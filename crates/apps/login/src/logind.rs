@@ -1,5 +1,10 @@
 //! logind and localed on the system bus: the proxies, and the reads and calls the daemon makes.
 
+use std::cell::RefCell;
+use std::future::Future;
+use std::os::fd::OwnedFd;
+use std::pin::Pin;
+use std::rc::Rc;
 use std::time::Duration;
 
 use futures_util::StreamExt;
@@ -8,7 +13,7 @@ use zbus::OwnedObjectPath;
 use zbus::proxy::CacheProperties;
 use zbus::{Connection, names::InterfaceName};
 
-use crate::daemon::LogindSession;
+use crate::daemon::{FrontUnit, Inhibit, LogindSession};
 
 const LOGIN1: &str = "org.freedesktop.login1";
 const SESSION: &str = "org.freedesktop.login1.Session";
@@ -19,6 +24,9 @@ const CLOSING: &str = "closing";
 const NO_SUCH_SESSION: &str = "org.freedesktop.login1.NoSuchSession";
 /// How long a method call on the system bus waits for its reply.
 const METHOD_TIMEOUT: Duration = Duration::from_secs(5);
+/// The front's unit, which the daemon starts and stops by `[remote_desktop] enabled`.
+pub const FRONT_UNIT: &str = "reprise-login-rdp.service";
+const INHIBIT_WHO: &str = "Reprise login manager";
 
 #[zbus::proxy(
     interface = "org.freedesktop.login1.Manager",
@@ -37,6 +45,7 @@ pub trait Manager {
     fn kill_session(&self, id: &str, who: &str, signal: i32) -> zbus::Result<()>;
     fn unlock_session(&self, id: &str) -> zbus::Result<()>;
     fn lock_session(&self, id: &str) -> zbus::Result<()>;
+    fn inhibit(&self, what: &str, who: &str, why: &str, mode: &str) -> zbus::Result<zbus::OwnedFd>;
     #[zbus(signal)]
     fn session_removed(&self, id: String, path: OwnedObjectPath) -> zbus::Result<()>;
 }
@@ -86,6 +95,8 @@ pub trait Session {
     default_path = "/org/freedesktop/systemd1"
 )]
 pub trait Systemd {
+    fn start_unit(&self, name: &str, mode: &str) -> zbus::Result<OwnedObjectPath>;
+    fn restart_unit(&self, name: &str, mode: &str) -> zbus::Result<OwnedObjectPath>;
     fn stop_unit(&self, name: &str, mode: &str) -> zbus::Result<OwnedObjectPath>;
 }
 
@@ -202,12 +213,35 @@ impl Logind {
     pub async fn stop_session(&self, id: &str) -> zbus::Result<()> {
         let path = self.manager.get_session(id).await?;
         let scope = self.session(path).await?.scope().await?;
-        let systemd = SystemdProxy::builder(&self.conn)
+        self.systemd().await?.stop_unit(&scope, "replace").await?;
+        Ok(())
+    }
+
+    async fn systemd(&self) -> zbus::Result<SystemdProxy<'static>> {
+        SystemdProxy::builder(&self.conn)
             .cache_properties(CacheProperties::No)
             .build()
-            .await?;
-        systemd.stop_unit(&scope, "replace").await?;
+            .await
+    }
+
+    /// Starts, restarts or stops [`FRONT_UNIT`].
+    pub async fn front_unit(&self, unit: FrontUnit) -> zbus::Result<()> {
+        let systemd = self.systemd().await?;
+        match unit {
+            FrontUnit::Start => systemd.start_unit(FRONT_UNIT, "replace").await?,
+            FrontUnit::Restart => systemd.restart_unit(FRONT_UNIT, "replace").await?,
+            FrontUnit::Stop => systemd.stop_unit(FRONT_UNIT, "replace").await?,
+        };
         Ok(())
+    }
+
+    /// A block inhibitor of `what`, held until the fd is dropped.
+    pub async fn inhibit(&self, what: &str, why: &str) -> zbus::Result<OwnedFd> {
+        let fd = self
+            .manager
+            .inhibit(what, INHIBIT_WHO, why, "block")
+            .await?;
+        Ok(fd.into())
     }
 
     /// The pid of session `id`'s leader.
@@ -319,6 +353,60 @@ impl Logind {
     }
 }
 
+/// logind's `what` and `why` for an inhibitor; `None` for none.
+fn inhibit_args(inhibit: Inhibit) -> Option<(&'static str, &'static str)> {
+    match inhibit {
+        Inhibit::Nothing => None,
+        Inhibit::Idle => Some(("idle", "a session runs in the background")),
+        Inhibit::SleepAndIdle => Some(("sleep:idle", "a remote client is connected")),
+    }
+}
+
+/// Takes an inhibitor of `what` for `why`; production passes [`Logind::inhibit`].
+pub type TakeInhibitor =
+    Rc<dyn Fn(&'static str, &'static str) -> Pin<Box<dyn Future<Output = zbus::Result<OwnedFd>>>>>;
+
+/// The inhibitor the daemon holds. A new one is taken before the old one is dropped, and
+/// one that arrives after a later change is dropped at once.
+pub struct Inhibitor {
+    take: TakeInhibitor,
+    /// Each change's number, and the fd held.
+    held: Rc<RefCell<(u64, Option<OwnedFd>)>>,
+}
+
+impl Inhibitor {
+    pub fn new(take: TakeInhibitor) -> Inhibitor {
+        Inhibitor {
+            take,
+            held: Rc::default(),
+        }
+    }
+
+    /// Holds `want` from now on, in a task of the current `LocalSet`.
+    pub fn set(&self, want: Inhibit) {
+        let mut held = self.held.borrow_mut();
+        held.0 += 1;
+        let change = held.0;
+        let Some((what, why)) = inhibit_args(want) else {
+            held.1 = None;
+            return;
+        };
+        drop(held);
+        let (take, held) = (self.take.clone(), self.held.clone());
+        tokio::task::spawn_local(async move {
+            match take(what, why).await {
+                Ok(fd) => {
+                    let mut held = held.borrow_mut();
+                    if held.0 == change {
+                        held.1 = Some(fd);
+                    }
+                }
+                Err(e) => log::warn!("logind's {what} inhibitor: {e}"),
+            }
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -368,5 +456,68 @@ mod tests {
                 options: "grp:alt_shift_toggle".into(),
             }
         );
+    }
+
+    /// Lets every ready task of the `LocalSet` run.
+    async fn settle() {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    fn open(w: &mut std::io::PipeWriter) -> bool {
+        use std::io::Write;
+        w.write(b"x").is_ok()
+    }
+
+    #[tokio::test]
+    async fn an_inhibitor_is_held_until_the_next_change_and_a_late_one_is_dropped() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let taken: Rc<RefCell<Vec<(&str, std::io::PipeWriter)>>> = Rc::default();
+                let slow = Rc::new(tokio::sync::Notify::new());
+                let hold = Rc::new(std::cell::Cell::new(false));
+                let take: TakeInhibitor = {
+                    let (taken, slow, hold) = (taken.clone(), slow.clone(), hold.clone());
+                    Rc::new(move |what, _why| {
+                        let (r, w) = std::io::pipe().unwrap();
+                        taken.borrow_mut().push((what, w));
+                        let (slow, hold) = (slow.clone(), hold.get());
+                        Box::pin(async move {
+                            if hold {
+                                slow.notified().await;
+                            }
+                            Ok(r.into())
+                        })
+                    })
+                };
+                let inhibitor = Inhibitor::new(take);
+                inhibitor.set(Inhibit::Idle);
+                settle().await;
+                inhibitor.set(Inhibit::SleepAndIdle);
+                settle().await;
+                {
+                    let mut t = taken.borrow_mut();
+                    assert_eq!((t[0].0, t[1].0), ("idle", "sleep:idle"));
+                    assert!(!open(&mut t[0].1), "the idle one is dropped once replaced");
+                    assert!(open(&mut t[1].1), "the sleep:idle one is held");
+                }
+                inhibitor.set(Inhibit::Nothing);
+                assert!(
+                    !open(&mut taken.borrow_mut()[1].1),
+                    "Nothing drops it at once"
+                );
+
+                hold.set(true);
+                inhibitor.set(Inhibit::Idle);
+                settle().await;
+                inhibitor.set(Inhibit::Nothing);
+                slow.notify_one();
+                settle().await;
+                assert!(
+                    !open(&mut taken.borrow_mut()[2].1),
+                    "an inhibitor arriving after a later change is dropped"
+                );
+            })
+            .await;
     }
 }

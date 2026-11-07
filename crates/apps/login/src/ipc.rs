@@ -67,15 +67,22 @@ impl Default for Paths {
 /// Binds both sockets over any stale files: `greeter` 0660 in group `greeter_gid`, `session`
 /// 0666. The listeners are non-blocking, for [`serve`].
 pub fn bind(paths: &Paths, greeter_gid: u32) -> io::Result<(StdListener, StdListener)> {
-    let greeter = bind_one(&paths.greeter)?;
-    std::os::unix::fs::chown(&paths.greeter, None, Some(greeter_gid))?;
-    std::fs::set_permissions(&paths.greeter, Permissions::from_mode(0o660))?;
+    let greeter = bind_group(&paths.greeter, greeter_gid)?;
     let session = bind_one(&paths.session)?;
     std::fs::set_permissions(&paths.session, Permissions::from_mode(0o666))?;
     Ok((greeter, session))
 }
 
-fn bind_one(path: &Path) -> io::Result<StdListener> {
+/// Binds `path` as [`bind_one`] does, 0660 in group `gid`.
+pub fn bind_group(path: &Path, gid: u32) -> io::Result<StdListener> {
+    let l = bind_one(path)?;
+    std::os::unix::fs::chown(path, None, Some(gid))?;
+    std::fs::set_permissions(path, Permissions::from_mode(0o660))?;
+    Ok(l)
+}
+
+/// Binds a non-blocking listener at `path` over any stale file.
+pub fn bind_one(path: &Path) -> io::Result<StdListener> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }

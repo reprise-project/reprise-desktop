@@ -11,6 +11,7 @@ use log::Level;
 use repriselogin::account::nt_hash;
 use repriselogin::front::{FrontEvent, FrontRequest, NlaUser, Secret};
 use repriselogin::greeter::{AuthKind, Note};
+use repriselogin::machine::MachineConfig;
 use repriselogin::throttle::{Attempt, Pause, Throttle};
 use zeroize::Zeroizing;
 
@@ -66,6 +67,15 @@ pub enum Inhibit {
     Nothing,
     Idle,
     SleepAndIdle,
+}
+
+/// What the backend does with `reprise-login-rdp.service`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FrontUnit {
+    Start,
+    /// A running front rereads its settings only when it starts.
+    Restart,
+    Stop,
 }
 
 #[derive(Default)]
@@ -155,6 +165,42 @@ impl Daemon {
             })
             .collect();
         Effect::ToFront(FrontEvent::Passwords { users })
+    }
+
+    /// Takes new machine settings. Turning remote logins on starts the front and opens the
+    /// sessions' links; turning them off stops it, denies every login not yet handed over
+    /// and closes the links.
+    pub(super) fn config_reloaded(&mut self, config: MachineConfig, out: &mut Vec<Effect>) {
+        let (was, port) = (self.config.remote.enabled, self.config.remote.port);
+        self.config = config;
+        match (was, self.config.remote.enabled) {
+            (false, true) => {
+                out.push(Effect::Front(FrontUnit::Start));
+                self.open_intakes(out);
+            }
+            (true, false) => {
+                out.push(Effect::Front(FrontUnit::Stop));
+                let pending: Vec<_> = (self.remote.logins.iter())
+                    .filter(|(_, l)| l.step != Step::Forwarding)
+                    .map(|(&conn, l)| (conn, l.backoff_s))
+                    .collect();
+                for (conn, backoff_s) in pending {
+                    self.forget(conn, out);
+                    out.push(Effect::ToFront(FrontEvent::Denied { conn, backoff_s }));
+                }
+                let uids: BTreeSet<u32> = (self.remote.linked.drain())
+                    .chain(self.remote.viewers.keys().copied())
+                    .collect();
+                for uid in uids {
+                    self.set_viewers(uid, 0, out);
+                }
+                out.push(Effect::CloseIntakes);
+            }
+            (true, true) if self.config.remote.port != port => {
+                out.push(Effect::Front(FrontUnit::Restart))
+            }
+            _ => {}
+        }
     }
 
     pub(super) fn is_remote_worker(&self, worker: WorkerId) -> bool {
