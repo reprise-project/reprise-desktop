@@ -36,9 +36,18 @@ pub(crate) fn load_picture(path: &Path) -> Option<Canvas> {
         return None;
     }
     let bytes = std::fs::read(path).ok()?;
-    reprisekit::icontheme::png_to_canvas(&bytes, 4096)
+    decode_picture(&bytes, |b| reprisekit::icontheme::png_to_canvas(b, 4096))
         .map_err(|e| log::debug!("user picture {}: {e}", path.display()))
         .ok()
+}
+
+/// `decode` with a panic counted as a failed decode: any local user sets the picture the login
+/// screen decodes, and a bad one leaves the stock picture instead of ending the screen.
+pub(super) fn decode_picture(
+    bytes: &[u8],
+    decode: impl FnOnce(&[u8]) -> Result<Canvas, String>,
+) -> Result<Canvas, String> {
+    crate::crash::guarded(|| decode(bytes)).unwrap_or_else(|_| Err("the decoder panicked".into()))
 }
 
 /// The first of `paths` that decodes, at each of `sizes` device pixels.
