@@ -48,12 +48,9 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
     match args.as_slice() {
         [_] => daemon(),
-        [_, flag, mode, user, autologin_user @ ..]
-            if flag == "--worker" && autologin_user.len() <= 1 =>
-        {
+        [_, flag, mode] if flag == "--worker" => {
             reprisebus::journal::init_logger(reprisebus::journal::PROGRAM_FILTER);
-            let autologin_user = autologin_user.first().map(String::as_str);
-            std::process::exit(worker(mode, user, autologin_user));
+            std::process::exit(worker(mode));
         }
         [_, flag] if flag == "--help" || flag == "-h" => {
             print!("{USAGE}");
@@ -66,7 +63,7 @@ fn main() -> ExitCode {
     }
 }
 
-fn worker(mode: &str, user: &str, autologin_user: Option<&str>) -> i32 {
+fn worker(mode: &str) -> i32 {
     let Some(mode) = Mode::parse(mode) else {
         eprintln!("reprise-login: unknown worker mode {mode:?}");
         return 2;
@@ -84,7 +81,7 @@ fn worker(mode: &str, user: &str, autologin_user: Option<&str>) -> i32 {
     }
     // SAFETY: fd 3 is an open socket nothing else in this process owns.
     let sock = unsafe { UnixStream::from_raw_fd(WORKER_FD) };
-    worker_main(mode, user, autologin_user, sock)
+    worker_main(mode, sock)
 }
 
 fn daemon() -> ExitCode {
@@ -524,8 +521,8 @@ impl Workers {
         }
     }
 
-    /// Runs `program --worker <mode> <user> [<autologin_user>]` with a socket on fd 3. A worker that cannot
-    /// start is reported as exited.
+    /// Runs `program --worker <mode>` with a socket on fd 3 whose first frame is `Begin`. A
+    /// worker that cannot start is reported as exited.
     fn spawn(&mut self, id: WorkerId, job: &Job) {
         let started = start(&self.program, job).and_then(|(child, stream)| {
             stream.set_nonblocking(true)?;
@@ -560,6 +557,11 @@ impl Workers {
                 session: None,
             },
         );
+        let begin = ToWorker::Begin {
+            user: job.user.clone(),
+            autologin_user: job.autologin_user.clone(),
+        };
+        self.send(id, &begin);
     }
 
     fn send(&self, id: WorkerId, msg: &ToWorker) {
@@ -663,16 +665,13 @@ impl Workers {
     }
 }
 
-/// Forks `program --worker <mode> <user> [<autologin_user>]` with the child's end of a socket
-/// pair on fd 3.
+/// Forks `program --worker <mode>` with the child's end of a socket pair on fd 3.
 fn start(program: &Path, job: &Job) -> io::Result<(Child, UnixStream)> {
     let (ours, theirs) = UnixStream::pair()?;
     let fd = theirs.as_raw_fd();
     let mut cmd = Command::new(program);
     cmd.arg("--worker")
         .arg(job.mode.as_arg())
-        .arg(&job.user)
-        .args(&job.autologin_user)
         .stdin(Stdio::null());
     // SAFETY: the closure runs in the child between fork and exec and calls only dup2 and
     // fcntl, which are async-signal-safe.
@@ -801,22 +800,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_worker_gets_its_mode_and_user_and_hears_on_fd_3() {
+    async fn the_worker_gets_its_mode_in_argv_and_its_user_first_on_fd_3() {
         let local = tokio::task::LocalSet::new();
         local
             .run_until(async {
                 let dir = tempfile::tempdir().unwrap();
                 let out = dir.path().join("out");
-                let body = format!("echo \"$@\" >{o}; head -c 4 <&3 >>{o}", o = out.display());
+                let begin = frame::encode(&ToWorker::Begin {
+                    user: "anna".into(),
+                    autologin_user: None,
+                })
+                .unwrap();
+                let start = frame::encode(&ToWorker::Start { vt: 7 }).unwrap();
+                let body = format!(
+                    "echo \"$@\" >{o}; head -c {n} <&3 >>{o}",
+                    o = out.display(),
+                    n = begin.len() + start.len()
+                );
                 let (tx, mut rx) = mpsc::unbounded_channel();
                 let mut w = Workers::new(script(dir.path(), &body), tx);
                 w.spawn(WorkerId(2), &login("anna"));
                 w.send(WorkerId(2), &ToWorker::Start { vt: 7 });
                 until_exited(&mut w, &mut rx, WorkerId(2)).await;
                 let got = std::fs::read(&out).unwrap();
-                let prefix = &frame::encode(&ToWorker::Start { vt: 7 }).unwrap()[..4];
-                assert_eq!(&got[..20], b"--worker login anna\n");
-                assert_eq!(&got[20..], prefix);
+                let want = [&b"--worker login\n"[..], &begin, &start].concat();
+                assert_eq!(got, want, "argv names no user; Begin comes before Start");
             })
             .await;
     }

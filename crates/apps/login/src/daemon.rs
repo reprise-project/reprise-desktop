@@ -30,7 +30,7 @@ pub const MAX_USERS: usize = 100;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct WorkerId(pub u32);
 
-/// What a worker is spawned for: `reprise-login --worker <mode> <user> [<autologin_user>]`.
+/// What a worker is spawned for: `reprise-login --worker <mode>`, told the rest in `Begin`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Job {
     pub mode: Mode,
