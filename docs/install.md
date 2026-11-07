@@ -102,9 +102,10 @@ If the login screen fails three times in a row, reprise-login switches to a
 text login on tty2. Ctrl+Alt+F2 reaches one at any time. systemd restarts
 reprise-login itself when it exits, but starts it at most twice in 30 s,
 manual restarts included. Past that it leaves it stopped and starts a text
-login on tty1. Once the cause is fixed, `sudo systemctl reset-failed
-reprise-login` and `sudo systemctl start reprise-login` bring the login
-screen back.
+login on tty1. Once the cause is fixed, log in on tty2 (Ctrl+Alt+F2) and
+run `sudo systemctl reset-failed reprise-login` and `sudo systemctl start
+reprise-login` to bring the login screen back. Run them from tty2, not tty1:
+starting reprise-login stops the text login on tty1, and the shell in it.
 
 The logs:
 
