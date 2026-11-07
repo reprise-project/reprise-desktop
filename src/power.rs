@@ -110,7 +110,8 @@ pub enum Call {
     State,
 }
 
-/// The hints logind last heard, so each goes out only on change. Both start false, as for a new session.
+/// The hints logind heard, or hears once the loop starts, so each goes out only on change.
+/// Both start false, as for a new session.
 #[derive(Default)]
 struct SessionHints {
     locked: bool,
@@ -582,8 +583,19 @@ pub fn check_closing(state: &mut State) {
 #[cfg(test)]
 pub fn capture_calls(state: &mut State) -> async_channel::Receiver<Call> {
     let (tx, rx) = async_channel::unbounded();
-    state.power.calls = Some(tx);
+    attach(state, tx);
     rx
+}
+
+/// Hands the loop its calls; a hint already set, as by a session born locked, goes out first.
+fn attach(state: &mut State, tx: async_channel::Sender<Call>) {
+    let h = &state.power.hints;
+    for (set, hint) in [(h.locked, Hint::Locked(true)), (h.idle, Hint::Idle(true))] {
+        if set {
+            let _ = tx.try_send(Call::Hint(hint));
+        }
+    }
+    state.power.calls = Some(tx);
 }
 
 /// A sleep still waiting for the cover goes on, since there is none left to wait for.
@@ -667,7 +679,7 @@ pub fn setup(state: &mut State) {
         .name("power-dbus".into())
         .spawn(move || zbus::block_on(run(tx, calls_rx)));
     if thread.is_ok() {
-        state.power.calls = Some(calls_tx);
+        attach(state, calls_tx);
     }
 }
 
