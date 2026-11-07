@@ -68,6 +68,7 @@ pub(crate) fn pause(state: &mut State) {
 
 pub(crate) fn activate(state: &mut State) {
     crate::lockview::seat_away(state, false);
+    crate::idle::resumed(state);
     let Some(b) = state.backend.as_mut() else {
         return;
     };

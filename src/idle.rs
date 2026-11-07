@@ -436,8 +436,8 @@ fn arm_console(state: &mut State) {
     }
 }
 
-/// The machine woke from sleep. The countdown starts again, but a wake is no activity: the
-/// outputs, the lock and idle-notify clients stay as they are until input comes.
+/// The machine woke from sleep or the session got the seat back. The countdown starts again, but
+/// that is no activity: the outputs, the lock and idle-notify clients stay as they are until input.
 pub fn resumed(state: &mut State) {
     let now = Instant::now();
     state.idle.since_activity = now;
@@ -1110,6 +1110,23 @@ mod tests {
             crate::backend::pause_session(&mut h.state);
             h.run_for(3500);
             assert!(!h.state.idle.steps.suspended, "no standby off the seat");
+        }
+
+        #[test]
+        fn a_return_to_the_seat_restarts_the_idle_countdown() {
+            let mut h = laptop(0);
+            crate::idle::setup(&mut h.state);
+            crate::backend::pause_session(&mut h.state);
+            h.run_for(3500);
+            crate::backend::activate_session(&mut h.state);
+            crate::idle::config_changed(&mut h.state);
+            h.run_for(100);
+            assert!(
+                !h.state.idle.steps.suspended,
+                "no standby right after the return"
+            );
+            h.run_for(3000);
+            assert!(h.state.idle.steps.suspended, "standby 3 s after the return");
         }
 
         #[test]
