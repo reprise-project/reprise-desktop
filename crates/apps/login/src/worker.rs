@@ -549,7 +549,7 @@ fn fail(sock: &mut UnixStream, kind: ErrorKind, text: &str) -> i32 {
 }
 
 /// Opens the session on `vt`: its tty and environment, the VT held and, unless `background`,
-/// shown, then the credentials and `pam_open_session`.
+/// shown, then the credentials, `pam_open_session` and the VT owned.
 fn open<V: Vts>(
     pam: &mut impl LoginPam,
     vts: &mut V,
@@ -595,6 +595,13 @@ fn open<V: Vts>(
     if let Err(e) = pam.open_session() {
         let _ = pam.delete_cred();
         return Err(e.to_string());
+    }
+    // Not before: a process a session module forks would get the VT as its terminal. The VT
+    // is root's until the compositor takes control, so the session can't claim it first.
+    if let Err(e) = vts.own(&tty) {
+        let _ = pam.close_session();
+        let _ = pam.delete_cred();
+        return Err(format!("/dev/tty{vt}: {e}"));
     }
     Ok((tty, groups))
 }
@@ -743,6 +750,7 @@ trait LoginPam: Creds {
     fn set_tty(&mut self, tty: &str) -> Result<(), PamError>;
     fn putenv(&mut self, key: &str, value: &str) -> Result<(), PamError>;
     fn open_session(&mut self) -> Result<(), PamError>;
+    fn close_session(&mut self) -> Result<(), PamError>;
 }
 
 impl LoginPam for Pam {
@@ -773,12 +781,18 @@ impl LoginPam for Pam {
     fn open_session(&mut self) -> Result<(), PamError> {
         Pam::open_session(self)
     }
+
+    fn close_session(&mut self) -> Result<(), PamError> {
+        Pam::close_session(self)
+    }
 }
 
 /// The VT calls of a session start, apart so a background start is testable.
 trait Vts {
     type Held;
     fn hold(&mut self, vt: u16) -> io::Result<Self::Held>;
+    /// Makes the held VT the worker's controlling terminal, deaf to the signals it sends.
+    fn own(&mut self, held: &Self::Held) -> io::Result<()>;
     fn activate_and_wait(&mut self, vt: u16, stop: &dyn Fn() -> bool) -> io::Result<()>;
 }
 
@@ -789,9 +803,12 @@ impl Vts for Console {
     type Held = File;
 
     fn hold(&mut self, vt: u16) -> io::Result<File> {
-        let tty = vt::hold(vt)?;
-        vt::own(&tty)?;
-        Ok(tty)
+        vt::hold(vt)
+    }
+
+    fn own(&mut self, tty: &File) -> io::Result<()> {
+        ignore_terminal_signals()?;
+        vt::own(tty)
     }
 
     fn activate_and_wait(&mut self, vt: u16, stop: &dyn Fn() -> bool) -> io::Result<()> {
@@ -818,17 +835,20 @@ extern "C" fn on_stop(_: c_int) {
     STOP.store(true, Ordering::Relaxed);
 }
 
-/// Makes the worker a session leader, which `vt::own` needs, that ignores `TERMINAL_SIGNALS`.
+/// Makes the worker a session leader with no controlling terminal, which `vt::own` needs.
 fn lead_session() -> io::Result<()> {
-    // SAFETY: setsid takes no arguments, and signal sets a disposition, not a handler.
-    unsafe {
-        if libc::setsid() < 0 {
+    // SAFETY: setsid takes no arguments.
+    if unsafe { libc::setsid() } < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+fn ignore_terminal_signals() -> io::Result<()> {
+    for sig in TERMINAL_SIGNALS {
+        // SAFETY: signal sets a disposition, not a handler.
+        if unsafe { libc::signal(sig, libc::SIG_IGN) } == libc::SIG_ERR {
             return Err(io::Error::last_os_error());
-        }
-        for sig in TERMINAL_SIGNALS {
-            if libc::signal(sig, libc::SIG_IGN) == libc::SIG_ERR {
-                return Err(io::Error::last_os_error());
-            }
         }
     }
     Ok(())
