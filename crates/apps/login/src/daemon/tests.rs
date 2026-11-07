@@ -1404,3 +1404,31 @@ fn an_account_resolving_to_uid_0_fails_like_a_wrong_password() {
         reply(error(ErrorKind::Refused, NOT_AUTHENTICATED))
     );
 }
+
+#[test]
+fn autologin_never_unlocks_a_session_its_user_already_has() {
+    let config = LoginConfig {
+        autologin_user: Some("anna".into()),
+        ..LoginConfig::default()
+    };
+    let mut run = Run::new(config, Remembered::default());
+    run.recover(vec![]);
+    run.start();
+    run.d.sessions.insert(SessionEntry {
+        id: "c1".into(),
+        user: "anna".into(),
+        uid: 1000,
+        vt: 8,
+        started: None,
+    });
+    let effects = run.worker(1, started("c2", 1000));
+    assert!(
+        !effects
+            .iter()
+            .any(|e| matches!(e, Effect::UnlockSession(_))),
+        "{effects:?}"
+    );
+    assert_eq!(effects[0], Effect::TerminateSession("c2".into()));
+    assert_eq!(effects[2..], greeter_spawn(2)[..], "{effects:?}");
+    assert!(run.d.conversation.is_none());
+}
