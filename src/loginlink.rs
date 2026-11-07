@@ -209,7 +209,7 @@ fn on_linked(state: &mut State) {
             return;
         }
     }
-    let interface = interface(state.config.interface);
+    let interface = crate::greeter::wire_interface(state.config.interface);
     if send(state, &SessionRequest::Hello { interface }) {
         log::info!("reprise-login: linked");
         crate::lockview::redraw(state);
@@ -242,15 +242,6 @@ fn lost(state: &mut State) {
     }
     crate::lockview::redraw(state);
     retry(state);
-}
-
-fn interface(i: reprisekit::interface::Interface) -> repriselogin::Interface {
-    use reprisekit::interface::Interface as Kit;
-    match i {
-        Kit::Classic => repriselogin::Interface::Classic,
-        Kit::Blue => repriselogin::Interface::Blue,
-        Kit::Glass => repriselogin::Interface::Glass,
-    }
 }
 
 #[cfg(test)]
