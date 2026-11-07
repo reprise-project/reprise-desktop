@@ -32,9 +32,9 @@ impl<S> Cork<S> {
         }
     }
 
-    /// Nothing of a partial record has been read.
+    /// Nothing of a partial record has been read, and no read failed.
     pub fn at_boundary(&self) -> bool {
-        self.header_len == 0 && self.body_left == 0
+        self.too_long.is_none() && self.header_len == 0 && self.body_left == 0
     }
 
     pub fn into_inner(self) -> S {
@@ -198,6 +198,7 @@ mod tests {
                 other => panic!("{read}: {other:?}, not InvalidData"),
             }
         }
+        assert!(!cork.at_boundary(), "a failed cork is never at a boundary");
     }
 
     #[tokio::test]
