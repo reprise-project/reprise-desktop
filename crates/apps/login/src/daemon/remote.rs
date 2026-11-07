@@ -140,7 +140,10 @@ enum Step {
     Accepted {
         uid: u32,
     },
-    Forwarding,
+    /// The backend passes the conn to `uid`'s session, answering with `Forwarded`.
+    Forwarding {
+        uid: u32,
+    },
     /// `Denied` goes out once `REFUSE_DELAY` has passed.
     Refused,
 }
@@ -205,7 +208,7 @@ impl Daemon {
             (true, false) => {
                 out.push(Effect::Front(FrontUnit::Stop));
                 let pending: Vec<_> = (self.remote.logins.iter())
-                    .filter(|(_, l)| l.step != Step::Forwarding)
+                    .filter(|(_, l)| !matches!(l.step, Step::Forwarding { .. }))
                     .map(|(&conn, l)| (conn, l.backoff_s))
                     .collect();
                 for (conn, backoff_s) in pending {
@@ -785,7 +788,7 @@ impl Daemon {
                 after: left,
             });
         }
-        if l.step == Step::Forwarding {
+        if let Step::Forwarding { .. } = l.step {
             out.push(Effect::Log(
                 Level::Warn,
                 format!(
@@ -827,7 +830,7 @@ impl Daemon {
         self.remote.front = false;
         let conns: Vec<_> = self.remote.logins.keys().copied().collect();
         for conn in conns {
-            if self.remote.logins[&conn].step == Step::Forwarding {
+            if let Step::Forwarding { .. } = self.remote.logins[&conn].step {
                 out.push(Effect::DropConn { conn });
             }
             self.forget(conn, out);
@@ -840,7 +843,7 @@ impl Daemon {
                 let Step::Accepted { uid } = l.step else {
                     unreachable!()
                 };
-                l.step = Step::Forwarding;
+                l.step = Step::Forwarding { uid };
                 out.push(Effect::Forward { conn, uid });
             }
             _ => {
@@ -854,24 +857,26 @@ impl Daemon {
         }
     }
 
-    pub(super) fn forwarded(&mut self, conn: u64, ok: bool, out: &mut Vec<Effect>) {
-        let Some(Login {
-            step: Step::Forwarding,
+    /// `world` is read fresh: a session the console does not show becomes a background one.
+    pub(super) fn forwarded(&mut self, world: &World, conn: u64, ok: bool, out: &mut Vec<Effect>) {
+        let Some(&Login {
+            step: Step::Forwarding { uid },
             ..
         }) = self.remote.logins.get(&conn)
         else {
             return;
         };
         let l = self.remote.logins.remove(&conn).expect("login");
-        if !ok {
-            out.push(Effect::Log(
-                Level::Warn,
-                format!(
-                    "the remote login from {} could not be handed to its session",
-                    l.peer
-                ),
-            ));
+        if ok {
+            return self.reached_remotely(world, uid, out);
         }
+        out.push(Effect::Log(
+            Level::Warn,
+            format!(
+                "the remote login from {} could not be handed to its session",
+                l.peer
+            ),
+        ));
     }
 
     pub(super) fn intake_open(&mut self, uid: u32, out: &mut Vec<Effect>) {
@@ -1000,19 +1005,6 @@ impl Daemon {
             ),
         ));
         out.push(Effect::TerminateSession(id.into()));
-    }
-
-    /// A background session someone switched to on the console is the console's from now on.
-    pub(super) fn console_on_vt(&mut self, vt: u16, out: &mut Vec<Effect>) {
-        let Some(e) = self.sessions.iter().find(|e| e.vt == vt && e.background) else {
-            return;
-        };
-        out.push(Effect::Log(
-            Level::Info,
-            format!("{}'s background session {} is on the console", e.user, e.id),
-        ));
-        let id = e.id.clone();
-        self.sessions.set_background(&id, false);
     }
 
     pub(super) fn remote_session_gone(&mut self, entry: &SessionEntry) {

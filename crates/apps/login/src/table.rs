@@ -13,7 +13,7 @@ pub struct SessionEntry {
     pub vt: u16,
     /// `None` for a session found in logind after a daemon restart.
     pub started: Option<Instant>,
-    /// A remote login's session that seat0 has not shown since this daemon started or found it.
+    /// A session a remote login started or reached that seat0 has not shown since.
     pub background: bool,
 }
 

@@ -425,8 +425,8 @@ impl WorldCache {
     }
 }
 
-/// Whether handling `input` can start a session, or answers a power request: a session start
-/// picks its VT from the world, and a cached `active_vt` could hand out the VT on screen.
+/// Whether handling `input` can start a session, answers a power request or marks a session
+/// reached off the seat: each reads `active_vt`, and a cached one could be another VT's.
 fn reads_world(input: &Input) -> bool {
     matches!(
         input,
@@ -436,6 +436,7 @@ fn reads_world(input: &Input) -> bool {
         ) | Input::Worker(_, FromWorker::Authenticated { .. })
             | Input::SessionRemoved { .. }
             | Input::TerminateFailed { .. }
+            | Input::Forwarded { .. }
     )
 }
 
@@ -1341,6 +1342,11 @@ mod tests {
         for input in &cached {
             assert!(!reads_world(input), "{input:?} uses the cached world");
         }
+    }
+
+    #[test]
+    fn a_forwarded_hand_over_reads_the_world_fresh() {
+        assert!(reads_world(&Input::Forwarded { conn: 1, ok: true }));
     }
 
     #[tokio::test]
