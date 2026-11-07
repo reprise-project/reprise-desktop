@@ -15,8 +15,8 @@ use repriselogin::throttle::{Attempt, Pause, Throttle};
 use zeroize::Zeroizing;
 
 use super::{
-    Conversation, Daemon, Effect, Job, NO_VT, Phase, START_WAIT, SessionWorker, Timer,
-    WORKER_ENDED, WorkerId, World,
+    Conversation, Daemon, Effect, Job, NO_VT, Phase, SESSION_ENDED, START_WAIT, SessionWorker,
+    Timer, WORKER_ENDED, WorkerId, World,
 };
 use crate::table::SessionEntry;
 use crate::vt;
@@ -159,6 +159,10 @@ impl Daemon {
         self.checking_conn(worker).is_some()
             || self.starting_uid(worker).is_some()
             || self.remote.stalled.contains_key(&worker)
+    }
+
+    pub(super) fn remote_start_in_flight(&self) -> bool {
+        !self.remote.starting.is_empty()
     }
 
     fn checking_conn(&self, worker: WorkerId) -> Option<u64> {
@@ -506,6 +510,20 @@ impl Daemon {
                 let s = self.remote.starting.remove(&uid).expect("start");
                 self.session_workers
                     .push(SessionWorker { worker, vt: s.vt });
+                if let Some(at) = (self.removed_early.iter()).position(|(r, _)| *r == session_id) {
+                    self.removed_early.remove(at);
+                    out.push(Effect::Log(
+                        Level::Warn,
+                        format!(
+                            "{}'s background session {session_id} ended as it started",
+                            s.user
+                        ),
+                    ));
+                    for conn in self.conns(Step::Starting { uid }) {
+                        self.refuse(now, conn, SESSION_ENDED, out);
+                    }
+                    return;
+                }
                 if self.sessions.by_uid(uid).is_some() {
                     out.push(Effect::Log(
                         Level::Warn,
