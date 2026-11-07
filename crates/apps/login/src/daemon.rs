@@ -659,7 +659,7 @@ impl Daemon {
             Input::IntakeOpen { uid } => self.intake_open(uid, &mut out),
             Input::IntakeLost { uid } => self.intake_lost(now, uid, &mut out),
             Input::Viewers { uid, count } => self.viewers_reported(now, uid, count, &mut out),
-            Input::Forwarded { conn, ok } => self.forwarded(world, conn, ok, &mut out),
+            Input::Forwarded { conn, ok } => self.forwarded(now, world, conn, ok, &mut out),
             Input::ConfigReloaded(config) => self.config_reloaded(now, config, &mut out),
             Input::Account {
                 link,
