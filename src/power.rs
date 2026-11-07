@@ -78,7 +78,7 @@ fn signal_rule(
         .ok()
 }
 
-enum Report {
+pub(crate) enum Report {
     OnBattery(bool),
     /// Kept until shutdown so logind leaves the lid and buttons to us.
     Inhibitor(OwnedFd),
@@ -490,7 +490,7 @@ async fn read_inhibitors(login1: &Proxy<'_>, reports: &Sender<Report>) {
     }
 }
 
-fn report(state: &mut State, r: Report) {
+pub(crate) fn report(state: &mut State, r: Report) {
     match r {
         Report::Inhibitor(fd) => state.power._inhibitor = Some(fd),
         Report::SleepDelay(fd) => {

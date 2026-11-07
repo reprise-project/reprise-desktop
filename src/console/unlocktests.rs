@@ -485,3 +485,58 @@ fn a_console_unlock_after_the_remote_side_clicked_the_desktop_focuses_the_deskto
     assert_eq!(keyboard_window(&h), None);
     assert_eq!(h.state.focused, None, "no window is focused");
 }
+
+#[test]
+fn a_session_that_lost_its_seat_takes_a_client_in_lock_mode_and_brings_its_windows_back() {
+    use super::homes::RelRect;
+    let mut h = computer();
+    let (ours, _daemon) = std::os::unix::net::UnixStream::pair().unwrap();
+    crate::loginlink::install(&mut h.state, crate::loginlink::LoginLink::from_stream(ours));
+    let edp = h.state.first_output().expect("eDP-1");
+    let home_area = h.state.usable_area(Some(&edp));
+    let mut c = h.connect();
+    let t = h.map_toplevel(
+        &mut c,
+        "test.app",
+        home_area.width / 2,
+        home_area.height / 2,
+    );
+    let (x, y) = (home_area.width / 4, home_area.height / 4);
+    h.state.move_to(t.id, home_area.x + x, home_area.y + y);
+    h.roundtrip(&mut c);
+    let home = frame(&h, t.id);
+    let rel = RelRect::of(home, home_area);
+
+    crate::backend::pause_session(&mut h.state);
+    assert!(h.state.console_locked(), "a session off the seat locks");
+    let mut portal = h.connect_portal();
+    let lock = portal.lock_screen();
+    lock.set_layout(&[(0, 0, 1600, 900, 100)]);
+    h.roundtrip(&mut portal);
+    h.roundtrip(&mut c);
+    assert!(
+        remote_side(&h.state),
+        "the client takes the session in lock mode"
+    );
+    assert!(h.state.console_locked(), "the console stays locked");
+    let remote = crate::virtualout::remote_outputs(&h.state);
+    let want = rel.at(h.state.usable_area(remote.first()));
+    let got = frame(&h, t.id);
+    assert!(
+        (got.x - want.x).abs() <= 1 && (got.y - want.y).abs() <= 1,
+        "{got:?} is at {want:?}'s place on the Remote output"
+    );
+    assert_eq!(
+        (got.width, got.height),
+        (home.width, home.height),
+        "the size stays"
+    );
+
+    crate::power::report(&mut h.state, crate::power::Report::Unlock);
+    crate::backend::activate_session(&mut h.state);
+    h.roundtrip(&mut portal);
+    h.roundtrip(&mut c);
+    assert!(!h.state.console_locked());
+    assert_lock_mode_over(&h);
+    assert_eq!(frame(&h, t.id), home, "the window is back where it was");
+}
