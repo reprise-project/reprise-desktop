@@ -821,11 +821,15 @@ impl Daemon {
         }
     }
 
-    /// A front that went away takes its conns along; session starts in flight go on.
+    /// A front that went away takes its conns along, hand-overs in flight included; session
+    /// starts in flight go on.
     pub(super) fn front_lost(&mut self, out: &mut Vec<Effect>) {
         self.remote.front = false;
         let conns: Vec<_> = self.remote.logins.keys().copied().collect();
         for conn in conns {
+            if self.remote.logins[&conn].step == Step::Forwarding {
+                out.push(Effect::DropConn { conn });
+            }
             self.forget(conn, out);
         }
     }
