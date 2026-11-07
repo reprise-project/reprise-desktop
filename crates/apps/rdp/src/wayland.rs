@@ -27,9 +27,16 @@ pub fn display_name(env: &[String]) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// Connects to the session's compositor: `WAYLAND_DISPLAY` when set, else the name the user
-/// manager's environment gives within [`SESSION_READY_WAIT`]. Blocks while it waits.
+/// The display [`connect_when_ready`] found, for later connections.
+static FOUND: OnceLock<String> = OnceLock::new();
+
+/// Connects to the session's compositor: the display [`connect_when_ready`] found, else
+/// `WAYLAND_DISPLAY` when set, else the name the user manager's environment gives within
+/// [`SESSION_READY_WAIT`]. Blocks while it waits.
 pub fn connect() -> Result<Connection, String> {
+    if let Some(name) = FOUND.get() {
+        return connect_to(name);
+    }
     if std::env::var_os("WAYLAND_DISPLAY").is_some_and(|d| !d.is_empty()) {
         return Connection::connect_to_env().map_err(|e| format!("no Wayland connection: {e}"));
     }
@@ -41,17 +48,47 @@ pub fn connect() -> Result<Connection, String> {
             LEARNED.get_or_init(|| learned).clone()
         }
     };
+    connect_to(&name)
+}
+
+fn connect_to(name: &str) -> Result<Connection, String> {
     let runtime = std::env::var_os("XDG_RUNTIME_DIR").ok_or("XDG_RUNTIME_DIR is not set")?;
-    let socket = PathBuf::from(runtime).join(&name);
+    let socket = PathBuf::from(runtime).join(name);
     let stream = UnixStream::connect(&socket)
         .map_err(|e| format!("no Wayland connection on {}: {e}", socket.display()))?;
     Connection::from_socket(stream).map_err(|e| format!("no Wayland connection: {e}"))
 }
 
-/// [`connect`], tried every [`POLL`] for [`SESSION_READY_WAIT`]: a user manager that outlived an
-/// earlier session still names that session's display until the new compositor is up.
+/// Connects to the display the user manager's environment names, both read again every [`POLL`]
+/// for [`SESSION_READY_WAIT`]. The process's own `WAYLAND_DISPLAY` is not used: a manager that
+/// outlived an earlier session passes that session's until the new compositor sets its own.
 pub fn connect_when_ready() -> Result<Connection, String> {
-    retried(SESSION_READY_WAIT, POLL, connect)
+    let bus =
+        zbus::block_on(zbus::Connection::session()).map_err(|e| format!("no session bus: {e}"))?;
+    let named = || {
+        let env = zbus::block_on(manager_environment(&bus))
+            .map_err(|e| format!("the user manager's environment: {e}"))?;
+        display_name(&env).ok_or_else(|| "the session set no WAYLAND_DISPLAY yet".to_string())
+    };
+    let (name, conn) = ready(SESSION_READY_WAIT, POLL, named, connect_to)?;
+    log::info!("the session's display is {name}");
+    let _ = FOUND.set(name);
+    Ok(conn)
+}
+
+/// `open` on the name `named` gives, both tried every `poll` until `open` succeeds or `wait` has
+/// passed.
+fn ready<T>(
+    wait: Duration,
+    poll: Duration,
+    mut named: impl FnMut() -> Result<String, String>,
+    mut open: impl FnMut(&str) -> Result<T, String>,
+) -> Result<(String, T), String> {
+    retried(wait, poll, || {
+        let name = named()?;
+        let opened = open(&name)?;
+        Ok((name, opened))
+    })
 }
 
 /// `attempt` every `poll` until it succeeds or `wait` has passed; then its last error.
@@ -180,6 +217,33 @@ mod tests {
         assert!(start.elapsed() >= Duration::from_millis(50));
         assert_eq!(never, Err(format!("not up {tries}")), "the last error");
         assert!(tries > 1);
+    }
+
+    #[test]
+    fn the_display_name_is_read_again_on_each_try() {
+        let mut names = [
+            Err("unset".to_string()),
+            Ok("wayland-0".to_string()),
+            Ok("wayland-1".to_string()),
+        ]
+        .into_iter();
+        let mut reads = 0;
+        let named = || {
+            reads += 1;
+            names.next().expect("no more tries than names")
+        };
+        let open = |name: &str| match name {
+            "wayland-1" => Ok(()),
+            stale => Err(format!("no compositor on {stale}")),
+        };
+        let found = ready(
+            Duration::from_secs(5),
+            Duration::from_millis(5),
+            named,
+            open,
+        );
+        assert_eq!(found, Ok(("wayland-1".to_string(), ())));
+        assert_eq!(reads, 3);
     }
 
     #[tokio::test]
