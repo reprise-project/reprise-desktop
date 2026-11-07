@@ -1570,3 +1570,33 @@ fn recovery_locks_every_session_that_is_not_on_screen() {
         ]
     );
 }
+
+#[test]
+fn the_console_moving_to_vt_1_with_no_login_screen_brings_one() {
+    let mut run = Run::booted();
+    run.log_in(2, "anna", 1000, "c1", 7);
+    assert_eq!(
+        run.on(Input::ConsoleOnGreeterVt),
+        vec![Effect::Kill(WorkerId(1))],
+        "the leaving greeter is replaced"
+    );
+    assert_eq!(run.exited(1), greeter_spawn(3));
+    assert_eq!(run.on(Input::ConsoleOnGreeterVt), vec![], "one runs");
+
+    let mut run = Run::booted();
+    run.log_in(2, "anna", 1000, "c1", 7);
+    assert_eq!(run.exited(1), vec![], "the greeter left");
+    assert_eq!(run.on(Input::ConsoleOnGreeterVt), greeter_spawn(3));
+}
+
+#[test]
+fn the_console_on_vt_1_while_autologin_starts_brings_no_login_screen() {
+    let config = LoginConfig {
+        autologin_user: Some("anna".into()),
+        ..LoginConfig::default()
+    };
+    let mut run = Run::new(config, Remembered::default());
+    run.recover(vec![]);
+    run.start();
+    assert_eq!(run.on(Input::ConsoleOnGreeterVt), vec![]);
+}

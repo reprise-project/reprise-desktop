@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::os::fd::AsRawFd;
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::{FileExt, OpenOptionsExt};
 use std::time::Duration;
 
 pub const GREETER_VT: u16 = 1;
@@ -117,9 +117,100 @@ pub fn disallocate(vt: u16) {
     }
 }
 
+/// Opens `/dev/tty<vt>` without making it a controlling terminal. While it is open, logind
+/// counts the VT busy and starts no autovt getty on it.
+pub fn hold(vt: u16) -> io::Result<File> {
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .custom_flags(libc::O_NOCTTY | libc::O_CLOEXEC)
+        .open(format!("/dev/tty{vt}"))
+}
+
+/// The kernel's name of the VT the console shows, `tty7` for VT 7.
+const ACTIVE: &str = "/sys/class/tty/tty0/active";
+
+/// The VT `ACTIVE`'s text names.
+pub fn parse_active(text: &str) -> Option<u16> {
+    text.trim().strip_prefix("tty")?.parse().ok()
+}
+
+/// Calls `changed` with the console's VT each time it moves, until `changed` returns false.
+/// Blocks: the kernel wakes a `poll` on `ACTIVE` with POLLPRI, as logind follows it.
+pub fn follow_active(changed: impl FnMut(u16) -> bool) -> io::Result<()> {
+    let file = File::open(ACTIVE)?;
+    let read = || {
+        let mut buf = [0u8; 16];
+        let n = file.read_at(&mut buf, 0)?;
+        let text = std::str::from_utf8(&buf[..n]).unwrap_or_default();
+        parse_active(text).ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, ACTIVE))
+    };
+    let wait = || {
+        let mut fd = libc::pollfd {
+            fd: file.as_raw_fd(),
+            events: libc::POLLPRI | libc::POLLERR,
+            revents: 0,
+        };
+        loop {
+            // SAFETY: `fd` is one live pollfd for an open file.
+            if unsafe { libc::poll(&mut fd, 1, -1) } >= 0 {
+                return Ok(());
+            }
+            let e = io::Error::last_os_error();
+            if e.kind() != io::ErrorKind::Interrupted {
+                return Err(e);
+            }
+        }
+    };
+    follow(read, wait, changed)
+}
+
+/// `follow_active`'s loop: a read arms the next wake, so each wait follows one.
+fn follow(
+    mut read: impl FnMut() -> io::Result<u16>,
+    mut wait: impl FnMut() -> io::Result<()>,
+    mut changed: impl FnMut(u16) -> bool,
+) -> io::Result<()> {
+    let mut last = read()?;
+    loop {
+        wait()?;
+        let now = read()?;
+        if now != last {
+            last = now;
+            if !changed(now) {
+                return Ok(());
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_active_attribute_names_the_vt() {
+        assert_eq!(parse_active("tty1\n"), Some(1));
+        assert_eq!(parse_active("tty12"), Some(12));
+        assert_eq!(parse_active(""), None);
+        assert_eq!(parse_active("ttyS0"), None);
+    }
+
+    #[test]
+    fn following_reports_each_move_and_not_the_start() {
+        let mut reads = [1, 1, 7, 7, 1, 2].into_iter();
+        let mut seen = Vec::new();
+        let r = follow(
+            || Ok(reads.next().unwrap()),
+            || Ok(()),
+            |vt| {
+                seen.push(vt);
+                vt != 2
+            },
+        );
+        assert!(r.is_ok(), "{r:?}");
+        assert_eq!(seen, [7, 1, 2]);
+    }
 
     #[test]
     fn the_first_pick_is_7() {

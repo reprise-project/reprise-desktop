@@ -96,6 +96,8 @@ pub enum Input {
     SwitchFailed {
         vt: u16,
     },
+    /// The console moved to the login screen's VT.
+    ConsoleOnGreeterVt,
     PowerDone(Result<(), String>),
     Timer(Timer),
 }
@@ -408,6 +410,7 @@ impl Daemon {
                 }
             }
             Input::SwitchFailed { vt } => self.switch_failed(vt, &mut out),
+            Input::ConsoleOnGreeterVt => self.console_on_greeter_vt(&mut out),
             Input::Timer(Timer::UnlockAck(generation)) => {
                 let current = matches!(&self.conversation, Some(Conversation {
                     phase: Phase::Unlocking { generation: g },
@@ -1177,6 +1180,18 @@ impl Daemon {
         };
         out.push(Effect::LockSession(e.id.clone()));
         self.bring_greeter(out);
+    }
+
+    /// VT 1 shows the login screen whenever the console is on it, unless autologin or a login
+    /// in flight is about to take the console.
+    fn console_on_greeter_vt(&mut self, out: &mut Vec<Effect>) {
+        let leaving = self.greeter.as_ref().map(|g| g.leaving);
+        let quiet = self.autologin.is_none() && self.conversation.is_none();
+        match leaving {
+            None if quiet => self.bring_greeter(out),
+            Some(true) => self.bring_greeter(out),
+            _ => {}
+        }
     }
 
     fn greeter_leaves(&mut self) {
