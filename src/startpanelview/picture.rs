@@ -29,7 +29,7 @@ fn user_picture_paths() -> Vec<PathBuf> {
 }
 
 /// The picture files carry no extension, so the icon cache does not take them.
-fn load_picture(path: &Path) -> Option<Canvas> {
+pub(crate) fn load_picture(path: &Path) -> Option<Canvas> {
     const MAX_BYTES: u64 = 4 << 20;
     let meta = std::fs::metadata(path).ok()?;
     if !meta.is_file() || meta.len() > MAX_BYTES {

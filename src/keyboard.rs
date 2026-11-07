@@ -278,6 +278,7 @@ impl State {
         // what it does not use comes back through a virtual keyboard
         // (`imefield`).
         let mut field_key = None;
+        let mut greeter_key = None;
         let to_ime = if pressed {
             let to = from_seat
                 && crate::imefield::field_route(&routed.route)
@@ -307,7 +308,7 @@ impl State {
                     KeyRoute::Lock => crate::lockview::key(st, pressed, &h),
                     KeyRoute::Greeter => {
                         if pressed {
-                            field_key = Some(crate::dialogview::DialogKey::of(mods, &h));
+                            greeter_key = crate::greeterview::decode(st, &h);
                         }
                         false
                     }
@@ -387,11 +388,7 @@ impl State {
                 }
             }
             KeyRoute::Lock => {}
-            KeyRoute::Greeter => {
-                if let Some(k) = field_key {
-                    crate::greeterview::key(self, &k);
-                }
-            }
+            KeyRoute::Greeter => crate::greeterview::key(self, greeter_key),
             KeyRoute::CaptureEscape => self.release_capture(),
             KeyRoute::Captured => self.capture_key(keycode - 8, pressed),
             KeyRoute::InhibitEscape => self.suspend_inhibitors(),
@@ -490,9 +487,10 @@ impl State {
         }
     }
 
-    /// Start repeating `code`, just pressed, if it went to a field route or the lock dialog, no input
-    /// method took it, and xkb says it repeats. Enter and Escape act once; the lock dialog repeats only
-    /// Backspace, so no password character is kept for the repeat.
+    /// Start repeating `code`, just pressed, if it went to a field route, the lock dialog or the login
+    /// screen, no input method took it, and xkb says it repeats. Enter and Escape act once; the lock
+    /// dialog and the login screen repeat only Backspace, so no password character is kept for the
+    /// repeat.
     fn arm_field_repeat(
         &mut self,
         code: Keycode,
@@ -500,7 +498,7 @@ impl State {
         route: KeyRoute,
         key: Option<DialogKey>,
     ) {
-        let lock = route == KeyRoute::Lock;
+        let lock = matches!(route, KeyRoute::Lock | KeyRoute::Greeter);
         if !(lock || crate::imefield::field_route(&route))
             || !self.key_input.held.is_taken(code.raw())
             || self.config.keyboard.repeat_rate <= 0
@@ -569,6 +567,7 @@ impl State {
         let (code, syms, key) = (r.code, r.press.syms.clone(), r.key.clone());
         match (&route, key) {
             (KeyRoute::Lock, _) => crate::lockview::repeat_backspace(self),
+            (KeyRoute::Greeter, _) => crate::greeterview::repeat_backspace(self),
             (KeyRoute::Rename, _) => self.rename_key(code, &syms),
             (route, Some(k)) => self.field_key(route, &k),
             _ => {}

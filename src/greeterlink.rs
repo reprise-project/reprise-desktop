@@ -92,10 +92,6 @@ impl GreeterLink {
 
 /// Sends `req` to reprise-login on `State`'s write half. A send that fails or times out may have
 /// left part of a frame, so the link is lost: it is shut down and nothing more goes out on it.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the login screen sends with it")
-)]
 pub fn send(state: &mut State, req: &GreeterRequest) {
     let Some(tx) = state.greeter_link.as_mut() else {
         return;

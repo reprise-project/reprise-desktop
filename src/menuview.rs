@@ -133,6 +133,8 @@ pub enum MenuKind {
     NotifyProgram(String),
     Layouts,
     NightLight(Vec<Option<crate::nightlight::Row>>),
+    /// The login screen's power menu: what each row asks of reprise-login.
+    GreeterPower(Vec<repriselogin::greeter::PowerAction>),
     Dnd(Vec<Option<crate::notifydnd::Row>>),
     StartPanel {
         rows: Vec<Option<StartRow>>,
@@ -196,6 +198,7 @@ pub enum MenuPick {
     },
     Layout(u32),
     NightLight(crate::nightlight::Row),
+    GreeterPower(repriselogin::greeter::PowerAction),
     Dnd(crate::notifydnd::Row),
     StartPanel(StartRow),
     TaskOverflow {
@@ -301,6 +304,10 @@ impl MenuKind {
                 .copied()
                 .flatten()
                 .map_or(MenuPick::Nothing, MenuPick::NightLight),
+            MenuKind::GreeterPower(rows) => rows
+                .get(idx)
+                .copied()
+                .map_or(MenuPick::Nothing, MenuPick::GreeterPower),
             MenuKind::Dnd(rows) => rows
                 .get(idx)
                 .copied()

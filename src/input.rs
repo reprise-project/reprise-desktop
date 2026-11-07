@@ -481,13 +481,21 @@ impl State {
         }
     }
 
-    /// A wheel or scroll frame from the backend or EIS: the shell's (`shell_axis`) unless the
-    /// desktop is locked, else the pointer's client's; in lock mode the computer's own scrolls nothing.
+    /// A wheel or scroll frame from the backend or EIS: the login screen's in the greeter, the
+    /// shell's (`shell_axis`) unless the desktop is locked, else the pointer's client's; in lock mode
+    /// the computer's own scrolls nothing.
     pub fn handle_axis(&mut self, frame: AxisFrame) {
         if crate::console::physical(self) {
             return;
         }
         self.settle_pointer();
+        if self.host == crate::compositor::Host::Greeter
+            && self.dialogs.views.is_empty()
+            && self.menus.is_empty()
+        {
+            crate::greeterview::wheel(self, &frame);
+            return;
+        }
         if !self.desktop_locked() && self.shell_axis(&frame) {
             return;
         }
