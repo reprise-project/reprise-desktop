@@ -1,13 +1,15 @@
-//! RemoteDesktop sessions skip the dialog when the request comes from Reprise's remote desktop
-//! server, its user unit enabled and running the installed binary: enabling it is the consent.
+//! RemoteDesktop sessions skip the dialog when the request comes from Reprise's installed remote
+//! desktop server: its enabled user unit (enabling it is the consent) or reprise-login's hand-over.
 
 use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
 
 pub const APP_ID: &str = "org.reprise.RemoteDesktop";
 pub const UNIT: &str = "app-org.reprise.RemoteDesktop.service";
+/// The server reprise-login's hand-overs start; the frontend gives its requests no app id.
+pub const HANDOVER_UNIT: &str = "reprise-rdp-handover.service";
 
-/// What the user manager says of [`UNIT`].
+/// What the user manager says of a server's unit.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct UnitFacts {
     pub file_state: String,
@@ -24,9 +26,22 @@ const INSTALLED: [&str; 2] = ["/usr/bin/reprise-rdp", "/usr/local/bin/reprise-rd
 /// Whether RemoteDesktop.Start skips the dialog: `app_id` is [`APP_ID`] and `caller` (the request's
 /// bus peer) is the main process of `unit`, enabled and active with the installed server.
 pub fn trusted(app_id: &str, caller: Option<u32>, unit: Option<&UnitFacts>) -> bool {
-    let Some(unit) = unit else {
-        return false;
-    };
+    app_id == APP_ID && unit.is_some_and(|u| u.file_state == "enabled" && serves(caller, u))
+}
+
+/// Whether RemoteDesktop.Start from `caller` skips the dialog: [`trusted`] for the per-user
+/// server `own`, or `caller` is the main process of the running hand-over server `handover`.
+pub fn start_trusted(
+    app_id: &str,
+    caller: Option<u32>,
+    own: Option<&UnitFacts>,
+    handover: Option<&UnitFacts>,
+) -> bool {
+    trusted(app_id, caller, own) || handover.is_some_and(|u| serves(caller, u))
+}
+
+/// Whether `caller` is the main process of `unit`, active and running an installed server.
+fn serves(caller: Option<u32>, unit: &UnitFacts) -> bool {
     if unit.main_pid == 0 || caller != Some(unit.main_pid) {
         return false;
     }
@@ -35,7 +50,7 @@ pub fn trusted(app_id: &str, caller: Option<u32>, unit: Option<&UnitFacts>) -> b
         let exe = exe.strip_suffix(b" (deleted)").unwrap_or(exe);
         INSTALLED.iter().any(|p| exe == p.as_bytes())
     });
-    app_id == APP_ID && unit.file_state == "enabled" && unit.active_state == "active" && installed
+    unit.active_state == "active" && installed
 }
 
 /// The unique bus name that made the session at `session_handle`, named by the frontend as
@@ -77,13 +92,13 @@ pub async fn pid_of(conn: &zbus::Connection, name: &str) -> Option<u32> {
     }
 }
 
-/// [`UNIT`] as the user manager on `conn` sees it; None when it is not loaded or the manager
+/// `unit` as the user manager on `conn` sees it; None when it is not loaded or the manager
 /// does not answer.
-pub async fn unit_facts(conn: &zbus::Connection) -> Option<UnitFacts> {
-    match read_unit(conn).await {
+pub async fn unit_facts(conn: &zbus::Connection, unit: &str) -> Option<UnitFacts> {
+    match read_unit(conn, unit).await {
         Ok(facts) => Some(facts),
         Err(e) => {
-            log::info!("{UNIT}: {e}");
+            log::info!("{unit}: {e}");
             None
         }
     }
@@ -91,14 +106,14 @@ pub async fn unit_facts(conn: &zbus::Connection) -> Option<UnitFacts> {
 
 const DEST: &str = "org.freedesktop.systemd1";
 
-async fn read_unit(conn: &zbus::Connection) -> zbus::Result<UnitFacts> {
+async fn read_unit(conn: &zbus::Connection, unit: &str) -> zbus::Result<UnitFacts> {
     let path: zbus::OwnedObjectPath = conn
         .call_method(
             Some(DEST),
             "/org/freedesktop/systemd1",
             Some("org.freedesktop.systemd1.Manager"),
             "GetUnit",
-            &(UNIT,),
+            &(unit,),
         )
         .await?
         .body()
@@ -251,5 +266,40 @@ mod tests {
     #[test]
     fn no_unit_is_not_trusted() {
         assert!(!trusted(APP_ID, None));
+    }
+
+    fn handover(exe: &str) -> UnitFacts {
+        UnitFacts {
+            file_state: "static".into(),
+            ..running(exe)
+        }
+    }
+
+    #[test]
+    fn the_hand_over_server_is_trusted_without_an_app_id() {
+        let unit = handover("/usr/bin/reprise-rdp");
+        assert!(start_trusted("", Some(SERVER), None, Some(&unit)));
+        assert!(!start_trusted("", Some(SERVER + 1), None, Some(&unit)));
+        assert!(!start_trusted("", None, None, Some(&unit)));
+        for state in ["inactive", "failed"] {
+            let stopped = UnitFacts {
+                active_state: state.into(),
+                ..handover("/usr/bin/reprise-rdp")
+            };
+            assert!(
+                !start_trusted("", Some(SERVER), None, Some(&stopped)),
+                "{state}"
+            );
+        }
+        let other = handover("/home/x/reprise-rdp");
+        assert!(!start_trusted("", Some(SERVER), None, Some(&other)));
+        assert!(!start_trusted("", Some(SERVER), None, None));
+    }
+
+    #[test]
+    fn the_per_user_server_still_needs_its_app_id_beside_the_hand_over_unit() {
+        let own = running("/usr/bin/reprise-rdp");
+        assert!(start_trusted(APP_ID, Some(SERVER), Some(&own), None));
+        assert!(!start_trusted("", Some(SERVER), Some(&own), None));
     }
 }
