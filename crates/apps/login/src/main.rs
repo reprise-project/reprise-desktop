@@ -938,7 +938,7 @@ fn start(program: &Path, job: &Job) -> io::Result<(Child, UnixStream)> {
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     // SAFETY: the closure runs in the child between fork and exec and calls only fcntl, dup2
-    // and close_range, which are async-signal-safe.
+    // and `cloexec_from`, which are async-signal-safe.
     unsafe {
         cmd.pre_exec(move || {
             // Copied above both targets first, so neither dup2 closes the other's source; the
@@ -946,15 +946,11 @@ fn start(program: &Path, job: &Job) -> io::Result<(Child, UnixStream)> {
             let high = |fd| libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, LOG_FD + 1);
             let (sock, log) = (high(sock), high(log));
             // zbus receives fds without CLOEXEC on its own thread, so one may be open here.
-            let rest = || {
-                let flags = libc::CLOSE_RANGE_CLOEXEC as libc::c_long;
-                libc::syscall(libc::SYS_close_range, LOG_FD + 1, u32::MAX, flags) < 0
-            };
             let failed = sock < 0
                 || log < 0
                 || libc::dup2(sock, WORKER_FD) < 0
                 || libc::dup2(log, LOG_FD) < 0
-                || rest();
+                || !cloexec_from(LOG_FD + 1);
             match failed {
                 true => Err(io::Error::last_os_error()),
                 false => Ok(()),
@@ -964,6 +960,38 @@ fn start(program: &Path, job: &Job) -> io::Result<(Child, UnixStream)> {
     let child = cmd.spawn()?;
     drop((theirs, log_stream));
     Ok((child, ours))
+}
+
+/// Sets FD_CLOEXEC on every fd from `first` up; false with errno set when it can't. Kernels
+/// before 5.11 lack close_range's CLOEXEC flag, so there each fd below the fd limit gets fcntl.
+fn cloexec_from(first: libc::c_int) -> bool {
+    let flags = libc::CLOSE_RANGE_CLOEXEC as libc::c_long;
+    // SAFETY: close_range takes plain integers.
+    if unsafe { libc::syscall(libc::SYS_close_range, first, u32::MAX, flags) } == 0 {
+        return true;
+    }
+    match io::Error::last_os_error().raw_os_error() {
+        Some(libc::EINVAL | libc::ENOSYS) => cloexec_each(first),
+        _ => false,
+    }
+}
+
+/// `cloexec_from` by fcntl on each fd up to the soft fd limit, which no open fd reaches.
+fn cloexec_each(first: libc::c_int) -> bool {
+    // SAFETY: rlimit is plain data, valid zeroed.
+    let mut limit: libc::rlimit = unsafe { std::mem::zeroed() };
+    // SAFETY: getrlimit is one syscall in glibc and writes only into `limit`; fcntl takes
+    // integers, and a closed fd just gives EBADF.
+    unsafe {
+        if libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) < 0 {
+            return false;
+        }
+        let end = libc::c_int::try_from(limit.rlim_cur).unwrap_or(libc::c_int::MAX);
+        for fd in first..end {
+            libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
+        }
+    }
+    true
 }
 
 async fn read_worker(id: WorkerId, rd: tokio::net::unix::OwnedReadHalf, events: Events) {
@@ -1397,6 +1425,36 @@ mod tests {
                 uid: Some(1001),
                 member: true
             }
+        );
+    }
+
+    #[test]
+    fn without_close_ranges_flag_each_fd_gets_cloexec_by_fcntl() {
+        let (pipe_end, _w) = io::pipe().unwrap();
+        let fd = pipe_end.as_raw_fd();
+        // SAFETY: the child makes only fcntl, getrlimit and _exit calls; `fd` is open in it.
+        let child = unsafe { libc::fork() };
+        assert!(child >= 0, "{}", io::Error::last_os_error());
+        if child == 0 {
+            // SAFETY: F_DUPFD and F_GETFD on open fds in the child.
+            unsafe {
+                // F_DUPFD leaves the copy without FD_CLOEXEC.
+                let high = libc::fcntl(fd, libc::F_DUPFD, 40);
+                if high < 40 || !cloexec_each(40) {
+                    libc::_exit(2);
+                }
+                let flags = libc::fcntl(high, libc::F_GETFD);
+                libc::_exit(if flags & libc::FD_CLOEXEC != 0 { 0 } else { 1 });
+            }
+        }
+        let mut status = 0;
+        // SAFETY: `child` is this process's child and `status` outlives the call.
+        assert_eq!(unsafe { libc::waitpid(child, &mut status, 0) }, child);
+        assert!(libc::WIFEXITED(status), "{status:#x}");
+        assert_eq!(
+            libc::WEXITSTATUS(status),
+            0,
+            "0: FD_CLOEXEC set; 1: the fd stays open across exec; 2: no fd or the loop failed"
         );
     }
 
