@@ -4,9 +4,9 @@
 use crate::control::Status;
 use repriseconf::remote::RemoteDesktop;
 use repriselogin::handover::HandOver;
-use reprisetls::tcp::{self, ALL};
+use reprisetls::tcp;
 use std::io;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::watch;
@@ -124,10 +124,7 @@ fn report(listener: &TcpListener, status: &watch::Sender<Status>) {
 
 /// Bind `ip`:`port` and report it, or the error, as `listening`.
 fn listen_on(ip: IpAddr, port: u16, status: &watch::Sender<Status>) -> Option<TcpListener> {
-    let bound = match tcp::bind(SocketAddr::new(ip, port)) {
-        Err(_) if ip == ALL => tcp::bind(SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), port)),
-        bound => bound,
-    };
+    let bound = tcp::bind(SocketAddr::new(ip, port));
     let (listener, listening) = match bound.and_then(|l| Ok((l.local_addr()?, l))) {
         Ok((addr, l)) => {
             log::info!("listening on {addr}");
