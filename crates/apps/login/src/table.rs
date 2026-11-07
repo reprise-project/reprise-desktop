@@ -29,9 +29,9 @@ pub enum Route {
 }
 
 impl Sessions {
-    /// Adds `entry`, replacing an entry with the same id.
+    /// Adds `entry`, replacing any entry with the same id, user or uid.
     pub fn insert(&mut self, entry: SessionEntry) {
-        self.remove(&entry.id);
+        (self.entries).retain(|e| e.id != entry.id && e.user != entry.user && e.uid != entry.uid);
         self.entries.push(entry);
     }
 
@@ -42,6 +42,10 @@ impl Sessions {
 
     pub fn by_id(&self, id: &str) -> Option<&SessionEntry> {
         self.entries.iter().find(|e| e.id == id)
+    }
+
+    pub fn by_uid(&self, uid: u32) -> Option<&SessionEntry> {
+        self.entries.iter().find(|e| e.uid == uid)
     }
 
     pub fn by_user(&self, user: &str) -> Option<&SessionEntry> {
@@ -124,6 +128,32 @@ mod tests {
             ])
         );
         assert!(Sessions::default().notes().is_empty());
+    }
+
+    #[test]
+    fn insert_keeps_one_entry_per_id_user_and_uid() {
+        let mut s = table();
+        s.insert(entry("9", "anna", 9));
+        assert_eq!(s.by_user("anna").map(|e| e.id.as_str()), Some("9"));
+        assert!(
+            s.by_id("3").is_none(),
+            "the same user replaces the old entry"
+        );
+        s.insert(SessionEntry {
+            uid: 1009,
+            ..entry("11", "Anna", 11)
+        });
+        assert_eq!(s.by_uid(1009).map(|e| e.id.as_str()), Some("11"));
+        assert!(
+            s.by_id("9").is_none(),
+            "the same uid replaces the old entry"
+        );
+        s.insert(entry("5", "dora", 12));
+        assert!(
+            s.by_user("bert").is_none(),
+            "the same id replaces the old entry"
+        );
+        assert_eq!(s.taken_vts(), BTreeSet::from([11, 12]));
     }
 
     #[test]

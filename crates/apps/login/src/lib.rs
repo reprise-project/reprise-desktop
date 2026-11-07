@@ -1,4 +1,5 @@
 pub mod config;
+pub mod daemon;
 pub mod greeterruns;
 pub mod pam;
 pub mod remembered;
