@@ -371,6 +371,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_front_that_reads_nothing_is_dropped_once_its_queue_fills() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let mut s = serve_for(own_uid());
+                let mut stream = UnixStream::connect(&s.path).await.unwrap();
+                assert_eq!(next(&mut s.rx).await, Input::FrontLinked);
+                for conn in 0..=LINK_QUEUE as u64 {
+                    s.front.borrow_mut().send(&FrontEvent::Accepted { conn });
+                }
+                assert_eq!(next(&mut s.rx).await, Input::FrontLost);
+                assert!(closed(&mut stream).await);
+            })
+            .await;
+    }
+
+    #[tokio::test]
     async fn a_ready_socket_is_held_by_conn_until_taken_or_the_link_ends() {
         let local = tokio::task::LocalSet::new();
         local
