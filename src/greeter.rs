@@ -16,7 +16,7 @@ use crate::greeterlink::GreeterLink;
 
 const HELLO_TIMEOUT: Duration = Duration::from_secs(5);
 
-pub fn main() -> i32 {
+pub fn main(socket: bool) -> i32 {
     let path = Path::new(repriselogin::GREETER_SOCKET);
     let mut link = match GreeterLink::connect(path) {
         Ok(link) => link,
@@ -32,7 +32,7 @@ pub fn main() -> i32 {
             return 1;
         }
     };
-    match run(link, greeting) {
+    match run(link, greeting, socket) {
         Ok(lost) => i32::from(lost),
         Err(e) => {
             log::error!("greeter: {e}");
@@ -42,16 +42,9 @@ pub fn main() -> i32 {
 }
 
 /// Whether the link was lost.
-fn run(link: GreeterLink, greeting: Greeting) -> Result<bool, Box<dyn Error>> {
+fn run(link: GreeterLink, greeting: Greeting, socket: bool) -> Result<bool, Box<dyn Error>> {
     let mut event_loop: EventLoop<'static, State> = EventLoop::try_new()?;
-    // No config file: the greeting carries what the login screen follows.
-    let mut state = State::new(
-        config_from(&greeting),
-        PathBuf::new(),
-        event_loop.handle(),
-        event_loop.get_signal(),
-        Host::Greeter,
-    )?;
+    let mut state = display(config_from(&greeting), &event_loop, socket)?;
     state.keyboard_setup();
     crate::backend::init(&mut state)?;
     crate::idle::setup(&mut state);
@@ -77,12 +70,36 @@ fn run(link: GreeterLink, greeting: Greeting) -> Result<bool, Box<dyn Error>> {
             Ok(PostAction::Continue)
         },
     )?;
-    log::info!(
-        "greeter: running on WAYLAND_DISPLAY={}",
-        state.socket().to_string_lossy()
-    );
+    match socket {
+        true => log::info!(
+            "greeter: running on WAYLAND_DISPLAY={}",
+            state.socket().to_string_lossy()
+        ),
+        false => log::info!("greeter: running with no Wayland socket"),
+    }
     event_loop.run(None, &mut state, State::turn_end)?;
     Ok(state.greeter.lost)
+}
+
+/// The login screen's state, with no config file: the greeting carries what it follows. Only
+/// with `socket` does it listen, since any process of its user could connect.
+fn display(
+    config: Config,
+    event_loop: &EventLoop<'static, State>,
+    socket: bool,
+) -> Result<State, Box<dyn Error>> {
+    let (handle, signal) = (event_loop.handle(), event_loop.get_signal());
+    match socket {
+        true => State::new(config, PathBuf::new(), handle, signal, Host::Greeter),
+        false => State::on_display(
+            config,
+            PathBuf::new(),
+            handle,
+            signal,
+            String::new(),
+            Host::Greeter,
+        ),
+    }
 }
 
 /// Takes logind's power, suspend and hibernate keys for the greeter's life: the power key opens
@@ -194,6 +211,23 @@ mod tests {
             },
             notice: None,
         }
+    }
+
+    #[test]
+    fn the_login_screen_listens_on_no_socket_by_default() {
+        let event_loop: EventLoop<'static, State> = EventLoop::try_new().unwrap();
+        let state = display(config_from(&greeting()), &event_loop, false).unwrap();
+        assert!(state.socket().is_empty(), "{:?}", state.socket());
+    }
+
+    #[test]
+    fn greeter_socket_is_a_greeter_flag() {
+        use clap::Parser as _;
+        let cli = crate::Cli::try_parse_from(["reprise", "--greeter"]).unwrap();
+        assert!(cli.greeter && !cli.greeter_socket);
+        let cli = crate::Cli::try_parse_from(["reprise", "--greeter", "--greeter-socket"]).unwrap();
+        assert!(cli.greeter_socket);
+        assert!(crate::Cli::try_parse_from(["reprise", "--greeter-socket"]).is_err());
     }
 
     #[test]

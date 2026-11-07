@@ -566,6 +566,7 @@ impl Workers {
         let begin = ToWorker::Begin {
             user: job.user.clone(),
             autologin_user: job.autologin_user.clone(),
+            greeter_socket: job.greeter_socket,
         };
         self.send(id, &begin);
     }
@@ -743,6 +744,7 @@ mod tests {
             mode: Mode::Login,
             user: user.into(),
             autologin_user: None,
+            greeter_socket: false,
         }
     }
 
@@ -822,6 +824,7 @@ mod tests {
                 let begin = frame::encode(&ToWorker::Begin {
                     user: "anna".into(),
                     autologin_user: None,
+                    greeter_socket: false,
                 })
                 .unwrap();
                 let start = frame::encode(&ToWorker::Start { vt: 7 }).unwrap();
