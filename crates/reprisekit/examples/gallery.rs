@@ -16,6 +16,8 @@ mod gallery_doctabs;
 mod gallery_fonts;
 #[path = "gallery_keys/mod.rs"]
 mod gallery_keys;
+#[path = "gallery_logon/mod.rs"]
+mod gallery_logon;
 #[path = "gallery_miniview/mod.rs"]
 mod gallery_miniview;
 #[path = "gallery_notes/mod.rs"]
@@ -117,6 +119,10 @@ fn main() {
         write_preview(
             &gallery_power::render(n.max(1)),
             &format!("reprisekit-gallery-power@{}.png", n.max(1)),
+        );
+        write_preview(
+            &gallery_logon::render(n.max(1)),
+            &format!("reprisekit-gallery-logon@{}.png", n.max(1)),
         );
         write_preview(
             &gallery_paint::render(n.max(1)),
@@ -373,6 +379,7 @@ fn main() {
         "reprisekit-gallery-colordlg@1.png",
     );
     write_preview(&gallery_power::render(1), "reprisekit-gallery-power@1.png");
+    write_preview(&gallery_logon::render(1), "reprisekit-gallery-logon@1.png");
     write_preview(
         &gallery_miniview::render(1),
         "reprisekit-gallery-mini-view@1.png",

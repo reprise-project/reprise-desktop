@@ -18,6 +18,7 @@ use crate::wallpapers::{self, Builtin, Design};
 use crate::{blue, controls, glass};
 use std::sync::Arc;
 
+pub mod logon;
 mod powerpanel;
 pub use powerpanel::{draw_power_panel, power_panel_variant};
 

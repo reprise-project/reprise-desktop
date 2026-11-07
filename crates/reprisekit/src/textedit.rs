@@ -5,6 +5,9 @@ use zeroize::Zeroize;
 /// A secret field's reservation, so typing a password does not outgrow its buffer.
 const SECRET_CAPACITY: usize = 256;
 
+/// What a masked field shows for each char of its value.
+pub const BULLET: &str = "\u{25cf}";
+
 /// Most text a single-line edit holds, in bytes; a paste is cut on a char boundary to fit.
 pub const MAX_LEN: usize = 32_767;
 
@@ -623,6 +626,17 @@ impl TextEdit {
 
     pub fn is_secret(&self) -> bool {
         self.secret
+    }
+
+    /// The bullets a masked field shows, with caret and anchor mapped by char index. Secret
+    /// itself, so the field shows no preedit and reports no text to an input method.
+    pub fn masked(&self) -> TextEdit {
+        let at = |i: usize| self.text[..i].chars().count() * BULLET.len();
+        let mut m = TextEdit::secret();
+        m.set_cue(self.cue());
+        m.text.push_str(&BULLET.repeat(self.text.chars().count()));
+        m.set_selection(at(self.anchor()), at(self.caret()));
+        m
     }
 
     pub fn set_read_only(&mut self, on: bool) {
