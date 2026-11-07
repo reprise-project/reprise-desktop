@@ -1,6 +1,7 @@
 //! reprise-login-rdp: the Remote Desktop front of reprise-login.
 
 mod accept;
+mod caps;
 mod handoff;
 mod limits;
 mod link;
@@ -147,6 +148,10 @@ async fn serve(port: u16, ctx: Rc<Ctx>) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    if let Err(e) = caps::drop_all() {
+        log::error!("capabilities: {e}");
+        return ExitCode::FAILURE;
+    }
     log::info!("listening on port {port}");
     let conns = Conns::default();
     let limits = Rc::new(RefCell::new(Limits::new(MAX_PREAUTH, PREAUTH_PER_IP)));
