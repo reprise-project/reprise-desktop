@@ -497,9 +497,8 @@ pub fn start_dialog_finger(state: &mut State) {
     }
 }
 
-/// Engage the lock: cover every Console output, clear client focus, route input to the dialog.
-/// No-op when already locked. A locker's own lock comes through here directly so it does not start
-/// another locker. Console-side window captures go blank while it holds (`capture::render_window`).
+/// Engage the lock unless locked: cover every Console output, clear client focus, route input to
+/// the dialog. A locker's own lock comes here directly, so it does not start another locker.
 pub fn engage(state: &mut State) {
     crate::crash::set_locked(true);
     if state.console_locked() {

@@ -1,10 +1,5 @@
-//! `reprise_input_v1`: the private global reprise-portal binds to hand in EIS
-//! sockets, drive pointer barriers, receive global shortcuts, press
-//! RemoteDesktop keys without libei, hear which sandboxed apps have a
-//! window, open the colour picker, mark the remote desktop server's capture
-//! connection and hold lock mode. Glue only: each request calls into `eis`, `inputcapture`,
-//! `globalshortcuts`, `remotekeys`, `toplevels`, `colorpickview` or `console`, or sets
-//! `ClientState`.
+//! `reprise_input_v1`, the private global reprise-portal binds. Glue only: each request calls
+//! `eis`, `inputcapture`, `globalshortcuts`, `remotekeys`, `toplevels`, `colorpickview` or `console`.
 //!
 //! Protocol objects carry ids, not the objects themselves: a resource whose
 //! object the compositor already dropped finds nothing behind its id.

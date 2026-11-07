@@ -161,9 +161,8 @@ pub fn monitor_added(state: &mut State, output: &Output) -> Option<Output> {
     Some(standby)
 }
 
-/// `output` left the layout. When it was the last monitor, Remote Desktop is on and no Remote
-/// output holds the desktop, the standby takes its mode, scale and place, and the windows stay
-/// put; the caller then lays out once.
+/// `output` left: if it was the last monitor, Remote Desktop is on and no Remote output holds the
+/// desktop, the standby takes its mode, scale and place, the windows staying; the caller lays out.
 pub fn monitor_removed(state: &mut State, output: &Output) {
     if crate::backend::is_virtual(output) {
         return;

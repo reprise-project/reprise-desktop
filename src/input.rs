@@ -481,9 +481,8 @@ impl State {
         }
     }
 
-    /// A wheel or scroll frame, from the backend or an EIS sender: the shell's
-    /// (`shell_axis`), except under the desktop's lock, else the client's under the pointer. The
-    /// computer's own in lock mode scrolls nothing.
+    /// A wheel or scroll frame from the backend or EIS: the shell's (`shell_axis`) unless the
+    /// desktop is locked, else the pointer's client's; in lock mode the computer's own scrolls nothing.
     pub fn handle_axis(&mut self, frame: AxisFrame) {
         if crate::console::physical(self) {
             return;
