@@ -116,9 +116,11 @@ impl Daemon {
         if c.step != Step::LookingUp {
             return;
         }
+        // Anyone may clear their own entry, so a user taken out of the group can drop it.
+        let allowed = member || c.nt_hash.is_none();
         match uid {
-            Some(uid) if uid != 0 && member && uid == c.uid => {}
-            Some(other) if other != 0 && member => {
+            Some(uid) if uid != 0 && allowed && uid == c.uid => {}
+            Some(other) if other != 0 && allowed => {
                 let why = format!("the account's uid is {other}, not the peer's {}", c.uid);
                 return self.account_failed(link, &why, out);
             }

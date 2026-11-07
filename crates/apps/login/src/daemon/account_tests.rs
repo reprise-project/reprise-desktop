@@ -274,6 +274,64 @@ fn only_a_remote_user_other_than_root_gets_a_remote_password() {
 }
 
 #[test]
+fn a_user_outside_the_remote_group_can_clear_their_remote_password() {
+    let mut run = run();
+    let bert = stored("bert", BERT, "bert-remote");
+    let anna = stored("anna", ANNA, "anna-remote");
+    assert_eq!(
+        run.d.set_remote_passwords(vec![anna, bert.clone()]).len(),
+        1
+    );
+    assert_eq!(
+        run.account(1, "anna", ANNA, set(LOGIN_PW, "new-remote-pw")),
+        looked_up(1, "anna")
+    );
+    assert_eq!(
+        run.quiet(member(1, Some(ANNA), false)),
+        refused(1, AccountRefusal::NotRemoteUser)
+    );
+    assert_eq!(
+        run.account(2, "anna", ANNA, clear(LOGIN_PW)),
+        looked_up(2, "anna")
+    );
+    assert_eq!(
+        run.quiet(member(2, Some(ANNA), false)),
+        spawn(2, Mode::Check, "anna")
+    );
+    assert_eq!(run.worker(2, secret("Password: ")), answer(2, LOGIN_PW));
+    assert_eq!(
+        run.quiet(Input::Worker(WorkerId(2), authed("anna", ANNA))),
+        vec![Effect::StorePasswords(vec![bert.clone()])]
+    );
+    let mut done = answered(2, AccountReply::Done);
+    done.push(Effect::ToFront(FrontEvent::Passwords {
+        users: vec![NlaUser {
+            user: "bert".into(),
+            nt_hash: bert.nt_hash.clone(),
+        }],
+    }));
+    assert_eq!(run.quiet(Input::Stored { ok: true }), done);
+}
+
+#[test]
+fn a_group_look_up_naming_another_uid_fails() {
+    let mut run = run();
+    for (link, request, member_of) in [
+        (1, set(LOGIN_PW, "new-remote-pw"), true),
+        (2, clear(LOGIN_PW), false),
+    ] {
+        assert_eq!(
+            run.account(link, "anna", ANNA, request),
+            looked_up(link, "anna")
+        );
+        assert_eq!(
+            run.quiet(member(link, Some(BERT), member_of)),
+            refused(link, AccountRefusal::Failed)
+        );
+    }
+}
+
+#[test]
 fn a_check_that_never_asks_or_names_another_uid_fails() {
     let mut run = run();
     assert_eq!(
