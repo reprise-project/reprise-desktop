@@ -401,14 +401,15 @@ impl Runtime {
                 (1, Vec::new())
             }
         };
-        let kernel_open = vt::open_mask().unwrap_or_else(|e| {
+        let (active_vt, kernel_open) = vt::console().unwrap_or_else(|e| {
             log::warn!("VT state: {e}");
-            0
+            (0, 0)
         });
         World {
             users: users::read_listed(),
             keyboard: self.logind.keyboard().await,
             kernel_open,
+            active_vt,
             user_sessions,
             login_sessions,
         }
@@ -1063,6 +1064,7 @@ mod tests {
             users: Vec::new(),
             keyboard: Default::default(),
             kernel_open: 0,
+            active_vt: 1,
             user_sessions: 0,
             login_sessions: Vec::new(),
         };

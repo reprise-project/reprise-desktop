@@ -25,6 +25,7 @@ fn world() -> World {
             ..Keyboard::default()
         },
         kernel_open: 0,
+        active_vt: 1,
         user_sessions: 0,
         login_sessions: Vec::new(),
     }

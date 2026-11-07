@@ -295,6 +295,18 @@ fn a_tls_login_checks_the_group_then_pam_then_starts_a_background_session() {
 }
 
 #[test]
+fn a_background_start_never_picks_the_vt_on_screen() {
+    let mut run = remote_run(enabled());
+    run.world.active_vt = 7;
+    run.on(tls(7, "anna", "pw"));
+    run.on(member(7, ANNA));
+    run.worker(2, secret("Password: "));
+    let mut want = vec![front(FrontEvent::Verified { conn: 7 })];
+    want.extend(background_start(2, 8));
+    assert_eq!(run.worker(2, authed("anna", ANNA)), want);
+}
+
+#[test]
 fn a_second_prompt_from_pam_fails_the_remote_login() {
     let mut run = remote_run(enabled());
     run.on(tls(7, "anna", "pw"));

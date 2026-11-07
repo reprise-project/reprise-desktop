@@ -233,6 +233,8 @@ pub struct World {
     pub keyboard: Keyboard,
     /// `VT_GETSTATE`'s mask of open VTs 1-15.
     pub kernel_open: u16,
+    /// The VT the console shows, `VT_GETSTATE`'s `v_active`; 0 when it can't be read.
+    pub active_vt: u16,
     /// logind's sessions of class `user` on any seat, text and ssh logins included.
     pub user_sessions: u32,
     /// Every session logind lists, closing ones included.
@@ -457,7 +459,7 @@ impl Daemon {
     fn autologin_or_greeter(&mut self, world: &World, out: &mut Vec<Effect>) {
         if let Some(user) = self.config.login.autologin_user.clone() {
             let listed = world.users.iter().any(|u| u.name == user);
-            let vt = vt::pick(&self.taken_vts(), world.kernel_open);
+            let vt = vt::pick(&self.taken_vts(), world.kernel_open, world.active_vt);
             match (listed, vt) {
                 (true, Some(vt)) => {
                     let mut ends = Vec::new();
@@ -748,7 +750,8 @@ impl Daemon {
                     c.phase = phase;
                     return;
                 }
-                let Some(vt) = vt::pick(&self.taken_vts(), world.kernel_open) else {
+                let Some(vt) = vt::pick(&self.taken_vts(), world.kernel_open, world.active_vt)
+                else {
                     return self.fail_conversation(ErrorKind::Failed, NO_VT.into(), out);
                 };
                 self.conversation.as_mut().expect("conversation").phase = Phase::Starting { vt };
