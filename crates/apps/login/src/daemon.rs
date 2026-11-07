@@ -24,7 +24,7 @@ mod account;
 mod power;
 mod remote;
 
-pub use power::ADMIN_GROUP;
+pub use power::{ADMIN_GROUP, ADMIN_REFUSE_DELAY};
 pub use remote::{
     FrontUnit, HANDOVER_DEADLINE, Inhibit, LookUpKey, MAX_REMOTE_CHECKS, REFUSE_DELAY,
     StoredPassword,
@@ -79,6 +79,8 @@ pub enum Timer {
     GreeterKill(WorkerId),
     /// `REFUSE_DELAY` after front conn `.0`'s `Authenticate`.
     Refuse(u64),
+    /// `ADMIN_REFUSE_DELAY` after the last answer to check worker `.0`'s conversation.
+    AdminRefuse(WorkerId),
     /// `HANDOVER_DEADLINE` after front conn `.0`'s TCP accept.
     Handover(u64),
     /// `end_disconnected_after` since background session `id` lost its last viewer.
@@ -307,10 +309,12 @@ enum Phase {
     Unlocking { generation: u32 },
     /// Check worker `worker` passed PAM's `uid`; `LookUp` asks if it is an administrator.
     Admin { worker: WorkerId, uid: u32 },
+    /// Check worker `worker`'s refusal waits for its `Timer::AdminRefuse`.
+    Refusing { worker: WorkerId },
 }
 
 /// What a greeter conversation authenticates for.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy)]
 enum Purpose {
     Login,
     /// An administrator's password lets `.0` run while others are logged on.
@@ -614,6 +618,9 @@ impl Daemon {
                 out.push(Effect::Reply(error(ErrorKind::Failed, POWER_FAILED.into())));
             }
             Input::Timer(Timer::Refuse(conn)) => self.refuse_delay_over(now, conn, &mut out),
+            Input::Timer(Timer::AdminRefuse(worker)) => {
+                self.admin_refuse_over(now, worker, &mut out)
+            }
             Input::Timer(Timer::Handover(conn)) => self.handover_deadline(now, conn, &mut out),
             Input::Timer(Timer::Disconnected { id, generation }) => {
                 self.disconnected(&id, generation, &mut out)
@@ -636,7 +643,7 @@ impl Daemon {
                 key: LookUpKey::Admin(worker),
                 uid,
                 member,
-            } => self.admin_member(worker, uid, member, &mut out),
+            } => self.admin_member(now, worker, uid, member, &mut out),
             Input::IntakeOpen { uid } => self.intake_open(uid, &mut out),
             Input::IntakeLost { uid } => self.intake_lost(uid, &mut out),
             Input::Viewers { uid, count } => self.set_viewers(uid, count, &mut out),
@@ -809,7 +816,7 @@ impl Daemon {
         };
         match (c.phase, &c.route) {
             (Phase::Starting { .. } | Phase::Unlocking { .. }, _) => out.push(refused(STARTING)),
-            (Phase::Authenticating { .. } | Phase::Admin { .. }, _) => {
+            (Phase::Authenticating { .. } | Phase::Admin { .. } | Phase::Refusing { .. }, _) => {
                 out.push(refused(NOT_AUTHENTICATED))
             }
             (Phase::Authenticated { .. }, Route::Resume { id, .. }) => {
@@ -983,7 +990,7 @@ impl Daemon {
             },
             FromWorker::Authenticated { user, uid } => {
                 if let Phase::Authenticating { .. } = c.phase {
-                    self.authenticated(worker, user, uid, out);
+                    self.authenticated(now, worker, user, uid, out);
                 }
             }
             FromWorker::Started { session_id, uid } => {
@@ -1011,6 +1018,9 @@ impl Daemon {
             }
             FromWorker::Failed { kind, text } => {
                 c.worker = None;
+                if let (Purpose::Power(_), ErrorKind::Auth) = (c.purpose, kind) {
+                    return self.refuse_admin(now, worker, out);
+                }
                 self.fail_conversation(kind, text, out);
             }
         }
@@ -1018,13 +1028,20 @@ impl Daemon {
 
     /// Routes the login by PAM's account: a uid with a session resumes it, any other starts one.
     /// Root never logs in here, and is told so in a wrong password's words.
-    fn authenticated(&mut self, worker: WorkerId, user: String, uid: u32, out: &mut Vec<Effect>) {
+    fn authenticated(
+        &mut self,
+        now: Instant,
+        worker: WorkerId,
+        user: String,
+        uid: u32,
+        out: &mut Vec<Effect>,
+    ) {
         if let Some(Conversation {
             purpose: Purpose::Power(_),
             ..
         }) = self.conversation
         {
-            return self.admin_authenticated(worker, user, uid, out);
+            return self.admin_authenticated(now, worker, user, uid, out);
         }
         if uid == 0 {
             out.push(Effect::Log(
