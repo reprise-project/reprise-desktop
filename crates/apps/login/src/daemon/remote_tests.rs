@@ -974,7 +974,6 @@ fn a_disconnected_background_session_ends_after_end_disconnected_after() {
     assert_eq!(
         run.d.recover(run.now, found, Some("g1")),
         [
-            Effect::LockSession("c1".into()),
             disconnect_arm("c1", 1, 30),
             Effect::OpenIntake { uid: ANNA },
             Effect::Inhibit(Inhibit::Idle),
@@ -1066,7 +1065,6 @@ fn recovery_marks_sessions_off_the_seat_background_and_opens_their_intakes() {
     assert_eq!(
         run.d.recover(run.now, found, Some("c3")),
         [
-            Effect::LockSession("c1".into()),
             Effect::LockSession("c4".into()),
             Effect::OpenIntake { uid: ANNA },
             Effect::OpenIntake { uid: BERT },
@@ -1123,11 +1121,21 @@ fn intake_links_open_only_while_remote_logins_are_enabled() {
     )];
     assert_eq!(
         run.d.recover(run.now, found, Some("g1")),
-        [
-            Effect::LockSession("c1".into()),
-            Effect::Inhibit(Inhibit::Idle)
-        ]
+        [Effect::Inhibit(Inhibit::Idle)]
     );
+}
+
+#[test]
+fn recovery_leaves_a_background_sessions_console_lock_to_its_compositor() {
+    for service in ["reprise-login-remote", "reprise-login-remote-nla"] {
+        let mut run = Run::machine(config(enabled()));
+        let found = vec![logind("c1", "anna", ANNA, 7, "user", service)];
+        let effects = run.d.recover(run.now, found, Some("g1"));
+        assert!(
+            !effects.contains(&Effect::LockSession("c1".into())),
+            "{service}: a logind lock would lock its connected client out too: {effects:?}"
+        );
+    }
 }
 
 #[test]
