@@ -244,9 +244,14 @@ and the last minutes before a scheduled shutdown), the login screen refuses
 logins and resumes alike. Switching to a session's VT (Ctrl+Alt+F7 for the
 first) still reaches its lock screen.
 
-Shut Down and Restart on the login screen are refused while any user
-session runs. A session that isn't on screen can't take the screen from the
-user in front of it: polkit refuses it logind's activation and VT switch,
+While any user session runs, Shut Down and Restart on the login screen ask
+for an administrator's name and password, checked through the
+`reprise-login-check` PAM service; the account must be in `wheel`. That
+stack refuses root before it asks for a password. Every refusal, a wrong
+password or an account outside `wheel`, comes 3 s after the last answer, so
+the reply doesn't tell who is an administrator. Shutting down ends every
+session, unsaved work included. A session that isn't on screen can't take
+the screen from the user in front of it: polkit refuses it logind's activation and VT switch,
 and it holds no terminal to switch VTs through ([Background
 sessions](#background-sessions)).
 
@@ -631,6 +636,16 @@ console session, the session runs until its user logs off.
   `reprise-login-check` includes system-auth, so a process running as a user
   can lock that user's console login for faillock's window by sending wrong
   login passwords, as `su` can.
+- **A right administrator password shows through an account refusal.**
+  When the password in the login screen's administrator form is right but
+  PAM's account check refuses (an expired or locked account), the refusal
+  comes at once in PAM's words instead of after 3 s, so whoever is at the
+  console learns the password was right. The console login behaves the
+  same.
+- **Wrong passwords in the administrator form count toward pam_faillock.**
+  `reprise-login-check` includes system-auth, so anyone at the login screen
+  can lock an administrator's console login for faillock's window by typing
+  wrong passwords for that name.
 - **Only root's inhibitor counts.** The compositor counts a client
   elsewhere only for a `sleep` block inhibitor named "Reprise login manager"
   that uid 0 holds. Any user can still take inhibitors of their own.

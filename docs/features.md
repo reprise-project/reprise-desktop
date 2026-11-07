@@ -543,9 +543,11 @@ the screen takes the interface of the last session.
   screen back while your session keeps running, locked; its tile says
   Logged on. Logging in again goes straight back to it, unlocked. One
   session per user: a second login resumes the first.
-- **Shut Down and Restart** from the login screen, except while anyone is
-  still logged on. Then the screen says why, and shutting down is done from
-  a session.
+- **Shut Down and Restart** from the login screen. While anyone is still
+  logged on, the screen first asks for an administrator's name and
+  password: a member of `wheel`, never root. Shutting down then ends every
+  session, unsaved work included. A wrong password and a name that isn't an
+  administrator's are both refused 3 s after the last answer.
 - **PAM's messages.** A wrong name or password gets one fixed message.
   What PAM says during the login (an account locked after failed logins,
   `/run/nologin`'s text, an expired account) stays on screen in its words.
