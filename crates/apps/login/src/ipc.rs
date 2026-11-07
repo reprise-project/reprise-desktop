@@ -656,6 +656,7 @@ pub fn error_kind(e: &FrameError) -> String {
         FrameError::Json(_) => "a message that does not parse".into(),
         FrameError::Io(kind) => format!("a socket error ({kind})"),
         FrameError::Closed => "the peer closed the socket".into(),
+        FrameError::Fd => "a file descriptor out of place".into(),
     }
 }
 

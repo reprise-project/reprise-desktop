@@ -19,6 +19,8 @@ pub enum FrameError {
     Json(String),
     Io(io::ErrorKind),
     Closed,
+    /// A second fd for one frame, a truncated control message, or an fd with no frame start.
+    Fd,
 }
 
 impl fmt::Display for FrameError {
@@ -28,6 +30,7 @@ impl fmt::Display for FrameError {
             FrameError::Json(e) => write!(f, "bad message: {e}"),
             FrameError::Io(k) => write!(f, "socket error: {k}"),
             FrameError::Closed => f.write_str("peer closed the socket"),
+            FrameError::Fd => f.write_str("a file descriptor came out of place"),
         }
     }
 }
@@ -107,6 +110,7 @@ pub struct FrameReader {
     need: usize,
     failed: Option<FrameError>,
     ready: VecDeque<Zeroizing<Vec<u8>>>,
+    begun: u64,
 }
 
 impl FrameReader {
@@ -120,6 +124,9 @@ impl FrameReader {
         }
         while !bytes.is_empty() {
             let Some(body) = &mut self.body else {
+                if self.prefix_len == 0 {
+                    self.begun += 1;
+                }
                 let take = (PREFIX - self.prefix_len).min(bytes.len());
                 self.prefix[self.prefix_len..][..take].copy_from_slice(&bytes[..take]);
                 self.prefix_len += take;
@@ -161,6 +168,11 @@ impl FrameReader {
 
     pub fn next_frame(&mut self) -> Option<Zeroizing<Vec<u8>>> {
         self.ready.pop_front()
+    }
+
+    /// Frames whose first byte has been pushed.
+    pub(crate) fn begun(&self) -> u64 {
+        self.begun
     }
 }
 
