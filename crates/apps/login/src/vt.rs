@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::fs::{File, OpenOptions};
 use std::io;
-use std::os::fd::AsRawFd;
+use std::os::fd::{AsFd, AsRawFd};
 use std::os::unix::fs::{FileExt, OpenOptionsExt};
 use std::time::Duration;
 
@@ -137,6 +137,16 @@ pub fn hold(vt: u16) -> io::Result<File> {
         .write(true)
         .custom_flags(libc::O_NOCTTY | libc::O_CLOEXEC)
         .open(format!("/dev/tty{vt}"))
+}
+
+/// Makes `tty` the caller's controlling terminal, taking it from any session that has it. The
+/// caller must lead a session that has none; no other session can claim the VT after.
+pub fn own(tty: impl AsFd) -> io::Result<()> {
+    // SAFETY: the fd is open for the call, and TIOCSCTTY takes its steal flag by value.
+    match unsafe { libc::ioctl(tty.as_fd().as_raw_fd(), libc::TIOCSCTTY, 1) } {
+        0 => Ok(()),
+        _ => Err(io::Error::last_os_error()),
+    }
 }
 
 /// The kernel's name of the VT the console shows, `tty7` for VT 7.

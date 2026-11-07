@@ -469,22 +469,23 @@ fn a_getgroups_failure_after_setcred_deletes_the_credentials() {
     assert!(creds.deleted, "pam_setcred's credentials are deleted again");
 }
 
-#[test]
-fn sighup_stops_the_worker_like_sigterm() {
-    install_stop_handler().unwrap();
-    for sig in [libc::SIGTERM, libc::SIGINT, libc::SIGHUP] {
-        // SAFETY: a query of the disposition into a zeroed local.
-        let handler = unsafe {
-            let mut old: libc::sigaction = std::mem::zeroed();
-            assert_eq!(libc::sigaction(sig, std::ptr::null(), &mut old), 0);
-            old.sa_sigaction
-        };
-        assert_eq!(
-            handler, on_stop as extern "C" fn(c_int) as libc::sighandler_t,
-            "signal {sig}"
-        );
+/// The handler `sig` has in this process.
+fn disposition(sig: c_int) -> libc::sighandler_t {
+    // SAFETY: a query of the disposition into a zeroed local.
+    unsafe {
+        let mut old: libc::sigaction = std::mem::zeroed();
+        libc::sigaction(sig, std::ptr::null(), &mut old);
+        old.sa_sigaction
     }
-    assert!(STOP_SIGNALS.contains(&libc::SIGHUP));
+}
+
+#[test]
+fn sigterm_stops_the_worker() {
+    install_stop_handler().unwrap();
+    assert_eq!(
+        disposition(libc::SIGTERM),
+        on_stop as extern "C" fn(c_int) as libc::sighandler_t
+    );
 }
 
 #[test]
@@ -861,5 +862,89 @@ fn a_session_gets_no_controlling_terminal() {
     assert_eq!(
         code, 0,
         "0: no controlling terminal and stdin no tty; 1: /dev/tty opened; 2: setup failed; 3: stdin a tty; 4: no pty"
+    );
+}
+
+/// Runs `body` in a forked child and returns its exit code.
+fn in_child(body: impl FnOnce() -> c_int) -> c_int {
+    // SAFETY: the child makes only async-signal-safe calls before `_exit`.
+    let child = unsafe { libc::fork() };
+    assert!(child >= 0, "{}", io::Error::last_os_error());
+    if child == 0 {
+        let code = body();
+        // SAFETY: the child ends here without unwinding into the test harness.
+        unsafe { libc::_exit(code) };
+    }
+    let mut status = 0;
+    // SAFETY: `child` is this process's child and `status` outlives the call.
+    assert_eq!(unsafe { libc::waitpid(child, &mut status, 0) }, child);
+    assert!(libc::WIFEXITED(status), "{status:#x}");
+    libc::WEXITSTATUS(status)
+}
+
+#[test]
+fn the_worker_leads_a_session_deaf_to_its_terminals_signals() {
+    let code = in_child(|| {
+        if lead_session().is_err() {
+            return 2;
+        }
+        // SAFETY: getsid and getpid take no pointers.
+        if unsafe { libc::getsid(0) != libc::getpid() } {
+            return 3;
+        }
+        match TERMINAL_SIGNALS
+            .iter()
+            .all(|&sig| disposition(sig) == libc::SIG_IGN)
+        {
+            true => 0,
+            false => 1,
+        }
+    });
+    assert_eq!(
+        code, 0,
+        "0: a session leader ignoring SIGHUP, SIGINT, SIGQUIT and SIGTSTP; 1: a signal not ignored; 2: setsid failed; 3: not a session leader"
+    );
+}
+
+#[test]
+fn no_process_outside_the_worker_can_claim_its_vt() {
+    let (_master, slave) = pty_slave();
+    let code = in_child(|| {
+        // SAFETY: open, fork, waitpid and _exit are async-signal-safe, and `slave` was made before
+        // the fork; `held` stays open for the borrow.
+        unsafe {
+            // The VT as `vt::hold` opens it.
+            let held = libc::open(slave.as_ptr(), libc::O_RDWR | libc::O_NOCTTY);
+            if held < 0 {
+                return 5;
+            }
+            let held = std::os::fd::BorrowedFd::borrow_raw(held);
+            if lead_session().is_err() || vt::own(held).is_err() {
+                return 6;
+            }
+            // A process of the session, which may open the VT by path once logind gives its
+            // user the VT.
+            let session = libc::fork();
+            if session == 0 {
+                libc::_exit(match own_session() {
+                    Err(_) => 2,
+                    Ok(()) if libc::open(slave.as_ptr(), libc::O_RDWR) < 0 => 3,
+                    Ok(()) if libc::open(c"/dev/tty".as_ptr(), libc::O_RDWR) >= 0 => 1,
+                    Ok(()) => 0,
+                });
+            }
+            let mut status = 0;
+            if session < 0
+                || libc::waitpid(session, &mut status, 0) != session
+                || !libc::WIFEXITED(status)
+            {
+                return 7;
+            }
+            libc::WEXITSTATUS(status)
+        }
+    });
+    assert_eq!(
+        code, 0,
+        "0: the VT stays the worker's; 1: the session process claimed it; 2: own_session failed; 3: the VT did not open; 5: no pty; 6: the worker could not own it; 7: no session process"
     );
 }
