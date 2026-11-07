@@ -112,9 +112,8 @@ impl Daemon {
         out.push(Effect::Power(action));
     }
 
-    /// Refuses check worker `worker`'s conversation with a wrong password's error, held until
-    /// `ADMIN_REFUSE_DELAY` after its last answer so a refused correct password takes as long
-    /// as a wrong one. The worker is killed now.
+    /// Refuses `worker`'s check with a wrong password's error `ADMIN_REFUSE_DELAY` after its last
+    /// answer, so a refused right password takes as long as a wrong one. Kills the worker now.
     pub(super) fn refuse_admin(&mut self, now: Instant, worker: WorkerId, out: &mut Vec<Effect>) {
         let c = self.conversation.as_mut().expect("conversation");
         if let Some(w) = c.worker.take() {
