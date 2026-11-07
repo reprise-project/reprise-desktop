@@ -1,6 +1,8 @@
 pub mod config;
 pub mod daemon;
 pub mod greeterruns;
+pub mod ipc;
+pub mod logind;
 pub mod pam;
 pub mod remembered;
 pub mod table;

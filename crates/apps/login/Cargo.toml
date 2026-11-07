@@ -22,6 +22,10 @@ toml.workspace = true
 log.workspace = true
 libc.workspace = true
 zeroize = { workspace = true, features = ["serde"] }
+reprisebus = { path = "../../reprisebus" }
+futures-util.workspace = true
+tokio = { workspace = true, features = ["rt", "net", "time", "macros", "io-util", "sync", "signal"] }
+zbus.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

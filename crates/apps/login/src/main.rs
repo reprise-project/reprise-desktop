@@ -1,7 +1,31 @@
-use std::os::fd::FromRawFd;
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::io;
+use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::unix::net::UnixStream;
+use std::os::unix::process::CommandExt;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, ExitCode, Stdio};
+use std::rc::Rc;
+use std::time::{Duration, Instant};
 
-use reprise_login::worker::{Mode, worker_main};
+use futures_util::StreamExt;
+use reprise_login::config::{CONFIG_PATH, LoginConfig};
+use reprise_login::daemon::{
+    Daemon, Effect, Input, Job, LogindSession, UNLOCK_WAIT, WorkerId, World,
+};
+use reprise_login::ipc::{self, Gate, Paths, Server};
+use reprise_login::logind::{Logind, SessionRemovedStream};
+use reprise_login::remembered::{Remembered, STATE_PATH};
+use reprise_login::users;
+use reprise_login::vt::{self, GREETER_VT};
+use reprise_login::worker::{FromWorker, Mode, ToWorker, worker_main};
+use repriselogin::GREETER_USER;
+use repriselogin::frame::{self, FrameError};
+use repriselogin::greeter::GreeterRequest;
+use tokio::signal::unix::{SignalKind, signal};
+use tokio::sync::mpsc;
+use zeroize::Zeroizing;
 
 const USAGE: &str = "\
 Usage: reprise-login
@@ -11,15 +35,26 @@ Reprise's login manager. It runs as root from reprise-login.service.
 
 /// The worker socket the daemon passes to `--worker`.
 const WORKER_FD: i32 = 3;
+/// How long a worker's socket may stay open after the worker exited, held by a child of it.
+const EOF_GRACE: Duration = Duration::from_secs(1);
 
-fn main() {
+fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
-    if let [_, flag, mode, user] = args.as_slice()
-        && flag == "--worker"
-    {
-        std::process::exit(worker(mode, user));
+    match args.as_slice() {
+        [_] => daemon(),
+        [_, flag, mode, user] if flag == "--worker" => {
+            reprisebus::journal::init_logger(reprisebus::journal::PROGRAM_FILTER);
+            std::process::exit(worker(mode, user));
+        }
+        [_, flag] if flag == "--help" || flag == "-h" => {
+            print!("{USAGE}");
+            ExitCode::SUCCESS
+        }
+        _ => {
+            eprint!("{USAGE}");
+            ExitCode::from(2)
+        }
     }
-    print!("{USAGE}");
 }
 
 fn worker(mode: &str, user: &str) -> i32 {
@@ -41,4 +76,715 @@ fn worker(mode: &str, user: &str) -> i32 {
     // SAFETY: fd 3 is an open socket nothing else in this process owns.
     let sock = unsafe { UnixStream::from_raw_fd(WORKER_FD) };
     worker_main(mode, user, sock)
+}
+
+fn daemon() -> ExitCode {
+    reprisebus::journal::init_logger(reprisebus::journal::PROGRAM_FILTER);
+    let rt = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(rt) => rt,
+        Err(e) => {
+            log::error!("no runtime: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let local = tokio::task::LocalSet::new();
+    match local.block_on(&rt, run()) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            log::error!("{e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// What the loop reacts to, in the order it happened.
+enum Event {
+    Input(Input),
+    /// The worker's socket closed; every frame it sent came before this.
+    WorkerEof(WorkerId),
+    /// A SIGCHLD: some worker may have exited.
+    Reap,
+    /// The worker exited `EOF_GRACE` ago and its socket is still open.
+    EofLate(WorkerId),
+    Stop,
+}
+
+type Events = mpsc::UnboundedSender<Event>;
+
+async fn run() -> Result<(), String> {
+    let config = LoginConfig::load(Path::new(CONFIG_PATH));
+    let remembered = Remembered::load(Path::new(STATE_PATH));
+    let greeter = match users::lookup(GREETER_USER) {
+        Ok(Some(account)) => account,
+        _ => return Err(format!("there is no {GREETER_USER} account")),
+    };
+    let logind = (Logind::connect().await).map_err(|e| format!("logind: {e}"))?;
+    let (events, mut rx) = mpsc::unbounded_channel();
+    // Subscribed before the sessions are listed, so no removal falls between.
+    let removed = (logind.manager().receive_session_removed().await)
+        .map_err(|e| format!("logind's SessionRemoved: {e}"))?;
+    let found = (logind.sessions().await).map_err(|e| format!("logind's sessions: {e}"))?;
+    // Registered before the first spawn, so no worker's exit goes unseen.
+    follow_signals(events.clone()).map_err(|e| format!("signals: {e}"))?;
+
+    let gate = Rc::new(RefCell::new(Gate::new(greeter.uid)));
+    let mut rt = Runtime {
+        daemon: Daemon::new(config, remembered),
+        logind: logind.clone(),
+        gate: gate.clone(),
+        workers: Workers::new(PathBuf::from("/proc/self/exe"), events.clone()),
+        events: events.clone(),
+        world: None,
+    };
+    let world = rt.read_world().await;
+    let effects = boot(&mut rt.daemon, found, &world);
+    rt.world = Some(world);
+
+    let (greeter_l, session_l) = (ipc::bind(&Paths::default(), greeter.gid))
+        .map_err(|e| format!("binding the sockets: {e}"))?;
+    let lookup = logind.clone();
+    let input = events.clone();
+    let server = Server {
+        gate,
+        session_of: Rc::new(move |pid| {
+            let l = lookup.clone();
+            Box::pin(async move { l.session_of(pid).await })
+        }),
+        input: Rc::new(move |i| {
+            let _ = input.send(Event::Input(i));
+        }),
+    };
+    ipc::serve(greeter_l, session_l, server).map_err(|e| format!("the sockets: {e}"))?;
+    tokio::task::spawn_local(follow_removals(removed, logind, events));
+    rt.run_effects(effects);
+    rt.sync_gate();
+
+    while let Some(event) = rx.recv().await {
+        match event {
+            Event::Input(input) => rt.input(input).await,
+            Event::WorkerEof(w) => {
+                if let Some(exit) = rt.workers.eof(w) {
+                    rt.exited(exit).await;
+                }
+            }
+            Event::Reap => {
+                for exit in rt.workers.reap() {
+                    rt.exited(exit).await;
+                }
+            }
+            Event::EofLate(w) => {
+                if let Some(exit) = rt.workers.eof_late(w) {
+                    rt.exited(exit).await;
+                }
+            }
+            Event::Stop => {
+                log::info!("stopping; user sessions keep running");
+                rt.workers.kill_greeters();
+                return Ok(());
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Rebuilds the table from logind's sessions and starts the login screen or autologin, with
+/// no event in between: a removal handled before `start` could leave VT 1 empty.
+fn boot(daemon: &mut Daemon, found: Vec<LogindSession>, world: &World) -> Vec<Effect> {
+    let now = Instant::now();
+    let mut effects = daemon.recover(now, found);
+    effects.extend(daemon.start(now, world));
+    effects
+}
+
+async fn follow_removals(mut removed: SessionRemovedStream, logind: Logind, events: Events) {
+    while let Some(signal) = removed.next().await {
+        let Ok(args) = signal.args() else { continue };
+        let id = args.id().clone();
+        let seat_active = logind.seat_active().await;
+        let _ = events.send(Event::Input(Input::SessionRemoved { id, seat_active }));
+    }
+    log::error!("logind's SessionRemoved signal stream ended");
+}
+
+/// SIGCHLD reaps workers; SIGTERM and SIGINT stop the daemon.
+fn follow_signals(events: Events) -> io::Result<()> {
+    let mut child = signal(SignalKind::child())?;
+    let mut term = signal(SignalKind::terminate())?;
+    let mut int = signal(SignalKind::interrupt())?;
+    tokio::task::spawn_local(async move {
+        loop {
+            let event = tokio::select! {
+                Some(()) = child.recv() => Event::Reap,
+                Some(()) = term.recv() => Event::Stop,
+                Some(()) = int.recv() => Event::Stop,
+            };
+            if events.send(event).is_err() {
+                return;
+            }
+        }
+    });
+    Ok(())
+}
+
+struct Runtime {
+    daemon: Daemon,
+    logind: Logind,
+    gate: Rc<RefCell<Gate>>,
+    workers: Workers,
+    events: Events,
+    /// The last world read; `None` before the first.
+    world: Option<World>,
+}
+
+impl Runtime {
+    async fn input(&mut self, input: Input) {
+        if let Input::Worker(w, FromWorker::Started { session_id, .. }) = &input {
+            self.workers.started(*w, session_id);
+            let mut gate = self.gate.borrow_mut();
+            if let Some(g) = gate.greeter.as_mut().filter(|g| g.0 == *w) {
+                g.1 = Some(session_id.clone());
+            }
+        }
+        let fresh = matches!(
+            input,
+            Input::GreeterRequest(
+                GreeterRequest::Hello | GreeterRequest::StartSession | GreeterRequest::Power { .. }
+            )
+        );
+        if fresh || self.world.is_none() {
+            self.world = Some(self.read_world().await);
+        }
+        let world = self.world.as_ref().expect("a world was read");
+        let effects = self.daemon.handle(Instant::now(), world, input);
+        self.run_effects(effects);
+        self.sync_gate();
+    }
+
+    /// Hands the state machine a worker's exit. The console leaves a timed-out worker's VT,
+    /// and a session worker whose logind session is closing or gone ends that session.
+    async fn exited(&mut self, exit: Exited) {
+        {
+            let mut gate = self.gate.borrow_mut();
+            if gate.greeter.as_ref().is_some_and(|g| g.0 == exit.id) {
+                gate.greeter = None;
+            }
+        }
+        let stalled = self.daemon.stalled_vt(exit.id);
+        self.input(Input::WorkerExited(exit.id)).await;
+        if stalled.is_some_and(|v| on_dead_vt(v, vt::active())) {
+            log::warn!("a timed-out login left the console on its VT; showing the login screen");
+            self.switch_to(GREETER_VT);
+        }
+        if let Some(id) = exit.session.filter(|_| exit.mode != Mode::Greeter)
+            && self.logind.ended(&id).await
+        {
+            let seat_active = self.logind.seat_active().await;
+            self.input(Input::SessionRemoved { id, seat_active }).await;
+        }
+    }
+
+    fn sync_gate(&self) {
+        self.gate.borrow_mut().sessions = self.daemon.session_uids();
+    }
+
+    async fn read_world(&self) -> World {
+        let user_sessions = match self.logind.sessions().await {
+            Ok(found) => found.iter().filter(|s| s.class == "user").count() as u32,
+            Err(e) => {
+                // Counted as one, so power stays refused while logind can't say.
+                log::warn!("logind's sessions: {e}");
+                1
+            }
+        };
+        let kernel_open = vt::open_mask().unwrap_or_else(|e| {
+            log::warn!("VT state: {e}");
+            0
+        });
+        World {
+            users: users::read_listed(),
+            keyboard: self.logind.keyboard().await,
+            kernel_open,
+            user_sessions,
+        }
+    }
+
+    fn run_effects(&mut self, effects: Vec<Effect>) {
+        for effect in effects {
+            self.run(effect);
+        }
+    }
+
+    fn run(&mut self, effect: Effect) {
+        match effect {
+            Effect::Reply(reply) => self.gate.borrow().reply(&reply),
+            Effect::Spawn { worker, job } => {
+                if job.mode == Mode::Greeter {
+                    self.gate.borrow_mut().greeter_spawned(worker);
+                }
+                self.workers.spawn(worker, &job);
+            }
+            Effect::ToWorker { worker, msg } => self.workers.send(worker, &msg),
+            Effect::Kill(worker) => self.workers.kill(worker),
+            Effect::SwitchTo(vt) => self.switch_to(vt),
+            Effect::Power(action) => {
+                let (l, events) = (self.logind.clone(), self.events.clone());
+                tokio::task::spawn_local(async move {
+                    let done = l.power(action).await.map_err(|e| e.to_string());
+                    let _ = events.send(Event::Input(Input::PowerDone(done)));
+                });
+            }
+            Effect::TerminateSession(id) => {
+                let l = self.logind.clone();
+                tokio::task::spawn_local(async move {
+                    if let Err(e) = l.manager().terminate_session(&id).await {
+                        log::warn!("terminating session {id}: {e}");
+                    }
+                });
+            }
+            Effect::UnlockSession(id) => {
+                let (l, events) = (self.logind.clone(), self.events.clone());
+                tokio::task::spawn_local(async move {
+                    match l.unlock(&id, UNLOCK_WAIT).await {
+                        Ok(true) => {
+                            let _ = events.send(Event::Input(Input::Unlocked { id }));
+                        }
+                        Ok(false) => {}
+                        Err(e) => log::warn!("unlocking session {id}: {e}"),
+                    }
+                });
+            }
+            Effect::Arm { timer, after } => {
+                let events = self.events.clone();
+                tokio::task::spawn_local(async move {
+                    tokio::time::sleep(after).await;
+                    let _ = events.send(Event::Input(Input::Timer(timer)));
+                });
+            }
+            Effect::Remember(remembered) => {
+                if let Err(e) = remembered.save(Path::new(STATE_PATH)) {
+                    log::warn!("{STATE_PATH}: {e}");
+                }
+            }
+            Effect::Disallocate(vt) => vt::disallocate(vt),
+            Effect::Log(text) => log::warn!("{text}"),
+        }
+    }
+
+    fn switch_to(&self, vt: u16) {
+        let l = self.logind.clone();
+        tokio::task::spawn_local(async move {
+            if let Err(e) = l.switch_to(vt).await {
+                log::warn!("switching to VT {vt}: {e}");
+            }
+        });
+    }
+}
+
+/// Whether the console still shows the VT of a worker whose start timed out. The login
+/// screen's own VT never counts.
+fn on_dead_vt(stalled_vt: u16, active: io::Result<u16>) -> bool {
+    stalled_vt != GREETER_VT && active.is_ok_and(|a| a == stalled_vt)
+}
+
+/// A worker process and the daemon's end of its socket.
+struct Worker {
+    child: Child,
+    mode: Mode,
+    /// The outbound queue; `None` once the socket is closed.
+    tx: Option<mpsc::UnboundedSender<Zeroizing<Vec<u8>>>>,
+    reader: Option<tokio::task::JoinHandle<()>>,
+    eof: bool,
+    exited: bool,
+    session: Option<String>,
+}
+
+/// A worker that exited, its socket drained.
+#[derive(Debug, PartialEq)]
+struct Exited {
+    id: WorkerId,
+    mode: Mode,
+    session: Option<String>,
+}
+
+struct Workers {
+    program: PathBuf,
+    events: Events,
+    running: HashMap<WorkerId, Worker>,
+}
+
+impl Workers {
+    fn new(program: PathBuf, events: Events) -> Workers {
+        Workers {
+            program,
+            events,
+            running: HashMap::new(),
+        }
+    }
+
+    /// Runs `program --worker <mode> <user>` with a socket on fd 3. A worker that cannot
+    /// start is reported as exited.
+    fn spawn(&mut self, id: WorkerId, job: &Job) {
+        let started = start(&self.program, job).and_then(|(child, stream)| {
+            stream.set_nonblocking(true)?;
+            Ok((child, tokio::net::UnixStream::from_std(stream)?))
+        });
+        let (child, stream) = match started {
+            Ok(started) => started,
+            Err(e) => {
+                log::error!("a {} worker did not start: {e}", job.mode.as_arg());
+                let _ = self.events.send(Event::Input(Input::WorkerExited(id)));
+                return;
+            }
+        };
+        let (rd, wr) = stream.into_split();
+        let (tx, rx) = mpsc::unbounded_channel();
+        tokio::task::spawn_local(ipc::write_frames(wr, rx));
+        let reader = tokio::task::spawn_local(read_worker(id, rd, self.events.clone()));
+        self.running.insert(
+            id,
+            Worker {
+                child,
+                mode: job.mode,
+                tx: Some(tx),
+                reader: Some(reader),
+                eof: false,
+                exited: false,
+                session: None,
+            },
+        );
+    }
+
+    fn send(&self, id: WorkerId, msg: &ToWorker) {
+        let Some(tx) = self.running.get(&id).and_then(|w| w.tx.as_ref()) else {
+            return;
+        };
+        match frame::encode(msg) {
+            Ok(f) => {
+                let _ = tx.send(f);
+            }
+            Err(e) => log::warn!("worker {}: {}", id.0, ipc::error_kind(&e)),
+        }
+    }
+
+    /// Closes the worker's socket and sends it SIGTERM.
+    fn kill(&mut self, id: WorkerId) {
+        let Some(w) = self.running.get_mut(&id) else {
+            return;
+        };
+        w.tx = None;
+        if let Some(reader) = w.reader.take() {
+            reader.abort();
+        }
+        w.eof = true;
+        if w.exited {
+            return;
+        }
+        let Ok(pid) = libc::pid_t::try_from(w.child.id()) else {
+            return;
+        };
+        // SAFETY: the child is not reaped yet, so the pid is still this worker's.
+        if unsafe { libc::kill(pid, libc::SIGTERM) } != 0 {
+            log::warn!("SIGTERM to worker {pid}: {}", io::Error::last_os_error());
+        }
+    }
+
+    fn kill_greeters(&mut self) {
+        let greeters: Vec<_> = (self.running.iter())
+            .filter(|(_, w)| w.mode == Mode::Greeter)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in greeters {
+            self.kill(id);
+        }
+    }
+
+    fn started(&mut self, id: WorkerId, session: &str) {
+        if let Some(w) = self.running.get_mut(&id) {
+            w.session = Some(session.to_owned());
+        }
+    }
+
+    fn eof(&mut self, id: WorkerId) -> Option<Exited> {
+        let w = self.running.get_mut(&id)?;
+        w.eof = true;
+        w.reader = None;
+        self.finish(id)
+    }
+
+    fn eof_late(&mut self, id: WorkerId) -> Option<Exited> {
+        let w = self.running.get_mut(&id)?;
+        if let Some(reader) = w.reader.take() {
+            log::warn!("worker {}: its socket outlived it", id.0);
+            reader.abort();
+        }
+        w.eof = true;
+        self.finish(id)
+    }
+
+    /// Every worker that exited and whose socket is drained.
+    fn reap(&mut self) -> Vec<Exited> {
+        let mut done = Vec::new();
+        for (id, w) in &mut self.running {
+            if !w.exited && matches!(w.child.try_wait(), Ok(Some(_))) {
+                w.exited = true;
+                if !w.eof {
+                    let (id, events) = (*id, self.events.clone());
+                    tokio::task::spawn_local(async move {
+                        tokio::time::sleep(EOF_GRACE).await;
+                        let _ = events.send(Event::EofLate(id));
+                    });
+                }
+            }
+            if w.exited && w.eof {
+                done.push(*id);
+            }
+        }
+        done.into_iter().filter_map(|id| self.finish(id)).collect()
+    }
+
+    fn finish(&mut self, id: WorkerId) -> Option<Exited> {
+        if !self.running.get(&id).is_some_and(|w| w.exited && w.eof) {
+            return None;
+        }
+        let w = self.running.remove(&id)?;
+        Some(Exited {
+            id,
+            mode: w.mode,
+            session: w.session,
+        })
+    }
+}
+
+/// Forks `program --worker <mode> <user>` with the child's end of a socket pair on fd 3.
+fn start(program: &Path, job: &Job) -> io::Result<(Child, UnixStream)> {
+    let (ours, theirs) = UnixStream::pair()?;
+    let fd = theirs.as_raw_fd();
+    let mut cmd = Command::new(program);
+    cmd.arg("--worker")
+        .arg(job.mode.as_arg())
+        .arg(&job.user)
+        .stdin(Stdio::null());
+    // SAFETY: the closure runs in the child between fork and exec and calls only dup2 and
+    // fcntl, which are async-signal-safe.
+    unsafe {
+        cmd.pre_exec(move || {
+            // dup2 onto itself would keep FD_CLOEXEC, so that case clears it instead.
+            let r = match fd == WORKER_FD {
+                true => libc::fcntl(fd, libc::F_SETFD, 0),
+                false => libc::dup2(fd, WORKER_FD),
+            };
+            match r < 0 {
+                true => Err(io::Error::last_os_error()),
+                false => Ok(()),
+            }
+        })
+    };
+    let child = cmd.spawn()?;
+    drop(theirs);
+    Ok((child, ours))
+}
+
+async fn read_worker(id: WorkerId, mut rd: tokio::net::unix::OwnedReadHalf, events: Events) {
+    let why = ipc::read_frames(&mut rd, |body| {
+        let msg = frame::decode::<FromWorker>(&body)?;
+        let _ = events.send(Event::Input(Input::Worker(id, msg)));
+        Ok(())
+    })
+    .await;
+    if why != FrameError::Closed {
+        log::warn!("worker {}: its socket: {}", id.0, ipc::error_kind(&why));
+    }
+    let _ = events.send(Event::WorkerEof(id));
+}
+
+#[cfg(test)]
+mod tests {
+    use std::os::unix::fs::PermissionsExt;
+
+    use repriselogin::greeter::ErrorKind;
+    use tokio::sync::mpsc::UnboundedReceiver;
+
+    use super::*;
+
+    fn script(dir: &Path, body: &str) -> PathBuf {
+        let path = dir.join("worker");
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+
+    fn login(user: &str) -> Job {
+        Job {
+            mode: Mode::Login,
+            user: user.into(),
+        }
+    }
+
+    /// Runs the loop's worker half until `id` has exited, returning what it heard first.
+    async fn until_exited(
+        w: &mut Workers,
+        rx: &mut UnboundedReceiver<Event>,
+        id: WorkerId,
+    ) -> (Vec<FromWorker>, Exited) {
+        let mut heard = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline {
+            let exit = match tokio::time::timeout(Duration::from_millis(20), rx.recv()).await {
+                Ok(Some(Event::Input(Input::Worker(from, msg)))) => {
+                    assert_eq!(from, id);
+                    heard.push(msg);
+                    None
+                }
+                Ok(Some(Event::WorkerEof(from))) => w.eof(from),
+                Ok(Some(Event::EofLate(from))) => w.eof_late(from),
+                _ => w.reap().pop(),
+            };
+            if let Some(exit) = exit {
+                return (heard, exit);
+            }
+        }
+        panic!("worker {} never exited", id.0);
+    }
+
+    #[tokio::test]
+    async fn a_workers_frames_all_arrive_before_its_exit() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let dir = tempfile::tempdir().unwrap();
+                let sent = [
+                    FromWorker::Authenticated {
+                        user: "anna".into(),
+                        uid: 1000,
+                    },
+                    FromWorker::Failed {
+                        kind: ErrorKind::Failed,
+                        text: "no VT".into(),
+                    },
+                ];
+                let mut bytes = Vec::new();
+                for m in &sent {
+                    bytes.extend_from_slice(&frame::encode(m).unwrap());
+                }
+                std::fs::write(dir.path().join("frames"), bytes).unwrap();
+                let program = script(dir.path(), "cat \"$(dirname \"$0\")/frames\" >&3");
+                let (tx, mut rx) = mpsc::unbounded_channel();
+                let mut w = Workers::new(program, tx);
+                w.spawn(WorkerId(4), &login("anna"));
+                let (heard, exit) = until_exited(&mut w, &mut rx, WorkerId(4)).await;
+                assert_eq!(heard, sent);
+                assert_eq!(
+                    exit,
+                    Exited {
+                        id: WorkerId(4),
+                        mode: Mode::Login,
+                        session: None
+                    }
+                );
+                assert!(w.running.is_empty());
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn the_worker_gets_its_mode_and_user_and_hears_on_fd_3() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let dir = tempfile::tempdir().unwrap();
+                let out = dir.path().join("out");
+                let body = format!("echo \"$@\" >{o}; head -c 4 <&3 >>{o}", o = out.display());
+                let (tx, mut rx) = mpsc::unbounded_channel();
+                let mut w = Workers::new(script(dir.path(), &body), tx);
+                w.spawn(WorkerId(2), &login("anna"));
+                w.send(WorkerId(2), &ToWorker::Start { vt: 7 });
+                until_exited(&mut w, &mut rx, WorkerId(2)).await;
+                let got = std::fs::read(&out).unwrap();
+                let prefix = &frame::encode(&ToWorker::Start { vt: 7 }).unwrap()[..4];
+                assert_eq!(&got[..20], b"--worker login anna\n");
+                assert_eq!(&got[20..], prefix);
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn kill_sigterms_the_worker_and_its_exit_still_comes() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let dir = tempfile::tempdir().unwrap();
+                let (tx, mut rx) = mpsc::unbounded_channel();
+                let mut w = Workers::new(script(dir.path(), "exec sleep 30"), tx);
+                w.spawn(WorkerId(3), &login("anna"));
+                w.kill(WorkerId(3));
+                w.send(WorkerId(3), &ToWorker::Cancel);
+                let started = Instant::now();
+                let (heard, exit) = until_exited(&mut w, &mut rx, WorkerId(3)).await;
+                assert!(heard.is_empty());
+                assert_eq!(exit.id, WorkerId(3));
+                assert!(started.elapsed() < Duration::from_secs(5));
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn a_worker_that_cannot_start_is_reported_exited() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let dir = tempfile::tempdir().unwrap();
+                let (tx, mut rx) = mpsc::unbounded_channel();
+                let mut w = Workers::new(dir.path().join("missing"), tx);
+                w.spawn(WorkerId(5), &login("anna"));
+                assert!(matches!(
+                    rx.recv().await,
+                    Some(Event::Input(Input::WorkerExited(WorkerId(5))))
+                ));
+                assert!(w.running.is_empty());
+            })
+            .await;
+    }
+
+    #[test]
+    fn boot_starts_before_any_removal_so_an_orphans_end_brings_the_greeter() {
+        use reprise_login::config::LoginConfig;
+        let orphan = LogindSession {
+            id: "c1".into(),
+            user: GREETER_USER.into(),
+            uid: 977,
+            vt: 1,
+            seat: "seat0".into(),
+            class: "greeter".into(),
+            service: Mode::Greeter.service().into(),
+        };
+        let world = World {
+            users: Vec::new(),
+            keyboard: Default::default(),
+            kernel_open: 0,
+            user_sessions: 0,
+        };
+        let mut daemon = Daemon::new(LoginConfig::default(), Remembered::default());
+        let effects = boot(&mut daemon, vec![orphan], &world);
+        assert_eq!(effects, [Effect::TerminateSession("c1".into())]);
+        let removed = Input::SessionRemoved {
+            id: "c1".into(),
+            seat_active: None,
+        };
+        let effects = daemon.handle(Instant::now(), &world, removed);
+        assert!(
+            matches!(&effects[0], Effect::Spawn { job, .. } if job.mode == Mode::Greeter),
+            "{effects:?}"
+        );
+    }
+
+    #[test]
+    fn a_timed_out_worker_on_the_active_vt_sends_the_console_to_vt_1() {
+        assert!(on_dead_vt(7, Ok(7)));
+        assert!(!on_dead_vt(7, Ok(1)), "the console moved on");
+        assert!(!on_dead_vt(1, Ok(1)), "the greeter's own VT");
+        assert!(!on_dead_vt(7, Err(io::ErrorKind::NotFound.into())));
+    }
 }
