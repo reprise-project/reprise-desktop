@@ -42,7 +42,8 @@ enum Phase {
     Idle,
     Authenticating,
     Starting,
-    /// An administrator's power request succeeded; nothing more is sent.
+    /// An administrator's power request succeeded; nothing more is sent, and only the power
+    /// action's failure is heard.
     GoingDown,
     /// The login was cancelled; what it still sends is dropped until the cancel's reply.
     Cancelling,
@@ -165,6 +166,12 @@ impl Conversation {
         }
         let answered = std::mem::take(&mut self.asked);
         match (self.phase, reply) {
+            // An administrator's success the held requests crossed: the computer is going down.
+            (Phase::Cancelling, GreeterReply::Success) if answered && self.admin => {
+                self.held.clear();
+                self.phase = Phase::GoingDown;
+                vec![Step::GoingDown]
+            }
             // The reply the held cancel waited out; after an error there is no login to cancel.
             (Phase::Cancelling, reply) if answered => {
                 let mut held = std::mem::take(&mut self.held);
@@ -222,6 +229,11 @@ impl Conversation {
                 self.phase = Phase::Idle;
                 self.password = None;
                 vec![Step::Fail(self.failure(kind, &text))]
+            }
+            // The power action the administrator's success started failed.
+            (Phase::GoingDown, GreeterReply::Error { .. }) => {
+                self.phase = Phase::Idle;
+                vec![Step::Fail(Failure::PowerFailed)]
             }
             (Phase::Cancelling, GreeterReply::Success | GreeterReply::Error { .. }) => {
                 self.phase = Phase::Idle;
@@ -675,6 +687,56 @@ mod tests {
         assert_eq!(s.c.power(PowerAction::Reboot), vec![]);
         assert_eq!(s.c.cancel(), None);
         assert_eq!(s.reply(GreeterReply::Success), vec![]);
+    }
+
+    /// The administrator's form after a power-off's password went out, its reply in flight.
+    fn admin_answered() -> Screen {
+        let mut s = admin_form();
+        s.typed("anna");
+        s.key(LogonKey::Enter);
+        s.typed("hunter2");
+        s.key(LogonKey::Enter);
+        s.reply(prompt(AuthKind::Secret, "Password:"));
+        s
+    }
+
+    #[test]
+    fn a_power_off_failing_after_the_administrators_success_gives_the_form_back() {
+        let mut s = admin_answered();
+        s.reply(GreeterReply::Success);
+        assert_eq!(
+            s.reply(error(ErrorKind::Failed, "org.freedesktop.login1 failed")),
+            vec![]
+        );
+        assert!(s.c.idle(), "the conversation is over");
+        assert!(!s.m.busy, "the form takes input again");
+        assert_eq!(s.m.message, Some(logon::text::power_failed()));
+        assert_eq!(s.m.busy_text(), logon::text::verifying());
+        assert_eq!(s.m.purpose, Purpose::Admin(logon::PowerAction::PowerOff));
+        s.typed("hunter2");
+        assert_eq!(
+            s.key(LogonKey::Enter),
+            Some(GreeterRequest::PowerAs {
+                action: PowerAction::PowerOff,
+                user: "anna".into()
+            }),
+            "the administrator may try again"
+        );
+        assert_eq!(s.m.busy_text(), logon::text::verifying());
+    }
+
+    #[test]
+    fn an_administrators_success_crossing_a_power_request_still_goes_down() {
+        let mut s = admin_answered();
+        assert_eq!(s.c.power(PowerAction::Reboot), vec![], "held for the reply");
+        assert_eq!(
+            s.reply(GreeterReply::Success),
+            vec![],
+            "the held cancel and power request are dropped"
+        );
+        assert!(s.m.busy);
+        assert_eq!(s.m.busy_text(), logon::text::shutting_down());
+        assert!(!s.c.idle());
     }
 
     #[test]

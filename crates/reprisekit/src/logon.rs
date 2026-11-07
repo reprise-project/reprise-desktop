@@ -606,6 +606,7 @@ impl Logon {
     /// Glass shows the text on its own screen, whose OK comes back here without it.
     pub fn fail(&mut self, text: String) {
         self.wipe_password();
+        self.going_down = false;
         self.prompt = None;
         self.name.set_read_only(false);
         self.busy = false;
