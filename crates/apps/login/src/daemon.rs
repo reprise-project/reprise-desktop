@@ -452,7 +452,7 @@ impl Daemon {
     /// its console when it links again, since a logind lock would lock its client out too.
     pub fn recover(
         &mut self,
-        _now: Instant,
+        now: Instant,
         found: Vec<LogindSession>,
         seat_active: Option<&str>,
     ) -> Vec<Effect> {
@@ -474,7 +474,7 @@ impl Daemon {
                     background,
                 });
                 if background {
-                    self.arm_disconnected(s.id, &mut out);
+                    self.arm_disconnected(now, s.id, &mut out);
                 }
             } else if s.class == "greeter" && s.service == Mode::Greeter.service() {
                 self.orphans.push(Orphan {
@@ -656,10 +656,10 @@ impl Daemon {
                 member,
             } => self.admin_member(now, worker, uid, member, &mut out),
             Input::IntakeOpen { uid } => self.intake_open(uid, &mut out),
-            Input::IntakeLost { uid } => self.intake_lost(uid, &mut out),
-            Input::Viewers { uid, count } => self.set_viewers(uid, count, &mut out),
+            Input::IntakeLost { uid } => self.intake_lost(now, uid, &mut out),
+            Input::Viewers { uid, count } => self.set_viewers(now, uid, count, &mut out),
             Input::Forwarded { conn, ok } => self.forwarded(conn, ok, &mut out),
-            Input::ConfigReloaded(config) => self.config_reloaded(config, &mut out),
+            Input::ConfigReloaded(config) => self.config_reloaded(now, config, &mut out),
             Input::Account {
                 link,
                 uid,
