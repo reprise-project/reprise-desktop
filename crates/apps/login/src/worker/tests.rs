@@ -805,3 +805,61 @@ fn a_check_worker_ends_after_authenticated_and_opens_nothing() {
         ]
     );
 }
+
+/// A new pty: its master, held for the test, and its slave's path.
+fn pty_slave() -> (std::os::fd::OwnedFd, CString) {
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    // SAFETY: posix_openpt returns a new fd or -1, which the check below catches.
+    let master = unsafe { libc::posix_openpt(libc::O_RDWR | libc::O_NOCTTY) };
+    assert!(master >= 0, "{}", io::Error::last_os_error());
+    // SAFETY: the fd was just opened, and nothing else owns it.
+    let master = unsafe { OwnedFd::from_raw_fd(master) };
+    let mut name = [0 as c_char; 128];
+    // SAFETY: each call takes the open master fd, and ptsname_r a buffer of the length passed.
+    unsafe {
+        assert_eq!(libc::grantpt(master.as_raw_fd()), 0);
+        assert_eq!(libc::unlockpt(master.as_raw_fd()), 0);
+        assert_eq!(
+            libc::ptsname_r(master.as_raw_fd(), name.as_mut_ptr(), name.len()),
+            0
+        );
+    }
+    // SAFETY: ptsname_r wrote a NUL-terminated path into `name`.
+    let slave = unsafe { std::ffi::CStr::from_ptr(name.as_ptr()) }.to_owned();
+    (master, slave)
+}
+
+#[test]
+fn a_session_gets_no_controlling_terminal() {
+    let (_master, slave) = pty_slave();
+    // SAFETY: the child makes only async-signal-safe calls before `_exit`.
+    let child = unsafe { libc::fork() };
+    assert!(child >= 0, "{}", io::Error::last_os_error());
+    if child == 0 {
+        // SAFETY: in the child right after fork; open, dup2, isatty and _exit are
+        // async-signal-safe, and `slave` was made before the fork.
+        unsafe {
+            // A terminal on stdin, as a worker started from one has.
+            let tty = libc::open(slave.as_ptr(), libc::O_RDWR | libc::O_NOCTTY);
+            if tty < 0 || libc::dup2(tty, 0) < 0 {
+                libc::_exit(4);
+            }
+            let code = match own_session() {
+                Err(_) => 2,
+                Ok(()) if libc::open(c"/dev/tty".as_ptr(), libc::O_RDWR) >= 0 => 1,
+                Ok(()) if libc::isatty(0) == 1 => 3,
+                Ok(()) => 0,
+            };
+            libc::_exit(code);
+        }
+    }
+    let mut status = 0;
+    // SAFETY: `child` is this process's child and `status` outlives the call.
+    assert_eq!(unsafe { libc::waitpid(child, &mut status, 0) }, child);
+    assert!(libc::WIFEXITED(status), "{status:#x}");
+    let code = libc::WEXITSTATUS(status);
+    assert_eq!(
+        code, 0,
+        "0: no controlling terminal and stdin no tty; 1: /dev/tty opened; 2: setup failed; 3: stdin a tty; 4: no pty"
+    );
+}
