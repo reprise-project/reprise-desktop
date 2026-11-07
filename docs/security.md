@@ -155,7 +155,8 @@ command, which is why that global needs no extra gate.
 processes:
 
 - **The daemon**, `reprise-login.service`, runs as root. It opens no
-  network socket, only the two unix sockets below. It reads
+  network socket, only the two unix sockets below and the two of [Remote
+  logins](#remote-logins). It reads
   `/etc/reprise/login.toml` and keeps the last user and interface in
   `/var/lib/reprise-login/state.toml` (0600, in a 0700 directory).
 - **A PAM worker** per login, and one for the login screen: the daemon
@@ -244,11 +245,10 @@ logins and resumes alike. Switching to a session's VT (Ctrl+Alt+F7 for the
 first) still reaches its lock screen.
 
 Shut Down and Restart on the login screen are refused while any user
-session runs. A background session on the seat can ask logind to make
-itself the active one (`loginctl activate`) and take the screen from the
-user in front of it. That user's session locks as it loses the screen, and
-the background session comes up on its own lock, so this denies the screen
-without showing anyone another user's session.
+session runs. A session that isn't on screen can't take the screen from the
+user in front of it: polkit refuses it logind's activation and VT switch,
+and it holds no terminal to switch VTs through ([Background
+sessions](#background-sessions)).
 
 ## Remote Desktop
 
@@ -258,7 +258,9 @@ NLA (CredSSP) is not offered: its NTLM exchange can only be checked against
 a password the server already holds, and PAM never hands one out. Under TLS
 the client sends the password itself, inside the encrypted connection. A
 client set to require NLA is closed, and the journal says to choose
-TLS.
+TLS. Under reprise-login this server never listens on the network; the
+login manager takes every connection and offers NLA with a Remote Desktop
+password ([Remote logins](#remote-logins)).
 
 It checks the password as the Unlock Computer dialog does, in a
 `reprise --rdp-password-conversation USER` helper with the password on its
@@ -424,6 +426,234 @@ portal marked every stream it granted virtual. One whose portal session fell
 back to the computer's own screens (a compositor without version 9,
 `ended(unavailable)` or `ended(replaced)`) locks on leave as in show mode.
 
+## Remote logins
+
+With `[remote_desktop] enabled = true` in `/etc/reprise/login.toml`
+([configuration.md](configuration.md#remote-logins)), reprise-login takes
+RDP connections for the members of the `reprise-remote` group, logs them in
+whether or not they have a session, and hands each connection to that
+user's own `reprise-rdp`. Two more processes join the ones under [Login
+manager](#login-manager):
+
+- **The front**, `reprise-login-rdp.service`, runs as the system user
+  `reprise-login-rdp` and is the only process that listens on the port. It
+  runs each connection up to its login: X.224, TLS and, under NLA, CredSSP.
+  It holds the TLS key (`/var/lib/reprise-login-rdp/key.pem`, 0600), the NT
+  hash of every Remote Desktop password, and the password of each client
+  logging in. It decides nothing: it sends the name and password to the
+  daemon and waits for its verdict. reprise-login starts and stops it.
+- **The hand-over server**, `reprise-rdp --hand-over`, runs as the user in
+  their session, as the user unit `reprise-rdp-handover.service`, started by
+  `reprise-rdp-handover.socket` at `$XDG_RUNTIME_DIR/reprise-rdp/handover.sock`
+  (0600, in a 0700 directory). It takes connections from reprise-login only
+  and stops when the last client leaves.
+
+Two more sockets in `/run/reprise-login`:
+
+- `front.sock` takes one link at a time, from the `reprise-login-rdp` uid
+  only. A `Ready` frame must carry exactly one socket; a socket on any other
+  frame breaks the link.
+- `account.sock` is 0666. Any local user asks it about their own Remote
+  Desktop password, by the uid `SO_PEERCRED` gives: one request per
+  connection, read within 5 s, and one change per user at a time.
+
+The design assumes the front can be broken into. A front run by an
+attacker holds every Remote Desktop password's NT hash and sees the
+password of each user who logs in meanwhile, as any TLS endpoint does, but
+can't log in with a hash: the daemon wants the password whose hash matches.
+The hand-over goes to the uid the daemon looked up, never one the front
+names. So the front carries a full sandbox: `ProtectSystem=strict`,
+`ProtectHome`, `PrivateTmp`, `PrivateDevices`, `ProtectProc=invisible`,
+`NoNewPrivileges`, a `@system-service` system call filter, AF_UNIX and
+AF_INET(6) only, 512 MiB and 64 tasks. It binds the port with
+`CAP_NET_BIND_SERVICE` and drops it once bound. The daemon's unit has none,
+for the reason under [Login manager](#login-manager); the front starts no
+session, so nothing of a user's descends from it.
+
+### Checks
+
+For each login the daemon checks, in order:
+
+1. The throttle below, and at most 4 logins in their check at once.
+2. The name, without any `DOMAIN\` or `@host`: at most 32 bytes of
+   `[a-z_][a-z0-9_.-]*`.
+3. The account: it must exist, not be root, and be in the group
+   (`reprise-remote` unless `[remote_desktop] group` says otherwise).
+4. The secret. Over TLS, the client's password goes to PAM's
+   `reprise-login-remote` service: `pam_shells`, `pam_env` and `pam_unix
+   nodelay` for `auth`, then system-login's `account` and `session`, with no
+   pam_faillock, so remote failures never lock the console. The worker
+   answers PAM's first password prompt with it; any other prompt fails the
+   login. Under NLA, the daemon compares the NT hash of the password the
+   client delegated with the stored one in constant time, then runs
+   `reprise-login-remote-nla`, which lets only a uid of 1000 or more through
+   and runs `pam_shells`, `pam_nologin` and system-login's `account` and
+   `session`. Both set `PAM_RHOST` to the client's address for `auth` and
+   `account`.
+5. A session: the user's own, or a new background one while fewer than
+   `max_sessions` run.
+
+Every refusal waits until 3 s after the login reached the daemon, whatever
+refused it, so an unknown name, a name outside the group, root and a wrong
+password look the same to the client. The daemon's journal (`journalctl -b
+-u reprise-login`) names the reason. A client has 10 s from its TCP accept
+to send its credentials, and a login 8 s to reach its session.
+
+### Throttle
+
+Two throttles count failed logins, with the numbers of the Remote Desktop
+server's ([Remote Desktop](#remote-desktop)): the daemon's counts TLS login
+passwords per client address, and the front's counts NLA Remote Desktop
+passwords per IPv4 address or IPv6 /64, from the client's NTLM AUTHENTICATE.
+Neither feeds the other, so each kind of secret has its own budget.
+
+- **Per address.** Three failures are free; the fourth starts a 2 s
+  back-off, doubling up to 60 s. Meanwhile the front refuses the address's
+  new logins: before TLS after TLS failures, at the start of CredSSP after
+  NLA failures. A success clears the address, and so do 20
+  minutes without a failure from it.
+- **Every address.** 10 failures within 10 minutes pause every login of that
+  kind for 10 minutes, a right password included, and the journal says so
+  once. Restarting reprise-login clears both throttles.
+
+xfreerdp opens each TLS logon twice, so one mistyped password from it
+counts two failures. Before a login the front also caps connections: 32 in
+all, 2 per IPv4 address or IPv6 /64, and 256 KiB read from each.
+
+### Hand-over
+
+Once the daemon accepts a login, the front puts the TCP socket into kernel
+TLS and sends it to the daemon over `SCM_RIGHTS`, with the connection's TLS
+keys and a recording of the exchange with the password and auto-reconnect
+cookie blanked. The daemon
+opens the user's `handover.sock` without following symlinks or crossing
+mounts (`openat2` with `RESOLVE_NO_SYMLINKS` and `RESOLVE_NO_XDEV`): the
+runtime directory, `reprise-rdp` and the socket must belong to the user and
+not be group or world writable, and `SO_PEERCRED` must name the user, so
+only a listener the user made gets the connection. The hand-over server
+takes links from root only and only a TCP socket, and replays the
+recording. It takes only a recording whose login names
+its own user with an empty password, and closes a fresh TCP connection. The
+password and the NT hash never leave the front and the daemon.
+
+TLS is 1.2 or 1.3 with AEAD suites only. After the hand-over, a TLS 1.3 key
+update is followed, and any other handshake record, TLS 1.2 renegotiation
+included, ends the connection.
+
+The front makes its self-signed certificate for the host name on its first
+start, in `/var/lib/reprise-login-rdp/`. Every user's connections use it,
+and its fingerprint shows on Settings > Login Manager and on each user's
+Remote Desktop page. Settings doesn't replace it: delete `cert.pem` and
+`key.pem` there and restart the front (`sudo systemctl restart
+reprise-login-rdp`). Under `ProtectHostname` the front reads the host name
+once, so a new name, which the NLA name forms and the TLS server name use,
+applies when the front restarts.
+
+### Remote Desktop password
+
+NTLM checks a client's proof against a password the server already holds,
+which PAM never hands out. So NLA logs on with a Remote Desktop password
+each user sets for themselves on Settings > Remote Desktop. It is kept as
+its NT hash, unsalted MD4 as NTLM needs, which is fast to crack from a
+copy. The file, `/var/lib/reprise-login/remote-passwords`, is 0600 root in a
+0700 directory. Use a strong Remote Desktop password: it needs 8
+characters or more and must differ from the login password.
+
+- Setting or clearing it takes the login password, checked through
+  `reprise-login-check` (system-auth). Clearing your own is always allowed,
+  even outside the group.
+- Locking the login password (`passwd -l`) leaves the Remote Desktop
+  password working. To stop it, clear it on Settings > Remote Desktop, or
+  take the user out of `reprise-remote`. An expired account
+  (`chage -E`) is refused either way, by the account step.
+- Setting one leaves TLS logins on: a client set to TLS still logs on with
+  the login password.
+- An entry whose account is gone, or whose name now has another uid, is
+  dropped when reprise-login starts.
+
+NLA takes the name as `user`, `.\user`, `HOST\user` (the host name's first
+label), `user@host` or `user@`. TLS strips any `DOMAIN\` or `@host`. mstsc
+is untested.
+
+### Background sessions
+
+A login for a user with no session starts one through the user's login
+shell, on the first free VT from 7 up that isn't on screen. It is a logind
+session on seat0 with `Remote=no`, so polkit treats it as a local session
+that isn't active. It comes up locked: switching to its VT at the computer shows
+its Unlock dialog, never its desktop, and its clients always run in lock mode
+([Lock mode](#lock-mode)). Off the seat a session runs no lid action and no
+idle suspend, and its power requests go through logind and polkit as an
+inactive session's. Once someone switches to it at the computer, it counts
+as a console session.
+
+No session holds a controlling terminal: the PAM worker holds the session's
+VT as its own, so no process of the session can switch VTs through the
+kernel. The polkit rule `/usr/share/polkit-1/rules.d/50-reprise-login.rules`
+refuses `org.freedesktop.login1.chvt` to every session that isn't active, so
+`loginctl activate` and `chvt` from a background session, or from one left
+behind by Switch User, fail. Only reprise-login, as root, switches.
+
+While a background session runs, reprise-login holds an `idle` block
+inhibitor; while a client is connected to any session, `sleep:idle`, so the
+computer doesn't sleep under a client. Each session's compositor reads that
+`sleep` inhibitor, held by root as "Reprise login manager", as a client
+connected elsewhere: idle suspend waits, and a shut lid darkens the
+internal panels instead of running `[power] lid_close`.
+
+A background session whose last client left ends `[remote_desktop]
+end_disconnected_after` minutes later, unless a client comes back first;
+logind ends its processes, unsaved work included. With it unset, and for a
+console session, the session runs until its user logs off.
+
+### Accepted risks
+
+- **Names with a Remote Desktop password show.** The front picks NLA or TLS
+  from the user name in the client's first, unauthenticated packet (its
+  `mstshash` cookie), NLA when that name has a Remote Desktop password. So
+  anyone who reaches the port can tell which names have one. Names leak,
+  never passwords.
+- **The chvt rule applies to the whole computer.** It sits in
+  `/usr/share/polkit-1/rules.d` and applies whether or not reprise-login
+  runs: under another display manager too, a session that isn't active
+  can't activate itself. Display managers switch as root, so only scripts
+  that activate their own inactive session lose out.
+- **Hashes outlive group membership.** Taking a user out of `reprise-remote`
+  stops their logins at once, as the group check comes before the hash
+  compare, but their NT hash stays in the file and the front still gets it
+  until they clear it.
+- **Wrong passwords on account.sock count toward pam_faillock.**
+  `reprise-login-check` includes system-auth, so a process running as a user
+  can lock that user's console login for faillock's window by sending wrong
+  login passwords, as `su` can.
+- **Only root's inhibitor counts.** The compositor counts a client
+  elsewhere only for a `sleep` block inhibitor named "Reprise login manager"
+  that uid 0 holds. Any user can still take inhibitors of their own.
+- **Inactive polkit grants.** A background session gets polkit's
+  `allow_inactive` answers, which for some actions are wider than a remote
+  session's: NetworkManager's network control (a remote user can take the
+  connection down), inhibiting shutdown and sleep, the power key and lid
+  inhibitors, and realtime priority. All affect availability only.
+- **Anyone can pause remote logins.** 10 wrong passwords every 10 minutes
+  from any addresses keep one kind of login paused.
+- **A late refusal tells the password was right.** A login refused after its
+  password passed (the most sessions, no free VT, a failed start, the 8 s
+  deadline) counts no failure, so its address doesn't back off. Under NLA
+  the client learns it from the early result anyway, and a reconnect lands
+  in the session the first one started.
+- **The journal can fill.** The front and the daemon log one line per
+  refused connection, so a storm of connections can push older lines out of
+  a journal capped by size.
+- **FUSE over the runtime directory.** A user who can mount FUSE over
+  `/run/user/<uid>` with `user_allow_other` (off by default in
+  `/etc/fuse.conf`) can stall the daemon at their own hand-over.
+- **System accounts in the group.** The TLS stack refuses root only. A
+  system account that an administrator adds to `reprise-remote`, with a
+  shell in `/etc/shells`, can log in over TLS; the NLA stack refuses every
+  uid below 1000.
+- **The front can reach the system bus.** Its sandbox leaves the system
+  bus socket visible, though it uses only `front.sock` and the journal.
+
 ## Keyboard shortcuts
 
 A window can ask Reprise for every keyboard shortcut through
@@ -547,8 +777,8 @@ sharing and remote control grants yet.
   its window has the focus, or through `[clipboard] trusted_apps`.
 - **No permissions page.** Remembered screen sharing and remote control
   grants are revoked with `flatpak permission-remove`.
-- **A background session can take the screen** under reprise-login; see
-  [Switching users](#switching-users).
+- **Background sessions get polkit's inactive grants** under
+  reprise-login; see [Accepted risks](#accepted-risks).
 - **Same-user code.** A program running as you can ptrace or preload the
   portal, the compositor or anything else of yours. Reprise doesn't defend
   against that, and doesn't treat it as a vulnerability.

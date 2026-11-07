@@ -95,8 +95,9 @@ reprise-login shows the login screen on VT 1 in Classic, Blue or Glass
 ([features](features.md#login-screen)) and starts each user's Reprise
 session on a VT of its own, from VT 7 up, through the user's login shell.
 `/etc/reprise/login.toml` picks the interface, whether the screen lists
-users, and a user to log in automatically
-([configuration](configuration.md#login-manager)).
+users, a user to log in automatically
+([configuration](configuration.md#login-manager)), and whether users may log
+in from another computer ([Remote logins](#remote-logins)).
 
 Ctrl+Alt+F1 brings the login screen back whenever none is showing, for
 another user to log in. Ctrl+Alt+F2 reaches a text login on tty2 at any
@@ -121,10 +122,53 @@ under `reprise` as it does under any login manager (`journalctl --user -b
 `reprise-session`.
 
 A build installed by hand needs `/usr/bin/reprise-login` (the unit's
-`ExecStart`), the unit in `/usr/lib/systemd/system/`, the three PAM files
-from `data/pam.d/` in `/etc/pam.d/`, and the files from `data/sysusers.d/`
-and `data/tmpfiles.d/` applied once with `systemd-sysusers` and
-`systemd-tmpfiles --create`. A package's install runs those two for you.
+`ExecStart`), the unit in `/usr/lib/systemd/system/`, the six
+`reprise-login*` PAM files from `data/pam.d/` in `/etc/pam.d/`, and the
+files from `data/sysusers.d/` and `data/tmpfiles.d/` applied once with
+`systemd-sysusers` and `systemd-tmpfiles --create`. A package's install runs
+those two for you. Remote logins also need `/usr/bin/reprise-login-rdp`
+with `reprise-login-rdp.service` beside the other unit,
+`/usr/lib/reprise/reprise-login-settings` (the path the polkit action
+names), the polkit action and rule from `data/polkit-1/` under
+`/usr/share/polkit-1/`, and `reprise-rdp-handover.socket` and `.service` in
+`/usr/lib/systemd/user/`, with the socket enabled for every user (`sudo
+systemctl --global enable reprise-rdp-handover.socket`).
+
+### Remote logins
+
+reprise-login can take RDP connections itself and log users in from another
+computer, into the session they left running or a new one in the
+background, several users at once ([features](features.md#remote-logins)).
+It ships off. To turn it on:
+
+1. Add each user who may log in remotely to the `reprise-remote` group:
+   `sudo usermod -aG reprise-remote USER`.
+2. Tick Allow remote logins to this computer on Settings > Login Manager,
+   or set `[remote_desktop] enabled = true` in `/etc/reprise/login.toml`
+   ([configuration](configuration.md#remote-logins)) and run `sudo
+   systemctl reload reprise-login`.
+3. Open the port, 3389/tcp unless `port` says otherwise, in your firewall:
+   `sudo ufw allow 3389/tcp`, or `sudo firewall-cmd --permanent
+   --add-port=3389/tcp` and `sudo firewall-cmd --reload`. Reprise opens no
+   firewall port and sets up no forwarding.
+
+Users log in with their login password over TLS, or with NLA once they set
+a Remote Desktop password on Settings > Remote Desktop
+([security](security.md#remote-desktop-password)).
+
+To turn it off, clear the check box, or set `enabled = false` and reload.
+The front stops, and every login not yet in its session is refused. Taking
+a user out of `reprise-remote` (`sudo gpasswd -d USER reprise-remote`)
+stops that user's remote logins alone.
+
+The logs:
+
+    journalctl -b -u reprise-login -u reprise-login-rdp
+    journalctl --user -b -u reprise-rdp-handover
+
+The first holds the daemon's verdict on each login, with the reason for a
+refusal, and the front's connections; the second, run as the user, that
+user's server.
 
 ## Requirements
 
@@ -168,9 +212,17 @@ and `data/tmpfiles.d/` applied once with `systemd-sysusers` and
   and `reprise-login-autologin` (`[login] autologin_user`), and the system
   user `reprise-greeter` with its home `/var/lib/reprise-greeter`, which the
   package's sysusers and tmpfiles files create
-- For remote logins at the login manager, the kernel's `tls` module
-  (`CONFIG_TLS`): each connection reaches the user's `reprise-rdp` in kernel
-  TLS
+- For remote logins at the login manager: the PAM files
+  `reprise-login-remote` (logins with the login password),
+  `reprise-login-remote-nla` (logins with a Remote Desktop password) and
+  `reprise-login-check` (Remote Desktop password changes), the system user
+  `reprise-login-rdp` and the group `reprise-remote` (sysusers), and Linux
+  5.6 or later (`openat2`). The oldest kernel remote logins have run on is
+  7.2.7
+- For remote logins, the kernel's `tls` module (`CONFIG_TLS`): each
+  connection reaches the user's `reprise-rdp` in kernel TLS. The front's unit
+  loads it; without it a login passes its check and then fails to reach its
+  session, and the journal says the module isn't loaded
 - libudev, libinput 1.26 or later, libdrm, Mesa (GBM and the EGL and OpenGL ES
   drivers), libglvnd and libdisplay-info
 - libxkbcommon and xkeyboard-config, whose registry names the keyboard
@@ -250,7 +302,9 @@ desktop and stays out of the way when it's missing.
 
 **Security**
 
-- polkit, for the admin password prompt
+- polkit, for the admin password prompt, for saving Settings > Login Manager
+  (pkexec), and for the rule that keeps background sessions off the screen
+  under remote logins
 - gnome-keyring, for saved passwords and the Secret portal. The login
   manager's PAM file (SDDM's or `reprise-login`) unlocks it at login, and the
   lock screen's password unlocks it when it was left locked. Under
