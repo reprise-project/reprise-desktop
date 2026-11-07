@@ -8,7 +8,8 @@ use log::Level;
 use repriselogin::account::{AccountReply, AccountRequest};
 use repriselogin::front::{FrontEvent, FrontRequest};
 use repriselogin::greeter::{
-    ErrorKind, GreeterReply, GreeterRequest, Greeting, Keyboard, Notice, PowerAction, UserEntry,
+    ErrorKind, GreeterReply, GreeterRequest, Greeting, Keyboard, Note, Notice, PowerAction,
+    UserEntry,
 };
 use repriselogin::machine::MachineConfig;
 use repriselogin::session::SessionRequest;
@@ -295,6 +296,8 @@ struct Greeter {
     leaving: bool,
     /// The greeter is wanted again once the leaving one has gone.
     relaunch: bool,
+    /// The notes of its last Greeting; None before its Hello.
+    notes: Option<HashMap<String, Note>>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -391,7 +394,8 @@ pub struct Daemon {
     /// seat0's active session.
     removed_early: Vec<(String, Option<String>)>,
     notice: Option<Notice>,
-    /// The running greeter came forward: it gets a fresh Greeting once the input is handled.
+    /// The running greeter came forward or its notes changed: it gets a fresh Greeting once the
+    /// input is handled.
     regreet: bool,
     next_worker: u32,
     unlocks: u32,
@@ -661,6 +665,11 @@ impl Daemon {
         if !self.start_in_flight() && !self.remote_start_in_flight() {
             self.removed_early.clear();
         }
+        if (self.greeter.as_ref())
+            .is_some_and(|g| !g.leaving && g.notes.as_ref().is_some_and(|n| *n != self.notes()))
+        {
+            self.regreet = true;
+        }
         if std::mem::take(&mut self.regreet) {
             let greeting = self.greeting(world);
             out.push(Effect::Reply(GreeterReply::Greeting(greeting)));
@@ -786,6 +795,9 @@ impl Daemon {
     /// The configured interface, else the last one used; users capped to fit one frame.
     fn greeting(&mut self, world: &World) -> Greeting {
         let notes = self.notes();
+        if let Some(g) = self.greeter.as_mut() {
+            g.notes = Some(notes.clone());
+        }
         let mut greeting = Greeting {
             interface: (self.config.login.interface)
                 .or(self.remembered.last_interface)
@@ -1588,6 +1600,7 @@ impl Daemon {
             session: None,
             leaving: false,
             relaunch: false,
+            notes: None,
         });
     }
 }
