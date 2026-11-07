@@ -98,7 +98,9 @@ session on a VT of its own, from VT 7 up, through the user's login shell.
 users, and a user to log in automatically
 ([configuration](configuration.md#login-manager)).
 
-Ctrl+Alt+F2 reaches a text login on tty2 at any time, and reprise-login
+Ctrl+Alt+F1 brings the login screen back whenever none is showing, for
+another user to log in. Ctrl+Alt+F2 reaches a text login on tty2 at any
+time, and reprise-login
 switches to it when the login screen fails three times in a row. systemd
 restarts reprise-login itself when it exits, but starts it at most twice in
 30 s, manual restarts included. Past that it leaves it stopped and starts a

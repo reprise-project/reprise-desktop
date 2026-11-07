@@ -4,10 +4,9 @@
 use std::cell::Cell;
 use std::ffi::{CString, c_char, c_int};
 use std::fmt;
-use std::fs::OpenOptions;
 use std::io::{self, Read};
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -438,12 +437,7 @@ fn run_session(
     }
     let tty_path = format!("/dev/tty{vt}");
     // Held open for the session's life, so logind's autovt never starts a getty on it.
-    let tty = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .custom_flags(libc::O_NOCTTY | libc::O_CLOEXEC)
-        .open(&tty_path)
-        .map_err(|e| format!("{tty_path}: {e}"))?;
+    let tty = vt::hold(vt).map_err(|e| format!("{tty_path}: {e}"))?;
     vt::activate_and_wait(vt, &stopped).map_err(|e| format!("VT {vt}: {e}"))?;
     if stopped() {
         return Err("stopped".into());

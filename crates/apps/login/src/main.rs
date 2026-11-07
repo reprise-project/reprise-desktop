@@ -148,6 +148,12 @@ async fn run() -> Result<(), String> {
     let seat_active = logind.seat_active().await;
     // Registered before the first spawn, so no worker's exit goes unseen.
     follow_signals(events.clone()).map_err(|e| format!("signals: {e}"))?;
+    // Held for the daemon's life: with VT 1 busy, logind never starts autovt@tty1, which is
+    // getty@tty1 and would stop this unit through its Conflicts=.
+    let _greeter_vt = (vt::hold(GREETER_VT))
+        .map_err(|e| log::warn!("/dev/tty{GREETER_VT}: {e}"))
+        .ok();
+    follow_console(events.clone());
 
     let gate = Rc::new(RefCell::new(Gate::new(greeter.uid)));
     let mut rt = Runtime {
@@ -278,6 +284,24 @@ async fn follow_leader(id: String, logind: Logind, events: Events) {
             return;
         }
         tokio::time::sleep(LEADER_POLL).await;
+    }
+}
+
+/// Feeds `ConsoleOnGreeterVt` each time the console moves to VT 1, from a thread: the
+/// kernel wakes a `poll` on a sysfs attribute, which tokio's reactor does not wait on.
+fn follow_console(events: Events) {
+    let spawned = std::thread::Builder::new()
+        .name("console".into())
+        .spawn(move || {
+            let followed = vt::follow_active(|vt| {
+                vt != GREETER_VT || events.send(Event::Input(Input::ConsoleOnGreeterVt)).is_ok()
+            });
+            if let Err(e) = followed {
+                log::warn!("following the console's VT: {e}");
+            }
+        });
+    if let Err(e) = spawned {
+        log::warn!("no thread to follow the console's VT: {e}");
     }
 }
 
