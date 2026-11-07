@@ -360,6 +360,7 @@ impl Logon {
             Part::PowerMenu => Some(LogonAction::PowerMenu),
             Part::Layout => Some(LogonAction::NextLayout),
             Part::MessageOk => {
+                self.message = None;
                 self.screen = self.back;
                 self.focus = self.home();
                 None
@@ -484,7 +485,7 @@ impl Logon {
     }
 
     /// The login failed with `text`: the password is wiped, the name stays and the focus goes home.
-    /// Glass shows the text on its own screen, whose OK comes back here.
+    /// Glass shows the text on its own screen, whose OK comes back here without it.
     pub fn fail(&mut self, text: String) {
         self.wipe_password();
         self.prompt = None;
