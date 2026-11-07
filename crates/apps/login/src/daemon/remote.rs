@@ -93,7 +93,7 @@ pub(super) struct Remote {
     /// Start workers killed at `START_WAIT`, with their VTs, until they exit.
     stalled: HashMap<WorkerId, u16>,
     /// Clients connected to each uid's session; a uid with none has no entry.
-    viewers: HashMap<u32, u32>,
+    pub(super) viewers: HashMap<u32, u32>,
     /// Uids whose hand-over link is up.
     linked: HashSet<u32>,
     /// Uids whose lost link is reopening, until the new link first reports.
@@ -859,7 +859,14 @@ impl Daemon {
     }
 
     /// `world` is read fresh: a session the console does not show becomes a background one.
-    pub(super) fn forwarded(&mut self, world: &World, conn: u64, ok: bool, out: &mut Vec<Effect>) {
+    pub(super) fn forwarded(
+        &mut self,
+        now: Instant,
+        world: &World,
+        conn: u64,
+        ok: bool,
+        out: &mut Vec<Effect>,
+    ) {
         let Some(&Login {
             step: Step::Forwarding { uid },
             ..
@@ -869,7 +876,7 @@ impl Daemon {
         };
         let l = self.remote.logins.remove(&conn).expect("login");
         if ok {
-            return self.reached_remotely(world, uid, out);
+            return self.reached_remotely(now, world, uid, out);
         }
         out.push(Effect::Log(
             Level::Warn,
@@ -946,7 +953,7 @@ impl Daemon {
     }
 
     /// Records background session `id` as unviewed from `now` and arms its `Disconnected`
-    /// timer: when the session starts, is found or loses its last viewer.
+    /// timer: when the session starts, is found, is reached remotely or loses its last viewer.
     pub(super) fn arm_disconnected(&mut self, now: Instant, id: String, out: &mut Vec<Effect>) {
         let unviewed = Unviewed {
             since: now,
