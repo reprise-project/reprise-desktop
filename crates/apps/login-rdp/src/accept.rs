@@ -86,7 +86,6 @@ pub struct Pending {
     /// Plaintext read past the Client Info PDU.
     pub leftover: BytesMut,
     pub acceptor: Acceptor,
-    #[expect(dead_code, reason = "the hand-over reads the traffic secrets")]
     pub key_log: Arc<ConnKeyLog>,
 }
 
@@ -173,10 +172,6 @@ pub struct ConnKeyLog {
     server: Mutex<Option<Zeroizing<Vec<u8>>>>,
 }
 
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the hand-over reads the traffic secrets")
-)]
 impl ConnKeyLog {
     pub fn client_secret(&self) -> Option<Zeroizing<Vec<u8>>> {
         self.client
@@ -248,7 +243,6 @@ impl<S> Limited<S> {
         }
     }
 
-    #[expect(dead_code, reason = "the hand-over takes the socket out")]
     pub fn into_inner(self) -> S {
         self.inner
     }
