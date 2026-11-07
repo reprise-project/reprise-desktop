@@ -649,8 +649,9 @@ impl Daemon {
                     format!("session {session_id} opened after its start timed out; ending it"),
                 ));
                 out.push(Effect::TerminateSession(session_id));
-                // Its worker activated `vt` before opening the session.
-                if vt != GREETER_VT {
+                // Its worker activated `vt` before opening the session; a start under way
+                // has the console now.
+                if vt != GREETER_VT && !self.start_in_flight() {
                     self.bring_greeter(out);
                 }
             }
