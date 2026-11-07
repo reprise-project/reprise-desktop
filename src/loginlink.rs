@@ -539,6 +539,15 @@ mod tests {
     }
 
     #[test]
+    fn a_session_born_in_the_background_after_a_locked_log_off_is_saved_locked() {
+        let (mut h, _theirs) = linked();
+        h.state.session.was_locked = true;
+        crate::crash::on_start(&mut h.state, false, false, false);
+        assert!(h.state.console_locked());
+        assert_eq!(crate::state::SCREEN_LOCKED.get(), Some(true));
+    }
+
+    #[test]
     fn without_reprise_login_an_inactive_start_locks_nothing() {
         let mut h = Harness::new();
         h.output("TEST-1", 1024, 768);
