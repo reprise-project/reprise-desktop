@@ -10,6 +10,7 @@ members = [
     "crates/repriseconf",
     "crates/repriseaudio",
     "crates/repriselogin",
+    "crates/reprisetls",
     "crates/reprisescene",
     "crates/reprisefx",
     "crates/apps/notepad",
@@ -39,6 +40,7 @@ members = [
     "crates/apps/taskmgr",
     "crates/apps/rdp",
     "crates/apps/login",
+    "crates/apps/login-rdp",
     "crates/apps/reprise-apps",
     "crates/portal",
 ]
@@ -53,6 +55,7 @@ repository = "https://github.com/reprise-project/reprise-desktop"
 [workspace.dependencies]
 accesskit_unix = "0.24"
 async-channel = "2"
+aws-lc-rs = "1.19.0"
 blocking = "1"
 env_logger = "0.11"
 futures-lite = "2"
@@ -66,8 +69,11 @@ inotify = { version = "0.11", default-features = false }
 # that cannot start, the client's monitors in the Monitor Layout PDU, a
 # connection handler choosing the desktop size from them, and the client's
 # extended monitor data in `ConnectionInfo`.
+ironrdp-acceptor = { git = "https://github.com/reprise-project/IronRDP.git", rev = "3ef780c076e0c5b3e6e6aac33deeadfd4317a160" }
 ironrdp-ainput = { git = "https://github.com/reprise-project/IronRDP.git", rev = "3ef780c076e0c5b3e6e6aac33deeadfd4317a160" }
+ironrdp-async = { git = "https://github.com/reprise-project/IronRDP.git", rev = "3ef780c076e0c5b3e6e6aac33deeadfd4317a160" }
 ironrdp-cliprdr = { git = "https://github.com/reprise-project/IronRDP.git", rev = "3ef780c076e0c5b3e6e6aac33deeadfd4317a160" }
+ironrdp-connector = { git = "https://github.com/reprise-project/IronRDP.git", rev = "3ef780c076e0c5b3e6e6aac33deeadfd4317a160" }
 ironrdp-core = { git = "https://github.com/reprise-project/IronRDP.git", rev = "3ef780c076e0c5b3e6e6aac33deeadfd4317a160" }
 ironrdp-displaycontrol = { git = "https://github.com/reprise-project/IronRDP.git", rev = "3ef780c076e0c5b3e6e6aac33deeadfd4317a160" }
 ironrdp-dvc = { git = "https://github.com/reprise-project/IronRDP.git", rev = "3ef780c076e0c5b3e6e6aac33deeadfd4317a160" }
@@ -77,12 +83,14 @@ ironrdp-pdu = { git = "https://github.com/reprise-project/IronRDP.git", rev = "3
 ironrdp-rdpsnd = { git = "https://github.com/reprise-project/IronRDP.git", rev = "3ef780c076e0c5b3e6e6aac33deeadfd4317a160" }
 ironrdp-server = { git = "https://github.com/reprise-project/IronRDP.git", rev = "3ef780c076e0c5b3e6e6aac33deeadfd4317a160", features = ["egfx"] }
 ironrdp-svc = { git = "https://github.com/reprise-project/IronRDP.git", rev = "3ef780c076e0c5b3e6e6aac33deeadfd4317a160" }
+ironrdp-tokio = { git = "https://github.com/reprise-project/IronRDP.git", rev = "3ef780c076e0c5b3e6e6aac33deeadfd4317a160" }
 libc = "0.2"
 log = "0.4"
 md4 = { version = "0.11", default-features = false }
 pipewire = "0.10"
 png = "0.18"
 rcgen = { version = "0.14", default-features = false, features = ["aws_lc_rs", "pem"] }
+rustls = "0.23.46"
 serde = "1"
 serde_json = "1"
 # Pinned to a commit on our fork: upstream master (far ahead of the last
@@ -97,6 +105,7 @@ smithay = { git = "https://github.com/reprise-project/smithay.git", rev = "36918
 smithay-drm-extras = { git = "https://github.com/reprise-project/smithay.git", rev = "36918c686619b6b3bef549b8e2ed37bf4fc84769" }
 tempfile = "3"
 tokio = "1"
+tokio-rustls = "0.26.6"
 toml = "1"
 toml_edit = "0.25"
 wayland-client = "0.31"

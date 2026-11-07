@@ -1,0 +1,6 @@
+[Unit]
+Description=Reprise Remote Desktop server for connections the login manager hands over
+
+[Service]
+ExecStart=/usr/bin/reprise-rdp --hand-over
+Restart=on-failure

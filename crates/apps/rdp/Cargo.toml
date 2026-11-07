@@ -30,7 +30,6 @@ ironrdp-graphics.workspace = true
 ironrdp-cliprdr.workspace = true
 ironrdp-rdpsnd.workspace = true
 tokio = { workspace = true, features = ["rt", "net", "time", "macros", "io-util", "sync", "signal"] }
-tokio-rustls = "0.26"
 pipewire = { workspace = true, features = ["v0_3_33"] }
 zbus.workspace = true
 zruntime.workspace = true
@@ -39,10 +38,7 @@ libc.workspace = true
 reis = { version = "0.7", default-features = false }
 bytes = "1"
 serde = { workspace = true, features = ["derive"] }
-rcgen.workspace = true
 async-trait = "0.1"
-sha2 = "0.11"
-socket2 = { version = "0.6", features = ["all"] }
 log.workspace = true
 zeroize.workspace = true
 ffmpeg = { package = "ffmpeg-the-third", version = "6", default-features = false, features = ["codec", "filter", "format", "software-scaling"] }
@@ -54,6 +50,7 @@ wayland-client.workspace = true
 wayland-protocols = { version = "0.32", features = ["client", "staging"] }
 reprisefs = { path = "../../reprisefs" }
 repriselogin = { path = "../../repriselogin" }
+reprisetls = { path = "../../reprisetls" }
 image.workspace = true
 
 [dev-dependencies]
