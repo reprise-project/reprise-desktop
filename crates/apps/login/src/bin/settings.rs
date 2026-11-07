@@ -1,0 +1,81 @@
+//! `pkexec reprise-login-settings`: reads the whole machine settings file as TOML on stdin and
+//! replaces `MACHINE_CONFIG` with it. Exit 0 is applied, 2 is refused with one reason per line on
+//! stderr, 1 is any other failure.
+
+use std::ffi::CString;
+use std::io::Read as _;
+use std::path::Path;
+use std::process::{Command, ExitCode};
+
+use reprise_login::machinewrite::{self, MAX_INPUT};
+use repriselogin::machine::MACHINE_CONFIG;
+
+const UNIT: &str = "reprise-login.service";
+
+fn main() -> ExitCode {
+    // SAFETY: geteuid has no preconditions.
+    if unsafe { libc::geteuid() } != 0 {
+        eprintln!("reprise-login-settings runs as root, through pkexec");
+        return ExitCode::from(1);
+    }
+    let mut input = Vec::new();
+    if let Err(e) = std::io::stdin()
+        .take(MAX_INPUT as u64 + 1)
+        .read_to_end(&mut input)
+    {
+        eprintln!("reading the settings: {e}");
+        return ExitCode::from(1);
+    }
+    if input.len() > MAX_INPUT {
+        eprintln!("the settings are too long");
+        return ExitCode::from(2);
+    }
+    let Ok(input) = String::from_utf8(input) else {
+        eprintln!("the settings are not UTF-8");
+        return ExitCode::from(2);
+    };
+    if let Err(warnings) = machinewrite::apply(&input, Path::new(MACHINE_CONFIG)) {
+        for w in warnings {
+            eprintln!("{}", machinewrite::one_line(&w));
+        }
+        return ExitCode::from(2);
+    }
+    let who = match std::env::var("PKEXEC_UID") {
+        Ok(uid) => format!("uid {uid}"),
+        Err(_) => "root, without pkexec,".into(),
+    };
+    journal(&format!(
+        "{who} changed the machine settings in {MACHINE_CONFIG}"
+    ));
+    if active() {
+        match Command::new("systemctl").args(["reload", UNIT]).status() {
+            Ok(s) if s.success() => {}
+            Ok(s) => eprintln!("warning: systemctl reload {UNIT}: {s}"),
+            Err(e) => eprintln!("warning: systemctl reload {UNIT}: {e}"),
+        }
+    }
+    ExitCode::SUCCESS
+}
+
+fn active() -> bool {
+    Command::new("systemctl")
+        .args(["is-active", "--quiet", UNIT])
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
+/// Logs `msg` through syslog, since stderr belongs to the caller under pkexec.
+fn journal(msg: &str) {
+    let Ok(msg) = CString::new(msg) else {
+        return;
+    };
+    // SAFETY: both strings are NUL-terminated, the ident is static, and "%s" takes one string.
+    unsafe {
+        libc::openlog(
+            c"reprise-login-settings".as_ptr(),
+            libc::LOG_PID,
+            libc::LOG_AUTHPRIV,
+        );
+        libc::syslog(libc::LOG_NOTICE, c"%s".as_ptr(), msg.as_ptr());
+    }
+}

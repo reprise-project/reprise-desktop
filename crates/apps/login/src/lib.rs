@@ -3,6 +3,7 @@ pub mod daemon;
 pub mod greeterruns;
 pub mod ipc;
 pub mod logind;
+pub mod machinewrite;
 pub mod pam;
 pub mod pidfd;
 pub mod remembered;
