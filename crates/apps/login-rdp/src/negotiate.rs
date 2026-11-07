@@ -4,7 +4,7 @@
 use ironrdp_pdu::nego::{ConnectionRequest, NegoRequestData, SecurityProtocol};
 use ironrdp_pdu::x224::X224;
 
-/// Characters of the user name mstsc keeps in its cookie.
+/// Characters of the user name a client may keep in its cookie.
 const COOKIE_CHARS: usize = 9;
 
 /// The protocols the client offers and the user its `Cookie: mstshash=` names, without a
