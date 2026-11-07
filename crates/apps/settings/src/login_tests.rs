@@ -355,6 +355,19 @@ fn cancel_or_a_close_during_a_save_closes_when_it_ends_saved_or_not() {
 }
 
 #[test]
+fn a_save_shows_the_fingerprint_the_front_wrote_since() {
+    let dir = tmp("fingerprint-after");
+    let mut a = app(&dir);
+    a.login_run = helper_saves;
+    open_login(&mut a);
+    assert_eq!(login(&a).edit_text("login_fingerprint"), "Not running");
+    std::fs::write(dir.join("fingerprint"), "3F:9A:01\n").unwrap();
+    apply_glass(&mut a);
+    a.wake();
+    assert_eq!(login(&a).edit_text("login_fingerprint"), "3F:9A:01");
+}
+
+#[test]
 fn a_close_after_a_save_remembers_the_window() {
     let dir = tmp("close-geometry");
     let mut a = app(&dir);
