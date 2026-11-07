@@ -4476,6 +4476,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "reprise-login"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "log",
+ "repriselogin",
+ "serde",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
 name = "reprise-network"
 version = "0.1.0"
 dependencies = [

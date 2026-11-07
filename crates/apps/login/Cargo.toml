@@ -1,0 +1,26 @@
+[package]
+name = "reprise-login"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+description = "Reprise's login manager: shows the login screen on the console and starts each user's Reprise session"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "reprise-login"
+path = "src/main.rs"
+
+[dependencies]
+repriselogin = { path = "../../repriselogin" }
+serde = { workspace = true, features = ["derive"] }
+toml.workspace = true
+log.workspace = true
+libc.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
