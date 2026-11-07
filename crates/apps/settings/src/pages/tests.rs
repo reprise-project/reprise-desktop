@@ -180,7 +180,7 @@ fn every_dialog_fits_its_text_under_every_interface() {
             crate::rdpassworddlg::Purpose::Set,
             crate::rdpassworddlg::Purpose::Clear,
         ] {
-            let mut d = crate::rdpassworddlg::RdPasswordDialog::new(p);
+            let mut d = crate::rdpassworddlg::RdPasswordDialog::new(p, 1);
             d.refused(repriselogin::account::AccountRefusal::SameAsLogin);
             forms.push((d.title().into(), d.form));
         }
@@ -199,7 +199,7 @@ fn the_remote_desktop_password_dialogs_pin_their_pixels_in_every_look() {
     use crate::rdpassworddlg::{self, Purpose, RdPasswordDialog};
     let mut got = Vec::new();
     for p in [Purpose::Set, Purpose::Clear] {
-        let mut d = RdPasswordDialog::new(p);
+        let mut d = RdPasswordDialog::new(p, 1);
         let (w, h) = d.client();
         let whole = Rect::new(0, 0, w, h);
         got.push(row_pins(&d.form, whole));

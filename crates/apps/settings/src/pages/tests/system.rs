@@ -1638,7 +1638,7 @@ fn the_remote_desktop_page_under_the_login_manager_pins_its_pixels_in_every_look
     let unknown = row_pins(&page, row);
     let mut got = vec![unknown];
     for set in [false, true] {
-        show_rd_password(&mut page, Some(set));
+        show_rd_password(&mut page, Some(set), false);
         got.push(row_pins(&page, row));
     }
     assert_eq!(
