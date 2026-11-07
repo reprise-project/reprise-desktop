@@ -4,6 +4,7 @@
 use std::cell::Cell;
 use std::ffi::{CString, c_char, c_int};
 use std::fmt;
+use std::fs::File;
 use std::io::{self, Read};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
@@ -90,9 +91,18 @@ impl Mode {
         }
     }
 
-    /// Greeter and autologin stacks have no prompting module, so only these relay prompts.
+    /// The greeter, autologin and NLA stacks have no prompting module, so only these relay
+    /// prompts.
     fn relays_prompts(self) -> bool {
-        matches!(self, Mode::Login | Mode::Reauth)
+        matches!(
+            self,
+            Mode::Login | Mode::Reauth | Mode::Remote | Mode::Check
+        )
+    }
+
+    /// Whether the worker waits for `Start` after `Authenticated` and opens a session.
+    fn opens_session(self) -> bool {
+        !matches!(self, Mode::Reauth | Mode::Check)
     }
 }
 
@@ -134,7 +144,7 @@ impl fmt::Debug for ToWorker {
 }
 
 /// The worker to the daemon. The worker's exit status is 0 only when its session ended
-/// with 0, or when a `Reauth` succeeded.
+/// with 0, or when a `Reauth` or `Check` succeeded.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum FromWorker {
@@ -166,10 +176,6 @@ pub struct SocketConverse {
 }
 
 impl SocketConverse {
-    pub fn new(sock: UnixStream) -> SocketConverse {
-        SocketConverse::stoppable(sock, &STOP)
-    }
-
     fn stoppable(sock: UnixStream, stop: &'static AtomicBool) -> SocketConverse {
         SocketConverse {
             sock,
@@ -210,14 +216,20 @@ impl Converse for SocketConverse {
     }
 }
 
-/// The conversation of the greeter and autologin stacks: prompts are refused and text is logged.
-struct Unattended;
+/// The conversation of the stacks with no prompting module: prompts are refused, which sets
+/// `refused`, and text is logged.
+struct Unattended {
+    refused: Rc<Cell<bool>>,
+}
 
 impl Converse for Unattended {
     fn prompt(&mut self, kind: AuthKind, text: &str) -> Option<Zeroizing<String>> {
         match kind {
             AuthKind::Info | AuthKind::Error => log::info!("pam: {text}"),
-            AuthKind::Visible | AuthKind::Secret => log::warn!("pam: refused prompt {text:?}"),
+            AuthKind::Visible | AuthKind::Secret => {
+                log::warn!("pam: refused prompt {text:?}");
+                self.refused.set(true);
+            }
         }
         None
     }
@@ -236,6 +248,8 @@ const STOP_POLL: Duration = Duration::from_millis(200);
 /// The one text the daemon gets for any `pam_authenticate` failure, so an unknown user and
 /// a wrong password look the same.
 pub const AUTH_FAILED: &str = "The user name or password is incorrect.";
+/// The text of a login whose stack asked an unattended conversation for input.
+const REFUSED_PROMPT: &str = "the PAM stack asked for input this login cannot give";
 
 /// The session's whole environment: the account's variables, then the PAM environment, whose
 /// value wins on a clash. Nothing comes from the worker's own environment.
@@ -330,78 +344,133 @@ pub fn worker_main(mode: Mode, mut sock: UnixStream) -> i32 {
         log::error!("worker: socket timeout: {e}");
         return 1;
     }
-    let (user, autologin_user, greeter_socket) = match read_until_stopped::<ToWorker>(&sock, &STOP)
-    {
+    match login(
+        mode,
+        &mut sock,
+        &STOP,
+        Pam::start,
+        users::lookup,
+        &mut Console,
+    ) {
+        Login::Done(status) => status,
+        Login::Opened(session) => run_session(session, mode, &mut sock),
+    }
+}
+
+/// How `login` ends: with the worker's exit status, or with a session open for `run_session`.
+enum Login<P, H> {
+    Done(i32),
+    Opened(Opened<P, H>),
+}
+
+struct Opened<P, H> {
+    pam: P,
+    account: PasswdEntry,
+    greeter_socket: bool,
+    vt: u16,
+    /// Held open for the session's life, so logind's autovt never starts a getty on it.
+    tty: H,
+    groups: Vec<libc::gid_t>,
+}
+
+/// Everything from `Begin` to `pam_open_session`, with libpam, passwd and the VTs passed in.
+fn login<P: LoginPam, V: Vts>(
+    mode: Mode,
+    sock: &mut UnixStream,
+    stop: &'static AtomicBool,
+    start: impl FnOnce(&str, &str, Box<dyn Converse>) -> Result<P, PamError>,
+    lookup: impl FnOnce(&str) -> io::Result<Option<PasswdEntry>>,
+    vts: &mut V,
+) -> Login<P, V::Held> {
+    let stopped = || stop.load(Ordering::Relaxed);
+    let (user, autologin_user, greeter_socket, rhost) = match read_until_stopped(sock, stop) {
         Ok(ToWorker::Begin {
             user,
             autologin_user,
             greeter_socket,
-            ..
-        }) => (user, autologin_user, greeter_socket),
-        Ok(_) => return fail(&mut sock, ErrorKind::Failed, "the first frame is not Begin"),
-        Err(_) => return 1,
+            rhost,
+        }) => (user, autologin_user, greeter_socket, rhost),
+        Ok(_) => {
+            return Login::Done(fail(
+                sock,
+                ErrorKind::Failed,
+                "the first frame is not Begin",
+            ));
+        }
+        Err(_) => return Login::Done(1),
     };
-    let user = user.as_str();
-    if !mode.runs_for(user, autologin_user.as_deref()) {
+    if !mode.runs_for(&user, autologin_user.as_deref()) {
         let text = format!("a {} worker does not run for {user}", mode.as_arg());
-        return fail(&mut sock, ErrorKind::Refused, &text);
+        return Login::Done(fail(sock, ErrorKind::Refused, &text));
     }
     let mut ended = None;
+    let refused = Rc::new(Cell::new(false));
     let conv: Box<dyn Converse> = if mode.relays_prompts() {
         let Ok(clone) = sock.try_clone() else {
             log::error!("worker: cannot clone the socket");
-            return 1;
+            return Login::Done(1);
         };
-        let c = SocketConverse::new(clone);
+        let c = SocketConverse::stoppable(clone, stop);
         ended = Some(c.ended());
         Box::new(c)
     } else {
-        Box::new(Unattended)
+        Box::new(Unattended {
+            refused: refused.clone(),
+        })
     };
     let cancelled = || stopped() || ended.as_ref().is_some_and(|e| e.get());
 
-    let mut pam = match Pam::start(mode.service(), user, conv) {
+    let mut pam = match start(mode.service(), &user, conv) {
         Ok(pam) => pam,
-        Err(e) => return fail(&mut sock, ErrorKind::Failed, &e.to_string()),
+        Err(e) => return Login::Done(fail(sock, ErrorKind::Failed, &e.to_string())),
     };
-    let refused = refusal(pam.authenticate(), || pam.account());
+    let checked = check(&mut pam, rhost.as_deref());
     if cancelled() {
-        return 1;
+        return Login::Done(1);
     }
     // The entered name stays out of the log: it may be a password typed into the name field.
-    if let Some((e, kind, text)) = refused {
+    if let Err((e, kind, text)) = checked {
         log::warn!("worker: login refused: {e}");
-        return fail(&mut sock, kind, &text);
+        return Login::Done(match refused.get() {
+            true => fail(sock, ErrorKind::Refused, REFUSED_PROMPT),
+            false => fail(sock, kind, &text),
+        });
     }
-    let account = match account_of(pam.user(), users::lookup) {
+    let account = match account_of(pam.user(), lookup) {
         Ok(account) => account,
-        Err(text) => return fail(&mut sock, ErrorKind::Failed, &text),
+        Err(text) => return Login::Done(fail(sock, ErrorKind::Failed, &text)),
     };
     let authenticated = FromWorker::Authenticated {
         user: account.name.clone(),
         uid: account.uid,
     };
-    if write_msg(&mut sock, &authenticated).is_err() {
-        return 1;
+    if write_msg(sock, &authenticated).is_err() {
+        return Login::Done(1);
     }
-    if mode == Mode::Reauth {
-        return 0;
+    if !mode.opens_session() {
+        return Login::Done(0);
     }
-    let vt = match read_until_stopped::<ToWorker>(&sock, &STOP) {
-        Ok(ToWorker::Start { vt, .. }) if (1..=vt::LAST_VT).contains(&vt) => vt,
-        Ok(ToWorker::Start { vt, .. }) => {
-            return fail(
-                &mut sock,
-                ErrorKind::Failed,
-                &format!("VT {vt} is out of range"),
-            );
+    let (vt, background) = match read_until_stopped(sock, stop) {
+        Ok(ToWorker::Start { vt, background }) if (1..=vt::LAST_VT).contains(&vt) => {
+            (vt, background)
         }
-        _ => return 1,
+        Ok(ToWorker::Start { vt, .. }) => {
+            let text = format!("VT {vt} is out of range");
+            return Login::Done(fail(sock, ErrorKind::Failed, &text));
+        }
+        _ => return Login::Done(1),
     };
-    match run_session(&mut pam, mode, &account, greeter_socket, vt, &mut sock) {
-        Ok(clean) => i32::from(!clean),
-        Err(_) if stopped() => 1,
-        Err(text) => fail(&mut sock, ErrorKind::Failed, &text),
+    match open(&mut pam, vts, mode, &account, vt, background, &stopped) {
+        Ok((tty, groups)) => Login::Opened(Opened {
+            pam,
+            account,
+            greeter_socket,
+            vt,
+            tty,
+            groups,
+        }),
+        Err(_) if stopped() => Login::Done(1),
+        Err(text) => Login::Done(fail(sock, ErrorKind::Failed, &text)),
     }
 }
 
@@ -409,6 +478,28 @@ pub fn worker_main(mode: Mode, mut sock: UnixStream) -> i32 {
 fn prepare_socket(sock: &UnixStream) -> io::Result<()> {
     sock.set_read_timeout(Some(STOP_POLL))?;
     sock.set_write_timeout(Some(WRITE_WAIT))
+}
+
+/// `pam_authenticate` and the account step. A remote login's `PAM_RHOST` is set for both, so
+/// the auth log names the address, and cleared after, so logind opens a local seat0 session.
+fn check(
+    pam: &mut impl LoginPam,
+    rhost: Option<&str>,
+) -> Result<(), (PamError, ErrorKind, String)> {
+    let failed = |e: PamError| {
+        let text = e.to_string();
+        (e, ErrorKind::Failed, text)
+    };
+    if rhost.is_some() {
+        pam.set_item_rhost(rhost).map_err(failed)?;
+    }
+    if let Some(refused) = refusal(pam.authenticate(), || pam.account()) {
+        return Err(refused);
+    }
+    if rhost.is_some() {
+        pam.set_item_rhost(None).map_err(failed)?;
+    }
+    Ok(())
 }
 
 /// Why the login stops before its session: a failed password gets the fixed text, and an account
@@ -454,16 +545,17 @@ fn fail(sock: &mut UnixStream, kind: ErrorKind, text: &str) -> i32 {
     1
 }
 
-/// Opens the session on `vt`, runs its program to the end and closes it again. `Ok` says
-/// whether the program exited with 0.
-fn run_session(
-    pam: &mut Pam,
+/// Opens the session on `vt`: its tty and environment, the VT held and, unless `background`,
+/// shown, then the credentials and `pam_open_session`.
+fn open<V: Vts>(
+    pam: &mut impl LoginPam,
+    vts: &mut V,
     mode: Mode,
     account: &PasswdEntry,
-    greeter_socket: bool,
     vt: u16,
-    sock: &mut UnixStream,
-) -> Result<bool, String> {
+    background: bool,
+    stopped: &dyn Fn() -> bool,
+) -> Result<(V::Held, Vec<libc::gid_t>), String> {
     let pam_err = |e: PamError| e.to_string();
     pam.set_tty(&format!("tty{vt}")).map_err(pam_err)?;
     let class = if mode == Mode::Greeter {
@@ -487,27 +579,55 @@ fn run_session(
             pam.putenv(&key, &value).map_err(pam_err)?;
         }
     }
-    let tty_path = format!("/dev/tty{vt}");
-    // Held open for the session's life, so logind's autovt never starts a getty on it.
-    let tty = vt::hold(vt).map_err(|e| format!("{tty_path}: {e}"))?;
-    vt::activate_and_wait(vt, &stopped).map_err(|e| format!("VT {vt}: {e}"))?;
+    let tty = vts.hold(vt).map_err(|e| format!("/dev/tty{vt}: {e}"))?;
+    if !background {
+        vts.activate_and_wait(vt, stopped)
+            .map_err(|e| format!("VT {vt}: {e}"))?;
+    }
     if stopped() {
         return Err("stopped".into());
     }
     let name = CString::new(account.name.as_str()).map_err(|_| "the user name holds a NUL byte")?;
-    let groups = establish_creds(&mut WorkerCreds(pam), &group_list(&name, account.gid)?)?;
+    let groups = establish_creds(pam, &group_list(&name, account.gid)?)?;
     if let Err(e) = pam.open_session() {
         let _ = pam.delete_cred();
         return Err(e.to_string());
     }
-    let clean = run_program(pam, mode, account, greeter_socket, &tty_path, groups, sock);
+    Ok((tty, groups))
+}
+
+/// Runs the opened session's program to the end and closes the session again. The status is 0
+/// only when the program exited with 0.
+fn run_session(session: Opened<Pam, File>, mode: Mode, sock: &mut UnixStream) -> i32 {
+    let Opened {
+        mut pam,
+        account,
+        greeter_socket,
+        vt,
+        tty,
+        groups,
+    } = session;
+    let tty_path = format!("/dev/tty{vt}");
+    let ran = run_program(
+        &mut pam,
+        mode,
+        &account,
+        greeter_socket,
+        &tty_path,
+        groups,
+        sock,
+    );
     let closed = pam.close_session();
-    let deleted = pam.delete_cred();
+    let deleted = Pam::delete_cred(&mut pam);
     drop(tty);
     for e in [closed.err(), deleted.err()].into_iter().flatten() {
         log::warn!("worker: closing {}'s session: {e}", account.name);
     }
-    clean
+    match ran {
+        Ok(clean) => i32::from(!clean),
+        Err(_) if stopped() => 1,
+        Err(text) => fail(sock, ErrorKind::Failed, &text),
+    }
 }
 
 /// Forks the session's program in the open session and waits for it.
@@ -586,9 +706,7 @@ fn establish_creds(
     })
 }
 
-struct WorkerCreds<'a>(&'a mut Pam);
-
-impl Creds for WorkerCreds<'_> {
+impl Creds for Pam {
     fn set_groups(&mut self, groups: &[libc::gid_t]) -> io::Result<()> {
         // SAFETY: `groups` holds `groups.len()` entries.
         match unsafe { libc::setgroups(groups.len(), groups.as_ptr()) } {
@@ -598,11 +716,11 @@ impl Creds for WorkerCreds<'_> {
     }
 
     fn establish_cred(&mut self) -> Result<(), PamError> {
-        self.0.establish_cred()
+        Pam::establish_cred(self)
     }
 
     fn delete_cred(&mut self) -> Result<(), PamError> {
-        self.0.delete_cred()
+        Pam::delete_cred(self)
     }
 
     fn groups(&self) -> io::Result<Vec<libc::gid_t>> {
@@ -620,6 +738,70 @@ impl Creds for WorkerCreds<'_> {
             groups.truncate(n as usize);
             Ok(groups)
         }
+    }
+}
+
+/// The PAM calls of a login, apart so their order is testable without libpam.
+trait LoginPam: Creds {
+    fn set_item_rhost(&mut self, rhost: Option<&str>) -> Result<(), PamError>;
+    fn authenticate(&mut self) -> Result<(), PamError>;
+    /// `pam_acct_mgmt`, changing an expired password through the conversation.
+    fn account(&mut self) -> Result<(), PamError>;
+    fn user(&self) -> Option<String>;
+    fn set_tty(&mut self, tty: &str) -> Result<(), PamError>;
+    fn putenv(&mut self, key: &str, value: &str) -> Result<(), PamError>;
+    fn open_session(&mut self) -> Result<(), PamError>;
+}
+
+impl LoginPam for Pam {
+    fn set_item_rhost(&mut self, rhost: Option<&str>) -> Result<(), PamError> {
+        Pam::set_item_rhost(self, rhost)
+    }
+
+    fn authenticate(&mut self) -> Result<(), PamError> {
+        Pam::authenticate(self)
+    }
+
+    fn account(&mut self) -> Result<(), PamError> {
+        Pam::account(self)
+    }
+
+    fn user(&self) -> Option<String> {
+        Pam::user(self)
+    }
+
+    fn set_tty(&mut self, tty: &str) -> Result<(), PamError> {
+        Pam::set_tty(self, tty)
+    }
+
+    fn putenv(&mut self, key: &str, value: &str) -> Result<(), PamError> {
+        Pam::putenv(self, key, value)
+    }
+
+    fn open_session(&mut self) -> Result<(), PamError> {
+        Pam::open_session(self)
+    }
+}
+
+/// The VT calls of a session start, apart so a background start is testable.
+trait Vts {
+    type Held;
+    fn hold(&mut self, vt: u16) -> io::Result<Self::Held>;
+    fn activate_and_wait(&mut self, vt: u16, stop: &dyn Fn() -> bool) -> io::Result<()>;
+}
+
+/// The kernel's VTs, through `vt`.
+struct Console;
+
+impl Vts for Console {
+    type Held = File;
+
+    fn hold(&mut self, vt: u16) -> io::Result<File> {
+        vt::hold(vt)
+    }
+
+    fn activate_and_wait(&mut self, vt: u16, stop: &dyn Fn() -> bool) -> io::Result<()> {
+        vt::activate_and_wait(vt, stop)
     }
 }
 
@@ -1455,5 +1637,312 @@ mod tests {
         prepare_socket(&worker).unwrap();
         assert_eq!(worker.read_timeout().unwrap(), Some(STOP_POLL));
         assert_eq!(worker.write_timeout().unwrap(), Some(WRITE_WAIT));
+    }
+
+    #[test]
+    fn the_remote_stacks_refuse_root_and_skip_faillock() {
+        let remote = include_str!("../../../../data/pam.d/reprise-login-remote");
+        let root = auth_line(remote, "pam_succeed_if.so quiet_success uid ne 0");
+        let shells = auth_line(remote, "pam_shells.so");
+        let unix = auth_line(remote, "pam_unix.so");
+        assert!(root.is_some() && root < shells && shells < unix, "{remote}");
+        let unix = remote.lines().nth(unix.unwrap()).unwrap();
+        assert!(unix.ends_with("pam_unix.so nodelay"), "{unix}");
+        let faillock = (remote.lines()).any(|l| !l.starts_with('#') && l.contains("pam_faillock"));
+        assert!(!faillock, "{remote}");
+
+        let nla = include_str!("../../../../data/pam.d/reprise-login-remote-nla");
+        let uid = auth_line(nla, "pam_succeed_if.so uid >= 1000");
+        let shells = auth_line(nla, "pam_shells.so");
+        assert!(uid.is_some() && uid < shells, "{nla}");
+        assert!(shells < auth_line(nla, "pam_permit.so"), "{nla}");
+
+        let check = include_str!("../../../../data/pam.d/reprise-login-check");
+        let stack: Vec<Vec<&str>> = (check.lines())
+            .filter(|l| !l.starts_with('#'))
+            .map(|l| l.split_whitespace().collect())
+            .collect();
+        assert_eq!(
+            stack,
+            [
+                ["auth", "include", "system-auth"],
+                ["account", "include", "system-auth"]
+            ]
+        );
+    }
+
+    type Calls = Rc<std::cell::RefCell<Vec<String>>>;
+
+    /// A PAM transaction that records its calls; `authenticate` asks `prompt` first if set.
+    struct FakePam {
+        calls: Calls,
+        conv: Box<dyn Converse>,
+        prompt: Option<(AuthKind, &'static str)>,
+        env: Vec<(String, String)>,
+        groups: Vec<libc::gid_t>,
+    }
+
+    impl FakePam {
+        fn call(&self, call: impl Into<String>) -> Result<(), PamError> {
+            self.calls.borrow_mut().push(call.into());
+            Ok(())
+        }
+    }
+
+    impl Creds for FakePam {
+        fn set_groups(&mut self, groups: &[libc::gid_t]) -> std::io::Result<()> {
+            self.groups = groups.to_vec();
+            Ok(())
+        }
+
+        fn establish_cred(&mut self) -> Result<(), PamError> {
+            self.call("setcred")
+        }
+
+        fn groups(&self) -> std::io::Result<Vec<libc::gid_t>> {
+            Ok(self.groups.clone())
+        }
+
+        fn delete_cred(&mut self) -> Result<(), PamError> {
+            self.call("delete_cred")
+        }
+    }
+
+    impl LoginPam for FakePam {
+        fn set_item_rhost(&mut self, rhost: Option<&str>) -> Result<(), PamError> {
+            self.call(format!("set_item_rhost({rhost:?})"))
+        }
+
+        fn authenticate(&mut self) -> Result<(), PamError> {
+            self.call("authenticate")?;
+            if let Some((kind, text)) = self.prompt
+                && self.conv.prompt(kind, text).is_none()
+            {
+                return Err(PamError {
+                    code: crate::pam::ffi::PAM_CONV_ERR,
+                    text: "Conversation error".into(),
+                });
+            }
+            Ok(())
+        }
+
+        fn account(&mut self) -> Result<(), PamError> {
+            self.call("acct_mgmt")
+        }
+
+        fn user(&self) -> Option<String> {
+            Some("anna".into())
+        }
+
+        fn set_tty(&mut self, tty: &str) -> Result<(), PamError> {
+            self.env.push(("PAM_TTY".into(), tty.into()));
+            Ok(())
+        }
+
+        fn putenv(&mut self, key: &str, value: &str) -> Result<(), PamError> {
+            self.env.push((key.into(), value.into()));
+            Ok(())
+        }
+
+        fn open_session(&mut self) -> Result<(), PamError> {
+            self.call("open_session")
+        }
+    }
+
+    #[derive(Default)]
+    struct FakeVts(Vec<String>);
+
+    impl Vts for FakeVts {
+        type Held = ();
+
+        fn hold(&mut self, vt: u16) -> std::io::Result<()> {
+            self.0.push(format!("hold({vt})"));
+            Ok(())
+        }
+
+        fn activate_and_wait(&mut self, vt: u16, _: &dyn Fn() -> bool) -> std::io::Result<()> {
+            self.0.push(format!("activate_and_wait({vt})"));
+            Ok(())
+        }
+    }
+
+    /// What a `login` against the fakes did.
+    struct Ran {
+        /// The exit status, or `None` when a session was opened.
+        status: Option<i32>,
+        pam: Vec<String>,
+        vts: Vec<String>,
+        env: Vec<(String, String)>,
+        sent: Vec<FromWorker>,
+    }
+
+    /// Runs `login` in `mode` against the fakes, with `queued` waiting for the worker and the
+    /// daemon's side closed after them.
+    fn run_login(
+        mode: Mode,
+        queued: Vec<ToWorker>,
+        prompt: Option<(AuthKind, &'static str)>,
+    ) -> Ran {
+        let (mut worker, mut daemon) = UnixStream::pair().unwrap();
+        for m in &queued {
+            write_msg(&mut daemon, m).unwrap();
+        }
+        daemon.shutdown(std::net::Shutdown::Write).unwrap();
+        let calls = Calls::default();
+        let start = |_: &str, _: &str, conv: Box<dyn Converse>| {
+            Ok(FakePam {
+                calls: calls.clone(),
+                conv,
+                prompt,
+                env: Vec::new(),
+                groups: Vec::new(),
+            })
+        };
+        let mut vts = FakeVts::default();
+        let lookup = |_: &str| Ok(Some(anna()));
+        let (status, env) = match login(mode, &mut worker, &NEVER, start, lookup, &mut vts) {
+            Login::Done(status) => (Some(status), Vec::new()),
+            Login::Opened(opened) => (None, opened.pam.env),
+        };
+        drop(worker);
+        let mut sent = Vec::new();
+        while let Ok(m) = read_msg::<FromWorker>(&mut daemon) {
+            sent.push(m);
+        }
+        let pam = calls.borrow().clone();
+        Ran {
+            status,
+            pam,
+            vts: vts.0,
+            env,
+            sent,
+        }
+    }
+
+    fn begin(rhost: Option<&str>) -> ToWorker {
+        ToWorker::Begin {
+            user: "anna".into(),
+            autologin_user: None,
+            greeter_socket: false,
+            rhost: rhost.map(str::to_owned),
+        }
+    }
+
+    fn answer(pw: &str) -> ToWorker {
+        ToWorker::Answer(Some(Zeroizing::new(pw.into())))
+    }
+
+    const PASSWORD: Option<(AuthKind, &str)> = Some((AuthKind::Secret, "Password:"));
+
+    #[test]
+    fn rhost_is_set_for_authentication_and_cleared_before_the_session_opens() {
+        let start = ToWorker::Start {
+            vt: 7,
+            background: true,
+        };
+        let queued = vec![begin(Some("192.0.2.7")), answer("pw"), start];
+        let ran = run_login(Mode::Remote, queued, PASSWORD);
+        assert_eq!(ran.status, None, "the session opened: {:?}", ran.sent);
+        assert_eq!(
+            ran.pam,
+            [
+                r#"set_item_rhost(Some("192.0.2.7"))"#,
+                "authenticate",
+                "acct_mgmt",
+                "set_item_rhost(None)",
+                "setcred",
+                "open_session"
+            ]
+        );
+        assert_eq!(
+            ran.sent,
+            [
+                FromWorker::Prompt {
+                    kind: AuthKind::Secret,
+                    text: "Password:".into()
+                },
+                FromWorker::Authenticated {
+                    user: "anna".into(),
+                    uid: 1000
+                }
+            ],
+            "a remote login relays its prompt as a console one does"
+        );
+    }
+
+    #[test]
+    fn a_background_start_never_activates_the_vt() {
+        let start = |background| ToWorker::Start { vt: 7, background };
+        let queued = vec![begin(Some("192.0.2.7")), answer("pw"), start(true)];
+        let ran = run_login(Mode::Remote, queued, PASSWORD);
+        assert_eq!(ran.status, None);
+        assert_eq!(ran.vts, ["hold(7)"]);
+        let console = run_login(
+            Mode::Login,
+            vec![begin(None), answer("pw"), start(false)],
+            PASSWORD,
+        );
+        assert_eq!(console.vts, ["hold(7)", "activate_and_wait(7)"]);
+        assert_eq!(
+            ran.env, console.env,
+            "a background session's tty and XDG variables"
+        );
+        for want in [
+            ("PAM_TTY", "tty7"),
+            ("XDG_VTNR", "7"),
+            ("XDG_SESSION_CLASS", "user"),
+            ("XDG_SESSION_TYPE", "wayland"),
+        ] {
+            assert!(
+                ran.env.contains(&(want.0.into(), want.1.into())),
+                "{want:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_remote_nla_worker_relays_no_prompt() {
+        let ran = run_login(Mode::RemoteNla, vec![begin(Some("192.0.2.7"))], PASSWORD);
+        assert_eq!(ran.status, Some(1));
+        assert_eq!(
+            ran.sent,
+            [FromWorker::Failed {
+                kind: ErrorKind::Refused,
+                text: REFUSED_PROMPT.into()
+            }]
+        );
+        assert_eq!(
+            ran.pam,
+            [r#"set_item_rhost(Some("192.0.2.7"))"#, "authenticate"]
+        );
+    }
+
+    #[test]
+    fn a_check_worker_ends_after_authenticated_and_opens_nothing() {
+        let start = ToWorker::Start {
+            vt: 7,
+            background: false,
+        };
+        let ran = run_login(
+            Mode::Check,
+            vec![begin(None), answer("pw"), start],
+            PASSWORD,
+        );
+        assert_eq!(ran.status, Some(0));
+        assert_eq!(ran.pam, ["authenticate", "acct_mgmt"]);
+        assert!(ran.vts.is_empty(), "{:?}", ran.vts);
+        assert_eq!(
+            ran.sent,
+            [
+                FromWorker::Prompt {
+                    kind: AuthKind::Secret,
+                    text: "Password:".into()
+                },
+                FromWorker::Authenticated {
+                    user: "anna".into(),
+                    uid: 1000
+                }
+            ]
+        );
     }
 }
