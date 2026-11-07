@@ -634,6 +634,13 @@ enum Credssp {
         user: &'static str,
         password: &'static str,
     },
+    /// Quits after TLS, or once NTLM's NEGOTIATE has its CHALLENGE, with no AUTHENTICATE sent.
+    Quits {
+        after_negotiate: bool,
+    },
+    /// Pauses tokio's clock after TLS and sends nothing more, as a client held at a
+    /// certificate prompt.
+    Stalls,
 }
 
 /// An NLA logon from `from`: `user` goes in the Client Info PDU, and in CredSSP unless
@@ -822,6 +829,48 @@ where
     }
 }
 
+/// Sends bare NTLM's NEGOTIATE and reads the server's CHALLENGE.
+async fn negotiate_only<S>(framed: &mut TokioFramed<S>) -> ConnectorResult<()>
+where
+    S: AsyncRead + AsyncWrite + Send + Sync + Unpin,
+{
+    let identity = AuthIdentity {
+        username: Username::new("anna", None).unwrap(),
+        password: "anna-rd-pass".to_owned().into(),
+    };
+    let mut ntlm = Ntlm::new();
+    let mut handle = (ntlm.acquire_credentials_handle())
+        .with_credential_use(CredentialUse::Outbound)
+        .with_auth_data(&identity)
+        .execute(&mut ntlm)
+        .unwrap()
+        .credentials_handle;
+    let mut input = vec![SecurityBuffer::new(Vec::new(), BufferType::Token)];
+    let mut output = vec![SecurityBuffer::new(Vec::new(), BufferType::Token)];
+    let target = format!("TERMSRV/{HOST}");
+    let mut builder = (ntlm.initialize_security_context())
+        .with_credentials_handle(&mut handle)
+        .with_context_requirements(ClientRequestFlags::MUTUAL_AUTH)
+        .with_target_data_representation(DataRepresentation::Native)
+        .with_target_name(&target)
+        .with_input(&mut input)
+        .with_output(&mut output);
+    (ntlm.initialize_security_context_impl(&mut builder))
+        .and_then(|mut g| g.resolve_to_result())
+        .map_err(|e| custom_err!("NTLM", e))?;
+    let negotiate = TsRequest {
+        version: 4,
+        nego_tokens: Some(output.remove(0).buffer),
+        ..TsRequest::default()
+    };
+    let challenge = ts_request(framed, &negotiate).await?;
+    assert!(
+        challenge.nego_tokens.is_some(),
+        "the server sends its CHALLENGE"
+    );
+    Ok(())
+}
+
 /// `data` sealed for the server, its signature first, as CredSSP sends it.
 fn seal(ntlm: &mut Ntlm, data: &[u8]) -> Vec<u8> {
     let mut token = [0u8; 1024];
@@ -929,6 +978,16 @@ async fn nla_client(
             )
             .await?;
             connector.mark_credssp_as_done();
+        }
+        Credssp::Quits { after_negotiate } => {
+            if after_negotiate {
+                negotiate_only(&mut framed).await?;
+            }
+            return Err(ConnectorError::general("the client quits"));
+        }
+        Credssp::Stalls => {
+            tokio::time::pause();
+            std::future::pending::<()>().await;
         }
     }
     loop {
@@ -1238,7 +1297,7 @@ async fn a_verdict_wait_past_the_handshake_deadline_is_refused_as_no_verdict() {
         accepted: start,
         heard: &mut heard,
         asked: true,
-        attempt: None,
+        attempt: &Cell::default(),
     };
     let waited = tokio::time::timeout(HANDSHAKE * 2, link.verified()).await;
     assert_eq!(waited, Ok(Err(Refused::NoVerdict)));
@@ -1421,4 +1480,58 @@ async fn the_right_nla_password_clears_the_address() {
     right_logon(&ctx, here)
         .await
         .expect("the free failures start again after a logon");
+}
+
+#[tokio::test]
+async fn clients_that_quit_before_the_ntlm_authenticate_count_no_failed_password() {
+    let ctx = ctx_with_anna();
+    let _daemon = Daemon::link(&ctx).await;
+    let here: IpAddr = Ipv4Addr::LOCALHOST.into();
+    let (_tell, mut heard) = mpsc::unbounded_channel();
+    for i in 0..2 * (FREE_FAILURES + 1) {
+        let logon = NlaLogon {
+            credssp: Credssp::Quits {
+                after_negotiate: i % 2 == 1,
+            },
+            ..hybrid("anna", "anna-rd-pass")
+        };
+        let (pending, client) = nla_log_on(&ctx, logon, &mut heard).await;
+        client.abort();
+        assert!(matches!(pending, Err(Refused::Nla(_))), "{pending:?}");
+    }
+    right_logon(&ctx, here)
+        .await
+        .expect("the address is not backed off");
+}
+
+#[tokio::test]
+async fn clients_stalled_after_tls_past_the_deadline_count_no_failed_password() {
+    let ctx = ctx_with_anna();
+    let _daemon = Daemon::link(&ctx).await;
+    let (_tell, mut heard) = mpsc::unbounded_channel();
+    for i in 1..=PAUSE_AFTER {
+        let logon = NlaLogon {
+            from: Ipv4Addr::new(127, 0, 0, i as u8).into(),
+            credssp: Credssp::Stalls,
+            ..hybrid("anna", "anna-rd-pass")
+        };
+        let (pending, client) = nla_log_on(&ctx, logon, &mut heard).await;
+        tokio::time::resume();
+        client.abort();
+        assert_eq!(pending.err(), Some(Refused::Deadline));
+    }
+    right_logon(&ctx, Ipv4Addr::new(127, 0, 0, 200).into())
+        .await
+        .expect("NLA logons are not paused");
+}
+
+#[test]
+fn an_ntlm_authenticate_header_split_across_reads_is_seen() {
+    let mut tail = Vec::new();
+    assert!(!authenticate_in(
+        &mut tail,
+        b"0\x82NTLMSSP\0\x01\0\0\0..NTLMS"
+    ));
+    assert!(authenticate_in(&mut tail, b"SP\0\x03\0\0\0.."));
+    assert!(!authenticate_in(&mut tail, b"NTLMSSP\0\x02\0\0\0"));
 }
