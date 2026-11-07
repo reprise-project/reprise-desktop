@@ -197,18 +197,13 @@ struct Greeter {
 #[derive(Clone, Copy, PartialEq)]
 enum Phase {
     /// `asked` while a prompt waits for the greeter's answer.
-    Authenticating {
-        asked: bool,
-    },
-    Authenticated,
+    Authenticating { asked: bool },
+    /// PAM's `uid` for the account.
+    Authenticated { uid: u32 },
     /// `Start` went to the worker, which opens the session on `vt`.
-    Starting {
-        vt: u16,
-    },
+    Starting { vt: u16 },
     /// `UnlockSession` went out; `generation` names its `Timer::UnlockAck`.
-    Unlocking {
-        generation: u32,
-    },
+    Unlocking { generation: u32 },
 }
 
 struct Conversation {
@@ -383,7 +378,8 @@ impl Daemon {
             match (listed, vt) {
                 (true, Some(vt)) => {
                     let mut ends = Vec::new();
-                    if let Some((id, _)) = self.take_leftovers(world, &user, &mut ends) {
+                    // PAM's uid comes after the spawn, so this matches by name; it only locks.
+                    if let Some((id, _)) = self.take_leftovers(world, &user, None, &mut ends) {
                         out.extend(ends);
                         out.push(Effect::LockSession(id));
                     } else {
@@ -618,17 +614,17 @@ impl Daemon {
         match (c.phase, &c.route) {
             (Phase::Starting { .. } | Phase::Unlocking { .. }, _) => out.push(refused(STARTING)),
             (Phase::Authenticating { .. }, _) => out.push(refused(NOT_AUTHENTICATED)),
-            (Phase::Authenticated, Route::Resume { id, .. }) => {
+            (Phase::Authenticated { .. }, Route::Resume { id, .. }) => {
                 let id = id.clone();
                 let phase = self.unlock(id, out);
                 self.conversation.as_mut().expect("conversation").phase = phase;
             }
-            (Phase::Authenticated, Route::Start) => {
+            (Phase::Authenticated { uid }, Route::Start) => {
                 let Some(worker) = c.worker else {
                     return self.fail_conversation(ErrorKind::Failed, WORKER_ENDED.into(), out);
                 };
                 let user = c.user.clone();
-                if let Some((id, vt)) = self.take_leftovers(world, &user, out) {
+                if let Some((id, vt)) = self.take_leftovers(world, &user, Some(uid), out) {
                     out.push(Effect::Kill(worker));
                     let phase = self.unlock(id.clone(), out);
                     let c = self.conversation.as_mut().expect("conversation");
@@ -646,17 +642,23 @@ impl Daemon {
         }
     }
 
-    /// `user`'s login-service sessions the table lacks: closing ones stop so none runs beside a
-    /// new one, and a live one on seat0 joins the table and is returned with its VT.
+    /// Login-service sessions of `uid` (of the name `user` when None) on a VT the table lacks:
+    /// closing ones stop so none runs beside a new one, a live one on seat0 joins the table.
     fn take_leftovers(
         &mut self,
         world: &World,
         user: &str,
+        uid: Option<u32>,
         out: &mut Vec<Effect>,
     ) -> Option<(String, u16)> {
         let mut live = None;
         for s in &world.login_sessions {
-            if s.user != user || !user_service(&s.service) || self.sessions.by_id(&s.id).is_some() {
+            let theirs = uid.map_or(s.user == user, |uid| s.uid == uid);
+            if !theirs
+                || s.vt == 0
+                || !user_service(&s.service)
+                || self.sessions.by_id(&s.id).is_some()
+            {
                 continue;
             }
             if s.closing {
@@ -844,7 +846,7 @@ impl Daemon {
         }
         c.user = user;
         c.route = route;
-        c.phase = Phase::Authenticated;
+        c.phase = Phase::Authenticated { uid };
         out.push(Effect::Reply(GreeterReply::Success));
     }
 
@@ -1057,7 +1059,10 @@ impl Daemon {
         {
             c.worker = None;
             let reauthed = matches!(c.route, Route::Resume { .. })
-                && matches!(c.phase, Phase::Authenticated | Phase::Unlocking { .. });
+                && matches!(
+                    c.phase,
+                    Phase::Authenticated { .. } | Phase::Unlocking { .. }
+                );
             if !reauthed {
                 self.fail_conversation(ErrorKind::Failed, WORKER_ENDED.into(), out);
             }

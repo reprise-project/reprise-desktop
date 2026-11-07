@@ -1811,3 +1811,29 @@ fn a_live_session_the_table_missed_is_adopted_and_never_stopped() {
         "no autologin beside c9: {started:?}"
     );
 }
+
+#[test]
+fn a_session_of_another_uid_with_the_same_name_is_neither_adopted_nor_stopped() {
+    let mut run = Run::booted();
+    run.world.login_sessions = vec![
+        logind("c9", "anna", 2000, 8, "user", "reprise-login"),
+        closing(logind("c8", "anna", 2000, 9, "user", "reprise-login")),
+    ];
+    run.greeter(create("anna"));
+    run.worker(2, authed("anna", 1000));
+    assert_eq!(
+        run.greeter(GreeterRequest::StartSession),
+        start_on(2, 7),
+        "uid 1000 starts its own session"
+    );
+    assert_eq!(run.greeting().users[0].note, None);
+}
+
+#[test]
+fn a_login_session_without_a_vt_is_not_adopted() {
+    let mut run = Run::booted();
+    run.world.login_sessions = vec![logind("c9", "anna", 1000, 0, "user", "reprise-login")];
+    run.greeter(create("anna"));
+    run.worker(2, authed("anna", 1000));
+    assert_eq!(run.greeter(GreeterRequest::StartSession), start_on(2, 7));
+}
