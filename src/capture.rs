@@ -529,10 +529,8 @@ fn window_size(state: &State, w: WindowId) -> Option<Size<i32, Physical>> {
     (size.w > 0 && size.h > 0).then_some(size)
 }
 
-/// Render `w`'s client surface tree, frame and popups left out, its
-/// window geometry's top-left at 0,0, into `target`. Under its side's
-/// lock the frame is blank: the window's own surfaces are not what the
-/// screen shows.
+/// Render `w`'s client surface tree, frame and popups left out, its geometry's top-left at 0,0,
+/// into `target`; blank under its side's lock, as the screen shows the lock and not the window.
 fn render_window(state: &mut State, w: WindowId, target: Target<'_>) -> Result<Drawn, String> {
     let size = window_size(state, w).ok_or("the window is not mapped")?;
     let scale = window_scale(state, w);
