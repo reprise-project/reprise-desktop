@@ -149,6 +149,15 @@ impl Combo {
         }
     }
 
+    /// Replace the rows with `rows`, `selected` picked, the open list `drop` rows at most; a
+    /// greyed combo stays greyed.
+    pub fn set_rows(&mut self, rows: &[String], selected: usize, drop: usize) {
+        let refs: Vec<&str> = rows.iter().map(String::as_str).collect();
+        let enabled = self.enabled;
+        *self = Combo::new(&refs, selected, rows.len().clamp(1, drop));
+        self.enabled = enabled;
+    }
+
     /// Selects the row showing `want`, adding it after the listed rows when they lack it. A row
     /// added for an earlier value goes first.
     pub fn select_text(&mut self, want: &str) {
