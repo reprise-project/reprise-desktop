@@ -625,9 +625,8 @@ fn capture(h: &Harness) -> Canvas {
     out
 }
 
-/// Renders each interface's greeter, at rest and after a wrong password, at scales 1 and 2, to
-/// `target/greeter-preview/`, and prints what one redraw costs. Run with
-/// `cargo test render_greeter_preview -- --ignored --nocapture`.
+/// Renders each greeter at rest and after a wrong password, at scales 1 and 2, to
+/// `target/greeter-preview/` and prints a redraw's cost. Run with `--ignored --nocapture`.
 #[test]
 #[ignore]
 fn render_greeter_preview() {

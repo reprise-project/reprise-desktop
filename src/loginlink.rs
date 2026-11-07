@@ -1,7 +1,5 @@
-//! The session's link to reprise-login over `REPRISE_LOGIN_SOCKET`: it says hello with the
-//! interface and asks for Switch User. While the daemon is away it calls again every 2 s;
-//! each loss asks logind whether the session is closing, which ends the compositor. After
-//! `MAX_REFUSALS` refusals in a row it stops calling.
+//! The session's link to reprise-login over `REPRISE_LOGIN_SOCKET`: Hello with the interface,
+//! Switch User. While the daemon is away it calls every 2 s, until `MAX_REFUSALS` in a row.
 
 use std::io::{self, Read};
 use std::os::unix::net::UnixStream;

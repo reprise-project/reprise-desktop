@@ -777,13 +777,10 @@ fn read_record(path: &Path) -> Vec<(String, u8)> {
         .collect()
 }
 
-/// The lid's closing runs `[power] lid_close` (or, docked, leaves the
-/// external output to carry on); its opening wakes the outputs and brings
-/// back panels a remote-control session darkened. Other
-/// switches (tablet mode) are ignored. An already closed lid reports when
-/// its device is added, at startup before any output exists. In the greeter, logind acts on
-/// the lid.
+/// The lid's closing runs `[power] lid_close` (docked, the external output carries on); its
+/// opening wakes the outputs and panels a remote-control session darkened. Tablet mode is ignored.
 pub fn switch_toggled(state: &mut State, switch: Option<Switch>, st: SwitchState) {
+    // In the greeter, logind acts on the lid.
     if switch != Some(Switch::Lid) || state.host == crate::compositor::Host::Greeter {
         return;
     }
@@ -795,6 +792,7 @@ pub fn switch_toggled(state: &mut State, switch: Option<Switch>, st: SwitchState
                 follow_lid(state);
                 return;
             }
+            // A lid closed at startup reports when its device is added, before any output.
             if !(state.scene.outputs().iter()).any(|o| !crate::backend::is_virtual(o)) {
                 log::info!("power: lid closed before any monitor");
                 arm_lid_check(state);

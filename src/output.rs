@@ -604,9 +604,8 @@ impl State {
         }
     }
 
-    /// The layout changed: place the outputs, then refit the desktop to
-    /// them (windows, taskbars, menus, wallpaper, icons, the login screen,
-    /// output management clients, pointer).
+    /// The layout changed: place the outputs, then refit windows, taskbars, menus, wallpaper,
+    /// icons, the login screen, output management clients and the pointer to them.
     pub fn update_layout(&mut self) {
         self.place_outputs();
         self.drop_unused_scales();
@@ -849,10 +848,8 @@ impl State {
             .cloned()
     }
 
-    /// What is left of an output for ordinary windows: what `layer::arrange`
-    /// last recorded, else its box without the taskbar's strip (the whole box
-    /// on the login screen, which has no taskbar). An empty result is a real
-    /// answer, so a full-height exclusive zone is honoured.
+    /// What an output leaves ordinary windows: `layer::arrange`'s last record, else its box less
+    /// the taskbar (all of it on the login screen). Empty is real: a full-height zone is honoured.
     pub fn usable_area(&self, output: Option<&Output>) -> Rect {
         self.usable_area_at(output, self.layout_box(output))
     }

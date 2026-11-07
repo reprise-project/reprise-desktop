@@ -128,9 +128,8 @@ pub enum FromWorker {
     },
 }
 
-/// The conversation over the worker socket: each message goes out as `Prompt` and waits for
-/// an `Answer`. `Cancel`, a closed socket or a bad frame ends it, and later prompts get `None`.
-/// A stop signal ends it as well.
+/// The conversation over the worker socket: each message goes out as `Prompt` and waits for an
+/// `Answer`. `Cancel`, a stop, a closed socket or a bad frame ends it; later prompts get `None`.
 pub struct SocketConverse {
     sock: UnixStream,
     ended: Rc<Cell<bool>>,
@@ -759,9 +758,8 @@ impl Launch {
         })
     }
 
-    /// Becomes the session's program. A failure before the session's output is set up is
-    /// written to the worker's log, a later one to the session's; either exits 1, or 127 when
-    /// `execve` fails.
+    /// Becomes the session's program. A failure before its output is set up goes to the worker's
+    /// log, a later one to the session's; either exits 1, or 127 when `execve` fails.
     ///
     /// # Safety
     /// Called only in the child right after `fork`.
