@@ -12,6 +12,7 @@ OnFailure=getty@tty1.service
 # (docs/security.md, Login manager).
 [Service]
 ExecStart=/usr/bin/reprise-login
+ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RuntimeDirectory=reprise-login
 RuntimeDirectoryMode=0755

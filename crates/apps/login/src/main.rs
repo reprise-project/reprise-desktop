@@ -12,16 +12,20 @@ use std::time::{Duration, Instant};
 use futures_util::StreamExt;
 use reprise_login::config;
 use reprise_login::daemon::{
-    Daemon, Effect, Input, Job, LogindSession, UNLOCK_WAIT, WorkerId, World,
+    Daemon, Effect, HANDOVER_DEADLINE, Input, Job, LogindSession, LookUpKey, UNLOCK_WAIT, WorkerId,
+    World,
 };
+use reprise_login::frontipc::{self, Front};
+use reprise_login::intake::{self, Links};
 use reprise_login::ipc::{self, Gate, Paths, Server};
-use reprise_login::logind::{self, Logind, SessionRemovedStream};
+use reprise_login::logind::{self, Inhibitor, Logind, SessionRemovedStream};
 use reprise_login::remembered::{Remembered, STATE_PATH};
 use reprise_login::vt::{self, GREETER_VT};
 use reprise_login::worker::{FromWorker, LOG_FD, Mode, ToWorker, worker_main};
 use reprise_login::{pidfd, users};
 use repriselogin::GREETER_USER;
 use repriselogin::frame::{self, FrameError};
+use repriselogin::front::{FRONT_SOCKET, FRONT_USER};
 use repriselogin::greeter::{ErrorKind, GreeterReply, GreeterRequest};
 use repriselogin::machine::MACHINE_CONFIG;
 use tokio::signal::unix::{SignalKind, signal};
@@ -44,6 +48,8 @@ const REMEMBER_DELAY: Duration = Duration::from_millis(500);
 /// logind marking it closing.
 const LEADER_POLL: Duration = Duration::from_millis(500);
 const LEADER_POLLS: u32 = 10;
+/// How long an account look-up may take before the account counts as no member.
+const LOOKUP_WAIT: Duration = Duration::from_secs(5);
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
@@ -128,6 +134,8 @@ enum Event {
     Exited(Exited),
     /// `REMEMBER_DELAY` passed since remembered state changed.
     Save,
+    /// A SIGHUP: the machine settings are read again.
+    Reload,
     Stop,
     /// The daemon can no longer follow logind; it exits so systemd restarts it.
     Lost(String),
@@ -159,6 +167,10 @@ async fn run() -> Result<(), String> {
     follow_console(events.clone());
 
     let gate = Rc::new(RefCell::new(Gate::new(greeter.uid)));
+    let (input, mut sockets) = mpsc::channel(ipc::QUEUE);
+    let front = Rc::new(RefCell::new(Front::default()));
+    let opener: intake::Opener = Rc::new(|uid| Box::pin(intake::open(uid)));
+    let taker = logind.clone();
     let mut rt = Runtime {
         daemon: Daemon::new(config, remembered),
         logind: logind.clone(),
@@ -166,17 +178,23 @@ async fn run() -> Result<(), String> {
         workers: Workers::new(PathBuf::from("/proc/self/exe"), events.clone()),
         saver: Saver::new(PathBuf::from(STATE_PATH), events.clone()),
         events: events.clone(),
-        world: None,
+        world: WorldCache::default(),
+        front: front.clone(),
+        links: Links::new(input.clone(), opener, HANDOVER_DEADLINE),
+        inhibitor: Inhibitor::new(Rc::new(move |what, why| {
+            let l = taker.clone();
+            Box::pin(async move { l.inhibit(what, why).await })
+        })),
     };
-    let world = rt.read_world().await;
+    let world = read_world(&logind).await;
     let effects = boot(&mut rt.daemon, found, seat_active.as_deref(), &world);
     let recovered: Vec<String> = rt.daemon.session_uids().into_keys().collect();
-    rt.world = Some(world);
+    rt.world = WorldCache(Some(world));
 
     let (greeter_l, session_l) = (ipc::bind(&Paths::default(), greeter.gid))
         .map_err(|e| format!("binding the sockets: {e}"))?;
+    serve_front(input.clone(), front);
     let (lookup, seat) = (logind.clone(), logind.clone());
-    let (input, mut sockets) = mpsc::channel(ipc::QUEUE);
     let server = Server {
         gate,
         session_of: Rc::new(move |pid| {
@@ -222,6 +240,11 @@ async fn run() -> Result<(), String> {
             }
             Event::Exited(exit) => rt.exited(exit).await,
             Event::Save => rt.saver.save(),
+            Event::Reload => {
+                log::info!("reading {MACHINE_CONFIG} again");
+                let config = config::load(Path::new(MACHINE_CONFIG));
+                rt.input(Input::ConfigReloaded(config)).await;
+            }
             Event::Stop => {
                 log::info!("stopping; user sessions keep running");
                 rt.workers.kill_greeters();
@@ -234,6 +257,21 @@ async fn run() -> Result<(), String> {
                 return Err(why);
             }
         }
+    }
+}
+
+/// Binds `FRONT_SOCKET` for the front's account and serves it; without the account or the
+/// socket the daemon runs on with no remote logins.
+fn serve_front(input: mpsc::Sender<Input>, front: Rc<RefCell<Front>>) {
+    let account = match users::lookup(FRONT_USER) {
+        Ok(Some(account)) => account,
+        Ok(None) => return log::warn!("there is no {FRONT_USER} account; no remote logins"),
+        Err(e) => return log::warn!("{FRONT_USER}: {e}; no remote logins"),
+    };
+    let served = ipc::bind_group(Path::new(FRONT_SOCKET), account.gid)
+        .and_then(|l| frontipc::serve(l, account.uid, input, front));
+    if let Err(e) = served {
+        log::warn!("{FRONT_SOCKET}: {e}; no remote logins");
     }
 }
 
@@ -312,15 +350,18 @@ fn follow_console(events: Events) {
     }
 }
 
-/// SIGCHLD reaps workers; SIGTERM and SIGINT stop the daemon.
+/// SIGCHLD reaps workers; SIGHUP reloads the machine settings; SIGTERM and SIGINT stop the
+/// daemon.
 fn follow_signals(events: Events) -> io::Result<()> {
     let mut child = signal(SignalKind::child())?;
+    let mut hup = signal(SignalKind::hangup())?;
     let mut term = signal(SignalKind::terminate())?;
     let mut int = signal(SignalKind::interrupt())?;
     tokio::task::spawn_local(async move {
         loop {
             let event = tokio::select! {
                 Some(()) = child.recv() => Event::Reap,
+                Some(()) = hup.recv() => Event::Reload,
                 Some(()) = term.recv() => Event::Stop,
                 Some(()) = int.recv() => Event::Stop,
             };
@@ -339,8 +380,37 @@ struct Runtime {
     workers: Workers,
     saver: Saver,
     events: Events,
-    /// The last world read; `None` before the first.
-    world: Option<World>,
+    world: WorldCache,
+    front: Rc<RefCell<Front>>,
+    links: Links,
+    inhibitor: Inhibitor,
+}
+
+/// The world the state machine last saw, read again for each input [`reads_world`] names.
+#[derive(Default)]
+struct WorldCache(Option<World>);
+
+impl WorldCache {
+    async fn for_input(&mut self, input: &Input, read: impl AsyncFnOnce() -> World) -> &World {
+        if reads_world(input) || self.0.is_none() {
+            self.0 = Some(read().await);
+        }
+        self.0.as_ref().expect("a world was read")
+    }
+}
+
+/// Whether handling `input` can start a session, or answers a power request: a session start
+/// picks its VT from the world, and a cached `active_vt` could hand out the VT on screen.
+fn reads_world(input: &Input) -> bool {
+    matches!(
+        input,
+        Input::GreeterRequest(
+            _,
+            GreeterRequest::Hello | GreeterRequest::StartSession | GreeterRequest::Power { .. }
+        ) | Input::Worker(_, FromWorker::Authenticated { .. })
+            | Input::SessionRemoved { .. }
+            | Input::TerminateFailed { .. }
+    )
 }
 
 impl Runtime {
@@ -349,17 +419,10 @@ impl Runtime {
             self.workers.started(*w, session_id);
             self.gate.borrow_mut().greeter_started(*w, session_id);
         }
-        let fresh = matches!(
-            input,
-            Input::GreeterRequest(
-                _,
-                GreeterRequest::Hello | GreeterRequest::StartSession | GreeterRequest::Power { .. }
-            )
-        );
-        if fresh || self.world.is_none() {
-            self.world = Some(self.read_world().await);
-        }
-        let world = self.world.as_ref().expect("a world was read");
+        let logind = &self.logind;
+        let world = (self.world)
+            .for_input(&input, async || read_world(logind).await)
+            .await;
         let effects = self.daemon.handle(Instant::now(), world, input);
         self.run_effects(effects);
         self.sync_gate();
@@ -387,32 +450,6 @@ impl Runtime {
         self.gate
             .borrow_mut()
             .set_sessions(self.daemon.session_uids());
-    }
-
-    async fn read_world(&self) -> World {
-        let (user_sessions, login_sessions) = match self.logind.listed().await {
-            Ok(found) => {
-                let open = found.iter().filter(|s| s.class == "user" && !s.closing);
-                (open.count() as u32, found)
-            }
-            Err(e) => {
-                // Counted as one, so power stays refused while logind can't say.
-                log::warn!("logind's sessions: {e}");
-                (1, Vec::new())
-            }
-        };
-        let (active_vt, kernel_open) = vt::console().unwrap_or_else(|e| {
-            log::warn!("VT state: {e}");
-            (0, 0)
-        });
-        World {
-            users: users::read_listed(),
-            keyboard: self.logind.keyboard().await,
-            kernel_open,
-            active_vt,
-            user_sessions,
-            login_sessions,
-        }
     }
 
     fn run_effects(&mut self, effects: Vec<Effect>) {
@@ -520,12 +557,35 @@ impl Runtime {
             Effect::Remember(remembered) => self.saver.remember(remembered),
             Effect::Disallocate(vt) => vt::disallocate(vt),
             Effect::Log(level, text) => log::log!(level, "{text}"),
-            effect @ (Effect::ToFront(_)
-            | Effect::LookUp { .. }
-            | Effect::OpenIntake { .. }
-            | Effect::Forward { .. }
-            | Effect::DropConn { .. }
-            | Effect::Inhibit(_)) => log::debug!("no remote login runtime for {effect:?}"),
+            Effect::ToFront(event) => self.front.borrow_mut().send(&event),
+            Effect::LookUp { key, user, group } => {
+                let events = self.events.clone();
+                tokio::task::spawn_local(async move {
+                    let job = move || users::member_of(&user, &group);
+                    let member = look_up(key, LOOKUP_WAIT, job).await;
+                    let _ = events.send(Event::Input(member));
+                });
+            }
+            Effect::OpenIntake { uid } => self.links.open(uid),
+            Effect::Forward { conn, uid } => {
+                let held = self.front.borrow_mut().take(conn);
+                let queued = held.is_some_and(|(fd, h)| self.links.forward(uid, conn, fd, h));
+                if !queued {
+                    let failed = Input::Forwarded { conn, ok: false };
+                    let _ = self.events.send(Event::Input(failed));
+                }
+            }
+            Effect::DropConn { conn } => drop(self.front.borrow_mut().take(conn)),
+            Effect::Inhibit(inhibit) => self.inhibitor.set(inhibit),
+            Effect::Front(unit) => {
+                let l = self.logind.clone();
+                tokio::task::spawn_local(async move {
+                    if let Err(e) = l.front_unit(unit).await {
+                        log::warn!("{unit:?} of {}: {e}", logind::FRONT_UNIT);
+                    }
+                });
+            }
+            Effect::CloseIntakes => self.links.close_all(),
         }
     }
 
@@ -538,6 +598,60 @@ impl Runtime {
             }
         });
     }
+}
+
+/// What the backend reads fresh for each input [`reads_world`] names.
+async fn read_world(logind: &Logind) -> World {
+    let (user_sessions, login_sessions) = match logind.listed().await {
+        Ok(found) => {
+            let open = found.iter().filter(|s| s.class == "user" && !s.closing);
+            (open.count() as u32, found)
+        }
+        Err(e) => {
+            // Counted as one, so power stays refused while logind can't say.
+            log::warn!("logind's sessions: {e}");
+            (1, Vec::new())
+        }
+    };
+    let (active_vt, kernel_open) = vt::console().unwrap_or_else(|e| {
+        log::warn!("VT state: {e}");
+        (0, 0)
+    });
+    World {
+        users: users::read_listed(),
+        keyboard: logind.keyboard().await,
+        kernel_open,
+        active_vt,
+        user_sessions,
+        login_sessions,
+    }
+}
+
+/// The answer to `Effect::LookUp` from `job`, run off the loop. One that fails or takes past
+/// `wait` counts as no member.
+async fn look_up(
+    key: LookUpKey,
+    wait: Duration,
+    job: impl FnOnce() -> io::Result<Option<(u32, bool)>> + Send + 'static,
+) -> Input {
+    let found = tokio::time::timeout(wait, tokio::task::spawn_blocking(job)).await;
+    let (uid, member) = match found {
+        Ok(Ok(Ok(Some((uid, member))))) => (Some(uid), member),
+        Ok(Ok(Ok(None))) => (None, false),
+        Ok(Ok(Err(e))) => {
+            log::warn!("looking up an account: {e}");
+            (None, false)
+        }
+        Ok(Err(e)) => {
+            log::warn!("looking up an account: {e}");
+            (None, false)
+        }
+        Err(_) => {
+            log::warn!("looking up an account took over {wait:?}");
+            (None, false)
+        }
+    };
+    Input::Member { key, uid, member }
 }
 
 /// Whether the console still shows the VT of a worker whose start timed out. The login
@@ -1088,5 +1202,102 @@ mod tests {
         assert!(!on_dead_vt(7, Ok(1)), "the console moved on");
         assert!(!on_dead_vt(1, Ok(1)), "the greeter's own VT");
         assert!(!on_dead_vt(7, Err(io::ErrorKind::NotFound.into())));
+    }
+
+    fn world_on(active_vt: u16) -> World {
+        World {
+            users: Vec::new(),
+            keyboard: Default::default(),
+            kernel_open: 0,
+            active_vt,
+            user_sessions: 0,
+            login_sessions: Vec::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_stale_cached_active_vt_is_never_picked() {
+        use repriselogin::front::{FrontRequest, Secret};
+        use repriselogin::greeter::AuthKind;
+        use repriselogin::machine::{MachineConfig, MachineRemote};
+
+        let config = MachineConfig {
+            remote: MachineRemote {
+                enabled: true,
+                ..MachineRemote::default()
+            },
+            ..MachineConfig::default()
+        };
+        let mut daemon = Daemon::new(config, Remembered::default());
+        let now = Instant::now();
+        daemon.recover(now, Vec::new(), None);
+        daemon.start(now, &world_on(1));
+        let mut cache = WorldCache(Some(world_on(1)));
+        let on_screen = world_on(7);
+        let mut handle = async |input: Input| {
+            let world = cache.for_input(&input, async || on_screen.clone()).await;
+            daemon.handle(now, world, input)
+        };
+        handle(Input::Front(FrontRequest::Authenticate {
+            conn: 7,
+            peer: "192.0.2.1:50000".parse().unwrap(),
+            user: "anna".into(),
+            secret: Secret::Password(Zeroizing::new("pw".into())),
+            elapsed_ms: 0,
+        }))
+        .await;
+        let member = Input::Member {
+            key: LookUpKey::Conn(7),
+            uid: Some(1001),
+            member: true,
+        };
+        let spawned = handle(member).await;
+        let Some(Effect::Spawn { worker, .. }) = spawned.first() else {
+            panic!("a check worker spawns: {spawned:?}");
+        };
+        let worker = *worker;
+        let prompt = FromWorker::Prompt {
+            kind: AuthKind::Secret,
+            text: "Password: ".into(),
+        };
+        handle(Input::Worker(worker, prompt)).await;
+        let authenticated = FromWorker::Authenticated {
+            user: "anna".into(),
+            uid: 1001,
+        };
+        let effects = handle(Input::Worker(worker, authenticated)).await;
+        let start = effects.iter().find_map(|e| match e {
+            Effect::ToWorker {
+                msg: ToWorker::Start { vt, .. },
+                ..
+            } => Some(*vt),
+            _ => None,
+        });
+        assert_eq!(start, Some(8), "VT 7 is on screen now: {effects:?}");
+    }
+
+    #[tokio::test]
+    async fn an_account_look_up_past_its_wait_counts_as_no_member() {
+        let key = LookUpKey::Conn(3);
+        let slow = || {
+            std::thread::sleep(Duration::from_millis(300));
+            Ok(Some((1001, true)))
+        };
+        assert_eq!(
+            look_up(key, Duration::from_millis(20), slow).await,
+            Input::Member {
+                key,
+                uid: None,
+                member: false
+            }
+        );
+        assert_eq!(
+            look_up(key, Duration::from_secs(5), || Ok(Some((1001, true)))).await,
+            Input::Member {
+                key,
+                uid: Some(1001),
+                member: true
+            }
+        );
     }
 }

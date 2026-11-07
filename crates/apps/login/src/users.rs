@@ -193,6 +193,70 @@ pub fn lookup(name: &str) -> io::Result<Option<PasswdEntry>> {
     }
 }
 
+/// `user`'s uid and whether `group` is among its groups, the primary one included; `None`
+/// when there is no such account. A group that does not exist has no members.
+pub fn member_of(user: &str, group: &str) -> io::Result<Option<(u32, bool)>> {
+    let Some(account) = lookup(user)? else {
+        return Ok(None);
+    };
+    let Some(gid) = group_id(group)? else {
+        return Ok(Some((account.uid, false)));
+    };
+    let groups = group_list(user, account.gid)?;
+    Ok(Some((account.uid, groups.contains(&gid))))
+}
+
+/// The gid of group `name` through NSS.
+fn group_id(name: &str) -> io::Result<Option<u32>> {
+    let Ok(cname) = CString::new(name) else {
+        return Ok(None);
+    };
+    let mut buf = vec![0u8; 1024];
+    loop {
+        // SAFETY: `libc::group` is a plain C struct; all zeroes is a valid value.
+        let mut grp: libc::group = unsafe { std::mem::zeroed() };
+        let mut result: *mut libc::group = std::ptr::null_mut();
+        // SAFETY: getgrnam_r writes only through the pointers passed, which point at live locals.
+        let rc = unsafe {
+            libc::getgrnam_r(
+                cname.as_ptr(),
+                &mut grp,
+                buf.as_mut_ptr().cast(),
+                buf.len(),
+                &mut result,
+            )
+        };
+        if rc == libc::ERANGE && buf.len() < 1 << 20 {
+            buf.resize(buf.len() * 2, 0);
+            continue;
+        }
+        if rc != 0 {
+            return Err(io::Error::from_raw_os_error(rc));
+        }
+        return Ok((!result.is_null()).then_some(grp.gr_gid));
+    }
+}
+
+/// Every group of `user`, whose primary group is `gid`.
+fn group_list(user: &str, gid: u32) -> io::Result<Vec<u32>> {
+    let cuser = CString::new(user).map_err(|_| io::ErrorKind::InvalidInput)?;
+    let mut groups: Vec<libc::gid_t> = vec![0; 64];
+    loop {
+        let mut n = libc::c_int::try_from(groups.len()).unwrap_or(libc::c_int::MAX);
+        // SAFETY: `groups` holds `n` entries, and getgrouplist writes at most `n` of them.
+        let rc = unsafe { libc::getgrouplist(cuser.as_ptr(), gid, groups.as_mut_ptr(), &mut n) };
+        let n = usize::try_from(n).unwrap_or(0);
+        if rc >= 0 {
+            groups.truncate(n);
+            return Ok(groups);
+        }
+        if n <= groups.len() || n > 1 << 16 {
+            return Err(io::Error::other("getgrouplist gave no room it needs"));
+        }
+        groups.resize(n, 0);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -309,5 +373,15 @@ mod tests {
         let root = lookup("root").unwrap().expect("root has a passwd entry");
         assert_eq!((root.name.as_str(), root.uid, root.gid), ("root", 0, 0));
         assert_eq!(lookup("no such account").unwrap(), None);
+    }
+
+    #[test]
+    fn member_of_reads_the_account_and_its_groups() {
+        assert_eq!(member_of("root", "root").unwrap(), Some((0, true)));
+        assert_eq!(
+            member_of("root", "no-such-group-for-reprise").unwrap(),
+            Some((0, false))
+        );
+        assert_eq!(member_of("no-such-user-for-reprise", "root").unwrap(), None);
     }
 }
