@@ -191,7 +191,7 @@ frame, and `sound` at once.
 ([install.md](install.md#login-manager)), for the whole computer. It is read
 when reprise-login starts: `sudo systemctl restart reprise-login` applies a
 change, and running sessions keep running. systemd starts it at most twice in
-30 s, so a third restart within that time leaves a text login on tty1
+30 s, so a third start within that time leaves a text login on tty1
 instead ([install.md](install.md#login-manager) says how to recover). Only
 the `[login]` table is
 read. A missing file gives the defaults. A key with a value it can't use
