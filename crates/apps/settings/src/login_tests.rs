@@ -357,6 +357,22 @@ fn cancel_or_a_close_during_a_save_closes_when_it_ends_saved_or_not() {
 }
 
 #[test]
+fn the_open_page_reads_the_fingerprint_again_as_the_front_starts_and_stops() {
+    let dir = tmp("fingerprint-poll");
+    let mut a = app(&dir);
+    open_login(&mut a);
+    assert_eq!(login(&a).edit_text("login_fingerprint"), "Not running");
+    std::fs::write(dir.join("fingerprint"), "3F:9A:01\n").unwrap();
+    a.wake();
+    a.wake();
+    assert_eq!(login(&a).edit_text("login_fingerprint"), "3F:9A:01");
+    std::fs::remove_file(dir.join("fingerprint")).unwrap();
+    a.wake();
+    a.wake();
+    assert_eq!(login(&a).edit_text("login_fingerprint"), "Not running");
+}
+
+#[test]
 fn a_save_shows_the_fingerprint_the_front_wrote_since() {
     let dir = tmp("fingerprint-after");
     let mut a = app(&dir);
