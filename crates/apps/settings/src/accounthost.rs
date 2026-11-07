@@ -51,7 +51,16 @@ pub(crate) struct Account {
     pub(crate) set: Option<bool>,
     asked: bool,
     status: Option<Asked>,
-    change: Option<(Purpose, Asked)>,
+    change: Option<Change>,
+    /// The generation the next dialog opens with.
+    opened: u64,
+}
+
+/// A set or clear under way, sent from the dialog of generation `from`.
+struct Change {
+    purpose: Purpose,
+    from: u64,
+    rx: Asked,
 }
 
 impl SettingsApp {
@@ -60,6 +69,7 @@ impl SettingsApp {
     pub(crate) fn ensure_account(&mut self) {
         if !self.remote.manager {
             self.account = Account::default();
+            self.rd_password = None;
             return;
         }
         let Some(path) = self.account_socket.clone() else {
@@ -77,11 +87,13 @@ impl SettingsApp {
         pages::show_rd_password(
             &mut self.sheet.pages[Page::RemoteDesktop.index()],
             self.account.set,
+            self.account.change.is_some(),
         );
     }
 
     pub(crate) fn open_rd_password(&mut self, purpose: Purpose) -> Reply {
-        self.rd_password = Some(RdPasswordDialog::new(purpose));
+        self.account.opened += 1;
+        self.rd_password = Some(RdPasswordDialog::new(purpose, self.account.opened));
         Reply::redraw_all()
     }
 
@@ -122,16 +134,17 @@ impl SettingsApp {
                     }
                     return Reply::redraw();
                 };
-                let purpose = d.purpose;
+                let (purpose, from) = (d.purpose, d.generation);
                 let rx = self.login_spawn(move || ask(&path, &req, TIMEOUT));
-                self.account.change = Some((purpose, rx));
-                Reply::redraw()
+                self.account.change = Some(Change { purpose, from, rx });
+                self.show_account();
+                Reply::redraw_all()
             }
         }
     }
 
-    /// A status or a change came back: show it on the page, or in the dialog when refused. True
-    /// when anything changed.
+    /// A status or a change came back: show it on the page, and in the dialog that sent it. A
+    /// `Done` outdates a status still asked. True when anything changed.
     pub(crate) fn account_done(&mut self) -> bool {
         let mut changed = false;
         if let Some(got) = self.account.status.as_ref().and_then(landed) {
@@ -146,14 +159,15 @@ impl SettingsApp {
             }
         }
         let done =
-            (self.account.change.as_ref()).and_then(|(purpose, rx)| Some((*purpose, landed(rx)?)));
-        if let Some((purpose, got)) = done {
+            (self.account.change.as_ref()).and_then(|c| Some((c.purpose, c.from, landed(&c.rx)?)));
+        if let Some((purpose, from, got)) = done {
             self.account.change = None;
             changed = true;
+            let sender = self.rd_password.take_if(|d| d.generation == from);
             let refused = match got {
                 Ok(AccountReply::Done) => {
                     self.account.set = Some(purpose == Purpose::Set);
-                    self.rd_password = None;
+                    self.account.status = None;
                     None
                 }
                 Ok(AccountReply::Refused { reason }) => Some(reason),
@@ -166,8 +180,9 @@ impl SettingsApp {
                     Some(AccountRefusal::Failed)
                 }
             };
-            if let (Some(r), Some(d)) = (refused, &mut self.rd_password) {
+            if let (Some(r), Some(mut d)) = (refused, sender) {
                 d.refused(r);
+                self.rd_password = Some(d);
             }
         }
         if changed {
