@@ -128,7 +128,7 @@ pub enum Refused {
     DelegationMismatch,
     /// reprise-login did not verify the delegated password within `HANDSHAKE`.
     NoVerdict,
-    /// Refused before CredSSP after failed passwords.
+    /// Refused at CredSSP's start or at the client's NTLM AUTHENTICATE after failed passwords.
     Throttled(Refusal),
 }
 
@@ -487,13 +487,15 @@ async fn credssp(
     acceptor.set_credssp_users(credssp_users(&ctx.nla_users.borrow(), &ctx.host));
     let public_key = ctx.identity.public_key();
     let (tls, leftover) = framed.get_inner_mut();
+    let throttled = Cell::new(None);
     let proofs = Proofs {
         tls,
         tail: Vec::new(),
-        counted: false,
+        seen: false,
         throttle: &ctx.nla_throttle,
         ip: link.peer.ip(),
         attempt: link.attempt,
+        throttled: &throttled,
     };
     let mut client = LocalTokioFramed::new_with_leftover(proofs, std::mem::take(leftover));
     let mut verify = Verify {
@@ -512,6 +514,9 @@ async fn credssp(
     )
     .await;
     *leftover = client.into_inner().1;
+    if let Some(refusal) = throttled.take() {
+        return Err(Refused::Throttled(refusal));
+    }
     let (user, refused) = (verify.user, verify.refused);
     if let Some(refused) = refused {
         return Err(refused);
@@ -593,10 +598,13 @@ struct Proofs<'a> {
     tls: &'a mut ClientTls,
     /// The end of the bytes read so far, for a header split across reads.
     tail: Vec<u8>,
-    counted: bool,
+    seen: bool,
     throttle: &'a RefCell<NlaThrottle>,
     ip: IpAddr,
     attempt: &'a Cell<Option<Attempt>>,
+    /// Why the AUTHENTICATE was refused unread, its address having backed off or the pause
+    /// started since CredSSP's start.
+    throttled: &'a Cell<Option<Refusal>>,
 }
 
 impl AsyncRead for Proofs<'_> {
@@ -608,9 +616,19 @@ impl AsyncRead for Proofs<'_> {
         let this = self.get_mut();
         let start = buf.filled().len();
         ready!(Pin::new(&mut *this.tls).poll_read(cx, buf))?;
-        if !this.counted && authenticate_in(&mut this.tail, &buf.filled()[start..]) {
-            this.counted = true;
-            (this.attempt).set(Some(this.throttle.borrow_mut().failed(this.ip)));
+        if !this.seen && authenticate_in(&mut this.tail, &buf.filled()[start..]) {
+            this.seen = true;
+            // Checked and counted in one borrow, so no other connection's proof slips between.
+            let mut throttle = this.throttle.borrow_mut();
+            if let Err(refusal) = throttle.check(this.ip) {
+                buf.set_filled(start);
+                this.throttled.set(Some(refusal));
+                return Poll::Ready(Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    refusal.to_string(),
+                )));
+            }
+            this.attempt.set(Some(throttle.failed(this.ip)));
         }
         Poll::Ready(Ok(()))
     }

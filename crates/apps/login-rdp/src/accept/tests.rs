@@ -31,7 +31,7 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::os::fd::AsFd;
 use tokio::io::{AsyncReadExt, Interest};
 use tokio::net::{TcpListener, UnixListener, UnixStream};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio_rustls::TlsConnector;
 use tokio_rustls::rustls::client::danger::{
     HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier,
@@ -641,6 +641,17 @@ enum Credssp {
     /// Pauses tokio's clock after TLS and sends nothing more, as a client held at a
     /// certificate prompt.
     Stalls,
+    /// Bare NTLM as anna with `password`, delegating the same, held at NTLM's CHALLENGE.
+    Held {
+        password: &'static str,
+        held: Held,
+    },
+}
+
+/// The client's side of a [`Hold`].
+struct Held {
+    at_challenge: oneshot::Sender<()>,
+    go: oneshot::Receiver<()>,
 }
 
 /// An NLA logon from `from`: `user` goes in the Client Info PDU, and in CredSSP unless
@@ -749,6 +760,7 @@ async fn delegate_other<S>(
     password: &str,
     delegated: AuthIdentity,
     public_key: &[u8],
+    mut held: Option<Held>,
 ) -> ConnectorResult<()>
 where
     S: AsyncRead + AsyncWrite + Send + Sync + Unpin,
@@ -793,6 +805,10 @@ where
             break;
         }
         let reply = ts_request(framed, &out).await?;
+        if let Some(held) = held.take() {
+            let _ = held.at_challenge.send(());
+            let _ = held.go.await;
+        }
         input[0].buffer = reply.nego_tokens.unwrap_or_default();
     }
     out.pub_key_auth = Some(seal(&mut ntlm, public_key));
@@ -975,6 +991,23 @@ async fn nla_client(
                 ntlm_password,
                 delegated,
                 &public_key,
+                None,
+            )
+            .await?;
+            connector.mark_credssp_as_done();
+        }
+        Credssp::Held { password, held } => {
+            let delegated = AuthIdentity {
+                username: Username::new("anna", None).unwrap(),
+                password: password.to_owned().into(),
+            };
+            delegate_other(
+                &mut framed,
+                "anna",
+                password,
+                delegated,
+                &public_key,
+                Some(held),
             )
             .await?;
             connector.mark_credssp_as_done();
@@ -1534,4 +1567,113 @@ fn an_ntlm_authenticate_header_split_across_reads_is_seen() {
     ));
     assert!(authenticate_in(&mut tail, b"SP\0\x03\0\0\0.."));
     assert!(!authenticate_in(&mut tail, b"NTLMSSP\0\x02\0\0\0"));
+}
+
+/// A logon held at NTLM's CHALLENGE until `go`; `done` fires once the front returns.
+struct Hold {
+    at_challenge: oneshot::Receiver<()>,
+    go: oneshot::Sender<()>,
+    done: oneshot::Receiver<()>,
+}
+
+/// An NLA logon as anna with `password` from `from`, held at NTLM's CHALLENGE.
+fn held_logon(from: IpAddr, password: &'static str) -> ((NlaLogon, oneshot::Sender<()>), Hold) {
+    let (at_challenge, reached) = oneshot::channel();
+    let (go, wait) = oneshot::channel();
+    let (done, front_done) = oneshot::channel();
+    let held = Held {
+        at_challenge,
+        go: wait,
+    };
+    let logon = NlaLogon {
+        from,
+        credssp: Credssp::Held { password, held },
+        ..hybrid("anna", password)
+    };
+    let hold = Hold {
+        at_challenge: reached,
+        go,
+        done: front_done,
+    };
+    ((logon, done), hold)
+}
+
+/// Runs a held logon's front side, then fires its `done`.
+async fn held_front(
+    ctx: &Ctx,
+    (logon, done): (NlaLogon, oneshot::Sender<()>),
+) -> Result<Pending, Refused> {
+    let (_tell, mut heard) = mpsc::unbounded_channel();
+    let (pending, client) = nla_log_on(ctx, logon, &mut heard).await;
+    client.abort();
+    let _ = done.send(());
+    pending
+}
+
+/// Waits until every logon holds at CHALLENGE, then lets each send its AUTHENTICATE in turn,
+/// the next once the front is done with the one before.
+async fn in_turn<const N: usize>(holds: [Hold; N]) {
+    let mut waiting = Vec::new();
+    for hold in holds {
+        let _ = hold.at_challenge.await;
+        waiting.push((hold.go, hold.done));
+    }
+    for (go, done) in waiting {
+        let _ = go.send(());
+        let _ = done.await;
+    }
+}
+
+#[tokio::test]
+async fn a_connection_held_at_challenge_while_its_address_backs_off_is_refused_at_its_authenticate()
+{
+    let ctx = ctx_with_anna();
+    let _daemon = Daemon::link(&ctx).await;
+    let here: IpAddr = Ipv4Addr::LOCALHOST.into();
+    fail_logons(&ctx, here, FREE_FAILURES).await;
+    let (first, first_hold) = held_logon(here, "wrong");
+    let (second, second_hold) = held_logon(here, "wrong");
+    let (first, second, ()) = tokio::join!(
+        held_front(&ctx, first),
+        held_front(&ctx, second),
+        in_turn([first_hold, second_hold]),
+    );
+    assert!(matches!(first, Err(Refused::Nla(_))), "{first:?}");
+    assert!(
+        matches!(second, Err(Refused::Throttled(Refusal::BackedOff(_)))),
+        "{second:?}"
+    );
+    let Err(Refused::Throttled(Refusal::BackedOff(left))) = right_logon(&ctx, here).await else {
+        panic!("the address backs off after its first held logon");
+    };
+    assert!(
+        left <= Duration::from_secs(2),
+        "one failure past the free ones, not two: {left:?}"
+    );
+}
+
+#[tokio::test]
+async fn connections_held_at_challenge_when_the_pause_starts_are_refused_at_their_authenticate() {
+    let ctx = ctx_with_anna();
+    let daemon = Daemon::link(&ctx).await;
+    for i in 1..PAUSE_AFTER {
+        fail_logons(&ctx, Ipv4Addr::new(127, 0, 0, i as u8).into(), 1).await;
+    }
+    let (last, last_hold) = held_logon(Ipv4Addr::new(127, 0, 0, 100).into(), "wrong");
+    let (right, right_hold) = held_logon(Ipv4Addr::new(127, 0, 0, 101).into(), "anna-rd-pass");
+    let (wrong, wrong_hold) = held_logon(Ipv4Addr::new(127, 0, 0, 102).into(), "wrong");
+    let (last, right, wrong, ()) = tokio::join!(
+        held_front(&ctx, last),
+        held_front(&ctx, right),
+        held_front(&ctx, wrong),
+        in_turn([last_hold, right_hold, wrong_hold]),
+    );
+    assert!(matches!(last, Err(Refused::Nla(_))), "{last:?}");
+    assert_eq!(right.err(), Some(Refused::Throttled(Refusal::Paused)));
+    assert_eq!(wrong.err(), Some(Refused::Throttled(Refusal::Paused)));
+    assert_eq!(
+        daemon.rest(ctx).await,
+        [],
+        "the daemon hears no Authenticate"
+    );
 }
