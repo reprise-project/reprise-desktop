@@ -602,15 +602,32 @@ fn press(a: &mut SettingsApp, id: &'static str) {
     ));
 }
 
-fn send(a: &mut SettingsApp, typed: &[(&'static str, &str)]) {
+/// Type into the open dialog and press OK; the reply lands on the next wake.
+fn ok(a: &mut SettingsApp, typed: &[(&'static str, &str)]) {
     let d = a.rd_password.as_mut().expect("the dialog is open");
     for (id, text) in typed {
         rdpassworddlg::type_into(d, id, text);
     }
     let out = d.event(form::Event::Pressed(rdpassworddlg::OK));
     a.rd_password_outcome(out);
+}
+
+fn send(a: &mut SettingsApp, typed: &[(&'static str, &str)]) {
+    ok(a, typed);
     a.wake();
 }
+
+fn cancel(a: &mut SettingsApp) {
+    let d = a.rd_password.as_mut().expect("the dialog is open");
+    let out = d.event(form::Event::Cancel);
+    a.rd_password_outcome(out);
+}
+
+const SET_NEW: [(&str, &str); 3] = [
+    (rdpassworddlg::LOGIN, "hunter2"),
+    (rdpassworddlg::NEW, "swordfish"),
+    (rdpassworddlg::CONFIRM, "swordfish"),
+];
 
 #[test]
 fn set_sends_the_login_and_remote_passwords_and_shows_done() {
@@ -717,4 +734,114 @@ fn without_the_login_manager_nothing_asks_the_account_socket() {
     );
     a.wake();
     assert!(seen.try_recv().is_err());
+}
+
+#[test]
+fn set_and_clear_grey_while_a_request_is_out_and_its_done_still_shows() {
+    let dir = tmp("rd-late-done");
+    let (socket, seen) = account_daemon(
+        &dir,
+        vec![
+            AccountReply::Status {
+                remote_password: false,
+            },
+            AccountReply::Done,
+        ],
+    );
+    let mut a = managed_app(&dir, socket);
+    assert_eq!(seen.recv_timeout(ANSWERED), Ok(AccountRequest::Status));
+    press(&mut a, pages::RD_PASSWORD_SET);
+    ok(&mut a, &SET_NEW);
+    cancel(&mut a);
+    assert!(a.rd_password.is_none());
+    assert!(!lit(remote(&a), pages::RD_PASSWORD_SET), "Set... waits");
+    assert!(!lit(remote(&a), pages::RD_PASSWORD_CLEAR), "Clear... waits");
+    a.wake();
+    assert_eq!(
+        lines(remote(&a), "rd_password_status"),
+        ["Set: clients that use Network Level Authentication log on with it."]
+    );
+    assert!(lit(remote(&a), pages::RD_PASSWORD_SET));
+    assert!(lit(remote(&a), pages::RD_PASSWORD_CLEAR));
+}
+
+#[test]
+fn a_late_done_leaves_a_dialog_that_never_sent_it_open() {
+    let dir = tmp("rd-late-close");
+    let (socket, seen) = account_daemon(
+        &dir,
+        vec![
+            AccountReply::Status {
+                remote_password: false,
+            },
+            AccountReply::Done,
+        ],
+    );
+    let mut a = managed_app(&dir, socket);
+    assert_eq!(seen.recv_timeout(ANSWERED), Ok(AccountRequest::Status));
+    press(&mut a, pages::RD_PASSWORD_SET);
+    ok(&mut a, &SET_NEW);
+    cancel(&mut a);
+    a.open_rd_password(rdpassworddlg::Purpose::Clear);
+    let d = a.rd_password.as_mut().unwrap();
+    rdpassworddlg::type_into(d, rdpassworddlg::LOGIN, "hunter3");
+    a.wake();
+    let d = a.rd_password.as_ref().expect("the Clear dialog stays open");
+    assert_eq!(d.why(), "");
+    assert_eq!(d.form.edit_text(rdpassworddlg::LOGIN), "hunter3");
+    assert_eq!(
+        lines(remote(&a), "rd_password_status"),
+        ["Set: clients that use Network Level Authentication log on with it."]
+    );
+}
+
+#[test]
+fn a_late_refusal_is_not_said_in_a_dialog_that_never_sent_it() {
+    let dir = tmp("rd-late-refusal");
+    let (socket, seen) = account_daemon(
+        &dir,
+        vec![
+            AccountReply::Status {
+                remote_password: true,
+            },
+            AccountReply::Refused {
+                reason: AccountRefusal::WrongPassword,
+            },
+        ],
+    );
+    let mut a = managed_app(&dir, socket);
+    assert_eq!(seen.recv_timeout(ANSWERED), Ok(AccountRequest::Status));
+    press(&mut a, pages::RD_PASSWORD_SET);
+    ok(&mut a, &SET_NEW);
+    cancel(&mut a);
+    a.open_rd_password(rdpassworddlg::Purpose::Clear);
+    let d = a.rd_password.as_mut().unwrap();
+    rdpassworddlg::type_into(d, rdpassworddlg::LOGIN, "hunter3");
+    a.wake();
+    let d = a.rd_password.as_ref().expect("the Clear dialog stays open");
+    assert_eq!(d.why(), "");
+    assert_eq!(d.form.edit_text(rdpassworddlg::LOGIN), "hunter3");
+    assert!(
+        lit(remote(&a), pages::RD_PASSWORD_CLEAR),
+        "lit once answered"
+    );
+}
+
+#[test]
+fn the_dialog_closes_when_the_login_manager_stops() {
+    let dir = tmp("rd-stopped");
+    let (socket, _seen) = account_daemon(
+        &dir,
+        vec![
+            AccountReply::Status {
+                remote_password: false,
+            },
+            AccountReply::Done,
+        ],
+    );
+    let mut a = managed_app(&dir, socket);
+    press(&mut a, pages::RD_PASSWORD_SET);
+    ok(&mut a, &SET_NEW);
+    remote_read(&mut a, remotehost::Remote::default());
+    assert!(a.rd_password.is_none());
 }

@@ -46,6 +46,8 @@ pub enum Outcome {
 pub struct RdPasswordDialog {
     pub form: Form,
     pub purpose: Purpose,
+    /// Tells this dialog's replies from those of a dialog closed before it.
+    pub generation: u64,
     /// A request is out: OK stays greyed until its reply.
     waiting: bool,
 }
@@ -95,7 +97,7 @@ fn secret((label_id, id, label): (&'static str, &'static str, &str), row: i32) -
 }
 
 impl RdPasswordDialog {
-    pub fn new(purpose: Purpose) -> RdPasswordDialog {
+    pub fn new(purpose: Purpose, generation: u64) -> RdPasswordDialog {
         let fields = match purpose {
             Purpose::Set => &FIELDS[..],
             Purpose::Clear => &FIELDS[..1],
@@ -129,6 +131,7 @@ impl RdPasswordDialog {
         RdPasswordDialog {
             form,
             purpose,
+            generation,
             waiting: false,
         }
     }
@@ -253,7 +256,7 @@ mod tests {
 
     #[test]
     fn the_dialog_needs_matching_new_passwords_of_8_or_more() {
-        let mut d = RdPasswordDialog::new(Purpose::Set);
+        let mut d = RdPasswordDialog::new(Purpose::Set, 1);
         assert!(!ok_lit(&d), "greyed when empty");
         type_into(&mut d, LOGIN, "hunter2");
         type_into(&mut d, NEW, "sword12");
@@ -290,7 +293,7 @@ mod tests {
 
     #[test]
     fn clear_asks_only_for_the_login_password() {
-        let mut d = RdPasswordDialog::new(Purpose::Clear);
+        let mut d = RdPasswordDialog::new(Purpose::Clear, 1);
         assert!(d.form.item(NEW).is_none() && d.form.item(CONFIRM).is_none());
         assert!(!ok_lit(&d));
         type_into(&mut d, LOGIN, "hunter2");
@@ -309,7 +312,7 @@ mod tests {
 
     #[test]
     fn debug_of_the_dialog_never_shows_the_passwords() {
-        let mut d = RdPasswordDialog::new(Purpose::Set);
+        let mut d = RdPasswordDialog::new(Purpose::Set, 1);
         type_into(&mut d, LOGIN, "hunter2");
         type_into(&mut d, NEW, "swordfish");
         type_into(&mut d, CONFIRM, "swordfish");
@@ -333,7 +336,7 @@ mod tests {
     #[test]
     fn everything_sits_inside_the_client() {
         for p in [Purpose::Set, Purpose::Clear] {
-            let d = RdPasswordDialog::new(p);
+            let d = RdPasswordDialog::new(p, 1);
             let (w, h) = d.client();
             for i in &d.form.items {
                 let r = i.rect;
@@ -344,7 +347,10 @@ mod tests {
                 );
             }
         }
-        assert_eq!(RdPasswordDialog::new(Purpose::Set).client(), (360, 156));
-        assert_eq!(RdPasswordDialog::new(Purpose::Clear).client(), (360, 100));
+        assert_eq!(RdPasswordDialog::new(Purpose::Set, 1).client(), (360, 156));
+        assert_eq!(
+            RdPasswordDialog::new(Purpose::Clear, 1).client(),
+            (360, 100)
+        );
     }
 }

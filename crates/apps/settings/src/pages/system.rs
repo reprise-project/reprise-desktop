@@ -707,20 +707,21 @@ pub fn remote_desktop(
     }
     let mut page = Form::new(items);
     show_remote(&mut page, status, enabled, None, None, machine);
-    show_rd_password(&mut page, None);
+    show_rd_password(&mut page, None, false);
     page
 }
 
 /// Show on a [`managed`] page whether you have a Remote Desktop password, `None` until the
-/// login manager says; Clear... greys while none is set.
-pub fn show_rd_password(page: &mut Form, set: Option<bool>) {
+/// login manager says; Clear... greys while none is set, and both buttons while `busy`.
+pub fn show_rd_password(page: &mut Form, set: Option<bool>, busy: bool) {
     let note = match set {
         Some(true) => vec![RD_PASSWORD_SET_NOTE.to_string()],
         Some(false) => vec![RD_PASSWORD_UNSET_NOTE.to_string()],
         None => Vec::new(),
     };
     page.set_lines(RD_PASSWORD_STATUS, &note);
-    page.set_enabled(RD_PASSWORD_CLEAR, set != Some(false));
+    page.set_enabled(RD_PASSWORD_SET, !busy);
+    page.set_enabled(RD_PASSWORD_CLEAR, !busy && set != Some(false));
 }
 
 /// Whether `page` was built for the login manager's remote logins.
