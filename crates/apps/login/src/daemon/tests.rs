@@ -1386,3 +1386,21 @@ fn a_greeters_gone_arriving_after_its_exit_spares_the_next_greeter() {
     );
     assert_eq!(run.greeter(create("anna")), spawn(3, Mode::Login, "anna"));
 }
+
+#[test]
+fn an_account_resolving_to_uid_0_fails_like_a_wrong_password() {
+    let mut run = Run::booted();
+    assert_eq!(run.greeter(create("toor")), spawn(2, Mode::Login, "toor"));
+    assert_eq!(
+        run.worker(2, authed("root", 0)),
+        vec![
+            Effect::Log(log::Level::Warn, "a login as root was refused".into()),
+            Effect::Kill(WorkerId(2)),
+            Effect::Reply(error(ErrorKind::Auth, AUTH_FAILED)),
+        ]
+    );
+    assert_eq!(
+        run.greeter(GreeterRequest::StartSession),
+        reply(error(ErrorKind::Refused, NOT_AUTHENTICATED))
+    );
+}
