@@ -7,10 +7,10 @@ use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 use std::sync::Arc;
 use tokio_rustls::TlsAcceptor;
-use tokio_rustls::rustls::ServerConfig;
 use tokio_rustls::rustls::crypto::aws_lc_rs;
 use tokio_rustls::rustls::pki_types::pem::{self, PemObject};
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use tokio_rustls::rustls::{KeyLog, ServerConfig};
 
 const CERT: &str = "cert.pem";
 const KEY: &str = "key.pem";
@@ -19,6 +19,30 @@ pub struct Identity {
     pub acceptor: TlsAcceptor,
     /// SHA-256 of the certificate's DER, as uppercase hex pairs joined by `:`.
     pub fingerprint: String,
+    config: Arc<ServerConfig>,
+    public_key: Vec<u8>,
+}
+
+impl Identity {
+    /// A copy of the TLS configuration for one connection, with secret extraction on when
+    /// `extract` and the connection's secrets going to `key_log`.
+    pub fn server_config(
+        &self,
+        extract: bool,
+        key_log: Option<Arc<dyn KeyLog>>,
+    ) -> Arc<ServerConfig> {
+        let mut config = (*self.config).clone();
+        config.enable_secret_extraction = extract;
+        if let Some(key_log) = key_log {
+            config.key_log = key_log;
+        }
+        Arc::new(config)
+    }
+
+    /// The subjectPublicKey bits of the certificate's SubjectPublicKeyInfo, which CredSSP binds to.
+    pub fn public_key(&self) -> Vec<u8> {
+        self.public_key.clone()
+    }
 }
 
 /// The certificate in `dir`, or a new one when it is missing or invalid; any other error (a
@@ -86,15 +110,22 @@ fn pem_error(e: pem::Error) -> io::Error {
 
 fn identity(cert: CertificateDer<'static>, key: PrivateKeyDer<'static>) -> io::Result<Identity> {
     let fingerprint = fingerprint(&cert);
+    let public_key = rcgen::KeyPair::try_from(&key)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?
+        .public_key_raw()
+        .to_vec();
     let config = ServerConfig::builder_with_provider(Arc::new(aws_lc_rs::default_provider()))
         .with_safe_default_protocol_versions()
         .map_err(io::Error::other)?
         .with_no_client_auth()
         .with_single_cert(vec![cert], key)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let config = Arc::new(config);
     Ok(Identity {
-        acceptor: TlsAcceptor::from(Arc::new(config)),
+        acceptor: TlsAcceptor::from(config.clone()),
         fingerprint,
+        config,
+        public_key,
     })
 }
 
@@ -200,6 +231,47 @@ mod tests {
                 && p.chars()
                     .all(|c| c.is_ascii_digit() || c.is_ascii_uppercase())
         }));
+    }
+
+    #[test]
+    fn the_public_key_is_the_certificates_subject_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let created = load_or_create(dir.path()).unwrap().public_key();
+        assert_eq!(created.len(), 65, "an uncompressed P-256 point");
+        assert_eq!(created[0], 4);
+        let cert = CertificateDer::from_pem_file(dir.path().join(CERT)).unwrap();
+        let mut bit_string = vec![0x03, created.len() as u8 + 1, 0];
+        bit_string.extend_from_slice(&created);
+        assert!(
+            cert.windows(bit_string.len()).any(|w| w == bit_string),
+            "the certificate's subjectPublicKey is the key"
+        );
+        assert_eq!(load_or_create(dir.path()).unwrap().public_key(), created);
+    }
+
+    #[derive(Debug)]
+    struct NoLog;
+
+    impl KeyLog for NoLog {
+        fn log(&self, _: &str, _: &[u8], _: &[u8]) {}
+    }
+
+    #[test]
+    fn a_connection_config_carries_extraction_and_its_key_log() {
+        let identity = load_or_create(tempfile::tempdir().unwrap().path()).unwrap();
+        let key_log: Arc<dyn KeyLog> = Arc::new(NoLog);
+        let config = identity.server_config(true, Some(key_log.clone()));
+        assert!(config.enable_secret_extraction);
+        assert!(std::ptr::addr_eq(
+            Arc::as_ptr(&config.key_log),
+            Arc::as_ptr(&key_log)
+        ));
+        let plain = identity.server_config(false, None);
+        assert!(!plain.enable_secret_extraction);
+        assert!(!std::ptr::addr_eq(
+            Arc::as_ptr(&plain.key_log),
+            Arc::as_ptr(&key_log)
+        ));
     }
 
     #[test]

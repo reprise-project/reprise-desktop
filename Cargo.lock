@@ -4498,8 +4498,20 @@ dependencies = [
 name = "reprise-login-rdp"
 version = "0.1.0"
 dependencies = [
+ "ironrdp-acceptor",
+ "ironrdp-connector",
+ "ironrdp-core",
+ "ironrdp-pdu",
+ "ironrdp-tokio",
+ "libc",
  "log",
  "reprisebus",
+ "repriselogin",
+ "reprisetls",
+ "tempfile",
+ "tokio",
+ "tokio-rustls",
+ "zeroize",
 ]
 
 [[package]]
