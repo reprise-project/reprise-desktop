@@ -738,7 +738,7 @@ fn field(
         r.height,
     );
     let first = edit_first_visible(text, &edit, inner.width, px, 0);
-    let caret = Caret::new(m.focus == part, true);
+    let caret = Caret::new(m.focus == part && !m.busy, true);
     paint::draw_edit(c, text, &edit, inner, px, p, caret, first);
 }
 
