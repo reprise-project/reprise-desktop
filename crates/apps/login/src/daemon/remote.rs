@@ -96,7 +96,7 @@ pub(super) struct Remote {
     viewers: HashMap<u32, u32>,
     /// Uids whose hand-over link is up.
     linked: HashSet<u32>,
-    /// Uids whose lost link is being reopened.
+    /// Uids whose lost link is reopening, until the new link first reports.
     reopening: HashSet<u32>,
     /// Background sessions with no viewer, by session id.
     disconnects: HashMap<String, Unviewed>,
@@ -875,7 +875,6 @@ impl Daemon {
     }
 
     pub(super) fn intake_open(&mut self, uid: u32, out: &mut Vec<Effect>) {
-        self.remote.reopening.remove(&uid);
         self.remote.linked.insert(uid);
         for conn in self.conns(Step::Linking { uid }) {
             self.link(conn, uid, out);
@@ -899,6 +898,19 @@ impl Daemon {
         for uid in uids {
             self.ask_link(uid, out);
         }
+    }
+
+    /// A link's count of its session's clients. The first after a reopen ends the reopen: a
+    /// link that opens and drops before it reports counts as the reopen giving up.
+    pub(super) fn viewers_reported(
+        &mut self,
+        now: Instant,
+        uid: u32,
+        count: u32,
+        out: &mut Vec<Effect>,
+    ) {
+        self.remote.reopening.remove(&uid);
+        self.set_viewers(now, uid, count, out);
     }
 
     /// A background session whose last viewer leaves ends `end_disconnected_after` later.
