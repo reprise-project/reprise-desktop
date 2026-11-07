@@ -68,9 +68,15 @@ impl Default for Paths {
 /// 0666. The listeners are non-blocking, for [`serve`].
 pub fn bind(paths: &Paths, greeter_gid: u32) -> io::Result<(StdListener, StdListener)> {
     let greeter = bind_group(&paths.greeter, greeter_gid)?;
-    let session = bind_one(&paths.session)?;
-    std::fs::set_permissions(&paths.session, Permissions::from_mode(0o666))?;
+    let session = bind_open(&paths.session)?;
     Ok((greeter, session))
+}
+
+/// Binds `path` as [`bind_one`] does, 0666 for every local user.
+pub fn bind_open(path: &Path) -> io::Result<StdListener> {
+    let l = bind_one(path)?;
+    std::fs::set_permissions(path, Permissions::from_mode(0o666))?;
+    Ok(l)
 }
 
 /// Binds `path` as [`bind_one`] does, 0660 in group `gid`.
@@ -267,20 +273,20 @@ pub fn serve(greeter: StdListener, session: StdListener, server: Server) -> io::
 
 /// A listener's checks in flight, in all and per uid.
 #[derive(Default)]
-struct Checks {
+pub(crate) struct Checks {
     all: usize,
     by_uid: HashMap<u32, usize>,
 }
 
 /// A check counted in its listener's [`Checks`] until it is dropped.
-struct InFlight {
+pub(crate) struct InFlight {
     checks: Rc<RefCell<Checks>>,
     uid: u32,
 }
 
 impl InFlight {
     /// Counts a check for `uid`; `None` when the listener or the uid is at its cap.
-    fn begin(checks: &Rc<RefCell<Checks>>, uid: u32) -> Option<InFlight> {
+    pub(crate) fn begin(checks: &Rc<RefCell<Checks>>, uid: u32) -> Option<InFlight> {
         let mut c = checks.borrow_mut();
         let mine = c.by_uid.get(&uid).copied().unwrap_or(0);
         if c.all >= MAX_PENDING || mine >= MAX_PENDING_PER_UID {
