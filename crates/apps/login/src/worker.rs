@@ -1,5 +1,5 @@
-//! The per-login worker, `reprise-login --worker <mode> <user>`: one process and one PAM
-//! handle from `pam_authenticate` to `pam_close_session`, talking to the daemon over fd 3.
+//! The per-login worker, `reprise-login --worker <mode>`: one process and one PAM handle from
+//! `pam_authenticate` to `pam_close_session`, talking to the daemon over fd 3.
 
 use std::cell::Cell;
 use std::ffi::{CString, c_char, c_int};
@@ -79,14 +79,22 @@ impl Mode {
 #[derive(PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "body", rename_all = "snake_case")]
 pub enum ToWorker {
+    /// The first frame. The user travels here, not in argv, which every local account can read.
+    Begin {
+        user: String,
+        autologin_user: Option<String>,
+    },
     Answer(Option<Zeroizing<String>>),
-    Start { vt: u16 },
+    Start {
+        vt: u16,
+    },
     Cancel,
 }
 
 impl fmt::Debug for ToWorker {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            ToWorker::Begin { .. } => f.write_str("Begin { <redacted> }"),
             ToWorker::Answer(Some(_)) => f.write_str("Answer(<redacted>)"),
             ToWorker::Answer(None) => f.write_str("Answer(None)"),
             ToWorker::Start { vt } => f.debug_struct("Start").field("vt", vt).finish(),
@@ -268,17 +276,8 @@ pub fn find_program(name: &str, path: &str) -> Option<PathBuf> {
         })
 }
 
-/// Runs one login for `user` and returns the worker's exit status.
-pub fn worker_main(
-    mode: Mode,
-    user: &str,
-    autologin_user: Option<&str>,
-    mut sock: UnixStream,
-) -> i32 {
-    if !mode.runs_for(user, autologin_user) {
-        let text = format!("a {} worker does not run for {user}", mode.as_arg());
-        return fail(&mut sock, ErrorKind::Refused, &text);
-    }
+/// Runs one login for the user the daemon's `Begin` names and returns the worker's exit status.
+pub fn worker_main(mode: Mode, mut sock: UnixStream) -> i32 {
     // SAFETY: plain signal disposition change; an inherited SIG_IGN would reap the session itself.
     if unsafe { libc::signal(libc::SIGCHLD, libc::SIG_DFL) } == libc::SIG_ERR {
         log::error!("worker: SIGCHLD: {}", io::Error::last_os_error());
@@ -291,6 +290,19 @@ pub fn worker_main(
     if let Err(e) = prepare_socket(&sock) {
         log::error!("worker: socket timeout: {e}");
         return 1;
+    }
+    let (user, autologin_user) = match read_until_stopped::<ToWorker>(&sock, &STOP) {
+        Ok(ToWorker::Begin {
+            user,
+            autologin_user,
+        }) => (user, autologin_user),
+        Ok(_) => return fail(&mut sock, ErrorKind::Failed, "the first frame is not Begin"),
+        Err(_) => return 1,
+    };
+    let user = user.as_str();
+    if !mode.runs_for(user, autologin_user.as_deref()) {
+        let text = format!("a {} worker does not run for {user}", mode.as_arg());
+        return fail(&mut sock, ErrorKind::Refused, &text);
     }
     let mut ended = None;
     let conv: Box<dyn Converse> = if mode.relays_prompts() {
@@ -1013,6 +1025,10 @@ mod tests {
     fn worker_messages_round_trip() {
         use repriselogin::frame::{decode, encode};
         let to = [
+            ToWorker::Begin {
+                user: "anna".into(),
+                autologin_user: Some("anna".into()),
+            },
             ToWorker::Answer(Some(Zeroizing::new("pw".into()))),
             ToWorker::Answer(None),
             ToWorker::Start { vt: 7 },
@@ -1063,6 +1079,11 @@ mod tests {
     fn debug_of_an_answer_never_shows_it() {
         let m = ToWorker::Answer(Some(Zeroizing::new("hunter2".into())));
         assert_eq!(format!("{m:?}"), "Answer(<redacted>)");
+        let begin = ToWorker::Begin {
+            user: "hunter2".into(),
+            autologin_user: None,
+        };
+        assert_eq!(format!("{begin:?}"), "Begin { <redacted> }");
         assert_eq!(format!("{:?}", ToWorker::Answer(None)), "Answer(None)");
         assert_eq!(
             format!("{:?}", ToWorker::Start { vt: 7 }),
