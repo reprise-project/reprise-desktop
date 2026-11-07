@@ -1,6 +1,8 @@
 pub mod config;
 pub mod daemon;
+pub mod frontipc;
 pub mod greeterruns;
+pub mod intake;
 pub mod ipc;
 pub mod logind;
 pub mod machinewrite;

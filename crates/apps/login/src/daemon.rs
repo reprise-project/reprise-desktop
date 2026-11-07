@@ -22,7 +22,8 @@ use crate::worker::{AUTH_FAILED, FromWorker, Mode, ToWorker};
 mod remote;
 
 pub use remote::{
-    HANDOVER_DEADLINE, Inhibit, LookUpKey, MAX_REMOTE_CHECKS, REFUSE_DELAY, StoredPassword,
+    FrontUnit, HANDOVER_DEADLINE, Inhibit, LookUpKey, MAX_REMOTE_CHECKS, REFUSE_DELAY,
+    StoredPassword,
 };
 
 /// A session that ends sooner than this after its start brings the greeter back with a notice.
@@ -153,6 +154,8 @@ pub enum Input {
         conn: u64,
         ok: bool,
     },
+    /// `MACHINE_CONFIG` was read again, on SIGHUP.
+    ConfigReloaded(MachineConfig),
 }
 
 #[derive(Debug, PartialEq)]
@@ -209,6 +212,10 @@ pub enum Effect {
     },
     /// The logind block inhibitor reprise-login holds from now on.
     Inhibit(Inhibit),
+    /// Starts, restarts or stops the front's unit.
+    Front(FrontUnit),
+    /// Closes every hand-over link.
+    CloseIntakes,
 }
 
 /// A session as logind's `ListSessions` and session properties describe it.
@@ -435,11 +442,14 @@ impl Daemon {
         out
     }
 
-    /// Starts the autologin session or the greeter; with sessions recovered, only the greeter
-    /// and only when seat0 shows none. An orphaned greeter was showing the login screen, so
-    /// that choice waits until it is gone.
+    /// Starts the front while remote logins are on, and the autologin session or the greeter;
+    /// with sessions recovered, only the greeter and only when seat0 shows none. An orphaned
+    /// greeter was showing the login screen, so that choice waits until it is gone.
     pub fn start(&mut self, _now: Instant, world: &World) -> Vec<Effect> {
         let mut out = Vec::new();
+        if self.config.remote.enabled {
+            out.push(Effect::Front(FrontUnit::Start));
+        }
         if !self.orphans.is_empty() {
             self.after_orphans = AfterOrphans::Replace;
             return out;
@@ -584,6 +594,7 @@ impl Daemon {
             Input::IntakeLost { uid } => self.intake_lost(uid, &mut out),
             Input::Viewers { uid, count } => self.set_viewers(uid, count, &mut out),
             Input::Forwarded { conn, ok } => self.forwarded(conn, ok, &mut out),
+            Input::ConfigReloaded(config) => self.config_reloaded(config, &mut out),
         }
         self.update_inhibit(&mut out);
         if !self.start_in_flight() && !self.remote_start_in_flight() {

@@ -31,20 +31,31 @@ fn enabled() -> MachineRemote {
     }
 }
 
-/// Remote logins on, nothing recovered, the greeter up as worker 1.
+/// The front's start, which `start` emits first while remote logins are on.
+fn front_start(remote: &MachineRemote) -> Vec<Effect> {
+    match remote.enabled {
+        true => vec![Effect::Front(FrontUnit::Start)],
+        false => vec![],
+    }
+}
+
+/// Nothing recovered, the greeter up as worker 1.
 fn remote_run(remote: MachineRemote) -> Run {
+    let mut want = front_start(&remote);
+    want.extend(greeter_spawn(1));
     let mut run = Run::machine(config(remote));
     assert_eq!(run.recover(vec![]), vec![]);
-    assert_eq!(run.start(), greeter_spawn(1));
+    assert_eq!(run.start(), want);
     run
 }
 
-/// Remote logins on, anna's session `c1` on VT 7 recovered with `seat_active` on seat0.
+/// Anna's session `c1` on VT 7 recovered with `seat_active` on seat0.
 fn anna_recovered(remote: MachineRemote, seat_active: &str, service: &str) -> Run {
+    let want = front_start(&remote);
     let mut run = Run::machine(config(remote));
     let found = vec![logind("c1", "anna", ANNA, 7, "user", service)];
     run.d.recover(run.now, found, Some(seat_active));
-    assert_eq!(run.start(), vec![]);
+    assert_eq!(run.start(), want);
     run
 }
 
@@ -1243,4 +1254,118 @@ fn a_reused_conn_id_re_arms_the_earlier_conns_timers() {
         }],
         "the first conn's deadline at +7.5 s"
     );
+}
+
+#[test]
+fn the_front_starts_with_the_daemon_when_remote_logins_are_on() {
+    let mut run = Run::machine(config(enabled()));
+    run.recover(vec![]);
+    let effects = run.start();
+    assert_eq!(effects[0], Effect::Front(FrontUnit::Start), "{effects:?}");
+    assert_eq!(effects[1..], greeter_spawn(1));
+    let mut run = Run::machine(config(MachineRemote::default()));
+    run.recover(vec![]);
+    let effects = run.start();
+    assert!(
+        !effects.iter().any(|e| matches!(e, Effect::Front(_))),
+        "{effects:?}"
+    );
+}
+
+#[test]
+fn turning_remote_on_starts_the_front_and_opens_every_sessions_intake() {
+    let mut run = anna_recovered(MachineRemote::default(), "c1", Mode::Login.service());
+    assert_eq!(
+        run.on(Input::ConfigReloaded(config(enabled()))),
+        [
+            Effect::Front(FrontUnit::Start),
+            Effect::OpenIntake { uid: ANNA }
+        ]
+    );
+    assert_eq!(run.on(Input::ConfigReloaded(config(enabled()))), []);
+}
+
+#[test]
+fn turning_remote_off_stops_the_front_and_denies_pending_logins() {
+    let mut run = remote_run(enabled());
+    run.anna_in_background(1, 2);
+    run.on(Input::IntakeOpen { uid: ANNA });
+    run.on(ready(1, "anna"));
+    run.on(Input::Forwarded { conn: 1, ok: true });
+    assert_eq!(
+        run.viewers(ANNA, 1),
+        [Effect::Inhibit(Inhibit::SleepAndIdle)]
+    );
+    assert_eq!(run.on(tls_from(7, 2, "bert", "pw")), looked_up(7, "bert"));
+    run.on(tls_from(8, 3, "carl", "pw"));
+    assert_eq!(
+        run.on(member(8, CARL)),
+        remote_spawn(3, Mode::Remote, "carl", 3)
+    );
+    run.on(tls_from(9, 4, "dora", "pw"));
+    let unknown = Input::Member {
+        key: LookUpKey::Conn(9),
+        uid: None,
+        member: false,
+    };
+    assert_eq!(quiet(run.on(unknown)), []);
+
+    let effects = run.on(Input::ConfigReloaded(config(MachineRemote::default())));
+    assert_eq!(
+        quiet(effects),
+        [
+            Effect::Front(FrontUnit::Stop),
+            front(FrontEvent::Denied {
+                conn: 7,
+                backoff_s: 0
+            }),
+            Effect::Kill(WorkerId(3)),
+            front(FrontEvent::Denied {
+                conn: 8,
+                backoff_s: 0
+            }),
+            front(FrontEvent::Denied {
+                conn: 9,
+                backoff_s: 0
+            }),
+            Effect::CloseIntakes,
+            Effect::Inhibit(Inhibit::Idle),
+        ]
+    );
+    assert_eq!(run.on(member(7, BERT)), [], "a denied login is forgotten");
+    assert_eq!(run.after(REFUSE_DELAY).fire(Timer::Refuse(9)), []);
+    assert_eq!(quiet(run.on(tls(10, "anna", "pw"))), armed(10));
+    assert_eq!(
+        run.after(REFUSE_DELAY).fire(Timer::Refuse(10)),
+        denied(10, 0),
+        "logins stay off"
+    );
+}
+
+#[test]
+fn a_port_change_restarts_the_front() {
+    let mut run = remote_run(enabled());
+    let moved = MachineRemote {
+        port: 3390,
+        ..enabled()
+    };
+    assert_eq!(
+        run.on(Input::ConfigReloaded(config(moved.clone()))),
+        [Effect::Front(FrontUnit::Restart)]
+    );
+    let more = MachineRemote {
+        max_sessions: 2,
+        ..moved
+    };
+    assert_eq!(
+        run.on(Input::ConfigReloaded(config(more))),
+        [],
+        "other remote settings apply to the next login"
+    );
+    let mut run = remote_run(MachineRemote::default());
+    let moved_off = MachineRemote {
+        port: 3390,
+        ..MachineRemote::default()
+    };
+    assert_eq!(run.on(Input::ConfigReloaded(config(moved_off))), []);
 }
