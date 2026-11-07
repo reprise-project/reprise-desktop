@@ -1105,3 +1105,20 @@ fn a_lost_intake_link_zeroes_its_viewers_and_reopens_on_the_next_login() {
         "an open link takes the login at once"
     );
 }
+
+#[test]
+fn a_background_session_removed_before_its_start_reports_leaves_no_entry() {
+    let mut run = remote_run(enabled());
+    let mut want = vec![front(FrontEvent::Verified { conn: 7 })];
+    want.extend(background_start(2, 7));
+    assert_eq!(run.verify(7, 2, "anna", ANNA), want);
+    assert_eq!(run.removed("c2", Some("g1")), []);
+    assert_eq!(
+        quiet(run.worker(2, started("c2", ANNA))),
+        [],
+        "no intake link and no inhibitor"
+    );
+    assert_eq!(run.d.sessions.by_uid(ANNA), None);
+    assert_eq!(run.after(REFUSE_DELAY).fire(Timer::Refuse(7)), denied(7, 0));
+    assert_eq!(run.exited(2), [Effect::Disallocate(7)]);
+}

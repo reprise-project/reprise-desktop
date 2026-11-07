@@ -342,7 +342,8 @@ pub struct Daemon {
     after_orphans: AfterOrphans,
     /// seat0 showed no session when `recover` ran.
     seat_empty: bool,
-    /// Removals of unknown sessions while a start is in flight, with seat0's active session.
+    /// Removals of unknown sessions while a start, console or remote, is in flight, with
+    /// seat0's active session.
     removed_early: Vec<(String, Option<String>)>,
     notice: Option<Notice>,
     /// The running greeter came forward: it gets a fresh Greeting once the input is handled.
@@ -583,7 +584,7 @@ impl Daemon {
             Input::Forwarded { conn, ok } => self.forwarded(conn, ok, &mut out),
         }
         self.update_inhibit(&mut out);
-        if !self.start_in_flight() {
+        if !self.start_in_flight() && !self.remote_start_in_flight() {
             self.removed_early.clear();
         }
         if std::mem::take(&mut self.regreet) {
@@ -1263,9 +1264,13 @@ impl Daemon {
             return self.orphan_gone(world, id, seat_active, out);
         }
         let Some(entry) = self.sessions.remove(id) else {
-            if self.start_in_flight() {
-                self.removed_early.push((id.into(), seat_active));
-            } else if seat_active.is_none() && self.stalled.iter().any(|s| s.vt != GREETER_VT) {
+            if self.start_in_flight() || self.remote_start_in_flight() {
+                self.removed_early.push((id.into(), seat_active.clone()));
+            }
+            if !self.start_in_flight()
+                && seat_active.is_none()
+                && self.stalled.iter().any(|s| s.vt != GREETER_VT)
+            {
                 // Likely a timed-out worker's session, leaving its VT on screen.
                 self.bring_greeter(out);
             }
