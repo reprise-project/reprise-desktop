@@ -159,6 +159,7 @@ pub enum StartRow {
     UnpinStart(usize),
     Forget(usize),
     Properties(usize),
+    SwitchUser,
     LogOff,
     Lock,
     Restart,
@@ -220,17 +221,21 @@ pub fn program_menu(
     v.into_iter().unzip()
 }
 
-/// The Shut down options: Log off, Lock, Restart, Sleep, and Hibernate
-/// when `hibernate` (`[power] hibernate` is set).
-pub fn shutdown_menu(hibernate: bool) -> (Vec<MenuItem>, Vec<Option<StartRow>>) {
-    let mut v = vec![
+/// The Shut down options: Switch user when `switch_user` (under reprise-login), Log off,
+/// Lock, Restart, Sleep, and Hibernate when `hibernate` (`[power] hibernate` is set).
+pub fn shutdown_menu(hibernate: bool, switch_user: bool) -> (Vec<MenuItem>, Vec<Option<StartRow>>) {
+    let mut v = Vec::new();
+    if switch_user {
+        v.push((MenuItem::item("S&witch user"), Some(StartRow::SwitchUser)));
+    }
+    v.extend([
         (MenuItem::item("&Log off"), Some(StartRow::LogOff)),
         (MenuItem::item("L&ock"), Some(StartRow::Lock)),
         (MenuItem::Separator, None),
         (MenuItem::item("&Restart"), Some(StartRow::Restart)),
         (MenuItem::Separator, None),
         (MenuItem::item("&Sleep"), Some(StartRow::Sleep)),
-    ];
+    ]);
     if hibernate {
         v.push((MenuItem::item("&Hibernate"), Some(StartRow::Hibernate)));
     }
@@ -436,10 +441,17 @@ mod tests {
     #[test]
     fn the_shutdown_menu_lists_hibernate_only_when_configured() {
         assert_eq!(
-            labels(&shutdown_menu(false).0),
+            labels(&shutdown_menu(false, false).0),
             ["&Log off", "L&ock", "", "&Restart", "", "&Sleep"]
         );
-        assert!(labels(&shutdown_menu(true).0).contains(&"&Hibernate".to_string()));
+        assert!(labels(&shutdown_menu(true, false).0).contains(&"&Hibernate".to_string()));
+    }
+
+    #[test]
+    fn the_shutdown_menu_offers_switch_user_first_under_reprise_login() {
+        let (items, rows) = shutdown_menu(false, true);
+        assert_eq!(labels(&items)[..2], ["S&witch user", "&Log off"]);
+        assert_eq!(rows[0], Some(StartRow::SwitchUser));
     }
 
     #[test]

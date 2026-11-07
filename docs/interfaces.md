@@ -134,7 +134,7 @@ folder, Documents, Pictures, Music, Recent Items, Computer, Control Panel,
 Printers and Run.
 Hover a program for its jump list. The Shut down button turns the computer
 off, and the arrow next to it offers Log off, Lock, Restart, Sleep and
-Hibernate.
+Hibernate, with Switch user first under reprise-login.
 
 ### Glass only
 
