@@ -7,6 +7,7 @@ mod capbutton;
 mod controls;
 mod copyflight;
 mod frame;
+pub mod logon;
 pub mod menus;
 pub mod overview;
 pub mod powerpanel;
@@ -99,6 +100,13 @@ impl Variant {
 
     pub fn parse(s: &str) -> Option<Variant> {
         Variant::ALL.into_iter().find(|v| v.as_str() == s)
+    }
+
+    /// The scheme `look` draws in: its own under Blue, navy under any other look.
+    pub fn of(look: &crate::paint::Look) -> Variant {
+        look.style()
+            .and_then(|st| Variant::ALL.into_iter().find(|v| v.style_name() == st.name))
+            .unwrap_or_default()
     }
 
     /// The variant an [`ENV`] value names; unset or unknown is navy.

@@ -201,7 +201,7 @@ pub fn look_of(c: Choice) -> (Hue, Mark) {
 }
 
 const TILE_RADIUS: f64 = 4.0;
-const RIM: (Color, u8) = (WHITE, 235);
+pub(super) const RIM: (Color, u8) = (WHITE, 235);
 /// The gloss's centre and radii, and its white at the centre.
 const GLOSS: ((f64, f64), (f64, f64), u8) = ((9.0, 6.0), (15.0, 11.0), 110);
 /// How far each state lifts the face towards white (negative: towards black).
@@ -213,9 +213,16 @@ const GREYED_FACE: f64 = 0.22;
 const GREYED_MARK: f64 = 0.45;
 const MARK_W: f64 = 2.0;
 
-/// A tile `size` design px square at `d` device px per design px: a big button's at [`ICON`],
-/// the Blue Start menu's bottom buttons smaller. Marks scale with the tile; strokes stay whole px.
-pub fn tile(hue: Hue, mark: Mark, state: TileState, size: i32, d: i32) -> Canvas {
+/// A tile face's shading in `state`: its fill top to bottom, the gloss's white out from its centre,
+/// and how much of the face, and of the rim and mark, a greyed tile keeps.
+pub(super) struct Glaze {
+    pub down: [(f64, Px); 3],
+    pub gloss: [(f64, Px); 2],
+    pub face_k: f64,
+    pub mark_k: f64,
+}
+
+pub(super) fn glaze(hue: Hue, state: TileState) -> Glaze {
     let lift = match state {
         TileState::Focus => LIFT_FOCUS,
         TileState::Hot => LIFT_HOT,
@@ -227,21 +234,36 @@ pub fn tile(hue: Hue, mark: Mark, state: TileState, size: i32, d: i32) -> Canvas
     } else {
         mix(hue.base(), BLACK, -lift)
     };
-    let down = [
-        (0.0, solid(mix(face, WHITE, 0.30))),
-        (0.55, solid(face)),
-        (1.0, solid(mix(face, BLACK, 0.16))),
-    ];
     let gloss_a = if state == TileState::Pressed {
         GLOSS.2 / 2
     } else {
         GLOSS.2
     };
-    let gloss = [(0.0, premul(WHITE, gloss_a)), (1.0, CLEAR)];
     let (face_k, mark_k) = match state {
         TileState::Disabled => (GREYED_FACE, GREYED_MARK),
         _ => (1.0, 1.0),
     };
+    Glaze {
+        down: [
+            (0.0, solid(mix(face, WHITE, 0.30))),
+            (0.55, solid(face)),
+            (1.0, solid(mix(face, BLACK, 0.16))),
+        ],
+        gloss: [(0.0, premul(WHITE, gloss_a)), (1.0, CLEAR)],
+        face_k,
+        mark_k,
+    }
+}
+
+/// A tile `size` design px square at `d` device px per design px: a big button's at [`ICON`],
+/// the Blue Start menu's bottom buttons smaller. Marks scale with the tile; strokes stay whole px.
+pub fn tile(hue: Hue, mark: Mark, state: TileState, size: i32, d: i32) -> Canvas {
+    let Glaze {
+        down,
+        gloss,
+        face_k,
+        mark_k,
+    } = glaze(hue, state);
     let k = f64::from(d);
     let n = f64::from(size);
     // Device px per design px of the 32 px tile the geometry is drawn in.
@@ -377,7 +399,7 @@ pub fn title_text() -> TextSpec {
     }
 }
 
-fn title_renderer() -> Rc<TextRenderer> {
+pub(super) fn title_renderer() -> Rc<TextRenderer> {
     thread_local! {
         static TITLE: Rc<TextRenderer> = Rc::new(TextRenderer::load(&title_text().font()));
     }

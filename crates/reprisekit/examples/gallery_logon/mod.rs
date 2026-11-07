@@ -1,11 +1,14 @@
-//! The login screen at 800x600: Classic's dialog states, then each interface's starting screen,
-//! written to `target/reprisekit-gallery-logon@<scale>.png`.
+//! The login screen at 800x600: Classic's dialog states, each interface's starting screen, then
+//! Blue's states and two more of its schemes, written to `target/reprisekit-gallery-logon@<scale>.png`.
 
 use reprisekit::art::userpic;
+use reprisekit::blue::Variant;
+use reprisekit::glass;
 use reprisekit::interface::Interface;
 use reprisekit::interfaces::logon::{draw_logon, logon_layout};
-use reprisekit::interfaces::theme_for;
-use reprisekit::logon::{Logon, LogonKey, LogonUser, UserNote, text};
+use reprisekit::interfaces::theme_with;
+use reprisekit::logon::{Logon, LogonKey, LogonUser, Part, UserNote, text};
+use reprisekit::pointer::Interaction;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
 use reprisekit::theme::Color;
@@ -25,13 +28,13 @@ fn users() -> Vec<LogonUser> {
     .map(|(i, (name, real))| LogonUser {
         name: name.into(),
         real_name: real.into(),
-        picture: Some(userpic::draw(userpic::ALL[i], 48)),
+        picture: Some(userpic::draw(userpic::ALL[i], userpic::SAVED_PX)),
         note: (i == 1).then_some(UserNote::LoggedOn),
     })
     .collect()
 }
 
-fn screens() -> Vec<Logon> {
+fn screens() -> Vec<(Logon, Variant)> {
     let empty = Logon::new(Interface::Classic, Vec::new(), false, None);
     let mut filled = Logon::new(Interface::Classic, Vec::new(), false, Some("alice"));
     filled.key(LogonKey::Text("hunter2"));
@@ -49,6 +52,32 @@ fn screens() -> Vec<Logon> {
     [empty, filled, message, busy, caps, badge]
         .into_iter()
         .chain(starts)
+        .map(|m| (m, Variant::Blue))
+        .chain(blue_screens())
+        .collect()
+}
+
+/// Blue's tiles with one hot, a tile open empty, with a message, Caps Lock and the badge, and
+/// busy, the typed screen, then the open tile with its message in Olive Green and Silver.
+fn blue_screens() -> Vec<(Logon, Variant)> {
+    let rest = Logon::new(Interface::Blue, users(), true, Some("carol"));
+    let mut hot = rest.clone();
+    hot.lit = Some((Part::Tile(0), Interaction::Hot));
+    let mut open = rest.clone();
+    open.click(Part::Tile(1));
+    let mut message = open.clone();
+    message.key(LogonKey::Text("x"));
+    message.fail(text::incorrect());
+    message.caps_lock = true;
+    message.layout = Some("EN".into());
+    let mut busy = open.clone();
+    busy.key(LogonKey::Text("hunter2"));
+    busy.set_busy(true);
+    let typed = Logon::new(Interface::Blue, Vec::new(), false, None);
+    [hot, open, message.clone(), busy, typed]
+        .map(|m| (m, Variant::Blue))
+        .into_iter()
+        .chain([Variant::Olive, Variant::Silver].map(|v| (message.clone(), v)))
         .collect()
 }
 
@@ -61,8 +90,8 @@ pub fn render(scale: i32) -> Canvas {
         at(rows, OUTPUT.height) as u32,
     );
     c.fill_rect(c.bounds(), Color::rgb(0x60, 0x60, 0x60));
-    for (i, m) in screens.iter().enumerate() {
-        let theme = theme_for(m.interface).scaled(scale);
+    for (i, (m, v)) in screens.iter().enumerate() {
+        let theme = theme_with(m.interface, *v, &glass::Settings::default()).scaled(scale);
         let text = TextRenderer::load(&theme.fonts);
         let l = logon_layout(m, &theme, &text, OUTPUT);
         let mut screen = Canvas::new(
