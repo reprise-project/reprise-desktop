@@ -1627,16 +1627,27 @@ fn the_login_screen_group_pins_its_pixels_in_every_look() {
     );
 }
 
-/// The Remote Desktop page while the login manager runs remote logins, with its fingerprint.
+/// The Remote Desktop page while the login manager runs remote logins, with its fingerprint,
+/// before your Remote Desktop password's status is known, then not set and set.
 #[test]
 fn the_remote_desktop_page_under_the_login_manager_pins_its_pixels_in_every_look() {
     let machine = Some("3F:9A:01");
     let mut page = remote_desktop(Area::MIN, None, false, machine);
     show_remote(&mut page, None, false, None, None, machine);
-    let got = row_pins(&page, Rect::new(20, 44, 358, 431));
+    let row = Rect::new(20, 44, 358, 465);
+    let unknown = row_pins(&page, row);
+    let mut got = vec![unknown];
+    for set in [false, true] {
+        show_rd_password(&mut page, Some(set));
+        got.push(row_pins(&page, row));
+    }
     assert_eq!(
         got,
-        [0xc7d24cbbfc553cf6, 0x7e8d9c986707e2b9, 0xf5b352589e6b98f1],
-        "Classic, Blue, Glass"
+        [
+            [0xebca3f7bc8851f64, 0x2a363298d2623bd7, 0xbccc41d91efd4efd],
+            [0xf006df6007e02f19, 0x12eb100fb557f7e9, 0x754cab42cdbfd2ca],
+            [0x7cac9a0ef1a7910c, 0xcc2d8c24136532f2, 0xf7878ed401e4fa40],
+        ],
+        "unknown, not set, set; Classic, Blue, Glass"
     );
 }

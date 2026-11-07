@@ -431,6 +431,16 @@ const REMOTE_FINGERPRINT: &str = "fingerprint";
 pub const REMOTE_REGENERATE: &str = "regenerate";
 const CLIENTS: &str = "clients";
 pub const REMOTE_DISCONNECT: &str = "disconnect";
+/// Open the dialogs that set and clear your Remote Desktop password, on a [`managed`] page.
+pub const RD_PASSWORD_SET: &str = "rd_password_set";
+pub const RD_PASSWORD_CLEAR: &str = "rd_password_clear";
+const RD_PASSWORD_STATUS: &str = "rd_password_status";
+const RD_PASSWORD_UNSET_NOTE: &str = "Not set: clients log on with your login password over TLS.";
+const RD_PASSWORD_SET_NOTE: &str =
+    "Set: clients that use Network Level Authentication log on with it.";
+/// How much lower the rows from the fingerprint down sit on a [`managed`] page, below the
+/// Remote Desktop password row and its two-line status.
+const RD_PASSWORD_DY: i32 = 34;
 
 /// What greys with the switch off; New Certificate and Disconnect also need the server answering.
 const REMOTE_CONTROLS: [&str; 24] = [
@@ -500,6 +510,7 @@ pub fn remote_desktop(
             "Remote logins to this computer are set on the Login Manager page.",
         ));
         items.extend(port(64));
+        let buttons_x = a.right() - 2 * BUTTON_W - BUTTON_GAP;
         items.extend([
             Item::label_at(
                 REMOTE_NOTE,
@@ -508,7 +519,27 @@ pub fn remote_desktop(
                 a.w - 100,
                 "The login manager's port is used.",
             ),
-            Item::label_at(REMOTE_STATUS, X, 80, a.w, ""),
+            Item::label_at(
+                "rd_password_label",
+                X,
+                84,
+                buttons_x - X - 6,
+                "Remote Desktop password:",
+            ),
+            Item::button_at(RD_PASSWORD_SET, buttons_x, 80, BUTTON_W, "Se&t...", true),
+            Item::button_at(
+                RD_PASSWORD_CLEAR,
+                a.right() - BUTTON_W,
+                80,
+                BUTTON_W,
+                "&Clear...",
+                true,
+            ),
+            Item::new(
+                RD_PASSWORD_STATUS,
+                Rect::new(X, 106, a.w, 2 * LINE_H),
+                Control::Lines(Vec::new()),
+            ),
         ]);
     } else {
         items.push(Item::check(
@@ -530,6 +561,7 @@ pub fn remote_desktop(
             Item::label_at(REMOTE_STATUS, X, 80, a.w - 18, "").under_check(),
         ]);
     }
+    let below = items.len();
     items.extend([
         Item::label_at("fingerprint_label", X, 104, 126, "&Fingerprint (SHA-256):"),
         edit(
@@ -667,9 +699,27 @@ pub fn remote_desktop(
             "Replace &it",
         ),
     ]);
+    if machine.is_some() {
+        for i in &mut items[below..] {
+            i.rect.y += RD_PASSWORD_DY;
+        }
+    }
     let mut page = Form::new(items);
     show_remote(&mut page, status, enabled, None, None, machine);
+    show_rd_password(&mut page, None);
     page
+}
+
+/// Show on a [`managed`] page whether you have a Remote Desktop password, `None` until the
+/// login manager says; Clear... greys while none is set.
+pub fn show_rd_password(page: &mut Form, set: Option<bool>) {
+    let note = match set {
+        Some(true) => vec![RD_PASSWORD_SET_NOTE.to_string()],
+        Some(false) => vec![RD_PASSWORD_UNSET_NOTE.to_string()],
+        None => Vec::new(),
+    };
+    page.set_lines(RD_PASSWORD_STATUS, &note);
+    page.set_enabled(RD_PASSWORD_CLEAR, set != Some(false));
 }
 
 /// Whether `page` was built for the login manager's remote logins.

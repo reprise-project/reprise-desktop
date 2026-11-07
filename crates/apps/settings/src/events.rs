@@ -3,10 +3,10 @@
 use crate::backuphost::Then;
 use crate::registry::Page;
 use crate::{
-    ADD_ITEM_WIN, ADD_WIN, ASK_WIN, CHOOSER_WIN, COLOR_WIN, ERROR_WIN, LAYOUT_WIN, RENAME_WIN,
-    SAVER_WIN, SHORTCUT_WIN, SettingsApp, additem, appearancepage, backgroundpage, defaultspage,
-    displayhost, displaypage, filepick::Pick, layoutdlg, menupage, notifypage, pages, quickpage,
-    renamedlg, saverdlg, saverpage,
+    ADD_ITEM_WIN, ADD_WIN, ASK_WIN, CHOOSER_WIN, COLOR_WIN, ERROR_WIN, LAYOUT_WIN, RD_PASSWORD_WIN,
+    RENAME_WIN, SAVER_WIN, SHORTCUT_WIN, SettingsApp, additem, appearancepage, backgroundpage,
+    defaultspage, displayhost, displaypage, filepick::Pick, layoutdlg, menupage, notifypage, pages,
+    quickpage, rdpassworddlg, renamedlg, saverdlg, saverpage,
 };
 use repriseapp::keys::{dialog_key, form_clipboard};
 use repriseapp::{BTN_LEFT, BTN_RIGHT, Ctx, Event, KeyInput, PointerInput, Reply, WinId};
@@ -142,6 +142,8 @@ impl SettingsApp {
                     self.remote_disconnect();
                     Reply::redraw()
                 }
+                pages::RD_PASSWORD_SET => self.open_rd_password(rdpassworddlg::Purpose::Set),
+                pages::RD_PASSWORD_CLEAR => self.open_rd_password(rdpassworddlg::Purpose::Clear),
                 pages::REMOTE_REGENERATE => {
                     self.ask(
                         "Make a new certificate? Computers that connected before will warn that \
@@ -363,6 +365,9 @@ impl SettingsApp {
         }
         if win == SAVER_WIN {
             return self.saver_dlg_event(ev, ctx);
+        }
+        if win == RD_PASSWORD_WIN {
+            return self.rd_password_event(ev, ctx);
         }
         if win == displayhost::MONITOR_WIN {
             return self.monitor_event(ev, ctx);
