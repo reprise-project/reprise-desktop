@@ -12,8 +12,9 @@
 //! `Lock` and `Unlock` signals (`loginctl lock-session`, `unlock-session`)
 //! lock and unlock, and `LockedHint` and `IdleHint` follow the lock and idle timer.
 //!
-//! Under remote control (`State::remote_controlled`) a shut lid darkens the
-//! internal panels instead of running `[power] lid_close`.
+//! With a remote client, in this session (`State::remote_controlled`) or another
+//! (`remote_elsewhere`), a shut lid darkens the internal panels instead of running
+//! `[power] lid_close`. Off the seat the lid does nothing.
 
 use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
@@ -54,6 +55,9 @@ const COVER_WAIT: Duration = Duration::from_millis(2000);
 /// logind's `HoldoffTimeoutSec` default.
 const LID_GRACE: Duration = Duration::from_secs(30);
 
+/// Who the login manager's inhibitors name.
+const LOGIN_MANAGER: &str = "Reprise login manager";
+
 /// Under `$XDG_RUNTIME_DIR`: the darkened panels, one `connector level` per line.
 const DARKENED_RECORD: &str = "reprise-darkened";
 
@@ -83,6 +87,8 @@ enum Report {
     SleepDelay(OwnedFd),
     /// `PrepareForSleep(true)`: the machine sleeps once every delay inhibitor is released.
     Sleeping,
+    /// `ListInhibitors` read again (`remote_elsewhere`).
+    RemoteElsewhere(bool),
     Resumed,
     Lock,
     Unlock,
@@ -141,6 +147,41 @@ pub struct PowerState {
     left_dark: Vec<(String, u8)>,
     /// What `remote_control_changed` last saw of `State::remote_controlled`.
     remote: bool,
+    /// A remote client works in another session on this machine (`remote_elsewhere`).
+    pub remote_elsewhere: bool,
+}
+
+/// One of logind's `ListInhibitors`: what, who, why, mode, uid, pid.
+pub type Inhibitor = (String, String, String, String, u32, u32);
+
+/// Whether the login manager holds sleep off for a remote client: a `block` inhibitor on `sleep`
+/// that root holds in its name.
+pub fn remote_elsewhere(inhibitors: &[Inhibitor]) -> bool {
+    inhibitors.iter().any(|(what, who, _, mode, uid, _)| {
+        who == LOGIN_MANAGER
+            && mode == "block"
+            && *uid == 0
+            && what.split(':').any(|w| w == "sleep")
+    })
+}
+
+/// The login manager's sleep inhibitor came or went: idle re-arms, and a shut lid's panels go
+/// dark or come back as under remote control.
+pub(crate) fn remote_elsewhere_changed(state: &mut State, elsewhere: bool) {
+    if std::mem::replace(&mut state.power.remote_elsewhere, elsewhere) == elsewhere {
+        return;
+    }
+    log::info!(
+        "power: a remote client in another session {}",
+        if elsewhere { "connected" } else { "left" }
+    );
+    crate::idle::arm(state);
+    remote_lid(state);
+}
+
+/// Whether a remote client holds the lid's action off: this session's or another's.
+fn remote_held(state: &State) -> bool {
+    state.remote_controlled() || state.power.remote_elsewhere
 }
 
 /// Runs on the D-Bus thread until the bus goes away.
@@ -190,6 +231,11 @@ async fn run(reports: Sender<Report>, calls: async_channel::Receiver<Call>) {
             },
             Err(e) => log::info!("power: no logind session ({e}); no lock-session, no hints"),
         }
+        let inhibitors = watch_inhibitors(login1.clone(), reports.clone());
+        std::thread::Builder::new()
+            .name("power-inhibitors".into())
+            .spawn(move || zbus::block_on(inhibitors))
+            .ok();
         let sleep = watch_sleep(login1, reports.clone());
         std::thread::Builder::new()
             .name("power-sleep".into())
@@ -377,6 +423,48 @@ async fn watch_sleep(login1: Proxy<'static>, reports: Sender<Report>) {
     }
 }
 
+/// logind's `BlockInhibited` changes as block inhibitors come and go; each change, and each new
+/// logind, reads `ListInhibitors` again. Only logind's own broadcasts get through.
+async fn watch_inhibitors(login1: Proxy<'static>, reports: Sender<Report>) {
+    use futures_util::stream::StreamExt;
+    let Some(rule) = signal_rule(LOGIN1_NAME, LOGIN1_PATH, PROPERTIES, "PropertiesChanged") else {
+        return;
+    };
+    let mut changes = reprisebus::signals(login1.connection(), LOGIN1_NAME, vec![rule]).await;
+    read_inhibitors(&login1, &reports).await;
+    while let Some(sig) = changes.next().await {
+        if let reprisebus::Signal::Message(msg) = sig {
+            let Ok((iface, changed, invalidated)) = msg.body().deserialize::<(
+                String,
+                std::collections::HashMap<String, zbus::OwnedVariant>,
+                Vec<String>,
+            )>() else {
+                continue;
+            };
+            let block = "BlockInhibited";
+            if iface != LOGIN1_MANAGER
+                || !(changed.contains_key(block) || invalidated.iter().any(|p| p == block))
+            {
+                continue;
+            }
+        }
+        read_inhibitors(&login1, &reports).await;
+    }
+}
+
+async fn read_inhibitors(login1: &Proxy<'_>, reports: &Sender<Report>) {
+    let list = match login1.call_method("ListInhibitors", &()).await {
+        Ok(reply) => reply.body().deserialize::<Vec<Inhibitor>>(),
+        Err(e) => Err(e),
+    };
+    match list {
+        Ok(list) => {
+            let _ = reports.send(Report::RemoteElsewhere(remote_elsewhere(&list)));
+        }
+        Err(e) => log::info!("power: no ListInhibitors ({e}); no remote client seen elsewhere"),
+    }
+}
+
 fn report(state: &mut State, r: Report) {
     match r {
         Report::Inhibitor(fd) => state.power._inhibitor = Some(fd),
@@ -385,6 +473,7 @@ fn report(state: &mut State, r: Report) {
             state.power.sleep_delay = Some(fd);
         }
         Report::Sleeping => sleeping(state),
+        Report::RemoteElsewhere(v) => remote_elsewhere_changed(state, v),
         Report::Resumed => {
             crate::idle::resumed(state);
             crate::nightlight::update(state);
@@ -687,11 +776,15 @@ fn lid_grace_over(state: &mut State) {
     }
 }
 
-/// The lid is closed with nothing external: `[power] lid_close` runs, or under remote control
-/// the internal panels go dark instead.
+/// The lid is closed with nothing external: `[power] lid_close` runs, or with a remote client
+/// (`remote_held`) the internal panels go dark instead. Off the seat, nothing.
 fn lid_shut(state: &mut State) {
-    if state.remote_controlled() {
-        log::info!("power: under remote control, the panels go dark instead");
+    if !crate::backend::session_active(state) {
+        log::info!("power: lid shut off the seat; nothing to do");
+        return;
+    }
+    if remote_held(state) {
+        log::info!("power: with a remote client, the panels go dark instead");
         darken_panels(state);
         return;
     }
@@ -830,8 +923,16 @@ pub fn remote_control_changed(state: &mut State) {
     }
     // notify_activity re-arms only when a step changed; the idle config changed regardless.
     crate::idle::arm(state);
-    let shut = state.power.lid_closed && !external_in_layout(state);
-    if remote {
+    remote_lid(state);
+}
+
+/// A remote client came or went (`remote_held`): a shut lid's panels go dark as the first comes
+/// and come back, with a lid check, as the last goes. Off the seat, nothing.
+fn remote_lid(state: &mut State) {
+    let shut = state.power.lid_closed
+        && !external_in_layout(state)
+        && crate::backend::session_active(state);
+    if remote_held(state) {
         if shut {
             darken_panels(state);
         }
@@ -909,6 +1010,24 @@ mod tests {
         assert!(internal_wanted(false, true));
         assert!(internal_wanted(true, false), "the panel is all there is");
         assert!(!internal_wanted(true, true));
+    }
+
+    #[test]
+    fn remote_elsewhere_reads_the_login_managers_sleep_inhibitor() {
+        let held = |what: &str, who: &str, mode: &str, uid| {
+            let why = "A Remote Desktop client is connected";
+            remote_elsewhere(&[(what.into(), who.into(), why.into(), mode.into(), uid, 1)])
+        };
+        let who = "Reprise login manager";
+        assert!(held("sleep:idle", who, "block", 0));
+        assert!(!held("idle", who, "block", 0));
+        assert!(!held("sleep", "reprise", "block", 0));
+        assert!(!held("sleep:idle", who, "delay", 0));
+        assert!(
+            !held("sleep:idle", who, "block", 1000),
+            "only root speaks for the login manager"
+        );
+        assert!(!remote_elsewhere(&[]));
     }
 
     mod remote {
@@ -1032,6 +1151,36 @@ mod tests {
             assert!(h.state.power.lid_timer.is_some(), "the lid check is armed");
             lid_grace_over(&mut h.state);
             assert!(h.state.console_locked(), "lid_close ran");
+        }
+
+        #[test]
+        fn a_shut_lid_with_a_remote_client_elsewhere_darkens_the_panel() {
+            let (mut h, jobs) = laptop();
+            crate::power::remote_elsewhere_changed(&mut h.state, true);
+            switch_toggled(&mut h.state, Some(Switch::Lid), SwitchState::On);
+            assert!(!h.state.console_locked(), "lid_close does not run");
+            assert_eq!(panel_sets(&jobs), [0], "the panel goes dark");
+            crate::power::remote_elsewhere_changed(&mut h.state, false);
+            assert_eq!(panel_sets(&jobs), [60], "the panel comes back at 60%");
+            assert!(h.state.power.lid_timer.is_some(), "the lid check is armed");
+            lid_grace_over(&mut h.state);
+            assert!(h.state.console_locked(), "lid_close ran");
+        }
+
+        #[test]
+        fn an_inactive_session_runs_no_lid_action() {
+            let (mut h, jobs) = laptop();
+            crate::backend::pause_session(&mut h.state);
+            switch_toggled(&mut h.state, Some(Switch::Lid), SwitchState::On);
+            lid_grace_over(&mut h.state);
+            assert!(!h.state.console_locked(), "lid_close does not run");
+            let _peer = h.ei_remote_session();
+            crate::power::remote_elsewhere_changed(&mut h.state, true);
+            assert_eq!(
+                panel_sets(&jobs),
+                Vec::<u8>::new(),
+                "the panel is left alone"
+            );
         }
 
         fn record_in_scratch(name: &str) -> std::path::PathBuf {
