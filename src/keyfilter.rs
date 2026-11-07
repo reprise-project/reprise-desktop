@@ -85,15 +85,17 @@ impl Aid {
 }
 
 /// The balloon after `aid` was turned on or off: summary and body. `shortcuts`: the
-/// `[accessibility] shortcuts` switch, without which the body names no shortcut.
-fn switched_notice(aid: Aid, on: bool, shortcuts: bool) -> (String, String) {
+/// `[accessibility] shortcuts` switch, without which the body names no shortcut. `settings`:
+/// whether a click on the balloon can open Settings.
+fn switched_notice(aid: Aid, on: bool, shortcuts: bool, settings: bool) -> (String, String) {
     let name = aid.name();
     let keys = aid.shortcut_keys();
     let body = match (on, shortcuts) {
         (true, true) => format!("{} {keys} turns it off.", aid.what()),
         (true, false) => aid.what().to_string(),
         (false, true) => format!("{keys} turns it on again."),
-        (false, false) => "Click here to turn it on again in Settings.".to_string(),
+        (false, false) if settings => "Click here to turn it on again in Settings.".to_string(),
+        (false, false) => String::new(),
     };
     let state = if on { "on" } else { "off" };
     (format!("{name} is {state}"), body)
@@ -498,7 +500,8 @@ impl State {
         if let Some(aid) = self.key_input.aids.prompt.take()
             && !self.console_locked()
         {
-            self.open_dialog(crate::dialog::Dialog::key_aid_prompt(aid));
+            let settings = !self.env.refuses_programs;
+            self.open_dialog(crate::dialog::Dialog::key_aid_prompt(aid, settings));
         }
     }
 
@@ -591,11 +594,17 @@ impl State {
         }
     }
 
-    /// Tell the user `aid` was turned on or off; a click on the balloon opens its settings.
+    /// Tell the user `aid` was turned on or off; a click opens its settings where programs may start.
     pub fn aid_switched(&mut self, aid: Aid, on: bool) {
-        let (summary, body) = switched_notice(aid, on, self.config.accessibility.shortcuts);
-        let argv = aid.settings_argv().iter().map(Into::into).collect();
-        crate::notifyview::notice_opening(self, &summary, &body, argv);
+        let settings = !self.env.refuses_programs;
+        let shortcuts = self.config.accessibility.shortcuts;
+        let (summary, body) = switched_notice(aid, on, shortcuts, settings);
+        if settings {
+            let argv = aid.settings_argv().iter().map(Into::into).collect();
+            crate::notifyview::notice_opening(self, &summary, &body, argv);
+        } else {
+            crate::notifyview::notice(self, &summary, &body);
+        }
     }
 
     /// Turn `aid` on or off: live at once, and in config.toml.
@@ -671,6 +680,8 @@ mod tests {
     const A: u32 = 38;
     const B: u32 = 56;
     const NUMLOCK: u32 = 77;
+    const EV_LEFTSHIFT: u32 = 42;
+    const EV_S: u32 = 31;
 
     fn key(code: u32, pressed: bool) -> Key {
         let modifier = match code {
@@ -1059,11 +1070,11 @@ mod tests {
             ),
             (Aid::MouseKeys, "Left Alt+left Shift+Num Lock"),
         ] {
-            let (summary, body) = switched_notice(aid, true, true);
+            let (summary, body) = switched_notice(aid, true, true, true);
             assert_eq!(summary, format!("{} is on", aid.name()));
             assert!(body.starts_with(aid.what()), "{body}");
             assert!(body.ends_with(&format!("{keys} turns it off.")), "{body}");
-            let (summary, body) = switched_notice(aid, false, true);
+            let (summary, body) = switched_notice(aid, false, true, true);
             assert_eq!(summary, format!("{} is off", aid.name()));
             assert_eq!(body, format!("{keys} turns it on again."));
         }
@@ -1071,10 +1082,82 @@ mod tests {
 
     #[test]
     fn with_the_shortcuts_off_the_notice_names_no_shortcut() {
-        let (_, on) = switched_notice(Aid::StickyKeys, true, false);
+        let (_, on) = switched_notice(Aid::StickyKeys, true, false, true);
         assert_eq!(on, Aid::StickyKeys.what());
-        let (_, off) = switched_notice(Aid::StickyKeys, false, false);
+        let (_, off) = switched_notice(Aid::StickyKeys, false, false, true);
         assert_eq!(off, "Click here to turn it on again in Settings.");
+    }
+
+    #[test]
+    fn without_settings_the_off_notice_has_no_body() {
+        let (summary, off) = switched_notice(Aid::StickyKeys, false, false, false);
+        assert_eq!((summary.as_str(), off.as_str()), ("StickyKeys is off", ""));
+    }
+
+    /// A state on `host` that heard the StickyKeys shortcut and records what it starts.
+    fn asked_for_sticky_keys(host: crate::compositor::Host) -> crate::harness::Harness {
+        let mut h = crate::harness::Harness::with_host(Default::default(), host);
+        h.output("TEST-1", 1024, 768);
+        crate::spawn::record();
+        for _ in 0..5 {
+            h.key(EV_LEFTSHIFT, true);
+            h.key(EV_LEFTSHIFT, false);
+        }
+        let top = h
+            .state
+            .dialogs
+            .views
+            .last()
+            .expect("the StickyKeys question");
+        assert_eq!(top.dialog.title, "StickyKeys");
+        h
+    }
+
+    fn type_s(h: &mut crate::harness::Harness) {
+        h.key(EV_S, true);
+        h.key(EV_S, false);
+    }
+
+    #[test]
+    fn s_at_the_login_screens_sticky_keys_question_starts_no_program() {
+        let mut h = asked_for_sticky_keys(crate::compositor::Host::Greeter);
+        type_s(&mut h);
+        assert_eq!(crate::spawn::recorded(), Vec::<String>::new());
+        assert_eq!(h.state.dialogs.views.len(), 1, "the question stays");
+    }
+
+    #[test]
+    fn the_login_screens_sticky_keys_question_greys_settings() {
+        let h = asked_for_sticky_keys(crate::compositor::Host::Greeter);
+        let top = h.state.dialogs.views.last().unwrap();
+        let labels: Vec<_> = top
+            .dialog
+            .buttons
+            .iter()
+            .map(|b| b.label.as_str())
+            .collect();
+        assert_eq!(labels, ["&Yes", "&No", "&Settings..."]);
+        let enabled: Vec<_> = top.dialog.buttons.iter().map(|b| b.enabled).collect();
+        assert_eq!(enabled, [true, true, false], "Settings... is greyed");
+    }
+
+    #[test]
+    fn the_login_screen_refuses_settings_past_the_greyed_button() {
+        let mut h = asked_for_sticky_keys(crate::compositor::Host::Greeter);
+        let top = h.state.dialogs.views.last().unwrap();
+        let crate::dialog::DialogAction::Spawn(cmd) = top.dialog.buttons[2].action.clone() else {
+            panic!("Settings... starts a program");
+        };
+        h.state.apply_dialog(crate::dialog::Outcome::Spawn(cmd));
+        assert_eq!(crate::spawn::recorded(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn s_at_a_sessions_sticky_keys_question_starts_settings() {
+        let mut h = asked_for_sticky_keys(crate::compositor::Host::Bare);
+        type_s(&mut h);
+        assert_eq!(crate::spawn::recorded(), ["reprise-settings"]);
+        assert!(h.state.dialogs.views.is_empty(), "the question closes");
     }
 
     #[test]

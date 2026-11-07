@@ -52,7 +52,7 @@ fn render_key_aid_preview() {
     let canvases: Vec<Canvas> = [Aid::StickyKeys, Aid::SlowKeys, Aid::MouseKeys]
         .into_iter()
         .map(|aid| {
-            let d = Dialog::key_aid_prompt(aid);
+            let d = Dialog::key_aid_prompt(aid, true);
             let l = DialogLayout::compute(&theme, &text, &d);
             draw(
                 &theme,

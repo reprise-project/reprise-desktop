@@ -709,8 +709,8 @@ impl Dialog {
 
     /// What a key aid's shortcut asks: turn the aid on (Yes), leave it
     /// off (No), or open its settings, where the shortcut itself can be
-    /// turned off.
-    pub fn key_aid_prompt(aid: crate::keyfilter::Aid) -> Dialog {
+    /// turned off. Without `settings` (the login screen) Settings... is greyed.
+    pub fn key_aid_prompt(aid: crate::keyfilter::Aid, settings: bool) -> Dialog {
         use crate::keyfilter::Aid;
         let what = match aid {
             Aid::StickyKeys => {
@@ -736,14 +736,17 @@ impl Dialog {
             buttons: vec![
                 button("&Yes", DialogAction::TurnOn(aid), true),
                 button("&No", DialogAction::Cancel, false),
-                button(
-                    "&Settings...",
-                    DialogAction::Spawn(format!(
-                        "reprise-settings --page text-and-keys --focus {}",
-                        aid.key()
-                    )),
-                    false,
-                ),
+                DialogButton {
+                    enabled: settings,
+                    ..button(
+                        "&Settings...",
+                        DialogAction::Spawn(format!(
+                            "reprise-settings --page text-and-keys --focus {}",
+                            aid.key()
+                        )),
+                        false,
+                    )
+                },
             ],
             ..Dialog::new(
                 name,

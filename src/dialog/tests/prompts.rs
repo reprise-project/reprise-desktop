@@ -17,7 +17,10 @@ fn delete_badge_pins_at_scale_1_and_2() {
 #[test]
 fn a_message_box_focuses_its_default_button_and_reads_its_text() {
     use reprisekit::access::accesskit::Role;
-    let (t, focus) = tree_of(&Dialog::key_aid_prompt(crate::keyfilter::Aid::StickyKeys));
+    let (t, focus) = tree_of(&Dialog::key_aid_prompt(
+        crate::keyfilter::Aid::StickyKeys,
+        true,
+    ));
     let yes = t.get(focus).unwrap();
     assert_eq!(yes.role(), Role::DefaultButton);
     assert_eq!(yes.label(), Some("Yes"));
@@ -592,7 +595,7 @@ fn a_key_aid_prompt_asks_on_its_fixed_template() {
         (Aid::SlowKeys, 7),
         (Aid::MouseKeys, 6),
     ] {
-        let mut d = Dialog::key_aid_prompt(aid);
+        let mut d = Dialog::key_aid_prompt(aid, true);
         assert_eq!(d.title, aid.name());
         assert_eq!(d.placement, Placement::CenterAs(180));
         let l = DialogLayout::compute(&theme, &text, &d);
@@ -620,6 +623,20 @@ fn a_key_aid_prompt_asks_on_its_fixed_template() {
             ))
         );
     }
+}
+
+#[test]
+fn a_key_aid_prompt_without_settings_greys_settings_and_leaves_s_inert() {
+    use crate::keyfilter::Aid;
+    let mut d = Dialog::key_aid_prompt(Aid::StickyKeys, false);
+    assert_eq!(d.buttons[2].label, "&Settings...");
+    assert!(!d.buttons[2].enabled, "Settings... is greyed");
+    assert_eq!(d.press(2), Outcome::Nothing);
+    assert_eq!(
+        d.key(Key::Edit(EditKey::Insert("s".into()))),
+        Outcome::Nothing
+    );
+    assert_eq!(d.key(Key::Enter), Outcome::TurnOn(Aid::StickyKeys));
 }
 
 #[test]

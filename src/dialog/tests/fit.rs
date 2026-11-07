@@ -384,7 +384,7 @@ fn template_dialogs() -> Vec<Dialog> {
             crate::keyfilter::Aid::SlowKeys,
             crate::keyfilter::Aid::MouseKeys,
         ]
-        .map(Dialog::key_aid_prompt),
+        .map(|aid| Dialog::key_aid_prompt(aid, true)),
     );
     ds
 }
