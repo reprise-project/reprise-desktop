@@ -110,6 +110,11 @@ pub enum Input {
         id: String,
         seat_active: Option<String>,
     },
+    /// Session `id` of `uid` lost its login worker while logind keeps it open.
+    SessionOrphaned {
+        id: String,
+        uid: u32,
+    },
     /// logind's `TerminateSession(id)` failed; `seat_active` is seat0's active session.
     TerminateFailed {
         id: String,
@@ -583,6 +588,7 @@ impl Daemon {
             Input::SessionRemoved { id, seat_active } => {
                 self.session_removed(now, world, &id, seat_active, &mut out)
             }
+            Input::SessionOrphaned { id, uid } => self.session_orphaned(&id, uid, &mut out),
             Input::Unlocked { id } => {
                 let resuming = matches!(&self.conversation, Some(Conversation {
                     route: Route::Resume { id: resumed, .. },

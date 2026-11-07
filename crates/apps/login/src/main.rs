@@ -456,7 +456,8 @@ impl Runtime {
     }
 
     /// Hands the state machine a worker's exit. The console leaves a timed-out worker's VT,
-    /// and a session worker whose logind session is closing or gone ends that session.
+    /// a session worker whose logind session is closing or gone ends that session, and one
+    /// whose session logind keeps open reports it orphaned.
     async fn exited(&mut self, exit: Exited) {
         self.gate.borrow_mut().greeter_exited(exit.id);
         let stalled = self.daemon.stalled_vt(exit.id);
@@ -465,11 +466,37 @@ impl Runtime {
             log::warn!("a timed-out login left the console on its VT; showing the login screen");
             self.switch_to(GREETER_VT);
         }
-        if let Some(id) = exit.session.filter(|_| exit.mode != Mode::Greeter)
-            && self.logind.ended(&id).await
-        {
+        let Some(id) = exit.session.filter(|_| exit.mode != Mode::Greeter) else {
+            return;
+        };
+        let ended = self.logind.ended(&id).await;
+        if orphaned(exit.mode, ended) {
+            self.report_orphan(id).await;
+        } else if ended {
             let seat_active = self.logind.seat_active().await;
             self.input(Input::SessionRemoved { id, seat_active }).await;
+        }
+    }
+
+    /// Reports session `id` orphaned with the uid logind lists for it, or removed once logind
+    /// no longer lists it open. A failed read ends nothing.
+    async fn report_orphan(&mut self, id: String) {
+        let open = match self.logind.sessions().await {
+            Ok(open) => Some(open),
+            Err(e) => {
+                log::warn!("session {id} lost its login worker; reading logind's sessions: {e}");
+                None
+            }
+        };
+        match orphan_report(&id, open.as_deref()) {
+            OrphanReport::Orphaned { uid } => {
+                self.input(Input::SessionOrphaned { id, uid }).await;
+            }
+            OrphanReport::Removed => {
+                let seat_active = self.logind.seat_active().await;
+                self.input(Input::SessionRemoved { id, seat_active }).await;
+            }
+            OrphanReport::Nothing => {}
         }
     }
 
@@ -703,6 +730,32 @@ async fn look_up(
 /// screen's own VT never counts.
 fn on_dead_vt(stalled_vt: u16, active: io::Result<u16>) -> bool {
     stalled_vt != GREETER_VT && active.is_ok_and(|a| a == stalled_vt)
+}
+
+/// Whether a worker's exit left its session without a PAM handle: a logout's worker exits
+/// after `pam_close_session`, when logind already reports the session closing or gone.
+fn orphaned(mode: Mode, ended: bool) -> bool {
+    mode != Mode::Greeter && !ended
+}
+
+/// What the loop sends for a session whose worker exited while logind kept it open.
+#[derive(Debug, PartialEq)]
+enum OrphanReport {
+    Orphaned {
+        uid: u32,
+    },
+    /// logind no longer lists it open: it closed between the two reads.
+    Removed,
+    /// logind's open sessions could not be read (`open` is `None`); nothing is ended.
+    Nothing,
+}
+
+fn orphan_report(id: &str, open: Option<&[LogindSession]>) -> OrphanReport {
+    match open.map(|open| open.iter().find(|s| s.id == id)) {
+        Some(Some(s)) => OrphanReport::Orphaned { uid: s.uid },
+        Some(None) => OrphanReport::Removed,
+        None => OrphanReport::Nothing,
+    }
 }
 
 /// Writes remembered state `REMEMBER_DELAY` after it changes, the latest value winning.
@@ -1281,6 +1334,49 @@ mod tests {
         assert!(!on_dead_vt(7, Ok(1)), "the console moved on");
         assert!(!on_dead_vt(1, Ok(1)), "the greeter's own VT");
         assert!(!on_dead_vt(7, Err(io::ErrorKind::NotFound.into())));
+    }
+
+    #[test]
+    fn a_worker_exit_reports_its_session_orphaned_only_while_logind_keeps_it_open() {
+        assert!(orphaned(Mode::Login, false));
+        assert!(orphaned(Mode::Remote, false));
+        assert!(
+            !orphaned(Mode::Login, true),
+            "a logout closes the session first"
+        );
+        assert!(
+            !orphaned(Mode::Greeter, false),
+            "the login screen's own session"
+        );
+    }
+
+    #[test]
+    fn an_orphaned_session_is_reported_open_removed_or_not_at_all() {
+        let open = |id: &str, uid| LogindSession {
+            id: id.into(),
+            user: "anna".into(),
+            uid,
+            vt: 7,
+            seat: "seat0".into(),
+            class: "user".into(),
+            service: Mode::Login.service().into(),
+            closing: false,
+        };
+        let listed = [open("c3", 1001), open("c1", 1000)];
+        assert_eq!(
+            orphan_report("c1", Some(&listed)),
+            OrphanReport::Orphaned { uid: 1000 }
+        );
+        assert_eq!(
+            orphan_report("c1", Some(&listed[..1])),
+            OrphanReport::Removed,
+            "closed between the two reads"
+        );
+        assert_eq!(
+            orphan_report("c1", None),
+            OrphanReport::Nothing,
+            "logind could not be read"
+        );
     }
 
     fn world_on(active_vt: u16) -> World {

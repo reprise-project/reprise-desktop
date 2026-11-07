@@ -1,5 +1,5 @@
-//! A session moving between the console and remote clients: the background mark and the
-//! interface the login screen remembers.
+//! A session moving between the console and remote clients: the background mark, the
+//! interface the login screen remembers, and a session left without its login worker.
 
 use std::time::Instant;
 
@@ -69,6 +69,19 @@ impl Daemon {
         if !self.remote.viewers.contains_key(&uid) {
             self.arm_disconnected(now, id, out);
         }
+    }
+
+    /// Ends session `id` when its entry is `uid`'s: without its worker it has no PAM handle
+    /// to close. The `SessionRemoved` that follows drops its entry.
+    pub(super) fn session_orphaned(&mut self, id: &str, uid: u32, out: &mut Vec<Effect>) {
+        let Some(e) = self.sessions.by_id(id).filter(|e| e.uid == uid) else {
+            return;
+        };
+        out.push(Effect::Log(
+            Level::Warn,
+            format!("{}'s session {id} lost its login worker; ending it", e.user),
+        ));
+        out.push(Effect::TerminateSession(id.into()));
     }
 
     fn remember_interface(&mut self, interface: Interface, out: &mut Vec<Effect>) {
