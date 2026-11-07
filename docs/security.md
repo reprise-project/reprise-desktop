@@ -185,7 +185,9 @@ The sockets live in `/run/reprise-login` (0755, root):
   time. A frame that doesn't decode closes the connection. Over it the
   login screen can start a login for a user name, answer PAM's prompts,
   start the session PAM let in, cancel, and ask to shut down or restart.
-  Without the password PAM wants it can start no session.
+  Without the password PAM wants it can start no session. An account that
+  PAM resolves to uid 0 is refused with a wrong password's message, and a
+  login with no request from the login screen for 5 minutes is cancelled.
 - `session.sock` is 0666. A connection is accepted only when the peer's
   logind session is one the daemon started or found at start, and its uid
   is that session's user. A session can say which interface it runs and ask
@@ -215,7 +217,19 @@ A session that loses the screen locks itself, whether through Switch User
 or a VT switch key. Logging in again as the same user at the login screen
 checks the password through the `reprise-login` PAM service, then unlocks
 that session through logind and switches to it, so no second password is
-asked. A user who already has a session never gets a second one.
+asked. A user who already has a session never gets a second one. If the
+switch fails, the session is locked again; a reprise-login that starts locks
+every session that isn't on screen.
+
+The session unlocks on logind's `Unlock`, so it can't tell reprise-login's
+resume from `loginctl unlock-session` run by root, by an admin polkit lets
+lock and unlock sessions, or by any process of the session's own user,
+another login of theirs included.
+
+`reprise-login` runs pam_nologin: while `/run/nologin` exists (early boot,
+and the last minutes before a scheduled shutdown), the login screen refuses
+logins and resumes alike. Switching to a session's VT (Ctrl+Alt+F7 for the
+first) still reaches its lock screen.
 
 Shut Down and Restart on the login screen are refused while any user
 session runs. A background session on the seat can ask logind to make
