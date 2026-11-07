@@ -10,7 +10,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
-use reprise_login::config::{CONFIG_PATH, LoginConfig};
+use reprise_login::config;
 use reprise_login::daemon::{
     Daemon, Effect, Input, Job, LogindSession, UNLOCK_WAIT, WorkerId, World,
 };
@@ -23,6 +23,7 @@ use reprise_login::{pidfd, users};
 use repriselogin::GREETER_USER;
 use repriselogin::frame::{self, FrameError};
 use repriselogin::greeter::{ErrorKind, GreeterReply, GreeterRequest};
+use repriselogin::machine::MACHINE_CONFIG;
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::mpsc;
 use zeroize::Zeroizing;
@@ -135,7 +136,7 @@ enum Event {
 type Events = mpsc::UnboundedSender<Event>;
 
 async fn run() -> Result<(), String> {
-    let config = LoginConfig::load(Path::new(CONFIG_PATH));
+    let config = config::load(Path::new(MACHINE_CONFIG)).login;
     let remembered = Remembered::load(Path::new(STATE_PATH));
     let greeter = match users::lookup(GREETER_USER) {
         Ok(Some(account)) => account,
@@ -1024,7 +1025,7 @@ mod tests {
 
     #[test]
     fn boot_starts_before_any_removal_so_an_orphans_end_brings_the_greeter() {
-        use reprise_login::config::LoginConfig;
+        use repriselogin::machine::LoginConfig;
         let orphan = LogindSession {
             id: "c1".into(),
             user: GREETER_USER.into(),

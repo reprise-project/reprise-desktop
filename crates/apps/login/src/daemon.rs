@@ -8,10 +8,10 @@ use log::Level;
 use repriselogin::greeter::{
     ErrorKind, GreeterReply, GreeterRequest, Greeting, Keyboard, Notice, PowerAction, UserEntry,
 };
+use repriselogin::machine::LoginConfig;
 use repriselogin::session::SessionRequest;
 use repriselogin::{GREETER_USER, Interface, frame};
 
-use crate::config::LoginConfig;
 use crate::greeterruns::{AfterGreeter, GreeterRuns, MAX_FAILURES};
 use crate::remembered::Remembered;
 use crate::table::{Route, SessionEntry, Sessions};
@@ -577,6 +577,7 @@ impl Daemon {
                     out.push(refused(OTHERS_LOGGED_ON));
                 }
             }
+            GreeterRequest::PowerAs { .. } => out.push(refused(OTHERS_LOGGED_ON)),
         }
     }
 

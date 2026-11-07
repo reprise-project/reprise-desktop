@@ -79,6 +79,7 @@ ironrdp-server = { git = "https://github.com/reprise-project/IronRDP.git", rev =
 ironrdp-svc = { git = "https://github.com/reprise-project/IronRDP.git", rev = "3ef780c076e0c5b3e6e6aac33deeadfd4317a160" }
 libc = "0.2"
 log = "0.4"
+md4 = { version = "0.11", default-features = false }
 pipewire = "0.10"
 png = "0.18"
 rcgen = { version = "0.14", default-features = false, features = ["aws_lc_rs", "pem"] }
