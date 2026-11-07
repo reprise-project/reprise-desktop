@@ -942,9 +942,9 @@ them.
 - **Into your session.** If you're logged in, here or in the background,
   the client joins that session, and your Remote Desktop settings (this
   computer's screen, `second_client`, `max_viewers`, picture and sound)
-  apply as they do to your own server. The port and New Certificate... are greyed: the
-  computer has one certificate for every user, its fingerprint on both
-  pages.
+  apply as they do to your own server. Your Remote Desktop page shows no
+  port and greys New Certificate...: the computer has one certificate for
+  every user, its fingerprint on both pages.
 - **A session in the background.** If you're not logged in, your session
   starts on a VT of its own and this computer's screen stays as it was, on
   the login screen or someone else's session. The session is locked here
