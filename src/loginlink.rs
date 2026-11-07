@@ -254,6 +254,11 @@ fn on_linked(state: &mut State) {
     let interface = crate::greeter::wire_interface(state.config.interface);
     if send(state, &SessionRequest::Hello { interface }) {
         log::info!("reprise-login: linked");
+        // An earlier daemon may have unlocked the session for a resume and died. Like `born`,
+        // this locks the console only: a connected client keeps its desktop.
+        if state.lock.seat_away {
+            crate::lockview::lock(state);
+        }
         crate::lockview::redraw(state);
     }
 }
@@ -654,6 +659,38 @@ mod tests {
             assert!(refuse(&mut link));
         }
         assert!(!refuse(&mut link), "no more calls");
+    }
+
+    #[test]
+    fn relinking_away_from_the_seat_locks_the_console_side_only() {
+        let path = socket_path("relink-away");
+        let listener = UnixListener::bind(&path).unwrap();
+        let mut h = Harness::new();
+        h.output("TEST-1", 1024, 768);
+        install(&mut h.state, LoginLink::at(path.clone(), own_uid()));
+        let (mut first, _) = listener.accept().unwrap();
+        assert_eq!(heard(&mut first), hello(Interface::Classic));
+        crate::backend::pause_session(&mut h.state);
+        crate::lockview::unlock(&mut h.state);
+        assert!(!h.state.console_locked(), "unlocked for a resume");
+        drop((first, listener));
+        std::fs::remove_file(&path).unwrap();
+        h.dispatch();
+        assert!(!connected(&h.state), "the daemon went");
+        let _listener = UnixListener::bind(&path).unwrap();
+        h.run_for(2500);
+        assert!(connected(&h.state));
+        assert!(h.state.console_locked(), "relinked away from the seat");
+
+        let (mut h, _portal, _lock) = crate::console::tests::in_lock_mode();
+        crate::lockview::seat_away(&mut h.state, true);
+        let (ours, _theirs) = UnixStream::pair().unwrap();
+        install(&mut h.state, LoginLink::from_stream(ours));
+        assert!(h.state.console_locked());
+        assert!(
+            !h.state.desktop_locked(),
+            "the connected client keeps its desktop"
+        );
     }
 
     #[test]
