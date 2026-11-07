@@ -12,7 +12,8 @@ use crate::pointer::{Interaction, Lit, lit_of};
 use crate::powerpanel::{BORDER, Choice, ICON, Layout, Panel, Part, SEPARATOR};
 use crate::raster::{Canvas, Rect};
 use crate::shape::{
-    self, CLEAR, Px, Stops, centre, ellipse, over, polygon, premul, radial, rounded, shares, stroke,
+    self, CLEAR, Px, Stops, centre, ellipse, over, polygon, premul, radial, rounded, rounded4,
+    shares, stroke,
 };
 use crate::style::TextSpec;
 use crate::text::{Align, TextRenderer};
@@ -170,6 +171,8 @@ pub enum Mark {
     /// Eight dashes round the middle.
     Burst,
     Moon,
+    /// A plug drawn apart from its socket.
+    Unplug,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -197,6 +200,7 @@ pub fn look_of(c: Choice) -> (Hue, Mark) {
         Choice::Hibernate => (Hue::Amber, Mark::Moon),
         Choice::TurnOff => (Hue::Red, Mark::Off),
         Choice::Restart => (Hue::Green, Mark::Burst),
+        Choice::Disconnect => (Hue::Green, Mark::Unplug),
     }
 }
 
@@ -212,6 +216,8 @@ const LIFT_PRESSED: f64 = -0.18;
 const GREYED_FACE: f64 = 0.22;
 const GREYED_MARK: f64 = 0.45;
 const MARK_W: f64 = 2.0;
+/// The radius of the Unplug mark's plug and socket at their backs, away from the gap.
+const UNPLUG_ROUND: f64 = 1.5;
 
 /// A tile face's shading in `state`: its fill top to bottom, the gloss's white out from its centre,
 /// and how much of the face, and of the rim and mark, a greyed tile keeps.
@@ -374,6 +380,23 @@ fn mark_cover(mark: Mark, x: f64, y: f64, pen: Pen) -> f64 {
                 - ellipse(x, y, 20.0 * g, 12.5 * g, 8.5 * g, 8.5 * g))
             .max(0.0),
         ],
+        Mark::Unplug => {
+            let block = |x0: f64, y0: f64, x1: f64, y1: f64, r: [f64; 4]| {
+                let (w, h) = ((x1 - x0) * g, (y1 - y0) * g);
+                rounded4(x - x0 * g, y - y0 * g, w, h, r.map(|r| r * g))
+            };
+            let (back, face) = (UNPLUG_ROUND, 0.0);
+            let slot = |y0: f64| block(21.0, y0, 23.0, y0 + 2.0, [0.0; 4]);
+            vec![
+                line(x, y, pen, &[(3.0, 16.0), (9.0, 16.0)]),
+                block(8.0, 10.0, 14.0, 22.0, [back, face, face, back]),
+                line(x, y, pen, &[(14.0, 13.0), (18.0, 13.0)]),
+                line(x, y, pen, &[(14.0, 19.0), (18.0, 19.0)]),
+                block(21.0, 10.0, 27.0, 22.0, [face, back, back, face])
+                    * (1.0 - slot(12.0).max(slot(18.0))),
+                line(x, y, pen, &[(27.0, 16.0), (29.0, 16.0)]),
+            ]
+        }
     };
     parts.into_iter().fold(0.0, f64::max).min(1.0)
 }
@@ -494,7 +517,7 @@ pub fn draw(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::powerpanel::layout;
+    use crate::powerpanel::{Leave, layout};
     use crate::theme::TextUnits;
 
     fn fnv(c: &Canvas) -> u64 {
@@ -512,13 +535,14 @@ mod tests {
         x
     }
 
-    const MARKS: [(Hue, Mark); 6] = [
+    const MARKS: [(Hue, Mark); 7] = [
         (Hue::Green, Mark::Arrows),
         (Hue::Orange, Mark::Key),
         (Hue::Amber, Mark::Power),
         (Hue::Amber, Mark::Moon),
         (Hue::Red, Mark::Off),
         (Hue::Green, Mark::Burst),
+        (Hue::Green, Mark::Unplug),
     ];
 
     #[test]
@@ -541,7 +565,10 @@ mod tests {
     fn backdrops_pin_per_scheme_at_scale_1_and_2() {
         let mut got = Vec::new();
         for v in [Variant::Blue, Variant::Silver, Variant::Olive] {
-            for p in [Panel::log_off(false), Panel::turn_off(true, true)] {
+            for p in [
+                Panel::log_off(Leave::SwitchUser { live: false }),
+                Panel::turn_off(true, true, false),
+            ] {
                 let lay = layout(&p, TextUnits::ONE);
                 for d in [1, 2] {
                     got.push((
@@ -607,7 +634,7 @@ mod tests {
 
     #[test]
     fn the_bands_follow_the_scheme_and_double_at_2() {
-        let lay = layout(&Panel::turn_off(true, false), TextUnits::ONE);
+        let lay = layout(&Panel::turn_off(true, false, false), TextUnits::ONE);
         let navy = backdrop(Variant::Blue, &lay, 1);
         let rgb = |p: u32| p & 0xFF_FFFF;
         assert_eq!(rgb(navy.get(0, 100)), 0, "the border is black");
