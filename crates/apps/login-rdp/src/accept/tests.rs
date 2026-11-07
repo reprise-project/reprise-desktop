@@ -279,6 +279,17 @@ async fn an_oversized_user_name_is_refused() {
 }
 
 #[tokio::test]
+async fn a_user_name_empty_without_its_domain_is_refused() {
+    for user in ["@host", "DOM\\"] {
+        assert_eq!(
+            log_on(user, "secret").await.unwrap_err(),
+            Refused::NoUser,
+            "{user}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn a_client_offering_no_protocol_in_common_is_told_and_refused() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let mut client = TcpStream::connect(listener.local_addr().unwrap())
