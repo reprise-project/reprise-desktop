@@ -5,12 +5,12 @@ use std::collections::BTreeMap;
 
 use log::Level;
 use repriselogin::account::{
-    AccountRefusal, AccountReply, AccountRequest, MIN_REMOTE_PASSWORD, nt_hash,
+    AccountRefusal, AccountReply, AccountRequest, MIN_REMOTE_PASSWORD, nt_hash, same_hash,
 };
 use repriselogin::greeter::{AuthKind, ErrorKind};
 use zeroize::Zeroizing;
 
-use super::remote::{ASKED_MORE, NEVER_ASKED, same_hash};
+use super::remote::{ASKED_MORE, NEVER_ASKED};
 use super::{Daemon, Effect, LookUpKey, StoredPassword, WORKER_ENDED, WorkerId};
 use crate::worker::{FromWorker, Mode, ToWorker};
 

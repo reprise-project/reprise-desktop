@@ -1,6 +1,7 @@
 //! A user's requests about their own Remote Desktop password over `ACCOUNT_SOCKET`.
 
 use std::fmt;
+use std::hint::black_box;
 
 use md4::{Digest, Md4};
 use serde::{Deserialize, Serialize};
@@ -76,6 +77,12 @@ pub fn nt_hash(password: &str) -> Zeroizing<String> {
     hex
 }
 
+/// Compares two NT hashes in a time that depends on their length only.
+pub fn same_hash(a: &str, b: &str) -> bool {
+    let (a, b) = (black_box(a.as_bytes()), black_box(b.as_bytes()));
+    a.len() == b.len() && black_box(a.iter().zip(b).fold(0, |d, (x, y)| d | (x ^ y))) == 0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -85,6 +92,15 @@ mod tests {
     fn nt_hash_of_password_is_the_known_value() {
         assert_eq!(*nt_hash("password"), "8846F7EAEE8FB117AD06BDD830B7586C");
         assert_eq!(*nt_hash(""), "31D6CFE0D16AE931B73C59D7E0C089C0");
+    }
+
+    #[test]
+    fn same_hash_is_true_for_equal_hashes_only() {
+        let hash = nt_hash("password");
+        assert!(same_hash(&hash, "8846F7EAEE8FB117AD06BDD830B7586C"));
+        assert!(!same_hash(&hash, "8846F7EAEE8FB117AD06BDD830B7586D"));
+        assert!(!same_hash(&hash, "8846F7EAEE8FB117AD06BDD830B7586"));
+        assert!(!same_hash(&hash, ""));
     }
 
     #[test]

@@ -3,12 +3,11 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
-use std::hint::black_box;
 use std::net::IpAddr;
 use std::time::{Duration, Instant};
 
 use log::Level;
-use repriselogin::account::nt_hash;
+use repriselogin::account::{nt_hash, same_hash};
 use repriselogin::front::{FrontEvent, FrontRequest, NlaUser, Secret};
 use repriselogin::greeter::{AuthKind, Note};
 use repriselogin::machine::MachineConfig;
@@ -964,10 +963,4 @@ fn valid_user_name(name: &str) -> bool {
             .next()
             .is_some_and(|b| b.is_ascii_lowercase() || b == b'_')
         && bytes.all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"_.-".contains(&b))
-}
-
-/// Compares two hashes in a time that depends on their length only.
-pub(super) fn same_hash(a: &str, b: &str) -> bool {
-    let (a, b) = (black_box(a.as_bytes()), black_box(b.as_bytes()));
-    a.len() == b.len() && black_box(a.iter().zip(b).fold(0, |d, (x, y)| d | (x ^ y))) == 0
 }
