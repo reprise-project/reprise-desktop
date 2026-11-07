@@ -1604,3 +1604,39 @@ fn the_remote_logins_group_pins_its_pixels_in_every_look() {
         "off, on; Classic, Blue, Glass"
     );
 }
+
+/// The Login Screen group with the defaults, then Blue, no user list and an automatic logon.
+#[test]
+fn the_login_screen_group_pins_its_pixels_in_every_look() {
+    let row = Rect::new(20, 44, 358, 98);
+    let mut f = login_manager(Area::MIN);
+    let unset = row_pins(&f, row);
+    let mut c = repriselogin::machine::MachineConfig::default();
+    c.login.interface = Some(repriselogin::Interface::Blue);
+    c.login.show_users = false;
+    c.login.autologin_user = Some("anna".into());
+    show_login(&mut f, &c, &["anna".into()], None);
+    let set = row_pins(&f, row);
+    assert_eq!(
+        [unset, set],
+        [
+            [0x66906fad015804f2, 0x1c36c36a279a0411, 0x9e3567829c5158a2],
+            [0xd562090bc7a5d904, 0x5d593a36c3b4dce7, 0x47e809cee3925083],
+        ],
+        "defaults, set; Classic, Blue, Glass"
+    );
+}
+
+/// The Remote Desktop page while the login manager runs remote logins, with its fingerprint.
+#[test]
+fn the_remote_desktop_page_under_the_login_manager_pins_its_pixels_in_every_look() {
+    let machine = Some("3F:9A:01");
+    let mut page = remote_desktop(Area::MIN, None, false, machine);
+    show_remote(&mut page, None, false, None, None, machine);
+    let got = row_pins(&page, Rect::new(20, 44, 358, 431));
+    assert_eq!(
+        got,
+        [0xc7d24cbbfc553cf6, 0x7e8d9c986707e2b9, 0xf5b352589e6b98f1],
+        "Classic, Blue, Glass"
+    );
+}
