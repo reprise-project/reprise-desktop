@@ -15,7 +15,7 @@ use reprise_login::daemon::{
     Daemon, Effect, Input, Job, LogindSession, UNLOCK_WAIT, WorkerId, World,
 };
 use reprise_login::ipc::{self, Gate, Paths, Server};
-use reprise_login::logind::{Logind, SessionRemovedStream};
+use reprise_login::logind::{self, Logind, SessionRemovedStream};
 use reprise_login::remembered::{Remembered, STATE_PATH};
 use reprise_login::vt::{self, GREETER_VT};
 use reprise_login::worker::{FromWorker, LOG_FD, Mode, ToWorker, worker_main};
@@ -445,7 +445,11 @@ impl Runtime {
                 let (l, events) = (self.logind.clone(), self.events.clone());
                 tokio::task::spawn_local(async move {
                     if let Err(e) = l.manager().terminate_session(&id).await {
-                        log::warn!("terminating session {id}: {e}");
+                        if logind::session_gone(&e) {
+                            log::info!("terminating session {id}: already gone");
+                        } else {
+                            log::warn!("terminating session {id}: {e}");
+                        }
                         let seat_active = l.seat_active().await;
                         let failed = Input::TerminateFailed { id, seat_active };
                         let _ = events.send(Event::Input(failed));
