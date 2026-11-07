@@ -1179,6 +1179,39 @@ fn an_orphan_removed_while_an_unknown_session_holds_the_seat_still_brings_the_gr
 }
 
 #[test]
+fn a_restart_over_the_login_screen_still_logs_the_autologin_user_in() {
+    let config = LoginConfig {
+        autologin_user: Some("anna".into()),
+        ..LoginConfig::default()
+    };
+    let mut run = Run::new(config, Remembered::default());
+    let orphan = logind(
+        "c5",
+        GREETER_USER,
+        960,
+        1,
+        "greeter",
+        "reprise-login-greeter",
+    );
+    run.recover(vec![orphan]);
+    assert_eq!(run.start(), vec![], "the old login screen goes first");
+    let effects = run.removed("c5", None);
+    assert!(
+        matches!(
+            effects.first(),
+            Some(Effect::Spawn {
+                job: Job {
+                    mode: Mode::Autologin,
+                    ..
+                },
+                ..
+            })
+        ),
+        "{effects:?}"
+    );
+}
+
+#[test]
 fn the_greeter_waits_for_an_orphan_whatever_asks_for_it() {
     let orphan = || {
         logind(
