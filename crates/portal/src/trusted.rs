@@ -29,6 +29,15 @@ pub fn trusted(app_id: &str, caller: Option<u32>, unit: Option<&UnitFacts>) -> b
     app_id == APP_ID && unit.is_some_and(|u| u.file_state == "enabled" && serves(caller, u))
 }
 
+/// Which server a RemoteDesktop.Start that skips the dialog comes from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Trust {
+    /// The user's own enabled server.
+    Own,
+    /// The server reprise-login's hand-overs start.
+    HandOver,
+}
+
 /// Whether RemoteDesktop.Start from `caller` skips the dialog: [`trusted`] for the per-user
 /// server `own`, or `caller` is the main process of the running hand-over server `handover`.
 pub fn start_trusted(
@@ -36,8 +45,13 @@ pub fn start_trusted(
     caller: Option<u32>,
     own: Option<&UnitFacts>,
     handover: Option<&UnitFacts>,
-) -> bool {
-    trusted(app_id, caller, own) || handover.is_some_and(|u| serves(caller, u))
+) -> Option<Trust> {
+    if trusted(app_id, caller, own) {
+        return Some(Trust::Own);
+    }
+    handover
+        .is_some_and(|u| serves(caller, u))
+        .then_some(Trust::HandOver)
 }
 
 /// Whether `caller` is the main process of `unit`, active and running an installed server.
@@ -278,28 +292,36 @@ mod tests {
     #[test]
     fn the_hand_over_server_is_trusted_without_an_app_id() {
         let unit = handover("/usr/bin/reprise-rdp");
-        assert!(start_trusted("", Some(SERVER), None, Some(&unit)));
-        assert!(!start_trusted("", Some(SERVER + 1), None, Some(&unit)));
-        assert!(!start_trusted("", None, None, Some(&unit)));
+        let hand_over = Some(Trust::HandOver);
+        assert_eq!(
+            start_trusted("", Some(SERVER), None, Some(&unit)),
+            hand_over
+        );
+        assert_eq!(start_trusted("", Some(SERVER + 1), None, Some(&unit)), None);
+        assert_eq!(start_trusted("", None, None, Some(&unit)), None);
         for state in ["inactive", "failed"] {
             let stopped = UnitFacts {
                 active_state: state.into(),
                 ..handover("/usr/bin/reprise-rdp")
             };
-            assert!(
-                !start_trusted("", Some(SERVER), None, Some(&stopped)),
+            assert_eq!(
+                start_trusted("", Some(SERVER), None, Some(&stopped)),
+                None,
                 "{state}"
             );
         }
         let other = handover("/home/x/reprise-rdp");
-        assert!(!start_trusted("", Some(SERVER), None, Some(&other)));
-        assert!(!start_trusted("", Some(SERVER), None, None));
+        assert_eq!(start_trusted("", Some(SERVER), None, Some(&other)), None);
+        assert_eq!(start_trusted("", Some(SERVER), None, None), None);
     }
 
     #[test]
     fn the_per_user_server_still_needs_its_app_id_beside_the_hand_over_unit() {
         let own = running("/usr/bin/reprise-rdp");
-        assert!(start_trusted(APP_ID, Some(SERVER), Some(&own), None));
-        assert!(!start_trusted("", Some(SERVER), Some(&own), None));
+        assert_eq!(
+            start_trusted(APP_ID, Some(SERVER), Some(&own), None),
+            Some(Trust::Own)
+        );
+        assert_eq!(start_trusted("", Some(SERVER), Some(&own), None), None);
     }
 }

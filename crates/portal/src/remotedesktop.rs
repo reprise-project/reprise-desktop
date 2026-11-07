@@ -166,15 +166,19 @@ impl RemoteDesktop {
         let key = session_handle.to_string();
         let parent = crate::dialog::parent_handle(&parent_window);
         let caller = crate::trusted::session_caller(conn, session_handle.as_str()).await;
-        let trusted = caller.is_some() && {
-            use crate::trusted::{HANDOVER_UNIT, UNIT, unit_facts};
-            crate::trusted::start_trusted(
-                &app_id,
-                caller,
-                unit_facts(conn, UNIT).await.as_ref(),
-                unit_facts(conn, HANDOVER_UNIT).await.as_ref(),
-            )
+        let trust = match caller {
+            Some(_) => {
+                use crate::trusted::{HANDOVER_UNIT, UNIT, unit_facts};
+                crate::trusted::start_trusted(
+                    &app_id,
+                    caller,
+                    unit_facts(conn, UNIT).await.as_ref(),
+                    unit_facts(conn, HANDOVER_UNIT).await.as_ref(),
+                )
+            }
+            None => None,
         };
+        let trusted = trust.is_some();
         let (devices, restored, mut requested) = {
             let mut sessions = self.sessions.lock().unwrap();
             let Some(s) = sessions.get_mut(&key).and_then(SessionData::remote_mut) else {
@@ -242,8 +246,8 @@ impl RemoteDesktop {
             None => return Ok((RESPONSE_CANCELLED, empty())),
             Some(0) => {}
             Some(_) => {
-                if trusted {
-                    match crate::lockmode::begin(conn, caller, live(&self.link)).await {
+                if let Some(trust) = trust {
+                    match crate::lockmode::begin(conn, caller, trust, live(&self.link)).await {
                         Ok(l) => locked = l,
                         Err(crate::lockmode::NotBegun) => return Ok((RESPONSE_OTHER, empty())),
                     }

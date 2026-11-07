@@ -115,8 +115,21 @@ fn main() -> ExitCode {
     });
     let (disconnect, disconnect_rx) = mpsc::unbounded_channel();
     let (regenerate, regenerate_rx) = mpsc::unbounded_channel();
-    // Hand-over runs serve it too: the portal's lock mode reads the ConsoleLayout of its owner.
-    control::spawn(status_rx, disconnect, regenerate);
+    // The portal's lock mode reads the ConsoleLayout of the name's owner, and refuses a hand-over
+    // server that does not own it.
+    let claim = control::spawn(status_rx, disconnect, regenerate, hand_over.is_some());
+    if let Some(listener) = &hand_over {
+        let claimed =
+            (claim.recv()).unwrap_or_else(|_| Err(zbus::Error::Failure("no thread".into())));
+        if let Err(e) = claimed {
+            log::error!(
+                "hand-overs need {} on the session bus ({e}); refusing them until the next start",
+                control::NAME
+            );
+            handover::refuse_waiting(listener);
+            return ExitCode::FAILURE;
+        }
+    }
     let identity = identity.map(watch::channel);
     let (config, config_rx) = watch::channel(cfg);
     let (display, probed) = match hand_over {
