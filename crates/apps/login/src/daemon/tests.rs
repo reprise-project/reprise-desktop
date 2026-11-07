@@ -1476,3 +1476,46 @@ fn the_auth_wait_ends_with_authentication() {
     run.now += AUTH_WAIT * 2;
     assert_eq!(run.on(Input::Timer(Timer::Auth(WorkerId(2)))), vec![]);
 }
+
+#[test]
+fn an_orphan_that_does_not_end_is_retried_then_given_up_on() {
+    let mut run = Run::new(LoginConfig::default(), Remembered::default());
+    let orphan = logind(
+        "c5",
+        GREETER_USER,
+        960,
+        1,
+        "greeter",
+        "reprise-login-greeter",
+    );
+    assert_eq!(
+        run.recover(vec![orphan]),
+        vec![Effect::TerminateSession("c5".into())]
+    );
+    assert_eq!(run.start(), vec![]);
+    let failed = || Input::TerminateFailed {
+        id: "c5".into(),
+        seat_active: None,
+    };
+    for n in 0..TERMINATE_TRIES - 1 {
+        assert_eq!(
+            run.on(failed()),
+            vec![Effect::Arm {
+                timer: Timer::Terminate("c5".into()),
+                after: TERMINATE_RETRY * 2u32.pow(n),
+            }]
+        );
+        assert_eq!(
+            run.on(Input::Timer(Timer::Terminate("c5".into()))),
+            vec![Effect::TerminateSession("c5".into())]
+        );
+    }
+    let effects = run.on(failed());
+    assert!(
+        matches!(&effects[0], Effect::Log(log::Level::Warn, text) if text.contains("c5")),
+        "{effects:?}"
+    );
+    assert_eq!(effects[1..], greeter_spawn(1)[..]);
+    assert_eq!(run.removed("c5", None), vec![], "its late removal");
+    assert_eq!(run.on(Input::Timer(Timer::Terminate("c5".into()))), vec![]);
+}
