@@ -14,18 +14,37 @@ pub fn intake_path(uid: u32) -> PathBuf {
 }
 
 /// One step of the connection sequence the front ran, replayed by the server that takes over.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// A `Pdu` can be the Client Info PDU, which carries the password.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Step {
     Pdu {
-        input: Vec<u8>,
-        output: Vec<u8>,
+        input: Zeroizing<Vec<u8>>,
+        output: Zeroizing<Vec<u8>>,
     },
     SecurityUpgradeDone,
     CredsspDone {
         user: String,
         domain: Option<String>,
     },
+}
+
+impl fmt::Debug for Step {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Step::Pdu { input, output } => f
+                .debug_struct("Pdu")
+                .field("input_len", &input.len())
+                .field("output_len", &output.len())
+                .finish(),
+            Step::SecurityUpgradeDone => f.write_str("SecurityUpgradeDone"),
+            Step::CredsspDone { user, domain } => f
+                .debug_struct("CredsspDone")
+                .field("user", user)
+                .field("domain", domain)
+                .finish(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -166,8 +185,8 @@ mod tests {
             security: 2,
             steps: vec![
                 Step::Pdu {
-                    input: vec![171; 4],
-                    output: vec![205; 4],
+                    input: Zeroizing::new(vec![171; 4]),
+                    output: Zeroizing::new(vec![205; 4]),
                 },
                 Step::SecurityUpgradeDone,
                 Step::CredsspDone {
@@ -189,8 +208,8 @@ mod tests {
     fn wire_shapes_are_pinned() {
         assert_eq!(
             body(&Step::Pdu {
-                input: vec![1, 2],
-                output: vec![]
+                input: Zeroizing::new(vec![1, 2]),
+                output: Zeroizing::new(vec![])
             }),
             r#"{"type":"pdu","input":[1,2],"output":[]}"#
         );
@@ -227,6 +246,15 @@ mod tests {
         assert!(!shown.contains("205"), "{shown}");
         assert!(shown.contains("steps: 3"), "{shown}");
         assert!(shown.contains(r#"user: "anna""#), "{shown}");
+    }
+
+    #[test]
+    fn debug_of_a_pdu_step_shows_only_lengths() {
+        let step = Step::Pdu {
+            input: Zeroizing::new(b"hunter2".to_vec()),
+            output: Zeroizing::new(vec![171; 3]),
+        };
+        assert_eq!(format!("{step:?}"), "Pdu { input_len: 7, output_len: 3 }");
     }
 
     #[test]
