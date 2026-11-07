@@ -585,3 +585,33 @@ fn a_disabled_edit_hits_as_body() {
     assert_eq!(dead.item, 1, "the same item is still hit");
     assert_eq!(dead.part, Part::Body);
 }
+
+#[test]
+fn set_combo_rows_replaces_the_rows_and_keeps_a_greyed_combo_greyed() {
+    let mut combo = Combo::new(&["one"], 0, 4);
+    combo.enabled = false;
+    let mut f = Form::new(vec![Item::new(
+        "pick",
+        Rect::new(10, 10, 100, 21),
+        Control::Combo(combo),
+    )]);
+    let rows: Vec<String> = (0..6).map(|i| format!("row {i}")).collect();
+    f.set_combo_rows("pick", &rows, 2, 4);
+    let Control::Combo(c) = &f.items[0].control else {
+        panic!("a combo");
+    };
+    assert_eq!(c.items.len(), 6);
+    assert_eq!((c.selected, c.rows, c.enabled), (2, 4, false));
+}
+
+#[test]
+fn show_edit_text_shows_a_read_only_field_from_its_start_with_nothing_selected() {
+    let mut f = edit_form();
+    f.key(Key::Char('o'));
+    f.show_edit_text("find", "3F:9A:01");
+    let Control::Edit { edit, first, .. } = &f.items[1].control else {
+        panic!("an edit");
+    };
+    assert_eq!(edit.text, "3F:9A:01");
+    assert_eq!((edit.anchor(), edit.caret(), first.get()), (0, 0, 0));
+}

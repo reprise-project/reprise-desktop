@@ -11,7 +11,6 @@ use reprisefs::apps::AppEntry;
 use reprisefs::mimetree::MimeTree;
 use reprisefs::props;
 use reprisekit::classic::widgets::{BUTTON_GAP, BUTTON_H, BUTTON_W};
-use reprisekit::controls::combo::Combo;
 use reprisekit::controls::form::{Control, Form, Item};
 use reprisekit::controls::listview::{Column, ListView, Row};
 use reprisekit::raster::Rect;
@@ -635,11 +634,11 @@ fn defaults_in(text: &str) -> Vec<String> {
 pub fn fill(form: &mut Form, d: &Defaults, terminal: &str, row: Option<usize>) {
     for k in &KINDS {
         let (rows, at) = d.kind_rows(k);
-        set_combo(form, k.id, &rows, at);
+        form.set_combo_rows(k.id, &rows, at, DROP_ROWS);
     }
     let (program, args) = split_command(terminal);
     let (rows, at) = d.terminal_rows(&program);
-    set_combo(form, TERMINAL, &rows, at);
+    form.set_combo_rows(TERMINAL, &rows, at, DROP_ROWS);
     if let Some(Control::Edit { edit, first, .. }) =
         form.item_mut(TERMINAL_ARGS).map(|i| &mut i.control)
         && edit.text.trim() != args
@@ -684,19 +683,6 @@ pub fn sync_buttons(form: &mut Form, d: &Defaults, row: Option<usize>) {
             form.set_focus(None);
         }
     }
-}
-
-fn set_combo(form: &mut Form, id: &str, rows: &[String], at: usize) {
-    if let Some(Control::Combo(c)) = form.item_mut(id).map(|i| &mut i.control) {
-        set_combo_rows(c, rows, at);
-    }
-}
-
-fn set_combo_rows(c: &mut Combo, rows: &[String], at: usize) {
-    let refs: Vec<&str> = rows.iter().map(String::as_str).collect();
-    let enabled = c.enabled;
-    *c = Combo::new(&refs, at, rows.len().clamp(1, DROP_ROWS));
-    c.enabled = enabled;
 }
 
 /// Refill `lv` from the types `d` shows, the type `keep` picked again
@@ -1048,7 +1034,7 @@ pub(crate) mod tests {
         if dropped && let Some(Control::Combo(c)) = page.item_mut(TERMINAL).map(|i| &mut i.control)
         {
             let rows: Vec<String> = (0..DROP_ROWS).map(|i| format!("Terminal {i}")).collect();
-            set_combo_rows(c, &rows, 0);
+            c.set_rows(&rows, 0, DROP_ROWS);
             c.toggle();
         }
         let mut c = reprisekit::raster::Canvas::new(sheet.size.0 as u32, sheet.size.1 as u32);

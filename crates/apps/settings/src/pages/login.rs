@@ -3,7 +3,6 @@
 
 use super::{Area, GX, edit, group, spin};
 use reprisekit::classic::widgets::LINE_H;
-use reprisekit::controls::combo::Combo;
 use reprisekit::controls::form::{Control, Form, Item};
 use reprisekit::raster::Rect;
 use repriselogin::Interface;
@@ -32,6 +31,7 @@ const INTERFACES: [(Option<Interface>, &str); 4] = [
 
 /// The first row of the automatic logon combo; the listed users follow it.
 const NOBODY: &str = "Nobody";
+const DROP_ROWS: usize = 8;
 
 /// The end disconnected sessions combo's rows, in minutes; `None` never ends them.
 const END_AFTER: [(Option<u32>, &str); 5] = [
@@ -176,13 +176,6 @@ fn end_rows(c: &MachineConfig) -> Vec<(Option<u32>, String)> {
     rows
 }
 
-fn set_rows(page: &mut Form, id: &str, rows: &[String], selected: usize) {
-    if let Some(it) = page.item_mut(id) {
-        let refs: Vec<&str> = rows.iter().map(String::as_str).collect();
-        it.control = Control::Combo(Combo::new(&refs, selected, rows.len().clamp(1, 8)));
-    }
-}
-
 fn set_updown(page: &mut Form, id: &str, v: u32) {
     if let Some(Control::UpDown(u)) = page.item_mut(id).map(|i| &mut i.control) {
         u.set(v as i32);
@@ -207,7 +200,7 @@ pub fn show_login(page: &mut Form, c: &MachineConfig, users: &[String], fingerpr
             .map_or(0, |i| i + 1),
         None => 0,
     };
-    set_rows(page, LOGIN_AUTOLOGIN, &rows, picked);
+    page.set_combo_rows(LOGIN_AUTOLOGIN, &rows, picked, DROP_ROWS);
     let r = &c.remote;
     page.set_check(LOGIN_REMOTE, r.enabled);
     set_updown(page, LOGIN_PORT, r.port.into());
@@ -225,16 +218,8 @@ pub fn show_login(page: &mut Form, c: &MachineConfig, users: &[String], fingerpr
         .position(|e| e.0 == r.end_disconnected_after_min)
         .unwrap_or(0);
     let labels: Vec<String> = ends.into_iter().map(|e| e.1).collect();
-    set_rows(page, LOGIN_END_AFTER, &labels, end);
-    let shown = fingerprint.unwrap_or(NOT_RUNNING);
-    if let Some(Control::Edit { edit, first, .. }) =
-        page.item_mut(LOGIN_FINGERPRINT).map(|i| &mut i.control)
-        && edit.text != shown
-    {
-        edit.set_selected(shown);
-        edit.set_selection(0, 0);
-        first.set(0);
-    }
+    page.set_combo_rows(LOGIN_END_AFTER, &labels, end, DROP_ROWS);
+    page.show_edit_text(LOGIN_FINGERPRINT, fingerprint.unwrap_or(NOT_RUNNING));
     follow_login(page);
 }
 
