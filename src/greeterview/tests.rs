@@ -328,6 +328,28 @@ fn a_login_that_cannot_run_shows_a_fixed_text_and_not_the_daemons() {
 }
 
 #[test]
+fn a_later_greeting_brings_the_tiles_notes_up_to_date() {
+    let mut anna = user("anna");
+    anna.note = Some(Note::LoggedOn);
+    let (mut h, mut d) = login_with(
+        repriselogin::Interface::Blue,
+        vec![anna, user("bob")],
+        |_| {},
+    );
+    assert_eq!(model(&h).users[0].note, Some(UserNote::LoggedOn));
+    let fresh = Greeting {
+        interface: repriselogin::Interface::Blue,
+        show_users: true,
+        users: vec![user("anna"), user("bob")],
+        last_user: None,
+        keyboard: Default::default(),
+        notice: None,
+    };
+    d.says(&mut h, GreeterReply::Greeting(fresh));
+    assert_eq!(model(&h).users[0].note, None, "anna logged off");
+}
+
+#[test]
 fn replies_once_the_link_is_lost_change_nothing() {
     let (mut h, mut d) = logged_in();
     d.0.shutdown(std::net::Shutdown::Read).unwrap();

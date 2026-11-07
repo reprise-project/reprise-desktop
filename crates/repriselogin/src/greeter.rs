@@ -54,10 +54,17 @@ impl fmt::Debug for GreeterRequest {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum GreeterReply {
+    /// The answer to `Hello`, and again unasked when a running login screen comes forward.
     Greeting(Greeting),
     Success,
-    AuthMessage { kind: AuthKind, text: String },
-    Error { kind: ErrorKind, text: String },
+    AuthMessage {
+        kind: AuthKind,
+        text: String,
+    },
+    Error {
+        kind: ErrorKind,
+        text: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

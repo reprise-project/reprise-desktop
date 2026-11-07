@@ -269,6 +269,8 @@ pub struct Daemon {
     /// Removals of unknown sessions while a start is in flight, with seat0's active session.
     removed_early: Vec<(String, Option<String>)>,
     notice: Option<Notice>,
+    /// The running greeter came forward: it gets a fresh Greeting once the input is handled.
+    regreet: bool,
     next_worker: u32,
     unlocks: u32,
 }
@@ -290,6 +292,7 @@ impl Daemon {
             seat_empty: false,
             removed_early: Vec::new(),
             notice: None,
+            regreet: false,
             next_worker: 1,
             unlocks: 0,
         }
@@ -456,6 +459,10 @@ impl Daemon {
         }
         if !self.start_in_flight() {
             self.removed_early.clear();
+        }
+        if std::mem::take(&mut self.regreet) {
+            let greeting = self.greeting(world);
+            out.push(Effect::Reply(GreeterReply::Greeting(greeting)));
         }
         out
     }
@@ -1245,7 +1252,10 @@ impl Daemon {
                     out.push(Effect::Kill(g.worker));
                 }
             }
-            Some(_) => out.push(Effect::SwitchTo(GREETER_VT)),
+            Some(_) => {
+                out.push(Effect::SwitchTo(GREETER_VT));
+                self.regreet = true;
+            }
             None => self.spawn_greeter(out),
         }
     }
