@@ -657,7 +657,7 @@ impl Daemon {
             } => self.admin_member(now, worker, uid, member, &mut out),
             Input::IntakeOpen { uid } => self.intake_open(uid, &mut out),
             Input::IntakeLost { uid } => self.intake_lost(now, uid, &mut out),
-            Input::Viewers { uid, count } => self.set_viewers(now, uid, count, &mut out),
+            Input::Viewers { uid, count } => self.viewers_reported(now, uid, count, &mut out),
             Input::Forwarded { conn, ok } => self.forwarded(conn, ok, &mut out),
             Input::ConfigReloaded(config) => self.config_reloaded(now, config, &mut out),
             Input::Account {
