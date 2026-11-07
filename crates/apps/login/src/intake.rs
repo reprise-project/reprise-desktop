@@ -1,7 +1,7 @@
 //! Links to each user's hand-over socket, `/run/user/<uid>/reprise-rdp/handover.sock`, whose
 //! peer must run as that user: hand-overs go out with their sockets, viewer counts come back.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::ffi::CString;
 use std::future::Future;
@@ -170,7 +170,27 @@ struct Link {
     serial: u64,
     /// `None` while it opens.
     queue: Option<Rc<Queue>>,
+    pace: Rc<Pace>,
     task: AbortHandle,
+}
+
+/// The wait between an opening link's tries, which a login waiting on a reopen shortens.
+struct Pace {
+    every: Cell<Duration>,
+    hurried: Notify,
+}
+
+impl Pace {
+    fn hurry(&self, every: Duration) {
+        if every < self.every.get() {
+            self.every.set(every);
+            self.hurried.notify_one();
+        }
+    }
+
+    async fn wait(&self) {
+        let _ = tokio::time::timeout(self.every.get(), self.hurried.notified()).await;
+    }
 }
 
 /// One link's hand-overs: those waiting, and the one being written.
@@ -211,7 +231,7 @@ impl Links {
     }
 
     /// Opens `uid`'s link, answered by `IntakeOpen` or `IntakeLost`. A link that is opening
-    /// already answers once; one that is up answers `IntakeOpen` again.
+    /// already answers once and tries every [`RETRY`]; one that is up answers `IntakeOpen` again.
     pub fn open(&self, uid: u32) {
         let retry = Retry {
             every: RETRY,
@@ -235,16 +255,21 @@ impl Links {
                 });
                 return;
             }
-            Some(_) => return,
+            Some(link) => return link.pace.hurry(retry.every),
             None => {}
         }
         st.serials += 1;
         let serial = st.serials;
+        let pace = Rc::new(Pace {
+            every: Cell::new(retry.every),
+            hurried: Notify::new(),
+        });
         let run = run(
             uid,
             serial,
             self.open.clone(),
-            retry,
+            pace.clone(),
+            retry.within,
             self.input.clone(),
             self.state.clone(),
         );
@@ -252,6 +277,7 @@ impl Links {
         let link = Link {
             serial,
             queue: None,
+            pace,
             task,
         };
         st.links.insert(uid, link);
@@ -317,12 +343,13 @@ async fn run(
     uid: u32,
     serial: u64,
     open: Opener,
-    retry: Retry,
+    pace: Rc<Pace>,
+    within: Duration,
     input: mpsc::Sender<Input>,
     state: Rc<RefCell<State>>,
 ) {
     let queue = Rc::new(Queue::default());
-    match open_until(uid, &open, retry).await {
+    match open_until(uid, &open, &pace, within).await {
         Ok(stream) => {
             match state.borrow_mut().current(uid, serial) {
                 Some(link) => link.queue = Some(queue.clone()),
@@ -353,15 +380,20 @@ async fn run(
     let _ = input.send(Input::IntakeLost { uid }).await;
 }
 
-/// Tries `open` on `retry` until it connects or gives up.
-async fn open_until(uid: u32, open: &Opener, retry: Retry) -> io::Result<UnixStream> {
-    let give_up = Instant::now() + retry.within;
+/// Tries `open` at `pace` until it connects or `within` has passed.
+async fn open_until(
+    uid: u32,
+    open: &Opener,
+    pace: &Pace,
+    within: Duration,
+) -> io::Result<UnixStream> {
+    let give_up = Instant::now() + within;
     loop {
         let left = give_up.saturating_duration_since(Instant::now());
         match tokio::time::timeout(left, open(uid)).await {
             Ok(Ok(stream)) => return Ok(stream),
-            Ok(Err(e)) if Instant::now() + retry.every >= give_up => return Err(e),
-            Ok(Err(_)) => tokio::time::sleep(retry.every).await,
+            Ok(Err(e)) if Instant::now() + pace.every.get() >= give_up => return Err(e),
+            Ok(Err(_)) => pace.wait().await,
             Err(_) => return Err(io::ErrorKind::TimedOut.into()),
         }
     }
@@ -789,6 +821,40 @@ pub(crate) mod tests {
                 assert!(asked.elapsed() >= Duration::from_millis(350));
                 let tries = tries.get();
                 assert!((3..=5).contains(&tries), "one try every 100 ms: {tries}");
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn a_login_waiting_on_a_reopen_tries_every_retry() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let (tx, _rx) = mpsc::channel(ipc::QUEUE);
+                let tries = Rc::new(std::cell::Cell::new(0));
+                let open: Opener = {
+                    let tries = tries.clone();
+                    Rc::new(move |_uid| {
+                        tries.set(tries.get() + 1);
+                        Box::pin(async { Err(io::ErrorKind::NotFound.into()) })
+                    })
+                };
+                let retry = Retry {
+                    every: Duration::from_secs(1),
+                    within: WAIT,
+                };
+                let links = Links::new(tx, open, WAIT).reopening(retry);
+                let uid = own_uid();
+                links.reopen(uid);
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                assert_eq!(tries.get(), 1, "the reopen waits a second");
+                links.open(uid);
+                tokio::time::sleep(Duration::from_millis(400)).await;
+                let tries = tries.get();
+                assert!(
+                    tries >= 5,
+                    "one try every 50 ms once a login waits: {tries}"
+                );
             })
             .await;
     }
