@@ -194,6 +194,10 @@ impl Converse for Unattended {
     }
 }
 
+/// The worker's log stream, the daemon's stderr. Its stdout and stderr are `/dev/null`, which
+/// is what a helper a PAM module starts inherits.
+pub const LOG_FD: c_int = 4;
+
 const SESSION_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/bin";
 const LOCALE_CONF: &str = "/etc/locale.conf";
 const JOURNAL_STDOUT: &str = "/run/systemd/journal/stdout";
@@ -735,8 +739,9 @@ impl Launch {
         })
     }
 
-    /// Becomes the session's program. A failure before the ids drop is written to the
-    /// worker's stderr, a later one to the session's; either exits 1, or 127 when `execve` fails.
+    /// Becomes the session's program. A failure before the session's output is set up is
+    /// written to the worker's log, a later one to the session's; either exits 1, or 127 when
+    /// `execve` fails.
     ///
     /// # Safety
     /// Called only in the child right after `fork`.
@@ -759,6 +764,7 @@ impl Launch {
             let mut empty: libc::sigset_t = std::mem::zeroed();
             libc::sigemptyset(&mut empty);
             libc::sigprocmask(libc::SIG_SETMASK, &empty, std::ptr::null_mut());
+            libc::dup2(LOG_FD, 2);
 
             if libc::setsid() < 0 {
                 fail(b"reprise-login: setsid failed\n");

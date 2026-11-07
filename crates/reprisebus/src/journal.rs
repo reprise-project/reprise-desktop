@@ -14,6 +14,15 @@ pub fn init_logger(default_filter: &str) {
     builder(default_filter, on_stream()).init();
 }
 
+/// [`init_logger`] writing to `out` instead of stderr; prefixed when `out` is the stream
+/// `JOURNAL_STREAM` names.
+pub fn init_logger_to(default_filter: &str, out: std::fs::File) {
+    let prefixed = names(std::env::var("JOURNAL_STREAM").ok().as_deref(), out.as_fd());
+    builder(default_filter, prefixed)
+        .target(env_logger::Target::Pipe(Box::new(out)))
+        .init();
+}
+
 /// The logger [`init_logger`] starts, with the prefixes chosen by the caller.
 pub fn builder(default_filter: &str, prefixed: bool) -> env_logger::Builder {
     let mut b =
