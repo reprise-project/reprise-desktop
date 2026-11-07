@@ -783,6 +783,17 @@ fn a_gone_conn_kills_its_worker() {
 }
 
 #[test]
+fn a_front_that_links_while_remote_logins_are_off_is_stopped() {
+    let mut run = remote_run(MachineRemote::default());
+    assert_eq!(run.on(Input::FrontLinked), []);
+    assert_eq!(
+        run.on(Input::Front(FrontRequest::Hello)),
+        [Effect::Front(FrontUnit::Stop)],
+        "the unit restarts with reprise-login whatever the settings say"
+    );
+}
+
+#[test]
 fn the_front_hears_the_nla_users_on_hello() {
     let mut run = remote_run(enabled());
     let anna = stored("anna", ANNA, "Remote1!");
