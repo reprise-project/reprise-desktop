@@ -168,6 +168,9 @@ journal names the invalid ones. A save it can't read (its permissions, or
 bytes that aren't UTF-8) or that isn't TOML keeps the settings from before,
 so the port and the connected computers stay, and the journal says why. A
 removed file gives the defaults; at startup so does an unreadable one.
+Under reprise-login the server never listens itself: the login manager
+takes the connections and hands them to it, and `port` goes unused ([Remote
+logins](#remote-logins)).
 
 | Key | Values | Default |
 | --- | --- | --- |
@@ -189,16 +192,24 @@ frame, and `sound` at once.
 ## Login manager
 
 `/etc/reprise/login.toml` configures `reprise-login`, the login manager
-([install.md](install.md#login-manager)), for the whole computer. It is read
-when reprise-login starts: `sudo systemctl restart reprise-login` applies a
-change, and running sessions keep running. systemd starts it at most twice in
-30 s, so a third start within that time leaves a text login on tty1
-instead ([install.md](install.md#login-manager) says how to recover). Only
-the `[login]` table is
-read. A missing file gives the defaults. A key with a value it can't use
-keeps its default and an unknown key is skipped; a file that isn't TOML
-gives every default. The journal names each (`journalctl -b -u
-reprise-login`).
+([install.md](install.md#login-manager)), for the whole computer: the
+`[login]` table and the machine's `[remote_desktop]` table below. It is read
+when reprise-login starts and again on `sudo systemctl reload
+reprise-login`. A reload applies `enabled` and `port` at once, the other
+`[remote_desktop]` keys from the next login or disconnect, `[login]` keys
+the next time the login screen starts, and `autologin_user` the next time
+reprise-login starts. `sudo systemctl restart reprise-login` applies
+everything, and running sessions keep running. systemd starts it at most
+twice in 30 s, so a third start within that time leaves a text login on
+tty1 instead ([install.md](install.md#login-manager) says how to recover).
+A missing file gives the defaults. A key with a value it can't use keeps
+its default and an unknown key is skipped; a file that isn't TOML gives
+every default. The journal names each (`journalctl -b -u reprise-login`).
+
+Settings > Login Manager writes the file through `pkexec
+reprise-login-settings`, which asks for an administrator's password,
+refuses a file with an unknown key or a bad value, rewrites it from the
+values it read (comments go) and reloads reprise-login.
 
 | Key | Values | Default |
 | --- | --- | --- |
@@ -213,6 +224,22 @@ of `/etc/login.defs` (1000 and 60000 when unset) and a shell listed in
 Classic fills in the user who last logged in, and Glass opens on that
 user's picture. reprise-login keeps that user and the last interface in
 `/var/lib/reprise-login/state.toml`.
+
+### Remote logins
+
+`[remote_desktop]` in `/etc/reprise/login.toml` lets reprise-login take RDP
+connections and log their users in, into their running session or a new
+one in the background ([features.md](features.md#remote-logins),
+[security.md](security.md#remote-logins)). Each user's `[remote_desktop]`
+keys in `config.toml`, `port` aside, still apply to their connections.
+
+| Key | Values | Default |
+| --- | --- | --- |
+| `enabled` | `true` starts the front, `reprise-login-rdp`, which listens on `port`; `false` stops it and refuses every login not yet handed to its session | `false` |
+| `port` | 1 to 65535, the TCP port on every interface | `3389` |
+| `group` | the group whose members may log in remotely. Root never can | `"reprise-remote"` |
+| `max_sessions` | 1 to 50: the most sessions reprise-login runs, console ones included. A remote login that would start one more is refused | `8` |
+| `end_disconnected_after` | 0 to 10080: minutes after its last client leaves that a background session ends. `0` never ends it | unset (never) |
 
 ## Lock when away
 

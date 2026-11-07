@@ -272,7 +272,8 @@ asks first. Programs see `TERM=xterm-256color` and `COLORTERM=truecolor`.
 
 ## Reprise Settings
 
-One window, 27 pages under seven headings, with link rows to the separate
+One window, 28 pages under seven headings (Login Manager only where
+`reprise-login` is installed), with link rows to the separate
 settings programs. Only one runs at a time. A link row ends in "..." and
 starts its program in its own window, as Start does, and Settings stays on
 its page; the row is greyed when the program has no desktop entry that shows
@@ -371,7 +372,12 @@ matched control focused.
     one is connected, and While connected, this computer's screen picks
     Stays on or Locks and fits the remote window (lock mode). With
     `[power] locker` set, Locks is greyed and a note under it says lock
-    mode is off while an external screen locker is set.
+    mode is off while an external screen locker is set. While
+    `reprise-login` runs, the switch gives way to a note that remote logins
+    are set on the Login Manager page, the port and New Certificate... are
+    greyed, the fingerprint is the login manager's, and a Remote Desktop
+    password row shows whether you have one: Set... and Clear... ask for
+    your login password first ([features.md](features.md#remote-logins)).
 - **System**
   - **Power Options...**
   - **Startup:** autostart entries, session restore and ending the programs
@@ -385,7 +391,17 @@ matched control focused.
   - **Privacy:** whether programs may ask for your location and the
     remembered answers (Forget drops one), recent files, clipboard history
     and the red border around what is being shared.
-  - **Date and Time...**, **User Accounts...** and **Software Updates...**
+  - **Date and Time...** and **User Accounts...**
+  - **Login Manager:** for the whole computer, in `/etc/reprise/login.toml`.
+    Login Screen: the interface (or the last one used), Show users, and a
+    user to log on automatically. Remote Logins: Allow remote logins to this
+    computer, the port, a note naming the group whose members may log on,
+    Sessions at most, End disconnected sessions after (Never, 15 minutes, 1 hour, 4
+    hours or 1 day), and the certificate fingerprint, or Not running while
+    the front is off. OK and Apply save through `pkexec`, which asks for an
+    administrator's password, and say why when the login manager refuses
+    the settings.
+  - **Software Updates...**
   - **Advanced:** the task manager, screenshots, the update restart notice,
     the Turn Off commands, the low disk space warning, the thumbnail cache
     (Clear removes only the thumbnails Reprise kept and says how much went),
@@ -683,6 +699,17 @@ network time.
   resize of the client's window updates it. See
   [features.md](features.md#remote-desktop) for connecting and
   [security.md](security.md#remote-desktop) for logins.
+- **Remote logins.** Under `reprise-login` with remote logins on,
+  `reprise-login-rdp` listens on the port instead, as the system service
+  `reprise-login-rdp.service` and its own system user, and has no window.
+  It runs each connection up to its login and hands it, once reprise-login
+  lets it in, to the user's `reprise-rdp --hand-over`, which the user unit
+  `reprise-rdp-handover.socket` starts. `/usr/lib/reprise/reprise-login-settings`
+  is the helper Settings > Login Manager saves through: run by `pkexec`, it
+  takes the whole file as TOML on stdin, checks it, writes
+  `/etc/reprise/login.toml` and reloads reprise-login. It exits 0 when
+  saved, 2 when refused, with a reason per line on stderr, and 1 on any
+  other failure. See [security.md](security.md#remote-logins).
 - **About Reprise.** Version, operating system, kernel, model, processor,
   graphics, memory (in kilobytes, total and available), disk, displays and
   uptime, with a Copy button for bug reports. The programs' own Help > About
