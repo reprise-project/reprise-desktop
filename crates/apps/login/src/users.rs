@@ -1,10 +1,14 @@
+use std::ffi::{CStr, CString, OsStr};
+use std::io;
 use std::ops::RangeInclusive;
+use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct PasswdEntry {
     pub name: String,
     pub uid: u32,
+    pub gid: u32,
     pub gecos: String,
     pub home: PathBuf,
     pub shell: String,
@@ -53,6 +57,53 @@ pub fn real_name(e: &PasswdEntry) -> String {
     if full.is_empty() { &e.name } else { full }.to_string()
 }
 
+/// The passwd entry for `name` through NSS, or `None` when there is none.
+pub fn lookup(name: &str) -> io::Result<Option<PasswdEntry>> {
+    let Ok(cname) = CString::new(name) else {
+        return Ok(None);
+    };
+    let mut buf = vec![0u8; 1024];
+    loop {
+        // SAFETY: `libc::passwd` is a plain C struct; all zeroes is a valid value.
+        let mut pwd: libc::passwd = unsafe { std::mem::zeroed() };
+        let mut result: *mut libc::passwd = std::ptr::null_mut();
+        // SAFETY: getpwnam_r writes only through the pointers passed, which point at live locals.
+        let rc = unsafe {
+            libc::getpwnam_r(
+                cname.as_ptr(),
+                &mut pwd,
+                buf.as_mut_ptr().cast(),
+                buf.len(),
+                &mut result,
+            )
+        };
+        if rc == libc::ERANGE && buf.len() < 1 << 20 {
+            buf.resize(buf.len() * 2, 0);
+            continue;
+        }
+        if rc != 0 {
+            return Err(io::Error::from_raw_os_error(rc));
+        }
+        if result.is_null() {
+            return Ok(None);
+        }
+        let field = |p: *const libc::c_char| match p.is_null() {
+            true => &[][..],
+            // SAFETY: a non-null passwd field is a NUL-terminated string in `buf`.
+            false => unsafe { CStr::from_ptr(p) }.to_bytes(),
+        };
+        let text = |p| String::from_utf8_lossy(field(p)).into_owned();
+        return Ok(Some(PasswdEntry {
+            name: text(pwd.pw_name),
+            uid: pwd.pw_uid,
+            gid: pwd.pw_gid,
+            gecos: text(pwd.pw_gecos),
+            home: PathBuf::from(OsStr::from_bytes(field(pwd.pw_dir))),
+            shell: text(pwd.pw_shell),
+        }));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -61,6 +112,7 @@ mod tests {
         PasswdEntry {
             name: name.into(),
             uid,
+            gid: uid,
             gecos: gecos.into(),
             home: PathBuf::from("/home").join(name),
             shell: shell.into(),
@@ -114,5 +166,12 @@ mod tests {
         );
         assert_eq!(real_name(&entry("anna", 1000, "", "")), "anna");
         assert_eq!(real_name(&entry("anna", 1000, ",,,", "")), "anna");
+    }
+
+    #[test]
+    fn lookup_reads_root_and_misses_an_unknown_name() {
+        let root = lookup("root").unwrap().expect("root has a passwd entry");
+        assert_eq!((root.name.as_str(), root.uid, root.gid), ("root", 0, 0));
+        assert_eq!(lookup("no such account").unwrap(), None);
     }
 }
