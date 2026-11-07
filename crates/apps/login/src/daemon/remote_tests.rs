@@ -13,7 +13,7 @@ use super::tests::{
 };
 use super::*;
 
-const ANNA: u32 = 1001;
+pub(super) const ANNA: u32 = 1001;
 const BERT: u32 = 1002;
 const CARL: u32 = 1003;
 
@@ -24,7 +24,7 @@ fn config(remote: MachineRemote) -> MachineConfig {
     }
 }
 
-fn enabled() -> MachineRemote {
+pub(super) fn enabled() -> MachineRemote {
     MachineRemote {
         enabled: true,
         ..MachineRemote::default()
@@ -40,7 +40,7 @@ fn front_start(remote: &MachineRemote) -> Vec<Effect> {
 }
 
 /// Nothing recovered, the greeter up as worker 1.
-fn remote_run(remote: MachineRemote) -> Run {
+pub(super) fn remote_run(remote: MachineRemote) -> Run {
     let mut want = front_start(&remote);
     want.extend(greeter_spawn(1));
     let mut run = Run::machine(config(remote));
@@ -139,7 +139,7 @@ fn remote_spawn(w: u32, mode: Mode, user: &str, from: u8) -> Vec<Effect> {
     }]
 }
 
-fn to_worker(w: u32, msg: ToWorker) -> Effect {
+pub(super) fn to_worker(w: u32, msg: ToWorker) -> Effect {
     Effect::ToWorker {
         worker: WorkerId(w),
         msg,
@@ -166,7 +166,7 @@ fn background_start(w: u32, vt: u16) -> Vec<Effect> {
     ]
 }
 
-fn front(event: FrontEvent) -> Effect {
+pub(super) fn front(event: FrontEvent) -> Effect {
     Effect::ToFront(event)
 }
 
@@ -174,7 +174,7 @@ fn denied(conn: u64, backoff_s: u32) -> Vec<Effect> {
     vec![front(FrontEvent::Denied { conn, backoff_s })]
 }
 
-fn ready(conn: u64, user: &str) -> Input {
+pub(super) fn ready(conn: u64, user: &str) -> Input {
     Input::FrontReady {
         conn,
         user: user.into(),
@@ -188,13 +188,13 @@ fn failed(kind: ErrorKind, text: &str) -> FromWorker {
     }
 }
 
-fn quiet(effects: Vec<Effect>) -> Vec<Effect> {
+pub(super) fn quiet(effects: Vec<Effect>) -> Vec<Effect> {
     (effects.into_iter())
         .filter(|e| !matches!(e, Effect::Log(..)))
         .collect()
 }
 
-fn disconnect_arm(id: &str, generation: u32, min: u32) -> Effect {
+pub(super) fn disconnect_arm(id: &str, generation: u32, min: u32) -> Effect {
     Effect::Arm {
         timer: Timer::Disconnected {
             id: id.into(),
@@ -213,18 +213,18 @@ fn stored(user: &str, uid: u32, password: &str) -> StoredPassword {
 }
 
 impl Run {
-    fn after(&mut self, wait: Duration) -> &mut Run {
+    pub(super) fn after(&mut self, wait: Duration) -> &mut Run {
         self.now += wait;
         self
     }
 
-    fn fire(&mut self, timer: Timer) -> Vec<Effect> {
+    pub(super) fn fire(&mut self, timer: Timer) -> Vec<Effect> {
         self.on(Input::Timer(timer))
     }
 
     /// Runs conn's TLS login for `user` through worker `w` up to `Verified`; returns what
     /// `Authenticated` gave.
-    fn verify(&mut self, conn: u64, w: u32, user: &str, uid: u32) -> Vec<Effect> {
+    pub(super) fn verify(&mut self, conn: u64, w: u32, user: &str, uid: u32) -> Vec<Effect> {
         assert_eq!(self.on(tls(conn, user, "pw")), looked_up(conn, user));
         assert_eq!(
             self.on(member(conn, uid)),
@@ -253,7 +253,7 @@ impl Run {
         assert_eq!(self.worker(w, started("c2", ANNA)), want);
     }
 
-    fn viewers(&mut self, uid: u32, count: u32) -> Vec<Effect> {
+    pub(super) fn viewers(&mut self, uid: u32, count: u32) -> Vec<Effect> {
         self.on(Input::Viewers { uid, count })
     }
 }
