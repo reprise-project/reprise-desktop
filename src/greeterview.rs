@@ -121,10 +121,30 @@ pub fn reply(state: &mut State, reply: GreeterReply) {
     let Some(g) = state.greeter.login.as_mut() else {
         return;
     };
+    if let GreeterReply::Greeting(fresh) = &reply {
+        regreet(g, fresh);
+        return redraw(state);
+    }
     for step in g.conv.on_reply(reply) {
         apply(state, step);
     }
     redraw(state);
+}
+
+/// A later Greeting: the running screen came forward, so its tiles' notes and the notice
+/// catch up with the sessions.
+fn regreet(g: &mut Greeter, fresh: &Greeting) {
+    for u in &mut g.model.users {
+        let note = fresh
+            .users
+            .iter()
+            .find(|f| f.name == u.name)
+            .and_then(|f| f.note);
+        u.note = note.map(|Note::LoggedOn| UserNote::LoggedOn);
+    }
+    if fresh.notice == Some(Notice::SessionEndedEarly) {
+        g.model.info(logon::text::session_ended_early());
+    }
 }
 
 fn apply(state: &mut State, step: Step) {
