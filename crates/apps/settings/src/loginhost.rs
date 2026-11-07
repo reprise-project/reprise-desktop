@@ -4,9 +4,11 @@
 use crate::registry::{self, Page};
 use crate::{SettingsApp, pages, take};
 use repriselogin::machine::{MACHINE_CONFIG, MachineConfig};
+use repriselogin::users::Source;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
+use std::sync::mpsc::Receiver;
 
 /// The helper that replaces `MACHINE_CONFIG` with the TOML on its stdin, as root.
 const HELPER: &str = "/usr/lib/reprise/reprise-login-settings";
@@ -108,54 +110,16 @@ fn fingerprint(path: &Path) -> Option<String> {
     Some(text.trim().to_string()).filter(|t| !t.is_empty())
 }
 
-/// The accounts the login screen lists, by name: a uid in `login_defs`' `UID_MIN..=UID_MAX`
-/// (1000 to 60000 when unset) and a login shell `shells` names.
-fn listed(passwd: &str, shells: &str, login_defs: &str) -> Vec<String> {
-    let (mut min, mut max) = (1000, 60000);
-    for line in login_defs.lines() {
-        let mut words = line.split_whitespace();
-        match (words.next(), words.next().and_then(|v| v.parse().ok())) {
-            (Some("UID_MIN"), Some(v)) => min = v,
-            (Some("UID_MAX"), Some(v)) => max = v,
-            _ => {}
-        }
+/// The accounts the login screen lists, read through NSS; none under test.
+pub(crate) fn machine_users() -> Source {
+    match cfg!(test) {
+        true => Source::default(),
+        false => Source::read(),
     }
-    let shells: Vec<&str> = shells
-        .lines()
-        .filter(|l| !l.trim().is_empty() && !l.trim_start().starts_with('#'))
-        .collect();
-    let mut names: Vec<String> = passwd
-        .lines()
-        .filter_map(|line| {
-            let f: Vec<&str> = line.split(':').collect();
-            let (name, uid, shell) = (*f.first()?, f.get(2)?.parse::<u32>().ok()?, *f.get(6)?);
-            let shell = if shell.is_empty() { "/bin/sh" } else { shell };
-            let login =
-                shells.contains(&shell) && !shell.ends_with("nologin") && !shell.ends_with("false");
-            (login && (min..=max).contains(&uid) && !name.starts_with(['+', '-']))
-                .then(|| name.to_string())
-        })
-        .collect();
-    names.sort();
-    names.dedup();
-    names
-}
-
-/// [`listed`] from this machine's files; none under test.
-fn users() -> Vec<String> {
-    if cfg!(test) {
-        return Vec::new();
-    }
-    let text = |path: &str| std::fs::read_to_string(path).unwrap_or_default();
-    listed(
-        &text("/etc/passwd"),
-        &text("/etc/shells"),
-        &text("/etc/login.defs"),
-    )
 }
 
 impl SettingsApp {
-    /// Read the machine settings the first time the page opens.
+    /// Read the machine settings the first time the page opens, and the accounts off the loop.
     pub(crate) fn ensure_login(&mut self) {
         if self.login.is_some() || registry::open(&self.sheet) != Page::LoginManager {
             return;
@@ -164,10 +128,31 @@ impl SettingsApp {
         self.login = Some(Login {
             want: loaded.clone(),
             loaded,
-            users: users(),
+            users: Vec::new(),
             fingerprint: fingerprint(&self.login_files.fingerprint),
         });
         self.show_login();
+        let source = self.login_source;
+        self.login_users =
+            Some(self.login_spawn(move || source().listed().into_iter().map(|e| e.name).collect()));
+    }
+
+    /// The accounts are in: offer them for automatic logon. True when the page changed.
+    pub(crate) fn login_users_done(&mut self) -> bool {
+        let Some(rx) = &self.login_users else {
+            return false;
+        };
+        let users = match take(rx) {
+            Ok(None) => return false,
+            Ok(Some(users)) => users,
+            Err(()) => Vec::new(),
+        };
+        self.login_users = None;
+        if let Some(l) = &mut self.login {
+            l.users = users;
+        }
+        self.show_login();
+        true
     }
 
     fn show_login(&mut self) {
@@ -209,7 +194,7 @@ impl SettingsApp {
             self.login_run,
             self.login_files.config.clone(),
         );
-        self.start_login(move || apply(&cfg, &run).map(|()| read(&path)));
+        self.login_job = Some(self.login_spawn(move || apply(&cfg, &run).map(|()| read(&path))));
     }
 
     pub(crate) fn revert_login(&mut self) {
@@ -248,44 +233,16 @@ impl SettingsApp {
         Some(saved && quit)
     }
 
-    #[cfg(not(test))]
-    fn start_login(
-        &mut self,
-        job: impl FnOnce() -> Result<MachineConfig, String> + Send + 'static,
-    ) {
-        self.login_job = Some(self.spawn(job));
-    }
-
-    /// Tests run the save at once, through the `login_run` they set.
-    #[cfg(test)]
-    fn start_login(
-        &mut self,
-        job: impl FnOnce() -> Result<MachineConfig, String> + Send + 'static,
-    ) {
-        let (tx, rx) = std::sync::mpsc::channel();
-        let _ = tx.send(job());
-        self.login_job = Some(rx);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::listed;
-
-    #[test]
-    fn the_listed_users_have_a_login_shell_and_a_uid_in_the_range() {
-        let passwd = "root:x:0:0::/root:/bin/bash\n\
-                      zoe:x:1001:1001::/home/zoe:/bin/zsh\n\
-                      anna:x:1000:1000:Anna:/home/anna:/bin/bash\n\
-                      svc:x:1002:1002::/:/usr/bin/nologin\n\
-                      old:x:1003:1003::/home/old:\n\
-                      far:x:70000:70000::/home/far:/bin/bash\n\
-                      +nis:x:1004:1004::/:/bin/bash\n";
-        let shells = "# login shells\n/bin/bash\n/bin/zsh\n/usr/bin/nologin\n/bin/sh\n";
-        assert_eq!(
-            listed(passwd, shells, "UID_MIN 1000\nUID_MAX 60000\n"),
-            ["anna", "old", "zoe"]
-        );
-        assert_eq!(listed(passwd, shells, "UID_MIN 1001\n"), ["old", "zoe"]);
+    /// Run `job` off the loop; tests run it at once.
+    fn login_spawn<T: Send + 'static>(
+        &self,
+        job: impl FnOnce() -> T + Send + 'static,
+    ) -> Receiver<T> {
+        if cfg!(test) {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let _ = tx.send(job());
+            return rx;
+        }
+        self.spawn(job)
     }
 }
