@@ -136,6 +136,16 @@ fn started(id: &str, uid: u32) -> FromWorker {
     }
 }
 
+/// `effects` less the fresh Greeting a running greeter gets last when it comes forward.
+fn regreeted(mut effects: Vec<Effect>) -> Vec<Effect> {
+    let last = effects.pop();
+    assert!(
+        matches!(last, Some(Effect::Reply(GreeterReply::Greeting(_)))),
+        "{effects:?} then {last:?}"
+    );
+    effects
+}
+
 fn is_refused(effects: &[Effect]) -> bool {
     matches!(
         effects,
@@ -724,6 +734,23 @@ fn a_session_ending_while_active_brings_the_greeter_back() {
 }
 
 #[test]
+fn a_login_screen_brought_back_while_running_is_greeted_afresh() {
+    let mut run = Run::anna_switched(Remembered::default());
+    assert_eq!(run.greeting().users[0].note, Some(Note::LoggedOn));
+    let effects = run.removed("c1", None);
+    match effects.as_slice() {
+        [
+            Effect::Disallocate(7),
+            Effect::SwitchTo(1),
+            Effect::Reply(GreeterReply::Greeting(g)),
+        ] => {
+            assert_eq!(g.users[0].note, None, "anna logged off");
+        }
+        other => panic!("the screen comes forward with a fresh Greeting, got {other:?}"),
+    }
+}
+
+#[test]
 fn a_session_ending_soon_after_start_shows_a_notice() {
     let mut run = Run::booted();
     run.log_in(2, "anna", 1000, "c2", 7);
@@ -741,13 +768,13 @@ fn a_session_that_fails_to_start_returns_to_the_login_screen() {
     run.worker(2, authed("anna", 1000));
     run.greeter(GreeterRequest::StartSession);
     assert_eq!(
-        run.worker(
+        regreeted(run.worker(
             2,
             FromWorker::Failed {
                 kind: ErrorKind::Failed,
                 text: "no session id".into(),
             }
-        ),
+        )),
         vec![
             Effect::Reply(error(ErrorKind::Failed, "no session id")),
             Effect::SwitchTo(1),
@@ -766,7 +793,7 @@ fn switch_user_from_a_session_starts_the_greeter() {
         greeter_spawn(1)
     );
     assert_eq!(
-        run.session("c1", SessionRequest::SwitchUser),
+        regreeted(run.session("c1", SessionRequest::SwitchUser)),
         vec![Effect::SwitchTo(1)]
     );
 }
@@ -959,7 +986,7 @@ fn a_resume_whose_session_ends_mid_conversation_kills_its_worker() {
     assert_eq!(run.greeter(create("anna")), spawn(2, Mode::Reauth, "anna"));
     run.worker(2, secret("Password:"));
     assert_eq!(
-        run.removed("c1", None),
+        regreeted(run.removed("c1", None)),
         vec![
             Effect::Kill(WorkerId(2)),
             Effect::Reply(error(ErrorKind::Failed, SESSION_ENDED)),
@@ -1010,7 +1037,7 @@ fn a_session_removed_before_its_started_is_handled_as_ended() {
     assert_eq!(run.greeter(GreeterRequest::StartSession), start_on(2, 7));
     assert_eq!(run.removed("c2", None), vec![]);
     assert_eq!(
-        run.worker(2, started("c2", 1000)),
+        regreeted(run.worker(2, started("c2", 1000))),
         vec![
             Effect::Reply(error(ErrorKind::Failed, SESSION_ENDED)),
             Effect::SwitchTo(1),
@@ -1133,7 +1160,7 @@ fn a_start_that_never_reports_started_times_out() {
     run.greeter(create("anna"));
     run.worker(2, authed("anna", 1000));
     run.greeter(GreeterRequest::StartSession);
-    let effects = run.on(Input::Timer(Timer::Start(WorkerId(2))));
+    let effects = regreeted(run.on(Input::Timer(Timer::Start(WorkerId(2)))));
     assert!(
         matches!(
             effects.as_slice(),
@@ -1315,7 +1342,7 @@ fn a_timed_out_start_whose_session_comes_up_late_returns_to_the_login_screen() {
     run.worker(2, authed("anna", 1000));
     run.greeter(GreeterRequest::StartSession);
     run.on(Input::Timer(Timer::Start(WorkerId(2))));
-    let effects = run.worker(2, started("c2", 1000));
+    let effects = regreeted(run.worker(2, started("c2", 1000)));
     assert!(
         matches!(
             effects.as_slice(),
@@ -1334,7 +1361,7 @@ fn a_timed_out_start_whose_session_comes_up_late_returns_to_the_login_screen() {
     run.on(Input::Timer(Timer::Start(WorkerId(2))));
     assert_eq!(run.removed("c9", Some("c8")), vec![]);
     assert_eq!(
-        run.removed("c2", None),
+        regreeted(run.removed("c2", None)),
         vec![Effect::SwitchTo(1)],
         "the timed-out worker's session left the seat empty"
     );
