@@ -27,7 +27,7 @@ use crate::textedit::Caret;
 use crate::theme::{Color, ColorScheme, Theme};
 use crate::trackbar;
 
-use super::field::{masked, visible_from};
+use super::field::visible_from;
 use super::item::Screen;
 use super::layout::{
     check_box, check_label_rect, choice_label_room, glyph_dy, icon_list_layout, note_lines,
@@ -279,7 +279,7 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
                 let hidden;
                 let unselected;
                 let shown = if edit.is_secret() {
-                    hidden = masked(edit);
+                    hidden = edit.masked();
                     &hidden
                 } else if !focused && edit.has_selection() {
                     let mut e = edit.clone();

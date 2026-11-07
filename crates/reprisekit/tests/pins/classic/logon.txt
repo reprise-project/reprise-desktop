@@ -1,0 +1,12 @@
+empty @1 41fcce8fda403c6c
+empty @2 a53aa65876ee4d51
+name filled @1 207ba9b052d25365
+name filled @2 6e0b5964bf4c9738
+message @1 9a02999e8fcf29ac
+message @2 0fde5ac3254e455d
+busy @1 ef8f34208dc594bc
+busy @2 edf9366d563406ed
+caps lock @1 1a90698a3f9b1935
+caps lock @2 f825138162f893b8
+layout badge @1 c5b8ed45e3cc5844
+layout badge @2 a80d9fd763b60b54

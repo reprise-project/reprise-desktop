@@ -4,6 +4,7 @@ pub mod copyflight;
 pub mod frame;
 pub mod gtk3;
 pub mod indicator;
+pub mod logon;
 pub mod perfgraph;
 pub mod progress;
 pub mod rebar;

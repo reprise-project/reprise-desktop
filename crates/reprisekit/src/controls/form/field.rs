@@ -8,7 +8,7 @@ use crate::classic::widgets::{self, LINE_H};
 use crate::controls::combo;
 use crate::controls::multiedit;
 use crate::text::TextRenderer;
-use crate::textedit::TextEdit;
+use crate::textedit::{BULLET, TextEdit};
 
 use super::{Control, Event, Form, Hit, Part};
 
@@ -205,24 +205,10 @@ pub(crate) fn visible_from(edit: &TextEdit, first: &Cell<usize>) -> usize {
     }
 }
 
-const BULLET: &str = "\u{25cf}";
-
-/// The bullets a masked field shows, with caret and anchor mapped by char index; `first`
-/// indexes these bullets. Secret itself, so the field shows no preedit and
-/// reports no text to an input method.
-pub(super) fn masked(edit: &TextEdit) -> TextEdit {
-    let at = |i: usize| edit.text[..i].chars().count() * BULLET.len();
-    let mut m = TextEdit::secret();
-    m.set_cue(edit.cue());
-    m.text.push_str(&BULLET.repeat(edit.text.chars().count()));
-    m.set_selection(at(edit.anchor()), at(edit.caret()));
-    m
-}
-
-/// What a field shows of `edit`: its bullets when masked ([`masked`]), else the value.
+/// What a field shows of `edit`: its bullets when masked ([`TextEdit::masked`]), else the value.
 pub(super) fn as_shown(edit: &TextEdit) -> Cow<'_, TextEdit> {
     if edit.is_secret() {
-        Cow::Owned(masked(edit))
+        Cow::Owned(edit.masked())
     } else {
         Cow::Borrowed(edit)
     }

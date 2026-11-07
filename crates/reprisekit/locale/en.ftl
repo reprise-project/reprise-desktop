@@ -115,6 +115,21 @@ powerpanel-turn-off-tip = Shuts down Reprise so that you can safely turn off the
 powerpanel-restart = &Restart
 powerpanel-restart-tip = Shuts down Reprise and then starts Reprise again.
 
+## The login screen
+logon-title = Log On to Reprise
+logon-user-name = User name:
+logon-password = Password:
+logon-shut-down = Shut Down...
+logon-begin = To begin, click your user name
+logon-other-user = Other user
+logon-logged-on = Logged on
+logon-password-cue = Password
+logon-incorrect = The user name or password is incorrect.
+logon-caps-lock = Caps Lock is on.
+logon-power-refused = Other people are logged on to this computer. Shut it down from your own session.
+logon-session-ended-early = The session ended as soon as it started. Its log is in the user journal.
+logon-power-off = Shut down
+
 ## Calculator
 calc-degrees = &Degrees
 calc-radians = &Radians
