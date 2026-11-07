@@ -15,6 +15,8 @@ const SESSION: &str = "org.freedesktop.login1.Session";
 const SEAT0: &str = "/org/freedesktop/login1/seat/seat0";
 /// A session logind keeps after its leader is gone, until its last process exits.
 const CLOSING: &str = "closing";
+/// logind's error for a session id it does not know.
+const NO_SUCH_SESSION: &str = "org.freedesktop.login1.NoSuchSession";
 /// How long a method call on the system bus waits for its reply.
 const METHOD_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -115,6 +117,16 @@ pub fn keyboard_from(
     }
 }
 
+/// Whether `e` says the session is gone: logind's `NoSuchSession`, or `UnknownObject` from a
+/// session object that went away. A greeter of the last daemon is often gone this way.
+pub fn session_gone(e: &zbus::Error) -> bool {
+    match e {
+        zbus::Error::FDO(e) => matches!(**e, zbus::fdo::Error::UnknownObject(_)),
+        zbus::Error::MethodError(name, ..) => name.as_str() == NO_SUCH_SESSION,
+        _ => false,
+    }
+}
+
 /// The daemon's system bus connection with logind's manager on it.
 #[derive(Clone)]
 pub struct Logind {
@@ -175,6 +187,7 @@ impl Logind {
                     },
                     closing,
                 )),
+                Err(e) if session_gone(&e) => log::debug!("logind session {id}: {e}"),
                 Err(e) => log::warn!("logind session {id}: {e}"),
             }
         }
@@ -314,6 +327,31 @@ impl Logind {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn error_reply(name: &str) -> zbus::Error {
+        let call = zbus::Message::method_call("/org/freedesktop/login1", "TerminateSession")
+            .build(&())
+            .unwrap();
+        let reply = zbus::Message::error(&call.header(), name)
+            .build(&("gone",))
+            .unwrap();
+        reply.into()
+    }
+
+    #[test]
+    fn a_session_that_went_away_is_told_from_other_failures() {
+        assert!(session_gone(&error_reply(NO_SUCH_SESSION)));
+        assert!(session_gone(&error_reply(
+            "org.freedesktop.DBus.Error.UnknownObject"
+        )));
+        assert!(!session_gone(&error_reply(
+            "org.freedesktop.DBus.Error.AccessDenied"
+        )));
+        assert!(!session_gone(&error_reply(
+            "org.freedesktop.login1.NoSuchUser"
+        )));
+        assert!(!session_gone(&zbus::Error::InvalidReply));
+    }
 
     #[test]
     fn keyboard_falls_back_to_us() {
