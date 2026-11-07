@@ -251,6 +251,10 @@ pub fn wheel_steps(discrete: i32, continuous: f64, residual: i32) -> (i32, i32) 
 
 impl State {
     pub fn gesture<B: InputBackend>(&mut self, event: InputEvent<B>) {
+        // The login screen takes none, and the overview and desktops behind it must not.
+        if self.host == crate::compositor::Host::Greeter {
+            return;
+        }
         if self.keep_swipe(&event) {
             return;
         }
