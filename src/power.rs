@@ -734,9 +734,10 @@ fn read_record(path: &Path) -> Vec<(String, u8)> {
 /// external output to carry on); its opening wakes the outputs and brings
 /// back panels a remote-control session darkened. Other
 /// switches (tablet mode) are ignored. An already closed lid reports when
-/// its device is added, at startup before any output exists.
+/// its device is added, at startup before any output exists. In the greeter, logind acts on
+/// the lid.
 pub fn switch_toggled(state: &mut State, switch: Option<Switch>, st: SwitchState) {
-    if switch != Some(Switch::Lid) {
+    if switch != Some(Switch::Lid) || state.host == crate::compositor::Host::Greeter {
         return;
     }
     match st {

@@ -76,6 +76,7 @@ use crate::{
 
 mod capture;
 mod lockscreen;
+mod touchpad;
 
 pub use lockscreen::{Heard, LockScreen};
 

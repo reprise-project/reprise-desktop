@@ -24,7 +24,7 @@ enum Phase {
     Idle,
     Authenticating,
     Starting,
-    /// `CancelSession` went out; what the old login still sends is dropped until its `Success`.
+    /// The login was cancelled; what it still sends is dropped until the cancel's reply.
     Cancelling,
 }
 
@@ -33,6 +33,11 @@ pub struct Conversation {
     phase: Phase,
     /// Answers the first secret prompt, then is gone.
     password: Option<Zeroizing<String>>,
+    /// A `CreateSession` or `PostAuthResponse` went out and its reply has not come.
+    asked: bool,
+    /// Requests held while `asked`: a cancel sent then could not be told from the reply it
+    /// crosses, since both may be `Success`.
+    held: Vec<GreeterRequest>,
     /// A `Power` request waits for its result. It goes out only while no login runs, so a
     /// result in `Idle` is its.
     power: bool,
@@ -47,24 +52,30 @@ impl Conversation {
     pub fn submit(&mut self, user: String, password: Zeroizing<String>) -> GreeterRequest {
         self.phase = Phase::Authenticating;
         self.password = Some(password);
+        self.asked = true;
         GreeterRequest::CreateSession { user }
     }
 
-    /// The answer to the prompt `Step::Ask` showed.
-    pub fn answer(&mut self, text: Zeroizing<String>) -> GreeterRequest {
-        GreeterRequest::PostAuthResponse {
-            response: Some(text),
+    /// The answer to the prompt `Step::Ask` showed; None once that login is cancelled or over.
+    pub fn answer(&mut self, text: Zeroizing<String>) -> Option<GreeterRequest> {
+        if self.phase != Phase::Authenticating || self.asked {
+            return None;
         }
+        self.asked = true;
+        Some(GreeterRequest::PostAuthResponse {
+            response: Some(text),
+        })
     }
 
-    /// Drops the login in progress; None while there is none or it is already starting.
+    /// Drops the login in progress; None while there is none, it is already starting, or a
+    /// reply is in flight (the cancel then goes out after it).
     pub fn cancel(&mut self) -> Option<GreeterRequest> {
         if self.phase != Phase::Authenticating {
             return None;
         }
         self.phase = Phase::Cancelling;
         self.password = None;
-        Some(GreeterRequest::CancelSession)
+        self.send(GreeterRequest::CancelSession)
     }
 
     /// The requests that ask for `action`: a login still authenticating is cancelled first, and
@@ -75,32 +86,62 @@ impl Conversation {
         }
         let mut out: Vec<GreeterRequest> = self.cancel().into_iter().collect();
         self.power = true;
-        out.push(GreeterRequest::Power { action });
+        out.extend(self.send(GreeterRequest::Power { action }));
         out
     }
 
+    /// `req` now, or held until the reply in flight comes.
+    fn send(&mut self, req: GreeterRequest) -> Option<GreeterRequest> {
+        if self.asked {
+            self.held.push(req);
+            return None;
+        }
+        Some(req)
+    }
+
     pub fn on_reply(&mut self, reply: GreeterReply) -> Vec<Step> {
+        if matches!(reply, GreeterReply::Greeting(_)) {
+            return Vec::new();
+        }
+        let answered = std::mem::take(&mut self.asked);
         match (self.phase, reply) {
-            (_, GreeterReply::Greeting(_)) => Vec::new(),
+            // The reply the held cancel waited out; after an error there is no login to cancel.
+            (Phase::Cancelling, reply) if answered => {
+                let mut held = std::mem::take(&mut self.held);
+                let mut out = Vec::new();
+                if matches!(reply, GreeterReply::Error { .. }) {
+                    self.phase = Phase::Idle;
+                    held.retain(|r| *r != GreeterRequest::CancelSession);
+                    out.push(Step::Idle);
+                }
+                out.extend(held.into_iter().map(Step::Send));
+                out
+            }
             (Phase::Authenticating, GreeterReply::AuthMessage { kind, text }) => match kind {
                 AuthKind::Secret | AuthKind::Visible => {
                     let password = (kind == AuthKind::Secret)
                         .then(|| self.password.take())
                         .flatten();
                     match password {
-                        Some(p) => vec![Step::Send(GreeterRequest::PostAuthResponse {
-                            response: Some(p),
-                        })],
+                        Some(p) => {
+                            self.asked = true;
+                            vec![Step::Send(GreeterRequest::PostAuthResponse {
+                                response: Some(p),
+                            })]
+                        }
                         None => vec![Step::Ask(Prompt {
                             text,
                             echo: kind == AuthKind::Visible,
                         })],
                     }
                 }
-                AuthKind::Info | AuthKind::Error => vec![
-                    Step::Note(text),
-                    Step::Send(GreeterRequest::PostAuthResponse { response: None }),
-                ],
+                AuthKind::Info | AuthKind::Error => {
+                    self.asked = true;
+                    vec![
+                        Step::Note(text),
+                        Step::Send(GreeterRequest::PostAuthResponse { response: None }),
+                    ]
+                }
             },
             (Phase::Authenticating, GreeterReply::Success) => {
                 self.phase = Phase::Starting;
@@ -116,7 +157,7 @@ impl Conversation {
                 self.password = None;
                 vec![Step::Fail(kind, text)]
             }
-            (Phase::Cancelling, GreeterReply::Success) => {
+            (Phase::Cancelling, GreeterReply::Success | GreeterReply::Error { .. }) => {
                 self.phase = Phase::Idle;
                 vec![Step::Idle]
             }
@@ -191,9 +232,9 @@ mod tests {
         );
         assert_eq!(
             c.answer(Zeroizing::new("123".into())),
-            GreeterRequest::PostAuthResponse {
+            Some(GreeterRequest::PostAuthResponse {
                 response: Some(Zeroizing::new("123".into()))
-            }
+            })
         );
     }
 
@@ -244,9 +285,17 @@ mod tests {
         );
     }
 
+    /// A login past its password, asking `Token:`: no reply is in flight.
+    fn asking() -> Conversation {
+        let mut c = submitted();
+        c.on_reply(prompt(AuthKind::Secret, "Password:"));
+        c.on_reply(prompt(AuthKind::Secret, "Token:"));
+        c
+    }
+
     #[test]
     fn power_during_a_login_cancels_it_first_and_its_refusal_fails() {
-        let mut c = submitted();
+        let mut c = asking();
         assert_eq!(
             c.power(PowerAction::PowerOff),
             vec![
@@ -257,11 +306,12 @@ mod tests {
             ]
         );
         assert_eq!(
-            c.on_reply(prompt(AuthKind::Secret, "Password:")),
-            vec![],
-            "the cancelled login's prompt is dropped"
+            c.answer(Zeroizing::new("123".into())),
+            None,
+            "the cancelled prompt takes no answer"
         );
         assert_eq!(c.on_reply(GreeterReply::Success), vec![Step::Idle]);
+        assert!(!c.idle(), "the power request is still out");
         assert_eq!(
             c.on_reply(GreeterReply::Error {
                 kind: ErrorKind::Refused,
@@ -271,6 +321,60 @@ mod tests {
                 ErrorKind::Refused,
                 "other users are logged on".into()
             )]
+        );
+        assert!(c.idle());
+    }
+
+    #[test]
+    fn a_cancel_goes_out_after_the_reply_it_would_cross() {
+        let mut c = submitted();
+        c.on_reply(prompt(AuthKind::Secret, "Password:"));
+        assert_eq!(c.cancel(), None, "the answer's reply is still to come");
+        assert_eq!(
+            c.on_reply(GreeterReply::Success),
+            vec![Step::Send(GreeterRequest::CancelSession)],
+            "the login's success is not the cancel's"
+        );
+        assert!(!c.idle());
+        assert_eq!(c.on_reply(GreeterReply::Success), vec![Step::Idle]);
+        assert!(c.idle());
+        c.submit("bob".into(), Zeroizing::new("pw".into()));
+        assert_eq!(
+            c.on_reply(GreeterReply::Success),
+            vec![Step::Send(GreeterRequest::StartSession)],
+            "the next login's success is its own"
+        );
+    }
+
+    #[test]
+    fn power_during_a_reply_in_flight_waits_for_it() {
+        let mut c = submitted();
+        assert_eq!(c.power(PowerAction::Reboot), vec![]);
+        assert_eq!(
+            c.on_reply(prompt(AuthKind::Secret, "Password:")),
+            vec![
+                Step::Send(GreeterRequest::CancelSession),
+                Step::Send(GreeterRequest::Power {
+                    action: PowerAction::Reboot
+                })
+            ],
+            "the prompt goes unanswered"
+        );
+        assert_eq!(c.on_reply(GreeterReply::Success), vec![Step::Idle]);
+        assert_eq!(c.on_reply(GreeterReply::Success), vec![]);
+        assert!(c.idle());
+    }
+
+    #[test]
+    fn a_login_failing_before_its_cancel_went_out_needs_none() {
+        let mut c = submitted();
+        assert_eq!(c.cancel(), None);
+        assert_eq!(
+            c.on_reply(GreeterReply::Error {
+                kind: ErrorKind::Auth,
+                text: "Authentication failure".into()
+            }),
+            vec![Step::Idle]
         );
         assert!(c.idle());
     }
