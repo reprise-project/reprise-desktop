@@ -60,7 +60,7 @@ impl Mode {
     }
 
     /// Whether a worker of this mode may run for `user`. The greeter's and autologin's stacks
-    /// admit anyone, so they run only for the greeter's account and `autologin_user`.
+    /// ask no password, so they run only for the greeter's account and `autologin_user`.
     pub fn runs_for(self, user: &str, autologin_user: Option<&str>) -> bool {
         match self {
             Mode::Greeter => user == GREETER_USER,
@@ -963,6 +963,23 @@ mod tests {
         for m in [Mode::Login, Mode::Reauth] {
             assert!(m.runs_for("anna", None));
         }
+    }
+
+    /// The index of the first `auth` line of `stack` running `module`.
+    fn auth_line(stack: &str, module: &str) -> Option<usize> {
+        (stack.lines()).position(|l| l.starts_with("auth") && l.contains(module))
+    }
+
+    #[test]
+    fn the_passwordless_stacks_check_the_account_before_pam_permit() {
+        let greeter = include_str!("../../../../data/pam.d/reprise-login-greeter");
+        let guard = auth_line(greeter, "pam_succeed_if.so user = reprise-greeter");
+        assert!(guard.is_some(), "{greeter}");
+        assert!(guard < auth_line(greeter, "pam_permit.so"));
+        let autologin = include_str!("../../../../data/pam.d/reprise-login-autologin");
+        let guard = auth_line(autologin, "pam_succeed_if.so uid >= 1000");
+        assert!(guard.is_some(), "{autologin}");
+        assert!(guard < auth_line(autologin, "pam_permit.so"));
     }
 
     #[test]
