@@ -8,7 +8,8 @@ use serde::{Deserialize, Serialize};
 
 pub const STATE_PATH: &str = "/var/lib/reprise-login/state.toml";
 
-/// What the login screen offers first: the last user who logged in and the interface they used.
+/// What the login screen offers first: the last user who logged in and the interface last used
+/// at the console.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Remembered {
     #[serde(skip_serializing_if = "Option::is_none")]

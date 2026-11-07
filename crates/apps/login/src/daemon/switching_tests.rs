@@ -1,12 +1,39 @@
+use repriselogin::Interface;
 use repriselogin::front::FrontEvent;
-use repriselogin::machine::MachineRemote;
+use repriselogin::machine::{MachineConfig, MachineRemote};
 use repriselogin::session::SessionRequest;
 
 use super::remote_tests::{
     ANNA, disconnect_arm, enabled, front, quiet, ready, remote_run, to_worker,
 };
-use super::tests::{Run, authed, create, greeter_spawn, reply, spawn, unlock};
+use super::tests::{Run, authed, create, greeter_spawn, logind, reply, spawn, unlock};
 use super::*;
+
+/// Anna on VT 7 holds the seat; bert's session is on VT 8.
+fn anna_and_bert() -> Run {
+    let mut run = Run::machine(MachineConfig::default());
+    run.recover(vec![
+        logind("c1", "anna", 1000, 7, "user", Mode::Login.service()),
+        logind("c3", "bert", 1001, 8, "user", Mode::Login.service()),
+    ]);
+    assert_eq!(run.start(), []);
+    run
+}
+
+fn hello(run: &mut Run, id: &str, interface: Interface, seat_active: &str) -> Vec<Effect> {
+    run.on(Input::Session {
+        id: id.into(),
+        request: SessionRequest::Hello { interface },
+        seat_active: Some(seat_active.into()),
+    })
+}
+
+fn remember(interface: Interface) -> Vec<Effect> {
+    vec![Effect::Remember(Remembered {
+        last_user: None,
+        last_interface: Some(interface),
+    })]
+}
 
 fn with_end_after(min: u32) -> MachineRemote {
     MachineRemote {
@@ -49,6 +76,40 @@ fn hand_over_to_anna(run: &mut Run, conn: u64, w: u32) {
 
 fn background(run: &Run, id: &str) -> Option<bool> {
     run.d.sessions.by_id(id).map(|e| e.background)
+}
+
+#[test]
+fn a_hello_from_a_session_off_the_seat_leaves_the_remembered_interface() {
+    let mut run = anna_and_bert();
+    assert_eq!(
+        hello(&mut run, "c1", Interface::Classic, "c1"),
+        remember(Interface::Classic)
+    );
+    assert_eq!(hello(&mut run, "c3", Interface::Blue, "c1"), []);
+    assert_eq!(run.d.remembered.last_interface, Some(Interface::Classic));
+}
+
+#[test]
+fn a_hello_from_the_session_on_the_seat_is_remembered() {
+    let mut run = anna_and_bert();
+    assert_eq!(
+        hello(&mut run, "c1", Interface::Glass, "c1"),
+        remember(Interface::Glass)
+    );
+    assert_eq!(hello(&mut run, "c1", Interface::Glass, "c1"), []);
+}
+
+#[test]
+fn the_session_brought_to_the_console_has_its_interface_remembered() {
+    let mut run = anna_and_bert();
+    hello(&mut run, "c1", Interface::Classic, "c1");
+    assert_eq!(hello(&mut run, "c3", Interface::Blue, "c1"), []);
+    assert_eq!(run.on(Input::ConsoleOnVt(8)), remember(Interface::Blue));
+    assert_eq!(
+        run.on(Input::ConsoleOnVt(8)),
+        [],
+        "Blue is remembered already"
+    );
 }
 
 #[test]

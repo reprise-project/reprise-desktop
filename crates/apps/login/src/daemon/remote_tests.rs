@@ -289,6 +289,7 @@ fn a_tls_login_checks_the_group_then_pam_then_starts_a_background_session() {
             vt: 7,
             started: Some(run.now),
             background: true,
+            interface: None,
         })
     );
     assert_eq!(

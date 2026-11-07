@@ -1,6 +1,7 @@
 use std::collections::{BTreeSet, HashMap};
 use std::time::Instant;
 
+use repriselogin::Interface;
 use repriselogin::greeter::Note;
 
 /// A user session started by reprise-login, or found in logind after a restart.
@@ -15,6 +16,8 @@ pub struct SessionEntry {
     pub started: Option<Instant>,
     /// A session a remote login started or reached that seat0 has not shown since.
     pub background: bool,
+    /// Its last `Hello`; `None` for a session found in logind until it says hello.
+    pub interface: Option<Interface>,
 }
 
 /// Every running user session, at most one per user.
@@ -76,6 +79,12 @@ impl Sessions {
         }
     }
 
+    pub fn set_interface(&mut self, id: &str, interface: Interface) {
+        if let Some(e) = self.entries.iter_mut().find(|e| e.id == id) {
+            e.interface = Some(interface);
+        }
+    }
+
     /// The login screen's note for each user, keyed by user name; `remote` says whether a
     /// uid's session has remote clients.
     pub fn notes(&self, remote: impl Fn(u32) -> bool) -> HashMap<String, Note> {
@@ -114,6 +123,7 @@ mod tests {
             vt,
             started: Some(Instant::now()),
             background: false,
+            interface: None,
         }
     }
 
