@@ -9,6 +9,7 @@ members = [
     "crates/reprisebus",
     "crates/repriseconf",
     "crates/repriseaudio",
+    "crates/repriselogin",
     "crates/reprisescene",
     "crates/reprisefx",
     "crates/apps/notepad",
@@ -81,6 +82,7 @@ pipewire = "0.10"
 png = "0.18"
 rcgen = { version = "0.14", default-features = false, features = ["aws_lc_rs", "pem"] }
 serde = "1"
+serde_json = "1"
 # Pinned to a commit on our fork: upstream master (far ahead of the last
 # release) plus `DrmCompositor::reposition_cursor` for pointer-only frames, an
 # xdg_toplevel_icon_v1 fix that stops a request after its immutable error,
@@ -153,6 +155,7 @@ reprisefs = { path = "crates/reprisefs" }
 repriseconf = { path = "crates/repriseconf" }
 reprisebus = { path = "crates/reprisebus" }
 repriseaudio = { path = "crates/repriseaudio" }
+repriselogin = { path = "crates/repriselogin" }
 accesskit_unix.workspace = true
 toml_edit.workspace = true
 libc.workspace = true
