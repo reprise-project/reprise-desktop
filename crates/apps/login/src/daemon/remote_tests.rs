@@ -16,7 +16,6 @@ use super::*;
 const ANNA: u32 = 1001;
 const BERT: u32 = 1002;
 const CARL: u32 = 1003;
-const ELAPSED_MS: u32 = 500;
 
 fn config(remote: MachineRemote) -> MachineConfig {
     MachineConfig {
@@ -70,7 +69,6 @@ fn authenticate(conn: u64, from: u8, user: &str, secret: Secret) -> Input {
         peer: peer(from),
         user: user.into(),
         secret,
-        elapsed_ms: ELAPSED_MS,
     })
 }
 
@@ -105,7 +103,7 @@ fn armed(conn: u64) -> Vec<Effect> {
         },
         Effect::Arm {
             timer: Timer::Handover(conn),
-            after: HANDOVER_DEADLINE - Duration::from_millis(ELAPSED_MS.into()),
+            after: HANDOVER_DEADLINE,
         },
     ]
 }
@@ -578,8 +576,7 @@ fn max_sessions_refuses_a_new_session_but_not_an_existing_one() {
 fn a_hand_over_not_taken_by_the_deadline_is_denied_and_the_session_kept() {
     let mut run = remote_run(enabled());
     run.anna_in_background(7, 2);
-    let effects = (run.after(HANDOVER_DEADLINE - Duration::from_millis(ELAPSED_MS.into())))
-        .fire(Timer::Handover(7));
+    let effects = run.after(HANDOVER_DEADLINE).fire(Timer::Handover(7));
     assert_eq!(
         quiet(effects),
         [
@@ -595,6 +592,21 @@ fn a_hand_over_not_taken_by_the_deadline_is_denied_and_the_session_kept() {
     assert_eq!(
         run.on(ready(7, "anna")).last(),
         Some(&Effect::DropConn { conn: 7 })
+    );
+}
+
+#[test]
+fn a_login_whose_authenticate_comes_late_still_gets_the_whole_hand_over_deadline() {
+    let mut run = remote_run(enabled());
+    run.after(Duration::from_secs(20));
+    assert_eq!(run.on(tls(7, "anna", "pw")), looked_up(7, "anna"));
+    let early = HANDOVER_DEADLINE - Duration::from_millis(100);
+    assert_eq!(
+        run.after(early).fire(Timer::Handover(7)),
+        [Effect::Arm {
+            timer: Timer::Handover(7),
+            after: Duration::from_millis(100),
+        }]
     );
 }
 
@@ -1403,8 +1415,7 @@ fn a_forward_never_confirmed_expires_at_the_hand_over_deadline() {
         run.on(ready(7, "anna")),
         [Effect::Forward { conn: 7, uid: ANNA }]
     );
-    let effects = (run.after(HANDOVER_DEADLINE - Duration::from_millis(ELAPSED_MS.into())))
-        .fire(Timer::Handover(7));
+    let effects = run.after(HANDOVER_DEADLINE).fire(Timer::Handover(7));
     assert_eq!(quiet(effects), [Effect::DropConn { conn: 7 }]);
     assert_eq!(run.on(Input::Forwarded { conn: 7, ok: true }), []);
     assert_eq!(
@@ -1445,13 +1456,12 @@ fn a_reused_conn_id_re_arms_the_earlier_conns_timers() {
         "the first conn's Refuse at +3 s"
     );
     assert_eq!(
-        run.after(Duration::from_millis(4500))
-            .fire(Timer::Handover(7)),
+        run.after(Duration::from_secs(5)).fire(Timer::Handover(7)),
         [Effect::Arm {
             timer: Timer::Handover(7),
             after: Duration::from_secs(2),
         }],
-        "the first conn's deadline at +7.5 s"
+        "the first conn's deadline at +8 s"
     );
 }
 

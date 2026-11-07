@@ -82,7 +82,7 @@ pub enum Timer {
     Refuse(u64),
     /// `ADMIN_REFUSE_DELAY` after the last answer to check worker `.0`'s conversation.
     AdminRefuse(WorkerId),
-    /// `HANDOVER_DEADLINE` after front conn `.0`'s TCP accept.
+    /// `HANDOVER_DEADLINE` after front conn `.0`'s `Authenticate`.
     Handover(u64),
     /// `end_disconnected_after` since background session `id` lost its last viewer.
     Disconnected { id: String, generation: u32 },
