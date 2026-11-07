@@ -1159,3 +1159,76 @@ fn every_refusal_from_one_address_carries_the_back_off_of_its_authenticate() {
     assert_eq!(backoff(false), 2, "the fourth failure backs off 2 s");
     assert_eq!(backoff(true), 2, "a wrong password tells the same");
 }
+
+#[test]
+fn pam_passing_a_tls_login_without_asking_its_password_refuses_it() {
+    let mut run = remote_run(enabled());
+    run.on(tls(7, "anna", "pw"));
+    run.on(member(7, ANNA));
+    assert_eq!(
+        quiet(run.worker(2, authed("anna", ANNA))),
+        [Effect::Kill(WorkerId(2))]
+    );
+    assert_eq!(run.after(REFUSE_DELAY).fire(Timer::Refuse(7)), denied(7, 0));
+}
+
+#[test]
+fn a_forward_never_confirmed_expires_at_the_hand_over_deadline() {
+    let mut run = remote_run(enabled());
+    run.anna_in_background(7, 2);
+    run.on(Input::IntakeOpen { uid: ANNA });
+    assert_eq!(
+        run.on(ready(7, "anna")),
+        [Effect::Forward { conn: 7, uid: ANNA }]
+    );
+    let effects = (run.after(HANDOVER_DEADLINE - Duration::from_millis(ELAPSED_MS.into())))
+        .fire(Timer::Handover(7));
+    assert_eq!(quiet(effects), [Effect::DropConn { conn: 7 }]);
+    assert_eq!(run.on(Input::Forwarded { conn: 7, ok: true }), []);
+    assert_eq!(
+        run.on(tls(7, "anna", "pw")),
+        looked_up(7, "anna"),
+        "conn 7 is free again"
+    );
+}
+
+#[test]
+fn viewers_for_a_uid_with_no_session_are_ignored() {
+    let mut run = remote_run(enabled());
+    assert_eq!(run.viewers(ANNA, 1), []);
+    run.anna_in_background(7, 2);
+}
+
+#[test]
+fn a_reused_conn_id_re_arms_the_earlier_conns_timers() {
+    let mut run = remote_run(enabled());
+    let not_member = || Input::Member {
+        key: LookUpKey::Conn(7),
+        uid: Some(ANNA),
+        member: false,
+    };
+    run.on(tls(7, "anna", "pw"));
+    run.on(not_member());
+    run.on(Input::FrontLost);
+    run.on(Input::FrontLinked);
+    run.after(Duration::from_secs(2));
+    run.on(tls(7, "anna", "pw"));
+    run.on(not_member());
+    assert_eq!(
+        run.after(Duration::from_secs(1)).fire(Timer::Refuse(7)),
+        [Effect::Arm {
+            timer: Timer::Refuse(7),
+            after: REFUSE_DELAY - Duration::from_secs(1),
+        }],
+        "the first conn's Refuse at +3 s"
+    );
+    assert_eq!(
+        run.after(Duration::from_millis(4500))
+            .fire(Timer::Handover(7)),
+        [Effect::Arm {
+            timer: Timer::Handover(7),
+            after: Duration::from_secs(2),
+        }],
+        "the first conn's deadline at +7.5 s"
+    );
+}
