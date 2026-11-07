@@ -17,9 +17,10 @@ const HANDSHAKE: u8 = 22;
 const DATA: u8 = 23;
 const CLOSE_NOTIFY: [u8; 2] = [1, 0];
 const KEY_UPDATE: [u8; 5] = [24, 0, 0, 1, 0];
-/// Writes between looks at the send sequence. Each write is at most a socket buffer, a few
-/// hundred records, so the records sent between looks stay far inside `REKEY_MARGIN`.
-const CHECK_EVERY: u32 = 1024;
+/// Records sent between looks at the send sequence, so they stay far inside `REKEY_MARGIN`.
+const CHECK_EVERY: u64 = 1024;
+/// The most plaintext a record carries (RFC 8446 5.1, RFC 5246 6.2.1).
+const MAX_PLAINTEXT: u64 = 1 << 14;
 /// The least room a receive gets, so a record longer than a key update shows as longer.
 const MIN_RECV: usize = KEY_UPDATE.len() + 1;
 
@@ -34,7 +35,9 @@ pub struct KtlsStream {
     /// The peer asked for a key update, or the send sequence neared the limit: the next write
     /// sends one first.
     update_tx: bool,
-    writes: u32,
+    /// A key update went out but the next send keys did not install: nothing more is sent.
+    tx_failed: bool,
+    sent: SentSince,
     /// Data received for a read with less room than `MIN_RECV`, which later reads give first.
     stash: Vec<u8>,
 }
@@ -48,7 +51,8 @@ impl KtlsStream {
             eof: false,
             close_notify_sent: false,
             update_tx: false,
-            writes: 0,
+            tx_failed: false,
+            sent: SentSince::default(),
             stash: Vec::new(),
         }
     }
@@ -88,10 +92,12 @@ impl KtlsStream {
     fn poll_update_tx(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         ready!(self.poll_send(cx, HANDSHAKE, &KEY_UPDATE))?;
         self.update_tx = false;
+        self.tx_failed = true;
         let keys = next_keys(self.tls.cipher, &self.tls.tx)?;
         let (version, cipher) = (self.tls.version, self.tls.cipher);
         super::set_keys(self.stream.as_fd(), Direction::Tx, version, cipher, &keys)?;
         self.tls.tx = keys;
+        self.tx_failed = false;
         Poll::Ready(Ok(()))
     }
 
@@ -186,13 +192,15 @@ impl AsyncWrite for KtlsStream {
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
         let this = self.get_mut();
-        if this.close_notify_sent {
-            return Poll::Ready(Err(io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                "a write after close_notify",
-            )));
+        if this.close_notify_sent || this.tx_failed {
+            let what = if this.tx_failed {
+                "a write after the send keys failed to update"
+            } else {
+                "a write after close_notify"
+            };
+            return Poll::Ready(Err(io::Error::new(io::ErrorKind::BrokenPipe, what)));
         }
-        if this.writes >= CHECK_EVERY {
+        if this.sent.due() {
             let seq = super::sent_seq(this.stream.as_fd(), this.tls.cipher)?;
             match record_action(this.tls.version, seq, this.tls.record_limit) {
                 RecordAction::Continue => {}
@@ -206,13 +214,13 @@ impl AsyncWrite for KtlsStream {
                     )));
                 }
             }
-            this.writes = 0;
+            this.sent = SentSince::default();
         }
         if this.update_tx {
             ready!(this.poll_update_tx(cx))?;
         }
         let n = ready!(Pin::new(&mut this.stream).poll_write(cx, buf))?;
-        this.writes += 1;
+        this.sent.add(n);
         Poll::Ready(Ok(n))
     }
 
@@ -222,11 +230,31 @@ impl AsyncWrite for KtlsStream {
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         let this = self.get_mut();
-        if !this.close_notify_sent {
+        if !this.close_notify_sent && !this.tx_failed {
             ready!(this.poll_send(cx, ALERT, &CLOSE_NOTIFY))?;
             this.close_notify_sent = true;
         }
         Pin::new(&mut this.stream).poll_shutdown(cx)
+    }
+}
+
+/// The writes since the last look at the send sequence. Records hold at most `MAX_PLAINTEXT`
+/// bytes and a write closes at most one partial one, so these bound the records sent.
+#[derive(Debug, Default)]
+struct SentSince {
+    writes: u64,
+    bytes: u64,
+}
+
+impl SentSince {
+    fn add(&mut self, n: usize) {
+        self.writes += 1;
+        self.bytes += n as u64;
+    }
+
+    /// Whether the records sent may have reached `CHECK_EVERY`.
+    fn due(&self) -> bool {
+        self.writes + self.bytes / MAX_PLAINTEXT >= CHECK_EVERY
     }
 }
 
@@ -305,12 +333,15 @@ mod tests {
     use tokio::io::AsyncWriteExt;
     use zeroize::Zeroizing;
 
-    #[tokio::test]
-    async fn a_write_after_close_notify_is_refused() {
+    use crate::ktls::REKEY_MARGIN;
+
+    /// A stream over a plain loopback socket, with TLS 1.3 keys and no traffic secrets.
+    async fn plain_stream() -> (KtlsStream, TcpStream) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let tcp = TcpStream::connect(listener.local_addr().unwrap())
             .await
             .unwrap();
+        let (peer, _) = listener.accept().await.unwrap();
         let keys = || DirectionKeys {
             seq: 0,
             key: Zeroizing::new(vec![0; 16]),
@@ -324,9 +355,51 @@ mod tests {
             rx: keys(),
             record_limit: 1 << 24,
         };
-        let mut stream = KtlsStream::new(tcp, tls);
+        (KtlsStream::new(tcp, tls), peer)
+    }
+
+    #[tokio::test]
+    async fn a_write_after_close_notify_is_refused() {
+        let (mut stream, _peer) = plain_stream().await;
         stream.close_notify_sent = true;
         let err = stream.write(b"late").await.unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::BrokenPipe);
+    }
+
+    #[tokio::test]
+    async fn a_write_after_a_failed_send_key_update_is_refused() {
+        let (mut stream, _peer) = plain_stream().await;
+        stream.update_tx = true;
+        stream
+            .write(b"first")
+            .await
+            .expect_err("a key update without the traffic secret fails");
+        let err = stream.write(b"late").await.unwrap_err();
+        assert_eq!(
+            err.kind(),
+            io::ErrorKind::BrokenPipe,
+            "nothing goes out under the old keys after a key update was sent"
+        );
+    }
+
+    #[test]
+    fn large_writes_look_at_the_send_sequence_before_many_records() {
+        const MIB_16: u64 = 16 << 20;
+        let mut sent = SentSince::default();
+        let mut records = 0;
+        let mut most = 0;
+        for _ in 0..1024 {
+            if sent.due() {
+                sent = SentSince::default();
+                records = 0;
+            }
+            sent.add(MIB_16 as usize);
+            records += MIB_16.div_ceil(1 << 14);
+            most = most.max(records);
+        }
+        assert!(
+            most <= 2 * CHECK_EVERY,
+            "at most 2048 records between looks, of a margin of {REKEY_MARGIN}; got {most}"
+        );
     }
 }
