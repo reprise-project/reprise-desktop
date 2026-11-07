@@ -220,12 +220,20 @@ impl Display {
         }
     }
 
-    /// Joins the console's run once and says whether it locks the console. Its first viewer
-    /// publishes the client's monitors and follows its Display Control layouts.
+    /// Joins the console's run once, or keeps the place its login took over, and says whether it
+    /// locks the console. The run's owner publishes the client's monitors and follows its
+    /// Display Control layouts.
     fn join(&mut self) -> bool {
         if self.joined.is_none() {
             let size = self.client_size.unwrap_or_else(|| self.told.get());
-            let joined = self.console.join(self.client.console_layout(size));
+            let monitors = self.client.console_layout(size);
+            let joined = match self.ending.taken_over() {
+                Some(place) => {
+                    place.take_layout(monitors);
+                    place
+                }
+                None => self.console.join(monitors),
+            };
             if let Some(layouts) = self.layouts_rx.take() {
                 let to = self.published_to.clone();
                 joined.follow(layouts, move |layout| {
@@ -262,8 +270,8 @@ impl RdpServerDisplay for Display {
         self.told.get()
     }
 
-    /// Lock mode's screens follow its first viewer's layout; a later viewer's layouts and shared
-    /// physical screens' sizes are not followed.
+    /// Lock mode's screens follow its owner's layout; another viewer's layouts and shared physical
+    /// screens' sizes are not followed.
     async fn offers_display_control(&mut self) -> bool {
         self.console.would_own()
     }

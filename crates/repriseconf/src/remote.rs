@@ -90,6 +90,27 @@ impl LaptopScreen {
     }
 }
 
+/// What a computer logging in does to those already connected.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SecondClient {
+    /// It joins them.
+    #[default]
+    Join,
+    /// It ends them.
+    Replace,
+}
+
+impl SecondClient {
+    /// Its name in `config.toml`.
+    pub fn name(self) -> &'static str {
+        match self {
+            SecondClient::Join => "join",
+            SecondClient::Replace => "replace",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RemoteDesktop {
     pub port: u16,
@@ -108,6 +129,7 @@ pub struct RemoteDesktop {
     /// turns it off as well.
     pub capture_border: bool,
     pub laptop_screen: LaptopScreen,
+    pub second_client: SecondClient,
 }
 
 impl Default for RemoteDesktop {
@@ -123,6 +145,7 @@ impl Default for RemoteDesktop {
             lock_grace_s: 5,
             capture_border: false,
             laptop_screen: LaptopScreen::Lock,
+            second_client: SecondClient::Join,
         }
     }
 }
@@ -223,6 +246,9 @@ fn read(t: &toml::Table) -> (RemoteDesktop, Vec<&'static str>) {
             toml::Value::as_bool,
         ),
         laptop_screen: key(t, "laptop_screen", &mut bad, d.laptop_screen, |v| {
+            v.clone().try_into().ok()
+        }),
+        second_client: key(t, "second_client", &mut bad, d.second_client, |v| {
             v.clone().try_into().ok()
         }),
     };
@@ -443,6 +469,30 @@ quality = \"sharp\"",
                 from_table(&t).laptop_screen,
                 s,
                 "{s:?} reads back by its name"
+            );
+        }
+    }
+
+    #[test]
+    fn second_client_reads_join_and_replace_and_defaults_to_join() {
+        let t: toml::Table = toml::from_str("second_client = \"replace\"").unwrap();
+        assert_eq!(from_table(&t).second_client, SecondClient::Replace);
+        assert_eq!(
+            from_table(&toml::Table::new()).second_client,
+            SecondClient::Join,
+            "a missing key"
+        );
+        let t: toml::Table = toml::from_str("second_client = \"swap\"").unwrap();
+        let (rd, bad) = read(&t);
+        assert_eq!(rd.second_client, SecondClient::Join);
+        assert_eq!(bad, ["second_client"]);
+        for c in [SecondClient::Join, SecondClient::Replace] {
+            let t: toml::Table =
+                toml::from_str(&format!("second_client = \"{}\"", c.name())).unwrap();
+            assert_eq!(
+                from_table(&t).second_client,
+                c,
+                "{c:?} reads back by its name"
             );
         }
     }

@@ -298,7 +298,9 @@ to log in; a check in flight when that time runs out is finished first.
 
 Up to `max_viewers` connections are served at once, counting those still
 logging in. One more is closed at once, before TLS, and never touches the
-session in use. So that one address cannot hold every place through the
+session in use. With `second_client = "replace"` one more is let in, and once
+it logs in every other connection is ended, so a password is still needed to
+take a session over. So that one address cannot hold every place through the
 login time, a third connection from an address that already has two still
 logging in is closed the same way, and so is every connection from an address
 in its back-off: a throttled address holds no place while it waits. TCP keepalive ends a connection whose

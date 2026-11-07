@@ -902,7 +902,10 @@ no port forwarding; allow the port in your firewall if you run one.
   locked here all through, so a leave locks nothing and these two settings
   don't apply. A computer that connects while `max_viewers` computers are
   connected or logging in is turned away at once, as is a third from an
-  address with two still logging in. A connection that dies without closing
+  address with two still logging in. With `second_client = "replace"` a
+  computer that logs in ends every other connection instead; in lock mode
+  the session stays locked here and its screens take the new viewer's
+  monitors. A connection that dies without closing
   ends within about 30 s.
 
 ## Files
