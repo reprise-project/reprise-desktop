@@ -4,6 +4,8 @@
 use std::io::Write as _;
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd};
 
+pub use env_logger::Builder;
+
 /// The default filter of Reprise's programs: their own crates (every target starting with
 /// `reprise`) at info, dependencies at warn.
 pub const PROGRAM_FILTER: &str = "warn,reprise=info";
@@ -24,7 +26,7 @@ pub fn init_logger_to(default_filter: &str, out: std::fs::File) {
 }
 
 /// The logger [`init_logger`] starts, with the prefixes chosen by the caller.
-pub fn builder(default_filter: &str, prefixed: bool) -> env_logger::Builder {
+pub fn builder(default_filter: &str, prefixed: bool) -> Builder {
     let mut b =
         env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(default_filter));
     if prefixed {
