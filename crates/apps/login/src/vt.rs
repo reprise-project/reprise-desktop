@@ -3,6 +3,7 @@ use std::fs::{File, OpenOptions};
 use std::io;
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::OpenOptionsExt;
+use std::time::Duration;
 
 pub const GREETER_VT: u16 = 1;
 pub const TEXT_LOGIN_VT: u16 = 2;
@@ -17,7 +18,6 @@ pub fn pick(taken: &BTreeSet<u16>, kernel_open: u16) -> Option<u16> {
 
 const VT_GETSTATE: libc::c_ulong = 0x5603;
 const VT_ACTIVATE: libc::c_ulong = 0x5606;
-const VT_WAITACTIVE: libc::c_ulong = 0x5607;
 const VT_DISALLOCATE: libc::c_ulong = 0x5608;
 
 /// `struct vt_stat` from `<linux/vt.h>`.
@@ -52,23 +52,57 @@ fn vt_ioctl(tty: &File, request: libc::c_ulong, vt: u16) -> io::Result<()> {
     }
 }
 
-/// The kernel's bitmask of open VTs 1-15, bit n for VT n.
-pub fn open_mask() -> io::Result<u16> {
-    let tty = tty0()?;
+fn state(tty: &File) -> io::Result<VtStat> {
     let mut stat = VtStat::default();
     // SAFETY: the fd is open, and `stat` is a live `struct vt_stat` the kernel fills.
     let r = unsafe { libc::ioctl(tty.as_raw_fd(), VT_GETSTATE as _, &mut stat as *mut VtStat) };
     if r != 0 {
         return Err(io::Error::last_os_error());
     }
-    Ok(stat.v_state)
+    Ok(stat)
 }
 
-/// Switches the console to `vt` and returns once it is the active VT.
-pub fn activate_and_wait(vt: u16) -> io::Result<()> {
+/// The kernel's bitmask of open VTs 1-15, bit n for VT n.
+pub fn open_mask() -> io::Result<u16> {
+    Ok(state(&tty0()?)?.v_state)
+}
+
+const SWITCH_POLL: Duration = Duration::from_millis(20);
+const SWITCH_POLLS: u32 = 500;
+
+/// Switches the console to `vt` and returns once it is the active VT. It gives up with
+/// `Interrupted` once `stop` returns true, and with `TimedOut` after 10 s.
+pub fn activate_and_wait(vt: u16, stop: &dyn Fn() -> bool) -> io::Result<()> {
     let tty = tty0()?;
     vt_ioctl(&tty, VT_ACTIVATE, vt)?;
-    vt_ioctl(&tty, VT_WAITACTIVE, vt)
+    wait_active(
+        vt,
+        || Ok(state(&tty)?.v_active),
+        stop,
+        SWITCH_POLLS,
+        SWITCH_POLL,
+    )
+}
+
+/// Polls `active` up to `slices` times, `slice` apart, until it reports `vt`. Polling stands
+/// in for `VT_WAITACTIVE`, which has no timeout and can miss a stop that lands before it blocks.
+fn wait_active(
+    vt: u16,
+    mut active: impl FnMut() -> io::Result<u16>,
+    stop: &dyn Fn() -> bool,
+    slices: u32,
+    slice: Duration,
+) -> io::Result<()> {
+    for _ in 0..slices {
+        if stop() {
+            return Err(io::ErrorKind::Interrupted.into());
+        }
+        if active()? == vt {
+            return Ok(());
+        }
+        std::thread::sleep(slice);
+    }
+    Err(io::ErrorKind::TimedOut.into())
 }
 
 /// Frees `vt` once nothing holds it open; a failure is logged.
@@ -104,5 +138,38 @@ mod tests {
     fn none_is_left_past_63() {
         let taken: BTreeSet<u16> = (FIRST_SESSION_VT..=LAST_VT).collect();
         assert_eq!(pick(&taken, 0), None);
+    }
+
+    #[test]
+    fn activation_returns_once_the_vt_is_active() {
+        let mut polls = [1, 1, 7].into_iter();
+        let r = wait_active(
+            7,
+            || Ok(polls.next().unwrap()),
+            &|| false,
+            10,
+            Duration::ZERO,
+        );
+        assert!(r.is_ok(), "{r:?}");
+        assert_eq!(polls.next(), None);
+    }
+
+    #[test]
+    fn a_stop_or_the_deadline_ends_the_wait() {
+        let stopped = wait_active(7, || Ok(1), &|| true, 10, Duration::ZERO);
+        assert_eq!(stopped.unwrap_err().kind(), io::ErrorKind::Interrupted);
+        let mut polls = 0;
+        let late = wait_active(
+            7,
+            || {
+                polls += 1;
+                Ok(1)
+            },
+            &|| false,
+            3,
+            Duration::ZERO,
+        );
+        assert_eq!(late.unwrap_err().kind(), io::ErrorKind::TimedOut);
+        assert_eq!(polls, 3);
     }
 }
