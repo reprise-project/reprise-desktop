@@ -37,6 +37,8 @@ MemoryDenyWriteExecute=yes
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
 SystemCallFilter=~@privileged @resources
+# The front drops CAP_NET_BIND_SERVICE once the port is bound.
+SystemCallFilter=capset
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 MemoryMax=512M
