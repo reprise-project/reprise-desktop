@@ -385,12 +385,18 @@ impl Runtime {
     }
 
     async fn read_world(&self) -> World {
-        let user_sessions = match self.logind.sessions().await {
-            Ok(found) => found.iter().filter(|s| s.class == "user").count() as u32,
+        let (user_sessions, login_sessions) = match self.logind.listed().await {
+            Ok(found) => {
+                let open = found
+                    .iter()
+                    .filter(|(s, closing)| s.class == "user" && !closing);
+                let count = open.count() as u32;
+                (count, found.into_iter().map(|(s, _)| s).collect())
+            }
             Err(e) => {
                 // Counted as one, so power stays refused while logind can't say.
                 log::warn!("logind's sessions: {e}");
-                1
+                (1, Vec::new())
             }
         };
         let kernel_open = vt::open_mask().unwrap_or_else(|e| {
@@ -402,6 +408,7 @@ impl Runtime {
             keyboard: self.logind.keyboard().await,
             kernel_open,
             user_sessions,
+            login_sessions,
         }
     }
 
@@ -442,6 +449,14 @@ impl Runtime {
                         let seat_active = l.seat_active().await;
                         let failed = Input::TerminateFailed { id, seat_active };
                         let _ = events.send(Event::Input(failed));
+                    }
+                });
+            }
+            Effect::StopSession(id) => {
+                let l = self.logind.clone();
+                tokio::task::spawn_local(async move {
+                    if let Err(e) = l.stop_session(&id).await {
+                        log::warn!("stopping session {id}: {e}");
                     }
                 });
             }
@@ -1000,6 +1015,7 @@ mod tests {
             keyboard: Default::default(),
             kernel_open: 0,
             user_sessions: 0,
+            login_sessions: Vec::new(),
         };
         let mut daemon = Daemon::new(LoginConfig::default(), Remembered::default());
         let effects = boot(&mut daemon, vec![orphan], None, &world);

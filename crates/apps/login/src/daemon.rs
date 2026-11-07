@@ -119,6 +119,9 @@ pub enum Effect {
     SwitchTo(u16),
     Power(PowerAction),
     TerminateSession(String),
+    /// Stops session `.0`'s scope through systemd, which also ends a closing session that
+    /// `TerminateSession` leaves running.
+    StopSession(String),
     /// logind's `UnlockSession`, answered by `Input::Unlocked`.
     UnlockSession(String),
     LockSession(String),
@@ -153,6 +156,8 @@ pub struct World {
     pub kernel_open: u16,
     /// logind's sessions of class `user` on any seat, text and ssh logins included.
     pub user_sessions: u32,
+    /// Every session logind lists, closing ones included.
+    pub login_sessions: Vec<LogindSession>,
 }
 
 const BUSY: &str = "another login is in progress";
@@ -309,9 +314,8 @@ impl Daemon {
         seat_active: Option<&str>,
     ) -> Vec<Effect> {
         let mut out = Vec::new();
-        let user_services = [Mode::Login.service(), Mode::Autologin.service()];
         for s in found {
-            if s.seat == "seat0" && s.class == "user" && user_services.contains(&&*s.service) {
+            if s.seat == "seat0" && s.class == "user" && user_service(&s.service) {
                 if seat_active != Some(&s.id) {
                     out.push(Effect::LockSession(s.id.clone()));
                 }
@@ -361,6 +365,7 @@ impl Daemon {
                         worker,
                         job: self.job(Mode::Autologin, &user),
                     });
+                    self.end_leftovers(world, &user, out);
                     send_start(worker, vt, out);
                     self.autologin = Some(Autologin { worker, user, vt });
                     return;
@@ -591,7 +596,23 @@ impl Daemon {
                     return self.fail_conversation(ErrorKind::Failed, NO_VT.into(), out);
                 };
                 c.phase = Phase::Starting { vt };
+                let user = c.user.clone();
+                self.end_leftovers(world, &user, out);
                 send_start(worker, vt, out);
+            }
+        }
+    }
+
+    /// Ends `user`'s sessions of a login service that logind lists and the table does not
+    /// hold, such as one left closing by a dead worker, so a new one never runs beside them.
+    fn end_leftovers(&self, world: &World, user: &str, out: &mut Vec<Effect>) {
+        for s in &world.login_sessions {
+            if s.user == user && user_service(&s.service) && self.sessions.by_id(&s.id).is_none() {
+                out.push(Effect::Log(
+                    Level::Info,
+                    format!("ending {user}'s leftover session {} before a new one", s.id),
+                ));
+                out.push(Effect::StopSession(s.id.clone()));
             }
         }
     }
@@ -1240,6 +1261,11 @@ fn error(kind: ErrorKind, text: String) -> GreeterReply {
 
 fn refused(text: &str) -> Effect {
     Effect::Reply(error(ErrorKind::Refused, text.into()))
+}
+
+/// Whether `service` is the PAM service of a user session reprise-login starts.
+fn user_service(service: &str) -> bool {
+    [Mode::Login.service(), Mode::Autologin.service()].contains(&service)
 }
 
 fn send_start(worker: WorkerId, vt: u16, out: &mut Vec<Effect>) {
