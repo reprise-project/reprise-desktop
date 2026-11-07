@@ -29,7 +29,13 @@ pub fn peer(socket: &impl AsRawFd) -> io::Result<OwnedFd> {
             &mut len,
         )
     };
-    owned(if r < 0 { -1 } else { fd.into() })
+    if r < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if len as usize != size_of::<libc::c_int>() {
+        return Err(io::ErrorKind::InvalidData.into());
+    }
+    owned(fd.into())
 }
 
 fn owned(fd: libc::c_long) -> io::Result<OwnedFd> {

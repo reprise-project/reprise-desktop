@@ -153,9 +153,27 @@ impl Run {
 
     /// Recovers nothing and starts, which brings up the greeter as worker 1.
     fn booted() -> Run {
-        let mut run = Run::new(LoginConfig::default(), Remembered::default());
+        Run::up(LoginConfig::default(), Remembered::default())
+    }
+
+    /// Like `booted`, with `config` and `remembered`.
+    fn up(config: LoginConfig, remembered: Remembered) -> Run {
+        let mut run = Run::new(config, remembered);
         assert_eq!(run.recover(vec![]), vec![]);
         assert_eq!(run.start(), greeter_spawn(1));
+        run
+    }
+
+    /// Recovers anna's session on VT 7 and starts; her Switch User brings up the greeter as
+    /// worker 1.
+    fn anna_switched(remembered: Remembered) -> Run {
+        let mut run = Run::new(LoginConfig::default(), remembered);
+        run.recover(vec![anna_on_7()]);
+        assert_eq!(run.start(), vec![]);
+        assert_eq!(
+            run.session("c1", SessionRequest::SwitchUser),
+            greeter_spawn(1)
+        );
         run
     }
 
@@ -286,17 +304,17 @@ fn hello_greets_with_the_configured_interface_else_the_last_one() {
         last_user: None,
         last_interface: Some(Interface::Blue),
     };
-    let mut run = Run::new(LoginConfig::default(), remembered.clone());
+    let mut run = Run::up(LoginConfig::default(), remembered.clone());
     assert_eq!(run.greeting().interface, Interface::Blue);
 
     let config = LoginConfig {
         interface: Some(Interface::Glass),
         ..LoginConfig::default()
     };
-    let mut run = Run::new(config, remembered);
+    let mut run = Run::up(config, remembered);
     assert_eq!(run.greeting().interface, Interface::Glass);
 
-    let mut run = Run::new(LoginConfig::default(), Remembered::default());
+    let mut run = Run::booted();
     assert_eq!(run.greeting().interface, Interface::Classic);
 }
 
@@ -306,8 +324,7 @@ fn the_greeting_marks_users_with_a_session_logged_on() {
         last_user: Some("bert".into()),
         last_interface: None,
     };
-    let mut run = Run::new(LoginConfig::default(), remembered);
-    run.recover(vec![anna_on_7()]);
+    let mut run = Run::anna_switched(remembered);
     assert_eq!(
         run.greeting(),
         Greeting {
@@ -743,8 +760,7 @@ fn a_removal_that_still_names_the_removed_session_active_brings_the_greeter() {
 
 #[test]
 fn power_with_another_session_running_is_refused() {
-    let mut run = Run::new(LoginConfig::default(), Remembered::default());
-    run.recover(vec![anna_on_7()]);
+    let mut run = Run::anna_switched(Remembered::default());
     let effects = run.greeter(GreeterRequest::Power {
         action: PowerAction::PowerOff,
     });
@@ -768,8 +784,7 @@ fn power_with_no_session_powers_off() {
 
 #[test]
 fn hello_from_a_session_remembers_its_interface() {
-    let mut run = Run::new(LoginConfig::default(), Remembered::default());
-    run.recover(vec![anna_on_7()]);
+    let mut run = Run::anna_switched(Remembered::default());
     let hello = SessionRequest::Hello {
         interface: Interface::Glass,
     };
@@ -842,9 +857,9 @@ fn recovery_rebuilds_the_table_and_terminates_an_orphaned_greeter() {
         vec![],
         "the greeter waits for the old one to go"
     );
+    assert_eq!(run.removed("c5", None), greeter_spawn(1));
     let notes: Vec<_> = run.greeting().users.iter().map(|u| u.note).collect();
     assert_eq!(notes, [Some(Note::LoggedOn), Some(Note::LoggedOn), None]);
-    assert_eq!(run.removed("c5", None), greeter_spawn(1));
     assert_eq!(run.greeter(create("anna")), spawn(2, Mode::Reauth, "anna"));
     assert_eq!(
         run.removed("c3", Some("c5")),
@@ -1274,4 +1289,17 @@ fn start_session_without_a_worker_says_the_login_ended() {
         run.greeter(GreeterRequest::StartSession),
         reply(error(ErrorKind::Failed, WORKER_ENDED))
     );
+}
+
+#[test]
+fn greeter_requests_while_no_greeter_runs_are_ignored() {
+    let config = LoginConfig {
+        autologin_user: Some("anna".into()),
+        ..LoginConfig::default()
+    };
+    let mut run = Run::new(config, Remembered::default());
+    run.recover(vec![]);
+    run.start();
+    assert_eq!(run.greeter(create("bert")), vec![]);
+    assert_eq!(run.greeter(GreeterRequest::Hello), vec![]);
 }

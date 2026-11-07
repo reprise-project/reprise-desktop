@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use repriselogin::frame::{FrameError, read_msg, write_msg};
 use repriselogin::greeter::{AuthKind, ErrorKind};
-use repriselogin::{SESSION_SOCKET, SOCKET_ENV};
+use repriselogin::{GREETER_USER, SESSION_SOCKET, SOCKET_ENV};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
@@ -57,6 +57,12 @@ impl Mode {
         [Mode::Login, Mode::Reauth, Mode::Greeter, Mode::Autologin]
             .into_iter()
             .find(|m| m.as_arg() == arg)
+    }
+
+    /// Whether a worker of this mode may run for `user`. The greeter's stack admits anyone,
+    /// so it runs only for the greeter's account.
+    pub fn runs_for(self, user: &str) -> bool {
+        self != Mode::Greeter || user == GREETER_USER
     }
 
     /// Greeter and autologin stacks have no prompting module, so only these relay prompts.
@@ -260,6 +266,10 @@ pub fn find_program(name: &str, path: &str) -> Option<PathBuf> {
 
 /// Runs one login for `user` and returns the worker's exit status.
 pub fn worker_main(mode: Mode, user: &str, mut sock: UnixStream) -> i32 {
+    if !mode.runs_for(user) {
+        let text = format!("a {} worker does not run for {user}", mode.as_arg());
+        return fail(&mut sock, ErrorKind::Refused, &text);
+    }
     // SAFETY: plain signal disposition change; an inherited SIG_IGN would reap the session itself.
     if unsafe { libc::signal(libc::SIGCHLD, libc::SIG_DFL) } == libc::SIG_ERR {
         log::error!("worker: SIGCHLD: {}", io::Error::last_os_error());
@@ -908,6 +918,16 @@ mod tests {
             assert_eq!(Mode::parse(m.as_arg()), Some(m));
         }
         assert_eq!(Mode::parse("root"), None);
+    }
+
+    #[test]
+    fn a_greeter_worker_runs_only_for_the_greeter_account() {
+        assert!(Mode::Greeter.runs_for(GREETER_USER));
+        assert!(!Mode::Greeter.runs_for("anna"));
+        assert!(!Mode::Greeter.runs_for("root"));
+        for m in [Mode::Login, Mode::Reauth, Mode::Autologin] {
+            assert!(m.runs_for("anna"));
+        }
     }
 
     #[test]
