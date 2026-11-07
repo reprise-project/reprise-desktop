@@ -40,12 +40,26 @@ pub enum Request {
 /// A request for a new certificate, answered once it is in use.
 pub type Regenerate = oneshot::Sender<Result<(), String>>;
 
-/// Serve `status` on the session bus until it is dropped, passing the bus's requests on.
+/// Serve `status` on the session bus until it is dropped, passing the bus's requests on. The
+/// receiver hears once whether [`NAME`] was claimed; `alone` claims it only from nobody and
+/// never gives it up.
 pub fn spawn(
     status: watch::Receiver<Status>,
     disconnect: mpsc::UnboundedSender<Request>,
     regenerate: mpsc::UnboundedSender<Regenerate>,
-) {
+    alone: bool,
+) -> std::sync::mpsc::Receiver<zbus::Result<()>> {
+    spawn_on(Builder::session(), status, disconnect, regenerate, alone)
+}
+
+fn spawn_on(
+    builder: Builder<'static>,
+    status: watch::Receiver<Status>,
+    disconnect: mpsc::UnboundedSender<Request>,
+    regenerate: mpsc::UnboundedSender<Regenerate>,
+    alone: bool,
+) -> std::sync::mpsc::Receiver<zbus::Result<()>> {
+    let (claimed, claim) = std::sync::mpsc::sync_channel(1);
     let spawned = std::thread::Builder::new()
         .name("reprise-rdp-control".into())
         .spawn(move || {
@@ -55,7 +69,10 @@ pub fn spawn(
                     disconnect,
                     regenerate,
                 };
-                serve(Builder::session().name(NAME), iface, status).await
+                let builder = (builder.name(NAME))
+                    .allow_name_replacements(!alone)
+                    .replace_existing_names(!alone);
+                serve(builder, iface, status, claimed).await
             });
             if let Err(e) = served {
                 log::error!("{NAME} is not on the session bus: {e}");
@@ -64,14 +81,18 @@ pub fn spawn(
     if let Err(e) = spawned {
         log::error!("no control thread: {e}");
     }
+    claim
 }
 
 async fn serve(
     builder: Builder<'_>,
     iface: RemoteDesktop,
     mut status: watch::Receiver<Status>,
+    claimed: std::sync::mpsc::SyncSender<zbus::Result<()>>,
 ) -> zbus::Result<()> {
-    let conn = builder.serve_at(PATH, iface).build().await?;
+    let built = builder.serve_at(PATH, iface).build().await;
+    let _ = claimed.send(built.as_ref().map(|_| ()).map_err(Clone::clone));
+    let conn = built?;
     let iface = conn
         .object_server()
         .interface::<_, RemoteDesktop>(PATH)
@@ -245,7 +266,8 @@ pub(crate) mod tests {
         let server = std::thread::spawn(move || {
             zbus::block_on(async move {
                 let builder = Builder::address(address.as_str()).name(NAME);
-                serve(builder, iface, rx).await
+                let (claimed, _claim) = std::sync::mpsc::sync_channel(1);
+                serve(builder, iface, rx, claimed).await
             })
         });
         zbus::block_on(async move {
@@ -376,5 +398,39 @@ pub(crate) mod tests {
             drop(status);
         });
         server.join().unwrap().unwrap();
+    }
+
+    fn spawned(bus: &Bus, alone: bool) -> (watch::Sender<Status>, zbus::Result<()>) {
+        let (status, rx) = watch::channel(Status::default());
+        let (disconnect, _) = mpsc::unbounded_channel();
+        let (regenerate, _) = mpsc::unbounded_channel();
+        let builder = Builder::address(bus.1.as_str());
+        let claim = spawn_on(builder, rx, disconnect, regenerate, alone);
+        (status, claim.recv().expect("the claim is told"))
+    }
+
+    #[test]
+    fn a_hand_over_server_claims_the_name_alone_or_not_at_all() {
+        let Some(bus) = bus() else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
+        let others =
+            |bus: &Bus| zbus::block_on(Builder::address(bus.1.as_str()).name(NAME).build());
+        let other = others(&bus).unwrap();
+        let (_status, claimed) = spawned(&bus, true);
+        assert!(
+            matches!(claimed, Err(zbus::Error::NameTaken)),
+            "another server's name is not taken from it: {claimed:?}"
+        );
+        zbus::block_on(other.release_name(NAME)).unwrap();
+
+        let (status, claimed) = spawned(&bus, true);
+        assert!(claimed.is_ok(), "{claimed:?}");
+        assert!(
+            matches!(others(&bus), Err(zbus::Error::NameTaken)),
+            "nor is the hand-over server's given up to another"
+        );
+        drop(status);
     }
 }
