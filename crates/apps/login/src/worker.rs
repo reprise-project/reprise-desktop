@@ -31,7 +31,24 @@ pub enum Mode {
     Reauth,
     Greeter,
     Autologin,
+    /// Checks a remote login's password, then opens its session in the background.
+    Remote,
+    /// Runs the account step of a Network Level Authentication login, then opens its session.
+    RemoteNla,
+    /// Checks a login password and starts nothing.
+    Check,
 }
+
+/// Every mode, in `--worker` order.
+const MODES: [Mode; 7] = [
+    Mode::Login,
+    Mode::Reauth,
+    Mode::Greeter,
+    Mode::Autologin,
+    Mode::Remote,
+    Mode::RemoteNla,
+    Mode::Check,
+];
 
 impl Mode {
     pub fn service(self) -> &'static str {
@@ -39,6 +56,9 @@ impl Mode {
             Mode::Login | Mode::Reauth => "reprise-login",
             Mode::Greeter => "reprise-login-greeter",
             Mode::Autologin => "reprise-login-autologin",
+            Mode::Remote => "reprise-login-remote",
+            Mode::RemoteNla => "reprise-login-remote-nla",
+            Mode::Check => "reprise-login-check",
         }
     }
 
@@ -49,22 +69,24 @@ impl Mode {
             Mode::Reauth => "reauth",
             Mode::Greeter => "greeter",
             Mode::Autologin => "autologin",
+            Mode::Remote => "remote",
+            Mode::RemoteNla => "remote-nla",
+            Mode::Check => "check",
         }
     }
 
     pub fn parse(arg: &str) -> Option<Mode> {
-        [Mode::Login, Mode::Reauth, Mode::Greeter, Mode::Autologin]
-            .into_iter()
-            .find(|m| m.as_arg() == arg)
+        MODES.into_iter().find(|m| m.as_arg() == arg)
     }
 
     /// Whether a worker of this mode may run for `user`. The greeter's and autologin's stacks
-    /// ask no password, so they run only for the greeter's account and `autologin_user`.
+    /// ask no password, so they run only for the greeter's account and `autologin_user`. The
+    /// daemon decides who gets the remote and check modes.
     pub fn runs_for(self, user: &str, autologin_user: Option<&str>) -> bool {
         match self {
             Mode::Greeter => user == GREETER_USER,
             Mode::Autologin => autologin_user == Some(user),
-            Mode::Login | Mode::Reauth => true,
+            Mode::Login | Mode::Reauth | Mode::Remote | Mode::RemoteNla | Mode::Check => true,
         }
     }
 
@@ -84,10 +106,14 @@ pub enum ToWorker {
         autologin_user: Option<String>,
         /// The greeter's `--greeter-socket`.
         greeter_socket: bool,
+        /// The remote client's address, for `PAM_RHOST`.
+        rhost: Option<String>,
     },
     Answer(Option<Zeroizing<String>>),
     Start {
         vt: u16,
+        /// Opens the session without taking the console to its VT.
+        background: bool,
     },
     Cancel,
 }
@@ -98,7 +124,10 @@ impl fmt::Debug for ToWorker {
             ToWorker::Begin { .. } => f.write_str("Begin { <redacted> }"),
             ToWorker::Answer(Some(_)) => f.write_str("Answer(<redacted>)"),
             ToWorker::Answer(None) => f.write_str("Answer(None)"),
-            ToWorker::Start { vt } => f.debug_struct("Start").field("vt", vt).finish(),
+            ToWorker::Start { vt, background } => (f.debug_struct("Start"))
+                .field("vt", vt)
+                .field("background", background)
+                .finish(),
             ToWorker::Cancel => f.write_str("Cancel"),
         }
     }
@@ -253,7 +282,12 @@ pub fn session_argv(user: &PasswdEntry, mode: Mode, greeter_socket: bool) -> Vec
     let argv: &[&str] = match mode {
         Mode::Greeter if greeter_socket => &["reprise", "--greeter", "--greeter-socket"],
         Mode::Greeter => &["reprise", "--greeter"],
-        Mode::Login | Mode::Reauth | Mode::Autologin => &[shell(user), "-l", "-c", "exec reprise"],
+        Mode::Login
+        | Mode::Reauth
+        | Mode::Autologin
+        | Mode::Remote
+        | Mode::RemoteNla
+        | Mode::Check => &[shell(user), "-l", "-c", "exec reprise"],
     };
     argv.iter().map(|s| s.to_string()).collect()
 }
@@ -302,6 +336,7 @@ pub fn worker_main(mode: Mode, mut sock: UnixStream) -> i32 {
             user,
             autologin_user,
             greeter_socket,
+            ..
         }) => (user, autologin_user, greeter_socket),
         Ok(_) => return fail(&mut sock, ErrorKind::Failed, "the first frame is not Begin"),
         Err(_) => return 1,
@@ -353,8 +388,8 @@ pub fn worker_main(mode: Mode, mut sock: UnixStream) -> i32 {
         return 0;
     }
     let vt = match read_until_stopped::<ToWorker>(&sock, &STOP) {
-        Ok(ToWorker::Start { vt }) if (1..=vt::LAST_VT).contains(&vt) => vt,
-        Ok(ToWorker::Start { vt }) => {
+        Ok(ToWorker::Start { vt, .. }) if (1..=vt::LAST_VT).contains(&vt) => vt,
+        Ok(ToWorker::Start { vt, .. }) => {
             return fail(
                 &mut sock,
                 ErrorKind::Failed,
@@ -948,18 +983,26 @@ mod tests {
 
     #[test]
     fn modes_name_their_pam_service_and_argument() {
-        let all = [Mode::Login, Mode::Reauth, Mode::Greeter, Mode::Autologin];
-        let services: Vec<_> = all.iter().map(|m| m.service()).collect();
+        let services: Vec<_> = MODES.iter().map(|m| m.service()).collect();
         assert_eq!(
             services,
             [
                 "reprise-login",
                 "reprise-login",
                 "reprise-login-greeter",
-                "reprise-login-autologin"
+                "reprise-login-autologin",
+                "reprise-login-remote",
+                "reprise-login-remote-nla",
+                "reprise-login-check"
             ]
         );
-        for m in all {
+        let args: Vec<_> = MODES.iter().map(|m| m.as_arg()).collect();
+        assert_eq!(
+            args[4..],
+            ["remote", "remote-nla", "check"],
+            "the remote and check modes' arguments"
+        );
+        for m in MODES {
             assert_eq!(Mode::parse(m.as_arg()), Some(m));
         }
         assert_eq!(Mode::parse("root"), None);
@@ -970,7 +1013,13 @@ mod tests {
         assert!(Mode::Greeter.runs_for(GREETER_USER, None));
         assert!(!Mode::Greeter.runs_for("anna", None));
         assert!(!Mode::Greeter.runs_for("root", Some("root")));
-        for m in [Mode::Login, Mode::Reauth] {
+        for m in [
+            Mode::Login,
+            Mode::Reauth,
+            Mode::Remote,
+            Mode::RemoteNla,
+            Mode::Check,
+        ] {
             assert!(m.runs_for("anna", None));
         }
     }
@@ -1085,10 +1134,14 @@ mod tests {
                 user: "anna".into(),
                 autologin_user: Some("anna".into()),
                 greeter_socket: true,
+                rhost: Some("192.0.2.1".into()),
             },
             ToWorker::Answer(Some(Zeroizing::new("pw".into()))),
             ToWorker::Answer(None),
-            ToWorker::Start { vt: 7 },
+            ToWorker::Start {
+                vt: 7,
+                background: true,
+            },
             ToWorker::Cancel,
         ];
         for m in to {
@@ -1168,12 +1221,19 @@ mod tests {
             user: "hunter2".into(),
             autologin_user: None,
             greeter_socket: false,
+            rhost: Some("192.0.2.1".into()),
         };
         assert_eq!(format!("{begin:?}"), "Begin { <redacted> }");
         assert_eq!(format!("{:?}", ToWorker::Answer(None)), "Answer(None)");
         assert_eq!(
-            format!("{:?}", ToWorker::Start { vt: 7 }),
-            "Start { vt: 7 }"
+            format!(
+                "{:?}",
+                ToWorker::Start {
+                    vt: 7,
+                    background: true
+                }
+            ),
+            "Start { vt: 7, background: true }"
         );
     }
 
