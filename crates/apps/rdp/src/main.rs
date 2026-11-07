@@ -398,7 +398,7 @@ fn spawn_probe(
             let tx = tx.clone();
             move || {
                 if let Some(display) = display {
-                    let connected = wayland::connect();
+                    let connected = wayland::connect_when_ready();
                     let up = connected.is_ok();
                     let _ = display.send(connected);
                     if !up {
