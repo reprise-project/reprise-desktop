@@ -521,6 +521,40 @@ are.
   greeter; the log counts the crashes and keeps each backtrace. A crash by
   a signal, such as a segfault, ends the session without a restart.
 
+## Login screen
+
+Reprise brings its own login manager, `reprise-login`. It's installed
+switched off; [install.md](install.md#login-manager) says how to switch to
+it and back. `[login] interface` in `/etc/reprise/login.toml` picks the
+design ([configuration.md](configuration.md#login-manager)), and without it
+the screen takes the interface of the last session.
+
+- **Classic** is a Log On to Reprise dialog on the desktop colour: a band
+  with the Reprise mark, User name and Password rows, and OK, Cancel and
+  Shut Down... buttons.
+- **Blue** is a welcome screen between two dark bands: the mark on the
+  left, a column of user tiles on the right ("To begin, click your user
+  name") and Turn off computer in the bottom band.
+- **Glass** shows the last user's picture over the wallpaper with a
+  password field and a round arrow, the other users' tiles one click away,
+  and a power button in the corner.
+- **Switching users.** Each user's session runs on a VT of its own. Switch
+  User in the Log Off dialog, or on the lock screen, brings the login
+  screen back while your session keeps running, locked; its tile says
+  Logged on. Logging in again goes straight back to it, unlocked. One
+  session per user: a second login resumes the first.
+- **Shut Down and Restart** from the login screen, except while anyone is
+  still logged on. Then the screen says why, and shutting down is done from
+  a session.
+- **Caps Lock and layouts.** "Caps Lock is on." shows under the password
+  while it is. With more than one keyboard layout set for the system, a
+  badge shows the active one, and clicking it moves to the next.
+- **Autologin.** `[login] autologin_user` logs one user in when the
+  computer starts. Logging off brings the login screen.
+- **A safety net.** A session that ends as soon as it starts brings the
+  login screen back with a note pointing at its log. A login screen that
+  fails three times in a row gives way to a text login on tty2.
+
 ## Displays
 
 - **Multiple monitors,** each with its own mode, scale, rotation and

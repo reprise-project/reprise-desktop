@@ -149,6 +149,77 @@ stack), switch to another VT, log in, and run `loginctl unlock-session`.
 Any program that can bind the session lock global can already run that
 command, which is why that global needs no extra gate.
 
+## Login manager
+
+`reprise-login` ([install.md](install.md#login-manager)) runs these
+processes:
+
+- **The daemon**, `reprise-login.service`, runs as root. It opens no
+  network socket, only the two unix sockets below. It reads
+  `/etc/reprise/login.toml` and keeps the last user and interface in
+  `/var/lib/reprise-login/state.toml` (0600, in a 0700 directory).
+- **A PAM worker** per login, and one for the login screen: the daemon
+  starts itself again as `reprise-login --worker`, as root. One worker holds
+  one PAM handle from `pam_authenticate` to `pam_close_session`, so a module
+  that takes the password at login (pam_gnome_keyring) sees it again when
+  the session opens. It sets the user's groups and ids in the child it
+  forks for the session, and waits as root to close the PAM session.
+- **The login screen** is the compositor in greeter mode (`reprise
+  --greeter`), run as the system user `reprise-greeter` in a greeter-class
+  logind session on VT 1. The account has no password and no login shell;
+  its home is `/var/lib/reprise-greeter` (0750). The worker sets
+  `no_new_privs` before it starts the login screen, so a setuid program
+  gains it nothing. It reads user pictures from AccountsService's
+  directory and can read no more of a user's files than any other account.
+- **Sessions** run as their user, through the user's login shell, with the
+  environment PAM set.
+
+The sockets live in `/run/reprise-login` (0755, root):
+
+- `greeter.sock` is 0660, group `reprise-greeter`. The daemon accepts a
+  connection only from the `reprise-greeter` uid (`SO_PEERCRED`) in the
+  logind session the daemon started the login screen in, and only one at a
+  time. A frame that doesn't decode closes the connection. Over it the
+  login screen can start a login for a user name, answer PAM's prompts,
+  start the session PAM let in, cancel, and ask to shut down or restart.
+  Without the password PAM wants it can start no session.
+- `session.sock` is 0666. A connection is accepted only when the peer's
+  logind session is one the daemon started or found at start, and its uid
+  is that session's user. A session can say which interface it runs and ask
+  for Switch User; it can't start a login or reach another session.
+
+Frames are length-prefixed JSON of at most 64 KiB. A password typed at the
+login screen travels in zeroed buffers from the login screen through the
+daemon to the worker, which hands it to PAM. It is never logged, every
+`Debug` of a message that can hold one prints it redacted, and a frame that
+fails to decode is logged by kind only.
+
+The daemon's unit carries no systemd sandbox. Every session descends from
+it (daemon, worker, session), and namespaces, a system call filter, a
+capability bounding set or `NoNewPrivileges` would bind each user's session
+as well: no setuid `sudo`, a read-only `/usr`, filtered system calls. The
+login screen is confined by its own unprivileged user and `no_new_privs`
+instead.
+
+A worker moves into its logind session's scope when the session opens, out
+of the unit's cgroup. Restarting reprise-login, or a crash, leaves running
+sessions alone; a login still in its PAM conversation ends with the daemon.
+
+### Switching users
+
+A session that loses the screen locks itself, whether through Switch User
+or a VT switch key. Logging in again as the same user at the login screen
+checks the password through the `reprise-login` PAM service, then unlocks
+that session through logind and switches to it, so no second password is
+asked. A user who already has a session never gets a second one.
+
+Shut Down and Restart on the login screen are refused while any user
+session runs. A background session on the seat can ask logind to make
+itself the active one (`loginctl activate`) and take the screen from the
+user in front of it. That user's session locks as it loses the screen, and
+the background session comes up on its own lock, so this denies the screen
+without showing anyone another user's session.
+
 ## Remote Desktop
 
 The Remote Desktop server, `reprise-rdp`, offers TLS security only and logs
@@ -440,6 +511,8 @@ sharing and remote control grants yet.
   its window has the focus, or through `[clipboard] trusted_apps`.
 - **No permissions page.** Remembered screen sharing and remote control
   grants are revoked with `flatpak permission-remove`.
+- **A background session can take the screen** under reprise-login; see
+  [Switching users](#switching-users).
 - **Same-user code.** A program running as you can ptrace or preload the
   portal, the compositor or anything else of yours. Reprise doesn't defend
   against that, and doesn't treat it as a vulnerability.

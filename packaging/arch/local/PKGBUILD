@@ -10,7 +10,7 @@ pkgdesc="Wayland desktop with a classic retro look, with Notepad, Explorer and a
 arch=('x86_64')
 url="https://github.com/reprise-project/reprise-desktop"
 license=('GPL-3.0-or-later')
-depends=('seatd' 'systemd-libs' 'libinput>=1.26' 'libdrm' 'mesa' 'libglvnd' 'libdisplay-info' 'libxkbcommon' 'xorg-xwayland' 'freetype2' 'fontconfig' 'pam' 'libxcrypt' 'dbus' 'pipewire>=1:1.4' 'zlib' 'ffmpeg')
+depends=('seatd' 'systemd' 'systemd-libs' 'libinput>=1.26' 'libdrm' 'mesa' 'libglvnd' 'libdisplay-info' 'libxkbcommon' 'xorg-xwayland' 'freetype2' 'fontconfig' 'pam' 'libxcrypt' 'dbus' 'pipewire>=1:1.4' 'zlib' 'ffmpeg')
 makedepends=('cargo' 'clang' 'pkgconf' 'git')
 optdepends=('ttf-tahoma: Wine'\''s Tahoma, the UI font the layouts are tuned for'
             'ttf-dejavu: fallback font' 'noto-fonts-cjk: Chinese, Japanese and Korean text'
@@ -43,7 +43,7 @@ optdepends=('ttf-tahoma: Wine'\''s Tahoma, the UI font the layouts are tuned for
             'packagekit: reprise-updates, the updates tray icon and Software Updates'
             'flatpak: Flatpak application and runtime updates in Software Updates'
             'fwupd: firmware updates in Software Updates (curl, which pacman needs too, downloads them)'
-            'accountsservice: reprise-accounts (User Accounts)'
+            'accountsservice: reprise-accounts (User Accounts) and the user pictures on the login screen'
             'cups: reprise-printers, Printers, print queues and the printing tray icon'
             'cups-filters: driverless IPP Everywhere and AirPrint printers, and the test page, in Printers'
             'cups-pk-helper: changing printers in Printers with an administrator password, for accounts outside the CUPS admin group'
@@ -61,7 +61,8 @@ optdepends=('ttf-tahoma: Wine'\''s Tahoma, the UI font the layouts are tuned for
             'nvidia-utils: hardware H.264 (NVENC) for Remote Desktop on NVIDIA graphics')
 provides=('reprise')
 conflicts=('reprise-git')
-backup=('etc/pam.d/reprise' 'etc/pam.d/reprise-fingerprint' 'etc/pam.d/reprise-rdp')
+backup=('etc/pam.d/reprise' 'etc/pam.d/reprise-fingerprint' 'etc/pam.d/reprise-rdp'
+        'etc/pam.d/reprise-login' 'etc/pam.d/reprise-login-greeter' 'etc/pam.d/reprise-login-autologin')
 # makepkg's lto turns the C shim in libspa-sys into GCC bitcode that rustc's
 # lld cannot link (undefined *_libspa_rs symbols in reprise-portal). The option
 # only touches CFLAGS, CXXFLAGS and LDFLAGS; Rust LTO follows Cargo.toml's
@@ -125,6 +126,9 @@ package() {
   done
   install -Dm755 "$srcdir/target/$_profile/reprise-rdp" "$pkgdir/usr/bin/reprise-rdp"
   install -Dm755 "$srcdir/target/$_profile/reprise-login" "$pkgdir/usr/bin/reprise-login"
+  install -Dm644 data/systemd/reprise-login.service "$pkgdir/usr/lib/systemd/system/reprise-login.service"
+  install -Dm644 data/sysusers.d/reprise-login.conf "$pkgdir/usr/lib/sysusers.d/reprise-login.conf"
+  install -Dm644 data/tmpfiles.d/reprise-login.conf "$pkgdir/usr/lib/tmpfiles.d/reprise-login.conf"
   install -Dm644 data/systemd/app-org.reprise.RemoteDesktop.service "$pkgdir/usr/lib/systemd/user/app-org.reprise.RemoteDesktop.service"
   install -Dm644 data/apps/org.reprise.RemoteDesktop.desktop "$pkgdir/usr/share/applications/org.reprise.RemoteDesktop.desktop"
   install -Dm755 "$srcdir/target/$_profile/reprise-portal" "$pkgdir/usr/bin/reprise-portal"
@@ -143,6 +147,9 @@ package() {
   install -Dm644 data/pam.d/reprise "$pkgdir/etc/pam.d/reprise"
   install -Dm644 data/pam.d/reprise-fingerprint "$pkgdir/etc/pam.d/reprise-fingerprint"
   install -Dm644 data/pam.d/reprise-rdp "$pkgdir/etc/pam.d/reprise-rdp"
+  install -Dm644 data/pam.d/reprise-login "$pkgdir/etc/pam.d/reprise-login"
+  install -Dm644 data/pam.d/reprise-login-greeter "$pkgdir/etc/pam.d/reprise-login-greeter"
+  install -Dm644 data/pam.d/reprise-login-autologin "$pkgdir/etc/pam.d/reprise-login-autologin"
   install -Dm644 data/geoclue/90-reprise.conf "$pkgdir/etc/geoclue/conf.d/90-reprise.conf"
   install -Dm644 config.example.toml "$pkgdir/usr/share/doc/reprise/config.example.toml"
   for ftl in data/locale/*/*.ftl; do
