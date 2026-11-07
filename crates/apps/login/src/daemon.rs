@@ -686,8 +686,9 @@ impl Daemon {
     }
 
     /// Enters a new session in the table. When its uid has a session already, it ends the
-    /// new one and resumes that one instead; when logind removed it already, it is over.
-    /// `greeter` asked for the session, `None` for autologin.
+    /// new one and resumes that one instead, or for autologin, which asked no password, shows
+    /// the login screen; when logind removed it already, it is over. `greeter` asked for the
+    /// session, `None` for autologin.
     fn session_started(
         &mut self,
         worker: WorkerId,
@@ -726,6 +727,16 @@ impl Daemon {
             };
             let id = existing.id.clone();
             out.push(Effect::TerminateSession(entry.id));
+            if greeter.is_none() {
+                out.push(Effect::Log(
+                    Level::Warn,
+                    format!(
+                        "autologin of {}: the account has a session already",
+                        entry.user
+                    ),
+                ));
+                return self.bring_greeter(out);
+            }
             let phase = self.unlock(id, out);
             self.conversation = Some(Conversation {
                 worker: None,
