@@ -48,6 +48,31 @@ pub fn connect() -> Result<Connection, String> {
     Connection::from_socket(stream).map_err(|e| format!("no Wayland connection: {e}"))
 }
 
+/// [`connect`], tried every [`POLL`] for [`SESSION_READY_WAIT`]: a user manager that outlived an
+/// earlier session still names that session's display until the new compositor is up.
+pub fn connect_when_ready() -> Result<Connection, String> {
+    retried(SESSION_READY_WAIT, POLL, connect)
+}
+
+/// `attempt` every `poll` until it succeeds or `wait` has passed; then its last error.
+fn retried<T>(
+    wait: Duration,
+    poll: Duration,
+    mut attempt: impl FnMut() -> Result<T, String>,
+) -> Result<T, String> {
+    let until = Instant::now() + wait;
+    loop {
+        match attempt() {
+            Ok(done) => return Ok(done),
+            Err(e) if Instant::now() >= until => return Err(e),
+            Err(e) => {
+                log::debug!("{e}; trying again");
+                std::thread::sleep(poll);
+            }
+        }
+    }
+}
+
 /// The display name from the user manager's environment, read until it is there.
 fn learned_name() -> Result<String, String> {
     let until = Instant::now() + SESSION_READY_WAIT;
@@ -131,6 +156,30 @@ mod tests {
         ];
         assert_eq!(display_name(&env).as_deref(), Some("wayland-1"));
         assert_eq!(display_name(&[]), None);
+    }
+
+    #[test]
+    fn a_display_not_up_yet_is_tried_again_until_the_wait_ends() {
+        let mut tries = 0;
+        let up = retried(Duration::from_secs(5), Duration::from_millis(5), || {
+            tries += 1;
+            if tries < 3 {
+                Err("not up".to_string())
+            } else {
+                Ok(tries)
+            }
+        });
+        assert_eq!(up, Ok(3));
+
+        let mut tries = 0;
+        let start = Instant::now();
+        let never = retried(Duration::from_millis(50), Duration::from_millis(5), || {
+            tries += 1;
+            Err::<(), _>(format!("not up {tries}"))
+        });
+        assert!(start.elapsed() >= Duration::from_millis(50));
+        assert_eq!(never, Err(format!("not up {tries}")), "the last error");
+        assert!(tries > 1);
     }
 
     #[tokio::test]
