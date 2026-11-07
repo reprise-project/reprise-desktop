@@ -12,6 +12,8 @@ pub enum Step {
     Ask(Prompt),
     Note(String),
     Fail(ErrorKind, String),
+    /// Turning off or restarting failed; the daemon's text is not for the screen.
+    PowerFailed,
     /// The session started: the greeter has done its job.
     Started,
     /// A cancelled login ended; nothing is in progress.
@@ -167,7 +169,10 @@ impl Conversation {
             }
             (Phase::Idle, GreeterReply::Error { kind, text }) if self.power => {
                 self.power = false;
-                vec![Step::Fail(kind, text)]
+                match kind {
+                    ErrorKind::Failed => vec![Step::PowerFailed],
+                    kind => vec![Step::Fail(kind, text)],
+                }
             }
             _ => Vec::new(),
         }
@@ -321,6 +326,20 @@ mod tests {
                 ErrorKind::Refused,
                 "other users are logged on".into()
             )]
+        );
+        assert!(c.idle());
+    }
+
+    #[test]
+    fn a_failed_power_request_is_a_power_failure() {
+        let mut c = Conversation::default();
+        c.power(PowerAction::Reboot);
+        assert_eq!(
+            c.on_reply(GreeterReply::Error {
+                kind: ErrorKind::Failed,
+                text: "org.freedesktop.DBus.Error.AccessDenied".into()
+            }),
+            vec![Step::PowerFailed]
         );
         assert!(c.idle());
     }
