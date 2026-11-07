@@ -603,6 +603,16 @@ impl Harness {
         surface
     }
 
+    /// `c` takes the session lock without a lock surface yet.
+    pub fn take_lock(&mut self, c: &mut TestClient) -> ExtSessionLockV1 {
+        let qh = c.qh();
+        let lock = (c.side.lock_manager.as_ref())
+            .expect("ext_session_lock_manager_v1")
+            .lock(&qh, ());
+        self.roundtrip(c);
+        lock
+    }
+
     /// A locker's lock from `c` with one lock surface on the client's first `wl_output`,
     /// configured and mapped with its first buffer.
     pub fn map_lock_surface(&mut self, c: &mut TestClient) -> (ExtSessionLockV1, WlSurface) {

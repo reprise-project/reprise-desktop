@@ -94,8 +94,9 @@ pub fn holds(state: &State, object: &ObjectId) -> bool {
     state.console.objects.contains(object)
 }
 
-/// Why an object may not begin: `[power] locker` is set, or a locker client holds the lock.
-pub fn refusal(state: &State) -> Option<Reason> {
+/// Why an object may not begin: `[power] locker` is set, or a live locker client holds the lock.
+pub fn refusal(state: &mut State) -> Option<Reason> {
+    crate::sessionlock::check_alive(state);
     if !state.config.power.locker.trim().is_empty() {
         Some(Reason::Unavailable)
     } else if crate::sessionlock::holds_input(state) {
