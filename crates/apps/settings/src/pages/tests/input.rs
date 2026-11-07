@@ -132,9 +132,7 @@ fn the_magnifier_filters_page_geometry() {
     assert_eq!(rect(&s, p, "magnifier_follow"), Rect::new(32, 184, 13, 13));
     assert_eq!(rect(&s, p, "mag_note"), Rect::new(32, 206, 334, 39));
     inside_page(&s, p);
-    if !reprisekit::text::test_tahoma() {
-        return;
-    }
+    reprisekit::pins::fonts();
     let text = TextRenderer::load(&FontConfig::default());
     let px = Theme::default().fonts.size_px;
     let page = &s.pages[p.index()];

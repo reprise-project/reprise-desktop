@@ -600,9 +600,7 @@ mod tests {
 
     #[test]
     fn pixels_match_an_edit_field_with_the_caret_at_the_end() {
-        if !crate::text::test_tahoma() {
-            return;
-        }
+        crate::pins::fonts();
         let theme = Theme::default();
         let text = TextRenderer::load(&FontConfig::default());
         let cs = &theme.colors;

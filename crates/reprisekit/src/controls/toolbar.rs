@@ -604,9 +604,7 @@ mod tests {
 
     #[test]
     fn big_layout_places_explorers_strip() {
-        if !crate::text::test_tahoma() {
-            return;
-        }
+        crate::pins::fonts();
         let text = renderer();
         let tb = explorer_strip();
         let r = Rect::new(0, 27, 400, BIG_HEIGHT);
@@ -629,9 +627,7 @@ mod tests {
 
     #[test]
     fn blues_big_strip_lays_out_wider_history_buttons() {
-        if !crate::text::test_tahoma() {
-            return;
-        }
+        crate::pins::fonts();
         let text = renderer();
         let tb = explorer_strip();
         let cm = crate::interfaces::blue_theme(crate::blue::Variant::Blue)
@@ -696,9 +692,7 @@ mod tests {
 
     #[test]
     fn a_big_labelled_button_places_its_icon_and_label() {
-        if !crate::text::test_tahoma() {
-            return;
-        }
+        crate::pins::fonts();
         const FRAME: i32 = 228;
         const ICON_BOX: i32 = 231;
         const LABEL_PEN: i32 = 260;
@@ -932,9 +926,7 @@ mod tests {
 
     #[test]
     fn a_latched_button_sinks_over_a_plain_face_even_when_hot() {
-        if !crate::text::test_tahoma() {
-            return;
-        }
+        crate::pins::fonts();
         let theme = Theme::default();
         let cs = &theme.colors;
         let text = renderer();
@@ -962,9 +954,7 @@ mod tests {
 
     #[test]
     fn a_big_button_gets_the_hot_border_and_the_pressed_shift() {
-        if !crate::text::test_tahoma() {
-            return;
-        }
+        crate::pins::fonts();
         let theme = Theme::default();
         let cs = &theme.colors;
         let text = renderer();

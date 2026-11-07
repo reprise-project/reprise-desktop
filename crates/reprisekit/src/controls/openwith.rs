@@ -1445,9 +1445,7 @@ mod tests {
 
     #[test]
     fn the_file_name_starts_at_x_90_after_the_file_label() {
-        if !crate::text::test_tahoma() {
-            return;
-        }
+        crate::pins::fonts();
         let theme = Theme::default();
         let cs = &theme.colors;
         let t = text();

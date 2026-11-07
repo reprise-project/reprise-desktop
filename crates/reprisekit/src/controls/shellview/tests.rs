@@ -1435,9 +1435,7 @@ fn a_grid_drag_keeps_the_pressed_cell_whole_wherever_it_is_pressed() {
 /// The Tiles and Thumbnails images' pixels in Tahoma at scale 1 and 2; scale 2 is twice the size.
 #[test]
 fn a_grid_drag_image_draws_its_pixels() {
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let mut got = Vec::new();
     for mode in [Mode::Tiles, Mode::Thumbnails] {
         let sv = sample(mode, false);
@@ -1493,9 +1491,7 @@ fn a_rows_drag_image_keeps_only_the_rows_on_screen() {
 /// The image's pixels in Tahoma, per mode at scale 1 and 2; scale 2 is twice the size.
 #[test]
 fn a_rows_drag_image_draws_its_pixels() {
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let mut got = Vec::new();
     for mode in [Mode::List, Mode::Details] {
         let sv = sample(mode, false);

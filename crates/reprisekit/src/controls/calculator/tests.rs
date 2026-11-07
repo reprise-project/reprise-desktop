@@ -423,9 +423,7 @@ fn drawn(theme: &Theme, calc: &Calc, history: bool, s: i32) -> Canvas {
 
 #[test]
 fn calculator_pins_at_scale_1_and_2() {
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let mut standard = after(Mode::Standard, "12+3*");
     standard.input(Input::MemStore);
     let scientific = after(Mode::Scientific, "2*(3+4\n");
@@ -450,9 +448,7 @@ fn calculator_pins_at_scale_1_and_2() {
 
 #[test]
 fn the_display_shows_the_number_and_an_m_with_memory() {
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let theme = Theme::default();
     let calc = after(Mode::Standard, "42");
     let mut stored = calc.clone();

@@ -502,9 +502,7 @@ fn a_150_percent_context_menu_grows_its_rows_around_its_labels() {
     assert_eq!(l.rows[0].height, 24);
     assert_eq!(l.rows[1].height, 9, "separators keep their size");
     assert_eq!(l.height, 2 * BORDER + 24 + 9 + 24);
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let text = TextRenderer::load(&theme.fonts);
     let l = MenuLayout::compute_styled(&style.fit(&text, &items, 17, 400), &items, usize::MAX);
     let mut c = Canvas::new(l.width as u32, l.height as u32);
@@ -995,9 +993,7 @@ fn disabled_entry_uses_gray_text_even_when_hovered() {
 
 #[test]
 fn context_menus_fit_their_labels() {
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let theme = Theme::default();
     let text = TextRenderer::load(&FontConfig::default());
     let fit = |items: &[MenuItem]| {
@@ -1061,9 +1057,7 @@ fn context_menus_fit_their_labels() {
 #[test]
 fn a_context_rows_label_inks_17_px_in() {
     const EXPECTED_INK_X: i32 = 17;
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let theme = wide_theme();
     let text = TextRenderer::load(&FontConfig::default());
     for (label, top) in [("Properties", 4), ("New", 4), ("List", 4), ("Refresh", 3)] {
@@ -1762,9 +1756,7 @@ fn a_flat_menu_has_a_one_px_border_a_one_line_separator_and_a_framed_lit_row() {
 
 #[test]
 fn a_flat_menus_greyed_label_has_no_etched_copy() {
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let theme = flat_theme(crate::blue::Variant::Blue);
     let text = TextRenderer::load(&FontConfig::default());
     let items = vec![

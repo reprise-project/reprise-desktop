@@ -51,9 +51,7 @@ mod tests {
 
     #[test]
     fn three_lines_make_a_122x51_box() {
-        if !crate::text::test_tahoma() {
-            return;
-        }
+        crate::pins::fonts();
         let theme = Theme::default();
         let text = TextRenderer::load(&FontConfig::default());
         let lines = lines();
@@ -80,9 +78,7 @@ mod tests {
 
     #[test]
     fn draw_frames_the_yellow_and_starts_the_ink_five_in() {
-        if !crate::text::test_tahoma() {
-            return;
-        }
+        crate::pins::fonts();
         let theme = Theme::default();
         let text = TextRenderer::load(&FontConfig::default());
         let lines = lines();

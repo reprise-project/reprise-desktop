@@ -324,9 +324,7 @@ fn fnv(c: &Canvas) -> u64 {
 
 #[test]
 fn a_note_pins_in_every_interface_at_scale_1_and_2() {
-    if !reprisekit::text::test_tahoma() {
-        return;
-    }
+    reprisekit::pins::fonts();
     let mut got = Vec::new();
     for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
         for scale in [1, 2] {
@@ -420,9 +418,7 @@ fn a_long_paragraph_wraps_and_rewraps_when_the_note_is_resized() {
 
 #[test]
 fn a_wrapped_note_pins_in_every_interface_at_scale_1_and_2() {
-    if !reprisekit::text::test_tahoma() {
-        return;
-    }
+    reprisekit::pins::fonts();
     let mut got = Vec::new();
     for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
         for scale in [1, 2] {

@@ -71,10 +71,7 @@ fn a_picture_decodes_fitted_text_reads_its_head_and_the_rest_keeps_the_card() {
 
 #[test]
 fn a_font_file_reads_as_its_sample_inside_the_max() {
-    let Some(dir) = std::env::var_os("REPRISE_TEST_FONTS") else {
-        return;
-    };
-    let tahoma = std::path::PathBuf::from(dir).join("tahoma.ttf");
+    let tahoma = reprisekit::pins::fonts().join("tahoma.ttf");
     match read_at(&tahoma, Route::Font) {
         Loaded::Picture(c) => {
             assert!(

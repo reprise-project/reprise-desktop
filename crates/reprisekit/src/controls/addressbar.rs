@@ -608,9 +608,7 @@ mod tests {
 
     #[test]
     fn blues_address_label_inks_the_rebar_label_grey() {
-        if !crate::text::test_tahoma() {
-            return;
-        }
+        crate::pins::fonts();
         let ab = bar();
         let text = TextRenderer::load(&FontConfig::default());
         use crate::blue::Variant;
@@ -722,9 +720,7 @@ mod tests {
 
     #[test]
     fn draws_the_band_pixels() {
-        if !crate::text::test_tahoma() {
-            return;
-        }
+        crate::pins::fonts();
         let ab = bar();
         let (c, theme, _) = render(&ab, false, false);
         let cs = &theme.colors;
@@ -785,9 +781,7 @@ mod tests {
 
     #[test]
     fn draws_the_open_list() {
-        if !crate::text::test_tahoma() {
-            return;
-        }
+        crate::pins::fonts();
         let mut ab = bar();
         ab.combo.toggle();
         assert_eq!(ab.combo.open, Some(1), "opens on the picked place");

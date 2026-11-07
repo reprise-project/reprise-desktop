@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Runs a command under CI's font environment, the one the pixel pins are drawn in: it sets
+# REPRISE_TEST_FONTS to scripts/test-fonts.sh's set and REPRISE_TEST_STRICT=1, under a fontconfig
+# that sees only this machine's DejaVu (the CI image's one system font).
+# Usage: scripts/pin-env CMD [ARGS...], e.g. scripts/pin-env cargo test -p reprisekit
+set -euo pipefail
+
+if (($# == 0)); then
+    echo "usage: scripts/pin-env CMD [ARGS...]" >&2
+    exit 2
+fi
+here=$(dirname "$(readlink -f "$0")")
+test_fonts=$("$here/test-fonts.sh")
+
+root=${XDG_CACHE_HOME:-$HOME/.cache}/reprise-pin-env
+mkdir -p "$root/fonts" "$root/fccache"
+mapfile -t dejavu < <(fc-list -f '%{file}\n' | grep -E '/DejaVu[^/]*\.ttf$' | sort -u)
+if ((${#dejavu[@]} == 0)); then
+    echo "pin-env: no DejaVu fonts installed (ttf-dejavu)" >&2
+    exit 1
+fi
+for file in "${dejavu[@]}"; do
+    link=$root/fonts/$(basename "$file")
+    [[ $(readlink "$link" 2>/dev/null) == "$file" ]] || ln -sfn "$file" "$link"
+done
+
+conf=$root/fonts.conf
+want="<?xml version=\"1.0\"?>
+<!DOCTYPE fontconfig SYSTEM \"urn:fontconfig:fonts.dtd\">
+<fontconfig>
+  <dir>$root/fonts</dir>
+  <cachedir>$root/fccache</cachedir>
+  <include ignore_missing=\"yes\">/etc/fonts/conf.d</include>
+</fontconfig>"
+if [[ $(cat "$conf" 2>/dev/null) != "$want" ]]; then
+    printf '%s\n' "$want" >"$conf.$$"
+    mv "$conf.$$" "$conf"
+fi
+
+# A Reprise session's own variables (REPRISE_INTERFACE, REPRISE_COLORS, ...) are not CI's; the
+# test and gallery knobs (REPRISE_BLESS, REPRISE_GALLERY_*, REPRISE_PREVIEW_*, ...) pass through.
+keep='REPRISE_(BLESS|GALLERY_[A-Z_]+|SCHEME|PAINT_PREVIEW|PREVIEW_[A-Z_]+)'
+for var in $(compgen -e | grep '^REPRISE_' | grep -vxE "$keep"); do
+    unset "$var"
+done
+export FONTCONFIG_FILE=$conf REPRISE_TEST_FONTS=$test_fonts REPRISE_TEST_STRICT=1
+exec "$@"

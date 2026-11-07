@@ -106,9 +106,7 @@ fn a_150_percent_bar_grows_around_its_titles_and_clock() {
     let theme = Theme::default().with_text_size(150);
     let cs = &theme.colors;
     assert_eq!(theme.metrics.taskbar_height, 35);
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let text = TextRenderer::load(&theme.fonts);
     let size = theme.fonts.size_px;
     let l = TaskbarLayout::compute(

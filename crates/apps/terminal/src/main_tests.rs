@@ -55,9 +55,14 @@ const NOWHERE: &str = "/nonexistent/reprise-terminal-test";
 
 /// A started terminal whose first tab runs `cmd` and whose shell is `/bin/sh`.
 fn terminal(cmd: &[&str]) -> Terminal {
+    terminal_with(Settings::default(), cmd)
+}
+
+/// [`terminal`] with `settings` but for the shell.
+fn terminal_with(settings: Settings, cmd: &[&str]) -> Terminal {
     let settings = Settings {
         shell: "/bin/sh".into(),
-        ..Settings::default()
+        ..settings
     };
     let nowhere = Path::new(NOWHERE);
     let mut t = Terminal::with_state(settings, Some(argv(cmd)), nowhere.join("state.toml"));
@@ -1275,7 +1280,10 @@ fn partial_damage_is_exact() {
 /// A started terminal like [`terminal`] whose compositor keeps tab groups and whose tabs go in
 /// the caption.
 fn captioned(cmd: &[&str]) -> Terminal {
-    let mut t = terminal(cmd);
+    caption_tabs(terminal(cmd))
+}
+
+fn caption_tabs(mut t: Terminal) -> Terminal {
     t.settings.tab_position = TabPosition::Caption;
     t.tab_groups = true;
     t.w.caption = t.caption_mode();
@@ -1516,13 +1524,16 @@ fn fnv(c: &Canvas) -> u64 {
 
 #[test]
 fn the_caption_mode_toolbar_pins_in_every_interface() {
-    if !reprisekit::text::test_tahoma() {
-        return;
-    }
+    reprisekit::pins::fonts();
+    // DejaVu Sans Mono is in the test fonts; the faces tried before it are the machine's.
+    let mono = || Settings {
+        font: "DejaVu Sans Mono".into(),
+        ..Settings::default()
+    };
     let mut got = Vec::new();
     for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
         let mut ctx = themed_ctx(reprisekit::interfaces::theme_for(i));
-        let mut t = captioned(&["cat"]);
+        let mut t = caption_tabs(terminal_with(mono(), &["cat"]));
         t.follow_scale(MAIN, 1, &mut ctx);
         let mut c = Canvas::new(640, 400);
         t.draw(MAIN, &mut c, &ctx);

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Fetches the fonts the pixel tests are pinned to (Wine 9.0's Tahoma, LGPL)
 # into the XDG cache, checks their sha256 and prints the directory. Idempotent.
-# Usage: export REPRISE_TEST_FONTS=$(scripts/test-fonts.sh)
+# Usage: export REPRISE_TEST_FONTS=$(scripts/test-fonts.sh), or scripts/pin-env CMD.
 set -euo pipefail
 
 base=https://gitlab.winehq.org/wine/wine/-/raw/wine-9.0/fonts

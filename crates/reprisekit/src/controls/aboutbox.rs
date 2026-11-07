@@ -492,9 +492,7 @@ mod tests {
     /// also checked on the banner.
     #[test]
     fn copyright_ink_tops_land_on_rows_49_and_60() {
-        if !crate::text::test_tahoma() {
-            return;
-        }
+        crate::pins::fonts();
         const INK_TOP: [i32; 2] = [49, 60];
         const BLUE_BASE: Color = Color::rgb(98, 134, 225);
         let px = 11;
@@ -917,9 +915,7 @@ mod tests {
     /// text, and its descenders stay clear of the bar.
     #[test]
     fn the_copyright_ink_grows_with_the_text_size() {
-        if !crate::text::test_tahoma() {
-            return;
-        }
+        crate::pins::fonts();
         let text = TextRenderer::load(&FontConfig::default());
         let white = Color::rgb(255, 255, 255).argb();
         for (pct, span) in [(100, (49, 70)), (150, (75, 109)), (200, (100, 141))] {

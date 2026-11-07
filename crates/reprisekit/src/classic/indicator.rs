@@ -226,9 +226,7 @@ mod tests {
 
     #[test]
     fn the_layout_square_carries_its_short_name() {
-        if !crate::text::test_tahoma() {
-            return;
-        }
+        crate::pins::fonts();
         let text = TextRenderer::load(&crate::theme::FontConfig::default());
         let cs = ColorScheme::default();
         let c = draw_layout(&text, &cs, "EN", 16, 11);

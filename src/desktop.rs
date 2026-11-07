@@ -655,9 +655,7 @@ mod tests {
         ] {
             assert_eq!(shell_place(&Kind::Place(p)), Some(want));
         }
-        if !reprisekit::text::test_tahoma() {
-            return;
-        }
+        reprisekit::pins::fonts();
         let theme = reprisekit::theme::Theme::default();
         let text = reprisekit::text::TextRenderer::load(&theme.fonts);
         for p in [
@@ -1378,9 +1376,7 @@ mod tests {
     /// The label of `archive.tar.gz` and its rename box under Show, at scale 1.
     #[test]
     fn a_shown_extension_pins_the_label_and_the_rename_box() {
-        if !reprisekit::text::test_tahoma() {
-            return;
-        }
+        reprisekit::pins::fonts();
         use reprisekit::textedit::Caret;
         fn fnv(c: &reprisekit::raster::Canvas) -> u64 {
             c.pixels.iter().fold(0xcbf29ce484222325, |h, p| {

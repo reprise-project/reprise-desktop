@@ -20,8 +20,9 @@ mod mnemonic;
 mod tests;
 mod wrap;
 
+pub use fonts::families;
 pub(crate) use fonts::system_fonts;
-pub use fonts::{families, test_tahoma};
+pub(crate) use fonts::test_fonts;
 use fonts::{full_hinting, load_faces, load_shell_dlg};
 pub use mnemonic::{access_key, escape_mnemonic, split_mnemonic};
 pub use wrap::{wrap, wrap_bold, wrap_chars};
@@ -127,6 +128,9 @@ struct LoadedFace {
     family: String,
     /// Slanted: an italic or an oblique face.
     italic: bool,
+    /// Set under `REPRISE_TEST_FONTS` for a face a family lookup found outside the test fonts (a
+    /// face opened by path has none); [`crate::pins::stray`] reports it when the face draws.
+    stray: Option<Box<str>>,
 }
 
 /// A sheared glyph's rows move right a pixel for each this many over the baseline.
@@ -318,6 +322,7 @@ impl TextRenderer {
         let loaded = LoadedFace {
             family: face.family_name().unwrap_or_default(),
             italic: false,
+            stray: None,
             face,
         };
         let mut t = TextRenderer::with_faces(Some(loaded.clone()), Some(loaded), true);
@@ -461,9 +466,13 @@ impl TextRenderer {
         self.regular.as_ref().is_some_and(|f| f.italic)
     }
 
-    fn face(&self, bold: bool) -> Option<&Face> {
+    fn loaded(&self, bold: bool) -> Option<&LoadedFace> {
         let f = if bold { &self.bold } else { &self.regular };
-        f.as_ref().map(|l| &l.face)
+        f.as_ref()
+    }
+
+    fn face(&self, bold: bool) -> Option<&Face> {
+        self.loaded(bold).map(|l| &l.face)
     }
 
     /// The face a glyph at logical `size_px` comes from, with the strike (ppem) to scale up for a
@@ -571,6 +580,11 @@ impl TextRenderer {
                 return Some(f(g));
             }
         }
+        if fallback.is_none()
+            && let Some(stray) = self.loaded(bold).and_then(|l| l.stray.as_deref())
+        {
+            crate::pins::stray(stray);
+        }
         let glyph = match fallback {
             Some(g) => g,
             None => self
@@ -607,6 +621,13 @@ impl TextRenderer {
         let open = |(path, index): &FaceFile| match lib.new_face(path, *index as isize) {
             Ok(face) => {
                 log::info!("fallback font for U+{:04X}: {}", ch as u32, path.display());
+                let family = face.family_name().unwrap_or_default();
+                if let Some(stray) = fonts::stray_note(path, &family, || {
+                    let ui = self.loaded(bold).map_or("", |l| &l.family);
+                    format!("U+{:04X}, which {ui} lacks", ch as u32)
+                }) {
+                    crate::pins::stray(&stray);
+                }
                 Some(face)
             }
             Err(e) => {

@@ -39,18 +39,21 @@ bus or display. A new crate whose tests touch any of them adds that line.
 reprisekit, which links no bus, sets up its HOME and XDG folders the same
 way in `src/testsession.rs`.
 
-Pixel tests that depend on the UI font are pinned to Wine 9.0's Tahoma.
-`scripts/test-fonts.sh` downloads it into your cache and prints the
-directory; the tests load Tahoma from there instead of the system:
+Pixel tests are pinned to Wine 9.0's Tahoma and DejaVu, the CI image's one
+system font. `scripts/pin-env` runs a command in CI's font environment. It
+sets `REPRISE_TEST_FONTS` to the Tahoma that `scripts/test-fonts.sh`
+downloads into your cache and `REPRISE_TEST_STRICT=1`, under a fontconfig
+that sees only DejaVu. It drops your session's `REPRISE_*` variables and
+keeps the test and gallery ones such as `REPRISE_BLESS`:
 
-    export REPRISE_TEST_FONTS=$(scripts/test-fonts.sh)
-    cargo nextest run --workspace
+    scripts/pin-env cargo nextest run --workspace
 
-Without `REPRISE_TEST_FONTS` those tests skip, as do the ones that pin
-Trebuchet MS or Segoe UI glyphs when those fonts aren't installed. CI sets
-it and `REPRISE_TEST_STRICT=1`, under which a skipped test fails; only the
-tests for Trebuchet MS, Franklin Gothic Medium, Segoe UI and Wine's
-`sserife.fon` still skip.
+A pixel test without `REPRISE_TEST_FONTS` fails, as does one that draws a
+glyph from a font outside that set; a painter that asks for another family
+takes its font as a parameter so its test can pass Tahoma. Under
+`REPRISE_TEST_STRICT=1` a skipped test fails too; only the tests for
+Trebuchet MS, Franklin Gothic Medium, Segoe UI and Wine's `sserife.fon`
+still skip where those fonts aren't installed.
 
 - **Pixel-neutral changes.** If a change shouldn't move a pixel, prove it
   with `scripts/pixels-unchanged.sh [--with-blue] BASE`. It renders the
@@ -59,8 +62,8 @@ tests for Trebuchet MS, Franklin Gothic Medium, Segoe UI and Wine's
 - **Pinned hashes.** Tests that call `pins::check` keep their image hashes
   in `crates/reprisekit/tests/pins/`, one `key hash` line per image. After a
   deliberate drawing change, or a new Blue scheme,
-  `REPRISE_BLESS=1 cargo test -p reprisekit` rewrites those files; review
-  their diff like code.
+  `REPRISE_BLESS=1 scripts/pin-env cargo test -p reprisekit` rewrites those
+  files; review their diff like code.
 - **UI strings.** A string a user reads goes through `tr!("id")` with its
   English text in the crate's `locale/en.ftl`; `cargo test -p reprisekit`
   runs `scripts/i18n-check`, which fails on an id missing from English or

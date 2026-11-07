@@ -1030,9 +1030,7 @@ mod tests {
 
     #[test]
     fn draw_cell_selected_highlights_label_with_rect_and_ring() {
-        if !crate::text::test_tahoma() {
-            return;
-        }
+        crate::pins::fonts();
         let theme = Theme::default();
         let t = text();
         let cs = &theme.colors;

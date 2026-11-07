@@ -1,4 +1,4 @@
-use super::fonts::{needs_scan, test_fonts_dir};
+use super::fonts::needs_scan;
 use super::*;
 use std::path::PathBuf;
 
@@ -81,9 +81,7 @@ fn without_a_second_dialog_font_every_dialog_takes_the_ui_font() {
 
 #[test]
 fn the_second_dialog_font_loads_by_family_or_file_on_the_ui_baseline() {
-    if !test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let db = system_fonts(&[]);
     let Some((family, path)) = db.faces().find_map(|f| {
         let family = &f.families.first()?.0;
@@ -290,13 +288,6 @@ fn mono_mode_yields_solid_pixels() {
 }
 
 #[test]
-fn reprise_test_fonts_supplies_the_ui_tahoma() {
-    if test_fonts_dir().is_some() {
-        assert!(test_tahoma(), "REPRISE_TEST_FONTS holds no Tahoma");
-    }
-}
-
-#[test]
 fn grayscale_mode_blends() {
     // Wine's Tahoma has bilevel bitmap strikes from 8 to 16 px but none at 14.
     let r = TextRenderer::load(&FontConfig {
@@ -346,9 +337,7 @@ fn italic_is_the_families_slanted_face_when_installed() {
 /// its foot.
 #[test]
 fn italic_shears_a_family_without_a_slanted_face() {
-    if !test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let t = TextRenderer::load(&FontConfig::default());
     let slanted = t.italic();
     assert!(!std::ptr::eq(slanted, &t));
@@ -448,9 +437,7 @@ fn tahoma_widths_match_hdmx() {
         antialias: false,
         ..FontConfig::default()
     });
-    if !test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     assert_eq!(r.measure("Start", false, 11), 24);
     assert_eq!(r.measure("Start", true, 11), 29);
 }
@@ -946,4 +933,25 @@ fn families_are_sorted_each_once() {
     sorted.dedup();
     assert_eq!(all, sorted);
     assert!(all.iter().all(|n| !n.starts_with('.')), "no dot family");
+}
+
+#[test]
+#[should_panic(expected = "Trebuchet MS (/usr/share/fonts/TTF/trebuc.ttf) for [\"Trebuchet MS\"]")]
+fn a_glyph_from_a_face_found_outside_the_test_fonts_fails_the_pin() {
+    let dir = crate::pins::fonts();
+    let mut t = TextRenderer::from_file(&dir.join("tahoma.ttf"), 0).expect("Tahoma");
+    t.regular.as_mut().unwrap().stray = fonts::stray_note(
+        std::path::Path::new("/usr/share/fonts/TTF/trebuc.ttf"),
+        "Trebuchet MS",
+        || "[\"Trebuchet MS\"]".into(),
+    );
+    t.measure("A", false, 11);
+}
+
+#[test]
+fn the_test_fonts_and_dejavu_are_the_test_set() {
+    let dir = crate::pins::fonts();
+    let dejavu = std::path::Path::new("/usr/share/fonts/TTF/DejaVuSans.ttf");
+    assert!(fonts::stray_note(&dir.join("tahoma.ttf"), "Tahoma", String::new).is_none());
+    assert!(fonts::stray_note(dejavu, "DejaVu Sans", String::new).is_none());
 }

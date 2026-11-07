@@ -536,9 +536,7 @@ mod tests {
     /// above are left out: the Home check box reads the user's name.
     #[test]
     fn the_desktop_icons_group_pins_its_pixels_in_every_look() {
-        if !reprisekit::text::test_tahoma() {
-            return;
-        }
+        reprisekit::pins::fonts();
         use reprisekit::controls::form;
         use reprisekit::interface::Interface;
         fn fnv(c: &Canvas) -> u64 {
@@ -637,9 +635,7 @@ mod tests {
     /// The Use for row with all desktops picked, with a desktop picked, and greyed with one desktop.
     #[test]
     fn the_use_for_row_pins_its_pixels_in_every_look() {
-        if !reprisekit::text::test_tahoma() {
-            return;
-        }
+        reprisekit::pins::fonts();
         use reprisekit::controls::form;
         use reprisekit::interface::Interface;
         fn fnv(c: &Canvas) -> u64 {

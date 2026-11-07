@@ -187,9 +187,7 @@ mod tests {
     #[test]
     fn the_meter_pins_in_each_look_at_scale_1_and_2() {
         use crate::interface::Interface;
-        if !crate::text::test_tahoma() {
-            return;
-        }
+        crate::pins::fonts();
         let mut got = Vec::new();
         for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
             for scale in [1, 2] {

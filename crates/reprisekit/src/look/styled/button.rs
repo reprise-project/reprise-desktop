@@ -473,9 +473,7 @@ mod tests {
     #[test]
     fn the_label_sits_a_pixel_below_the_middle() {
         let theme = blue();
-        if !crate::text::test_tahoma() {
-            return;
-        }
+        crate::pins::fonts();
         let black = theme.colors.button_text;
         let c = button("&Cancel", NORMAL);
         let want: Vec<i32> = (7..=15).chain([17]).collect();
@@ -528,9 +526,7 @@ mod tests {
     fn a_75_px_button_shows_a_67_px_label_whole_and_clips_a_wider_one() {
         let theme = blue();
         let text = TextRenderer::load(&theme.fonts);
-        if !crate::text::test_tahoma() {
-            return;
-        }
+        crate::pins::fonts();
         let px = theme.fonts.size_px;
         let width = |l: &str| l.chars().map(|ch| text.advance(ch, false, px)).sum::<i32>();
         assert_eq!(width("Clock Settings"), 67);

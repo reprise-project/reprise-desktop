@@ -482,9 +482,7 @@ const LOZENGE_PINS: [u64; 16] = [
 
 #[test]
 fn lozenge_pins() {
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let t = text();
     let mut got = Vec::new();
     for (case, name) in CASES.iter().enumerate() {
@@ -848,9 +846,7 @@ const HALO_PINS: [u64; 24] = [
 
 #[test]
 fn halo_pins() {
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let t = text();
     let mut got = Vec::new();
     for (case, name) in HALO_CASES.iter().enumerate() {
@@ -1644,9 +1640,7 @@ const DROPLET_PINS: [u64; 24] = [
 
 #[test]
 fn droplet_pins() {
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let t = text();
     let mut got = Vec::new();
     for (case, name) in DROPLET_CASES.iter().enumerate() {
@@ -2091,9 +2085,7 @@ const WRAPPED_PILL_PINS: [u64; 6] = [
 /// Three long pills on two rows on each shape, expanded, at scale 1 and 2.
 #[test]
 fn wrapped_pill_rows_pins() {
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let t = text();
     let mut got = Vec::new();
     for shape in SHAPES {
@@ -2337,9 +2329,7 @@ const GROWN_PINS: [u64; 6] = [
 /// The crowded sheet at 200% text on each shape, expanded, at scale 1 and 2.
 #[test]
 fn grown_text_pins() {
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let t = text();
     let mut got = Vec::new();
     for shape in SHAPES {

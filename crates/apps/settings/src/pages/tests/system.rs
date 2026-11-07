@@ -194,16 +194,14 @@ fn the_program_switches_pin_their_pixels_in_every_look() {
     );
     notifypage::fill(&mut f, &programs, &s);
     let row = Rect::new(20, 272, 358, 144);
-    let Some(none) = row_pins(&f, row) else {
-        return;
-    };
+    let none = row_pins(&f, row);
     if let Some(form::Control::ListBox { list, .. }) =
         f.item_mut(notifypage::PROGRAMS).map(|i| &mut i.control)
     {
         list.selected = Some(1);
     }
     notifypage::fill(&mut f, &programs, &s);
-    let chat = row_pins(&f, row).unwrap();
+    let chat = row_pins(&f, row);
     assert_eq!(
         [none, chat],
         [
@@ -517,9 +515,7 @@ fn clear_greys_while_it_runs_then_says_what_went() {
 /// The Clear row idle, clearing and done, Classic at 100%; every result line fits.
 #[test]
 fn the_clear_row_pixels() {
-    if !reprisekit::text::test_tahoma() {
-        return;
-    }
+    reprisekit::pins::fonts();
     let theme = Theme {
         access_keys: true,
         ..Theme::default()
@@ -757,9 +753,7 @@ fn the_backup_page_geometry() {
 /// Every line of the Backup page fits its rect in the dialog font.
 #[test]
 fn the_backup_page_lines_fit() {
-    if !reprisekit::text::test_tahoma() {
-        return;
-    }
+    reprisekit::pins::fonts();
     let text = TextRenderer::load(&FontConfig::default());
     let px = Theme::default().fonts.size_px;
     let page = backup(Area::MIN);
@@ -1497,9 +1491,7 @@ fn a_blank_locker_leaves_the_lock_radio_lit() {
 /// The page with one client, selected, and the defaults in its settings, Classic at 100%.
 #[test]
 fn the_remote_desktop_page_pixels() {
-    if !reprisekit::text::test_tahoma() {
-        return;
-    }
+    reprisekit::pins::fonts();
     let theme = Theme {
         access_keys: true,
         ..Theme::default()

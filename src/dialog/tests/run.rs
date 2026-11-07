@@ -40,7 +40,7 @@ fn runs_browse_keeps_3_px_off_the_screens_edge_on_starts_side() {
 #[test]
 fn a_long_run_command_scrolls_instead_of_overflowing_the_field() {
     let theme = Theme::default();
-    let Some(text) = tahoma() else { return };
+    let text = tahoma();
     let px = theme.fonts.size_px;
     let mut d = Dialog::run(&[]);
     let long = "/usr/local/bin/some-very-long-command --with --plenty --of --flags";
@@ -107,7 +107,7 @@ fn a_long_run_command_scrolls_instead_of_overflowing_the_field() {
 fn run_drop_button_has_the_combo_bevel() {
     let theme = Theme::default();
     let cs = &theme.colors;
-    let Some(text) = tahoma() else { return };
+    let text = tahoma();
     let d = Dialog::run(&history());
     let l = DialogLayout::compute(&theme, &text, &d);
     let c = draw(
@@ -147,7 +147,7 @@ fn run_drop_button_has_the_combo_bevel() {
 #[test]
 fn run_highlights_its_command_13_rows_tall_from_6_px_in() {
     let theme = Theme::default();
-    let Some(text) = tahoma() else { return };
+    let text = tahoma();
     let d = Dialog::run(&history());
     let l = DialogLayout::compute(&theme, &text, &d);
     let c = draw(
@@ -232,7 +232,7 @@ fn the_wheel_scrolls_run_s_open_list_wherever_the_pointer_is() {
 
 #[test]
 fn a_readers_focus_on_a_button_moves_the_keyboard_without_pressing_it() {
-    let Some(text) = tahoma() else { return };
+    let text = tahoma();
     let theme = Theme::default();
     let px = theme.fonts.size_px;
     let middle = |r: Rect| (r.x + r.width / 2, r.y + r.height / 2);
@@ -805,7 +805,7 @@ fn combo_layout_and_clicks() {
 #[test]
 fn combo_draws_help_button_selection_and_list() {
     let theme = Theme::default();
-    let Some(text) = tahoma() else { return };
+    let text = tahoma();
     let cs = &theme.colors;
     let mut d = Dialog::run(&history());
     let l = DialogLayout::compute(&theme, &text, &d);

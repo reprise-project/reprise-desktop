@@ -349,7 +349,7 @@ fn change_default_chooser_only_sets_the_default() {
 #[test]
 fn open_with_chooser_draws_group_list_and_selection() {
     let theme = Theme::default();
-    let Some(text) = tahoma() else { return };
+    let text = tahoma();
     let d = chooser();
     let l = DialogLayout::compute(&theme, &text, &d);
     let c = draw(
@@ -392,7 +392,7 @@ fn open_with_chooser_draws_group_list_and_selection() {
 #[test]
 fn browse_is_a_frame_around_the_file_dialog() {
     let theme = Theme::default();
-    let Some(text) = tahoma() else { return };
+    let text = tahoma();
     let dir = std::env::temp_dir().join(format!("reprise-browse-frame-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -427,7 +427,7 @@ fn a_grown_browse_dialog_frames_its_bigger_client() {
     use reprisekit::controls::filedlg::{CLIENT, Hit};
     let (dw, dh) = (168, 55);
     let theme = Theme::default();
-    let Some(text) = tahoma() else { return };
+    let text = tahoma();
     let dir = std::env::temp_dir().join(format!("reprise-browse-grown-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
