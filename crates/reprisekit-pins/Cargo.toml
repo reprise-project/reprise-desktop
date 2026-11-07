@@ -35,7 +35,7 @@ syn = { version = "3", features = ["extra-traits", "fold", "full", "visit-mut"] 
 tinystr = { version = "0.8", features = ["zerovec"] }
 uuid = { version = "1", features = ["serde", "v4"] }
 zerocopy = { version = "0.8", features = ["derive"] }
-zeroize = { workspace = true, features = ["serde", "zeroize_derive"] }
+zeroize = { workspace = true, features = ["derive", "serde", "zeroize_derive"] }
 zerovec = { version = "0.11", features = ["derive", "yoke"] }
 
 # Host side (proc macros, build scripts) resolves features separately.
