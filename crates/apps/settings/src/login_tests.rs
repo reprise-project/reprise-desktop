@@ -508,7 +508,7 @@ fn under_reprise_login_the_allow_box_is_a_note() {
 }
 
 #[test]
-fn the_per_user_port_is_greyed_under_reprise_login() {
+fn the_per_user_port_is_hidden_under_reprise_login() {
     let dir = tmp("managed-port");
     let mut a = app(&dir);
     remote_read(
@@ -521,12 +521,9 @@ fn the_per_user_port_is_greyed_under_reprise_login() {
     assert!(lit(remote(&a), "port"));
     remote_read(&mut a, managed());
     let page = remote(&a);
-    assert!(!lit(page, "port"));
-    assert!(!lit(page, "port_label"));
-    assert_eq!(
-        label(page, "allow_note"),
-        "The login manager's port is used."
-    );
+    for id in ["port", "port_label", "allow_note"] {
+        assert!(page.item(id).is_none(), "{id} is not on the page");
+    }
 }
 
 #[test]
