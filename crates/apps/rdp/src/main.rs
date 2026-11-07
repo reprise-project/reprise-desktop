@@ -117,7 +117,11 @@ fn main() -> ExitCode {
     let (regenerate, regenerate_rx) = mpsc::unbounded_channel();
     // The portal's lock mode reads the ConsoleLayout of the name's owner, and refuses a hand-over
     // server that does not own it.
-    let claim = control::spawn(status_rx, disconnect, regenerate, hand_over.is_some());
+    let server = match hand_over {
+        Some(_) => control::Server::HandOver,
+        None => control::Server::Own(regenerate),
+    };
+    let claim = control::spawn(status_rx, disconnect, server);
     if let Some(listener) = &hand_over {
         let claimed =
             (claim.recv()).unwrap_or_else(|_| Err(zbus::Error::Failure("no thread".into())));
