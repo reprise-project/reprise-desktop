@@ -339,15 +339,9 @@ pub fn worker_main(mode: Mode, mut sock: UnixStream) -> i32 {
         log::warn!("worker: login refused: {e}");
         return fail(&mut sock, kind, &text);
     }
-    let account = match pam.user().map(|name| users::lookup(&name)) {
-        Some(Ok(Some(account))) => account,
-        _ => {
-            return fail(
-                &mut sock,
-                ErrorKind::Failed,
-                &format!("{user} has no passwd entry"),
-            );
-        }
+    let account = match account_of(pam.user(), users::lookup) {
+        Ok(account) => account,
+        Err(text) => return fail(&mut sock, ErrorKind::Failed, &text),
     };
     let authenticated = FromWorker::Authenticated {
         user: account.name.clone(),
@@ -395,6 +389,21 @@ fn refusal(
             let text = e.text.clone();
             (e, ErrorKind::Account, text)
         }),
+    }
+}
+
+/// The account PAM let in, by the name PAM resolved; the error names only that name.
+fn account_of(
+    pam_user: Option<String>,
+    lookup: impl FnOnce(&str) -> io::Result<Option<PasswdEntry>>,
+) -> Result<PasswdEntry, String> {
+    let Some(name) = pam_user else {
+        return Err("PAM names no user".into());
+    };
+    match lookup(&name) {
+        Ok(Some(account)) => Ok(account),
+        Ok(None) => Err(format!("{name} has no passwd entry")),
+        Err(e) => Err(format!("looking up {name}: {e}")),
     }
 }
 
@@ -1128,6 +1137,16 @@ mod tests {
             refusal(Err(err(7, "Authentication failure")), || unreachable!()).expect("refused");
         assert_eq!((kind, text.as_str()), (ErrorKind::Auth, AUTH_FAILED));
         assert!(refusal(Ok(()), || Ok(())).is_none());
+    }
+
+    #[test]
+    fn a_missing_account_is_named_by_pams_user_only() {
+        let err = account_of(Some("anna".into()), |_| Ok(None)).unwrap_err();
+        assert_eq!(err, "anna has no passwd entry");
+        assert_eq!(
+            account_of(None, |_| unreachable!()).unwrap_err(),
+            "PAM names no user"
+        );
     }
 
     #[test]
