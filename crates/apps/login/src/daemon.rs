@@ -144,6 +144,8 @@ pub struct LogindSession {
     pub seat: String,
     pub class: String,
     pub service: String,
+    /// logind's `State` is `closing`: its leader is gone and its scope may still run.
+    pub closing: bool,
 }
 
 /// What the backend reads fresh for each `Hello`, each start and each power request.
@@ -373,15 +375,21 @@ impl Daemon {
             let vt = vt::pick(&self.sessions.taken_vts(), world.kernel_open);
             match (listed, vt) {
                 (true, Some(vt)) => {
-                    let worker = self.next_worker();
-                    out.push(Effect::Spawn {
-                        worker,
-                        job: self.job(Mode::Autologin, &user),
-                    });
-                    self.end_leftovers(world, &user, out);
-                    send_start(worker, vt, out);
-                    self.autologin = Some(Autologin { worker, user, vt });
-                    return;
+                    let mut ends = Vec::new();
+                    if let Some((id, _)) = self.take_leftovers(world, &user, &mut ends) {
+                        out.extend(ends);
+                        out.push(Effect::LockSession(id));
+                    } else {
+                        let worker = self.next_worker();
+                        out.push(Effect::Spawn {
+                            worker,
+                            job: self.job(Mode::Autologin, &user),
+                        });
+                        out.extend(ends);
+                        send_start(worker, vt, out);
+                        self.autologin = Some(Autologin { worker, user, vt });
+                        return;
+                    }
                 }
                 (true, None) => out.push(Effect::Log(
                     Level::Warn,
@@ -609,29 +617,65 @@ impl Daemon {
                 let Some(worker) = c.worker else {
                     return self.fail_conversation(ErrorKind::Failed, WORKER_ENDED.into(), out);
                 };
+                let user = c.user.clone();
+                if let Some((id, vt)) = self.take_leftovers(world, &user, out) {
+                    out.push(Effect::Kill(worker));
+                    let phase = self.unlock(id.clone(), out);
+                    let c = self.conversation.as_mut().expect("conversation");
+                    c.worker = None;
+                    c.route = Route::Resume { id, vt };
+                    c.phase = phase;
+                    return;
+                }
                 let Some(vt) = vt::pick(&self.sessions.taken_vts(), world.kernel_open) else {
                     return self.fail_conversation(ErrorKind::Failed, NO_VT.into(), out);
                 };
-                c.phase = Phase::Starting { vt };
-                let user = c.user.clone();
-                self.end_leftovers(world, &user, out);
+                self.conversation.as_mut().expect("conversation").phase = Phase::Starting { vt };
                 send_start(worker, vt, out);
             }
         }
     }
 
-    /// Ends `user`'s sessions of a login service that logind lists and the table does not
-    /// hold, such as one left closing by a dead worker, so a new one never runs beside them.
-    fn end_leftovers(&self, world: &World, user: &str, out: &mut Vec<Effect>) {
+    /// `user`'s sessions of a login service that logind lists and the table does not hold. A
+    /// closing one (a dead worker's) is stopped, so no new one runs beside it; a live one on
+    /// seat0 is entered in the table and returned with its VT.
+    fn take_leftovers(
+        &mut self,
+        world: &World,
+        user: &str,
+        out: &mut Vec<Effect>,
+    ) -> Option<(String, u16)> {
+        let mut live = None;
         for s in &world.login_sessions {
-            if s.user == user && user_service(&s.service) && self.sessions.by_id(&s.id).is_none() {
+            if s.user != user || !user_service(&s.service) || self.sessions.by_id(&s.id).is_some() {
+                continue;
+            }
+            if s.closing {
                 out.push(Effect::Log(
                     Level::Info,
                     format!("ending {user}'s leftover session {} before a new one", s.id),
                 ));
                 out.push(Effect::StopSession(s.id.clone()));
+            } else if live.is_none() && s.seat == "seat0" && s.class == "user" {
+                live = Some(s.clone());
             }
         }
+        let s = live?;
+        out.push(Effect::Log(
+            Level::Info,
+            format!(
+                "{user}'s session {} was not in the table; taking it in",
+                s.id
+            ),
+        ));
+        self.sessions.insert(SessionEntry {
+            id: s.id.clone(),
+            user: s.user,
+            uid: s.uid,
+            vt: s.vt,
+            started: None,
+        });
+        Some((s.id, s.vt))
     }
 
     fn worker_message(

@@ -387,11 +387,8 @@ impl Runtime {
     async fn read_world(&self) -> World {
         let (user_sessions, login_sessions) = match self.logind.listed().await {
             Ok(found) => {
-                let open = found
-                    .iter()
-                    .filter(|(s, closing)| s.class == "user" && !closing);
-                let count = open.count() as u32;
-                (count, found.into_iter().map(|(s, _)| s).collect())
+                let open = found.iter().filter(|s| s.class == "user" && !s.closing);
+                (open.count() as u32, found)
             }
             Err(e) => {
                 // Counted as one, so power stays refused while logind can't say.
@@ -1028,6 +1025,7 @@ mod tests {
             seat: "seat0".into(),
             class: "greeter".into(),
             service: Mode::Greeter.service().into(),
+            closing: false,
         };
         let world = World {
             users: Vec::new(),

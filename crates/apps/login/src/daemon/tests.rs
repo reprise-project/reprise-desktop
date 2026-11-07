@@ -38,7 +38,12 @@ fn logind(id: &str, user: &str, uid: u32, vt: u16, class: &str, service: &str) -
         seat: "seat0".into(),
         class: class.into(),
         service: service.into(),
+        closing: false,
     }
+}
+
+fn closing(s: LogindSession) -> LogindSession {
+    LogindSession { closing: true, ..s }
 }
 
 fn anna_on_7() -> LogindSession {
@@ -1660,7 +1665,7 @@ fn the_console_on_vt_1_while_autologin_starts_brings_no_login_screen() {
 }
 
 #[test]
-fn a_login_first_ends_its_users_sessions_the_table_does_not_hold() {
+fn a_login_first_ends_its_users_closing_sessions_the_table_does_not_hold() {
     let ends = || {
         vec![
             Effect::Log(
@@ -1672,15 +1677,49 @@ fn a_login_first_ends_its_users_sessions_the_table_does_not_hold() {
     };
     let mut run = Run::booted();
     run.world.login_sessions = vec![
-        logind("c9", "anna", 1000, 8, "user", "reprise-login"),
-        logind("c8", "bert", 1001, 9, "user", "reprise-login"),
-        logind("c7", "anna", 1000, 0, "user", "sshd"),
+        closing(logind("c9", "anna", 1000, 8, "user", "reprise-login")),
+        closing(logind("c8", "bert", 1001, 9, "user", "reprise-login")),
+        closing(logind("c7", "anna", 1000, 0, "user", "sshd")),
     ];
     assert_eq!(run.greeter(create("anna")), spawn(2, Mode::Login, "anna"));
     run.worker(2, authed("anna", 1000));
     let mut expected = ends();
     expected.extend(start_on(2, 7));
     assert_eq!(run.greeter(GreeterRequest::StartSession), expected);
+
+    let config = LoginConfig {
+        autologin_user: Some("anna".into()),
+        ..LoginConfig::default()
+    };
+    let mut run = Run::new(config, Remembered::default());
+    run.world.login_sessions = vec![closing(logind(
+        "c9",
+        "anna",
+        1000,
+        8,
+        "user",
+        "reprise-login-autologin",
+    ))];
+    let started = run.start();
+    assert_eq!(started[1..3], ends()[..], "{started:?}");
+    assert!(matches!(started[3], Effect::ToWorker { .. }), "{started:?}");
+}
+
+#[test]
+fn a_live_session_the_table_missed_is_adopted_and_never_stopped() {
+    let stops = |e: &[Effect]| e.iter().any(|e| matches!(e, Effect::StopSession(_)));
+    let mut run = Run::booted();
+    run.world.login_sessions = vec![logind("c9", "anna", 1000, 8, "user", "reprise-login")];
+    run.greeter(create("anna"));
+    run.worker(2, authed("anna", 1000));
+    let effects = run.greeter(GreeterRequest::StartSession);
+    assert!(!stops(&effects), "{effects:?}");
+    assert!(effects.contains(&Effect::Kill(WorkerId(2))), "{effects:?}");
+    assert!(
+        effects.contains(&Effect::UnlockSession("c9".into())),
+        "anna's login resumes c9: {effects:?}"
+    );
+    assert_eq!(run.greeting().users[0].note, Some(Note::LoggedOn));
 
     let config = LoginConfig {
         autologin_user: Some("anna".into()),
@@ -1696,6 +1735,9 @@ fn a_login_first_ends_its_users_sessions_the_table_does_not_hold() {
         "reprise-login-autologin",
     )];
     let started = run.start();
-    assert_eq!(started[1..3], ends()[..], "{started:?}");
-    assert!(matches!(started[3], Effect::ToWorker { .. }), "{started:?}");
+    assert!(!stops(&started), "{started:?}");
+    assert!(
+        started.ends_with(&greeter_spawn(1)),
+        "no autologin beside c9: {started:?}"
+    );
 }
