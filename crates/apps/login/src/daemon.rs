@@ -920,10 +920,7 @@ impl Daemon {
         if told {
             out.push(Effect::Reply(GreeterReply::Success));
         }
-        if self.remembered.last_user.as_ref() != Some(&user) {
-            self.remembered.last_user = Some(user);
-            out.push(Effect::Remember(self.remembered.clone()));
-        }
+        self.remember_user(user, out);
         self.runs.reset();
         if told {
             self.greeter_leaves();
@@ -1248,6 +1245,7 @@ impl Daemon {
         let Some(Conversation {
             route: Route::Resume { id, vt },
             greeter,
+            user,
             ..
         }) = self.conversation.take()
         else {
@@ -1265,6 +1263,15 @@ impl Daemon {
         if self.greeter_runs(greeter) {
             out.push(Effect::Reply(GreeterReply::Success));
             self.greeter_leaves();
+        }
+        self.remember_user(user, out);
+    }
+
+    /// The login screen picks `user` next.
+    fn remember_user(&mut self, user: String, out: &mut Vec<Effect>) {
+        if self.remembered.last_user.as_ref() != Some(&user) {
+            self.remembered.last_user = Some(user);
+            out.push(Effect::Remember(self.remembered.clone()));
         }
     }
 
