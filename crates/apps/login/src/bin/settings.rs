@@ -1,18 +1,20 @@
-//! `pkexec reprise-login-settings`: reads the whole machine settings file as TOML on stdin and
-//! replaces `MACHINE_CONFIG` with it. Exit 0 is applied, 2 is refused with one reason per line on
-//! stderr, 1 is any other failure.
+//! `pkexec reprise-login-settings`: replaces `MACHINE_CONFIG` with the TOML on stdin. Exit 0 is
+//! applied, 2 is refused with one reason per line on stderr, 1 is any other failure.
 
 use std::ffi::CString;
 use std::io::Read as _;
 use std::path::Path;
 use std::process::{Command, ExitCode};
 
-use reprise_login::machinewrite::{self, MAX_INPUT};
+use reprise_login::machinewrite::{self, Error, MAX_INPUT};
 use repriselogin::machine::MACHINE_CONFIG;
 
 const UNIT: &str = "reprise-login.service";
+const SYSTEMCTL: &str = "/usr/bin/systemctl";
 
 fn main() -> ExitCode {
+    // SAFETY: umask has no preconditions. pkexec passes on the caller's umask.
+    unsafe { libc::umask(0o022) };
     // SAFETY: geteuid has no preconditions.
     if unsafe { libc::geteuid() } != 0 {
         eprintln!("reprise-login-settings runs as root, through pkexec");
@@ -34,11 +36,18 @@ fn main() -> ExitCode {
         eprintln!("the settings are not UTF-8");
         return ExitCode::from(2);
     };
-    if let Err(warnings) = machinewrite::apply(&input, Path::new(MACHINE_CONFIG)) {
-        for w in warnings {
-            eprintln!("{}", machinewrite::one_line(&w));
+    match machinewrite::apply(&input, Path::new(MACHINE_CONFIG)) {
+        Ok(()) => {}
+        Err(Error::Invalid(warnings)) => {
+            for w in warnings {
+                eprintln!("{}", machinewrite::one_line(&w));
+            }
+            return ExitCode::from(2);
         }
-        return ExitCode::from(2);
+        Err(Error::Io(e)) => {
+            eprintln!("{MACHINE_CONFIG}: {e}");
+            return ExitCode::from(1);
+        }
     }
     let who = match std::env::var("PKEXEC_UID") {
         Ok(uid) => format!("uid {uid}"),
@@ -48,7 +57,7 @@ fn main() -> ExitCode {
         "{who} changed the machine settings in {MACHINE_CONFIG}"
     ));
     if active() {
-        match Command::new("systemctl").args(["reload", UNIT]).status() {
+        match Command::new(SYSTEMCTL).args(["reload", UNIT]).status() {
             Ok(s) if s.success() => {}
             Ok(s) => eprintln!("warning: systemctl reload {UNIT}: {s}"),
             Err(e) => eprintln!("warning: systemctl reload {UNIT}: {e}"),
@@ -58,7 +67,7 @@ fn main() -> ExitCode {
 }
 
 fn active() -> bool {
-    Command::new("systemctl")
+    Command::new(SYSTEMCTL)
         .args(["is-active", "--quiet", UNIT])
         .status()
         .is_ok_and(|s| s.success())

@@ -1,8 +1,8 @@
 //! Writes the machine settings for `reprise-login-settings`.
 
-use std::fs::{File, OpenOptions, Permissions};
+use std::fs::{DirBuilder, File, OpenOptions, Permissions};
 use std::io::{self, Write as _};
-use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
+use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _, PermissionsExt as _};
 use std::path::Path;
 
 use repriselogin::machine::MachineConfig;
@@ -10,14 +10,22 @@ use repriselogin::machine::MachineConfig;
 /// The longest settings text the helper reads, in bytes.
 pub const MAX_INPUT: usize = 16 * 1024;
 
-/// Validates `input` and replaces `path` with its settings, or returns every warning and leaves
-/// `path` untouched.
-pub fn apply(input: &str, path: &Path) -> Result<(), Vec<String>> {
+/// Why [`apply`] failed.
+#[derive(Debug)]
+pub enum Error {
+    /// Every warning the input raised.
+    Invalid(Vec<String>),
+    Io(io::Error),
+}
+
+/// Validates `input` and atomically replaces `path` with its settings. Invalid input leaves `path`
+/// untouched.
+pub fn apply(input: &str, path: &Path) -> Result<(), Error> {
     let (config, warnings) = MachineConfig::parse(input);
     if !warnings.is_empty() {
-        return Err(warnings);
+        return Err(Error::Invalid(warnings));
     }
-    write(&config.to_toml(), path).map_err(|e| vec![format!("{}: {e}", path.display())])
+    write(&config.to_toml(), path).map_err(Error::Io)
 }
 
 /// `warning` on one line: a TOML parse error's heading and message, without its source snippet.
@@ -34,20 +42,34 @@ pub fn one_line(warning: &str) -> String {
 
 fn write(text: &str, path: &Path) -> io::Result<()> {
     let dir = path.parent().unwrap_or(Path::new("."));
-    std::fs::create_dir_all(dir)?;
+    if !dir.exists() {
+        DirBuilder::new().recursive(true).mode(0o755).create(dir)?;
+        // The modes here and below are masked by the umask, which pkexec passes on from the caller.
+        std::fs::set_permissions(dir, Permissions::from_mode(0o755))?;
+    }
     let mut tmp = path.as_os_str().to_owned();
     tmp.push(".tmp");
+    // unlink does not follow a planted symlink, and O_EXCL | O_NOFOLLOW refuses one planted since.
+    match std::fs::remove_file(&tmp) {
+        Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e),
+        _ => {}
+    }
     let mut file = OpenOptions::new()
         .write(true)
-        .create(true)
-        .truncate(true)
+        .create_new(true)
+        .custom_flags(libc::O_NOFOLLOW)
         .mode(0o644)
         .open(&tmp)?;
-    // The mode above is masked by the umask, which pkexec passes on from the caller.
-    file.set_permissions(Permissions::from_mode(0o644))?;
-    file.write_all(text.as_bytes())?;
-    file.sync_all()?;
-    std::fs::rename(&tmp, path)?;
+    let replaced = (|| {
+        file.set_permissions(Permissions::from_mode(0o644))?;
+        file.write_all(text.as_bytes())?;
+        file.sync_all()?;
+        std::fs::rename(&tmp, path)
+    })();
+    if let Err(e) = replaced {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
     File::open(dir)?.sync_all()
 }
 
@@ -81,12 +103,102 @@ mod tests {
     }
 
     #[test]
+    fn a_planted_tmp_symlink_is_replaced_and_its_target_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let elsewhere = tempfile::tempdir().unwrap();
+        let victim = elsewhere.path().join("victim");
+        std::fs::write(&victim, "victim").unwrap();
+        std::fs::set_permissions(&victim, Permissions::from_mode(0o600)).unwrap();
+        let path = dir.path().join("login.toml");
+        std::os::unix::fs::symlink(&victim, dir.path().join("login.toml.tmp")).unwrap();
+        apply("[login]\nshow_users = false\n", &path).unwrap();
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "victim");
+        let mode = std::fs::metadata(&victim).unwrap().permissions().mode();
+        assert_eq!(mode & 0o7777, 0o600);
+        assert!(
+            !MachineConfig::parse(&std::fs::read_to_string(&path).unwrap())
+                .0
+                .login
+                .show_users
+        );
+        assert!(std::fs::symlink_metadata(dir.path().join("login.toml.tmp")).is_err());
+    }
+
+    const CHILD_DIR: &str = "REPRISE_MACHINEWRITE_DIR";
+
+    #[test]
+    #[ignore = "run by apply_sets_the_modes_whatever_the_umask"]
+    fn apply_in_a_child() {
+        let dir = std::env::var_os(CHILD_DIR).unwrap();
+        apply(
+            "[login]\nshow_users = false\n",
+            &Path::new(&dir).join("login.toml"),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn apply_sets_the_modes_whatever_the_umask() {
+        use std::os::unix::process::CommandExt as _;
+        for umask in [0, 0o077] {
+            let root = tempfile::tempdir().unwrap();
+            let dir = root.path().join("reprise");
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+            child
+                .args([
+                    "--exact",
+                    "machinewrite::tests::apply_in_a_child",
+                    "--ignored",
+                ])
+                .env(CHILD_DIR, &dir);
+            // SAFETY: umask is async-signal-safe and touches only the child.
+            unsafe {
+                child.pre_exec(move || {
+                    libc::umask(umask);
+                    Ok(())
+                });
+            }
+            let out = child.output().unwrap();
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stdout)
+            );
+            let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o7777;
+            assert_eq!(mode(&dir), 0o755, "directory under umask {umask:o}");
+            assert_eq!(
+                mode(&dir.join("login.toml")),
+                0o644,
+                "file under umask {umask:o}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_failed_rename_is_an_io_error_and_leaves_no_tmp() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("login.toml");
+        std::fs::create_dir(&path).unwrap();
+        std::fs::write(path.join("keep"), "").unwrap();
+        let err = apply("[login]\nshow_users = false\n", &path).unwrap_err();
+        assert!(matches!(err, Error::Io(_)), "{err:?}");
+        let mut names: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        names.sort();
+        assert_eq!(names, ["login.toml"]);
+    }
+
+    #[test]
     fn apply_refuses_invalid_settings_and_keeps_the_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("login.toml");
         let before = "[remote_desktop]\nport = 3390\n";
         std::fs::write(&path, before).unwrap();
-        let warnings = apply("[remote_desktop]\nport = 0\n", &path).unwrap_err();
+        let Err(Error::Invalid(warnings)) = apply("[remote_desktop]\nport = 0\n", &path) else {
+            panic!("port 0 is refused as invalid");
+        };
         assert_eq!(warnings.len(), 1, "{warnings:?}");
         assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
     }
