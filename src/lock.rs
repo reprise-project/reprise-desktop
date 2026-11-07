@@ -57,23 +57,22 @@ pub enum LockButton {
     SwitchUser,
 }
 
-/// The dialog's state. `input` is the password typed so far; it is zeroed
-/// whenever it is cleared. `verifying` gates every edit while the password
-/// helper is busy. `prompt` is a further PAM prompt (a one-time code) the
-/// field answers in place of the password. `finger` is the fingerprint
-/// conversation's standing prompt (its last PAM info text) while it runs,
-/// shown when there is no message. `caps_lock` mirrors the keyboard's;
-/// `layout` is the active keyboard layout's short name while more than one
-/// is configured. `switch_user` shows the Switch User button.
+/// The dialog's state.
 #[derive(Default)]
 pub struct LockState {
+    /// The password typed so far, zeroed whenever it is cleared.
     pub input: String,
     pub message: Option<String>,
+    /// Gates every edit while the password helper is busy.
     pub verifying: bool,
+    /// A further PAM prompt (a one-time code) the field answers in place of the password.
     pub prompt: Option<Prompt>,
+    /// The fingerprint conversation's last PAM info text while it runs, shown with no message.
     pub finger: Option<String>,
     pub caps_lock: bool,
+    /// The active keyboard layout's short name while more than one is configured.
     pub layout: Option<String>,
+    /// Shows the Switch User button.
     pub switch_user: bool,
 }
 

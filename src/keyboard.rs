@@ -487,10 +487,8 @@ impl State {
         }
     }
 
-    /// Start repeating `code`, just pressed, if it went to a field route, the lock dialog or the login
-    /// screen, no input method took it, and xkb says it repeats. Enter and Escape act once; the lock
-    /// dialog and the login screen repeat only Backspace, so no password character is kept for the
-    /// repeat.
+    /// Start repeating `code`, just pressed, if it went to a field route, the lock or the login
+    /// screen, no input method took it, and xkb says it repeats. Enter and Escape act once.
     fn arm_field_repeat(
         &mut self,
         code: Keycode,
@@ -506,6 +504,7 @@ impl State {
             return;
         }
         let once = [keys::KEY_Return, keys::KEY_KP_Enter, keys::KEY_Escape];
+        // The lock and the login screen repeat only Backspace: no password character is kept.
         if press.syms.iter().any(|s| once.contains(s))
             || (lock && !press.syms.contains(&keys::KEY_BackSpace))
             || (!lock && route != KeyRoute::Rename && key.is_none())
