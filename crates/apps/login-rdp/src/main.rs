@@ -24,7 +24,7 @@ use tokio::sync::oneshot;
 use tokio::task::AbortHandle;
 use tokio::time::Instant;
 
-use accept::{Ctx, Refused};
+use accept::Ctx;
 use limits::{Limits, MAX_PREAUTH, PREAUTH_PER_IP, Permit};
 
 const RECONNECT: Duration = Duration::from_secs(1);
@@ -212,7 +212,7 @@ async fn connection(arrival: Arrival, ctx: Rc<Ctx>, conns: Conns, limits: Rc<Ref
     let pending = match accept::to_client_info(tcp, conn, &ctx).await {
         Ok(pending) => pending,
         Err(refused) => {
-            log_refused(peer, &refused);
+            log::info!("{peer}: refused: {refused}");
             return;
         }
     };
@@ -248,13 +248,6 @@ async fn connection(arrival: Arrival, ctx: Rc<Ctx>, conns: Conns, limits: Rc<Ref
         }
         Ok(FrontEvent::Accepted { .. }) => log::info!("{peer}: logged on"),
         Ok(_) | Err(_) => {}
-    }
-}
-
-fn log_refused(peer: SocketAddr, refused: &Refused) {
-    match refused {
-        Refused::Io(_) | Refused::Deadline => log::debug!("{peer}: refused: {refused}"),
-        _ => log::info!("{peer}: refused: {refused}"),
     }
 }
 
