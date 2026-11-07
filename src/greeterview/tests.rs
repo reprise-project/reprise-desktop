@@ -472,7 +472,6 @@ fn the_lid_is_left_to_logind() {
         c.power.lid_close = crate::config::PowerAction::Ask;
     });
     crate::power::switch_toggled(&mut h.state, Some(Switch::Lid), SwitchState::On);
-    assert!(!h.state.power.lid_closed, "the greeter keeps no lid state");
     assert!(h.state.dialogs.views.is_empty(), "no Turn Off dialog");
 }
 

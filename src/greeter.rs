@@ -49,6 +49,7 @@ fn run(link: GreeterLink, greeting: Greeting, socket: bool) -> Result<bool, Box<
     crate::backend::init(&mut state)?;
     crate::idle::setup(&mut state);
     hold_power_keys();
+    crate::power::setup_greeter(&mut state);
     crate::greeterview::setup(&mut state, greeting);
     state.greeter_link = Some(link.tx()?);
     link.register(&event_loop.handle())?;
