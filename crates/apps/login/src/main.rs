@@ -48,9 +48,12 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
     match args.as_slice() {
         [_] => daemon(),
-        [_, flag, mode, user] if flag == "--worker" => {
+        [_, flag, mode, user, autologin_user @ ..]
+            if flag == "--worker" && autologin_user.len() <= 1 =>
+        {
             reprisebus::journal::init_logger(reprisebus::journal::PROGRAM_FILTER);
-            std::process::exit(worker(mode, user));
+            let autologin_user = autologin_user.first().map(String::as_str);
+            std::process::exit(worker(mode, user, autologin_user));
         }
         [_, flag] if flag == "--help" || flag == "-h" => {
             print!("{USAGE}");
@@ -63,7 +66,7 @@ fn main() -> ExitCode {
     }
 }
 
-fn worker(mode: &str, user: &str) -> i32 {
+fn worker(mode: &str, user: &str, autologin_user: Option<&str>) -> i32 {
     let Some(mode) = Mode::parse(mode) else {
         eprintln!("reprise-login: unknown worker mode {mode:?}");
         return 2;
@@ -81,7 +84,7 @@ fn worker(mode: &str, user: &str) -> i32 {
     }
     // SAFETY: fd 3 is an open socket nothing else in this process owns.
     let sock = unsafe { UnixStream::from_raw_fd(WORKER_FD) };
-    worker_main(mode, user, sock)
+    worker_main(mode, user, autologin_user, sock)
 }
 
 fn daemon() -> ExitCode {
@@ -309,6 +312,7 @@ impl Runtime {
         let fresh = matches!(
             input,
             Input::GreeterRequest(
+                _,
                 GreeterRequest::Hello | GreeterRequest::StartSession | GreeterRequest::Power { .. }
             )
         );
@@ -374,7 +378,11 @@ impl Runtime {
 
     fn run(&mut self, effect: Effect) {
         match effect {
-            Effect::Reply(reply) => self.gate.borrow().reply(&reply),
+            Effect::Reply(reply) => {
+                if let Some(greeter) = self.gate.borrow_mut().reply(&reply) {
+                    let _ = (self.events).send(Event::Input(Input::GreeterGone(greeter)));
+                }
+            }
             Effect::Spawn { worker, job } => {
                 if job.mode == Mode::Greeter {
                     self.gate.borrow_mut().greeter_spawned(worker);
@@ -516,7 +524,7 @@ impl Workers {
         }
     }
 
-    /// Runs `program --worker <mode> <user>` with a socket on fd 3. A worker that cannot
+    /// Runs `program --worker <mode> <user> [<autologin_user>]` with a socket on fd 3. A worker that cannot
     /// start is reported as exited.
     fn spawn(&mut self, id: WorkerId, job: &Job) {
         let started = start(&self.program, job).and_then(|(child, stream)| {
@@ -537,8 +545,8 @@ impl Workers {
             }
         };
         let (rd, wr) = stream.into_split();
-        let (tx, rx) = mpsc::unbounded_channel();
-        tokio::task::spawn_local(ipc::write_frames(wr, rx));
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        tokio::task::spawn_local(ipc::write_frames(wr, async move || rx.recv().await));
         let reader = tokio::task::spawn_local(read_worker(id, rd, self.events.clone()));
         self.running.insert(
             id,
@@ -655,7 +663,8 @@ impl Workers {
     }
 }
 
-/// Forks `program --worker <mode> <user>` with the child's end of a socket pair on fd 3.
+/// Forks `program --worker <mode> <user> [<autologin_user>]` with the child's end of a socket
+/// pair on fd 3.
 fn start(program: &Path, job: &Job) -> io::Result<(Child, UnixStream)> {
     let (ours, theirs) = UnixStream::pair()?;
     let fd = theirs.as_raw_fd();
@@ -663,6 +672,7 @@ fn start(program: &Path, job: &Job) -> io::Result<(Child, UnixStream)> {
     cmd.arg("--worker")
         .arg(job.mode.as_arg())
         .arg(&job.user)
+        .args(&job.autologin_user)
         .stdin(Stdio::null());
     // SAFETY: the closure runs in the child between fork and exec and calls only dup2 and
     // fcntl, which are async-signal-safe.
@@ -720,6 +730,7 @@ mod tests {
         Job {
             mode: Mode::Login,
             user: user.into(),
+            autologin_user: None,
         }
     }
 

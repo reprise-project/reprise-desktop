@@ -56,6 +56,7 @@ fn spawn(w: u32, mode: Mode, user: &str) -> Vec<Effect> {
         job: Job {
             mode,
             user: user.into(),
+            autologin_user: None,
         },
     }]
 }
@@ -189,8 +190,17 @@ impl Run {
         self.d.handle(self.now, &self.world, input)
     }
 
+    /// A request from the running greeter, or from worker 1 with none running.
     fn greeter(&mut self, request: GreeterRequest) -> Vec<Effect> {
-        self.on(Input::GreeterRequest(request))
+        self.on(Input::GreeterRequest(self.greeter_worker(), request))
+    }
+
+    fn greeter_gone(&mut self) -> Vec<Effect> {
+        self.on(Input::GreeterGone(self.greeter_worker()))
+    }
+
+    fn greeter_worker(&self) -> WorkerId {
+        self.d.greeter.as_ref().map_or(GREETER, |g| g.worker)
     }
 
     fn worker(&mut self, w: u32, msg: FromWorker) -> Vec<Effect> {
@@ -264,6 +274,7 @@ fn boot_with_autologin_starts_that_user_on_vt_7_without_a_greeter() {
                 job: Job {
                     mode: Mode::Autologin,
                     user: "anna".into(),
+                    autologin_user: Some("anna".into()),
                 },
             },
             Effect::ToWorker {
@@ -628,14 +639,14 @@ fn greeter_gone_mid_conversation_kills_the_worker() {
     run.greeter(create("anna"));
     run.worker(2, secret("Password:"));
     assert_eq!(
-        run.on(Input::GreeterGone),
+        run.greeter_gone(),
         vec![Effect::Kill(WorkerId(2)), Effect::Kill(GREETER)]
     );
     assert_eq!(run.worker(2, secret("Password:")), vec![]);
     assert_eq!(run.exited(2), vec![]);
     assert_eq!(run.exited(1), greeter_spawn(3));
     assert_eq!(run.greeter(create("anna")), spawn(4, Mode::Login, "anna"));
-    run.on(Input::GreeterGone);
+    run.greeter_gone();
     assert_eq!(run.exited(3), greeter_spawn(5));
     assert_eq!(
         run.exited(5)[0],
@@ -1010,7 +1021,7 @@ fn a_start_finishing_after_its_greeter_died_tells_the_next_greeter_nothing() {
     run.greeter(create("bert"));
     run.worker(2, authed("bert", 1001));
     assert_eq!(run.greeter(GreeterRequest::StartSession), start_on(2, 8));
-    assert_eq!(run.on(Input::GreeterGone), vec![Effect::Kill(GREETER)]);
+    assert_eq!(run.greeter_gone(), vec![Effect::Kill(GREETER)]);
     assert_eq!(
         run.exited(1),
         vec![],
@@ -1302,4 +1313,16 @@ fn greeter_requests_while_no_greeter_runs_are_ignored() {
     run.start();
     assert_eq!(run.greeter(create("bert")), vec![]);
     assert_eq!(run.greeter(GreeterRequest::Hello), vec![]);
+}
+
+#[test]
+fn a_greeters_gone_arriving_after_its_exit_spares_the_next_greeter() {
+    let mut run = Run::booted();
+    assert_eq!(run.exited(1), greeter_spawn(2));
+    assert_eq!(run.on(Input::GreeterGone(GREETER)), vec![]);
+    assert_eq!(
+        run.on(Input::GreeterRequest(GREETER, create("anna"))),
+        vec![]
+    );
+    assert_eq!(run.greeter(create("anna")), spawn(3, Mode::Login, "anna"));
 }

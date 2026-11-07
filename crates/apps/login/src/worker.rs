@@ -59,10 +59,14 @@ impl Mode {
             .find(|m| m.as_arg() == arg)
     }
 
-    /// Whether a worker of this mode may run for `user`. The greeter's stack admits anyone,
-    /// so it runs only for the greeter's account.
-    pub fn runs_for(self, user: &str) -> bool {
-        self != Mode::Greeter || user == GREETER_USER
+    /// Whether a worker of this mode may run for `user`. The greeter's and autologin's stacks
+    /// admit anyone, so they run only for the greeter's account and `autologin_user`.
+    pub fn runs_for(self, user: &str, autologin_user: Option<&str>) -> bool {
+        match self {
+            Mode::Greeter => user == GREETER_USER,
+            Mode::Autologin => autologin_user == Some(user),
+            Mode::Login | Mode::Reauth => true,
+        }
     }
 
     /// Greeter and autologin stacks have no prompting module, so only these relay prompts.
@@ -265,8 +269,13 @@ pub fn find_program(name: &str, path: &str) -> Option<PathBuf> {
 }
 
 /// Runs one login for `user` and returns the worker's exit status.
-pub fn worker_main(mode: Mode, user: &str, mut sock: UnixStream) -> i32 {
-    if !mode.runs_for(user) {
+pub fn worker_main(
+    mode: Mode,
+    user: &str,
+    autologin_user: Option<&str>,
+    mut sock: UnixStream,
+) -> i32 {
+    if !mode.runs_for(user, autologin_user) {
         let text = format!("a {} worker does not run for {user}", mode.as_arg());
         return fail(&mut sock, ErrorKind::Refused, &text);
     }
@@ -922,12 +931,19 @@ mod tests {
 
     #[test]
     fn a_greeter_worker_runs_only_for_the_greeter_account() {
-        assert!(Mode::Greeter.runs_for(GREETER_USER));
-        assert!(!Mode::Greeter.runs_for("anna"));
-        assert!(!Mode::Greeter.runs_for("root"));
-        for m in [Mode::Login, Mode::Reauth, Mode::Autologin] {
-            assert!(m.runs_for("anna"));
+        assert!(Mode::Greeter.runs_for(GREETER_USER, None));
+        assert!(!Mode::Greeter.runs_for("anna", None));
+        assert!(!Mode::Greeter.runs_for("root", Some("root")));
+        for m in [Mode::Login, Mode::Reauth] {
+            assert!(m.runs_for("anna", None));
         }
+    }
+
+    #[test]
+    fn an_autologin_worker_runs_only_for_the_configured_user() {
+        assert!(Mode::Autologin.runs_for("anna", Some("anna")));
+        assert!(!Mode::Autologin.runs_for("root", Some("anna")));
+        assert!(!Mode::Autologin.runs_for("anna", None));
     }
 
     #[test]

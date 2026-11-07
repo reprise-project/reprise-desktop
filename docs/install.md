@@ -98,14 +98,14 @@ session on a VT of its own, from VT 7 up, through the user's login shell.
 users, and a user to log in automatically
 ([configuration](configuration.md#login-manager)).
 
-If the login screen fails three times in a row, reprise-login switches to a
-text login on tty2. Ctrl+Alt+F2 reaches one at any time. systemd restarts
-reprise-login itself when it exits, but starts it at most twice in 30 s,
-manual restarts included. Past that it leaves it stopped and starts a text
-login on tty1. Once the cause is fixed, log in on tty2 (Ctrl+Alt+F2) and
-run `sudo systemctl reset-failed reprise-login` and `sudo systemctl start
-reprise-login` to bring the login screen back. Run them from tty2, not tty1:
-starting reprise-login stops the text login on tty1, and the shell in it.
+Ctrl+Alt+F2 reaches a text login on tty2 at any time, and reprise-login
+switches to it when the login screen fails three times in a row. systemd
+restarts reprise-login itself when it exits, but starts it at most twice in
+30 s, manual restarts included. Past that it leaves it stopped and starts a
+text login on tty1. Once the cause is fixed, log in on the Ctrl+Alt+F2 text
+login and run `sudo systemctl reset-failed reprise-login` and `sudo
+systemctl start reprise-login` to bring the login screen back. Not on tty1:
+starting reprise-login stops the text login there, and the shell in it.
 
 The logs:
 
