@@ -1,10 +1,10 @@
 //! One connection from the TCP accept to its Client Info PDU: X.224, TLS over a `Cork`, MCS and
 //! the channel joins, each acceptor step recorded for the server that takes over.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::fmt;
 use std::io;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
@@ -23,7 +23,7 @@ use ironrdp_pdu::nego::SecurityProtocol;
 use ironrdp_pdu::rdp::ClientInfoPdu;
 use ironrdp_pdu::x224::X224;
 use ironrdp_tokio::bytes::{Bytes, BytesMut};
-use ironrdp_tokio::{FramedWrite, NetworkClient, TokioFramed};
+use ironrdp_tokio::{FramedWrite, LocalTokioFramed, NetworkClient, TokioFramed};
 use repriselogin::account::{nt_hash, same_hash};
 use repriselogin::front::{FrontEvent, FrontRequest, NlaUser, Secret};
 use repriselogin::handover::Step;
@@ -311,6 +311,7 @@ pub async fn to_client_info(
     heard: &mut UnboundedReceiver<FrontEvent>,
 ) -> Result<Pending, Refused> {
     let peer = tcp.peer_addr().map_err(|e| Refused::Io(e.kind()))?;
+    let attempt = Cell::default();
     let link = Link {
         ctx,
         conn,
@@ -318,7 +319,7 @@ pub async fn to_client_info(
         accepted,
         heard,
         asked: false,
-        attempt: None,
+        attempt: &attempt,
     };
     tokio::time::timeout(HANDSHAKE, accept(tcp, link))
         .await
@@ -335,13 +336,13 @@ struct Link<'a> {
     heard: &'a mut UnboundedReceiver<FrontEvent>,
     asked: bool,
     /// The password check counted as failed until the delegated password is listed.
-    attempt: Option<Attempt>,
+    attempt: &'a Cell<Option<Attempt>>,
 }
 
 impl Drop for Link<'_> {
     fn drop(&mut self) {
         // A failed check may have started a pause, which is logged once.
-        if self.attempt.is_some()
+        if self.attempt.take().is_some()
             && let Ok(mut throttle) = self.ctx.nla_throttle.try_borrow_mut()
         {
             throttle.paused();
@@ -481,26 +482,36 @@ async fn credssp(
     steps: &mut Vec<Step>,
     link: &mut Link<'_>,
 ) -> Result<String, Refused> {
-    let attempt = link.ctx.nla_throttle.borrow_mut().check(link.peer.ip());
-    link.attempt = Some(attempt.map_err(Refused::Throttled)?);
-    let host = &link.ctx.host;
-    acceptor.set_credssp_users(credssp_users(&link.ctx.nla_users.borrow(), host));
-    let public_key = link.ctx.identity.public_key();
+    let ctx = link.ctx;
+    (ctx.nla_throttle.borrow_mut().check(link.peer.ip())).map_err(Refused::Throttled)?;
+    acceptor.set_credssp_users(credssp_users(&ctx.nla_users.borrow(), &ctx.host));
+    let public_key = ctx.identity.public_key();
+    let (tls, leftover) = framed.get_inner_mut();
+    let proofs = Proofs {
+        tls,
+        tail: Vec::new(),
+        counted: false,
+        throttle: &ctx.nla_throttle,
+        ip: link.peer.ip(),
+        attempt: link.attempt,
+    };
+    let mut client = LocalTokioFramed::new_with_leftover(proofs, std::mem::take(leftover));
     let mut verify = Verify {
         link: &mut *link,
         user: None,
         refused: None,
     };
     let done = ironrdp_acceptor::accept_credssp_with(
-        framed,
+        &mut client,
         acceptor,
         &mut NoNetwork,
-        ServerName::new(host.as_str()),
+        ServerName::new(ctx.host.as_str()),
         public_key,
         None,
         &mut verify,
     )
     .await;
+    *leftover = client.into_inner().1;
     let (user, refused) = (verify.user, verify.refused);
     if let Some(refused) = refused {
         return Err(refused);
@@ -571,6 +582,64 @@ impl Link<'_> {
             }
         }
     }
+}
+
+/// NTLM's signature and AUTHENTICATE's message type, which sspi reads before the proof.
+const AUTHENTICATE: &[u8] = b"NTLMSSP\0\x03\0\0\0";
+
+/// The TLS stream while CredSSP runs. A failed password counts from the client's NTLM
+/// AUTHENTICATE, the first message with a password proof; a client that stops before counts none.
+struct Proofs<'a> {
+    tls: &'a mut ClientTls,
+    /// The end of the bytes read so far, for a header split across reads.
+    tail: Vec<u8>,
+    counted: bool,
+    throttle: &'a RefCell<NlaThrottle>,
+    ip: IpAddr,
+    attempt: &'a Cell<Option<Attempt>>,
+}
+
+impl AsyncRead for Proofs<'_> {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        let this = self.get_mut();
+        let start = buf.filled().len();
+        ready!(Pin::new(&mut *this.tls).poll_read(cx, buf))?;
+        if !this.counted && authenticate_in(&mut this.tail, &buf.filled()[start..]) {
+            this.counted = true;
+            (this.attempt).set(Some(this.throttle.borrow_mut().failed(this.ip)));
+        }
+        Poll::Ready(Ok(()))
+    }
+}
+
+impl AsyncWrite for Proofs<'_> {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        data: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut *self.get_mut().tls).poll_write(cx, data)
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut *self.get_mut().tls).poll_flush(cx)
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut *self.get_mut().tls).poll_shutdown(cx)
+    }
+}
+
+/// Whether `read`, after the `tail` of the reads before it, holds an NTLM AUTHENTICATE header.
+fn authenticate_in(tail: &mut Vec<u8>, read: &[u8]) -> bool {
+    tail.extend_from_slice(read);
+    let found = tail.windows(AUTHENTICATE.len()).any(|w| w == AUTHENTICATE);
+    tail.drain(..tail.len().saturating_sub(AUTHENTICATE.len() - 1));
+    found
 }
 
 /// Called before HYBRID_EX's result, which is success only once reprise-login verifies the
