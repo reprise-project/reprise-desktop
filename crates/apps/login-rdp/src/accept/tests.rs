@@ -18,7 +18,7 @@ use tokio_rustls::rustls::crypto::aws_lc_rs;
 use tokio_rustls::rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use tokio_rustls::rustls::{ClientConfig, DigitallySignedStruct, SignatureScheme};
 
-fn ctx() -> Ctx {
+pub(crate) fn ctx() -> Ctx {
     let dir = tempfile::tempdir().unwrap();
     Ctx {
         identity: reprisetls::cert::load_or_create(dir.path()).unwrap(),
@@ -135,7 +135,7 @@ fn client_config(user: &str, password: &str) -> Config {
 }
 
 /// A client that logs on as `user` over TLS and then waits for the licence the front never sends.
-async fn client(addr: SocketAddr, user: String, password: String) {
+pub(crate) async fn client(addr: SocketAddr, user: String, password: String) {
     let tcp = TcpStream::connect(addr).await.unwrap();
     let local = tcp.local_addr().unwrap();
     let mut framed = TokioFramed::new(tcp);
