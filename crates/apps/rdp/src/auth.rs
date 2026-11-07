@@ -235,10 +235,10 @@ impl PasswordCheck {
 
     async fn check(&self, credentials: &Credentials) -> io::Result<bool> {
         let peer = self.peer;
-        let name = account(&credentials.username);
-        if name != self.user {
+        // The typed name stays out of the log: it may be a password typed into the name field.
+        if account(&credentials.username) != self.user {
             log::warn!(
-                "{peer}: refused a login as {name:?}; only {} can log in",
+                "{peer}: refused a login as another user; only {} can log in",
                 self.user
             );
             return Ok(false);
@@ -615,6 +615,21 @@ pub(crate) mod tests {
             CredentialDecision::Reject
         );
         assert!(!dir.path().join("args").exists(), "the helper must not run");
+    }
+
+    #[tokio::test]
+    async fn a_refused_user_name_stays_out_of_the_log() {
+        crate::listen::tests::capture_log();
+        let dir = tempfile::tempdir().unwrap();
+        let typed = "hunter2-typed-as-a-name";
+        assert_eq!(
+            validate(dir.path(), typed, "secret").await,
+            CredentialDecision::Reject
+        );
+        assert!(crate::listen::tests::logged(
+            "192.0.2.1:50000: refused a login as another user; only alice can log in"
+        ));
+        assert!(!crate::listen::tests::logged_containing(typed));
     }
 
     #[tokio::test]

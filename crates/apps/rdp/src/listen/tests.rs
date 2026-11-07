@@ -587,6 +587,10 @@ pub(crate) fn logged(line: &str) -> bool {
     times_logged(line) > 0
 }
 
+pub(crate) fn logged_containing(part: &str) -> bool {
+    LINES.lock().unwrap().iter().any(|l| l.contains(part))
+}
+
 pub(crate) fn times_logged(line: &str) -> usize {
     LINES.lock().unwrap().iter().filter(|l| *l == line).count()
 }
