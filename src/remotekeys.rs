@@ -41,6 +41,11 @@ impl KeysState {
         self.objects.iter_mut().find(|k| k.id == id)
     }
 
+    #[cfg(test)]
+    pub fn exists(&self, id: KeysId) -> bool {
+        self.objects.iter().any(|k| k.id == id)
+    }
+
     /// Forget every object and the keys it holds, releasing none: its later requests do nothing.
     pub fn revoke_all(&mut self) {
         self.objects.clear();
