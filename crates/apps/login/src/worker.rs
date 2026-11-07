@@ -367,7 +367,6 @@ struct Opened<P, H> {
     pam: P,
     account: PasswdEntry,
     greeter_socket: bool,
-    vt: u16,
     /// Held open for the session's life, so logind's autovt never starts a getty on it.
     tty: H,
     groups: Vec<libc::gid_t>,
@@ -465,7 +464,6 @@ fn login<P: LoginPam, V: Vts>(
             pam,
             account,
             greeter_socket,
-            vt,
             tty,
             groups,
         }),
@@ -603,20 +601,10 @@ fn run_session(session: Opened<Pam, File>, mode: Mode, sock: &mut UnixStream) ->
         mut pam,
         account,
         greeter_socket,
-        vt,
         tty,
         groups,
     } = session;
-    let tty_path = format!("/dev/tty{vt}");
-    let ran = run_program(
-        &mut pam,
-        mode,
-        &account,
-        greeter_socket,
-        &tty_path,
-        groups,
-        sock,
-    );
+    let ran = run_program(&mut pam, mode, &account, greeter_socket, groups, sock);
     let closed = pam.close_session();
     let deleted = Pam::delete_cred(&mut pam);
     drop(tty);
@@ -636,7 +624,6 @@ fn run_program(
     mode: Mode,
     account: &PasswdEntry,
     greeter_socket: bool,
-    tty_path: &str,
     groups: Vec<libc::gid_t>,
     sock: &mut UnixStream,
 ) -> Result<bool, String> {
@@ -650,7 +637,7 @@ fn run_program(
     };
     let env = session_env(account, mode, pam_env);
     let argv = session_argv(account, mode, greeter_socket);
-    let launch = Launch::new(account, mode, argv, tty_path, env, groups)?;
+    let launch = Launch::new(account, mode, argv, env, groups)?;
     let waited = block_session_signals();
     // Checked with the signals blocked: a later stop stays pending for `wait_for`.
     if stopped() {
@@ -925,7 +912,6 @@ struct Launch {
     uid: libc::uid_t,
     gid: libc::gid_t,
     home: CString,
-    tty: CString,
     no_new_privs: bool,
     journal: libc::sockaddr_un,
     journal_header: Vec<u8>,
@@ -936,7 +922,6 @@ impl Launch {
         account: &PasswdEntry,
         mode: Mode,
         argv: Vec<String>,
-        tty_path: &str,
         env: Vec<(String, String)>,
         groups: Vec<libc::gid_t>,
     ) -> Result<Launch, String> {
@@ -968,7 +953,6 @@ impl Launch {
             uid: account.uid,
             gid: account.gid,
             home: CString::new(account.home.as_os_str().as_bytes()).map_err(|_| nul("home"))?,
-            tty: CString::new(tty_path).map_err(|_| nul("tty"))?,
             no_new_privs: mode == Mode::Greeter,
             journal: journal_address(),
             journal_header: format!("{JOURNAL_IDENTIFIER}\n\n6\n1\n0\n0\n0\n").into_bytes(),
@@ -1001,18 +985,8 @@ impl Launch {
             libc::sigprocmask(libc::SIG_SETMASK, &empty, std::ptr::null_mut());
             libc::dup2(LOG_FD, 2);
 
-            if libc::setsid() < 0 {
-                fail(b"reprise-login: setsid failed\n");
-            }
-            let tty = libc::open(self.tty.as_ptr(), libc::O_RDWR);
-            if tty < 0 {
-                fail(b"reprise-login: cannot open the session's tty\n");
-            }
-            if libc::ioctl(tty, libc::TIOCSCTTY, 0) < 0 {
-                fail(b"reprise-login: cannot take the tty as controlling terminal\n");
-            }
-            if libc::dup2(tty, 0) < 0 {
-                fail(b"reprise-login: cannot make the tty stdin\n");
+            if let Err(msg) = own_session() {
+                fail(msg);
             }
             if libc::syscall(libc::SYS_close_range, 3, u32::MAX, 0) < 0 {
                 fail(b"reprise-login: cannot close the worker's files\n");
@@ -1098,6 +1072,26 @@ impl Launch {
             None
         }
     }
+}
+
+/// Makes the forked session child a session of its own with `/dev/null` as stdin. It gets no
+/// controlling terminal: through `/dev/tty` its VT would let any of its processes VT_ACTIVATE
+/// and take the monitor from the seat's active session.
+///
+/// # Safety
+/// Called only in a child right after `fork`; it makes only async-signal-safe calls.
+unsafe fn own_session() -> Result<(), &'static [u8]> {
+    // SAFETY: setsid, open and dup2 are async-signal-safe and take no pointer but a literal.
+    unsafe {
+        if libc::setsid() < 0 {
+            return Err(b"reprise-login: setsid failed\n");
+        }
+        let null = libc::open(c"/dev/null".as_ptr(), libc::O_RDONLY);
+        if null < 0 || libc::dup2(null, 0) < 0 {
+            return Err(b"reprise-login: cannot make /dev/null stdin\n");
+        }
+    }
+    Ok(())
 }
 
 /// NULL-terminated pointers into `strings`, for `execve`.
