@@ -443,4 +443,4 @@ pub fn verdict_conn(event: &FrontEvent) -> Option<u64> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
