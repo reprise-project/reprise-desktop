@@ -1036,31 +1036,46 @@ async fn a_stop_locks_with_every_client_connected_then_ends_them() {
         .await;
 }
 
-#[test]
-fn a_stop_tells_the_client_the_server_ended_it_and_a_kick_that_the_user_did() {
-    let code = |kick| match told_for(kick) {
-        ErrorInfo::ProtocolIndependentCode(code) => code,
-        other => panic!("{other:?}"),
-    };
-    assert_eq!(
-        code(Kick::Stopped),
-        ProtocolIndependentCode::RpcInitiatedDisconnect
-    );
-    for kick in [Kick::Asked, Kick::PortChanged] {
-        assert_eq!(
-            code(kick),
-            ProtocolIndependentCode::RpcInitiatedDisconnectByuser
-        );
+/// Queues a session end as the server stops, after its accept loop has read its last request.
+struct EndsWithTheStop(Rc<RefCell<Option<mpsc::UnboundedSender<Request>>>>);
+
+impl Leave for EndsWithTheStop {
+    async fn left(&self, _: End) {}
+    async fn stopping(&self) {
+        let ending = self.0.borrow_mut().take().unwrap();
+        ending.send(Request::SessionEnding).unwrap();
     }
 }
 
-#[test]
-fn a_replaced_client_is_told_another_connection_took_over() {
-    let ErrorInfo::ProtocolIndependentCode(code) = told_for(Kick::Replaced) else {
-        panic!("{:?}", told_for(Kick::Replaced));
-    };
-    assert_eq!(code, ProtocolIndependentCode::DisconnectedByOtherconnection);
-    assert_eq!(code as u32, 5, "ERRINFO_DISCONNECTED_BY_OTHERCONNECTION");
+#[tokio::test]
+async fn a_session_end_queued_as_the_server_stops_tells_every_client_it_logged_off() {
+    capture_log();
+    let local = LocalSet::new();
+    local
+        .run_until(async {
+            let link = Rc::new(RefCell::new(None));
+            let config = RemoteDesktop {
+                port: 0,
+                max_viewers: 4,
+                ..RemoteDesktop::default()
+            };
+            let leave = |_| EndsWithTheStop(link.clone());
+            let mut s = start_leaving(&local, config, Admitted, leave).await;
+            *link.borrow_mut() = Some(s.disconnect.clone());
+            let [(mut a, first), (mut b, second)] = two_listed(&mut s).await;
+            s.stop.take().unwrap().send(()).unwrap();
+            assert!(closed_soon(&mut a).await, "the first client is ended");
+            assert!(closed_soon(&mut b).await, "the second client is ended");
+            let served = tokio::time::timeout(Duration::from_secs(5), s.served).await;
+            assert!(served.is_ok(), "the server returns once both closed");
+            for peer in [first, second] {
+                assert!(
+                    logged(&format!("{peer}: disconnected; the session logged off")),
+                    "{peer} is told the session logged off"
+                );
+            }
+        })
+        .await;
 }
 
 #[tokio::test(start_paused = true)]
@@ -1140,10 +1155,6 @@ async fn a_console_unlock_ending_lock_mode_tells_the_client_another_connection_t
     let ended = tokio::time::timeout(TOLD * 2, ended).await;
     let ended = ended.expect("the connection ends once told");
     assert_eq!(told.get(), Some(TOOK_OVER));
-    assert_eq!(
-        TOOK_OVER,
-        ErrorInfo::ProtocolIndependentCode(ProtocolIndependentCode::DisconnectedByOtherconnection)
-    );
     assert!(ended.is_none());
     assert_eq!(
         console.cut_when_asked.get(),

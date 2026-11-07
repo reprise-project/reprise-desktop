@@ -16,6 +16,8 @@ pub enum Kick {
     Stopped,
     /// Another connection logged in with `second_client = "replace"`.
     Replaced,
+    /// The session is ending.
+    LoggedOff,
 }
 
 /// Why [`Viewers::join`] turned a connection away.
@@ -198,6 +200,19 @@ mod tests {
         v.kick_all(Kick::PortChanged);
         assert_eq!(a.try_recv(), Ok(Kick::PortChanged));
         assert_eq!(b.try_recv(), Ok(Kick::PortChanged));
+    }
+
+    #[test]
+    fn a_viewer_kicked_once_is_not_kicked_again_by_the_stop() {
+        let mut v = Viewers::default();
+        let (_, mut a) = v.join(peer("10.0.0.1:1"), 4).unwrap();
+        let (_, mut b) = v.join(peer("10.0.0.2:1"), 4).unwrap();
+        v.kick_all(Kick::LoggedOff);
+        v.kick_all(Kick::Stopped);
+        for kicked in [&mut a, &mut b] {
+            assert_eq!(kicked.try_recv(), Ok(Kick::LoggedOff));
+            assert_eq!(kicked.try_recv(), Err(TryRecvError::Closed));
+        }
     }
 
     #[test]

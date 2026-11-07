@@ -3,6 +3,8 @@
 //! kernel TLS. It reports who is connected.
 
 #[cfg(test)]
+mod reason_tests;
+#[cfg(test)]
 pub(crate) mod tests;
 
 use crate::auth::{Login, Logins};
@@ -235,12 +237,7 @@ pub async fn serve<D, I, L>(
     loop {
         tokio::select! {
             () = &mut stop => break,
-            Some(request) = server.disconnect.recv() => match request {
-                Request::All => shared.viewers.borrow_mut().kick_all(Kick::Asked),
-                Request::Client(address, reply) => {
-                    let _ = reply.send(shared.viewers.borrow_mut().kick(&address, Kick::Asked));
-                }
-            },
+            Some(request) = server.disconnect.recv() => answer(&shared, request),
             arrival = intake.next() => {
                 let (incoming, peer, admission) = match arrival {
                     Arrival::Connection { stream, peer, admission } => {
@@ -324,9 +321,24 @@ pub async fn serve<D, I, L>(
     }
     log::info!("stopping");
     shared.leave.stopping().await;
+    // A session end queued as the stop came still tells its clients they logged off.
+    while let Ok(request) = server.disconnect.try_recv() {
+        answer(&shared, request);
+    }
     shared.viewers.borrow_mut().kick_all(Kick::Stopped);
     drop(alive);
     let _ = all_closed.recv().await;
+}
+
+fn answer<L>(shared: &Shared<L>, request: Request) {
+    let mut viewers = shared.viewers.borrow_mut();
+    match request {
+        Request::All => viewers.kick_all(Kick::Asked),
+        Request::SessionEnding => viewers.kick_all(Kick::LoggedOff),
+        Request::Client(address, reply) => {
+            let _ = reply.send(viewers.kick(&address, Kick::Asked));
+        }
+    }
 }
 
 /// A connection to serve: one accepted here, under the server's TLS, or one handed over past its
@@ -504,6 +516,7 @@ async fn run<L: Leave + 'static, C: Login, S>(
                 Kick::PortChanged => log::info!("{peer}: disconnected; the port changed"),
                 Kick::Stopped => log::info!("{peer}: disconnected; the server is stopping"),
                 Kick::Replaced => log::info!("{peer}: disconnected; another client logged in"),
+                Kick::LoggedOff => log::info!("{peer}: disconnected; the session logged off"),
             }
             shared.forget(id, peer);
             tell_and_end(connection.as_mut(), told_for(kick), |why| drop(told.disconnect(why))).await;
@@ -582,6 +595,7 @@ fn told_for(kick: Kick) -> ErrorInfo {
         Kick::Asked | Kick::PortChanged => ProtocolIndependentCode::RpcInitiatedDisconnectByuser,
         Kick::Stopped => ProtocolIndependentCode::RpcInitiatedDisconnect,
         Kick::Replaced => ProtocolIndependentCode::DisconnectedByOtherconnection,
+        Kick::LoggedOff => ProtocolIndependentCode::LogoffByUser,
     };
     ErrorInfo::ProtocolIndependentCode(code)
 }
