@@ -1,5 +1,7 @@
 #%PAM-1.0
 # The login screen's own session, as the reprise-greeter system user, which has no password.
+# Only the reprise-greeter account passes, whichever program runs this stack.
+auth      requisite pam_succeed_if.so user = reprise-greeter quiet_success
 auth      required  pam_env.so
 auth      required  pam_permit.so
 account   required  pam_permit.so
