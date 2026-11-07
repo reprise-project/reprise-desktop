@@ -86,12 +86,22 @@ enum Report {
     Resumed,
     Lock,
     Unlock,
+    /// The session's `State` read `closing`: its leader is gone.
+    Closing,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Hint {
     Locked(bool),
     Idle(bool),
+}
+
+/// What the loop asks of its logind session object.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Call {
+    Hint(Hint),
+    /// Read `State`; a `closing` session is reported.
+    State,
 }
 
 /// The hints logind last heard, so each goes out only on change. Both start false, as for a new session.
@@ -119,7 +129,7 @@ pub struct PowerState {
     cover_wait: Option<CoverWait<Output>>,
     cover_timer: Option<RegistrationToken>,
     hints: SessionHints,
-    hint_tx: Option<async_channel::Sender<Hint>>,
+    calls: Option<async_channel::Sender<Call>>,
     pub lid_closed: bool,
     /// Runs the lid action `LID_GRACE` after arming if the lid is still closed with no external output.
     lid_timer: Option<RegistrationToken>,
@@ -134,7 +144,7 @@ pub struct PowerState {
 }
 
 /// Runs on the D-Bus thread until the bus goes away.
-async fn run(reports: Sender<Report>, hints: async_channel::Receiver<Hint>) {
+async fn run(reports: Sender<Report>, calls: async_channel::Receiver<Call>) {
     let conn = match Connection::system().await {
         Ok(c) => c,
         Err(e) => {
@@ -167,9 +177,10 @@ async fn run(reports: Sender<Report>, hints: async_channel::Receiver<Hint>) {
             }
         }
         match session_path(&login1).await {
-            Ok(path) => match Proxy::new(&conn, LOGIN1_NAME, path, LOGIN1_SESSION).await {
+            // Uncached: logind sends no change signal for `State`.
+            Ok(path) => match session_proxy(&conn, path).await {
                 Ok(session) => {
-                    let watch = watch_session(conn.clone(), session, hints, reports.clone());
+                    let watch = watch_session(conn.clone(), session, calls, reports.clone());
                     std::thread::Builder::new()
                         .name("power-session".into())
                         .spawn(move || zbus::block_on(watch))
@@ -241,12 +252,22 @@ async fn session_path(login1: &Proxy<'_>) -> zbus::Result<OwnedObjectPath> {
     reply.body().deserialize()
 }
 
+async fn session_proxy(conn: &Connection, path: OwnedObjectPath) -> zbus::Result<Proxy<'static>> {
+    zbus::proxy::Builder::new(conn)
+        .destination(LOGIN1_NAME)
+        .path(path)
+        .interface(LOGIN1_SESSION)
+        .cache_properties(zbus::proxy::CacheProperties::No)
+        .build()
+        .await
+}
+
 /// Only logind's own broadcasts get through (see `reprisebus::signals`), so a
 /// spoofed `Unlock` cannot end the lock.
 async fn watch_session(
     conn: Connection,
     session: Proxy<'static>,
-    hints: async_channel::Receiver<Hint>,
+    calls: async_channel::Receiver<Call>,
     reports: Sender<Report>,
 ) {
     use futures_util::stream::StreamExt;
@@ -274,10 +295,20 @@ async fn watch_session(
         }
     };
     let setter = async {
-        while let Ok(h) = hints.recv().await {
-            let (method, v) = match h {
-                Hint::Locked(v) => ("SetLockedHint", v),
-                Hint::Idle(v) => ("SetIdleHint", v),
+        while let Ok(c) = calls.recv().await {
+            let (method, v) = match c {
+                Call::Hint(Hint::Locked(v)) => ("SetLockedHint", v),
+                Call::Hint(Hint::Idle(v)) => ("SetIdleHint", v),
+                Call::State => {
+                    match session.get_property::<String>("State").await {
+                        Ok(s) if s == "closing" => {
+                            let _ = reports.send(Report::Closing);
+                        }
+                        Ok(_) => {}
+                        Err(e) => log::debug!("power: reading the session's State: {e}"),
+                    }
+                    continue;
+                }
             };
             if let Err(e) = session.call_method(method, &(v,)).await {
                 log::warn!("power: {method}({v}) failed: {e}");
@@ -367,6 +398,7 @@ fn report(state: &mut State, r: Report) {
             log::info!("power: logind ends the lock");
             crate::lockview::unlock(state);
         }
+        Report::Closing => crate::loginlink::session_closing(state),
         Report::OnBattery(v) => {
             if state.power.on_battery != v {
                 log::info!("power: {}", if v { "on battery" } else { "plugged in" });
@@ -444,10 +476,25 @@ fn stop_cover_wait(state: &mut State) {
 pub fn hint(state: &mut State, h: Hint) {
     let p = &mut state.power;
     if p.hints.changed(h)
-        && let Some(tx) = &p.hint_tx
+        && let Some(tx) = &p.calls
     {
-        let _ = tx.try_send(h);
+        let _ = tx.try_send(Call::Hint(h));
     }
+}
+
+/// Asks logind for the session's `State`; a `closing` one comes back as `Report::Closing`.
+pub fn check_closing(state: &mut State) {
+    if let Some(tx) = &state.power.calls {
+        let _ = tx.try_send(Call::State);
+    }
+}
+
+/// The calls the loop makes from now on, for a test to read.
+#[cfg(test)]
+pub fn capture_calls(state: &mut State) -> async_channel::Receiver<Call> {
+    let (tx, rx) = async_channel::unbounded();
+    state.power.calls = Some(tx);
+    rx
 }
 
 /// A sleep still waiting for the cover goes on, since there is none left to wait for.
@@ -526,12 +573,12 @@ pub fn setup(state: &mut State) {
         log::warn!("power: no report channel ({}); always plugged in", e.error);
         return;
     }
-    let (hint_tx, hint_rx) = async_channel::unbounded::<Hint>();
+    let (calls_tx, calls_rx) = async_channel::unbounded::<Call>();
     let thread = std::thread::Builder::new()
         .name("power-dbus".into())
-        .spawn(move || zbus::block_on(run(tx, hint_rx)));
+        .spawn(move || zbus::block_on(run(tx, calls_rx)));
     if thread.is_ok() {
-        state.power.hint_tx = Some(hint_tx);
+        state.power.calls = Some(calls_tx);
     }
 }
 
