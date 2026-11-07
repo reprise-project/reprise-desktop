@@ -364,8 +364,6 @@ fn run(
     tray::setup(&mut state);
     backend::init(&mut state)?;
     loginlink::setup(&mut state);
-    let active = (state.backend.as_ref()).is_some_and(|b| b.session.is_active());
-    loginlink::born(&mut state, active);
     // After the seat is ours: a start that cannot take it never stops the scopes.
     spawn::stop_stale_scopes(
         &state.env,
@@ -373,7 +371,8 @@ fn run(
         another_session,
         after_crash,
     );
-    crash::on_start(&mut state, after_crash, locked);
+    let active = (state.backend.as_ref()).is_some_and(|b| b.session.is_active());
+    crash::on_start(&mut state, after_crash, locked, active);
     configwatch::setup(&mut state, config_stamp);
     appindex::setup(&mut state);
     iconwatch::setup(&mut state);

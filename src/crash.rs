@@ -79,13 +79,16 @@ pub fn starts_locked(after_crash: bool, was_locked: bool) -> bool {
 
 /// A start's steps once the backend is up: the lock when `starts_locked`, else a stale
 /// `screen_locked` cleared; after a crash, the notice after the first frame. `locked`: the
-/// restart was passed `--locked`.
-pub fn on_start(state: &mut State, after_crash: bool, locked: bool) {
+/// restart was passed `--locked`; `active`: the seat's state at start, for `loginlink::born`.
+/// Runs after `spawn::stop_stale_scopes`, which would stop a locker the lock starts.
+pub fn on_start(state: &mut State, after_crash: bool, locked: bool, active: bool) {
     if starts_locked(after_crash, locked || state.session.was_locked) {
         crate::lockview::lock(state);
     } else if state.session.was_locked {
         crate::state::save_screen_locked(false);
     }
+    // After the clear above, so a born lock's `screen_locked` is the last written.
+    crate::loginlink::born(state, active);
     if after_crash {
         state.handle.insert_idle(|state| {
             crate::notifyview::notice(state, "Reprise", NOTICE);
@@ -286,7 +289,7 @@ mod tests {
         let notice = |after_crash| {
             let mut h = crate::harness::Harness::new();
             h.output("TEST-1", 1024, 768);
-            on_start(&mut h.state, after_crash, false);
+            on_start(&mut h.state, after_crash, false, true);
             assert!(
                 h.state.notify.log.get(u32::MAX).is_none(),
                 "nothing before a frame"
@@ -314,7 +317,7 @@ mod tests {
             let mut h = crate::harness::Harness::new();
             h.output("TEST-1", 1024, 768);
             h.state.session.was_locked = true;
-            on_start(&mut h.state, after_crash, false);
+            on_start(&mut h.state, after_crash, false, true);
             h.state.console_locked()
         };
         assert!(start(true));
@@ -376,7 +379,7 @@ mod tests {
         let mut h = crate::harness::Harness::new();
         h.output("TEST-1", 1024, 768);
         h.state.session.was_locked = false;
-        on_start(&mut h.state, true, true);
+        on_start(&mut h.state, true, true, true);
         assert!(h.state.console_locked());
     }
 }
