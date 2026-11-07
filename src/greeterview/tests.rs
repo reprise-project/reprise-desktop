@@ -26,8 +26,7 @@ fn greeter() -> Harness {
         keysym: KEY_Delete,
         action: Action::Run,
     });
-    let mut h = Harness::with_config(config);
-    h.state.host = Host::Greeter;
+    let mut h = Harness::with_host(config, Host::Greeter);
     h.output("TEST-1", 1024, 768);
     h
 }
@@ -128,8 +127,7 @@ fn login_with(
     // Glass's wallpaper draws on a thread into the cache; the screen is what these tests read.
     config.wallpaper.image = None;
     tune(&mut config);
-    let mut h = Harness::with_config(config);
-    h.state.host = Host::Greeter;
+    let mut h = Harness::with_host(config, Host::Greeter);
     h.output("TEST-1", 1024, 768);
     let (ours, theirs) = std::os::unix::net::UnixStream::pair().unwrap();
     theirs

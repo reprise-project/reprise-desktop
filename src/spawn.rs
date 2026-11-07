@@ -2,6 +2,7 @@
 
 use crate::mutex::lock;
 use reprisebus::units::SESSION_TARGET;
+use std::collections::BTreeSet;
 use std::os::unix::process::CommandExt;
 use std::sync::Mutex;
 
@@ -11,6 +12,24 @@ use std::sync::Mutex;
 /// `xkbcomp`, which fails with `ECHILD` when children are auto-reaped. `reap_children` reaps
 /// our own pids instead.
 static CHILDREN: Mutex<Vec<(libc::pid_t, String)>> = Mutex::new(Vec::new());
+
+#[cfg(test)]
+thread_local! {
+    /// Set by [`record`]: this thread's starts by log name, run in no process.
+    static RECORDED: std::cell::RefCell<Option<Vec<String>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// From here on, this thread's starts are only recorded; [`recorded`] lists them.
+#[cfg(test)]
+pub fn record() {
+    RECORDED.set(Some(Vec::new()));
+}
+
+#[cfg(test)]
+pub fn recorded() -> Vec<String> {
+    RECORDED.with_borrow(|r| r.clone().unwrap_or_default())
+}
 
 const TERM_SIGNALS: [libc::c_int; 2] = [libc::SIGTERM, libc::SIGINT];
 
@@ -131,6 +150,9 @@ pub struct SessionEnv {
     /// The logind session a display manager started Reprise as, which ends with it. None for a
     /// TTY start or nested run.
     pub logind_session: Option<String>,
+    /// Set on the login screen: [`command`], the `spawn*` functions and the `try_spawn*` ones
+    /// refuse every launch.
+    pub refuses_programs: bool,
 }
 
 /// What the login manager and pam_systemd set that services outside our process tree still need.
@@ -170,6 +192,7 @@ impl SessionEnv {
                 .collect(),
             parent: parent_session(|k| std::env::var(k).ok().filter(|v| !v.is_empty())),
             logind_session: own_session(|k| std::env::var(k).ok().filter(|v| !v.is_empty())),
+            refuses_programs: false,
         }
     }
 
@@ -553,25 +576,39 @@ pub struct Launch {
 /// `XDG_ACTIVATION_TOKEN` and a start by key sets [`reprisebus::instance::KEYBOARD_LAUNCH_ENV`];
 /// without one both are removed so an inherited value never reaches a client.
 /// `DESKTOP_STARTUP_ID` is always removed.
-pub fn command(cmd: &str, env: &SessionEnv, launch: Option<&Launch>) -> std::process::Command {
-    let mut c = std::process::Command::new("sh");
-    c.arg("-c").arg(cmd);
-    with_session_env(&mut c, env, launch);
-    c
+/// None when `env` refuses programs.
+pub fn command(
+    cmd: &str,
+    env: &SessionEnv,
+    launch: Option<&Launch>,
+) -> Option<std::process::Command> {
+    let name = crate::session::program(cmd).unwrap_or_else(|| "sh".into());
+    command_argv(&log_name(None, &name), &"sh", &["-c", cmd], env, launch)
 }
 
+/// Program names whose refusal is already in the journal.
+static REFUSED: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
+
 /// `program` with `args` as a process of its own, no shell: a desktop entry's `Exec`
-/// (`reprisefs::apps::exec_argv`).
+/// (`reprisefs::apps::exec_argv`). [`command`] and every `spawn*` build their command here, so
+/// this is where [`SessionEnv::refuses_programs`] stops one: None, logged once per `name`.
 fn command_argv<S: AsRef<std::ffi::OsStr>>(
+    name: &str,
     program: &S,
     args: &[S],
     env: &SessionEnv,
     launch: Option<&Launch>,
-) -> std::process::Command {
+) -> Option<std::process::Command> {
+    if env.refuses_programs {
+        if lock(&REFUSED).insert(name.to_string()) {
+            log::info!("the login screen starts no programs: refused {name}");
+        }
+        return None;
+    }
     let mut c = std::process::Command::new(program);
     c.args(args);
     with_session_env(&mut c, env, launch);
-    c
+    Some(c)
 }
 
 fn with_session_env(c: &mut std::process::Command, env: &SessionEnv, launch: Option<&Launch>) {
@@ -603,11 +640,10 @@ pub fn spawn_in(cmd: &str, app: Option<&str>, env: &SessionEnv, launch: Option<&
         &crate::session::program(cmd).unwrap_or_else(|| "sh".into()),
     );
     let argv = reprisefs::scope::in_scope(&["sh", "-c", cmd], Some(&name));
-    match start(
-        command_argv(&argv[0], &argv[1..], env, launch),
-        &name,
-        Some(&name),
-    ) {
+    let Some(c) = command_argv(&name, &argv[0], &argv[1..], env, launch) else {
+        return false;
+    };
+    match start(c, &name, Some(&name)) {
         Ok(_) => true,
         Err(e) => {
             log::error!("spawn {name:?}: {e}");
@@ -644,24 +680,26 @@ pub fn spawn_argv_in<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
     }
 }
 
-/// [`spawn_argv_in`] that hands back the pid, or why the program did not start (the exec's own
-/// error, such as a missing interpreter). Waits for the exec, so a program on a hung mount blocks
-/// the caller. Without an `app` it starts unscoped.
+/// [`spawn_argv_in`] that hands back the pid, None for a refused launch, or why the program did
+/// not start (the exec's own error, such as a missing interpreter). Waits for the exec, so a
+/// program on a hung mount blocks the caller. Without an `app` it starts unscoped.
 pub fn try_spawn_argv_in<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
     argv: &[S],
     app: Option<&str>,
     dir: Option<&std::path::Path>,
     env: &SessionEnv,
     launch: Option<&Launch>,
-) -> std::io::Result<u32> {
+) -> std::io::Result<Option<u32>> {
     let what = first(argv)?.as_ref().to_string_lossy();
     let name = log_name(app, &what);
     let argv = reprisefs::scope::in_scope(argv, app);
-    let mut c = command_argv(&argv[0], &argv[1..], env, launch);
+    let Some(mut c) = command_argv(&name, &argv[0], &argv[1..], env, launch) else {
+        return Ok(None);
+    };
     if let Some(dir) = dir {
         c.current_dir(dir);
     }
-    start(c, &what, Some(&name))
+    start(c, &what, Some(&name)).map(Some)
 }
 
 /// [`try_spawn_argv_in`] in `app`'s scope without `systemd-run` in front, whose error would hide
@@ -673,15 +711,17 @@ pub fn try_spawn_held<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
     dir: Option<&std::path::Path>,
     env: &SessionEnv,
     launch: Option<&Launch>,
-) -> std::io::Result<u32> {
+) -> std::io::Result<Option<u32>> {
     let what = first(argv)?.as_ref().to_string_lossy();
     let name = log_name(Some(app), &what);
-    let mut c = command_argv(&argv[0], &argv[1..], env, launch);
+    let Some(mut c) = command_argv(&name, &argv[0], &argv[1..], env, launch) else {
+        return Ok(None);
+    };
     if let Some(dir) = dir {
         c.current_dir(dir);
     }
     reprisefs::scope::hold(&mut c, app)?;
-    start_forked(c, &what, Some(&name))
+    start_forked(c, &what, Some(&name)).map(Some)
 }
 
 fn first<S>(argv: &[S]) -> std::io::Result<&S> {
@@ -798,6 +838,13 @@ fn start_forked(
 }
 
 fn started(what: &str, spawn: impl FnOnce() -> std::io::Result<u32>) -> std::io::Result<u32> {
+    #[cfg(test)]
+    if RECORDED
+        .with_borrow_mut(|r| r.as_mut().map(|r| r.push(what.to_string())))
+        .is_some()
+    {
+        return Ok(0);
+    }
     // Held across the spawn: a child started off the loop that exits at once is listed before
     // the loop's `reap_children` can look for it. Dropping a `Child` does not reap.
     let mut children = lock(&CHILDREN);
@@ -1013,6 +1060,7 @@ mod tests {
             login: vec![("XDG_SEAT", "seat0".into())],
             parent: Vec::new(),
             logind_session: None,
+            refuses_programs: false,
         }
     }
 
@@ -1451,7 +1499,7 @@ mod tests {
             token: "tok-1".into(),
             by_key: false,
         };
-        let c = command("true", &env(None), Some(&launch));
+        let c = command("true", &env(None), Some(&launch)).unwrap();
         assert_eq!(
             env_of(&c, "XDG_ACTIVATION_TOKEN"),
             Some(Some("tok-1".into()))
@@ -1472,7 +1520,7 @@ mod tests {
                 by_key,
             };
             env_of(
-                &command("true", &env(None), Some(&launch)),
+                &command("true", &env(None), Some(&launch)).unwrap(),
                 reprisebus::instance::KEYBOARD_LAUNCH_ENV,
             )
         };
@@ -1484,7 +1532,7 @@ mod tests {
         );
         assert_eq!(
             env_of(
-                &command("true", &env(None), None),
+                &command("true", &env(None), None).unwrap(),
                 reprisebus::instance::KEYBOARD_LAUNCH_ENV
             ),
             Some(None)
@@ -1496,7 +1544,7 @@ mod tests {
         // A token inherited from the environment that launched reprise, of
         // either kind, must not leak into children: the compositor is the
         // only source of valid tokens for its own clients.
-        let c = command("true", &env(Some(":1")), None);
+        let c = command("true", &env(Some(":1")), None).unwrap();
         assert_eq!(env_of(&c, "XDG_ACTIVATION_TOKEN"), Some(None));
         assert_eq!(env_of(&c, "DESKTOP_STARTUP_ID"), Some(None));
         assert_eq!(env_of(&c, "DISPLAY"), Some(Some(":1".into())));
@@ -1507,7 +1555,7 @@ mod tests {
     /// environment.
     #[test]
     fn command_carries_the_desktop_and_colours() {
-        let c = command("true", &env(None), None);
+        let c = command("true", &env(None), None).unwrap();
         assert_eq!(
             env_of(&c, "XDG_CURRENT_DESKTOP"),
             Some(Some("reprise".into()))
@@ -1534,7 +1582,7 @@ mod tests {
     #[test]
     fn qt_takes_the_portal_under_a_dark_look_or_the_configured_theme() {
         use reprisekit::theme::{Color, ColorScheme};
-        let light = command("true", &env(None), None);
+        let light = command("true", &env(None), None).unwrap();
         assert_eq!(env_of(&light, "QT_QPA_PLATFORMTHEME"), None);
         let dark_scheme = ColorScheme {
             window: Color::rgb(32, 32, 32),
@@ -1544,7 +1592,7 @@ mod tests {
             colors: dark_scheme.to_env(),
             ..env(None)
         };
-        let dark = command("true", &e, None);
+        let dark = command("true", &e, None).unwrap();
         assert_eq!(
             env_of(&dark, "QT_QPA_PLATFORMTHEME"),
             Some(Some("xdgdesktopportal".into()))
@@ -1555,7 +1603,10 @@ mod tests {
             ..env(None)
         };
         assert_eq!(
-            env_of(&command("true", &qt6ct, None), "QT_QPA_PLATFORMTHEME"),
+            env_of(
+                &command("true", &qt6ct, None).unwrap(),
+                "QT_QPA_PLATFORMTHEME"
+            ),
             Some(Some("qt6ct".into()))
         );
         let reprise = SessionEnv {
@@ -1564,7 +1615,10 @@ mod tests {
             ..env(None)
         };
         assert_eq!(
-            env_of(&command("true", &reprise, None), "QT_QPA_PLATFORMTHEME"),
+            env_of(
+                &command("true", &reprise, None).unwrap(),
+                "QT_QPA_PLATFORMTHEME"
+            ),
             Some(Some("qt5ct".into())),
             "\"reprise\" takes the tool holding the generated palette"
         );
@@ -1603,6 +1657,7 @@ mod tests {
     #[test]
     fn detached_child_has_its_own_session_and_no_stdin() {
         let mut c = command_argv(
+            "sh",
             &"sh",
             &[
                 "-c",
@@ -1610,7 +1665,8 @@ mod tests {
             ],
             &env(None),
             None,
-        );
+        )
+        .unwrap();
         c.stdout(std::process::Stdio::piped());
         detach(&mut c);
         let out = c.spawn().unwrap().wait_with_output().unwrap();
@@ -1697,6 +1753,29 @@ mod tests {
     }
 
     #[test]
+    fn a_launch_refused_by_the_env_reaches_no_start() {
+        let refusing = SessionEnv {
+            refuses_programs: true,
+            ..env(None)
+        };
+        record();
+        assert!(!spawn("true", &refusing, None));
+        let argv = ["true"];
+        assert_eq!(
+            try_spawn_argv_in(&argv, None, None, &refusing, None).unwrap(),
+            None
+        );
+        assert_eq!(
+            try_spawn_held(&argv, "true", None, &refusing, None).unwrap(),
+            None
+        );
+        assert!(command("true", &refusing, None).is_none());
+        assert_eq!(recorded(), Vec::<String>::new());
+        assert!(spawn("true", &env(None), None));
+        assert_eq!(recorded(), ["true"], "a session's launch starts");
+    }
+
+    #[test]
     fn a_detached_spawn_of_a_missing_program_returns_the_exec_error() {
         let c = std::process::Command::new("/srv/no-such-program");
         let e = spawn_detached(&c, None).unwrap_err();
@@ -1708,11 +1787,13 @@ mod tests {
     #[test]
     fn detached_child_does_not_inherit_an_ignored_interrupt() {
         let mut c = command_argv(
+            "sh",
             &"sh",
             &["-c", "grep SigIgn /proc/self/status"],
             &env(None),
             None,
-        );
+        )
+        .unwrap();
         c.stdout(std::process::Stdio::piped());
         // SAFETY: runs between fork and exec, before `detach`'s own closure;
         // signal is async-signal-safe. It ignores SIGINT in the child only,

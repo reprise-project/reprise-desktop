@@ -608,7 +608,9 @@ fn error_name(e: &zbus::Error) -> Option<&str> {
 
 /// Run a custom `[power]` command and wait for it.
 fn run(cmd: &str, env: &crate::spawn::SessionEnv) -> Option<Refused> {
-    let mut c = crate::spawn::command(cmd, env, None);
+    let Some(mut c) = crate::spawn::command(cmd, env, None) else {
+        return Some(Refused::NotAllowed);
+    };
     crate::spawn::detach(&mut c);
     c.stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped());

@@ -271,9 +271,8 @@ mod tests {
         assert_eq!((idle.lock_after, idle.lock_fade), (0, 0), "no idle lock");
         assert_eq!(idle.screen_off_after, 900, "the screen still powers off");
 
-        let mut h = Harness::new();
+        let mut h = Harness::with_host(Default::default(), Host::Greeter);
         assert_eq!(h.state.config.idle.lock_after, 600);
-        h.state.host = Host::Greeter;
         h.output("TEST-1", 1024, 768);
         let queued = crate::state::QUEUED.with(|n| n.get());
         crate::idle::idle_for(&mut h.state, Duration::from_secs(601));
