@@ -4,3 +4,5 @@ Description=Reprise Remote Desktop server for connections the login manager hand
 [Service]
 ExecStart=/usr/bin/reprise-rdp --hand-over
 Restart=on-failure
+# 75: another process holds org.reprise.RemoteDesktop; the next hand-over starts it again.
+RestartPreventExitStatus=75
