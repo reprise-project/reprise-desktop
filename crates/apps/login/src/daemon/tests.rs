@@ -45,19 +45,9 @@ fn anna_on_7() -> LogindSession {
 }
 
 fn greeter_spawn(w: u32) -> Vec<Effect> {
-    vec![
-        Effect::Spawn {
-            worker: WorkerId(w),
-            job: Job {
-                mode: Mode::Greeter,
-                user: GREETER_USER.into(),
-            },
-        },
-        Effect::ToWorker {
-            worker: WorkerId(w),
-            msg: ToWorker::Start { vt: 1 },
-        },
-    ]
+    let mut effects = spawn(w, Mode::Greeter, GREETER_USER);
+    effects.extend(start_on(w, 1));
+    effects
 }
 
 fn spawn(w: u32, mode: Mode, user: &str) -> Vec<Effect> {
@@ -1001,10 +991,20 @@ fn a_started_before_start_ends_that_session() {
     assert!(
         matches!(
             effects.as_slice(),
-            [Effect::Log(_), Effect::TerminateSession(id)] if id == "c2"
+            [
+                Effect::Log(_),
+                Effect::TerminateSession(id),
+                Effect::Kill(WorkerId(2)),
+                Effect::Reply(GreeterReply::Error {
+                    kind: ErrorKind::Failed,
+                    ..
+                }),
+            ] if id == "c2"
         ),
         "{effects:?}"
     );
+    assert_eq!(run.exited(2), vec![]);
+    assert_eq!(run.greeter(create("anna")), spawn(3, Mode::Login, "anna"));
 }
 
 #[test]
@@ -1049,7 +1049,7 @@ fn a_start_that_never_reports_started_times_out() {
     );
     assert_eq!(run.greeter(create("bert")), spawn(3, Mode::Login, "bert"));
     assert_eq!(run.on(Input::Timer(Timer::Start(WorkerId(2)))), vec![]);
-    assert_eq!(run.exited(2), vec![]);
+    assert_eq!(run.exited(2), vec![Effect::Disallocate(7)]);
 
     let mut run = Run::booted();
     run.log_in(2, "anna", 1000, "c2", 7);
@@ -1072,13 +1072,17 @@ fn an_autologin_that_never_starts_times_out_to_the_login_screen() {
     assert!(
         matches!(
             effects.as_slice(),
-            [Effect::Kill(WorkerId(1)), Effect::Log(_)]
+            [Effect::Kill(WorkerId(1)), Effect::Log(_), ..]
         ),
         "{effects:?}"
     );
-    let effects = run.exited(1);
-    assert!(matches!(&effects[0], Effect::Log(_)), "{effects:?}");
-    assert_eq!(effects[1..], greeter_spawn(2)[..]);
+    assert_eq!(
+        effects[2..],
+        greeter_spawn(2)[..],
+        "the login screen comes up without waiting for the worker"
+    );
+    assert_eq!(run.exited(1), vec![Effect::Disallocate(7)]);
+    assert_eq!(run.exited(2), greeter_spawn(3));
 }
 
 #[test]
@@ -1089,4 +1093,148 @@ fn power_with_a_text_or_ssh_login_running_is_refused() {
         action: PowerAction::Reboot,
     });
     assert!(is_refused(&effects), "{effects:?}");
+}
+
+#[test]
+fn an_orphan_removed_while_an_unknown_session_holds_the_seat_still_brings_the_greeter() {
+    let mut run = Run::new(LoginConfig::default(), Remembered::default());
+    let orphan = logind(
+        "c5",
+        GREETER_USER,
+        960,
+        1,
+        "greeter",
+        "reprise-login-greeter",
+    );
+    run.recover(vec![orphan]);
+    assert_eq!(run.start(), vec![]);
+    assert_eq!(
+        run.removed("c5", Some("tty2-session")),
+        greeter_spawn(1),
+        "a text login is not a session of this daemon"
+    );
+}
+
+#[test]
+fn the_greeter_waits_for_an_orphan_whatever_asks_for_it() {
+    let orphan = || {
+        logind(
+            "c5",
+            GREETER_USER,
+            960,
+            1,
+            "greeter",
+            "reprise-login-greeter",
+        )
+    };
+    let mut run = Run::new(LoginConfig::default(), Remembered::default());
+    run.recover(vec![anna_on_7(), orphan()]);
+    assert_eq!(run.start(), vec![]);
+    assert_eq!(run.session("c1", SessionRequest::SwitchUser), vec![]);
+    assert_eq!(
+        run.removed("c5", Some("c1")),
+        greeter_spawn(1),
+        "c1 asked for the login screen"
+    );
+
+    let mut run = Run::new(LoginConfig::default(), Remembered::default());
+    run.recover(vec![anna_on_7(), orphan()]);
+    run.start();
+    assert_eq!(run.removed("c1", None), vec![Effect::Disallocate(7)]);
+    assert_eq!(run.removed("c5", None), greeter_spawn(1));
+}
+
+#[test]
+fn a_timed_out_start_whose_session_comes_up_late_returns_to_the_login_screen() {
+    let mut run = Run::booted();
+    run.greeter(create("anna"));
+    run.worker(2, authed("anna", 1000));
+    run.greeter(GreeterRequest::StartSession);
+    run.on(Input::Timer(Timer::Start(WorkerId(2))));
+    let effects = run.worker(2, started("c2", 1000));
+    assert!(
+        matches!(
+            effects.as_slice(),
+            [Effect::Log(_), Effect::TerminateSession(id), Effect::SwitchTo(1)] if id == "c2"
+        ),
+        "{effects:?}"
+    );
+    let notes: Vec<_> = run.greeting().users.iter().map(|u| u.note).collect();
+    assert_eq!(notes, [None, None], "c2 never entered the table");
+    assert_eq!(run.exited(2), vec![Effect::Disallocate(7)]);
+
+    let mut run = Run::booted();
+    run.greeter(create("anna"));
+    run.worker(2, authed("anna", 1000));
+    run.greeter(GreeterRequest::StartSession);
+    run.on(Input::Timer(Timer::Start(WorkerId(2))));
+    assert_eq!(run.removed("c9", Some("c8")), vec![]);
+    assert_eq!(
+        run.removed("c2", None),
+        vec![Effect::SwitchTo(1)],
+        "the timed-out worker's session left the seat empty"
+    );
+    run.exited(2);
+    assert_eq!(
+        run.removed("c3", None),
+        vec![],
+        "no worker timed out any more"
+    );
+}
+
+#[test]
+fn a_greeter_that_never_starts_times_out_and_counts_as_failed() {
+    let mut run = Run::booted();
+    let effects = run.on(Input::Timer(Timer::Start(GREETER)));
+    assert!(
+        matches!(
+            effects.as_slice(),
+            [Effect::Kill(GREETER), Effect::Log(_), ..]
+        ),
+        "{effects:?}"
+    );
+    assert_eq!(effects[2..], greeter_spawn(2)[..]);
+    assert_eq!(
+        run.worker(1, started("c1", 960)),
+        vec![
+            Effect::Log("session c1 opened after its start timed out; ending it".into()),
+            Effect::TerminateSession("c1".into()),
+        ]
+    );
+    assert_eq!(run.exited(1), vec![]);
+    run.on(Input::Timer(Timer::Start(WorkerId(2))));
+    let effects = run.on(Input::Timer(Timer::Start(WorkerId(3))));
+    assert!(
+        matches!(
+            effects.as_slice(),
+            [
+                Effect::Kill(WorkerId(3)),
+                Effect::Log(_),
+                Effect::SwitchTo(2),
+                Effect::Log(_)
+            ]
+        ),
+        "{effects:?}"
+    );
+    assert_eq!(
+        run.removed("c9", None),
+        vec![],
+        "the text login stays: a stalled greeter holds no VT but 1"
+    );
+
+    let mut run = Run::booted();
+    assert_eq!(run.worker(1, started("c1", 960)), vec![]);
+    assert_eq!(run.on(Input::Timer(Timer::Start(GREETER))), vec![]);
+}
+
+#[test]
+fn start_session_without_a_worker_says_the_login_ended() {
+    let mut run = Run::booted();
+    run.greeter(create("anna"));
+    run.worker(2, authed("anna", 1000));
+    run.d.conversation.as_mut().expect("conversation").worker = None;
+    assert_eq!(
+        run.greeter(GreeterRequest::StartSession),
+        reply(error(ErrorKind::Failed, WORKER_ENDED))
+    );
 }

@@ -131,9 +131,12 @@ const NO_VT: &str = "no free VT for a session";
 const NO_SESSION: &str = "the account has no session to resume";
 const WORKER_ENDED: &str = "the login ended unexpectedly";
 const SESSION_ENDED: &str = "the session ended";
+const STARTED_EARLY: &str = "the session started before it was asked to";
 
 struct Greeter {
     worker: WorkerId,
+    /// Its worker reported `Started`.
+    started: bool,
     /// Set by the final `Success`: the greeter exits by itself, and that exit counts no failure.
     leaving: bool,
     /// The greeter is wanted again once the leaving one has gone.
@@ -180,6 +183,23 @@ struct SessionWorker {
     vt: u16,
 }
 
+/// A worker killed because its start timed out; it lives on until it exits.
+struct Stalled {
+    worker: WorkerId,
+    vt: u16,
+}
+
+/// What follows the removal of the last orphaned greeter.
+#[derive(Clone, Copy, PartialEq)]
+enum AfterOrphans {
+    Nothing,
+    /// The orphan was showing the login screen: a new greeter replaces it unless one of the
+    /// table's sessions holds the seat.
+    Replace,
+    /// The login screen was asked for while an orphan still held VT 1.
+    Greeter,
+}
+
 pub struct Daemon {
     config: LoginConfig,
     remembered: Remembered,
@@ -189,10 +209,11 @@ pub struct Daemon {
     conversation: Option<Conversation>,
     autologin: Option<Autologin>,
     session_workers: Vec<SessionWorker>,
-    /// Greeter sessions of an earlier daemon, terminated and not yet removed.
+    stalled: Vec<Stalled>,
+    /// Greeter sessions of an earlier daemon, terminated and not yet removed. No greeter
+    /// starts while one is left.
     orphans: Vec<String>,
-    /// The greeter starts once every orphan is removed.
-    greeter_after_orphans: bool,
+    after_orphans: AfterOrphans,
     /// Removals of unknown sessions while a start is in flight, with seat0's active session.
     removed_early: Vec<(String, Option<String>)>,
     notice: Option<Notice>,
@@ -211,8 +232,9 @@ impl Daemon {
             conversation: None,
             autologin: None,
             session_workers: Vec::new(),
+            stalled: Vec::new(),
             orphans: Vec::new(),
-            greeter_after_orphans: false,
+            after_orphans: AfterOrphans::Nothing,
             removed_early: Vec::new(),
             notice: None,
             next_worker: 1,
@@ -246,7 +268,7 @@ impl Daemon {
     pub fn start(&mut self, _now: Instant, world: &World) -> Vec<Effect> {
         let mut out = Vec::new();
         if !self.orphans.is_empty() {
-            self.greeter_after_orphans = true;
+            self.after_orphans = AfterOrphans::Replace;
             return out;
         }
         if !self.sessions.is_empty() {
@@ -433,10 +455,10 @@ impl Daemon {
                 self.conversation.as_mut().expect("conversation").phase = phase;
             }
             (Phase::Authenticated, Route::Start) => {
-                let (Some(worker), Some(vt)) = (
-                    c.worker,
-                    vt::pick(&self.sessions.taken_vts(), world.kernel_open),
-                ) else {
+                let Some(worker) = c.worker else {
+                    return self.fail_conversation(ErrorKind::Failed, WORKER_ENDED.into(), out);
+                };
+                let Some(vt) = vt::pick(&self.sessions.taken_vts(), world.kernel_open) else {
                     return self.fail_conversation(ErrorKind::Failed, NO_VT.into(), out);
                 };
                 c.phase = Phase::Starting { vt };
@@ -458,6 +480,20 @@ impl Daemon {
             .is_some_and(|c| c.worker == Some(worker))
         {
             return self.conversation_message(now, worker, msg, out);
+        }
+        if let Some(s) = self.stalled.iter().find(|s| s.worker == worker) {
+            if let FromWorker::Started { session_id, .. } = msg {
+                let vt = s.vt;
+                out.push(Effect::Log(format!(
+                    "session {session_id} opened after its start timed out; ending it"
+                )));
+                out.push(Effect::TerminateSession(session_id));
+                // Its worker activated `vt` before opening the session.
+                if vt != GREETER_VT {
+                    self.bring_greeter(out);
+                }
+            }
+            return;
         }
         let is_greeter = self.greeter.as_ref().is_some_and(|g| g.worker == worker);
         let autologin = self.autologin.as_ref().is_some_and(|a| a.worker == worker);
@@ -483,6 +519,9 @@ impl Daemon {
                     started: Some(now),
                 };
                 self.session_started(worker, entry, None, out);
+            }
+            FromWorker::Started { .. } if is_greeter => {
+                self.greeter.as_mut().expect("greeter").started = true;
             }
             FromWorker::Failed { text, .. } if is_greeter => out.push(Effect::Log(format!(
                 "the login screen did not start: {text}"
@@ -524,7 +563,8 @@ impl Daemon {
                         "a login worker reported session {session_id} before its start; \
                          ending it"
                     )));
-                    return out.push(Effect::TerminateSession(session_id));
+                    out.push(Effect::TerminateSession(session_id));
+                    return self.fail_conversation(ErrorKind::Failed, STARTED_EARLY.into(), out);
                 };
                 let c = self.conversation.take().expect("conversation");
                 let entry = SessionEntry {
@@ -686,19 +726,36 @@ impl Daemon {
         self.conversation = None;
     }
 
-    /// Fails a login whose worker sent no `Started` within `START_WAIT` of its `Start`.
+    /// Gives up on a worker that sent no `Started` within `START_WAIT` of its `Start`: it is
+    /// killed and the login screen comes back without waiting for its exit, which may never
+    /// come from a worker stuck in PAM.
     fn start_timed_out(&mut self, worker: WorkerId, out: &mut Vec<Effect>) {
-        let starting = matches!(&self.conversation, Some(Conversation {
-            worker: Some(w),
-            phase: Phase::Starting { .. },
-            ..
-        }) if *w == worker);
         let text = format!("the session did not start within {START_WAIT:?}");
-        if starting {
+        let starting = match &self.conversation {
+            Some(Conversation {
+                worker: Some(w),
+                phase: Phase::Starting { vt },
+                ..
+            }) if *w == worker => Some(*vt),
+            _ => None,
+        };
+        if let Some(vt) = starting {
+            self.stalled.push(Stalled { worker, vt });
             self.fail_conversation(ErrorKind::Failed, text, out);
-        } else if let Some(a) = self.autologin.as_ref().filter(|a| a.worker == worker) {
+        } else if self.autologin.as_ref().is_some_and(|a| a.worker == worker) {
+            let a = self.autologin.take().expect("autologin worker");
             out.push(Effect::Kill(worker));
             out.push(Effect::Log(format!("autologin of {}: {text}", a.user)));
+            self.stalled.push(Stalled { worker, vt: a.vt });
+            self.bring_greeter(out);
+        } else if (self.greeter.as_ref()).is_some_and(|g| g.worker == worker && !g.started) {
+            out.push(Effect::Kill(worker));
+            out.push(Effect::Log(format!("the login screen: {text}")));
+            self.stalled.push(Stalled {
+                worker,
+                vt: GREETER_VT,
+            });
+            self.greeter_exited(out);
         }
     }
 
@@ -712,6 +769,13 @@ impl Daemon {
     fn worker_exited(&mut self, worker: WorkerId, out: &mut Vec<Effect>) {
         if self.greeter.as_ref().is_some_and(|g| g.worker == worker) {
             return self.greeter_exited(out);
+        }
+        if let Some(at) = self.stalled.iter().position(|s| s.worker == worker) {
+            let vt = self.stalled.remove(at).vt;
+            if vt != GREETER_VT {
+                out.push(Effect::Disallocate(vt));
+            }
+            return;
         }
         if let Some(c) = self
             .conversation
@@ -786,10 +850,18 @@ impl Daemon {
     ) {
         if let Some(at) = self.orphans.iter().position(|o| o == id) {
             self.orphans.remove(at);
-            if self.orphans.is_empty()
-                && std::mem::take(&mut self.greeter_after_orphans)
-                && seat_active.is_none()
-            {
+            if !self.orphans.is_empty() {
+                return;
+            }
+            let seat_taken =
+                (seat_active.as_deref()).is_some_and(|a| self.sessions.by_id(a).is_some());
+            let bring = match self.after_orphans {
+                AfterOrphans::Greeter => true,
+                AfterOrphans::Replace => !seat_taken,
+                AfterOrphans::Nothing => false,
+            };
+            if bring {
+                self.after_orphans = AfterOrphans::Nothing;
                 self.bring_greeter(out);
             }
             return;
@@ -797,6 +869,9 @@ impl Daemon {
         let Some(entry) = self.sessions.remove(id) else {
             if self.start_in_flight() {
                 self.removed_early.push((id.into(), seat_active));
+            } else if seat_active.is_none() && self.stalled.iter().any(|s| s.vt != GREETER_VT) {
+                // Likely a timed-out worker's session, leaving its VT on screen.
+                self.bring_greeter(out);
             }
             return;
         };
@@ -862,8 +937,13 @@ impl Daemon {
         }
     }
 
-    /// Shows the login screen: switches to a running greeter or starts one.
+    /// Shows the login screen: switches to a running greeter or starts one, once no orphaned
+    /// greeter is left on VT 1.
     fn bring_greeter(&mut self, out: &mut Vec<Effect>) {
+        if !self.orphans.is_empty() {
+            self.after_orphans = AfterOrphans::Greeter;
+            return;
+        }
         match &mut self.greeter {
             Some(g) if g.leaving => {
                 if !std::mem::replace(&mut g.relaunch, true) {
@@ -884,12 +964,10 @@ impl Daemon {
                 user: GREETER_USER.into(),
             },
         });
-        out.push(Effect::ToWorker {
-            worker,
-            msg: ToWorker::Start { vt: GREETER_VT },
-        });
+        send_start(worker, GREETER_VT, out);
         self.greeter = Some(Greeter {
             worker,
+            started: false,
             leaving: false,
             relaunch: false,
         });
