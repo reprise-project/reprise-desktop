@@ -310,7 +310,7 @@ impl Dispatch2<RepriseLockScreenV1, State> for LockScreenData {
             return;
         };
         if crate::console::holds(state, &resource.id()) {
-            crate::console::relayout(state, resource.id(), layout);
+            crate::console::relayout(state, layout);
         } else if let Some(reason) = crate::console::refusal(state) {
             log::info!("lock mode: refused with {reason:?}");
             send_ended(resource, reason);

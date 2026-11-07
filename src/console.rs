@@ -43,8 +43,6 @@ pub struct RemoteMonitor {
 pub struct Console {
     pub owner: Owner,
     objects: Vec<ObjectId>,
-    /// The object whose layouts apply, kept after it goes until `objects` empties.
-    leader: Option<ObjectId>,
     layout: Vec<RemoteMonitor>,
     /// Remote outputs this layout removes, at their last boxes, for `homes::refit_remote`.
     pub(crate) gone: Vec<(Output, Rect)>,
@@ -106,8 +104,8 @@ pub fn refusal(state: &mut State) -> Option<Reason> {
     }
 }
 
-/// `object`'s first layout. The first object enters lock mode with it and leads it; a later one
-/// hears the screens there are.
+/// `object`'s first layout. The first object enters lock mode with it; a later one hears the
+/// screens there are.
 pub fn begin(state: &mut State, object: ObjectId, layout: Vec<RemoteMonitor>) {
     let first = state.console.objects.is_empty();
     state.console.objects.push(object.clone());
@@ -115,7 +113,6 @@ pub fn begin(state: &mut State, object: ObjectId, layout: Vec<RemoteMonitor>) {
         send_screens(state, &[object]);
         return;
     }
-    state.console.leader = Some(object);
     log::info!("lock mode: begins with {} remote screens", layout.len());
     state.console.owner = Owner::Remote;
     apply(state, layout);
@@ -126,9 +123,10 @@ pub fn begin(state: &mut State, object: ObjectId, layout: Vec<RemoteMonitor>) {
     send_screens(state, &state.console.objects);
 }
 
-/// A later layout of `object`; only the leader's applies.
-pub fn relayout(state: &mut State, object: ObjectId, layout: Vec<RemoteMonitor>) {
-    if state.console.leader.as_ref() != Some(&object) || state.console.layout == layout {
+/// A later layout of an object holding lock mode. Every object relays the one server's layout,
+/// so whichever sends a change first applies it and the others' copies are no-ops.
+pub fn relayout(state: &mut State, layout: Vec<RemoteMonitor>) {
+    if state.console.layout == layout {
         return;
     }
     log::info!("lock mode: {} remote screens", layout.len());
@@ -180,7 +178,6 @@ pub fn console_unlocked(state: &mut State) {
 
 fn leave(state: &mut State) {
     log::info!("lock mode: ends");
-    state.console.leader = None;
     // Before the seal, so the window holding the remote's keys hears them released.
     keys::end(state);
     crate::lockview::drop_remote(state);
