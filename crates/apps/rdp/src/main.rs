@@ -104,10 +104,8 @@ fn main() -> ExitCode {
     });
     let (disconnect, disconnect_rx) = mpsc::unbounded_channel();
     let (regenerate, regenerate_rx) = mpsc::unbounded_channel();
-    // Under reprise-login the machine's settings run remote logins, so no bus name is claimed.
-    if hand_over.is_none() {
-        control::spawn(status_rx, disconnect, regenerate);
-    }
+    // Hand-over runs serve it too: the portal's lock mode reads the ConsoleLayout of its owner.
+    control::spawn(status_rx, disconnect, regenerate);
     let identity = identity.map(watch::channel);
     let (config, config_rx) = watch::channel(cfg);
     let (display, probed) = match hand_over {
