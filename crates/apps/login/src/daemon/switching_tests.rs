@@ -226,16 +226,62 @@ fn a_hand_over_forwarded_before_the_console_shows_the_session_does_not_end_it() 
 }
 
 #[test]
-fn a_session_switched_away_with_no_remote_client_is_not_ended() {
-    let mut run = anna_switched_away(with_end_after(1));
-    assert_eq!(background(&run, "c2"), Some(false));
+fn a_disconnect_time_running_out_while_the_console_shows_the_session_does_not_end_it() {
+    let mut run = anna_switched_away(with_end_after(30));
+    hand_over_to_anna(&mut run, 7, 4);
+    run.world.active_vt = vt::GREETER_VT;
+    quiet(run.on(Input::Forwarded { conn: 7, ok: true }));
+    assert_eq!(background(&run, "c2"), Some(true));
+    run.world.active_vt = 7;
     let disconnected = Timer::Disconnected {
         id: "c2".into(),
         generation: 1,
     };
-    let effects = run.after(Duration::from_secs(120)).fire(disconnected);
-    assert_eq!(effects, []);
-    assert!(run.d.sessions.by_id("c2").is_some());
+    let effects = quiet(run.after(Duration::from_secs(31 * 60)).fire(disconnected));
+    assert!(
+        !effects.contains(&Effect::TerminateSession("c2".into())),
+        "{effects:?}"
+    );
+    assert_eq!(background(&run, "c2"), Some(false));
+}
+
+#[test]
+fn a_disconnect_time_running_out_with_no_active_vt_ends_a_session_on_vt_0() {
+    let mut run = anna_switched_away(with_end_after(30));
+    hand_over_to_anna(&mut run, 7, 4);
+    run.world.active_vt = vt::GREETER_VT;
+    quiet(run.on(Input::Forwarded { conn: 7, ok: true }));
+    let mut e = run.d.sessions.by_id("c2").cloned().expect("anna's session");
+    e.vt = 0;
+    run.d.sessions.insert(e);
+    run.world.active_vt = 0;
+    let disconnected = Timer::Disconnected {
+        id: "c2".into(),
+        generation: 1,
+    };
+    let effects = quiet(run.after(Duration::from_secs(31 * 60)).fire(disconnected));
+    assert!(
+        effects.contains(&Effect::TerminateSession("c2".into())),
+        "{effects:?}"
+    );
+}
+
+#[test]
+fn a_session_switched_away_with_no_remote_client_is_not_ended() {
+    let mut run = anna_switched_away(with_end_after(1));
+    run.viewers(ANNA, 1);
+    let effects = run.viewers(ANNA, 0);
+    let armed = |e: &Effect| {
+        matches!(
+            e,
+            Effect::Arm {
+                timer: Timer::Disconnected { .. },
+                ..
+            }
+        )
+    };
+    assert!(!effects.iter().any(armed), "{effects:?}");
+    assert_eq!(background(&run, "c2"), Some(false));
 }
 
 fn orphaned(run: &mut Run, id: &str, uid: u32) -> Vec<Effect> {

@@ -991,10 +991,23 @@ impl Daemon {
         });
     }
 
-    pub(super) fn disconnected(&mut self, id: &str, generation: u32, out: &mut Vec<Effect>) {
-        if self.remote.disconnects.get(id).and_then(|u| u.generation) == Some(generation) {
-            self.end_unviewed(id, out);
+    /// `active_vt` is read fresh: a session the console shows is the console's even when the
+    /// VT follower's report of it has not arrived.
+    pub(super) fn disconnected(
+        &mut self,
+        id: &str,
+        generation: u32,
+        active_vt: u16,
+        out: &mut Vec<Effect>,
+    ) {
+        if self.remote.disconnects.get(id).and_then(|u| u.generation) != Some(generation) {
+            return;
         }
+        if active_vt != 0 && self.sessions.by_id(id).is_some_and(|e| e.vt == active_vt) {
+            self.remote.disconnects.remove(id);
+            return self.console_on_vt(active_vt, out);
+        }
+        self.end_unviewed(id, out);
     }
 
     fn end_unviewed(&mut self, id: &str, out: &mut Vec<Effect>) {

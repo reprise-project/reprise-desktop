@@ -637,7 +637,7 @@ impl Daemon {
             }
             Input::Timer(Timer::Handover(conn)) => self.handover_deadline(now, conn, &mut out),
             Input::Timer(Timer::Disconnected { id, generation }) => {
-                self.disconnected(&id, generation, &mut out)
+                self.disconnected(&id, generation, world.active_vt, &mut out)
             }
             Input::FrontLinked => self.remote.front = true,
             Input::FrontLost => self.front_lost(&mut out),
