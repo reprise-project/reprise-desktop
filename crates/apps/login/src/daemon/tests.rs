@@ -25,6 +25,7 @@ fn world() -> World {
         },
         kernel_open: 0,
         user_sessions: 0,
+        login_sessions: Vec::new(),
     }
 }
 
@@ -1599,4 +1600,45 @@ fn the_console_on_vt_1_while_autologin_starts_brings_no_login_screen() {
     run.recover(vec![]);
     run.start();
     assert_eq!(run.on(Input::ConsoleOnGreeterVt), vec![]);
+}
+
+#[test]
+fn a_login_first_ends_its_users_sessions_the_table_does_not_hold() {
+    let ends = || {
+        vec![
+            Effect::Log(
+                Level::Info,
+                "ending anna's leftover session c9 before a new one".into(),
+            ),
+            Effect::StopSession("c9".into()),
+        ]
+    };
+    let mut run = Run::booted();
+    run.world.login_sessions = vec![
+        logind("c9", "anna", 1000, 8, "user", "reprise-login"),
+        logind("c8", "bert", 1001, 9, "user", "reprise-login"),
+        logind("c7", "anna", 1000, 0, "user", "sshd"),
+    ];
+    assert_eq!(run.greeter(create("anna")), spawn(2, Mode::Login, "anna"));
+    run.worker(2, authed("anna", 1000));
+    let mut expected = ends();
+    expected.extend(start_on(2, 7));
+    assert_eq!(run.greeter(GreeterRequest::StartSession), expected);
+
+    let config = LoginConfig {
+        autologin_user: Some("anna".into()),
+        ..LoginConfig::default()
+    };
+    let mut run = Run::new(config, Remembered::default());
+    run.world.login_sessions = vec![logind(
+        "c9",
+        "anna",
+        1000,
+        8,
+        "user",
+        "reprise-login-autologin",
+    )];
+    let started = run.start();
+    assert_eq!(started[1..3], ends()[..], "{started:?}");
+    assert!(matches!(started[3], Effect::ToWorker { .. }), "{started:?}");
 }

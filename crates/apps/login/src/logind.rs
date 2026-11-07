@@ -72,7 +72,18 @@ pub trait Session {
     #[zbus(property)]
     fn leader(&self) -> zbus::Result<u32>;
     #[zbus(property)]
+    fn scope(&self) -> zbus::Result<String>;
+    #[zbus(property)]
     fn locked_hint(&self) -> zbus::Result<bool>;
+}
+
+#[zbus::proxy(
+    interface = "org.freedesktop.systemd1.Manager",
+    default_service = "org.freedesktop.systemd1",
+    default_path = "/org/freedesktop/systemd1"
+)]
+pub trait Systemd {
+    fn stop_unit(&self, name: &str, mode: &str) -> zbus::Result<OwnedObjectPath>;
 }
 
 #[zbus::proxy(
@@ -139,33 +150,56 @@ impl Logind {
     /// logind's sessions, leaving out those closing (their user has left them) and those
     /// whose properties can't be read.
     pub async fn sessions(&self) -> zbus::Result<Vec<LogindSession>> {
+        let listed = self.listed().await?;
+        Ok(listed
+            .into_iter()
+            .filter(|(_, c)| !c)
+            .map(|(s, _)| s)
+            .collect())
+    }
+
+    /// logind's sessions whose properties can be read, each with whether it is closing.
+    pub async fn listed(&self) -> zbus::Result<Vec<(LogindSession, bool)>> {
         let mut found = Vec::new();
         for (id, uid, user, seat, path) in self.manager.list_sessions().await? {
             match self.describe(path).await {
-                Ok(Some((vt, class, service))) => found.push(LogindSession {
-                    id,
-                    user,
-                    uid,
-                    vt,
-                    seat,
-                    class,
-                    service,
-                }),
-                Ok(None) => {}
+                Ok((vt, class, service, closing)) => found.push((
+                    LogindSession {
+                        id,
+                        user,
+                        uid,
+                        vt,
+                        seat,
+                        class,
+                        service,
+                    },
+                    closing,
+                )),
                 Err(e) => log::warn!("logind session {id}: {e}"),
             }
         }
         Ok(found)
     }
 
-    /// The VT, class and service of the session at `path`; `None` when it is closing.
-    async fn describe(&self, path: OwnedObjectPath) -> zbus::Result<Option<(u16, String, String)>> {
+    /// The VT, class and service of the session at `path`, and whether it is closing.
+    async fn describe(&self, path: OwnedObjectPath) -> zbus::Result<(u16, String, String, bool)> {
         let s = self.session(path).await?;
-        if s.state().await? == CLOSING {
-            return Ok(None);
-        }
+        let closing = s.state().await? == CLOSING;
         let vt = u16::try_from(s.vtnr().await?).unwrap_or(0);
-        Ok(Some((vt, s.class().await?, s.service().await?)))
+        Ok((vt, s.class().await?, s.service().await?, closing))
+    }
+
+    /// Stops session `id`'s scope, which `TerminateSession` leaves running once the session
+    /// is closing.
+    pub async fn stop_session(&self, id: &str) -> zbus::Result<()> {
+        let path = self.manager.get_session(id).await?;
+        let scope = self.session(path).await?.scope().await?;
+        let systemd = SystemdProxy::builder(&self.conn)
+            .cache_properties(CacheProperties::No)
+            .build()
+            .await?;
+        systemd.stop_unit(&scope, "replace").await?;
+        Ok(())
     }
 
     /// The pid of session `id`'s leader.
