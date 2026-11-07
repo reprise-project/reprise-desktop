@@ -291,24 +291,31 @@ failure up to 60 s, and a success or 20 minutes without a failure clears
 them. During the wait the dialog refuses to check and says how long is left.
 
 Unlocking at the computer, by password, fingerprint or logind's `Unlock`,
-ends lock mode: each object hears `ended(console_unlocked)`, every libei
-sender, the server's and any other the portal let in, is cut off at once
-(its libei connection is closed and its keys object goes inert), the portal
+ends lock mode: every libei sender, the server's and any other the portal
+let in, is cut off at once (its libei connection is closed and its keys
+object goes inert), each object hears `ended(console_unlocked)`, the portal
 closes those sessions, and the windows come back to the computer's own
-screens. While a locker client holds the lock, the object hears
-`ended(replaced)` and nothing is made, and a locker client that takes the
-lock during lock mode ends it the same way. With `[power] locker` set, the
-object hears `ended(unavailable)`. Lock mode ending any other way leaves the
-session locked.
+screens. The server sees LockedHint false within 500 ms of the screens
+going and tells its client another connection took over, so a client set to
+reconnect doesn't lock the computer again. A locker client that takes the
+lock during lock mode ends it the same way, with `ended(replaced)`, and its
+lock stays; that client is told nothing and may reconnect.
+
+An object made or given its first layout while a locker client holds the
+lock hears `ended(replaced)`, and one while `[power] locker` is set hears
+`ended(unavailable)`. Neither makes a screen, and the portal shares the
+computer's own screens as in show mode. Any other answer to the layout, or
+none within 2 s, fails the session's Start, and the client is told its
+display failed to start. Lock mode ending any other way leaves the session
+locked.
 
 The server never locks on leave after a lock-mode connection, since the
 session stayed locked here all through it. A connection counts as one only
 when the server ran it as lock mode, having read `laptop_screen = "lock"`
 and no locker when its run's first client was shown the session, and the
 portal marked every stream it granted virtual. One whose portal session fell
-back to the computer's own screens (a compositor without version 9, a
-refused `lock_screen`, no screens within 2 s) locks on leave as in show
-mode.
+back to the computer's own screens (a compositor without version 9,
+`ended(unavailable)` or `ended(replaced)`) locks on leave as in show mode.
 
 ## Keyboard shortcuts
 
