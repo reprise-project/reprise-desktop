@@ -51,6 +51,14 @@ impl Intake for HandOverIntake {
     }
 }
 
+/// Closes the hand-overs waiting on `listener`: reprise-login refuses their clients at once, and
+/// systemd has none left to start the server again for.
+pub fn refuse_waiting(listener: &std::os::unix::net::UnixListener) {
+    while let Ok((link, _)) = listener.accept() {
+        drop(link);
+    }
+}
+
 /// The socket systemd passed this process, in non-blocking mode.
 pub fn activated() -> io::Result<std::os::unix::net::UnixListener> {
     let pid = std::env::var("LISTEN_PID").ok();
@@ -396,5 +404,26 @@ mod tests {
         assert!(!passed_one(Some("42"), Some("2"), 42));
         assert!(!passed_one(None, Some("1"), 42));
         assert!(!passed_one(Some("42"), None, 42));
+    }
+
+    #[test]
+    fn refused_hand_overs_are_closed_and_the_listener_left_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("handover.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let mut waiting: Vec<_> = (0..2)
+            .map(|_| std::os::unix::net::UnixStream::connect(&path).unwrap())
+            .collect();
+        refuse_waiting(&listener);
+        for link in &mut waiting {
+            link.set_read_timeout(Some(WAIT)).unwrap();
+            assert_eq!(std::io::Read::read(link, &mut [0]).unwrap(), 0, "closed");
+        }
+        assert_eq!(
+            listener.accept().unwrap_err().kind(),
+            io::ErrorKind::WouldBlock,
+            "none left for systemd to start the server again for"
+        );
     }
 }

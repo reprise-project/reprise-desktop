@@ -4,6 +4,7 @@
 use crate::Pick;
 use crate::inputlink::{Link, LockEvent, LockScreenHandle, Monitor};
 use crate::inputproto::reprise_lock_screen_v1::Reason;
+use crate::trusted::Trust;
 use futures_lite::StreamExt;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
@@ -34,18 +35,30 @@ pub fn pick(locked: Option<&Locked>) -> Pick {
 #[derive(Debug, PartialEq, Eq)]
 pub struct NotBegun;
 
-/// Lock mode for a trusted Start by `caller`; None is show mode: no published layout, no lock
+/// Lock mode for a Start `trust`ed for `caller`; None is show mode: an empty layout, no lock
 /// screens, or `unavailable` or `replaced`. Any other answer, or none in [`SCREENS_WAIT`], fails.
+/// No layout read is show mode for the user's own server and a failure for the hand-over server,
+/// whose session may have a locked console.
 pub async fn begin(
     conn: &zbus::Connection,
     caller: Option<u32>,
+    trust: Trust,
     link: Option<&Link>,
 ) -> Result<Option<Locked>, NotBegun> {
-    let Some((layout, layouts)) = (match caller {
+    let read = match caller {
         Some(caller) => console_layout(conn, caller).await,
         None => None,
-    }) else {
-        return Ok(None);
+    };
+    let Some((layout, layouts)) = read else {
+        return match trust {
+            Trust::Own => Ok(None),
+            Trust::HandOver => {
+                log::warn!(
+                    "lock mode: no layout from the hand-over server; the screen is not shared"
+                );
+                Err(NotBegun)
+            }
+        };
     };
     if layout.is_empty() {
         return Ok(None);
@@ -83,7 +96,7 @@ pub async fn begin(
 async fn console_layout(conn: &zbus::Connection, caller: u32) -> Option<(Vec<Monitor>, Layouts)> {
     let owner = reprisebus::name_owner(conn, SERVER).await?;
     if crate::trusted::pid_of(conn, &owner).await != Some(caller) {
-        log::warn!("{SERVER} is not owned by the session's caller; sharing every screen");
+        log::warn!("{SERVER} is not owned by the session's caller");
         return None;
     }
     let read = async {
@@ -405,6 +418,7 @@ mod tests {
     fn begun(
         layout: &[Monitor],
         caller: u32,
+        trust: Trust,
         answer: impl FnMut(&mut UnixStream, u32, usize) -> bool + Send + 'static,
     ) -> Option<(Begun, Vec<Vec<u8>>)> {
         let bus = bus()?;
@@ -414,7 +428,7 @@ mod tests {
         let pick = zbus::block_on(async {
             let _server = server(&bus, layout).await;
             let conn = connect(&bus).await;
-            let begun = begin(&conn, Some(caller), Some(&link)).await;
+            let begun = begin(&conn, Some(caller), trust, Some(&link)).await;
             begun.map(|locked| pick(locked.as_ref()))
         });
         let _marker = link.create_keys();
@@ -427,7 +441,7 @@ mod tests {
             screens(sock, lock, &["REMOTE-1", "REMOTE-2"]);
             true
         };
-        let Some((pick, layouts)) = begun(&FIRST, std::process::id(), answer) else {
+        let Some((pick, layouts)) = begun(&FIRST, std::process::id(), Trust::Own, answer) else {
             eprintln!("no dbus-daemon; skipped");
             return;
         };
@@ -457,14 +471,14 @@ mod tests {
     fn an_empty_console_layout_shares_every_screen_as_before() {
         let me = std::process::id();
         let never = |_: &mut UnixStream, _, _| panic!("no layout reaches the compositor");
-        let Some((pick, layouts)) = begun(&[], me, never) else {
+        let Some((pick, layouts)) = begun(&[], me, Trust::Own, never) else {
             eprintln!("no dbus-daemon; skipped");
             return;
         };
         assert_eq!(pick, Ok(Pick::All));
         assert!(layouts.is_empty(), "no lock screen is made");
 
-        let (pick, layouts) = begun(&FIRST, me + 1, never).unwrap();
+        let (pick, layouts) = begun(&FIRST, me + 1, Trust::Own, never).unwrap();
         assert_eq!(pick, Ok(Pick::All), "a layout another process publishes");
         assert!(layouts.is_empty(), "is not read");
 
@@ -473,17 +487,48 @@ mod tests {
                 ended(sock, lock, reason);
                 true
             };
-            let (pick, layouts) = begun(&FIRST, me, refused).unwrap();
+            let (pick, layouts) = begun(&FIRST, me, Trust::Own, refused).unwrap();
             assert_eq!(pick, Ok(Pick::All), "ended({name})");
             assert_eq!(layouts, [words(&FIRST)]);
         }
     }
 
     #[test]
+    fn a_hand_over_server_without_the_name_shares_no_screen() {
+        let me = std::process::id();
+        let never = |_: &mut UnixStream, _, _| panic!("no layout reaches the compositor");
+        let Some((pick, _)) = begun(&FIRST, me + 1, Trust::HandOver, never) else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
+        assert_eq!(pick, Err(NotBegun), "another process owns the name");
+
+        let bus = bus().unwrap();
+        let (ours, theirs) = UnixStream::pair().unwrap();
+        let fake = compositor(theirs, never);
+        let link = link_on(ours);
+        let unowned = zbus::block_on(async {
+            let conn = connect(&bus).await;
+            begin(&conn, Some(me), Trust::HandOver, Some(&link)).await
+        });
+        assert!(matches!(unowned, Err(NotBegun)), "nobody owns the name");
+        let _marker = link.create_keys();
+        fake.join().unwrap();
+
+        let (pick, layouts) = begun(&[], me, Trust::HandOver, never).unwrap();
+        assert_eq!(
+            pick,
+            Ok(Pick::All),
+            "an owner publishing no layout asks for show mode"
+        );
+        assert!(layouts.is_empty());
+    }
+
+    #[test]
     fn lock_mode_the_compositor_neither_begins_nor_refuses_fails_the_start() {
         let me = std::process::id();
         let silent = |_: &mut UnixStream, _, _| true;
-        let Some((pick, _)) = begun(&FIRST, me, silent) else {
+        let Some((pick, _)) = begun(&FIRST, me, Trust::Own, silent) else {
             eprintln!("no dbus-daemon; skipped");
             return;
         };
@@ -493,18 +538,18 @@ mod tests {
             ended(sock, lock, CONSOLE_UNLOCKED);
             true
         };
-        let (pick, _) = begun(&FIRST, me, unlocked).unwrap();
+        let (pick, _) = begun(&FIRST, me, Trust::Own, unlocked).unwrap();
         assert_eq!(pick, Err(NotBegun), "ended(console_unlocked) first");
 
         let none = |sock: &mut UnixStream, lock, _| {
             screens(sock, lock, &[]);
             true
         };
-        let (pick, _) = begun(&FIRST, me, none).unwrap();
+        let (pick, _) = begun(&FIRST, me, Trust::Own, none).unwrap();
         assert_eq!(pick, Err(NotBegun), "no screens");
 
         let lost = |_: &mut UnixStream, _, _| false;
-        let (pick, _) = begun(&FIRST, me, lost).unwrap();
+        let (pick, _) = begun(&FIRST, me, Trust::Own, lost).unwrap();
         assert_eq!(pick, Err(NotBegun), "the compositor's connection lost");
     }
 
@@ -530,7 +575,7 @@ mod tests {
         zbus::block_on(async {
             let server = server(&bus, &FIRST).await;
             let conn = connect(&bus).await;
-            let locked = begin(&conn, Some(std::process::id()), Some(&link))
+            let locked = begin(&conn, Some(std::process::id()), Trust::Own, Some(&link))
                 .await
                 .unwrap()
                 .expect("lock mode");
