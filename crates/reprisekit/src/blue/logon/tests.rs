@@ -3,6 +3,7 @@ use crate::blue::powerpanel::TILE_STATES;
 use crate::interface::Interface;
 use crate::interfaces::blue_theme;
 use crate::logon::{LogonKey, LogonUser, hit};
+use crate::style::TextSpec;
 
 const OUTPUT: Rect = Rect::new(0, 0, 1024, 768);
 
@@ -67,12 +68,21 @@ fn states() -> Vec<(&'static str, Logon)> {
     ]
 }
 
+/// Draws the wordmark in Tahoma Bold, since its own faces are whichever the machine installs.
 fn drawn(m: &Logon, v: Variant, s: i32) -> (Canvas, LogonLayout) {
     let theme = blue_theme(v).scaled(s);
     let text = TextRenderer::load(&theme.fonts);
+    let title = TextRenderer::load(
+        &TextSpec {
+            family: vec!["Tahoma".into()],
+            family_sizes: Vec::new(),
+            ..title_text()
+        }
+        .font(),
+    );
     let l = layout(m, &theme, &text, OUTPUT);
     let mut c = Canvas::new((OUTPUT.width * s) as u32, (OUTPUT.height * s) as u32);
-    draw(&mut c, m, &l, &theme, text.for_output(s), s);
+    draw_titled(&mut c, m, &l, &theme, text.for_output(s), &title, s);
     (c, l)
 }
 
