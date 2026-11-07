@@ -374,10 +374,11 @@ matched control focused.
     `[power] locker` set, Locks is greyed and a note under it says lock
     mode is off while an external screen locker is set. While
     `reprise-login` runs, the switch gives way to a note that remote logins
-    are set on the Login Manager page, the port and New Certificate... are
-    greyed, the fingerprint is the login manager's, and a Remote Desktop
-    password row shows whether you have one: Set... and Clear... ask for
-    your login password first ([features.md](features.md#remote-logins)).
+    are set on the Login Manager page, the port row is gone, New
+    Certificate... is greyed, the fingerprint is the login manager's, and a
+    Remote Desktop password row shows whether you have one: Set... and
+    Clear... ask for your login password first
+    ([features.md](features.md#remote-logins)).
 - **System**
   - **Power Options...**
   - **Startup:** autostart entries, session restore and ending the programs
