@@ -119,6 +119,9 @@ impl SettingsApp {
         if let Some(close) = self.login_done() {
             changed = true;
             quit = close;
+            if close {
+                self.save_window();
+            }
         }
         let cleared = match &self.clearing {
             Some(rx) => match take(rx) {
