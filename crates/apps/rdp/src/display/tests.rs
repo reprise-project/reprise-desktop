@@ -113,6 +113,11 @@ fn display(client: ClientLayout) -> Display {
 
 /// [`display`] on `console`.
 fn on_console(client: ClientLayout, console: Console) -> Display {
+    ending_on_console(client, console, Ending::default())
+}
+
+/// [`on_console`] with `ending`.
+fn ending_on_console(client: ClientLayout, console: Console, ending: Ending) -> Display {
     let (_, feed) = input::Input::new(Default::default());
     Display::new(
         Arc::new(Mutex::new(UNSHARED)),
@@ -122,7 +127,7 @@ fn on_console(client: ClientLayout, console: Console) -> Display {
         links().0,
         Connection {
             shown: Shown::default(),
-            ending: Ending::default(),
+            ending,
             client,
             console,
         },
@@ -244,6 +249,27 @@ async fn the_first_lock_mode_viewers_display_publishes_its_client_and_follows_it
     assert_eq!(published(), [(0, 0, 1920, 1080, 100)]);
     drop(display);
     assert!(published().is_empty(), "the run ends with its last display");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_display_whose_login_took_the_run_over_publishes_its_client_and_follows_its_layouts() {
+    let (console, _config, status) = console::tests::configured(LaptopScreen::Lock, false);
+    let mut first = on_console(crate::client::connected(vec![]), console.clone());
+    assert!(first.join());
+    let ending = Ending::default();
+    ending.took_over(console.take_over());
+    let client = crate::client::connected(crate::client::two_monitors());
+    let mut replacing = ending_on_console(client, console, ending);
+    assert!(replacing.join(), "it keeps the run in lock mode");
+    let published = || status.borrow().console_layout.clone();
+    assert_eq!(
+        published(),
+        [(0, 0, 2560, 1440, 100), (2560, 0, 1920, 1080, 100)]
+    );
+    drop(first);
+    replacing.request_layout(console::tests::layout(&[(0, 0, 1920, 1080)]));
+    tokio::time::sleep(console::SETTLE * 2).await;
+    assert_eq!(published(), [(0, 0, 1920, 1080, 100)]);
 }
 
 #[tokio::test]

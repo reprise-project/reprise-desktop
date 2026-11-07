@@ -1,10 +1,10 @@
-//! Lock mode: the run of viewers that locks this computer's screen, and the layout its first
-//! viewer publishes as `ConsoleLayout` for the portal to make the viewers' screens from.
+//! Lock mode: the run of viewers that locks this computer's screen, and the layout its owner (its
+//! first viewer, or one that replaced the others) publishes as `ConsoleLayout` for the portal.
 
 use crate::control::Status;
 use ironrdp_displaycontrol::pdu::{DisplayControlCapabilities, DisplayControlMonitorLayout};
 use ironrdp_pdu::gcc;
-use repriseconf::remote::{LaptopScreen, RemoteDesktop};
+use repriseconf::remote::{LaptopScreen, RemoteDesktop, SecondClient};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::{mpsc, watch};
@@ -52,10 +52,14 @@ impl Console {
         }))
     }
 
-    /// Whether a viewer joining now would start a lock-mode run, and so have its layouts
-    /// published.
+    /// Whether a viewer joining now would start a lock-mode run, or take over the one going on
+    /// once it logs in with `second_client = "replace"`, and so have its layouts published.
     pub fn would_own(&self) -> bool {
-        self.0.run.lock().unwrap().viewers == 0 && self.configured_lock()
+        let run = self.0.run.lock().unwrap();
+        match run.viewers {
+            0 => self.configured_lock(),
+            _ => run.lock && self.0.config.borrow().second_client == SecondClient::Replace,
+        }
     }
 
     fn configured_lock(&self) -> bool {
@@ -80,6 +84,35 @@ impl Console {
             console: self.clone(),
             id,
             lock: run.lock,
+        }
+    }
+
+    /// Joins the run going on in place of its other viewers, taking its layout; None when no
+    /// viewer is in a run.
+    pub fn take_over(&self) -> Option<Joined> {
+        let joined = {
+            let mut run = self.0.run.lock().unwrap();
+            if run.viewers == 0 {
+                return None;
+            }
+            let id = run.next;
+            run.next += 1;
+            run.viewers += 1;
+            Joined {
+                console: self.clone(),
+                id,
+                lock: run.lock,
+            }
+        };
+        self.take_owner(joined.id);
+        Some(joined)
+    }
+
+    /// The published layout of a lock-mode run follows `viewer` from now on.
+    pub fn take_owner(&self, viewer: u64) {
+        let mut run = self.0.run.lock().unwrap();
+        if run.lock {
+            run.owner = Some(viewer);
         }
     }
 
@@ -114,6 +147,11 @@ impl Joined {
         self.lock
     }
 
+    /// Publishes `monitors` if this viewer owns the run.
+    pub fn take_layout(&self, monitors: Vec<Monitor>) {
+        self.console.publish_as(self.id, monitors);
+    }
+
     /// Publishes the last of each burst of `layouts` once none came for [`SETTLE`], while this
     /// viewer's layout is the published one, and passes each to `published`. Ends with the channel.
     pub fn follow(
@@ -121,9 +159,6 @@ impl Joined {
         mut layouts: mpsc::UnboundedReceiver<Vec<Monitor>>,
         published: impl Fn(&[Monitor]) + Send + 'static,
     ) {
-        if self.console.0.run.lock().unwrap().owner != Some(self.id) {
-            return;
-        }
         let (console, id) = (self.console.clone(), self.id);
         tokio::spawn(async move {
             while let Some(mut last) = layouts.recv().await {
@@ -392,6 +427,59 @@ pub(crate) mod tests {
         drop(first);
         tokio::time::sleep(SETTLE * 2).await;
         assert!(published(&status).is_empty(), "the ended run stays empty");
+    }
+
+    #[test]
+    fn a_replacing_viewer_keeps_lock_mode_and_takes_the_layout() {
+        let (console, _config, status) = configured(LaptopScreen::Lock, false);
+        let first = console.join(FIRST.to_vec());
+        let replacing = console.join(SECOND.to_vec());
+        console.take_owner(replacing.id);
+        drop(first);
+        assert!(replacing.lock(), "the run stays in lock mode");
+        assert_eq!(published(&status), FIRST, "the run goes on");
+        assert!(console.publish_as(replacing.id, SECOND.to_vec()));
+        assert_eq!(published(&status), SECOND);
+        assert!(
+            !console.publish_as(0, FIRST.to_vec()),
+            "the replaced viewer no longer publishes"
+        );
+        assert_eq!(published(&status), SECOND);
+    }
+
+    #[test]
+    fn a_take_over_joins_the_run_going_on_as_its_owner() {
+        let (console, config, status) = configured(LaptopScreen::Lock, false);
+        assert!(console.take_over().is_none(), "no run to take over");
+        let first = console.join(FIRST.to_vec());
+        assert!(
+            !console.would_own(),
+            "a joining viewer does not own the run"
+        );
+        config.send_modify(|c| c.second_client = SecondClient::Replace);
+        assert!(console.would_own(), "a replacing one will");
+        let replacing = console.take_over().expect("the run is going on");
+        drop(first);
+        assert!(replacing.lock());
+        replacing.take_layout(SECOND.to_vec());
+        assert_eq!(published(&status), SECOND, "its monitors are published");
+        drop(replacing);
+        assert!(published(&status).is_empty(), "the run ends with it");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_viewer_that_takes_the_run_over_after_following_publishes() {
+        let (console, _config, status) = configured(LaptopScreen::Lock, false);
+        let first = console.join(FIRST.to_vec());
+        let later = console.join(SECOND.to_vec());
+        let (layouts, rx) = mpsc::unbounded_channel();
+        later.follow(rx, |_| {});
+        console.take_owner(later.id);
+        drop(first);
+        let last = vec![(0, 0, 1440, 900, 100)];
+        layouts.send(last.clone()).unwrap();
+        tokio::time::sleep(SETTLE * 2).await;
+        assert_eq!(published(&status), last);
     }
 
     #[test]

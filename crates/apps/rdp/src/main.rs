@@ -110,6 +110,7 @@ fn main() -> ExitCode {
             config: config_rx.clone(),
             disconnect: disconnect_rx,
             leave: lock::LockOnLeave::new(marker, config_rx.clone()),
+            console: console.clone(),
         };
         let sync_owner = input::SyncOwner::default();
         let handlers = |shown: listen::Shown, ending: listen::Ending| {

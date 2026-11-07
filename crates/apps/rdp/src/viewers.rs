@@ -14,6 +14,8 @@ pub enum Kick {
     PortChanged,
     /// The server is stopping.
     Stopped,
+    /// Another connection logged in with `second_client = "replace"`.
+    Replaced,
 }
 
 /// Why [`Viewers::join`] turned a connection away.
@@ -93,6 +95,12 @@ impl Viewers {
 
     pub fn kick_all(&mut self, why: Kick) {
         self.live.values_mut().for_each(|e| e.end(why));
+    }
+
+    pub fn kick_others(&mut self, keep: ViewerId, why: Kick) {
+        (self.live.iter_mut())
+            .filter(|(id, _)| **id != keep)
+            .for_each(|(_, e)| e.end(why));
     }
 
     pub fn len(&self) -> usize {
@@ -189,6 +197,18 @@ mod tests {
         v.kick_all(Kick::PortChanged);
         assert_eq!(a.try_recv(), Ok(Kick::PortChanged));
         assert_eq!(b.try_recv(), Ok(Kick::PortChanged));
+    }
+
+    #[test]
+    fn kick_others_kicks_every_viewer_but_the_one_given() {
+        let mut v = Viewers::default();
+        let (_, mut a) = v.join(peer("10.0.0.1:1"), 4).unwrap();
+        let (b, mut kept) = v.join(peer("10.0.0.2:1"), 4).unwrap();
+        let (_, mut c) = v.join(peer("10.0.0.3:1"), 4).unwrap();
+        v.kick_others(b, Kick::Replaced);
+        assert_eq!(a.try_recv(), Ok(Kick::Replaced));
+        assert_eq!(c.try_recv(), Ok(Kick::Replaced));
+        assert_eq!(kept.try_recv(), Err(TryRecvError::Empty));
     }
 
     #[test]

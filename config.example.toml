@@ -407,6 +407,8 @@ suspend_after = 0            # run [power] standby
 # laptop_screen = "lock"     # "lock": while a computer is connected, this screen shows the
 #                            # lock and the viewer gets screens sized to its window; "show"
 #                            # keeps the session on this screen too, as does a [power] locker
+# second_client = "join"     # "join": a computer logging in joins those connected;
+#                            # "replace": it ends them, even with max_viewers connected
 
 # [debug]                    # Settings > Advanced also sets these
 # overlay = false            # true shows frame rate, render times, damage, clients

@@ -8,6 +8,7 @@ use crate::auth::{Login, Logins};
 use crate::cert::Identity;
 use crate::client::{self, ClientLayout};
 use crate::clipboard::Cut;
+use crate::console::{Console, Joined};
 use crate::control::{Client, Request, Status};
 use crate::intake::{Arrival, Intake};
 use crate::portal::Screen;
@@ -17,7 +18,7 @@ use ironrdp_server::{
     CliprdrServerFactory, ErrorInfo, GfxServerFactory, RdpServer, RdpServerDisplay,
     RdpServerInputHandler, SoundServerFactory,
 };
-use repriseconf::remote::RemoteDesktop;
+use repriseconf::remote::{RemoteDesktop, SecondClient};
 use std::cell::{Cell, RefCell};
 use std::convert::Infallible;
 use std::io;
@@ -61,7 +62,7 @@ pub enum End {
 }
 
 /// Marked by a connection's display when it is granted lock mode's screens or the screen it shows
-/// goes, before the connection ends.
+/// goes, before the connection ends; it hands the display the run a replacing login took over.
 #[derive(Clone, Default)]
 pub struct Ending(Arc<Marks>);
 
@@ -73,6 +74,8 @@ struct Marks {
     /// Set once [`run`] leaves the end to the display, whose updates then end.
     released: Flag,
     clipboard: Cut,
+    /// The place in the console's run this connection took over as it logged in.
+    taken_over: Mutex<Option<Joined>>,
 }
 
 /// A flag set once and waited for.
@@ -128,6 +131,15 @@ impl Ending {
         self.0.released.set();
     }
 
+    pub(crate) fn took_over(&self, place: Option<Joined>) {
+        *self.0.taken_over.lock().unwrap() = place;
+    }
+
+    /// The place in the console's run this connection took over as it logged in, once.
+    pub fn taken_over(&self) -> Option<Joined> {
+        self.0.taken_over.lock().unwrap().take()
+    }
+
     /// Marks a grant of lock mode's screens, true if it was one: a grant to a run that `locks`
     /// the console, every stream cast from a virtual output. The standby screen is virtual too.
     pub fn granted(&self, locks: bool, screens: &[Screen]) -> bool {
@@ -158,6 +170,8 @@ pub struct Server<L> {
     /// Ends connected clients' sessions.
     pub disconnect: mpsc::UnboundedReceiver<Request>,
     pub leave: L,
+    /// The run of viewers a replacing login takes over.
+    pub console: Console,
 }
 
 /// Sent by a connection's display once its portal session is granted and its input is served.
@@ -193,8 +207,9 @@ pub type Handlers<D, I> = (
 
 /// Serve clients from `intake` for `server.user`, each checked by `logins` and served by
 /// `handlers`, which reports through its [`Shown`] and [`Ending`]. A client arriving with
-/// `max_viewers` connected, or from an address in back-off, is closed at once. On `stop`, [`Leave::stopping`] runs, then every
-/// connection is told the server stopped and this returns once each has closed.
+/// `max_viewers` connected (one more with `second_client = "replace"`), or from an address in
+/// back-off, is closed at once. On `stop`, [`Leave::stopping`] runs, then every connection is told
+/// the server stopped and this returns once each has closed.
 pub async fn serve<D, I, L>(
     mut server: Server<L>,
     mut intake: impl Intake,
@@ -211,6 +226,7 @@ pub async fn serve<D, I, L>(
         status: server.status,
         leave: server.leave,
         viewers: RefCell::default(),
+        console: server.console,
     });
     let (alive, mut all_closed) = mpsc::channel::<Infallible>(1);
     tokio::pin!(stop);
@@ -237,8 +253,12 @@ pub async fn serve<D, I, L>(
                     log::info!("{peer}: closed; {ip} has {} s of back-off left after failed logins", backoff.as_secs_f32().ceil());
                     continue;
                 }
-                let cap = server.config.borrow().max_viewers;
-                let joined = shared.viewers.borrow_mut().join(peer, cap);
+                let (max, second) = {
+                    let config = server.config.borrow();
+                    (config.max_viewers, config.second_client)
+                };
+                let replaces = second == SecondClient::Replace;
+                let joined = shared.viewers.borrow_mut().join(peer, max + usize::from(replaces));
                 let (id, kicked) = match joined {
                     Ok(joined) => joined,
                     Err(Refused::Full) => {
@@ -270,7 +290,7 @@ pub async fn serve<D, I, L>(
                     .with_sound_factory(sound)
                     .with_connection_handler(Some(Box::new(client::Handler(layout))))
                     .build();
-                let viewer = Viewer { id, peer, kicked, ending, alive: alive.clone() };
+                let viewer = Viewer { id, peer, kicked, ending, replaces, alive: alive.clone() };
                 let shared = shared.clone();
                 tokio::task::spawn_local(run(rdp, stream, viewer, check, budget, on_shown, shared));
             }
@@ -289,6 +309,7 @@ struct Shared<L> {
     status: watch::Sender<Status>,
     leave: L,
     viewers: RefCell<Viewers>,
+    console: Console,
 }
 
 impl<L> Shared<L> {
@@ -313,6 +334,8 @@ struct Viewer {
     peer: SocketAddr,
     kicked: oneshot::Receiver<Kick>,
     ending: Ending,
+    /// Whether logging in ends every other connection, its run of viewers going on with this one.
+    replaces: bool,
     /// Held until the connection has closed; [`serve`] waits for every one as it stops.
     alive: mpsc::Sender<Infallible>,
 }
@@ -331,6 +354,7 @@ async fn run<L: Leave + 'static, C: Login>(
         peer,
         kicked,
         ending,
+        replaces,
         alive,
     } = viewer;
     log::info!("{peer}: connected");
@@ -349,6 +373,10 @@ async fn run<L: Leave + 'static, C: Login>(
     let present = async {
         check.logged_in().await;
         shared.viewers.borrow_mut().logged_in(id);
+        if replaces {
+            ending.took_over(shared.console.take_over());
+            shared.viewers.borrow_mut().kick_others(id, Kick::Replaced);
+        }
         let since = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs());
@@ -378,6 +406,7 @@ async fn run<L: Leave + 'static, C: Login>(
                 Kick::Asked => log::info!("{peer}: disconnected by request"),
                 Kick::PortChanged => log::info!("{peer}: disconnected; the port changed"),
                 Kick::Stopped => log::info!("{peer}: disconnected; the server is stopping"),
+                Kick::Replaced => log::info!("{peer}: disconnected; another client logged in"),
             }
             shared.forget(id, peer);
             tell_and_end(connection.as_mut(), told_for(kick), |why| drop(told.disconnect(why))).await;
@@ -455,6 +484,7 @@ fn told_for(kick: Kick) -> ErrorInfo {
     let code = match kick {
         Kick::Asked | Kick::PortChanged => ProtocolIndependentCode::RpcInitiatedDisconnectByuser,
         Kick::Stopped => ProtocolIndependentCode::RpcInitiatedDisconnect,
+        Kick::Replaced => ProtocolIndependentCode::DisconnectedByOtherconnection,
     };
     ErrorInfo::ProtocolIndependentCode(code)
 }
