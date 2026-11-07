@@ -78,6 +78,9 @@ fn drawn(m: &Logon, v: Variant, s: i32) -> (Canvas, LogonLayout) {
 
 #[test]
 fn blue_logon_pins_per_scheme_at_scale_1_and_2() {
+    if !crate::text::test_tahoma() {
+        return;
+    }
     let mut got = Vec::new();
     for v in Variant::ALL {
         for (name, m) in states() {

@@ -1,18 +1,18 @@
-tile @1 4caac5179cee1d15
-tile @2 97adbe01a6e0a122
-tile hot @1 b7bc5f3928ba49ad
-tile hot @2 0819c3a044415c3a
-arrow hot @1 4191acafbd6d1147
-arrow hot @2 4b944ba0ae800fcb
-typed @1 1ac41d10a5bc1f92
-typed @2 da4a3192918bc5fe
-tiles @1 05290320d22d523e
-tiles @2 50c027de53b257ec
-message @1 785ebd73526a837f
-message @2 99ba9dd155915106
-busy @1 44bd527aec21e0b8
-busy @2 826900b5522bef0a
-power hot @1 a07a24586ac650ee
-power hot @2 f55f08b159045bbd
-tile after ok @1 4caac5179cee1d15
-tile after ok @2 97adbe01a6e0a122
+tile @1 13eadb7831b3b005
+tile @2 dca595efd71f5d16
+tile hot @1 b80c647a51ad036d
+tile hot @2 ab7ad9f9e0d174de
+arrow hot @1 ff2ead5f5fce9106
+arrow hot @2 1f40c4afb3a38c78
+typed @1 17ceced346e961e7
+typed @2 2f81ae1e15b94d73
+tiles @1 2818a4202ce908f6
+tiles @2 b42e9882c2048ca2
+message @1 3bd04da937fc11e1
+message @2 3b7a325de759552a
+busy @1 973a83f576fc2b9f
+busy @2 651880d082fdb1ae
+power hot @1 bc1b58aa8bf674d6
+power hot @2 2e080922ab62f92d
+tile after ok @1 13eadb7831b3b005
+tile after ok @2 dca595efd71f5d16

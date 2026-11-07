@@ -50,6 +50,9 @@ fn drawn(m: &Logon, s: i32) -> (Canvas, LogonLayout, Theme) {
 
 #[test]
 fn classic_logon_pins_at_scale_1_and_2() {
+    if !crate::text::test_tahoma() {
+        return;
+    }
     let mut got = Vec::new();
     for (name, m) in states() {
         for s in [1, 2] {

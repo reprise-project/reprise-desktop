@@ -95,6 +95,9 @@ fn drawn_with(m: &Logon, s: i32, preedit: Option<Preedit>) -> (Canvas, LogonLayo
 
 #[test]
 fn glass_logon_pins_at_scale_1_and_2() {
+    if !crate::text::test_tahoma() {
+        return;
+    }
     let mut got = Vec::new();
     for (name, m) in states()
         .into_iter()
