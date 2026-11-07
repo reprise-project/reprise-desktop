@@ -21,6 +21,7 @@ path = "src/bin/settings.rs"
 
 [dependencies]
 repriselogin = { path = "../../repriselogin" }
+reprisepam = { path = "../../reprisepam" }
 serde = { workspace = true, features = ["derive"] }
 toml.workspace = true
 log.workspace = true

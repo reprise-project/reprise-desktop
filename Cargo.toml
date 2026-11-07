@@ -10,6 +10,7 @@ members = [
     "crates/repriseconf",
     "crates/repriseaudio",
     "crates/repriselogin",
+    "crates/reprisepam",
     "crates/reprisetls",
     "crates/reprisescene",
     "crates/reprisefx",
@@ -169,6 +170,7 @@ repriseconf = { path = "crates/repriseconf" }
 reprisebus = { path = "crates/reprisebus" }
 repriseaudio = { path = "crates/repriseaudio" }
 repriselogin = { path = "crates/repriselogin" }
+reprisepam = { path = "crates/reprisepam" }
 accesskit_unix.workspace = true
 toml_edit.workspace = true
 libc.workspace = true

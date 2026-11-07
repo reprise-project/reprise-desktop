@@ -1,0 +1,12 @@
+[package]
+name = "reprisepam"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+description = "The libpam binding the lock screen and reprise-login share: its constants, types and functions"
+
+[lints]
+workspace = true

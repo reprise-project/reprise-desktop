@@ -584,7 +584,7 @@ impl LoginPam for FakePam {
             && self.conv.prompt(kind, text).is_none()
         {
             return Err(PamError {
-                code: crate::pam::ffi::PAM_CONV_ERR,
+                code: reprisepam::ffi::PAM_CONV_ERR,
                 text: "Conversation error".into(),
             });
         }

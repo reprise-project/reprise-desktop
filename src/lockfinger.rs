@@ -3,7 +3,9 @@
 //! The password's child asks a further prompt with `? <text>` (blind) or `?? <text>` (echoed) and reads its answer as the next line of stdin, which stays open until the conversation ends.
 //! reprise-rdp and lock mode's remote Unlock dialog run it as `--rdp-password-conversation USER`, under the Remote Desktop PAM service.
 
-use crate::lock::{self, Verdict, Verifier, ffi};
+use crate::lock::{self, Verdict, Verifier};
+use repriselogin::{add_prompt_lines, clean_prompt};
+use reprisepam::ffi;
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::io::{Read, Write};
 use std::os::fd::{AsFd, AsRawFd, RawFd};
@@ -90,7 +92,7 @@ impl PasswordAnswer {
     pub fn line(&mut self, line: Line) -> Option<Verdict> {
         match line {
             Line::Info(t) | Line::Error(t) => {
-                lock::add_notice(&mut self.notices, &t);
+                add_prompt_lines(&mut self.notices, &t);
                 None
             }
             Line::Prompt(_) => None,
@@ -317,7 +319,7 @@ fn password_conversation(v: &dyn Verifier, user: &str, mut input: impl Read, mut
     let verdict = match read_answer(&mut input) {
         Some(password) => {
             let mut ask = |text: &str, echo: bool| {
-                let text = lock::clean_notice(text).join(" ");
+                let text = clean_prompt(text).join(" ");
                 let tag = if echo { "??" } else { "?" };
                 out.write_all(format!("{tag} {text}\n").as_bytes()).ok()?;
                 out.flush().ok()?;
@@ -450,7 +452,7 @@ unsafe extern "C" fn converse(
         }
         // SAFETY: libpam's message text is a NUL-terminated string.
         let text = unsafe { CStr::from_ptr(m.msg as *const c_char) }.to_string_lossy();
-        for l in lock::clean_notice(&text) {
+        for l in clean_prompt(&text) {
             lines.push(format!("{tag} {l}\n"));
         }
     }
