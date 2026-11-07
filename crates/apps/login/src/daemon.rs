@@ -259,7 +259,7 @@ pub struct LogindSession {
 /// What the backend reads fresh for each `Hello`, each start and each power request.
 #[derive(Clone, Debug, PartialEq)]
 pub struct World {
-    /// The accounts the login screen lists, as `users::listed` picks them.
+    /// The accounts the login screen lists, as `repriselogin::users::Source::listed` picks them.
     pub users: Vec<UserEntry>,
     pub keyboard: Keyboard,
     /// `VT_GETSTATE`'s mask of open VTs 1-15.
