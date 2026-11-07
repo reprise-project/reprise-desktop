@@ -16,6 +16,7 @@ use std::process::ExitCode;
 use std::rc::Rc;
 use std::time::Duration;
 
+use reprisebus::journal;
 use repriselogin::front::{FrontEvent, FrontRequest, Secret};
 use repriselogin::machine::{MACHINE_CONFIG, MachineConfig};
 use reprisetls::{cert, tcp};
@@ -40,8 +41,16 @@ struct Conn {
 
 type Conns = Rc<RefCell<HashMap<u64, Conn>>>;
 
+/// Kept at warn even under RUST_LOG=debug: their debug records carry the NTLM messages, which
+/// an attacker can crack offline.
+const CREDSSP_LOGS: [&str; 2] = ["ironrdp", "sspi"];
+
 fn main() -> ExitCode {
-    reprisebus::journal::init_logger(reprisebus::journal::PROGRAM_FILTER);
+    let mut logger = journal::builder(journal::PROGRAM_FILTER, journal::on_stream());
+    for target in CREDSSP_LOGS {
+        logger.filter_module(target, log::LevelFilter::Warn);
+    }
+    logger.init();
     let port = machine_config().remote.port;
     let (Some(state), Some(runtime)) = (unit_dir("STATE_DIRECTORY"), unit_dir("RUNTIME_DIRECTORY"))
     else {
@@ -76,7 +85,7 @@ fn main() -> ExitCode {
         identity,
         nla_users: Rc::default(),
         link: RefCell::new(None),
-        host: hostname,
+        host: hostname(),
     });
     tokio::task::LocalSet::new().block_on(&rt, serve(port, ctx))
 }

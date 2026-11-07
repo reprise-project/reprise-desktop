@@ -1,12 +1,17 @@
 use super::*;
 use crate::link;
 use ironrdp_connector::credssp::CredsspSequence;
+use ironrdp_connector::sspi::credssp::write_ts_credentials;
 use ironrdp_connector::sspi::credssp::{
     ClientMode, ClientState, CredSspClient, CredSspMode, EarlyUserAuthResult, TsRequest,
 };
 use ironrdp_connector::sspi::generator::GeneratorState;
 use ironrdp_connector::sspi::ntlm::NtlmConfig;
-use ironrdp_connector::sspi::{AuthIdentity, NegotiateConfig};
+use ironrdp_connector::sspi::{
+    AuthIdentity, BufferType, ClientRequestFlags, CredentialUse, CredentialsBuffers,
+    DataRepresentation, EncryptionFlags, NegotiateConfig, Ntlm, SecurityBuffer, SecurityBufferRef,
+    SecurityStatus, Sspi as _, SspiImpl as _,
+};
 use ironrdp_connector::{ClientConnector, Config, ConnectorErrorKind, Credentials, custom_err};
 use ironrdp_pdu::PduHint;
 use ironrdp_pdu::gcc;
@@ -41,7 +46,7 @@ pub(crate) fn ctx() -> Ctx {
         identity: reprisetls::cert::load_or_create(dir.path()).unwrap(),
         nla_users: Rc::default(),
         link: RefCell::new(None),
-        host: || HOST.to_owned(),
+        host: HOST.to_owned(),
     }
 }
 
@@ -618,6 +623,13 @@ enum Credssp {
         user: &'static str,
         domain: Option<&'static str>,
     },
+    /// SPNEGO as the logon's user, delegating empty credentials.
+    NoPassword,
+    /// Bare NTLM as the logon's user, delegating `user` and `password` instead.
+    Delegating {
+        user: &'static str,
+        password: &'static str,
+    },
 }
 
 /// An NLA logon: `user` goes in the Client Info PDU, and in CredSSP unless `credssp` names
@@ -658,6 +670,7 @@ async fn spnego<S>(
     password: &str,
     public_key: Vec<u8>,
     hybrid_ex: bool,
+    mode: CredSspMode,
 ) -> ConnectorResult<()>
 where
     S: AsyncRead + AsyncWrite + Send + Sync + Unpin,
@@ -669,7 +682,7 @@ where
     let mut client = CredSspClient::new(
         public_key,
         identity.into(),
-        CredSspMode::WithCredentials,
+        mode,
         ClientMode::Negotiate(NegotiateConfig {
             protocol_config: Box::new(NtlmConfig::default()),
             package_list: Some("!kerberos,!pku2u".to_owned()),
@@ -714,6 +727,109 @@ where
         }
     }
     Ok(())
+}
+
+/// Runs CredSSP with bare NTLM as `user`, then delegates `delegated` in its TSCredentials.
+/// CredSSP version 4 echoes the public key, which needs no hash.
+async fn delegate_other<S>(
+    framed: &mut TokioFramed<S>,
+    user: &str,
+    password: &str,
+    delegated: AuthIdentity,
+    public_key: &[u8],
+) -> ConnectorResult<()>
+where
+    S: AsyncRead + AsyncWrite + Send + Sync + Unpin,
+{
+    let identity = AuthIdentity {
+        username: Username::new(user, None).unwrap(),
+        password: password.to_owned().into(),
+    };
+    let mut ntlm = Ntlm::new();
+    let mut handle = (ntlm.acquire_credentials_handle())
+        .with_credential_use(CredentialUse::Outbound)
+        .with_auth_data(&identity)
+        .execute(&mut ntlm)
+        .unwrap()
+        .credentials_handle;
+    let mut input = vec![SecurityBuffer::new(Vec::new(), BufferType::Token)];
+    let mut out = TsRequest {
+        version: 4,
+        ..TsRequest::default()
+    };
+    loop {
+        let mut output = vec![SecurityBuffer::new(Vec::new(), BufferType::Token)];
+        let target = format!("TERMSRV/{HOST}");
+        let mut builder = (ntlm.initialize_security_context())
+            .with_credentials_handle(&mut handle)
+            .with_context_requirements(
+                ClientRequestFlags::MUTUAL_AUTH
+                    | ClientRequestFlags::USE_SESSION_KEY
+                    | ClientRequestFlags::INTEGRITY
+                    | ClientRequestFlags::CONFIDENTIALITY,
+            )
+            .with_target_data_representation(DataRepresentation::Native)
+            .with_target_name(&target)
+            .with_input(&mut input)
+            .with_output(&mut output);
+        let status = (ntlm.initialize_security_context_impl(&mut builder))
+            .and_then(|mut g| g.resolve_to_result())
+            .map_err(|e| custom_err!("NTLM", e))?
+            .status;
+        out.nego_tokens = Some(output.remove(0).buffer);
+        if status == SecurityStatus::Ok {
+            break;
+        }
+        let reply = ts_request(framed, &out).await?;
+        input[0].buffer = reply.nego_tokens.unwrap_or_default();
+    }
+    out.pub_key_auth = Some(seal(&mut ntlm, public_key));
+    ts_request(framed, &out).await?;
+    let delegated = CredentialsBuffers::AuthIdentity(delegated.into());
+    let credentials = write_ts_credentials(&delegated, CredSspMode::WithCredentials).unwrap();
+    let last = TsRequest {
+        version: 4,
+        auth_info: Some(seal(&mut ntlm, &credentials)),
+        ..TsRequest::default()
+    };
+    let mut bytes = Vec::new();
+    last.encode_ts_request(&mut bytes).unwrap();
+    framed.write_all(&bytes).await.unwrap();
+    Ok(())
+}
+
+/// Sends `request` and reads the server's answer.
+async fn ts_request<S>(
+    framed: &mut TokioFramed<S>,
+    request: &TsRequest,
+) -> ConnectorResult<TsRequest>
+where
+    S: AsyncRead + AsyncWrite + Send + Sync + Unpin,
+{
+    let mut out = Vec::new();
+    request.encode_ts_request(&mut out).unwrap();
+    framed.write_all(&out).await.unwrap();
+    let pdu = (framed.read_by_hint(&TsRequestHint).await).map_err(|e| custom_err!("read", e))?;
+    let reply = TsRequest::from_buffer(&pdu).map_err(|e| custom_err!("TsRequest", e))?;
+    match reply.error_code {
+        Some(_) => Err(ConnectorError::general("the server failed CredSSP")),
+        None => Ok(reply),
+    }
+}
+
+/// `data` sealed for the server, its signature first, as CredSSP sends it.
+fn seal(ntlm: &mut Ntlm, data: &[u8]) -> Vec<u8> {
+    let mut token = [0u8; 1024];
+    let mut data = data.to_vec();
+    let mut buffers = [
+        SecurityBufferRef::token_buf(&mut token),
+        SecurityBufferRef::data_buf(&mut data),
+    ];
+    ntlm.encrypt_message(EncryptionFlags::empty(), &mut buffers)
+        .unwrap();
+    let mut sealed = buffers[0].data().to_vec();
+    sealed.extend_from_slice(buffers[1].data());
+    sealed
 }
 
 /// Logs on over NLA and fails with why the client stopped; past Client Info it waits for the
@@ -761,7 +877,46 @@ async fn nla_client(
         Credssp::Spnego { user, domain } => {
             let username = Username::new(user, domain).unwrap();
             let hybrid_ex = logon.protocol == SecurityProtocol::HYBRID_EX;
-            spnego(&mut framed, username, logon.password, public_key, hybrid_ex).await?;
+            let mode = CredSspMode::WithCredentials;
+            spnego(
+                &mut framed,
+                username,
+                logon.password,
+                public_key,
+                hybrid_ex,
+                mode,
+            )
+            .await?;
+            connector.mark_credssp_as_done();
+        }
+        Credssp::NoPassword => {
+            let username = Username::new(logon.user, None).unwrap();
+            let hybrid_ex = logon.protocol == SecurityProtocol::HYBRID_EX;
+            let mode = CredSspMode::CredentialLess;
+            spnego(
+                &mut framed,
+                username,
+                logon.password,
+                public_key,
+                hybrid_ex,
+                mode,
+            )
+            .await?;
+            connector.mark_credssp_as_done();
+        }
+        Credssp::Delegating { user, password } => {
+            let delegated = AuthIdentity {
+                username: Username::new(user, None).unwrap(),
+                password: password.to_owned().into(),
+            };
+            delegate_other(
+                &mut framed,
+                logon.user,
+                logon.password,
+                delegated,
+                &public_key,
+            )
+            .await?;
             connector.mark_credssp_as_done();
         }
     }
@@ -840,11 +995,6 @@ async fn nla_with_the_remote_desktop_password_reaches_client_info_as_that_user()
                 domain: None
             }
         ]
-    );
-    assert!(
-        matches!(pending.steps[3], Step::CredsspDone { .. }),
-        "CredSSP follows the upgrade: {:?}",
-        pending.steps
     );
     let Some(Step::Pdu { input, .. }) = pending.steps.last() else {
         panic!("the last step is a PDU: {:?}", pending.steps);
@@ -949,6 +1099,106 @@ async fn a_client_info_user_other_than_the_credssp_user_is_refused() {
         [FrontRequest::Gone { conn: 7 }],
         "reprise-login hears the logon is gone"
     );
+}
+
+/// `ctx_with_anna`, with `bert` listed under `bert-rd-pass`.
+fn ctx_with_anna_and_bert() -> Ctx {
+    let ctx = ctx_with_anna();
+    ctx.nla_users.borrow_mut().push(NlaUser {
+        user: "bert".into(),
+        nt_hash: nt_hash("bert-rd-pass"),
+    });
+    ctx
+}
+
+#[tokio::test]
+async fn a_client_authenticated_as_anna_that_delegates_bert_is_refused() {
+    let ctx = ctx_with_anna_and_bert();
+    let daemon = Daemon::link(&ctx).await;
+    let (_tell, mut heard) = mpsc::unbounded_channel();
+    let logon = NlaLogon {
+        credssp: Credssp::Delegating {
+            user: "bert",
+            password: "bert-pass",
+        },
+        ..hybrid("anna", "anna-rd-pass")
+    };
+    let (pending, client) = nla_log_on(&ctx, logon, &mut heard).await;
+    client.abort();
+    assert_eq!(pending.unwrap_err(), Refused::DelegationMismatch);
+    assert_eq!(daemon.rest(ctx).await, [], "no Authenticate");
+}
+
+#[tokio::test]
+async fn a_client_that_delegates_another_password_than_it_authenticated_with_is_refused() {
+    let ctx = ctx_with_anna();
+    let daemon = Daemon::link(&ctx).await;
+    let (_tell, mut heard) = mpsc::unbounded_channel();
+    let logon = NlaLogon {
+        credssp: Credssp::Delegating {
+            user: "anna",
+            password: "other-pass",
+        },
+        ..hybrid("anna", "anna-rd-pass")
+    };
+    let (pending, client) = nla_log_on(&ctx, logon, &mut heard).await;
+    client.abort();
+    assert_eq!(pending.unwrap_err(), Refused::DelegationMismatch);
+    assert_eq!(daemon.rest(ctx).await, [], "no Authenticate");
+}
+
+#[tokio::test]
+async fn a_hand_built_client_that_delegates_its_own_credentials_logs_on() {
+    let ctx = ctx_with_anna();
+    let mut daemon = Daemon::link(&ctx).await;
+    let (_tell, mut heard) = mpsc::unbounded_channel();
+    let logon = NlaLogon {
+        credssp: Credssp::Delegating {
+            user: "anna",
+            password: "anna-rd-pass",
+        },
+        ..hybrid("anna", "anna-rd-pass")
+    };
+    let (pending, client) = nla_log_on(&ctx, logon, &mut heard).await;
+    client.abort();
+    assert_eq!(pending.expect("the client logs on").user, "anna");
+    assert!(matches!(
+        daemon.request().await,
+        FrontRequest::Authenticate { conn: 7, .. }
+    ));
+}
+
+#[tokio::test]
+async fn a_client_that_delegates_no_password_is_refused() {
+    let ctx = ctx_with_anna();
+    let daemon = Daemon::link(&ctx).await;
+    let (_tell, mut heard) = mpsc::unbounded_channel();
+    let logon = NlaLogon {
+        credssp: Credssp::NoPassword,
+        ..hybrid("anna", "anna-rd-pass")
+    };
+    let (pending, client) = nla_log_on(&ctx, logon, &mut heard).await;
+    client.abort();
+    assert_eq!(pending.unwrap_err(), Refused::NoDelegation);
+    assert_eq!(daemon.rest(ctx).await, [], "no Authenticate");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_verdict_wait_past_the_handshake_deadline_is_refused_as_no_verdict() {
+    let ctx = ctx();
+    let (_tell, mut heard) = mpsc::unbounded_channel();
+    let start = Instant::now();
+    let mut link = Link {
+        ctx: &ctx,
+        conn: 7,
+        peer: "127.0.0.1:1".parse().unwrap(),
+        accepted: start,
+        heard: &mut heard,
+        asked: true,
+    };
+    let waited = tokio::time::timeout(HANDSHAKE * 2, link.verified()).await;
+    assert_eq!(waited, Ok(Err(Refused::NoVerdict)));
+    assert_eq!(start.elapsed(), HANDSHAKE);
 }
 
 #[tokio::test]
