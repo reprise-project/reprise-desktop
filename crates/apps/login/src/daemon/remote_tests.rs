@@ -995,6 +995,112 @@ fn a_disconnected_background_session_ends_after_end_disconnected_after() {
     );
 }
 
+fn ending_after(min: Option<u32>) -> Input {
+    Input::ConfigReloaded(config(MachineRemote {
+        end_disconnected_after_min: min,
+        ..enabled()
+    }))
+}
+
+/// Anna's background session `c2`, started at the run's start with no client, its
+/// `Disconnected` timer armed for 30 minutes as generation 1.
+fn anna_unviewed_for_30() -> Run {
+    let mut run = remote_run(MachineRemote {
+        end_disconnected_after_min: Some(30),
+        ..enabled()
+    });
+    run.anna_in_background(7, 2);
+    run
+}
+
+#[test]
+fn never_cancels_an_armed_disconnected_timer_and_a_value_re_arms_it_from_the_disconnect() {
+    let mut run = anna_unviewed_for_30();
+    assert_eq!(
+        run.after(Duration::from_secs(600)).on(ending_after(None)),
+        []
+    );
+    let gen1 = Timer::Disconnected {
+        id: "c2".into(),
+        generation: 1,
+    };
+    assert_eq!(run.after(Duration::from_secs(1200)).fire(gen1), []);
+    assert_eq!(
+        run.after(Duration::from_secs(60))
+            .on(ending_after(Some(40))),
+        [Effect::Arm {
+            timer: Timer::Disconnected {
+                id: "c2".into(),
+                generation: 2
+            },
+            after: Duration::from_secs(40 * 60 - 1860),
+        }],
+        "40 minutes from the disconnect, not from the reload"
+    );
+}
+
+#[test]
+fn a_shorter_end_disconnected_after_ends_a_session_past_it_at_once() {
+    let mut run = anna_unviewed_for_30();
+    assert_eq!(
+        quiet(
+            run.after(Duration::from_secs(600))
+                .on(ending_after(Some(5)))
+        ),
+        [Effect::TerminateSession("c2".into())]
+    );
+    let mut run = anna_unviewed_for_30();
+    assert_eq!(
+        run.after(Duration::from_secs(60)).on(ending_after(Some(5))),
+        [Effect::Arm {
+            timer: Timer::Disconnected {
+                id: "c2".into(),
+                generation: 2
+            },
+            after: Duration::from_secs(240),
+        }]
+    );
+    let gen1 = Timer::Disconnected {
+        id: "c2".into(),
+        generation: 1,
+    };
+    assert_eq!(run.fire(gen1), [], "the old timer is stale");
+}
+
+#[test]
+fn a_longer_end_disconnected_after_re_arms_from_the_disconnect() {
+    let mut run = anna_unviewed_for_30();
+    assert_eq!(
+        run.after(Duration::from_secs(600))
+            .on(ending_after(Some(60))),
+        [Effect::Arm {
+            timer: Timer::Disconnected {
+                id: "c2".into(),
+                generation: 2
+            },
+            after: Duration::from_secs(50 * 60),
+        }]
+    );
+    let gen1 = Timer::Disconnected {
+        id: "c2".into(),
+        generation: 1,
+    };
+    assert_eq!(run.after(Duration::from_secs(1200)).fire(gen1), []);
+    let gen2 = Timer::Disconnected {
+        id: "c2".into(),
+        generation: 2,
+    };
+    assert_eq!(
+        quiet(run.after(Duration::from_secs(1800)).fire(gen2)),
+        [Effect::TerminateSession("c2".into())]
+    );
+    assert_eq!(
+        run.after(Duration::from_secs(1)).on(ending_after(Some(60))),
+        [],
+        "an unchanged value re-arms nothing"
+    );
+}
+
 #[test]
 fn resuming_a_background_session_at_the_login_screen_makes_it_the_consoles() {
     let remote = MachineRemote {
