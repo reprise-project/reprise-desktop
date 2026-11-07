@@ -181,7 +181,7 @@ fn run(
 }
 
 fn connect(mailbox: Mailbox) -> Result<(Connection, EventQueue<App>, Wl), String> {
-    let conn = Connection::connect_to_env().map_err(|e| format!("no Wayland connection: {e}"))?;
+    let conn = crate::wayland::connect()?;
     let (globals, queue) = registry_queue_init::<App>(&conn).map_err(|e| e.to_string())?;
     let qh = queue.handle();
     let manager: ExtDataControlManagerV1 = (globals.bind(&qh, 1..=1, ()))

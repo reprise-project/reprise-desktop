@@ -26,6 +26,8 @@ struct Shared {
     config: watch::Receiver<RemoteDesktop>,
     /// Whether `[power] locker` names another locker, which turns lock mode off.
     locker_set: Box<dyn Fn() -> bool + Send + Sync>,
+    /// Whether the session is away from its seat, which turns lock mode on.
+    seat_away: Box<dyn Fn() -> bool + Send + Sync>,
     run: Mutex<Run>,
 }
 
@@ -43,11 +45,13 @@ impl Console {
         status: watch::Sender<Status>,
         config: watch::Receiver<RemoteDesktop>,
         locker_set: impl Fn() -> bool + Send + Sync + 'static,
+        seat_away: impl Fn() -> bool + Send + Sync + 'static,
     ) -> Console {
         Console(Arc::new(Shared {
             status,
             config,
             locker_set: Box::new(locker_set),
+            seat_away: Box::new(seat_away),
             run: Mutex::default(),
         }))
     }
@@ -63,7 +67,8 @@ impl Console {
     }
 
     fn configured_lock(&self) -> bool {
-        self.0.config.borrow().laptop_screen == LaptopScreen::Lock && !(self.0.locker_set)()
+        (self.0.seat_away)()
+            || self.0.config.borrow().laptop_screen == LaptopScreen::Lock && !(self.0.locker_set)()
     }
 
     /// Joins the run of viewers, starting one with `laptop_screen` as configured now when none
@@ -254,10 +259,23 @@ pub(crate) mod tests {
     use ironrdp_displaycontrol::pdu::{DeviceScaleFactor, MonitorLayoutEntry};
 
     /// A console configured with `laptop_screen`, a locker set or not, and the status it
-    /// publishes to.
+    /// publishes to, for a session on its seat.
     pub(crate) fn configured(
         laptop_screen: LaptopScreen,
         locker: bool,
+    ) -> (
+        Console,
+        watch::Sender<RemoteDesktop>,
+        watch::Receiver<Status>,
+    ) {
+        on_seat(laptop_screen, locker, false)
+    }
+
+    /// [`configured`] for a session `away` from its seat or not.
+    fn on_seat(
+        laptop_screen: LaptopScreen,
+        locker: bool,
+        away: bool,
     ) -> (
         Console,
         watch::Sender<RemoteDesktop>,
@@ -269,7 +287,7 @@ pub(crate) mod tests {
         });
         let (status, status_rx) = watch::channel(Status::default());
         (
-            Console::new(status, config_rx, move || locker),
+            Console::new(status, config_rx, move || locker, move || away),
             config,
             status_rx,
         )
@@ -339,6 +357,15 @@ pub(crate) mod tests {
         let (console, _config, status) = configured(LaptopScreen::Lock, true);
         assert!(!console.join(FIRST.to_vec()).lock());
         assert!(published(&status).is_empty());
+    }
+
+    #[test]
+    fn a_session_away_from_the_seat_runs_lock_mode_whatever_laptop_screen_says() {
+        let (console, _config, status) = on_seat(LaptopScreen::Show, true, true);
+        assert!(console.would_own());
+        let joined = console.join(FIRST.to_vec());
+        assert!(joined.lock());
+        assert_eq!(published(&status), FIRST);
     }
 
     #[tokio::test(start_paused = true)]
