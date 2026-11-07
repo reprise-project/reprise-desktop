@@ -98,8 +98,8 @@ pub(super) struct Remote {
     linked: HashSet<u32>,
     /// Uids whose lost link is being reopened.
     reopening: HashSet<u32>,
-    /// The generation of each armed `Timer::Disconnected`, by session id.
-    disconnects: HashMap<String, u32>,
+    /// Background sessions with no viewer, by session id.
+    disconnects: HashMap<String, Unviewed>,
     generations: u32,
     inhibit: Inhibit,
 }
@@ -145,6 +145,13 @@ enum Step {
     Refused,
 }
 
+struct Unviewed {
+    /// When the last viewer left, or the session started or was found without one.
+    since: Instant,
+    /// The armed `Timer::Disconnected`'s; an older one is stale.
+    generation: Option<u32>,
+}
+
 struct Starting {
     worker: WorkerId,
     vt: u16,
@@ -175,9 +182,21 @@ impl Daemon {
 
     /// Turning remote logins on starts the front and opens the sessions' links; off stops it
     /// and denies logins not handed over, keeping the links of uids with a session.
-    pub(super) fn config_reloaded(&mut self, config: MachineConfig, out: &mut Vec<Effect>) {
+    pub(super) fn config_reloaded(
+        &mut self,
+        now: Instant,
+        config: MachineConfig,
+        out: &mut Vec<Effect>,
+    ) {
         let (was, port) = (self.config.remote.enabled, self.config.remote.port);
+        let ending = self.config.remote.end_disconnected_after_min;
         self.config = config;
+        if self.config.remote.end_disconnected_after_min != ending {
+            let ids: BTreeSet<String> = self.remote.disconnects.keys().cloned().collect();
+            for id in ids {
+                self.arm_unviewed(now, &id, out);
+            }
+        }
         match (was, self.config.remote.enabled) {
             (false, true) => {
                 out.push(Effect::Front(FrontUnit::Start));
@@ -613,7 +632,7 @@ impl Daemon {
                         started: Some(now),
                         background: true,
                     });
-                    self.arm_disconnected(session_id, out);
+                    self.arm_disconnected(now, session_id, out);
                 }
                 self.ask_link(uid, out);
                 for conn in self.conns(Step::Starting { uid }) {
@@ -863,13 +882,13 @@ impl Daemon {
 
     /// A lost link of a uid with a session reopens, keeping its count meanwhile. A reopen
     /// that fails counts as no viewers; the next login for `uid` opens it again.
-    pub(super) fn intake_lost(&mut self, uid: u32, out: &mut Vec<Effect>) {
+    pub(super) fn intake_lost(&mut self, now: Instant, uid: u32, out: &mut Vec<Effect>) {
         self.remote.linked.remove(&uid);
         if self.sessions.by_uid(uid).is_some() && self.remote.reopening.insert(uid) {
             return out.push(Effect::ReopenIntake { uid });
         }
         self.remote.reopening.remove(&uid);
-        self.set_viewers(uid, 0, out);
+        self.set_viewers(now, uid, 0, out);
     }
 
     /// Opens the hand-over link of every session in the table while remote logins are on.
@@ -882,7 +901,13 @@ impl Daemon {
 
     /// A background session whose last viewer leaves ends `end_disconnected_after` later.
     /// A count for a uid with no session is ignored.
-    pub(super) fn set_viewers(&mut self, uid: u32, count: u32, out: &mut Vec<Effect>) {
+    pub(super) fn set_viewers(
+        &mut self,
+        now: Instant,
+        uid: u32,
+        count: u32,
+        out: &mut Vec<Effect>,
+    ) {
         let Some(e) = self.sessions.by_uid(uid) else {
             return;
         };
@@ -896,29 +921,56 @@ impl Daemon {
         }
         if before.is_some() && e.background {
             let id = e.id.clone();
-            self.arm_disconnected(id, out);
+            self.arm_disconnected(now, id, out);
         }
     }
 
-    /// Arms background session `id`'s `Disconnected` timer with a new generation, which
-    /// stales any earlier one: when the session starts, is found or loses its last viewer.
-    pub(super) fn arm_disconnected(&mut self, id: String, out: &mut Vec<Effect>) {
-        let Some(min) = self.config.remote.end_disconnected_after_min else {
+    /// Records background session `id` as unviewed from `now` and arms its `Disconnected`
+    /// timer: when the session starts, is found or loses its last viewer.
+    pub(super) fn arm_disconnected(&mut self, now: Instant, id: String, out: &mut Vec<Effect>) {
+        let unviewed = Unviewed {
+            since: now,
+            generation: None,
+        };
+        self.remote.disconnects.insert(id.clone(), unviewed);
+        self.arm_unviewed(now, &id, out);
+    }
+
+    /// Arms `id`'s `Disconnected` timer for `end_disconnected_after` past its `since` with a
+    /// new generation, which stales any earlier one; ends it at once if that has passed.
+    fn arm_unviewed(&mut self, now: Instant, id: &str, out: &mut Vec<Effect>) {
+        let min = self.config.remote.end_disconnected_after_min;
+        let Some(u) = self.remote.disconnects.get_mut(id) else {
             return;
         };
+        u.generation = None;
+        let Some(min) = min else {
+            return;
+        };
+        let end = u.since + Duration::from_secs(u64::from(min) * 60);
+        let after = end.saturating_duration_since(now);
+        if after.is_zero() {
+            return self.end_unviewed(id, out);
+        }
         self.remote.generations += 1;
         let generation = self.remote.generations;
-        (self.remote.disconnects).insert(id.clone(), generation);
+        u.generation = Some(generation);
         out.push(Effect::Arm {
-            timer: Timer::Disconnected { id, generation },
-            after: Duration::from_secs(u64::from(min) * 60),
+            timer: Timer::Disconnected {
+                id: id.into(),
+                generation,
+            },
+            after,
         });
     }
 
     pub(super) fn disconnected(&mut self, id: &str, generation: u32, out: &mut Vec<Effect>) {
-        if self.remote.disconnects.get(id) != Some(&generation) {
-            return;
+        if self.remote.disconnects.get(id).and_then(|u| u.generation) == Some(generation) {
+            self.end_unviewed(id, out);
         }
+    }
+
+    fn end_unviewed(&mut self, id: &str, out: &mut Vec<Effect>) {
         self.remote.disconnects.remove(id);
         let Some(e) = self.sessions.by_id(id) else {
             return;

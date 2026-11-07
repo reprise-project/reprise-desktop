@@ -195,8 +195,10 @@ frame, and `sound` at once.
 ([install.md](install.md#login-manager)), for the whole computer: the
 `[login]` table and the machine's `[remote_desktop]` table below. It is read
 when reprise-login starts and again on `sudo systemctl reload
-reprise-login`. A reload applies `enabled` and `port` at once, the other
-`[remote_desktop]` keys from the next login or disconnect, `[login]` keys
+reprise-login`. A reload applies `enabled`, `port` and
+`end_disconnected_after` at once, the last counted from when each session's
+last client left, the other `[remote_desktop]` keys from the next login,
+`[login]` keys
 the next time the login screen starts, and `autologin_user` the next time
 reprise-login starts. `sudo systemctl restart reprise-login` applies
 everything, and running sessions keep running. systemd starts it at most
