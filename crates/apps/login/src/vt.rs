@@ -113,7 +113,16 @@ fn wait_active(
 /// Frees `vt` once nothing holds it open; a failure is logged.
 pub fn disallocate(vt: u16) {
     if let Err(e) = tty0().and_then(|tty| vt_ioctl(&tty, VT_DISALLOCATE, vt)) {
-        log::warn!("VT {vt}: disallocate: {e}");
+        log::log!(disallocate_level(&e), "VT {vt}: disallocate: {e}");
+    }
+}
+
+/// A logout's VT is often still held by the session's compositor when its worker exits; that
+/// VT stays allocated and the next login picks it again, so `EBUSY` is no warning.
+fn disallocate_level(e: &io::Error) -> log::Level {
+    match e.raw_os_error() {
+        Some(libc::EBUSY) => log::Level::Debug,
+        _ => log::Level::Warn,
     }
 }
 
@@ -187,6 +196,13 @@ fn follow(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_vt_still_held_at_its_disallocation_is_logged_at_debug() {
+        let level = |errno| disallocate_level(&io::Error::from_raw_os_error(errno));
+        assert_eq!(level(libc::EBUSY), log::Level::Debug);
+        assert_eq!(level(libc::EINVAL), log::Level::Warn);
+    }
 
     #[test]
     fn the_active_attribute_names_the_vt() {
