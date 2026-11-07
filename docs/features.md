@@ -558,8 +558,9 @@ the screen takes the interface of the last session.
   computer starts. Logging off brings the login screen.
 - **Remote logins.** A user connected from another computer has a tile
   that says Connected remotely. Logging in here as that user brings the
-  session to this screen and ends the remote connection
-  ([Remote logins](#remote-logins)).
+  session to this screen. For a background session, or one in lock mode,
+  that ends the remote connection; a session showing its screen keeps its
+  client ([Remote logins](#remote-logins)).
 - **A safety net.** A session that ends as soon as it starts brings the
   login screen back with a note pointing at its log. A login screen that
   fails three times in a row gives way to a text login on tty2.
