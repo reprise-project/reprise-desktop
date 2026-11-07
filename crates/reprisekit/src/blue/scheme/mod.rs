@@ -1562,6 +1562,16 @@ pub struct Scheme {
     pub places_bar: PlacesBarFaces,
     pub tray_arrow: ArrowRecipe,
     pub start_menu: StartMenu,
+    /// The welcome screen: its dark top and bottom bands, the field between them with its glow
+    /// on the left, the lit rules along the bands and down the middle, and its text.
+    pub welcome_band: Color,
+    pub welcome_field: Color,
+    pub welcome_glow: Color,
+    pub welcome_rule: Color,
+    pub welcome_text: Color,
+    /// The band behind a hot or open user tile, and the frame round each user's picture.
+    pub welcome_tile_hot: Color,
+    pub welcome_tile_frame: Color,
 }
 
 impl Scheme {

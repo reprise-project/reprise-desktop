@@ -12,9 +12,7 @@ use crate::text::TextRenderer;
 
 /// The Blue scheme a panel drawn under `look` takes: the look's own under Blue, navy otherwise.
 pub fn power_panel_variant(look: &Look) -> Variant {
-    look.style()
-        .and_then(|st| Variant::ALL.into_iter().find(|v| v.style_name() == st.name))
-        .unwrap_or_default()
+    Variant::of(look)
 }
 
 /// Panel `p` laid out as `lay` onto `c`, a device-px canvas at scale 1 for output scale `s`, in
