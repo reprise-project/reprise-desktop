@@ -131,17 +131,18 @@ pub struct Pam {
     handle: *mut ffi::pam_handle_t,
     last: c_int,
     _conv: Box<ffi::pam_conv>,
-    _converse: Box<Box<dyn Converse>>,
+    /// The `appdata_ptr` libpam hands back to `converse`, freed in `Drop` after `pam_end`.
+    converse: *mut Box<dyn Converse>,
 }
 
 impl Pam {
     pub fn start(service: &str, user: &str, conv: Box<dyn Converse>) -> Result<Pam, PamError> {
-        let cservice = c_string(service)?;
-        let cuser = c_string(user)?;
-        let mut converse_box = Box::new(conv);
+        let cservice = c_string(service, "service name")?;
+        let cuser = c_string(user, "user name")?;
+        let appdata = Box::into_raw(Box::new(conv));
         let pam_conv = Box::new(ffi::pam_conv {
             conv: Some(converse),
-            appdata_ptr: &mut *converse_box as *mut Box<dyn Converse> as *mut c_void,
+            appdata_ptr: appdata.cast(),
         });
         let mut handle = std::ptr::null_mut();
         // SAFETY: the strings are NUL-terminated and `pam_conv` and the
@@ -149,6 +150,8 @@ impl Pam {
         let rc =
             unsafe { ffi::pam_start(cservice.as_ptr(), cuser.as_ptr(), &*pam_conv, &mut handle) };
         if rc != ffi::PAM_SUCCESS || handle.is_null() {
+            // SAFETY: `appdata` came from `Box::into_raw` above and libpam holds no handle.
+            drop(unsafe { Box::from_raw(appdata) });
             return Err(PamError {
                 code: rc,
                 text: format!("cannot start PAM service {service} (code {rc})"),
@@ -158,12 +161,12 @@ impl Pam {
             handle,
             last: rc,
             _conv: pam_conv,
-            _converse: converse_box,
+            converse: appdata,
         })
     }
 
     pub fn set_tty(&mut self, tty: &str) -> Result<(), PamError> {
-        let tty = c_string(tty)?;
+        let tty = c_string(tty, "tty")?;
         // SAFETY: the handle is live; libpam copies the string.
         let rc = unsafe { ffi::pam_set_item(self.handle, ffi::PAM_TTY, tty.as_ptr().cast()) };
         self.check(rc)
@@ -183,7 +186,7 @@ impl Pam {
     }
 
     pub fn putenv(&mut self, key: &str, value: &str) -> Result<(), PamError> {
-        let pair = c_string(&format!("{key}={value}"))?;
+        let pair = c_string(&format!("{key}={value}"), "environment variable")?;
         // SAFETY: the handle is live; libpam copies the string.
         let rc = unsafe { ffi::pam_putenv(self.handle, pair.as_ptr()) };
         self.check(rc)
@@ -282,15 +285,21 @@ impl PamOps for Pam {
 
 impl Drop for Pam {
     fn drop(&mut self) {
-        // SAFETY: the handle is live and not used after this call.
-        unsafe { ffi::pam_end(self.handle, self.last) };
+        // SAFETY: the handle is live and not used after this call; `converse` came from
+        // `Box::into_raw` and libpam no longer calls back once `pam_end` returns.
+        unsafe {
+            ffi::pam_end(self.handle, self.last);
+            drop(Box::from_raw(self.converse));
+        }
     }
 }
 
-fn c_string(s: &str) -> Result<CString, PamError> {
+/// `s` as a C string. The error names `what` and never echoes `s`, which may be a password
+/// typed into the user name field.
+fn c_string(s: &str, what: &str) -> Result<CString, PamError> {
     CString::new(s).map_err(|_| PamError {
         code: ffi::PAM_SYSTEM_ERR,
-        text: format!("{s:?} holds a NUL byte"),
+        text: format!("the {what} holds a NUL byte"),
     })
 }
 
@@ -499,7 +508,7 @@ mod tests {
     }
 
     #[test]
-    fn a_refused_prompt_returns_conv_err_and_frees_earlier_answers() {
+    fn a_refused_prompt_fails_the_conversation_with_no_responses() {
         let (rc, responses, seen) = run(
             &[
                 (ffi::PAM_PROMPT_ECHO_ON, "login:"),

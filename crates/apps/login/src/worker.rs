@@ -4,18 +4,20 @@
 use std::cell::Cell;
 use std::ffi::{CString, c_char, c_int};
 use std::fmt;
-use std::fs::{File, OpenOptions};
-use std::io::Write as _;
-use std::os::fd::{AsRawFd, OwnedFd};
+use std::fs::OpenOptions;
+use std::io::{self, Read};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
-use repriselogin::frame::{read_msg, write_msg};
+use repriselogin::frame::{FrameError, read_msg, write_msg};
 use repriselogin::greeter::{AuthKind, ErrorKind};
 use repriselogin::{SESSION_SOCKET, SOCKET_ENV};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
@@ -88,24 +90,44 @@ impl fmt::Debug for ToWorker {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum FromWorker {
-    Prompt { kind: AuthKind, text: String },
-    Authenticated,
-    Started { session_id: String, uid: u32 },
-    Failed { kind: ErrorKind, text: String },
+    Prompt {
+        kind: AuthKind,
+        text: String,
+    },
+    /// The account PAM resolved after authentication, which may differ from the entered name.
+    Authenticated {
+        user: String,
+        uid: u32,
+    },
+    Started {
+        session_id: String,
+        uid: u32,
+    },
+    Failed {
+        kind: ErrorKind,
+        text: String,
+    },
 }
 
 /// The conversation over the worker socket: each message goes out as `Prompt` and waits for
 /// an `Answer`. `Cancel`, a closed socket or a bad frame ends it, and later prompts get `None`.
+/// A stop of the worker (SIGTERM, SIGINT) ends it as well.
 pub struct SocketConverse {
     sock: UnixStream,
     ended: Rc<Cell<bool>>,
+    stop: &'static AtomicBool,
 }
 
 impl SocketConverse {
     pub fn new(sock: UnixStream) -> SocketConverse {
+        SocketConverse::stoppable(sock, &STOP)
+    }
+
+    fn stoppable(sock: UnixStream, stop: &'static AtomicBool) -> SocketConverse {
         SocketConverse {
             sock,
             ended: Rc::default(),
+            stop,
         }
     }
 
@@ -125,7 +147,7 @@ impl Converse for SocketConverse {
             text: text.to_owned(),
         };
         let answer = match write_msg(&mut self.sock, &prompt) {
-            Ok(()) => read_msg::<ToWorker>(&mut self.sock),
+            Ok(()) => read_until_stopped::<ToWorker>(&self.sock, self.stop),
             Err(e) => Err(e),
         };
         match answer {
@@ -158,6 +180,11 @@ const SESSION_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/bin";
 const LOCALE_CONF: &str = "/etc/locale.conf";
 const JOURNAL_STDOUT: &str = "/run/systemd/journal/stdout";
 const JOURNAL_IDENTIFIER: &str = "reprise-session";
+/// The worker socket's read timeout: the longest a stop waits on a read it raced into.
+const STOP_POLL: Duration = Duration::from_millis(200);
+/// The one text the daemon gets for any `pam_authenticate` failure, so an unknown user and
+/// a wrong password look the same.
+const AUTH_FAILED: &str = "The user name or password is incorrect.";
 
 /// The session's whole environment: the account's variables, then the PAM environment, whose
 /// value wins on a clash. Nothing comes from the worker's own environment.
@@ -235,6 +262,11 @@ pub fn find_program(name: &str, path: &str) -> Option<PathBuf> {
 pub fn worker_main(mode: Mode, user: &str, mut sock: UnixStream) -> i32 {
     // SAFETY: plain signal disposition change; an inherited SIG_IGN would reap the session itself.
     unsafe { libc::signal(libc::SIGCHLD, libc::SIG_DFL) };
+    install_stop_handler();
+    if let Err(e) = sock.set_read_timeout(Some(STOP_POLL)) {
+        log::error!("worker: socket timeout: {e}");
+        return 1;
+    }
     let mut ended = None;
     let conv: Box<dyn Converse> = if mode.relays_prompts() {
         let Ok(clone) = sock.try_clone() else {
@@ -247,19 +279,26 @@ pub fn worker_main(mode: Mode, user: &str, mut sock: UnixStream) -> i32 {
     } else {
         Box::new(Unattended)
     };
-    let cancelled = || ended.as_ref().is_some_and(|e| e.get());
+    let cancelled = || stopped() || ended.as_ref().is_some_and(|e| e.get());
 
     let mut pam = match Pam::start(mode.service(), user, conv) {
         Ok(pam) => pam,
         Err(e) => return fail(&mut sock, ErrorKind::Failed, &e.to_string()),
     };
-    let checked = pam.authenticate().and_then(|()| pam.account());
+    let refused = match pam.authenticate() {
+        Err(e) => Some((e, AUTH_FAILED.to_owned())),
+        Ok(()) => pam.account().err().map(|e| {
+            let text = e.text.clone();
+            (e, text)
+        }),
+    };
     if cancelled() {
         return 1;
     }
-    if let Err(e) = checked {
-        log::warn!("worker: {user} refused: {e}");
-        return fail(&mut sock, ErrorKind::Auth, &e.text);
+    // The entered name stays out of the log: it may be a password typed into the name field.
+    if let Some((e, text)) = refused {
+        log::warn!("worker: login refused: {e}");
+        return fail(&mut sock, ErrorKind::Auth, &text);
     }
     let account = match pam.user().map(|name| users::lookup(&name)) {
         Some(Ok(Some(account))) => account,
@@ -271,13 +310,17 @@ pub fn worker_main(mode: Mode, user: &str, mut sock: UnixStream) -> i32 {
             );
         }
     };
-    if write_msg(&mut sock, &FromWorker::Authenticated).is_err() {
+    let authenticated = FromWorker::Authenticated {
+        user: account.name.clone(),
+        uid: account.uid,
+    };
+    if write_msg(&mut sock, &authenticated).is_err() {
         return 1;
     }
     if mode == Mode::Reauth {
         return 0;
     }
-    let vt = match read_msg::<ToWorker>(&mut sock) {
+    let vt = match read_until_stopped::<ToWorker>(&sock, &STOP) {
         Ok(ToWorker::Start { vt }) if (1..=vt::LAST_VT).contains(&vt) => vt,
         Ok(ToWorker::Start { vt }) => {
             return fail(
@@ -290,6 +333,7 @@ pub fn worker_main(mode: Mode, user: &str, mut sock: UnixStream) -> i32 {
     };
     match run_session(&mut pam, mode, &account, vt, &mut sock) {
         Ok(clean) => i32::from(!clean),
+        Err(_) if stopped() => 1,
         Err(text) => fail(&mut sock, ErrorKind::Failed, &text),
     }
 }
@@ -347,13 +391,17 @@ fn run_session(
         .custom_flags(libc::O_NOCTTY | libc::O_CLOEXEC)
         .open(&tty_path)
         .map_err(|e| format!("{tty_path}: {e}"))?;
-    vt::activate_and_wait(vt).map_err(|e| format!("VT {vt}: {e}"))?;
-    pam.establish_cred().map_err(pam_err)?;
+    vt::activate_and_wait(vt, &stopped).map_err(|e| format!("VT {vt}: {e}"))?;
+    if stopped() {
+        return Err("stopped".into());
+    }
+    let name = CString::new(account.name.as_str()).map_err(|_| "the user name holds a NUL byte")?;
+    let groups = establish_creds(&mut WorkerCreds(pam), &group_list(&name, account.gid)?)?;
     if let Err(e) = pam.open_session() {
         let _ = pam.delete_cred();
         return Err(e.to_string());
     }
-    let clean = run_program(pam, mode, account, &tty_path, sock);
+    let clean = run_program(pam, mode, account, &tty_path, groups, sock);
     let closed = pam.close_session();
     let deleted = pam.delete_cred();
     drop(tty);
@@ -369,6 +417,7 @@ fn run_program(
     mode: Mode,
     account: &PasswdEntry,
     tty_path: &str,
+    groups: Vec<libc::gid_t>,
     sock: &mut UnixStream,
 ) -> Result<bool, String> {
     let pam_env = pam.env();
@@ -379,10 +428,16 @@ fn run_program(
     else {
         return Err("pam_systemd registered no session (no XDG_SESSION_ID)".into());
     };
-    let launch = Launch::new(account, mode, tty_path, session_env(account, mode, pam_env))?;
+    let env = session_env(account, mode, pam_env);
+    let launch = Launch::new(account, mode, tty_path, env, groups)?;
     let waited = block_session_signals();
-    // SAFETY: the worker is single-threaded; the child makes only async-signal-safe calls
-    // before `execve` or `_exit`.
+    // Checked with the signals blocked: a later stop stays pending for `wait_for`.
+    if stopped() {
+        unblock(&waited);
+        return Err("stopped".into());
+    }
+    // SAFETY: the child makes only async-signal-safe calls before `execve` or `_exit`, which
+    // fork allows whatever other threads the worker has.
     let child = unsafe { libc::fork() };
     if child < 0 {
         unblock(&waited);
@@ -401,7 +456,119 @@ fn run_program(
         log::warn!("worker: the daemon is gone; the session runs on");
     }
     let status = wait_for(child, &waited);
+    unblock(&waited);
     Ok(status.is_some_and(|s| libc::WIFEXITED(s) && libc::WEXITSTATUS(s) == 0))
+}
+
+/// The calls that give the session its credentials, apart so their order is testable.
+trait Creds {
+    fn set_groups(&mut self, groups: &[libc::gid_t]) -> io::Result<()>;
+    fn establish_cred(&mut self) -> Result<(), PamError>;
+    fn groups(&self) -> io::Result<Vec<libc::gid_t>>;
+}
+
+/// Puts the account's groups on the worker, runs `pam_setcred`, and returns the worker's
+/// groups after it: the session's, with any a module such as pam_group added.
+fn establish_creds(
+    c: &mut impl Creds,
+    account: &[libc::gid_t],
+) -> Result<Vec<libc::gid_t>, String> {
+    c.set_groups(account)
+        .map_err(|e| format!("setgroups: {e}"))?;
+    c.establish_cred().map_err(|e| e.to_string())?;
+    c.groups().map_err(|e| format!("getgroups: {e}"))
+}
+
+struct WorkerCreds<'a>(&'a mut Pam);
+
+impl Creds for WorkerCreds<'_> {
+    fn set_groups(&mut self, groups: &[libc::gid_t]) -> io::Result<()> {
+        // SAFETY: `groups` holds `groups.len()` entries.
+        match unsafe { libc::setgroups(groups.len(), groups.as_ptr()) } {
+            0 => Ok(()),
+            _ => Err(io::Error::last_os_error()),
+        }
+    }
+
+    fn establish_cred(&mut self) -> Result<(), PamError> {
+        self.0.establish_cred()
+    }
+
+    fn groups(&self) -> io::Result<Vec<libc::gid_t>> {
+        // SAFETY: a size query, then a fill of a buffer of that size.
+        unsafe {
+            let n = libc::getgroups(0, std::ptr::null_mut());
+            if n < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            let mut groups = vec![0; n as usize];
+            let n = libc::getgroups(n, groups.as_mut_ptr());
+            if n < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            groups.truncate(n as usize);
+            Ok(groups)
+        }
+    }
+}
+
+/// Set by SIGTERM and SIGINT, which the worker unwinds on through `pam_end`.
+static STOP: AtomicBool = AtomicBool::new(false);
+
+fn stopped() -> bool {
+    STOP.load(Ordering::Relaxed)
+}
+
+extern "C" fn on_stop(_: c_int) {
+    STOP.store(true, Ordering::Relaxed);
+}
+
+/// Points SIGTERM and SIGINT at `on_stop`. Without `SA_RESTART`, the blocking call a stop
+/// lands in returns `EINTR`. A handler, unlike a blocked mask, does not reach PAM's helpers.
+fn install_stop_handler() {
+    // SAFETY: `on_stop` only stores to an atomic, which is async-signal-safe.
+    unsafe {
+        let mut action: libc::sigaction = std::mem::zeroed();
+        action.sa_sigaction = on_stop as extern "C" fn(c_int) as libc::sighandler_t;
+        libc::sigemptyset(&mut action.sa_mask);
+        for sig in [libc::SIGTERM, libc::SIGINT] {
+            libc::sigaction(sig, &action, std::ptr::null_mut());
+        }
+    }
+}
+
+/// One frame from `sock`, or an error once `stop` is set. A stop that lands just before a
+/// read waits out the socket's read timeout.
+fn read_until_stopped<T: DeserializeOwned>(
+    sock: &UnixStream,
+    stop: &AtomicBool,
+) -> Result<T, FrameError> {
+    read_msg(&mut Stoppable { sock, stop })
+}
+
+struct Stoppable<'a> {
+    sock: &'a UnixStream,
+    stop: &'a AtomicBool,
+}
+
+impl Read for Stoppable<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        loop {
+            if self.stop.load(Ordering::Relaxed) {
+                return Err(io::Error::other("the worker was stopped"));
+            }
+            match self.sock.read(buf) {
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        io::ErrorKind::WouldBlock
+                            | io::ErrorKind::TimedOut
+                            | io::ErrorKind::Interrupted
+                    ) => {}
+                r => return r,
+            }
+        }
+    }
 }
 
 /// Blocks the signals the parent waits on before `fork`, so none is lost before `wait_for`.
@@ -459,7 +626,8 @@ struct Launch {
     home: CString,
     tty: CString,
     no_new_privs: bool,
-    stream: OwnedFd,
+    journal: libc::sockaddr_un,
+    journal_header: Vec<u8>,
 }
 
 impl Launch {
@@ -468,6 +636,7 @@ impl Launch {
         mode: Mode,
         tty_path: &str,
         env: Vec<(String, String)>,
+        groups: Vec<libc::gid_t>,
     ) -> Result<Launch, String> {
         let nul = |what: &str| format!("{what} holds a NUL byte");
         let argv = session_argv(account, mode);
@@ -488,25 +657,25 @@ impl Launch {
             .into_iter()
             .filter_map(|(k, v)| CString::new(format!("{k}={v}")).ok())
             .collect();
-        let name = CString::new(account.name.as_str()).map_err(|_| nul("user name"))?;
         Ok(Launch {
             path,
             argv_ptrs: pointers(&argv),
             _argv: argv,
             envp_ptrs: pointers(&envp),
             _envp: envp,
-            groups: group_list(&name, account.gid)?,
+            groups,
             uid: account.uid,
             gid: account.gid,
             home: CString::new(account.home.as_os_str().as_bytes()).map_err(|_| nul("home"))?,
             tty: CString::new(tty_path).map_err(|_| nul("tty"))?,
             no_new_privs: mode == Mode::Greeter,
-            stream: journal_stream(),
+            journal: journal_address(),
+            journal_header: format!("{JOURNAL_IDENTIFIER}\n\n6\n1\n0\n0\n0\n").into_bytes(),
         })
     }
 
-    /// Becomes the session's program. Any failure is written to the stream and exits 1, or
-    /// 127 when `execve` itself fails.
+    /// Becomes the session's program. A failure before the ids drop is written to the
+    /// worker's stderr, a later one to the session's; either exits 1, or 127 when `execve` fails.
     ///
     /// # Safety
     /// Called only in the child right after `fork`.
@@ -530,10 +699,6 @@ impl Launch {
             libc::sigemptyset(&mut empty);
             libc::sigprocmask(libc::SIG_SETMASK, &empty, std::ptr::null_mut());
 
-            let stream = self.stream.as_raw_fd();
-            if libc::dup2(stream, 1) < 0 || libc::dup2(stream, 2) < 0 {
-                libc::_exit(1);
-            }
             if libc::setsid() < 0 {
                 fail(b"reprise-login: setsid failed\n");
             }
@@ -547,15 +712,43 @@ impl Launch {
             if libc::dup2(tty, 0) < 0 {
                 fail(b"reprise-login: cannot make the tty stdin\n");
             }
-            libc::syscall(libc::SYS_close_range, 3, u32::MAX, 0);
+            if libc::syscall(libc::SYS_close_range, 3, u32::MAX, 0) < 0 {
+                fail(b"reprise-login: cannot close the worker's files\n");
+            }
             if libc::setgroups(self.groups.len(), self.groups.as_ptr()) < 0
                 || libc::setgid(self.gid) < 0
                 || libc::setuid(self.uid) < 0
             {
                 fail(b"reprise-login: cannot drop to the user's ids\n");
             }
-            if libc::getuid() != self.uid || libc::geteuid() != self.uid {
-                fail(b"reprise-login: the uid did not change\n");
+            if libc::getuid() != self.uid
+                || libc::geteuid() != self.uid
+                || libc::getgid() != self.gid
+                || libc::getegid() != self.gid
+            {
+                fail(b"reprise-login: the ids did not change\n");
+            }
+            // Connected as the user, so journald files the output under the user's uid.
+            let out = match self.connect_journal() {
+                Some(fd) => fd,
+                None => {
+                    let msg =
+                        b"reprise-login: no journal stream; the session's output is dropped\n";
+                    libc::write(2, msg.as_ptr().cast(), msg.len());
+                    libc::open(c"/dev/null".as_ptr(), libc::O_WRONLY)
+                }
+            };
+            if out < 0 || libc::dup2(out, 1) < 0 || libc::dup2(out, 2) < 0 {
+                fail(b"reprise-login: cannot set up the session's output\n");
+            }
+            if out > 2 {
+                libc::close(out);
+            }
+            // dup2 onto itself keeps FD_CLOEXEC, so clear it on all three.
+            for fd in 0..3 {
+                if libc::fcntl(fd, libc::F_SETFD, 0) < 0 {
+                    fail(b"reprise-login: cannot keep the session's stdio open\n");
+                }
             }
             if libc::chdir(self.home.as_ptr()) < 0 {
                 libc::chdir(c"/".as_ptr());
@@ -571,6 +764,36 @@ impl Launch {
             let msg = b"reprise-login: cannot run the session's program\n";
             libc::write(2, msg.as_ptr().cast(), msg.len());
             libc::_exit(127)
+        }
+    }
+
+    /// A journal stdout stream with the header written, or `None` when journald takes none.
+    ///
+    /// # Safety
+    /// Called only in the child; it makes only async-signal-safe calls.
+    unsafe fn connect_journal(&self) -> Option<c_int> {
+        // SAFETY: socket, connect, write, shutdown and close are async-signal-safe, and
+        // `journal` and `journal_header` were made before the fork.
+        unsafe {
+            let fd = libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0);
+            if fd < 0 {
+                return None;
+            }
+            let addr = (&self.journal as *const libc::sockaddr_un).cast::<libc::sockaddr>();
+            let len = std::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t;
+            let mut ok = libc::connect(fd, addr, len) == 0;
+            let mut sent = 0;
+            while ok && sent < self.journal_header.len() {
+                let rest = &self.journal_header[sent..];
+                let n = libc::write(fd, rest.as_ptr().cast(), rest.len());
+                ok = n > 0;
+                sent += n.max(0) as usize;
+            }
+            if ok && libc::shutdown(fd, libc::SHUT_RD) == 0 {
+                return Some(fd);
+            }
+            libc::close(fd);
+            None
         }
     }
 }
@@ -603,31 +826,22 @@ fn group_list(name: &CString, gid: libc::gid_t) -> Result<Vec<libc::gid_t>, Stri
     }
 }
 
-/// A journal stream for the session's stdout and stderr, or /dev/null when journald has none.
-fn journal_stream() -> OwnedFd {
-    let header = format!("{JOURNAL_IDENTIFIER}\n\n6\n1\n0\n0\n0\n");
-    let stream = UnixStream::connect(JOURNAL_STDOUT).and_then(|mut s| {
-        s.write_all(header.as_bytes())?;
-        s.shutdown(std::net::Shutdown::Read)?;
-        Ok(s)
-    });
-    match stream {
-        Ok(s) => s.into(),
-        Err(e) => {
-            log::warn!("worker: {JOURNAL_STDOUT}: {e}; the session's output is dropped");
-            File::options()
-                .write(true)
-                .open("/dev/null")
-                .expect("/dev/null opens")
-                .into()
-        }
+/// journald's stdout stream socket, built before fork for `Launch::connect_journal`.
+fn journal_address() -> libc::sockaddr_un {
+    // SAFETY: `sockaddr_un` is a plain C struct; all zeroes is a valid value.
+    let mut addr: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+    addr.sun_family = libc::AF_UNIX as libc::sa_family_t;
+    for (dst, src) in addr.sun_path.iter_mut().zip(JOURNAL_STDOUT.as_bytes()) {
+        *dst = *src as c_char;
     }
+    addr
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use repriselogin::frame::FrameError;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;
 
     fn anna() -> PasswdEntry {
@@ -678,7 +892,7 @@ mod tests {
             }
             seen
         });
-        let mut conv = SocketConverse::new(worker);
+        let mut conv = SocketConverse::stoppable(worker, &NEVER);
         let answer = conv.prompt(AuthKind::Secret, "Password:");
         assert_eq!(answer.as_deref().map(String::as_str), Some("hunter2"));
         assert_eq!(conv.prompt(AuthKind::Info, "Welcome"), None);
@@ -704,7 +918,7 @@ mod tests {
         worker
             .set_read_timeout(Some(Duration::from_secs(5)))
             .unwrap();
-        let mut conv = SocketConverse::new(worker);
+        let mut conv = SocketConverse::stoppable(worker, &NEVER);
         let ended = conv.ended();
         let daemon = std::thread::spawn(move || {
             let first = read_msg::<FromWorker>(&mut daemon).unwrap();
@@ -724,7 +938,7 @@ mod tests {
     fn a_closed_socket_ends_the_conversation() {
         let (worker, daemon) = UnixStream::pair().unwrap();
         drop(daemon);
-        let mut conv = SocketConverse::new(worker);
+        let mut conv = SocketConverse::stoppable(worker, &NEVER);
         assert_eq!(conv.prompt(AuthKind::Visible, "login:"), None);
         assert!(conv.ended().get());
     }
@@ -747,7 +961,10 @@ mod tests {
                 kind: AuthKind::Visible,
                 text: "login:".into(),
             },
-            FromWorker::Authenticated,
+            FromWorker::Authenticated {
+                user: "anna".into(),
+                uid: 1000,
+            },
             FromWorker::Started {
                 session_id: "3".into(),
                 uid: 1000,
@@ -761,6 +978,19 @@ mod tests {
             let frame = encode(&m).unwrap();
             assert_eq!(decode::<FromWorker>(&frame[4..]).unwrap(), m);
         }
+    }
+
+    #[test]
+    fn authenticated_names_the_account_pam_resolved() {
+        let m = FromWorker::Authenticated {
+            user: "anna".into(),
+            uid: 1000,
+        };
+        let frame = repriselogin::frame::encode(&m).unwrap();
+        assert_eq!(
+            std::str::from_utf8(&frame[4..]).unwrap(),
+            r#"{"type":"authenticated","user":"anna","uid":1000}"#
+        );
     }
 
     #[test]
@@ -865,6 +1095,79 @@ mod tests {
         assert_eq!(
             locale_env(conf),
             pairs(&[("LANG", "de_DE.UTF-8"), ("LC_TIME", "en_GB.UTF-8")])
+        );
+    }
+
+    static NEVER: AtomicBool = AtomicBool::new(false);
+
+    #[test]
+    fn a_stop_while_prompting_ends_the_conversation() {
+        static STOPPED: AtomicBool = AtomicBool::new(false);
+        let (worker, mut daemon) = UnixStream::pair().unwrap();
+        worker
+            .set_read_timeout(Some(Duration::from_millis(20)))
+            .unwrap();
+        let mut conv = SocketConverse::stoppable(worker, &STOPPED);
+        let daemon = std::thread::spawn(move || {
+            let prompt = read_msg::<FromWorker>(&mut daemon).unwrap();
+            STOPPED.store(true, Ordering::Relaxed);
+            (prompt, daemon)
+        });
+        assert_eq!(conv.prompt(AuthKind::Secret, "Password:"), None);
+        assert!(conv.ended().get());
+        let (prompt, _daemon) = daemon.join().unwrap();
+        assert!(matches!(prompt, FromWorker::Prompt { .. }), "{prompt:?}");
+    }
+
+    #[test]
+    fn sigterm_ends_a_blocked_socket_read() {
+        use std::os::unix::thread::JoinHandleExt;
+        install_stop_handler();
+        let (worker, daemon) = UnixStream::pair().unwrap();
+        worker
+            .set_read_timeout(Some(Duration::from_millis(100)))
+            .unwrap();
+        let reader = std::thread::spawn(move || read_until_stopped::<ToWorker>(&worker, &STOP));
+        std::thread::sleep(Duration::from_millis(50));
+        // SAFETY: the thread is alive until joined below; SIGTERM has the stop handler.
+        unsafe { libc::pthread_kill(reader.as_pthread_t(), libc::SIGTERM) };
+        let r = reader.join().unwrap();
+        assert!(matches!(r, Err(FrameError::Io(_))), "{r:?}");
+        assert!(STOP.load(Ordering::Relaxed));
+        drop(daemon);
+    }
+
+    /// The worker's groups as `setgroups` leaves them; `pam_setcred` adds `added`.
+    struct FakeCreds {
+        groups: Vec<libc::gid_t>,
+        added: libc::gid_t,
+    }
+
+    impl Creds for FakeCreds {
+        fn set_groups(&mut self, groups: &[libc::gid_t]) -> std::io::Result<()> {
+            self.groups = groups.to_vec();
+            Ok(())
+        }
+
+        fn establish_cred(&mut self) -> Result<(), PamError> {
+            self.groups.push(self.added);
+            Ok(())
+        }
+
+        fn groups(&self) -> std::io::Result<Vec<libc::gid_t>> {
+            Ok(self.groups.clone())
+        }
+    }
+
+    #[test]
+    fn groups_added_by_setcred_reach_the_session() {
+        let mut creds = FakeCreds {
+            groups: vec![0],
+            added: 990,
+        };
+        assert_eq!(
+            establish_creds(&mut creds, &[1000, 998]),
+            Ok(vec![1000, 998, 990])
         );
     }
 }
