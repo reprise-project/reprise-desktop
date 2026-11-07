@@ -130,7 +130,7 @@ impl Daemon {
 }
 
 #[derive(Debug)]
-struct AnyCertificate;
+pub(crate) struct AnyCertificate;
 
 impl ServerCertVerifier for AnyCertificate {
     fn verify_server_cert(
@@ -182,7 +182,7 @@ fn client_tls(key_log: Option<Arc<dyn KeyLog>>) -> TlsConnector {
     TlsConnector::from(Arc::new(config))
 }
 
-fn client_config(user: &str, password: &str) -> Config {
+pub(crate) fn client_config(user: &str, password: &str) -> Config {
     Config {
         desktop_size: ironrdp_connector::DesktopSize {
             width: 1280,
@@ -270,7 +270,7 @@ async fn log_on(user: &str, password: &str) -> Result<Pending, Refused> {
     pending
 }
 
-fn client_info(pdu: &[u8]) -> ClientInfoPdu {
+pub(crate) fn client_info(pdu: &[u8]) -> ClientInfoPdu {
     let request = ironrdp_core::decode::<X224<SendDataRequest<'_>>>(pdu)
         .unwrap()
         .0;
