@@ -18,7 +18,7 @@ fn users() -> Vec<LogonUser> {
         name: name.into(),
         real_name: real.into(),
         picture: (i != 1).then(|| userpic::draw(userpic::ALL[i * 3], 256)),
-        note: (i == 1).then_some(UserNote::LoggedOn),
+        note: [Some(UserNote::Remote), Some(UserNote::LoggedOn), None][i],
     })
     .collect()
 }

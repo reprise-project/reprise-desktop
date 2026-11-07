@@ -1,7 +1,7 @@
 //! The login screen's side of reprise-login's conversation: which request each reply calls for.
 //! Pure, so the order of prompts, notes and results is tested without a socket.
 
-use reprisekit::logon::Prompt;
+use reprisekit::logon::{self, Logon, Prompt, Purpose};
 use repriselogin::greeter::{AuthKind, ErrorKind, GreeterReply, GreeterRequest, PowerAction};
 use zeroize::Zeroizing;
 
@@ -14,6 +14,10 @@ pub enum Step {
     Fail(Failure),
     /// The session started: the greeter has done its job.
     Started,
+    /// Turning off or restarting needs an administrator, since others are logged on.
+    Admin(logon::PowerAction),
+    /// An administrator's power request succeeded; the computer is going down.
+    GoingDown,
     /// A cancelled login ended; nothing is in progress.
     Idle,
 }
@@ -27,7 +31,7 @@ pub enum Failure {
     Pam(String),
     /// The login could not run; the daemon's reason is for the journal.
     Failed,
-    /// Turning off or restarting is refused while others are logged on.
+    /// Turning off or restarting is refused: others are logged on, or the account may not.
     PowerRefused,
     PowerFailed,
 }
@@ -38,6 +42,8 @@ enum Phase {
     Idle,
     Authenticating,
     Starting,
+    /// An administrator's power request succeeded; nothing more is sent.
+    GoingDown,
     /// The login was cancelled; what it still sends is dropped until the cancel's reply.
     Cancelling,
 }
@@ -57,6 +63,8 @@ pub struct Conversation {
     power: bool,
     /// This login's info and error notes, cleaned like the Unlock dialog's.
     notes: Vec<String>,
+    /// The conversation in progress is a `PowerAs`'s, so its success turns the computer off.
+    admin: bool,
 }
 
 impl Conversation {
@@ -65,12 +73,47 @@ impl Conversation {
         self.phase == Phase::Idle && !self.power
     }
 
-    pub fn submit(&mut self, user: String, password: Zeroizing<String>) -> GreeterRequest {
+    /// `user` logs on, or under [`Purpose::Admin`] asks for its power action as an administrator;
+    /// either way the conversation runs as a login's does.
+    pub fn submit(
+        &mut self,
+        purpose: Purpose,
+        user: String,
+        password: Zeroizing<String>,
+    ) -> GreeterRequest {
         self.phase = Phase::Authenticating;
         self.password = Some(password);
         self.asked = true;
         self.notes.clear();
-        GreeterRequest::CreateSession { user }
+        match purpose {
+            Purpose::Login => {
+                self.admin = false;
+                GreeterRequest::CreateSession { user }
+            }
+            Purpose::Admin(action) => {
+                self.admin = true;
+                GreeterRequest::PowerAs {
+                    action: wire(action),
+                    user,
+                }
+            }
+        }
+    }
+
+    /// The screen's submit for `user`: the waiting prompt's answer, else a new login or power
+    /// request. The password field is wiped and the screen busy once a request goes out.
+    pub fn on_submit(&mut self, m: &mut Logon, user: String) -> Option<GreeterRequest> {
+        let text = Zeroizing::new(m.password.text.clone());
+        let req = if m.prompt.is_some() {
+            self.answer(text)
+        } else if self.idle() {
+            Some(self.submit(m.purpose, user, text))
+        } else {
+            None
+        }?;
+        m.password.wipe();
+        m.set_busy(true);
+        Some(req)
     }
 
     /// The answer to the prompt `Step::Ask` showed; None once that login is cancelled or over.
@@ -98,7 +141,7 @@ impl Conversation {
     /// The requests that ask for `action`: a login still authenticating is cancelled first, and
     /// one that is starting keeps the machine up.
     pub fn power(&mut self, action: PowerAction) -> Vec<GreeterRequest> {
-        if self.phase == Phase::Starting || self.power {
+        if matches!(self.phase, Phase::Starting | Phase::GoingDown) || self.power {
             return Vec::new();
         }
         let mut out: Vec<GreeterRequest> = self.cancel().into_iter().collect();
@@ -161,6 +204,11 @@ impl Conversation {
                     ]
                 }
             },
+            (Phase::Authenticating, GreeterReply::Success) if self.admin => {
+                self.phase = Phase::GoingDown;
+                self.password = None;
+                vec![Step::GoingDown]
+            }
             (Phase::Authenticating, GreeterReply::Success) => {
                 self.phase = Phase::Starting;
                 self.password = None;
@@ -183,6 +231,10 @@ impl Conversation {
                 self.power = false;
                 Vec::new()
             }
+            (Phase::Idle, GreeterReply::AdminNeeded { action }) if self.power => {
+                self.power = false;
+                vec![Step::Admin(kit(action))]
+            }
             (Phase::Idle, GreeterReply::Error { kind, .. }) if self.power => {
                 self.power = false;
                 vec![Step::Fail(match kind {
@@ -198,6 +250,8 @@ impl Conversation {
     fn failure(&self, kind: ErrorKind, text: &str) -> Failure {
         let notes = (!self.notes.is_empty()).then(|| self.notes.join("\n"));
         match kind {
+            ErrorKind::Refused if self.admin => Failure::PowerRefused,
+            ErrorKind::Failed if self.admin => Failure::PowerFailed,
             ErrorKind::Auth => notes.map_or(Failure::Incorrect, Failure::Pam),
             ErrorKind::Account => {
                 Failure::Pam(notes.unwrap_or_else(|| crate::lock::clean_notice(text).join("\n")))
@@ -207,9 +261,44 @@ impl Conversation {
     }
 }
 
+/// Puts `step` on the screen; `Send` and `Started` are the host's.
+pub fn show(m: &mut Logon, step: Step) {
+    match step {
+        Step::Send(_) | Step::Started => {}
+        Step::Ask(prompt) => m.ask(prompt),
+        Step::Note(text) => m.info(text),
+        Step::Fail(f) => m.fail(match f {
+            Failure::Incorrect => logon::text::incorrect(),
+            Failure::Pam(text) => text,
+            Failure::Failed => logon::text::failed(),
+            Failure::PowerRefused => logon::text::power_refused(),
+            Failure::PowerFailed => logon::text::power_failed(),
+        }),
+        Step::Idle => m.set_busy(false),
+        Step::Admin(action) => m.admin(action),
+        Step::GoingDown => m.going_down(),
+    }
+}
+
+fn wire(action: logon::PowerAction) -> PowerAction {
+    match action {
+        logon::PowerAction::PowerOff => PowerAction::PowerOff,
+        logon::PowerAction::Reboot => PowerAction::Reboot,
+    }
+}
+
+fn kit(action: PowerAction) -> logon::PowerAction {
+    match action {
+        PowerAction::PowerOff => logon::PowerAction::PowerOff,
+        PowerAction::Reboot => logon::PowerAction::Reboot,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use reprisekit::interface::Interface;
+    use reprisekit::logon::{self, LogonAction, LogonKey};
 
     fn prompt(kind: AuthKind, text: &str) -> GreeterReply {
         GreeterReply::AuthMessage {
@@ -220,7 +309,11 @@ mod tests {
 
     fn submitted() -> Conversation {
         let mut c = Conversation::default();
-        let req = c.submit("anna".into(), Zeroizing::new("hunter2".into()));
+        let req = c.submit(
+            Purpose::Login,
+            "anna".into(),
+            Zeroizing::new("hunter2".into()),
+        );
         assert_eq!(
             req,
             GreeterRequest::CreateSession {
@@ -385,7 +478,7 @@ mod tests {
         assert!(!c.idle());
         assert_eq!(c.on_reply(GreeterReply::Success), vec![Step::Idle]);
         assert!(c.idle());
-        c.submit("bob".into(), Zeroizing::new("pw".into()));
+        c.submit(Purpose::Login, "bob".into(), Zeroizing::new("pw".into()));
         assert_eq!(
             c.on_reply(GreeterReply::Success),
             vec![Step::Send(GreeterRequest::StartSession)],
@@ -459,7 +552,7 @@ mod tests {
                 "The account is locked due to 3 failed logins.\n(5 minutes left to unlock)".into()
             ))]
         );
-        c.submit("anna".into(), Zeroizing::new("pw".into()));
+        c.submit(Purpose::Login, "anna".into(), Zeroizing::new("pw".into()));
         assert_eq!(
             c.on_reply(error(ErrorKind::Auth, "Authentication failure")),
             vec![Step::Fail(Failure::Incorrect)],
@@ -482,5 +575,165 @@ mod tests {
             c.on_reply(error(ErrorKind::Account, "User account has expired")),
             vec![Step::Fail(Failure::Pam(note.into()))]
         );
+    }
+
+    /// The screen's model and the conversation, joined as the host joins them.
+    struct Screen {
+        m: Logon,
+        c: Conversation,
+    }
+
+    impl Screen {
+        fn new() -> Screen {
+            Screen {
+                m: Logon::new(Interface::Classic, Vec::new(), false, Some("bob")),
+                c: Conversation::default(),
+            }
+        }
+
+        /// The requests `reply` sends; every other step is shown.
+        fn reply(&mut self, reply: GreeterReply) -> Vec<GreeterRequest> {
+            let mut out = Vec::new();
+            for step in self.c.on_reply(reply) {
+                match step {
+                    Step::Send(req) => out.push(req),
+                    step => show(&mut self.m, step),
+                }
+            }
+            out
+        }
+
+        /// The request `key` sends.
+        fn key(&mut self, key: LogonKey) -> Option<GreeterRequest> {
+            match self.m.key(key)? {
+                LogonAction::Submit { user } => self.c.on_submit(&mut self.m, user),
+                LogonAction::Cancel => self.c.cancel(),
+                _ => None,
+            }
+        }
+
+        fn typed(&mut self, text: &str) {
+            assert_eq!(self.key(LogonKey::Text(text)), None);
+        }
+    }
+
+    /// A power-off refused for others' sessions: the administrator's form is up.
+    fn admin_form() -> Screen {
+        let mut s = Screen::new();
+        assert_eq!(
+            s.c.power(PowerAction::PowerOff),
+            vec![GreeterRequest::Power {
+                action: PowerAction::PowerOff
+            }]
+        );
+        assert_eq!(
+            s.reply(GreeterReply::AdminNeeded {
+                action: PowerAction::PowerOff
+            }),
+            vec![]
+        );
+        s
+    }
+
+    #[test]
+    fn admin_needed_turns_the_form_to_an_administrators_and_power_as_follows() {
+        let mut s = admin_form();
+        assert_eq!(s.m.purpose, Purpose::Admin(logon::PowerAction::PowerOff));
+        assert_eq!(s.m.name.text, "", "the last user's name is not offered");
+        assert!(s.c.idle(), "the refused power request is over");
+        s.typed("anna");
+        assert_eq!(s.key(LogonKey::Enter), None, "Enter on the name moves on");
+        s.typed("hunter2");
+        assert_eq!(
+            s.key(LogonKey::Enter),
+            Some(GreeterRequest::PowerAs {
+                action: PowerAction::PowerOff,
+                user: "anna".into()
+            })
+        );
+        assert_eq!(
+            s.reply(prompt(AuthKind::Secret, "Password:")),
+            vec![GreeterRequest::PostAuthResponse {
+                response: Some(Zeroizing::new("hunter2".into()))
+            }],
+            "the typed password answers, as a login's does"
+        );
+    }
+
+    #[test]
+    fn an_administrators_success_shuts_down_and_starts_no_session() {
+        let mut s = admin_form();
+        s.typed("anna");
+        s.key(LogonKey::Enter);
+        s.typed("hunter2");
+        s.key(LogonKey::Enter);
+        s.reply(prompt(AuthKind::Secret, "Password:"));
+        assert_eq!(s.reply(GreeterReply::Success), vec![], "no StartSession");
+        assert!(s.m.busy, "the form stays busy");
+        assert_eq!(s.m.busy_text(), logon::text::shutting_down());
+        assert!(!s.c.idle(), "no login starts while the computer goes down");
+        assert_eq!(s.c.power(PowerAction::Reboot), vec![]);
+        assert_eq!(s.c.cancel(), None);
+        assert_eq!(s.reply(GreeterReply::Success), vec![]);
+    }
+
+    #[test]
+    fn a_wrong_administrators_password_keeps_the_form() {
+        let mut s = admin_form();
+        s.typed("anna");
+        s.key(LogonKey::Enter);
+        s.typed("wrong");
+        s.key(LogonKey::Enter);
+        s.reply(prompt(AuthKind::Secret, "Password:"));
+        assert_eq!(
+            s.reply(error(ErrorKind::Auth, "Authentication failure")),
+            vec![]
+        );
+        assert_eq!(s.m.purpose, Purpose::Admin(logon::PowerAction::PowerOff));
+        assert_eq!(s.m.message, Some(logon::text::incorrect()));
+        s.typed("hunter2");
+        assert_eq!(
+            s.key(LogonKey::Enter),
+            Some(GreeterRequest::PowerAs {
+                action: PowerAction::PowerOff,
+                user: "anna".into()
+            }),
+            "the next try asks again"
+        );
+        let mut s = admin_form();
+        s.c.submit(s.m.purpose, "anna".into(), Zeroizing::new("hunter2".into()));
+        assert_eq!(s.reply(error(ErrorKind::Failed, "logind")), vec![]);
+        assert_eq!(s.m.message, Some(logon::text::power_failed()));
+    }
+
+    #[test]
+    fn cancel_leaves_the_administrators_form() {
+        let mut s = admin_form();
+        s.typed("anna");
+        s.key(LogonKey::Enter);
+        s.typed("hunter2");
+        s.key(LogonKey::Enter);
+        s.reply(prompt(AuthKind::Secret, "Password:"));
+        s.reply(prompt(AuthKind::Secret, "Token:"));
+        assert_eq!(s.key(LogonKey::Escape), Some(GreeterRequest::CancelSession));
+        assert_eq!(s.m.purpose, Purpose::Login);
+        assert_eq!(s.reply(GreeterReply::Success), vec![]);
+        assert!(s.c.idle());
+        s.typed("bob");
+        s.key(LogonKey::Enter);
+        s.typed("pw");
+        assert_eq!(
+            s.key(LogonKey::Enter),
+            Some(GreeterRequest::CreateSession { user: "bob".into() }),
+            "the next submit is a login again"
+        );
+
+        let mut s = admin_form();
+        assert_eq!(
+            s.key(LogonKey::Escape),
+            None,
+            "an empty form has no conversation to cancel"
+        );
+        assert_eq!(s.m.purpose, Purpose::Login);
     }
 }

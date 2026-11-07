@@ -1,6 +1,6 @@
 use super::*;
 use crate::interface::Interface;
-use crate::logon::{Part, text as strings};
+use crate::logon::{Part, PowerAction, text as strings};
 
 const OUTPUT: Rect = Rect::new(0, 0, 1024, 768);
 
@@ -36,7 +36,28 @@ fn states() -> Vec<(&'static str, Logon)> {
         ("busy", busy),
         ("caps lock", caps),
         ("layout badge", badge),
+        ("admin shut down", admin(PowerAction::PowerOff, "")),
+        ("admin restart filled", admin(PowerAction::Reboot, "anna")),
+        ("shutting down", going_down()),
     ]
+}
+
+/// The administrator's form for `action` with `name` typed and, after it, a password.
+fn admin(action: PowerAction, name: &str) -> Logon {
+    let mut m = Logon::new(Interface::Classic, Vec::new(), false, Some("alice"));
+    m.admin(action);
+    if !name.is_empty() {
+        m.key(crate::logon::LogonKey::Text(name));
+        m.key(crate::logon::LogonKey::Enter);
+        m.key(crate::logon::LogonKey::Text("hunter2"));
+    }
+    m
+}
+
+fn going_down() -> Logon {
+    let mut m = admin(PowerAction::PowerOff, "anna");
+    m.going_down();
+    m
 }
 
 fn drawn(m: &Logon, s: i32) -> (Canvas, LogonLayout, Theme) {

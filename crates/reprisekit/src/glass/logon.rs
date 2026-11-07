@@ -179,7 +179,7 @@ struct Geometry {
     tiles: Vec<(Part, Rect, Rect, Rect)>,
     /// The error screen's icon and text, centred together across this row.
     message: Option<Rect>,
-    /// The spinner and Verifying..., centred together across this row.
+    /// The spinner and the busy text, centred together across this row.
     busy: Option<Rect>,
     mark: Rect,
 }
@@ -366,7 +366,7 @@ pub fn draw(
         Part::Tile(i) => m.users.get(i),
         _ => None,
     };
-    let logged_on = |part: Part| user(part).and_then(|u| u.note) == Some(UserNote::LoggedOn);
+    let note = |part: Part| user(part).and_then(|u| u.note).map(UserNote::text);
 
     if let Some((part, r)) = g.frame {
         let picture = user(part).and_then(|u| u.picture.as_ref());
@@ -375,19 +375,30 @@ pub fn draw(
         if let Some(r) = g.name {
             label(c, text, at(r), &shown, u.px(NAME_PX) * s as u32, INK, s);
         }
-        if let Some(r) = g.note
-            && logged_on(part)
-        {
-            label(c, text, at(r), &strings::logged_on(), ui, NOTE_INK, s);
+        if let (Some(r), Some(note)) = (g.note, note(part)) {
+            label(c, text, at(r), &note, ui, NOTE_INK, s);
         }
     }
     if let Some(r) = g.notice {
-        let notice = m.caps_lock.then(strings::caps_lock).or(m.message.clone());
+        let notice = (m.caps_lock.then(strings::caps_lock))
+            .or_else(|| m.message.clone())
+            .or_else(|| m.heading());
         if let Some(notice) = notice {
-            label(c, text, at(r), &notice, ui, NOTE_INK, s);
+            // A second line runs into the gap above Switch User.
+            let r = at(r);
+            for (k, line) in message_lines(text, &notice, r.width, ui, 2)
+                .iter()
+                .enumerate()
+            {
+                let row = Rect {
+                    y: r.y + k as i32 * r.height,
+                    ..r
+                };
+                label(c, text, row, line, ui, NOTE_INK, s);
+            }
         }
     }
-    for &(part, frame, name, note) in &g.tiles {
+    for &(part, frame, name, note_at) in &g.tiles {
         let lit = if m.focus == part {
             Face::Focused
         } else {
@@ -402,8 +413,8 @@ pub fn draw(
         tile(c, at(frame), picture, SMALL_PAD, SMALL_R, face(part), s);
         let shown = user(part).map_or_else(strings::other_user, |u| u.shown().to_owned());
         label(c, text, at(name), &shown, ui, INK, s);
-        if logged_on(part) {
-            label(c, text, at(note), &strings::logged_on(), ui, NOTE_INK, s);
+        if let Some(words) = note(part) {
+            label(c, text, at(note_at), &words, ui, NOTE_INK, s);
         }
     }
 
@@ -460,7 +471,7 @@ pub fn draw(
     if let Some(r) = g.busy {
         let r = at(r);
         let px = u.px(BUSY_PX) * s as u32;
-        let word = strings::verifying();
+        let word = m.busy_text();
         let w = (SPINNER + ICON_GAP) * s + text.measure(&word, false, px);
         let x = r.x + (r.width - w) / 2;
         spinner(c, x, r.y, s);

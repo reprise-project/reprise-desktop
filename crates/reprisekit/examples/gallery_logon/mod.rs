@@ -1,5 +1,6 @@
-//! The login screen at 800x600 (Classic's states, each interface's start, Blue's states in three
-//! schemes, Glass over its wallpaper) written to `target/reprisekit-gallery-logon@<scale>.png`.
+//! The login screen at 800x600 (Classic's states, each interface's start and administrator's form,
+//! Blue's states in three schemes, Glass over its wallpaper) written to
+//! `target/reprisekit-gallery-logon@<scale>.png`.
 
 mod glass;
 
@@ -8,7 +9,7 @@ use reprisekit::blue::Variant;
 use reprisekit::interface::Interface;
 use reprisekit::interfaces::logon::{draw_logon, logon_layout};
 use reprisekit::interfaces::{default_wallpaper, theme_with};
-use reprisekit::logon::{Logon, LogonKey, LogonUser, Part, UserNote, text};
+use reprisekit::logon::{Logon, LogonKey, LogonUser, Part, PowerAction, UserNote, text};
 use reprisekit::pointer::Interaction;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
@@ -31,7 +32,7 @@ fn users() -> Vec<LogonUser> {
         name: name.into(),
         real_name: real.into(),
         picture: Some(userpic::draw(userpic::ALL[i], userpic::SAVED_PX)),
-        note: (i == 1).then_some(UserNote::LoggedOn),
+        note: [Some(UserNote::Remote), Some(UserNote::LoggedOn), None][i],
     })
     .collect()
 }
@@ -51,9 +52,14 @@ fn screens() -> Vec<(Logon, Variant)> {
     badge.message = Some(text::power_refused());
     let starts = [Interface::Classic, Interface::Blue, Interface::Glass]
         .map(|i| Logon::new(i, users(), true, Some("carol")));
+    let admins = starts.clone().map(|mut m| {
+        m.admin(PowerAction::PowerOff);
+        m
+    });
     [empty, filled, message, busy, caps, badge]
         .into_iter()
         .chain(starts)
+        .chain(admins)
         .map(|m| (m, Variant::Blue))
         .chain(blue_screens())
         .chain(glass::screens().into_iter().map(|m| (m, Variant::Blue)))

@@ -80,6 +80,21 @@ pub mod text {
     pub fn user_name_cue() -> String {
         tr!("logon-user-name-cue")
     }
+    pub fn admin_shut_down() -> String {
+        tr!("logon-admin-shut-down")
+    }
+    pub fn admin_restart() -> String {
+        tr!("logon-admin-restart")
+    }
+    pub fn shutting_down() -> String {
+        tr!("logon-shutting-down")
+    }
+    pub fn restarting() -> String {
+        tr!("logon-restarting")
+    }
+    pub fn remote() -> String {
+        tr!("logon-remote")
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -104,6 +119,33 @@ impl LogonUser {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UserNote {
     LoggedOn,
+    /// Logged on from another computer.
+    Remote,
+}
+
+impl UserNote {
+    /// The line under the user's name.
+    pub fn text(self) -> String {
+        match self {
+            UserNote::LoggedOn => text::logged_on(),
+            UserNote::Remote => text::remote(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PowerAction {
+    PowerOff,
+    Reboot,
+}
+
+/// What the name and password are asked for.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Purpose {
+    #[default]
+    Login,
+    /// An administrator's, to turn the computer off or restart it while others are logged on.
+    Admin(PowerAction),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -189,6 +231,7 @@ pub const COLUMN: usize = 5;
 pub struct Logon {
     pub interface: Interface,
     pub users: Vec<LogonUser>,
+    pub purpose: Purpose,
     pub screen: Screen,
     pub name: TextEdit,
     pub password: TextEdit,
@@ -205,6 +248,8 @@ pub struct Logon {
     pub column: usize,
     /// The screen [`Screen::Message`]'s OK goes back to.
     back: Screen,
+    /// An administrator's power request succeeded and the computer is going down.
+    going_down: bool,
 }
 
 impl Logon {
@@ -228,6 +273,7 @@ impl Logon {
         let mut m = Logon {
             interface,
             users,
+            purpose: Purpose::Login,
             screen,
             name: TextEdit::new(name, false),
             password: TextEdit::secret(),
@@ -241,6 +287,7 @@ impl Logon {
             first_tile: 0,
             column: COLUMN,
             back: Screen::Typed,
+            going_down: false,
         };
         m.focus = m.home();
         if let Part::Tile(i) = m.focus {
@@ -357,11 +404,11 @@ impl Logon {
         match part {
             Part::Name => None,
             Part::Password | Part::Submit => self.submit(),
-            Part::Cancel => self.clear(),
+            Part::Cancel => self.leave_admin().or_else(|| self.clear()),
             Part::Tile(i) if self.screen == Screen::Tile(i) => None,
             Part::Tile(i) => self.open(Screen::Tile(i)),
             Part::OtherUser => self.open(Screen::Typed),
-            Part::SwitchUser => self.open(Screen::Tiles),
+            Part::SwitchUser => self.leave_admin().or_else(|| self.open(Screen::Tiles)),
             Part::Power => Some(LogonAction::Power),
             Part::PowerMenu => Some(LogonAction::PowerMenu),
             Part::Layout => Some(LogonAction::NextLayout),
@@ -387,6 +434,9 @@ impl Logon {
     }
 
     fn escape(&mut self) -> Option<LogonAction> {
+        if self.purpose != Purpose::Login {
+            return self.leave_admin();
+        }
         let listed = !self.users.is_empty();
         match (self.interface, self.screen) {
             (_, Screen::Message) => self.press(Part::MessageOk),
@@ -395,6 +445,68 @@ impl Logon {
             (Interface::Glass, Screen::Typed) if listed => self.open(Screen::Tiles),
             _ => self.clear(),
         }
+    }
+
+    /// The administrator's form for `action`, empty, in place of whatever the screen showed. The
+    /// host has dropped any login in progress.
+    pub fn admin(&mut self, action: PowerAction) {
+        self.purpose = Purpose::Admin(action);
+        self.going_down = false;
+        self.busy = false;
+        self.forget();
+        self.name = TextEdit::new("", false);
+        self.screen = Screen::Typed;
+        self.back = Screen::Typed;
+        self.focus = Part::Name;
+    }
+
+    /// Back from the administrator's form to the screen a login starts on, with a
+    /// [`LogonAction::Cancel`] for the conversation; None on a login's form.
+    fn leave_admin(&mut self) -> Option<LogonAction> {
+        if self.purpose == Purpose::Login {
+            return None;
+        }
+        self.purpose = Purpose::Login;
+        if self.interface != Interface::Classic && !self.users.is_empty() {
+            self.name = TextEdit::new("", false);
+            self.open(Screen::Tiles);
+            return Some(LogonAction::Cancel);
+        }
+        self.clear()
+    }
+
+    /// The administrator's power request succeeded: the form stays busy until the computer is
+    /// down.
+    pub fn going_down(&mut self) {
+        self.wipe_password();
+        self.going_down = true;
+        self.busy = true;
+    }
+
+    /// The administrator's form's heading, shown where a message goes when there is none.
+    pub fn heading(&self) -> Option<String> {
+        match self.purpose {
+            Purpose::Login => None,
+            Purpose::Admin(PowerAction::PowerOff) => Some(text::admin_shut_down()),
+            Purpose::Admin(PowerAction::Reboot) => Some(text::admin_restart()),
+        }
+    }
+
+    /// What the screen says while busy.
+    pub fn busy_text(&self) -> String {
+        match self.purpose {
+            Purpose::Admin(PowerAction::PowerOff) if self.going_down => text::shutting_down(),
+            Purpose::Admin(PowerAction::Reboot) if self.going_down => text::restarting(),
+            _ => text::verifying(),
+        }
+    }
+
+    /// The message area's text: the busy text, else the message, else the heading.
+    pub fn said(&self) -> Option<String> {
+        if self.busy {
+            return Some(self.busy_text());
+        }
+        self.message.clone().or_else(|| self.heading())
     }
 
     /// Cancel: both fields emptied, the conversation dropped and the focus on the name.
@@ -596,8 +708,8 @@ pub fn access(m: &Logon, l: &LogonLayout, tree: &mut Tree) {
             Part::Tile(i) => {
                 let mut n = ax::named(Role::ListItem, r, &label);
                 n.set_selected(m.focus == part || m.screen == Screen::Tile(i));
-                if m.users.get(i).and_then(|u| u.note) == Some(UserNote::LoggedOn) {
-                    n.set_description(text::logged_on());
+                if let Some(note) = m.users.get(i).and_then(|u| u.note) {
+                    n.set_description(note.text());
                 }
                 ax::focusable(&mut n, live(part));
                 n
@@ -610,7 +722,8 @@ pub fn access(m: &Logon, l: &LogonLayout, tree: &mut Tree) {
         }
     }
     let notice = m.caps_lock.then(text::caps_lock);
-    let said: Vec<String> = notice.into_iter().chain(m.message.clone()).collect();
+    let message = m.message.clone().or_else(|| m.heading());
+    let said: Vec<String> = notice.into_iter().chain(message).collect();
     if !said.is_empty() {
         let r = l.dialog.unwrap_or(l.output);
         tree.push(parent, "message", ax::label(r, &said.join(" "), true));

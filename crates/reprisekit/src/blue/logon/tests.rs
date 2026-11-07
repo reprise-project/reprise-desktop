@@ -2,7 +2,7 @@ use super::*;
 use crate::blue::powerpanel::TILE_STATES;
 use crate::interface::Interface;
 use crate::interfaces::blue_theme;
-use crate::logon::{LogonKey, LogonUser, hit};
+use crate::logon::{LogonKey, LogonUser, PowerAction, hit};
 use crate::style::TextSpec;
 
 const OUTPUT: Rect = Rect::new(0, 0, 1024, 768);
@@ -65,7 +65,36 @@ fn states() -> Vec<(&'static str, Logon)> {
         ("tile open with message", message),
         ("busy", busy),
         ("typed", typed),
+        ("admin shut down", admin(PowerAction::PowerOff, "")),
+        ("admin restart filled", admin(PowerAction::Reboot, "anna")),
+        ("shutting down", going_down()),
+        ("remote note", remote()),
     ]
+}
+
+/// The administrator's form for `action` over the tiles, with `name` typed and a password.
+fn admin(action: PowerAction, name: &str) -> Logon {
+    let mut m = Logon::new(Interface::Blue, users(), true, Some("carol"));
+    m.admin(action);
+    if !name.is_empty() {
+        m.key(LogonKey::Text(name));
+        m.key(LogonKey::Enter);
+        m.key(LogonKey::Text("hunter2"));
+    }
+    m
+}
+
+fn going_down() -> Logon {
+    let mut m = admin(PowerAction::PowerOff, "anna");
+    m.going_down();
+    m
+}
+
+/// The tiles with the first user connected remotely and the second logged on here.
+fn remote() -> Logon {
+    let mut m = Logon::new(Interface::Blue, users(), true, Some("carol"));
+    m.users[0].note = Some(UserNote::Remote);
+    m
 }
 
 /// Draws the wordmark in Tahoma Bold, since its own faces are whichever the machine installs.
