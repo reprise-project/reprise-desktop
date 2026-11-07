@@ -33,7 +33,8 @@ pub fn draw_logon(
 /// How many tiles the interface in force shows across `output`: the host's [`Logon::column`].
 pub fn logon_column(m: &Logon, theme: &Theme, output: Rect) -> usize {
     match m.interface {
+        Interface::Classic => COLUMN,
         Interface::Blue => blue::logon::column(theme, output),
-        Interface::Classic | Interface::Glass => COLUMN,
+        Interface::Glass => glass::logon::column(theme, output),
     }
 }

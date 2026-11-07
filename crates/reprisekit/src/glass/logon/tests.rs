@@ -3,6 +3,7 @@ use crate::art::userpic;
 use crate::interface::Interface;
 use crate::logon::{LogonKey, LogonUser, Part, UserNote, hit, text as strings};
 use crate::pointer::Interaction;
+use crate::textedit::Preedit;
 
 const OUTPUT: Rect = Rect::new(0, 0, 1024, 768);
 
@@ -53,21 +54,41 @@ fn states() -> Vec<(&'static str, Logon)> {
     let mut busy = tile();
     busy.key(LogonKey::Text("abc"));
     busy.set_busy(true);
+    let mut tile_hot = tile();
+    tile_hot.lit = Some((Part::Tile(0), Interaction::Hot));
+    let mut power_hot = tile();
+    power_hot.lit = Some((Part::Power, Interaction::Hot));
     vec![
         ("tile", rest),
+        ("tile hot", tile_hot),
         ("arrow hot", hot),
         ("typed", typed),
         ("tiles", tiles),
         ("message", message),
         ("busy", busy),
+        ("power hot", power_hot),
     ]
 }
 
+/// The tile after a wrong password and the error screen's OK.
+fn tile_after_ok() -> Logon {
+    let mut m = tile();
+    m.key(LogonKey::Text("abc"));
+    m.fail(strings::incorrect());
+    m.click(Part::MessageOk);
+    m
+}
+
 fn drawn(m: &Logon, s: i32) -> (Canvas, LogonLayout) {
+    drawn_with(m, s, None)
+}
+
+fn drawn_with(m: &Logon, s: i32, preedit: Option<Preedit>) -> (Canvas, LogonLayout) {
     let theme = crate::interfaces::theme_for(Interface::Glass).scaled(s);
     let text = TextRenderer::load(&theme.fonts);
     let l = layout(m, &theme, &text, OUTPUT);
     let mut c = Canvas::new((OUTPUT.width * s) as u32, (OUTPUT.height * s) as u32);
+    c.set_preedit(preedit);
     draw(&mut c, m, &l, &theme, text.for_output(s), s);
     (c, l)
 }
@@ -75,7 +96,10 @@ fn drawn(m: &Logon, s: i32) -> (Canvas, LogonLayout) {
 #[test]
 fn glass_logon_pins_at_scale_1_and_2() {
     let mut got = Vec::new();
-    for (name, m) in states() {
+    for (name, m) in states()
+        .into_iter()
+        .chain([("tile after ok", tile_after_ok())])
+    {
         for s in [1, 2] {
             got.push((format!("{name} @{s}"), fnv(&drawn(&m, s).0)));
         }
@@ -94,6 +118,47 @@ fn glass_states_are_distinct() {
             assert_ne!(a.1, b.1, "{} and {} draw alike", a.0, b.0);
         }
     }
+}
+
+#[test]
+fn glass_tile_after_ok_draws_no_notice() {
+    assert_eq!(
+        fnv(&drawn(&tile_after_ok(), 1).0),
+        fnv(&drawn(&tile(), 1).0),
+        "after OK the tile draws as it did before the try"
+    );
+}
+
+#[test]
+fn glass_typed_name_field_draws_a_preedit() {
+    let (_, typed) = states().into_iter().find(|(n, _)| *n == "typed").unwrap();
+    assert_eq!((typed.screen, typed.focus), (Screen::Typed, Part::Name));
+    let (plain, l) = drawn(&typed, 1);
+    let (composing, _) = drawn_with(&typed, 1, Preedit::new("hao".into(), 2, 2));
+    let field = l.rect(Part::Name).unwrap();
+    let inside = |c: &Canvas| -> Vec<u32> {
+        (field.y..field.bottom())
+            .flat_map(|y| (field.x..field.right()).map(move |x| (x, y)))
+            .map(|(x, y)| c.get(x, y))
+            .collect()
+    };
+    assert_ne!(
+        inside(&plain),
+        inside(&composing),
+        "the name field shows the preedit"
+    );
+}
+
+#[test]
+fn logon_column_is_glass_fit_for_glass_and_the_default_for_classic() {
+    use crate::interfaces::logon::logon_column;
+    let theme = crate::interfaces::theme_for(Interface::Glass);
+    assert_eq!(
+        logon_column(&tile(), &theme, OUTPUT),
+        column(&theme, OUTPUT)
+    );
+    let m = Logon::new(Interface::Classic, users(2), true, None);
+    assert_eq!(logon_column(&m, &theme, OUTPUT), crate::logon::COLUMN);
 }
 
 #[test]
