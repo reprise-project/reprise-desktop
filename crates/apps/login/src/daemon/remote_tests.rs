@@ -1332,6 +1332,25 @@ fn a_lost_intake_link_reopens_and_keeps_its_viewers_until_the_new_link_reports()
 }
 
 #[test]
+fn a_reopened_link_lost_before_it_reports_gives_up() {
+    let remote = MachineRemote {
+        end_disconnected_after_min: Some(30),
+        ..enabled()
+    };
+    let mut run = remote_run(remote);
+    run.anna_in_background(7, 2);
+    run.on(Input::IntakeOpen { uid: ANNA });
+    run.viewers(ANNA, 1);
+    run.on(Input::IntakeLost { uid: ANNA });
+    assert_eq!(run.on(Input::IntakeOpen { uid: ANNA }), []);
+    assert_eq!(
+        run.on(Input::IntakeLost { uid: ANNA }),
+        [disconnect_arm("c2", 2, 30), Effect::Inhibit(Inhibit::Idle)],
+        "no second reopen"
+    );
+}
+
+#[test]
 fn a_reopen_that_gives_up_zeroes_its_viewers_and_the_next_login_opens_it() {
     let remote = MachineRemote {
         end_disconnected_after_min: Some(30),
