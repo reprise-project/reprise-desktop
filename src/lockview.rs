@@ -524,9 +524,8 @@ pub fn start_dialog_finger(state: &mut State) {
     }
 }
 
-/// Engage the lock unless locked: cover every Console output, clear client focus, route input to
-/// the dialog. A locker's own lock comes here directly, so it does not start another locker.
-/// No-op in the greeter.
+/// Engage the lock unless locked or in the greeter: cover every Console output, clear client focus,
+/// route input to the dialog. A locker's own lock comes here, so it starts no other locker.
 pub fn engage(state: &mut State) {
     if state.host == crate::compositor::Host::Greeter {
         return;
@@ -1378,9 +1377,8 @@ pub fn repeat_backspace(state: &mut State) {
     }
 }
 
-/// A press on `side`'s lock: a locker's surfaces take it through the seat; otherwise a left press on
-/// OK submits, on Cancel clears, on Switch User asks for the login screen, and beside the dialog
-/// splashes the lock water.
+/// A press on `side`'s lock: a locker's surfaces take it through the seat; else a left press on OK
+/// submits, on Cancel clears, on Switch User asks for the login screen, beside the dialog splashes.
 pub fn button(state: &mut State, side: Side, button: u32, pos: Point<f64, Logical>) {
     crate::sessionlock::check_alive(state);
     if button != BTN_LEFT || crate::sessionlock::holds_input(state) {

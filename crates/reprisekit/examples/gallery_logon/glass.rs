@@ -1,6 +1,5 @@
-//! Glass's login screens: the last user's tile at rest, its frame hot, typed into with the arrow
-//! hot, Other user, the tiles, the error, the tile after its OK, busy, the power button hot with
-//! Caps Lock on and a layout badge.
+//! Glass's login screens: the tile at rest, frame hot, typed into with the arrow hot, Other user,
+//! the tiles, the error, after its OK, busy, and power hot with Caps Lock and a layout badge.
 
 use reprisekit::art::userpic;
 use reprisekit::interface::Interface;

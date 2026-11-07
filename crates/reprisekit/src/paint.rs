@@ -156,9 +156,8 @@ impl<'a> Paint<'a> {
     }
 }
 
-/// Draw `edit` left-aligned in `inner` from byte `first` (`edit_first_visible`): selection,
-/// blinking caret and, when focused, the canvas' preedit with its `TextSpot`. A secret field shows
-/// no preedit.
+/// Draw `edit` left-aligned in `inner` from byte `first` (`edit_first_visible`): selection, caret
+/// and, focused, the canvas' preedit with its `TextSpot`, which a secret field never shows.
 #[expect(clippy::too_many_arguments)]
 pub fn draw_edit(
     c: &mut Canvas,

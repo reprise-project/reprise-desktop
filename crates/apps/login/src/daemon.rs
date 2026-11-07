@@ -322,9 +322,8 @@ impl Daemon {
             .map(|s| s.vt)
     }
 
-    /// Rebuilds the session table from logind after a daemon start and ends orphaned greeters.
-    /// Every session but `seat_active` is locked: an earlier daemon may have unlocked one for
-    /// a resume and died before the switch.
+    /// Rebuilds the table from logind after a start, ends orphaned greeters and locks every
+    /// session but `seat_active`: an earlier daemon may have unlocked one and died.
     pub fn recover(
         &mut self,
         _now: Instant,
@@ -647,9 +646,8 @@ impl Daemon {
         }
     }
 
-    /// `user`'s sessions of a login service that logind lists and the table does not hold. A
-    /// closing one (a dead worker's) is stopped, so no new one runs beside it; a live one on
-    /// seat0 is entered in the table and returned with its VT.
+    /// `user`'s login-service sessions the table lacks: closing ones stop so none runs beside a
+    /// new one, and a live one on seat0 joins the table and is returned with its VT.
     fn take_leftovers(
         &mut self,
         world: &World,
@@ -814,9 +812,8 @@ impl Daemon {
         }
     }
 
-    /// Routes the login by the account PAM resolved: a uid with a session resumes it, so no
-    /// second session opens, and any other account starts one. Root never logs in here, and is
-    /// told so in a wrong password's words.
+    /// Routes the login by PAM's account: a uid with a session resumes it, any other starts one.
+    /// Root never logs in here, and is told so in a wrong password's words.
     fn authenticated(&mut self, worker: WorkerId, user: String, uid: u32, out: &mut Vec<Effect>) {
         if uid == 0 {
             out.push(Effect::Log(
@@ -851,10 +848,8 @@ impl Daemon {
         out.push(Effect::Reply(GreeterReply::Success));
     }
 
-    /// Enters a new session in the table. When its uid has a session already, it ends the
-    /// new one and resumes that one instead, or for autologin, which asked no password, shows
-    /// the login screen; when logind removed it already, it is over. `greeter` asked for the
-    /// session, `None` for autologin.
+    /// Enters a new session in the table. A uid with one already ends it and resumes that, or for
+    /// autologin (`greeter` None) shows the login screen; one logind removed already is over.
     fn session_started(
         &mut self,
         now: Instant,
@@ -943,9 +938,8 @@ impl Daemon {
             )
     }
 
-    /// Ends the conversation with an error and kills its worker if it still runs. A session
-    /// that failed to start has taken the console to its VT already, so the login screen
-    /// comes back.
+    /// Ends the conversation with an error and kills its worker if it runs. A failed start has
+    /// taken the console to its VT already, so the login screen comes back.
     fn fail_conversation(&mut self, kind: ErrorKind, text: String, out: &mut Vec<Effect>) {
         let Some(c) = self.conversation.take() else {
             return;
@@ -975,9 +969,8 @@ impl Daemon {
         self.conversation = None;
     }
 
-    /// Gives up on a worker that sent no `Started` within `START_WAIT` of its `Start`: it is
-    /// killed and the login screen comes back without waiting for its exit, which may never
-    /// come from a worker stuck in PAM.
+    /// Gives up on a worker with no `Started` within `START_WAIT`: it is killed and the login
+    /// screen comes back without waiting for its exit, which a worker stuck in PAM never makes.
     fn start_timed_out(&mut self, worker: WorkerId, out: &mut Vec<Effect>) {
         let text = format!("the session did not start within {START_WAIT:?}");
         let starting = match &self.conversation {
