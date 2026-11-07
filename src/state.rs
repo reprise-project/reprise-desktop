@@ -176,6 +176,8 @@ pub fn save_session(
 
 /// Queue a write of `screen_locked`, leaving every other key as it is.
 pub fn save_screen_locked(locked: bool) {
+    #[cfg(test)]
+    SCREEN_LOCKED.set(Some(locked));
     let path = path();
     let keys = toml::Table::from_iter([("screen_locked".to_string(), locked.into())]);
     run_in_order(move || patch(&path, keys));
@@ -378,6 +380,9 @@ pub fn run_in_order(work: impl FnOnce() + Send + 'static) {
 thread_local! {
     /// Writes this test thread queued.
     pub(crate) static QUEUED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// The last `screen_locked` this test thread queued.
+    pub(crate) static SCREEN_LOCKED: std::cell::Cell<Option<bool>> =
+        const { std::cell::Cell::new(None) };
 }
 
 /// Block until every write queued so far is on disk: before the compositor exits.
