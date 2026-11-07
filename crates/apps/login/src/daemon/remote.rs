@@ -32,6 +32,7 @@ const MAX_USER_NAME: usize = 32;
 
 const MOST_SESSIONS: &str = "the computer runs its most sessions";
 const ASKED_MORE: &str = "PAM asked for more than the password";
+const NEVER_ASKED: &str = "PAM passed the login without asking for its password";
 
 /// A user's Remote Desktop password as the store keeps it: 32 uppercase hex characters.
 #[derive(Clone, PartialEq, Eq)]
@@ -427,6 +428,10 @@ impl Daemon {
                 out.push(Effect::Kill(worker));
                 self.refuse(now, conn, ASKED_MORE, out);
             }
+            FromWorker::Authenticated { .. } if matches!(l.secret, Some(Secret::Password(_))) => {
+                out.push(Effect::Kill(worker));
+                self.refuse(now, conn, NEVER_ASKED, out);
+            }
             FromWorker::Authenticated { uid: got, .. } if got != uid => {
                 out.push(Effect::Kill(worker));
                 let why = format!("PAM's account {got} is not the looked-up {uid}");
@@ -693,20 +698,30 @@ impl Daemon {
     }
 
     /// Denies a login that has not reached its session by the deadline. A session started
-    /// for it keeps running, and a reconnect lands in it.
+    /// for it keeps running, and a reconnect lands in it. A forward the backend never
+    /// confirmed is dropped; the front gave its socket away already.
     pub(super) fn handover_deadline(&mut self, now: Instant, conn: u64, out: &mut Vec<Effect>) {
         let Some(l) = self.remote.logins.get(&conn) else {
             return;
         };
-        if l.step == Step::Forwarding {
-            return;
-        }
         let left = l.deadline.saturating_duration_since(now);
         if !left.is_zero() {
             return out.push(Effect::Arm {
                 timer: Timer::Handover(conn),
                 after: left,
             });
+        }
+        if l.step == Step::Forwarding {
+            out.push(Effect::Log(
+                Level::Warn,
+                format!(
+                    "the remote login from {} was not handed to its session within \
+                     {HANDOVER_DEADLINE:?}",
+                    l.peer
+                ),
+            ));
+            self.remote.logins.remove(&conn);
+            return out.push(Effect::DropConn { conn });
         }
         out.push(Effect::Log(
             Level::Info,
@@ -803,13 +818,14 @@ impl Daemon {
     }
 
     /// A background session whose last viewer leaves ends `end_disconnected_after` later.
+    /// A count for a uid with no session is ignored.
     pub(super) fn set_viewers(&mut self, uid: u32, count: u32, out: &mut Vec<Effect>) {
+        let Some(e) = self.sessions.by_uid(uid) else {
+            return;
+        };
         let before = match count {
             0 => self.remote.viewers.remove(&uid),
             _ => self.remote.viewers.insert(uid, count),
-        };
-        let Some(e) = self.sessions.by_uid(uid) else {
-            return;
         };
         if count > 0 {
             self.remote.disconnects.remove(&e.id);
