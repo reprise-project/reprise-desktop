@@ -3,7 +3,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv6Addr};
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -11,7 +11,8 @@ use tokio::time::Instant;
 
 /// Connections that have not authenticated yet, from all addresses.
 pub const MAX_PREAUTH: usize = 32;
-/// Connections one address may have logging in; xfreerdp3 opens two about 5 ms apart.
+/// Connections one address (an IPv6 /64) may have logging in; xfreerdp3 opens two about
+/// 5 ms apart.
 pub const PREAUTH_PER_IP: usize = 2;
 /// From the TCP accept to the credentials. It bounds the slot; reprise-login refuses a logon
 /// past its 8 s hand-over deadline anyway.
@@ -94,7 +95,7 @@ impl Limits {
     }
 
     pub fn admit(&mut self, ip: IpAddr, now: Instant) -> Result<Permit, Refusal> {
-        let ip = ip.to_canonical();
+        let ip = place(ip);
         self.backed_off.retain(|_, until| *until > now);
         if let Some(until) = self.backed_off.get(&ip) {
             return Err(Refusal::BackedOff(*until - now));
@@ -117,8 +118,16 @@ impl Limits {
     /// Refuses `ip` until `for_` from `now`, or longer when it is already backed off longer.
     pub fn back_off(&mut self, ip: IpAddr, for_: Duration, now: Instant) {
         let until = now + for_;
-        let entry = self.backed_off.entry(ip.to_canonical()).or_insert(until);
+        let entry = self.backed_off.entry(place(ip)).or_insert(until);
         *entry = (*entry).max(until);
+    }
+}
+
+/// What the limits count `ip` as: itself for IPv4, its /64 for IPv6.
+fn place(ip: IpAddr) -> IpAddr {
+    match ip.to_canonical() {
+        IpAddr::V6(v6) => IpAddr::V6(Ipv6Addr::from_bits(v6.to_bits() & (u128::MAX << 64))),
+        v4 => v4,
     }
 }
 
@@ -198,5 +207,27 @@ mod tests {
         limits
             .admit(ip("192.0.2.1"), now + Duration::from_secs(4))
             .expect("admitted once the back-off ends");
+    }
+
+    #[test]
+    fn addresses_in_one_ipv6_64_count_as_one() {
+        let mut limits = Limits::new(MAX_PREAUTH, PREAUTH_PER_IP);
+        let now = Instant::now();
+        let _first = limits.admit(ip("2001:db8::1"), now).expect("admitted");
+        let _second = limits.admit(ip("2001:db8::2"), now).expect("admitted");
+        assert_eq!(
+            limits.admit(ip("2001:db8::ffff:3"), now).err(),
+            Some(Refusal::LoggingIn),
+            "a third address in the /64 is the same place"
+        );
+        limits
+            .admit(ip("2001:db8:0:1::1"), now)
+            .expect("the next /64 is admitted");
+        limits.back_off(ip("2001:db8:0:2::1"), Duration::from_secs(4), now);
+        assert_eq!(
+            limits.admit(ip("2001:db8:0:2::9"), now).err(),
+            Some(Refusal::BackedOff(Duration::from_secs(4))),
+            "a back-off holds the whole /64"
+        );
     }
 }
