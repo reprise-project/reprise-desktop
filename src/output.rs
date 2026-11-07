@@ -706,15 +706,14 @@ impl State {
         self.carry_windows(&before, &after);
     }
 
-    /// Windows keep their place on an output that moved in the layout (an arrangement change, or
-    /// an output left of it growing): each moves by its output's move, restore boxes included.
-    /// Windows on a Remote output keep their relative place on it (`homes::refit_remote`); lock
-    /// mode's first layout sends every window to one (`homes::send_all`).
+    /// Windows move by their output's move in the layout, restore boxes included; on Remote outputs
+    /// they keep their relative place (`homes::refit_remote`, `homes::send_all`); held ones stay.
     fn carry_windows(&mut self, before: &[(Output, Rect)], after: &[(Output, Rect)]) {
         let windows: Vec<(WindowId, Rect)> = self
             .windows
             .iter()
             .filter(|w| w.mapped && !w.override_redirect)
+            .filter(|w| !crate::console::homes::is_held(self, w.id))
             .map(|w| (w.id, w.frame_rect()))
             .collect();
         let frames: Vec<Rect> = windows.iter().map(|w| w.1).collect();
@@ -745,7 +744,7 @@ impl State {
     }
 
     /// Centre each window whose frame centre is off the outputs (in lock mode, the Remote ones) on
-    /// the pointer's output; a zoned window or one with an unacked size stays if its origin is on.
+    /// the pointer's output; a zoned or unacked window with its origin on stays, and a held one.
     pub fn rescue_offscreen(&mut self) {
         let pos = self.pointer_location();
         let pointed = self.output_at(pos.x, pos.y);
@@ -761,6 +760,7 @@ impl State {
             .windows
             .iter()
             .filter(|w| w.mapped && !w.maximized && !w.fullscreen && !w.override_redirect)
+            .filter(|w| !crate::console::homes::is_held(self, w.id))
             .filter(|w| {
                 let r = w.frame_rect();
                 let lagging = w.size_pending()

@@ -352,6 +352,19 @@ pub fn is_virtual(output: &Output) -> bool {
     screen_of(output) == Some(Screen::Virtual)
 }
 
+/// Whether a connector scan or an output enable is due, so a monitor may still come.
+pub fn outputs_pending(state: &State) -> bool {
+    match state.backend.as_ref() {
+        Some(b) => {
+            !b.reenable.is_empty() || (b.devices.iter()).any(|(_, d)| d.rescan || d.probe.is_some())
+        }
+        #[cfg(test)]
+        None => state.test_outputs_pending,
+        #[cfg(not(test))]
+        None => false,
+    }
+}
+
 /// Whether the session has the seat. Without a DRM backend: as `pause` and `activate` last left it.
 pub fn session_active(state: &State) -> bool {
     match state.backend.as_ref() {

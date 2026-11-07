@@ -199,6 +199,14 @@ impl Harness {
     /// A `w`x`h` output at scale 1 put in the layout, as `backend::enable` does once it drives
     /// a connector.
     pub fn output(&mut self, name: &str, w: i32, h: i32) -> Output {
+        let output = self.add_output(name, w, h, None);
+        self.dispatch();
+        output
+    }
+
+    /// [`Harness::output`] asking for its place at `at`, the turn left running, as each monitor
+    /// of one connector scan comes.
+    pub fn add_output(&mut self, name: &str, w: i32, h: i32, at: Option<(i32, i32)>) -> Output {
         let output = Output::new(
             name.into(),
             PhysicalProperties {
@@ -221,9 +229,9 @@ impl Harness {
             None,
         );
         let _global = output.create_global::<State>(&self.state.dh);
+        crate::output::set_placement(&output, at.map(Into::into));
         self.state.scene.add_output(&output);
         self.state.output_added(&output);
-        self.dispatch();
         output
     }
 
