@@ -123,24 +123,23 @@ pub fn rdp_changed(state: &mut State, on: bool) {
 }
 
 /// Remote outputs came or went: the standby goes while they hold the desktop and comes back when
-/// the last goes with Remote Desktop on and no monitor. True when it went; the caller lays out.
-pub fn remotes_changed(state: &mut State) -> bool {
+/// the last goes with Remote Desktop on and no monitor. The caller lays out after either.
+pub fn remotes_changed(state: &mut State) -> Change {
     let exists = state.standby.output.is_some();
-    match change(exists, wanted_now(state)) {
+    let change = change(exists, wanted_now(state));
+    match change {
         Change::Add => {
             add(state);
-            false
         }
         Change::Remove => {
-            let Some(output) = state.standby.output.take() else {
-                return false;
-            };
-            crate::virtualout::remove(state, &output);
-            state.forget_output(&output);
-            true
+            if let Some(output) = state.standby.output.take() {
+                crate::virtualout::remove(state, &output);
+                state.forget_output(&output);
+            }
         }
-        Change::Keep => false,
+        Change::Keep => {}
     }
+    change
 }
 
 /// `output` came into the layout: a monitor takes over the standby's box, keeping its windows in

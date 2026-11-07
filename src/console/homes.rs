@@ -68,19 +68,34 @@ pub struct Home {
     pub snapped_rel: Option<RelRect>,
 }
 
-/// Once lock mode places the Remote outputs, each window keeps its home and goes to the same
-/// relative place on its paired Remote output ([`console_outputs`]), else the remote primary.
+/// Lock mode placed the Remote outputs: each window keeps its home and takes its relative place on
+/// the client screen it left last, else its paired one ([`console_outputs`]), else the primary.
 pub fn send_all(state: &mut State) {
     if !crate::console::remote_side(state) {
         return;
     }
+    let held = std::mem::take(&mut state.console.held);
+    let left = std::mem::take(&mut state.console.left);
     let remotes = remote_outputs(state);
     let Some(primary) = remotes.first().cloned() else {
         return;
     };
+    let screen = |w: WindowId, paired: Option<usize>| {
+        let i = (left.iter().find(|(l, _)| *l == w)).map(|(_, i)| *i);
+        (i.or(paired).and_then(|i| remotes.get(i)))
+            .unwrap_or(&primary)
+            .clone()
+    };
     let outs = console_outputs(state);
     let ids = crate::outputlayouts::monitor_ids(&outs.iter().collect::<Vec<_>>());
     for w in movable(state) {
+        if let Some(h) = held.iter().find(|h| h.w == w) {
+            if let Some(win) = state.win_mut(w) {
+                win.home = h.home.clone();
+            }
+            carry(state, w, h.from, &screen(w, None), None);
+            continue;
+        }
         let Some(i) = under(state, w, &outs) else {
             continue;
         };
@@ -89,32 +104,77 @@ pub fn send_all(state: &mut State) {
         if let Some(win) = state.win_mut(w) {
             win.home = home;
         }
-        let to = remotes.get(i).unwrap_or(&primary).clone();
-        carry(state, w, from, &to, None);
+        carry(state, w, from, &screen(w, Some(i)), None);
     }
 }
 
+/// A window lock mode brought back: its Remote output's work area and its [`Home`].
+pub struct Held {
+    w: WindowId,
+    from: Rect,
+    home: Option<Home>,
+}
+
 /// Lock mode ends, before the Remote outputs go: each window goes home, else to the console
-/// primary at its relative place; a snap group follows its first homed member. The caller lays out.
+/// primary at its relative place ([`land`]), else waits in `console.held`; the caller lays out.
 pub fn bring_back(state: &mut State) {
     let remotes = remote_outputs(state);
+    let mut left = Vec::new();
+    let held = (movable(state).into_iter())
+        .filter_map(|w| {
+            let r = under(state, w, &remotes)?;
+            left.push((w, r));
+            let home = state.win(w)?.home.clone();
+            let from = state.usable_area(Some(&remotes[r]));
+            Some(Held { w, from, home })
+        })
+        .collect();
+    state.console.left = left;
+    for win in &mut state.windows {
+        win.home = None;
+    }
+    state.console.held = held;
+    land(state, console_outputs(state));
+}
+
+/// At a turn's end with no scan or enable due: waiting windows go to the console outputs and are
+/// laid out. Only an active session takes the standby; an inactive one waits for a monitor.
+pub fn land_held(state: &mut State) {
+    if state.console.held.is_empty()
+        || crate::console::remote_side(state)
+        || crate::backend::outputs_pending(state)
+    {
+        return;
+    }
     let outs = console_outputs(state);
+    let standby_only = outs.iter().all(crate::backend::is_virtual);
+    if outs.is_empty() || (standby_only && !crate::backend::session_active(state)) {
+        return;
+    }
+    land(state, outs);
+    state.update_layout();
+}
+
+/// Whether `w` waits for an output; the layout leaves it where lock mode left it.
+pub fn is_held(state: &State, w: WindowId) -> bool {
+    state.console.held.iter().any(|h| h.w == w)
+}
+
+/// Each window in `console.held` goes home on `outs`, else to `outs[0]` at its relative place; a
+/// snap group follows its first homed member. With no `outs` they keep waiting.
+fn land(state: &mut State, outs: Vec<Output>) {
+    if outs.is_empty() {
+        return;
+    }
     let ids = crate::outputlayouts::monitor_ids(&outs.iter().collect::<Vec<_>>());
-    let mut ws = movable(state);
-    ws.sort_by_key(|&w| state.win(w).is_none_or(|x| x.home.is_none()));
-    for w in ws {
-        let home = state.win_mut(w).and_then(|x| x.home.take());
-        let Some(r) = under(state, w, &remotes) else {
-            continue;
-        };
-        let from = state.usable_area(Some(&remotes[r]));
+    let mut held = std::mem::take(&mut state.console.held);
+    held.sort_by_key(|h| h.home.is_none());
+    for Held { w, from, home } in held {
         let at_home = (home.as_ref()).and_then(|h| {
             (ids.iter().position(|id| *id == h.monitor))
                 .or_else(|| outs.iter().position(|o| o.name() == h.connector))
         });
-        let Some(to) = outs.get(at_home.unwrap_or(0)).cloned() else {
-            continue;
-        };
+        let to = outs[at_home.unwrap_or(0)].clone();
         carry(
             state,
             w,
@@ -122,9 +182,6 @@ pub fn bring_back(state: &mut State) {
             &to,
             home.as_ref().filter(|_| at_home.is_some()),
         );
-    }
-    for win in &mut state.windows {
-        win.home = None;
     }
 }
 
@@ -264,8 +321,13 @@ fn carry(state: &mut State, w: WindowId, from: Rect, to: &Output, home: Option<&
     let Some(fit) = fit_of(state, w) else {
         return;
     };
-    let group_on_remote = (state.wm.snap.group_output(w))
-        .is_some_and(|name| remote_outputs(state).iter().any(|o| o.name() == name));
+    let side = if is_remote(to) {
+        remote_outputs(state)
+    } else {
+        console_outputs(state)
+    };
+    let group_away =
+        (state.wm.snap.group_output(w)).is_some_and(|name| !side.iter().any(|o| o.name() == name));
     let Some(win) = state.win_mut(w) else {
         return;
     };
@@ -282,7 +344,7 @@ fn carry(state: &mut State, w: WindowId, from: Rect, to: &Output, home: Option<&
             let b = state.layout_box(Some(to));
             centre(state, w, b);
         }
-        Fit::Grouped if group_on_remote != is_remote(to) => {
+        Fit::Grouped if group_away => {
             state.wm.snap.move_group(w, &to.name());
         }
         Fit::Grouped => {}

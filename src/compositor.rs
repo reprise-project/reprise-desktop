@@ -288,6 +288,9 @@ pub struct State {
     /// A test's connectors, standing in for `backend` (`backend::fake`).
     #[cfg(test)]
     pub test_heads: Vec<smithay::output::Output>,
+    /// Stands in for a connector scan or output enable due (`backend::outputs_pending`).
+    #[cfg(test)]
+    pub test_outputs_pending: bool,
     /// What `console::end_clients` asked the remote desktop server for.
     #[cfg(test)]
     pub ended_clients: Vec<crate::console::ClientsEnd>,
@@ -697,6 +700,8 @@ impl State {
             #[cfg(test)]
             test_heads: Vec::new(),
             #[cfg(test)]
+            test_outputs_pending: false,
+            #[cfg(test)]
             ended_clients: Vec::new(),
             // A slideshow picks its first picture once the loop runs.
             wallpaper: config
@@ -819,6 +824,7 @@ impl State {
 
     /// What every turn of the event loop ends with, after its sources ran.
     pub fn turn_end(&mut self) {
+        crate::console::homes::land_held(self);
         self.popups.cleanup();
         self.refresh_toplevels();
         self.refresh_workspaces();

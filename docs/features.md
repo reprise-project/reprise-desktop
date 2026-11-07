@@ -976,8 +976,10 @@ them.
   computer's screens, each at its place relative to the screen it was on.
 - **And back.** Switch User, or a VT switch key, sends a session on the
   monitor to the background, locked. A remote login of its user lands in it,
-  with no new session; its windows go to the client's screens and this
-  computer's screen stays locked.
+  with no new session; each window goes back to the client screen in the
+  same place in the client's layout (counted primary first) as the one it
+  left, or to the client's primary when there is none, at its relative
+  place, and this computer's screen stays locked.
 - **Leaving.** Disconnecting, from the client or with Disconnect in the
   session, leaves the session running, and the next connection lands back
   in it. End disconnected sessions after (`end_disconnected_after`) logs a
