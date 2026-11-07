@@ -59,7 +59,7 @@ fn main() -> ExitCode {
     if let Err(e) = write_public(&fingerprint, &format!("{}\n", identity.fingerprint)) {
         log::warn!("{}: {e}", fingerprint.display());
     }
-    // The unit allows 64 tasks; the front runs on one thread and blocks on nothing.
+    // The unit allows 64 tasks; the front runs on one thread.
     let rt = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .max_blocking_threads(2)
