@@ -408,7 +408,7 @@ async fn accept(tcp: TcpStream, mut link: Link<'_>) -> Result<Pending, Refused> 
     let (user, password) = match nla_user {
         Some(user) => {
             let info = recorded_client_info(&steps)?;
-            if negotiate::strip_domain(&info.client_info.credentials.username) != user {
+            if repriselogin::account_name(&info.client_info.credentials.username) != user {
                 return Err(Refused::UserChanged);
             }
             (user, Zeroizing::new(String::new()))
@@ -447,9 +447,9 @@ async fn accept(tcp: TcpStream, mut link: Link<'_>) -> Result<Pending, Refused> 
     })
 }
 
-/// A user name with its domain stripped, refused when empty or too long.
+/// The account a typed user name names, refused when empty or too long.
 fn checked_user(name: &str) -> Result<String, Refused> {
-    let user = negotiate::strip_domain(name);
+    let user = repriselogin::account_name(name);
     if user.is_empty() {
         return Err(Refused::NoUser);
     }
