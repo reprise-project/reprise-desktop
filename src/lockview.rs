@@ -432,8 +432,12 @@ fn on_result(state: &mut State, side: Side) -> PostAction {
     PostAction::Remove
 }
 
-/// Lock the session, then start `[power] locker` if one is set. No-op when already locked.
+/// Lock the session, then start `[power] locker` if one is set. No-op when already locked, and in
+/// the greeter, which has no session to lock.
 pub fn lock(state: &mut State) {
+    if state.host == crate::compositor::Host::Greeter {
+        return;
+    }
     crate::crash::set_locked(true);
     if state.console_locked() {
         return;
@@ -499,7 +503,11 @@ pub fn start_dialog_finger(state: &mut State) {
 
 /// Engage the lock unless locked: cover every Console output, clear client focus, route input to
 /// the dialog. A locker's own lock comes here directly, so it does not start another locker.
+/// No-op in the greeter.
 pub fn engage(state: &mut State) {
+    if state.host == crate::compositor::Host::Greeter {
+        return;
+    }
     crate::crash::set_locked(true);
     if state.console_locked() {
         return;

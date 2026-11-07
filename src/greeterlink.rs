@@ -3,6 +3,7 @@
 
 use std::error::Error;
 use std::io::{self, Read};
+use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::time::Duration;
@@ -89,17 +90,34 @@ impl GreeterLink {
     }
 }
 
+/// Sends `req` to reprise-login on `State`'s write half. A send that fails or times out may have
+/// left part of a frame, so the link is lost: it is shut down and nothing more goes out on it.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the login screen sends with it")
+)]
+pub fn send(state: &mut State, req: &GreeterRequest) {
+    let Some(tx) = state.greeter_link.as_mut() else {
+        return;
+    };
+    if let Err(e) = tx.send(req) {
+        log::warn!("greeter: sending to the login manager failed: {e}");
+        let _ = tx.0.shutdown(Shutdown::Both);
+        state.greeter_link = None;
+        crate::greeterview::lost(state);
+    }
+}
+
 impl GreeterLinkTx {
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the login screen sends with it")
-    )]
-    pub fn send(&mut self, req: &GreeterRequest) -> io::Result<()> {
+    fn send(&mut self, req: &GreeterRequest) -> io::Result<()> {
         frame::write_msg(&mut self.0, req).map_err(io_error)
     }
 }
 
 fn gone(state: &mut State, error: Option<FrameError>) -> PostAction {
+    if state.greeter.lost {
+        return PostAction::Remove;
+    }
     if let Some(e) = error {
         log::warn!("greeter: link to the login manager broke: {e}");
     }
@@ -122,6 +140,7 @@ mod tests {
     use crate::harness::Harness;
     use repriselogin::Interface;
     use repriselogin::greeter::{AuthKind, Keyboard};
+    use std::io::Write;
 
     fn greeting() -> Greeting {
         Greeting {
@@ -187,15 +206,50 @@ mod tests {
         assert!(h.state.greeter.heard.is_empty());
     }
 
-    #[test]
-    fn requests_go_out_on_the_write_half() {
+    fn linked() -> (Harness, UnixStream) {
         let mut h = Harness::new();
-        let (ours, mut daemon) = UnixStream::pair().unwrap();
+        let (ours, daemon) = UnixStream::pair().unwrap();
         let link = GreeterLink::from_stream(ours);
         h.state.greeter_link = Some(link.tx().unwrap());
         link.register(&h.state.handle).unwrap();
-        let tx = h.state.greeter_link.as_mut().unwrap();
-        tx.send(&GreeterRequest::StartSession).unwrap();
+        (h, daemon)
+    }
+
+    #[test]
+    fn a_failed_send_loses_the_link() {
+        let (mut h, daemon) = linked();
+        drop(daemon);
+        send(&mut h.state, &GreeterRequest::StartSession);
+        assert!(h.state.greeter.lost);
+        assert!(h.state.greeter_link.is_none(), "nothing more goes out");
+    }
+
+    #[test]
+    fn a_send_that_times_out_loses_the_link() {
+        let (mut h, mut daemon) = linked();
+        let tx = &h.state.greeter_link.as_ref().unwrap().0;
+        tx.set_nonblocking(true).unwrap();
+        while (&*tx).write(&[0; 4096]).is_ok() {}
+        tx.set_nonblocking(false).unwrap();
+        send(&mut h.state, &GreeterRequest::StartSession);
+        assert!(h.state.greeter.lost);
+        assert!(
+            h.state.greeter_link.is_none(),
+            "no retry after a part frame"
+        );
+        daemon.set_nonblocking(true).unwrap();
+        while daemon.read(&mut [0; 65536]).is_ok_and(|n| n > 0) {}
+        send(&mut h.state, &GreeterRequest::CancelSession);
+        assert!(
+            !daemon.read(&mut [0; 16]).is_ok_and(|n| n > 0),
+            "the lost link sends nothing"
+        );
+    }
+
+    #[test]
+    fn requests_go_out_on_the_write_half() {
+        let (mut h, mut daemon) = linked();
+        send(&mut h.state, &GreeterRequest::StartSession);
         let req: GreeterRequest = frame::read_msg(&mut daemon).unwrap();
         assert_eq!(req, GreeterRequest::StartSession);
         h.run_for(10);
