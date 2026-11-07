@@ -117,6 +117,15 @@ pub fn interface(i: repriselogin::Interface) -> reprisekit::interface::Interface
     }
 }
 
+pub fn wire_interface(i: reprisekit::interface::Interface) -> repriselogin::Interface {
+    use reprisekit::interface::Interface as Kit;
+    match i {
+        Kit::Classic => repriselogin::Interface::Classic,
+        Kit::Blue => repriselogin::Interface::Blue,
+        Kit::Glass => repriselogin::Interface::Glass,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
