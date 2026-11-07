@@ -1,4 +1,4 @@
-//! Messages a user session sends reprise-login over `SESSION_SOCKET`.
+//! Messages a user session sends reprise-login over `SESSION_SOCKET`, and the one it hears.
 
 use serde::{Deserialize, Serialize};
 
@@ -9,6 +9,13 @@ use crate::Interface;
 pub enum SessionRequest {
     Hello { interface: Interface },
     SwitchUser,
+}
+
+/// Sent before reprise-login closes a session's link because the session is not one of its own.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SessionReply {
+    Refused,
 }
 
 #[cfg(test)]
@@ -28,6 +35,10 @@ mod tests {
         assert_eq!(
             body(&SessionRequest::SwitchUser),
             br#"{"type":"switch_user"}"#
+        );
+        assert_eq!(
+            encode(&SessionReply::Refused).unwrap()[4..],
+            *br#"{"type":"refused"}"#
         );
     }
 }
