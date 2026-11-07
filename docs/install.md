@@ -215,7 +215,8 @@ user's server.
 - For remote logins at the login manager: the PAM files
   `reprise-login-remote` (logins with the login password),
   `reprise-login-remote-nla` (logins with a Remote Desktop password) and
-  `reprise-login-check` (Remote Desktop password changes), the system user
+  `reprise-login-check` (Remote Desktop password changes and the login
+  screen's administrator password), the system user
   `reprise-login-rdp` and the group `reprise-remote` (sysusers), and Linux
   5.6 or later (`openat2`). The oldest kernel remote logins have run on is
   7.2.7
