@@ -232,7 +232,7 @@ fn escape_in_a_start_panel_popup_closes_the_popup_only() {
         route(&modes, &escape, &[], &[]).route,
         KeyRoute::Menu(keys::KEY_Escape)
     );
-    let (items, rows) = crate::startmenu::shutdown_menu(false);
+    let (items, rows) = crate::startmenu::shutdown_menu(false, false);
     assert_eq!(
         key_act(&items, Some(0), keys::KEY_Escape, KeyStops::Enabled),
         Some(KeyAct::CloseTopmost)

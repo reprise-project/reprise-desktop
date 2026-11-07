@@ -94,8 +94,10 @@ impl State {
             return;
         };
         let edge = self.bar_placement(&output).edge;
-        let (items, rows) =
-            crate::startmenu::shutdown_menu(!self.config.power.hibernate.is_empty());
+        let (items, rows) = crate::startmenu::shutdown_menu(
+            !self.config.power.hibernate.is_empty(),
+            crate::loginlink::connected(self),
+        );
         let kind = crate::menuview::MenuKind::StartPanel { rows };
         let at = (arrow.right(), arrow.y);
         let place = |_, size, usable| shutdown_options_at(edge, arrow, size, usable);
@@ -265,6 +267,10 @@ impl State {
                     }
                     Err(err) => log::warn!("properties: {}: {err}", file.display()),
                 }
+            }
+            StartRow::SwitchUser => {
+                self.close_start_panel();
+                crate::loginlink::switch_user(self);
             }
             StartRow::LogOff => {
                 self.close_start_panel();
