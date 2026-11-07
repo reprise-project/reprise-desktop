@@ -53,7 +53,10 @@ fn main() -> ExitCode {
         logger.filter_module(target, log::LevelFilter::Warn);
     }
     logger.init();
-    let port = machine_config().remote.port;
+    let Some(port) = port_to_serve(&machine_config()) else {
+        log::info!("remote logins are off in {MACHINE_CONFIG}; the front stays off");
+        return ExitCode::SUCCESS;
+    };
     let (Some(state), Some(runtime)) = (unit_dir("STATE_DIRECTORY"), unit_dir("RUNTIME_DIRECTORY"))
     else {
         log::error!("STATE_DIRECTORY and RUNTIME_DIRECTORY are set by reprise-login-rdp.service");
@@ -91,6 +94,12 @@ fn main() -> ExitCode {
         nla_throttle: RefCell::default(),
     });
     tokio::task::LocalSet::new().block_on(&rt, serve(port, ctx))
+}
+
+/// The port to listen on; None while remote logins are off. reprise-login also stops a front
+/// that links then, but one that never links would hold the port.
+fn port_to_serve(config: &MachineConfig) -> Option<u16> {
+    config.remote.enabled.then_some(config.remote.port)
 }
 
 fn machine_config() -> MachineConfig {
@@ -359,6 +368,20 @@ mod tests {
     use limits::Refusal;
     use repriselogin::fdpass::FdFrameReader;
     use tokio::net::{TcpListener, UnixListener};
+
+    #[test]
+    fn the_front_serves_its_port_only_while_remote_logins_are_on() {
+        let port = |text: &str| port_to_serve(&MachineConfig::parse(text).0);
+        assert_eq!(
+            port("[remote_desktop]\nenabled = true\nport = 3390\n"),
+            Some(3390)
+        );
+        assert_eq!(
+            port("[remote_desktop]\nenabled = false\nport = 3390\n"),
+            None
+        );
+        assert_eq!(port(""), None, "off by default");
+    }
 
     #[test]
     fn the_fingerprint_is_readable_by_all_under_a_private_umask() {
