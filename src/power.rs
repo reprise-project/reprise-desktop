@@ -481,12 +481,7 @@ fn report(state: &mut State, r: Report) {
         }
         Report::Lock => {
             log::info!("power: logind asks for the lock");
-            // Away from its seat the computer shows none of the session; its remote side is the
-            // connected client's, which reprise-login's recovery would otherwise lock out.
-            match state.lock.seat_away {
-                true => crate::lockview::lock(state),
-                false => crate::lockview::lock_all(state),
-            }
+            crate::lockview::lock_all(state);
         }
         Report::Unlock => {
             log::info!("power: logind ends the lock");
@@ -974,15 +969,12 @@ mod tests {
     }
 
     #[test]
-    fn a_logind_lock_away_from_the_seat_locks_the_console_only() {
+    fn a_logind_lock_away_from_the_seat_locks_both_sides() {
         let (mut h, _portal, _lock) = crate::console::tests::in_lock_mode();
         crate::lockview::seat_away(&mut h.state, true);
         report(&mut h.state, Report::Lock);
         assert!(h.state.console_locked());
-        assert!(
-            !h.state.desktop_locked(),
-            "the connected client keeps its desktop"
-        );
+        assert!(h.state.desktop_locked(), "the remote side locks too");
     }
 
     #[test]

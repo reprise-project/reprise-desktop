@@ -442,7 +442,8 @@ impl Daemon {
 
     /// Rebuilds the table from logind after a start, ends orphaned greeters and locks every
     /// session but `seat_active`: an earlier daemon may have unlocked one and died. A remote
-    /// login's session other than `seat_active` counts as a background one.
+    /// login's session other than `seat_active` counts as a background one; its compositor locks
+    /// its console when it links again, since a logind lock would lock its client out too.
     pub fn recover(
         &mut self,
         _now: Instant,
@@ -454,10 +455,10 @@ impl Daemon {
         for s in found {
             if s.seat == "seat0" && s.class == "user" && user_service(&s.service) {
                 let off_seat = seat_active != Some(&s.id);
-                if off_seat {
+                let background = off_seat && remote_service(&s.service);
+                if off_seat && !background {
                     out.push(Effect::LockSession(s.id.clone()));
                 }
-                let background = off_seat && remote_service(&s.service);
                 self.sessions.insert(SessionEntry {
                     id: s.id.clone(),
                     user: s.user,
