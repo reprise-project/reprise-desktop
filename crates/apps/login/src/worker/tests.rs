@@ -512,17 +512,25 @@ fn the_remote_stacks_refuse_root_and_skip_faillock() {
     let shells = auth_line(nla, "pam_shells.so");
     assert!(uid.is_some() && uid < shells, "{nla}");
     assert!(shells < auth_line(nla, "pam_permit.so"), "{nla}");
+}
 
+#[test]
+fn the_check_stack_refuses_root_before_its_password() {
     let check = include_str!("../../../../../data/pam.d/reprise-login-check");
     let stack: Vec<Vec<&str>> = (check.lines())
         .filter(|l| !l.starts_with('#'))
         .map(|l| l.split_whitespace().collect())
         .collect();
+    let root: Vec<&str> = "auth [success=ok user_unknown=ignore default=die] pam_succeed_if.so \
+                           quiet_success uid ne 0"
+        .split_whitespace()
+        .collect();
     assert_eq!(
         stack,
         [
-            ["auth", "include", "system-auth"],
-            ["account", "include", "system-auth"]
+            root,
+            vec!["auth", "include", "system-auth"],
+            vec!["account", "include", "system-auth"]
         ]
     );
 }
