@@ -1,5 +1,14 @@
 use super::*;
-use ironrdp_connector::{ClientConnector, Config, Credentials};
+use crate::link;
+use ironrdp_connector::credssp::CredsspSequence;
+use ironrdp_connector::sspi::credssp::{
+    ClientMode, ClientState, CredSspClient, CredSspMode, EarlyUserAuthResult, TsRequest,
+};
+use ironrdp_connector::sspi::generator::GeneratorState;
+use ironrdp_connector::sspi::ntlm::NtlmConfig;
+use ironrdp_connector::sspi::{AuthIdentity, NegotiateConfig};
+use ironrdp_connector::{ClientConnector, Config, ConnectorErrorKind, Credentials, custom_err};
+use ironrdp_pdu::PduHint;
 use ironrdp_pdu::gcc;
 use ironrdp_pdu::rdp::capability_sets::{MajorPlatformType, RailSupportLevel};
 use ironrdp_pdu::rdp::client_info::{
@@ -7,9 +16,15 @@ use ironrdp_pdu::rdp::client_info::{
     ExtendedClientOptionalInfo, PasswordCookie,
 };
 use ironrdp_pdu::rdp::headers::{BasicSecurityHeader, BasicSecurityHeaderFlags};
+use repriselogin::account::nt_hash;
+use repriselogin::fdpass::FdFrameReader;
+use repriselogin::frame;
 use std::collections::HashMap;
-use tokio::io::AsyncReadExt;
-use tokio::net::TcpListener;
+use std::convert::Infallible;
+use std::os::fd::AsFd;
+use tokio::io::{AsyncReadExt, Interest};
+use tokio::net::{TcpListener, UnixListener, UnixStream};
+use tokio::sync::mpsc;
 use tokio_rustls::TlsConnector;
 use tokio_rustls::rustls::client::danger::{
     HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier,
@@ -18,12 +33,91 @@ use tokio_rustls::rustls::crypto::aws_lc_rs;
 use tokio_rustls::rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use tokio_rustls::rustls::{ClientConfig, DigitallySignedStruct, SignatureScheme};
 
+const HOST: &str = "reprise-box.lan";
+
 pub(crate) fn ctx() -> Ctx {
     let dir = tempfile::tempdir().unwrap();
     Ctx {
         identity: reprisetls::cert::load_or_create(dir.path()).unwrap(),
         nla_users: Rc::default(),
         link: RefCell::new(None),
+        host: || HOST.to_owned(),
+    }
+}
+
+/// A context whose only Remote Desktop user is `anna`, with the password `anna-rd-pass`.
+fn ctx_with_anna() -> Ctx {
+    let ctx = ctx();
+    ctx.nla_users.borrow_mut().push(NlaUser {
+        user: "anna".into(),
+        nt_hash: nt_hash("anna-rd-pass"),
+    });
+    ctx
+}
+
+/// The next request the front sent over `daemon`.
+pub(crate) async fn request(daemon: &UnixStream, reader: &mut FdFrameReader) -> FrontRequest {
+    loop {
+        if let Some((body, _)) = reader.next().unwrap() {
+            return frame::decode(&body).unwrap();
+        }
+        daemon.readable().await.unwrap();
+        match daemon.try_io(Interest::READABLE, || reader.read_from(daemon.as_fd())) {
+            Ok(n) => assert_ne!(n, 0, "the front keeps the link"),
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
+            Err(e) => panic!("{e}"),
+        }
+    }
+}
+
+/// reprise-login's end of a link the front holds in its `Ctx`.
+struct Daemon {
+    _dir: tempfile::TempDir,
+    sock: UnixStream,
+    reader: FdFrameReader,
+}
+
+impl Daemon {
+    async fn link(ctx: &Ctx) -> Daemon {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("front.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        let (sender, _events) = link::connect_to(&path).await.unwrap();
+        *ctx.link.borrow_mut() = Some(sender);
+        let (sock, _) = listener.accept().await.unwrap();
+        let mut daemon = Daemon {
+            _dir: dir,
+            sock,
+            reader: FdFrameReader::new(),
+        };
+        assert_eq!(daemon.request().await, FrontRequest::Hello);
+        daemon
+    }
+
+    async fn request(&mut self) -> FrontRequest {
+        request(&self.sock, &mut self.reader).await
+    }
+
+    /// Every request until the front drops `ctx`'s link.
+    async fn rest(mut self, ctx: Ctx) -> Vec<FrontRequest> {
+        drop(ctx);
+        let mut all = Vec::new();
+        loop {
+            if let Some((body, _)) = self.reader.next().unwrap() {
+                all.push(frame::decode(&body).unwrap());
+                continue;
+            }
+            self.sock.readable().await.unwrap();
+            let read = (self.sock).try_io(Interest::READABLE, || {
+                self.reader.read_from(self.sock.as_fd())
+            });
+            match read {
+                Ok(0) => return all,
+                Ok(_) => {}
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
+                Err(e) => panic!("{e}"),
+            }
+        }
     }
 }
 
@@ -162,7 +256,8 @@ async fn log_on(user: &str, password: &str) -> Result<Pending, Refused> {
     let addr = listener.local_addr().unwrap();
     let client = tokio::spawn(client(addr, user.into(), password.into()));
     let (tcp, _) = listener.accept().await.unwrap();
-    let pending = to_client_info(tcp, 7, &ctx()).await;
+    let (_tell, mut heard) = mpsc::unbounded_channel();
+    let pending = to_client_info(tcp, 7, Instant::now(), &ctx(), &mut heard).await;
     client.abort();
     pending
 }
@@ -181,6 +276,7 @@ async fn a_tls_client_is_read_to_client_info_and_its_password_blanked() {
     assert_eq!(pending.user, "anna");
     assert_eq!(*pending.password, "secret");
     assert_eq!(pending.security, SecurityProtocol::SSL);
+    assert!(!pending.nla);
     assert!(pending.leftover.is_empty());
     assert!(!format!("{pending:?}").contains("secret"));
 
@@ -228,8 +324,11 @@ async fn a_connection_silent_past_the_handshake_deadline_is_closed() {
         .unwrap();
     let (tcp, _) = listener.accept().await.unwrap();
     let start = tokio::time::Instant::now();
+    let (_tell, mut heard) = mpsc::unbounded_channel();
     assert_eq!(
-        to_client_info(tcp, 1, &ctx()).await.err(),
+        to_client_info(tcp, 1, start, &ctx(), &mut heard)
+            .await
+            .err(),
         Some(Refused::Deadline)
     );
     let waited = start.elapsed();
@@ -304,7 +403,10 @@ async fn a_client_offering_no_protocol_in_common_is_told_and_refused() {
     .unwrap();
     client.write_all(&request).await.unwrap();
     let (tcp, _) = listener.accept().await.unwrap();
-    let refused = to_client_info(tcp, 1, &ctx()).await.unwrap_err();
+    let (_tell, mut heard) = mpsc::unbounded_channel();
+    let refused = to_client_info(tcp, 1, Instant::now(), &ctx(), &mut heard)
+        .await
+        .unwrap_err();
     assert_eq!(refused, Refused::Negotiation(NLA_OR_RDP.into()));
     let mut answer = Vec::new();
     client.read_to_end(&mut answer).await.unwrap();
@@ -505,5 +607,413 @@ fn garbage_never_panics() {
         }
         let _ = negotiate::peek_request(&buf);
         let _ = blank_password(&buf);
+    }
+}
+
+/// How a test client runs CredSSP: the connector's own bare NTLM, or NTLM in SPNEGO as
+/// `user` in `domain`, which mstsc and FreeRDP send.
+enum Credssp {
+    Connector,
+    Spnego {
+        user: &'static str,
+        domain: Option<&'static str>,
+    },
+}
+
+/// An NLA logon: `user` goes in the Client Info PDU, and in CredSSP unless `credssp` names
+/// another.
+struct NlaLogon {
+    protocol: SecurityProtocol,
+    user: &'static str,
+    domain: Option<&'static str>,
+    password: &'static str,
+    credssp: Credssp,
+}
+
+#[derive(Debug)]
+struct TsRequestHint;
+
+impl PduHint for TsRequestHint {
+    fn find_size(&self, bytes: &[u8]) -> ironrdp_core::DecodeResult<Option<(bool, usize)>> {
+        match TsRequest::read_length(bytes) {
+            Ok(length) => Ok(Some((true, length))),
+            Err(_) => Ok(None),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct EarlyUserAuthResultHint;
+
+impl PduHint for EarlyUserAuthResultHint {
+    fn find_size(&self, _: &[u8]) -> ironrdp_core::DecodeResult<Option<(bool, usize)>> {
+        Ok(Some((true, 4)))
+    }
+}
+
+/// Runs CredSSP with NTLM in SPNEGO, then reads HYBRID_EX's Early User Authorization Result.
+async fn spnego<S>(
+    framed: &mut TokioFramed<S>,
+    username: Username,
+    password: &str,
+    public_key: Vec<u8>,
+    hybrid_ex: bool,
+) -> ConnectorResult<()>
+where
+    S: AsyncRead + AsyncWrite + Send + Sync + Unpin,
+{
+    let identity = AuthIdentity {
+        username,
+        password: password.to_owned().into(),
+    };
+    let mut client = CredSspClient::new(
+        public_key,
+        identity.into(),
+        CredSspMode::WithCredentials,
+        ClientMode::Negotiate(NegotiateConfig {
+            protocol_config: Box::new(NtlmConfig::default()),
+            package_list: Some("!kerberos,!pku2u".to_owned()),
+            client_computer_name: "client".to_owned(),
+        }),
+        format!("TERMSRV/{HOST}"),
+    )
+    .unwrap();
+    let mut request = TsRequest::default();
+    loop {
+        let state = match client.process(request).start() {
+            GeneratorState::Completed(state) => state,
+            GeneratorState::Suspended(_) => panic!("NTLM makes no network requests"),
+        };
+        let state = state.map_err(|e| custom_err!("SPNEGO", e))?;
+        let (reply, last) = match state {
+            ClientState::ReplyNeeded(reply) => (reply, false),
+            ClientState::FinalMessage(reply) => (reply, true),
+        };
+        let mut out = Vec::new();
+        reply.encode_ts_request(&mut out).unwrap();
+        framed.write_all(&out).await.unwrap();
+        if last {
+            break;
+        }
+        let pdu =
+            (framed.read_by_hint(&TsRequestHint).await).map_err(|e| custom_err!("read", e))?;
+        request = TsRequest::from_buffer(&pdu).map_err(|e| custom_err!("TsRequest", e))?;
+        if request.error_code.is_some() {
+            return Err(ConnectorError::general("the server failed CredSSP"));
+        }
+    }
+    if hybrid_ex {
+        let pdu = (framed.read_by_hint(&EarlyUserAuthResultHint).await)
+            .map_err(|e| custom_err!("read", e))?;
+        let result = EarlyUserAuthResult::from_buffer(&pdu[..]).unwrap();
+        if matches!(result, EarlyUserAuthResult::AccessDenied) {
+            return Err(ConnectorError::new(
+                "CredSSP",
+                ConnectorErrorKind::AccessDenied,
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Logs on over NLA and fails with why the client stopped; past Client Info it waits for the
+/// licence the front never sends.
+async fn nla_client(
+    addr: SocketAddr,
+    logon: NlaLogon,
+    public_key: Vec<u8>,
+) -> ConnectorResult<Infallible> {
+    let tcp = TcpStream::connect(addr).await.unwrap();
+    let local = tcp.local_addr().unwrap();
+    let mut framed = TokioFramed::new(tcp);
+    let mut config = client_config(logon.user, logon.password);
+    config.enable_tls = false;
+    config.enable_credssp = true;
+    config.domain = logon.domain.map(str::to_owned);
+    let mut connector = ClientConnector::new(config, local);
+    let mut buf = WriteBuf::new();
+    connector.initiate_with_security_protocol(logon.protocol, &mut buf)?;
+    framed.write_all(buf.filled()).await.unwrap();
+    let upgrade = ironrdp_tokio::connect_begin(&mut framed, &mut connector).await?;
+    let tcp = framed.into_inner_no_leftover();
+    let name = tokio_rustls::rustls::pki_types::ServerName::try_from("localhost").unwrap();
+    let tls = (client_tls(None).connect(name, tcp).await).map_err(|e| custom_err!("TLS", e))?;
+    let _ = ironrdp_tokio::mark_as_upgraded(upgrade, &mut connector);
+    let mut framed = TokioFramed::new(tls);
+    match logon.credssp {
+        Credssp::Connector => {
+            let (sequence, request) = CredsspSequence::init_for_connector(
+                &connector,
+                ironrdp_connector::ServerName::new(HOST),
+                public_key,
+                None,
+            )?;
+            let sequence = ironrdp_tokio::perform_credssp_with_context(
+                &mut framed,
+                &mut NoNetwork,
+                &mut buf,
+                sequence,
+                request,
+            )
+            .await?;
+            connector.complete_credssp(sequence)?;
+        }
+        Credssp::Spnego { user, domain } => {
+            let username = Username::new(user, domain).unwrap();
+            let hybrid_ex = logon.protocol == SecurityProtocol::HYBRID_EX;
+            spnego(&mut framed, username, logon.password, public_key, hybrid_ex).await?;
+            connector.mark_credssp_as_done();
+        }
+    }
+    loop {
+        ironrdp_tokio::single_sequence_step(&mut framed, &mut connector, &mut buf).await?;
+    }
+}
+
+/// Runs `logon` against the front until it returns, with `heard` as the daemon's events.
+async fn nla_log_on(
+    ctx: &Ctx,
+    logon: NlaLogon,
+    heard: &mut UnboundedReceiver<FrontEvent>,
+) -> (
+    Result<Pending, Refused>,
+    tokio::task::JoinHandle<ConnectorResult<Infallible>>,
+) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let client = tokio::spawn(nla_client(addr, logon, ctx.identity.public_key()));
+    let (tcp, _) = listener.accept().await.unwrap();
+    let pending = to_client_info(tcp, 7, Instant::now(), ctx, heard).await;
+    (pending, client)
+}
+
+fn hybrid(user: &'static str, password: &'static str) -> NlaLogon {
+    NlaLogon {
+        protocol: SecurityProtocol::HYBRID,
+        user,
+        domain: None,
+        password,
+        credssp: Credssp::Connector,
+    }
+}
+
+#[tokio::test]
+async fn nla_with_the_remote_desktop_password_reaches_client_info_as_that_user() {
+    let ctx = ctx_with_anna();
+    let mut daemon = Daemon::link(&ctx).await;
+    let (_tell, mut heard) = mpsc::unbounded_channel();
+    let logon = hybrid("anna", "anna-rd-pass");
+    let (pending, client) = nla_log_on(&ctx, logon, &mut heard).await;
+    client.abort();
+    let pending = pending.expect("the client logs on");
+    assert!(pending.nla);
+    assert_eq!(pending.user, "anna");
+    assert_eq!(pending.security, SecurityProtocol::HYBRID);
+    assert!(
+        pending.password.is_empty(),
+        "the password went to reprise-login"
+    );
+    match daemon.request().await {
+        FrontRequest::Authenticate {
+            conn: 7,
+            user,
+            secret,
+            ..
+        } => {
+            assert_eq!(user, "anna");
+            assert_eq!(
+                secret,
+                Secret::Delegated(Zeroizing::new("anna-rd-pass".into()))
+            );
+        }
+        other => panic!("an Authenticate for conn 7: {other:?}"),
+    }
+    let markers: Vec<&Step> = (pending.steps.iter())
+        .filter(|s| !matches!(s, Step::Pdu { .. }))
+        .collect();
+    assert_eq!(
+        markers,
+        [
+            &Step::SecurityUpgradeDone,
+            &Step::CredsspDone {
+                user: "anna".into(),
+                domain: None
+            }
+        ]
+    );
+    assert!(
+        matches!(pending.steps[3], Step::CredsspDone { .. }),
+        "CredSSP follows the upgrade: {:?}",
+        pending.steps
+    );
+    let Some(Step::Pdu { input, .. }) = pending.steps.last() else {
+        panic!("the last step is a PDU: {:?}", pending.steps);
+    };
+    let info = client_info(input);
+    assert_eq!(info.client_info.credentials.username, "anna");
+    assert_eq!(info.client_info.credentials.password, "");
+    assert!(!input.windows(12).any(|w| w == b"anna-rd-pass"));
+    drop(pending);
+    assert_eq!(daemon.rest(ctx).await, [], "no Gone for a logon handed on");
+}
+
+#[tokio::test]
+async fn nla_with_a_wrong_password_never_reaches_the_daemon() {
+    let ctx = ctx_with_anna();
+    let daemon = Daemon::link(&ctx).await;
+    let (_tell, mut heard) = mpsc::unbounded_channel();
+    let (pending, client) = nla_log_on(&ctx, hybrid("anna", "wrong"), &mut heard).await;
+    assert!(
+        matches!(pending, Err(Refused::Nla(_))),
+        "CredSSP fails: {pending:?}"
+    );
+    assert!(client.await.unwrap().is_err());
+    assert_eq!(daemon.rest(ctx).await, [], "no Authenticate");
+}
+
+#[tokio::test]
+async fn a_hybrid_ex_client_hears_access_denied_when_the_daemon_denies() {
+    let ctx = ctx_with_anna();
+    let mut daemon = Daemon::link(&ctx).await;
+    let (tell, mut heard) = mpsc::unbounded_channel();
+    let logon = NlaLogon {
+        protocol: SecurityProtocol::HYBRID_EX,
+        ..hybrid("anna", "anna-rd-pass")
+    };
+    let answer = async {
+        let authenticate = daemon.request().await;
+        assert!(
+            matches!(authenticate, FrontRequest::Authenticate { conn: 7, .. }),
+            "{authenticate:?}"
+        );
+        tell.send(FrontEvent::Denied {
+            conn: 7,
+            backoff_s: 4,
+        })
+        .unwrap();
+    };
+    let ((pending, client), ()) = tokio::join!(nla_log_on(&ctx, logon, &mut heard), answer);
+    assert_eq!(pending.unwrap_err(), Refused::Denied { backoff_s: 4 });
+    let e = client.await.unwrap().unwrap_err();
+    assert!(
+        matches!(e.kind(), ConnectorErrorKind::AccessDenied),
+        "the early user authorization result denies access: {e}"
+    );
+    assert_eq!(daemon.rest(ctx).await, [], "no Gone after a Denied");
+}
+
+#[tokio::test]
+async fn a_hybrid_ex_client_goes_on_once_the_daemon_verifies() {
+    let ctx = ctx_with_anna();
+    let mut daemon = Daemon::link(&ctx).await;
+    let (tell, mut heard) = mpsc::unbounded_channel();
+    let logon = NlaLogon {
+        protocol: SecurityProtocol::HYBRID_EX,
+        ..hybrid("anna", "anna-rd-pass")
+    };
+    let answer = async {
+        assert!(matches!(
+            daemon.request().await,
+            FrontRequest::Authenticate { conn: 7, .. }
+        ));
+        tell.send(FrontEvent::Verified { conn: 7 }).unwrap();
+    };
+    let ((pending, client), ()) = tokio::join!(nla_log_on(&ctx, logon, &mut heard), answer);
+    client.abort();
+    let pending = pending.expect("the client reaches Client Info");
+    assert_eq!(pending.security, SecurityProtocol::HYBRID_EX);
+    assert!(pending.nla);
+}
+
+#[tokio::test]
+async fn a_client_info_user_other_than_the_credssp_user_is_refused() {
+    let ctx = ctx_with_anna();
+    let mut daemon = Daemon::link(&ctx).await;
+    let (_tell, mut heard) = mpsc::unbounded_channel();
+    let logon = NlaLogon {
+        credssp: Credssp::Spnego {
+            user: "anna",
+            domain: None,
+        },
+        ..hybrid("bob", "anna-rd-pass")
+    };
+    let (pending, client) = nla_log_on(&ctx, logon, &mut heard).await;
+    client.abort();
+    assert_eq!(pending.unwrap_err(), Refused::UserChanged);
+    assert!(matches!(
+        daemon.request().await,
+        FrontRequest::Authenticate { conn: 7, .. }
+    ));
+    assert_eq!(
+        daemon.rest(ctx).await,
+        [FrontRequest::Gone { conn: 7 }],
+        "reprise-login hears the logon is gone"
+    );
+}
+
+#[tokio::test]
+async fn spnego_clients_log_on_under_each_name_form_of_the_user() {
+    let forms = [
+        (None, "anna"),
+        (Some("REPRISE-BOX"), "anna"),
+        (Some("reprise-box"), "anna"),
+        (Some("."), "anna"),
+        (None, "anna@reprise-box.lan"),
+    ];
+    for (domain, user) in forms {
+        let ctx = ctx_with_anna();
+        let _daemon = Daemon::link(&ctx).await;
+        let (_tell, mut heard) = mpsc::unbounded_channel();
+        let logon = NlaLogon {
+            domain,
+            credssp: Credssp::Spnego { user, domain },
+            ..hybrid("anna", "anna-rd-pass")
+        };
+        let (pending, client) = nla_log_on(&ctx, logon, &mut heard).await;
+        client.abort();
+        let pending = pending.unwrap_or_else(|e| panic!("{domain:?} {user}: {e}"));
+        assert_eq!(pending.user, "anna", "{domain:?} {user}");
+    }
+}
+
+#[tokio::test]
+async fn a_spnego_client_with_another_domain_is_refused() {
+    let ctx = ctx_with_anna();
+    let daemon = Daemon::link(&ctx).await;
+    let (_tell, mut heard) = mpsc::unbounded_channel();
+    let logon = NlaLogon {
+        credssp: Credssp::Spnego {
+            user: "anna",
+            domain: Some("ELSEWHERE"),
+        },
+        ..hybrid("anna", "anna-rd-pass")
+    };
+    let (pending, client) = nla_log_on(&ctx, logon, &mut heard).await;
+    client.abort();
+    assert!(matches!(pending, Err(Refused::Nla(_))), "{pending:?}");
+    assert_eq!(daemon.rest(ctx).await, []);
+}
+
+#[test]
+fn the_credssp_list_holds_each_user_under_four_names_with_its_nt_hash() {
+    let users = [NlaUser {
+        user: "anna".into(),
+        nt_hash: nt_hash("anna-rd-pass"),
+    }];
+    let list = credssp_users(&users, HOST);
+    let names: Vec<String> = list.iter().map(|i| format!("{:?}", i.username)).collect();
+    assert_eq!(list.len(), 4, "{names:?}");
+    let want = [
+        Username::new("anna", None).unwrap(),
+        Username::new_down_level_logon_name("anna", ".").unwrap(),
+        Username::new_down_level_logon_name("anna", "REPRISE-BOX").unwrap(),
+        Username::new_upn("anna", HOST).unwrap(),
+    ];
+    for (got, want) in list.iter().zip(&want) {
+        assert_eq!(&got.username, want);
+        assert_eq!(
+            got.password.as_ref().as_str(),
+            format!("{NT_HASH_PREFIX}{}", *nt_hash("anna-rd-pass"))
+        );
     }
 }
