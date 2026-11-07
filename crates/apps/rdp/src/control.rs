@@ -40,25 +40,36 @@ pub enum Request {
 /// A request for a new certificate, answered once it is in use.
 pub type Regenerate = oneshot::Sender<Result<(), String>>;
 
+/// Which server serves the bus.
+pub enum Server {
+    /// The user's own server, which makes its certificates.
+    Own(mpsc::UnboundedSender<Regenerate>),
+    /// reprise-login's hand-over server: it holds [`NAME`] alone, and the login manager owns the
+    /// certificate.
+    HandOver,
+}
+
 /// Serve `status` on the session bus until it is dropped, passing the bus's requests on. The
-/// receiver hears once whether [`NAME`] was claimed; `alone` claims it only from nobody and
-/// never gives it up.
+/// receiver hears once whether [`NAME`] was claimed; the hand-over server claims it only from
+/// nobody and never gives it up.
 pub fn spawn(
     status: watch::Receiver<Status>,
     disconnect: mpsc::UnboundedSender<Request>,
-    regenerate: mpsc::UnboundedSender<Regenerate>,
-    alone: bool,
+    server: Server,
 ) -> std::sync::mpsc::Receiver<zbus::Result<()>> {
-    spawn_on(Builder::session(), status, disconnect, regenerate, alone)
+    spawn_on(Builder::session(), status, disconnect, server)
 }
 
 fn spawn_on(
     builder: Builder<'static>,
     status: watch::Receiver<Status>,
     disconnect: mpsc::UnboundedSender<Request>,
-    regenerate: mpsc::UnboundedSender<Regenerate>,
-    alone: bool,
+    server: Server,
 ) -> std::sync::mpsc::Receiver<zbus::Result<()>> {
+    let (alone, regenerate) = match server {
+        Server::Own(regenerate) => (false, Some(regenerate)),
+        Server::HandOver => (true, None),
+    };
     let (claimed, claim) = std::sync::mpsc::sync_channel(1);
     let spawned = std::thread::Builder::new()
         .name("reprise-rdp-control".into())
@@ -135,7 +146,8 @@ fn signalled(sent: zbus::Result<()>) {
 struct RemoteDesktop {
     status: watch::Receiver<Status>,
     disconnect: mpsc::UnboundedSender<Request>,
-    regenerate: mpsc::UnboundedSender<Regenerate>,
+    /// None on the hand-over server.
+    regenerate: Option<mpsc::UnboundedSender<Regenerate>>,
 }
 
 #[zbus::interface(name = "org.reprise.RemoteDesktop")]
@@ -188,11 +200,16 @@ impl RemoteDesktop {
         rx.await.unwrap_or(false).then_some(()).ok_or_else(none)
     }
 
-    /// Replies once the new certificate is in use; clients connected now keep the old one.
+    /// Replies once the new certificate is in use; clients connected now keep the old one. The
+    /// hand-over server refuses it.
     async fn regenerate_certificate(&self) -> zbus::fdo::Result<()> {
         let (tx, rx) = oneshot::channel();
         let gone = || zbus::fdo::Error::Failed("the server is stopping".into());
-        self.regenerate.send(tx).map_err(|_| gone())?;
+        let Some(regenerate) = &self.regenerate else {
+            let owned = "the login manager owns the certificate";
+            return Err(zbus::fdo::Error::Failed(owned.into()));
+        };
+        regenerate.send(tx).map_err(|_| gone())?;
         rx.await
             .map_err(|_| gone())?
             .map_err(zbus::fdo::Error::Failed)
@@ -261,7 +278,7 @@ pub(crate) mod tests {
         let iface = RemoteDesktop {
             status: rx.clone(),
             disconnect,
-            regenerate,
+            regenerate: Some(regenerate),
         };
         let server = std::thread::spawn(move || {
             zbus::block_on(async move {
@@ -400,12 +417,11 @@ pub(crate) mod tests {
         server.join().unwrap().unwrap();
     }
 
-    fn spawned(bus: &Bus, alone: bool) -> (watch::Sender<Status>, zbus::Result<()>) {
+    fn spawned(bus: &Bus, server: Server) -> (watch::Sender<Status>, zbus::Result<()>) {
         let (status, rx) = watch::channel(Status::default());
         let (disconnect, _) = mpsc::unbounded_channel();
-        let (regenerate, _) = mpsc::unbounded_channel();
         let builder = Builder::address(bus.1.as_str());
-        let claim = spawn_on(builder, rx, disconnect, regenerate, alone);
+        let claim = spawn_on(builder, rx, disconnect, server);
         (status, claim.recv().expect("the claim is told"))
     }
 
@@ -418,18 +434,41 @@ pub(crate) mod tests {
         let others =
             |bus: &Bus| zbus::block_on(Builder::address(bus.1.as_str()).name(NAME).build());
         let other = others(&bus).unwrap();
-        let (_status, claimed) = spawned(&bus, true);
+        let (_status, claimed) = spawned(&bus, Server::HandOver);
         assert!(
             matches!(claimed, Err(zbus::Error::NameTaken)),
             "another server's name is not taken from it: {claimed:?}"
         );
         zbus::block_on(other.release_name(NAME)).unwrap();
 
-        let (status, claimed) = spawned(&bus, true);
+        let (status, claimed) = spawned(&bus, Server::HandOver);
         assert!(claimed.is_ok(), "{claimed:?}");
         assert!(
             matches!(others(&bus), Err(zbus::Error::NameTaken)),
             "nor is the hand-over server's given up to another"
+        );
+        drop(status);
+    }
+
+    #[test]
+    fn a_hand_over_server_leaves_the_certificate_to_the_login_manager() {
+        let Some(bus) = bus() else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
+        let (status, claimed) = spawned(&bus, Server::HandOver);
+        claimed.unwrap();
+        let refused = zbus::block_on(async {
+            let conn = Builder::address(bus.1.as_str()).build().await.unwrap();
+            let method = "RegenerateCertificate";
+            conn.call_method(Some(NAME), PATH, Some(NAME), method, &())
+                .await
+        });
+        assert!(
+            matches!(&refused, Err(zbus::Error::FDO(e))
+                if matches!(&**e, zbus::fdo::Error::Failed(m)
+                    if m == "the login manager owns the certificate")),
+            "{refused:?}"
         );
         drop(status);
     }
