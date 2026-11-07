@@ -83,6 +83,8 @@ pub enum ToWorker {
     Begin {
         user: String,
         autologin_user: Option<String>,
+        /// The greeter's `--greeter-socket`.
+        greeter_socket: bool,
     },
     Answer(Option<Zeroizing<String>>),
     Start {
@@ -249,8 +251,9 @@ fn shell(user: &PasswdEntry) -> &str {
 }
 
 /// The session's program. A bare name is looked up on the session's `PATH`.
-pub fn session_argv(user: &PasswdEntry, mode: Mode) -> Vec<String> {
+pub fn session_argv(user: &PasswdEntry, mode: Mode, greeter_socket: bool) -> Vec<String> {
     let argv: &[&str] = match mode {
+        Mode::Greeter if greeter_socket => &["reprise", "--greeter", "--greeter-socket"],
         Mode::Greeter => &["reprise", "--greeter"],
         Mode::Login | Mode::Reauth | Mode::Autologin => &[shell(user), "-l", "-c", "exec reprise"],
     };
@@ -295,11 +298,13 @@ pub fn worker_main(mode: Mode, mut sock: UnixStream) -> i32 {
         log::error!("worker: socket timeout: {e}");
         return 1;
     }
-    let (user, autologin_user) = match read_until_stopped::<ToWorker>(&sock, &STOP) {
+    let (user, autologin_user, greeter_socket) = match read_until_stopped::<ToWorker>(&sock, &STOP)
+    {
         Ok(ToWorker::Begin {
             user,
             autologin_user,
-        }) => (user, autologin_user),
+            greeter_socket,
+        }) => (user, autologin_user, greeter_socket),
         Ok(_) => return fail(&mut sock, ErrorKind::Failed, "the first frame is not Begin"),
         Err(_) => return 1,
     };
@@ -372,7 +377,7 @@ pub fn worker_main(mode: Mode, mut sock: UnixStream) -> i32 {
         }
         _ => return 1,
     };
-    match run_session(&mut pam, mode, &account, vt, &mut sock) {
+    match run_session(&mut pam, mode, &account, greeter_socket, vt, &mut sock) {
         Ok(clean) => i32::from(!clean),
         Err(_) if stopped() => 1,
         Err(text) => fail(&mut sock, ErrorKind::Failed, &text),
@@ -404,6 +409,7 @@ fn run_session(
     pam: &mut Pam,
     mode: Mode,
     account: &PasswdEntry,
+    greeter_socket: bool,
     vt: u16,
     sock: &mut UnixStream,
 ) -> Result<bool, String> {
@@ -448,7 +454,7 @@ fn run_session(
         let _ = pam.delete_cred();
         return Err(e.to_string());
     }
-    let clean = run_program(pam, mode, account, &tty_path, groups, sock);
+    let clean = run_program(pam, mode, account, greeter_socket, &tty_path, groups, sock);
     let closed = pam.close_session();
     let deleted = pam.delete_cred();
     drop(tty);
@@ -463,6 +469,7 @@ fn run_program(
     pam: &mut Pam,
     mode: Mode,
     account: &PasswdEntry,
+    greeter_socket: bool,
     tty_path: &str,
     groups: Vec<libc::gid_t>,
     sock: &mut UnixStream,
@@ -476,7 +483,8 @@ fn run_program(
         return Err("pam_systemd registered no session (no XDG_SESSION_ID)".into());
     };
     let env = session_env(account, mode, pam_env);
-    let launch = Launch::new(account, mode, tty_path, env, groups)?;
+    let argv = session_argv(account, mode, greeter_socket);
+    let launch = Launch::new(account, mode, argv, tty_path, env, groups)?;
     let waited = block_session_signals();
     // Checked with the signals blocked: a later stop stays pending for `wait_for`.
     if stopped() {
@@ -699,12 +707,12 @@ impl Launch {
     fn new(
         account: &PasswdEntry,
         mode: Mode,
+        argv: Vec<String>,
         tty_path: &str,
         env: Vec<(String, String)>,
         groups: Vec<libc::gid_t>,
     ) -> Result<Launch, String> {
         let nul = |what: &str| format!("{what} holds a NUL byte");
-        let argv = session_argv(account, mode);
         let path_var = env
             .iter()
             .rev()
@@ -1034,6 +1042,7 @@ mod tests {
             ToWorker::Begin {
                 user: "anna".into(),
                 autologin_user: Some("anna".into()),
+                greeter_socket: true,
             },
             ToWorker::Answer(Some(Zeroizing::new("pw".into()))),
             ToWorker::Answer(None),
@@ -1088,6 +1097,7 @@ mod tests {
         let begin = ToWorker::Begin {
             user: "hunter2".into(),
             autologin_user: None,
+            greeter_socket: false,
         };
         assert_eq!(format!("{begin:?}"), "Begin { <redacted> }");
         assert_eq!(format!("{:?}", ToWorker::Answer(None)), "Answer(None)");
@@ -1140,20 +1150,24 @@ mod tests {
     #[test]
     fn session_argv_runs_the_login_shell() {
         let argv = ["/bin/bash", "-l", "-c", "exec reprise"];
-        assert_eq!(session_argv(&anna(), Mode::Login), argv);
-        assert_eq!(session_argv(&anna(), Mode::Autologin), argv);
+        assert_eq!(session_argv(&anna(), Mode::Login, false), argv);
+        assert_eq!(session_argv(&anna(), Mode::Autologin, true), argv);
         let shell_less = PasswdEntry {
             shell: String::new(),
             ..anna()
         };
-        assert_eq!(session_argv(&shell_less, Mode::Login)[0], "/bin/sh");
+        assert_eq!(session_argv(&shell_less, Mode::Login, false)[0], "/bin/sh");
     }
 
     #[test]
-    fn the_greeter_argv_is_reprise_greeter() {
+    fn the_greeter_argv_is_reprise_greeter_with_a_socket_only_when_asked() {
         assert_eq!(
-            session_argv(&anna(), Mode::Greeter),
+            session_argv(&anna(), Mode::Greeter, false),
             ["reprise", "--greeter"]
+        );
+        assert_eq!(
+            session_argv(&anna(), Mode::Greeter, true),
+            ["reprise", "--greeter", "--greeter-socket"]
         );
     }
 

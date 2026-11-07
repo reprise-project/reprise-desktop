@@ -57,6 +57,7 @@ fn spawn(w: u32, mode: Mode, user: &str) -> Vec<Effect> {
             mode,
             user: user.into(),
             autologin_user: None,
+            greeter_socket: false,
         },
     }]
 }
@@ -259,6 +260,28 @@ fn boot_with_no_session_starts_the_greeter_on_vt_1() {
 }
 
 #[test]
+fn only_a_greeter_job_carries_greeter_socket_and_only_when_set() {
+    let config = LoginConfig {
+        greeter_socket: true,
+        ..LoginConfig::default()
+    };
+    let mut run = Run::new(config, Remembered::default());
+    match run.start().as_slice() {
+        [Effect::Spawn { job, .. }, ..] => assert!(job.greeter_socket, "{job:?}"),
+        other => panic!("{other:?}"),
+    }
+    match run.greeter(create("anna")).as_slice() {
+        [Effect::Spawn { job, .. }, ..] => assert!(!job.greeter_socket, "{job:?}"),
+        other => panic!("{other:?}"),
+    }
+    let mut run = Run::new(LoginConfig::default(), Remembered::default());
+    match run.start().as_slice() {
+        [Effect::Spawn { job, .. }, ..] => assert!(!job.greeter_socket, "{job:?}"),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
 fn boot_with_autologin_starts_that_user_on_vt_7_without_a_greeter() {
     let config = LoginConfig {
         autologin_user: Some("anna".into()),
@@ -275,6 +298,7 @@ fn boot_with_autologin_starts_that_user_on_vt_7_without_a_greeter() {
                     mode: Mode::Autologin,
                     user: "anna".into(),
                     autologin_user: Some("anna".into()),
+                    greeter_socket: false,
                 },
             },
             Effect::ToWorker {

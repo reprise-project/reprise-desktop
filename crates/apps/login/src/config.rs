@@ -10,6 +10,8 @@ pub struct LoginConfig {
     pub interface: Option<Interface>,
     pub show_users: bool,
     pub autologin_user: Option<String>,
+    /// Lets the login screen listen on a Wayland socket, for capture tools while testing.
+    pub greeter_socket: bool,
 }
 
 impl Default for LoginConfig {
@@ -18,6 +20,7 @@ impl Default for LoginConfig {
             interface: None,
             show_users: true,
             autologin_user: None,
+            greeter_socket: false,
         }
     }
 }
@@ -55,12 +58,18 @@ impl LoginConfig {
                     config.show_users = *b;
                     continue;
                 }
+                ("greeter_socket", toml::Value::Boolean(b)) => {
+                    config.greeter_socket = *b;
+                    continue;
+                }
                 ("autologin_user", toml::Value::String(s)) => {
                     config.autologin_user = (!s.is_empty()).then(|| s.clone());
                     continue;
                 }
                 ("interface" | "autologin_user", _) => format!("login.{key}: expected a string"),
-                ("show_users", _) => "login.show_users: expected true or false".into(),
+                ("show_users" | "greeter_socket", _) => {
+                    format!("login.{key}: expected true or false")
+                }
                 _ => format!("login.{key}: unknown key"),
             };
             warnings.push(warning);
@@ -93,7 +102,8 @@ mod tests {
     #[test]
     fn parses_the_login_section() {
         let (config, warnings) = LoginConfig::parse(
-            "[login]\ninterface = \"glass\"\nshow_users = false\nautologin_user = \"anna\"\n",
+            "[login]\ninterface = \"glass\"\nshow_users = false\nautologin_user = \"anna\"\n\
+             greeter_socket = true\n",
         );
         assert_eq!(
             config,
@@ -101,6 +111,7 @@ mod tests {
                 interface: Some(Interface::Glass),
                 show_users: false,
                 autologin_user: Some("anna".into()),
+                greeter_socket: true,
             }
         );
         assert!(warnings.is_empty(), "{warnings:?}");
@@ -112,6 +123,7 @@ mod tests {
         let config = LoginConfig::load(&dir.path().join("login.toml"));
         assert_eq!(config, LoginConfig::default());
         assert!(config.show_users);
+        assert!(!config.greeter_socket, "the login screen has no socket");
     }
 
     #[test]

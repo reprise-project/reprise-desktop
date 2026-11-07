@@ -204,6 +204,7 @@ reprise-login`).
 | `interface` | `"classic"`, `"blue"` or `"glass"`: the login screen's design ([features.md](features.md#login-screen)) | the `[appearance] interface` of the last session that ran under reprise-login; `"classic"` before any |
 | `show_users` | `true` lists the accounts on the Blue and Glass screens, with each one's picture from AccountsService. `false` asks for a typed user name there, as Classic always does | `true` |
 | `autologin_user` | an account name. Each time reprise-login starts with no session running, it logs that user in without a password; a logout brings the login screen. A name the screen wouldn't list shows the login screen, and the journal says why. `""` counts as unset | unset |
+| `greeter_socket` | `true` lets the login screen listen on a Wayland socket in its runtime directory, so screenshot and input tools can reach it while testing. Any process of the `reprise-greeter` user can then reach the login screen: type into it, capture it, draw over it. Leave it `false` on a machine people use | `false` |
 
 The login screen lists accounts with a uid between `UID_MIN` and `UID_MAX`
 of `/etc/login.defs` (1000 and 60000 when unset) and a shell listed in
