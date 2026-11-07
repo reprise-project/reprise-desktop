@@ -11,13 +11,25 @@ pub enum Step {
     /// A question after the password, for the field to take.
     Ask(Prompt),
     Note(String),
-    Fail(ErrorKind, String),
-    /// Turning off or restarting failed; the daemon's text is not for the screen.
-    PowerFailed,
+    Fail(Failure),
     /// The session started: the greeter has done its job.
     Started,
     /// A cancelled login ended; nothing is in progress.
     Idle,
+}
+
+/// What the screen says when a request fails.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Failure {
+    /// The name or password is wrong.
+    Incorrect,
+    /// PAM's own words: its notes from this login, or else its refusal of the account.
+    Pam(String),
+    Refused,
+    /// The login could not run; the text is the daemon's.
+    Failed(String),
+    /// Turning off or restarting failed; the daemon's text is not for the screen.
+    PowerFailed,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -43,6 +55,8 @@ pub struct Conversation {
     /// A `Power` request waits for its result. It goes out only while no login runs, so a
     /// result in `Idle` is its.
     power: bool,
+    /// This login's info and error notes, cleaned like the Unlock dialog's.
+    notes: Vec<String>,
 }
 
 impl Conversation {
@@ -55,6 +69,7 @@ impl Conversation {
         self.phase = Phase::Authenticating;
         self.password = Some(password);
         self.asked = true;
+        self.notes.clear();
         GreeterRequest::CreateSession { user }
     }
 
@@ -139,6 +154,7 @@ impl Conversation {
                 }
                 AuthKind::Info | AuthKind::Error => {
                     self.asked = true;
+                    crate::lock::add_notice(&mut self.notes, &text);
                     vec![
                         Step::Note(text),
                         Step::Send(GreeterRequest::PostAuthResponse { response: None }),
@@ -157,7 +173,7 @@ impl Conversation {
             (Phase::Authenticating | Phase::Starting, GreeterReply::Error { kind, text }) => {
                 self.phase = Phase::Idle;
                 self.password = None;
-                vec![Step::Fail(kind, text)]
+                vec![Step::Fail(self.failure(kind, &text))]
             }
             (Phase::Cancelling, GreeterReply::Success | GreeterReply::Error { .. }) => {
                 self.phase = Phase::Idle;
@@ -167,14 +183,27 @@ impl Conversation {
                 self.power = false;
                 Vec::new()
             }
-            (Phase::Idle, GreeterReply::Error { kind, text }) if self.power => {
+            (Phase::Idle, GreeterReply::Error { kind, .. }) if self.power => {
                 self.power = false;
-                match kind {
-                    ErrorKind::Failed => vec![Step::PowerFailed],
-                    kind => vec![Step::Fail(kind, text)],
-                }
+                vec![Step::Fail(match kind {
+                    ErrorKind::Refused => Failure::Refused,
+                    _ => Failure::PowerFailed,
+                })]
             }
             _ => Vec::new(),
+        }
+    }
+
+    /// A failed login's words: PAM's notes when it sent any, as the Unlock dialog shows them.
+    fn failure(&self, kind: ErrorKind, text: &str) -> Failure {
+        let notes = (!self.notes.is_empty()).then(|| self.notes.join("\n"));
+        match kind {
+            ErrorKind::Auth => notes.map_or(Failure::Incorrect, Failure::Pam),
+            ErrorKind::Account => {
+                Failure::Pam(notes.unwrap_or_else(|| crate::lock::clean_notice(text).join("\n")))
+            }
+            ErrorKind::Refused => Failure::Refused,
+            ErrorKind::Failed => Failure::Failed(text.to_owned()),
         }
     }
 }
@@ -271,16 +300,19 @@ mod tests {
         assert_eq!(c.on_reply(GreeterReply::Success), vec![Step::Started]);
     }
 
+    fn error(kind: ErrorKind, text: &str) -> GreeterReply {
+        GreeterReply::Error {
+            kind,
+            text: text.into(),
+        }
+    }
+
     #[test]
-    fn an_auth_error_clears_the_password_and_shows_the_text() {
+    fn an_auth_error_clears_the_password_and_says_incorrect() {
         let mut c = submitted();
-        let error = GreeterReply::Error {
-            kind: ErrorKind::Auth,
-            text: "Authentication failure".into(),
-        };
         assert_eq!(
-            c.on_reply(error),
-            vec![Step::Fail(ErrorKind::Auth, "Authentication failure".into())]
+            c.on_reply(error(ErrorKind::Auth, "Authentication failure")),
+            vec![Step::Fail(Failure::Incorrect)]
         );
         assert!(c.idle(), "the conversation is back to idle");
         assert_eq!(
@@ -322,10 +354,7 @@ mod tests {
                 kind: ErrorKind::Refused,
                 text: "other users are logged on".into()
             }),
-            vec![Step::Fail(
-                ErrorKind::Refused,
-                "other users are logged on".into()
-            )]
+            vec![Step::Fail(Failure::Refused)]
         );
         assert!(c.idle());
     }
@@ -339,7 +368,7 @@ mod tests {
                 kind: ErrorKind::Failed,
                 text: "org.freedesktop.DBus.Error.AccessDenied".into()
             }),
-            vec![Step::PowerFailed]
+            vec![Step::Fail(Failure::PowerFailed)]
         );
         assert!(c.idle());
     }
@@ -404,5 +433,42 @@ mod tests {
         c.on_reply(GreeterReply::Success);
         assert_eq!(c.power(PowerAction::Reboot), vec![]);
         assert_eq!(c.cancel(), None);
+    }
+
+    #[test]
+    fn an_auth_error_after_notes_keeps_them() {
+        let mut c = submitted();
+        c.on_reply(prompt(AuthKind::Secret, "Password:"));
+        let locked = "The account is locked due to 3 failed logins.\n\t(5 minutes left to unlock)";
+        c.on_reply(prompt(AuthKind::Error, locked));
+        assert_eq!(
+            c.on_reply(error(ErrorKind::Auth, "Authentication failure")),
+            vec![Step::Fail(Failure::Pam(
+                "The account is locked due to 3 failed logins.\n(5 minutes left to unlock)".into()
+            ))]
+        );
+        c.submit("anna".into(), Zeroizing::new("pw".into()));
+        assert_eq!(
+            c.on_reply(error(ErrorKind::Auth, "Authentication failure")),
+            vec![Step::Fail(Failure::Incorrect)],
+            "the next login starts without them"
+        );
+    }
+
+    #[test]
+    fn an_account_refusal_shows_its_notes_or_else_pams_text() {
+        let mut c = submitted();
+        c.on_reply(prompt(AuthKind::Secret, "Password:"));
+        assert_eq!(
+            c.on_reply(error(ErrorKind::Account, "User account has expired")),
+            vec![Step::Fail(Failure::Pam("User account has expired".into()))]
+        );
+        let mut c = submitted();
+        let note = "Your account has expired; please contact your system administrator.";
+        c.on_reply(prompt(AuthKind::Error, note));
+        assert_eq!(
+            c.on_reply(error(ErrorKind::Account, "User account has expired")),
+            vec![Step::Fail(Failure::Pam(note.into()))]
+        );
     }
 }

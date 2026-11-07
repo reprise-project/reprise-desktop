@@ -11,7 +11,7 @@ use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
 use reprisekit::textedit::{EditKey, key_for};
 use reprisekit::theme::Theme;
-use repriselogin::greeter::{ErrorKind, GreeterReply, Greeting, Note, Notice, PowerAction};
+use repriselogin::greeter::{GreeterReply, Greeting, Note, Notice, PowerAction};
 use reprisescene::{BufferId, RectId, TreeId};
 use smithay::backend::input::InputTime;
 use smithay::input::keyboard::KeysymHandle;
@@ -23,7 +23,7 @@ use zeroize::Zeroizing;
 use crate::compose::{Compose, Fed};
 use crate::compositor::State;
 use crate::editkeys::KeyText;
-use crate::greeterconv::{Conversation, Step};
+use crate::greeterconv::{Conversation, Failure, Step};
 use crate::input::BTN_LEFT;
 use crate::keys;
 use crate::menuview::{MenuFrom, MenuKind};
@@ -139,12 +139,12 @@ fn apply(state: &mut State, step: Step) {
         Step::Send(_) => {}
         Step::Ask(prompt) => g.model.ask(prompt),
         Step::Note(text) => g.model.info(text),
-        Step::Fail(kind, text) => g.model.fail(match kind {
-            ErrorKind::Auth => logon::text::incorrect(),
-            ErrorKind::Refused => logon::text::power_refused(),
-            ErrorKind::Failed => text,
+        Step::Fail(f) => g.model.fail(match f {
+            Failure::Incorrect => logon::text::incorrect(),
+            Failure::Pam(text) | Failure::Failed(text) => text,
+            Failure::Refused => logon::text::power_refused(),
+            Failure::PowerFailed => logon::text::power_failed(),
         }),
-        Step::PowerFailed => g.model.fail(logon::text::power_failed()),
         Step::Idle => g.model.set_busy(false),
         Step::Started => {
             g.started = true;

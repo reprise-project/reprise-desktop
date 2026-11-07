@@ -546,6 +546,9 @@ the screen takes the interface of the last session.
 - **Shut Down and Restart** from the login screen, except while anyone is
   still logged on. Then the screen says why, and shutting down is done from
   a session.
+- **PAM's messages.** A wrong name or password gets one fixed message.
+  What PAM says during the login (an account locked after failed logins,
+  `/run/nologin`'s text, an expired account) stays on screen in its words.
 - **Caps Lock and layouts.** "Caps Lock is on." shows under the password
   while it is. With more than one keyboard layout set for the system, a
   badge shows the active one, and clicking it moves to the next.

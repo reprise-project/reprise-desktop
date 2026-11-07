@@ -330,20 +330,14 @@ pub fn worker_main(mode: Mode, mut sock: UnixStream) -> i32 {
         Ok(pam) => pam,
         Err(e) => return fail(&mut sock, ErrorKind::Failed, &e.to_string()),
     };
-    let refused = match pam.authenticate() {
-        Err(e) => Some((e, AUTH_FAILED.to_owned())),
-        Ok(()) => pam.account().err().map(|e| {
-            let text = e.text.clone();
-            (e, text)
-        }),
-    };
+    let refused = refusal(pam.authenticate(), || pam.account());
     if cancelled() {
         return 1;
     }
     // The entered name stays out of the log: it may be a password typed into the name field.
-    if let Some((e, text)) = refused {
+    if let Some((e, kind, text)) = refused {
         log::warn!("worker: login refused: {e}");
-        return fail(&mut sock, ErrorKind::Auth, &text);
+        return fail(&mut sock, kind, &text);
     }
     let account = match pam.user().map(|name| users::lookup(&name)) {
         Some(Ok(Some(account))) => account,
@@ -387,6 +381,21 @@ pub fn worker_main(mode: Mode, mut sock: UnixStream) -> i32 {
 fn prepare_socket(sock: &UnixStream) -> io::Result<()> {
     sock.set_read_timeout(Some(STOP_POLL))?;
     sock.set_write_timeout(Some(WRITE_WAIT))
+}
+
+/// Why the login stops before its session: a failed password gets the fixed text, and an account
+/// refused after a correct one gets PAM's.
+fn refusal(
+    authenticated: Result<(), PamError>,
+    account: impl FnOnce() -> Result<(), PamError>,
+) -> Option<(PamError, ErrorKind, String)> {
+    match authenticated {
+        Err(e) => Some((e, ErrorKind::Auth, AUTH_FAILED.to_owned())),
+        Ok(()) => account().err().map(|e| {
+            let text = e.text.clone();
+            (e, ErrorKind::Account, text)
+        }),
+    }
 }
 
 /// Tells the daemon why the login failed and gives the exit status for it.
@@ -1101,6 +1110,24 @@ mod tests {
             let frame = encode(&m).unwrap();
             assert_eq!(decode::<FromWorker>(&frame[4..]).unwrap(), m);
         }
+    }
+
+    #[test]
+    fn an_account_refusal_carries_pams_text_and_a_failed_password_the_fixed_one() {
+        let err = |code, text: &str| PamError {
+            code,
+            text: text.into(),
+        };
+        let expired = || Err(err(13, "User account has expired"));
+        let (_, kind, text) = refusal(Ok(()), expired).expect("refused");
+        assert_eq!(
+            (kind, text.as_str()),
+            (ErrorKind::Account, "User account has expired")
+        );
+        let (_, kind, text) =
+            refusal(Err(err(7, "Authentication failure")), || unreachable!()).expect("refused");
+        assert_eq!((kind, text.as_str()), (ErrorKind::Auth, AUTH_FAILED));
+        assert!(refusal(Ok(()), || Ok(())).is_none());
     }
 
     #[test]

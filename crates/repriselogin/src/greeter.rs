@@ -112,6 +112,8 @@ pub enum AuthKind {
 #[serde(rename_all = "snake_case")]
 pub enum ErrorKind {
     Auth,
+    /// The account step refused a correct password; the text is PAM's.
+    Account,
     Refused,
     Failed,
 }
@@ -156,6 +158,13 @@ mod tests {
         assert_eq!(
             body(&GreeterRequest::PostAuthResponse { response: None }),
             r#"{"type":"post_auth_response","response":null}"#
+        );
+        assert_eq!(
+            body(&GreeterReply::Error {
+                kind: ErrorKind::Account,
+                text: "User account has expired".into()
+            }),
+            r#"{"type":"error","kind":"account","text":"User account has expired"}"#
         );
     }
 
