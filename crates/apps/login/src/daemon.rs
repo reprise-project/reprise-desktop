@@ -201,8 +201,8 @@ struct Stalled {
 #[derive(Clone, Copy, PartialEq)]
 enum AfterOrphans {
     Nothing,
-    /// The orphan was showing the login screen: a new greeter replaces it unless one of the
-    /// table's sessions holds the seat.
+    /// The orphan was showing the login screen: with no session, the autologin session or a
+    /// new greeter follows it; else a new greeter, unless one of the sessions holds the seat.
     Replace,
     /// The login screen was asked for while an orphan still held VT 1.
     Greeter,
@@ -286,7 +286,7 @@ impl Daemon {
     }
 
     /// Starts the autologin session or the greeter, unless sessions were recovered. An
-    /// orphaned greeter was showing the login screen, so a new one replaces it once it is gone.
+    /// orphaned greeter was showing the login screen, so that choice waits until it is gone.
     pub fn start(&mut self, _now: Instant, world: &World) -> Vec<Effect> {
         let mut out = Vec::new();
         if !self.orphans.is_empty() {
@@ -296,6 +296,13 @@ impl Daemon {
         if !self.sessions.is_empty() {
             return out;
         }
+        self.autologin_or_greeter(world, &mut out);
+        out
+    }
+
+    /// With no session running: the autologin session if one is configured and can start,
+    /// else the greeter.
+    fn autologin_or_greeter(&mut self, world: &World, out: &mut Vec<Effect>) {
         if let Some(user) = self.config.autologin_user.clone() {
             let listed = world.users.iter().any(|u| u.name == user);
             let vt = vt::pick(&self.sessions.taken_vts(), world.kernel_open);
@@ -306,9 +313,9 @@ impl Daemon {
                         worker,
                         job: self.job(Mode::Autologin, &user),
                     });
-                    send_start(worker, vt, &mut out);
+                    send_start(worker, vt, out);
                     self.autologin = Some(Autologin { worker, user, vt });
-                    return out;
+                    return;
                 }
                 (true, None) => out.push(Effect::Log(
                     Level::Warn,
@@ -323,8 +330,7 @@ impl Daemon {
                 )),
             }
         }
-        self.spawn_greeter(&mut out);
-        out
+        self.spawn_greeter(out);
     }
 
     pub fn handle(&mut self, now: Instant, world: &World, input: Input) -> Vec<Effect> {
@@ -343,7 +349,7 @@ impl Daemon {
                 seat_active,
             } => self.session_request(&id, request, seat_active, &mut out),
             Input::SessionRemoved { id, seat_active } => {
-                self.session_removed(now, &id, seat_active, &mut out)
+                self.session_removed(now, world, &id, seat_active, &mut out)
             }
             Input::Unlocked { id } => {
                 let resuming = matches!(&self.conversation, Some(Conversation {
@@ -919,6 +925,7 @@ impl Daemon {
     fn session_removed(
         &mut self,
         now: Instant,
+        world: &World,
         id: &str,
         seat_active: Option<String>,
         out: &mut Vec<Effect>,
@@ -932,14 +939,13 @@ impl Daemon {
             }
             let seat_taken =
                 (seat_active.as_deref()).is_some_and(|a| self.sessions.by_id(a).is_some());
-            let bring = match self.after_orphans {
-                AfterOrphans::Greeter => true,
-                AfterOrphans::Replace => !seat_taken,
-                AfterOrphans::Nothing => false,
-            };
-            if bring {
-                self.after_orphans = AfterOrphans::Nothing;
-                self.bring_greeter(out);
+            match std::mem::replace(&mut self.after_orphans, AfterOrphans::Nothing) {
+                AfterOrphans::Greeter => self.bring_greeter(out),
+                AfterOrphans::Replace if self.sessions.is_empty() => {
+                    self.autologin_or_greeter(world, out)
+                }
+                AfterOrphans::Replace if !seat_taken => self.bring_greeter(out),
+                AfterOrphans::Replace | AfterOrphans::Nothing => {}
             }
             return;
         }
