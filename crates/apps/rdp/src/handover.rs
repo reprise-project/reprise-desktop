@@ -52,7 +52,7 @@ impl Intake for HandOverIntake {
 }
 
 /// Closes the hand-overs waiting on `listener`: reprise-login refuses their clients at once, and
-/// systemd has none left to start the server again for.
+/// the socket starts the server again only for the next hand-over.
 pub fn refuse_waiting(listener: &std::os::unix::net::UnixListener) {
     while let Ok((link, _)) = listener.accept() {
         drop(link);

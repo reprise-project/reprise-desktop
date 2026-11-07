@@ -127,11 +127,12 @@ fn main() -> ExitCode {
             (claim.recv()).unwrap_or_else(|_| Err(zbus::Error::Failure("no thread".into())));
         if let Err(e) = claimed {
             log::error!(
-                "hand-overs need {} on the session bus ({e}); refusing them until the next start",
+                "hand-overs need {} on the session bus ({e}); refusing them until the next \
+                 hand-over starts the server again",
                 control::NAME
             );
             handover::refuse_waiting(listener);
-            return ExitCode::FAILURE;
+            return ExitCode::from(NAME_HELD);
         }
     }
     let identity = identity.map(watch::channel);
@@ -269,6 +270,11 @@ fn main() -> ExitCode {
     drop(local);
     code
 }
+
+/// The hand-over server's exit when another process holds its bus name: the unit's
+/// `RestartPreventExitStatus=` keeps systemd from restarting it into the start limit, which would
+/// fail the socket.
+const NAME_HELD: u8 = 75;
 
 /// The only peer the hand-over socket takes: reprise-login runs as root.
 const ROOT: u32 = 0;
@@ -499,6 +505,19 @@ fn cert_dir() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use log::Log as _;
+
+    #[test]
+    fn the_hand_over_unit_does_not_restart_a_server_whose_name_is_held() {
+        let unit = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../data/systemd/reprise-rdp-handover.service");
+        let unit = std::fs::read_to_string(unit).unwrap();
+        let prevented: Vec<u8> = (unit.lines())
+            .filter_map(|l| l.trim().strip_prefix("RestartPreventExitStatus="))
+            .flat_map(str::split_whitespace)
+            .filter_map(|code| code.parse().ok())
+            .collect();
+        assert!(prevented.contains(&super::NAME_HELD), "{prevented:?}");
+    }
 
     #[test]
     fn ironrdp_and_sspi_debug_records_stay_out_of_the_log() {
