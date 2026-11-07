@@ -625,8 +625,9 @@ enum Credssp {
     },
     /// SPNEGO as the logon's user, delegating empty credentials.
     NoPassword,
-    /// Bare NTLM as the logon's user, delegating `user` and `password` instead.
+    /// Bare NTLM as `ntlm`'s user and password, delegating `user` and `password` instead.
     Delegating {
+        ntlm: (&'static str, &'static str),
         user: &'static str,
         password: &'static str,
     },
@@ -904,15 +905,19 @@ async fn nla_client(
             .await?;
             connector.mark_credssp_as_done();
         }
-        Credssp::Delegating { user, password } => {
+        Credssp::Delegating {
+            ntlm: (ntlm_user, ntlm_password),
+            user,
+            password,
+        } => {
             let delegated = AuthIdentity {
                 username: Username::new(user, None).unwrap(),
                 password: password.to_owned().into(),
             };
             delegate_other(
                 &mut framed,
-                logon.user,
-                logon.password,
+                ntlm_user,
+                ntlm_password,
                 delegated,
                 &public_key,
             )
@@ -1112,12 +1117,13 @@ fn ctx_with_anna_and_bert() -> Ctx {
 }
 
 #[tokio::test]
-async fn a_client_authenticated_as_anna_that_delegates_bert_is_refused() {
+async fn a_client_authenticated_as_anna_that_delegates_bert_with_a_wrong_password_is_refused() {
     let ctx = ctx_with_anna_and_bert();
     let daemon = Daemon::link(&ctx).await;
     let (_tell, mut heard) = mpsc::unbounded_channel();
     let logon = NlaLogon {
         credssp: Credssp::Delegating {
+            ntlm: ("anna", "anna-rd-pass"),
             user: "bert",
             password: "bert-pass",
         },
@@ -1130,12 +1136,41 @@ async fn a_client_authenticated_as_anna_that_delegates_bert_is_refused() {
 }
 
 #[tokio::test]
+async fn a_client_authenticated_as_anna_that_delegates_bert_with_his_password_logs_on_as_bert() {
+    let ctx = ctx_with_anna_and_bert();
+    let mut daemon = Daemon::link(&ctx).await;
+    let (_tell, mut heard) = mpsc::unbounded_channel();
+    let logon = NlaLogon {
+        credssp: Credssp::Delegating {
+            ntlm: ("anna", "anna-rd-pass"),
+            user: "bert",
+            password: "bert-rd-pass",
+        },
+        ..hybrid("bert", "bert-rd-pass")
+    };
+    let (pending, client) = nla_log_on(&ctx, logon, &mut heard).await;
+    client.abort();
+    assert_eq!(pending.expect("the client logs on").user, "bert");
+    match daemon.request().await {
+        FrontRequest::Authenticate { user, secret, .. } => {
+            assert_eq!(user, "bert");
+            assert_eq!(
+                secret,
+                Secret::Delegated(Zeroizing::new("bert-rd-pass".into()))
+            );
+        }
+        other => panic!("an Authenticate for bert: {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn a_client_that_delegates_another_password_than_it_authenticated_with_is_refused() {
     let ctx = ctx_with_anna();
     let daemon = Daemon::link(&ctx).await;
     let (_tell, mut heard) = mpsc::unbounded_channel();
     let logon = NlaLogon {
         credssp: Credssp::Delegating {
+            ntlm: ("anna", "anna-rd-pass"),
             user: "anna",
             password: "other-pass",
         },
@@ -1154,6 +1189,7 @@ async fn a_hand_built_client_that_delegates_its_own_credentials_logs_on() {
     let (_tell, mut heard) = mpsc::unbounded_channel();
     let logon = NlaLogon {
         credssp: Credssp::Delegating {
+            ntlm: ("anna", "anna-rd-pass"),
             user: "anna",
             password: "anna-rd-pass",
         },
