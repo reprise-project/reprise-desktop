@@ -254,6 +254,10 @@ impl Daemon {
         out: &mut Vec<Effect>,
     ) {
         match request {
+            // Restarting reprise-login restarts its front (PartOf) whatever the settings say.
+            FrontRequest::Hello if !self.config.remote.enabled => {
+                out.push(Effect::Front(FrontUnit::Stop));
+            }
             FrontRequest::Hello => out.push(self.passwords_event()),
             FrontRequest::Authenticate { .. } => self.authenticate(now, request, out),
             FrontRequest::Gone { conn } => self.forget(conn, out),
