@@ -257,8 +257,8 @@ pub fn repeat_backspace(state: &mut State) {
     redraw(state);
 }
 
-/// A press beside any dialog or menu: one closes an open menu; a left press clicks the part
-/// under it.
+/// A press beside any dialog or menu: one closes an open menu, one beside an open dialog does
+/// nothing, and otherwise a left press clicks the part under it.
 pub fn button(state: &mut State, button: u32, pos: Point<f64, Logical>) {
     #[cfg(test)]
     state.greeter.heard.push(Heard::Button(button));
@@ -266,7 +266,7 @@ pub fn button(state: &mut State, button: u32, pos: Point<f64, Logical>) {
         state.close_menu();
         return;
     }
-    if button != BTN_LEFT {
+    if button != BTN_LEFT || !state.dialogs.views.is_empty() {
         return;
     }
     let Some(g) = state.greeter.login.as_mut() else {
@@ -350,10 +350,14 @@ fn act(state: &mut State, action: Option<LogonAction>) {
             let req = if g.model.prompt.is_some() {
                 g.conv.answer(text)
             } else if g.conv.idle() {
-                g.conv.submit(user, text)
+                Some(g.conv.submit(user, text))
             } else {
+                None
+            };
+            let Some(req) = req else {
                 return;
             };
+            g.model.password.wipe();
             g.model.set_busy(true);
             crate::greeterlink::send(state, &req);
         }

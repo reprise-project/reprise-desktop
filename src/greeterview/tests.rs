@@ -207,6 +207,11 @@ fn logged_in() -> (Harness, Daemon) {
 fn typing_a_name_and_password_and_enter_sends_create_session() {
     let (h, _d) = logged_in();
     assert!(model(&h).busy, "the screen says Verifying...");
+    assert_eq!(
+        model(&h).password.text,
+        "",
+        "the sent password leaves the field"
+    );
 }
 
 #[test]
@@ -259,16 +264,28 @@ fn an_incorrect_password_says_so_and_empties_the_field() {
 #[test]
 fn replies_once_the_link_is_lost_change_nothing() {
     let (mut h, mut d) = logged_in();
-    h.state.greeter.lost = true;
-    d.says(
-        &mut h,
-        GreeterReply::Error {
-            kind: ErrorKind::Auth,
-            text: "Authentication failure".into(),
-        },
+    d.0.shutdown(std::net::Shutdown::Read).unwrap();
+    let note = GreeterReply::AuthMessage {
+        kind: repriselogin::greeter::AuthKind::Info,
+        text: "Password expires in 3 days".into(),
+    };
+    let error = GreeterReply::Error {
+        kind: ErrorKind::Auth,
+        text: "Authentication failure".into(),
+    };
+    repriselogin::frame::write_msg(&mut d.0, &note).unwrap();
+    repriselogin::frame::write_msg(&mut d.0, &error).unwrap();
+    h.run_for(30);
+    assert!(
+        h.state.greeter.lost,
+        "the note's acknowledgement could not be sent"
     );
     assert!(model(&h).busy, "still Verifying...");
-    assert_eq!(model(&h).message, None);
+    assert_eq!(
+        model(&h).message.as_deref(),
+        Some("Password expires in 3 days"),
+        "the error after the loss is not shown"
+    );
 }
 
 fn turned_off() -> (Harness, Daemon) {
@@ -305,6 +322,55 @@ fn a_refused_power_shows_why() {
         model(&h).message.as_deref(),
         Some(logon::text::power_refused().as_str())
     );
+}
+
+#[test]
+fn presses_beside_the_turn_off_dialog_do_nothing() {
+    let (mut h, _d) = login(repriselogin::Interface::Classic);
+    click_part(&mut h, Part::Power);
+    assert_eq!(h.state.dialogs.views.len(), 1, "the Turn Off dialog");
+    let parts = (h.state.greeter.login.as_ref().unwrap().layout.as_ref())
+        .unwrap()
+        .parts
+        .clone();
+    let (x, y) = (parts.iter())
+        .map(|(_, r)| ((r.x + r.width / 2) as f64, (r.y + r.height / 2) as f64))
+        .find(|&at| {
+            !matches!(
+                h.state.scene_hit(at.into()),
+                crate::input::Hit::Dialog { .. }
+            )
+        })
+        .expect("a part beside the dialog");
+    let before = format!("{:?}", model(&h));
+    h.click(x, y);
+    assert_eq!(
+        format!("{:?}", model(&h)),
+        before,
+        "the screen is untouched"
+    );
+    assert_eq!(h.state.dialogs.views.len(), 1, "only the Turn Off dialog");
+}
+
+#[test]
+fn a_swipe_neither_opens_the_overview_nor_steps_desktops() {
+    let (mut h, _d) = login(repriselogin::Interface::Classic);
+    let desktop = h.state.desktops.current;
+    h.swipe(3, &[(0.0, -60.0); 6]);
+    assert!(h.state.overview.view.is_none(), "no overview");
+    h.swipe(3, &[(-60.0, 0.0); 6]);
+    assert_eq!(h.state.desktops.current, desktop, "the same desktop");
+}
+
+#[test]
+fn the_lid_is_left_to_logind() {
+    use smithay::backend::input::{Switch, SwitchState};
+    let (mut h, _d) = login_with(repriselogin::Interface::Classic, Vec::new(), |c| {
+        c.power.lid_close = crate::config::PowerAction::Ask;
+    });
+    crate::power::switch_toggled(&mut h.state, Some(Switch::Lid), SwitchState::On);
+    assert!(!h.state.power.lid_closed, "the greeter keeps no lid state");
+    assert!(h.state.dialogs.views.is_empty(), "no Turn Off dialog");
 }
 
 #[test]
