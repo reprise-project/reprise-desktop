@@ -5,7 +5,7 @@ use crate::art::logo;
 use crate::classic::indicator;
 use crate::classic::widgets::{self, BUTTON_GAP, BUTTON_H, BUTTON_W, LINE_H};
 use crate::icon::ICON_SIZE;
-use crate::logon::{Logon, LogonLayout, Part, text as strings};
+use crate::logon::{Logon, LogonLayout, Part, message_lines, text as strings};
 use crate::paint::Paint;
 use crate::pointer::Interaction;
 use crate::raster::{Canvas, EdgeStyle, Rect};
@@ -288,24 +288,6 @@ fn field(
     }
     let first = edit_first_visible(text, edit, inner.width, px, 0);
     widgets::draw_edit(c, text, edit, inner, px, p, caret, first);
-}
-
-/// `msg` wrapped to `width`, cut to `room` lines, with "..." closing the last line when text was
-/// cut and on any line still too wide.
-fn message_lines(text: &TextRenderer, msg: &str, width: i32, px: u32, room: usize) -> Vec<String> {
-    let mut lines = crate::text::wrap(text, msg, width, px);
-    if lines.len() > room {
-        lines.truncate(room);
-        if let Some(last) = lines.last_mut() {
-            while text.measure(&format!("{last}..."), false, px) > width && last.pop().is_some() {}
-            last.truncate(last.trim_end().len());
-            last.push_str("...");
-        }
-    }
-    lines
-        .iter()
-        .map(|l| text.ellipsize(l, width, false, px).into_owned())
-        .collect()
 }
 
 #[cfg(test)]
