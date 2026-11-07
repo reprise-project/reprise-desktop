@@ -1,17 +1,20 @@
-//! The login screen at 800x600: Classic's dialog states, each interface's starting screen, then
-//! Blue's states and two more of its schemes, written to `target/reprisekit-gallery-logon@<scale>.png`.
+//! The login screen at 800x600: Classic's dialog states, each interface's starting screen,
+//! Blue's states and two more of its schemes, then Glass's screens over its wallpaper, written to
+//! `target/reprisekit-gallery-logon@<scale>.png`.
+
+mod glass;
 
 use reprisekit::art::userpic;
 use reprisekit::blue::Variant;
-use reprisekit::glass;
 use reprisekit::interface::Interface;
 use reprisekit::interfaces::logon::{draw_logon, logon_layout};
-use reprisekit::interfaces::theme_with;
+use reprisekit::interfaces::{default_wallpaper, theme_with};
 use reprisekit::logon::{Logon, LogonKey, LogonUser, Part, UserNote, text};
 use reprisekit::pointer::Interaction;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
 use reprisekit::theme::Color;
+use reprisekit::wallpapers;
 
 const OUTPUT: Rect = Rect::new(0, 0, 800, 600);
 const GAP: i32 = 10;
@@ -54,6 +57,7 @@ fn screens() -> Vec<(Logon, Variant)> {
         .chain(starts)
         .map(|m| (m, Variant::Blue))
         .chain(blue_screens())
+        .chain(glass::screens().into_iter().map(|m| (m, Variant::Blue)))
         .collect()
 }
 
@@ -91,13 +95,18 @@ pub fn render(scale: i32) -> Canvas {
     );
     c.fill_rect(c.bounds(), Color::rgb(0x60, 0x60, 0x60));
     for (i, (m, v)) in screens.iter().enumerate() {
-        let theme = theme_with(m.interface, *v, &glass::Settings::default()).scaled(scale);
+        let theme =
+            theme_with(m.interface, *v, &reprisekit::glass::Settings::default()).scaled(scale);
         let text = TextRenderer::load(&theme.fonts);
         let l = logon_layout(m, &theme, &text, OUTPUT);
-        let mut screen = Canvas::new(
+        let (w, h) = (
             (OUTPUT.width * scale) as u32,
             (OUTPUT.height * scale) as u32,
         );
+        let mut screen = match default_wallpaper(m.interface) {
+            Some(b) if m.interface == Interface::Glass => wallpapers::render(b, w, h, 0),
+            _ => Canvas::new(w, h),
+        };
         draw_logon(&mut screen, m, &l, &theme, text.for_output(scale), scale);
         let i = i as i32;
         c.blit_canvas(

@@ -17,6 +17,7 @@ pub mod frame;
 mod glyph;
 mod header;
 mod items;
+pub mod logon;
 mod menus;
 pub mod notify;
 mod orb;

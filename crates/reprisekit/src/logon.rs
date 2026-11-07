@@ -68,6 +68,12 @@ pub mod text {
     pub fn verifying() -> String {
         tr!("logon-verifying")
     }
+    pub fn power_options() -> String {
+        tr!("logon-power-options")
+    }
+    pub fn user_name_cue() -> String {
+        tr!("logon-user-name-cue")
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -524,7 +530,7 @@ impl Logon {
                 Interface::Blue => text::turn_off(),
                 Interface::Glass => text::power_off(),
             },
-            Part::PowerMenu => String::new(),
+            Part::PowerMenu => text::power_options(),
             Part::Layout => self.layout.clone().unwrap_or_default(),
         }
     }

@@ -1,0 +1,903 @@
+//! Glass's login screen over the host's wallpaper: a picture tile with a password field and round
+//! arrow, the user tiles, the error screen, the busy spinner, the mark and the power button.
+
+use super::Settings;
+use super::tint::{self, Surface};
+use crate::art::logo;
+use crate::logon::{Logon, LogonLayout, Part, Screen, UserNote, text as strings};
+use crate::pointer::Interaction;
+use crate::raster::{Canvas, Rect};
+use crate::shape::{
+    self, CLEAR, Glyph, Px, Stops, centre, ellipse, glyph, over, premul, radial, ringed, rounded,
+    stroke,
+};
+use crate::style::{Part as StylePart, State};
+use crate::text::{Align, TextRenderer, split_mnemonic};
+use crate::textedit::{Caret, TextEdit, edit_first_visible};
+use crate::theme::{Color, Theme};
+
+/// Design px. Text rows, fields, buttons and tile cells grow with the text size; pictures, the
+/// arrow and the power button keep theirs.
+const PICTURE: i32 = 128;
+const FRAME_PAD: i32 = 7;
+const FRAME_R: f64 = 7.0;
+const PICTURE_R: f64 = 3.0;
+const SMALL_PICTURE: i32 = 80;
+const SMALL_PAD: i32 = 5;
+const SMALL_R: f64 = 5.0;
+const CELL_W: i32 = 132;
+const CELL_GAP: i32 = 12;
+const CELL_R: f64 = 4.0;
+const NAME_PX: u32 = 20;
+const NAME_H: i32 = 30;
+const NOTE_H: i32 = 16;
+const TILE_NAME_H: i32 = 20;
+const FIELD_W: i32 = 210;
+const FIELD_H: i32 = 24;
+const FIELD_PAD: i32 = 5;
+const ARROW: i32 = 26;
+const ARROW_GAP: i32 = 6;
+const PICTURE_GAP: i32 = 10;
+const ROW_GAP: i32 = 8;
+const SWITCH_GAP: i32 = 22;
+const BUTTON_H: i32 = 26;
+const BUTTON_MIN_W: i32 = 96;
+const BUTTON_PAD: i32 = 16;
+const BUTTON_R: f64 = 3.0;
+const ICON: i32 = 24;
+const ICON_GAP: i32 = 10;
+const MESSAGE_W: i32 = 380;
+const SPINNER: i32 = 28;
+const BUSY_PX: u32 = 28;
+const EDGE: i32 = 24;
+const POWER_W: i32 = 36;
+const MENU_W: i32 = 20;
+const POWER_H: i32 = 26;
+const MENU_ARROW: i32 = 7;
+const BADGE_W: i32 = 34;
+const MARK: i32 = 32;
+const MARK_PX: u32 = 24;
+const MARK_GAP: i32 = 8;
+/// How far the block's middle sits above the screen's.
+const LIFT: i32 = 24;
+/// The wordmark beside the mark: the product's name, never translated.
+const WORD: &str = "Reprise";
+/// The dark glow under white text on the wallpaper: its reach and its peak alpha.
+const HALO: i32 = 3;
+const HALO_ALPHA: f64 = 150.0;
+/// The white glow round a lit picture frame: its reach and its alpha at the frame.
+const GLOW: i32 = 8;
+const GLOW_ALPHA: f64 = 110.0;
+/// The spinner's head, radians clockwise from the top.
+const SPIN_HEAD: f64 = 0.8;
+
+const INK: Color = Color::rgb(0xFF, 0xFF, 0xFF);
+const NOTE_INK: Color = Color::rgb(0xE4, 0xEE, 0xFA);
+const FIELD_INK: Color = Color::rgb(0x00, 0x00, 0x00);
+const CUE_INK: Color = Color::rgb(0x6D, 0x6D, 0x6D);
+const FIELD_FILL: Color = Color::rgb(0xFF, 0xFF, 0xFF);
+const READ_ONLY_FILL: Color = Color::rgb(0xEC, 0xEE, 0xF2);
+const PERSON_SKY: [Color; 2] = [Color::rgb(0xF2, 0xF6, 0xFB), Color::rgb(0xC4, 0xD4, 0xE6)];
+const PERSON_INK: Color = Color::rgb(0x8A, 0xA2, 0xBE);
+
+const WHITE: Px = grey(255.0);
+const OUTLINE: Px = (150.0, [0.0, 8.0, 20.0]);
+const OUTLINE_PRESSED: Px = (190.0, [0.0, 6.0, 16.0]);
+const LINE: Px = grey(120.0);
+const LINE_LIT: Px = grey(220.0);
+const PRESSED_SHADE: Px = (90.0, [0.0, 10.0, 30.0]);
+const LIFT_HOT: f64 = 0.22;
+const LIFT_FOCUS: f64 = 0.12;
+/// The sheen down a glass box: bright on top, a step at the middle, a little light at the foot.
+const SHEEN: [(f64, Px); 4] = [
+    (0.0, grey(110.0)),
+    (0.48, grey(46.0)),
+    (0.5, grey(8.0)),
+    (1.0, grey(36.0)),
+];
+const CELL_FOCUS: Px = grey(60.0);
+const CELL_FOCUS_LINE: Px = grey(150.0);
+const CELL_HOT: Px = grey(34.0);
+const CELL_HOT_LINE: Px = grey(90.0);
+const CELL_PRESSED: Px = (40.0, [8.0, 14.0, 22.0]);
+
+const RIM: Px = grey(230.0);
+const RIM_FOCUS: Px = grey(255.0);
+const GLOSS: Px = grey(95.0);
+const DISC: [(f64, Px); 2] = [
+    (0.0, ink(Color::rgb(0x6A, 0xB8, 0xF0))),
+    (1.0, ink(Color::rgb(0x1C, 0x5E, 0xA8))),
+];
+const DISC_HOT: [(f64, Px); 2] = [
+    (0.0, ink(Color::rgb(0x9C, 0xD8, 0xFF))),
+    (1.0, ink(Color::rgb(0x2C, 0x7C, 0xCC))),
+];
+const DISC_PRESSED: [(f64, Px); 2] = [
+    (0.0, ink(Color::rgb(0x3C, 0x86, 0xC4))),
+    (1.0, ink(Color::rgb(0x0E, 0x3C, 0x78))),
+];
+
+const RED_OUTLINE: Px = ink(Color::rgb(0x4A, 0x08, 0x06));
+const RED_LINE: Px = (130.0, [130.0, 96.0, 96.0]);
+const RED_GLOSS: Px = grey(40.0);
+const RED: [(f64, Px); 3] = [
+    (0.0, ink(Color::rgb(0xD8, 0x4A, 0x3C))),
+    (0.5, ink(Color::rgb(0xA8, 0x1C, 0x14))),
+    (1.0, ink(Color::rgb(0x7A, 0x0E, 0x0A))),
+];
+const RED_HOT: [(f64, Px); 3] = [
+    (0.0, ink(Color::rgb(0xF2, 0x6E, 0x5C))),
+    (0.5, ink(Color::rgb(0xCC, 0x30, 0x24))),
+    (1.0, ink(Color::rgb(0x98, 0x18, 0x10))),
+];
+const RED_PRESSED: [(f64, Px); 3] = [
+    (0.0, ink(Color::rgb(0x8C, 0x1A, 0x12))),
+    (0.5, ink(Color::rgb(0x6A, 0x0C, 0x08))),
+    (1.0, ink(Color::rgb(0x56, 0x08, 0x06))),
+];
+const SPIN: [(f64, Px); 3] = [
+    (0.0, (40.0, [40.0, 44.0, 48.0])),
+    (0.6, (110.0, [92.0, 150.0, 200.0])),
+    (1.0, (255.0, [220.0, 240.0, 255.0])),
+];
+
+const fn ink(c: Color) -> Px {
+    (255.0, [c.r as f64, c.g as f64, c.b as f64])
+}
+
+/// White at alpha `a`, premultiplied.
+const fn grey(a: f64) -> Px {
+    (a, [a, a, a])
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Face {
+    Rest,
+    Hot,
+    Pressed,
+    Focused,
+}
+
+/// Design px in the output's space. `parts` are the layout's; the rest only `draw` uses.
+#[derive(Default)]
+struct Geometry {
+    parts: Vec<(Part, Rect)>,
+    frame: Option<(Part, Rect)>,
+    name: Option<Rect>,
+    note: Option<Rect>,
+    notice: Option<Rect>,
+    /// Per tile in view: its part, its frame, its name and its note line.
+    tiles: Vec<(Part, Rect, Rect, Rect)>,
+    /// The error screen's icon and text, centred together across this row.
+    message: Option<Rect>,
+    /// The spinner and Verifying..., centred together across this row.
+    busy: Option<Rect>,
+    mark: Rect,
+}
+
+/// How many tiles fit across `output` at `theme`'s text size, Other user included: the host's
+/// [`Logon::column`].
+pub fn column(theme: &Theme, output: Rect) -> usize {
+    let cell = theme.text.len(CELL_W) + CELL_GAP;
+    ((output.width - 2 * EDGE + CELL_GAP) / cell).max(1) as usize
+}
+
+/// `button_w` is the width of the screen's one centred button (Switch User or OK).
+fn geometry(m: &Logon, theme: &Theme, output: Rect, button_w: i32) -> Geometry {
+    let u = theme.text;
+    let mut g = Geometry::default();
+    let cx = output.x + output.width / 2;
+    let centred = |w: i32, y: i32, h: i32| Rect::new(cx - w / 2, y, w, h);
+    let frame = PICTURE + 2 * FRAME_PAD;
+    let (name_h, note_h) = (u.len(NAME_H), u.len(NOTE_H));
+    let (field_w, field_h, button_h) = (u.len(FIELD_W), u.len(FIELD_H), u.len(BUTTON_H));
+    let text_w = u.len(MESSAGE_W);
+    let top = |h: i32| output.y + (output.height - h) / 2 - LIFT;
+
+    match m.screen {
+        _ if m.busy => g.busy = Some(centred(text_w, top(SPINNER), SPINNER)),
+        Screen::Tile(i) => {
+            let h = frame + PICTURE_GAP + name_h + note_h + ROW_GAP + field_h + note_h;
+            let mut y = top(h + SWITCH_GAP + button_h);
+            let r = centred(frame, y, frame);
+            g.frame = Some((Part::Tile(i), r));
+            g.parts.push((Part::Tile(i), r));
+            y += frame + PICTURE_GAP;
+            g.name = Some(centred(text_w, y, name_h));
+            y += name_h;
+            g.note = Some(centred(text_w, y, note_h));
+            y += note_h + ROW_GAP;
+            password_row(&mut g, centred(field_w, y, field_h));
+            y += field_h;
+            g.notice = Some(centred(text_w, y, note_h));
+            y += note_h + SWITCH_GAP;
+            g.parts
+                .push((Part::SwitchUser, centred(button_w, y, button_h)));
+        }
+        Screen::Typed => {
+            let h = frame + PICTURE_GAP + name_h + ROW_GAP + 2 * field_h + ROW_GAP + note_h;
+            let listed = !m.users.is_empty();
+            let mut y = top(h + if listed { SWITCH_GAP + button_h } else { 0 });
+            g.frame = Some((Part::OtherUser, centred(frame, y, frame)));
+            y += frame + PICTURE_GAP;
+            g.name = Some(centred(text_w, y, name_h));
+            y += name_h + ROW_GAP;
+            g.parts.push((Part::Name, centred(field_w, y, field_h)));
+            y += field_h + ROW_GAP;
+            password_row(&mut g, centred(field_w, y, field_h));
+            y += field_h;
+            g.notice = Some(centred(text_w, y, note_h));
+            y += note_h + SWITCH_GAP;
+            if listed {
+                g.parts
+                    .push((Part::SwitchUser, centred(button_w, y, button_h)));
+            }
+        }
+        Screen::Tiles => {
+            let small = SMALL_PICTURE + 2 * SMALL_PAD;
+            let (cell_w, tile_name_h) = (u.len(CELL_W), u.len(TILE_NAME_H));
+            let cell_h = small + PICTURE_GAP / 2 + tile_name_h + note_h;
+            let total = m.users.len() + 1;
+            let fit = column(theme, output).min(total);
+            let first = m.first_tile.min(total - fit);
+            let row_w = fit as i32 * cell_w + (fit as i32 - 1) * CELL_GAP;
+            let y = top(cell_h);
+            for (k, item) in (first..first + fit).enumerate() {
+                let x = cx - row_w / 2 + k as i32 * (cell_w + CELL_GAP);
+                let part = if item < m.users.len() {
+                    Part::Tile(item)
+                } else {
+                    Part::OtherUser
+                };
+                let tile = Rect::new(x + (cell_w - small) / 2, y, small, small);
+                let name = Rect::new(x, tile.bottom() + PICTURE_GAP / 2, cell_w, tile_name_h);
+                let note = Rect::new(x, name.bottom(), cell_w, note_h);
+                g.tiles.push((part, tile, name, note));
+                g.parts.push((part, Rect::new(x, y, cell_w, cell_h)));
+            }
+        }
+        Screen::Message => {
+            let h = 2 * name_h + SWITCH_GAP + button_h;
+            let y = top(h);
+            g.message = Some(centred(text_w, y, 2 * name_h));
+            let ok = centred(button_w, y + 2 * name_h + SWITCH_GAP, button_h);
+            g.parts.push((Part::MessageOk, ok));
+        }
+    }
+
+    let bottom = output.bottom() - EDGE;
+    let power = Rect::new(
+        output.right() - EDGE - POWER_W - MENU_W,
+        bottom - POWER_H,
+        POWER_W,
+        POWER_H,
+    );
+    g.parts.push((Part::Power, power));
+    g.parts.push((
+        Part::PowerMenu,
+        Rect::new(power.right(), power.y, MENU_W, POWER_H),
+    ));
+    if m.layout.is_some() {
+        let badge = Rect::new(output.x + EDGE, bottom - POWER_H, BADGE_W, POWER_H);
+        g.parts.push((Part::Layout, badge));
+    }
+    g.mark = Rect::new(output.x, bottom - MARK, output.width, MARK);
+    g
+}
+
+fn password_row(g: &mut Geometry, field: Rect) {
+    let arrow = Rect::new(
+        field.right() + ARROW_GAP,
+        field.y + (field.height - ARROW) / 2,
+        ARROW,
+        ARROW,
+    );
+    g.parts.push((Part::Password, field));
+    g.parts.push((Part::Submit, arrow));
+}
+
+fn button_caption(m: &Logon) -> Option<String> {
+    match m.screen {
+        _ if m.busy => None,
+        Screen::Message => Some(plain(&strings::ok())),
+        Screen::Tiles => None,
+        Screen::Typed if m.users.is_empty() => None,
+        Screen::Typed | Screen::Tile(_) => Some(plain(&strings::switch_user())),
+    }
+}
+
+/// `label` without its access-key marker: the screen draws no underlines.
+fn plain(label: &str) -> String {
+    split_mnemonic(label).0
+}
+
+/// The UI font size in px at 100% scale.
+fn ui_px(theme: &Theme) -> u32 {
+    theme.fonts.size_px / theme.scale.max(1) as u32
+}
+
+pub fn layout(m: &Logon, theme: &Theme, text: &TextRenderer, output: Rect) -> LogonLayout {
+    let button_w = button_caption(m).map_or(0, |caption| {
+        let w = text.measure(&caption, false, ui_px(theme)) + 2 * BUTTON_PAD;
+        w.max(theme.text.len(BUTTON_MIN_W))
+    });
+    LogonLayout {
+        output,
+        parts: geometry(m, theme, output, button_w).parts,
+        dialog: None,
+    }
+}
+
+/// `c` covers `l.output` at scale `s` and starts clear: the host lays it over the wallpaper.
+/// `theme` is the output's (`Theme::scaled(s)`) and `text` its renderer.
+pub fn draw(
+    c: &mut Canvas,
+    m: &Logon,
+    l: &LogonLayout,
+    theme: &Theme,
+    text: &TextRenderer,
+    s: i32,
+) {
+    let button_w = [Part::SwitchUser, Part::MessageOk]
+        .into_iter()
+        .find_map(|p| l.rect(p))
+        .map_or(0, |r| r.width);
+    let g = geometry(m, theme, l.output, button_w);
+    let o = l.output;
+    let at = |r: Rect| Rect::new(r.x - o.x, r.y - o.y, r.width, r.height).scaled(s);
+    let u = theme.text;
+    let ui = ui_px(theme) * s as u32;
+    let face = |part: Part| match m.lit {
+        Some((p, Interaction::Pressed)) if p == part => Face::Pressed,
+        Some((p, Interaction::Hot)) if p == part => Face::Hot,
+        _ if m.focus == part => Face::Focused,
+        _ => Face::Rest,
+    };
+    let user = |part: Part| match part {
+        Part::Tile(i) => m.users.get(i),
+        _ => None,
+    };
+    let logged_on = |part: Part| user(part).and_then(|u| u.note) == Some(UserNote::LoggedOn);
+
+    if let Some((part, r)) = g.frame {
+        let picture = user(part).and_then(|u| u.picture.as_ref());
+        tile(c, at(r), picture, FRAME_PAD, FRAME_R, face(part), s);
+        let shown = user(part).map_or_else(strings::other_user, |u| u.shown().to_owned());
+        if let Some(r) = g.name {
+            label(c, text, at(r), &shown, u.px(NAME_PX) * s as u32, INK, s);
+        }
+        if let Some(r) = g.note
+            && logged_on(part)
+        {
+            label(c, text, at(r), &strings::logged_on(), ui, NOTE_INK, s);
+        }
+    }
+    if let Some(r) = g.notice {
+        let notice = m.caps_lock.then(strings::caps_lock).or(m.message.clone());
+        if let Some(notice) = notice {
+            label(c, text, at(r), &notice, ui, NOTE_INK, s);
+        }
+    }
+    for &(part, frame, name, note) in &g.tiles {
+        let lit = if m.focus == part {
+            Face::Focused
+        } else {
+            face(part)
+        };
+        if lit != Face::Rest
+            && let Some(cell) = l.rect(part)
+        {
+            lit_cell(c, at(cell), lit, s);
+        }
+        let picture = user(part).and_then(|u| u.picture.as_ref());
+        tile(c, at(frame), picture, SMALL_PAD, SMALL_R, face(part), s);
+        let shown = user(part).map_or_else(strings::other_user, |u| u.shown().to_owned());
+        label(c, text, at(name), &shown, ui, INK, s);
+        if logged_on(part) {
+            label(c, text, at(note), &strings::logged_on(), ui, NOTE_INK, s);
+        }
+    }
+
+    let password_cue = m
+        .prompt
+        .as_ref()
+        .map_or_else(strings::password_cue, |p| p.text.clone());
+    for (part, edit, cue) in [
+        (Part::Name, &m.name, strings::user_name_cue()),
+        (Part::Password, &m.password, password_cue),
+    ] {
+        let Some(r) = l.rect(part) else { continue };
+        let shown = if edit.is_secret() {
+            edit.masked()
+        } else {
+            edit.clone()
+        };
+        let state = match face(part) {
+            Face::Focused => State::Focused,
+            Face::Hot | Face::Pressed => State::Hot,
+            Face::Rest => State::Normal,
+        };
+        let caret = Caret::new(m.focus == part, true);
+        let f = Field {
+            r: at(r),
+            state,
+            caret,
+            px: ui,
+        };
+        field(c, theme, text, &f, &shown, &cue, s);
+    }
+    if let Some(r) = l.rect(Part::Submit) {
+        arrow(c, at(r), face(Part::Submit), s);
+    }
+    for (part, caption) in [
+        (Part::SwitchUser, plain(&strings::switch_user())),
+        (Part::MessageOk, plain(&strings::ok())),
+    ] {
+        if let Some(r) = l.rect(part) {
+            glass_box(c, at(r), BUTTON_R, face(part), s);
+            label(c, text, at(r), &caption, ui, INK, s);
+        }
+    }
+    if let Some(r) = g.message {
+        let r = at(r);
+        let room = r.width - (ICON + ICON_GAP) * s;
+        let msg = m.message.clone().unwrap_or_default();
+        let lines: Vec<String> = crate::text::wrap(text, &msg, room, ui)
+            .into_iter()
+            .take(2)
+            .collect();
+        let widest = lines.iter().map(|l| text.measure(l, false, ui)).max();
+        let x = r.x + (room - widest.unwrap_or(0)) / 2;
+        error_icon(c, x, r.y + (r.height - ICON * s) / 2, s);
+        let line_h = r.height / 2;
+        let left = x + (ICON + ICON_GAP) * s;
+        for (k, line) in lines.iter().enumerate() {
+            let y = r.y
+                + if lines.len() == 1 {
+                    line_h / 2
+                } else {
+                    k as i32 * line_h
+                };
+            let row = Rect::new(left, y, r.right() - left, line_h);
+            left_label(c, text, row, line, ui, INK, s);
+        }
+    }
+    if let Some(r) = g.busy {
+        let r = at(r);
+        let px = u.px(BUSY_PX) * s as u32;
+        let word = strings::verifying();
+        let w = (SPINNER + ICON_GAP) * s + text.measure(&word, false, px);
+        let x = r.x + (r.width - w) / 2;
+        spinner(c, x, r.y, s);
+        let left = x + (SPINNER + ICON_GAP) * s;
+        let row = Rect::new(left, r.y - r.height / 2, r.right() - left, 2 * r.height);
+        left_label(c, text, row, &word, px, INK, s);
+    }
+
+    if let Some(r) = l.rect(Part::Power) {
+        power_button(c, at(r), face(Part::Power), face(Part::PowerMenu), s);
+    }
+    if let (Some(r), Some(short)) = (l.rect(Part::Layout), m.layout.as_deref()) {
+        glass_box(c, at(r), BUTTON_R, face(Part::Layout), s);
+        label(c, text, at(r), short, ui, INK, s);
+    }
+    wordmark(c, text, at(g.mark), u.px(MARK_PX) * s as u32, s);
+}
+
+fn lit_cell(c: &mut Canvas, r: Rect, face: Face, s: i32) {
+    let (fill, line) = match face {
+        Face::Focused => (CELL_FOCUS, CELL_FOCUS_LINE),
+        Face::Pressed => (CELL_PRESSED, CELL_FOCUS_LINE),
+        Face::Hot | Face::Rest => (CELL_HOT, CELL_HOT_LINE),
+    };
+    let (w, h) = (r.width / s, r.height / s);
+    let px = ringed(
+        w,
+        h,
+        CELL_R,
+        1,
+        s,
+        |_, _, ring| {
+            if ring == 0 { line } else { fill }
+        },
+    );
+    lay(c, r.x, r.y, w * s, &px);
+}
+
+/// With no picture the frame holds a person's outline.
+fn tile(
+    c: &mut Canvas,
+    r: Rect,
+    picture: Option<&Canvas>,
+    pad: i32,
+    radius: f64,
+    face: Face,
+    s: i32,
+) {
+    if matches!(face, Face::Hot | Face::Focused) {
+        glow(c, r, radius, s);
+    }
+    glass_box(c, r, radius, face, s);
+    let inner = r.inset(pad * s);
+    let (w, h) = (inner.width, inner.height);
+    let k = f64::from(s);
+    let pic = picture.map(|p| p.resample_box(w as u32, h as u32));
+    for y in 0..h {
+        for x in 0..w {
+            let (fx, fy) = (f64::from(x), f64::from(y));
+            let cov = rounded(fx, fy, f64::from(w), f64::from(h), PICTURE_R * k);
+            if cov <= 0.0 {
+                continue;
+            }
+            let p = match &pic {
+                Some(p) => shape::unpack(p.get(x, y)),
+                None => person(
+                    (centre(x, s) + 0.5) / f64::from(w / s),
+                    (centre(y, s) + 0.5) / f64::from(h / s),
+                ),
+            };
+            put_over(c, inner.x + x, inner.y + y, shape::scale(p, cov));
+        }
+    }
+}
+
+/// (`u`, `v`) in the unit square.
+fn person(u: f64, v: f64) -> Px {
+    let head = (u - 0.5).hypot(v - 0.40) < 0.17;
+    let shoulders = ((u - 0.5) / 0.32).hypot((v - 0.95) / 0.30) < 1.0;
+    if head || shoulders {
+        premul(PERSON_INK, 255)
+    } else {
+        let sky = [premul(PERSON_SKY[0], 255), premul(PERSON_SKY[1], 255)];
+        Stops(&[(0.0, sky[0]), (1.0, sky[1])]).at(v)
+    }
+}
+
+fn glow(c: &mut Canvas, r: Rect, radius: f64, s: i32) {
+    let reach = GLOW * s;
+    let k = f64::from(s);
+    for y in -reach..r.height + reach {
+        for x in -reach..r.width + reach {
+            let (w, h) = (f64::from(r.width), f64::from(r.height));
+            let (px, py) = (f64::from(x) + 0.5, f64::from(y) + 0.5);
+            let dist = shape::rounded_distance(px, py, w, h, radius * k) / k;
+            if dist <= 0.0 || dist >= f64::from(GLOW) {
+                continue;
+            }
+            let a = GLOW_ALPHA * (1.0 - dist / f64::from(GLOW)).powi(2);
+            put_over(c, r.x + x, r.y + y, grey(a));
+        }
+    }
+}
+
+/// The glass colour from `[glass]`'s defaults under an outline, a light line and a sheen.
+fn glass_box(c: &mut Canvas, r: Rect, radius: f64, face: Face, s: i32) {
+    let (w, h) = (r.width / s, r.height / s);
+    let glass = tint::plain(&Settings::default(), Surface::Active);
+    let (outline, line, lift, body) = match face {
+        Face::Rest => (OUTLINE, LINE, 0.0, glass),
+        Face::Hot => (OUTLINE, LINE_LIT, LIFT_HOT, glass),
+        Face::Focused => (OUTLINE, LINE_LIT, LIFT_FOCUS, glass),
+        Face::Pressed => (OUTLINE_PRESSED, LINE, 0.0, over(PRESSED_SHADE, glass)),
+    };
+    let hh = f64::from(h);
+    let px = ringed(w, h, radius, 2, s, |_, y, ring| match ring {
+        0 => outline,
+        1 => line,
+        _ => {
+            let sheen = Stops(&SHEEN).at((y - 1.5) / (hh - 3.0));
+            over(shape::scale(WHITE, lift), over(sheen, body))
+        }
+    });
+    lay(c, r.x, r.y, w * s, &px);
+}
+
+fn arrow(c: &mut Canvas, r: Rect, face: Face, s: i32) {
+    let k = f64::from(s);
+    let n = f64::from(ARROW) * k;
+    let half = n / 2.0;
+    let stops: &[(f64, Px)] = match face {
+        Face::Pressed => &DISC_PRESSED,
+        Face::Hot => &DISC_HOT,
+        Face::Rest | Face::Focused => &DISC,
+    };
+    let rim = if face == Face::Focused {
+        RIM_FOCUS
+    } else {
+        RIM
+    };
+    let shaft = [(7.0 * k, half), (17.5 * k, half)];
+    let head = [
+        (13.0 * k, half - 6.0 * k),
+        (19.5 * k, half),
+        (13.0 * k, half + 6.0 * k),
+    ];
+    let img = shape::draw(ARROW, ARROW, s, |x, y| {
+        let disc = ellipse(x, y, half, half, half, half);
+        if disc <= 0.0 {
+            return CLEAR;
+        }
+        let inside = ellipse(x, y, half, half, half - k, half - k);
+        let fill = radial(x, y, half, 0.2 * n, 1.1 * half, n, &Stops(stops));
+        let gloss = ellipse(x, y, half, 0.32 * n, 0.36 * n, 0.24 * n);
+        let arrow = stroke(x, y, &shaft, 2.5 * k).max(shape::polygon(x, y, &head));
+        let face = over(
+            shape::scale(WHITE, arrow),
+            over(shape::scale(GLOSS, gloss), fill),
+        );
+        shape::shares(&[(rim, (disc - inside).max(0.0)), (face, inside)])
+    });
+    c.blit_over(r.x, r.y, &img);
+}
+
+/// One bar for both parts, each half lit on its own.
+fn power_button(c: &mut Canvas, r: Rect, power: Face, menu: Face, s: i32) {
+    let (w, h) = (POWER_W + MENU_W, POWER_H);
+    let hh = f64::from(h);
+    let k = f64::from(s);
+    let px = ringed(w, h, BUTTON_R, 2, s, |x, y, ring| {
+        let column = x.round() as i32;
+        let half = if column < POWER_W { power } else { menu };
+        match ring {
+            _ if ring > 0 && column == POWER_W - 1 => RED_OUTLINE,
+            0 => RED_OUTLINE,
+            1 if half == Face::Focused => RIM_FOCUS,
+            1 => RED_LINE,
+            _ => {
+                let stops: &[(f64, Px)] = match half {
+                    Face::Hot => &RED_HOT,
+                    Face::Pressed => &RED_PRESSED,
+                    Face::Rest | Face::Focused => &RED,
+                };
+                let t = (y - 1.5) / (hh - 3.0);
+                let gloss = if t < 0.5 { RED_GLOSS } else { CLEAR };
+                over(gloss, Stops(stops).at(t))
+            }
+        }
+    });
+    lay(c, r.x, r.y, w * s, &px);
+
+    let (cx, cy) = (f64::from(POWER_W) / 2.0 * k, hh / 2.0 * k);
+    let symbol = shape::draw(POWER_W, POWER_H, s, |x, y| {
+        let ring = power_ring(x, y, cx, cy, 5.5 * k, 1.8 * k);
+        let bar = stroke(x, y, &[(cx, cy - 7.5 * k), (cx, cy - k)], 1.8 * k);
+        shape::scale(WHITE, ring.max(bar))
+    });
+    c.blit_over(r.x, r.y, &symbol);
+    let up = glyph(Glyph::ArrowUp, MENU_ARROW, s, 1.0, WHITE);
+    let ax = r.x + (POWER_W + (MENU_W - MENU_ARROW) / 2) * s;
+    let ay = r.y + (POWER_H - MENU_ARROW) / 2 * s;
+    c.blit_over(ax, ay, &up);
+}
+
+/// The power symbol's ring round (`cx`, `cy`): `radius` across its middle, `width` wide, open
+/// over its top.
+fn power_ring(x: f64, y: f64, cx: f64, cy: f64, radius: f64, width: f64) -> f64 {
+    let (outer, inner) = (radius + width / 2.0, radius - width / 2.0);
+    let ring = ellipse(x, y, cx, cy, outer, outer) - ellipse(x, y, cx, cy, inner, inner);
+    let (dx, dy) = (x + 0.5 - cx, y + 0.5 - cy);
+    if dy < 0.0 && dx.abs() < -dy * 0.75 {
+        0.0
+    } else {
+        ring.max(0.0)
+    }
+}
+
+/// At device (`x`, `y`).
+fn error_icon(c: &mut Canvas, x: i32, y: i32, s: i32) {
+    let k = f64::from(s);
+    let n = f64::from(ICON) * k;
+    let half = n / 2.0;
+    let (a, b) = (half - 4.5 * k, half + 4.5 * k);
+    let img = shape::draw(ICON, ICON, s, |x, y| {
+        let disc = ellipse(x, y, half, half, half, half);
+        let inside = ellipse(x, y, half, half, half - 1.5 * k, half - 1.5 * k);
+        let fill = radial(x, y, half, 0.25 * n, half, 0.9 * n, &Stops(&RED_HOT));
+        let cross = stroke(x, y, &[(a, a), (b, b)], 2.5 * k);
+        let cross = cross.max(stroke(x, y, &[(b, a), (a, b)], 2.5 * k));
+        let face = over(shape::scale(WHITE, cross), fill);
+        shape::shares(&[(RIM, (disc - inside).max(0.0)), (face, inside)])
+    });
+    c.blit_over(x, y, &img);
+}
+
+/// At device (`x`, `y`); the ring's light fades back from its head.
+fn spinner(c: &mut Canvas, x: i32, y: i32, s: i32) {
+    let k = f64::from(s);
+    let half = f64::from(SPINNER) * k / 2.0;
+    let tau = std::f64::consts::TAU;
+    let img = shape::draw(SPINNER, SPINNER, s, |x, y| {
+        let outer = ellipse(x, y, half, half, half, half);
+        let inner = ellipse(x, y, half, half, half - 4.0 * k, half - 4.0 * k);
+        let turn = (x + 0.5 - half).atan2(half - y - 0.5);
+        let t = 1.0 - (SPIN_HEAD - turn).rem_euclid(tau) / tau;
+        shape::scale(Stops(&SPIN).at(t), (outer - inner).max(0.0))
+    });
+    c.blit_over(x, y, &img);
+}
+
+/// Where a field goes and how it stands; `px` is its text size at the output scale.
+struct Field {
+    r: Rect,
+    state: State,
+    caret: Caret,
+    px: u32,
+}
+
+fn field(
+    c: &mut Canvas,
+    theme: &Theme,
+    text: &TextRenderer,
+    f: &Field,
+    shown: &TextEdit,
+    cue: &str,
+    s: i32,
+) {
+    let (r, px) = (f.r, f.px);
+    let fill = if shown.is_read_only() {
+        READ_ONLY_FILL
+    } else {
+        FIELD_FILL
+    };
+    c.fill_rect(r.inset(s), fill);
+    if let Some(st) = theme.look.style() {
+        st.draw(c, r, StylePart::EditBorder, f.state, s);
+    }
+    let inner = Rect::new(
+        r.x + FIELD_PAD * s,
+        r.y,
+        r.width - 2 * FIELD_PAD * s,
+        r.height,
+    );
+    let line = text
+        .line(inner, false, px)
+        .map_or(inner, |(y, h)| Rect::new(inner.x, y, inner.width, h));
+    let first = edit_first_visible(text, shown, inner.width, px, 0);
+    if shown.text.is_empty() {
+        let cue = text.ellipsize(cue, inner.width, false, px);
+        text.draw(c, inner, &cue, false, CUE_INK, Align::Left, px);
+    } else {
+        let run = &shown.text[first..];
+        text.draw(c, inner, run, false, FIELD_INK, Align::Left, px);
+    }
+    let x_of = |i: usize| inner.x + text.measure(&shown.text[first..i.max(first)], false, px);
+    let sel = shown.selection();
+    if f.caret.focused() && sel.end > first && !sel.is_empty() {
+        let cs = &theme.colors;
+        let (x0, x1) = (x_of(sel.start), x_of(sel.end).min(inner.right()));
+        c.fill_rect(Rect::new(x0, line.y, x1 - x0, line.height), cs.hilight);
+        let run = Rect::new(x0, inner.y, inner.right() - x0, inner.height);
+        let picked = &shown.text[sel.start.max(first)..sel.end];
+        text.draw(c, run, picked, false, cs.hilight_text, Align::Left, px);
+    }
+    let caret_x = x_of(shown.caret()).min(inner.right() - s);
+    let bar = Rect::new(caret_x, line.y, s, line.height);
+    if f.caret.shown() {
+        c.fill_rect(bar, FIELD_INK);
+    }
+    if f.caret.focused() {
+        c.report_spot(shown.spot(inner, bar));
+    }
+}
+
+/// `words` centred on `r` in `color` over a dark halo, cut short to fit.
+fn label(c: &mut Canvas, text: &TextRenderer, r: Rect, words: &str, px: u32, color: Color, s: i32) {
+    let shown = text.ellipsize(words, r.width, false, px);
+    let w = text.measure(&shown, false, px);
+    inked(c, text, r, r.x + (r.width - w) / 2, &shown, px, color, s);
+}
+
+fn left_label(
+    c: &mut Canvas,
+    text: &TextRenderer,
+    r: Rect,
+    words: &str,
+    px: u32,
+    color: Color,
+    s: i32,
+) {
+    let shown = text.ellipsize(words, r.width, false, px);
+    inked(c, text, r, r.x, &shown, px, color, s);
+}
+
+#[expect(clippy::too_many_arguments)]
+fn inked(
+    c: &mut Canvas,
+    text: &TextRenderer,
+    r: Rect,
+    pen: i32,
+    words: &str,
+    px: u32,
+    color: Color,
+    s: i32,
+) {
+    let Some(baseline) = text.baseline(r, false, px) else {
+        return;
+    };
+    let m = HALO * s;
+    let w = text.measure(words, false, px);
+    let area = Rect::new(pen - m, r.y - m, w + 2 * m, r.height + 2 * m);
+    if area.is_empty() {
+        return;
+    }
+    let local = Rect::new(0, 0, area.width, area.height);
+    let cov = Canvas::new(area.width as u32, area.height as u32).ink_coverage(|cc, white| {
+        text.draw_run(cc, m, baseline - area.y, local, words, false, white, px);
+    });
+    ink_mask(c, area, &cov, color, s);
+}
+
+/// The dark halo keeps white text readable on a light wallpaper.
+fn ink_mask(c: &mut Canvas, area: Rect, cov: &[u8], color: Color, s: i32) {
+    let (w, h) = (area.width as usize, area.height as usize);
+    let reach = (HALO * s / 2).max(1) as usize;
+    let halo: Vec<u8> = blur(&blur(cov, w, h, reach), w, h, reach)
+        .iter()
+        .map(|&v| (2.0 * f64::from(v) * HALO_ALPHA / 255.0).min(HALO_ALPHA) as u8)
+        .collect();
+    let all = c.bounds();
+    c.blit_mask_over(area.x, area.y, w, h, &halo, Color::rgb(0, 0, 0), all);
+    c.blit_mask_over(area.x, area.y, w, h, cov, color, all);
+}
+
+fn blur(src: &[u8], w: usize, h: usize, reach: usize) -> Vec<u8> {
+    let n = (2 * reach + 1) as u32;
+    let mut across = vec![0u8; w * h];
+    for y in 0..h {
+        for x in 0..w {
+            let (a, b) = (x.saturating_sub(reach), (x + reach).min(w - 1));
+            let sum: u32 = src[y * w + a..=y * w + b]
+                .iter()
+                .map(|&v| u32::from(v))
+                .sum();
+            across[y * w + x] = (sum / n) as u8;
+        }
+    }
+    let mut down = vec![0u8; w * h];
+    for y in 0..h {
+        let (a, b) = (y.saturating_sub(reach), (y + reach).min(h - 1));
+        for x in 0..w {
+            let sum: u32 = (a..=b).map(|row| u32::from(across[row * w + x])).sum();
+            down[y * w + x] = (sum / n) as u8;
+        }
+    }
+    down
+}
+
+fn wordmark(c: &mut Canvas, text: &TextRenderer, r: Rect, px: u32, s: i32) {
+    let (mark, m) = (MARK * s, HALO * s);
+    let w = text.measure(WORD, false, px);
+    let total = mark + MARK_GAP * s + w;
+    let x = r.x + (r.width - total) / 2;
+    let y = r.y + (r.height - mark) / 2;
+    let area = Rect::new(x - m, y - m, mark + 2 * m, mark + 2 * m);
+    let drawn = logo::coverage_any(mark as usize);
+    let side = area.width as usize;
+    let mut cov = vec![0u8; side * side];
+    for (row, line) in drawn.chunks(mark as usize).enumerate() {
+        let at = (row + m as usize) * side + m as usize;
+        cov[at..at + line.len()].copy_from_slice(line);
+    }
+    ink_mask(c, area, &cov, INK, s);
+    let word = Rect::new(x + mark + MARK_GAP * s, r.y, w, r.height);
+    left_label(c, text, word, WORD, px, INK, s);
+}
+
+/// The pixels `px`, `w` device px a row, laid over `c` from device (`x`, `y`).
+fn lay(c: &mut Canvas, x: i32, y: i32, w: i32, px: &[Px]) {
+    for (i, &p) in px.iter().enumerate() {
+        let i = i as i32;
+        put_over(c, x + i % w, y + i / w, p);
+    }
+}
+
+fn put_over(c: &mut Canvas, x: i32, y: i32, p: Px) {
+    if p.0 <= 0.0 || x < 0 || y < 0 || x >= c.width as i32 || y >= c.height as i32 {
+        return;
+    }
+    let under = shape::unpack(c.get(x, y));
+    c.put_raw(x, y, shape::pack(over(p, under)));
+}
+
+#[cfg(test)]
+mod tests;
