@@ -16,7 +16,7 @@ name = "reprise-login-rdp"
 path = "src/main.rs"
 
 [dependencies]
-async-trait = "0.1"
+async-trait.workspace = true
 ironrdp-acceptor.workspace = true
 ironrdp-connector.workspace = true
 ironrdp-core.workspace = true

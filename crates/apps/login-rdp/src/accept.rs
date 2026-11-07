@@ -3,6 +3,7 @@
 
 use std::cell::RefCell;
 use std::fmt;
+use std::hint::black_box;
 use std::io;
 use std::net::SocketAddr;
 use std::pin::Pin;
@@ -24,6 +25,7 @@ use ironrdp_pdu::rdp::ClientInfoPdu;
 use ironrdp_pdu::x224::X224;
 use ironrdp_tokio::bytes::{Bytes, BytesMut};
 use ironrdp_tokio::{FramedWrite, NetworkClient, TokioFramed};
+use repriselogin::account::nt_hash;
 use repriselogin::front::{FrontEvent, FrontRequest, NlaUser, Secret};
 use repriselogin::handover::Step;
 use reprisetls::cert::Identity;
@@ -62,8 +64,9 @@ pub struct Ctx {
     pub nla_users: Rc<RefCell<Vec<NlaUser>>>,
     /// `None` while reprise-login is out of reach.
     pub link: RefCell<Option<LinkSender>>,
-    /// The machine's host name, read for each connection since it may change.
-    pub host: fn() -> String,
+    /// The machine's host name. The unit's ProtectHostname= hides later changes, so a new name
+    /// applies when the front restarts.
+    pub host: String,
 }
 
 /// A connection that sent its credentials, waiting for reprise-login's verdict.
@@ -119,6 +122,11 @@ pub enum Refused {
     Denied {
         backoff_s: u32,
     },
+    /// The delegated user and password are not a listed user and that user's Remote Desktop
+    /// password.
+    DelegationMismatch,
+    /// reprise-login did not verify the delegated password within `HANDSHAKE`.
+    NoVerdict,
 }
 
 impl fmt::Display for Refused {
@@ -142,6 +150,14 @@ impl fmt::Display for Refused {
                 f.write_str("the logon info names another user than the one authenticated")
             }
             Refused::Denied { .. } => f.write_str("reprise-login refused the logon"),
+            Refused::DelegationMismatch => f.write_str(
+                "the client delegated another user or password than its Remote Desktop password",
+            ),
+            Refused::NoVerdict => write!(
+                f,
+                "reprise-login did not verify the password within {} s",
+                HANDSHAKE.as_secs()
+            ),
         }
     }
 }
@@ -452,8 +468,8 @@ async fn credssp(
     steps: &mut Vec<Step>,
     link: &mut Link<'_>,
 ) -> Result<String, Refused> {
-    let host = (link.ctx.host)();
-    acceptor.set_credssp_users(credssp_users(&link.ctx.nla_users.borrow(), &host));
+    let host = &link.ctx.host;
+    acceptor.set_credssp_users(credssp_users(&link.ctx.nla_users.borrow(), host));
     let public_key = link.ctx.identity.public_key();
     let mut verify = Verify {
         link: &mut *link,
@@ -464,7 +480,7 @@ async fn credssp(
         framed,
         acceptor,
         &mut NoNetwork,
-        ServerName::new(host),
+        ServerName::new(host.as_str()),
         public_key,
         None,
         &mut verify,
@@ -490,7 +506,8 @@ async fn credssp(
 }
 
 impl Link<'_> {
-    /// Sends the password CredSSP delegated to reprise-login.
+    /// Sends the password CredSSP delegated to reprise-login. sspi does not say which user NTLM
+    /// authenticated, so the delegated pair must be a listed user and its listed password.
     fn delegate(&mut self, received: Option<&ReceivedCredentials>) -> Result<String, Refused> {
         let credentials = match received {
             Some(c) if c.origin == CredentialOrigin::CredSspDelegated => &c.credentials,
@@ -500,6 +517,12 @@ impl Link<'_> {
             return Err(Refused::NoDelegation);
         }
         let user = checked_user(&credentials.username)?;
+        let hash = nt_hash(&credentials.password);
+        let listed = (self.ctx.nla_users.borrow().iter())
+            .any(|u| u.user == user && same_hash(&u.nt_hash, &hash));
+        if !listed {
+            return Err(Refused::DelegationMismatch);
+        }
         let secret = Secret::Delegated(Zeroizing::new(credentials.password.clone()));
         authenticate(
             self.ctx,
@@ -514,10 +537,12 @@ impl Link<'_> {
         Ok(user)
     }
 
-    /// Waits for `Verified`, or `Denied`.
+    /// Waits for `Verified`, or `Denied`, until `HANDSHAKE` after the accept.
     async fn verified(&mut self) -> Result<(), Refused> {
+        let deadline = self.accepted + HANDSHAKE;
         loop {
-            match self.heard.recv().await {
+            let event = tokio::time::timeout_at(deadline, self.heard.recv()).await;
+            match event.map_err(|_| Refused::NoVerdict)? {
                 Some(FrontEvent::Verified { .. }) => return Ok(()),
                 Some(FrontEvent::Denied { backoff_s, .. }) => {
                     self.asked = false;
@@ -588,6 +613,12 @@ fn credssp_users(users: &[NlaUser], host: &str) -> Vec<CredsspAuthIdentity> {
         }
     }
     list
+}
+
+/// Compares two NT hashes in a time that depends on their length only.
+fn same_hash(a: &str, b: &str) -> bool {
+    let (a, b) = (black_box(a.as_bytes()), black_box(b.as_bytes()));
+    a.len() == b.len() && black_box(a.iter().zip(b).fold(0, |d, (x, y)| d | (x ^ y))) == 0
 }
 
 /// The recording travels to the session in one frame, so a large one is refused here.
