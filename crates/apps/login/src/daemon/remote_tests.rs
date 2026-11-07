@@ -677,6 +677,21 @@ fn more_than_max_remote_checks_at_once_are_denied() {
 }
 
 #[test]
+fn a_front_holding_max_logins_is_not_heard_until_one_ends() {
+    let mut run = remote_run(enabled());
+    for conn in 0..MAX_LOGINS as u64 {
+        run.on(tls_from(conn, conn as u8, "Not A Name", "pw"));
+    }
+    assert_eq!(
+        quiet(run.on(tls_from(900, 1, "anna", "pw"))),
+        vec![],
+        "a login past the cap is dropped unanswered"
+    );
+    run.after(REFUSE_DELAY).fire(Timer::Refuse(0));
+    assert_eq!(quiet(run.on(tls_from(901, 1, "anna", "pw"))), armed(901));
+}
+
+#[test]
 fn a_ready_for_another_user_is_dropped() {
     let mut run = remote_run(enabled());
     run.anna_in_background(7, 2);

@@ -29,6 +29,9 @@ pub const REFUSE_DELAY: Duration = Duration::from_secs(3);
 pub const HANDOVER_DEADLINE: Duration = Duration::from_secs(8);
 /// Most logins in their group look-up or PAM check at once.
 pub const MAX_REMOTE_CHECKS: usize = 4;
+/// Logins held at once. The front holds at most 32 connections before their verdict and 32
+/// for their hand-over, so one past this misbehaves.
+pub const MAX_LOGINS: usize = 128;
 const MAX_USER_NAME: usize = 32;
 
 const MOST_SESSIONS: &str = "the computer runs its most sessions";
@@ -283,6 +286,12 @@ impl Daemon {
             return out.push(Effect::Log(
                 Level::Warn,
                 format!("the front sent a second login for conn {conn}; ignoring it"),
+            ));
+        }
+        if self.remote.logins.len() >= MAX_LOGINS {
+            return out.push(Effect::Log(
+                Level::Warn,
+                format!("the front holds {MAX_LOGINS} logins; ignoring conn {conn}'s"),
             ));
         }
         let left = HANDOVER_DEADLINE.saturating_sub(Duration::from_millis(elapsed_ms.into()));

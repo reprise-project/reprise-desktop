@@ -27,7 +27,7 @@ mod remote;
 
 pub use power::{ADMIN_GROUP, ADMIN_REFUSE_DELAY};
 pub use remote::{
-    FrontUnit, HANDOVER_DEADLINE, Inhibit, LookUpKey, MAX_REMOTE_CHECKS, REFUSE_DELAY,
+    FrontUnit, HANDOVER_DEADLINE, Inhibit, LookUpKey, MAX_LOGINS, MAX_REMOTE_CHECKS, REFUSE_DELAY,
     StoredPassword,
 };
 
