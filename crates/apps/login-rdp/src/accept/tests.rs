@@ -265,7 +265,7 @@ async fn log_on(user: &str, password: &str) -> Result<Pending, Refused> {
     let client = tokio::spawn(client(addr, user.into(), password.into()));
     let (tcp, _) = listener.accept().await.unwrap();
     let (_tell, mut heard) = mpsc::unbounded_channel();
-    let pending = to_client_info(tcp, 7, Instant::now(), &ctx(), &mut heard).await;
+    let pending = to_client_info(tcp, 7, &ctx(), &mut heard).await;
     client.abort();
     pending
 }
@@ -334,15 +334,13 @@ async fn a_connection_silent_past_the_handshake_deadline_is_closed() {
     let start = tokio::time::Instant::now();
     let (_tell, mut heard) = mpsc::unbounded_channel();
     assert_eq!(
-        to_client_info(tcp, 1, start, &ctx(), &mut heard)
-            .await
-            .err(),
+        to_client_info(tcp, 1, &ctx(), &mut heard).await.err(),
         Some(Refused::Deadline)
     );
     let waited = start.elapsed();
     assert!(
-        waited >= HANDSHAKE && waited < HANDSHAKE + Duration::from_secs(1),
-        "closed at 10 s, after {waited:?}"
+        waited >= Duration::from_secs(60) && waited < Duration::from_secs(61),
+        "closed at 60 s, after {waited:?}"
     );
     drop(silent);
 }
@@ -412,7 +410,7 @@ async fn a_client_offering_no_protocol_in_common_is_told_and_refused() {
     client.write_all(&request).await.unwrap();
     let (tcp, _) = listener.accept().await.unwrap();
     let (_tell, mut heard) = mpsc::unbounded_channel();
-    let refused = to_client_info(tcp, 1, Instant::now(), &ctx(), &mut heard)
+    let refused = to_client_info(tcp, 1, &ctx(), &mut heard)
         .await
         .unwrap_err();
     assert_eq!(refused, Refused::Negotiation(NLA_OR_RDP.into()));
@@ -1041,7 +1039,7 @@ async fn nla_log_on(
     let addr = listener.local_addr().unwrap();
     let client = tokio::spawn(nla_client(addr, logon, ctx.identity.public_key()));
     let (tcp, _) = listener.accept().await.unwrap();
-    let pending = to_client_info(tcp, 7, Instant::now(), ctx, heard).await;
+    let pending = to_client_info(tcp, 7, ctx, heard).await;
     (pending, client)
 }
 
@@ -1319,7 +1317,7 @@ async fn a_client_that_delegates_no_password_is_refused() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_verdict_wait_past_the_handshake_deadline_is_refused_as_no_verdict() {
+async fn a_verdict_not_heard_within_verdict_wait_of_the_authenticate_is_refused() {
     let ctx = ctx();
     let (_tell, mut heard) = mpsc::unbounded_channel();
     let start = Instant::now();
@@ -1327,14 +1325,13 @@ async fn a_verdict_wait_past_the_handshake_deadline_is_refused_as_no_verdict() {
         ctx: &ctx,
         conn: 7,
         peer: "127.0.0.1:1".parse().unwrap(),
-        accepted: start,
         heard: &mut heard,
         asked: true,
         attempt: &Cell::default(),
     };
     let waited = tokio::time::timeout(HANDSHAKE * 2, link.verified()).await;
     assert_eq!(waited, Ok(Err(Refused::NoVerdict)));
-    assert_eq!(start.elapsed(), HANDSHAKE);
+    assert_eq!(start.elapsed(), VERDICT_WAIT);
 }
 
 #[tokio::test]

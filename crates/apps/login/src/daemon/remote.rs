@@ -25,7 +25,7 @@ use crate::worker::{FromWorker, Mode, ToWorker};
 
 /// A refused login hears `Denied` this long after its `Authenticate`, whatever refused it.
 pub const REFUSE_DELAY: Duration = Duration::from_secs(3);
-/// How long after the TCP accept a login has to reach its session.
+/// How long after its `Authenticate` a login has to reach its session.
 pub const HANDOVER_DEADLINE: Duration = Duration::from_secs(8);
 /// Most logins in their group look-up or PAM check at once.
 pub const MAX_REMOTE_CHECKS: usize = 4;
@@ -293,7 +293,6 @@ impl Daemon {
             peer,
             user,
             secret,
-            elapsed_ms,
         } = request
         else {
             return;
@@ -310,14 +309,13 @@ impl Daemon {
                 format!("the front holds {MAX_LOGINS} logins; ignoring conn {conn}'s"),
             ));
         }
-        let left = HANDOVER_DEADLINE.saturating_sub(Duration::from_millis(elapsed_ms.into()));
         out.push(Effect::Arm {
             timer: Timer::Refuse(conn),
             after: REFUSE_DELAY,
         });
         out.push(Effect::Arm {
             timer: Timer::Handover(conn),
-            after: left,
+            after: HANDOVER_DEADLINE,
         });
         let checks = (self.remote.logins.values())
             .filter(|l| matches!(l.step, Step::LookingUp | Step::Checking { .. }))
@@ -330,7 +328,7 @@ impl Daemon {
                 user: user.clone(),
                 secret: Some(secret),
                 at: now,
-                deadline: now + left,
+                deadline: now + HANDOVER_DEADLINE,
                 attempt: None,
                 backoff_s: 0,
                 step: Step::LookingUp,

@@ -39,7 +39,9 @@ use tokio_rustls::rustls::KeyLog;
 use tokio_rustls::server::TlsStream;
 use zeroize::{Zeroize, Zeroizing};
 
-use crate::limits::{HANDSHAKE, MAX_PREAUTH_BYTES, MAX_RECORDING, MAX_USER, NlaThrottle, Refusal};
+use crate::limits::{
+    HANDSHAKE, MAX_PREAUTH_BYTES, MAX_RECORDING, MAX_USER, NlaThrottle, Refusal, VERDICT_WAIT,
+};
 use crate::link::LinkSender;
 use crate::negotiate;
 
@@ -125,7 +127,7 @@ pub enum Refused {
     /// The delegated user and password are not a listed user and that user's Remote Desktop
     /// password.
     DelegationMismatch,
-    /// reprise-login did not verify the delegated password within `HANDSHAKE`.
+    /// reprise-login did not verify the delegated password within `VERDICT_WAIT`.
     NoVerdict,
     /// Refused at CredSSP's start or at the client's NTLM AUTHENTICATE after failed passwords.
     Throttled(Refusal),
@@ -158,7 +160,7 @@ impl fmt::Display for Refused {
             Refused::NoVerdict => write!(
                 f,
                 "reprise-login did not verify the password within {} s",
-                HANDSHAKE.as_secs()
+                VERDICT_WAIT.as_secs()
             ),
             Refused::Throttled(refusal) => refusal.fmt(f),
         }
@@ -300,7 +302,6 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for Limited<S> {
 pub async fn to_client_info(
     tcp: TcpStream,
     conn: u64,
-    accepted: Instant,
     ctx: &Ctx,
     heard: &mut UnboundedReceiver<FrontEvent>,
 ) -> Result<Pending, Refused> {
@@ -310,7 +311,6 @@ pub async fn to_client_info(
         ctx,
         conn,
         peer,
-        accepted,
         heard,
         asked: false,
         attempt: &attempt,
@@ -326,7 +326,6 @@ struct Link<'a> {
     ctx: &'a Ctx,
     conn: u64,
     peer: SocketAddr,
-    accepted: Instant,
     heard: &'a mut UnboundedReceiver<FrontEvent>,
     asked: bool,
     /// The password check counted as failed until the delegated password is listed.
@@ -552,22 +551,15 @@ impl Link<'_> {
             (self.ctx.nla_throttle.borrow_mut()).succeeded(self.peer.ip(), attempt);
         }
         let secret = Secret::Delegated(Zeroizing::new(credentials.password.clone()));
-        authenticate(
-            self.ctx,
-            self.conn,
-            self.peer,
-            self.accepted,
-            user.clone(),
-            secret,
-        )
-        .map_err(|e| Refused::Io(e.kind()))?;
+        authenticate(self.ctx, self.conn, self.peer, user.clone(), secret)
+            .map_err(|e| Refused::Io(e.kind()))?;
         self.asked = true;
         Ok(user)
     }
 
-    /// Waits for `Verified`, or `Denied`, until `HANDSHAKE` after the accept.
+    /// Waits for `Verified`, or `Denied`, for `VERDICT_WAIT` after its `Authenticate`.
     async fn verified(&mut self) -> Result<(), Refused> {
-        let deadline = self.accepted + HANDSHAKE;
+        let deadline = Instant::now() + VERDICT_WAIT;
         loop {
             let event = tokio::time::timeout_at(deadline, self.heard.recv()).await;
             match event.map_err(|_| Refused::NoVerdict)? {
@@ -813,7 +805,6 @@ pub fn authenticate(
     ctx: &Ctx,
     conn: u64,
     peer: SocketAddr,
-    accepted: Instant,
     user: String,
     secret: Secret,
 ) -> io::Result<()> {
@@ -822,7 +813,6 @@ pub fn authenticate(
         peer,
         user,
         secret,
-        elapsed_ms: u32::try_from(accepted.elapsed().as_millis()).unwrap_or(u32::MAX),
     };
     match &*ctx.link.borrow() {
         Some(link) => link.send(&request, None),

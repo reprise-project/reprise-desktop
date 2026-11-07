@@ -1371,7 +1371,6 @@ mod tests {
             peer: "192.0.2.1:50000".parse().unwrap(),
             user: "anna".into(),
             secret: Secret::Password(Zeroizing::new("pw".into())),
-            elapsed_ms: 0,
         }))
         .await;
         let member = Input::Member {

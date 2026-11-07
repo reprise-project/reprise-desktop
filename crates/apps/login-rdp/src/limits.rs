@@ -15,9 +15,9 @@ pub const MAX_PREAUTH: usize = 32;
 /// Connections one address (an IPv6 /64) may have logging in; xfreerdp3 opens two about
 /// 5 ms apart.
 pub const PREAUTH_PER_IP: usize = 2;
-/// From the TCP accept to the credentials, HYBRID_EX's verified password included. It bounds
-/// the slot; reprise-login refuses a logon past its 8 s hand-over deadline anyway.
-pub const HANDSHAKE: Duration = Duration::from_secs(10);
+/// From the TCP accept to the credentials, HYBRID_EX's verified password included: long enough
+/// for a client's user to answer its certificate or password prompt.
+pub const HANDSHAKE: Duration = Duration::from_secs(60);
 /// From the `Authenticate` send to reprise-login's verdict: its 3 s refusal hold plus PAM.
 pub const VERDICT_WAIT: Duration = Duration::from_secs(12);
 /// Bytes read from a client before it authenticates.
