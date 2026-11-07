@@ -24,9 +24,8 @@ const MAX_PLAINTEXT: u64 = 1 << 14;
 /// The least room a receive gets, so a record longer than a key update shows as longer.
 const MIN_RECV: usize = KEY_UPDATE.len() + 1;
 
-/// Reads give the peer's data, end at its close_notify and fail on any other alert; a TLS 1.3
-/// key update re-keys them. Writes send a key update before the record limit on TLS 1.3 and
-/// close on TLS 1.2. Shutting down sends a close_notify.
+/// Reads end at close_notify, fail on other alerts and follow TLS 1.3 key updates. Writes
+/// re-key before the record limit on TLS 1.3 and close there on 1.2; shutdown sends close_notify.
 pub struct KtlsStream {
     stream: TcpStream,
     tls: TlsState,
