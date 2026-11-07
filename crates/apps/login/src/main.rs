@@ -13,8 +13,8 @@ use futures_util::StreamExt;
 use reprise_login::accountipc::{self, Replies};
 use reprise_login::config;
 use reprise_login::daemon::{
-    Daemon, Effect, HANDOVER_DEADLINE, Input, Job, LogindSession, LookUpKey, UNLOCK_WAIT, WorkerId,
-    World,
+    Daemon, Effect, HANDOVER_DEADLINE, Input, Job, LogindSession, LookUpKey, Timer, UNLOCK_WAIT,
+    WorkerId, World,
 };
 use reprise_login::frontipc::{self, Front};
 use reprise_login::intake::{self, Links};
@@ -359,16 +359,13 @@ fn follow_console(events: Events) {
     let spawned = std::thread::Builder::new()
         .name("console".into())
         .spawn(move || {
-            let followed = vt::follow_active(|vt| {
+            vt::follow_active(|vt| {
                 let input = match vt {
                     GREETER_VT => Input::ConsoleOnGreeterVt,
                     vt => Input::ConsoleOnVt(vt),
                 };
                 events.send(Event::Input(input)).is_ok()
             });
-            if let Err(e) = followed {
-                log::warn!("following the console's VT: {e}");
-            }
         });
     if let Err(e) = spawned {
         log::warn!("no thread to follow the console's VT: {e}");
@@ -425,8 +422,8 @@ impl WorldCache {
     }
 }
 
-/// Whether handling `input` can start a session, answers a power request or marks a session
-/// reached off the seat: each reads `active_vt`, and a cached one could be another VT's.
+/// Whether handling `input` reads `active_vt` (start, power, hand-over, disconnect end): a cached
+/// one could be another VT's.
 fn reads_world(input: &Input) -> bool {
     matches!(
         input,
@@ -437,6 +434,7 @@ fn reads_world(input: &Input) -> bool {
             | Input::SessionRemoved { .. }
             | Input::TerminateFailed { .. }
             | Input::Forwarded { .. }
+            | Input::Timer(Timer::Disconnected { .. })
     )
 }
 
@@ -1443,6 +1441,15 @@ mod tests {
     #[test]
     fn a_forwarded_hand_over_reads_the_world_fresh() {
         assert!(reads_world(&Input::Forwarded { conn: 1, ok: true }));
+    }
+
+    #[test]
+    fn a_disconnect_time_running_out_reads_the_world_fresh() {
+        let disconnected = Timer::Disconnected {
+            id: "c2".into(),
+            generation: 1,
+        };
+        assert!(reads_world(&Input::Timer(disconnected)));
     }
 
     #[tokio::test]

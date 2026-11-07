@@ -157,9 +157,44 @@ pub fn parse_active(text: &str) -> Option<u16> {
     text.trim().strip_prefix("tty")?.parse().ok()
 }
 
-/// Calls `changed` with the console's VT each time it moves, until `changed` returns false.
-/// Blocks: the kernel wakes a `poll` on `ACTIVE` with POLLPRI, as logind follows it.
-pub fn follow_active(changed: impl FnMut(u16) -> bool) -> io::Result<()> {
+/// Calls `changed` with the console's VT each time it moves, until `changed` returns false; a
+/// failed follower starts again and reports the VT it finds ([`restart_report`]). Blocks on `poll`.
+pub fn follow_active(mut changed: impl FnMut(u16) -> bool) {
+    let mut pause = Duration::from_secs(1);
+    retrying(
+        |restarted| {
+            if restarted {
+                follow_once(true, restart_report(&mut changed))
+            } else {
+                follow_once(false, &mut changed)
+            }
+        },
+        |e| {
+            log::error!("following the console's VT: {e}; again in {pause:?}");
+            std::thread::sleep(pause);
+            pause = (pause * 2).min(Duration::from_secs(60));
+        },
+    );
+}
+
+/// `changed` for a restarted follower, whose first report is the VT it finds. The login screen's
+/// VT is left out: as a move it would end a greeter that is leaving for a session.
+fn restart_report(mut changed: impl FnMut(u16) -> bool) -> impl FnMut(u16) -> bool {
+    let mut first = true;
+    move |vt| (std::mem::take(&mut first) && vt == GREETER_VT) || changed(vt)
+}
+
+/// Runs `follow` until it returns Ok, calling `failed` after each error; `follow` is told
+/// whether it runs again.
+fn retrying(mut follow: impl FnMut(bool) -> io::Result<()>, mut failed: impl FnMut(io::Error)) {
+    let mut again = false;
+    while let Err(e) = follow(again) {
+        failed(e);
+        again = true;
+    }
+}
+
+fn follow_once(report_start: bool, changed: impl FnMut(u16) -> bool) -> io::Result<()> {
     let file = File::open(ACTIVE)?;
     let read = || {
         let mut buf = [0u8; 16];
@@ -184,16 +219,21 @@ pub fn follow_active(changed: impl FnMut(u16) -> bool) -> io::Result<()> {
             }
         }
     };
-    follow(read, wait, changed)
+    follow(read, wait, report_start, changed)
 }
 
-/// `follow_active`'s loop: a read arms the next wake, so each wait follows one.
+/// `follow_active`'s loop: a read arms the next wake, so each wait follows one. The first read
+/// is reported only with `report_start`.
 fn follow(
     mut read: impl FnMut() -> io::Result<u16>,
     mut wait: impl FnMut() -> io::Result<()>,
+    report_start: bool,
     mut changed: impl FnMut(u16) -> bool,
 ) -> io::Result<()> {
     let mut last = read()?;
+    if report_start && !changed(last) {
+        return Ok(());
+    }
     loop {
         wait()?;
         let now = read()?;
@@ -232,6 +272,7 @@ mod tests {
         let r = follow(
             || Ok(reads.next().unwrap()),
             || Ok(()),
+            false,
             |vt| {
                 seen.push(vt);
                 vt != 2
@@ -239,6 +280,63 @@ mod tests {
         );
         assert!(r.is_ok(), "{r:?}");
         assert_eq!(seen, [7, 1, 2]);
+    }
+
+    #[test]
+    fn a_restarted_follower_reports_the_vt_it_starts_on() {
+        let mut reads = [7, 7, 1].into_iter();
+        let mut seen = Vec::new();
+        let r = follow(
+            || Ok(reads.next().unwrap()),
+            || Ok(()),
+            true,
+            |vt| {
+                seen.push(vt);
+                vt != 1
+            },
+        );
+        assert!(r.is_ok(), "{r:?}");
+        assert_eq!(seen, [7, 1]);
+    }
+
+    #[test]
+    fn a_restarted_follower_leaves_the_login_screens_vt_unreported() {
+        let run = |reads: [u16; 3]| {
+            let mut reads = reads.into_iter();
+            let mut seen = Vec::new();
+            let r = follow(
+                || Ok(reads.next().unwrap()),
+                || Ok(()),
+                true,
+                restart_report(|vt| {
+                    seen.push(vt);
+                    vt != 7
+                }),
+            );
+            assert!(r.is_ok(), "{r:?}");
+            seen
+        };
+        assert_eq!(run([1, 1, 7]), [7]);
+        assert_eq!(run([2, 2, 7]), [2, 7]);
+    }
+
+    #[test]
+    fn a_failed_follower_starts_again_as_a_restart() {
+        let mut runs = Vec::new();
+        let mut failures = 0;
+        retrying(
+            |again| {
+                runs.push(again);
+                if runs.len() < 3 {
+                    Err(io::Error::from_raw_os_error(libc::EIO))
+                } else {
+                    Ok(())
+                }
+            },
+            |_| failures += 1,
+        );
+        assert_eq!(runs, [false, true, true]);
+        assert_eq!(failures, 2);
     }
 
     #[test]
