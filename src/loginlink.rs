@@ -544,6 +544,19 @@ mod tests {
     }
 
     #[test]
+    fn a_session_born_locked_tells_logind_once_power_is_set_up() {
+        let (mut h, _theirs) = linked();
+        born(&mut h.state, false);
+        let calls = crate::power::capture_calls(&mut h.state);
+        assert_eq!(
+            calls.try_recv(),
+            Ok(crate::power::Call::Hint(crate::power::Hint::Locked(true)))
+        );
+        crate::lockview::lock(&mut h.state);
+        assert!(calls.try_recv().is_err(), "still locked: nothing new");
+    }
+
+    #[test]
     fn a_session_born_in_the_background_after_a_locked_log_off_is_saved_locked() {
         let (mut h, _theirs) = linked();
         h.state.session.was_locked = true;
