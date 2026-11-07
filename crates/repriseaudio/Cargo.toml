@@ -12,6 +12,6 @@ description = "The PipeWire devices, streams and volume writes the sound program
 workspace = true
 
 [dependencies]
-serde_json = "1"
+serde_json.workspace = true
 log.workspace = true
 libc.workspace = true

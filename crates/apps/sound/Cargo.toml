@@ -23,7 +23,7 @@ repriseaudio = { path = "../../repriseaudio" }
 repriseconf = { path = "../../repriseconf" }
 reprisekit = { path = "../../reprisekit" }
 reprisetray = { path = "../../reprisetray" }
-serde_json = "1"
+serde_json.workspace = true
 zbus.workspace = true
 futures-util.workspace = true
 log.workspace = true
