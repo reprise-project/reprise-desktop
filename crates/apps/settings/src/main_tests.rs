@@ -1296,7 +1296,8 @@ fn client_at_200(i: Interface) -> (i32, i32) {
 }
 
 /// At 200% on a 1080-line screen the work area is shorter than the smallest sheet under every
-/// interface, and every page still ends above the window's bottom with its buttons inside it.
+/// interface, and every page, the Remote Desktop page under the login manager too, still ends
+/// above the window's bottom with its buttons inside it.
 #[test]
 fn at_200_percent_a_window_shorter_than_the_sheet_keeps_its_buttons_in_it() {
     let all = [Interface::Classic, Interface::Blue, Interface::Glass];
@@ -1330,16 +1331,31 @@ fn at_200_percent_a_window_shorter_than_the_sheet_keeps_its_buttons_in_it() {
         let client = app.sheet.client();
         assert!(client.1 <= h, "{i:?}: {client:?} fits the window");
         let mut c = Canvas::new(w as u32, h as u32);
-        for pg in Page::all() {
+        let mut fits = |app: &mut SettingsApp, pg: Page, managed: bool| {
             app.sheet.tabs.open = pg.index();
             app.draw(MAIN, &mut c, &ctx);
             let l = app.sheet.layout(&ctx.text, ctx.forms().fonts.size_px);
-            assert_eq!(l.bar, None, "{i:?}: {pg:?} ends above the window's bottom");
+            assert_eq!(
+                l.bar, None,
+                "{i:?}: {pg:?} (managed {managed}) ends above the window's bottom"
+            );
             for id in [propsheet::OK, propsheet::CANCEL, propsheet::APPLY] {
                 let b = app.sheet.open().rect(id).unwrap();
                 assert!(b.bottom() <= h, "{i:?}: {id} at {b:?} shows");
             }
+        };
+        for pg in Page::all() {
+            fits(&mut app, pg, false);
         }
+        let managed = remotehost::Remote {
+            manager: true,
+            ..remotehost::Remote::default()
+        };
+        remote_read(&mut app, managed, None);
+        assert!(pages::managed(
+            &app.sheet.pages[Page::RemoteDesktop.index()]
+        ));
+        fits(&mut app, Page::RemoteDesktop, true);
     }
 }
 

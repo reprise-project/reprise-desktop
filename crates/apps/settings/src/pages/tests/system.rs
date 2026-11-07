@@ -1634,7 +1634,7 @@ fn the_remote_desktop_page_under_the_login_manager_pins_its_pixels_in_every_look
     let machine = Some("3F:9A:01");
     let mut page = remote_desktop(Area::MIN, None, false, machine);
     show_remote(&mut page, None, false, None, None, machine);
-    let row = Rect::new(20, 44, 358, 465);
+    let row = Rect::new(20, 44, 358, 435);
     let unknown = row_pins(&page, row);
     let mut got = vec![unknown];
     for set in [false, true] {
@@ -1644,9 +1644,9 @@ fn the_remote_desktop_page_under_the_login_manager_pins_its_pixels_in_every_look
     assert_eq!(
         got,
         [
-            [0xebca3f7bc8851f64, 0x2a363298d2623bd7, 0xbccc41d91efd4efd],
-            [0xf006df6007e02f19, 0x12eb100fb557f7e9, 0x754cab42cdbfd2ca],
-            [0x7cac9a0ef1a7910c, 0xcc2d8c24136532f2, 0xf7878ed401e4fa40],
+            [0x825c80c18980d191, 0xe848d7d8954cb2ab, 0xc1d740305e6ff6d6],
+            [0xef84a824d49cbf04, 0xa7a3385216bd0031, 0x29bf690dae6c3219],
+            [0x262ba88709416289, 0x8e04bbad38017266, 0x9b06a2addc35c407],
         ],
         "unknown, not set, set; Classic, Blue, Glass"
     );

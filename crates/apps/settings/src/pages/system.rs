@@ -439,8 +439,10 @@ const RD_PASSWORD_UNSET_NOTE: &str = "Not set: clients log on with your login pa
 const RD_PASSWORD_SET_NOTE: &str =
     "Set: clients that use Network Level Authentication log on with it.";
 /// How much lower the rows from the fingerprint down sit on a [`managed`] page, below the
-/// Remote Desktop password row and its two-line status.
-const RD_PASSWORD_DY: i32 = 34;
+/// Remote Desktop password row and its status.
+const RD_PASSWORD_DY: i32 = 4;
+/// The status under the row is one line; a font that wraps it flows the rows below down.
+const RD_PASSWORD_Y: i32 = 60;
 
 /// What greys with the switch off; New Certificate and Disconnect also need the server answering.
 const REMOTE_CONTROLS: [&str; 24] = [
@@ -509,35 +511,34 @@ pub fn remote_desktop(
             a.w,
             "Remote logins to this computer are set on the Login Manager page.",
         ));
-        items.extend(port(64));
         let buttons_x = a.right() - 2 * BUTTON_W - BUTTON_GAP;
         items.extend([
             Item::label_at(
-                REMOTE_NOTE,
-                X,
-                64,
-                a.w - 100,
-                "The login manager's port is used.",
-            ),
-            Item::label_at(
                 "rd_password_label",
                 X,
-                84,
+                RD_PASSWORD_Y + 4,
                 buttons_x - X - 6,
                 "Remote Desktop password:",
             ),
-            Item::button_at(RD_PASSWORD_SET, buttons_x, 80, BUTTON_W, "Se&t...", true),
+            Item::button_at(
+                RD_PASSWORD_SET,
+                buttons_x,
+                RD_PASSWORD_Y,
+                BUTTON_W,
+                "Se&t...",
+                true,
+            ),
             Item::button_at(
                 RD_PASSWORD_CLEAR,
                 a.right() - BUTTON_W,
-                80,
+                RD_PASSWORD_Y,
                 BUTTON_W,
                 "&Clear...",
                 true,
             ),
             Item::new(
                 RD_PASSWORD_STATUS,
-                Rect::new(X, 106, a.w, 2 * LINE_H),
+                Rect::new(X, RD_PASSWORD_Y + 26, a.w, LINE_H),
                 Control::Lines(Vec::new()),
             ),
         ]);
