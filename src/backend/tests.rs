@@ -1,13 +1,16 @@
 use super::gamma::{GammaStep, Lut, gamma_step, lut_from_blob};
 use super::links::{LINK_TRIES, LinkStep, link_mode, link_step};
 use super::outputs::{Scan, ScanAction, asks_scan, scan_action};
-use super::render::{glass_hold, waits_for_frame};
+use super::render::{
+    Due, INACTIVE_CALLBACK, callback_interval, due_now, glass_hold, waits_for_frame,
+};
 use super::schedule::{Asked, pointer_ask_renders};
 use super::steps::{MODE_TRIES, PendingMode, Step, next_step};
 use super::{Ask, CrtcNow, StartPlan, pick_gpu, start_plan};
 use crate::config::OutputMode;
 use crate::output::ModeInfo;
 use smithay::utils::{Point, Rectangle};
+use std::time::Duration;
 
 fn asked(asks: &[Ask]) -> Asked {
     let mut a = Asked::default();
@@ -27,6 +30,47 @@ fn a_held_output_answers_frames_on_the_timer() {
     assert!(!waits_for_frame(true, true, false, true));
     assert!(!waits_for_frame(true, false, false, false));
     assert!(!waits_for_frame(false, false, false, true));
+}
+
+#[test]
+fn a_commit_on_a_head_of_an_inactive_session_gets_its_frame_callback_within_a_second() {
+    use crate::framepace::{Done, Pace, interval};
+    let commit = asked(&[Ask::Content]);
+    assert!(commit.redraw);
+    assert_eq!(
+        due_now(false, false, false, true),
+        Due::Away,
+        "the render the commit asks for arms the callback timer"
+    );
+    let now = std::time::Instant::now();
+    let mut pace = Pace {
+        last_done: Some(now - Duration::from_millis(10)),
+        ..Pace::default()
+    };
+    let wait = match pace.done(false, now, callback_interval(60_000, false)) {
+        Done::Now => Duration::ZERO,
+        Done::After(wait) => wait,
+    };
+    assert_eq!(wait, INACTIVE_CALLBACK - Duration::from_millis(10));
+    assert!(
+        !waits_for_frame(commit.redraw, false, false, false),
+        "the timer sends the callback without a frame"
+    );
+    assert_eq!(callback_interval(60_000, true), interval(60_000));
+}
+
+#[test]
+fn a_head_renders_only_when_ready_on_its_session() {
+    assert_eq!(due_now(false, false, true, true), Due::Now);
+    assert_eq!(due_now(false, false, true, false), Due::Wait);
+    assert_eq!(due_now(false, true, true, true), Due::Wait);
+    assert_eq!(
+        due_now(false, true, false, true),
+        Due::Wait,
+        "an output off holds its clients' callbacks even away"
+    );
+    assert_eq!(due_now(true, false, false, true), Due::Wait);
+    assert_eq!(due_now(false, false, false, false), Due::Away);
 }
 
 #[test]
