@@ -160,7 +160,7 @@ async fn run() -> Result<(), String> {
     let (greeter_l, session_l) = (ipc::bind(&Paths::default(), greeter.gid))
         .map_err(|e| format!("binding the sockets: {e}"))?;
     let (lookup, seat) = (logind.clone(), logind.clone());
-    let input = events.clone();
+    let (input, mut sockets) = mpsc::channel(ipc::QUEUE);
     let server = Server {
         gate,
         session_of: Rc::new(move |pid| {
@@ -171,9 +171,7 @@ async fn run() -> Result<(), String> {
             let l = seat.clone();
             Box::pin(async move { l.seat_active().await })
         }),
-        input: Rc::new(move |i| {
-            let _ = input.send(Event::Input(i));
-        }),
+        input,
     };
     ipc::serve(greeter_l, session_l, server).map_err(|e| format!("the sockets: {e}"))?;
     for id in recovered {
@@ -183,7 +181,12 @@ async fn run() -> Result<(), String> {
     rt.run_effects(effects);
     rt.sync_gate();
 
-    while let Some(event) = rx.recv().await {
+    loop {
+        let event = tokio::select! {
+            Some(event) = rx.recv() => event,
+            Some(input) = sockets.recv() => Event::Input(input),
+            else => return Ok(()),
+        };
         match event {
             Event::Input(input) => rt.input(input).await,
             Event::WorkerEof(w) => {
@@ -216,7 +219,6 @@ async fn run() -> Result<(), String> {
             }
         }
     }
-    Ok(())
 }
 
 /// Rebuilds the table from logind's sessions and starts the login screen or autologin, with
@@ -247,6 +249,8 @@ async fn follow_leader(id: String, logind: Logind, events: Events) {
         return;
     };
     match pidfd::open(pid) {
+        // The leader may have exited, and its pid gone to another process, before the open.
+        Ok(_) if logind.ended(&id).await => {}
         Ok(fd) => {
             if let Err(e) = pidfd::exited(fd).await {
                 return log::warn!("session {id}: watching its leader {pid}: {e}");

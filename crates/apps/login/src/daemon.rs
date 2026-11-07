@@ -379,7 +379,11 @@ impl Daemon {
         id
     }
 
+    /// With no greeter of this daemon running, a request has nobody to answer and is ignored.
     fn greeter_request(&mut self, world: &World, request: GreeterRequest, out: &mut Vec<Effect>) {
+        if self.greeter.is_none() {
+            return;
+        }
         match request {
             GreeterRequest::Hello => {
                 let greeting = self.greeting(world);

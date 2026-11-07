@@ -190,7 +190,10 @@ frame, and `sound` at once.
 `/etc/reprise/login.toml` configures `reprise-login`, the login manager
 ([install.md](install.md#login-manager)), for the whole computer. It is read
 when reprise-login starts: `sudo systemctl restart reprise-login` applies a
-change, and running sessions keep running. Only the `[login]` table is
+change, and running sessions keep running. systemd starts it at most twice in
+30 s, so a third restart within that time leaves a text login on tty1
+instead ([install.md](install.md#login-manager) says how to recover). Only
+the `[login]` table is
 read. A missing file gives the defaults. A key with a value it can't use
 keeps its default and an unknown key is skipped; a file that isn't TOML
 gives every default. The journal names each (`journalctl -b -u

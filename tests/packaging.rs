@@ -242,6 +242,43 @@ fn every_pam_file_is_backed_up_and_installed() {
     }
 }
 
+fn file_names(dir: &str) -> BTreeSet<String> {
+    std::fs::read_dir(root().join(dir))
+        .unwrap_or_else(|e| panic!("{dir} lists: {e}"))
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect()
+}
+
+#[test]
+fn the_login_unit_sysusers_and_tmpfiles_are_installed() {
+    let mut files = vec![(
+        "data/systemd/reprise-login.service".to_owned(),
+        "usr/lib/systemd/system/reprise-login.service".to_owned(),
+    )];
+    for (dir, to) in [
+        ("data/sysusers.d", "usr/lib/sysusers.d"),
+        ("data/tmpfiles.d", "usr/lib/tmpfiles.d"),
+    ] {
+        let names = file_names(dir);
+        assert!(names.contains("reprise-login.conf"), "{dir}: {names:?}");
+        files.extend(
+            names
+                .iter()
+                .map(|n| (format!("{dir}/{n}"), format!("{to}/{n}"))),
+        );
+    }
+    for path in PKGBUILDS {
+        let text = std::fs::read_to_string(root().join(path)).expect("PKGBUILD reads");
+        for (from, to) in &files {
+            let install = format!(r#"install -Dm644 {from} "$pkgdir/{to}""#);
+            assert!(
+                text.lines().any(|l| l.trim() == install),
+                "{path} installs {from} to /{to}"
+            );
+        }
+    }
+}
+
 #[test]
 fn deps_reads_a_wrapped_array() {
     let pkgbuild =

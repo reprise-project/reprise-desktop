@@ -1,7 +1,7 @@
 //! The greeter's and the sessions' sockets: binding, peer checks and one reader per connection.
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::Permissions;
 use std::future::Future;
 use std::io;
@@ -88,8 +88,12 @@ fn bind_one(path: &Path) -> io::Result<StdListener> {
     Ok(l)
 }
 
-/// Most connections a listener checks at once; past it, new ones are closed unchecked.
+/// Most connections a listener checks at once, in all and per uid; past either, new ones
+/// are closed unchecked.
 const MAX_PENDING: usize = 16;
+const MAX_PENDING_PER_UID: usize = 4;
+/// How many socket requests wait for the daemon's loop; past it, a reader stops reading.
+pub const QUEUE: usize = 16;
 /// How long a greeter connection waits for its worker's `Started` to reach the loop.
 pub const GREETER_WAIT: Duration = Duration::from_secs(3);
 
@@ -173,9 +177,11 @@ impl Gate {
         }
     }
 
+    /// The greeter `worker` exited; its connection is closed.
     pub fn greeter_exited(&mut self, worker: WorkerId) {
         if self.greeter.as_ref().is_some_and(|g| g.0 == worker) {
             self.greeter = None;
+            self.link = None;
         }
     }
 
@@ -223,7 +229,8 @@ pub struct Server {
     pub gate: Rc<RefCell<Gate>>,
     pub session_of: SessionOf,
     pub seat_active: SeatActive,
-    pub input: Rc<dyn Fn(Input)>,
+    /// The daemon's loop; capped at [`QUEUE`], so a reader waits while it is full.
+    pub input: mpsc::Sender<Input>,
 }
 
 /// Accepts on both listeners in tasks of the current `LocalSet`.
@@ -236,19 +243,64 @@ pub fn serve(greeter: StdListener, session: StdListener, server: Server) -> io::
     Ok(())
 }
 
-/// Decrements a listener's count of checks in flight when the check ends.
-struct InFlight(Rc<Cell<usize>>);
+/// A listener's checks in flight, in all and per uid.
+#[derive(Default)]
+struct Checks {
+    all: usize,
+    by_uid: HashMap<u32, usize>,
+}
+
+/// A check counted in its listener's [`Checks`] until it is dropped.
+struct InFlight {
+    checks: Rc<RefCell<Checks>>,
+    uid: u32,
+}
+
+impl InFlight {
+    /// Counts a check for `uid`; `None` when the listener or the uid is at its cap.
+    fn begin(checks: &Rc<RefCell<Checks>>, uid: u32) -> Option<InFlight> {
+        let mut c = checks.borrow_mut();
+        let mine = c.by_uid.get(&uid).copied().unwrap_or(0);
+        if c.all >= MAX_PENDING || mine >= MAX_PENDING_PER_UID {
+            return None;
+        }
+        c.all += 1;
+        *c.by_uid.entry(uid).or_default() += 1;
+        Some(InFlight {
+            checks: checks.clone(),
+            uid,
+        })
+    }
+}
 
 impl Drop for InFlight {
     fn drop(&mut self) {
-        self.0.set(self.0.get() - 1);
+        let mut c = self.checks.borrow_mut();
+        c.all -= 1;
+        if let Some(n) = c.by_uid.get_mut(&self.uid) {
+            *n -= 1;
+            if *n == 0 {
+                c.by_uid.remove(&self.uid);
+            }
+        }
+    }
+}
+
+/// The uids a listener logged a refusal of: each is logged once, whatever passes after.
+#[derive(Default)]
+struct Refusals(RefCell<HashSet<u32>>);
+
+impl Refusals {
+    /// Whether this is `uid`'s first refusal.
+    fn first(&self, uid: u32) -> bool {
+        self.0.borrow_mut().insert(uid)
     }
 }
 
 async fn accept(l: UnixListener, kind: Listener, s: Rc<Server>) {
-    let pending = Rc::new(Cell::new(0));
+    let checks = Rc::new(RefCell::new(Checks::default()));
     let failing = Spell::default();
-    let refused = Rc::new(Spell::default());
+    let refused = Rc::new(Refusals::default());
     loop {
         let stream = match l.accept().await {
             Ok((stream, _)) => stream,
@@ -265,26 +317,22 @@ async fn accept(l: UnixListener, kind: Listener, s: Rc<Server>) {
             continue;
         };
         if !s.gate.borrow().may_try(kind, uid) {
-            if refused.fail() {
+            if refused.first(uid) {
                 log::warn!("{kind:?} socket: refused uid {uid}");
             }
             continue;
         }
-        if pending.get() >= MAX_PENDING {
-            if refused.fail() {
-                log::warn!("{kind:?} socket: {MAX_PENDING} connections are being checked");
+        let Some(in_flight) = InFlight::begin(&checks, uid) else {
+            if refused.first(uid) {
+                log::warn!("{kind:?} socket: refused uid {uid}: too many connections in checks");
             }
             continue;
-        }
-        pending.set(pending.get() + 1);
-        let in_flight = InFlight(pending.clone());
+        };
         let (s, refused) = (s.clone(), refused.clone());
         tokio::task::spawn_local(async move {
             let _in_flight = in_flight;
-            match admit(stream, uid, kind, &s).await {
-                true => refused.pass(),
-                false if refused.fail() => log::warn!("{kind:?} socket: refused uid {uid}"),
-                false => {}
+            if !admit(stream, uid, kind, &s).await && refused.first(uid) {
+                log::warn!("{kind:?} socket: refused uid {uid}");
             }
         });
     }
@@ -399,30 +447,50 @@ async fn read_greeter(
     let mut frames = Frames::new(rd);
     let why = loop {
         match frames.next().await.and_then(|body| frame::decode(&body)) {
-            Ok(request) => (s.input)(Input::GreeterRequest(request)),
+            Ok(request) => {
+                if s.input.send(Input::GreeterRequest(request)).await.is_err() {
+                    return;
+                }
+            }
             Err(e) => break e,
         }
     };
     if why != FrameError::Closed {
         log::warn!("greeter socket: dropping the greeter: {}", error_kind(&why));
     }
+    // A greeter that is no longer the running one ended already.
+    let running = (s.gate.borrow().greeter.as_ref()).is_some_and(|g| g.0 == worker);
+    if running {
+        let _ = s.input.send(Input::GreeterGone).await;
+    }
+    // Last: dropping the link aborts this task.
     let mut gate = s.gate.borrow_mut();
     if gate.link.as_ref().is_some_and(|l| l.serial == serial) {
         gate.link = None;
     }
-    // A greeter that is no longer the running one ended already.
-    let running = gate.greeter.as_ref().is_some_and(|g| g.0 == worker);
-    drop(gate);
-    if running {
-        (s.input)(Input::GreeterGone);
-    }
 }
 
+/// Forwards a session's requests. Only its latest Hello matters, so one waits at a time and
+/// a later one replaces it; a SwitchUser stops the reading until it is queued.
 async fn read_session(stream: UnixStream, id: String, serial: u64, s: Rc<Server>) {
     let mut frames = Frames::new(stream);
     let bad = Spell::default();
+    let mut hello = None;
+    let input = |request, seat_active| Input::Session {
+        id: id.clone(),
+        request,
+        seat_active,
+    };
     let why = loop {
-        let body = match frames.next().await {
+        let next = tokio::select! {
+            permit = s.input.reserve(), if hello.is_some() => {
+                let Ok(permit) = permit else { return };
+                permit.send(input(hello.take().expect("a Hello waits"), None));
+                continue;
+            }
+            next = frames.next() => next,
+        };
+        let body = match next {
             Ok(body) => body,
             Err(e) => break e,
         };
@@ -436,17 +504,26 @@ async fn read_session(stream: UnixStream, id: String, serial: u64, s: Rc<Server>
             }
         };
         bad.pass();
-        // Read before the next frame, so a flood of requests waits on the bus, not the loop.
-        let seat_active = match request {
-            SessionRequest::SwitchUser => (s.seat_active)().await,
-            SessionRequest::Hello { .. } => None,
-        };
-        (s.input)(Input::Session {
-            id: id.clone(),
-            request,
-            seat_active,
-        });
+        match request {
+            SessionRequest::Hello { .. } => {
+                hello = Some(request);
+                continue;
+            }
+            SessionRequest::SwitchUser => {}
+        }
+        if let Some(h) = hello.take()
+            && s.input.send(input(h, None)).await.is_err()
+        {
+            return;
+        }
+        let seat_active = (s.seat_active)().await;
+        if s.input.send(input(request, seat_active)).await.is_err() {
+            return;
+        }
     };
+    if let Some(h) = hello.take() {
+        let _ = s.input.send(input(h, None)).await;
+    }
     if why != FrameError::Closed {
         log::warn!("session {id}: dropping its link: {}", error_kind(&why));
     }
@@ -476,7 +553,7 @@ impl<R: AsyncRead + Unpin> Frames<R> {
     }
 
     /// The next frame's body, or why there is none: the peer closed, a read failed or the
-    /// stream broke framing.
+    /// stream broke framing. Cancel-safe: a dropped call loses no bytes.
     pub async fn next(&mut self) -> Result<Zeroizing<Vec<u8>>, FrameError> {
         loop {
             if let Some(body) = self.reader.next_frame() {
@@ -526,7 +603,7 @@ mod tests {
 
     use repriselogin::frame::encode;
     use repriselogin::greeter::GreeterRequest;
-    use tokio::sync::mpsc::UnboundedReceiver;
+    use tokio::sync::mpsc::Receiver;
 
     use super::*;
 
@@ -583,7 +660,7 @@ mod tests {
         dir: &Path,
         greeter_uid: u32,
         peer_session: &'static str,
-    ) -> (Rc<RefCell<Gate>>, UnboundedReceiver<Input>) {
+    ) -> (Rc<RefCell<Gate>>, Receiver<Input>) {
         let (gate, rx, _) = serve_with(dir, greeter_uid, move || {
             Box::pin(async move { Some(peer_session.into()) })
         });
@@ -596,13 +673,13 @@ mod tests {
         dir: &Path,
         greeter_uid: u32,
         lookup: impl Fn() -> Pin<Box<dyn Future<Output = Option<String>>>> + 'static,
-    ) -> (Rc<RefCell<Gate>>, UnboundedReceiver<Input>, Rc<Cell<u32>>) {
+    ) -> (Rc<RefCell<Gate>>, Receiver<Input>, Rc<Cell<u32>>) {
         let (greeter, session) = bind(&paths(dir), ids().1).unwrap();
         let mut gate = Gate::new(greeter_uid);
         gate.greeter = Some((GREETER, Some("c1".into())));
         gate.sessions.insert("3".into(), ids().0);
         let gate = Rc::new(RefCell::new(gate));
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx, rx) = mpsc::channel(QUEUE);
         let lookups = Rc::new(Cell::new(0));
         let counted = lookups.clone();
         let server = Server {
@@ -612,9 +689,7 @@ mod tests {
                 lookup()
             }),
             seat_active: Rc::new(|| Box::pin(async { Some("3".into()) })),
-            input: Rc::new(move |i| {
-                let _ = tx.send(i);
-            }),
+            input: tx,
         };
         serve(greeter, session, server).unwrap();
         (gate, rx, lookups)
@@ -639,7 +714,7 @@ mod tests {
         stream.write_all(&encode(msg).unwrap()).await.unwrap();
     }
 
-    async fn next(rx: &mut UnboundedReceiver<Input>) -> Input {
+    async fn next(rx: &mut Receiver<Input>) -> Input {
         tokio::time::timeout(Duration::from_secs(5), rx.recv())
             .await
             .expect("an input arrives")
@@ -767,7 +842,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn connections_past_the_checks_in_flight_are_closed_at_once() {
+    async fn a_uids_connections_past_its_checks_in_flight_are_closed_at_once() {
         let local = tokio::task::LocalSet::new();
         local
             .run_until(async {
@@ -776,7 +851,7 @@ mod tests {
                     serve_with(dir.path(), ids().0, || Box::pin(std::future::pending()));
                 let path = dir.path().join("session.sock");
                 let mut waiting = Vec::new();
-                for _ in 0..MAX_PENDING {
+                for _ in 0..MAX_PENDING_PER_UID {
                     waiting.push(UnixStream::connect(&path).await.unwrap());
                 }
                 let mut over = UnixStream::connect(&path).await.unwrap();
@@ -784,7 +859,7 @@ mod tests {
                     eof_within(&mut over, Duration::from_secs(5)).await,
                     Some(true)
                 );
-                assert_eq!(lookups.get(), MAX_PENDING as u32);
+                assert_eq!(lookups.get(), MAX_PENDING_PER_UID as u32);
                 assert_eq!(
                     eof_within(&mut waiting[0], Duration::from_millis(100)).await,
                     None,
@@ -902,6 +977,144 @@ mod tests {
                     Some(true)
                 );
                 assert!(started.elapsed() >= GREETER_WAIT, "{:?}", started.elapsed());
+            })
+            .await;
+    }
+
+    #[test]
+    fn checks_in_flight_are_capped_per_uid_and_per_listener() {
+        let checks = Rc::new(RefCell::new(Checks::default()));
+        let mut held: Vec<_> = (0..MAX_PENDING_PER_UID)
+            .map(|_| InFlight::begin(&checks, 1000).expect("under the uid's cap"))
+            .collect();
+        assert!(InFlight::begin(&checks, 1000).is_none(), "the uid's cap");
+        for uid in 1001..1100 {
+            match InFlight::begin(&checks, uid) {
+                Some(c) => held.push(c),
+                None => break,
+            }
+        }
+        assert_eq!(held.len(), MAX_PENDING, "the listener's cap");
+        assert!(InFlight::begin(&checks, 2000).is_none());
+        held.remove(0);
+        assert!(
+            InFlight::begin(&checks, 1000).is_some(),
+            "a finished check frees its slot"
+        );
+        drop(held);
+        assert_eq!(checks.borrow().all, 0);
+        assert!(checks.borrow().by_uid.is_empty());
+    }
+
+    #[test]
+    fn a_uids_refusal_is_logged_once() {
+        let refusals = Refusals::default();
+        assert!(refusals.first(1000));
+        assert!(!refusals.first(1000));
+        assert!(refusals.first(1001));
+        assert!(!refusals.first(1000));
+    }
+
+    #[tokio::test]
+    async fn a_greeter_whose_worker_exited_loses_its_link() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let dir = tempfile::tempdir().unwrap();
+                let (gate, mut rx) = serve_in(dir.path(), ids().0, "c1");
+                let mut c = UnixStream::connect(dir.path().join("greeter.sock"))
+                    .await
+                    .unwrap();
+                send(&mut c, &GreeterRequest::Hello).await;
+                assert_eq!(
+                    next(&mut rx).await,
+                    Input::GreeterRequest(GreeterRequest::Hello)
+                );
+                gate.borrow_mut().greeter_exited(GREETER);
+                assert_eq!(eof_within(&mut c, Duration::from_secs(2)).await, Some(true));
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn a_hello_flood_is_read_through_and_queues_at_most_the_cap() {
+        use repriselogin::Interface;
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let dir = tempfile::tempdir().unwrap();
+                let (_gate, mut rx) = serve_in(dir.path(), ids().0, "3");
+                let mut c = UnixStream::connect(dir.path().join("session.sock"))
+                    .await
+                    .unwrap();
+                let flood = tokio::task::spawn_local(async move {
+                    for i in 0..5000 {
+                        let interface = [Interface::Classic, Interface::Blue][i % 2];
+                        send(&mut c, &SessionRequest::Hello { interface }).await;
+                    }
+                    let interface = Interface::Glass;
+                    send(&mut c, &SessionRequest::Hello { interface }).await;
+                    c
+                });
+                let _c = tokio::time::timeout(Duration::from_secs(5), flood)
+                    .await
+                    .expect("the reader keeps reading while the queue is full")
+                    .unwrap();
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                assert!(rx.len() <= QUEUE, "{} queued", rx.len());
+                let mut heard = Vec::new();
+                while let Ok(Some(i)) =
+                    tokio::time::timeout(Duration::from_millis(200), rx.recv()).await
+                {
+                    heard.push(i);
+                }
+                assert!(heard.len() <= QUEUE + 1, "{} heard", heard.len());
+                let glass = Input::Session {
+                    id: "3".into(),
+                    request: SessionRequest::Hello {
+                        interface: Interface::Glass,
+                    },
+                    seat_active: None,
+                };
+                assert_eq!(heard.last(), Some(&glass));
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn a_hello_before_a_switch_user_is_queued_first() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let dir = tempfile::tempdir().unwrap();
+                let (_gate, mut rx) = serve_in(dir.path(), ids().0, "3");
+                let mut c = UnixStream::connect(dir.path().join("session.sock"))
+                    .await
+                    .unwrap();
+                send(&mut c, &hello()).await;
+                send(&mut c, &SessionRequest::SwitchUser).await;
+                let first = next(&mut rx).await;
+                assert!(
+                    matches!(
+                        &first,
+                        Input::Session {
+                            request: SessionRequest::Hello { .. },
+                            ..
+                        }
+                    ),
+                    "{first:?}"
+                );
+                let second = next(&mut rx).await;
+                assert!(
+                    matches!(
+                        &second,
+                        Input::Session {
+                            request: SessionRequest::SwitchUser,
+                            ..
+                        }
+                    ),
+                    "{second:?}"
+                );
             })
             .await;
     }
