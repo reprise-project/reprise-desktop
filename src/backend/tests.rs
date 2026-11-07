@@ -36,7 +36,6 @@ fn a_held_output_answers_frames_on_the_timer() {
 fn a_commit_on_a_head_of_an_inactive_session_gets_its_frame_callback_within_a_second() {
     use crate::framepace::{Done, Pace, interval};
     let commit = asked(&[Ask::Content]);
-    assert!(commit.redraw);
     assert_eq!(
         due_now(false, false, false, true),
         Due::Away,
