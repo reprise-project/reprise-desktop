@@ -1,4 +1,5 @@
-//! reprise-rdp: the session's Remote Desktop server, one per user session.
+//! reprise-rdp: the session's Remote Desktop server, one per user session. `--hand-over` serves
+//! the connections reprise-login hands over on the socket systemd passes.
 
 #[cfg(test)]
 reprisebus::test_session!();
@@ -12,6 +13,7 @@ mod display;
 mod encode;
 mod geometry;
 mod gfx;
+mod handover;
 mod input;
 mod intake;
 mod keymap;
@@ -44,6 +46,20 @@ fn main() -> ExitCode {
         log::error!("USER is not set");
         return ExitCode::FAILURE;
     };
+    let hand_over = match std::env::args().nth(1).as_deref() {
+        Some("--hand-over") => match handover::activated() {
+            Ok(listener) => Some(listener),
+            Err(e) => {
+                log::error!("{e}");
+                return ExitCode::FAILURE;
+            }
+        },
+        _ => None,
+    };
+    if hand_over.is_none() && login_manager_runs() {
+        log::info!("reprise-login takes this computer's remote connections; this server stays off");
+        return ExitCode::SUCCESS;
+    }
     let cfg = repriseconf::remote::remote_desktop();
     let dir = cert_dir();
     let identity = match cert::load_or_create(&dir) {
@@ -79,7 +95,7 @@ fn main() -> ExitCode {
     let probed = spawn_probe();
     let marker = lock::marker_path();
     let local = tokio::task::LocalSet::new();
-    local.block_on(&rt, async {
+    let code = local.block_on(&rt, async {
         lock::lock_if_marked(marker.as_deref(), lock::lock()).await;
         let _watch = follow_config(config, status.clone(), probed.clone());
         tokio::task::spawn_local(show_encoders(
@@ -101,8 +117,9 @@ fn main() -> ExitCode {
         };
         let console =
             console::Console::new(status.clone(), config_rx.clone(), repriseconf::locker_set);
-        let intake = intake::TcpIntake::new(tcp::ALL, config_rx.clone(), status.clone());
-        let logins = auth::PasswordLogins::new(user.clone());
+        let tcp_status = status.clone();
+        let viewers = status.subscribe();
+        let session_user = user.clone();
         let server = listen::Server {
             identity: identity_rx,
             user,
@@ -151,11 +168,46 @@ fn main() -> ExitCode {
                 layout,
             )
         };
-        listen::serve(server, intake, logins, handlers, terminated()).await;
+        match hand_over {
+            Some(listener) => {
+                let listener = match tokio::net::UnixListener::from_std(listener) {
+                    Ok(listener) => listener,
+                    Err(e) => {
+                        log::error!("hand-over socket: {e}");
+                        return ExitCode::FAILURE;
+                    }
+                };
+                let intake = handover::HandOverIntake::new(listener, ROOT, viewers);
+                let logins = auth::HandedOverLogins::new(session_user);
+                listen::serve(server, intake, logins, handlers, terminated()).await;
+            }
+            None => {
+                let intake = intake::TcpIntake::new(tcp::ALL, config_rx.clone(), tcp_status);
+                let logins = auth::PasswordLogins::new(session_user);
+                listen::serve(server, intake, logins, handlers, terminated()).await;
+            }
+        }
+        ExitCode::SUCCESS
     });
     // Dropping the connections gives the shared sink's default back before the process ends.
     drop(local);
-    ExitCode::SUCCESS
+    code
+}
+
+/// The only peer the hand-over socket takes: reprise-login runs as root.
+const ROOT: u32 = 0;
+
+/// Whether reprise-login runs, asked once on the system bus.
+fn login_manager_runs() -> bool {
+    zbus::block_on(async {
+        match zbus::Connection::system().await {
+            Ok(system) => reprisebus::login::manager_active(&system).await,
+            Err(e) => {
+                log::debug!("no system bus: {e}");
+                false
+            }
+        }
+    })
 }
 
 async fn terminated() {
