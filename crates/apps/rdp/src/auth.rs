@@ -448,7 +448,8 @@ impl Logins for HandedOverLogins {
 }
 
 /// A hand-over's login, accepted once the replayed exchange reaches its credential check. That
-/// check sees the session user with an empty password, since the password never reaches this server.
+/// check sees the session user (bare, `DOMAIN\user` or `user@host`) with an empty password, since
+/// the password never reaches this server.
 pub struct HandedOverCheck {
     user: String,
     /// The hand-over named the session user.
@@ -476,8 +477,10 @@ impl CredentialValidator for HandedOverCheck {
         &self,
         credentials: &Credentials,
     ) -> Result<CredentialDecision, CredentialValidationError> {
+        let name = account(&credentials.username);
+        let upn_user = name.split_once('@').filter(|(_, host)| !host.is_empty());
         let ok = self.admitted
-            && account(&credentials.username) == self.user
+            && upn_user.map_or(name, |(user, _)| user) == self.user
             && credentials.password.is_empty();
         if !ok {
             return Ok(CredentialDecision::Reject);
@@ -886,6 +889,26 @@ pub(crate) mod tests {
         assert_eq!(
             decide(&check, "anna", "x").await,
             CredentialDecision::Reject
+        );
+    }
+
+    #[tokio::test]
+    async fn a_hand_over_takes_the_session_user_in_upn_form() {
+        let logins = HandedOverLogins::new("anna".into());
+        let admission = Admission::HandedOver {
+            user: "anna".into(),
+        };
+        let (check, _) = logins.check(B, admission);
+        for other in ["bert@host", "anna@", "@host", "annabel@host"] {
+            assert_eq!(
+                decide(&check, other, "").await,
+                CredentialDecision::Reject,
+                "{other}"
+            );
+        }
+        assert_eq!(
+            decide(&check, "anna@host", "").await,
+            CredentialDecision::Accept
         );
     }
 
