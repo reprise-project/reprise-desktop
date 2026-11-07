@@ -21,16 +21,31 @@ pub(crate) fn find(query: &str) -> Option<(Filter, Vec<Option<Hit>>)> {
     Some((filter, hits))
 }
 
+/// `filter` with `absent` hidden as well; `None` while it hides nothing.
+fn without(filter: Option<Filter>, absent: &[Page]) -> Option<Filter> {
+    if absent.is_empty() {
+        return filter;
+    }
+    let mut f = filter.unwrap_or_else(|| Filter {
+        pages: vec![true; Page::all().count()],
+        links: vec![true; links().count()],
+    });
+    for p in absent {
+        f.pages[p.index()] = false;
+    }
+    Some(f)
+}
+
 impl SettingsApp {
-    /// Filter the page list by `query`. New rows bring the open page's row into view; a query
+    /// Filter the page list by `query`, the pages this machine lacks left out. New rows bring the open page's row into view; a query
     /// showing the rows already shown leaves the list where it is scrolled.
     pub(crate) fn search(&mut self, query: &str) -> Reply {
         let found = find(query);
-        let filter = found.as_ref().map(|(f, _)| f);
+        let filter = without(found.as_ref().map(|(f, _)| f.clone()), &self.absent);
         if let Some(list) = self.sheet.list_mut()
-            && list.filter() != filter
+            && list.filter() != filter.as_ref()
         {
-            list.set_filter(filter);
+            list.set_filter(filter.as_ref());
             self.sheet.reveal_open();
         }
         self.search_hits = found.map(|(_, hits)| hits).unwrap_or_default();

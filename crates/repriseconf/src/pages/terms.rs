@@ -367,6 +367,8 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
             ),
             ("remote_screen_show", "Stays on"),
             ("remote_screen_lock", "Locks and fits the remote window"),
+            ("second_client_join", "Join it"),
+            ("second_client_replace", "Replace it"),
         ],
         Page::Privacy => &[
             ("privacy_location", "Let programs ask for your location"),
@@ -380,6 +382,16 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
                 "capture_border",
                 "Show a red border around what is being shared",
             ),
+        ],
+        Page::LoginManager => &[
+            ("login_interface", "Interface:"),
+            ("login_show_users", "Show users"),
+            ("login_autologin", "Log on automatically as:"),
+            ("login_remote", "Allow remote logins to this computer"),
+            ("login_port", "Port:"),
+            ("login_sessions", "Sessions at most:"),
+            ("login_end_after", "End disconnected sessions after:"),
+            ("login_fingerprint", "Certificate fingerprint:"),
         ],
         Page::Advanced => &[
             ("task_manager", "Task manager (empty runs Task Manager):"),

@@ -1837,6 +1837,7 @@ fn the_remote_desktop_page_follows_what_the_server_says() {
         enabled: true,
         status: Some(status),
         address: Some("192.168.1.20".into()),
+        ..remotehost::Remote::default()
     };
     remote_read(&mut a, serving, None);
     let page = &a.sheet.pages[Page::RemoteDesktop.index()];

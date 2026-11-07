@@ -11,7 +11,8 @@ use super::system::{
     ALLOW_BOOST, BELL, CLIPBOARD_HISTORY, LOCKER_NOTE, NOTIFICATION_SOUND, QUALITY_VALUE,
     REMOTE_BORDER, REMOTE_ENCODER, REMOTE_FRAME_RATE, REMOTE_LOCK_GRACE, REMOTE_LOCK_ON_LEAVE,
     REMOTE_PORT, REMOTE_QUALITY, REMOTE_SCREEN_LOCK, REMOTE_SCREEN_NOTE, REMOTE_SCREEN_SHOW,
-    REMOTE_SOUND, SOUND_CONTROLS, clipboard_label, follow_lock, follow_screen,
+    REMOTE_SECOND_JOIN, REMOTE_SECOND_REPLACE, REMOTE_SOUND, SOUND_CONTROLS, clipboard_label,
+    follow_lock, follow_screen,
 };
 use super::{
     CURSOR_FIXED_ROWS, DEBUG_IN_CAPTURES, DEBUG_OVERLAY, DELAY_MAX, DELAY_MIN, DOUBLE_CLICK,
@@ -310,6 +311,12 @@ pub(super) fn binds() -> Vec<Bind> {
         Bind::Flag(REMOTE_BORDER, lens!(remote_capture_border)),
         Bind::Radio(REMOTE_SCREEN_SHOW, lens!(remote_laptop_screen), "show"),
         Bind::Radio(REMOTE_SCREEN_LOCK, lens!(remote_laptop_screen), "lock"),
+        Bind::Radio(REMOTE_SECOND_JOIN, lens!(remote_second_client), "join"),
+        Bind::Radio(
+            REMOTE_SECOND_REPLACE,
+            lens!(remote_second_client),
+            "replace",
+        ),
         Bind::Track("mouse_speed", lens!(mouse_speed)),
         Bind::Flag("mouse_accel", lens!(mouse_accel)),
         Bind::Flag("mouse_natural", lens!(mouse_natural)),

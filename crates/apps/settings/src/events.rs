@@ -33,6 +33,10 @@ impl SettingsApp {
                 if p == Page::Tablet.index() {
                     return self.tablet_changed(id);
                 }
+                if p == Page::LoginManager.index() {
+                    self.login_changed(id);
+                    return Reply::redraw();
+                }
                 if p == Page::Notifications.index()
                     && [
                         notifypage::PROGRAMS,

@@ -29,7 +29,8 @@ pub struct Sources<'a> {
 /// Page `p` for area `a` before any value is pushed in. The Appearance,
 /// Display and Tablet pages depend on what they show; the host rebuilds
 /// those ([`crate::appearancepage::follow`], [`crate::displaypage::refresh`],
-/// `tabletpage::page`). Remote Desktop starts off and `remotehost` fills it in.
+/// `tabletpage::page`). Remote Desktop starts off and `remotehost` fills it in, as `loginhost`
+/// does Login Manager.
 pub fn build(p: Page, src: &Sources, a: Area) -> Form {
     match p {
         Page::Appearance => crate::appearancepage::page(&Settings::default(), a),
@@ -61,7 +62,8 @@ pub fn build(p: Page, src: &Sources, a: Area) -> Form {
         Page::Startup => pages::startup(a),
         Page::DefaultPrograms => crate::defaultspage::page(a),
         Page::Privacy => pages::privacy(a),
-        Page::RemoteDesktop => pages::remote_desktop(a, None, false),
+        Page::RemoteDesktop => pages::remote_desktop(a, None, false, None),
+        Page::LoginManager => pages::login_manager(a),
         Page::Advanced => pages::advanced(a),
         Page::Backup => pages::backup(a),
     }
@@ -161,6 +163,7 @@ mod tests {
                 "Startup",
                 "Default Programs",
                 "Privacy",
+                "Login Manager",
                 "Advanced",
                 "Backup",
             ]
@@ -232,8 +235,8 @@ mod tests {
         assert_eq!(open(&s), Page::Appearance, "the first page opens");
     }
 
-    /// The list's inside is 456 px at the smallest sheet: 41 rows at 721 px, so it scrolls
-    /// until the sheet is 265 px taller. On a sheet 56 px shorter, a page opened from its end
+    /// The list's inside is 456 px at the smallest sheet: 42 rows at 738 px, so it scrolls
+    /// until the sheet is 282 px taller. On a sheet 56 px shorter, a page opened from its end
     /// (keys or `--page`) comes into view.
     #[test]
     fn the_list_scrolls_to_the_open_page() {
@@ -243,16 +246,16 @@ mod tests {
         let px = Theme::default().fonts.size_px;
         let mut sheet = built();
         let list = sheet.layout(&text, px).list.expect("a list sheet");
-        assert_eq!(list.rows.len(), 41, "seven headings, 27 pages, seven links");
-        assert_eq!((list.total, list.inner.height), (721, 456));
-        assert!(list.scrollbar.is_some(), "the rows overflow by 265 px");
-        sheet.size.1 += 265;
+        assert_eq!(list.rows.len(), 42, "seven headings, 28 pages, seven links");
+        assert_eq!((list.total, list.inner.height), (738, 456));
+        assert!(list.scrollbar.is_some(), "the rows overflow by 282 px");
+        sheet.size.1 += 282;
         let list = sheet.layout(&text, px).list.unwrap();
         assert!(list.scrollbar.is_none(), "every row shows");
 
-        sheet.size.1 -= 321;
+        sheet.size.1 -= 338;
         let list = sheet.layout(&text, px).list.unwrap();
-        assert_eq!((list.total, list.inner.height), (721, 400));
+        assert_eq!((list.total, list.inner.height), (738, 400));
         let bar = list.scrollbar.expect("the rows overflow");
         assert_eq!(bar.right(), list.inner.right() + bar.width);
         let last = *list.rows.last().unwrap();

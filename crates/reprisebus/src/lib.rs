@@ -74,6 +74,18 @@ pub fn session() -> zbus::Result<Connection> {
     Ok(c)
 }
 
+/// The program's system bus connection, made by the first call that finds the bus.
+pub fn system() -> zbus::Result<Connection> {
+    static SYSTEM: Mutex<Option<Connection>> = Mutex::new(None);
+    let mut conn = lock(&SYSTEM);
+    if let Some(c) = conn.as_ref() {
+        return Ok(c.clone());
+    }
+    let c = connect(zbus::connection::Builder::system().method_timeout(METHOD_TIMEOUT))?;
+    *conn = Some(c.clone());
+    Ok(c)
+}
+
 /// Builds a connection whose I/O runs on a helper thread of its own, so any
 /// thread can [`wait`] on it, an async task included.
 pub fn connect(builder: zbus::connection::Builder<'_>) -> zbus::Result<Connection> {

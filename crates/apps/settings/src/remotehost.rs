@@ -2,7 +2,7 @@
 //! every [`POLL`], and the switch, New Certificate and Disconnect carried out at once.
 
 use crate::registry::Page;
-use crate::{SettingsApp, pages, registry, take};
+use crate::{SettingsApp, loginhost, pages, registry, take};
 use reprisebus::remote::{self, Status};
 use reprisekit::controls::form::Form;
 use std::net::UdpSocket;
@@ -13,12 +13,15 @@ const POLL: Duration = Duration::from_secs(2);
 /// How long a switch turned on waits for the server to answer before showing what it found.
 const START_WAIT: Duration = Duration::from_secs(2);
 
-/// What the page shows: the unit's switch, what the server reports, and this computer's address.
+/// What the page shows: the unit's switch, what the server reports, this computer's address,
+/// and whether the login manager runs remote logins, with its certificate's fingerprint.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Remote {
     pub(crate) enabled: bool,
     pub(crate) status: Option<Status>,
     pub(crate) address: Option<String>,
+    pub(crate) manager: bool,
+    pub(crate) machine_fingerprint: Option<String>,
 }
 
 /// A read or an act off the loop: the state afterwards, and what to tell when the act failed.
@@ -41,13 +44,16 @@ pub(crate) fn disconnect(page: &Form, status: Option<&Status>) -> Option<Act> {
     pages::selected_client(page, status).map(|a| Act::Disconnect(a.into()))
 }
 
-/// The unit and the server as they are now.
+/// The unit, the server and the login manager as they are now.
 fn read() -> Remote {
     let status = remote::status();
+    let manager = reprisebus::login::manager_runs();
     Remote {
         enabled: remote::enabled(),
         address: status.as_ref().and_then(|_| address()),
         status,
+        manager,
+        machine_fingerprint: manager.then(loginhost::machine_fingerprint).flatten(),
     }
 }
 
@@ -188,15 +194,30 @@ impl SettingsApp {
         pages::selected_client(page, self.remote.status.as_ref()).map(str::to_owned)
     }
 
-    /// Put what is known of the server on the page, the client at `keep` selected.
+    /// Put what is known of the server on the page, the client at `keep` selected; the page is
+    /// built again when the login manager started or stopped.
     pub(crate) fn show_remote(&mut self, keep: Option<String>) {
+        let at = Page::RemoteDesktop.index();
+        let r = &self.remote;
+        let machine = r.manager.then(|| {
+            r.machine_fingerprint
+                .as_deref()
+                .unwrap_or(pages::NOT_RUNNING)
+        });
+        if pages::managed(&self.sheet.pages[at]) != r.manager {
+            let page = pages::remote_desktop(self.area(), None, false, machine);
+            self.sheet.set_page(at, page);
+            pages::write_form(&mut self.sheet.pages[at], &self.want);
+            pages::follow(&mut self.sheet, &self.want);
+        }
         let r = &self.remote;
         pages::show_remote(
-            &mut self.sheet.pages[Page::RemoteDesktop.index()],
+            &mut self.sheet.pages[at],
             r.status.as_ref(),
             r.enabled,
             r.address.as_deref(),
             keep.as_deref(),
+            machine,
         );
     }
 }

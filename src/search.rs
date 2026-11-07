@@ -92,8 +92,8 @@ impl Setting {
     }
 }
 
-/// The settings pages and programs `query` finds, at most `max`: label matches, then keyword
-/// matches, then control-label matches. Programs not installed or already in `programs` are left out.
+/// The settings pages and programs `query` finds, at most `max`: label, then keyword, then
+/// control-label matches. What is not installed, and programs already in `programs`, is left out.
 pub fn rank_settings(
     query: &str,
     apps: &[AppEntry],
@@ -103,7 +103,7 @@ pub fn rank_settings(
     if query.trim().chars().count() < SETTINGS_MIN_CHARS {
         return Vec::new();
     }
-    let pages = Page::all().filter_map(|p| {
+    let pages = Page::all().filter(|&p| page_installed(p)).filter_map(|p| {
         let hit = p.find(query)?;
         Some((
             hit,
@@ -125,6 +125,14 @@ pub fn rank_settings(
         Hit::Control(_) => 2,
     });
     found.into_iter().map(|(_, s)| s).take(max).collect()
+}
+
+/// [`Page::installed`]; under test every page is but the Login Manager, whatever the host has.
+fn page_installed(p: Page) -> bool {
+    match cfg!(test) {
+        true => p != Page::LoginManager,
+        false => p.installed(),
+    }
 }
 
 /// The command that opens Settings on `page`, with `focus` (a control id) focused.

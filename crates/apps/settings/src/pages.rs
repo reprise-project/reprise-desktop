@@ -25,6 +25,7 @@ mod bind;
 mod desktop;
 mod input;
 mod lists;
+mod login;
 mod system;
 
 pub use appearance::{effects, fonts_and_icons, night_light, text_size_note};
@@ -39,9 +40,10 @@ pub use lists::{
     fit_shortcut_columns, list_key, new_list, new_location_list, new_shortcut_list,
     show_locations_loading,
 };
+pub use login::{NOT_RUNNING, follow_login, login_manager, read_login, show_login};
 pub use system::{
-    REMOTE_ALLOW, REMOTE_DISCONNECT, REMOTE_REGENERATE, advanced, backup, notifications, privacy,
-    remote_desktop, selected_client, show_remote, sound, startup,
+    REMOTE_ALLOW, REMOTE_DISCONNECT, REMOTE_REGENERATE, advanced, backup, managed, notifications,
+    privacy, remote_desktop, selected_client, show_remote, sound, startup,
 };
 
 /// The client every page is built for at [`Area::MIN`]; the sheet puts each page right of its list ([`PropSheet::on_page`]).

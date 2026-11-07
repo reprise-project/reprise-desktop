@@ -14,6 +14,17 @@ pub async fn manager_active(system: &zbus::Connection) -> bool {
     }
 }
 
+/// [`manager_active`] on the program's [`crate::system`] connection, blocking.
+pub fn manager_runs() -> bool {
+    match crate::system() {
+        Ok(system) => crate::wait(manager_active(&system)),
+        Err(e) => {
+            log::debug!("no system bus: {e}");
+            false
+        }
+    }
+}
+
 async fn active_state(system: &zbus::Connection) -> zbus::Result<String> {
     let path: zbus::OwnedObjectPath = system
         .call_method(
