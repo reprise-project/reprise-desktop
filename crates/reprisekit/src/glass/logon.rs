@@ -2,9 +2,11 @@
 //! arrow, the user tiles, the error screen, the busy spinner, the mark and the power button.
 
 use super::Settings;
+use super::panel::{self, Fade, LightBox};
 use super::tint::{self, Surface};
 use crate::art::logo;
-use crate::logon::{Logon, LogonLayout, Part, Screen, UserNote, text as strings};
+use crate::logon::{Logon, LogonLayout, Part, Screen, UserNote, message_lines, text as strings};
+use crate::paint::{self, Paint};
 use crate::pointer::Interaction;
 use crate::raster::{Canvas, Rect};
 use crate::shape::{
@@ -12,8 +14,8 @@ use crate::shape::{
     stroke,
 };
 use crate::style::{Part as StylePart, State};
-use crate::text::{Align, TextRenderer, split_mnemonic};
-use crate::textedit::{Caret, TextEdit, edit_first_visible};
+use crate::text::{TextRenderer, split_mnemonic};
+use crate::textedit::{Caret, edit_first_visible};
 use crate::theme::{Color, Theme};
 
 /// Design px. Text rows, fields, buttons and tile cells grow with the text size; pictures, the
@@ -27,7 +29,6 @@ const SMALL_PAD: i32 = 5;
 const SMALL_R: f64 = 5.0;
 const CELL_W: i32 = 132;
 const CELL_GAP: i32 = 12;
-const CELL_R: f64 = 4.0;
 const NAME_PX: u32 = 20;
 const NAME_H: i32 = 30;
 const NOTE_H: i32 = 16;
@@ -65,6 +66,7 @@ const WORD: &str = "Reprise";
 /// The dark glow under white text on the wallpaper: its reach and its peak alpha.
 const HALO: i32 = 3;
 const HALO_ALPHA: f64 = 150.0;
+const HALO_INK: Color = Color::rgb(0x00, 0x00, 0x00);
 /// The white glow round a lit picture frame: its reach and its alpha at the frame.
 const GLOW: i32 = 8;
 const GLOW_ALPHA: f64 = 110.0;
@@ -73,8 +75,6 @@ const SPIN_HEAD: f64 = 0.8;
 
 const INK: Color = Color::rgb(0xFF, 0xFF, 0xFF);
 const NOTE_INK: Color = Color::rgb(0xE4, 0xEE, 0xFA);
-const FIELD_INK: Color = Color::rgb(0x00, 0x00, 0x00);
-const CUE_INK: Color = Color::rgb(0x6D, 0x6D, 0x6D);
 const FIELD_FILL: Color = Color::rgb(0xFF, 0xFF, 0xFF);
 const READ_ONLY_FILL: Color = Color::rgb(0xEC, 0xEE, 0xF2);
 const PERSON_SKY: [Color; 2] = [Color::rgb(0xF2, 0xF6, 0xFB), Color::rgb(0xC4, 0xD4, 0xE6)];
@@ -95,11 +95,9 @@ const SHEEN: [(f64, Px); 4] = [
     (0.5, grey(8.0)),
     (1.0, grey(36.0)),
 ];
-const CELL_FOCUS: Px = grey(60.0);
-const CELL_FOCUS_LINE: Px = grey(150.0);
-const CELL_HOT: Px = grey(34.0);
-const CELL_HOT_LINE: Px = grey(90.0);
-const CELL_PRESSED: Px = (40.0, [8.0, 14.0, 22.0]);
+const CELL_FOCUS: LightBox = cell(150, (Color::rgb(0xFF, 0xFF, 0xFF), 60));
+const CELL_HOT: LightBox = cell(90, (Color::rgb(0xFF, 0xFF, 0xFF), 34));
+const CELL_PRESSED: LightBox = cell(150, (Color::rgb(0x33, 0x59, 0x8C), 40));
 
 const RIM: Px = grey(230.0);
 const RIM_FOCUS: Px = grey(255.0);
@@ -140,6 +138,17 @@ const SPIN: [(f64, Px); 3] = [
     (0.6, (110.0, [92.0, 150.0, 200.0])),
     (1.0, (255.0, [220.0, 240.0, 255.0])),
 ];
+
+/// A tile's light box on the tiles screen: a white outline at alpha `outline` round a flat fill.
+const fn cell(outline: u8, fill: (Color, u8)) -> LightBox {
+    LightBox {
+        outline: (Color::rgb(0xFF, 0xFF, 0xFF), outline),
+        line: None,
+        fill: (fill, fill),
+        radius: 4.0,
+        fade: Fade::Box,
+    }
+}
 
 const fn ink(c: Color) -> Px {
     (255.0, [c.r as f64, c.g as f64, c.b as f64])
@@ -402,29 +411,18 @@ pub fn draw(
         .prompt
         .as_ref()
         .map_or_else(strings::password_cue, |p| p.text.clone());
-    for (part, edit, cue) in [
-        (Part::Name, &m.name, strings::user_name_cue()),
-        (Part::Password, &m.password, password_cue),
+    let p = Paint { s, ..theme.paint() };
+    for (part, cue) in [
+        (Part::Name, strings::user_name_cue()),
+        (Part::Password, password_cue),
     ] {
         let Some(r) = l.rect(part) else { continue };
-        let shown = if edit.is_secret() {
-            edit.masked()
-        } else {
-            edit.clone()
-        };
         let state = match face(part) {
             Face::Focused => State::Focused,
             Face::Hot | Face::Pressed => State::Hot,
             Face::Rest => State::Normal,
         };
-        let caret = Caret::new(m.focus == part, true);
-        let f = Field {
-            r: at(r),
-            state,
-            caret,
-            px: ui,
-        };
-        field(c, theme, text, &f, &shown, &cue, s);
+        field(c, m, part, &cue, at(r), state, text, &p, ui);
     }
     if let Some(r) = l.rect(Part::Submit) {
         arrow(c, at(r), face(Part::Submit), s);
@@ -442,10 +440,7 @@ pub fn draw(
         let r = at(r);
         let room = r.width - (ICON + ICON_GAP) * s;
         let msg = m.message.clone().unwrap_or_default();
-        let lines: Vec<String> = crate::text::wrap(text, &msg, room, ui)
-            .into_iter()
-            .take(2)
-            .collect();
+        let lines = message_lines(text, &msg, room, ui, 2);
         let widest = lines.iter().map(|l| text.measure(l, false, ui)).max();
         let x = r.x + (room - widest.unwrap_or(0)) / 2;
         error_icon(c, x, r.y + (r.height - ICON * s) / 2, s);
@@ -485,23 +480,12 @@ pub fn draw(
 }
 
 fn lit_cell(c: &mut Canvas, r: Rect, face: Face, s: i32) {
-    let (fill, line) = match face {
-        Face::Focused => (CELL_FOCUS, CELL_FOCUS_LINE),
-        Face::Pressed => (CELL_PRESSED, CELL_FOCUS_LINE),
-        Face::Hot | Face::Rest => (CELL_HOT, CELL_HOT_LINE),
+    let b = match face {
+        Face::Focused => &CELL_FOCUS,
+        Face::Pressed => &CELL_PRESSED,
+        Face::Hot | Face::Rest => &CELL_HOT,
     };
-    let (w, h) = (r.width / s, r.height / s);
-    let px = ringed(
-        w,
-        h,
-        CELL_R,
-        1,
-        s,
-        |_, _, ring| {
-            if ring == 0 { line } else { fill }
-        },
-    );
-    lay(c, r.x, r.y, w * s, &px);
+    c.blit_over(r.x, r.y, &panel::light_box(b, r.width / s, r.height / s, s));
 }
 
 /// With no picture the frame holds a person's outline.
@@ -716,32 +700,36 @@ fn spinner(c: &mut Canvas, x: i32, y: i32, s: i32) {
     c.blit_over(x, y, &img);
 }
 
-/// Where a field goes and how it stands; `px` is its text size at the output scale.
-struct Field {
-    r: Rect,
-    state: State,
-    caret: Caret,
-    px: u32,
-}
-
+/// `part`'s edit in Glass's edit border at device `r`, the text drawn as every line edit's.
+#[expect(clippy::too_many_arguments)]
 fn field(
     c: &mut Canvas,
-    theme: &Theme,
-    text: &TextRenderer,
-    f: &Field,
-    shown: &TextEdit,
+    m: &Logon,
+    part: Part,
     cue: &str,
-    s: i32,
+    r: Rect,
+    state: State,
+    text: &TextRenderer,
+    p: &Paint,
+    px: u32,
 ) {
-    let (r, px) = (f.r, f.px);
-    let fill = if shown.is_read_only() {
+    let mut edit = match part {
+        Part::Name => m.name.clone(),
+        _ => m.password.clone(),
+    };
+    edit.set_cue(cue);
+    if edit.is_secret() {
+        edit = edit.masked();
+    }
+    let s = p.s;
+    let fill = if edit.is_read_only() {
         READ_ONLY_FILL
     } else {
         FIELD_FILL
     };
     c.fill_rect(r.inset(s), fill);
-    if let Some(st) = theme.look.style() {
-        st.draw(c, r, StylePart::EditBorder, f.state, s);
+    if let Some(st) = p.look.style() {
+        st.draw(c, r, StylePart::EditBorder, state, s);
     }
     let inner = Rect::new(
         r.x + FIELD_PAD * s,
@@ -749,35 +737,9 @@ fn field(
         r.width - 2 * FIELD_PAD * s,
         r.height,
     );
-    let line = text
-        .line(inner, false, px)
-        .map_or(inner, |(y, h)| Rect::new(inner.x, y, inner.width, h));
-    let first = edit_first_visible(text, shown, inner.width, px, 0);
-    if shown.text.is_empty() {
-        let cue = text.ellipsize(cue, inner.width, false, px);
-        text.draw(c, inner, &cue, false, CUE_INK, Align::Left, px);
-    } else {
-        let run = &shown.text[first..];
-        text.draw(c, inner, run, false, FIELD_INK, Align::Left, px);
-    }
-    let x_of = |i: usize| inner.x + text.measure(&shown.text[first..i.max(first)], false, px);
-    let sel = shown.selection();
-    if f.caret.focused() && sel.end > first && !sel.is_empty() {
-        let cs = &theme.colors;
-        let (x0, x1) = (x_of(sel.start), x_of(sel.end).min(inner.right()));
-        c.fill_rect(Rect::new(x0, line.y, x1 - x0, line.height), cs.hilight);
-        let run = Rect::new(x0, inner.y, inner.right() - x0, inner.height);
-        let picked = &shown.text[sel.start.max(first)..sel.end];
-        text.draw(c, run, picked, false, cs.hilight_text, Align::Left, px);
-    }
-    let caret_x = x_of(shown.caret()).min(inner.right() - s);
-    let bar = Rect::new(caret_x, line.y, s, line.height);
-    if f.caret.shown() {
-        c.fill_rect(bar, FIELD_INK);
-    }
-    if f.caret.focused() {
-        c.report_spot(shown.spot(inner, bar));
-    }
+    let first = edit_first_visible(text, &edit, inner.width, px, 0);
+    let caret = Caret::new(m.focus == part, true);
+    paint::draw_edit(c, text, &edit, inner, px, p, caret, first);
 }
 
 /// `words` centred on `r` in `color` over a dark halo, cut short to fit.
@@ -836,7 +798,7 @@ fn ink_mask(c: &mut Canvas, area: Rect, cov: &[u8], color: Color, s: i32) {
         .map(|&v| (2.0 * f64::from(v) * HALO_ALPHA / 255.0).min(HALO_ALPHA) as u8)
         .collect();
     let all = c.bounds();
-    c.blit_mask_over(area.x, area.y, w, h, &halo, Color::rgb(0, 0, 0), all);
+    c.blit_mask_over(area.x, area.y, w, h, &halo, HALO_INK, all);
     c.blit_mask_over(area.x, area.y, w, h, cov, color, all);
 }
 

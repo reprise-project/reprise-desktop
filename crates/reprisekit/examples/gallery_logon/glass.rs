@@ -1,5 +1,6 @@
-//! Glass's login screens: the last user's tile at rest, typed into with the arrow hot, Other user,
-//! the tiles, the error, busy, the power button hot with Caps Lock on and a layout badge.
+//! Glass's login screens: the last user's tile at rest, its frame hot, typed into with the arrow
+//! hot, Other user, the tiles, the error, the tile after its OK, busy, the power button hot with
+//! Caps Lock on and a layout badge.
 
 use reprisekit::art::userpic;
 use reprisekit::interface::Interface;
@@ -25,6 +26,8 @@ fn users() -> Vec<LogonUser> {
 
 pub fn screens() -> Vec<Logon> {
     let rest = Logon::new(Interface::Glass, users(), true, Some("carol"));
+    let mut frame_hot = rest.clone();
+    frame_hot.lit = Some((Part::Tile(2), Interaction::Hot));
     let mut typed = rest.clone();
     typed.key(LogonKey::Text("hunter2"));
     typed.lit = Some((Part::Submit, Interaction::Hot));
@@ -38,6 +41,8 @@ pub fn screens() -> Vec<Logon> {
     let mut message = typed.clone();
     message.lit = None;
     message.fail(text::incorrect());
+    let mut after_ok = message.clone();
+    after_ok.click(Part::MessageOk);
     let mut busy = typed.clone();
     busy.lit = None;
     busy.set_busy(true);
@@ -45,5 +50,7 @@ pub fn screens() -> Vec<Logon> {
     power.caps_lock = true;
     power.layout = Some("EN".into());
     power.lit = Some((Part::Power, Interaction::Hot));
-    vec![rest, typed, other, tiles, message, busy, power]
+    vec![
+        rest, frame_hot, typed, other, tiles, message, after_ok, busy, power,
+    ]
 }

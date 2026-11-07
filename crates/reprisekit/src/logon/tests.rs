@@ -193,6 +193,16 @@ fn fail_clears_the_password_and_keeps_the_name() {
 }
 
 #[test]
+fn glass_ok_puts_the_failure_text_away() {
+    let mut g = Logon::new(Interface::Glass, users(2), true, Some("user0"));
+    typed(&mut g, "wrong");
+    g.fail(text::incorrect());
+    g.click(Part::MessageOk);
+    assert_eq!(g.screen, Screen::Tile(0));
+    assert_eq!(g.message, None, "the tile shows no failure text after OK");
+}
+
+#[test]
 fn fail_and_its_ok_focus_the_screens_home_when_it_has_no_password_field() {
     let mut blue = Logon::new(Interface::Blue, users(3), true, Some("user1"));
     blue.fail(text::power_refused());
