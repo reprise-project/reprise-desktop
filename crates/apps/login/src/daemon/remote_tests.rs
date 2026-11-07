@@ -1122,3 +1122,40 @@ fn a_background_session_removed_before_its_start_reports_leaves_no_entry() {
     assert_eq!(run.after(REFUSE_DELAY).fire(Timer::Refuse(7)), denied(7, 0));
     assert_eq!(run.exited(2), [Effect::Disallocate(7)]);
 }
+
+#[test]
+fn every_refusal_from_one_address_carries_the_back_off_of_its_authenticate() {
+    let backoff = |wrong_password: bool| {
+        let mut run = remote_run(enabled());
+        for conn in 1..=3 {
+            run.on(tls(conn, "anna", "pw"));
+            run.on(Input::Member {
+                key: LookUpKey::Conn(conn),
+                uid: Some(ANNA),
+                member: false,
+            });
+        }
+        run.on(tls(4, "anna", "pw"));
+        if wrong_password {
+            run.on(member(4, ANNA));
+            run.worker(2, secret("Password: "));
+            run.after(Duration::from_millis(1500));
+            run.worker(2, failed(ErrorKind::Auth, AUTH_FAILED));
+            run.after(REFUSE_DELAY - Duration::from_millis(1500));
+        } else {
+            run.after(Duration::from_millis(50));
+            run.on(Input::Member {
+                key: LookUpKey::Conn(4),
+                uid: Some(ANNA),
+                member: false,
+            });
+            run.after(REFUSE_DELAY - Duration::from_millis(50));
+        }
+        match run.fire(Timer::Refuse(4)).as_slice() {
+            [Effect::ToFront(FrontEvent::Denied { conn: 4, backoff_s })] => *backoff_s,
+            other => panic!("{other:?}"),
+        }
+    };
+    assert_eq!(backoff(false), 2, "the fourth failure backs off 2 s");
+    assert_eq!(backoff(true), 2, "a wrong password tells the same");
+}
