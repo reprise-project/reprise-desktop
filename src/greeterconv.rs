@@ -25,10 +25,10 @@ pub enum Failure {
     Incorrect,
     /// PAM's own words: its notes from this login, or else its refusal of the account.
     Pam(String),
-    Refused,
-    /// The login could not run; the text is the daemon's.
-    Failed(String),
-    /// Turning off or restarting failed; the daemon's text is not for the screen.
+    /// The login could not run; the daemon's reason is for the journal.
+    Failed,
+    /// Turning off or restarting is refused while others are logged on.
+    PowerRefused,
     PowerFailed,
 }
 
@@ -186,7 +186,7 @@ impl Conversation {
             (Phase::Idle, GreeterReply::Error { kind, .. }) if self.power => {
                 self.power = false;
                 vec![Step::Fail(match kind {
-                    ErrorKind::Refused => Failure::Refused,
+                    ErrorKind::Refused => Failure::PowerRefused,
                     _ => Failure::PowerFailed,
                 })]
             }
@@ -202,8 +202,7 @@ impl Conversation {
             ErrorKind::Account => {
                 Failure::Pam(notes.unwrap_or_else(|| crate::lock::clean_notice(text).join("\n")))
             }
-            ErrorKind::Refused => Failure::Refused,
-            ErrorKind::Failed => Failure::Failed(text.to_owned()),
+            ErrorKind::Refused | ErrorKind::Failed => Failure::Failed,
         }
     }
 }
@@ -354,7 +353,7 @@ mod tests {
                 kind: ErrorKind::Refused,
                 text: "other users are logged on".into()
             }),
-            vec![Step::Fail(Failure::Refused)]
+            vec![Step::Fail(Failure::PowerRefused)]
         );
         assert!(c.idle());
     }
@@ -433,6 +432,19 @@ mod tests {
         c.on_reply(GreeterReply::Success);
         assert_eq!(c.power(PowerAction::Reboot), vec![]);
         assert_eq!(c.cancel(), None);
+    }
+
+    #[test]
+    fn a_refused_or_failed_login_is_a_fixed_failure() {
+        for kind in [ErrorKind::Refused, ErrorKind::Failed] {
+            let mut c = submitted();
+            c.on_reply(prompt(AuthKind::Info, "Welcome"));
+            assert_eq!(
+                c.on_reply(error(kind, "another login is in progress")),
+                vec![Step::Fail(Failure::Failed)],
+                "{kind:?}"
+            );
+        }
     }
 
     #[test]
