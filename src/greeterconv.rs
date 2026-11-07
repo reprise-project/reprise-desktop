@@ -205,7 +205,7 @@ impl Conversation {
                 }
                 AuthKind::Info | AuthKind::Error => {
                     self.asked = true;
-                    crate::lock::add_notice(&mut self.notes, &text);
+                    repriselogin::add_prompt_lines(&mut self.notes, &text);
                     vec![
                         Step::Note(text),
                         Step::Send(GreeterRequest::PostAuthResponse { response: None }),
@@ -267,7 +267,7 @@ impl Conversation {
             ErrorKind::Failed if self.admin => Failure::PowerFailed,
             ErrorKind::Auth => notes.map_or(Failure::Incorrect, Failure::Pam),
             ErrorKind::Account => {
-                Failure::Pam(notes.unwrap_or_else(|| crate::lock::clean_notice(text).join("\n")))
+                Failure::Pam(notes.unwrap_or_else(|| repriselogin::clean_prompt(text).join("\n")))
             }
             ErrorKind::Refused | ErrorKind::Failed => Failure::Failed,
         }

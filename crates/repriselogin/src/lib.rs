@@ -17,7 +17,7 @@ pub const SESSION_SOCKET: &str = "/run/reprise-login/session.sock";
 pub const SOCKET_ENV: &str = "REPRISE_LOGIN_SOCKET";
 pub const GREETER_USER: &str = "reprise-greeter";
 
-/// Lines of PAM text one message keeps.
+/// Lines of PAM text kept and shown.
 pub const PROMPT_LINES: usize = 2;
 /// Characters kept of one PAM text line.
 pub const PROMPT_CHARS: usize = 200;
@@ -130,5 +130,16 @@ mod tests {
         let mut lines = vec!["first".to_string()];
         add_prompt_lines(&mut lines, "second\nthird");
         assert_eq!(lines, vec!["first".to_string(), "second".to_string()]);
+    }
+
+    #[test]
+    fn prompt_lines_fill_up_across_messages() {
+        let mut lines = Vec::new();
+        add_prompt_lines(&mut lines, "  \n\tThe account\x1b[31m is locked.\r\n");
+        assert_eq!(lines, ["The account [31m is locked."]);
+        add_prompt_lines(&mut lines, &"x".repeat(1000));
+        assert_eq!(lines[1], "x".repeat(PROMPT_CHARS));
+        add_prompt_lines(&mut lines, "past the message area");
+        assert_eq!(lines.len(), PROMPT_LINES);
     }
 }
