@@ -8,7 +8,7 @@ use crate::classic::widgets::{self, LINE_H};
 use crate::controls::combo;
 use crate::controls::multiedit;
 use crate::text::TextRenderer;
-use crate::textedit::{BULLET, TextEdit};
+use crate::textedit::{TextEdit, mask::BULLET};
 
 use super::{Control, Event, Form, Hit, Part};
 

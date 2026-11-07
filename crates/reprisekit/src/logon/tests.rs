@@ -193,6 +193,37 @@ fn fail_clears_the_password_and_keeps_the_name() {
 }
 
 #[test]
+fn fail_and_its_ok_focus_the_screens_home_when_it_has_no_password_field() {
+    let mut blue = Logon::new(Interface::Blue, users(3), true, Some("user1"));
+    blue.fail(text::power_refused());
+    assert_eq!((blue.screen, blue.focus), (Screen::Tiles, Part::Tile(1)));
+
+    let mut glass = Logon::new(Interface::Glass, users(3), true, None);
+    glass.key(LogonKey::Escape);
+    glass.fail(text::power_refused());
+    assert_eq!(
+        (glass.screen, glass.focus),
+        (Screen::Message, Part::MessageOk)
+    );
+    glass.key(LogonKey::Enter);
+    assert_eq!((glass.screen, glass.focus), (Screen::Tiles, Part::Tile(0)));
+}
+
+#[test]
+fn a_logon_keys_debug_hides_the_typed_text() {
+    let text = format!("{:?}", LogonKey::Text("hunter2"));
+    let insert = format!("{:?}", LogonKey::Edit(EditKey::Insert("hunter2".into())));
+    assert_eq!(text, "Text(<redacted>)");
+    assert_eq!(insert, "Edit(Insert(<redacted>))");
+    let backspace = LogonKey::Edit(EditKey::Backspace { word: true });
+    assert_eq!(format!("{backspace:?}"), "Edit(Backspace { word: true })");
+    assert_eq!(
+        format!("{:?}", LogonKey::Tab { back: true }),
+        "Tab { back: true }"
+    );
+}
+
+#[test]
 fn busy_ignores_everything_but_power() {
     let mut m = Logon::new(Interface::Classic, Vec::new(), false, Some("alice"));
     typed(&mut m, "pw");

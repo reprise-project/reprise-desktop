@@ -1,6 +1,5 @@
-//! The login screen: who may log on, the typed name and password, which screen shows, and the
-//! keys and clicks that move between screens. Model, hit and access here; each interface's
-//! `logon` module lays it out and paints it, and `interfaces::logon` picks the one in force.
+//! The login screen's model, hit and access. Each interface's `logon` module lays it out and
+//! paints it; `interfaces::logon` picks the one in force.
 
 use crate::access::accesskit::{NodeId, Role};
 use crate::access::{self as ax, ROOT, Tree};
@@ -64,6 +63,9 @@ pub mod text {
     }
     pub fn power_off() -> String {
         tr!("logon-power-off")
+    }
+    pub fn verifying() -> String {
+        tr!("logon-verifying")
     }
 }
 
@@ -138,7 +140,8 @@ pub struct Prompt {
     pub echo: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// `Debug` redacts typed text, which may be a password.
+#[derive(Clone, PartialEq, Eq)]
 pub enum LogonKey<'a> {
     Edit(EditKey),
     Text(&'a str),
@@ -149,12 +152,26 @@ pub enum LogonKey<'a> {
     Down,
 }
 
+impl std::fmt::Debug for LogonKey<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LogonKey::Edit(EditKey::Insert(_)) => f.write_str("Edit(Insert(<redacted>))"),
+            LogonKey::Edit(k) => f.debug_tuple("Edit").field(k).finish(),
+            LogonKey::Text(_) => f.write_str("Text(<redacted>)"),
+            LogonKey::Enter => f.write_str("Enter"),
+            LogonKey::Escape => f.write_str("Escape"),
+            LogonKey::Tab { back } => f.debug_struct("Tab").field("back", back).finish(),
+            LogonKey::Up => f.write_str("Up"),
+            LogonKey::Down => f.write_str("Down"),
+        }
+    }
+}
+
 /// How many tiles a screen shows at once unless the host says otherwise.
 pub const COLUMN: usize = 5;
 
-/// The login screen's state. `name` always holds the user the screen is about: typed, or the
-/// tile's. The host reads `password.text` on [`LogonAction::Submit`] and sets `caps_lock`,
-/// `layout` (the badge's short name) and `lit`.
+/// `name` holds the user the screen is about, typed or the tile's. The host reads `password.text`
+/// on [`LogonAction::Submit`] and sets `caps_lock`, `layout` (the badge's short name) and `lit`.
 #[derive(Clone, Debug)]
 pub struct Logon {
     pub interface: Interface,
@@ -337,7 +354,7 @@ impl Logon {
             Part::Layout => Some(LogonAction::NextLayout),
             Part::MessageOk => {
                 self.screen = self.back;
-                self.focus = Part::Password;
+                self.focus = self.home();
                 None
             }
         }
@@ -459,7 +476,7 @@ impl Logon {
         self.focus = Part::Password;
     }
 
-    /// The login failed with `text`: the password is wiped and takes the focus, the name stays.
+    /// The login failed with `text`: the password is wiped, the name stays and the focus goes home.
     /// Glass shows the text on its own screen, whose OK comes back here.
     pub fn fail(&mut self, text: String) {
         self.wipe_password();
@@ -467,7 +484,7 @@ impl Logon {
         self.name.set_read_only(false);
         self.busy = false;
         self.message = Some(text);
-        self.focus = Part::Password;
+        self.focus = self.home();
         if self.interface == Interface::Glass && self.screen != Screen::Message {
             self.back = self.screen;
             self.screen = Screen::Message;
