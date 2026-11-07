@@ -1308,9 +1308,8 @@ mod tests {
                 }
             }
         }
-        if crate::text::test_tahoma() {
-            assert_eq!(got, want);
-        }
+        crate::pins::fonts();
+        assert_eq!(got, want);
     }
 
     #[test]

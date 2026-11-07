@@ -893,9 +893,7 @@ mod tests {
 
     #[test]
     fn the_panel_pins_per_interface_at_scale_1_and_2() {
-        if !crate::text::test_tahoma() {
-            return;
-        }
+        crate::pins::fonts();
         let lines: Vec<String> = pin_cases()
             .iter()
             .map(|(name, c)| format!("(\"{name}\", 0x{:016x}),", fnv(c)))

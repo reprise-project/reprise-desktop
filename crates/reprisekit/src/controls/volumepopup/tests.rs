@@ -1992,9 +1992,7 @@ fn fnv(c: &Canvas) -> u64 {
 /// Two programs, the second muted, the focus ring on the first's thumb, at scale 1 and 2.
 #[test]
 fn the_popup_is_pinned_in_each_look_at_scale_1_and_2() {
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let mut muted = app("mpv", 8);
     muted.mute = true;
     let mut vp = VolumePopup::new(&mix(&[app("firefox", 16), muted]));

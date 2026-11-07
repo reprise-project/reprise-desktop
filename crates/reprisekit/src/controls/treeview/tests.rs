@@ -666,9 +666,7 @@ fn explorer_style_lands_on_its_pixels() {
 /// its 9 px box at x 7..15, icon from x 22, band from x 41, label from 43.
 #[test]
 fn picker_style_lands_on_its_pixels() {
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let theme = Theme::default();
     let cs = &theme.colors;
     let text = TextRenderer::load(&FontConfig::default());

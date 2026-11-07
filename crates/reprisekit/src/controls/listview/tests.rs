@@ -709,9 +709,7 @@ fn a_blue_header_lights_the_column_the_pointer_is_on() {
 
 #[test]
 fn the_sort_arrow_sits_after_the_title() {
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let text = TextRenderer::load(&FontConfig::default());
     let mut lv = view(3);
     lv.sort = Some((0, true));
@@ -758,9 +756,7 @@ fn the_sort_arrow_sits_after_the_title() {
 /// short of the column's end, and the title ends its ink 10 px before the arrow.
 #[test]
 fn a_right_aligned_sorted_column_puts_its_arrow_after_the_title() {
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let mut lv = view(0);
     lv.columns = vec![
         Column::new("Name", 180),
@@ -850,9 +846,7 @@ fn blue_header_inks(sort: Option<(usize, bool)>) -> Vec<(Vec<i32>, Vec<i32>)> {
 /// divider (85..93 of 96) and ends its ink 10 px before it, at 74 (unsorted: 88).
 #[test]
 fn blue_sorted_titles_move_in_and_a_right_aligned_arrow_meets_the_divider() {
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let rest = blue_header_inks(None);
     assert_eq!(rest[0].0.first(), Some(&9), "Name at rest");
     assert_eq!(rest[1].0.last(), Some(&88), "Size at rest");
@@ -937,9 +931,7 @@ fn scrolling_left_shifts_the_header_and_the_cells() {
 
 #[test]
 fn the_rename_box_is_a_black_border_on_white_over_the_name() {
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let text = TextRenderer::load(&FontConfig::default());
     let theme = Theme::default();
     let px = theme.fonts.size_px;
@@ -1266,9 +1258,7 @@ fn a_borderless_list_lays_out_on_the_rect() {
     let framed = layout(&lv, r, &ControlMetrics::CLASSIC);
     assert_eq!(framed.header, Rect::new(22, 32, 296, HEADER_H));
     assert_eq!(framed.body.x, 22);
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     lv.frame = false;
     let (c, _, theme) = render(&lv, Rect::new(0, 0, 300, 200));
     assert_ne!(
@@ -1280,9 +1270,7 @@ fn a_borderless_list_lays_out_on_the_rect() {
 
 #[test]
 fn a_group_header_is_bold_over_the_gradient_rule() {
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let lv = grouped();
     let r = Rect::new(0, 0, 400, 200);
     let (c, lay, theme) = render(&lv, r);

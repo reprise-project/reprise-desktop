@@ -89,9 +89,7 @@ fn balloon_tip_has_a_stem_a_bubble_and_wraps_long_bodies() {
 
 #[test]
 fn info_tip_wraps_at_300_px_and_sits_where_asked() {
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let theme = Theme::default();
     let text = TextRenderer::load(&FontConfig::default());
     let short = "Contains music and other audio files.";
@@ -710,9 +708,7 @@ const WRAPPED_PINS: [u64; 6] = [
 #[test]
 fn wrapped_button_rows_pins() {
     use crate::interface::Interface;
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let mut got = Vec::new();
     for i in [Interface::Classic, Interface::Blue] {
         for (pct, s) in [(100, 1), (100, 2), (200, 1)] {
@@ -755,16 +751,15 @@ fn a_blue_tip_is_black_round_its_info_colour_in_every_variant() {
             assert_eq!(c.get(x, y), black, "{v:?}: the frame at {x},{y}");
         }
         assert_eq!(c.get(1, 1), theme.colors.info_bk.argb(), "{v:?}: the fill");
-        if crate::text::test_tahoma() {
-            assert_eq!(h, 17, "{v:?}: 17 px tall");
-            let first = (1..w - 1).find(|&x| (1..h - 1).any(|y| c.get(x, y) == black));
-            let top = (1..h - 1).find(|&y| (1..w - 1).any(|x| c.get(x, y) == black));
-            assert_eq!(
-                (first, top),
-                (Some(3), Some(4)),
-                "{v:?}: the ink starts 3 px in, 4 down"
-            );
-        }
+        crate::pins::fonts();
+        assert_eq!(h, 17, "{v:?}: 17 px tall");
+        let first = (1..w - 1).find(|&x| (1..h - 1).any(|y| c.get(x, y) == black));
+        let top = (1..h - 1).find(|&y| (1..w - 1).any(|x| c.get(x, y) == black));
+        assert_eq!(
+            (first, top),
+            (Some(3), Some(4)),
+            "{v:?}: the ink starts 3 px in, 4 down"
+        );
     }
 }
 

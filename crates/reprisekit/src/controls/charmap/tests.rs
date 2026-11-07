@@ -248,9 +248,7 @@ fn drawn(theme: &Theme, f: &Form, map: &CharMap, focused: bool, s: i32) -> Canva
 /// font picked.
 #[test]
 fn character_map_pins_at_scale_1_and_2() {
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let fonts = vec![FontConfig::default().family[0].clone()];
     let mut all = sample();
     all.pick_char('A');

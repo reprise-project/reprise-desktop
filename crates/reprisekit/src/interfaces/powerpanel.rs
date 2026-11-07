@@ -137,9 +137,7 @@ mod tests {
 
     #[test]
     fn the_panels_pin_per_state_scheme_and_scale() {
-        if !crate::text::test_tahoma() {
-            crate::pins::skip!("no Tahoma for the labels");
-        }
+        crate::pins::fonts();
         let all = Cues {
             focus: true,
             keys: true,
@@ -187,9 +185,7 @@ mod tests {
 
     #[test]
     fn classics_cancel_pins_per_state_and_scale() {
-        if !crate::text::test_tahoma() {
-            crate::pins::skip!("no Tahoma for the labels");
-        }
+        crate::pins::fonts();
         let classic = Theme::default();
         let mut got = Vec::new();
         for s in [1, 2] {

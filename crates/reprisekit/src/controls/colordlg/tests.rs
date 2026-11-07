@@ -497,9 +497,7 @@ fn looks() -> Vec<(String, Theme)> {
 
 #[test]
 fn color_dialog_pins_at_scale_1_and_2() {
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let narrow = ColorDlg::new(BASIC[13], custom());
     let wide = sample();
     let mut got = Vec::new();

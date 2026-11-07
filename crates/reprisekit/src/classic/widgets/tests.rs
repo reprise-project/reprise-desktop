@@ -304,9 +304,7 @@ fn group_box_corners_take_the_right_ls_colour() {
 #[test]
 fn group_box_label_gap_counts_the_access_key() {
     let (theme, text) = setup();
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let cs = &theme.colors;
     let px = theme.fonts.size_px;
     let g = Rect::new(12, 87, 368, 60);
@@ -863,9 +861,7 @@ fn caption_has_the_gradient_title_and_buttons() {
 #[test]
 fn a_long_value_scrolls_to_keep_the_caret_in_the_field() {
     let (theme, text) = setup();
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let px = theme.fonts.size_px;
     let mut e = TextEdit::new("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", false);
     e.set_selection(e.text.len(), e.text.len());
@@ -945,9 +941,7 @@ fn the_scroll_matches_remeasuring_every_start() {
 #[test]
 fn a_visible_caret_does_not_move_the_view() {
     let (theme, text) = setup();
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let px = theme.fonts.size_px;
     let mut e = TextEdit::new("abcdef", false);
     e.set_selection(3, 3);
@@ -957,9 +951,7 @@ fn a_visible_caret_does_not_move_the_view() {
 #[test]
 fn a_scrolled_field_paints_nothing_past_its_right_edge() {
     let (theme, text) = setup();
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let cs = &theme.colors;
     let px = theme.fonts.size_px;
     let mut c = Canvas::new(120, 40);
@@ -1083,9 +1075,7 @@ fn a_preedit_range_draws_only_underlined_with_the_caret_at_its_end() {
 #[test]
 fn a_selection_and_the_caret_cover_13_rows_from_the_text_area_s_top() {
     let (theme, text) = setup();
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let cs = &theme.colors;
     let px = theme.fonts.size_px;
     for h in [14, 15] {
@@ -1153,14 +1143,12 @@ fn a_hidden_caret_still_reports_its_spot() {
 #[test]
 fn a_scrolled_multibyte_value_stays_on_char_boundaries() {
     let (theme, text) = setup();
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let cs = &theme.colors;
     let px = theme.fonts.size_px;
-    // 2-byte Latin-1 accents and 3-byte CJK well past the field, so `first` lands inside a
-    // multi-byte run.
-    let mut e = TextEdit::new("áéíóú日本語テキストáéíóú".repeat(4), false);
+    // 2-byte Latin-1 accents and 3-byte punctuation well past the field, so `first` lands inside
+    // a multi-byte run.
+    let mut e = TextEdit::new("áéíóú€…‰€…‰€áéíóú".repeat(4), false);
     e.set_selection(e.text.len(), e.text.len());
     let first = edit_first_visible(&text, &e, 40, px, 0);
     assert!(

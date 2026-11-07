@@ -62,7 +62,7 @@ fn wrap_breaks_on_words_and_inside_words_too_long_for_a_line() {
 #[test]
 fn layout_stacks_text_field_and_buttons() {
     let theme = Theme::default();
-    let Some(text) = tahoma() else { return };
+    let text = tahoma();
     let d = Dialog::run(&[]);
     let l = DialogLayout::compute(&theme, &text, &d);
     assert_eq!(l.size, (347, 179));
@@ -117,7 +117,7 @@ fn layout_stacks_text_field_and_buttons() {
 #[test]
 fn confirm_delete_icons_asks_about_the_places_then_the_files() {
     let theme = Theme::default();
-    let Some(text) = tahoma() else { return };
+    let text = tahoma();
     let hide = vec!["home".to_string()];
     let files = vec![
         std::path::PathBuf::from("/d/a.txt"),
@@ -162,7 +162,7 @@ fn confirm_delete_icons_asks_about_the_places_then_the_files() {
 fn confirm_hide_fits_its_text() {
     use crate::desktop::Place;
     let theme = Theme::default();
-    let Some(text) = tahoma() else { return };
+    let text = tahoma();
     let mut d = Dialog::confirm_hide(Place::Computer, "Computer");
     assert_eq!(d.title, "Confirm Delete");
     assert_eq!(d.icon.as_deref(), Some("folder-documents"));
@@ -486,7 +486,7 @@ fn space_presses_a_message_boxs_focused_button() {
 #[test]
 fn end_program_lays_out_its_template() {
     let theme = Theme::default();
-    let Some(text) = tahoma() else { return };
+    let text = tahoma();
     let mut d = Dialog::end_program("signal-desktop", 4321);
     assert_eq!(d.title, "End Program - signal-desktop");
     let l = DialogLayout::compute(&theme, &text, &d);
@@ -589,7 +589,7 @@ fn end_program_sets_its_text_and_buttons_in_the_second_dialog_font() {
 fn a_key_aid_prompt_asks_on_its_fixed_template() {
     use crate::keyfilter::Aid;
     let theme = Theme::default();
-    let Some(text) = tahoma() else { return };
+    let text = tahoma();
     for (aid, lines) in [
         (Aid::StickyKeys, 6),
         (Aid::SlowKeys, 7),

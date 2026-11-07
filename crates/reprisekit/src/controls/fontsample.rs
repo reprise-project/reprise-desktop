@@ -202,17 +202,13 @@ mod tests {
     use super::*;
     use crate::theme::Theme;
 
-    fn tahoma() -> Option<TextRenderer> {
-        if !crate::text::test_tahoma() {
-            return None;
-        }
-        let dir = std::path::PathBuf::from(std::env::var_os("REPRISE_TEST_FONTS")?);
-        TextRenderer::from_file(&dir.join("tahoma.ttf"), 0)
+    fn tahoma() -> TextRenderer {
+        TextRenderer::from_file(&crate::pins::fonts().join("tahoma.ttf"), 0).expect("Tahoma")
     }
 
     #[test]
     fn a_sample_grows_with_its_sizes_and_stops_at_the_widest() {
-        let Some(t) = tahoma() else { return };
+        let t = tahoma();
         let (w, h) = size(&t);
         assert_eq!(w, MAX_W, "the 72 px pangram is cut");
         let sum: u32 = SIZES.iter().sum();
@@ -221,7 +217,7 @@ mod tests {
 
     #[test]
     fn a_file_face_draws_no_fallback_glyphs() {
-        let Some(t) = tahoma() else { return };
+        let t = tahoma();
         let ui = TextRenderer::load(&Theme::default().fonts);
         assert_eq!(
             t.advance('\u{4e2d}', false, 24),
@@ -233,7 +229,7 @@ mod tests {
 
     #[test]
     fn the_picture_fits_inside_its_bound_at_scale_2() {
-        let Some(t) = tahoma() else { return };
+        let t = tahoma();
         let ui = TextRenderer::load(&Theme::default().fonts);
         let cs = Theme::default().colors;
         let pic = picture(

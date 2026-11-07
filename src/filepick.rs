@@ -2159,9 +2159,8 @@ mod tests {
         // The picture's cell: its frame and name. The Look in and places labels name the
         // test's folder and user.
         let cell = Rect::new(drawn.x - 9, drawn.y - 33, 112, 136);
-        if reprisekit::text::test_tahoma() {
-            assert_eq!(fnv(&c, cell), 0xdb3b_8c32_df81_6bd0, "Browse in Thumbnails");
-        }
+        reprisekit::pins::fonts();
+        assert_eq!(fnv(&c, cell), 0xdb3b_8c32_df81_6bd0, "Browse in Thumbnails");
 
         p.event(Event::NeedListing(p.dlg.folder().unwrap()));
         settle(&mut p);

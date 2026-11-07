@@ -1077,9 +1077,8 @@ fn a_dialogs_button_draws_as_a_task_button() {
     let ink: Vec<i32> = (24..r.width)
         .filter(|&x| (5..18).any(|y| px(&c, x, y) == cs.button_text.argb()))
         .collect();
-    if reprisekit::text::test_tahoma() {
-        assert_eq!(ink.first(), Some(&25), "the title from x 25");
-    }
+    reprisekit::pins::fonts();
+    assert_eq!(ink.first(), Some(&25), "the title from x 25");
     assert!(ink.last().is_some_and(|&x| x < r.width - 3), "cut inside");
     let c = draw(false);
     assert_eq!(px(&c, 0, 10), cs.button_hilight.argb(), "raised");

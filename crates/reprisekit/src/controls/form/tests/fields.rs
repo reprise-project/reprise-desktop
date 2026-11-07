@@ -286,9 +286,7 @@ fn a_read_only_field_takes_the_focus_and_copies_but_no_typing_paste_or_drop() {
 /// A read-only field draws as a writable one does, on the window colour with its text black.
 #[test]
 fn a_read_only_field_pixels() {
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let t = tr();
     let cs = &Theme::default().colors;
     let shot = |f: &Form| {
@@ -453,9 +451,7 @@ fn a_masked_field_reports_a_secret_spot_and_shows_no_preedit() {
 /// changes what it draws.
 #[test]
 fn masked_edit_draws_bullets() {
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let t = tr();
     let theme = Theme::default();
     let cs = &theme.colors;
@@ -501,9 +497,7 @@ fn masked_edit_draws_bullets() {
 /// and a masked field shows its cue rather than bullets.
 #[test]
 fn an_empty_edit_draws_its_cue_in_grey() {
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let t = tr();
     let theme = Theme::default();
     let cs = &theme.colors;

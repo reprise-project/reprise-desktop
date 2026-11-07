@@ -439,53 +439,63 @@ mod tests {
     use crate::taskbar::TaskbarShape;
     use crate::theme::Theme;
 
-    #[test]
-    fn caption_fit_leaves_a_title_exactly_its_room_in_every_interface() {
+    /// `title`'s caption fit in `i` leaves it exactly its room, `dialog` and `prompt` px wide in
+    /// the caption's own face.
+    fn fits_its_room(i: Interface, dialog: i32, prompt: i32) {
         let title = "User Accounts";
-        for (i, dialog, prompt) in [
-            (Interface::Classic, 159, 103),
-            (Interface::Blue, 179, 179),
-            (Interface::Glass, 201, 201),
-        ] {
-            let theme = theme_for(i);
-            let fit = caption_fit(&theme, title, Chrome::DIALOG);
-            let g = FrameGeometry::layout(&theme.metrics, fit, 1, false, Chrome::DIALOG);
-            let room = match &theme.look {
-                Look::Classic => classic::frame::title_rect(&g, 1).width,
-                Look::Styled(s) => {
-                    let (left, right) = style_frame::title_span(s, &g, 1);
-                    right - left
-                }
-            };
-            let (need, face) = match &theme.look {
-                Look::Classic => {
-                    let t = loaded(theme.fonts.clone());
-                    let need = t.measure(title, true, theme.fonts.size_px);
-                    (need, crate::text::test_tahoma())
-                }
-                Look::Styled(s) => {
-                    let font = s.caption_text.font();
-                    let t = caption_text(s);
-                    let need = t.measure(title, s.caption_text.bold, s.caption_text.size_px);
-                    (need, t.has_face(&font.family[0]))
-                }
-            };
-            assert_eq!(room, need, "{i:?}: the title fills its room at the fit");
-            if !face {
-                continue;
+        let theme = theme_for(i);
+        let fit = caption_fit(&theme, title, Chrome::DIALOG);
+        let g = FrameGeometry::layout(&theme.metrics, fit, 1, false, Chrome::DIALOG);
+        let room = match &theme.look {
+            Look::Classic => classic::frame::title_rect(&g, 1).width,
+            Look::Styled(s) => {
+                let (left, right) = style_frame::title_span(s, &g, 1);
+                right - left
             }
-            assert_eq!(fit, dialog, "{i:?} dialog caption");
-            assert_eq!(
-                caption_fit(&theme, title, Chrome::PROMPT),
-                prompt,
-                "{i:?} prompt caption"
-            );
+        };
+        let (need, face) = match &theme.look {
+            Look::Classic => {
+                let t = loaded(theme.fonts.clone());
+                (t.measure(title, true, theme.fonts.size_px), true)
+            }
+            Look::Styled(s) => {
+                let font = s.caption_text.font();
+                let t = caption_text(s);
+                let need = t.measure(title, s.caption_text.bold, s.caption_text.size_px);
+                (need, t.has_face(&font.family[0]))
+            }
+        };
+        assert_eq!(room, need, "{i:?}: the title fills its room at the fit");
+        if !face {
+            return;
         }
+        assert_eq!(fit, dialog, "{i:?} dialog caption");
+        assert_eq!(
+            caption_fit(&theme, title, Chrome::PROMPT),
+            prompt,
+            "{i:?} prompt caption"
+        );
+    }
+
+    #[test]
+    fn caption_fit_leaves_a_classic_title_exactly_its_room() {
+        crate::pins::fonts();
+        fits_its_room(Interface::Classic, 159, 103);
         let undecorated = Chrome {
             decorated: false,
             ..Chrome::DIALOG
         };
-        assert_eq!(caption_fit(&Theme::default(), title, undecorated), 0);
+        assert_eq!(
+            caption_fit(&Theme::default(), "User Accounts", undecorated),
+            0
+        );
+    }
+
+    /// Their caption faces are system fonts; the widths are checked where those are installed.
+    #[test]
+    fn caption_fit_leaves_a_blue_or_glass_title_exactly_its_room() {
+        fits_its_room(Interface::Blue, 179, 179);
+        fits_its_room(Interface::Glass, 201, 201);
     }
 
     /// Blue draws its controls hot and held; Classic and Glass draw them the same whatever the pointer does, so hover asks them for no redraw.

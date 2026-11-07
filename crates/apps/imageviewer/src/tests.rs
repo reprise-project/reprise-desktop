@@ -396,9 +396,7 @@ fn fnv(c: &Canvas) -> u64 {
 
 #[test]
 fn the_main_window_is_pinned_per_interface_and_scale() {
-    if !reprisekit::text::test_tahoma() {
-        return;
-    }
+    reprisekit::pins::fonts();
     let dir = folder(&[("a.bmp", 200, 120), ("b.bmp", 4, 4)]);
     let mut got = Vec::new();
     for i in [Interface::Classic, Interface::Blue, Interface::Glass] {

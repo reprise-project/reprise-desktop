@@ -189,9 +189,7 @@ fn drawn() -> Vec<(reprisekit::interface::Interface, Canvas)> {
 /// With the test fonts only.
 #[test]
 fn the_window_sits_on_its_pixels_in_every_look() {
-    if !reprisekit::text::test_tahoma() {
-        return;
-    }
+    reprisekit::pins::fonts();
     let mut pins = Vec::new();
     for (_, c) in drawn() {
         let mut h: u64 = 0xcbf2_9ce4_8422_2325;

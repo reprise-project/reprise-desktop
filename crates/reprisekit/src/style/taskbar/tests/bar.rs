@@ -407,7 +407,11 @@ fn blue_clock_bar(clock: &str) -> (Canvas, TaskbarLayout) {
     let theme = theme_for(Interface::Blue);
     let s = theme.look.style().unwrap();
     let text = TextRenderer::load(&theme.fonts);
-    let start = TextRenderer::load(&s.start_text.font());
+    // The Start label's own faces are whichever the machine installs; the clock is what is read.
+    let start = TextRenderer::load(&FontConfig {
+        family: vec!["Tahoma".into()],
+        ..s.start_text.font()
+    });
     let counts = TaskbarCounts {
         tray: 2,
         ..TaskbarCounts::default()
@@ -426,9 +430,7 @@ fn blue_clock_bar(clock: &str) -> (Canvas, TaskbarLayout) {
 
 #[test]
 fn blue_sets_the_clock_in_its_48_px_box_12_px_from_the_end() {
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     for (clock, x0, x1) in [
         ("11:00 PM", 1862, 1904),
         ("12:19 PM", 1862, 1904),

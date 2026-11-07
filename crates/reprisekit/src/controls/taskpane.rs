@@ -643,9 +643,7 @@ mod tests {
 
     #[test]
     fn a_long_details_line_wraps_and_grows_its_body() {
-        if !crate::text::test_tahoma() {
-            return;
-        }
+        crate::pins::fonts();
         let (theme, text) = renderer();
         let px = theme.fonts.size_px;
         let mut tp = pane();
@@ -695,9 +693,7 @@ mod tests {
 
     #[test]
     fn a_wrapped_link_row_is_thirty_tall_and_pushes_the_next_one_down() {
-        if !crate::text::test_tahoma() {
-            return;
-        }
+        crate::pins::fonts();
         let (theme, text) = renderer();
         let tp = pane();
         let lay = layout(
@@ -742,9 +738,7 @@ mod tests {
 
     #[test]
     fn an_empty_details_line_is_a_five_pixel_gap() {
-        if !crate::text::test_tahoma() {
-            return;
-        }
+        crate::pins::fonts();
         let (theme, text) = renderer();
         let px = theme.fonts.size_px;
         let mut tp = pane();
@@ -767,9 +761,7 @@ mod tests {
         let lay = layout(&tp, &text, px, PANE, &ControlMetrics::CLASSIC);
         assert_eq!(lay.lines[2].len(), 8, "the date wraps once");
         assert_eq!(lay.bodies[2].height, 101);
-        if !crate::text::test_tahoma() {
-            return;
-        }
+        crate::pins::fonts();
         let cs = &theme.colors;
         let mut c = Canvas::new(200, 700);
         draw(&mut c, &text, &classic_paint(cs, 1), &tp, &lay, px);

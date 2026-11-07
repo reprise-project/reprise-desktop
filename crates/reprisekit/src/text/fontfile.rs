@@ -243,10 +243,7 @@ mod tests {
 
     #[test]
     fn the_test_tahoma_reads_its_name_table() {
-        if !crate::text::test_tahoma() {
-            return;
-        }
-        let dir = super::super::fonts::test_fonts_dir().expect("the test fonts");
+        let dir = crate::pins::fonts();
         let bold = faces(&dir.join("tahomabd.ttf")).expect("a font");
         assert_eq!(bold.len(), 1);
         let f = &bold[0];
@@ -259,10 +256,7 @@ mod tests {
 
     #[test]
     fn the_test_tahoma_is_installed_from_its_folder() {
-        if !crate::text::test_tahoma() {
-            return;
-        }
-        let dir = super::super::fonts::test_fonts_dir().expect("the test fonts");
+        let dir = crate::pins::fonts();
         let dir = dir.canonicalize().unwrap_or(dir);
         let face = faces(&dir.join("tahoma.ttf")).expect("a font").remove(0);
         let at = installed(&face.postscript);

@@ -1099,9 +1099,7 @@ pub(crate) mod tests {
 
     #[test]
     fn the_script_row_pins_its_pixels_in_every_look() {
-        if !reprisekit::text::test_tahoma() {
-            return;
-        }
+        reprisekit::pins::fonts();
         use reprisekit::controls::form;
         use reprisekit::interface::Interface;
         use reprisekit::raster::Canvas;

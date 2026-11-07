@@ -243,9 +243,7 @@ mod tests {
     fn a_blue_open_tab_label_sits_where_the_closed_one_did_raised_2_px() {
         let theme = theme_for(Interface::Blue);
         let text = TextRenderer::load(&theme.fonts);
-        if !crate::text::test_tahoma() {
-            return;
-        }
+        crate::pins::fonts();
         let closed = Rect::new(7, 7, 50, 18);
         let open = Rect::new(5, 5, 54, 20);
         let page = Rect::new(5, 25, 80, 30);

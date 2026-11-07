@@ -604,9 +604,7 @@ fn classic_pixels_sit_where_the_dialog_draws_them() {
     assert_eq!(c.get(246, 307), cs.button_hilight.argb());
     assert_eq!(c.get(338, 329), cs.button_dk_shadow.argb());
     assert_eq!(c.get(183, 359), cs.window_frame.argb(), "default ring");
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let intro = ink(&c, Rect::new(9, 0, 330, 30), face).unwrap();
     assert_eq!(intro.1, 13, "intro ink top");
     let prompt = ink(&c, Rect::new(9, 62, 330, 16), face).unwrap();
@@ -709,9 +707,7 @@ fn a_glass_tip_is_set_in_its_fonts_italic() {
 
 #[test]
 fn the_glass_page_pixels_sit_where_the_page_draws_them() {
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let (c, _, theme) = page_pixels(&sample(Wording::Glass));
     let inks = theme.look.style().and_then(|st| st.page).unwrap();
     let (cs, white) = (&theme.colors, theme.colors.window.argb());

@@ -185,12 +185,10 @@ fn every_dialog_fits_its_text_under_every_interface() {
     assert!(over.is_empty(), "{}", over.join("\n"));
 }
 
-/// A hash of `row` of `form` drawn in each of Classic, Blue and Glass; None without the test fonts.
-fn row_pins(form: &form::Form, row: Rect) -> Option<[u64; 3]> {
-    if !reprisekit::text::test_tahoma() {
-        return None;
-    }
+/// A hash of `row` of `form` drawn in each of Classic, Blue and Glass, with the test fonts.
+fn row_pins(form: &form::Form, row: Rect) -> [u64; 3] {
     use reprisekit::interface::Interface;
+    reprisekit::pins::fonts();
     let mut got = [0; 3];
     for (k, i) in [Interface::Classic, Interface::Blue, Interface::Glass]
         .into_iter()
@@ -219,7 +217,7 @@ fn row_pins(form: &form::Form, row: Rect) -> Option<[u64; 3]> {
                 (h ^ *p as u64).wrapping_mul(0x100000001b3)
             });
     }
-    Some(got)
+    got
 }
 
 fn under(interface: &str) -> PropSheet {
@@ -326,9 +324,7 @@ fn first_ink(c: &Canvas, r: Rect) -> Option<i32> {
 /// of a check box's, it starts a pixel right of the radio's.
 #[test]
 fn lines_under_a_choice_start_at_its_label_in_every_look() {
-    if !reprisekit::text::test_tahoma() {
-        return;
-    }
+    reprisekit::pins::fonts();
     use reprisekit::interface::Interface;
     let text = TextRenderer::load(&FontConfig::default());
     for i in [Interface::Classic, Interface::Blue, Interface::Glass] {

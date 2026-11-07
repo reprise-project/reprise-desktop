@@ -36,11 +36,10 @@ mod welcome;
 
 use crate::theme::FontConfig;
 
-/// A renderer for tests that pin exact pixels, which hold only for the
-/// default UI face; None (the test skips) without it.
-fn tahoma() -> Option<TextRenderer> {
-    let text = TextRenderer::load(&FontConfig::default());
-    reprisekit::text::test_tahoma().then_some(text)
+/// The test fonts' UI face, for tests that pin exact pixels.
+fn tahoma() -> TextRenderer {
+    reprisekit::pins::fonts();
+    TextRenderer::load(&FontConfig::default())
 }
 
 fn power() -> PowerConfig {

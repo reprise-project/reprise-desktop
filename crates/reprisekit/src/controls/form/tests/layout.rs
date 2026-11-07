@@ -33,9 +33,7 @@ fn a_label_wider_than_its_column_moves_the_field_after_it() {
 
 #[test]
 fn a_greyed_note_is_drawn_grey_and_rewraps() {
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let text = tr();
     let theme = Theme::default();
     let cs = &theme.colors;
@@ -172,9 +170,7 @@ fn a_form_draws_in_its_dialog_font() {
 #[test]
 fn labels_at_their_ink_start_on_the_same_column_in_either_dialog_font() {
     let path = "/usr/share/wine/fonts/sserife.fon";
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     if !std::path::Path::new(path).exists() {
         crate::pins::skip!(face path);
     }
@@ -228,9 +224,7 @@ fn labels_at_their_ink_start_on_the_same_column_in_either_dialog_font() {
 #[test]
 fn a_check_boxs_label_starts_five_px_past_the_box() {
     let text = TextRenderer::load(&FontConfig::default());
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let theme = Theme::default();
     let cs = &theme.colors;
     let px = theme.fonts.size_px;

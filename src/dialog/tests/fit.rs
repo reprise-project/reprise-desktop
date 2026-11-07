@@ -5,7 +5,7 @@ use super::*;
 #[test]
 fn an_open_dialog_lays_out_again_at_a_new_text_size() {
     use reprisekit::controls::filesheet;
-    let Some(text) = tahoma() else { return };
+    let text = tahoma();
     let one = Theme::default();
     let big = Theme::default().with_text_size(200);
     let opened = |theme: &Theme| {
@@ -86,7 +86,7 @@ fn opened_measured(m: &Measured, theme: &Theme, text: &TextRenderer) -> Dialog {
 
 #[test]
 fn a_measured_dialog_is_built_again_at_a_new_text_size_and_font() {
-    let Some(tahoma) = tahoma() else { return };
+    let tahoma = tahoma();
     let dejavu = TextRenderer::load(&FontConfig {
         family: vec!["DejaVu Sans".into()],
         ..FontConfig::default()
@@ -463,7 +463,7 @@ fn every_dialog_fits_its_text_under_every_interface() {
 /// inside the dialog under the field. 100% is Run as laid out.
 #[test]
 fn run_grows_with_the_text_size() {
-    let Some(text) = tahoma() else { return };
+    let text = tahoma();
     let one = DialogLayout::compute(&Theme::default(), &text, &Dialog::run(&history()));
     assert_eq!(one.size, (347, 179));
     for pct in [150, 200] {
@@ -507,7 +507,7 @@ fn run_grows_with_the_text_size() {
 #[test]
 fn prompts_and_form_dialogs_grow_with_the_text_size() {
     use reprisekit::controls::filesheet;
-    let Some(text) = tahoma() else { return };
+    let text = tahoma();
     let theme = Theme::default().with_text_size(150);
     let u = theme.text;
     let d = Dialog::confirm_delete(

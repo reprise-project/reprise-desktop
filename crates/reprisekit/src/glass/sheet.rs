@@ -825,9 +825,7 @@ mod tests {
 
     #[test]
     fn a_glass_button_label_is_black_with_its_baseline_on_row_15() {
-        if !crate::text::test_tahoma() {
-            return;
-        }
+        crate::pins::fonts();
         let c = button_at((75, 23), 1, "Cancel", NORMAL);
         let rows: Vec<i32> = inked(&c, Color::rgb(0, 0, 0))
             .into_iter()
@@ -924,9 +922,7 @@ mod tests {
 
     #[test]
     fn a_glass_group_box_label_sits_9_px_in_with_its_baseline_4_px_under_the_line() {
-        if !crate::text::test_tahoma() {
-            return;
-        }
+        crate::pins::fonts();
         let g = Rect::new(5, 20, 150, 60);
         let (c, _) = group_box(g, 1, FACE);
         let ink = inked(&c, Color::rgb(0, 0, 0));

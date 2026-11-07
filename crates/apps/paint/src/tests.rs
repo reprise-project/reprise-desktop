@@ -377,22 +377,13 @@ fn the_status_bar_shows_the_pointer_and_the_selection_size() {
     assert_eq!(bar.panels[2].text, "10x4");
 }
 
-/// Pinned hashes in `tests/pins/<name>.txt`; `REPRISE_BLESS=1` rewrites the file.
+/// [`reprisekit::pins::check_file`] on `tests/pins/<name>.txt`.
+#[track_caller]
 fn check_pins(name: &str, got: &[(String, u64)]) {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/pins")
         .join(format!("{name}.txt"));
-    let text: String = got.iter().map(|(k, h)| format!("{k} {h:016x}\n")).collect();
-    if std::env::var_os("REPRISE_BLESS").is_some_and(|v| v != "0") {
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, text).unwrap();
-        return;
-    }
-    let pinned = std::fs::read_to_string(&path).unwrap_or_default();
-    assert_eq!(
-        pinned, text,
-        "{name}: rerun with REPRISE_BLESS=1 after checking the pictures"
-    );
+    reprisekit::pins::check_file(&path, got);
 }
 
 fn hash(c: &Canvas) -> u64 {
@@ -403,10 +394,7 @@ fn hash(c: &Canvas) -> u64 {
 
 #[test]
 fn the_window_is_pinned_in_each_interface_at_scale_one_and_two() {
-    if !reprisekit::text::test_tahoma() {
-        reprisekit::pins::skipped("REPRISE_TEST_FONTS is not set");
-        return;
-    }
+    reprisekit::pins::fonts();
     let mut got = Vec::new();
     for look in [Interface::Classic, Interface::Blue, Interface::Glass] {
         for s in [1, 2] {
@@ -450,10 +438,7 @@ fn typed(p: &mut Paint, ctx: &mut Ctx, s: &str) {
 
 #[test]
 fn typed_text_wraps_at_the_box_and_lands_with_the_same_breaks() {
-    if !reprisekit::text::test_tahoma() {
-        reprisekit::pins::skipped("REPRISE_TEST_FONTS is not set");
-        return;
-    }
+    reprisekit::pins::fonts();
     let mut ctx = test_ctx();
     let mut p = Paint::new(None);
     p.doc.img = Bitmap::new(160, 100, WHITE);

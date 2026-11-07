@@ -1442,9 +1442,7 @@ mod tests {
 
     #[test]
     fn switch_user_dialog_pins_at_scale_1_and_2() {
-        if !reprisekit::text::test_tahoma() {
-            return;
-        }
+        reprisekit::pins::fonts();
         let got = SWITCH_PINS.map(|(scale, _)| {
             let theme = Theme::default().scaled(scale);
             let text = TextRenderer::load(&theme.fonts);
@@ -1651,9 +1649,7 @@ mod tests {
 
     #[test]
     fn caps_lock_dialog_pins_at_scale_1_and_2() {
-        if !reprisekit::text::test_tahoma() {
-            return;
-        }
+        reprisekit::pins::fonts();
         let got = CAPS_PINS.map(|(scale, _)| {
             let theme = Theme::default().scaled(scale);
             let text = TextRenderer::load(&theme.fonts);

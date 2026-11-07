@@ -192,9 +192,8 @@ mod tests {
             !cue.contains(&cs.button_text.argb()),
             "the cue is grey, never the text's ink"
         );
-        if crate::text::test_tahoma() {
-            assert!(cue.contains(&cs.gray_text.argb()));
-        }
+        crate::pins::fonts();
+        assert!(cue.contains(&cs.gray_text.argb()));
 
         let mut typed = SearchField::default();
         typed.key(EditKey::Insert("notes".into()));
