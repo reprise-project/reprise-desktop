@@ -4495,6 +4495,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "reprise-login-rdp"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "reprisebus",
+]
+
+[[package]]
 name = "reprise-network"
 version = "0.1.0"
 dependencies = [
@@ -4672,19 +4680,16 @@ dependencies = [
  "log",
  "pipewire",
  "png",
- "rcgen",
  "reis",
  "repriseaudio",
  "reprisebus",
  "repriseconf",
  "reprisefs",
  "repriselogin",
+ "reprisetls",
  "serde",
- "sha2 0.11.1",
- "socket2",
  "tempfile",
  "tokio",
- "tokio-rustls",
  "wayland-client",
  "wayland-protocols",
  "zbus 6.2.1",
@@ -4990,6 +4995,19 @@ dependencies = [
  "smithay",
  "tempfile",
  "wayland-client",
+]
+
+[[package]]
+name = "reprisetls"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "rcgen",
+ "sha2 0.11.1",
+ "socket2",
+ "tempfile",
+ "tokio",
+ "tokio-rustls",
 ]
 
 [[package]]

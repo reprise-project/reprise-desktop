@@ -4,7 +4,6 @@
 reprisebus::test_session!();
 
 mod auth;
-mod cert;
 mod client;
 mod clipboard;
 mod console;
@@ -29,6 +28,7 @@ mod wlclip;
 use encode::choice;
 use repriseconf::ConfigWatch;
 use repriseconf::remote::{EncoderChoice, RemoteDesktop};
+use reprisetls::{cert, tcp};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
@@ -101,7 +101,7 @@ fn main() -> ExitCode {
         };
         let console =
             console::Console::new(status.clone(), config_rx.clone(), repriseconf::locker_set);
-        let intake = intake::TcpIntake::new(intake::ALL, config_rx.clone(), status.clone());
+        let intake = intake::TcpIntake::new(tcp::ALL, config_rx.clone(), status.clone());
         let logins = auth::PasswordLogins::new(user.clone());
         let server = listen::Server {
             identity: identity_rx,

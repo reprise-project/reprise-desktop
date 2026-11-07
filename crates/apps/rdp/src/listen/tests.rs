@@ -132,7 +132,7 @@ async fn start_leaving<L: Leave + 'static>(
 ) -> Running {
     let port = config.port;
     let dir = tempfile::tempdir().unwrap();
-    let identity = crate::cert::load_or_create(dir.path()).unwrap();
+    let identity = reprisetls::cert::load_or_create(dir.path()).unwrap();
     let (config, config_rx) = watch::channel(config);
     let (status, mut status_rx) = watch::channel(Status::default());
     let (disconnect, disconnect_rx) = mpsc::unbounded_channel();
@@ -883,7 +883,7 @@ async fn session(
         drop(grant);
         open.send_replace(false);
     });
-    let identity = crate::cert::load_or_create(dir.path()).unwrap();
+    let identity = reprisetls::cert::load_or_create(dir.path()).unwrap();
     let rdp = RdpServer::builder()
         .with_addr(peer)
         .with_tls(identity.acceptor)
@@ -1252,7 +1252,7 @@ async fn an_accepted_connection_that_never_arrived_does_not_leave() {
             let (stream, peer) = listener.accept().await.unwrap();
             drop(client);
             let dir = tempfile::tempdir().unwrap();
-            let identity = crate::cert::load_or_create(dir.path()).unwrap();
+            let identity = reprisetls::cert::load_or_create(dir.path()).unwrap();
             let check = Arc::new(AcceptedUnseen);
             let rdp = RdpServer::builder()
                 .with_addr(peer)

@@ -5,7 +5,6 @@
 pub(crate) mod tests;
 
 use crate::auth::{Login, Logins};
-use crate::cert::Identity;
 use crate::client::{self, ClientLayout};
 use crate::clipboard::Cut;
 use crate::console::{Console, Joined};
@@ -19,6 +18,7 @@ use ironrdp_server::{
     RdpServerInputHandler, SoundServerFactory,
 };
 use repriseconf::remote::{RemoteDesktop, SecondClient};
+use reprisetls::cert::Identity;
 use std::cell::{Cell, RefCell};
 use std::convert::Infallible;
 use std::io;

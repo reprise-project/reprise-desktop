@@ -62,7 +62,8 @@ optdepends=('ttf-tahoma: Wine'\''s Tahoma, the UI font the layouts are tuned for
 provides=('reprise')
 conflicts=('reprise-git')
 backup=('etc/pam.d/reprise' 'etc/pam.d/reprise-fingerprint' 'etc/pam.d/reprise-rdp'
-        'etc/pam.d/reprise-login' 'etc/pam.d/reprise-login-greeter' 'etc/pam.d/reprise-login-autologin')
+        'etc/pam.d/reprise-login' 'etc/pam.d/reprise-login-greeter' 'etc/pam.d/reprise-login-autologin'
+        'etc/pam.d/reprise-login-remote' 'etc/pam.d/reprise-login-remote-nla' 'etc/pam.d/reprise-login-check')
 # makepkg's lto turns the C shim in libspa-sys into GCC bitcode that rustc's
 # lld cannot link (undefined *_libspa_rs symbols in reprise-portal). The option
 # only touches CFLAGS, CXXFLAGS and LDFLAGS; Rust LTO follows Cargo.toml's
@@ -109,7 +110,7 @@ build() {
   export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$srcdir=/usr/src/debug/$pkgbase --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo"
   # Named explicitly: the workspace has a root package, so a bare build
   # would build only that.
-  cargo build --profile "$_profile" --locked -p reprise -p reprise-portal -p reprise-apps -p reprise-rdp -p reprise-login
+  cargo build --profile "$_profile" --locked -p reprise -p reprise-portal -p reprise-apps -p reprise-rdp -p reprise-login -p reprise-login-rdp
 }
 
 package() {
@@ -126,6 +127,15 @@ package() {
   done
   install -Dm755 "$srcdir/target/$_profile/reprise-rdp" "$pkgdir/usr/bin/reprise-rdp"
   install -Dm755 "$srcdir/target/$_profile/reprise-login" "$pkgdir/usr/bin/reprise-login"
+  install -Dm755 "$srcdir/target/$_profile/reprise-login-settings" "$pkgdir/usr/lib/reprise/reprise-login-settings"
+  install -Dm755 "$srcdir/target/$_profile/reprise-login-rdp" "$pkgdir/usr/bin/reprise-login-rdp"
+  install -Dm644 data/systemd/reprise-login-rdp.service "$pkgdir/usr/lib/systemd/system/reprise-login-rdp.service"
+  install -Dm644 data/systemd/reprise-rdp-handover.socket "$pkgdir/usr/lib/systemd/user/reprise-rdp-handover.socket"
+  install -Dm644 data/systemd/reprise-rdp-handover.service "$pkgdir/usr/lib/systemd/user/reprise-rdp-handover.service"
+  install -d "$pkgdir/usr/lib/systemd/user/sockets.target.wants"
+  ln -s ../reprise-rdp-handover.socket "$pkgdir/usr/lib/systemd/user/sockets.target.wants/reprise-rdp-handover.socket"
+  install -Dm644 data/polkit-1/rules.d/50-reprise-login.rules "$pkgdir/usr/share/polkit-1/rules.d/50-reprise-login.rules"
+  install -Dm644 data/polkit-1/actions/org.reprise.login.policy "$pkgdir/usr/share/polkit-1/actions/org.reprise.login.policy"
   install -Dm644 data/systemd/reprise-login.service "$pkgdir/usr/lib/systemd/system/reprise-login.service"
   install -Dm644 data/sysusers.d/reprise-login.conf "$pkgdir/usr/lib/sysusers.d/reprise-login.conf"
   install -Dm644 data/tmpfiles.d/reprise-login.conf "$pkgdir/usr/lib/tmpfiles.d/reprise-login.conf"
@@ -150,6 +160,9 @@ package() {
   install -Dm644 data/pam.d/reprise-login "$pkgdir/etc/pam.d/reprise-login"
   install -Dm644 data/pam.d/reprise-login-greeter "$pkgdir/etc/pam.d/reprise-login-greeter"
   install -Dm644 data/pam.d/reprise-login-autologin "$pkgdir/etc/pam.d/reprise-login-autologin"
+  install -Dm644 data/pam.d/reprise-login-remote "$pkgdir/etc/pam.d/reprise-login-remote"
+  install -Dm644 data/pam.d/reprise-login-remote-nla "$pkgdir/etc/pam.d/reprise-login-remote-nla"
+  install -Dm644 data/pam.d/reprise-login-check "$pkgdir/etc/pam.d/reprise-login-check"
   install -Dm644 data/geoclue/90-reprise.conf "$pkgdir/etc/geoclue/conf.d/90-reprise.conf"
   install -Dm644 config.example.toml "$pkgdir/usr/share/doc/reprise/config.example.toml"
   for ftl in data/locale/*/*.ftl; do

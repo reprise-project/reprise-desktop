@@ -1,0 +1,20 @@
+[package]
+name = "reprise-login-rdp"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+description = "The Remote Desktop front of reprise-login: an unprivileged, sandboxed service that holds the machine's RDP port and hands each authenticated connection to the user's session"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "reprise-login-rdp"
+path = "src/main.rs"
+
+[dependencies]
+reprisebus = { path = "../../reprisebus" }
+log.workspace = true
