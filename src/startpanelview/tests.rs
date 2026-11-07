@@ -18,7 +18,7 @@ use super::lists::{
     app_icon, frequent_rows, jump_file, one_per_name, refill_tree, replace_tree, tree_rows,
 };
 use super::menus::shutdown_options_at;
-use super::picture::{UserPictures, picture_paths, read_pictures};
+use super::picture::{UserPictures, decode_picture, picture_paths, read_pictures};
 use super::search::{ResultKind, panel_matches, result_groups};
 use super::*;
 
@@ -1147,4 +1147,12 @@ fn the_blue_menus_menus_and_their_folders_wear_its_look_and_other_menus_keep_the
         Skin::Theme,
         "the taskbar's menu keeps the theme"
     );
+}
+
+#[test]
+fn a_picture_whose_decoder_panics_is_no_picture() {
+    let r = decode_picture(b"\x89PNG", |_| panic!("a decoder bug"));
+    assert_eq!(r.err().as_deref(), Some("the decoder panicked"));
+    let ok = decode_picture(b"", |_| Ok(Canvas::new(1, 1)));
+    assert!(ok.is_ok());
 }
