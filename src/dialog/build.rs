@@ -879,13 +879,14 @@ impl Dialog {
         }
     }
 
-    /// The Log Off panel: Switch User, live with `switch_user` (under reprise-login), and Log
-    /// Off, which runs the `exit` action and holds the focus.
-    pub fn log_off(switch_user: bool) -> Dialog {
+    /// The Log Off panel: `leave` (Switch User or Disconnect), and Log Off, which runs the
+    /// `exit` action and holds the focus.
+    pub fn log_off(leave: Leave) -> Dialog {
         Dialog::welcome(Welcome {
-            panel: Panel::log_off(reprisekit::powerpanel::Leave::SwitchUser { live: switch_user }),
+            panel: Panel::log_off(leave),
             actions: vec![
                 (Choice::SwitchUser, DialogAction::SwitchUser),
+                (Choice::Disconnect, DialogAction::Disconnect),
                 (Choice::LogOff, DialogAction::Act(Action::Exit)),
             ],
             always_blue: false,
@@ -893,12 +894,14 @@ impl Dialog {
     }
 
     /// The Turn off computer panel running the `[power]` commands: Stand By (Hibernate with
-    /// Shift held), greyed while its command is unset, Turn Off and Restart.
-    pub fn turn_off(power: &PowerConfig) -> Dialog {
+    /// Shift held), greyed while its command is unset, or with `disconnect` Disconnect in its
+    /// place; Turn Off and Restart.
+    pub fn turn_off(power: &PowerConfig, disconnect: bool) -> Dialog {
         let set = |cmd: &str| !cmd.trim().is_empty();
         Dialog::welcome(Welcome {
-            panel: Panel::turn_off(set(&power.standby), set(&power.hibernate), false),
+            panel: Panel::turn_off(set(&power.standby), set(&power.hibernate), disconnect),
             actions: vec![
+                (Choice::Disconnect, DialogAction::Disconnect),
                 (
                     Choice::StandBy,
                     DialogAction::StandBy(power.standby.clone()),

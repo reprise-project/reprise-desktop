@@ -4,6 +4,7 @@
 //! Turn Off and Restart ask logind first, and a refusal before or after the programs close shows a message box.
 //! Stand By and Hibernate close nothing; a refusal shows the same message box.
 
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use reprisekit::controls::endsession::{self, Choice, Goal, Row};
@@ -13,12 +14,15 @@ use smithay::reexports::calloop::{
 };
 
 use crate::compositor::State;
+use crate::fsjobs::OnLoop;
 use crate::lockview::Origin;
 use crate::window::WindowId;
 
 const PROMPT_AFTER: Duration = Duration::from_secs(5);
 const POLL: Duration = Duration::from_millis(500);
 const CALL_TIMEOUT: Duration = Duration::from_secs(2);
+/// The longest a session end waits for the remote desktop server to tell its clients.
+const TELL_CLIENTS: Duration = Duration::from_secs(1);
 
 const PORTAL: &str = "org.freedesktop.impl.portal.desktop.reprise";
 const PORTAL_PATH: &str = "/org/freedesktop/portal/desktop";
@@ -276,13 +280,63 @@ fn finish(state: &mut State, override_inhibitors: bool) {
     go_on(state, e.goal, e.cmd, override_inhibitors);
 }
 
-/// Fade the screen out, then end: stop the compositor for Log Off, else run `cmd`.
+/// Fade the screen out, then end: stop the compositor for Log Off, else run `cmd`. Remote clients
+/// hear the session logged off; the end waits for the server's answer, [`TELL_CLIENTS`] at most.
 fn go_on(state: &mut State, goal: Goal, cmd: Option<String>, override_inhibitors: bool) {
     crate::crash::ending();
+    let end: OnLoop = Box::new(move |state| act(state, goal, cmd, override_inhibitors));
+    if !crate::console::remote_side(state) && !state.remote_controlled() {
+        crate::sessionfade::out(state, end);
+        return;
+    }
+    let wait = Arc::new(Mutex::new(Wait {
+        faded: false,
+        told: false,
+        end: Some(end),
+    }));
+    let told = Arc::clone(&wait);
+    crate::console::end_clients_then(
+        state,
+        crate::console::ClientsEnd::LoggedOff,
+        Box::new(move |state| arrive(&told, state, |w| w.told = true)),
+    );
+    let late = Arc::clone(&wait);
+    let armed =
+        (state.handle).insert_source(Timer::from_duration(TELL_CLIENTS), move |_, _, state| {
+            arrive(&late, state, |w| w.told = true);
+            TimeoutAction::Drop
+        });
+    if let Err(e) = armed {
+        log::warn!("session end: no timer for the clients: {}", e.error);
+        arrive(&wait, state, |w| w.told = true);
+    }
     crate::sessionfade::out(
         state,
-        Box::new(move |state| act(state, goal, cmd, override_inhibitors)),
+        Box::new(move |state| arrive(&wait, state, |w| w.faded = true)),
     );
+}
+
+/// A session end waiting for its fade and for the remote clients to hear of it.
+struct Wait {
+    faded: bool,
+    told: bool,
+    end: Option<OnLoop>,
+}
+
+/// Mark what arrived, then end once both have.
+fn arrive(wait: &Mutex<Wait>, state: &mut State, mark: impl FnOnce(&mut Wait)) {
+    let end = {
+        let mut w = wait.lock().unwrap_or_else(|e| e.into_inner());
+        mark(&mut w);
+        if w.faded && w.told {
+            w.end.take()
+        } else {
+            None
+        }
+    };
+    if let Some(end) = end {
+        end(state);
+    }
 }
 
 /// End the session now, whatever is open (a SIGTERM, a GPU gone): fade out, then stop the loop.
@@ -1069,6 +1123,22 @@ mod tests {
             crate::crash::is_ending(),
             "a panic in the fade ends the process"
         );
+    }
+
+    #[test]
+    fn a_committed_log_off_with_a_client_tells_it_the_session_logged_off() {
+        let (mut h, _portal, _lock) = crate::console::tests::in_lock_mode();
+        go_on(&mut h.state, Goal::LogOff, None, false);
+        assert_eq!(
+            h.state.ended_clients,
+            [crate::console::ClientsEnd::LoggedOff]
+        );
+
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        go_on(&mut h.state, Goal::LogOff, None, false);
+        assert!(h.state.ended_clients.is_empty(), "no client to tell");
+        assert!(h.state.session_fade.fading_out(), "the fade runs");
     }
 
     #[test]

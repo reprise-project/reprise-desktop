@@ -715,3 +715,56 @@ fn in_lock_mode_no_capture_border_draws_on_a_locked_output() {
     );
     assert!(crate::captureborder::elements(&mut h.state, &edp).is_empty());
 }
+
+#[test]
+fn disconnect_is_offered_on_the_remote_side_and_off_the_seat_with_a_client() {
+    let (h, _portal, _lock) = in_lock_mode();
+    assert!(disconnect_offered(&h.state), "the remote side");
+
+    let mut h = Harness::new();
+    h.output("eDP-1", 1920, 1080);
+    assert!(!disconnect_offered(&h.state), "a console session");
+    let peer = h.ei_remote_session();
+    assert!(
+        !disconnect_offered(&h.state),
+        "a client showing the console's session"
+    );
+    crate::lockview::seat_away(&mut h.state, true);
+    assert!(disconnect_offered(&h.state), "off the seat with a client");
+    h.ei_close(peer);
+    assert!(!disconnect_offered(&h.state), "off the seat with no client");
+}
+
+/// Press the top dialog's button `i` and apply what it does.
+fn press_dialog(h: &mut Harness, i: usize) {
+    let outcome = (h.state.dialogs.views.last_mut().expect("a dialog").dialog).press(i);
+    assert_eq!(outcome, crate::dialog::Outcome::Disconnect);
+    h.state.apply_dialog(outcome);
+}
+
+#[test]
+fn disconnect_locks_the_console_and_ends_every_client() {
+    let (mut h, _portal, _lock) = in_lock_mode();
+    h.state.run_action(&crate::config::Action::TurnOff, 0);
+    press_dialog(&mut h, 0);
+    assert!(h.state.console_locked());
+    assert_eq!(h.state.ended_clients, [ClientsEnd::Disconnect]);
+}
+
+#[test]
+fn disconnect_with_no_server_on_the_bus_still_locks_the_console() {
+    let mut h = Harness::new();
+    h.output("eDP-1", 1920, 1080);
+    h.state.lock.helpers.finger = |_| None;
+    let _peer = h.ei_remote_session();
+    crate::lockview::seat_away(&mut h.state, true);
+    assert!(!h.state.console_locked());
+    h.state.run_action(&crate::config::Action::LogOff, 0);
+    press_dialog(&mut h, 0);
+    assert!(h.state.console_locked());
+    assert_eq!(h.state.ended_clients, [ClientsEnd::Disconnect]);
+    assert!(
+        h.state.dialogs.views.is_empty(),
+        "the failed call opens no message"
+    );
+}

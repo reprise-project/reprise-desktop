@@ -18,7 +18,7 @@ use reprisekit::controls::scrollbar::ThumbDrag;
 use reprisekit::controls::traycustomize::{self, TrayCustomize};
 use reprisekit::frame::{CaptionButton, Edges};
 use reprisekit::pointer::Pointer;
-use reprisekit::powerpanel::{Choice, Panel};
+use reprisekit::powerpanel::{Choice, Leave, Panel};
 
 mod build;
 mod draw;
@@ -66,6 +66,8 @@ pub enum DialogAction {
     EmptyBin,
     /// Lock and hand the screen to the login screen (`loginlink::switch_user`).
     SwitchUser,
+    /// Lock the console and let every remote client go (`console::disconnect`).
+    Disconnect,
     /// Ask reprise-login to turn the machine off or restart it (`greeterview::power`).
     GreeterPower(repriselogin::greeter::PowerAction),
     Act(Action),
@@ -514,6 +516,7 @@ pub enum Outcome {
     },
     EmptyBin,
     SwitchUser,
+    Disconnect,
     GreeterPower(repriselogin::greeter::PowerAction),
     /// Delete (Shift+Delete with `shift`) in Browse's list: asked over the dialog as the desktop
     /// asks ([`crate::compositor::State::ask_delete`]).

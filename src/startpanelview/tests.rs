@@ -1158,7 +1158,7 @@ fn a_picture_whose_decoder_panics_is_no_picture() {
 }
 
 #[test]
-fn a_lock_mode_remote_viewer_gets_no_switch_user_from_the_shutdown_options() {
+fn the_remote_sides_shutdown_options_list_disconnect_first() {
     use std::os::unix::net::UnixStream;
     let mut config = crate::config::Config::default();
     config.startmenu_style = crate::config::StartMenuStyle::Glass;
@@ -1178,6 +1178,7 @@ fn a_lock_mode_remote_viewer_gets_no_switch_user_from_the_shutdown_options() {
         crate::menuview::MenuKind::StartPanel { rows } => rows.clone(),
         _ => panic!("the Shut down options"),
     };
+    assert_eq!(rows[0], Some(crate::startmenu::StartRow::Disconnect));
     assert!(rows.contains(&Some(crate::startmenu::StartRow::LogOff)));
     assert!(!rows.contains(&Some(crate::startmenu::StartRow::SwitchUser)));
     h.from(crate::inputproto::InputSource::Remote, |s| {
@@ -1191,4 +1192,11 @@ fn a_lock_mode_remote_viewer_gets_no_switch_user_from_the_shutdown_options() {
     })
     .unwrap();
     assert_eq!(heard, *hello, "only the link's Hello reached the daemon");
+    h.from(crate::inputproto::InputSource::Remote, |s| {
+        s.start_row(crate::startmenu::StartRow::Disconnect)
+    });
+    assert_eq!(
+        h.state.ended_clients,
+        [crate::console::ClientsEnd::Disconnect]
+    );
 }
