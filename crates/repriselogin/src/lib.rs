@@ -67,6 +67,14 @@ pub fn add_prompt_lines(lines: &mut Vec<String>, raw: &str) {
     }
 }
 
+/// The account a user name typed into a Remote Desktop client names, without its `DOMAIN\` or
+/// `@host`: `DOM\anna`, `anna@host` and `anna@` are `anna`. Both the front and the session's
+/// server read names with it, so a name one admits the other accepts.
+pub fn account_name(typed: &str) -> &str {
+    let name = typed.rsplit('\\').next().unwrap_or(typed);
+    name.split('@').next().unwrap_or(name)
+}
+
 pub fn clean_prompt(raw: &str) -> Vec<String> {
     let mut v = Vec::new();
     add_prompt_lines(&mut v, raw);
@@ -87,6 +95,22 @@ mod tests {
             );
         }
         assert_eq!(Interface::parse("Glass"), None);
+    }
+
+    #[test]
+    fn a_typed_name_means_its_account_without_domain_or_host() {
+        for typed in [
+            "anna",
+            "DOM\\anna",
+            ".\\anna",
+            "anna@host",
+            "anna@",
+            "DOM\\anna@host",
+        ] {
+            assert_eq!(account_name(typed), "anna", "{typed}");
+        }
+        assert_eq!(account_name("@host"), "");
+        assert_eq!(account_name("DOM\\"), "");
     }
 
     #[test]
