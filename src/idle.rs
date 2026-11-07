@@ -547,6 +547,13 @@ pub fn arm(state: &mut State) {
     state.idle.deadline_current = true;
 }
 
+/// As if no input came for `by`: backdate the last activity and run the steps now due.
+#[cfg(test)]
+pub fn idle_for(state: &mut State, by: Duration) {
+    state.idle.since_activity -= by;
+    fired(state);
+}
+
 fn fired(state: &mut State) {
     state.idle.deadline_current = false;
     let elapsed = state.idle.since_activity.elapsed().as_millis() as u64;
