@@ -15,7 +15,7 @@ use super::links::{check_links, retrain_link};
 use super::outputs::{Probe, scan_connectors, set_mode};
 use super::render::{callbacks_after_a_frame, render_waiting};
 use super::session::reset_device;
-use super::{Backend, Flip, Head, Screen, commit, is_master, screen_of};
+use super::{Backend, Flip, Head, Screen, commit, device_added, is_master, screen_of};
 
 impl Backend {
     /// No commit holds the kernel's modeset locks (`commit::quiet`).
@@ -335,6 +335,10 @@ fn quiet_step(state: &mut State) {
             log::debug!("connector scan");
             for (node, infos) in probed {
                 scan_connectors(state, node, &infos);
+            }
+            let late = (state.backend.as_mut()).map(|b| std::mem::take(&mut b.late_secondaries));
+            for node in late.unwrap_or_default() {
+                device_added(state, node);
             }
             check_links(state);
         }

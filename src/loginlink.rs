@@ -108,6 +108,16 @@ pub fn desk_offers(state: &State) -> bool {
     connected(state) && !crate::console::remote_side(state)
 }
 
+/// A session reprise-login started on a VT nobody shows comes up locked: Ctrl+Alt+Fn at the
+/// computer must not show its desktop. `active` is the seat's state at start.
+pub fn born(state: &mut State, active: bool) {
+    if active || state.login_link.is_none() {
+        return;
+    }
+    crate::lockview::seat_away(state, true);
+    crate::lockview::lock(state);
+}
+
 /// Lock the console, then ask the daemon for the login screen. No-op without a link.
 pub fn switch_user(state: &mut State) {
     if !connected(state) {
@@ -508,6 +518,32 @@ mod tests {
         crate::lockview::button(&mut h.state, Side::Console, crate::input::BTN_LEFT, at);
         assert!(h.state.console_locked(), "the lock stays up");
         assert_eq!(heard(&mut theirs), SessionRequest::SwitchUser);
+    }
+
+    #[test]
+    fn a_session_born_in_the_background_under_reprise_login_starts_locked() {
+        let (mut h, _theirs) = linked();
+        born(&mut h.state, false);
+        assert!(h.state.console_locked());
+        assert!(
+            h.state.lock.seat_away,
+            "the lock starts no reader conversation"
+        );
+
+        let (mut h, _theirs) = linked();
+        born(&mut h.state, true);
+        assert!(
+            !h.state.console_locked(),
+            "a session born on the monitor opens"
+        );
+    }
+
+    #[test]
+    fn without_reprise_login_an_inactive_start_locks_nothing() {
+        let mut h = Harness::new();
+        h.output("TEST-1", 1024, 768);
+        born(&mut h.state, false);
+        assert!(!h.state.console_locked());
     }
 
     #[test]

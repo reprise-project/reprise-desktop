@@ -4,7 +4,7 @@ use super::outputs::{Scan, ScanAction, asks_scan, scan_action};
 use super::render::{glass_hold, waits_for_frame};
 use super::schedule::{Asked, pointer_ask_renders};
 use super::steps::{MODE_TRIES, PendingMode, Step, next_step};
-use super::{Ask, CrtcNow, pick_gpu};
+use super::{Ask, CrtcNow, StartPlan, pick_gpu, start_plan};
 use crate::config::OutputMode;
 use crate::output::ModeInfo;
 use smithay::utils::{Point, Rectangle};
@@ -507,4 +507,25 @@ fn the_configured_gpu_is_driven_only_when_the_seat_has_it() {
     assert_eq!(pick_gpu(None, Some(1), &[1, 2]), Some(1));
     assert_eq!(pick_gpu(None, None, &[2, 1]), Some(2));
     assert_eq!(pick_gpu::<u8>(None, None, &[]), None);
+}
+
+#[test]
+fn an_inactive_start_defers_the_reset_the_scan_and_input() {
+    assert_eq!(
+        start_plan(true),
+        StartPlan {
+            reset: true,
+            scan_now: true,
+            suspend_input: false,
+        }
+    );
+    assert_eq!(
+        start_plan(false),
+        StartPlan {
+            reset: false,
+            scan_now: false,
+            suspend_input: true,
+        },
+        "an inactive seat resets, scans and takes input only on its first activation"
+    );
 }
