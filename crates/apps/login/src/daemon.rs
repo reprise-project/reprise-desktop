@@ -37,6 +37,8 @@ pub struct Job {
     pub user: String,
     /// The configured autologin user, for an `Autologin` job only.
     pub autologin_user: Option<String>,
+    /// `[login] greeter_socket`, for a `Greeter` job only.
+    pub greeter_socket: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -395,6 +397,7 @@ impl Daemon {
             autologin_user: (mode == Mode::Autologin)
                 .then(|| self.config.autologin_user.clone())
                 .flatten(),
+            greeter_socket: mode == Mode::Greeter && self.config.greeter_socket,
         }
     }
 

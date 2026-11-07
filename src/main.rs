@@ -259,6 +259,10 @@ struct Cli {
     /// Show the login screen for reprise-login and nothing else (reprise-login starts it)
     #[arg(long, hide = true)]
     greeter: bool,
+    /// With `--greeter`: listen on a Wayland socket, which any process of the login screen's
+    /// user can reach (reprise-login passes it for `[login] greeter_socket`)
+    #[arg(long, hide = true, requires = "greeter")]
+    greeter_socket: bool,
 }
 
 fn main() {
@@ -272,7 +276,7 @@ fn main() {
     let cli = Cli::parse();
     // Before the crash restart: a greeter that dies is reprise-login's to count.
     if cli.greeter {
-        std::process::exit(greeter::main());
+        std::process::exit(greeter::main(cli.greeter_socket));
     }
     if let Some(user) = cli.fingerprint_conversation.as_deref() {
         std::process::exit(lockfinger::child_main(user));

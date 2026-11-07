@@ -171,6 +171,9 @@ processes:
   `no_new_privs` before it starts the login screen, so a setuid program
   gains it nothing. It reads user pictures from AccountsService's
   directory and can read no more of a user's files than any other account.
+  It listens on no Wayland socket, so the user services logind starts for
+  `reprise-greeter` can't reach it; `[login] greeter_socket` opens one for
+  testing.
 - **Sessions** run as their user, through the user's login shell, with the
   environment PAM set.
 
