@@ -365,10 +365,14 @@ impl Daemon {
                 }
             }
             Input::Timer(Timer::Start(worker)) => self.start_timed_out(worker, &mut out),
-            Input::PowerDone(result) => out.push(Effect::Reply(match result {
-                Ok(()) => GreeterReply::Success,
-                Err(text) => error(ErrorKind::Failed, text),
-            })),
+            Input::PowerDone(Ok(())) => out.push(Effect::Reply(GreeterReply::Success)),
+            Input::PowerDone(Err(text)) => {
+                out.push(Effect::Log(
+                    Level::Warn,
+                    format!("turning off or restarting: {text}"),
+                ));
+                out.push(Effect::Reply(error(ErrorKind::Failed, text)));
+            }
         }
         if !self.start_in_flight() {
             self.removed_early.clear();
