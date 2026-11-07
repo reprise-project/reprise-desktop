@@ -21,6 +21,7 @@ serde = { workspace = true, features = ["derive"] }
 toml.workspace = true
 log.workspace = true
 libc.workspace = true
+zeroize = { workspace = true, features = ["serde"] }
 
 [dev-dependencies]
 tempfile.workspace = true
