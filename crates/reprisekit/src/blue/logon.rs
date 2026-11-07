@@ -108,9 +108,9 @@ fn noted(m: &Logon, i: usize) -> bool {
     m.users.get(i).and_then(|u| u.note) == Some(UserNote::LoggedOn)
 }
 
-/// How tall tile `i` stands open: its name and note, the cue, the field and the message.
-fn open_height(m: &Logon, i: usize, k: Lines) -> i32 {
-    let note = if noted(m, i) { k.line } else { 0 };
+/// How tall a tile stands open: its name and note, the cue, the field and the message.
+fn open_height(noted: bool, k: Lines) -> i32 {
+    let note = if noted { k.line } else { 0 };
     let text = k.name + note + k.line + k.field + ROW_GAP + MESSAGE_LINES as i32 * k.line;
     TILE_H.max(2 * TILE_PAD + text)
 }
@@ -142,25 +142,37 @@ fn field_at(x: i32, y: i32, right: i32, k: Lines) -> Rect {
     Rect::new(x, y, w, k.field)
 }
 
+/// How many tiles fit in the middle with room left for one of them, noted, to stand open.
+fn fit(f: &Frame, k: Lines) -> usize {
+    let room = f.middle.height - 2 * SIDE_GAP - (open_height(true, k) - TILE_H);
+    ((room + TILE_GAP) / (TILE_H + TILE_GAP)).max(1) as usize
+}
+
+/// How many tiles `output` shows at once: the host's [`Logon::column`].
+pub fn column(theme: &Theme, output: Rect) -> usize {
+    fit(&frame(output), lines(theme.text))
+}
+
 fn tile_parts(m: &Logon, f: &Frame, k: Lines, x: i32, w: i32, parts: &mut Vec<(Part, Rect)>) {
     let n = m.users.len();
     let open = match m.screen {
         Screen::Tile(i) => Some(i),
         _ => None,
     };
-    let extra = (0..n)
-        .map(|i| open_height(m, i, k) - TILE_H)
-        .max()
-        .unwrap_or(0);
-    let room = f.middle.height - 2 * SIDE_GAP - extra;
-    let fit = ((room + TILE_GAP) / (TILE_H + TILE_GAP)).max(1) as usize;
-    let first = m.first_tile.min(n.saturating_sub(1));
+    let fit = fit(f, k);
+    let mut first = m.first_tile.min(n.saturating_sub(fit));
+    if let Some(sel) = open.or(match m.focus {
+        Part::Tile(i) => Some(i),
+        _ => None,
+    }) {
+        first = first.min(sel).max((sel + 1).saturating_sub(fit));
+    }
     let shown = first..(first + fit).min(n);
     let count = shown.len() as i32;
     let rest = count * TILE_H + (count - 1).max(0) * TILE_GAP;
     let grown = open
         .filter(|i| shown.contains(i))
-        .map_or(0, |i| open_height(m, i, k) - TILE_H);
+        .map_or(0, |i| open_height(noted(m, i), k) - TILE_H);
     let mh = f.middle.height;
     let top = ((mh - rest) / 2)
         .min(mh - SIDE_GAP - rest - grown)
@@ -168,7 +180,7 @@ fn tile_parts(m: &Logon, f: &Frame, k: Lines, x: i32, w: i32, parts: &mut Vec<(P
     let mut y = f.middle.y + top;
     for i in shown {
         if open == Some(i) {
-            let tile = Rect::new(x, y, w, open_height(m, i, k));
+            let tile = Rect::new(x, y, w, open_height(noted(m, i), k));
             let tx = x + TILE_PAD + FRAMED + TEXT_GAP;
             let note = if noted(m, i) { k.line } else { 0 };
             let fy = y + TILE_PAD + k.name + note + k.line;
@@ -273,20 +285,27 @@ pub fn backdrop(sc: &Scheme, w: i32, h: i32, d: i32) -> Canvas {
     })
 }
 
-/// [`backdrop`] for the last scheme and size asked, kept since typing repaints the whole screen.
+/// How many backdrops [`cached_backdrop`] keeps: one per output a greeter is likely to span.
+const KEPT_BACKDROPS: usize = 4;
+
+/// [`backdrop`] for the last few schemes and sizes asked, kept since typing repaints the whole
+/// screen.
 fn cached_backdrop(sc: &Scheme, w: i32, h: i32, d: i32) -> Rc<Canvas> {
-    type Kept = Option<((&'static str, i32, i32, i32), Rc<Canvas>)>;
+    type Kept = Vec<((&'static str, i32, i32, i32), Rc<Canvas>)>;
     thread_local! {
-        static LAST: RefCell<Kept> = const { RefCell::new(None) };
+        static KEPT: RefCell<Kept> = const { RefCell::new(Vec::new()) };
     }
     let key = (sc.name, w, h, d);
-    LAST.with_borrow_mut(|last| match last {
-        Some((k, c)) if *k == key => Rc::clone(c),
-        _ => {
-            let c = Rc::new(backdrop(sc, w, h, d));
-            *last = Some((key, Rc::clone(&c)));
-            c
+    KEPT.with_borrow_mut(|kept| {
+        if let Some((_, c)) = kept.iter().find(|(k, _)| *k == key) {
+            return Rc::clone(c);
         }
+        if kept.len() == KEPT_BACKDROPS {
+            kept.remove(0);
+        }
+        let c = Rc::new(backdrop(sc, w, h, d));
+        kept.push((key, Rc::clone(&c)));
+        c
     })
 }
 
@@ -621,8 +640,8 @@ fn draw_tile(c: &mut Canvas, m: &Logon, sc: &Scheme, i: usize, r: Rect, k: Lines
     }
 }
 
-/// The password field, the arrow, the badge and Caps Lock notice beside them, and the message
-/// under them; on the typed screen the prompt or "Password:" labels the field.
+/// The password field, the arrow and the badge beside it, and Caps Lock and the message under
+/// them; on the typed screen the prompt or "Password:" labels the field.
 #[expect(clippy::too_many_arguments)]
 fn draw_password_row(
     c: &mut Canvas,
@@ -649,30 +668,20 @@ fn draw_password_row(
         pen.line(c, r, &label, false, px, Align::Left);
     }
     draw_field(c, m, theme, sc, Part::Password, field, pen);
-    let mut end = field.right();
     if let Some(go_at) = l.rect(Part::Submit) {
         let at = pen.at(go_at);
         c.blit_over(at.x, at.y, &go(state_of(m, Part::Submit, !m.busy), s));
-        end = go_at.right();
     }
     if let (Some(short), Some(b)) = (&m.layout, l.rect(Part::Layout)) {
         let at = pen.at(b);
         c.blit_over(at.x, at.y, &badge_box(sc.welcome_band, s));
         pen.text
             .draw(c, at, short, false, pen.ink, Align::Center, pen.px);
-        end = b.right();
-    }
-    let caps = strings::caps_lock();
-    let x = end + GO_GAP;
-    let beside = m.caps_lock && pen.text.measure(&caps, false, px) <= (right - x) * s;
-    if beside {
-        let r = Rect::new(x, field.y, right - x, field.height);
-        pen.line(c, r, &caps, false, px, Align::Left);
     }
     let w = right - field.x;
     let mut lines = Vec::new();
-    if m.caps_lock && !beside {
-        lines.extend(pen.wrapped(&caps, w, 1));
+    if m.caps_lock {
+        lines.extend(pen.wrapped(&strings::caps_lock(), w, 1));
     }
     let msg = if m.busy {
         Some(strings::verifying())
