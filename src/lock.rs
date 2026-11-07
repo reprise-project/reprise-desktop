@@ -54,6 +54,7 @@ pub enum LockKey<'a> {
 pub enum LockButton {
     Ok,
     Cancel,
+    SwitchUser,
 }
 
 /// The dialog's state. `input` is the password typed so far; it is zeroed
@@ -63,7 +64,7 @@ pub enum LockButton {
 /// conversation's standing prompt (its last PAM info text) while it runs,
 /// shown when there is no message. `caps_lock` mirrors the keyboard's;
 /// `layout` is the active keyboard layout's short name while more than one
-/// is configured.
+/// is configured. `switch_user` shows the Switch User button.
 #[derive(Default)]
 pub struct LockState {
     pub input: String,
@@ -73,6 +74,7 @@ pub struct LockState {
     pub finger: Option<String>,
     pub caps_lock: bool,
     pub layout: Option<String>,
+    pub switch_user: bool,
 }
 
 /// A PAM prompt after the password: its text labels the field, and `echo`
@@ -98,6 +100,7 @@ impl std::fmt::Debug for LockState {
             .field("finger", &self.finger)
             .field("caps_lock", &self.caps_lock)
             .field("layout", &self.layout)
+            .field("switch_user", &self.switch_user)
             .finish()
     }
 }
@@ -178,6 +181,7 @@ impl LockState {
                 self.prompt = None;
                 false
             }
+            LockButton::SwitchUser => false,
         }
     }
 
@@ -668,6 +672,8 @@ pub struct DialogLayout {
     pub message: Rect,
     pub ok: Rect,
     pub cancel: Rect,
+    /// Switch User at the bottom left, under reprise-login only.
+    pub switch_user: Option<Rect>,
     /// The keyboard layout badge: the taskbar cell's size, at the message
     /// area's bottom-right, above Cancel.
     pub layout: Rect,
@@ -696,7 +702,7 @@ const CHROME: Chrome = Chrome {
 /// the body keeps its size and the dialog grows by the frame's difference.
 /// The client grows with the text size (`theme.text`); so does Classic's
 /// whole dialog, by as much.
-pub fn dialog_layout(theme: &Theme) -> DialogLayout {
+pub fn dialog_layout(theme: &Theme, switch_user: bool) -> DialogLayout {
     let s = theme.scale.max(1);
     let u = theme.text;
     let m = &theme.metrics;
@@ -742,6 +748,7 @@ pub fn dialog_layout(theme: &Theme) -> DialogLayout {
     let by = client.bottom() - at(PAD) - bh;
     let cancel = Rect::new(client.right() - at(PAD) - bw, by, bw, bh);
     let ok = Rect::new(cancel.x - at(6) - bw, by, bw, bh);
+    let switch_user = switch_user.then(|| Rect::new(client.x + at(PAD), by, bw, bh));
     let badge = theme.icon_size();
     let layout = Rect::new(
         cancel.right() - badge,
@@ -762,6 +769,7 @@ pub fn dialog_layout(theme: &Theme) -> DialogLayout {
         message,
         ok,
         cancel,
+        switch_user,
         layout,
     }
 }
@@ -779,7 +787,7 @@ pub fn draw_dialog(
     user: &str,
     state: &LockState,
 ) -> Canvas {
-    let l = dialog_layout(theme);
+    let l = dialog_layout(theme, state.switch_user);
     let (w, h) = l.size;
     let mut c = Canvas::new(w.max(1) as u32, h.max(1) as u32);
     match &l.frame {
@@ -937,13 +945,16 @@ fn draw_body(
         c.blit_canvas(l.layout.x, l.layout.y, &badge);
     }
 
-    for (r, caption) in [(l.ok, "OK"), (l.cancel, "Cancel")] {
+    let switch_user =
+        (l.switch_user).map(|r| (r, reprisekit::powerpanel::Choice::SwitchUser.label()));
+    let buttons = [(l.ok, "OK".to_string()), (l.cancel, "Cancel".to_string())];
+    for (r, caption) in buttons.into_iter().chain(switch_user) {
         draw_button(
             c,
             text,
             &theme.paint(),
             r,
-            caption,
+            &caption,
             false,
             Interaction::Idle,
             true,
@@ -1387,7 +1398,7 @@ mod tests {
     #[test]
     fn dialog_layout_scales_with_theme() {
         let t1 = Theme::default();
-        let l1 = dialog_layout(&t1);
+        let l1 = dialog_layout(&t1, false);
         assert_eq!(l1.size, (360, 180));
         assert_eq!(l1.ok.width, 75);
         assert_eq!(l1.ok.height, 23);
@@ -1396,11 +1407,62 @@ mod tests {
         assert!(l1.field.y > l1.user_box.bottom());
         assert!(l1.message.y > l1.field.bottom());
         assert!(l1.ok.y > l1.message.bottom());
-        let l2 = dialog_layout(&t1.scaled(2));
+        let l2 = dialog_layout(&t1.scaled(2), false);
         assert_eq!(l2.size, (720, 360));
         assert_eq!(l2.ok, l1.ok.scaled(2));
         assert_eq!(l2.field, l1.field.scaled(2));
     }
+
+    #[test]
+    fn the_unlock_dialog_has_switch_user_only_when_linked() {
+        let theme = Theme::default();
+        let plain = dialog_layout(&theme, false);
+        let l = dialog_layout(&theme, true);
+        assert_eq!(plain.switch_user, None);
+        let r = l.switch_user.expect("Switch User under reprise-login");
+        assert_eq!((r.x, r.y, r.width, r.height), (l.message.x, l.ok.y, 75, 23));
+        assert!(r.right() < l.ok.x);
+        let others = DialogLayout {
+            switch_user: None,
+            ..l.clone()
+        };
+        assert_eq!(others, plain, "nothing else moves");
+        let l2 = dialog_layout(&theme.scaled(2), true);
+        assert_eq!(l2.switch_user, Some(r.scaled(2)));
+
+        let text = TextRenderer::load(&FontConfig::default());
+        let bg = theme.colors.button_face.argb();
+        let mut s = LockState::new();
+        let c = draw_dialog(&theme, &text, None, "someone", &s);
+        assert!(!has_ink(&c, r, bg), "no button without the link");
+        s.switch_user = true;
+        let c = draw_dialog(&theme, &text, None, "someone", &s);
+        assert!(has_ink(&c, r.inset(3), bg), "the label");
+        assert_eq!(c.get(r.x, r.y + 5), theme.colors.button_hilight.argb());
+    }
+
+    #[test]
+    fn switch_user_dialog_pins_at_scale_1_and_2() {
+        if !reprisekit::text::test_tahoma() {
+            return;
+        }
+        let got = SWITCH_PINS.map(|(scale, _)| {
+            let theme = Theme::default().scaled(scale);
+            let text = TextRenderer::load(&theme.fonts);
+            let s = LockState {
+                switch_user: true,
+                ..LockState::new()
+            };
+            (scale, fnv(&draw_dialog(&theme, &text, None, "someone", &s)))
+        });
+        assert!(
+            got == SWITCH_PINS,
+            "pins changed; now:\n{}",
+            got.map(|(s, h)| format!("({s}, {h:#018x}),")).join("\n")
+        );
+    }
+
+    const SWITCH_PINS: [(i32, u64); 2] = [(1, 0xd858362cbb3e3958), (2, 0x919c472d738423eb)];
 
     fn has_ink(c: &Canvas, r: crate::raster::Rect, bg: u32) -> bool {
         (r.x..r.right()).any(|x| (r.y..r.bottom()).any(|y| c.get(x, y) != bg))
@@ -1410,7 +1472,7 @@ mod tests {
     fn draw_dialog_shows_caption_and_asterisks() {
         let theme = Theme::default();
         let text = TextRenderer::load(&FontConfig::default());
-        let l = dialog_layout(&theme);
+        let l = dialog_layout(&theme, false);
         let mut s = LockState::new();
         let c = draw_dialog(&theme, &text, None, "someone", &s);
         assert_eq!(c.width as i32, l.size.0);
@@ -1440,7 +1502,7 @@ mod tests {
         // starts on top of the ring instead of inside it.
         let theme = Theme::default().scaled(4);
         let text = TextRenderer::load(&theme.fonts);
-        let l = dialog_layout(&theme);
+        let l = dialog_layout(&theme, false);
         let s = LockState::new();
         let c = draw_dialog(&theme, &text, None, "someone", &s);
         let scale = theme.scale;
@@ -1453,7 +1515,7 @@ mod tests {
     #[test]
     fn a_long_message_is_cut_to_two_lines_that_fit_the_area() {
         let text = TextRenderer::load(&FontConfig::default());
-        let w = dialog_layout(&Theme::default()).message.width;
+        let w = dialog_layout(&Theme::default(), false).message.width;
         let one = message_lines(&text, INCORRECT, w, 11, MESSAGE_LINES);
         assert_eq!(one, [INCORRECT]);
         let long = format!("{}\n{}", "word ".repeat(40), "y".repeat(NOTICE_CHARS));
@@ -1470,7 +1532,7 @@ mod tests {
     fn two_message_lines_end_above_the_buttons() {
         let theme = Theme::default();
         let text = TextRenderer::load(&FontConfig::default());
-        let l = dialog_layout(&theme);
+        let l = dialog_layout(&theme, false);
         assert!(l.message.bottom() < l.ok.y);
         let mut s = LockState::new();
         s.fail_with("The account is locked due to 3 failed logins.\n(10 minutes left to unlock)");
@@ -1486,7 +1548,7 @@ mod tests {
     fn draw_dialog_message_and_verifying() {
         let theme = Theme::default();
         let text = TextRenderer::load(&FontConfig::default());
-        let l = dialog_layout(&theme);
+        let l = dialog_layout(&theme, false);
         let bg = theme.colors.button_face.argb();
         let s = LockState::new();
         let c = draw_dialog(&theme, &text, None, "someone", &s);
@@ -1512,7 +1574,7 @@ mod tests {
     fn a_further_prompt_relabels_the_field() {
         let theme = Theme::default();
         let text = TextRenderer::load(&FontConfig::default());
-        let l = dialog_layout(&theme);
+        let l = dialog_layout(&theme, false);
         let s_ = theme.scale;
         let label = Rect::new(l.caption.x + PAD, l.field.y, LABEL_W, l.field.height);
         let pixels = |c: &Canvas, r: Rect| -> Vec<u32> {
@@ -1571,7 +1633,7 @@ mod tests {
     fn caps_lock_shows_a_notice_under_the_field() {
         let theme = Theme::default();
         let text = TextRenderer::load(&FontConfig::default());
-        let l = dialog_layout(&theme);
+        let l = dialog_layout(&theme, false);
         let bg = theme.colors.button_face.argb();
         let line_h = LINE_H;
         let first = Rect::new(l.message.x, l.message.y, l.message.width, line_h);
@@ -1620,7 +1682,7 @@ mod tests {
     #[test]
     fn the_layout_badge_fills_its_corner_only_when_set() {
         assert_eq!(
-            dialog_layout(&Theme::default()).layout,
+            dialog_layout(&Theme::default(), false).layout,
             Rect::new(328, 124, 16, 16)
         );
         let glass = reprisekit::interfaces::theme_for(reprisekit::interface::Interface::Glass);
@@ -1628,7 +1690,7 @@ mod tests {
             for scale in [1, 2] {
                 let theme = look.scaled(scale);
                 let text = TextRenderer::load(&theme.fonts);
-                let l = dialog_layout(&theme);
+                let l = dialog_layout(&theme, false);
                 assert_eq!(l.layout.right(), l.cancel.right());
                 assert_eq!(l.layout.bottom(), l.message.bottom());
                 assert!(l.layout.bottom() <= l.cancel.y);
@@ -1651,7 +1713,7 @@ mod tests {
         }
         let theme = Theme::default();
         let text = TextRenderer::load(&theme.fonts);
-        let l = dialog_layout(&theme);
+        let l = dialog_layout(&theme, false);
         let mut s = LockState::new();
         s.layout = Some("EN".into());
         s.fail_with(&"word ".repeat(80));
@@ -1666,9 +1728,9 @@ mod tests {
     /// narrower and 6 px taller. Scale 2 doubles every rect.
     #[test]
     fn a_blue_unlock_dialog_takes_the_styles_frame() {
-        let classic = dialog_layout(&Theme::default());
+        let classic = dialog_layout(&Theme::default(), false);
         let blue = blue();
-        let l = dialog_layout(&blue);
+        let l = dialog_layout(&blue, false);
         let frame = l.frame.expect("a styled look lays out a frame");
         assert_eq!(l.size, (358, 186));
         assert_eq!(l.caption, Rect::new(3, 3, 352, 26));
@@ -1681,7 +1743,7 @@ mod tests {
         assert_eq!(l.ok, mv(classic.ok));
         assert_eq!(l.cancel, mv(classic.cancel));
         assert_eq!(classic.frame, None);
-        let l2 = dialog_layout(&blue.scaled(2));
+        let l2 = dialog_layout(&blue.scaled(2), false);
         assert_eq!(l2.size, (716, 372));
         assert_eq!(l2.caption, l.caption.scaled(2));
         assert_eq!(l2.ok, l.ok.scaled(2));
@@ -1695,7 +1757,7 @@ mod tests {
         use reprisekit::style::{Part, State};
         let blue = blue();
         let text = TextRenderer::load(&blue.fonts);
-        let l = dialog_layout(&blue);
+        let l = dialog_layout(&blue, false);
         let c = draw_dialog(&blue, &text, None, "someone", &LockState::new());
         assert_eq!((c.width as i32, c.height as i32), l.size);
         let top = Rect::new(0, 0, l.size.0, l.caption.bottom());
@@ -1735,7 +1797,7 @@ mod tests {
     fn a_blue_unlock_dialog_frames_its_fields_with_the_edit_border_and_shows_its_icon() {
         let blue = blue();
         let text = TextRenderer::load(&blue.fonts);
-        let l = dialog_layout(&blue);
+        let l = dialog_layout(&blue, false);
         let line = reprisekit::blue::Variant::Blue
             .scheme()
             .edit_border
@@ -1813,10 +1875,13 @@ mod tests {
     /// dialog.
     #[test]
     fn the_dialog_grows_with_the_text_size() {
-        assert_eq!(dialog_layout(&Theme::default()).size, (DIALOG_W, DIALOG_H));
+        assert_eq!(
+            dialog_layout(&Theme::default(), false).size,
+            (DIALOG_W, DIALOG_H)
+        );
         for pct in [150, 200] {
             let theme = Theme::default().with_text_size(pct);
-            let l = dialog_layout(&theme);
+            let l = dialog_layout(&theme, false);
             let px = theme.fonts.size_px as i32;
             assert!(l.field.height >= px + 4, "{pct}%");
             assert!(l.user_box.bottom() <= l.field.y, "{pct}%");

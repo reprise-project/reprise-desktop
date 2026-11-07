@@ -876,12 +876,15 @@ impl Dialog {
         }
     }
 
-    /// The Log Off panel: Switch User, greyed as Reprise has no other session to switch to, and
-    /// Log Off, which runs the `exit` action and holds the focus.
-    pub fn log_off() -> Dialog {
+    /// The Log Off panel: Switch User, live with `switch_user` (under reprise-login), and Log
+    /// Off, which runs the `exit` action and holds the focus.
+    pub fn log_off(switch_user: bool) -> Dialog {
         Dialog::welcome(Welcome {
-            panel: Panel::log_off(false),
-            actions: vec![(Choice::LogOff, DialogAction::Act(Action::Exit))],
+            panel: Panel::log_off(switch_user),
+            actions: vec![
+                (Choice::SwitchUser, DialogAction::SwitchUser),
+                (Choice::LogOff, DialogAction::Act(Action::Exit)),
+            ],
             always_blue: false,
         })
     }

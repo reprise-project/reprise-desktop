@@ -79,7 +79,7 @@ fn classic_dialog_has_a_close_button_and_a_focus_ring() {
     let ok = rl.buttons[0].inset(4);
     assert_ne!(rc.get(ok.x + 1, ok.y), cs.button_text.argb());
     assert!(
-        DialogLayout::compute(&theme, &text, &Dialog::log_off())
+        DialogLayout::compute(&theme, &text, &Dialog::log_off(false))
             .close
             .is_none()
     );
@@ -87,7 +87,7 @@ fn classic_dialog_has_a_close_button_and_a_focus_ring() {
 
 #[test]
 fn a_classic_button_lights_under_the_pointer_and_a_leave_clears_it() {
-    let mut d = Dialog::log_off();
+    let mut d = Dialog::log_off(false);
     let on = Some(DialogHit::Button(1));
     assert!(d.hover(on, (0, 0), true));
     assert_eq!(d.lit(), Some((1, Interaction::Hot)));
@@ -109,7 +109,7 @@ fn a_classic_button_lights_under_the_pointer_and_a_leave_clears_it() {
 
 #[test]
 fn the_help_box_lights_hot_and_shows_the_press_until_the_release() {
-    let mut d = Dialog::log_off();
+    let mut d = Dialog::log_off(false);
     let help = Some(DialogHit::Help);
     assert!(d.hover(help, (0, 0), true));
     assert_eq!(d.help_box.of(()), Interaction::Hot);
@@ -222,7 +222,7 @@ fn a_blue_form_dialog_lights_its_tab_and_control_and_a_leave_clears_them() {
 
 #[test]
 fn a_button_acts_on_the_release_over_it() {
-    let mut d = Dialog::log_off();
+    let mut d = Dialog::log_off(false);
     assert!(!d.press_button(0), "disabled");
     assert_eq!(d.lit(), None);
     assert!(d.press_button(1));
@@ -240,7 +240,7 @@ fn a_button_acts_on_the_release_over_it() {
 
 #[test]
 fn a_cancelled_press_does_not_act_on_the_release() {
-    let mut d = Dialog::log_off();
+    let mut d = Dialog::log_off(false);
     assert!(d.press_button(1));
     d.press_help();
     assert_eq!(d.cancel_press(), Outcome::Redraw);
@@ -489,7 +489,7 @@ fn a_blue_dialogs_close_box_draws_hot() {
 
 #[test]
 fn the_close_box_closes_only_on_a_release_over_it() {
-    let mut d = Dialog::log_off();
+    let mut d = Dialog::log_off(false);
     d.press_caption(CaptionButton::Close);
     assert_eq!(d.caption_box.of(CaptionButton::Close), Interaction::Pressed);
     assert!(d.drag_caption(None), "dragged off");

@@ -770,7 +770,10 @@ impl State {
                 let d = crate::dialog::Dialog::run(&self.dialogs.run_history);
                 self.open_dialog(d);
             }
-            Action::LogOff => self.open_dialog(crate::dialog::Dialog::log_off()),
+            Action::LogOff => {
+                let d = crate::dialog::Dialog::log_off(crate::loginlink::desk_offers(self));
+                self.open_dialog(d);
+            }
             Action::TurnOff => {
                 let d = crate::dialog::Dialog::turn_off(&self.config.power);
                 self.open_dialog(d);
