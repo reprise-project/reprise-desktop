@@ -406,11 +406,14 @@ struct SettingsApp {
     remote_job: Option<Receiver<remotehost::Reading>>,
     remote_acting: bool,
 
-    /// The Login Manager page's machine settings, read when it first opens; `login_job` holds
-    /// a save through `login_run` under way, and `login_quit` an OK or a close waiting on it.
+    /// The Login Manager page's machine settings, read when it first opens with the accounts
+    /// `login_source` gives; `login_job` holds a save through `login_run` under way, and
+    /// `login_quit` an OK or a close waiting on it.
     login: Option<loginhost::Login>,
     login_files: loginhost::Files,
+    login_source: fn() -> repriselogin::users::Source,
     login_run: fn(&str) -> std::io::Result<std::process::Output>,
+    login_users: Option<Receiver<Vec<String>>>,
     login_job: Option<Receiver<Result<repriselogin::machine::MachineConfig, String>>>,
     login_quit: bool,
     /// The pages this machine lacks the program for, kept out of the list ([`Page::installed`]).
@@ -669,7 +672,9 @@ impl SettingsApp {
             remote_acting: false,
             login: None,
             login_files: loginhost::Files::default(),
+            login_source: loginhost::machine_users,
             login_run: loginhost::pkexec,
+            login_users: None,
             login_job: None,
             login_quit: false,
             absent: absent_pages(),

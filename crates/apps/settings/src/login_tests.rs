@@ -35,6 +35,7 @@ fn login(a: &SettingsApp) -> &form::Form {
 fn open_login(a: &mut SettingsApp) {
     assert!(a.open_page(Page::LoginManager, None));
     a.ensure_login();
+    a.wake();
 }
 
 fn combo_text(f: &form::Form, id: &str) -> String {
@@ -44,6 +45,13 @@ fn combo_text(f: &form::Form, id: &str) -> String {
         .control
     {
         form::Control::Combo(c) => c.items[c.selected].text.clone(),
+        c => panic!("{id} is a combo, not {c:?}"),
+    }
+}
+
+fn combo_rows(f: &form::Form, id: &str) -> Vec<String> {
+    match &f.item(id).unwrap().control {
+        form::Control::Combo(c) => c.items.iter().map(|i| i.text.clone()).collect(),
         c => panic!("{id} is a combo, not {c:?}"),
     }
 }
@@ -147,6 +155,18 @@ fn the_login_manager_page_reads_the_machine_settings() {
     assert_eq!(combo_text(page, "login_end_after"), "4 hours");
     assert_eq!(page.edit_text("login_fingerprint"), "3F:9A:01");
     assert!(!a.dirty(), "reading the page is no change for Apply");
+}
+
+#[test]
+fn automatic_logon_offers_the_accounts_the_login_screen_lists() {
+    let dir = tmp("users");
+    let mut a = app(&dir);
+    a.login_source = repriselogin::users::sample;
+    open_login(&mut a);
+    assert_eq!(
+        combo_rows(login(&a), "login_autologin"),
+        ["Nobody", "anna", "old", "zoe"]
+    );
 }
 
 #[test]
