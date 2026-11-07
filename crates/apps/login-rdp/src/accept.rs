@@ -94,6 +94,7 @@ pub enum Refused {
     Negotiation(String),
     Tls(String),
     NoPassword,
+    NoUser,
     UserTooLong,
     Io(io::ErrorKind),
 }
@@ -108,6 +109,7 @@ impl fmt::Display for Refused {
             Refused::NoPassword => f.write_str(
                 "no password in the client's logon info; save the user name and password in the client",
             ),
+            Refused::NoUser => f.write_str("no user name in the client's logon info"),
             Refused::UserTooLong => write!(f, "a user name over {MAX_USER} bytes"),
             Refused::Io(kind) => write!(f, "connection error: {kind}"),
         }
@@ -321,6 +323,9 @@ async fn accept(
         _ => return Err(Refused::NoPassword),
     };
     let user = negotiate::strip_domain(&credentials.username).to_owned();
+    if user.is_empty() {
+        return Err(Refused::NoUser);
+    }
     if user.len() > MAX_USER {
         return Err(Refused::UserTooLong);
     }
