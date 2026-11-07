@@ -12,7 +12,30 @@ use repriselogin::machine::MACHINE_CONFIG;
 const UNIT: &str = "reprise-login.service";
 const SYSTEMCTL: &str = "/usr/bin/systemctl";
 
+/// Prints the library's warnings, such as a directory sync failing after the rename, to stderr.
+struct Stderr;
+
+impl log::Log for Stderr {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        metadata.level() <= log::Level::Warn
+    }
+
+    fn log(&self, record: &log::Record) {
+        match record.level() {
+            log::Level::Error => eprintln!("error: {}", record.args()),
+            log::Level::Warn => eprintln!("warning: {}", record.args()),
+            _ => {}
+        }
+    }
+
+    fn flush(&self) {}
+}
+
 fn main() -> ExitCode {
+    static STDERR: Stderr = Stderr;
+    if log::set_logger(&STDERR).is_ok() {
+        log::set_max_level(log::LevelFilter::Warn);
+    }
     // SAFETY: umask has no preconditions. pkexec passes on the caller's umask.
     unsafe { libc::umask(0o022) };
     // SAFETY: geteuid has no preconditions.
