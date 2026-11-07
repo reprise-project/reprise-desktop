@@ -423,3 +423,361 @@ fn the_saved_display_layout_never_records_a_remote_screen() {
         .expect("the saved layouts");
     assert!(!file.contains("REMOTE"), "{file}");
 }
+
+#[test]
+fn a_session_with_no_monitor_yet_takes_its_windows_to_the_first_monitor_at_their_relative_places() {
+    let mut h = Harness::new();
+    let mut c = h.connect();
+    let s = begin(&mut h, &[(0, 0, 1024, 768, 100)]);
+    h.roundtrip(&mut c);
+    let r = remotes(&h)[0].clone();
+    let t = h.map_toplevel(&mut c, "t", 400, 300);
+    place(&mut h, &mut c, t, &r, (0.25, 0.25));
+    let from = rel(frame(&h, t.id), area(&h, &r));
+    let width = frame(&h, t.id).width;
+    end(&mut h, s, &mut c);
+
+    let monitor = h.output("Virtual-1", 1920, 1080);
+    h.roundtrip(&mut c);
+    near(
+        rel(frame(&h, t.id), area(&h, &monitor)),
+        from,
+        area(&h, &monitor),
+    );
+    assert_eq!(frame(&h, t.id).width, width, "the size stays");
+}
+
+/// A session with no monitor whose window `t` lock mode left on a 1024x768 client screen at
+/// (0.25, 0.25) of its work area; that place, as `rel` gives it.
+fn held_window(h: &mut Harness, c: &mut TestClient) -> (Toplevel, (f64, f64)) {
+    let s = begin(h, &[(0, 0, 1024, 768, 100)]);
+    h.roundtrip(c);
+    let r = remotes(h)[0].clone();
+    let t = h.map_toplevel(c, "t", 400, 300);
+    place(h, c, t, &r, (0.25, 0.25));
+    let from = rel(frame(h, t.id), area(h, &r));
+    end(h, s, c);
+    (t, from)
+}
+
+#[test]
+fn a_window_back_from_lock_mode_stays_put_when_another_monitor_comes() {
+    let mut h = Harness::new();
+    let mut c = h.connect();
+    let (t, _) = held_window(&mut h, &mut c);
+    let s = begin(&mut h, &[(0, 0, 1024, 768, 100)]);
+    h.roundtrip(&mut c);
+    let monitor = h.output("HDMI-A-1", 1920, 1080);
+    h.roundtrip(&mut c);
+    end(&mut h, s, &mut c);
+    let back = frame(&h, t.id);
+    assert!(
+        centre_on(back, h.state.layout_box(Some(&monitor))),
+        "{back:?}"
+    );
+
+    h.output("DP-1", 1280, 1024);
+    h.roundtrip(&mut c);
+    assert_eq!(frame(&h, t.id), back, "the window stays");
+}
+
+#[test]
+fn a_snap_group_waiting_for_a_monitor_fills_its_zones_there() {
+    let mut h = Harness::new();
+    let mut c = h.connect();
+    let s = begin(&mut h, &[(0, 0, 1024, 768, 100)]);
+    h.roundtrip(&mut c);
+    let r = remotes(&h)[0].clone();
+    let left = h.map_toplevel(&mut c, "left", 300, 200);
+    let right = h.map_toplevel(&mut c, "right", 300, 200);
+    h.state.apply_layout(&r, halves(), false, left.id, 0);
+    h.state.apply_layout(&r, halves(), false, right.id, 1);
+    h.roundtrip(&mut c);
+    assert!(h.state.wm.snap.shares_group(left.id, right.id));
+    end(&mut h, s, &mut c);
+
+    let monitor = h.output("HDMI-A-1", 1920, 1080);
+    h.roundtrip(&mut c);
+    let a = area(&h, &monitor);
+    assert_eq!(
+        frame(&h, left.id),
+        Rect::new(a.x, a.y, a.width / 2, a.height),
+        "the left half of the monitor"
+    );
+    assert!(centre_on(
+        frame(&h, right.id),
+        Rect::new(a.x + a.width / 2, a.y, a.width / 2, a.height)
+    ));
+    assert_eq!(h.state.wm.snap.group_output(left.id), Some("HDMI-A-1"));
+}
+
+#[test]
+fn a_waiting_window_takes_its_relative_place_on_a_monitor_placed_off_the_origin() {
+    let mut h = Harness::new();
+    let mut c = h.connect();
+    let (t, from) = held_window(&mut h, &mut c);
+
+    let monitor = h.add_output("HDMI-A-1", 1920, 1080, Some((1920, 0)));
+    h.dispatch();
+    h.roundtrip(&mut c);
+    assert_eq!(h.state.layout_box(Some(&monitor)).x, 1920);
+    near(
+        rel(frame(&h, t.id), area(&h, &monitor)),
+        from,
+        area(&h, &monitor),
+    );
+}
+
+/// `[[outputs]]` making `name` the primary.
+fn primary(name: &str) -> crate::config::OutputConfig {
+    crate::config::OutputConfig {
+        name: name.into(),
+        scale: 1.0,
+        mode: None,
+        adaptive_sync: None,
+        transform: Default::default(),
+        position: None,
+        primary: true,
+    }
+}
+
+#[test]
+fn waiting_windows_go_to_the_console_primary_of_the_monitors_that_come_together() {
+    let mut h = Harness::new();
+    h.state.config.outputs = vec![primary("HDMI-A-1")];
+    let mut c = h.connect();
+    let (t, from) = held_window(&mut h, &mut c);
+
+    h.add_output("DP-1", 1280, 1024, None);
+    let primary = h.add_output("HDMI-A-1", 1920, 1080, None);
+    h.dispatch();
+    h.roundtrip(&mut c);
+    let f = frame(&h, t.id);
+    assert!(centre_on(f, h.state.layout_box(Some(&primary))), "{f:?}");
+    near(rel(f, area(&h, &primary)), from, area(&h, &primary));
+}
+
+#[test]
+fn a_window_back_from_lock_mode_lands_on_the_standby_and_a_monitor_takes_it_in_place() {
+    let mut h = Harness::new();
+    crate::standby::rdp_changed(&mut h.state, true);
+    let mut c = h.connect();
+    let s = begin(&mut h, &[(0, 0, 2560, 1440, 100)]);
+    h.roundtrip(&mut c);
+    let r = remotes(&h)[0].clone();
+    let t = h.map_toplevel(&mut c, "t", 400, 300);
+    place(&mut h, &mut c, t, &r, (0.75, 0.5));
+    let from = rel(frame(&h, t.id), area(&h, &r));
+    end(&mut h, s, &mut c);
+    let standby = (h.state.scene.outputs().iter())
+        .find(|o| crate::backend::is_virtual(o))
+        .cloned()
+        .expect("the standby holds the desktop");
+    let f = frame(&h, t.id);
+    assert!(centre_on(f, h.state.layout_box(Some(&standby))), "{f:?}");
+    near(rel(f, area(&h, &standby)), from, area(&h, &standby));
+
+    h.output("HDMI-A-1", 1920, 1080);
+    h.roundtrip(&mut c);
+    assert_eq!(frame(&h, t.id), f, "the window stays where it is");
+}
+
+#[test]
+fn a_snap_group_whose_monitor_left_fills_its_zones_on_the_remote_screen() {
+    let mut h = Harness::new();
+    h.output("eDP-1", 1920, 1080);
+    let hdmi = h.output("HDMI-A-1", 1920, 1080);
+    let mut c = h.connect();
+    let left = h.map_toplevel(&mut c, "left", 300, 200);
+    let right = h.map_toplevel(&mut c, "right", 300, 200);
+    h.state.apply_layout(&hdmi, halves(), false, left.id, 0);
+    h.state.apply_layout(&hdmi, halves(), false, right.id, 1);
+    h.roundtrip(&mut c);
+    h.state.scene.remove_output(&hdmi);
+    h.state.output_removed(&hdmi);
+    h.roundtrip(&mut c);
+    assert_eq!(h.state.wm.snap.group_output(left.id), Some("HDMI-A-1"));
+
+    let _s = begin(&mut h, &[(0, 0, 1024, 768, 100)]);
+    h.roundtrip(&mut c);
+    let r = remotes(&h)[0].clone();
+    assert_eq!(
+        h.state.wm.snap.group_output(left.id),
+        Some(r.name().as_str())
+    );
+    let a = area(&h, &r);
+    assert_eq!(
+        frame(&h, left.id),
+        Rect::new(a.x, a.y, a.width / 2, a.height),
+        "the left half of the client's screen"
+    );
+}
+
+#[test]
+fn waiting_windows_wait_for_a_deferred_monitor_enable_and_go_to_the_console_primary() {
+    let mut h = Harness::new();
+    h.state.config.outputs = vec![primary("HDMI-A-1")];
+    let mut c = h.connect();
+    let (t, from) = held_window(&mut h, &mut c);
+
+    h.state.test_outputs_pending = true;
+    h.output("DP-1", 1280, 1024);
+    h.roundtrip(&mut c);
+    h.state.test_outputs_pending = false;
+    let primary = h.output("HDMI-A-1", 1920, 1080);
+    h.roundtrip(&mut c);
+    let f = frame(&h, t.id);
+    assert!(centre_on(f, h.state.layout_box(Some(&primary))), "{f:?}");
+    near(rel(f, area(&h, &primary)), from, area(&h, &primary));
+}
+
+#[test]
+fn a_window_whose_monitor_left_in_lock_mode_goes_home_when_it_comes_back() {
+    let mut h = Harness::new();
+    let edp = h.output("eDP-1", 1920, 1080);
+    let mut c = h.connect();
+    let t = h.map_toplevel(&mut c, "t", 500, 400);
+    place(&mut h, &mut c, t, &edp, (0.3, 0.2));
+    let home = frame(&h, t.id);
+    let s = begin(&mut h, &[(0, 0, 1024, 768, 100)]);
+    h.roundtrip(&mut c);
+    let r = remotes(&h)[0].clone();
+    place(&mut h, &mut c, t, &r, (0.5, 0.4));
+    h.state.scene.remove_output(&edp);
+    h.state.output_removed(&edp);
+    end(&mut h, s, &mut c);
+    assert!(
+        h.state.win(t.id).is_some_and(|w| w.home.is_none()),
+        "homes are spent"
+    );
+
+    h.output("eDP-1", 1920, 1080);
+    h.roundtrip(&mut c);
+    assert_eq!(frame(&h, t.id), home, "back at its home");
+}
+
+#[test]
+fn a_window_waiting_for_its_monitor_keeps_its_home_through_a_reconnect() {
+    let mut h = Harness::new();
+    let edp = h.output("eDP-1", 1920, 1080);
+    let mut c = h.connect();
+    let t = h.map_toplevel(&mut c, "t", 500, 400);
+    place(&mut h, &mut c, t, &edp, (0.3, 0.2));
+    let home = frame(&h, t.id);
+    let s = begin(&mut h, &[(0, 0, 1024, 768, 100)]);
+    h.roundtrip(&mut c);
+    let r = remotes(&h)[0].clone();
+    place(&mut h, &mut c, t, &r, (0.5, 0.4));
+    h.state.scene.remove_output(&edp);
+    h.state.output_removed(&edp);
+    end(&mut h, s, &mut c);
+
+    let s = begin(&mut h, &[(0, 0, 1024, 768, 100)]);
+    h.roundtrip(&mut c);
+    h.output("eDP-1", 1920, 1080);
+    h.roundtrip(&mut c);
+    end(&mut h, s, &mut c);
+    assert_eq!(frame(&h, t.id), home, "back at its home");
+}
+
+#[test]
+fn a_background_session_takes_its_windows_to_its_first_monitor_at_their_relative_places() {
+    let mut h = Harness::new();
+    crate::standby::rdp_changed(&mut h.state, true);
+    crate::lockview::seat_away(&mut h.state, true);
+    let mut c = h.connect();
+    let s = begin(&mut h, &[(0, 0, 1024, 768, 100)]);
+    h.roundtrip(&mut c);
+    let r = remotes(&h)[0].clone();
+    let t = h.map_toplevel(&mut c, "t", 200, 150);
+    place(&mut h, &mut c, t, &r, (0.75, 0.5));
+    let from = rel(frame(&h, t.id), area(&h, &r));
+    end(&mut h, s, &mut c);
+
+    h.state.test_outputs_pending = true;
+    crate::lockview::seat_away(&mut h.state, false);
+    h.roundtrip(&mut c);
+    let monitor = h.output("eDP-1", 1440, 900);
+    h.state.test_outputs_pending = false;
+    h.roundtrip(&mut c);
+    let f = frame(&h, t.id);
+    assert!(centre_on(f, h.state.layout_box(Some(&monitor))), "{f:?}");
+    near(rel(f, area(&h, &monitor)), from, area(&h, &monitor));
+}
+
+#[test]
+fn a_window_waiting_for_a_monitor_takes_its_relative_place_on_the_next_remote_screen() {
+    let mut h = Harness::new();
+    let mut c = h.connect();
+    let (t, from) = held_window(&mut h, &mut c);
+
+    let _s = begin(&mut h, &[(0, 0, 2560, 1440, 100)]);
+    h.roundtrip(&mut c);
+    let r = remotes(&h)[0].clone();
+    near(rel(frame(&h, t.id), area(&h, &r)), from, area(&h, &r));
+}
+
+/// Two client screens side by side: 1280x720, then 1024x768.
+const TWO: [(i32, i32, i32, i32, u32); 2] = [(0, 0, 1280, 720, 100), (1280, 0, 1024, 768, 100)];
+
+#[test]
+fn each_window_goes_back_to_the_client_screen_it_left() {
+    let mut h = Harness::new();
+    let mut c = h.connect();
+    let s = begin(&mut h, &TWO);
+    h.roundtrip(&mut c);
+    let r = remotes(&h);
+    let a = h.map_toplevel(&mut c, "a", 300, 200);
+    let b = h.map_toplevel(&mut c, "b", 300, 200);
+    place(&mut h, &mut c, a, &r[0], (0.25, 0.25));
+    place(&mut h, &mut c, b, &r[1], (0.5, 0.4));
+    end(&mut h, s, &mut c);
+    let monitor = h.output("eDP-1", 1440, 900);
+    h.roundtrip(&mut c);
+    let on_console = |h: &Harness, t: Toplevel| rel(frame(h, t.id), area(h, &monitor));
+    let (fa, fb) = (on_console(&h, a), on_console(&h, b));
+
+    let _s = begin(&mut h, &TWO);
+    h.roundtrip(&mut c);
+    let r = remotes(&h);
+    near(rel(frame(&h, a.id), area(&h, &r[0])), fa, area(&h, &r[0]));
+    near(rel(frame(&h, b.id), area(&h, &r[1])), fb, area(&h, &r[1]));
+}
+
+#[test]
+fn a_window_whose_client_screen_is_gone_goes_to_the_client_primary() {
+    let mut h = Harness::new();
+    let monitor = h.output("eDP-1", 1440, 900);
+    let mut c = h.connect();
+    let s = begin(&mut h, &TWO);
+    h.roundtrip(&mut c);
+    let b = h.map_toplevel(&mut c, "b", 300, 200);
+    let r = remotes(&h);
+    place(&mut h, &mut c, b, &r[1], (0.5, 0.4));
+    end(&mut h, s, &mut c);
+    let from = rel(frame(&h, b.id), area(&h, &monitor));
+
+    let _s = begin(&mut h, &[(0, 0, 1024, 768, 100)]);
+    h.roundtrip(&mut c);
+    let r = remotes(&h)[0].clone();
+    near(rel(frame(&h, b.id), area(&h, &r)), from, area(&h, &r));
+}
+
+#[test]
+fn windows_on_the_standby_take_their_relative_places_on_the_client_screen() {
+    let mut h = Harness::new();
+    crate::standby::rdp_changed(&mut h.state, true);
+    let mut c = h.connect();
+    let standby = (h.state.scene.outputs().iter())
+        .find(|o| crate::backend::is_virtual(o))
+        .cloned()
+        .expect("the standby holds the desktop");
+    let t = h.map_toplevel(&mut c, "t", 200, 150);
+    place(&mut h, &mut c, t, &standby, (0.75, 0.5));
+    let from = rel(frame(&h, t.id), area(&h, &standby));
+
+    let _s = begin(&mut h, &[(0, 0, 1024, 768, 100)]);
+    h.roundtrip(&mut c);
+    let r = remotes(&h)[0].clone();
+    near(rel(frame(&h, t.id), area(&h, &r)), from, area(&h, &r));
+}

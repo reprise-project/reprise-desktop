@@ -52,6 +52,10 @@ pub struct Console {
     pub(crate) keys: keys::Keys,
     /// The computer's own pointer in lock mode (`pointer`).
     pub(crate) pointer: Point<f64, Logical>,
+    /// Windows lock mode brought back, waiting for an output (`homes::land_held`).
+    pub(crate) held: Vec<homes::Held>,
+    /// The client screen, by layout index, each window lock mode brought back was on.
+    pub(crate) left: Vec<(crate::window::WindowId, usize)>,
 }
 
 /// The most monitors a layout may have.
@@ -280,7 +284,7 @@ pub fn side_of(output: &Output) -> Side {
 }
 
 /// Make the Remote outputs `layout`'s, in order: resize those there are, make or remove the
-/// rest, re-decide the standby, then lay out once.
+/// rest and lay out, then re-decide the standby, whose windows that first layout carried.
 fn apply(state: &mut State, layout: Vec<RemoteMonitor>) {
     let specs = specs(&layout);
     let remotes = crate::virtualout::remote_outputs(state);
@@ -302,9 +306,12 @@ fn apply(state: &mut State, layout: Vec<RemoteMonitor>) {
         crate::virtualout::remove(state, o);
         state.forget_output(o);
     }
-    let standby_gone = crate::standby::remotes_changed(state);
     state.update_layout();
-    if !gone.is_empty() || standby_gone {
+    let standby = crate::standby::remotes_changed(state);
+    if standby != crate::standby::Change::Keep {
+        state.update_layout();
+    }
+    if !gone.is_empty() || standby == crate::standby::Change::Remove {
         crate::notifyview::output_removed(state);
     }
     state.console.layout = layout;
