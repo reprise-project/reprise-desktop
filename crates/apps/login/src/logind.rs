@@ -34,6 +34,7 @@ pub trait Manager {
     fn power_off(&self, interactive: bool) -> zbus::Result<()>;
     fn reboot(&self, interactive: bool) -> zbus::Result<()>;
     fn terminate_session(&self, id: &str) -> zbus::Result<()>;
+    fn kill_session(&self, id: &str, who: &str, signal: i32) -> zbus::Result<()>;
     fn unlock_session(&self, id: &str) -> zbus::Result<()>;
     fn lock_session(&self, id: &str) -> zbus::Result<()>;
     #[zbus(signal)]

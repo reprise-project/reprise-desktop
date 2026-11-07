@@ -484,6 +484,14 @@ impl Runtime {
                     }
                 });
             }
+            Effect::KillSession(id) => {
+                let l = self.logind.clone();
+                tokio::task::spawn_local(async move {
+                    if let Err(e) = l.manager().kill_session(&id, "all", libc::SIGKILL).await {
+                        log::warn!("killing session {id}: {e}");
+                    }
+                });
+            }
             Effect::UnlockSession(id) => {
                 let (l, events) = (self.logind.clone(), self.events.clone());
                 tokio::task::spawn_local(async move {

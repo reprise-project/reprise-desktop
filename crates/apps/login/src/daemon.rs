@@ -31,6 +31,8 @@ pub const AUTH_WAIT: Duration = Duration::from_secs(5 * 60);
 pub const TERMINATE_TRIES: u32 = 4;
 /// The wait before the first retry, doubled for each later one.
 pub const TERMINATE_RETRY: Duration = Duration::from_secs(1);
+/// How long a greeter told to end gets before its session is killed.
+pub const KILL_WAIT: Duration = Duration::from_secs(5);
 /// Most users one `Greeting` lists; fewer when their entries would not fit one frame.
 pub const MAX_USERS: usize = 100;
 
@@ -59,6 +61,8 @@ pub enum Timer {
     Auth(WorkerId),
     /// The next try at ending orphaned greeter session `.0`.
     Terminate(String),
+    /// `KILL_WAIT` after greeter worker `.0` was told to end.
+    GreeterKill(WorkerId),
 }
 
 #[derive(Debug, PartialEq)]
@@ -125,6 +129,8 @@ pub enum Effect {
     /// logind's `UnlockSession`, answered by `Input::Unlocked`.
     UnlockSession(String),
     LockSession(String),
+    /// SIGKILLs every process of session `.0`.
+    KillSession(String),
     Arm {
         timer: Timer,
         after: Duration,
@@ -180,6 +186,8 @@ struct Greeter {
     worker: WorkerId,
     /// Its worker reported `Started`.
     started: bool,
+    /// Its logind session, from `Started`.
+    session: Option<String>,
     /// Set by the final `Success`: the greeter exits by itself, and that exit counts no failure.
     leaving: bool,
     /// The greeter is wanted again once the leaving one has gone.
@@ -450,6 +458,9 @@ impl Daemon {
             Input::Timer(Timer::Auth(worker)) => self.auth_wait(now, worker, &mut out),
             Input::TerminateFailed { id, seat_active } => {
                 self.terminate_failed(world, id, seat_active, &mut out)
+            }
+            Input::Timer(Timer::GreeterKill(worker)) => {
+                self.greeter_outlived_kill(worker, &mut out)
             }
             Input::Timer(Timer::Terminate(id)) => {
                 if self.orphans.iter().any(|o| o.id == id) {
@@ -733,8 +744,10 @@ impl Daemon {
                 };
                 self.session_started(now, worker, entry, None, out);
             }
-            FromWorker::Started { .. } if is_greeter => {
-                self.greeter.as_mut().expect("greeter").started = true;
+            FromWorker::Started { session_id, .. } if is_greeter => {
+                let g = self.greeter.as_mut().expect("greeter");
+                g.started = true;
+                g.session = Some(session_id);
             }
             FromWorker::Failed { text, .. } if is_greeter => out.push(Effect::Log(
                 Level::Warn,
@@ -1294,6 +1307,10 @@ impl Daemon {
             Some(g) if g.leaving => {
                 if !std::mem::replace(&mut g.relaunch, true) {
                     out.push(Effect::Kill(g.worker));
+                    out.push(Effect::Arm {
+                        timer: Timer::GreeterKill(g.worker),
+                        after: KILL_WAIT,
+                    });
                 }
             }
             Some(_) => {
@@ -1301,6 +1318,21 @@ impl Daemon {
                 self.regreet = true;
             }
             None => self.spawn_greeter(out),
+        }
+    }
+
+    /// A greeter still running `KILL_WAIT` after its kill hangs past SIGTERM: its session
+    /// goes, which ends its worker too.
+    fn greeter_outlived_kill(&mut self, worker: WorkerId, out: &mut Vec<Effect>) {
+        let Some(g) = self.greeter.as_ref().filter(|g| g.worker == worker) else {
+            return;
+        };
+        out.push(Effect::Log(
+            Level::Warn,
+            format!("the login screen did not end within {KILL_WAIT:?}; killing it"),
+        ));
+        if let Some(id) = &g.session {
+            out.push(Effect::KillSession(id.clone()));
         }
     }
 
@@ -1314,6 +1346,7 @@ impl Daemon {
         self.greeter = Some(Greeter {
             worker,
             started: false,
+            session: None,
             leaving: false,
             relaunch: false,
         });
