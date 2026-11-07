@@ -5,7 +5,7 @@ mod stream;
 use std::io;
 use std::os::fd::{AsRawFd, BorrowedFd};
 
-use aws_lc_rs::hmac;
+use aws_lc_rs::{constant_time, hmac};
 use repriselogin::handover::{Cipher, DirectionKeys, TlsState, TlsVersion};
 use rustls::{
     ConnectionCommon, ConnectionTrafficSecrets, ProtocolVersion, ServerConnection,
@@ -271,51 +271,68 @@ pub struct TrafficSecrets {
     pub server: Zeroizing<Vec<u8>>,
 }
 
-/// Takes a server's keys out of rustls once nothing can be lost on the way into the kernel:
-/// `cork` stopped at a record boundary, rustls holds nothing unread or unsent, and its secrets
-/// extract. TLS 1.3 also needs `secrets`, which key updates derive from.
+/// Takes a server's keys out of rustls once nothing can be lost on the way into the kernel. TLS
+/// 1.3 also needs `secrets`, the ones the keys came from, which key updates derive from.
 pub fn hand_over<S>(
     cork: &Cork<S>,
     mut conn: ServerConnection,
     secrets: Option<TrafficSecrets>,
 ) -> io::Result<TlsState> {
-    let refused = |why: String| io::Error::other(format!("TLS hand-over refused: {why}"));
+    let refused = |why: &str| io::Error::other(format!("TLS hand-over refused: {why}"));
     if !cork.at_boundary() {
-        return Err(refused("a partial record was read".into()));
+        return Err(refused("a partial record was read"));
     }
     check_drained(&mut conn)?;
-    let (version, record_limit) = match (conn.protocol_version(), conn.negotiated_cipher_suite()) {
-        (Some(version), Some(SupportedCipherSuite::Tls13(suite))) => {
-            (version, suite.common.confidentiality_limit)
-        }
-        (Some(version), Some(SupportedCipherSuite::Tls12(suite))) => {
-            (version, suite.common.confidentiality_limit)
-        }
-        _ => return Err(refused("the handshake is not done".into())),
+    let (version, protocol, record_limit) = match conn.negotiated_cipher_suite() {
+        Some(SupportedCipherSuite::Tls13(suite)) => (
+            TlsVersion::Tls13,
+            ProtocolVersion::TLSv1_3,
+            suite.common.confidentiality_limit,
+        ),
+        Some(SupportedCipherSuite::Tls12(suite)) => (
+            TlsVersion::Tls12,
+            ProtocolVersion::TLSv1_2,
+            suite.common.confidentiality_limit,
+        ),
+        None => return Err(refused("the handshake is not done")),
     };
     let (tx_secret, rx_secret) = match (version, secrets) {
-        (ProtocolVersion::TLSv1_3, Some(s)) => (Some(s.server), Some(s.client)),
-        (ProtocolVersion::TLSv1_3, None) => {
-            return Err(refused("TLS 1.3 without its traffic secrets".into()));
-        }
-        _ => (None, None),
+        (TlsVersion::Tls13, Some(s)) => (Some(s.server), Some(s.client)),
+        (TlsVersion::Tls13, None) => return Err(refused("TLS 1.3 without its traffic secrets")),
+        (TlsVersion::Tls12, _) => (None, None),
     };
     #[allow(deprecated)]
     let extracted = conn
         .dangerous_extract_secrets()
-        .map_err(|e| refused(format!("rustls gave no secrets: {e}")))?;
-    let (cipher, tx) = keys_from_rustls(version, extracted.tx.0, extracted.tx.1, tx_secret)?;
-    let (_, rx) = keys_from_rustls(version, extracted.rx.0, extracted.rx.1, rx_secret)?;
+        .map_err(|e| refused(&format!("rustls gave no secrets: {e}")))?;
+    let (cipher, tx) = keys_from_rustls(protocol, extracted.tx.0, extracted.tx.1, tx_secret)?;
+    let (_, rx) = keys_from_rustls(protocol, extracted.rx.0, extracted.rx.1, rx_secret)?;
+    // A key update before the hand-over leaves the keys a generation past the logged secrets;
+    // updating from those would send under the current key again from sequence 0.
+    if !(keys_match_secret(cipher, &tx) & keys_match_secret(cipher, &rx)) {
+        return Err(refused(
+            "the traffic secrets don't match the connection's keys",
+        ));
+    }
     Ok(TlsState {
-        version: match version {
-            ProtocolVersion::TLSv1_2 => TlsVersion::Tls12,
-            _ => TlsVersion::Tls13,
-        },
+        version,
         cipher,
         tx,
         rx,
         record_limit,
     })
+}
+
+/// Whether `keys` are the key and iv of their TLS 1.3 traffic secret, compared in constant time.
+/// Keys without a secret (TLS 1.2) match.
+fn keys_match_secret(cipher: Cipher, keys: &DirectionKeys) -> bool {
+    let Some(secret) = &keys.secret else {
+        return true;
+    };
+    let (key, iv) = traffic_keys(cipher, secret);
+    let key_matches = constant_time::verify_slices_are_equal(&key, &keys.key).is_ok();
+    let iv_matches = constant_time::verify_slices_are_equal(&iv, &keys.iv).is_ok();
+    key_matches & iv_matches
 }
 
 /// How many records a sender keeps in hand below the record limit.
@@ -839,6 +856,53 @@ mod tests {
                 "{version:?} {record:?}"
             );
         }
+    }
+
+    #[test]
+    fn hand_over_refuses_traffic_secrets_behind_the_connection_keys() {
+        let suite = cipher_suite::TLS13_AES_128_GCM_SHA256;
+        let boundary = Cork::new(tokio::io::empty());
+        let refused = |result: io::Result<TlsState>, case: &str| {
+            let err = result.unwrap_err().to_string();
+            assert!(err.contains("don't match"), "{case}: {err}");
+        };
+
+        let (config, secrets) = fixture::logged_server_config();
+        let (mut client, mut server) = connected_to(suite, config);
+        client.refresh_traffic_keys().unwrap();
+        send(&mut client, &mut server);
+        refused(
+            hand_over(&boundary, server, traffic(&secrets)),
+            "the client updated its keys and asked for the server's",
+        );
+
+        let (config, secrets) = fixture::logged_server_config();
+        let (mut client, mut server) = connected_to(suite, config);
+        server.refresh_traffic_keys().unwrap();
+        send(&mut server, &mut client);
+        refused(
+            hand_over(&boundary, server, traffic(&secrets)),
+            "the server updated its send keys",
+        );
+
+        let (config, secrets) = fixture::logged_server_config();
+        let (_, server) = connected_to(suite, config);
+        let TrafficSecrets { client, server: s } = traffic(&secrets).unwrap();
+        let swapped = TrafficSecrets {
+            client: s,
+            server: client,
+        };
+        refused(
+            hand_over(&boundary, server, Some(swapped)),
+            "swapped secrets",
+        );
+
+        let (config, secrets) = fixture::logged_server_config();
+        let (_, server) = connected_to(suite, config);
+        assert!(
+            hand_over(&boundary, server, traffic(&secrets)).is_ok(),
+            "a connection that never updated its keys hands over"
+        );
     }
 
     #[tokio::test]
