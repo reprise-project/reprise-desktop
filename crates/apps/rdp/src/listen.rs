@@ -243,6 +243,11 @@ pub async fn serve<D, I, L>(
                         shared.viewers.borrow_mut().kick_all(Kick::PortChanged);
                         continue;
                     }
+                    Arrival::HandedOver { tcp, handover } => {
+                        drop(tcp);
+                        log::info!("{}: closed; hand-overs are not served", handover.peer);
+                        continue;
+                    }
                 };
                 let backoff = logins.backoff(peer.ip());
                 if !backoff.is_zero() {
