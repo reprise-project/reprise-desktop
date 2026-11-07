@@ -135,6 +135,7 @@ fn a_remote_login_reaching_a_session_off_the_seat_makes_it_a_background_session(
                 Level::Info,
                 "anna's session c2 is in the background with a remote client".into()
             ),
+            disconnect_arm("c2", 1, 30),
             Effect::Inhibit(Inhibit::Idle),
         ]
     );
@@ -145,8 +146,26 @@ fn a_remote_login_reaching_a_session_off_the_seat_makes_it_a_background_session(
     );
     assert_eq!(
         run.viewers(ANNA, 0),
+        [disconnect_arm("c2", 2, 30), Effect::Inhibit(Inhibit::Idle)]
+    );
+}
+
+#[test]
+fn a_session_reached_remotely_whose_client_never_shows_ends_after_its_disconnect_time() {
+    let mut run = anna_switched_away(with_end_after(30));
+    hand_over_to_anna(&mut run, 7, 4);
+    run.world.active_vt = vt::GREETER_VT;
+    let effects = quiet(run.on(Input::Forwarded { conn: 7, ok: true }));
+    assert_eq!(
+        effects,
         [disconnect_arm("c2", 1, 30), Effect::Inhibit(Inhibit::Idle)]
     );
+    let disconnected = Timer::Disconnected {
+        id: "c2".into(),
+        generation: 1,
+    };
+    let effects = quiet(run.after(Duration::from_secs(31 * 60)).fire(disconnected));
+    assert_eq!(effects, [Effect::TerminateSession("c2".into())]);
 }
 
 #[test]
@@ -173,6 +192,37 @@ fn a_hand_over_forwarded_after_the_session_reached_the_console_leaves_it_a_conso
         [Effect::Inhibit(Inhibit::Nothing)],
         "no Disconnected timer for the session on the monitor"
     );
+}
+
+#[test]
+fn a_hand_over_forwarded_before_the_console_shows_the_session_does_not_end_it() {
+    let mut run = anna_switched_away(with_end_after(30));
+    assert_eq!(run.greeter(create("anna")), spawn(4, Mode::Reauth, "anna"));
+    assert_eq!(
+        run.worker(4, authed("anna", ANNA)),
+        reply(GreeterReply::Success)
+    );
+    assert_eq!(run.greeter(GreeterRequest::StartSession), unlock("c2", 1));
+    hand_over_to_anna(&mut run, 7, 5);
+    let effects = run.on(Input::Unlocked { id: "c2".into() });
+    assert_eq!(effects.first(), Some(&Effect::SwitchTo(7)), "{effects:?}");
+    run.world.active_vt = vt::GREETER_VT;
+    assert_eq!(
+        quiet(run.on(Input::Forwarded { conn: 7, ok: true })),
+        [disconnect_arm("c2", 1, 30), Effect::Inhibit(Inhibit::Idle)]
+    );
+    run.world.active_vt = 7;
+    assert_eq!(
+        quiet(run.on(Input::ConsoleOnVt(7))),
+        [Effect::Inhibit(Inhibit::Nothing)]
+    );
+    assert_eq!(background(&run, "c2"), Some(false));
+    let disconnected = Timer::Disconnected {
+        id: "c2".into(),
+        generation: 1,
+    };
+    let effects = run.after(Duration::from_secs(31 * 60)).fire(disconnected);
+    assert_eq!(effects, [], "the session on the monitor is not ended");
 }
 
 #[test]

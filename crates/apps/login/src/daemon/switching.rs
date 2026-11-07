@@ -1,6 +1,8 @@
 //! A session moving between the console and remote clients: the background mark and the
 //! interface the login screen remembers.
 
+use std::time::Instant;
+
 use log::Level;
 use repriselogin::Interface;
 
@@ -40,8 +42,15 @@ impl Daemon {
     }
 
     /// A hand-over passed to `uid`'s session while the console shows another VT makes it a
-    /// background session. An unknown `active_vt` (0) marks nothing.
-    pub(super) fn reached_remotely(&mut self, world: &World, uid: u32, out: &mut Vec<Effect>) {
+    /// background session, armed to end like one until a client shows. An unknown
+    /// `active_vt` (0) marks nothing.
+    pub(super) fn reached_remotely(
+        &mut self,
+        now: Instant,
+        world: &World,
+        uid: u32,
+        out: &mut Vec<Effect>,
+    ) {
         let Some(e) = self.sessions.by_uid(uid) else {
             return;
         };
@@ -57,6 +66,9 @@ impl Daemon {
         ));
         let id = e.id.clone();
         self.sessions.set_background(&id, true);
+        if !self.remote.viewers.contains_key(&uid) {
+            self.arm_disconnected(now, id, out);
+        }
     }
 
     fn remember_interface(&mut self, interface: Interface, out: &mut Vec<Effect>) {
