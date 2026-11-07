@@ -5001,13 +5001,17 @@ dependencies = [
 name = "reprisetls"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "log",
  "rcgen",
+ "repriselogin",
+ "rustls",
  "sha2 0.11.1",
  "socket2",
  "tempfile",
  "tokio",
  "tokio-rustls",
+ "zeroize",
 ]
 
 [[package]]

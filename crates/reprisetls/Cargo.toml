@@ -12,12 +12,16 @@ description = "TLS and TCP pieces reprise-rdp and reprise-login's Remote Desktop
 workspace = true
 
 [dependencies]
+libc.workspace = true
 log.workspace = true
 rcgen.workspace = true
+repriselogin = { path = "../repriselogin" }
+rustls = { workspace = true, default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
 sha2 = "0.11"
 socket2 = { version = "0.6", features = ["all"] }
-tokio = { workspace = true, features = ["net"] }
+tokio = { workspace = true, features = ["net", "io-util"] }
 tokio-rustls.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
