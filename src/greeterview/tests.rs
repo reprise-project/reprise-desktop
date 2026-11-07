@@ -3,6 +3,7 @@ use crate::compositor::Host;
 use crate::config::{Action, Keybind};
 use crate::harness::Harness;
 use crate::keys::{KEY_Delete, KEY_r, MOD_ALT, MOD_CTRL};
+use repriselogin::greeter::ErrorKind;
 
 const RIGHT: u32 = 0x111;
 const LEFTMETA: u32 = 125;
@@ -259,6 +260,49 @@ fn an_incorrect_password_says_so_and_empties_the_field() {
     assert!(m.password.text.is_empty());
     assert!(!m.busy);
     assert_eq!(m.name.text, "anna");
+}
+
+#[test]
+fn a_lockout_note_stays_on_screen_after_the_failure() {
+    let (mut h, mut d) = logged_in();
+    let locked = "The account is locked due to 3 failed logins.";
+    d.says(
+        &mut h,
+        GreeterReply::AuthMessage {
+            kind: repriselogin::greeter::AuthKind::Error,
+            text: locked.into(),
+        },
+    );
+    assert_eq!(
+        d.heard(),
+        repriselogin::greeter::GreeterRequest::PostAuthResponse { response: None }
+    );
+    d.says(
+        &mut h,
+        GreeterReply::Error {
+            kind: ErrorKind::Auth,
+            text: "Authentication failure".into(),
+        },
+    );
+    assert_eq!(model(&h).message.as_deref(), Some(locked));
+    assert!(!model(&h).busy);
+}
+
+#[test]
+fn an_account_refused_after_its_password_shows_pams_text() {
+    let (mut h, mut d) = logged_in();
+    d.says(
+        &mut h,
+        GreeterReply::Error {
+            kind: ErrorKind::Account,
+            text: "User account has expired".into(),
+        },
+    );
+    assert_eq!(
+        model(&h).message.as_deref(),
+        Some("User account has expired")
+    );
+    assert!(model(&h).password.text.is_empty());
 }
 
 #[test]
