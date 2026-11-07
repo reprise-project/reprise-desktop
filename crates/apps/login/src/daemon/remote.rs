@@ -485,7 +485,7 @@ impl Daemon {
             out.push(cancel);
             return self.refuse(now, conn, MOST_SESSIONS, out);
         }
-        let Some(vt) = vt::pick(&self.taken_vts(), world.kernel_open) else {
+        let Some(vt) = vt::pick(&self.taken_vts(), world.kernel_open, world.active_vt) else {
             out.push(cancel);
             return self.refuse(now, conn, NO_VT, out);
         };
