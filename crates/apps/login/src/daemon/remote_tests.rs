@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::net::SocketAddr;
 
 use repriselogin::account::nt_hash;
@@ -1031,6 +1032,12 @@ fn greeting_notes_a_session_with_remote_viewers_as_remote() {
     run.viewers(ANNA, 1);
     assert_eq!(notes(&mut run), [Some(Note::Remote), None]);
     run.on(Input::IntakeLost { uid: ANNA });
+    assert_eq!(
+        notes(&mut run),
+        [Some(Note::Remote), None],
+        "while it reopens"
+    );
+    run.on(Input::IntakeLost { uid: ANNA });
     assert_eq!(notes(&mut run), [Some(Note::LoggedOn), None]);
 }
 
@@ -1139,7 +1146,7 @@ fn recovery_leaves_a_background_sessions_console_lock_to_its_compositor() {
 }
 
 #[test]
-fn a_lost_intake_link_zeroes_its_viewers_and_reopens_on_the_next_login() {
+fn a_lost_intake_link_reopens_and_keeps_its_viewers_until_the_new_link_reports() {
     let remote = MachineRemote {
         end_disconnected_after_min: Some(30),
         ..enabled()
@@ -1150,16 +1157,39 @@ fn a_lost_intake_link_zeroes_its_viewers_and_reopens_on_the_next_login() {
     run.viewers(ANNA, 1);
     assert_eq!(
         run.on(Input::IntakeLost { uid: ANNA }),
-        [
-            Effect::Arm {
-                timer: Timer::Disconnected {
-                    id: "c2".into(),
-                    generation: 2
-                },
-                after: Duration::from_secs(30 * 60),
-            },
-            Effect::Inhibit(Inhibit::Idle),
-        ]
+        [Effect::ReopenIntake { uid: ANNA }]
+    );
+    assert_eq!(
+        run.fire(Timer::Disconnected {
+            id: "c2".into(),
+            generation: 1
+        }),
+        [],
+        "the client is still counted"
+    );
+    assert_eq!(run.on(Input::IntakeOpen { uid: ANNA }), []);
+    assert_eq!(run.viewers(ANNA, 1), []);
+    assert_eq!(
+        run.on(Input::IntakeLost { uid: ANNA }),
+        [Effect::ReopenIntake { uid: ANNA }],
+        "a link lost after its reopen opens again"
+    );
+}
+
+#[test]
+fn a_reopen_that_gives_up_zeroes_its_viewers_and_the_next_login_opens_it() {
+    let remote = MachineRemote {
+        end_disconnected_after_min: Some(30),
+        ..enabled()
+    };
+    let mut run = remote_run(remote);
+    run.anna_in_background(7, 2);
+    run.on(Input::IntakeOpen { uid: ANNA });
+    run.viewers(ANNA, 1);
+    run.on(Input::IntakeLost { uid: ANNA });
+    assert_eq!(
+        run.on(Input::IntakeLost { uid: ANNA }),
+        [disconnect_arm("c2", 2, 30), Effect::Inhibit(Inhibit::Idle)]
     );
     assert_eq!(
         run.verify(8, 3, "anna", ANNA),
@@ -1181,6 +1211,15 @@ fn a_lost_intake_link_zeroes_its_viewers_and_reopens_on_the_next_login() {
         ],
         "an open link takes the login at once"
     );
+}
+
+#[test]
+fn a_lost_link_of_a_uid_with_no_session_is_not_reopened() {
+    let mut run = remote_run(enabled());
+    run.anna_in_background(7, 2);
+    run.on(Input::IntakeOpen { uid: ANNA });
+    run.removed("c2", Some("g1"));
+    assert_eq!(run.on(Input::IntakeLost { uid: ANNA }), []);
 }
 
 #[test]
@@ -1340,8 +1379,12 @@ fn turning_remote_on_starts_the_front_and_opens_every_sessions_intake() {
 }
 
 #[test]
-fn turning_remote_off_stops_the_front_and_denies_pending_logins() {
-    let mut run = remote_run(enabled());
+fn turning_remote_off_stops_the_front_and_denies_pending_logins_but_keeps_connected_clients() {
+    let remote = MachineRemote {
+        end_disconnected_after_min: Some(30),
+        ..enabled()
+    };
+    let mut run = remote_run(remote.clone());
     run.anna_in_background(1, 2);
     run.on(Input::IntakeOpen { uid: ANNA });
     run.on(ready(1, "anna"));
@@ -1364,7 +1407,11 @@ fn turning_remote_off_stops_the_front_and_denies_pending_logins() {
     };
     assert_eq!(quiet(run.on(unknown)), []);
 
-    let effects = run.on(Input::ConfigReloaded(config(MachineRemote::default())));
+    let off = MachineRemote {
+        enabled: false,
+        ..remote
+    };
+    let effects = run.on(Input::ConfigReloaded(config(off)));
     assert_eq!(
         quiet(effects),
         [
@@ -1382,10 +1429,17 @@ fn turning_remote_off_stops_the_front_and_denies_pending_logins() {
                 conn: 9,
                 backoff_s: 0
             }),
-            Effect::CloseIntakes,
-            Effect::Inhibit(Inhibit::Idle),
-        ]
+            Effect::CloseIntakes {
+                keep: BTreeSet::from([ANNA])
+            },
+        ],
+        "anna's client keeps the inhibitor and arms no Disconnected timer"
     );
+    let gen1 = Timer::Disconnected {
+        id: "c2".into(),
+        generation: 1,
+    };
+    assert_eq!(run.fire(gen1), []);
     assert_eq!(run.on(member(7, BERT)), [], "a denied login is forgotten");
     assert_eq!(run.after(REFUSE_DELAY).fire(Timer::Refuse(9)), []);
     assert_eq!(quiet(run.on(tls(10, "anna", "pw"))), armed(10));
@@ -1393,6 +1447,11 @@ fn turning_remote_off_stops_the_front_and_denies_pending_logins() {
         run.after(REFUSE_DELAY).fire(Timer::Refuse(10)),
         denied(10, 0),
         "logins stay off"
+    );
+    assert_eq!(
+        run.viewers(ANNA, 0),
+        [disconnect_arm("c2", 2, 30), Effect::Inhibit(Inhibit::Idle)],
+        "the kept link still reports"
     );
 }
 

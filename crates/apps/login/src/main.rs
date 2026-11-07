@@ -614,7 +614,8 @@ impl Runtime {
                     }
                 });
             }
-            Effect::CloseIntakes => self.links.close_all(),
+            Effect::CloseIntakes { keep } => self.links.close_all_but(&keep),
+            Effect::ReopenIntake { uid } => self.links.reopen(uid),
             Effect::AccountReply { link, reply } => self.accounts.send(link, reply),
             Effect::StorePasswords(all) => {
                 let events = self.events.clone();
