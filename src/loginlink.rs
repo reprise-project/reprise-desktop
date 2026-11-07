@@ -281,10 +281,24 @@ fn send(state: &mut State, msg: &SessionRequest) -> bool {
         Ok(()) => true,
         Err(e) => {
             log::warn!("reprise-login: the link failed: {e}");
+            drain(state);
             lost(state);
             false
         }
     }
+}
+
+/// Reads what the daemon sent before the stream broke, so a `Refused` the watch has not read
+/// yet still counts.
+fn drain(state: &mut State) {
+    let Some(stream) = state.login_link.as_mut().and_then(|l| l.stream.as_mut()) else {
+        return;
+    };
+    let mut bytes = Vec::new();
+    if stream.set_nonblocking(true).is_ok() {
+        let _ = stream.read_to_end(&mut bytes);
+    }
+    heard(state, &mut FrameReader::new(), &bytes);
 }
 
 /// The daemon went or dropped the session: forget the stream, take Switch User away, ask
@@ -441,6 +455,18 @@ mod tests {
         assert!(h.state.dialogs.views.is_empty(), "the panel closes");
         assert!(h.state.console_locked());
         assert_eq!(heard(&mut theirs), SessionRequest::SwitchUser);
+    }
+
+    #[test]
+    fn a_refusal_sent_before_the_hello_still_counts() {
+        let mut h = Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let (ours, mut theirs) = UnixStream::pair().unwrap();
+        frame::write_msg(&mut theirs, &SessionReply::Refused).unwrap();
+        drop(theirs);
+        install(&mut h.state, LoginLink::from_stream(ours));
+        assert!(!connected(&h.state), "the Hello found the stream closed");
+        assert_eq!(h.state.login_link.as_ref().unwrap().refusals, 1);
     }
 
     #[test]
