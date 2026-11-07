@@ -12,9 +12,8 @@
 //! `Lock` and `Unlock` signals (`loginctl lock-session`, `unlock-session`)
 //! lock and unlock, and `LockedHint` and `IdleHint` follow the lock and idle timer.
 //!
-//! With a remote client, in this session (`State::remote_controlled`) or another
-//! (`remote_elsewhere`), a shut lid darkens the internal panels instead of running
-//! `[power] lid_close`. Off the seat the lid does nothing.
+//! A remote client here or elsewhere (`remote_elsewhere`) makes a shut lid darken the internal
+//! panels, at the login screen too; off the seat the lid does nothing.
 
 use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
@@ -89,6 +88,8 @@ enum Report {
     Sleeping,
     /// `ListInhibitors` read again (`remote_elsewhere`).
     RemoteElsewhere(bool),
+    /// The login screen's hold on logind's lid switch, for a remote client elsewhere.
+    LidHold(OwnedFd),
     Resumed,
     Lock,
     Unlock,
@@ -108,6 +109,8 @@ pub enum Call {
     Hint(Hint),
     /// Read `State`; a `closing` session is reported.
     State,
+    /// Take logind's lid switch for the login screen, answered by `Report::LidHold`.
+    HoldLid,
 }
 
 /// The hints logind heard, or hears once the loop starts, so each goes out only on change.
@@ -150,6 +153,8 @@ pub struct PowerState {
     remote: bool,
     /// A remote client works in another session on this machine (`remote_elsewhere`).
     pub remote_elsewhere: bool,
+    /// The login screen's hold on logind's lid switch while `remote_elsewhere`.
+    lid_hold: Option<OwnedFd>,
 }
 
 /// One of logind's `ListInhibitors`: what, who, why, mode, uid, pid.
@@ -176,8 +181,23 @@ pub(crate) fn remote_elsewhere_changed(state: &mut State, elsewhere: bool) {
         "power: a remote client in another session {}",
         if elsewhere { "connected" } else { "left" }
     );
+    if state.host == crate::compositor::Host::Greeter {
+        hold_lid(state, elsewhere);
+    }
     crate::idle::arm(state);
     remote_lid(state);
+}
+
+/// The login screen takes logind's lid switch while a remote client works elsewhere and lets
+/// it go when the client leaves.
+fn hold_lid(state: &mut State, hold: bool) {
+    if !hold {
+        state.power.lid_hold = None;
+    } else if let Some(tx) = &state.power.calls
+        && state.power.lid_hold.is_none()
+    {
+        let _ = tx.try_send(Call::HoldLid);
+    }
 }
 
 /// Whether a remote client holds the lid's action off: this session's or another's.
@@ -356,6 +376,7 @@ async fn watch_session(
                     }
                     continue;
                 }
+                Call::HoldLid => continue,
             };
             if let Err(e) = session.call_method(method, &(v,)).await {
                 log::warn!("power: {method}({v}) failed: {e}");
@@ -475,6 +496,11 @@ fn report(state: &mut State, r: Report) {
         }
         Report::Sleeping => sleeping(state),
         Report::RemoteElsewhere(v) => remote_elsewhere_changed(state, v),
+        Report::LidHold(fd) => {
+            if state.power.remote_elsewhere {
+                state.power.lid_hold = Some(fd);
+            }
+        }
         Report::Resumed => {
             crate::idle::resumed(state);
             crate::nightlight::update(state);
@@ -683,6 +709,62 @@ pub fn setup(state: &mut State) {
     }
 }
 
+/// The login screen's part: the login manager's sleep inhibitor is watched, and logind's lid
+/// switch held while it says a remote client works elsewhere.
+pub fn setup_greeter(state: &mut State) {
+    let (tx, rx) = channel::channel::<Report>();
+    if let Err(e) = state.handle.insert_source(rx, |event, _, state| {
+        if let channel::Event::Msg(r) = event {
+            report(state, r);
+        }
+    }) {
+        log::warn!(
+            "power: no report channel ({}); logind keeps the lid",
+            e.error
+        );
+        return;
+    }
+    let (calls_tx, calls_rx) = async_channel::unbounded::<Call>();
+    let thread = std::thread::Builder::new()
+        .name("greeter-power".into())
+        .spawn(move || zbus::block_on(run_greeter(tx, calls_rx)));
+    if thread.is_ok() {
+        attach(state, calls_tx);
+    }
+}
+
+async fn run_greeter(reports: Sender<Report>, calls: async_channel::Receiver<Call>) {
+    let login1 = match Connection::system().await {
+        Ok(conn) => Proxy::new(&conn, LOGIN1_NAME, LOGIN1_PATH, LOGIN1_MANAGER).await,
+        Err(e) => Err(e),
+    };
+    let login1 = match login1 {
+        Ok(p) => p,
+        Err(e) => return log::info!("power: no logind ({e}); logind keeps the lid"),
+    };
+    let inhibitors = watch_inhibitors(login1.clone(), reports.clone());
+    std::thread::Builder::new()
+        .name("power-inhibitors".into())
+        .spawn(move || zbus::block_on(inhibitors))
+        .ok();
+    while let Ok(c) = calls.recv().await {
+        if c != Call::HoldLid {
+            continue;
+        }
+        let why = "a remote client is connected; a shut lid darkens the panel";
+        let taken = login1
+            .call_method("Inhibit", &("handle-lid-switch", "reprise", why, "block"))
+            .await
+            .and_then(|reply| reply.body().deserialize::<ZOwnedFd>());
+        match taken {
+            Ok(fd) => {
+                let _ = reports.send(Report::LidHold(fd.into()));
+            }
+            Err(e) => log::warn!("power: no lid inhibitor for the login screen: {e}"),
+        }
+    }
+}
+
 pub fn run_action(state: &mut State, a: PowerAction, origin: Origin) {
     log::info!("power: {}", a.name());
     match a {
@@ -885,9 +967,11 @@ fn read_record(path: &Path) -> Vec<(String, u8)> {
 /// The lid's closing runs `[power] lid_close` (docked, the external output carries on); its
 /// opening wakes the outputs and panels a remote-control session darkened. Tablet mode is ignored.
 pub fn switch_toggled(state: &mut State, switch: Option<Switch>, st: SwitchState) {
-    // In the greeter, logind acts on the lid.
-    if switch != Some(Switch::Lid) || state.host == crate::compositor::Host::Greeter {
+    if switch != Some(Switch::Lid) {
         return;
+    }
+    if state.host == crate::compositor::Host::Greeter {
+        return greeter_lid(state, st == SwitchState::On);
     }
     match st {
         SwitchState::On => {
@@ -938,8 +1022,18 @@ pub fn remote_control_changed(state: &mut State) {
     remote_lid(state);
 }
 
+/// The login screen runs no lid action: a shut lid darkens the panels while a remote client
+/// works elsewhere, and logind acts on it otherwise.
+fn greeter_lid(state: &mut State, closed: bool) {
+    state.power.lid_closed = closed;
+    match closed {
+        true => remote_lid(state),
+        false => restore_panels(state),
+    }
+}
+
 /// A remote client came or went (`remote_held`): a shut lid's panels go dark as the first comes
-/// and come back, with a lid check, as the last goes. Off the seat, nothing.
+/// and come back, with a lid check in a session, as the last goes. Off the seat, nothing.
 fn remote_lid(state: &mut State) {
     let shut = state.power.lid_closed
         && !external_in_layout(state)
@@ -950,7 +1044,7 @@ fn remote_lid(state: &mut State) {
         }
     } else {
         restore_panels(state);
-        if shut {
+        if shut && state.host != crate::compositor::Host::Greeter {
             arm_lid_check(state);
         }
     }
@@ -1052,9 +1146,13 @@ mod tests {
     }
 
     mod remote {
+        use std::os::fd::OwnedFd;
         use std::sync::mpsc::Receiver;
 
-        use super::super::{lid_grace_over, read_record, switch_toggled};
+        use super::super::{
+            Call, Report, capture_calls, lid_grace_over, read_record, remote_elsewhere_changed,
+            report, switch_toggled,
+        };
         use smithay::backend::input::{Switch, SwitchState};
 
         use crate::config::{Config, PowerAction};
@@ -1186,6 +1284,77 @@ mod tests {
             assert!(h.state.power.lid_timer.is_some(), "the lid check is armed");
             lid_grace_over(&mut h.state);
             assert!(h.state.console_locked(), "lid_close ran");
+        }
+
+        fn null_fd() -> OwnedFd {
+            std::fs::File::open("/dev/null").expect("/dev/null").into()
+        }
+
+        #[test]
+        fn the_login_screen_holds_the_lid_only_while_a_remote_client_works_elsewhere() {
+            let (mut h, _jobs) = laptop();
+            h.state.host = crate::compositor::Host::Greeter;
+            let calls = capture_calls(&mut h.state);
+            remote_elsewhere_changed(&mut h.state, true);
+            assert_eq!(calls.try_recv(), Ok(Call::HoldLid));
+            report(&mut h.state, Report::LidHold(null_fd()));
+            assert!(h.state.power.lid_hold.is_some(), "the lid switch is held");
+            remote_elsewhere_changed(&mut h.state, false);
+            assert!(
+                h.state.power.lid_hold.is_none(),
+                "logind's own lid action applies again"
+            );
+            report(&mut h.state, Report::LidHold(null_fd()));
+            assert!(
+                h.state.power.lid_hold.is_none(),
+                "a hold taken after the client left is dropped"
+            );
+            assert!(calls.try_recv().is_err());
+        }
+
+        #[test]
+        fn a_session_takes_no_lid_hold_of_its_own_for_a_remote_client_elsewhere() {
+            let (mut h, _jobs) = laptop();
+            let calls = capture_calls(&mut h.state);
+            remote_elsewhere_changed(&mut h.state, true);
+            assert!(
+                calls.try_recv().is_err(),
+                "its startup inhibitor holds the lid"
+            );
+        }
+
+        #[test]
+        fn a_shut_lid_at_the_login_screen_darkens_the_panel_only_with_a_remote_client_elsewhere() {
+            let (mut h, jobs) = laptop();
+            h.state.host = crate::compositor::Host::Greeter;
+            switch_toggled(&mut h.state, Some(Switch::Lid), SwitchState::On);
+            assert_eq!(
+                panel_sets(&jobs),
+                Vec::<u8>::new(),
+                "logind acts on the lid"
+            );
+            assert!(h.state.power.lid_timer.is_none());
+            switch_toggled(&mut h.state, Some(Switch::Lid), SwitchState::Off);
+
+            remote_elsewhere_changed(&mut h.state, true);
+            switch_toggled(&mut h.state, Some(Switch::Lid), SwitchState::On);
+            assert_eq!(panel_sets(&jobs), [0], "the panel goes dark");
+            switch_toggled(&mut h.state, Some(Switch::Lid), SwitchState::Off);
+            assert_eq!(panel_sets(&jobs), [60], "opening the lid brings back 60%");
+
+            switch_toggled(&mut h.state, Some(Switch::Lid), SwitchState::On);
+            assert_eq!(panel_sets(&jobs), [0]);
+            remote_elsewhere_changed(&mut h.state, false);
+            assert_eq!(
+                panel_sets(&jobs),
+                [60],
+                "the panel comes back for logind's action"
+            );
+            assert!(
+                h.state.power.lid_timer.is_none(),
+                "the login screen runs no lid action"
+            );
+            assert!(!h.state.console_locked());
         }
 
         #[test]
