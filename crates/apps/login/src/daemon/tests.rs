@@ -276,7 +276,7 @@ impl Run {
     }
 
     /// A request from session `id` while it is on screen.
-    fn session(&mut self, id: &str, request: SessionRequest) -> Vec<Effect> {
+    pub(super) fn session(&mut self, id: &str, request: SessionRequest) -> Vec<Effect> {
         self.on(Input::Session {
             id: id.into(),
             request,
@@ -299,7 +299,7 @@ impl Run {
     }
 
     /// Logs `user` in through worker `w` from the greeter and its session `id` starts on `vt`.
-    fn log_in(&mut self, w: u32, user: &str, uid: u32, id: &str, vt: u16) {
+    pub(super) fn log_in(&mut self, w: u32, user: &str, uid: u32, id: &str, vt: u16) {
         assert_eq!(self.greeter(create(user)), spawn(w, Mode::Login, user));
         assert_eq!(
             self.worker(w, authed(user, uid)),

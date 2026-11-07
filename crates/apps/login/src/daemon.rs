@@ -24,6 +24,7 @@ use crate::worker::{AUTH_FAILED, FromWorker, Mode, ToWorker};
 mod account;
 mod power;
 mod remote;
+mod switching;
 
 pub use power::{ADMIN_GROUP, ADMIN_REFUSE_DELAY};
 pub use remote::{
@@ -263,7 +264,7 @@ pub struct LogindSession {
     pub closing: bool,
 }
 
-/// What the backend reads fresh for each `Hello`, each start and each power request.
+/// What the backend reads fresh for each `Hello`, start, power request and forwarded hand-over.
 #[derive(Clone, Debug, PartialEq)]
 pub struct World {
     /// The accounts the login screen lists, as `repriselogin::users::Source::listed` picks them.
@@ -658,7 +659,7 @@ impl Daemon {
             Input::IntakeOpen { uid } => self.intake_open(uid, &mut out),
             Input::IntakeLost { uid } => self.intake_lost(now, uid, &mut out),
             Input::Viewers { uid, count } => self.viewers_reported(now, uid, count, &mut out),
-            Input::Forwarded { conn, ok } => self.forwarded(conn, ok, &mut out),
+            Input::Forwarded { conn, ok } => self.forwarded(world, conn, ok, &mut out),
             Input::ConfigReloaded(config) => self.config_reloaded(now, config, &mut out),
             Input::Account {
                 link,
@@ -1654,5 +1655,7 @@ mod account_tests;
 mod power_tests;
 #[cfg(test)]
 mod remote_tests;
+#[cfg(test)]
+mod switching_tests;
 #[cfg(test)]
 mod tests;
