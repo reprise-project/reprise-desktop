@@ -14,9 +14,8 @@ pub const PAUSE_AFTER: usize = 10;
 pub const PAUSE_WINDOW: Duration = Duration::from_secs(600);
 pub const PAUSE: Duration = Duration::from_secs(600);
 
-/// Failed logins: from the fourth an address is refused for a back-off, doubling up to `MAX_WAIT`,
-/// until a success or `FORGET` without a failure.
-/// A login counts as failed from the start of its check, so a check cut short still counts.
+/// After `FREE_FAILURES` an address waits a back-off doubling up to `MAX_WAIT`. A login counts as
+/// failed from the start of its check, so a check cut short still counts.
 #[derive(Default)]
 pub struct Throttle {
     peers: HashMap<IpAddr, Failures>,

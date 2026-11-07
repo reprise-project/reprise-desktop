@@ -275,28 +275,64 @@ mod tests {
         assert_eq!(text, "through the pipe");
     }
 
+    /// A pipe's read end to send, and its write end, which sees EPIPE once every read end closes.
+    fn watched_pipe() -> (OwnedFd, io::PipeWriter) {
+        let (r, w) = io::pipe().unwrap();
+        (r.into(), w)
+    }
+
+    fn assert_closed(w: &mut io::PipeWriter) {
+        let e = w.write(b"x").unwrap_err();
+        assert_eq!(
+            e.raw_os_error(),
+            Some(libc::EPIPE),
+            "the read end is still open"
+        );
+    }
+
     #[test]
-    fn two_fds_on_one_frame_are_refused() {
+    fn two_fds_on_one_frame_are_refused_and_closed() {
         let (a, b) = UnixStream::pair().unwrap();
-        let (one, two) = (pipe_with(b""), pipe_with(b""));
+        let ((one, mut one_w), (two, mut two_w)) = (watched_pipe(), watched_pipe());
         send_raw(&a, &frame(b"A"), &[one.as_raw_fd(), two.as_raw_fd()]);
+        drop((one, two));
         let mut r = FdFrameReader::new();
         assert!(r.read_from(b.as_fd()).unwrap() > 0);
         assert_eq!(r.next().map(|f| f.is_some()), Err(FrameError::Fd));
         assert_eq!(r.next().map(|f| f.is_some()), Err(FrameError::Fd));
+        assert_closed(&mut one_w);
+        assert_closed(&mut two_w);
     }
 
     #[test]
-    fn an_fd_inside_a_frame_is_refused() {
+    fn three_fds_overflowing_the_control_buffer_are_all_closed() {
+        let (a, b) = UnixStream::pair().unwrap();
+        let (reads, mut writers): (Vec<OwnedFd>, Vec<_>) = (0..3).map(|_| watched_pipe()).unzip();
+        let raw: Vec<RawFd> = reads.iter().map(|r| r.as_raw_fd()).collect();
+        send_raw(&a, &frame(b"A"), &raw);
+        drop(reads);
+        let mut r = FdFrameReader::new();
+        assert!(r.read_from(b.as_fd()).unwrap() > 0);
+        assert_eq!(r.next().map(|f| f.is_some()), Err(FrameError::Fd));
+        for w in &mut writers {
+            assert_closed(w);
+        }
+    }
+
+    #[test]
+    fn an_fd_inside_a_frame_is_refused_and_closed() {
         let (a, b) = UnixStream::pair().unwrap();
         let whole = frame(b"a frame sent in two parts");
         let mut r = FdFrameReader::new();
         send(a.as_fd(), &whole[..6], None).unwrap();
         r.read_from(b.as_fd()).unwrap();
-        let pipe = pipe_with(b"");
+        let (pipe, mut pipe_w) = watched_pipe();
         send(a.as_fd(), &whole[6..], Some(pipe.as_fd())).unwrap();
+        drop(pipe);
+        pipe_w.write_all(b"x").unwrap();
         r.read_from(b.as_fd()).unwrap();
         assert_eq!(r.next().map(|f| f.is_some()), Err(FrameError::Fd));
+        assert_closed(&mut pipe_w);
     }
 
     #[test]
