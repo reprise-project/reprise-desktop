@@ -92,6 +92,10 @@ pub enum Input {
     Unlocked {
         id: String,
     },
+    /// logind's `SwitchTo(vt)` failed.
+    SwitchFailed {
+        vt: u16,
+    },
     PowerDone(Result<(), String>),
     Timer(Timer),
 }
@@ -115,6 +119,7 @@ pub enum Effect {
     TerminateSession(String),
     /// logind's `UnlockSession`, answered by `Input::Unlocked`.
     UnlockSession(String),
+    LockSession(String),
     Arm {
         timer: Timer,
         after: Duration,
@@ -293,11 +298,21 @@ impl Daemon {
     }
 
     /// Rebuilds the session table from logind after a daemon start and ends orphaned greeters.
-    pub fn recover(&mut self, _now: Instant, found: Vec<LogindSession>) -> Vec<Effect> {
+    /// Every session but `seat_active` is locked: an earlier daemon may have unlocked one for
+    /// a resume and died before the switch.
+    pub fn recover(
+        &mut self,
+        _now: Instant,
+        found: Vec<LogindSession>,
+        seat_active: Option<&str>,
+    ) -> Vec<Effect> {
         let mut out = Vec::new();
         let user_services = [Mode::Login.service(), Mode::Autologin.service()];
         for s in found {
             if s.seat == "seat0" && s.class == "user" && user_services.contains(&&*s.service) {
+                if seat_active != Some(&s.id) {
+                    out.push(Effect::LockSession(s.id.clone()));
+                }
                 self.sessions.insert(SessionEntry {
                     id: s.id,
                     user: s.user,
@@ -392,6 +407,7 @@ impl Daemon {
                     self.finish_resume(false, &mut out);
                 }
             }
+            Input::SwitchFailed { vt } => self.switch_failed(vt, &mut out),
             Input::Timer(Timer::UnlockAck(generation)) => {
                 let current = matches!(&self.conversation, Some(Conversation {
                     phase: Phase::Unlocking { generation: g },
@@ -1151,6 +1167,16 @@ impl Daemon {
             out.push(Effect::Reply(GreeterReply::Success));
             self.greeter_leaves();
         }
+    }
+
+    /// A session the console could not switch to may have just been unlocked for a resume:
+    /// it is locked again, and the login screen stays.
+    fn switch_failed(&mut self, vt: u16, out: &mut Vec<Effect>) {
+        let Some(e) = self.sessions.iter().find(|e| e.vt == vt) else {
+            return;
+        };
+        out.push(Effect::LockSession(e.id.clone()));
+        self.bring_greeter(out);
     }
 
     fn greeter_leaves(&mut self) {

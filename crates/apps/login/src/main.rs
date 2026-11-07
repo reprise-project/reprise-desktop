@@ -145,6 +145,7 @@ async fn run() -> Result<(), String> {
     let removed = (logind.manager().receive_session_removed().await)
         .map_err(|e| format!("logind's SessionRemoved: {e}"))?;
     let found = (logind.sessions().await).map_err(|e| format!("logind's sessions: {e}"))?;
+    let seat_active = logind.seat_active().await;
     // Registered before the first spawn, so no worker's exit goes unseen.
     follow_signals(events.clone()).map_err(|e| format!("signals: {e}"))?;
 
@@ -159,7 +160,7 @@ async fn run() -> Result<(), String> {
         world: None,
     };
     let world = rt.read_world().await;
-    let effects = boot(&mut rt.daemon, found, &world);
+    let effects = boot(&mut rt.daemon, found, seat_active.as_deref(), &world);
     let recovered: Vec<String> = rt.daemon.session_uids().into_keys().collect();
     rt.world = Some(world);
 
@@ -229,9 +230,14 @@ async fn run() -> Result<(), String> {
 
 /// Rebuilds the table from logind's sessions and starts the login screen or autologin, with
 /// no event in between: a removal handled before `start` could leave VT 1 empty.
-fn boot(daemon: &mut Daemon, found: Vec<LogindSession>, world: &World) -> Vec<Effect> {
+fn boot(
+    daemon: &mut Daemon,
+    found: Vec<LogindSession>,
+    seat_active: Option<&str>,
+    world: &World,
+) -> Vec<Effect> {
     let now = Instant::now();
-    let mut effects = daemon.recover(now, found);
+    let mut effects = daemon.recover(now, found, seat_active);
     effects.extend(daemon.start(now, world));
     effects
 }
@@ -413,6 +419,14 @@ impl Runtime {
                     }
                 });
             }
+            Effect::LockSession(id) => {
+                let l = self.logind.clone();
+                tokio::task::spawn_local(async move {
+                    if let Err(e) = l.manager().lock_session(&id).await {
+                        log::warn!("locking session {id}: {e}");
+                    }
+                });
+            }
             Effect::UnlockSession(id) => {
                 let (l, events) = (self.logind.clone(), self.events.clone());
                 tokio::task::spawn_local(async move {
@@ -439,10 +453,11 @@ impl Runtime {
     }
 
     fn switch_to(&self, vt: u16) {
-        let l = self.logind.clone();
+        let (l, events) = (self.logind.clone(), self.events.clone());
         tokio::task::spawn_local(async move {
             if let Err(e) = l.switch_to(vt).await {
                 log::warn!("switching to VT {vt}: {e}");
+                let _ = events.send(Event::Input(Input::SwitchFailed { vt }));
             }
         });
     }
@@ -961,7 +976,7 @@ mod tests {
             user_sessions: 0,
         };
         let mut daemon = Daemon::new(LoginConfig::default(), Remembered::default());
-        let effects = boot(&mut daemon, vec![orphan], &world);
+        let effects = boot(&mut daemon, vec![orphan], None, &world);
         assert_eq!(effects, [Effect::TerminateSession("c1".into())]);
         let removed = Input::SessionRemoved {
             id: "c1".into(),
