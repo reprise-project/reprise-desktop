@@ -98,6 +98,12 @@ impl AsyncWrite for KtlsStream {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
+        if self.close_notify_sent {
+            return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "a write after close_notify",
+            )));
+        }
         Pin::new(&mut self.stream).poll_write(cx, buf)
     }
 
@@ -115,10 +121,14 @@ impl AsyncWrite for KtlsStream {
                 .try_io(Interest::WRITABLE, || send_record(fd, ALERT, &CLOSE_NOTIFY))
             {
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
-                sent => {
-                    sent?;
-                    this.close_notify_sent = true;
+                Ok(n) if n == CLOSE_NOTIFY.len() => this.close_notify_sent = true,
+                Ok(n) => {
+                    return Poll::Ready(Err(io::Error::new(
+                        io::ErrorKind::WriteZero,
+                        format!("a close_notify cut to {n} bytes"),
+                    )));
                 }
+                Err(e) => return Poll::Ready(Err(e)),
             }
         }
         Pin::new(&mut this.stream).poll_shutdown(cx)
@@ -190,5 +200,38 @@ fn send_record(fd: RawFd, record_type: u8, data: &[u8]) -> io::Result<usize> {
         Err(io::Error::last_os_error())
     } else {
         Ok(n as usize)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use repriselogin::handover::{Cipher, DirectionKeys, TlsVersion};
+    use tokio::io::AsyncWriteExt;
+    use zeroize::Zeroizing;
+
+    #[tokio::test]
+    async fn a_write_after_close_notify_is_refused() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let tcp = TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let keys = || DirectionKeys {
+            seq: 0,
+            key: Zeroizing::new(vec![0; 16]),
+            iv: Zeroizing::new(vec![0; 12]),
+            secret: None,
+        };
+        let tls = TlsState {
+            version: TlsVersion::Tls13,
+            cipher: Cipher::Aes128Gcm,
+            tx: keys(),
+            rx: keys(),
+            record_limit: 1 << 24,
+        };
+        let mut stream = KtlsStream::new(tcp, tls);
+        stream.close_notify_sent = true;
+        let err = stream.write(b"late").await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::BrokenPipe);
     }
 }

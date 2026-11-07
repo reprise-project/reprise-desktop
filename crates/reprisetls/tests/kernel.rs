@@ -1,24 +1,23 @@
 //! Kernel TLS between a loopback rustls client and a server that moves its keys into the kernel.
 
+mod fixture;
+
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::os::fd::AsFd;
-use std::sync::Arc;
+use std::sync::mpsc;
 use std::thread;
+use std::time::Duration;
 
 use repriselogin::handover::{TlsState, TlsVersion};
 use reprisetls::cork::Cork;
 use reprisetls::ktls::{self, KtlsStream};
-use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
-use rustls::crypto::aws_lc_rs::{self as provider, cipher_suite};
-use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
-use rustls::{
-    ClientConfig, ClientConnection, DigitallySignedStruct, ProtocolVersion, ServerConfig,
-    SignatureScheme, StreamOwned, SupportedCipherSuite,
-};
+use rustls::crypto::aws_lc_rs::cipher_suite;
+use rustls::{ClientConnection, ProtocolVersion, StreamOwned, SupportedCipherSuite};
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
+use tokio::time::timeout;
 
 const SUITES: [SupportedCipherSuite; 6] = [
     cipher_suite::TLS13_AES_128_GCM_SHA256,
@@ -30,100 +29,43 @@ const SUITES: [SupportedCipherSuite; 6] = [
 ];
 
 const ECHOED: usize = 4 << 20;
+/// Per suite, so a fault fails the test instead of hanging it.
+const LIMIT: Duration = Duration::from_secs(10);
 
-#[derive(Debug)]
-struct AnyCert;
-
-impl ServerCertVerifier for AnyCert {
-    fn verify_server_cert(
-        &self,
-        _: &CertificateDer<'_>,
-        _: &[CertificateDer<'_>],
-        _: &ServerName<'_>,
-        _: &[u8],
-        _: UnixTime,
-    ) -> Result<ServerCertVerified, rustls::Error> {
-        Ok(ServerCertVerified::assertion())
-    }
-
-    fn verify_tls12_signature(
-        &self,
-        _: &[u8],
-        _: &CertificateDer<'_>,
-        _: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        Ok(HandshakeSignatureValid::assertion())
-    }
-
-    fn verify_tls13_signature(
-        &self,
-        _: &[u8],
-        _: &CertificateDer<'_>,
-        _: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        Ok(HandshakeSignatureValid::assertion())
-    }
-
-    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
-        provider::default_provider()
-            .signature_verification_algorithms
-            .supported_schemes()
-    }
-}
-
-fn server_config() -> Arc<ServerConfig> {
-    let key = rcgen::KeyPair::generate().unwrap();
-    let cert = rcgen::CertificateParams::new(vec!["reprise".into()])
-        .unwrap()
-        .self_signed(&key)
-        .unwrap();
-    let mut config = ServerConfig::builder_with_provider(Arc::new(provider::default_provider()))
-        .with_safe_default_protocol_versions()
-        .unwrap()
-        .with_no_client_auth()
-        .with_single_cert(
-            vec![cert.der().clone()],
-            PrivateKeyDer::try_from(key.serialize_der()).unwrap(),
-        )
-        .unwrap();
-    config.enable_secret_extraction = true;
-    Arc::new(config)
-}
-
-/// A blocking rustls client offering only `suite`, past its handshake with `addr`.
+/// A blocking rustls client offering only `suite`, past its handshake with `addr`. It returns
+/// once the server's keys are in the kernel, so the server reads nothing past the handshake.
 fn client(
     addr: SocketAddr,
     suite: SupportedCipherSuite,
+    installed: mpsc::Receiver<()>,
 ) -> StreamOwned<ClientConnection, TcpStream> {
-    let mut provider = provider::default_provider();
-    provider.cipher_suites = vec![suite];
-    let config = ClientConfig::builder_with_provider(Arc::new(provider))
-        .with_protocol_versions(&[suite.version()])
-        .unwrap()
-        .dangerous()
-        .with_custom_certificate_verifier(Arc::new(AnyCert))
-        .with_no_client_auth();
-    let conn = ClientConnection::new(Arc::new(config), "reprise".try_into().unwrap()).unwrap();
-    let mut stream = StreamOwned::new(conn, TcpStream::connect(addr).unwrap());
+    let conn = ClientConnection::new(fixture::client_config(suite), "reprise".try_into().unwrap())
+        .unwrap();
+    let sock = TcpStream::connect(addr).unwrap();
+    sock.set_read_timeout(Some(LIMIT)).unwrap();
+    sock.set_write_timeout(Some(LIMIT)).unwrap();
+    let mut stream = StreamOwned::new(conn, sock);
     while stream.conn.is_handshaking() {
         stream.conn.complete_io(&mut stream.sock).unwrap();
     }
+    installed.recv_timeout(LIMIT).unwrap();
     stream
 }
 
-/// Accepts one connection, runs the handshake through `Cork` and moves its keys into the kernel.
-async fn accept(listener: &TcpListener) -> KtlsStream {
+/// Accepts one connection, runs the handshake through `Cork`, moves its keys into the kernel and
+/// tells the client through `installed`.
+async fn accept(listener: &TcpListener, installed: mpsc::Sender<()>) -> KtlsStream {
     let (tcp, _) = listener.accept().await.unwrap();
-    let tls = tokio_rustls::TlsAcceptor::from(server_config())
+    let tls = tokio_rustls::TlsAcceptor::from(fixture::server_config())
         .accept(Cork::new(tcp))
         .await
         .unwrap();
-    let (cork, conn) = tls.into_inner();
+    let (cork, mut conn) = tls.into_inner();
     assert!(
         cork.at_boundary(),
         "the handshake ends at a record boundary"
     );
-    assert!(!conn.wants_write(), "the handshake is flushed");
+    ktls::check_drained(&mut conn).unwrap();
     let version = conn.protocol_version().unwrap();
     #[allow(deprecated)]
     let secrets = conn.dangerous_extract_secrets().unwrap();
@@ -141,6 +83,7 @@ async fn accept(listener: &TcpListener) -> KtlsStream {
     };
     let tcp = cork.into_inner();
     ktls::install(tcp.as_fd(), &tls).unwrap();
+    installed.send(()).unwrap();
     KtlsStream::new(tcp, tls)
 }
 
@@ -162,8 +105,9 @@ async fn echo_4_mib_through_ktls_for_every_suite() {
     for suite in SUITES {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
+        let (installed, ready) = mpsc::channel();
         let client = thread::spawn(move || {
-            let mut stream = client(addr, suite);
+            let mut stream = client(addr, suite, ready);
             let sent = seeded(ECHOED);
             let mut back = vec![0; ECHOED];
             for (out, back) in sent.chunks(1 << 16).zip(back.chunks_mut(1 << 16)) {
@@ -177,15 +121,19 @@ async fn echo_4_mib_through_ktls_for_every_suite() {
                 suite.suite()
             );
         });
-        let mut stream = accept(&listener).await;
-        let mut buf = vec![0; 1 << 16];
-        let mut echoed = 0;
-        while echoed < ECHOED {
-            let n = stream.read(&mut buf).await.unwrap();
-            assert!(n > 0, "{:?} ended after {echoed} bytes", suite.suite());
-            stream.write_all(&buf[..n]).await.unwrap();
-            echoed += n;
-        }
+        timeout(LIMIT, async {
+            let mut stream = accept(&listener, installed).await;
+            let mut buf = vec![0; 1 << 16];
+            let mut echoed = 0;
+            while echoed < ECHOED {
+                let n = stream.read(&mut buf).await.unwrap();
+                assert!(n > 0, "{:?} ended after {echoed} bytes", suite.suite());
+                stream.write_all(&buf[..n]).await.unwrap();
+                echoed += n;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("{:?} echoes within {LIMIT:?}", suite.suite()));
         client.join().unwrap();
     }
 }
@@ -196,39 +144,59 @@ async fn a_client_close_notify_ends_the_stream_cleanly() {
     for suite in SUITES {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
+        let (installed, ready) = mpsc::channel();
         let client = thread::spawn(move || {
-            let mut stream = client(addr, suite);
+            let mut stream = client(addr, suite, ready);
             stream.conn.send_close_notify();
             stream.flush().unwrap();
             let _ = stream.sock.read(&mut [0; 1]);
         });
-        let mut stream = accept(&listener).await;
-        let mut buf = [0; 64];
-        assert_eq!(
-            stream.read(&mut buf).await.unwrap(),
-            0,
-            "{:?}",
-            suite.suite()
-        );
-        assert_eq!(stream.read(&mut buf).await.unwrap(), 0, "EOF stays");
-        drop(stream);
+        timeout(LIMIT, async {
+            let mut stream = accept(&listener, installed).await;
+            let mut buf = [0; 64];
+            assert_eq!(
+                stream.read(&mut buf).await.unwrap(),
+                0,
+                "{:?}",
+                suite.suite()
+            );
+            assert_eq!(stream.read(&mut buf).await.unwrap(), 0, "EOF stays");
+        })
+        .await
+        .unwrap_or_else(|_| panic!("{:?} reads EOF within {LIMIT:?}", suite.suite()));
         client.join().unwrap();
     }
 }
 
 #[tokio::test]
 #[ignore = "needs the kernel tls module; run on a VM"]
-async fn shutdown_sends_close_notify() {
+async fn shutdown_sends_close_notify_after_the_data() {
     for suite in SUITES {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
+        let (installed, ready) = mpsc::channel();
         let client = thread::spawn(move || {
-            let mut stream = client(addr, suite);
-            let read = stream.read(&mut [0; 64]);
-            assert_eq!(read.unwrap(), 0, "{:?} reads a clean EOF", suite.suite());
+            let mut stream = client(addr, suite, ready);
+            let mut got = Vec::new();
+            stream.read_to_end(&mut got).unwrap();
+            assert_eq!(
+                Sha256::digest(&got),
+                Sha256::digest(seeded(ECHOED)),
+                "{:?} reads every byte, then a clean EOF",
+                suite.suite()
+            );
         });
-        let mut stream = accept(&listener).await;
-        stream.shutdown().await.unwrap();
+        timeout(LIMIT, async {
+            let mut stream = accept(&listener, installed).await;
+            stream.write_all(&seeded(ECHOED)).await.unwrap();
+            stream.shutdown().await.unwrap();
+            assert!(
+                stream.write(b"late").await.is_err(),
+                "nothing is sent after close_notify"
+            );
+        })
+        .await
+        .unwrap_or_else(|_| panic!("{:?} shuts down within {LIMIT:?}", suite.suite()));
         client.join().unwrap();
     }
 }
