@@ -272,7 +272,7 @@ fn render_node(
 /// The compositor's main dma-buf device (linux-dmabuf default feedback), which the portal
 /// allocates the screen's buffers on.
 fn session_device() -> Option<libc::dev_t> {
-    let conn = wl::Connection::connect_to_env().ok()?;
+    let conn = crate::wayland::connect().ok()?;
     let (globals, mut queue) = registry_queue_init::<Feedback>(&conn).ok()?;
     let qh = queue.handle();
     let dmabuf: ZwpLinuxDmabufV1 = globals.bind(&qh, 4..=5, ()).ok()?;

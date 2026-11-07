@@ -21,20 +21,25 @@ mod layout;
 mod listen;
 mod lock;
 mod portal;
+mod seat;
 mod sink;
 mod sound;
 mod stream;
 mod viewers;
+mod wayland;
 mod wlclip;
 
 use encode::choice;
+use listen::{End, Leave};
 use repriseconf::ConfigWatch;
 use repriseconf::remote::{EncoderChoice, RemoteDesktop};
 use reprisetls::{cert, tcp};
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
-use tokio::sync::{mpsc, watch};
+use std::time::Duration;
+use tokio::sync::{Notify, mpsc, oneshot, watch};
 
 #[cfg(test)]
 use display::Grey;
@@ -62,14 +67,20 @@ fn main() -> ExitCode {
     }
     let cfg = repriseconf::remote::remote_desktop();
     let dir = cert_dir();
-    let identity = match cert::load_or_create(&dir) {
-        Ok(identity) => identity,
-        Err(e) => {
-            log::error!("{}: no certificate: {e}", dir.display());
-            return ExitCode::FAILURE;
-        }
+    let identity = match hand_over {
+        Some(_) => None,
+        None => match cert::load_or_create(&dir) {
+            Ok(identity) => {
+                log::info!("certificate fingerprint {}", identity.fingerprint);
+                Some(identity)
+            }
+            Err(e) => {
+                log::error!("{}: no certificate: {e}", dir.display());
+                return ExitCode::FAILURE;
+            }
+        },
     };
-    log::info!("certificate fingerprint {}", identity.fingerprint);
+    let seat_away = seat::away();
     sink::recover();
     let rt = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -82,17 +93,30 @@ fn main() -> ExitCode {
         }
     };
     let (status, status_rx) = watch::channel(control::Status {
+        listening: match hand_over {
+            Some(_) => "login manager".into(),
+            None => String::new(),
+        },
         encoder: choice::PROBING_LABEL.into(),
         encoders: choice::names(&[]),
-        fingerprint: identity.fingerprint.clone(),
+        fingerprint: (identity.as_ref()).map_or_else(String::new, |i| i.fingerprint.clone()),
         ..control::Status::default()
     });
     let (disconnect, disconnect_rx) = mpsc::unbounded_channel();
     let (regenerate, regenerate_rx) = mpsc::unbounded_channel();
-    control::spawn(status_rx, disconnect, regenerate);
-    let (identity, identity_rx) = watch::channel(identity);
+    // Under reprise-login the machine's settings run remote logins, so no bus name is claimed.
+    if hand_over.is_none() {
+        control::spawn(status_rx, disconnect, regenerate);
+    }
+    let identity = identity.map(watch::channel);
     let (config, config_rx) = watch::channel(cfg);
-    let probed = spawn_probe();
+    let (display, probed) = match hand_over {
+        Some(_) => {
+            let (connected, display) = oneshot::channel();
+            (Some(display), spawn_probe(Some(connected)))
+        }
+        None => (None, spawn_probe(None)),
+    };
     let marker = lock::marker_path();
     let local = tokio::task::LocalSet::new();
     let code = local.block_on(&rt, async {
@@ -103,30 +127,47 @@ fn main() -> ExitCode {
             config_rx.clone(),
             status.clone(),
         ));
-        tokio::task::spawn_local(regenerate_on_request(
-            regenerate_rx,
-            dir,
-            identity,
-            status.clone(),
-        ));
+        let identity_rx = identity.map(|(identity, identity_rx)| {
+            tokio::task::spawn_local(regenerate_on_request(
+                regenerate_rx,
+                dir,
+                identity,
+                status.clone(),
+            ));
+            identity_rx
+        });
         let last_told = Arc::new(Mutex::new(display::UNSHARED));
         let links = display::Links {
             config: config_rx.clone(),
             status: status.clone(),
             lives: Arc::default(),
+            portal_wait: match hand_over {
+                Some(_) => wayland::SESSION_READY_WAIT,
+                None => Duration::ZERO,
+            },
         };
-        let console =
-            console::Console::new(status.clone(), config_rx.clone(), repriseconf::locker_set);
+        let console = console::Console::new(
+            status.clone(),
+            config_rx.clone(),
+            repriseconf::locker_set,
+            seat_away,
+        );
         let tcp_status = status.clone();
         let viewers = status.subscribe();
         let session_user = user.clone();
+        let idle = Rc::new(Notify::new());
+        let leave = Leaving {
+            inner: lock::LockOnLeave::new(marker, config_rx.clone()),
+            status: status.subscribe(),
+            idle: idle.clone(),
+        };
         let server = listen::Server {
             identity: identity_rx,
             user,
             status,
             config: config_rx.clone(),
             disconnect: disconnect_rx,
-            leave: lock::LockOnLeave::new(marker, config_rx.clone()),
+            leave,
             console: console.clone(),
         };
         let sync_owner = input::SyncOwner::default();
@@ -179,7 +220,16 @@ fn main() -> ExitCode {
                 };
                 let intake = handover::HandOverIntake::new(listener, ROOT, viewers);
                 let logins = auth::HandedOverLogins::new(session_user);
-                listen::serve(server, intake, logins, handlers, terminated()).await;
+                let stop = async {
+                    tokio::select! {
+                        () = terminated() => {}
+                        () = display_gone(display) => {}
+                        () = idle.notified() => {
+                            log::info!("no client is connected; stopping until the next hand-over");
+                        }
+                    }
+                };
+                listen::serve(server, intake, logins, handlers, stop).await;
             }
             None => {
                 let intake = intake::TcpIntake::new(tcp::ALL, config_rx.clone(), tcp_status);
@@ -197,10 +247,16 @@ fn main() -> ExitCode {
 /// The only peer the hand-over socket takes: reprise-login runs as root.
 const ROOT: u32 = 0;
 
+/// How long the system bus may take to answer whether reprise-login runs.
+const BUS_ANSWER: Duration = Duration::from_secs(5);
+
 /// Whether reprise-login runs, asked once on the system bus.
 fn login_manager_runs() -> bool {
     zbus::block_on(async {
-        match zbus::Connection::system().await {
+        let system = zbus::connection::Builder::system()
+            .method_timeout(BUS_ANSWER)
+            .build();
+        match system.await {
             Ok(system) => reprisebus::login::manager_active(&system).await,
             Err(e) => {
                 log::debug!("no system bus: {e}");
@@ -208,6 +264,52 @@ fn login_manager_runs() -> bool {
             }
         }
     })
+}
+
+/// The session's [`listen::Leave`]: [`lock::LockOnLeave`], then a notice on `idle` once a
+/// client has left and none is listed. Hand-over mode stops on it; the socket starts it again.
+struct Leaving<L> {
+    inner: L,
+    status: watch::Receiver<control::Status>,
+    idle: Rc<Notify>,
+}
+
+impl<L: Leave> Leave for Leaving<L> {
+    fn arrived(&self) {
+        self.inner.arrived();
+    }
+
+    async fn left(&self, why: End) {
+        self.inner.left(why).await;
+        if self.status.borrow().clients.is_empty() {
+            self.idle.notify_one();
+        }
+    }
+
+    fn stopping(&self) -> impl Future<Output = ()> {
+        self.inner.stopping()
+    }
+
+    fn console_unlocked(&self) -> impl Future<Output = bool> {
+        self.inner.console_unlocked()
+    }
+}
+
+/// Ends once the session's Wayland display closes, or once it is not up in time.
+async fn display_gone(
+    display: Option<oneshot::Receiver<Result<wayland_client::Connection, String>>>,
+) {
+    let Some(display) = display else {
+        return std::future::pending().await;
+    };
+    match display.await {
+        Ok(Ok(conn)) => {
+            wayland::closed(conn).await;
+            log::info!("the session's display closed; stopping");
+        }
+        Ok(Err(e)) => log::error!("{e}; stopping"),
+        Err(_) => log::error!("the probe thread ended without the display; stopping"),
+    }
 }
 
 async fn terminated() {
@@ -286,14 +388,26 @@ async fn regenerate_on_request(
 }
 
 /// Probes the H.264 backends on a thread of their own, so the bus and the listener start at
-/// once; the returned watch holds the find once it is in.
-fn spawn_probe() -> display::Probed {
+/// once; the returned watch holds the find once it is in. Given `display`, the thread first
+/// connects to the session's display, sends it there and probes only once it is up.
+fn spawn_probe(
+    display: Option<oneshot::Sender<Result<wayland_client::Connection, String>>>,
+) -> display::Probed {
     let (tx, rx) = watch::channel(None);
     let spawned = std::thread::Builder::new()
         .name("reprise-rdp-probe".into())
         .spawn({
             let tx = tx.clone();
             move || {
+                if let Some(display) = display {
+                    let connected = wayland::connect();
+                    let up = connected.is_ok();
+                    let _ = display.send(connected);
+                    if !up {
+                        tx.send_replace(Some(Arc::default()));
+                        return;
+                    }
+                }
                 tx.send_replace(Some(Arc::new(picture())));
             }
         });

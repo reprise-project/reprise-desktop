@@ -1,5 +1,6 @@
 //! The accept loop: clients from an [`Intake`], up to `max_viewers` at once, TLS security only,
-//! each logged in through a [`Login`]. It reports who is connected.
+//! each logged in through a [`Login`]; or connections reprise-login handed over, resumed over
+//! kernel TLS. It reports who is connected.
 
 #[cfg(test)]
 pub(crate) mod tests;
@@ -9,16 +10,19 @@ use crate::client::{self, ClientLayout};
 use crate::clipboard::Cut;
 use crate::console::{Console, Joined};
 use crate::control::{Client, Request, Status};
-use crate::intake::{Arrival, Intake};
+use crate::intake::{Admission, Arrival, Intake};
 use crate::portal::Screen;
 use crate::viewers::{Kick, LOGGING_IN_PER_IP, Refused, ViewerId, Viewers};
+use ironrdp_pdu::nego::SecurityProtocol;
 use ironrdp_pdu::rdp::server_error_info::ProtocolIndependentCode;
 use ironrdp_server::{
     CliprdrServerFactory, ErrorInfo, GfxServerFactory, RdpServer, RdpServerDisplay,
-    RdpServerInputHandler, SoundServerFactory,
+    RdpServerInputHandler, ReplayStep, Resumed, SoundServerFactory,
 };
 use repriseconf::remote::{RemoteDesktop, SecondClient};
+use repriselogin::handover::{HandOver, Step};
 use reprisetls::cert::Identity;
+use reprisetls::ktls::KtlsStream;
 use std::cell::{Cell, RefCell};
 use std::convert::Infallible;
 use std::io;
@@ -161,7 +165,8 @@ impl Ending {
 
 /// The accept loop's settings and its links to the bus.
 pub struct Server<L> {
-    pub identity: watch::Receiver<Identity>,
+    /// None for a server that takes only hand-overs, which arrive past their TLS.
+    pub identity: Option<watch::Receiver<Identity>>,
     pub user: String,
     /// Its `clients` are kept here.
     pub status: watch::Sender<Status>,
@@ -237,16 +242,28 @@ pub async fn serve<D, I, L>(
                 }
             },
             arrival = intake.next() => {
-                let (stream, peer, admission) = match arrival {
-                    Arrival::Connection { stream, peer, admission } => (stream, peer, admission),
+                let (incoming, peer, admission) = match arrival {
+                    Arrival::Connection { stream, peer, admission } => {
+                        let Some(identity) = &server.identity else {
+                            log::info!("{peer}: closed; this server takes only hand-overs");
+                            continue;
+                        };
+                        let tls = identity.borrow().acceptor.clone();
+                        (Incoming::Fresh(stream, tls), peer, admission)
+                    }
                     Arrival::Moved => {
                         shared.viewers.borrow_mut().kick_all(Kick::PortChanged);
                         continue;
                     }
                     Arrival::HandedOver { tcp, handover } => {
-                        drop(tcp);
-                        log::info!("{}: closed; hand-overs are not served", handover.peer);
-                        continue;
+                        let (peer, user) = (handover.peer, handover.user.clone());
+                        match resume(tcp, *handover) {
+                            Ok(incoming) => (incoming, peer, Admission::HandedOver { user }),
+                            Err(e) => {
+                                log::warn!("{peer}: closed; the handed-over socket: {e}");
+                                continue;
+                            }
+                        }
                     }
                 };
                 let backoff = logins.backoff(peer.ip());
@@ -278,12 +295,12 @@ pub async fn serve<D, I, L>(
                 let ending = Ending::default();
                 let (display, input, gfx, clipboard, sound, layout) =
                     handlers(Shown(shown), ending.clone());
-                let local = stream
-                    .local_addr()
-                    .unwrap_or(SocketAddr::from(([0, 0, 0, 0], 0)));
-                let rdp = RdpServer::builder()
-                    .with_addr(local)
-                    .with_tls(server.identity.borrow().acceptor.clone())
+                let builder = RdpServer::builder().with_addr(incoming.local_addr());
+                let builder = match &incoming {
+                    Incoming::Fresh(_, tls) => builder.with_tls(tls.clone()),
+                    Incoming::Resumed { .. } => builder.with_no_security(),
+                };
+                let rdp = builder
                     .with_input_handler(input)
                     .with_display_handler(display)
                     .with_credential_validator(Some(check.clone()))
@@ -294,7 +311,14 @@ pub async fn serve<D, I, L>(
                     .build();
                 let viewer = Viewer { id, peer, kicked, ending, replaces, alive: alive.clone() };
                 let shared = shared.clone();
-                tokio::task::spawn_local(run(rdp, stream, viewer, check, budget, on_shown, shared));
+                match incoming {
+                    Incoming::Fresh(stream, _) => tokio::task::spawn_local(run(
+                        rdp, stream, None, viewer, check, budget, on_shown, shared,
+                    )),
+                    Incoming::Resumed { stream, resumed, .. } => tokio::task::spawn_local(run(
+                        rdp, stream, Some(resumed), viewer, check, budget, on_shown, shared,
+                    )),
+                };
             }
         }
     }
@@ -303,6 +327,67 @@ pub async fn serve<D, I, L>(
     shared.viewers.borrow_mut().kick_all(Kick::Stopped);
     drop(alive);
     let _ = all_closed.recv().await;
+}
+
+/// A connection to serve: one accepted here, under the server's TLS, or one handed over past its
+/// TLS with the accept another process ran.
+enum Incoming {
+    Fresh(TcpStream, tokio_rustls::TlsAcceptor),
+    Resumed {
+        stream: Box<KtlsStream>,
+        local: SocketAddr,
+        resumed: Resumed,
+    },
+}
+
+impl Incoming {
+    fn local_addr(&self) -> SocketAddr {
+        match self {
+            Incoming::Fresh(stream, _) => (stream.local_addr()).unwrap_or(([0, 0, 0, 0], 0).into()),
+            Incoming::Resumed { local, .. } => *local,
+        }
+    }
+}
+
+/// A handed-over connection as [`run`] takes it: its socket, whose TLS the kernel already
+/// carries, and the accept to replay.
+fn resume(tcp: std::net::TcpStream, handover: HandOver) -> io::Result<Incoming> {
+    tcp.set_nonblocking(true)?;
+    let tcp = TcpStream::from_std(tcp)?;
+    let local = tcp.local_addr()?;
+    let HandOver {
+        security,
+        steps,
+        tls,
+        ..
+    } = handover;
+    let resumed = Resumed {
+        security: SecurityProtocol::from_bits_truncate(security),
+        steps: steps.into_iter().map(replay_step).collect(),
+    };
+    let stream = Box::new(KtlsStream::new(tcp, tls));
+    Ok(Incoming::Resumed {
+        stream,
+        local,
+        resumed,
+    })
+}
+
+fn replay_step(step: Step) -> ReplayStep {
+    match step {
+        Step::Pdu {
+            mut input,
+            mut output,
+        } => ReplayStep::Pdu {
+            input: std::mem::take(&mut *input),
+            output: std::mem::take(&mut *output),
+        },
+        Step::SecurityUpgradeDone => ReplayStep::SecurityUpgradeDone,
+        Step::CredsspDone { user, domain } => ReplayStep::CredsspDone {
+            username: user,
+            domain,
+        },
+    }
 }
 
 /// What every connection of one [`serve`] shares.
@@ -342,15 +427,20 @@ struct Viewer {
     alive: mpsc::Sender<Infallible>,
 }
 
-async fn run<L: Leave + 'static, C: Login>(
+/// Runs one connection from its first byte, or from the end of `resumed`'s replay.
+#[expect(clippy::too_many_arguments, reason = "each is one connection's own")]
+async fn run<L: Leave + 'static, C: Login, S>(
     mut server: RdpServer,
-    stream: TcpStream,
+    stream: S,
+    resumed: Option<Resumed>,
     viewer: Viewer,
     check: Arc<C>,
     budget: Duration,
     on_shown: watch::Receiver<bool>,
     shared: Rc<Shared<L>>,
-) {
+) where
+    S: AsyncRead + AsyncWrite + Send + Sync + Unpin,
+{
     let Viewer {
         id,
         peer,
@@ -398,7 +488,12 @@ async fn run<L: Leave + 'static, C: Login>(
     let told = server.error_info_disconnect_handle();
     let mut stopped = false;
     let ended = {
-        let connection = server.run_connection(stream);
+        let connection = async {
+            match resumed {
+                Some(resumed) => server.run_connection_resumed(stream, resumed).await,
+                None => server.run_connection(stream).await,
+            }
+        };
         tokio::pin!(connection);
         tokio::select! {
         biased;
@@ -579,12 +674,12 @@ impl Seen {
 }
 
 /// A client stream that keeps a [`Seen`] of what it reads.
-struct Recorded {
-    inner: TcpStream,
+struct Recorded<S> {
+    inner: S,
     seen: Arc<Mutex<Seen>>,
 }
 
-impl AsyncRead for Recorded {
+impl<S: AsyncRead + Unpin> AsyncRead for Recorded<S> {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -603,7 +698,7 @@ impl AsyncRead for Recorded {
     }
 }
 
-impl AsyncWrite for Recorded {
+impl<S: AsyncWrite + Unpin> AsyncWrite for Recorded<S> {
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,

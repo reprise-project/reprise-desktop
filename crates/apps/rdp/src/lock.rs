@@ -42,7 +42,7 @@ pub async fn lock_session(conn: &Connection, given_up: &AtomicBool) -> zbus::Res
 }
 
 /// The user's display session's object path: logind's `GetUser(uid)`, then its `Display`.
-async fn display_session(conn: &Connection) -> zbus::Result<OwnedObjectPath> {
+pub(crate) async fn display_session(conn: &Connection) -> zbus::Result<OwnedObjectPath> {
     // SAFETY: getuid has no preconditions and cannot fail.
     let uid = unsafe { libc::getuid() };
     let user: OwnedObjectPath = conn

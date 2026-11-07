@@ -51,10 +51,14 @@ wayland-protocols = { version = "0.32", features = ["client", "staging"] }
 reprisefs = { path = "../../reprisefs" }
 repriselogin = { path = "../../repriselogin" }
 reprisetls = { path = "../../reprisetls" }
+tokio-rustls.workspace = true
 image.workspace = true
 
 [dev-dependencies]
+ironrdp-acceptor.workspace = true
 ironrdp-ainput.workspace = true
+ironrdp-connector.workspace = true
+ironrdp-tokio.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["sync", "test-util"] }
 png.workspace = true

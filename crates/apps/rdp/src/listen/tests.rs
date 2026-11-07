@@ -142,7 +142,7 @@ async fn start_leaving<L: Leave + 'static>(
         status.clone(),
     );
     let server = Server {
-        identity: watch::channel(identity).1,
+        identity: Some(watch::channel(identity).1),
         user: "alice".into(),
         status,
         config: config_rx,
@@ -929,6 +929,7 @@ async fn session(
             run(
                 rdp,
                 stream,
+                None,
                 Viewer {
                     id,
                     peer,
@@ -1284,6 +1285,7 @@ async fn an_accepted_connection_that_never_arrived_does_not_leave() {
             let ran = run(
                 rdp,
                 stream,
+                None,
                 viewer,
                 check,
                 HANDSHAKE,
@@ -1332,6 +1334,538 @@ async fn a_shown_connection_whose_task_panics_still_locks() {
                 let want: &[&str] = if shown { &["lock"] } else { &[] };
                 assert_eq!(*steps.borrow(), want, "shown: {shown}");
             }
+        })
+        .await;
+}
+
+const WAIT: Duration = Duration::from_secs(5);
+
+/// A client that logs on over TLS as the session user with the empty password a hand-over's
+/// replayed Client Info carries.
+fn handed_over_client(local: SocketAddr) -> ironrdp_connector::ClientConnector {
+    use ironrdp_connector::{Config, Credentials, DesktopSize};
+    use ironrdp_pdu::gcc;
+    use ironrdp_pdu::rdp::capability_sets::{MajorPlatformType, RailSupportLevel};
+    let config = Config {
+        desktop_size: DesktopSize {
+            width: 1280,
+            height: 800,
+        },
+        monitor_layout: None,
+        desktop_scale_factor: 0,
+        desktop_physical_size: None,
+        desktop_orientation: None,
+        device_scale_factor: None,
+        monitor_extended_layout: None,
+        relative_mouse_input: false,
+        enable_tls: true,
+        enable_credssp: false,
+        enable_standard_rdp_security: false,
+        credentials: Credentials::UsernamePassword {
+            username: "alice".into(),
+            password: String::new(),
+        },
+        domain: None,
+        client_build: 0,
+        client_name: "test".into(),
+        keyboard_type: gcc::KeyboardType::IBM_ENHANCED,
+        keyboard_subtype: 0,
+        keyboard_functional_keys_count: 12,
+        keyboard_layout: 0,
+        connection_type: gcc::ConnectionType::Lan,
+        ime_file_name: String::new(),
+        bitmap: None,
+        dig_product_id: String::new(),
+        client_dir: String::new(),
+        alternate_shell: String::new(),
+        work_dir: String::new(),
+        remote_application_mode: false,
+        rail_support_level: RailSupportLevel::SUPPORTED,
+        platform: MajorPlatformType::UNIX,
+        hardware_id: None,
+        request_data: None,
+        autologon: false,
+        enable_audio_playback: false,
+        enable_audio_capture: false,
+        performance_flags: Default::default(),
+        license_cache: None,
+        timezone_info: Default::default(),
+        compression_type: None,
+        enable_server_pointer: false,
+        pointer_software_rendering: false,
+        multitransport_flags: None,
+        support_dyn_vc_gfx_protocol: false,
+        rdp_version: gcc::RdpVersion::V5_PLUS,
+    };
+    ironrdp_connector::ClientConnector::new(config, local)
+}
+
+/// The front's acceptor, as a hand-over's record is made.
+fn front_acceptor() -> ironrdp_acceptor::Acceptor {
+    let desktop = ironrdp_acceptor::DesktopSize {
+        width: 1024,
+        height: 768,
+    };
+    ironrdp_acceptor::Acceptor::new(SecurityProtocol::SSL, desktop, vec![], None)
+}
+
+/// `sequence` stepped on `input`, and what it wrote.
+fn stepped(sequence: &mut dyn ironrdp_connector::Sequence, input: &[u8]) -> Vec<u8> {
+    let mut buf = ironrdp_core::WriteBuf::new();
+    let written = sequence.step(input, None, &mut buf).unwrap();
+    buf.filled()[..written.size().unwrap_or(0)].to_vec()
+}
+
+/// The next PDU `hint` asks for off `queue`: empty for a send-only step, None while incomplete.
+fn take_pdu(hint: Option<&dyn ironrdp_pdu::PduHint>, queue: &mut Vec<u8>) -> Option<Vec<u8>> {
+    let Some(hint) = hint else {
+        return Some(Vec::new());
+    };
+    let (_, size) = hint.find_size(queue).unwrap()?;
+    Some(queue.drain(..size).collect())
+}
+
+/// The front's accept of `client` in memory up to Licensing, both sides marking the security
+/// upgrade done without TLS.
+fn recorded_accept(client: &mut ironrdp_connector::ClientConnector) -> Vec<Step> {
+    use ironrdp_connector::Sequence as _;
+    let mut acceptor = front_acceptor();
+    let (mut to_server, mut to_client) = (Vec::new(), Vec::new());
+    let mut steps = Vec::new();
+    while acceptor.client_info_flags().is_none() {
+        if acceptor.reached_security_upgrade().is_some() {
+            acceptor.mark_security_upgrade_as_done();
+            steps.push(Step::SecurityUpgradeDone);
+        } else if let Some(input) = take_pdu(acceptor.next_pdu_hint(), &mut to_server) {
+            let output = stepped(&mut acceptor, &input);
+            to_client.extend_from_slice(&output);
+            steps.push(Step::Pdu {
+                input: input.into(),
+                output: output.into(),
+            });
+        } else if client.should_perform_security_upgrade() {
+            client.mark_security_upgrade_as_done();
+        } else {
+            let hint = client.next_pdu_hint();
+            let input = take_pdu(hint, &mut to_client).expect("one side has a PDU to read");
+            to_server.extend_from_slice(&stepped(client, &input));
+        }
+    }
+    steps
+}
+
+/// Steps `client` over `stream` until it is connected.
+async fn connect_over<S>(client: &mut ironrdp_connector::ClientConnector, stream: S)
+where
+    S: AsyncRead + AsyncWrite + Send + Sync + Unpin,
+{
+    use ironrdp_connector::State as _;
+    let mut framed = ironrdp_tokio::TokioFramed::new(stream);
+    let mut buf = ironrdp_core::WriteBuf::new();
+    let connected = async {
+        while !client.state.is_terminal() {
+            let state = client.state.name();
+            ironrdp_tokio::single_sequence_step(&mut framed, client, &mut buf)
+                .await
+                .unwrap_or_else(|e| panic!("the client fails at {state}: {e}"));
+        }
+    };
+    tokio::time::timeout(WAIT, connected)
+        .await
+        .expect("the client connects");
+    assert_eq!(client.state.name(), "Connected");
+}
+
+/// Both ends of a loopback TCP connection: the client's, then the accepted one and its peer.
+async fn loopback() -> (TcpStream, TcpStream, SocketAddr) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let client = TcpStream::connect(listener.local_addr().unwrap())
+        .await
+        .unwrap();
+    let (accepted, peer) = listener.accept().await.unwrap();
+    (client, accepted, peer)
+}
+
+#[tokio::test]
+async fn a_handed_over_connection_runs_to_the_session() {
+    LocalSet::new()
+        .run_until(async {
+            let (client_end, stream, peer) = loopback().await;
+            let mut client = handed_over_client(peer);
+            let steps = recorded_accept(&mut client);
+            let admission = Admission::HandedOver {
+                user: "alice".into(),
+            };
+            let (check, budget) =
+                auth::HandedOverLogins::new("alice".into()).check(peer, admission);
+            let rdp = RdpServer::builder()
+                .with_addr(peer)
+                .with_no_security()
+                .with_input_handler(crate::input::Input::new(Default::default()).0)
+                .with_display_handler(crate::Grey)
+                .with_credential_validator(Some(check.clone()))
+                .build();
+            let (status, mut status_rx) = watch::channel(Status::default());
+            let shared = Rc::new(Shared {
+                user: "alice".into(),
+                status,
+                leave: (),
+                viewers: RefCell::default(),
+                console: lock_mode_console(),
+            });
+            let (id, kicked) = shared.viewers.borrow_mut().join(peer, 1).unwrap();
+            let viewer = Viewer {
+                id,
+                peer,
+                kicked,
+                ending: Ending::default(),
+                replaces: false,
+                alive: mpsc::channel(1).0,
+            };
+            let resumed = Resumed {
+                security: SecurityProtocol::SSL,
+                steps: steps.into_iter().map(replay_step).collect(),
+            };
+            let on_shown = watch::channel(false).1;
+            let served = tokio::task::spawn_local(run(
+                rdp,
+                stream,
+                Some(resumed),
+                viewer,
+                check,
+                budget,
+                on_shown,
+                shared,
+            ));
+            let mut client_end = client_end;
+            connect_over(&mut client, &mut client_end).await;
+            let listed = status_rx.wait_for(|s| !s.clients.is_empty());
+            let listed = (tokio::time::timeout(WAIT, listed).await)
+                .expect("the client is listed")
+                .unwrap()
+                .clients
+                .clone();
+            assert_eq!(listed.len(), 1);
+            assert_eq!(listed[0].address, peer.to_string());
+            assert_eq!(listed[0].user, "alice");
+            drop(client_end);
+            (tokio::time::timeout(WAIT, served).await)
+                .expect("the connection ends with its client")
+                .unwrap();
+            assert!(status_rx.borrow().clients.is_empty());
+        })
+        .await;
+}
+
+/// Arrivals the test sends.
+struct Sent(mpsc::UnboundedReceiver<Arrival>);
+
+impl Intake for Sent {
+    async fn next(&mut self) -> Arrival {
+        match self.0.recv().await {
+            Some(arrival) => arrival,
+            None => std::future::pending().await,
+        }
+    }
+}
+
+/// A [`serve`] of hand-overs only, as `--hand-over` runs it, until `stop`.
+fn serve_hand_overs(
+    stop: impl Future<Output = ()> + 'static,
+) -> (
+    mpsc::UnboundedSender<Arrival>,
+    watch::Receiver<Status>,
+    tokio::task::JoinHandle<()>,
+) {
+    let (arrivals, arrived) = mpsc::unbounded_channel();
+    let (status, status_rx) = watch::channel(Status::default());
+    let server = Server {
+        identity: None,
+        user: "alice".into(),
+        status,
+        config: watch::channel(RemoteDesktop::default()).1,
+        disconnect: mpsc::unbounded_channel().1,
+        leave: (),
+        console: lock_mode_console(),
+    };
+    let handlers = |_, _| {
+        (
+            crate::Grey,
+            crate::input::Input::new(Default::default()).0,
+            None,
+            None,
+            None,
+            ClientLayout::default(),
+        )
+    };
+    let logins = auth::HandedOverLogins::new("alice".into());
+    let served = tokio::task::spawn_local(serve(server, Sent(arrived), logins, handlers, stop));
+    (arrivals, status_rx, served)
+}
+
+/// A hand-over of `tcp`, blocking as a passed socket may be, for `peer` with `steps` and `tls`.
+fn handed_over(
+    tcp: std::net::TcpStream,
+    peer: SocketAddr,
+    steps: Vec<Step>,
+    tls: repriselogin::handover::TlsState,
+) -> Arrival {
+    tcp.set_nonblocking(false).unwrap();
+    let handover = HandOver {
+        conn: 1,
+        user: "alice".into(),
+        peer,
+        security: SecurityProtocol::SSL.bits(),
+        steps,
+        tls,
+    };
+    Arrival::HandedOver {
+        tcp,
+        handover: Box::new(handover),
+    }
+}
+
+#[tokio::test]
+async fn a_handed_over_connection_whose_replay_diverges_is_closed() {
+    use repriselogin::handover::{Cipher, DirectionKeys, TlsState, TlsVersion};
+    LocalSet::new()
+        .run_until(async {
+            let (arrivals, status, _served) = serve_hand_overs(std::future::pending());
+            let (mut client_end, accepted, peer) = loopback().await;
+            let mut steps = recorded_accept(&mut handed_over_client(peer));
+            let output = (steps.iter_mut())
+                .find_map(|step| match step {
+                    Step::Pdu { output, .. } if !output.is_empty() => Some(output),
+                    _ => None,
+                })
+                .expect("a step that writes");
+            output[0] ^= 0xff;
+            let keys = || DirectionKeys {
+                seq: 0,
+                key: vec![1; 16].into(),
+                iv: vec![2; 12].into(),
+                secret: None,
+            };
+            let tls = TlsState {
+                version: TlsVersion::Tls13,
+                cipher: Cipher::Aes128Gcm,
+                tx: keys(),
+                rx: keys(),
+                record_limit: 1 << 24,
+            };
+            let accepted = accepted.into_std().unwrap();
+            let _ = arrivals.send(handed_over(accepted, peer, steps, tls));
+            let mut read = Vec::new();
+            (tokio::time::timeout(WAIT, client_end.read_to_end(&mut read)).await)
+                .expect("the connection is closed")
+                .unwrap();
+            assert!(
+                read.is_empty(),
+                "the client reads EOF and nothing else: {read:?}"
+            );
+            assert!(!status.has_changed().unwrap(), "no client is ever listed");
+            assert!(status.borrow().clients.is_empty());
+        })
+        .await;
+}
+
+#[tokio::test]
+async fn a_closed_display_ends_serve() {
+    LocalSet::new()
+        .run_until(async {
+            let (ours, compositor) = std::os::unix::net::UnixStream::pair().unwrap();
+            let display = wayland_client::Connection::from_socket(ours).unwrap();
+            let (_arrivals, _status, served) = serve_hand_overs(crate::wayland::closed(display));
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            assert!(!served.is_finished(), "serving while the display is open");
+            drop(compositor);
+            (tokio::time::timeout(WAIT, served).await)
+                .expect("serve ends with the display")
+                .unwrap();
+        })
+        .await;
+}
+
+/// The TLS 1.3 traffic secrets a connection logs.
+#[derive(Debug, Default)]
+struct TrafficLog(Mutex<Vec<(String, Vec<u8>)>>);
+
+impl tokio_rustls::rustls::KeyLog for TrafficLog {
+    fn log(&self, label: &str, _: &[u8], secret: &[u8]) {
+        self.0.lock().unwrap().push((label.into(), secret.to_vec()));
+    }
+}
+
+impl TrafficLog {
+    fn secrets(&self) -> Option<reprisetls::ktls::TrafficSecrets> {
+        let logged = self.0.lock().unwrap();
+        let get = |label: &str| {
+            (logged.iter())
+                .find(|(l, _)| l == label)
+                .map(|(_, s)| zeroize::Zeroizing::new(s.clone()))
+        };
+        let client = get("CLIENT_TRAFFIC_SECRET_0")?;
+        let server = get("SERVER_TRAFFIC_SECRET_0")?;
+        Some(reprisetls::ktls::TrafficSecrets { client, server })
+    }
+}
+
+/// Steps `acceptor` once over `framed`, writing its reply, and records the step.
+async fn front_step<S>(
+    framed: &mut ironrdp_tokio::TokioFramed<S>,
+    acceptor: &mut ironrdp_acceptor::Acceptor,
+    steps: &mut Vec<Step>,
+) where
+    S: AsyncRead + AsyncWrite + Send + Sync + Unpin,
+{
+    use ironrdp_connector::Sequence as _;
+    use ironrdp_tokio::FramedWrite as _;
+    let input = match acceptor.next_pdu_hint() {
+        Some(hint) => framed.read_by_hint(hint).await.unwrap().to_vec(),
+        None => Vec::new(),
+    };
+    let output = stepped(acceptor, &input);
+    framed.write_all(&output).await.unwrap();
+    steps.push(Step::Pdu {
+        input: input.into(),
+        output: output.into(),
+    });
+}
+
+/// Plays reprise-login's front: accepts one client to Licensing over TLS, takes its keys out of
+/// rustls and puts them in the kernel, and hands the socket over.
+async fn front(listener: TcpListener) -> Arrival {
+    let (tcp, peer) = listener.accept().await.unwrap();
+    let mut acceptor = front_acceptor();
+    let mut steps = Vec::new();
+    let mut framed = ironrdp_tokio::TokioFramed::new(tcp);
+    while acceptor.reached_security_upgrade().is_none() {
+        front_step(&mut framed, &mut acceptor, &mut steps).await;
+    }
+    let (tcp, early) = framed.into_inner();
+    assert!(early.is_empty());
+    let dir = tempfile::tempdir().unwrap();
+    let identity = reprisetls::cert::load_or_create(dir.path()).unwrap();
+    let log = Arc::new(TrafficLog::default());
+    let config = identity.server_config(true, Some(log.clone()));
+    let tls = tokio_rustls::TlsAcceptor::from(config)
+        .accept(reprisetls::cork::Cork::new(tcp))
+        .await
+        .unwrap();
+    acceptor.mark_security_upgrade_as_done();
+    steps.push(Step::SecurityUpgradeDone);
+    let mut framed = ironrdp_tokio::TokioFramed::new(tls);
+    while acceptor.client_info_flags().is_none() {
+        front_step(&mut framed, &mut acceptor, &mut steps).await;
+    }
+    let (tls, leftover) = framed.into_inner();
+    assert!(leftover.is_empty());
+    let (cork, conn) = tls.into_inner();
+    let state = reprisetls::ktls::hand_over(&cork, conn, log.secrets()).unwrap();
+    let tcp = cork.into_inner().into_std().unwrap();
+    reprisetls::ktls::install(std::os::fd::AsFd::as_fd(&tcp), &state).unwrap();
+    handed_over(tcp, peer, steps, state)
+}
+
+/// Accepts any server certificate.
+#[derive(Debug)]
+struct AnyCertificate;
+
+impl tokio_rustls::rustls::client::danger::ServerCertVerifier for AnyCertificate {
+    fn verify_server_cert(
+        &self,
+        _: &tokio_rustls::rustls::pki_types::CertificateDer<'_>,
+        _: &[tokio_rustls::rustls::pki_types::CertificateDer<'_>],
+        _: &tokio_rustls::rustls::pki_types::ServerName<'_>,
+        _: &[u8],
+        _: tokio_rustls::rustls::pki_types::UnixTime,
+    ) -> Result<tokio_rustls::rustls::client::danger::ServerCertVerified, tokio_rustls::rustls::Error>
+    {
+        Ok(tokio_rustls::rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _: &[u8],
+        _: &tokio_rustls::rustls::pki_types::CertificateDer<'_>,
+        _: &tokio_rustls::rustls::DigitallySignedStruct,
+    ) -> Result<
+        tokio_rustls::rustls::client::danger::HandshakeSignatureValid,
+        tokio_rustls::rustls::Error,
+    > {
+        Ok(tokio_rustls::rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _: &[u8],
+        _: &tokio_rustls::rustls::pki_types::CertificateDer<'_>,
+        _: &tokio_rustls::rustls::DigitallySignedStruct,
+    ) -> Result<
+        tokio_rustls::rustls::client::danger::HandshakeSignatureValid,
+        tokio_rustls::rustls::Error,
+    > {
+        Ok(tokio_rustls::rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<tokio_rustls::rustls::SignatureScheme> {
+        tokio_rustls::rustls::crypto::aws_lc_rs::default_provider()
+            .signature_verification_algorithms
+            .supported_schemes()
+    }
+}
+
+/// `client` connected to `addr` over TLS.
+async fn connect_over_tls(client: &mut ironrdp_connector::ClientConnector, addr: SocketAddr) {
+    use tokio_rustls::rustls::ClientConfig;
+    use tokio_rustls::rustls::crypto::aws_lc_rs;
+    let tcp = TcpStream::connect(addr).await.unwrap();
+    let mut framed = ironrdp_tokio::TokioFramed::new(tcp);
+    let upgrade = ironrdp_tokio::connect_begin(&mut framed, client)
+        .await
+        .unwrap();
+    let tcp = framed.into_inner_no_leftover();
+    let config = ClientConfig::builder_with_provider(Arc::new(aws_lc_rs::default_provider()))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(AnyCertificate))
+        .with_no_client_auth();
+    let name = tokio_rustls::rustls::pki_types::ServerName::try_from("localhost").unwrap();
+    let tls = tokio_rustls::TlsConnector::from(Arc::new(config))
+        .connect(name, tcp)
+        .await
+        .unwrap();
+    let _ = ironrdp_tokio::mark_as_upgraded(upgrade, client);
+    connect_over(client, tls).await;
+}
+
+#[tokio::test]
+#[ignore = "needs the kernel tls module; run on a VM with REPRISE_KTLS_TESTS=1"]
+async fn a_hand_over_is_served_over_kernel_tls_to_the_session() {
+    if std::env::var_os("REPRISE_KTLS_TESTS").is_none_or(|v| v != "1") {
+        eprintln!("skipped: set REPRISE_KTLS_TESTS=1 where the kernel's tls module is loaded");
+        return;
+    }
+    LocalSet::new()
+        .run_until(async {
+            let (arrivals, mut status, _served) = serve_hand_overs(std::future::pending());
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let handing = tokio::task::spawn_local(async move {
+                let _ = arrivals.send(front(listener).await);
+                arrivals
+            });
+            let mut client = handed_over_client(SocketAddr::from(([127, 0, 0, 1], 0)));
+            connect_over_tls(&mut client, addr).await;
+            let _arrivals = handing.await.unwrap();
+            let listed = status.wait_for(|s| !s.clients.is_empty());
+            let listed = (tokio::time::timeout(WAIT, listed).await)
+                .expect("the client is listed")
+                .unwrap()
+                .clients
+                .clone();
+            assert_eq!(listed[0].user, "alice");
         })
         .await;
 }

@@ -420,7 +420,7 @@ impl Logins for HandedOverLogins {
     type Check = HandedOverCheck;
 
     fn check(&self, peer: SocketAddr, admission: Admission) -> (Arc<HandedOverCheck>, Duration) {
-        let accepted = match admission {
+        let admitted = match admission {
             Admission::HandedOver { user } if user == self.user => true,
             Admission::HandedOver { user } => {
                 log::warn!(
@@ -436,7 +436,8 @@ impl Logins for HandedOverLogins {
         };
         let check = HandedOverCheck {
             user: self.user.clone(),
-            accepted,
+            admitted,
+            logged_in: watch::Sender::new(false),
         };
         (Arc::new(check), HANDSHAKE)
     }
@@ -446,26 +447,26 @@ impl Logins for HandedOverLogins {
     }
 }
 
-/// A hand-over's login, accepted when it is made. The replayed exchange logs in again as the
-/// session user with an empty password, since the password never reaches this server.
+/// A hand-over's login, accepted once the replayed exchange reaches its credential check. That
+/// check sees the session user with an empty password, since the password never reaches this server.
 pub struct HandedOverCheck {
     user: String,
-    accepted: bool,
+    /// The hand-over named the session user.
+    admitted: bool,
+    logged_in: watch::Sender<bool>,
 }
 
 impl Login for HandedOverCheck {
     async fn logged_in(&self) {
-        if !self.accepted {
-            std::future::pending::<()>().await;
-        }
+        let _ = self.logged_in.subscribe().wait_for(|l| *l).await;
     }
 
     fn accepted(&self) -> bool {
-        self.accepted
+        *self.logged_in.borrow()
     }
 
     async fn settled(&self) -> bool {
-        self.accepted
+        self.accepted()
     }
 }
 
@@ -475,14 +476,14 @@ impl CredentialValidator for HandedOverCheck {
         &self,
         credentials: &Credentials,
     ) -> Result<CredentialDecision, CredentialValidationError> {
-        let ok = self.accepted
+        let ok = self.admitted
             && account(&credentials.username) == self.user
             && credentials.password.is_empty();
-        Ok(if ok {
-            CredentialDecision::Accept
-        } else {
-            CredentialDecision::Reject
-        })
+        if !ok {
+            return Ok(CredentialDecision::Reject);
+        }
+        self.logged_in.send_replace(true);
+        Ok(CredentialDecision::Accept)
     }
 }
 
@@ -859,7 +860,7 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn a_handed_over_login_is_accepted_at_once_for_the_session_user() {
+    async fn a_handed_over_login_is_accepted_at_its_replayed_check_for_the_session_user() {
         let logins = HandedOverLogins::new("anna".into());
         let admission = Admission::HandedOver {
             user: "anna".into(),
@@ -867,12 +868,16 @@ pub(crate) mod tests {
         let (check, budget) = logins.check(B, admission);
         assert_eq!(budget, HANDSHAKE);
         assert_eq!(logins.backoff(A), Duration::ZERO);
+        assert!(!check.accepted(), "not before the replay reaches its check");
+        assert!(!check.settled().await);
+        assert_eq!(decide(&check, "bert", "").await, CredentialDecision::Reject);
+        assert!(!check.accepted(), "nor after a refused one");
+        assert_eq!(decide(&check, "anna", "").await, CredentialDecision::Accept);
         tokio::time::timeout(Duration::ZERO, check.logged_in())
             .await
-            .expect("logged in without a check");
+            .expect("logged in at the check");
         assert!(check.accepted());
         assert!(check.settled().await);
-        assert_eq!(decide(&check, "anna", "").await, CredentialDecision::Accept);
         assert_eq!(
             decide(&check, "DOM\\anna", "").await,
             CredentialDecision::Accept
