@@ -4,7 +4,7 @@ use reprisekit::interfaces::{draw_power_panel, theme_for};
 
 #[test]
 fn log_off_and_turn_off_answer_enter_and_access_keys() {
-    let mut d = Dialog::log_off(false);
+    let mut d = log_off();
     assert_eq!(d.key(Key::Enter), Outcome::Act(Action::Exit));
     assert_eq!(
         d.key(Key::Edit(EditKey::Insert("l".into()))),
@@ -15,7 +15,7 @@ fn log_off_and_turn_off_answer_enter_and_access_keys() {
         Outcome::Nothing
     );
     assert_eq!(d.key(Key::Escape), Outcome::Close);
-    let mut t = Dialog::turn_off(&power());
+    let mut t = turn_off();
     assert_eq!(
         t.key(Key::Enter),
         Outcome::EndSession(Goal::TurnOff, "systemctl poweroff".into())
@@ -36,7 +36,7 @@ fn log_off_and_turn_off_answer_enter_and_access_keys() {
 fn welcome_panels_take_the_panels_layout() {
     let theme = Theme::default();
     let text = TextRenderer::load(&theme.fonts);
-    let turn_off = Dialog::turn_off(&power());
+    let turn_off = turn_off();
     let t = DialogLayout::compute(&theme, &text, &turn_off);
     let lay = t.power.as_ref().expect("the Blue panel's layout");
     assert_eq!(t.size, lay.size);
@@ -67,7 +67,7 @@ fn under_glass_the_panels_are_framed_unless_they_are_always_blue() {
     use reprisekit::blue::powerpanel::{TileState, icon};
     let theme = theme_for(Interface::Glass);
     let text = TextRenderer::load(&theme.fonts);
-    for (d, icons) in [(Dialog::log_off(false), 2), (Dialog::turn_off(&power()), 3)] {
+    for (d, icons) in [(log_off(), 2), (turn_off(), 3)] {
         let l = DialogLayout::compute(&theme, &text, &d);
         let client = l.frame.as_ref().expect("a frame").client;
         assert_eq!(client.width, GLASS_WELCOME_W, "{}", d.title);
@@ -165,7 +165,7 @@ fn assert_draws_as_the_power_panel(theme: &Theme, d: &Dialog, cancel: Option<&Th
 #[test]
 fn under_classic_the_panel_draws_classics_cancel_unless_always_blue() {
     let classic = Theme::default();
-    let d = Dialog::turn_off(&power());
+    let d = turn_off();
     assert_draws_as_the_power_panel(&classic, &d, Some(&classic));
     assert_draws_as_the_power_panel(&classic, &d.always_blue(), None);
 }
@@ -173,7 +173,7 @@ fn under_classic_the_panel_draws_classics_cancel_unless_always_blue() {
 #[test]
 fn under_blue_the_panel_draws_blues_cancel() {
     let blue = theme_for(Interface::Blue);
-    let d = Dialog::turn_off(&power());
+    let d = turn_off();
     assert_draws_as_the_power_panel(&blue, &d, None);
     assert_draws_as_the_power_panel(&blue, &d.always_blue(), None);
 }
@@ -184,7 +184,7 @@ fn focused(d: &Dialog) -> Option<usize> {
 
 #[test]
 fn keys_walk_the_focus_and_the_buttons_follow_it() {
-    let mut d = Dialog::log_off(false);
+    let mut d = log_off();
     assert_eq!(focused(&d), Some(1), "Log Off has the focus");
     assert_eq!(d.key(Key::Left), Outcome::Nothing, "Switch User is greyed");
     assert_eq!(d.key(Key::Tab { back: false }), Outcome::Redraw);
@@ -196,7 +196,7 @@ fn keys_walk_the_focus_and_the_buttons_follow_it() {
         "Tab wraps past the greyed Switch User"
     );
 
-    let mut d = Dialog::turn_off(&power());
+    let mut d = turn_off();
     let order: Vec<_> = (0..4)
         .map(|_| {
             d.key(Key::Tab { back: false });
@@ -223,11 +223,14 @@ fn keys_walk_the_focus_and_the_buttons_follow_it() {
 
 #[test]
 fn shift_turns_stand_by_into_hibernate() {
-    let mut d = Dialog::turn_off(&PowerConfig {
-        standby: String::new(),
-        hibernate: "systemctl hibernate".into(),
-        ..power()
-    });
+    let mut d = Dialog::turn_off(
+        &PowerConfig {
+            standby: String::new(),
+            hibernate: "systemctl hibernate".into(),
+            ..power()
+        },
+        false,
+    );
     assert!(!d.buttons[0].enabled, "no standby command greys Stand By");
     assert_eq!(d.welcome_shift(true), Outcome::Redraw);
     assert_eq!(d.buttons[0].label, "&Hibernate");
@@ -238,10 +241,13 @@ fn shift_turns_stand_by_into_hibernate() {
     );
     assert_eq!(d.welcome_shift(false), Outcome::Redraw);
     assert_eq!(d.buttons[0].label, "&Stand By");
-    let mut plain = Dialog::turn_off(&PowerConfig {
-        hibernate: String::new(),
-        ..power()
-    });
+    let mut plain = Dialog::turn_off(
+        &PowerConfig {
+            hibernate: String::new(),
+            ..power()
+        },
+        false,
+    );
     assert_eq!(
         plain.welcome_shift(true),
         Outcome::Nothing,
@@ -251,7 +257,7 @@ fn shift_turns_stand_by_into_hibernate() {
 
 #[test]
 fn welcome_buttons_tip_their_description_but_not_when_greyed() {
-    let l = Dialog::log_off(false);
+    let l = log_off();
     assert!(l.buttons[0].tip.is_none(), "greyed Switch User has none");
     assert_eq!(
         l.buttons[1].tip.as_deref(),

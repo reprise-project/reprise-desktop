@@ -6,6 +6,7 @@ pub use reprisekit::controls::menu::*;
 use crate::compositor::State;
 use crate::config::{MenuEntry, StartMenuStyle};
 use reprisefs::apps::AppEntry;
+use reprisekit::powerpanel::{Choice, Leave};
 use reprisescene::TreeId;
 
 impl State {
@@ -160,6 +161,7 @@ pub enum StartRow {
     Forget(usize),
     Properties(usize),
     SwitchUser,
+    Disconnect,
     LogOff,
     Lock,
     Restart,
@@ -221,12 +223,20 @@ pub fn program_menu(
     v.into_iter().unzip()
 }
 
-/// The Shut down options: Switch user when `switch_user` (under reprise-login), Log off,
-/// Lock, Restart, Sleep, and Hibernate when `hibernate` (`[power] hibernate` is set).
-pub fn shutdown_menu(hibernate: bool, switch_user: bool) -> (Vec<MenuItem>, Vec<Option<StartRow>>) {
+/// The Shut down options: Disconnect for `Leave::Disconnect`, Switch user when it is live
+/// (under reprise-login), Log off, Lock, Restart, Sleep, and Hibernate when `hibernate`
+/// (`[power] hibernate` is set).
+pub fn shutdown_menu(hibernate: bool, leave: Leave) -> (Vec<MenuItem>, Vec<Option<StartRow>>) {
     let mut v = Vec::new();
-    if switch_user {
-        v.push((MenuItem::item("S&witch user"), Some(StartRow::SwitchUser)));
+    match leave {
+        Leave::Disconnect => v.push((
+            MenuItem::item(&Choice::Disconnect.label()),
+            Some(StartRow::Disconnect),
+        )),
+        Leave::SwitchUser { live: true } => {
+            v.push((MenuItem::item("S&witch user"), Some(StartRow::SwitchUser)))
+        }
+        Leave::SwitchUser { live: false } => {}
     }
     v.extend([
         (MenuItem::item("&Log off"), Some(StartRow::LogOff)),
@@ -441,17 +451,35 @@ mod tests {
     #[test]
     fn the_shutdown_menu_lists_hibernate_only_when_configured() {
         assert_eq!(
-            labels(&shutdown_menu(false, false).0),
+            labels(&shutdown_menu(false, Leave::SwitchUser { live: false }).0),
             ["&Log off", "L&ock", "", "&Restart", "", "&Sleep"]
         );
-        assert!(labels(&shutdown_menu(true, false).0).contains(&"&Hibernate".to_string()));
+        assert!(
+            labels(&shutdown_menu(true, Leave::SwitchUser { live: false }).0)
+                .contains(&"&Hibernate".to_string())
+        );
     }
 
     #[test]
     fn the_shutdown_menu_offers_switch_user_first_under_reprise_login() {
-        let (items, rows) = shutdown_menu(false, true);
+        let (items, rows) = shutdown_menu(false, Leave::SwitchUser { live: true });
         assert_eq!(labels(&items)[..2], ["S&witch user", "&Log off"]);
         assert_eq!(rows[0], Some(StartRow::SwitchUser));
+    }
+
+    #[test]
+    fn the_shutdown_menu_offers_disconnect_first_on_the_remote_side() {
+        let (items, rows) = shutdown_menu(false, Leave::Disconnect);
+        assert_eq!(labels(&items)[..2], ["&Disconnect", "&Log off"]);
+        assert_eq!(
+            rows[..3],
+            [
+                Some(StartRow::Disconnect),
+                Some(StartRow::LogOff),
+                Some(StartRow::Lock)
+            ]
+        );
+        assert!(!rows.contains(&Some(StartRow::SwitchUser)));
     }
 
     #[test]

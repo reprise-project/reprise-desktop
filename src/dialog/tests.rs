@@ -51,6 +51,16 @@ fn power() -> PowerConfig {
     }
 }
 
+/// The Log Off panel of a console session with no login link.
+fn log_off() -> Dialog {
+    Dialog::log_off(Leave::SwitchUser { live: false })
+}
+
+/// The Turn Off panel of a console session.
+fn turn_off() -> Dialog {
+    Dialog::turn_off(&power(), false)
+}
+
 fn tree_of(
     d: &Dialog,
 ) -> (
@@ -178,4 +188,38 @@ fn render(theme: &Theme, text: &TextRenderer, l: &DialogLayout, d: &Dialog) -> C
         true,
         None,
     )
+}
+
+fn top_panel(h: &crate::harness::Harness) -> &reprisekit::powerpanel::Panel {
+    match &h.state.dialogs.views.last().expect("a dialog").dialog.style {
+        Style::Welcome(w) => &w.panel,
+        _ => panic!("a Welcome panel"),
+    }
+}
+
+#[test]
+fn the_log_off_dialog_offers_disconnect_on_the_remote_side() {
+    let (mut h, _portal, _lock) = crate::console::tests::in_lock_mode();
+    h.state.run_action(&Action::LogOff, 0);
+    assert_eq!(top_panel(&h).bigs[0].choice, Choice::Disconnect);
+
+    let mut h = crate::harness::Harness::new();
+    h.output("eDP-1", 1920, 1080);
+    h.state.run_action(&Action::LogOff, 0);
+    assert_eq!(top_panel(&h).bigs[0].choice, Choice::SwitchUser);
+}
+
+#[test]
+fn the_turn_off_dialog_offers_disconnect_in_stand_bys_place_with_the_focus() {
+    let (mut h, _portal, _lock) = crate::console::tests::in_lock_mode();
+    h.state.run_action(&Action::TurnOff, 0);
+    let panel = top_panel(&h);
+    let choices: Vec<Choice> = panel.bigs.iter().map(|b| b.choice).collect();
+    assert_eq!(
+        choices,
+        [Choice::Disconnect, Choice::TurnOff, Choice::Restart]
+    );
+    assert_eq!(panel.focus, reprisekit::powerpanel::Part::Big(0));
+    let d = &mut h.state.dialogs.views.last_mut().expect("a dialog").dialog;
+    assert_eq!(d.key(Key::Enter), Outcome::Disconnect);
 }

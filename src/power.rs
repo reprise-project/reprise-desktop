@@ -801,7 +801,8 @@ pub fn run_action(state: &mut State, a: PowerAction, origin: Origin) {
                 log::info!("power: ask ignored while locked");
                 return;
             }
-            let d = crate::dialog::Dialog::turn_off(&state.config.power);
+            let offered = crate::console::disconnect_offered(state);
+            let d = crate::dialog::Dialog::turn_off(&state.config.power, offered);
             state.open_dialog(d);
         }
     }

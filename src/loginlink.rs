@@ -408,7 +408,9 @@ mod tests {
             .last()
             .expect("Log Off is open")
             .dialog;
-        let offered = d.buttons[0].enabled;
+        let first = &d.buttons[0];
+        let offered =
+            first.enabled && first.choice == Some(reprisekit::powerpanel::Choice::SwitchUser);
         h.state.apply_dialog(crate::dialog::Outcome::Close);
         offered
     }
@@ -507,7 +509,10 @@ mod tests {
         let (ours, mut theirs) = UnixStream::pair().unwrap();
         install(&mut h.state, LoginLink::from_stream(ours));
         assert_eq!(heard(&mut theirs), hello(Interface::Classic));
-        assert!(!log_off_offers(&mut h), "the remote's Log Off greys it");
+        assert!(
+            !log_off_offers(&mut h),
+            "the remote's Log Off offers Disconnect instead"
+        );
         crate::lockview::lock_remote(&mut h.state);
         let switch_on = |side| {
             let l = h.state.lock.on(side).expect("locked");

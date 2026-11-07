@@ -4,6 +4,7 @@ use super::{
 };
 use crate::dialog::Dialog;
 use crate::raster::Rect;
+use reprisekit::powerpanel::Leave;
 
 #[test]
 fn an_icon_file_not_decoded_yet_is_left_for_a_job_and_shows_nothing() {
@@ -204,9 +205,17 @@ fn a_glass_dialogs_backdrop_covers_its_frame_only() {
     let classic = crate::theme::Theme::default();
     let cl = DialogLayout::compute(&classic, &text, &Dialog::run(&[]));
     assert!(glass_pane(&classic, true, &cl).is_none(), "Classic");
-    let welcome = DialogLayout::compute(&classic, &text, &Dialog::log_off(false));
+    let welcome = DialogLayout::compute(
+        &classic,
+        &text,
+        &Dialog::log_off(Leave::SwitchUser { live: false }),
+    );
     assert!(glass_pane(&classic, true, &welcome).is_none(), "Welcome");
-    let welcome = DialogLayout::compute(&glass, &text, &Dialog::log_off(false));
+    let welcome = DialogLayout::compute(
+        &glass,
+        &text,
+        &Dialog::log_off(Leave::SwitchUser { live: false }),
+    );
     assert!(
         glass_pane(&glass, true, &welcome).is_some(),
         "a Welcome panel under glass is framed"
@@ -241,7 +250,11 @@ fn a_dialogs_backdrop_content_is_its_client_area() {
         "the client's top-left"
     );
     let classic = crate::theme::Theme::default();
-    let welcome = DialogLayout::compute(&classic, &text, &Dialog::log_off(false));
+    let welcome = DialogLayout::compute(
+        &classic,
+        &text,
+        &Dialog::log_off(Leave::SwitchUser { live: false }),
+    );
     assert!(client_part(&canvas, &welcome, 2).is_none(), "Welcome");
 }
 
@@ -263,7 +276,7 @@ fn a_dialog_left_outside_a_shrunken_output_moves_back_inside() {
         refit_origin(&d, (900, 469), (404, 611), Rect::default()),
         None
     );
-    let welcome = Dialog::log_off(false);
+    let welcome = Dialog::log_off(Leave::SwitchUser { live: false });
     assert_eq!(refit_origin(&welcome, (900, 469), (404, 611), area), None);
 }
 

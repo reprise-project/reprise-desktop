@@ -96,7 +96,7 @@ impl State {
         let edge = self.bar_placement(&output).edge;
         let (items, rows) = crate::startmenu::shutdown_menu(
             !self.config.power.hibernate.is_empty(),
-            crate::loginlink::desk_offers(self),
+            crate::console::leave_offered(self),
         );
         let kind = crate::menuview::MenuKind::StartPanel { rows };
         let at = (arrow.right(), arrow.y);
@@ -272,6 +272,12 @@ impl State {
                 self.close_start_panel();
                 if crate::loginlink::desk_offers(self) {
                     crate::loginlink::switch_user(self);
+                }
+            }
+            StartRow::Disconnect => {
+                self.close_start_panel();
+                if crate::console::disconnect_offered(self) {
+                    crate::console::disconnect(self);
                 }
             }
             StartRow::LogOff => {

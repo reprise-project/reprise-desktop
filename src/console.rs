@@ -5,7 +5,10 @@ use smithay::output::Output;
 use smithay::reexports::wayland_server::{Resource, backend::ObjectId};
 use smithay::utils::{Logical, Point, Transform};
 
+use reprisekit::powerpanel::Leave;
+
 use crate::compositor::State;
+use crate::fsjobs::OnLoop;
 use crate::inputproto::InputSource;
 use crate::inputproto::proto::reprise_lock_screen_v1::{Reason, RepriseLockScreenV1};
 use crate::output::quarter_scale;
@@ -201,6 +204,60 @@ fn on_end(state: &mut State) {
 
 pub fn remote_side(state: &State) -> bool {
     state.console.owner == Owner::Remote
+}
+
+/// How the remote desktop server lets every client go: `Disconnect` leaves the session running,
+/// `LoggedOff` tells them the session logged off.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ClientsEnd {
+    Disconnect,
+    LoggedOff,
+}
+
+/// Whether Disconnect takes Switch User's and Stand By's places: on the remote side, or while a
+/// remote client drives a session that is off the seat.
+pub fn disconnect_offered(state: &State) -> bool {
+    remote_side(state) || (state.lock.seat_away && state.remote_controlled())
+}
+
+/// What the Log Off panel and the Shut down options offer besides Log Off.
+pub fn leave_offered(state: &State) -> Leave {
+    if disconnect_offered(state) {
+        Leave::Disconnect
+    } else {
+        Leave::SwitchUser {
+            live: crate::loginlink::desk_offers(state),
+        }
+    }
+}
+
+/// Lock the console, then ask the server to end every client; the session keeps running.
+pub fn disconnect(state: &mut State) {
+    log::info!("remote desktop: disconnect");
+    crate::lockview::lock(state);
+    end_clients(state, ClientsEnd::Disconnect);
+}
+
+pub(crate) fn end_clients(state: &mut State, why: ClientsEnd) {
+    end_clients_then(state, why, Box::new(|_| {}));
+}
+
+/// [`end_clients`], running `then` on the loop once the server answered or the call failed.
+pub(crate) fn end_clients_then(state: &mut State, why: ClientsEnd, then: OnLoop) {
+    #[cfg(test)]
+    state.ended_clients.push(why);
+    state.spawn_job(move || {
+        let told = match why {
+            ClientsEnd::Disconnect => reprisebus::remote::disconnect_all(),
+            ClientsEnd::LoggedOff => reprisebus::remote::session_ending(),
+        };
+        Box::new(move |state: &mut State| {
+            if let Err(e) = told {
+                log::info!("remote desktop: ending the clients ({why:?}): {e}");
+            }
+            then(state);
+        })
+    });
 }
 
 /// Whether the input being handled is the computer's own and lock mode keeps it for the console:

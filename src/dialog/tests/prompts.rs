@@ -29,7 +29,7 @@ fn a_message_box_focuses_its_default_button_and_reads_its_text() {
             .any(|(_, n)| n.value().is_some_and(|v| v.contains("Turn on StickyKeys?"))),
         "the text is there"
     );
-    let (t, focus) = tree_of(&Dialog::turn_off(&power()));
+    let (t, focus) = tree_of(&turn_off());
     assert_eq!(t.get(focus).unwrap().label(), Some("Turn Off"));
 }
 
@@ -412,7 +412,7 @@ fn confirm_empty_bin_names_one_item_or_counts_them() {
 
 #[test]
 fn disabled_button_is_inert() {
-    let mut d = Dialog::log_off(false);
+    let mut d = log_off();
     assert!(!d.buttons[0].enabled);
     assert_eq!(d.press(0), Outcome::Nothing);
     assert_eq!(
@@ -510,7 +510,7 @@ fn end_program_and_windowed_dialogs_have_a_taskbar_button() {
     assert!(Dialog::end_program("foot", 4321).on_taskbar());
     assert!(!Dialog::end_program("foot", 4321).windowed());
     assert!(!Dialog::run(&[]).on_taskbar());
-    assert!(!Dialog::log_off(false).on_taskbar());
+    assert!(!log_off().on_taskbar());
     assert!(!Dialog::error("Title", "Text".into()).on_taskbar());
     assert!(!Dialog::run(&[]).windowed());
     assert!(!Dialog::error("Title", "Text".into()).windowed());
@@ -523,7 +523,7 @@ fn only_end_program_names_a_pid() {
         Some(4321)
     );
     assert_eq!(Dialog::run(&[]).end_program_pid(), None);
-    assert_eq!(Dialog::log_off(false).end_program_pid(), None);
+    assert_eq!(log_off().end_program_pid(), None);
 }
 
 /// The advances a second dialog font gives at 11 px where they differ

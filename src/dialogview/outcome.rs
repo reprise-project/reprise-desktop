@@ -71,6 +71,12 @@ impl State {
                     crate::loginlink::switch_user(self);
                 }
             }
+            Outcome::Disconnect => {
+                self.close_dialog();
+                if crate::console::disconnect_offered(self) {
+                    crate::console::disconnect(self);
+                }
+            }
             Outcome::Notice(d) => self.open_dialog_over(*d),
             Outcome::Run(cmd) => {
                 self.close_dialog();

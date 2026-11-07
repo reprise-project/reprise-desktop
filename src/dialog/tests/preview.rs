@@ -138,8 +138,8 @@ fn dialogs_preview(theme: &Theme, file: &str) {
         ),
         Dialog::confirm_hide(crate::desktop::Place::Computer, "Computer"),
         Dialog::end_program("signal-desktop", 1234),
-        Dialog::log_off(false),
-        Dialog::turn_off(&power()),
+        log_off(),
+        turn_off(),
     ];
     let canvases: Vec<Canvas> = dialogs
         .into_iter()

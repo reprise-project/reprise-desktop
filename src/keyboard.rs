@@ -769,11 +769,12 @@ impl State {
                 self.open_dialog(d);
             }
             Action::LogOff => {
-                let d = crate::dialog::Dialog::log_off(crate::loginlink::desk_offers(self));
+                let d = crate::dialog::Dialog::log_off(crate::console::leave_offered(self));
                 self.open_dialog(d);
             }
             Action::TurnOff => {
-                let d = crate::dialog::Dialog::turn_off(&self.config.power);
+                let offered = crate::console::disconnect_offered(self);
+                let d = crate::dialog::Dialog::turn_off(&self.config.power, offered);
                 self.open_dialog(d);
             }
             Action::DoNotDisturb => {
