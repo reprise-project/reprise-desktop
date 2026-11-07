@@ -994,8 +994,7 @@ fn recovery_rebuilds_the_table_and_terminates_an_orphaned_greeter() {
         run.recover(found),
         vec![
             Effect::LockSession("c3".into()),
-            Effect::TerminateSession("c5".into()),
-            Effect::Inhibit(Inhibit::Idle)
+            Effect::TerminateSession("c5".into())
         ],
         "bert's session is off screen; carl's text login is not reprise-login's"
     );
@@ -1010,7 +1009,7 @@ fn recovery_rebuilds_the_table_and_terminates_an_orphaned_greeter() {
     assert_eq!(run.greeter(create("anna")), spawn(2, Mode::Reauth, "anna"));
     assert_eq!(
         run.removed("c3", Some("c5")),
-        vec![Effect::Disallocate(8), Effect::Inhibit(Inhibit::Nothing)],
+        vec![Effect::Disallocate(8)],
         "no worker of this daemon holds a recovered session's VT"
     );
 
@@ -1384,10 +1383,7 @@ fn a_restart_with_sessions_and_no_session_on_screen_brings_the_login_screen() {
     let mut run = Run::new(LoginConfig::default(), Remembered::default());
     assert_eq!(
         run.d.recover(run.now, vec![anna_on_7()], None),
-        vec![
-            Effect::LockSession("c1".into()),
-            Effect::Inhibit(Inhibit::Idle)
-        ]
+        vec![Effect::LockSession("c1".into())]
     );
     assert_eq!(run.start(), greeter_spawn(1));
 }
@@ -1726,18 +1722,14 @@ fn recovery_locks_every_session_that_is_not_on_screen() {
     let mut run = Run::new(LoginConfig::default(), Remembered::default());
     assert_eq!(
         run.d.recover(run.now, found(), Some("c1")),
-        vec![
-            Effect::LockSession("c2".into()),
-            Effect::Inhibit(Inhibit::Idle)
-        ]
+        vec![Effect::LockSession("c2".into())]
     );
     let mut run = Run::new(LoginConfig::default(), Remembered::default());
     assert_eq!(
         run.d.recover(run.now, found(), None),
         vec![
             Effect::LockSession("c1".into()),
-            Effect::LockSession("c2".into()),
-            Effect::Inhibit(Inhibit::Idle)
+            Effect::LockSession("c2".into())
         ]
     );
 }

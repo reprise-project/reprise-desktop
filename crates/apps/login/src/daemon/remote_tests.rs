@@ -908,19 +908,53 @@ fn recovery_marks_sessions_off_the_seat_background_and_opens_their_intakes() {
     let found = vec![
         logind("c1", "anna", ANNA, 7, "user", "reprise-login-remote"),
         logind("c3", "bert", BERT, 8, "user", "reprise-login"),
+        logind("c4", "carl", CARL, 9, "user", "reprise-login"),
     ];
     assert_eq!(
         run.d.recover(run.now, found, Some("c3")),
         [
             Effect::LockSession("c1".into()),
+            Effect::LockSession("c4".into()),
             Effect::OpenIntake { uid: ANNA },
             Effect::OpenIntake { uid: BERT },
+            Effect::OpenIntake { uid: CARL },
             Effect::Inhibit(Inhibit::Idle),
         ]
     );
     let background = |id| run.d.sessions.by_id(id).map(|e| e.background);
     assert_eq!(background("c1"), Some(true));
     assert_eq!(background("c3"), Some(false));
+    assert_eq!(
+        background("c4"),
+        Some(false),
+        "a console session off the seat is no background one"
+    );
+}
+
+#[test]
+fn a_recovered_switched_away_console_session_holds_no_inhibitor_and_never_ends_unviewed() {
+    let remote = MachineRemote {
+        end_disconnected_after_min: Some(30),
+        ..enabled()
+    };
+    let mut run = Run::machine(config(remote));
+    let found = vec![logind("c1", "anna", ANNA, 7, "user", "reprise-login")];
+    assert_eq!(
+        run.d.recover(run.now, found, Some("g1")),
+        [
+            Effect::LockSession("c1".into()),
+            Effect::OpenIntake { uid: ANNA }
+        ]
+    );
+    assert_eq!(
+        run.viewers(ANNA, 1),
+        [Effect::Inhibit(Inhibit::SleepAndIdle)]
+    );
+    assert_eq!(
+        run.viewers(ANNA, 0),
+        [Effect::Inhibit(Inhibit::Nothing)],
+        "no Disconnected timer"
+    );
 }
 
 #[test]
