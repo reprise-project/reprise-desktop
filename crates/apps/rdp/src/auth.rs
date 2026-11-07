@@ -1,5 +1,6 @@
 //! Logins: the session user's password, checked by the compositor's PAM conversation helper, a
-//! per-address back-off after repeated failures, and a pause of every login after many.
+//! per-address back-off after repeated failures, and a pause of every login after many; or a
+//! connection reprise-login logged in.
 
 use crate::intake::Admission;
 use ironrdp_server::{
@@ -162,8 +163,7 @@ impl PasswordLogins {
 impl Logins for PasswordLogins {
     type Check = PasswordCheck;
 
-    fn check(&self, peer: SocketAddr, admission: Admission) -> (Arc<PasswordCheck>, Duration) {
-        let Admission::Password = admission;
+    fn check(&self, peer: SocketAddr, _: Admission) -> (Arc<PasswordCheck>, Duration) {
         let check =
             PasswordCheck::new(self.user.clone(), &self.helper, peer, self.throttle.clone());
         (Arc::new(check), HANDSHAKE)
@@ -235,10 +235,7 @@ impl PasswordCheck {
 
     async fn check(&self, credentials: &Credentials) -> io::Result<bool> {
         let peer = self.peer;
-        let name = match credentials.username.rsplit_once('\\') {
-            Some((_, name)) => name,
-            None => &credentials.username,
-        };
+        let name = account(&credentials.username);
         if name != self.user {
             log::warn!(
                 "{peer}: refused a login as {name:?}; only {} can log in",
@@ -294,6 +291,13 @@ impl Login for PasswordCheck {
             .await
             .is_ok_and(|l| *l == Stage::Accepted)
     }
+}
+
+/// `username` without a `DOMAIN\` prefix.
+fn account(username: &str) -> &str {
+    username
+        .rsplit_once('\\')
+        .map_or(username, |(_, name)| name)
 }
 
 /// Run the helper with `line` (the password and a newline) on its stdin. A further prompt gets
@@ -398,6 +402,87 @@ impl CredentialValidator for PasswordCheck {
         // Logs a pause this failure starts.
         self.throttle.lock().unwrap().paused();
         Ok(CredentialDecision::Reject)
+    }
+}
+
+/// Connections reprise-login handed over, for the session user only.
+pub struct HandedOverLogins {
+    user: String,
+}
+
+impl HandedOverLogins {
+    pub fn new(user: String) -> HandedOverLogins {
+        HandedOverLogins { user }
+    }
+}
+
+impl Logins for HandedOverLogins {
+    type Check = HandedOverCheck;
+
+    fn check(&self, peer: SocketAddr, admission: Admission) -> (Arc<HandedOverCheck>, Duration) {
+        let accepted = match admission {
+            Admission::HandedOver { user } if user == self.user => true,
+            Admission::HandedOver { user } => {
+                log::warn!(
+                    "{peer}: refused a hand-over for {user:?}; only {} can log in",
+                    self.user
+                );
+                false
+            }
+            Admission::Password => {
+                log::warn!("{peer}: refused; this server takes only hand-overs");
+                false
+            }
+        };
+        let check = HandedOverCheck {
+            user: self.user.clone(),
+            accepted,
+        };
+        (Arc::new(check), HANDSHAKE)
+    }
+
+    fn backoff(&self, _: IpAddr) -> Duration {
+        Duration::ZERO
+    }
+}
+
+/// A hand-over's login, accepted when it is made. The replayed exchange logs in again as the
+/// session user with an empty password, since the password never reaches this server.
+pub struct HandedOverCheck {
+    user: String,
+    accepted: bool,
+}
+
+impl Login for HandedOverCheck {
+    async fn logged_in(&self) {
+        if !self.accepted {
+            std::future::pending::<()>().await;
+        }
+    }
+
+    fn accepted(&self) -> bool {
+        self.accepted
+    }
+
+    async fn settled(&self) -> bool {
+        self.accepted
+    }
+}
+
+#[async_trait::async_trait]
+impl CredentialValidator for HandedOverCheck {
+    async fn validate(
+        &self,
+        credentials: &Credentials,
+    ) -> Result<CredentialDecision, CredentialValidationError> {
+        let ok = self.accepted
+            && account(&credentials.username) == self.user
+            && credentials.password.is_empty();
+        Ok(if ok {
+            CredentialDecision::Accept
+        } else {
+            CredentialDecision::Reject
+        })
     }
 }
 
@@ -763,5 +848,59 @@ pub(crate) mod tests {
             .unwrap()
             .failed(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 1)));
         assert!(throttle.lock().unwrap().paused());
+    }
+    const B: SocketAddr = SocketAddr::new(A, 50000);
+
+    async fn decide(check: &HandedOverCheck, username: &str, password: &str) -> CredentialDecision {
+        check
+            .validate(&credentials(username, password))
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_handed_over_login_is_accepted_at_once_for_the_session_user() {
+        let logins = HandedOverLogins::new("anna".into());
+        let admission = Admission::HandedOver {
+            user: "anna".into(),
+        };
+        let (check, budget) = logins.check(B, admission);
+        assert_eq!(budget, HANDSHAKE);
+        assert_eq!(logins.backoff(A), Duration::ZERO);
+        tokio::time::timeout(Duration::ZERO, check.logged_in())
+            .await
+            .expect("logged in without a check");
+        assert!(check.accepted());
+        assert!(check.settled().await);
+        assert_eq!(decide(&check, "anna", "").await, CredentialDecision::Accept);
+        assert_eq!(
+            decide(&check, "DOM\\anna", "").await,
+            CredentialDecision::Accept
+        );
+        assert_eq!(decide(&check, "bert", "").await, CredentialDecision::Reject);
+        assert_eq!(
+            decide(&check, "anna", "x").await,
+            CredentialDecision::Reject
+        );
+    }
+
+    #[tokio::test]
+    async fn a_hand_over_for_another_user_or_a_password_login_is_refused() {
+        let logins = HandedOverLogins::new("anna".into());
+        let other = Admission::HandedOver {
+            user: "bert".into(),
+        };
+        for admission in [other, Admission::Password] {
+            let (check, _) = logins.check(B, admission.clone());
+            assert!(!check.accepted(), "{admission:?}");
+            assert!(!check.settled().await, "{admission:?}");
+            assert!(
+                tokio::time::timeout(Duration::from_millis(50), check.logged_in())
+                    .await
+                    .is_err(),
+                "{admission:?} never logs in"
+            );
+            assert_eq!(decide(&check, "anna", "").await, CredentialDecision::Reject);
+        }
     }
 }

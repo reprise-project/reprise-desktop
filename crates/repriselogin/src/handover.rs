@@ -148,15 +148,7 @@ pub enum IntakeMessage {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum IntakeReport {
     /// The clients now connected to the session, sent on every change.
-    Viewers {
-        count: u32,
-    },
-    Taken {
-        conn: u64,
-    },
-    Refused {
-        conn: u64,
-    },
+    Viewers { count: u32 },
 }
 
 #[cfg(test)]

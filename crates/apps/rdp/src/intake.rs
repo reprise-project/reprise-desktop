@@ -1,8 +1,9 @@
 //! Where connections come from: [`TcpIntake`] listens on the configured port, follows it and
-//! reports where it listens.
+//! reports where it listens; [`crate::handover::HandOverIntake`] takes them from reprise-login.
 
 use crate::control::Status;
 use repriseconf::remote::RemoteDesktop;
+use repriselogin::handover::HandOver;
 use reprisetls::tcp::{self, ALL};
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -18,15 +19,23 @@ pub enum Arrival {
         peer: SocketAddr,
         admission: Admission,
     },
+    /// A connection reprise-login authenticated, with the exchange it ran so far.
+    HandedOver {
+        tcp: std::net::TcpStream,
+        handover: Box<HandOver>,
+    },
     /// The listening address changed; every connection is ended.
     Moved,
 }
 
 /// What a connection must do to be let in.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Admission {
     /// Log in with the session user's password.
     Password,
+    /// Nothing more: reprise-login logged `user` in.
+    #[cfg_attr(not(test), expect(dead_code, reason = "serve does not run hand-overs"))]
+    HandedOver { user: String },
 }
 
 /// A source of connections.
