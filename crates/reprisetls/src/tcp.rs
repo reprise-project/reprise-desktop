@@ -1,7 +1,7 @@
 //! The listening socket and the options of an accepted link.
 
 use std::io;
-use std::net::{IpAddr, Ipv6Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
 
@@ -11,11 +11,29 @@ const KEEPALIVE_PROBES: u32 = 3;
 /// Keepalive probes wait for unacknowledged data; this ends a link that dies mid-send.
 const USER_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// All addresses: IPv4 included through the IPv6 socket, IPv4 alone where IPv6 is off.
+/// All addresses: IPv4 included through the IPv6 socket; [`bind`] takes IPv4 alone where
+/// IPv6 is off.
 pub const ALL: IpAddr = IpAddr::V6(Ipv6Addr::UNSPECIFIED);
 
 /// A listener on `addr`; an IPv6 one takes IPv4 too, whatever `net.ipv6.bindv6only` says.
+/// [`ALL`] that cannot bind, as on a host booted with IPv6 off, listens on IPv4 alone.
 pub fn bind(addr: SocketAddr) -> io::Result<TcpListener> {
+    bind_with(addr, bind_one)
+}
+
+fn bind_with(
+    addr: SocketAddr,
+    one: impl Fn(SocketAddr) -> io::Result<TcpListener>,
+) -> io::Result<TcpListener> {
+    match one(addr) {
+        Err(_) if addr.ip() == ALL => {
+            one(SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), addr.port()))
+        }
+        bound => bound,
+    }
+}
+
+fn bind_one(addr: SocketAddr) -> io::Result<TcpListener> {
     use socket2::{Domain, Protocol, Socket, Type};
     let socket = Socket::new(Domain::for_address(addr), Type::STREAM, Some(Protocol::TCP))?;
     if addr.is_ipv6() {
@@ -58,6 +76,30 @@ mod tests {
         assert!(socket.tcp_nodelay().unwrap());
         assert!(socket.keepalive().unwrap());
         assert_eq!(socket.tcp_keepalive_time().unwrap(), KEEPALIVE_IDLE);
+    }
+
+    #[tokio::test]
+    async fn all_addresses_fall_back_to_ipv4_where_ipv6_cannot_bind() {
+        let tried = std::cell::RefCell::new(Vec::new());
+        let no_ipv6 = |addr: SocketAddr| {
+            tried.borrow_mut().push(addr);
+            match addr.is_ipv6() {
+                true => Err(io::Error::from_raw_os_error(libc::EAFNOSUPPORT)),
+                false => bind_one(addr),
+            }
+        };
+        let listener = bind_with(SocketAddr::new(ALL, 0), no_ipv6).unwrap();
+        let addr = listener.local_addr().unwrap();
+        assert_eq!(addr.ip(), IpAddr::from([0, 0, 0, 0]));
+        assert_eq!(
+            *tried.borrow(),
+            [SocketAddr::new(ALL, 0), SocketAddr::from(([0, 0, 0, 0], 0))]
+        );
+
+        let one = SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], 0));
+        tried.borrow_mut().clear();
+        assert!(bind_with(one, no_ipv6).is_err());
+        assert_eq!(*tried.borrow(), [one], "only all addresses fall back");
     }
 
     #[tokio::test]
