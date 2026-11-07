@@ -1250,6 +1250,16 @@ fn a_restart_over_the_login_screen_still_logs_the_autologin_user_in() {
 }
 
 #[test]
+fn a_restart_with_sessions_and_no_session_on_screen_brings_the_login_screen() {
+    let mut run = Run::new(LoginConfig::default(), Remembered::default());
+    assert_eq!(
+        run.d.recover(run.now, vec![anna_on_7()], None),
+        vec![Effect::LockSession("c1".into())]
+    );
+    assert_eq!(run.start(), greeter_spawn(1));
+}
+
+#[test]
 fn the_greeter_waits_for_an_orphan_whatever_asks_for_it() {
     let orphan = || {
         logind(
