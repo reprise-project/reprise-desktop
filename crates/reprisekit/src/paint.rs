@@ -6,6 +6,8 @@
 use crate::raster::{Canvas, Rect};
 use crate::style::{GlassSpec, Style};
 use crate::taskbar::TaskbarShape;
+use crate::text::{Align, TextRenderer};
+use crate::textedit::{Caret, TextEdit, edit_first_visible};
 use crate::theme::{ColorScheme, Theme};
 use std::sync::Arc;
 
@@ -151,6 +153,97 @@ impl<'a> Paint<'a> {
                 st.draw_page(c, page, self.s);
             });
         }
+    }
+}
+
+/// Draw `edit` left-aligned in `inner` from byte `first` (`edit_first_visible`): selection,
+/// blinking caret and, when focused, the canvas' preedit with its `TextSpot`. A secret field shows
+/// no preedit.
+#[expect(clippy::too_many_arguments)]
+pub fn draw_edit(
+    c: &mut Canvas,
+    text: &TextRenderer,
+    edit: &TextEdit,
+    inner: Rect,
+    px: u32,
+    p: &Paint,
+    caret: Caret,
+    first: usize,
+) {
+    let Paint { cs, s, .. } = *p;
+    let own = edit;
+    // With a preedit the text is drawn with it spliced in, selection gone (text-input-v3 removes
+    // it).
+    let preedit = c
+        .preedit()
+        .filter(|_| caret.focused() && !own.is_secret())
+        .cloned();
+    let composed;
+    let (edit, first, run, bar_on) = match &preedit {
+        Some(p) => {
+            let (e, run, bar_on) = p.compose(own);
+            composed = e;
+            let at = composed.selection().start;
+            let from = edit_first_visible(text, &composed, inner.width, px, first.min(at));
+            (&composed, from, Some(run), bar_on)
+        }
+        None => (own, first, None, true),
+    };
+    let at = |i: usize| {
+        if i < first {
+            inner.x
+        } else {
+            inner.x + text.measure(&edit.text[first..i], false, px)
+        }
+    };
+    if edit.text.is_empty() && !edit.cue().is_empty() {
+        text.draw(c, inner, edit.cue(), false, cs.gray_text, Align::Left, px);
+    } else {
+        text.draw(
+            c,
+            inner,
+            &edit.text[first..],
+            false,
+            cs.button_text,
+            Align::Left,
+            px,
+        );
+    }
+    let line = text
+        .line(inner, false, px)
+        .map_or(inner, |(y, h)| Rect::new(inner.x, y, inner.width, h))
+        .intersect(&inner);
+    let sel = edit.selection();
+    let sel = sel.start.max(first)..sel.end.max(first);
+    if !sel.is_empty() {
+        let (x0, x1) = (at(sel.start), at(sel.end).min(inner.right()));
+        let run = Rect::new(x0, line.y, x1 - x0, line.height);
+        c.fill_rect(run, cs.hilight);
+        text.draw(
+            c,
+            Rect::new(x0, inner.y, inner.right() - x0, inner.height),
+            &edit.text[sel.clone()],
+            false,
+            cs.hilight_text,
+            Align::Left,
+            px,
+        );
+    }
+    if let Some(run) = run {
+        let base = text
+            .baseline(inner, false, px)
+            .unwrap_or(inner.bottom() - 3 * s);
+        let (x0, x1) = (at(run.start.max(first)), at(run.end.max(first)));
+        let ul = Rect::new(x0, base + s, x1 - x0, s).intersect(&inner);
+        c.fill_rect(ul, cs.button_text);
+    }
+    let cx = at(edit.caret()).min(inner.right() - s);
+    let bar = Rect::new(cx, line.y, s, line.height);
+    if caret.shown() && bar_on {
+        c.fill_rect(bar, cs.button_text);
+    }
+    if caret.focused() {
+        c.report_spot(own.spot(inner, bar));
     }
 }
 

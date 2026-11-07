@@ -1,5 +1,6 @@
 use super::*;
 use crate::look::classic_paint;
+use crate::textedit::Caret;
 use crate::theme::{FontConfig, Theme};
 
 fn setup() -> (Theme, TextRenderer) {
