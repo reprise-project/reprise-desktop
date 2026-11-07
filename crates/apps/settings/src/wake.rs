@@ -115,6 +115,7 @@ impl SettingsApp {
         }
         changed |= self.remote_done();
         changed |= self.login_users_done();
+        changed |= self.login_poll_done();
         changed |= self.account_done();
         let mut quit = false;
         if let Some(close) = self.login_done() {

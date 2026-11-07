@@ -10,10 +10,13 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::mpsc::Receiver;
+use std::time::Duration;
 
 /// The helper that replaces `MACHINE_CONFIG` with the TOML on its stdin, as root.
 const HELPER: &str = "/usr/lib/reprise/reprise-login-settings";
 const PKEXEC: &str = "/usr/bin/pkexec";
+/// How often the open page reads the front's fingerprint again.
+const POLL: Duration = Duration::from_secs(2);
 
 /// The files the page reads.
 #[derive(Clone, Debug)]
@@ -130,8 +133,11 @@ pub(crate) fn machine_users() -> Source {
 impl SettingsApp {
     /// Read the machine settings the first time the page opens, and the accounts off the loop.
     pub(crate) fn ensure_login(&mut self) {
-        if self.login.is_some() || registry::open(&self.sheet) != Page::LoginManager {
+        if registry::open(&self.sheet) != Page::LoginManager {
             return;
+        }
+        if self.login.is_some() {
+            return self.poll_fingerprint();
         }
         let loaded = read(&self.login_files.config);
         self.login = Some(Login {
@@ -144,6 +150,47 @@ impl SettingsApp {
         let source = self.login_source;
         self.login_users =
             Some(self.login_spawn(move || source().listed().into_iter().map(|e| e.name).collect()));
+        self.poll_fingerprint();
+    }
+
+    /// Read the front's fingerprint again in [`POLL`] unless a read is under way or the page
+    /// is closed. Tests read it at once.
+    fn poll_fingerprint(&mut self) {
+        if self.login_poll.is_some() || registry::open(&self.sheet) != Page::LoginManager {
+            return;
+        }
+        let path = self.login_files.fingerprint.clone();
+        self.login_poll = Some(self.login_spawn(move || {
+            if !cfg!(test) {
+                std::thread::sleep(POLL);
+            }
+            fingerprint(&path)
+        }));
+    }
+
+    /// A poll read the fingerprint: show it if it changed, and poll again. True when the page
+    /// changed.
+    pub(crate) fn login_poll_done(&mut self) -> bool {
+        let Some(rx) = &self.login_poll else {
+            return false;
+        };
+        let read = take(rx);
+        if matches!(read, Ok(None)) {
+            return false;
+        }
+        self.login_poll = None;
+        let changed = match (&mut self.login, read) {
+            (Some(l), Ok(Some(now))) if l.fingerprint != now => {
+                l.fingerprint = now;
+                true
+            }
+            _ => false,
+        };
+        if changed {
+            self.show_login();
+        }
+        self.poll_fingerprint();
+        changed
     }
 
     /// The accounts are in: offer them for automatic logon. True when the page changed.
