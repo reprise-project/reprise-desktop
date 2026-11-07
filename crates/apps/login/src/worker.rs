@@ -977,6 +977,21 @@ mod tests {
     }
 
     #[test]
+    fn the_login_stack_refuses_root_before_any_password_is_checked() {
+        let login = include_str!("../../../../data/pam.d/reprise-login");
+        let delay = auth_line(login, "pam_faildelay.so delay=2000000");
+        let guard = auth_line(login, "pam_succeed_if.so quiet_success uid ne 0");
+        let include = auth_line(login, "system-login");
+        assert!(delay.is_some() && delay < guard, "{login}");
+        assert!(guard.is_some() && guard < include, "{login}");
+        let guard = login.lines().nth(guard.unwrap()).unwrap();
+        assert!(
+            guard.contains("[success=ok user_unknown=ignore default=die]"),
+            "an unknown user still reaches the password prompt: {guard}"
+        );
+    }
+
+    #[test]
     fn an_autologin_worker_runs_only_for_the_configured_user() {
         assert!(Mode::Autologin.runs_for("anna", Some("anna")));
         assert!(!Mode::Autologin.runs_for("root", Some("anna")));
