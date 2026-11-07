@@ -166,6 +166,24 @@ impl Form {
         }
     }
 
+    /// [`Combo::set_rows`](crate::controls::combo::Combo::set_rows) on combo `id`.
+    pub fn set_combo_rows(&mut self, id: &str, rows: &[String], selected: usize, drop: usize) {
+        if let Some(Control::Combo(c)) = self.item_mut(id).map(|i| &mut i.control) {
+            c.set_rows(rows, selected, drop);
+        }
+    }
+
+    /// Show `s` in edit `id` from its start with nothing selected, as a read-only field does.
+    pub fn show_edit_text(&mut self, id: &str, s: &str) {
+        if let Some(Control::Edit { edit, first, .. }) = self.item_mut(id).map(|i| &mut i.control)
+            && edit.text != s
+        {
+            edit.set_selected(s);
+            edit.set_selection(0, 0);
+            first.set(0);
+        }
+    }
+
     /// Move trackbar `id` to `pos`, clamped to its last tick. Its thumb
     /// turns hot or cold when it moved to or from under the pointer, or
     /// was greyed or enabled under it.

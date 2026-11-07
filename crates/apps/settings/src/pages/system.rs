@@ -711,14 +711,7 @@ pub fn show_remote(
         }
     }
     let fingerprint = machine.unwrap_or(shown.map_or("", |s| s.fingerprint.as_str()));
-    if let Some(Control::Edit { edit, first, .. }) =
-        page.item_mut(REMOTE_FINGERPRINT).map(|i| &mut i.control)
-        && edit.text != fingerprint
-    {
-        edit.set_selected(fingerprint);
-        edit.set_selection(0, 0);
-        first.set(0);
-    }
+    page.show_edit_text(REMOTE_FINGERPRINT, fingerprint);
     let clients = shown.map_or(&[][..], |s| s.clients.as_slice());
     let items: Vec<String> = clients
         .iter()
