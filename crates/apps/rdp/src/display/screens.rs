@@ -23,7 +23,7 @@ pub(super) fn gone_with_all(ending: Ending, screens: usize) -> impl Fn() + Clone
 /// Each shared screen's [`Live`], one stream each; the connection goes on while any streams.
 pub(super) struct Lives {
     screens: Vec<Live>,
-    /// A lock-mode grant's: its updates end only once the connection's run releases them.
+    /// A lock-mode grant's: once its screens all went, its updates end as the run releases them.
     held: Option<Ending>,
 }
 
@@ -36,8 +36,8 @@ impl Lives {
         self.screens.iter_mut().for_each(Live::activate);
     }
 
-    /// The next update of any screen; None once every screen's stream ended, and a held run
-    /// released them. Cancel safe, as [`Live::next`] is.
+    /// The next update of any screen; None once every screen's stream ended, and once a held
+    /// grant's screens all went, its run released them. Cancel safe, as [`Live::next`] is.
     pub(super) async fn next(&mut self) -> Option<DisplayUpdate> {
         loop {
             // Each turn starts at the next screen, so a busy one cannot keep the others waiting.
@@ -47,7 +47,7 @@ impl Lives {
                 .map(|live| Box::pin(live.next()))
                 .collect();
             if running.is_empty() {
-                if let Some(ending) = &self.held {
+                if let Some(ending) = self.held.as_ref().filter(|e| e.is_gone()) {
                     ending.released().await;
                 }
                 return None;
@@ -400,13 +400,38 @@ mod tests {
         let mut c = screens(&[screen(0, 0, 4, 2)], &[], (4, 2), None, |_| {
             Switch::bitmaps
         });
-        let ending = Ending::default();
+        let ending = lock_mode();
         let mut lives = Lives::new(std::mem::take(&mut c.lives), Some(ending.clone()));
+        ending.screen_gone();
         c.frames.clear();
         let early = tokio::time::timeout(Duration::from_millis(200), lives.next()).await;
         assert!(early.is_err(), "held while the run decides how it ends");
         ending.release();
         assert!(next_of(&mut lives).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_lock_mode_grants_streams_ending_while_their_screens_stay_end_at_once() {
+        let mut c = screens(&[screen(0, 0, 4, 2)], &[], (4, 2), None, |_| {
+            Switch::bitmaps
+        });
+        let mut lives = Lives::new(std::mem::take(&mut c.lives), Some(lock_mode()));
+        c.frames.clear();
+        let ended = tokio::time::timeout(Duration::from_millis(200), lives.next()).await;
+        assert!(ended.expect("not held").is_none());
+    }
+
+    fn lock_mode() -> Ending {
+        let ending = Ending::default();
+        let screen = crate::portal::Screen {
+            node: 0,
+            position: (0, 0),
+            size: (4, 2),
+            mapping_id: None,
+            virtual_output: true,
+        };
+        assert!(ending.granted(true, &[screen]));
+        ending
     }
 
     async fn next_of(lives: &mut Lives) -> Option<DisplayUpdate> {
