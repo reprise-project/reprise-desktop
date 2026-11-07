@@ -241,7 +241,7 @@ impl Logind {
             .manager
             .inhibit(what, INHIBIT_WHO, why, "block")
             .await?;
-        Ok(fd.into())
+        Ok(cloexec(fd.into())?)
     }
 
     /// The pid of session `id`'s leader.
@@ -353,6 +353,17 @@ impl Logind {
     }
 }
 
+/// `fd` with `FD_CLOEXEC` set. zbus receives fds without it, and a worker spawned while one
+/// is open would keep it, and with it the inhibitor.
+fn cloexec(fd: OwnedFd) -> std::io::Result<OwnedFd> {
+    use std::os::fd::AsRawFd;
+    // SAFETY: F_SETFD on an fd this function owns has no other preconditions.
+    if unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC) } != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(fd)
+}
+
 /// logind's `what` and `why` for an inhibitor; `None` for none.
 fn inhibit_args(inhibit: Inhibit) -> Option<(&'static str, &'static str)> {
     match inhibit {
@@ -400,6 +411,9 @@ impl Inhibitor {
                     if held.0 == change {
                         held.1 = Some(fd);
                     }
+                }
+                Err(e) if held.borrow().1.is_some() => {
+                    log::warn!("logind's {what} inhibitor: {e}; the previous one stays held");
                 }
                 Err(e) => log::warn!("logind's {what} inhibitor: {e}"),
             }
@@ -458,9 +472,28 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_received_fd_is_closed_on_exec() {
+        use std::os::fd::{AsRawFd, FromRawFd};
+        let mut ends = [0; 2];
+        // SAFETY: `ends` has room for the two fds pipe writes.
+        assert_eq!(unsafe { libc::pipe(ends.as_mut_ptr()) }, 0);
+        // SAFETY: pipe just returned both fds, and nothing else owns them.
+        let (r, _w) = unsafe { (OwnedFd::from_raw_fd(ends[0]), OwnedFd::from_raw_fd(ends[1])) };
+        let flags = |fd: &OwnedFd| {
+            // SAFETY: F_GETFD on an open fd has no other preconditions.
+            unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_GETFD) }
+        };
+        assert_eq!(flags(&r) & libc::FD_CLOEXEC, 0, "a bare pipe is inherited");
+        let r = cloexec(r).unwrap();
+        assert_eq!(flags(&r) & libc::FD_CLOEXEC, libc::FD_CLOEXEC);
+    }
+
     /// Lets every ready task of the `LocalSet` run.
     async fn settle() {
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
     }
 
     fn open(w: &mut std::io::PipeWriter) -> bool {

@@ -50,6 +50,9 @@ const LEADER_POLL: Duration = Duration::from_millis(500);
 const LEADER_POLLS: u32 = 10;
 /// How long an account look-up may take before the account counts as no member.
 const LOOKUP_WAIT: Duration = Duration::from_secs(5);
+/// Threads for account look-ups. One stuck in NSS keeps its thread past `LOOKUP_WAIT`, so
+/// the pool is capped; a look-up waiting for a thread counts against its own wait.
+const LOOKUP_THREADS: usize = 8;
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
@@ -103,6 +106,7 @@ fn daemon() -> ExitCode {
     reprisebus::journal::init_logger(reprisebus::journal::PROGRAM_FILTER);
     let rt = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
+        .max_blocking_threads(LOOKUP_THREADS)
         .build()
     {
         Ok(rt) => rt,
@@ -575,7 +579,10 @@ impl Runtime {
                     let _ = self.events.send(Event::Input(failed));
                 }
             }
-            Effect::DropConn { conn } => drop(self.front.borrow_mut().take(conn)),
+            Effect::DropConn { conn } => {
+                drop(self.front.borrow_mut().take(conn));
+                self.links.drop_conn(conn);
+            }
             Effect::Inhibit(inhibit) => self.inhibitor.set(inhibit),
             Effect::Front(unit) => {
                 let l = self.logind.clone();
@@ -1212,6 +1219,56 @@ mod tests {
             active_vt,
             user_sessions: 0,
             login_sessions: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn the_inputs_that_can_start_a_session_read_the_world_again() {
+        use repriselogin::greeter::PowerAction;
+        let (w, id) = (WorkerId(1), String::from("c1"));
+        let greeter = |r| Input::GreeterRequest(w, r);
+        let fresh = [
+            greeter(GreeterRequest::Hello),
+            greeter(GreeterRequest::StartSession),
+            greeter(GreeterRequest::Power {
+                action: PowerAction::PowerOff,
+            }),
+            Input::Worker(
+                w,
+                FromWorker::Authenticated {
+                    user: "anna".into(),
+                    uid: 1000,
+                },
+            ),
+            Input::SessionRemoved {
+                id: id.clone(),
+                seat_active: None,
+            },
+            Input::TerminateFailed {
+                id: id.clone(),
+                seat_active: None,
+            },
+        ];
+        for input in &fresh {
+            assert!(reads_world(input), "{input:?} reads the world");
+        }
+        let cached = [
+            greeter(GreeterRequest::CancelSession),
+            Input::Worker(
+                w,
+                FromWorker::Started {
+                    session_id: id,
+                    uid: 1000,
+                },
+            ),
+            Input::Viewers {
+                uid: 1000,
+                count: 1,
+            },
+            Input::FrontLinked,
+        ];
+        for input in &cached {
+            assert!(!reads_world(input), "{input:?} uses the cached world");
         }
     }
 
