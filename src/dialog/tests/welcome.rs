@@ -4,7 +4,7 @@ use reprisekit::interfaces::{draw_power_panel, theme_for};
 
 #[test]
 fn log_off_and_turn_off_answer_enter_and_access_keys() {
-    let mut d = Dialog::log_off();
+    let mut d = Dialog::log_off(false);
     assert_eq!(d.key(Key::Enter), Outcome::Act(Action::Exit));
     assert_eq!(
         d.key(Key::Edit(EditKey::Insert("l".into()))),
@@ -67,7 +67,7 @@ fn under_glass_the_panels_are_framed_unless_they_are_always_blue() {
     use reprisekit::blue::powerpanel::{TileState, icon};
     let theme = theme_for(Interface::Glass);
     let text = TextRenderer::load(&theme.fonts);
-    for (d, icons) in [(Dialog::log_off(), 2), (Dialog::turn_off(&power()), 3)] {
+    for (d, icons) in [(Dialog::log_off(false), 2), (Dialog::turn_off(&power()), 3)] {
         let l = DialogLayout::compute(&theme, &text, &d);
         let client = l.frame.as_ref().expect("a frame").client;
         assert_eq!(client.width, GLASS_WELCOME_W, "{}", d.title);
@@ -184,7 +184,7 @@ fn focused(d: &Dialog) -> Option<usize> {
 
 #[test]
 fn keys_walk_the_focus_and_the_buttons_follow_it() {
-    let mut d = Dialog::log_off();
+    let mut d = Dialog::log_off(false);
     assert_eq!(focused(&d), Some(1), "Log Off has the focus");
     assert_eq!(d.key(Key::Left), Outcome::Nothing, "Switch User is greyed");
     assert_eq!(d.key(Key::Tab { back: false }), Outcome::Redraw);
@@ -251,7 +251,7 @@ fn shift_turns_stand_by_into_hibernate() {
 
 #[test]
 fn welcome_buttons_tip_their_description_but_not_when_greyed() {
-    let l = Dialog::log_off();
+    let l = Dialog::log_off(false);
     assert!(l.buttons[0].tip.is_none(), "greyed Switch User has none");
     assert_eq!(
         l.buttons[1].tip.as_deref(),
