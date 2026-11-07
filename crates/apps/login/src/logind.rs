@@ -33,6 +33,7 @@ pub trait Manager {
     fn reboot(&self, interactive: bool) -> zbus::Result<()>;
     fn terminate_session(&self, id: &str) -> zbus::Result<()>;
     fn unlock_session(&self, id: &str) -> zbus::Result<()>;
+    fn lock_session(&self, id: &str) -> zbus::Result<()>;
     #[zbus(signal)]
     fn session_removed(&self, id: String, path: OwnedObjectPath) -> zbus::Result<()>;
 }
