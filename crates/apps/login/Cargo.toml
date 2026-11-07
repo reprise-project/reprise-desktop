@@ -15,6 +15,10 @@ workspace = true
 name = "reprise-login"
 path = "src/main.rs"
 
+[[bin]]
+name = "reprise-login-settings"
+path = "src/bin/settings.rs"
+
 [dependencies]
 repriselogin = { path = "../../repriselogin" }
 serde = { workspace = true, features = ["derive"] }
