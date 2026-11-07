@@ -26,6 +26,11 @@ pub const UNLOCK_WAIT: Duration = Duration::from_secs(1);
 pub const START_WAIT: Duration = Duration::from_secs(30);
 /// How long a login waits for the greeter's next request before it is cancelled.
 pub const AUTH_WAIT: Duration = Duration::from_secs(5 * 60);
+/// How many times an orphaned greeter's `TerminateSession` is tried before the login screen
+/// comes up beside it.
+pub const TERMINATE_TRIES: u32 = 4;
+/// The wait before the first retry, doubled for each later one.
+pub const TERMINATE_RETRY: Duration = Duration::from_secs(1);
 /// Most users one `Greeting` lists; fewer when their entries would not fit one frame.
 pub const MAX_USERS: usize = 100;
 
@@ -52,6 +57,8 @@ pub enum Timer {
     Start(WorkerId),
     /// The `AUTH_WAIT` of the conversation of login worker `.0`.
     Auth(WorkerId),
+    /// The next try at ending orphaned greeter session `.0`.
+    Terminate(String),
 }
 
 #[derive(Debug, PartialEq)]
@@ -73,6 +80,11 @@ pub enum Input {
     },
     /// logind removed session `id`; `seat_active` is seat0's active session after that.
     SessionRemoved {
+        id: String,
+        seat_active: Option<String>,
+    },
+    /// logind's `TerminateSession(id)` failed; `seat_active` is seat0's active session.
+    TerminateFailed {
         id: String,
         seat_active: Option<String>,
     },
@@ -206,6 +218,13 @@ struct Stalled {
     vt: u16,
 }
 
+/// A greeter session of an earlier daemon, terminated and not yet removed.
+struct Orphan {
+    id: String,
+    /// The `TerminateSession` calls that failed.
+    failed: u32,
+}
+
 /// What follows the removal of the last orphaned greeter.
 #[derive(Clone, Copy, PartialEq)]
 enum AfterOrphans {
@@ -229,7 +248,7 @@ pub struct Daemon {
     stalled: Vec<Stalled>,
     /// Greeter sessions of an earlier daemon, terminated and not yet removed. No greeter
     /// starts while one is left.
-    orphans: Vec<String>,
+    orphans: Vec<Orphan>,
     after_orphans: AfterOrphans,
     /// Removals of unknown sessions while a start is in flight, with seat0's active session.
     removed_early: Vec<(String, Option<String>)>,
@@ -287,7 +306,10 @@ impl Daemon {
                     started: None,
                 });
             } else if s.class == "greeter" && s.service == Mode::Greeter.service() {
-                self.orphans.push(s.id.clone());
+                self.orphans.push(Orphan {
+                    id: s.id.clone(),
+                    failed: 0,
+                });
                 out.push(Effect::TerminateSession(s.id));
             }
         }
@@ -381,6 +403,14 @@ impl Daemon {
             }
             Input::Timer(Timer::Start(worker)) => self.start_timed_out(worker, &mut out),
             Input::Timer(Timer::Auth(worker)) => self.auth_wait(now, worker, &mut out),
+            Input::TerminateFailed { id, seat_active } => {
+                self.terminate_failed(world, id, seat_active, &mut out)
+            }
+            Input::Timer(Timer::Terminate(id)) => {
+                if self.orphans.iter().any(|o| o.id == id) {
+                    out.push(Effect::TerminateSession(id));
+                }
+            }
             Input::PowerDone(Ok(())) => out.push(Effect::Reply(GreeterReply::Success)),
             Input::PowerDone(Err(text)) => {
                 out.push(Effect::Log(
@@ -1002,22 +1032,8 @@ impl Daemon {
     ) {
         // A closing session can still be seat0's active one; nothing else is on screen then.
         let seat_active = seat_active.filter(|a| a != id);
-        if let Some(at) = self.orphans.iter().position(|o| o == id) {
-            self.orphans.remove(at);
-            if !self.orphans.is_empty() {
-                return;
-            }
-            let seat_taken =
-                (seat_active.as_deref()).is_some_and(|a| self.sessions.by_id(a).is_some());
-            match std::mem::replace(&mut self.after_orphans, AfterOrphans::Nothing) {
-                AfterOrphans::Greeter => self.bring_greeter(out),
-                AfterOrphans::Replace if self.sessions.is_empty() => {
-                    self.autologin_or_greeter(world, out)
-                }
-                AfterOrphans::Replace if !seat_taken => self.bring_greeter(out),
-                AfterOrphans::Replace | AfterOrphans::Nothing => {}
-            }
-            return;
+        if self.orphans.iter().any(|o| o.id == id) {
+            return self.orphan_gone(world, id, seat_active, out);
         }
         let Some(entry) = self.sessions.remove(id) else {
             if self.start_in_flight() {
@@ -1047,6 +1063,56 @@ impl Daemon {
             }
             self.bring_greeter(out);
         }
+    }
+
+    /// Drops orphan `id`; once none is left, follows `after_orphans`.
+    fn orphan_gone(
+        &mut self,
+        world: &World,
+        id: &str,
+        seat_active: Option<String>,
+        out: &mut Vec<Effect>,
+    ) {
+        self.orphans.retain(|o| o.id != id);
+        if !self.orphans.is_empty() {
+            return;
+        }
+        let seat_taken = (seat_active.as_deref()).is_some_and(|a| self.sessions.by_id(a).is_some());
+        match std::mem::replace(&mut self.after_orphans, AfterOrphans::Nothing) {
+            AfterOrphans::Greeter => self.bring_greeter(out),
+            AfterOrphans::Replace if self.sessions.is_empty() => {
+                self.autologin_or_greeter(world, out)
+            }
+            AfterOrphans::Replace if !seat_taken => self.bring_greeter(out),
+            AfterOrphans::Replace | AfterOrphans::Nothing => {}
+        }
+    }
+
+    /// Retries an orphan's end with a growing wait, and after `TERMINATE_TRIES` failures
+    /// counts it gone, so no greeter waits on it for good.
+    fn terminate_failed(
+        &mut self,
+        world: &World,
+        id: String,
+        seat_active: Option<String>,
+        out: &mut Vec<Effect>,
+    ) {
+        let Some(o) = self.orphans.iter_mut().find(|o| o.id == id) else {
+            return;
+        };
+        o.failed += 1;
+        if o.failed < TERMINATE_TRIES {
+            let after = TERMINATE_RETRY * 2u32.pow(o.failed - 1);
+            return out.push(Effect::Arm {
+                timer: Timer::Terminate(id),
+                after,
+            });
+        }
+        out.push(Effect::Log(
+            Level::Warn,
+            format!("greeter session {id} of an earlier start did not end; showing the login screen anyway"),
+        ));
+        self.orphan_gone(world, &id, seat_active, out);
     }
 
     /// Asks logind to unlock session `id` and arms the wait; returns the `Unlocking` phase.
