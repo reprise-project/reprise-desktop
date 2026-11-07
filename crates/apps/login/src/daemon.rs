@@ -1,7 +1,7 @@
 //! The login manager's state machine: inputs from the greeter, the workers, the sessions and
 //! logind go in, effects for the backends come out. It does no I/O and reads no clock.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::time::{Duration, Instant};
 
 use log::Level;
@@ -232,8 +232,14 @@ pub enum Effect {
     Inhibit(Inhibit),
     /// Starts, restarts or stops the front's unit.
     Front(FrontUnit),
-    /// Closes every hand-over link.
-    CloseIntakes,
+    /// Opens `uid`'s lost link again, retrying for a while, answered like `OpenIntake`.
+    ReopenIntake {
+        uid: u32,
+    },
+    /// Closes every hand-over link but those of `keep`.
+    CloseIntakes {
+        keep: BTreeSet<u32>,
+    },
     /// Answers account link `link`, which then closes.
     AccountReply {
         link: u64,

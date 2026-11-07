@@ -235,7 +235,7 @@ keys in `config.toml`, `port` aside, still apply to their connections.
 
 | Key | Values | Default |
 | --- | --- | --- |
-| `enabled` | `true` starts the front, `reprise-login-rdp`, which listens on `port`; `false` stops it and refuses every login not yet handed to its session | `false` |
+| `enabled` | `true` starts the front, `reprise-login-rdp`, which listens on `port`; `false` stops it and refuses every login not yet handed to its session; clients already connected stay | `false` |
 | `port` | 1 to 65535, the TCP port on every interface | `3389` |
 | `group` | the group whose members may log in remotely. Root never can | `"reprise-remote"` |
 | `max_sessions` | 1 to 50: the most sessions reprise-login runs, console ones included. A remote login that would start one more is refused | `8` |

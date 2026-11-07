@@ -96,6 +96,8 @@ pub(super) struct Remote {
     viewers: HashMap<u32, u32>,
     /// Uids whose hand-over link is up.
     linked: HashSet<u32>,
+    /// Uids whose lost link is being reopened.
+    reopening: HashSet<u32>,
     /// The generation of each armed `Timer::Disconnected`, by session id.
     disconnects: HashMap<String, u32>,
     generations: u32,
@@ -171,9 +173,8 @@ impl Daemon {
         Effect::ToFront(FrontEvent::Passwords { users })
     }
 
-    /// Takes new machine settings. Turning remote logins on starts the front and opens the
-    /// sessions' links; turning them off stops it, denies every login not yet handed over
-    /// and closes the links.
+    /// Turning remote logins on starts the front and opens the sessions' links; off stops it
+    /// and denies logins not handed over, keeping the links of uids with a session.
     pub(super) fn config_reloaded(&mut self, config: MachineConfig, out: &mut Vec<Effect>) {
         let (was, port) = (self.config.remote.enabled, self.config.remote.port);
         self.config = config;
@@ -192,13 +193,9 @@ impl Daemon {
                     self.forget(conn, out);
                     out.push(Effect::ToFront(FrontEvent::Denied { conn, backoff_s }));
                 }
-                let uids: BTreeSet<u32> = (self.remote.linked.drain())
-                    .chain(self.remote.viewers.keys().copied())
-                    .collect();
-                for uid in uids {
-                    self.set_viewers(uid, 0, out);
-                }
-                out.push(Effect::CloseIntakes);
+                let keep: BTreeSet<u32> = self.sessions.iter().map(|e| e.uid).collect();
+                self.remote.linked.retain(|uid| keep.contains(uid));
+                out.push(Effect::CloseIntakes { keep });
             }
             (true, true) if self.config.remote.port != port => {
                 out.push(Effect::Front(FrontUnit::Restart))
@@ -857,15 +854,21 @@ impl Daemon {
     }
 
     pub(super) fn intake_open(&mut self, uid: u32, out: &mut Vec<Effect>) {
+        self.remote.reopening.remove(&uid);
         self.remote.linked.insert(uid);
         for conn in self.conns(Step::Linking { uid }) {
             self.link(conn, uid, out);
         }
     }
 
-    /// A lost link counts as no viewers; the next login for `uid` opens it again.
+    /// A lost link of a uid with a session reopens, keeping its count meanwhile. A reopen
+    /// that fails counts as no viewers; the next login for `uid` opens it again.
     pub(super) fn intake_lost(&mut self, uid: u32, out: &mut Vec<Effect>) {
         self.remote.linked.remove(&uid);
+        if self.sessions.by_uid(uid).is_some() && self.remote.reopening.insert(uid) {
+            return out.push(Effect::ReopenIntake { uid });
+        }
+        self.remote.reopening.remove(&uid);
         self.set_viewers(uid, 0, out);
     }
 
@@ -949,6 +952,7 @@ impl Daemon {
     pub(super) fn remote_session_gone(&mut self, entry: &SessionEntry) {
         self.remote.viewers.remove(&entry.uid);
         self.remote.linked.remove(&entry.uid);
+        self.remote.reopening.remove(&entry.uid);
         self.remote.disconnects.remove(&entry.id);
     }
 
