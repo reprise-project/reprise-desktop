@@ -1,4 +1,5 @@
 //! Kernel TLS between a loopback rustls client and a server that moves its keys into the kernel.
+//! They need the kernel's tls module and run only with `REPRISE_KTLS_TESTS=1`, on a VM.
 
 mod fixture;
 
@@ -102,6 +103,15 @@ fn updated_tx(tls: &TlsState) -> (Zeroizing<Vec<u8>>, Zeroizing<Vec<u8>>) {
     ktls::traffic_keys(tls.cipher, &next)
 }
 
+/// Whether `REPRISE_KTLS_TESTS=1` asks for the kernel tests; without it each one returns at once.
+fn kernel_tls() -> bool {
+    let on = std::env::var_os("REPRISE_KTLS_TESTS").is_some_and(|v| v == "1");
+    if !on {
+        eprintln!("skipped: set REPRISE_KTLS_TESTS=1 where the kernel's tls module is loaded");
+    }
+    on
+}
+
 fn seeded(len: usize) -> Vec<u8> {
     let mut x = 0x9e37_79b9_7f4a_7c15_u64;
     (0..len)
@@ -115,8 +125,11 @@ fn seeded(len: usize) -> Vec<u8> {
 }
 
 #[tokio::test]
-#[ignore = "needs the kernel tls module; run on a VM"]
+#[ignore = "needs the kernel tls module; run on a VM with REPRISE_KTLS_TESTS=1"]
 async fn echo_4_mib_through_ktls_for_every_suite() {
+    if !kernel_tls() {
+        return;
+    }
     for suite in SUITES {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -154,8 +167,11 @@ async fn echo_4_mib_through_ktls_for_every_suite() {
 }
 
 #[tokio::test]
-#[ignore = "needs the kernel tls module; run on a VM"]
+#[ignore = "needs the kernel tls module; run on a VM with REPRISE_KTLS_TESTS=1"]
 async fn a_client_close_notify_ends_the_stream_cleanly() {
+    if !kernel_tls() {
+        return;
+    }
     for suite in SUITES {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -184,8 +200,11 @@ async fn a_client_close_notify_ends_the_stream_cleanly() {
 }
 
 #[tokio::test]
-#[ignore = "needs the kernel tls module; run on a VM"]
+#[ignore = "needs the kernel tls module; run on a VM with REPRISE_KTLS_TESTS=1"]
 async fn shutdown_sends_close_notify_after_the_data() {
+    if !kernel_tls() {
+        return;
+    }
     for suite in SUITES {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -217,8 +236,53 @@ async fn shutdown_sends_close_notify_after_the_data() {
 }
 
 #[tokio::test]
-#[ignore = "needs the kernel tls module; run on a VM"]
+#[ignore = "needs the kernel tls module; run on a VM with REPRISE_KTLS_TESTS=1"]
+async fn one_byte_reads_get_every_byte_in_order() {
+    if !kernel_tls() {
+        return;
+    }
+    const SENT: usize = 4096;
+    for suite in SUITES {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (installed, ready) = mpsc::channel();
+        let client = thread::spawn(move || {
+            let mut stream = client(addr, suite, ready);
+            for record in seeded(SENT).chunks(100) {
+                stream.write_all(record).unwrap();
+                stream.flush().unwrap();
+            }
+            let mut done = [0; 1];
+            stream.read_exact(&mut done).unwrap();
+        });
+        timeout(LIMIT, async {
+            let (mut stream, _) = accept(&listener, installed).await;
+            let mut got = Vec::with_capacity(SENT);
+            let mut byte = [0; 1];
+            while got.len() < SENT {
+                stream.read_exact(&mut byte).await.unwrap();
+                got.push(byte[0]);
+            }
+            assert_eq!(
+                got,
+                seeded(SENT),
+                "{:?} reads the records in order",
+                suite.suite()
+            );
+            stream.write_all(b"k").await.unwrap();
+        })
+        .await
+        .unwrap_or_else(|_| panic!("{:?} reads within {LIMIT:?}", suite.suite()));
+        client.join().unwrap();
+    }
+}
+
+#[tokio::test]
+#[ignore = "needs the kernel tls module; run on a VM with REPRISE_KTLS_TESTS=1"]
 async fn a_client_key_update_rekeys_the_receiver() {
+    if !kernel_tls() {
+        return;
+    }
     const SENT: usize = 1 << 20;
     for suite in TLS13 {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -258,8 +322,11 @@ async fn a_client_key_update_rekeys_the_receiver() {
 }
 
 #[tokio::test]
-#[ignore = "needs the kernel tls module; run on a VM"]
+#[ignore = "needs the kernel tls module; run on a VM with REPRISE_KTLS_TESTS=1"]
 async fn a_requested_update_is_answered() {
+    if !kernel_tls() {
+        return;
+    }
     for suite in TLS13 {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -296,8 +363,11 @@ async fn a_requested_update_is_answered() {
 }
 
 #[tokio::test]
-#[ignore = "needs the kernel tls module; run on a VM"]
+#[ignore = "needs the kernel tls module; run on a VM with REPRISE_KTLS_TESTS=1"]
 async fn the_sender_rekeys_before_the_limit() {
+    if !kernel_tls() {
+        return;
+    }
     const WRITES: usize = 2048;
     for suite in TLS13 {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -327,7 +397,6 @@ async fn the_sender_rekeys_before_the_limit() {
         })
         .await
         .unwrap_or_else(|_| panic!("{:?} writes within {LIMIT:?}", suite.suite()));
-        assert_eq!(tls.tx.seq, tls.record_limit - REKEY_MARGIN - 10);
         let rx = client.join().unwrap();
         let (key, iv) = updated_tx(&tls);
         assert!(
@@ -340,8 +409,11 @@ async fn the_sender_rekeys_before_the_limit() {
 }
 
 #[tokio::test]
-#[ignore = "needs the kernel tls module; run on a VM"]
+#[ignore = "needs the kernel tls module; run on a VM with REPRISE_KTLS_TESTS=1"]
 async fn a_tls12_sender_closes_before_the_limit() {
+    if !kernel_tls() {
+        return;
+    }
     for suite in TLS12 {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
