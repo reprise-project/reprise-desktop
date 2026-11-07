@@ -579,8 +579,8 @@ characters or more and must differ from the login password.
   dropped when reprise-login starts.
 
 NLA takes the name as `user`, `.\user`, `HOST\user` (the host name's first
-label), `user@host` or `user@`. TLS strips any `DOMAIN\` or `@host`. mstsc
-is untested.
+label), `user@host` or `user@`. TLS strips any `DOMAIN\` or `@host`. Only
+xfreerdp has been tried.
 
 ### Background sessions
 
