@@ -147,3 +147,57 @@ fn the_dialog_grows_with_the_text_and_the_badge_stays_at_the_message_end() {
         assert_eq!(badge.width, 16, "the badge keeps the taskbar cell's size");
     }
 }
+
+#[test]
+fn busy_says_verifying_on_the_first_free_message_line() {
+    let mut filled = Logon::new(Interface::Classic, Vec::new(), false, Some("alice"));
+    filled.key(crate::logon::LogonKey::Text("hunter2"));
+    let mut busy = filled.clone();
+    busy.set_busy(true);
+    let mut caps = busy.clone();
+    caps.caps_lock = true;
+    let inked = |m: &Logon| -> Vec<bool> {
+        let (c, _, theme) = drawn(m, 1);
+        let r = geometry(&theme, OUTPUT).message;
+        let h = r.height / MESSAGE_LINES as i32;
+        let face = theme.colors.button_face.argb();
+        (0..MESSAGE_LINES as i32)
+            .map(|i| {
+                (r.y + i * h..r.y + (i + 1) * h)
+                    .any(|y| (r.x..r.right()).any(|x| c.get(x, y) != face))
+            })
+            .collect()
+    };
+    assert_eq!(inked(&filled), [false, false], "idle: no text");
+    assert_eq!(inked(&busy), [true, false], "busy: the first line");
+    assert_eq!(inked(&caps), [true, true], "under the Caps Lock notice");
+}
+
+#[test]
+fn a_prompt_label_draws_its_ampersand() {
+    let mut m = Logon::new(Interface::Classic, Vec::new(), false, Some("alice"));
+    let asked = "Token & PIN:";
+    m.ask(crate::logon::Prompt {
+        text: asked.into(),
+        echo: false,
+    });
+    for s in [1, 2] {
+        let (c, l, theme) = drawn(&m, s);
+        let text = TextRenderer::load(&theme.fonts);
+        let px = theme.fonts.size_px * s as u32 / theme.scale.max(1) as u32;
+        let g = geometry(&theme, OUTPUT);
+        let row = l.rect(Part::Password).unwrap().scaled(s);
+        let r = Rect::new(
+            g.label_x * s,
+            row.y,
+            theme.text.len(LABEL_W) * s,
+            row.height,
+        );
+        let mut want = c.clone();
+        want.fill_rect(r, theme.colors.button_face);
+        let ink = theme.colors.button_text;
+        text.for_output(s)
+            .draw(&mut want, r, asked, false, ink, Align::Left, px);
+        assert!(c == want, "@{s}: the label reads {asked:?}");
+    }
+}

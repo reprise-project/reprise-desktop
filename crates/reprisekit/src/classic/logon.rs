@@ -187,10 +187,11 @@ pub fn draw(
     text.draw(c, word, MARK, true, cs.title_text, Align::Left, px * 2);
 
     let label_w = theme.text.len(LABEL_W) * s;
+    let label_at = |row: Rect| Rect::new((g.label_x - o.x) * s, row.y, label_w, row.height);
     let label = |c: &mut Canvas, row: Rect, name: &str| {
-        let r = Rect::new((g.label_x - o.x) * s, row.y, label_w, row.height);
         let name = text.ellipsize(name, label_w, false, px);
         let name = p.label(&name);
+        let r = label_at(row);
         widgets::draw_label(c, text, r, &name, false, cs.button_text, Align::Left, px, s);
     };
     let caret = |part: Part| Caret::new(m.focus == part && !m.busy, true);
@@ -198,8 +199,15 @@ pub fn draw(
     label(c, name, &strings::user_name());
     field(c, text, &p, name, &m.name, caret(Part::Name), px);
     let password = at(g.password);
-    let asked = m.prompt.as_ref().map(|q| q.text.clone());
-    label(c, password, &asked.unwrap_or_else(strings::password));
+    match &m.prompt {
+        // The conversation's text has no access keys: an `&` in it is drawn as is.
+        Some(q) => {
+            let asked = text.ellipsize(&q.text, label_w, false, px);
+            let r = label_at(password);
+            text.draw(c, r, &asked, false, cs.button_text, Align::Left, px);
+        }
+        None => label(c, password, &strings::password()),
+    }
     let shown = if m.password.is_secret() {
         m.password.masked()
     } else {
@@ -220,9 +228,14 @@ pub fn draw(
                 .into_owned(),
         );
     }
-    if let Some(msg) = &m.message {
+    let msg = if m.busy {
+        Some(strings::verifying())
+    } else {
+        m.message.clone()
+    };
+    if let Some(msg) = msg {
         let room = MESSAGE_LINES - lines.len();
-        lines.extend(message_lines(text, msg, width, px, room));
+        lines.extend(message_lines(text, &msg, width, px, room));
     }
     let line_h = message.height / MESSAGE_LINES as i32;
     for (i, line) in lines.iter().enumerate() {
