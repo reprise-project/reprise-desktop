@@ -11,21 +11,27 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, ready};
 use std::time::Duration;
 
-use ironrdp_acceptor::{Acceptor, CredentialOrigin, DesktopSize};
-use ironrdp_connector::Sequence;
+use ironrdp_acceptor::{
+    Acceptor, ConnectionSetupHandler, ConnectorError, ConnectorErrorExt as _, ConnectorResult,
+    CredentialOrigin, CredsspAuthIdentity, DesktopSize, ReceivedCredentials,
+};
+use ironrdp_connector::sspi::{NetworkRequest, Username};
+use ironrdp_connector::{ConnectorErrorKind, Sequence, ServerName};
 use ironrdp_core::WriteBuf;
 use ironrdp_pdu::mcs::SendDataRequest;
 use ironrdp_pdu::nego::SecurityProtocol;
 use ironrdp_pdu::rdp::ClientInfoPdu;
 use ironrdp_pdu::x224::X224;
 use ironrdp_tokio::bytes::{Bytes, BytesMut};
-use ironrdp_tokio::{FramedWrite, TokioFramed};
-use repriselogin::front::{FrontEvent, NlaUser};
+use ironrdp_tokio::{FramedWrite, NetworkClient, TokioFramed};
+use repriselogin::front::{FrontEvent, FrontRequest, NlaUser, Secret};
 use repriselogin::handover::Step;
 use reprisetls::cert::Identity;
 use reprisetls::cork::Cork;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::TcpStream;
+use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::time::Instant;
 use tokio_rustls::TlsAcceptor;
 use tokio_rustls::rustls::KeyLog;
 use tokio_rustls::server::TlsStream;
@@ -44,6 +50,8 @@ const FAREWELL: Duration = Duration::from_secs(2);
 const CLIENT_TRAFFIC: &str = "CLIENT_TRAFFIC_SECRET_0";
 const SERVER_TRAFFIC: &str = "SERVER_TRAFFIC_SECRET_0";
 const NLA_OR_RDP: &str = "the client requires NLA or RDP security; choose TLS security in the client, or set a Remote Desktop password in Settings";
+/// sspi's NTLM takes a password in this form as its NT hash.
+const NT_HASH_PREFIX: &str = "$NTLM$:";
 
 pub type ClientTls = TlsStream<Cork<Limited<TcpStream>>>;
 
@@ -54,6 +62,8 @@ pub struct Ctx {
     pub nla_users: Rc<RefCell<Vec<NlaUser>>>,
     /// `None` while reprise-login is out of reach.
     pub link: RefCell<Option<LinkSender>>,
+    /// The machine's host name, read for each connection since it may change.
+    pub host: fn() -> String,
 }
 
 /// A connection that sent its credentials, waiting for reprise-login's verdict.
@@ -64,7 +74,10 @@ pub struct Pending {
     /// The Client Info PDU, last, has its password blanked.
     pub steps: Vec<Step>,
     pub user: String,
+    /// Empty under NLA, whose `Authenticate` went out after CredSSP.
     pub password: Zeroizing<String>,
+    /// Logged on with Network Level Authentication.
+    pub nla: bool,
     pub tls: ClientTls,
     /// Plaintext read past the Client Info PDU.
     pub leftover: BytesMut,
@@ -82,6 +95,7 @@ impl fmt::Debug for Pending {
             .field("steps", &self.steps)
             .field("user", &self.user)
             .field("password", &format_args!("<redacted>"))
+            .field("nla", &self.nla)
             .field("leftover", &self.leftover.len())
             .finish_non_exhaustive()
     }
@@ -97,6 +111,14 @@ pub enum Refused {
     NoUser,
     UserTooLong,
     Io(io::ErrorKind),
+    Nla(String),
+    NoDelegation,
+    /// The Client Info PDU names another user than CredSSP authenticated.
+    UserChanged,
+    /// reprise-login refused the delegated password before HYBRID_EX's result.
+    Denied {
+        backoff_s: u32,
+    },
 }
 
 impl fmt::Display for Refused {
@@ -112,6 +134,14 @@ impl fmt::Display for Refused {
             Refused::NoUser => f.write_str("no user name in the client's logon info"),
             Refused::UserTooLong => write!(f, "a user name over {MAX_USER} bytes"),
             Refused::Io(kind) => write!(f, "connection error: {kind}"),
+            Refused::Nla(e) => write!(f, "Network Level Authentication failed: {e}"),
+            Refused::NoDelegation => f.write_str(
+                "the client sent no password (Restricted Admin or Remote Credential Guard), which Reprise cannot use",
+            ),
+            Refused::UserChanged => {
+                f.write_str("the logon info names another user than the one authenticated")
+            }
+            Refused::Denied { .. } => f.write_str("reprise-login refused the logon"),
         }
     }
 }
@@ -251,20 +281,53 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for Limited<S> {
     }
 }
 
-/// Runs `tcp` to its Client Info PDU within `HANDSHAKE`.
-pub async fn to_client_info(tcp: TcpStream, conn: u64, ctx: &Ctx) -> Result<Pending, Refused> {
+/// Runs `tcp` to its Client Info PDU within `HANDSHAKE`. Under NLA it sends `Authenticate`
+/// after CredSSP; `heard` carries reprise-login's events for `conn`.
+pub async fn to_client_info(
+    tcp: TcpStream,
+    conn: u64,
+    accepted: Instant,
+    ctx: &Ctx,
+    heard: &mut UnboundedReceiver<FrontEvent>,
+) -> Result<Pending, Refused> {
     let peer = tcp.peer_addr().map_err(|e| Refused::Io(e.kind()))?;
-    tokio::time::timeout(HANDSHAKE, accept(tcp, peer, conn, ctx))
+    let link = Link {
+        ctx,
+        conn,
+        peer,
+        accepted,
+        heard,
+        asked: false,
+    };
+    tokio::time::timeout(HANDSHAKE, accept(tcp, link))
         .await
         .unwrap_or(Err(Refused::Deadline))
 }
 
-async fn accept(
-    tcp: TcpStream,
-    peer: SocketAddr,
+/// One connection's side of the link. Dropped after its `Authenticate` with no verdict yet,
+/// it tells reprise-login the connection is gone.
+struct Link<'a> {
+    ctx: &'a Ctx,
     conn: u64,
-    ctx: &Ctx,
-) -> Result<Pending, Refused> {
+    peer: SocketAddr,
+    accepted: Instant,
+    heard: &'a mut UnboundedReceiver<FrontEvent>,
+    asked: bool,
+}
+
+impl Drop for Link<'_> {
+    fn drop(&mut self) {
+        if self.asked
+            && let Ok(link) = self.ctx.link.try_borrow()
+            && let Some(link) = &*link
+        {
+            let _ = link.send(&FrontRequest::Gone { conn: self.conn }, None);
+        }
+    }
+}
+
+async fn accept(tcp: TcpStream, mut link: Link<'_>) -> Result<Pending, Refused> {
+    let (ctx, conn, peer) = (link.ctx, link.conn, link.peer);
     let mut framed = TokioFramed::new(Limited::new(tcp));
     let request = framed
         .read_by_hint(&ironrdp_pdu::X224_HINT)
@@ -308,37 +371,43 @@ async fn accept(
         })?;
     acceptor.mark_security_upgrade_as_done();
     steps.push(Step::SecurityUpgradeDone);
-    if acceptor.should_perform_credssp() {
-        return Err(Refused::Negotiation(
-            "Network Level Authentication is not available".into(),
-        ));
-    }
 
     let mut framed = TokioFramed::new(tls);
+    let nla_user = match acceptor.should_perform_credssp() {
+        true => Some(credssp(&mut framed, &mut acceptor, &mut steps, &mut link).await?),
+        false => None,
+    };
     while acceptor.client_info_flags().is_none() {
         step(&mut framed, &mut acceptor, &mut steps, None).await?;
     }
-    let credentials = match acceptor.received_credentials() {
-        Some(c) if c.origin == CredentialOrigin::ClientInfo => &c.credentials,
-        _ => return Err(Refused::NoPassword),
+    let nla = nla_user.is_some();
+    let (user, password) = match nla_user {
+        Some(user) => {
+            let info = recorded_client_info(&steps)?;
+            if negotiate::strip_domain(&info.client_info.credentials.username) != user {
+                return Err(Refused::UserChanged);
+            }
+            (user, Zeroizing::new(String::new()))
+        }
+        None => {
+            let credentials = match acceptor.received_credentials() {
+                Some(c) if c.origin == CredentialOrigin::ClientInfo => &c.credentials,
+                _ => return Err(Refused::NoPassword),
+            };
+            let user = checked_user(&credentials.username)?;
+            if credentials.password.is_empty() {
+                return Err(Refused::NoPassword);
+            }
+            (user, Zeroizing::new(credentials.password.clone()))
+        }
     };
-    let user = negotiate::strip_domain(&credentials.username).to_owned();
-    if user.is_empty() {
-        return Err(Refused::NoUser);
-    }
-    if user.len() > MAX_USER {
-        return Err(Refused::UserTooLong);
-    }
-    if credentials.password.is_empty() {
-        return Err(Refused::NoPassword);
-    }
-    let password = Zeroizing::new(credentials.password.clone());
     if let Some(Step::Pdu { input, .. }) = steps.last_mut() {
         let blanked = blank_password(input).map_err(|e| Refused::Negotiation(e.to_string()))?;
         *input = Zeroizing::new(blanked);
     }
     check_recording(&steps)?;
     let (tls, leftover) = framed.into_inner();
+    link.asked = false;
     Ok(Pending {
         conn,
         peer,
@@ -346,11 +415,179 @@ async fn accept(
         steps,
         user,
         password,
+        nla,
         tls,
         leftover,
         acceptor,
         key_log,
     })
+}
+
+/// A user name with its domain stripped, refused when empty or too long.
+fn checked_user(name: &str) -> Result<String, Refused> {
+    let user = negotiate::strip_domain(name);
+    if user.is_empty() {
+        return Err(Refused::NoUser);
+    }
+    if user.len() > MAX_USER {
+        return Err(Refused::UserTooLong);
+    }
+    Ok(user.to_owned())
+}
+
+/// The Client Info PDU, the last step recorded.
+fn recorded_client_info(steps: &[Step]) -> Result<ClientInfoPdu, Refused> {
+    let Some(Step::Pdu { input, .. }) = steps.last() else {
+        return Err(Refused::Negotiation("no Client Info PDU".into()));
+    };
+    let (_, info) = read_client_info(input).map_err(|e| Refused::Negotiation(e.to_string()))?;
+    Ok(info)
+}
+
+/// Runs CredSSP against the Remote Desktop passwords and sends reprise-login the delegated
+/// password; HYBRID_EX's result waits for reprise-login to verify it. Returns the user.
+async fn credssp(
+    framed: &mut TokioFramed<ClientTls>,
+    acceptor: &mut Acceptor,
+    steps: &mut Vec<Step>,
+    link: &mut Link<'_>,
+) -> Result<String, Refused> {
+    let host = (link.ctx.host)();
+    acceptor.set_credssp_users(credssp_users(&link.ctx.nla_users.borrow(), &host));
+    let public_key = link.ctx.identity.public_key();
+    let mut verify = Verify {
+        link: &mut *link,
+        user: None,
+        refused: None,
+    };
+    let done = ironrdp_acceptor::accept_credssp_with(
+        framed,
+        acceptor,
+        &mut NoNetwork,
+        ServerName::new(host),
+        public_key,
+        None,
+        &mut verify,
+    )
+    .await;
+    let (user, refused) = (verify.user, verify.refused);
+    if let Some(refused) = refused {
+        return Err(refused);
+    }
+    done.map_err(|e| Refused::Nla(e.to_string()))?;
+    let user = match user {
+        Some(user) => user,
+        None => link.delegate(acceptor.received_credentials())?,
+    };
+    let Some(ReceivedCredentials { credentials, .. }) = acceptor.received_credentials() else {
+        return Err(Refused::NoDelegation);
+    };
+    steps.push(Step::CredsspDone {
+        user: credentials.username.clone(),
+        domain: credentials.domain.clone(),
+    });
+    Ok(user)
+}
+
+impl Link<'_> {
+    /// Sends the password CredSSP delegated to reprise-login.
+    fn delegate(&mut self, received: Option<&ReceivedCredentials>) -> Result<String, Refused> {
+        let credentials = match received {
+            Some(c) if c.origin == CredentialOrigin::CredSspDelegated => &c.credentials,
+            _ => return Err(Refused::NoDelegation),
+        };
+        if credentials.password.is_empty() {
+            return Err(Refused::NoDelegation);
+        }
+        let user = checked_user(&credentials.username)?;
+        let secret = Secret::Delegated(Zeroizing::new(credentials.password.clone()));
+        authenticate(
+            self.ctx,
+            self.conn,
+            self.peer,
+            self.accepted,
+            user.clone(),
+            secret,
+        )
+        .map_err(|e| Refused::Io(e.kind()))?;
+        self.asked = true;
+        Ok(user)
+    }
+
+    /// Waits for `Verified`, or `Denied`.
+    async fn verified(&mut self) -> Result<(), Refused> {
+        loop {
+            match self.heard.recv().await {
+                Some(FrontEvent::Verified { .. }) => return Ok(()),
+                Some(FrontEvent::Denied { backoff_s, .. }) => {
+                    self.asked = false;
+                    return Err(Refused::Denied { backoff_s });
+                }
+                Some(_) => {}
+                None => return Err(Refused::Io(io::ErrorKind::NotConnected)),
+            }
+        }
+    }
+}
+
+/// Called before HYBRID_EX's result, which is success only once reprise-login verifies the
+/// delegated password.
+struct Verify<'a, 'b> {
+    link: &'a mut Link<'b>,
+    user: Option<String>,
+    refused: Option<Refused>,
+}
+
+#[async_trait::async_trait(?Send)]
+impl ConnectionSetupHandler for Verify<'_, '_> {
+    async fn handle_credentials(
+        &mut self,
+        credentials: Option<ReceivedCredentials>,
+    ) -> ConnectorResult<()> {
+        let verified = match self.link.delegate(credentials.as_ref()) {
+            Ok(user) => {
+                self.user = Some(user);
+                self.link.verified().await
+            }
+            Err(refused) => Err(refused),
+        };
+        verified.map_err(|refused| {
+            self.refused = Some(refused);
+            ConnectorError::new("reprise-login", ConnectorErrorKind::AccessDenied)
+        })
+    }
+}
+
+/// NTLM makes no network requests.
+struct NoNetwork;
+
+impl NetworkClient for NoNetwork {
+    async fn send(&mut self, _: &NetworkRequest) -> ConnectorResult<Vec<u8>> {
+        Err(ConnectorError::general("NTLM needs no network"))
+    }
+}
+
+/// Each user under the four name forms an SPNEGO client may send, which sspi matches in
+/// full: `anna`, `.\anna`, `HOST\anna` and `anna@host`. The password is the NT hash.
+fn credssp_users(users: &[NlaUser], host: &str) -> Vec<CredsspAuthIdentity> {
+    let domain = host.split('.').next().unwrap_or(host).to_uppercase();
+    let mut list = Vec::with_capacity(users.len() * 4);
+    for u in users {
+        let password = Zeroizing::new(format!("{NT_HASH_PREFIX}{}", *u.nt_hash));
+        let names = [
+            Username::new(&u.user, None),
+            Username::new_down_level_logon_name(&u.user, "."),
+            Username::new_down_level_logon_name(&u.user, &domain),
+            Username::new_upn(&u.user, host),
+        ];
+        for username in names.into_iter().filter_map(Result::ok) {
+            list.push(CredsspAuthIdentity {
+                username,
+                password: (*password).clone().into(),
+            });
+        }
+    }
+    list
 }
 
 /// The recording travels to the session in one frame, so a large one is refused here.
@@ -406,14 +643,22 @@ where
     Ok(())
 }
 
-/// The Client Info PDU `pdu` (X.224 and MCS Send Data Request) with its password emptied.
-pub fn blank_password(pdu: &[u8]) -> io::Result<Vec<u8>> {
-    let invalid = |e: &dyn fmt::Display| io::Error::new(io::ErrorKind::InvalidData, e.to_string());
+fn invalid(e: &dyn fmt::Display) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, e.to_string())
+}
+
+/// The Client Info PDU `pdu` (X.224 and MCS Send Data Request), with its Send Data Request.
+fn read_client_info(pdu: &[u8]) -> io::Result<(SendDataRequest<'_>, ClientInfoPdu)> {
     let request = ironrdp_core::decode::<X224<SendDataRequest<'_>>>(pdu)
         .map_err(|e| invalid(&e))?
         .0;
-    let mut info: ClientInfoPdu =
-        ironrdp_core::decode(request.user_data.as_ref()).map_err(|e| invalid(&e))?;
+    let info = ironrdp_core::decode(request.user_data.as_ref()).map_err(|e| invalid(&e))?;
+    Ok((request, info))
+}
+
+/// The Client Info PDU `pdu` with its password emptied.
+pub fn blank_password(pdu: &[u8]) -> io::Result<Vec<u8>> {
+    let (request, mut info) = read_client_info(pdu)?;
     info.client_info.credentials.password.zeroize();
     if let Some(mut cookie) = info.client_info.password_cookie.take() {
         cookie.0.zeroize();
@@ -439,11 +684,35 @@ pub async fn deny(mut pending: Pending) {
     let _ = tokio::time::timeout(FAREWELL, farewell).await;
 }
 
-/// The connection a verdict is for.
-pub fn verdict_conn(event: &FrontEvent) -> Option<u64> {
+/// Asks reprise-login to log `user` on with `secret`.
+pub fn authenticate(
+    ctx: &Ctx,
+    conn: u64,
+    peer: SocketAddr,
+    accepted: Instant,
+    user: String,
+    secret: Secret,
+) -> io::Result<()> {
+    let request = FrontRequest::Authenticate {
+        conn,
+        peer,
+        user,
+        secret,
+        elapsed_ms: u32::try_from(accepted.elapsed().as_millis()).unwrap_or(u32::MAX),
+    };
+    match &*ctx.link.borrow() {
+        Some(link) => link.send(&request, None),
+        None => Err(io::ErrorKind::NotConnected.into()),
+    }
+}
+
+/// The connection an event is for.
+pub fn event_conn(event: &FrontEvent) -> Option<u64> {
     match event {
-        FrontEvent::Accepted { conn } | FrontEvent::Denied { conn, .. } => Some(*conn),
-        _ => None,
+        FrontEvent::Verified { conn }
+        | FrontEvent::Accepted { conn }
+        | FrontEvent::Denied { conn, .. } => Some(*conn),
+        FrontEvent::Passwords { .. } => None,
     }
 }
 

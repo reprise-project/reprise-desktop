@@ -20,11 +20,11 @@ use repriselogin::front::{FrontEvent, FrontRequest, Secret};
 use repriselogin::machine::{MACHINE_CONFIG, MachineConfig};
 use reprisetls::{cert, tcp};
 use tokio::net::TcpStream;
-use tokio::sync::oneshot;
+use tokio::sync::mpsc;
 use tokio::task::AbortHandle;
 use tokio::time::Instant;
 
-use accept::Ctx;
+use accept::{Ctx, Refused};
 use limits::{Limits, MAX_PREAUTH, PREAUTH_PER_IP, Permit, VERDICT_WAIT};
 
 const RECONNECT: Duration = Duration::from_secs(1);
@@ -34,7 +34,8 @@ const ACCEPT_RETRY: Duration = Duration::from_millis(100);
 /// A connection between its accept and its verdict.
 struct Conn {
     abort: AbortHandle,
-    verdict: Option<oneshot::Sender<FrontEvent>>,
+    /// reprise-login's events for the connection.
+    tell: mpsc::UnboundedSender<FrontEvent>,
 }
 
 type Conns = Rc<RefCell<HashMap<u64, Conn>>>;
@@ -75,6 +76,7 @@ fn main() -> ExitCode {
         identity,
         nla_users: Rc::default(),
         link: RefCell::new(None),
+        host: hostname,
     });
     tokio::task::LocalSet::new().block_on(&rt, serve(port, ctx))
 }
@@ -94,6 +96,14 @@ fn machine_config() -> MachineConfig {
         log::warn!("{MACHINE_CONFIG}: {w}");
     }
     config
+}
+
+fn hostname() -> String {
+    fs::read_to_string("/proc/sys/kernel/hostname")
+        .map(|h| h.trim().to_owned())
+        .ok()
+        .filter(|h| !h.is_empty())
+        .unwrap_or_else(|| "localhost".into())
 }
 
 /// The first directory systemd names in `var`.
@@ -157,12 +167,14 @@ async fn serve(port: u16, ctx: Rc<Ctx>) -> ExitCode {
         };
         next_conn += 1;
         let conn = next_conn;
+        let (tell, heard) = mpsc::unbounded_channel();
         let task = tokio::task::spawn_local(connection(
             Arrival {
                 tcp,
                 peer,
                 conn,
                 accepted,
+                heard,
                 _permit: permit,
             },
             ctx.clone(),
@@ -170,13 +182,7 @@ async fn serve(port: u16, ctx: Rc<Ctx>) -> ExitCode {
             limits.clone(),
         ));
         let abort = task.abort_handle();
-        conns.borrow_mut().insert(
-            conn,
-            Conn {
-                abort,
-                verdict: None,
-            },
-        );
+        conns.borrow_mut().insert(conn, Conn { abort, tell });
     }
 }
 
@@ -185,6 +191,7 @@ struct Arrival {
     peer: SocketAddr,
     conn: u64,
     accepted: Instant,
+    heard: mpsc::UnboundedReceiver<FrontEvent>,
     /// Held until the connection ends.
     _permit: Permit,
 }
@@ -206,37 +213,31 @@ async fn connection(arrival: Arrival, ctx: Rc<Ctx>, conns: Conns, limits: Rc<Ref
         peer,
         conn,
         accepted,
+        mut heard,
         _permit,
     } = arrival;
     let _forget = Forget(conns.clone(), conn);
-    let pending = match accept::to_client_info(tcp, conn, &ctx).await {
+    let pending = match accept::to_client_info(tcp, conn, accepted, &ctx, &mut heard).await {
         Ok(pending) => pending,
+        Err(Refused::Denied { backoff_s }) => {
+            log::info!("{peer}: the logon was refused");
+            back_off(&limits, peer, backoff_s);
+            return;
+        }
         Err(refused) => {
             log::info!("{peer}: refused: {refused}");
             return;
         }
     };
-    let (tell, verdict) = oneshot::channel();
-    if let Some(c) = conns.borrow_mut().get_mut(&conn) {
-        c.verdict = Some(tell);
+    if !pending.nla {
+        let secret = Secret::Password(pending.password.clone());
+        let user = pending.user.clone();
+        if let Err(e) = accept::authenticate(&ctx, conn, peer, accepted, user, secret) {
+            log::warn!("{peer}: reprise-login: {e}");
+            return;
+        }
     }
-    let request = FrontRequest::Authenticate {
-        conn,
-        peer,
-        user: pending.user.clone(),
-        secret: Secret::Password(pending.password.clone()),
-        elapsed_ms: u32::try_from(accepted.elapsed().as_millis()).unwrap_or(u32::MAX),
-    };
-    let sent = match &*ctx.link.borrow() {
-        Some(link) => link.send(&request, None),
-        None => Err(io::ErrorKind::NotConnected.into()),
-    };
-    drop(request);
-    if let Err(e) = sent {
-        log::warn!("{peer}: reprise-login: {e}");
-        return;
-    }
-    let Ok(verdict) = tokio::time::timeout(VERDICT_WAIT, verdict).await else {
+    let Ok(verdict) = tokio::time::timeout(VERDICT_WAIT, verdict(&mut heard)).await else {
         log::warn!("{peer}: reprise-login gave no verdict");
         if let Some(link) = &*ctx.link.borrow() {
             let _ = link.send(&FrontRequest::Gone { conn }, None);
@@ -244,18 +245,31 @@ async fn connection(arrival: Arrival, ctx: Rc<Ctx>, conns: Conns, limits: Rc<Ref
         return;
     };
     match verdict {
-        Ok(FrontEvent::Denied { backoff_s, .. }) => {
+        Some(FrontEvent::Denied { backoff_s, .. }) => {
             log::info!("{peer}: the logon was refused");
-            limits.borrow_mut().back_off(
-                peer.ip(),
-                Duration::from_secs(backoff_s.into()),
-                Instant::now(),
-            );
+            back_off(&limits, peer, backoff_s);
             accept::deny(pending).await;
         }
-        Ok(FrontEvent::Accepted { .. }) => log::info!("{peer}: logged on"),
-        Ok(_) | Err(_) => {}
+        Some(FrontEvent::Accepted { .. }) => log::info!("{peer}: logged on"),
+        Some(_) | None => {}
     }
+}
+
+/// The next `Accepted` or `Denied`; `Verified` only says the password was right.
+async fn verdict(heard: &mut mpsc::UnboundedReceiver<FrontEvent>) -> Option<FrontEvent> {
+    loop {
+        match heard.recv().await? {
+            FrontEvent::Verified { .. } => {}
+            event => return Some(event),
+        }
+    }
+}
+
+fn back_off(limits: &RefCell<Limits>, peer: SocketAddr, backoff_s: u32) {
+    let for_ = Duration::from_secs(backoff_s.into());
+    limits
+        .borrow_mut()
+        .back_off(peer.ip(), for_, Instant::now());
 }
 
 /// Keeps the link to reprise-login up: the latest Remote Desktop users, each verdict to its
@@ -271,14 +285,10 @@ async fn follow_link(ctx: Rc<Ctx>, conns: Conns) {
                 while let Some(event) = events.next().await {
                     if let FrontEvent::Passwords { users } = event {
                         *ctx.nla_users.borrow_mut() = users;
-                    } else if let Some(conn) = accept::verdict_conn(&event) {
-                        let tell = conns
-                            .borrow_mut()
-                            .get_mut(&conn)
-                            .and_then(|c| c.verdict.take());
-                        if let Some(tell) = tell {
-                            let _ = tell.send(event);
-                        }
+                    } else if let Some(conn) = accept::event_conn(&event)
+                        && let Some(c) = conns.borrow().get(&conn)
+                    {
+                        let _ = c.tell.send(event);
                     }
                 }
                 log::warn!("lost reprise-login; closing every connection still logging in");
@@ -306,27 +316,10 @@ async fn follow_link(ctx: Rc<Ctx>, conns: Conns) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use accept::tests::request;
     use limits::Refusal;
     use repriselogin::fdpass::FdFrameReader;
-    use repriselogin::frame;
-    use std::os::fd::AsFd;
-    use tokio::io::Interest;
-    use tokio::net::{TcpListener, UnixListener, UnixStream};
-
-    /// The next request the front sent over `daemon`.
-    async fn request(daemon: &UnixStream, reader: &mut FdFrameReader) -> FrontRequest {
-        loop {
-            if let Some((body, _)) = reader.next().unwrap() {
-                return frame::decode(&body).unwrap();
-            }
-            daemon.readable().await.unwrap();
-            match daemon.try_io(Interest::READABLE, || reader.read_from(daemon.as_fd())) {
-                Ok(n) => assert_ne!(n, 0, "the front keeps the link"),
-                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
-                Err(e) => panic!("{e}"),
-            }
-        }
-    }
+    use tokio::net::{TcpListener, UnixListener};
 
     #[tokio::test]
     async fn a_logon_with_no_verdict_is_gone_after_the_verdict_wait() {
@@ -354,11 +347,13 @@ mod tests {
                 let start = Instant::now();
                 let permit = limits.borrow_mut().admit(peer.ip(), start).unwrap();
                 let conns = Conns::default();
+                let (tell, heard) = mpsc::unbounded_channel();
                 let arrival = Arrival {
                     tcp,
                     peer,
                     conn: 5,
                     accepted: start,
+                    heard,
                     _permit: permit,
                 };
                 let task = tokio::task::spawn_local(connection(
@@ -371,7 +366,7 @@ mod tests {
                     5,
                     Conn {
                         abort: task.abort_handle(),
-                        verdict: None,
+                        tell,
                     },
                 );
                 let authenticate = request(&daemon, &mut reader).await;
