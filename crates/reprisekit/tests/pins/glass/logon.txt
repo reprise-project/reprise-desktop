@@ -1,0 +1,12 @@
+tile @1 5d496f0c61f6d561
+tile @2 6806e6de02211352
+arrow hot @1 4191acafbd6d1147
+arrow hot @2 4b944ba0ae800fcb
+typed @1 2041bfb8999b613e
+typed @2 ddcd55f3e0a51cf6
+tiles @1 05290320d22d523e
+tiles @2 50c027de53b257ec
+message @1 785ebd73526a837f
+message @2 99ba9dd155915106
+busy @1 44bd527aec21e0b8
+busy @2 826900b5522bef0a

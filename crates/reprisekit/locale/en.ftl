@@ -130,6 +130,8 @@ logon-power-refused = Other people are logged on to this computer. Shut it down 
 logon-session-ended-early = The session ended as soon as it started. Its log is in the user journal.
 logon-power-off = Shut down
 logon-verifying = Verifying...
+logon-power-options = Shut down options
+logon-user-name-cue = User name
 
 ## Calculator
 calc-degrees = &Degrees
