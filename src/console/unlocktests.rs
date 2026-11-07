@@ -367,6 +367,33 @@ fn a_console_unlock_cuts_every_remote_desktop_session_off() {
 }
 
 #[test]
+fn a_locker_taking_the_lock_mid_run_cuts_every_sender_off() {
+    let mut h = computer();
+    let (mut portal, lock) = begin(&mut h);
+    let mut peer = h.ei_remote_session();
+    h.ei_hear(&mut peer);
+    let keys = h.state.inputproto.keys.create();
+    let mut locker = h.connect();
+    let (_locked, _surface) = h.map_lock_surface(&mut locker);
+    h.roundtrip(&mut portal);
+    assert_lock_mode_over(&h);
+    assert_eq!(ended(&lock), [Reason::Replaced as u32]);
+    assert!(
+        h.state.inputproto.eis.get(peer.id).is_none(),
+        "the session's EIS client is gone"
+    );
+    h.ei_hear(&mut peer);
+    assert!(
+        (peer.heard.iter()).any(|e| matches!(e, EiEvent::Disconnected(_))),
+        "the session hears it is disconnected"
+    );
+    assert!(
+        !h.state.inputproto.keys.exists(keys),
+        "the keys object is revoked"
+    );
+}
+
+#[test]
 fn a_console_unlock_cuts_a_permitted_remote_desktop_session_off() {
     use crate::eis::Kind;
     use crate::inputproto::{DEVICE_KEYBOARD, DEVICE_POINTER};
