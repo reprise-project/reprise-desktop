@@ -1156,3 +1156,39 @@ fn a_picture_whose_decoder_panics_is_no_picture() {
     let ok = decode_picture(b"", |_| Ok(Canvas::new(1, 1)));
     assert!(ok.is_ok());
 }
+
+#[test]
+fn a_lock_mode_remote_viewer_gets_no_switch_user_from_the_shutdown_options() {
+    use std::os::unix::net::UnixStream;
+    let mut config = crate::config::Config::default();
+    config.startmenu_style = crate::config::StartMenuStyle::Glass;
+    let (mut h, _portal, _lock) = crate::console::tests::in_lock_mode_with(config);
+    let (ours, mut theirs) = UnixStream::pair().unwrap();
+    crate::loginlink::install(&mut h.state, crate::loginlink::LoginLink::from_stream(ours));
+    let remote = crate::virtualout::remote_outputs(&h.state)[0].clone();
+    let bar = (h.state.bars.iter().find(|b| b.output == remote))
+        .expect("the remote screen has a bar")
+        .tree;
+    h.from(crate::inputproto::InputSource::Remote, |s| {
+        s.toggle_start(bar)
+    });
+    assert!(h.state.start_panel.is_some());
+    h.state.open_shutdown_options();
+    let rows = match &h.state.menus.last().expect("the options opened").kind {
+        crate::menuview::MenuKind::StartPanel { rows } => rows.clone(),
+        _ => panic!("the Shut down options"),
+    };
+    assert!(rows.contains(&Some(crate::startmenu::StartRow::LogOff)));
+    assert!(!rows.contains(&Some(crate::startmenu::StartRow::SwitchUser)));
+    h.from(crate::inputproto::InputSource::Remote, |s| {
+        s.start_row(crate::startmenu::StartRow::SwitchUser)
+    });
+    theirs.set_nonblocking(true).unwrap();
+    let mut heard = Vec::new();
+    let _ = std::io::Read::read_to_end(&mut theirs, &mut heard);
+    let hello = repriselogin::frame::encode(&repriselogin::session::SessionRequest::Hello {
+        interface: repriselogin::Interface::Classic,
+    })
+    .unwrap();
+    assert_eq!(heard, *hello, "only the link's Hello reached the daemon");
+}

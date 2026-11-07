@@ -105,7 +105,7 @@ pub fn offered(state: &State, side: Side) -> bool {
     side == Side::Console && connected(state)
 }
 
-/// Whether the desktop's Log Off offers Switch User: not to a remote viewer in lock mode.
+/// Whether the desktop offers Switch User (Log Off, Start's options): not to a lock-mode remote.
 pub fn desk_offers(state: &State) -> bool {
     connected(state) && !crate::console::remote_side(state)
 }
