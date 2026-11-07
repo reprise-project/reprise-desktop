@@ -288,6 +288,9 @@ pub struct State {
     /// A test's connectors, standing in for `backend` (`backend::fake`).
     #[cfg(test)]
     pub test_heads: Vec<smithay::output::Output>,
+    /// What `console::end_clients` asked the remote desktop server for.
+    #[cfg(test)]
+    pub ended_clients: Vec<crate::console::ClientsEnd>,
     /// `[wallpaper] image` and its per-output buffers; None for the
     /// background colour alone.
     pub wallpaper: Option<Wallpaper>,
@@ -693,6 +696,8 @@ impl State {
             backend: None,
             #[cfg(test)]
             test_heads: Vec::new(),
+            #[cfg(test)]
+            ended_clients: Vec::new(),
             // A slideshow picks its first picture once the loop runs.
             wallpaper: config
                 .wallpaper
