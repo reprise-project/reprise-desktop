@@ -249,7 +249,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_connection_with_buffered_ciphertext_is_not_handed_over() {
+    async fn a_connection_with_plaintext_left_unread_is_not_handed_over() {
         let tls = connector(&[&version::TLS13], None);
         let (_, prepared) = prepared(tls, b"0123456789").await;
         assert!(
@@ -257,6 +257,50 @@ mod tests {
             "{:?}",
             prepared.map(|(_, h)| h)
         );
+    }
+
+    #[test]
+    fn a_full_recording_with_its_tls_state_fits_one_ready_frame() {
+        let worst = |n: usize| Zeroizing::new(vec![0xFF; n]);
+        let steps = vec![
+            Step::Pdu {
+                input: worst(crate::limits::MAX_RECORDING / 2),
+                output: worst(crate::limits::MAX_RECORDING / 2),
+            },
+            Step::SecurityUpgradeDone,
+            Step::CredsspDone {
+                user: "u".repeat(crate::limits::MAX_USER),
+                domain: Some("d".repeat(255)),
+            },
+        ];
+        assert_eq!(accept::check_recording(&steps), Ok(()));
+        let keys = || DirectionKeys {
+            seq: u64::MAX,
+            key: worst(32),
+            iv: worst(12),
+            secret: Some(worst(48)),
+        };
+        let handover = HandOver {
+            conn: u64::MAX,
+            user: "u".repeat(crate::limits::MAX_USER),
+            peer: "[ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff]:65535"
+                .parse()
+                .unwrap(),
+            security: u32::MAX,
+            steps,
+            tls: TlsState {
+                version: TlsVersion::Tls13,
+                cipher: Cipher::Chacha20Poly1305,
+                tx: keys(),
+                rx: keys(),
+                record_limit: u64::MAX,
+            },
+        };
+        let ready = FrontRequest::Ready {
+            conn: u64::MAX,
+            handover: Box::new(handover),
+        };
+        assert!(repriselogin::frame::encode(&ready).is_ok());
     }
 
     #[tokio::test]
