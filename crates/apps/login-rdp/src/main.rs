@@ -148,6 +148,13 @@ fn write_public(path: &Path, text: &str) -> io::Result<()> {
     fs::rename(&tmp, path)
 }
 
+/// A random start for the conn ids, so a result reprise-login sent for an earlier front's conn
+/// never names one of this front's. `RandomState`'s keys come from the OS.
+fn first_conn() -> u64 {
+    use std::hash::{BuildHasher, RandomState};
+    RandomState::new().hash_one(std::process::id())
+}
+
 async fn serve(port: u16, ctx: Rc<Ctx>) -> ExitCode {
     let addr = SocketAddr::new(tcp::ALL, port);
     let listener = match tcp::bind(addr) {
@@ -166,7 +173,7 @@ async fn serve(port: u16, ctx: Rc<Ctx>) -> ExitCode {
     let limits = Rc::new(RefCell::new(Limits::new(MAX_PREAUTH, PREAUTH_PER_IP)));
     let front = PathBuf::from(FRONT_SOCKET);
     tokio::task::spawn_local(follow_link(ctx.clone(), conns.clone(), front));
-    let mut next_conn = 0;
+    let mut next_conn = first_conn();
     loop {
         let (tcp, peer) = match listener.accept().await {
             Ok(accepted) => accepted,
@@ -191,7 +198,7 @@ async fn serve(port: u16, ctx: Rc<Ctx>) -> ExitCode {
                 continue;
             }
         };
-        next_conn += 1;
+        next_conn = next_conn.wrapping_add(1);
         let conn = next_conn;
         let (tell, heard) = mpsc::unbounded_channel();
         let task = tokio::task::spawn_local(connection(
