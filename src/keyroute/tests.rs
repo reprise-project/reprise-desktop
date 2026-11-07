@@ -1796,3 +1796,34 @@ fn the_place_keysym_binds_only_when_the_layouts_own_is_unbound() {
         "tab-next takes no Shift"
     );
 }
+
+#[test]
+fn the_greeter_gives_keys_only_to_a_vt_switch_and_a_dialog() {
+    let g = Modes {
+        greeter: true,
+        can_switch_vt: true,
+        desktop_has_keyboard: true,
+        ..Modes::default()
+    };
+    for k in [
+        press(KEY_r, MOD_LOGO),
+        press(KEY_Super_L, 0),
+        release(KEY_Super_L),
+        press(KEY_XF86PowerOff, 0),
+        press(KEY_XF86AudioMute, 0),
+        press(KEY_Tab, MOD_ALT),
+    ] {
+        let routed = route(&g, &k, &binds(), &[]);
+        assert_eq!(routed.route, KeyRoute::Greeter, "{k:?}");
+        assert!(!routed.fire_super, "{k:?} never opens Start");
+    }
+    assert_eq!(r(&g, &press(KEY_XF86Switch_VT_2, 0)), KeyRoute::VtSwitch(2));
+    let dialog = Modes {
+        dialog_has_keyboard: true,
+        ..g.clone()
+    };
+    assert_eq!(r(&dialog, &press(KEY_Return, 0)), KeyRoute::Dialog);
+    assert_eq!(r(&dialog, &press(KEY_r, MOD_LOGO)), KeyRoute::Dialog);
+    assert!(chord_allowed(&g, &NEXT));
+    assert!(!chord_allowed(&g, &Action::Terminal));
+}

@@ -14,7 +14,7 @@ use reprisekit::classic::frame::{Edges, FrameHit};
 use reprisekit::fluid::Source;
 
 use crate::{
-    compositor::{SceneOwner, State},
+    compositor::{Host, SceneOwner, State},
     popups::Popup,
     taskbar::TaskbarHit,
 };
@@ -320,6 +320,10 @@ impl State {
     pub fn repoint(&mut self, pos: Point<f64, Logical>, time: InputTime) {
         self.pointers.hovered_at = Some(Instant::now());
         self.pointers.owed = None;
+        if self.host == Host::Greeter && self.dialogs.views.is_empty() {
+            crate::greeterview::motion(self, pos, time);
+            return;
+        }
         if self.desktop_locked() {
             crate::lockview::motion(self, pos, time);
             return;

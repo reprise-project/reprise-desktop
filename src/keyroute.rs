@@ -50,6 +50,8 @@ impl KeyPress {
 pub struct Modes {
     /// A session (a real seat, not a nested window) can switch VTs.
     pub can_switch_vt: bool,
+    /// The compositor shows reprise-login's login screen (`Host::Greeter`).
+    pub greeter: bool,
     pub locked: bool,
     /// An InputCapture client has the keyboard.
     pub captured: bool,
@@ -127,6 +129,8 @@ pub enum KeyRoute {
     VtSwitch(u32),
     /// Everything goes to the lock dialog.
     Lock,
+    /// Everything goes to the login screen (`greeterview`).
+    Greeter,
     /// Super+Shift+Escape under a capture: end it and keep the key.
     CaptureEscape,
     /// Forwarded raw to the InputCapture receiver.
@@ -244,6 +248,15 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
         arm_super: None,
         fire_super: false,
     };
+    // The login screen runs no binds and no machine keys: logind keeps the power
+    // and sleep buttons. Only a VT switch and an open dialog take keys from it.
+    if modes.greeter {
+        return plain(match vt_switch(modes, k) {
+            Some(n) => KeyRoute::VtSwitch(n),
+            None if modes.dialog_has_keyboard && k.pressed => KeyRoute::Dialog,
+            None => KeyRoute::Greeter,
+        });
+    }
     // The power and sleep buttons are the machine's, not the session's:
     // they work at the lock screen and under a capture, as logind's own
     // handling would have.
@@ -273,14 +286,8 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
     // VT switching always works, under the lock and a capture too: another
     // VT asks for its own login, and it is the way out of a lock whose
     // password cannot be checked.
-    if k.pressed
-        && modes.can_switch_vt
-        && let Some(sym) = k
-            .syms
-            .iter()
-            .find(|s| (KEY_XF86Switch_VT_1..=KEY_XF86Switch_VT_12).contains(s))
-    {
-        return plain(KeyRoute::VtSwitch(sym - KEY_XF86Switch_VT_1 + 1));
+    if let Some(n) = vt_switch(modes, k) {
+        return plain(KeyRoute::VtSwitch(n));
     }
     if modes.locked {
         return plain(KeyRoute::Lock);
@@ -938,10 +945,19 @@ pub fn chord_allowed(modes: &Modes, a: &Action) -> bool {
     !modes.captured
         && !modes.shortcuts_inhibited
         && !modes.dragging
-        && (!modes.locked || *a == Action::NextLayout)
+        && (!(modes.locked || modes.greeter) || *a == Action::NextLayout)
         && (!modes.dialog_has_keyboard
             || passes_dialog(a)
             || (modes.dialog_windowed && *a == Action::ShowDesktop))
+}
+
+/// The VT a press of `XF86Switch_VT_n` asks for, when the seat can switch.
+fn vt_switch(modes: &Modes, k: &KeyPress) -> Option<u32> {
+    let sym = k
+        .syms
+        .iter()
+        .find(|s| (KEY_XF86Switch_VT_1..=KEY_XF86Switch_VT_12).contains(s))?;
+    (k.pressed && modes.can_switch_vt).then(|| sym - KEY_XF86Switch_VT_1 + 1)
 }
 
 /// The built-in action of a media keysym; None for any other key.

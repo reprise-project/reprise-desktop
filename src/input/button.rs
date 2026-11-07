@@ -9,7 +9,7 @@ use reprisekit::fluid::Source;
 use reprisekit::pointer::{Click, DoubleClick};
 
 use crate::{
-    compositor::State,
+    compositor::{Host, State},
     keys,
     menuview::MenuRoot,
     popups::{Popup, PressAt},
@@ -152,6 +152,10 @@ impl State {
     }
 
     pub(crate) fn press(&mut self, button: u32, pos: Point<f64, Logical>, time: InputTime) {
+        if self.host == Host::Greeter && !matches!(self.scene_hit(pos), Hit::Dialog { .. }) {
+            crate::greeterview::button(self, button, pos);
+            return;
+        }
         if self.desktop_locked() {
             crate::lockview::desk_button(self, button, pos);
             return;
