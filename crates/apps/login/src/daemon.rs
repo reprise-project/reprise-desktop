@@ -389,8 +389,8 @@ impl Daemon {
     }
 
     /// Rebuilds the table from logind after a start, ends orphaned greeters and locks every
-    /// session but `seat_active`: an earlier daemon may have unlocked one and died. Every
-    /// session but `seat_active` counts as a background one.
+    /// session but `seat_active`: an earlier daemon may have unlocked one and died. A remote
+    /// login's session other than `seat_active` counts as a background one.
     pub fn recover(
         &mut self,
         _now: Instant,
@@ -401,10 +401,11 @@ impl Daemon {
         self.seat_empty = seat_active.is_none();
         for s in found {
             if s.seat == "seat0" && s.class == "user" && user_service(&s.service) {
-                let background = seat_active != Some(&s.id);
-                if background {
+                let off_seat = seat_active != Some(&s.id);
+                if off_seat {
                     out.push(Effect::LockSession(s.id.clone()));
                 }
+                let background = off_seat && remote_service(&s.service);
                 self.sessions.insert(SessionEntry {
                     id: s.id,
                     user: s.user,
@@ -1481,6 +1482,13 @@ fn refused(text: &str) -> Effect {
 /// Whether `service` is the PAM service of a user session reprise-login starts.
 fn user_service(service: &str) -> bool {
     [Mode::Login, Mode::Autologin, Mode::Remote, Mode::RemoteNla]
+        .iter()
+        .any(|m| m.service() == service)
+}
+
+/// Whether `service` is the PAM service of a remote login's session.
+fn remote_service(service: &str) -> bool {
+    [Mode::Remote, Mode::RemoteNla]
         .iter()
         .any(|m| m.service() == service)
 }
