@@ -389,7 +389,8 @@ suspend_after = 0            # run [power] standby
 # [remote_desktop]           # the Remote Desktop server; Settings > Remote Desktop
 #                            # also sets these and turns it on
 # port = 3389                # the TCP port it listens on, on every interface; a change
-#                            # moves it at once and ends every connected session
+#                            # moves it at once and ends every connected session. Unused
+#                            # under reprise-login, whose /etc/reprise/login.toml sets it
 # quality = "balanced"       # "speed", "balanced" or "sharp": sharper text costs bandwidth;
 #                            # "balanced" and "sharp" send full colour to a client that takes it
 # frame_rate = 60            # 30, 60, 120 or 144 frames a second at most, and never more
