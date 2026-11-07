@@ -306,6 +306,28 @@ fn an_account_refused_after_its_password_shows_pams_text() {
 }
 
 #[test]
+fn a_login_that_cannot_run_shows_a_fixed_text_and_not_the_daemons() {
+    for (kind, text) in [
+        (ErrorKind::Failed, "no free VT for a session"),
+        (ErrorKind::Refused, "another login is in progress"),
+    ] {
+        let (mut h, mut d) = logged_in();
+        d.says(
+            &mut h,
+            GreeterReply::Error {
+                kind,
+                text: text.into(),
+            },
+        );
+        assert_eq!(
+            model(&h).message.as_deref(),
+            Some(logon::text::failed().as_str()),
+            "{kind:?}"
+        );
+    }
+}
+
+#[test]
 fn replies_once_the_link_is_lost_change_nothing() {
     let (mut h, mut d) = logged_in();
     d.0.shutdown(std::net::Shutdown::Read).unwrap();
