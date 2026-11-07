@@ -184,6 +184,16 @@ fn quiet(effects: Vec<Effect>) -> Vec<Effect> {
         .collect()
 }
 
+fn disconnect_arm(id: &str, generation: u32, min: u32) -> Effect {
+    Effect::Arm {
+        timer: Timer::Disconnected {
+            id: id.into(),
+            generation,
+        },
+        after: Duration::from_secs(u64::from(min) * 60),
+    }
+}
+
 fn stored(user: &str, uid: u32, password: &str) -> StoredPassword {
     StoredPassword {
         user: user.into(),
@@ -217,18 +227,20 @@ impl Run {
         self.worker(w, authed(user, uid))
     }
 
-    /// Starts anna's background session `c2` on VT 7 for conn through worker `w`.
+    /// Starts anna's background session `c2` on VT 7 for conn through worker `w`. With
+    /// `end_disconnected_after` set, its first `Disconnected` timer is generation 1.
     fn anna_in_background(&mut self, conn: u64, w: u32) {
         let mut want = vec![front(FrontEvent::Verified { conn })];
         want.extend(background_start(w, 7));
         assert_eq!(self.verify(conn, w, "anna", ANNA), want);
-        assert_eq!(
-            self.worker(w, started("c2", ANNA)),
-            [
-                Effect::OpenIntake { uid: ANNA },
-                Effect::Inhibit(Inhibit::Idle)
-            ]
-        );
+        let mut want = vec![
+            Effect::OpenIntake { uid: ANNA },
+            Effect::Inhibit(Inhibit::Idle),
+        ];
+        if let Some(min) = self.d.config.remote.end_disconnected_after_min {
+            want.insert(0, disconnect_arm("c2", 1, min));
+        }
+        assert_eq!(self.worker(w, started("c2", ANNA)), want);
     }
 
     fn viewers(&mut self, uid: u32, count: u32) -> Vec<Effect> {
@@ -820,23 +832,20 @@ fn a_disconnected_background_session_ends_after_end_disconnected_after() {
         end_disconnected_after_min: Some(30),
         ..enabled()
     };
-    let disconnected = |generation| Timer::Disconnected {
-        id: "c2".into(),
+    let disconnected = |id: &str, generation| Timer::Disconnected {
+        id: id.into(),
         generation,
     };
-    let arm = |generation| Effect::Arm {
-        timer: disconnected(generation),
-        after: Duration::from_secs(30 * 60),
-    };
+    let arm = |generation| disconnect_arm("c2", generation, 30);
     let mut run = remote_run(remote.clone());
     run.anna_in_background(7, 2);
     run.viewers(ANNA, 1);
     assert_eq!(
         run.viewers(ANNA, 0),
-        [arm(1), Effect::Inhibit(Inhibit::Idle)]
+        [arm(2), Effect::Inhibit(Inhibit::Idle)]
     );
     assert_eq!(
-        quiet(run.fire(disconnected(1))),
+        quiet(run.fire(disconnected("c2", 2))),
         [Effect::TerminateSession("c2".into())]
     );
 
@@ -847,12 +856,45 @@ fn a_disconnected_background_session_ends_after_end_disconnected_after() {
     run.viewers(ANNA, 1);
     assert_eq!(
         run.viewers(ANNA, 0),
-        [arm(2), Effect::Inhibit(Inhibit::Idle)]
+        [arm(3), Effect::Inhibit(Inhibit::Idle)]
     );
-    assert_eq!(run.fire(disconnected(1)), [], "a stale generation");
+    assert_eq!(run.fire(disconnected("c2", 1)), [], "a stale generation");
+    assert_eq!(run.fire(disconnected("c2", 2)), [], "a stale generation");
     assert_eq!(
-        quiet(run.fire(disconnected(2))),
+        quiet(run.fire(disconnected("c2", 3))),
         [Effect::TerminateSession("c2".into())]
+    );
+
+    let mut run = remote_run(remote.clone());
+    run.anna_in_background(7, 2);
+    assert_eq!(
+        quiet(run.fire(disconnected("c2", 1))),
+        [Effect::TerminateSession("c2".into())],
+        "a session no client ever reached ends too"
+    );
+
+    let mut run = Run::machine(config(remote.clone()));
+    let found = vec![logind(
+        "c1",
+        "anna",
+        ANNA,
+        7,
+        "user",
+        "reprise-login-remote",
+    )];
+    assert_eq!(
+        run.d.recover(run.now, found, Some("g1")),
+        [
+            Effect::LockSession("c1".into()),
+            disconnect_arm("c1", 1, 30),
+            Effect::OpenIntake { uid: ANNA },
+            Effect::Inhibit(Inhibit::Idle),
+        ]
+    );
+    assert_eq!(
+        quiet(run.fire(disconnected("c1", 1))),
+        [Effect::TerminateSession("c1".into())],
+        "a recovered background session with no client ends"
     );
 
     let mut run = anna_recovered(remote, "c1", Mode::Login.service());
@@ -883,11 +925,13 @@ fn resuming_a_background_session_at_the_login_screen_makes_it_the_consoles() {
     let effects = run.on(Input::Unlocked { id: "c2".into() });
     assert_eq!(effects[0], Effect::SwitchTo(7));
     assert_eq!(effects.last(), Some(&Effect::Inhibit(Inhibit::Nothing)));
-    let disconnected = Timer::Disconnected {
-        id: "c2".into(),
-        generation: 1,
-    };
-    assert_eq!(run.fire(disconnected), []);
+    for generation in [1, 2] {
+        let disconnected = Timer::Disconnected {
+            id: "c2".into(),
+            generation,
+        };
+        assert_eq!(run.fire(disconnected), []);
+    }
 }
 
 #[test]
@@ -993,7 +1037,7 @@ fn a_lost_intake_link_zeroes_its_viewers_and_reopens_on_the_next_login() {
             Effect::Arm {
                 timer: Timer::Disconnected {
                     id: "c2".into(),
-                    generation: 1
+                    generation: 2
                 },
                 after: Duration::from_secs(30 * 60),
             },

@@ -518,13 +518,14 @@ impl Daemon {
                     out.push(Effect::TerminateSession(session_id));
                 } else {
                     self.sessions.insert(SessionEntry {
-                        id: session_id,
+                        id: session_id.clone(),
                         user: s.user,
                         uid,
                         vt: s.vt,
                         started: Some(now),
                         background: true,
                     });
+                    self.arm_disconnected(session_id, out);
                 }
                 self.ask_link(uid, out);
                 for conn in self.conns(Step::Starting { uid }) {
@@ -792,20 +793,23 @@ impl Daemon {
             self.remote.disconnects.remove(&e.id);
             return;
         }
+        if before.is_some() && e.background {
+            let id = e.id.clone();
+            self.arm_disconnected(id, out);
+        }
+    }
+
+    /// Arms background session `id`'s `Disconnected` timer with a new generation, which
+    /// stales any earlier one: when the session starts, is found or loses its last viewer.
+    pub(super) fn arm_disconnected(&mut self, id: String, out: &mut Vec<Effect>) {
         let Some(min) = self.config.remote.end_disconnected_after_min else {
             return;
         };
-        if before.is_none() || !e.background {
-            return;
-        }
         self.remote.generations += 1;
         let generation = self.remote.generations;
-        (self.remote.disconnects).insert(e.id.clone(), generation);
+        (self.remote.disconnects).insert(id.clone(), generation);
         out.push(Effect::Arm {
-            timer: Timer::Disconnected {
-                id: e.id.clone(),
-                generation,
-            },
+            timer: Timer::Disconnected { id, generation },
             after: Duration::from_secs(u64::from(min) * 60),
         });
     }
