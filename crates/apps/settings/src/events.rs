@@ -400,7 +400,10 @@ impl SettingsApp {
                 }
                 r
             }
-            Event::CloseRequest => self.display_close(&mut ctx.heads),
+            Event::CloseRequest => {
+                self.close_login();
+                self.display_close(&mut ctx.heads)
+            }
             Event::Blink => {
                 self.sheet.open_mut().blink(ctx.caret_on);
                 Reply::redraw()

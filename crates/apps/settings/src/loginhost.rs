@@ -41,6 +41,16 @@ pub(crate) struct Login {
     fingerprint: Option<String>,
 }
 
+/// A save under way and the settings it sent.
+pub(crate) struct Saving {
+    sent: MachineConfig,
+    rx: Receiver<Result<MachineConfig, String>>,
+    /// An OK, Cancel or close waits on it.
+    pub(crate) quit: bool,
+    /// Cancel or a close: the sheet closes when it ends, saved or not, and nothing follows it.
+    discard: bool,
+}
+
 const NOT_SAVED: &str = "The login manager's settings could not be saved.";
 
 /// Save `cfg` through `run`, which hands the TOML to the helper's stdin and returns how it
@@ -194,43 +204,72 @@ impl SettingsApp {
             self.login_run,
             self.login_files.config.clone(),
         );
-        self.login_job = Some(self.login_spawn(move || apply(&cfg, &run).map(|()| read(&path))));
+        let sent = cfg.clone();
+        let rx = self.login_spawn(move || apply(&cfg, &run).map(|()| read(&path)));
+        self.login_job = Some(Saving {
+            sent,
+            rx,
+            quit: false,
+            discard: false,
+        });
     }
 
+    /// Drop the page's unsaved changes; a save under way still lands.
     pub(crate) fn revert_login(&mut self) {
         if let Some(l) = &mut self.login {
-            l.want = l.loaded.clone();
+            l.want = match &mut self.login_job {
+                Some(s) => {
+                    s.discard = true;
+                    s.sent.clone()
+                }
+                None => l.loaded.clone(),
+            };
         }
         self.show_login();
     }
 
-    /// A save finished: show the file as it now reads, or why it was not saved. True when the
-    /// sheet closes, which an OK or a close waited on.
+    /// The sheet is closing without OK: a save under way ends it saved or not.
+    pub(crate) fn close_login(&mut self) {
+        if let Some(s) = &mut self.login_job {
+            s.discard = true;
+        }
+    }
+
+    /// A save finished: show the file as it now reads, or why it was not saved. Edits made
+    /// while it ran stay, and go in the next save. True when the sheet closes.
     pub(crate) fn login_done(&mut self) -> Option<bool> {
-        let rx = self.login_job.as_ref()?;
-        let done = match take(rx) {
+        let done = match take(&self.login_job.as_ref()?.rx) {
             Ok(None) => return None,
             Ok(Some(r)) => r,
             Err(()) => Err(NOT_SAVED.to_string()),
         };
-        self.login_job = None;
-        let quit = std::mem::take(&mut self.login_quit);
+        let s = self.login_job.take()?;
         let saved = match done {
             Ok(now) => {
                 if let Some(l) = &mut self.login {
-                    l.loaded = now.clone();
-                    l.want = now;
+                    if l.want == s.sent {
+                        l.want = now.clone();
+                    }
+                    l.loaded = now;
                 }
                 self.show_login();
                 true
             }
             Err(why) => {
-                self.fail(&why);
+                if !(s.quit && s.discard) {
+                    self.fail(&why);
+                }
                 false
             }
         };
+        if saved && !s.discard {
+            self.apply_login();
+            if let Some(next) = &mut self.login_job {
+                next.quit = s.quit;
+            }
+        }
         self.sync_apply();
-        Some(saved && quit)
+        Some(s.quit && self.login_job.is_none() && (saved || s.discard))
     }
 
     /// Run `job` off the loop; tests run it at once.

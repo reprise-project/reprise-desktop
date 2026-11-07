@@ -235,6 +235,142 @@ fn apply_sends_the_edited_machine_settings_to_the_helper() {
     assert!(!a.dirty(), "a save leaves nothing to apply");
 }
 
+fn helper_dismissed(toml: &str) -> io::Result<Output> {
+    SENT.with(|s| s.borrow_mut().push(toml.into()));
+    Ok(exited(126, ""))
+}
+
+fn sent_interfaces() -> Vec<Option<Interface>> {
+    SENT.with(|s| s.borrow().clone())
+        .iter()
+        .map(|t| MachineConfig::parse(t).0.login.interface)
+        .collect()
+}
+
+/// The app on `tag`'s files with the page open, `run` as the helper and nothing sent yet.
+fn saving_app(tag: &str, run: fn(&str) -> io::Result<Output>) -> SettingsApp {
+    let mut a = app(&tmp(tag));
+    a.login_run = run;
+    open_login(&mut a);
+    SENT.with(|s| s.borrow_mut().clear());
+    a
+}
+
+/// An event that carries out a pending OK or Cancel press, as the next one in the loop does.
+fn settle(a: &mut SettingsApp, ctx: &mut Ctx) -> Reply {
+    a.event(repriseapp::MAIN, Event::Blink, ctx)
+}
+
+/// Apply with Glass picked; tests run the save at once, and its end is read on the next wake.
+fn apply_glass(a: &mut SettingsApp) {
+    pick(a, "login_interface", 2);
+    a.sheet_event(propsheet::Event::Apply);
+    assert!(a.login_job.is_some(), "the save is under way");
+}
+
+#[test]
+fn an_edit_made_during_a_save_stays_and_is_sent_after_it() {
+    let mut a = saving_app("edit-during", helper_saves);
+    apply_glass(&mut a);
+    pick(&mut a, "login_interface", 0);
+    a.wake();
+    assert_eq!(combo_text(login(&a), "login_interface"), "Classic");
+    assert_eq!(
+        sent_interfaces(),
+        [Some(Interface::Glass), Some(Interface::Classic)],
+        "the edit goes in a second save"
+    );
+    a.wake();
+    assert!(a.login_job.is_none(), "no third save");
+    assert_eq!(SENT.with(|s| s.borrow().len()), 2);
+}
+
+#[test]
+fn ok_during_a_save_closes_once_the_edits_after_it_are_saved() {
+    let mut a = saving_app("ok-during", helper_saves);
+    let mut ctx = crate::tests::test_ctx();
+    apply_glass(&mut a);
+    pick(&mut a, "login_interface", 1);
+    a.sheet_event(propsheet::Event::Ok);
+    assert!(!settle(&mut a, &mut ctx).quit, "OK waits for the save");
+    assert!(!a.wake().quit, "an edit is left to save");
+    assert!(a.wake().quit, "nothing left: the sheet closes");
+    assert_eq!(
+        sent_interfaces(),
+        [Some(Interface::Glass), Some(Interface::Blue)]
+    );
+}
+
+#[test]
+fn ok_during_a_failed_save_keeps_the_sheet_open_with_why() {
+    let mut a = saving_app("ok-fails", helper_dismissed);
+    let mut ctx = crate::tests::test_ctx();
+    apply_glass(&mut a);
+    a.sheet_event(propsheet::Event::Ok);
+    assert!(!settle(&mut a, &mut ctx).quit);
+    assert!(!a.wake().quit, "the sheet stays open");
+    let text = a.error.as_ref().map(|b| b.fields.text.clone());
+    assert_eq!(text.as_deref(), Some("The change was not authorized."));
+    assert!(a.dirty(), "the change stays to apply");
+    assert!(!a.wake().quit, "the close it waited on is spent");
+}
+
+#[test]
+fn cancel_or_a_close_during_a_save_closes_when_it_ends_saved_or_not() {
+    let runs = [
+        ("saved", helper_saves as fn(&str) -> io::Result<Output>),
+        ("dismissed", helper_dismissed),
+    ];
+    for ((tag, run), cancel) in runs.into_iter().flat_map(|r| [(r, true), (r, false)]) {
+        let mut a = saving_app(tag, run);
+        let mut ctx = crate::tests::test_ctx();
+        apply_glass(&mut a);
+        pick(&mut a, "login_interface", 1);
+        let r = if cancel {
+            a.sheet_event(propsheet::Event::Cancel);
+            assert_eq!(
+                combo_text(login(&a), "login_interface"),
+                "Glass",
+                "{tag}: Cancel drops the edit, not the save"
+            );
+            settle(&mut a, &mut ctx)
+        } else {
+            a.event(repriseapp::MAIN, Event::CloseRequest, &mut ctx)
+        };
+        assert!(
+            !r.quit,
+            "{tag}, cancel {cancel}: the close waits for the save"
+        );
+        assert!(a.wake().quit, "{tag}, cancel {cancel}: the sheet closes");
+        assert!(
+            a.error.is_none(),
+            "{tag}, cancel {cancel}: no box over a closing sheet"
+        );
+        assert_eq!(
+            sent_interfaces(),
+            [Some(Interface::Glass)],
+            "{tag}: one save"
+        );
+    }
+}
+
+#[test]
+fn a_close_after_a_save_remembers_the_window() {
+    let dir = tmp("close-geometry");
+    let mut a = app(&dir);
+    a.login_run = helper_saves;
+    open_login(&mut a);
+    let state = dir.join("settings.toml");
+    a.state_path = Some(state.clone());
+    let mut ctx = crate::tests::test_ctx();
+    apply_glass(&mut a);
+    a.window_dirty = true;
+    a.sheet_event(propsheet::Event::Ok);
+    assert!(!settle(&mut a, &mut ctx).quit);
+    assert!(a.wake().quit);
+    assert!(state.exists(), "the window's place is saved");
+}
+
 #[test]
 fn a_refused_helper_shows_its_reasons() {
     let dir = tmp("refused");
