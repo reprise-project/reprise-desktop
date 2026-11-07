@@ -70,6 +70,8 @@ fn worker(mode: &str) -> i32 {
         ),
         _ => reprisebus::journal::init_logger(reprisebus::journal::PROGRAM_FILTER),
     }
+    // Its stderr is /dev/null, so a panic reaches the daemon only through the log.
+    reprisebus::journal::log_panics();
     let Some(mode) = Mode::parse(mode) else {
         log::error!("unknown worker mode {mode:?}");
         return 2;
