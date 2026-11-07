@@ -831,8 +831,9 @@ no port forwarding; allow the port in your firewall if you run one.
   lock key, and their Unlock dialog checks the password as a login does
   ([security.md](security.md#lock-mode)). Unlocking at this computer, by
   password, fingerprint or `loginctl unlock-session`, ends lock mode: every
-  client is disconnected and the windows come back here. When the last
-  client leaves, the session stays locked here.
+  client is disconnected, told another connection took over so it doesn't
+  reconnect, and the windows come back here. When the last client leaves,
+  the session stays locked here.
 - **While a client is connected,** with Stays on (`laptop_screen =
   "show"`), this screen keeps showing the session and its own keyboard and
   mouse keep working. The screen saver and the idle lock keep their

@@ -133,8 +133,12 @@
       that object's later layouts resize them; once it is destroyed, no
       layout applies until the last object goes. A later object's first
       set_layout hears the screens that exist. Lock mode lasts until the
-      last object is destroyed, or until a locker client takes the lock,
-      which sends every object ended(replaced). The lock stays either way.
+      last object is destroyed, until a locker client takes the lock,
+      which sends every object ended(replaced), or until the session is
+      unlocked at the computer, which sends every object
+      ended(console_unlocked). Either ended first disconnects every EIS
+      sender and revokes every reprise_keys_v1 object. The lock stays
+      after all but the console unlock.
     </description>
 
     <enum name="reason">
