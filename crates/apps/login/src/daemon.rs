@@ -117,6 +117,8 @@ pub enum Input {
     },
     /// The console moved to the login screen's VT.
     ConsoleOnGreeterVt,
+    /// The console moved to VT `.0`, not the login screen's.
+    ConsoleOnVt(u16),
     PowerDone(Result<(), String>),
     Timer(Timer),
     FrontLinked,
@@ -526,6 +528,7 @@ impl Daemon {
             }
             Input::SwitchFailed { vt } => self.switch_failed(vt, &mut out),
             Input::ConsoleOnGreeterVt => self.console_on_greeter_vt(&mut out),
+            Input::ConsoleOnVt(vt) => self.console_on_vt(vt, &mut out),
             Input::Timer(Timer::UnlockAck(generation)) => {
                 let current = matches!(&self.conversation, Some(Conversation {
                     phase: Phase::Unlocking { generation: g },
@@ -1279,7 +1282,7 @@ impl Daemon {
         if entry.started.is_none() {
             out.push(Effect::Disallocate(entry.vt));
         }
-        if seat_active.is_none() && !entry.background {
+        if seat_active.is_none() {
             if entry
                 .started
                 .is_some_and(|t| now.duration_since(t) < EARLY_END)
