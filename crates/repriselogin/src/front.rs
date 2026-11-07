@@ -10,6 +10,8 @@ use crate::handover::HandOver;
 
 pub const FRONT_SOCKET: &str = "/run/reprise-login/front.sock";
 pub const FRONT_USER: &str = "reprise-login-rdp";
+/// The front's certificate fingerprint while it runs, in its runtime directory.
+pub const FINGERPRINT: &str = "/run/reprise-login-rdp/fingerprint";
 
 /// `Password` came in the Client Info PDU over TLS; `Delegated` is the password CredSSP
 /// delegated after Network Level Authentication.

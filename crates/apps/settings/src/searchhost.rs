@@ -37,8 +37,8 @@ fn without(filter: Option<Filter>, absent: &[Page]) -> Option<Filter> {
 }
 
 impl SettingsApp {
-    /// Filter the page list by `query`, the pages this machine lacks left out. New rows bring the open page's row into view; a query
-    /// showing the rows already shown leaves the list where it is scrolled.
+    /// Filter the page list by `query`, leaving out the pages this machine lacks. New rows bring
+    /// the open page's row into view; the same rows again leave the list where it is scrolled.
     pub(crate) fn search(&mut self, query: &str) -> Reply {
         let found = find(query);
         let filter = without(found.as_ref().map(|(f, _)| f.clone()), &self.absent);

@@ -3,6 +3,7 @@
 
 use crate::registry::{self, Page};
 use crate::{SettingsApp, pages, take};
+use repriselogin::front::FINGERPRINT;
 use repriselogin::machine::{MACHINE_CONFIG, MachineConfig};
 use repriselogin::users::Source;
 use std::io::{self, Write};
@@ -13,8 +14,6 @@ use std::sync::mpsc::Receiver;
 /// The helper that replaces `MACHINE_CONFIG` with the TOML on its stdin, as root.
 const HELPER: &str = "/usr/lib/reprise/reprise-login-settings";
 const PKEXEC: &str = "/usr/bin/pkexec";
-/// The Remote Desktop front's certificate fingerprint, while it runs.
-const FINGERPRINT: &str = "/run/reprise-login-rdp/fingerprint";
 
 /// The files the page reads.
 #[derive(Clone, Debug)]
@@ -235,8 +234,8 @@ impl SettingsApp {
         }
     }
 
-    /// A save finished: show the file as it now reads, or why it was not saved. Edits made
-    /// while it ran stay, and go in the next save. True when the sheet closes.
+    /// A save ended: show the file and the front's fingerprint as they now read, or why it
+    /// failed. Edits made while it ran stay for the next save. True when the sheet closes.
     pub(crate) fn login_done(&mut self) -> Option<bool> {
         let done = match take(&self.login_job.as_ref()?.rx) {
             Ok(None) => return None,
@@ -251,6 +250,7 @@ impl SettingsApp {
                         l.want = now.clone();
                     }
                     l.loaded = now;
+                    l.fingerprint = fingerprint(&self.login_files.fingerprint);
                 }
                 self.show_login();
                 true

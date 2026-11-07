@@ -127,7 +127,7 @@ pub fn rank_settings(
     found.into_iter().map(|(_, s)| s).take(max).collect()
 }
 
-/// [`Page::installed`]; under test every page is but the Login Manager, whatever the host has.
+/// [`Page::installed`]; under test the Login Manager is never installed, whatever the host has.
 fn page_installed(p: Page) -> bool {
     match cfg!(test) {
         true => p != Page::LoginManager,
