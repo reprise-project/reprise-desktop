@@ -84,6 +84,12 @@ pub enum Typed {
     PowerKey,
 }
 
+fn user_note(note: Note) -> UserNote {
+    match note {
+        Note::LoggedOn | Note::Remote => UserNote::LoggedOn,
+    }
+}
+
 /// Starts the login screen from reprise-login's `greeting`.
 pub fn setup(state: &mut State, g: Greeting) {
     let users = (g.users.iter())
@@ -91,7 +97,7 @@ pub fn setup(state: &mut State, g: Greeting) {
             name: u.name.clone(),
             real_name: u.real_name.clone(),
             picture: (u.picture.as_deref()).and_then(crate::startpanelview::picture::load_picture),
-            note: u.note.map(|Note::LoggedOn| UserNote::LoggedOn),
+            note: u.note.map(user_note),
         })
         .collect();
     let interface = crate::greeter::interface(g.interface);
@@ -140,7 +146,7 @@ fn regreet(g: &mut Greeter, fresh: &Greeting) {
             .iter()
             .find(|f| f.name == u.name)
             .and_then(|f| f.note);
-        u.note = note.map(|Note::LoggedOn| UserNote::LoggedOn);
+        u.note = note.map(user_note);
     }
     if fresh.notice == Some(Notice::SessionEndedEarly) {
         g.model.info(logon::text::session_ended_early());

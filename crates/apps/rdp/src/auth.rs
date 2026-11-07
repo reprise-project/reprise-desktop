@@ -5,7 +5,7 @@ use crate::intake::Admission;
 use ironrdp_server::{
     CredentialDecision, CredentialValidationError, CredentialValidator, Credentials,
 };
-use std::collections::{HashMap, VecDeque};
+use repriselogin::throttle::{self, Attempt, Pause};
 use std::io::{self, BufRead, BufReader, Write};
 use std::net::{IpAddr, SocketAddr};
 use std::os::unix::process::CommandExt;
@@ -41,107 +41,45 @@ pub const HANDSHAKE: Duration = Duration::from_secs(10);
 /// How long the helper has to give its verdict before it is killed and the check fails.
 const HELPER_LIMIT: Duration = Duration::from_secs(30);
 
-const FREE_FAILURES: u32 = 3;
-const MAX_WAIT: Duration = Duration::from_secs(60);
-/// How long after its last failure an address is forgotten.
-const FORGET: Duration = Duration::from_secs(1200);
-/// `PAUSE_AFTER` failures from any addresses within `PAUSE_WINDOW` pause every login for `PAUSE`.
-const PAUSE_AFTER: usize = 10;
-const PAUSE_WINDOW: Duration = Duration::from_secs(600);
-const PAUSE: Duration = Duration::from_secs(600);
-
-/// Failed logins: from the fourth an address is refused for a back-off, doubling up to `MAX_WAIT`,
-/// until a success or `FORGET` without a failure.
-/// A login counts as failed from the start of its check, so a check cut short still counts.
+/// [`throttle::Throttle`] on tokio's clock, so tests with paused time move it.
 #[derive(Default)]
-pub struct Throttle {
-    peers: HashMap<IpAddr, Failures>,
-    /// Failures from every address, oldest first, dropped once older than `PAUSE_WINDOW + PAUSE`.
-    recent: VecDeque<Instant>,
-    /// The end of the pause last logged.
-    announced: Option<Instant>,
-}
-
-/// One counted login, handed back to [`Throttle::succeeded`].
-pub struct Attempt(Instant);
-
-struct Failures {
-    count: u32,
-    until: Instant,
-}
+pub struct Throttle(throttle::Throttle);
 
 impl Throttle {
-    /// How long `peer` is still refused before its next login is checked.
     pub fn delay(&self, peer: IpAddr) -> Duration {
-        self.peers.get(&peer).map_or(Duration::ZERO, |f| {
-            f.until.saturating_duration_since(Instant::now())
-        })
+        self.0.delay(peer, now())
     }
 
     pub fn failed(&mut self, peer: IpAddr) -> Attempt {
-        let now = Instant::now();
-        self.peers
-            .retain(|_, f| now.duration_since(f.until - wait_after(f.count)) < FORGET);
-        let f = self.peers.entry(peer).or_insert(Failures {
-            count: 0,
-            until: now,
-        });
-        f.count += 1;
-        f.until = now + wait_after(f.count);
-        while self
-            .recent
-            .front()
-            .is_some_and(|&t| now.duration_since(t) >= PAUSE_WINDOW + PAUSE)
-        {
-            self.recent.pop_front();
-        }
-        self.recent.push_back(now);
-        Attempt(now)
+        self.0.failed(peer, now())
     }
 
-    /// Takes back `attempt`'s failure and forgets `peer`'s; the failures of other logins stay.
     pub fn succeeded(&mut self, peer: IpAddr, attempt: Attempt) {
-        self.peers.remove(&peer);
-        if let Some(i) = self.recent.iter().rposition(|&t| t == attempt.0) {
-            self.recent.remove(i);
-        }
+        self.0.succeeded(peer, attempt, now())
     }
 
     /// Whether every login is paused. Logs the start of each pause once.
     pub fn paused(&mut self) -> bool {
-        let Some(until) = self.pause_end() else {
-            return false;
-        };
-        if Instant::now() >= until {
-            return false;
+        match self.0.paused(now()) {
+            Pause::Off => false,
+            Pause::Started => {
+                log::warn!(
+                    "Remote Desktop logins are paused for 10 minutes after repeated failures"
+                );
+                true
+            }
+            Pause::Running => true,
         }
-        if self.announced != Some(until) {
-            self.announced = Some(until);
-            log::warn!("Remote Desktop logins are paused for 10 minutes after repeated failures");
-        }
-        true
-    }
-
-    /// The end of the pause started by the latest failures. No login is checked during a pause,
-    /// so only the latest `PAUSE_AFTER` can have started the one still running.
-    fn pause_end(&self) -> Option<Instant> {
-        let n = self.recent.len();
-        let first = *self.recent.get(n.checked_sub(PAUSE_AFTER)?)?;
-        let last = *self.recent.back()?;
-        (last.duration_since(first) < PAUSE_WINDOW).then_some(last + PAUSE)
     }
 
     #[cfg(test)]
     pub fn failures(&self, peer: IpAddr) -> u32 {
-        self.peers.get(&peer).map_or(0, |f| f.count)
+        self.0.failures(peer)
     }
 }
 
-fn wait_after(failures: u32) -> Duration {
-    match failures.checked_sub(FREE_FAILURES) {
-        None | Some(0) => Duration::ZERO,
-        Some(n) => Duration::from_secs(1u64 << n.min(6)).min(MAX_WAIT),
-    }
+fn now() -> std::time::Instant {
+    Instant::now().into_std()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -466,6 +404,7 @@ impl CredentialValidator for PasswordCheck {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use repriselogin::throttle::{FREE_FAILURES, PAUSE, PAUSE_AFTER};
 
     #[test]
     fn the_helper_is_the_reprise_beside_the_server() {
@@ -486,77 +425,10 @@ pub(crate) mod tests {
     use std::os::unix::fs::PermissionsExt;
 
     const A: IpAddr = IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1));
-    const B: IpAddr = IpAddr::V4(Ipv4Addr::new(192, 0, 2, 2));
 
     /// Serialises writing a helper script with spawning one: a fork while another script is still
     /// open for writing makes its exec fail with ETXTBSY.
     pub(crate) static SCRIPTS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
-    #[tokio::test(start_paused = true)]
-    async fn the_throttle_waits_from_the_fourth_failure() {
-        let mut t = Throttle::default();
-        let mut waits = Vec::new();
-        for _ in 0..10 {
-            t.failed(A);
-            waits.push(t.delay(A).as_secs());
-        }
-        assert_eq!(waits, [0, 0, 0, 2, 4, 8, 16, 32, 60, 60]);
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn success_resets_the_address() {
-        let mut t = Throttle::default();
-        for _ in 0..4 {
-            t.failed(A);
-        }
-        let attempt = t.failed(A);
-        t.succeeded(A, attempt);
-        assert_eq!(t.delay(A), Duration::ZERO);
-        for _ in 0..3 {
-            t.failed(A);
-        }
-        assert_eq!(
-            t.delay(A),
-            Duration::ZERO,
-            "the count starts again after a success"
-        );
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn addresses_are_throttled_apart() {
-        let mut t = Throttle::default();
-        for _ in 0..5 {
-            t.failed(A);
-        }
-        t.failed(B);
-        assert_eq!(t.delay(A), Duration::from_secs(4));
-        assert_eq!(t.delay(B), Duration::ZERO);
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn an_address_is_forgotten_20_minutes_after_its_last_failure() {
-        let mut t = Throttle::default();
-        for _ in 0..5 {
-            t.failed(A);
-        }
-        tokio::time::advance(FORGET - Duration::from_secs(1)).await;
-        t.failed(B);
-        assert_eq!(t.failures(A), 5, "a failure 1 s short of FORGET is kept");
-        tokio::time::advance(Duration::from_secs(1)).await;
-        t.failed(B);
-        assert_eq!(t.failures(A), 0);
-        assert_eq!(t.failures(B), 2);
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn the_wait_runs_down() {
-        let mut t = Throttle::default();
-        for _ in 0..4 {
-            t.failed(A);
-        }
-        tokio::time::advance(Duration::from_millis(1500)).await;
-        assert_eq!(t.delay(A), Duration::from_millis(500));
-    }
 
     #[test]
     fn the_helper_lines_give_the_verdict() {

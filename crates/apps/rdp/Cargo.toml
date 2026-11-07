@@ -53,6 +53,7 @@ drm = "0.15"
 wayland-client.workspace = true
 wayland-protocols = { version = "0.32", features = ["client", "staging"] }
 reprisefs = { path = "../../reprisefs" }
+repriselogin = { path = "../../repriselogin" }
 image.workspace = true
 
 [dev-dependencies]

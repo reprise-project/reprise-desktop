@@ -24,6 +24,10 @@ pub enum GreeterRequest {
     Power {
         action: PowerAction,
     },
+    PowerAs {
+        action: PowerAction,
+        user: String,
+    },
 }
 
 impl fmt::Debug for GreeterRequest {
@@ -47,6 +51,11 @@ impl fmt::Debug for GreeterRequest {
             GreeterRequest::Power { action } => {
                 f.debug_struct("Power").field("action", action).finish()
             }
+            GreeterRequest::PowerAs { action, user } => f
+                .debug_struct("PowerAs")
+                .field("action", action)
+                .field("user", user)
+                .finish(),
         }
     }
 }
@@ -64,6 +73,10 @@ pub enum GreeterReply {
     Error {
         kind: ErrorKind,
         text: String,
+    },
+    /// Others are logged on, so `action` waits for an administrator's password.
+    AdminNeeded {
+        action: PowerAction,
     },
 }
 
@@ -89,6 +102,8 @@ pub struct UserEntry {
 #[serde(rename_all = "snake_case")]
 pub enum Note {
     LoggedOn,
+    /// Logged on from another computer.
+    Remote,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -173,6 +188,20 @@ mod tests {
             }),
             r#"{"type":"error","kind":"account","text":"User account has expired"}"#
         );
+        assert_eq!(
+            body(&GreeterReply::AdminNeeded {
+                action: PowerAction::PowerOff
+            }),
+            r#"{"type":"admin_needed","action":"power_off"}"#
+        );
+        assert_eq!(
+            body(&GreeterRequest::PowerAs {
+                action: PowerAction::Reboot,
+                user: "anna".into()
+            }),
+            r#"{"type":"power_as","action":"reboot","user":"anna"}"#
+        );
+        assert_eq!(serde_json::to_string(&Note::Remote).unwrap(), r#""remote""#);
     }
 
     #[test]
@@ -210,6 +239,16 @@ mod tests {
                 }
             ),
             r#"CreateSession { user: "anna" }"#
+        );
+        assert_eq!(
+            format!(
+                "{:?}",
+                GreeterRequest::PowerAs {
+                    action: PowerAction::Reboot,
+                    user: "anna".into()
+                }
+            ),
+            r#"PowerAs { action: Reboot, user: "anna" }"#
         );
     }
 }
