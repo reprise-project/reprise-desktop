@@ -89,6 +89,10 @@ impl Flag {
     async fn wait(&self) {
         let _ = self.0.subscribe().wait_for(|set| *set).await;
     }
+
+    fn is_set(&self) -> bool {
+        *self.0.borrow()
+    }
 }
 
 const SCREEN_GONE: u8 = 1;
@@ -105,6 +109,11 @@ impl Ending {
     /// The clipboard bridge of this connection, stopped as lock mode's screens go.
     pub fn clipboard(&self) -> Cut {
         self.0.clipboard.clone()
+    }
+
+    /// Whether a lock-mode grant's screens all went; their streams' receivers close after this.
+    pub(crate) fn is_gone(&self) -> bool {
+        self.0.gone.is_set()
     }
 
     /// Until [`run`] leaves the end of a lock-mode grant whose screens went to the display.
@@ -379,8 +388,12 @@ async fn run<L: Leave + 'static, C: Login>(
         () = ending.0.gone.wait() => {
             let tell = |why| drop(told.disconnect(why));
             let ended = lock_mode_gone(connection.as_mut(), &ending, &shared.leave, tell).await;
-            if ended.is_none() {
-                log::info!("{peer}: disconnected; the console was unlocked");
+            match ended {
+                Some(_) => {}
+                None if ending.0.released.is_set() => {
+                    log::info!("{peer}: dropped; lock mode's display did not end it in time");
+                }
+                None => log::info!("{peer}: disconnected; the console was unlocked"),
             }
             ended
         }
@@ -443,8 +456,8 @@ fn told_for(kick: Kick) -> ErrorInfo {
     ErrorInfo::ProtocolIndependentCode(code)
 }
 
-/// Ends a connection whose lock-mode grant's screens all went, its clipboard bridge stopped
-/// first: told [`TOOK_OVER`] if `leave` finds the console unlocked, else ended by its display.
+/// Ends a connection whose lock-mode grant's screens all went, its clipboard cut first: told
+/// [`TOOK_OVER`] if `leave` finds the console unlocked, else ended by its display within [`TOLD`].
 async fn lock_mode_gone<F: Future>(
     connection: Pin<&mut F>,
     ending: &Ending,
@@ -457,7 +470,7 @@ async fn lock_mode_gone<F: Future>(
         return None;
     }
     ending.release();
-    Some(connection.await)
+    tokio::time::timeout(TOLD, connection).await.ok()
 }
 
 /// What a client is told when this computer's own screen was unlocked, so it does not
@@ -1674,6 +1687,17 @@ pub(crate) mod tests {
         assert_eq!(told.get(), None, "the client reconnects to the new screens");
         assert!(ended.is_some(), "the display ends the connection");
         assert_eq!(console.cut_when_asked.get(), Some(true));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_lock_mode_connection_its_display_does_not_end_is_dropped_after_2_s() {
+        let (ending, console) = lock_mode_screens_gone(false).await;
+        let started = tokio::time::Instant::now();
+        let connection = std::pin::pin!(std::future::pending::<()>());
+        let ended = lock_mode_gone(connection, &ending, &console, drop);
+        let ended = tokio::time::timeout(TOLD * 2, ended).await;
+        assert!(ended.expect("dropped, not held").is_none());
+        assert_eq!(started.elapsed(), TOLD);
     }
 
     #[tokio::test(start_paused = true)]
