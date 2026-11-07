@@ -24,6 +24,7 @@ fn world() -> World {
             ..Keyboard::default()
         },
         kernel_open: 0,
+        user_sessions: 0,
     }
 }
 
@@ -97,6 +98,36 @@ fn create(user: &str) -> GreeterRequest {
     GreeterRequest::CreateSession { user: user.into() }
 }
 
+fn authed(user: &str, uid: u32) -> FromWorker {
+    FromWorker::Authenticated {
+        user: user.into(),
+        uid,
+    }
+}
+
+fn start_on(w: u32, vt: u16) -> Vec<Effect> {
+    vec![
+        Effect::ToWorker {
+            worker: WorkerId(w),
+            msg: ToWorker::Start { vt },
+        },
+        Effect::Arm {
+            timer: Timer::Start(WorkerId(w)),
+            after: START_WAIT,
+        },
+    ]
+}
+
+fn unlock(id: &str, generation: u32) -> Vec<Effect> {
+    vec![
+        Effect::UnlockSession(id.into()),
+        Effect::Arm {
+            timer: Timer::UnlockAck(generation),
+            after: UNLOCK_WAIT,
+        },
+    ]
+}
+
 fn started(id: &str, uid: u32) -> FromWorker {
     FromWorker::Started {
         session_id: id.into(),
@@ -158,11 +189,8 @@ impl Run {
         self.on(Input::Worker(WorkerId(w), msg))
     }
 
-    fn exited(&mut self, w: u32, clean: bool) -> Vec<Effect> {
-        self.on(Input::WorkerExited {
-            worker: WorkerId(w),
-            clean,
-        })
+    fn exited(&mut self, w: u32) -> Vec<Effect> {
+        self.on(Input::WorkerExited(WorkerId(w)))
     }
 
     fn session(&mut self, id: &str, request: SessionRequest) -> Vec<Effect> {
@@ -190,16 +218,10 @@ impl Run {
     fn log_in(&mut self, w: u32, user: &str, uid: u32, id: &str, vt: u16) {
         assert_eq!(self.greeter(create(user)), spawn(w, Mode::Login, user));
         assert_eq!(
-            self.worker(w, FromWorker::Authenticated),
+            self.worker(w, authed(user, uid)),
             reply(GreeterReply::Success)
         );
-        assert_eq!(
-            self.greeter(GreeterRequest::StartSession),
-            vec![Effect::ToWorker {
-                worker: WorkerId(w),
-                msg: ToWorker::Start { vt },
-            }]
-        );
+        assert_eq!(self.greeter(GreeterRequest::StartSession), start_on(w, vt));
         let effects = self.worker(w, started(id, uid));
         assert_eq!(
             effects[0],
@@ -237,6 +259,10 @@ fn boot_with_autologin_starts_that_user_on_vt_7_without_a_greeter() {
             Effect::ToWorker {
                 worker: WorkerId(1),
                 msg: ToWorker::Start { vt: 7 },
+            },
+            Effect::Arm {
+                timer: Timer::Start(WorkerId(1)),
+                after: START_WAIT,
             },
         ]
     );
@@ -349,16 +375,10 @@ fn a_login_for_a_new_user_starts_a_session_on_the_lowest_free_vt() {
         }]
     );
     assert_eq!(
-        run.worker(2, FromWorker::Authenticated),
+        run.worker(2, authed("anna", 1000)),
         reply(GreeterReply::Success)
     );
-    assert_eq!(
-        run.greeter(GreeterRequest::StartSession),
-        vec![Effect::ToWorker {
-            worker: WorkerId(2),
-            msg: ToWorker::Start { vt: 7 },
-        }]
-    );
+    assert_eq!(run.greeter(GreeterRequest::StartSession), start_on(2, 7));
     assert_eq!(
         run.worker(2, started("c2", 1000)),
         vec![
@@ -370,7 +390,7 @@ fn a_login_for_a_new_user_starts_a_session_on_the_lowest_free_vt() {
         ]
     );
     assert_eq!(
-        run.exited(1, false),
+        run.exited(1),
         vec![],
         "the leaving greeter is not respawned"
     );
@@ -379,49 +399,106 @@ fn a_login_for_a_new_user_starts_a_session_on_the_lowest_free_vt() {
         run.session("c2", SessionRequest::SwitchUser),
         greeter_spawn(3)
     );
-    assert_eq!(run.exited(3, false), greeter_spawn(4));
+    assert_eq!(run.exited(3), greeter_spawn(4));
     assert_eq!(
-        run.exited(4, false),
+        run.exited(4),
         greeter_spawn(5),
         "the leaving greeter's exit counted no failure"
     );
 }
 
 #[test]
-fn a_login_whose_account_has_a_session_resumes_that_one() {
+fn a_login_whose_account_has_a_session_resumes_it_without_starting_one() {
     let mut run = Run::new(LoginConfig::default(), Remembered::default());
     run.recover(vec![anna_on_7()]);
     assert_eq!(
         run.session("c1", SessionRequest::SwitchUser),
         greeter_spawn(1)
     );
-    run.greeter(create("Anna"));
-    run.worker(2, FromWorker::Authenticated);
-    run.greeter(GreeterRequest::StartSession);
+    assert_eq!(run.greeter(create("Anna")), spawn(2, Mode::Login, "Anna"));
+    assert_eq!(
+        run.worker(2, authed("anna", 1000)),
+        vec![
+            Effect::Kill(WorkerId(2)),
+            Effect::Reply(GreeterReply::Success)
+        ],
+        "uid 1000 already has session c1"
+    );
+    assert_eq!(run.greeter(GreeterRequest::StartSession), unlock("c1", 1));
+    assert_eq!(run.exited(2), vec![]);
+    assert_eq!(
+        run.on(Input::Unlocked { id: "c1".into() }),
+        vec![Effect::SwitchTo(7), Effect::Reply(GreeterReply::Success)]
+    );
+    assert_eq!(run.exited(1), vec![], "the greeter left");
+}
+
+#[test]
+fn a_started_session_whose_uid_has_one_already_is_ended_and_that_one_resumed() {
+    let mut run = Run::new(LoginConfig::default(), Remembered::default());
+    run.recover(vec![anna_on_7()]);
+    run.session("c1", SessionRequest::SwitchUser);
+    run.greeter(create("bert"));
+    run.worker(2, authed("bert", 1001));
+    assert_eq!(run.greeter(GreeterRequest::StartSession), start_on(2, 8));
+    let mut ends_c2 = vec![Effect::TerminateSession("c2".into())];
+    ends_c2.extend(unlock("c1", 1));
     assert_eq!(
         run.worker(2, started("c2", 1000)),
-        vec![
-            Effect::TerminateSession("c2".into()),
-            Effect::UnlockSession("c1".into()),
-            Effect::Arm {
-                timer: Timer::UnlockAck("c1".into()),
-                after: UNLOCK_WAIT,
-            },
-        ],
-        "the account's uid already has session c1"
+        ends_c2,
+        "uid 1000 already has session c1"
     );
     assert_eq!(
         run.on(Input::Unlocked { id: "c1".into() }),
         vec![Effect::SwitchTo(7), Effect::Reply(GreeterReply::Success)]
     );
     assert_eq!(run.removed("c2", Some("c1")), vec![]);
-    assert_eq!(run.exited(2, false), vec![Effect::Disallocate(8)]);
-    assert_eq!(run.exited(1, false), vec![], "the greeter left");
+    assert_eq!(run.exited(2), vec![Effect::Disallocate(8)]);
+    assert_eq!(run.exited(1), vec![], "the greeter left");
     assert_eq!(
         run.session("c1", SessionRequest::SwitchUser),
         greeter_spawn(3),
         "c1 is still in the table"
     );
+}
+
+#[test]
+fn the_table_keeps_the_name_pam_resolved() {
+    let mut run = Run::booted();
+    run.greeter(create("ANNA"));
+    assert_eq!(
+        run.worker(2, authed("anna", 1000)),
+        reply(GreeterReply::Success)
+    );
+    run.greeter(GreeterRequest::StartSession);
+    assert_eq!(
+        run.worker(2, started("c2", 1000)),
+        vec![
+            Effect::Reply(GreeterReply::Success),
+            Effect::Remember(Remembered {
+                last_user: Some("anna".into()),
+                last_interface: None,
+            }),
+        ]
+    );
+    let notes: Vec<_> = run.greeting().users.iter().map(|u| u.note).collect();
+    assert_eq!(notes, [Some(Note::LoggedOn), None]);
+    assert_eq!(run.greeter(create("anna")), spawn(3, Mode::Reauth, "anna"));
+}
+
+#[test]
+fn a_reauth_that_resolves_to_an_account_without_a_session_unlocks_nothing() {
+    let mut run = Run::new(LoginConfig::default(), Remembered::default());
+    run.recover(vec![anna_on_7()]);
+    run.session("c1", SessionRequest::SwitchUser);
+    assert_eq!(run.greeter(create("anna")), spawn(2, Mode::Reauth, "anna"));
+    assert_eq!(
+        run.worker(2, authed("bert", 1001)),
+        reply(error(ErrorKind::Failed, NO_SESSION))
+    );
+    let effects = run.greeter(GreeterRequest::StartSession);
+    assert!(is_refused(&effects), "{effects:?}");
+    assert_eq!(run.exited(2), vec![]);
 }
 
 #[test]
@@ -437,37 +514,31 @@ fn a_login_for_a_user_with_a_session_unlocks_and_switches_to_it() {
     run.worker(2, secret("Password:"));
     run.greeter(answer("hunter2"));
     assert_eq!(
-        run.worker(2, FromWorker::Authenticated),
+        run.worker(2, authed("anna", 1000)),
         reply(GreeterReply::Success)
     );
-    assert_eq!(run.exited(2, true), vec![]);
-    let unlock = vec![
-        Effect::UnlockSession("c1".into()),
-        Effect::Arm {
-            timer: Timer::UnlockAck("c1".into()),
-            after: UNLOCK_WAIT,
-        },
-    ];
-    assert_eq!(run.greeter(GreeterRequest::StartSession), unlock);
+    assert_eq!(run.exited(2), vec![]);
+    assert_eq!(run.greeter(GreeterRequest::StartSession), unlock("c1", 1));
     assert_eq!(
         run.on(Input::Unlocked { id: "c1".into() }),
         vec![Effect::SwitchTo(7), Effect::Reply(GreeterReply::Success)]
     );
-    assert_eq!(run.on(Input::Timer(Timer::UnlockAck("c1".into()))), vec![]);
-    assert_eq!(
-        run.exited(1, false),
-        vec![],
-        "the greeter left after the resume"
-    );
+    assert_eq!(run.on(Input::Timer(Timer::UnlockAck(1))), vec![]);
+    assert_eq!(run.exited(1), vec![], "the greeter left after the resume");
 
     assert_eq!(
         run.session("c1", SessionRequest::SwitchUser),
         greeter_spawn(3)
     );
     assert_eq!(run.greeter(create("anna")), spawn(4, Mode::Reauth, "anna"));
-    run.worker(4, FromWorker::Authenticated);
-    assert_eq!(run.greeter(GreeterRequest::StartSession), unlock);
-    let effects = run.on(Input::Timer(Timer::UnlockAck("c1".into())));
+    run.worker(4, authed("anna", 1000));
+    assert_eq!(run.greeter(GreeterRequest::StartSession), unlock("c1", 2));
+    assert_eq!(
+        run.on(Input::Timer(Timer::UnlockAck(1))),
+        vec![],
+        "the first resume's timer is stale"
+    );
+    let effects = run.on(Input::Timer(Timer::UnlockAck(2)));
     assert!(
         matches!(
             effects.as_slice(),
@@ -498,7 +569,7 @@ fn a_wrong_password_reports_an_auth_error_and_the_greeter_can_retry() {
         ),
         reply(error(ErrorKind::Auth, "Authentication failure"))
     );
-    assert_eq!(run.exited(2, false), vec![]);
+    assert_eq!(run.exited(2), vec![]);
     assert_eq!(run.greeter(create("anna")), spawn(3, Mode::Login, "anna"));
 }
 
@@ -552,24 +623,24 @@ fn greeter_gone_mid_conversation_kills_the_worker() {
         vec![Effect::Kill(WorkerId(2)), Effect::Kill(GREETER)]
     );
     assert_eq!(run.worker(2, secret("Password:")), vec![]);
-    assert_eq!(run.exited(2, false), vec![]);
-    assert_eq!(run.exited(1, false), greeter_spawn(3));
+    assert_eq!(run.exited(2), vec![]);
+    assert_eq!(run.exited(1), greeter_spawn(3));
     assert_eq!(run.greeter(create("anna")), spawn(4, Mode::Login, "anna"));
     run.on(Input::GreeterGone);
-    assert_eq!(run.exited(3, false), greeter_spawn(5));
+    assert_eq!(run.exited(3), greeter_spawn(5));
     assert_eq!(
-        run.exited(5, false)[0],
+        run.exited(5)[0],
         Effect::SwitchTo(2),
         "the first death counted"
     );
 }
 
 #[test]
-fn three_greeter_crashes_in_a_row_switch_to_the_text_login_vt() {
+fn three_greeter_exits_in_a_row_switch_to_the_text_login_vt() {
     let mut run = Run::booted();
-    assert_eq!(run.exited(1, false), greeter_spawn(2));
-    assert_eq!(run.exited(2, false), greeter_spawn(3));
-    let effects = run.exited(3, false);
+    assert_eq!(run.exited(1), greeter_spawn(2));
+    assert_eq!(run.exited(2), greeter_spawn(3));
+    let effects = run.exited(3);
     assert!(
         matches!(effects.as_slice(), [Effect::SwitchTo(2), Effect::Log(_)]),
         "{effects:?}"
@@ -580,29 +651,29 @@ fn three_greeter_crashes_in_a_row_switch_to_the_text_login_vt() {
 fn a_session_ending_while_active_brings_the_greeter_back() {
     let mut run = Run::booted();
     run.log_in(2, "anna", 1000, "c2", 7);
-    run.exited(1, true);
+    run.exited(1);
     run.now += EARLY_END * 2;
     assert_eq!(run.removed("c2", None), greeter_spawn(3));
-    assert_eq!(run.exited(2, true), vec![Effect::Disallocate(7)]);
+    assert_eq!(run.exited(2), vec![Effect::Disallocate(7)]);
 
     run.log_in(4, "anna", 1000, "c4", 7);
-    run.exited(3, true);
+    run.exited(3);
     assert_eq!(
         run.session("c4", SessionRequest::SwitchUser),
         greeter_spawn(5)
     );
     run.log_in(6, "bert", 1001, "c6", 8);
-    run.exited(5, true);
+    run.exited(5);
     run.now += EARLY_END * 2;
     assert_eq!(run.removed("c4", Some("c6")), vec![]);
-    assert_eq!(run.exited(4, true), vec![Effect::Disallocate(7)]);
+    assert_eq!(run.exited(4), vec![Effect::Disallocate(7)]);
 }
 
 #[test]
 fn a_session_ending_soon_after_start_shows_a_notice() {
     let mut run = Run::booted();
     run.log_in(2, "anna", 1000, "c2", 7);
-    run.exited(1, true);
+    run.exited(1);
     run.now += EARLY_END / 2;
     assert_eq!(run.removed("c2", None), greeter_spawn(3));
     assert_eq!(run.greeting().notice, Some(Notice::SessionEndedEarly));
@@ -613,7 +684,7 @@ fn a_session_ending_soon_after_start_shows_a_notice() {
 fn a_session_that_fails_to_start_returns_to_the_login_screen() {
     let mut run = Run::booted();
     run.greeter(create("anna"));
-    run.worker(2, FromWorker::Authenticated);
+    run.worker(2, authed("anna", 1000));
     run.greeter(GreeterRequest::StartSession);
     assert_eq!(
         run.worker(
@@ -711,9 +782,9 @@ fn a_cancelled_workers_messages_are_ignored() {
     run.greeter(create("anna"));
     run.greeter(GreeterRequest::CancelSession);
     assert_eq!(run.worker(2, secret("Password:")), vec![]);
-    assert_eq!(run.worker(2, FromWorker::Authenticated), vec![]);
+    assert_eq!(run.worker(2, authed("anna", 1000)), vec![]);
     assert_eq!(run.worker(2, started("c2", 1000)), vec![]);
-    assert_eq!(run.exited(2, false), vec![]);
+    assert_eq!(run.exited(2), vec![]);
 }
 
 #[test]
@@ -756,6 +827,27 @@ fn recovery_rebuilds_the_table_and_terminates_an_orphaned_greeter() {
         vec![Effect::Disallocate(8)],
         "no worker of this daemon holds a recovered session's VT"
     );
+
+    let mut run = Run::new(LoginConfig::default(), Remembered::default());
+    let orphan = logind(
+        "c5",
+        GREETER_USER,
+        960,
+        1,
+        "greeter",
+        "reprise-login-greeter",
+    );
+    run.recover(vec![anna_on_7(), orphan]);
+    assert_eq!(run.start(), vec![]);
+    assert_eq!(
+        run.removed("c5", Some("c1")),
+        vec![],
+        "anna's session holds the seat"
+    );
+    assert_eq!(
+        run.session("c1", SessionRequest::SwitchUser),
+        greeter_spawn(1)
+    );
 }
 
 #[test]
@@ -766,4 +858,235 @@ fn a_session_request_from_an_unknown_session_is_ignored() {
         interface: Interface::Blue,
     };
     assert_eq!(run.session("c9", hello), vec![]);
+}
+
+#[test]
+fn a_resume_whose_session_ends_mid_conversation_kills_its_worker() {
+    let mut run = Run::new(LoginConfig::default(), Remembered::default());
+    run.recover(vec![anna_on_7()]);
+    run.session("c1", SessionRequest::SwitchUser);
+    assert_eq!(run.greeter(create("anna")), spawn(2, Mode::Reauth, "anna"));
+    run.worker(2, secret("Password:"));
+    assert_eq!(
+        run.removed("c1", None),
+        vec![
+            Effect::Kill(WorkerId(2)),
+            Effect::Reply(error(ErrorKind::Failed, SESSION_ENDED)),
+            Effect::Disallocate(7),
+            Effect::SwitchTo(1),
+        ]
+    );
+    assert_eq!(run.greeter(create("anna")), spawn(3, Mode::Login, "anna"));
+}
+
+#[test]
+fn start_session_with_no_free_vt_fails_and_kills_the_worker() {
+    let mut run = Run::new(LoginConfig::default(), Remembered::default());
+    run.recover(
+        (16..=63)
+            .map(|vt| {
+                let (id, name) = (format!("c{vt}"), format!("u{vt}"));
+                logind(
+                    &id,
+                    &name,
+                    2000 + u32::from(vt),
+                    vt,
+                    "user",
+                    "reprise-login",
+                )
+            })
+            .collect(),
+    );
+    run.world.kernel_open = 0xff80;
+    run.session("c16", SessionRequest::SwitchUser);
+    run.greeter(create("anna"));
+    run.worker(2, authed("anna", 1000));
+    assert_eq!(
+        run.greeter(GreeterRequest::StartSession),
+        vec![
+            Effect::Kill(WorkerId(2)),
+            Effect::Reply(error(ErrorKind::Failed, NO_VT)),
+        ]
+    );
+    assert_eq!(run.greeter(create("anna")), spawn(3, Mode::Login, "anna"));
+}
+
+#[test]
+fn a_session_removed_before_its_started_is_handled_as_ended() {
+    let mut run = Run::booted();
+    run.greeter(create("anna"));
+    run.worker(2, authed("anna", 1000));
+    assert_eq!(run.greeter(GreeterRequest::StartSession), start_on(2, 7));
+    assert_eq!(run.removed("c2", None), vec![]);
+    assert_eq!(
+        run.worker(2, started("c2", 1000)),
+        vec![
+            Effect::Reply(error(ErrorKind::Failed, SESSION_ENDED)),
+            Effect::SwitchTo(1),
+        ]
+    );
+    let notes: Vec<_> = run.greeting().users.iter().map(|u| u.note).collect();
+    assert_eq!(notes, [None, None], "c2 never entered the table");
+    assert_eq!(run.greeter(create("anna")), spawn(3, Mode::Login, "anna"));
+    assert_eq!(run.exited(2), vec![Effect::Disallocate(7)]);
+
+    let config = LoginConfig {
+        autologin_user: Some("anna".into()),
+        ..LoginConfig::default()
+    };
+    let mut run = Run::new(config, Remembered::default());
+    run.start();
+    assert_eq!(run.removed("c1", None), vec![]);
+    assert_eq!(run.worker(1, started("c1", 1000)), greeter_spawn(2));
+    assert_eq!(run.greeting().notice, Some(Notice::SessionEndedEarly));
+}
+
+#[test]
+fn a_session_removed_after_its_worker_exited_frees_its_vt_once() {
+    let mut run = Run::booted();
+    run.log_in(2, "anna", 1000, "c2", 7);
+    run.exited(1);
+    assert_eq!(run.exited(2), vec![Effect::Disallocate(7)]);
+    run.now += EARLY_END * 2;
+    assert_eq!(run.removed("c2", None), greeter_spawn(3));
+}
+
+#[test]
+fn a_leaving_greeter_that_lingers_is_killed_when_the_login_screen_is_wanted() {
+    let mut run = Run::booted();
+    run.log_in(2, "anna", 1000, "c2", 7);
+    assert_eq!(
+        run.session("c2", SessionRequest::SwitchUser),
+        vec![Effect::Kill(GREETER)]
+    );
+    assert_eq!(run.session("c2", SessionRequest::SwitchUser), vec![]);
+    assert_eq!(run.exited(1), greeter_spawn(3));
+}
+
+#[test]
+fn a_start_finishing_after_its_greeter_died_tells_the_next_greeter_nothing() {
+    let mut run = Run::new(LoginConfig::default(), Remembered::default());
+    run.recover(vec![anna_on_7()]);
+    run.session("c1", SessionRequest::SwitchUser);
+    run.greeter(create("bert"));
+    run.worker(2, authed("bert", 1001));
+    assert_eq!(run.greeter(GreeterRequest::StartSession), start_on(2, 8));
+    assert_eq!(run.on(Input::GreeterGone), vec![Effect::Kill(GREETER)]);
+    assert_eq!(
+        run.exited(1),
+        vec![],
+        "no new greeter while bert's session starts"
+    );
+    assert_eq!(
+        run.session("c1", SessionRequest::SwitchUser),
+        greeter_spawn(3)
+    );
+    assert_eq!(
+        run.worker(2, started("c2", 1001)),
+        vec![Effect::Remember(Remembered {
+            last_user: Some("bert".into()),
+            last_interface: None,
+        })],
+        "greeter 3 asked for no session"
+    );
+    assert_eq!(run.exited(3), greeter_spawn(4), "greeter 3 was not leaving");
+}
+
+#[test]
+fn a_started_before_start_ends_that_session() {
+    let mut run = Run::booted();
+    run.greeter(create("anna"));
+    run.worker(2, authed("anna", 1000));
+    let effects = run.worker(2, started("c2", 1000));
+    assert!(
+        matches!(
+            effects.as_slice(),
+            [Effect::Log(_), Effect::TerminateSession(id)] if id == "c2"
+        ),
+        "{effects:?}"
+    );
+}
+
+#[test]
+fn cancel_is_refused_once_the_session_starts_or_unlocks() {
+    let mut run = Run::booted();
+    run.greeter(create("anna"));
+    run.worker(2, authed("anna", 1000));
+    run.greeter(GreeterRequest::StartSession);
+    let effects = run.greeter(GreeterRequest::CancelSession);
+    assert!(is_refused(&effects), "{effects:?}");
+
+    let mut run = Run::new(LoginConfig::default(), Remembered::default());
+    run.recover(vec![anna_on_7()]);
+    run.session("c1", SessionRequest::SwitchUser);
+    run.greeter(create("anna"));
+    run.worker(2, authed("anna", 1000));
+    run.greeter(GreeterRequest::StartSession);
+    let effects = run.greeter(GreeterRequest::CancelSession);
+    assert!(is_refused(&effects), "{effects:?}");
+}
+
+#[test]
+fn a_start_that_never_reports_started_times_out() {
+    let mut run = Run::booted();
+    run.greeter(create("anna"));
+    run.worker(2, authed("anna", 1000));
+    run.greeter(GreeterRequest::StartSession);
+    let effects = run.on(Input::Timer(Timer::Start(WorkerId(2))));
+    assert!(
+        matches!(
+            effects.as_slice(),
+            [
+                Effect::Kill(WorkerId(2)),
+                Effect::Reply(GreeterReply::Error {
+                    kind: ErrorKind::Failed,
+                    ..
+                }),
+                Effect::SwitchTo(1),
+            ]
+        ),
+        "{effects:?}"
+    );
+    assert_eq!(run.greeter(create("bert")), spawn(3, Mode::Login, "bert"));
+    assert_eq!(run.on(Input::Timer(Timer::Start(WorkerId(2)))), vec![]);
+    assert_eq!(run.exited(2), vec![]);
+
+    let mut run = Run::booted();
+    run.log_in(2, "anna", 1000, "c2", 7);
+    assert_eq!(
+        run.on(Input::Timer(Timer::Start(WorkerId(2)))),
+        vec![],
+        "c2 started in time"
+    );
+}
+
+#[test]
+fn an_autologin_that_never_starts_times_out_to_the_login_screen() {
+    let config = LoginConfig {
+        autologin_user: Some("anna".into()),
+        ..LoginConfig::default()
+    };
+    let mut run = Run::new(config, Remembered::default());
+    run.start();
+    let effects = run.on(Input::Timer(Timer::Start(WorkerId(1))));
+    assert!(
+        matches!(
+            effects.as_slice(),
+            [Effect::Kill(WorkerId(1)), Effect::Log(_)]
+        ),
+        "{effects:?}"
+    );
+    let effects = run.exited(1);
+    assert!(matches!(&effects[0], Effect::Log(_)), "{effects:?}");
+    assert_eq!(effects[1..], greeter_spawn(2)[..]);
+}
+
+#[test]
+fn power_with_a_text_or_ssh_login_running_is_refused() {
+    let mut run = Run::booted();
+    run.world.user_sessions = 1;
+    let effects = run.greeter(GreeterRequest::Power {
+        action: PowerAction::Reboot,
+    });
+    assert!(is_refused(&effects), "{effects:?}");
 }
