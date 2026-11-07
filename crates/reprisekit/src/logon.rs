@@ -6,6 +6,7 @@ use crate::access::{self as ax, ROOT, Tree};
 use crate::interface::Interface;
 use crate::pointer::Interaction;
 use crate::raster::{Canvas, Rect};
+use crate::text::TextRenderer;
 use crate::textedit::{EditKey, TextEdit};
 
 /// The login screen's strings, one accessor per Fluent id.
@@ -604,6 +605,30 @@ pub fn access(m: &Logon, l: &LogonLayout, tree: &mut Tree) {
     if let Some(id) = focus {
         tree.set_focus(id);
     }
+}
+
+/// `msg` wrapped to `width`, cut to `room` lines, with "..." closing the last line when text was
+/// cut and on any line still too wide.
+pub fn message_lines(
+    text: &TextRenderer,
+    msg: &str,
+    width: i32,
+    px: u32,
+    room: usize,
+) -> Vec<String> {
+    let mut lines = crate::text::wrap(text, msg, width, px);
+    if lines.len() > room {
+        lines.truncate(room);
+        if let Some(last) = lines.last_mut() {
+            while text.measure(&format!("{last}..."), false, px) > width && last.pop().is_some() {}
+            last.truncate(last.trim_end().len());
+            last.push_str("...");
+        }
+    }
+    lines
+        .iter()
+        .map(|l| text.ellipsize(l, width, false, px).into_owned())
+        .collect()
 }
 
 #[cfg(test)]
