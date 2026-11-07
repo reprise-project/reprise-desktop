@@ -4729,6 +4729,7 @@ dependencies = [
  "tempfile",
  "toml_edit",
  "xcursor",
+ "zeroize",
 ]
 
 [[package]]

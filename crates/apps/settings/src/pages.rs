@@ -42,8 +42,9 @@ pub use lists::{
 };
 pub use login::{NOT_RUNNING, follow_login, login_manager, read_login, show_login};
 pub use system::{
-    REMOTE_ALLOW, REMOTE_DISCONNECT, REMOTE_REGENERATE, advanced, backup, managed, notifications,
-    privacy, remote_desktop, selected_client, show_remote, sound, startup,
+    RD_PASSWORD_CLEAR, RD_PASSWORD_SET, REMOTE_ALLOW, REMOTE_DISCONNECT, REMOTE_REGENERATE,
+    advanced, backup, managed, notifications, privacy, remote_desktop, selected_client,
+    show_rd_password, show_remote, sound, startup,
 };
 
 /// The client every page is built for at [`Area::MIN`]; the sheet puts each page right of its list ([`PropSheet::on_page`]).
