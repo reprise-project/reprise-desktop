@@ -1,14 +1,15 @@
 //! The session's link to reprise-login over `REPRISE_LOGIN_SOCKET`: it says hello with the
 //! interface and asks for Switch User. While the daemon is away it calls again every 2 s;
-//! each loss asks logind whether the session is closing, which ends the compositor.
+//! each loss asks logind whether the session is closing, which ends the compositor. After
+//! `MAX_REFUSALS` refusals in a row it stops calling.
 
 use std::io::{self, Read};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use repriselogin::frame::write_msg;
-use repriselogin::session::SessionRequest;
+use repriselogin::frame::{self, FrameReader, write_msg};
+use repriselogin::session::{SessionReply, SessionRequest};
 use smithay::reexports::calloop::generic::Generic;
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay::reexports::calloop::{Interest, Mode, PostAction, RegistrationToken};
@@ -20,6 +21,8 @@ use crate::console::Side;
 /// The uid the daemon runs as.
 const ROOT: u32 = 0;
 const RETRY: Duration = Duration::from_secs(2);
+/// Links in a row the daemon refuses, as not one of its sessions, before the link stops calling.
+const MAX_REFUSALS: u32 = 5;
 
 pub struct LoginLink {
     /// None for a link made from a stream, which never calls again.
@@ -31,6 +34,10 @@ pub struct LoginLink {
     retry: Option<RegistrationToken>,
     /// A refused server was logged at warn since the last link; later refusals log at debug.
     refusal_warned: bool,
+    /// The daemon sent `Refused` on the current stream.
+    refused: bool,
+    /// Streams in a row the daemon refused.
+    refusals: u32,
 }
 
 impl LoginLink {
@@ -42,7 +49,19 @@ impl LoginLink {
             watch: None,
             retry: None,
             refusal_warned: false,
+            refused: false,
+            refusals: 0,
         }
+    }
+
+    /// Counts the stream that just closed; whether to call again.
+    fn closed(&mut self) -> bool {
+        if std::mem::take(&mut self.refused) {
+            self.refusals += 1;
+        } else {
+            self.refusals = 0;
+        }
+        self.refusals < MAX_REFUSALS
     }
 
     /// A link over `stream`, with no uid check.
@@ -189,12 +208,16 @@ fn on_linked(state: &mut State) {
             return;
         }
     };
+    let mut frames = FrameReader::new();
     let token = state.handle.insert_source(
         Generic::new(watched, Interest::READ, Mode::Level),
-        |_, stream, state| {
+        move |_, stream, state| {
             let mut buf = [0; 256];
             match (&**stream).read(&mut buf) {
-                Ok(n) if n > 0 => return Ok(PostAction::Continue),
+                Ok(n) if n > 0 => {
+                    heard(state, &mut frames, &buf[..n]);
+                    return Ok(PostAction::Continue);
+                }
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                     return Ok(PostAction::Continue);
                 }
@@ -227,6 +250,20 @@ fn on_linked(state: &mut State) {
     }
 }
 
+/// Notes a `Refused` among `bytes`; anything else the daemon sends is skipped.
+fn heard(state: &mut State, frames: &mut FrameReader, bytes: &[u8]) {
+    if frames.push(bytes).is_err() {
+        return;
+    }
+    while let Some(body) = frames.next_frame() {
+        if let Ok(SessionReply::Refused) = frame::decode(&body)
+            && let Some(link) = state.login_link.as_mut()
+        {
+            link.refused = true;
+        }
+    }
+}
+
 /// Send `msg`; a failure drops the link. Whether it went.
 fn send(state: &mut State, msg: &SessionRequest) -> bool {
     let Some(stream) = state.login_link.as_mut().and_then(|l| l.stream.as_mut()) else {
@@ -249,12 +286,19 @@ fn lost(state: &mut State) {
         return;
     };
     link.stream = None;
+    let again = link.closed();
     if let Some(t) = link.watch.take() {
         state.handle.remove(t);
     }
     crate::lockview::redraw(state);
     crate::power::check_closing(state);
-    retry(state);
+    if again {
+        retry(state);
+    } else {
+        log::warn!(
+            "reprise-login: refused {MAX_REFUSALS} times in a row as not its session; no more calls"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -496,6 +540,35 @@ mod tests {
         let (mut h, _theirs) = linked();
         session_closing(&mut h.state);
         assert!(crate::crash::is_ending(), "the session ends");
+    }
+
+    #[test]
+    fn a_refused_link_counts_toward_the_refusals_that_stop_its_calls() {
+        let (mut h, mut theirs) = linked();
+        write_msg(&mut theirs, &SessionReply::Refused).unwrap();
+        drop(theirs);
+        h.dispatch();
+        h.dispatch();
+        assert!(!connected(&h.state));
+        assert_eq!(h.state.login_link.as_ref().unwrap().refusals, 1);
+    }
+
+    #[test]
+    fn the_link_stops_calling_after_refusals_in_a_row_and_a_plain_close_resets_them() {
+        let mut link = LoginLink::at(PathBuf::new(), ROOT);
+        let refuse = |link: &mut LoginLink| {
+            link.refused = true;
+            link.closed()
+        };
+        for _ in 1..MAX_REFUSALS {
+            assert!(refuse(&mut link));
+        }
+        assert!(link.closed(), "a close without a refusal");
+        assert_eq!(link.refusals, 0);
+        for _ in 1..MAX_REFUSALS {
+            assert!(refuse(&mut link));
+        }
+        assert!(!refuse(&mut link), "no more calls");
     }
 
     #[test]

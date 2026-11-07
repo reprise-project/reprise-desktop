@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use repriselogin::frame::{self, FrameError, FrameReader};
 use repriselogin::greeter::{GreeterReply, GreeterRequest};
-use repriselogin::session::SessionRequest;
+use repriselogin::session::{SessionReply, SessionRequest};
 use repriselogin::{GREETER_SOCKET, SESSION_SOCKET};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
@@ -350,6 +350,9 @@ async fn accept(l: UnixListener, kind: Listener, s: Rc<Server>) {
             continue;
         };
         if !s.gate.borrow().may_try(kind, uid) {
+            if kind == Listener::Session {
+                refuse_session(&stream);
+            }
             if refused.first(uid) {
                 log::warn!("{kind:?} socket: refused uid {uid}");
             }
@@ -464,6 +467,7 @@ fn admit_session(stream: UnixStream, uid: u32, session: Option<String>, s: &Rc<S
         )
     };
     let Some(id) = session.filter(|_| allowed) else {
+        refuse_session(&stream);
         return false;
     };
     let mut gate = s.gate.borrow_mut();
@@ -471,6 +475,14 @@ fn admit_session(stream: UnixStream, uid: u32, session: Option<String>, s: &Rc<S
     let reader = Reader::spawn(read_session(stream, id.clone(), serial, s.clone()));
     gate.session_links.insert(id, (serial, reader));
     true
+}
+
+/// Tells a session peer it is not one of the table's, so its link stops calling; best effort,
+/// since the stream is dropped next.
+fn refuse_session(stream: &UnixStream) {
+    if let Ok(frame) = frame::encode(&SessionReply::Refused) {
+        let _ = stream.try_write(&frame);
+    }
 }
 
 /// Forwards the greeter's requests. Each Hello gets a whole Greeting, so one waits at a time
@@ -857,8 +869,20 @@ mod tests {
             .await;
     }
 
+    /// Everything `stream` sends before it closes, within `wait`.
+    async fn all_within(stream: &mut UnixStream, wait: Duration) -> Vec<u8> {
+        let mut all = Vec::new();
+        let read = tokio::time::timeout(wait, stream.read_to_end(&mut all)).await;
+        assert!(matches!(read, Ok(Ok(_))), "the stream closes: {read:?}");
+        all
+    }
+
+    fn refused() -> Vec<u8> {
+        encode(&SessionReply::Refused).unwrap().to_vec()
+    }
+
     #[tokio::test]
-    async fn a_session_peer_outside_the_table_is_closed() {
+    async fn a_session_peer_outside_the_table_is_told_it_is_refused_and_closed() {
         let local = tokio::task::LocalSet::new();
         local
             .run_until(async {
@@ -867,7 +891,7 @@ mod tests {
                 let mut c = UnixStream::connect(dir.path().join("session.sock"))
                     .await
                     .unwrap();
-                assert_eq!(eof_within(&mut c, Duration::from_secs(5)).await, Some(true));
+                assert_eq!(all_within(&mut c, Duration::from_secs(5)).await, refused());
             })
             .await;
     }
@@ -882,10 +906,14 @@ mod tests {
                     Box::pin(async { Some("3".into()) })
                 });
                 gate.borrow_mut().sessions = HashMap::from([("3".into(), ids().0 + 1)]);
-                for sock in ["greeter.sock", "session.sock"] {
-                    let mut c = UnixStream::connect(dir.path().join(sock)).await.unwrap();
-                    assert_eq!(eof_within(&mut c, Duration::from_secs(5)).await, Some(true));
-                }
+                let mut c = UnixStream::connect(dir.path().join("greeter.sock"))
+                    .await
+                    .unwrap();
+                assert_eq!(eof_within(&mut c, Duration::from_secs(5)).await, Some(true));
+                let mut c = UnixStream::connect(dir.path().join("session.sock"))
+                    .await
+                    .unwrap();
+                assert_eq!(all_within(&mut c, Duration::from_secs(5)).await, refused());
                 assert_eq!(lookups.get(), 0);
             })
             .await;
