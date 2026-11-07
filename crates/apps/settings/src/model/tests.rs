@@ -752,6 +752,7 @@ fn save_round_trips_every_field() {
         remote_lock_grace_s: 30,
         remote_capture_border: true,
         remote_laptop_screen: "show".into(),
+        remote_second_client: "replace".into(),
         desktops: 1,
         desktop_animation: "slide-vertical".into(),
         desktop_animation_ms: 350,

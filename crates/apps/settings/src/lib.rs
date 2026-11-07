@@ -1,6 +1,6 @@
 //! Reprise Settings: a property sheet over `config.toml` and the XDG autostart directories.
 //!
-//! Pages are listed in `registry::GROUPS`. `--page night-light` opens on one (`--focus mouse_keys` then focuses a control there), and a second start hands its page to the running sheet (`reprisebus::instance`). OK and Apply rewrite `config.toml` with `toml_edit` and the autostart files; a change written elsewhere while the sheet is open is reread (`configwatch`). The Startup list's Add... and Remove, Quick Launch changes, the Privacy page's Forget, the Advanced page's Clear and the Backup page's Export... and Import... (`backup`, also `--export`/`--import FILE`) act at once. The Display page goes through wlr-output-management (`repriseapp::heads`); only a Yes on the Monitor Settings question writes `[[outputs]]`.
+//! Pages are listed in `registry::GROUPS`. `--page night-light` opens on one (`--focus mouse_keys` then focuses a control there), and a second start hands its page to the running sheet (`reprisebus::instance`). OK and Apply rewrite `config.toml` with `toml_edit` and the autostart files, and save the Login Manager page through `pkexec` (`loginhost`); a change written elsewhere while the sheet is open is reread (`configwatch`). The Startup list's Add... and Remove, Quick Launch changes, the Privacy page's Forget, the Advanced page's Clear and the Backup page's Export... and Import... (`backup`, also `--export`/`--import FILE`) act at once. The Display page goes through wlr-output-management (`repriseapp::heads`); only a Yes on the Monitor Settings question writes `[[outputs]]`.
 
 #[cfg(test)]
 reprisebus::test_session!();
@@ -28,6 +28,7 @@ mod keyboardhost;
 mod layoutdlg;
 mod linkhost;
 mod locations;
+mod loginhost;
 mod magnifierpage;
 mod menuhost;
 mod menupage;
@@ -405,6 +406,16 @@ struct SettingsApp {
     remote_job: Option<Receiver<remotehost::Reading>>,
     remote_acting: bool,
 
+    /// The Login Manager page's machine settings, read when it first opens; `login_job` holds
+    /// a save through `login_run` under way, and `login_quit` an OK or a close waiting on it.
+    login: Option<loginhost::Login>,
+    login_files: loginhost::Files,
+    login_run: fn(&str) -> std::io::Result<std::process::Output>,
+    login_job: Option<Receiver<Result<repriselogin::machine::MachineConfig, String>>>,
+    login_quit: bool,
+    /// The pages this machine lacks the program for, kept out of the list ([`Page::installed`]).
+    absent: Vec<Page>,
+
     xkb: Vec<reprisefs::xkb::Layout>,
     /// The layout an empty `[keyboard] layout` gives, read once at start.
     system_layout: String,
@@ -543,6 +554,9 @@ impl SettingsApp {
                 Page::Tablet => {
                     tabletpage::page(a, &self.pads, self.pad_picked, &self.want.tablet_pads)
                 }
+                Page::RemoteDesktop => {
+                    pages::remote_desktop(a, None, false, self.remote.manager.then_some(""))
+                }
                 _ => registry::build(p, &src, a),
             };
             self.sheet.pages[p.index()].take_layout(&template, offset);
@@ -653,6 +667,12 @@ impl SettingsApp {
             remote: remotehost::Remote::default(),
             remote_job: None,
             remote_acting: false,
+            login: None,
+            login_files: loginhost::Files::default(),
+            login_run: loginhost::pkexec,
+            login_job: None,
+            login_quit: false,
+            absent: absent_pages(),
             types: defaultspage::new_list(),
             types_focus: false,
             chooser: None,
@@ -735,6 +755,7 @@ impl SettingsApp {
         app.show_monitor();
         app.find_links();
         app.show_links();
+        app.search("");
         app
     }
 
@@ -927,6 +948,7 @@ impl App for SettingsApp {
         self.ensure_defaults();
         self.ensure_locations();
         self.ensure_remote();
+        self.ensure_login();
         if win == repriseapp::MAIN
             && !self.saver_ticking
             && self.sheet.tabs.open == Page::ScreenSaverLock.index()
@@ -938,6 +960,10 @@ impl App for SettingsApp {
         reply.redraw |= self.ensure_notify_programs();
         reply.redraw |= self.ensure_away_devices();
         self.prime_icons(ctx);
+        if reply.quit && self.login_job.is_some() {
+            reply.quit = false;
+            self.login_quit = true;
+        }
         if reply.quit {
             self.save_window();
         }
@@ -1080,6 +1106,14 @@ pub fn main(args: Vec<std::ffi::OsString>) {
     repriseapp::run(Box::new(SettingsApp::new(page, requests))).unwrap_or_else(|e| e.exit());
 }
 
+/// The pages whose program this machine lacks; none under test.
+fn absent_pages() -> Vec<Page> {
+    if cfg!(test) {
+        return Vec::new();
+    }
+    Page::all().filter(|p| !p.installed()).collect()
+}
+
 /// The compositor's saved layouts; in tests a file of the test process's own.
 fn layouts_file() -> std::path::PathBuf {
     #[cfg(test)]
@@ -1094,3 +1128,7 @@ fn layouts_file() -> std::path::PathBuf {
 #[cfg(test)]
 #[path = "main_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "login_tests.rs"]
+mod login_tests;

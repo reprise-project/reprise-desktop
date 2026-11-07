@@ -860,32 +860,44 @@ fn the_remote_desktop_page_geometry() {
     assert_eq!(rect(&s, p, "clients_label"), Rect::new(20, 252, 200, 13));
     assert_eq!(
         rect(&s, p, "clients"),
-        Rect::new(20, 268, 277, 55),
-        "three rows"
+        Rect::new(20, 268, 277, 38),
+        "two rows"
     );
     assert_eq!(rect(&s, p, "disconnect"), Rect::new(303, 268, 75, 23));
-    assert_eq!(rect(&s, p, "remote_lock"), Rect::new(20, 329, 13, 13));
-    assert_eq!(rect(&s, p, "lock_grace_label"), Rect::new(38, 350, 238, 13));
+    assert_eq!(rect(&s, p, "remote_lock"), Rect::new(20, 312, 13, 13));
+    assert_eq!(rect(&s, p, "lock_grace_label"), Rect::new(38, 333, 238, 13));
     assert_eq!(
         rect(&s, p, "lock_grace"),
-        Rect::new(282, 346, 96, combo::COMBO_H)
+        Rect::new(282, 329, 96, combo::COMBO_H)
     );
-    assert_eq!(rect(&s, p, "remote_border"), Rect::new(20, 372, 13, 13));
+    assert_eq!(rect(&s, p, "remote_border"), Rect::new(20, 355, 13, 13));
     assert_eq!(
         rect(&s, p, "remote_screen_label"),
-        Rect::new(20, 394, 358, 13)
+        Rect::new(20, 377, 358, 13)
     );
     assert_eq!(
         rect(&s, p, "remote_screen_show"),
-        Rect::new(20, 412, 12, 12)
+        Rect::new(20, 395, 12, 12)
     );
     assert_eq!(
         rect(&s, p, "remote_screen_lock"),
-        Rect::new(100, 412, 12, 12)
+        Rect::new(100, 395, 12, 12)
     );
     assert_eq!(
         rect(&s, p, "remote_screen_note"),
-        Rect::new(38, 430, 340, 13),
+        Rect::new(38, 413, 340, 13)
+    );
+    assert_eq!(
+        rect(&s, p, "second_client_label"),
+        Rect::new(20, 431, 176, 13)
+    );
+    assert_eq!(
+        rect(&s, p, "second_client_join"),
+        Rect::new(202, 431, 12, 12)
+    );
+    assert_eq!(
+        rect(&s, p, "second_client_replace"),
+        Rect::new(272, 431, 12, 12),
         "the page ends by 450"
     );
     inside_page(&s, p);
@@ -958,20 +970,25 @@ fn unavailable_encoders_are_greyed() {
         encoders: vec!["software".into(), "none".into()],
         ..serving(Vec::new())
     };
-    let mut page = remote_desktop(Area::MIN, Some(&software_only), true);
+    let mut page = remote_desktop(Area::MIN, Some(&software_only), true, None);
     assert_eq!(
         encoders_lit(&page),
         [true, false, false, false, true, true],
         "Automatic, Software and None"
     );
-    show_remote(&mut page, None, true, None, None);
+    show_remote(&mut page, None, true, None, None, None);
     assert_eq!(
         encoders_lit(&page),
         [true, false, false, false, false, false],
         "only Automatic while the server does not answer"
     );
     assert_eq!(
-        encoders_lit(&remote_desktop(Area::MIN, Some(&software_only), false)),
+        encoders_lit(&remote_desktop(
+            Area::MIN,
+            Some(&software_only),
+            false,
+            None
+        )),
         [true, false, false, false, false, false],
         "only Automatic while it is off"
     );
@@ -1021,7 +1038,7 @@ fn an_unknown_quality_shows_balanced() {
 
 #[test]
 fn allow_reflects_the_unit() {
-    let off = remote_desktop(Area::MIN, None, false);
+    let off = remote_desktop(Area::MIN, None, false, None);
     assert_eq!(off.checked("allow"), Some(false));
     assert!(enabled(&off, "allow"), "the check box itself stays lit");
     assert!(
@@ -1039,7 +1056,7 @@ fn allow_reflects_the_unit() {
     };
     assert_eq!(text, "Off");
 
-    let on = remote_desktop(Area::MIN, Some(&serving(vec![client()])), true);
+    let on = remote_desktop(Area::MIN, Some(&serving(vec![client()])), true, None);
     assert_eq!(on.checked("allow"), Some(true));
     for id in REMOTE_GREYED {
         assert!(enabled(&on, id), "{id} is lit while the server runs");
@@ -1082,10 +1099,10 @@ fn the_status_line_says_where_the_server_listens() {
 
 #[test]
 fn disconnect_greys_without_a_client() {
-    let idle = remote_desktop(Area::MIN, Some(&serving(Vec::new())), true);
+    let idle = remote_desktop(Area::MIN, Some(&serving(Vec::new())), true, None);
     assert!(!enabled(&idle, "disconnect"));
     assert!(enabled(&idle, "regenerate"));
-    let busy = remote_desktop(Area::MIN, Some(&serving(vec![client()])), true);
+    let busy = remote_desktop(Area::MIN, Some(&serving(vec![client()])), true, None);
     assert!(enabled(&busy, "disconnect"));
     let Control::ListBox { list, .. } = &busy.item("clients").unwrap().control else {
         panic!("the clients are a list box");
@@ -1096,7 +1113,7 @@ fn disconnect_greys_without_a_client() {
         "{:?}",
         list.detail
     );
-    let silent = remote_desktop(Area::MIN, None, true);
+    let silent = remote_desktop(Area::MIN, None, true, None);
     for id in ["disconnect", "regenerate"] {
         assert!(
             !enabled(&silent, id),
@@ -1123,6 +1140,7 @@ fn two_viewers_from_one_ip_are_listed_with_their_ports() {
             viewer("192.168.1.31:40100"),
         ])),
         true,
+        None,
     );
     let Control::ListBox { list, .. } = &page.item("clients").unwrap().control else {
         panic!("the clients are a list box");
@@ -1155,7 +1173,7 @@ fn the_selection_follows_its_address_when_a_row_above_goes() {
         viewer("192.168.1.30:51240"),
         viewer("192.168.1.31:40100"),
     ]);
-    let mut page = remote_desktop(Area::MIN, Some(&three), true);
+    let mut page = remote_desktop(Area::MIN, Some(&three), true, None);
     assert_eq!(
         client_row(&page),
         Some(0),
@@ -1168,7 +1186,7 @@ fn the_selection_follows_its_address_when_a_row_above_goes() {
         viewer("192.168.1.30:51240"),
         viewer("192.168.1.31:40100"),
     ]);
-    show_remote(&mut page, Some(&left), true, None, keep.as_deref());
+    show_remote(&mut page, Some(&left), true, None, keep.as_deref(), None);
     assert_eq!(client_row(&page), Some(1), "the picked client is row 1");
     assert_eq!(
         selected_client(&page, Some(&left)),
@@ -1181,6 +1199,7 @@ fn the_selection_follows_its_address_when_a_row_above_goes() {
         true,
         None,
         keep.as_deref(),
+        None,
     );
     assert_eq!(client_row(&page), None);
     assert!(!enabled(&page, "disconnect"));
@@ -1192,7 +1211,7 @@ fn the_selection_follows_its_address_when_a_row_comes_above() {
         viewer("192.168.1.30:51240"),
         viewer("192.168.1.31:40100"),
     ]);
-    let mut page = remote_desktop(Area::MIN, Some(&two), true);
+    let mut page = remote_desktop(Area::MIN, Some(&two), true, None);
     pick_client(&mut page, 1);
     let keep = selected_client(&page, Some(&two)).map(str::to_owned);
     let three = serving(vec![
@@ -1200,7 +1219,7 @@ fn the_selection_follows_its_address_when_a_row_comes_above() {
         viewer("192.168.1.30:51240"),
         viewer("192.168.1.31:40100"),
     ]);
-    show_remote(&mut page, Some(&three), true, None, keep.as_deref());
+    show_remote(&mut page, Some(&three), true, None, keep.as_deref(), None);
     assert_eq!(client_row(&page), Some(2), "the picked client is row 2");
     assert_eq!(
         selected_client(&page, Some(&three)),
@@ -1214,7 +1233,7 @@ fn disconnect_names_the_selected_viewer() {
         viewer("192.168.1.30:51234"),
         viewer("192.168.1.31:40100"),
     ]);
-    let mut page = remote_desktop(Area::MIN, Some(&two), true);
+    let mut page = remote_desktop(Area::MIN, Some(&two), true, None);
     assert_eq!(
         crate::remotehost::disconnect(&page, Some(&two)),
         Some(crate::remotehost::Act::Disconnect(
@@ -1353,7 +1372,14 @@ fn the_wait_before_locking_greys_with_the_lock_check_box_off() {
     let p = Page::RemoteDesktop;
     let mut want = crate::model::load("");
     let status = serving(Vec::new());
-    show_remote(&mut s.pages[p.index()], Some(&status), true, None, None);
+    show_remote(
+        &mut s.pages[p.index()],
+        Some(&status),
+        true,
+        None,
+        None,
+        None,
+    );
     for id in ["lock_grace_label", "lock_grace"] {
         assert!(enabled_on(&s, p, id), "{id} is lit with the lock on");
     }
@@ -1363,7 +1389,14 @@ fn the_wait_before_locking_greys_with_the_lock_check_box_off() {
     for id in ["lock_grace_label", "lock_grace"] {
         assert!(!enabled_on(&s, p, id), "{id} greys with the lock off");
     }
-    show_remote(&mut s.pages[p.index()], Some(&status), true, None, None);
+    show_remote(
+        &mut s.pages[p.index()],
+        Some(&status),
+        true,
+        None,
+        None,
+        None,
+    );
     for id in ["lock_grace_label", "lock_grace"] {
         assert!(
             !enabled_on(&s, p, id),
@@ -1371,7 +1404,7 @@ fn the_wait_before_locking_greys_with_the_lock_check_box_off() {
         );
     }
     s.pages[p.index()].set_check("remote_lock", true);
-    show_remote(&mut s.pages[p.index()], None, false, None, None);
+    show_remote(&mut s.pages[p.index()], None, false, None, None, None);
     for id in ["lock_grace_label", "lock_grace"] {
         assert!(
             !enabled_on(&s, p, id),
@@ -1443,7 +1476,14 @@ fn the_lock_radio_greys_with_a_note_while_a_locker_is_set() {
     let mut s = with(&locker);
     let p = Page::RemoteDesktop;
     let status = serving(Vec::new());
-    show_remote(&mut s.pages[p.index()], Some(&status), true, None, None);
+    show_remote(
+        &mut s.pages[p.index()],
+        Some(&status),
+        true,
+        None,
+        None,
+        None,
+    );
     assert!(enabled_on(&s, p, "remote_screen_show"), "Stays on is lit");
     assert!(
         !enabled_on(&s, p, "remote_screen_lock"),
@@ -1462,7 +1502,14 @@ fn the_lock_radio_greys_with_a_note_while_a_locker_is_set() {
     );
     assert_eq!(lines(&s, p, "remote_screen_note"), [""], "no note then");
     crate::pages::follow(&mut s, &locker);
-    show_remote(&mut s.pages[p.index()], Some(&status), true, None, None);
+    show_remote(
+        &mut s.pages[p.index()],
+        Some(&status),
+        true,
+        None,
+        None,
+        None,
+    );
     assert!(
         !enabled_on(&s, p, "remote_screen_lock"),
         "it stays grey as the server's state is shown"
@@ -1478,6 +1525,7 @@ fn a_blank_locker_leaves_the_lock_radio_lit() {
         &mut s.pages[p.index()],
         Some(&serving(Vec::new())),
         true,
+        None,
         None,
         None,
     );
@@ -1507,6 +1555,7 @@ fn the_remote_desktop_page_pixels() {
         true,
         Some("192.168.1.20"),
         None,
+        None,
     );
     // The local time zone writes the time; the pins hold one.
     if let Some(Control::ListBox { list, .. }) = page.item_mut("clients").map(|i| &mut i.control) {
@@ -1524,7 +1573,7 @@ fn the_remote_desktop_page_pixels() {
             (h ^ u64::from(*p)).wrapping_mul(0x100_0000_01b3)
         });
     assert_eq!(
-        h, 12_491_411_028_081_152_023,
+        h, 15_354_460_693_671_608_155,
         "the page with its client selected"
     );
 }
@@ -1534,4 +1583,24 @@ fn variable_refresh_rate_words_find_display() {
     for word in ["vrr", "adaptive sync", "freesync"] {
         assert!(Page::Display.find(word).is_some(), "{word}");
     }
+}
+
+/// The Remote Logins group: off with the front not running, then on with its fingerprint.
+#[test]
+fn the_remote_logins_group_pins_its_pixels_in_every_look() {
+    let row = Rect::new(20, 152, 358, 158);
+    let mut f = login_manager(Area::MIN);
+    let off = row_pins(&f, row);
+    let mut c = repriselogin::machine::MachineConfig::default();
+    c.remote.enabled = true;
+    show_login(&mut f, &c, &[], Some("3F:9A:01"));
+    let on = row_pins(&f, row);
+    assert_eq!(
+        [off, on],
+        [
+            [0xacb5b86e525def62, 0xa43cab3129b6a3ed, 0xc74f9e48b0f27025],
+            [0x2a0864c10b5a7905, 0x4b2cfd128d199ca1, 0x8610ba006abc8dfc],
+        ],
+        "off, on; Classic, Blue, Glass"
+    );
 }

@@ -23,6 +23,7 @@ reprisebus = { path = "../../reprisebus" }
 reprisefs = { path = "../../reprisefs" }
 repriseaudio = { path = "../../repriseaudio" }
 repriseconf = { path = "../../repriseconf" }
+repriselogin = { path = "../../repriselogin" }
 toml_edit.workspace = true
 inotify.workspace = true
 xcursor = "0.3"

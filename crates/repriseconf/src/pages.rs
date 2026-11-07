@@ -4,6 +4,10 @@
 mod terms;
 
 use crate::search::{all_words, word_starts};
+use std::path::Path;
+
+/// The login manager's program; the Login Manager page applies only where it is installed.
+pub const LOGIN_MANAGER: &str = "/usr/bin/reprise-login";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Page {
@@ -32,6 +36,7 @@ pub enum Page {
     Startup,
     DefaultPrograms,
     Privacy,
+    LoginManager,
     Advanced,
     Backup,
 }
@@ -129,6 +134,7 @@ pub const GROUPS: &[(&str, &[Entry])] = &[
             Entry::Page(Page::Privacy),
             Entry::Program("reprise-datetime.desktop"),
             Entry::Program("reprise-accounts.desktop"),
+            Entry::Page(Page::LoginManager),
             Entry::Program("reprise-updates.desktop"),
             Entry::Page(Page::Advanced),
             Entry::Page(Page::Backup),
@@ -173,6 +179,11 @@ impl Page {
         })
     }
 
+    /// Whether the page applies to this machine: the Login Manager page needs [`LOGIN_MANAGER`].
+    pub fn installed(self) -> bool {
+        self != Page::LoginManager || Path::new(LOGIN_MANAGER).exists()
+    }
+
     pub fn at(i: usize) -> Option<Page> {
         Page::all().nth(i)
     }
@@ -210,6 +221,7 @@ impl Page {
             Page::DefaultPrograms => "Default Programs",
             Page::Privacy => "Privacy",
             Page::RemoteDesktop => "Remote Desktop",
+            Page::LoginManager => "Login Manager",
             Page::Advanced => "Advanced",
             Page::Backup => "Backup",
         }
@@ -385,6 +397,13 @@ impl Page {
                 "recent files",
                 "history",
                 "screen sharing",
+            ],
+            Page::LoginManager => &[
+                "login screen",
+                "greeter",
+                "autologin",
+                "automatic login",
+                "display manager",
             ],
             Page::Advanced => &[
                 "screenshots",
