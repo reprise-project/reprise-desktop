@@ -24,8 +24,10 @@ use ironrdp_pdu::rdp::headers::{BasicSecurityHeader, BasicSecurityHeaderFlags};
 use repriselogin::account::nt_hash;
 use repriselogin::fdpass::FdFrameReader;
 use repriselogin::frame;
+use repriselogin::throttle::{FREE_FAILURES, PAUSE, PAUSE_AFTER};
 use std::collections::HashMap;
 use std::convert::Infallible;
+use std::net::{IpAddr, Ipv4Addr};
 use std::os::fd::AsFd;
 use tokio::io::{AsyncReadExt, Interest};
 use tokio::net::{TcpListener, UnixListener, UnixStream};
@@ -47,6 +49,7 @@ pub(crate) fn ctx() -> Ctx {
         nla_users: Rc::default(),
         link: RefCell::new(None),
         host: HOST.to_owned(),
+        nla_throttle: RefCell::default(),
     }
 }
 
@@ -633,9 +636,10 @@ enum Credssp {
     },
 }
 
-/// An NLA logon: `user` goes in the Client Info PDU, and in CredSSP unless `credssp` names
-/// another.
+/// An NLA logon from `from`: `user` goes in the Client Info PDU, and in CredSSP unless
+/// `credssp` names another.
 struct NlaLogon {
+    from: IpAddr,
     protocol: SecurityProtocol,
     user: &'static str,
     domain: Option<&'static str>,
@@ -840,7 +844,9 @@ async fn nla_client(
     logon: NlaLogon,
     public_key: Vec<u8>,
 ) -> ConnectorResult<Infallible> {
-    let tcp = TcpStream::connect(addr).await.unwrap();
+    let socket = tokio::net::TcpSocket::new_v4().unwrap();
+    socket.bind(SocketAddr::new(logon.from, 0)).unwrap();
+    let tcp = socket.connect(addr).await.unwrap();
     let local = tcp.local_addr().unwrap();
     let mut framed = TokioFramed::new(tcp);
     let mut config = client_config(logon.user, logon.password);
@@ -949,6 +955,7 @@ async fn nla_log_on(
 
 fn hybrid(user: &'static str, password: &'static str) -> NlaLogon {
     NlaLogon {
+        from: Ipv4Addr::LOCALHOST.into(),
         protocol: SecurityProtocol::HYBRID,
         user,
         domain: None,
@@ -1231,6 +1238,7 @@ async fn a_verdict_wait_past_the_handshake_deadline_is_refused_as_no_verdict() {
         accepted: start,
         heard: &mut heard,
         asked: true,
+        attempt: None,
     };
     let waited = tokio::time::timeout(HANDSHAKE * 2, link.verified()).await;
     assert_eq!(waited, Ok(Err(Refused::NoVerdict)));
@@ -1302,4 +1310,115 @@ fn the_credssp_list_holds_each_user_under_four_names_with_its_nt_hash() {
             format!("{NT_HASH_PREFIX}{}", *nt_hash("anna-rd-pass"))
         );
     }
+}
+
+/// Moves tokio's clock on by `by` at once; handshakes run on the real clock.
+async fn skip(by: Duration) {
+    tokio::time::pause();
+    tokio::time::advance(by).await;
+    tokio::time::resume();
+}
+
+/// A wrong password, or a right one delegating another, from `from`.
+fn failing_logon(from: IpAddr, i: u32) -> NlaLogon {
+    let logon = NlaLogon {
+        from,
+        ..hybrid("anna", "wrong")
+    };
+    match i % 2 {
+        0 => logon,
+        _ => NlaLogon {
+            credssp: Credssp::Delegating {
+                ntlm: ("anna", "anna-rd-pass"),
+                user: "anna",
+                password: "other-pass",
+            },
+            ..logon
+        },
+    }
+}
+
+/// Fails `n` NLA logons from `from` at the front.
+async fn fail_logons(ctx: &Ctx, from: IpAddr, n: u32) {
+    let (_tell, mut heard) = mpsc::unbounded_channel();
+    for i in 0..n {
+        let (pending, client) = nla_log_on(ctx, failing_logon(from, i), &mut heard).await;
+        client.abort();
+        assert!(
+            matches!(pending, Err(Refused::Nla(_) | Refused::DelegationMismatch)),
+            "{pending:?}"
+        );
+    }
+}
+
+/// Logs on as anna with her Remote Desktop password from `from`.
+async fn right_logon(ctx: &Ctx, from: IpAddr) -> Result<Pending, Refused> {
+    let (_tell, mut heard) = mpsc::unbounded_channel();
+    let logon = NlaLogon {
+        from,
+        ..hybrid("anna", "anna-rd-pass")
+    };
+    let (pending, client) = nla_log_on(ctx, logon, &mut heard).await;
+    client.abort();
+    pending
+}
+
+#[tokio::test]
+async fn failed_nla_logons_back_the_address_off_even_from_the_right_password() {
+    let ctx = ctx_with_anna();
+    let daemon = Daemon::link(&ctx).await;
+    let here: IpAddr = Ipv4Addr::LOCALHOST.into();
+    fail_logons(&ctx, here, FREE_FAILURES + 1).await;
+    let Err(Refused::Throttled(Refusal::BackedOff(left))) = right_logon(&ctx, here).await else {
+        panic!("the right password is refused inside the back-off");
+    };
+    assert!(left <= Duration::from_secs(2), "{left:?}");
+    skip(left / 2).await;
+    let refused = right_logon(&ctx, here).await.err();
+    assert!(
+        matches!(refused, Some(Refused::Throttled(Refusal::BackedOff(_)))),
+        "still refused halfway through the back-off: {refused:?}"
+    );
+    right_logon(&ctx, Ipv4Addr::new(127, 0, 0, 2).into())
+        .await
+        .expect("another address logs on");
+    let requests = daemon.rest(ctx).await;
+    assert_eq!(requests.len(), 1, "one Authenticate: {requests:?}");
+}
+
+#[tokio::test]
+async fn failed_nla_logons_from_many_addresses_pause_every_nla_logon() {
+    let ctx = ctx_with_anna();
+    let _daemon = Daemon::link(&ctx).await;
+    for i in 1..=PAUSE_AFTER {
+        fail_logons(&ctx, Ipv4Addr::new(127, 0, 0, i as u8).into(), 1).await;
+    }
+    let fresh: IpAddr = Ipv4Addr::new(127, 0, 0, 200).into();
+    assert_eq!(
+        right_logon(&ctx, fresh).await.err(),
+        Some(Refused::Throttled(Refusal::Paused))
+    );
+    skip(PAUSE).await;
+    right_logon(&ctx, fresh)
+        .await
+        .expect("the pause ends after 10 minutes");
+}
+
+#[tokio::test]
+async fn the_right_nla_password_clears_the_address() {
+    let ctx = ctx_with_anna();
+    let _daemon = Daemon::link(&ctx).await;
+    let here: IpAddr = Ipv4Addr::LOCALHOST.into();
+    fail_logons(&ctx, here, FREE_FAILURES + 1).await;
+    let Err(Refused::Throttled(Refusal::BackedOff(left))) = right_logon(&ctx, here).await else {
+        panic!("the right password is refused inside the back-off");
+    };
+    skip(left).await;
+    right_logon(&ctx, here)
+        .await
+        .expect("logs on once the back-off ends");
+    fail_logons(&ctx, here, FREE_FAILURES).await;
+    right_logon(&ctx, here)
+        .await
+        .expect("the free failures start again after a logon");
 }

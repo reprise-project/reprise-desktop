@@ -7,6 +7,7 @@ use std::net::{IpAddr, Ipv6Addr};
 use std::rc::Rc;
 use std::time::Duration;
 
+use repriselogin::throttle::{Attempt, PAUSE, Pause, Throttle};
 use tokio::time::Instant;
 
 /// Connections that have not authenticated yet, from all addresses.
@@ -32,6 +33,8 @@ pub enum Refusal {
     LoggingIn,
     /// Refused for the time left.
     BackedOff(Duration),
+    /// Every Network Level Authentication logon waits out a pause after many failed passwords.
+    Paused,
 }
 
 impl fmt::Display for Refusal {
@@ -48,6 +51,9 @@ impl fmt::Display for Refusal {
                     left.as_secs_f32().ceil()
                 )
             }
+            Refusal::Paused => f.write_str(
+                "Network Level Authentication is paused after repeated failed passwords",
+            ),
         }
     }
 }
@@ -121,6 +127,50 @@ impl Limits {
         let entry = self.backed_off.entry(place(ip)).or_insert(until);
         *entry = (*entry).max(until);
     }
+}
+
+/// The Remote Desktop passwords the front checks itself, which reprise-login's throttle never
+/// sees: that throttle's back-off and pause, on tokio's clock and per place.
+#[derive(Default)]
+pub struct NlaThrottle(Throttle);
+
+impl NlaThrottle {
+    /// Counts a password check from `ip` as failed until it [`succeeded`](Self::succeeded), or
+    /// refuses it while `ip` backs off or every check is paused.
+    pub fn check(&mut self, ip: IpAddr) -> Result<Attempt, Refusal> {
+        let (ip, now) = (place(ip), now());
+        let left = self.0.delay(ip, now);
+        if !left.is_zero() {
+            return Err(Refusal::BackedOff(left));
+        }
+        if self.paused() {
+            return Err(Refusal::Paused);
+        }
+        Ok(self.0.failed(ip, now))
+    }
+
+    pub fn succeeded(&mut self, ip: IpAddr, attempt: Attempt) {
+        self.0.succeeded(place(ip), attempt, now());
+    }
+
+    /// Whether every check is paused. Logs the start of each pause once.
+    pub fn paused(&mut self) -> bool {
+        match self.0.paused(now()) {
+            Pause::Off => false,
+            Pause::Started => {
+                log::info!(
+                    "Network Level Authentication is paused for {} minutes after repeated failed passwords",
+                    PAUSE.as_secs() / 60
+                );
+                true
+            }
+            Pause::Running => true,
+        }
+    }
+}
+
+fn now() -> std::time::Instant {
+    Instant::now().into_std()
 }
 
 /// What the limits count `ip` as: itself for IPv4, its /64 for IPv6.
