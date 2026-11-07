@@ -43,11 +43,20 @@ pub async fn connect_to(path: &Path) -> io::Result<(LinkSender, Events)> {
 }
 
 impl LinkSender {
-    /// Sends `req`, with `fd` attached to its first byte.
+    /// Sends `req`, with `fd` attached to its first byte. A failed write closes the link, since
+    /// it may leave half a frame on it.
     pub fn send(&self, req: &FrontRequest, fd: Option<BorrowedFd<'_>>) -> io::Result<()> {
         let frame = frame::encode(req).map_err(io::Error::other)?;
+        let written = self.write(&frame, fd);
+        if written.is_err() {
+            // SAFETY: the fd is the open socket `self.sock` owns.
+            unsafe { libc::shutdown(self.sock.as_raw_fd(), libc::SHUT_RDWR) };
+        }
+        written
+    }
+
+    fn write(&self, frame: &[u8], mut fd: Option<BorrowedFd<'_>>) -> io::Result<()> {
         let mut sent = 0;
-        let mut fd = fd;
         while sent < frame.len() {
             match fdpass::send(self.sock.as_fd(), &frame[sent..], fd) {
                 Ok(n) => {
@@ -170,5 +179,23 @@ mod tests {
         assert_eq!(events.next().await, Some(FrontEvent::Passwords { users }));
         drop(peer);
         assert_eq!(events.next().await, None, "a closed link ends the events");
+    }
+
+    #[tokio::test]
+    async fn a_send_that_fails_drops_the_link() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("front.sock");
+        let daemon = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        let (sender, mut events) = connect_to(&path).await.unwrap();
+        let (_unread, _) = daemon.accept().unwrap();
+        let failed = (0..1_000_000)
+            .find_map(|_| sender.send(&FrontRequest::Gone { conn: 1 }, None).err())
+            .expect("a daemon that never reads fills the socket");
+        assert_eq!(failed.kind(), io::ErrorKind::TimedOut);
+        assert_eq!(
+            events.next().await,
+            None,
+            "the link is closed after a failed send"
+        );
     }
 }
