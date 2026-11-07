@@ -104,12 +104,15 @@ pub fn refusal(state: &mut State) -> Option<Reason> {
     }
 }
 
-/// `object`'s first layout. The first object enters lock mode with it; a later one hears the
-/// screens there are.
+/// `object`'s first layout. The first object enters lock mode with it; a later one applies it
+/// as [`relayout`] does, or hears the screens there are when it is the same.
 pub fn begin(state: &mut State, object: ObjectId, layout: Vec<RemoteMonitor>) {
     let first = state.console.objects.is_empty();
     state.console.objects.push(object.clone());
     if !first {
+        if state.console.layout != layout {
+            return relayout(state, layout);
+        }
         send_screens(state, &[object]);
         return;
     }

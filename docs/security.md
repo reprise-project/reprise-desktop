@@ -372,8 +372,8 @@ session it started whose layout the portal can't read shares no screen,
 where the user's own server's would share every screen. The compositor
 makes one virtual screen per
 monitor of the first object's layout, in a block to the right of the
-computer's own screens. Any object's later layouts resize them, until the
-last object goes. A layout with no monitor, more than 16, a side outside
+computer's own screens. Any later layout resizes them, a later object's
+first one included, until the last object goes. A layout with no monitor, more than 16, a side outside
 200 to 8192 pixels or a corner more than 131072 pixels from the origin is
 ignored. The portal casts these screens alone and marks their streams
 virtual (`source_type` 4); every other stream, the standby screen's

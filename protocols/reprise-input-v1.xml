@@ -131,7 +131,8 @@
       Otherwise the first object's first set_layout creates one virtual
       screen per monitor and locks the session if it isn't locked. Any
       object's later layouts resize them. A later object's first
-      set_layout hears the screens that exist. Lock mode lasts until the
+      set_layout resizes them too when it differs, and otherwise hears
+      the screens that exist. Lock mode lasts until the
       last object is destroyed, until a locker client takes the lock,
       which sends every object ended(replaced), or until the session is
       unlocked at the computer, which sends every object

@@ -72,7 +72,7 @@ fn lock_mode_lasts_until_the_last_object_goes() {
 }
 
 #[test]
-fn a_later_objects_first_layout_is_ignored_and_its_next_applies() {
+fn a_later_objects_first_layout_applies_when_it_differs() {
     let mut h = Harness::new();
     h.output("eDP-1", 1920, 1080);
     let mut portal = h.connect_portal();
@@ -83,19 +83,25 @@ fn a_later_objects_first_layout_is_ignored_and_its_next_applies() {
     let second = portal.lock_screen();
     second.set_layout(&[(0, 0, 1280, 720, 100), (1280, 0, 1280, 720, 100)]);
     h.roundtrip(&mut portal);
+    assert_eq!(second.take_screens(), ["REMOTE-1", "REMOTE-2"]);
     assert_eq!(
-        second.take_screens(),
-        ["REMOTE-1"],
-        "it hears the screens there are"
+        first.take_screens(),
+        ["REMOTE-1", "REMOTE-2"],
+        "both hear the change"
+    );
+    let remote = &crate::virtualout::remote_outputs(&h.state)[0];
+    assert_eq!(size_and_scale(remote), ((1280, 720), 1.0));
+
+    let third = portal.lock_screen();
+    third.set_layout(&[(0, 0, 1280, 720, 100), (1280, 0, 1280, 720, 100)]);
+    h.roundtrip(&mut portal);
+    assert_eq!(
+        third.take_screens(),
+        ["REMOTE-1", "REMOTE-2"],
+        "the same layout hears the screens there are"
     );
     assert!(first.heard().is_empty(), "nothing changed for the first");
-    assert_eq!(remote_names(&h), ["REMOTE-1"]);
-    let remote = &crate::virtualout::remote_outputs(&h.state)[0];
-    assert_eq!(size_and_scale(remote), ((1920, 1080), 1.0));
-    second.set_layout(&[(0, 0, 1280, 720, 100)]);
-    h.roundtrip(&mut portal);
-    assert_eq!(size_and_scale(remote), ((1280, 720), 1.0));
-    assert_eq!(first.take_screens(), ["REMOTE-1"], "both hear the change");
+    assert!(second.heard().is_empty(), "nor for the second");
 }
 
 #[test]
@@ -316,7 +322,7 @@ fn screens_are_followed_by_done_and_a_smaller_layout_replaces_the_list() {
     );
     first.take_screens();
     let second = portal.lock_screen();
-    second.set_layout(&[(0, 0, 1280, 720, 100)]);
+    second.set_layout(&[(0, 0, 1920, 1080, 100), (1920, 0, 1920, 1080, 100)]);
     h.roundtrip(&mut portal);
     assert_eq!(
         second.heard(),
