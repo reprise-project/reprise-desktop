@@ -34,7 +34,6 @@ pub enum Admission {
     /// Log in with the session user's password.
     Password,
     /// Nothing more: reprise-login logged `user` in.
-    #[cfg_attr(not(test), expect(dead_code, reason = "serve does not run hand-overs"))]
     HandedOver { user: String },
 }
 

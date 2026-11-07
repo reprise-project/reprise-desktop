@@ -76,6 +76,25 @@ pub async fn open() -> Result<Grant, String> {
     rx.await.map_err(|_| GONE.to_string())?
 }
 
+/// `open` (production passes [`open`]), tried again every 250 ms until it succeeds or `deadline`
+/// has passed, for a session whose portal is still starting.
+pub async fn open_when_ready<T, F: Future<Output = Result<T, String>>>(
+    mut open: impl FnMut() -> F,
+    deadline: Duration,
+) -> Result<T, String> {
+    let until = tokio::time::Instant::now() + deadline;
+    loop {
+        match open().await {
+            Ok(opened) => return Ok(opened),
+            Err(e) if tokio::time::Instant::now() >= until => return Err(e),
+            Err(e) => log::debug!("the portal is not ready: {e}"),
+        }
+        tokio::time::sleep(RETRY).await;
+    }
+}
+
+const RETRY: Duration = Duration::from_millis(250);
+
 /// Resolves once every session asked for is closed or failed to open.
 pub async fn closed() {
     let _ = OPEN.subscribe().wait_for(|n| *n == 0).await;
@@ -363,6 +382,38 @@ pub(crate) mod tests {
             keyboard: true,
             pointer: true,
         }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_portal_is_retried_until_the_session_is_ready() {
+        let start = tokio::time::Instant::now();
+        let mut tries = 0;
+        let opened = open_when_ready(
+            || {
+                tries += 1;
+                let ready = tries > 2;
+                async move {
+                    if ready {
+                        Ok(())
+                    } else {
+                        Err("not yet".to_string())
+                    }
+                }
+            },
+            crate::wayland::SESSION_READY_WAIT,
+        )
+        .await;
+        assert_eq!(opened, Ok(()));
+        assert_eq!(start.elapsed(), Duration::from_millis(500));
+
+        let start = tokio::time::Instant::now();
+        let failed = open_when_ready(
+            || async { Err::<(), _>("no portal".to_string()) },
+            crate::wayland::SESSION_READY_WAIT,
+        )
+        .await;
+        assert_eq!(failed, Err("no portal".to_string()));
+        assert_eq!(start.elapsed(), Duration::from_secs(30));
     }
 
     #[test]

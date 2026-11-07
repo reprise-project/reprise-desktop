@@ -53,6 +53,7 @@ pub(super) fn links() -> (Links, watch::Sender<RemoteDesktop>, watch::Receiver<S
             config,
             status,
             lives,
+            portal_wait: Duration::ZERO,
         },
         config_tx,
         status_rx,

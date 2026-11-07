@@ -124,6 +124,8 @@ pub struct Links {
     pub status: watch::Sender<Status>,
     /// How many [`Live`]s run; the last to drop puts the configured encoder back in `status`.
     pub lives: Arc<AtomicUsize>,
+    /// How long a portal that does not answer yet is tried again, for a session still starting.
+    pub portal_wait: Duration,
 }
 
 /// What the stream offers while H.264 is sent: the tiled modifiers when there are any. LINEAR
@@ -297,8 +299,8 @@ impl RdpServerDisplay for Display {
         if self.session.is_none() {
             let lock = self.join();
             let picture = probed(&mut self.picture).await;
-            let mut grant =
-                (portal::open().await).map_err(|e| unshared("the screen is not shared", e))?;
+            let opened = portal::open_when_ready(portal::open, self.links.portal_wait).await;
+            let mut grant = opened.map_err(|e| unshared("the screen is not shared", e))?;
             for screen in &grant.screens {
                 log::info!(
                     "sharing {} at {:?}, {}x{} logical",
@@ -520,6 +522,7 @@ impl Live {
             mut config,
             status,
             lives,
+            ..
         } = links;
         lives.fetch_add(1, Ordering::Relaxed);
         let cfg = *config.borrow_and_update();
