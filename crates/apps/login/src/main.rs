@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io;
-use std::os::fd::{AsRawFd, FromRawFd};
+use std::os::fd::{AsFd, AsRawFd, FromRawFd};
 use std::os::unix::net::UnixStream;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -18,7 +18,7 @@ use reprise_login::ipc::{self, Gate, Paths, Server};
 use reprise_login::logind::{Logind, SessionRemovedStream};
 use reprise_login::remembered::{Remembered, STATE_PATH};
 use reprise_login::vt::{self, GREETER_VT};
-use reprise_login::worker::{FromWorker, Mode, ToWorker, worker_main};
+use reprise_login::worker::{FromWorker, LOG_FD, Mode, ToWorker, worker_main};
 use reprise_login::{pidfd, users};
 use repriselogin::GREETER_USER;
 use repriselogin::frame::{self, FrameError};
@@ -48,10 +48,7 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
     match args.as_slice() {
         [_] => daemon(),
-        [_, flag, mode] if flag == "--worker" => {
-            reprisebus::journal::init_logger(reprisebus::journal::PROGRAM_FILTER);
-            std::process::exit(worker(mode));
-        }
+        [_, flag, mode] if flag == "--worker" => std::process::exit(worker(mode)),
         [_, flag] if flag == "--help" || flag == "-h" => {
             print!("{USAGE}");
             ExitCode::SUCCESS
@@ -64,8 +61,17 @@ fn main() -> ExitCode {
 }
 
 fn worker(mode: &str) -> i32 {
+    // SAFETY: F_SETFD only changes the flags of fd LOG_FD, which nothing else here owns.
+    match unsafe { libc::fcntl(LOG_FD, libc::F_SETFD, libc::FD_CLOEXEC) } {
+        0 => reprisebus::journal::init_logger_to(
+            reprisebus::journal::PROGRAM_FILTER,
+            // SAFETY: fd LOG_FD is open, and the logger owns it for the process's life.
+            unsafe { std::fs::File::from_raw_fd(LOG_FD) },
+        ),
+        _ => reprisebus::journal::init_logger(reprisebus::journal::PROGRAM_FILTER),
+    }
     let Some(mode) = Mode::parse(mode) else {
-        eprintln!("reprise-login: unknown worker mode {mode:?}");
+        log::error!("unknown worker mode {mode:?}");
         return 2;
     };
     // SAFETY: fstat fills a local struct; F_SETFD only changes fd 3's flags.
@@ -76,7 +82,7 @@ fn worker(mode: &str) -> i32 {
             && libc::fcntl(WORKER_FD, libc::F_SETFD, libc::FD_CLOEXEC) == 0
     };
     if !is_socket {
-        eprintln!("reprise-login: --worker needs its socket on fd {WORKER_FD}");
+        log::error!("--worker needs its socket on fd {WORKER_FD}");
         return 2;
     }
     // SAFETY: fd 3 is an open socket nothing else in this process owns.
@@ -665,31 +671,38 @@ impl Workers {
     }
 }
 
-/// Forks `program --worker <mode>` with the child's end of a socket pair on fd 3.
+/// Forks `program --worker <mode>` with the child's end of a socket pair on fd 3 and the
+/// daemon's stderr on `LOG_FD`.
 fn start(program: &Path, job: &Job) -> io::Result<(Child, UnixStream)> {
     let (ours, theirs) = UnixStream::pair()?;
-    let fd = theirs.as_raw_fd();
+    let log_stream = io::stderr().as_fd().try_clone_to_owned()?;
+    let (sock, log) = (theirs.as_raw_fd(), log_stream.as_raw_fd());
     let mut cmd = Command::new(program);
     cmd.arg("--worker")
         .arg(job.mode.as_arg())
-        .stdin(Stdio::null());
-    // SAFETY: the closure runs in the child between fork and exec and calls only dup2 and
-    // fcntl, which are async-signal-safe.
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    // SAFETY: the closure runs in the child between fork and exec and calls only fcntl and
+    // dup2, which are async-signal-safe.
     unsafe {
         cmd.pre_exec(move || {
-            // dup2 onto itself would keep FD_CLOEXEC, so that case clears it instead.
-            let r = match fd == WORKER_FD {
-                true => libc::fcntl(fd, libc::F_SETFD, 0),
-                false => libc::dup2(fd, WORKER_FD),
-            };
-            match r < 0 {
+            // Copied above both targets first, so neither dup2 closes the other's source; the
+            // CLOEXEC copies end at exec, and dup2's targets never carry CLOEXEC.
+            let high = |fd| libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, LOG_FD + 1);
+            let (sock, log) = (high(sock), high(log));
+            let failed = sock < 0
+                || log < 0
+                || libc::dup2(sock, WORKER_FD) < 0
+                || libc::dup2(log, LOG_FD) < 0;
+            match failed {
                 true => Err(io::Error::last_os_error()),
                 false => Ok(()),
             }
         })
     };
     let child = cmd.spawn()?;
-    drop(theirs);
+    drop((theirs, log_stream));
     Ok((child, ours))
 }
 
@@ -825,6 +838,28 @@ mod tests {
                 let got = std::fs::read(&out).unwrap();
                 let want = [&b"--worker login\n"[..], &begin, &start].concat();
                 assert_eq!(got, want, "argv names no user; Begin comes before Start");
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn a_workers_stdout_and_stderr_are_dev_null_and_its_log_goes_to_fd_4() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let dir = tempfile::tempdir().unwrap();
+                let out = dir.path().join("out");
+                let body = format!(
+                    "readlink /proc/$$/fd/1 /proc/$$/fd/2 /proc/$$/fd/{LOG_FD} >{}",
+                    out.display()
+                );
+                let (tx, mut rx) = mpsc::unbounded_channel();
+                let mut w = Workers::new(script(dir.path(), &body), tx);
+                w.spawn(WorkerId(6), &login("anna"));
+                until_exited(&mut w, &mut rx, WorkerId(6)).await;
+                let ours = std::fs::read_link("/proc/self/fd/2").unwrap();
+                let want = format!("/dev/null\n/dev/null\n{}\n", ours.display());
+                assert_eq!(std::fs::read_to_string(&out).unwrap(), want);
             })
             .await;
     }
