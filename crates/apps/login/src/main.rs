@@ -937,18 +937,24 @@ fn start(program: &Path, job: &Job) -> io::Result<(Child, UnixStream)> {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    // SAFETY: the closure runs in the child between fork and exec and calls only fcntl and
-    // dup2, which are async-signal-safe.
+    // SAFETY: the closure runs in the child between fork and exec and calls only fcntl, dup2
+    // and close_range, which are async-signal-safe.
     unsafe {
         cmd.pre_exec(move || {
             // Copied above both targets first, so neither dup2 closes the other's source; the
             // CLOEXEC copies end at exec, and dup2's targets never carry CLOEXEC.
             let high = |fd| libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, LOG_FD + 1);
             let (sock, log) = (high(sock), high(log));
+            // zbus receives fds without CLOEXEC on its own thread, so one may be open here.
+            let rest = || {
+                let flags = libc::CLOSE_RANGE_CLOEXEC as libc::c_long;
+                libc::syscall(libc::SYS_close_range, LOG_FD + 1, u32::MAX, flags) < 0
+            };
             let failed = sock < 0
                 || log < 0
                 || libc::dup2(sock, WORKER_FD) < 0
-                || libc::dup2(log, LOG_FD) < 0;
+                || libc::dup2(log, LOG_FD) < 0
+                || rest();
             match failed {
                 true => Err(io::Error::last_os_error()),
                 false => Ok(()),
@@ -1392,5 +1398,34 @@ mod tests {
                 member: true
             }
         );
+    }
+
+    #[test]
+    fn a_worker_inherits_no_fd_left_without_cloexec() {
+        use std::os::fd::OwnedFd;
+        use std::os::unix::fs::MetadataExt;
+        let dir = tempfile::tempdir().unwrap();
+        let (pipe_end, _w) = io::pipe().unwrap();
+        // SAFETY: F_DUPFD on an open fd; the copy, above the worker's fixed fds and without
+        // FD_CLOEXEC, is one zbus received.
+        let leak = unsafe { libc::fcntl(pipe_end.as_raw_fd(), libc::F_DUPFD, 20) };
+        assert!(leak > LOG_FD, "{}", io::Error::last_os_error());
+        // SAFETY: the fd was just made, and nothing else owns it.
+        let leak = unsafe { OwnedFd::from_raw_fd(leak) };
+        let pipe = format!(
+            "pipe:[{}]",
+            std::fs::metadata(format!("/proc/self/fd/{}", leak.as_raw_fd()))
+                .unwrap()
+                .ino()
+        );
+        let program = script(dir.path(), "ls -l /proc/$$/fd/ > \"$(dirname \"$0\")/fds\"");
+        let (mut child, _sock) = start(&program, &login("anna")).unwrap();
+        assert!(child.wait().unwrap().success());
+        let fds = std::fs::read_to_string(dir.path().join("fds")).unwrap();
+        assert!(
+            fds.contains("socket:["),
+            "the worker's socket is there: {fds}"
+        );
+        assert!(!fds.contains(&pipe), "{pipe} leaked into the worker: {fds}");
     }
 }
