@@ -229,7 +229,9 @@ checks the password through the `reprise-login` PAM service, then unlocks
 that session through logind and switches to it, so no second password is
 asked. A user who already has a session never gets a second one. If the
 switch fails, the session is locked again; a reprise-login that starts locks
-every session that isn't on screen.
+every session that isn't on screen. A remote login's background session
+instead locks its own screen when it links to reprise-login again, so its
+connected client keeps the desktop.
 
 The session unlocks on logind's `Unlock`, so it can't tell reprise-login's
 resume from `loginctl unlock-session` run by root, by an admin polkit lets
