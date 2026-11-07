@@ -165,17 +165,16 @@ impl RemoteDesktop {
         }
         let key = session_handle.to_string();
         let parent = crate::dialog::parent_handle(&parent_window);
-        let caller = if app_id == crate::trusted::APP_ID {
-            crate::trusted::session_caller(conn, session_handle.as_str()).await
-        } else {
-            None
-        };
-        let trusted = caller.is_some()
-            && crate::trusted::trusted(
+        let caller = crate::trusted::session_caller(conn, session_handle.as_str()).await;
+        let trusted = caller.is_some() && {
+            use crate::trusted::{HANDOVER_UNIT, UNIT, unit_facts};
+            crate::trusted::start_trusted(
                 &app_id,
                 caller,
-                crate::trusted::unit_facts(conn).await.as_ref(),
-            );
+                unit_facts(conn, UNIT).await.as_ref(),
+                unit_facts(conn, HANDOVER_UNIT).await.as_ref(),
+            )
+        };
         let (devices, restored, mut requested) = {
             let mut sessions = self.sessions.lock().unwrap();
             let Some(s) = sessions.get_mut(&key).and_then(SessionData::remote_mut) else {
