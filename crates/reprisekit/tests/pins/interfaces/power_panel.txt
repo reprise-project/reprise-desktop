@@ -6,6 +6,8 @@ Blue 1 cancel focused cc7a04cbd1010bbc
 Blue 1 cancel pressed b12524520fc2a45d
 Blue 1 log off 3a79cdb1ded50540
 Blue 1 log off hot fb5204e1f5d10983
+Blue 1 disconnect log off 7ae378b2ef749ad2
+Blue 1 disconnect turn off 405e8c8bc61a35cd
 Blue 2 turn off 64f22a9990582ef3
 Blue 2 restart hot 5df0df3aa30a01ff
 Blue 2 turn off pressed e2f2995d5703fdc2
@@ -14,6 +16,8 @@ Blue 2 cancel focused 6bbaa40bef48aaa4
 Blue 2 cancel pressed 7418357395992d6d
 Blue 2 log off a8c3121c51950a9a
 Blue 2 log off hot 5d0b35d31c5877c0
+Blue 2 disconnect log off 23cb4d69f6128071
+Blue 2 disconnect turn off c9f71148c3afa11c
 Silver 1 turn off eab49d314e881a42
 Silver 1 restart hot 4be55082fe55d2e6
 Silver 1 turn off pressed 90f662b7bb1ff065
@@ -22,6 +26,8 @@ Silver 1 cancel focused 622519543f6720ed
 Silver 1 cancel pressed 0e9a34d56290c5f5
 Silver 1 log off 07719a21424e7321
 Silver 1 log off hot 2c0c32404c7e29ee
+Silver 1 disconnect log off aae5093065279c31
+Silver 1 disconnect turn off 636b67462187c4cc
 Silver 2 turn off 398365c81c1fdc65
 Silver 2 restart hot 6597f9823e3ef181
 Silver 2 turn off pressed 77c620b968497926
@@ -30,3 +36,5 @@ Silver 2 cancel focused f131da1413263746
 Silver 2 cancel pressed 50628c0ca894763e
 Silver 2 log off 01994e16bd9b101f
 Silver 2 log off hot ab39050815bcad05
+Silver 2 disconnect log off c8592e2c70d634a4
+Silver 2 disconnect turn off c0d9ba42ea74b3df

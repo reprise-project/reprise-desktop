@@ -58,3 +58,13 @@ Green Burst 2 Focus 70f949a0d40c9dfc
 Green Burst 2 Hot 598ae30ba6367d34
 Green Burst 2 Pressed d9f7eb1ce8b877c8
 Green Burst 2 Disabled dc376a65044c4007
+Green Unplug 1 Normal fbff3e0e2a753477
+Green Unplug 1 Focus 4fdc50a433dc707c
+Green Unplug 1 Hot 38cebea9f4c84176
+Green Unplug 1 Pressed cb7453ac49d452d6
+Green Unplug 1 Disabled 385e5f4d4d5ea130
+Green Unplug 2 Normal 797707c62f46eabf
+Green Unplug 2 Focus 0cce15e5820138b6
+Green Unplug 2 Hot bcbf8727062f1a78
+Green Unplug 2 Pressed 2e31e6f78b19ab9b
+Green Unplug 2 Disabled e6f4e6562fd2b04f

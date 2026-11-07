@@ -883,7 +883,7 @@ impl Dialog {
     /// Off, which runs the `exit` action and holds the focus.
     pub fn log_off(switch_user: bool) -> Dialog {
         Dialog::welcome(Welcome {
-            panel: Panel::log_off(switch_user),
+            panel: Panel::log_off(reprisekit::powerpanel::Leave::SwitchUser { live: switch_user }),
             actions: vec![
                 (Choice::SwitchUser, DialogAction::SwitchUser),
                 (Choice::LogOff, DialogAction::Act(Action::Exit)),
@@ -897,7 +897,7 @@ impl Dialog {
     pub fn turn_off(power: &PowerConfig) -> Dialog {
         let set = |cmd: &str| !cmd.trim().is_empty();
         Dialog::welcome(Welcome {
-            panel: Panel::turn_off(set(&power.standby), set(&power.hibernate)),
+            panel: Panel::turn_off(set(&power.standby), set(&power.hibernate), false),
             actions: vec![
                 (
                     Choice::StandBy,
@@ -925,7 +925,7 @@ impl Dialog {
     pub fn greeter_turn_off() -> Dialog {
         use repriselogin::greeter::PowerAction;
         Dialog::welcome(Welcome {
-            panel: Panel::turn_off(false, false),
+            panel: Panel::turn_off(false, false, false),
             actions: vec![
                 (
                     Choice::TurnOff,

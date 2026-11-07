@@ -74,7 +74,7 @@ mod tests {
     use crate::interface::Interface;
     use crate::interfaces::theme_for;
     use crate::pointer::Interaction;
-    use crate::powerpanel::{Choice, ICON, layout};
+    use crate::powerpanel::{Choice, ICON, Leave, layout};
     use crate::theme::{TextUnits, Theme};
 
     fn fnv(c: &Canvas) -> u64 {
@@ -151,7 +151,7 @@ mod tests {
         let mut got = Vec::new();
         for v in [Variant::Blue, Variant::Silver] {
             for s in [1, 2] {
-                let mut t = untitled(Panel::turn_off(false, true));
+                let mut t = untitled(Panel::turn_off(false, true, false));
                 let mut add = |name: &str, c: Canvas| {
                     got.push((format!("{v:?} {s} {name}"), fnv(&c)));
                 };
@@ -172,12 +172,16 @@ mod tests {
                     "cancel pressed",
                     drawn(v, &t, Some((Part::Cancel, Interaction::Pressed)), all, s),
                 );
-                let l = untitled(Panel::log_off(false));
+                let l = untitled(Panel::log_off(Leave::SwitchUser { live: false }));
                 add("log off", drawn(v, &l, None, Cues::NONE, s));
                 add(
                     "log off hot",
                     drawn(v, &l, Some((Part::Big(1), Interaction::Hot)), all, s),
                 );
+                let d = untitled(Panel::log_off(Leave::Disconnect));
+                add("disconnect log off", drawn(v, &d, None, all, s));
+                let d = untitled(Panel::turn_off(true, true, true));
+                add("disconnect turn off", drawn(v, &d, None, Cues::NONE, s));
             }
         }
         crate::pins::check("interfaces/power_panel", &got);
@@ -190,7 +194,7 @@ mod tests {
         let mut got = Vec::new();
         for s in [1, 2] {
             let theme = classic.scaled(s);
-            let mut t = Panel::turn_off(false, true);
+            let mut t = Panel::turn_off(false, true, false);
             t.title = String::new();
             let mut add = |name: &str, p: &Panel, lit: Lit<Part>, cues: Cues| {
                 let c = drawn_with(Variant::Blue, Some(&theme), p, lit, cues, s);
@@ -217,7 +221,7 @@ mod tests {
 
     #[test]
     fn cancel_takes_the_classic_face_under_classic_and_blues_otherwise() {
-        let p = Panel::turn_off(false, true);
+        let p = Panel::turn_off(false, true, false);
         let lay = layout(&p, TextUnits::ONE);
         let classic = Theme::default();
         let r = lay.cancel;
@@ -245,7 +249,7 @@ mod tests {
 
     #[test]
     fn the_title_inks_white_in_the_title_band_left_of_the_logo() {
-        let p = Panel::turn_off(true, false);
+        let p = Panel::turn_off(true, false, false);
         let lay = layout(&p, TextUnits::ONE);
         let c = drawn(Variant::Blue, &p, None, Cues::NONE, 1);
         let t = lay.title;
@@ -261,7 +265,7 @@ mod tests {
 
     #[test]
     fn the_tiles_sit_in_their_cells_and_a_greyed_one_lets_the_band_through() {
-        let p = Panel::turn_off(false, false);
+        let p = Panel::turn_off(false, false, false);
         let lay = layout(&p, TextUnits::ONE);
         let c = drawn(Variant::Blue, &p, None, Cues::NONE, 1);
         let (at, _) = lay.cell_parts(lay.cells[1]);
@@ -285,7 +289,7 @@ mod tests {
     #[ignore]
     fn render_power_panels() {
         for s in [1, 2] {
-            let mut t = Panel::turn_off(false, true);
+            let mut t = Panel::turn_off(false, true, false);
             crate::raster::write_preview(
                 &drawn(Variant::Blue, &t, None, Cues::NONE, s),
                 &format!("power-turn-off@{s}.png"),
@@ -296,7 +300,13 @@ mod tests {
                 &format!("power-hibernate-olive@{s}.png"),
             );
             crate::raster::write_preview(
-                &drawn(Variant::Blue, &Panel::log_off(false), None, Cues::NONE, s),
+                &drawn(
+                    Variant::Blue,
+                    &Panel::log_off(Leave::SwitchUser { live: false }),
+                    None,
+                    Cues::NONE,
+                    s,
+                ),
                 &format!("power-log-off@{s}.png"),
             );
         }

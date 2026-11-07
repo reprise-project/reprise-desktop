@@ -114,6 +114,8 @@ powerpanel-turn-off = T&urn Off
 powerpanel-turn-off-tip = Shuts down Reprise so that you can safely turn off the computer.
 powerpanel-restart = &Restart
 powerpanel-restart-tip = Shuts down Reprise and then starts Reprise again.
+powerpanel-disconnect = &Disconnect
+powerpanel-disconnect-tip = Ends this connection and leaves your session running, so you can connect to it again.
 
 ## The login screen
 logon-title = Log On to Reprise
