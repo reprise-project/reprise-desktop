@@ -779,7 +779,7 @@ fn power_with_another_session_running_is_refused() {
 }
 
 #[test]
-fn power_with_no_session_powers_off() {
+fn power_with_no_session_powers_off_and_a_failure_is_logged() {
     let mut run = Run::booted();
     assert_eq!(
         run.greeter(GreeterRequest::Power {
@@ -789,7 +789,10 @@ fn power_with_no_session_powers_off() {
     );
     assert_eq!(
         run.on(Input::PowerDone(Err("masked".into()))),
-        reply(error(ErrorKind::Failed, "masked"))
+        vec![
+            Effect::Log(Level::Warn, "turning off or restarting: masked".into()),
+            Effect::Reply(error(ErrorKind::Failed, "masked")),
+        ]
     );
 }
 
