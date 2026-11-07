@@ -4498,6 +4498,7 @@ dependencies = [
 name = "reprise-login-rdp"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "ironrdp-acceptor",
  "ironrdp-connector",
  "ironrdp-core",

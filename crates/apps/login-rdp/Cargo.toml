@@ -16,6 +16,7 @@ name = "reprise-login-rdp"
 path = "src/main.rs"
 
 [dependencies]
+async-trait = "0.1"
 ironrdp-acceptor.workspace = true
 ironrdp-connector.workspace = true
 ironrdp-core.workspace = true
@@ -26,7 +27,7 @@ log.workspace = true
 reprisebus = { path = "../../reprisebus" }
 repriselogin = { path = "../../repriselogin" }
 reprisetls = { path = "../../reprisetls" }
-tokio = { workspace = true, features = ["rt", "net", "time", "macros", "io-util"] }
+tokio = { workspace = true, features = ["rt", "net", "time", "macros", "io-util", "sync"] }
 tokio-rustls.workspace = true
 zeroize.workspace = true
 
