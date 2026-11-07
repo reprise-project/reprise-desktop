@@ -268,3 +268,23 @@ fn an_orphan_report_for_an_unknown_session_terminates_nothing() {
     let mut run = anna_and_bert();
     assert_eq!(orphaned(&mut run, "c9", 1000), []);
 }
+
+#[test]
+fn recovery_locks_no_session_off_the_seat() {
+    let found = vec![
+        logind("c1", "anna", ANNA, 7, "user", "reprise-login-remote"),
+        logind("c2", "bert", 1002, 8, "user", "reprise-login-remote-nla"),
+        logind("c4", "carl", 1003, 9, "user", Mode::Login.service()),
+    ];
+    for seat_active in [Some("g1"), None] {
+        let mut run = Run::machine(MachineConfig {
+            remote: enabled(),
+            ..MachineConfig::default()
+        });
+        let effects = run.d.recover(run.now, found.clone(), seat_active);
+        assert!(
+            !effects.iter().any(|e| matches!(e, Effect::LockSession(_))),
+            "each compositor locks its own console when its link drops: {effects:?}"
+        );
+    }
+}

@@ -314,8 +314,8 @@ fn drain(state: &mut State) {
     heard(state, &mut FrameReader::new(), &bytes);
 }
 
-/// The daemon went or dropped the session: forget the stream, take Switch User away, ask
-/// logind whether the session is closing and call again.
+/// The daemon went or dropped the session: forget the stream, take Switch User away, lock the
+/// console off the seat, ask logind whether the session is closing and call again.
 fn lost(state: &mut State) {
     let Some(link) = state.login_link.as_mut() else {
         return;
@@ -324,6 +324,11 @@ fn lost(state: &mut State) {
     let again = link.closed();
     if let Some(t) = link.watch.take() {
         state.handle.remove(t);
+    }
+    // A daemon that died between unlocking this session for a resume and switching to it left
+    // it unlocked on a VT anyone can reach. Like `born`, a connected client keeps its desktop.
+    if state.lock.seat_away {
+        crate::lockview::lock(state);
     }
     crate::lockview::redraw(state);
     crate::power::check_closing(state);
@@ -684,12 +689,12 @@ mod tests {
         let (mut first, _) = listener.accept().unwrap();
         assert_eq!(heard(&mut first), hello(Interface::Classic));
         crate::backend::pause_session(&mut h.state);
-        crate::lockview::unlock(&mut h.state);
-        assert!(!h.state.console_locked(), "unlocked for a resume");
         drop((first, listener));
         std::fs::remove_file(&path).unwrap();
         h.dispatch();
         assert!(!connected(&h.state), "the daemon went");
+        crate::lockview::unlock(&mut h.state);
+        assert!(!h.state.console_locked(), "unlocked while unlinked");
         let _listener = UnixListener::bind(&path).unwrap();
         h.run_for(2500);
         assert!(connected(&h.state));
@@ -704,6 +709,42 @@ mod tests {
             !h.state.desktop_locked(),
             "the connected client keeps its desktop"
         );
+    }
+
+    #[test]
+    fn a_link_lost_off_the_seat_locks_the_console() {
+        let (mut h, theirs) = linked();
+        crate::lockview::seat_away(&mut h.state, true);
+        assert!(!h.state.console_locked(), "unlocked for a resume");
+        drop(theirs);
+        h.dispatch();
+        assert!(!connected(&h.state), "the daemon went");
+        assert!(h.state.console_locked());
+    }
+
+    #[test]
+    fn a_link_lost_in_lock_mode_leaves_the_remote_side_unlocked() {
+        let (mut h, _portal, _lock) = crate::console::tests::in_lock_mode();
+        let (ours, theirs) = UnixStream::pair().unwrap();
+        install(&mut h.state, LoginLink::from_stream(ours));
+        crate::lockview::seat_away(&mut h.state, true);
+        drop(theirs);
+        h.dispatch();
+        assert!(!connected(&h.state), "the daemon went");
+        assert!(h.state.console_locked());
+        assert!(
+            !h.state.desktop_locked(),
+            "the connected client keeps its desktop"
+        );
+    }
+
+    #[test]
+    fn a_link_lost_on_the_seat_locks_nothing() {
+        let (mut h, theirs) = linked();
+        drop(theirs);
+        h.dispatch();
+        assert!(!connected(&h.state), "the daemon went");
+        assert!(!h.state.console_locked());
     }
 
     #[test]
