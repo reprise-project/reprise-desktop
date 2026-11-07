@@ -7,7 +7,8 @@
 //! unlocked and any client holds an idle inhibitor or an
 //! `org.freedesktop.ScreenSaver` cookie. A fullscreen window on screen holds
 //! off only the saver; the other steps keep their timeouts. A remote-control
-//! session holds off screen-off and suspend, even while locked.
+//! session holds off screen-off and suspend, even while locked. A remote client
+//! elsewhere (`power::remote_elsewhere`) or a session off the seat holds off suspend.
 //! The timeouts are `Config::idle_for` the current power source
 //! (`power::PowerState::on_battery`).
 
@@ -512,11 +513,14 @@ fn notify_clients(state: &mut State) {
 }
 
 /// A remote-control session (`State::remote_controlled`) holds off screen-off and suspend,
-/// locked or not; the saver and the lock keep their timeouts.
+/// locked or not; a remote client elsewhere or a session off the seat holds off suspend.
 fn config(state: &State) -> IdleConfig {
     let mut cfg = state.config.idle_for(state.power.on_battery);
     if state.remote_controlled() {
         cfg.screen_off_after = 0;
+        cfg.suspend_after = 0;
+    }
+    if state.power.remote_elsewhere || !crate::backend::session_active(state) {
         cfg.suspend_after = 0;
     }
     cfg
@@ -1096,6 +1100,35 @@ mod tests {
             assert!(
                 h.state.idle.steps.suspended,
                 "standby once the sender is gone"
+            );
+        }
+
+        #[test]
+        fn an_inactive_session_never_suspends_on_idle() {
+            let mut h = laptop(0);
+            crate::idle::setup(&mut h.state);
+            crate::backend::pause_session(&mut h.state);
+            h.run_for(3500);
+            assert!(!h.state.idle.steps.suspended, "no standby off the seat");
+        }
+
+        #[test]
+        fn a_remote_client_elsewhere_holds_off_suspend_like_remote_control() {
+            let mut h = laptop(0);
+            crate::power::remote_elsewhere_changed(&mut h.state, true);
+            crate::idle::setup(&mut h.state);
+            h.run_for(3500);
+            assert!(
+                h.state.idle.steps.screen_off,
+                "this console's outputs go off"
+            );
+            assert!(!h.state.idle.steps.suspended, "no standby");
+
+            crate::power::remote_elsewhere_changed(&mut h.state, false);
+            h.run_for(100);
+            assert!(
+                h.state.idle.steps.suspended,
+                "standby once the client is gone"
             );
         }
 

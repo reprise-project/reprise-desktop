@@ -93,8 +93,10 @@ pub(super) fn flipped(state: &mut State, head: Head, (time, seq, kind): Flip) {
 
 pub(super) fn render(state: &mut State, head: Head) {
     state.settle_moves();
-    let Some(output) = due(state, head) else {
-        return;
+    let output = match due(state, head) {
+        Some((Due::Now, output)) => output,
+        Some((Due::Away, _)) => return callbacks_after_a_frame(state, head, false),
+        _ => return,
     };
     if held_back(state, head) {
         return;
@@ -617,17 +619,47 @@ fn held_back(state: &mut State, head: Head) -> bool {
     }
 }
 
-pub(super) fn due(state: &State, head: Head) -> Option<Output> {
+/// How often a head away from its session answers its clients' frame callbacks.
+pub(super) const INACTIVE_CALLBACK: Duration = Duration::from_secs(1);
+
+/// Whether a head renders now, later, or not before its session comes back (`Away`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Due {
+    Now,
+    Wait,
+    Away,
+}
+
+/// A head `ready` (its frame and every commit done, no device return pending) renders while the
+/// session is `active`; an `Away` head answers its clients on the callback timer instead.
+pub(super) fn due_now(gone: bool, off: bool, active: bool, ready: bool) -> Due {
+    if gone || off {
+        Due::Wait
+    } else if !active {
+        Due::Away
+    } else if ready {
+        Due::Now
+    } else {
+        Due::Wait
+    }
+}
+
+/// The pace of a head's frame callbacks, its refresh being `refresh` mHz.
+pub(super) fn callback_interval(refresh: i32, active: bool) -> Duration {
+    if active {
+        crate::framepace::interval(refresh)
+    } else {
+        INACTIVE_CALLBACK
+    }
+}
+
+fn due(state: &State, head: Head) -> Option<(Due, Output)> {
     let b = state.backend.as_ref()?;
     let s = b.surfaces.get(&head)?;
     let device = b.devices.of(head)?;
-    (!device.dead
-        && s.track.idle()
-        && b.quiet()
-        && !device.back.pending()
-        && !s.hw.off
-        && b.session.is_active())
-    .then(|| s.output.clone())
+    let ready = s.track.idle() && b.quiet() && !device.back.pending();
+    let due = due_now(device.dead, s.hw.off, b.session.is_active(), ready);
+    Some((due, s.output.clone()))
 }
 
 fn count_frame(s: &mut Surface, overlay: bool, started: std::time::Instant, cursor_only: bool) {
@@ -700,14 +732,15 @@ pub fn take_stats(state: &mut State, output: &Output) -> Option<crate::debugview
 }
 
 pub(super) fn callbacks_after_a_frame(state: &mut State, head: Head, shown: bool) {
-    let Some(s) = state
-        .backend
-        .as_mut()
-        .and_then(|b| b.surfaces.get_mut(&head))
-    else {
+    let Some(b) = state.backend.as_mut() else {
         return;
     };
-    let interval = crate::framepace::interval(s.output.current_mode().map_or(0, |m| m.refresh));
+    let active = b.session.is_active();
+    let Some(s) = b.surfaces.get_mut(&head) else {
+        return;
+    };
+    let refresh = s.output.current_mode().map_or(0, |m| m.refresh);
+    let interval = callback_interval(refresh, active);
     let wait = match s.pace.done(shown, std::time::Instant::now(), interval) {
         Done::Now if shown => {
             s.callback_timer = None;

@@ -82,6 +82,7 @@ pub(crate) fn activate(state: &mut State) {
     for s in b.surfaces.values_mut() {
         s.track.reset();
         s.hw.unlit = true;
+        s.callback_timer = None;
     }
     on_quiet(state);
     for output in state.scene.outputs().to_vec() {
