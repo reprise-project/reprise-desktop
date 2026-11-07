@@ -4,6 +4,7 @@ use super::*;
 use crate::auth::{self, HANDSHAKE, PasswordCheck, PasswordLogins, Throttle};
 use crate::intake::{Admission, TcpIntake};
 use ironrdp_server::{CredentialDecision, CredentialValidator};
+use repriseconf::remote::SecondClient;
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Once;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -41,6 +42,11 @@ fn connection_request(protocols: u32) -> Vec<u8> {
 
 impl Leave for () {
     async fn left(&self, _: End) {}
+}
+
+/// A console whose runs of viewers are in lock mode.
+fn lock_mode_console() -> crate::console::Console {
+    crate::console::tests::configured(repriseconf::remote::LaptopScreen::Lock, false).0
 }
 
 /// A running [`serve`] on 127.0.0.1 and its links.
@@ -142,6 +148,7 @@ async fn start_leaving<L: Leave + 'static>(
         config: config_rx,
         disconnect: disconnect_rx,
         leave: leave(status_rx.clone()),
+        console: lock_mode_console(),
     };
     let (stop, stopped) = oneshot::channel::<()>();
     let handlers = |_, _| {
@@ -374,6 +381,61 @@ async fn a_connection_over_the_cap_is_closed_and_not_listed() {
             assert!(lines.contains(&line), "{line:?} in {lines:?}");
         })
         .await;
+}
+
+#[tokio::test]
+async fn a_second_client_joins_by_default() {
+    let local = LocalSet::new();
+    local
+        .run_until(async {
+            let mut s = start_admitting(&local, 0, 4).await;
+            let [(mut a, first), (mut b, second)] = two_listed(&mut s).await;
+            assert!(still_open(&mut a).await, "the first client is kept");
+            assert!(still_open(&mut b).await, "the second client is kept");
+            assert_eq!(listed(&s), [first, second]);
+        })
+        .await;
+}
+
+/// With `second_client = "replace"` and `max_viewers`, a client connects, then a second one
+/// logs in and ends it.
+async fn the_second_client_replaces_the_first(max_viewers: usize) {
+    let local = LocalSet::new();
+    local
+        .run_until(async {
+            let config = RemoteDesktop {
+                port: 0,
+                max_viewers,
+                second_client: SecondClient::Replace,
+                ..RemoteDesktop::default()
+            };
+            let mut s = start_with(&local, config, Admitted).await;
+            let mut first = TcpStream::connect(s.addr).await.unwrap();
+            assert!(confirmed(&mut first).await);
+            let replaced = first.local_addr().unwrap().to_string();
+            listed_become(&mut s, &[replaced.as_str()]).await;
+            let mut second = TcpStream::connect(s.addr).await.unwrap();
+            assert!(confirmed(&mut second).await, "the second client is let in");
+            let kept = second.local_addr().unwrap().to_string();
+            assert!(closed_soon(&mut first).await, "the first client is ended");
+            let line = format!("{replaced}: disconnected; another client logged in");
+            assert!(logged(&line), "{line:?} in {:?}", LINES.lock().unwrap());
+            listed_become(&mut s, &[kept.as_str()]).await;
+            assert!(still_open(&mut second).await, "the second client is kept");
+        })
+        .await;
+}
+
+#[tokio::test]
+async fn with_replace_a_client_logging_in_ends_the_earlier_ones() {
+    capture_log();
+    the_second_client_replaces_the_first(4).await;
+}
+
+#[tokio::test]
+async fn with_replace_a_client_past_max_viewers_is_let_in_to_replace() {
+    capture_log();
+    the_second_client_replaces_the_first(1).await;
 }
 
 /// A connection to `addr` from `ip`, one of the 127/8 addresses.
@@ -838,6 +900,7 @@ async fn session(
             open: matches!(portal, Portal::Flag).then_some(open_rx),
         },
         viewers: RefCell::default(),
+        console: lock_mode_console(),
     });
     let (id, kicked) = shared.viewers.borrow_mut().join(peer, 1).unwrap();
     let ending = Ending::default();
@@ -871,6 +934,7 @@ async fn session(
                     peer,
                     kicked,
                     ending: ending.clone(),
+                    replaces: false,
                     alive: mpsc::channel(1).0,
                 },
                 check.clone(),
@@ -983,6 +1047,15 @@ fn a_stop_tells_the_client_the_server_ended_it_and_a_kick_that_the_user_did() {
             ProtocolIndependentCode::RpcInitiatedDisconnectByuser
         );
     }
+}
+
+#[test]
+fn a_replaced_client_is_told_another_connection_took_over() {
+    let ErrorInfo::ProtocolIndependentCode(code) = told_for(Kick::Replaced) else {
+        panic!("{:?}", told_for(Kick::Replaced));
+    };
+    assert_eq!(code, ProtocolIndependentCode::DisconnectedByOtherconnection);
+    assert_eq!(code as u32, 5, "ERRINFO_DISCONNECTED_BY_OTHERCONNECTION");
 }
 
 #[tokio::test(start_paused = true)]
@@ -1197,6 +1270,7 @@ async fn an_accepted_connection_that_never_arrived_does_not_leave() {
                     open: Some(watch::channel(false).1),
                 },
                 viewers: RefCell::default(),
+                console: lock_mode_console(),
             });
             let (id, kicked) = shared.viewers.borrow_mut().join(peer, 1).unwrap();
             let viewer = Viewer {
@@ -1204,6 +1278,7 @@ async fn an_accepted_connection_that_never_arrived_does_not_leave() {
                 peer,
                 kicked,
                 ending: Ending::default(),
+                replaces: false,
                 alive: mpsc::channel(1).0,
             };
             let ran = run(
@@ -1238,6 +1313,7 @@ async fn a_shown_connection_whose_task_panics_still_locks() {
                         open: Some(watch::channel(false).1),
                     },
                     viewers: RefCell::default(),
+                    console: lock_mode_console(),
                 });
                 let (id, _kicked) = shared.viewers.borrow_mut().join(peer, 1).unwrap();
                 let task = tokio::task::spawn_local(async move {
