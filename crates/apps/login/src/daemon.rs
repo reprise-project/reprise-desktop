@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use log::Level;
+use repriselogin::account::{AccountReply, AccountRequest};
 use repriselogin::front::{FrontEvent, FrontRequest};
 use repriselogin::greeter::{
     ErrorKind, GreeterReply, GreeterRequest, Greeting, Keyboard, Notice, PowerAction, UserEntry,
@@ -19,6 +20,7 @@ use crate::table::{Route, SessionEntry, Sessions};
 use crate::vt::{self, GREETER_VT, TEXT_LOGIN_VT};
 use crate::worker::{AUTH_FAILED, FromWorker, Mode, ToWorker};
 
+mod account;
 mod remote;
 
 pub use remote::{
@@ -156,6 +158,17 @@ pub enum Input {
     },
     /// `MACHINE_CONFIG` was read again, on SIGHUP.
     ConfigReloaded(MachineConfig),
+    /// A request on account link `link` from `uid`, whose account is `user`.
+    Account {
+        link: u64,
+        uid: u32,
+        user: String,
+        request: AccountRequest,
+    },
+    /// The answer to `Effect::StorePasswords`.
+    Stored {
+        ok: bool,
+    },
 }
 
 #[derive(Debug, PartialEq)]
@@ -216,6 +229,13 @@ pub enum Effect {
     Front(FrontUnit),
     /// Closes every hand-over link.
     CloseIntakes,
+    /// Answers account link `link`, which then closes.
+    AccountReply {
+        link: u64,
+        reply: AccountReply,
+    },
+    /// Replaces the Remote Desktop password store with these, answered by `Input::Stored`.
+    StorePasswords(Vec<StoredPassword>),
 }
 
 /// A session as logind's `ListSessions` and session properties describe it.
@@ -516,9 +536,15 @@ impl Daemon {
             Input::Worker(worker, msg) if self.is_remote_worker(worker) => {
                 self.remote_worker_message(now, world, worker, msg, &mut out)
             }
+            Input::Worker(worker, msg) if self.is_account_worker(worker) => {
+                self.account_worker_message(worker, msg, &mut out)
+            }
             Input::Worker(worker, msg) => self.worker_message(now, worker, msg, &mut out),
             Input::WorkerExited(worker) if self.is_remote_worker(worker) => {
                 self.remote_worker_exited(now, worker, &mut out)
+            }
+            Input::WorkerExited(worker) if self.is_account_worker(worker) => {
+                self.account_worker_exited(worker, &mut out)
             }
             Input::WorkerExited(worker) => self.worker_exited(worker, &mut out),
             Input::Session {
@@ -589,12 +615,24 @@ impl Daemon {
                 uid,
                 member,
             } => self.member(now, conn, uid, member, &mut out),
+            Input::Member {
+                key: LookUpKey::Account(link),
+                uid,
+                member,
+            } => self.account_member(link, uid, member, &mut out),
             Input::Member { .. } => {}
             Input::IntakeOpen { uid } => self.intake_open(uid, &mut out),
             Input::IntakeLost { uid } => self.intake_lost(uid, &mut out),
             Input::Viewers { uid, count } => self.set_viewers(uid, count, &mut out),
             Input::Forwarded { conn, ok } => self.forwarded(conn, ok, &mut out),
             Input::ConfigReloaded(config) => self.config_reloaded(config, &mut out),
+            Input::Account {
+                link,
+                uid,
+                user,
+                request,
+            } => self.account_request(link, uid, user, request, &mut out),
+            Input::Stored { ok } => self.stored(ok, &mut out),
         }
         self.update_inhibit(&mut out);
         if !self.start_in_flight() && !self.remote_start_in_flight() {
@@ -1532,6 +1570,8 @@ fn send_start(worker: WorkerId, vt: u16, out: &mut Vec<Effect>) {
     });
 }
 
+#[cfg(test)]
+mod account_tests;
 #[cfg(test)]
 mod remote_tests;
 #[cfg(test)]

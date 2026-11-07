@@ -1,3 +1,5 @@
+pub mod accountipc;
+pub mod atomic;
 pub mod config;
 pub mod daemon;
 pub mod frontipc;
@@ -9,6 +11,7 @@ pub mod machinewrite;
 pub mod pam;
 pub mod pidfd;
 pub mod remembered;
+pub mod remotepw;
 pub mod table;
 pub mod users;
 pub mod vt;

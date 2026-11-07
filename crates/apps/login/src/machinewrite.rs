@@ -1,11 +1,11 @@
 //! Writes the machine settings for `reprise-login-settings`.
 
-use std::fs::{DirBuilder, File, OpenOptions, Permissions};
-use std::io::{self, Write as _};
-use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _, PermissionsExt as _};
+use std::io;
 use std::path::Path;
 
 use repriselogin::machine::MachineConfig;
+
+use crate::atomic;
 
 /// The longest settings text the helper reads, in bytes.
 pub const MAX_INPUT: usize = 16 * 1024;
@@ -25,7 +25,7 @@ pub fn apply(input: &str, path: &Path) -> Result<(), Error> {
     if !warnings.is_empty() {
         return Err(Error::Invalid(warnings));
     }
-    write(&config.to_toml(), path).map_err(Error::Io)
+    atomic::replace(path, config.to_toml().as_bytes(), 0o755, 0o644).map_err(Error::Io)
 }
 
 /// `warning` on one line: a TOML parse error's heading and message, without its source snippet.
@@ -40,41 +40,9 @@ pub fn one_line(warning: &str) -> String {
     lines.join(": ")
 }
 
-fn write(text: &str, path: &Path) -> io::Result<()> {
-    let dir = path.parent().unwrap_or(Path::new("."));
-    if !dir.exists() {
-        DirBuilder::new().recursive(true).mode(0o755).create(dir)?;
-        // The modes here and below are masked by the umask, which pkexec passes on from the caller.
-        std::fs::set_permissions(dir, Permissions::from_mode(0o755))?;
-    }
-    let mut tmp = path.as_os_str().to_owned();
-    tmp.push(".tmp");
-    // unlink does not follow a planted symlink, and O_EXCL | O_NOFOLLOW refuses one planted since.
-    match std::fs::remove_file(&tmp) {
-        Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e),
-        _ => {}
-    }
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .custom_flags(libc::O_NOFOLLOW)
-        .mode(0o644)
-        .open(&tmp)?;
-    let replaced = (|| {
-        file.set_permissions(Permissions::from_mode(0o644))?;
-        file.write_all(text.as_bytes())?;
-        file.sync_all()?;
-        std::fs::rename(&tmp, path)
-    })();
-    if let Err(e) = replaced {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e);
-    }
-    File::open(dir)?.sync_all()
-}
-
 #[cfg(test)]
 mod tests {
+    use std::fs::Permissions;
     use std::os::unix::fs::PermissionsExt;
 
     use repriselogin::machine::MachineRemote;
