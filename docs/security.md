@@ -218,10 +218,12 @@ instead.
 A worker moves into its logind session's scope when the session opens, out
 of the unit's cgroup. Restarting reprise-login, or a crash, leaves running
 sessions alone; a login still in its PAM conversation ends with the daemon.
-A session whose worker dies while logind still lists it open has no PAM
-handle left to close it, so the daemon ends it through logind, unsaved work
-included. It acts only when its own table has that session id for the uid
-logind lists, and a failed read of logind's sessions ends nothing. A worker
+A worker leads its session, so when it dies logind marks the session
+closing and the session's compositor ends itself. Should logind still list
+the session open, with no PAM handle left to close it, the daemon ends it
+through logind, unsaved work included. It acts only when its own table has
+that session id for the uid logind lists, and a failed read of logind's
+sessions ends nothing. A worker
 that exits after `pam_close_session` (a logout) leaves its session closing:
 its compositor ends itself once logind reports it closing, and that user's
 next login first stops whatever is left of the session's scope.

@@ -35,10 +35,8 @@ pub fn pick(locked: Option<&Locked>) -> Pick {
 #[derive(Debug, PartialEq, Eq)]
 pub struct NotBegun;
 
-/// Lock mode for a Start `trust`ed for `caller`; None is show mode: an empty layout, no lock
-/// screens, or `unavailable` or `replaced`. Any other answer, or none in [`SCREENS_WAIT`], fails.
-/// No layout read is show mode for the user's own server and a failure for the hand-over server,
-/// whose session may have a locked console.
+/// Lock mode for a Start `trust`ed for `caller`, None for show mode. It fails on any other answer,
+/// none in [`SCREENS_WAIT`], or no layout read for the hand-over server (its console may be locked).
 pub async fn begin(
     conn: &zbus::Connection,
     caller: Option<u32>,
