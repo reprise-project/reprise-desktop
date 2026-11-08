@@ -507,7 +507,8 @@ at its start and on each reload. While they are off the port is free, so a
 user who binds it then keeps it, and turning them on fails until that user
 lets go: reprise-login's journal names the socket, `journalctl -u
 reprise-login-rdp.socket` gives the reason, and each reload while they are
-on tries the port again.
+on tries the port again. Until one succeeds the socket stays set to that
+port, so a boot in between binds that port or none.
 
 Two more sockets in `/run/reprise-login`:
 
