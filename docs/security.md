@@ -605,8 +605,10 @@ empty password, and closes a fresh TCP connection. The daemon holds its copy
 of the socket until the server reports taking the connection: one sent to a
 server that is stopping goes to the next server the socket starts, and if no
 server reports taking it within the login's 8 s, the daemon closes its copy.
-A server takes a connection once only and closes a copy sent again. The
-password and the NT hash never leave the front and the daemon.
+A server takes a connection once only and closes a copy sent again, and
+closes one whose kernel TLS has moved past the sequence numbers and nonces
+the hand-over carries: a connection another server used is never served
+again from its old keys. The password and the NT hash never leave the front and the daemon.
 
 TLS is 1.2 or 1.3 with AEAD suites only. After the hand-over, a TLS 1.3 key
 update is followed, and any other handshake record, TLS 1.2 renegotiation
