@@ -27,12 +27,14 @@ impl Backend {
         )
     }
 
-    /// No commit holds the modeset locks and no frame holds a compositor (`commit::modes_settle`).
+    /// The session is `settled`, no commit holds the modeset locks and no frame holds a
+    /// compositor (`commit::modes_settle`).
     fn modes_settle(&self) -> bool {
         let all: Vec<_> = self.tracks().collect();
         commit::modes_settle(
             all.iter().copied(),
             !self.retiring.is_empty(),
+            self.settled(),
             std::time::Instant::now(),
         )
     }
@@ -78,7 +80,7 @@ pub fn modes_settle(state: &State) -> bool {
 /// reloads meanwhile, the first one's.
 pub fn defer_output_config(state: &mut State, old: &crate::config::Config) {
     if let Some(b) = state.backend.as_mut() {
-        log::info!("display busy: the configured output changes wait for it");
+        log::info!("display busy or away: the configured output changes wait for it");
         b.config_from.get_or_insert_with(|| Box::new(old.clone()));
     }
 }

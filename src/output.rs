@@ -435,10 +435,11 @@ impl State {
         let at = req.position.or_else(|| self.back_place(output));
         set_placement(output, at.map(Point::from));
         if driven {
-            if let Some(i) = req.mode
-                && !crate::backend::set_mode(self, output, i)
-            {
-                return false;
+            if let Some(i) = req.mode {
+                if !crate::backend::set_mode(self, output, i) {
+                    return false;
+                }
+                self.mode_set(&name);
             }
             return crate::backend::set_vrr(self, output, req.adaptive_sync) || !req.adaptive_sync;
         }
@@ -460,6 +461,7 @@ impl State {
         if !ok {
             return false;
         }
+        self.mode_set(&name);
         if req.adaptive_sync {
             crate::backend::set_vrr(self, output, true);
         }
@@ -472,8 +474,11 @@ impl State {
     /// `old`'s and from what it runs; runs when the config file changes. An
     /// unchanged key is left alone, so what output management set stays. A
     /// missing mode keeps the current one, and turning adaptive sync off is
-    /// always accepted. While the display is busy it all waits for
-    /// `backend::on_quiet`. A scale no output draws at yet waits while a job paints its art.
+    /// always accepted. While the display is busy or the session is off its
+    /// seat it all waits for `backend::on_quiet`. A scale no output draws at
+    /// yet waits while a job paints its art. A refused mode saves no layout and
+    /// is tried again at each later `[[outputs]]` change until it runs,
+    /// `[[outputs]]` drops it or output management sets the connector's mode.
     /// Returns whether any output's geometry changed.
     pub fn apply_output_config(&mut self, old: &crate::config::Config) -> bool {
         self.apply_outputs(old, true)
@@ -500,6 +505,7 @@ impl State {
             }
         }
         let mut geometry_changed = false;
+        let mut refused = Vec::new();
         for head in crate::backend::heads(self) {
             if !head.enabled {
                 continue;
@@ -507,10 +513,11 @@ impl State {
             let output = head.output;
             let name = output.name();
             let change = crate::configwatch::output_change(old, &self.config, &name);
-            if !change.any() {
+            let retry = self.mode_refused(&name);
+            if !change.any() && !retry {
                 continue;
             }
-            if change.mode
+            if (change.mode || retry)
                 && let Some(want) = self.config.mode_for_output_name(&name)
                 && let Some(i) = pick_mode(&head.modes, Some(&want))
                 && head.current != Some(i)
@@ -519,6 +526,7 @@ impl State {
                     geometry_changed = true;
                 } else {
                     log::warn!("output {name}: the configured mode was refused");
+                    refused.push(name.clone());
                 }
             }
             if change.transform {
@@ -548,7 +556,11 @@ impl State {
                 geometry_changed = true;
             }
         }
-        self.outputs_reloaded();
+        if !refused.is_empty() {
+            self.outputs_refused(refused);
+        } else {
+            self.outputs_reloaded();
+        }
         geometry_changed
     }
 

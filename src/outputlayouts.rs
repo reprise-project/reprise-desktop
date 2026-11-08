@@ -10,7 +10,6 @@ use crate::{
     output::{HeadRequest, ModeInfo, pick_mode, transform},
 };
 
-#[derive(Default)]
 pub struct SavedLayouts {
     /// The connected monitors' ids, sorted, as last looked up.
     set: Vec<String>,
@@ -18,8 +17,25 @@ pub struct SavedLayouts {
     /// decide.
     active: Option<Vec<(String, MonitorLayout)>>,
     /// The `[[outputs]]` fingerprint the file carries when no one else changed it: the config's
-    /// at start, then each save's.
+    /// at start, then each save's or refusal's.
     seen: Option<String>,
+    /// Connectors whose `[[outputs]]` mode was refused: each later `[[outputs]]` change tries them
+    /// again and saves no layout while one stays refused.
+    refused: Vec<String>,
+    /// Where layouts are saved (displays.toml).
+    pub path: std::path::PathBuf,
+}
+
+impl Default for SavedLayouts {
+    fn default() -> SavedLayouts {
+        SavedLayouts {
+            set: Vec::new(),
+            active: None,
+            seen: None,
+            refused: Vec::new(),
+            path: file(),
+        }
+    }
 }
 
 impl SavedLayouts {
@@ -115,7 +131,8 @@ impl State {
         let seen = (self.saved_layouts.seen)
             .get_or_insert_with(|| displays::outputs_fingerprint(&self.config.outputs))
             .clone();
-        let layouts = Layouts::parse(&std::fs::read_to_string(file()).unwrap_or_default());
+        let layouts =
+            Layouts::parse(&std::fs::read_to_string(&self.saved_layouts.path).unwrap_or_default());
         let connectors: Vec<String> = heads.iter().map(|h| h.output.name()).collect();
         let active = (layouts.find(&ids, &seen)).map(|l| by_connector(&connectors, &ids, l));
         self.saved_layouts.active = active.clone();
@@ -161,7 +178,48 @@ impl State {
     /// for the connected monitors, once the reload has laid out.
     pub fn outputs_reloaded(&mut self) {
         self.saved_layouts.active = None;
+        self.saved_layouts.refused.clear();
         self.handle.insert_idle(|state| state.save_layout());
+    }
+
+    /// As `outputs_reloaded`, but the mode `[[outputs]]` pins for `connectors` was refused. The
+    /// connected set's layout is dropped instead of saved, so the next start tries the pin; the
+    /// other sets' layouts move to the new `[[outputs]]` as a save would move them.
+    pub fn outputs_refused(&mut self, connectors: Vec<String>) {
+        self.saved_layouts.active = None;
+        self.saved_layouts.refused = connectors;
+        let mut set = ids_of(&crate::backend::heads(self));
+        set.sort();
+        let now = displays::outputs_fingerprint(&self.config.outputs);
+        let expected =
+            (self.saved_layouts.seen.replace(now.clone())).unwrap_or_else(|| now.clone());
+        let path = self.saved_layouts.path.clone();
+        crate::state::run_in_order(move || {
+            let saved = repriseconf::edit_or_reset(&path, |old| {
+                let mut l = Layouts::parse(old);
+                if l.outputs_seen != expected {
+                    l.list.clear();
+                }
+                l.list
+                    .retain(|layout| !layout.monitors.iter().map(|(id, _)| id).eq(set.iter()));
+                l.outputs_seen = now;
+                Ok::<_, std::convert::Infallible>(l.render())
+            });
+            if let Err(e) = saved {
+                log::warn!("{}: {e}", path.display());
+            }
+        });
+    }
+
+    /// Whether the last `[[outputs]]` change had `connector`'s mode refused; the next one tries
+    /// it again.
+    pub fn mode_refused(&self, connector: &str) -> bool {
+        self.saved_layouts.refused.iter().any(|c| c == connector)
+    }
+
+    /// Output management or a saved layout set `connector`'s mode: no longer retried as refused.
+    pub fn mode_set(&mut self, connector: &str) {
+        self.saved_layouts.refused.retain(|c| c != connector);
     }
 
     fn save_layout(&mut self) {
@@ -226,8 +284,8 @@ impl State {
             s
         };
         log::info!("monitors {connectors:?}: layout saved");
+        let path = self.saved_layouts.path.clone();
         crate::state::run_in_order(move || {
-            let path = file();
             let saved = repriseconf::edit_or_reset(&path, |old| {
                 let mut l = Layouts::parse(old);
                 l.put(layout, &expected, &now);
@@ -350,5 +408,157 @@ mod tests {
         let at: Vec<(&str, (i32, i32))> =
             got.iter().map(|(c, m)| (c.as_str(), m.position)).collect();
         assert_eq!(at, [("eDP-1", (1920, 0)), ("DP-7", (0, 0))]);
+    }
+
+    /// A harness with head DP-9 running 1280x800 that also lists 1920x1080.
+    fn one_head() -> (crate::harness::Harness, Output) {
+        let mut h = crate::harness::Harness::new();
+        let out = h.head("DP-9", 1280, 800);
+        out.add_mode(smithay::output::Mode {
+            size: (1920, 1080).into(),
+            refresh: 60_000,
+        });
+        assert!(!h.state.monitors_changed(), "nothing saved yet");
+        (h, out)
+    }
+
+    /// Reload `[[outputs]]` pinning DP-9 to 1920x1080, which is refused (the harness has no
+    /// device to set it on).
+    fn refuse(h: &mut crate::harness::Harness) {
+        let old = h.state.config.clone();
+        h.state.config.outputs.push(crate::config::OutputConfig {
+            name: "DP-9".into(),
+            scale: 1.0,
+            mode: Some(OutputMode::parse("1920x1080@60").unwrap()),
+            adaptive_sync: None,
+            transform: Default::default(),
+            position: None,
+            primary: false,
+        });
+        assert!(!h.state.apply_output_config(&old), "the mode is refused");
+        h.dispatch();
+        crate::state::flush();
+    }
+
+    /// [`one_head`] after [`refuse`].
+    fn refused() -> (crate::harness::Harness, Output) {
+        let (mut h, out) = one_head();
+        refuse(&mut h);
+        (h, out)
+    }
+
+    /// Whether displays.toml holds a layout for `h`'s monitors under its `[[outputs]]`.
+    fn saved_under_outputs(h: &crate::harness::Harness) -> bool {
+        let ids = ids_of(&crate::backend::heads(&h.state));
+        let now = displays::outputs_fingerprint(&h.state.config.outputs);
+        let text = std::fs::read_to_string(&h.state.saved_layouts.path).unwrap_or_default();
+        Layouts::parse(&text).find(&ids, &now).is_some()
+    }
+
+    #[test]
+    fn a_reload_whose_mode_is_refused_saves_no_layout() {
+        let (h, out) = refused();
+        assert_eq!(h.state.saved_layout_of(&out), None);
+        assert!(
+            !saved_under_outputs(&h),
+            "no layout under the new [[outputs]]"
+        );
+    }
+
+    #[test]
+    fn a_replug_after_a_refused_mode_leaves_the_monitors_to_outputs() {
+        let (mut h, out) = refused();
+        let ids = ids_of(&crate::backend::heads(&h.state));
+        let before = displays::outputs_fingerprint(&[]);
+        let mut layouts = Layouts::parse("");
+        let m = saved("1280x800@60", 500);
+        layouts.put(Layout::new(vec![(ids[0].clone(), m)]), &before, &before);
+        std::fs::write(&h.state.saved_layouts.path, layouts.render()).unwrap();
+        h.state.saved_layouts.set.clear();
+        assert!(
+            !h.state.monitors_changed(),
+            "the layout from before [[outputs]] changed is not taken"
+        );
+        assert_eq!(h.state.saved_layout_of(&out), None);
+    }
+
+    #[test]
+    fn a_later_reload_saves_nothing_while_the_pinned_mode_stays_refused() {
+        let (mut h, out) = refused();
+        let old = h.state.config.clone();
+        h.state.config.outputs[0].position = Some((10, 0));
+        h.state.apply_output_config(&old);
+        h.dispatch();
+        crate::state::flush();
+        assert_eq!(h.state.saved_layout_of(&out), None);
+        assert!(
+            !saved_under_outputs(&h),
+            "no layout under the newest [[outputs]]"
+        );
+    }
+
+    #[test]
+    fn a_reload_that_drops_a_refused_mode_saves_the_layout() {
+        let (mut h, out) = refused();
+        let old = h.state.config.clone();
+        h.state.config.outputs[0].mode = None;
+        h.state.apply_output_config(&old);
+        h.dispatch();
+        crate::state::flush();
+        assert!(h.state.saved_layout_of(&out).is_some());
+        assert!(
+            saved_under_outputs(&h),
+            "the layout under the newest [[outputs]]"
+        );
+    }
+
+    #[test]
+    fn a_mode_output_management_sets_is_not_replaced_by_the_refused_pin() {
+        let (mut h, out) = refused();
+        let req = |enabled| HeadRequest {
+            enabled,
+            mode: Some(0),
+            position: None,
+            transform: Transform::Normal,
+            scale: 1.0,
+            adaptive_sync: false,
+        };
+        assert!(h.state.apply_head(&out, &req(false)), "turned off");
+        assert!(
+            h.state.apply_head(&out, &req(true)),
+            "turned on in 1280x800"
+        );
+        assert!(!h.state.mode_refused("DP-9"));
+    }
+
+    #[test]
+    fn a_refused_mode_keeps_the_layouts_of_other_monitor_sets() {
+        let (mut h, _) = one_head();
+        let start = displays::outputs_fingerprint(&[]);
+        let dock = displays::monitor_ids(&["DP-9", "DP-5"].map(|connector| Monitor {
+            connector,
+            make: "Reprise",
+            model: "Test",
+            serial: "0",
+        }));
+        let mut layouts = Layouts::parse("");
+        let docked = (dock.iter().zip([0, 1280]))
+            .map(|(id, x)| (id.clone(), saved("1280x800@60", x)))
+            .collect();
+        layouts.put(Layout::new(docked), &start, &start);
+        std::fs::write(&h.state.saved_layouts.path, layouts.render()).unwrap();
+        refuse(&mut h);
+        let old = h.state.config.clone();
+        h.state.config.outputs[0].mode = None;
+        h.state.apply_output_config(&old);
+        h.dispatch();
+        crate::state::flush();
+        assert!(saved_under_outputs(&h), "DP-9 alone saved");
+        let dp5 = h.head("DP-5", 1280, 800);
+        assert!(h.state.monitors_changed(), "the docked layout is restored");
+        assert_eq!(
+            h.state.saved_layout_of(&dp5).map(|m| m.position),
+            Some((1280, 0))
+        );
     }
 }
