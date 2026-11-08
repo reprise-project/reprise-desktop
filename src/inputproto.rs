@@ -73,8 +73,12 @@ pub struct InputProto {
 pub enum InputSource {
     /// The backend's devices.
     Physical,
-    /// A RemoteDesktop sender or the trusted key injector.
+    /// Reprise's own remote desktop server: the portal's `remote_session` sender, which it makes
+    /// only for a session `reprise-rdp` started (`crates/portal/src/trusted.rs`).
     Remote,
+    /// An app's RemoteDesktop session: a plain sender or a keys object. It drives the desktop
+    /// as `Remote` does, but never reaches a consent prompt (`crate::consent`).
+    App,
     /// Virtual keyboards, virtual pointers and the compositor's own moves.
     #[default]
     Other,
@@ -102,7 +106,7 @@ impl InputProto {
     /// even while a capture holds the physical devices (a machine in a Deskflow
     /// chain is both a client and a server).
     pub fn gated(&self) -> bool {
-        self.captured() && self.source != InputSource::Remote
+        self.captured() && !matches!(self.source, InputSource::Remote | InputSource::App)
     }
 }
 

@@ -106,7 +106,7 @@ impl State {
     /// One key through the physical keyboard's path, past an InputCapture
     /// as a libei sender's keys go.
     fn keys_inject(&mut self, code: u32, pressed: bool) {
-        self.with_source(InputSource::Remote, |s| {
+        self.with_source(InputSource::App, |s| {
             crate::idle::notify_activity(s);
             s.handle_key(evdev_key(code), pressed, InputTime::now());
         });
