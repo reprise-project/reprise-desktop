@@ -52,6 +52,12 @@ fn acquire<T>(
     Ok(made)
 }
 
+/// Waits up to [`JOIN`] for the shared sink's thread to give the default back: a sink dropped on
+/// the runtime ends on a thread of its own, which a process about to exit would cut short.
+pub fn settle() {
+    drop(ONE.take(JOIN));
+}
+
 /// One holder at a time, with a wait that gives up on a holder that never lets go.
 struct Turn {
     /// The holder's number and the next one to hand out.
@@ -713,6 +719,32 @@ mod tests {
         std::thread::sleep(Duration::from_millis(50));
         drop(last);
         assert!(next.join().unwrap() < JOIN);
+    }
+
+    #[test]
+    fn the_server_exits_after_a_sink_dropped_on_its_runtime_gives_the_default_back() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let given_back = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let code = crate::run_to_end(&rt, tokio::task::LocalSet::new(), {
+            let given_back = given_back.clone();
+            async move {
+                let (holding, held) = mpsc::channel();
+                let sink = Worker::spawn("test-sink", move |_stopped| {
+                    let _one = ONE.take(JOIN);
+                    let _ = holding.send(());
+                    std::thread::sleep(Duration::from_millis(200));
+                    given_back.store(true, std::sync::atomic::Ordering::SeqCst);
+                })
+                .unwrap();
+                held.recv().unwrap();
+                drop(sink);
+                std::process::ExitCode::SUCCESS
+            }
+        });
+        assert_eq!(code, std::process::ExitCode::SUCCESS);
+        assert!(given_back.load(std::sync::atomic::Ordering::SeqCst));
     }
 
     #[tokio::test]
