@@ -9,6 +9,7 @@ use ironrdp_server::{
     EgfxServerMessage, GfxContext, GfxDvcBridge, GfxServerFactory, GfxServerHandle, ServerEvent,
     ServerEventSender,
 };
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::Notify;
@@ -27,6 +28,9 @@ pub struct Gfx {
     link: Arc<Mutex<Link>>,
     /// Told when the client has opened the pipeline.
     ready: Arc<Notify>,
+    /// Counts the client's capability advertisements: each one after the first drops every
+    /// surface on both sides.
+    advertised: Arc<AtomicU32>,
 }
 
 pub enum Prepared {
@@ -68,8 +72,7 @@ impl Gfx {
 
     /// A new pipeline server for the connection, offered to the client now.
     pub fn open(&self) -> (GfxDvcBridge, GfxServerHandle) {
-        let handler = Box::new(Handler(self.ready.clone()));
-        let mut server = GraphicsPipelineServer::new(handler);
+        let mut server = GraphicsPipelineServer::new(self.handler());
         server.set_max_frames_in_flight(MAX_IN_FLIGHT);
         let server = Arc::new(Mutex::new(server));
         let mut link = self.link.lock().unwrap();
@@ -105,13 +108,21 @@ impl Gfx {
         let _ = tokio::time::timeout_at(at + NEGOTIATION, ready).await;
     }
 
+    fn handler(&self) -> Box<dyn GraphicsPipelineHandler> {
+        Box::new(Handler {
+            ready: self.ready.clone(),
+            advertised: self.advertised.clone(),
+        })
+    }
+
     fn open_now(&self) -> bool {
         let server = self.link.lock().unwrap().server.clone();
         server.is_some_and(|s| s.lock().unwrap().is_ready())
     }
 
     /// Ready `screen`'s surface for an H.264 frame at its target in `layout`. A desktop or
-    /// monitors other than the surfaces' reset the client's graphics first.
+    /// monitors other than the surfaces', or a new advertisement, reset the client's graphics
+    /// first.
     pub fn prepare(&self, layout: &Layout, screen: usize) -> Prepared {
         let mut link = self.link.lock().unwrap();
         let Some(server) = link.server.clone() else {
@@ -124,8 +135,10 @@ impl Gfx {
         let Some(target) = layout.target(screen).filter(|t| t.w > 0 && t.h > 0) else {
             return Prepared::Unavailable;
         };
-        let reset = (link.surfaces.as_ref())
-            .is_none_or(|u| (u.desktop, &u.monitors) != (layout.desktop, &layout.monitors));
+        let advertised = self.advertised.load(Ordering::Relaxed);
+        let reset = (link.surfaces.as_ref()).is_none_or(|u| {
+            (u.desktop, &u.monitors, u.advertised) != (layout.desktop, &layout.monitors, advertised)
+        });
         if reset {
             let (w, h) = layout.desktop;
             s.resize_with_monitors(w, h, layout.monitors.clone());
@@ -134,6 +147,7 @@ impl Gfx {
             link.surfaces = Some(Surfaces {
                 desktop: layout.desktop,
                 monitors: layout.monitors.clone(),
+                advertised,
                 made: Vec::new(),
             });
         }
@@ -212,6 +226,8 @@ impl Gfx {
 struct Surfaces {
     desktop: (u16, u16),
     monitors: Vec<ironrdp_pdu::gcc::Monitor>,
+    /// [`Gfx::advertised`] at the reset.
+    advertised: u32,
     made: Vec<Surface>,
 }
 
@@ -289,7 +305,7 @@ impl ServerEventSender for Factory {
 
 impl GfxServerFactory for Factory {
     fn build_gfx_handler(&self, _: GfxContext) -> Box<dyn GraphicsPipelineHandler> {
-        Box::new(Handler(self.0.ready.clone()))
+        self.0.handler()
     }
 
     fn build_server_with_handle(&self, _: GfxContext) -> Option<(GfxDvcBridge, GfxServerHandle)> {
@@ -297,15 +313,21 @@ impl GfxServerFactory for Factory {
     }
 }
 
-/// Logs the negotiation and tells the display it is done.
-struct Handler(Arc<Notify>);
+/// Logs the negotiation, counts advertisements and tells the display it is done. Runs with the
+/// pipeline server locked, so it never takes [`Gfx::link`].
+struct Handler {
+    ready: Arc<Notify>,
+    advertised: Arc<AtomicU32>,
+}
 
 impl GraphicsPipelineHandler for Handler {
-    fn capabilities_advertise(&mut self, _: &CapabilitiesAdvertisePdu) {}
+    fn capabilities_advertise(&mut self, _: &CapabilitiesAdvertisePdu) {
+        self.advertised.fetch_add(1, Ordering::Relaxed);
+    }
 
     fn on_ready(&mut self, negotiated: &CapabilitySet) {
         log::info!("graphics pipeline ready: {negotiated:?}");
-        self.0.notify_waiters();
+        self.ready.notify_waiters();
     }
 }
 
@@ -455,6 +477,34 @@ pub(crate) mod tests {
             ),
             "an acknowledgement frees a place"
         );
+    }
+
+    #[test]
+    fn a_client_advertising_again_gets_its_graphics_reset_and_new_surfaces() {
+        let (gfx, server, mut events) = opened();
+        let whole = [Rect::full((64, 64))];
+        gfx.prepare(&one((64, 64)), 0);
+        assert!(gfx.send(0, Video::Avc420(AU), &whole, 22));
+        sent(&mut events);
+        client_opens(&server);
+        assert!(matches!(
+            gfx.prepare(&one((64, 64)), 0),
+            Prepared::Ready { new: true, .. }
+        ));
+        let pdus = sent(&mut events);
+        assert!(
+            matches!(
+                &pdus[..],
+                [
+                    GfxPdu::ResetGraphics(_),
+                    GfxPdu::CreateSurface(c),
+                    GfxPdu::MapSurfaceToOutput(_),
+                ] if c.surface_id == 0
+            ),
+            "{pdus:?}"
+        );
+        assert!(gfx.send(0, Video::Avc420(AU), &whole, 22));
+        assert_eq!(last_frame(&sent(&mut events)).surface_id, 0);
     }
 
     #[test]
