@@ -593,6 +593,10 @@ mod tests {
             calls.try_recv(),
             Ok(crate::power::Call::Hint(crate::power::Hint::Locked(true)))
         );
+        assert_eq!(
+            calls.try_recv(),
+            Ok(crate::power::Call::Hint(crate::power::Hint::Idle(false)))
+        );
         crate::lockview::lock(&mut h.state);
         assert!(calls.try_recv().is_err(), "still locked: nothing new");
     }
@@ -671,7 +675,10 @@ mod tests {
         drop(theirs);
         h.dispatch();
         assert!(!connected(&h.state));
-        assert_eq!(calls.try_recv(), Ok(crate::power::Call::State));
+        assert_eq!(
+            crate::power::calls_but_hints(&calls),
+            [crate::power::Call::State]
+        );
     }
 
     #[test]
