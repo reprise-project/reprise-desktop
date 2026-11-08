@@ -441,7 +441,8 @@ const RD_PASSWORD_SET_NOTE: &str =
 /// How much lower the rows from the fingerprint down sit on a [`managed`] page, below the
 /// Remote Desktop password row and its status.
 const RD_PASSWORD_DY: i32 = 4;
-/// The status under the row is one line; a font that wraps it flows the rows below down.
+/// Top of the Remote Desktop password row on a [`managed`] page; a wrapping status flows the
+/// rows below down.
 const RD_PASSWORD_Y: i32 = 60;
 
 /// What greys with the switch off; New Certificate and Disconnect also need the server answering.

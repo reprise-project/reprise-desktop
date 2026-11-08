@@ -43,10 +43,20 @@ pub(crate) struct Login {
     fingerprint: Option<String>,
 }
 
+/// How a save ended; each but `Failed` carries the file as it reads after.
+enum Ended {
+    Saved(Read),
+    Failed(String),
+    /// The file no longer read as the page loaded it, so nothing was sent.
+    Changed(Read),
+}
+
+type Read = Result<MachineConfig, String>;
+
 /// A save under way and the settings it sent.
 pub(crate) struct Saving {
     sent: MachineConfig,
-    rx: Receiver<Result<MachineConfig, String>>,
+    rx: Receiver<Ended>,
     /// An OK, Cancel or close waits on it.
     pub(crate) quit: bool,
     /// Cancel or a close: the sheet closes when it ends, saved or not, and nothing follows it.
@@ -54,6 +64,10 @@ pub(crate) struct Saving {
 }
 
 const NOT_SAVED: &str = "The login manager's settings could not be saved.";
+const NOT_AUTHORIZED: &str = "The change was not authorized.";
+const CHANGED: &str = "Your changes were not saved: the login manager's settings changed since \
+                       this page opened. The page now shows the new settings; make your changes \
+                       again.";
 
 /// Save `cfg` through `run`, which hands the TOML to the helper's stdin and returns how it
 /// exited; the message to show when it did not save.
@@ -68,19 +82,30 @@ pub(crate) fn apply(
         false => format!("{head}\n\n{why}"),
     };
     // The helper's exits: 0 saved, 1 the write failed, 2 refused (a reason per line);
-    // pkexec's 126 and 127: not authorized, or the prompt dismissed.
+    // pkexec's 126: the prompt dismissed, 127: polkit said "Not authorized" or pkexec failed.
     match out.status.code() {
         Some(0) => Ok(()),
         Some(2) => Err(with_why("The login manager refused the settings:")),
-        Some(126 | 127) => Err("The change was not authorized.".into()),
+        Some(126) => Err(NOT_AUTHORIZED.into()),
+        Some(127) if why.contains("Not authorized") => Err(NOT_AUTHORIZED.into()),
+        Some(127) => Err(with_why(NOT_AUTHORIZED)),
         _ => Err(with_why(NOT_SAVED)),
     }
 }
 
 /// `pkexec` running [`HELPER`] with `toml` on its stdin.
 pub(crate) fn pkexec(toml: &str) -> io::Result<Output> {
+    run_helper(Path::new(HELPER), toml)
+}
+
+/// `pkexec` running `helper`; a missing helper is named without asking for a password.
+pub(crate) fn run_helper(helper: &Path, toml: &str) -> io::Result<Output> {
+    if !helper.exists() {
+        let why = format!("{} is not installed.", helper.display());
+        return Err(io::Error::new(io::ErrorKind::NotFound, why));
+    }
     let mut child = Command::new(PKEXEC)
-        .arg(HELPER)
+        .arg(helper)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -94,22 +119,31 @@ pub(crate) fn pkexec(toml: &str) -> io::Result<Output> {
     }
 }
 
-/// The machine settings in `path`; a missing or unreadable file gives the defaults.
-fn read(path: &Path) -> MachineConfig {
+/// The machine settings in `path`, the defaults when it is missing; the message to show when
+/// it could not be read or holds anything the page would not save back.
+fn read(path: &Path) -> Read {
+    let at = path.display();
     let text = match std::fs::read_to_string(path) {
         Ok(t) => t,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => String::new(),
         Err(e) => {
-            if e.kind() != io::ErrorKind::NotFound {
-                log::warn!("{}: {e}", path.display());
-            }
-            String::new()
+            log::warn!("{at}: {e}");
+            return Err(format!(
+                "The login manager's settings in {at} could not be read, so this page doesn't \
+                 save over them.\n\n{e}"
+            ));
         }
     };
     let (config, warnings) = MachineConfig::parse(&text);
-    for w in warnings {
-        log::warn!("{}: {w}", path.display());
+    if warnings.is_empty() {
+        return Ok(config);
     }
-    config
+    log::warn!("{at}: {}", warnings.join("; "));
+    Err(format!(
+        "The login manager's settings in {at} have values this page can't use, so it doesn't \
+         save over them. Correct or remove these lines as root, then press Apply again:\n\n{}",
+        warnings.join("\n")
+    ))
 }
 
 /// The Remote Desktop front's fingerprint; `None` while it is not running.
@@ -139,7 +173,10 @@ impl SettingsApp {
         if self.login.is_some() {
             return self.poll_fingerprint();
         }
-        let loaded = read(&self.login_files.config);
+        let loaded = read(&self.login_files.config).unwrap_or_else(|why| {
+            self.fail(&why);
+            MachineConfig::default()
+        });
         self.login = Some(Login {
             want: loaded.clone(),
             loaded,
@@ -237,7 +274,8 @@ impl SettingsApp {
         self.sync_apply();
     }
 
-    /// Save the page's changes off the loop, unless a save is under way.
+    /// Save the page's changes off the loop unless a save is under way. The save rereads the
+    /// file first and sends nothing when it no longer reads as the page loaded it.
     pub(crate) fn apply_login(&mut self) {
         if !self.login_dirty() || self.login_job.is_some() {
             return;
@@ -245,13 +283,20 @@ impl SettingsApp {
         let Some(l) = &self.login else {
             return;
         };
-        let (cfg, run, path) = (
+        let (cfg, loaded, run, path) = (
             l.want.clone(),
+            l.loaded.clone(),
             self.login_run,
             self.login_files.config.clone(),
         );
         let sent = cfg.clone();
-        let rx = self.login_spawn(move || apply(&cfg, &run).map(|()| read(&path)));
+        let rx = self.login_spawn(move || match read(&path) {
+            Ok(now) if now == loaded => match apply(&cfg, &run) {
+                Ok(()) => Ended::Saved(read(&path)),
+                Err(why) => Ended::Failed(why),
+            },
+            now => Ended::Changed(now),
+        });
         self.login_job = Some(Saving {
             sent,
             rx,
@@ -281,34 +326,33 @@ impl SettingsApp {
         }
     }
 
-    /// A save ended: show the file and the front's fingerprint as they now read, or why it
-    /// failed. Edits made while it ran stay for the next save. True when the sheet closes.
+    /// A save ended: show the file as it now reads, or why nothing was saved. Edits made while it
+    /// ran stay for the next save; a file changed since the page loaded it replaces them.
     pub(crate) fn login_done(&mut self) -> Option<bool> {
         let done = match take(&self.login_job.as_ref()?.rx) {
             Ok(None) => return None,
             Ok(Some(r)) => r,
-            Err(()) => Err(NOT_SAVED.to_string()),
+            Err(()) => Ended::Failed(NOT_SAVED.to_string()),
         };
         let s = self.login_job.take()?;
-        let saved = match done {
-            Ok(now) => {
-                if let Some(l) = &mut self.login {
-                    if l.want == s.sent {
-                        l.want = now.clone();
-                    }
-                    l.loaded = now;
-                    l.fingerprint = fingerprint(&self.login_files.fingerprint);
-                }
-                self.show_login();
-                true
+        let (saved, why) = match done {
+            Ended::Saved(now) => {
+                let unedited = self.login.as_ref().is_some_and(|l| l.want == s.sent);
+                self.login_reread(Ok(now.unwrap_or_else(|_| s.sent.clone())), unedited);
+                (true, None)
             }
-            Err(why) => {
-                if !(s.quit && s.discard) {
-                    self.fail(&why);
-                }
-                false
+            Ended::Failed(why) => (false, Some(why)),
+            Ended::Changed(now) => {
+                let why = now.as_ref().err().cloned().unwrap_or(CHANGED.into());
+                self.login_reread(now, true);
+                (false, Some(why))
             }
         };
+        if let Some(why) = why
+            && !(s.quit && s.discard)
+        {
+            self.fail(&why);
+        }
         if saved && !s.discard {
             self.apply_login();
             if let Some(next) = &mut self.login_job {
@@ -317,6 +361,21 @@ impl SettingsApp {
         }
         self.sync_apply();
         Some(s.quit && self.login_job.is_none() && (saved || s.discard))
+    }
+
+    /// Take the file as it now reads as the page's loaded settings, and as its edits too when
+    /// `replace`; an unreadable file leaves both.
+    fn login_reread(&mut self, now: Read, replace: bool) {
+        if let Some(l) = &mut self.login {
+            if let Ok(now) = now {
+                if replace {
+                    l.want = now.clone();
+                }
+                l.loaded = now;
+            }
+            l.fingerprint = fingerprint(&self.login_files.fingerprint);
+        }
+        self.show_login();
     }
 
     /// Run `job` off the loop; tests run it at once.
