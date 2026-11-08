@@ -343,17 +343,19 @@ fn password_conversation(v: &dyn Verifier, user: &str, mut input: impl Read, mut
     let _ = out.flush();
 }
 
-/// One line of `input` (at most `lock::INPUT_CAPACITY` bytes, up to a newline or EOF), read a byte at a
-/// time so nothing past it is taken, into a string zeroed on drop. None at EOF before any byte, or for
-/// a line that is not UTF-8.
+/// One line of `input` (up to a newline or EOF), read a byte at a time so nothing past it is taken,
+/// into a string zeroed on drop. None at EOF before any byte, for a line that is not UTF-8, or for one
+/// longer than `lock::INPUT_CAPACITY`, which is still read to its end.
 fn read_answer(input: &mut impl Read) -> Option<zeroize::Zeroizing<String>> {
-    let mut buf = zeroize::Zeroizing::new([0u8; lock::INPUT_CAPACITY]);
+    let mut buf = zeroize::Zeroizing::new([0u8; lock::INPUT_CAPACITY + 1]);
     let mut n = 0;
     let mut ended = false;
-    while n < buf.len() {
-        match input.read(&mut buf[n..=n]) {
+    loop {
+        // Past the capacity every byte lands in the last slot, so the line ends where it ends.
+        let at = n.min(lock::INPUT_CAPACITY);
+        match input.read(&mut buf[at..=at]) {
             Ok(0) => break,
-            Ok(_) if buf[n] == b'\n' => {
+            Ok(_) if buf[at] == b'\n' => {
                 ended = true;
                 break;
             }
@@ -362,7 +364,7 @@ fn read_answer(input: &mut impl Read) -> Option<zeroize::Zeroizing<String>> {
             Err(_) => break,
         }
     }
-    if n == 0 && !ended {
+    if n > lock::INPUT_CAPACITY || (n == 0 && !ended) {
         return None;
     }
     let mut s = zeroize::Zeroizing::new(String::with_capacity(n));
@@ -595,6 +597,44 @@ pub(crate) mod tests {
         assert!(
             String::from_utf8(out).unwrap().ends_with("? PIN:\n= 7\n"),
             "a prompt past the end of stdin has no answer"
+        );
+    }
+
+    /// Takes a password of `lock::INPUT_CAPACITY` bytes, then "123456" and "4321".
+    struct LongPassword;
+    impl Verifier for LongPassword {
+        fn verify(&self, _: &str, password: &str, ask: &mut lock::Ask<'_>) -> Verdict {
+            let code = ask("Verification code:", true);
+            let pin = ask("PIN:", false);
+            match (
+                password.len(),
+                code.as_deref().map(String::as_str),
+                pin.as_deref().map(String::as_str),
+            ) {
+                (lock::INPUT_CAPACITY, Some("123456"), Some("4321")) => Ok(()),
+                _ => Err(Vec::new()),
+            }
+        }
+    }
+
+    #[test]
+    fn a_password_as_long_as_the_field_leaves_the_later_prompts_their_own_answers() {
+        let mut input = vec![b'p'; lock::INPUT_CAPACITY];
+        input.extend_from_slice(b"\n123456\n4321\n");
+        let mut out = Vec::new();
+        password_conversation(&LongPassword, "someone", &input[..], &mut out);
+        assert!(String::from_utf8(out).unwrap().ends_with("= 0\n"));
+    }
+
+    #[test]
+    fn a_line_past_the_field_is_refused_and_read_to_its_end() {
+        let mut input = vec![b'p'; lock::INPUT_CAPACITY + 3];
+        input.extend_from_slice(b"\nnext\n");
+        let mut input = &input[..];
+        assert_eq!(read_answer(&mut input), None, "too long for PAM");
+        assert_eq!(
+            read_answer(&mut input).as_deref().map(String::as_str),
+            Some("next")
         );
     }
 
