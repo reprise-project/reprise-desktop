@@ -60,6 +60,10 @@ impl GlobalDispatch2<RepriseOnTopV1, State> for OnTopGlobal {
         state.on_top_managers.retain(Resource::is_alive);
         state.on_top_managers.push(m);
     }
+
+    fn can_view(&self, client: &Client) -> bool {
+        crate::sandbox::client_may_see(client, "reprise_on_top_v1")
+    }
 }
 
 impl Dispatch2<RepriseOnTopV1, State> for OnTopData {
@@ -121,6 +125,9 @@ impl State {
 
 #[cfg(test)]
 mod tests {
+    use crate::window::WindowId;
+    use reprisescene::NodeId;
+
     #[test]
     fn a_client_keeps_its_window_on_top_and_hears_the_window_menu_change_it() {
         let mut h = crate::harness::Harness::new();
@@ -159,5 +166,72 @@ mod tests {
         h.roundtrip(&mut c);
         assert!(h.state.win(t.id).is_some_and(|w| w.on_top));
         assert_eq!(c.side.on_top, [true]);
+    }
+
+    #[test]
+    fn a_sandboxed_client_is_not_offered_the_on_top_global() {
+        let mut h = crate::harness::Harness::new();
+        let offered = |c: &crate::harness::TestClient| c.offered("reprise_on_top_v1");
+        let mut host = h.connect();
+        h.roundtrip(&mut host);
+        assert!(offered(&host), "a program outside a sandbox gets it");
+        let mut boxed = h.connect_sandboxed();
+        h.roundtrip(&mut boxed);
+        assert!(!offered(&boxed), "a Flatpak app does not");
+        let mut ctx = h.connect_in_flatpak("org.example.App");
+        h.roundtrip(&mut ctx);
+        assert!(!offered(&ctx), "nor one on a security context's socket");
+    }
+
+    #[test]
+    fn a_consent_prompt_stays_above_an_on_top_window() {
+        let mut h = crate::harness::Harness::new();
+        h.output("o", 800, 600);
+        let mut c = h.connect();
+        let m = c.bind_on_top();
+        let app = h.map_toplevel(&mut c, "app", 400, 300);
+        m.set(&c.side.shells[app.shell].toplevel, 1);
+        h.roundtrip(&mut c);
+        let mut p = h.connect_as(crate::mapfocus::TEST_PROMPT_PID);
+        let prompt = h.map_toplevel(&mut p, crate::mapfocus::CONSENT_APP_ID, 300, 150);
+        let password = h.map_toplevel(&mut p, "reprise.polkit", 300, 150);
+        h.state.focus_window(app.id);
+        h.roundtrip(&mut c);
+        let layer = |h: &crate::harness::Harness, w: WindowId| {
+            h.state.win(w).and_then(|x| h.state.scene.parent(x.tree))
+        };
+        let l = &h.state.layers;
+        assert_eq!(layer(&h, app.id), Some(l.on_top));
+        assert_eq!(layer(&h, prompt.id), Some(l.prompts), "the prompt");
+        assert_eq!(
+            layer(&h, password.id),
+            Some(l.windows),
+            "a password box stacks like any window"
+        );
+        let root = h.state.scene.children(h.state.scene.root());
+        let at = |t| root.iter().position(|&n| n == NodeId::from(t));
+        assert!(
+            at(l.prompts) > at(l.on_top),
+            "prompts sit over on-top windows"
+        );
+    }
+
+    #[test]
+    fn a_sandboxed_client_claiming_the_portals_pid_draws_no_consent_prompt() {
+        let mut h = crate::harness::Harness::new();
+        h.output("o", 800, 600);
+        let mut c = h.connect();
+        let app = h.map_toplevel(&mut c, "app", 400, 300);
+        let mut boxed = h.connect_sandboxed_as(crate::mapfocus::TEST_PROMPT_PID);
+        let fake = h.map_toplevel(&mut boxed, crate::mapfocus::CONSENT_APP_ID, 300, 150);
+        let w = h.state.win(fake.id).unwrap();
+        assert!(!w.consent);
+        assert_eq!(h.state.scene.parent(w.tree), Some(h.state.layers.windows));
+        assert_eq!(
+            h.state.client_pid(fake.id),
+            Some(crate::mapfocus::TEST_PROMPT_PID)
+        );
+        assert_eq!(h.state.prompt_pid(fake.id), None, "no prompt rights");
+        assert!(h.state.prompt_pid(app.id).is_some());
     }
 }

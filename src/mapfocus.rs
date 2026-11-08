@@ -234,9 +234,27 @@ fn descendants(pid: i32) -> Vec<i32> {
 const PROMPTS: &[&str] = &["reprise-portal", "reprise-polkit", "reprise-drives"];
 
 pub fn is_prompt(pid: i32) -> bool {
+    #[cfg(test)]
+    if pid == TEST_PROMPT_PID {
+        return true;
+    }
     PROMPTS
         .iter()
         .any(|p| crate::inputproto::runs_installed(pid, p))
+}
+
+/// In tests, the pid [`is_prompt`] takes for an installed prompt program.
+#[cfg(test)]
+pub const TEST_PROMPT_PID: i32 = i32::MAX - 1;
+
+/// The app id the portal's permission prompts and share picker draw under.
+pub const CONSENT_APP_ID: &str = "reprise.portal";
+
+/// Whether a window of process `pid` ([`State::prompt_pid`](crate::compositor::State::prompt_pid))
+/// with `app_id` is a consent prompt: the portal's permission prompt, share picker or Access
+/// prompt. The polkit and drives boxes are not; their windows stack like any other.
+pub fn is_consent(pid: i32, app_id: &str) -> bool {
+    app_id == CONSENT_APP_ID && is_prompt(pid)
 }
 
 #[cfg(test)]
