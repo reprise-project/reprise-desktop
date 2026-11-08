@@ -5,6 +5,7 @@ use repriseconf::remote::RemoteDesktop;
 use std::cell::Cell;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -18,6 +19,8 @@ const LOGIN1: &str = "org.freedesktop.login1";
 const CLOSE_WAIT: Duration = Duration::from_secs(5);
 /// How long logind may take to lock.
 const LOCK_WAIT: Duration = Duration::from_secs(5);
+/// How often a lock logind refused or didn't answer is tried again.
+const RELOCK: Duration = Duration::from_secs(10);
 /// How long a console unlock may take to clear `LockedHint` after lock mode's screens went, and
 /// how often it is read meanwhile.
 const HINT_WAIT: Duration = Duration::from_millis(500);
@@ -118,22 +121,31 @@ pub async fn console_unlocked() -> bool {
     })
 }
 
-/// [`lock_session`] on the system bus, from a thread of its own; whether it locked.
-pub async fn lock() -> bool {
-    let locked = on_thread(LOCK_WAIT, |given_up| {
+/// [`lock_session`] on the system bus, from a thread of its own.
+pub async fn lock() -> Result<(), String> {
+    on_thread(LOCK_WAIT, |given_up| {
         zbus::block_on(async {
             let conn = Connection::system().await?;
             lock_session(&conn, given_up).await
         })
         .map_err(|e| e.to_string())
-    });
-    match locked.await {
+    })
+    .await
+}
+
+/// Whether `lock` locked, logged; a failure at warn unless `quiet`.
+async fn locked(lock: &impl AsyncFn() -> Result<(), String>, quiet: bool) -> bool {
+    match lock().await {
         Ok(()) => {
             log::info!("locked the session");
             true
         }
+        Err(e) if quiet => {
+            log::debug!("cannot lock the session: {e}");
+            false
+        }
         Err(e) => {
-            log::error!("cannot lock the session: {e}");
+            log::warn!("cannot lock the session: {e}");
             false
         }
     }
@@ -155,17 +167,6 @@ fn mark(marker: &Path) {
         .and_then(|()| fs::write(marker, b""));
     if let Err(e) = written {
         log::warn!("{}: {e}", marker.display());
-    }
-}
-
-/// Locks through `lock` when `marker` is there and removes it once locked.
-pub async fn lock_if_marked(marker: Option<&Path>, lock: impl Future<Output = bool>) {
-    let Some(marker) = marker.filter(|m| m.exists()) else {
-        return;
-    };
-    log::info!("{}: no lock followed a login; locking", marker.display());
-    if lock.await {
-        let _ = fs::remove_file(marker);
     }
 }
 
@@ -197,11 +198,13 @@ async fn on_thread<T: Send + 'static>(
 /// closed; docs/security.md has the rules (`lock_on_leave`, `lock_grace_s`, the marker).
 pub struct LockOnLeave<F> {
     marker: Option<PathBuf>,
-    present: Cell<usize>,
+    present: Rc<Cell<usize>>,
     /// Wakes a last leaver's close wait: a login there means no lock.
     arrival: Notify,
     /// Counts the last leaves; a grace that ends after a later one leaves the lock to it.
     last_leaves: Cell<u64>,
+    /// Counts arrivals and relocks; a relock ends once a later one of either comes.
+    relocks: Rc<Cell<u64>>,
     config: watch::Receiver<RemoteDesktop>,
     lock: F,
 }
@@ -210,7 +213,7 @@ impl LockOnLeave<()> {
     pub fn new(
         marker: Option<PathBuf>,
         config: watch::Receiver<RemoteDesktop>,
-    ) -> LockOnLeave<impl AsyncFn() -> bool> {
+    ) -> LockOnLeave<impl AsyncFn() -> Result<(), String> + Clone + 'static> {
         LockOnLeave {
             config,
             ..LockOnLeave::with_lock(marker, lock)
@@ -218,22 +221,74 @@ impl LockOnLeave<()> {
     }
 }
 
-impl<F: AsyncFn() -> bool> LockOnLeave<F> {
+impl<F: AsyncFn() -> Result<(), String> + Clone + 'static> LockOnLeave<F> {
     fn with_lock(marker: Option<PathBuf>, lock: F) -> Self {
         Self {
             marker,
-            present: Cell::new(0),
+            present: Rc::default(),
             arrival: Notify::new(),
             last_leaves: Cell::new(0),
+            relocks: Rc::default(),
             config: watch::channel(RemoteDesktop::default()).1,
             lock,
         }
     }
+
+    /// Locks when the marker is there and removes it once locked; `relock` tries a failed lock
+    /// again as [`Self::relock`] does.
+    pub async fn lock_if_marked(&self, relock: bool) {
+        let Some(marker) = self.marker.as_deref().filter(|m| m.exists()) else {
+            return;
+        };
+        log::info!("{}: no lock followed a login; locking", marker.display());
+        if locked(&self.lock, false).await {
+            let _ = fs::remove_file(marker);
+        } else if relock {
+            self.relock();
+        }
+    }
+
+    /// Tries the lock again every [`RELOCK`] on a local task, until it takes, a client is shown
+    /// the session, the marker goes or `lock_on_leave` is turned off.
+    fn relock(&self) {
+        let turn = self.relocks.get() + 1;
+        self.relocks.set(turn);
+        log::warn!(
+            "trying the lock again every {} s until it takes",
+            RELOCK.as_secs()
+        );
+        let relocks = self.relocks.clone();
+        let present = self.present.clone();
+        let marker = self.marker.clone();
+        let config = self.config.clone();
+        let lock = self.lock.clone();
+        tokio::task::spawn_local(async move {
+            loop {
+                tokio::time::sleep(RELOCK).await;
+                let owed = relocks.get() == turn
+                    && present.get() == 0
+                    && config.borrow().lock_on_leave
+                    && marker.as_deref().is_none_or(Path::exists);
+                if !owed {
+                    return;
+                }
+                if locked(&lock, true).await {
+                    if present.get() == 0
+                        && let Some(m) = &marker
+                    {
+                        let _ = fs::remove_file(m);
+                    }
+                    return;
+                }
+            }
+        });
+    }
 }
 
-impl<F: AsyncFn() -> bool> Leave for LockOnLeave<F> {
+impl<F: AsyncFn() -> Result<(), String> + Clone + 'static> Leave for LockOnLeave<F> {
     fn arrived(&self) {
         self.present.set(self.present.get() + 1);
+        self.relocks.set(self.relocks.get() + 1);
         self.arrival.notify_waiters();
         if self.config.borrow().lock_on_leave
             && let Some(m) = &self.marker
@@ -290,18 +345,21 @@ impl<F: AsyncFn() -> bool> Leave for LockOnLeave<F> {
             () = self.arrival.notified() => return,
             () = close_wait() => {}
         }
+        let took = locked(&self.lock, false).await;
         // A client may log in while logind locks.
-        if (self.lock)().await
-            && self.present.get() == 0
-            && let Some(m) = &self.marker
-        {
+        if self.present.get() > 0 {
+            return;
+        }
+        if !took {
+            self.relock();
+        } else if let Some(m) = &self.marker {
             let _ = fs::remove_file(m);
         }
     }
 
     /// Locks if a client is still logged in, while its connection is open.
     async fn stopping(&self) {
-        lock_if_marked(self.marker.as_deref(), (self.lock)()).await;
+        self.lock_if_marked(false).await;
     }
 
     async fn console_unlocked(&self) -> bool {
@@ -335,39 +393,60 @@ mod tests {
     use crate::listen::Ending;
     use crate::portal::Screen;
     use futures_util::FutureExt;
-    use std::cell::RefCell;
-    use std::rc::Rc;
     use tokio::task::LocalSet;
 
     #[tokio::test]
     async fn a_start_after_a_login_left_unlocked_locks_and_clears_the_marker() {
         let dir = tempfile::tempdir().unwrap();
         let marker = dir.path().join("reprise/rdp/logged-in");
-        let locks = Rc::new(RefCell::new(0));
-        let lock = || {
-            let locks = locks.clone();
-            async move {
-                *locks.borrow_mut() += 1;
-                true
-            }
-        };
-        lock_if_marked(Some(&marker), lock()).await;
-        assert_eq!(*locks.borrow(), 0, "no marker, no lock");
+        let locks = Rc::new(Cell::new(0));
+        let leave = LockOnLeave::with_lock(Some(marker.clone()), counted(&locks));
+        leave.lock_if_marked(true).await;
+        assert_eq!(locks.get(), 0, "no marker, no lock");
 
-        LockOnLeave::with_lock(Some(marker.clone()), async || true).arrived();
+        leave.arrived();
         assert!(marker.exists(), "a login leaves the marker");
-        lock_if_marked(Some(&marker), lock()).await;
-        assert_eq!(*locks.borrow(), 1, "the marker locks");
+        leave.lock_if_marked(true).await;
+        assert_eq!(locks.get(), 1, "the marker locks");
         assert!(!marker.exists(), "the lock clears the marker");
 
         mark(&marker);
-        lock_if_marked(Some(&marker), async { false }).await;
+        let failing = LockOnLeave::with_lock(Some(marker.clone()), scripted(&[false], &locks));
+        failing.lock_if_marked(false).await;
         assert!(
             marker.exists(),
             "a failed lock keeps the marker for next time"
         );
-        lock_if_marked(None, lock()).await;
-        assert_eq!(*locks.borrow(), 1, "no runtime dir, no lock");
+        LockOnLeave::with_lock(None, counted(&locks))
+            .lock_if_marked(true)
+            .await;
+        assert_eq!(locks.get(), 2, "no runtime dir, no lock");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_start_whose_lock_fails_tries_again_without_holding_up_serving() {
+        LocalSet::new()
+            .run_until(async {
+                let dir = tempfile::tempdir().unwrap();
+                let marker = dir.path().join("logged-in");
+                mark(&marker);
+                let locks = Rc::new(Cell::new(0));
+                let leave =
+                    LockOnLeave::with_lock(Some(marker.clone()), scripted(&[false, true], &locks));
+                let started = tokio::time::Instant::now();
+                leave.lock_if_marked(true).await;
+                assert_eq!(
+                    started.elapsed(),
+                    Duration::ZERO,
+                    "serving starts after one try"
+                );
+                assert_eq!(locks.get(), 1);
+                assert!(marker.exists());
+                tokio::time::sleep(RELOCK + Duration::from_millis(1)).await;
+                assert_eq!(locks.get(), 2, "tried again after RELOCK");
+                assert!(!marker.exists(), "the lock that took clears the marker");
+            })
+            .await;
     }
 
     #[tokio::test]
@@ -385,11 +464,11 @@ mod tests {
     }
 
     /// A lock that counts its calls and succeeds.
-    fn counted(locks: &Rc<Cell<usize>>) -> impl AsyncFn() -> bool + use<> {
+    fn counted(locks: &Rc<Cell<usize>>) -> impl AsyncFn() -> Result<(), String> + Clone + use<> {
         let locks = locks.clone();
         async move || {
             locks.set(locks.get() + 1);
-            true
+            Ok(())
         }
     }
 
@@ -470,7 +549,7 @@ mod tests {
             async move || {
                 started.notify_one();
                 gate.notified().await;
-                true
+                Ok(())
             }
         };
         let leave = LockOnLeave::with_lock(Some(marker.clone()), lock);
@@ -523,7 +602,7 @@ mod tests {
     }
 
     /// `leave.left(why)` on a task of its own, in the LocalSet the test runs in.
-    fn leaving<F: AsyncFn() -> bool + 'static>(
+    fn leaving<F: AsyncFn() -> Result<(), String> + Clone + 'static>(
         leave: &Rc<LockOnLeave<F>>,
         why: End,
     ) -> tokio::task::JoinHandle<()> {
@@ -536,7 +615,7 @@ mod tests {
         marker: &Path,
         locks: &Rc<Cell<usize>>,
         config: watch::Receiver<RemoteDesktop>,
-    ) -> Rc<LockOnLeave<impl AsyncFn() -> bool + use<>>> {
+    ) -> Rc<LockOnLeave<impl AsyncFn() -> Result<(), String> + Clone + use<>>> {
         Rc::new(LockOnLeave {
             config,
             ..LockOnLeave::with_lock(Some(marker.to_path_buf()), counted(locks))
@@ -786,6 +865,68 @@ mod tests {
         assert_eq!(started.elapsed(), Duration::ZERO);
         assert_eq!(locks.get(), 0);
         assert!(!marker.exists());
+    }
+
+    /// A lock that counts its calls and answers each as `answers` says, the last one for any after.
+    fn scripted(
+        answers: &'static [bool],
+        locks: &Rc<Cell<usize>>,
+    ) -> impl AsyncFn() -> Result<(), String> + Clone + use<> {
+        let locks = locks.clone();
+        async move || {
+            let n = locks.get();
+            locks.set(n + 1);
+            if answers[n.min(answers.len() - 1)] {
+                Ok(())
+            } else {
+                Err("refused".into())
+            }
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_failed_lock_on_leave_is_tried_again_until_it_locks() {
+        LocalSet::new()
+            .run_until(async {
+                let dir = tempfile::tempdir().unwrap();
+                let marker = dir.path().join("logged-in");
+                let locks = Rc::new(Cell::new(0));
+                let leave = LockOnLeave::with_lock(
+                    Some(marker.clone()),
+                    scripted(&[false, false, true], &locks),
+                );
+                leave.arrived();
+                leave.left(End::Left).await;
+                assert_eq!(locks.get(), 1, "the leave returns after its own try");
+                assert!(marker.exists(), "the failed lock keeps the marker");
+                tokio::time::sleep(RELOCK * 2 + Duration::from_millis(1)).await;
+                assert_eq!(locks.get(), 3, "tried again every RELOCK");
+                assert!(!marker.exists(), "the lock that took clears the marker");
+                tokio::time::sleep(RELOCK * 3).await;
+                assert_eq!(locks.get(), 3, "no try after the lock took");
+            })
+            .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_client_shown_the_session_stops_the_relocks() {
+        LocalSet::new()
+            .run_until(async {
+                let dir = tempfile::tempdir().unwrap();
+                let marker = dir.path().join("logged-in");
+                let locks = Rc::new(Cell::new(0));
+                let leave =
+                    LockOnLeave::with_lock(Some(marker.clone()), scripted(&[false], &locks));
+                leave.arrived();
+                leave.left(End::Left).await;
+                tokio::time::sleep(RELOCK + Duration::from_millis(1)).await;
+                assert_eq!(locks.get(), 2, "the lock is tried again");
+                leave.arrived();
+                tokio::time::sleep(RELOCK * 3).await;
+                assert_eq!(locks.get(), 2, "no try while a client is shown the session");
+                assert!(marker.exists());
+            })
+            .await;
     }
 
     #[tokio::test(start_paused = true)]
