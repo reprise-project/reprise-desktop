@@ -197,7 +197,8 @@ frame, and `sound` at once.
 when reprise-login starts and again on `sudo systemctl reload
 reprise-login`. A reload applies `enabled`, `port` and
 `end_disconnected_after` at once, the last counted from when each session's
-last client left, the other `[remote_desktop]` keys from the next login,
+last client left, or from the login that reached it while no client was
+counted, the other `[remote_desktop]` keys from the next login,
 `[login]` keys
 the next time the login screen starts, and `autologin_user` the next time
 reprise-login starts. `sudo systemctl restart reprise-login` applies
@@ -209,8 +210,8 @@ its default and an unknown key is skipped; a file that isn't TOML gives
 every default. The journal names each (`journalctl -b -u reprise-login`).
 
 Settings > Login Manager writes the file through `pkexec
-reprise-login-settings`, which asks for an administrator's password,
-refuses a file with an unknown key or a bad value, rewrites it from the
+reprise-login-settings`, which asks for an administrator's password (polkit
+doesn't ask again for a few minutes), refuses a file with an unknown key or a bad value, rewrites it from the
 values it read (comments go) and reloads reprise-login.
 
 | Key | Values | Default |
@@ -241,7 +242,7 @@ keys in `config.toml`, `port` aside, still apply to their connections.
 | `port` | 1 to 65535, the TCP port on every interface | `3389` |
 | `group` | the group whose members may log in remotely. Root never can | `"reprise-remote"` |
 | `max_sessions` | 1 to 50: the most sessions reprise-login runs, console ones included. A remote login that would start one more is refused | `8` |
-| `end_disconnected_after` | 0 to 10080: minutes after its last client leaves that a background session ends: one a remote login started, or one it reached while this computer showed another ([security.md](security.md#background-sessions)). The session on screen is never ended. `0` never ends it | unset (never) |
+| `end_disconnected_after` | 0 to 10080: minutes after its last client leaves, or after a login reaches it with no client counted, that a background session ends: one a remote login started, or one it reached while this computer showed another ([security.md](security.md#background-sessions)). The session on screen is never ended. `0` never ends it | unset (never) |
 
 ## Lock when away
 

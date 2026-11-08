@@ -345,7 +345,10 @@ since it logged in again. Until then the session stays unlocked, on a
 monitor that just came back too; `lock_grace_s = 0` locks at once. Every
 other leave, a client closing, Disconnect, a dropped network, locks without
 waiting. A client that logged in but never got the picture and input (with
-no screen to share, say) leaves the session as it was. Stopping the server,
+no screen to share, say) leaves the session as it was. Under
+`second_client = "replace"`, a login that ends a client shown the session
+counts as shown from its login, so the replaced client's leave doesn't lock
+the session under it; any other login counts from its first frame. Stopping the server,
 as turning Remote Desktop off does, locks the session before a shown
 client's connection closes, and at once while the lock waits for a
 reconnect; each client is then told the server ended it, so it doesn't
@@ -482,7 +485,8 @@ manager](#login-manager):
   their session, as the user unit `reprise-rdp-handover.service`, started by
   `reprise-rdp-handover.socket` at `$XDG_RUNTIME_DIR/reprise-rdp/handover.sock`
   (0600, in a 0700 directory). It takes connections from reprise-login only
-  and stops when the last client leaves.
+  and stops when its last client leaves, or once no client has been listed
+  for 60 s since it started.
 
 Two more sockets in `/run/reprise-login`:
 
@@ -500,8 +504,9 @@ can't log in with a hash: the daemon wants the password whose hash matches.
 The hand-over goes to the uid the daemon looked up, never one the front
 names. So the front carries a full sandbox: `ProtectSystem=strict`,
 `ProtectHome`, `PrivateTmp`, `PrivateDevices`, `ProtectProc=invisible`,
-`NoNewPrivileges`, a `@system-service` system call filter, AF_UNIX and
-AF_INET(6) only, 512 MiB and 64 tasks. It binds the port with
+`NoNewPrivileges`, `/run/dbus` out of reach (it makes no bus calls), a
+`@system-service` system call filter, AF_UNIX and AF_INET(6) only, 512 MiB
+and 64 tasks. It binds the port with
 `CAP_NET_BIND_SERVICE` and drops it once bound. The daemon's unit has none,
 for the reason under [Login manager](#login-manager); the front starts no
 session, so nothing of a user's descends from it.
@@ -518,7 +523,9 @@ For each login the daemon checks, in order:
 4. The secret. Over TLS, the client's password goes to PAM's
    `reprise-login-remote` service: `pam_shells`, `pam_env` and `pam_unix
    nodelay` for `auth`, then system-login's `account` and `session`, with no
-   pam_faillock, so remote failures never lock the console. The worker
+   pam_faillock, so remote failures never lock the console. With pam_unix
+   alone checking the password, a systemd-homed account can't log on over
+   TLS. The worker
    answers PAM's first password prompt with it; any other prompt fails the
    login. Under NLA, the daemon compares the NT hash of the password the
    client delegated with the stored one in constant time, then runs
@@ -546,17 +553,29 @@ passwords per IPv4 address or IPv6 /64, from the client's NTLM AUTHENTICATE.
 Neither feeds the other, so each kind of secret has its own budget.
 
 - **Per address.** Three failures are free; the fourth starts a 2 s
-  back-off, doubling up to 60 s. Meanwhile the front refuses the address's
-  new logins: before TLS after TLS failures, at the start of CredSSP after
-  NLA failures. A success clears the address, and so do 20
-  minutes without a failure from it.
+  back-off, doubling up to 60 s. After TLS failures the front closes every
+  new connection from the address before TLS. After NLA failures it refuses
+  at the negotiation, also before TLS, a connection that chose NLA, while a
+  TLS logon from the address goes ahead. A success clears the address, and
+  so do 20 minutes without a failure from it.
 - **Every address.** 10 failures within 10 minutes pause every login of that
   kind for 10 minutes, a right password included, and the journal says so
   once. Restarting reprise-login clears both throttles.
 
+An NTLM AUTHENTICATE counts as a failed NLA password until the client
+delegates the Remote Desktop password it proved. So a right proof that
+delegates no password, or another user or password than the proof's, counts
+as one, and so does a client that stalls inside its AUTHENTICATE.
+
 xfreerdp opens each TLS logon twice, so one mistyped password from it
 counts two failures. Before a login the front also caps connections: 32 in
 all, 2 per IPv4 address or IPv6 /64, and 256 KiB read from each.
+
+The front logs every failed NLA password in full with the client's address,
+and every verdict reprise-login sends it. Of its other refusals before a
+login (the caps, a back-off, a failed handshake, no link to reprise-login)
+the first each minute is logged in full and the rest are counted by kind in
+one line a minute.
 
 ### Hand-over
 
@@ -610,7 +629,8 @@ characters or more and must differ from the login password.
   dropped when reprise-login starts.
 
 NLA takes the name as `user`, `.\user`, `HOST\user` (the host name's first
-label), `user@host` or `user@`. TLS strips any `DOMAIN\` or `@host`. Only
+label), `user@host` or `user@`. A client that runs bare NTLM instead of
+SPNEGO may give any domain. TLS strips any `DOMAIN\` or `@host`. Only
 xfreerdp has been tried.
 
 ### Background sessions
@@ -647,7 +667,9 @@ acts on the lid.
 
 A background session whose last client left ends `[remote_desktop]
 end_disconnected_after` minutes later, unless a client comes back first;
-logind ends its processes, unsaved work included. When that time runs out
+logind ends its processes, unsaved work included. A login that reaches a
+session with no client counted yet starts that time, so the session ends
+even when the client that logged in never reaches it. When that time runs out
 the daemon reads the VT on screen afresh, and a session the computer shows
 counts as a console session and is kept. With it unset, and for a console
 session, the session runs until its user logs off. Disconnect in the
@@ -701,18 +723,19 @@ login reaches the others again.
   deadline) counts no failure, so its address doesn't back off. Under NLA
   the client learns it from the early result anyway, and a reconnect lands
   in the session the first one started.
-- **The journal can fill.** The front and the daemon log one line per
-  refused connection, so a storm of connections can push older lines out of
-  a journal capped by size.
+- **The journal can fill.** The daemon logs one line per refused login and
+  the front one per failed NLA password, so a storm of logins can push older
+  lines out of a journal capped by size. The front's other refusals take a
+  line or two a minute ([Throttle](#throttle)).
 - **FUSE over the runtime directory.** A user who can mount FUSE over
   `/run/user/<uid>` with `user_allow_other` (off by default in
-  `/etc/fuse.conf`) can stall the daemon at their own hand-over.
+  `/etc/fuse.conf`) can hold their own hand-over until its link's open
+  times out, and each such open leaves one of the daemon's threads stuck in
+  the mount.
 - **System accounts in the group.** The TLS stack refuses root only. A
   system account that an administrator adds to `reprise-remote`, with a
   shell in `/etc/shells`, can log in over TLS; the NLA stack refuses every
   uid below 1000.
-- **The front can reach the system bus.** Its sandbox leaves the system
-  bus socket visible, though it uses only `front.sock` and the journal.
 
 ## Keyboard shortcuts
 
