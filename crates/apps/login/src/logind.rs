@@ -133,6 +133,9 @@ pub trait Systemd {
     fn subscribe(&self) -> zbus::Result<()>;
     fn reset_failed_unit(&self, name: &str) -> zbus::Result<()>;
     fn load_unit(&self, name: &str) -> zbus::Result<OwnedObjectPath>;
+    /// Sent with `active` false when a daemon-reload is done.
+    #[zbus(signal)]
+    fn reloading(&self, active: bool);
     #[zbus(signal)]
     fn job_removed(&self, id: u32, job: OwnedObjectPath, unit: String, result: String);
     fn enable_unit_files(
@@ -207,14 +210,32 @@ pub(crate) trait Units {
 }
 
 /// Applies the front changes sent on the returned queue one at a time, in order, so a Stop
-/// never runs between the calls of a Start. The task ends when the queue closes.
+/// never runs between the calls of a Start. After each daemon-reload sent on `reloads` while
+/// remote logins are on, a socket the reload left without its port is restarted with the front.
+/// The task ends when the queue closes.
 pub(crate) fn apply_front_units<U: Units + 'static>(
     units: U,
     drop_in: PathBuf,
+    mut reloads: mpsc::UnboundedReceiver<()>,
 ) -> (mpsc::UnboundedSender<FrontUnit>, JoinHandle<()>) {
     let (tx, mut rx) = mpsc::unbounded_channel::<FrontUnit>();
     let task = tokio::task::spawn_local(async move {
-        while let Some(unit) = rx.recv().await {
+        let mut on = None;
+        loop {
+            let unit = tokio::select! {
+                unit = rx.recv() => match unit {
+                    Some(unit) => unit,
+                    None => break,
+                },
+                Some(()) = reloads.recv() => match on {
+                    Some(port) if socket_unheld(&units, port).await => FrontUnit::Start { port },
+                    _ => continue,
+                },
+            };
+            on = match unit {
+                FrontUnit::Start { port } => Some(port),
+                FrontUnit::Stop => None,
+            };
             if let Err(e) = apply(&units, &drop_in, unit).await {
                 log::error!("{unit:?} of {FRONT_UNIT}: {e}");
             }
@@ -314,6 +335,11 @@ async fn unheld(units: &impl Units, port: u16) -> bool {
         tokio::time::sleep(REREAD_PAUSE).await;
         unheld().await
     }
+}
+
+/// Whether [`FRONT_SOCKET`] is active while systemd holds no socket on `port`.
+async fn socket_unheld(units: &impl Units, port: u16) -> bool {
+    (units.state(FRONT_SOCKET).await).is_ok_and(|s| s.active) && unheld(units, port).await
 }
 
 /// The inodes of the sockets listening on `port` in `table`, a `/proc/net/tcp` or `tcp6`.
@@ -513,7 +539,27 @@ impl Logind {
     /// The queue the daemon's front changes go through, applied in order by
     /// [`apply_front_units`].
     pub fn front_units(&self) -> mpsc::UnboundedSender<FrontUnit> {
-        apply_front_units(self.clone(), PathBuf::from(FRONT_PORT_DROP_IN)).0
+        let (reloaded, reloads) = mpsc::unbounded_channel();
+        tokio::task::spawn_local(self.clone().send_reloads(reloaded));
+        apply_front_units(self.clone(), PathBuf::from(FRONT_PORT_DROP_IN), reloads).0
+    }
+
+    /// Sends on `reloaded` each time systemd finishes a daemon-reload, until it closes.
+    async fn send_reloads(self, reloaded: mpsc::UnboundedSender<()>) {
+        let followed = async {
+            let systemd = self.systemd().await?;
+            let mut reloading = systemd.receive_reloading().await?;
+            subscribed(systemd.subscribe().await)?;
+            while let Some(signal) = reloading.next().await {
+                if signal.args().is_ok_and(|a| !a.active) && reloaded.send(()).is_err() {
+                    break;
+                }
+            }
+            zbus::Result::Ok(())
+        };
+        if let Err(e) = followed.await {
+            log::warn!("following systemd's reloads: {e}");
+        }
     }
 
     /// A block inhibitor of `what`, held until the fd is dropped.
@@ -1003,7 +1049,8 @@ mod tests {
         let applied = units.clone();
         tokio::task::LocalSet::new()
             .run_until(async move {
-                let (tx, task) = apply_front_units(applied, dir.path().join("port.conf"));
+                let (_reloaded, reloads) = mpsc::unbounded_channel();
+                let (tx, task) = apply_front_units(applied, dir.path().join("port.conf"), reloads);
                 tx.send(FrontUnit::Start { port: 3390 }).unwrap();
                 tx.send(FrontUnit::Stop).unwrap();
                 drop(tx);
@@ -1019,6 +1066,58 @@ mod tests {
         assert_eq!(fake.jobs.last(), Some(&(UnitJob::Stop, FRONT_SOCKET)));
         assert!(!fake.enabled, "the socket is disabled");
         assert!(fake.active.is_empty(), "{:?} still run", fake.active);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_daemon_reload_that_leaves_the_socket_without_its_port_restarts_it_while_remote_logins_are_on()
+     {
+        let dir = tempfile::tempdir().unwrap();
+        let units = FakeUnits::default();
+        let applied = units.clone();
+        let settle = || tokio::time::sleep(Duration::from_secs(1));
+        tokio::task::LocalSet::new()
+            .run_until(async move {
+                let (reloaded, reloads) = mpsc::unbounded_channel();
+                let (tx, _task) = apply_front_units(applied, dir.path().join("port.conf"), reloads);
+                tx.send(FrontUnit::Start { port: 3389 }).unwrap();
+                settle().await;
+                units.0.borrow_mut().jobs.clear();
+                reloaded.send(()).unwrap();
+                settle().await;
+                assert!(
+                    units.0.borrow().jobs.is_empty(),
+                    "a socket on its port is left alone"
+                );
+
+                units.0.borrow_mut().deaf = true;
+                reloaded.send(()).unwrap();
+                settle().await;
+                {
+                    let fake = units.0.borrow();
+                    assert!(!fake.deaf, "the socket holds its port again");
+                    assert_eq!(
+                        fake.jobs,
+                        [
+                            (UnitJob::Restart, FRONT_SOCKET),
+                            (UnitJob::Start, FRONT_UNIT)
+                        ]
+                    );
+                    assert_eq!(fake.active.len(), 2, "{:?}", fake.active);
+                }
+
+                tx.send(FrontUnit::Stop).unwrap();
+                settle().await;
+                {
+                    let mut fake = units.0.borrow_mut();
+                    fake.active.insert(FRONT_SOCKET);
+                    fake.deaf = true;
+                    fake.jobs.clear();
+                }
+                reloaded.send(()).unwrap();
+                settle().await;
+                assert!(units.0.borrow().jobs.is_empty(), "remote logins are off");
+            })
+            .await;
     }
 
     #[tokio::test]
