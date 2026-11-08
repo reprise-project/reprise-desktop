@@ -26,6 +26,25 @@ pub fn caps_lock() -> bool {
     CAPS_LOCK.with(|c| c.get())
 }
 
+/// The keysym each held key went down as, by keycode, so its release reports that keysym even
+/// when a modifier changed in between (`a` down, Shift down, `A` up).
+#[derive(Debug, Default)]
+pub(crate) struct DownSyms(Vec<(u32, u32)>);
+
+impl DownSyms {
+    fn press(&mut self, code: u32, sym: u32) {
+        self.0.retain(|&(c, _)| c != code);
+        self.0.push((code, sym));
+    }
+
+    fn release(&mut self, code: u32, sym: u32) -> u32 {
+        match self.0.iter().position(|&(c, _)| c == code) {
+            Some(i) => self.0.swap_remove(i).1,
+            None => sym,
+        }
+    }
+}
+
 impl Host {
     fn key_input(&self, event: &KeyEvent) -> KeyInput {
         let sym = event.keysym.raw();
@@ -112,7 +131,8 @@ impl Host {
 
     fn key_up(&mut self, mut event: KeyEvent) {
         self.echo_key(&event, false);
-        let input = self.key_input(&event);
+        let mut input = self.key_input(&event);
+        input.sym = self.down_syms.release(event.raw_code, input.sym);
         event.utf8.zeroize();
         let win = self.focus.unwrap_or(MAIN);
         self.send(win, Event::KeyUp(input));
@@ -372,6 +392,7 @@ impl KeyboardHandler for Host {
     ) {
         self.last_serial = serial;
         self.input_serial = serial;
+        self.down_syms.press(event.raw_code, event.keysym.raw());
         self.key(event);
     }
     fn repeat_key(
@@ -496,5 +517,22 @@ impl Dispatch2<zwp_text_input_v3::ZwpTextInputV3, Host> for TextInputOf {
         _: &QueueHandle<Host>,
     ) {
         host.text_input_event(event);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DownSyms;
+
+    #[test]
+    fn a_key_comes_up_as_the_keysym_it_went_down_as() {
+        let (a, shift_a, b) = (0x61, 0x41, 0x62);
+        let mut d = DownSyms::default();
+        d.press(30, a);
+        assert_eq!(d.release(30, shift_a), a, "Shift went down in between");
+        assert_eq!(d.release(30, shift_a), shift_a, "a release with no press");
+        d.press(48, b);
+        d.press(48, b);
+        assert_eq!(d.release(48, b), b);
     }
 }

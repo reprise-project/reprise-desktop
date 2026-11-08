@@ -27,6 +27,7 @@ use crate::textedit::TextEdit;
 use crate::theme::{TextUnits, Theme};
 use crate::trackbar::{self, TrackBar};
 
+pub use consent::ARM as CONSENT_ARM;
 pub(crate) use draw::greyed_field_scheme;
 pub use draw::{draw, draw_popups, draw_tip};
 use field::FieldDrop;
@@ -37,6 +38,7 @@ pub use keys::{Key, ctrl_key, flat_key, shove_dir, special_key};
 use tip::LabelTip;
 
 mod access_tree;
+mod consent;
 mod draw;
 mod field;
 mod focus;
@@ -235,6 +237,8 @@ pub struct Form {
     /// A host shows the open combo list or colour popup on a popup ([`Hosted`](crate::controls::hosted::Hosted)): `draw` leaves
     /// it out.
     hosted: bool,
+    /// Set on a consent prompt's form ([`Form::set_consent`]).
+    consent: Option<consent::Gate>,
 }
 
 /// A scrolled form's window onto the surface: every item but those in `keep` draws and takes
@@ -502,6 +506,7 @@ impl Form {
             tip: LabelTip::default(),
             rendered: Rendered::default(),
             hosted: false,
+            consent: None,
         };
         let first = (0..form.items.len()).find(|&i| form.tab_stop(i));
         form.set_focus(first);

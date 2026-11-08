@@ -261,7 +261,8 @@ pub fn buttons(
 }
 
 /// How a prompt closed without accepting: `cancel` pressed (click, access
-/// key, Enter or Space on it) or dismissed (Esc, Enter with no button focused, window close).
+/// key, Enter or Space on it, Enter anywhere on a consent form) or dismissed (Esc, Enter with no
+/// button focused, window close).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Refusal {
     Button,

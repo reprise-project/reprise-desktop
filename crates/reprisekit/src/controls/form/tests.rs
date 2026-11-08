@@ -28,6 +28,7 @@ use super::layout::{icon_list_layout, note_lines};
 use super::tip::TIP_TICKS;
 use super::*;
 
+mod consent;
 mod controls;
 mod fields;
 mod focus;

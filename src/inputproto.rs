@@ -63,6 +63,8 @@ pub struct InputProto {
     pub keys: crate::remotekeys::KeysState,
     /// Where the input being handled comes from.
     pub source: InputSource,
+    /// Buttons whose press a consent prompt refused (`State::consent_refuses_button`).
+    pub consent_held: Vec<u32>,
 }
 
 /// Where the input being handled comes from. In lock mode the computer's own goes to the
@@ -87,6 +89,7 @@ impl InputProto {
             shortcuts: Default::default(),
             keys: Default::default(),
             source: InputSource::Other,
+            consent_held: Vec::new(),
         }
     }
 

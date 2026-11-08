@@ -236,6 +236,7 @@ pub fn run(app: Box<dyn App>) -> Result<(), RunError> {
         kb_on: None,
         kb_settle: false,
         key_last: reprisebus::instance::Handoff::from_env().by_key,
+        down_syms: Default::default(),
         press_time: 0,
         compositor,
         xdg_shell,

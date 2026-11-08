@@ -100,7 +100,7 @@ pub fn icon_names(icon: Option<&str>) -> Vec<String> {
     names
 }
 
-/// The prompt's form and 100% client size for text set at `px` that grows by `u`: subtitle, body and choices stacked from line 12, Allow and Deny 20 px under the lowest row and never above the permit prompt's row at 97. Subtitle and body are capped at `SUBTITLE_LINES` and `BODY_LINES`. Deny is the default button and has the focus, so Enter never grants by accident. `cm` is the look the prompt runs in, whose combo lists are kept inside it.
+/// The prompt's form and 100% client size for text set at `px` that grows by `u`: subtitle, body and choices stacked from line 12, Allow and Deny 20 px under the lowest row and never above the permit prompt's row at 97. Subtitle and body are capped at `SUBTITLE_LINES` and `BODY_LINES`. Deny is the default button and has the focus, so Enter never grants by accident; a consent form ([`Form::set_consent`]). `cm` is the look the prompt runs in, whose combo lists are kept inside it.
 pub fn build_form(
     input: &Input,
     text: &TextRenderer,
@@ -165,6 +165,7 @@ pub fn build_form(
     let mut form = Form::new(items);
     choices::fit_lists(&mut form, size.1, cm, u);
     form.focus_id("deny");
+    form.set_consent();
     (form, size)
 }
 
@@ -507,6 +508,14 @@ mod tests {
             "buttons 20 px under the combo's bottom (131)"
         );
         assert_eq!(size, (391, 185));
+    }
+
+    #[test]
+    fn a_bare_letter_grants_no_access() {
+        use reprisekit::controls::form::{Event, Key};
+        let (mut f, _) = form(&base());
+        assert_eq!(f.key(Key::Char('a')), Event::None);
+        assert_eq!(f.key(Key::Access('a')), Event::Pressed("allow"));
     }
 
     #[test]

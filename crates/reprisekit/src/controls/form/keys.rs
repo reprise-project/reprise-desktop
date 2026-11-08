@@ -308,6 +308,10 @@ impl Form {
             Key::Tab { back } => self.move_focus(back),
             Key::Escape => Event::Cancel,
             Key::Enter => match self.focus {
+                _ if self.consent.is_some() => match self.default_button() {
+                    Some(d) => Event::Pressed(self.items[d].id),
+                    None => Event::Default,
+                },
                 Some(i) if matches!(self.items[i].control, Control::Button { .. }) => {
                     Event::Pressed(self.items[i].id)
                 }
@@ -337,6 +341,9 @@ impl Form {
                 let Some(i) = self.focus else {
                     return Event::None;
                 };
+                // A consent form's keyboard grants only through an Alt access key.
+                let plain = self.consent.is_none();
+                let refusing = self.default_button() == Some(i);
                 let (id, grows) = (self.items[i].id, self.items[i].grows);
                 let rect = self.at(&self.items[i]);
                 match (&mut self.items[i].control, other) {
@@ -406,9 +413,13 @@ impl Form {
                             Event::None
                         }
                     }
-                    (Control::Button { .. }, Key::Space) => Event::Pressed(id),
-                    (Control::Button { .. }, Key::Left | Key::Up) => self.next_button(i, true),
-                    (Control::Button { .. }, Key::Right | Key::Down) => self.next_button(i, false),
+                    (Control::Button { .. }, Key::Space) if plain || refusing => Event::Pressed(id),
+                    (Control::Button { .. }, Key::Left | Key::Up) if plain => {
+                        self.next_button(i, true)
+                    }
+                    (Control::Button { .. }, Key::Right | Key::Down) if plain => {
+                        self.next_button(i, false)
+                    }
                     (Control::ListBox { list, .. }, Key::Space) => {
                         let flipped = list.selected.is_some_and(|r| list.toggle(r));
                         if flipped {
@@ -594,7 +605,7 @@ impl Form {
     }
 
     /// A typed character: a digit into a spinner, a letter into a combo or list box
-    /// (type-ahead), else an access key.
+    /// (type-ahead), else an access key, except on a consent form, which takes those with Alt only.
     fn char_key(&mut self, ch: char) -> Event {
         if let Some(i) = self.focus {
             let id = self.items[i].id;
@@ -648,6 +659,9 @@ impl Form {
                 }
                 _ => {}
             }
+        }
+        if self.consent.is_some() {
+            return Event::None;
         }
         self.access_key(ch)
     }

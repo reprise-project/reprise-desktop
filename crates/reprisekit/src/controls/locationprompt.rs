@@ -109,7 +109,7 @@ pub fn client(f: &Fields, text: &TextRenderer, px: u32, u: TextUnits) -> (i32, i
 }
 
 /// Lay the prompt out over [`client`]'s size: the check box ticked, the
-/// focus and the default on Deny.
+/// focus and the default on Deny, a consent form ([`Form::set_consent`]).
 pub fn form(f: &Fields, text: &TextRenderer, px: u32, u: TextUnits) -> Form {
     let p = plan(f, text, px, u);
     let col = W - TEXT_X - MARGIN;
@@ -152,6 +152,7 @@ pub fn form(f: &Fields, text: &TextRenderer, px: u32, u: TextUnits) -> Form {
     ));
     let mut form = Form::new(items);
     form.focus_id(DENY);
+    form.set_consent();
     form
 }
 

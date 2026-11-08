@@ -225,10 +225,16 @@ pub fn form_input(form: &mut Form, ev: &Event, ctx: &Ctx) -> Option<form::Event>
 
 fn form_event(form: &mut Form, ev: &Event, ctx: &Ctx) -> Option<form::Event> {
     let px = form.units().px(ctx.base_px());
+    let now = std::time::Instant::now();
     Some(match ev {
+        Event::Focus(true) => {
+            form.consent_focused(now);
+            return None;
+        }
         Event::Focus(false) | Event::ShortcutsInactive => {
             form.blur_hotkey().then_some(form::Event::Redraw)?
         }
+        Event::Key(k) if !form.consent_key(k.sym, now) => return None,
         Event::Key(k) => match hotkey_input(form, k, true) {
             Some(e) => e,
             None => {
@@ -237,8 +243,14 @@ fn form_event(form: &mut Form, ev: &Event, ctx: &Ctx) -> Option<form::Event> {
             }
         },
         Event::Pasted(text) => form.paste(text.clone()),
-        Event::KeyUp(k) => hotkey_input(form, k, false)?,
+        Event::KeyUp(k) => {
+            form.consent_key_up(k.sym);
+            hotkey_input(form, k, false)?
+        }
         Event::Blink => form.tip_tick().then_some(form::Event::Redraw)?,
+        Event::Pointer(PointerInput::Press {
+            button: BTN_LEFT, ..
+        }) if !form.consent_press(now) => return None,
         Event::Pointer(PointerInput::Press {
             x,
             y,
@@ -836,5 +848,82 @@ mod tests {
         assert_eq!(draw(&form), (Pos::default(), 0), "Ctrl+Home: the top");
         form_input(&mut form, &ctrl(END), &ctx);
         assert_eq!(draw(&form), (end, bottom), "Ctrl+End: the bottom");
+    }
+
+    #[test]
+    fn a_consent_form_ignores_keys_and_presses_right_after_its_window_gets_the_keyboard() {
+        use reprisekit::controls::form::Item;
+        use reprisekit::raster::Rect;
+        let ctx = Ctx {
+            theme: reprisekit::theme::Theme::default(),
+            text: std::rc::Rc::new(reprisekit::text::TextRenderer::load(
+                &reprisekit::theme::FontConfig::default(),
+            )),
+            icons: reprisekit::icontheme::IconCache::new(reprisekit::icontheme::IconTheme::load(
+                "test",
+                &[],
+            )),
+            caret_on: true,
+            size: (200, 100),
+            maximized: false,
+            origin: (0, 0),
+            wake: crate::Waker::noop(),
+            heads: Default::default(),
+            want_tick: Default::default(),
+            output_size: None,
+            at_pick: false,
+            text_size: 100,
+        };
+        let build = |consent: bool| {
+            let mut f = Form::new(vec![
+                Item::button("allow", Rect::new(10, 10, 75, 23), "&Allow", true, false),
+                Item::button("deny", Rect::new(90, 10, 75, 23), "&Deny", true, true),
+            ]);
+            f.focus_id("deny");
+            if consent {
+                f.set_consent();
+            }
+            f
+        };
+        let enter = Event::Key(KeyInput {
+            sym: reprisekit::textedit::keysym::RETURN,
+            utf8: None,
+            mods: crate::Mods::default(),
+            edit: None,
+        });
+        let press = Event::Pointer(PointerInput::Press {
+            x: 20,
+            y: 20,
+            button: BTN_LEFT,
+            time: 0,
+            mods: crate::Mods::default(),
+        });
+        let mut plain = build(false);
+        form_input(&mut plain, &Event::Focus(true), &ctx);
+        assert_eq!(
+            form_input(&mut plain, &enter, &ctx),
+            Some(form::Event::Pressed("deny"))
+        );
+        let mut f = build(true);
+        assert_eq!(form_input(&mut f, &Event::Focus(true), &ctx), None);
+        assert_eq!(form_input(&mut f, &enter, &ctx), None, "Enter is ignored");
+        assert_eq!(form_input(&mut f, &press, &ctx), None, "a press is ignored");
+        let Event::Key(k) = &enter else {
+            unreachable!()
+        };
+        form_input(&mut f, &Event::KeyUp(k.clone()), &ctx);
+        f.consent_focused(std::time::Instant::now() - form::CONSENT_ARM);
+        assert_eq!(
+            form_input(&mut f, &enter, &ctx),
+            Some(form::Event::Pressed("deny")),
+            "Enter counts once the wait is over"
+        );
+        form_input(&mut f, &Event::KeyUp(k.clone()), &ctx);
+        assert_eq!(form_input(&mut f, &Event::Focus(true), &ctx), None);
+        assert_eq!(
+            form_input(&mut f, &enter, &ctx),
+            None,
+            "the keyboard back: Enter is ignored again"
+        );
     }
 }
