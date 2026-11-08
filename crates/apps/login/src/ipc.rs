@@ -272,10 +272,27 @@ pub fn serve(greeter: StdListener, session: StdListener, server: Server) -> io::
 }
 
 /// A listener's checks in flight, in all and per uid.
-#[derive(Default)]
 pub(crate) struct Checks {
     all: usize,
     by_uid: HashMap<u32, usize>,
+    most: usize,
+}
+
+impl Default for Checks {
+    fn default() -> Checks {
+        Checks::new(MAX_PENDING)
+    }
+}
+
+impl Checks {
+    /// Checks capped at `most` in all and `MAX_PENDING_PER_UID` per uid.
+    pub(crate) fn new(most: usize) -> Checks {
+        Checks {
+            all: 0,
+            by_uid: HashMap::new(),
+            most,
+        }
+    }
 }
 
 /// A check counted in its listener's [`Checks`] until it is dropped.
@@ -289,7 +306,7 @@ impl InFlight {
     pub(crate) fn begin(checks: &Rc<RefCell<Checks>>, uid: u32) -> Option<InFlight> {
         let mut c = checks.borrow_mut();
         let mine = c.by_uid.get(&uid).copied().unwrap_or(0);
-        if c.all >= MAX_PENDING || mine >= MAX_PENDING_PER_UID {
+        if c.all >= c.most || mine >= MAX_PENDING_PER_UID {
             return None;
         }
         c.all += 1;

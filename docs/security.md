@@ -517,7 +517,10 @@ Two more sockets in `/run/reprise-login`:
   frame breaks the link.
 - `account.sock` is 0666. Any local user asks it about their own Remote
   Desktop password, by the uid `SO_PEERCRED` gives: one request per
-  connection, read within 5 s, and one change per user at a time.
+  connection, read within 5 s, and one change per user at a time. A uid
+  holds at most 4 connections, and 64 are open at most; only a uid that
+  names an account waits for its request, among 16 at most, so a user's
+  subordinate uids are answered and closed at once.
 
 The design assumes the front can be broken into. A front run by an
 attacker holds every Remote Desktop password's NT hash and sees the
