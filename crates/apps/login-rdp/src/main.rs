@@ -1,6 +1,7 @@
 //! reprise-login-rdp: the Remote Desktop front of reprise-login.
 
 mod accept;
+mod confine;
 mod handoff;
 mod limits;
 mod link;
@@ -66,6 +67,24 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    match confine::confine() {
+        Ok(confined) => {
+            if !confined.seccomp {
+                log::warn!(
+                    "no seccomp filter for this architecture: only the unit keeps the front from network sockets"
+                );
+            }
+            if !confined.landlock {
+                log::warn!(
+                    "the kernel has no Landlock TCP rules: an accepted connection could be reconnected elsewhere"
+                );
+            }
+        }
+        Err(e) => {
+            log::error!("confinement: {e}");
+            return ExitCode::FAILURE;
+        }
+    }
     let (Some(state), Some(runtime)) = (unit_dir("STATE_DIRECTORY"), unit_dir("RUNTIME_DIRECTORY"))
     else {
         log::error!("STATE_DIRECTORY and RUNTIME_DIRECTORY are set by reprise-login-rdp.service");
