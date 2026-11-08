@@ -750,9 +750,12 @@ the daemon reads the VT on screen afresh, and a session the computer shows
 counts as a console session and is kept. With it unset, and for a console
 session, the session runs until its user logs off. Disconnect in the
 session ends its clients like any other leave and leaves it running,
-locked. After reprise-login restarts, of the sessions off the seat only
-those a remote login started count as background ones, until a remote
-login reaches the others again. reprise-login links each background session
+locked. reprise-login keeps the list of background sessions in
+`/run/reprise-login/background-sessions` (root, 0600), so a session off the
+seat stays a background or console session across a restart of the daemon.
+Without that list, as after the first restart following an upgrade, of the
+sessions off the seat only those a remote login started count as background
+ones, until a remote login reaches the others again. reprise-login links each background session
 whatever `enabled` and the user's group say, since a client may still be
 connected, and starts its time once the session's hand-over server reports
 no client, or fails to report within the link's wait. A seat0 session
