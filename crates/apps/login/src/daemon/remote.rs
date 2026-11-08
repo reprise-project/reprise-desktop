@@ -199,8 +199,9 @@ impl Daemon {
         Effect::ToFront(FrontEvent::Passwords { users })
     }
 
-    /// Turning remote logins on starts the front and opens the links of group members' sessions;
-    /// off stops it and denies logins not handed over, keeping the links of uids with a session.
+    /// Turning remote logins on starts the front and opens the links of background sessions and
+    /// group members' sessions; off stops it and denies logins not handed over, keeping the links
+    /// of uids with a session.
     pub(super) fn config_reloaded(
         &mut self,
         now: Instant,
@@ -712,9 +713,15 @@ impl Daemon {
         self.start_failed(now, uid, &why, out);
     }
 
-    /// Opens `uid`'s hand-over link unless it is up.
+    /// Opens `uid`'s hand-over link while remote logins are on, unless it is up.
     fn ask_link(&mut self, uid: u32, out: &mut Vec<Effect>) {
-        if self.config.remote.enabled && !self.remote.linked.contains(&uid) {
+        if self.config.remote.enabled {
+            self.open_link(uid, out);
+        }
+    }
+
+    fn open_link(&mut self, uid: u32, out: &mut Vec<Effect>) {
+        if !self.remote.linked.contains(&uid) {
             out.push(Effect::OpenIntake { uid });
         }
     }
@@ -940,22 +947,25 @@ impl Daemon {
         }
     }
 
-    /// Looks up whether each session's user is in the remote logins' group while remote
-    /// logins are on; `link_member` opens the links of members.
+    /// Opens the link of every background session, whose count alone starts its disconnect
+    /// time, whatever the settings and group say. For the others it looks up whether their
+    /// user is in the remote logins' group while remote logins are on; `link_member` opens the
+    /// links of members.
     pub(super) fn open_intakes(&mut self, out: &mut Vec<Effect>) {
-        if !self.config.remote.enabled {
-            return;
-        }
-        let users: BTreeMap<u32, String> = (self.sessions.iter())
+        let users: BTreeMap<u32, (String, bool)> = (self.sessions.iter())
             .filter(|e| !self.remote.linked.contains(&e.uid))
-            .map(|e| (e.uid, e.user.clone()))
+            .map(|e| (e.uid, (e.user.clone(), e.background)))
             .collect();
-        for (uid, user) in users {
-            out.push(Effect::LookUp {
-                key: LookUpKey::Link(uid),
-                user,
-                group: self.config.remote.group.clone(),
-            });
+        for (uid, (user, background)) in users {
+            if background {
+                self.open_link(uid, out);
+            } else if self.config.remote.enabled {
+                out.push(Effect::LookUp {
+                    key: LookUpKey::Link(uid),
+                    user,
+                    group: self.config.remote.group.clone(),
+                });
+            }
         }
     }
 
@@ -974,7 +984,9 @@ impl Daemon {
         }
     }
 
-    /// A link's count of its session's clients. The first after a reopen ends the reopen.
+    /// A link's count of its session's clients. The first after a reopen ends the reopen. A
+    /// count of none starts the disconnect time of a background session that has none running,
+    /// as one found at recovery.
     pub(super) fn viewers_reported(
         &mut self,
         now: Instant,
@@ -984,6 +996,13 @@ impl Daemon {
     ) {
         self.remote.reopening.remove(&uid);
         self.set_viewers(now, uid, count, out);
+        let Some(e) = self.sessions.by_uid(uid) else {
+            return;
+        };
+        if count == 0 && e.background && !self.remote.disconnects.contains_key(&e.id) {
+            let id = e.id.clone();
+            self.arm_disconnected(now, id, out);
+        }
     }
 
     /// A background session whose last viewer leaves ends `end_disconnected_after` later.
@@ -1013,7 +1032,8 @@ impl Daemon {
     }
 
     /// Records background session `id` as unviewed from `now` and arms its `Disconnected`
-    /// timer: when the session starts, is found, is reached remotely or loses its last viewer.
+    /// timer: when the session starts, is reached remotely, loses its last viewer, or is first
+    /// counted with none.
     pub(super) fn arm_disconnected(&mut self, now: Instant, id: String, out: &mut Vec<Effect>) {
         let unviewed = Unviewed {
             since: now,

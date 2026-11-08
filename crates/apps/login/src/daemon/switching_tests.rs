@@ -343,7 +343,7 @@ fn recovery_locks_no_session_off_the_seat() {
             remote: enabled(),
             ..MachineConfig::default()
         });
-        let effects = run.d.recover(run.now, found.clone(), seat_active);
+        let effects = run.d.recover(found.clone(), seat_active);
         assert!(
             !effects.iter().any(|e| matches!(e, Effect::LockSession(_))),
             "each compositor locks its own console when its link drops: {effects:?}"

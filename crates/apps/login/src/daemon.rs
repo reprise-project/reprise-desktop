@@ -458,12 +458,7 @@ impl Daemon {
 
     /// Rebuilds the table from logind and ends orphaned greeters; a remote login's session other
     /// than `seat_active` is a background one. No logind lock: it would lock remote clients out.
-    pub fn recover(
-        &mut self,
-        now: Instant,
-        found: Vec<LogindSession>,
-        seat_active: Option<&str>,
-    ) -> Vec<Effect> {
+    pub fn recover(&mut self, found: Vec<LogindSession>, seat_active: Option<&str>) -> Vec<Effect> {
         let mut out = Vec::new();
         self.seat_empty = seat_active.is_none();
         for s in found {
@@ -478,9 +473,6 @@ impl Daemon {
                     background,
                     interface: None,
                 });
-                if background {
-                    self.arm_disconnected(now, s.id, &mut out);
-                }
             } else if s.class == "greeter" && s.service == Mode::Greeter.service() {
                 self.orphans.push(Orphan {
                     id: s.id.clone(),
