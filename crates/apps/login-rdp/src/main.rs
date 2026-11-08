@@ -277,8 +277,8 @@ async fn connection(arrival: Arrival, ctx: Rc<Ctx>, conns: Conns, limits: Rc<Ref
     }
 }
 
-/// Hands the logged-on connection to reprise-login; when that fails it hears the connection is
-/// gone, and the connection is closed.
+/// Hands the logged-on connection to reprise-login and logs it once written; when that fails it
+/// hears the connection is gone, and the connection is closed.
 fn hand_off(ctx: &Ctx, peer: SocketAddr, pending: Pending) {
     let link = ctx.link.borrow();
     let Some(link) = &*link else {
@@ -293,7 +293,16 @@ fn hand_off(ctx: &Ctx, peer: SocketAddr, pending: Pending) {
         }
     };
     match sent {
-        Ok(()) => log::info!("{peer}: logged on"),
+        Ok(written) => {
+            tokio::spawn(async move {
+                match written.await {
+                    Ok(()) => log::info!("{peer}: logged on"),
+                    Err(_) => log::warn!(
+                        "{peer}: logged on, but the hand-over failed: the link to reprise-login was lost"
+                    ),
+                }
+            });
+        }
         Err(e) => log::warn!("{peer}: logged on, but the hand-over failed: {e}"),
     }
 }
