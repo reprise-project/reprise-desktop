@@ -210,8 +210,7 @@ its default and an unknown key is skipped; a file that isn't TOML gives
 every default. The journal names each (`journalctl -b -u reprise-login`).
 
 Settings > Login Manager writes the file through `pkexec
-reprise-login-settings`, which asks for an administrator's password (polkit
-doesn't ask again for a few minutes), refuses a file with an unknown key or a bad value, rewrites it from the
+reprise-login-settings`, which asks for an administrator's password on each save, refuses a file with an unknown key or a bad value, rewrites it from the
 values it read (comments go) and reloads reprise-login.
 
 | Key | Values | Default |
