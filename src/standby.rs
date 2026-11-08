@@ -108,6 +108,8 @@ fn add(state: &mut State) -> Output {
 /// Remote Desktop came on or went off: the standby exists while it is on, no monitor is in the
 /// layout and no Remote output holds the desktop.
 pub fn rdp_changed(state: &mut State, on: bool) {
+    // The server owns one name per user; beside another Reprise session it serves that one.
+    let on = on && !state.env.defers_user_units;
     if state.standby.rdp_on == on {
         return;
     }
