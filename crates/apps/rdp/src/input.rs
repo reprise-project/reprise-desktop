@@ -207,6 +207,7 @@ pub struct Input {
     wheel_x: AinputWheel,
     wheel_y: AinputWheel,
     moves: SharedMoves,
+    last_move: Option<(u16, u16)>,
 }
 
 /// The receiving side of an [`Input`], for the display that opens the portal session.
@@ -230,12 +231,19 @@ impl Input {
             wheel_x: AinputWheel::default(),
             wheel_y: AinputWheel::default(),
             moves: moves.clone(),
+            last_move: None,
         };
         (input, Feed { events: rx, moves })
     }
 
     fn send(&self, event: Event) {
         let _ = self.events.send(event);
+    }
+
+    fn move_to(&mut self, x: u16, y: u16) {
+        self.moves.lock().unwrap().moved((x, y), now());
+        self.last_move = Some((x, y));
+        self.send(Event::Move(x, y));
     }
 
     fn press(&mut self, what: Release) {
@@ -328,14 +336,22 @@ impl RdpServerInputHandler for Input {
 
     fn mouse(&mut self, event: MouseEvent) {
         match event {
-            MouseEvent::Move { x, y } => {
-                self.moves.lock().unwrap().moved((x, y), now());
-                self.send(Event::Move(x, y));
-            }
+            MouseEvent::Move { x, y } => self.move_to(x, y),
             MouseEvent::Button {
-                button, pressed, ..
-            }
-            | MouseEvent::ButtonRel {
+                x,
+                y,
+                button,
+                pressed,
+            } => match evdev_button(button) {
+                Some(code) => {
+                    if self.last_move != Some((x, y)) {
+                        self.move_to(x, y);
+                    }
+                    self.button(code, pressed);
+                }
+                None => log::debug!("{button:?} is not sent"),
+            },
+            MouseEvent::ButtonRel {
                 button, pressed, ..
             } => match evdev_button(button) {
                 Some(code) => self.button(code, pressed),
@@ -799,6 +815,57 @@ mod tests {
     }
 
     #[test]
+    fn a_press_lands_where_its_pdu_puts_it() {
+        let (mut input, mut feed) = Input::new(SyncOwner::default());
+        let left = |flags| {
+            MouseEvent::from(MousePdu {
+                flags: PointerFlags::LEFT_BUTTON | flags,
+                number_of_wheel_rotation_units: 0,
+                x_position: 50,
+                y_position: 60,
+            })
+        };
+        input.mouse(MouseEvent::Move { x: 10, y: 10 });
+        input.mouse(left(PointerFlags::DOWN));
+        input.mouse(left(PointerFlags::empty()));
+        assert_eq!(
+            sent(&mut feed),
+            [
+                Event::Move(10, 10),
+                Event::Move(50, 60),
+                Event::Button(BTN_LEFT, true),
+                Event::Button(BTN_LEFT, false)
+            ]
+        );
+    }
+
+    #[test]
+    fn an_advanced_input_press_lands_where_its_pdu_puts_it() {
+        use ironrdp_ainput::MouseEventFlags as A;
+        let (mut input, mut feed) = Input::new(SyncOwner::default());
+        let left = |flags| {
+            MouseEvent::from(ironrdp_ainput::MousePdu {
+                time: 0,
+                flags: A::BUTTON1 | flags,
+                x: 50,
+                y: 60,
+            })
+        };
+        input.mouse(MouseEvent::Move { x: 10, y: 10 });
+        input.mouse(left(A::DOWN));
+        input.mouse(left(A::empty()));
+        assert_eq!(
+            sent(&mut feed),
+            [
+                Event::Move(10, 10),
+                Event::Move(50, 60),
+                Event::Button(BTN_LEFT, true),
+                Event::Button(BTN_LEFT, false)
+            ]
+        );
+    }
+
+    #[test]
     fn middle_button_reaches_the_session() {
         let (mut input, mut feed) = Input::new(SyncOwner::default());
         let middle = PointerFlags::MIDDLE_BUTTON_OR_WHEEL;
@@ -807,6 +874,7 @@ mod tests {
         assert_eq!(
             sent(&mut feed),
             [
+                Event::Move(5, 6),
                 Event::Button(BTN_MIDDLE, true),
                 Event::Button(BTN_MIDDLE, false)
             ]
@@ -843,6 +911,7 @@ mod tests {
         assert_eq!(
             sent(&mut feed),
             [
+                Event::Move(5, 6),
                 Event::Button(BTN_SIDE, true),
                 Event::Button(BTN_SIDE, false),
                 Event::Button(BTN_EXTRA, true),
@@ -1126,6 +1195,7 @@ mod tests {
                 Event::Key(56, true),
                 Event::Key(15, true),
                 Event::Key(15, false),
+                Event::Move(0, 0),
                 Event::Button(BTN_LEFT, true),
                 Event::Keysym(0xE9, true),
                 Event::Key(56, false),
