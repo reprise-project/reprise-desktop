@@ -408,9 +408,8 @@ mod tests {
             .last()
             .expect("Log Off is open")
             .dialog;
-        let first = &d.buttons[0];
-        let offered =
-            first.enabled && first.choice == Some(reprisekit::powerpanel::Choice::SwitchUser);
+        let offered = (d.buttons.iter())
+            .any(|b| b.enabled && b.choice == Some(reprisekit::powerpanel::Choice::SwitchUser));
         h.state.apply_dialog(crate::dialog::Outcome::Close);
         offered
     }

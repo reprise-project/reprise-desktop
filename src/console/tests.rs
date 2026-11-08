@@ -735,9 +735,9 @@ fn disconnect_is_offered_on_the_remote_side_and_off_the_seat_with_a_client() {
     assert!(!disconnect_offered(&h.state), "off the seat with no client");
 }
 
-/// Press the top dialog's button `i` and apply what it does.
-fn press_dialog(h: &mut Harness, i: usize) {
-    let outcome = (h.state.dialogs.views.last_mut().expect("a dialog").dialog).press(i);
+/// Press the top dialog's first button, Disconnect, and apply it.
+fn press_disconnect(h: &mut Harness) {
+    let outcome = (h.state.dialogs.views.last_mut().expect("a dialog").dialog).press(0);
     assert_eq!(outcome, crate::dialog::Outcome::Disconnect);
     h.state.apply_dialog(outcome);
 }
@@ -746,8 +746,9 @@ fn press_dialog(h: &mut Harness, i: usize) {
 fn disconnect_locks_the_console_and_ends_every_client() {
     let (mut h, _portal, _lock) = in_lock_mode();
     h.state.run_action(&crate::config::Action::TurnOff, 0);
-    press_dialog(&mut h, 0);
+    press_disconnect(&mut h);
     assert!(h.state.console_locked());
+    assert!(!h.state.desktop_locked(), "the remote side stays unlocked");
     assert_eq!(h.state.ended_clients, [ClientsEnd::Disconnect]);
 }
 
@@ -760,7 +761,7 @@ fn disconnect_with_no_server_on_the_bus_still_locks_the_console() {
     crate::lockview::seat_away(&mut h.state, true);
     assert!(!h.state.console_locked());
     h.state.run_action(&crate::config::Action::LogOff, 0);
-    press_dialog(&mut h, 0);
+    press_disconnect(&mut h);
     assert!(h.state.console_locked());
     assert_eq!(h.state.ended_clients, [ClientsEnd::Disconnect]);
     assert!(
