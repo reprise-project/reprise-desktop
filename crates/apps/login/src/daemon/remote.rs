@@ -1360,7 +1360,8 @@ impl Daemon {
     }
 
     /// Arms `id`'s `Disconnected` timer for `end_disconnected_after` past its `since` with a
-    /// new generation, which stales any earlier one; ends it at once if that has passed.
+    /// new generation, which stales any earlier one; at once if that has passed, so the end
+    /// still reads the console's VT fresh.
     fn arm_unviewed(&mut self, now: Instant, id: &str, out: &mut Vec<Effect>) {
         let min = self.config.remote.end_disconnected_after_min;
         let Some(u) = self.remote.disconnects.get_mut(id) else {
@@ -1371,11 +1372,7 @@ impl Daemon {
             return;
         };
         let end = u.since + Duration::from_secs(u64::from(min) * 60);
-        let after = end.saturating_duration_since(now);
-        if after.is_zero() {
-            return self.end_unviewed(id, out);
-        }
-        self.arm_after(id, after, out);
+        self.arm_after(id, end.saturating_duration_since(now), out);
     }
 
     /// Arms `id`'s `Disconnected` timer `after` from now with a new generation.
