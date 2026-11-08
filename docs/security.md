@@ -1043,6 +1043,12 @@ sharing and remote control grants yet.
 - **Background sessions get polkit's inactive grants** under
   reprise-login, and its active ones while their user is active elsewhere;
   see [Accepted risks](#accepted-risks).
+- **Idle inhibitors hold off the idle lock.** Any program, a sandboxed one
+  included, holds `[idle] lock_after` off with an idle-inhibit-v1 inhibitor on
+  a surface that shows (a window on the current desktop, a mapped layer
+  surface, a popup on either) or through the portal's Inhibit, as on other
+  desktops. An inhibitor on a surface that shows nowhere doesn't count, and
+  none holds off a lock that is already up.
 - **Same-user code.** A program running as you can ptrace or preload the
   portal, the compositor or anything else of yours. Reprise doesn't defend
   against that, and doesn't treat it as a vulnerability.

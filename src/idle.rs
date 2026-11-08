@@ -16,7 +16,6 @@ use std::time::{Duration, Instant};
 
 use smithay::{
     backend::input::{InputBackend, InputEvent},
-    backend::renderer::utils::with_renderer_surface_state,
     output::Output,
     reexports::{
         calloop::{
@@ -232,9 +231,8 @@ fn root_of(s: &WlSurface) -> WlSurface {
     root
 }
 
-/// Whether an inhibitor on `s` counts: its surface shows, and for a
-/// window, that window is mapped, not minimized and on the current
-/// desktop.
+/// Whether an inhibitor on `s` counts: `s` is part of a window, layer surface or popup that
+/// shows.
 fn shows(state: &State, s: &WlSurface) -> bool {
     if !s.is_alive() {
         return false;
@@ -244,7 +242,11 @@ fn shows(state: &State, s: &WlSurface) -> bool {
         Some(w) => {
             state.win(w).is_some_and(|w| w.mapped && !w.hidden()) && state.on_current_desktop(w)
         }
-        None => with_renderer_surface_state(&root, |st| st.buffer().is_some()).unwrap_or(false),
+        None => match state.popups.find_popup(&root) {
+            Some(popup) => smithay::desktop::find_popup_root_surface(&popup)
+                .is_ok_and(|top| top != root && shows(state, &top)),
+            None => crate::layer::is_mapped_layer(state, &root),
+        },
     }
 }
 
@@ -1053,6 +1055,32 @@ mod tests {
             Steps::default().next_deadline_ms(&cfg(600, 900), 0, Some(0), true),
             None
         );
+    }
+
+    #[test]
+    fn an_inhibitor_counts_only_on_a_surface_that_shows() {
+        use wayland_client::Proxy;
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let bare = h.bare_surface_drawn(&mut c, 10, 10);
+        assert!(
+            !shows(&h.state, &bare),
+            "a surface with no role shows nowhere"
+        );
+        let flyout = h.map_flyout(&mut c);
+        let flyout = c
+            .server
+            .object_from_protocol_id(&h.state.dh, flyout.id().protocol_id())
+            .expect("the flyout on the compositor's side");
+        assert!(shows(&h.state, &flyout), "a mapped layer surface shows");
+        let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+        let menu = h.map_popup(&mut c, t, 100, 80);
+        let menu = c
+            .server
+            .object_from_protocol_id(&h.state.dh, menu.surface.id().protocol_id())
+            .expect("the popup on the compositor's side");
+        assert!(shows(&h.state, &menu), "a popup on a shown window shows");
     }
 
     mod remote {
