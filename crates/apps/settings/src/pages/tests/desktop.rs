@@ -590,7 +590,7 @@ fn the_taskbar_page_geometry() {
             "{id} is row {i}"
         );
     }
-    assert_eq!(rect(&s, p, TRAY_CUSTOMIZE), Rect::new(303, 167, 75, 23));
+    assert_eq!(rect(&s, p, TRAY_CUSTOMIZE), Rect::new(294, 167, 84, 23));
     assert_eq!(rect(&s, p, "taskbar_note"), Rect::new(20, 228, 358, 39));
     assert_eq!(rect(&s, p, "taskbar_auto_hide").y, 272);
     for (i, id) in REVEAL_CONTROLS.into_iter().enumerate() {
