@@ -602,7 +602,7 @@ async fn credssp(
     if let Some(refused) = refused {
         return Err(refused);
     }
-    done.map_err(|e| Refused::Nla(e.to_string()))?;
+    done.map_err(|e| Refused::Nla(e.report().to_string()))?;
     let user = match user {
         Some(user) => user,
         None => link.delegate(acceptor.received_credentials())?,
