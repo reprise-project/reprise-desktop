@@ -205,6 +205,7 @@ pub struct LockOnLeave<F> {
     last_leaves: Cell<u64>,
     /// Counts arrivals and relocks; a relock ends once a later one of either comes.
     relocks: Rc<Cell<u64>>,
+    owed: Owed,
     config: watch::Receiver<RemoteDesktop>,
     lock: F,
 }
@@ -229,6 +230,7 @@ impl<F: AsyncFn() -> Result<(), String> + Clone + 'static> LockOnLeave<F> {
             arrival: Notify::new(),
             last_leaves: Cell::new(0),
             relocks: Rc::default(),
+            owed: Owed::default(),
             config: watch::channel(RemoteDesktop::default()).1,
             lock,
         }
@@ -248,6 +250,11 @@ impl<F: AsyncFn() -> Result<(), String> + Clone + 'static> LockOnLeave<F> {
         }
     }
 
+    /// The relocks running, which an idle stop waits out.
+    pub fn owed(&self) -> Owed {
+        self.owed.clone()
+    }
+
     /// Tries the lock again every [`RELOCK`] on a local task, until it takes, a client is shown
     /// the session, the marker goes or `lock_on_leave` is turned off.
     fn relock(&self) {
@@ -262,7 +269,9 @@ impl<F: AsyncFn() -> Result<(), String> + Clone + 'static> LockOnLeave<F> {
         let marker = self.marker.clone();
         let config = self.config.clone();
         let lock = self.lock.clone();
+        let running = self.owed.start();
         tokio::task::spawn_local(async move {
+            let _running = running;
             loop {
                 tokio::time::sleep(RELOCK).await;
                 let owed = relocks.get() == turn
@@ -364,6 +373,41 @@ impl<F: AsyncFn() -> Result<(), String> + Clone + 'static> Leave for LockOnLeave
 
     async fn console_unlocked(&self) -> bool {
         console_unlocked().await
+    }
+}
+
+/// Counts the relocks running.
+#[derive(Clone, Default)]
+pub struct Owed(Rc<(Cell<usize>, Notify)>);
+
+impl Owed {
+    pub(crate) fn start(&self) -> Running {
+        self.0.0.set(self.0.0.get() + 1);
+        Running(self.clone())
+    }
+
+    /// Ends once no relock is running.
+    pub async fn settled(&self) {
+        loop {
+            let done = self.0.1.notified();
+            tokio::pin!(done);
+            done.as_mut().enable();
+            if self.0.0.get() == 0 {
+                return;
+            }
+            done.await;
+        }
+    }
+}
+
+/// One relock's place in [`Owed`], given back when its task ends or is dropped.
+pub(crate) struct Running(Owed);
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        let (running, done) = &*self.0.0;
+        running.set(running.get() - 1);
+        done.notify_waiters();
     }
 }
 
@@ -904,6 +948,32 @@ mod tests {
                 assert!(!marker.exists(), "the lock that took clears the marker");
                 tokio::time::sleep(RELOCK * 3).await;
                 assert_eq!(locks.get(), 3, "no try after the lock took");
+            })
+            .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_refused_leave_lock_stays_owed_until_a_retry_takes() {
+        LocalSet::new()
+            .run_until(async {
+                let dir = tempfile::tempdir().unwrap();
+                let marker = dir.path().join("logged-in");
+                let locks = Rc::new(Cell::new(0));
+                let leave = LockOnLeave::with_lock(
+                    Some(marker.clone()),
+                    scripted(&[false, false, true], &locks),
+                );
+                let owed = leave.owed();
+                assert!(owed.settled().now_or_never().is_some(), "nothing owed yet");
+                leave.arrived();
+                leave.left(End::Left).await;
+                let settled = tokio::task::spawn_local(async move { owed.settled().await });
+                tokio::time::sleep(RELOCK + Duration::from_millis(1)).await;
+                assert!(!settled.is_finished(), "owed while logind refuses");
+                tokio::time::sleep(RELOCK).await;
+                assert_eq!(locks.get(), 3);
+                settled.await.unwrap();
+                assert!(!marker.exists());
             })
             .await;
     }
