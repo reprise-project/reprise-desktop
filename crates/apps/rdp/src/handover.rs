@@ -13,15 +13,15 @@ use std::time::Duration;
 use tokio::io::Interest;
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{mpsc, watch};
-use tokio::task::{JoinHandle, JoinSet};
+use tokio::task::JoinSet;
 
 /// The fd systemd passes the first socket on.
 const LISTEN_FD: i32 = 3;
 
-/// Hand-overs from links whose peer runs as `allowed_uid`.
+/// Hand-overs from links whose peer runs as `allowed_uid`. Dropping it asks each link to report
+/// no viewers and close, best effort: a link whose task never runs again closes unreported.
 pub struct HandOverIntake {
     arrivals: mpsc::Receiver<Arrival>,
-    links: JoinHandle<()>,
 }
 
 impl HandOverIntake {
@@ -31,14 +31,8 @@ impl HandOverIntake {
         status: watch::Receiver<Status>,
     ) -> HandOverIntake {
         let (sender, arrivals) = mpsc::channel(1);
-        let links = tokio::spawn(accept(listener, allowed_uid, status, sender));
-        HandOverIntake { arrivals, links }
-    }
-}
-
-impl Drop for HandOverIntake {
-    fn drop(&mut self) {
-        self.links.abort();
+        tokio::spawn(accept(listener, allowed_uid, status, sender));
+        HandOverIntake { arrivals }
     }
 }
 
@@ -90,6 +84,7 @@ async fn accept(
     let mut links = JoinSet::new();
     loop {
         tokio::select! {
+            () = arrivals.closed() => break,
             accepted = listener.accept() => match accepted {
                 Ok((stream, _)) => match stream.peer_cred() {
                     Ok(peer) if peer.uid() == allowed_uid => {
@@ -106,6 +101,8 @@ async fn accept(
             Some(_) = links.join_next() => {}
         }
     }
+    drop(listener);
+    while links.join_next().await.is_some() {}
 }
 
 async fn link(
@@ -118,7 +115,8 @@ async fn link(
     }
 }
 
-/// Passes each hand-over on and reports the viewer count until the peer closes the link.
+/// Passes each hand-over on and reports the viewer count until the peer closes the link, or
+/// reports no viewers once the intake is dropped.
 async fn serve_link(
     stream: &UnixStream,
     mut status: watch::Receiver<Status>,
@@ -139,10 +137,11 @@ async fn serve_link(
                 }
                 while let Some((body, fd)) = reader.next().map_err(io::Error::other)? {
                     if arrivals.send(arrival(&body, fd)?).await.is_err() {
-                        return Ok(());
+                        return report(stream, 0).await;
                     }
                 }
             }
+            () = arrivals.closed() => return report(stream, 0).await,
             changed = status.changed() => {
                 if changed.is_err() {
                     return Ok(());
@@ -395,6 +394,32 @@ mod tests {
             read_report(&mut l.link).await,
             Some(IntakeReport::Viewers { count: 2 })
         );
+    }
+
+    #[tokio::test]
+    async fn a_dropped_intake_reports_no_viewers_before_closing_its_links() {
+        let mut l = linked(own_uid()).await;
+        assert_eq!(
+            read_report(&mut l.link).await,
+            Some(IntakeReport::Viewers { count: 0 })
+        );
+        l.status.send_modify(|s| {
+            s.clients = vec![Client {
+                address: "192.0.2.1:50000".into(),
+                user: "anna".into(),
+                since: 0,
+            }]
+        });
+        assert_eq!(
+            read_report(&mut l.link).await,
+            Some(IntakeReport::Viewers { count: 1 })
+        );
+        drop(l.intake);
+        assert_eq!(
+            read_report(&mut l.link).await,
+            Some(IntakeReport::Viewers { count: 0 })
+        );
+        assert_eq!(read_report(&mut l.link).await, None, "then the link closes");
     }
 
     #[test]

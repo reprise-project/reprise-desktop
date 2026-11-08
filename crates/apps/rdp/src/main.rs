@@ -72,7 +72,7 @@ fn main() -> ExitCode {
         },
         _ => None,
     };
-    if hand_over.is_none() && login_manager_runs() {
+    if hand_over.is_none() && reprisebus::login::manager_runs() {
         log::info!("reprise-login takes this computer's remote connections; this server stays off");
         return ExitCode::SUCCESS;
     }
@@ -181,6 +181,7 @@ fn main() -> ExitCode {
         );
         let tcp_status = status.clone();
         let viewers = status.subscribe();
+        let listed = status.subscribe();
         let session_user = user.clone();
         let idle = Rc::new(Notify::new());
         let leave = Leaving {
@@ -254,6 +255,12 @@ fn main() -> ExitCode {
                         () = idle.notified() => {
                             log::info!("no client is connected; stopping until the next hand-over");
                         }
+                        () = unused(listed) => {
+                            log::info!(
+                                "no client connected in {} s; stopping until the next hand-over",
+                                QUIET.as_secs()
+                            );
+                        }
                     }
                 };
                 listen::serve(server, intake, logins, handlers, stop).await;
@@ -278,25 +285,6 @@ const NAME_HELD: u8 = 75;
 
 /// The only peer the hand-over socket takes: reprise-login runs as root.
 const ROOT: u32 = 0;
-
-/// How long the system bus may take to answer whether reprise-login runs.
-const BUS_ANSWER: Duration = Duration::from_secs(5);
-
-/// Whether reprise-login runs, asked once on the system bus.
-fn login_manager_runs() -> bool {
-    zbus::block_on(async {
-        let system = zbus::connection::Builder::system()
-            .method_timeout(BUS_ANSWER)
-            .build();
-        match system.await {
-            Ok(system) => reprisebus::login::manager_active(&system).await,
-            Err(e) => {
-                log::debug!("no system bus: {e}");
-                false
-            }
-        }
-    })
-}
 
 /// The session's [`listen::Leave`]: [`lock::LockOnLeave`], then a notice on `idle` once a
 /// client has left and none is listed. Hand-over mode stops on it; the socket starts it again.
@@ -324,6 +312,22 @@ impl<L: Leave> Leave for Leaving<L> {
 
     fn console_unlocked(&self) -> impl Future<Output = bool> {
         self.inner.console_unlocked()
+    }
+}
+
+/// How long a hand-over server waits with no client listed before it stops.
+const QUIET: Duration = Duration::from_secs(60);
+
+/// Ends once no client has been listed for [`QUIET`].
+async fn unused(mut status: watch::Receiver<control::Status>) {
+    loop {
+        if status.wait_for(|s| s.clients.is_empty()).await.is_err() {
+            return std::future::pending().await;
+        }
+        let listed = status.wait_for(|s| !s.clients.is_empty());
+        if tokio::time::timeout(QUIET, listed).await.is_err() {
+            return;
+        }
     }
 }
 
@@ -505,6 +509,38 @@ fn cert_dir() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use log::Log as _;
+
+    #[tokio::test(start_paused = true)]
+    async fn a_hand_over_server_shown_no_client_stops_after_the_quiet_wait() {
+        use std::time::Duration;
+        let (status, status_rx) = tokio::sync::watch::channel(super::control::Status::default());
+        let second = Duration::from_secs(1);
+        let never_shown = tokio::task::spawn(super::unused(status_rx.clone()));
+        (tokio::time::timeout(super::QUIET + second, never_shown).await)
+            .expect("a server never shown a client stops")
+            .unwrap();
+        let mut unused = tokio::task::spawn(super::unused(status_rx));
+        tokio::time::sleep(super::QUIET - second).await;
+        assert!(!unused.is_finished(), "a server just started waits");
+        status.send_modify(|s| {
+            s.clients.push(super::control::Client {
+                address: "192.0.2.1:50000".into(),
+                user: "alice".into(),
+                since: 0,
+            })
+        });
+        tokio::time::sleep(super::QUIET + second).await;
+        assert!(!unused.is_finished(), "a listed client keeps it serving");
+        status.send_modify(|s| s.clients.clear());
+        tokio::time::sleep(super::QUIET - second).await;
+        assert!(
+            !unused.is_finished(),
+            "the wait starts again once the list empties"
+        );
+        (tokio::time::timeout(2 * second, &mut unused).await)
+            .expect("no client listed for the quiet wait stops it")
+            .unwrap();
+    }
 
     #[test]
     fn the_hand_over_unit_does_not_restart_a_server_whose_name_is_held() {

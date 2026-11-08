@@ -41,7 +41,8 @@ use tokio::sync::{mpsc, oneshot, watch};
 
 /// What follows a connection being shown the session, and what follows once its display and
 /// input are dropped; each called once per connection shown it, so several may be at a time.
-/// A connection that logs in but never gets its portal session never had the session.
+/// A connection that logs in but never gets its portal session never had the session, unless it
+/// logged in to replace one that had.
 pub trait Leave {
     fn arrived(&self) {}
     fn left(&self, why: End) -> impl Future<Output = ()>;
@@ -82,6 +83,9 @@ struct Marks {
     clipboard: Cut,
     /// The place in the console's run this connection took over as it logged in.
     taken_over: Mutex<Option<Joined>>,
+    /// Whether logging in ends every other connection, its run of viewers going on with this one;
+    /// fixed as the connection arrives.
+    replaces: bool,
 }
 
 /// A flag set once and waited for.
@@ -111,6 +115,17 @@ const SCREEN_GONE: u8 = 1;
 const LOCK_MODE: u8 = 2;
 
 impl Ending {
+    pub fn new(replaces: bool) -> Ending {
+        Ending(Arc::new(Marks {
+            replaces,
+            ..Marks::default()
+        }))
+    }
+
+    pub fn replaces(&self) -> bool {
+        self.0.replaces
+    }
+
     pub fn screen_gone(&self) {
         let was = self.0.state.fetch_max(SCREEN_GONE, Ordering::AcqRel);
         if was == LOCK_MODE {
@@ -289,7 +304,7 @@ pub async fn serve<D, I, L>(
                 };
                 let (check, budget) = logins.check(peer, admission);
                 let (shown, on_shown) = watch::channel(false);
-                let ending = Ending::default();
+                let ending = Ending::new(replaces);
                 let (display, input, gfx, clipboard, sound, layout) =
                     handlers(Shown(shown), ending.clone());
                 let builder = RdpServer::builder().with_addr(incoming.local_addr());
@@ -306,7 +321,7 @@ pub async fn serve<D, I, L>(
                     .with_sound_factory(sound)
                     .with_connection_handler(Some(Box::new(client::Handler(layout))))
                     .build();
-                let viewer = Viewer { id, peer, kicked, ending, replaces, alive: alive.clone() };
+                let viewer = Viewer { id, peer, kicked, ending, alive: alive.clone() };
                 let shared = shared.clone();
                 match incoming {
                     Incoming::Fresh(stream, _) => tokio::task::spawn_local(run(
@@ -320,6 +335,8 @@ pub async fn serve<D, I, L>(
         }
     }
     log::info!("stopping");
+    // Closed before the drain, so a hand-over sent from now on goes to the next server.
+    drop(intake);
     shared.leave.stopping().await;
     // A session end queued as the stop came still tells its clients they logged off.
     while let Ok(request) = server.disconnect.try_recv() {
@@ -433,8 +450,6 @@ struct Viewer {
     peer: SocketAddr,
     kicked: oneshot::Receiver<Kick>,
     ending: Ending,
-    /// Whether logging in ends every other connection, its run of viewers going on with this one.
-    replaces: bool,
     /// Held until the connection has closed; [`serve`] waits for every one as it stops.
     alive: mpsc::Sender<Infallible>,
 }
@@ -458,7 +473,6 @@ async fn run<L: Leave + 'static, C: Login, S>(
         peer,
         kicked,
         ending,
-        replaces,
         alive,
     } = viewer;
     log::info!("{peer}: connected");
@@ -474,12 +488,22 @@ async fn run<L: Leave + 'static, C: Login, S>(
         inner: stream,
         seen: seen.clone(),
     };
+    let arrive = || {
+        shared.viewers.borrow_mut().shown(id);
+        shared.leave.arrived();
+        arrived.set(true);
+    };
     let present = async {
         check.logged_in().await;
         shared.viewers.borrow_mut().logged_in(id);
-        if replaces {
+        if ending.replaces() {
             ending.took_over(shared.console.take_over());
-            shared.viewers.borrow_mut().kick_others(id, Kick::Replaced);
+            let ended = shared.viewers.borrow_mut().kick_others(id, Kick::Replaced);
+            // Arrived before the shown ones it ended leave, so the last of them does not lock
+            // the session.
+            if ended > 0 {
+                arrive();
+            }
         }
         let since = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
@@ -491,9 +515,8 @@ async fn run<L: Leave + 'static, C: Login, S>(
                 since,
             })
         });
-        if shown(on_shown).await {
-            shared.leave.arrived();
-            arrived.set(true);
+        if shown(on_shown).await && !arrived.get() {
+            arrive();
         }
         std::future::pending::<Infallible>().await
     };
