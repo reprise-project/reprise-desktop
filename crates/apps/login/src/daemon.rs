@@ -77,7 +77,7 @@ pub enum Timer {
     Start(WorkerId),
     /// The `AUTH_WAIT` of the conversation of login worker `.0`.
     Auth(WorkerId),
-    /// The next try at ending orphaned greeter session `.0`.
+    /// The next try at ending orphaned greeter session `.0`, or a session that lost its worker.
     Terminate(String),
     /// `KILL_WAIT` after greeter worker `.0` was told to end.
     GreeterKill(WorkerId),
@@ -401,6 +401,22 @@ struct Orphan {
     failed: u32,
 }
 
+/// Why this daemon asked logind to end a session in the table.
+#[derive(Clone, Copy, PartialEq)]
+enum EndReason {
+    /// It lost its login worker.
+    Orphaned,
+    /// It is a background session with no client past `end_disconnected_after`.
+    Unviewed,
+}
+
+/// A session in the table this daemon asked logind to end.
+struct Ending {
+    reason: EndReason,
+    /// The `TerminateSession` calls that failed.
+    failed: u32,
+}
+
 /// What follows the removal of the last orphaned greeter.
 #[derive(Clone, Copy, PartialEq)]
 enum AfterOrphans {
@@ -426,6 +442,8 @@ pub struct Daemon {
     /// starts while one is left.
     orphans: Vec<Orphan>,
     after_orphans: AfterOrphans,
+    /// Sessions in the table this daemon asked logind to end, by id.
+    endings: HashMap<String, Ending>,
     /// seat0 showed no session when `recover` ran.
     seat_empty: bool,
     /// Removals of unknown sessions while a start, console or remote, is in flight, with
@@ -454,6 +472,7 @@ impl Daemon {
             stalled: Vec::new(),
             orphans: Vec::new(),
             after_orphans: AfterOrphans::Nothing,
+            endings: HashMap::new(),
             seat_empty: false,
             removed_early: Vec::new(),
             notice: None,
@@ -622,13 +641,15 @@ impl Daemon {
             Input::Timer(Timer::Start(worker)) => self.start_timed_out(worker, &mut out),
             Input::Timer(Timer::Auth(worker)) => self.auth_wait(now, worker, &mut out),
             Input::TerminateFailed { id, seat_active } => {
-                self.terminate_failed(world, id, seat_active, &mut out)
+                self.terminate_failed(now, world, id, seat_active, &mut out)
             }
             Input::Timer(Timer::GreeterKill(worker)) => {
                 self.greeter_outlived_kill(worker, &mut out)
             }
             Input::Timer(Timer::Terminate(id)) => {
-                if self.orphans.iter().any(|o| o.id == id) {
+                let orphaned =
+                    (self.endings.get(&id)).is_some_and(|e| e.reason == EndReason::Orphaned);
+                if self.orphans.iter().any(|o| o.id == id) || orphaned {
                     out.push(Effect::TerminateSession(id));
                 }
             }
@@ -1430,6 +1451,7 @@ impl Daemon {
         if self.orphans.iter().any(|o| o.id == id) {
             return self.orphan_gone(world, id, seat_active, out);
         }
+        self.endings.remove(id);
         let Some(entry) = self.sessions.remove(id) else {
             // It may have been on screen, as recovery could not tell.
             if unread && seat_active.is_none() {
@@ -1493,16 +1515,18 @@ impl Daemon {
     }
 
     /// Retries an orphan's end with a growing wait, and after `TERMINATE_TRIES` failures
-    /// counts it gone, so no greeter waits on it for good.
+    /// counts it gone, so no greeter waits on it for good. A session of the table is ended again
+    /// the same way it was.
     fn terminate_failed(
         &mut self,
+        now: Instant,
         world: &World,
         id: String,
         seat_active: Option<String>,
         out: &mut Vec<Effect>,
     ) {
         let Some(o) = self.orphans.iter_mut().find(|o| o.id == id) else {
-            return;
+            return self.ending_failed(now, id, out);
         };
         o.failed += 1;
         if o.failed < TERMINATE_TRIES {
@@ -1517,6 +1541,44 @@ impl Daemon {
             format!("greeter session {id} of an earlier start did not end; showing the login screen anyway"),
         ));
         self.orphan_gone(world, &id, seat_active, out);
+    }
+
+    /// Tries the end of table session `id` again after a growing wait, through the check that
+    /// ended it, and leaves it running after `TERMINATE_TRIES` failures.
+    fn ending_failed(&mut self, now: Instant, id: String, out: &mut Vec<Effect>) {
+        if self.sessions.by_id(&id).is_none() {
+            self.endings.remove(&id);
+            return;
+        }
+        let Some(e) = self.endings.get_mut(&id) else {
+            return;
+        };
+        e.failed += 1;
+        if e.failed >= TERMINATE_TRIES {
+            self.endings.remove(&id);
+            return out.push(Effect::Log(
+                Level::Warn,
+                format!("session {id} did not end after {TERMINATE_TRIES} tries; leaving it"),
+            ));
+        }
+        let after = TERMINATE_RETRY * 2u32.pow(e.failed - 1);
+        match e.reason {
+            EndReason::Orphaned => out.push(Effect::Arm {
+                timer: Timer::Terminate(id),
+                after,
+            }),
+            EndReason::Unviewed => self.end_unviewed_again(now, &id, after, out),
+        }
+    }
+
+    /// Records that this daemon asked logind to end table session `id` for `reason`; the
+    /// failures of an earlier end for the same reason still count.
+    fn ending(&mut self, id: &str, reason: EndReason) {
+        let fresh = Ending { reason, failed: 0 };
+        let e = self.endings.entry(id.into()).or_insert(fresh);
+        if e.reason != reason {
+            *e = Ending { reason, failed: 0 };
+        }
     }
 
     /// Asks logind to unlock session `id` and arms the wait; returns the `Unlocking` phase.

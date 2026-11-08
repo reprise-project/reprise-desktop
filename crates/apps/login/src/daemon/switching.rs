@@ -6,7 +6,7 @@ use std::time::Instant;
 use log::Level;
 use repriselogin::Interface;
 
-use super::{Daemon, Effect, World};
+use super::{Daemon, Effect, EndReason, World};
 
 impl Daemon {
     /// Keeps session `id`'s interface on its entry; only seat0's active session's is remembered.
@@ -44,7 +44,7 @@ impl Daemon {
     /// Session `id` is the console's: not background, and no disconnect time can end it.
     pub(super) fn bring_to_console(&mut self, id: &str) {
         self.sessions.set_background(id, false);
-        self.remote.disconnects.remove(id);
+        self.cancel_unviewed_end(id);
     }
 
     /// A hand-over to `uid`'s session while the console shows another VT marks it a background
@@ -86,6 +86,7 @@ impl Daemon {
             Level::Warn,
             format!("{}'s session {id} lost its login worker; ending it", e.user),
         ));
+        self.ending(id, EndReason::Orphaned);
         out.push(Effect::TerminateSession(id.into()));
     }
 
