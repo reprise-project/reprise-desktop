@@ -866,6 +866,31 @@ mod tests {
     }
 
     #[test]
+    fn a_relative_advanced_input_click_lands_at_the_pointer() {
+        use ironrdp_ainput::MouseEventFlags as A;
+        let (mut input, mut feed) = Input::new(SyncOwner::default());
+        let left = |flags| {
+            MouseEvent::from(ironrdp_ainput::MousePdu {
+                time: 0,
+                flags: A::REL | A::HAVE_REL | A::BUTTON1 | flags,
+                x: -3,
+                y: 0,
+            })
+        };
+        input.mouse(MouseEvent::Move { x: 10, y: 10 });
+        input.mouse(left(A::DOWN));
+        input.mouse(left(A::empty()));
+        assert_eq!(
+            sent(&mut feed),
+            [
+                Event::Move(10, 10),
+                Event::Button(BTN_LEFT, true),
+                Event::Button(BTN_LEFT, false)
+            ]
+        );
+    }
+
+    #[test]
     fn middle_button_reaches_the_session() {
         let (mut input, mut feed) = Input::new(SyncOwner::default());
         let middle = PointerFlags::MIDDLE_BUTTON_OR_WHEEL;
