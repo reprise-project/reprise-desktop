@@ -138,7 +138,7 @@ pub fn list(a: Area) -> Rect {
     Rect::new(X, 365, a.w, 55 + a.dh)
 }
 pub const COLUMNS: [(&str, i32); 3] = [("Type", 90), ("Description", 140), ("Opens With", 108)];
-const RESTORE_W: i32 = 96;
+const RESTORE_W: i32 = 100;
 
 /// The page in `a` as built, before [`fill`] puts the programs in. The
 /// combos grow with the column up to their most.
@@ -1073,8 +1073,8 @@ pub(crate) mod tests {
         assert_eq!(at(CONFIRM_SCRIPTS), Rect::new(20, 324, 13, 13));
         assert_eq!(at("dp_types_label"), Rect::new(20, 345, 120, 13));
         assert_eq!(at(FILTER), Rect::new(228, 341, 150, 20));
-        assert_eq!(at(CHANGE), Rect::new(201, 426, 75, 23));
-        assert_eq!(at(RESTORE), Rect::new(282, 426, 96, 23));
+        assert_eq!(at(CHANGE), Rect::new(197, 426, 75, 23));
+        assert_eq!(at(RESTORE), Rect::new(278, 426, 100, 23));
         assert_eq!(
             at(RESTORE).right(),
             list(Area::MIN).right(),
