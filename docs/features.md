@@ -903,7 +903,8 @@ no port forwarding; allow the port in your firewall if you run one.
   session off this computer's screen while a client drives it, the session
   offers Disconnect: in Switch User's place on the Log Off dialog, in Stand
   By's place on the Turn Off dialog, where it holds the focus (Shift then
-  gives no Hibernate), and first in Glass's Shut down options. It ends every
+  gives no Hibernate), and first in Glass's Shut down options, which then
+  list no Sleep or Hibernate. It ends every
   client and leaves the session running, locked here; the next connection
   lands back in it.
 - **Logging off with a client connected.** Log Off, Turn Off and Restart

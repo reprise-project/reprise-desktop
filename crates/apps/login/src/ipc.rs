@@ -545,9 +545,8 @@ async fn read_greeter(
     }
 }
 
-/// Forwards a session's requests, each with seat0's active session as it was sent. Only its
-/// latest Hello matters, so one waits at a time and a later one replaces it; a SwitchUser
-/// stops the reading until it is queued.
+/// Forwards a session's requests, each with seat0's active session as it was sent. One Hello
+/// waits at a time, a later one replacing it; a SwitchUser pauses reading until it is queued.
 async fn read_session(stream: UnixStream, id: String, serial: u64, s: Rc<Server>) {
     let mut frames = Frames::new(stream);
     let bad = Spell::default();

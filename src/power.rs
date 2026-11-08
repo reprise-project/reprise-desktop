@@ -1,19 +1,5 @@
-//! The laptop side of the compositor: the power source (UPower's
-//! `OnBattery`, which picks between `[idle]` and `[idle.battery]`), the lid
-//! switch, the power and sleep buttons, and the actions they run.
-//!
-//! logind would act on the lid and buttons itself, so at startup the module
-//! takes its `block` inhibitor for them and keeps the fd for the process's
-//! life; the config's actions decide. A `delay` inhibitor on sleep lets
-//! `PrepareForSleep` lock the screen and release it once every output that
-//! is on has presented the cover, so a suspend resumes to the lock.
-//!
-//! The compositor's logind session object carries the lock both ways: its
-//! `Lock` and `Unlock` signals (`loginctl lock-session`, `unlock-session`)
-//! lock and unlock, and `LockedHint` and `IdleHint` follow the lock and idle timer.
-//!
-//! A remote client here or elsewhere (`remote_elsewhere`) makes a shut lid darken the internal
-//! panels, at the login screen too; off the seat the lid does nothing.
+//! The laptop side: power source, lid, power and sleep buttons, whose logind handling a `block`
+//! inhibitor holds off for the config's actions, and the logind session's lock signals and hints.
 
 use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};

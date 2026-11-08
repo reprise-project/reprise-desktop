@@ -223,9 +223,8 @@ pub fn program_menu(
     v.into_iter().unzip()
 }
 
-/// The Shut down options: Disconnect for `Leave::Disconnect`, Switch user when it is live
-/// (under reprise-login), Log off, Lock, Restart, then Sleep, and Hibernate when `hibernate`
-/// (`[power] hibernate` is set), unless Disconnect is offered.
+/// The Shut down options: Disconnect or a live Switch user (`leave`), Log off, Lock, Restart,
+/// then, unless Disconnect is offered, Sleep, and Hibernate when `hibernate` is set.
 pub fn shutdown_menu(hibernate: bool, leave: Leave) -> (Vec<MenuItem>, Vec<Option<StartRow>>) {
     let mut v = Vec::new();
     let remote = leave == Leave::Disconnect;
