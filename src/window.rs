@@ -216,6 +216,9 @@ pub struct Window {
     pub place_tag: Option<String>,
     pub modal: bool,
     pub on_top: bool,
+    /// A consent prompt ([`crate::mapfocus::is_consent`]), set at map: stacked in
+    /// `layers.prompts`, and input from an app's RemoteDesktop session never reaches it.
+    pub consent: bool,
     pub frame_scale: i32,
     /// Capabilities last sent; `None` before the first send.
     pub wm_caps: Option<(bool, bool)>,
@@ -506,6 +509,20 @@ impl State {
             Kind::X11(x) => i32::try_from(x.pid()?).ok()?,
         };
         (pid > 0).then_some(pid)
+    }
+
+    /// The process a window's prompt rights ([`crate::mapfocus::is_prompt`]) are judged by: its
+    /// Wayland client's socket peer, outside any sandbox. An X11 window's pid is a property its
+    /// client sets, so an X11 window has none.
+    pub fn prompt_pid(&self, w: WindowId) -> Option<i32> {
+        let Kind::Xdg(t) = &self.win(w)?.kind else {
+            return None;
+        };
+        let surface = t.wl_surface();
+        if crate::sandbox::client_sandboxed(&surface.client()?) {
+            return None;
+        }
+        self.surface_pid(surface)
     }
 
     /// The process of the Wayland client owning `surface`.

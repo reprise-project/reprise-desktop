@@ -112,6 +112,7 @@ impl State {
             place_tag: None,
             modal: false,
             on_top: false,
+            consent: false,
             frame_scale: 1,
             wm_caps: None,
             placement: None,
@@ -436,6 +437,12 @@ impl State {
             self.scene.set_enabled(tree, shown);
         }
         crate::idle::inhibition_changed(self);
+        let consent = self.prompt_pid(w).is_some_and(|pid| {
+            crate::mapfocus::is_consent(pid, &self.win(w).map(Window::app_id).unwrap_or_default())
+        });
+        if let Some(win) = self.win_mut(w) {
+            win.consent = consent;
+        }
         self.restack();
         let mut activated = self.win(w).is_some_and(|x| x.activate_on_map);
         let locked = self.desktop_locked();

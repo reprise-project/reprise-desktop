@@ -115,7 +115,7 @@ pub enum SceneOwner {
 
 /// The scene's layer trees, bottom to top: the background (wallpaper),
 /// layer-shell's bottom layer, the windows, the windows kept on top, the
-/// mini views, layer-shell's top layer, the taskbar, a fullscreen window, the desktop
+/// mini views, the consent prompts, layer-shell's top layer, the taskbar, a fullscreen window, the desktop
 /// switch animation, the menu tree, Start's orb over its menu, the
 /// layer-shell overlay tree, and finally the lock screen, above everything
 /// else. The overlay tree is left out of the glass backdrop: what lies on
@@ -130,6 +130,8 @@ pub struct Layers {
     pub on_top: TreeId,
     /// Mini views (`miniview`), above every window.
     pub minis: TreeId,
+    /// Consent prompts (`Window::consent`), above every on-top window and mini view.
+    pub prompts: TreeId,
     pub top: TreeId,
     pub taskbar: TreeId,
     /// Holds the focused window's tree while it is fullscreen, so it
@@ -156,6 +158,7 @@ impl Layers {
             windows: t(),
             on_top: t(),
             minis: t(),
+            prompts: t(),
             top: t(),
             taskbar: t(),
             fullscreen: t(),

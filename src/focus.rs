@@ -61,8 +61,8 @@ impl State {
     }
 
     /// Put each window's tree in its layer: `layers.fullscreen` (the fullscreen
-    /// `bind_window`), `layers.on_top` (also X11 menus and tooltips) or
-    /// `layers.windows`. Walks all windows: one that just left fullscreen or on top
+    /// `bind_window`), `layers.prompts` (consent prompts), `layers.on_top` (also X11 menus and
+    /// tooltips) or `layers.windows`. Walks all windows: one that just left fullscreen or on top
     /// has its flag cleared and still has to come down. Reparenting lands a tree on
     /// top of its new parent, so this runs before the focused window is raised.
     pub fn restack(&mut self) {
@@ -75,6 +75,8 @@ impl State {
             let lifted = win.fullscreen && top == Some(w);
             let want = if lifted {
                 self.layers.fullscreen
+            } else if win.consent {
+                self.layers.prompts
             } else if win.override_redirect || self.stays_on_top(w) {
                 self.layers.on_top
             } else {
@@ -184,7 +186,7 @@ impl State {
             lineage: &lineage,
             session,
             launched: launch.is_some(),
-            prompt: new_pid.is_some_and(mapfocus::is_prompt),
+            prompt: self.prompt_pid(w).is_some_and(mapfocus::is_prompt),
         };
         let window = self
             .focused

@@ -26,9 +26,9 @@ use smithay::{
 use crate::compositor::{ClientState, State};
 
 /// The globals a sandboxed client must not see, by interface name: they read
-/// the screen, the clipboard, other windows or typed keys, inject input, or
-/// reshape or recolour the desktop. The portal reaches them on the sandbox's
-/// behalf.
+/// the screen, the clipboard, other windows or typed keys, inject input,
+/// reshape or recolour the desktop, or keep a window over the others (and so over a
+/// permission prompt). The portal reaches the rest on the sandbox's behalf.
 pub const PRIVILEGED_GLOBALS: &[&str] = &[
     "reprise_input_v1",
     "zwlr_screencopy_manager_v1",
@@ -49,6 +49,7 @@ pub const PRIVILEGED_GLOBALS: &[&str] = &[
     "zwlr_virtual_pointer_manager_v1",
     "ext_session_lock_manager_v1",
     "wp_security_context_manager_v1",
+    "reprise_on_top_v1",
 ];
 
 pub fn is_privileged(name: &str) -> bool {
