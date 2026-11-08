@@ -285,7 +285,7 @@ fn finish(state: &mut State, override_inhibitors: bool) {
 fn go_on(state: &mut State, goal: Goal, cmd: Option<String>, override_inhibitors: bool) {
     crate::crash::ending();
     let end: OnLoop = Box::new(move |state| act(state, goal, cmd, override_inhibitors));
-    if !crate::console::remote_side(state) && !state.remote_controlled() {
+    if !crate::console::remote_side(state) && !state.standby.rdp_on() {
         crate::sessionfade::out(state, end);
         return;
     }
@@ -1139,6 +1139,48 @@ mod tests {
         go_on(&mut h.state, Goal::LogOff, None, false);
         assert!(h.state.ended_clients.is_empty(), "no client to tell");
         assert!(h.state.session_fade.fading_out(), "the fade runs");
+    }
+
+    #[test]
+    fn a_log_off_with_the_remote_desktop_server_running_tells_a_view_only_client() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        crate::standby::rdp_changed(&mut h.state, true);
+        assert!(!h.state.remote_controlled());
+        go_on(&mut h.state, Goal::LogOff, None, false);
+        assert_eq!(
+            h.state.ended_clients,
+            [crate::console::ClientsEnd::LoggedOff]
+        );
+    }
+
+    #[test]
+    fn the_end_runs_once_after_both_the_fade_and_the_answer() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let mut h = crate::harness::Harness::new();
+        let faded: fn(&mut Wait) = |w| w.faded = true;
+        let told: fn(&mut Wait) = |w| w.told = true;
+        for (first, second) in [(faded, told), (told, faded)] {
+            let ends = Arc::new(AtomicUsize::new(0));
+            let counted = Arc::clone(&ends);
+            let wait = Mutex::new(Wait {
+                faded: false,
+                told: false,
+                end: Some(Box::new(move |_| {
+                    counted.fetch_add(1, Ordering::Relaxed);
+                })),
+            });
+            arrive(&wait, &mut h.state, first);
+            assert_eq!(ends.load(Ordering::Relaxed), 0, "one of the two arrived");
+            arrive(&wait, &mut h.state, second);
+            assert_eq!(ends.load(Ordering::Relaxed), 1, "both arrived");
+            arrive(&wait, &mut h.state, told);
+            assert_eq!(
+                ends.load(Ordering::Relaxed),
+                1,
+                "the timer's late answer ends nothing"
+            );
+        }
     }
 
     #[test]

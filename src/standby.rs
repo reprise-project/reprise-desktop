@@ -18,6 +18,13 @@ pub struct Standby {
     output: Option<Output>,
 }
 
+impl Standby {
+    /// Whether the remote desktop server owns its name on the session bus.
+    pub fn rdp_on(&self) -> bool {
+        self.rdp_on
+    }
+}
+
 /// Whether the standby exists: Remote Desktop is on and no monitor is in the layout.
 pub fn wanted(rdp_on: bool, monitors: usize) -> bool {
     rdp_on && monitors == 0
