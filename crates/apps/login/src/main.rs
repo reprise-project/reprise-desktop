@@ -13,8 +13,8 @@ use futures_util::StreamExt;
 use reprise_login::accountipc::{self, Replies};
 use reprise_login::config;
 use reprise_login::daemon::{
-    Daemon, Effect, HANDOVER_DEADLINE, Input, Job, LogindSession, LookUpKey, Timer, UNLOCK_WAIT,
-    Unread, WorkerId, World,
+    Daemon, Effect, FrontUnit, HANDOVER_DEADLINE, Input, Job, LogindSession, LookUpKey, Timer,
+    UNLOCK_WAIT, Unread, WorkerId, World,
 };
 use reprise_login::frontipc::{self, Front};
 use reprise_login::intake::{self, Links};
@@ -208,6 +208,7 @@ async fn run() -> Result<(), String> {
         world: WorldCache::default(),
         users: UserList::default(),
         front: front.clone(),
+        front_units: logind.front_units(),
         accounts: serve_account(input.clone()),
         links: Links::new(input.clone(), opener, HANDOVER_DEADLINE),
         inhibitor: Inhibitor::new(Rc::new(move |what, why| {
@@ -461,6 +462,7 @@ struct Runtime {
     world: WorldCache,
     users: UserList,
     front: Rc<RefCell<Front>>,
+    front_units: mpsc::UnboundedSender<FrontUnit>,
     accounts: Replies,
     links: Links,
     inhibitor: Inhibitor,
@@ -697,12 +699,7 @@ impl Runtime {
             }
             Effect::Inhibit(inhibit) => self.inhibitor.set(inhibit),
             Effect::Front(unit) => {
-                let l = self.logind.clone();
-                tokio::task::spawn_local(async move {
-                    if let Err(e) = l.front_unit(unit).await {
-                        log::warn!("{unit:?} of {}: {e}", logind::FRONT_UNIT);
-                    }
-                });
+                let _ = self.front_units.send(unit);
             }
             Effect::CloseIntakes { keep } => self.links.close_all_but(&keep),
             Effect::ReopenIntake { uid } => self.links.reopen(uid),
@@ -1421,6 +1418,7 @@ mod tests {
 
     #[test]
     fn boot_starts_before_any_removal_so_an_orphans_end_brings_the_greeter() {
+        use reprise_login::daemon::FrontUnit;
         use repriselogin::machine::MachineConfig;
         let orphan = LogindSession {
             id: "c1".into(),
@@ -1442,7 +1440,13 @@ mod tests {
         };
         let mut daemon = Daemon::new(MachineConfig::default(), Remembered::default());
         let effects = boot(&mut daemon, vec![orphan], None, &world);
-        assert_eq!(effects, [Effect::TerminateSession("c1".into())]);
+        assert_eq!(
+            effects,
+            [
+                Effect::TerminateSession("c1".into()),
+                Effect::Front(FrontUnit::Stop)
+            ]
+        );
         let removed = Input::SessionRemoved {
             id: "c1".into(),
             seat_active: None,

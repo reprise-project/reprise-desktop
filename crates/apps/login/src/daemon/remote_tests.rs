@@ -31,18 +31,9 @@ pub(super) fn enabled() -> MachineRemote {
     }
 }
 
-/// The front's start, which `start` emits first while remote logins are on.
-fn front_start(remote: &MachineRemote) -> Vec<Effect> {
-    match remote.enabled {
-        true => vec![Effect::Front(FrontUnit::Start)],
-        false => vec![],
-    }
-}
-
 /// Nothing recovered, the greeter up as worker 1.
 pub(super) fn remote_run(remote: MachineRemote) -> Run {
-    let mut want = front_start(&remote);
-    want.extend(greeter_spawn(1));
+    let want = greeter_spawn(1);
     let mut run = Run::machine(config(remote));
     assert_eq!(run.recover(vec![]), vec![]);
     assert_eq!(run.start(), want);
@@ -51,11 +42,10 @@ pub(super) fn remote_run(remote: MachineRemote) -> Run {
 
 /// Anna's session `c1` on VT 7 recovered with `seat_active` on seat0.
 fn anna_recovered(remote: MachineRemote, seat_active: &str, service: &str) -> Run {
-    let want = front_start(&remote);
     let mut run = Run::machine(config(remote));
     let found = vec![logind("c1", "anna", ANNA, 7, "user", service)];
     run.d.recover(found, Some(seat_active));
-    assert_eq!(run.start(), want);
+    assert_eq!(run.start(), []);
     run
 }
 
@@ -1231,6 +1221,11 @@ fn a_disconnected_background_session_ends_after_end_disconnected_after() {
     );
 }
 
+/// A reload's start of the front while remote logins stay on at port 3389.
+pub(super) fn front_on() -> Effect {
+    Effect::Front(FrontUnit::Start { port: 3389 })
+}
+
 fn ending_after(min: Option<u32>) -> Input {
     Input::ConfigReloaded(config(MachineRemote {
         end_disconnected_after_min: min,
@@ -1255,7 +1250,7 @@ fn never_cancels_an_armed_disconnected_timer_and_a_value_re_arms_it_from_the_dis
     let mut run = anna_unviewed_for_30();
     assert_eq!(
         run.after(Duration::from_secs(600)).on(ending_after(None)),
-        []
+        [front_on()]
     );
     let gen1 = Timer::Disconnected {
         id: "c2".into(),
@@ -1265,13 +1260,16 @@ fn never_cancels_an_armed_disconnected_timer_and_a_value_re_arms_it_from_the_dis
     assert_eq!(
         run.after(Duration::from_secs(60))
             .on(ending_after(Some(40))),
-        [Effect::Arm {
-            timer: Timer::Disconnected {
-                id: "c2".into(),
-                generation: 2
+        [
+            Effect::Arm {
+                timer: Timer::Disconnected {
+                    id: "c2".into(),
+                    generation: 2
+                },
+                after: Duration::from_secs(40 * 60 - 1860),
             },
-            after: Duration::from_secs(40 * 60 - 1860),
-        }],
+            front_on()
+        ],
         "40 minutes from the disconnect, not from the reload"
     );
 }
@@ -1345,18 +1343,21 @@ fn a_shorter_end_disconnected_after_ends_a_session_past_it_at_once() {
             run.after(Duration::from_secs(600))
                 .on(ending_after(Some(5)))
         ),
-        [Effect::TerminateSession("c2".into())]
+        [Effect::TerminateSession("c2".into()), front_on()]
     );
     let mut run = anna_unviewed_for_30();
     assert_eq!(
         run.after(Duration::from_secs(60)).on(ending_after(Some(5))),
-        [Effect::Arm {
-            timer: Timer::Disconnected {
-                id: "c2".into(),
-                generation: 2
+        [
+            Effect::Arm {
+                timer: Timer::Disconnected {
+                    id: "c2".into(),
+                    generation: 2
+                },
+                after: Duration::from_secs(240),
             },
-            after: Duration::from_secs(240),
-        }]
+            front_on()
+        ]
     );
     let gen1 = Timer::Disconnected {
         id: "c2".into(),
@@ -1371,13 +1372,16 @@ fn a_longer_end_disconnected_after_re_arms_from_the_disconnect() {
     assert_eq!(
         run.after(Duration::from_secs(600))
             .on(ending_after(Some(60))),
-        [Effect::Arm {
-            timer: Timer::Disconnected {
-                id: "c2".into(),
-                generation: 2
+        [
+            Effect::Arm {
+                timer: Timer::Disconnected {
+                    id: "c2".into(),
+                    generation: 2
+                },
+                after: Duration::from_secs(50 * 60),
             },
-            after: Duration::from_secs(50 * 60),
-        }]
+            front_on()
+        ]
     );
     let gen1 = Timer::Disconnected {
         id: "c2".into(),
@@ -1394,7 +1398,7 @@ fn a_longer_end_disconnected_after_re_arms_from_the_disconnect() {
     );
     assert_eq!(
         run.after(Duration::from_secs(1)).on(ending_after(Some(60))),
-        [],
+        [front_on()],
         "an unchanged value re-arms nothing"
     );
 }
@@ -1420,7 +1424,7 @@ fn resuming_a_background_session_at_the_login_screen_makes_it_the_consoles() {
     assert_eq!(effects.last(), Some(&Effect::Inhibit(Inhibit::Nothing)));
     assert_eq!(
         quiet(run.on(ending_after(Some(60)))),
-        [],
+        [front_on()],
         "a console session arms nothing"
     );
     for generation in [1, 2] {
@@ -1963,19 +1967,28 @@ fn a_reused_conn_id_re_arms_the_earlier_conns_timers() {
 }
 
 #[test]
-fn the_front_starts_with_the_daemon_when_remote_logins_are_on() {
-    let mut run = Run::machine(config(enabled()));
+fn the_daemon_starts_the_front_on_its_port_or_frees_the_port_at_start() {
+    let mut run = Run::machine(config(MachineRemote {
+        port: 3390,
+        ..enabled()
+    }));
     run.recover(vec![]);
-    let effects = run.start();
-    assert_eq!(effects[0], Effect::Front(FrontUnit::Start), "{effects:?}");
+    let effects = run.d.start(run.now, &run.world);
+    assert_eq!(
+        effects[0],
+        Effect::Front(FrontUnit::Start { port: 3390 }),
+        "{effects:?}"
+    );
     assert_eq!(effects[1..], greeter_spawn(1));
     let mut run = Run::machine(config(MachineRemote::default()));
     run.recover(vec![]);
-    let effects = run.start();
-    assert!(
-        !effects.iter().any(|e| matches!(e, Effect::Front(_))),
-        "{effects:?}"
+    let effects = run.d.start(run.now, &run.world);
+    assert_eq!(
+        effects[0],
+        Effect::Front(FrontUnit::Stop),
+        "a port held since boot is freed while remote logins are off: {effects:?}"
     );
+    assert_eq!(effects[1..], greeter_spawn(1));
 }
 
 #[test]
@@ -1983,13 +1996,40 @@ fn turning_remote_on_starts_the_front_and_opens_the_intakes_of_group_members() {
     let mut run = anna_recovered(MachineRemote::default(), "c1", Mode::Login.service());
     assert_eq!(
         run.on(Input::ConfigReloaded(config(enabled()))),
-        [Effect::Front(FrontUnit::Start), link_look_up(ANNA, "anna")]
+        [
+            Effect::Front(FrontUnit::Start { port: 3389 }),
+            link_look_up(ANNA, "anna")
+        ]
     );
     assert_eq!(
         run.on(link_member(ANNA, Some(ANNA), true)),
         [Effect::OpenIntake { uid: ANNA }]
     );
-    assert_eq!(run.on(Input::ConfigReloaded(config(enabled()))), []);
+    assert_eq!(
+        run.on(Input::ConfigReloaded(config(enabled()))),
+        [Effect::Front(FrontUnit::Start { port: 3389 })],
+        "no second look-up"
+    );
+}
+
+#[test]
+fn a_reload_while_remote_logins_stay_off_frees_the_port() {
+    let mut run = anna_recovered(MachineRemote::default(), "c1", Mode::Login.service());
+    assert_eq!(
+        run.on(Input::ConfigReloaded(config(MachineRemote::default()))),
+        [Effect::Front(FrontUnit::Stop)],
+        "a socket started by hand is stopped"
+    );
+}
+
+#[test]
+fn a_reload_while_remote_logins_stay_on_starts_the_front_again() {
+    let mut run = anna_recovered(enabled(), "c1", Mode::Login.service());
+    assert_eq!(
+        run.on(Input::ConfigReloaded(config(enabled()))),
+        [Effect::Front(FrontUnit::Start { port: 3389 })],
+        "a port another program held at the last start is tried again"
+    );
 }
 
 #[test]
@@ -2113,7 +2153,7 @@ fn turning_remote_off_stops_the_front_and_denies_pending_logins_but_keeps_connec
 }
 
 #[test]
-fn a_port_change_restarts_the_front() {
+fn a_port_change_moves_the_held_port() {
     let mut run = remote_run(enabled());
     let moved = MachineRemote {
         port: 3390,
@@ -2121,7 +2161,7 @@ fn a_port_change_restarts_the_front() {
     };
     assert_eq!(
         run.on(Input::ConfigReloaded(config(moved.clone()))),
-        [Effect::Front(FrontUnit::Restart)]
+        [Effect::Front(FrontUnit::Start { port: 3390 })]
     );
     let more = MachineRemote {
         max_sessions: 2,
@@ -2129,7 +2169,7 @@ fn a_port_change_restarts_the_front() {
     };
     assert_eq!(
         run.on(Input::ConfigReloaded(config(more))),
-        [],
+        [Effect::Front(FrontUnit::Start { port: 3390 })],
         "other remote settings apply to the next login"
     );
     let mut run = remote_run(MachineRemote::default());
@@ -2137,7 +2177,11 @@ fn a_port_change_restarts_the_front() {
         port: 3390,
         ..MachineRemote::default()
     };
-    assert_eq!(run.on(Input::ConfigReloaded(config(moved_off))), []);
+    assert_eq!(
+        run.on(Input::ConfigReloaded(config(moved_off))),
+        [Effect::Front(FrontUnit::Stop)],
+        "no port is held while remote logins are off"
+    );
 }
 
 #[test]

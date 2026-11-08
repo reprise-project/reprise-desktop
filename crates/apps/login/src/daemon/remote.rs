@@ -74,12 +74,13 @@ pub enum Inhibit {
     SleepAndIdle,
 }
 
-/// What the backend does with `reprise-login-rdp.service`.
+/// What the backend does with `reprise-login-rdp.service` and the socket holding its port.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FrontUnit {
-    Start,
-    /// A running front rereads its settings only when it starts.
-    Restart,
+    /// Holds `port` from boot on, moving the socket and its front when the port changed, and
+    /// starts the front.
+    Start { port: u16 },
+    /// Stops the front and frees the port, from boot on too.
     Stop,
 }
 
@@ -244,14 +245,15 @@ impl Daemon {
     }
 
     /// On starts the front and links background and members' sessions; off stops it and denies
-    /// logins not handed over, keeping the links of uids with a session.
+    /// logins not handed over, keeping the links of uids with a session. Every reload while on
+    /// starts it again, and every reload while off stops it again.
     pub(super) fn config_reloaded(
         &mut self,
         now: Instant,
         config: MachineConfig,
         out: &mut Vec<Effect>,
     ) {
-        let (was, port) = (self.config.remote.enabled, self.config.remote.port);
+        let was = self.config.remote.enabled;
         let ending = self.config.remote.end_disconnected_after_min;
         self.config = config;
         if self.config.remote.end_disconnected_after_min != ending {
@@ -262,7 +264,7 @@ impl Daemon {
         }
         match (was, self.config.remote.enabled) {
             (false, true) => {
-                out.push(Effect::Front(FrontUnit::Start));
+                out.push(self.front_unit());
                 self.open_intakes(out);
             }
             (true, false) => {
@@ -279,11 +281,21 @@ impl Daemon {
                 self.remote.linked.retain(|uid| keep.contains(uid));
                 out.push(Effect::CloseIntakes { keep });
             }
-            (true, true) if self.config.remote.port != port => {
-                out.push(Effect::Front(FrontUnit::Restart))
-            }
-            _ => {}
+            // Moves the port, or retries a port another program held at the last start.
+            (true, true) => out.push(self.front_unit()),
+            // Frees a port whose socket was started by hand.
+            (false, false) => out.push(Effect::Front(FrontUnit::Stop)),
         }
+    }
+
+    /// The front's start or stop as the settings stand.
+    pub(super) fn front_unit(&self) -> Effect {
+        Effect::Front(match self.config.remote.enabled {
+            true => FrontUnit::Start {
+                port: self.config.remote.port,
+            },
+            false => FrontUnit::Stop,
+        })
     }
 
     pub(super) fn is_remote_worker(&self, worker: WorkerId) -> bool {

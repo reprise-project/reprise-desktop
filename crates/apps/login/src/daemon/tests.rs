@@ -246,8 +246,18 @@ impl Run {
         self.d.recover(found, Some("c1"))
     }
 
+    /// The daemon's start past its first effect, which starts the front on its port while remote
+    /// logins are on and frees the port while they are off.
     pub(super) fn start(&mut self) -> Vec<Effect> {
-        self.d.start(self.now, &self.world)
+        let mut out = self.d.start(self.now, &self.world);
+        let remote = &self.d.config.remote;
+        let front = match remote.enabled {
+            true => FrontUnit::Start { port: remote.port },
+            false => FrontUnit::Stop,
+        };
+        assert_eq!(out.first(), Some(&Effect::Front(front)), "{out:?}");
+        out.remove(0);
+        out
     }
 
     pub(super) fn on(&mut self, input: Input) -> Vec<Effect> {
