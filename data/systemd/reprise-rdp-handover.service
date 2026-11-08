@@ -12,3 +12,5 @@ RestartSteps=5
 RestartMaxDelaySec=60
 # 75: another process holds org.reprise.RemoteDesktop; the next hand-over starts it again.
 RestartPreventExitStatus=75
+# As app-org.reprise.RemoteDesktop.service.
+MemoryMax=1G
