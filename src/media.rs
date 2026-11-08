@@ -372,23 +372,22 @@ async fn wpctl(args: &[&str]) -> Option<String> {
 
 /// Run `program` and take its stdout. Async so the job's timeout can fire while the child runs; `kill_on_drop` kills the child when it loses that race.
 async fn command(program: &str, args: &[&str]) -> Option<String> {
-    let out = match async_process::Command::new(program)
+    spawned(program, args).await.ok().flatten()
+}
+
+/// [`command`], with Err when `program` did not start.
+async fn spawned(program: &str, args: &[&str]) -> std::io::Result<Option<String>> {
+    let out = async_process::Command::new(program)
         .args(args)
         .kill_on_drop(true)
         .output()
         .await
-    {
-        Ok(out) => out,
-        Err(e) => {
-            log::warn!("media: {program} {} did not run: {e}", args.join(" "));
-            return None;
-        }
-    };
+        .inspect_err(|e| log::warn!("media: {program} {} did not run: {e}", args.join(" ")))?;
     if !out.status.success() {
         log::warn!("media: {program} {} failed", args.join(" "));
-        return None;
+        return Ok(None);
     }
-    Some(String::from_utf8_lossy(&out.stdout).into_owned())
+    Ok(Some(String::from_utf8_lossy(&out.stdout).into_owned()))
 }
 
 async fn set_brightness(buses: &mut Buses, subsystem: &str, name: &str, v: u32) -> bool {
@@ -459,14 +458,23 @@ async fn backlight_write(buses: &mut Buses, sysfs: &Sysfs, name: &str, level: u8
     }
 }
 
-async fn ddcutil(lane: &Lane, args: &[&str]) -> Option<String> {
+/// Runs ddcutil on `lane`; one that is not installed is dropped, so the lane tries it once.
+async fn ddcutil(lane: &mut Lane, args: &[&str]) -> Option<String> {
     let (program, lead) = lane.ddcutil.split_first()?;
     let args: Vec<&str> = lead
         .iter()
         .map(String::as_str)
         .chain(args.iter().copied())
         .collect();
-    command(program, &args).await
+    match spawned(program, &args).await {
+        Ok(out) => out,
+        Err(e) => {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                lane.ddcutil.clear();
+            }
+            None
+        }
+    }
 }
 
 /// Read over DDC/CI, keeping the monitor's maximum for the next write. DDC calls skip ddcutil's start-up checks and writes skip its read-back: on some monitors those cost seconds, which would outrun JOB_TIMEOUT.
@@ -1318,6 +1326,19 @@ esac"#,
                 level: 15,
                 floor: 0
             }))
+        );
+    }
+
+    #[test]
+    fn a_missing_ddcutil_is_tried_once() {
+        let mut lane = Lane {
+            ddc_max: None,
+            ddcutil: vec!["/nonexistent/ddcutil".into()],
+        };
+        assert_eq!(zbus::block_on(ddc_read(&mut lane, 8)), None);
+        assert!(
+            lane.ddcutil.is_empty(),
+            "a ddcutil that is not installed is dropped from the lane"
         );
     }
 
