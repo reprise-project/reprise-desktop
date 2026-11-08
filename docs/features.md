@@ -527,7 +527,7 @@ Reprise brings its own login manager, `reprise-login`. It's installed
 switched off; [install.md](install.md#login-manager) says how to switch to
 it and back. `[login] interface` in `/etc/reprise/login.toml` picks the
 design ([configuration.md](configuration.md#login-manager)), and without it
-the screen takes the interface of the last session.
+the screen takes the interface of the last session used at this computer.
 
 - **Classic** is a Log On to Reprise dialog on the desktop colour: a band
   with the Reprise mark, User name and Password rows, and OK, Cancel and
@@ -559,8 +559,11 @@ the screen takes the interface of the last session.
 - **Remote logins.** A user connected from another computer has a tile
   that says Connected remotely. Logging in here as that user brings the
   session to this screen. For a background session, or one in lock mode,
-  that ends the remote connection; a session showing its screen keeps its
-  client ([Remote logins](#remote-logins)).
+  that ends the remote connection, and the client is told another
+  connection took over; a session showing its screen keeps its client
+  ([Remote logins](#remote-logins)). Switch User sends the session back to
+  the background, locked, and the next remote login of its user lands in it
+  again.
 - **A safety net.** A session that ends as soon as it starts brings the
   login screen back with a note pointing at its log. A login screen that
   fails three times in a row gives way to a text login on tty2.
@@ -896,6 +899,23 @@ no port forwarding; allow the port in your firewall if you run one.
   client; Disconnect ends the selected one. Turning Remote Desktop off ends
   every client. Each is told it was disconnected on purpose, so a client set
   to reconnect after a network drop stays off.
+- **Disconnect in the session.** On the remote side of lock mode, and in a
+  session off this computer's screen while a client drives it, the session
+  offers Disconnect: in Switch User's place on the Log Off dialog, in Stand
+  By's place on the Turn Off dialog, where it holds the focus (Shift then
+  gives no Hibernate), and first in Glass's Shut down options. It ends every
+  client and leaves the session running, locked here; the next connection
+  lands back in it.
+- **Logging off with a client connected.** Log Off, Turn Off and Restart
+  tell every client the session logged off, so it doesn't reconnect. The
+  session waits for that while the screen fades, 1 s at most.
+- **What a client is told.** A client this side ends hears why before the
+  connection closes: 0x5, another connection took over, when a newer client
+  replaces it (`second_client = "replace"`) and when lock mode ends at this
+  computer, by an unlock or by a login at the login screen; 0xB, the user
+  disconnected it, for Disconnect in the session or on the Settings page and
+  for a port change; 0xC, the session logged off, for Log Off, Turn Off and
+  Restart; 0x1, the server ended it, when Remote Desktop is turned off.
 - **Leaving locks.** In show mode, when the last client shown the session
   leaves, whether it disconnects or Disconnect ends it, the session locks; a
   client shown it before the lock goes ahead keeps it unlocked. A client
@@ -951,12 +971,20 @@ them.
   the login screen or someone else's session. The session is locked here
   (switching to its VT shows its Unlock dialog), and its clients always
   work on screens of their own, as in lock mode. Several users can each have one, up to
-  `max_sessions` sessions in all, console ones included.
-- **Leaving.** Disconnecting leaves the session running, and the next
-  connection lands back in it. End disconnected sessions after
-  (`end_disconnected_after`) logs a background session off that long after
-  its last client left, unsaved work included; Never keeps it until you log
-  off.
+  `max_sessions` sessions in all, console ones included. Logging in at the
+  login screen brings it to the monitor, and its windows go to this
+  computer's screens, each at its place relative to the screen it was on.
+- **And back.** Switch User, or a VT switch key, sends a session on the
+  monitor to the background, locked. A remote login of its user lands in it,
+  with no new session; its windows go to the client's screens and this
+  computer's screen stays locked.
+- **Leaving.** Disconnecting, from the client or with Disconnect in the
+  session, leaves the session running, and the next connection lands back
+  in it. End disconnected sessions after (`end_disconnected_after`) logs a
+  background session off that long after its last client left, unsaved
+  work included; Never keeps it until you log off. A session sent back to
+  the background counts as one once a remote login reaches it. The session
+  this computer shows is never ended this way.
 - **Power.** While a client is connected to any session, the computer
   doesn't sleep, and a shut lid darkens the panel instead of
   running its action, at the login screen too. A session in the background never suspends the

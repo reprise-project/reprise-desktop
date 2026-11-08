@@ -152,6 +152,12 @@ It ships off. To turn it on:
    --add-port=3389/tcp` and `sudo firewall-cmd --reload`. Reprise opens no
    firewall port and sets up no forwarding.
 
+A user logged in while the package installs has no
+`reprise-rdp-handover.socket` until their systemd user manager restarts, and
+their remote logins are refused (`uid N's hand-over socket: No such file or
+directory` in reprise-login's log). Log that user out and back in, or run
+`systemctl --user start reprise-rdp-handover.socket` as that user.
+
 Users log in with their login password over TLS, or with NLA once they set
 a Remote Desktop password on Settings > Remote Desktop
 ([security](security.md#remote-desktop-password)).

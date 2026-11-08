@@ -215,7 +215,7 @@ values it read (comments go) and reloads reprise-login.
 
 | Key | Values | Default |
 | --- | --- | --- |
-| `interface` | `"classic"`, `"blue"` or `"glass"`: the login screen's design ([features.md](features.md#login-screen)) | the `[appearance] interface` of the last session that ran under reprise-login; `"classic"` before any |
+| `interface` | `"classic"`, `"blue"` or `"glass"`: the login screen's design ([features.md](features.md#login-screen)) | the `[appearance] interface` of the last session used at this computer under reprise-login; `"classic"` before any |
 | `show_users` | `true` lists the accounts on the Blue and Glass screens, with each one's picture from AccountsService. `false` asks for a typed user name there, as Classic always does | `true` |
 | `autologin_user` | an account name. Each time reprise-login starts with no session running, it logs that user in without a password; a logout brings the login screen. A name the screen wouldn't list shows the login screen, and the journal says why. `""` counts as unset | unset |
 | `greeter_socket` | `true` lets the login screen listen on a Wayland socket in its runtime directory, so screenshot and input tools can reach it while testing. Any process of the `reprise-greeter` user can then reach the login screen: type into it, capture it, draw over it. Leave it `false` on a machine people use | `false` |
@@ -241,7 +241,7 @@ keys in `config.toml`, `port` aside, still apply to their connections.
 | `port` | 1 to 65535, the TCP port on every interface | `3389` |
 | `group` | the group whose members may log in remotely. Root never can | `"reprise-remote"` |
 | `max_sessions` | 1 to 50: the most sessions reprise-login runs, console ones included. A remote login that would start one more is refused | `8` |
-| `end_disconnected_after` | 0 to 10080: minutes after its last client leaves that a background session ends. `0` never ends it | unset (never) |
+| `end_disconnected_after` | 0 to 10080: minutes after its last client leaves that a background session ends: one a remote login started, or one it reached while this computer showed another ([security.md](security.md#background-sessions)). The session on screen is never ended. `0` never ends it | unset (never) |
 
 ## Lock when away
 
