@@ -1,7 +1,7 @@
 //! Taskbar, Search, Window Switcher, Virtual Desktops and Window Behavior.
 
-use super::{Area, GX, TRAY_CUSTOMIZE, X, button, choice, edit, group, spin};
-use reprisekit::classic::widgets::{BUTTON_H, BUTTON_W, LINE_H};
+use super::{Area, GX, TRAY_CUSTOMIZE, X, choice, edit, group, spin};
+use reprisekit::classic::widgets::{BUTTON_H, LINE_H};
 use reprisekit::controls::form::{Control, Form, Item};
 use reprisekit::raster::Rect;
 use reprisekit::trackbar::{self, TrackBar};
@@ -11,6 +11,8 @@ use crate::model::{
     SWITCH_ANIMATIONS, SWITCH_MS_MAX, SWITCHER_SIZES, SWITCHER_STYLES, Shortcut, TASKBAR_BUTTONS,
     TASKBAR_POSITIONS, TITLE_DOUBLE_CLICKS, keys_for,
 };
+
+const CUSTOMIZE_W: i32 = 84;
 
 /// How windows snap, tab and come back: the Snapping group holds
 /// `[window_snapping]`'s drag snapping and how near an edge it starts (greyed
@@ -274,11 +276,12 @@ pub fn taskbar(a: Area) -> Form {
     for (i, (id, text)) in checks.into_iter().enumerate() {
         items.push(Item::check(id, X, 100 + 18 * i as i32, text));
     }
-    items.push(button(
+    items.push(Item::button(
         TRAY_CUSTOMIZE,
-        a.right() - BUTTON_W,
-        167,
+        Rect::new(a.right() - CUSTOMIZE_W, 167, CUSTOMIZE_W, BUTTON_H),
         "C&ustomize...",
+        true,
+        false,
     ));
     items.push(Item::new(
         "taskbar_note",

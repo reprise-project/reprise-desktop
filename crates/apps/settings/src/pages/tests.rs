@@ -98,8 +98,8 @@ fn every_bind_names_a_control_on_exactly_one_page() {
 
 /// Every page's text fits its rects under each interface, in Tahoma and in DejaVu Sans, the
 /// default family's second face, at each text size, Remote Desktop also as the login manager
-/// lays it out. Buttons do not widen, so each of Remote Desktop's labels must fit with room for
-/// the focus rect.
+/// lays it out. Buttons do not widen, so each button's label must fit with room for the focus
+/// rect.
 #[test]
 fn every_page_fits_its_text_under_every_interface() {
     let pages = |i: reprisekit::interface::Interface| {
@@ -117,9 +117,6 @@ fn every_page_fits_its_text_under_every_interface() {
         let px = theme.fonts.size_px;
         let mut over = Vec::new();
         for (name, form) in pages(i) {
-            if !name.starts_with("Remote Desktop") {
-                continue;
-            }
             for it in &form.items {
                 if let Control::Button { label, .. } = &it.control {
                     let label = reprisekit::text::split_mnemonic(label).0;
