@@ -151,6 +151,14 @@ desktop you log into starts clean. Once the variables are published it starts
 `reprise-session.target`, which binds `graphical-session.target`, so user units
 wanted by or `PartOf` that target run with the session; Log Off and exit stop
 it. `loginctl lock-session` locks the screen.
+
+Two sessions of one user share one user manager. A Reprise started from a
+text login while another Reprise session of the user runs publishes nothing
+and leaves the target and portals to that session. The programs it launches
+still get its display, while D-Bus-activated services, the portals and the
+Remote Desktop server stay with the other session. A session started by a
+login manager always publishes and starts the target. Whichever session
+ends first leaves the other's variables, units and app scopes running.
 XDG autostart honours `OnlyShowIn`, `NotShowIn`, `Hidden` and `TryExec`.
 An entry marked `X-systemd-skip=true` or `X-GNOME-HiddenUnderSystemd=true`
 whose program a user unit of the session runs (one `reprise-session.target`

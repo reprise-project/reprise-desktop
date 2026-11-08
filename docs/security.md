@@ -1025,7 +1025,10 @@ sharing and remote control grants yet.
   default), Log Off stops the `app-reprise-*` scopes and, after a display
   manager login, terminates the login session, so windowless programs Reprise
   or the session started go too. A program started outside the session (a
-  user service, an SSH login) keeps running. A nested Reprise stops neither.
+  user service, an SSH login) keeps running. A nested Reprise stops neither. While another Reprise session of the same user runs, Log Off stops
+  only the scopes this session launched (each scope name carries its
+  `XDG_SESSION_ID`) and leaves the user manager's variables, the session
+  target and the portals to that session.
 
 ## Out of scope and known gaps
 
