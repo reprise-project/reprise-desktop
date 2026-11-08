@@ -1,11 +1,13 @@
-//! The Set... and Clear... dialogs for your Remote Desktop password. Set asks for your login
-//! password and the new password twice; Clear asks for the login password alone.
+//! The dialogs that create, change and remove your Remote Desktop password. Create and Change
+//! ask for your login password and the new password twice; Remove asks for the login password
+//! alone.
 
 use std::cell::Cell;
 use std::fmt;
 
 use reprisekit::classic::widgets::{BUTTON_GAP, BUTTON_H, BUTTON_W, LINE_H};
 use reprisekit::controls::form::{self, Control, Form, Item};
+use reprisekit::controls::remotepassword::Action;
 use reprisekit::raster::Rect;
 use reprisekit::textedit::TextEdit;
 use repriselogin::account::{AccountRefusal, AccountRequest, MIN_REMOTE_PASSWORD};
@@ -29,12 +31,6 @@ pub const NEW: &str = "remote_password";
 pub const CONFIRM: &str = "confirm";
 pub const WHY: &str = "why";
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Purpose {
-    Set,
-    Clear,
-}
-
 pub enum Outcome {
     None,
     Redraw,
@@ -45,7 +41,7 @@ pub enum Outcome {
 
 pub struct RdPasswordDialog {
     pub form: Form,
-    pub purpose: Purpose,
+    pub action: Action,
     /// Tells this dialog's replies from those of a dialog closed before it.
     pub generation: u64,
     /// A request is out: OK stays greyed until its reply.
@@ -55,7 +51,7 @@ pub struct RdPasswordDialog {
 impl fmt::Debug for RdPasswordDialog {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RdPasswordDialog")
-            .field("purpose", &self.purpose)
+            .field("action", &self.action)
             .field("waiting", &self.waiting)
             .field("why", &self.why())
             .finish_non_exhaustive()
@@ -97,10 +93,10 @@ fn secret((label_id, id, label): (&'static str, &'static str, &str), row: i32) -
 }
 
 impl RdPasswordDialog {
-    pub fn new(purpose: Purpose, generation: u64) -> RdPasswordDialog {
-        let fields = match purpose {
-            Purpose::Set => &FIELDS[..],
-            Purpose::Clear => &FIELDS[..1],
+    pub fn new(action: Action, generation: u64) -> RdPasswordDialog {
+        let fields = match action {
+            Action::Create | Action::Change => &FIELDS[..],
+            Action::Remove => &FIELDS[..1],
         };
         let mut items: Vec<Item> = (0..)
             .zip(fields)
@@ -130,16 +126,17 @@ impl RdPasswordDialog {
         form.focus_id(LOGIN);
         RdPasswordDialog {
             form,
-            purpose,
+            action,
             generation,
             waiting: false,
         }
     }
 
     pub fn title(&self) -> &'static str {
-        match self.purpose {
-            Purpose::Set => "Set Remote Desktop Password",
-            Purpose::Clear => "Clear Remote Desktop Password",
+        match self.action {
+            Action::Create => "Create Remote Desktop Password",
+            Action::Change => "Change Remote Desktop Password",
+            Action::Remove => "Remove Remote Desktop Password",
         }
     }
 
@@ -210,9 +207,9 @@ impl RdPasswordDialog {
         if text(LOGIN).is_empty() {
             return false;
         }
-        match self.purpose {
-            Purpose::Clear => true,
-            Purpose::Set => {
+        match self.action {
+            Action::Remove => true,
+            Action::Create | Action::Change => {
                 text(NEW).chars().count() >= MIN_REMOTE_PASSWORD && text(NEW) == text(CONFIRM)
             }
         }
@@ -223,12 +220,12 @@ impl RdPasswordDialog {
             return None;
         }
         let secret = |id| Zeroizing::new(self.form.edit_text(id).to_owned());
-        Some(match self.purpose {
-            Purpose::Set => AccountRequest::SetRemotePassword {
+        Some(match self.action {
+            Action::Create | Action::Change => AccountRequest::SetRemotePassword {
                 login_password: secret(LOGIN),
                 remote_password: secret(NEW),
             },
-            Purpose::Clear => AccountRequest::ClearRemotePassword {
+            Action::Remove => AccountRequest::ClearRemotePassword {
                 login_password: secret(LOGIN),
             },
         })
@@ -256,7 +253,7 @@ mod tests {
 
     #[test]
     fn the_dialog_needs_matching_new_passwords_of_8_or_more() {
-        let mut d = RdPasswordDialog::new(Purpose::Set, 1);
+        let mut d = RdPasswordDialog::new(Action::Create, 1);
         assert!(!ok_lit(&d), "greyed when empty");
         type_into(&mut d, LOGIN, "hunter2");
         type_into(&mut d, NEW, "sword12");
@@ -293,7 +290,7 @@ mod tests {
 
     #[test]
     fn clear_asks_only_for_the_login_password() {
-        let mut d = RdPasswordDialog::new(Purpose::Clear, 1);
+        let mut d = RdPasswordDialog::new(Action::Remove, 1);
         assert!(d.form.item(NEW).is_none() && d.form.item(CONFIRM).is_none());
         assert!(!ok_lit(&d));
         type_into(&mut d, LOGIN, "hunter2");
@@ -312,7 +309,7 @@ mod tests {
 
     #[test]
     fn debug_of_the_dialog_never_shows_the_passwords() {
-        let mut d = RdPasswordDialog::new(Purpose::Set, 1);
+        let mut d = RdPasswordDialog::new(Action::Create, 1);
         type_into(&mut d, LOGIN, "hunter2");
         type_into(&mut d, NEW, "swordfish");
         type_into(&mut d, CONFIRM, "swordfish");
@@ -329,13 +326,13 @@ mod tests {
         }
         assert_eq!(
             format!("{d:?}"),
-            "RdPasswordDialog { purpose: Set, waiting: true, why: \"\", .. }"
+            "RdPasswordDialog { action: Create, waiting: true, why: \"\", .. }"
         );
     }
 
     #[test]
     fn everything_sits_inside_the_client() {
-        for p in [Purpose::Set, Purpose::Clear] {
+        for p in [Action::Create, Action::Change, Action::Remove] {
             let d = RdPasswordDialog::new(p, 1);
             let (w, h) = d.client();
             for i in &d.form.items {
@@ -347,10 +344,97 @@ mod tests {
                 );
             }
         }
-        assert_eq!(RdPasswordDialog::new(Purpose::Set, 1).client(), (360, 156));
         assert_eq!(
-            RdPasswordDialog::new(Purpose::Clear, 1).client(),
+            RdPasswordDialog::new(Action::Create, 1).client(),
+            (360, 156)
+        );
+        assert_eq!(
+            RdPasswordDialog::new(Action::Change, 1).client(),
+            (360, 156)
+        );
+        assert_eq!(
+            RdPasswordDialog::new(Action::Remove, 1).client(),
             (360, 100)
+        );
+    }
+
+    #[test]
+    fn the_dialogs_fit_their_text_under_every_interface() {
+        let over = reprisekit::interfaces::form_overflows(|_, _, _| {
+            [Action::Create, Action::Change, Action::Remove]
+                .into_iter()
+                .map(|a| {
+                    let mut d = RdPasswordDialog::new(a, 1);
+                    d.refused(AccountRefusal::SameAsLogin);
+                    (d.title().into(), d.form)
+                })
+                .collect()
+        });
+        assert!(over.is_empty(), "{}", over.join("\n"));
+    }
+
+    /// A hash of `d` drawn in each of Classic, Blue and Glass, with the test fonts.
+    fn pins(d: &RdPasswordDialog) -> [u64; 3] {
+        use reprisekit::interface::Interface;
+        use reprisekit::raster::Canvas;
+        use reprisekit::text::TextRenderer;
+        use reprisekit::theme::Theme;
+        reprisekit::pins::fonts();
+        let mut got = [0; 3];
+        for (k, i) in [Interface::Classic, Interface::Blue, Interface::Glass]
+            .into_iter()
+            .enumerate()
+        {
+            let theme = Theme {
+                access_keys: true,
+                ..reprisekit::interfaces::theme_for(i)
+            };
+            let text = TextRenderer::load(&theme.fonts);
+            let (w, h) = d.client();
+            let mut c = Canvas::new(w as u32, h as u32);
+            c.fill_rect(c.bounds(), theme.colors.button_face);
+            form::draw(
+                &mut c,
+                &text,
+                &theme.paint(),
+                &d.form,
+                false,
+                theme.fonts.size_px,
+            );
+            got[k] = c.pixels.iter().fold(0xcbf29ce484222325, |h, p| {
+                (h ^ *p as u64).wrapping_mul(0x100000001b3)
+            });
+        }
+        got
+    }
+
+    /// Create then Remove: empty, typed into, then refused.
+    #[test]
+    fn the_dialogs_pin_their_pixels_in_every_look() {
+        let mut got = Vec::new();
+        for a in [Action::Create, Action::Remove] {
+            let mut d = RdPasswordDialog::new(a, 1);
+            got.push(pins(&d));
+            for id in [LOGIN, NEW, CONFIRM] {
+                if d.form.item(id).is_some() {
+                    type_into(&mut d, id, "swordfish");
+                }
+            }
+            got.push(pins(&d));
+            d.refused(AccountRefusal::NotRemoteUser);
+            got.push(pins(&d));
+        }
+        assert_eq!(
+            got,
+            [
+                [0x2257e143d4ae3064, 0x62ee661248c965f0, 0x053345cacc82ef33],
+                [0xfbfd5ca4ae78819f, 0x9189bdc2eb60b61d, 0x9c99f9185f026ec6],
+                [0x13e6874b649e692f, 0xb6d0e8a9e682b0d9, 0x1669cff72d11d12a],
+                [0xbabbbdfc0331d2cc, 0x8a87746c7e76c83b, 0xd311d41a3e1af5f0],
+                [0x23a60d53daf65d43, 0xc34d4f182551418e, 0x969db73445924479],
+                [0x90839a3197dc33b3, 0x7fad7217f0b61d3a, 0xf9b3cd0d18d1666d],
+            ],
+            "Create then Remove: empty, typed, refused; Classic, Blue, Glass"
         );
     }
 }

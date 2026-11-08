@@ -1,7 +1,8 @@
 //! An account's Properties: a sheet with three tabs (General, Picture, Password). On your
 //! own account Password asks for the current password first. Apply and OK hand the host a
 //! list of [`Op`]s for what changed; the sheet is a pure model and the host loads pictures,
-//! opens the file dialog and runs the calls.
+//! opens the file dialog and runs the calls. Password ends with the Remote Desktop password
+//! section the host hands [`Props::show_remote`].
 
 use std::cell::Cell;
 use std::path::PathBuf;
@@ -11,6 +12,7 @@ use reprisekit::classic::widgets::LINE_H;
 use reprisekit::controls::form::{self, Control, Form, Item};
 use reprisekit::controls::iconlist::{self, IconList};
 use reprisekit::controls::propsheet::{self, PropSheet};
+use reprisekit::controls::remotepassword::{self, Action, Section};
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::textedit::TextEdit;
 use reprisekit::theme::TextUnits;
@@ -19,7 +21,7 @@ use zeroize::Zeroizing;
 use crate::acct::{Op, User};
 use crate::picture::Source;
 
-pub const CLIENT: (i32, i32) = (398, 380);
+pub const CLIENT: (i32, i32) = (398, 410);
 pub const TABS: [&str; 3] = ["General", "Picture", "Password"];
 pub const TAB_GENERAL: usize = 0;
 pub const TAB_PICTURE: usize = 1;
@@ -46,6 +48,8 @@ const X: i32 = 16;
 const FIELD_X: i32 = 150;
 const FIELD_W: i32 = 232;
 const FIELD_H: i32 = 21;
+/// The Remote Desktop password section's top on the Password page.
+const REMOTE_Y: i32 = 184;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Outcome {
@@ -56,6 +60,8 @@ pub enum Outcome {
     /// Something typed cannot be applied; the host shows why.
     Refuse(String),
     Browse,
+    /// The Remote Desktop password section asked for `Action`'s dialog.
+    RemotePassword(Action),
     Close,
 }
 
@@ -69,6 +75,8 @@ pub struct Props {
     picture: Option<Source>,
     /// The text size the pictures were made for.
     units: TextUnits,
+    /// The Remote Desktop password section on Password; `None` hides it.
+    remote: Option<Section>,
 }
 
 fn secret(id: &'static str, y: i32) -> Item {
@@ -180,9 +188,17 @@ fn picture_page(face: Option<Canvas>, u: TextUnits) -> Form {
     ])
 }
 
-fn password_page(user: &User) -> Form {
+fn password_page(user: &User, remote: Option<&Section>) -> Form {
+    let mut items = login_password(user);
+    if let Some(s) = remote {
+        items.extend(remotepassword::items(s, X, REMOTE_Y, CLIENT.0 - 2 * X).0);
+    }
+    Form::new(items)
+}
+
+fn login_password(user: &User) -> Vec<Item> {
     if user.you {
-        return Form::new(vec![
+        return vec![
             Item::lines_at(
                 "intro",
                 X,
@@ -199,9 +215,9 @@ fn password_page(user: &User) -> Form {
             secret(NEW, 110),
             Item::label_at("confirm_l", X, 144, 130, "C&onfirm new password:"),
             secret(CONFIRM, 140),
-        ]);
+        ];
     }
-    Form::new(vec![
+    vec![
         Item::lines_at(
             "intro",
             X,
@@ -223,7 +239,7 @@ fn password_page(user: &User) -> Form {
             160,
             "As&k for a new password at the next login",
         ),
-    ])
+    ]
 }
 
 fn wipe(form: &mut Form, id: &str) {
@@ -240,7 +256,7 @@ impl Props {
         let pages = vec![
             general_page(&user, small, last_admin),
             picture_page(face, u),
-            password_page(&user),
+            password_page(&user, None),
         ];
         let mut p = Props {
             sheet: PropSheet::new(&TABS, pages, CLIENT),
@@ -248,6 +264,7 @@ impl Props {
             last_admin,
             picture: None,
             units: u,
+            remote: None,
         };
         p.sync();
         p
@@ -420,6 +437,9 @@ impl Props {
             }
             propsheet::Event::Redraw => Outcome::Redraw,
             propsheet::Event::Page(_, form::Event::Pressed(BROWSE)) => Outcome::Browse,
+            propsheet::Event::Page(_, ref ev) if remotepassword::action(ev).is_some() => {
+                remotepassword::action(ev).map_or(Outcome::None, Outcome::RemotePassword)
+            }
             propsheet::Event::Page(_, form::Event::Changed(STOCK)) => {
                 let picked =
                     self.sheet.pages[TAB_PICTURE]
@@ -501,6 +521,23 @@ impl Props {
         self.sheet.pages[TAB_GENERAL].set_enabled(STANDARD, !last);
     }
 
+    /// Show `remote` as the Password page's Remote Desktop password section, keeping what is
+    /// typed on the page. True when it changed.
+    pub fn show_remote(&mut self, remote: Option<Section>) -> bool {
+        if self.remote == remote {
+            return false;
+        }
+        let mut page = password_page(&self.user, remote.as_ref());
+        page.carry(&self.sheet.pages[TAB_PASSWORD]);
+        for (a, lit) in remote.iter().flat_map(|s| &s.actions) {
+            page.set_enabled(a.id(), *lit);
+        }
+        self.sheet.set_page(TAB_PASSWORD, page);
+        self.remote = remote;
+        self.sync();
+        true
+    }
+
     pub fn paste(&mut self, t: String) -> Outcome {
         let ev = self.sheet.open_mut().paste(t);
         let page = self.sheet.tabs.open;
@@ -564,15 +601,30 @@ mod tests {
         Ok(PathBuf::from("/run/user/1000/reprise-accounts/p.png"))
     }
 
+    /// The tallest Remote Desktop password section for `u`: yours with a password, outside
+    /// a long-named group, and another account's note.
+    fn tallest_remote(u: &User) -> Option<Section> {
+        use reprisekit::controls::remotepassword::{Access, Answer, Facts, Manager};
+        remotepassword::section(&Facts {
+            manager: Manager::Running(Answer::Has(true)),
+            yours: u.you,
+            access: Access::NotInGroup("remote desktop users of floor 3b".into()),
+            busy: false,
+        })
+    }
+
     /// Every page fits its text under every interface and text size, for your account and
-    /// for another one.
+    /// for another one, with the Remote Desktop password section at its tallest.
     #[test]
     fn every_page_fits_its_text() {
         let over = reprisekit::interfaces::form_overflows(|_, _, _| {
             [("yours", user(true, true)), ("another", user(false, false))]
                 .into_iter()
                 .flat_map(|(whose, u)| {
-                    let s = Props::new(u, None, false, TextUnits::ONE).sheet.clone();
+                    let remote = tallest_remote(&u);
+                    let mut p = Props::new(u, None, false, TextUnits::ONE);
+                    p.show_remote(remote);
+                    let s = p.sheet.clone();
                     let tabs = s
                         .tabs
                         .labels
@@ -696,6 +748,39 @@ mod tests {
                 .iter()
                 .all(|c| c.as_ref().is_some_and(|c| c.width == 32))
         );
+    }
+
+    #[test]
+    fn the_remote_desktop_section_ends_above_the_sheets_buttons() {
+        for you in [true, false] {
+            let u = user(you, false);
+            let remote = tallest_remote(&u);
+            let mut p = Props::new(u, None, false, TextUnits::ONE);
+            assert!(p.show_remote(remote.clone()));
+            assert!(
+                !p.show_remote(remote),
+                "the same section again changes nothing"
+            );
+            let page = &p.sheet.pages[TAB_PASSWORD];
+            let bottom = page.items.iter().filter(|i| i.id.starts_with("remote_"));
+            let bottom = bottom.map(|i| i.rect.bottom()).max().unwrap();
+            let ok = page.item(propsheet::OK).unwrap().rect;
+            assert!(bottom + 10 <= ok.y, "{you}: {bottom} against {ok:?}");
+        }
+    }
+
+    #[test]
+    fn a_press_on_the_remote_desktop_section_asks_for_its_dialog() {
+        let u = user(true, false);
+        let remote = tallest_remote(&u);
+        let mut p = Props::new(u, None, false, TextUnits::ONE);
+        p.show_remote(remote);
+        let ev = propsheet::Event::Page(TAB_PASSWORD, form::Event::Pressed(remotepassword::REMOVE));
+        assert_eq!(
+            p.event(ev, no_file),
+            Outcome::RemotePassword(Action::Remove)
+        );
+        assert!(!p.dirty(), "the section is no edit to apply");
     }
 
     #[test]

@@ -675,17 +675,19 @@ applies when the front restarts.
 
 NTLM checks a client's proof against a password the server already holds,
 which PAM never hands out. So NLA logs on with a Remote Desktop password
-each user sets for themselves on Settings > Remote Desktop. It is kept as
+each user sets for themselves in User Accounts. It is kept as
 its NT hash, unsalted MD4 as NTLM needs, which is fast to crack from a
 copy. The file, `/var/lib/reprise-login/remote-passwords`, is 0600 root in a
 0700 directory. Use a strong Remote Desktop password: it needs 8
 characters or more and must differ from the login password.
 
-- Setting or clearing it takes the login password, checked through
-  `reprise-login-check` (system-auth). Clearing your own is always allowed,
-  even outside the group.
+- The account socket acts only on the caller's own uid, and setting or
+  clearing it takes that user's login password, checked through
+  `reprise-login-check` (system-auth), so an administrator can't set or
+  clear another user's there. Clearing your own is always allowed, even
+  outside the group.
 - Locking the login password (`passwd -l`) leaves the Remote Desktop
-  password working. To stop it, clear it on Settings > Remote Desktop, or
+  password working. To stop it, the user removes it in User Accounts, or
   take the user out of `reprise-remote`. An expired account
   (`chage -E`) is refused either way, by the account step.
 - Setting one leaves TLS logins on: a client set to TLS still logs on with

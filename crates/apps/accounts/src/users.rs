@@ -325,7 +325,7 @@ pub fn caption(u: &User) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     pub fn user(uid: u32, login: &str, admin: bool, you: bool) -> User {

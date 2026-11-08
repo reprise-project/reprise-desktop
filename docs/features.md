@@ -961,14 +961,22 @@ them (polkit doesn't ask again for a few minutes).
   takes the name as `user`, `.\user`, `HOST\user`, `user@host` or `user@`
   ([security.md](security.md#remote-desktop-password)).
   Only xfreerdp has been tried.
-- **Remote Desktop password.** Settings > Remote Desktop says "Remote
-  logins to this computer are set on the Login Manager page." in place of
-  its on switch, and shows a Remote Desktop password row: Set... asks for
-  your login password and the new one twice, Clear... for your login
-  password. It needs 8 characters or more and must differ from your login
-  password. It is kept as a weak hash, so make it strong
+- **Remote Desktop password.** You set it in User Accounts, on the
+  Password tab of your own account's Properties: Create a Remote Desktop
+  password... asks for your login password and the new one twice; once you
+  have one, Change my Remote Desktop password... does the same and Remove my
+  Remote Desktop password... asks for your login password. It needs 8
+  characters or more and must differ from your login password. It is kept as
+  a weak hash, so make it strong
   ([security.md](security.md#remote-desktop-password)). Locking your login
-  password doesn't clear it.
+  password doesn't clear it. Create and Change are greyed, with a note
+  saying why, while remote logins are off, you aren't in the remote group
+  or you are root, as the login manager answers; Remove stays open. Another
+  account's Password tab says each user sets their own. Without
+  reprise-login installed the section isn't shown. Settings > Remote
+  Desktop says "Remote logins are set on the Login Manager page." in place
+  of its on switch, and its User Accounts... button opens your account's
+  Password tab.
 - **Into your session.** If you're logged in, here or in the background,
   the client joins that session, and your Remote Desktop settings (this
   computer's screen, `second_client`, `max_viewers`, picture and sound)

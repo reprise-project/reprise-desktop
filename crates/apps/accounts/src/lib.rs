@@ -6,11 +6,14 @@ mod adduser;
 mod passwd;
 mod picture;
 mod props;
+mod rdpassword;
+mod remote;
 mod users;
 
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::mpsc::{Receiver, channel};
+use std::time::Duration;
 
 use repriseapp::filedlg::{Host, Resolved, Step, type_keep};
 use repriseapp::keys::{dialog_key, form_clipboard, form_input, sheet_input};
@@ -23,6 +26,7 @@ use reprisekit::controls::filedlg::{
     self, DlgMode, Event as FileEvent, Fields as FileFields, FileDlg,
 };
 use reprisekit::controls::msgbox::Fields;
+use reprisekit::controls::remotepassword;
 use reprisekit::controls::{form, propsheet};
 use reprisekit::look::Paint;
 use reprisekit::raster::{Canvas, Rect};
@@ -31,12 +35,14 @@ use reprisekit::textedit::keysym;
 use reprisekit::theme::{TextUnits, Theme};
 
 use acct::{Op, User};
+use rdpassword::RdPasswordDialog;
 
 const PROPS: WinId = WinId::named("props");
 const ADD: WinId = WinId::named("add");
 const BROWSE: WinId = WinId::named("browse");
 const REMOVE: WinId = WinId::named("remove");
 const ERROR: WinId = WinId::named("error");
+const RD_PASSWORD: WinId = WinId::named("rd_password");
 
 const TITLE: &str = "User Accounts";
 
@@ -71,6 +77,11 @@ struct AccountsApp {
     forms: Theme,
     /// The client size last asked for the main window.
     asked: (i32, i32),
+    remote: remote::Remote,
+    sources: remote::Sources,
+    rd_password: Option<RdPasswordDialog>,
+    /// Open your Properties on Password once the accounts are read.
+    open_yours: bool,
 }
 
 impl AccountsApp {
@@ -89,6 +100,131 @@ impl AccountsApp {
             text: None,
             forms: Theme::default(),
             asked: users::CLIENT,
+            remote: remote::Remote::default(),
+            sources: remote::Sources::default(),
+            rd_password: None,
+            open_yours: false,
+        }
+    }
+
+    /// Run `job` off the loop, waking it when done; tests run it at once.
+    fn spawn<T: Send + 'static>(&self, job: impl FnOnce() -> T + Send + 'static) -> Receiver<T> {
+        let (tx, rx) = channel();
+        if cfg!(test) {
+            let _ = tx.send(job());
+            return rx;
+        }
+        let waker = self.waker.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(job());
+            if let Some(w) = waker {
+                w.wake();
+            }
+        });
+        rx
+    }
+
+    /// Read the login manager and your Remote Desktop password after `wait`, unless a read is
+    /// under way. Only the first of a run of unanswered reads warns.
+    fn read_remote(&mut self, wait: Duration) {
+        if self.remote.reading.is_some() {
+            return;
+        }
+        let src = self.sources.clone();
+        let failed = match &self.remote.found {
+            Some(f) if f.silent() => log::Level::Debug,
+            _ => log::Level::Warn,
+        };
+        self.remote.reading = Some(self.spawn(move || {
+            std::thread::sleep(wait);
+            remote::read(&src, failed)
+        }));
+    }
+
+    /// Put the Remote Desktop password section for the open account on its Password page.
+    fn show_remote(&mut self) {
+        if let Some(p) = &mut self.props {
+            let facts = self.remote.facts(p.user.you);
+            p.show_remote(facts.as_ref().and_then(remotepassword::section));
+        }
+    }
+
+    /// A read or a change came back: show it, and in the dialog that sent the change. A login
+    /// manager that did not answer is asked again while your own sheet is open. True when
+    /// anything changed.
+    fn remote_done(&mut self) -> bool {
+        let mut changed = false;
+        if let Some(found) = self.remote.read_landed() {
+            changed = true;
+            if found.silent() && self.props.as_ref().is_some_and(|p| p.user.you) {
+                self.read_remote(self.sources.retry);
+            }
+        }
+        if let Some((from, ended)) = self.remote.change_landed() {
+            changed = true;
+            let sender = self.rd_password.take_if(|d| d.generation == from);
+            if let (remote::Ended::Refused(r), Some(mut d)) = (ended, sender) {
+                d.refused(r);
+                self.rd_password = Some(d);
+            }
+        }
+        if changed {
+            self.show_remote();
+        }
+        changed
+    }
+
+    fn open_rd_password(&mut self, action: remotepassword::Action) -> Reply {
+        self.remote.opened += 1;
+        self.rd_password = Some(RdPasswordDialog::new(action, self.remote.opened));
+        Reply::redraw_all()
+    }
+
+    fn rd_password_event(&mut self, ev: Event, ctx: &Ctx) -> Reply {
+        let out = {
+            let Some(d) = self.rd_password.as_mut() else {
+                return Reply::none();
+            };
+            match ev {
+                Event::CloseRequest => rdpassword::Outcome::Cancel,
+                Event::Blink => {
+                    d.form.blink(ctx.caret_on);
+                    return Reply::redraw();
+                }
+                Event::Pasted(t) => {
+                    let e = d.form.paste(t);
+                    d.event(e)
+                }
+                ev => match form_input(&mut d.form, &ev, ctx) {
+                    Some(e) => d.event(e),
+                    None => return Reply::none(),
+                },
+            }
+        };
+        self.rd_password_outcome(out)
+    }
+
+    /// Carry out what the dialog asked. A request runs off the loop with the dialog open; a
+    /// Cancel drops the dialog and its fields, and a request under way still lands.
+    fn rd_password_outcome(&mut self, out: rdpassword::Outcome) -> Reply {
+        match out {
+            rdpassword::Outcome::None => Reply::none(),
+            rdpassword::Outcome::Redraw => Reply::redraw(),
+            rdpassword::Outcome::Cancel => {
+                self.rd_password = None;
+                Reply::redraw_all()
+            }
+            rdpassword::Outcome::Send(req) => {
+                let Some(d) = &self.rd_password else {
+                    return Reply::none();
+                };
+                let (action, from) = (d.action, d.generation);
+                let path = self.sources.socket.clone();
+                let rx = self.spawn(move || remote::ask(&path, &req, remote::TIMEOUT));
+                self.remote.change = Some(remote::Change { action, from, rx });
+                self.show_remote();
+                Reply::redraw_all()
+            }
         }
     }
 
@@ -155,11 +291,21 @@ impl AccountsApp {
     }
 
     fn wake(&mut self) -> Reply {
+        let remote = self.remote_done();
+        if self.accounts_done() || remote {
+            Reply::redraw_all()
+        } else {
+            Reply::none()
+        }
+    }
+
+    /// The accounts job came back: show the accounts and what it did. True when it had.
+    fn accounts_done(&mut self) -> bool {
         let Some((rx, after)) = &self.job else {
-            return Reply::none();
+            return false;
         };
         let Ok((done, read)) = rx.try_recv() else {
-            return Reply::none();
+            return false;
         };
         let after = *after;
         self.job = None;
@@ -201,7 +347,15 @@ impl AccountsApp {
         if let Err(acct::Failure::Text(why)) = done {
             self.fail(why);
         }
-        Reply::redraw_all()
+        if std::mem::take(&mut self.open_yours)
+            && let Some(uid) = self.users.rows.iter().find(|u| u.you).map(|u| u.uid)
+        {
+            self.open_props(uid);
+            if let Some(p) = &mut self.props {
+                p.sheet.tabs.open = props::TAB_PASSWORD;
+            }
+        }
+        true
     }
 
     /// Each account's list picture at [`ROW_PX`] grown with the text.
@@ -233,6 +387,8 @@ impl AccountsApp {
         let face = sheet_face(&u, px, self.face.as_ref());
         let last = self.last_admin(uid);
         self.props = Some(props::Props::new(u, face, last, self.forms.text));
+        self.show_remote();
+        self.read_remote(Duration::ZERO);
     }
 
     fn ask_remove(&mut self, uid: u32, ctx: &mut Ctx) {
@@ -398,9 +554,11 @@ impl AccountsApp {
                 self.open_browse(ctx.forms().text);
                 Reply::redraw_all()
             }
+            props::Outcome::RemotePassword(action) => self.open_rd_password(action),
             props::Outcome::Close => {
                 self.props = None;
                 self.browse = None;
+                self.rd_password = None;
                 Reply::redraw_all()
             }
         }
@@ -574,6 +732,7 @@ impl AccountsApp {
         match win {
             PROPS => self.props.as_ref()?.sheet.open().focused_edit(),
             ADD => self.add.as_ref()?.form.focused_edit(),
+            RD_PASSWORD => self.rd_password.as_ref()?.form.focused_edit(),
             _ => None,
         }
     }
@@ -623,6 +782,15 @@ impl App for AccountsApp {
                 modal: false,
             });
         }
+        if let Some(d) = &self.rd_password {
+            out.push(Child {
+                id: RD_PASSWORD,
+                title: d.title().into(),
+                size: self.forms.text.size(d.client()),
+                fixed: true,
+                modal: true,
+            });
+        }
         if self.browse.is_some() {
             out.push(Child {
                 id: BROWSE,
@@ -647,6 +815,7 @@ impl App for AccountsApp {
         self.fonts();
         self.waker = Some(waker);
         self.run(Vec::new(), After::Read);
+        self.read_remote(Duration::ZERO);
         repriseapp::Start::Continue
     }
 
@@ -685,6 +854,12 @@ impl App for AccountsApp {
             ADD => {
                 c.fill_rect(c.bounds(), cs.button_face);
                 if let Some(d) = &self.add {
+                    form::draw(c, &ctx.text, &paint, &d.form, true, px);
+                }
+            }
+            RD_PASSWORD => {
+                c.fill_rect(c.bounds(), cs.button_face);
+                if let Some(d) = &self.rd_password {
                     form::draw(c, &ctx.text, &paint, &d.form, true, px);
                 }
             }
@@ -744,6 +919,11 @@ impl repriseapp::Extended for AccountsApp {
                     oneshot::access_form(&d.form, tree, &ctx.text, px);
                 }
             }
+            RD_PASSWORD => {
+                if let Some(d) = &self.rd_password {
+                    oneshot::access_form(&d.form, tree, &ctx.text, px);
+                }
+            }
             BROWSE => {
                 if let Some(d) = &self.browse {
                     let r = Rect::new(0, 0, d.client().0, d.client().1);
@@ -768,6 +948,7 @@ impl repriseapp::Extended for AccountsApp {
         let form = match win {
             PROPS => self.props.as_mut()?.sheet.open_mut(),
             ADD => &mut self.add.as_mut()?.form,
+            RD_PASSWORD => &mut self.rd_password.as_mut()?.form,
             _ => return None,
         };
         Some(DropForm { form, px: None })
@@ -796,6 +977,7 @@ impl AccountsApp {
         match win {
             PROPS => self.props_event(ev, ctx),
             ADD => self.add_event(ev, ctx),
+            RD_PASSWORD => self.rd_password_event(ev, ctx),
             BROWSE => self.browse_event(ev, ctx),
             REMOVE => self.remove_event(ev),
             ERROR => self.error_event(ev),
@@ -806,9 +988,12 @@ impl AccountsApp {
 }
 
 /// Runs the program; `args` are the command line after the program's name.
-pub fn main(_args: Vec<std::ffi::OsString>) {
+/// `--remote-password` opens your Properties on Password.
+pub fn main(args: Vec<std::ffi::OsString>) {
     reprisebus::journal::init_logger(reprisebus::journal::PROGRAM_FILTER);
-    repriseapp::run(Box::new(AccountsApp::new())).unwrap_or_else(|e| e.exit());
+    let mut app = AccountsApp::new();
+    app.open_yours = args.iter().any(|a| a == "--remote-password");
+    repriseapp::run(Box::new(app)).unwrap_or_else(|e| e.exit());
 }
 
 #[cfg(test)]

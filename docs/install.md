@@ -165,7 +165,7 @@ directory` in reprise-login's log). Log that user out and back in, or run
 `systemctl --user start reprise-rdp-handover.socket` as that user.
 
 Users log in with their login password over TLS, or with NLA once they set
-a Remote Desktop password on Settings > Remote Desktop
+a Remote Desktop password in User Accounts
 ([security](security.md#remote-desktop-password)).
 
 To turn it off, clear the check box, or set `enabled = false` and reload.
