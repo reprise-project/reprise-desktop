@@ -132,9 +132,20 @@ pub trait Systemd {
     ) -> zbus::Result<Vec<(String, String, String)>>;
 }
 
+/// Heads a drop-in whose port the socket failed to take, so the next write of that port differs.
+const UNTAKEN: &str = "# The socket failed to take this port; reprise-login tries it again.\n";
+
+/// The socket drop-in that listens on `port` alone.
+fn port_drop_in(port: u16) -> String {
+    format!("[Socket]\nListenStream=\nListenStream={port}\n")
+}
+
 /// Writes the socket drop-in at `path` that listens on `port`; true when it changed.
 fn write_port(path: &Path, port: u16) -> io::Result<bool> {
-    let text = format!("[Socket]\nListenStream=\nListenStream={port}\n");
+    write_drop_in(path, &port_drop_in(port))
+}
+
+fn write_drop_in(path: &Path, text: &str) -> io::Result<bool> {
     if std::fs::read_to_string(path).is_ok_and(|old| old == text) {
         return Ok(false);
     }
@@ -191,8 +202,9 @@ async fn apply(units: &impl Units, drop_in: &Path, unit: FrontUnit) -> Result<()
                 write_port(drop_in, port).map_err(|e| format!("{}: {e}", drop_in.display()))?;
             let held = hold(units, port, moved).await;
             if held.is_err() && moved {
-                // The next Start finds the port moved again and retries.
-                let _ = std::fs::remove_file(drop_in);
+                // Kept on the port so a boot binds no other, and marked so the next Start finds
+                // it moved and reloads and restarts the socket again.
+                let _ = write_drop_in(drop_in, &format!("{UNTAKEN}{}", port_drop_in(port)));
             }
             held?;
             (units.run(UnitJob::Start, FRONT_UNIT).await).map_err(|e| format!("{FRONT_UNIT}: {e}"))
@@ -864,6 +876,36 @@ mod tests {
         );
         assert!(fake.enabled);
         assert_eq!(fake.active.len(), 2, "{:?}", fake.active);
+    }
+
+    /// The ports systemd binds for the socket at boot: the shipped unit's, then the drop-in's.
+    fn boot_ports(drop_in: &Path) -> Vec<u16> {
+        let unit = include_str!("../../../../data/systemd/reprise-login-rdp.socket");
+        let drop_in = std::fs::read_to_string(drop_in).unwrap_or_default();
+        let mut ports = Vec::new();
+        for line in unit.lines().chain(drop_in.lines()) {
+            match line.strip_prefix("ListenStream=") {
+                Some("") => ports.clear(),
+                Some(port) => ports.push(port.parse().unwrap()),
+                None => {}
+            }
+        }
+        ports
+    }
+
+    #[tokio::test]
+    async fn a_socket_that_failed_to_take_its_port_binds_no_other_at_boot() {
+        let dir = tempfile::tempdir().unwrap();
+        let drop_in = dir.path().join("port.conf");
+        let units = FakeUnits::default();
+        units.0.borrow_mut().port_held = true;
+        let start = FrontUnit::Start { port: 3390 };
+        apply(&units, &drop_in, start).await.unwrap_err();
+        assert!(units.0.borrow().enabled);
+        assert_eq!(boot_ports(&drop_in), [3390]);
+        units.0.borrow_mut().port_held = false;
+        apply(&units, &drop_in, start).await.unwrap();
+        assert_eq!(boot_ports(&drop_in), [3390]);
     }
 
     #[tokio::test]
