@@ -218,9 +218,13 @@ instead.
 A worker moves into its logind session's scope when the session opens, out
 of the unit's cgroup. Restarting reprise-login, or a crash, leaves running
 sessions alone; a login still in its PAM conversation ends with the daemon.
-A session whose worker dies is left closing by logind: its compositor ends
-itself once logind reports it closing, and that user's next login first
-stops whatever is left of the session's scope.
+A session whose worker dies while logind still lists it open has no PAM
+handle left to close it, so the daemon ends it through logind, unsaved work
+included. It acts only when its own table has that session id for the uid
+logind lists, and a failed read of logind's sessions ends nothing. A worker
+that exits after `pam_close_session` (a logout) leaves its session closing:
+its compositor ends itself once logind reports it closing, and that user's
+next login first stops whatever is left of the session's scope.
 
 ### Switching users
 
@@ -229,15 +233,21 @@ or a VT switch key. Logging in again as the same user at the login screen
 checks the password through the `reprise-login` PAM service, then unlocks
 that session through logind and switches to it, so no second password is
 asked. A user who already has a session never gets a second one. If the
-switch fails, the session is locked again; a reprise-login that starts locks
-every session that isn't on screen. A remote login's background session
-instead locks its own screen when it links to reprise-login again, so its
-connected client keeps the desktop.
+switch fails, the session is locked again. A session off the seat locks its
+own screen when its link to reprise-login drops, as when the daemon restarts
+or dies, so a daemon that dies between unlocking a session for a resume and
+switching to it leaves it locked. In lock mode only the computer's side
+locks, and the connected client keeps its desktop. A reprise-login that
+starts locks no session: a logind lock would lock a session's client out
+too.
 
 The session unlocks on logind's `Unlock`, so it can't tell reprise-login's
 resume from `loginctl unlock-session` run by root, by an admin polkit lets
 lock and unlock sessions, or by any process of the session's own user,
-another login of theirs included.
+another login of theirs included. Off the seat with its link to
+reprise-login down, it refuses `Unlock` and stays locked: off the seat an
+unlock comes from reprise-login resuming it, and with no link no resume is
+under way.
 
 `reprise-login` runs pam_nologin: while `/run/nologin` exists (early boot,
 and the last minutes before a scheduled shutdown), the login screen refuses
@@ -343,6 +353,25 @@ off: a client shown the session with it off doesn't lock on a stop or the
 next start, and the last to leave doesn't lock while it is off. None of
 these locks follow a lock-mode connection, as the session stayed locked here
 all through it.
+
+Disconnect in the session ends every client and leaves the session running.
+It is offered only on the remote side of lock mode, or off the seat while a
+remote client drives the session (any libei sender with a seat and devices
+counts), in the Log Off and Turn Off dialogs and Glass's Shut down options.
+Nothing opens those from a locked screen, the login screen or a client that
+hasn't logged in, and a press checks again that Disconnect is still offered,
+so a dialog left open across an unlock at the computer does nothing. It
+locks the computer's side first, then calls `Disconnect` on
+`org.reprise.RemoteDesktop` on the user's session bus. A committed Log Off,
+Turn Off or Restart with a client connected calls `SessionEnding` there,
+which ends every client as logged off. Any process of the user can call
+either method and drop that user's clients; the session keeps running, and
+no other user can reach the bus.
+
+Each client the server ends is told why before its connection closes (the
+codes are in [features.md](features.md#remote-desktop)). The reason
+goes to every client, also one that didn't say it reads reasons. It carries
+only the code, and only after the client logged in.
 
 The client shares the clipboard only while it is shown the session.
 `reprise-rdp` opens its data control connection once the client's clipboard
@@ -592,7 +621,10 @@ its Unlock dialog, never its desktop, and its clients always run in lock mode
 ([Lock mode](#lock-mode)). Off the seat a session runs no lid action and no
 idle suspend, and its power requests go through logind and polkit as an
 inactive session's. Once someone switches to it at the computer, it counts
-as a console session.
+as a console session. A console session that a remote login reaches while
+the computer shows another VT, after Switch User say, counts as a
+background session again. The daemon reads the VT on screen afresh for
+that, and an unknown VT marks nothing.
 
 No session holds a controlling terminal: the PAM worker holds the session's
 VT as its own, so no process of the session can switch VTs through the
@@ -613,8 +645,14 @@ acts on the lid.
 
 A background session whose last client left ends `[remote_desktop]
 end_disconnected_after` minutes later, unless a client comes back first;
-logind ends its processes, unsaved work included. With it unset, and for a
-console session, the session runs until its user logs off.
+logind ends its processes, unsaved work included. When that time runs out
+the daemon reads the VT on screen afresh, and a session the computer shows
+counts as a console session and is kept. With it unset, and for a console
+session, the session runs until its user logs off. Disconnect in the
+session ends its clients like any other leave and leaves it running,
+locked. After reprise-login restarts, of the sessions off the seat only
+those a remote login started count as background ones, until a remote
+login reaches the others again.
 
 ### Accepted risks
 
