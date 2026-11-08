@@ -88,7 +88,9 @@ pub(super) struct Remote {
     pub(super) front: bool,
     pub(super) passwords: Vec<StoredPassword>,
     pub(super) accounts: Accounts,
-    throttle: Throttle,
+    tls_throttle: Throttle,
+    /// Failed delegated NLA passwords, which the front has already proved.
+    nla_throttle: Throttle,
     logins: BTreeMap<u64, Login>,
     /// Background session starts in flight, by uid.
     starting: HashMap<u32, Starting>,
@@ -108,6 +110,15 @@ pub(super) struct Remote {
     inhibit: Inhibit,
 }
 
+impl Remote {
+    fn throttle_mut(&mut self, nla: bool) -> &mut Throttle {
+        match nla {
+            true => &mut self.nla_throttle,
+            false => &mut self.tls_throttle,
+        }
+    }
+}
+
 struct Login {
     peer: IpAddr,
     /// The name the client gave; the hand-over must carry the same.
@@ -118,6 +129,8 @@ struct Login {
     deadline: Instant,
     /// The failure counted from the start of the check, taken back once verified.
     attempt: Option<Attempt>,
+    /// Delegated under NLA, so counted by `nla_throttle`.
+    nla: bool,
     /// `Denied`'s back-off as the address stood after this `Authenticate`, so it is the
     /// same whatever refuses the login and whenever.
     backoff_s: u32,
@@ -371,6 +384,7 @@ impl Daemon {
             .filter(|l| matches!(l.step, Step::LookingUp | Step::Checking { .. }))
             .count();
         let peer = peer.ip();
+        let nla = matches!(secret, Secret::Delegated(_));
         self.remote.logins.insert(
             conn,
             Login {
@@ -380,15 +394,15 @@ impl Daemon {
                 at: now,
                 deadline: now + HANDOVER_DEADLINE,
                 attempt: None,
+                nla,
                 backoff_s: 0,
                 step: Step::LookingUp,
             },
         );
-        let gate = self.gate(now, peer, checks, out);
-        let attempt = gate
-            .is_none()
-            .then(|| self.remote.throttle.failed(peer, now));
-        let backoff = self.remote.throttle.delay(peer, now);
+        let gate = self.gate(now, peer, nla, checks, out);
+        let throttle = self.remote.throttle_mut(nla);
+        let attempt = gate.is_none().then(|| throttle.failed(peer, now));
+        let backoff = throttle.delay(peer, now);
         if let Some(l) = self.remote.logins.get_mut(&conn) {
             l.attempt = attempt;
             l.backoff_s = u32::try_from(backoff.as_millis().div_ceil(1000)).unwrap_or(u32::MAX);
@@ -406,30 +420,40 @@ impl Daemon {
         });
     }
 
-    /// Why a login from `peer` is refused before any check, if it is.
+    /// Why a login from `peer` is refused before any check, if it is. Each kind of login (`nla`
+    /// or TLS) backs off and pauses on its own failures.
     fn gate(
         &mut self,
         now: Instant,
         peer: IpAddr,
+        nla: bool,
         checks: usize,
         out: &mut Vec<Effect>,
     ) -> Option<&'static str> {
         if !self.config.remote.enabled {
             return Some("remote logins are off");
         }
-        if !self.remote.throttle.delay(peer, now).is_zero() {
-            return Some("the address backs off after failed logins");
+        let throttle = self.remote.throttle_mut(nla);
+        if !throttle.delay(peer, now).is_zero() {
+            return Some(match nla {
+                true => "the address backs off after failed NLA logins",
+                false => "the address backs off after failed TLS logins",
+            });
         }
-        match self.remote.throttle.paused(now) {
+        let paused = match nla {
+            true => "NLA logins are paused",
+            false => "TLS logins are paused",
+        };
+        match throttle.paused(now) {
             Pause::Off => {}
             Pause::Started => {
                 out.push(Effect::Log(
                     Level::Warn,
-                    "remote logins are paused for 10 minutes after repeated failures".into(),
+                    format!("{paused} for 10 minutes after repeated failures"),
                 ));
-                return Some("remote logins are paused");
+                return Some(paused);
             }
-            Pause::Running => return Some("remote logins are paused"),
+            Pause::Running => return Some(paused),
         }
         (checks >= MAX_REMOTE_CHECKS).then_some("too many remote logins are being checked")
     }
@@ -590,7 +614,11 @@ impl Daemon {
         };
         out.push(Effect::ToFront(FrontEvent::Verified { conn }));
         if let Some(attempt) = l.attempt.take() {
-            self.remote.throttle.succeeded(l.peer, attempt, now);
+            let throttle = match l.nla {
+                true => &mut self.remote.nla_throttle,
+                false => &mut self.remote.tls_throttle,
+            };
+            throttle.succeeded(l.peer, attempt, now);
             l.backoff_s = 0;
         }
         let cancel = Effect::ToWorker {
