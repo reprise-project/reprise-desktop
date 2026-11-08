@@ -723,7 +723,7 @@ mod tests {
         let leave = LockOnLeave::with_lock(Some(marker.clone()), counted(&locks));
         leave.arrived();
         let why = granted(false, &[true], false);
-        assert_eq!(why, End::Left, "show mode on the standby screen");
+        assert_eq!(why, End::Left, "a run that doesn't lock is show mode");
         leave.left(why).await;
         assert_eq!(locks.get(), 1);
         assert!(!marker.exists());
