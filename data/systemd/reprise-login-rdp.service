@@ -29,9 +29,13 @@ ProtectClock=yes
 ProtectHostname=yes
 ProtectProc=invisible
 ProcSubset=pid
-# The front makes no bus calls; /run/systemd/userdb stays reachable for NSS.
-InaccessiblePaths=-/run/dbus
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# /run holds only the link to reprise-login and the RuntimeDirectory.
+TemporaryFileSystem=/run:ro
+BindReadOnlyPaths=/run/reprise-login
+# The port's socket comes from reprise-login-rdp.socket and works from the empty namespace.
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+SocketBindDeny=any
 RestrictNamespaces=yes
 RestrictRealtime=yes
 RestrictSUIDSGID=yes
@@ -40,6 +44,8 @@ MemoryDenyWriteExecute=yes
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
 SystemCallFilter=~@privileged @resources
+# The front confines itself further with seccomp and Landlock.
+SystemCallFilter=landlock_create_ruleset landlock_restrict_self
 CapabilityBoundingSet=
 MemoryMax=512M
 TasksMax=64

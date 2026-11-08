@@ -525,10 +525,32 @@ can't log in with a hash: the daemon wants the password whose hash matches.
 The hand-over goes to the uid the daemon looked up, never one the front
 names. So the front carries a full sandbox: `ProtectSystem=strict`,
 `ProtectHome`, `PrivateTmp`, `PrivateDevices`, `ProtectProc=invisible`,
-`NoNewPrivileges`, `/run/dbus` out of reach (it makes no bus calls), a
-`@system-service` system call filter, AF_UNIX and AF_INET(6) only, 512 MiB
-and 64 tasks. It holds no capability: systemd passes it the bound port. The
-daemon's unit has no sandbox, for the reason under [Login
+`NoNewPrivileges`, a `@system-service` system call filter, AF_UNIX only and
+no bind (`SocketBindDeny=any`), 512 MiB and 64 tasks, no capability (systemd
+passes it the bound port), an empty network namespace (`PrivateNetwork`) and
+a `/run` holding only its own directory and `/run/reprise-login`. At its
+start it refuses itself new IPv4 and IPv6 sockets, io_uring and sends with
+`MSG_FASTOPEN` with seccomp (x86_64 and aarch64; elsewhere it logs a
+warning), and every TCP connect and bind with Landlock (Linux 6.7 or later;
+an older kernel logs a warning), so it can't reconnect a socket it accepted
+to another host.
+
+A front run by an attacker still reaches:
+
+- the port and the connections it accepts on it;
+- `front.sock`, and `account.sock` and `session.sock`, which any local user
+  reaches;
+- AF_UNIX sockets elsewhere in the file system, outside `/run`, `/tmp` and
+  `/home`, that its uid may connect to.
+
+It reaches no TCP or UDP service, on this host or another, no abstract
+AF_UNIX socket, no netlink socket and no D-Bus. Without Landlock's TCP
+rules, a socket it accepted can still be reconnected to a TCP service. Without
+the seccomp filter, it can also be reconnected through TCP Fast Open on a
+kernel whose Landlock predates the Fast Open fix (Linux 7.2 and its stable
+backports).
+
+The daemon's unit has no sandbox, for the reason under [Login
 manager](#login-manager); the front starts no session, so nothing of a
 user's descends from it.
 
