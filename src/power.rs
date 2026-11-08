@@ -35,6 +35,8 @@ const PROPERTIES: &str = "org.freedesktop.DBus.Properties";
 const COVER_WAIT: Duration = Duration::from_millis(2000);
 /// How long after a refused sleep delay inhibitor it is asked for again.
 const DELAY_RETRY: Duration = Duration::from_secs(30);
+/// How long after logind refused a hint it is sent again.
+const HINT_RETRY: Duration = Duration::from_secs(5);
 /// How long a closed lid with no external output waits before its action
 /// when closing didn't cause that state (the lid at startup, reported before
 /// any output exists, or the last external output leaving). Gives late
@@ -83,6 +85,8 @@ pub(crate) enum Report {
     Unlock,
     /// The session's `State` read `closing`: its leader is gone.
     Closing,
+    /// `org.freedesktop.login1` changed hands: a restarted logind keeps no hints.
+    LogindRestarted,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -233,7 +237,8 @@ async fn run(reports: Sender<Report>, calls: async_channel::Receiver<Call>) {
             // Uncached: logind sends no change signal for `State`.
             Ok(path) => match session_proxy(&conn, path).await {
                 Ok(session) => {
-                    let watch = watch_session(conn.clone(), session, calls, reports.clone());
+                    let watch =
+                        watch_session(conn.clone(), session, calls, reports.clone(), HINT_RETRY);
                     std::thread::Builder::new()
                         .name("power-session".into())
                         .spawn(move || zbus::block_on(watch))
@@ -327,6 +332,7 @@ async fn watch_session(
     session: Proxy<'static>,
     calls: async_channel::Receiver<Call>,
     reports: Sender<Report>,
+    retry: Duration,
 ) {
     use futures_util::stream::StreamExt;
     let signals = async {
@@ -341,8 +347,12 @@ async fn watch_session(
         }
         let mut stream = reprisebus::signals(&conn, LOGIN1_NAME, rules).await;
         while let Some(sig) = stream.next().await {
-            let reprisebus::Signal::Message(m) = sig else {
-                continue;
+            let m = match sig {
+                reprisebus::Signal::Message(m) => m,
+                reprisebus::Signal::OwnerChanged => {
+                    let _ = reports.send(Report::LogindRestarted);
+                    continue;
+                }
             };
             let r = match m.header().member().map(|m| m.as_str()) {
                 Some("Lock") => Report::Lock,
@@ -353,11 +363,30 @@ async fn watch_session(
         }
     };
     let setter = async {
-        while let Ok(c) = calls.recv().await {
-            let (method, v) = match c {
-                Call::Hint(Hint::Locked(v)) => ("SetLockedHint", v),
-                Call::Hint(Hint::Idle(v)) => ("SetIdleHint", v),
-                Call::State => {
+        // Each hint logind refused, by kind, until it lands or a newer one of its kind comes.
+        let mut unsent: [Option<Hint>; 2] = [None, None];
+        let kind = |h: Hint| match h {
+            Hint::Locked(_) => 0,
+            Hint::Idle(_) => 1,
+        };
+        loop {
+            let next = if unsent.iter().any(Option::is_some) {
+                let wait = async {
+                    async_io::Timer::after(retry).await;
+                    None
+                };
+                futures_lite::future::or(async { Some(calls.recv().await) }, wait).await
+            } else {
+                Some(calls.recv().await)
+            };
+            let hints: Vec<Hint> = match next {
+                None => unsent.iter_mut().filter_map(Option::take).collect(),
+                Some(Err(_)) => return,
+                Some(Ok(Call::Hint(h))) => {
+                    unsent[kind(h)] = None;
+                    vec![h]
+                }
+                Some(Ok(Call::State)) => {
                     match session.get_property::<String>("State").await {
                         Ok(s) if s == "closing" => {
                             let _ = reports.send(Report::Closing);
@@ -367,10 +396,19 @@ async fn watch_session(
                     }
                     continue;
                 }
-                Call::HoldLid => continue,
+                Some(Ok(Call::HoldLid)) => continue,
             };
-            if let Err(e) = session.call_method(method, &(v,)).await {
-                log::warn!("power: {method}({v}) failed: {e}");
+            for h in hints {
+                let (method, v) = match h {
+                    Hint::Locked(v) => ("SetLockedHint", v),
+                    Hint::Idle(v) => ("SetIdleHint", v),
+                };
+                if let Err(e) = session.call_method(method, &(v,)).await {
+                    if next.is_some() {
+                        log::warn!("power: {method}({v}) failed: {e}; sent again every {retry:?}");
+                    }
+                    unsent[kind(h)] = Some(h);
+                }
             }
         }
     };
@@ -542,6 +580,10 @@ pub(crate) fn report(state: &mut State, r: Report) {
             crate::lockview::unlock(state);
         }
         Report::Closing => crate::loginlink::session_closing(state),
+        Report::LogindRestarted => {
+            log::info!("power: logind changed hands; the hints go out again");
+            send_hints(state);
+        }
         Report::OnBattery(v) => {
             if state.power.on_battery != v {
                 log::info!("power: {}", if v { "on battery" } else { "plugged in" });
@@ -640,15 +682,29 @@ pub fn capture_calls(state: &mut State) -> async_channel::Receiver<Call> {
     rx
 }
 
-/// Hands the loop its calls; a hint already set, as by a session born locked, goes out first.
+/// The calls `calls` holds, past every hint.
+#[cfg(test)]
+pub fn calls_but_hints(calls: &async_channel::Receiver<Call>) -> Vec<Call> {
+    std::iter::from_fn(|| calls.try_recv().ok())
+        .filter(|c| !matches!(c, Call::Hint(_)))
+        .collect()
+}
+
+/// Hands the loop its calls; both hints go out first, so logind drops what a crashed
+/// compositor left and hears a lock set before the loop ran.
 fn attach(state: &mut State, tx: async_channel::Sender<Call>) {
+    state.power.calls = Some(tx);
+    send_hints(state);
+}
+
+/// Both hints as they stand, whatever logind last heard.
+fn send_hints(state: &State) {
     let h = &state.power.hints;
-    for (set, hint) in [(h.locked, Hint::Locked(true)), (h.idle, Hint::Idle(true))] {
-        if set {
+    if let Some(tx) = &state.power.calls {
+        for hint in [Hint::Locked(h.locked), Hint::Idle(h.idle)] {
             let _ = tx.try_send(Call::Hint(hint));
         }
     }
-    state.power.calls = Some(tx);
 }
 
 /// A sleep still waiting for the cover goes on, since there is none left to wait for.
@@ -1206,11 +1262,14 @@ mod tests {
     mod logind {
         use std::io::{BufRead, BufReader};
         use std::process::{Child, Command, Stdio};
-        use std::sync::Arc;
         use std::sync::atomic::{AtomicU32, Ordering};
+        use std::sync::{Arc, Mutex};
         use std::time::{Duration, Instant};
 
-        use super::super::{LOGIN1_MANAGER, LOGIN1_NAME, LOGIN1_PATH, Report, watch_sleep};
+        use super::super::{
+            Call, Hint, LOGIN1_MANAGER, LOGIN1_NAME, LOGIN1_PATH, Report, session_proxy,
+            watch_session, watch_sleep,
+        };
 
         struct Bus(Child, String);
 
@@ -1310,6 +1369,110 @@ mod tests {
                 "two refusals, then the delay"
             );
         }
+
+        /// Refuses `SetLockedHint` while `refusals` lasts and keeps each value it took.
+        struct FakeSession {
+            refusals: Arc<AtomicU32>,
+            asked: Arc<AtomicU32>,
+            heard: Arc<Mutex<Vec<bool>>>,
+        }
+
+        #[zbus::interface(name = "org.freedesktop.login1.Session")]
+        impl FakeSession {
+            fn set_locked_hint(&self, locked: bool) -> zbus::fdo::Result<()> {
+                self.asked.fetch_add(1, Ordering::SeqCst);
+                if self.refusals.load(Ordering::SeqCst) > 0 {
+                    self.refusals.fetch_sub(1, Ordering::SeqCst);
+                    return Err(zbus::fdo::Error::Failed("not now".into()));
+                }
+                self.heard.lock().expect("heard").push(locked);
+                Ok(())
+            }
+        }
+
+        #[test]
+        fn a_refused_locked_hint_is_sent_again() {
+            let Some(bus) = bus() else {
+                eprintln!("no dbus-daemon; skipped");
+                return;
+            };
+            const SESSION: &str = "/org/freedesktop/login1/session/_31";
+            let asked = Arc::new(AtomicU32::new(0));
+            let heard = Arc::new(Mutex::new(Vec::new()));
+            let fake = FakeSession {
+                refusals: Arc::new(AtomicU32::new(2)),
+                asked: asked.clone(),
+                heard: heard.clone(),
+            };
+            let (calls_tx, calls) = async_channel::unbounded();
+            let (tx, _rx) = smithay::reexports::calloop::channel::channel::<Report>();
+            let address = bus.1.clone();
+            std::thread::spawn(move || {
+                zbus::block_on(async move {
+                    let logind = zbus::connection::Builder::address(address.as_str())
+                        .name(LOGIN1_NAME)
+                        .serve_at(SESSION, fake)
+                        .build()
+                        .await
+                        .expect("the fake logind");
+                    let ours = zbus::connection::Builder::address(address.as_str())
+                        .build()
+                        .await
+                        .expect("connect");
+                    let path = zbus::OwnedObjectPath::try_from(SESSION).expect("path");
+                    let session = session_proxy(&ours, path).await.expect("proxy");
+                    watch_session(ours, session, calls, tx, Duration::from_millis(20)).await;
+                    drop(logind);
+                });
+            });
+            calls_tx
+                .try_send(Call::Hint(Hint::Locked(true)))
+                .expect("the loop's calls");
+            let end = Instant::now() + Duration::from_secs(5);
+            while heard.lock().expect("heard").is_empty() {
+                assert!(
+                    Instant::now() < end,
+                    "no LockedHint taken after {} tries",
+                    asked.load(Ordering::SeqCst)
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            assert_eq!(
+                asked.load(Ordering::SeqCst),
+                3,
+                "two refusals, then the hint"
+            );
+            assert_eq!(*heard.lock().expect("heard"), [true]);
+        }
+    }
+
+    fn hints_heard(calls: &async_channel::Receiver<Call>) -> Vec<Hint> {
+        std::iter::from_fn(|| calls.try_recv().ok())
+            .filter_map(|c| match c {
+                Call::Hint(h) => Some(h),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_restarted_logind_hears_both_hints_again() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let calls = capture_calls(&mut h.state);
+        assert_eq!(
+            hints_heard(&calls),
+            [Hint::Locked(false), Hint::Idle(false)],
+            "the loop's start sets both"
+        );
+        crate::lockview::lock(&mut h.state);
+        assert_eq!(hints_heard(&calls), [Hint::Locked(true)]);
+        report(&mut h.state, Report::LogindRestarted);
+        assert_eq!(
+            hints_heard(&calls),
+            [Hint::Locked(true), Hint::Idle(false)],
+            "the new logind hears the lock"
+        );
     }
 
     mod remote {
@@ -1317,8 +1480,8 @@ mod tests {
         use std::sync::mpsc::Receiver;
 
         use super::super::{
-            Call, Report, capture_calls, lid_grace_over, read_record, remote_elsewhere_changed,
-            report, switch_toggled,
+            Call, Report, calls_but_hints, capture_calls, lid_grace_over, read_record,
+            remote_elsewhere_changed, report, switch_toggled,
         };
         use smithay::backend::input::{Switch, SwitchState};
 
@@ -1502,7 +1665,7 @@ mod tests {
             h.state.host = crate::compositor::Host::Greeter;
             let calls = capture_calls(&mut h.state);
             remote_elsewhere_changed(&mut h.state, true);
-            assert_eq!(calls.try_recv(), Ok(Call::HoldLid));
+            assert_eq!(calls_but_hints(&calls), [Call::HoldLid]);
             report(&mut h.state, Report::LidHold(null_fd()));
             assert!(h.state.power.lid_hold.is_some(), "the lid switch is held");
             remote_elsewhere_changed(&mut h.state, false);
@@ -1515,7 +1678,7 @@ mod tests {
                 h.state.power.lid_hold.is_none(),
                 "a hold taken after the client left is dropped"
             );
-            assert!(calls.try_recv().is_err());
+            assert!(calls_but_hints(&calls).is_empty());
         }
 
         #[test]
@@ -1524,7 +1687,7 @@ mod tests {
             let calls = capture_calls(&mut h.state);
             remote_elsewhere_changed(&mut h.state, true);
             assert!(
-                calls.try_recv().is_err(),
+                calls_but_hints(&calls).is_empty(),
                 "its startup inhibitor holds the lid"
             );
         }
