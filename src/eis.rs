@@ -129,6 +129,11 @@ pub struct EisState {
 }
 
 impl EisState {
+    #[cfg(test)]
+    pub fn is_empty(&self) -> bool {
+        self.clients.is_empty()
+    }
+
     pub fn get(&self, id: EisId) -> Option<&EisClient> {
         self.clients.iter().find(|c| c.id == id)
     }

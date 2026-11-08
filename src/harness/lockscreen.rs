@@ -1,10 +1,12 @@
 //! The portal's side of `reprise_lock_screen_v1` for tests.
 
+use std::os::unix::net::UnixStream;
 use std::sync::{Arc, Mutex};
 
 use wayland_client::{self as wc, Connection, QueueHandle};
 
-use super::input_client::reprise_input_v1::RepriseInputV1;
+use super::input_client::reprise_eis_client_v1::RepriseEisClientV1;
+use super::input_client::reprise_input_v1::{Kind, RepriseInputV1};
 use super::input_client::reprise_lock_screen_v1::{self, RepriseLockScreenV1};
 use super::{ClientSide, TestClient};
 
@@ -38,7 +40,25 @@ impl TestClient {
         let object = input.lock_screen(&self.qh(), heard.clone());
         LockScreen { object, heard }
     }
+
+    /// Send `connect_eis` for a sender of `kind` with `devices`, as the portal's ConnectToEIS
+    /// does; returns the libei client's end of the socket.
+    pub fn connect_eis(&self, kind: Kind, devices: u32) -> UnixStream {
+        let input: RepriseInputV1 = self.bind("reprise_input_v1", 9);
+        let (ours, theirs) = UnixStream::pair().expect("socket pair");
+        let _: RepriseEisClientV1 = input.connect_eis(
+            std::os::fd::AsFd::as_fd(&ours),
+            kind,
+            None,
+            devices,
+            &self.qh(),
+            (),
+        );
+        theirs
+    }
 }
+
+wc::delegate_noop!(ClientSide: ignore RepriseEisClientV1);
 
 impl LockScreen {
     /// Send `monitors` as (x, y, width, height, scale percent), primary first.

@@ -137,8 +137,9 @@
       which sends every object ended(replaced), or until the session is
       unlocked at the computer, which sends every object
       ended(console_unlocked). Either ended first disconnects every EIS
-      sender and revokes every reprise_keys_v1 object. The lock stays
-      after all but the console unlock.
+      sender and revokes every reprise_keys_v1 object, and until the
+      client destroys every object that heard it, its connect_eis for a
+      sender is refused. The lock stays after all but the console unlock.
     </description>
 
     <enum name="reason">

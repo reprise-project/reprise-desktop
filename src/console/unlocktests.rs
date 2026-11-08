@@ -367,6 +367,35 @@ fn a_console_unlock_cuts_every_remote_desktop_session_off() {
 }
 
 #[test]
+fn a_sender_asked_for_before_the_portal_heard_the_console_unlock_is_refused() {
+    use crate::harness::input_client::reprise_input_v1::Kind;
+    use crate::inputproto::{DEVICE_KEYBOARD, DEVICE_POINTER};
+    use std::io::Read;
+    let mut h = computer();
+    let (mut portal, lock) = begin(&mut h);
+    unlock_at_the_computer(&mut h);
+    assert_lock_mode_over(&h);
+    let mut theirs = portal.connect_eis(Kind::RemoteSession, DEVICE_KEYBOARD | DEVICE_POINTER);
+    h.roundtrip(&mut portal);
+    assert_eq!(ended(&lock), [Reason::ConsoleUnlocked as u32]);
+    assert!(h.state.inputproto.eis.is_empty(), "no sender is made");
+    theirs.set_nonblocking(true).expect("nonblocking");
+    assert_eq!(
+        theirs.read(&mut [0; 64]).ok(),
+        Some(0),
+        "the libei client's socket is closed"
+    );
+    lock.object.destroy();
+    h.roundtrip(&mut portal);
+    let _theirs = portal.connect_eis(Kind::RemoteSession, DEVICE_KEYBOARD | DEVICE_POINTER);
+    h.roundtrip(&mut portal);
+    assert!(
+        !h.state.inputproto.eis.is_empty(),
+        "a sender asked for after the object went is made"
+    );
+}
+
+#[test]
 fn a_locker_taking_the_lock_mid_run_cuts_every_sender_off() {
     let mut h = computer();
     let (mut portal, lock) = begin(&mut h);

@@ -209,6 +209,13 @@ impl Dispatch2<RepriseInputV1, State> for InputData {
                     resource.post_error(Error::CaptureForbidden, "sender with a capture");
                     return;
                 }
+                if kind == crate::eis::Kind::Sender
+                    && crate::console::asked_in_lock_mode(state, &resource.id())
+                {
+                    log::info!("connect_eis: a sender asked for before lock mode's end refused");
+                    data_init.init(id, EisClientData(None));
+                    return;
+                }
                 match state.eis_connect(fd, kind, present, cap, devices) {
                     Ok(ec) => {
                         if let Some(c) = cap {
