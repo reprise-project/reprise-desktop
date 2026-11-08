@@ -588,6 +588,24 @@ fn failures_back_off_the_address_and_a_pause_stops_every_login() {
 }
 
 #[test]
+fn a_session_logind_could_not_describe_at_recovery_gets_no_session_beside_it_until_it_ends() {
+    let mut run = Run::machine(config(enabled()));
+    run.d.recover_unread(vec![("c1".into(), ANNA)]);
+    assert_eq!(run.recover(vec![]), vec![]);
+    run.start();
+    assert_eq!(
+        quiet(run.verify(7, 2, "anna", ANNA)),
+        [
+            front(FrontEvent::Verified { conn: 7 }),
+            to_worker(2, ToWorker::Cancel),
+        ]
+    );
+    assert_eq!(run.after(REFUSE_DELAY).fire(Timer::Refuse(7)), denied(7, 0));
+    run.removed("c1", Some("g1"));
+    run.anna_in_background(8, 3);
+}
+
+#[test]
 fn max_sessions_refuses_a_new_session_but_not_an_existing_one() {
     let remote = MachineRemote {
         max_sessions: 1,

@@ -1392,6 +1392,7 @@ impl Daemon {
     ) {
         // A closing session can still be seat0's active one; nothing else is on screen then.
         let seat_active = seat_active.filter(|a| a != id);
+        self.remote.unread.remove(id);
         if self.orphans.iter().any(|o| o.id == id) {
             return self.orphan_gone(world, id, seat_active, out);
         }
