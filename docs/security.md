@@ -978,7 +978,20 @@ sharing and remote control grants yet.
 - **App scopes.** A program started from a desktop entry runs in a systemd
   scope `app-reprise-<app id>-<n>.scope`, where xdg-desktop-portal reads a
   host app's id. The scope is for identification and cleanup, not
-  confinement.
+  confinement. A scope is outside every logind session, so polkit judges
+  its programs by the user's display session (logind's first graphical one)
+  and sends their password prompts to that session's agent. A session that
+  isn't its user's display session, such as a Reprise started from a text
+  login while the user has a graphical session or an earlier ssh login,
+  starts its programs unscoped, in its own session. Their prompts stay in
+  it: the polkit agent runs once per user, so with the other session's
+  agent running, `pkexec` asks on its own terminal. The portal sees them
+  with no app id, Task Manager's program list is empty, Log Off leaves
+  their windowless ones running, and after a crash autostart starts its
+  entries again beside copies that still run. This covers Reprise's
+  launches only: a program that leaves its session on purpose
+  (`systemd-run --user --scope`) is judged by the display session again
+  (see Same-user code in the next section).
 - **Ending the session.** With `[session] end_processes = true` (the
   default), Log Off stops the `app-reprise-*` scopes and, after a display
   manager login, terminates the login session, so windowless programs Reprise
