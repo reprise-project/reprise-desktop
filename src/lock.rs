@@ -19,6 +19,7 @@ use reprisepam::ffi;
 use std::cell::{Cell, RefCell};
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::path::Path;
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use zeroize::{Zeroize, Zeroizing};
 
@@ -506,16 +507,24 @@ unsafe fn free_answers(resp: *mut ffi::pam_response, i: usize) {
 }
 
 /// Login name of the user running the compositor: the passwd entry for
-/// the uid, else `$USER`, else `$LOGNAME`, else "". It may block on
-/// nsswitch, so `Server::new` calls it once. An empty name means PAM can
-/// never accept anything, so `lockview::lock` logs it as an error before
-/// engaging.
+/// the uid, else `$USER`, else `$LOGNAME`, else "". The lookup may block on
+/// nsswitch, so `run` makes it at startup and a name found is kept for
+/// every later call. An empty name means PAM can never accept anything, so
+/// `lockview::lock` logs it as an error before engaging.
 pub fn current_user() -> String {
-    pick_user(
+    static FOUND: OnceLock<String> = OnceLock::new();
+    if let Some(name) = FOUND.get() {
+        return name.clone();
+    }
+    let name = pick_user(
         passwd_name(),
         std::env::var("USER").ok(),
         std::env::var("LOGNAME").ok(),
-    )
+    );
+    if !name.is_empty() {
+        let _ = FOUND.set(name.clone());
+    }
+    name
 }
 
 fn pick_user(passwd: Option<String>, user: Option<String>, logname: Option<String>) -> String {
