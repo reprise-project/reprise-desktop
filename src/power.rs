@@ -867,7 +867,7 @@ fn lid_grace_over(state: &mut State) {
 }
 
 /// The lid is closed with nothing external: `[power] lid_close` runs, or with a remote client
-/// (`remote_held`) the internal panels go dark instead. Off the seat, nothing.
+/// (`remote_held`) `held_lid`. Off the seat, nothing.
 fn lid_shut(state: &mut State) {
     if !crate::backend::session_active(state) {
         log::info!("power: lid shut off the seat; nothing to do");
@@ -875,11 +875,24 @@ fn lid_shut(state: &mut State) {
     }
     if remote_held(state) {
         log::info!("power: with a remote client, the panels go dark instead");
-        darken_panels(state);
+        held_lid(state);
         return;
     }
     let action = state.config.power.lid_close;
     run_action(state, action, Origin::Console);
+}
+
+/// A shut lid a remote client holds the action of: the panels go dark, and unless this
+/// session's own client shows its desktop, a `lid_close` that would hide the desktop locks it.
+fn held_lid(state: &mut State) {
+    let hides = !matches!(
+        state.config.power.lid_close,
+        PowerAction::Nothing | PowerAction::ScreenOff
+    );
+    if hides && !state.remote_controlled() {
+        crate::lockview::lock(state);
+    }
+    darken_panels(state);
 }
 
 fn darken_panels(state: &mut State) {
@@ -1038,7 +1051,7 @@ fn remote_lid(state: &mut State) {
     let shut = closed && !external_in_layout(state) && crate::backend::session_active(state);
     if remote_held(state) {
         if shut {
-            darken_panels(state);
+            held_lid(state);
         }
     } else {
         restore_panels(state);
@@ -1283,17 +1296,56 @@ mod tests {
         }
 
         #[test]
-        fn a_shut_lid_with_a_remote_client_elsewhere_darkens_the_panel() {
+        fn a_shut_lid_with_a_remote_client_elsewhere_locks_and_darkens_the_panel() {
             let (mut h, jobs) = laptop();
             crate::power::remote_elsewhere_changed(&mut h.state, true);
             switch_toggled(&mut h.state, Some(Switch::Lid), SwitchState::On);
-            assert!(!h.state.console_locked(), "lid_close does not run");
+            assert!(h.state.console_locked(), "the session locks");
             assert_eq!(panel_sets(&jobs), [0], "the panel goes dark");
             crate::power::remote_elsewhere_changed(&mut h.state, false);
             assert_eq!(panel_sets(&jobs), [60], "the panel comes back at 60%");
             assert!(h.state.power.lid_timer.is_some(), "the lid check is armed");
             lid_grace_over(&mut h.state);
             assert!(h.state.console_locked(), "lid_close ran");
+        }
+
+        #[test]
+        fn a_remote_client_elsewhere_locks_the_session_for_every_lid_action_that_hides_it() {
+            for (action, locks) in [
+                (PowerAction::Lock, true),
+                (PowerAction::Standby, true),
+                (PowerAction::Hibernate, true),
+                (PowerAction::TurnOff, true),
+                (PowerAction::Ask, true),
+                (PowerAction::Nothing, false),
+                (PowerAction::ScreenOff, false),
+            ] {
+                let (mut h, jobs) = laptop_with(60, |h| h.state.config.power.lid_close = action);
+                remote_elsewhere_changed(&mut h.state, true);
+                switch_toggled(&mut h.state, Some(Switch::Lid), SwitchState::On);
+                assert_eq!(h.state.console_locked(), locks, "{action:?}");
+                assert_eq!(panel_sets(&jobs), [0], "{action:?}: the panel goes dark");
+                assert!(
+                    h.state.ending.is_none(),
+                    "{action:?}: the computer stays on for the client"
+                );
+            }
+        }
+
+        #[test]
+        fn a_shut_lid_locks_when_this_sessions_client_leaves_while_one_works_elsewhere() {
+            let (mut h, jobs) = laptop();
+            remote_elsewhere_changed(&mut h.state, true);
+            let peer = h.ei_remote_session();
+            switch_toggled(&mut h.state, Some(Switch::Lid), SwitchState::On);
+            assert!(
+                !h.state.console_locked(),
+                "its own client shows the desktop"
+            );
+            assert_eq!(panel_sets(&jobs), [0]);
+            h.ei_close(peer);
+            assert!(h.state.console_locked(), "the session locks");
+            assert_eq!(panel_sets(&jobs), Vec::<u8>::new(), "the panel stays dark");
         }
 
         fn null_fd() -> OwnedFd {
