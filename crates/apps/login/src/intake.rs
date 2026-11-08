@@ -239,9 +239,8 @@ impl Links {
         Links { reopen, ..self }
     }
 
-    /// Opens `uid`'s link, answered by `IntakeOpen` then the server's first `Viewers`, or by
-    /// `IntakeLost`. A link that is opening already answers once and tries every [`RETRY`]; one
-    /// that is up answers `IntakeOpen` again.
+    /// Opens `uid`'s link, trying every [`RETRY`]; answered once by `IntakeOpen` after the server's
+    /// first report or by `IntakeLost`, and at once by `IntakeOpen` when the link is up.
     pub fn open(&self, uid: u32) {
         let retry = Retry {
             every: RETRY,
@@ -751,9 +750,8 @@ pub(crate) mod tests {
             .await;
     }
 
-    /// Links whose every link is one end of a pair whose send buffer is full and whose peer
-    /// reports no viewers and never reads, so no hand-over is ever written. The peers live in
-    /// the returned list.
+    /// Links whose every link has a full send buffer and a peer, kept in the returned list, that
+    /// reports no viewers and never reads, so no hand-over is ever written.
     fn stalled_links() -> (Links, Receiver<Input>, Rc<RefCell<Vec<UnixStream>>>) {
         let (tx, rx) = mpsc::channel(ipc::QUEUE);
         let peers: Rc<RefCell<Vec<UnixStream>>> = Rc::default();
