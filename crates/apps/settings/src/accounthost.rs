@@ -65,11 +65,18 @@ struct Change {
 
 impl SettingsApp {
     /// Ask for the status once while the login manager runs remote logins; forget it when it
-    /// stops.
+    /// stops. A set or clear under way and its dialog stay: a reloading manager reads as stopped.
     pub(crate) fn ensure_account(&mut self) {
         if !self.remote.manager {
-            self.account = Account::default();
-            self.rd_password = None;
+            let Account { change, opened, .. } = std::mem::take(&mut self.account);
+            self.account = Account {
+                change,
+                opened,
+                ..Account::default()
+            };
+            if self.account.change.is_none() {
+                self.rd_password = None;
+            }
             return;
         }
         let Some(path) = self.account_socket.clone() else {

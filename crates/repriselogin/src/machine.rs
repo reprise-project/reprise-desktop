@@ -65,7 +65,7 @@ impl MachineConfig {
         let table = match text.parse::<toml::Table>() {
             Ok(table) => table,
             Err(e) => {
-                warnings.push(e.to_string());
+                warnings.push(one_line(&e.to_string()));
                 return (config, warnings);
             }
         };
@@ -122,6 +122,18 @@ fn section<'a>(
             None
         }
     }
+}
+
+/// A TOML parse error's heading and message, without its source snippet.
+fn one_line(error: &str) -> String {
+    let snippet = |l: &str| {
+        let l = l
+            .trim_start_matches(|c: char| c.is_ascii_digit())
+            .trim_start();
+        l.is_empty() || l.starts_with('|')
+    };
+    let lines: Vec<_> = error.lines().filter(|l| !snippet(l)).collect();
+    lines.join(": ")
 }
 
 fn line(out: &mut String, key: &str, value: impl Into<toml::Value>) {
@@ -217,6 +229,16 @@ mod tests {
             }
         );
         assert!(warnings.is_empty(), "{warnings:?}");
+    }
+
+    #[test]
+    fn a_parse_error_is_one_line() {
+        let (_, warnings) = MachineConfig::parse("[login]\nshow_users = \n");
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        let line = &warnings[0];
+        assert!(!line.contains('\n'), "{line}");
+        assert!(line.starts_with("TOML parse error at line 2"), "{line}");
+        assert!(!line.contains('|'), "{line}");
     }
 
     #[test]
