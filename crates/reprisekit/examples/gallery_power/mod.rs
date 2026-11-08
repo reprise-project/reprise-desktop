@@ -1,12 +1,11 @@
-//! The Log Off and Turn off computer panels in three Blue schemes and with Classic's Cancel, at
-//! rest, hot, pressed, with Shift held and offering Disconnect, written to
-//! `target/reprisekit-gallery-power@<scale>.png`.
+//! Log Off and Turn off panels in three Blue schemes and with Classic's Cancel: at rest, hot,
+//! pressed, Shift held, offering Disconnect. Writes `target/reprisekit-gallery-power@<scale>.png`.
 
 use reprisekit::blue::Variant;
 use reprisekit::cues::Cues;
 use reprisekit::interfaces::draw_power_panel;
 use reprisekit::pointer::Interaction;
-use reprisekit::powerpanel::{Leave, Panel, Part, layout};
+use reprisekit::powerpanel::{First, Leave, Panel, Part, layout};
 use reprisekit::raster::Canvas;
 use reprisekit::text::TextRenderer;
 use reprisekit::theme::{Color, TextUnits, Theme};
@@ -16,7 +15,10 @@ const GAP: i32 = 10;
 pub fn render(scale: i32) -> Canvas {
     let theme = Theme::default().scaled(scale);
     let text = TextRenderer::load(&theme.fonts);
-    let mut shifted = Panel::turn_off(false, true, false);
+    let mut shifted = Panel::turn_off(First::StandBy {
+        live: false,
+        hibernate: true,
+    });
     shifted.set_shift(true);
     let mut cancel = Panel::log_off(Leave::SwitchUser { live: false });
     cancel.focus = Part::Cancel;
@@ -32,19 +34,25 @@ pub fn render(scale: i32) -> Canvas {
             Cues::NONE,
         ),
         (cancel, None, Cues::ALL),
-        (Panel::turn_off(false, true, false), None, Cues::NONE),
         (
-            Panel::turn_off(true, true, false),
+            Panel::turn_off(First::StandBy {
+                live: false,
+                hibernate: true,
+            }),
+            None,
+            Cues::NONE,
+        ),
+        (
+            Panel::turn_off(First::StandBy {
+                live: true,
+                hibernate: true,
+            }),
             Some((Part::Big(2), Interaction::Pressed)),
             Cues::NONE,
         ),
         (shifted, Some((Part::Big(0), Interaction::Hot)), Cues::ALL),
         (Panel::log_off(Leave::Disconnect), None, Cues::ALL),
-        (
-            Panel::turn_off(true, true, true),
-            Some((Part::Big(0), Interaction::Hot)),
-            Cues::NONE,
-        ),
+        (Panel::turn_off(First::Disconnect), None, Cues::ALL),
     ];
     let classic = theme.paint();
     let schemes = [

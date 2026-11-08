@@ -81,6 +81,14 @@ pub enum Leave {
     Disconnect,
 }
 
+/// The Turn Off panel's first button: Stand By, live or greyed and with Hibernate under Shift or
+/// not, or Disconnect.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum First {
+    StandBy { live: bool, hibernate: bool },
+    Disconnect,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Part {
     Big(usize),
@@ -130,17 +138,21 @@ impl Panel {
         }
     }
 
-    /// Stand By (live when there is a standby command, Hibernate under Shift when there is a
-    /// hibernate one), Turn Off, which has the focus, and Restart. With `disconnect`, Disconnect
-    /// takes Stand By's place and the focus, and `standby` and `hibernate` go unused.
-    pub fn turn_off(standby: bool, hibernate: bool, disconnect: bool) -> Panel {
-        let first = if disconnect {
-            Big::new(Choice::Disconnect, true)
-        } else {
-            Big {
-                shifted: hibernate.then_some(Choice::Hibernate),
-                ..Big::new(Choice::StandBy, standby)
+    /// `first`, Turn Off, which has the focus unless `first` is Disconnect, and Restart.
+    pub fn turn_off(first: First) -> Panel {
+        let (first, focus) = match first {
+            First::StandBy { live, hibernate } => {
+                let shifted = hibernate.then_some(Choice::Hibernate);
+                let stand_by = Big::new(Choice::StandBy, live);
+                (
+                    Big {
+                        shifted,
+                        ..stand_by
+                    },
+                    1,
+                )
             }
+            First::Disconnect => (Big::new(Choice::Disconnect, true), 0),
         };
         Panel {
             title: tr!("powerpanel-title-turn-off"),
@@ -149,7 +161,7 @@ impl Panel {
                 Big::new(Choice::TurnOff, true),
                 Big::new(Choice::Restart, true),
             ],
-            focus: Part::Big(if disconnect { 0 } else { 1 }),
+            focus: Part::Big(focus),
             shift: false,
         }
     }
@@ -381,7 +393,10 @@ mod tests {
 
     #[test]
     fn turn_off_focuses_turn_off_and_the_arrows_skip_a_greyed_stand_by() {
-        let mut p = Panel::turn_off(false, false, false);
+        let mut p = Panel::turn_off(First::StandBy {
+            live: false,
+            hibernate: false,
+        });
         assert_eq!(p.focus, Part::Big(1));
         assert_eq!(p.key(Key::Left), Event::None, "Stand By is greyed");
         assert_eq!(p.key(Key::Right), Event::Redraw);
@@ -414,7 +429,10 @@ mod tests {
 
     #[test]
     fn a_letter_presses_the_live_button_it_marks() {
-        let mut p = Panel::turn_off(true, false, false);
+        let mut p = Panel::turn_off(First::StandBy {
+            live: true,
+            hibernate: false,
+        });
         assert_eq!(p.key(Key::Char('S')), Event::Press(Part::Big(0)));
         assert_eq!(p.key(Key::Char('u')), Event::Press(Part::Big(1)));
         assert_eq!(p.key(Key::Char('r')), Event::Press(Part::Big(2)));
@@ -426,7 +444,10 @@ mod tests {
 
     #[test]
     fn shift_turns_stand_by_into_hibernate_when_there_is_one() {
-        let mut p = Panel::turn_off(false, true, false);
+        let mut p = Panel::turn_off(First::StandBy {
+            live: false,
+            hibernate: true,
+        });
         assert_eq!(p.shown(0), Some((Choice::StandBy, false)));
         assert_eq!(p.set_shift(true), Event::Redraw);
         assert_eq!(p.shown(0), Some((Choice::Hibernate, true)));
@@ -438,14 +459,23 @@ mod tests {
             Part::Big(1),
             "the greyed Stand By gives up the focus"
         );
-        let mut none = Panel::turn_off(true, false, false);
+        let mut none = Panel::turn_off(First::StandBy {
+            live: true,
+            hibernate: false,
+        });
         assert_eq!(none.set_shift(true), Event::None);
         assert_eq!(none.shown(0), Some((Choice::StandBy, true)));
     }
 
     #[test]
     fn the_panel_lays_out_its_cells_and_cancel() {
-        let t = layout(&Panel::turn_off(true, false, false), TextUnits::ONE);
+        let t = layout(
+            &Panel::turn_off(First::StandBy {
+                live: true,
+                hibernate: false,
+            }),
+            TextUnits::ONE,
+        );
         assert_eq!(t.size, (314, 200));
         assert_eq!(t.title, Rect::new(1, 1, 312, 43));
         assert_eq!(t.band, Rect::new(1, 46, 312, 110));
@@ -471,7 +501,10 @@ mod tests {
 
     #[test]
     fn the_panel_grows_with_the_text_but_its_icons_do_not() {
-        let p = Panel::turn_off(true, false, false);
+        let p = Panel::turn_off(First::StandBy {
+            live: true,
+            hibernate: false,
+        });
         let u = TextUnits::new(16, 11);
         let l = layout(&p, u);
         assert_eq!(l.size, (u.len(314), u.len(200)));
@@ -524,7 +557,7 @@ mod tests {
 
     #[test]
     fn the_turn_off_panel_offers_disconnect_in_stand_bys_place_with_the_focus() {
-        let mut p = Panel::turn_off(true, true, true);
+        let mut p = Panel::turn_off(First::Disconnect);
         let shown: Vec<_> = (0..p.bigs.len()).filter_map(|i| p.shown(i)).collect();
         assert_eq!(
             shown,
