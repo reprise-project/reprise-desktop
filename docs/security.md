@@ -742,12 +742,17 @@ A login for a user with no session starts one through the user's login
 shell, on the first free VT from 7 up that isn't on screen. It is a logind
 session on seat0 with `Remote=no`, so polkit treats it as a local session
 that isn't active, unless another session of the same user is active (see
-[Accepted risks](#accepted-risks)). It comes up locked: switching to its VT at the computer shows
-its Unlock dialog, never its desktop, and its clients always run in lock mode
+[Accepted risks](#accepted-risks)). It comes up locked: switching to its VT
+at the computer shows its Unlock dialog, never its desktop, even when the
+switch comes before its compositor starts (the worker marks the session's
+environment with `REPRISE_LOGIN_BACKGROUND=1`, and a compositor started
+with it locks whatever logind reports), and its clients always run in lock mode
 ([Lock mode](#lock-mode)). Off the seat a session runs no lid action and no
 idle suspend, and its power requests go through logind and polkit as an
 inactive session's. Once someone switches to it at the computer, it counts
-as a console session. A console session that a remote login reaches while
+as a console session. It keeps the mark, so it comes back locked after a
+crash restart, and a resume while its compositor starts shows the lock;
+both ask for the password once more. A console session that a remote login reaches while
 the computer shows another VT, after Switch User say, counts as a
 background session again. The daemon reads the VT on screen afresh for
 that, and an unknown VT marks nothing.

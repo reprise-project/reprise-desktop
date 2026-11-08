@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use repriselogin::frame::{FrameError, read_msg, write_msg};
 use repriselogin::greeter::{AuthKind, ErrorKind};
-use repriselogin::{GREETER_USER, SESSION_SOCKET, SOCKET_ENV};
+use repriselogin::{BACKGROUND_ENV, GREETER_USER, SESSION_SOCKET, SOCKET_ENV};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
@@ -548,7 +548,8 @@ fn fail(sock: &mut UnixStream, kind: ErrorKind, text: &str) -> i32 {
 }
 
 /// Opens the session on `vt`: its tty and environment, the VT held and, unless `background`,
-/// shown, then the credentials, `pam_open_session` and the VT owned.
+/// shown, then the credentials, `pam_open_session` and the VT owned. A background session's
+/// environment carries `BACKGROUND_ENV`, since its VT may be on screen before its compositor runs.
 fn open<V: Vts>(
     pam: &mut impl LoginPam,
     vts: &mut V,
@@ -574,6 +575,9 @@ fn open<V: Vts>(
         ("XDG_SESSION_DESKTOP", "reprise"),
     ] {
         pam.putenv(key, value).map_err(pam_err)?;
+    }
+    if background {
+        pam.putenv(BACKGROUND_ENV, "1").map_err(pam_err)?;
     }
     if mode == Mode::Greeter {
         let conf = std::fs::read_to_string(LOCALE_CONF).unwrap_or_default();
