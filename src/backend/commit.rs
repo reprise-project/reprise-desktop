@@ -61,14 +61,16 @@ pub fn quiet<'a, M: 'a>(
     !retiring && all.into_iter().all(|t| t.quiet(now))
 }
 
-/// Whether main may change a mode now: `quiet`, and no output's frame is on its thread, since
-/// that job holds the compositor a mode change goes through.
+/// Whether main may change a mode now: the session is `settled` (a paused device refuses every
+/// modeset), `quiet`, and no output's frame is on its thread, since that job holds the
+/// compositor a mode change goes through.
 pub fn modes_settle<'a, M: 'a>(
     all: impl IntoIterator<Item = &'a Track<M>> + Clone,
     retiring: bool,
+    settled: bool,
     now: Instant,
 ) -> bool {
-    quiet(all.clone(), retiring, now) && !all.into_iter().any(Track::busy)
+    settled && quiet(all.clone(), retiring, now) && !all.into_iter().any(Track::busy)
 }
 
 /// Whether `own`'s next frame is held past `STALL`: its own job or flip stalled, or another
@@ -561,8 +563,12 @@ mod tests {
         let (idle, frame) = (Track::<u32>::default(), busy());
         let now = Instant::now();
         assert!(quiet([&idle, &frame], false, now), "a frame job is quiet");
-        assert!(!modes_settle([&idle, &frame], false, now));
-        assert!(modes_settle([&idle, &idle], false, now));
+        assert!(!modes_settle([&idle, &frame], false, true, now));
+        assert!(modes_settle([&idle, &idle], false, true, now));
+        assert!(
+            !modes_settle([&idle, &idle], false, false, now),
+            "a session off its seat, or back with its device not yet reset, takes no mode"
+        );
     }
 
     #[test]

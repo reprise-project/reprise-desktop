@@ -5,7 +5,8 @@
 //! niri's, a configuration is checked against the outputs (`resolve`) before
 //! anything is applied, so a test answers what an apply would do and a refused
 //! configuration changes nothing; an apply runs head by head through
-//! `State::apply_head`, once modes settle (`backend::modes_settle`).
+//! `State::apply_head`, once modes settle (`backend::modes_settle`), or fails
+//! when it needs a device while the session is off its seat.
 
 use std::collections::HashMap;
 
@@ -338,28 +339,51 @@ fn apply_after_warm(state: &mut State, p: Pending) {
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Verdict {
     Cancel,
+    Fail,
     Hold,
     Apply,
 }
 
 /// What a waiting apply resolved against heads serial `asked` does now: cancelled once the heads
-/// moved on, held while a commit or a frame keeps modes from settling, else applied.
-fn verdict(current: u32, asked: u32, settle: bool) -> Verdict {
+/// moved on. While the session is `away` (its return may never come), failed when it needs the
+/// `device` and applied when it does not. Else held while a commit or a frame keeps modes from
+/// settling, and applied.
+fn verdict(current: u32, asked: u32, away: bool, device: bool, settle: bool) -> Verdict {
     match () {
         _ if current != asked => Verdict::Cancel,
+        _ if away && device => Verdict::Fail,
+        _ if away => Verdict::Apply,
         _ if !settle => Verdict::Hold,
         _ => Verdict::Apply,
     }
 }
 
+/// Whether applying `reqs` to `heads` commits to a device: a head turned on or off, another
+/// mode, or adaptive sync switched. Scale, transform and position alone stay on main.
+fn needs_device(heads: &[HeadState], reqs: &[(String, HeadRequest)]) -> bool {
+    reqs.iter().any(|(name, r)| {
+        let Some(h) = heads.iter().find(|h| h.name == *name) else {
+            return true;
+        };
+        let mode = r.mode.is_some_and(|m| Some(m) != h.current);
+        r.enabled != h.enabled || (r.enabled && (mode || r.adaptive_sync != h.adaptive_sync))
+    })
+}
+
 /// Apply a waiting configuration and answer it, or hold it until modes settle; cancelled when
-/// the heads changed meanwhile.
+/// the heads changed meanwhile, failed when it needs a device while the session is off its seat.
 pub fn answer(state: &mut State, p: Pending) {
+    let away = !crate::backend::session_active(state);
+    let device = needs_device(&state.outputs_mgmt.heads, &p.reqs);
     let settle = crate::backend::modes_settle(state);
-    match verdict(state.outputs_mgmt.serial, p.serial, settle) {
+    match verdict(state.outputs_mgmt.serial, p.serial, away, device, settle) {
         Verdict::Cancel => p.conf.cancelled(),
+        Verdict::Fail => {
+            log::info!("output management: the session is off its seat, the configuration fails");
+            p.conf.failed();
+        }
         Verdict::Hold => {
-            log::info!("output management: display busy, the configuration waits for it");
+            log::info!("output management: display busy or settling, the configuration waits");
             state.outputs_mgmt.held.push(p);
         }
         Verdict::Apply if apply(state, p.reqs) => p.conf.succeeded(),
@@ -367,8 +391,8 @@ pub fn answer(state: &mut State, p: Pending) {
     }
 }
 
-/// Answer the applies held for modes to settle (`backend::on_quiet`), behind a scale warm
-/// under way if there is one.
+/// Answer the applies held for modes to settle (`backend::on_quiet`, or the session's pause),
+/// behind a scale warm under way if there is one.
 pub fn release_held(state: &mut State) {
     for p in std::mem::take(&mut state.outputs_mgmt.held) {
         match state.scale_warm.as_mut() {
@@ -805,10 +829,44 @@ mod tests {
 
     #[test]
     fn an_apply_waits_for_modes_to_settle_unless_the_heads_moved_on() {
-        assert_eq!(verdict(3, 3, false), Verdict::Hold);
-        assert_eq!(verdict(3, 3, true), Verdict::Apply);
-        assert_eq!(verdict(4, 3, false), Verdict::Cancel);
-        assert_eq!(verdict(4, 3, true), Verdict::Cancel);
+        assert_eq!(verdict(3, 3, false, true, false), Verdict::Hold);
+        assert_eq!(verdict(3, 3, false, true, true), Verdict::Apply);
+        assert_eq!(verdict(4, 3, false, true, false), Verdict::Cancel);
+        assert_eq!(verdict(4, 3, false, true, true), Verdict::Cancel);
+    }
+
+    #[test]
+    fn off_its_seat_an_apply_fails_only_when_it_needs_the_device() {
+        assert_eq!(verdict(3, 3, true, true, false), Verdict::Fail);
+        assert_eq!(verdict(3, 3, true, false, false), Verdict::Apply);
+        assert_eq!(
+            verdict(4, 3, true, true, false),
+            Verdict::Cancel,
+            "the heads moved on"
+        );
+    }
+
+    #[test]
+    fn only_a_mode_power_or_adaptive_sync_change_needs_the_device() {
+        let heads = [head("A", true), head("B", false)];
+        let mut r = resolve(&heads, &[ask(&heads[0])]).unwrap()[0].1.clone();
+        r.scale = 2.0;
+        r.position = Some((100, 0));
+        r.transform = Transform::_90;
+        assert!(!needs_device(&heads, &[("A".into(), r.clone())]));
+        let changed = |f: fn(&mut HeadRequest)| {
+            let mut r = r.clone();
+            f(&mut r);
+            needs_device(&heads, &[("A".into(), r)])
+        };
+        assert!(changed(|r| r.mode = Some(1)), "another mode");
+        assert!(changed(|r| r.adaptive_sync = true), "adaptive sync on");
+        assert!(changed(|r| r.enabled = false), "a driven head turned off");
+        let parked = resolve(&heads, &[ask(&heads[1])]).unwrap()[0].1.clone();
+        assert!(
+            needs_device(&heads, &[("B".into(), parked)]),
+            "a parked head turned on"
+        );
     }
 
     #[test]

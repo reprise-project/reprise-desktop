@@ -419,8 +419,7 @@ fn the_saved_display_layout_never_records_a_remote_screen() {
     assert_eq!(h.state.saved_primary(), Some("eDP-1"));
     let r = remotes(&h);
     assert_eq!(h.state.saved_layout_of(&r[0]), None);
-    let file = std::fs::read_to_string(crate::harness::scratch().join("displays.toml"))
-        .expect("the saved layouts");
+    let file = std::fs::read_to_string(&h.state.saved_layouts.path).expect("the saved layouts");
     assert!(!file.contains("REMOTE"), "{file}");
 }
 

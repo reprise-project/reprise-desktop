@@ -64,6 +64,7 @@ pub(crate) fn pause(state: &mut State) {
     for (_, d) in b.devices.iter_mut() {
         d.drm.pause();
     }
+    crate::outputmgmt::release_held(state);
 }
 
 pub(crate) fn activate(state: &mut State) {
