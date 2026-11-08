@@ -288,6 +288,14 @@ TLS. Under reprise-login this server never listens on the network; the
 login manager takes every connection and offers NLA with a Remote Desktop
 password ([Remote logins](#remote-logins)).
 
+Without reprise-login the server listens on its port on every address, IPv6
+and IPv4 alike, and gives up with `Address already in use`, shown on
+Settings > Remote Desktop, when another socket holds the port on any of
+them. Another local user whose program holds the whole port first still
+takes every client's connection; only a certificate fingerprint other than
+the one Settings shows tells the client. Under reprise-login the login
+manager's socket holds the port from boot.
+
 It checks the password as the Unlock Computer dialog does, in a
 `reprise --rdp-password-conversation USER` helper with the password on its
 stdin, but under its own PAM service, `reprise-rdp`: `pam_unix` for `auth`
