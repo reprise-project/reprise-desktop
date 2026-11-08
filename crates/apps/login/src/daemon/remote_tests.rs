@@ -1777,6 +1777,58 @@ fn a_failed_hand_over_opens_the_link_again_for_the_next_login() {
 }
 
 #[test]
+fn a_ready_for_a_login_whose_session_ended_is_denied_and_not_forwarded() {
+    let mut run = remote_run(enabled());
+    run.anna_in_background(7, 2);
+    run.on(Input::IntakeOpen { uid: ANNA });
+    run.removed("c2", Some("g1"));
+    assert_eq!(
+        quiet(run.on(ready(7, "anna"))),
+        [
+            front(FrontEvent::Denied {
+                conn: 7,
+                backoff_s: 0
+            }),
+            Effect::DropConn { conn: 7 },
+        ]
+    );
+    assert_eq!(run.fire(Timer::Handover(7)), [], "nothing left to deny");
+}
+
+#[test]
+fn a_login_waiting_as_a_viewed_link_drops_hurries_its_reopen() {
+    let mut run = remote_run(enabled());
+    run.anna_in_background(7, 2);
+    run.on(Input::IntakeOpen { uid: ANNA });
+    run.viewers(ANNA, 1);
+    run.on(ready(7, "anna"));
+    run.on(Input::Forwarded { conn: 7, ok: false });
+    run.verify(8, 3, "anna", ANNA);
+    assert_eq!(
+        run.on(Input::IntakeLost { uid: ANNA }),
+        [
+            Effect::ReopenIntake { uid: ANNA },
+            Effect::OpenIntake { uid: ANNA },
+        ]
+    );
+}
+
+#[test]
+fn a_link_closing_as_its_unviewed_session_ends_logs_and_arms_nothing() {
+    let mut run = anna_unviewed_for_30();
+    run.on(Input::IntakeOpen { uid: ANNA });
+    run.viewers(ANNA, 0);
+    let ended = run
+        .after(Duration::from_secs(30 * 60))
+        .fire(Timer::Disconnected {
+            id: "c2".into(),
+            generation: 1,
+        });
+    assert_eq!(quiet(ended), [Effect::TerminateSession("c2".into())]);
+    assert_eq!(run.on(Input::IntakeLost { uid: ANNA }), []);
+}
+
+#[test]
 fn a_lost_link_of_a_uid_with_no_session_is_not_reopened() {
     let mut run = remote_run(enabled());
     run.anna_in_background(7, 2);

@@ -181,15 +181,18 @@ impl State {
 
 struct Link {
     serial: u64,
-    /// `None` while it opens.
-    queue: Option<Rc<Queue>>,
+    /// False until its server first reports.
+    up: bool,
+    queue: Rc<Queue>,
     pace: Rc<Pace>,
     task: AbortHandle,
 }
 
-/// The wait between an opening link's tries, which a login waiting on a reopen shortens.
+/// The wait between an opening link's tries, which a waiting login shortens, and when it gives
+/// up, which a later open or reopen extends.
 struct Pace {
     every: Cell<Duration>,
+    until: Cell<Instant>,
     hurried: Notify,
 }
 
@@ -198,6 +201,12 @@ impl Pace {
         if every < self.every.get() {
             self.every.set(every);
             self.hurried.notify_one();
+        }
+    }
+
+    fn extend(&self, until: Instant) {
+        if until > self.until.get() {
+            self.until.set(until);
         }
     }
 
@@ -287,9 +296,7 @@ impl Links {
         let mut st = self.state.borrow_mut();
         match st.links.get(&uid) {
             Some(Link {
-                queue: Some(_),
-                serial,
-                ..
+                up: true, serial, ..
             }) => {
                 let (input, state, serial) = (self.input.clone(), self.state.clone(), *serial);
                 // A link that drops before this runs has sent its IntakeLost, the answer.
@@ -300,21 +307,26 @@ impl Links {
                 });
                 return;
             }
-            Some(link) => return link.pace.hurry(retry.every),
+            Some(link) => {
+                link.pace.hurry(retry.every);
+                return link.pace.extend(Instant::now() + retry.within);
+            }
             None => {}
         }
         st.serials += 1;
         let serial = st.serials;
         let pace = Rc::new(Pace {
             every: Cell::new(retry.every),
+            until: Cell::new(Instant::now() + retry.within),
             hurried: Notify::new(),
         });
+        let queue = Rc::new(Queue::default());
         let run = LinkTask {
             uid,
             serial,
+            queue: queue.clone(),
             open: self.open.clone(),
             pace: pace.clone(),
-            within: retry.within,
             deadline: self.deadline,
             input: self.input.clone(),
             state: self.state.clone(),
@@ -322,45 +334,48 @@ impl Links {
         let task = tokio::task::spawn_local(run.run()).abort_handle();
         let link = Link {
             serial,
-            queue: None,
+            up: false,
+            queue,
             pace,
             task,
         };
         st.links.insert(uid, link);
     }
 
-    /// Queues `handover` with `fd` on `uid`'s link, answered by `Forwarded`. False, closing `fd`,
-    /// when the link is down, holds [`MAX_FORWARDS`], or the hand-over does not fit a frame.
+    /// Queues `handover` with `fd` on `uid`'s link, answered by `Forwarded`; a link still opening
+    /// tries every [`RETRY`] from then, and a uid with none gets one opened. False, closing `fd`,
+    /// when the link holds [`MAX_FORWARDS`] or the hand-over does not fit a frame.
     pub fn forward(&self, uid: u32, conn: u64, fd: OwnedFd, handover: Box<HandOver>) -> bool {
-        let st = self.state.borrow();
-        let Some(queue) = st.links.get(&uid).and_then(|l| l.queue.as_ref()) else {
-            return false;
+        let frame = match frame::encode(&IntakeMessage::HandOver(handover)) {
+            Ok(frame) => frame,
+            Err(e) => {
+                log::warn!("the hand-over of conn {conn}: {}", ipc::error_kind(&e));
+                return false;
+            }
         };
-        if queue.len() >= MAX_FORWARDS {
+        if !self.state.borrow().links.contains_key(&uid) {
+            log::info!("uid {uid} has no hand-over link for conn {conn}; opening one");
+            self.open(uid);
+        }
+        let st = self.state.borrow();
+        let link = &st.links[&uid];
+        if link.queue.len() >= MAX_FORWARDS {
             log::warn!("uid {uid}'s session reads no hand-overs; refusing conn {conn}");
             return false;
         }
-        match frame::encode(&IntakeMessage::HandOver(handover)) {
-            Ok(frame) => {
-                queue
-                    .waiting
-                    .borrow_mut()
-                    .push_back(Forward { conn, frame, fd });
-                queue.queued.notify_one();
-                true
-            }
-            Err(e) => {
-                log::warn!("the hand-over of conn {conn}: {}", ipc::error_kind(&e));
-                false
-            }
+        if !link.up {
+            link.pace.hurry(RETRY);
         }
+        (link.queue.waiting.borrow_mut()).push_back(Forward { conn, frame, fd });
+        link.queue.queued.notify_one();
+        true
     }
 
     /// Drops `conn`'s hand-over and closes its socket if a link still holds it, written or not.
     /// One being written takes its link down, since part of its frame may be out.
     pub fn drop_conn(&self, conn: u64) {
         let st = self.state.borrow();
-        for queue in st.links.values().filter_map(|l| l.queue.as_ref()) {
+        for queue in st.links.values().map(|l| &l.queue) {
             queue.waiting.borrow_mut().retain(|f| f.conn != conn);
             queue.untaken.borrow_mut().retain(|f| f.conn != conn);
             let writing = queue.writing.borrow_mut().take_if(|(c, _)| *c == conn);
@@ -383,13 +398,13 @@ impl Links {
     }
 }
 
-/// The task of `uid`'s link `serial`, opening it within `within`.
+/// The task of `uid`'s link `serial`, opening it at its pace.
 struct LinkTask {
     uid: u32,
     serial: u64,
+    queue: Rc<Queue>,
     open: Opener,
     pace: Rc<Pace>,
-    within: Duration,
     deadline: Duration,
     input: mpsc::Sender<Input>,
     state: Rc<RefCell<State>>,
@@ -402,22 +417,21 @@ impl LinkTask {
         let LinkTask {
             uid,
             serial,
+            queue,
             open,
             pace,
-            mut within,
             deadline,
             input,
             state,
         } = self;
-        let queue = Rc::new(Queue::default());
         let mut opened = false;
         let mut give_up: Option<Instant> = None;
         loop {
             let takes = queue.takes.get();
-            match open_until(uid, &open, &pace, within).await {
+            match open_until(uid, &open, &pace).await {
                 Ok((stream, reader, count)) => {
                     match state.borrow_mut().current(uid, serial) {
-                        Some(link) => link.queue = Some(queue.clone()),
+                        Some(link) => link.up = true,
                         None => return,
                     }
                     let told = opened || input.send(Input::IntakeOpen { uid }).await.is_ok();
@@ -451,7 +465,7 @@ impl LinkTask {
                 _ => now + deadline,
             };
             give_up = Some(at);
-            within = at.saturating_duration_since(now);
+            pace.until.set(at);
             pace.every.set(RETRY);
         }
         if state.borrow_mut().current(uid, serial).is_none() {
@@ -472,27 +486,31 @@ impl LinkTask {
     }
 }
 
-/// Tries `open` at `pace` until a link's server reports or `within` has passed. A connect
-/// alone proves nothing: systemd holds the socket while the server is down or restarting.
+/// Tries `open` at `pace` until a link's server reports or the pace's `until` has passed. A
+/// connect alone proves nothing: systemd holds the socket while the server is down or restarting.
 async fn open_until(
     uid: u32,
     open: &Opener,
     pace: &Pace,
-    within: Duration,
 ) -> io::Result<(UnixStream, FdFrameReader, u32)> {
-    let give_up = Instant::now() + within;
     loop {
-        let left = give_up.saturating_duration_since(Instant::now());
-        let tried = async {
+        let mut tried = std::pin::pin!(async {
             let stream = open(uid).await?;
             let (reader, count) = first_report(&stream).await?;
             Ok::<_, io::Error>((stream, reader, count))
+        });
+        let tried = loop {
+            let until = pace.until.get();
+            match tokio::time::timeout_at(until.into(), &mut tried).await {
+                Ok(tried) => break tried,
+                Err(_) if pace.until.get() > until => {}
+                Err(_) => return Err(io::ErrorKind::TimedOut.into()),
+            }
         };
-        match tokio::time::timeout(left, tried).await {
-            Ok(Ok(opened)) => return Ok(opened),
-            Ok(Err(e)) if Instant::now() + pace.every.get() >= give_up => return Err(e),
-            Ok(Err(_)) => pace.wait().await,
-            Err(_) => return Err(io::ErrorKind::TimedOut.into()),
+        match tried {
+            Ok(opened) => return Ok(opened),
+            Err(e) if Instant::now() + pace.every.get() >= pace.until.get() => return Err(e),
+            Err(_) => pace.wait().await,
         }
     }
 }
@@ -908,9 +926,6 @@ pub(crate) mod tests {
 
                 drop(rdp);
                 assert_eq!(next(&mut rx).await, Input::IntakeLost { uid });
-                let (pipe, mut pipe_w) = watched_pipe();
-                assert!(!links.forward(uid, 10, pipe, Box::new(hand_over(10))));
-                assert_closed(&mut pipe_w);
             })
             .await;
     }
@@ -1163,11 +1178,18 @@ pub(crate) mod tests {
                 links.close_all_but(&BTreeSet::from([uid]));
                 let (pipe, mut w) = watched_pipe();
                 assert!(links.forward(uid, 1, pipe, Box::new(hand_over(1))));
-                let (pipe, mut gone) = watched_pipe();
-                assert!(!links.forward(uid + 1, 2, pipe, Box::new(hand_over(2))));
-                assert_closed(&mut gone);
                 assert!(is_open(&mut w));
                 nothing_within(&mut rx, Duration::from_millis(100)).await;
+                assert_eq!(peers.borrow().len(), 2, "the kept link serves its forward");
+
+                let (pipe, _w) = watched_pipe();
+                assert!(links.forward(uid + 1, 2, pipe, Box::new(hand_over(2))));
+                opened(&mut rx, uid + 1).await;
+                assert_eq!(
+                    peers.borrow().len(),
+                    3,
+                    "the closed link's uid gets a new one"
+                );
                 drop(peers);
             })
             .await;
@@ -1423,6 +1445,146 @@ pub(crate) mod tests {
                 took(&rdp, 0).await;
                 assert_eq!(next(&mut rx).await, Input::Forwarded { conn: 0, ok: true });
                 assert_closed(&mut ends[0]);
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn a_hand_over_sent_after_its_link_closed_reaches_the_next_server() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let (dir, listener) = runtime_dir();
+                let (links, mut rx, stopped) = linked_at(dir.path(), &listener, WAIT).await;
+                let uid = own_uid();
+                drop(stopped);
+                assert_eq!(next(&mut rx).await, Input::IntakeLost { uid });
+
+                let tcp = TcpListener::bind("127.0.0.1:0").unwrap();
+                let mut client = TcpStream::connect(tcp.local_addr().unwrap()).unwrap();
+                let (server, _) = tcp.accept().unwrap();
+                assert!(links.forward(uid, 9, server.into(), Box::new(hand_over(9))));
+                let (rdp, _) = tokio::time::timeout(WAIT, listener.accept())
+                    .await
+                    .expect("the hand-over opens the link again")
+                    .unwrap();
+                report(&rdp, 0).await;
+                opened(&mut rx, uid).await;
+                let (got, fd) = read_hand_over(&rdp).await;
+                assert_eq!(got, hand_over(9));
+                took(&rdp, 9).await;
+                assert_eq!(next(&mut rx).await, Input::Forwarded { conn: 9, ok: true });
+                let mut handed = TcpStream::from(fd.expect("the client's socket came along"));
+                handed.write_all(b"hello").unwrap();
+                let mut text = [0u8; 5];
+                client.read_exact(&mut text).unwrap();
+                assert_eq!(&text, b"hello");
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn a_hand_over_sent_after_its_link_closed_fails_at_the_deadline_with_no_server() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let (dir, listener) = runtime_dir();
+                let deadline = Duration::from_millis(300);
+                let (links, mut rx, stopped) = linked_at(dir.path(), &listener, deadline).await;
+                let uid = own_uid();
+                drop(stopped);
+                assert_eq!(next(&mut rx).await, Input::IntakeLost { uid });
+                drop(listener);
+
+                let (pipe, mut pipe_w) = watched_pipe();
+                let sent = Instant::now();
+                assert!(links.forward(uid, 9, pipe, Box::new(hand_over(9))));
+                assert_eq!(next(&mut rx).await, Input::Forwarded { conn: 9, ok: false });
+                assert!(sent.elapsed() >= Duration::from_millis(250));
+                assert_eq!(next(&mut rx).await, Input::IntakeLost { uid });
+                assert_closed(&mut pipe_w);
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn a_hand_over_sent_while_its_link_reopens_waits_for_it_trying_every_retry() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let (dir, listener) = runtime_dir();
+                let (tx, mut rx) = mpsc::channel(ipc::QUEUE);
+                let (open, up) = gated_opener(dir.path());
+                let retry = Retry {
+                    every: Duration::from_secs(1),
+                    within: WAIT,
+                };
+                let links = Links::new(tx, open, WAIT).reopening(retry);
+                let uid = own_uid();
+                links.reopen(uid);
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                up.set(true);
+
+                let (pipe, _w) = watched_pipe();
+                assert!(links.forward(uid, 9, pipe, Box::new(hand_over(9))));
+                let (rdp, _) = tokio::time::timeout(Duration::from_millis(500), listener.accept())
+                    .await
+                    .expect("a waiting hand-over tries every RETRY, not every second")
+                    .unwrap();
+                report(&rdp, 0).await;
+                opened(&mut rx, uid).await;
+                let (got, _fd) = read_hand_over(&rdp).await;
+                assert_eq!(got, hand_over(9));
+            })
+            .await;
+    }
+
+    /// Opens at `dir` once the flag is set; NotFound before, as with no server's socket yet.
+    fn gated_opener(dir: &Path) -> (Opener, Rc<Cell<bool>>) {
+        let up = Rc::new(Cell::new(false));
+        let open: Opener = {
+            let (at, up) = (dir.to_path_buf(), up.clone());
+            Rc::new(move |uid| {
+                let (at, up) = (at.clone(), up.get());
+                Box::pin(async move {
+                    if !up {
+                        return Err(io::ErrorKind::NotFound.into());
+                    }
+                    open_at(&at, uid).await
+                })
+            })
+        };
+        (open, up)
+    }
+
+    #[tokio::test]
+    async fn a_reopen_asked_while_a_forward_opens_its_link_tries_as_long_as_a_reopen() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let (dir, listener) = runtime_dir();
+                let (tx, mut rx) = mpsc::channel(ipc::QUEUE);
+                let (open, up) = gated_opener(dir.path());
+                let retry = Retry {
+                    every: Duration::from_secs(1),
+                    within: WAIT,
+                };
+                let links = Links::new(tx, open, Duration::from_millis(300)).reopening(retry);
+                let uid = own_uid();
+                let (pipe, _w) = watched_pipe();
+                assert!(links.forward(uid, 9, pipe, Box::new(hand_over(9))));
+                links.reopen(uid);
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                up.set(true);
+
+                let (rdp, _) = tokio::time::timeout(WAIT, listener.accept())
+                    .await
+                    .expect("the link tries past the forward's 300 ms until the reopen's deadline")
+                    .unwrap();
+                report(&rdp, 0).await;
+                opened(&mut rx, uid).await;
+                let (got, _fd) = read_hand_over(&rdp).await;
+                assert_eq!(got, hand_over(9));
             })
             .await;
     }
