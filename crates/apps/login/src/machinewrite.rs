@@ -28,18 +28,6 @@ pub fn apply(input: &str, path: &Path) -> Result<(), Error> {
     atomic::replace(path, config.to_toml().as_bytes(), 0o755, 0o644).map_err(Error::Io)
 }
 
-/// `warning` on one line: a TOML parse error's heading and message, without its source snippet.
-pub fn one_line(warning: &str) -> String {
-    let snippet = |l: &str| {
-        let l = l
-            .trim_start_matches(|c: char| c.is_ascii_digit())
-            .trim_start();
-        l.is_empty() || l.starts_with('|')
-    };
-    let lines: Vec<_> = warning.lines().filter(|l| !snippet(l)).collect();
-    lines.join(": ")
-}
-
 #[cfg(test)]
 mod tests {
     use std::fs::Permissions;
@@ -171,20 +159,6 @@ mod tests {
         };
         assert_eq!(warnings.len(), 1, "{warnings:?}");
         assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
-    }
-
-    #[test]
-    fn a_parse_error_is_one_line() {
-        let (_, warnings) = MachineConfig::parse("[login]\nshow_users = \n");
-        assert!(warnings[0].contains('\n'), "{warnings:?}");
-        let line = one_line(&warnings[0]);
-        assert!(!line.contains('\n'), "{line}");
-        assert!(line.starts_with("TOML parse error at line 2"), "{line}");
-        assert!(!line.contains('|'), "{line}");
-        assert_eq!(
-            one_line("port: expected a number"),
-            "port: expected a number"
-        );
     }
 
     #[test]

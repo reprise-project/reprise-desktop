@@ -272,10 +272,14 @@ pub fn read_login(page: &Form, id: &str, c: &mut MachineConfig) -> bool {
             }
         }
         LOGIN_END_AFTER => {
-            if let Some((row, _)) = combo(id)
-                && let Some(e) = END_AFTER.get(row)
-            {
-                c.remote.end_disconnected_after_min = e.0;
+            if let Some((row, text)) = combo(id) {
+                let minutes = match END_AFTER.get(row) {
+                    Some(e) => Ok(e.0),
+                    None => text.trim_end_matches(" minutes").parse().map(Some),
+                };
+                if let Ok(m) = minutes {
+                    c.remote.end_disconnected_after_min = m;
+                }
             }
         }
         _ => return false,

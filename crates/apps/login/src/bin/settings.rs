@@ -63,7 +63,7 @@ fn main() -> ExitCode {
         Ok(()) => {}
         Err(Error::Invalid(warnings)) => {
             for w in warnings {
-                eprintln!("{}", machinewrite::one_line(&w));
+                eprintln!("{w}");
             }
             return ExitCode::from(2);
         }

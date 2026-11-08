@@ -444,13 +444,27 @@ fn each_helper_exit_tells_its_own_message() {
              login.interface: \"aqua\" is not classic, blue or glass"
             .into())
     );
-    for code in [126, 127] {
-        assert_eq!(
-            told(code, "Error executing command as another user\n"),
-            Err("The change was not authorized.".into()),
-            "pkexec exit {code}"
-        );
-    }
+    assert_eq!(
+        told(
+            126,
+            "Error executing command as another user: Request dismissed\n"
+        ),
+        Err("The change was not authorized.".into()),
+        "the prompt dismissed"
+    );
+    assert_eq!(
+        told(
+            127,
+            "Error executing command as another user: Not authorized\n\n\
+             This incident has been reported.\n"
+        ),
+        Err("The change was not authorized.".into()),
+        "a polkit denial"
+    );
+    assert_eq!(
+        told(127, "No authentication agent found.\n"),
+        Err("The change was not authorized.\n\nNo authentication agent found.".into())
+    );
     let missing = loginhost::apply(&cfg, &|_: &str| {
         Err(io::Error::from(io::ErrorKind::NotFound))
     });
@@ -458,6 +472,167 @@ fn each_helper_exit_tells_its_own_message() {
         missing,
         Err("The login manager's settings could not be saved.\n\nentity not found".into())
     );
+}
+
+#[test]
+fn a_missing_helper_is_named_and_pkexec_never_runs() {
+    let missing = loginhost::apply(&MachineConfig::default(), &|toml: &str| {
+        loginhost::run_helper(Path::new("/nonexistent/reprise-login-settings"), toml)
+    });
+    assert_eq!(
+        missing,
+        Err("The login manager's settings could not be saved.\n\n\
+             /nonexistent/reprise-login-settings is not installed."
+            .into())
+    );
+}
+
+fn error_text(a: &SettingsApp) -> Option<String> {
+    a.error.as_ref().map(|b| b.fields.text.clone())
+}
+
+#[test]
+fn an_unreadable_or_invalid_file_is_never_saved_over() {
+    let files = [
+        ("not-toml", Some("[login\nshow_users = false\n")),
+        (
+            "bad-value",
+            Some("[remote_desktop]\nenabled = true\nport = 0\n"),
+        ),
+        ("a-directory", None),
+    ];
+    for (tag, text) in files {
+        let dir = tmp(&format!("unreadable-{tag}"));
+        let path = dir.join("login.toml");
+        match text {
+            Some(t) => std::fs::write(&path, t).unwrap(),
+            None => std::fs::create_dir(&path).unwrap(),
+        }
+        let mut a = app(&dir);
+        a.login_run = helper_saves;
+        open_login(&mut a);
+        let opened = error_text(&a).unwrap_or_default();
+        let (head, why) = opened.split_once("\n\n").unwrap_or((&opened, ""));
+        let at = path.display();
+        let expected_head = match tag {
+            "a-directory" => format!(
+                "The login manager's settings in {at} could not be read, so this page doesn't \
+                 save over them."
+            ),
+            _ => format!(
+                "The login manager's settings in {at} have values this page can't use, so it \
+                 doesn't save over them. Correct or remove these lines as root, then press \
+                 Apply again:"
+            ),
+        };
+        assert_eq!(head, expected_head, "{tag}: told when the page opens");
+        match tag {
+            "bad-value" => assert_eq!(why, "remote_desktop.port: 0 is not between 1 and 65535"),
+            "not-toml" => assert!(
+                why.starts_with("TOML parse error") && !why.contains('\n'),
+                "a parse error on one line: {why}"
+            ),
+            _ => assert_eq!(why, "Is a directory (os error 21)"),
+        }
+
+        a.error = None;
+        SENT.with(|s| s.borrow_mut().clear());
+        pick(&mut a, "login_interface", 2);
+        assert!(a.dirty(), "{tag}: the edit lights Apply");
+        a.sheet_event(propsheet::Event::Apply);
+        a.wake();
+        assert_eq!(SENT.with(|s| s.borrow().len()), 0, "{tag}: nothing is sent");
+        assert_eq!(error_text(&a), Some(opened), "{tag}: told again on Apply");
+        assert!(a.dirty(), "{tag}: the edit stays");
+
+        a.error = None;
+        if text.is_none() {
+            std::fs::remove_dir(&path).unwrap();
+        }
+        std::fs::write(&path, "[login]\ninterface = \"blue\"\n").unwrap();
+        a.sheet_event(propsheet::Event::Apply);
+        a.wake();
+        assert_eq!(
+            SENT.with(|s| s.borrow().len()),
+            0,
+            "{tag}: the fixed file reloads first"
+        );
+        assert_eq!(error_text(&a).as_deref(), Some(CHANGED), "{tag}");
+        assert_eq!(combo_text(login(&a), "login_interface"), "Blue", "{tag}");
+        assert!(!a.dirty(), "{tag}: the page holds the fixed file");
+
+        a.error = None;
+        pick(&mut a, "login_interface", 2);
+        a.sheet_event(propsheet::Event::Apply);
+        a.wake();
+        assert_eq!(
+            SENT.with(|s| s.borrow().len()),
+            1,
+            "{tag}: the next Apply saves"
+        );
+        assert_eq!(error_text(&a), None, "{tag}");
+    }
+}
+
+const CHANGED: &str = "Your changes were not saved: the login manager's settings changed since \
+                       this page opened. The page now shows the new settings; make your changes \
+                       again.";
+
+#[test]
+fn a_file_changed_since_the_page_opened_is_not_overwritten() {
+    let dir = tmp("changed-since");
+    let path = dir.join("login.toml");
+    std::fs::write(&path, "[login]\ninterface = \"blue\"\n").unwrap();
+    let mut a = app(&dir);
+    a.login_run = helper_saves;
+    open_login(&mut a);
+    SENT.with(|s| s.borrow_mut().clear());
+    pick(&mut a, "login_interface", 2);
+    std::fs::write(
+        &path,
+        "[login]\ninterface = \"blue\"\nautologin_user = \"zoe\"\n",
+    )
+    .unwrap();
+    a.sheet_event(propsheet::Event::Apply);
+    a.wake();
+    assert_eq!(SENT.with(|s| s.borrow().len()), 0, "nothing is sent");
+    assert_eq!(error_text(&a).as_deref(), Some(CHANGED));
+    assert_eq!(combo_text(login(&a), "login_autologin"), "zoe");
+    assert_eq!(combo_text(login(&a), "login_interface"), "Blue");
+    assert!(!a.dirty(), "the page holds the file as it now reads");
+
+    a.error = None;
+    pick(&mut a, "login_interface", 2);
+    a.sheet_event(propsheet::Event::Apply);
+    a.wake();
+    let sent = SENT.with(|s| s.borrow().clone());
+    assert_eq!(sent.len(), 1, "an edit on the new file saves");
+    assert_eq!(
+        MachineConfig::parse(&sent[0])
+            .0
+            .login
+            .autologin_user
+            .as_deref(),
+        Some("zoe"),
+        "the other change is kept"
+    );
+}
+
+#[test]
+fn picking_the_hand_edited_end_after_row_back_restores_its_minutes() {
+    let dir = tmp("end-after-back");
+    std::fs::write(
+        dir.join("login.toml"),
+        "[remote_desktop]\nenabled = true\nend_disconnected_after = 90\n",
+    )
+    .unwrap();
+    let mut a = app(&dir);
+    open_login(&mut a);
+    assert_eq!(combo_text(login(&a), "login_end_after"), "90 minutes");
+    pick(&mut a, "login_end_after", 1);
+    assert!(a.dirty());
+    pick(&mut a, "login_end_after", 5);
+    assert!(!a.dirty(), "90 minutes again is the file's own value");
 }
 
 #[test]
@@ -848,16 +1023,78 @@ fn the_dialog_closes_when_the_login_manager_stops() {
     let dir = tmp("rd-stopped");
     let (socket, _seen) = account_daemon(
         &dir,
+        vec![AccountReply::Status {
+            remote_password: false,
+        }],
+    );
+    let mut a = managed_app(&dir, socket);
+    press(&mut a, pages::RD_PASSWORD_SET);
+    remote_read(&mut a, remotehost::Remote::default());
+    assert!(a.rd_password.is_none());
+}
+
+#[test]
+fn a_refusal_after_a_manager_blink_shows_in_its_dialog() {
+    let dir = tmp("rd-blink-refused");
+    let (socket, seen) = account_daemon(
+        &dir,
+        vec![
+            AccountReply::Status {
+                remote_password: false,
+            },
+            AccountReply::Refused {
+                reason: AccountRefusal::WrongPassword,
+            },
+            AccountReply::Status {
+                remote_password: false,
+            },
+        ],
+    );
+    let mut a = managed_app(&dir, socket);
+    assert_eq!(seen.recv_timeout(ANSWERED), Ok(AccountRequest::Status));
+    press(&mut a, pages::RD_PASSWORD_SET);
+    ok(&mut a, &SET_NEW);
+    remote_read(&mut a, remotehost::Remote::default());
+    remote_read(&mut a, managed());
+    a.wake();
+    let d = a.rd_password.as_ref().expect("the dialog stays open");
+    assert_eq!(d.why(), "The password is incorrect.");
+}
+
+#[test]
+fn a_request_out_when_the_manager_blinks_keeps_set_grey_and_its_done_still_shows() {
+    let dir = tmp("rd-blink");
+    let (socket, seen) = account_daemon(
+        &dir,
         vec![
             AccountReply::Status {
                 remote_password: false,
             },
             AccountReply::Done,
+            AccountReply::Status {
+                remote_password: false,
+            },
         ],
     );
     let mut a = managed_app(&dir, socket);
+    assert_eq!(seen.recv_timeout(ANSWERED), Ok(AccountRequest::Status));
     press(&mut a, pages::RD_PASSWORD_SET);
     ok(&mut a, &SET_NEW);
     remote_read(&mut a, remotehost::Remote::default());
-    assert!(a.rd_password.is_none());
+    remote_read(&mut a, managed());
+    assert!(
+        !lit(remote(&a), pages::RD_PASSWORD_SET),
+        "Set... still waits"
+    );
+    assert!(
+        !lit(remote(&a), pages::RD_PASSWORD_CLEAR),
+        "Clear... still waits"
+    );
+    a.wake();
+    assert_eq!(
+        lines(remote(&a), "rd_password_status"),
+        ["Set: clients that use Network Level Authentication log on with it."]
+    );
+    assert!(lit(remote(&a), pages::RD_PASSWORD_SET));
+    assert!(lit(remote(&a), pages::RD_PASSWORD_CLEAR));
 }
