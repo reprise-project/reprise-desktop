@@ -575,6 +575,7 @@ pub fn seal(state: &mut State, raise: impl FnOnce(&mut State)) {
     state.cancel_client_gesture();
     state.caption_clicks.reset();
     raise(state);
+    crate::saverview::locked(state);
     // A client's popup grab keeps the keyboard on its popup, refuses the focus changes below and would
     // leave a locker without keys. Ending it closes the popup.
     if let Some(k) = state.seat.get_keyboard() {

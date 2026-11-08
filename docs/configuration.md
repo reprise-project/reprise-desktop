@@ -156,7 +156,8 @@ A fullscreen window holds the saver off and it counts again from when the
 window leaves fullscreen; the lock, screen off and suspend steps keep their
 timeouts unless a program inhibits idle.
 `speed` (1 to 10), `stars`, `shapes`, `cycle_colors`, `folder` (for Photos;
-Pictures when left out) and `photo_seconds` tune them.
+Pictures when left out) and `photo_seconds` tune them. Photos runs as Blank
+while the session is locked.
 
 ## Remote Desktop
 
