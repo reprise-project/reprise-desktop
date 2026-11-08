@@ -1,4 +1,4 @@
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::io;
 use std::path::Path;
 
@@ -46,7 +46,8 @@ pub fn member_of(user: &str, group: &str) -> io::Result<Option<(u32, bool)>> {
     let Some(gid) = group_id(group)? else {
         return Ok(Some((account.uid, false)));
     };
-    let groups = group_list(user, account.gid)?;
+    let cuser = CString::new(user).map_err(|_| io::ErrorKind::InvalidInput)?;
+    let groups = group_list(&cuser, account.gid)?;
     Ok(Some((account.uid, groups.contains(&gid))))
 }
 
@@ -82,13 +83,12 @@ fn group_id(name: &str) -> io::Result<Option<u32>> {
 }
 
 /// Every group of `user`, whose primary group is `gid`.
-fn group_list(user: &str, gid: u32) -> io::Result<Vec<u32>> {
-    let cuser = CString::new(user).map_err(|_| io::ErrorKind::InvalidInput)?;
+pub(crate) fn group_list(user: &CStr, gid: u32) -> io::Result<Vec<u32>> {
     let mut groups: Vec<libc::gid_t> = vec![0; 64];
     loop {
         let mut n = libc::c_int::try_from(groups.len()).unwrap_or(libc::c_int::MAX);
         // SAFETY: `groups` holds `n` entries, and getgrouplist writes at most `n` of them.
-        let rc = unsafe { libc::getgrouplist(cuser.as_ptr(), gid, groups.as_mut_ptr(), &mut n) };
+        let rc = unsafe { libc::getgrouplist(user.as_ptr(), gid, groups.as_mut_ptr(), &mut n) };
         let n = usize::try_from(n).unwrap_or(0);
         if rc >= 0 {
             groups.truncate(n);

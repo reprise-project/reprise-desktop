@@ -38,6 +38,8 @@ pub const EARLY_END: Duration = Duration::from_secs(10);
 pub const UNLOCK_WAIT: Duration = Duration::from_secs(1);
 /// How long a worker gets from `Start` to `Started` before its login fails.
 pub const START_WAIT: Duration = Duration::from_secs(30);
+/// How long an account change's login password check gets before the change fails.
+pub const ACCOUNT_WAIT: Duration = Duration::from_secs(25);
 /// How long a login waits for the greeter's next request before it is cancelled.
 pub const AUTH_WAIT: Duration = Duration::from_secs(5 * 60);
 /// How many times an orphaned greeter's `TerminateSession` is tried before the login screen
@@ -85,6 +87,8 @@ pub enum Timer {
     AdminRefuse(WorkerId),
     /// `HANDOVER_DEADLINE` after front conn `.0`'s `Authenticate`.
     Handover(u64),
+    /// `ACCOUNT_WAIT` after account check worker `.0` was spawned.
+    Account(WorkerId),
     /// `end_disconnected_after` since background session `id` lost its last viewer.
     Disconnected { id: String, generation: u32 },
 }
@@ -489,9 +493,8 @@ impl Daemon {
         out
     }
 
-    /// Starts the front while remote logins are on, and the autologin session or the greeter;
-    /// with sessions recovered, only the greeter and only when seat0 shows none. An orphaned
-    /// greeter was showing the login screen, so that choice waits until it is gone.
+    /// Starts the front if remote logins are on, and autologin or the greeter: after recovery only a
+    /// greeter, when seat0 shows none. An orphaned greeter was on screen, so this waits for it to go.
     pub fn start(&mut self, _now: Instant, world: &World) -> Vec<Effect> {
         let mut out = Vec::new();
         if self.config.remote.enabled {
@@ -634,6 +637,7 @@ impl Daemon {
                 self.admin_refuse_over(now, worker, &mut out)
             }
             Input::Timer(Timer::Handover(conn)) => self.handover_deadline(now, conn, &mut out),
+            Input::Timer(Timer::Account(worker)) => self.account_deadline(worker, &mut out),
             Input::Timer(Timer::Disconnected { id, generation }) => {
                 self.disconnected(&id, generation, world.active_vt, &mut out)
             }
@@ -656,6 +660,11 @@ impl Daemon {
                 uid,
                 member,
             } => self.admin_member(now, worker, uid, member, &mut out),
+            Input::Member {
+                key: LookUpKey::Link(uid),
+                uid: found,
+                member,
+            } => self.link_member(uid, found, member, &mut out),
             Input::IntakeOpen { uid } => self.intake_open(uid, &mut out),
             Input::IntakeLost { uid } => self.intake_lost(now, uid, &mut out),
             Input::Viewers { uid, count } => self.viewers_reported(now, uid, count, &mut out),
@@ -1511,7 +1520,7 @@ impl Daemon {
             ));
         }
         out.push(Effect::SwitchTo(vt));
-        self.sessions.set_background(&id, false);
+        self.bring_to_console(&id);
         if self.greeter_runs(greeter) {
             out.push(Effect::Reply(GreeterReply::Success));
             self.greeter_leaves();

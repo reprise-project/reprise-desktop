@@ -11,7 +11,9 @@ use repriselogin::greeter::{AuthKind, ErrorKind};
 use zeroize::Zeroizing;
 
 use super::remote::{ASKED_MORE, NEVER_ASKED};
-use super::{Daemon, Effect, LookUpKey, StoredPassword, WORKER_ENDED, WorkerId};
+use super::{
+    ACCOUNT_WAIT, Daemon, Effect, LookUpKey, StoredPassword, Timer, WORKER_ENDED, WorkerId,
+};
 use crate::worker::{FromWorker, Mode, ToWorker};
 
 #[derive(Default)]
@@ -60,7 +62,8 @@ impl Daemon {
     ) {
         let (login_password, nt_hash) = match request {
             AccountRequest::Status => {
-                let remote_password = self.remote.passwords.iter().any(|p| p.uid == uid);
+                let remote_password =
+                    (self.remote.passwords.iter()).any(|p| p.uid == uid && p.user == user);
                 return answer(link, AccountReply::Status { remote_password }, out);
             }
             AccountRequest::SetRemotePassword {
@@ -134,6 +137,17 @@ impl Daemon {
         let c = self.remote.accounts.changes.get_mut(&link).expect("change");
         c.step = Step::Checking(worker);
         out.push(Effect::Spawn { worker, job });
+        out.push(Effect::Arm {
+            timer: Timer::Account(worker),
+            after: ACCOUNT_WAIT,
+        });
+    }
+
+    pub(super) fn account_deadline(&mut self, worker: WorkerId, out: &mut Vec<Effect>) {
+        if let Some(link) = self.account_checking(worker) {
+            out.push(Effect::Kill(worker));
+            self.account_failed(link, "the login password check took too long", out);
+        }
     }
 
     pub(super) fn account_worker_message(
