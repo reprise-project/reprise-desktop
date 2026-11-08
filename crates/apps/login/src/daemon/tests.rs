@@ -1429,6 +1429,22 @@ fn a_late_session_of_a_timed_out_start_leaves_the_next_starting_login_on_its_vt(
 }
 
 #[test]
+fn a_start_never_takes_the_vt_of_a_timed_out_start_still_running() {
+    let mut run = Run::booted();
+    run.greeter(create("anna"));
+    run.worker(2, authed("anna", 1000));
+    assert_eq!(run.greeter(GreeterRequest::StartSession), start_on(2, 7));
+    run.on(Input::Timer(Timer::Start(WorkerId(2))));
+    run.greeter(create("bob"));
+    run.worker(3, authed("bob", 1001));
+    assert_eq!(
+        run.greeter(GreeterRequest::StartSession),
+        start_on(3, 8),
+        "VT 7 is the stalled worker's until it exits"
+    );
+}
+
+#[test]
 fn a_timed_out_start_whose_session_comes_up_late_returns_to_the_login_screen() {
     let mut run = Run::booted();
     run.greeter(create("anna"));
