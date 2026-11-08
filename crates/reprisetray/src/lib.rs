@@ -628,6 +628,12 @@ async fn register(conn: &Connection) {
     }
 }
 
+/// Whether a start with `args` shows the running copy: one with `--tray` (autostart, window
+/// hidden) leaves it as it is.
+fn raises_running<S: AsRef<std::ffi::OsStr>>(args: impl IntoIterator<Item = S>) -> bool {
+    !args.into_iter().any(|a| a.as_ref() == "--tray")
+}
+
 /// Ask the instance that owns the bus name to show itself, handing over our [`Handoff`] first so its
 /// window takes focus, with its cues out after a start by key.
 async fn activate_existing(conn: &Connection, config: &Config) {
@@ -899,7 +905,8 @@ const READY_TIMEOUT: Duration = Duration::from_secs(10);
 pub enum Started {
     /// The item is up: push state through the handle, drain the receiver on every wake.
     Running(TrayHandle, Receiver<Msg>),
-    /// Another instance owns the bus name and was asked to raise itself; this one should exit.
+    /// Another instance owns the bus name (and was asked to raise itself, unless this start has
+    /// `--tray`); this one should exit.
     AlreadyRunning,
     /// No session bus or thread, or no answer within `READY_TIMEOUT`: the program runs with its window only.
     Unavailable,
@@ -977,7 +984,9 @@ pub fn start(config: Config, initial: Shown, wake: Wake) -> Started {
                     .request_name_with_flags(config.bus_name, RequestNameFlags::DO_NOT_QUEUE)
                     .await;
                 if !matches!(owned, Ok(RequestNameReply::PrimaryOwner)) {
-                    activate_existing(&conn, &config).await;
+                    if raises_running(std::env::args_os()) {
+                        activate_existing(&conn, &config).await;
+                    }
                     let _ = ready_tx.send(Started::AlreadyRunning);
                     return;
                 }
@@ -1060,6 +1069,13 @@ mod tests {
         for n in rows.nodes().iter().filter(|n| n.separator) {
             assert_eq!(rows.translate(Msg::Clicked(n.id)), None);
         }
+    }
+
+    #[test]
+    fn a_start_with_its_window_hidden_leaves_the_running_copy_hidden() {
+        assert!(!raises_running(["reprise-sound", "--tray"]));
+        assert!(raises_running(["reprise-sound"]));
+        assert!(raises_running(Vec::<String>::new()));
     }
 
     #[test]

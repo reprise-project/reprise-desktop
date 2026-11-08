@@ -513,8 +513,9 @@ pub fn setup(state: &mut State) {
     let icon_theme = state.config.icons.theme.clone();
     let pads = state.devices.pads.shared();
     let sizes = drawn_sizes(state);
-    let Some((commands, thread)) = dbus::start(tx, thread_fd, appearance, icon_theme, pads, sizes)
-    else {
+    let defers = state.env.defers_user_units;
+    let started = dbus::start(tx, thread_fd, appearance, icon_theme, pads, sizes, defers);
+    let Some((commands, thread)) = started else {
         log::warn!("tray: could not start the D-Bus thread; tray disabled");
         return;
     };

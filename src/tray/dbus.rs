@@ -643,6 +643,32 @@ fn load_icons(theme: &str) -> IconCache {
     IconCache::new(IconTheme::load(theme, &IconTheme::default_roots()))
 }
 
+/// How the tray asks for its well-known names. A session that defers to another Reprise session
+/// of the user takes only names nobody holds and lets none go, so it never takes that session's
+/// notifications, tray or settings over.
+fn name_flags(defers: bool) -> zbus::fdo::RequestNameFlags {
+    use zbus::fdo::RequestNameFlags;
+    if defers {
+        RequestNameFlags::DO_NOT_QUEUE
+    } else {
+        RequestNameFlags::default()
+    }
+}
+
+async fn own(
+    conn: &Connection,
+    name: &str,
+    flags: zbus::fdo::RequestNameFlags,
+) -> Result<(), String> {
+    use zbus::fdo::RequestNameReply;
+    match conn.request_name_with_flags(name, flags).await {
+        Ok(RequestNameReply::PrimaryOwner | RequestNameReply::AlreadyOwner) => Ok(()),
+        Ok(reply) => Err(format!("{reply:?}")),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn setup(
     events: Sender<TrayEvent>,
     eventfd: RawFd,
@@ -651,7 +677,9 @@ async fn setup(
     icon_theme: String,
     pads: crate::tabletpad::Shared,
     sizes: Vec<i32>,
+    defers: bool,
 ) -> Result<Loop, String> {
+    let flags = name_flags(defers);
     let icons: Icons = Arc::new(Mutex::new(load_icons(&icon_theme)));
     let senders: Arc<Mutex<Senders>> = Arc::default();
     let programs: Arc<Mutex<Programs>> = Arc::default();
@@ -702,7 +730,7 @@ async fn setup(
         )
         .await
         .map_err(|e| format!("object server (notifications): {e}"))?;
-    match conn.request_name(NOTIFY_NAME).await {
+    match own(&conn, NOTIFY_NAME, flags).await {
         Ok(_) => log::info!("notifications: hosting {NOTIFY_NAME}"),
         Err(_) => log::info!("notifications: {NOTIFY_NAME} already owned; balloons off"),
     }
@@ -713,7 +741,7 @@ async fn setup(
             .await
             .map_err(|e| format!("object server (screensaver): {e}"))?;
     }
-    match conn.request_name(SCREENSAVER_NAME).await {
+    match own(&conn, SCREENSAVER_NAME, flags).await {
         Ok(_) => log::info!("screensaver: hosting {SCREENSAVER_NAME}"),
         Err(e) => log::info!("screensaver: {SCREENSAVER_NAME}: {e}; inhibits go to its owner"),
     }
@@ -727,7 +755,7 @@ async fn setup(
         )
         .await
         .map_err(|e| format!("object server (settings): {e}"))?;
-    match conn.request_name(SETTINGS_NAME).await {
+    match own(&conn, SETTINGS_NAME, flags).await {
         Ok(_) => log::info!("settings portal: hosting {SETTINGS_NAME}"),
         Err(e) => {
             log::warn!("settings portal: {SETTINGS_NAME}: {e}; dark mode stays unknown to portals")
@@ -747,13 +775,13 @@ async fn setup(
         )
         .await
         .map_err(|e| format!("object server (tray): {e}"))?;
-    if let Err(e) = conn.request_name(reprisebus::tray::NAME).await {
+    if let Err(e) = own(&conn, reprisebus::tray::NAME, flags).await {
         log::warn!(
             "tray: {}: {e}; Customize... reaches nobody",
             reprisebus::tray::NAME
         );
     }
-    let own_watcher = conn.request_name(WATCHER_NAME).await.is_ok();
+    let own_watcher = own(&conn, WATCHER_NAME, flags).await.is_ok();
     conn.request_name(host_name.as_str())
         .await
         .map_err(|e| format!("host name: {e}"))?;
@@ -833,6 +861,7 @@ pub fn start(
     icon_theme: String,
     pads: crate::tabletpad::Shared,
     icon_sizes: Vec<i32>,
+    defers: bool,
 ) -> Option<(async_channel::Sender<TrayCommand>, JoinHandle<()>)> {
     let (tx, rx) = async_channel::unbounded::<TrayCommand>();
     let handle = std::thread::Builder::new()
@@ -850,6 +879,7 @@ pub fn start(
                     icon_theme,
                     pads,
                     icon_sizes,
+                    defers,
                 )
                 .await
                 {

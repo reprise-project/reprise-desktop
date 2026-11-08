@@ -160,7 +160,7 @@ fn start(state: &mut State, goal: Goal, cmd: Option<String>, critical: bool, ori
         })
         .map_err(|e| log::warn!("session end: no report channel: {}", e.error))
         .ok();
-    let stop = spawn_poll(tx);
+    let stop = spawn_poll(tx, !state.env.defers_user_units);
     let timer = state
         .handle
         .insert_source(Timer::from_duration(PROMPT_AFTER), |_, _, state| {
@@ -882,11 +882,16 @@ fn sync_prompt(state: &mut State) {
     }
 }
 
-fn spawn_poll(tx: channel::Sender<Vec<Holder>>) -> Option<async_channel::Sender<()>> {
+/// Polls the inhibitors; `ask_portal` is off beside another Reprise session, whose programs the
+/// shared portal's inhibitors and monitors belong to.
+fn spawn_poll(
+    tx: channel::Sender<Vec<Holder>>,
+    ask_portal: bool,
+) -> Option<async_channel::Sender<()>> {
     let (stop_tx, stop_rx) = async_channel::bounded::<()>(1);
     let thread = std::thread::Builder::new()
         .name("session-end".into())
-        .spawn(move || zbus::block_on(poll(tx, stop_rx)));
+        .spawn(move || zbus::block_on(poll(tx, stop_rx, ask_portal)));
     match thread {
         Ok(_) => Some(stop_tx),
         Err(e) => {
@@ -909,8 +914,16 @@ async fn connect(system: bool) -> Option<zbus::Connection> {
         .ok()
 }
 
-async fn poll(tx: channel::Sender<Vec<Holder>>, stop: async_channel::Receiver<()>) {
-    let session = connect(false).await;
+async fn poll(
+    tx: channel::Sender<Vec<Holder>>,
+    stop: async_channel::Receiver<()>,
+    ask_portal: bool,
+) {
+    let session = if ask_portal {
+        connect(false).await
+    } else {
+        None
+    };
     let system = connect(true).await;
     loop {
         let mut held = match &session {
@@ -1152,6 +1165,20 @@ mod tests {
             h.state.ended_clients,
             [crate::console::ClientsEnd::LoggedOff]
         );
+    }
+
+    #[test]
+    fn a_log_off_beside_another_reprise_session_leaves_the_remote_desktop_server_to_it() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.state.env.defers_user_units = true;
+        crate::standby::rdp_changed(&mut h.state, true);
+        assert!(
+            !h.state.standby.rdp_on(),
+            "the server is the other session's"
+        );
+        go_on(&mut h.state, Goal::LogOff, None, false);
+        assert!(h.state.ended_clients.is_empty(), "its clients stay");
     }
 
     #[test]

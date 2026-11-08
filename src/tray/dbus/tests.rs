@@ -859,3 +859,13 @@ fn the_ping_round_runs_from_the_first_watcher_to_the_last_leaving() {
     assert!(!r.left(":1.7"), "one watcher is left");
     assert!(r.left(":1.8"), "the last leaving stops it");
 }
+
+#[test]
+fn a_session_deferring_to_another_takes_only_free_names_and_replaces_none() {
+    use zbus::fdo::RequestNameFlags;
+    let deferring = name_flags(true);
+    assert!(deferring.contains(RequestNameFlags::DO_NOT_QUEUE));
+    assert!(!deferring.contains(RequestNameFlags::REPLACE_EXISTING));
+    assert!(!deferring.contains(RequestNameFlags::ALLOW_REPLACEMENT));
+    assert_eq!(name_flags(false), RequestNameFlags::default());
+}
