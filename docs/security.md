@@ -339,10 +339,15 @@ logging in. One more is closed at once, before TLS, and never touches the
 session in use. With `second_client = "replace"` one more is let in, and once
 it logs in every other connection is ended, so a password is still needed to
 take a session over. So that one address cannot hold every place through the
-login time, a third connection from an address that already has two still
-logging in is closed the same way, and so is every connection from an address
-in its back-off: a throttled address holds no place while it waits. TCP keepalive ends a connection whose
-client has gone silent within about 30 s.
+login time, a third connection from an address, or for IPv6 from the same
+/64 network, that already has two still logging in is closed the same way, and so is every
+connection from an address in its back-off: a throttled address holds no
+place while it waits. A few addresses can still hold every place: with the
+default `max_viewers = 4`, two IPv4 addresses or two IPv6 /64s that open two
+connections each, send nothing and reconnect every 10 s keep the owner's
+client out without spending a login. Under reprise-login the front's own
+limits apply instead ([Throttle](#throttle)). TCP keepalive ends a
+connection whose client has gone silent within about 30 s.
 
 Nothing is captured while no client is logged in: the portal session that
 shares the screen and takes input opens after the login and closes when the
