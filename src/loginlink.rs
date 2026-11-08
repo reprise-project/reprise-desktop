@@ -36,6 +36,8 @@ pub struct LoginLink {
     refused: bool,
     /// Streams in a row the daemon refused.
     refusals: u32,
+    /// The worker started the session in the background (`repriselogin::BACKGROUND_ENV`).
+    background: bool,
 }
 
 impl LoginLink {
@@ -49,6 +51,7 @@ impl LoginLink {
             refusal_warned: false,
             refused: false,
             refusals: 0,
+            background: false,
         }
     }
 
@@ -77,6 +80,9 @@ impl LoginLink {
 pub fn setup(state: &mut State) {
     if let Some(path) = std::env::var_os(repriselogin::SOCKET_ENV) {
         setup_at(state, PathBuf::from(path));
+    }
+    if let Some(link) = state.login_link.as_mut() {
+        link.background = std::env::var_os(repriselogin::BACKGROUND_ENV).is_some();
     }
 }
 
@@ -117,10 +123,15 @@ pub fn refuses_unlock(state: &State) -> bool {
 /// A session reprise-login started on a VT nobody shows comes up locked: Ctrl+Alt+Fn at the
 /// computer must not show its desktop. `active` is the seat's state at start.
 pub fn born(state: &mut State, active: bool) {
-    if active || state.login_link.is_none() {
+    let Some(link) = state.login_link.as_ref() else {
+        return;
+    };
+    if active && !link.background {
         return;
     }
-    crate::lockview::seat_away(state, true);
+    if !active {
+        crate::lockview::seat_away(state, true);
+    }
     crate::lockview::lock(state);
 }
 
@@ -555,6 +566,21 @@ mod tests {
         assert!(
             !h.state.console_locked(),
             "a session born on the monitor opens"
+        );
+    }
+
+    #[test]
+    fn a_background_start_locks_even_when_its_vt_is_on_the_monitor_at_start() {
+        let (mut h, _theirs) = linked();
+        h.state.login_link.as_mut().unwrap().background = true;
+        born(&mut h.state, true);
+        assert!(
+            h.state.console_locked(),
+            "a VT switched to before the compositor started shows the lock"
+        );
+        assert!(
+            !h.state.lock.seat_away,
+            "on the monitor, the lock starts its reader conversation"
         );
     }
 

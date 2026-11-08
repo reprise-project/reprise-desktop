@@ -15,6 +15,8 @@ pub const GREETER_SOCKET: &str = "/run/reprise-login/greeter.sock";
 pub const SESSION_SOCKET: &str = "/run/reprise-login/session.sock";
 /// Names the session socket in a user session's environment.
 pub const SOCKET_ENV: &str = "REPRISE_LOGIN_SOCKET";
+/// Set to `1` in a session started on a VT nobody shows: its compositor starts locked.
+pub const BACKGROUND_ENV: &str = "REPRISE_LOGIN_BACKGROUND";
 pub const GREETER_USER: &str = "reprise-greeter";
 
 /// Lines of PAM text kept and shown.
