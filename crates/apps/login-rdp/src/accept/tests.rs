@@ -502,6 +502,15 @@ fn blank_password_keeps_every_other_field() {
     assert!(!blanked.windows(6).any(|w| w == b"secret"));
 }
 
+#[test]
+fn blank_password_drops_the_password_cookie() {
+    let pdu = client_info_pdu("", Some(b"\0\0cookie".to_vec()));
+    let blanked = blank_password(&pdu).unwrap();
+    assert!(client_info(&pdu).client_info.password_cookie.is_some());
+    assert_eq!(client_info(&blanked).client_info.password_cookie, None);
+    assert!(!blanked.windows(6).any(|w| w == b"cookie"));
+}
+
 #[derive(Debug, Default)]
 struct AllLabels(Mutex<HashMap<String, Vec<u8>>>);
 

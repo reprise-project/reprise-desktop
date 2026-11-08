@@ -822,13 +822,11 @@ fn read_client_info(pdu: &[u8]) -> io::Result<(SendDataRequest<'_>, ClientInfoPd
     Ok((request, info))
 }
 
-/// The Client Info PDU `pdu` with its password emptied.
+/// The Client Info PDU `pdu` with its password emptied and its password cookie dropped.
 pub fn blank_password(pdu: &[u8]) -> io::Result<Vec<u8>> {
     let (request, mut info) = read_client_info(pdu)?;
     info.client_info.credentials.password.zeroize();
-    if let Some(mut cookie) = info.client_info.password_cookie.take() {
-        cookie.0.zeroize();
-    }
+    info.client_info.password_cookie = None;
     let user_data = ironrdp_core::encode_vec(&info).map_err(|e| invalid(&e))?;
     let blanked = SendDataRequest {
         initiator_id: request.initiator_id,
