@@ -953,7 +953,7 @@ Under `reprise-login`, the computer takes RDP connections for every user in
 the `reprise-remote` group, whether they are logged in or not.
 [install.md](install.md#remote-logins) says how to turn it on; Settings >
 Login Manager holds its settings, and an administrator's password saves
-them (polkit doesn't ask again for a few minutes).
+them, asked on each save.
 
 - **Connecting.** Point the client at this computer, port 3389 unless set
   otherwise, with your user name. Over TLS (`xfreerdp3 /v:HOST /u:USER

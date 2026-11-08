@@ -192,6 +192,22 @@ fn the_chvt_rule_refuses_only_inactive_subjects() {
 }
 
 #[test]
+fn the_login_settings_action_asks_an_administrator_every_time() {
+    let policy = data("polkit-1/actions/org.reprise.login.policy");
+    for want in [
+        "<allow_any>auth_admin</allow_any>",
+        "<allow_inactive>auth_admin</allow_inactive>",
+        "<allow_active>auth_admin</allow_active>",
+    ] {
+        assert!(policy.contains(want), "the policy has `{want}`: {policy}");
+    }
+    assert!(
+        !policy.contains("_keep"),
+        "no authorization is kept: {policy}"
+    );
+}
+
+#[test]
 fn the_remote_group_and_front_user_are_declared() {
     let sysusers = data("sysusers.d/reprise-login.conf");
     let lines: Vec<&str> = sysusers.lines().map(str::trim).collect();
