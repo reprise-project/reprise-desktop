@@ -506,6 +506,19 @@ impl Daemon {
         self.background_before = ids;
     }
 
+    /// Whether logind's removal of session `id` changes anything here: an orphan, a session of
+    /// the table or one logind could not describe, or any removal while a start is in flight or
+    /// a timed-out start's VT may be on screen.
+    pub fn acts_on_removal(&self, id: &str) -> bool {
+        self.orphans.iter().any(|o| o.id == id)
+            || self.sessions.by_id(id).is_some()
+            || self.remote.unread.contains_key(id)
+            || self.remote.left_out.contains(id)
+            || self.start_in_flight()
+            || self.remote_start_in_flight()
+            || self.stalled.iter().any(|s| s.vt != GREETER_VT)
+    }
+
     /// The VT of `worker` when its start timed out and it has not exited yet.
     pub fn stalled_vt(&self, worker: WorkerId) -> Option<u16> {
         (self.stalled.iter())

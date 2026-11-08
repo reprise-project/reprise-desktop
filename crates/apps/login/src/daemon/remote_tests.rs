@@ -788,6 +788,7 @@ fn a_session_left_out_of_the_table_on_screen_that_ends_brings_the_login_screen()
     };
     run.on(read);
     assert!(run.d.sessions.by_id("c1").is_none());
+    assert!(run.d.acts_on_removal("c1"));
     assert_eq!(run.removed("c1", None), greeter_spawn(1));
 }
 

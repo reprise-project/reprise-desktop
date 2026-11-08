@@ -35,7 +35,7 @@ use repriselogin::greeter::{ErrorKind, GreeterReply, GreeterRequest, UserEntry};
 use repriselogin::machine::MACHINE_CONFIG;
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::mpsc;
-use tokio::task::JoinHandle;
+use tokio::task::{AbortHandle, JoinHandle};
 use zeroize::Zeroizing;
 
 const USAGE: &str = "\
@@ -215,6 +215,7 @@ async fn run() -> Result<(), String> {
         front_units: logind.front_units(),
         accounts: serve_account(input.clone()),
         links: Links::new(input.clone(), opener, HANDOVER_DEADLINE),
+        timers: Timers::default(),
         backgrounds: backgrounds::Saved::default(),
         inhibitor: Inhibitor::new(Rc::new(move |what, why| {
             let l = taker.clone();
@@ -472,6 +473,7 @@ struct Runtime {
     front_units: mpsc::UnboundedSender<FrontUnit>,
     accounts: Replies,
     links: Links,
+    timers: Timers,
     /// The background sessions' ids last written to `BACKGROUNDS`.
     backgrounds: backgrounds::Saved,
     inhibitor: Inhibitor,
@@ -482,8 +484,13 @@ struct Runtime {
 struct WorldCache(Option<World>);
 
 impl WorldCache {
-    async fn for_input(&mut self, input: &Input, read: impl AsyncFnOnce() -> World) -> &World {
-        if reads_world(input) || self.0.is_none() {
+    async fn for_input(
+        &mut self,
+        input: &Input,
+        daemon: &Daemon,
+        read: impl AsyncFnOnce() -> World,
+    ) -> &World {
+        if reads_world(input, daemon) || self.0.is_none() {
             self.0 = Some(read().await);
         }
         self.0.as_ref().expect("a world was read")
@@ -491,15 +498,17 @@ impl WorldCache {
 }
 
 /// Whether handling `input` reads `active_vt` (start, power, hand-over, disconnect end): a cached
-/// one could be another VT's.
-fn reads_world(input: &Input) -> bool {
+/// one could be another VT's. A removal of a session the daemon does not act on reads nothing.
+fn reads_world(input: &Input, daemon: &Daemon) -> bool {
+    if let Input::SessionRemoved { id, .. } = input {
+        return daemon.acts_on_removal(id);
+    }
     matches!(
         input,
         Input::GreeterRequest(
             _,
             GreeterRequest::Hello | GreeterRequest::StartSession | GreeterRequest::Power { .. }
         ) | Input::Worker(_, FromWorker::Authenticated { .. })
-            | Input::SessionRemoved { .. }
             | Input::TerminateFailed { .. }
             | Input::Forwarded { .. }
             | Input::Timer(Timer::Disconnected { .. })
@@ -518,7 +527,9 @@ impl Runtime {
         }
         let (logind, users) = (&self.logind, &mut self.users);
         let world = (self.world)
-            .for_input(&input, async || read_world(logind, users).await)
+            .for_input(&input, &self.daemon, async || {
+                read_world(logind, users).await
+            })
             .await;
         let effects = self.daemon.handle(Instant::now(), world, input);
         self.run_effects(effects);
@@ -681,13 +692,7 @@ impl Runtime {
                     }
                 });
             }
-            Effect::Arm { timer, after } => {
-                let events = self.events.clone();
-                tokio::task::spawn_local(async move {
-                    tokio::time::sleep(after).await;
-                    let _ = events.send(Event::Input(Input::Timer(timer)));
-                });
-            }
+            Effect::Arm { timer, after } => self.timers.arm(timer, after, &self.events),
             Effect::Remember(remembered) => self.saver.remember(remembered),
             Effect::Disallocate(vt) => vt::disallocate(vt),
             Effect::Log(level, text) => log::log!(level, "{text}"),
@@ -764,6 +769,33 @@ impl Runtime {
                 let _ = events.send(Event::Input(Input::SwitchFailed { vt }));
             }
         });
+    }
+}
+
+/// The armed timers' tasks. A session's `Disconnected` timer stales the one before it, so a
+/// re-arm aborts that one's task rather than leave it to sleep and wake the loop for nothing.
+#[derive(Default)]
+struct Timers {
+    disconnected: HashMap<String, AbortHandle>,
+}
+
+impl Timers {
+    fn arm(&mut self, timer: Timer, after: Duration, events: &Events) {
+        let id = match &timer {
+            Timer::Disconnected { id, .. } => Some(id.clone()),
+            _ => None,
+        };
+        let events = events.clone();
+        let task = tokio::task::spawn_local(async move {
+            tokio::time::sleep(after).await;
+            let _ = events.send(Event::Input(Input::Timer(timer)));
+        });
+        if let Some(id) = id {
+            self.disconnected.retain(|_, t| !t.is_finished());
+            if let Some(before) = self.disconnected.insert(id, task.abort_handle()) {
+                before.abort();
+            }
+        }
     }
 }
 
@@ -1521,6 +1553,69 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn re_arming_a_disconnected_timer_drops_the_one_it_replaces() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let (events, mut rx) = mpsc::unbounded_channel();
+                let mut timers = Timers::default();
+                let disconnected = |id: &str, generation| Timer::Disconnected {
+                    id: id.into(),
+                    generation,
+                };
+                let short = Duration::from_millis(20);
+                timers.arm(disconnected("c2", 1), short, &events);
+                timers.arm(disconnected("c3", 2), short, &events);
+                timers.arm(disconnected("c2", 3), short * 2, &events);
+                timers.arm(Timer::Refuse(7), short, &events);
+                timers.arm(Timer::Refuse(7), short, &events);
+                tokio::time::sleep(short * 10).await;
+                let mut fired = Vec::new();
+                while let Ok(Event::Input(Input::Timer(timer))) = rx.try_recv() {
+                    fired.push(timer);
+                }
+                fired.sort_by_key(|t| format!("{t:?}"));
+                assert_eq!(
+                    fired,
+                    [
+                        disconnected("c2", 3),
+                        disconnected("c3", 2),
+                        Timer::Refuse(7),
+                        Timer::Refuse(7),
+                    ]
+                );
+                assert_eq!(timers.disconnected.len(), 2);
+            })
+            .await;
+    }
+
+    #[test]
+    fn only_a_removal_the_daemon_acts_on_reads_the_world() {
+        use repriselogin::machine::MachineConfig;
+        let removed = |id: &str| Input::SessionRemoved {
+            id: id.into(),
+            seat_active: None,
+        };
+        let anna = LogindSession {
+            id: "c1".into(),
+            user: "anna".into(),
+            uid: 1000,
+            vt: 7,
+            seat: "seat0".into(),
+            class: "user".into(),
+            service: Mode::Login.service().into(),
+            closing: false,
+        };
+        let mut daemon = Daemon::new(MachineConfig::default(), Remembered::default());
+        daemon.recover(vec![anna], Some("c1"));
+        assert!(reads_world(&removed("c1"), &daemon));
+        assert!(
+            !reads_world(&removed("c9"), &daemon),
+            "a session the daemon never knew, with no start in flight"
+        );
+    }
+
     #[test]
     fn the_sessions_logind_could_not_describe_count_as_user_sessions() {
         let session = |id: &str, class: &str, closing| LogindSession {
@@ -1645,7 +1740,20 @@ mod tests {
     #[test]
     fn the_inputs_that_can_start_a_session_read_the_world_again() {
         use repriselogin::greeter::PowerAction;
+        use repriselogin::machine::MachineConfig;
         let (w, id) = (WorkerId(1), String::from("c1"));
+        let anna = LogindSession {
+            id: id.clone(),
+            user: "anna".into(),
+            uid: 1000,
+            vt: 7,
+            seat: "seat0".into(),
+            class: "user".into(),
+            service: Mode::Login.service().into(),
+            closing: false,
+        };
+        let mut daemon = Daemon::new(MachineConfig::default(), Remembered::default());
+        daemon.recover(vec![anna], Some("c1"));
         let greeter = |r| Input::GreeterRequest(w, r);
         let fresh = [
             greeter(GreeterRequest::Hello),
@@ -1670,7 +1778,7 @@ mod tests {
             },
         ];
         for input in &fresh {
-            assert!(reads_world(input), "{input:?} reads the world");
+            assert!(reads_world(input, &daemon), "{input:?} reads the world");
         }
         let cached = [
             greeter(GreeterRequest::CancelSession),
@@ -1688,13 +1796,20 @@ mod tests {
             Input::FrontLinked,
         ];
         for input in &cached {
-            assert!(!reads_world(input), "{input:?} uses the cached world");
+            assert!(
+                !reads_world(input, &daemon),
+                "{input:?} uses the cached world"
+            );
         }
     }
 
     #[test]
     fn a_forwarded_hand_over_reads_the_world_fresh() {
-        assert!(reads_world(&Input::Forwarded { conn: 1, ok: true }));
+        let daemon = Daemon::new(Default::default(), Remembered::default());
+        assert!(reads_world(
+            &Input::Forwarded { conn: 1, ok: true },
+            &daemon
+        ));
     }
 
     #[test]
@@ -1703,7 +1818,8 @@ mod tests {
             id: "c2".into(),
             generation: 1,
         };
-        assert!(reads_world(&Input::Timer(disconnected)));
+        let daemon = Daemon::new(Default::default(), Remembered::default());
+        assert!(reads_world(&Input::Timer(disconnected), &daemon));
     }
 
     #[tokio::test]
@@ -1726,7 +1842,9 @@ mod tests {
         let mut cache = WorldCache(Some(world_on(1)));
         let on_screen = world_on(7);
         let mut handle = async |input: Input| {
-            let world = cache.for_input(&input, async || on_screen.clone()).await;
+            let world = (cache)
+                .for_input(&input, &daemon, async || on_screen.clone())
+                .await;
             daemon.handle(now, world, input)
         };
         handle(Input::Front(FrontRequest::Authenticate {
