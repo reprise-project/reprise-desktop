@@ -1240,6 +1240,23 @@ async fn nla_with_a_wrong_password_never_reaches_the_daemon() {
 }
 
 #[tokio::test]
+async fn a_refused_nla_proof_names_its_cause() {
+    let ctx = ctx_with_anna();
+    let _daemon = Daemon::link(&ctx).await;
+    let (_tell, mut heard) = mpsc::unbounded_channel();
+    let (pending, client) = nla_log_on(&ctx, hybrid("anna", "wrong"), &mut heard).await;
+    client.abort();
+    let why = pending
+        .expect_err("a wrong password is refused")
+        .to_string();
+    assert_eq!(
+        why,
+        "Network Level Authentication failed: [Credssp server error] custom error, \
+         caused by: LogonDenied: no candidate credential matched"
+    );
+}
+
+#[tokio::test]
 async fn a_hybrid_ex_client_hears_access_denied_when_the_daemon_denies() {
     let ctx = ctx_with_anna();
     let mut daemon = Daemon::link(&ctx).await;
