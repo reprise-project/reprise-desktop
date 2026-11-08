@@ -134,10 +134,8 @@ pub fn dismiss(state: &mut State) -> bool {
     true
 }
 
-/// A client destroyed popup `gone`: the keyboard leaves it now, for the popup below it or,
-/// once no grabbed popup is left, the surface they opened on (`root`). Smithay's popup
-/// keyboard grab moves it only with the next key, and any other grab holding the keyboard
-/// never does.
+/// A client destroyed popup `gone`: the keyboard moves now, not on the next key, to the popup
+/// below it or, once none is left, to `root`; under the desktop's lock, to no client.
 pub fn popup_gone(state: &mut State, gone: &WlSurface, root: &WlSurface) {
     let (Some(keyboard), Some(pointer)) = (state.seat.get_keyboard(), state.seat.get_pointer())
     else {
@@ -149,6 +147,7 @@ pub fn popup_gone(state: &mut State, gone: &WlSurface, root: &WlSurface) {
     }
     if keyboard.current_focus().as_ref() == Some(gone) {
         let to = holding(&pointer).map_or_else(|| Some(root.clone()), |g| g.current_grab());
+        let to = to.filter(|_| !state.desktop_locked());
         keyboard.set_focus(state, to, SERIAL_COUNTER.next_serial());
     }
 }
