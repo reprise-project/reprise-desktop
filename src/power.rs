@@ -33,6 +33,8 @@ const LOGIN1_SESSION: &str = "org.freedesktop.login1.Session";
 const PROPERTIES: &str = "org.freedesktop.DBus.Properties";
 /// Well under logind's `InhibitDelayMaxSec` (5 s by default).
 const COVER_WAIT: Duration = Duration::from_millis(2000);
+/// How long after a refused sleep delay inhibitor it is asked for again.
+const DELAY_RETRY: Duration = Duration::from_secs(30);
 /// How long a closed lid with no external output waits before its action
 /// when closing didn't cause that state (the lid at startup, reported before
 /// any output exists, or the last external output leaving). Gives late
@@ -246,7 +248,7 @@ async fn run(reports: Sender<Report>, calls: async_channel::Receiver<Call>) {
             .name("power-inhibitors".into())
             .spawn(move || zbus::block_on(inhibitors))
             .ok();
-        let sleep = watch_sleep(login1, reports.clone());
+        let sleep = watch_sleep(login1, reports.clone(), DELAY_RETRY);
         std::thread::Builder::new()
             .name("power-sleep".into())
             .spawn(move || zbus::block_on(sleep))
@@ -395,19 +397,34 @@ async fn sleep_delay(login1: &Proxy<'_>) -> Result<OwnedFd, String> {
     Ok(fd.into())
 }
 
-async fn take_sleep_delay(login1: &Proxy<'_>, reports: &Sender<Report>) {
+/// Whether the delay inhibitor was taken; a refusal logs at info when `loud`, else at debug.
+async fn take_sleep_delay(login1: &Proxy<'_>, reports: &Sender<Report>, loud: bool) -> bool {
     match sleep_delay(login1).await {
         Ok(fd) => {
             let _ = reports.send(Report::SleepDelay(fd));
+            true
         }
-        Err(e) => log::info!("power: no sleep delay inhibitor ({e}); no lock on sleep"),
+        Err(e) => {
+            let level = if loud {
+                log::Level::Info
+            } else {
+                log::Level::Debug
+            };
+            log::log!(
+                level,
+                "power: no sleep delay inhibitor ({e}); asked again in {retry:?}",
+                retry = DELAY_RETRY
+            );
+            false
+        }
     }
 }
 
 /// `true` hands the loop the moment to lock (it drops the fd once the cover
 /// is on screen, letting the sleep go on); `false` is the resume, when the
-/// inhibitor is taken again.
-async fn watch_sleep(login1: Proxy<'static>, reports: Sender<Report>) {
+/// inhibitor is taken again. A refused inhibitor is asked for again every
+/// `retry` until one is taken or a sleep starts without it.
+async fn watch_sleep(login1: Proxy<'static>, reports: Sender<Report>, retry: Duration) {
     use futures_util::stream::StreamExt;
     // Only logind's own broadcast is acted on (see `reprisebus::signals`), so a
     // spoofed `PrepareForSleep` cannot lock the screen or move the inhibitor.
@@ -417,8 +434,24 @@ async fn watch_sleep(login1: Proxy<'static>, reports: Sender<Report>) {
         return;
     };
     let mut signals = reprisebus::signals(login1.connection(), LOGIN1_NAME, vec![rule]).await;
-    take_sleep_delay(&login1, &reports).await;
-    while let Some(sig) = signals.next().await {
+    let mut ask_again = !take_sleep_delay(&login1, &reports, true).await;
+    loop {
+        let next = if ask_again {
+            let wait = async {
+                async_io::Timer::after(retry).await;
+                None
+            };
+            futures_lite::future::or(async { Some(signals.next().await) }, wait).await
+        } else {
+            Some(signals.next().await)
+        };
+        let Some(sig) = next else {
+            ask_again = !take_sleep_delay(&login1, &reports, false).await;
+            continue;
+        };
+        let Some(sig) = sig else {
+            return;
+        };
         let reprisebus::Signal::Message(msg) = sig else {
             continue;
         };
@@ -426,10 +459,12 @@ async fn watch_sleep(login1: Proxy<'static>, reports: Sender<Report>) {
             continue;
         };
         if starting {
+            // One taken now would hold this sleep back past the cover.
+            ask_again = false;
             let _ = reports.send(Report::Sleeping);
         } else {
             let _ = reports.send(Report::Resumed);
-            take_sleep_delay(&login1, &reports).await;
+            ask_again = !take_sleep_delay(&login1, &reports, true).await;
         }
     }
 }
@@ -1166,6 +1201,115 @@ mod tests {
             "only root speaks for the login manager"
         );
         assert!(!remote_elsewhere(&[]));
+    }
+
+    mod logind {
+        use std::io::{BufRead, BufReader};
+        use std::process::{Child, Command, Stdio};
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use std::time::{Duration, Instant};
+
+        use super::super::{LOGIN1_MANAGER, LOGIN1_NAME, LOGIN1_PATH, Report, watch_sleep};
+
+        struct Bus(Child, String);
+
+        impl Drop for Bus {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+
+        fn bus() -> Option<Bus> {
+            let mut child = Command::new("dbus-daemon")
+                .args(["--session", "--nofork", "--print-address"])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+                .ok()?;
+            let mut line = String::new();
+            BufReader::new(child.stdout.take()?)
+                .read_line(&mut line)
+                .ok()?;
+            Some(Bus(child, line.trim().to_string()))
+        }
+
+        /// Refuses `Inhibit` while `refusals` lasts, then hands out /dev/null.
+        struct FakeManager {
+            refusals: Arc<AtomicU32>,
+            asked: Arc<AtomicU32>,
+        }
+
+        #[zbus::interface(name = "org.freedesktop.login1.Manager")]
+        impl FakeManager {
+            fn inhibit(
+                &self,
+                _what: &str,
+                _who: &str,
+                _why: &str,
+                _mode: &str,
+            ) -> zbus::fdo::Result<zbus::OwnedFd> {
+                self.asked.fetch_add(1, Ordering::SeqCst);
+                if self.refusals.load(Ordering::SeqCst) > 0 {
+                    self.refusals.fetch_sub(1, Ordering::SeqCst);
+                    return Err(zbus::fdo::Error::Failed("not now".into()));
+                }
+                let null = std::fs::File::open("/dev/null").expect("/dev/null");
+                Ok(std::os::fd::OwnedFd::from(null).into())
+            }
+        }
+
+        #[test]
+        fn a_refused_sleep_delay_is_asked_for_again() {
+            let Some(bus) = bus() else {
+                eprintln!("no dbus-daemon; skipped");
+                return;
+            };
+            let asked = Arc::new(AtomicU32::new(0));
+            let fake = FakeManager {
+                refusals: Arc::new(AtomicU32::new(2)),
+                asked: asked.clone(),
+            };
+            let (tx, rx) = smithay::reexports::calloop::channel::channel::<Report>();
+            let address = bus.1.clone();
+            std::thread::spawn(move || {
+                zbus::block_on(async move {
+                    let logind = zbus::connection::Builder::address(address.as_str())
+                        .name(LOGIN1_NAME)
+                        .serve_at(LOGIN1_PATH, fake)
+                        .build()
+                        .await
+                        .expect("the fake logind");
+                    let ours = zbus::connection::Builder::address(address.as_str())
+                        .build()
+                        .await
+                        .expect("connect");
+                    let login1 = zbus::Proxy::new(&ours, LOGIN1_NAME, LOGIN1_PATH, LOGIN1_MANAGER)
+                        .await
+                        .expect("proxy");
+                    watch_sleep(login1, tx, Duration::from_millis(20)).await;
+                    drop(logind);
+                });
+            });
+            let end = Instant::now() + Duration::from_secs(5);
+            loop {
+                if let Ok(Report::SleepDelay(_)) = rx.try_recv() {
+                    break;
+                }
+                assert!(
+                    Instant::now() < end,
+                    "no delay inhibitor after {} asks",
+                    asked.load(Ordering::SeqCst)
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            assert_eq!(
+                asked.load(Ordering::SeqCst),
+                3,
+                "two refusals, then the delay"
+            );
+        }
     }
 
     mod remote {
