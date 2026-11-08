@@ -364,8 +364,12 @@ impl XdgShellHandler for State {
 
 impl State {
     /// Give a popup's `grab` (asked for with `serial`) the keyboard and the pointer, unless another
-    /// grab holds them.
+    /// grab holds them or the desktop is locked.
     pub fn set_popup_grab(&mut self, mut grab: PopupGrab<State>, serial: Serial) {
+        if self.desktop_locked() {
+            grab.ungrab(PopupUngrabStrategy::All);
+            return;
+        }
         let seat = self.seat.clone();
         if let Some(keyboard) = seat.get_keyboard() {
             let held_by_other = keyboard.is_grabbed()
