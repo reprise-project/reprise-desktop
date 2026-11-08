@@ -707,9 +707,11 @@ network time.
 - **Remote logins.** Under `reprise-login` with remote logins on,
   `reprise-login-rdp` listens on the port instead, as the system service
   `reprise-login-rdp.service` and its own system user, and has no window.
-  It runs each connection up to its login and hands it, once reprise-login
-  lets it in, to the user's `reprise-rdp --hand-over`, which the user unit
-  `reprise-rdp-handover.socket` starts. `/usr/lib/reprise/reprise-login-settings`
+  It runs each connection up to its login and, once reprise-login lets it
+  in, hands it to reprise-login, which passes it on to the user's
+  `reprise-rdp --hand-over`, which the user unit
+  `reprise-rdp-handover.socket` starts. `reprise-login-rdp.socket` holds the
+  port and passes it to the front. `/usr/lib/reprise/reprise-login-settings`
   is the helper Settings > Login Manager saves through: run by `pkexec`, it
   takes the whole file as TOML on stdin, checks it, writes
   `/etc/reprise/login.toml` and reloads reprise-login. It exits 0 when

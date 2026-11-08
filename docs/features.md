@@ -542,7 +542,9 @@ the screen takes the interface of the last session used at this computer.
   User in the Log Off dialog, or on the lock screen, brings the login
   screen back while your session keeps running, locked; its tile says
   Logged on. Logging in again goes straight back to it, unlocked. One
-  session per user: a second login resumes the first.
+  session per user: a second login resumes the first. After a restart of
+  the login manager, a session it can't read yet keeps a login of that user
+  waiting.
 - **Shut Down and Restart** from the login screen. While anyone is still
   logged on, the screen first asks for an administrator's name and
   password: a member of `wheel`, never root. Shutting down then ends every
