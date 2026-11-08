@@ -15,8 +15,12 @@ pub const MAX_PREAUTH: usize = 32;
 /// Connections one address (an IPv6 /64) may have logging in; xfreerdp3 opens two about
 /// 5 ms apart.
 pub const PREAUTH_PER_IP: usize = 2;
-/// From the TCP accept to the credentials, HYBRID_EX's verified password included: long enough
-/// for a client's user to answer its certificate or password prompt.
+/// Connections one IPv6 /48 may have logging in, whatever its /64s.
+pub const PREAUTH_PER_SITE: usize = 4;
+/// From the TCP accept to the TLS ClientHello, the X.224 request included.
+pub const HELLO: Duration = Duration::from_secs(10);
+/// From the TLS ClientHello to the credentials, HYBRID_EX's verified password included: long
+/// enough for a client's user to answer its certificate or password prompt.
 pub const HANDSHAKE: Duration = Duration::from_secs(60);
 /// From the `Authenticate` send to reprise-login's verdict: its 3 s refusal hold plus PAM.
 pub const VERDICT_WAIT: Duration = Duration::from_secs(12);
@@ -31,6 +35,8 @@ pub const MAX_RECORDING: usize = 12 * 1024;
 pub enum Refusal {
     Full,
     LoggingIn,
+    /// The address's IPv6 /48 has `PREAUTH_PER_SITE` connections logging in.
+    SiteLoggingIn,
     /// Refused for the time left.
     BackedOff(Duration),
     /// Every Network Level Authentication logon waits out a pause after many failed passwords.
@@ -42,7 +48,7 @@ impl Refusal {
     pub fn kind(&self) -> &'static str {
         match self {
             Refusal::Full => "full",
-            Refusal::LoggingIn => "logging in",
+            Refusal::LoggingIn | Refusal::SiteLoggingIn => "logging in",
             Refusal::BackedOff(_) => "backed off",
             Refusal::Paused => "NLA paused",
         }
@@ -55,6 +61,12 @@ impl fmt::Display for Refusal {
             Refusal::Full => write!(f, "{MAX_PREAUTH} connections are logging in"),
             Refusal::LoggingIn => {
                 write!(f, "{PREAUTH_PER_IP} connections from here are logging in")
+            }
+            Refusal::SiteLoggingIn => {
+                write!(
+                    f,
+                    "{PREAUTH_PER_SITE} connections from this /48 are logging in"
+                )
             }
             Refusal::BackedOff(left) => {
                 write!(
@@ -74,6 +86,18 @@ impl fmt::Display for Refusal {
 struct Counts {
     total: usize,
     by_ip: HashMap<IpAddr, usize>,
+    by_site: HashMap<IpAddr, usize>,
+}
+
+impl Counts {
+    fn release(map: &mut HashMap<IpAddr, usize>, key: &IpAddr) {
+        if let Some(n) = map.get_mut(key) {
+            *n -= 1;
+            if *n == 0 {
+                map.remove(key);
+            }
+        }
+    }
 }
 
 pub struct Limits {
@@ -87,17 +111,16 @@ pub struct Limits {
 pub struct Permit {
     counts: Rc<RefCell<Counts>>,
     ip: IpAddr,
+    site: Option<IpAddr>,
 }
 
 impl Drop for Permit {
     fn drop(&mut self) {
-        let mut counts = self.counts.borrow_mut();
+        let counts = &mut *self.counts.borrow_mut();
         counts.total -= 1;
-        if let Some(n) = counts.by_ip.get_mut(&self.ip) {
-            *n -= 1;
-            if *n == 0 {
-                counts.by_ip.remove(&self.ip);
-            }
+        Counts::release(&mut counts.by_ip, &self.ip);
+        if let Some(site) = &self.site {
+            Counts::release(&mut counts.by_site, site);
         }
     }
 }
@@ -122,14 +145,22 @@ impl Limits {
         if counts.by_ip.get(&ip).copied().unwrap_or(0) >= self.per_ip {
             return Err(Refusal::LoggingIn);
         }
+        let site = site(ip);
+        if site.is_some_and(|s| counts.by_site.get(&s).copied().unwrap_or(0) >= PREAUTH_PER_SITE) {
+            return Err(Refusal::SiteLoggingIn);
+        }
         if counts.total >= self.total {
             return Err(Refusal::Full);
         }
         counts.total += 1;
         *counts.by_ip.entry(ip).or_default() += 1;
+        if let Some(site) = site {
+            *counts.by_site.entry(site).or_default() += 1;
+        }
         Ok(Permit {
             counts: self.counts.clone(),
             ip,
+            site,
         })
     }
 
@@ -193,6 +224,16 @@ fn place(ip: IpAddr) -> IpAddr {
     match ip.to_canonical() {
         IpAddr::V6(v6) => IpAddr::V6(Ipv6Addr::from_bits(v6.to_bits() & (u128::MAX << 64))),
         v4 => v4,
+    }
+}
+
+/// The /48 an IPv6 place belongs to; none for IPv4.
+fn site(place: IpAddr) -> Option<IpAddr> {
+    match place {
+        IpAddr::V6(v6) => Some(IpAddr::V6(Ipv6Addr::from_bits(
+            v6.to_bits() & (u128::MAX << 80),
+        ))),
+        IpAddr::V4(_) => None,
     }
 }
 
@@ -294,5 +335,41 @@ mod tests {
             Some(Refusal::BackedOff(Duration::from_secs(4))),
             "a back-off holds the whole /64"
         );
+    }
+
+    #[test]
+    fn one_ipv6_48_holds_at_most_preauth_per_site_places() {
+        let mut limits = Limits::new(MAX_PREAUTH, PREAUTH_PER_IP);
+        let now = Instant::now();
+        let held: Vec<Permit> = (0..PREAUTH_PER_SITE)
+            .map(|i| {
+                let v6 = format!("2001:db8:0:{:x}::1", i / PREAUTH_PER_IP);
+                limits
+                    .admit(ip(&v6), now)
+                    .expect("admitted below the /48's cap")
+            })
+            .collect();
+        assert_eq!(
+            limits.admit(ip("2001:db8:0:ff::1"), now).err(),
+            Some(Refusal::SiteLoggingIn),
+            "another /64 of the same /48 is refused"
+        );
+        limits
+            .admit(ip("2001:db8:1::1"), now)
+            .expect("the next /48 is admitted");
+        limits
+            .admit(ip("192.0.2.1"), now)
+            .expect("IPv4 has no /48 cap");
+        let mapped: Vec<Permit> = (0..=PREAUTH_PER_SITE)
+            .map(|i| {
+                limits
+                    .admit(ip(&format!("::ffff:192.0.2.{}", 10 + i)), now)
+                    .expect("IPv4-mapped addresses have no /48 cap")
+            })
+            .collect();
+        drop((held, mapped));
+        limits
+            .admit(ip("2001:db8:0:ff::1"), now)
+            .expect("admitted once the /48's connections end");
     }
 }

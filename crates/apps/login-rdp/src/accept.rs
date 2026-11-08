@@ -34,13 +34,14 @@ use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::time::Instant;
-use tokio_rustls::TlsAcceptor;
-use tokio_rustls::rustls::KeyLog;
+use tokio_rustls::LazyConfigAcceptor;
+use tokio_rustls::rustls::{self, KeyLog};
 use tokio_rustls::server::TlsStream;
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::limits::{
-    HANDSHAKE, MAX_PREAUTH_BYTES, MAX_RECORDING, MAX_USER, NlaThrottle, Refusal, VERDICT_WAIT,
+    HANDSHAKE, HELLO, MAX_PREAUTH_BYTES, MAX_RECORDING, MAX_USER, NlaThrottle, Refusal,
+    VERDICT_WAIT,
 };
 use crate::link::LinkSender;
 use crate::negotiate;
@@ -110,6 +111,9 @@ impl fmt::Debug for Pending {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Refused {
+    /// No X.224 request and TLS ClientHello within `HELLO` of the accept.
+    NoHello,
+    /// No credentials within `HANDSHAKE` of the TLS ClientHello.
     Deadline,
     TooLong,
     Negotiation(String),
@@ -142,7 +146,7 @@ impl Refused {
     /// What the refusal counts as in the refusals report.
     pub fn kind(&self) -> &'static str {
         match self {
-            Refused::Deadline => "deadline",
+            Refused::NoHello | Refused::Deadline => "deadline",
             Refused::TooLong => "too long",
             Refused::Negotiation(_) => "negotiation",
             Refused::Tls(_) => "TLS",
@@ -172,7 +176,16 @@ impl Refused {
 impl fmt::Display for Refused {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Refused::Deadline => write!(f, "no logon info within {} s", HANDSHAKE.as_secs()),
+            Refused::NoHello => write!(
+                f,
+                "no X.224 request and TLS ClientHello within {} s",
+                HELLO.as_secs()
+            ),
+            Refused::Deadline => write!(
+                f,
+                "no logon info within {} s of the TLS handshake",
+                HANDSHAKE.as_secs()
+            ),
             Refused::TooLong => f.write_str("the client sent too much before logging on"),
             Refused::Negotiation(why) => f.write_str(why),
             Refused::Tls(e) => write!(f, "TLS handshake failed: {e}"),
@@ -334,8 +347,9 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for Limited<S> {
     }
 }
 
-/// Runs `tcp` to its Client Info PDU within `HANDSHAKE`. Under NLA it sends `Authenticate`
-/// after CredSSP; `heard` carries reprise-login's events for `conn`.
+/// Runs `tcp` to its TLS ClientHello within `HELLO`, then to its Client Info PDU within
+/// `HANDSHAKE`. Under NLA it sends `Authenticate` after CredSSP; `heard` carries reprise-login's
+/// events for `conn`.
 pub async fn to_client_info(
     tcp: TcpStream,
     conn: u64,
@@ -354,12 +368,30 @@ pub async fn to_client_info(
         attempt: &attempt,
         failed_proof: &failed_proof,
     };
-    let accepted = tokio::time::timeout(HANDSHAKE, accept(tcp, link)).await;
-    match accepted.unwrap_or(Err(Refused::Deadline)) {
+    let hello = Cell::new(None);
+    let accepted = tokio::select! {
+        accepted = accept(tcp, link, &hello) => accepted,
+        refused = deadline(&hello) => Err(refused),
+    };
+    match accepted {
         Err(refused) if failed_proof.get() && refused.counted_as().is_some() => {
             Err(Refused::FailedProof(Box::new(refused)))
         }
         accepted => accepted,
+    }
+}
+
+/// Waits out `HELLO`, then `HANDSHAKE` from the ClientHello once `hello` holds its time.
+async fn deadline(hello: &Cell<Option<Instant>>) -> Refused {
+    tokio::time::sleep(HELLO).await;
+    loop {
+        let Some(at) = hello.get() else {
+            return Refused::NoHello;
+        };
+        if Instant::now() >= at + HANDSHAKE {
+            return Refused::Deadline;
+        }
+        tokio::time::sleep_until(at + HANDSHAKE).await;
     }
 }
 
@@ -395,7 +427,11 @@ impl Drop for Link<'_> {
     }
 }
 
-async fn accept(tcp: TcpStream, mut link: Link<'_>) -> Result<Pending, Refused> {
+async fn accept(
+    tcp: TcpStream,
+    mut link: Link<'_>,
+    hello: &Cell<Option<Instant>>,
+) -> Result<Pending, Refused> {
     let (ctx, conn, peer) = (link.ctx, link.conn, link.peer);
     let mut framed = TokioFramed::new(Limited::new(tcp));
     let request = framed
@@ -435,13 +471,15 @@ async fn accept(tcp: TcpStream, mut link: Link<'_>) -> Result<Pending, Refused> 
 
     let key_log = Arc::new(ConnKeyLog::default());
     let config = (ctx.identity).server_config(true, Some(key_log.clone()));
-    let tls = TlsAcceptor::from(config)
-        .accept(Cork::new(limited))
+    let tls_error = |e: io::Error| match over_limit(&e) {
+        true => Refused::TooLong,
+        false => Refused::Tls(e.to_string()),
+    };
+    let start = LazyConfigAcceptor::new(rustls::server::Acceptor::default(), Cork::new(limited))
         .await
-        .map_err(|e| match over_limit(&e) {
-            true => Refused::TooLong,
-            false => Refused::Tls(e.to_string()),
-        })?;
+        .map_err(tls_error)?;
+    hello.set(Some(Instant::now()));
+    let tls = start.into_stream(config).await.map_err(tls_error)?;
     acceptor.mark_security_upgrade_as_done();
     steps.push(Step::SecurityUpgradeDone);
 

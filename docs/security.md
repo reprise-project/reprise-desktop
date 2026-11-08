@@ -542,10 +542,11 @@ For each login the daemon checks, in order:
 Every refusal waits until 3 s after the login reached the daemon, whatever
 refused it, so an unknown name, a name outside the group, root and a wrong
 password look the same to the client. The daemon's journal (`journalctl -b
--u reprise-login`) names the reason. A client has 60 s from its TCP accept
-to send its credentials, time for its user to answer a certificate or
-password prompt, and the login then has 8 s to reach its session. The
-caps on connections not yet logged in bound what slow clients hold.
+-u reprise-login`) names the reason. A client has 10 s from its TCP accept
+to send its X.224 request and its TLS ClientHello, then 60 s to send its
+credentials, time for its user to answer a certificate or password prompt,
+and the login then has 8 s to reach its session. The caps on connections
+not yet logged in bound what slow clients hold.
 
 ### Throttle
 
@@ -578,7 +579,8 @@ as one, and so does a client that stalls inside its AUTHENTICATE.
 
 xfreerdp opens each TLS logon twice, so one mistyped password from it
 counts two failures. Before a login the front also caps connections: 32 in
-all, 2 per IPv4 address or IPv6 /64, and 256 KiB read from each.
+all, 2 per IPv4 address or IPv6 /64, 4 per IPv6 /48, and 256 KiB read
+from each.
 
 The front logs every failed NLA password in full with the client's address,
 and every verdict reprise-login sends it. Of its other refusals before a
@@ -740,6 +742,10 @@ or it ends.
   handshake and an NTLM AUTHENTICATE's first 12 bytes each, since the count
   starts before the proof is read. Meanwhile users with a Remote Desktop
   password can't log on, and TLS logins carry on.
+- **Many addresses can fill the logins in progress.** Connections from 16
+  IPv4 addresses or 8 IPv6 /48s that each send an X.224 request and a TLS
+  ClientHello (fixed bytes, no handshake work) and then wait hold every place
+  for up to 70 s at a time.
 - **A late refusal tells the password was right.** A login refused after its
   password passed (the most sessions, no free VT, a failed start, the 8 s
   deadline) counts no failure, so its address doesn't back off. Under NLA
