@@ -31,7 +31,14 @@ fn sound_opens_sounds_and_audio_devices() {
             "set each program's volume, open"
         ]
     );
-    assert_eq!(program_for(AUDIO_DEVICES), Some("reprise-sound.desktop"));
+    assert_eq!(
+        program_for(AUDIO_DEVICES),
+        Some(("reprise-sound.desktop", &[][..]))
+    );
+    assert_eq!(
+        program_for(RD_PASSWORD_ACCOUNTS),
+        Some(("reprise-accounts.desktop", &["--remote-password"][..]))
+    );
     assert_eq!(program_for(EDIT_FILE), None);
 }
 
@@ -1627,27 +1634,17 @@ fn the_login_screen_group_pins_its_pixels_in_every_look() {
     );
 }
 
-/// The Remote Desktop page while the login manager runs remote logins, with its fingerprint,
-/// before your Remote Desktop password's status is known, then not set and set.
+/// The Remote Desktop page while the login manager runs remote logins, with its fingerprint
+/// and the row that sends you to User Accounts for your Remote Desktop password.
 #[test]
 fn the_remote_desktop_page_under_the_login_manager_pins_its_pixels_in_every_look() {
     let machine = Some("3F:9A:01");
     let mut page = remote_desktop(Area::MIN, None, false, machine);
     show_remote(&mut page, None, false, None, None, machine);
     let row = Rect::new(20, 44, 358, 435);
-    let unknown = row_pins(&page, row);
-    let mut got = vec![unknown];
-    for set in [false, true] {
-        show_rd_password(&mut page, Some(set), false);
-        got.push(row_pins(&page, row));
-    }
     assert_eq!(
-        got,
-        [
-            [0x825c80c18980d191, 0xe848d7d8954cb2ab, 0xc1d740305e6ff6d6],
-            [0xef84a824d49cbf04, 0xa7a3385216bd0031, 0x29bf690dae6c3219],
-            [0x262ba88709416289, 0x8e04bbad38017266, 0x9b06a2addc35c407],
-        ],
-        "unknown, not set, set; Classic, Blue, Glass"
+        row_pins(&page, row),
+        [0x9c2c7bd2a545b901, 0x2528886f05025373, 0x6557f484fcea80a5],
+        "Classic, Blue, Glass"
     );
 }

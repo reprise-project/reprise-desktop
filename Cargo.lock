@@ -4326,6 +4326,7 @@ dependencies = [
  "reprisebus",
  "reprisefs",
  "reprisekit",
+ "repriselogin",
  "serde",
  "zbus 6.2.1",
  "zeroize",

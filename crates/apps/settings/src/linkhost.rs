@@ -57,7 +57,7 @@ impl SettingsApp {
 
     /// Grey each link row and page button whose program has no shown entry.
     pub(crate) fn show_links(&mut self) {
-        for (button, program) in PROGRAM_BUTTONS {
+        for (button, program, _) in PROGRAM_BUTTONS {
             let shown = find(program, &self.app_dirs).is_some();
             for page in &mut self.sheet.pages {
                 page.set_enabled(button, shown);
@@ -81,11 +81,16 @@ impl SettingsApp {
 
     /// Start the program whose desktop entry id is `desktop_id`; nothing when it has no shown
     /// entry.
-    pub(crate) fn open_program(&mut self, desktop_id: &str) -> Reply {
-        match find(desktop_id, &self.app_dirs) {
-            Some(e) => launch(&e, &self.loaded.terminal),
-            None => Reply::none(),
+    /// Start `desktop_id`'s shown entry with `args` after its command line.
+    pub(crate) fn open_program(&mut self, desktop_id: &str, args: &[&str]) -> Reply {
+        let Some(e) = find(desktop_id, &self.app_dirs) else {
+            return Reply::none();
+        };
+        let mut reply = launch(&e, &self.loaded.terminal);
+        if let Some(argv) = reply.spawn.first_mut() {
+            argv.extend(args.iter().map(|a| (*a).into()));
         }
+        reply
     }
 }
 

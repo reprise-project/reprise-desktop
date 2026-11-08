@@ -48,9 +48,29 @@ impl fmt::Debug for AccountRequest {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AccountReply {
-    Status { remote_password: bool },
+    Status {
+        remote_password: bool,
+        access: RemoteAccess,
+    },
     Done,
-    Refused { reason: AccountRefusal },
+    Refused {
+        reason: AccountRefusal,
+    },
+}
+
+/// Whether the caller may set a Remote Desktop password, as the login manager decides it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RemoteAccess {
+    Allowed,
+    /// Remote logins are off on this computer.
+    Off,
+    /// The caller is not in `group`, whose members may log on remotely.
+    NotInGroup {
+        group: String,
+    },
+    /// root never logs on remotely.
+    Root,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -125,6 +145,15 @@ mod tests {
             r#"{"refused":{"reason":"same_as_login"}}"#
         );
         assert_eq!(body(&AccountRequest::Status), r#""status""#);
+        assert_eq!(
+            body(&AccountReply::Status {
+                remote_password: true,
+                access: RemoteAccess::NotInGroup {
+                    group: "rdp users".into()
+                },
+            }),
+            r#"{"status":{"remote_password":true,"access":{"not_in_group":{"group":"rdp users"}}}}"#
+        );
     }
 
     #[test]

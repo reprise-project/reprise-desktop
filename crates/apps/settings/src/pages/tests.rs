@@ -97,14 +97,40 @@ fn every_bind_names_a_control_on_exactly_one_page() {
 }
 
 /// Every page's text fits its rects under each interface, in Tahoma and in DejaVu Sans, the
-/// default family's second face, at each text size.
+/// default family's second face, at each text size, Remote Desktop also as the login manager
+/// lays it out. Buttons do not widen, so each of Remote Desktop's labels must fit with room for
+/// the focus rect.
 #[test]
 fn every_page_fits_its_text_under_every_interface() {
-    let over = reprisekit::interfaces::form_overflows(|i, _, _| {
+    let pages = |i: reprisekit::interface::Interface| {
         let sheet = under(i.as_str());
-        Page::all()
+        let mut forms: Vec<(String, Form)> = Page::all()
             .map(|p| (p.label().to_string(), sheet.pages[p.index()].clone()))
-            .collect()
+            .collect();
+        let managed = remote_desktop(Area::MIN, None, false, Some(""));
+        forms.push(("Remote Desktop, managed".into(), managed));
+        forms
+    };
+    let over = reprisekit::interfaces::form_overflows(|i, _, _| pages(i));
+    assert!(over.is_empty(), "{}", over.join("\n"));
+    let over = reprisekit::interfaces::overflows(|i, theme, text| {
+        let px = theme.fonts.size_px;
+        let mut over = Vec::new();
+        for (name, form) in pages(i) {
+            if !name.starts_with("Remote Desktop") {
+                continue;
+            }
+            for it in &form.items {
+                if let Control::Button { label, .. } = &it.control {
+                    let label = reprisekit::text::split_mnemonic(label).0;
+                    let by = text.ink_width(&label, false, px) + 12 - theme.text.len(it.rect.width);
+                    if by > 0 {
+                        over.push((format!("{name}, {label}"), it.id, by));
+                    }
+                }
+            }
+        }
+        over
     });
     assert!(over.is_empty(), "{}", over.join("\n"));
 }
@@ -176,14 +202,6 @@ fn every_dialog_fits_its_text_under_every_interface() {
                 crate::shortcutdlg::ShortcutDialog::for_program("Ctrl+Alt+T", vec![]).form,
             ),
         ];
-        for p in [
-            crate::rdpassworddlg::Purpose::Set,
-            crate::rdpassworddlg::Purpose::Clear,
-        ] {
-            let mut d = crate::rdpassworddlg::RdPasswordDialog::new(p, 1);
-            d.refused(repriselogin::account::AccountRefusal::SameAsLogin);
-            forms.push((d.title().into(), d.form));
-        }
         for kind in reprisekit::saver::Kind::ALL {
             let d = crate::saverdlg::SaverDialog::new(kind, &Settings::default());
             forms.push((format!("{kind:?} settings"), d.form));
@@ -191,43 +209,6 @@ fn every_dialog_fits_its_text_under_every_interface() {
         forms
     });
     assert!(over.is_empty(), "{}", over.join("\n"));
-}
-
-/// The Remote Desktop password dialogs empty, typed into, then refused.
-#[test]
-fn the_remote_desktop_password_dialogs_pin_their_pixels_in_every_look() {
-    use crate::rdpassworddlg::{self, Purpose, RdPasswordDialog};
-    let mut got = Vec::new();
-    for p in [Purpose::Set, Purpose::Clear] {
-        let mut d = RdPasswordDialog::new(p, 1);
-        let (w, h) = d.client();
-        let whole = Rect::new(0, 0, w, h);
-        got.push(row_pins(&d.form, whole));
-        for id in [
-            rdpassworddlg::LOGIN,
-            rdpassworddlg::NEW,
-            rdpassworddlg::CONFIRM,
-        ] {
-            if d.form.item(id).is_some() {
-                rdpassworddlg::type_into(&mut d, id, "swordfish");
-            }
-        }
-        got.push(row_pins(&d.form, whole));
-        d.refused(repriselogin::account::AccountRefusal::NotRemoteUser);
-        got.push(row_pins(&d.form, whole));
-    }
-    assert_eq!(
-        got,
-        [
-            [0x2257e143d4ae3064, 0x62ee661248c965f0, 0x053345cacc82ef33],
-            [0xfbfd5ca4ae78819f, 0x9189bdc2eb60b61d, 0x9c99f9185f026ec6],
-            [0x13e6874b649e692f, 0xb6d0e8a9e682b0d9, 0x1669cff72d11d12a],
-            [0xbabbbdfc0331d2cc, 0x8a87746c7e76c83b, 0xd311d41a3e1af5f0],
-            [0x23a60d53daf65d43, 0xc34d4f182551418e, 0x969db73445924479],
-            [0x90839a3197dc33b3, 0x7fad7217f0b61d3a, 0xf9b3cd0d18d1666d],
-        ],
-        "Set then Clear: empty, typed, refused; Classic, Blue, Glass"
-    );
 }
 
 /// A hash of `row` of `form` drawn in each of Classic, Blue and Glass, with the test fonts.

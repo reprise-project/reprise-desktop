@@ -1,7 +1,7 @@
 use crate::registry::Page;
 use crate::{
-    ADD_ITEM_WIN, ADD_WIN, ASK_WIN, CHOOSER_WIN, COLOR_WIN, ERROR_WIN, LAYOUT_WIN, RD_PASSWORD_WIN,
-    RENAME_WIN, SAVER_WIN, SHORTCUT_WIN, SettingsApp, defaultspage, displayhost, pages,
+    ADD_ITEM_WIN, ADD_WIN, ASK_WIN, CHOOSER_WIN, COLOR_WIN, ERROR_WIN, LAYOUT_WIN, RENAME_WIN,
+    SAVER_WIN, SHORTCUT_WIN, SettingsApp, defaultspage, displayhost, pages,
 };
 use repriseapp::oneshot;
 use repriseapp::{Ctx, WinId};
@@ -77,16 +77,12 @@ impl SettingsApp {
             }
             return;
         }
-        if matches!(
-            win,
-            LAYOUT_WIN | ADD_ITEM_WIN | RENAME_WIN | SAVER_WIN | RD_PASSWORD_WIN
-        ) {
+        if matches!(win, LAYOUT_WIN | ADD_ITEM_WIN | RENAME_WIN | SAVER_WIN) {
             c.fill_rect(c.bounds(), cs.button_face);
             let dialog = match win {
                 LAYOUT_WIN => self.add_layout.as_ref().map(|d| &d.form),
                 ADD_ITEM_WIN => self.add_item.as_ref().map(|d| &d.form),
                 SAVER_WIN => self.saver_dlg.as_ref().map(|d| &d.form),
-                RD_PASSWORD_WIN => self.rd_password.as_ref().map(|d| &d.form),
                 _ => self.rename.as_ref().map(|d| &d.form),
             };
             if let Some(f) = dialog {
@@ -232,11 +228,6 @@ impl SettingsApp {
             }
             SAVER_WIN => {
                 if let Some(d) = &self.saver_dlg {
-                    oneshot::access_form(&d.form, tree, &ctx.text, drawn(&d.form));
-                }
-            }
-            RD_PASSWORD_WIN => {
-                if let Some(d) = &self.rd_password {
                     oneshot::access_form(&d.form, tree, &ctx.text, drawn(&d.form));
                 }
             }

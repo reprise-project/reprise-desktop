@@ -64,6 +64,7 @@ pub mod placesbar;
 pub mod propsheet;
 pub mod rebar;
 pub mod regionselect;
+pub mod remotepassword;
 pub mod replacebox;
 pub mod scrollbar;
 pub mod searchfield;
