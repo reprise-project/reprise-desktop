@@ -370,7 +370,9 @@ impl State {
         // The power and sleep keys are the computer's own only from its keyboard.
         let origin = match self.inputproto.source {
             InputSource::Physical => crate::lockview::Origin::Console,
-            InputSource::Remote | InputSource::Other => crate::lockview::Origin::Desktop,
+            InputSource::Remote | InputSource::App | InputSource::Other => {
+                crate::lockview::Origin::Desktop
+            }
         };
         match routed.route {
             KeyRoute::PowerKey => {

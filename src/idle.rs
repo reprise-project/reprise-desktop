@@ -329,6 +329,8 @@ pub fn notify_activity(state: &mut State) {
         return;
     }
     notify_clients(state);
+    let dark =
+        state.idle.steps.blanked || state.idle.steps.screen_off || crate::saverview::running(state);
     let idle = &mut state.idle;
     idle.since_activity = Instant::now();
     idle.saver_since = idle.since_activity;
@@ -352,6 +354,9 @@ pub fn notify_activity(state: &mut State) {
     }
     if changed || !state.idle.deadline_current {
         arm(state);
+    }
+    if dark && !crate::saverview::running(state) {
+        state.rearm_consent();
     }
     let idle = state.idle.steps.is_idle();
     crate::power::hint(state, crate::power::Hint::Idle(idle));

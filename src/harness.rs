@@ -1261,6 +1261,8 @@ pub struct ClientSide {
     enter_serial: u32,
     /// The keys array of the last `wl_keyboard.enter`.
     pub enter_keys: Vec<u8>,
+    /// How many `wl_keyboard.enter`s the keyboard heard.
+    pub enters: usize,
     /// The seat's keymap as the keyboard got it: the file and its size.
     keymap: Option<(std::os::fd::OwnedFd, u32)>,
     im_manager: Option<ZwpInputMethodManagerV2>,
@@ -1476,6 +1478,7 @@ impl wc::Dispatch<wl_keyboard::WlKeyboard, ()> for ClientSide {
             } => {
                 st.enter_keys = keys;
                 st.enter_serial = serial;
+                st.enters += 1;
                 st.keyboard_focus = Some(surface);
             }
             wl_keyboard::Event::Leave { surface, .. } => {

@@ -96,6 +96,15 @@ impl EisClient {
         self.devices.as_ref()
     }
 
+    /// Whose input this sender's is: the remote desktop server's when `present`, else an app's.
+    fn source(&self) -> InputSource {
+        if self.present {
+            InputSource::Remote
+        } else {
+            InputSource::App
+        }
+    }
+
     fn write_out(&mut self) -> std::io::Result<bool> {
         loop {
             let reis_done = match self.context.flush() {
@@ -422,7 +431,8 @@ impl State {
         let buttons = std::mem::take(&mut c.pressed_buttons);
         let keys = std::mem::take(&mut c.pressed_keys);
         let time = InputTime::now();
-        self.with_source(InputSource::Remote, |s| {
+        let source = c.source();
+        self.with_source(source, |s| {
             for b in buttons {
                 s.handle_button(b, ButtonState::Released, time);
             }
@@ -585,8 +595,8 @@ impl State {
         }
     }
 
-    /// The source is Remote throughout: a RemoteDesktop sender drives this desktop, so it
-    /// reaches local clients even while an InputCapture holds the devices.
+    /// The source is the sender's ([`EisClient::source`]) throughout: a RemoteDesktop sender drives
+    /// this desktop, so it reaches local clients even while an InputCapture holds the devices.
     fn eis_inject(&mut self, id: EisId, r: EisRequest) {
         let Some(c) = self.inputproto.eis.get(id) else {
             return;
@@ -595,7 +605,8 @@ impl State {
             log::debug!("eis: receiver sent {r:?}");
             return;
         }
-        self.with_source(InputSource::Remote, |s| {
+        let source = c.source();
+        self.with_source(source, |s| {
             crate::idle::notify_activity(s);
             s.eis_inject_inner(id, r);
         });
@@ -722,6 +733,10 @@ impl State {
         let globals = self.global_binds();
         let route =
             crate::keyroute::route(&self.key_modes(), &press, &self.config.keybinds, &globals);
+        if self.consent_refuses_text(&route.route) {
+            log::debug!("eis: text kept from a consent prompt");
+            return;
+        }
         match route.route {
             KeyRoute::Client => self.type_text(text),
             KeyRoute::Lock => crate::lockview::type_text(self, text),
