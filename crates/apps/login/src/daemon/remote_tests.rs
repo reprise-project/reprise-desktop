@@ -1558,6 +1558,56 @@ fn a_background_session_switched_to_on_the_console_becomes_the_consoles() {
 }
 
 #[test]
+fn a_restart_keeps_each_session_background_or_console_as_it_was() {
+    let remote = MachineRemote {
+        end_disconnected_after_min: Some(30),
+        ..enabled()
+    };
+    let mut run = remote_run(remote.clone());
+    run.anna_in_background(7, 2);
+    assert_eq!(run.d.background_ids(), BTreeSet::from(["c2".to_string()]));
+    run.on(Input::ConsoleOnVt(7));
+    assert_eq!(run.d.background_ids(), BTreeSet::new());
+
+    let restarted = |before: Option<BTreeSet<String>>| {
+        let mut run = Run::machine(config(remote.clone()));
+        run.d.background_before(before);
+        let found = vec![
+            logind("c2", "anna", ANNA, 7, "user", "reprise-login-remote"),
+            logind("c3", "bert", BERT, 8, "user", "reprise-login"),
+        ];
+        run.d.recover(found, Some("g1"));
+        run
+    };
+    let background = |run: &Run, id: &str| run.d.sessions.by_id(id).map(|e| e.background);
+    let mut run = restarted(Some(BTreeSet::new()));
+    assert_eq!(
+        background(&run, "c2"),
+        Some(false),
+        "anna used it at the console"
+    );
+    run.on(Input::IntakeOpen { uid: ANNA });
+    let effects = run.viewers(ANNA, 0);
+    assert!(
+        !effects.iter().any(|e| matches!(e, Effect::Arm { .. })),
+        "{effects:?}"
+    );
+    let run = restarted(Some(BTreeSet::from(["c3".to_string()])));
+    assert_eq!(background(&run, "c2"), Some(false));
+    assert_eq!(
+        background(&run, "c3"),
+        Some(true),
+        "bert's was reached remotely"
+    );
+    let run = restarted(None);
+    assert_eq!(
+        (background(&run, "c2"), background(&run, "c3")),
+        (Some(true), Some(false)),
+        "with no record, a remote login's session off the seat is a background one"
+    );
+}
+
+#[test]
 fn the_inhibitor_follows_viewers_and_background_sessions() {
     let mut run = remote_run(enabled());
     run.anna_in_background(7, 2);

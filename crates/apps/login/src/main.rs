@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
 use reprise_login::accountipc::{self, Replies};
+use reprise_login::backgrounds::{self, BACKGROUNDS};
 use reprise_login::config;
 use reprise_login::daemon::{
     Daemon, Effect, FrontUnit, HANDOVER_DEADLINE, Input, Job, LogindSession, LookUpKey, Timer,
@@ -194,6 +195,7 @@ async fn run() -> Result<(), String> {
     let opener: intake::Opener = Rc::new(|uid| Box::pin(intake::open(uid)));
     let taker = logind.clone();
     let mut daemon = Daemon::new(config, remembered);
+    daemon.background_before(backgrounds::load(Path::new(BACKGROUNDS)));
     let passwords = remotepw::current(remotepw::load(Path::new(STORE)), |user| {
         users::lookup(user).map(|e| e.map(|e| e.uid))
     });
@@ -213,6 +215,7 @@ async fn run() -> Result<(), String> {
         front_units: logind.front_units(),
         accounts: serve_account(input.clone()),
         links: Links::new(input.clone(), opener, HANDOVER_DEADLINE),
+        backgrounds: backgrounds::Saved::default(),
         inhibitor: Inhibitor::new(Rc::new(move |what, why| {
             let l = taker.clone();
             Box::pin(async move { l.inhibit(what, why).await })
@@ -248,6 +251,7 @@ async fn run() -> Result<(), String> {
     tokio::task::spawn_local(follow_removals(removed, logind, events));
     rt.run_effects(effects);
     rt.sync_gate();
+    rt.save_backgrounds();
 
     loop {
         let event = tokio::select! {
@@ -468,6 +472,8 @@ struct Runtime {
     front_units: mpsc::UnboundedSender<FrontUnit>,
     accounts: Replies,
     links: Links,
+    /// The background sessions' ids last written to `BACKGROUNDS`.
+    backgrounds: backgrounds::Saved,
     inhibitor: Inhibitor,
 }
 
@@ -517,6 +523,7 @@ impl Runtime {
         let effects = self.daemon.handle(Instant::now(), world, input);
         self.run_effects(effects);
         self.sync_gate();
+        self.save_backgrounds();
         if let Some(id) = read.filter(|id| self.daemon.session_uids().contains_key(id)) {
             let (logind, events) = (self.logind.clone(), self.events.clone());
             tokio::task::spawn_local(follow_leader(id, logind, events));
@@ -565,6 +572,12 @@ impl Runtime {
             }
             OrphanReport::Nothing => {}
         }
+    }
+
+    /// Writes the background sessions' ids when they changed; /run is tmpfs, so on the loop.
+    fn save_backgrounds(&mut self) {
+        let ids = self.daemon.background_ids();
+        self.backgrounds.sync(Path::new(BACKGROUNDS), ids);
     }
 
     fn sync_gate(&self) {

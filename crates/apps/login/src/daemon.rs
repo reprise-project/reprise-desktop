@@ -444,6 +444,8 @@ pub struct Daemon {
     after_orphans: AfterOrphans,
     /// Sessions in the table this daemon asked logind to end, by id.
     endings: HashMap<String, Ending>,
+    /// The background sessions' ids as the last run of the daemon left them, if it did.
+    background_before: Option<BTreeSet<String>>,
     /// seat0 showed no session when `recover` ran.
     seat_empty: bool,
     /// Removals of unknown sessions while a start, console or remote, is in flight, with
@@ -473,6 +475,7 @@ impl Daemon {
             orphans: Vec::new(),
             after_orphans: AfterOrphans::Nothing,
             endings: HashMap::new(),
+            background_before: None,
             seat_empty: false,
             removed_early: Vec::new(),
             notice: None,
@@ -490,6 +493,19 @@ impl Daemon {
             .collect()
     }
 
+    /// The background sessions' ids, which the next run of the daemon recovers as background.
+    pub fn background_ids(&self) -> BTreeSet<String> {
+        (self.sessions.iter())
+            .filter(|e| e.background)
+            .map(|e| e.id.clone())
+            .collect()
+    }
+
+    /// The last run's [`Daemon::background_ids`], for `recover` and sessions read late.
+    pub fn background_before(&mut self, ids: Option<BTreeSet<String>>) {
+        self.background_before = ids;
+    }
+
     /// The VT of `worker` when its start timed out and it has not exited yet.
     pub fn stalled_vt(&self, worker: WorkerId) -> Option<u16> {
         (self.stalled.iter())
@@ -497,13 +513,13 @@ impl Daemon {
             .map(|s| s.vt)
     }
 
-    /// Rebuilds the table from logind and ends orphaned greeters; a remote login's session other
-    /// than `seat_active` is a background one. No logind lock: it would lock remote clients out.
+    /// Rebuilds the table from logind and ends orphaned greeters; see [`table_entry`] for which
+    /// sessions are background ones. No logind lock: it would lock remote clients out.
     pub fn recover(&mut self, found: Vec<LogindSession>, seat_active: Option<&str>) -> Vec<Effect> {
         let mut out = Vec::new();
         self.seat_empty = seat_active.is_none();
         for s in found {
-            if let Some(entry) = table_entry(&s, seat_active) {
+            if let Some(entry) = table_entry(&s, seat_active, self.background_before.as_ref()) {
                 self.sessions.insert(entry);
             } else if s.class == "greeter" && s.service == Mode::Greeter.service() {
                 self.orphans.push(Orphan {
@@ -1724,9 +1740,14 @@ fn refused(text: &str) -> Effect {
     Effect::Reply(error(ErrorKind::Refused, text.into()))
 }
 
-/// `s` as the table holds it when it is a seat0 user session reprise-login started; one other
-/// than `seat_active` that a remote login started is a background one.
-fn table_entry(s: &LogindSession, seat_active: Option<&str>) -> Option<SessionEntry> {
+/// `s` as the table holds it when it is a seat0 user session reprise-login started. One other
+/// than `seat_active` is a background one when `before` lists it, or with no `before`, when a
+/// remote login started it.
+fn table_entry(
+    s: &LogindSession,
+    seat_active: Option<&str>,
+    before: Option<&BTreeSet<String>>,
+) -> Option<SessionEntry> {
     if s.seat != "seat0" || s.class != "user" || !user_service(&s.service) {
         return None;
     }
@@ -1736,7 +1757,8 @@ fn table_entry(s: &LogindSession, seat_active: Option<&str>) -> Option<SessionEn
         uid: s.uid,
         vt: s.vt,
         started: None,
-        background: seat_active != Some(&s.id) && remote_service(&s.service),
+        background: seat_active != Some(&s.id)
+            && before.map_or(remote_service(&s.service), |ids| ids.contains(&s.id)),
         interface: None,
     })
 }

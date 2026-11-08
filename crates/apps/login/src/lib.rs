@@ -1,5 +1,6 @@
 pub mod accountipc;
 pub mod atomic;
+pub mod backgrounds;
 pub mod config;
 pub mod daemon;
 pub mod frontipc;
