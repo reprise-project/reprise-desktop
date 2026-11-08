@@ -28,11 +28,14 @@ use crate::ipc;
 const RUNTIME: &str = "/run/user";
 const DIR: &str = "reprise-rdp";
 const SOCKET: &str = "handover.sock";
-/// Hand-overs one link holds at once, the one being written included; past it a forward is
-/// refused.
+/// Hand-overs one link holds at once, those being written or not yet taken included; past it a
+/// forward is refused.
 pub const MAX_FORWARDS: usize = 4;
 /// The wait before a link that did not open is tried again.
 pub const RETRY: Duration = Duration::from_millis(50);
+/// Reads of a broken link's last reports, enough for a full socket buffer and no more, so a
+/// server that keeps writing cannot hold the daemon.
+const DRAIN_READS: usize = 16;
 /// How a lost link is opened again: every second for half a minute.
 pub const REOPEN: Retry = Retry {
     every: Duration::from_secs(1),
@@ -153,7 +156,8 @@ async fn connect(path: &Path, uid: u32) -> io::Result<UnixStream> {
 pub type Opener = Rc<dyn Fn(u32) -> Pin<Box<dyn Future<Output = io::Result<UnixStream>>>>>;
 
 /// One link per uid, each in a task of the current `LocalSet`. A link counts as open once its
-/// server's first report arrives; one that does not within `deadline` is reported lost.
+/// server's first report arrives; one that does not within `deadline` is reported lost. A
+/// hand-over counts as forwarded once its server reports it took it.
 pub struct Links {
     state: Rc<RefCell<State>>,
     input: mpsc::Sender<Input>,
@@ -202,18 +206,43 @@ impl Pace {
     }
 }
 
-/// One link's hand-overs: those waiting, and the one being written.
+/// One link's hand-overs: those waiting, the one being written, and those written that its
+/// server has not reported taking.
 #[derive(Default)]
 struct Queue {
     waiting: RefCell<VecDeque<Forward>>,
     /// The conn being written, and the sender that stops its write.
     writing: RefCell<Option<(u64, oneshot::Sender<()>)>>,
+    untaken: RefCell<Vec<Forward>>,
+    /// Hand-overs reported taken so far.
+    takes: Cell<u64>,
     queued: Notify,
 }
 
 impl Queue {
     fn len(&self) -> usize {
-        self.waiting.borrow().len() + usize::from(self.writing.borrow().is_some())
+        self.waiting.borrow().len()
+            + usize::from(self.writing.borrow().is_some())
+            + self.untaken.borrow().len()
+    }
+
+    /// Drops `conn` from those written, closing its socket; false when none is `conn`.
+    fn took(&self, conn: u64) -> bool {
+        let mut untaken = self.untaken.borrow_mut();
+        let at = untaken.iter().position(|f| f.conn == conn);
+        let took = at.map(|at| untaken.remove(at)).is_some();
+        if took {
+            self.takes.set(self.takes.get() + 1);
+        }
+        took
+    }
+
+    /// Puts those written but not taken back in front of those waiting, in the order written.
+    fn requeue(&self) {
+        let mut waiting = self.waiting.borrow_mut();
+        for f in self.untaken.take().into_iter().rev() {
+            waiting.push_front(f);
+        }
     }
 }
 
@@ -280,16 +309,17 @@ impl Links {
             every: Cell::new(retry.every),
             hurried: Notify::new(),
         });
-        let run = run(
+        let run = LinkTask {
             uid,
             serial,
-            self.open.clone(),
-            pace.clone(),
-            retry.within,
-            self.input.clone(),
-            self.state.clone(),
-        );
-        let task = tokio::task::spawn_local(run).abort_handle();
+            open: self.open.clone(),
+            pace: pace.clone(),
+            within: retry.within,
+            deadline: self.deadline,
+            input: self.input.clone(),
+            state: self.state.clone(),
+        };
+        let task = tokio::task::spawn_local(run.run()).abort_handle();
         let link = Link {
             serial,
             queue: None,
@@ -326,12 +356,13 @@ impl Links {
         }
     }
 
-    /// Drops `conn`'s hand-over and closes its socket if a link still holds it. One being
-    /// written takes its link down, since part of its frame may be out.
+    /// Drops `conn`'s hand-over and closes its socket if a link still holds it, written or not.
+    /// One being written takes its link down, since part of its frame may be out.
     pub fn drop_conn(&self, conn: u64) {
         let st = self.state.borrow();
         for queue in st.links.values().filter_map(|l| l.queue.as_ref()) {
             queue.waiting.borrow_mut().retain(|f| f.conn != conn);
+            queue.untaken.borrow_mut().retain(|f| f.conn != conn);
             let writing = queue.writing.borrow_mut().take_if(|(c, _)| *c == conn);
             if let Some((_, stop)) = writing {
                 let _ = stop.send(());
@@ -352,48 +383,93 @@ impl Links {
     }
 }
 
-/// Opens and serves link `serial`. When it ends, every hand-over still waiting counts as
-/// failed.
-async fn run(
+/// The task of `uid`'s link `serial`, opening it within `within`.
+struct LinkTask {
     uid: u32,
     serial: u64,
     open: Opener,
     pace: Rc<Pace>,
     within: Duration,
+    deadline: Duration,
     input: mpsc::Sender<Input>,
     state: Rc<RefCell<State>>,
-) {
-    let queue = Rc::new(Queue::default());
-    match open_until(uid, &open, &pace, within).await {
-        Ok((stream, reader, count)) => {
-            match state.borrow_mut().current(uid, serial) {
-                Some(link) => link.queue = Some(queue.clone()),
-                None => return,
+}
+
+impl LinkTask {
+    /// Opens and serves the link. Hand-overs a server leaves untaken go first to the next one
+    /// socket activation starts, until `deadline` passes with no server taking one.
+    async fn run(self) {
+        let LinkTask {
+            uid,
+            serial,
+            open,
+            pace,
+            mut within,
+            deadline,
+            input,
+            state,
+        } = self;
+        let queue = Rc::new(Queue::default());
+        let mut opened = false;
+        let mut give_up: Option<Instant> = None;
+        loop {
+            let takes = queue.takes.get();
+            match open_until(uid, &open, &pace, within).await {
+                Ok((stream, reader, count)) => {
+                    match state.borrow_mut().current(uid, serial) {
+                        Some(link) => link.queue = Some(queue.clone()),
+                        None => return,
+                    }
+                    let told = opened || input.send(Input::IntakeOpen { uid }).await.is_ok();
+                    opened = true;
+                    if told
+                        && input.send(Input::Viewers { uid, count }).await.is_ok()
+                        && let Err(e) = relay(uid, &stream, reader, &queue, &input).await
+                    {
+                        log::warn!("dropped uid {uid}'s hand-over link: {e}");
+                    }
+                }
+                Err(e) => {
+                    log::warn!("uid {uid}'s hand-over socket: {e}");
+                    break;
+                }
             }
-            if input.send(Input::IntakeOpen { uid }).await.is_ok()
-                && input.send(Input::Viewers { uid, count }).await.is_ok()
-                && let Err(e) = relay(uid, &stream, reader, &queue, &input).await
-            {
-                log::warn!("dropped uid {uid}'s hand-over link: {e}");
+            if input.is_closed() || state.borrow_mut().current(uid, serial).is_none() {
+                return;
             }
+            queue.requeue();
+            let left = queue.waiting.borrow().len();
+            if left == 0 {
+                break;
+            }
+            log::info!(
+                "uid {uid}'s hand-over server left {left} hand-overs untaken; opening the next"
+            );
+            let now = Instant::now();
+            let at = match give_up {
+                Some(at) if queue.takes.get() == takes => at,
+                _ => now + deadline,
+            };
+            give_up = Some(at);
+            within = at.saturating_duration_since(now);
+            pace.every.set(RETRY);
         }
-        Err(e) => log::warn!("uid {uid}'s hand-over socket: {e}"),
-    }
-    if state.borrow_mut().current(uid, serial).is_none() {
-        return;
-    }
-    state.borrow_mut().links.remove(&uid);
-    let failed: Vec<_> = queue.waiting.take().into_iter().map(|f| f.conn).collect();
-    for conn in failed {
-        if input
-            .send(Input::Forwarded { conn, ok: false })
-            .await
-            .is_err()
-        {
+        if state.borrow_mut().current(uid, serial).is_none() {
             return;
         }
+        state.borrow_mut().links.remove(&uid);
+        let failed: Vec<_> = queue.waiting.take().into_iter().map(|f| f.conn).collect();
+        for conn in failed {
+            if input
+                .send(Input::Forwarded { conn, ok: false })
+                .await
+                .is_err()
+            {
+                return;
+            }
+        }
+        let _ = input.send(Input::IntakeLost { uid }).await;
     }
-    let _ = input.send(Input::IntakeLost { uid }).await;
 }
 
 /// Tries `open` at `pace` until a link's server reports or `within` has passed. A connect
@@ -421,7 +497,7 @@ async fn open_until(
     }
 }
 
-/// Reads `stream` until its first report, which the server sends as it accepts.
+/// Reads `stream` until its first report, the viewer count the server sends as it accepts.
 async fn first_report(stream: &UnixStream) -> io::Result<(FdFrameReader, u32)> {
     let mut reader = FdFrameReader::new();
     loop {
@@ -432,14 +508,20 @@ async fn first_report(stream: &UnixStream) -> io::Result<(FdFrameReader, u32)> {
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
             Err(e) => return Err(e),
         }
-        if let Some(count) = next_report(&mut reader)? {
-            return Ok((reader, count));
+        match next_report(&mut reader)? {
+            Some(IntakeReport::Viewers { count }) => return Ok((reader, count)),
+            Some(IntakeReport::Took { conn }) => {
+                return Err(io::Error::other(format!(
+                    "conn {conn} reported taken on a new link"
+                )));
+            }
+            None => {}
         }
     }
 }
 
 /// The next whole report `reader` holds.
-fn next_report(reader: &mut FdFrameReader) -> io::Result<Option<u32>> {
+fn next_report(reader: &mut FdFrameReader) -> io::Result<Option<IntakeReport>> {
     let broken = |e| io::Error::other(ipc::error_kind(&e));
     let Some((body, fd)) = reader.next().map_err(broken)? else {
         return Ok(None);
@@ -447,12 +529,11 @@ fn next_report(reader: &mut FdFrameReader) -> io::Result<Option<u32>> {
     if fd.is_some() {
         return Err(io::Error::other("a socket came with a report"));
     }
-    let IntakeReport::Viewers { count } = frame::decode(&body).map_err(broken)?;
-    Ok(Some(count))
+    frame::decode(&body).map(Some).map_err(broken)
 }
 
 /// Writes `queue`'s hand-overs and feeds the reports after `reader`'s first to `input` until
-/// the link breaks.
+/// the link breaks, then those the server sent before it did.
 async fn relay(
     uid: u32,
     stream: &UnixStream,
@@ -460,22 +541,74 @@ async fn relay(
     queue: &Queue,
     input: &mpsc::Sender<Input>,
 ) -> io::Result<()> {
+    let relayed = relay_until_broken(uid, stream, &mut reader, queue, input).await;
+    let mut reads = 0;
+    while matches!(feed(uid, &mut reader, queue, input).await, Ok(true))
+        && reads < DRAIN_READS
+        && matches!(reader.read_from(stream.as_fd()), Ok(1..))
+    {
+        reads += 1;
+    }
+    relayed
+}
+
+/// Feeds the reports `reader` holds to `input`; false once `input` is closed.
+async fn feed(
+    uid: u32,
+    reader: &mut FdFrameReader,
+    queue: &Queue,
+    input: &mpsc::Sender<Input>,
+) -> io::Result<bool> {
+    while let Some(report) = next_report(reader)? {
+        let fed = match report {
+            IntakeReport::Viewers { count } => Input::Viewers { uid, count },
+            IntakeReport::Took { conn } if queue.took(conn) => Input::Forwarded { conn, ok: true },
+            IntakeReport::Took { .. } => continue,
+        };
+        if input.send(fed).await.is_err() {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// [`relay`] until the link breaks. A hand-over whose write fails goes back in front of those
+/// waiting.
+async fn relay_until_broken(
+    uid: u32,
+    stream: &UnixStream,
+    reader: &mut FdFrameReader,
+    queue: &Queue,
+    input: &mpsc::Sender<Input>,
+) -> io::Result<()> {
     loop {
-        while let Some(count) = next_report(&mut reader)? {
-            if input.send(Input::Viewers { uid, count }).await.is_err() {
-                return Ok(());
-            }
+        if !feed(uid, reader, queue, input).await? {
+            return Ok(());
         }
         let next = queue.waiting.borrow_mut().pop_front();
         if let Some(f) = next {
-            let sent = write(stream, queue, &f).await;
-            let conn = f.conn;
-            drop(f);
-            let ok = sent.is_ok();
-            if input.send(Input::Forwarded { conn, ok }).await.is_err() {
-                return Ok(());
+            match write(stream, queue, &f).await {
+                Ok(true) => queue.untaken.borrow_mut().push(f),
+                Ok(false) => {
+                    let conn = f.conn;
+                    drop(f);
+                    if input
+                        .send(Input::Forwarded { conn, ok: false })
+                        .await
+                        .is_err()
+                    {
+                        return Ok(());
+                    }
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        format!("conn {conn}'s hand-over was not read by its deadline"),
+                    ));
+                }
+                Err(e) => {
+                    queue.waiting.borrow_mut().push_front(f);
+                    return Err(e);
+                }
             }
-            sent?;
             continue;
         }
         tokio::select! {
@@ -493,16 +626,14 @@ async fn relay(
     }
 }
 
-/// Writes `f` as `queue`'s one being written, until done or [`Links::drop_conn`] stops it.
-async fn write(stream: &UnixStream, queue: &Queue, f: &Forward) -> io::Result<()> {
+/// Writes `f` as `queue`'s one being written: true once done, false when [`Links::drop_conn`]
+/// stops it.
+async fn write(stream: &UnixStream, queue: &Queue, f: &Forward) -> io::Result<bool> {
     let (stop, stopped) = oneshot::channel();
     *queue.writing.borrow_mut() = Some((f.conn, stop));
     let sent = tokio::select! {
-        sent = send_with_fd(stream, &f.frame, f.fd.as_fd()) => sent,
-        Ok(()) = stopped => Err(io::Error::new(
-            io::ErrorKind::TimedOut,
-            format!("conn {}'s hand-over was not read by its deadline", f.conn),
-        )),
+        sent = send_with_fd(stream, &f.frame, f.fd.as_fd()) => sent.map(|()| true),
+        Ok(()) = stopped => Ok(false),
     };
     queue.writing.borrow_mut().take();
     sent
@@ -688,9 +819,54 @@ pub(crate) mod tests {
     }
 
     async fn report(stream: &UnixStream, count: u32) {
-        let frame = frame::encode(&IntakeReport::Viewers { count }).unwrap();
+        send_report(stream, &IntakeReport::Viewers { count }).await;
+    }
+
+    async fn took(stream: &UnixStream, conn: u64) {
+        send_report(stream, &IntakeReport::Took { conn }).await;
+    }
+
+    async fn send_report(stream: &UnixStream, report: &IntakeReport) {
+        let frame = frame::encode(report).unwrap();
         stream.writable().await.unwrap();
         assert_eq!(stream.try_write(&frame).unwrap(), frame.len());
+    }
+
+    /// The next hand-over the server end `rdp` reads, with the fd that came along.
+    async fn read_hand_over(rdp: &UnixStream) -> (HandOver, Option<OwnedFd>) {
+        let mut reader = FdFrameReader::new();
+        let (body, fd) = loop {
+            if let Some(got) = reader.next().unwrap() {
+                break got;
+            }
+            tokio::time::timeout(WAIT, rdp.readable())
+                .await
+                .expect("a hand-over in time")
+                .unwrap();
+            let read = rdp.try_io(Interest::READABLE, || reader.read_from(rdp.as_fd()));
+            match read {
+                Ok(n) => assert_ne!(n, 0, "the link stays open"),
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
+                Err(e) => panic!("{e}"),
+            }
+        };
+        let IntakeMessage::HandOver(got) = frame::decode(&body).unwrap();
+        (*got, fd)
+    }
+
+    /// Links on `dir` and the server end of `uid`'s first link, opened with no viewers.
+    async fn linked_at(
+        dir: &Path,
+        listener: &UnixListener,
+        deadline: Duration,
+    ) -> (Links, Receiver<Input>, UnixStream) {
+        let (links, mut rx) = links_at(dir, deadline);
+        let uid = own_uid();
+        links.open(uid);
+        let (rdp, _) = listener.accept().await.unwrap();
+        report(&rdp, 0).await;
+        opened(&mut rx, uid).await;
+        (links, rx, rdp)
     }
 
     #[tokio::test]
@@ -718,23 +894,12 @@ pub(crate) mod tests {
                 let mut client = TcpStream::connect(tcp.local_addr().unwrap()).unwrap();
                 let (server, _) = tcp.accept().unwrap();
                 assert!(links.forward(uid, 9, server.into(), Box::new(hand_over(9))));
-                assert_eq!(next(&mut rx).await, Input::Forwarded { conn: 9, ok: true });
 
-                let mut reader = FdFrameReader::new();
-                let (body, fd) = loop {
-                    rdp.readable().await.unwrap();
-                    let read = rdp.try_io(Interest::READABLE, || reader.read_from(rdp.as_fd()));
-                    match read {
-                        Ok(n) => assert_ne!(n, 0, "the link stays open"),
-                        Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
-                        Err(e) => panic!("{e}"),
-                    }
-                    if let Some(got) = reader.next().unwrap() {
-                        break got;
-                    }
-                };
-                let IntakeMessage::HandOver(got) = frame::decode(&body).unwrap();
-                assert_eq!(*got, hand_over(9));
+                let (got, fd) = read_hand_over(&rdp).await;
+                assert_eq!(got, hand_over(9));
+                nothing_within(&mut rx, Duration::from_millis(100)).await;
+                took(&rdp, 9).await;
+                assert_eq!(next(&mut rx).await, Input::Forwarded { conn: 9, ok: true });
                 let mut handed = TcpStream::from(fd.expect("the client's socket came along"));
                 handed.write_all(b"hello").unwrap();
                 let mut text = [0u8; 5];
@@ -844,9 +1009,18 @@ pub(crate) mod tests {
 
                 links.drop_conn(1);
                 assert_eq!(next(&mut rx).await, Input::Forwarded { conn: 1, ok: false });
+                assert_closed(&mut ends[0]);
+                assert_eq!(
+                    next(&mut rx).await,
+                    Input::Viewers { uid, count: 0 },
+                    "the one behind it goes on a new link"
+                );
+                assert!(is_open(&mut ends[2]));
+                nothing_within(&mut rx, Duration::from_millis(100)).await;
+
+                links.drop_conn(3);
                 assert_eq!(next(&mut rx).await, Input::Forwarded { conn: 3, ok: false });
                 assert_eq!(next(&mut rx).await, Input::IntakeLost { uid });
-                assert_closed(&mut ends[0]);
                 assert_closed(&mut ends[2]);
             })
             .await;
@@ -1028,6 +1202,227 @@ pub(crate) mod tests {
                 assert!(asked.elapsed() >= Duration::from_millis(250));
                 let again = tokio::time::timeout(Duration::from_millis(500), rx.recv()).await;
                 assert!(again.is_err(), "one answer for both asks: {again:?}");
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn a_hand_over_written_to_a_stopping_server_reaches_the_next_one() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let (dir, listener) = runtime_dir();
+                let (links, mut rx, stopping) = linked_at(dir.path(), &listener, WAIT).await;
+                let uid = own_uid();
+                let tcp = TcpListener::bind("127.0.0.1:0").unwrap();
+                let mut client = TcpStream::connect(tcp.local_addr().unwrap()).unwrap();
+                let (server, _) = tcp.accept().unwrap();
+                assert!(links.forward(uid, 9, server.into(), Box::new(hand_over(9))));
+                let (_, fd) = read_hand_over(&stopping).await;
+                drop(fd);
+                report(&stopping, 0).await;
+                drop(stopping);
+
+                let (rdp, _) = tokio::time::timeout(WAIT, listener.accept())
+                    .await
+                    .expect("the link opens again")
+                    .unwrap();
+                report(&rdp, 0).await;
+                assert_eq!(next(&mut rx).await, Input::Viewers { uid, count: 0 });
+                assert_eq!(next(&mut rx).await, Input::Viewers { uid, count: 0 });
+                let (got, fd) = read_hand_over(&rdp).await;
+                assert_eq!(got, hand_over(9));
+                nothing_within(&mut rx, Duration::from_millis(100)).await;
+                took(&rdp, 9).await;
+                assert_eq!(next(&mut rx).await, Input::Forwarded { conn: 9, ok: true });
+                let mut handed = TcpStream::from(fd.expect("the client's socket came along"));
+                handed.write_all(b"hello").unwrap();
+                let mut text = [0u8; 5];
+                client.read_exact(&mut text).unwrap();
+                assert_eq!(&text, b"hello");
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn a_hand_over_no_server_takes_fails_at_the_deadline() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let (dir, listener) = runtime_dir();
+                let deadline = Duration::from_millis(300);
+                let (links, mut rx, stopping) = linked_at(dir.path(), &listener, deadline).await;
+                let uid = own_uid();
+                let (pipe, mut pipe_w) = watched_pipe();
+                assert!(links.forward(uid, 9, pipe, Box::new(hand_over(9))));
+                let (_, fd) = read_hand_over(&stopping).await;
+                drop(fd);
+                let stopped = Instant::now();
+                drop(stopping);
+                assert_eq!(next(&mut rx).await, Input::Forwarded { conn: 9, ok: false });
+                assert!(stopped.elapsed() >= Duration::from_millis(250));
+                assert_eq!(next(&mut rx).await, Input::IntakeLost { uid });
+                assert_closed(&mut pipe_w);
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn a_hand_over_every_server_drops_fails_within_one_deadline() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let (dir, listener) = runtime_dir();
+                let deadline = Duration::from_millis(300);
+                let (links, mut rx, first) = linked_at(dir.path(), &listener, deadline).await;
+                let uid = own_uid();
+                let (pipe, mut pipe_w) = watched_pipe();
+                assert!(links.forward(uid, 9, pipe, Box::new(hand_over(9))));
+                let servers = tokio::task::spawn_local(async move {
+                    let mut rdp = first;
+                    loop {
+                        let _ = rdp.readable().await;
+                        drop(rdp);
+                        let Ok((next, _)) = listener.accept().await else {
+                            return;
+                        };
+                        report(&next, 0).await;
+                        rdp = next;
+                    }
+                });
+                let started = Instant::now();
+                let ends = async {
+                    let mut ends = Vec::new();
+                    while ends.len() < 2 {
+                        match next(&mut rx).await {
+                            Input::Viewers { .. } => {}
+                            got => ends.push(got),
+                        }
+                    }
+                    ends
+                };
+                let ends = tokio::time::timeout(deadline * 4, ends)
+                    .await
+                    .expect("the reopens end within the deadline");
+                assert_eq!(
+                    ends,
+                    [
+                        Input::Forwarded { conn: 9, ok: false },
+                        Input::IntakeLost { uid }
+                    ]
+                );
+                assert!(started.elapsed() >= deadline - Duration::from_millis(50));
+                assert_closed(&mut pipe_w);
+                servers.abort();
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn a_took_the_server_sent_before_its_link_broke_is_not_sent_again() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let (tx, mut rx) = mpsc::channel(ipc::QUEUE);
+                type Ends = Vec<(UnixStream, std::os::unix::net::UnixStream)>;
+                let ends: Rc<RefCell<Ends>> = Rc::default();
+                let open: Opener = {
+                    let ends = ends.clone();
+                    Rc::new(move |_uid| {
+                        let (ours, peer) = std::os::unix::net::UnixStream::pair().unwrap();
+                        ours.set_nonblocking(true).unwrap();
+                        peer.set_nonblocking(true).unwrap();
+                        let none = frame::encode(&IntakeReport::Viewers { count: 0 }).unwrap();
+                        (&peer).write_all(&none).unwrap();
+                        let filler = ours.try_clone().unwrap();
+                        let peer = UnixStream::from_std(peer).unwrap();
+                        ends.borrow_mut().push((peer, filler));
+                        let ours = UnixStream::from_std(ours);
+                        Box::pin(async move { ours })
+                    })
+                };
+                let links = Links::new(tx, open, WAIT);
+                let uid = own_uid();
+                links.open(uid);
+                opened(&mut rx, uid).await;
+                let (rdp, filler) = ends.borrow_mut().remove(0);
+                let (pipe, mut taken_w) = watched_pipe();
+                assert!(links.forward(uid, 9, pipe, Box::new(hand_over(9))));
+                assert_eq!(read_hand_over(&rdp).await.0.conn, 9);
+                let chunk = [0u8; 4096];
+                while (&filler).write(&chunk).is_ok() {}
+                while (&filler).write(&chunk[..1]).is_ok() {}
+                drop(filler);
+                let mut held = Vec::new();
+                for conn in [10, 11] {
+                    let (pipe, w) = watched_pipe();
+                    assert!(links.forward(uid, conn, pipe, Box::new(hand_over(conn))));
+                    held.push(w);
+                }
+                nothing_within(&mut rx, Duration::from_millis(100)).await;
+
+                took(&rdp, 9).await;
+                took(&rdp, 11).await;
+                drop(rdp);
+                assert_eq!(next(&mut rx).await, Input::Forwarded { conn: 9, ok: true });
+                assert_closed(&mut taken_w);
+                assert_eq!(
+                    next(&mut rx).await,
+                    Input::Viewers { uid, count: 0 },
+                    "the link opens again"
+                );
+                let (rdp, _filler) = ends.borrow_mut().remove(0);
+                assert_eq!(read_hand_over(&rdp).await.0.conn, 10);
+                assert_eq!(
+                    read_hand_over(&rdp).await.0.conn,
+                    11,
+                    "a Took for a hand-over not yet written is ignored"
+                );
+                nothing_within(&mut rx, Duration::from_millis(100)).await;
+                for w in &mut held {
+                    assert!(is_open(w), "the hand-overs not taken are still held");
+                }
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn an_untaken_hand_over_counts_toward_max_forwards_until_dropped() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let (dir, listener) = runtime_dir();
+                let (links, mut rx, rdp) = linked_at(dir.path(), &listener, WAIT).await;
+                let uid = own_uid();
+                let mut ends = Vec::new();
+                for conn in 0..MAX_FORWARDS as u64 {
+                    let (pipe, w) = watched_pipe();
+                    assert!(links.forward(uid, conn, pipe, Box::new(hand_over(conn))));
+                    let (got, fd) = read_hand_over(&rdp).await;
+                    assert_eq!(got.conn, conn);
+                    drop(fd);
+                    ends.push(w);
+                }
+                let (pipe, mut refused) = watched_pipe();
+                assert!(
+                    !links.forward(uid, 99, pipe, Box::new(hand_over(99))),
+                    "hand-overs written but not taken count toward MAX_FORWARDS"
+                );
+                assert_closed(&mut refused);
+                assert!(
+                    is_open(&mut ends[1]),
+                    "an untaken hand-over's socket is held"
+                );
+
+                links.drop_conn(1);
+                assert_closed(&mut ends[1]);
+                took(&rdp, 1).await;
+                nothing_within(&mut rx, Duration::from_millis(100)).await;
+                let (pipe, _w) = watched_pipe();
+                assert!(links.forward(uid, 5, pipe, Box::new(hand_over(5))));
+                took(&rdp, 0).await;
+                assert_eq!(next(&mut rx).await, Input::Forwarded { conn: 0, ok: true });
+                assert_closed(&mut ends[0]);
             })
             .await;
     }

@@ -154,6 +154,8 @@ pub enum IntakeMessage {
 pub enum IntakeReport {
     /// The clients now connected to the session, sent on every change.
     Viewers { count: u32 },
+    /// The server's accept loop took hand-over `conn`; a stopping server sends none.
+    Took { conn: u64 },
 }
 
 #[cfg(test)]
@@ -217,6 +219,10 @@ pub(crate) mod tests {
         assert_eq!(
             body(&IntakeReport::Viewers { count: 2 }),
             r#"{"viewers":{"count":2}}"#
+        );
+        assert_eq!(
+            body(&IntakeReport::Took { conn: 9 }),
+            r#"{"took":{"conn":9}}"#
         );
     }
 

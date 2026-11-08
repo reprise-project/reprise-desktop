@@ -147,8 +147,9 @@ fn main() -> ExitCode {
     let marker = lock::marker_path();
     let local = tokio::task::LocalSet::new();
     let code = local.block_on(&rt, async {
-        // Up before the lock wait: reprise-login's login waits on the intake's first report.
-        let intake = match hand_over.map(tokio::net::UnixListener::from_std) {
+        // Up and taking hand-overs during the lock wait: reprise-login's login waits on the
+        // intake's first report and on its Took. Serving starts after the lock.
+        let mut intake = match hand_over.map(tokio::net::UnixListener::from_std) {
             Some(Ok(listener)) => Some(handover::HandOverIntake::new(
                 listener,
                 ROOT,
@@ -160,7 +161,11 @@ fn main() -> ExitCode {
             }
             None => None,
         };
-        lock::lock_if_marked(marker.as_deref(), lock::lock()).await;
+        let lock_wait = lock::lock_if_marked(marker.as_deref(), lock::lock());
+        match &mut intake {
+            Some(intake) => intake.take_during(lock_wait).await,
+            None => lock_wait.await,
+        }
         let _watch = follow_config(config, status.clone(), probed.clone());
         tokio::task::spawn_local(show_encoders(
             probed.clone(),
