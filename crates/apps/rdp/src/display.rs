@@ -274,7 +274,7 @@ impl RdpServerDisplay for Display {
     /// Lock mode's screens follow its owner's layout; another viewer's layouts and shared physical
     /// screens' sizes are not followed.
     async fn offers_display_control(&mut self) -> bool {
-        self.console.would_own()
+        self.console.would_own(self.ending.replaces())
     }
 
     async fn monitor_count(&mut self) -> u32 {

@@ -130,6 +130,32 @@ async fn start_leaving<L: Leave + 'static>(
     logins: impl Logins + 'static,
     leave: impl FnOnce(watch::Receiver<Status>) -> L,
 ) -> Running {
+    let handlers = |_, _| {
+        (
+            crate::Grey,
+            crate::input::Input::new(Default::default()).0,
+            None,
+            None,
+            None,
+            ClientLayout::default(),
+        )
+    };
+    start_handled(local, config, logins, leave, handlers).await
+}
+
+/// [`start_leaving`], serving each connection with what `handlers` makes.
+async fn start_handled<L, D, I>(
+    local: &LocalSet,
+    config: RemoteDesktop,
+    logins: impl Logins + 'static,
+    leave: impl FnOnce(watch::Receiver<Status>) -> L,
+    handlers: impl FnMut(Shown, Ending) -> Handlers<D, I> + 'static,
+) -> Running
+where
+    L: Leave + 'static,
+    D: RdpServerDisplay + 'static,
+    I: RdpServerInputHandler + 'static,
+{
     let port = config.port;
     let dir = tempfile::tempdir().unwrap();
     let identity = reprisetls::cert::load_or_create(dir.path()).unwrap();
@@ -151,16 +177,6 @@ async fn start_leaving<L: Leave + 'static>(
         console: lock_mode_console(),
     };
     let (stop, stopped) = oneshot::channel::<()>();
-    let handlers = |_, _| {
-        (
-            crate::Grey,
-            crate::input::Input::new(Default::default()).0,
-            None,
-            None,
-            None,
-            ClientLayout::default(),
-        )
-    };
     // A dropped `Running` leaves it serving.
     let stopped = async {
         if stopped.await.is_err() {
@@ -436,6 +452,115 @@ async fn with_replace_a_client_logging_in_ends_the_earlier_ones() {
 async fn with_replace_a_client_past_max_viewers_is_let_in_to_replace() {
     capture_log();
     the_second_client_replaces_the_first(1).await;
+}
+
+/// Notes each arrival, and each leave with the clients still shown the session after it.
+#[derive(Clone, Default)]
+struct Present {
+    steps: Rc<RefCell<Vec<String>>>,
+    shown: Rc<Cell<usize>>,
+}
+
+impl Leave for Present {
+    fn arrived(&self) {
+        self.shown.set(self.shown.get() + 1);
+        self.steps.borrow_mut().push("arrived".into());
+    }
+
+    async fn left(&self, _: End) {
+        self.shown.set(self.shown.get() - 1);
+        let step = format!("left, {} shown", self.shown.get());
+        self.steps.borrow_mut().push(step);
+    }
+}
+
+#[tokio::test]
+async fn a_replacing_login_counts_as_shown_before_the_client_it_replaces_leaves() {
+    let local = LocalSet::new();
+    local
+        .run_until(async {
+            let config = RemoteDesktop {
+                port: 0,
+                second_client: SecondClient::Replace,
+                ..RemoteDesktop::default()
+            };
+            let present = Present::default();
+            let shown = Rc::new(RefCell::new(Vec::new()));
+            let handled = shown.clone();
+            let handlers = move |s: Shown, _| {
+                handled.borrow_mut().push(s);
+                (
+                    crate::Grey,
+                    crate::input::Input::new(Default::default()).0,
+                    None,
+                    None,
+                    None,
+                    ClientLayout::default(),
+                )
+            };
+            let leave = present.clone();
+            let mut s = start_handled(&local, config, Admitted, |_| leave, handlers).await;
+            let mut first = TcpStream::connect(s.addr).await.unwrap();
+            assert!(confirmed(&mut first).await);
+            let replaced = first.local_addr().unwrap().to_string();
+            listed_become(&mut s, &[replaced.as_str()]).await;
+            shown.borrow_mut().remove(0).send();
+            let steps = |until: fn(&[String]) -> bool| {
+                let present = present.clone();
+                async move {
+                    while !until(&present.steps.borrow()) {
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
+                    present.steps.borrow().clone()
+                }
+            };
+            let arrived =
+                tokio::time::timeout(Duration::from_secs(5), steps(|s| !s.is_empty())).await;
+            assert_eq!(arrived.expect("the first client arrives"), ["arrived"]);
+            let mut second = TcpStream::connect(s.addr).await.unwrap();
+            assert!(confirmed(&mut second).await, "the second client is let in");
+            assert!(closed_soon(&mut first).await, "the first client is ended");
+            let left = tokio::time::timeout(
+                Duration::from_secs(5),
+                steps(|s| s.iter().any(|s| s.starts_with("left"))),
+            )
+            .await;
+            assert_eq!(
+                left.expect("the first client leaves"),
+                ["arrived", "arrived", "left, 1 shown"],
+                "the replacing client arrives as it logs in, before its first frame"
+            );
+        })
+        .await;
+}
+
+#[tokio::test]
+async fn with_replace_a_lone_login_never_shown_leaves_the_session_as_it_was() {
+    let local = LocalSet::new();
+    local
+        .run_until(async {
+            let config = RemoteDesktop {
+                port: 0,
+                second_client: SecondClient::Replace,
+                ..RemoteDesktop::default()
+            };
+            let present = Present::default();
+            let leave = present.clone();
+            let mut s = start_leaving(&local, config, Admitted, |_| leave).await;
+            let mut client = TcpStream::connect(s.addr).await.unwrap();
+            assert!(confirmed(&mut client).await);
+            let address = client.local_addr().unwrap().to_string();
+            listed_become(&mut s, &[address.as_str()]).await;
+            drop(client);
+            listed_become(&mut s, &[]).await;
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            assert_eq!(
+                *present.steps.borrow(),
+                Vec::<String>::new(),
+                "a login that ends no shown client neither arrives nor leaves"
+            );
+        })
+        .await;
 }
 
 /// A connection to `addr` from `ip`, one of the 127/8 addresses.
@@ -939,7 +1064,6 @@ async fn session(
                     peer,
                     kicked,
                     ending: ending.clone(),
-                    replaces: false,
                     alive: mpsc::channel(1).0,
                 },
                 check.clone(),
@@ -1294,7 +1418,6 @@ async fn an_accepted_connection_that_never_arrived_does_not_leave() {
                 peer,
                 kicked,
                 ending: Ending::default(),
-                replaces: false,
                 alive: mpsc::channel(1).0,
             };
             let ran = run(
@@ -1534,7 +1657,6 @@ async fn a_handed_over_connection_runs_to_the_session() {
                 peer,
                 kicked,
                 ending: Ending::default(),
-                replaces: false,
                 alive: mpsc::channel(1).0,
             };
             let resumed = Resumed {
@@ -1697,6 +1819,65 @@ async fn a_closed_display_ends_serve() {
             (tokio::time::timeout(WAIT, served).await)
                 .expect("serve ends with the display")
                 .unwrap();
+        })
+        .await;
+}
+
+/// An intake with no arrivals that sets its flag as it is dropped.
+struct Dropped(Rc<Cell<bool>>);
+
+impl Intake for Dropped {
+    async fn next(&mut self) -> Arrival {
+        std::future::pending().await
+    }
+}
+
+impl Drop for Dropped {
+    fn drop(&mut self) {
+        self.0.set(true);
+    }
+}
+
+/// Whether the intake was dropped as the server began stopping.
+struct IntakeAtStop(Rc<Cell<bool>>, Rc<Cell<Option<bool>>>);
+
+impl Leave for IntakeAtStop {
+    async fn left(&self, _: End) {}
+    async fn stopping(&self) {
+        self.1.set(Some(self.0.get()));
+    }
+}
+
+#[tokio::test]
+async fn a_stopping_server_drops_its_intake_at_once() {
+    LocalSet::new()
+        .run_until(async {
+            let dropped = Rc::new(Cell::new(false));
+            let at_stop = Rc::new(Cell::new(None));
+            let server = Server {
+                identity: None,
+                user: "alice".into(),
+                status: watch::channel(Status::default()).0,
+                config: watch::channel(RemoteDesktop::default()).1,
+                disconnect: mpsc::unbounded_channel().1,
+                leave: IntakeAtStop(dropped.clone(), at_stop.clone()),
+                console: lock_mode_console(),
+            };
+            let handlers = |_, _| {
+                (
+                    crate::Grey,
+                    crate::input::Input::new(Default::default()).0,
+                    None,
+                    None,
+                    None,
+                    ClientLayout::default(),
+                )
+            };
+            let logins = auth::HandedOverLogins::new("alice".into());
+            let intake = Dropped(dropped.clone());
+            let served = serve(server, intake, logins, handlers, std::future::ready(()));
+            (tokio::time::timeout(WAIT, served).await).expect("serve ends with its stop");
+            assert_eq!(at_stop.get(), Some(true), "the intake goes before the lock");
         })
         .await;
 }
