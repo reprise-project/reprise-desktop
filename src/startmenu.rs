@@ -224,10 +224,11 @@ pub fn program_menu(
 }
 
 /// The Shut down options: Disconnect for `Leave::Disconnect`, Switch user when it is live
-/// (under reprise-login), Log off, Lock, Restart, Sleep, and Hibernate when `hibernate`
-/// (`[power] hibernate` is set).
+/// (under reprise-login), Log off, Lock, Restart, then Sleep, and Hibernate when `hibernate`
+/// (`[power] hibernate` is set), unless Disconnect is offered.
 pub fn shutdown_menu(hibernate: bool, leave: Leave) -> (Vec<MenuItem>, Vec<Option<StartRow>>) {
     let mut v = Vec::new();
+    let remote = leave == Leave::Disconnect;
     match leave {
         Leave::Disconnect => v.push((
             MenuItem::item(&Choice::Disconnect.label()),
@@ -243,11 +244,15 @@ pub fn shutdown_menu(hibernate: bool, leave: Leave) -> (Vec<MenuItem>, Vec<Optio
         (MenuItem::item("L&ock"), Some(StartRow::Lock)),
         (MenuItem::Separator, None),
         (MenuItem::item("&Restart"), Some(StartRow::Restart)),
-        (MenuItem::Separator, None),
-        (MenuItem::item("&Sleep"), Some(StartRow::Sleep)),
     ]);
-    if hibernate {
-        v.push((MenuItem::item("&Hibernate"), Some(StartRow::Hibernate)));
+    if !remote {
+        v.extend([
+            (MenuItem::Separator, None),
+            (MenuItem::item("&Sleep"), Some(StartRow::Sleep)),
+        ]);
+        if hibernate {
+            v.push((MenuItem::item("&Hibernate"), Some(StartRow::Hibernate)));
+        }
     }
     v.into_iter().unzip()
 }
@@ -480,6 +485,17 @@ mod tests {
             ]
         );
         assert!(!rows.contains(&Some(StartRow::SwitchUser)));
+    }
+
+    #[test]
+    fn the_shutdown_menu_offers_no_sleep_or_hibernate_on_the_remote_side() {
+        let (items, rows) = shutdown_menu(true, Leave::Disconnect);
+        assert_eq!(
+            labels(&items),
+            ["&Disconnect", "&Log off", "L&ock", "", "&Restart"]
+        );
+        assert!(!rows.contains(&Some(StartRow::Sleep)));
+        assert!(!rows.contains(&Some(StartRow::Hibernate)));
     }
 
     #[test]
