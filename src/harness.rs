@@ -130,13 +130,15 @@ impl Harness {
         // A lock would start the fingerprint conversation in /proc/self/exe, the test binary,
         // whenever the machine has the PAM service.
         state.lock.helpers.finger = |_| None;
-        // The files `reload_remembered` rereads: a write another test queued would land in them.
+        // The files a state rereads (`reload_remembered`, displays.toml): a write another test
+        // queued would land in them.
         static HARNESSES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let n = HARNESSES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let own = scratch().join(format!("harness-{n}"));
         let _ = std::fs::create_dir_all(&own);
         state.wm.kept.path = own.join("windows.toml");
         state.wm.file_dialog.path = own.join("filedialog.toml");
+        state.saved_layouts.path = own.join("displays.toml");
         Harness { event_loop, state }
     }
 

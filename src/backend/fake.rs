@@ -1,5 +1,5 @@
 //! Connectors for tests: an output in `State::test_heads` is a head that `disable` parks and
-//! `enable` drives again, with the one mode the harness gave it.
+//! `enable` drives again, with the modes the harness gave it.
 
 use smithay::output::Output;
 
@@ -10,18 +10,21 @@ pub(super) fn heads(state: &State) -> Vec<HeadState> {
     let mut heads: Vec<HeadState> = (state.test_heads.iter())
         .map(|o| {
             let enabled = state.scene.outputs().contains(o);
+            let modes = o.modes();
             HeadState {
                 output: o.clone(),
                 enabled,
-                modes: o.preferred_mode().map_or(Vec::new(), |m| {
-                    vec![ModeInfo {
+                modes: (modes.iter())
+                    .map(|m| ModeInfo {
                         width: m.size.w,
                         height: m.size.h,
                         refresh_mhz: m.refresh,
-                        preferred: true,
-                    }]
-                }),
-                current: enabled.then_some(0),
+                        preferred: o.preferred_mode() == Some(*m),
+                    })
+                    .collect(),
+                current: (modes.iter())
+                    .position(|m| Some(*m) == o.current_mode())
+                    .filter(|_| enabled),
                 vrr_capable: false,
                 vrr_on: false,
             }
