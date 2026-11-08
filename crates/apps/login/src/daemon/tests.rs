@@ -51,7 +51,7 @@ pub(super) fn logind(
     }
 }
 
-fn closing(s: LogindSession) -> LogindSession {
+pub(super) fn closing(s: LogindSession) -> LogindSession {
     LogindSession { closing: true, ..s }
 }
 

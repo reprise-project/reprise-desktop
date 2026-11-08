@@ -756,11 +756,8 @@ impl Runtime {
 
 /// What the backend reads fresh for each input [`reads_world`] names.
 async fn read_world(logind: &Logind, users: &mut UserList) -> World {
-    let (user_sessions, login_sessions) = match logind.listed().await {
-        Ok(found) => {
-            let open = found.iter().filter(|s| s.class == "user" && !s.closing);
-            (open.count() as u32, found)
-        }
+    let (user_sessions, login_sessions) = match logind.listing().await {
+        Ok(listing) => (user_sessions(&listing), listing.found),
         Err(e) => {
             // Counted as one, so power stays refused while logind can't say.
             log::warn!("logind's sessions: {e}");
@@ -779,6 +776,12 @@ async fn read_world(logind: &Logind, users: &mut UserList) -> World {
         user_sessions,
         login_sessions,
     }
+}
+
+/// Open sessions of class `user`, and those logind could not describe, which may be.
+fn user_sessions(listing: &Listing) -> u32 {
+    let open = (listing.found.iter()).filter(|s| s.class == "user" && !s.closing);
+    (open.count() + listing.unread.len()) as u32
 }
 
 /// The login screen's accounts, enumerated off the loop with at most one enumeration running:
@@ -1503,6 +1506,34 @@ mod tests {
             matches!(&effects[0], Effect::Spawn { job, .. } if job.mode == Mode::Greeter),
             "{effects:?}"
         );
+    }
+
+    #[test]
+    fn the_sessions_logind_could_not_describe_count_as_user_sessions() {
+        let session = |id: &str, class: &str, closing| LogindSession {
+            id: id.into(),
+            user: "anna".into(),
+            uid: 1000,
+            vt: 7,
+            seat: "seat0".into(),
+            class: class.into(),
+            service: "reprise-login".into(),
+            closing,
+        };
+        let listing = Listing {
+            found: vec![
+                session("c1", "user", false),
+                session("c2", "user", true),
+                session("c3", "greeter", false),
+            ],
+            unread: vec![Unread {
+                id: "c4".into(),
+                uid: 1001,
+                user: "bert".into(),
+                seat: "seat0".into(),
+            }],
+        };
+        assert_eq!(user_sessions(&listing), 2);
     }
 
     #[test]

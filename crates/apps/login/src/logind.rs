@@ -372,11 +372,6 @@ impl Logind {
             .await
     }
 
-    /// logind's sessions whose properties can be read, closing ones included.
-    pub async fn listed(&self) -> zbus::Result<Vec<LogindSession>> {
-        Ok(self.listing().await?.found)
-    }
-
     pub async fn listing(&self) -> zbus::Result<Listing> {
         let mut listing = Listing::default();
         for (id, uid, user, seat, path) in self.manager.list_sessions().await? {

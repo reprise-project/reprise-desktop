@@ -9,7 +9,7 @@ use repriselogin::throttle::PAUSE_AFTER;
 use zeroize::Zeroizing;
 
 use super::tests::{
-    Run, authed, create, greeter_spawn, logind, reply, secret, spawn, started, unlock,
+    Run, authed, closing, create, greeter_spawn, logind, reply, secret, spawn, started, unlock,
 };
 use super::*;
 
@@ -654,7 +654,7 @@ fn tls_and_nla_logins_back_off_and_pause_each_on_their_own_failures() {
 fn a_session_logind_could_not_describe_at_recovery_gets_no_session_beside_it_until_it_ends() {
     let mut run = Run::machine(config(enabled()));
     run.d.recover_unread(vec![unread("c1", ANNA, "seat0")]);
-    assert_eq!(run.recover(vec![]), vec![]);
+    assert_eq!(run.d.recover(vec![], None), vec![]);
     run.start();
     let effects = run.verify(7, 2, "anna", ANNA);
     assert!(
@@ -674,6 +674,123 @@ fn a_session_logind_could_not_describe_at_recovery_gets_no_session_beside_it_unt
     run.anna_in_background(8, 3);
 }
 
+fn autologin_anna() -> MachineConfig {
+    MachineConfig {
+        login: repriselogin::machine::LoginConfig {
+            autologin_user: Some("anna".into()),
+            ..Default::default()
+        },
+        ..MachineConfig::default()
+    }
+}
+
+#[test]
+fn a_session_logind_could_not_describe_at_recovery_counts_as_running_at_start() {
+    let mut run = Run::machine(autologin_anna());
+    run.d.recover_unread(vec![unread("c1", ANNA, "seat0")]);
+    assert_eq!(run.recover(vec![]), []);
+    assert_eq!(
+        run.start(),
+        [],
+        "the seat shows a session, and autologin waits"
+    );
+
+    let mut run = Run::machine(autologin_anna());
+    run.d.recover_unread(vec![unread("c1", ANNA, "seat0")]);
+    assert_eq!(run.d.recover(vec![], None), []);
+    assert_eq!(run.start(), greeter_spawn(1), "no autologin beside it");
+}
+
+#[test]
+fn a_console_login_for_a_user_whose_session_logind_could_not_describe_starts_none() {
+    let mut run = Run::machine(MachineConfig::default());
+    run.d.recover_unread(vec![unread("c1", ANNA, "seat0")]);
+    run.d.recover(vec![], None);
+    assert_eq!(run.start(), greeter_spawn(1));
+    assert_eq!(run.greeter(create("anna")), spawn(2, Mode::Login, "anna"));
+    let effects = quiet(run.worker(2, authed("anna", ANNA)));
+    assert!(
+        matches!(
+            effects.as_slice(),
+            [
+                Effect::Kill(WorkerId(2)),
+                Effect::Reply(GreeterReply::Error {
+                    kind: ErrorKind::Failed,
+                    ..
+                })
+            ]
+        ),
+        "{effects:?}"
+    );
+}
+
+#[test]
+fn a_session_read_after_recovery_never_replaces_its_users_session_in_the_table() {
+    let mut run = Run::machine(MachineConfig::default());
+    run.d.recover_unread(vec![unread("c1", ANNA, "seat0")]);
+    let c9 = logind("c9", "anna", ANNA, 8, "user", "reprise-login");
+    run.d.recover(vec![c9], Some("c9"));
+    run.start();
+    let read = Input::SessionRead {
+        session: logind("c1", "anna", ANNA, 7, "user", "reprise-login"),
+        seat_active: Some("c9".into()),
+    };
+    let effects = run.on(read);
+    assert!(
+        (effects.iter())
+            .any(|e| matches!(e, Effect::Log(Level::Warn, text) if text.contains("c1"))),
+        "{effects:?}"
+    );
+    assert_eq!(
+        run.d.sessions.by_uid(ANNA).map(|e| e.id.as_str()),
+        Some("c9")
+    );
+    assert!(run.d.sessions.by_id("c1").is_none());
+}
+
+#[test]
+fn an_unread_session_on_screen_that_ends_brings_the_login_screen() {
+    let mut run = Run::machine(MachineConfig::default());
+    run.d.recover_unread(vec![unread("c1", ANNA, "seat0")]);
+    assert_eq!(run.recover(vec![]), []);
+    assert_eq!(run.start(), []);
+    assert_eq!(run.removed("c1", None), greeter_spawn(1));
+}
+
+#[test]
+fn an_unread_session_on_screen_read_as_closing_brings_the_login_screen() {
+    let mut run = Run::machine(MachineConfig::default());
+    run.d.recover_unread(vec![unread("c1", ANNA, "seat0")]);
+    assert_eq!(run.recover(vec![]), []);
+    assert_eq!(run.start(), []);
+    let read = Input::SessionRead {
+        session: closing(logind("c1", "anna", ANNA, 7, "user", "reprise-login")),
+        seat_active: Some("c1".into()),
+    };
+    assert_eq!(run.on(read), greeter_spawn(1));
+    assert_eq!(
+        run.removed("c1", None),
+        [],
+        "the login screen is already up"
+    );
+}
+
+#[test]
+fn a_session_left_out_of_the_table_on_screen_that_ends_brings_the_login_screen() {
+    let mut run = Run::machine(MachineConfig::default());
+    run.d.recover_unread(vec![unread("c1", ANNA, "seat0")]);
+    let c9 = logind("c9", "anna", ANNA, 8, "user", "reprise-login");
+    run.d.recover(vec![c9], Some("c1"));
+    assert_eq!(run.start(), []);
+    let read = Input::SessionRead {
+        session: logind("c1", "anna", ANNA, 7, "user", "reprise-login"),
+        seat_active: Some("c1".into()),
+    };
+    run.on(read);
+    assert!(run.d.sessions.by_id("c1").is_none());
+    assert_eq!(run.removed("c1", None), greeter_spawn(1));
+}
+
 #[test]
 fn only_seat0_sessions_logind_could_not_describe_at_recovery_hold_back_remote_logins() {
     let mut run = Run::machine(config(enabled()));
@@ -681,7 +798,7 @@ fn only_seat0_sessions_logind_could_not_describe_at_recovery_hold_back_remote_lo
         .d
         .recover_unread(vec![unread("c1", ANNA, ""), unread("c3", BERT, "seat0")]);
     assert_eq!(kept, [unread("c3", BERT, "seat0")]);
-    run.recover(vec![]);
+    run.d.recover(vec![], None);
     run.start();
     run.anna_in_background(7, 2);
 }
@@ -690,7 +807,7 @@ fn only_seat0_sessions_logind_could_not_describe_at_recovery_hold_back_remote_lo
 fn a_seat0_session_read_after_recovery_joins_the_table_and_is_linked() {
     let mut run = Run::machine(config(enabled()));
     run.d.recover_unread(vec![unread("c1", ANNA, "seat0")]);
-    run.recover(vec![]);
+    run.d.recover(vec![], None);
     run.start();
     let read = |id: &str| Input::SessionRead {
         session: logind(id, "anna", ANNA, 7, "user", "reprise-login-remote"),
@@ -724,7 +841,7 @@ fn a_seat0_session_read_after_recovery_joins_the_table_and_is_linked() {
 fn a_session_read_after_recovery_that_is_no_seat0_user_session_stops_holding_back_logins() {
     let mut run = Run::machine(config(enabled()));
     run.d.recover_unread(vec![unread("c1", ANNA, "seat0")]);
-    run.recover(vec![]);
+    run.d.recover(vec![], None);
     run.start();
     let session = logind("c1", "anna", ANNA, 0, "manager", "systemd-user");
     let read = Input::SessionRead {
