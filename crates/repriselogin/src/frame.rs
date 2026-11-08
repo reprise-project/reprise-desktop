@@ -204,6 +204,123 @@ pub fn read_msg<T: DeserializeOwned>(r: &mut impl Read) -> Result<T, FrameError>
     decode(&body)
 }
 
+/// Secrets travel as hex text: serde_json borrows it from the frame body, and it decodes into
+/// one buffer of its final size, so no unwiped copy is left on the heap.
+pub mod hex {
+    use std::fmt::{self, Write};
+
+    use serde::de::Error;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use zeroize::Zeroizing;
+
+    struct Hex<'a>(&'a [u8]);
+
+    impl fmt::Display for Hex<'_> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            for b in self.0 {
+                for nibble in [b >> 4, b & 15] {
+                    f.write_char(char::from(b"0123456789abcdef"[usize::from(nibble)]))?;
+                }
+            }
+            Ok(())
+        }
+    }
+
+    /// serde_json's `collect_str` writes straight into the frame, with no `String` between.
+    impl Serialize for Hex<'_> {
+        fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+            s.collect_str(self)
+        }
+    }
+
+    fn bytes<E: Error>(hex: &str) -> Result<Zeroizing<Vec<u8>>, E> {
+        if !hex.len().is_multiple_of(2) {
+            return Err(E::custom("hex of odd length"));
+        }
+        let mut out = Zeroizing::new(vec![0; hex.len() / 2]);
+        for (o, [hi, lo]) in out.iter_mut().zip(hex.as_bytes().as_chunks().0) {
+            let digit = |c: u8| {
+                char::from(c)
+                    .to_digit(16)
+                    .ok_or_else(|| E::custom("not hex"))
+            };
+            *o = (digit(*hi)? << 4 | digit(*lo)?) as u8;
+        }
+        Ok(out)
+    }
+
+    /// Escaped hex would come from serde_json's scratch buffer, so only borrowed text is taken.
+    fn borrowed<'de, D: Deserializer<'de>>(d: D) -> Result<&'de str, D::Error> {
+        <&str>::deserialize(d)
+    }
+
+    pub fn serialize<S: Serializer>(v: &Zeroizing<Vec<u8>>, s: S) -> Result<S::Ok, S::Error> {
+        Hex(v).serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Zeroizing<Vec<u8>>, D::Error> {
+        bytes(borrowed(d)?)
+    }
+
+    pub mod option {
+        use super::*;
+
+        pub fn serialize<S: Serializer>(
+            v: &Option<Zeroizing<Vec<u8>>>,
+            s: S,
+        ) -> Result<S::Ok, S::Error> {
+            v.as_ref().map(|v| Hex(v)).serialize(s)
+        }
+
+        pub fn deserialize<'de, D: Deserializer<'de>>(
+            d: D,
+        ) -> Result<Option<Zeroizing<Vec<u8>>>, D::Error> {
+            Option::<&str>::deserialize(d)?.map(bytes).transpose()
+        }
+    }
+
+    fn text<E: Error>(hex: &str) -> Result<Zeroizing<String>, E> {
+        let mut utf8 = bytes(hex)?;
+        match String::from_utf8(std::mem::take(&mut *utf8)) {
+            Ok(s) => Ok(Zeroizing::new(s)),
+            Err(e) => {
+                drop(Zeroizing::new(e.into_bytes()));
+                Err(E::custom("not UTF-8"))
+            }
+        }
+    }
+
+    /// A password as the hex of its UTF-8 bytes.
+    pub mod text {
+        use super::*;
+
+        pub fn serialize<S: Serializer>(v: &Zeroizing<String>, s: S) -> Result<S::Ok, S::Error> {
+            Hex(v.as_bytes()).serialize(s)
+        }
+
+        pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Zeroizing<String>, D::Error> {
+            super::text(borrowed(d)?)
+        }
+
+        pub mod option {
+            use super::super::*;
+
+            pub fn serialize<S: Serializer>(
+                v: &Option<Zeroizing<String>>,
+                s: S,
+            ) -> Result<S::Ok, S::Error> {
+                v.as_ref().map(|v| Hex(v.as_bytes())).serialize(s)
+            }
+
+            pub fn deserialize<'de, D: Deserializer<'de>>(
+                d: D,
+            ) -> Result<Option<Zeroizing<String>>, D::Error> {
+                Option::<&str>::deserialize(d)?.map(text).transpose()
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -328,9 +445,38 @@ mod tests {
     }
 
     #[test]
+    fn a_secret_that_is_not_plain_hex_is_a_json_error() {
+        use crate::account::AccountRequest;
+        use crate::handover::Step;
+        for pdu in [
+            br#"{"pdu":{"input":"0","output":""}}"#.as_slice(),
+            br#"{"pdu":{"input":"zz","output":""}}"#,
+            br#"{"pdu":{"input":"\u0030\u0031","output":""}}"#,
+            br#"{"pdu":{"input":[1,2],"output":""}}"#,
+        ] {
+            assert!(
+                matches!(decode::<Step>(pdu), Err(FrameError::Json(_))),
+                "{}",
+                String::from_utf8_lossy(pdu)
+            );
+        }
+        assert!(matches!(
+            decode::<AccountRequest>(br#"{"clear_remote_password":{"login_password":"ff"}}"#),
+            Err(FrameError::Json(_))
+        ));
+        assert_eq!(
+            decode::<Step>(br#"{"pdu":{"input":"0A0b","output":""}}"#).unwrap(),
+            Step::Pdu {
+                input: Zeroizing::new(vec![10, 11]),
+                output: Zeroizing::new(vec![]),
+            }
+        );
+    }
+
+    #[test]
     fn an_unknown_type_is_a_json_error_not_a_panic() {
         assert!(matches!(
-            decode::<GreeterRequest>(br#"{"type":"teleport"}"#),
+            decode::<GreeterRequest>(br#"{"teleport":{}}"#),
             Err(FrameError::Json(_))
         ));
     }

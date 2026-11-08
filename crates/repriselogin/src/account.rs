@@ -12,14 +12,17 @@ pub const ACCOUNT_SOCKET: &str = "/run/reprise-login/account.sock";
 pub const MIN_REMOTE_PASSWORD: usize = 8;
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
 pub enum AccountRequest {
     Status,
     SetRemotePassword {
+        #[serde(with = "crate::frame::hex::text")]
         login_password: Zeroizing<String>,
+        #[serde(with = "crate::frame::hex::text")]
         remote_password: Zeroizing<String>,
     },
     ClearRemotePassword {
+        #[serde(with = "crate::frame::hex::text")]
         login_password: Zeroizing<String>,
     },
 }
@@ -43,7 +46,7 @@ impl fmt::Debug for AccountRequest {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
 pub enum AccountReply {
     Status { remote_password: bool },
     Done,
@@ -109,24 +112,46 @@ mod tests {
         assert_ne!(nt_hash("é𝄞"), nt_hash("e"));
     }
 
+    fn body<T: serde::Serialize>(m: &T) -> String {
+        String::from_utf8(encode(m).unwrap()[4..].to_vec()).unwrap()
+    }
+
     #[test]
     fn wire_shapes_are_pinned() {
-        let body = |m: &AccountReply| String::from_utf8(encode(m).unwrap()[4..].to_vec()).unwrap();
         assert_eq!(
             body(&AccountReply::Refused {
                 reason: AccountRefusal::SameAsLogin
             }),
-            r#"{"type":"refused","reason":"same_as_login"}"#
+            r#"{"refused":{"reason":"same_as_login"}}"#
         );
+        assert_eq!(body(&AccountRequest::Status), r#""status""#);
+    }
+
+    #[test]
+    fn a_set_remote_password_round_trips_with_both_passwords_in_hex() {
+        let sent = AccountRequest::SetRemotePassword {
+            login_password: Zeroizing::new("hunter2".into()),
+            remote_password: Zeroizing::new("sw\"ordfish".into()),
+        };
+        let json = body(&sent);
         assert_eq!(
-            decode::<AccountRequest>(
-                br#"{"type":"clear_remote_password","login_password":"hunter2"}"#
-            )
-            .unwrap(),
-            AccountRequest::ClearRemotePassword {
-                login_password: Zeroizing::new("hunter2".into())
-            }
+            json,
+            r#"{"set_remote_password":{"login_password":"68756e74657232","remote_password":"7377226f726466697368"}}"#
         );
+        assert_eq!(decode::<AccountRequest>(json.as_bytes()).unwrap(), sent);
+    }
+
+    #[test]
+    fn a_clear_remote_password_round_trips_with_its_password_in_hex() {
+        let sent = AccountRequest::ClearRemotePassword {
+            login_password: Zeroizing::new("é𝄞".into()),
+        };
+        let json = body(&sent);
+        assert_eq!(
+            json,
+            r#"{"clear_remote_password":{"login_password":"c3a9f09d849e"}}"#
+        );
+        assert_eq!(decode::<AccountRequest>(json.as_bytes()).unwrap(), sent);
     }
 
     #[test]

@@ -16,10 +16,12 @@ pub fn intake_path(uid: u32) -> PathBuf {
 /// One step of the connection sequence the front ran, replayed by the server that takes over.
 /// A `Pdu` can be the Client Info PDU, which carries the password.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
 pub enum Step {
     Pdu {
+        #[serde(with = "crate::frame::hex")]
         input: Zeroizing<Vec<u8>>,
+        #[serde(with = "crate::frame::hex")]
         output: Zeroizing<Vec<u8>>,
     },
     SecurityUpgradeDone,
@@ -67,8 +69,11 @@ pub enum Cipher {
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DirectionKeys {
     pub seq: u64,
+    #[serde(with = "crate::frame::hex")]
     pub key: Zeroizing<Vec<u8>>,
+    #[serde(with = "crate::frame::hex")]
     pub iv: Zeroizing<Vec<u8>>,
+    #[serde(with = "crate::frame::hex::option")]
     pub secret: Option<Zeroizing<Vec<u8>>>,
 }
 
@@ -138,21 +143,21 @@ impl fmt::Debug for HandOver {
 /// reprise-login to a user's reprise-rdp. `HandOver` always travels with exactly one fd, the
 /// client's socket.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
 pub enum IntakeMessage {
     HandOver(Box<HandOver>),
 }
 
 /// A user's reprise-rdp to reprise-login.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
 pub enum IntakeReport {
     /// The clients now connected to the session, sent on every change.
     Viewers { count: u32 },
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::frame::{decode, encode};
 
@@ -169,7 +174,7 @@ mod tests {
         }
     }
 
-    fn hand_over() -> HandOver {
+    pub(crate) fn hand_over() -> HandOver {
         HandOver {
             conn: 9,
             user: "anna".into(),
@@ -200,34 +205,51 @@ mod tests {
     fn wire_shapes_are_pinned() {
         assert_eq!(
             body(&Step::Pdu {
-                input: Zeroizing::new(vec![1, 2]),
+                input: Zeroizing::new(vec![1, 0xAB]),
                 output: Zeroizing::new(vec![])
             }),
-            r#"{"type":"pdu","input":[1,2],"output":[]}"#
+            r#"{"pdu":{"input":"01ab","output":""}}"#
         );
         assert_eq!(
             body(&Step::SecurityUpgradeDone),
-            r#"{"type":"security_upgrade_done"}"#
+            r#""security_upgrade_done""#
         );
         assert_eq!(
             body(&IntakeReport::Viewers { count: 2 }),
-            r#"{"type":"viewers","count":2}"#
+            r#"{"viewers":{"count":2}}"#
         );
     }
 
     #[test]
-    fn a_hand_over_round_trips_beside_its_tag() {
+    fn a_hand_over_round_trips_with_its_secrets_in_hex() {
         let sent = IntakeMessage::HandOver(Box::new(hand_over()));
+        let keys = format!(
+            r#"{{"seq":3,"key":"{}","iv":"{}","secret":"{}"}}"#,
+            "ab".repeat(32),
+            "ab".repeat(12),
+            "cd".repeat(48)
+        );
+        assert_eq!(
+            body(&sent),
+            format!(
+                r#"{{"hand_over":{{"conn":9,"user":"anna","peer":"192.0.2.1:50000","security":2,"steps":[{{"pdu":{{"input":"abababab","output":"cdcdcdcd"}}}},"security_upgrade_done",{{"credssp_done":{{"user":"anna","domain":null}}}}],"tls":{{"version":"tls13","cipher":"aes256_gcm","tx":{keys},"rx":{keys},"record_limit":16777216}}}}}}"#
+            )
+        );
+        assert_eq!(
+            decode::<IntakeMessage>(body(&sent).as_bytes()).unwrap(),
+            sent
+        );
+    }
+
+    #[test]
+    fn a_tls12_hand_over_round_trips_without_a_traffic_secret() {
+        let mut handover = hand_over();
+        handover.tls.version = TlsVersion::Tls12;
+        handover.tls.tx.secret = None;
+        handover.tls.rx.secret = None;
+        let sent = IntakeMessage::HandOver(Box::new(handover));
         let json = body(&sent);
-        assert!(
-            json.starts_with(r#"{"type":"hand_over","conn":9,"#),
-            "{json}"
-        );
-        assert!(json.contains(r#""peer":"192.0.2.1:50000""#), "{json}");
-        assert!(
-            json.contains(r#""version":"tls13","cipher":"aes256_gcm""#),
-            "{json}"
-        );
+        assert!(json.contains(r#","secret":null}"#), "{json}");
         assert_eq!(decode::<IntakeMessage>(json.as_bytes()).unwrap(), sent);
     }
 
