@@ -44,6 +44,7 @@ use crate::limits::{
 };
 use crate::link::LinkSender;
 use crate::negotiate;
+use crate::refusals::Refusals;
 
 const DESKTOP: DesktopSize = DesktopSize {
     width: 1024,
@@ -70,6 +71,7 @@ pub struct Ctx {
     /// applies when the front restarts.
     pub host: String,
     pub nla_throttle: RefCell<NlaThrottle>,
+    pub refusals: RefCell<Refusals>,
 }
 
 /// A connection that sent its credentials, waiting for reprise-login's verdict.
@@ -117,6 +119,8 @@ pub enum Refused {
     UserTooLong,
     Io(io::ErrorKind),
     Nla(String),
+    /// Refused after the client's NTLM AUTHENTICATE was counted as a failed password.
+    FailedProof(Box<Refused>),
     NoDelegation,
     /// The Client Info PDU names another user than CredSSP authenticated.
     UserChanged,
@@ -129,8 +133,40 @@ pub enum Refused {
     DelegationMismatch,
     /// reprise-login did not verify the delegated password within `VERDICT_WAIT`.
     NoVerdict,
-    /// Refused at CredSSP's start or at the client's NTLM AUTHENTICATE after failed passwords.
+    /// Refused at the negotiation, at CredSSP's start or at the client's NTLM AUTHENTICATE
+    /// after failed passwords.
     Throttled(Refusal),
+}
+
+impl Refused {
+    /// What the refusal counts as in the refusals report.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Refused::Deadline => "deadline",
+            Refused::TooLong => "too long",
+            Refused::Negotiation(_) => "negotiation",
+            Refused::Tls(_) => "TLS",
+            Refused::NoPassword | Refused::NoUser | Refused::UserTooLong => "logon info",
+            Refused::Io(_) => "connection error",
+            Refused::Nla(_)
+            | Refused::FailedProof(_)
+            | Refused::NoDelegation
+            | Refused::UserChanged
+            | Refused::DelegationMismatch
+            | Refused::NoVerdict => "NLA",
+            Refused::Denied { .. } => "denied",
+            Refused::Throttled(refusal) => refusal.kind(),
+        }
+    }
+
+    /// The kind the refusals report counts it as; None for a failed password proof, which is
+    /// always logged in full.
+    pub fn counted_as(&self) -> Option<&'static str> {
+        match self {
+            Refused::FailedProof(_) | Refused::DelegationMismatch => None,
+            refusal => Some(refusal.kind()),
+        }
+    }
 }
 
 impl fmt::Display for Refused {
@@ -147,6 +183,7 @@ impl fmt::Display for Refused {
             Refused::UserTooLong => write!(f, "a user name over {MAX_USER} bytes"),
             Refused::Io(kind) => write!(f, "connection error: {kind}"),
             Refused::Nla(e) => write!(f, "Network Level Authentication failed: {e}"),
+            Refused::FailedProof(refused) => refused.fmt(f),
             Refused::NoDelegation => f.write_str(
                 "the client sent no password (Restricted Admin or Remote Credential Guard), which Reprise cannot use",
             ),
@@ -307,6 +344,7 @@ pub async fn to_client_info(
 ) -> Result<Pending, Refused> {
     let peer = tcp.peer_addr().map_err(|e| Refused::Io(e.kind()))?;
     let attempt = Cell::default();
+    let failed_proof = Cell::new(false);
     let link = Link {
         ctx,
         conn,
@@ -314,10 +352,15 @@ pub async fn to_client_info(
         heard,
         asked: false,
         attempt: &attempt,
+        failed_proof: &failed_proof,
     };
-    tokio::time::timeout(HANDSHAKE, accept(tcp, link))
-        .await
-        .unwrap_or(Err(Refused::Deadline))
+    let accepted = tokio::time::timeout(HANDSHAKE, accept(tcp, link)).await;
+    match accepted.unwrap_or(Err(Refused::Deadline)) {
+        Err(refused) if failed_proof.get() && refused.counted_as().is_some() => {
+            Err(Refused::FailedProof(Box::new(refused)))
+        }
+        accepted => accepted,
+    }
 }
 
 /// One connection's side of the link. Dropped after its `Authenticate` with no verdict yet,
@@ -330,15 +373,18 @@ struct Link<'a> {
     asked: bool,
     /// The password check counted as failed until the delegated password is listed.
     attempt: &'a Cell<Option<Attempt>>,
+    /// Set on drop when `attempt` still held a failed password check.
+    failed_proof: &'a Cell<bool>,
 }
 
 impl Drop for Link<'_> {
     fn drop(&mut self) {
-        // A failed check may have started a pause, which is logged once.
-        if self.attempt.take().is_some()
-            && let Ok(mut throttle) = self.ctx.nla_throttle.try_borrow_mut()
-        {
-            throttle.paused();
+        if self.attempt.take().is_some() {
+            self.failed_proof.set(true);
+            // A failed check may have started a pause, which is logged once.
+            if let Ok(mut throttle) = self.ctx.nla_throttle.try_borrow_mut() {
+                throttle.paused();
+            }
         }
         if self.asked
             && let Ok(link) = self.ctx.link.try_borrow()
@@ -362,6 +408,10 @@ async fn accept(tcp: TcpStream, mut link: Link<'_>) -> Result<Pending, Refused> 
         .map(|u| u.user.clone())
         .collect();
     let chosen = negotiate::choose_protocol(offered, cookie.as_deref(), &names);
+    if chosen.is_some_and(|p| p.intersects(SecurityProtocol::HYBRID | SecurityProtocol::HYBRID_EX))
+    {
+        (ctx.nla_throttle.borrow_mut().check(peer.ip())).map_err(Refused::Throttled)?;
+    }
     // With no protocol to agree on, an SSL acceptor still answers RDP_NEG_FAILURE.
     let mut acceptor = Acceptor::new(
         chosen.unwrap_or(SecurityProtocol::SSL),
@@ -683,8 +733,8 @@ impl NetworkClient for NoNetwork {
     }
 }
 
-/// Each user under the four name forms an SPNEGO client may send, which sspi matches in
-/// full: `anna`, `.\anna`, `HOST\anna` and `anna@host`. The password is the NT hash.
+/// Each user as `anna`, `.\anna`, `HOST\anna` and `anna@host`, with the NT hash as password; the
+/// acceptor compares account names only, so any domain logs on.
 fn credssp_users(users: &[NlaUser], host: &str) -> Vec<CredsspAuthIdentity> {
     let domain = host.split('.').next().unwrap_or(host).to_uppercase();
     let mut list = Vec::with_capacity(users.len() * 4);

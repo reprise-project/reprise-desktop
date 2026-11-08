@@ -237,8 +237,8 @@ impl AsyncWrite for KtlsStream {
     }
 }
 
-/// The writes since the last look at the send sequence. Records hold at most `MAX_PLAINTEXT`
-/// bytes and a write closes at most one partial one, so these bound the records sent.
+/// Writes since the last look at the send sequence; each closes at most one partial record, so
+/// they bound the records sent plus one left open before the look.
 #[derive(Debug, Default)]
 struct SentSince {
     writes: u64,

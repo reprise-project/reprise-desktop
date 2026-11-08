@@ -21,6 +21,14 @@ fn section<'a>(unit: &'a str, name: &str) -> Vec<&'a str> {
     lines
 }
 
+fn assert_is(unit: &str, name: &str, wanted: &[&str]) {
+    assert_eq!(
+        section(unit, name),
+        wanted,
+        "[{name}] holds exactly these lines"
+    );
+}
+
 fn assert_has(unit: &str, name: &str, wanted: &[&str]) {
     let lines = section(unit, name);
     for want in wanted {
@@ -31,7 +39,7 @@ fn assert_has(unit: &str, name: &str, wanted: &[&str]) {
 #[test]
 fn the_front_unit_runs_unprivileged_and_sandboxed() {
     let unit = data("systemd/reprise-login-rdp.service");
-    assert_has(
+    assert_is(
         &unit,
         "Unit",
         &[
@@ -40,7 +48,7 @@ fn the_front_unit_runs_unprivileged_and_sandboxed() {
             "After=reprise-login.service network.target",
         ],
     );
-    assert_has(
+    assert_is(
         &unit,
         "Service",
         &[
@@ -67,6 +75,7 @@ fn the_front_unit_runs_unprivileged_and_sandboxed() {
             "ProtectHostname=yes",
             "ProtectProc=invisible",
             "ProcSubset=pid",
+            "InaccessiblePaths=-/run/dbus",
             "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
             "RestrictNamespaces=yes",
             "RestrictRealtime=yes",
@@ -76,6 +85,7 @@ fn the_front_unit_runs_unprivileged_and_sandboxed() {
             "SystemCallArchitectures=native",
             "SystemCallFilter=@system-service",
             "SystemCallFilter=~@privileged @resources",
+            "SystemCallFilter=capset",
             "CapabilityBoundingSet=CAP_NET_BIND_SERVICE",
             "AmbientCapabilities=CAP_NET_BIND_SERVICE",
             "MemoryMax=512M",
@@ -85,12 +95,6 @@ fn the_front_unit_runs_unprivileged_and_sandboxed() {
     assert!(
         !unit.lines().any(|l| l.trim() == "[Install]"),
         "reprise-login starts and stops the front, so it has no [Install]"
-    );
-    assert!(
-        !unit
-            .lines()
-            .any(|l| l.trim_start().starts_with("User=root")),
-        "the front never runs as root"
     );
 }
 
@@ -112,12 +116,16 @@ fn the_handover_socket_is_owner_only() {
 #[test]
 fn the_handover_service_starts_without_waiting_for_the_compositor() {
     let service = data("systemd/reprise-rdp-handover.service");
-    assert_has(
+    assert_is(
         &service,
         "Service",
         &[
             "ExecStart=/usr/bin/reprise-rdp --hand-over",
             "Restart=on-failure",
+            "RestartSec=2",
+            "RestartSteps=5",
+            "RestartMaxDelaySec=60",
+            "RestartPreventExitStatus=75",
         ],
     );
     assert!(
@@ -130,6 +138,19 @@ fn the_handover_service_starts_without_waiting_for_the_compositor() {
 fn the_handover_service_is_not_restarted_after_it_refuses_its_hand_overs() {
     let service = data("systemd/reprise-rdp-handover.service");
     assert_has(&service, "Service", &["RestartPreventExitStatus=75"]);
+}
+
+#[test]
+fn the_handover_service_has_no_start_limit() {
+    let service = data("systemd/reprise-rdp-handover.service");
+    assert_is(
+        &service,
+        "Unit",
+        &[
+            "Description=Reprise Remote Desktop server for connections the login manager hands over",
+            "StartLimitIntervalSec=0",
+        ],
+    );
 }
 
 #[test]

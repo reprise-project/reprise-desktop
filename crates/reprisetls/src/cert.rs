@@ -4,7 +4,7 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{self, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio_rustls::TlsAcceptor;
 use tokio_rustls::rustls::crypto::aws_lc_rs;
@@ -73,8 +73,8 @@ pub fn regenerate(dir: &Path) -> io::Result<Identity> {
         .mode(0o700)
         .create(dir)?;
     owner_only(dir)?;
-    replace(&dir.join(KEY), key.serialize_pem().as_bytes())?;
-    replace(&dir.join(CERT), cert.pem().as_bytes())?;
+    replace(&dir.join(KEY), key.serialize_pem().as_bytes(), 0o600)?;
+    replace(&dir.join(CERT), cert.pem().as_bytes(), 0o600)?;
     identity(
         cert.der().clone(),
         PrivateKeyDer::try_from(key.serialize_der()).map_err(io::Error::other)?,
@@ -137,9 +137,12 @@ fn fingerprint(der: &[u8]) -> String {
         .join(":")
 }
 
-/// Write `path` through a temporary file readable by the owner only, so it never holds half a key.
-fn replace(path: &Path, contents: &[u8]) -> io::Result<()> {
-    let tmp = path.with_extension("pem.tmp");
+/// Replaces `path` with `contents` through a temporary file of `mode`, whatever the umask, so it
+/// never holds half of them.
+pub fn replace(path: &Path, contents: &[u8], mode: u32) -> io::Result<()> {
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let tmp = PathBuf::from(tmp);
     match fs::remove_file(&tmp) {
         Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e),
         _ => {}
@@ -147,14 +150,16 @@ fn replace(path: &Path, contents: &[u8]) -> io::Result<()> {
     let mut f = fs::OpenOptions::new()
         .write(true)
         .create_new(true)
-        .mode(0o600)
+        .mode(mode)
         .open(&tmp)?;
+    f.set_permissions(fs::Permissions::from_mode(mode))?;
     f.write_all(contents)?;
     f.sync_all()?;
     fs::rename(&tmp, path)
 }
 
-fn hostname() -> String {
+/// The kernel's host name, or `localhost` when it has none.
+pub fn hostname() -> String {
     fs::read_to_string("/proc/sys/kernel/hostname")
         .map(|h| h.trim().to_string())
         .ok()

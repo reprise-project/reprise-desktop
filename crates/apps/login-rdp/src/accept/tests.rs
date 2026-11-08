@@ -50,6 +50,7 @@ pub(crate) fn ctx() -> Ctx {
         link: RefCell::new(None),
         host: HOST.to_owned(),
         nla_throttle: RefCell::default(),
+        refusals: RefCell::default(),
     }
 }
 
@@ -644,6 +645,15 @@ enum Credssp {
         password: &'static str,
         held: Held,
     },
+    /// Bare NTLM as anna with a wrong password, sending its AUTHENTICATE but the last byte, then
+    /// pausing tokio's clock and sending nothing more.
+    StallsInProof,
+}
+
+/// Where a bare NTLM client stops.
+enum Stop {
+    AtChallenge(Held),
+    InProof,
 }
 
 /// The client's side of a [`Hold`].
@@ -758,7 +768,7 @@ async fn delegate_other<S>(
     password: &str,
     delegated: AuthIdentity,
     public_key: &[u8],
-    mut held: Option<Held>,
+    mut stop: Option<Stop>,
 ) -> ConnectorResult<()>
 where
     S: AsyncRead + AsyncWrite + Send + Sync + Unpin,
@@ -803,13 +813,22 @@ where
             break;
         }
         let reply = ts_request(framed, &out).await?;
-        if let Some(held) = held.take() {
+        if let Some(Stop::AtChallenge(held)) = stop.take_if(|s| matches!(s, Stop::AtChallenge(_))) {
             let _ = held.at_challenge.send(());
             let _ = held.go.await;
         }
         input[0].buffer = reply.nego_tokens.unwrap_or_default();
     }
     out.pub_key_auth = Some(seal(&mut ntlm, public_key));
+    if let Some(Stop::InProof) = stop {
+        let mut bytes = Vec::new();
+        out.encode_ts_request(&mut bytes).unwrap();
+        framed.write_all(&bytes[..bytes.len() - 1]).await.unwrap();
+        // On the real clock, so the front reads the AUTHENTICATE before the deadline comes.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        tokio::time::pause();
+        std::future::pending::<()>().await;
+    }
     ts_request(framed, &out).await?;
     let delegated = CredentialsBuffers::AuthIdentity(delegated.into());
     let credentials = write_ts_credentials(&delegated, CredSspMode::WithCredentials).unwrap();
@@ -1005,7 +1024,7 @@ async fn nla_client(
                 password,
                 delegated,
                 &public_key,
-                Some(held),
+                Some(Stop::AtChallenge(held)),
             )
             .await?;
             connector.mark_credssp_as_done();
@@ -1019,6 +1038,14 @@ async fn nla_client(
         Credssp::Stalls => {
             tokio::time::pause();
             std::future::pending::<()>().await;
+        }
+        Credssp::StallsInProof => {
+            let delegated = AuthIdentity {
+                username: Username::new("anna", None).unwrap(),
+                password: "wrong".to_owned().into(),
+            };
+            let stop = Some(Stop::InProof);
+            delegate_other(&mut framed, "anna", "wrong", delegated, &public_key, stop).await?;
         }
     }
     loop {
@@ -1116,7 +1143,7 @@ async fn nla_with_a_wrong_password_never_reaches_the_daemon() {
     let (_tell, mut heard) = mpsc::unbounded_channel();
     let (pending, client) = nla_log_on(&ctx, hybrid("anna", "wrong"), &mut heard).await;
     assert!(
-        matches!(pending, Err(Refused::Nla(_))),
+        matches!(pending, Err(Refused::FailedProof(_))),
         "CredSSP fails: {pending:?}"
     );
     assert!(client.await.unwrap().is_err());
@@ -1312,7 +1339,11 @@ async fn a_client_that_delegates_no_password_is_refused() {
     };
     let (pending, client) = nla_log_on(&ctx, logon, &mut heard).await;
     client.abort();
-    assert_eq!(pending.unwrap_err(), Refused::NoDelegation);
+    assert_eq!(
+        pending.unwrap_err(),
+        Refused::FailedProof(Box::new(Refused::NoDelegation)),
+        "the proof counts as failed until a password is delegated"
+    );
     assert_eq!(daemon.rest(ctx).await, [], "no Authenticate");
 }
 
@@ -1328,6 +1359,7 @@ async fn a_verdict_not_heard_within_verdict_wait_of_the_authenticate_is_refused(
         heard: &mut heard,
         asked: true,
         attempt: &Cell::default(),
+        failed_proof: &Cell::default(),
     };
     let waited = tokio::time::timeout(HANDSHAKE * 2, link.verified()).await;
     assert_eq!(waited, Ok(Err(Refused::NoVerdict)));
@@ -1373,7 +1405,10 @@ async fn a_spnego_client_with_another_domain_is_refused() {
     };
     let (pending, client) = nla_log_on(&ctx, logon, &mut heard).await;
     client.abort();
-    assert!(matches!(pending, Err(Refused::Nla(_))), "{pending:?}");
+    assert!(
+        matches!(pending, Err(Refused::FailedProof(_))),
+        "{pending:?}"
+    );
     assert_eq!(daemon.rest(ctx).await, []);
 }
 
@@ -1434,7 +1469,10 @@ async fn fail_logons(ctx: &Ctx, from: IpAddr, n: u32) {
         let (pending, client) = nla_log_on(ctx, failing_logon(from, i), &mut heard).await;
         client.abort();
         assert!(
-            matches!(pending, Err(Refused::Nla(_) | Refused::DelegationMismatch)),
+            matches!(
+                pending,
+                Err(Refused::FailedProof(_) | Refused::DelegationMismatch)
+            ),
             "{pending:?}"
         );
     }
@@ -1635,7 +1673,7 @@ async fn a_connection_held_at_challenge_while_its_address_backs_off_is_refused_a
         held_front(&ctx, second),
         in_turn([first_hold, second_hold]),
     );
-    assert!(matches!(first, Err(Refused::Nla(_))), "{first:?}");
+    assert!(matches!(first, Err(Refused::FailedProof(_))), "{first:?}");
     assert!(
         matches!(second, Err(Refused::Throttled(Refusal::BackedOff(_)))),
         "{second:?}"
@@ -1665,12 +1703,198 @@ async fn connections_held_at_challenge_when_the_pause_starts_are_refused_at_thei
         held_front(&ctx, wrong),
         in_turn([last_hold, right_hold, wrong_hold]),
     );
-    assert!(matches!(last, Err(Refused::Nla(_))), "{last:?}");
+    assert!(matches!(last, Err(Refused::FailedProof(_))), "{last:?}");
     assert_eq!(right.err(), Some(Refused::Throttled(Refusal::Paused)));
     assert_eq!(wrong.err(), Some(Refused::Throttled(Refusal::Paused)));
     assert_eq!(
         daemon.rest(ctx).await,
         [],
         "the daemon hears no Authenticate"
+    );
+}
+
+fn limits() -> Rc<RefCell<crate::limits::Limits>> {
+    Rc::new(RefCell::new(crate::limits::Limits::new(
+        crate::limits::MAX_PREAUTH,
+        crate::limits::PREAUTH_PER_IP,
+    )))
+}
+
+/// Runs `logon` through the front's whole connection on `listener`, as the accept loop does.
+async fn through_connection(
+    ctx: &Rc<Ctx>,
+    limits: &Rc<RefCell<crate::limits::Limits>>,
+    listener: &TcpListener,
+    logon: NlaLogon,
+) {
+    let addr = listener.local_addr().unwrap();
+    let client = tokio::spawn(nla_client(addr, logon, ctx.identity.public_key()));
+    let (tcp, peer) = listener.accept().await.unwrap();
+    let permit = (limits.borrow_mut().admit(peer.ip(), Instant::now()))
+        .unwrap_or_else(|r| panic!("{peer} is admitted: {r}"));
+    let (_tell, heard) = mpsc::unbounded_channel();
+    let arrival = crate::Arrival {
+        tcp,
+        peer,
+        conn: 1,
+        heard,
+        _permit: permit,
+    };
+    crate::connection(
+        arrival,
+        ctx.clone(),
+        crate::Conns::default(),
+        limits.clone(),
+    )
+    .await;
+    client.abort();
+}
+
+#[tokio::test]
+async fn an_address_backing_off_from_nla_is_refused_before_tls_and_logs_on_over_tls() {
+    let ctx = Rc::new(ctx_with_anna());
+    let limits = limits();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let here: IpAddr = Ipv4Addr::LOCALHOST.into();
+    for i in 0..=FREE_FAILURES {
+        through_connection(&ctx, &limits, &listener, failing_logon(here, i)).await;
+    }
+    // The back-off runs on tokio's clock; paused, it lasts however long the negotiation takes.
+    tokio::time::pause();
+    limits
+        .borrow_mut()
+        .admit(here, Instant::now())
+        .expect("failed proofs leave the address to the NLA throttle, not to admit");
+
+    let mut raw = TcpStream::connect(addr).await.unwrap();
+    let request = ironrdp_core::encode_vec(&X224(ironrdp_pdu::nego::ConnectionRequest {
+        nego_data: None,
+        flags: ironrdp_pdu::nego::RequestFlags::empty(),
+        protocol: SecurityProtocol::HYBRID,
+        correlation_info: None,
+    }))
+    .unwrap();
+    raw.write_all(&request).await.unwrap();
+    let (tcp, _) = listener.accept().await.unwrap();
+    let (_tell, mut heard) = mpsc::unbounded_channel();
+    let refused = to_client_info(tcp, 10, &ctx, &mut heard).await.unwrap_err();
+    let Refused::Throttled(Refusal::BackedOff(left)) = refused else {
+        panic!("an NLA logon is refused while the address backs off: {refused:?}");
+    };
+    assert!(left <= Duration::from_secs(2), "{left:?}");
+    let mut answer = Vec::new();
+    raw.read_to_end(&mut answer).await.unwrap();
+    assert!(
+        answer.is_empty(),
+        "refused before the negotiation's answer and TLS: {answer:?}"
+    );
+    tokio::time::resume();
+
+    let tls = tokio::spawn(client(addr, "anna".into(), "secret".into()));
+    let (tcp, _) = listener.accept().await.unwrap();
+    let pending = to_client_info(tcp, 11, &ctx, &mut heard).await;
+    tls.abort();
+    let pending = pending.expect("a TLS-security logon does not wait out the NLA back-off");
+    assert_eq!(pending.security, SecurityProtocol::SSL);
+}
+
+#[tokio::test]
+async fn failed_nla_proofs_are_logged_in_full_and_other_nla_refusals_counted() {
+    let ctx = ctx_with_anna();
+    let peer: SocketAddr = "127.0.0.1:3390".parse().unwrap();
+    assert!(
+        crate::refused(&ctx, peer, Some("TLS"), "TLS"),
+        "the first is in full"
+    );
+    assert!(
+        !crate::refused(&ctx, peer, Some("TLS"), "TLS"),
+        "the next is counted"
+    );
+    let (_tell, mut heard) = mpsc::unbounded_channel();
+    for i in 0..2 {
+        let (pending, client) = nla_log_on(
+            &ctx,
+            failing_logon(Ipv4Addr::LOCALHOST.into(), i),
+            &mut heard,
+        )
+        .await;
+        client.abort();
+        let refusal = pending.unwrap_err();
+        assert!(
+            crate::refused(&ctx, peer, refusal.counted_as(), &refusal),
+            "a failed proof is logged in full: {refusal:?}"
+        );
+    }
+    let quits = NlaLogon {
+        credssp: Credssp::Quits {
+            after_negotiate: true,
+        },
+        ..hybrid("anna", "anna-rd-pass")
+    };
+    let (pending, client) = nla_log_on(&ctx, quits, &mut heard).await;
+    client.abort();
+    let refusal = pending.unwrap_err();
+    assert!(
+        !crate::refused(&ctx, peer, refusal.counted_as(), &refusal),
+        "a client quitting before its proof is counted: {refusal:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_client_stalled_inside_its_ntlm_authenticate_is_a_failed_proof() {
+    let ctx = ctx_with_anna();
+    let (_tell, mut heard) = mpsc::unbounded_channel();
+    let logon = NlaLogon {
+        credssp: Credssp::StallsInProof,
+        ..hybrid("anna", "wrong")
+    };
+    let (pending, client) = nla_log_on(&ctx, logon, &mut heard).await;
+    tokio::time::resume();
+    client.abort();
+    assert_eq!(
+        pending.err(),
+        Some(Refused::FailedProof(Box::new(Refused::Deadline)))
+    );
+}
+
+#[tokio::test]
+async fn a_connection_logs_failed_and_stalled_nla_proofs_in_full_and_counts_the_rest() {
+    let ctx = Rc::new(ctx_with_anna());
+    let limits = limits();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let peer: SocketAddr = "127.0.0.1:3390".parse().unwrap();
+    assert!(
+        crate::refused(&ctx, peer, Some("TLS"), "TLS"),
+        "the first is in full"
+    );
+    let from = |i| IpAddr::from(Ipv4Addr::new(127, 0, 0, i));
+    through_connection(&ctx, &limits, &listener, failing_logon(from(1), 0)).await;
+    through_connection(&ctx, &limits, &listener, failing_logon(from(2), 1)).await;
+    let stalls = NlaLogon {
+        from: from(3),
+        credssp: Credssp::StallsInProof,
+        ..hybrid("anna", "wrong")
+    };
+    through_connection(&ctx, &limits, &listener, stalls).await;
+    tokio::time::resume();
+    assert_eq!(
+        ctx.refusals.borrow_mut().report(),
+        None,
+        "each failed proof is logged in full, none counted"
+    );
+    let quits = NlaLogon {
+        from: from(4),
+        credssp: Credssp::Quits {
+            after_negotiate: true,
+        },
+        ..hybrid("anna", "anna-rd-pass")
+    };
+    assert!(crate::refused(&ctx, peer, Some("TLS"), "TLS"));
+    through_connection(&ctx, &limits, &listener, quits).await;
+    assert_eq!(
+        ctx.refusals.borrow_mut().report().as_deref(),
+        Some("refused more connections: 1 NLA"),
+        "a client quitting before its proof is counted"
     );
 }
