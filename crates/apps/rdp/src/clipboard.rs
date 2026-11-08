@@ -22,6 +22,9 @@ use tokio::sync::watch;
 
 pub const TEXT_MAX: usize = 16 << 20;
 pub const PICTURE_MAX: usize = 64 << 20;
+/// The longest clipboard message taken from a client; a longer one ends its connection. Twice
+/// [`PICTURE_MAX`], so an 8K screenshot is still refused in the session and the client stays.
+pub const CHANNEL_MAX: usize = 2 * PICTURE_MAX;
 /// How long the client has to answer a paste before it ends empty.
 pub const ANSWER_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -585,7 +588,11 @@ impl CliprdrBackendFactory for Factory {
     }
 }
 
-impl CliprdrServerFactory for Factory {}
+impl CliprdrServerFactory for Factory {
+    fn max_message_size(&self) -> Option<usize> {
+        Some(CHANNEL_MAX)
+    }
+}
 
 /// Passes the client's side of CLIPRDR to `wlclip`'s thread, which stops when this drops.
 #[derive(Debug)]
@@ -658,6 +665,15 @@ impl CliprdrBackend for Backend {
 mod tests {
     use super::*;
     use tokio::sync::mpsc;
+
+    #[test]
+    fn the_clipboard_channel_takes_a_picture_answer_over_the_limit_without_ending_the_connection() {
+        use ironrdp_server::CliprdrServerFactory as _;
+        let factory = Factory::new(watch::channel(false).1, Cut::default());
+        let limit = factory.max_message_size().expect("a limit");
+        let eight_k_dib = 7680 * 4320 * 4 + 40;
+        assert!(eight_k_dib > PICTURE_MAX && limit > eight_k_dib, "{limit}");
+    }
 
     #[test]
     fn a_cut_stops_the_bridge_and_any_started_later() {
