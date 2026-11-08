@@ -508,7 +508,15 @@ user who binds it then keeps it, and turning them on fails until that user
 lets go: reprise-login's journal names the socket, `journalctl -u
 reprise-login-rdp.socket` gives the reason, and each reload while they are
 on tries the port again. Until one succeeds the socket stays set to that
-port, so a boot in between binds that port or none.
+port, so a boot in between binds that port or none. Each start of
+reprise-login and each reload while remote logins are on also clears a
+failed socket or front and its start limit, and loads their unit files if
+they changed on disk. A socket that is active while systemd holds nothing
+on its port is restarted: a daemon-reload that finds the socket's unit
+changed while it ran leaves it so (installing a package without the socket
+unit and then one with it does), and the front then fails until its start
+limit. A socket that holds its port is only started, so the port is never
+free between boot and the front's start.
 
 Two more sockets in `/run/reprise-login`:
 
