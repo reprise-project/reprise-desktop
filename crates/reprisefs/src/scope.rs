@@ -1,6 +1,7 @@
 //! App scopes: a program started from a desktop entry runs in `app-reprise-<id>-<n>.scope`, where
 //! xdg-desktop-portal reads a host app's id. The compositor and the programs both launch this way;
-//! a launch that must report its own exec error is [`hold`]en before the exec instead.
+//! a launch that must report its own exec error is [`hold`]en before the exec instead. A launch
+//! from a session other than the user's display session stays in its session ([`session_kept`]).
 
 use std::ffi::{OsStr, OsString};
 use std::io::{Read, Write};
@@ -12,9 +13,10 @@ use std::time::Duration;
 /// Every app scope [`in_scope`] names, as a `systemctl` pattern.
 pub const PATTERN: &str = "app-reprise-*.scope";
 
-/// `argv` behind the [`scope_argv`] prefix of `app`, or alone without an app or a user manager.
+/// `argv` behind the [`scope_argv`] prefix of `app`, or alone without an app, a user manager or
+/// a [`session_kept`] scope.
 pub fn in_scope<S: AsRef<OsStr>>(argv: &[S], app: Option<&str>) -> Vec<OsString> {
-    let scope = app.filter(|_| user_manager_running());
+    let scope = app.filter(|_| user_manager_running() && session_kept());
     let prefix = scope.map(|app| scope_argv(app, &unit_suffix()));
     (prefix.into_iter().flatten().map(Into::into))
         .chain(argv.iter().map(|a| a.as_ref().to_os_string()))
@@ -27,9 +29,9 @@ const HOLD_LIMIT: Duration = Duration::from_secs(5);
 /// Makes `c`'s child wait between fork and exec until it is in an app scope of its own named by
 /// `app`, as `systemd-run --scope` does, so the program and whatever it forks run there from their
 /// first instruction and the spawn still returns the exec's own error. The spawn then blocks on
-/// the session bus. Without a user manager the child runs unscoped.
+/// the session bus. Without a user manager or a [`session_kept`] scope the child runs unscoped.
 pub fn hold(c: &mut std::process::Command, app: &str) -> std::io::Result<()> {
-    if !user_manager_running() {
+    if !user_manager_running() || !session_kept() {
         return Ok(());
     }
     let app = app.to_owned();
@@ -237,6 +239,38 @@ fn user_manager_running() -> bool {
     })
 }
 
+/// Whether polkit judges a child in an app scope by the session it would have unscoped. A scope
+/// leaves logind's session, and polkitd then takes the user's display session
+/// (`sd_uid_get_display`), whose agent asks the child's passwords.
+fn session_kept() -> bool {
+    let own = std::fs::read_to_string("/proc/self/cgroup").unwrap_or_default();
+    // SAFETY: getuid cannot fail and touches no memory.
+    let uid = unsafe { libc::getuid() };
+    let user = std::fs::read_to_string(format!("/run/systemd/users/{uid}")).unwrap_or_default();
+    keeps_session(session_of_cgroup(&own), display_of_user(&user))
+}
+
+fn keeps_session(own: Option<&str>, display: Option<&str>) -> bool {
+    own.is_none_or(|own| display == Some(own))
+}
+
+/// The logind session a `/proc/<pid>/cgroup` listing puts the process in: the first unit below
+/// the slices being `session-<id>.scope`, as `sd_pid_get_session` reads it.
+fn session_of_cgroup(cgroup: &str) -> Option<&str> {
+    let path = cgroup.lines().find_map(|l| l.strip_prefix("0::"))?;
+    let unit = path
+        .split('/')
+        .find(|c| !c.is_empty() && !c.ends_with(".slice"))?;
+    unit.strip_prefix("session-")?.strip_suffix(".scope")
+}
+
+/// `DISPLAY=` of logind's record of a user (`/run/systemd/users/<uid>`), which
+/// `sd_uid_get_display` reads.
+fn display_of_user(record: &str) -> Option<&str> {
+    let display = record.lines().find_map(|l| l.strip_prefix("DISPLAY="))?;
+    (!display.is_empty()).then_some(display)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -363,6 +397,38 @@ mod tests {
         assert!(monotonic_us() > 0);
         let unit = format!("{}.scope", unit_name("syncthing", &unit_suffix()));
         assert!(is_app_scope(&unit, "syncthing"), "{unit}");
+    }
+
+    #[test]
+    fn a_process_in_a_session_scope_has_that_session_and_one_under_the_user_manager_none() {
+        let session = "0::/user.slice/user-1000.slice/session-3.scope\n";
+        assert_eq!(session_of_cgroup(session), Some("3"));
+        let below = "0::/user.slice/user-1000.slice/session-c2.scope/payload\n";
+        assert_eq!(session_of_cgroup(below), Some("c2"));
+        let v1_first = "12:pids:/user.slice\n0::/user.slice/user-1000.slice/session-7.scope\n";
+        assert_eq!(session_of_cgroup(v1_first), Some("7"));
+        let app =
+            "0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-reprise-x-1.scope";
+        assert_eq!(session_of_cgroup(app), None);
+        assert_eq!(session_of_cgroup("0::/init.scope\n"), None);
+        assert_eq!(session_of_cgroup("0::/\n"), None);
+    }
+
+    #[test]
+    fn the_display_session_is_the_users_logind_record_display_key() {
+        let record = "NAME=ann\nSTATE=active\nDISPLAY=3\nSESSIONS=5 3\n";
+        assert_eq!(display_of_user(record), Some("3"));
+        assert_eq!(display_of_user("NAME=ann\nDISPLAY=\n"), None);
+        assert_eq!(display_of_user("NAME=ann\nSESSIONS=5\n"), None);
+    }
+
+    #[test]
+    fn a_launch_is_scoped_only_where_polkit_would_judge_it_by_the_launchers_session() {
+        assert!(keeps_session(None, Some("3")), "already outside a session");
+        assert!(keeps_session(None, None), "already outside a session");
+        assert!(keeps_session(Some("3"), Some("3")), "the display session");
+        assert!(!keeps_session(Some("5"), Some("3")), "another session");
+        assert!(!keeps_session(Some("5"), None), "no display session");
     }
 
     #[test]
