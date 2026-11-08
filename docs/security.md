@@ -676,7 +676,11 @@ session, the session runs until its user logs off. Disconnect in the
 session ends its clients like any other leave and leaves it running,
 locked. After reprise-login restarts, of the sessions off the seat only
 those a remote login started count as background ones, until a remote
-login reaches the others again.
+login reaches the others again. It links each background session whatever
+`enabled` and the user's group say, since a client may still be connected,
+and starts its time only once the session's hand-over server reports no
+client; one whose server never reports runs on until a remote login reaches
+it or its user logs off.
 
 ### Accepted risks
 

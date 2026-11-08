@@ -243,7 +243,7 @@ impl Run {
 
     /// Recovers `found` with c1 on screen.
     pub(super) fn recover(&mut self, found: Vec<LogindSession>) -> Vec<Effect> {
-        self.d.recover(self.now, found, Some("c1"))
+        self.d.recover(found, Some("c1"))
     }
 
     pub(super) fn start(&mut self) -> Vec<Effect> {
@@ -1365,7 +1365,7 @@ fn a_restart_over_the_login_screen_still_logs_the_autologin_user_in() {
 #[test]
 fn a_restart_with_sessions_and_no_session_on_screen_brings_the_login_screen() {
     let mut run = Run::new(LoginConfig::default(), Remembered::default());
-    assert_eq!(run.d.recover(run.now, vec![anna_on_7()], None), vec![]);
+    assert_eq!(run.d.recover(vec![anna_on_7()], None), vec![]);
     assert_eq!(run.start(), greeter_spawn(1));
 }
 

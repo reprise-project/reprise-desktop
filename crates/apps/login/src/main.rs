@@ -319,7 +319,7 @@ fn boot(
     world: &World,
 ) -> Vec<Effect> {
     let now = Instant::now();
-    let mut effects = daemon.recover(now, found, seat_active);
+    let mut effects = daemon.recover(found, seat_active);
     effects.extend(daemon.start(now, world));
     effects
 }
@@ -1567,7 +1567,7 @@ mod tests {
         };
         let mut daemon = Daemon::new(config, Remembered::default());
         let now = Instant::now();
-        daemon.recover(now, Vec::new(), None);
+        daemon.recover(Vec::new(), None);
         daemon.start(now, &world_on(1));
         let mut cache = WorldCache(Some(world_on(1)));
         let on_screen = world_on(7);

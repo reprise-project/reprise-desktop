@@ -54,7 +54,7 @@ fn anna_recovered(remote: MachineRemote, seat_active: &str, service: &str) -> Ru
     let want = front_start(&remote);
     let mut run = Run::machine(config(remote));
     let found = vec![logind("c1", "anna", ANNA, 7, "user", service)];
-    run.d.recover(run.now, found, Some(seat_active));
+    run.d.recover(found, Some(seat_active));
     assert_eq!(run.start(), want);
     run
 }
@@ -404,7 +404,7 @@ fn a_login_for_the_console_users_session_hands_over_to_it() {
     let mut run = Run::machine(config(enabled()));
     let found = vec![logind("c1", "anna", ANNA, 7, "user", "reprise-login")];
     assert_eq!(
-        run.d.recover(run.now, found, Some("c1")),
+        run.d.recover(found, Some("c1")),
         [link_look_up(ANNA, "anna")],
         "the session on the console is neither locked nor a background one"
     );
@@ -1056,13 +1056,14 @@ fn a_disconnected_background_session_ends_after_end_disconnected_after() {
         "reprise-login-remote",
     )];
     assert_eq!(
-        run.d.recover(run.now, found, Some("g1")),
+        run.d.recover(found, Some("g1")),
         [
-            disconnect_arm("c1", 1, 30),
-            link_look_up(ANNA, "anna"),
+            Effect::OpenIntake { uid: ANNA },
             Effect::Inhibit(Inhibit::Idle),
         ]
     );
+    run.on(Input::IntakeOpen { uid: ANNA });
+    assert_eq!(run.viewers(ANNA, 0), [disconnect_arm("c1", 1, 30)]);
     assert_eq!(
         quiet(run.fire(disconnected("c1", 1))),
         [Effect::TerminateSession("c1".into())],
@@ -1318,7 +1319,7 @@ fn the_login_screen_hears_each_change_of_its_notes() {
 }
 
 #[test]
-fn recovery_marks_sessions_off_the_seat_background_and_looks_up_their_links() {
+fn recovery_marks_sessions_off_the_seat_background_links_them_and_looks_up_the_others() {
     let mut run = Run::machine(config(enabled()));
     let found = vec![
         logind("c1", "anna", ANNA, 7, "user", "reprise-login-remote"),
@@ -1326,9 +1327,9 @@ fn recovery_marks_sessions_off_the_seat_background_and_looks_up_their_links() {
         logind("c4", "carl", CARL, 9, "user", "reprise-login"),
     ];
     assert_eq!(
-        run.d.recover(run.now, found, Some("c3")),
+        run.d.recover(found, Some("c3")),
         [
-            link_look_up(ANNA, "anna"),
+            Effect::OpenIntake { uid: ANNA },
             link_look_up(BERT, "bert"),
             link_look_up(CARL, "carl"),
             Effect::Inhibit(Inhibit::Idle),
@@ -1353,7 +1354,7 @@ fn a_recovered_switched_away_console_session_holds_no_inhibitor_and_never_ends_u
     let mut run = Run::machine(config(remote));
     let found = vec![logind("c1", "anna", ANNA, 7, "user", "reprise-login")];
     assert_eq!(
-        run.d.recover(run.now, found, Some("g1")),
+        run.d.recover(found, Some("g1")),
         [link_look_up(ANNA, "anna")]
     );
     assert_eq!(
@@ -1368,19 +1369,88 @@ fn a_recovered_switched_away_console_session_holds_no_inhibitor_and_never_ends_u
 }
 
 #[test]
-fn intake_links_open_only_while_remote_logins_are_enabled() {
+fn with_remote_logins_off_recovery_links_only_background_sessions() {
     let mut run = Run::machine(config(MachineRemote::default()));
+    let found = vec![
+        logind("c1", "anna", ANNA, 7, "user", "reprise-login-remote-nla"),
+        logind("c3", "bert", BERT, 8, "user", "reprise-login"),
+    ];
+    assert_eq!(
+        run.d.recover(found, Some("g1")),
+        [
+            Effect::OpenIntake { uid: ANNA },
+            Effect::Inhibit(Inhibit::Idle),
+        ]
+    );
+}
+
+#[test]
+fn a_recovered_background_session_outside_the_group_is_linked_without_a_look_up() {
+    let mut run = Run::machine(config(enabled()));
     let found = vec![logind(
         "c1",
         "anna",
         ANNA,
         7,
         "user",
-        "reprise-login-remote-nla",
+        "reprise-login-remote",
     )];
+    let effects = run.d.recover(found, Some("g1"));
+    assert!(
+        !(effects.iter()).any(|e| matches!(e, Effect::LookUp { .. })),
+        "{effects:?}"
+    );
+    assert!(
+        effects.contains(&Effect::OpenIntake { uid: ANNA }),
+        "{effects:?}"
+    );
+}
+
+#[test]
+fn a_recovered_background_session_ends_only_after_its_server_reports_no_client() {
+    let remote = MachineRemote {
+        end_disconnected_after_min: Some(30),
+        ..MachineRemote::default()
+    };
+    let mut run = Run::machine(config(remote));
+    let found = vec![logind(
+        "c1",
+        "anna",
+        ANNA,
+        7,
+        "user",
+        "reprise-login-remote",
+    )];
+    run.d.recover(found, Some("g1"));
+    assert_eq!(run.on(Input::IntakeOpen { uid: ANNA }), []);
     assert_eq!(
-        run.d.recover(run.now, found, Some("g1")),
-        [Effect::Inhibit(Inhibit::Idle)]
+        run.viewers(ANNA, 1),
+        [Effect::Inhibit(Inhibit::SleepAndIdle)],
+        "a client still connected keeps it"
+    );
+    assert_eq!(
+        run.after(Duration::from_secs(10)).viewers(ANNA, 0),
+        [disconnect_arm("c1", 1, 30), Effect::Inhibit(Inhibit::Idle)]
+    );
+
+    let remote = MachineRemote {
+        end_disconnected_after_min: Some(30),
+        ..enabled()
+    };
+    let mut run = Run::machine(config(remote));
+    let found = vec![logind(
+        "c1",
+        "anna",
+        ANNA,
+        7,
+        "user",
+        "reprise-login-remote",
+    )];
+    run.d.recover(found, Some("g1"));
+    assert_eq!(
+        run.on(Input::IntakeLost { uid: ANNA }),
+        [],
+        "a server that never reports leaves it running"
     );
 }
 
@@ -1720,7 +1790,7 @@ fn recovery_opens_links_only_for_remote_group_members() {
         logind("c3", "carl", CARL, 8, "user", "reprise-login"),
     ];
     assert_eq!(
-        run.d.recover(run.now, found, Some("c1")),
+        run.d.recover(found, Some("c1")),
         [link_look_up(ANNA, "anna"), link_look_up(CARL, "carl")]
     );
     assert_eq!(run.on(link_member(CARL, Some(CARL), false)), []);
@@ -1739,7 +1809,7 @@ fn recovery_opens_links_only_for_remote_group_members() {
 fn a_link_look_up_that_fails_still_opens_the_link() {
     let mut run = Run::machine(config(enabled()));
     let found = vec![logind("c1", "anna", ANNA, 7, "user", "reprise-login")];
-    run.d.recover(run.now, found, Some("c1"));
+    run.d.recover(found, Some("c1"));
     assert_eq!(
         run.on(link_member(ANNA, None, false)),
         [Effect::OpenIntake { uid: ANNA }]
@@ -1750,7 +1820,7 @@ fn a_link_look_up_that_fails_still_opens_the_link() {
 fn a_link_look_up_answered_after_its_session_ended_opens_nothing() {
     let mut run = Run::machine(config(enabled()));
     let found = vec![logind("c1", "anna", ANNA, 7, "user", "reprise-login")];
-    run.d.recover(run.now, found, Some("g1"));
+    run.d.recover(found, Some("g1"));
     run.removed("c1", Some("g1"));
     assert_eq!(run.on(link_member(ANNA, Some(ANNA), true)), []);
 }
