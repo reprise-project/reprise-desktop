@@ -216,7 +216,7 @@ async fn follow(tx: channel::Sender<bool>) {
     };
     let changes = reprisebus::signals(&conn, name, Vec::new()).await;
     let conn = &conn;
-    let owned = move || async move { reprisebus::name_owner(conn, name).await.is_some() };
+    let owned = move || async move { reprisebus::remote::server(conn).await.is_ok() };
     if report_owner(changes, owned, |on| tx.send(on).is_ok()).await {
         log::warn!(
             "standby: the session bus stopped reporting {name}'s owner; Remote Desktop counts as off"

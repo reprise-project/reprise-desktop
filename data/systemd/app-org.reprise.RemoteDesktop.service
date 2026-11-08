@@ -7,6 +7,8 @@ After=graphical-session.target wireplumber.service
 Type=simple
 ExecStart=/usr/bin/reprise-rdp
 Restart=on-failure
+# 75: another process holds org.reprise.RemoteDesktop; the server stays off until started again.
+RestartPreventExitStatus=75
 
 [Install]
 WantedBy=reprise-session.target

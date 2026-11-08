@@ -3,6 +3,7 @@
 
 use tokio::sync::{mpsc, oneshot, watch};
 use zbus::connection::Builder;
+use zbus::message::Header;
 
 pub const NAME: &str = "org.reprise.RemoteDesktop";
 pub const PATH: &str = "/org/reprise/RemoteDesktop";
@@ -51,8 +52,8 @@ pub enum Server {
 }
 
 /// Serve `status` on the session bus until it is dropped, passing the bus's requests on. The
-/// receiver hears once whether [`NAME`] was claimed; the hand-over server claims it only from
-/// nobody and never gives it up.
+/// receiver hears once whether [`NAME`] was claimed; neither server gives it up, and the
+/// hand-over server claims it only from nobody.
 pub fn spawn(
     status: watch::Receiver<Status>,
     disconnect: mpsc::UnboundedSender<Request>,
@@ -82,7 +83,7 @@ fn spawn_on(
                     regenerate,
                 };
                 let builder = (builder.name(NAME))
-                    .allow_name_replacements(!alone)
+                    .allow_name_replacements(false)
                     .replace_existing_names(!alone);
                 serve(builder, iface, status, claimed).await
             });
@@ -118,7 +119,7 @@ async fn serve(
             signalled(server.listening_changed(emitter).await);
         }
         if now.clients != sent.clients {
-            signalled(server.clients_changed(emitter).await);
+            signalled(server.clients_invalidate(emitter).await);
         }
         if now.encoder != sent.encoder {
             signalled(server.encoder_changed(emitter).await);
@@ -158,12 +159,19 @@ impl RemoteDesktop {
         self.status.borrow().listening.clone()
     }
 
-    /// Address, user and Unix seconds since the login, for each connected client.
-    #[zbus(property)]
-    fn clients(&self) -> Vec<(String, String, u64)> {
-        (self.status.borrow().clients.iter())
+    /// Address, user and Unix seconds since the login, for each connected client. A change is
+    /// signalled without the value, which a sandboxed peer can't read.
+    #[zbus(property(emits_changed_signal = "invalidates"))]
+    async fn clients(
+        &self,
+        #[zbus(connection)] conn: &zbus::Connection,
+        #[zbus(header)] header: Option<Header<'_>>,
+    ) -> zbus::fdo::Result<Vec<(String, String, u64)>> {
+        let header = header.ok_or_else(|| zbus::fdo::Error::AccessDenied("no sender".into()))?;
+        unsandboxed(conn, &header).await?;
+        Ok((self.status.borrow().clients.iter())
             .map(|c| (c.address.clone(), c.user.clone(), c.since))
-            .collect()
+            .collect())
     }
 
     #[zbus(property)]
@@ -189,17 +197,35 @@ impl RemoteDesktop {
     }
 
     /// Ends every connected client's session.
-    fn disconnect(&self) {
+    async fn disconnect(
+        &self,
+        #[zbus(connection)] conn: &zbus::Connection,
+        #[zbus(header)] header: Header<'_>,
+    ) -> zbus::fdo::Result<()> {
+        unsandboxed(conn, &header).await?;
         let _ = self.disconnect.send(Request::All);
+        Ok(())
     }
 
     /// Ends every client, telling each the session logged off.
-    fn session_ending(&self) {
+    async fn session_ending(
+        &self,
+        #[zbus(connection)] conn: &zbus::Connection,
+        #[zbus(header)] header: Header<'_>,
+    ) -> zbus::fdo::Result<()> {
+        unsandboxed(conn, &header).await?;
         let _ = self.disconnect.send(Request::SessionEnding);
+        Ok(())
     }
 
     /// Ends the session of the client at `address`, as listed in `Clients`.
-    async fn disconnect_client(&self, address: String) -> zbus::fdo::Result<()> {
+    async fn disconnect_client(
+        &self,
+        #[zbus(connection)] conn: &zbus::Connection,
+        #[zbus(header)] header: Header<'_>,
+        address: String,
+    ) -> zbus::fdo::Result<()> {
+        unsandboxed(conn, &header).await?;
         let (tx, rx) = oneshot::channel();
         let none = || zbus::fdo::Error::Failed(format!("no client at {address}"));
         let _ = self.disconnect.send(Request::Client(address.clone(), tx));
@@ -208,7 +234,12 @@ impl RemoteDesktop {
 
     /// Replies once the new certificate is in use; clients connected now keep the old one. The
     /// hand-over server refuses it.
-    async fn regenerate_certificate(&self) -> zbus::fdo::Result<()> {
+    async fn regenerate_certificate(
+        &self,
+        #[zbus(connection)] conn: &zbus::Connection,
+        #[zbus(header)] header: Header<'_>,
+    ) -> zbus::fdo::Result<()> {
+        unsandboxed(conn, &header).await?;
         let (tx, rx) = oneshot::channel();
         let gone = || zbus::fdo::Error::Failed("the server is stopping".into());
         let Some(regenerate) = &self.regenerate else {
@@ -219,6 +250,20 @@ impl RemoteDesktop {
         rx.await
             .map_err(|_| gone())?
             .map_err(zbus::fdo::Error::Failed)
+    }
+}
+
+/// Refuses a peer in a Flatpak sandbox: one whose app id is this name's may reach the bus name,
+/// and the process the bus reports is its bus proxy's, which runs in the sandbox too.
+async fn unsandboxed(conn: &zbus::Connection, header: &Header<'_>) -> zbus::fdo::Result<()> {
+    let refused = || zbus::fdo::Error::AccessDenied("not from a sandbox".into());
+    let sender = header.sender().ok_or_else(refused)?;
+    match reprisebus::peer::sandboxed(conn, sender).await {
+        false => Ok(()),
+        true => {
+            log::warn!("{NAME}: refused a call from sandboxed peer {sender}");
+            Err(refused())
+        }
     }
 }
 
@@ -330,10 +375,17 @@ pub(crate) mod tests {
             status.send_modify(|s| s.clients = vec![client()]);
             let change = next_change().await;
             let args = change.args().unwrap();
-            let changed: Vec<_> = args.changed_properties().keys().copied().collect();
-            assert_eq!(changed, ["Clients"], "only what changed is signalled");
+            assert!(
+                args.changed_properties().is_empty(),
+                "no addresses broadcast"
+            );
+            assert_eq!(
+                args.invalidated_properties()[..],
+                ["Clients"],
+                "only what changed is signalled"
+            );
             let clients = <Vec<(String, String, u64)>>::try_from(
-                args.changed_properties()["Clients"].try_to_owned().unwrap(),
+                props.get(iface.clone(), "Clients").await.unwrap(),
             )
             .unwrap();
             assert_eq!(
@@ -476,6 +528,28 @@ pub(crate) mod tests {
         assert!(
             matches!(others(&bus), Err(zbus::Error::NameTaken)),
             "nor is the hand-over server's given up to another"
+        );
+        drop(status);
+    }
+
+    #[test]
+    fn the_own_server_takes_the_name_and_never_gives_it_up() {
+        let Some(bus) = bus() else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
+        let (regenerate, _) = mpsc::unbounded_channel();
+        let (status, claimed) = spawned(&bus, Server::Own(regenerate));
+        claimed.unwrap();
+        let replaced = zbus::block_on(
+            Builder::address(bus.1.as_str())
+                .name(NAME)
+                .replace_existing_names(true)
+                .build(),
+        );
+        assert!(
+            matches!(replaced, Err(zbus::Error::NameTaken)),
+            "{replaced:?}"
         );
         drop(status);
     }
