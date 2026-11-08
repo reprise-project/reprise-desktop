@@ -67,12 +67,30 @@ pub fn from_props(props: &HashMap<String, OwnedVariant>) -> Status {
     }
 }
 
-/// The server's status on `conn`; None while nothing owns [`NAME`] (the server is off).
+/// The unique name of the server on `conn`: [`NAME`]'s owner, unless nothing owns it (the server
+/// is off) or the owner runs in a Flatpak sandbox, which Flatpak lets own it under its app id.
+pub async fn server(conn: &Connection) -> Result<String, String> {
+    server_under(conn, std::path::Path::new("/proc")).await
+}
+
+async fn server_under(conn: &Connection, proc: &std::path::Path) -> Result<String, String> {
+    let Some(owner) = crate::name_owner(conn, NAME).await else {
+        return Err("the Remote Desktop server is not running".into());
+    };
+    if crate::peer::sandboxed_under(conn, &owner, proc).await {
+        return Err(format!(
+            "{NAME} is held by a sandboxed program, not the server"
+        ));
+    }
+    Ok(owner)
+}
+
+/// The server's status on `conn`; None while no [`server`] runs.
 pub async fn read(conn: &Connection) -> Option<Status> {
-    crate::name_owner(conn, NAME).await?;
+    let server = server(conn).await.ok()?;
     let reply = conn
         .call_method(
-            Some(NAME),
+            Some(server.as_str()),
             PATH,
             Some("org.freedesktop.DBus.Properties"),
             "GetAll",
@@ -107,10 +125,11 @@ pub fn session_ending() -> Result<(), String> {
 /// End the session of the client at `address`, as [`Client::address`] gives it.
 pub fn disconnect_client(address: &str) -> Result<(), String> {
     let conn = session()?;
+    let server = found("DisconnectClient", &conn)?;
     told(
         "DisconnectClient",
         crate::wait(conn.call_method(
-            Some(NAME),
+            Some(server.as_str()),
             PATH,
             Some(INTERFACE),
             "DisconnectClient",
@@ -126,8 +145,14 @@ pub fn regenerate() -> Result<(), String> {
 
 fn call(method: &str) -> Result<(), String> {
     let conn = session()?;
-    let reply = conn.call_method(Some(NAME), PATH, Some(INTERFACE), method, &());
+    let server = found(method, &conn)?;
+    let reply = conn.call_method(Some(server.as_str()), PATH, Some(INTERFACE), method, &());
     told(method, crate::wait(reply))
+}
+
+/// The [`server`] a call to `method` goes to.
+fn found(method: &str, conn: &Connection) -> Result<String, String> {
+    crate::wait(server(conn)).inspect_err(|e| log::warn!("remote desktop, {method}: {e}"))
 }
 
 /// Whether [`UNIT`] is enabled; false when the user manager does not answer.
@@ -213,8 +238,7 @@ fn told(what: &str, reply: zbus::Result<zbus::Message>) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{BufRead, BufReader};
-    use std::process::{Child, Command, Stdio};
+    use crate::peer::tests::{bus, sandboxed_proc};
     use zbus::Variant;
 
     fn owned(v: Variant<'_>) -> OwnedVariant {
@@ -268,29 +292,6 @@ mod tests {
         assert_eq!(from_props(&props).encoders, ["vaapi", "software", "none"]);
     }
 
-    struct Bus(Child, String);
-
-    impl Drop for Bus {
-        fn drop(&mut self) {
-            let _ = self.0.kill();
-            let _ = self.0.wait();
-        }
-    }
-
-    fn bus() -> Option<Bus> {
-        let mut child = Command::new("dbus-daemon")
-            .args(["--session", "--nofork", "--print-address"])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .ok()?;
-        let mut line = String::new();
-        BufReader::new(child.stdout.take()?)
-            .read_line(&mut line)
-            .ok()?;
-        Some(Bus(child, line.trim().to_string()))
-    }
-
     struct FakeServer;
 
     #[zbus::interface(name = "org.reprise.RemoteDesktop")]
@@ -330,6 +331,26 @@ mod tests {
             assert_eq!(status.listening, "0.0.0.0:3389");
             assert_eq!(status.clients.len(), 1);
             assert_eq!(status.clients[0].user, "user");
+        });
+    }
+
+    #[test]
+    fn a_sandboxed_owner_of_the_name_is_not_the_server() {
+        let Some(bus) = bus() else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
+        zbus::block_on(async move {
+            let connect = || zbus::connection::Builder::address(bus.1.as_str()).build();
+            let conn = connect().await.unwrap();
+            let server = connect().await.unwrap();
+            server.request_name(NAME).await.unwrap();
+            let proc = sandboxed_proc();
+            assert!(server_under(&conn, proc.path()).await.is_err());
+            assert_eq!(
+                server_under(&conn, std::path::Path::new("/proc")).await,
+                Ok(server.unique_name().unwrap().to_string())
+            );
         });
     }
 }

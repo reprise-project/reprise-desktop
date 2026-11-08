@@ -123,18 +123,24 @@ fn main() -> ExitCode {
         None => control::Server::Own(regenerate),
     };
     let claim = control::spawn(status_rx, disconnect, server);
-    if let Some(listener) = &hand_over {
-        let claimed =
-            (claim.recv()).unwrap_or_else(|_| Err(zbus::Error::Failure("no thread".into())));
-        if let Err(e) = claimed {
-            log::error!(
-                "hand-overs need {} on the session bus ({e}); refusing them until the next \
-                 hand-over starts the server again",
+    let claimed = (claim.recv()).unwrap_or_else(|_| Err(zbus::Error::Failure("no thread".into())));
+    if let Err(e) = claimed {
+        match &hand_over {
+            Some(listener) => {
+                log::error!(
+                    "hand-overs need {} on the session bus ({e}); refusing them until the next \
+                     hand-over starts the server again",
+                    control::NAME
+                );
+                handover::refuse_waiting(listener);
+            }
+            None => log::error!(
+                "{} is not this server's on the session bus ({e}); Settings would show its \
+                 holder's fingerprint and clients, so this server stays off",
                 control::NAME
-            );
-            handover::refuse_waiting(listener);
-            return ExitCode::from(NAME_HELD);
+            ),
         }
+        return ExitCode::from(NAME_HELD);
     }
     let identity = identity.map(watch::channel);
     let (config, config_rx) = watch::channel(cfg);
@@ -292,9 +298,8 @@ fn main() -> ExitCode {
     code
 }
 
-/// The hand-over server's exit when another process holds its bus name: the unit's
-/// `RestartPreventExitStatus=` keeps systemd from restarting it into the start limit, which would
-/// fail the socket.
+/// The exit when another process holds the bus name: the units' `RestartPreventExitStatus=` keeps
+/// systemd from restarting the server into the start limit, which would fail the hand-over socket.
 const NAME_HELD: u8 = 75;
 
 /// The only peer the hand-over socket takes: reprise-login runs as root.
@@ -605,16 +610,25 @@ mod tests {
     }
 
     #[test]
-    fn the_hand_over_unit_does_not_restart_a_server_whose_name_is_held() {
-        let unit = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../data/systemd/reprise-rdp-handover.service");
-        let unit = std::fs::read_to_string(unit).unwrap();
-        let prevented: Vec<u8> = (unit.lines())
-            .filter_map(|l| l.trim().strip_prefix("RestartPreventExitStatus="))
-            .flat_map(str::split_whitespace)
-            .filter_map(|code| code.parse().ok())
-            .collect();
-        assert!(prevented.contains(&super::NAME_HELD), "{prevented:?}");
+    fn neither_unit_restarts_a_server_whose_name_is_held() {
+        for unit in [
+            "app-org.reprise.RemoteDesktop.service",
+            "reprise-rdp-handover.service",
+        ] {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../../data/systemd")
+                .join(unit);
+            let text = std::fs::read_to_string(path).unwrap();
+            let prevented: Vec<u8> = (text.lines())
+                .filter_map(|l| l.trim().strip_prefix("RestartPreventExitStatus="))
+                .flat_map(str::split_whitespace)
+                .filter_map(|code| code.parse().ok())
+                .collect();
+            assert!(
+                prevented.contains(&super::NAME_HELD),
+                "{unit}: {prevented:?}"
+            );
+        }
     }
 
     #[test]

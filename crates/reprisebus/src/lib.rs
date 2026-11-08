@@ -26,6 +26,7 @@
 //! turns its user unit on or off. Synchronous callers [`wait`] on it.
 //! [`bluez`] lists BlueZ's paired devices and follows whether one is connected.
 //! [`kdeconnect`] follows the phones KDE Connect reaches.
+//! [`peer`] tells whether a session bus peer runs in a Flatpak sandbox.
 //! [`mutex`] locks a mutex even when its holder panicked.
 //! [`login`] asks the system manager whether reprise-login runs.
 //! [`testsession`] gives a test binary a session of its own.
@@ -43,6 +44,7 @@ pub mod launcher;
 pub mod login;
 pub mod mutex;
 pub mod notify;
+pub mod peer;
 pub mod permissions;
 pub mod polkit;
 pub mod remote;
