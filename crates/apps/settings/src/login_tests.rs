@@ -574,6 +574,27 @@ fn an_unreadable_or_invalid_file_is_never_saved_over() {
     }
 }
 
+#[test]
+fn the_error_at_open_has_the_stop_icon_when_a_wake_is_the_first_event() {
+    let dir = tmp("open-icon");
+    std::fs::write(dir.join("login.toml"), "[login\n").unwrap();
+    let mut ctx = crate::tests::test_ctx();
+    let stop = Canvas::new(32, 32);
+    let theme = ctx.icons.theme();
+    ctx.icons.put_icons(
+        &theme,
+        vec![("dialog-error".into(), 32, Some(stop.clone()))],
+    );
+    let mut a = app(&dir);
+    assert!(a.open_page(Page::LoginManager, None));
+    a.event(repriseapp::MAIN, Event::Wake, &mut ctx);
+    let icon = a
+        .error
+        .as_ref()
+        .map(|b| b.fields.icon.as_ref() == Some(&stop));
+    assert_eq!(icon, Some(true), "the box at open has dialog-error");
+}
+
 const CHANGED: &str = "Your changes were not saved: the login manager's settings changed since \
                        this page opened. The page now shows the new settings; make your changes \
                        again.";
