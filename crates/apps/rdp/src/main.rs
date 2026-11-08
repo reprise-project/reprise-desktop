@@ -147,6 +147,19 @@ fn main() -> ExitCode {
     let marker = lock::marker_path();
     let local = tokio::task::LocalSet::new();
     let code = local.block_on(&rt, async {
+        // Up before the lock wait: reprise-login's login waits on the intake's first report.
+        let intake = match hand_over.map(tokio::net::UnixListener::from_std) {
+            Some(Ok(listener)) => Some(handover::HandOverIntake::new(
+                listener,
+                ROOT,
+                status.subscribe(),
+            )),
+            Some(Err(e)) => {
+                log::error!("hand-over socket: {e}");
+                return ExitCode::FAILURE;
+            }
+            None => None,
+        };
         lock::lock_if_marked(marker.as_deref(), lock::lock()).await;
         let _watch = follow_config(config, status.clone(), probed.clone());
         tokio::task::spawn_local(show_encoders(
@@ -168,7 +181,7 @@ fn main() -> ExitCode {
             config: config_rx.clone(),
             status: status.clone(),
             lives: Arc::default(),
-            portal_wait: match hand_over {
+            portal_wait: match intake {
                 Some(_) => wayland::SESSION_READY_WAIT,
                 None => Duration::ZERO,
             },
@@ -180,7 +193,6 @@ fn main() -> ExitCode {
             seat_away,
         );
         let tcp_status = status.clone();
-        let viewers = status.subscribe();
         let listed = status.subscribe();
         let session_user = user.clone();
         let idle = Rc::new(Notify::new());
@@ -237,16 +249,8 @@ fn main() -> ExitCode {
                 layout,
             )
         };
-        match hand_over {
-            Some(listener) => {
-                let listener = match tokio::net::UnixListener::from_std(listener) {
-                    Ok(listener) => listener,
-                    Err(e) => {
-                        log::error!("hand-over socket: {e}");
-                        return ExitCode::FAILURE;
-                    }
-                };
-                let intake = handover::HandOverIntake::new(listener, ROOT, viewers);
+        match intake {
+            Some(intake) => {
                 let logins = auth::HandedOverLogins::new(session_user);
                 let stop = async {
                     tokio::select! {
