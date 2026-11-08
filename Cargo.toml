@@ -64,7 +64,7 @@ futures-lite = "2"
 futures-util = "0.3"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "bmp"] }
 inotify = { version = "0.11", default-features = false }
-# Pinned to a8f5f64e on our fork's `patches` branch: upstream master plus the
+# Pinned to f2edd7d9 on our fork's `patches` branch: upstream master plus the
 # 0xE1 prefix of Pause (`KeyboardEvent::extended1`), the ainput side buttons,
 # frame acknowledgements staying suspended across a graphics reset, a
 # Disconnect Provider Ultimatum ending a server-side disconnect and a display
@@ -74,23 +74,23 @@ inotify = { version = "0.11", default-features = false }
 # recorded accept, CredSSP checked against a per-connection user list, every
 # client told its disconnect reason, `Credentials` and password cookies wiped
 # on drop, Client Info strings decoded without spare copies, ainput events
-# handed to the input handler in order, and a relative ainput button reported
-# as `ButtonRel`.
-ironrdp-acceptor = { git = "https://github.com/reprise-project/IronRDP.git", rev = "a8f5f64e180a858439b614da62dc16560fc5f1d5" }
-ironrdp-ainput = { git = "https://github.com/reprise-project/IronRDP.git", rev = "a8f5f64e180a858439b614da62dc16560fc5f1d5" }
-ironrdp-async = { git = "https://github.com/reprise-project/IronRDP.git", rev = "a8f5f64e180a858439b614da62dc16560fc5f1d5" }
-ironrdp-cliprdr = { git = "https://github.com/reprise-project/IronRDP.git", rev = "a8f5f64e180a858439b614da62dc16560fc5f1d5" }
-ironrdp-connector = { git = "https://github.com/reprise-project/IronRDP.git", rev = "a8f5f64e180a858439b614da62dc16560fc5f1d5" }
-ironrdp-core = { git = "https://github.com/reprise-project/IronRDP.git", rev = "a8f5f64e180a858439b614da62dc16560fc5f1d5" }
-ironrdp-displaycontrol = { git = "https://github.com/reprise-project/IronRDP.git", rev = "a8f5f64e180a858439b614da62dc16560fc5f1d5" }
-ironrdp-dvc = { git = "https://github.com/reprise-project/IronRDP.git", rev = "a8f5f64e180a858439b614da62dc16560fc5f1d5" }
-ironrdp-egfx = { git = "https://github.com/reprise-project/IronRDP.git", rev = "a8f5f64e180a858439b614da62dc16560fc5f1d5" }
-ironrdp-graphics = { git = "https://github.com/reprise-project/IronRDP.git", rev = "a8f5f64e180a858439b614da62dc16560fc5f1d5" }
-ironrdp-pdu = { git = "https://github.com/reprise-project/IronRDP.git", rev = "a8f5f64e180a858439b614da62dc16560fc5f1d5" }
-ironrdp-rdpsnd = { git = "https://github.com/reprise-project/IronRDP.git", rev = "a8f5f64e180a858439b614da62dc16560fc5f1d5" }
-ironrdp-server = { git = "https://github.com/reprise-project/IronRDP.git", rev = "a8f5f64e180a858439b614da62dc16560fc5f1d5", features = ["egfx"] }
-ironrdp-svc = { git = "https://github.com/reprise-project/IronRDP.git", rev = "a8f5f64e180a858439b614da62dc16560fc5f1d5" }
-ironrdp-tokio = { git = "https://github.com/reprise-project/IronRDP.git", rev = "a8f5f64e180a858439b614da62dc16560fc5f1d5" }
+# handed to the input handler in order, a relative ainput button reported as
+# `ButtonRel`, and a CredSSP public key proof shorter than a signature refused.
+ironrdp-acceptor = { git = "https://github.com/reprise-project/IronRDP.git", rev = "f2edd7d95f950657c82fac739e4481edb9cf1bb2" }
+ironrdp-ainput = { git = "https://github.com/reprise-project/IronRDP.git", rev = "f2edd7d95f950657c82fac739e4481edb9cf1bb2" }
+ironrdp-async = { git = "https://github.com/reprise-project/IronRDP.git", rev = "f2edd7d95f950657c82fac739e4481edb9cf1bb2" }
+ironrdp-cliprdr = { git = "https://github.com/reprise-project/IronRDP.git", rev = "f2edd7d95f950657c82fac739e4481edb9cf1bb2" }
+ironrdp-connector = { git = "https://github.com/reprise-project/IronRDP.git", rev = "f2edd7d95f950657c82fac739e4481edb9cf1bb2" }
+ironrdp-core = { git = "https://github.com/reprise-project/IronRDP.git", rev = "f2edd7d95f950657c82fac739e4481edb9cf1bb2" }
+ironrdp-displaycontrol = { git = "https://github.com/reprise-project/IronRDP.git", rev = "f2edd7d95f950657c82fac739e4481edb9cf1bb2" }
+ironrdp-dvc = { git = "https://github.com/reprise-project/IronRDP.git", rev = "f2edd7d95f950657c82fac739e4481edb9cf1bb2" }
+ironrdp-egfx = { git = "https://github.com/reprise-project/IronRDP.git", rev = "f2edd7d95f950657c82fac739e4481edb9cf1bb2" }
+ironrdp-graphics = { git = "https://github.com/reprise-project/IronRDP.git", rev = "f2edd7d95f950657c82fac739e4481edb9cf1bb2" }
+ironrdp-pdu = { git = "https://github.com/reprise-project/IronRDP.git", rev = "f2edd7d95f950657c82fac739e4481edb9cf1bb2" }
+ironrdp-rdpsnd = { git = "https://github.com/reprise-project/IronRDP.git", rev = "f2edd7d95f950657c82fac739e4481edb9cf1bb2" }
+ironrdp-server = { git = "https://github.com/reprise-project/IronRDP.git", rev = "f2edd7d95f950657c82fac739e4481edb9cf1bb2", features = ["egfx"] }
+ironrdp-svc = { git = "https://github.com/reprise-project/IronRDP.git", rev = "f2edd7d95f950657c82fac739e4481edb9cf1bb2" }
+ironrdp-tokio = { git = "https://github.com/reprise-project/IronRDP.git", rev = "f2edd7d95f950657c82fac739e4481edb9cf1bb2" }
 libc = "0.2"
 log = "0.4"
 md4 = { version = "0.11", default-features = false }
