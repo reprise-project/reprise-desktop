@@ -121,6 +121,48 @@ impl CryptoInfo {
         })
     }
 
+    /// What the kernel holds as `name` (`TLS_TX` or `TLS_RX`) on a socket under `cipher`.
+    fn get(fd: BorrowedFd<'_>, name: libc::c_int, cipher: Cipher) -> io::Result<CryptoInfo> {
+        // SAFETY: these are plain C structs of integers and byte arrays, valid all zero.
+        let mut info = unsafe {
+            match cipher {
+                Cipher::Aes128Gcm => CryptoInfo::Aes128Gcm(std::mem::zeroed()),
+                Cipher::Aes256Gcm => CryptoInfo::Aes256Gcm(std::mem::zeroed()),
+                Cipher::Chacha20Poly1305 => CryptoInfo::Chacha20Poly1305(std::mem::zeroed()),
+            }
+        };
+        match &mut info {
+            CryptoInfo::Aes128Gcm(c) => getsockopt(fd, name, c),
+            CryptoInfo::Aes256Gcm(c) => getsockopt(fd, name, c),
+            CryptoInfo::Chacha20Poly1305(c) => getsockopt(fd, name, c),
+        }?;
+        Ok(info)
+    }
+
+    fn rec_seq(&self) -> u64 {
+        u64::from_be_bytes(match self {
+            CryptoInfo::Aes128Gcm(c) => c.rec_seq,
+            CryptoInfo::Aes256Gcm(c) => c.rec_seq,
+            CryptoInfo::Chacha20Poly1305(c) => c.rec_seq,
+        })
+    }
+
+    /// Whether `other` has the same version, cipher, nonce and record sequence; the kernel moves
+    /// the last two on with each record and each key update.
+    fn same_place(&self, other: &CryptoInfo) -> bool {
+        self.place() == other.place()
+    }
+
+    fn place(&self) -> (u16, u16, &[u8], &[u8]) {
+        match self {
+            CryptoInfo::Aes128Gcm(c) => (c.info.version, c.info.cipher_type, &c.iv, &c.rec_seq),
+            CryptoInfo::Aes256Gcm(c) => (c.info.version, c.info.cipher_type, &c.iv, &c.rec_seq),
+            CryptoInfo::Chacha20Poly1305(c) => {
+                (c.info.version, c.info.cipher_type, &c.iv, &c.rec_seq)
+            }
+        }
+    }
+
     /// Sets it as `name` (`TLS_TX` or `TLS_RX`) on a socket already under the `tls` ULP.
     fn set(&self, fd: BorrowedFd<'_>, name: libc::c_int) -> io::Result<()> {
         match self {
@@ -472,20 +514,25 @@ pub(crate) fn set_keys(
 
 /// The sequence number of the next record the kernel sends on `fd`.
 pub(crate) fn sent_seq(fd: BorrowedFd<'_>, cipher: Cipher) -> io::Result<u64> {
-    // SAFETY: these are plain C structs of integers and byte arrays, valid all zero.
-    let mut info = unsafe {
-        match cipher {
-            Cipher::Aes128Gcm => CryptoInfo::Aes128Gcm(std::mem::zeroed()),
-            Cipher::Aes256Gcm => CryptoInfo::Aes256Gcm(std::mem::zeroed()),
-            Cipher::Chacha20Poly1305 => CryptoInfo::Chacha20Poly1305(std::mem::zeroed()),
+    CryptoInfo::get(fd, libc::TLS_TX, cipher).map(|info| info.rec_seq())
+}
+
+/// Refuses a socket whose kernel TLS moved on from `tls`, the state it was handed over in:
+/// serving it from `tls` could reuse a key and nonce another server already used.
+pub fn check_untouched(fd: BorrowedFd<'_>, tls: &TlsState) -> io::Result<()> {
+    let directions = [
+        (Direction::Tx, libc::TLS_TX, &tls.tx),
+        (Direction::Rx, libc::TLS_RX, &tls.rx),
+    ];
+    for (direction, name, keys) in directions {
+        let handed = CryptoInfo::new(direction, tls.version, tls.cipher, keys)?;
+        if !handed.same_place(&CryptoInfo::get(fd, name, tls.cipher)?) {
+            return Err(io::Error::other(format!(
+                "kernel TLS: the {direction:?} keys moved on since the hand-over"
+            )));
         }
-    };
-    let rec_seq = match &mut info {
-        CryptoInfo::Aes128Gcm(c) => getsockopt(fd, libc::TLS_TX, c).map(|()| c.rec_seq),
-        CryptoInfo::Aes256Gcm(c) => getsockopt(fd, libc::TLS_TX, c).map(|()| c.rec_seq),
-        CryptoInfo::Chacha20Poly1305(c) => getsockopt(fd, libc::TLS_TX, c).map(|()| c.rec_seq),
-    }?;
-    Ok(u64::from_be_bytes(rec_seq))
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -695,6 +742,49 @@ mod tests {
             rx.iv[4..],
             "a receive key keeps rustls's explicit iv"
         );
+    }
+
+    #[test]
+    fn only_the_kernel_state_a_hand_over_installed_is_the_same_place() {
+        let secret = |len| Some(Zeroizing::new(vec![5; len]));
+        let ciphers = [
+            (Cipher::Aes128Gcm, 16, 32),
+            (Cipher::Aes256Gcm, 32, 48),
+            (Cipher::Chacha20Poly1305, 32, 32),
+        ];
+        for (cipher, key_len, secret_len) in ciphers {
+            let keys = DirectionKeys {
+                seq: 3,
+                key: Zeroizing::new(vec![7; key_len]),
+                iv: Zeroizing::new(vec![9; 12]),
+                secret: secret(secret_len),
+            };
+            let mut sent = keys.clone();
+            sent.seq += 1;
+            let mut updated = next_keys(cipher, &keys).unwrap();
+            updated.seq = keys.seq;
+            for version in [TlsVersion::Tls12, TlsVersion::Tls13] {
+                for direction in [Direction::Tx, Direction::Rx] {
+                    let info = |keys| CryptoInfo::new(direction, version, cipher, keys).unwrap();
+                    let at = (cipher, version, direction);
+                    assert!(info(&keys).same_place(&info(&keys)), "{at:?} as installed");
+                    assert!(
+                        !info(&keys).same_place(&info(&sent)),
+                        "{at:?} one record on"
+                    );
+                    assert!(
+                        !info(&keys).same_place(&info(&updated)),
+                        "{at:?} re-keyed, as many records on"
+                    );
+                }
+            }
+            let tls13 = |keys| CryptoInfo::new(Direction::Tx, TlsVersion::Tls13, cipher, keys);
+            let tls12 = |keys| CryptoInfo::new(Direction::Tx, TlsVersion::Tls12, cipher, keys);
+            assert!(
+                !tls13(&keys).unwrap().same_place(&tls12(&keys).unwrap()),
+                "{cipher:?}: another version"
+            );
+        }
     }
 
     #[test]
