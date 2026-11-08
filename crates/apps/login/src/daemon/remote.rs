@@ -946,12 +946,27 @@ impl Daemon {
         }
     }
 
+    /// Forwards an accepted login to its session; one whose session ended since is denied, so the
+    /// intake never opens a link for a uid the daemon no longer tracks.
     pub(super) fn front_ready(&mut self, conn: u64, user: &str, out: &mut Vec<Effect>) {
         match self.remote.logins.get_mut(&conn) {
             Some(l) if l.user == user && matches!(l.step, Step::Accepted { .. }) => {
                 let Step::Accepted { uid } = l.step else {
                     unreachable!()
                 };
+                if self.sessions.by_uid(uid).is_none() {
+                    out.push(Effect::Log(
+                        Level::Info,
+                        format!(
+                            "a remote login from {} lost its session before its hand-over",
+                            l.peer
+                        ),
+                    ));
+                    let backoff_s = l.backoff_s;
+                    self.forget(conn, out);
+                    out.push(Effect::ToFront(FrontEvent::Denied { conn, backoff_s }));
+                    return out.push(Effect::DropConn { conn });
+                }
                 l.step = Step::Forwarding { uid };
                 out.push(Effect::Forward { conn, uid });
             }
@@ -1008,17 +1023,23 @@ impl Daemon {
         }
     }
 
-    /// A lost link with viewers reopens once, keeping its count meanwhile. Any other loss zeroes
-    /// the count and refuses the logins waiting on it; the next login for `uid` reopens it.
+    /// A lost link with viewers reopens once, keeping its count meanwhile, at a login's pace if
+    /// one waits. Any other loss zeroes the count and refuses the logins waiting on it; the next
+    /// login for `uid` reopens it.
     pub(super) fn intake_lost(&mut self, now: Instant, uid: u32, out: &mut Vec<Effect>) {
-        self.remote.linked.remove(&uid);
+        let reported = self.remote.linked.remove(&uid);
         let viewed = self.remote.viewers.contains_key(&uid);
         if viewed && self.sessions.by_uid(uid).is_some() && self.remote.reopening.insert(uid) {
-            return out.push(Effect::ReopenIntake { uid });
+            out.push(Effect::ReopenIntake { uid });
+            if !self.conns(Step::Linking { uid }).is_empty() {
+                out.push(Effect::OpenIntake { uid });
+            }
+            return;
         }
         self.remote.reopening.remove(&uid);
         self.set_viewers(now, uid, 0, out);
-        if let Some(e) = self.sessions.by_uid(uid)
+        if !reported
+            && let Some(e) = self.sessions.by_uid(uid)
             && e.background
             && !self.remote.disconnects.contains_key(&e.id)
         {
