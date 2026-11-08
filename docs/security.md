@@ -430,7 +430,9 @@ other, and `reprise-rdp` fetches the bytes when a program on the other side
 reads them. With `[clipboard] history` on, Reprise reads every new copy for
 the history, so a client's text or picture crosses as soon as it is copied.
 Text and pictures cross, files and the primary selection don't. Text over
-16 MiB and pictures over 64 MiB are refused, measured on the wire. The
+16 MiB and pictures over 64 MiB are refused, measured on the wire, and a
+clipboard message over 128 MiB ends the client's connection. The server's
+units cap its memory at 1 GiB (`MemoryMax=`). The
 clipboard doesn't follow a lock: while the session is locked, here in show
 mode or on the remote side in lock mode, someone at the client can still
 paste the session's last copy there or copy into the session, which

@@ -9,6 +9,9 @@ ExecStart=/usr/bin/reprise-rdp
 Restart=on-failure
 # 75: another process holds org.reprise.RemoteDesktop; the server stays off until started again.
 RestartPreventExitStatus=75
+# One 1600x900 H.264 viewer peaks at about 170 MB; 1 GiB leaves room for a 4K screen, four
+# viewers and a clipboard message at its 128 MiB limit.
+MemoryMax=1G
 
 [Install]
 WantedBy=reprise-session.target

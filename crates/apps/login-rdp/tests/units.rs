@@ -151,6 +151,7 @@ fn the_handover_service_starts_without_waiting_for_the_compositor() {
             "RestartSteps=5",
             "RestartMaxDelaySec=60",
             "RestartPreventExitStatus=75",
+            "MemoryMax=1G",
         ],
     );
     assert!(
