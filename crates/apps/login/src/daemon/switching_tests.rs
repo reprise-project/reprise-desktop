@@ -324,6 +324,46 @@ fn a_session_whose_worker_died_while_it_runs_is_terminated() {
 }
 
 #[test]
+fn a_failed_end_of_a_session_that_lost_its_worker_is_tried_again() {
+    let mut run = anna_and_bert();
+    orphaned(&mut run, "c1", 1000);
+    let failed = || Input::TerminateFailed {
+        id: "c1".into(),
+        seat_active: Some("c1".into()),
+    };
+    for n in 0..TERMINATE_TRIES - 1 {
+        assert_eq!(
+            run.on(failed()),
+            [Effect::Arm {
+                timer: Timer::Terminate("c1".into()),
+                after: TERMINATE_RETRY * 2u32.pow(n),
+            }]
+        );
+        assert_eq!(
+            run.on(Input::Timer(Timer::Terminate("c1".into()))),
+            [Effect::TerminateSession("c1".into())]
+        );
+    }
+    let effects = run.on(failed());
+    assert!(
+        matches!(effects.as_slice(), [Effect::Log(Level::Warn, text)] if text.contains("c1")),
+        "{effects:?}"
+    );
+    assert_eq!(run.on(Input::Timer(Timer::Terminate("c1".into()))), []);
+}
+
+#[test]
+fn a_failed_end_of_a_session_nobody_asked_to_end_retries_nothing() {
+    let mut run = anna_and_bert();
+    let failed = Input::TerminateFailed {
+        id: "c3".into(),
+        seat_active: Some("c1".into()),
+    };
+    assert_eq!(run.on(failed), []);
+    assert_eq!(run.on(Input::Timer(Timer::Terminate("c3".into()))), []);
+}
+
+#[test]
 fn an_orphan_report_with_another_uid_terminates_nothing() {
     let mut run = anna_and_bert();
     assert_eq!(orphaned(&mut run, "c1", 1001), []);
