@@ -1662,13 +1662,25 @@ fn a_disconnect_time_running_out_waits_for_a_login_in_flight_to_the_session() {
 
 #[test]
 fn a_shorter_end_disconnected_after_ends_a_session_past_it_at_once() {
+    let gen2 = || Timer::Disconnected {
+        id: "c2".into(),
+        generation: 2,
+    };
     let mut run = anna_unviewed_for_30();
     assert_eq!(
-        quiet(
-            run.after(Duration::from_secs(600))
-                .on(ending_after(Some(5)))
-        ),
-        [Effect::TerminateSession("c2".into()), front_on()]
+        run.after(Duration::from_secs(600))
+            .on(ending_after(Some(5))),
+        [
+            Effect::Arm {
+                timer: gen2(),
+                after: Duration::ZERO,
+            },
+            front_on()
+        ]
+    );
+    assert_eq!(
+        quiet(run.fire(gen2())),
+        [Effect::TerminateSession("c2".into())]
     );
     let mut run = anna_unviewed_for_30();
     assert_eq!(
@@ -1689,6 +1701,25 @@ fn a_shorter_end_disconnected_after_ends_a_session_past_it_at_once() {
         generation: 1,
     };
     assert_eq!(run.fire(gen1), [], "the old timer is stale");
+}
+
+#[test]
+fn a_shorter_end_disconnected_after_never_ends_the_session_the_console_shows() {
+    let mut run = anna_unviewed_for_30();
+    run.world.active_vt = 7;
+    let effects = run
+        .after(Duration::from_secs(600))
+        .on(ending_after(Some(5)));
+    assert!(
+        !effects.contains(&Effect::TerminateSession("c2".into())),
+        "{effects:?}"
+    );
+    let gen2 = Timer::Disconnected {
+        id: "c2".into(),
+        generation: 2,
+    };
+    assert_eq!(quiet(run.fire(gen2)), [Effect::Inhibit(Inhibit::Nothing)]);
+    assert!(!run.d.sessions.by_id("c2").unwrap().background);
 }
 
 #[test]
