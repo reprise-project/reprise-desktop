@@ -1,5 +1,5 @@
 use repriselogin::account::{AccountRefusal, AccountReply, AccountRequest, nt_hash};
-use repriselogin::front::{FrontEvent, NlaUser};
+use repriselogin::front::{FrontEvent, FrontRequest, NlaUser};
 use repriselogin::greeter::{AuthKind, ErrorKind};
 use zeroize::Zeroizing;
 
@@ -85,6 +85,7 @@ fn member(link: u64, uid: Option<u32>, member: bool) -> Input {
         key: LookUpKey::Account(link),
         uid,
         member,
+        failed: false,
     }
 }
 
@@ -166,12 +167,7 @@ fn setting_a_remote_password_checks_the_login_password_first() {
         vec![Effect::StorePasswords(vec![want.clone()])]
     );
     let mut done = answered(1, AccountReply::Done);
-    done.push(Effect::ToFront(FrontEvent::Passwords {
-        users: vec![NlaUser {
-            user: "anna".into(),
-            nt_hash: want.nt_hash.clone(),
-        }],
-    }));
+    done.push(Effect::ToFront(FrontEvent::Passwords { users: vec![] }));
     assert_eq!(run.quiet(Input::Stored { ok: true }), done);
     assert_eq!(run.exited(2), vec![], "the check's exit after its success");
     assert_eq!(
@@ -329,13 +325,50 @@ fn a_user_outside_the_remote_group_can_clear_their_remote_password() {
         vec![Effect::StorePasswords(vec![bert.clone()])]
     );
     let mut done = answered(2, AccountReply::Done);
-    done.push(Effect::ToFront(FrontEvent::Passwords {
-        users: vec![NlaUser {
-            user: "bert".into(),
-            nt_hash: bert.nt_hash.clone(),
-        }],
-    }));
+    done.push(Effect::ToFront(FrontEvent::Passwords { users: vec![] }));
     assert_eq!(run.quiet(Input::Stored { ok: true }), done);
+}
+
+#[test]
+fn a_set_password_reaches_the_front_once_a_look_up_after_its_check_finds_the_user_in_the_group() {
+    let mut run = super::remote_tests::remote_run(super::remote_tests::enabled());
+    run.on(Input::FrontLinked);
+    run.on(Input::Front(FrontRequest::Hello));
+    checking(&mut run, 1, "anna", ANNA, set(LOGIN_PW, "new-remote-pw"), 2);
+    let want = stored("anna", ANNA, "new-remote-pw");
+    assert_eq!(
+        run.quiet(Input::Worker(WorkerId(2), authed("anna", ANNA))),
+        vec![Effect::StorePasswords(vec![want.clone()])]
+    );
+    let mut done = answered(1, AccountReply::Done);
+    done.push(Effect::ToFront(FrontEvent::Passwords { users: vec![] }));
+    done.push(Effect::LookUp {
+        key: LookUpKey::Listed {
+            uid: ANNA,
+            generation: 2,
+        },
+        user: "anna".into(),
+        group: "reprise-remote".into(),
+    });
+    assert_eq!(run.quiet(Input::Stored { ok: true }), done);
+    let found = Input::Member {
+        key: LookUpKey::Listed {
+            uid: ANNA,
+            generation: 2,
+        },
+        uid: Some(ANNA),
+        member: true,
+        failed: false,
+    };
+    assert_eq!(
+        run.quiet(found),
+        [Effect::ToFront(FrontEvent::Passwords {
+            users: vec![NlaUser {
+                user: "anna".into(),
+                nt_hash: want.nt_hash.clone(),
+            }],
+        })]
+    );
 }
 
 #[test]

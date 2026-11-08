@@ -273,6 +273,10 @@ impl Daemon {
                 ));
                 answer(link, AccountReply::Done, out);
                 out.extend(self.set_remote_passwords(all));
+                // The set's own look-up predates its PAM check, so the group is read again.
+                if c.nt_hash.is_some() {
+                    self.look_up_listed(out);
+                }
             } else {
                 out.push(Effect::Log(
                     Level::Warn,
