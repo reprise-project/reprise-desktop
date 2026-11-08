@@ -139,6 +139,34 @@ pub fn session_gone(e: &zbus::Error) -> bool {
     }
 }
 
+/// logind's sessions as one `ListSessions` lists them.
+#[derive(Debug, Default)]
+pub struct Listing {
+    /// Those whose properties could be read, closing ones included.
+    pub found: Vec<LogindSession>,
+    /// The ids of those whose properties could not be read.
+    pub unread: Vec<String>,
+}
+
+/// Whether a session is gone or closing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ended {
+    Yes,
+    No,
+    /// logind could not be read.
+    Unknown,
+}
+
+/// What a read of whether a session is closing says of its end.
+fn ended_by(closing: zbus::Result<bool>) -> Ended {
+    match closing {
+        Ok(true) => Ended::Yes,
+        Ok(false) => Ended::No,
+        Err(e) if session_gone(&e) => Ended::Yes,
+        Err(_) => Ended::Unknown,
+    }
+}
+
 /// The daemon's system bus connection with logind's manager on it.
 #[derive(Clone)]
 pub struct Logind {
@@ -180,10 +208,14 @@ impl Logind {
 
     /// logind's sessions whose properties can be read, closing ones included.
     pub async fn listed(&self) -> zbus::Result<Vec<LogindSession>> {
-        let mut found = Vec::new();
+        Ok(self.listing().await?.found)
+    }
+
+    pub async fn listing(&self) -> zbus::Result<Listing> {
+        let mut listing = Listing::default();
         for (id, uid, user, seat, path) in self.manager.list_sessions().await? {
             match self.describe(path).await {
-                Ok((vt, class, service, closing)) => found.push(LogindSession {
+                Ok((vt, class, service, closing)) => listing.found.push(LogindSession {
                     id,
                     user,
                     uid,
@@ -194,10 +226,13 @@ impl Logind {
                     closing,
                 }),
                 Err(e) if session_gone(&e) => log::debug!("logind session {id}: {e}"),
-                Err(e) => log::warn!("logind session {id}: {e}"),
+                Err(e) => {
+                    log::warn!("logind session {id}: {e}");
+                    listing.unread.push(id);
+                }
             }
         }
-        Ok(found)
+        Ok(listing)
     }
 
     /// The VT, class and service of the session at `path`, and whether it is closing.
@@ -260,15 +295,19 @@ impl Logind {
         }
     }
 
-    /// Whether session `id` is gone or closing.
-    pub async fn ended(&self, id: &str) -> bool {
-        let Ok(path) = self.manager.get_session(id).await else {
-            return true;
+    /// Whether session `id` is gone or closing; `Unknown` when logind fails to say.
+    pub async fn ended(&self, id: &str) -> Ended {
+        let state = match self.manager.get_session(id).await {
+            Ok(path) => match self.session(path).await {
+                Ok(s) => s.state().await,
+                Err(e) => Err(e),
+            },
+            Err(e) => Err(e),
         };
-        match self.session(path).await {
-            Ok(s) => s.state().await.is_ok_and(|state| state == CLOSING),
-            Err(_) => true,
+        if let Err(e) = &state {
+            log::debug!("logind session {id}: {e}");
         }
+        ended_by(state.map(|state| state == CLOSING))
     }
 
     async fn seat0(&self) -> zbus::Result<SeatProxy<'static>> {
@@ -448,6 +487,26 @@ mod tests {
             "org.freedesktop.login1.NoSuchUser"
         )));
         assert!(!session_gone(&zbus::Error::InvalidReply));
+    }
+
+    #[test]
+    fn a_session_is_ended_only_when_gone_or_closing() {
+        assert_eq!(ended_by(Ok(true)), Ended::Yes);
+        assert_eq!(ended_by(Ok(false)), Ended::No);
+        assert_eq!(ended_by(Err(error_reply(NO_SUCH_SESSION))), Ended::Yes);
+        assert_eq!(
+            ended_by(Err(error_reply("org.freedesktop.DBus.Error.UnknownObject"))),
+            Ended::Yes
+        );
+        assert_eq!(
+            ended_by(Err(error_reply("org.freedesktop.DBus.Error.NoReply"))),
+            Ended::Unknown
+        );
+        assert_eq!(
+            ended_by(Err(error_reply("org.freedesktop.DBus.Error.AccessDenied"))),
+            Ended::Unknown
+        );
+        assert_eq!(ended_by(Err(zbus::Error::InvalidReply)), Ended::Unknown);
     }
 
     #[test]

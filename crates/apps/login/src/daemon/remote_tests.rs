@@ -118,6 +118,22 @@ fn looked_up(conn: u64, user: &str) -> Vec<Effect> {
     effects
 }
 
+fn link_look_up(uid: u32, user: &str) -> Effect {
+    Effect::LookUp {
+        key: LookUpKey::Link(uid),
+        user: user.into(),
+        group: "reprise-remote".into(),
+    }
+}
+
+fn link_member(uid: u32, found: Option<u32>, member: bool) -> Input {
+    Input::Member {
+        key: LookUpKey::Link(uid),
+        uid: found,
+        member,
+    }
+}
+
 fn member(conn: u64, uid: u32) -> Input {
     Input::Member {
         key: LookUpKey::Conn(conn),
@@ -385,7 +401,7 @@ fn a_login_for_the_console_users_session_hands_over_to_it() {
     let found = vec![logind("c1", "anna", ANNA, 7, "user", "reprise-login")];
     assert_eq!(
         run.d.recover(run.now, found, Some("c1")),
-        [Effect::OpenIntake { uid: ANNA }],
+        [link_look_up(ANNA, "anna")],
         "the session on the console is neither locked nor a background one"
     );
     let mut effects = run.verify(7, 1, "anna", ANNA);
@@ -655,6 +671,16 @@ fn nla_verifies_the_delegated_password_against_the_stored_hash() {
     let mut want = vec![front(FrontEvent::Verified { conn: 7 })];
     want.extend(background_start(2, 7));
     assert_eq!(run.worker(2, authed("anna", ANNA)), want);
+}
+
+#[test]
+fn a_delegated_password_stored_under_another_name_for_the_uid_is_refused() {
+    let mut run = remote_run(enabled());
+    run.d
+        .set_remote_passwords(vec![stored("alice", ANNA, "Remote1!")]);
+    assert_eq!(run.on(nla(7, "anna", "Remote1!")), looked_up(7, "anna"));
+    assert_eq!(quiet(run.on(member(7, ANNA))), []);
+    assert_eq!(run.after(REFUSE_DELAY).fire(Timer::Refuse(7)), denied(7, 0));
 }
 
 #[test]
@@ -1026,7 +1052,7 @@ fn a_disconnected_background_session_ends_after_end_disconnected_after() {
         run.d.recover(run.now, found, Some("g1")),
         [
             disconnect_arm("c1", 1, 30),
-            Effect::OpenIntake { uid: ANNA },
+            link_look_up(ANNA, "anna"),
             Effect::Inhibit(Inhibit::Idle),
         ]
     );
@@ -1170,6 +1196,11 @@ fn resuming_a_background_session_at_the_login_screen_makes_it_the_consoles() {
     let effects = run.on(Input::Unlocked { id: "c2".into() });
     assert_eq!(effects[0], Effect::SwitchTo(7));
     assert_eq!(effects.last(), Some(&Effect::Inhibit(Inhibit::Nothing)));
+    assert_eq!(
+        quiet(run.on(ending_after(Some(60)))),
+        [],
+        "a console session arms nothing"
+    );
     for generation in [1, 2] {
         let disconnected = Timer::Disconnected {
             id: "c2".into(),
@@ -1218,7 +1249,7 @@ fn the_login_screen_hears_each_change_of_its_notes() {
 }
 
 #[test]
-fn recovery_marks_sessions_off_the_seat_background_and_opens_their_intakes() {
+fn recovery_marks_sessions_off_the_seat_background_and_looks_up_their_links() {
     let mut run = Run::machine(config(enabled()));
     let found = vec![
         logind("c1", "anna", ANNA, 7, "user", "reprise-login-remote"),
@@ -1228,9 +1259,9 @@ fn recovery_marks_sessions_off_the_seat_background_and_opens_their_intakes() {
     assert_eq!(
         run.d.recover(run.now, found, Some("c3")),
         [
-            Effect::OpenIntake { uid: ANNA },
-            Effect::OpenIntake { uid: BERT },
-            Effect::OpenIntake { uid: CARL },
+            link_look_up(ANNA, "anna"),
+            link_look_up(BERT, "bert"),
+            link_look_up(CARL, "carl"),
             Effect::Inhibit(Inhibit::Idle),
         ]
     );
@@ -1254,7 +1285,7 @@ fn a_recovered_switched_away_console_session_holds_no_inhibitor_and_never_ends_u
     let found = vec![logind("c1", "anna", ANNA, 7, "user", "reprise-login")];
     assert_eq!(
         run.d.recover(run.now, found, Some("g1")),
-        [Effect::OpenIntake { uid: ANNA }]
+        [link_look_up(ANNA, "anna")]
     );
     assert_eq!(
         run.viewers(ANNA, 1),
@@ -1368,6 +1399,82 @@ fn a_reopen_that_gives_up_zeroes_its_viewers_and_the_next_login_opens_it() {
             front(FrontEvent::Accepted { conn: 8 }),
         ],
         "an open link takes the login at once"
+    );
+}
+
+#[test]
+fn a_link_lost_with_no_viewers_is_not_reopened() {
+    let mut run = remote_run(enabled());
+    run.anna_in_background(7, 2);
+    run.on(Input::IntakeOpen { uid: ANNA });
+    run.viewers(ANNA, 1);
+    run.viewers(ANNA, 0);
+    assert_eq!(run.on(Input::IntakeLost { uid: ANNA }), []);
+    assert_eq!(
+        run.verify(8, 3, "anna", ANNA),
+        [
+            front(FrontEvent::Verified { conn: 8 }),
+            to_worker(3, ToWorker::Cancel),
+            Effect::OpenIntake { uid: ANNA },
+        ],
+        "the next login opens it"
+    );
+}
+
+#[test]
+fn a_login_waiting_on_a_reopen_that_gives_up_is_refused() {
+    let mut run = remote_run(enabled());
+    run.anna_in_background(7, 2);
+    run.on(Input::IntakeOpen { uid: ANNA });
+    run.viewers(ANNA, 1);
+    run.on(Input::IntakeLost { uid: ANNA });
+    assert_eq!(
+        run.verify(8, 3, "anna", ANNA),
+        [
+            front(FrontEvent::Verified { conn: 8 }),
+            to_worker(3, ToWorker::Cancel),
+            Effect::OpenIntake { uid: ANNA },
+        ]
+    );
+    run.after(REFUSE_DELAY);
+    let effects = run.on(Input::IntakeLost { uid: ANNA });
+    assert!(
+        !(effects.iter()).any(|e| matches!(e, Effect::Log(Level::Warn, _))),
+        "{effects:?}"
+    );
+    assert!(
+        effects.contains(&front(FrontEvent::Denied {
+            conn: 8,
+            backoff_s: 0
+        })),
+        "{effects:?}"
+    );
+    assert_eq!(run.fire(Timer::Handover(8)), [], "nothing left to deny");
+}
+
+#[test]
+fn an_intake_open_for_a_uid_without_a_session_marks_nothing() {
+    let mut run = remote_run(enabled());
+    run.anna_in_background(7, 2);
+    run.removed("c2", Some("g1"));
+    assert_eq!(run.on(Input::IntakeOpen { uid: ANNA }), []);
+    run.anna_in_background(8, 3);
+}
+
+#[test]
+fn a_failed_hand_over_opens_the_link_again_for_the_next_login() {
+    let mut run = remote_run(enabled());
+    run.anna_in_background(7, 2);
+    run.on(Input::IntakeOpen { uid: ANNA });
+    run.on(ready(7, "anna"));
+    run.on(Input::Forwarded { conn: 7, ok: false });
+    assert_eq!(
+        run.verify(8, 3, "anna", ANNA),
+        [
+            front(FrontEvent::Verified { conn: 8 }),
+            to_worker(3, ToWorker::Cancel),
+            Effect::OpenIntake { uid: ANNA },
+        ]
     );
 }
 
@@ -1522,16 +1629,60 @@ fn the_front_starts_with_the_daemon_when_remote_logins_are_on() {
 }
 
 #[test]
-fn turning_remote_on_starts_the_front_and_opens_every_sessions_intake() {
+fn turning_remote_on_starts_the_front_and_opens_the_intakes_of_group_members() {
     let mut run = anna_recovered(MachineRemote::default(), "c1", Mode::Login.service());
     assert_eq!(
         run.on(Input::ConfigReloaded(config(enabled()))),
-        [
-            Effect::Front(FrontUnit::Start),
-            Effect::OpenIntake { uid: ANNA }
-        ]
+        [Effect::Front(FrontUnit::Start), link_look_up(ANNA, "anna")]
+    );
+    assert_eq!(
+        run.on(link_member(ANNA, Some(ANNA), true)),
+        [Effect::OpenIntake { uid: ANNA }]
     );
     assert_eq!(run.on(Input::ConfigReloaded(config(enabled()))), []);
+}
+
+#[test]
+fn recovery_opens_links_only_for_remote_group_members() {
+    let mut run = Run::machine(config(enabled()));
+    let found = vec![
+        logind("c1", "anna", ANNA, 7, "user", "reprise-login"),
+        logind("c3", "carl", CARL, 8, "user", "reprise-login"),
+    ];
+    assert_eq!(
+        run.d.recover(run.now, found, Some("c1")),
+        [link_look_up(ANNA, "anna"), link_look_up(CARL, "carl")]
+    );
+    assert_eq!(run.on(link_member(CARL, Some(CARL), false)), []);
+    assert_eq!(
+        run.on(link_member(ANNA, Some(ANNA), true)),
+        [Effect::OpenIntake { uid: ANNA }]
+    );
+    assert_eq!(
+        run.on(link_member(CARL, Some(BERT), true)),
+        [],
+        "the name now names another account"
+    );
+}
+
+#[test]
+fn a_link_look_up_that_fails_still_opens_the_link() {
+    let mut run = Run::machine(config(enabled()));
+    let found = vec![logind("c1", "anna", ANNA, 7, "user", "reprise-login")];
+    run.d.recover(run.now, found, Some("c1"));
+    assert_eq!(
+        run.on(link_member(ANNA, None, false)),
+        [Effect::OpenIntake { uid: ANNA }]
+    );
+}
+
+#[test]
+fn a_link_look_up_answered_after_its_session_ended_opens_nothing() {
+    let mut run = Run::machine(config(enabled()));
+    let found = vec![logind("c1", "anna", ANNA, 7, "user", "reprise-login")];
+    run.d.recover(run.now, found, Some("g1"));
+    run.removed("c1", Some("g1"));
+    assert_eq!(run.on(link_member(ANNA, Some(ANNA), true)), []);
 }
 
 #[test]
@@ -1637,4 +1788,40 @@ fn a_port_change_restarts_the_front() {
         ..MachineRemote::default()
     };
     assert_eq!(run.on(Input::ConfigReloaded(config(moved_off))), []);
+}
+
+#[test]
+fn a_background_start_finishing_beside_a_console_session_ends_it_and_hands_over_to_the_console_one()
+{
+    let mut run = remote_run(enabled());
+    let mut want = vec![front(FrontEvent::Verified { conn: 7 })];
+    want.extend(background_start(2, 7));
+    assert_eq!(run.verify(7, 2, "anna", ANNA), want);
+    run.log_in(3, "anna", ANNA, "c3", 8);
+    let effects = run.worker(2, started("c2", ANNA));
+    assert!(
+        effects
+            .iter()
+            .any(|e| matches!(e, Effect::Log(Level::Warn, m) if m.contains("beside"))),
+        "{effects:?}"
+    );
+    assert_eq!(
+        quiet(effects),
+        [
+            Effect::TerminateSession("c2".into()),
+            Effect::OpenIntake { uid: ANNA },
+        ]
+    );
+    assert_eq!(
+        run.d.sessions.by_uid(ANNA).map(|e| e.id.as_str()),
+        Some("c3")
+    );
+    assert_eq!(
+        run.on(Input::IntakeOpen { uid: ANNA }),
+        [front(FrontEvent::Accepted { conn: 7 })]
+    );
+    assert_eq!(
+        run.on(ready(7, "anna")),
+        [Effect::Forward { conn: 7, uid: ANNA }]
+    );
 }

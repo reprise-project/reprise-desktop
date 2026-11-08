@@ -80,9 +80,8 @@ impl Mode {
         MODES.into_iter().find(|m| m.as_arg() == arg)
     }
 
-    /// Whether a worker of this mode may run for `user`. The greeter's and autologin's stacks
-    /// ask no password, so they run only for the greeter's account and `autologin_user`. The
-    /// daemon decides who gets the remote and check modes.
+    /// Whether this mode may run for `user`. The greeter's and autologin's stacks ask no
+    /// password, so only for their own accounts; the daemon picks who gets the others.
     pub fn runs_for(self, user: &str, autologin_user: Option<&str>) -> bool {
         match self {
             Mode::Greeter => user == GREETER_USER,
@@ -91,8 +90,8 @@ impl Mode {
         }
     }
 
-    /// The greeter, autologin and NLA stacks have no prompting module, so only these relay
-    /// prompts.
+    /// The greeter, autologin and NLA stacks have no prompting module, so every other mode
+    /// relays prompts.
     fn relays_prompts(self) -> bool {
         matches!(
             self,
@@ -591,7 +590,8 @@ fn open<V: Vts>(
         return Err("stopped".into());
     }
     let name = CString::new(account.name.as_str()).map_err(|_| "the user name holds a NUL byte")?;
-    let groups = establish_creds(pam, &group_list(&name, account.gid)?)?;
+    let groups = users::group_list(&name, account.gid).map_err(|e| e.to_string())?;
+    let groups = establish_creds(pam, &groups)?;
     if let Err(e) = pam.open_session() {
         let _ = pam.delete_cred();
         return Err(e.to_string());
@@ -1143,25 +1143,6 @@ fn pointers(strings: &[CString]) -> Vec<*const c_char> {
         .map(|s| s.as_ptr())
         .chain(std::iter::once(std::ptr::null()))
         .collect()
-}
-
-/// `getgrouplist` for the account: its primary group and every group listing it.
-fn group_list(name: &CString, gid: libc::gid_t) -> Result<Vec<libc::gid_t>, String> {
-    let mut len: c_int = 64;
-    loop {
-        let mut groups = vec![0; len as usize];
-        let mut n = len;
-        // SAFETY: `groups` holds `n` entries and `name` is NUL-terminated.
-        let r = unsafe { libc::getgrouplist(name.as_ptr(), gid, groups.as_mut_ptr(), &mut n) };
-        if r >= 0 {
-            groups.truncate(n as usize);
-            return Ok(groups);
-        }
-        if len >= 65536 {
-            return Err("getgrouplist: too many groups".into());
-        }
-        len = n.max(len * 2);
-    }
 }
 
 /// journald's stdout stream socket, built before fork for `Launch::connect_journal`.

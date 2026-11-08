@@ -34,11 +34,17 @@ impl Daemon {
                 Level::Info,
                 format!("{}'s background session {id} is on the console", e.user),
             ));
-            self.sessions.set_background(&id, false);
+            self.bring_to_console(&id);
         }
         if let Some(interface) = interface {
             self.remember_interface(interface, out);
         }
+    }
+
+    /// Session `id` is the console's: not background, and no disconnect time can end it.
+    pub(super) fn bring_to_console(&mut self, id: &str) {
+        self.sessions.set_background(id, false);
+        self.remote.disconnects.remove(id);
     }
 
     /// A hand-over to `uid`'s session while the console shows another VT marks it a background

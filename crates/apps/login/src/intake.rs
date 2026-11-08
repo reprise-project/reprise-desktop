@@ -54,7 +54,16 @@ pub async fn open(uid: u32) -> io::Result<UnixStream> {
 /// [`open`] with `dir` for `/run/user/<uid>`. Both directories must be `uid`'s, writable by
 /// nobody else and no symlinks; the socket must be `uid`'s, and so must its peer.
 pub async fn open_at(dir: &Path, uid: u32) -> io::Result<UnixStream> {
-    let socket = socket_at(dir, uid)?;
+    // On a thread of its own: a FUSE mount over the directory can hang these calls for good,
+    // and a caller's timeout then abandons that thread, not the loop or the blocking pool.
+    let (tx, rx) = oneshot::channel();
+    let dir = dir.to_owned();
+    std::thread::Builder::new()
+        .name("intake-open".into())
+        .spawn(move || {
+            let _ = tx.send(socket_at(&dir, uid));
+        })?;
+    let socket = rx.await.map_err(io::Error::other)??;
     connect_to(&socket, uid).await
 }
 
@@ -283,9 +292,8 @@ impl Links {
         st.links.insert(uid, link);
     }
 
-    /// Queues `handover` with `fd` on `uid`'s link, answered by `Forwarded`. False, closing
-    /// `fd`, when the link is not up, holds [`MAX_FORWARDS`], or the hand-over does not fit
-    /// a frame.
+    /// Queues `handover` with `fd` on `uid`'s link, answered by `Forwarded`. False, closing `fd`,
+    /// when the link is down, holds [`MAX_FORWARDS`], or the hand-over does not fit a frame.
     pub fn forward(&self, uid: u32, conn: u64, fd: OwnedFd, handover: Box<HandOver>) -> bool {
         let st = self.state.borrow();
         let Some(queue) = st.links.get(&uid).and_then(|l| l.queue.as_ref()) else {

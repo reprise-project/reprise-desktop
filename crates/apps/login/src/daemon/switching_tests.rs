@@ -284,6 +284,22 @@ fn a_session_switched_away_with_no_remote_client_is_not_ended() {
     assert_eq!(background(&run, "c2"), Some(false));
 }
 
+#[test]
+fn a_session_brought_to_the_console_keeps_no_disconnect_entry() {
+    let mut run = anna_switched_away(with_end_after(30));
+    hand_over_to_anna(&mut run, 7, 4);
+    run.world.active_vt = vt::GREETER_VT;
+    quiet(run.on(Input::Forwarded { conn: 7, ok: true }));
+    run.world.active_vt = 7;
+    quiet(run.on(Input::ConsoleOnVt(7)));
+    assert_eq!(background(&run, "c2"), Some(false));
+    let reload = Input::ConfigReloaded(MachineConfig {
+        remote: with_end_after(60),
+        ..MachineConfig::default()
+    });
+    assert_eq!(quiet(run.on(reload)), [], "a console session arms nothing");
+}
+
 fn orphaned(run: &mut Run, id: &str, uid: u32) -> Vec<Effect> {
     run.on(Input::SessionOrphaned { id: id.into(), uid })
 }

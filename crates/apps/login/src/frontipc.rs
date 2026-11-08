@@ -77,9 +77,8 @@ impl Front {
     }
 }
 
-/// Accepts the front's link on `listener` in a task of the current `LocalSet`. Its requests
-/// go to `input` as `Front`, its `Ready` frames as `FrontReady` with the socket kept in
-/// `front`.
+/// Accepts the front's link on `listener` in a task of the current `LocalSet`. Its requests go to
+/// `input` as `Front`, its `Ready` frames as `FrontReady` with the socket kept in `front`.
 pub fn serve(
     listener: StdListener,
     front_uid: u32,

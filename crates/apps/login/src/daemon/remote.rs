@@ -56,12 +56,14 @@ impl fmt::Debug for StoredPassword {
     }
 }
 
-/// Who asked for a look-up: a front conn, an account link or the administrator check.
+/// Who asked for a look-up: a front conn, an account link, the administrator check, or the
+/// hand-over link of a session's uid.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum LookUpKey {
     Conn(u64),
     Account(u64),
     Admin(WorkerId),
+    Link(u32),
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -99,7 +101,7 @@ pub(super) struct Remote {
     /// Uids whose lost link is reopening, until the new link first reports.
     reopening: HashSet<u32>,
     /// Background sessions with no viewer, by session id.
-    disconnects: HashMap<String, Unviewed>,
+    pub(super) disconnects: HashMap<String, Unviewed>,
     generations: u32,
     inhibit: Inhibit,
 }
@@ -148,7 +150,7 @@ enum Step {
     Refused,
 }
 
-struct Unviewed {
+pub(super) struct Unviewed {
     /// When the last viewer left, or the session started or was found without one.
     since: Instant,
     /// The armed `Timer::Disconnected`'s; an older one is stale.
@@ -183,8 +185,8 @@ impl Daemon {
         Effect::ToFront(FrontEvent::Passwords { users })
     }
 
-    /// Turning remote logins on starts the front and opens the sessions' links; off stops it
-    /// and denies logins not handed over, keeping the links of uids with a session.
+    /// Turning remote logins on starts the front and opens the links of group members' sessions;
+    /// off stops it and denies logins not handed over, keeping the links of uids with a session.
     pub(super) fn config_reloaded(
         &mut self,
         now: Instant,
@@ -410,7 +412,8 @@ impl Daemon {
         let l = self.remote.logins.get_mut(&conn).expect("login");
         let mode = match l.secret.take() {
             Some(Secret::Delegated(password)) => {
-                let stored = self.remote.passwords.iter().find(|p| p.uid == uid);
+                let stored =
+                    (self.remote.passwords.iter()).find(|p| p.uid == uid && p.user == l.user);
                 match stored {
                     None => {
                         let why = "the account has no Remote Desktop password";
@@ -726,6 +729,7 @@ impl Daemon {
         let Some(l) = self.remote.logins.get_mut(&conn) else {
             return;
         };
+        let checking = matches!(l.step, Step::LookingUp | Step::Checking { .. });
         l.step = Step::Refused;
         l.secret = None;
         out.push(Effect::Log(
@@ -733,7 +737,10 @@ impl Daemon {
             format!("a remote login from {} was refused: {why}", l.peer),
         ));
         let waited = now.saturating_duration_since(l.at);
-        if waited >= REFUSE_DELAY {
+        if waited < REFUSE_DELAY {
+            return;
+        }
+        if checking {
             out.push(Effect::Log(
                 Level::Warn,
                 format!(
@@ -742,8 +749,8 @@ impl Daemon {
                     l.peer
                 ),
             ));
-            self.deny(conn, out);
         }
+        self.deny(conn, out);
     }
 
     fn deny(&mut self, conn: u64, out: &mut Vec<Effect>) {
@@ -775,9 +782,8 @@ impl Daemon {
         self.deny(conn, out);
     }
 
-    /// Denies a login that has not reached its session by the deadline. A session started
-    /// for it keeps running, and a reconnect lands in it. A forward the backend never
-    /// confirmed is dropped; the front gave its socket away already.
+    /// Denies a login not in its session by the deadline; a session started for it keeps running for
+    /// a reconnect. An unconfirmed forward is dropped, as the front gave its socket away already.
     pub(super) fn handover_deadline(&mut self, now: Instant, conn: u64, out: &mut Vec<Effect>) {
         let Some(l) = self.remote.logins.get(&conn) else {
             return;
@@ -878,6 +884,7 @@ impl Daemon {
         if ok {
             return self.reached_remotely(now, world, uid, out);
         }
+        self.remote.linked.remove(&uid);
         out.push(Effect::Log(
             Level::Warn,
             format!(
@@ -887,28 +894,63 @@ impl Daemon {
         ));
     }
 
+    /// A link that opens after its session ended stays unmarked, so the next session's first
+    /// login opens it again.
     pub(super) fn intake_open(&mut self, uid: u32, out: &mut Vec<Effect>) {
+        if self.sessions.by_uid(uid).is_none() {
+            return;
+        }
         self.remote.linked.insert(uid);
         for conn in self.conns(Step::Linking { uid }) {
             self.link(conn, uid, out);
         }
     }
 
-    /// A lost link of a uid with a session reopens, keeping its count meanwhile. A reopen
-    /// that fails counts as no viewers; the next login for `uid` opens it again.
+    /// A lost link with viewers reopens once, keeping its count meanwhile. Any other loss zeroes
+    /// the count and refuses the logins waiting on it; the next login for `uid` reopens it.
     pub(super) fn intake_lost(&mut self, now: Instant, uid: u32, out: &mut Vec<Effect>) {
         self.remote.linked.remove(&uid);
-        if self.sessions.by_uid(uid).is_some() && self.remote.reopening.insert(uid) {
+        let viewed = self.remote.viewers.contains_key(&uid);
+        if viewed && self.sessions.by_uid(uid).is_some() && self.remote.reopening.insert(uid) {
             return out.push(Effect::ReopenIntake { uid });
         }
         self.remote.reopening.remove(&uid);
         self.set_viewers(now, uid, 0, out);
+        for conn in self.conns(Step::Linking { uid }) {
+            self.refuse(now, conn, "its session's hand-over link did not open", out);
+        }
     }
 
-    /// Opens the hand-over link of every session in the table while remote logins are on.
+    /// Looks up whether each session's user is in the remote logins' group while remote
+    /// logins are on; `link_member` opens the links of members.
     pub(super) fn open_intakes(&mut self, out: &mut Vec<Effect>) {
-        let uids: Vec<_> = self.sessions.iter().map(|e| e.uid).collect();
-        for uid in uids {
+        if !self.config.remote.enabled {
+            return;
+        }
+        let users: BTreeMap<u32, String> = (self.sessions.iter())
+            .filter(|e| !self.remote.linked.contains(&e.uid))
+            .map(|e| (e.uid, e.user.clone()))
+            .collect();
+        for (uid, user) in users {
+            out.push(Effect::LookUp {
+                key: LookUpKey::Link(uid),
+                user,
+                group: self.config.remote.group.clone(),
+            });
+        }
+    }
+
+    /// Opens `uid`'s link while its session is there, unless the look-up says its user is not in
+    /// the group. A failed look-up opens it: a lost viewer count can end a session with a client.
+    pub(super) fn link_member(
+        &mut self,
+        uid: u32,
+        found: Option<u32>,
+        member: bool,
+        out: &mut Vec<Effect>,
+    ) {
+        let outside = uid == 0 || found.is_some_and(|f| f != uid || !member);
+        if !outside && self.sessions.by_uid(uid).is_some() {
             self.ask_link(uid, out);
         }
     }
