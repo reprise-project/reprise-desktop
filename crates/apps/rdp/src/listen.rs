@@ -24,11 +24,12 @@ use ironrdp_server::{
 use repriseconf::remote::{RemoteDesktop, SecondClient};
 use repriselogin::handover::{HandOver, Step};
 use reprisetls::cert::Identity;
-use reprisetls::ktls::KtlsStream;
+use reprisetls::ktls::{self, KtlsStream};
 use std::cell::{Cell, RefCell};
 use std::convert::Infallible;
 use std::io;
 use std::net::SocketAddr;
+use std::os::fd::AsFd;
 use std::pin::Pin;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -379,8 +380,9 @@ impl Incoming {
 }
 
 /// A handed-over connection as [`run`] takes it: its socket, whose TLS the kernel already
-/// carries, and the accept to replay.
+/// carries, and the accept to replay. A socket another server took first and used is refused.
 fn resume(tcp: std::net::TcpStream, handover: HandOver) -> io::Result<Incoming> {
+    ktls::check_untouched(tcp.as_fd(), &handover.tls)?;
     tcp.set_nonblocking(true)?;
     let tcp = TcpStream::from_std(tcp)?;
     let local = tcp.local_addr()?;

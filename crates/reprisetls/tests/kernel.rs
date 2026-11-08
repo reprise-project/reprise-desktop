@@ -69,6 +69,16 @@ async fn accept_with(
     installed: mpsc::Sender<()>,
     adjust: impl FnOnce(&mut TlsState),
 ) -> (KtlsStream, TlsState) {
+    let (tcp, tls) = accept_installed(listener, installed, adjust).await;
+    (KtlsStream::new(tcp, tls.clone()), tls)
+}
+
+/// As `accept_with`, giving the socket before a stream takes it.
+async fn accept_installed(
+    listener: &TcpListener,
+    installed: mpsc::Sender<()>,
+    adjust: impl FnOnce(&mut TlsState),
+) -> (tokio::net::TcpStream, TlsState) {
     let (tcp, _) = listener.accept().await.unwrap();
     let (config, secrets) = fixture::logged_server_config();
     let tls = tokio_rustls::TlsAcceptor::from(config)
@@ -85,7 +95,7 @@ async fn accept_with(
     let tcp = cork.into_inner();
     ktls::install(tcp.as_fd(), &tls).unwrap();
     installed.send(()).unwrap();
-    (KtlsStream::new(tcp, tls.clone()), tls)
+    (tcp, tls)
 }
 
 /// The keys the client receives under now, from its extracted secrets.
@@ -448,6 +458,43 @@ async fn a_tls12_sender_closes_before_the_limit() {
         })
         .await
         .unwrap_or_else(|_| panic!("{:?} closes within {LIMIT:?}", suite.suite()));
+        client.join().unwrap();
+    }
+}
+
+#[tokio::test]
+#[ignore = "needs the kernel tls module; run on a VM with REPRISE_KTLS_TESTS=1"]
+async fn a_socket_that_sent_since_its_hand_over_is_refused() {
+    if !kernel_tls() {
+        return;
+    }
+    for suite in SUITES {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (installed, ready) = mpsc::channel();
+        let client = thread::spawn(move || {
+            let mut stream = client(addr, suite, ready);
+            let mut got = [0; 4];
+            stream.read_exact(&mut got).unwrap();
+        });
+        timeout(LIMIT, async {
+            let (tcp, tls) = accept_installed(&listener, installed, |_| {}).await;
+            let watched = tcp.as_fd().try_clone_to_owned().unwrap();
+            assert!(
+                ktls::check_untouched(watched.as_fd(), &tls).is_ok(),
+                "{:?} as handed over",
+                suite.suite()
+            );
+            let mut stream = KtlsStream::new(tcp, tls.clone());
+            stream.write_all(b"once").await.unwrap();
+            assert!(
+                ktls::check_untouched(watched.as_fd(), &tls).is_err(),
+                "{:?} after a record went out",
+                suite.suite()
+            );
+        })
+        .await
+        .unwrap_or_else(|_| panic!("{:?} checks within {LIMIT:?}", suite.suite()));
         client.join().unwrap();
     }
 }
