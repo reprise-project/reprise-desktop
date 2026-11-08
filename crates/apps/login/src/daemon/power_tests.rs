@@ -42,6 +42,7 @@ fn member(uid: Option<u32>, member: bool) -> Input {
         key: LookUpKey::Admin(CHECK),
         uid,
         member,
+        failed: false,
     }
 }
 

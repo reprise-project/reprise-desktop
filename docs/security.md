@@ -580,14 +580,21 @@ For each login the daemon checks, in order:
 5. A session: the user's own, or a new background one while fewer than
    `max_sessions` run.
 
-Every refusal waits until 3 s after the login reached the daemon, whatever
-refused it, so an unknown name, a name outside the group, root and a wrong
-password look the same to the client. The daemon's journal (`journalctl -b
--u reprise-login`) names the reason. A client has 10 s from its TCP accept
-to send its X.224 request and its TLS ClientHello, then 60 s to send its
-credentials, time for its user to answer a certificate or password prompt,
-and the login then has 8 s to reach its session. The caps on connections
-not yet logged in bound what slow clients hold.
+Every refusal reprise-login makes waits until 3 s after the login reached
+the daemon, whatever refused it, so an unknown name, a name outside the
+group, root and a wrong password look the same to the client. The daemon's
+journal (`journalctl -b -u reprise-login`) names the reason. Under NLA the
+front checks the Remote Desktop password itself: a wrong one is refused at
+once with STATUS_LOGON_FAILURE and never reaches reprise-login, and an
+unknown name, root, a name outside the group and one with no Remote Desktop
+password get the same answer. The front's journal (`journalctl -b -u
+reprise-login-rdp`) logs that refusal. Which names have a Remote Desktop
+password shows anyway (see [Accepted risks](#accepted-risks)). A client has
+10 s from its TCP accept to send its X.224 request and its TLS ClientHello,
+then 60 s to send its credentials, time for its user to answer a
+certificate or password prompt, and the login then has 8 s to reach its
+session. The caps on connections not yet logged in bound what slow clients
+hold.
 
 ### Throttle
 
@@ -685,6 +692,15 @@ characters or more and must differ from the login password.
   the login password.
 - An entry whose account is gone, or whose name now has another uid, is
   dropped when reprise-login starts.
+- The front gets only the hashes of users in the group, never root's.
+  reprise-login reads the group for every stored user when the front links,
+  on each reload (`systemctl reload reprise-login`), after a password is set
+  on Settings, and when a login's or a session's group check disagrees with
+  the front's list. One read runs at a time; requests during it run one more
+  after it. A reload that changes `group` takes every user off the list at
+  once. A look-up that fails leaves its user off the list, and the read runs
+  again after 30 s, doubling to 5 min, until it passes. The daemon's journal
+  names each user put on or taken off the list.
 
 NLA takes the name as `user`, `.\user`, `HOST\user` (the host name's first
 label), `user@host` or `user@`. A client that runs bare NTLM instead of
@@ -746,9 +762,9 @@ or it ends.
 
 - **Names with a Remote Desktop password show.** The front picks NLA or TLS
   from the user name in the client's first, unauthenticated packet (its
-  `mstshash` cookie), NLA when that name has a Remote Desktop password. So
-  anyone who reaches the port can tell which names have one. Names leak,
-  never passwords.
+  `mstshash` cookie), NLA when that name is a group member's with a Remote
+  Desktop password. So anyone who reaches the port can tell which names
+  have one. Names leak, never passwords.
 - **The chvt rule applies to the whole computer.** It sits in
   `/usr/share/polkit-1/rules.d` and applies whether or not reprise-login
   runs: under another display manager too, a session that isn't active
@@ -756,8 +772,9 @@ or it ends.
   that activate their own inactive session lose out.
 - **Hashes outlive group membership.** Taking a user out of `reprise-remote`
   stops their logins at once, as the group check comes before the hash
-  compare, but their NT hash stays in the file and the front still gets it
-  until they clear it.
+  compare, but their NT hash stays in the file until they clear it. The
+  front keeps it until reprise-login next reads the group, and until then
+  a right guess of it is confirmed to the client.
 - **Wrong passwords on account.sock count toward pam_faillock.**
   `reprise-login-check` includes system-auth, so a process running as a user
   can lock that user's console login for faillock's window by sending wrong

@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::os::fd::{AsFd, AsRawFd, FromRawFd};
 use std::os::unix::net::UnixStream;
@@ -7,6 +7,7 @@ use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitCode, Stdio};
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
@@ -207,6 +208,7 @@ async fn run() -> Result<(), String> {
         events: events.clone(),
         world: WorldCache::default(),
         users: UserList::default(),
+        listing_jobs: ListingJobs::default(),
         front: front.clone(),
         front_units: logind.front_units(),
         accounts: serve_account(input.clone()),
@@ -461,6 +463,7 @@ struct Runtime {
     events: Events,
     world: WorldCache,
     users: UserList,
+    listing_jobs: ListingJobs,
     front: Rc<RefCell<Front>>,
     front_units: mpsc::UnboundedSender<FrontUnit>,
     accounts: Replies,
@@ -678,8 +681,28 @@ impl Runtime {
             Effect::ToFront(event) => self.front.borrow_mut().send(&event),
             Effect::LookUp { key, user, group } => {
                 let events = self.events.clone();
+                let hold = match key {
+                    LookUpKey::Listed { uid, .. } => match self.listing_jobs.hold(uid) {
+                        Some(hold) => Some(hold),
+                        None => {
+                            log::warn!("{user}'s last group look-up still runs");
+                            let failed = Input::Member {
+                                key,
+                                uid: None,
+                                member: false,
+                                failed: true,
+                            };
+                            let _ = events.send(Event::Input(failed));
+                            return;
+                        }
+                    },
+                    _ => None,
+                };
                 tokio::task::spawn_local(async move {
-                    let job = move || users::member_of(&user, &group);
+                    let job = move || {
+                        let _hold = hold;
+                        users::member_of(&user, &group)
+                    };
                     let member = look_up(key, LOOKUP_WAIT, job).await;
                     let _ = events.send(Event::Input(member));
                 });
@@ -819,31 +842,55 @@ impl UserList {
     }
 }
 
+/// Uids whose look-up for the front's list runs, past its wait too, so NSS that hangs holds
+/// at most one such job per stored user.
+#[derive(Clone, Default)]
+struct ListingJobs(Arc<Mutex<HashSet<u32>>>);
+
+impl ListingJobs {
+    /// Holds `uid` until the hold drops with its job, or `None` while its last job runs.
+    fn hold(&self, uid: u32) -> Option<ListingHold> {
+        let added = self.0.lock().unwrap_or_else(|e| e.into_inner()).insert(uid);
+        added.then(|| ListingHold(self.clone(), uid))
+    }
+}
+
+struct ListingHold(ListingJobs, u32);
+
+impl Drop for ListingHold {
+    fn drop(&mut self) {
+        (self.0.0.lock().unwrap_or_else(|e| e.into_inner())).remove(&self.1);
+    }
+}
+
 /// The answer to `Effect::LookUp` from `job`, run off the loop. One that fails or takes past
-/// `wait` counts as no member.
+/// `wait` counts as no member and is marked failed.
 async fn look_up(
     key: LookUpKey,
     wait: Duration,
     job: impl FnOnce() -> io::Result<Option<(u32, bool)>> + Send + 'static,
 ) -> Input {
     let found = tokio::time::timeout(wait, tokio::task::spawn_blocking(job)).await;
-    let (uid, member) = match found {
-        Ok(Ok(Ok(Some((uid, member))))) => (Some(uid), member),
-        Ok(Ok(Ok(None))) => (None, false),
-        Ok(Ok(Err(e))) => {
-            log::warn!("looking up an account: {e}");
-            (None, false)
-        }
-        Ok(Err(e)) => {
-            log::warn!("looking up an account: {e}");
-            (None, false)
-        }
-        Err(_) => {
-            log::warn!("looking up an account took over {wait:?}");
-            (None, false)
+    let failed = |why: &dyn std::fmt::Display| {
+        log::warn!("looking up an account: {why}");
+        Input::Member {
+            key,
+            uid: None,
+            member: false,
+            failed: true,
         }
     };
-    Input::Member { key, uid, member }
+    match found {
+        Ok(Ok(Ok(found))) => Input::Member {
+            key,
+            uid: found.map(|(uid, _)| uid),
+            member: found.is_some_and(|(_, member)| member),
+            failed: false,
+        },
+        Ok(Ok(Err(e))) => failed(&e),
+        Ok(Err(e)) => failed(&e),
+        Err(_) => failed(&format_args!("it took over {wait:?}")),
+    }
 }
 
 /// Whether the console still shows the VT of a worker whose start timed out. The login
@@ -1649,6 +1696,7 @@ mod tests {
             key: LookUpKey::Conn(7),
             uid: Some(1001),
             member: true,
+            failed: false,
         };
         let spawned = handle(member).await;
         let Some(Effect::Spawn { worker, .. }) = spawned.first() else {
@@ -1676,7 +1724,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_account_look_up_past_its_wait_counts_as_no_member() {
+    async fn an_account_look_up_past_its_wait_counts_as_a_failed_no_member() {
         let key = LookUpKey::Conn(3);
         let slow = || {
             std::thread::sleep(Duration::from_millis(300));
@@ -1687,7 +1735,8 @@ mod tests {
             Input::Member {
                 key,
                 uid: None,
-                member: false
+                member: false,
+                failed: true,
             }
         );
         assert_eq!(
@@ -1695,9 +1744,45 @@ mod tests {
             Input::Member {
                 key,
                 uid: Some(1001),
-                member: true
+                member: true,
+                failed: false,
             }
         );
+    }
+
+    #[tokio::test]
+    async fn a_missing_account_is_no_member_and_an_erring_look_up_is_failed() {
+        let key = LookUpKey::Conn(3);
+        assert_eq!(
+            look_up(key, Duration::from_secs(5), || Ok(None)).await,
+            Input::Member {
+                key,
+                uid: None,
+                member: false,
+                failed: false,
+            }
+        );
+        let erring = || Err(io::Error::other("sssd is down"));
+        assert_eq!(
+            look_up(key, Duration::from_secs(5), erring).await,
+            Input::Member {
+                key,
+                uid: None,
+                member: false,
+                failed: true,
+            }
+        );
+    }
+
+    #[test]
+    fn a_listing_look_up_runs_once_per_uid_until_its_job_ends() {
+        let jobs = ListingJobs::default();
+        let anna = jobs.hold(1001).expect("the first hold");
+        assert!(jobs.hold(1001).is_none(), "anna's job still runs");
+        let bert = jobs.hold(1002);
+        assert!(bert.is_some(), "another uid has its own");
+        drop(anna);
+        assert!(jobs.hold(1001).is_some(), "anna's job ended");
     }
 
     fn entry(name: &str) -> UserEntry {
