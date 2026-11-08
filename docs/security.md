@@ -995,16 +995,40 @@ location prompt grant something, and a prompt that takes the keyboard while
 you type must not be answered by your typing. Each of them:
 
 - takes its access keys with Alt only: a bare A, R or S presses nothing.
-- ignores keys and clicks for 500 ms after it gets the keyboard, when it
-  opens and each time it gets it back. A key that went down in that time
-  counts for nothing until it comes up, its repeats included.
-- presses the refusing button (Deny or Cancel) on Enter: it is the default.
+- ignores keys and clicks for 500 ms after it gets the keyboard: when it
+  opens, each time it gets it back (the click that gives it the keyboard
+  included) and when the screen wakes from the saver, blank or power-off. A
+  key that went down in that time counts for nothing until it comes up, its
+  repeats included.
+- grants only through a click or an Alt access key. Enter presses the
+  refusing button (Deny or Cancel) wherever the focus is, Space presses no
+  other button, and the arrow keys don't move between buttons. Tab still
+  moves the focus, to Remember or the list of sources.
 - stacks above every window kept on top (X11 menus included) and every mini
-  view. A sandboxed program isn't offered `reprise_on_top_v1` at all.
+  view. A sandboxed program isn't offered `reprise_on_top_v1` at all. Only a
+  Wayland window from the installed portal, outside any sandbox, counts as a
+  prompt: the compositor checks the process at the other end of the
+  client's socket. An X11 window never counts, whatever `_NET_WM_PID` and
+  `WM_CLASS` it sets.
+- takes no input from an app's RemoteDesktop session: neither its libei
+  sender's keys and clicks nor its NotifyKeyboard keys reach a prompt, so an
+  app granted the keyboard can't widen its own grant or answer another
+  app's. Reprise's own remote desktop server still answers prompts from the
+  viewer. The compositor tells the two apart by the kind of sender the portal
+  connects: `remote_session` for a session the portal started without a
+  dialog for `reprise-rdp` (see [Sandboxed programs](#sandboxed-programs)),
+  a plain sender for every other. Only the installed portal can bind
+  `reprise_input_v1` to connect either. Someone driving this computer
+  through Deskflow or another app answers a prompt at its own keyboard and
+  mouse instead.
+
+Xwayland's clients can't be told apart, so a sandboxed program with X11
+access can still keep an override-redirect window (a menu or tooltip) above
+the other windows and mini views. It stays under a consent prompt.
 
 The polkit agent's password box and the Drives passphrase box are not
-consent prompts: they stack like any window, and the secret they ask for
-keeps a stray key from answering them.
+consent prompts: they stack like any window and take remote input, and the
+secret they ask for keeps a stray key from answering them.
 
 To revoke: `flatpak permissions` lists the permission store and `flatpak
 permission-remove <table> <id>` removes an entry. The Keyboard page of

@@ -444,6 +444,9 @@ pub struct KeyAids {
     /// A shortcut's prompt, asked by `aids_after_key` so the key that
     /// asked for it does not land in it.
     prompt: Option<Aid>,
+    /// Where each key SlowKeys holds came from, so its accepted press comes back under that
+    /// source.
+    held_from: Vec<(u32, InputSource)>,
 }
 
 impl State {
@@ -478,6 +481,11 @@ impl State {
             pressed: k.pressed,
         };
         let now = self.aids_now();
+        let held = &mut self.key_input.aids.held_from;
+        held.retain(|&(c, _)| c != code);
+        if k.pressed {
+            held.push((code, self.inputproto.source));
+        }
         let (verdict, fx) = self.key_input.aids.filter.key(key, now);
         self.key_input.aids.resync |= fx.mods_changed;
         self.aids_effects(fx);
@@ -569,13 +577,14 @@ impl State {
     }
 
     fn aids_effects(&mut self, fx: Effects) {
-        // The aids' timer runs as Other; a press it lets through counts as the computer's
-        // keyboard's, the only one the aids see in lock mode.
-        let source = match self.inputproto.source {
-            InputSource::Other => InputSource::Physical,
-            s => s,
-        };
         for code in fx.accept {
+            // The aids' timer runs as Other; a press it lets through counts as where it came
+            // from, else as the computer's keyboard's, the only one the aids see in lock mode.
+            let held = self.key_input.aids.held_from.iter().find(|h| h.0 == code);
+            let source = match held.map_or(self.inputproto.source, |h| h.1) {
+                InputSource::Other => InputSource::Physical,
+                s => s,
+            };
             // The press comes back through the key handler; its release
             // comes from the keyboard as usual.
             self.with_source(source, |s| {
