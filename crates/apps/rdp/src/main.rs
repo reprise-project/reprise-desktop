@@ -153,7 +153,7 @@ fn main() -> ExitCode {
     };
     let marker = lock::marker_path();
     let local = tokio::task::LocalSet::new();
-    let code = local.block_on(&rt, async {
+    run_to_end(&rt, local, async {
         // Up and taking hand-overs during the lock wait: reprise-login's login waits on the
         // intake's first report and on its Took. Serving starts after the lock's first try.
         let mut intake = match hand_over.map(tokio::net::UnixListener::from_std) {
@@ -292,9 +292,19 @@ fn main() -> ExitCode {
             }
         }
         ExitCode::SUCCESS
-    });
-    // Dropping the connections gives the shared sink's default back before the process ends.
+    })
+}
+
+/// Runs `serve` on `local` to its exit code. The connections its stop dropped on the runtime give
+/// the shared sink's default back on threads of their own; the exit waits for that.
+fn run_to_end(
+    rt: &tokio::runtime::Runtime,
+    local: tokio::task::LocalSet,
+    serve: impl Future<Output = ExitCode>,
+) -> ExitCode {
+    let code = local.block_on(rt, serve);
     drop(local);
+    sink::settle();
     code
 }
 
