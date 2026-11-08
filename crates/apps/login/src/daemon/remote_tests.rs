@@ -269,6 +269,10 @@ impl Run {
         assert_eq!(self.worker(w, started("c2", ANNA)), want);
     }
 
+    fn gone(&mut self, conn: u64) {
+        assert_eq!(self.on(Input::Front(FrontRequest::Gone { conn })), []);
+    }
+
     pub(super) fn viewers(&mut self, uid: u32, count: u32) -> Vec<Effect> {
         self.on(Input::Viewers { uid, count })
     }
@@ -1005,6 +1009,7 @@ fn a_disconnected_background_session_ends_after_end_disconnected_after() {
     let arm = |generation| disconnect_arm("c2", generation, 30);
     let mut run = remote_run(remote.clone());
     run.anna_in_background(7, 2);
+    run.gone(7);
     run.viewers(ANNA, 1);
     assert_eq!(
         run.viewers(ANNA, 0),
@@ -1017,6 +1022,7 @@ fn a_disconnected_background_session_ends_after_end_disconnected_after() {
 
     let mut run = remote_run(remote.clone());
     run.anna_in_background(7, 2);
+    run.gone(7);
     run.viewers(ANNA, 1);
     run.viewers(ANNA, 0);
     run.viewers(ANNA, 1);
@@ -1033,6 +1039,7 @@ fn a_disconnected_background_session_ends_after_end_disconnected_after() {
 
     let mut run = remote_run(remote.clone());
     run.anna_in_background(7, 2);
+    run.gone(7);
     assert_eq!(
         quiet(run.fire(disconnected("c2", 1))),
         [Effect::TerminateSession("c2".into())],
@@ -1078,14 +1085,15 @@ fn ending_after(min: Option<u32>) -> Input {
     }))
 }
 
-/// Anna's background session `c2`, started at the run's start with no client, its
-/// `Disconnected` timer armed for 30 minutes as generation 1.
+/// Anna's background session `c2`, started at the run's start for a login that then went,
+/// with no client, its `Disconnected` timer armed for 30 minutes as generation 1.
 fn anna_unviewed_for_30() -> Run {
     let mut run = remote_run(MachineRemote {
         end_disconnected_after_min: Some(30),
         ..enabled()
     });
     run.anna_in_background(7, 2);
+    run.gone(7);
     run
 }
 
@@ -1112,6 +1120,67 @@ fn never_cancels_an_armed_disconnected_timer_and_a_value_re_arms_it_from_the_dis
             after: Duration::from_secs(40 * 60 - 1860),
         }],
         "40 minutes from the disconnect, not from the reload"
+    );
+}
+
+#[test]
+fn a_login_reaching_an_unviewed_background_session_restarts_its_time() {
+    let mut run = anna_unviewed_for_30();
+    run.on(Input::IntakeOpen { uid: ANNA });
+    run.after(Duration::from_secs(29 * 60));
+    assert_eq!(
+        run.verify(8, 3, "anna", ANNA),
+        [
+            front(FrontEvent::Verified { conn: 8 }),
+            to_worker(3, ToWorker::Cancel),
+            disconnect_arm("c2", 2, 30),
+            front(FrontEvent::Accepted { conn: 8 }),
+        ]
+    );
+    let gen1 = Timer::Disconnected {
+        id: "c2".into(),
+        generation: 1,
+    };
+    assert_eq!(run.after(Duration::from_secs(60)).fire(gen1), []);
+}
+
+#[test]
+fn a_disconnect_time_running_out_waits_for_a_login_in_flight_to_the_session() {
+    let disconnected = |generation| Timer::Disconnected {
+        id: "c2".into(),
+        generation,
+    };
+    let held = || Effect::Arm {
+        timer: disconnected(2),
+        after: HANDOVER_DEADLINE,
+    };
+    let mut run = anna_unviewed_for_30();
+    run.after(Duration::from_secs(30 * 60 - 1));
+    run.on(tls(8, "anna", "pw"));
+    run.on(member(8, ANNA));
+    assert_eq!(
+        run.after(Duration::from_secs(1)).fire(disconnected(1)),
+        [held()],
+        "the PAM check holds it"
+    );
+    run.worker(3, failed(ErrorKind::Failed, "wrong password"));
+    assert_eq!(
+        quiet(run.after(HANDOVER_DEADLINE).fire(disconnected(2))),
+        [Effect::TerminateSession("c2".into())],
+        "a refused login holds it no longer"
+    );
+
+    let mut run = anna_unviewed_for_30();
+    run.after(Duration::from_secs(30 * 60));
+    run.on(tls(8, "anna", "pw"));
+    run.on(member(8, ANNA));
+    run.worker(3, secret("Password: "));
+    assert_eq!(run.fire(disconnected(1)), [held()]);
+    run.worker(3, authed("anna", ANNA));
+    assert_eq!(
+        run.after(HANDOVER_DEADLINE).fire(disconnected(2)),
+        [],
+        "the verified login restarted its time"
     );
 }
 
@@ -1385,6 +1454,7 @@ fn a_reopen_that_gives_up_zeroes_its_viewers_and_the_next_login_opens_it() {
         [
             front(FrontEvent::Verified { conn: 8 }),
             to_worker(3, ToWorker::Cancel),
+            disconnect_arm("c2", 3, 30),
             Effect::OpenIntake { uid: ANNA },
         ]
     );
