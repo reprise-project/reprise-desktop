@@ -88,6 +88,16 @@ fn member(link: u64, uid: Option<u32>, member: bool) -> Input {
     }
 }
 
+/// Check worker `w`'s spawn for `user`, with its deadline.
+fn check_spawn(w: u32, user: &str) -> Vec<Effect> {
+    let mut effects = spawn(w, Mode::Check, user);
+    effects.push(Effect::Arm {
+        timer: Timer::Account(WorkerId(w)),
+        after: ACCOUNT_WAIT,
+    });
+    effects
+}
+
 fn answer(w: u32, password: &str) -> Vec<Effect> {
     vec![Effect::ToWorker {
         worker: WorkerId(w),
@@ -109,7 +119,7 @@ fn checking(run: &mut Run, link: u64, user: &str, uid: u32, request: AccountRequ
     assert_eq!(run.account(link, user, uid, request), looked_up(link, user));
     assert_eq!(
         run.quiet(member(link, Some(uid), true)),
-        spawn(w, Mode::Check, user)
+        check_spawn(w, user)
     );
     assert_eq!(
         run.quiet(Input::Worker(WorkerId(w), secret("Password: "))),
@@ -135,7 +145,7 @@ fn setting_a_remote_password_checks_the_login_password_first() {
     );
     assert_eq!(
         run.quiet(member(1, Some(ANNA), true)),
-        spawn(2, Mode::Check, "anna")
+        check_spawn(2, "anna")
     );
     let info = FromWorker::Prompt {
         kind: AuthKind::Info,
@@ -311,7 +321,7 @@ fn a_user_outside_the_remote_group_can_clear_their_remote_password() {
     );
     assert_eq!(
         run.quiet(member(2, Some(ANNA), false)),
-        spawn(2, Mode::Check, "anna")
+        check_spawn(2, "anna")
     );
     assert_eq!(run.worker(2, secret("Password: ")), answer(2, LOGIN_PW));
     assert_eq!(
@@ -355,7 +365,7 @@ fn a_check_that_never_asks_or_names_another_uid_fails() {
     );
     assert_eq!(
         run.quiet(member(1, Some(ANNA), true)),
-        spawn(2, Mode::Check, "anna")
+        check_spawn(2, "anna")
     );
     let mut killed = vec![Effect::Kill(WorkerId(2))];
     killed.extend(refused(1, AccountRefusal::Failed));
@@ -422,5 +432,43 @@ fn stores_go_one_at_a_time_and_each_builds_on_the_last() {
             }
         ),
         "a failed store keeps the passwords"
+    );
+}
+
+#[test]
+fn an_account_check_that_never_answers_fails_at_its_deadline() {
+    let mut run = run();
+    checking(&mut run, 1, "anna", ANNA, set(LOGIN_PW, "new-remote-pw"), 2);
+    let mut killed = vec![Effect::Kill(WorkerId(2))];
+    killed.extend(refused(1, AccountRefusal::Failed));
+    assert_eq!(run.quiet(Input::Timer(Timer::Account(WorkerId(2)))), killed);
+    assert_eq!(run.quiet(Input::WorkerExited(WorkerId(2))), vec![]);
+
+    checking(&mut run, 2, "anna", ANNA, clear(LOGIN_PW), 3);
+    assert_eq!(
+        run.quiet(Input::Worker(WorkerId(3), authed("anna", ANNA))),
+        vec![Effect::StorePasswords(vec![])],
+        "the next request is not busy"
+    );
+    assert_eq!(
+        run.quiet(Input::Timer(Timer::Account(WorkerId(3)))),
+        vec![],
+        "a check that passed has no deadline left"
+    );
+}
+
+#[test]
+fn a_status_counts_only_a_password_stored_under_the_account_name() {
+    let mut run = run();
+    run.d
+        .set_remote_passwords(vec![stored("alice", ANNA, "alice-remote")]);
+    assert_eq!(
+        status(&mut run, ANNA),
+        answered(
+            99,
+            AccountReply::Status {
+                remote_password: false
+            }
+        )
     );
 }

@@ -67,9 +67,8 @@ pub fn add_prompt_lines(lines: &mut Vec<String>, raw: &str) {
     }
 }
 
-/// The account a user name typed into a Remote Desktop client names, without its `DOMAIN\` or
-/// `@host`: `DOM\anna`, `anna@host` and `anna@` are `anna`. Both the front and the session's
-/// server read names with it, so a name one admits the other accepts.
+/// The account a name typed into a Remote Desktop client names: `DOM\anna`, `anna@host` and
+/// `anna@` are `anna`. The front and the session's server both use it, so they agree on names.
 pub fn account_name(typed: &str) -> &str {
     let name = typed.rsplit('\\').next().unwrap_or(typed);
     name.split('@').next().unwrap_or(name)

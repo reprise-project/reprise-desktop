@@ -366,6 +366,11 @@ mod tests {
     }
 
     #[test]
+    fn an_unknown_active_vt_picks_the_first_free() {
+        assert_eq!(pick(&BTreeSet::new(), 0, 0), Some(7));
+    }
+
+    #[test]
     fn none_is_left_past_63() {
         let taken: BTreeSet<u16> = (FIRST_SESSION_VT..=LAST_VT).collect();
         assert_eq!(pick(&taken, 0, 1), None);

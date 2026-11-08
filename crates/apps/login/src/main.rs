@@ -19,7 +19,7 @@ use reprise_login::daemon::{
 use reprise_login::frontipc::{self, Front};
 use reprise_login::intake::{self, Links};
 use reprise_login::ipc::{self, Gate, Paths, Server};
-use reprise_login::logind::{self, Inhibitor, Logind, SessionRemovedStream};
+use reprise_login::logind::{self, Ended, Inhibitor, Listing, Logind, SessionRemovedStream};
 use reprise_login::remembered::{Remembered, STATE_PATH};
 use reprise_login::remotepw::{self, STORE};
 use reprise_login::vt::{self, GREETER_VT};
@@ -29,10 +29,11 @@ use repriselogin::GREETER_USER;
 use repriselogin::account::ACCOUNT_SOCKET;
 use repriselogin::frame::{self, FrameError};
 use repriselogin::front::{FRONT_SOCKET, FRONT_USER};
-use repriselogin::greeter::{ErrorKind, GreeterReply, GreeterRequest};
+use repriselogin::greeter::{ErrorKind, GreeterReply, GreeterRequest, UserEntry};
 use repriselogin::machine::MACHINE_CONFIG;
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 use zeroize::Zeroizing;
 
 const USAGE: &str = "\
@@ -53,9 +54,13 @@ const LEADER_POLL: Duration = Duration::from_millis(500);
 const LEADER_POLLS: u32 = 10;
 /// How long an account look-up may take before the account counts as no member.
 const LOOKUP_WAIT: Duration = Duration::from_secs(5);
-/// Threads for account look-ups. One stuck in NSS keeps its thread past `LOOKUP_WAIT`, so
-/// the pool is capped; a look-up waiting for a thread counts against its own wait.
+/// Threads for account look-ups and the account list. One stuck in NSS keeps its thread for
+/// good, so the pool is capped; a look-up waiting for a thread counts against its own wait.
 const LOOKUP_THREADS: usize = 8;
+/// How long the login screen's account list may take before the last one read stands in.
+const USERS_WAIT: Duration = Duration::from_secs(1);
+/// The wait until a first read finishes: autologin and the greeter's tiles need the whole list.
+const BOOT_USERS_WAIT: Duration = Duration::from_secs(60);
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
@@ -119,13 +124,17 @@ fn daemon() -> ExitCode {
         }
     };
     let local = tokio::task::LocalSet::new();
-    match local.block_on(&rt, run()) {
+    let code = match local.block_on(&rt, run()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             log::error!("{e}");
             ExitCode::FAILURE
         }
-    }
+    };
+    drop(local);
+    // A blocking thread stuck in NSS would hold a plain drop forever.
+    rt.shutdown_background();
+    code
 }
 
 /// What the loop reacts to, in the order it happened.
@@ -192,6 +201,7 @@ async fn run() -> Result<(), String> {
         saver: Saver::new(PathBuf::from(STATE_PATH), events.clone()),
         events: events.clone(),
         world: WorldCache::default(),
+        users: UserList::default(),
         front: front.clone(),
         accounts: serve_account(input.clone()),
         links: Links::new(input.clone(), opener, HANDOVER_DEADLINE),
@@ -200,7 +210,7 @@ async fn run() -> Result<(), String> {
             Box::pin(async move { l.inhibit(what, why).await })
         })),
     };
-    let world = read_world(&logind).await;
+    let world = read_world(&logind, &mut rt.users).await;
     let effects = boot(&mut rt.daemon, found, seat_active.as_deref(), &world);
     let recovered: Vec<String> = rt.daemon.session_uids().into_keys().collect();
     rt.world = WorldCache(Some(world));
@@ -334,7 +344,7 @@ async fn follow_leader(id: String, logind: Logind, events: Events) {
     };
     match pidfd::open(pid) {
         // The leader may have exited, and its pid gone to another process, before the open.
-        Ok(_) if logind.ended(&id).await => {}
+        Ok(_) if logind.ended(&id).await == Ended::Yes => {}
         Ok(fd) => {
             if let Err(e) = pidfd::exited(fd).await {
                 return log::warn!("session {id}: watching its leader {pid}: {e}");
@@ -344,7 +354,7 @@ async fn follow_leader(id: String, logind: Logind, events: Events) {
         Err(e) => return log::warn!("session {id}: watching its leader {pid}: {e}"),
     }
     for _ in 0..LEADER_POLLS {
-        if logind.ended(&id).await {
+        if logind.ended(&id).await == Ended::Yes {
             let seat_active = logind.seat_active().await;
             let _ = events.send(Event::Input(Input::SessionRemoved { id, seat_active }));
             return;
@@ -403,6 +413,7 @@ struct Runtime {
     saver: Saver,
     events: Events,
     world: WorldCache,
+    users: UserList,
     front: Rc<RefCell<Front>>,
     accounts: Replies,
     links: Links,
@@ -444,9 +455,9 @@ impl Runtime {
             self.workers.started(*w, session_id);
             self.gate.borrow_mut().greeter_started(*w, session_id);
         }
-        let logind = &self.logind;
+        let (logind, users) = (&self.logind, &mut self.users);
         let world = (self.world)
-            .for_input(&input, async || read_world(logind).await)
+            .for_input(&input, async || read_world(logind, users).await)
             .await;
         let effects = self.daemon.handle(Instant::now(), world, input);
         self.run_effects(effects);
@@ -469,23 +480,23 @@ impl Runtime {
         let ended = self.logind.ended(&id).await;
         if orphaned(exit.mode, ended) {
             self.report_orphan(id).await;
-        } else if ended {
+        } else if ended == Ended::Yes {
             let seat_active = self.logind.seat_active().await;
             self.input(Input::SessionRemoved { id, seat_active }).await;
         }
     }
 
     /// Reports session `id` orphaned with the uid logind lists for it, or removed once logind
-    /// no longer lists it open. A failed read ends nothing.
+    /// lists it closing or not at all. A failed read ends nothing.
     async fn report_orphan(&mut self, id: String) {
-        let open = match self.logind.sessions().await {
-            Ok(open) => Some(open),
+        let listing = match self.logind.listing().await {
+            Ok(listing) => Some(listing),
             Err(e) => {
                 log::warn!("session {id} lost its login worker; reading logind's sessions: {e}");
                 None
             }
         };
-        match orphan_report(&id, open.as_deref()) {
+        match orphan_report(&id, listing.as_ref()) {
             OrphanReport::Orphaned { uid } => {
                 self.input(Input::SessionOrphaned { id, uid }).await;
             }
@@ -670,7 +681,7 @@ impl Runtime {
 }
 
 /// What the backend reads fresh for each input [`reads_world`] names.
-async fn read_world(logind: &Logind) -> World {
+async fn read_world(logind: &Logind, users: &mut UserList) -> World {
     let (user_sessions, login_sessions) = match logind.listed().await {
         Ok(found) => {
             let open = found.iter().filter(|s| s.class == "user" && !s.closing);
@@ -687,12 +698,73 @@ async fn read_world(logind: &Logind) -> World {
         (0, 0)
     });
     World {
-        users: users::read_listed(),
+        users: users.read().await,
         keyboard: logind.keyboard().await,
         kernel_open,
         active_vt,
         user_sessions,
         login_sessions,
+    }
+}
+
+/// The login screen's accounts, enumerated off the loop with at most one enumeration running:
+/// `getpwent` keeps one cursor per process.
+struct UserList {
+    last: Vec<UserEntry>,
+    reading: Option<(Instant, JoinHandle<Vec<UserEntry>>)>,
+    waits: [Duration; 2],
+    read_once: bool,
+}
+
+impl Default for UserList {
+    fn default() -> Self {
+        Self {
+            last: Vec::new(),
+            reading: None,
+            waits: [BOOT_USERS_WAIT, USERS_WAIT],
+            read_once: false,
+        }
+    }
+}
+
+impl UserList {
+    /// A fresh list, or the last one when the read runs past its wait from its start. A read
+    /// that ran past its wait is waited on by later calls, and once done, replaced by a new one.
+    async fn read(&mut self) -> Vec<UserEntry> {
+        self.read_with(users::read_listed).await
+    }
+
+    async fn read_with(
+        &mut self,
+        job: impl FnOnce() -> Vec<UserEntry> + Send + 'static,
+    ) -> Vec<UserEntry> {
+        if let Some((_, late)) = self.reading.take_if(|(_, h)| h.is_finished()) {
+            self.keep(late.await);
+        }
+        let wait = self.wait();
+        let (started, reading) = (self.reading)
+            .get_or_insert_with(|| (Instant::now(), tokio::task::spawn_blocking(job)));
+        match tokio::time::timeout(wait.saturating_sub(started.elapsed()), reading).await {
+            Ok(read) => {
+                self.reading = None;
+                self.keep(read);
+            }
+            Err(_) => log::warn!("listing the accounts took over {wait:?}; showing the last list"),
+        }
+        self.last.clone()
+    }
+
+    /// [`BOOT_USERS_WAIT`] until a read has finished, then [`USERS_WAIT`].
+    fn wait(&self) -> Duration {
+        self.waits[usize::from(self.read_once)]
+    }
+
+    fn keep(&mut self, read: Result<Vec<UserEntry>, tokio::task::JoinError>) {
+        self.read_once = true;
+        match read {
+            Ok(users) => self.last = users,
+            Err(e) => log::warn!("listing the accounts: {e}"),
+        }
     }
 }
 
@@ -729,10 +801,10 @@ fn on_dead_vt(stalled_vt: u16, active: io::Result<u16>) -> bool {
     stalled_vt != GREETER_VT && active.is_ok_and(|a| a == stalled_vt)
 }
 
-/// Whether a worker's exit left its session open without a PAM handle. The worker leads its
+/// Whether a worker's exit may have left its session open without a PAM handle. The worker leads its
 /// session, so logind most often reports it closing already, after a logout or a crash alike.
-fn orphaned(mode: Mode, ended: bool) -> bool {
-    mode != Mode::Greeter && !ended
+fn orphaned(mode: Mode, ended: Ended) -> bool {
+    mode != Mode::Greeter && ended != Ended::Yes
 }
 
 /// What the loop sends for a session whose worker exited while logind kept it open.
@@ -741,17 +813,20 @@ enum OrphanReport {
     Orphaned {
         uid: u32,
     },
-    /// logind no longer lists it open: it closed between the two reads.
+    /// logind lists it closing or not at all: it closed between the two reads.
     Removed,
-    /// logind's open sessions could not be read (`open` is `None`); nothing is ended.
+    /// logind's sessions, or this one's properties, could not be read; nothing is ended.
     Nothing,
 }
 
-fn orphan_report(id: &str, open: Option<&[LogindSession]>) -> OrphanReport {
-    match open.map(|open| open.iter().find(|s| s.id == id)) {
-        Some(Some(s)) => OrphanReport::Orphaned { uid: s.uid },
-        Some(None) => OrphanReport::Removed,
-        None => OrphanReport::Nothing,
+fn orphan_report(id: &str, listing: Option<&Listing>) -> OrphanReport {
+    let Some(listing) = listing else {
+        return OrphanReport::Nothing;
+    };
+    match listing.found.iter().find(|s| s.id == id) {
+        Some(s) if !s.closing => OrphanReport::Orphaned { uid: s.uid },
+        None if listing.unread.iter().any(|u| u == id) => OrphanReport::Nothing,
+        _ => OrphanReport::Removed,
     }
 }
 
@@ -802,7 +877,7 @@ struct Worker {
     mode: Mode,
     /// The outbound queue; `None` once the socket is closed.
     tx: Option<mpsc::UnboundedSender<Zeroizing<Vec<u8>>>>,
-    reader: Option<tokio::task::JoinHandle<()>>,
+    reader: Option<JoinHandle<()>>,
     eof: bool,
     exited: bool,
     session: Option<String>,
@@ -1335,14 +1410,18 @@ mod tests {
 
     #[test]
     fn a_worker_exit_reports_its_session_orphaned_only_while_logind_keeps_it_open() {
-        assert!(orphaned(Mode::Login, false));
-        assert!(orphaned(Mode::Remote, false));
+        assert!(orphaned(Mode::Login, Ended::No));
+        assert!(orphaned(Mode::Remote, Ended::No));
         assert!(
-            !orphaned(Mode::Login, true),
+            orphaned(Mode::Login, Ended::Unknown),
+            "the orphan report reads logind again"
+        );
+        assert!(
+            !orphaned(Mode::Login, Ended::Yes),
             "a logout closes the session first"
         );
         assert!(
-            !orphaned(Mode::Greeter, false),
+            !orphaned(Mode::Greeter, Ended::No),
             "the login screen's own session"
         );
     }
@@ -1359,21 +1438,43 @@ mod tests {
             service: Mode::Login.service().into(),
             closing: false,
         };
-        let listed = [open("c3", 1001), open("c1", 1000)];
+        let listing = |found| Listing {
+            found,
+            unread: vec![],
+        };
+        let both = listing(vec![open("c3", 1001), open("c1", 1000)]);
         assert_eq!(
-            orphan_report("c1", Some(&listed)),
+            orphan_report("c1", Some(&both)),
             OrphanReport::Orphaned { uid: 1000 }
         );
         assert_eq!(
-            orphan_report("c1", Some(&listed[..1])),
+            orphan_report("c1", Some(&listing(vec![open("c3", 1001)]))),
             OrphanReport::Removed,
             "closed between the two reads"
+        );
+        let closing = LogindSession {
+            closing: true,
+            ..open("c1", 1000)
+        };
+        assert_eq!(
+            orphan_report("c1", Some(&listing(vec![closing]))),
+            OrphanReport::Removed,
+            "closing since the first read"
         );
         assert_eq!(
             orphan_report("c1", None),
             OrphanReport::Nothing,
             "logind could not be read"
         );
+    }
+
+    #[test]
+    fn a_session_logind_lists_but_cannot_describe_is_not_reported_removed() {
+        let listing = Listing {
+            found: vec![],
+            unread: vec!["c1".into()],
+        };
+        assert_eq!(orphan_report("c1", Some(&listing)), OrphanReport::Nothing);
     }
 
     fn world_on(active_vt: u16) -> World {
@@ -1533,6 +1634,69 @@ mod tests {
                 uid: Some(1001),
                 member: true
             }
+        );
+    }
+
+    fn entry(name: &str) -> UserEntry {
+        UserEntry {
+            name: name.into(),
+            real_name: String::new(),
+            picture: None,
+            note: None,
+        }
+    }
+
+    fn waiting(first: Duration, then: Duration) -> UserList {
+        UserList {
+            waits: [first, then],
+            ..UserList::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn the_first_account_read_waits_the_boot_wait_and_later_ones_the_loop_wait() {
+        let mut users = UserList::default();
+        assert_eq!(users.wait(), BOOT_USERS_WAIT);
+        assert_eq!(
+            users.read_with(|| vec![entry("anna")]).await,
+            [entry("anna")]
+        );
+        assert_eq!(users.wait(), USERS_WAIT);
+    }
+
+    #[tokio::test]
+    async fn an_account_read_already_past_its_wait_returns_the_last_list_at_once() {
+        let (release, held) = std::sync::mpsc::channel::<()>();
+        let wait = Duration::from_secs(60);
+        let mut users = waiting(wait, wait);
+        let hung = move || {
+            let _ = held.recv();
+            vec![entry("anna")]
+        };
+        let started = Instant::now().checked_sub(wait).unwrap();
+        users.reading = Some((started, tokio::task::spawn_blocking(hung)));
+        let read = tokio::time::timeout(Duration::from_secs(5), users.read_with(Vec::new)).await;
+        assert_eq!(read.ok(), Some(Vec::new()), "no second wait of {wait:?}");
+        drop(release);
+    }
+
+    #[tokio::test]
+    async fn an_account_read_that_finished_late_is_followed_by_a_fresh_one() {
+        let (release, held) = std::sync::mpsc::channel::<()>();
+        let mut users = waiting(Duration::ZERO, Duration::from_secs(5));
+        let late = move || {
+            let _ = held.recv();
+            vec![entry("anna")]
+        };
+        assert_eq!(users.read_with(late).await, Vec::new());
+        release.send(()).unwrap();
+        while !users.reading.as_ref().unwrap().1.is_finished() {
+            tokio::task::yield_now().await;
+        }
+        let fresh = || vec![entry("anna"), entry("bert")];
+        assert_eq!(
+            users.read_with(fresh).await,
+            vec![entry("anna"), entry("bert")]
         );
     }
 
