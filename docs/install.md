@@ -238,6 +238,9 @@ user's server.
   connection reaches the user's `reprise-rdp` in kernel TLS. The front's unit
   loads it; without it a login passes its check and then fails to reach its
   session, and the journal says the module isn't loaded
+- Optional, for remote logins: Landlock (`CONFIG_SECURITY_LANDLOCK`, with
+  `landlock` in the kernel's active LSMs), which stops the front connecting
+  out over TCP. Without it the front runs and logs a warning
 - libudev, libinput 1.26 or later, libdrm, Mesa (GBM and the EGL and OpenGL ES
   drivers), libglvnd and libdisplay-info
 - libxkbcommon and xkeyboard-config, whose registry names the keyboard
