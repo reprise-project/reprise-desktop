@@ -300,8 +300,8 @@ pub async fn serve<D, I, L>(
                         log::info!("{peer}: closed; {n} viewers are connected");
                         continue;
                     }
-                    Err(Refused::LoggingIn(ip)) => {
-                        log::info!("{peer}: closed; {ip} has {LOGGING_IN_PER_IP} connections logging in");
+                    Err(Refused::LoggingIn(place)) => {
+                        log::info!("{peer}: closed; {place} has {LOGGING_IN_PER_IP} connections logging in");
                         continue;
                     }
                 };

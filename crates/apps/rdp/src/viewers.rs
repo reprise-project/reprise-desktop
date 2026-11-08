@@ -1,10 +1,11 @@
 //! The connected viewers, each with a way to end it from this side.
 
 use std::collections::HashMap;
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 use tokio::sync::oneshot;
 
-/// Connections from one address still logging in at once; xfreerdp3 opens two about 5 ms apart.
+/// Connections from one address (an IPv6 /64) still logging in at once; xfreerdp3 opens two
+/// about 5 ms apart.
 pub const LOGGING_IN_PER_IP: usize = 2;
 
 /// Why a connection was ended from this side.
@@ -25,8 +26,22 @@ pub enum Kick {
 pub enum Refused {
     /// `max_viewers` connections are already served.
     Full,
-    /// [`LOGGING_IN_PER_IP`] connections from this address are still logging in.
-    LoggingIn(IpAddr),
+    /// [`LOGGING_IN_PER_IP`] connections from this address, or for IPv6 its /64, are still
+    /// logging in.
+    LoggingIn(Place),
+}
+
+/// An IPv4 address, or an IPv6 /64, as connections logging in are counted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Place(IpAddr);
+
+impl std::fmt::Display for Place {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.0 {
+            IpAddr::V6(v6) => write!(f, "{v6}/64"),
+            v4 => write!(f, "{v4}"),
+        }
+    }
 }
 
 /// One connection's place in [`Viewers`]; never given out twice.
@@ -56,9 +71,9 @@ impl Viewers {
         if self.live.len() >= cap {
             return Err(Refused::Full);
         }
-        let ip = peer.ip().to_canonical();
+        let ip = place(peer.ip());
         let logging_in = (self.live.values())
-            .filter(|e| !e.logged_in && e.peer.ip().to_canonical() == ip)
+            .filter(|e| !e.logged_in && place(e.peer.ip()) == ip)
             .count();
         if logging_in >= LOGGING_IN_PER_IP {
             return Err(Refused::LoggingIn(ip));
@@ -141,6 +156,15 @@ impl Entry {
     }
 }
 
+/// What the logins in progress count `ip` as: itself for IPv4, its /64 for IPv6, which one host
+/// can fill with addresses.
+fn place(ip: IpAddr) -> Place {
+    Place(match ip.to_canonical() {
+        IpAddr::V6(v6) => IpAddr::V6(Ipv6Addr::from_bits(v6.to_bits() & (u128::MAX << 64))),
+        v4 => v4,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -176,15 +200,28 @@ mod tests {
         v.join(peer("10.0.0.1:1"), 16).unwrap();
         let mapped: SocketAddr = "[::ffff:10.0.0.1]:2".parse().unwrap();
         v.join(mapped, 16).unwrap();
-        let ip: IpAddr = "10.0.0.1".parse().unwrap();
-        assert_eq!(
-            v.join(peer("10.0.0.1:3"), 16).err(),
-            Some(Refused::LoggingIn(ip)),
-            "a third from 10.0.0.1 is refused"
-        );
+        let Some(Refused::LoggingIn(place)) = v.join(peer("10.0.0.1:3"), 16).err() else {
+            panic!("a third from 10.0.0.1 is refused");
+        };
+        assert_eq!(place.to_string(), "10.0.0.1");
         assert!(
             v.join(peer("10.0.0.2:1"), 16).is_ok(),
             "another address is let in"
+        );
+    }
+
+    #[test]
+    fn a_third_connection_logging_in_from_one_ipv6_64_is_refused() {
+        let mut v = Viewers::default();
+        v.join(peer("[2001:db8:0:1::a]:1"), 16).unwrap();
+        v.join(peer("[2001:db8:0:1::b]:1"), 16).unwrap();
+        let Some(Refused::LoggingIn(place)) = v.join(peer("[2001:db8:0:1::c]:1"), 16).err() else {
+            panic!("a third address in the /64 is the same place");
+        };
+        assert_eq!(place.to_string(), "2001:db8:0:1::/64");
+        assert!(
+            v.join(peer("[2001:db8:0:2::a]:1"), 16).is_ok(),
+            "the next /64 is let in"
         );
     }
 
