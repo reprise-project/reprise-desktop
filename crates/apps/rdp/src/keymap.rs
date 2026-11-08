@@ -1,7 +1,9 @@
 //! Client keys as the session's: RDP scancodes (set 1 and the extended flag) to evdev codes,
 //! Unicode key events to keysyms, and the client's lock keys.
 
-/// The evdev code of set-1 scancode `code`, `extended` when it came with the 0xE0 prefix.
+/// The evdev code of set-1 scancode `code`, `extended` when it came with the 0xE0 prefix. The
+/// power, sleep and wake keys (E0 5E, 5F, 63) reach none: a client must not suspend or turn off
+/// the computer it can't wake.
 pub fn evdev(code: u8, extended: bool) -> Option<u32> {
     let key = if extended {
         match code {
@@ -35,9 +37,6 @@ pub fn evdev(code: u8, extended: bool) -> Option<u32> {
             0x5B => 125, // left Super
             0x5C => 126, // right Super
             0x5D => 127, // Menu
-            0x5E => 116, // power
-            0x5F => 142, // sleep
-            0x63 => 143, // wake up
             0x65 => 217, // search
             0x66 => 156, // bookmarks
             0x67 => 173, // refresh
@@ -172,6 +171,13 @@ mod tests {
         assert_eq!(evdev(0x45, false), Some(69), "Num Lock");
         assert_eq!(evdev(0x56, false), Some(86), "the key left of Z");
         assert_eq!(evdev(0x7F, true), None);
+    }
+
+    #[test]
+    fn the_power_sleep_and_wake_keys_reach_no_key() {
+        for (code, name) in [(0x5E, "power"), (0x5F, "sleep"), (0x63, "wake up")] {
+            assert_eq!(evdev(code, true), None, "{name}");
+        }
     }
 
     #[test]
