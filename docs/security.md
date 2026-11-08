@@ -985,6 +985,22 @@ The share picker also keeps the last screen or window each app picked
 (`$XDG_STATE_HOME/reprise-portal/lastpick.toml`), but only to preselect it:
 you still confirm.
 
+### Consent prompts
+
+The permission prompts, the share picker, the Access prompt and the
+location prompt grant something, and a prompt that takes the keyboard while
+you type must not be answered by your typing. Each of them:
+
+- takes its access keys with Alt only: a bare A, R or S presses nothing.
+- ignores keys and clicks for 500 ms after it gets the keyboard, when it
+  opens and each time it gets it back. A key that went down in that time
+  counts for nothing until it comes up, its repeats included.
+- presses the refusing button (Deny or Cancel) on Enter: it is the default.
+
+The polkit agent's password box and the Drives passphrase box are not
+consent prompts: the secret they ask for keeps a stray key from answering
+them.
+
 To revoke: `flatpak permissions` lists the permission store and `flatpak
 permission-remove <table> <id>` removes an entry. The Keyboard page of
 Reprise Settings forgets a program's global shortcuts, and Settings >

@@ -321,7 +321,8 @@ fn client_size(input: &Input) -> (i32, i32) {
 
 /// The dialog's controls: who is asking, the listed lines, the preview
 /// (black until the child decodes the picture), what it gets, the Remember check box when offered, Allow and Deny. Deny is the default
-/// button, so Enter never grants by accident, and Remember starts off.
+/// button, so Enter never grants by accident, and Remember starts off. A consent form
+/// ([`Form::set_consent`]): a bare letter presses nothing.
 fn build_form(kind: Kind, input: &Input) -> Form {
     let (w, _) = CLIENT;
     let dy = grown_h(input);
@@ -360,6 +361,7 @@ fn build_form(kind: Kind, input: &Input) -> Form {
     ));
     let mut f = Form::new(items);
     f.focus_id("deny");
+    f.set_consent();
     f
 }
 
@@ -430,6 +432,36 @@ mod tests {
             };
             let back: Input = toml::from_str(&toml::to_string(&input).unwrap()).unwrap();
             assert_eq!(back, input);
+        }
+    }
+
+    #[test]
+    fn a_bare_letter_answers_no_permission_prompt() {
+        use reprisekit::controls::form::{Event, Key};
+        let input = Input {
+            app: "Chromium".into(),
+            offer_remember: true,
+            ..Default::default()
+        };
+        for kind in Kind::ALL {
+            let mut f = build_form(kind, &input);
+            for ch in ['a', 'r', 'd'] {
+                assert_eq!(f.key(Key::Char(ch)), Event::None, "{kind:?}: {ch}");
+            }
+            assert_eq!(f.checked("remember"), Some(false), "{kind:?}");
+            assert_eq!(f.key(Key::Access('a')), Event::Pressed("allow"), "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn up_then_enter_answers_no_permission_prompt_with_allow() {
+        use reprisekit::controls::form::{Event, Key};
+        for kind in Kind::ALL {
+            let mut f = build_form(kind, &Input::default());
+            f.key(Key::Up);
+            assert_eq!(f.key(Key::Enter), Event::Pressed("deny"), "{kind:?}");
+            f.key(Key::Tab { back: true });
+            assert_ne!(f.key(Key::Space), Event::Pressed("allow"), "{kind:?}");
         }
     }
 

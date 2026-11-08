@@ -24,6 +24,7 @@ mod coalesce;
 mod colorpickview;
 mod compositor;
 mod configwatch;
+mod consent;
 mod console;
 mod constraint;
 mod crash;

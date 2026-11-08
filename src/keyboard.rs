@@ -188,6 +188,9 @@ impl State {
         if k.pressed && self.edit_menu_key(&routed.route, &k.syms, k.mods) {
             routed.route = KeyRoute::Swallow;
         }
+        if self.consent_refuses_key(&routed.route, keycode, pressed) {
+            routed.route = KeyRoute::Swallow;
+        }
         // A release goes where its press went. A held-back key's reaches
         // no client; a global shortcut's program hears deactivated,
         // whatever the modifiers are by now, and no client hears the key.
