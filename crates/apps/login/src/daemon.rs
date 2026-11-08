@@ -28,8 +28,8 @@ mod switching;
 
 pub use power::{ADMIN_GROUP, ADMIN_REFUSE_DELAY};
 pub use remote::{
-    FrontUnit, HANDOVER_DEADLINE, Inhibit, LookUpKey, MAX_LOGINS, MAX_REMOTE_CHECKS, REFUSE_DELAY,
-    StoredPassword,
+    FrontUnit, GONE_CHECK, HANDOVER_DEADLINE, Inhibit, LookUpKey, MAX_LOGINS, MAX_REMOTE_CHECKS,
+    REFUSE_DELAY, StoredPassword,
 };
 
 /// A session that ends sooner than this after its start brings the greeter back with a notice.
@@ -93,6 +93,9 @@ pub enum Timer {
     Disconnected { id: String, generation: u32 },
     /// The retry of the group look-ups for the front's list after one of them failed.
     Relist,
+    /// `GONE_CHECK` after a round of the front's list found a stored password's account
+    /// missing: the round that may drop it.
+    GoneCheck,
 }
 
 #[derive(Debug, PartialEq)]
@@ -697,6 +700,7 @@ impl Daemon {
             Input::Timer(Timer::Handover(conn)) => self.handover_deadline(now, conn, &mut out),
             Input::Timer(Timer::Account(worker)) => self.account_deadline(worker, &mut out),
             Input::Timer(Timer::Relist) => self.relist(&mut out),
+            Input::Timer(Timer::GoneCheck) => self.gone_check(&mut out),
             Input::Timer(Timer::Disconnected { id, generation }) => {
                 self.disconnected(&id, generation, world.active_vt, &mut out)
             }
@@ -733,7 +737,7 @@ impl Daemon {
                 uid: found,
                 member,
                 failed,
-            } => self.listed_member(uid, generation, found, member, failed, &mut out),
+            } => self.listed_member(now, uid, generation, found, member, failed, &mut out),
             Input::IntakeOpen { uid } => self.intake_open(uid, &mut out),
             Input::IntakeLost { uid } => self.intake_lost(now, uid, &mut out),
             Input::Viewers { uid, count } => self.viewers_reported(now, uid, count, &mut out),

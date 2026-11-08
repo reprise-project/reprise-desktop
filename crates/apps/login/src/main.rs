@@ -196,11 +196,17 @@ async fn run() -> Result<(), String> {
     let taker = logind.clone();
     let mut daemon = Daemon::new(config, remembered);
     daemon.background_before(backgrounds::load(Path::new(BACKGROUNDS)));
-    let passwords = remotepw::current(remotepw::load(Path::new(STORE)), |user| {
-        users::lookup(user).map(|e| e.map(|e| e.uid))
-    });
+    let loaded = remotepw::load(Path::new(STORE));
+    let stored = loaded.len();
+    let passwords = remotepw::current(loaded, |user| users::lookup(user).map(|e| e.map(|e| e.uid)));
+    let dropped = passwords.len() < stored;
     // No front is linked yet, so this emits nothing.
     let _ = daemon.set_remote_passwords(passwords);
+    // An account made again with the same name and uid must not find the old password.
+    let rewrite = match dropped {
+        true => daemon.rewrite_passwords(),
+        false => Vec::new(),
+    };
     let mut rt = Runtime {
         daemon,
         logind: logind.clone(),
@@ -251,6 +257,7 @@ async fn run() -> Result<(), String> {
     tokio::task::spawn_local(read_unread(unread, logind.clone(), events.clone()));
     tokio::task::spawn_local(follow_removals(removed, logind, events));
     rt.run_effects(effects);
+    rt.run_effects(rewrite);
     rt.sync_gate();
     rt.save_backgrounds();
 

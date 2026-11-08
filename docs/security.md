@@ -696,12 +696,19 @@ characters or more and must differ from the login password.
   (`chage -E`) is refused either way, by the account step.
 - Setting one leaves TLS logins on: a client set to TLS still logs on with
   the login password.
-- An entry whose account is gone, or whose name now has another uid, is
-  dropped when reprise-login starts.
+- An entry whose name now has another uid is dropped from the file when
+  reprise-login starts and whenever it reads the group for the front's list
+  while remote logins are on (below). An entry whose account is not found is
+  left out of the front's list at once, and dropped only when a read at least
+  10 minutes later, with no failed look-up, still finds no account: NSS
+  answers "not found" while systemd-homed restarts or sssd is offline. An
+  account deleted and made again with the same name and uid in between keeps
+  the old entry, so remove the Remote Desktop password before deleting an
+  account.
 - The front gets only the hashes of users in the group, never root's.
   reprise-login reads the group for every stored user when the front links,
   on each reload (`systemctl reload reprise-login`), after a password is set
-  on Settings, and when a login's or a session's group check disagrees with
+  in User Accounts, and when a login's or a session's group check disagrees with
   the front's list. One read runs at a time; requests during it run one more
   after it. A reload that changes `group` takes every user off the list at
   once. A look-up that fails leaves its user off the list, and the read runs

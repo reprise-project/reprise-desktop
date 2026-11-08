@@ -64,13 +64,14 @@ pub fn save(path: &Path, all: &[StoredPassword]) -> io::Result<()> {
     atomic::replace(path, text.as_bytes(), 0o700, 0o600)
 }
 
-/// The entries of `all` whose user still has that uid, as `uid_of` reads it; an entry
-/// `uid_of` fails for is kept.
+/// The entries of `all` but those whose name `uid_of` finds on another uid; one it misses or
+/// fails for is kept, and the daemon drops it once the account stays missing.
 pub fn current(
     all: Vec<StoredPassword>,
     uid_of: impl Fn(&str) -> io::Result<Option<u32>>,
 ) -> Vec<StoredPassword> {
     let keep = |p: &StoredPassword| match uid_of(&p.user) {
+        Ok(None) => true,
         Ok(uid) if uid == Some(p.uid) => true,
         Ok(_) => {
             log::info!(
@@ -208,7 +209,7 @@ mod tests {
     }
 
     #[test]
-    fn entries_whose_uid_no_longer_names_the_user_are_dropped() {
+    fn only_entries_whose_name_now_has_another_uid_are_dropped() {
         let all = vec![
             stored("anna", 1001, "a"),
             stored("bert", 1002, "b"),
@@ -221,6 +222,10 @@ mod tests {
             "carl" => Ok(None),
             _ => Err(io::Error::other("NSS is down")),
         });
-        assert_eq!(kept, vec![all[0].clone(), all[3].clone()]);
+        assert_eq!(
+            kept,
+            vec![all[0].clone(), all[2].clone(), all[3].clone()],
+            "an account not found may be one NSS cannot reach for now"
+        );
     }
 }
