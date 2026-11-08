@@ -153,6 +153,12 @@ pub struct SessionEnv {
     /// Set on the login screen: [`command`], the `spawn*` functions and the `try_spawn*` ones
     /// refuse every launch.
     pub refuses_programs: bool,
+    /// The logind session our launches name in their app scopes
+    /// ([`reprisefs::scope::session_pattern`]).
+    pub session_id: Option<String>,
+    /// Started from a text login while another Reprise session of the user runs: that session
+    /// keeps the user manager's variables and units, which this one neither publishes nor stops.
+    pub defers_user_units: bool,
 }
 
 /// What the login manager and pam_systemd set that services outside our process tree still need.
@@ -193,6 +199,8 @@ impl SessionEnv {
             parent: parent_session(|k| std::env::var(k).ok().filter(|v| !v.is_empty())),
             logind_session: own_session(|k| std::env::var(k).ok().filter(|v| !v.is_empty())),
             refuses_programs: false,
+            session_id: reprisefs::scope::launch_session(),
+            defers_user_units: false,
         }
     }
 
@@ -268,6 +276,9 @@ impl SessionEnv {
 /// bus-activated services find the compositor. [`begin_session`] publishes first; this runs when
 /// `DISPLAY` is known and when colours change. Best effort.
 pub fn export_session_env(env: &SessionEnv) {
+    if env.defers_user_units {
+        return;
+    }
     let argv = export_argv(env);
     let mut c = std::process::Command::new(&argv[0]);
     c.args(&argv[1..]);
@@ -297,6 +308,9 @@ const A11Y_REGISTRY: &str = "dbus-*-org.a11y.atspi.Registry@*.service";
 /// the accessibility bus it takes down, start the target. A nested run only publishes:
 /// `graphical-session.target` is the parent's.
 pub fn begin_commands(env: &SessionEnv) -> Vec<Vec<String>> {
+    if env.defers_user_units {
+        return Vec::new();
+    }
     let mut out = vec![export_argv(env)];
     if env.parent.is_empty() {
         // `graphical-session.target` by name: it stops when unneeded only after the stop job,
@@ -342,9 +356,9 @@ const PORTAL_GTK_UNIT: &str = "xdg-desktop-portal-gtk.service";
 /// Hand xdg-desktop-portal-gtk `theme` so its print dialog looks like the program. The backend
 /// reads GSettings, which Reprise leaves alone; `GTK_THEME` outranks that, via a drop-in under
 /// `$XDG_RUNTIME_DIR`. A running backend restarts to read it. No-op when the drop-in already
-/// says `theme` or on a nested run.
+/// says `theme`, on a nested run or beside another Reprise session.
 pub fn theme_portal_gtk(env: &SessionEnv, theme: &str) {
-    if !env.parent.is_empty() {
+    if !env.parent.is_empty() || env.defers_user_units {
         return;
     }
     let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR") else {
@@ -421,14 +435,17 @@ const PORTAL_UNITS: [&str; 2] = ["reprise-portal.service", "xdg-desktop-portal.s
 
 /// The commands that end the session `env` published, in order: unset (or restore the parent's)
 /// variables in the systemd user manager, stop the portal backend, and the session target,
-/// [`A11Y_REGISTRY`] and frontend too unless nested (it reads `XDG_CURRENT_DESKTOP` once, so a survivor would route the next desktop's
-/// dialogs here). dbus-broker defers to systemd, so that is all to undo. With `end_processes`
-/// and not nested, the app scopes stop too, and a session of our own is terminated last: logind
-/// leaves its processes running without `KillUserProcesses`, e.g. a windowless Deskflow server.
-pub fn end_commands(env: &SessionEnv, end_processes: bool) -> Vec<Vec<String>> {
+/// [`A11Y_REGISTRY`] and frontend too unless nested (it reads `XDG_CURRENT_DESKTOP` once, so a
+/// survivor would route the next desktop's dialogs here). dbus-broker defers to systemd, so that
+/// is all to undo. With `end_processes` and not nested, the app scopes stop too, and a session of
+/// our own is terminated last: logind leaves its processes running without `KillUserProcesses`,
+/// e.g. a windowless Deskflow server. While `another_runs` (another Reprise session of the user)
+/// the variables and units stay its own and only this session's app scopes stop.
+pub fn end_commands(env: &SessionEnv, end_processes: bool, another_runs: bool) -> Vec<Vec<String>> {
     let user = |verb: &str| vec!["systemctl".to_string(), "--user".into(), verb.into()];
+    let nested = !env.parent.is_empty();
     let mut out = Vec::new();
-    if !env.parent.is_empty() {
+    if nested {
         let mut c = user("set-environment");
         c.extend(env.parent.iter().map(|(k, v)| format!("{k}={v}")));
         out.push(c);
@@ -438,24 +455,31 @@ pub fn end_commands(env: &SessionEnv, end_processes: bool) -> Vec<Vec<String>> {
         .filter(|k| !env.parent.iter().any(|(p, _)| p == k))
         .map(String::from)
         .collect();
-    if !unset.is_empty() {
+    if !unset.is_empty() && (nested || !another_runs) {
         let mut c = user("unset-environment");
         c.extend(unset);
         out.push(c);
     }
     let mut stop = user("stop");
     stop.insert(2, "--no-block".into());
-    if env.parent.is_empty() {
+    let stop_verb = stop.len();
+    if nested {
+        stop.push(PORTAL_UNITS[0].into());
+    } else if !another_runs {
         stop.push(SESSION_TARGET.into());
         stop.push(A11Y_REGISTRY.into());
         stop.extend(PORTAL_UNITS.iter().map(|u| u.to_string()));
-    } else {
-        stop.push(PORTAL_UNITS[0].into());
     }
-    if end_processes && env.parent.is_empty() {
-        stop.push(reprisefs::scope::PATTERN.into());
+    if end_processes && !nested {
+        if !another_runs {
+            stop.push(reprisefs::scope::PATTERN.into());
+        } else if let Some(id) = &env.session_id {
+            stop.push(reprisefs::scope::session_pattern(id));
+        }
     }
-    out.push(stop);
+    if stop.len() > stop_verb {
+        out.push(stop);
+    }
     if end_processes && let Some(id) = &env.logind_session {
         out.push(vec![
             "loginctl".into(),
@@ -466,9 +490,56 @@ pub fn end_commands(env: &SessionEnv, end_processes: bool) -> Vec<Vec<String>> {
     out
 }
 
+/// Whether a process named `comm`, as this compositor is, runs in one of the `online` logind
+/// sessions of the user other than `own`; `procs` are each process's `comm` and `cgroup` files.
+fn runs_elsewhere(
+    comm: &str,
+    own: Option<&str>,
+    online: &[&str],
+    procs: impl IntoIterator<Item = (String, String)>,
+) -> bool {
+    procs.into_iter().any(|(c, cgroup)| {
+        c.trim_end() == comm
+            && reprisefs::scope::session_of_cgroup(&cgroup)
+                .is_some_and(|s| Some(s) != own && online.contains(&s))
+    })
+}
+
+/// Whether another of the user's logind sessions runs Reprise: its user manager, portals and
+/// app scopes are then shared with that session.
+pub fn another_session_runs_reprise() -> bool {
+    let read = |p: &str| std::fs::read_to_string(p).unwrap_or_default();
+    let comm = read("/proc/self/comm");
+    let own = read("/proc/self/cgroup");
+    // SAFETY: getuid cannot fail and touches no memory.
+    let uid = unsafe { libc::getuid() };
+    let record = read(&format!("/run/systemd/users/{uid}"));
+    let me = std::process::id();
+    let Ok(dir) = std::fs::read_dir("/proc") else {
+        return false;
+    };
+    let procs = dir.filter_map(|e| {
+        let pid: u32 = e.ok()?.file_name().to_str()?.parse().ok()?;
+        (pid != me).then_some(())?;
+        let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
+        let cgroup = std::fs::read_to_string(format!("/proc/{pid}/cgroup")).ok()?;
+        Some((comm, cgroup))
+    });
+    runs_elsewhere(
+        comm.trim_end(),
+        reprisefs::scope::session_of_cgroup(&own),
+        &reprisefs::scope::online_sessions(&record),
+        procs,
+    )
+}
+
 /// Run `end_commands` as the compositor exits.
 pub fn end_session_env(env: &SessionEnv, end_processes: bool) {
-    run_waited(end_commands(env, end_processes));
+    run_waited(end_commands(
+        env,
+        end_processes,
+        another_session_runs_reprise(),
+    ));
 }
 
 /// The command that stops the app scopes a previous session left behind when it crashed, before
@@ -1061,6 +1132,8 @@ mod tests {
             parent: Vec::new(),
             logind_session: None,
             refuses_programs: false,
+            session_id: None,
+            defers_user_units: false,
         }
     }
 
@@ -1224,7 +1297,7 @@ mod tests {
         let mut unset = argv(&["systemctl", "--user", "unset-environment"]);
         unset.extend(every.iter().map(|s| s.to_string()));
         assert_eq!(
-            end_commands(&env(None), true),
+            end_commands(&env(None), true, false),
             vec![
                 unset,
                 argv(&[
@@ -1261,7 +1334,7 @@ mod tests {
             ..env(None)
         };
         assert_eq!(
-            end_commands(&e, true).last(),
+            end_commands(&e, true, false).last(),
             Some(&argv(&["loginctl", "terminate-session", "3"]))
         );
         let tty = |k: &str| match k {
@@ -1275,7 +1348,7 @@ mod tests {
         };
         assert_eq!(own_session(nested), None);
         assert!(
-            !end_commands(&env(None), true)
+            !end_commands(&env(None), true, false)
                 .iter()
                 .any(|c| c[0] == "loginctl"),
             "no session, nothing terminated"
@@ -1290,7 +1363,7 @@ mod tests {
             logind_session: Some("3".into()),
             ..env(None)
         };
-        let cmds = end_commands(&e, false);
+        let cmds = end_commands(&e, false, false);
         assert!(!cmds.iter().any(|c| c[0] == "loginctl"));
         assert_eq!(
             cmds.last(),
@@ -1328,10 +1401,87 @@ mod tests {
         };
         assert_eq!(stale_scopes_command(&nested, true, false, false), None);
         assert!(
-            !end_commands(&nested, true)
+            !end_commands(&nested, true, false)
                 .concat()
                 .contains(&"app-reprise-*.scope".to_string())
         );
+    }
+
+    /// A Reprise started from a text login while another Reprise session of the user runs
+    /// leaves the user manager's variables and units to that session.
+    #[test]
+    fn a_text_login_beside_another_reprise_session_publishes_and_restarts_nothing() {
+        let e = SessionEnv {
+            defers_user_units: true,
+            ..env(None)
+        };
+        assert_eq!(begin_commands(&e), Vec::<Vec<String>>::new());
+    }
+
+    /// The user's other Reprise session keeps the variables, the session target, the portals
+    /// and its own app scopes.
+    #[test]
+    fn a_session_ending_beside_another_reprise_session_stops_only_its_own_scopes() {
+        let dm = SessionEnv {
+            logind_session: Some("7".into()),
+            session_id: Some("7".into()),
+            ..env(None)
+        };
+        assert_eq!(
+            end_commands(&dm, true, true),
+            vec![
+                argv(&[
+                    "systemctl",
+                    "--user",
+                    "--no-block",
+                    "stop",
+                    "app-reprise-*-s7x*.scope"
+                ]),
+                argv(&["loginctl", "terminate-session", "7"]),
+            ]
+        );
+        let tty = SessionEnv {
+            session_id: Some("9".into()),
+            defers_user_units: true,
+            ..env(None)
+        };
+        assert_eq!(
+            end_commands(&tty, true, true),
+            vec![argv(&[
+                "systemctl",
+                "--user",
+                "--no-block",
+                "stop",
+                "app-reprise-*-s9x*.scope"
+            ])]
+        );
+        assert_eq!(end_commands(&tty, false, true), Vec::<Vec<String>>::new());
+    }
+
+    #[test]
+    fn another_reprise_session_is_the_compositor_in_another_online_session_of_the_user() {
+        let cg = |id: &str| format!("0::/user.slice/user-1000.slice/session-{id}.scope\n");
+        let runs = |comm: &str, cgroup: String| {
+            runs_elsewhere(
+                "reprise",
+                Some("8"),
+                &["3", "8"],
+                [(format!("{comm}\n"), cgroup)],
+            )
+        };
+        assert!(runs("reprise", cg("3")));
+        assert!(!runs("reprise", cg("8")), "its own session");
+        assert!(!runs("reprise", cg("5")), "a session that is closing");
+        assert!(!runs("reprise-portal", cg("3")), "another program");
+        let app =
+            "0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-reprise-x-1.scope";
+        assert!(!runs("reprise", app.into()), "outside every session");
+        assert!(runs_elsewhere(
+            "reprise",
+            None,
+            &["3"],
+            [("reprise".into(), cg("3"))]
+        ));
     }
 
     #[test]
@@ -1364,7 +1514,7 @@ mod tests {
             parent,
             ..env(None)
         };
-        let cmds = end_commands(&e, true);
+        let cmds = end_commands(&e, true, false);
         assert_eq!(
             cmds[0],
             argv(&[

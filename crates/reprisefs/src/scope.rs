@@ -13,6 +13,23 @@ use std::time::Duration;
 /// Every app scope [`in_scope`] names, as a `systemctl` pattern.
 pub const PATTERN: &str = "app-reprise-*.scope";
 
+/// The app scopes launched from logind session `session`, as a `systemctl` pattern.
+pub fn session_pattern(session: &str) -> String {
+    format!("app-reprise-*-s{session}x*.scope")
+}
+
+/// The logind session that launches from this process name in their scopes: its
+/// `XDG_SESSION_ID`, which programs inherit from the compositor.
+pub fn launch_session() -> Option<String> {
+    let v = std::env::var("XDG_SESSION_ID").ok();
+    launch_session_of(v.as_deref()).map(String::from)
+}
+
+/// A logind session id (`3`, `c2`); an `x` would run into the suffix's next field.
+fn launch_session_of(v: Option<&str>) -> Option<&str> {
+    v.filter(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_alphanumeric() && b != b'x'))
+}
+
 /// `argv` behind the [`scope_argv`] prefix of `app`, or alone without an app, a user manager or
 /// a [`session_kept`] scope.
 pub fn in_scope<S: AsRef<OsStr>>(argv: &[S], app: Option<&str>) -> Vec<OsString> {
@@ -206,8 +223,10 @@ fn unit_escape(s: &str) -> String {
 /// process re-execs itself, keeping its pid and starting its count over.
 fn unit_suffix() -> String {
     static START: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    static SESSION: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
     static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     suffix(
+        SESSION.get_or_init(launch_session).as_deref(),
         std::process::id(),
         *START.get_or_init(monotonic_us),
         NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
@@ -224,10 +243,12 @@ fn monotonic_us() -> u64 {
     (ts.tv_sec as u64) * 1_000_000 + (ts.tv_nsec as u64) / 1_000
 }
 
-/// Launch `n` of process `pid` in the run that started at `start`; each `x` keeps the hex fields
-/// apart, so pid 0x1a's launch 0x23 is not pid 0x1a2's 0x3.
-fn suffix(pid: u32, start: u64, n: u32) -> String {
-    format!("{pid:x}x{start:x}x{n:x}")
+/// Launch `n` of process `pid` in the run that started at `start`, from logind session `session`
+/// ([`session_pattern`]); each `x` keeps the fields apart, so pid 0x1a's launch 0x23 is not pid
+/// 0x1a2's 0x3.
+fn suffix(session: Option<&str>, pid: u32, start: u64, n: u32) -> String {
+    let session = session.map_or_else(String::new, |s| format!("s{s}x"));
+    format!("{session}{pid:x}x{start:x}x{n:x}")
 }
 
 /// Without a user manager `systemd-run --user` fails, so the command runs unscoped.
@@ -256,12 +277,20 @@ fn keeps_session(own: Option<&str>, display: Option<&str>) -> bool {
 
 /// The logind session a `/proc/<pid>/cgroup` listing puts the process in: the first unit below
 /// the slices being `session-<id>.scope`, as `sd_pid_get_session` reads it.
-fn session_of_cgroup(cgroup: &str) -> Option<&str> {
+pub fn session_of_cgroup(cgroup: &str) -> Option<&str> {
     let path = cgroup.lines().find_map(|l| l.strip_prefix("0::"))?;
     let unit = path
         .split('/')
         .find(|c| !c.is_empty() && !c.ends_with(".slice"))?;
     unit.strip_prefix("session-")?.strip_suffix(".scope")
+}
+
+/// `ONLINE_SESSIONS=` of logind's record of a user (`/run/systemd/users/<uid>`): the user's
+/// sessions that are not closing.
+pub fn online_sessions(record: &str) -> Vec<&str> {
+    (record.lines())
+        .find_map(|l| l.strip_prefix("ONLINE_SESSIONS="))
+        .map_or_else(Vec::new, |v| v.split_whitespace().collect())
 }
 
 /// `DISPLAY=` of logind's record of a user (`/run/systemd/users/<uid>`), which
@@ -384,13 +413,13 @@ mod tests {
 
     #[test]
     fn two_processes_never_share_a_scope_suffix() {
-        assert_ne!(suffix(0x1a, 0x5, 0x23), suffix(0x1a2, 0x5, 0x3));
-        assert_eq!(suffix(0x1a, 0x5, 0x23), "1ax5x23");
+        assert_ne!(suffix(None, 0x1a, 0x5, 0x23), suffix(None, 0x1a2, 0x5, 0x3));
+        assert_eq!(suffix(None, 0x1a, 0x5, 0x23), "1ax5x23");
     }
 
     #[test]
     fn a_process_restarted_under_its_pid_never_reuses_a_scope_suffix() {
-        let run = |start| (0..64).map(move |n| suffix(0x1a, start, n));
+        let run = |start| (0..64).map(move |n| suffix(None, 0x1a, start, n));
         let first: std::collections::HashSet<_> = run(0x10).collect();
         assert!(run(0x11).all(|s| !first.contains(&s)));
         assert!(run(0x100).all(|s| !first.contains(&s)));
@@ -420,6 +449,60 @@ mod tests {
         assert_eq!(display_of_user(record), Some("3"));
         assert_eq!(display_of_user("NAME=ann\nDISPLAY=\n"), None);
         assert_eq!(display_of_user("NAME=ann\nSESSIONS=5\n"), None);
+    }
+
+    /// `systemctl`'s `*` glob, which matches across dashes.
+    fn glob(pattern: &str, name: &str) -> bool {
+        match pattern.split_once('*') {
+            None => pattern == name,
+            Some((head, tail)) => name.strip_prefix(head).is_some_and(|rest| {
+                (0..=rest.len()).any(|i| rest.is_char_boundary(i) && glob(tail, &rest[i..]))
+            }),
+        }
+    }
+
+    #[test]
+    fn a_scope_names_the_session_it_was_launched_from_and_its_pattern_finds_only_that_sessions() {
+        assert_eq!(suffix(Some("7"), 0x1a, 0x5, 0x23), "s7x1ax5x23");
+        let own = format!(
+            "{}.scope",
+            unit_name("foot", &suffix(Some("7"), 0x1a, 0x5, 0))
+        );
+        let escaped = format!("{}.scope", unit_name("a-s7x", &suffix(Some("8"), 1, 2, 3)));
+        let other = format!(
+            "{}.scope",
+            unit_name("foot", &suffix(Some("71"), 0x1a, 0x5, 0))
+        );
+        let sessionless = format!("{}.scope", unit_name("s7x", &suffix(None, 0x1a, 0x5, 0)));
+        let pattern = session_pattern("7");
+        assert!(glob(&pattern, &own), "{pattern} {own}");
+        assert!(!glob(&pattern, &escaped), "{pattern} {escaped}");
+        assert!(!glob(&pattern, &other), "{pattern} {other}");
+        assert!(!glob(&pattern, &sessionless), "{pattern} {sessionless}");
+        assert!(glob(PATTERN, &own) && glob(PATTERN, &sessionless));
+        assert!(is_app_scope(&own, "foot"));
+    }
+
+    #[test]
+    fn only_a_logind_session_id_names_a_scope() {
+        assert_eq!(launch_session_of(Some("7")), Some("7"));
+        assert_eq!(launch_session_of(Some("c2")), Some("c2"));
+        assert_eq!(launch_session_of(Some("")), None);
+        assert_eq!(
+            launch_session_of(Some("7x")),
+            None,
+            "x ends the session field"
+        );
+        assert_eq!(launch_session_of(Some("3*")), None);
+        assert_eq!(launch_session_of(None), None);
+    }
+
+    #[test]
+    fn the_online_sessions_are_the_users_logind_record_online_sessions_key() {
+        let record = "NAME=ann\nSESSIONS=11 10 3\nACTIVE_SESSIONS=11 3\nONLINE_SESSIONS=11 3\n";
+        assert_eq!(online_sessions(record), ["11", "3"]);
+        assert!(online_sessions("NAME=ann\nONLINE_SESSIONS=\n").is_empty());
+        assert!(online_sessions("NAME=ann\n").is_empty());
     }
 
     #[test]

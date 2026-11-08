@@ -13,7 +13,7 @@ pub struct Scope {
 }
 
 /// The app id inside scope unit `unit`, unescaped; None for any other unit. The id is
-/// unit-escaped and the suffix is hex fields joined by `x`, so the id ends at the last dash.
+/// unit-escaped and the suffix is fields joined by `x`, so the id ends at the last dash.
 pub fn app_of(unit: &str) -> Option<String> {
     let rest = unit.strip_prefix("app-reprise-")?.strip_suffix(".scope")?;
     let (id, suffix) = rest.rsplit_once('-')?;
@@ -105,6 +105,10 @@ mod tests {
         assert_eq!(
             app_of("app-reprise-reprise\\x2dnotepad-1ax2x3.scope").as_deref(),
             Some("reprise-notepad")
+        );
+        assert_eq!(
+            app_of("app-reprise-org.kde.ark-s7x1ax2x3.scope").as_deref(),
+            Some("org.kde.ark")
         );
         assert_eq!(app_of("app-reprise-firefox-.scope"), None);
         assert_eq!(app_of("app-gnome-firefox-12.scope"), None);
