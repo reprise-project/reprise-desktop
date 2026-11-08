@@ -331,8 +331,10 @@ client's address:
 
 A login counts as a failure from the moment its password check starts until
 PAM accepts it, so a client that drops the connection mid-check still
-spends an attempt. A failed login is answered at once. A connection has 10 s
-to log in; a check in flight when that time runs out is finished first.
+spends an attempt. A wrong password is answered after PAM's failure delay,
+about 2 s; a wrong name, a back-off and the pause are answered at once. A
+connection has 10 s to log in; a check in flight when that time runs out is
+finished first.
 
 Up to `max_viewers` connections are served at once, counting those still
 logging in. One more is closed at once, before TLS, and never touches the
