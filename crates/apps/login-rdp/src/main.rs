@@ -50,12 +50,22 @@ type Conns = Rc<RefCell<HashMap<u64, Conn>>>;
 /// an attacker can crack offline.
 const CREDSSP_LOGS: [&str; 2] = ["ironrdp", "sspi"];
 
-fn main() -> ExitCode {
-    let mut logger = journal::builder(journal::PROGRAM_FILTER, journal::on_stream());
+/// Kept at error: rustls warns here on every client that names an address as SNI, as FreeRDP
+/// does.
+const SNI_LOGS: &str = "rustls::msgs::handshake";
+
+/// The logger, with `default_filter` unless RUST_LOG is set.
+fn logger(default_filter: &str, prefixed: bool) -> journal::Builder {
+    let mut logger = journal::builder(default_filter, prefixed);
     for target in CREDSSP_LOGS {
         logger.filter_module(target, log::LevelFilter::Warn);
     }
-    logger.init();
+    logger.filter_module(SNI_LOGS, log::LevelFilter::Error);
+    logger
+}
+
+fn main() -> ExitCode {
+    logger(journal::PROGRAM_FILTER, journal::on_stream()).init();
     if !machine_config().remote.enabled {
         log::info!("remote logins are off in {MACHINE_CONFIG}; the front stays off");
         return ExitCode::SUCCESS;
@@ -418,6 +428,19 @@ mod tests {
     use repriselogin::fdpass::FdFrameReader;
     use std::os::unix::fs::PermissionsExt;
     use tokio::net::UnixListener;
+
+    #[test]
+    fn an_address_as_sni_logs_nothing_while_other_dependency_warnings_stay() {
+        use log::Log as _;
+        let logger = logger(journal::PROGRAM_FILTER, false).build();
+        let enabled = |target, level| {
+            logger.enabled(&log::Metadata::builder().target(target).level(level).build())
+        };
+        assert!(!enabled("rustls::msgs::handshake", log::Level::Warn));
+        assert!(enabled("rustls::msgs::handshake", log::Level::Error));
+        assert!(enabled("rustls::server::hs", log::Level::Warn));
+        assert!(enabled("tokio", log::Level::Warn));
+    }
 
     #[test]
     fn the_fingerprint_is_readable_by_all_under_a_private_umask() {
