@@ -127,18 +127,29 @@ under `reprise` as it does under any login manager (`journalctl --user -b
 
 A build installed by hand needs `/usr/bin/reprise-login` (the unit's
 `ExecStart`), the unit in `/usr/lib/systemd/system/`, the six
-`reprise-login*` PAM files from `data/pam.d/` in `/etc/pam.d/`, and the
-files from `data/sysusers.d/` and `data/tmpfiles.d/` applied once with
+`reprise-login*` PAM files from `data/pam.d/` in `/etc/pam.d/`
+(`reprise-login-check` also checks the administrator password for Shut Down
+and Restart on the login screen), the polkit action and rule from
+`data/polkit-1/` under `/usr/share/polkit-1/` (the rule keeps every session
+that isn't on screen, Switch User's included, from switching the console),
+`/usr/lib/reprise/reprise-login-settings` (the path the polkit action names;
+Settings > Login Manager saves through it), and the files from
+`data/sysusers.d/` and `data/tmpfiles.d/` applied once with
 `systemd-sysusers` and `systemd-tmpfiles --create`. A package's install runs
 those two for you. Remote logins also need `/usr/bin/reprise-login-rdp`
 with `reprise-login-rdp.service` and `reprise-login-rdp.socket` beside the
 other unit (leave the socket disabled: reprise-login enables and disables
-it),
-`/usr/lib/reprise/reprise-login-settings` (the path the polkit action
-names), the polkit action and rule from `data/polkit-1/` under
-`/usr/share/polkit-1/`, and `reprise-rdp-handover.socket` and `.service` in
+it), and `reprise-rdp-handover.socket` and `.service` in
 `/usr/lib/systemd/user/`, with the socket enabled for every user (`sudo
 systemctl --global enable reprise-rdp-handover.socket`).
+
+After upgrading the package, reboot, or run `sudo systemctl restart
+reprise-login` and have each remote user reconnect. The login manager, the
+login screen, Settings, User Accounts and each session's `reprise-rdp
+--hand-over` talk over sockets whose messages can change between versions: an
+older program can't talk to a newer daemon, and a hand-over server that
+started before the upgrade can't report its clients, so a background
+session it serves counts as having none and its disconnect time starts.
 
 ### Remote logins
 
@@ -221,15 +232,16 @@ user's server.
   sysusers and tmpfiles for the login manager) and libseat (from seatd; it
   talks to logind)
 - For the login manager: the PAM files `reprise-login` (logins typed at the
-  login screen), `reprise-login-greeter` (the login screen's own session)
-  and `reprise-login-autologin` (`[login] autologin_user`), and the system
+  login screen), `reprise-login-greeter` (the login screen's own session),
+  `reprise-login-autologin` (`[login] autologin_user`) and
+  `reprise-login-check` (the login screen's administrator password for Shut
+  Down and Restart, and Remote Desktop password changes), and the system
   user `reprise-greeter` with its home `/var/lib/reprise-greeter`, which the
   package's sysusers and tmpfiles files create
 - For remote logins at the login manager: the PAM files
-  `reprise-login-remote` (logins with the login password),
-  `reprise-login-remote-nla` (logins with a Remote Desktop password) and
-  `reprise-login-check` (Remote Desktop password changes and the login
-  screen's administrator password), the system user
+  `reprise-login-remote` (logins with the login password) and
+  `reprise-login-remote-nla` (logins with a Remote Desktop password), the
+  system user
   `reprise-login-rdp` and the group `reprise-remote` (sysusers), and Linux
   6.14 or later, whose kernel TLS follows TLS 1.3 key updates: on an older
   kernel a TLS 1.3 connection ends at its first key update. The oldest
@@ -321,8 +333,9 @@ desktop and stays out of the way when it's missing.
 **Security**
 
 - polkit, for the admin password prompt, for saving Settings > Login Manager
-  (pkexec), and for the rule that keeps background sessions off the screen
-  under remote logins
+  (pkexec), and for the login manager's rule that keeps every session not
+  on screen, Switch User's and background ones alike, from switching the
+  console
 - gnome-keyring, for saved passwords and the Secret portal. The login
   manager's PAM file (SDDM's or `reprise-login`) unlocks it at login, and the
   lock screen's password unlocks it when it was left locked. Under
