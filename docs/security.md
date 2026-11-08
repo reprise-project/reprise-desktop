@@ -392,7 +392,22 @@ locks the computer's side first, then calls `Disconnect` on
 Turn Off or Restart with a client connected calls `SessionEnding` there,
 which ends every client as logged off. Any process of the user can call
 either method and drop that user's clients; the session keeps running, and
-no other user can reach the bus.
+no other user can reach the bus. A process in a Flatpak sandbox is refused
+these calls and the client list, and a change to the list is signalled
+without the addresses.
+
+Flatpak lets an app own the bus names under its app id, so an app with the
+id `org.reprise.RemoteDesktop` can own the server's name. The server holds
+the name without letting it be taken over, and a server that finds it held
+exits with status 75, which neither of its units restarts: the TCP server
+never serves without its name, and the hand-over server refuses that user's
+remote logins until the app is gone. Settings, the session's Disconnect and
+Log Off, and the standby screen talk to the name's owner only when it runs
+outside a sandbox, judged by the process a pidfd from the bus names, so a
+reused pid can't stand in for it. While a sandboxed app holds the name,
+Remote Desktop reads as off there. Any other process of the user is trusted
+with the name, as it could reach the server's files and the session
+anyway.
 
 Each client the server ends is told why before its connection closes (the
 codes are in [features.md](features.md#remote-desktop)). The reason
