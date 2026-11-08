@@ -117,11 +117,15 @@ fn checking(run: &mut Run, link: u64, user: &str, uid: u32, request: AccountRequ
         | AccountRequest::ClearRemotePassword { login_password } => login_password.to_string(),
         AccountRequest::Status => unreachable!("a status runs no check"),
     };
-    assert_eq!(run.account(link, user, uid, request), looked_up(link, user));
-    assert_eq!(
-        run.quiet(member(link, Some(uid), true)),
-        check_spawn(w, user)
-    );
+    if let AccountRequest::ClearRemotePassword { .. } = request {
+        assert_eq!(run.account(link, user, uid, request), check_spawn(w, user));
+    } else {
+        assert_eq!(run.account(link, user, uid, request), looked_up(link, user));
+        assert_eq!(
+            run.quiet(member(link, Some(uid), true)),
+            check_spawn(w, user)
+        );
+    }
     assert_eq!(
         run.quiet(Input::Worker(WorkerId(w), secret("Password: "))),
         answer(w, &login)
@@ -253,7 +257,7 @@ fn a_second_request_while_one_runs_is_busy() {
     );
     assert_eq!(
         run.account(3, "bert", BERT, clear(LOGIN_PW)),
-        looked_up(3, "bert"),
+        check_spawn(2, "bert"),
         "another uid is not held up"
     );
     assert_eq!(
@@ -262,7 +266,7 @@ fn a_second_request_while_one_runs_is_busy() {
     );
     assert_eq!(
         run.account(4, "anna", ANNA, clear(LOGIN_PW)),
-        looked_up(4, "anna"),
+        check_spawn(3, "anna"),
         "an answered request frees its uid"
     );
 }
@@ -283,18 +287,37 @@ fn only_a_remote_user_other_than_root_gets_a_remote_password() {
 }
 
 #[test]
-fn root_is_refused_a_clear_in_the_group_or_out_of_it() {
+fn a_set_whose_group_look_up_failed_is_refused_as_failed() {
     let mut run = run();
-    for (link, member_of) in [(1, true), (2, false)] {
-        assert_eq!(
-            run.account(link, "root", 0, clear(LOGIN_PW)),
-            looked_up(link, "root")
-        );
-        assert_eq!(
-            run.quiet(member(link, Some(0), member_of)),
-            refused(link, AccountRefusal::NotRemoteUser)
-        );
-    }
+    assert_eq!(
+        run.account(1, "anna", ANNA, set(LOGIN_PW, "new-remote-pw")),
+        looked_up(1, "anna")
+    );
+    let failed = Input::Member {
+        key: LookUpKey::Account(1),
+        uid: None,
+        member: false,
+        failed: true,
+    };
+    assert_eq!(run.quiet(failed), refused(1, AccountRefusal::Failed));
+}
+
+#[test]
+fn a_clear_checks_the_login_password_without_a_group_look_up() {
+    let mut run = run();
+    assert_eq!(
+        run.account(1, "anna", ANNA, clear(LOGIN_PW)),
+        check_spawn(2, "anna")
+    );
+}
+
+#[test]
+fn root_is_refused_a_clear() {
+    let mut run = run();
+    assert_eq!(
+        run.account(1, "root", 0, clear(LOGIN_PW)),
+        refused(1, AccountRefusal::NotRemoteUser)
+    );
 }
 
 #[test]
@@ -316,10 +339,6 @@ fn a_user_outside_the_remote_group_can_clear_their_remote_password() {
     );
     assert_eq!(
         run.account(2, "anna", ANNA, clear(LOGIN_PW)),
-        looked_up(2, "anna")
-    );
-    assert_eq!(
-        run.quiet(member(2, Some(ANNA), false)),
         check_spawn(2, "anna")
     );
     assert_eq!(run.worker(2, secret("Password: ")), answer(2, LOGIN_PW));
@@ -377,19 +396,14 @@ fn a_set_password_reaches_the_front_once_a_look_up_after_its_check_finds_the_use
 #[test]
 fn a_group_look_up_naming_another_uid_fails() {
     let mut run = run();
-    for (link, request, member_of) in [
-        (1, set(LOGIN_PW, "new-remote-pw"), true),
-        (2, clear(LOGIN_PW), false),
-    ] {
-        assert_eq!(
-            run.account(link, "anna", ANNA, request),
-            looked_up(link, "anna")
-        );
-        assert_eq!(
-            run.quiet(member(link, Some(BERT), member_of)),
-            refused(link, AccountRefusal::Failed)
-        );
-    }
+    assert_eq!(
+        run.account(1, "anna", ANNA, set(LOGIN_PW, "new-remote-pw")),
+        looked_up(1, "anna")
+    );
+    assert_eq!(
+        run.quiet(member(1, Some(BERT), true)),
+        refused(1, AccountRefusal::Failed)
+    );
 }
 
 #[test]
@@ -397,10 +411,6 @@ fn a_check_that_never_asks_or_names_another_uid_fails() {
     let mut run = run();
     assert_eq!(
         run.account(1, "anna", ANNA, clear(LOGIN_PW)),
-        looked_up(1, "anna")
-    );
-    assert_eq!(
-        run.quiet(member(1, Some(ANNA), true)),
         check_spawn(2, "anna")
     );
     let mut killed = vec![Effect::Kill(WorkerId(2))];

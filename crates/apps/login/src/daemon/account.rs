@@ -90,11 +90,19 @@ impl Daemon {
                 format!("a second request on account link {link}; ignoring it"),
             ));
         }
-        out.push(Effect::LookUp {
-            key: LookUpKey::Account(link),
-            user: user.clone(),
-            group: self.config.remote.group.clone(),
-        });
+        // Anyone but root may clear their own entry, so a user taken out of the group, or one
+        // whose group can't be read, can drop it.
+        let clearing = nt_hash.is_none();
+        if clearing && uid == 0 {
+            return refuse(link, AccountRefusal::NotRemoteUser, out);
+        }
+        if !clearing {
+            out.push(Effect::LookUp {
+                key: LookUpKey::Account(link),
+                user: user.clone(),
+                group: self.config.remote.group.clone(),
+            });
+        }
         let change = Change {
             uid,
             user,
@@ -103,6 +111,9 @@ impl Daemon {
             step: Step::LookingUp,
         };
         changes.insert(link, change);
+        if clearing {
+            self.account_check(link, out);
+        }
     }
 
     /// Answers a status at once when root asks or remote logins are off, else after the group
@@ -161,11 +172,12 @@ impl Daemon {
         if c.step != Step::LookingUp {
             return;
         }
-        // Anyone may clear their own entry, so a user taken out of the group can drop it.
-        let allowed = member || c.nt_hash.is_none();
+        if failed {
+            return self.account_failed(link, "the group look-up failed", out);
+        }
         match uid {
-            Some(uid) if uid != 0 && allowed && uid == c.uid => {}
-            Some(other) if other != 0 && allowed => {
+            Some(uid) if uid != 0 && member && uid == c.uid => {}
+            Some(other) if other != 0 && member => {
                 let why = format!("the account's uid is {other}, not the peer's {}", c.uid);
                 return self.account_failed(link, &why, out);
             }
@@ -174,6 +186,14 @@ impl Daemon {
                 return refuse(link, AccountRefusal::NotRemoteUser, out);
             }
         }
+        self.account_check(link, out);
+    }
+
+    /// Spawns the worker that checks change `link`'s login password.
+    fn account_check(&mut self, link: u64, out: &mut Vec<Effect>) {
+        let Some(c) = self.remote.accounts.changes.get(&link) else {
+            return;
+        };
         let job = self.job(Mode::Check, &c.user);
         let worker = self.next_worker();
         let c = self.remote.accounts.changes.get_mut(&link).expect("change");
