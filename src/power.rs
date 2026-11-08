@@ -1108,6 +1108,18 @@ mod tests {
     }
 
     #[test]
+    fn a_logind_unlock_off_the_seat_without_reprise_login_still_unlocks() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.state.lock.helpers.finger = |_| None;
+        crate::lockview::lock(&mut h.state);
+        crate::lockview::seat_away(&mut h.state, true);
+        assert!(h.state.login_link.is_none());
+        report(&mut h.state, Report::Unlock);
+        assert!(!h.state.console_locked());
+    }
+
+    #[test]
     fn built_in_panels_are_told_apart_by_connector() {
         assert!(is_internal_output("eDP-1"));
         assert!(is_internal_output("LVDS-1"));
