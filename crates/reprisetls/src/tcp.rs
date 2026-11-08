@@ -16,7 +16,8 @@ const USER_TIMEOUT: Duration = Duration::from_secs(30);
 pub const ALL: IpAddr = IpAddr::V6(Ipv6Addr::UNSPECIFIED);
 
 /// A listener on `addr`; an IPv6 one takes IPv4 too, whatever `net.ipv6.bindv6only` says.
-/// [`ALL`] that cannot bind, as on a host booted with IPv6 off, listens on IPv4 alone.
+/// [`ALL`] on a host without IPv6 listens on IPv4 alone. A port another socket holds is an
+/// error, so a user holding `[::]` IPv6-only never gets this server's IPv6 clients.
 pub fn bind(addr: SocketAddr) -> io::Result<TcpListener> {
     bind_with(addr, bind_one)
 }
@@ -26,11 +27,18 @@ fn bind_with(
     one: impl Fn(SocketAddr) -> io::Result<TcpListener>,
 ) -> io::Result<TcpListener> {
     match one(addr) {
-        Err(_) if addr.ip() == ALL => {
+        Err(e) if addr.ip() == ALL && no_ipv6(&e) => {
             one(SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), addr.port()))
         }
         bound => bound,
     }
+}
+
+fn no_ipv6(e: &io::Error) -> bool {
+    matches!(
+        e.raw_os_error(),
+        Some(libc::EAFNOSUPPORT | libc::EADDRNOTAVAIL | libc::EPROTONOSUPPORT)
+    )
 }
 
 fn bind_one(addr: SocketAddr) -> io::Result<TcpListener> {
@@ -100,6 +108,37 @@ mod tests {
         tried.borrow_mut().clear();
         assert!(bind_with(one, no_ipv6).is_err());
         assert_eq!(*tried.borrow(), [one], "only all addresses fall back");
+    }
+
+    #[tokio::test]
+    async fn all_addresses_held_by_another_socket_is_an_error_and_not_ipv4_alone() {
+        let tried = std::cell::RefCell::new(Vec::new());
+        let held = |addr: SocketAddr| {
+            tried.borrow_mut().push(addr);
+            match addr.is_ipv6() {
+                true => Err(io::Error::from_raw_os_error(libc::EADDRINUSE)),
+                false => bind_one(addr),
+            }
+        };
+        let e = bind_with(SocketAddr::new(ALL, 0), held).unwrap_err();
+        assert_eq!(e.kind(), io::ErrorKind::AddrInUse);
+        assert_eq!(*tried.borrow(), [SocketAddr::new(ALL, 0)]);
+    }
+
+    #[tokio::test]
+    async fn a_port_held_ipv6_only_is_refused_to_all_addresses() {
+        use socket2::{Domain, Protocol, Socket, Type};
+        let squatter = Socket::new(Domain::IPV6, Type::STREAM, Some(Protocol::TCP)).unwrap();
+        squatter.set_only_v6(true).unwrap();
+        squatter.set_reuse_address(true).unwrap();
+        let any = SocketAddr::new(ALL, 0);
+        if squatter.bind(&any.into()).is_err() {
+            return;
+        }
+        squatter.listen(1).unwrap();
+        let port = squatter.local_addr().unwrap().as_socket().unwrap().port();
+        let e = bind(SocketAddr::new(ALL, port)).unwrap_err();
+        assert_eq!(e.kind(), io::ErrorKind::AddrInUse);
     }
 
     #[tokio::test]
