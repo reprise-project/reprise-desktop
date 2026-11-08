@@ -1,6 +1,9 @@
 // A session in the background cannot take the monitor; reprise-login (root) switches.
+// subject.active is true while any session of the user is active, an ssh login included, so the
+// subject's own session is asked too.
 polkit.addRule(function(action, subject) {
-    if (action.id == "org.freedesktop.login1.chvt" && !subject.active) {
+    if (action.id == "org.freedesktop.login1.chvt" && (!subject.active || !subject.session ||
+        polkit.spawn(["/usr/bin/loginctl", "show-session", subject.session, "-p", "Active", "--value"]).trim() != "yes")) {
         return polkit.Result.NO;
     }
 });

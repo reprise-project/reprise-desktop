@@ -741,7 +741,8 @@ xfreerdp has been tried.
 A login for a user with no session starts one through the user's login
 shell, on the first free VT from 7 up that isn't on screen. It is a logind
 session on seat0 with `Remote=no`, so polkit treats it as a local session
-that isn't active. It comes up locked: switching to its VT at the computer shows
+that isn't active, unless another session of the same user is active (see
+[Accepted risks](#accepted-risks)). It comes up locked: switching to its VT at the computer shows
 its Unlock dialog, never its desktop, and its clients always run in lock mode
 ([Lock mode](#lock-mode)). Off the seat a session runs no lid action and no
 idle suspend, and its power requests go through logind and polkit as an
@@ -754,9 +755,16 @@ that, and an unknown VT marks nothing.
 No session holds a controlling terminal: the PAM worker holds the session's
 VT as its own, so no process of the session can switch VTs through the
 kernel. The polkit rule `/usr/share/polkit-1/rules.d/50-reprise-login.rules`
-refuses `org.freedesktop.login1.chvt` to every session that isn't active, so
-`loginctl activate` and `chvt` from a background session, or from one left
-behind by Switch User, fail. Only reprise-login, as root, switches.
+refuses `org.freedesktop.login1.chvt` to every caller that isn't in the
+logind session on screen. polkit's own `subject.active` is true while any
+session of the user is active, so the rule asks `loginctl show-session`
+whether the caller's own session is. A process outside every session has no
+`subject.session` and is refused before that: programs started from the
+desktop (in app scopes) and user services can't switch VTs, the on-screen
+session's included. So `loginctl activate` and `chvt` from a background
+session, or from one left behind by Switch User, fail, also while the same
+user has an ssh login. The compositor, which runs in its session, switches
+VTs on Ctrl+Alt+F1..F12, and reprise-login switches as root.
 
 While a background session runs, reprise-login holds an `idle` block
 inhibitor; while a client is connected to any session, `sleep:idle`, so the
@@ -844,6 +852,15 @@ or it ends.
   session's: NetworkManager's network control (a remote user can take the
   connection down), inhibiting shutdown and sleep, the power key and lid
   inhibitors, and realtime priority. All affect availability only.
+- **Active polkit grants while the user is active elsewhere.** polkit asks
+  logind whether the user, not the session, is active. While the same user
+  has an active session elsewhere, a text login on screen or any ssh login
+  (logind counts a session without a seat as active), a background
+  session gets the `allow_active` answers: mounting and powering off the
+  computer's drives through udisks, NetworkManager changes, and logind's
+  power actions, with no password. Only the VT switch is refused by the
+  rule above; rules can't read an action's defaults, so mapping every
+  other action needs a list.
 - **Anyone can pause remote logins.** 10 wrong passwords every 10 minutes
   from any addresses keep one kind of login paused. For NLA that costs a TLS
   handshake and an NTLM AUTHENTICATE's first 12 bytes each, since the count
@@ -1012,7 +1029,8 @@ sharing and remote control grants yet.
 - **No permissions page.** Remembered screen sharing and remote control
   grants are revoked with `flatpak permission-remove`.
 - **Background sessions get polkit's inactive grants** under
-  reprise-login; see [Accepted risks](#accepted-risks).
+  reprise-login, and its active ones while their user is active elsewhere;
+  see [Accepted risks](#accepted-risks).
 - **Same-user code.** A program running as you can ptrace or preload the
   portal, the compositor or anything else of yours. Reprise doesn't defend
   against that, and doesn't treat it as a vulnerability.
