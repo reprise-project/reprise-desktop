@@ -400,7 +400,8 @@ matched control focused.
     Sessions at most, End disconnected sessions after (Never, 15 minutes, 1 hour, 4
     hours or 1 day), and the certificate fingerprint, or Not running while
     the front is off. OK and Apply save through `pkexec`, which asks for an
-    administrator's password, and say why when the login manager refuses
+    administrator's password (polkit doesn't ask again for a few minutes),
+    and say why when the login manager refuses
     the settings.
   - **Software Updates...**
   - **Advanced:** the task manager, screenshots, the update restart notice,

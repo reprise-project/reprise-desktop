@@ -224,8 +224,9 @@ user's server.
   `reprise-login-check` (Remote Desktop password changes and the login
   screen's administrator password), the system user
   `reprise-login-rdp` and the group `reprise-remote` (sysusers), and Linux
-  5.6 or later (`openat2`). The oldest kernel remote logins have run on is
-  7.2.7
+  6.14 or later, whose kernel TLS follows TLS 1.3 key updates: on an older
+  kernel a TLS 1.3 connection ends at its first key update. The oldest
+  kernel remote logins have run on is 7.2.7
 - For remote logins, the kernel's `tls` module (`CONFIG_TLS`): each
   connection reaches the user's `reprise-rdp` in kernel TLS. The front's unit
   loads it; without it a login passes its check and then fails to reach its

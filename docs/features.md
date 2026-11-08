@@ -787,7 +787,9 @@ no port forwarding; allow the port in your firewall if you run one.
   a fourth wrong password from an address, each further try waits longer
   ([security.md](security.md#remote-desktop)). Under reprise-login the
   login manager takes the connections instead, and NLA works with a Remote
-  Desktop password ([Remote logins](#remote-logins)).
+  Desktop password ([Remote logins](#remote-logins)). There the journal
+  gives the hint to choose TLS, or to set a Remote Desktop password, in full
+  for the first refusal each minute and counts the rest in a line a minute.
 - **The picture.** In lock mode the client sees the screens made for it,
   each on its own monitor or one in its window (see Lock mode below); a
   client without H.264 shows only one of them after a resize. In show mode
@@ -922,7 +924,10 @@ no port forwarding; allow the port in your firewall if you run one.
 - **Leaving locks.** In show mode, when the last client shown the session
   leaves, whether it disconnects or Disconnect ends it, the session locks; a
   client shown it before the lock goes ahead keeps it unlocked. A client
-  that logged in but never got the picture leaves the session as it was.
+  that logged in but never got the picture leaves the session as it was,
+  unless it logged in to replace a client shown the session
+  (`second_client = "replace"`): it then counts as shown from its login, so
+  the client it replaced doesn't lock the session as it leaves.
   Clearing Lock this computer when the last one disconnects, under the list
   of connected computers (`lock_on_leave`), leaves it unlocked; it is read
   as each client is shown the session and as it leaves. When the last client
@@ -946,14 +951,15 @@ Under `reprise-login`, the computer takes RDP connections for every user in
 the `reprise-remote` group, whether they are logged in or not.
 [install.md](install.md#remote-logins) says how to turn it on; Settings >
 Login Manager holds its settings, and an administrator's password saves
-them.
+them (polkit doesn't ask again for a few minutes).
 
 - **Connecting.** Point the client at this computer, port 3389 unless set
   otherwise, with your user name. Over TLS (`xfreerdp3 /v:HOST /u:USER
   /sec:tls`) you log on with your login password. With a Remote Desktop
   password set, a client that offers NLA, as xfreerdp3 does by default, logs
   on with that instead; set to TLS it still takes the login password. NLA
-  takes the name as `user`, `.\user`, `HOST\user`, `user@host` or `user@`.
+  takes the name as `user`, `.\user`, `HOST\user`, `user@host` or `user@`
+  ([security.md](security.md#remote-desktop-password)).
   Only xfreerdp has been tried.
 - **Remote Desktop password.** Settings > Remote Desktop says "Remote
   logins to this computer are set on the Login Manager page." in place of
