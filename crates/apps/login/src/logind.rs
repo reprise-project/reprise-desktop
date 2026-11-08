@@ -41,6 +41,9 @@ const FRONT_SOCKET: &str = "reprise-login-rdp.socket";
 /// The socket's port, as `[remote_desktop] port`; system.control holds settings made over the
 /// manager's bus API.
 const FRONT_PORT_DROP_IN: &str = "/etc/systemd/system.control/reprise-login-rdp.socket.d/port.conf";
+/// The pause between two reads of the port; one read of `/proc/net/tcp` can miss a listener
+/// while others open and close.
+const REREAD_PAUSE: Duration = Duration::from_millis(100);
 /// How long a job on the front's units may take before it is reported unfinished.
 const JOB_WAIT: Duration = Duration::from_secs(30);
 const INHIBIT_WHO: &str = "Reprise login manager";
@@ -287,9 +290,7 @@ async fn hold(units: &impl Units, port: u16, moved: bool) -> Result<(), String> 
     // A reload that finds a running socket's unit changed can leave it holding no fds, and the
     // front then fails to its start limit. A restart stops the front too (Requires=), and the
     // Start after this one brings it back.
-    let deaf = !moved
-        && socket.is_ok_and(|s| s.active)
-        && (units.listening(port).await).is_ok_and(|held| !held);
+    let deaf = !moved && socket.is_ok_and(|s| s.active) && unheld(units, port).await;
     if deaf {
         log::warn!("{FRONT_SOCKET} is active but holds no socket on port {port}; restarting it");
     }
@@ -303,6 +304,16 @@ async fn hold(units: &impl Units, port: u16, moved: bool) -> Result<(), String> 
             "{FRONT_SOCKET}: {e}; if another program holds port {port}, `journalctl -u {FRONT_SOCKET}` says so"
         )
     })
+}
+
+/// Whether systemd holds no socket on `port` in two reads [`REREAD_PAUSE`] apart; a failed
+/// read counts as held.
+async fn unheld(units: &impl Units, port: u16) -> bool {
+    let unheld = async || (units.listening(port).await).is_ok_and(|held| !held);
+    unheld().await && {
+        tokio::time::sleep(REREAD_PAUSE).await;
+        unheld().await
+    }
 }
 
 /// The inodes of the sockets listening on `port` in `table`, a `/proc/net/tcp` or `tcp6`.
@@ -865,6 +876,9 @@ mod tests {
         limited: std::collections::BTreeSet<&'static str>,
         /// Whether systemd listens on the port can't be read.
         listening_unknown: bool,
+        /// Reads of the port that miss systemd's socket, as a read of the table during churn can.
+        missed_reads: usize,
+        reads: usize,
     }
 
     impl FakeUnits {
@@ -940,9 +954,14 @@ mod tests {
         }
 
         async fn listening(&self, _port: u16) -> io::Result<bool> {
-            let fake = self.0.borrow();
+            let mut fake = self.0.borrow_mut();
+            fake.reads += 1;
             if fake.listening_unknown {
                 return Err(io::ErrorKind::PermissionDenied.into());
+            }
+            if fake.missed_reads > 0 {
+                fake.missed_reads -= 1;
+                return Ok(false);
             }
             Ok(fake.active.contains(FRONT_SOCKET) && !fake.deaf)
         }
@@ -1128,6 +1147,28 @@ mod tests {
                 "listening unknown: {unknown}"
             );
         }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_socket_one_read_of_the_table_misses_is_left_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let drop_in = dir.path().join("port.conf");
+        write_port(&drop_in, 3389).unwrap();
+        let units = FakeUnits::default();
+        {
+            let mut fake = units.0.borrow_mut();
+            fake.enabled = true;
+            fake.active.insert(FRONT_SOCKET);
+            fake.missed_reads = 1;
+        }
+        let on = FrontUnit::Start { port: 3389 };
+        assert_eq!(apply(&units, &drop_in, on).await, Ok(()));
+        let fake = units.0.borrow();
+        assert_eq!(
+            fake.jobs,
+            [(UnitJob::Start, FRONT_SOCKET), (UnitJob::Start, FRONT_UNIT)]
+        );
+        assert_eq!(fake.reads, 2, "the table is read again before a restart");
     }
 
     #[test]
