@@ -16,8 +16,9 @@ use zeroize::Zeroizing;
 
 use super::account::Accounts;
 use super::{
-    Conversation, Daemon, Effect, GREETER_VT, Job, LogindSession, NO_VT, Phase, SESSION_ENDED,
-    START_WAIT, SessionWorker, Timer, Unread, WORKER_ENDED, WorkerId, World, table_entry,
+    Conversation, Daemon, Effect, EndReason, GREETER_VT, Job, LogindSession, NO_VT, Phase,
+    SESSION_ENDED, START_WAIT, SessionWorker, Timer, Unread, WORKER_ENDED, WorkerId, World,
+    table_entry,
 };
 use crate::table::SessionEntry;
 use crate::vt;
@@ -1363,8 +1364,8 @@ impl Daemon {
             _ => self.remote.viewers.insert(uid, count),
         };
         if count > 0 {
-            self.remote.disconnects.remove(&e.id);
-            return;
+            let id = e.id.clone();
+            return self.cancel_unviewed_end(&id);
         }
         if before.is_some() && e.background {
             let id = e.id.clone();
@@ -1444,8 +1445,7 @@ impl Daemon {
             return;
         };
         if !e.background || self.remote.viewers.contains_key(&e.uid) {
-            self.remote.disconnects.remove(id);
-            return;
+            return self.cancel_unviewed_end(id);
         }
         let (uid, user) = (e.uid, e.user.clone());
         if (self.remote.logins.values()).any(|l| l.step.uid() == Some(uid)) {
@@ -1456,7 +1456,33 @@ impl Daemon {
             Level::Info,
             format!("ending {user}'s background session {id}: no client is connected"),
         ));
+        self.ending(id, EndReason::Unviewed);
         out.push(Effect::TerminateSession(id.into()));
+    }
+
+    /// Ends unviewed background session `id` `after` from now, with the checks of its first end.
+    pub(super) fn end_unviewed_again(
+        &mut self,
+        now: Instant,
+        id: &str,
+        after: Duration,
+        out: &mut Vec<Effect>,
+    ) {
+        let unviewed = Unviewed {
+            since: now,
+            generation: None,
+        };
+        self.remote.disconnects.insert(id.into(), unviewed);
+        self.arm_after(id, after, out);
+    }
+
+    /// Session `id` has a client or is the console's again: no disconnect time ends it, and a
+    /// later end of it counts its failures afresh.
+    pub(super) fn cancel_unviewed_end(&mut self, id: &str) {
+        self.remote.disconnects.remove(id);
+        if (self.endings.get(id)).is_some_and(|e| e.reason == EndReason::Unviewed) {
+            self.endings.remove(id);
+        }
     }
 
     pub(super) fn remote_session_gone(&mut self, entry: &SessionEntry) {

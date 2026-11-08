@@ -1778,6 +1778,93 @@ fn a_disconnect_time_running_out_waits_for_a_login_in_flight_to_the_session() {
 }
 
 #[test]
+fn a_failed_end_of_an_unviewed_background_session_is_tried_again_unless_a_client_came() {
+    let disconnected = |generation| Timer::Disconnected {
+        id: "c2".into(),
+        generation,
+    };
+    let failed = || Input::TerminateFailed {
+        id: "c2".into(),
+        seat_active: None,
+    };
+    let mut run = anna_unviewed_for_30();
+    let end = quiet(
+        run.after(Duration::from_secs(30 * 60))
+            .fire(disconnected(1)),
+    );
+    assert_eq!(end, [Effect::TerminateSession("c2".into())]);
+    assert_eq!(
+        run.on(failed()),
+        [Effect::Arm {
+            timer: disconnected(2),
+            after: TERMINATE_RETRY,
+        }]
+    );
+    assert_eq!(
+        quiet(run.after(TERMINATE_RETRY).fire(disconnected(2))),
+        [Effect::TerminateSession("c2".into())]
+    );
+    assert_eq!(
+        run.on(failed()),
+        [Effect::Arm {
+            timer: disconnected(3),
+            after: TERMINATE_RETRY * 2,
+        }]
+    );
+    run.on(Input::IntakeOpen { uid: ANNA });
+    run.viewers(ANNA, 1);
+    assert_eq!(
+        quiet(run.after(TERMINATE_RETRY * 2).fire(disconnected(3))),
+        [],
+        "a client connected meanwhile"
+    );
+}
+
+#[test]
+fn a_new_end_after_a_client_came_and_left_counts_its_failures_afresh() {
+    let failed = || Input::TerminateFailed {
+        id: "c2".into(),
+        seat_active: None,
+    };
+    let fire_armed = |run: &mut Run, effects: Vec<Effect>| -> Vec<Effect> {
+        let armed = effects.iter().find_map(|e| match e {
+            Effect::Arm { timer, after } => Some((timer.clone(), *after)),
+            _ => None,
+        });
+        let (timer, after) = armed.unwrap_or_else(|| panic!("a timer armed, got {effects:?}"));
+        quiet(run.after(after).fire(timer))
+    };
+    let mut run = anna_unviewed_for_30();
+    let ended = |effects: &[Effect]| effects == [Effect::TerminateSession("c2".into())];
+    let end = quiet(
+        run.after(Duration::from_secs(30 * 60))
+            .fire(Timer::Disconnected {
+                id: "c2".into(),
+                generation: 1,
+            }),
+    );
+    assert!(ended(&end), "{end:?}");
+    let retry = run.on(failed());
+    assert!(ended(&fire_armed(&mut run, retry)));
+    run.on(failed());
+    run.on(Input::IntakeOpen { uid: ANNA });
+    run.viewers(ANNA, 1);
+    let left = quiet(run.viewers(ANNA, 0));
+    assert!(ended(&fire_armed(&mut run, left)));
+    assert_eq!(
+        quiet(run.on(failed())).as_slice(),
+        [Effect::Arm {
+            timer: Timer::Disconnected {
+                id: "c2".into(),
+                generation: 5,
+            },
+            after: TERMINATE_RETRY,
+        }],
+        "the first retry of a new end waits the first wait"
+    );
+}
+
+#[test]
 fn a_shorter_end_disconnected_after_ends_a_session_past_it_at_once() {
     let gen2 = || Timer::Disconnected {
         id: "c2".into(),
