@@ -130,6 +130,7 @@ package() {
   install -Dm755 "$srcdir/target/$_profile/reprise-login-settings" "$pkgdir/usr/lib/reprise/reprise-login-settings"
   install -Dm755 "$srcdir/target/$_profile/reprise-login-rdp" "$pkgdir/usr/bin/reprise-login-rdp"
   install -Dm644 data/systemd/reprise-login-rdp.service "$pkgdir/usr/lib/systemd/system/reprise-login-rdp.service"
+  install -Dm644 data/systemd/reprise-login-rdp.socket "$pkgdir/usr/lib/systemd/system/reprise-login-rdp.socket"
   install -Dm644 data/systemd/reprise-rdp-handover.socket "$pkgdir/usr/lib/systemd/user/reprise-rdp-handover.socket"
   install -Dm644 data/systemd/reprise-rdp-handover.service "$pkgdir/usr/lib/systemd/user/reprise-rdp-handover.service"
   install -d "$pkgdir/usr/lib/systemd/user/sockets.target.wants"

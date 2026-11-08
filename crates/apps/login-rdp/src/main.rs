@@ -1,10 +1,10 @@
 //! reprise-login-rdp: the Remote Desktop front of reprise-login.
 
 mod accept;
-mod caps;
 mod handoff;
 mod limits;
 mod link;
+mod listen;
 mod negotiate;
 mod refusals;
 
@@ -23,7 +23,7 @@ use reprisebus::journal;
 use repriselogin::front::{FRONT_SOCKET, FrontEvent, FrontRequest, Secret};
 use repriselogin::machine::{MACHINE_CONFIG, MachineConfig};
 use reprisetls::{cert, tcp};
-use tokio::net::TcpStream;
+use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 use tokio::task::AbortHandle;
 use tokio::time::Instant;
@@ -55,9 +55,16 @@ fn main() -> ExitCode {
         logger.filter_module(target, log::LevelFilter::Warn);
     }
     logger.init();
-    let Some(port) = port_to_serve(&machine_config()) else {
+    if !machine_config().remote.enabled {
         log::info!("remote logins are off in {MACHINE_CONFIG}; the front stays off");
         return ExitCode::SUCCESS;
+    }
+    let listener = match listen::passed() {
+        Ok(listener) => listener,
+        Err(e) => {
+            log::error!("{e}");
+            return ExitCode::FAILURE;
+        }
     };
     let (Some(state), Some(runtime)) = (unit_dir("STATE_DIRECTORY"), unit_dir("RUNTIME_DIRECTORY"))
     else {
@@ -100,13 +107,7 @@ fn main() -> ExitCode {
         nla_throttle: RefCell::default(),
         refusals: RefCell::default(),
     });
-    tokio::task::LocalSet::new().block_on(&rt, serve(port, ctx))
-}
-
-/// The port to listen on; None while remote logins are off. reprise-login also stops a front
-/// that links then, but one that never links would hold the port.
-fn port_to_serve(config: &MachineConfig) -> Option<u16> {
-    config.remote.enabled.then_some(config.remote.port)
+    tokio::task::LocalSet::new().block_on(&rt, serve(listener, ctx))
 }
 
 fn machine_config() -> MachineConfig {
@@ -140,20 +141,18 @@ fn first_conn() -> u64 {
     RandomState::new().hash_one(std::process::id())
 }
 
-async fn serve(port: u16, ctx: Rc<Ctx>) -> ExitCode {
-    let addr = SocketAddr::new(tcp::ALL, port);
-    let listener = match tcp::bind(addr) {
+async fn serve(listener: std::net::TcpListener, ctx: Rc<Ctx>) -> ExitCode {
+    let listener = match TcpListener::from_std(listener) {
         Ok(listener) => listener,
         Err(e) => {
-            log::error!("port {port}: {e}");
+            log::error!("the passed socket: {e}");
             return ExitCode::FAILURE;
         }
     };
-    if let Err(e) = caps::drop_all() {
-        log::error!("capabilities: {e}");
-        return ExitCode::FAILURE;
+    match listener.local_addr() {
+        Ok(addr) => log::info!("listening on port {}", addr.port()),
+        Err(e) => log::warn!("the passed socket: {e}"),
     }
-    log::info!("listening on port {port}");
     let conns = Conns::default();
     let limits = Rc::new(RefCell::new(Limits::new(MAX_PREAUTH, PREAUTH_PER_IP)));
     let front = PathBuf::from(FRONT_SOCKET);
@@ -399,21 +398,7 @@ mod tests {
     use limits::Refusal;
     use repriselogin::fdpass::FdFrameReader;
     use std::os::unix::fs::PermissionsExt;
-    use tokio::net::{TcpListener, UnixListener};
-
-    #[test]
-    fn the_front_serves_its_port_only_while_remote_logins_are_on() {
-        let port = |text: &str| port_to_serve(&MachineConfig::parse(text).0);
-        assert_eq!(
-            port("[remote_desktop]\nenabled = true\nport = 3390\n"),
-            Some(3390)
-        );
-        assert_eq!(
-            port("[remote_desktop]\nenabled = false\nport = 3390\n"),
-            None
-        );
-        assert_eq!(port(""), None, "off by default");
-    }
+    use tokio::net::UnixListener;
 
     #[test]
     fn the_fingerprint_is_readable_by_all_under_a_private_umask() {

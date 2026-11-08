@@ -89,7 +89,11 @@ the old display manager. To go back:
 
     sudo systemctl enable sddm --force
 
-(or another display manager), then reboot.
+(or another display manager), then reboot. If remote logins are on, turn
+them off first, or run `sudo systemctl disable --now
+reprise-login-rdp.socket`: reprise-login enables that socket, and nothing
+else disables it, so it would hold the Remote Desktop port at every boot.
+The same goes before removing the package.
 
 reprise-login shows the login screen on VT 1 in Classic, Blue or Glass
 ([features](features.md#login-screen)) and starts each user's Reprise
@@ -127,7 +131,9 @@ A build installed by hand needs `/usr/bin/reprise-login` (the unit's
 files from `data/sysusers.d/` and `data/tmpfiles.d/` applied once with
 `systemd-sysusers` and `systemd-tmpfiles --create`. A package's install runs
 those two for you. Remote logins also need `/usr/bin/reprise-login-rdp`
-with `reprise-login-rdp.service` beside the other unit,
+with `reprise-login-rdp.service` and `reprise-login-rdp.socket` beside the
+other unit (leave the socket disabled: reprise-login enables and disables
+it),
 `/usr/lib/reprise/reprise-login-settings` (the path the polkit action
 names), the polkit action and rule from `data/polkit-1/` under
 `/usr/share/polkit-1/`, and `reprise-rdp-handover.socket` and `.service` in
@@ -163,13 +169,14 @@ a Remote Desktop password on Settings > Remote Desktop
 ([security](security.md#remote-desktop-password)).
 
 To turn it off, clear the check box, or set `enabled = false` and reload.
-The front stops, and every login not yet in its session is refused. Taking
+The front and its socket stop, the port is free, and every login not yet
+in its session is refused. Taking
 a user out of `reprise-remote` (`sudo gpasswd -d USER reprise-remote`)
 stops that user's remote logins alone.
 
 The logs:
 
-    journalctl -b -u reprise-login -u reprise-login-rdp
+    journalctl -b -u reprise-login -u reprise-login-rdp -u reprise-login-rdp.socket
     journalctl --user -b -u reprise-rdp-handover
 
 The first holds the daemon's verdict on each login, with the reason for a

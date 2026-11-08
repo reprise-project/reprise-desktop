@@ -2,13 +2,17 @@
 
 use std::cell::RefCell;
 use std::future::Future;
+use std::io;
 use std::os::fd::OwnedFd;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::rc::Rc;
 use std::time::Duration;
 
 use futures_util::StreamExt;
 use repriselogin::greeter::{Keyboard, PowerAction};
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 use zbus::OwnedObjectPath;
 use zbus::proxy::CacheProperties;
 use zbus::{Connection, names::InterfaceName};
@@ -22,10 +26,23 @@ const SEAT0: &str = "/org/freedesktop/login1/seat/seat0";
 const CLOSING: &str = "closing";
 /// logind's error for a session id it does not know.
 const NO_SUCH_SESSION: &str = "org.freedesktop.login1.NoSuchSession";
+/// systemd's error for a unit or unit file that isn't installed.
+const NO_SUCH_UNIT: &str = "org.freedesktop.systemd1.NoSuchUnit";
+/// systemd's error for a second `Subscribe()` from one connection.
+const ALREADY_SUBSCRIBED: &str = "org.freedesktop.systemd1.AlreadySubscribed";
 /// How long a method call on the system bus waits for its reply.
 const METHOD_TIMEOUT: Duration = Duration::from_secs(5);
+/// How long systemd's `Reload()` may take; it replies only once the reload is done.
+const RELOAD_TIMEOUT: Duration = Duration::from_secs(25);
 /// The front's unit, which the daemon starts and stops by `[remote_desktop] enabled`.
-pub const FRONT_UNIT: &str = "reprise-login-rdp.service";
+const FRONT_UNIT: &str = "reprise-login-rdp.service";
+/// The socket holding the front's port from boot, enabled while remote logins are on.
+const FRONT_SOCKET: &str = "reprise-login-rdp.socket";
+/// The socket's port, as `[remote_desktop] port`; system.control holds settings made over the
+/// manager's bus API.
+const FRONT_PORT_DROP_IN: &str = "/etc/systemd/system.control/reprise-login-rdp.socket.d/port.conf";
+/// How long a job on the front's units may take before it is reported unfinished.
+const JOB_WAIT: Duration = Duration::from_secs(30);
 const INHIBIT_WHO: &str = "Reprise login manager";
 
 #[zbus::proxy(
@@ -98,6 +115,150 @@ pub trait Systemd {
     fn start_unit(&self, name: &str, mode: &str) -> zbus::Result<OwnedObjectPath>;
     fn restart_unit(&self, name: &str, mode: &str) -> zbus::Result<OwnedObjectPath>;
     fn stop_unit(&self, name: &str, mode: &str) -> zbus::Result<OwnedObjectPath>;
+    fn reload(&self) -> zbus::Result<()>;
+    fn subscribe(&self) -> zbus::Result<()>;
+    #[zbus(signal)]
+    fn job_removed(&self, id: u32, job: OwnedObjectPath, unit: String, result: String);
+    fn enable_unit_files(
+        &self,
+        files: &[&str],
+        runtime: bool,
+        force: bool,
+    ) -> zbus::Result<(bool, Vec<(String, String, String)>)>;
+    fn disable_unit_files(
+        &self,
+        files: &[&str],
+        runtime: bool,
+    ) -> zbus::Result<Vec<(String, String, String)>>;
+}
+
+/// Writes the socket drop-in at `path` that listens on `port`; true when it changed.
+fn write_port(path: &Path, port: u16) -> io::Result<bool> {
+    let text = format!("[Socket]\nListenStream=\nListenStream={port}\n");
+    if std::fs::read_to_string(path).is_ok_and(|old| old == text) {
+        return Ok(false);
+    }
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, text)?;
+    std::fs::rename(&tmp, path)?;
+    Ok(true)
+}
+
+/// A systemd job on a unit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UnitJob {
+    Start,
+    Restart,
+    Stop,
+}
+
+/// The systemd manager calls a [`FrontUnit`] is made of; a fake stands in for tests.
+pub(crate) trait Units {
+    async fn reload(&self) -> zbus::Result<()>;
+    /// Enables `unit`; true when a unit file link changed, which takes a reload.
+    async fn enable(&self, unit: &str) -> zbus::Result<bool>;
+    /// Disables `unit`; true when a unit file link changed, which takes a reload.
+    async fn disable(&self, unit: &str) -> zbus::Result<bool>;
+    /// Runs `job` on `unit` to its end; a job that ends other than "done" is an error.
+    async fn run(&self, job: UnitJob, unit: &str) -> zbus::Result<()>;
+}
+
+/// Applies the front changes sent on the returned queue one at a time, in order, so a Stop
+/// never runs between the calls of a Start. The task ends when the queue closes.
+pub(crate) fn apply_front_units<U: Units + 'static>(
+    units: U,
+    drop_in: PathBuf,
+) -> (mpsc::UnboundedSender<FrontUnit>, JoinHandle<()>) {
+    let (tx, mut rx) = mpsc::unbounded_channel::<FrontUnit>();
+    let task = tokio::task::spawn_local(async move {
+        while let Some(unit) = rx.recv().await {
+            if let Err(e) = apply(&units, &drop_in, unit).await {
+                log::error!("{unit:?} of {FRONT_UNIT}: {e}");
+            }
+        }
+    });
+    (tx, task)
+}
+
+/// Starts [`FRONT_UNIT`] on `port` held by [`FRONT_SOCKET`], or stops both and frees the port.
+async fn apply(units: &impl Units, drop_in: &Path, unit: FrontUnit) -> Result<(), String> {
+    match unit {
+        FrontUnit::Start { port } => {
+            let moved =
+                write_port(drop_in, port).map_err(|e| format!("{}: {e}", drop_in.display()))?;
+            let held = hold(units, port, moved).await;
+            if held.is_err() && moved {
+                // The next Start finds the port moved again and retries.
+                let _ = std::fs::remove_file(drop_in);
+            }
+            held?;
+            (units.run(UnitJob::Start, FRONT_UNIT).await).map_err(|e| format!("{FRONT_UNIT}: {e}"))
+        }
+        FrontUnit::Stop => {
+            let front = units.run(UnitJob::Stop, FRONT_UNIT).await;
+            let socket = units.run(UnitJob::Stop, FRONT_SOCKET).await;
+            let disabled = units.disable(FRONT_SOCKET).await;
+            let reloaded = match disabled {
+                Ok(true) => units.reload().await,
+                _ => Ok(()),
+            };
+            let steps = [
+                (FRONT_UNIT, front),
+                (FRONT_SOCKET, socket),
+                (FRONT_SOCKET, disabled.map(drop)),
+                ("reloading systemd", reloaded),
+            ];
+            let failed: Vec<String> = (steps.into_iter())
+                .filter_map(|(unit, done)| match done {
+                    Ok(()) => None,
+                    Err(e) if no_such_unit(&e) => {
+                        log::debug!("{unit}: {e}");
+                        None
+                    }
+                    Err(e) => Some(format!("{unit}: {e}")),
+                })
+                .collect();
+            match failed.is_empty() {
+                true => Ok(()),
+                false => Err(failed.join("; ")),
+            }
+        }
+    }
+}
+
+/// Has [`FRONT_SOCKET`] hold `port` from boot on, restarting it when the port `moved`.
+async fn hold(units: &impl Units, port: u16, moved: bool) -> Result<(), String> {
+    let enabled = (units.enable(FRONT_SOCKET).await).map_err(|e| format!("{FRONT_SOCKET}: {e}"))?;
+    if moved || enabled {
+        (units.reload().await).map_err(|e| format!("reloading systemd: {e}"))?;
+    }
+    // A restart stops the front too (Requires=); the Start after this one brings it back.
+    let job = if moved {
+        UnitJob::Restart
+    } else {
+        UnitJob::Start
+    };
+    (units.run(job, FRONT_SOCKET).await).map_err(|e| {
+        format!(
+            "{FRONT_SOCKET}: {e}; if another program holds port {port}, `journalctl -u {FRONT_SOCKET}` says so"
+        )
+    })
+}
+
+/// Whether `e` is systemd's answer for a unit that isn't installed.
+fn no_such_unit(e: &zbus::Error) -> bool {
+    matches!(e, zbus::Error::MethodError(name, ..) if name.as_str() == NO_SUCH_UNIT)
+}
+
+/// `Subscribe()`'s result, with a connection that was already subscribed counted as success.
+fn subscribed(r: zbus::Result<()>) -> zbus::Result<()> {
+    match r {
+        Err(zbus::Error::MethodError(name, ..)) if name.as_str() == ALREADY_SUBSCRIBED => Ok(()),
+        r => r,
+    }
 }
 
 #[zbus::proxy(
@@ -273,15 +434,10 @@ impl Logind {
             .await
     }
 
-    /// Starts, restarts or stops [`FRONT_UNIT`].
-    pub async fn front_unit(&self, unit: FrontUnit) -> zbus::Result<()> {
-        let systemd = self.systemd().await?;
-        match unit {
-            FrontUnit::Start => systemd.start_unit(FRONT_UNIT, "replace").await?,
-            FrontUnit::Restart => systemd.restart_unit(FRONT_UNIT, "replace").await?,
-            FrontUnit::Stop => systemd.stop_unit(FRONT_UNIT, "replace").await?,
-        };
-        Ok(())
+    /// The queue the daemon's front changes go through, applied in order by
+    /// [`apply_front_units`].
+    pub fn front_units(&self) -> mpsc::UnboundedSender<FrontUnit> {
+        apply_front_units(self.clone(), PathBuf::from(FRONT_PORT_DROP_IN)).0
     }
 
     /// A block inhibitor of `what`, held until the fd is dropped.
@@ -430,6 +586,61 @@ fn inhibit_args(inhibit: Inhibit) -> Option<(&'static str, &'static str)> {
 pub type TakeInhibitor =
     Rc<dyn Fn(&'static str, &'static str) -> Pin<Box<dyn Future<Output = zbus::Result<OwnedFd>>>>>;
 
+impl Units for Logind {
+    async fn reload(&self) -> zbus::Result<()> {
+        let conn = zbus::connection::Builder::system()
+            .method_timeout(RELOAD_TIMEOUT)
+            .build()
+            .await?;
+        SystemdProxy::builder(&conn)
+            .cache_properties(CacheProperties::No)
+            .build()
+            .await?
+            .reload()
+            .await
+    }
+
+    async fn enable(&self, unit: &str) -> zbus::Result<bool> {
+        let systemd = self.systemd().await?;
+        let (_, changes) = systemd.enable_unit_files(&[unit], false, true).await?;
+        Ok(!changes.is_empty())
+    }
+
+    async fn disable(&self, unit: &str) -> zbus::Result<bool> {
+        let systemd = self.systemd().await?;
+        let changes = systemd.disable_unit_files(&[unit], false).await?;
+        Ok(!changes.is_empty())
+    }
+
+    async fn run(&self, job: UnitJob, unit: &str) -> zbus::Result<()> {
+        let systemd = self.systemd().await?;
+        // Taken before the job is queued, so its removal can't come first.
+        let mut removed = systemd.receive_job_removed().await?;
+        subscribed(systemd.subscribe().await)?;
+        let path = match job {
+            UnitJob::Start => systemd.start_unit(unit, "replace").await?,
+            UnitJob::Restart => systemd.restart_unit(unit, "replace").await?,
+            UnitJob::Stop => systemd.stop_unit(unit, "replace").await?,
+        };
+        let ended = async {
+            while let Some(signal) = removed.next().await {
+                let args = signal.args()?;
+                if *args.job() == path {
+                    return Ok(args.result().clone());
+                }
+            }
+            Err(zbus::Error::Failure("systemd's JobRemoved ended".into()))
+        };
+        let result = tokio::time::timeout(JOB_WAIT, ended).await.map_err(|_| {
+            zbus::Error::Failure(format!("{job:?} still runs after {JOB_WAIT:?}"))
+        })??;
+        match result.as_str() {
+            "done" => Ok(()),
+            _ => Err(zbus::Error::Failure(format!("{job:?} ended {result}"))),
+        }
+    }
+}
+
 /// The inhibitor the daemon holds. A new one is taken before the old one is dropped, and
 /// one that arrives after a later change is dropped at once.
 pub struct Inhibitor {
@@ -478,6 +689,244 @@ impl Inhibitor {
 mod tests {
     use super::*;
 
+    #[test]
+    fn the_port_drop_in_is_rewritten_only_when_the_port_moves() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("reprise-login-rdp.socket.d/port.conf");
+        assert!(
+            write_port(&path, 3390).unwrap(),
+            "a missing drop-in is written"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "[Socket]\nListenStream=\nListenStream=3390\n"
+        );
+        assert!(
+            !write_port(&path, 3390).unwrap(),
+            "the same port is left alone"
+        );
+        assert!(write_port(&path, 3389).unwrap());
+        assert!(
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .ends_with("ListenStream=3389\n")
+        );
+    }
+
+    /// systemd as far as the front's units go. A reload yields, so tasks can run inside it.
+    #[derive(Clone, Default)]
+    struct FakeUnits(Rc<RefCell<Fake>>);
+
+    #[derive(Default)]
+    struct Fake {
+        /// Neither unit is installed.
+        missing: bool,
+        enabled: bool,
+        active: std::collections::BTreeSet<&'static str>,
+        /// Another program holds the port, so the socket fails to start.
+        port_held: bool,
+        failing_stop: Option<&'static str>,
+        jobs: Vec<(UnitJob, &'static str)>,
+        /// Unit files changed since the last reload, which `systemctl` would warn about.
+        stale: bool,
+        reloads: usize,
+    }
+
+    impl FakeUnits {
+        fn unit(&self, unit: &str) -> zbus::Result<&'static str> {
+            if self.0.borrow().missing {
+                return Err(error_reply(NO_SUCH_UNIT));
+            }
+            Ok([FRONT_UNIT, FRONT_SOCKET]
+                .into_iter()
+                .find(|u| *u == unit)
+                .expect("a front unit"))
+        }
+
+        fn start(&self, unit: &'static str) -> zbus::Result<()> {
+            let mut fake = self.0.borrow_mut();
+            if unit == FRONT_SOCKET && fake.port_held {
+                return Err(zbus::Error::Failure("Start ended failed".into()));
+            }
+            if unit == FRONT_UNIT && fake.port_held && !fake.active.contains(FRONT_SOCKET) {
+                return Err(zbus::Error::Failure("Start ended dependency".into()));
+            }
+            fake.active.insert(FRONT_SOCKET);
+            fake.active.insert(unit);
+            Ok(())
+        }
+    }
+
+    impl Units for FakeUnits {
+        async fn reload(&self) -> zbus::Result<()> {
+            for _ in 0..3 {
+                tokio::task::yield_now().await;
+            }
+            let mut fake = self.0.borrow_mut();
+            fake.stale = false;
+            fake.reloads += 1;
+            Ok(())
+        }
+
+        async fn enable(&self, unit: &str) -> zbus::Result<bool> {
+            self.unit(unit)?;
+            let mut fake = self.0.borrow_mut();
+            let changed = !fake.enabled;
+            fake.stale |= changed;
+            fake.enabled = true;
+            Ok(changed)
+        }
+
+        async fn disable(&self, unit: &str) -> zbus::Result<bool> {
+            self.unit(unit)?;
+            let mut fake = self.0.borrow_mut();
+            let changed = fake.enabled;
+            fake.stale |= changed;
+            fake.enabled = false;
+            Ok(changed)
+        }
+
+        async fn run(&self, job: UnitJob, unit: &str) -> zbus::Result<()> {
+            let unit = self.unit(unit)?;
+            self.0.borrow_mut().jobs.push((job, unit));
+            match job {
+                UnitJob::Start => self.start(unit),
+                UnitJob::Restart => {
+                    let mut fake = self.0.borrow_mut();
+                    fake.active.remove(unit);
+                    if unit == FRONT_SOCKET {
+                        fake.active.remove(FRONT_UNIT);
+                    }
+                    drop(fake);
+                    self.start(unit)
+                }
+                UnitJob::Stop => {
+                    let mut fake = self.0.borrow_mut();
+                    if fake.failing_stop == Some(unit) {
+                        return Err(zbus::Error::Failure("Stop ended failed".into()));
+                    }
+                    fake.active.remove(unit);
+                    if unit == FRONT_SOCKET {
+                        fake.active.remove(FRONT_UNIT);
+                    }
+                    Ok(())
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn turning_remote_logins_on_then_off_at_once_ends_with_the_port_freed() {
+        let dir = tempfile::tempdir().unwrap();
+        let units = FakeUnits::default();
+        let applied = units.clone();
+        tokio::task::LocalSet::new()
+            .run_until(async move {
+                let (tx, task) = apply_front_units(applied, dir.path().join("port.conf"));
+                tx.send(FrontUnit::Start { port: 3390 }).unwrap();
+                tx.send(FrontUnit::Stop).unwrap();
+                drop(tx);
+                task.await.unwrap();
+                // Gives any apply still in flight its turn.
+                for _ in 0..20 {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await;
+        let fake = units.0.borrow();
+        assert!(fake.jobs.contains(&(UnitJob::Start, FRONT_UNIT)));
+        assert_eq!(fake.jobs.last(), Some(&(UnitJob::Stop, FRONT_SOCKET)));
+        assert!(!fake.enabled, "the socket is disabled");
+        assert!(fake.active.is_empty(), "{:?} still run", fake.active);
+    }
+
+    #[tokio::test]
+    async fn a_port_the_socket_could_not_take_is_tried_again_by_the_next_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let drop_in = dir.path().join("port.conf");
+        let units = FakeUnits::default();
+        units.0.borrow_mut().port_held = true;
+        let start = FrontUnit::Start { port: 3390 };
+        let e = apply(&units, &drop_in, start).await.unwrap_err();
+        assert!(e.contains(FRONT_SOCKET), "the socket is named: {e}");
+        assert!(!units.0.borrow().active.contains(FRONT_UNIT));
+        units.0.borrow_mut().port_held = false;
+        units.0.borrow_mut().jobs.clear();
+        apply(&units, &drop_in, start).await.unwrap();
+        let fake = units.0.borrow();
+        assert_eq!(
+            fake.jobs,
+            [
+                (UnitJob::Restart, FRONT_SOCKET),
+                (UnitJob::Start, FRONT_UNIT)
+            ],
+            "the socket moves to the port"
+        );
+        assert!(fake.enabled);
+        assert_eq!(fake.active.len(), 2, "{:?}", fake.active);
+    }
+
+    #[tokio::test]
+    async fn systemd_is_reloaded_only_after_the_socket_is_enabled_or_disabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let drop_in = dir.path().join("port.conf");
+        write_port(&drop_in, 3389).unwrap();
+        let units = FakeUnits::default();
+        let on = FrontUnit::Start { port: 3389 };
+        apply(&units, &drop_in, on).await.unwrap();
+        assert!(!units.0.borrow().stale, "reloaded after enabling");
+        apply(&units, &drop_in, on).await.unwrap();
+        assert_eq!(
+            units.0.borrow().reloads,
+            1,
+            "an enabled socket needs no reload"
+        );
+        apply(&units, &drop_in, FrontUnit::Stop).await.unwrap();
+        assert!(!units.0.borrow().stale, "reloaded after disabling");
+        apply(&units, &drop_in, FrontUnit::Stop).await.unwrap();
+        assert_eq!(
+            units.0.borrow().reloads,
+            2,
+            "a disabled socket needs no reload"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_port_that_cannot_be_written_starts_no_front() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("file");
+        std::fs::write(&file, "").unwrap();
+        let units = FakeUnits::default();
+        let start = FrontUnit::Start { port: 3390 };
+        let e = (apply(&units, &file.join("port.conf"), start).await).unwrap_err();
+        assert!(e.contains("port.conf"), "the drop-in is named: {e}");
+        assert!(units.0.borrow().active.is_empty());
+    }
+
+    #[tokio::test]
+    async fn stopping_goes_on_past_a_failed_step() {
+        let dir = tempfile::tempdir().unwrap();
+        let units = FakeUnits::default();
+        let on = FrontUnit::Start { port: 3389 };
+        apply(&units, &dir.path().join("port.conf"), on)
+            .await
+            .unwrap();
+        units.0.borrow_mut().failing_stop = Some(FRONT_UNIT);
+        let e = (apply(&units, Path::new("/nonexistent"), FrontUnit::Stop).await).unwrap_err();
+        assert!(e.contains(FRONT_UNIT), "{e}");
+        let fake = units.0.borrow();
+        assert!(!fake.enabled, "the socket is disabled");
+        assert!(fake.active.is_empty(), "{:?} still run", fake.active);
+    }
+
+    #[tokio::test]
+    async fn stopping_front_units_that_are_not_installed_is_no_failure() {
+        let units = FakeUnits::default();
+        units.0.borrow_mut().missing = true;
+        let stopped = apply(&units, Path::new("/nonexistent"), FrontUnit::Stop).await;
+        assert_eq!(stopped, Ok(()));
+    }
+
     fn error_reply(name: &str) -> zbus::Error {
         let call = zbus::Message::method_call("/org/freedesktop/login1", "TerminateSession")
             .build(&())
@@ -486,6 +935,15 @@ mod tests {
             .build(&("gone",))
             .unwrap();
         reply.into()
+    }
+
+    #[test]
+    fn a_connection_already_subscribed_to_systemd_counts_as_subscribed() {
+        assert!(subscribed(Ok(())).is_ok());
+        assert!(subscribed(Err(error_reply(ALREADY_SUBSCRIBED))).is_ok());
+        assert!(subscribed(Err(error_reply(NO_SUCH_UNIT))).is_err());
+        assert!(subscribed(Err(error_reply("org.freedesktop.DBus.Error.AccessDenied"))).is_err());
+        assert!(subscribed(Err(zbus::Error::InvalidReply)).is_err());
     }
 
     #[test]

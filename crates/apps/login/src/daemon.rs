@@ -492,13 +492,11 @@ impl Daemon {
         out
     }
 
-    /// Starts the front if remote logins are on, and autologin or the greeter: after recovery only a
-    /// greeter, when seat0 shows none. An orphaned greeter was on screen, so this waits for it to go.
+    /// Starts the front if remote logins are on, else frees its port, and starts autologin or the
+    /// greeter: after recovery only a greeter, when seat0 shows none. An orphaned greeter was on
+    /// screen, so this waits for it to go.
     pub fn start(&mut self, _now: Instant, world: &World) -> Vec<Effect> {
-        let mut out = Vec::new();
-        if self.config.remote.enabled {
-            out.push(Effect::Front(FrontUnit::Start));
-        }
+        let mut out = vec![self.front_unit()];
         if !self.orphans.is_empty() {
             self.after_orphans = AfterOrphans::Replace;
             return out;

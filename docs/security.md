@@ -478,8 +478,9 @@ user's own `reprise-rdp`. Two more processes join the ones under [Login
 manager](#login-manager):
 
 - **The front**, `reprise-login-rdp.service`, runs as the system user
-  `reprise-login-rdp` and is the only process that listens on the port. It
-  runs each connection up to its login: X.224, TLS and, under NLA, CredSSP.
+  `reprise-login-rdp` and is the only process that takes connections on the
+  port. It runs each connection up to its login: X.224, TLS and, under NLA,
+  CredSSP.
   It holds the TLS key (`/var/lib/reprise-login-rdp/key.pem`, 0600), the NT
   hash of every Remote Desktop password, and the password of each client
   logging in. It decides nothing: it sends the name and password to the
@@ -490,6 +491,23 @@ manager](#login-manager):
   (0600, in a 0700 directory). It takes connections from reprise-login only
   and stops when its last client leaves, or once no client has been listed
   for 60 s since it started.
+
+The port is held by `reprise-login-rdp.socket`: systemd binds it in
+`sockets.target`, before any user's service starts, and passes it to the
+front, so no local user can take the port at boot or while the front
+restarts and show clients a login of their own. This holds from the boot
+after remote logins were turned on: the socket is enabled by reprise-login
+when it applies the setting, so on the first boot after an upgrade that
+brought the socket, the port is free until reprise-login starts. Turning
+remote logins on writes the port to
+`/etc/systemd/system.control/reprise-login-rdp.socket.d/port.conf`, enables
+the socket and starts the front; turning them off stops both and disables
+the socket. While they are off, reprise-login stops a socket started by hand
+at its start and on each reload. While they are off the port is free, so a
+user who binds it then keeps it, and turning them on fails until that user
+lets go: reprise-login's journal names the socket, `journalctl -u
+reprise-login-rdp.socket` gives the reason, and each reload while they are
+on tries the port again.
 
 Two more sockets in `/run/reprise-login`:
 
@@ -509,10 +527,10 @@ names. So the front carries a full sandbox: `ProtectSystem=strict`,
 `ProtectHome`, `PrivateTmp`, `PrivateDevices`, `ProtectProc=invisible`,
 `NoNewPrivileges`, `/run/dbus` out of reach (it makes no bus calls), a
 `@system-service` system call filter, AF_UNIX and AF_INET(6) only, 512 MiB
-and 64 tasks. It binds the port with
-`CAP_NET_BIND_SERVICE` and drops it once bound. The daemon's unit has none,
-for the reason under [Login manager](#login-manager); the front starts no
-session, so nothing of a user's descends from it.
+and 64 tasks. It holds no capability: systemd passes it the bound port. The
+daemon's unit has no sandbox, for the reason under [Login
+manager](#login-manager); the front starts no session, so nothing of a
+user's descends from it.
 
 ### Checks
 
