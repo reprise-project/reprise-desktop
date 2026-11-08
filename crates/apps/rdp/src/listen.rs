@@ -195,6 +195,8 @@ pub struct Server<L> {
     pub leave: L,
     /// The run of viewers a replacing login takes over.
     pub console: Console,
+    /// Every connection with a place, kept here and read by the stop.
+    pub viewers: Rc<RefCell<Viewers>>,
 }
 
 /// Sent by a connection's display once its portal session is granted and its input is served.
@@ -245,7 +247,7 @@ pub async fn serve<D, I, L>(
         user: server.user,
         status: server.status,
         leave: server.leave,
-        viewers: RefCell::default(),
+        viewers: server.viewers,
         console: server.console,
     });
     let (alive, mut all_closed) = mpsc::channel::<Infallible>(1);
@@ -426,7 +428,7 @@ struct Shared<L> {
     user: String,
     status: watch::Sender<Status>,
     leave: L,
-    viewers: RefCell<Viewers>,
+    viewers: Rc<RefCell<Viewers>>,
     console: Console,
 }
 

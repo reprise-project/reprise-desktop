@@ -123,6 +123,11 @@ impl Viewers {
     pub fn len(&self) -> usize {
         self.live.len()
     }
+
+    /// Whether no connection holds a place, one still logging in included.
+    pub fn is_empty(&self) -> bool {
+        self.live.is_empty()
+    }
 }
 
 impl Entry {

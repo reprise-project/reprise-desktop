@@ -175,6 +175,7 @@ where
         disconnect: disconnect_rx,
         leave: leave(status_rx.clone()),
         console: lock_mode_console(),
+        viewers: Rc::default(),
     };
     let (stop, stopped) = oneshot::channel::<()>();
     // A dropped `Running` leaves it serving.
@@ -1028,7 +1029,7 @@ async fn session(
             steps: steps.clone(),
             open: matches!(portal, Portal::Flag).then_some(open_rx),
         },
-        viewers: RefCell::default(),
+        viewers: Rc::default(),
         console: lock_mode_console(),
     });
     let (id, kicked) = shared.viewers.borrow_mut().join(peer, 1).unwrap();
@@ -1409,7 +1410,7 @@ async fn an_accepted_connection_that_never_arrived_does_not_leave() {
                     steps: steps.clone(),
                     open: Some(watch::channel(false).1),
                 },
-                viewers: RefCell::default(),
+                viewers: Rc::default(),
                 console: lock_mode_console(),
             });
             let (id, kicked) = shared.viewers.borrow_mut().join(peer, 1).unwrap();
@@ -1452,7 +1453,7 @@ async fn a_shown_connection_whose_task_panics_still_locks() {
                         steps: steps.clone(),
                         open: Some(watch::channel(false).1),
                     },
-                    viewers: RefCell::default(),
+                    viewers: Rc::default(),
                     console: lock_mode_console(),
                 });
                 let (id, _kicked) = shared.viewers.borrow_mut().join(peer, 1).unwrap();
@@ -1648,7 +1649,7 @@ async fn a_handed_over_connection_runs_to_the_session() {
                 user: "alice".into(),
                 status,
                 leave: (),
-                viewers: RefCell::default(),
+                viewers: Rc::default(),
                 console: lock_mode_console(),
             });
             let (id, kicked) = shared.viewers.borrow_mut().join(peer, 1).unwrap();
@@ -1724,6 +1725,7 @@ fn serve_hand_overs(
         disconnect: mpsc::unbounded_channel().1,
         leave: (),
         console: lock_mode_console(),
+        viewers: Rc::default(),
     };
     let handlers = |_, _| {
         (
@@ -1862,6 +1864,7 @@ async fn a_stopping_server_drops_its_intake_at_once() {
                 disconnect: mpsc::unbounded_channel().1,
                 leave: IntakeAtStop(dropped.clone(), at_stop.clone()),
                 console: lock_mode_console(),
+                viewers: Rc::default(),
             };
             let handlers = |_, _| {
                 (
