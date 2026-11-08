@@ -589,8 +589,12 @@ runtime directory, `reprise-rdp` and the socket must belong to the user and
 not be group or world writable, and `SO_PEERCRED` must name the user, so
 only a listener the user made gets the connection. The hand-over server
 takes links from root only and only a TCP socket, and replays the
-recording. It takes only a recording whose login names
-its own user with an empty password, and closes a fresh TCP connection. The
+recording. It takes only a recording whose login names its own user with an
+empty password, and closes a fresh TCP connection. The daemon holds its copy
+of the socket until the server reports taking the connection: one sent to a
+server that is stopping goes to the next server the socket starts, and if no
+server reports taking it within the login's 8 s, the daemon closes its copy.
+A server takes a connection once only and closes a copy sent again. The
 password and the NT hash never leave the front and the daemon.
 
 TLS is 1.2 or 1.3 with AEAD suites only. After the hand-over, a TLS 1.3 key
