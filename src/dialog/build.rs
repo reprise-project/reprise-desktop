@@ -893,13 +893,20 @@ impl Dialog {
         })
     }
 
-    /// The Turn off computer panel running the `[power]` commands: Stand By (Hibernate with
-    /// Shift held), greyed while its command is unset, or with `disconnect` Disconnect in its
-    /// place; Turn Off and Restart.
+    /// The Turn off computer panel running the `[power]` commands, Disconnect in Stand By's place
+    /// with `disconnect`; Stand By and Hibernate are greyed or left out while their command is unset.
     pub fn turn_off(power: &PowerConfig, disconnect: bool) -> Dialog {
         let set = |cmd: &str| !cmd.trim().is_empty();
+        let first = if disconnect {
+            First::Disconnect
+        } else {
+            First::StandBy {
+                live: set(&power.standby),
+                hibernate: set(&power.hibernate),
+            }
+        };
         Dialog::welcome(Welcome {
-            panel: Panel::turn_off(set(&power.standby), set(&power.hibernate), disconnect),
+            panel: Panel::turn_off(first),
             actions: vec![
                 (Choice::Disconnect, DialogAction::Disconnect),
                 (
@@ -928,7 +935,10 @@ impl Dialog {
     pub fn greeter_turn_off() -> Dialog {
         use repriselogin::greeter::PowerAction;
         Dialog::welcome(Welcome {
-            panel: Panel::turn_off(false, false, false),
+            panel: Panel::turn_off(First::StandBy {
+                live: false,
+                hibernate: false,
+            }),
             actions: vec![
                 (
                     Choice::TurnOff,

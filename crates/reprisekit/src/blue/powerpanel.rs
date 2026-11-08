@@ -517,7 +517,7 @@ pub fn draw(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::powerpanel::{Leave, layout};
+    use crate::powerpanel::{First, Leave, layout};
     use crate::theme::TextUnits;
 
     fn fnv(c: &Canvas) -> u64 {
@@ -567,7 +567,10 @@ mod tests {
         for v in [Variant::Blue, Variant::Silver, Variant::Olive] {
             for p in [
                 Panel::log_off(Leave::SwitchUser { live: false }),
-                Panel::turn_off(true, true, false),
+                Panel::turn_off(First::StandBy {
+                    live: true,
+                    hibernate: true,
+                }),
             ] {
                 let lay = layout(&p, TextUnits::ONE);
                 for d in [1, 2] {
@@ -634,7 +637,13 @@ mod tests {
 
     #[test]
     fn the_bands_follow_the_scheme_and_double_at_2() {
-        let lay = layout(&Panel::turn_off(true, false, false), TextUnits::ONE);
+        let lay = layout(
+            &Panel::turn_off(First::StandBy {
+                live: true,
+                hibernate: false,
+            }),
+            TextUnits::ONE,
+        );
         let navy = backdrop(Variant::Blue, &lay, 1);
         let rgb = |p: u32| p & 0xFF_FFFF;
         assert_eq!(rgb(navy.get(0, 100)), 0, "the border is black");

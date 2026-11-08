@@ -18,7 +18,7 @@ use reprisekit::controls::scrollbar::ThumbDrag;
 use reprisekit::controls::traycustomize::{self, TrayCustomize};
 use reprisekit::frame::{CaptionButton, Edges};
 use reprisekit::pointer::Pointer;
-use reprisekit::powerpanel::{Choice, Leave, Panel};
+use reprisekit::powerpanel::{Choice, First, Leave, Panel};
 
 mod build;
 mod draw;
