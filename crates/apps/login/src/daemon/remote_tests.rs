@@ -86,9 +86,13 @@ fn tls_from(conn: u64, from: u8, user: &str, password: &str) -> Input {
 }
 
 fn nla(conn: u64, user: &str, password: &str) -> Input {
+    nla_from(conn, 1, user, password)
+}
+
+fn nla_from(conn: u64, from: u8, user: &str, password: &str) -> Input {
     authenticate(
         conn,
-        1,
+        from,
         user,
         Secret::Delegated(Zeroizing::new(password.into())),
     )
@@ -547,7 +551,7 @@ fn a_refusal_decided_after_the_refuse_delay_goes_out_at_once_and_is_logged_as_sl
 }
 
 #[test]
-fn failures_back_off_the_address_and_a_pause_stops_every_login() {
+fn tls_failures_back_off_the_address_and_a_pause_stops_every_tls_login() {
     let mut run = remote_run(enabled());
     let not_member = |conn| Input::Member {
         key: LookUpKey::Conn(conn),
@@ -594,6 +598,59 @@ fn failures_back_off_the_address_and_a_pause_stops_every_login() {
         run.after(REFUSE_DELAY).fire(Timer::Refuse(11)),
         denied(11, 0)
     );
+}
+
+#[test]
+fn tls_and_nla_logins_back_off_and_pause_each_on_their_own_failures() {
+    let not_member = |conn| Input::Member {
+        key: LookUpKey::Conn(conn),
+        uid: Some(ANNA),
+        member: false,
+    };
+    type Login = fn(u64, u8, &str, &str) -> Input;
+    let kinds: [(&str, Login, Login); 2] =
+        [("TLS", tls_from, nla_from), ("NLA", nla_from, tls_from)];
+    for (kind, failing, other) in kinds {
+        let mut run = remote_run(enabled());
+        for conn in 1..=4 {
+            assert_eq!(
+                run.on(failing(conn, 1, "anna", "pw")),
+                looked_up(conn, "anna")
+            );
+            run.on(not_member(conn));
+        }
+        assert_eq!(
+            quiet(run.on(failing(5, 1, "anna", "pw"))),
+            armed(5),
+            "{kind} failures back the address off for {kind}"
+        );
+        assert_eq!(
+            run.on(other(6, 1, "anna", "pw")),
+            looked_up(6, "anna"),
+            "{kind} failures leave the address's other kind of login alone"
+        );
+
+        let mut run = remote_run(enabled());
+        for n in 1..=PAUSE_AFTER as u8 {
+            let conn = u64::from(n);
+            assert_eq!(
+                run.on(failing(conn, n, "anna", "pw")),
+                looked_up(conn, "anna")
+            );
+            run.on(not_member(conn));
+            run.after(Duration::from_secs(30));
+        }
+        assert_eq!(
+            quiet(run.on(failing(11, 11, "anna", "pw"))),
+            armed(11),
+            "{kind} failures pause {kind}"
+        );
+        assert_eq!(
+            run.on(other(12, 12, "anna", "pw")),
+            looked_up(12, "anna"),
+            "a {kind} pause leaves the other kind of login alone"
+        );
+    }
 }
 
 #[test]
