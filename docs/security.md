@@ -829,10 +829,13 @@ or it ends.
   deadline) counts no failure, so its address doesn't back off. Under NLA
   the client learns it from the early result anyway, and a reconnect lands
   in the session the first one started.
-- **The journal can fill.** The daemon logs one line per refused login and
-  the front one per failed NLA password, so a storm of logins can push older
-  lines out of a journal capped by size. The front's other refusals take a
-  line or two a minute ([Throttle](#throttle)).
+- **The journal can fill.** The daemon logs one line per refused login it
+  checked and the front one per failed NLA password, so a storm of logins
+  can push older lines out of a journal capped by size. A refusal before any
+  check (a backed-off address, a pause, remote logins off, too many checks)
+  takes one line a minute per reason in the daemon's journal, counting those
+  held back, and the front's other refusals a line or two a minute
+  ([Throttle](#throttle)).
 - **FUSE over the runtime directory.** A user who can mount FUSE over
   `/run/user/<uid>` with `user_allow_other` (off by default in
   `/etc/fuse.conf`) can hold their own hand-over until its link's open
