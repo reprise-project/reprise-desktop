@@ -250,7 +250,7 @@ impl Daemon {
             }
             return;
         }
-        let Some(entry) = table_entry(&s, seat_active) else {
+        let Some(entry) = table_entry(&s, seat_active, self.background_before.as_ref()) else {
             return;
         };
         let (uid, user, background) = (entry.uid, entry.user.clone(), entry.background);
