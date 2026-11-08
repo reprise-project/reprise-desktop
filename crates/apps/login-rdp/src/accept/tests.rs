@@ -32,13 +32,13 @@ use std::os::fd::AsFd;
 use tokio::io::{AsyncReadExt, Interest};
 use tokio::net::{TcpListener, UnixListener, UnixStream};
 use tokio::sync::{mpsc, oneshot};
-use tokio_rustls::TlsConnector;
 use tokio_rustls::rustls::client::danger::{
     HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier,
 };
 use tokio_rustls::rustls::crypto::aws_lc_rs;
 use tokio_rustls::rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use tokio_rustls::rustls::{ClientConfig, DigitallySignedStruct, SignatureScheme};
+use tokio_rustls::{TlsAcceptor, TlsConnector};
 
 const HOST: &str = "reprise-box.lan";
 
@@ -326,7 +326,7 @@ async fn a_tls_client_is_read_to_client_info_and_its_password_blanked() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_connection_silent_past_the_handshake_deadline_is_closed() {
+async fn a_connection_silent_past_the_hello_deadline_is_closed() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let silent = TcpStream::connect(listener.local_addr().unwrap())
         .await
@@ -336,14 +336,94 @@ async fn a_connection_silent_past_the_handshake_deadline_is_closed() {
     let (_tell, mut heard) = mpsc::unbounded_channel();
     assert_eq!(
         to_client_info(tcp, 1, &ctx(), &mut heard).await.err(),
-        Some(Refused::Deadline)
+        Some(Refused::NoHello)
     );
     let waited = start.elapsed();
     assert!(
-        waited >= Duration::from_secs(60) && waited < Duration::from_secs(61),
-        "closed at 60 s, after {waited:?}"
+        waited >= Duration::from_secs(10) && waited < Duration::from_secs(11),
+        "closed at 10 s, after {waited:?}"
     );
     drop(silent);
+}
+
+/// Once `go` fires, waits 5 s, sends a TLS-only X.224 request and a TLS ClientHello, reads the
+/// server's first answer and then holds the connection as a client at its certificate prompt
+/// does. Sends tokio's time at the hold, once the clock is paused.
+async fn hold_at_certificate_prompt(
+    addr: SocketAddr,
+    go: oneshot::Receiver<()>,
+    held: oneshot::Sender<Instant>,
+) {
+    let mut tcp = TcpStream::connect(addr).await.unwrap();
+    go.await.unwrap();
+    skip(Duration::from_secs(5)).await;
+    let request = ironrdp_core::encode_vec(&X224(ironrdp_pdu::nego::ConnectionRequest {
+        nego_data: None,
+        flags: ironrdp_pdu::nego::RequestFlags::empty(),
+        protocol: SecurityProtocol::SSL,
+        correlation_info: None,
+    }))
+    .unwrap();
+    tcp.write_all(&request).await.unwrap();
+    let mut framed = TokioFramed::new(tcp);
+    framed
+        .read_by_hint(&ironrdp_pdu::X224_HINT)
+        .await
+        .expect("the negotiation's answer");
+    let mut tcp = framed.into_inner_no_leftover();
+    let config = ClientConfig::builder_with_provider(Arc::new(aws_lc_rs::default_provider()))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(AnyCertificate))
+        .with_no_client_auth();
+    let name = ServerName::try_from("localhost").unwrap();
+    let mut tls = tokio_rustls::rustls::ClientConnection::new(Arc::new(config), name).unwrap();
+    let mut hello = Vec::new();
+    tls.write_tls(&mut hello).unwrap();
+    tcp.write_all(&hello).await.unwrap();
+    let mut server_hello = [0u8; 1];
+    tcp.read_exact(&mut server_hello).await.unwrap();
+    tokio::time::pause();
+    let _ = held.send(Instant::now());
+    std::future::pending::<()>().await;
+}
+
+#[tokio::test]
+async fn a_client_at_its_certificate_prompt_has_60_s_from_its_tls_hello() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let (go, wait) = oneshot::channel();
+    let (held, at) = oneshot::channel();
+    let client = tokio::spawn(hold_at_certificate_prompt(
+        listener.local_addr().unwrap(),
+        wait,
+        held,
+    ));
+    let (tcp, _) = listener.accept().await.unwrap();
+    let accepted = Instant::now();
+    let (ctx, (_tell, mut heard)) = (ctx(), mpsc::unbounded_channel());
+    let mut run = std::pin::pin!(to_client_info(tcp, 1, &ctx, &mut heard));
+    // The client's 5 s skip waits until the deadline's timer is armed.
+    let first = std::future::poll_fn(|cx| std::task::Poll::Ready(run.as_mut().poll(cx))).await;
+    assert!(first.is_pending());
+    go.send(()).unwrap();
+    let refused = run.await.err();
+    let ended = Instant::now();
+    tokio::time::resume();
+    client.abort();
+    assert_eq!(refused, Some(Refused::Deadline));
+    let held = at.await.expect("the client reached its prompt");
+    assert!(
+        ended - accepted >= HANDSHAKE + Duration::from_secs(5),
+        "60 s run from the hello, 5 s after the accept: {:?}",
+        ended - accepted
+    );
+    let waited = ended - held;
+    assert!(
+        waited > HANDSHAKE - Duration::from_secs(1)
+            && waited < HANDSHAKE + Duration::from_millis(50),
+        "closed 60 s after the hello, {waited:?} after the prompt"
+    );
 }
 
 #[tokio::test]
