@@ -582,6 +582,29 @@ impl Harness {
             .expect("the surface on the compositor's side")
     }
 
+    /// A `wl_surface` from `c` with no role and a committed `w`x`h` buffer, as the compositor
+    /// sees it.
+    pub fn bare_surface_drawn(
+        &mut self,
+        c: &mut TestClient,
+        w: i32,
+        h: i32,
+    ) -> smithay::reexports::wayland_server::protocol::wl_surface::WlSurface {
+        use wc::Proxy;
+        let surface = self.bare_client_surface(c);
+        attach(
+            c.side.shm.as_ref().expect("wl_shm"),
+            &c.qh(),
+            &surface,
+            w,
+            h,
+        );
+        self.roundtrip(c);
+        c.server
+            .object_from_protocol_id(&self.state.dh, surface.id().protocol_id())
+            .expect("the surface on the compositor's side")
+    }
+
     /// A flyout as `repriseapp` opens one: an overlay layer surface over the whole output that
     /// holds the keyboard outright, configured and mapped with its first buffer.
     pub fn map_flyout(&mut self, c: &mut TestClient) -> WlSurface {
