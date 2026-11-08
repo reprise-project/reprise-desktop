@@ -42,9 +42,8 @@ pub use lists::{
 };
 pub use login::{NOT_RUNNING, follow_login, login_manager, read_login, show_login};
 pub use system::{
-    RD_PASSWORD_CLEAR, RD_PASSWORD_SET, REMOTE_ALLOW, REMOTE_DISCONNECT, REMOTE_REGENERATE,
-    advanced, backup, managed, notifications, privacy, remote_desktop, selected_client,
-    show_rd_password, show_remote, sound, startup,
+    RD_PASSWORD_ACCOUNTS, REMOTE_ALLOW, REMOTE_DISCONNECT, REMOTE_REGENERATE, advanced, backup,
+    managed, notifications, privacy, remote_desktop, selected_client, show_remote, sound, startup,
 };
 
 /// The client every page is built for at [`Area::MIN`]; the sheet puts each page right of its list ([`PropSheet::on_page`]).
@@ -191,15 +190,23 @@ pub const EDIT_FILE: &str = "edit_file";
 /// The Sound page's button that opens Sounds and Audio Devices.
 pub const AUDIO_DEVICES: &str = "audio_devices";
 
-/// Each page button that starts a program, with the program's desktop entry id.
-pub const PROGRAM_BUTTONS: [(&str, &str); 1] = [(AUDIO_DEVICES, "reprise-sound.desktop")];
+/// Each page button that starts a program, with the program's desktop entry id and the
+/// arguments it adds.
+pub const PROGRAM_BUTTONS: [(&str, &str, &[&str]); 2] = [
+    (AUDIO_DEVICES, "reprise-sound.desktop", &[]),
+    (
+        RD_PASSWORD_ACCOUNTS,
+        "reprise-accounts.desktop",
+        &["--remote-password"],
+    ),
+];
 
-/// The desktop entry id of the program page button `id` opens, if it opens one.
-pub fn program_for(id: &str) -> Option<&'static str> {
+/// The desktop entry id and arguments of the program page button `id` opens, if it opens one.
+pub fn program_for(id: &str) -> Option<(&'static str, &'static [&'static str])> {
     PROGRAM_BUTTONS
         .iter()
-        .find(|(button, _)| *button == id)
-        .map(|(_, program)| *program)
+        .find(|(button, ..)| *button == id)
+        .map(|(_, program, args)| (*program, *args))
 }
 
 /// The Backup page's buttons and the line saying what the last Export or Import did.

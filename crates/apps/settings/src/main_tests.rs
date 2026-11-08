@@ -2301,11 +2301,28 @@ fn open_program_starts_a_shown_entry_and_nothing_for_a_missing_one() {
         "[Desktop Entry]\nType=Application\nName=Sounds\nExec=reprise-sound\n",
     )
     .unwrap();
+    std::fs::write(
+        dir.join("reprise-accounts.desktop"),
+        "[Desktop Entry]\nType=Application\nName=User Accounts\nExec=reprise-accounts\n",
+    )
+    .unwrap();
     a.app_dirs = vec![dir];
-    let r = a.open_program("reprise-sound.desktop");
+    let r = a.open_program("reprise-sound.desktop", &[]);
     assert_eq!(r.spawn, [vec![OsString::from("reprise-sound")]]);
     assert_eq!(r.spawn_app.as_deref(), Some("reprise-sound.desktop"));
-    assert!(a.open_program("reprise-updates.desktop").spawn.is_empty());
+    let r = a.open_program("reprise-accounts.desktop", &["--remote-password"]);
+    assert_eq!(
+        r.spawn,
+        [vec![
+            OsString::from("reprise-accounts"),
+            OsString::from("--remote-password")
+        ]]
+    );
+    assert!(
+        a.open_program("reprise-updates.desktop", &[])
+            .spawn
+            .is_empty()
+    );
 }
 
 #[test]

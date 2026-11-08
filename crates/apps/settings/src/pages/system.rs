@@ -431,19 +431,11 @@ const REMOTE_FINGERPRINT: &str = "fingerprint";
 pub const REMOTE_REGENERATE: &str = "regenerate";
 const CLIENTS: &str = "clients";
 pub const REMOTE_DISCONNECT: &str = "disconnect";
-/// Open the dialogs that set and clear your Remote Desktop password, on a [`managed`] page.
-pub const RD_PASSWORD_SET: &str = "rd_password_set";
-pub const RD_PASSWORD_CLEAR: &str = "rd_password_clear";
-const RD_PASSWORD_STATUS: &str = "rd_password_status";
-const RD_PASSWORD_UNSET_NOTE: &str = "Not set: clients log on with your login password over TLS.";
-const RD_PASSWORD_SET_NOTE: &str =
-    "Set: clients that use Network Level Authentication log on with it.";
-/// How much lower the rows from the fingerprint down sit on a [`managed`] page, below the
-/// Remote Desktop password row and its status.
-const RD_PASSWORD_DY: i32 = 4;
-/// Top of the Remote Desktop password row on a [`managed`] page; a wrapping status flows the
-/// rows below down.
-const RD_PASSWORD_Y: i32 = 60;
+/// Opens User Accounts on your Remote Desktop password, on a [`managed`] page.
+pub const RD_PASSWORD_ACCOUNTS: &str = "rd_password_accounts";
+/// Top of the Remote Desktop password row on a [`managed`] page.
+const RD_PASSWORD_Y: i32 = 62;
+const ACCOUNTS_W: i32 = 110;
 
 /// What greys with the switch off; New Certificate and Disconnect also need the server answering.
 const REMOTE_CONTROLS: [&str; 24] = [
@@ -510,37 +502,22 @@ pub fn remote_desktop(
             X,
             44,
             a.w,
-            "Remote logins to this computer are set on the Login Manager page.",
+            "Remote logins are set on the Login Manager page.",
         ));
-        let buttons_x = a.right() - 2 * BUTTON_W - BUTTON_GAP;
+        let button_x = a.right() - ACCOUNTS_W;
         items.extend([
-            Item::label_at(
+            Item::lines(
                 "rd_password_label",
-                X,
-                RD_PASSWORD_Y + 4,
-                buttons_x - X - 6,
-                "Remote Desktop password:",
+                Rect::new(X, RD_PASSWORD_Y - 1, button_x - X - 6, 2 * LINE_H),
+                &["Your Remote Desktop password is set in User Accounts."],
             ),
             Item::button_at(
-                RD_PASSWORD_SET,
-                buttons_x,
+                RD_PASSWORD_ACCOUNTS,
+                button_x,
                 RD_PASSWORD_Y,
-                BUTTON_W,
-                "Se&t...",
+                ACCOUNTS_W,
+                "&User Accounts...",
                 true,
-            ),
-            Item::button_at(
-                RD_PASSWORD_CLEAR,
-                a.right() - BUTTON_W,
-                RD_PASSWORD_Y,
-                BUTTON_W,
-                "&Clear...",
-                true,
-            ),
-            Item::new(
-                RD_PASSWORD_STATUS,
-                Rect::new(X, RD_PASSWORD_Y + 26, a.w, LINE_H),
-                Control::Lines(Vec::new()),
             ),
         ]);
     } else {
@@ -563,7 +540,6 @@ pub fn remote_desktop(
             Item::label_at(REMOTE_STATUS, X, 80, a.w - 18, "").under_check(),
         ]);
     }
-    let below = items.len();
     items.extend([
         Item::label_at("fingerprint_label", X, 104, 126, "&Fingerprint (SHA-256):"),
         edit(
@@ -701,28 +677,9 @@ pub fn remote_desktop(
             "Replace &it",
         ),
     ]);
-    if machine.is_some() {
-        for i in &mut items[below..] {
-            i.rect.y += RD_PASSWORD_DY;
-        }
-    }
     let mut page = Form::new(items);
     show_remote(&mut page, status, enabled, None, None, machine);
-    show_rd_password(&mut page, None, false);
     page
-}
-
-/// Show on a [`managed`] page whether you have a Remote Desktop password, `None` until the
-/// login manager says; Clear... greys while none is set, and both buttons while `busy`.
-pub fn show_rd_password(page: &mut Form, set: Option<bool>, busy: bool) {
-    let note = match set {
-        Some(true) => vec![RD_PASSWORD_SET_NOTE.to_string()],
-        Some(false) => vec![RD_PASSWORD_UNSET_NOTE.to_string()],
-        None => Vec::new(),
-    };
-    page.set_lines(RD_PASSWORD_STATUS, &note);
-    page.set_enabled(RD_PASSWORD_SET, !busy);
-    page.set_enabled(RD_PASSWORD_CLEAR, !busy && set != Some(false));
 }
 
 /// Whether `page` was built for the login manager's remote logins.

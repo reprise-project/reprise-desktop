@@ -1,4 +1,4 @@
-use repriselogin::account::{AccountRefusal, AccountReply, AccountRequest, nt_hash};
+use repriselogin::account::{AccountRefusal, AccountReply, AccountRequest, RemoteAccess, nt_hash};
 use repriselogin::front::{FrontEvent, FrontRequest, NlaUser};
 use repriselogin::greeter::{AuthKind, ErrorKind};
 use zeroize::Zeroizing;
@@ -136,7 +136,8 @@ fn setting_a_remote_password_checks_the_login_password_first() {
         answered(
             99,
             AccountReply::Status {
-                remote_password: false
+                remote_password: false,
+                access: RemoteAccess::Off,
             }
         )
     );
@@ -175,7 +176,8 @@ fn setting_a_remote_password_checks_the_login_password_first() {
         answered(
             99,
             AccountReply::Status {
-                remote_password: true
+                remote_password: true,
+                access: RemoteAccess::Off,
             }
         )
     );
@@ -231,7 +233,8 @@ fn a_wrong_login_password_stores_nothing() {
         answered(
             99,
             AccountReply::Status {
-                remote_password: false
+                remote_password: false,
+                access: RemoteAccess::Off,
             }
         )
     );
@@ -461,7 +464,8 @@ fn stores_go_one_at_a_time_and_each_builds_on_the_last() {
         answered(
             3,
             AccountReply::Status {
-                remote_password: true
+                remote_password: true,
+                access: RemoteAccess::Off,
             }
         ),
         "a failed store keeps the passwords"
@@ -500,8 +504,85 @@ fn a_status_counts_only_a_password_stored_under_the_account_name() {
         answered(
             99,
             AccountReply::Status {
-                remote_password: false
+                remote_password: false,
+                access: RemoteAccess::Off,
             }
         )
+    );
+}
+
+/// Remote logins on for group `reprise-remote`, nothing recovered and the greeter up.
+fn remote_on() -> Run {
+    let mut config = MachineConfig::default();
+    config.remote.enabled = true;
+    let mut run = Run::machine(config);
+    assert_eq!(run.recover(vec![]), vec![]);
+    assert_eq!(run.start(), greeter_spawn(1));
+    run
+}
+
+fn status_of(remote_password: bool, access: RemoteAccess) -> Vec<Effect> {
+    answered(
+        99,
+        AccountReply::Status {
+            remote_password,
+            access,
+        },
+    )
+}
+
+#[test]
+fn a_status_with_remote_logins_on_asks_the_group_first() {
+    let mut run = remote_on();
+    run.d
+        .set_remote_passwords(vec![stored("anna", ANNA, "anna-remote")]);
+    assert_eq!(status(&mut run, ANNA), looked_up(99, "anna"));
+    assert_eq!(
+        run.quiet(member(99, Some(ANNA), true)),
+        status_of(true, RemoteAccess::Allowed)
+    );
+}
+
+#[test]
+fn a_status_outside_the_group_names_the_group() {
+    let not_in = || RemoteAccess::NotInGroup {
+        group: "reprise-remote".into(),
+    };
+    for (uid, member_) in [(Some(ANNA), false), (Some(BERT), true), (None, false)] {
+        let mut run = remote_on();
+        assert_eq!(status(&mut run, ANNA), looked_up(99, "anna"));
+        assert_eq!(
+            run.quiet(member(99, uid, member_)),
+            status_of(false, not_in()),
+            "{uid:?} {member_}"
+        );
+    }
+}
+
+#[test]
+fn a_status_whose_group_look_up_fails_is_refused_as_failed() {
+    let mut run = remote_on();
+    assert_eq!(status(&mut run, ANNA), looked_up(99, "anna"));
+    let failed = Input::Member {
+        key: LookUpKey::Account(99),
+        uid: None,
+        member: false,
+        failed: true,
+    };
+    assert_eq!(run.quiet(failed), refused(99, AccountRefusal::Failed));
+}
+
+#[test]
+fn a_status_with_remote_logins_off_answers_without_a_look_up() {
+    let mut run = run();
+    assert_eq!(status(&mut run, ANNA), status_of(false, RemoteAccess::Off));
+}
+
+#[test]
+fn a_status_for_root_says_root_never_logs_on_remotely() {
+    let mut run = remote_on();
+    assert_eq!(
+        run.account(99, "root", 0, AccountRequest::Status),
+        status_of(false, RemoteAccess::Root)
     );
 }

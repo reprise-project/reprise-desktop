@@ -5,7 +5,6 @@
 #[cfg(test)]
 reprisebus::test_session!();
 
-mod accounthost;
 mod additem;
 mod appearancepage;
 mod apply;
@@ -40,7 +39,6 @@ mod notifypage;
 mod outputwrite;
 mod pages;
 mod quickpage;
-mod rdpassworddlg;
 mod registry;
 mod remotehost;
 mod renamedlg;
@@ -96,7 +94,6 @@ const LAYOUT_WIN: WinId = WinId::named("layout");
 const ADD_ITEM_WIN: WinId = WinId::named("add_item");
 const RENAME_WIN: WinId = WinId::named("rename");
 const SAVER_WIN: WinId = WinId::named("saver");
-const RD_PASSWORD_WIN: WinId = WinId::named("rd_password");
 
 const CHOOSER_WIN: WinId = WinId::named("openwith");
 
@@ -419,10 +416,6 @@ struct SettingsApp {
     login_job: Option<loginhost::Saving>,
     /// The page's next read of the front's fingerprint.
     login_poll: Option<Receiver<Option<String>>>,
-    /// Your Remote Desktop password's status and requests, asked of `account_socket`.
-    account: accounthost::Account,
-    account_socket: Option<PathBuf>,
-    rd_password: Option<rdpassworddlg::RdPasswordDialog>,
     /// The pages this machine lacks the program for, kept out of the list ([`Page::installed`]).
     absent: Vec<Page>,
 
@@ -684,9 +677,6 @@ impl SettingsApp {
             login_users: None,
             login_job: None,
             login_poll: None,
-            account: accounthost::Account::default(),
-            account_socket: accounthost::socket(),
-            rd_password: None,
             absent: absent_pages(),
             types: defaultspage::new_list(),
             types_focus: false,
@@ -891,15 +881,6 @@ impl App for SettingsApp {
                 modal: true,
             });
         }
-        if let Some(d) = &self.rd_password {
-            kids.push(Child {
-                id: RD_PASSWORD_WIN,
-                title: d.title().into(),
-                size: self.units.size(d.client()),
-                fixed: true,
-                modal: true,
-            });
-        }
         if let Some(d) = &self.saver_dlg {
             kids.push(Child {
                 id: SAVER_WIN,
@@ -1058,7 +1039,6 @@ impl repriseapp::Extended for SettingsApp {
             ADD_ITEM_WIN => &mut self.add_item.as_mut()?.form,
             RENAME_WIN => &mut self.rename.as_mut()?.form,
             SAVER_WIN => &mut self.saver_dlg.as_mut()?.form,
-            RD_PASSWORD_WIN => &mut self.rd_password.as_mut()?.form,
             _ => return None,
         };
         Some(DropForm { form, px: None })

@@ -662,8 +662,8 @@ impl Daemon {
                 key: LookUpKey::Account(link),
                 uid,
                 member,
-                ..
-            } => self.account_member(link, uid, member, &mut out),
+                failed,
+            } => self.account_member(link, uid, member, failed, &mut out),
             Input::Member {
                 key: LookUpKey::Admin(worker),
                 uid,

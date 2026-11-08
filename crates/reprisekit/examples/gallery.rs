@@ -36,6 +36,8 @@ mod gallery_perf;
 mod gallery_power;
 #[path = "gallery_programs/mod.rs"]
 mod gallery_programs;
+#[path = "gallery_remote_password/mod.rs"]
+mod gallery_remote_password;
 #[path = "gallery_rename/mod.rs"]
 mod gallery_rename;
 #[path = "gallery_widgets/mod.rs"]
@@ -135,6 +137,10 @@ fn main() {
         write_preview(
             &gallery_rename::render(n.max(1)),
             &format!("reprisekit-gallery-rename@{}.png", n.max(1)),
+        );
+        write_preview(
+            &gallery_remote_password::render(n.max(1)),
+            &format!("reprisekit-gallery-remote-password@{}.png", n.max(1)),
         );
         write_preview(
             &gallery_checksums::render(n.max(1)),
@@ -355,6 +361,10 @@ fn main() {
     write_preview(
         &gallery_rename::render(1),
         "reprisekit-gallery-rename@1.png",
+    );
+    write_preview(
+        &gallery_remote_password::render(1),
+        "reprisekit-gallery-remote-password@1.png",
     );
     write_preview(
         &gallery_checksums::render(1),

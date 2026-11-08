@@ -5,7 +5,8 @@ use std::collections::BTreeMap;
 
 use log::Level;
 use repriselogin::account::{
-    AccountRefusal, AccountReply, AccountRequest, MIN_REMOTE_PASSWORD, nt_hash, same_hash,
+    AccountRefusal, AccountReply, AccountRequest, MIN_REMOTE_PASSWORD, RemoteAccess, nt_hash,
+    same_hash,
 };
 use repriselogin::greeter::{AuthKind, ErrorKind};
 use zeroize::Zeroizing;
@@ -21,6 +22,8 @@ pub(super) struct Accounts {
     changes: BTreeMap<u64, Change>,
     /// The change whose store write is in flight, with the passwords it writes.
     storing: Option<(u64, Vec<StoredPassword>)>,
+    /// Status links waiting on their group look-up, with the peer's uid and account name.
+    statuses: BTreeMap<u64, (u32, String)>,
 }
 
 struct Change {
@@ -61,11 +64,7 @@ impl Daemon {
         out: &mut Vec<Effect>,
     ) {
         let (login_password, nt_hash) = match request {
-            AccountRequest::Status => {
-                let remote_password =
-                    (self.remote.passwords.iter()).any(|p| p.uid == uid && p.user == user);
-                return answer(link, AccountReply::Status { remote_password }, out);
-            }
+            AccountRequest::Status => return self.account_status(link, uid, user, out),
             AccountRequest::SetRemotePassword {
                 login_password,
                 remote_password,
@@ -106,13 +105,56 @@ impl Daemon {
         changes.insert(link, change);
     }
 
+    /// Answers a status at once when root asks or remote logins are off, else after the group
+    /// look-up, so the reply says whether a set would be allowed. A look-up that fails or times
+    /// out is refused as `Failed`, which User Accounts reads as not answering and asks again.
+    fn account_status(&mut self, link: u64, uid: u32, user: String, out: &mut Vec<Effect>) {
+        let access = if uid == 0 {
+            RemoteAccess::Root
+        } else if !self.config.remote.enabled {
+            RemoteAccess::Off
+        } else {
+            out.push(Effect::LookUp {
+                key: LookUpKey::Account(link),
+                user: user.clone(),
+                group: self.config.remote.group.clone(),
+            });
+            self.remote.accounts.statuses.insert(link, (uid, user));
+            return;
+        };
+        answer(link, self.status(uid, &user, access), out);
+    }
+
+    fn status(&self, uid: u32, user: &str, access: RemoteAccess) -> AccountReply {
+        let remote_password =
+            (self.remote.passwords.iter()).any(|p| p.uid == uid && p.user == user);
+        AccountReply::Status {
+            remote_password,
+            access,
+        }
+    }
+
     pub(super) fn account_member(
         &mut self,
         link: u64,
         uid: Option<u32>,
         member: bool,
+        failed: bool,
         out: &mut Vec<Effect>,
     ) {
+        if let Some((peer, user)) = self.remote.accounts.statuses.remove(&link) {
+            if failed {
+                return refuse(link, AccountRefusal::Failed, out);
+            }
+            let access = if member && uid == Some(peer) {
+                RemoteAccess::Allowed
+            } else {
+                RemoteAccess::NotInGroup {
+                    group: self.config.remote.group.clone(),
+                }
+            };
+            return answer(link, self.status(peer, &user, access), out);
+        }
         let Some(c) = self.remote.accounts.changes.get(&link) else {
             return;
         };

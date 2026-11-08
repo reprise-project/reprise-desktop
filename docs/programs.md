@@ -376,8 +376,8 @@ matched control focused.
     `reprise-login` runs, the switch gives way to a note that remote logins
     are set on the Login Manager page, the port row is gone, New
     Certificate... is greyed, the fingerprint is the login manager's, and a
-    Remote Desktop password row shows whether you have one: Set... and
-    Clear... ask for your login password first
+    User Accounts... button opens your account's Password tab, where your
+    Remote Desktop password is set
     ([features.md](features.md#remote-logins)).
 - **System**
   - **Power Options...**
@@ -589,7 +589,10 @@ another program).
 
 Change your name, picture and password. With admin rights, add and remove
 accounts, choosing what happens to their files. A new account can be told to
-pick its own password at first login.
+pick its own password at first login. While reprise-login is installed, your
+account's Password tab also creates, changes and removes your Remote Desktop
+password ([features.md](features.md#remote-logins));
+`reprise-accounts --remote-password` opens it there.
 
 ## Software Updates
 
