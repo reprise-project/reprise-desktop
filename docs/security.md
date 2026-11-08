@@ -144,6 +144,10 @@ and the dialog comes back. A locker may take over a lock that has none, the
 dialog's or a crashed locker's, and unlock it. A locker whose lock has ended
 can't unlock a lock taken after it.
 
+The screen saver draws above the lock. Photos runs as Blank while the
+desktop is locked, so no picture from `[screensaver] folder` shows to whoever
+is at the locked computer.
+
 When the lock can't check a password at all (no login name, a broken PAM
 stack), switch to another VT, log in, and run `loginctl unlock-session`.
 Any program that can bind the session lock global can already run that

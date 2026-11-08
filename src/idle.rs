@@ -711,8 +711,8 @@ pub fn end_dim(state: &mut State) {
 }
 
 /// The screen saver step: `[screensaver] name` over every output, above
-/// the lock screen, so a locked session shows it too, until the next
-/// input (`saverview`).
+/// the lock screen, so a locked session shows it too (Photos as Blank),
+/// until the next input (`saverview`).
 fn blank(state: &mut State, on: bool) {
     if on {
         let kind = state.config.screensaver.kind;
