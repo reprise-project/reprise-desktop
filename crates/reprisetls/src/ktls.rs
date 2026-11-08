@@ -5,7 +5,7 @@ mod stream;
 use std::io;
 use std::os::fd::{AsRawFd, BorrowedFd};
 
-use aws_lc_rs::{constant_time, hmac};
+use aws_lc_rs::{constant_time, hkdf};
 use repriselogin::handover::{Cipher, DirectionKeys, TlsState, TlsVersion};
 use rustls::{
     ConnectionCommon, ConnectionTrafficSecrets, ProtocolVersion, ServerConnection,
@@ -20,6 +20,8 @@ pub use stream::KtlsStream;
 /// Moves `tls` into the kernel for the connected TCP socket `fd`; from then on plain reads and
 /// writes on it carry TLS records.
 pub fn install(fd: BorrowedFd<'_>, tls: &TlsState) -> io::Result<()> {
+    checked_secret(tls.cipher, &tls.tx)?;
+    checked_secret(tls.cipher, &tls.rx)?;
     let tx = CryptoInfo::new(Direction::Tx, tls.version, tls.cipher, &tls.tx)?;
     let rx = CryptoInfo::new(Direction::Rx, tls.version, tls.cipher, &tls.rx)?;
     // SAFETY: `fd` is a live socket and the option value is the 3 bytes of "tls".
@@ -214,7 +216,7 @@ fn invalid(what: &str) -> io::Error {
 
 /// Refuses a hand-over while rustls holds what extracting its secrets would drop: plaintext or a
 /// close_notify it read past the handshake, or records it has yet to send.
-pub fn check_drained<D>(conn: &mut ConnectionCommon<D>) -> io::Result<()> {
+fn check_drained<D>(conn: &mut ConnectionCommon<D>) -> io::Result<()> {
     let state = conn.process_new_packets().map_err(io::Error::other)?;
     let held = if state.plaintext_bytes_to_read() > 0 {
         "data read past the handshake"
@@ -232,6 +234,7 @@ pub fn check_drained<D>(conn: &mut ConnectionCommon<D>) -> io::Result<()> {
 
 /// One direction's keys as rustls extracted them, with the TLS 1.3 `traffic_secret` a key update
 /// derives the next keys from.
+#[doc(hidden)]
 pub fn keys_from_rustls(
     version: ProtocolVersion,
     seq: u64,
@@ -324,10 +327,12 @@ pub fn hand_over<S>(
 }
 
 /// Whether `keys` are the key and iv of their TLS 1.3 traffic secret, compared in constant time.
-/// Keys without a secret (TLS 1.2) match.
+/// Keys without a secret (TLS 1.2) match; a secret of the wrong length does not.
 fn keys_match_secret(cipher: Cipher, keys: &DirectionKeys) -> bool {
-    let Some(secret) = &keys.secret else {
-        return true;
+    let secret = match checked_secret(cipher, keys) {
+        Ok(Some(secret)) => secret,
+        Ok(None) => return true,
+        Err(_) => return false,
     };
     let (key, iv) = traffic_keys(cipher, secret);
     let key_matches = constant_time::verify_slices_are_equal(&key, &keys.key).is_ok();
@@ -358,13 +363,7 @@ pub fn record_action(version: TlsVersion, seq: u64, limit: u64) -> RecordAction 
 
 /// The traffic secret after a key update (RFC 8446 7.2).
 pub fn next_traffic_secret(cipher: Cipher, secret: &[u8]) -> Zeroizing<Vec<u8>> {
-    let hash = hash(cipher);
-    expand_label(
-        hash,
-        secret,
-        b"traffic upd",
-        hash.digest_algorithm().output_len(),
-    )
+    expand_label(hash(cipher), secret, b"traffic upd", secret_len(cipher))
 }
 
 /// The record key and iv of a TLS 1.3 traffic secret (RFC 8446 7.3).
@@ -376,32 +375,58 @@ pub fn traffic_keys(cipher: Cipher, secret: &[u8]) -> (Zeroizing<Vec<u8>>, Zeroi
     )
 }
 
-/// The hash of the one TLS 1.3 suite using `cipher`.
-fn hash(cipher: Cipher) -> hmac::Algorithm {
-    match cipher {
-        Cipher::Aes256Gcm => hmac::HMAC_SHA384,
-        Cipher::Aes128Gcm | Cipher::Chacha20Poly1305 => hmac::HMAC_SHA256,
+/// `keys`' TLS 1.3 traffic secret, refused unless it is its suite's hash long.
+fn checked_secret(cipher: Cipher, keys: &DirectionKeys) -> io::Result<Option<&[u8]>> {
+    match keys.secret.as_deref() {
+        Some(secret) if secret.len() != secret_len(cipher) => Err(invalid(
+            "a traffic secret of the wrong length for its cipher",
+        )),
+        secret => Ok(secret.map(Vec::as_slice)),
     }
 }
 
-/// HKDF-Expand-Label with an empty context (RFC 8446 7.1), for `len` up to the hash's length,
-/// which one HMAC block covers.
+fn secret_len(cipher: Cipher) -> usize {
+    hash(cipher)
+        .hmac_algorithm()
+        .digest_algorithm()
+        .output_len()
+}
+
+/// The hash of the one TLS 1.3 suite using `cipher`.
+fn hash(cipher: Cipher) -> hkdf::Algorithm {
+    match cipher {
+        Cipher::Aes256Gcm => hkdf::HKDF_SHA384,
+        Cipher::Aes128Gcm | Cipher::Chacha20Poly1305 => hkdf::HKDF_SHA256,
+    }
+}
+
+struct OutputLen(usize);
+
+impl hkdf::KeyType for OutputLen {
+    fn len(&self) -> usize {
+        self.0
+    }
+}
+
+/// HKDF-Expand-Label with an empty context (RFC 8446 7.1).
 fn expand_label(
-    hash: hmac::Algorithm,
+    hash: hkdf::Algorithm,
     secret: &[u8],
     label: &[u8],
     len: usize,
 ) -> Zeroizing<Vec<u8>> {
-    assert!(len <= hash.digest_algorithm().output_len());
     let mut info = Vec::with_capacity(16);
     info.extend_from_slice(&(len as u16).to_be_bytes());
     info.push((6 + label.len()) as u8);
     info.extend_from_slice(b"tls13 ");
     info.extend_from_slice(label);
     info.push(0);
-    info.push(1);
-    let block = hmac::sign(&hmac::Key::new(hash, secret), &info);
-    Zeroizing::new(block.as_ref()[..len].to_vec())
+    let mut out = Zeroizing::new(vec![0; len]);
+    hkdf::Prk::new_less_safe(hash, secret)
+        .expand(&[&info], OutputLen(len))
+        .and_then(|okm| okm.fill(&mut out))
+        .expect("a traffic secret expands to a key, iv or secret");
+    out
 }
 
 /// Whether a TLS 1.3 handshake record is a KeyUpdate asking for one back; any other
@@ -418,9 +443,7 @@ pub(crate) fn key_update(version: TlsVersion, record: &[u8]) -> io::Result<bool>
 
 /// The keys after a key update, from `keys`' traffic secret, starting at sequence 0.
 pub(crate) fn next_keys(cipher: Cipher, keys: &DirectionKeys) -> io::Result<DirectionKeys> {
-    let secret = keys
-        .secret
-        .as_ref()
+    let secret = checked_secret(cipher, keys)?
         .ok_or_else(|| invalid("a key update without the traffic secret"))?;
     let next = next_traffic_secret(cipher, secret);
     let (key, iv) = traffic_keys(cipher, &next);
@@ -854,6 +877,45 @@ mod tests {
                 err.kind(),
                 io::ErrorKind::InvalidData,
                 "{version:?} {record:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_traffic_secret_not_its_hash_long_is_refused_at_hand_over_install_and_key_update() {
+        let cases = [
+            (Cipher::Aes128Gcm, 65),
+            (Cipher::Aes128Gcm, 48),
+            (Cipher::Aes256Gcm, 32),
+            (Cipher::Chacha20Poly1305, 0),
+        ];
+        for (cipher, len) in cases {
+            let keys = DirectionKeys {
+                seq: 0,
+                key: Zeroizing::new(vec![1; key_len(cipher)]),
+                iv: Zeroizing::new(vec![2; 12]),
+                secret: Some(Zeroizing::new(vec![3; len])),
+            };
+            assert!(!keys_match_secret(cipher, &keys), "{cipher:?} {len}");
+            let err = next_keys(cipher, &keys).unwrap_err();
+            assert!(
+                err.to_string()
+                    .contains("traffic secret of the wrong length"),
+                "{cipher:?} {len}: {err}"
+            );
+            let tls = TlsState {
+                version: TlsVersion::Tls13,
+                cipher,
+                tx: keys.clone(),
+                rx: keys,
+                record_limit: 1 << 24,
+            };
+            let (socket, _peer) = std::os::unix::net::UnixStream::pair().unwrap();
+            let err = install(std::os::fd::AsFd::as_fd(&socket), &tls).unwrap_err();
+            assert!(
+                err.to_string()
+                    .contains("traffic secret of the wrong length"),
+                "{cipher:?} {len}: {err}"
             );
         }
     }

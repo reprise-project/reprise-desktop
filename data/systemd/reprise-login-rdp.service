@@ -28,6 +28,8 @@ ProtectClock=yes
 ProtectHostname=yes
 ProtectProc=invisible
 ProcSubset=pid
+# The front makes no bus calls; /run/systemd/userdb stays reachable for NSS.
+InaccessiblePaths=-/run/dbus
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 RestrictNamespaces=yes
 RestrictRealtime=yes

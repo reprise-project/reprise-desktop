@@ -37,6 +37,18 @@ pub enum Refusal {
     Paused,
 }
 
+impl Refusal {
+    /// What the refusal counts as in the refusals report.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Refusal::Full => "full",
+            Refusal::LoggingIn => "logging in",
+            Refusal::BackedOff(_) => "backed off",
+            Refusal::Paused => "NLA paused",
+        }
+    }
+}
+
 impl fmt::Display for Refusal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
