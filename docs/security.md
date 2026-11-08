@@ -518,7 +518,10 @@ on its port, in two reads of the kernel's table 100 ms apart, is restarted:
 a daemon-reload that finds the socket's unit
 changed while it ran leaves it so (installing a package without the socket
 unit and then one with it does), and the front then fails until its start
-limit. A socket that holds its port is only started, so the port is never
+limit. reprise-login checks for this at its start, on each of its reloads
+and after each daemon-reload of systemd while remote logins are on, so the
+daemon-reload a package upgrade ends with repairs a socket the upgrade left
+so. A socket that holds its port is only started, so the port is never
 free between boot and the front's start.
 
 Two more sockets in `/run/reprise-login`:
