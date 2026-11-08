@@ -353,6 +353,8 @@ fn run(
         compositor::Host::Session,
     )?;
     sandbox::set_trusted(&state.config.clipboard.trusted_apps);
+    // Before any lock: a lock raised while nsswitch hangs would leave the desktop on screen.
+    lock::current_user();
     let another_session = spawn::another_session_on_bus();
     state.setup_widgets();
     desktopview::setup(&mut state);
