@@ -179,10 +179,16 @@ fn the_handover_service_has_no_start_limit() {
 }
 
 #[test]
-fn the_chvt_rule_refuses_only_inactive_subjects() {
+fn the_chvt_rule_refuses_every_subject_whose_own_session_is_not_active() {
     let rule = data("polkit-1/rules.d/50-reprise-login.rules");
     assert!(rule.contains(r#"action.id == "org.freedesktop.login1.chvt""#));
     assert!(rule.contains("!subject.active"));
+    assert!(
+        rule.contains(
+            r#"polkit.spawn(["/usr/bin/loginctl", "show-session", subject.session, "-p", "Active", "--value"])"#
+        ),
+        "subject.active is true while any session of the user is: {rule}"
+    );
     assert!(rule.contains("return polkit.Result.NO;"));
     assert_eq!(
         rule.matches("return ").count(),
