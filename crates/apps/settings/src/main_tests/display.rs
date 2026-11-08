@@ -1,0 +1,174 @@
+use super::*;
+
+/// DP-1 listed with a smaller resolution picked, Apply or OK pressed
+/// and taken, so the question is up.
+fn question_up(tag: &str, press: displayhost::Press) -> (SettingsApp, Ctx) {
+    let mut app = app(tag);
+    let mut ctx = test_ctx();
+    app.event(
+        MAIN,
+        Event::Heads(vec![displaypage::test_head("DP-1")]),
+        &mut ctx,
+    );
+    app.display.model.pick_resolution(1);
+    app.start_display(press, &mut ctx.heads);
+    let asked = ctx.heads.take();
+    assert_eq!(asked.len(), 1, "the mode is asked for");
+    let r = app.event(
+        MAIN,
+        Event::HeadsApplied {
+            serial: asked[0].0,
+            ok: true,
+        },
+        &mut ctx,
+    );
+    assert!(r.tick, "the countdown runs on the main window's ticks");
+    assert!(
+        app.children()
+            .iter()
+            .any(|c| c.id == displayhost::MONITOR_WIN),
+        "Monitor Settings is up"
+    );
+    (app, ctx)
+}
+
+#[test]
+fn the_questions_close_box_puts_the_old_mode_back_and_keeps_the_sheet() {
+    let (mut app, mut ctx) = question_up("question-close", displayhost::Press::Apply);
+    let r = app.event(displayhost::MONITOR_WIN, Event::CloseRequest, &mut ctx);
+    assert!(!r.quit);
+    assert!(app.display.flow.question.is_none());
+    let back = ctx.heads.take();
+    assert_eq!(back.len(), 1);
+    assert_eq!(
+        back[0].1,
+        vec![("DP-1".to_string(), displaypage::test_head("DP-1").state())]
+    );
+    let r = app.event(
+        MAIN,
+        Event::HeadsApplied {
+            serial: back[0].0,
+            ok: true,
+        },
+        &mut ctx,
+    );
+    assert!(!r.quit, "the sheet stays open after the put-back");
+    assert!(!app.path.exists(), "nothing written");
+}
+
+#[test]
+fn yes_after_ok_writes_the_output_and_quits() {
+    let (mut app, mut ctx) = question_up("question-yes", displayhost::Press::Ok);
+    let q = app.display.flow.question.as_ref().expect("the question");
+    let yes = q.dialog.form.item(monitordlg::YES).expect("a Yes button");
+    let r = yes.placed(&ctx.forms().controls());
+    let (x, y) = (r.x + r.width / 2, r.y + r.height / 2);
+    let mods = Mods::default();
+    let press = PointerInput::Press {
+        x,
+        y,
+        button: BTN_LEFT,
+        time: 0,
+        mods,
+    };
+    let release = PointerInput::Release {
+        x,
+        y,
+        button: BTN_LEFT,
+        mods,
+    };
+    let win = displayhost::MONITOR_WIN;
+    assert!(!app.event(win, Event::Pointer(press), &mut ctx).quit);
+    assert!(app.event(win, Event::Pointer(release), &mut ctx).quit);
+    let text = std::fs::read_to_string(&app.path).expect("config written");
+    assert!(
+        text.contains("name = \"DP-1\"") && text.contains("mode = \"1280x720@60\""),
+        "DP-1's [[outputs]] entry has the new mode: {text}"
+    );
+}
+
+/// Two outputs side by side; the second dragged under the first and
+/// made the primary one. Apply writes the primary at once and asks
+/// for both places in one request; Yes writes both.
+#[test]
+fn a_kept_arrangement_writes_every_place_and_the_primary() {
+    let mut app = app("arrangement");
+    let mut ctx = test_ctx();
+    let mut b = displaypage::test_head("HDMI-A-1");
+    b.position = (1920, 0);
+    app.event(
+        MAIN,
+        Event::Heads(vec![displaypage::test_head("DP-1"), b]),
+        &mut ctx,
+    );
+    let mut well = reprisekit::controls::arrange::Arrange::new(app.display.model.tiles(), 1);
+    well.tiles[1].pos = (0, 1080);
+    app.display.model.set_arrangement(&well);
+    app.display.model.make_primary();
+    app.start_display(displayhost::Press::Apply, &mut ctx.heads);
+    let text = std::fs::read_to_string(&app.path).expect("the primary is written at once");
+    assert!(text.contains("primary = true"), "{text}");
+    let asked = ctx.heads.take();
+    assert_eq!(asked.len(), 1, "one request");
+    let places: Vec<_> = asked[0]
+        .1
+        .iter()
+        .map(|(n, c)| (n.as_str(), c.position))
+        .collect();
+    assert_eq!(
+        places,
+        vec![("DP-1", Some((0, 0))), ("HDMI-A-1", Some((0, 1080)))]
+    );
+    app.event(
+        MAIN,
+        Event::HeadsApplied {
+            serial: asked[0].0,
+            ok: true,
+        },
+        &mut ctx,
+    );
+    let effects = app.display.flow.answer(true, &mut ctx.heads);
+    app.display_effects(effects);
+    let text = std::fs::read_to_string(&app.path).unwrap();
+    assert_eq!(
+        outputwrite::read_primary(&text).as_deref(),
+        Some("HDMI-A-1")
+    );
+    assert!(
+        text.contains("position = [0, 0]") && text.contains("position = [0, 1080]"),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_refused_vrr_on_ok_says_so_and_keeps_the_sheet() {
+    let mut app = app("vrr-refused");
+    let mut ctx = test_ctx();
+    // The test output supports VRR and runs without it.
+    app.event(
+        MAIN,
+        Event::Heads(vec![displaypage::test_head("DP-1")]),
+        &mut ctx,
+    );
+    app.display.model.set_vrr(true);
+    let r = app.start_display(displayhost::Press::Ok, &mut ctx.heads);
+    assert!(!r.quit, "waits for the answer");
+    let asked = ctx.heads.take();
+    assert_eq!(asked.len(), 1, "only VRR is asked for");
+    let r = app.event(
+        MAIN,
+        Event::HeadsApplied {
+            serial: asked[0].0,
+            ok: false,
+        },
+        &mut ctx,
+    );
+    assert!(!r.quit, "the sheet stays open");
+    let text = app.error.as_ref().map(|b| b.fields.text.clone());
+    assert_eq!(text.as_deref(), Some(displayflow::VRR_REFUSED));
+    assert!(
+        app.children().iter().any(|c| c.id == ERROR_WIN),
+        "the error box is up"
+    );
+    assert!(!app.display.model.pick().unwrap().vrr, "the box unticks");
+}
