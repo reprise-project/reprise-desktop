@@ -549,21 +549,27 @@ caps on connections not yet logged in bound what slow clients hold.
 
 ### Throttle
 
-Two throttles count failed logins, with the numbers of the Remote Desktop
+Throttles count failed logins, with the numbers of the Remote Desktop
 server's ([Remote Desktop](#remote-desktop)): the daemon's counts TLS login
 passwords per client address, and the front's counts NLA Remote Desktop
 passwords per IPv4 address or IPv6 /64, from the client's NTLM AUTHENTICATE.
-Neither feeds the other, so each kind of secret has its own budget.
+The daemon counts the passwords NLA logins delegate in a throttle of their
+own, which bounds a front that passes wrong ones on. No throttle feeds
+another, so each kind of secret has its own budget.
 
 - **Per address.** Three failures are free; the fourth starts a 2 s
-  back-off, doubling up to 60 s. After TLS failures the front closes every
-  new connection from the address before TLS. After NLA failures it refuses
-  at the negotiation, also before TLS, a connection that chose NLA, while a
-  TLS logon from the address goes ahead. A success clears the address, and
+  back-off, doubling up to 60 s. After failures the daemon counts, the front
+  closes every new connection from the address before TLS. After NLA
+  failures the front refuses at the negotiation, also before TLS, a
+  connection that chose NLA: one for a user with a Remote Desktop password.
+  TLS logons from the address go ahead. A success clears the address, and
   so do 20 minutes without a failure from it.
 - **Every address.** 10 failures within 10 minutes pause every login of that
   kind for 10 minutes, a right password included, and the journal says so
-  once. Restarting reprise-login clears both throttles.
+  once. While NLA pauses, clients of users with a Remote Desktop password
+  are refused at the negotiation, and TLS logins carry on: other users', and
+  clients that offer TLS alone with the login password. Restarting
+  reprise-login clears every throttle.
 
 An NTLM AUTHENTICATE counts as a failed NLA password until the client
 delegates the Remote Desktop password it proved. So a right proof that
@@ -730,7 +736,10 @@ or it ends.
   connection down), inhibiting shutdown and sleep, the power key and lid
   inhibitors, and realtime priority. All affect availability only.
 - **Anyone can pause remote logins.** 10 wrong passwords every 10 minutes
-  from any addresses keep one kind of login paused.
+  from any addresses keep one kind of login paused. For NLA that costs a TLS
+  handshake and an NTLM AUTHENTICATE's first 12 bytes each, since the count
+  starts before the proof is read. Meanwhile users with a Remote Desktop
+  password can't log on, and TLS logins carry on.
 - **A late refusal tells the password was right.** A login refused after its
   password passed (the most sessions, no free VT, a failed start, the 8 s
   deadline) counts no failure, so its address doesn't back off. Under NLA
