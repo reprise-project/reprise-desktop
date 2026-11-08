@@ -309,13 +309,13 @@ impl SettingsApp {
     }
 
     pub(crate) fn route(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
+        if self.err_icon.is_none() {
+            self.err_icon = ctx.icons.get("dialog-error", 32);
+        }
         if matches!(ev, Event::Wake) {
             return self.wake();
         }
         self.fit_columns(&ctx.forms().controls());
-        if self.err_icon.is_none() {
-            self.err_icon = ctx.icons.get("dialog-error", 32);
-        }
         if self.display.icon.is_none() {
             self.display.icon = ctx.icons.get("dialog-question", 32);
         }
