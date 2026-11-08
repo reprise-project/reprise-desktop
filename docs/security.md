@@ -776,7 +776,8 @@ inhibitor; while a client is connected to any session, `sleep:idle`, so the
 computer doesn't sleep under a client. Each session's compositor reads that
 `sleep` inhibitor, held by root as "Reprise login manager", as a client
 connected elsewhere: idle suspend waits, and a shut lid darkens the
-internal panels instead of running `[power] lid_close`. The login screen
+internal panels instead of running `[power] lid_close`. The session still
+locks unless `lid_close` is `nothing` or `screen_off`. The login screen
 reads it the same way: while it is held, the screen takes logind's
 `handle-lid-switch` and a shut lid darkens the panels; otherwise logind
 acts on the lid.
@@ -844,9 +845,11 @@ or it ends.
   client, and takes the count on trust: a server that kept its clients
   across a reprise-login restart reports clients the daemon never handed
   it. A user with a session can answer their own `handover.sock` with a
-  count that never drops, so idle suspend waits and a shut lid only darkens
-  the panels, in every session and at the login screen. That grants no
-  more than the session has: polkit lets an active or inactive session
+  count that never drops, so idle suspend waits and a shut lid darkens the
+  panels instead of sleeping, in every session and at the login screen. The
+  lid still locks each session whose `lid_close` isn't `nothing` or
+  `screen_off`. That grants no more than the session has: polkit lets an
+  active or inactive session
   take `sleep` and `handle-lid-switch` block inhibitors of its own, which
   keep the computer awake the same way. Only the name differs: the console
   sees the login manager's inhibitor instead of the user's. A count the
