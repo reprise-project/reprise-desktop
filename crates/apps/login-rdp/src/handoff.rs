@@ -11,7 +11,7 @@ use reprisetls::ktls::{self, TrafficSecrets};
 use tokio::net::TcpStream;
 
 use crate::accept::Pending;
-use crate::link::LinkSender;
+use crate::link::{LinkSender, Written};
 
 #[derive(Debug)]
 pub enum HandOffError {
@@ -70,16 +70,16 @@ pub fn prepare(pending: Pending) -> Result<(TcpStream, HandOver), HandOffError> 
     Ok((cork.into_inner().into_inner(), handover))
 }
 
-/// Installs `handover`'s keys on `tcp` and sends both to reprise-login. On failure reprise-login
+/// Installs `handover`'s keys on `tcp` and queues both for reprise-login. On failure reprise-login
 /// hears the connection is gone. `tcp` is closed here either way.
-pub fn send(link: &LinkSender, tcp: TcpStream, handover: HandOver) -> io::Result<()> {
+pub fn send(link: &LinkSender, tcp: TcpStream, handover: HandOver) -> io::Result<Written> {
     let conn = handover.conn;
     let sent = ktls::install(tcp.as_fd(), &handover.tls).and_then(|()| {
         let ready = FrontRequest::Ready {
             conn,
             handover: Box::new(handover),
         };
-        link.send(&ready, Some(tcp.as_fd()))
+        link.send_tracked(&ready, Some(tcp.as_fd()))
     });
     if sent.is_err() {
         let _ = link.send(&FrontRequest::Gone { conn }, None);
