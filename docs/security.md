@@ -234,7 +234,9 @@ A session that loses the screen locks itself, whether through Switch User
 or a VT switch key. Logging in again as the same user at the login screen
 checks the password through the `reprise-login` PAM service, then unlocks
 that session through logind and switches to it, so no second password is
-asked. A user who already has a session never gets a second one. If the
+asked. A user who already has a session never gets a second one; a session
+logind can't describe after reprise-login restarts counts as running, so its
+user's login waits until logind describes it. If the
 switch fails, the session is locked again. A session off the seat locks its
 own screen when its link to reprise-login drops, as when the daemon restarts
 or dies, so a daemon that dies between unlocking a session for a resume and
@@ -619,7 +621,8 @@ another, so each kind of secret has its own budget.
 
 - **Per address.** Three failures are free; the fourth starts a 2 s
   back-off, doubling up to 60 s. After failures the daemon counts, the front
-  closes every new connection from the address before TLS. After NLA
+  closes every new connection from the address (from its /64, for IPv6)
+  before TLS. After NLA
   failures the front refuses at the negotiation, also before TLS, a
   connection that chose NLA: one for a user with a Remote Desktop password.
   TLS logons from the address go ahead. A success clears the address, and
@@ -655,8 +658,9 @@ keys and a recording of the exchange with the password and auto-reconnect
 cookie blanked. The daemon
 opens the user's `handover.sock` without following symlinks or crossing
 mounts (`openat2` with `RESOLVE_NO_SYMLINKS` and `RESOLVE_NO_XDEV`): the
-runtime directory, `reprise-rdp` and the socket must belong to the user and
-not be group or world writable, and `SO_PEERCRED` must name the user, so
+runtime directory and `reprise-rdp` must belong to the user and not be
+group or world writable, the socket must belong to the user, and
+`SO_PEERCRED` must name the user, so
 only a listener the user made gets the connection. The hand-over server
 takes links from root only and only a TCP socket, and replays the
 recording. It takes only a recording whose login names its own user with an
@@ -766,7 +770,9 @@ logind ends its processes, unsaved work included. A login that reaches a
 session with no client counted yet starts that time, so the session ends
 even when the client that logged in never reaches it. When that time runs out
 the daemon reads the VT on screen afresh, and a session the computer shows
-counts as a console session and is kept. With it unset, and for a console
+counts as a console session and is kept; a login of its user still in its
+check or on its way to it holds the end off another 8 s at a time, until
+it reaches the session or is refused. With it unset, and for a console
 session, the session runs until its user logs off. Disconnect in the
 session ends its clients like any other leave and leaves it running,
 locked. reprise-login keeps the list of background sessions in
