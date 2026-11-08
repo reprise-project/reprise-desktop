@@ -514,7 +514,8 @@ port, so a boot in between binds that port or none. Each start of
 reprise-login and each reload while remote logins are on also clears a
 failed socket or front and its start limit, and loads their unit files if
 they changed on disk. A socket that is active while systemd holds nothing
-on its port is restarted: a daemon-reload that finds the socket's unit
+on its port, in two reads of the kernel's table 100 ms apart, is restarted:
+a daemon-reload that finds the socket's unit
 changed while it ran leaves it so (installing a package without the socket
 unit and then one with it does), and the front then fails until its start
 limit. A socket that holds its port is only started, so the port is never
