@@ -20,8 +20,11 @@ use crate::worker::{FromWorker, Mode, ToWorker};
 #[derive(Default)]
 pub(super) struct Accounts {
     changes: BTreeMap<u64, Change>,
-    /// The change whose store write is in flight, with the passwords it writes.
-    storing: Option<(u64, Vec<StoredPassword>)>,
+    /// The store write in flight: a change's, by its link, or `None` for a rewrite of what the
+    /// daemon holds.
+    storing: Option<Option<u64>>,
+    /// The store holds passwords the daemon has dropped since its last write.
+    rewrite: bool,
     /// Status links waiting on their group look-up, with the peer's uid and account name.
     statuses: BTreeMap<u64, (u32, String)>,
 }
@@ -294,17 +297,39 @@ impl Daemon {
         refuse(link, AccountRefusal::Failed, out);
     }
 
-    /// Writes the next checked change unless a write is in flight, building on the passwords
-    /// as the last write left them.
-    fn store_next(&mut self, out: &mut Vec<Effect>) {
-        let accounts = &self.remote.accounts;
-        if accounts.storing.is_some() {
+    /// Drops the passwords `gone` picks and writes the store without them.
+    pub(super) fn drop_passwords(
+        &mut self,
+        gone: impl Fn(&StoredPassword) -> bool,
+        out: &mut Vec<Effect>,
+    ) {
+        let before = self.remote.passwords.len();
+        let mut unlisted = false;
+        let remote = &mut self.remote;
+        remote.passwords.retain(|p| {
+            let dropped = gone(p);
+            unlisted |= dropped && remote.listed.remove(&p.uid);
+            !dropped
+        });
+        if self.remote.passwords.len() == before {
             return;
         }
-        let Some((&link, c)) = (accounts.changes.iter()).find(|(_, c)| c.step == Step::Store)
-        else {
-            return;
-        };
+        if unlisted && self.remote.front {
+            out.push(self.passwords_event());
+        }
+        out.extend(self.rewrite_passwords());
+    }
+
+    /// Writes the store with the passwords the daemon holds, after the write in flight.
+    pub fn rewrite_passwords(&mut self) -> Vec<Effect> {
+        let mut out = Vec::new();
+        self.remote.accounts.rewrite = true;
+        self.store_next(&mut out);
+        out
+    }
+
+    /// The passwords the daemon holds with change `c` made.
+    fn with_change(&self, c: &Change) -> Vec<StoredPassword> {
         let mut all: Vec<_> = (self.remote.passwords.iter())
             .filter(|p| p.uid != c.uid)
             .cloned()
@@ -314,13 +339,41 @@ impl Daemon {
             uid: c.uid,
             nt_hash,
         }));
-        out.push(Effect::StorePasswords(all.clone()));
-        self.remote.accounts.storing = Some((link, all));
+        all
+    }
+
+    /// Writes the next checked change, or else a pending rewrite, unless a write is in flight.
+    /// Each write holds the passwords the daemon holds then, so it carries every drop before it.
+    fn store_next(&mut self, out: &mut Vec<Effect>) {
+        let accounts = &self.remote.accounts;
+        if accounts.storing.is_some() {
+            return;
+        }
+        let next = (accounts.changes.iter()).find(|(_, c)| c.step == Step::Store);
+        let (link, all) = match next {
+            Some((&link, c)) => (Some(link), self.with_change(c)),
+            None if accounts.rewrite => (None, self.remote.passwords.clone()),
+            None => return,
+        };
+        self.remote.accounts.rewrite = false;
+        out.push(Effect::StorePasswords(all));
+        self.remote.accounts.storing = Some(link);
     }
 
     pub(super) fn stored(&mut self, ok: bool, out: &mut Vec<Effect>) {
-        let Some((link, all)) = self.remote.accounts.storing.take() else {
+        let Some(link) = self.remote.accounts.storing.take() else {
             return;
+        };
+        let Some(link) = link else {
+            if !ok {
+                out.push(Effect::Log(
+                    Level::Warn,
+                    "the Remote Desktop passwords of accounts that are gone stay stored until \
+                     the next write"
+                        .into(),
+                ));
+            }
+            return self.store_next(out);
         };
         if let Some(c) = self.remote.accounts.changes.remove(&link) {
             if ok {
@@ -334,6 +387,7 @@ impl Daemon {
                     format!("{} {what} their Remote Desktop password", c.user),
                 ));
                 answer(link, AccountReply::Done, out);
+                let all = self.with_change(&c);
                 out.extend(self.set_remote_passwords(all));
                 // The set's own look-up predates its PAM check, so the group is read again.
                 if c.nt_hash.is_some() {

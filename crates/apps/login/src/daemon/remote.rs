@@ -41,6 +41,9 @@ const GATE_LOG_EVERY: Duration = Duration::from_secs(60);
 /// doubles with each failed round up to `RELIST_RETRY_MOST`.
 const RELIST_RETRY: Duration = Duration::from_secs(30);
 const RELIST_RETRY_MOST: Duration = Duration::from_secs(300);
+/// How long a stored password's account stays missing, up to a round with no failed look-up,
+/// before the password goes: NSS misses accounts while homed restarts or sssd is offline.
+pub const GONE_CHECK: Duration = Duration::from_secs(600);
 
 const MOST_SESSIONS: &str = "the computer runs its most sessions";
 pub(super) const ASKED_MORE: &str = "PAM asked for more than the password";
@@ -109,6 +112,11 @@ struct Listing {
     retrying: bool,
     /// The front has said Hello on its link.
     greeted: bool,
+    /// Stored uids whose account NSS did not find, with when it first missed it.
+    missing: HashMap<u32, Instant>,
+    /// Those the current round missed.
+    missed: HashSet<u32>,
+    gone_check_armed: bool,
 }
 
 #[derive(Default)]
@@ -314,7 +322,7 @@ impl Daemon {
     }
 
     /// The NLA users: the stored passwords of the users in the group, never root's.
-    fn passwords_event(&self) -> Effect {
+    pub(super) fn passwords_event(&self) -> Effect {
         let users = (self.remote.passwords.iter())
             .filter(|p| p.uid != 0 && self.remote.listed.contains(&p.uid))
             .map(|p| NlaUser {
@@ -338,6 +346,10 @@ impl Daemon {
         }
         l.generation = l.generation.wrapping_add(1);
         l.failed = false;
+        l.missed.clear();
+        let passwords = &self.remote.passwords;
+        l.missing
+            .retain(|uid, _| passwords.iter().any(|p| p.uid == *uid));
         for p in self.remote.passwords.iter().filter(|p| p.uid != 0) {
             l.awaiting.insert(p.uid);
             out.push(Effect::LookUp {
@@ -351,8 +363,10 @@ impl Daemon {
         }
     }
 
+    #[expect(clippy::too_many_arguments, reason = "the fields of one Input::Member")]
     pub(super) fn listed_member(
         &mut self,
+        now: Instant,
         uid: u32,
         generation: u32,
         found: Option<u32>,
@@ -389,9 +403,49 @@ impl Daemon {
             if changed && self.remote.front {
                 out.push(self.passwords_event());
             }
+            let l = &mut self.remote.listing;
+            match found {
+                _ if failed => {}
+                Some(f) if f == uid => {
+                    l.missing.remove(&uid);
+                }
+                Some(_) => self.drop_passwords(|p| p.uid == uid, out),
+                None => {
+                    l.missing.entry(uid).or_insert(now);
+                    l.missed.insert(uid);
+                }
+            }
         }
         if self.remote.listing.awaiting.is_empty() {
+            self.drop_missing(now, out);
             self.listing_answered(out);
+        }
+    }
+
+    /// After a round with no failed look-up, drops the passwords whose accounts it missed and
+    /// that were missing `GONE_CHECK` ago too; arms the round that checks the rest.
+    fn drop_missing(&mut self, now: Instant, out: &mut Vec<Effect>) {
+        let l = &mut self.remote.listing;
+        if !l.failed {
+            let gone: HashSet<u32> = (l.missed.iter().copied())
+                .filter(|uid| {
+                    l.missing
+                        .get(uid)
+                        .is_some_and(|&t| now.duration_since(t) >= GONE_CHECK)
+                })
+                .collect();
+            if !gone.is_empty() {
+                l.missing.retain(|uid, _| !gone.contains(uid));
+                self.drop_passwords(|p| gone.contains(&p.uid), out);
+            }
+        }
+        let l = &mut self.remote.listing;
+        if !l.missing.is_empty() && !l.gone_check_armed {
+            l.gone_check_armed = true;
+            out.push(Effect::Arm {
+                timer: Timer::GoneCheck,
+                after: GONE_CHECK,
+            });
         }
     }
 
@@ -415,6 +469,14 @@ impl Daemon {
             timer: Timer::Relist,
             after,
         });
+    }
+
+    pub(super) fn gone_check(&mut self, out: &mut Vec<Effect>) {
+        let l = &mut self.remote.listing;
+        l.gone_check_armed = false;
+        if !l.missing.is_empty() {
+            self.look_up_listed(out);
+        }
     }
 
     pub(super) fn relist(&mut self, out: &mut Vec<Effect>) {
