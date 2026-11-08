@@ -163,7 +163,7 @@ impl Ending {
     }
 
     /// Marks a grant of lock mode's screens, true if it was one: a grant to a run that `locks`
-    /// the console, every stream cast from a virtual output. The standby screen is virtual too.
+    /// the console, every stream cast from a virtual output.
     pub fn granted(&self, locks: bool, screens: &[Screen]) -> bool {
         let lock_mode = locks && !screens.is_empty() && screens.iter().all(|s| s.virtual_output);
         if lock_mode {
