@@ -794,8 +794,15 @@ fn a_background_start_never_activates_the_vt() {
         PASSWORD,
     );
     assert_eq!(console.vts, ["hold(7)", "activate_and_wait(7)"]);
+    let marker = (BACKGROUND_ENV.to_owned(), "1".to_owned());
+    assert!(
+        ran.env.contains(&marker),
+        "the session's compositor starts locked"
+    );
+    assert!(!console.env.contains(&marker));
+    let others: Vec<_> = ran.env.iter().filter(|e| **e != marker).cloned().collect();
     assert_eq!(
-        ran.env, console.env,
+        others, console.env,
         "a background session's tty and XDG variables"
     );
     for want in [
