@@ -35,6 +35,7 @@ use reprisebus::journal;
 use repriseconf::ConfigWatch;
 use repriseconf::remote::{EncoderChoice, RemoteDesktop};
 use reprisetls::{cert, tcp};
+use std::cell::RefCell;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::rc::Rc;
@@ -202,6 +203,8 @@ fn main() -> ExitCode {
         let listed = status.subscribe();
         let session_user = user.clone();
         let idle = Rc::new(Notify::new());
+        let owed = lock.owed();
+        let viewers = Rc::<RefCell<viewers::Viewers>>::default();
         let leave = Leaving {
             inner: lock,
             status: status.subscribe(),
@@ -215,6 +218,7 @@ fn main() -> ExitCode {
             disconnect: disconnect_rx,
             leave,
             console: console.clone(),
+            viewers: viewers.clone(),
         };
         let sync_owner = input::SyncOwner::default();
         let handlers = |shown: listen::Shown, ending: listen::Ending| {
@@ -262,10 +266,10 @@ fn main() -> ExitCode {
                     tokio::select! {
                         () = terminated() => {}
                         () = display_gone(display) => {}
-                        () = idle.notified() => {
+                        () = settled(|| idle.notified(), &owed, &viewers) => {
                             log::info!("no client is connected; stopping until the next hand-over");
                         }
-                        () = unused(listed) => {
+                        () = settled(|| unused(listed.clone()), &owed, &viewers) => {
                             log::info!(
                                 "no client connected in {} s; stopping until the next hand-over",
                                 QUIET.as_secs()
@@ -322,6 +326,23 @@ impl<L: Leave> Leave for Leaving<L> {
 
     fn console_unlocked(&self) -> impl Future<Output = bool> {
         self.inner.console_unlocked()
+    }
+}
+
+/// `quiet`, then once no relock is owed, if no connection holds a place, one still logging in
+/// included; else `quiet` again. An idle stop so never drops a lock logind refused, nor a login
+/// handed over meanwhile.
+async fn settled<Q: Future<Output = ()>>(
+    quiet: impl Fn() -> Q,
+    owed: &lock::Owed,
+    viewers: &RefCell<viewers::Viewers>,
+) {
+    loop {
+        quiet().await;
+        owed.settled().await;
+        if viewers.borrow().is_empty() {
+            return;
+        }
     }
 }
 
@@ -550,6 +571,37 @@ mod tests {
         (tokio::time::timeout(2 * second, &mut unused).await)
             .expect("no client listed for the quiet wait stops it")
             .unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_idle_stop_waits_out_an_owed_lock_and_a_connection_meanwhile() {
+        let viewers = std::rc::Rc::<std::cell::RefCell<super::viewers::Viewers>>::default();
+        let owed = super::lock::Owed::default();
+        let idle = std::rc::Rc::new(tokio::sync::Notify::new());
+        let relock = owed.start();
+        let local = tokio::task::LocalSet::new();
+        let stop = local.spawn_local({
+            let (idle, owed, viewers) = (idle.clone(), owed.clone(), viewers.clone());
+            async move { super::settled(|| idle.notified(), &owed, &viewers).await }
+        });
+        local
+            .run_until(async {
+                idle.notify_one();
+                tokio::task::yield_now().await;
+                assert!(!stop.is_finished(), "a relock is owed");
+                let peer = "192.0.2.1:50000".parse().unwrap();
+                let (logging_in, _kicked) = viewers.borrow_mut().join(peer, 4).unwrap();
+                drop(relock);
+                tokio::task::yield_now().await;
+                assert!(
+                    !stop.is_finished(),
+                    "a connection still logging in arrived meanwhile"
+                );
+                viewers.borrow_mut().leave(logging_in);
+                idle.notify_one();
+                stop.await.unwrap();
+            })
+            .await;
     }
 
     #[test]
