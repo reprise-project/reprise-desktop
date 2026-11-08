@@ -356,6 +356,14 @@ impl Harness {
         self.connect_with(None, |d| d.pid = Some(pid))
     }
 
+    /// [`Harness::connect_as`] for a client in a Flatpak sandbox.
+    pub fn connect_sandboxed_as(&mut self, pid: i32) -> TestClient {
+        self.connect_with(None, |d| {
+            d.pid = Some(pid);
+            d.sandbox.flatpak = true;
+        })
+    }
+
     fn connect_with(
         &mut self,
         context: Option<crate::sandbox::Sandbox>,
@@ -852,6 +860,11 @@ impl TestClient {
     }
 
     /// Bind `reprise_on_top_v1`; its `changed` events land in [`ClientSide::on_top`].
+    /// Whether the registry offered a global of `interface`.
+    pub fn offered(&self, interface: &str) -> bool {
+        self.side.globals.iter().any(|(_, i, _)| i == interface)
+    }
+
     pub fn bind_on_top(&self) -> on_top_client::reprise_on_top_v1::RepriseOnTopV1 {
         let name = (self.side.globals.iter())
             .find(|(_, i, _)| i == "reprise_on_top_v1")

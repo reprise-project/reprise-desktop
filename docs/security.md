@@ -46,6 +46,9 @@ Such a program can bind every global Reprise offers, including these:
 - **Output management, power and gamma** (`zwlr_output_manager_v1`,
   `zwlr_output_power_manager_v1`, `zwlr_gamma_control_manager_v1`):
   rearranges, turns off or recolours the screens.
+- **On top** (`reprise_on_top_v1`): keeps one of the program's windows
+  above the others. A consent prompt still stacks above it
+  ([Consent prompts](#consent-prompts)).
 
 These are the protocols panels, lockers, clipboard managers, screenshot
 tools and input methods are built on; [protocols.md](protocols.md) lists the
@@ -996,10 +999,12 @@ you type must not be answered by your typing. Each of them:
   opens and each time it gets it back. A key that went down in that time
   counts for nothing until it comes up, its repeats included.
 - presses the refusing button (Deny or Cancel) on Enter: it is the default.
+- stacks above every window kept on top (X11 menus included) and every mini
+  view. A sandboxed program isn't offered `reprise_on_top_v1` at all.
 
 The polkit agent's password box and the Drives passphrase box are not
-consent prompts: the secret they ask for keeps a stray key from answering
-them.
+consent prompts: they stack like any window, and the secret they ask for
+keeps a stray key from answering them.
 
 To revoke: `flatpak permissions` lists the permission store and `flatpak
 permission-remove <table> <id>` removes an entry. The Keyboard page of

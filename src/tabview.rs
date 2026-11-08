@@ -859,7 +859,7 @@ impl State {
     /// title bar and it can take tabs. A window over the caption hides it.
     fn caption_under(&self, skip: &[WindowId], x: f64, y: f64) -> Option<WindowId> {
         let m = &self.config.theme.metrics;
-        for layer in [self.layers.on_top, self.layers.windows] {
+        for layer in [self.layers.prompts, self.layers.on_top, self.layers.windows] {
             for &node in self.scene.children(layer).iter().rev() {
                 if !self.scene.enabled(node) {
                     continue;
