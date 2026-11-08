@@ -212,6 +212,24 @@ fn worker_messages_round_trip() {
 }
 
 #[test]
+fn an_answer_round_trips_in_hex_under_its_tag() {
+    use repriselogin::frame::{decode, encode};
+    let sent = ToWorker::Answer(Some(Zeroizing::new("pa\"ss\\word".into())));
+    let frame = encode(&sent).unwrap();
+    assert_eq!(
+        std::str::from_utf8(&frame[4..]).unwrap(),
+        r#"{"type":"answer","body":"70612273735c776f7264"}"#
+    );
+    assert_eq!(decode::<ToWorker>(&frame[4..]).unwrap(), sent);
+    let none = encode(&ToWorker::Answer(None)).unwrap();
+    assert_eq!(
+        std::str::from_utf8(&none[4..]).unwrap(),
+        r#"{"type":"answer","body":null}"#
+    );
+    assert!(decode::<ToWorker>(br#"{"type":"answer","body":"pa\"ss"}"#).is_err());
+}
+
+#[test]
 fn an_account_refusal_carries_pams_text_and_a_failed_password_the_fixed_one() {
     let err = |code, text: &str| PamError {
         code,

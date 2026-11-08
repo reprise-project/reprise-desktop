@@ -9,7 +9,7 @@ use zeroize::Zeroizing;
 use crate::Interface;
 
 #[derive(PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
 pub enum GreeterRequest {
     Hello,
     CreateSession {
@@ -17,6 +17,7 @@ pub enum GreeterRequest {
     },
     /// `None` answers an Info or Error message.
     PostAuthResponse {
+        #[serde(with = "crate::frame::hex::text::option")]
         response: Option<Zeroizing<String>>,
     },
     StartSession,
@@ -61,7 +62,7 @@ impl fmt::Debug for GreeterRequest {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
 pub enum GreeterReply {
     /// The answer to `Hello`, and again unasked when a running login screen comes forward.
     Greeting(Greeting),
@@ -162,50 +163,50 @@ mod tests {
             body(&GreeterRequest::CreateSession {
                 user: "anna".into()
             }),
-            r#"{"type":"create_session","user":"anna"}"#
+            r#"{"create_session":{"user":"anna"}}"#
         );
         assert_eq!(
             body(&GreeterReply::AuthMessage {
                 kind: AuthKind::Secret,
                 text: "Password:".into()
             }),
-            r#"{"type":"auth_message","kind":"secret","text":"Password:"}"#
+            r#"{"auth_message":{"kind":"secret","text":"Password:"}}"#
         );
         assert_eq!(
             body(&GreeterRequest::Power {
                 action: PowerAction::PowerOff
             }),
-            r#"{"type":"power","action":"power_off"}"#
+            r#"{"power":{"action":"power_off"}}"#
         );
         assert_eq!(
             body(&GreeterRequest::PostAuthResponse { response: None }),
-            r#"{"type":"post_auth_response","response":null}"#
+            r#"{"post_auth_response":{"response":null}}"#
         );
         assert_eq!(
             body(&GreeterReply::Error {
                 kind: ErrorKind::Account,
                 text: "User account has expired".into()
             }),
-            r#"{"type":"error","kind":"account","text":"User account has expired"}"#
+            r#"{"error":{"kind":"account","text":"User account has expired"}}"#
         );
         assert_eq!(
             body(&GreeterReply::AdminNeeded {
                 action: PowerAction::PowerOff
             }),
-            r#"{"type":"admin_needed","action":"power_off"}"#
+            r#"{"admin_needed":{"action":"power_off"}}"#
         );
         assert_eq!(
             body(&GreeterRequest::PowerAs {
                 action: PowerAction::Reboot,
                 user: "anna".into()
             }),
-            r#"{"type":"power_as","action":"reboot","user":"anna"}"#
+            r#"{"power_as":{"action":"reboot","user":"anna"}}"#
         );
         assert_eq!(serde_json::to_string(&Note::Remote).unwrap(), r#""remote""#);
     }
 
     #[test]
-    fn a_greeting_carries_its_fields_beside_the_tag() {
+    fn a_greeting_round_trips_under_its_tag() {
         let g = Greeting {
             interface: Interface::Classic,
             show_users: false,
@@ -215,11 +216,29 @@ mod tests {
             notice: Some(Notice::SessionEndedEarly),
         };
         let json = body(&GreeterReply::Greeting(g.clone()));
-        assert!(json.starts_with(r#"{"type":"greeting","interface":"classic","#));
+        assert!(json.starts_with(r#"{"greeting":{"interface":"classic","#));
         assert!(json.contains(r#""notice":"session_ended_early""#));
         assert_eq!(
             decode::<GreeterReply>(json.as_bytes()).unwrap(),
             GreeterReply::Greeting(g)
+        );
+    }
+
+    #[test]
+    fn a_response_round_trips_in_hex() {
+        let sent = GreeterRequest::PostAuthResponse {
+            response: Some(Zeroizing::new("hun\"ter2".into())),
+        };
+        let json = body(&sent);
+        assert_eq!(
+            json,
+            r#"{"post_auth_response":{"response":"68756e2274657232"}}"#
+        );
+        assert_eq!(decode::<GreeterRequest>(json.as_bytes()).unwrap(), sent);
+        let none = GreeterRequest::PostAuthResponse { response: None };
+        assert_eq!(
+            decode::<GreeterRequest>(body(&none).as_bytes()).unwrap(),
+            none
         );
     }
 
