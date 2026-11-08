@@ -118,7 +118,7 @@ pub enum ToWorker {
         /// The remote client's address, for `PAM_RHOST`.
         rhost: Option<String>,
     },
-    Answer(Option<Zeroizing<String>>),
+    Answer(#[serde(with = "repriselogin::frame::hex::text::option")] Option<Zeroizing<String>>),
     Start {
         vt: u16,
         /// Opens the session without taking the console to its VT.

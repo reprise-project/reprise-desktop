@@ -24,7 +24,7 @@ pub const VERDICT_WAIT: Duration = Duration::from_secs(12);
 pub const MAX_PREAUTH_BYTES: usize = 256 * 1024;
 /// Bytes of a user name, as the daemon takes them.
 pub const MAX_USER: usize = 32;
-/// Bytes of the recorded exchange; the hand-over frame carries it as JSON, about four bytes each.
+/// Bytes of the recorded exchange; the hand-over frame carries it as hex, two bytes each.
 pub const MAX_RECORDING: usize = 12 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

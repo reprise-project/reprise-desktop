@@ -18,8 +18,8 @@ pub const FINGERPRINT: &str = "/run/reprise-login-rdp/fingerprint";
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Secret {
-    Password(Zeroizing<String>),
-    Delegated(Zeroizing<String>),
+    Password(#[serde(with = "crate::frame::hex::text")] Zeroizing<String>),
+    Delegated(#[serde(with = "crate::frame::hex::text")] Zeroizing<String>),
 }
 
 impl fmt::Debug for Secret {
@@ -32,7 +32,7 @@ impl fmt::Debug for Secret {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
 pub enum FrontRequest {
     Hello,
     Authenticate {
@@ -52,7 +52,7 @@ pub enum FrontRequest {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
 pub enum FrontEvent {
     Passwords { users: Vec<NlaUser> },
     Verified { conn: u64 },
@@ -96,13 +96,18 @@ mod tests {
 
     #[test]
     fn wire_shapes_are_pinned() {
+        assert_eq!(body(&FrontRequest::Hello), r#""hello""#);
         assert_eq!(
             body(&FrontEvent::Denied {
                 conn: 7,
                 backoff_s: 4
             }),
-            r#"{"type":"denied","conn":7,"backoff_s":4}"#
+            r#"{"denied":{"conn":7,"backoff_s":4}}"#
         );
+    }
+
+    #[test]
+    fn an_authenticate_round_trips_with_its_secret_in_hex() {
         for (secret, kind) in [
             (
                 Secret::Password(Zeroizing::new("hunter2".into())),
@@ -118,11 +123,41 @@ mod tests {
             assert_eq!(
                 json,
                 format!(
-                    r#"{{"type":"authenticate","conn":7,"peer":"[2001:db8::1]:3389","user":"anna","secret":{{"{kind}":"hunter2"}}}}"#
+                    r#"{{"authenticate":{{"conn":7,"peer":"[2001:db8::1]:3389","user":"anna","secret":{{"{kind}":"68756e74657232"}}}}}}"#
                 )
             );
             assert_eq!(decode::<FrontRequest>(json.as_bytes()).unwrap(), sent);
         }
+    }
+
+    #[test]
+    fn a_ready_round_trips_with_its_hand_over() {
+        let sent = FrontRequest::Ready {
+            conn: 9,
+            handover: Box::new(crate::handover::tests::hand_over()),
+        };
+        let json = body(&sent);
+        assert!(
+            json.starts_with(r#"{"ready":{"conn":9,"handover":{"conn":9,"#),
+            "{json}"
+        );
+        assert_eq!(decode::<FrontRequest>(json.as_bytes()).unwrap(), sent);
+    }
+
+    #[test]
+    fn the_passwords_round_trip_with_their_hashes() {
+        let sent = FrontEvent::Passwords {
+            users: vec![NlaUser {
+                user: "anna".into(),
+                nt_hash: Zeroizing::new("8846F7EAEE8FB117AD06BDD830B7586C".into()),
+            }],
+        };
+        let json = body(&sent);
+        assert_eq!(
+            json,
+            r#"{"passwords":{"users":[{"user":"anna","nt_hash":"8846F7EAEE8FB117AD06BDD830B7586C"}]}}"#
+        );
+        assert_eq!(decode::<FrontEvent>(json.as_bytes()).unwrap(), sent);
     }
 
     #[test]
