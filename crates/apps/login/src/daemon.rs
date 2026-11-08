@@ -171,7 +171,7 @@ pub enum Input {
         uid: u32,
         count: u32,
     },
-    /// The backend passed conn's socket on (`ok`), or failed to.
+    /// Conn's session's server took its socket (`ok`), or it could not be passed on.
     Forwarded {
         conn: u64,
         ok: bool,

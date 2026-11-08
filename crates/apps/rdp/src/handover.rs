@@ -1,28 +1,39 @@
 //! [`HandOverIntake`]: connections reprise-login hands over on the user manager's socket, each
-//! link told the session's viewer count.
+//! link told the session's viewer count and which of its hand-overs the server took.
 
 use crate::control::Status;
 use crate::intake::{Arrival, Intake};
 use repriselogin::fdpass::FdFrameReader;
 use repriselogin::frame;
 use repriselogin::handover::{IntakeMessage, IntakeReport};
+use std::collections::VecDeque;
 use std::io;
 use std::mem;
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
 use std::time::Duration;
 use tokio::io::Interest;
 use tokio::net::{UnixListener, UnixStream};
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinSet;
 
 /// The fd systemd passes the first socket on.
 const LISTEN_FD: i32 = 3;
 
+/// Conns a server remembers taking: reprise-login sends one again only within its login's 8 s.
+const TAKEN_KEPT: usize = 64;
+
 /// Hand-overs from links whose peer runs as `allowed_uid`. Dropping it asks each link to report
 /// no viewers and close, best effort: a link whose task never runs again closes unreported.
 pub struct HandOverIntake {
-    arrivals: mpsc::Receiver<Arrival>,
+    arrivals: mpsc::Receiver<Handed>,
+    /// The last [`TAKEN_KEPT`] conns taken, oldest first.
+    taken: VecDeque<u64>,
+    /// Taken by [`HandOverIntake::take_during`], not yet served.
+    early: VecDeque<Arrival>,
 }
+
+/// A hand-over's conn and arrival, and the sender that tells its link the server took it.
+type Handed = (u64, Arrival, oneshot::Sender<()>);
 
 impl HandOverIntake {
     pub fn new(
@@ -32,15 +43,61 @@ impl HandOverIntake {
     ) -> HandOverIntake {
         let (sender, arrivals) = mpsc::channel(1);
         tokio::spawn(accept(listener, allowed_uid, status, sender));
-        HandOverIntake { arrivals }
+        HandOverIntake {
+            arrivals,
+            taken: VecDeque::new(),
+            early: VecDeque::new(),
+        }
+    }
+
+    /// Takes hand-overs while `wait` runs, so their links report them taken at once; `next`
+    /// yields them first.
+    pub async fn take_during(&mut self, wait: impl Future<Output = ()>) {
+        tokio::pin!(wait);
+        loop {
+            let arrival = tokio::select! {
+                biased;
+                () = &mut wait => return,
+                arrival = self.take() => arrival,
+            };
+            self.early.push_back(arrival);
+        }
+    }
+
+    /// The next hand-over, its link told it was taken. One taken before is closed unserved.
+    async fn take(&mut self) -> Arrival {
+        loop {
+            let Some((conn, arrival, took)) = self.arrivals.recv().await else {
+                return std::future::pending().await;
+            };
+            let _ = took.send(());
+            if self.taken.contains(&conn) {
+                log::info!("closed conn {conn}'s hand-over: this server took it already");
+                continue;
+            }
+            if self.taken.len() == TAKEN_KEPT {
+                self.taken.pop_front();
+            }
+            self.taken.push_back(conn);
+            return arrival;
+        }
     }
 }
 
 impl Intake for HandOverIntake {
     async fn next(&mut self) -> Arrival {
-        match self.arrivals.recv().await {
+        match self.early.pop_front() {
             Some(arrival) => arrival,
-            None => std::future::pending().await,
+            None => self.take().await,
+        }
+    }
+}
+
+impl Drop for HandOverIntake {
+    fn drop(&mut self) {
+        if !self.early.is_empty() {
+            let n = self.early.len();
+            log::info!("closed {n} hand-overs taken during the lock wait; the server is stopping");
         }
     }
 }
@@ -79,11 +136,12 @@ async fn accept(
     listener: UnixListener,
     allowed_uid: u32,
     status: watch::Receiver<Status>,
-    arrivals: mpsc::Sender<Arrival>,
+    arrivals: mpsc::Sender<Handed>,
 ) {
     let mut links = JoinSet::new();
     loop {
         tokio::select! {
+            biased;
             () = arrivals.closed() => break,
             accepted = listener.accept() => match accepted {
                 Ok((stream, _)) => match stream.peer_cred() {
@@ -105,58 +163,110 @@ async fn accept(
     while links.join_next().await.is_some() {}
 }
 
-async fn link(
-    stream: UnixStream,
-    status: watch::Receiver<Status>,
-    arrivals: mpsc::Sender<Arrival>,
-) {
+async fn link(stream: UnixStream, status: watch::Receiver<Status>, arrivals: mpsc::Sender<Handed>) {
     if let Err(e) = serve_link(&stream, status, &arrivals).await {
         log::warn!("dropped a hand-over link: {e}");
     }
 }
 
-/// Passes each hand-over on and reports the viewer count until the peer closes the link, or
-/// reports no viewers once the intake is dropped.
+/// Passes each hand-over on and reports the viewer count until the link ends. Every exit
+/// reports `Took` for the hand-overs taken; one where the intake was dropped then no viewers.
 async fn serve_link(
     stream: &UnixStream,
-    mut status: watch::Receiver<Status>,
-    arrivals: &mpsc::Sender<Arrival>,
+    status: watch::Receiver<Status>,
+    arrivals: &mpsc::Sender<Handed>,
 ) -> io::Result<()> {
+    let mut taking = VecDeque::new();
+    let ended = pass_on(stream, status, arrivals, &mut taking).await;
+    let reported = report_taken(stream, taking).await;
+    match ended {
+        Ok(Ended::Stopping) => {
+            reported?;
+            report(stream, &IntakeReport::Viewers { count: 0 }).await
+        }
+        Ok(Ended::Closed) => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
+/// How [`pass_on`] ended without an error.
+enum Ended {
+    /// The peer closed the link, or the process is ending.
+    Closed,
+    /// The intake was dropped.
+    Stopping,
+}
+
+/// A hand-over passed on and the receiver that hears when the server takes it.
+type Taking = VecDeque<(u64, oneshot::Receiver<()>)>;
+
+async fn pass_on(
+    stream: &UnixStream,
+    mut status: watch::Receiver<Status>,
+    arrivals: &mpsc::Sender<Handed>,
+    taking: &mut Taking,
+) -> io::Result<Ended> {
     let mut count = status.borrow_and_update().clients.len();
-    report(stream, count).await?;
+    report(stream, &viewers(count)).await?;
     let mut reader = FdFrameReader::new();
     loop {
         tokio::select! {
+            biased;
+            () = arrivals.closed() => return Ok(Ended::Stopping),
             ready = stream.readable() => {
                 ready?;
                 match stream.try_io(Interest::READABLE, || reader.read_from(stream.as_fd())) {
-                    Ok(0) => return Ok(()),
+                    Ok(0) => return Ok(Ended::Closed),
                     Ok(_) => {}
                     Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
                     Err(e) => return Err(e),
                 }
                 while let Some((body, fd)) = reader.next().map_err(io::Error::other)? {
-                    if arrivals.send(arrival(&body, fd)?).await.is_err() {
-                        return report(stream, 0).await;
+                    let (conn, arrival) = arrival(&body, fd)?;
+                    let (took, taken) = oneshot::channel();
+                    if arrivals.send((conn, arrival, took)).await.is_err() {
+                        return Ok(Ended::Stopping);
                     }
+                    taking.push_back((conn, taken));
                 }
             }
-            () = arrivals.closed() => return report(stream, 0).await,
+            taken = async { (&mut taking[0].1).await }, if !taking.is_empty() => {
+                let (conn, _) = taking.pop_front().expect("one is waiting");
+                if taken.is_ok() {
+                    report(stream, &IntakeReport::Took { conn }).await?;
+                }
+            }
             changed = status.changed() => {
                 if changed.is_err() {
-                    return Ok(());
+                    return Ok(Ended::Closed);
                 }
                 let now = status.borrow_and_update().clients.len();
                 if now != count {
                     count = now;
-                    report(stream, count).await?;
+                    report(stream, &viewers(count)).await?;
                 }
             }
         }
     }
 }
 
-fn arrival(body: &[u8], fd: Option<OwnedFd>) -> io::Result<Arrival> {
+/// Reports `Took` for each hand-over of `taking` the server has taken.
+async fn report_taken(stream: &UnixStream, taking: Taking) -> io::Result<()> {
+    for (conn, mut taken) in taking {
+        if taken.try_recv().is_ok() {
+            report(stream, &IntakeReport::Took { conn }).await?;
+        }
+    }
+    Ok(())
+}
+
+fn viewers(count: usize) -> IntakeReport {
+    let count = u32::try_from(count).unwrap_or(u32::MAX);
+    IntakeReport::Viewers { count }
+}
+
+/// The hand-over in `body` as an arrival, with its conn.
+fn arrival(body: &[u8], fd: Option<OwnedFd>) -> io::Result<(u64, Arrival)> {
     let IntakeMessage::HandOver(handover) = frame::decode(body).map_err(io::Error::other)?;
     let fd = fd.ok_or_else(|| io::Error::other("a hand-over came without its socket"))?;
     let tcp = tcp_stream(fd)?;
@@ -166,7 +276,7 @@ fn arrival(body: &[u8], fd: Option<OwnedFd>) -> io::Result<Arrival> {
         handover.peer,
         handover.user
     );
-    Ok(Arrival::HandedOver { tcp, handover })
+    Ok((handover.conn, Arrival::HandedOver { tcp, handover }))
 }
 
 /// `fd` as a TCP stream, or an error, closing it, when it is any other file.
@@ -201,9 +311,8 @@ fn socket_option(fd: BorrowedFd<'_>, option: libc::c_int) -> io::Result<libc::c_
     Ok(value)
 }
 
-async fn report(stream: &UnixStream, count: usize) -> io::Result<()> {
-    let count = u32::try_from(count).unwrap_or(u32::MAX);
-    let frame = frame::encode(&IntakeReport::Viewers { count }).map_err(io::Error::other)?;
+async fn report(stream: &UnixStream, report: &IntakeReport) -> io::Result<()> {
+    let frame = frame::encode(report).map_err(io::Error::other)?;
     let mut sent = 0;
     while sent < frame.len() {
         stream.writable().await?;
@@ -291,8 +400,12 @@ mod tests {
     }
 
     fn hand_over(peer: SocketAddr) -> Vec<u8> {
+        hand_over_of(9, peer)
+    }
+
+    fn hand_over_of(conn: u64, peer: SocketAddr) -> Vec<u8> {
         let message = IntakeMessage::HandOver(Box::new(HandOver {
-            conn: 9,
+            conn,
             user: "anna".into(),
             peer,
             security: 1,
@@ -420,6 +533,157 @@ mod tests {
             Some(IntakeReport::Viewers { count: 0 })
         );
         assert_eq!(read_report(&mut l.link).await, None, "then the link closes");
+    }
+
+    async fn no_report(link: &mut UnixStream) {
+        let mut byte = [0; 1];
+        let read = tokio::time::timeout(Duration::from_millis(200), link.read(&mut byte)).await;
+        assert!(read.is_err(), "no report yet: {read:?}");
+    }
+
+    #[tokio::test]
+    async fn a_hand_over_is_reported_taken_once_the_server_takes_it() {
+        let mut l = linked(own_uid()).await;
+        assert_eq!(
+            read_report(&mut l.link).await,
+            Some(IntakeReport::Viewers { count: 0 })
+        );
+        let (client, accepted) = tcp_pair();
+        send(
+            &l.link,
+            &hand_over(client.local_addr().unwrap()),
+            Some(accepted.as_fd()),
+        );
+        no_report(&mut l.link).await;
+        tokio::time::timeout(WAIT, l.intake.next()).await.unwrap();
+        assert_eq!(
+            read_report(&mut l.link).await,
+            Some(IntakeReport::Took { conn: 9 })
+        );
+    }
+
+    #[tokio::test]
+    async fn a_stopping_server_reports_taken_only_the_hand_overs_it_took() {
+        let mut l = linked(own_uid()).await;
+        assert_eq!(
+            read_report(&mut l.link).await,
+            Some(IntakeReport::Viewers { count: 0 })
+        );
+        let (client, accepted) = tcp_pair();
+        let peer = client.local_addr().unwrap();
+        send(&l.link, &hand_over_of(9, peer), Some(accepted.as_fd()));
+        send(&l.link, &hand_over_of(10, peer), Some(accepted.as_fd()));
+        no_report(&mut l.link).await;
+        tokio::time::timeout(WAIT, l.intake.next()).await.unwrap();
+        drop(l.intake);
+        assert_eq!(
+            read_report(&mut l.link).await,
+            Some(IntakeReport::Took { conn: 9 })
+        );
+        assert_eq!(
+            read_report(&mut l.link).await,
+            Some(IntakeReport::Viewers { count: 0 })
+        );
+        assert_eq!(read_report(&mut l.link).await, None, "then the link closes");
+    }
+
+    #[tokio::test]
+    async fn a_hand_over_taken_before_its_link_breaks_is_reported_taken() {
+        let mut l = linked(own_uid()).await;
+        assert_eq!(
+            read_report(&mut l.link).await,
+            Some(IntakeReport::Viewers { count: 0 })
+        );
+        let (client, accepted) = tcp_pair();
+        let peer = client.local_addr().unwrap();
+        send(&l.link, &hand_over_of(9, peer), Some(accepted.as_fd()));
+        send(&l.link, &hand_over_of(10, peer), Some(accepted.as_fd()));
+        send(&l.link, &[1, 0, 0, 0, b'x'], None);
+        tokio::time::timeout(WAIT, l.intake.next()).await.unwrap();
+        assert_eq!(
+            read_report(&mut l.link).await,
+            Some(IntakeReport::Took { conn: 9 })
+        );
+        assert_eq!(read_report(&mut l.link).await, None, "then the link closes");
+    }
+
+    #[tokio::test]
+    async fn a_hand_over_sent_again_is_reported_taken_and_closed_unserved() {
+        let mut l = linked(own_uid()).await;
+        assert_eq!(
+            read_report(&mut l.link).await,
+            Some(IntakeReport::Viewers { count: 0 })
+        );
+        let (client, accepted) = tcp_pair();
+        send(
+            &l.link,
+            &hand_over(client.local_addr().unwrap()),
+            Some(accepted.as_fd()),
+        );
+        let _served = tokio::time::timeout(WAIT, l.intake.next()).await.unwrap();
+        assert_eq!(
+            read_report(&mut l.link).await,
+            Some(IntakeReport::Took { conn: 9 })
+        );
+
+        let mut again = UnixStream::connect(l._dir.path().join("handover.sock"))
+            .await
+            .unwrap();
+        assert_eq!(
+            read_report(&mut again).await,
+            Some(IntakeReport::Viewers { count: 0 })
+        );
+        let (mut copy_client, copy) = tcp_pair();
+        send(
+            &again,
+            &hand_over(copy_client.local_addr().unwrap()),
+            Some(copy.as_fd()),
+        );
+        drop(copy);
+        stays_pending(&mut l.intake).await;
+        assert_eq!(
+            read_report(&mut again).await,
+            Some(IntakeReport::Took { conn: 9 })
+        );
+        copy_client.set_read_timeout(Some(WAIT)).unwrap();
+        assert_eq!(
+            std::io::Read::read(&mut copy_client, &mut [0]).unwrap(),
+            0,
+            "the copy's socket is closed"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_hand_over_sent_during_the_lock_wait_is_taken_at_once_and_served_after() {
+        let mut l = linked(own_uid()).await;
+        assert_eq!(
+            read_report(&mut l.link).await,
+            Some(IntakeReport::Viewers { count: 0 })
+        );
+        let (client, accepted) = tcp_pair();
+        send(
+            &l.link,
+            &hand_over(client.local_addr().unwrap()),
+            Some(accepted.as_fd()),
+        );
+        let (unlock, locked) = oneshot::channel::<()>();
+        {
+            let lock_wait = l.intake.take_during(async {
+                let _ = locked.await;
+            });
+            tokio::pin!(lock_wait);
+            let report = tokio::select! {
+                report = read_report(&mut l.link) => report,
+                () = &mut lock_wait => panic!("the lock wait is still running"),
+            };
+            assert_eq!(report, Some(IntakeReport::Took { conn: 9 }));
+            unlock.send(()).unwrap();
+            tokio::time::timeout(WAIT, lock_wait).await.unwrap();
+        }
+        let arrival = tokio::time::timeout(Duration::from_millis(10), l.intake.next())
+            .await
+            .expect("the hand-over taken during the wait comes first");
+        assert!(matches!(arrival, Arrival::HandedOver { handover, .. } if handover.conn == 9));
     }
 
     #[test]
