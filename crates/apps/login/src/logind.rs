@@ -144,8 +144,8 @@ pub fn session_gone(e: &zbus::Error) -> bool {
 pub struct Listing {
     /// Those whose properties could be read, closing ones included.
     pub found: Vec<LogindSession>,
-    /// The ids of those whose properties could not be read.
-    pub unread: Vec<String>,
+    /// The ids and uids of those whose properties could not be read.
+    pub unread: Vec<(String, u32)>,
 }
 
 /// Whether a session is gone or closing.
@@ -199,13 +199,6 @@ impl Logind {
             .await
     }
 
-    /// logind's sessions, leaving out those closing (their user has left them) and those
-    /// whose properties can't be read.
-    pub async fn sessions(&self) -> zbus::Result<Vec<LogindSession>> {
-        let listed = self.listed().await?;
-        Ok(listed.into_iter().filter(|s| !s.closing).collect())
-    }
-
     /// logind's sessions whose properties can be read, closing ones included.
     pub async fn listed(&self) -> zbus::Result<Vec<LogindSession>> {
         Ok(self.listing().await?.found)
@@ -228,7 +221,7 @@ impl Logind {
                 Err(e) if session_gone(&e) => log::debug!("logind session {id}: {e}"),
                 Err(e) => {
                     log::warn!("logind session {id}: {e}");
-                    listing.unread.push(id);
+                    listing.unread.push((id, uid));
                 }
             }
         }

@@ -61,6 +61,9 @@ const LOOKUP_THREADS: usize = 8;
 const USERS_WAIT: Duration = Duration::from_secs(1);
 /// The wait until a first read finishes: autologin and the greeter's tiles need the whole list.
 const BOOT_USERS_WAIT: Duration = Duration::from_secs(60);
+/// Listings at start while logind fails to describe a session, and the wait between them.
+const BOOT_TRIES: u32 = 3;
+const BOOT_RETRY: Duration = Duration::from_millis(200);
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
@@ -171,7 +174,7 @@ async fn run() -> Result<(), String> {
     // Subscribed before the sessions are listed, so no removal falls between.
     let removed = (logind.manager().receive_session_removed().await)
         .map_err(|e| format!("logind's SessionRemoved: {e}"))?;
-    let found = (logind.sessions().await).map_err(|e| format!("logind's sessions: {e}"))?;
+    let (found, unread) = boot_sessions(&logind).await?;
     let seat_active = logind.seat_active().await;
     // Registered before the first spawn, so no worker's exit goes unseen.
     follow_signals(events.clone()).map_err(|e| format!("signals: {e}"))?;
@@ -211,6 +214,7 @@ async fn run() -> Result<(), String> {
         })),
     };
     let world = read_world(&logind, &mut rt.users).await;
+    rt.daemon.recover_unread(unread);
     let effects = boot(&mut rt.daemon, found, seat_active.as_deref(), &world);
     let recovered: Vec<String> = rt.daemon.session_uids().into_keys().collect();
     rt.world = WorldCache(Some(world));
@@ -308,6 +312,23 @@ fn serve_account(input: mpsc::Sender<Input>) -> Replies {
         log::warn!("{ACCOUNT_SOCKET}: {e}; Remote Desktop passwords cannot be changed");
         Replies::default()
     })
+}
+
+/// logind's sessions, closing ones left out, and the ids and uids of those it still could not
+/// describe after `BOOT_TRIES` listings.
+async fn boot_sessions(
+    logind: &Logind,
+) -> Result<(Vec<LogindSession>, Vec<(String, u32)>), String> {
+    let mut tries = 1;
+    loop {
+        let listing = (logind.listing().await).map_err(|e| format!("logind's sessions: {e}"))?;
+        if listing.unread.is_empty() || tries == BOOT_TRIES {
+            let found = listing.found.into_iter().filter(|s| !s.closing).collect();
+            return Ok((found, listing.unread));
+        }
+        tries += 1;
+        tokio::time::sleep(BOOT_RETRY).await;
+    }
 }
 
 /// Rebuilds the table from logind's sessions and starts the login screen or autologin, with
@@ -825,7 +846,7 @@ fn orphan_report(id: &str, listing: Option<&Listing>) -> OrphanReport {
     };
     match listing.found.iter().find(|s| s.id == id) {
         Some(s) if !s.closing => OrphanReport::Orphaned { uid: s.uid },
-        None if listing.unread.iter().any(|u| u == id) => OrphanReport::Nothing,
+        None if listing.unread.iter().any(|(u, _)| u == id) => OrphanReport::Nothing,
         _ => OrphanReport::Removed,
     }
 }
@@ -1472,7 +1493,7 @@ mod tests {
     fn a_session_logind_lists_but_cannot_describe_is_not_reported_removed() {
         let listing = Listing {
             found: vec![],
-            unread: vec!["c1".into()],
+            unread: vec![("c1".into(), 1000)],
         };
         assert_eq!(orphan_report("c1", Some(&listing)), OrphanReport::Nothing);
     }

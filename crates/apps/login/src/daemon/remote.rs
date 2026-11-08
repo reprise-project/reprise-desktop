@@ -35,6 +35,7 @@ pub const MAX_LOGINS: usize = 128;
 const MAX_USER_NAME: usize = 32;
 
 const MOST_SESSIONS: &str = "the computer runs its most sessions";
+const UNREAD: &str = "logind could not describe the user's running session";
 pub(super) const ASKED_MORE: &str = "PAM asked for more than the password";
 pub(super) const NEVER_ASKED: &str = "PAM passed the login without asking for its password";
 
@@ -102,6 +103,8 @@ pub(super) struct Remote {
     reopening: HashSet<u32>,
     /// Background sessions with no viewer, by session id.
     pub(super) disconnects: HashMap<String, Unviewed>,
+    /// Sessions logind could not describe at recovery, by id, with their uids.
+    pub(super) unread: HashMap<String, u32>,
     generations: u32,
     inhibit: Inhibit,
 }
@@ -179,6 +182,12 @@ struct Starting {
 }
 
 impl Daemon {
+    /// Takes the sessions, by id with their uids, that logind listed at recovery but could not
+    /// describe. Until each is removed, a remote login for its uid starts no session beside it.
+    pub fn recover_unread(&mut self, unread: Vec<(String, u32)>) {
+        self.remote.unread = unread.into_iter().collect();
+    }
+
     /// Replaces the Remote Desktop passwords, telling a linked front.
     pub fn set_remote_passwords(&mut self, passwords: Vec<StoredPassword>) -> Vec<Effect> {
         self.remote.passwords = passwords;
@@ -579,6 +588,10 @@ impl Daemon {
         if self.remote.starting.contains_key(&uid) {
             out.push(cancel);
             return self.set_step(conn, Step::Starting { uid });
+        }
+        if self.remote.unread.values().any(|&u| u == uid) {
+            out.push(cancel);
+            return self.refuse(now, conn, UNREAD, out);
         }
         let most = self.config.remote.max_sessions as usize;
         if self.sessions.len() + self.remote.starting.len() >= most {
