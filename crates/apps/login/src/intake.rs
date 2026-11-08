@@ -36,6 +36,8 @@ pub const RETRY: Duration = Duration::from_millis(50);
 /// Reads of a broken link's last reports, enough for a full socket buffer and no more, so a
 /// server that keeps writing cannot hold the daemon.
 const DRAIN_READS: usize = 16;
+/// A link passes a viewer count on at most this often; meanwhile only the latest is kept.
+pub const VIEWERS_EVERY: Duration = Duration::from_millis(250);
 /// How a lost link is opened again: every second for half a minute.
 pub const REOPEN: Retry = Retry {
     every: Duration::from_secs(1),
@@ -252,6 +254,34 @@ impl Queue {
         for f in self.untaken.take().into_iter().rev() {
             waiting.push_front(f);
         }
+    }
+}
+
+/// A link's viewer counts on their way to the daemon: one passes at once, and those within
+/// `VIEWERS_EVERY` of it wait, only the latest kept.
+struct Counts {
+    held: Option<u32>,
+    /// When the next count may pass.
+    next: tokio::time::Instant,
+}
+
+impl Counts {
+    /// After the first report, which passed just now.
+    fn new() -> Counts {
+        Counts {
+            held: None,
+            next: tokio::time::Instant::now() + VIEWERS_EVERY,
+        }
+    }
+
+    /// The held count once its turn has come.
+    fn due(&mut self, now: tokio::time::Instant) -> Option<u32> {
+        if now < self.next {
+            return None;
+        }
+        let count = self.held.take()?;
+        self.next = now + VIEWERS_EVERY;
+        Some(count)
     }
 }
 
@@ -559,27 +589,38 @@ async fn relay(
     queue: &Queue,
     input: &mpsc::Sender<Input>,
 ) -> io::Result<()> {
-    let relayed = relay_until_broken(uid, stream, &mut reader, queue, input).await;
+    let mut counts = Counts::new();
+    let relayed = relay_until_broken(uid, stream, &mut reader, queue, &mut counts, input).await;
     let mut reads = 0;
-    while matches!(feed(uid, &mut reader, queue, input).await, Ok(true))
-        && reads < DRAIN_READS
+    while matches!(
+        feed(uid, &mut reader, queue, &mut counts, input).await,
+        Ok(true)
+    ) && reads < DRAIN_READS
         && matches!(reader.read_from(stream.as_fd()), Ok(1..))
     {
         reads += 1;
     }
+    if let Some(count) = counts.held {
+        let _ = input.send(Input::Viewers { uid, count }).await;
+    }
     relayed
 }
 
-/// Feeds the reports `reader` holds to `input`; false once `input` is closed.
+/// Feeds the reports `reader` holds to `input`, a viewer count once its turn has come; false
+/// once `input` is closed.
 async fn feed(
     uid: u32,
     reader: &mut FdFrameReader,
     queue: &Queue,
+    counts: &mut Counts,
     input: &mpsc::Sender<Input>,
 ) -> io::Result<bool> {
     while let Some(report) = next_report(reader)? {
         let fed = match report {
-            IntakeReport::Viewers { count } => Input::Viewers { uid, count },
+            IntakeReport::Viewers { count } => {
+                counts.held = Some(count);
+                continue;
+            }
             IntakeReport::Took { conn } if queue.took(conn) => Input::Forwarded { conn, ok: true },
             IntakeReport::Took { .. } => continue,
         };
@@ -587,7 +628,10 @@ async fn feed(
             return Ok(false);
         }
     }
-    Ok(true)
+    match counts.due(tokio::time::Instant::now()) {
+        Some(count) => Ok(input.send(Input::Viewers { uid, count }).await.is_ok()),
+        None => Ok(true),
+    }
 }
 
 /// [`relay`] until the link breaks. A hand-over whose write fails goes back in front of those
@@ -597,10 +641,11 @@ async fn relay_until_broken(
     stream: &UnixStream,
     reader: &mut FdFrameReader,
     queue: &Queue,
+    counts: &mut Counts,
     input: &mpsc::Sender<Input>,
 ) -> io::Result<()> {
     loop {
-        if !feed(uid, reader, queue, input).await? {
+        if !feed(uid, reader, queue, counts, input).await? {
             return Ok(());
         }
         let next = queue.waiting.borrow_mut().pop_front();
@@ -629,7 +674,9 @@ async fn relay_until_broken(
             }
             continue;
         }
+        let turn = counts.held.map(|_| counts.next);
         tokio::select! {
+            () = tokio::time::sleep_until(turn.unwrap_or(counts.next)), if turn.is_some() => {}
             ready = stream.readable() => {
                 ready?;
                 match stream.try_io(Interest::READABLE, || reader.read_from(stream.as_fd())) {
@@ -885,6 +932,62 @@ pub(crate) mod tests {
         report(&rdp, 0).await;
         opened(&mut rx, uid).await;
         (links, rx, rdp)
+    }
+
+    #[tokio::test]
+    async fn a_link_passes_on_its_latest_viewer_count_at_most_every_viewers_every() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let (dir, listener) = runtime_dir();
+                let (_links, mut rx, rdp) = linked_at(dir.path(), &listener, WAIT).await;
+                let uid = own_uid();
+                let mut flips = Vec::new();
+                for count in (0..400).map(|n| 1 - n % 2).chain([3]) {
+                    flips.extend_from_slice(
+                        &frame::encode(&IntakeReport::Viewers { count }).unwrap(),
+                    );
+                }
+                tokio::time::pause();
+                let rdp = Rc::new(rdp);
+                let writer = rdp.clone();
+                tokio::task::spawn_local(async move {
+                    let mut sent = 0;
+                    while sent < flips.len() {
+                        writer.writable().await.unwrap();
+                        match writer.try_write(&flips[sent..]) {
+                            Ok(n) => sent += n,
+                            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
+                            Err(e) => panic!("{e}"),
+                        }
+                    }
+                });
+                let mut got = Vec::new();
+                let until = tokio::time::Instant::now() + VIEWERS_EVERY * 3;
+                while let Ok(Some(input)) = tokio::time::timeout_at(until, rx.recv()).await {
+                    got.push(input);
+                }
+                assert!(got.len() <= 3, "{} inputs: {got:?}", got.len());
+                assert_eq!(got.last(), Some(&Input::Viewers { uid, count: 3 }));
+                tokio::time::resume();
+
+                report(&rdp, 1).await;
+                report(&rdp, 0).await;
+                drop(Rc::try_unwrap(rdp).expect("the writer is done"));
+                let mut got = Vec::new();
+                while let Ok(Some(input)) = tokio::time::timeout(WAIT, rx.recv()).await {
+                    got.push(input);
+                    if got.last() == Some(&Input::IntakeLost { uid }) {
+                        break;
+                    }
+                }
+                assert_eq!(
+                    got[got.len() - 2..],
+                    [Input::Viewers { uid, count: 0 }, Input::IntakeLost { uid }],
+                    "the count held when the link drops goes first"
+                );
+            })
+            .await;
     }
 
     #[tokio::test]
