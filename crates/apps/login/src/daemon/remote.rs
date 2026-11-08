@@ -134,6 +134,8 @@ pub(super) struct Remote {
     pub(super) disconnects: HashMap<String, Unviewed>,
     /// Sessions logind could not describe at recovery, by id, with their uids.
     pub(super) unread: HashMap<String, u32>,
+    /// Sessions read after recovery but left out of the table, as their user had one there.
+    pub(super) left_out: HashSet<String>,
     generations: u32,
     inhibit: Inhibit,
 }
@@ -230,20 +232,38 @@ impl Daemon {
         kept
     }
 
-    /// A session left unread at recovery joins the table as recovery would have taken it.
+    /// A session left unread at recovery joins the table as recovery would have taken it,
+    /// unless its user has a session there already.
     pub(super) fn session_read(
         &mut self,
         s: LogindSession,
         seat_active: Option<&str>,
         out: &mut Vec<Effect>,
     ) {
-        if self.remote.unread.remove(&s.id).is_none() || s.closing {
+        if self.remote.unread.remove(&s.id).is_none() {
+            return;
+        }
+        if s.closing {
+            if seat_active.is_none_or(|a| a == s.id) {
+                self.bring_greeter(out);
+            }
             return;
         }
         let Some(entry) = table_entry(&s, seat_active) else {
             return;
         };
         let (uid, user, background) = (entry.uid, entry.user.clone(), entry.background);
+        if let Some(e) = (self.sessions.by_uid(uid)).or_else(|| self.sessions.by_user(&user)) {
+            self.remote.left_out.insert(s.id.clone());
+            return out.push(Effect::Log(
+                Level::Warn,
+                format!(
+                    "logind described session {} at last, but {user}'s session {} is in the \
+                     table; leaving {} out",
+                    s.id, e.id, s.id
+                ),
+            ));
+        }
         self.sessions.insert(entry);
         if !self.remote.linked.contains(&uid) {
             self.open_intake(uid, user, background, out);
@@ -465,6 +485,11 @@ impl Daemon {
             },
             false => FrontUnit::Stop,
         })
+    }
+
+    /// A session of `uid` that logind could not describe at recovery.
+    pub(super) fn unread_of(&self, uid: u32) -> Option<&str> {
+        (self.remote.unread.iter()).find_map(|(id, &u)| (u == uid).then_some(id.as_str()))
     }
 
     pub(super) fn is_remote_worker(&self, worker: WorkerId) -> bool {
@@ -837,8 +862,7 @@ impl Daemon {
             out.push(cancel);
             return self.set_step(conn, Step::Starting { uid });
         }
-        if let Some(id) = (self.remote.unread.iter()).find_map(|(id, &u)| (u == uid).then_some(id))
-        {
+        if let Some(id) = self.unread_of(uid) {
             let why = format!("logind has not described the user's running session {id}");
             out.push(cancel);
             return self.refuse_at(Level::Warn, now, conn, &why, out);
