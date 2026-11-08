@@ -353,7 +353,10 @@ as turning Remote Desktop off does, locks the session before a shown
 client's connection closes, and at once while the lock waits for a
 reconnect; each client is then told the server ended it, so it doesn't
 reconnect. A server that dies with a client shown the session locks it when
-it next starts. `[remote_desktop] lock_on_leave = false` turns these locks
+it next starts. These locks go through logind: one that logind refuses or
+doesn't answer within 5 s, after a leave or at a start, is tried again every
+10 s until it takes or a client is shown the session again; one at a stop is
+tried again at the next start. `[remote_desktop] lock_on_leave = false` turns these locks
 off: a client shown the session with it off doesn't lock on a stop or the
 next start, and the last to leave doesn't lock while it is off. None of
 these locks follow a lock-mode connection, as the session stayed locked here
