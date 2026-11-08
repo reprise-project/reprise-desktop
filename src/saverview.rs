@@ -1,7 +1,8 @@
 //! The screen saver on screen: `[screensaver] name` once the idle timer reaches `[idle] blank_after`
 //! (`idle::blank`), or any saver for Reprise Settings' Preview button until the next input. Each output
-//! gets a tree in `layers.saver`, above the lock screen: a black rect and what the saver draws over it,
-//! stepped by one timer at `saver::STEP_MS` (30 a second) while something moves.
+//! gets a tree in `layers.saver`, above the lock screen (so Photos runs as Blank under it): a black rect
+//! and what the saver draws over it, stepped by one timer at `saver::STEP_MS` (30 a second) while
+//! something moves.
 //!
 //! Per-step cost: Starfield and Mystify hand their marks to a stroke node the GPU draws at the
 //! output's resolution; the logo moves one buffer and uploads again only when its colour changes; Photos uploads a picture
@@ -72,7 +73,12 @@ struct Out {
 }
 
 /// Start `kind` on every output of the desktop's (`console::on_desk`), replacing any saver running. `preview` is Preview's run, which the next input after a moment stops.
+/// Under the desktop's lock Photos runs as Blank: the saver draws above the lock.
 pub fn start(state: &mut State, kind: Kind, preview: bool) {
+    let kind = match kind {
+        Kind::Photos if state.desktop_locked() => Kind::Blank,
+        kind => kind,
+    };
     stop(state);
     state.saver.generation += 1;
     let generation = state.saver.generation;
@@ -149,6 +155,16 @@ pub fn start(state: &mut State, kind: Kind, preview: bool) {
         listen_for_photos(state);
     }
     tick(state);
+}
+
+/// The desktop locked: running Photos turns Blank.
+pub fn locked(state: &mut State) {
+    if let Some(run) = &state.saver.run
+        && run.kind == Kind::Photos
+    {
+        let preview = run.grace_until.is_some();
+        start(state, Kind::Photos, preview);
+    }
 }
 
 pub fn running(state: &State) -> bool {
@@ -486,6 +502,46 @@ mod tests {
             generation: 1,
             holds_keys: false,
         }
+    }
+
+    fn photos_harness() -> crate::harness::Harness {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 800, 600);
+        let folder = crate::harness::scratch().join("saver-photos");
+        std::fs::create_dir_all(&folder).unwrap();
+        h.state.config.screensaver.folder = Some(folder);
+        h
+    }
+
+    fn kind(h: &crate::harness::Harness) -> Option<Kind> {
+        h.state.saver.run.as_ref().map(|r| r.kind)
+    }
+
+    #[test]
+    fn photos_started_under_the_lock_show_blank() {
+        let mut h = photos_harness();
+        crate::lockview::lock(&mut h.state);
+        start(&mut h.state, Kind::Photos, false);
+        assert_eq!(kind(&h), Some(Kind::Blank));
+    }
+
+    #[test]
+    fn the_lock_turns_running_photos_blank() {
+        let mut h = photos_harness();
+        start(&mut h.state, Kind::Photos, false);
+        assert_eq!(kind(&h), Some(Kind::Photos));
+        crate::lockview::lock(&mut h.state);
+        assert_eq!(
+            kind(&h),
+            Some(Kind::Blank),
+            "no picture shows above the lock"
+        );
+        start(&mut h.state, Kind::Starfield, false);
+        assert_eq!(
+            kind(&h),
+            Some(Kind::Starfield),
+            "the other savers show no files"
+        );
     }
 
     #[test]
