@@ -303,7 +303,8 @@ pub struct World {
     pub kernel_open: u16,
     /// The VT the console shows, `VT_GETSTATE`'s `v_active`; 0 when it can't be read.
     pub active_vt: u16,
-    /// logind's sessions of class `user` on any seat, text and ssh logins included.
+    /// logind's sessions of class `user` on any seat, text and ssh logins included, and those
+    /// it could not describe.
     pub user_sessions: u32,
     /// Every session logind lists, closing ones included.
     pub login_sessions: Vec<LogindSession>,
@@ -317,6 +318,7 @@ const NO_VT: &str = "no free VT for a session";
 const NO_SESSION: &str = "the account has no session to resume";
 const WORKER_ENDED: &str = "the login ended unexpectedly";
 const SESSION_ENDED: &str = "the session ended";
+const UNREAD: &str = "the account's running session is not known yet; try again shortly";
 const STARTED_EARLY: &str = "the session started before it was asked to";
 const AUTH_TIMED_OUT: &str = "the login waited too long and was cancelled";
 /// What the greeter hears of a failed power call; logind's own error is only logged.
@@ -498,15 +500,15 @@ impl Daemon {
     }
 
     /// Starts the front if remote logins are on, else frees its port, and starts autologin or the
-    /// greeter: after recovery only a greeter, when seat0 shows none. An orphaned greeter was on
-    /// screen, so this waits for it to go.
+    /// greeter: after recovery, sessions logind could not describe included, only a greeter, when
+    /// seat0 shows none. An orphaned greeter was on screen, so this waits for it to go.
     pub fn start(&mut self, _now: Instant, world: &World) -> Vec<Effect> {
         let mut out = vec![self.front_unit()];
         if !self.orphans.is_empty() {
             self.after_orphans = AfterOrphans::Replace;
             return out;
         }
-        if !self.sessions.is_empty() {
+        if !self.sessions.is_empty() || !self.remote.unread.is_empty() {
             if self.seat_empty {
                 self.bring_greeter(&mut out);
             }
@@ -1075,8 +1077,9 @@ impl Daemon {
         }
     }
 
-    /// Routes the login by PAM's account: a uid with a session resumes it, any other starts one.
-    /// Root never logs in here, and is told so in a wrong password's words.
+    /// Routes the login by PAM's account: a uid with a session resumes it, any other starts one,
+    /// unless logind could not describe a session of it at recovery. Root never logs in here, and
+    /// is told so in a wrong password's words.
     fn authenticated(
         &mut self,
         now: Instant,
@@ -1106,6 +1109,13 @@ impl Daemon {
             },
             None => Route::Start,
         };
+        if let (Route::Start, Some(id)) = (&route, self.unread_of(uid)) {
+            out.push(Effect::Log(
+                Level::Warn,
+                format!("a login of {user} waits: logind has not described their session {id}"),
+            ));
+            return self.fail_conversation(ErrorKind::Failed, UNREAD.into(), out);
+        }
         let c = self.conversation.as_mut().expect("conversation");
         let reauth = matches!(c.route, Route::Resume { .. });
         match (reauth, &route) {
@@ -1416,11 +1426,15 @@ impl Daemon {
     ) {
         // A closing session can still be seat0's active one; nothing else is on screen then.
         let seat_active = seat_active.filter(|a| a != id);
-        self.remote.unread.remove(id);
+        let unread = self.remote.unread.remove(id).is_some() | self.remote.left_out.remove(id);
         if self.orphans.iter().any(|o| o.id == id) {
             return self.orphan_gone(world, id, seat_active, out);
         }
         let Some(entry) = self.sessions.remove(id) else {
+            // It may have been on screen, as recovery could not tell.
+            if unread && seat_active.is_none() {
+                return self.bring_greeter(out);
+            }
             if self.start_in_flight() || self.remote_start_in_flight() {
                 self.removed_early.push((id.into(), seat_active.clone()));
             }
