@@ -152,8 +152,8 @@ async fn connect(path: &Path, uid: u32) -> io::Result<UnixStream> {
 /// Opens a link; production passes [`open`].
 pub type Opener = Rc<dyn Fn(u32) -> Pin<Box<dyn Future<Output = io::Result<UnixStream>>>>>;
 
-/// One link per uid, each in a task of the current `LocalSet`. A link that does not open
-/// within `deadline` is reported lost.
+/// One link per uid, each in a task of the current `LocalSet`. A link counts as open once its
+/// server's first report arrives; one that does not within `deadline` is reported lost.
 pub struct Links {
     state: Rc<RefCell<State>>,
     input: mpsc::Sender<Input>,
@@ -239,8 +239,9 @@ impl Links {
         Links { reopen, ..self }
     }
 
-    /// Opens `uid`'s link, answered by `IntakeOpen` or `IntakeLost`. A link that is opening
-    /// already answers once and tries every [`RETRY`]; one that is up answers `IntakeOpen` again.
+    /// Opens `uid`'s link, answered by `IntakeOpen` then the server's first `Viewers`, or by
+    /// `IntakeLost`. A link that is opening already answers once and tries every [`RETRY`]; one
+    /// that is up answers `IntakeOpen` again.
     pub fn open(&self, uid: u32) {
         let retry = Retry {
             every: RETRY,
@@ -358,13 +359,14 @@ async fn run(
 ) {
     let queue = Rc::new(Queue::default());
     match open_until(uid, &open, &pace, within).await {
-        Ok(stream) => {
+        Ok((stream, reader, count)) => {
             match state.borrow_mut().current(uid, serial) {
                 Some(link) => link.queue = Some(queue.clone()),
                 None => return,
             }
             if input.send(Input::IntakeOpen { uid }).await.is_ok()
-                && let Err(e) = relay(uid, &stream, &queue, &input).await
+                && input.send(Input::Viewers { uid, count }).await.is_ok()
+                && let Err(e) = relay(uid, &stream, reader, &queue, &input).await
             {
                 log::warn!("dropped uid {uid}'s hand-over link: {e}");
             }
@@ -388,18 +390,24 @@ async fn run(
     let _ = input.send(Input::IntakeLost { uid }).await;
 }
 
-/// Tries `open` at `pace` until it connects or `within` has passed.
+/// Tries `open` at `pace` until a link's server reports or `within` has passed. A connect
+/// alone proves nothing: systemd holds the socket while the server is down or restarting.
 async fn open_until(
     uid: u32,
     open: &Opener,
     pace: &Pace,
     within: Duration,
-) -> io::Result<UnixStream> {
+) -> io::Result<(UnixStream, FdFrameReader, u32)> {
     let give_up = Instant::now() + within;
     loop {
         let left = give_up.saturating_duration_since(Instant::now());
-        match tokio::time::timeout(left, open(uid)).await {
-            Ok(Ok(stream)) => return Ok(stream),
+        let tried = async {
+            let stream = open(uid).await?;
+            let (reader, count) = first_report(&stream).await?;
+            Ok::<_, io::Error>((stream, reader, count))
+        };
+        match tokio::time::timeout(left, tried).await {
+            Ok(Ok(opened)) => return Ok(opened),
             Ok(Err(e)) if Instant::now() + pace.every.get() >= give_up => return Err(e),
             Ok(Err(_)) => pace.wait().await,
             Err(_) => return Err(io::ErrorKind::TimedOut.into()),
@@ -407,15 +415,51 @@ async fn open_until(
     }
 }
 
-/// Writes `queue`'s hand-overs and feeds reports to `input` until the link breaks.
+/// Reads `stream` until its first report, which the server sends as it accepts.
+async fn first_report(stream: &UnixStream) -> io::Result<(FdFrameReader, u32)> {
+    let mut reader = FdFrameReader::new();
+    loop {
+        stream.readable().await?;
+        match stream.try_io(Interest::READABLE, || reader.read_from(stream.as_fd())) {
+            Ok(0) => return Err(io::ErrorKind::UnexpectedEof.into()),
+            Ok(_) => {}
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
+            Err(e) => return Err(e),
+        }
+        if let Some(count) = next_report(&mut reader)? {
+            return Ok((reader, count));
+        }
+    }
+}
+
+/// The next whole report `reader` holds.
+fn next_report(reader: &mut FdFrameReader) -> io::Result<Option<u32>> {
+    let broken = |e| io::Error::other(ipc::error_kind(&e));
+    let Some((body, fd)) = reader.next().map_err(broken)? else {
+        return Ok(None);
+    };
+    if fd.is_some() {
+        return Err(io::Error::other("a socket came with a report"));
+    }
+    let IntakeReport::Viewers { count } = frame::decode(&body).map_err(broken)?;
+    Ok(Some(count))
+}
+
+/// Writes `queue`'s hand-overs and feeds the reports after `reader`'s first to `input` until
+/// the link breaks.
 async fn relay(
     uid: u32,
     stream: &UnixStream,
+    mut reader: FdFrameReader,
     queue: &Queue,
     input: &mpsc::Sender<Input>,
 ) -> io::Result<()> {
-    let mut reader = FdFrameReader::new();
     loop {
+        while let Some(count) = next_report(&mut reader)? {
+            if input.send(Input::Viewers { uid, count }).await.is_err() {
+                return Ok(());
+            }
+        }
         let next = queue.waiting.borrow_mut().pop_front();
         if let Some(f) = next {
             let sent = write(stream, queue, &f).await;
@@ -436,16 +480,6 @@ async fn relay(
                     Ok(_) => {}
                     Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
                     Err(e) => return Err(e),
-                }
-                let broken = |e| io::Error::other(ipc::error_kind(&e));
-                while let Some((body, fd)) = reader.next().map_err(broken)? {
-                    if fd.is_some() {
-                        return Err(io::Error::other("a socket came with a report"));
-                    }
-                    let IntakeReport::Viewers { count } = frame::decode(&body).map_err(broken)?;
-                    if input.send(Input::Viewers { uid, count }).await.is_err() {
-                        return Ok(());
-                    }
                 }
             }
             () = queue.queued.notified() => {}
@@ -663,8 +697,9 @@ pub(crate) mod tests {
                 let uid = own_uid();
                 links.open(uid);
                 let (rdp, _) = listener.accept().await.unwrap();
-                assert_eq!(next(&mut rx).await, Input::IntakeOpen { uid });
+                nothing_within(&mut rx, Duration::from_millis(100)).await;
                 report(&rdp, 2).await;
+                assert_eq!(next(&mut rx).await, Input::IntakeOpen { uid });
                 assert_eq!(next(&mut rx).await, Input::Viewers { uid, count: 2 });
                 links.open(uid);
                 assert_eq!(
@@ -710,7 +745,8 @@ pub(crate) mod tests {
     }
 
     /// Links whose every link is one end of a pair whose send buffer is full and whose peer
-    /// never reads, so no hand-over is ever written. The peers live in the returned list.
+    /// reports no viewers and never reads, so no hand-over is ever written. The peers live in
+    /// the returned list.
     fn stalled_links() -> (Links, Receiver<Input>, Rc<RefCell<Vec<UnixStream>>>) {
         let (tx, rx) = mpsc::channel(ipc::QUEUE);
         let peers: Rc<RefCell<Vec<UnixStream>>> = Rc::default();
@@ -720,6 +756,8 @@ pub(crate) mod tests {
                 let (ours, peer) = std::os::unix::net::UnixStream::pair().unwrap();
                 ours.set_nonblocking(true).unwrap();
                 peer.set_nonblocking(true).unwrap();
+                let none = frame::encode(&IntakeReport::Viewers { count: 0 }).unwrap();
+                (&peer).write_all(&none).unwrap();
                 let chunk = [0u8; 4096];
                 while (&ours).write(&chunk).is_ok() {}
                 while (&ours).write(&chunk[..1]).is_ok() {}
@@ -729,6 +767,12 @@ pub(crate) mod tests {
             })
         };
         (Links::new(tx, open, WAIT), rx, peers)
+    }
+
+    /// Expects `uid`'s link to open with its stand-in's report of no viewers.
+    async fn opened(rx: &mut Receiver<Input>, uid: u32) {
+        assert_eq!(next(rx).await, Input::IntakeOpen { uid });
+        assert_eq!(next(rx).await, Input::Viewers { uid, count: 0 });
     }
 
     async fn nothing_within(rx: &mut Receiver<Input>, wait: Duration) {
@@ -749,7 +793,7 @@ pub(crate) mod tests {
                 let (links, mut rx, _peers) = stalled_links();
                 let uid = own_uid();
                 links.open(uid);
-                assert_eq!(next(&mut rx).await, Input::IntakeOpen { uid });
+                opened(&mut rx, uid).await;
                 let mut held = Vec::new();
                 for conn in 0..MAX_FORWARDS as u64 {
                     let (pipe, w) = watched_pipe();
@@ -778,7 +822,7 @@ pub(crate) mod tests {
                 let (links, mut rx, _peers) = stalled_links();
                 let uid = own_uid();
                 links.open(uid);
-                assert_eq!(next(&mut rx).await, Input::IntakeOpen { uid });
+                opened(&mut rx, uid).await;
                 let mut ends = Vec::new();
                 for conn in 1..=3 {
                     let (pipe, w) = watched_pipe();
@@ -890,7 +934,9 @@ pub(crate) mod tests {
                 let rdp = dir.path().join(DIR);
                 std::fs::create_dir(&rdp).unwrap();
                 mode(&rdp, 0o700);
-                let _listener = UnixListener::bind(rdp.join(SOCKET)).unwrap();
+                let listener = UnixListener::bind(rdp.join(SOCKET)).unwrap();
+                let (stream, _) = listener.accept().await.unwrap();
+                report(&stream, 0).await;
                 assert_eq!(next(&mut rx).await, Input::IntakeOpen { uid });
             })
             .await;
@@ -905,8 +951,14 @@ pub(crate) mod tests {
                 let uid = own_uid();
                 links.open(uid);
                 links.open(uid + 1);
-                assert_eq!(next(&mut rx).await, Input::IntakeOpen { uid });
-                assert_eq!(next(&mut rx).await, Input::IntakeOpen { uid: uid + 1 });
+                let mut got = Vec::new();
+                for _ in 0..4 {
+                    got.push(next(&mut rx).await);
+                }
+                for uid in [uid, uid + 1] {
+                    assert!(got.contains(&Input::IntakeOpen { uid }), "{got:?}");
+                    assert!(got.contains(&Input::Viewers { uid, count: 0 }), "{got:?}");
+                }
                 links.close_all_but(&BTreeSet::from([uid]));
                 let (pipe, mut w) = watched_pipe();
                 assert!(links.forward(uid, 1, pipe, Box::new(hand_over(1))));
@@ -916,6 +968,20 @@ pub(crate) mod tests {
                 assert!(is_open(&mut w));
                 nothing_within(&mut rx, Duration::from_millis(100)).await;
                 drop(peers);
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn a_link_whose_server_never_reports_is_lost_at_the_deadline() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let (dir, _listening) = runtime_dir();
+                let (links, mut rx) = links_at(dir.path(), Duration::from_millis(300));
+                let uid = own_uid();
+                links.open(uid);
+                assert_eq!(next(&mut rx).await, Input::IntakeLost { uid });
             })
             .await;
     }

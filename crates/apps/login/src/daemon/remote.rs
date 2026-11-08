@@ -955,8 +955,7 @@ impl Daemon {
         }
     }
 
-    /// A link's count of its session's clients. The first after a reopen ends the reopen: a
-    /// link that opens and drops before it reports counts as the reopen giving up.
+    /// A link's count of its session's clients. The first after a reopen ends the reopen.
     pub(super) fn viewers_reported(
         &mut self,
         now: Instant,

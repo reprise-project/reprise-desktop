@@ -153,7 +153,7 @@ pub enum Input {
         uid: Option<u32>,
         member: bool,
     },
-    /// The link to `uid`'s hand-over socket is up.
+    /// The link to `uid`'s hand-over socket is up, and its first `Viewers` follows.
     IntakeOpen {
         uid: u32,
     },
@@ -224,7 +224,8 @@ pub enum Effect {
         user: String,
         group: String,
     },
-    /// Opens the link to `uid`'s hand-over socket, answered by `IntakeOpen` or `IntakeLost`.
+    /// Opens the link to `uid`'s hand-over socket, answered by `IntakeOpen` once its server
+    /// reports, or `IntakeLost`.
     OpenIntake {
         uid: u32,
     },
