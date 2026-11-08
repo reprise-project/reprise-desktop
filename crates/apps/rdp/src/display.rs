@@ -252,6 +252,8 @@ impl Display {
 struct Session {
     _grant: Arc<Grant>,
     _streams: Vec<stream::Stream>,
+    /// In lock mode, keeps the session's sound off this computer's speakers.
+    _silence: Option<crate::sink::Silence>,
 }
 
 #[async_trait::async_trait]
@@ -374,9 +376,16 @@ impl RdpServerDisplay for Display {
                 lives.push(live.on(&joint, screen));
                 kept.push(stream);
             }
+            let silence = lock_mode.then(crate::sink::Silence::hold).and_then(|held| {
+                held.inspect_err(|e| {
+                    log::warn!("sound: lock mode can't silence this computer: {e}")
+                })
+                .ok()
+            });
             self.session = Some(Session {
                 _grant: grant,
                 _streams: kept,
+                _silence: silence,
             });
             let held = lock_mode.then(|| self.ending.clone());
             *self.live.lock().unwrap() = Some(Lives::new(lives, held));

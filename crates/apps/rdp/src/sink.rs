@@ -151,6 +151,19 @@ impl Drop for Sink {
     }
 }
 
+/// Keeps the shared sink the default with nothing captured from it, so what plays in the session
+/// goes nowhere rather than to this computer's speakers.
+pub struct Silence {
+    _shared: Arc<Shared>,
+}
+
+impl Silence {
+    pub fn hold() -> io::Result<Silence> {
+        let shared = acquire(&SHARED, Shared::alive, Shared::open)?;
+        Ok(Silence { _shared: shared })
+    }
+}
+
 /// The null sink and the default switch to it, on a thread whose PipeWire connection owns the
 /// sink. Dropping it gives the default back and removes the sink.
 struct Shared {
