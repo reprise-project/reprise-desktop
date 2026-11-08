@@ -20,6 +20,9 @@ type Work = Box<dyn FnOnce() -> OnLoop + Send>;
 /// thread; past this many, later jobs wait for a thread to come back instead of stranding more.
 pub const MAX_THREADS: usize = 8;
 
+/// Jobs waiting this long with no thread coming back are logged as a file system not answering.
+const STALLED: Duration = Duration::from_secs(2);
+
 /// The loop's end of the jobs' channel. No sender until `setup`, or when the
 /// channel could not join the loop: `spawn` then runs the work inline.
 #[derive(Default)]
@@ -41,7 +44,9 @@ struct Pool {
     running: Arc<AtomicUsize>,
     /// Jobs waiting for a thread while [`MAX_THREADS`] are running.
     waiting: VecDeque<Work>,
-    /// The wait was logged; cleared once the waiting jobs have started.
+    /// When a waiting job last started, or the first began to wait; None while none wait.
+    stalled_since: Option<Instant>,
+    /// The stall was logged; cleared once the waiting jobs have started.
     warned: bool,
 }
 
@@ -51,7 +56,7 @@ pub fn setup(state: &mut State) {
     let joined = state.handle.insert_source(rx, |ev, _, state| {
         if let Event::Msg(run) = ev {
             run_one(run, state);
-            state.fsjobs.start_waiting();
+            state.fsjobs.start_waiting(Instant::now());
         }
     });
     match joined {
@@ -88,27 +93,29 @@ impl FsJobs {
     }
 
     /// Starts waiting jobs on the threads that have come back.
-    fn start_waiting(&mut self) {
+    fn start_waiting(&mut self, now: Instant) {
         let Some(tx) = self.tx.clone() else {
             return;
         };
-        self.files.start_waiting(&tx, "file jobs");
-        self.actions.start_waiting(&tx, "file actions");
+        self.files.start_waiting(&tx, "file jobs", now);
+        self.actions.start_waiting(&tx, "file actions", now);
     }
+}
+
+fn files(jobs: &mut FsJobs) -> &mut Pool {
+    &mut jobs.files
+}
+
+fn actions(jobs: &mut FsJobs) -> &mut Pool {
+    &mut jobs.actions
 }
 
 impl Pool {
     /// Runs `work` on a thread of its own, or queues it while [`MAX_THREADS`] are running.
     /// False only if the thread fails to spawn and the work is lost.
-    fn spawn(&mut self, tx: Sender<OnLoop>, work: Work, what: &str) -> bool {
+    fn spawn(&mut self, tx: Sender<OnLoop>, work: Work, now: Instant) -> bool {
         if self.running.load(Ordering::Acquire) >= MAX_THREADS {
-            if !self.warned {
-                log::warn!(
-                    "fsjobs: {MAX_THREADS} {what} have not finished (a file system not \
-                     answering?); later ones wait for one"
-                );
-                self.warned = true;
-            }
+            self.stalled_since.get_or_insert(now);
             self.waiting.push_back(work);
             return true;
         }
@@ -120,17 +127,43 @@ impl Pool {
         spawned
     }
 
-    fn start_waiting(&mut self, tx: &Sender<OnLoop>, what: &str) {
+    fn start_waiting(&mut self, tx: &Sender<OnLoop>, what: &str, now: Instant) {
+        let mut started = false;
         while self.running.load(Ordering::Acquire) < MAX_THREADS {
             let Some(work) = self.waiting.pop_front() else {
                 break;
             };
-            self.spawn(tx.clone(), work, what);
+            self.spawn(tx.clone(), work, now);
+            started = true;
         }
-        if self.waiting.is_empty() && self.warned {
-            log::info!("fsjobs: the waiting {what} have started");
-            self.warned = false;
+        if self.waiting.is_empty() {
+            self.stalled_since = None;
+            if self.warned {
+                log::info!("fsjobs: the waiting {what} have started");
+                self.warned = false;
+            }
+        } else if started {
+            self.stalled_since = Some(now);
         }
+    }
+
+    /// Warns once jobs have waited [`STALLED`] with no thread coming back. Returns how long until
+    /// the next check, or None when none wait or the stall was logged.
+    fn check(&mut self, now: Instant, what: &str) -> Option<Duration> {
+        let since = self.stalled_since?;
+        if self.warned {
+            return None;
+        }
+        let waited = now.saturating_duration_since(since);
+        if waited < STALLED {
+            return Some(STALLED - waited);
+        }
+        log::warn!(
+            "fsjobs: {what} have waited {STALLED:?} for one of {MAX_THREADS} threads (a file \
+             system not answering?)"
+        );
+        self.warned = true;
+        None
     }
 }
 
@@ -295,7 +328,7 @@ impl State {
             work()(self);
             return true;
         };
-        self.fsjobs.files.spawn(tx, Box::new(work), "file jobs")
+        self.spawn_pooled(files, "file jobs", tx, Box::new(work))
     }
 
     /// [`State::spawn_fs_job`] for an action asked for by hand: past [`ACTION_DEADLINE`] an error box
@@ -324,7 +357,35 @@ impl State {
             log::warn!("fsjobs: no deadline for {}: {}", action.title, e.error);
         }
         let work = gated(gate, action.late, work);
-        self.fsjobs.actions.spawn(tx, work, "file actions")
+        self.spawn_pooled(actions, "file actions", tx, work)
+    }
+
+    /// Spawns `work` on the pool `pool` picks. When it is the first to wait, a timer checks that
+    /// pool until its jobs start or the stall is logged.
+    fn spawn_pooled(
+        &mut self,
+        pool: fn(&mut FsJobs) -> &mut Pool,
+        what: &'static str,
+        tx: Sender<OnLoop>,
+        work: Work,
+    ) -> bool {
+        let waited = pool(&mut self.fsjobs).stalled_since.is_some();
+        let spawned = pool(&mut self.fsjobs).spawn(tx, work, Instant::now());
+        if waited || pool(&mut self.fsjobs).stalled_since.is_none() {
+            return spawned;
+        }
+        let watch =
+            self.handle.insert_source(
+                Timer::from_duration(STALLED),
+                move |_, _, state| match pool(&mut state.fsjobs).check(Instant::now(), what) {
+                    Some(left) => TimeoutAction::ToDuration(left),
+                    None => TimeoutAction::Drop,
+                },
+            );
+        if let Err(e) = watch {
+            log::warn!("fsjobs: no stall check for {what}: {}", e.error);
+        }
+        spawned
     }
 
     /// [`State::spawn_fs_job`] for work that opens no file (painting art, bus calls) or only the
@@ -386,15 +447,19 @@ mod tests {
                 let _ = std::fs::read(&path);
                 Box::new(|_| {})
             });
-            assert!(jobs.files.spawn(tx.clone(), work, "file jobs"));
+            assert!(jobs.files.spawn(tx.clone(), work, Instant::now()));
         }
         let running = Arc::clone(&jobs.files.running);
         until("the threads to start", || {
             running.load(Ordering::Acquire) == MAX_THREADS
         });
         assert_eq!(jobs.files.waiting.len(), 3, "jobs past the cap wait");
+        assert_eq!(
+            jobs.files.check(Instant::now() + STALLED, "file jobs"),
+            None
+        );
         assert!(jobs.files.warned);
-        jobs.start_waiting();
+        jobs.start_waiting(Instant::now());
         assert_eq!(jobs.files.waiting.len(), 3, "no thread came back");
 
         // A writer opening and closing the pipe answers each blocked read with an empty file.
@@ -412,13 +477,70 @@ mod tests {
         let end = Instant::now() + Duration::from_secs(5);
         while !(jobs.files.waiting.is_empty() && running.load(Ordering::Acquire) == 0) {
             assert!(Instant::now() < end, "timed out waiting for the jobs");
-            jobs.start_waiting();
+            jobs.start_waiting(Instant::now());
             std::thread::sleep(Duration::from_millis(5));
         }
         assert!(!jobs.files.warned, "the wait is over");
         stop.store(true, Ordering::Release);
         writer.join().unwrap();
         let _ = std::fs::remove_dir_all(hang.parent().unwrap());
+    }
+
+    #[test]
+    fn jobs_waiting_past_the_cap_warn_only_once_no_thread_has_come_back_for_stalled() {
+        let (tx, _rx) = channel::channel::<OnLoop>();
+        let mut jobs = FsJobs {
+            tx: Some(tx.clone()),
+            ..Default::default()
+        };
+        let running = Arc::clone(&jobs.files.running);
+        running.store(MAX_THREADS, Ordering::Release);
+        let t0 = Instant::now();
+        let release = Arc::new(AtomicBool::new(false));
+        let quick = || -> Work {
+            let release = Arc::clone(&release);
+            Box::new(move || {
+                while !release.load(Ordering::Acquire) {
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+                Box::new(|_| {})
+            })
+        };
+        for _ in 0..2 {
+            assert!(jobs.files.spawn(tx.clone(), quick(), t0));
+        }
+        assert_eq!(jobs.files.waiting.len(), 2);
+        assert!(!jobs.files.warned, "a burst past the cap is not a stall");
+        let second = Duration::from_secs(1);
+        assert_eq!(
+            jobs.files.check(t0 + second, "file jobs"),
+            Some(STALLED - second)
+        );
+
+        running.fetch_sub(1, Ordering::AcqRel);
+        jobs.files.start_waiting(&tx, "file jobs", t0 + second);
+        assert_eq!(jobs.files.waiting.len(), 1);
+        assert_eq!(
+            jobs.files.check(t0 + STALLED, "file jobs"),
+            Some(second),
+            "a thread coming back restarts the wait"
+        );
+        assert!(!jobs.files.warned);
+        assert_eq!(jobs.files.check(t0 + second + STALLED, "file jobs"), None);
+        assert!(jobs.files.warned, "no thread came back for {STALLED:?}");
+
+        release.store(true, Ordering::Release);
+        until("the started job to end", || {
+            running.load(Ordering::Acquire) == MAX_THREADS - 1
+        });
+        jobs.files.start_waiting(&tx, "file jobs", t0 + STALLED * 2);
+        assert!(jobs.files.waiting.is_empty());
+        assert!(!jobs.files.warned, "the waiting jobs have started");
+        assert_eq!(jobs.files.check(t0 + STALLED * 9, "file jobs"), None);
+        until("the last job to end", || {
+            running.load(Ordering::Acquire) == MAX_THREADS - 1
+        });
+        assert!(!jobs.files.warned);
     }
 
     #[test]
@@ -436,7 +558,7 @@ mod tests {
                 let _ = std::fs::read(&path);
                 Box::new(|_| {})
             });
-            assert!(jobs.files.spawn(tx.clone(), work, "file jobs"));
+            assert!(jobs.files.spawn(tx.clone(), work, Instant::now()));
         }
         let running = Arc::clone(&jobs.files.running);
         until("the threads to start", || {
@@ -524,7 +646,7 @@ mod tests {
             }
             Box::new(|_| {})
         });
-        assert!(jobs.actions.spawn(tx, work, "file actions"));
+        assert!(jobs.actions.spawn(tx, work, Instant::now()));
         let running = Arc::clone(&jobs.actions.running);
         until("the action to start", || entered.load(Ordering::Acquire));
         assert_eq!(gate.give_up(), Some(false), "no change had started");
@@ -550,7 +672,7 @@ mod tests {
         for _ in 0..MAX_THREADS {
             assert!(
                 jobs.files
-                    .spawn(tx.clone(), stuck(hang.clone()), "file jobs")
+                    .spawn(tx.clone(), stuck(hang.clone()), Instant::now())
             );
         }
         let files = Arc::clone(&jobs.files.running);
@@ -563,7 +685,7 @@ mod tests {
             done.store(true, Ordering::Release);
             Box::new(|_| {})
         });
-        assert!(jobs.actions.spawn(tx.clone(), action, "file actions"));
+        assert!(jobs.actions.spawn(tx.clone(), action, Instant::now()));
         until("the action to run", || ran.load(Ordering::Acquire));
         let actions = Arc::clone(&jobs.actions.running);
         until("the action to end", || actions.load(Ordering::Acquire) == 0);
@@ -576,11 +698,11 @@ mod tests {
                     Box::new(|_| {})
                 }
             });
-            assert!(jobs.actions.spawn(tx.clone(), work, "file actions"));
+            assert!(jobs.actions.spawn(tx.clone(), work, Instant::now()));
         }
         assert_eq!(jobs.actions.waiting.len(), 1, "a ninth stuck action waits");
         answer(&hang, || {
-            jobs.start_waiting();
+            jobs.start_waiting(Instant::now());
             jobs.actions.waiting.is_empty()
                 && actions.load(Ordering::Acquire) == 0
                 && files.load(Ordering::Acquire) == 0
