@@ -46,6 +46,8 @@ pub struct RemoteMonitor {
 pub struct Console {
     pub owner: Owner,
     objects: Vec<ObjectId>,
+    /// Objects [`stop`] ended that their client has not destroyed yet (`asked_in_lock_mode`).
+    unheard: Vec<ObjectId>,
     layout: Vec<RemoteMonitor>,
     /// Remote outputs this layout removes, at their last boxes, for `homes::refit_remote`.
     pub(crate) gone: Vec<(Output, Rect)>,
@@ -99,6 +101,12 @@ pub fn holds(state: &State, object: &ObjectId) -> bool {
     state.console.objects.contains(object)
 }
 
+/// Whether `request`'s client still holds an object [`stop`] ended: until it destroys the
+/// object it may not have heard `ended`, so what it asks for now may belong to lock mode.
+pub fn asked_in_lock_mode(state: &State, request: &ObjectId) -> bool {
+    (state.console.unheard.iter()).any(|o| o.same_client_as(request))
+}
+
 /// Why an object may not begin: `[power] locker` is set, or a live locker client holds the lock.
 pub fn refusal(state: &mut State) -> Option<Reason> {
     crate::sessionlock::check_alive(state);
@@ -146,6 +154,7 @@ pub fn relayout(state: &mut State, layout: Vec<RemoteMonitor>) {
 
 /// `object` went. Lock mode ends with the last one; the lock stays.
 pub fn end(state: &mut State, object: ObjectId) {
+    state.console.unheard.retain(|o| *o != object);
     let objects = &mut state.console.objects;
     let Some(i) = objects.iter().position(|o| *o == object) else {
         return;
@@ -165,8 +174,9 @@ pub fn stop(state: &mut State, reason: Reason) {
     state.eis_revoke_senders();
     state.inputproto.keys.revoke_all();
     for id in std::mem::take(&mut state.console.objects) {
-        if let Ok(r) = RepriseLockScreenV1::from_id(&state.dh, id) {
+        if let Ok(r) = RepriseLockScreenV1::from_id(&state.dh, id.clone()) {
             crate::inputproto::send_ended(&r, reason);
+            state.console.unheard.push(id);
         }
     }
     leave(state);

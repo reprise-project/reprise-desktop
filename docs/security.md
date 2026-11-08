@@ -455,7 +455,9 @@ ends lock mode: every libei sender, the server's and any other the portal
 let in, is cut off at once (its libei connection is closed and its keys
 object goes inert), each object hears `ended(console_unlocked)`, the portal
 closes those sessions, and the windows come back to the computer's own
-screens. The server sees LockedHint false within 500 ms of the screens
+screens. Until the portal destroys every object that heard `ended`, a
+sender it asks for is refused, so a session that connects its input as the
+console unlocks gets none. The server sees LockedHint false within 500 ms of the screens
 going and tells its client another connection took over, so a client set to
 reconnect doesn't lock the computer again. A locker client that takes the
 lock during lock mode ends it the same way, with `ended(replaced)`, and its
