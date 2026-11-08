@@ -848,7 +848,8 @@ no port forwarding; allow the port in your firewall if you run one.
   are. Caps Lock and Num Lock follow the client; with several connected,
   the lock keys of the first computer to send them set the session's until
   it leaves. Five mouse buttons, the wheel and the horizontal wheel work. Keys
-  and buttons held when the client leaves are let go.
+  and buttons held when the client leaves are let go. The client's Power,
+  Sleep and Wake keys do nothing here.
 - **Copy and paste.** Text and pictures copied on either side paste on the
   other while a client is connected, up to 16 MiB of text as RDP carries it
   (UTF-16, so about 8 MiB of plain ASCII) and 64 MiB of picture. Pasting
