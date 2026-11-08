@@ -299,9 +299,10 @@ impl State {
             .is_some_and(|v| matches!(v.dialog.style, Style::Welcome(_)))
     }
 
-    /// Redraw the taskbars after the stack or keyboard changed, when some dialog has a button or
-    /// `closed_one` had one.
+    /// After the stack or keyboard changed: the consent gate follows the keyboard, and the taskbars
+    /// redraw when some dialog has a button or `closed_one` had one.
     fn sync_dialog_tasks(&mut self, closed_one: bool) {
+        self.follow_consent_keyboard();
         if closed_one || self.dialogs.views.iter().any(|v| v.dialog.on_taskbar()) {
             self.redraw_taskbars();
         }

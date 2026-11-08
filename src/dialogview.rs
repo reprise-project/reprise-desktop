@@ -49,6 +49,8 @@ pub struct Dialogs {
     pub picker_wake: Option<smithay::reexports::calloop::ping::Ping>,
     /// The pinned folders, for Browse dialogs' places bars and the desktop's folder menus.
     pub pins: Option<reprisefs::pins::Pins>,
+    /// The dialog last seen with the keyboard ([`State::follow_consent_keyboard`]).
+    pub keyboard_holder: Option<u64>,
 }
 
 pub struct DialogView {

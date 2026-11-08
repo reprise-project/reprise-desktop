@@ -44,6 +44,9 @@ impl State {
         }
         let serial = SERIAL_COUNTER.next_serial();
         let pos = self.pointer_location();
+        if self.consent_refuses_button(button, state == ButtonState::Pressed, pos) {
+            return;
+        }
         if state == ButtonState::Pressed && self.interaction.is_keyboard() {
             self.end_interaction();
             self.repoint(pos, time);

@@ -20,8 +20,8 @@ impl Form {
         });
     }
 
-    /// Take over what `old`'s controls hold, its focus and its pointer when the host builds the
-    /// same form again for a new text size or font. Items are matched by id; labels and notes
+    /// Take over what `old`'s controls hold, its focus, its pointer and a consent form's wait
+    /// when the host builds the same form again for a new text size or font. Items are matched by id; labels and notes
     /// keep their new text, which was measured for the new size.
     pub fn carry(&mut self, old: &Form) {
         for it in &mut self.items {
@@ -40,6 +40,9 @@ impl Form {
         let focus = old.focus.and_then(|i| self.index_of(old.items.get(i)?.id));
         self.set_focus(focus);
         self.carry_pointer(old);
+        if old.consent.is_some() {
+            self.consent = old.consent.clone();
+        }
     }
 
     /// Move each control to the rect of `template`'s item with the same id, moved by `offset`;

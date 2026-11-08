@@ -247,6 +247,7 @@ fn build_form(
     ));
     let mut f = Form::new(items);
     f.focus_id("tree");
+    f.set_consent();
     f
 }
 
@@ -435,6 +436,28 @@ mod tests {
             theme.fonts.size_px,
         );
         reprisekit::raster::write_preview(&c, "picker-preview.png");
+    }
+
+    #[test]
+    fn a_bare_letter_shares_nothing() {
+        use reprisekit::controls::form::{Event, Key};
+        let mut f = build_form(Purpose::Share, &rows(), Some(1), true, "Chromium", |_| None);
+        assert_eq!(f.key(Key::Char('s')), Event::None);
+        assert_eq!(f.key(Key::Char('r')), Event::None);
+        assert_eq!(f.checked("remember"), Some(false));
+        assert_eq!(f.key(Key::Access('s')), Event::Pressed("share"));
+    }
+
+    #[test]
+    fn tab_then_enter_or_space_shares_nothing() {
+        use reprisekit::controls::form::{Event, Key};
+        let mut f = build_form(Purpose::Share, &rows(), Some(1), true, "Chromium", |_| None);
+        for _ in 0..4 {
+            f.key(Key::Tab { back: false });
+            let mut g = f.clone();
+            assert_eq!(f.key(Key::Enter), Event::Pressed("cancel"));
+            assert_ne!(g.key(Key::Space), Event::Pressed("share"));
+        }
     }
 
     #[test]
