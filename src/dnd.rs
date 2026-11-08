@@ -1173,6 +1173,44 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_popup_grab_a_drag_holds_never_takes_the_keyboard_under_the_lock() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+        let w = h.state.win(t.id).expect("the window");
+        let (client, x, y) = (w.geom.client, w.x, w.y);
+        h.pointer_to(
+            f64::from(x + client.x + client.width / 2),
+            f64::from(y + client.y + client.height / 2),
+        );
+        h.button(crate::input::BTN_LEFT, true);
+        h.roundtrip(&mut c);
+        let pointer = h.state.seat.get_pointer().expect("pointer");
+        let start = crate::popupgrab::press_start(&pointer).expect("the press");
+        let ours = start
+            .focus
+            .as_ref()
+            .and_then(|(f, _)| f.surface())
+            .expect("the press is on the window");
+        let source = DragSource::new(Origin::Local(ours.clone()));
+        h.state
+            .start_drag(source, None, start, SERIAL_COUNTER.next_serial());
+        assert!(h.state.dnd.running());
+        let _menu = h.map_popup(&mut c, t, 100, 80);
+        assert!(h.state.dnd.holds_popup(), "the drag holds the menu's grab");
+
+        crate::lockview::lock(&mut h.state);
+        h.dispatch();
+        h.roundtrip(&mut c);
+        let kb = h.state.seat.get_keyboard().expect("keyboard");
+        assert_eq!(kb.current_focus(), None, "the lock holds the keyboard");
+        assert!(!kb.is_grabbed(), "no popup grab came back");
+        assert_eq!(c.side.keyboard_focus, None);
+        assert!(!h.state.dnd.holds_popup());
+    }
+
+    #[test]
     fn modifiers_pick_the_compositor_action() {
         assert_eq!(compositor_action(true, false, false, false), (NONE, false));
         assert_eq!(compositor_action(true, true, false, false), (COPY, false));

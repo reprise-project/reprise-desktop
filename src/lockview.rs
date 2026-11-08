@@ -566,6 +566,8 @@ pub fn seal(state: &mut State, raise: impl FnOnce(&mut State)) {
     // The emoji picker and clipboard history would type or paste into whatever has the keyboard after
     // unlock; the region overlay would take the pointer from the lock dialog.
     state.close_panels();
+    // A client popup grab the drag holds would be set again at its end, under the lock.
+    state.dnd.dismiss_held_popup();
     // Before the focus clearing below: the drag's end puts the pointer back on a client, which it takes away.
     state.cancel_drag();
     cancel_interaction(state);
