@@ -16,8 +16,8 @@ use zeroize::Zeroizing;
 
 use super::account::Accounts;
 use super::{
-    Conversation, Daemon, Effect, Job, LogindSession, NO_VT, Phase, SESSION_ENDED, START_WAIT,
-    SessionWorker, Timer, Unread, WORKER_ENDED, WorkerId, World, table_entry,
+    Conversation, Daemon, Effect, GREETER_VT, Job, LogindSession, NO_VT, Phase, SESSION_ENDED,
+    START_WAIT, SessionWorker, Timer, Unread, WORKER_ENDED, WorkerId, World, table_entry,
 };
 use crate::table::SessionEntry;
 use crate::vt;
@@ -489,11 +489,12 @@ impl Daemon {
             .map(|(&uid, _)| uid)
     }
 
-    /// Every VT a session holds or a start is about to take.
+    /// Every VT a session holds, a start is about to take, or a timed-out start may still take.
     pub(super) fn taken_vts(&self) -> BTreeSet<u16> {
         let mut taken = self.sessions.taken_vts();
         taken.extend(self.remote.starting.values().map(|s| s.vt));
         taken.extend(self.remote.stalled.values());
+        taken.extend((self.stalled.iter().map(|s| s.vt)).filter(|&vt| vt != GREETER_VT));
         if let Some(Conversation {
             phase: Phase::Starting { vt },
             ..
