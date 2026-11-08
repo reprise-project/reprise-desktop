@@ -150,6 +150,20 @@ enum Step {
     Refused,
 }
 
+impl Step {
+    /// The uid whose session the login is headed for, once known.
+    fn uid(self) -> Option<u32> {
+        match self {
+            Step::Checking { uid, .. }
+            | Step::Starting { uid }
+            | Step::Linking { uid }
+            | Step::Accepted { uid }
+            | Step::Forwarding { uid } => Some(uid),
+            Step::LookingUp | Step::Refused => None,
+        }
+    }
+}
+
 pub(super) struct Unviewed {
     /// When the last viewer left, or the session started or was found without one.
     since: Instant,
@@ -529,7 +543,8 @@ impl Daemon {
     }
 
     /// Routes a verified login: to its user's session, to its start in flight, or to a new
-    /// background session that its worker opens. Every other worker is cancelled.
+    /// background session that its worker opens. Every other worker is cancelled. A background
+    /// session with no client counted restarts its disconnect time.
     fn verified(
         &mut self,
         now: Instant,
@@ -551,8 +566,12 @@ impl Daemon {
             worker,
             msg: ToWorker::Cancel,
         };
-        if self.sessions.by_uid(uid).is_some() {
+        if let Some(e) = self.sessions.by_uid(uid) {
             out.push(cancel);
+            if e.background && !self.remote.viewers.contains_key(&uid) {
+                let id = e.id.clone();
+                self.arm_disconnected(now, id, out);
+            }
             self.ask_link(uid, out);
             return self.link(conn, uid, out);
         }
@@ -1020,6 +1039,14 @@ impl Daemon {
         if after.is_zero() {
             return self.end_unviewed(id, out);
         }
+        self.arm_after(id, after, out);
+    }
+
+    /// Arms `id`'s `Disconnected` timer `after` from now with a new generation.
+    fn arm_after(&mut self, id: &str, after: Duration, out: &mut Vec<Effect>) {
+        let Some(u) = self.remote.disconnects.get_mut(id) else {
+            return;
+        };
         self.remote.generations += 1;
         let generation = self.remote.generations;
         u.generation = Some(generation);
@@ -1051,20 +1078,25 @@ impl Daemon {
         self.end_unviewed(id, out);
     }
 
+    /// Ends unviewed background session `id`, unless a login is on its way to it: that holds
+    /// it another `HANDOVER_DEADLINE`, by which the login has reached it or been refused.
     fn end_unviewed(&mut self, id: &str, out: &mut Vec<Effect>) {
-        self.remote.disconnects.remove(id);
         let Some(e) = self.sessions.by_id(id) else {
+            self.remote.disconnects.remove(id);
             return;
         };
         if !e.background || self.remote.viewers.contains_key(&e.uid) {
+            self.remote.disconnects.remove(id);
             return;
         }
+        let (uid, user) = (e.uid, e.user.clone());
+        if (self.remote.logins.values()).any(|l| l.step.uid() == Some(uid)) {
+            return self.arm_after(id, HANDOVER_DEADLINE, out);
+        }
+        self.remote.disconnects.remove(id);
         out.push(Effect::Log(
             Level::Info,
-            format!(
-                "ending {}'s background session {id}: no client is connected",
-                e.user
-            ),
+            format!("ending {user}'s background session {id}: no client is connected"),
         ));
         out.push(Effect::TerminateSession(id.into()));
     }
