@@ -91,6 +91,8 @@ pub enum Timer {
     Account(WorkerId),
     /// `end_disconnected_after` since background session `id` lost its last viewer.
     Disconnected { id: String, generation: u32 },
+    /// The retry of the group look-ups for the front's list after one of them failed.
+    Relist,
 }
 
 #[derive(Debug, PartialEq)]
@@ -154,10 +156,13 @@ pub enum Input {
         user: String,
     },
     /// The answer to `Effect::LookUp`: the account's uid, and whether it is in the group.
+    /// `failed` marks a look-up that erred or ran past its wait, whose `uid` is `None` without
+    /// saying the account is missing.
     Member {
         key: LookUpKey,
         uid: Option<u32>,
         member: bool,
+        failed: bool,
     },
     /// The link to `uid`'s hand-over socket is up; a new link's first `Viewers` follows.
     IntakeOpen {
@@ -639,10 +644,11 @@ impl Daemon {
             }
             Input::Timer(Timer::Handover(conn)) => self.handover_deadline(now, conn, &mut out),
             Input::Timer(Timer::Account(worker)) => self.account_deadline(worker, &mut out),
+            Input::Timer(Timer::Relist) => self.relist(&mut out),
             Input::Timer(Timer::Disconnected { id, generation }) => {
                 self.disconnected(&id, generation, world.active_vt, &mut out)
             }
-            Input::FrontLinked => self.remote.front = true,
+            Input::FrontLinked => self.front_linked(),
             Input::FrontLost => self.front_lost(&mut out),
             Input::Front(request) => self.front_request(now, request, &mut out),
             Input::FrontReady { conn, user } => self.front_ready(conn, &user, &mut out),
@@ -650,22 +656,32 @@ impl Daemon {
                 key: LookUpKey::Conn(conn),
                 uid,
                 member,
-            } => self.member(now, conn, uid, member, &mut out),
+                failed,
+            } => self.member(now, conn, uid, member, failed, &mut out),
             Input::Member {
                 key: LookUpKey::Account(link),
                 uid,
                 member,
+                ..
             } => self.account_member(link, uid, member, &mut out),
             Input::Member {
                 key: LookUpKey::Admin(worker),
                 uid,
                 member,
+                ..
             } => self.admin_member(now, worker, uid, member, &mut out),
             Input::Member {
                 key: LookUpKey::Link(uid),
                 uid: found,
                 member,
-            } => self.link_member(uid, found, member, &mut out),
+                failed,
+            } => self.link_member(uid, found, member, failed, &mut out),
+            Input::Member {
+                key: LookUpKey::Listed { uid, generation },
+                uid: found,
+                member,
+                failed,
+            } => self.listed_member(uid, generation, found, member, failed, &mut out),
             Input::IntakeOpen { uid } => self.intake_open(uid, &mut out),
             Input::IntakeLost { uid } => self.intake_lost(now, uid, &mut out),
             Input::Viewers { uid, count } => self.viewers_reported(now, uid, count, &mut out),

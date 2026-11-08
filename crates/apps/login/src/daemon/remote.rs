@@ -33,6 +33,10 @@ pub const MAX_REMOTE_CHECKS: usize = 4;
 /// for their hand-over, so one past this misbehaves.
 pub const MAX_LOGINS: usize = 128;
 const MAX_USER_NAME: usize = 32;
+/// The first wait before the front's list is looked up again after a look-up failed; it
+/// doubles with each failed round up to `RELIST_RETRY_MOST`.
+const RELIST_RETRY: Duration = Duration::from_secs(30);
+const RELIST_RETRY_MOST: Duration = Duration::from_secs(300);
 
 const MOST_SESSIONS: &str = "the computer runs its most sessions";
 pub(super) const ASKED_MORE: &str = "PAM asked for more than the password";
@@ -56,14 +60,15 @@ impl fmt::Debug for StoredPassword {
     }
 }
 
-/// Who asked for a look-up: a front conn, an account link, the administrator check, or the
-/// hand-over link of a session's uid.
+/// Who asked for a look-up: a front conn, an account link, the administrator check, the
+/// hand-over link of a session's uid, or the front's list of NLA users in its `generation`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum LookUpKey {
     Conn(u64),
     Account(u64),
     Admin(WorkerId),
     Link(u32),
+    Listed { uid: u32, generation: u32 },
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -84,10 +89,32 @@ pub enum FrontUnit {
     Stop,
 }
 
+/// The rounds of group look-ups behind `listed`: one runs at a time, and any number of requests
+/// during it run one more round after it.
+#[derive(Default)]
+struct Listing {
+    /// The current round's; answers from other rounds are dropped.
+    generation: u32,
+    /// Stored uids whose answer in the current round is still out.
+    awaiting: HashSet<u32>,
+    again: bool,
+    /// A look-up of the current round failed.
+    failed: bool,
+    /// The next retry's wait; zero until a round fails.
+    backoff: Duration,
+    retrying: bool,
+    /// The front has said Hello on its link.
+    greeted: bool,
+}
+
 #[derive(Default)]
 pub(super) struct Remote {
     pub(super) front: bool,
     pub(super) passwords: Vec<StoredPassword>,
+    /// Uids of stored passwords whose users the last look-up found in the group; the front gets
+    /// only theirs.
+    pub(super) listed: HashSet<u32>,
+    listing: Listing,
     pub(super) accounts: Accounts,
     tls_throttle: Throttle,
     /// Failed delegated NLA passwords, which the front has already proved.
@@ -226,6 +253,9 @@ impl Daemon {
 
     /// Replaces the Remote Desktop passwords, telling a linked front.
     pub fn set_remote_passwords(&mut self, passwords: Vec<StoredPassword>) -> Vec<Effect> {
+        self.remote
+            .listed
+            .retain(|&uid| passwords.iter().any(|p| p.uid == uid));
         self.remote.passwords = passwords;
         if self.remote.front {
             vec![self.passwords_event()]
@@ -234,14 +264,140 @@ impl Daemon {
         }
     }
 
+    /// The NLA users: the stored passwords of the users in the group, never root's.
     fn passwords_event(&self) -> Effect {
         let users = (self.remote.passwords.iter())
+            .filter(|p| p.uid != 0 && self.remote.listed.contains(&p.uid))
             .map(|p| NlaUser {
                 user: p.user.clone(),
                 nt_hash: p.nt_hash.clone(),
             })
             .collect();
         Effect::ToFront(FrontEvent::Passwords { users })
+    }
+
+    /// Looks every stored password's user up in the group again, for a linked front, or once
+    /// more after the round in flight.
+    pub(super) fn look_up_listed(&mut self, out: &mut Vec<Effect>) {
+        if !self.remote.front || !self.config.remote.enabled {
+            return;
+        }
+        let l = &mut self.remote.listing;
+        if !l.awaiting.is_empty() {
+            l.again = true;
+            return;
+        }
+        l.generation = l.generation.wrapping_add(1);
+        l.failed = false;
+        for p in self.remote.passwords.iter().filter(|p| p.uid != 0) {
+            l.awaiting.insert(p.uid);
+            out.push(Effect::LookUp {
+                key: LookUpKey::Listed {
+                    uid: p.uid,
+                    generation: l.generation,
+                },
+                user: p.user.clone(),
+                group: self.config.remote.group.clone(),
+            });
+        }
+    }
+
+    pub(super) fn listed_member(
+        &mut self,
+        uid: u32,
+        generation: u32,
+        found: Option<u32>,
+        member: bool,
+        failed: bool,
+        out: &mut Vec<Effect>,
+    ) {
+        let l = &mut self.remote.listing;
+        if generation != l.generation || !l.awaiting.remove(&uid) {
+            return;
+        }
+        l.failed |= failed;
+        if let Some(p) = self.remote.passwords.iter().find(|p| p.uid == uid) {
+            let (user, group) = (&p.user, &self.config.remote.group);
+            let listed = uid != 0 && found == Some(uid) && member;
+            let changed = match listed {
+                true => self.remote.listed.insert(uid),
+                false => self.remote.listed.remove(&uid),
+            };
+            if changed || failed {
+                let why = match found {
+                    _ if listed => format!("{user} is in {group}"),
+                    _ if failed => format!("{user}'s group look-up failed"),
+                    Some(f) if f == uid => format!("{user} is not in {group}"),
+                    _ => format!("{user}'s account is gone or has another uid"),
+                };
+                let (level, what) = match listed {
+                    true => (Level::Info, "takes"),
+                    false => (Level::Warn, "leaves out"),
+                };
+                let text = format!("{why}; the front {what} their Remote Desktop password");
+                out.push(Effect::Log(level, text));
+            }
+            if changed && self.remote.front {
+                out.push(self.passwords_event());
+            }
+        }
+        if self.remote.listing.awaiting.is_empty() {
+            self.listing_answered(out);
+        }
+    }
+
+    /// Runs the round asked for during the last, or arms a retry after a failed look-up.
+    fn listing_answered(&mut self, out: &mut Vec<Effect>) {
+        let l = &mut self.remote.listing;
+        if std::mem::take(&mut l.again) {
+            return self.look_up_listed(out);
+        }
+        if !l.failed {
+            l.backoff = Duration::ZERO;
+            return;
+        }
+        if l.retrying {
+            return;
+        }
+        let after = l.backoff.max(RELIST_RETRY);
+        l.backoff = (after * 2).min(RELIST_RETRY_MOST);
+        l.retrying = true;
+        out.push(Effect::Arm {
+            timer: Timer::Relist,
+            after,
+        });
+    }
+
+    pub(super) fn relist(&mut self, out: &mut Vec<Effect>) {
+        let l = &mut self.remote.listing;
+        l.retrying = false;
+        if l.failed && l.awaiting.is_empty() {
+            self.look_up_listed(out);
+        }
+    }
+
+    /// Looks the NLA users up again when a look-up of `user` disagrees with the front's list; a
+    /// failed one says nothing either way.
+    fn check_listed(
+        &mut self,
+        user: &str,
+        found: Option<u32>,
+        member: bool,
+        failed: bool,
+        out: &mut Vec<Effect>,
+    ) {
+        let Some(p) = self.remote.passwords.iter().find(|p| p.user == user) else {
+            return;
+        };
+        let member = p.uid != 0 && found == Some(p.uid) && member;
+        if !failed && member != self.remote.listed.contains(&p.uid) {
+            self.look_up_listed(out);
+        }
+    }
+
+    pub(super) fn front_linked(&mut self) {
+        self.remote.front = true;
+        self.remote.listing.greeted = false;
     }
 
     /// On starts the front and links background and members' sessions; off stops it and denies
@@ -255,6 +411,7 @@ impl Daemon {
     ) {
         let was = self.config.remote.enabled;
         let ending = self.config.remote.end_disconnected_after_min;
+        let regrouped = self.config.remote.group != config.remote.group;
         self.config = config;
         if self.config.remote.end_disconnected_after_min != ending {
             let ids: BTreeSet<String> = self.remote.disconnects.keys().cloned().collect();
@@ -286,6 +443,18 @@ impl Daemon {
             // Frees a port whose socket was started by hand.
             (false, false) => out.push(Effect::Front(FrontUnit::Stop)),
         }
+        if regrouped {
+            let l = &mut self.remote.listing;
+            l.awaiting.clear();
+            l.again = false;
+            if !self.remote.listed.is_empty() {
+                self.remote.listed.clear();
+                if self.remote.front {
+                    out.push(self.passwords_event());
+                }
+            }
+        }
+        self.look_up_listed(out);
     }
 
     /// The front's start or stop as the settings stand.
@@ -352,7 +521,18 @@ impl Daemon {
             FrontRequest::Hello if !self.config.remote.enabled => {
                 out.push(Effect::Front(FrontUnit::Stop));
             }
-            FrontRequest::Hello => out.push(self.passwords_event()),
+            FrontRequest::Hello => {
+                out.push(self.passwords_event());
+                if std::mem::replace(&mut self.remote.listing.greeted, true) {
+                    out.push(Effect::Log(
+                        Level::Warn,
+                        "the front said Hello again on its link; reading the group once a link"
+                            .into(),
+                    ));
+                } else {
+                    self.look_up_listed(out);
+                }
+            }
             FrontRequest::Authenticate { .. } => self.authenticate(now, request, out),
             FrontRequest::Gone { conn } => self.forget(conn, out),
             FrontRequest::Ready { conn, .. } => out.push(Effect::Log(
@@ -476,11 +656,17 @@ impl Daemon {
         conn: u64,
         uid: Option<u32>,
         member: bool,
+        failed: bool,
         out: &mut Vec<Effect>,
     ) {
-        if self.remote.logins.get(&conn).map(|l| l.step) != Some(Step::LookingUp) {
+        let Some(l) = self.remote.logins.get(&conn) else {
+            return;
+        };
+        if l.step != Step::LookingUp {
             return;
         }
+        let user = l.user.clone();
+        self.check_listed(&user, uid, member, failed, out);
         let uid = match uid {
             None => return self.refuse(now, conn, "no such account", out),
             Some(0) => return self.refuse(now, conn, "root never logs in remotely", out),
@@ -949,6 +1135,7 @@ impl Daemon {
     /// starts in flight go on.
     pub(super) fn front_lost(&mut self, out: &mut Vec<Effect>) {
         self.remote.front = false;
+        self.remote.listing.greeted = false;
         let conns: Vec<_> = self.remote.logins.keys().copied().collect();
         for conn in conns {
             if let Step::Forwarding { .. } = self.remote.logins[&conn].step {
@@ -1101,10 +1288,15 @@ impl Daemon {
         uid: u32,
         found: Option<u32>,
         member: bool,
+        failed: bool,
         out: &mut Vec<Effect>,
     ) {
         let outside = uid == 0 || found.is_some_and(|f| f != uid || !member);
-        if !outside && self.sessions.by_uid(uid).is_some() {
+        let Some(user) = self.sessions.by_uid(uid).map(|e| e.user.clone()) else {
+            return;
+        };
+        self.check_listed(&user, found, member, failed, out);
+        if !outside {
             self.ask_link(uid, out);
         }
     }
