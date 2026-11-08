@@ -4,7 +4,7 @@ use repriselogin::machine::{MachineConfig, MachineRemote};
 use repriselogin::session::SessionRequest;
 
 use super::remote_tests::{
-    ANNA, disconnect_arm, enabled, front, quiet, ready, remote_run, to_worker,
+    ANNA, disconnect_arm, enabled, front, front_on, quiet, ready, remote_run, to_worker,
 };
 use super::tests::{Run, authed, create, greeter_spawn, logind, reply, spawn, unlock};
 use super::*;
@@ -297,7 +297,11 @@ fn a_session_brought_to_the_console_keeps_no_disconnect_entry() {
         remote: with_end_after(60),
         ..MachineConfig::default()
     });
-    assert_eq!(quiet(run.on(reload)), [], "a console session arms nothing");
+    assert_eq!(
+        quiet(run.on(reload)),
+        [front_on()],
+        "a console session arms nothing"
+    );
 }
 
 fn orphaned(run: &mut Run, id: &str, uid: u32) -> Vec<Effect> {

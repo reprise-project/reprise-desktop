@@ -1,7 +1,8 @@
 [Unit]
 Description=Reprise login manager: Remote Desktop logins
 PartOf=reprise-login.service
-After=reprise-login.service network.target
+Requires=reprise-login-rdp.socket
+After=reprise-login-rdp.socket reprise-login.service network.target
 
 [Service]
 # "+" loads the kernel's tls module outside the sandbox; "-" starts the front when that fails.
@@ -39,11 +40,8 @@ MemoryDenyWriteExecute=yes
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
 SystemCallFilter=~@privileged @resources
-# The front drops CAP_NET_BIND_SERVICE once the port is bound.
-SystemCallFilter=capset
-CapabilityBoundingSet=CAP_NET_BIND_SERVICE
-AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=
 MemoryMax=512M
 TasksMax=64
 
-# No [Install]: reprise-login starts and stops the front.
+# No [Install]: reprise-login starts and stops the front and its socket.

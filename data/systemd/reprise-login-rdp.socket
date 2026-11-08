@@ -1,0 +1,13 @@
+[Unit]
+Description=Reprise login manager: the Remote Desktop port
+
+# reprise-login enables this socket while remote logins are on and sets its port in
+# /etc/systemd/system.control/reprise-login-rdp.socket.d/port.conf.
+[Socket]
+ListenStream=3389
+BindIPv6Only=both
+Backlog=1024
+Accept=no
+
+[Install]
+WantedBy=sockets.target

@@ -45,7 +45,8 @@ fn the_front_unit_runs_unprivileged_and_sandboxed() {
         &[
             "Description=Reprise login manager: Remote Desktop logins",
             "PartOf=reprise-login.service",
-            "After=reprise-login.service network.target",
+            "Requires=reprise-login-rdp.socket",
+            "After=reprise-login-rdp.socket reprise-login.service network.target",
         ],
     );
     assert_is(
@@ -85,9 +86,7 @@ fn the_front_unit_runs_unprivileged_and_sandboxed() {
             "SystemCallArchitectures=native",
             "SystemCallFilter=@system-service",
             "SystemCallFilter=~@privileged @resources",
-            "SystemCallFilter=capset",
-            "CapabilityBoundingSet=CAP_NET_BIND_SERVICE",
-            "AmbientCapabilities=CAP_NET_BIND_SERVICE",
+            "CapabilityBoundingSet=",
             "MemoryMax=512M",
             "TasksMax=64",
         ],
@@ -95,6 +94,28 @@ fn the_front_unit_runs_unprivileged_and_sandboxed() {
     assert!(
         !unit.lines().any(|l| l.trim() == "[Install]"),
         "reprise-login starts and stops the front, so it has no [Install]"
+    );
+}
+
+#[test]
+fn the_front_port_is_held_by_its_socket_from_boot() {
+    let socket = data("systemd/reprise-login-rdp.socket");
+    assert_is(
+        &socket,
+        "Socket",
+        &[
+            "ListenStream=3389",
+            "BindIPv6Only=both",
+            "Backlog=1024",
+            "Accept=no",
+        ],
+    );
+    assert_is(&socket, "Install", &["WantedBy=sockets.target"]);
+    assert!(
+        !section(&socket, "Unit")
+            .iter()
+            .any(|l| l.starts_with("PartOf=")),
+        "the port stays held while reprise-login or the front restarts"
     );
 }
 
