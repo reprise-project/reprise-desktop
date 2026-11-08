@@ -863,7 +863,9 @@ no port forwarding; allow the port in your firewall if you run one.
   starts. A change while connected applies at once. Sound goes as Opus when
   the client takes it, else as 16-bit PCM at 44.1 kHz. The client's own
   buffering sets most of the delay: with FreeRDP's default it is about 110
-  ms, and `/sound:latency:20` brings it to about 65 ms.
+  ms, and `/sound:latency:20` brings it to about 65 ms. In lock mode the
+  "Remote client" output is the default also with sound off or a client
+  that doesn't take it, so the session is never heard here while locked.
 - **Lock mode.** While connected, this computer's screen, on the Settings
   page (`laptop_screen`), picks what this computer shows. With Locks and
   fits the remote window, the default, the session locks here when the first
