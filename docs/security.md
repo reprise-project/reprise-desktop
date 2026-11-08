@@ -807,7 +807,9 @@ or it ends.
   more than the session has: polkit lets an active or inactive session
   take `sleep` and `handle-lid-switch` block inhibitors of its own, which
   keep the computer awake the same way. Only the name differs: the console
-  sees the login manager's inhibitor instead of the user's.
+  sees the login manager's inhibitor instead of the user's. A count the
+  server changes faster reaches the daemon at most every 250 ms, its latest
+  value only, and the daemon takes one inhibitor at a time.
 - **Inactive polkit grants.** A background session gets polkit's
   `allow_inactive` answers, which for some actions are wider than a remote
   session's: NetworkManager's network control (a remote user can take the

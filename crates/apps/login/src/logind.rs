@@ -649,44 +649,65 @@ impl Units for Logind {
 }
 
 /// The inhibitor the daemon holds. A new one is taken before the old one is dropped, and
-/// one that arrives after a later change is dropped at once.
+/// one that arrives after a later change is dropped at once. One take runs at a time; changes
+/// during it leave only the latest to take after it.
 pub struct Inhibitor {
     take: TakeInhibitor,
-    /// Each change's number, and the fd held.
-    held: Rc<RefCell<(u64, Option<OwnedFd>)>>,
+    state: Rc<RefCell<Held>>,
+}
+
+#[derive(Default)]
+struct Held {
+    /// Each change's number.
+    change: u64,
+    fd: Option<OwnedFd>,
+    taking: bool,
+    /// The change to take once the take in flight ends.
+    next: Option<(u64, &'static str, &'static str)>,
 }
 
 impl Inhibitor {
     pub fn new(take: TakeInhibitor) -> Inhibitor {
         Inhibitor {
             take,
-            held: Rc::default(),
+            state: Rc::default(),
         }
     }
 
     /// Holds `want` from now on, in a task of the current `LocalSet`.
     pub fn set(&self, want: Inhibit) {
-        let mut held = self.held.borrow_mut();
-        held.0 += 1;
-        let change = held.0;
+        let mut st = self.state.borrow_mut();
+        st.change += 1;
+        let change = st.change;
+        st.next = None;
         let Some((what, why)) = inhibit_args(want) else {
-            held.1 = None;
+            st.fd = None;
             return;
         };
-        drop(held);
-        let (take, held) = (self.take.clone(), self.held.clone());
+        if std::mem::replace(&mut st.taking, true) {
+            st.next = Some((change, what, why));
+            return;
+        }
+        drop(st);
+        let (take, state) = (self.take.clone(), self.state.clone());
         tokio::task::spawn_local(async move {
-            match take(what, why).await {
-                Ok(fd) => {
-                    let mut held = held.borrow_mut();
-                    if held.0 == change {
-                        held.1 = Some(fd);
+            let (mut change, mut what, mut why) = (change, what, why);
+            loop {
+                let taken = take(what, why).await;
+                let mut st = state.borrow_mut();
+                match taken {
+                    Ok(fd) if st.change == change => st.fd = Some(fd),
+                    Ok(_) => {}
+                    Err(e) if st.fd.is_some() => {
+                        log::warn!("logind's {what} inhibitor: {e}; previous one stays held");
                     }
+                    Err(e) => log::warn!("logind's {what} inhibitor: {e}"),
                 }
-                Err(e) if held.borrow().1.is_some() => {
-                    log::warn!("logind's {what} inhibitor: {e}; the previous one stays held");
-                }
-                Err(e) => log::warn!("logind's {what} inhibitor: {e}"),
+                let Some(next) = st.next.take() else {
+                    st.taking = false;
+                    return;
+                };
+                (change, what, why) = next;
             }
         });
     }
@@ -1067,6 +1088,48 @@ mod tests {
     fn open(w: &mut std::io::PipeWriter) -> bool {
         use std::io::Write;
         w.write(b"x").is_ok()
+    }
+
+    #[tokio::test]
+    async fn changes_during_a_take_in_flight_take_only_the_latest_after_it() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let taken: Rc<RefCell<Vec<(&str, std::io::PipeWriter)>>> = Rc::default();
+                let slow = Rc::new(tokio::sync::Notify::new());
+                let take: TakeInhibitor = {
+                    let (taken, slow) = (taken.clone(), slow.clone());
+                    Rc::new(move |what, _why| {
+                        let (r, w) = std::io::pipe().unwrap();
+                        taken.borrow_mut().push((what, w));
+                        let slow = slow.clone();
+                        Box::pin(async move {
+                            slow.notified().await;
+                            Ok(r.into())
+                        })
+                    })
+                };
+                let inhibitor = Inhibitor::new(take);
+                inhibitor.set(Inhibit::Idle);
+                settle().await;
+                for _ in 0..50 {
+                    inhibitor.set(Inhibit::SleepAndIdle);
+                    inhibitor.set(Inhibit::Idle);
+                }
+                inhibitor.set(Inhibit::SleepAndIdle);
+                settle().await;
+                assert_eq!(taken.borrow().len(), 1, "one take in flight");
+                slow.notify_one();
+                settle().await;
+                slow.notify_one();
+                settle().await;
+                let mut t = taken.borrow_mut();
+                let whats: Vec<_> = t.iter().map(|(what, _)| *what).collect();
+                assert_eq!(whats, ["idle", "sleep:idle"]);
+                assert!(!open(&mut t[0].1), "the stale one is dropped");
+                assert!(open(&mut t[1].1), "the latest is held");
+            })
+            .await;
     }
 
     #[tokio::test]
