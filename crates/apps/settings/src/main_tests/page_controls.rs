@@ -1,0 +1,252 @@
+use super::*;
+
+#[test]
+fn the_script_open_combo_shows_and_writes_script_open() {
+    let dir = tmp("script-open");
+    let path = dir.join("config.toml");
+    std::fs::write(&path, "terminal = \"foot\"\n").unwrap();
+    let mut a = SettingsApp::open(path.clone(), "us".into());
+    let dp = Page::DefaultPrograms.index();
+    let combo = |a: &SettingsApp| a.sheet.pages[dp].combo_selected(defaultspage::SCRIPT_OPEN);
+    assert_eq!(combo(&a), Some(0), "Run it");
+    let pick = |a: &mut SettingsApp, row| {
+        a.sheet.pages[dp].set_combo(defaultspage::SCRIPT_OPEN, row);
+        a.sheet_event(propsheet::Event::Page(
+            dp,
+            form::Event::Changed(defaultspage::SCRIPT_OPEN),
+        ));
+        assert!(a.apply());
+        std::fs::read_to_string(&path).unwrap()
+    };
+    assert_eq!(
+        pick(&mut a, 1),
+        "terminal = \"foot\"\nscript_open = \"terminal\"\n"
+    );
+    assert_eq!(
+        pick(&mut a, 0),
+        "terminal = \"foot\"\n",
+        "Run it is the default and removes the key"
+    );
+}
+
+#[test]
+fn the_script_combo_shows_and_writes_script_terminal() {
+    let dir = tmp("script-end");
+    let path = dir.join("config.toml");
+    std::fs::write(&path, "terminal = \"foot\"\n").unwrap();
+    let mut a = SettingsApp::open(path.clone(), "us".into());
+    let dp = Page::DefaultPrograms.index();
+    let combo = |a: &SettingsApp| a.sheet.pages[dp].combo_selected(defaultspage::SCRIPT_END);
+    assert_eq!(combo(&a), Some(0), "Keep its window open");
+    let pick = |a: &mut SettingsApp, row| {
+        a.sheet.pages[dp].set_combo(defaultspage::SCRIPT_END, row);
+        a.sheet_event(propsheet::Event::Page(
+            dp,
+            form::Event::Changed(defaultspage::SCRIPT_END),
+        ));
+        assert!(a.apply());
+        std::fs::read_to_string(&path).unwrap()
+    };
+    assert_eq!(
+        pick(&mut a, 1),
+        "terminal = \"foot\"\nscript_terminal = \"close\"\n"
+    );
+    assert_eq!(
+        pick(&mut a, 0),
+        "terminal = \"foot\"\n",
+        "Keep its window open is the default and removes the key"
+    );
+}
+
+#[test]
+fn the_drive_combo_shows_and_writes_on_insert() {
+    let dir = tmp("drive-insert");
+    let path = dir.join("config.toml");
+    std::fs::write(&path, "[drives]\non_insert = \"mount\"\n").unwrap();
+    let mut a = SettingsApp::open(path.clone(), "us".into());
+    let dp = Page::DefaultPrograms.index();
+    assert_eq!(
+        a.sheet.pages[dp].combo_selected(defaultspage::DRIVE_INSERT),
+        Some(1),
+        "Mount it"
+    );
+    a.sheet.pages[dp].set_combo(defaultspage::DRIVE_INSERT, 2);
+    a.sheet_event(propsheet::Event::Page(
+        dp,
+        form::Event::Changed(defaultspage::DRIVE_INSERT),
+    ));
+    assert!(a.apply());
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(text, "[drives]\non_insert = \"open\"\n");
+    a.sheet.pages[dp].set_combo(defaultspage::DRIVE_INSERT, 0);
+    a.sheet_event(propsheet::Event::Page(
+        dp,
+        form::Event::Changed(defaultspage::DRIVE_INSERT),
+    ));
+    assert!(a.apply());
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(
+        text, "",
+        "Ask what to do is the default and removes the key"
+    );
+}
+
+#[test]
+fn a_drop_on_a_page_field_is_read_into_the_settings() {
+    let mut a = app("drop");
+    let mut ctx = test_ctx();
+    let px = ctx.theme.fonts.size_px;
+    a.sheet.tabs.open = Page::Advanced.index();
+    let form = a.drop_form(MAIN).expect("the open page").form;
+    let r = form
+        .item("task_manager")
+        .unwrap()
+        .placed(&reprisekit::controls::metrics::ControlMetrics::CLASSIC);
+    assert!(form.drag_over(r.x + 4, r.y + r.height / 2, &ctx.text, px));
+    let changed = form.drop_text(
+        &reprisekit::textedit::DropLine::Text("htop".into()),
+        &ctx.text,
+        px,
+    );
+    assert_eq!(changed, form::Event::Changed("task_manager"));
+    a.event(MAIN, Event::FieldDropped(changed), &mut ctx);
+    assert!(
+        a.want.task_manager.contains("htop"),
+        "{}",
+        a.want.task_manager
+    );
+}
+
+#[test]
+fn a_later_start_opens_its_page_unless_a_dialog_is_up() {
+    let mut a = app("request");
+    assert!(a.request(&page_request("fonts-and-icons")));
+    assert_eq!(a.sheet.tabs.open, Page::FontsAndIcons.index());
+    assert!(!a.request(&page_request("nowhere")));
+    assert!(!a.request(&instance::Request::default()));
+    a.fail("broken");
+    assert!(!a.request(&page_request("startup")));
+    assert_eq!(a.sheet.tabs.open, Page::FontsAndIcons.index());
+}
+
+fn remote_label(a: &SettingsApp, id: &str) -> String {
+    match &a.sheet.pages[Page::RemoteDesktop.index()]
+        .item(id)
+        .unwrap()
+        .control
+    {
+        form::Control::Label { text, .. } => text.clone(),
+        c => panic!("{id} is a label, not {c:?}"),
+    }
+}
+
+#[test]
+fn the_remote_desktop_page_follows_what_the_server_says() {
+    let mut a = app("remote");
+    let status = reprisebus::remote::Status {
+        listening: "0.0.0.0:3389".into(),
+        clients: vec![reprisebus::remote::Client {
+            address: "192.168.1.30:51234".into(),
+            user: "user".into(),
+            since: 1_762_000_000,
+        }],
+        encoder: "VA-API H.264".into(),
+        encoders: vec!["vaapi".into(), "none".into()],
+        fingerprint: "3F:9A".into(),
+    };
+    let serving = remotehost::Remote {
+        enabled: true,
+        status: Some(status),
+        address: Some("192.168.1.20".into()),
+        ..remotehost::Remote::default()
+    };
+    remote_read(&mut a, serving, None);
+    let page = &a.sheet.pages[Page::RemoteDesktop.index()];
+    assert_eq!(page.checked(pages::REMOTE_ALLOW), Some(true));
+    assert_eq!(
+        remote_label(&a, "status"),
+        "Listening on port 3389 at 192.168.1.20"
+    );
+    assert_eq!(remote_label(&a, "encoder"), "Video: VA-API H.264");
+    assert_eq!(page.edit_text("fingerprint"), "3F:9A");
+    assert!(a.error.is_none());
+    assert_eq!(a.want, a.loaded, "the switch is no change for Apply");
+
+    remote_read(
+        &mut a,
+        remotehost::Remote::default(),
+        Some("Remote Desktop could not be turned on.".into()),
+    );
+    assert!(a.error.is_some(), "a failed switch says why");
+    let page = &a.sheet.pages[Page::RemoteDesktop.index()];
+    assert_eq!(page.checked(pages::REMOTE_ALLOW), Some(false));
+    assert_eq!(remote_label(&a, "status"), "Off");
+    assert_eq!(page.edit_text("fingerprint"), "");
+}
+
+#[test]
+fn other_on_the_colour_button_opens_the_color_dialog_whose_ok_sets_the_desktop() {
+    use reprisekit::controls::colordlg::{BASIC, Grid, Well};
+    let mut a = app("othercolor");
+    let state = tmp("othercolor-state").join("settings.toml");
+    a.state_path = Some(state.clone());
+    let mut ctx = test_ctx();
+    let p = Page::Background.index();
+    a.sheet_event(propsheet::Event::Page(
+        p,
+        form::Event::Pressed("background"),
+    ));
+    assert!(a.children().iter().any(|c| c.id == COLOR_WIN));
+    let (d, ..) = a.color_dlg.as_mut().unwrap();
+    d.dlg.pick(Well {
+        grid: Grid::Basic,
+        i: 28,
+    });
+    d.dlg.add_custom();
+    let enter = Event::Key(key_input(keysym::RETURN, Mods::default(), None));
+    a.event(COLOR_WIN, enter, &mut ctx);
+    assert!(a.color_dlg.is_none(), "Enter is OK");
+    assert_eq!(BASIC[28], reprisekit::theme::Color::rgb(0, 0, 0xFF));
+    assert_eq!(a.want.background, "#0000FF");
+    assert_eq!(winstate::custom_colors(&state)[0], BASIC[28]);
+    let _ = std::fs::remove_dir_all(state.parent().unwrap());
+}
+
+#[test]
+fn unchecking_run_as_asks_first_and_only_ok_unchecks_it() {
+    let mut a = app("runas");
+    let mut ctx = test_ctx();
+    let cm = ctx.forms().controls();
+    a.entries = vec![
+        reprisefs::autostart::parse(
+            autostart::RUN_AS,
+            "[Desktop Entry]\nName=Run As\nExec=reprise-polkit\n",
+            false,
+        )
+        .unwrap(),
+    ];
+    a.applied_checks = vec![true];
+    pages::fill_list(&mut a.list, &a.entries, &[true]);
+    a.sheet.tabs.open = Page::Startup.index();
+    a.list.selection.focus = Some(0);
+    let key = |sym| key_input(sym, Mods::default(), None);
+
+    a.list_key(&form::Key::Space, &cm);
+    assert_eq!(
+        a.list.checks,
+        Some(vec![true]),
+        "checked until the question is answered"
+    );
+    assert_eq!(
+        a.asking.as_ref().map(|q| q.msg.fields.text.as_str()),
+        Some(apply::RUN_AS_QUESTION)
+    );
+    a.event(ASK_WIN, Event::Key(key(keysym::ESCAPE)), &mut ctx);
+    assert!(a.asking.is_none());
+    assert_eq!(a.list.checks, Some(vec![true]), "Cancel keeps it");
+
+    a.list_key(&form::Key::Space, &cm);
+    a.event(ASK_WIN, Event::Key(key(keysym::RETURN)), &mut ctx);
+    assert_eq!(a.list.checks, Some(vec![false]), "OK unchecks it");
+    assert!(a.dirty(), "Apply writes it");
+}
