@@ -36,6 +36,7 @@ pub struct ViewerId(u64);
 struct Entry {
     peer: SocketAddr,
     logged_in: bool,
+    shown: bool,
     kick: Option<oneshot::Sender<Kick>>,
 }
 
@@ -68,6 +69,7 @@ impl Viewers {
         let entry = Entry {
             peer,
             logged_in: false,
+            shown: false,
             kick: Some(kick),
         };
         self.live.insert(id, entry);
@@ -78,6 +80,13 @@ impl Viewers {
     pub fn logged_in(&mut self, id: ViewerId) {
         if let Some(e) = self.live.get_mut(&id) {
             e.logged_in = true;
+        }
+    }
+
+    /// Marks `id` shown the session, so a [`Viewers::kick_others`] that ends it counts it.
+    pub fn shown(&mut self, id: ViewerId) {
+        if let Some(e) = self.live.get_mut(&id) {
+            e.shown = true;
         }
     }
 
@@ -96,14 +105,19 @@ impl Viewers {
     }
 
     pub fn kick_all(&mut self, why: Kick) {
-        self.live.values_mut().for_each(|e| e.end(why));
+        self.live.values_mut().for_each(|e| {
+            e.end(why);
+        });
     }
 
-    /// Ends every connection but `keep`'s, each told `why` once logged in.
-    pub fn kick_others(&mut self, keep: ViewerId, why: Kick) {
+    /// Ends every connection but `keep`'s, each told `why` once logged in; how many of those it
+    /// ended had been shown the session.
+    pub fn kick_others(&mut self, keep: ViewerId, why: Kick) -> usize {
         (self.live.iter_mut())
             .filter(|(id, _)| **id != keep)
-            .for_each(|(_, e)| e.end(why));
+            .map(|(_, e)| e.end(why) && e.shown)
+            .filter(|&counted| counted)
+            .count()
     }
 
     pub fn len(&self) -> usize {
@@ -112,10 +126,13 @@ impl Viewers {
 }
 
 impl Entry {
-    fn end(&mut self, why: Kick) {
-        if let Some(kick) = self.kick.take() {
-            let _ = kick.send(why);
-        }
+    /// Whether this call ended it, as opposed to an earlier one.
+    fn end(&mut self, why: Kick) -> bool {
+        let Some(kick) = self.kick.take() else {
+            return false;
+        };
+        let _ = kick.send(why);
+        true
     }
 }
 
@@ -221,10 +238,26 @@ mod tests {
         let (_, mut a) = v.join(peer("10.0.0.1:1"), 4).unwrap();
         let (b, mut kept) = v.join(peer("10.0.0.2:1"), 4).unwrap();
         let (_, mut c) = v.join(peer("10.0.0.3:1"), 4).unwrap();
-        v.kick_others(b, Kick::Replaced);
+        assert_eq!(v.kick_others(b, Kick::Replaced), 0, "none was shown");
         assert_eq!(a.try_recv(), Ok(Kick::Replaced));
         assert_eq!(c.try_recv(), Ok(Kick::Replaced));
         assert_eq!(kept.try_recv(), Err(TryRecvError::Empty));
+    }
+
+    #[test]
+    fn kick_others_counts_the_shown_viewers_it_ends() {
+        let mut v = Viewers::default();
+        let (a, _a) = v.join(peer("10.0.0.1:1"), 4).unwrap();
+        let (b, _b) = v.join(peer("10.0.0.2:1"), 4).unwrap();
+        let (c, _c) = v.join(peer("10.0.0.3:1"), 4).unwrap();
+        v.shown(a);
+        v.shown(b);
+        assert_eq!(v.kick_others(c, Kick::Replaced), 2);
+        assert_eq!(
+            v.kick_others(c, Kick::Replaced),
+            0,
+            "a viewer already ended is not ended again"
+        );
     }
 
     #[test]

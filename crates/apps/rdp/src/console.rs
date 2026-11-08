@@ -4,7 +4,7 @@
 use crate::control::Status;
 use ironrdp_displaycontrol::pdu::{DisplayControlCapabilities, DisplayControlMonitorLayout};
 use ironrdp_pdu::gcc;
-use repriseconf::remote::{LaptopScreen, RemoteDesktop, SecondClient};
+use repriseconf::remote::{LaptopScreen, RemoteDesktop};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::{mpsc, watch};
@@ -57,12 +57,12 @@ impl Console {
     }
 
     /// Whether a viewer joining now would start a lock-mode run, or take over the one going on
-    /// once it logs in with `second_client = "replace"`, and so have its layouts published.
-    pub fn would_own(&self) -> bool {
+    /// once it logs in when it `replaces` the others, and so have its layouts published.
+    pub fn would_own(&self, replaces: bool) -> bool {
         let run = self.0.run.lock().unwrap();
         match run.viewers {
             0 => self.configured_lock(),
-            _ => run.lock && self.0.config.borrow().second_client == SecondClient::Replace,
+            _ => run.lock && replaces,
         }
     }
 
@@ -362,7 +362,7 @@ pub(crate) mod tests {
     #[test]
     fn a_session_away_from_the_seat_runs_lock_mode_whatever_laptop_screen_says() {
         let (console, _config, status) = on_seat(LaptopScreen::Show, true, true);
-        assert!(console.would_own());
+        assert!(console.would_own(false));
         let joined = console.join(FIRST.to_vec());
         assert!(joined.lock());
         assert_eq!(published(&status), FIRST);
@@ -466,15 +466,14 @@ pub(crate) mod tests {
 
     #[test]
     fn a_take_over_joins_the_run_going_on_as_its_owner() {
-        let (console, config, status) = configured(LaptopScreen::Lock, false);
+        let (console, _config, status) = configured(LaptopScreen::Lock, false);
         assert!(console.take_over().is_none(), "no run to take over");
         let first = console.join(FIRST.to_vec());
         assert!(
-            !console.would_own(),
+            !console.would_own(false),
             "a joining viewer does not own the run"
         );
-        config.send_modify(|c| c.second_client = SecondClient::Replace);
-        assert!(console.would_own(), "a replacing one will");
+        assert!(console.would_own(true), "a replacing one will");
         let replacing = console.take_over().expect("the run is going on");
         drop(first);
         assert!(replacing.lock());
@@ -482,6 +481,18 @@ pub(crate) mod tests {
         assert_eq!(published(&status), SECOND, "its monitors are published");
         drop(replacing);
         assert!(published(&status).is_empty(), "the run ends with it");
+    }
+
+    #[test]
+    fn a_take_over_in_show_mode_owns_nothing() {
+        let (console, _config, status) = configured(LaptopScreen::Show, false);
+        let first = console.join(FIRST.to_vec());
+        assert!(!console.would_own(true), "a show-mode run has no owner");
+        let replacing = console.take_over().expect("the run is going on");
+        drop(first);
+        assert!(!replacing.lock(), "the run stays in show mode");
+        replacing.take_layout(SECOND.to_vec());
+        assert!(published(&status).is_empty(), "nothing is published");
     }
 
     #[tokio::test(start_paused = true)]
@@ -507,7 +518,7 @@ pub(crate) mod tests {
         assert!(later.lock(), "the run keeps its mode");
         assert_eq!(published(&status), FIRST);
         drop((first, later));
-        assert!(!console.would_own(), "with no run, as configured");
+        assert!(!console.would_own(false), "with no run, as configured");
         assert!(!console.join(SECOND.to_vec()).lock());
         assert!(published(&status).is_empty());
     }

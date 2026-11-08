@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::stream::Rect;
-use repriseconf::remote::LaptopScreen;
+use repriseconf::remote::{LaptopScreen, SecondClient};
 
 #[test]
 fn a_screen_that_cannot_be_shared_tells_the_client_its_display_failed_to_start() {
@@ -165,6 +165,26 @@ async fn display_control_is_offered_to_the_first_viewer_of_a_run_only() {
     assert!(
         !later.offers_display_control().await,
         "a later viewer's layouts would be ignored"
+    );
+}
+
+#[tokio::test]
+async fn display_control_follows_whether_the_viewer_arrived_to_replace() {
+    let (console, config, _) = console::tests::configured(LaptopScreen::Lock, false);
+    let mut first = on_console(ClientLayout::default(), console.clone());
+    first.join();
+    config.send_modify(|c| c.second_client = SecondClient::Replace);
+    let mut joining =
+        ending_on_console(ClientLayout::default(), console.clone(), Ending::new(false));
+    assert!(
+        !joining.offers_display_control().await,
+        "one that arrived to join"
+    );
+    config.send_modify(|c| c.second_client = SecondClient::Join);
+    let mut replacing = ending_on_console(ClientLayout::default(), console, Ending::new(true));
+    assert!(
+        replacing.offers_display_control().await,
+        "one that arrived to replace"
     );
 }
 
