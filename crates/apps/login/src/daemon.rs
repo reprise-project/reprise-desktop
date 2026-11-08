@@ -451,10 +451,8 @@ impl Daemon {
             .map(|s| s.vt)
     }
 
-    /// Rebuilds the table from logind after a start and ends orphaned greeters. A remote login's
-    /// session other than `seat_active` counts as a background one. Nothing is locked here: a
-    /// session off the seat locks its console when its link drops, and a logind lock would lock
-    /// its remote clients out too.
+    /// Rebuilds the table from logind and ends orphaned greeters; a remote login's session other
+    /// than `seat_active` is a background one. No logind lock: it would lock remote clients out.
     pub fn recover(
         &mut self,
         now: Instant,

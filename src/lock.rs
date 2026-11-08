@@ -211,9 +211,8 @@ impl LockState {
     }
 }
 
-/// A verifier's answer: `Ok` to unlock, or `Err` with the text PAM sent
-/// along with the rejection (empty for a plain wrong password), already
-/// cleaned by `repriselogin::add_prompt_lines`.
+/// A verifier's answer: `Ok` to unlock, or `Err` with the text PAM sent with the rejection (empty
+/// for a plain wrong password), cleaned by `repriselogin::add_prompt_lines`.
 pub type Verdict = Result<(), Vec<String>>;
 
 /// Answers a PAM prompt after the password: its text and whether it

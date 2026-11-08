@@ -1,6 +1,5 @@
-//! `org.reprise.RemoteDesktop` on the session bus: the server's status for Settings, and
-//! Disconnect, SessionEnding, DisconnectClient and RegenerateCertificate. The bus connection
-//! lives on a thread of its own.
+//! `org.reprise.RemoteDesktop` on the session bus, on a thread of its own: the server's status
+//! for Settings, and Disconnect, SessionEnding, DisconnectClient and RegenerateCertificate.
 
 use tokio::sync::{mpsc, oneshot, watch};
 use zbus::connection::Builder;

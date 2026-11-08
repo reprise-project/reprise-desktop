@@ -41,9 +41,8 @@ impl Daemon {
         }
     }
 
-    /// A hand-over passed to `uid`'s session while the console shows another VT makes it a
-    /// background session, armed to end like one until a client shows. An unknown
-    /// `active_vt` (0) marks nothing.
+    /// A hand-over to `uid`'s session while the console shows another VT marks it a background
+    /// session, armed to end like one until a client shows; an unknown `active_vt` (0) marks none.
     pub(super) fn reached_remotely(
         &mut self,
         now: Instant,

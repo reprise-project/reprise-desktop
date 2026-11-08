@@ -453,9 +453,8 @@ impl Runtime {
         self.sync_gate();
     }
 
-    /// Hands the state machine a worker's exit. The console leaves a timed-out worker's VT,
-    /// a session worker whose logind session is closing or gone ends that session, and one
-    /// whose session logind keeps open reports it orphaned.
+    /// Hands the state machine a worker's exit: the console leaves a timed-out worker's VT, and a
+    /// session worker's session is removed once logind lists it closing, else reported orphaned.
     async fn exited(&mut self, exit: Exited) {
         self.gate.borrow_mut().greeter_exited(exit.id);
         let stalled = self.daemon.stalled_vt(exit.id);
@@ -730,8 +729,8 @@ fn on_dead_vt(stalled_vt: u16, active: io::Result<u16>) -> bool {
     stalled_vt != GREETER_VT && active.is_ok_and(|a| a == stalled_vt)
 }
 
-/// Whether a worker's exit left its session without a PAM handle: a logout's worker exits
-/// after `pam_close_session`, when logind already reports the session closing or gone.
+/// Whether a worker's exit left its session open without a PAM handle. The worker leads its
+/// session, so logind most often reports it closing already, after a logout or a crash alike.
 fn orphaned(mode: Mode, ended: bool) -> bool {
     mode != Mode::Greeter && !ended
 }
