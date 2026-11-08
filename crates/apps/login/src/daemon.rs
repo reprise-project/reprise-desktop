@@ -114,6 +114,12 @@ pub enum Input {
         id: String,
         seat_active: Option<String>,
     },
+    /// logind described a session it could not at recovery; `seat_active` is seat0's active
+    /// session then.
+    SessionRead {
+        session: LogindSession,
+        seat_active: Option<String>,
+    },
     /// Session `id` of `uid` lost its login worker while logind keeps it open.
     SessionOrphaned {
         id: String,
@@ -153,7 +159,7 @@ pub enum Input {
         uid: Option<u32>,
         member: bool,
     },
-    /// The link to `uid`'s hand-over socket is up, and its first `Viewers` follows.
+    /// The link to `uid`'s hand-over socket is up; a new link's first `Viewers` follows.
     IntakeOpen {
         uid: u32,
     },
@@ -271,6 +277,15 @@ pub struct LogindSession {
     pub service: String,
     /// logind's `State` is `closing`: its leader is gone and its scope may still run.
     pub closing: bool,
+}
+
+/// A session logind's `ListSessions` lists whose properties could not be read.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Unread {
+    pub id: String,
+    pub uid: u32,
+    pub user: String,
+    pub seat: String,
 }
 
 /// What the backend reads fresh for each `Hello`, start, power request and forwarded hand-over.
@@ -462,17 +477,8 @@ impl Daemon {
         let mut out = Vec::new();
         self.seat_empty = seat_active.is_none();
         for s in found {
-            if s.seat == "seat0" && s.class == "user" && user_service(&s.service) {
-                let background = seat_active != Some(&s.id) && remote_service(&s.service);
-                self.sessions.insert(SessionEntry {
-                    id: s.id.clone(),
-                    user: s.user,
-                    uid: s.uid,
-                    vt: s.vt,
-                    started: None,
-                    background,
-                    interface: None,
-                });
+            if let Some(entry) = table_entry(&s, seat_active) {
+                self.sessions.insert(entry);
             } else if s.class == "greeter" && s.service == Mode::Greeter.service() {
                 self.orphans.push(Orphan {
                     id: s.id.clone(),
@@ -578,6 +584,10 @@ impl Daemon {
             Input::SessionRemoved { id, seat_active } => {
                 self.session_removed(now, world, &id, seat_active, &mut out)
             }
+            Input::SessionRead {
+                session,
+                seat_active,
+            } => self.session_read(session, seat_active.as_deref(), &mut out),
             Input::SessionOrphaned { id, uid } => self.session_orphaned(&id, uid, &mut out),
             Input::Unlocked { id } => {
                 let resuming = matches!(&self.conversation, Some(Conversation {
@@ -1622,6 +1632,23 @@ fn error(kind: ErrorKind, text: String) -> GreeterReply {
 
 fn refused(text: &str) -> Effect {
     Effect::Reply(error(ErrorKind::Refused, text.into()))
+}
+
+/// `s` as the table holds it when it is a seat0 user session reprise-login started; one other
+/// than `seat_active` that a remote login started is a background one.
+fn table_entry(s: &LogindSession, seat_active: Option<&str>) -> Option<SessionEntry> {
+    if s.seat != "seat0" || s.class != "user" || !user_service(&s.service) {
+        return None;
+    }
+    Some(SessionEntry {
+        id: s.id.clone(),
+        user: s.user.clone(),
+        uid: s.uid,
+        vt: s.vt,
+        started: None,
+        background: seat_active != Some(&s.id) && remote_service(&s.service),
+        interface: None,
+    })
 }
 
 /// Whether `service` is the PAM service of a user session reprise-login starts.

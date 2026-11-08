@@ -16,8 +16,8 @@ use zeroize::Zeroizing;
 
 use super::account::Accounts;
 use super::{
-    Conversation, Daemon, Effect, Job, NO_VT, Phase, SESSION_ENDED, START_WAIT, SessionWorker,
-    Timer, WORKER_ENDED, WorkerId, World,
+    Conversation, Daemon, Effect, Job, LogindSession, NO_VT, Phase, SESSION_ENDED, START_WAIT,
+    SessionWorker, Timer, Unread, WORKER_ENDED, WorkerId, World, table_entry,
 };
 use crate::table::SessionEntry;
 use crate::vt;
@@ -35,7 +35,6 @@ pub const MAX_LOGINS: usize = 128;
 const MAX_USER_NAME: usize = 32;
 
 const MOST_SESSIONS: &str = "the computer runs its most sessions";
-const UNREAD: &str = "logind could not describe the user's running session";
 pub(super) const ASKED_MORE: &str = "PAM asked for more than the password";
 pub(super) const NEVER_ASKED: &str = "PAM passed the login without asking for its password";
 
@@ -182,10 +181,33 @@ struct Starting {
 }
 
 impl Daemon {
-    /// Takes the sessions, by id with their uids, that logind listed at recovery but could not
-    /// describe. Until each is removed, a remote login for its uid starts no session beside it.
-    pub fn recover_unread(&mut self, unread: Vec<(String, u32)>) {
-        self.remote.unread = unread.into_iter().collect();
+    /// Keeps the seat0 sessions logind listed at recovery but could not describe, returning them
+    /// to be read again. Until each reads or is removed, a remote login for its uid is refused.
+    pub fn recover_unread(&mut self, unread: Vec<Unread>) -> Vec<Unread> {
+        let kept: Vec<Unread> = unread.into_iter().filter(|u| u.seat == "seat0").collect();
+        self.remote.unread = kept.iter().map(|u| (u.id.clone(), u.uid)).collect();
+        kept
+    }
+
+    /// A session left unread at recovery joins the table as recovery would have taken it.
+    pub(super) fn session_read(
+        &mut self,
+        s: LogindSession,
+        seat_active: Option<&str>,
+        out: &mut Vec<Effect>,
+    ) {
+        if self.remote.unread.remove(&s.id).is_none() || s.closing {
+            return;
+        }
+        let Some(entry) = table_entry(&s, seat_active) else {
+            return;
+        };
+        let (uid, user, background) = (entry.uid, entry.user.clone(), entry.background);
+        self.sessions.insert(entry);
+        if !self.remote.linked.contains(&uid) {
+            self.open_intake(uid, user, background, out);
+        }
+        self.update_inhibit(out);
     }
 
     /// Replaces the Remote Desktop passwords, telling a linked front.
@@ -208,9 +230,8 @@ impl Daemon {
         Effect::ToFront(FrontEvent::Passwords { users })
     }
 
-    /// Turning remote logins on starts the front and opens the links of background sessions and
-    /// group members' sessions; off stops it and denies logins not handed over, keeping the links
-    /// of uids with a session.
+    /// On starts the front and links background and members' sessions; off stops it and denies
+    /// logins not handed over, keeping the links of uids with a session.
     pub(super) fn config_reloaded(
         &mut self,
         now: Instant,
@@ -589,9 +610,11 @@ impl Daemon {
             out.push(cancel);
             return self.set_step(conn, Step::Starting { uid });
         }
-        if self.remote.unread.values().any(|&u| u == uid) {
+        if let Some(id) = (self.remote.unread.iter()).find_map(|(id, &u)| (u == uid).then_some(id))
+        {
+            let why = format!("logind has not described the user's running session {id}");
             out.push(cancel);
-            return self.refuse(now, conn, UNREAD, out);
+            return self.refuse_at(Level::Warn, now, conn, &why, out);
         }
         let most = self.config.remote.max_sessions as usize;
         if self.sessions.len() + self.remote.starting.len() >= most {
@@ -765,6 +788,18 @@ impl Daemon {
     /// Refuses `conn`'s login. `Denied` waits until `REFUSE_DELAY` after its `Authenticate`,
     /// so a refusal takes as long as a wrong password. The caller ends its worker.
     fn refuse(&mut self, now: Instant, conn: u64, why: &str, out: &mut Vec<Effect>) {
+        self.refuse_at(Level::Info, now, conn, why, out);
+    }
+
+    /// [`Self::refuse`], logged at `level`.
+    fn refuse_at(
+        &mut self,
+        level: Level,
+        now: Instant,
+        conn: u64,
+        why: &str,
+        out: &mut Vec<Effect>,
+    ) {
         let Some(l) = self.remote.logins.get_mut(&conn) else {
             return;
         };
@@ -772,7 +807,7 @@ impl Daemon {
         l.step = Step::Refused;
         l.secret = None;
         out.push(Effect::Log(
-            Level::Info,
+            level,
             format!("a remote login from {} was refused: {why}", l.peer),
         ));
         let waited = now.saturating_duration_since(l.at);
@@ -955,30 +990,46 @@ impl Daemon {
         }
         self.remote.reopening.remove(&uid);
         self.set_viewers(now, uid, 0, out);
+        if let Some(e) = self.sessions.by_uid(uid)
+            && e.background
+            && !self.remote.disconnects.contains_key(&e.id)
+        {
+            let id = e.id.clone();
+            out.push(Effect::Log(
+                Level::Warn,
+                format!(
+                    "background session {id}'s hand-over server never reported; counting no client"
+                ),
+            ));
+            self.arm_disconnected(now, id, out);
+        }
         for conn in self.conns(Step::Linking { uid }) {
             self.refuse(now, conn, "its session's hand-over link did not open", out);
         }
     }
 
-    /// Opens the link of every background session, whose count alone starts its disconnect
-    /// time, whatever the settings and group say. For the others it looks up whether their
-    /// user is in the remote logins' group while remote logins are on; `link_member` opens the
-    /// links of members.
+    /// Links every background session, whose count alone starts its time; looks up the group
+    /// for the others while remote logins are on.
     pub(super) fn open_intakes(&mut self, out: &mut Vec<Effect>) {
         let users: BTreeMap<u32, (String, bool)> = (self.sessions.iter())
             .filter(|e| !self.remote.linked.contains(&e.uid))
             .map(|e| (e.uid, (e.user.clone(), e.background)))
             .collect();
         for (uid, (user, background)) in users {
-            if background {
-                self.open_link(uid, out);
-            } else if self.config.remote.enabled {
-                out.push(Effect::LookUp {
-                    key: LookUpKey::Link(uid),
-                    user,
-                    group: self.config.remote.group.clone(),
-                });
-            }
+            self.open_intake(uid, user, background, out);
+        }
+    }
+
+    /// Links `uid`'s background session, or looks up its user for `link_member`.
+    fn open_intake(&mut self, uid: u32, user: String, background: bool, out: &mut Vec<Effect>) {
+        if background {
+            self.open_link(uid, out);
+        } else if self.config.remote.enabled {
+            out.push(Effect::LookUp {
+                key: LookUpKey::Link(uid),
+                user,
+                group: self.config.remote.group.clone(),
+            });
         }
     }
 
@@ -997,9 +1048,8 @@ impl Daemon {
         }
     }
 
-    /// A link's count of its session's clients. The first after a reopen ends the reopen. A
-    /// count of none starts the disconnect time of a background session that has none running,
-    /// as one found at recovery.
+    /// A link's count of its session's clients; the first ends a reopen. A count of none starts
+    /// a background session's time when none runs, as for one found at recovery.
     pub(super) fn viewers_reported(
         &mut self,
         now: Instant,

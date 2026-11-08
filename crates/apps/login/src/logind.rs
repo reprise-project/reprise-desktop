@@ -13,7 +13,7 @@ use zbus::OwnedObjectPath;
 use zbus::proxy::CacheProperties;
 use zbus::{Connection, names::InterfaceName};
 
-use crate::daemon::{FrontUnit, Inhibit, LogindSession};
+use crate::daemon::{FrontUnit, Inhibit, LogindSession, Unread};
 
 const LOGIN1: &str = "org.freedesktop.login1";
 const SESSION: &str = "org.freedesktop.login1.Session";
@@ -144,8 +144,8 @@ pub fn session_gone(e: &zbus::Error) -> bool {
 pub struct Listing {
     /// Those whose properties could be read, closing ones included.
     pub found: Vec<LogindSession>,
-    /// The ids and uids of those whose properties could not be read.
-    pub unread: Vec<(String, u32)>,
+    /// Those whose properties could not be read.
+    pub unread: Vec<Unread>,
 }
 
 /// Whether a session is gone or closing.
@@ -221,11 +221,32 @@ impl Logind {
                 Err(e) if session_gone(&e) => log::debug!("logind session {id}: {e}"),
                 Err(e) => {
                     log::warn!("logind session {id}: {e}");
-                    listing.unread.push((id, uid));
+                    listing.unread.push(Unread {
+                        id,
+                        uid,
+                        user,
+                        seat,
+                    });
                 }
             }
         }
         Ok(listing)
+    }
+
+    /// Describes session `u` again.
+    pub async fn read(&self, u: &Unread) -> zbus::Result<LogindSession> {
+        let path = self.manager.get_session(&u.id).await?;
+        let (vt, class, service, closing) = self.describe(path).await?;
+        Ok(LogindSession {
+            id: u.id.clone(),
+            user: u.user.clone(),
+            uid: u.uid,
+            vt,
+            seat: u.seat.clone(),
+            class,
+            service,
+            closing,
+        })
     }
 
     /// The VT, class and service of the session at `path`, and whether it is closing.

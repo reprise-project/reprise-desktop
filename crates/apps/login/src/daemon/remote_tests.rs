@@ -210,6 +210,15 @@ pub(super) fn quiet(effects: Vec<Effect>) -> Vec<Effect> {
         .collect()
 }
 
+fn unread(id: &str, uid: u32, seat: &str) -> Unread {
+    Unread {
+        id: id.into(),
+        uid,
+        user: String::new(),
+        seat: seat.into(),
+    }
+}
+
 pub(super) fn disconnect_arm(id: &str, generation: u32, min: u32) -> Effect {
     Effect::Arm {
         timer: Timer::Disconnected {
@@ -590,11 +599,17 @@ fn failures_back_off_the_address_and_a_pause_stops_every_login() {
 #[test]
 fn a_session_logind_could_not_describe_at_recovery_gets_no_session_beside_it_until_it_ends() {
     let mut run = Run::machine(config(enabled()));
-    run.d.recover_unread(vec![("c1".into(), ANNA)]);
+    run.d.recover_unread(vec![unread("c1", ANNA, "seat0")]);
     assert_eq!(run.recover(vec![]), vec![]);
     run.start();
+    let effects = run.verify(7, 2, "anna", ANNA);
+    assert!(
+        (effects.iter())
+            .any(|e| matches!(e, Effect::Log(Level::Warn, text) if text.contains("session c1"))),
+        "{effects:?}"
+    );
     assert_eq!(
-        quiet(run.verify(7, 2, "anna", ANNA)),
+        quiet(effects),
         [
             front(FrontEvent::Verified { conn: 7 }),
             to_worker(2, ToWorker::Cancel),
@@ -603,6 +618,68 @@ fn a_session_logind_could_not_describe_at_recovery_gets_no_session_beside_it_unt
     assert_eq!(run.after(REFUSE_DELAY).fire(Timer::Refuse(7)), denied(7, 0));
     run.removed("c1", Some("g1"));
     run.anna_in_background(8, 3);
+}
+
+#[test]
+fn only_seat0_sessions_logind_could_not_describe_at_recovery_hold_back_remote_logins() {
+    let mut run = Run::machine(config(enabled()));
+    let kept = run
+        .d
+        .recover_unread(vec![unread("c1", ANNA, ""), unread("c3", BERT, "seat0")]);
+    assert_eq!(kept, [unread("c3", BERT, "seat0")]);
+    run.recover(vec![]);
+    run.start();
+    run.anna_in_background(7, 2);
+}
+
+#[test]
+fn a_seat0_session_read_after_recovery_joins_the_table_and_is_linked() {
+    let mut run = Run::machine(config(enabled()));
+    run.d.recover_unread(vec![unread("c1", ANNA, "seat0")]);
+    run.recover(vec![]);
+    run.start();
+    let read = |id: &str| Input::SessionRead {
+        session: logind(id, "anna", ANNA, 7, "user", "reprise-login-remote"),
+        seat_active: Some("g1".into()),
+    };
+    assert_eq!(
+        run.on(read("c1")),
+        [
+            Effect::OpenIntake { uid: ANNA },
+            Effect::Inhibit(Inhibit::Idle),
+        ]
+    );
+    assert_eq!(run.d.sessions.by_id("c1").map(|e| e.background), Some(true));
+    assert_eq!(run.on(read("c1")), [], "a second read changes nothing");
+    assert_eq!(
+        run.on(Input::IntakeOpen { uid: ANNA }),
+        [],
+        "nothing waits on the link"
+    );
+    assert_eq!(
+        quiet(run.verify(7, 2, "anna", ANNA)),
+        [
+            front(FrontEvent::Verified { conn: 7 }),
+            to_worker(2, ToWorker::Cancel),
+            front(FrontEvent::Accepted { conn: 7 }),
+        ]
+    );
+}
+
+#[test]
+fn a_session_read_after_recovery_that_is_no_seat0_user_session_stops_holding_back_logins() {
+    let mut run = Run::machine(config(enabled()));
+    run.d.recover_unread(vec![unread("c1", ANNA, "seat0")]);
+    run.recover(vec![]);
+    run.start();
+    let session = logind("c1", "anna", ANNA, 0, "manager", "systemd-user");
+    let read = Input::SessionRead {
+        session,
+        seat_active: Some("g1".into()),
+    };
+    assert_eq!(run.on(read), []);
+    assert!(run.d.sessions.by_id("c1").is_none());
+    run.anna_in_background(7, 2);
 }
 
 #[test]
@@ -1425,7 +1502,7 @@ fn a_recovered_background_session_outside_the_group_is_linked_without_a_look_up(
 }
 
 #[test]
-fn a_recovered_background_session_ends_only_after_its_server_reports_no_client() {
+fn a_recovered_background_session_ends_once_its_server_reports_no_client_or_never_reports() {
     let remote = MachineRemote {
         end_disconnected_after_min: Some(30),
         ..MachineRemote::default()
@@ -1465,10 +1542,16 @@ fn a_recovered_background_session_ends_only_after_its_server_reports_no_client()
         "reprise-login-remote",
     )];
     run.d.recover(found, Some("g1"));
+    let effects = run.on(Input::IntakeLost { uid: ANNA });
+    assert!(
+        (effects.iter())
+            .any(|e| matches!(e, Effect::Log(Level::Warn, text) if text.contains("c1"))),
+        "{effects:?}"
+    );
     assert_eq!(
-        run.on(Input::IntakeLost { uid: ANNA }),
-        [],
-        "a server that never reports leaves it running"
+        quiet(effects),
+        [disconnect_arm("c1", 1, 30)],
+        "a server that never reports counts as no client"
     );
 }
 

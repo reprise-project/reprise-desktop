@@ -14,7 +14,7 @@ use reprise_login::accountipc::{self, Replies};
 use reprise_login::config;
 use reprise_login::daemon::{
     Daemon, Effect, HANDOVER_DEADLINE, Input, Job, LogindSession, LookUpKey, Timer, UNLOCK_WAIT,
-    WorkerId, World,
+    Unread, WorkerId, World,
 };
 use reprise_login::frontipc::{self, Front};
 use reprise_login::intake::{self, Links};
@@ -64,6 +64,8 @@ const BOOT_USERS_WAIT: Duration = Duration::from_secs(60);
 /// Listings at start while logind fails to describe a session, and the wait between them.
 const BOOT_TRIES: u32 = 3;
 const BOOT_RETRY: Duration = Duration::from_millis(200);
+/// The wait between reads of the sessions logind still could not describe after start.
+const UNREAD_RETRY: Duration = Duration::from_secs(5);
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
@@ -214,7 +216,7 @@ async fn run() -> Result<(), String> {
         })),
     };
     let world = read_world(&logind, &mut rt.users).await;
-    rt.daemon.recover_unread(unread);
+    let unread = rt.daemon.recover_unread(unread);
     let effects = boot(&mut rt.daemon, found, seat_active.as_deref(), &world);
     let recovered: Vec<String> = rt.daemon.session_uids().into_keys().collect();
     rt.world = WorldCache(Some(world));
@@ -239,6 +241,7 @@ async fn run() -> Result<(), String> {
     for id in recovered {
         tokio::task::spawn_local(follow_leader(id, logind.clone(), events.clone()));
     }
+    tokio::task::spawn_local(read_unread(unread, logind.clone(), events.clone()));
     tokio::task::spawn_local(follow_removals(removed, logind, events));
     rt.run_effects(effects);
     rt.sync_gate();
@@ -314,11 +317,9 @@ fn serve_account(input: mpsc::Sender<Input>) -> Replies {
     })
 }
 
-/// logind's sessions, closing ones left out, and the ids and uids of those it still could not
-/// describe after `BOOT_TRIES` listings.
-async fn boot_sessions(
-    logind: &Logind,
-) -> Result<(Vec<LogindSession>, Vec<(String, u32)>), String> {
+/// logind's sessions, closing ones left out, and those it still could not describe after
+/// `BOOT_TRIES` listings.
+async fn boot_sessions(logind: &Logind) -> Result<(Vec<LogindSession>, Vec<Unread>), String> {
     let mut tries = 1;
     loop {
         let listing = (logind.listing().await).map_err(|e| format!("logind's sessions: {e}"))?;
@@ -343,6 +344,30 @@ fn boot(
     let mut effects = daemon.recover(found, seat_active);
     effects.extend(daemon.start(now, world));
     effects
+}
+
+/// Reads `unread` every `UNREAD_RETRY` until each reads, feeding it as `SessionRead`, or is gone.
+async fn read_unread(mut unread: Vec<Unread>, logind: Logind, events: Events) {
+    while !unread.is_empty() {
+        tokio::time::sleep(UNREAD_RETRY).await;
+        let mut left = Vec::new();
+        for u in unread {
+            match logind.read(&u).await {
+                Ok(session) => {
+                    log::info!("logind described session {} at last", u.id);
+                    let seat_active = logind.seat_active().await;
+                    let read = Input::SessionRead {
+                        session,
+                        seat_active,
+                    };
+                    let _ = events.send(Event::Input(read));
+                }
+                Err(e) if logind::session_gone(&e) => {}
+                Err(_) => left.push(u),
+            }
+        }
+        unread = left;
+    }
 }
 
 async fn follow_removals(mut removed: SessionRemovedStream, logind: Logind, events: Events) {
@@ -472,6 +497,10 @@ fn reads_world(input: &Input) -> bool {
 
 impl Runtime {
     async fn input(&mut self, input: Input) {
+        let read = match &input {
+            Input::SessionRead { session, .. } => Some(session.id.clone()),
+            _ => None,
+        };
         if let Input::Worker(w, FromWorker::Started { session_id, .. }) = &input {
             self.workers.started(*w, session_id);
             self.gate.borrow_mut().greeter_started(*w, session_id);
@@ -483,6 +512,10 @@ impl Runtime {
         let effects = self.daemon.handle(Instant::now(), world, input);
         self.run_effects(effects);
         self.sync_gate();
+        if let Some(id) = read.filter(|id| self.daemon.session_uids().contains_key(id)) {
+            let (logind, events) = (self.logind.clone(), self.events.clone());
+            tokio::task::spawn_local(follow_leader(id, logind, events));
+        }
     }
 
     /// Hands the state machine a worker's exit: the console leaves a timed-out worker's VT, and a
@@ -846,7 +879,7 @@ fn orphan_report(id: &str, listing: Option<&Listing>) -> OrphanReport {
     };
     match listing.found.iter().find(|s| s.id == id) {
         Some(s) if !s.closing => OrphanReport::Orphaned { uid: s.uid },
-        None if listing.unread.iter().any(|(u, _)| u == id) => OrphanReport::Nothing,
+        None if listing.unread.iter().any(|u| u.id == id) => OrphanReport::Nothing,
         _ => OrphanReport::Removed,
     }
 }
@@ -1493,7 +1526,12 @@ mod tests {
     fn a_session_logind_lists_but_cannot_describe_is_not_reported_removed() {
         let listing = Listing {
             found: vec![],
-            unread: vec![("c1".into(), 1000)],
+            unread: vec![Unread {
+                id: "c1".into(),
+                uid: 1000,
+                user: "anna".into(),
+                seat: "seat0".into(),
+            }],
         };
         assert_eq!(orphan_report("c1", Some(&listing)), OrphanReport::Nothing);
     }
