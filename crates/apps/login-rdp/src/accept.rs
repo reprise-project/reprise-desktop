@@ -733,8 +733,8 @@ impl NetworkClient for NoNetwork {
     }
 }
 
-/// Each user as `anna`, `.\anna`, `HOST\anna` and `anna@host`, with the NT hash as password; the
-/// acceptor compares account names only, so any domain logs on.
+/// Each user as `anna`, `.\anna`, `HOST\anna` and `anna@host`, with the NT hash as password.
+/// Bare NTLM compares account names only, so any domain logs on; SPNEGO takes only these forms.
 fn credssp_users(users: &[NlaUser], host: &str) -> Vec<CredsspAuthIdentity> {
     let domain = host.split('.').next().unwrap_or(host).to_uppercase();
     let mut list = Vec::with_capacity(users.len() * 4);
