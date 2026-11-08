@@ -258,10 +258,17 @@ impl Links {
     fn open_with(&self, uid: u32, retry: Retry) {
         let mut st = self.state.borrow_mut();
         match st.links.get(&uid) {
-            Some(Link { queue: Some(_), .. }) => {
-                let input = self.input.clone();
+            Some(Link {
+                queue: Some(_),
+                serial,
+                ..
+            }) => {
+                let (input, state, serial) = (self.input.clone(), self.state.clone(), *serial);
+                // A link that drops before this runs has sent its IntakeLost, the answer.
                 tokio::task::spawn_local(async move {
-                    let _ = input.send(Input::IntakeOpen { uid }).await;
+                    if state.borrow_mut().current(uid, serial).is_some() {
+                        let _ = input.send(Input::IntakeOpen { uid }).await;
+                    }
                 });
                 return;
             }
@@ -843,6 +850,28 @@ pub(crate) mod tests {
                 assert_eq!(next(&mut rx).await, Input::IntakeLost { uid });
                 assert_closed(&mut ends[0]);
                 assert_closed(&mut ends[2]);
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn an_open_asked_as_its_link_drops_is_answered_lost_only() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let (links, mut rx, _peers) = stalled_links();
+                let uid = own_uid();
+                links.open(uid);
+                opened(&mut rx, uid).await;
+                let (pipe, _w) = watched_pipe();
+                assert!(links.forward(uid, 1, pipe, Box::new(hand_over(1))));
+                nothing_within(&mut rx, Duration::from_millis(100)).await;
+
+                links.drop_conn(1);
+                links.open(uid);
+                assert_eq!(next(&mut rx).await, Input::Forwarded { conn: 1, ok: false });
+                assert_eq!(next(&mut rx).await, Input::IntakeLost { uid });
+                nothing_within(&mut rx, Duration::from_millis(200)).await;
             })
             .await;
     }
