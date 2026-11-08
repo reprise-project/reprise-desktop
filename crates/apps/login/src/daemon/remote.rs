@@ -34,6 +34,9 @@ pub const MAX_REMOTE_CHECKS: usize = 4;
 /// for their hand-over, so one past this misbehaves.
 pub const MAX_LOGINS: usize = 128;
 const MAX_USER_NAME: usize = 32;
+/// A refusal that costs the front nothing, before any check, is logged once this often per
+/// reason; the rest are counted into the next line.
+const GATE_LOG_EVERY: Duration = Duration::from_secs(60);
 /// The first wait before the front's list is looked up again after a look-up failed; it
 /// doubles with each failed round up to `RELIST_RETRY_MOST`.
 const RELIST_RETRY: Duration = Duration::from_secs(30);
@@ -139,6 +142,25 @@ pub(super) struct Remote {
     pub(super) left_out: HashSet<String>,
     generations: u32,
     inhibit: Inhibit,
+    gate_log: GateLog,
+}
+
+/// When each reason for refusing a login before any check was last logged, and the refusals
+/// held back since.
+#[derive(Default)]
+struct GateLog(HashMap<&'static str, (Instant, u32)>);
+
+impl GateLog {
+    /// The refusals held back since `why` was last logged, when it is logged now.
+    fn take(&mut self, now: Instant, why: &'static str) -> Option<u32> {
+        match self.0.get_mut(why) {
+            Some((at, held)) if now.saturating_duration_since(*at) < GATE_LOG_EVERY => {
+                *held += 1;
+                None
+            }
+            _ => Some(self.0.insert(why, (now, 0)).map_or(0, |(_, held)| held)),
+        }
+    }
 }
 
 impl Remote {
@@ -166,6 +188,9 @@ struct Login {
     /// same whatever refuses the login and whenever.
     backoff_s: u32,
     step: Step,
+    /// Group look-ups for its conn still out, a given-up login's included; each counts among
+    /// `MAX_REMOTE_CHECKS`.
+    lookups: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -194,6 +219,9 @@ enum Step {
     },
     /// `Denied` goes out once `REFUSE_DELAY` has passed.
     Refused,
+    /// The front gave it up; it holds its place among `MAX_LOGINS` until its deadline, as its
+    /// timers run until then.
+    Gone,
 }
 
 impl Step {
@@ -205,7 +233,7 @@ impl Step {
             | Step::Linking { uid }
             | Step::Accepted { uid }
             | Step::Forwarding { uid } => Some(uid),
-            Step::LookingUp | Step::Refused => None,
+            Step::LookingUp | Step::Refused | Step::Gone => None,
         }
     }
 }
@@ -579,29 +607,47 @@ impl Daemon {
         else {
             return;
         };
-        if self.remote.logins.contains_key(&conn) {
-            return out.push(Effect::Log(
-                Level::Warn,
-                format!("the front sent a second login for conn {conn}; ignoring it"),
-            ));
+        // A login given up on takes the new one's place, and its timers, which re-arm for the
+        // rest of the new one's waits, serve both.
+        let gone = match self.remote.logins.get(&conn) {
+            Some(l) if l.step == Step::Gone => Some((l.at, l.lookups)),
+            Some(_) => {
+                return out.push(Effect::Log(
+                    Level::Warn,
+                    format!("the front sent a second login for conn {conn}; ignoring it"),
+                ));
+            }
+            None => None,
+        };
+        if gone.is_none() && self.remote.logins.len() >= MAX_LOGINS {
+            let full = "the front holds the most logins";
+            if let Some(held) = self.remote.gate_log.take(now, full) {
+                out.push(Effect::Log(
+                    Level::Warn,
+                    format!(
+                        "the front holds {MAX_LOGINS} logins; ignoring conn {conn}'s{}",
+                        held_back(held)
+                    ),
+                ));
+            }
+            return;
         }
-        if self.remote.logins.len() >= MAX_LOGINS {
-            return out.push(Effect::Log(
-                Level::Warn,
-                format!("the front holds {MAX_LOGINS} logins; ignoring conn {conn}'s"),
-            ));
+        // The given-up login's Refuse timer has fired once its delay is over.
+        if gone.is_none_or(|(at, _)| now.saturating_duration_since(at) >= REFUSE_DELAY) {
+            out.push(Effect::Arm {
+                timer: Timer::Refuse(conn),
+                after: REFUSE_DELAY,
+            });
         }
-        out.push(Effect::Arm {
-            timer: Timer::Refuse(conn),
-            after: REFUSE_DELAY,
-        });
-        out.push(Effect::Arm {
-            timer: Timer::Handover(conn),
-            after: HANDOVER_DEADLINE,
-        });
-        let checks = (self.remote.logins.values())
-            .filter(|l| matches!(l.step, Step::LookingUp | Step::Checking { .. }))
-            .count();
+        if gone.is_none() {
+            out.push(Effect::Arm {
+                timer: Timer::Handover(conn),
+                after: HANDOVER_DEADLINE,
+            });
+        }
+        let checks: usize = (self.remote.logins.values())
+            .map(|l| l.lookups as usize + usize::from(matches!(l.step, Step::Checking { .. })))
+            .sum();
         let peer = peer.ip();
         let nla = matches!(secret, Secret::Delegated(_));
         self.remote.logins.insert(
@@ -616,6 +662,7 @@ impl Daemon {
                 nla,
                 backoff_s: 0,
                 step: Step::LookingUp,
+                lookups: gone.map_or(0, |(_, lookups)| lookups),
             },
         );
         let gate = self.gate(now, peer, nla, checks, out);
@@ -627,10 +674,19 @@ impl Daemon {
             l.backoff_s = u32::try_from(backoff.as_millis().div_ceil(1000)).unwrap_or(u32::MAX);
         }
         if let Some(why) = gate {
-            return self.refuse(now, conn, why, out);
+            return match self.remote.gate_log.take(now, why) {
+                Some(held) => {
+                    let why = format!("{why}{}", held_back(held));
+                    self.refuse(now, conn, &why, out)
+                }
+                None => self.refuse_unlogged(now, conn, out),
+            };
         }
         if !valid_user_name(&user) {
             return self.refuse(now, conn, "the name is no account name", out);
+        }
+        if let Some(l) = self.remote.logins.get_mut(&conn) {
+            l.lookups += 1;
         }
         out.push(Effect::LookUp {
             key: LookUpKey::Conn(conn),
@@ -686,9 +742,10 @@ impl Daemon {
         failed: bool,
         out: &mut Vec<Effect>,
     ) {
-        let Some(l) = self.remote.logins.get(&conn) else {
+        let Some(l) = self.remote.logins.get_mut(&conn) else {
             return;
         };
+        l.lookups = l.lookups.saturating_sub(1);
         if l.step != Step::LookingUp {
             return;
         }
@@ -1052,16 +1109,23 @@ impl Daemon {
         why: &str,
         out: &mut Vec<Effect>,
     ) {
+        if let Some(l) = self.remote.logins.get(&conn) {
+            out.push(Effect::Log(
+                level,
+                format!("a remote login from {} was refused: {why}", l.peer),
+            ));
+        }
+        self.refuse_unlogged(now, conn, out);
+    }
+
+    /// [`Self::refuse`] with no log line.
+    fn refuse_unlogged(&mut self, now: Instant, conn: u64, out: &mut Vec<Effect>) {
         let Some(l) = self.remote.logins.get_mut(&conn) else {
             return;
         };
         let checking = matches!(l.step, Step::LookingUp | Step::Checking { .. });
         l.step = Step::Refused;
         l.secret = None;
-        out.push(Effect::Log(
-            level,
-            format!("a remote login from {} was refused: {why}", l.peer),
-        ));
         let waited = now.saturating_duration_since(l.at);
         if waited < REFUSE_DELAY {
             return;
@@ -1095,7 +1159,10 @@ impl Daemon {
         let Some(l) = self.remote.logins.get(&conn) else {
             return;
         };
-        if l.step != Step::Refused {
+        if !matches!(
+            l.step,
+            Step::Refused | Step::LookingUp | Step::Checking { .. }
+        ) {
             return;
         }
         let left = REFUSE_DELAY.saturating_sub(now.saturating_duration_since(l.at));
@@ -1105,7 +1172,9 @@ impl Daemon {
                 after: left,
             });
         }
-        self.deny(conn, out);
+        if l.step == Step::Refused {
+            self.deny(conn, out);
+        }
     }
 
     /// Denies a login not in its session by the deadline; a session started for it keeps running for
@@ -1120,6 +1189,10 @@ impl Daemon {
                 timer: Timer::Handover(conn),
                 after: left,
             });
+        }
+        if let Step::Gone = l.step {
+            self.remote.logins.remove(&conn);
+            return;
         }
         if let Step::Forwarding { .. } = l.step {
             out.push(Effect::Log(
@@ -1142,19 +1215,22 @@ impl Daemon {
         ));
         let backoff_s = l.backoff_s;
         self.forget(conn, out);
+        self.remote.logins.remove(&conn);
         out.push(Effect::ToFront(FrontEvent::Denied { conn, backoff_s }));
         out.push(Effect::DropConn { conn });
     }
 
-    /// Drops `conn`'s login, killing a worker still checking it.
+    /// Gives `conn`'s login up, killing a worker still checking it. It holds its place until its
+    /// `Handover` timer, which the deadline makes its last.
     fn forget(&mut self, conn: u64, out: &mut Vec<Effect>) {
-        if let Some(Login {
-            step: Step::Checking { worker, .. },
-            ..
-        }) = self.remote.logins.remove(&conn)
-        {
+        let Some(l) = self.remote.logins.get_mut(&conn) else {
+            return;
+        };
+        if let Step::Checking { worker, .. } = l.step {
             out.push(Effect::Kill(worker));
         }
+        l.step = Step::Gone;
+        l.secret = None;
     }
 
     /// A front that went away takes its conns along, hand-overs in flight included; session
@@ -1505,6 +1581,14 @@ impl Daemon {
             self.remote.inhibit = want;
             out.push(Effect::Inhibit(want));
         }
+    }
+}
+
+/// How many refusals a log line stands for beyond its own.
+fn held_back(held: u32) -> String {
+    match held {
+        0 => String::new(),
+        n => format!(" ({n} more since the last such line)"),
     }
 }
 

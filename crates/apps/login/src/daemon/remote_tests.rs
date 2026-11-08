@@ -1023,6 +1023,167 @@ fn a_front_holding_max_logins_is_not_heard_until_one_ends() {
 }
 
 #[test]
+fn a_login_the_front_gave_up_holds_its_place_until_its_hand_over_deadline() {
+    let mut run = remote_run(enabled());
+    for conn in 0..MAX_LOGINS as u64 {
+        run.on(tls_from(conn, 1, "anna", "pw"));
+        run.gone(conn);
+    }
+    assert_eq!(
+        quiet(run.on(tls_from(900, 1, "anna", "pw"))),
+        [],
+        "the logins the front gave up still count, and so do their timers"
+    );
+    run.after(REFUSE_DELAY);
+    for conn in 0..MAX_LOGINS as u64 {
+        assert_eq!(run.fire(Timer::Refuse(conn)), []);
+    }
+    run.after(HANDOVER_DEADLINE - REFUSE_DELAY);
+    for conn in 0..MAX_LOGINS as u64 {
+        assert_eq!(run.fire(Timer::Handover(conn)), []);
+    }
+    assert_eq!(
+        quiet(run.on(tls_from(901, 1, "anna", "pw"))),
+        looked_up(901, "anna")
+    );
+}
+
+#[test]
+fn a_login_for_the_conn_of_one_given_up_takes_its_place_and_timers() {
+    let mut run = remote_run(enabled());
+    run.on(tls(7, "anna", "pw"));
+    run.gone(7);
+    let effects = run.after(Duration::from_secs(1)).on(tls(7, "anna", "pw"));
+    assert_eq!(
+        effects,
+        [Effect::LookUp {
+            key: LookUpKey::Conn(7),
+            user: "anna".into(),
+            group: "reprise-remote".into(),
+        }]
+    );
+    assert_eq!(
+        run.after(Duration::from_secs(7)).fire(Timer::Handover(7)),
+        [Effect::Arm {
+            timer: Timer::Handover(7),
+            after: Duration::from_secs(1),
+        }]
+    );
+}
+
+#[test]
+fn a_login_given_up_during_its_look_up_counts_among_the_checks_until_it_answers() {
+    let mut run = remote_run(enabled());
+    let looks_up =
+        |effects: &[Effect]| (effects.iter()).any(|e| matches!(e, Effect::LookUp { .. }));
+    for from in 1..=MAX_REMOTE_CHECKS as u8 {
+        assert!(looks_up(&run.on(tls_from(7, from, "anna", "pw"))));
+        run.gone(7);
+    }
+    assert!(
+        !looks_up(&run.on(tls_from(7, 10, "anna", "pw"))),
+        "the look-ups of the logins given up still run"
+    );
+    run.gone(7);
+    run.on(Input::Member {
+        key: LookUpKey::Conn(7),
+        uid: Some(ANNA),
+        member: true,
+        failed: false,
+    });
+    assert!(looks_up(&run.on(tls_from(8, 11, "anna", "pw"))));
+}
+
+#[test]
+fn a_login_taking_the_place_of_one_given_up_within_its_refuse_delay_is_denied_on_time() {
+    let mut run = remote_run(enabled());
+    run.on(tls(7, "anna", "pw"));
+    run.gone(7);
+    assert_eq!(
+        run.after(Duration::from_secs(2)).on(tls(7, "anna", "pw")),
+        [Effect::LookUp {
+            key: LookUpKey::Conn(7),
+            user: "anna".into(),
+            group: "reprise-remote".into(),
+        }]
+    );
+    assert_eq!(
+        run.after(Duration::from_secs(1)).fire(Timer::Refuse(7)),
+        [Effect::Arm {
+            timer: Timer::Refuse(7),
+            after: Duration::from_secs(2),
+        }],
+        "the timer it took over waits on for the new login"
+    );
+    let not_member = Input::Member {
+        key: LookUpKey::Conn(7),
+        uid: Some(ANNA),
+        member: false,
+        failed: false,
+    };
+    assert_eq!(quiet(run.on(not_member)), []);
+    let denied = quiet(run.after(Duration::from_secs(2)).fire(Timer::Refuse(7)));
+    assert!(
+        matches!(
+            denied.as_slice(),
+            [Effect::ToFront(FrontEvent::Denied { conn: 7, .. })]
+        ),
+        "{denied:?}"
+    );
+}
+
+#[test]
+fn a_login_taking_the_place_of_one_given_up_past_its_refuse_delay_is_denied_on_time() {
+    let mut run = remote_run(enabled());
+    run.on(tls(7, "anna", "pw"));
+    run.gone(7);
+    assert_eq!(run.after(REFUSE_DELAY).fire(Timer::Refuse(7)), []);
+    let refused = quiet(
+        run.after(Duration::from_secs(1))
+            .on(tls(7, "Not A Name", "pw")),
+    );
+    assert_eq!(
+        refused,
+        [Effect::Arm {
+            timer: Timer::Refuse(7),
+            after: REFUSE_DELAY,
+        }]
+    );
+    let denied = quiet(run.after(REFUSE_DELAY).fire(Timer::Refuse(7)));
+    assert!(
+        matches!(
+            denied.as_slice(),
+            [Effect::ToFront(FrontEvent::Denied { conn: 7, .. })]
+        ),
+        "{denied:?}"
+    );
+}
+
+#[test]
+fn a_refusal_before_any_check_is_logged_once_a_minute() {
+    let logs = |effects: &[Effect]| {
+        (effects.iter())
+            .filter(|e| matches!(e, Effect::Log(_, text) if text.contains("was refused")))
+            .count()
+    };
+    let mut run = remote_run(MachineRemote::default());
+    assert_eq!(logs(&run.on(tls(1, "anna", "pw"))), 1);
+    let mut held = 0;
+    for conn in 2..50 {
+        held += logs(
+            &run.after(Duration::from_millis(100))
+                .on(tls(conn, "anna", "pw")),
+        );
+    }
+    assert_eq!(held, 0, "the rest of the minute is counted");
+    let effects = run.after(Duration::from_secs(60)).on(tls(50, "anna", "pw"));
+    assert!(
+        (effects.iter()).any(|e| matches!(e, Effect::Log(_, text) if text.contains("48 more"))),
+        "{effects:?}"
+    );
+}
+
+#[test]
 fn a_ready_for_another_user_is_dropped() {
     let mut run = remote_run(enabled());
     run.anna_in_background(7, 2);
@@ -2407,7 +2568,11 @@ fn a_ready_for_a_login_whose_session_ended_is_denied_and_not_forwarded() {
             Effect::DropConn { conn: 7 },
         ]
     );
-    assert_eq!(run.fire(Timer::Handover(7)), [], "nothing left to deny");
+    assert_eq!(
+        run.after(HANDOVER_DEADLINE).fire(Timer::Handover(7)),
+        [],
+        "nothing left to deny"
+    );
 }
 
 #[test]
