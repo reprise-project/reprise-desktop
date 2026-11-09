@@ -244,6 +244,10 @@ impl State {
                 let with = with.and_then(|id| self.app_index.iter().find(|a| a.id == id).cloned());
                 self.open_document(&path, with, Confirm::Allow, recent);
             }
+            Outcome::MountImage(path) => {
+                self.close_dialog();
+                self.mount_image(&path);
+            }
             Outcome::TurnOn(aid) => {
                 self.close_dialog();
                 self.set_aid(aid, true);

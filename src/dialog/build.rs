@@ -831,6 +831,34 @@ impl Dialog {
         Dialog::run_question(&path, asked, buttons)
     }
 
+    /// The question before the disk image at `path` is mounted: Mount mounts it read-only,
+    /// Cancel, the default, leaves it.
+    pub fn ask_mount(path: std::path::PathBuf) -> Dialog {
+        use reprisefs::udisks::{MOUNT_BUTTONS, MOUNT_TITLE, mount_text};
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        Dialog {
+            icon: Some("dialog-warning".into()),
+            text: mount_text(&name),
+            buttons: vec![
+                button(
+                    MOUNT_BUTTONS[0],
+                    DialogAction::MountImage(path.clone()),
+                    false,
+                ),
+                button(MOUNT_BUTTONS[1], DialogAction::Cancel, true),
+            ],
+            ..Dialog::new(
+                MOUNT_TITLE,
+                Style::Classic {
+                    template: Template::MessageBox,
+                    text_h: None,
+                    delete_badge: false,
+                },
+                Placement::Center,
+            )
+        }
+    }
+
     fn run_question(
         path: &std::path::Path,
         asked: reprisefs::program::Asked,

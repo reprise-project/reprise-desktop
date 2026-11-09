@@ -1050,6 +1050,7 @@ impl Dialog {
                 with: with.clone(),
                 recent: *recent,
             },
+            DialogAction::MountImage(path) => Outcome::MountImage(path.clone()),
             DialogAction::TooBig { asker, answer } => Outcome::TooBig {
                 asker: asker.clone(),
                 answer: *answer,
