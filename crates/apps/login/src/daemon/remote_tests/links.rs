@@ -239,6 +239,8 @@ fn viewers_for_a_uid_with_no_session_are_ignored() {
 #[test]
 fn recovery_opens_links_only_for_remote_group_members() {
     let mut run = Run::machine(config(enabled()));
+    let viewed = BTreeSet::from(["c1".to_string(), "c3".to_string()]);
+    run.d.viewed_before(Some(viewed));
     let found = vec![
         logind("c1", "anna", ANNA, 7, "user", "reprise-login"),
         logind("c3", "carl", CARL, 8, "user", "reprise-login"),

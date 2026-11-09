@@ -214,7 +214,7 @@ fn a_session_read_after_recovery_that_is_no_seat0_user_session_stops_holding_bac
 }
 
 #[test]
-fn recovery_marks_sessions_off_the_seat_background_links_them_and_looks_up_the_others() {
+fn recovery_marks_sessions_off_the_seat_background_and_links_only_them() {
     let mut run = Run::machine(config(enabled()));
     let found = vec![
         logind("c1", "anna", ANNA, 7, "user", "reprise-login-remote"),
@@ -225,8 +225,6 @@ fn recovery_marks_sessions_off_the_seat_background_links_them_and_looks_up_the_o
         run.d.recover(found, Some("c3")),
         [
             Effect::OpenIntake { uid: ANNA },
-            link_look_up(BERT, "bert"),
-            link_look_up(CARL, "carl"),
             Effect::Inhibit(Inhibit::Idle),
         ]
     );
@@ -247,6 +245,8 @@ fn a_recovered_switched_away_console_session_holds_no_inhibitor_and_never_ends_u
         ..enabled()
     };
     let mut run = Run::machine(config(remote));
+    run.d
+        .viewed_before(Some(BTreeSet::from(["c1".to_string()])));
     let found = vec![logind("c1", "anna", ANNA, 7, "user", "reprise-login")];
     assert_eq!(
         run.d.recover(found, Some("g1")),
@@ -336,17 +336,18 @@ fn a_session_linked_at_a_restart_stays_listed_and_reopens_once_until_its_link_re
 }
 
 #[test]
-fn a_session_linked_at_a_restart_is_looked_up_once_remote_logins_turn_on_after_its_link_ended() {
+fn a_session_linked_at_a_restart_is_not_linked_again_when_remote_logins_turn_on_after_its_link_ended()
+ {
     let (mut run, _) = bert_viewed_at_restart(MachineRemote::default());
     run.on(Input::IntakeOpen { uid: BERT });
     run.viewers(BERT, 1);
     run.viewers(BERT, 0);
     run.on(Input::IntakeLost { uid: BERT });
     let effects = run.on(Input::ConfigReloaded(config(enabled())));
-    assert!(effects.contains(&link_look_up(BERT, "bert")), "{effects:?}");
-    assert!(
-        !effects.contains(&Effect::OpenIntake { uid: BERT }),
-        "{effects:?}"
+    assert_eq!(
+        effects,
+        [Effect::Front(FrontUnit::Start { port: 3389 })],
+        "its list entry is used up"
     );
 }
 
@@ -355,9 +356,32 @@ fn with_remote_logins_on_a_restart_looks_up_the_group_for_a_session_that_had_a_c
     let (run, effects) = bert_viewed_at_restart(enabled());
     assert_eq!(
         effects,
-        [link_look_up(ANNA, "anna"), link_look_up(BERT, "bert")]
+        [link_look_up(BERT, "bert")],
+        "anna's session had no client"
     );
     assert_eq!(run.d.viewed_ids(), BTreeSet::new());
+}
+
+#[test]
+fn with_remote_logins_on_a_restart_links_no_console_session_without_a_client() {
+    let mut run = Run::machine(config(enabled()));
+    run.d.recover_unread(vec![unread("c5", CARL, "seat0")]);
+    let found = vec![
+        logind("c1", "anna", ANNA, 7, "user", Mode::Login.service()),
+        logind("c3", "bert", BERT, 8, "user", Mode::Login.service()),
+    ];
+    let linking = |e: &Effect| matches!(e, Effect::LookUp { .. } | Effect::OpenIntake { .. });
+    let effects = run.d.recover(found, Some("c1"));
+    assert!(!effects.iter().any(linking), "{effects:?}");
+    let read = Input::SessionRead {
+        session: logind("c5", "carl", CARL, 9, "user", Mode::Login.service()),
+        seat_active: Some("c1".into()),
+    };
+    let effects = run.on(read);
+    assert!(
+        !effects.iter().any(linking),
+        "a session read late: {effects:?}"
+    );
 }
 
 #[test]
