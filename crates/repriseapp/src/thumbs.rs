@@ -269,7 +269,7 @@ const PROGRAM_PREFIX: &str = "reprise-";
 const PROGRAM: &str = concat!("reprise-", env!("CARGO_PKG_VERSION"));
 
 /// How the worker makes a thumbnail: the built-in decoders, and the installed thumbnailers unless
-/// `[thumbnail_cache] external_thumbnailers` is off.
+/// `[thumbnail_cache] external_thumbnailers` is off or bubblewrap is missing.
 struct Make<'a> {
     decoders: &'a Decoders,
     globs: MimeGlobs,
@@ -286,10 +286,13 @@ impl<'a> Make<'a> {
         Make {
             decoders,
             globs: MimeGlobs::new(),
-            external: external.then(|| External {
-                runner: Runner::default(),
-                installed: Box::new(reprisefs::thumbnailers::installed),
-            }),
+            external: external
+                .then(Runner::jailed)
+                .flatten()
+                .map(|runner| External {
+                    runner,
+                    installed: Box::new(reprisefs::thumbnailers::installed),
+                }),
         }
     }
 }
@@ -983,6 +986,7 @@ mod tests {
                     slot_dir: dir.to_path_buf(),
                     scratch: dir.to_path_buf(),
                     deadline: Duration::from_secs(5),
+                    jail: reprisefs::thumbnailers::Jail::Bare,
                 },
                 installed: Box::new(move || list.clone()),
             }),
