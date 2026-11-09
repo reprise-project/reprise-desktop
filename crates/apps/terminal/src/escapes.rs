@@ -84,13 +84,8 @@ pub struct Filter {
 }
 
 impl Filter {
-    /// How many bytes are held for a later [`Filter::feed`].
-    pub fn held(&self) -> usize {
-        self.held.len()
-    }
-
-    /// Pass `input` on into `out`, which grows by at most `input.len()` and [`Filter::held`]
-    /// as it was. Returns the URI of the last OSC 7 that `input` ends.
+    /// Pass `input` on into `out`, which grows by at most `input.len()` and the bytes held
+    /// before. Returns the URI of the last OSC 7 that `input` ends.
     pub fn feed(&mut self, input: &[u8], out: &mut Vec<u8>) -> Option<String> {
         let mut found = None;
         let mut i = 0;
@@ -392,7 +387,7 @@ mod tests {
             f.feed(&[b'x'; 64 << 10], &mut out);
         }
         assert_eq!(out, ST);
-        assert!(f.held() <= 2 + OSC_MAX, "held {}", f.held());
+        assert!(f.held.len() <= 2 + OSC_MAX, "held {}", f.held.len());
     }
 
     #[test]
