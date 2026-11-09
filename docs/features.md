@@ -351,8 +351,11 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
 - **Programs and scripts.** A file with its Executable box ticked
   (Properties) that holds a script (`#!`) or a binary runs when you open it,
   in its own folder, here and in Explorer. The first time you open a
-  script, a box asks whether to run it or open it in Notepad; Run is
-  remembered for that file (`confirm_scripts = false` never asks). A
+  script, a box asks whether to run it or open it in Notepad; a binary, or
+  a file whose program runs it (a `.exe` under Wine, a Java
+  archive, an AppImage), asks Run or Cancel. Run is remembered for that file
+  (`confirm_scripts = false` never asks). A program started from an
+  installed application entry never asks. A
   script runs on its own, or in
   your terminal with `script_open = "terminal"` (Settings > Default
   Programs); its menu has Run and Run in terminal in place of Open, the

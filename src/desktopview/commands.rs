@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use reprisefs::program::{Confirm, Program, ScriptOpen};
+use reprisefs::program::{Asked, Confirm, Program, ScriptOpen};
 use reprisefs::{apps, names, ops};
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 
@@ -174,15 +174,43 @@ impl State {
                     .as_deref()
                     .and_then(|m| reprisefs::props::default_app_entry(m, &self.app_index));
                 let open = reprisefs::props::open_file(file, default, &self.config.terminal);
-                return self.spawn_opening_activated(&open);
+                let file = file.clone();
+                return self.open_plain(&file, mime.as_deref(), open, how);
             }
         };
         self.spawn_argv_activated(&argv);
     }
 
+    /// Open the file at `path` of type `mime` as `open` says. A type its program runs
+    /// ([`reprisefs::program::runs_in_its_program`]) that `how` asks about first raises
+    /// [`Dialog::ask_run`] instead; the trust check reads an xattr, so it runs off the loop.
+    pub(crate) fn open_plain(
+        &mut self,
+        path: &Path,
+        mime: Option<&str>,
+        open: reprisefs::props::Opening,
+        how: Confirm,
+    ) {
+        if !mime.is_some_and(reprisefs::program::runs_in_its_program) {
+            return self.spawn_opening_activated(&open);
+        }
+        let path = path.to_path_buf();
+        self.spawn_job(move || {
+            let asks = reprisefs::program::asks_first(&path, how);
+            Box::new(move |state: &mut State| {
+                if asks {
+                    let d = crate::dialog::Dialog::ask_run(path, ScriptOpen::Run, Asked::Typed);
+                    state.open_dialog(d);
+                } else {
+                    state.spawn_opening_activated(&open);
+                }
+            }) as crate::fsjobs::OnLoop
+        });
+    }
+
     /// Run the program file at `path` in its own folder and an app scope named after it, a script
-    /// bare or in the terminal as `open` says. A script `how` asks about first raises
-    /// [`Dialog::ask_script`] instead. The exec waits on the file's mount, so it runs off the
+    /// bare or in the terminal as `open` says. A program `how` asks about first raises
+    /// [`Dialog::ask_run`] instead. The exec waits on the file's mount, so it runs off the
     /// loop; a program that does not start gets an error box.
     pub(crate) fn run_program(
         &mut self,
@@ -196,9 +224,10 @@ impl State {
         let path = path.to_path_buf();
         let (terminal, end) = (self.config.terminal.clone(), self.config.script_terminal);
         self.spawn_job(move || {
-            if reprisefs::program::asks_first(&path, program, how) {
+            if reprisefs::program::asks_first(&path, how) {
                 return Box::new(move |state: &mut State| {
-                    state.open_dialog(crate::dialog::Dialog::ask_script(path, open));
+                    let d = crate::dialog::Dialog::ask_run(path, open, Asked::of(program));
+                    state.open_dialog(d);
                 }) as crate::fsjobs::OnLoop;
             }
             let name = path.file_name().unwrap_or_default().to_string_lossy();

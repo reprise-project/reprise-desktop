@@ -67,7 +67,7 @@ while an editor saves it doesn't.
 | `[[outputs]]` | per-monitor mode, scale, rotation and position; a layout saved for the connected set of monitors wins over them ([features.md](features.md#displays)) |
 | `[display]` | `gpu`: which GPU draws and drives the monitors; `all_gpus`: also open the other GPUs. Both read when Reprise starts |
 | `desktop_widgets` | widgets on the desktop: `clock`, `calendar`, `meter`; none by default ([features.md](features.md#desktop)) |
-| `terminal`, `script_open`, `script_terminal`, `confirm_scripts` | the terminal, and how opening a script runs it and whether it asks first |
+| `terminal`, `script_open`, `script_terminal`, `confirm_scripts` | the terminal, how opening a script runs it, and whether opening a script, a binary or a file its program runs asks first |
 | `task_manager` | what the taskbar menu's Task Manager row and Ctrl+Shift+Escape start; Reprise's Task Manager by default |
 
 ## Wallpaper

@@ -230,7 +230,7 @@ pub fn page(a: Area) -> Form {
         CONFIRM_SCRIPTS,
         X,
         y + ROW_STEP,
-        "As&k before running a script the first time",
+        "As&k before running a program the first time",
     ));
     let y = list.y - 20;
     items.push(Item::label_at("dp_types_label", X, y, 120, "File types:"));
