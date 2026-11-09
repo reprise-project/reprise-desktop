@@ -411,9 +411,8 @@ fn c_dates(cmd: &mut Command) {
     cmd.env("LC_TIME", "C");
 }
 
-/// The type letter, size and the rest (the name, then a link's target) of a `bsdtar -tv
-/// --numeric-owner` line: mode, links, uid, gid, size, a three-word date, one space. A device
-/// node lists `major,minor` as its size and holds no bytes.
+/// Type letter, size and rest (name, then link target) of a `bsdtar -tv --numeric-owner` line:
+/// mode, links, uid, gid, size, a three-word date. A device's `major,minor` size holds no bytes.
 fn listed_line(line: &[u8]) -> Option<(u8, u64, &[u8])> {
     let mut rest = line;
     let mut words = [&line[..0]; 8];
@@ -687,9 +686,8 @@ fn resolves(base: &std::fs::File, rel: &Path) -> std::io::Result<Resolves> {
     }
 }
 
-/// Move what folder `from` holds into `to`, keeping what `to` has: a folder in both is merged
-/// into (never through a link), one meeting a non-folder there refuses. Returns what moved, by
-/// path under both; on a failure each goes back, or `Kept` says some could not and `from` stays.
+/// Move `from`'s entries into `to`, merging folders (never through a link) and refusing over a
+/// non-folder; returns the moved paths. A failure moves them back, or `Kept` says some stayed.
 fn merge_into(from: &Path, to: &Path) -> Result<Vec<PathBuf>, Failure> {
     use crate::ops::at::{c_path, cwd, open_dir, rename_free};
     let io = |e: std::io::Error| Failure::Tool(e.to_string());

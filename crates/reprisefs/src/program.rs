@@ -196,10 +196,8 @@ impl Asked {
     }
 }
 
-/// Whether opening `path` asks first, as `how` says; a program the system [`installed`] never
-/// asks. [`Confirm::Allow`] marks the file ([`crate::apps::set_trusted`]) so it opens bare from
-/// then on; a file system without `user.` xattrs asks again next time. Reads and writes an
-/// xattr, so a host calls it off its event loop.
+/// Whether opening `path` asks first; [`Confirm::Allow`] marks the file so it opens bare from
+/// then on. Reads and writes an xattr, so a host calls it off its event loop.
 pub fn asks_first(path: &Path, how: Confirm) -> bool {
     match how {
         Confirm::Skip => false,
@@ -260,9 +258,8 @@ pub fn runs_in_its_program(mime: &str) -> bool {
     RUNNABLE_TYPES.contains(&mime.to_ascii_lowercase().as_str())
 }
 
-/// Whether opening the file at `path`, of type `mime` by its name, runs it in its type's program:
-/// a [`runs_in_its_program`] type, or a name with no type whose first bytes are an `.exe`'s `MZ`,
-/// which `xdg-open` would sniff. Reads the file's head when its name has no type.
+/// Whether opening `path` (of type `mime` by its name) runs it in its type's program; a name
+/// with no type counts when its head starts with an `.exe`'s `MZ`, as `xdg-open` would sniff.
 pub fn opens_as_a_program(path: &Path, mime: Option<&str>) -> bool {
     match mime {
         Some(mime) => runs_in_its_program(mime),

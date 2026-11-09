@@ -564,9 +564,8 @@ impl Loop {
         true
     }
 
-    /// Ask again for every name a newer session took or this one deferred, without replacing
-    /// a holder, so a session started meanwhile keeps its own; a later one still replaces ours.
-    /// Names already ours stay so.
+    /// Ask again for every name not ours, without replacing a holder, so a session started
+    /// meanwhile keeps its own; a later one still replaces ours.
     async fn retake_names(&mut self) {
         use zbus::fdo::{RequestNameFlags, RequestNameReply};
         let flags = retake_flags();

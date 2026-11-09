@@ -173,9 +173,8 @@ impl BinDir {
     }
 }
 
-/// Move drive trash item `files` back to `dir/name` under `top` through folders made when gone and
-/// never links, numbered beside a taken name; `InvalidData` when `dir` is not under `top`. A
-/// failure removes the folders it made.
+/// Move drive trash item `files` back to `dir/name` under `top`, never through a link, numbered
+/// beside a taken name; `InvalidData` when `dir` is outside `top`. A failure undoes its folders.
 pub(crate) fn restore_beneath(
     bin: &BinDir,
     files: &Path,
