@@ -227,6 +227,18 @@ impl RemoteDesktop {
         Ok(())
     }
 
+    /// [`Self::session_ending`] for the computer turning off or restarting, which ends every
+    /// session: any Reprise session of the user may call it.
+    async fn power_ending(
+        &self,
+        #[zbus(connection)] conn: &zbus::Connection,
+        #[zbus(header)] header: Header<'_>,
+    ) -> zbus::fdo::Result<()> {
+        unsandboxed(conn, &header).await?;
+        let _ = self.disconnect.send(Request::SessionEnding);
+        Ok(())
+    }
+
     /// Ends the session of the client at `address`, as listed in `Clients`.
     async fn disconnect_client(
         &self,
@@ -561,6 +573,16 @@ pub(crate) mod tests {
             "{refused:?}"
         );
         assert!(disconnected.try_recv().is_err(), "no client is ended");
+        zbus::block_on(async {
+            let conn = Builder::address(bus.1.as_str()).build().await.unwrap();
+            conn.call_method(Some(NAME), PATH, Some(NAME), "PowerEnding", &())
+                .await
+                .unwrap();
+        });
+        assert!(
+            matches!(disconnected.blocking_recv(), Some(Request::SessionEnding)),
+            "a Turn Off from that session ends every client"
+        );
         drop(status);
     }
 
