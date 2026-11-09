@@ -373,8 +373,9 @@ impl Links {
     }
 
     /// Queues `handover` with `fd` on `uid`'s link, answered by `Forwarded`; a link still opening
-    /// tries every [`RETRY`] from then, and a uid with none gets one opened. False, closing `fd`,
-    /// when the link holds [`MAX_FORWARDS`] or the hand-over does not fit a frame.
+    /// tries every [`RETRY`] from then and for the deadline at least, and a uid with none gets one
+    /// opened. False, closing `fd`, when the link holds [`MAX_FORWARDS`] or the hand-over does not
+    /// fit a frame.
     pub fn forward(&self, uid: u32, conn: u64, fd: OwnedFd, handover: Box<HandOver>) -> bool {
         let frame = match frame::encode(&IntakeMessage::HandOver(handover)) {
             Ok(frame) => frame,
@@ -395,6 +396,7 @@ impl Links {
         }
         if !link.up {
             link.pace.hurry(RETRY);
+            link.pace.extend(Instant::now() + self.deadline);
         }
         (link.queue.waiting.borrow_mut()).push_back(Forward { conn, frame, fd });
         link.queue.queued.notify_one();
@@ -442,7 +444,8 @@ struct LinkTask {
 
 impl LinkTask {
     /// Opens and serves the link. Hand-overs a server leaves untaken go first to the next one
-    /// socket activation starts, until `deadline` passes with no server taking one.
+    /// socket activation starts, until `deadline` passes with no server taking one or, for a
+    /// hand-over queued since, until its own deadline.
     async fn run(self) {
         let LinkTask {
             uid,
@@ -478,8 +481,9 @@ impl LinkTask {
                     break;
                 }
             }
-            if input.is_closed() || state.borrow_mut().current(uid, serial).is_none() {
-                return;
+            match state.borrow_mut().current(uid, serial) {
+                Some(link) if !input.is_closed() => link.up = false,
+                _ => return,
             }
             queue.requeue();
             let left = queue.waiting.borrow().len();
@@ -495,7 +499,7 @@ impl LinkTask {
                 _ => now + deadline,
             };
             give_up = Some(at);
-            pace.until.set(at);
+            pace.extend(at);
             pace.every.set(RETRY);
         }
         if state.borrow_mut().current(uid, serial).is_none() {
@@ -1638,6 +1642,48 @@ pub(crate) mod tests {
                 opened(&mut rx, uid).await;
                 let (got, _fd) = read_hand_over(&rdp).await;
                 assert_eq!(got, hand_over(9));
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn a_hand_over_queued_after_a_server_left_one_untaken_waits_its_own_deadline() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let (dir, listener) = runtime_dir();
+                let deadline = Duration::from_millis(600);
+                let (links, _rx, first) = linked_at(dir.path(), &listener, deadline).await;
+                let uid = own_uid();
+                let (pipe, _w) = watched_pipe();
+                assert!(links.forward(uid, 9, pipe, Box::new(hand_over(9))));
+                let (_, fd) = read_hand_over(&first).await;
+                drop((fd, first));
+
+                tokio::time::sleep(Duration::from_millis(400)).await;
+                let (pipe, _w) = watched_pipe();
+                assert!(links.forward(uid, 10, pipe, Box::new(hand_over(10))));
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                links.drop_conn(9);
+                let (second, _) = tokio::time::timeout(WAIT, listener.accept())
+                    .await
+                    .unwrap()
+                    .unwrap();
+                report(&second, 0).await;
+                drop(second);
+
+                tokio::time::sleep(Duration::from_millis(150)).await;
+                let (third, _) = tokio::time::timeout(WAIT, listener.accept())
+                    .await
+                    .unwrap()
+                    .unwrap();
+                report(&third, 0).await;
+                let (got, _fd) = read_hand_over(&third).await;
+                assert_eq!(
+                    got,
+                    hand_over(10),
+                    "hand-over 10 waits until 600 ms after it came"
+                );
             })
             .await;
     }
