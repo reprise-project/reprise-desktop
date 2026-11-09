@@ -129,6 +129,7 @@ mod tabletpad;
 mod tabs;
 mod tabsproto;
 mod tabview;
+mod takeback;
 mod taskpreview;
 #[cfg(test)]
 mod testbus;
@@ -423,7 +424,8 @@ fn run(
         "running on WAYLAND_DISPLAY={}",
         state.socket().to_string_lossy()
     );
-    let session_begun = spawn::begin_session(&state.env);
+    let begun = takeback::setup(&mut state);
+    let session_begun = spawn::begin_session(&state.env, move || begun.done());
     spawn::theme_portal_gtk(
         &state.env,
         tray::settings::Appearance::live(&state).gtk_theme(),
@@ -460,6 +462,7 @@ fn shutdown(state: State, event_loop: EventLoop<'static, State>) {
     let end_processes = state.config.session.end_processes;
     drop(state);
     drop(event_loop);
+    takeback::finish();
     spawn::end_session_env(&env, end_processes);
     state::flush();
     log::info!("shut down");

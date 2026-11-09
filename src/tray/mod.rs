@@ -299,6 +299,8 @@ pub enum TrayCommand {
     /// The desktop locked or unlocked ([`State::desktop_locked`]): `GetActive` answers it and
     /// `ActiveChanged` goes out.
     Locked(bool),
+    /// The session this one gave way to ended: ask again for the names nobody holds now.
+    RetakeNames,
     Shutdown,
 }
 

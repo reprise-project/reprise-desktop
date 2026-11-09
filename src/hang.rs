@@ -219,7 +219,7 @@ fn thread_pidfd(tid: i32) -> std::io::Result<OwnedFd> {
 }
 
 /// A pidfd that turns readable once every thread of process `pid` has exited.
-fn process_pidfd(pid: i32) -> std::io::Result<OwnedFd> {
+pub(crate) fn process_pidfd(pid: i32) -> std::io::Result<OwnedFd> {
     pidfd(pid, 0)
 }
 

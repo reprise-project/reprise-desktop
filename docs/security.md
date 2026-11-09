@@ -1384,7 +1384,11 @@ sharing and remote control grants yet.
   user service, an SSH login) keeps running. A nested Reprise stops neither. While another Reprise session of the same user runs, Log Off stops
   only the scopes this session launched (each scope name carries its
   `XDG_SESSION_ID`) and leaves the user manager's variables, the session
-  target and the portals to that session.
+  target and the portals to that session. A text-login Reprise that gave way
+  to another Reprise session takes them back once that session's compositor
+  exits and its display is gone, and takes back only the bus names nobody
+  holds by then; beside a live desktop that is not Reprise it takes nothing
+  ([The session](protocols.md#the-session)).
 
 ## Out of scope and known gaps
 
