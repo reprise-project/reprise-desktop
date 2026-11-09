@@ -20,7 +20,17 @@ pub fn decode_with(
     max_side: u32,
     max_alloc: Option<u64>,
 ) -> image::ImageResult<image::DynamicImage> {
-    let mut reader = image::ImageReader::open(path)?.with_guessed_format()?;
+    limited(image::ImageReader::open(path)?, max_side, max_alloc)
+}
+
+/// `reader`'s picture by its content, refused past `max_side` a side and `max_alloc` bytes of
+/// decoder memory.
+pub fn limited<R: std::io::BufRead + std::io::Seek>(
+    reader: image::ImageReader<R>,
+    max_side: u32,
+    max_alloc: Option<u64>,
+) -> image::ImageResult<image::DynamicImage> {
+    let mut reader = reader.with_guessed_format()?;
     let mut limits = image::Limits::default();
     limits.max_image_width = Some(max_side);
     limits.max_image_height = Some(max_side);
