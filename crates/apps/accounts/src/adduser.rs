@@ -41,6 +41,8 @@ pub struct AddUser {
     pub form: Form,
     taken: Vec<String>,
     login_edited: bool,
+    /// A change is under way: Create greys until it lands.
+    busy: bool,
 }
 
 fn field(id: &'static str, y: i32, secret: bool) -> Item {
@@ -172,6 +174,7 @@ impl AddUser {
             form: Form::new(items),
             taken,
             login_edited: false,
+            busy: false,
         };
         d.form.focus_id(FULL);
         d.sync();
@@ -207,7 +210,19 @@ impl AddUser {
         let typed = !self.text(FULL).is_empty() || !self.text(LOGIN).is_empty();
         self.form
             .set_text(HINT, if typed { problem.unwrap_or("") } else { "" });
-        self.form.set_enabled(CREATE, problem.is_none());
+        self.form
+            .set_enabled(CREATE, problem.is_none() && !self.busy);
+    }
+
+    pub fn set_busy(&mut self, busy: bool) {
+        self.busy = busy;
+        self.sync();
+    }
+
+    /// The user names in use as last read, such as one a failed Create made.
+    pub fn set_taken(&mut self, taken: Vec<String>) {
+        self.taken = taken;
+        self.sync();
     }
 
     fn fill_login(&mut self) {
@@ -238,7 +253,7 @@ impl AddUser {
                 Outcome::Redraw
             }
             form::Event::Pressed(CREATE) | form::Event::Default => {
-                if self.problem().is_some() {
+                if self.problem().is_some() || self.busy {
                     return Outcome::None;
                 }
                 Outcome::Create(Op::Create {
@@ -362,6 +377,22 @@ mod tests {
                 expire: false,
             })
         );
+    }
+
+    #[test]
+    fn create_greys_while_a_change_is_under_way_and_takes_names_made_since() {
+        let mut d = AddUser::new(Vec::new());
+        type_into(&mut d, FULL, "Sam Lee");
+        type_into(&mut d, PASSWORD, "pw12345!");
+        type_into(&mut d, CONFIRM, "pw12345!");
+        d.set_busy(true);
+        assert!(!create_live(&d));
+        assert_eq!(d.event(form::Event::Default), Outcome::None);
+        d.set_busy(false);
+        assert!(create_live(&d));
+        d.set_taken(vec!["sam".into()]);
+        assert_eq!(d.problem(), Some("That user name is taken."));
+        assert!(!create_live(&d));
     }
 
     fn tick(d: &mut AddUser, id: &str) {
