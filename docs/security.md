@@ -1268,7 +1268,9 @@ sharing and remote control grants yet.
   or any other unused value is skipped unread, a dictionary keeps 64
   entries, a string 4096 bytes, a string list 16 strings, and a tray menu
   its first level, up to 256 rows. A player's title, artist and name show
-  256 characters at most.
+  256 characters at most. A notification's `image-path` picture is read
+  only from a regular file of 32 MiB or less, opened without blocking, and
+  decoded off the bus thread; one that takes over 2 s is left out.
 - **Launchers.** A `.desktop` file in a folder (the desktop, Explorer)
   runs only when it is executable and carries the `user.reprise.trusted`
   extended attribute, which Allow Launching sets. Extracting an archive

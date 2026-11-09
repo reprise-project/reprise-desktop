@@ -201,7 +201,12 @@ fn a_picture_does_not_replace_the_app_icon() {
         }),
         ..Default::default()
     };
-    let (app, image) = notification_icons(&hicolor(), &hints, blue_svg("both"), None);
+    let (app, image) = zbus::block_on(notification_icons(
+        &hicolor(),
+        &hints,
+        blue_svg("both"),
+        None,
+    ));
     assert_eq!(app.len(), NOTIFY_SIZES.len());
     assert_eq!(image.len(), NOTIFY_SIZES.len());
 }
@@ -212,7 +217,7 @@ fn image_path_is_the_picture_and_an_unresolved_app_icon_stays_empty() {
         image_path: Some(format!("file://{}", blue_svg("path"))),
         ..Default::default()
     };
-    let (app, image) = notification_icons(&hicolor(), &hints, String::new(), None);
+    let (app, image) = zbus::block_on(notification_icons(&hicolor(), &hints, String::new(), None));
     assert!(app.is_empty());
     assert_eq!(image.len(), NOTIFY_SIZES.len());
 }
@@ -229,7 +234,7 @@ fn a_jpeg_image_path_is_the_picture() {
         image_path: Some(format!("file://{}", file.display())),
         ..Default::default()
     };
-    let (_, image) = notification_icons(&hicolor(), &hints, String::new(), None);
+    let (_, image) = zbus::block_on(notification_icons(&hicolor(), &hints, String::new(), None));
     assert_eq!(image.len(), NOTIFY_SIZES.len());
     let big = image.iter().max_by_key(|s| s.width).unwrap();
     let mid = big.pixels[(big.height / 2 * big.width + big.width / 2) as usize];
@@ -255,7 +260,12 @@ fn the_desktop_entry_icon_stands_in_for_a_missing_app_icon() {
         shown: true,
     };
     let hints = notify::Hints::default();
-    let (app, image) = notification_icons(&hicolor(), &hints, String::new(), Some(&entry));
+    let (app, image) = zbus::block_on(notification_icons(
+        &hicolor(),
+        &hints,
+        String::new(),
+        Some(&entry),
+    ));
     assert_eq!(app.len(), NOTIFY_SIZES.len());
     assert!(image.is_empty());
 }
