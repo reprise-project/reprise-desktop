@@ -51,6 +51,7 @@ pub(crate) fn read(
     route: Route,
     decoders: &Decoders,
     cache: Option<&Thumbnails>,
+    fonts: &FontSampler,
     max: (u32, u32),
     scale: i32,
 ) -> Loaded {
@@ -82,12 +83,63 @@ pub(crate) fn read(
     };
     let found = match route {
         Route::Picture => picture().map(Loaded::Picture),
-        Route::Font => font_sample(path, max, scale).map(Loaded::Picture),
+        Route::Font => fonts.sample(path, max, scale).map(Loaded::Picture),
         Route::Text | Route::Other => read_text().map(Loaded::Text),
     };
     found
         .or_else(|| cached(path, &meta, cache?, max, scale).map(Loaded::Picture))
         .unwrap_or(Loaded::Nothing)
+}
+
+/// How a font's sample is drawn: by `exe` [`FONT_SAMPLE`] in the thumbnailers' jail, so a font file
+/// is never parsed in Explorer. No runner draws none.
+pub(crate) struct FontSampler {
+    pub runner: Option<reprisefs::thumbnailers::Runner>,
+    pub exe: std::path::PathBuf,
+}
+
+impl FontSampler {
+    /// Explorer's own program, jailed as the thumbnailers are; no runner without bubblewrap.
+    pub(crate) fn installed() -> FontSampler {
+        FontSampler {
+            runner: reprisefs::thumbnailers::Runner::jailed(),
+            exe: std::env::current_exe().unwrap_or_default(),
+        }
+    }
+
+    /// The sample of the font file at `path` inside `max` device px at `scale`.
+    fn sample(&self, path: &Path, max: (u32, u32), scale: i32) -> Option<Canvas> {
+        use reprisefs::thumbnailers::{MAX_SIDE, Thumbnailer};
+        let runner = self.runner.as_ref()?;
+        let (w, h) = (max.0.min(MAX_SIDE), max.1.min(MAX_SIDE));
+        let exe = reprisefs::apps::exec_quote(self.exe.to_str()?);
+        let t = Thumbnailer::command(
+            "font-sample",
+            format!("{exe} {FONT_SAMPLE} {w} {h} {scale} %i %o"),
+        );
+        let png = (runner.run(&t, path, 0))
+            .map_err(|e| log::debug!("font sample {}: {e:?}", path.display()))
+            .ok()?;
+        let c = reprisekit::icontheme::png_to_canvas(&png, MAX_SIDE).ok()?;
+        Some(c.at_scale(scale))
+    }
+}
+
+/// Explorer's helper mode `--font-sample W H SCALE FONT OUT`: [`font_sample`] as a PNG at OUT.
+pub const FONT_SAMPLE: &str = "--font-sample";
+
+/// [`FONT_SAMPLE`] with the arguments after the flag.
+pub fn serve_font_sample(args: &[std::ffi::OsString]) -> Result<(), String> {
+    let [w, h, scale, font, out] = args else {
+        return Err("usage: --font-sample W H SCALE FONT OUT".into());
+    };
+    let num = |a: &std::ffi::OsString| a.to_str().and_then(|s| s.parse::<u32>().ok());
+    let (Some(w), Some(h), Some(scale)) = (num(w), num(h), num(scale)) else {
+        return Err("W, H and SCALE are numbers".into());
+    };
+    let c = font_sample(Path::new(font), (w, h), scale.clamp(1, 4) as i32)
+        .ok_or_else(|| format!("{}: no face", Path::new(font).display()))?;
+    std::fs::write(out, reprisekit::raster::to_png(&c)).map_err(|e| e.to_string())
 }
 
 /// The font file at `path`'s first face set as a sample, inside `max` device px, in Classic's
@@ -175,6 +227,7 @@ impl Explorer {
                     route,
                     &Decoders::default_set(),
                     cache.as_ref(),
+                    &FontSampler::installed(),
                     max,
                     scale,
                 )

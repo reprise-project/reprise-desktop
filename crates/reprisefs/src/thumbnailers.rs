@@ -55,6 +55,16 @@ impl Thumbnailer {
         })
     }
 
+    /// A thumbnailer of Reprise's own that runs the command line `exec`, for no type.
+    pub fn command(id: &str, exec: String) -> Thumbnailer {
+        Thumbnailer {
+            id: id.to_string(),
+            exec,
+            try_exec: None,
+            mimes: Vec::new(),
+        }
+    }
+
     /// The program runs: its `TryExec`, else its first argument, is an executable file (by
     /// absolute path or on `PATH`).
     fn runnable(&self) -> bool {
