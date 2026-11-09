@@ -256,6 +256,8 @@ struct Fetch {
     again: bool,
 }
 
+type WatcherItems = Arc<Mutex<Vec<Published>>>;
+
 struct Loop {
     conn: Connection,
     events: Sender<TrayEvent>,
@@ -265,7 +267,9 @@ struct Loop {
     next_fetch: u64,
     /// Dropping an item's sender ends its signal streams, and their match rules with them.
     item_stops: HashMap<String, async_channel::Sender<()>>,
-    published: Option<Arc<Mutex<Vec<Published>>>>,
+    published: Option<WatcherItems>,
+    /// The watcher's items and registrations while another process holds its name.
+    idle_watcher: Option<(WatcherItems, async_channel::Receiver<Wake>)>,
     screensaver: screensaver::Shared,
     streams: SelectAll<BoxStream<'static, Wake>>,
     appearance: Arc<Mutex<Appearance>>,
@@ -554,9 +558,39 @@ impl Loop {
             TrayCommand::Appearance(a) => settings::update(&self.conn, &self.appearance, a).await,
             TrayCommand::IconTheme(name) => self.retheme(&name),
             TrayCommand::IconSizes(sizes) => self.resize_icons(sizes),
+            TrayCommand::RetakeNames => self.retake_names().await,
             TrayCommand::Shutdown => return false,
         }
         true
+    }
+
+    /// Ask again for every name a newer session took or this one deferred, without replacing
+    /// a holder, so a session started meanwhile keeps its own; a later one still replaces ours.
+    /// Names already ours stay so.
+    async fn retake_names(&mut self) {
+        use zbus::fdo::{RequestNameFlags, RequestNameReply};
+        let flags = retake_flags();
+        let queued = flags.difference(RequestNameFlags::DO_NOT_QUEUE);
+        for (name, flags) in [
+            (NOTIFY_NAME, flags),
+            (SETTINGS_NAME, flags),
+            (reprisebus::tray::NAME, flags),
+            (SCREENSAVER_NAME, queued),
+        ] {
+            match self.conn.request_name_with_flags(name, flags).await {
+                Ok(RequestNameReply::PrimaryOwner) => log::info!("tray: hosting {name} again"),
+                Ok(RequestNameReply::AlreadyOwner) => {}
+                Ok(reply) => log::debug!("tray: {name}: {reply:?}; its holder keeps it"),
+                Err(e) => log::info!("tray: {name}: {e}"),
+            }
+        }
+        if own(&self.conn, WATCHER_NAME, flags).await.is_ok()
+            && let Some((items, registrations)) = self.idle_watcher.take()
+        {
+            log::info!("tray: hosting {WATCHER_NAME}");
+            self.published = Some(items);
+            self.streams.push(registrations.boxed());
+        }
     }
 
     /// Reads every item again, for `IconPixmap` entries and named icons at `sizes`.
@@ -665,6 +699,13 @@ fn name_flags(defers: bool) -> zbus::fdo::RequestNameFlags {
     } else {
         RequestNameFlags::default()
     }
+}
+
+/// How a session asks for its names again once the session it gave way to ended: only names
+/// nobody holds, and replaceable by a later session.
+fn retake_flags() -> zbus::fdo::RequestNameFlags {
+    use zbus::fdo::RequestNameFlags;
+    RequestNameFlags::ALLOW_REPLACEMENT | RequestNameFlags::DO_NOT_QUEUE
 }
 
 /// `org.freedesktop.ScreenSaver` as [`name_flags`] asks for it, except that a session that doesn't
@@ -819,10 +860,10 @@ async fn setup(
         .await
         .map_err(|e| format!("host name: {e}"))?;
 
-    let published = if own_watcher {
+    let (published, idle_watcher) = if own_watcher {
         log::info!("tray: hosting {WATCHER_NAME}");
         streams.push(reg_rx.boxed());
-        Some(published)
+        (Some(published), None)
     } else {
         log::info!("tray: joining the existing {WATCHER_NAME}");
         let foreign = Proxy::new(&conn, WATCHER_NAME, WATCHER_PATH, WATCHER_IFACE)
@@ -852,7 +893,7 @@ async fn setup(
             let (bus, path) = split_service(&s);
             push_known_item(&mut streams, bus, path);
         }
-        None
+        (None, Some((published, reg_rx)))
     };
     let watcher_proxy = Proxy::new(&conn, WATCHER_NAME, WATCHER_PATH, WATCHER_IFACE)
         .await
@@ -870,6 +911,7 @@ async fn setup(
         next_fetch: 0,
         item_stops: HashMap::new(),
         published,
+        idle_watcher,
         screensaver,
         streams,
         appearance: current,
