@@ -875,18 +875,32 @@ fn a_file_changed_while_the_prompt_was_up_is_shown_and_not_overwritten() {
 #[test]
 fn a_withdrawn_save_stops_its_helper_at_once() {
     let dir = tmp("withdraw");
-    let helper = dir.join("helper");
-    std::fs::write(&helper, "exec sleep 30\n").unwrap();
+    let (helper, ran) = (dir.join("helper"), dir.join("ran"));
+    std::fs::write(&helper, format!("touch {}\nexec sleep 30\n", ran.display())).unwrap();
     let withdraw = Withdraw::default();
     let w = withdraw.clone();
     let start = std::time::Instant::now();
     let run =
         std::thread::spawn(move || loginhost::run_helper(Path::new("/bin/sh"), &helper, "", &w));
-    while !run.is_finished() && start.elapsed() < Duration::from_secs(10) {
-        withdraw.stop();
+    while !ran.exists() && start.elapsed() < Duration::from_secs(10) {
         std::thread::sleep(Duration::from_millis(20));
     }
+    withdraw.stop();
     let out = run.join().unwrap().unwrap();
     assert_eq!(out.status.signal(), Some(9), "killed: {out:?}");
     assert!(start.elapsed() < Duration::from_secs(10));
+}
+
+#[test]
+fn a_save_withdrawn_before_pkexec_starts_never_starts_it() {
+    let dir = tmp("withdraw-early");
+    let (helper, ran) = (dir.join("helper"), dir.join("ran"));
+    std::fs::write(&helper, format!("touch {}\nexec sleep 30\n", ran.display())).unwrap();
+    let withdraw = Withdraw::default();
+    withdraw.stop();
+    let start = std::time::Instant::now();
+    let out = loginhost::run_helper(Path::new("/bin/sh"), &helper, "", &withdraw);
+    assert!(out.is_err(), "nothing ran: {out:?}");
+    assert!(!ran.exists());
+    assert!(start.elapsed() < Duration::from_secs(5));
 }
