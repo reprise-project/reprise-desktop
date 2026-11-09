@@ -6,6 +6,33 @@ use crate::Interface;
 
 pub const MACHINE_CONFIG: &str = "/etc/reprise/login.toml";
 
+/// The first line of a save request: `expect ` and the [`file_tag`] of the file the settings
+/// were read from, so the helper replaces only that file.
+const EXPECT: &str = "expect ";
+
+/// A tag for the bytes of `MACHINE_CONFIG`, `none` while it is missing: FNV-1a, which tells a
+/// file changed since it was read and stands against no forger.
+pub fn file_tag(bytes: Option<&[u8]>) -> String {
+    let Some(bytes) = bytes else {
+        return "none".into();
+    };
+    let hash = bytes.iter().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
+        (h ^ u64::from(*b)).wrapping_mul(0x0100_0000_01b3)
+    });
+    format!("{hash:016x}")
+}
+
+/// What Settings sends `reprise-login-settings`: the expected tag, then the settings as TOML.
+pub fn save_request(tag: &str, toml: &str) -> String {
+    format!("{EXPECT}{tag}\n{toml}")
+}
+
+/// The tag and the TOML of a [`save_request`]; `None` without the tag line.
+pub fn parse_save_request(input: &str) -> Option<(&str, &str)> {
+    let (first, toml) = input.split_once('\n')?;
+    Some((first.strip_prefix(EXPECT)?, toml))
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MachineConfig {
     pub login: LoginConfig,

@@ -4,7 +4,7 @@
 use crate::registry::{self, Page};
 use crate::{SettingsApp, pages, take};
 use repriselogin::front::FINGERPRINT;
-use repriselogin::machine::{MACHINE_CONFIG, MachineConfig};
+use repriselogin::machine::{MACHINE_CONFIG, MachineConfig, file_tag, save_request};
 use repriselogin::users::Source;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -47,7 +47,7 @@ pub(crate) struct Login {
 enum Ended {
     Saved(Read),
     Failed(String),
-    /// The file no longer read as the page loaded it, so nothing was sent.
+    /// The file no longer read as the page loaded it, so nothing was saved.
     Changed(Read),
 }
 
@@ -69,37 +69,51 @@ const CHANGED: &str = "Your changes were not saved: the login manager's settings
                        this page opened. The page now shows the new settings; make your changes \
                        again.";
 
-/// Save `cfg` through `run`, which hands the TOML to the helper's stdin and returns how it
-/// exited; the message to show when it did not save.
+/// Why [`apply`] saved nothing.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Unsaved {
+    /// The file is no longer the one tagged `tag`.
+    Changed,
+    /// The message to show.
+    Failed(String),
+}
+
+/// Save `cfg` through `run`, which hands the save request to the helper's stdin and returns how
+/// it exited. The helper replaces only a file that still has `tag`.
 pub(crate) fn apply(
     cfg: &MachineConfig,
+    tag: &str,
     run: &dyn Fn(&str) -> io::Result<Output>,
-) -> Result<(), String> {
-    let out = run(&cfg.to_toml()).map_err(|e| format!("{NOT_SAVED}\n\n{e}"))?;
+) -> Result<(), Unsaved> {
+    let out = run(&save_request(tag, &cfg.to_toml()))
+        .map_err(|e| Unsaved::Failed(format!("{NOT_SAVED}\n\n{e}")))?;
     let why = String::from_utf8_lossy(&out.stderr).trim_end().to_string();
     let with_why = |head: &str| match why.is_empty() {
         true => head.to_string(),
         false => format!("{head}\n\n{why}"),
     };
-    // The helper's exits: 0 saved, 1 the write failed, 2 refused (a reason per line);
-    // pkexec's 126: the prompt dismissed, 127: polkit said "Not authorized" or pkexec failed.
-    match out.status.code() {
-        Some(0) => Ok(()),
-        Some(2) => Err(with_why("The login manager refused the settings:")),
-        Some(126) => Err(NOT_AUTHORIZED.into()),
-        Some(127) if why.contains("Not authorized") => Err(NOT_AUTHORIZED.into()),
-        Some(127) => Err(with_why(NOT_AUTHORIZED)),
-        _ => Err(with_why(NOT_SAVED)),
-    }
+    // The helper's exits: 0 saved, 1 the write failed, 2 refused (a reason per line), 3 the file
+    // changed; pkexec's 126: the prompt dismissed, 127: polkit said "Not authorized" or pkexec
+    // failed.
+    let why = match out.status.code() {
+        Some(0) => return Ok(()),
+        Some(3) => return Err(Unsaved::Changed),
+        Some(2) => with_why("The login manager refused the settings:"),
+        Some(126) => NOT_AUTHORIZED.into(),
+        Some(127) if why.contains("Not authorized") => NOT_AUTHORIZED.into(),
+        Some(127) => with_why(NOT_AUTHORIZED),
+        _ => with_why(NOT_SAVED),
+    };
+    Err(Unsaved::Failed(why))
 }
 
-/// `pkexec` running [`HELPER`] with `toml` on its stdin.
-pub(crate) fn pkexec(toml: &str) -> io::Result<Output> {
-    run_helper(Path::new(HELPER), toml)
+/// `pkexec` running [`HELPER`] with `input` on its stdin.
+pub(crate) fn pkexec(input: &str) -> io::Result<Output> {
+    run_helper(Path::new(HELPER), input)
 }
 
 /// `pkexec` running `helper`; a missing helper is named without asking for a password.
-pub(crate) fn run_helper(helper: &Path, toml: &str) -> io::Result<Output> {
+pub(crate) fn run_helper(helper: &Path, input: &str) -> io::Result<Output> {
     if !helper.exists() {
         let why = format!("{} is not installed.", helper.display());
         return Err(io::Error::new(io::ErrorKind::NotFound, why));
@@ -110,7 +124,10 @@ pub(crate) fn run_helper(helper: &Path, toml: &str) -> io::Result<Output> {
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()?;
-    let wrote = child.stdin.take().map(|mut s| s.write_all(toml.as_bytes()));
+    let wrote = child
+        .stdin
+        .take()
+        .map(|mut s| s.write_all(input.as_bytes()));
     let out = child.wait_with_output()?;
     match wrote {
         // A refusal before the helper read its input closes the pipe; its exit tells why.
@@ -122,10 +139,19 @@ pub(crate) fn run_helper(helper: &Path, toml: &str) -> io::Result<Output> {
 /// The machine settings in `path`, the defaults when it is missing; the message to show when
 /// it could not be read or holds anything the page would not save back.
 fn read(path: &Path) -> Read {
+    read_tagged(path).map(|(config, _)| config)
+}
+
+/// [`read`], with the file's tag for the save that follows.
+fn read_tagged(path: &Path) -> Result<(MachineConfig, String), String> {
     let at = path.display();
-    let text = match std::fs::read_to_string(path) {
+    let utf8 = |b: Vec<u8>| match String::from_utf8(b) {
+        Ok(t) => Ok(Some(t)),
+        Err(e) => Err(io::Error::new(io::ErrorKind::InvalidData, e.utf8_error())),
+    };
+    let text = match std::fs::read(path).and_then(utf8) {
         Ok(t) => t,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => None,
         Err(e) => {
             log::warn!("{at}: {e}");
             return Err(format!(
@@ -134,9 +160,10 @@ fn read(path: &Path) -> Read {
             ));
         }
     };
-    let (config, warnings) = MachineConfig::parse(&text);
+    let tag = file_tag(text.as_deref().map(str::as_bytes));
+    let (config, warnings) = MachineConfig::parse(text.as_deref().unwrap_or_default());
     if warnings.is_empty() {
-        return Ok(config);
+        return Ok((config, tag));
     }
     log::warn!("{at}: {}", warnings.join("; "));
     Err(format!(
@@ -275,7 +302,8 @@ impl SettingsApp {
     }
 
     /// Save the page's changes off the loop unless a save is under way. The save rereads the
-    /// file first and sends nothing when it no longer reads as the page loaded it.
+    /// file first and sends nothing when it no longer reads as the page loaded it; the helper
+    /// refuses a file changed after that reread.
     pub(crate) fn apply_login(&mut self) {
         if !self.login_dirty() || self.login_job.is_some() {
             return;
@@ -290,12 +318,13 @@ impl SettingsApp {
             self.login_files.config.clone(),
         );
         let sent = cfg.clone();
-        let rx = self.login_spawn(move || match read(&path) {
-            Ok(now) if now == loaded => match apply(&cfg, &run) {
+        let rx = self.login_spawn(move || match read_tagged(&path) {
+            Ok((now, tag)) if now == loaded => match apply(&cfg, &tag, &run) {
                 Ok(()) => Ended::Saved(read(&path)),
-                Err(why) => Ended::Failed(why),
+                Err(Unsaved::Changed) => Ended::Changed(read(&path)),
+                Err(Unsaved::Failed(why)) => Ended::Failed(why),
             },
-            now => Ended::Changed(now),
+            now => Ended::Changed(now.map(|(config, _)| config)),
         });
         self.login_job = Some(Saving {
             sent,
