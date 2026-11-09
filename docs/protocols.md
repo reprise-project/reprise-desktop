@@ -169,11 +169,12 @@ stay with the other session, and its Log Off tells neither the portal nor the
 Remote Desktop server. Whichever session started first, a Log Off while the
 other runs leaves the shared portal's inhibitors and monitors alone, and the
 Remote Desktop server ends its clients only when the compositor it serves
-logs off. reprise-login's hand-over server takes the display of the session
-reprise-login opened and waits until that session's portals serve it, so a
-remote login that starts a session beside a text-login Reprise shares the new
-session on its first connection. A tray
-applet's autostart (`--tray`) finds the other
+logs off. A Turn Off or Restart from either session asks the portal and ends
+the server's clients as logged off, since it ends both. reprise-login's
+hand-over server takes the display of the session reprise-login opened and
+waits until that session's portals serve it, so a remote login that starts a
+session beside a text-login Reprise shares the new session on its first
+connection. A tray applet's autostart (`--tray`) finds the other
 session's copy running and leaves its window alone. A session started by a
 login manager always publishes, starts the target and takes the bus names
 over, and a text-login Reprise started before it publishes no more while it

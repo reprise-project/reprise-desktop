@@ -221,11 +221,13 @@ pub fn remote_side(state: &State) -> bool {
 }
 
 /// How the remote desktop server lets every client go: `Disconnect` leaves the session running,
-/// `LoggedOff` tells them the session logged off.
+/// `LoggedOff` and `PoweredOff` tell them the session logged off.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ClientsEnd {
     Disconnect,
     LoggedOff,
+    /// Turn Off or Restart, which ends the user's other sessions too.
+    PoweredOff,
 }
 
 /// Whether Disconnect takes Switch User's and Stand By's places: on the remote side, or while a
@@ -264,6 +266,7 @@ pub(crate) fn end_clients_then(state: &mut State, why: ClientsEnd, then: OnLoop)
         let told = match why {
             ClientsEnd::Disconnect => reprisebus::remote::disconnect_all(),
             ClientsEnd::LoggedOff => reprisebus::remote::session_ending(),
+            ClientsEnd::PoweredOff => reprisebus::remote::power_ending(),
         };
         Box::new(move |state: &mut State| {
             if let Err(e) = told {

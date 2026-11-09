@@ -50,6 +50,8 @@ pub struct Ending {
     cmd: Option<String>,
     holders: Option<Vec<Holder>>,
     stop: Option<async_channel::Sender<()>>,
+    /// The poll moves the portal's monitors to query-end ([`asks_portal`]).
+    asked_portal: bool,
     timer: Option<RegistrationToken>,
     reports: Option<RegistrationToken>,
     mode: Mode,
@@ -160,7 +162,7 @@ fn start(state: &mut State, goal: Goal, cmd: Option<String>, critical: bool, ori
         })
         .map_err(|e| log::warn!("session end: no report channel: {}", e.error))
         .ok();
-    let ask_portal = asks_portal(&state.env, crate::spawn::another_session_runs_reprise);
+    let ask_portal = asks_portal(&state.env, goal, crate::spawn::another_session_runs_reprise);
     let stop = spawn_poll(tx, ask_portal);
     let timer = state
         .handle
@@ -181,6 +183,7 @@ fn start(state: &mut State, goal: Goal, cmd: Option<String>, critical: bool, ori
         // Without the thread nothing is known to hold the session.
         holders: stop.is_none().then(Vec::new),
         stop,
+        asked_portal: ask_portal,
         timer,
         reports,
         mode: Mode::new(critical),
@@ -270,10 +273,7 @@ fn finish(state: &mut State, override_inhibitors: bool) {
     if let Some(i) = prompt_index(state) {
         state.close_dialog_at(i);
     }
-    // A command (Turn Off, Restart) leaves the compositor running until
-    // the system stops it, or for good if it fails: the portal's monitors
-    // go back to running. Log Off just ends the thread with the loop.
-    if e.cmd.is_some()
+    if resets_portal(&e, &state.env, crate::spawn::another_session_runs_reprise)
         && let Some(stop) = e.stop.take()
     {
         let _ = stop.try_send(());
@@ -281,12 +281,25 @@ fn finish(state: &mut State, override_inhibitors: bool) {
     go_on(state, e.goal, e.cmd, override_inhibitors);
 }
 
+/// Whether a committed end moves the portal's monitors back to running: a command (Turn Off,
+/// Restart) leaves the compositor running, and another session may have started since the ask.
+fn resets_portal(
+    e: &Ending,
+    env: &crate::spawn::SessionEnv,
+    another_runs: impl FnOnce() -> bool,
+) -> bool {
+    e.cmd.is_some() || (e.asked_portal && !asks_portal(env, e.goal, another_runs))
+}
+
 /// Fade the screen out, then end: stop the compositor for Log Off, else run `cmd`. Remote clients
 /// hear the session logged off; the end waits for the server's answer, [`TELL_CLIENTS`] at most.
 fn go_on(state: &mut State, goal: Goal, cmd: Option<String>, override_inhibitors: bool) {
     crate::crash::ending();
+    let powers_off = goal != Goal::LogOff;
     let end: OnLoop = Box::new(move |state| act(state, goal, cmd, override_inhibitors));
-    if !crate::console::remote_side(state) && !state.standby.rdp_on() {
+    // A deferring session's Turn Off also ends the other session's clients.
+    let server_ours = state.standby.rdp_on() || (powers_off && state.env.defers_user_units);
+    if !crate::console::remote_side(state) && !server_ours {
         crate::sessionfade::out(state, end);
         return;
     }
@@ -296,9 +309,13 @@ fn go_on(state: &mut State, goal: Goal, cmd: Option<String>, override_inhibitors
         end: Some(end),
     }));
     let told = Arc::clone(&wait);
+    let why = match powers_off {
+        true => crate::console::ClientsEnd::PoweredOff,
+        false => crate::console::ClientsEnd::LoggedOff,
+    };
     crate::console::end_clients_then(
         state,
-        crate::console::ClientsEnd::LoggedOff,
+        why,
         Box::new(move |state| arrive(&told, state, |w| w.told = true)),
     );
     let late = Arc::clone(&wait);
@@ -883,10 +900,14 @@ fn sync_prompt(state: &mut State) {
     }
 }
 
-/// Whether a session end asks the portal, moving its monitors to query-end: not beside another
-/// Reprise session of the user, which shares the portal, whichever of the two started first.
-fn asks_portal(env: &crate::spawn::SessionEnv, another_runs: impl FnOnce() -> bool) -> bool {
-    !env.defers_user_units && !another_runs()
+/// Whether a session end asks the portal, moving its monitors to query-end: a Log Off does only
+/// with no other Reprise session of the user beside it, which shares the portal.
+fn asks_portal(
+    env: &crate::spawn::SessionEnv,
+    goal: Goal,
+    another_runs: impl FnOnce() -> bool,
+) -> bool {
+    goal != Goal::LogOff || (!env.defers_user_units && !another_runs())
 }
 
 /// Polls the inhibitors, and the portal's with `ask_portal`.
@@ -1188,11 +1209,15 @@ mod tests {
     }
 
     #[test]
-    fn a_session_end_beside_another_reprise_session_leaves_the_shared_portal_running() {
+    fn a_log_off_beside_another_reprise_session_leaves_the_shared_portal_running() {
         let alone = crate::spawn::SessionEnv::default();
-        assert!(asks_portal(&alone, || false), "the only session asks");
+        let log_off = Goal::LogOff;
         assert!(
-            !asks_portal(&alone, || true),
+            asks_portal(&alone, log_off, || false),
+            "the only session asks"
+        );
+        assert!(
+            !asks_portal(&alone, log_off, || true),
             "a session another one started beside leaves it"
         );
         let deferring = crate::spawn::SessionEnv {
@@ -1200,8 +1225,58 @@ mod tests {
             ..alone
         };
         assert!(
-            !asks_portal(&deferring, || true),
+            !asks_portal(&deferring, log_off, || true),
             "a deferring one leaves it"
+        );
+        for goal in [Goal::TurnOff, Goal::Restart] {
+            assert!(
+                asks_portal(&deferring, goal, || true),
+                "{goal:?} ends them all"
+            );
+        }
+    }
+
+    #[test]
+    fn a_log_off_hands_the_portal_back_to_a_session_started_during_its_prompt() {
+        let env = crate::spawn::SessionEnv::default();
+        let ending = |goal, cmd: Option<&str>, asked_portal| Ending {
+            goal,
+            cmd: cmd.map(String::from),
+            holders: None,
+            stop: None,
+            asked_portal,
+            timer: None,
+            reports: None,
+            mode: Mode::Waiting,
+        };
+        let asked = ending(Goal::LogOff, None, true);
+        assert!(
+            resets_portal(&asked, &env, || true),
+            "another session runs by now"
+        );
+        assert!(
+            !resets_portal(&asked, &env, || false),
+            "the portal ends with it"
+        );
+        let unasked = ending(Goal::LogOff, None, false);
+        assert!(!resets_portal(&unasked, &env, || true), "it never moved");
+        let turn_off = ending(Goal::TurnOff, Some("true"), true);
+        assert!(
+            resets_portal(&turn_off, &env, || false),
+            "a command keeps the compositor"
+        );
+    }
+
+    #[test]
+    fn a_turn_off_beside_another_reprise_session_tells_its_remote_clients() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.state.env.defers_user_units = true;
+        crate::standby::rdp_changed(&mut h.state, true);
+        go_on(&mut h.state, Goal::TurnOff, Some("true".into()), false);
+        assert_eq!(
+            h.state.ended_clients,
+            [crate::console::ClientsEnd::PoweredOff]
         );
     }
 

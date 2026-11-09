@@ -395,14 +395,14 @@ Nothing opens those from a locked screen, the login screen or a client that
 hasn't logged in, and a press checks again that Disconnect is still offered,
 so a dialog left open across an unlock at the computer does nothing. It
 locks the computer's side first, then calls `Disconnect` on
-`org.reprise.RemoteDesktop` on the user's session bus. A committed Log Off,
-Turn Off or Restart with a client connected calls `SessionEnding` there,
-which ends every client as logged off. Any process of the user can call
-`Disconnect` and drop that user's clients; the session keeps running, and
-no other user can reach the bus. The server takes `SessionEnding` only from
-the compositor whose display it serves, so another Reprise session of the
-same user logging off leaves its clients connected. A process in a Flatpak
-sandbox is refused
+`org.reprise.RemoteDesktop` on the user's session bus. A committed Log Off
+with a client connected calls `SessionEnding` there, and a Turn Off or
+Restart calls `PowerEnding`; both end every client as logged off. Any
+process of the user can call `Disconnect` or `PowerEnding` and drop that
+user's clients; the session keeps running, and no other user can reach the
+bus. The server takes `SessionEnding` only from the compositor whose display
+it serves, so another Reprise session of the same user logging off leaves
+its clients connected. A process in a Flatpak sandbox is refused
 these calls and the client list, and a change to the list is signalled
 without the addresses.
 

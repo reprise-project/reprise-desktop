@@ -122,6 +122,12 @@ pub fn session_ending() -> Result<(), String> {
     call("SessionEnding")
 }
 
+/// [`session_ending`] for the computer turning off or restarting; the server takes it from any
+/// of the user's sessions.
+pub fn power_ending() -> Result<(), String> {
+    call("PowerEnding")
+}
+
 /// End the session of the client at `address`, as [`Client::address`] gives it.
 pub fn disconnect_client(address: &str) -> Result<(), String> {
     let conn = session()?;
