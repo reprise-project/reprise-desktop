@@ -1,6 +1,5 @@
-//! Extracting archives with `bsdtar`, which reads zip, 7z and tar plain or compressed. Each archive
-//! comes out into a fresh folder of its own, which is checked for links leading out of it, then
-//! kept (Extract to) or moved into place (Extract Here). `-P` is never passed.
+//! Extracting archives with `bsdtar` (zip, 7z, tar), never with `-P`, each into a fresh folder;
+//! docs/security.md "Extracting archives" has the rules.
 
 use crate::names;
 use crate::progress::{Decision, Meter, Phase, Totals};
@@ -177,17 +176,23 @@ pub(crate) enum Failure {
     /// Why Reprise will not extract it.
     Refused(String),
     Tool(String),
+    /// Extract Here stopped part way and could not move everything back.
+    Kept(String),
     Cancelled,
 }
 
 impl Failure {
     fn text(&self, name: &str) -> String {
+        format!("Cannot extract {name}: {}", self.why())
+    }
+
+    fn why(&self) -> String {
         match self {
-            Failure::Climbs(entry) => format!(
-                "Cannot extract {name}: it holds {entry}, which would land outside the folder."
-            ),
-            Failure::Tool(why) | Failure::Refused(why) => format!("Cannot extract {name}: {why}"),
-            Failure::Cancelled => format!("Cannot extract {name}: the operation was cancelled."),
+            Failure::Climbs(entry) => {
+                format!("it holds {entry}, which would land outside the folder.")
+            }
+            Failure::Tool(why) | Failure::Refused(why) | Failure::Kept(why) => why.clone(),
+            Failure::Cancelled => "the operation was cancelled.".into(),
         }
     }
 }
@@ -196,10 +201,19 @@ impl ArchiveJob {
     /// Lists every archive first (the totals; an entry landing outside refuses its archive), then
     /// extracts each in order on a thread. A failed archive holds the job for a [`Decision`].
     pub fn extract(items: Vec<Archive>, wake: impl Fn() + Send + 'static) -> ArchiveJob {
+        ArchiveJob::extract_within(items, Limits::of, wake)
+    }
+
+    /// [`ArchiveJob::extract`], `limits` saying how much each folder takes.
+    pub(crate) fn extract_within(
+        items: Vec<Archive>,
+        limits: fn(&Path) -> Limits,
+        wake: impl Fn() + Send + 'static,
+    ) -> ArchiveJob {
         let meter = Arc::new(Meter::default());
         meter.ask_on_failure();
         ArchiveJob::on_thread("reprisefs-extract", meter, wake, move |m, send| {
-            run(&items, m, send)
+            run(&items, limits, m, send)
         })
     }
 
@@ -256,7 +270,12 @@ impl ArchiveJob {
     }
 }
 
-fn run(items: &[Archive], m: &Meter, send: &dyn Fn(ArchiveEvent) -> bool) {
+fn run(
+    items: &[Archive],
+    limits: fn(&Path) -> Limits,
+    m: &Meter,
+    send: &dyn Fn(ArchiveEvent) -> bool,
+) {
     let name = |a: &Archive| a.src.file_name().unwrap_or_default().to_owned();
     let mut lists: Vec<Result<Listed, Failure>> = Vec::new();
     for a in items {
@@ -294,7 +313,7 @@ fn run(items: &[Archive], m: &Meter, send: &dyn Fn(ArchiveEvent) -> bool) {
             }
         }
         let r = match &lists[index] {
-            Ok(l) => extract(a, m, done, *l),
+            Ok(l) => extract(a, m, done, *l, limits),
             Err(e) => Err(e.clone()),
         };
         let ev = match r {
@@ -393,7 +412,8 @@ fn c_dates(cmd: &mut Command) {
 }
 
 /// The type letter, size and the rest (the name, then a link's target) of a `bsdtar -tv
-/// --numeric-owner` line: mode, links, uid, gid, size, a three-word date, one space.
+/// --numeric-owner` line: mode, links, uid, gid, size, a three-word date, one space. A device
+/// node lists `major,minor` as its size and holds no bytes.
 fn listed_line(line: &[u8]) -> Option<(u8, u64, &[u8])> {
     let mut rest = line;
     let mut words = [&line[..0]; 8];
@@ -401,8 +421,12 @@ fn listed_line(line: &[u8]) -> Option<(u8, u64, &[u8])> {
         rest = &rest[rest.iter().position(|&b| b != b' ')?..];
         (*w, rest) = rest.split_at(rest.iter().position(|&b| b == b' ')?);
     }
-    let size = std::str::from_utf8(words[4]).ok()?.parse().ok()?;
-    Some((*words[0].first()?, size, rest.strip_prefix(b" ")?))
+    let kind = *words[0].first()?;
+    let size = match kind {
+        b'c' | b'b' if words[4].contains(&b',') => 0,
+        _ => std::str::from_utf8(words[4]).ok()?.parse().ok()?,
+    };
+    Some((kind, size, rest.strip_prefix(b" ")?))
 }
 
 fn hidden_at_top(entry: &[u8]) -> bool {
@@ -417,12 +441,18 @@ fn hidden_at_top(entry: &[u8]) -> bool {
 
 /// Extracts `a`, the batch having counted `before` items, into a fresh folder that Extract to keeps
 /// and Extract Here merges into place. docs/security.md "Extracting archives" has the rules.
-fn extract(a: &Archive, m: &Meter, before: u64, listed: Listed) -> Result<PathBuf, Failure> {
+fn extract(
+    a: &Archive,
+    m: &Meter,
+    before: u64,
+    listed: Listed,
+    limits: fn(&Path) -> Limits,
+) -> Result<PathBuf, Failure> {
     let dir = a
         .src
         .parent()
         .ok_or_else(|| Failure::Tool("it has no folder".into()))?;
-    Limits::of(dir).admit(listed)?;
+    limits(dir).admit(listed)?;
     let here = a.here && !listed.hidden;
     let name = folder_name(a.src.file_name().unwrap_or_default());
     let into = make_folder(dir, &if here { staging(&name) } else { name })?;
@@ -458,6 +488,8 @@ fn extract(a: &Archive, m: &Meter, before: u64, listed: Listed) -> Result<PathBu
     if !ok {
         return Err(undo(Failure::Tool(said(last.as_bytes(), UNREAD))));
     }
+    let io = |e: std::io::Error| Failure::Tool(e.to_string());
+    let modes = open_up(&into).map_err(io).map_err(undo)?;
     match leads_out(&into) {
         Ok(None) => {}
         Ok(Some(entry)) => {
@@ -465,14 +497,81 @@ fn extract(a: &Archive, m: &Meter, before: u64, listed: Listed) -> Result<PathBu
                 "it holds {entry}, a link to outside the folder."
             ))));
         }
-        Err(e) => return Err(undo(Failure::Tool(e.to_string()))),
+        Err(e) => return Err(undo(io(e))),
     }
     if !here {
+        set_modes(&into, &modes, |_| true)
+            .map_err(io)
+            .map_err(undo)?;
         return Ok(into);
     }
     let merged = merge_into(&into, dir);
-    remove();
-    merged.map(|()| dir.to_path_buf())
+    if let Ok(moved) = &merged {
+        let landed = |rel: &Path| moved.iter().any(|m| rel.starts_with(m));
+        if let Err(e) = set_modes(dir, &modes, landed) {
+            log::warn!(
+                "reprisefs: cannot set the folder modes of {}: {e}",
+                a.src.display()
+            );
+        }
+    }
+    if !matches!(merged, Err(Failure::Kept(_))) {
+        remove();
+    }
+    merged.map(|_| dir.to_path_buf())
+}
+
+/// Gives every folder under `root` its owner's read, write and search bits, so the walk and the
+/// move into place can enter and rename it, returning each changed one's mode for [`set_modes`].
+fn open_up(root: &Path) -> std::io::Result<Vec<(PathBuf, libc::mode_t)>> {
+    use crate::ops::at::{c_path, cwd, open_dir, stat_at};
+    let mut changed = Vec::new();
+    let top = std::rc::Rc::new(open_dir(cwd(), &c_path(root)?, true)?);
+    // A folder still to list holds its parent's descriptor, so about one is open per level.
+    let mut pending = Vec::new();
+    let mut next = Some((top, PathBuf::new()));
+    while let Some((fd, rel)) = next.take() {
+        for (name, is_dir) in crate::ops::entries_at(fd.as_fd())? {
+            if !is_dir {
+                continue;
+            }
+            let mode = stat_at(fd.as_fd(), &name)?.st_mode & 0o7777;
+            let sub = rel.join(OsStr::from_bytes(name.to_bytes()));
+            if mode & 0o700 != 0o700 {
+                // SAFETY: `name` is NUL-terminated and `fd` is an open folder.
+                if unsafe { libc::fchmodat(fd.as_raw_fd(), name.as_ptr(), mode | 0o700, 0) } != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                changed.push((sub.clone(), mode));
+            }
+            pending.push((fd.clone(), name, sub));
+        }
+        if let Some((parent, name, rel)) = pending.pop() {
+            next = Some((open_dir(parent.as_fd(), &name, false)?.into(), rel));
+        }
+    }
+    Ok(changed)
+}
+
+/// Gives back the modes [`open_up`] changed to the folders now under `root` that `landed` picks,
+/// deepest first, so a folder closed to its owner is closed only once its children are set.
+fn set_modes(
+    root: &Path,
+    modes: &[(PathBuf, libc::mode_t)],
+    landed: impl Fn(&Path) -> bool,
+) -> std::io::Result<()> {
+    use crate::ops::at::{c_path, cwd, open_dir};
+    let mut picked: Vec<_> = modes.iter().filter(|(rel, _)| landed(rel)).collect();
+    picked.sort_by_key(|(rel, _)| std::cmp::Reverse(rel.components().count()));
+    let base = open_dir(cwd(), &c_path(root)?, true)?;
+    for (rel, mode) in picked {
+        let at = steps(base.as_fd(), rel)?;
+        // SAFETY: `at` is an open folder.
+        if unsafe { libc::fchmod(at.as_raw_fd(), *mode) } != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+    }
+    Ok(())
 }
 
 /// The hidden folder Extract Here fills before moving its entries into place.
@@ -514,7 +613,8 @@ pub(crate) fn leads_out(root: &Path) -> std::io::Result<Option<String>> {
     Ok(out.map(|(_, path)| path.to_string_lossy().into_owned()))
 }
 
-/// Whether link `rel` under the folder open as `base` resolves inside it, or to nothing.
+/// Whether link `rel` under the folder open as `base` resolves inside it, or to nothing; one
+/// through a folder it cannot search counts as outside.
 fn resolves_beneath(base: &std::fs::File, rel: &Path) -> std::io::Result<bool> {
     let path = std::ffi::CString::new(rel.as_os_str().as_bytes())?;
     // SAFETY: an all-zero `open_how` is a valid value of a plain C struct.
@@ -540,49 +640,87 @@ fn resolves_beneath(base: &std::fs::File, rel: &Path) -> std::io::Result<bool> {
     let e = std::io::Error::last_os_error();
     match e.raw_os_error() {
         Some(libc::EXDEV) => Ok(false),
-        Some(libc::ENOENT | libc::ELOOP | libc::ENOTDIR | libc::EACCES) => Ok(true),
+        Some(libc::EACCES) => Ok(false),
+        Some(libc::ENOENT | libc::ELOOP | libc::ENOTDIR) => Ok(true),
         _ => Err(e),
     }
 }
 
 /// Move what folder `from` holds into `to`, keeping what `to` has: a folder in both is merged
-/// into (never through a link), one meeting a non-folder there refuses.
-fn merge_into(from: &Path, to: &Path) -> Result<(), Failure> {
-    use crate::ops::at::{c_path, cwd, open_dir};
+/// into (never through a link), one meeting a non-folder there refuses. Returns what moved, by
+/// path under both; on a failure each goes back, or `Kept` says some could not and `from` stays.
+fn merge_into(from: &Path, to: &Path) -> Result<Vec<PathBuf>, Failure> {
+    use crate::ops::at::{c_path, cwd, open_dir, rename_free};
     let io = |e: std::io::Error| Failure::Tool(e.to_string());
-    let from = open_dir(cwd(), &c_path(from).map_err(io)?, true).map_err(io)?;
-    let to = open_dir(cwd(), &c_path(to).map_err(io)?, true).map_err(io)?;
-    merge_at(from.as_fd(), to.as_fd(), Path::new(""))
+    let from_fd = open_dir(cwd(), &c_path(from).map_err(io)?, true).map_err(io)?;
+    let to_fd = open_dir(cwd(), &c_path(to).map_err(io)?, true).map_err(io)?;
+    let mut moved = Vec::new();
+    let Err(why) = merge_at(from_fd.as_fd(), to_fd.as_fd(), Path::new(""), &mut moved) else {
+        return Ok(moved);
+    };
+    let back = |rel: &Path| -> std::io::Result<()> {
+        let parent = rel.parent().unwrap_or(Path::new(""));
+        let name = crate::ops::at::c_name(rel.file_name().unwrap_or_default())?;
+        let there = steps(to_fd.as_fd(), parent)?;
+        let here = steps(from_fd.as_fd(), parent)?;
+        rename_free(there.as_fd(), &name, here.as_fd(), &name)
+    };
+    let mut stuck = false;
+    for rel in moved.iter().rev() {
+        if let Err(e) = back(rel) {
+            log::warn!("reprisefs: cannot move {} back: {e}", rel.display());
+            stuck = true;
+        }
+    }
+    Err(match stuck {
+        false => why,
+        true => Failure::Kept(format!(
+            "{} Some of its entries stay in place, and the rest in {}.",
+            why.why(),
+            from.display()
+        )),
+    })
+}
+
+/// Folder `rel` under `base`, each step opened without following a link.
+fn steps(base: std::os::fd::BorrowedFd, rel: &Path) -> std::io::Result<std::os::fd::OwnedFd> {
+    use crate::ops::at::{c_name, open_dir};
+    let mut at = open_dir(base, c".", false)?;
+    for part in rel.components() {
+        at = open_dir(at.as_fd(), &c_name(part.as_os_str())?, false)?;
+    }
+    Ok(at)
 }
 
 fn merge_at(
     from: std::os::fd::BorrowedFd,
     to: std::os::fd::BorrowedFd,
     rel: &Path,
+    moved: &mut Vec<PathBuf>,
 ) -> Result<(), Failure> {
     use crate::ops::at::{open_dir, rename_free};
     let io = |e: std::io::Error| Failure::Tool(e.to_string());
     for (name, is_dir) in crate::ops::entries_at(from).map_err(io)? {
+        let rel = rel.join(OsStr::from_bytes(name.to_bytes()));
         match rename_free(from, &name, to, &name) {
-            Ok(()) => continue,
+            Ok(()) => {
+                moved.push(rel);
+                continue;
+            }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(e) => return Err(io(e)),
         }
         if !is_dir {
             continue;
         }
-        let rel = rel.join(OsStr::from_bytes(name.to_bytes()));
         let there = open_dir(to, &name, false).map_err(|_| {
             Failure::Refused(format!(
                 "it holds the folder {}, which is not a folder here.",
                 rel.display()
             ))
         })?;
-        merge_at(
-            open_dir(from, &name, false).map_err(io)?.as_fd(),
-            there.as_fd(),
-            &rel,
-        )?;
+        let here = open_dir(from, &name, false).map_err(io)?;
+        merge_at(here.as_fd(), there.as_fd(), &rel, moved)?;
     }
     Ok(())
 }
@@ -1221,6 +1359,154 @@ mod tests {
             7,
             "fewer free inodes cap it lower"
         );
+    }
+
+    #[test]
+    fn an_archive_past_the_folder_limits_fails_and_writes_nothing() {
+        let t = tempfile::tempdir().unwrap();
+        let d = t.path();
+        std::fs::create_dir(d.join("src")).unwrap();
+        std::fs::write(d.join("src/a.txt"), "a").unwrap();
+        bsdtar(&d.join("src"), &["-cf", "../pack.tar", "a.txt"]);
+        std::fs::remove_dir_all(d.join("src")).unwrap();
+        for here in [false, true] {
+            let (wtx, woke) = mpsc::channel();
+            let items = vec![Archive {
+                src: d.join("pack.tar"),
+                here,
+            }];
+            let mut job = ArchiveJob::extract_within(
+                items,
+                |_| Limits::from_free(0, None),
+                move || {
+                    let _ = wtx.send(());
+                },
+            );
+            let mut got = Vec::new();
+            while !job.is_finished() {
+                woke.recv_timeout(std::time::Duration::from_secs(30))
+                    .expect("a wake");
+                for ev in job.poll() {
+                    if matches!(ev, ArchiveEvent::Failed { .. }) {
+                        job.meter().decide(Decision::Abort);
+                    }
+                    got.push(ev);
+                }
+            }
+            assert!(
+                matches!(&got[..], [ArchiveEvent::Failed { text, .. }, ArchiveEvent::Finished]
+                    if text.contains("free space")),
+                "here={here}: {got:?}"
+            );
+            assert_eq!(names_in(d), ["pack.tar"], "here={here}");
+        }
+    }
+
+    #[test]
+    fn a_device_node_lists_with_no_bytes() {
+        let line = b"crw-r--r--  0 0      0         1,3 Jan  1  2020 dev/null";
+        assert_eq!(listed_line(line), Some((b'c', 0, &b"dev/null"[..])));
+    }
+
+    /// Makes `rel` under `root` writable again so the temp dir can go.
+    fn writable(root: &Path, rel: &[&str]) {
+        use std::os::unix::fs::PermissionsExt;
+        for r in rel {
+            let _ = std::fs::set_permissions(root.join(r), std::fs::Permissions::from_mode(0o755));
+        }
+    }
+
+    #[test]
+    fn read_only_folders_extract_and_keep_their_modes() {
+        use std::os::unix::fs::PermissionsExt;
+        let t = tempfile::tempdir().unwrap();
+        let (d, src) = (t.path().join("d"), t.path().join("src"));
+        std::fs::create_dir_all(src.join("pkg/sub")).unwrap();
+        std::fs::create_dir(&d).unwrap();
+        std::fs::write(src.join("pkg/sub/g.txt"), "g").unwrap();
+        let mode = |m| std::fs::Permissions::from_mode(m);
+        std::fs::set_permissions(src.join("pkg/sub"), mode(0o500)).unwrap();
+        std::fs::set_permissions(src.join("pkg"), mode(0o555)).unwrap();
+        let tar = d.join("pack.tar");
+        bsdtar(&src, &["-cf", tar.to_str().unwrap(), "pkg"]);
+        writable(&src, &["pkg", "pkg/sub"]);
+        for (here, into) in [(true, d.clone()), (false, d.join("pack"))] {
+            let got = only(&tar, here);
+            let g = std::fs::read_to_string(into.join("pkg/sub/g.txt")).ok();
+            let modes: Vec<u32> = ["pkg", "pkg/sub"]
+                .iter()
+                .map(|r| {
+                    std::fs::metadata(into.join(r)).map_or(0, |m| m.permissions().mode() & 0o777)
+                })
+                .collect();
+            writable(&into, &["pkg", "pkg/sub"]);
+            assert!(
+                matches!(
+                    &got[..],
+                    [ArchiveEvent::Landed { .. }, ArchiveEvent::Finished]
+                ),
+                "here={here}: {got:?}"
+            );
+            assert_eq!(g.as_deref(), Some("g"), "here={here}");
+            assert_eq!(modes, [0o555, 0o500], "here={here}");
+            assert_eq!(
+                names_in(&d).len(),
+                if here { 2 } else { 3 },
+                "here={here}: no staging is left"
+            );
+        }
+    }
+
+    #[test]
+    fn a_merge_that_stops_part_way_moves_nothing_into_place() {
+        use std::os::unix::fs::PermissionsExt;
+        let t = tempfile::tempdir().unwrap();
+        let (src, away) = (t.path().join("src"), t.path().join("away"));
+        std::fs::create_dir_all(src.join("sub")).unwrap();
+        std::fs::create_dir(&away).unwrap();
+        std::fs::write(src.join("sub/x.txt"), "x").unwrap();
+        let mut names = vec![];
+        for i in 0..6 {
+            for p in ["a", "z"] {
+                std::fs::write(src.join(format!("{p}{i}.txt")), "n").unwrap();
+                names.push(format!("{p}{i}.txt"));
+            }
+        }
+        names.sort();
+        let mut args: Vec<&str> = vec!["-cf", "../pack.tar"];
+        args.extend(names[..6].iter().map(String::as_str));
+        args.push("sub");
+        args.extend(names[6..].iter().map(String::as_str));
+        for (case, there) in ["a link", "a read-only folder"].into_iter().enumerate() {
+            let d = t.path().join(format!("d{case}"));
+            std::fs::create_dir(&d).unwrap();
+            let _ = std::fs::remove_file(t.path().join("pack.tar"));
+            bsdtar(&src, &args);
+            std::fs::rename(t.path().join("pack.tar"), d.join("pack.tar")).unwrap();
+            match case {
+                0 => std::os::unix::fs::symlink(&away, d.join("sub")).unwrap(),
+                _ => {
+                    std::fs::create_dir(d.join("sub")).unwrap();
+                    std::fs::set_permissions(d.join("sub"), std::fs::Permissions::from_mode(0o555))
+                        .unwrap();
+                }
+            }
+            let got = only(&d.join("pack.tar"), true);
+            writable(&d, &["sub"]);
+            assert!(
+                matches!(
+                    &got[..],
+                    [ArchiveEvent::Failed { .. }, ArchiveEvent::Finished]
+                ),
+                "{there}: {got:?}"
+            );
+            assert_eq!(
+                names_in(&d),
+                ["pack.tar", "sub"],
+                "{there}: nothing moved stays"
+            );
+            assert_eq!(std::fs::read_dir(&away).unwrap().count(), 0, "{there}");
+        }
     }
 
     #[test]
