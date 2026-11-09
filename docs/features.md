@@ -278,7 +278,8 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
 - **Icons** you can drag around, rename with F2, delete to the trash,
   refresh with F5 and right-click. Documents, Computer, Home and Recycle Bin are there if you
   want them, and the files in `~/Desktop` too. Labels hide file name extensions, only
-  `.desktop`, or none (`desktop_extensions`); renaming a shown extension selects the name
+  `.desktop`, or none (`desktop_extensions`); a name whose rest ends in a known extension
+  too (`report.pdf.sh`) shows in full. Renaming a shown extension selects the name
   before it.
 - **Open in Terminal** on the desktop's right-click menu, a folder's and
   Documents' or Home's starts your `terminal` there.
