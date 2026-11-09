@@ -1242,6 +1242,15 @@ sharing and remote control grants yet.
   the default) or in your terminal (`script_open = "terminal"`). The
   execute bit is the only gate: an archive that restores it gives you a
   program that runs on a double-click.
+- **Thumbnailers.** Thumbnails and Tiles hand each file Reprise doesn't
+  decode itself to its installed `.thumbnailer` program as the folder
+  shows, with no click. Each runs under bubblewrap in a systemd user scope:
+  new user, pid, network, IPC and UTS namespaces, `/usr` and the input
+  file read-only, a fresh scratch folder its one writable place, no home
+  folder, no session bus or display socket, `MemoryMax=512M` and a 10
+  second deadline, after which its process group is killed. Without
+  bubblewrap no thumbnailer runs; the built-in picture decoders (Rust, in
+  Explorer or its `--thumbnailer` helper) still do.
 - **App scopes.** A program started from a desktop entry runs in a systemd
   scope `app-reprise-<app id>-<n>.scope`, where xdg-desktop-portal reads a
   host app's id. The scope is for identification and cleanup, not

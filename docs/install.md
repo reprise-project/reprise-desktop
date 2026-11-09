@@ -415,7 +415,11 @@ desktop and stays out of the way when it's missing.
   itself (`[thumbnail_cache] external_thumbnailers`): papers or evince for
   PDF, PostScript, DjVu and comic books, ffmpegthumbnailer for videos,
   gnome-font-viewer for fonts, libgsf for OpenDocument and Office files.
-  Any package that installs a `.thumbnailer` file works.
+  Any package that installs a `.thumbnailer` file works. They run only
+  with bubblewrap installed.
+- bubblewrap, for the freedesktop thumbnailers: each runs in a bubblewrap
+  jail with no network and only `/usr`, its input file and its output
+  folder visible. Without bubblewrap only pictures get thumbnails.
 
 ## Fonts
 
