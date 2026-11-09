@@ -296,7 +296,8 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   window).
 - **Trusted launchers.** A `.desktop` file on the desktop, or one the
   launcher finds, runs only once you've marked it trusted (Allow Launching),
-  so a download can't pose as a program.
+  so a download can't pose as a program. An edit to the file, or a copy of
+  it off a drive, drops the mark, and it asks again.
 - **Program icons.** A file that runs when opened (below) wears the theme's
   program icon (`application-x-executable`) on the desktop, in Explorer and
   in file dialogs.
@@ -358,7 +359,8 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   remembered for that file until it changes (`confirm_scripts = false`
   never asks). The Start menu's Documents, jump lists and search ask the
   same way. A program started from an
-  installed application entry never asks. A
+  installed application entry never asks, and neither does one the system
+  installed under `/usr` or `/opt` that only root can change. A
   script runs on its own, or in
   your terminal with `script_open = "terminal"` (Settings > Default
   Programs); its menu has Run and Run in terminal in place of Open, the
@@ -718,6 +720,9 @@ the screen takes the interface of the last session used at this computer.
   phone, and Send files from the tray or Send To.
 - **Drives** mount when you plug them in, ask for a passphrase if they're
   encrypted, and eject from the tray or from Computer.
+- **Disk images.** Opening an `.iso` or `.img` asks Mount or Cancel, and
+  Mount mounts it read-only like a drive instead of handing it to its type's
+  program. Open With and Explorer's Open hand it to a program.
 - **Disk Usage.** What takes a folder's or a drive's space, largest first with
   a bar each, counted in the background; open it from Explorer or the low disk
   space balloon.
@@ -738,8 +743,9 @@ the screen takes the interface of the last session used at this computer.
 - **Indicators.** A red dot while the screen is shared or recorded, or
   while a program controls the keyboard or mouse through the portal, a
   microphone while a program records, a camera while one films and a pin
-  while one reads your location. A mixer's level meter doesn't light the
-  microphone. The tooltips name the program. A single
+  while one reads your location. A mixer's level meter lights the
+  microphone too ([why](security.md#out-of-scope-and-known-gaps)). The
+  tooltips name the program. A single
   screenshot shows no dot. A program's second screenshot within 3 s shows it
   for 3 s, so screenshots in a loop show it, but holds back no balloons.
 - **Capture border.** A red border on the screen around the screen, window
@@ -770,7 +776,8 @@ the screen takes the interface of the last session used at this computer.
   one window.
 - **Remote control.** Tools can drive the keyboard and mouse once you allow
   them. One you allowed with Remember starts without asking and shows a
-  balloon, "<app> is controlling this computer"; its Stop and forget ends the
+  balloon, "<app> is controlling this computer", that stays until you close
+  it, even under Do Not Disturb; its Stop and forget ends the
   session and forgets the choice, so the next start asks again. Reprise's own
   server for RDP clients is [Remote Desktop](#remote-desktop).
 - **One keyboard and mouse across computers** with Deskflow. Super+Shift+Esc
@@ -874,7 +881,8 @@ no port forwarding; allow the port in your firewall if you run one.
   (UTF-16, so about 8 MiB of plain ASCII) and 64 MiB of picture. Pasting
   something copied on the client ends empty if the client doesn't send it
   within 5 s. Files stay where they are. A password manager's copy stays out
-  of the other side's clipboard history. While the session is locked (on the
+  of the other side's clipboard history when the client passes its mark on;
+  FreeRDP on Linux doesn't. While the session is locked (on the
   client's side in lock mode) nothing crosses either way and neither side's
   clipboard changes. On unlock the client's newest copy from the lock lands
   here, or else a copy made here during the lock reaches the client.

@@ -668,8 +668,16 @@ mod tests {
         crate::permit::Answer::Allow { remember: true }
     }
 
-    /// Each Notify's app name, summary and actions.
-    type Noted = Arc<Mutex<Vec<(String, String, Vec<String>)>>>;
+    #[derive(Clone, Debug, PartialEq)]
+    struct Note {
+        app_name: String,
+        summary: String,
+        actions: Vec<String>,
+        urgency: Option<u8>,
+        desktop_entry: Option<String>,
+    }
+
+    type Noted = Arc<Mutex<Vec<Note>>>;
 
     struct FakeNotifications(Noted);
 
@@ -684,11 +692,18 @@ mod tests {
             summary: String,
             _body: String,
             actions: Vec<String>,
-            _hints: HashMap<String, OwnedVariant>,
+            hints: HashMap<String, OwnedVariant>,
             _expire_timeout: i32,
         ) -> u32 {
             let mut noted = self.0.lock().unwrap();
-            noted.push((app_name, summary, actions));
+            noted.push(Note {
+                app_name,
+                summary,
+                actions,
+                urgency: hints.get("urgency").and_then(|v| u8::try_from(v).ok()),
+                desktop_entry: (hints.get("desktop-entry"))
+                    .and_then(|v| String::try_from(v.try_clone().ok()?).ok()),
+            });
             40 + noted.len() as u32
         }
     }
@@ -864,7 +879,7 @@ mod tests {
         }
 
         /// The balloons so far, once `n` have come or after 5 s.
-        async fn balloons(&self, n: usize) -> Vec<(String, String, Vec<String>)> {
+        async fn balloons(&self, n: usize) -> Vec<Note> {
             for _ in 0..500 {
                 if self.noted.lock().unwrap().len() >= n {
                     break;
@@ -875,16 +890,20 @@ mod tests {
         }
     }
 
-    fn controlled(app_id: &str) -> (String, String, Vec<String>) {
-        (
-            app_id.to_string(),
-            format!("{app_id} is controlling this computer"),
-            vec!["forget".to_string(), "Stop and forget".to_string()],
-        )
+    /// Critical and from Reprise, not the app, so neither the app's mute nor Do Not Disturb holds
+    /// it, and it stays up past a lock.
+    fn controlled(app_id: &str) -> Note {
+        Note {
+            app_name: "Reprise".to_string(),
+            summary: format!("{app_id} is controlling this computer"),
+            actions: vec!["forget".to_string(), "Stop and forget".to_string()],
+            urgency: Some(2),
+            desktop_entry: None,
+        }
     }
 
     #[test]
-    fn a_start_from_a_remembered_grant_shows_one_balloon() {
+    fn a_start_from_a_remembered_grant_shows_one_critical_balloon_from_reprise() {
         let Some(bus) = crate::lockmode::tests::bus() else {
             eprintln!("no dbus-daemon; skipped");
             return;
