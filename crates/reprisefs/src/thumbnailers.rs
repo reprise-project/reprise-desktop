@@ -224,8 +224,8 @@ pub enum RunError {
 /// How a thumbnailer is confined.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Jail {
-    /// bubblewrap inside a systemd user scope capped at [`MEMORY_MAX`]: no network, a new pid
-    /// namespace, `/usr` and the input read-only, the scratch folder the one writable place.
+    /// bubblewrap in a systemd user scope capped at [`MEMORY_MAX`]: no network, a new pid
+    /// namespace, `/usr`, `/opt` and the input read-only, only the scratch folder writable.
     Bwrap {
         bwrap: PathBuf,
         systemd_run: PathBuf,
@@ -274,11 +274,16 @@ impl Jail {
                 _ => {}
             }
         }
-        for etc in ["/etc/ld.so.cache", "/etc/fonts", "/var/cache/fontconfig"] {
-            out.extend(["--ro-bind-try", etc, etc].map(os));
+        for shared in [
+            "/opt",
+            "/etc/ld.so.cache",
+            "/etc/fonts",
+            "/var/cache/fontconfig",
+        ] {
+            out.extend(["--ro-bind-try", shared, shared].map(os));
         }
         out.extend(["--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp"].map(os));
-        if !program.starts_with("/usr") {
+        if !program.starts_with("/usr") && !program.starts_with("/opt") {
             out.extend([os("--ro-bind"), os(&program), os(&program)]);
         }
         out.extend([os("--ro-bind"), os(input), os(input)]);

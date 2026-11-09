@@ -414,9 +414,14 @@ fn the_jail_shares_only_the_system_the_input_and_the_scratch_folder() {
     for from in after("--ro-bind") {
         assert!(from == input || system.contains(&from), "{from}");
     }
-    for from in after("--ro-bind-try") {
+    let tried = after("--ro-bind-try");
+    assert!(
+        tried.contains(&"/opt"),
+        "programs installed in /opt: {tried:?}"
+    );
+    for from in tried {
         assert!(
-            from.starts_with("/etc/") || from == "/var/cache/fontconfig",
+            from.starts_with("/etc/") || ["/opt", "/var/cache/fontconfig"].contains(&from),
             "{from}"
         );
     }

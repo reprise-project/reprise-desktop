@@ -166,7 +166,9 @@ app's remote control shows no dot and still reaches the lock screen. A
 Settings window open across the upgrade can't save Login Manager: close it
 and open it again. After a Turn Off in a session started before the
 upgrade, the other session's remote clients are dropped without being told
-the computer is turning off.
+the computer is turning off. Launchers you allowed and programs you ran
+before the upgrade ask once more: the trust marker now covers the file's
+contents, so allow each launcher again.
 
 ### Remote logins
 

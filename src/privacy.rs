@@ -465,8 +465,6 @@ struct NodeInfo {
     app: String,
     client: u32,
     running: bool,
-    /// `stream.monitor`: a level meter's peak stream, which records nothing.
-    monitor: bool,
 }
 
 /// The registry view the thread keeps: nodes by id, links as
@@ -507,13 +505,7 @@ impl NodeInfo {
             app: get("application.name"),
             client: get("client.id").parse().unwrap_or(0),
             running: false,
-            monitor: false,
         }
-    }
-
-    /// Takes in the full props a bound node's info event carries.
-    fn note_props<'a>(&mut self, get: impl Fn(&str) -> Option<&'a str>) {
-        self.monitor = matches!(get("stream.monitor"), Some("true" | "1"));
     }
 }
 
@@ -567,7 +559,7 @@ impl Graph {
             .values()
             .filter(|(out, _)| self.nodes.get(out).is_some_and(&from))
             .filter_map(|(_, inp)| self.nodes.get(inp))
-            .filter(|n| n.class.starts_with(class) && (n.running || !running) && !n.monitor)
+            .filter(|n| n.class.starts_with(class) && (n.running || !running))
             .map(|n| self.consumer_name(n))
             .collect();
         apps.sort();
@@ -653,15 +645,8 @@ fn mic_thread(
                                 .info(move |info| {
                                     let running =
                                         matches!(info.state(), pipewire::node::NodeState::Running);
-                                    let props = info.props().filter(|_| {
-                                        info.change_mask()
-                                            .contains(pipewire::node::NodeChangeMask::PROPS)
-                                    });
                                     if let Some(n) = graph2.borrow_mut().nodes.get_mut(&id) {
                                         n.running = running;
-                                        if let Some(p) = props {
-                                            n.note_props(|k| p.get(k));
-                                        }
                                     }
                                     report2();
                                 })
@@ -739,14 +724,13 @@ mod tests {
             app: app.into(),
             client: 0,
             running,
-            monitor: false,
         }
     }
 
     type Keys = &'static [(&'static str, &'static str)];
 
-    /// pavucontrol's Input Devices meter on a microphone: its node global, then the props its
-    /// info event adds (PipeWire 1.6, pipewire-pulse).
+    /// pavucontrol's Input Devices meter on a microphone (PipeWire 1.6, pipewire-pulse); its info
+    /// adds `stream.monitor` and `resample.peaks`.
     const METER_GLOBAL: Keys = &[
         ("object.serial", "66"),
         ("factory.id", "7"),
@@ -756,16 +740,8 @@ mod tests {
         ("node.name", "PulseAudio Volume Control"),
         ("media.class", "Stream/Input/Audio"),
     ];
-    const METER_INFO: Keys = &[
-        ("application.id", "org.PulseAudio.pavucontrol"),
-        ("application.process.binary", "pavucontrol"),
-        ("media.name", "Peak detect"),
-        ("resample.peaks", "true"),
-        ("stream.monitor", "true"),
-        ("target.object", "55"),
-    ];
 
-    /// `pw-record --target testmic`: its node global, then the props its info event adds.
+    /// `pw-record --target testmic`.
     const RECORD_GLOBAL: Keys = &[
         ("object.serial", "83"),
         ("factory.id", "9"),
@@ -774,37 +750,40 @@ mod tests {
         ("node.name", "pw-record"),
         ("media.class", "Stream/Input/Audio"),
     ];
-    const RECORD_INFO: Keys = &[
-        ("media.category", "Capture"),
-        ("media.role", "Music"),
-        ("media.name", "/tmp/rec.wav"),
-        ("stream.is-live", "true"),
-        ("target.object", "testmic"),
-    ];
 
-    /// A running stream as the registry and then its info event describe it.
-    fn stream(global: Keys, info: Keys) -> NodeInfo {
-        let find = |set: Keys| move |k: &str| set.iter().find(|(key, _)| *key == k).map(|p| p.1);
-        let mut n = NodeInfo::from_global(find(global));
+    /// A running stream as its registry global describes it.
+    fn stream(global: Keys) -> NodeInfo {
+        let mut n =
+            NodeInfo::from_global(|k| global.iter().find(|(key, _)| *key == k).map(|p| p.1));
         n.running = true;
-        n.note_props(find(info));
         n
     }
 
+    /// `pw-record -P '{ stream.monitor = true }'`: a recorder marking its own stream as a meter;
+    /// its info adds `stream.monitor` and `resample.peaks` as the meter's does.
+    const MARKED_GLOBAL: Keys = &[
+        ("object.serial", "84"),
+        ("factory.id", "9"),
+        ("client.id", "60"),
+        ("application.name", "pw-record"),
+        ("node.name", "pw-record"),
+        ("media.class", "Stream/Input/Audio"),
+    ];
+
     #[test]
-    fn a_level_meter_does_not_light_the_microphone_and_a_recording_does() {
+    fn every_capture_lights_the_microphone_even_one_marked_as_a_level_meter() {
         let mut g = Graph::default();
         g.nodes.insert(55, node("Audio/Source", "", false));
-        g.nodes.insert(60, stream(METER_GLOBAL, METER_INFO));
+        g.nodes.insert(62, stream(MARKED_GLOBAL));
+        g.links.insert(102, (55, 62));
+        assert_eq!(g.recording(), ["pw-record"], "a marked recorder");
+        g.nodes.remove(&62);
+        g.nodes.insert(60, stream(METER_GLOBAL));
         g.links.insert(100, (55, 60));
-        assert_eq!(
-            g.recording(),
-            Vec::<String>::new(),
-            "a level meter records nothing"
-        );
-        g.nodes.insert(61, stream(RECORD_GLOBAL, RECORD_INFO));
+        assert_eq!(g.recording(), ["PulseAudio Volume Control"], "a meter");
+        g.nodes.insert(61, stream(RECORD_GLOBAL));
         g.links.insert(101, (55, 61));
-        assert_eq!(g.recording(), vec!["pw-record".to_string()]);
+        assert_eq!(g.recording(), ["PulseAudio Volume Control", "pw-record"]);
     }
 
     #[test]

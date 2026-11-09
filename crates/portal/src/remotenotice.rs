@@ -8,6 +8,7 @@ use zbus::{OwnedVariant, Variant};
 
 const SERVER: &str = "org.freedesktop.Notifications";
 const SERVER_PATH: &str = "/org/freedesktop/Notifications";
+const SENDER: &str = "Reprise";
 const FORGET_KEY: &str = "forget";
 const FORGET_LABEL: &str = "Stop and forget";
 const BODY: &str = "You allowed this before and ticked Remember this choice.";
@@ -47,15 +48,17 @@ impl Notices {
             true => "An application is controlling this computer".to_string(),
             false => format!("{name} is controlling this computer"),
         };
+        // From Reprise and critical, so neither the app's own mute nor Do Not Disturb holds it,
+        // and it stays up until dismissed, past a lock.
         let mut hints: HashMap<&str, Variant<'_>> = HashMap::new();
-        hints.insert("urgency", Variant::U8(1));
-        if !app_id.is_empty() {
-            hints.insert("desktop-entry", Variant::from(app_id.as_str()));
+        hints.insert("urgency", Variant::U8(2));
+        if !icon.is_empty() {
+            hints.insert("image-path", Variant::from(icon.as_str()));
         }
         let body = (
-            name.as_str(),
+            SENDER,
             0u32,
-            icon.as_str(),
+            "",
             summary.as_str(),
             BODY,
             vec![FORGET_KEY, FORGET_LABEL],
