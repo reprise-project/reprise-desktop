@@ -8,6 +8,7 @@ reprisebus::test_session!();
 mod chrome;
 mod cwd;
 mod drop;
+mod escapes;
 mod find;
 mod keys;
 mod newtab;

@@ -152,7 +152,8 @@ impl Tab {
         let osc7 = Arc::new(Mutex::new(None));
         let reader = cwd::Reader {
             file: pty.file().try_clone()?,
-            scan: cwd::Osc7::default(),
+            filter: Default::default(),
+            out: Vec::new(),
             host: cwd::hostname(),
             cwd: osc7.clone(),
         };
