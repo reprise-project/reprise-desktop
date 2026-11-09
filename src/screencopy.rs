@@ -303,4 +303,8 @@ impl Screencopy {
     pub fn client(&self) -> Option<ClientId> {
         self.frame.client().map(|c| c.id())
     }
+
+    pub fn wl_client(&self) -> Option<Client> {
+        self.frame.client()
+    }
 }

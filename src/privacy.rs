@@ -1,6 +1,5 @@
-//! The taskbar's privacy indicators: a record dot while an output or window is captured or an app's RemoteDesktop
-//! session holds input, a microphone while an app records, a camera while one films, each with the app's name in its
-//! tooltip (from PipeWire, a screencast's from the portal's word on its node, controlling apps from the portal).
+//! The taskbar's privacy indicators: a record dot while the screen is captured or an app holds
+//! input, a microphone while an app records, a camera while one films, each naming its apps.
 
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -11,6 +10,8 @@ use smithay::reexports::calloop::{
     timer::{TimeoutAction, Timer},
 };
 
+use smithay::reexports::wayland_server::Client;
+
 use crate::{captureborder::Captured, compositor::State};
 
 #[cfg(not(test))]
@@ -19,8 +20,8 @@ const HOLD: Duration = Duration::from_secs(5);
 #[cfg(test)]
 const HOLD: Duration = Duration::from_millis(500);
 
-/// How long the dot shows after any captured frame, so captures repeated slower than a
-/// recording (a screenshot loop) still show.
+/// How long the dot shows after a process's second still within this time of its first, so
+/// captures repeated slower than a recording (a screenshot loop) show and a single one does not.
 #[cfg(not(test))]
 const STILL_HOLD: Duration = Duration::from_secs(3);
 #[cfg(test)]
@@ -49,7 +50,9 @@ pub struct Privacy {
     /// The app ids of the apps whose RemoteDesktop sessions hold input, sorted, "" for an unnamed
     /// one (`control_changed`).
     controlling: Vec<String>,
-    /// While `STILL_HOLD` after a captured frame: whether one showed a screen and one a window.
+    /// The processes that took a still within `STILL_HOLD`, by pid, and when.
+    takers: Vec<(i32, Instant)>,
+    /// While `STILL_HOLD` after a repeated still: whether one showed a screen and one a window.
     still: Option<(bool, bool)>,
     still_until: Option<Instant>,
     still_timer: Option<RegistrationToken>,
@@ -88,8 +91,8 @@ impl Privacy {
         self.sharing
     }
 
-    /// Whether the tray's dot shows: a capture is shared or was taken within `STILL_HOLD`, or an
-    /// app controls this computer.
+    /// Whether the tray's dot shows: a capture is shared, a process repeats stills, or an app
+    /// controls this computer.
     pub fn dot_shown(&self) -> bool {
         self.sharing || self.still.is_some() || !self.controlling.is_empty()
     }
@@ -165,9 +168,25 @@ fn still_label(screen: bool, window: bool) -> String {
     .into()
 }
 
-/// A client asked for a frame of a `window` or a screen: the dot shows for `STILL_HOLD` from now.
-pub fn frame_taken(state: &mut State, window: bool) {
+/// `client` was handed a frame of a `window` or a screen; its process's second within `STILL_HOLD`
+/// lights the dot. Called after the fill, so the frame that lights the dot never shows it.
+pub fn frame_taken(state: &mut State, client: Option<&Client>, window: bool) {
+    let Some(pid) = client
+        .and_then(|c| c.get_data::<crate::compositor::ClientState>())
+        .and_then(|d| d.sandbox.pid)
+    else {
+        return;
+    };
+    let now = Instant::now();
     let p = &mut state.privacy;
+    p.takers
+        .retain(|&(_, at)| now.duration_since(at) < STILL_HOLD);
+    let again = p.takers.iter().any(|&(t, _)| t == pid);
+    p.takers.retain(|&(t, _)| t != pid);
+    p.takers.push((pid, now));
+    if !again {
+        return;
+    }
     let was = p.still;
     let (screen, win) = was.unwrap_or_default();
     p.still = Some((screen || !window, win || window));
@@ -482,10 +501,8 @@ impl Graph {
         })
     }
 
-    /// The apps a Reprise screencast is shared with, sorted, deduplicated: each by the
-    /// `application.name` the portal put on the cast's node, which only the node's owner sets,
-    /// else by the consumer's own word. A paused consumer still holds the stream, so Running is
-    /// not required.
+    /// The apps a Reprise screencast is shared with, by the cast node's `application.name` (only
+    /// its owner, the portal, sets it), else the consumer's own. A paused consumer still counts.
     fn sharing(&self) -> Vec<String> {
         let mut apps: Vec<String> = (self.links.values())
             .filter_map(|(out, inp)| Some((self.nodes.get(out)?, self.nodes.get(inp)?)))
@@ -994,19 +1011,36 @@ mod tests {
     }
 
     #[test]
-    fn a_screenshot_shows_the_dot_for_a_moment() {
+    fn a_single_screenshot_shows_no_dot() {
         let mut h = capturing();
-        screenshot(&mut h);
-        assert_eq!(dot(&h).as_deref(), Some("Your screen was captured"));
+        let mut c = h.connect_capture(SIZE);
+        c.wlr_shot(&mut h);
+        assert_eq!(dot(&h), None, "one wlr still");
+        h.run_for(STILL_HOLD.mul_f32(1.2).as_millis() as u64);
+        let mut s = c.ext_session(&mut h);
+        c.ext_frame(&mut h, &mut s);
+        c.ext_end(&mut h, s);
+        assert_eq!(dot(&h), None, "one ext still, after the last one's hold");
+    }
+
+    #[test]
+    fn screenshots_in_a_loop_show_the_dot_from_the_second() {
+        let mut h = capturing();
+        h.connect_capture(SIZE).wlr_shot(&mut h);
+        assert_eq!(dot(&h), None, "the first still");
+        for _ in 0..3 {
+            h.run_for(STILL_HOLD.mul_f32(0.6).as_millis() as u64);
+            h.connect_capture(SIZE).wlr_shot(&mut h);
+            assert_eq!(
+                dot(&h).as_deref(),
+                Some("Your screen was captured"),
+                "each still after the first, from one process"
+            );
+        }
         assert!(
             !h.state.privacy.sharing_shown(),
             "balloons don't wait for it"
         );
-        for _ in 0..3 {
-            h.run_for(STILL_HOLD.mul_f32(0.6).as_millis() as u64);
-            screenshot(&mut h);
-            assert!(dot(&h).is_some(), "screenshots in a loop keep the dot");
-        }
         let last = std::time::Instant::now();
         let left =
             (last + STILL_HOLD.mul_f32(1.3)).saturating_duration_since(std::time::Instant::now());

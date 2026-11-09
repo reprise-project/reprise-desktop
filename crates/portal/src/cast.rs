@@ -262,9 +262,8 @@ fn cursor_plane(
     })
 }
 
-/// The app a cast is for: the id the frontend gave and its desktop entry's name, either empty
-/// when unknown. They go on the node as `application.id` and `application.name`, which the
-/// compositor's sharing tooltip reads.
+/// The app a cast is for, "" when unknown. Its name goes on the node as `application.name`, which
+/// the compositor's sharing tooltip reads.
 #[derive(Clone, Debug, Default)]
 pub struct CastFor {
     pub id: String,

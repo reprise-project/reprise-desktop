@@ -35,9 +35,10 @@ Such a program can bind every global Reprise offers, including these:
   `ext_image_copy_capture_manager_v1` and its capture sources): copies any
   screen or window without asking. A capture that keeps running draws the
   red capture border while it does (`[privacy] capture_border`); a single
-  screenshot draws none, but every captured frame shows the screen-sharing
-  dot for 3 s, so screenshots taken in a loop show it too. The one exception is the Remote Desktop server's
-  capture, which goes without it unless `[remote_desktop] capture_border`
+  screenshot draws none. A program's second still within 3 s of its first
+  shows the screen-sharing dot for 3 s, so screenshots taken in a loop show
+  it and a single one does not. The one exception is the Remote Desktop
+  server's capture, which goes without it unless `[remote_desktop] capture_border`
   is set: the portal marks that capture's connection through
   `reprise_input_v1`, which only the installed reprise-portal can bind, and
   only for the session it starts without a dialog for the server's enabled
