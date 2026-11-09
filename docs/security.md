@@ -59,6 +59,10 @@ tools. Reprise has no allow-list for them.
 A client is sandboxed when it connects through a socket a sandbox opened
 with `wp_security_context_manager_v1` (Flatpak does this), or when its
 process sees `/.flatpak-info` (a Flatpak app that connected without one).
+Reprise looks at the process that connected through a pidfd. One that has
+exited by then, or whose root Reprise can't open, counts as sandboxed too,
+so a Flatpak app can't pass as a host program by connecting and exiting
+before the connection is accepted.
 A sandboxed client sees none of the globals above. It also doesn't see
 `wp_security_context_manager_v1` itself, so it can't open a socket of its
 own under another app id. The full list is `PRIVILEGED_GLOBALS` in

@@ -331,7 +331,9 @@ impl Harness {
 
     /// A client in a Flatpak sandbox.
     pub fn connect_sandboxed(&mut self) -> TestClient {
-        self.connect_with(None, |d| d.sandbox.flatpak = true)
+        self.connect_with(None, |d| {
+            d.sandbox.process = crate::sandbox::Process::Flatpak
+        })
     }
 
     /// A client the global filter takes for the installed reprise-portal.
@@ -347,7 +349,9 @@ impl Harness {
             engine: Some("org.flatpak".into()),
             app_id: Some(app_id.into()),
         };
-        self.connect_with(Some(context), |d| d.sandbox.flatpak = true)
+        self.connect_with(Some(context), |d| {
+            d.sandbox.process = crate::sandbox::Process::Flatpak
+        })
     }
 
     /// A client [`State::client_pid`] takes for process `pid`; pick one above the kernel's
@@ -360,7 +364,7 @@ impl Harness {
     pub fn connect_sandboxed_as(&mut self, pid: i32) -> TestClient {
         self.connect_with(None, |d| {
             d.pid = Some(pid);
-            d.sandbox.flatpak = true;
+            d.sandbox.process = crate::sandbox::Process::Flatpak;
         })
     }
 
