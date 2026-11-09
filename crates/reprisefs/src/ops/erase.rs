@@ -1,8 +1,9 @@
+use super::at::{open_dir, stat_fd};
 use super::{refuse_holding_mount, refuse_mount_point};
 use crate::progress::Meter;
-use std::ffi::CStr;
+use std::ffi::{CStr, CString};
 use std::io;
-use std::os::fd::{AsFd, AsRawFd, BorrowedFd};
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd};
 use std::path::Path;
 
 /// Remove `path` for good: a folder with everything under it, a file or
@@ -52,7 +53,7 @@ pub(crate) fn erase_at(
         return Ok(());
     }
     refuse_holding_mount(path)?;
-    remove_tree_at(dir.as_raw_fd(), name, meter)
+    remove_tree_at(dir, name, meter)
 }
 
 /// Whether `name` in the folder open as `dir` is a folder, not a link to one.
@@ -108,46 +109,112 @@ fn erase_tree(path: &Path, meter: Option<&Meter>) -> io::Result<()> {
         parent
     })?;
     let name = std::ffi::CString::new(name.as_bytes())?;
-    remove_tree_at(parent.as_raw_fd(), &name, meter)
+    remove_tree_at(parent.as_fd(), &name, meter)
 }
 
-/// Remove folder `name` in the folder open at `parent` with everything under it, children first.
-fn remove_tree_at(
-    parent: std::os::fd::RawFd,
-    name: &CStr,
-    meter: Option<&Meter>,
-) -> io::Result<()> {
-    use std::os::fd::{FromRawFd, OwnedFd};
-    let flags = libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC;
-    // SAFETY: `name` is NUL-terminated and outlives the call; `parent` is an open folder.
-    let fd = unsafe { libc::openat(parent, name.as_ptr(), flags) };
-    if fd < 0 {
-        return Err(io::Error::last_os_error());
-    }
-    // SAFETY: `fd` was just opened and is owned by nothing else.
-    let dir = unsafe { OwnedFd::from_raw_fd(fd) };
-    for (child, is_dir) in entries_at(dir.as_fd())? {
-        match meter {
-            Some(m) => m.hold()?,
-            None => crate::progress::step(),
-        }
-        if is_dir {
-            remove_tree_at(dir.as_raw_fd(), &child, meter)?;
-        } else {
-            // SAFETY: as for `openat` above.
-            if unsafe { libc::unlinkat(dir.as_raw_fd(), child.as_ptr(), 0) } != 0 {
-                return Err(io::Error::last_os_error());
+/// The folders [`remove_tree_at`] keeps open on its way down; one above them is closed and
+/// opened again by name when the walk climbs back to it.
+const OPEN_LEVELS: usize = 64;
+
+/// One folder on [`remove_tree_at`]'s way down.
+struct Level {
+    name: CString,
+    fd: Option<OwnedFd>,
+    ino: u64,
+    left: Vec<(CString, bool)>,
+}
+
+/// Remove folder `name` in the folder open at `parent` with everything under it, children first,
+/// without following a link or entering another file system. Iterative, so depth costs no stack.
+fn remove_tree_at(parent: BorrowedFd, name: &CStr, meter: Option<&Meter>) -> io::Result<()> {
+    let dev = stat_fd(parent)?.st_dev;
+    let mut stack = vec![level(parent, name, dev)?];
+    while !stack.is_empty() {
+        let top = stack.len() - 1;
+        match stack[top].left.pop() {
+            Some((child, is_dir)) => {
+                match meter {
+                    Some(m) => m.hold()?,
+                    None => crate::progress::step(),
+                }
+                let at = reopen(parent, &mut stack, dev)?;
+                if is_dir {
+                    let next = level(at, &child, dev)?;
+                    stack.push(next);
+                    if let Some(far) = stack.len().checked_sub(OPEN_LEVELS + 1) {
+                        stack[far].fd = None;
+                    }
+                } else {
+                    unlink_at(at, &child, 0)?;
+                    if let Some(m) = meter {
+                        m.removed();
+                    }
+                }
             }
-            if let Some(m) = meter {
-                m.removed();
+            None => {
+                let done = stack.pop().expect("a level is left");
+                drop(done.fd);
+                let up = match stack.is_empty() {
+                    true => parent,
+                    false => reopen(parent, &mut stack, dev)?,
+                };
+                unlink_at(up, &done.name, libc::AT_REMOVEDIR)?;
             }
         }
-    }
-    // SAFETY: as for `openat` above.
-    if unsafe { libc::unlinkat(parent, name.as_ptr(), libc::AT_REMOVEDIR) } != 0 {
-        return Err(io::Error::last_os_error());
     }
     Ok(())
+}
+
+/// Open folder `name` in `at` and list it; another device than `dev` is refused.
+fn level(at: BorrowedFd, name: &CStr, dev: libc::dev_t) -> io::Result<Level> {
+    let fd = open_dir(at, name, false)?;
+    let st = stat_fd(fd.as_fd())?;
+    if st.st_dev != dev {
+        return Err(io::Error::new(
+            io::ErrorKind::ResourceBusy,
+            "a folder in it is a mounted drive",
+        ));
+    }
+    Ok(Level {
+        name: name.to_owned(),
+        left: entries_at(fd.as_fd())?,
+        ino: st.st_ino,
+        fd: Some(fd),
+    })
+}
+
+/// The open folder of `stack`'s last level, opening again by name the levels [`remove_tree_at`]
+/// closed; one that is no longer the folder it listed fails.
+fn reopen<'a>(
+    parent: BorrowedFd<'a>,
+    stack: &'a mut [Level],
+    dev: libc::dev_t,
+) -> io::Result<BorrowedFd<'a>> {
+    let top = stack.len() - 1;
+    let first = stack
+        .iter()
+        .rposition(|l| l.fd.is_some())
+        .map_or(0, |i| i + 1);
+    for i in first..=top {
+        let fd = {
+            let at = match i {
+                0 => parent,
+                _ => stack[i - 1].fd.as_ref().expect("opened above").as_fd(),
+            };
+            open_dir(at, &stack[i].name, false)?
+        };
+        let st = stat_fd(fd.as_fd())?;
+        if st.st_dev != dev || st.st_ino != stack[i].ino {
+            return Err(io::Error::other(
+                "a folder in it was replaced while it was removed",
+            ));
+        }
+        stack[i].fd = Some(fd);
+        if let Some(far) = i.checked_sub(1).filter(|&j| top - j >= OPEN_LEVELS) {
+            stack[far].fd = None;
+        }
+    }
+    Ok(stack[top].fd.as_ref().expect("opened above").as_fd())
 }
 
 /// The names in the folder open as `dir`, each with whether it is a folder (not a link to one).
