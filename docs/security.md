@@ -1264,8 +1264,10 @@ sharing and remote control grants yet.
   file read-only, a fresh scratch folder its one writable place, no home
   folder, no session bus or display socket, `MemoryMax=512M` and a 10
   second deadline, after which its process group is killed. Without
-  bubblewrap no thumbnailer runs; the built-in picture decoders (Rust, in
-  Explorer or its `--thumbnailer` helper) still do. A font's sample in the
+  bubblewrap, or where it can't start (no user namespaces, no systemd user
+  manager, a file it can't bind), no thumbnailer runs and no file is marked
+  failed; the built-in picture decoders (Rust, in Explorer or its
+  `--thumbnailer` helper) still do. A font's sample in the
   Space preview is drawn the same way, by `reprise-explorer --font-sample`
   in the jail, so FreeType never parses a font file inside Explorer.
 - **App scopes.** A program started from a desktop entry runs in a systemd
