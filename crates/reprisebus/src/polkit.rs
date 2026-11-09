@@ -90,20 +90,25 @@ pub fn refusal(
     refused: impl FnOnce(&str) -> bool,
     dismissed: impl FnOnce() -> bool,
 ) -> Option<Refusal> {
-    match e {
-        zbus::Error::MethodError(name, _, _) if name.as_str() == NO_REPLY => {
-            Some(Refusal::TimedOut)
-        }
+    let name = match e {
         zbus::Error::InputOutput(io) if io.kind() == std::io::ErrorKind::TimedOut => {
-            Some(Refusal::TimedOut)
+            return Some(Refusal::TimedOut);
         }
-        zbus::Error::MethodError(name, _, _) if refused(name.as_str()) => Some(if dismissed() {
+        zbus::Error::MethodError(name, _, _) => name.to_string(),
+        // zbus turns a reply named `org.freedesktop.DBus.Error.*` into its `fdo::Error`.
+        zbus::Error::FDO(fdo) => zbus::DBusError::name(&**fdo).to_string(),
+        _ => return None,
+    };
+    if name == NO_REPLY {
+        return Some(Refusal::TimedOut);
+    }
+    refused(&name).then(|| {
+        if dismissed() {
             Refusal::Dismissed
         } else {
             Refusal::Denied
-        }),
-        _ => None,
-    }
+        }
+    })
 }
 
 /// Whether polkit lets the owner of `conn` do `action` with no password prompt. A service that
@@ -225,5 +230,29 @@ mod tests {
         assert_eq!(timed_out, Some(Refusal::TimedOut));
         let reset = zbus::Error::from(std::io::Error::from(std::io::ErrorKind::ConnectionReset));
         assert_eq!(refusal(&reset, |_| true, || false), None);
+    }
+
+    #[test]
+    fn a_reply_named_in_the_dbus_namespace_is_a_refusal_or_a_timeout_too() {
+        let call = zbus::Message::method_call("/", "M")
+            .build(&())
+            .expect("a method call");
+        let reply = |name: &str| {
+            let m = zbus::Message::error(&call.header(), name)
+                .build(&("Permission denied",))
+                .expect("an error reply");
+            zbus::Error::from(m)
+        };
+        let denied = reply("org.freedesktop.DBus.Error.AccessDenied");
+        let refused = |n: &str| n == "org.freedesktop.DBus.Error.AccessDenied";
+        assert_eq!(refusal(&denied, refused, || true), Some(Refusal::Dismissed));
+        assert_eq!(refusal(&denied, refused, || false), Some(Refusal::Denied));
+        let no_reply = reply("org.freedesktop.DBus.Error.NoReply");
+        let timed_out = refusal(
+            &no_reply,
+            |_| false,
+            || panic!("asking forgets a dismissal a timeout has no claim to"),
+        );
+        assert_eq!(timed_out, Some(Refusal::TimedOut));
     }
 }
