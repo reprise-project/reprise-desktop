@@ -127,10 +127,17 @@ async fn read(
     match reply.and_then(|m| m.body().deserialize::<bool>()) {
         Ok(active) => Ok((owner, active)),
         Err(e) => Err(Unread {
+            again: !lacks_get_active(&e),
             why: format!("GetActive from {owner}: {e}"),
-            again: true,
         }),
     }
+}
+
+/// Whether `e` says the owner has no `GetActive`, as a compositor from before it doesn't; the
+/// owner can't grow one without the name changing hands.
+fn lacks_get_active(e: &zbus::Error) -> bool {
+    use zbus::fdo::Error::{UnknownInterface, UnknownMethod};
+    matches!(e, zbus::Error::FDO(e) if matches!(**e, UnknownMethod(_) | UnknownInterface(_)))
 }
 
 #[cfg(test)]
@@ -256,6 +263,41 @@ mod tests {
             reads(&rx, |l| *l == Lock::Locked),
             "read again once the name changes hands"
         );
+    }
+
+    struct OldSaver;
+
+    #[zbus::interface(name = "org.freedesktop.ScreenSaver")]
+    impl OldSaver {
+        fn inhibit(&self, _app: String, _reason: String) -> u32 {
+            1
+        }
+    }
+
+    #[test]
+    fn an_owner_without_get_active_is_asked_again_only_once_the_name_changes_hands() {
+        let Some(bus) = bus() else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
+        let _old = zbus::block_on(
+            Builder::address(bus.1.as_str())
+                .serve_at(PATH, OldSaver)
+                .name(NAME)
+                .build(),
+        )
+        .unwrap();
+        let reads_done = Arc::new(AtomicUsize::new(0));
+        let counted = reads_done.clone();
+        let rx = follow_on(&bus.1, move || {
+            counted.fetch_add(1, Ordering::SeqCst);
+            Ok(std::process::id())
+        });
+        assert!(reads(&rx, unknown));
+        std::thread::sleep(RETRY * 2 + Duration::from_millis(500));
+        assert_eq!(reads_done.load(Ordering::SeqCst), 1, "one read");
+        let _new = owner(&bus.1, false);
+        assert!(reads(&rx, |l| *l == Lock::Unlocked), "a new owner is read");
     }
 
     #[test]

@@ -19,7 +19,7 @@ pub fn follow() -> watch::Receiver<bool> {
             let ended = match reprisebus::connect(Builder::session()) {
                 Ok(conn) => reprisebus::wait(reprisebus::desklock::follow(
                     &conn,
-                    crate::wayland::compositor_pid,
+                    kept(crate::wayland::compositor_pid),
                     report,
                 )),
                 Err(e) => format!("no session bus: {e}"),
@@ -41,4 +41,37 @@ fn publish(locked: &watch::Sender<bool>, now: Lock) {
         }
     }
     locked.send_replace(now != Lock::Unlocked);
+}
+
+/// `read` until it gives a pid, then that pid: the server ends with the display, so the process
+/// serving it can't change.
+fn kept(mut read: impl FnMut() -> Result<u32, String>) -> impl FnMut() -> Result<u32, String> {
+    let mut pid = None;
+    move || {
+        let pid = match pid {
+            Some(pid) => pid,
+            None => *pid.insert(read()?),
+        };
+        Ok(pid)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_compositor_is_asked_until_it_gives_its_pid_and_then_not_again() {
+        let mut calls = 0;
+        let mut pid = kept(move || {
+            calls += 1;
+            match calls {
+                1 => Err("not up yet".into()),
+                n => Ok(40 + n),
+            }
+        });
+        assert!(pid().is_err());
+        assert_eq!(pid(), Ok(42));
+        assert_eq!(pid(), Ok(42), "kept");
+    }
 }
