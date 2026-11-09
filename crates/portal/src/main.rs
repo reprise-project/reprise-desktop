@@ -1207,10 +1207,12 @@ async fn serve(
         .await
 }
 
+/// The filter without RUST_LOG. zbus logs every call it serves at info, with the whole message,
+/// and passes its spans to `log` under `tracing::span`.
+const DEFAULT_FILTER: &str = "info,zbus=warn,tracing::span=warn";
+
 fn main() {
-    // zbus logs every call it serves at info, with the whole message; RUST_LOG
-    // still turns it back on.
-    reprisebus::journal::init_logger("info,zbus=warn");
+    reprisebus::journal::init_logger(DEFAULT_FILTER);
     // A panic in a handler can leave a process that holds the bus name and answers nothing;
     // exiting lets the unit restart.
     let default_hook = std::panic::take_hook();
@@ -1701,5 +1703,24 @@ mod tests {
         assert_eq!(gone, ["a", "c"]);
         assert_eq!(map.keys().collect::<Vec<_>>(), ["b"]);
         assert!(take_owned_by(&mut map, ":1.7").is_empty());
+    }
+
+    #[test]
+    fn the_default_filter_keeps_zbus_to_warnings() {
+        use log::Log as _;
+        let logger = reprisebus::journal::Builder::new()
+            .parse_filters(super::DEFAULT_FILTER)
+            .build();
+        let enabled = |target, level| {
+            logger.enabled(&log::Metadata::builder().target(target).level(level).build())
+        };
+        assert!(enabled("reprise_portal::screencast", log::Level::Info));
+        for dep in ["zbus::object_server", "tracing::span"] {
+            assert!(
+                !enabled(dep, log::Level::Info),
+                "{dep} does not log at info"
+            );
+            assert!(enabled(dep, log::Level::Warn), "{dep} logs warnings");
+        }
     }
 }
