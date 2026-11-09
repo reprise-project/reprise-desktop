@@ -792,7 +792,7 @@ impl Clickable {
     }
 }
 
-/// Follow the server's balloon signals, only from its current owner (see [`reprisebus::signals`]).
+/// Follow the server's balloon signals, only from its current owner (see [`reprisebus::owner_signals`]).
 async fn balloon_signals(conn: &Connection) -> futures_util::stream::BoxStream<'static, Wakeup> {
     let mut rules = Vec::new();
     for member in ["ActivationToken", "ActionInvoked", "NotificationClosed"] {
@@ -808,7 +808,7 @@ async fn balloon_signals(conn: &Connection) -> futures_util::stream::BoxStream<'
             Err(e) => log::warn!("no match rule for {member}: {e}"),
         }
     }
-    reprisebus::signals(conn, NOTIFY_NAME, rules)
+    reprisebus::owner_signals(conn, NOTIFY_NAME, rules)
         .await
         .filter_map(|s| {
             std::future::ready(match s {

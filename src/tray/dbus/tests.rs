@@ -429,6 +429,85 @@ fn a_menu_reply_over_the_body_cap_is_refused() {
     assert_eq!(layout_served(vec![small(1), big]), None);
 }
 
+/// The member and destination of each signal the loop sends for `cmd`, notification 5 having come
+/// from `:1.1`.
+fn notification_signals(cmd: TrayCommand) -> Vec<(String, Option<String>)> {
+    let (tx, _events) = std::sync::mpsc::channel();
+    // SAFETY: eventfd takes no pointers; the result is checked below.
+    let fd = unsafe { libc::eventfd(0, libc::EFD_NONBLOCK | libc::EFD_CLOEXEC) };
+    assert!(fd >= 0, "eventfd failed");
+    // SAFETY: `fd` was just opened and nothing else owns it.
+    let fd = unsafe { OwnedFd::from_raw_fd(fd) };
+    zbus::block_on(async {
+        let (ours, theirs) = peers(Duration::from_secs(10)).await;
+        let mut lp = test_loop(ours.clone(), tx.clone(), fd.as_raw_fd());
+        let notes = Notifications {
+            events: tx,
+            eventfd: fd.as_raw_fd(),
+            next_id: std::sync::atomic::AtomicU32::new(1),
+            senders: lp.senders.clone(),
+            programs: Arc::default(),
+            icons: hicolor(),
+        };
+        ours.object_server().at(NOTIFY_PATH, notes).await.unwrap();
+        lock(&lp.senders)
+            .0
+            .insert(5, (":1.1".into(), "mail".into(), None));
+        let mut signals = zbus::MessageStream::from(&theirs);
+        lp.handle_command(cmd).await;
+        let mut out = Vec::new();
+        loop {
+            let next = async { signals.next().await };
+            let quiet = async {
+                async_io::Timer::after(Duration::from_millis(300)).await;
+                None
+            };
+            let Some(Ok(m)) = futures_lite::future::or(next, quiet).await else {
+                break;
+            };
+            let hdr = m.header();
+            if m.message_type() == zbus::message::Type::Signal {
+                out.push((
+                    hdr.member().map(|m| m.to_string()).unwrap_or_default(),
+                    hdr.destination().map(|d| d.to_string()),
+                ));
+            }
+        }
+        out
+    })
+}
+
+#[test]
+fn a_notifications_signals_go_only_to_its_sender() {
+    let to = |member: &str| (member.to_string(), Some(":1.1".to_string()));
+    let click = TrayCommand::ActionInvoked {
+        id: 5,
+        key: "default".into(),
+        token: Some("token".into()),
+    };
+    assert_eq!(
+        notification_signals(click),
+        [to("ActivationToken"), to("ActionInvoked")]
+    );
+    let reply = TrayCommand::Replied {
+        id: 5,
+        text: "hi".into(),
+    };
+    assert_eq!(notification_signals(reply), [to("NotificationReplied")]);
+    let closed = TrayCommand::NotificationClosed { id: 5, reason: 2 };
+    assert_eq!(notification_signals(closed), [to("NotificationClosed")]);
+    let unknown = TrayCommand::ActionInvoked {
+        id: 6,
+        key: "default".into(),
+        token: Some("token".into()),
+    };
+    assert_eq!(
+        notification_signals(unknown),
+        [],
+        "nothing for a notification with no sender on record"
+    );
+}
+
 fn test_loop(conn: Connection, events: Sender<TrayEvent>, eventfd: RawFd) -> Loop {
     Loop {
         conn,
