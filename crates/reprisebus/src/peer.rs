@@ -1,5 +1,6 @@
-//! Whether a session bus peer runs in a Flatpak sandbox. Flatpak lets an app own the names under
-//! its app id, so a name like `org.reprise.RemoteDesktop` alone does not say who serves it.
+//! Which process a session bus peer is, and whether it runs in a Flatpak sandbox. Flatpak lets an
+//! app own the names under its app id, so a name like `org.reprise.RemoteDesktop` alone does not
+//! say who serves it.
 
 use std::os::fd::{AsFd, AsRawFd};
 use std::path::Path;
@@ -13,6 +14,26 @@ pub async fn sandboxed(conn: &Connection, peer: &str) -> bool {
 }
 
 pub(crate) async fn sandboxed_under(conn: &Connection, peer: &str, proc: &Path) -> bool {
+    let Some(fd) = process_fd(conn, peer).await else {
+        return true;
+    };
+    let Some(pid) = pid_of(&fd) else {
+        return true;
+    };
+    // The pidfd keeps `pid` from being reused while it shows the pid: if it still does after the
+    // read, the root read was the peer's.
+    shows_flatpak_info(proc, pid) || pid_of(&fd) != Some(pid)
+}
+
+/// Whether `peer` on `conn` is the process `pid`; not when the bus gives no process fd for it.
+pub async fn is_process(conn: &Connection, peer: &str, pid: u32) -> bool {
+    let fd = process_fd(conn, peer).await;
+    // A pidfd that still names `pid` means that process is alive and is the peer.
+    fd.is_some_and(|fd| pid_of(&fd) == Some(pid))
+}
+
+/// The pidfd of `peer`'s process, as the bus reports it.
+async fn process_fd(conn: &Connection, peer: &str) -> Option<zbus::OwnedFd> {
     let reply = conn
         .call_method(
             Some(crate::DBUS),
@@ -22,19 +43,10 @@ pub(crate) async fn sandboxed_under(conn: &Connection, peer: &str, proc: &Path) 
             &(peer,),
         )
         .await;
-    let fd = reply
+    reply
         .and_then(|m| m.body().deserialize::<ConnectionCredentials>())
         .ok()
-        .and_then(ConnectionCredentials::into_process_fd);
-    let Some(fd) = fd else {
-        return true;
-    };
-    let Some(pid) = pid_of(&fd) else {
-        return true;
-    };
-    // The pidfd keeps `pid` from being reused while it shows the pid: if it still does after the
-    // read, the root read was the peer's.
-    shows_flatpak_info(proc, pid) || pid_of(&fd) != Some(pid)
+        .and_then(ConnectionCredentials::into_process_fd)
 }
 
 /// The pid a pidfd refers to, from its fdinfo; None once the process is gone (`Pid: -1`).
@@ -124,6 +136,26 @@ pub(crate) mod tests {
             );
             assert!(sandboxed_under(&us, &name, proc.path()).await);
             assert!(sandboxed(&us, ":1.999").await, "no such peer");
+        });
+    }
+
+    #[test]
+    fn a_peer_is_matched_to_the_process_its_pidfd_names() {
+        let Some(bus) = bus() else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
+        let connect =
+            || zbus::block_on(zbus::connection::Builder::address(bus.1.as_str()).build()).unwrap();
+        let (us, peer) = (connect(), connect());
+        let name = peer.unique_name().unwrap().to_string();
+        zbus::block_on(async {
+            assert!(is_process(&us, &name, std::process::id()).await);
+            assert!(!is_process(&us, &name, 1).await, "another process");
+            assert!(
+                !is_process(&us, ":1.999", std::process::id()).await,
+                "no such peer"
+            );
         });
     }
 }
