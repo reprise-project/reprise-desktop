@@ -16,7 +16,7 @@ use x11rb::{
             GrabStatus, InputFocus, PropMode, WindowClass,
         },
     },
-    rust_connection::RustConnection,
+    rust_connection::{DefaultStream, RustConnection},
     wrapper::ConnectionExt as _,
 };
 
@@ -56,12 +56,12 @@ pub struct Helper {
 }
 
 impl Helper {
-    pub fn spawn(display: u32, back: Sender<Back>) -> std::io::Result<Helper> {
+    pub fn spawn(display: u32, cookie: [u8; 16], back: Sender<Back>) -> std::io::Result<Helper> {
         let (tx, rx) = mpsc::channel();
         std::thread::Builder::new()
             .name("x11-helper".into())
             .spawn(move || {
-                if let Err(e) = run(display, &rx, &back) {
+                if let Err(e) = run(display, cookie, &rx, &back) {
                     log::warn!("X11 focus connection: {e}");
                 }
             })?;
@@ -74,13 +74,26 @@ impl Helper {
     }
 }
 
+/// The compositor's environment has no `XAUTHORITY`, so the cookie is handed over here.
+fn connect(display: u32, cookie: [u8; 16]) -> Result<RustConnection, Box<dyn std::error::Error>> {
+    let socket = std::os::unix::net::UnixStream::connect(format!("/tmp/.X11-unix/X{display}"))?;
+    let (stream, _) = DefaultStream::from_unix_stream(socket)?;
+    Ok(RustConnection::connect_to_stream_with_auth_info(
+        stream,
+        0,
+        super::auth::NAME.to_vec(),
+        cookie.to_vec(),
+    )?)
+}
+
 fn run(
     display: u32,
+    cookie: [u8; 16],
     rx: &mpsc::Receiver<Req>,
     back: &Sender<Back>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let (conn, screen) = RustConnection::connect(Some(&format!(":{display}")))?;
-    let root = conn.setup().roots[screen].root;
+    let conn = connect(display, cookie)?;
+    let root = conn.setup().roots[0].root;
     let atom = |name: &[u8]| -> Result<u32, Box<dyn std::error::Error>> {
         Ok(conn.intern_atom(false, name)?.reply()?.atom)
     };

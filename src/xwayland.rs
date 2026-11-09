@@ -16,6 +16,10 @@
 //! The X input focus and `_NET_WM_ICON` go through a second connection
 //! on a thread of its own (`helper`).
 //!
+//! Xwayland runs with `-auth` and a cookie (`auth`), so a program needs `XAUTHORITY` as well as
+//! the socket: a same-user process that can reach the abstract socket, such as a Flatpak app
+//! with network access and no X11 access, is refused.
+//!
 //! The server starts lazily: Reprise holds the display and its sockets
 //! from login (`sockets`), so `DISPLAY` is good at once, and spawns
 //! Xwayland on the first connection to them. Once no X11 program has been
@@ -25,6 +29,7 @@
 //! sooner is left down, so a server that cannot run is not started over
 //! and over.
 
+mod auth;
 mod helper;
 pub mod menus;
 mod sockets;
@@ -92,6 +97,8 @@ pub struct Xwayland {
     pid: i32,
     /// The display, None once X11 programs cannot run.
     sockets: Option<sockets::Sockets>,
+    /// The display's cookie, beside `sockets`.
+    cookie: Option<auth::Cookie>,
     /// The watches on the sockets while no server runs.
     watches: Vec<RegistrationToken>,
     /// The server's event source on the loop while one runs: removing it
@@ -133,6 +140,7 @@ impl Xwayland {
             helper: None,
             pid: 0,
             sockets: None,
+            cookie: None,
             watches: Vec::new(),
             source: None,
             started: None,
@@ -170,18 +178,35 @@ impl Xwayland {
     }
 }
 
-/// Hold the first free display and wait for its first X11 program.
-/// `DISPLAY` is known at once and goes into the session environment.
+/// Hold the first free display, write its cookie and wait for its first X11 program.
+/// `DISPLAY` and `XAUTHORITY` are known at once and go into the session environment.
 pub fn start(state: &mut State) {
-    match sockets::Sockets::reserve(None) {
-        Ok(s) => {
-            log::info!("X11 display :{} waits for its first program", s.display());
-            state.env.x11_display = Some(format!(":{}", s.display()));
-            state.xwayland.sockets = Some(s);
-            watch(state);
-        }
-        Err(e) => log::warn!("no X11 display; X11 programs will not run: {e}"),
-    }
+    let s = match sockets::Sockets::reserve(None) {
+        Ok(s) => s,
+        Err(e) => return log::warn!("no X11 display; X11 programs will not run: {e}"),
+    };
+    let cookie = match auth::Cookie::write(&cookie_dir(), s.display()) {
+        Ok(c) => c,
+        Err(e) => return log::warn!("no X11 cookie; X11 programs will not run: {e}"),
+    };
+    log::info!("X11 display :{} waits for its first program", s.display());
+    state.env.x11 = Some(crate::spawn::X11Env {
+        display: format!(":{}", s.display()),
+        authority: cookie.path().to_string_lossy().into_owned(),
+    });
+    state.xwayland.sockets = Some(s);
+    state.xwayland.cookie = Some(cookie);
+    watch(state);
+}
+
+fn cookie_dir() -> std::path::PathBuf {
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            // SAFETY: getuid cannot fail.
+            format!("/run/user/{}", unsafe { libc::getuid() }).into()
+        });
+    runtime.join("reprise")
 }
 
 /// Watch the display's sockets: the first connection spawns Xwayland.
@@ -215,20 +240,24 @@ fn spawn(state: &mut State) {
     for token in state.xwayland.watches.drain(..) {
         state.handle.remove(token);
     }
-    let Some(sockets) = state.xwayland.sockets.as_mut() else {
+    let (Some(sockets), Some(cookie)) = (&mut state.xwayland.sockets, &state.xwayland.cookie)
+    else {
         return;
     };
     let display = sockets.display();
+    let auth = cookie.path().as_os_str().to_owned();
     let handed = match sockets.hand_over() {
         Ok(h) => h,
         Err(e) => return give_up(state, &e.to_string()),
     };
+    let mut args: Vec<std::ffi::OsString> = handed.args().into_iter().map(Into::into).collect();
+    args.extend(["-auth".into(), auth]);
     let spawned = crate::spawn::with_signals_unblocked(|| {
         XWayland::spawn(
             &state.dh,
             display,
             std::iter::empty::<(&str, &str)>(),
-            handed.args(),
+            args,
             false,
             Stdio::null(),
             Stdio::inherit(),
@@ -319,7 +348,8 @@ fn restart(state: &mut State) {
             sockets.display()
         );
         state.xwayland.sockets = None;
-        state.env.x11_display = None;
+        state.xwayland.cookie = None;
+        state.env.x11 = None;
         start(state);
         crate::spawn::export_session_env(&state.env);
         return;
@@ -335,7 +365,8 @@ fn give_up(state: &mut State, why: &str) {
         state.handle.remove(token);
     }
     state.xwayland.sockets = None;
-    state.env.x11_display = None;
+    state.xwayland.cookie = None;
+    state.env.x11 = None;
     crate::spawn::export_session_env(&state.env);
 }
 
@@ -371,6 +402,7 @@ fn parent_and_name(stat: &str) -> Option<(i32, &str)> {
 
 /// The helper thread and the loop source its answers come back on.
 fn start_helper(state: &mut State, display: u32) -> Option<helper::Helper> {
+    let cookie = state.xwayland.cookie.as_ref()?.data();
     let (tx, rx) = channel::channel();
     let source = state
         .handle
@@ -393,7 +425,7 @@ fn start_helper(state: &mut State, display: u32) -> Option<helper::Helper> {
         log::warn!("X11 icons: {e}");
         return None;
     }
-    match helper::Helper::spawn(display, tx) {
+    match helper::Helper::spawn(display, cookie, tx) {
         Ok(h) => Some(h),
         Err(e) => {
             log::warn!("X11 focus connection: {e}");
