@@ -1466,6 +1466,36 @@ fn a_copy_leaves_a_drive_only_from_a_drive_mount_onto_another_device() {
 }
 
 #[test]
+fn a_copy_reads_the_mount_table_again_only_when_stale_or_missing_its_device() {
+    use super::fileio::{MOUNTS_FRESH, mounts_for};
+    let info = b"36 1 8:2 / / rw - ext4 /dev/sda2 rw\n\
+        90 36 8:17 / /run/media/u/STICK rw - vfat /dev/sdb1 rw\n";
+    let (stick, new_stick) = (libc::makedev(8, 17), libc::makedev(8, 33));
+    let held = std::sync::Mutex::new(None);
+    let reads = std::cell::Cell::new(0);
+    let read = || {
+        reads.set(reads.get() + 1);
+        Some(info.to_vec())
+    };
+    let t0 = std::time::Instant::now();
+    for _ in 0..100 {
+        assert_eq!(
+            mounts_for(&held, stick, t0, read).as_deref(),
+            Some(&info[..])
+        );
+    }
+    assert_eq!(reads.get(), 1, "one read for a whole folder's files");
+    mounts_for(&held, new_stick, t0, read);
+    assert_eq!(
+        reads.get(),
+        2,
+        "a device the table doesn't list reads it again"
+    );
+    mounts_for(&held, stick, t0 + MOUNTS_FRESH, read);
+    assert_eq!(reads.get(), 3, "a stale table is read again");
+}
+
+#[test]
 fn copy_new_keeps_a_read_only_launcher_trusted() {
     use std::os::unix::fs::PermissionsExt;
     let t = tempfile::tempdir().unwrap();
