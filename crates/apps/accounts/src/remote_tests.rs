@@ -194,6 +194,34 @@ fn a_wrong_login_password_is_said_in_the_dialog() {
 }
 
 #[test]
+fn a_change_that_failed_reads_the_password_again() {
+    let dir = tmp("rd-failed");
+    let replies = vec![
+        status_is(false),
+        AccountReply::Refused {
+            reason: AccountRefusal::Failed,
+        },
+        status_is(true),
+    ];
+    let (socket, seen) = account_daemon(&dir, replies);
+    let mut a = app_with(running(socket), true);
+    assert_eq!(seen.recv_timeout(ANSWERED), Ok(AccountRequest::Status));
+    press(&mut a, remotepassword::CREATE);
+    send(&mut a, &SET_NEW);
+    assert!(matches!(
+        seen.recv_timeout(ANSWERED),
+        Ok(AccountRequest::SetRemotePassword { .. })
+    ));
+    assert_eq!(seen.recv_timeout(ANSWERED), Ok(AccountRequest::Status));
+    a.wake();
+    assert_eq!(
+        status(&a),
+        [remotepassword::HAS_ONE],
+        "the password the daemon stored after all"
+    );
+}
+
+#[test]
 fn a_stopped_login_manager_is_not_asked_and_says_it_is_not_running() {
     let dir = tmp("rd-stopped");
     let (socket, seen) = account_daemon(&dir, vec![AccountReply::Done]);

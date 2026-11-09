@@ -8,6 +8,8 @@ use std::time::Duration;
 use zbus::{OwnedObjectPath, OwnedVariant};
 use zeroize::Zeroizing;
 
+use reprisebus::logind;
+
 use crate::passwd;
 
 const DEST: &str = "org.freedesktop.Accounts";
@@ -38,6 +40,8 @@ pub struct User {
     pub icon: String,
     pub home: String,
     pub you: bool,
+    /// logind lists a session of the account that is not closing.
+    pub logged_on: bool,
 }
 
 impl User {
@@ -46,6 +50,14 @@ impl User {
             &self.login
         } else {
             &self.real_name
+        }
+    }
+
+    /// The name and, after a full name, the user name: "Jo Doe (jo)".
+    pub fn named(&self) -> String {
+        match self.real_name.trim() {
+            "" => self.login.clone(),
+            name => format!("{name} ({})", self.login),
         }
     }
 
@@ -151,6 +163,7 @@ fn user_of(path: &str, m: &HashMap<String, OwnedVariant>, me: u32) -> Option<Use
         icon: text(m, "IconFile"),
         home: text(m, "HomeDirectory"),
         you: uid == me,
+        logged_on: false,
     })
 }
 
@@ -224,6 +237,9 @@ pub fn read() -> zbus::Result<Vec<User>> {
             let m: HashMap<String, OwnedVariant> = reply.body().deserialize()?;
             users.extend(user_of(p.as_str(), &m, me));
         }
+        for u in &mut users {
+            u.logged_on = !logind::online_sessions(&logind::user_record(u.uid)).is_empty();
+        }
         sort(&mut users);
         Ok(users)
     })
@@ -243,8 +259,42 @@ impl From<String> for Failure {
     }
 }
 
+/// Why an only administrator cannot be made standard or deleted.
+pub const ONLY_ADMIN: &str =
+    "This is the only administrator account. Make another account an administrator first.";
+
+/// Why `u` cannot be deleted while it has sessions.
+pub fn logged_on_text(u: &User) -> String {
+    format!(
+        "{} is logged on. Delete the account once they have logged off.",
+        u.named()
+    )
+}
+
+/// Why `ops` must not run against the accounts as `rows` has them: a Delete of a logged-on
+/// account, or a demotion or Delete that leaves no administrator.
+pub fn refusal(ops: &[Op], rows: &[User]) -> Option<String> {
+    let deleted = |u: &User| {
+        ops.iter()
+            .any(|op| matches!(op, Op::Delete { uid, .. } if *uid == u.uid))
+    };
+    let demoted = |u: &User| {
+        ops.iter()
+            .any(|op| matches!(op, Op::Admin { path, admin: false } if *path == u.path))
+    };
+    if let Some(u) = rows.iter().find(|u| deleted(u) && u.logged_on) {
+        return Some(logged_on_text(u));
+    }
+    let admins = rows.iter().filter(|u| u.admin);
+    if admins.clone().next().is_some() && admins.clone().all(|u| deleted(u) || demoted(u)) {
+        return Some(ONLY_ADMIN.into());
+    }
+    None
+}
+
 pub fn apply(ops: &[Op]) -> Result<(), Failure> {
     removing_pictures(ops, |ops| {
+        check_fresh(ops)?;
         zbus::block_on(async {
             let conn = connect(None).await.map_err(|e| e.to_string())?;
             for op in ops {
@@ -253,6 +303,25 @@ pub fn apply(ops: &[Op]) -> Result<(), Failure> {
             Ok(())
         })
     })
+}
+
+/// AccountsService refuses none of what [`refusal`] does, so `ops` that delete or demote are
+/// checked against a fresh read.
+fn check_fresh(ops: &[Op]) -> Result<(), Failure> {
+    let risky = ops
+        .iter()
+        .any(|op| matches!(op, Op::Delete { .. } | Op::Admin { admin: false, .. }));
+    if !risky {
+        return Ok(());
+    }
+    let rows = read().map_err(|e| {
+        log::error!("reading the accounts before a change: {e}");
+        "The accounts could not be read, so nothing was changed.".to_string()
+    })?;
+    match refusal(ops, &rows) {
+        Some(why) => Err(Failure::Text(why)),
+        None => Ok(()),
+    }
 }
 
 /// Runs `call`, then deletes the saved pictures its `Op::Picture`s name: the daemon has copied
@@ -527,6 +596,46 @@ mod tests {
         });
         assert_eq!(done, Err(Failure::Dismissed));
         assert!(!file.exists(), "the saved picture is gone after the call");
+    }
+
+    #[test]
+    fn a_change_leaving_no_administrator_or_deleting_a_logged_on_account_is_refused() {
+        let u = |uid: u32, admin, logged_on| User {
+            path: format!("/u/{uid}"),
+            uid,
+            login: format!("u{uid}"),
+            admin,
+            logged_on,
+            ..User::default()
+        };
+        let rows = [
+            u(1000, true, true),
+            u(1001, true, false),
+            u(1002, false, true),
+        ];
+        let demote = |uid: u32| Op::Admin {
+            path: format!("/u/{uid}"),
+            admin: false,
+        };
+        let delete = |uid| Op::Delete {
+            uid,
+            remove_files: true,
+        };
+        assert_eq!(refusal(&[demote(1000)], &rows), None, "u1001 stays one");
+        assert_eq!(refusal(&[delete(1001)], &rows), None);
+        assert_eq!(
+            refusal(&[demote(1000)], &rows[..1]),
+            Some(ONLY_ADMIN.into()),
+            "a fresh read found the other one gone"
+        );
+        assert_eq!(
+            refusal(&[delete(1001)], &rows[1..]),
+            Some(ONLY_ADMIN.into())
+        );
+        assert_eq!(
+            refusal(&[delete(1002)], &rows),
+            Some("u1002 is logged on. Delete the account once they have logged off.".into())
+        );
     }
 
     #[test]

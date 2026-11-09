@@ -58,7 +58,11 @@ pub fn own_cgroup() -> String {
 /// logind's record of the user running this process; empty when there is none.
 pub fn own_user_record() -> String {
     // SAFETY: getuid cannot fail and touches no memory.
-    let uid = unsafe { libc::getuid() };
+    user_record(unsafe { libc::getuid() })
+}
+
+/// logind's record of user `uid`; empty when there is none.
+pub fn user_record(uid: u32) -> String {
     std::fs::read_to_string(format!("/run/systemd/users/{uid}")).unwrap_or_default()
 }
 
