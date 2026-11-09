@@ -561,7 +561,7 @@ impl State {
 
     /// Run the held field key again, unless it was released, the focus moved or the route it went to
     /// changed (a mode opened or closed); then the repeat ends.
-    fn field_repeat_tick(&mut self) -> TimeoutAction {
+    pub(crate) fn field_repeat_tick(&mut self) -> TimeoutAction {
         let Some(r) = self.key_input.field_repeat.as_ref() else {
             return TimeoutAction::Drop;
         };
