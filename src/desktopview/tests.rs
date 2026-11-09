@@ -1400,6 +1400,33 @@ fn documents_and_home_pin_and_unpin_from_their_menus() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+#[test]
+fn opening_a_disk_image_asks_before_mounting_it_and_starts_nothing() {
+    use crate::dialog::DialogAction;
+    use reprisefs::program::Confirm;
+    let mime = reprisefs::apps::mime_globs().mime_of_name("stick.img");
+    if !mime.is_some_and(|m| reprisefs::udisks::is_disk_image(&m)) {
+        eprintln!("SKIPPED: shared-mime-info gives .img no disk image type here");
+        return;
+    }
+    crate::spawn::record();
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    let dir = crate::harness::scratch().join("open-image");
+    std::fs::create_dir_all(&dir).unwrap();
+    let img = dir.join("stick.img");
+    std::fs::write(&img, [0u8; 4096]).unwrap();
+    h.state.open_document(&img, None, Confirm::Ask, true);
+    assert_eq!(
+        asked(&h),
+        [DialogAction::MountImage(img.clone()), DialogAction::Cancel]
+    );
+    let d = &h.state.dialogs.views.last().unwrap().dialog;
+    assert_eq!(d.title, reprisefs::udisks::MOUNT_TITLE);
+    assert!(d.buttons[1].default, "Enter cancels");
+    assert_eq!(crate::spawn::recorded(), Vec::<String>::new());
+}
+
 /// The question `open_document` raised, as the actions of its buttons.
 fn asked(h: &crate::harness::Harness) -> Vec<crate::dialog::DialogAction> {
     let d = &h
