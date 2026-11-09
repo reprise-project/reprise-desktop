@@ -683,7 +683,8 @@ impl Terminal {
     }
 
     /// Carry out what each window's tabs queued; a window whose last tab closed closes. Only the
-    /// windows whose shown tab, strip or chrome changed draw again.
+    /// windows whose shown tab, strip or chrome changed draw again. A program's clipboard store
+    /// counts only from the open tab of a focused window.
     fn wake(&mut self, ctx: &Ctx) -> Reply {
         let scheme = self.scheme(&ctx.theme);
         let mut reply = Reply::none();
@@ -691,15 +692,17 @@ impl Terminal {
             if !self.enter(id) {
                 continue;
             }
-            let open = self.w.tabs.strip.open;
+            let (open, focused) = (self.w.tabs.strip.open, self.w.focused);
             let mut shown = false;
             for (i, t) in self.w.tabs.list.iter_mut().enumerate() {
                 let Some(copied) = t.pump(&scheme) else {
                     continue;
                 };
                 shown |= i == open;
-                reply.copy = copied.clipboard.or(reply.copy);
-                reply.copy_primary = copied.primary.or(reply.copy_primary);
+                if i == open && focused {
+                    reply.copy = copied.clipboard.or(reply.copy);
+                    reply.copy_primary = copied.primary.or(reply.copy_primary);
+                }
             }
             let reaped = self.reap();
             for (program, code) in &reaped {

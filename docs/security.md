@@ -1230,7 +1230,10 @@ sharing and remote control grants yet.
   windows. The terminal drops an OSC sequence longer than 64 KiB (an OSC 52
   one longer than a 1 MiB store) before it reaches the parser, and a title
   push (CSI 22 t) past 16 deep, so output can't make a tab hold memory
-  without bound.
+  without bound. An OSC 52 copy reaches the clipboard only from the open
+  tab of a focused terminal window and only up to 1 MiB, so a background
+  tab can't swap what you are about to paste; reading the clipboard with
+  OSC 52 is refused.
 - **Launchers.** A `.desktop` file in a folder (the desktop, Explorer)
   runs only when it is executable and carries the `user.reprise.trusted`
   extended attribute, which Allow Launching sets. Extracting an archive
