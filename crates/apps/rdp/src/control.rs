@@ -51,6 +51,9 @@ pub enum Server {
     HandOver,
 }
 
+/// The pid of the compositor the server serves; it may block while the display comes up.
+pub type Compositor = fn() -> Result<u32, String>;
+
 /// Serve `status` on the session bus until it is dropped, passing the bus's requests on. The
 /// receiver hears once whether [`NAME`] was claimed; neither server gives it up, and the
 /// hand-over server claims it only from nobody.
@@ -59,7 +62,8 @@ pub fn spawn(
     disconnect: mpsc::UnboundedSender<Request>,
     server: Server,
 ) -> std::sync::mpsc::Receiver<zbus::Result<()>> {
-    spawn_on(Builder::session(), status, disconnect, server)
+    let compositor = crate::wayland::compositor_pid;
+    spawn_on(Builder::session(), status, disconnect, server, compositor)
 }
 
 fn spawn_on(
@@ -67,6 +71,7 @@ fn spawn_on(
     status: watch::Receiver<Status>,
     disconnect: mpsc::UnboundedSender<Request>,
     server: Server,
+    compositor: Compositor,
 ) -> std::sync::mpsc::Receiver<zbus::Result<()>> {
     let (alone, regenerate) = match server {
         Server::Own(regenerate) => (false, Some(regenerate)),
@@ -81,6 +86,7 @@ fn spawn_on(
                     status: status.clone(),
                     disconnect,
                     regenerate,
+                    compositor,
                 };
                 let builder = (builder.name(NAME))
                     .allow_name_replacements(false)
@@ -150,6 +156,7 @@ struct RemoteDesktop {
     disconnect: mpsc::UnboundedSender<Request>,
     /// None on the hand-over server.
     regenerate: Option<mpsc::UnboundedSender<Regenerate>>,
+    compositor: Compositor,
 }
 
 #[zbus::interface(name = "org.reprise.RemoteDesktop")]
@@ -207,13 +214,15 @@ impl RemoteDesktop {
         Ok(())
     }
 
-    /// Ends every client, telling each the session logged off.
+    /// Ends every client, telling each the session logged off. Only the compositor the server
+    /// serves may call it: the user's other Reprise sessions share the bus.
     async fn session_ending(
         &self,
         #[zbus(connection)] conn: &zbus::Connection,
         #[zbus(header)] header: Header<'_>,
     ) -> zbus::fdo::Result<()> {
         unsandboxed(conn, &header).await?;
+        from_compositor(conn, &header, self.compositor).await?;
         let _ = self.disconnect.send(Request::SessionEnding);
         Ok(())
     }
@@ -250,6 +259,35 @@ impl RemoteDesktop {
         rx.await
             .map_err(|_| gone())?
             .map_err(zbus::fdo::Error::Failed)
+    }
+}
+
+/// Refuses a peer that is not the process `compositor` names.
+async fn from_compositor(
+    conn: &zbus::Connection,
+    header: &Header<'_>,
+    compositor: Compositor,
+) -> zbus::fdo::Result<()> {
+    let sender =
+        (header.sender()).ok_or_else(|| zbus::fdo::Error::AccessDenied("no sender".into()))?;
+    let (tx, rx) = oneshot::channel();
+    std::thread::spawn(move || tx.send(compositor()));
+    let pid = (rx.await)
+        .unwrap_or_else(|_| Err("no answer".into()))
+        .map_err(|e| zbus::fdo::Error::Failed(format!("the compositor: {e}")))?;
+    match reprisebus::peer::is_process(conn, sender, pid).await {
+        Ok(true) => Ok(()),
+        Ok(false) => {
+            log::info!(
+                "{NAME}: {sender} is not the compositor of this server's session; its clients stay"
+            );
+            Err(zbus::fdo::Error::AccessDenied(
+                "not the compositor of this server's session".into(),
+            ))
+        }
+        Err(e) => Err(zbus::fdo::Error::Failed(format!(
+            "the process behind {sender}: {e}"
+        ))),
     }
 }
 
@@ -330,6 +368,7 @@ pub(crate) mod tests {
             status: rx.clone(),
             disconnect,
             regenerate: Some(regenerate),
+            compositor: this_process,
         };
         let server = std::thread::spawn(move || {
             zbus::block_on(async move {
@@ -484,7 +523,7 @@ pub(crate) mod tests {
         let (status, rx) = watch::channel(Status::default());
         let (disconnect, mut disconnected) = mpsc::unbounded_channel();
         let builder = Builder::address(bus.1.as_str());
-        let claim = spawn_on(builder, rx, disconnect, Server::HandOver);
+        let claim = spawn_on(builder, rx, disconnect, Server::HandOver, this_process);
         claim.recv().expect("the claim is told").unwrap();
         zbus::block_on(async {
             let conn = Builder::address(bus.1.as_str()).build().await.unwrap();
@@ -499,11 +538,42 @@ pub(crate) mod tests {
         drop(status);
     }
 
+    #[test]
+    fn a_session_ending_from_another_session_leaves_every_client_connected() {
+        let Some(bus) = bus() else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
+        let (status, rx) = watch::channel(Status::default());
+        let (disconnect, mut disconnected) = mpsc::unbounded_channel();
+        let builder = Builder::address(bus.1.as_str());
+        let elsewhere: Compositor = || Ok(1);
+        let claim = spawn_on(builder, rx, disconnect, Server::HandOver, elsewhere);
+        claim.recv().expect("the claim is told").unwrap();
+        let refused = zbus::block_on(async {
+            let conn = Builder::address(bus.1.as_str()).build().await.unwrap();
+            conn.call_method(Some(NAME), PATH, Some(NAME), "SessionEnding", &())
+                .await
+        });
+        assert!(
+            matches!(&refused, Err(zbus::Error::FDO(e))
+                if matches!(&**e, zbus::fdo::Error::AccessDenied(_))),
+            "{refused:?}"
+        );
+        assert!(disconnected.try_recv().is_err(), "no client is ended");
+        drop(status);
+    }
+
+    /// The test process stands in for the compositor.
+    fn this_process() -> Result<u32, String> {
+        Ok(std::process::id())
+    }
+
     fn spawned(bus: &Bus, server: Server) -> (watch::Sender<Status>, zbus::Result<()>) {
         let (status, rx) = watch::channel(Status::default());
         let (disconnect, _) = mpsc::unbounded_channel();
         let builder = Builder::address(bus.1.as_str());
-        let claim = spawn_on(builder, rx, disconnect, server);
+        let claim = spawn_on(builder, rx, disconnect, server, this_process);
         (status, claim.recv().expect("the claim is told"))
     }
 
