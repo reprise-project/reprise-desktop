@@ -854,7 +854,10 @@ no port forwarding; allow the port in your firewall if you run one.
   other while a client is connected, up to 16 MiB of text as RDP carries it
   (UTF-16, so about 8 MiB of plain ASCII) and 64 MiB of picture. Pasting
   something copied on the client ends empty if the client doesn't send it
-  within 5 s. Files stay where they are.
+  within 5 s. Files stay where they are. While the session is locked (on the
+  client's side in lock mode) nothing crosses either way and neither side's
+  clipboard changes. On unlock the client's newest copy from the lock lands
+  here, or else a copy made here during the lock reaches the client.
 - **Sound.** With Play sound on the remote computer on (`sound`), this
   computer's sound plays on every connected client and not here. A "Remote
   client" output becomes the default while a client is connected; the one

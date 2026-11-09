@@ -9,6 +9,7 @@ mod client;
 mod clipboard;
 mod console;
 mod control;
+mod desklock;
 mod display;
 mod encode;
 mod geometry;
@@ -227,6 +228,7 @@ fn main() -> ExitCode {
             viewers: viewers.clone(),
         };
         let sync_owner = input::SyncOwner::default();
+        let desktop_lock = desklock::follow();
         let handlers = |shown: listen::Shown, ending: listen::Ending| {
             let on_shown = shown.subscribe();
             let cut = ending.clipboard();
@@ -253,7 +255,7 @@ fn main() -> ExitCode {
                 connection,
             );
             let clipboard: Box<dyn ironrdp_server::CliprdrServerFactory> =
-                Box::new(clipboard::Factory::new(on_shown, cut));
+                Box::new(clipboard::Factory::new(on_shown, desktop_lock.clone(), cut));
             let sound: Box<dyn ironrdp_server::SoundServerFactory> =
                 Box::new(sound::Factory::new(config_rx.clone()));
             (

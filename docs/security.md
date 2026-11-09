@@ -432,11 +432,25 @@ the history, so a client's text or picture crosses as soon as it is copied.
 Text and pictures cross, files and the primary selection don't. Text over
 16 MiB and pictures over 64 MiB are refused, measured on the wire, and a
 clipboard message over 128 MiB ends the client's connection. The server's
-units cap its memory at 1 GiB (`MemoryMax=`). The
-clipboard doesn't follow a lock: while the session is locked, here in show
-mode or on the remote side in lock mode, someone at the client can still
-paste the session's last copy there or copy into the session, which
-`[clipboard] history` then keeps. Disconnect the client to end that.
+units cap its memory at 1 GiB (`MemoryMax=`).
+
+The clipboard follows the desktop's lock: this computer's lock in show mode,
+the remote side's in lock mode. The compositor reports it as
+`org.freedesktop.ScreenSaver`'s `GetActive` and `ActiveChanged` on the
+session bus and holds that name so no other process can take it over.
+`reprise-rdp` believes the name only while the bus reports its owner to be
+the process serving the session's display. While the name has no owner,
+another process owns it or the owner doesn't answer, the clipboard is held
+as if locked, and the server logs why. While locked, no format list goes
+either way, so the client machine's own clipboard stays as it is. Each paste
+the client asks for is answered with a failure, a read already under way
+included, and a paste in the session of something copied on the client ends
+empty. A copy on the client during the lock waits: on unlock the client's
+newest copy reaches the session, or else the session's copy made during the
+lock is offered to the client. `[clipboard] history` keeps nothing from the
+lock. Other data control clients are not cut off during a lock: clipboard
+managers, and programs that pass the clipboard on to another machine such as
+KDE Connect's clipboard sync or Deskflow, still read and set it.
 
 ### Lock mode
 

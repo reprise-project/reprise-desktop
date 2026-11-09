@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Instant;
 use tokio::sync::mpsc::UnboundedSender;
-use tokio::sync::watch;
+use tokio::sync::{oneshot, watch};
 use wayland_client::backend::WaylandError;
 use wayland_client::globals::{GlobalListContents, registry_queue_init};
 use wayland_client::protocol::{wl_registry, wl_seat::WlSeat};
@@ -34,6 +34,8 @@ pub enum Msg {
     ClientAsks(ClipboardFormatId),
     ClientSent(Option<Vec<u8>>),
     Read(Option<Vec<u8>>),
+    /// The desktop's lock changed.
+    LockChanged,
     Stop,
 }
 
@@ -62,6 +64,8 @@ pub struct Link {
     mailbox: Mailbox,
     rdp: UnboundedSender<ServerEvent>,
     answer_limit: Arc<AtomicUsize>,
+    /// Ends the thread passing on the desktop's lock as it drops.
+    _following: Option<oneshot::Sender<()>>,
 }
 
 impl Link {
@@ -111,13 +115,18 @@ impl Drop for Link {
 }
 
 /// Start the thread for one connection; its events go to `rdp`. It reaches the session's
-/// clipboard once `shown` is true.
-pub fn start(rdp: UnboundedSender<ServerEvent>, shown: watch::Receiver<bool>) -> Link {
+/// clipboard once `shown` is true, and follows `locked`, the desktop's lock.
+pub fn start(
+    rdp: UnboundedSender<ServerEvent>,
+    shown: watch::Receiver<bool>,
+    locked: watch::Receiver<bool>,
+) -> Link {
     let (tx, rx) = mpsc::channel();
     let mut link = Link {
         mailbox: Mailbox { tx, wake: None },
         rdp: rdp.clone(),
         answer_limit: Arc::default(),
+        _following: None,
     };
     let pair = UnixStream::pair().and_then(|(woken, wake)| {
         woken.set_nonblocking(true)?;
@@ -134,13 +143,49 @@ pub fn start(rdp: UnboundedSender<ServerEvent>, shown: watch::Receiver<bool>) ->
     link.mailbox.wake = Some(Arc::new(wake));
     let mailbox = link.mailbox.clone();
     let answer_limit = link.answer_limit.clone();
+    let follows = locked.clone();
     let spawned = std::thread::Builder::new()
         .name("clipboard".into())
-        .spawn(move || run(rdp, mailbox, answer_limit, shown, &rx, &woken));
+        .spawn(move || run(rdp, mailbox, answer_limit, shown, locked, &rx, &woken));
     if let Err(e) = spawned {
         log::warn!("clipboard: cannot spawn: {e}; copy and paste with the client is off");
+        return link;
     }
+    link._following = follow(follows, link.mailbox.clone());
     link
+}
+
+/// Passes each change of `locked` to the thread until the returned sender drops.
+fn follow(mut locked: watch::Receiver<bool>, mailbox: Mailbox) -> Option<oneshot::Sender<()>> {
+    let (following, mut dropped) = oneshot::channel();
+    let passes = mailbox.clone();
+    let spawned = std::thread::Builder::new()
+        .name("clipboard-lock".into())
+        .spawn(move || {
+            zbus::block_on(async move {
+                loop {
+                    tokio::select! {
+                        changed = locked.changed() => {
+                            locked.borrow_and_update();
+                            if changed.is_err() || !passes.send(Msg::LockChanged) {
+                                return;
+                            }
+                        }
+                        _ = &mut dropped => return,
+                    }
+                }
+            });
+        });
+    match spawned {
+        Ok(_) => Some(following),
+        Err(e) => {
+            mailbox.send(Msg::Stop);
+            log::warn!(
+                "clipboard: cannot follow the lock: {e}; copy and paste with the client is off"
+            );
+            None
+        }
+    }
 }
 
 fn run(
@@ -148,18 +193,21 @@ fn run(
     mailbox: Mailbox,
     answer_limit: Arc<AtomicUsize>,
     shown: watch::Receiver<bool>,
+    locked: watch::Receiver<bool>,
     rx: &mpsc::Receiver<Msg>,
     woken: &UnixStream,
 ) {
     // What the client sends meanwhile waits in `rx`.
     if zbus::block_on(crate::listen::shown(shown)) {
         let served = connect(mailbox).and_then(|(conn, queue, wl)| {
-            let app = App {
+            let mut app = App {
                 model: Clipboard::new(rdp.clone(), answer_limit),
                 wl,
+                locked,
                 done: false,
                 started: false,
             };
+            app.follow_lock();
             serve(&conn, queue, app, rx, woken)
         });
         let Err(e) = served else {
@@ -294,6 +342,7 @@ fn handle(app: &mut App, rx: &mpsc::Receiver<Msg>) -> bool {
             Msg::ClientAsks(format) => model.client_asks(format, wl),
             Msg::ClientSent(bytes) => model.client_sent(bytes, wl),
             Msg::Read(bytes) => model.desktop_read(bytes, wl),
+            Msg::LockChanged => app.follow_lock(),
             Msg::Stop => return false,
         }
     }
@@ -302,12 +351,24 @@ fn handle(app: &mut App, rx: &mpsc::Receiver<Msg>) -> bool {
 struct App {
     model: Clipboard<OwnedFd>,
     wl: Wl,
+    /// The desktop's lock; each change comes as [`Msg::LockChanged`].
+    locked: watch::Receiver<bool>,
     done: bool,
     /// False until the client's first messages are handled.
     started: bool,
 }
 
 impl App {
+    /// Reads the lock now rather than from the message, so a change queued earlier never undoes a
+    /// later one.
+    fn follow_lock(&mut self) {
+        if *self.locked.borrow() {
+            self.model.lock(&mut self.wl);
+        } else {
+            self.model.unlock(&mut self.wl);
+        }
+    }
+
     fn selection(&mut self, offer: Option<ExtDataControlOfferV1>) {
         if self.wl.echoes > 0 {
             self.wl.echoes -= 1;
@@ -534,7 +595,7 @@ mod tests {
     fn a_paste_asked_before_the_client_is_shown_the_session_waits_for_it() {
         let (tx, mut rdp) = tokio::sync::mpsc::unbounded_channel();
         let (shown, on_shown) = watch::channel(false);
-        let link = start(tx, on_shown);
+        let link = start(tx, on_shown, watch::channel(false).1);
         link.send(Msg::ClientAsks(ClipboardFormatId::CF_UNICODETEXT));
         assert!(
             !answered(&mut rdp, Duration::from_millis(300)),
@@ -549,7 +610,7 @@ mod tests {
     fn a_paste_on_a_connection_whose_display_went_unshown_ends_empty() {
         let (tx, mut rdp) = tokio::sync::mpsc::unbounded_channel();
         let (shown, on_shown) = watch::channel(false);
-        let link = start(tx, on_shown);
+        let link = start(tx, on_shown, watch::channel(false).1);
         drop(shown);
         link.send(Msg::ClientAsks(ClipboardFormatId::CF_UNICODETEXT));
         assert!(answered(&mut rdp, Duration::from_secs(5)));
