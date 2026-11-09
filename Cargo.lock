@@ -4487,6 +4487,7 @@ name = "reprise-login"
 version = "0.1.0"
 dependencies = [
  "futures-util",
+ "inotify",
  "libc",
  "log",
  "reprisebus",

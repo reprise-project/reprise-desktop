@@ -783,13 +783,21 @@ characters or more and must differ from the login password.
   account.
 - The front gets only the hashes of users in the group, never root's.
   reprise-login reads the group for every stored user when the front links,
-  on each reload (`systemctl reload reprise-login`), after a password is set
-  in User Accounts, and when a login's or a session's group check disagrees with
-  the front's list. One read runs at a time; requests during it run one more
-  after it. A reload that changes `group` takes every user off the list at
-  once. A look-up that fails leaves its user off the list, and the read runs
-  again after 30 s, doubling to 5 min, until it passes. The daemon's journal
-  names each user put on or taken off the list.
+  each time `/etc/group` or `/etc/passwd` is written, on each reload
+  (`systemctl reload reprise-login`), after a password is set in User
+  Accounts, and when a login's or a session's group check disagrees with the
+  front's list. A user put in or taken out of the group with `gpasswd` or
+  `usermod` (members or the primary group) is on or off the list once that
+  read answers, with no reload. Groups from systemd-homed records
+  (`homectl update --member-of`), sssd or LDAP, and groups served from an
+  nscd cache, follow at the other reads only, so a change there needs a
+  reload. If reprise-login can't watch `/etc`, or the watch stops, its
+  journal says so and the list follows at the other reads only.
+  One read runs at a time; requests during it run one more after it. A
+  reload that changes `group` takes every user off the list at once. A
+  look-up that fails leaves its user off the list, and the read runs again
+  after 30 s, doubling to 5 min, until it passes. The daemon's journal names
+  each user put on or taken off the list.
 
 NLA takes the name as `user`, `.\user`, `HOST\user` (the host name's first
 label), `user@host` or `user@`. A client that runs bare NTLM instead of
@@ -888,8 +896,9 @@ or it ends.
 - **Hashes outlive group membership.** Taking a user out of `reprise-remote`
   stops their logins at once, as the group check comes before the hash
   compare, but their NT hash stays in the file until they clear it. The
-  front keeps it until reprise-login next reads the group, and until then
-  a right guess of it is confirmed to the client.
+  front keeps it until reprise-login next reads the group, right after a
+  write of `/etc/group` or `/etc/passwd`, and until then a right guess of it
+  is confirmed to the client.
 - **Wrong passwords on account.sock count toward pam_faillock.**
   `reprise-login-check` includes system-auth, so a process running as a user
   can lock that user's console login for faillock's window by sending wrong
