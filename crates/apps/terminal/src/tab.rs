@@ -155,14 +155,7 @@ impl Tab {
         let pty = tty::new(&options, window, 0)?;
         let pid = pty.child().id();
         let osc7 = Arc::new(Mutex::new(None));
-        let reader = cwd::Reader {
-            file: pty.file().try_clone()?,
-            shell: pid,
-            filter: Default::default(),
-            out: Vec::new(),
-            host: cwd::hostname(),
-            cwd: osc7.clone(),
-        };
+        let reader = cwd::Reader::new(pty.file().try_clone()?, pid, cwd::hostname(), osc7.clone());
         let pty = Watched { pty, reader };
         let inbox = Arc::new(Mutex::new(Inbox::default()));
         let proxy = Proxy {

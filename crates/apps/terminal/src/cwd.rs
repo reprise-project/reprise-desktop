@@ -72,39 +72,55 @@ pub fn osc7_dir(uri: &str, local: &str, shell_cwd: &Path) -> Option<PathBuf> {
 /// The PTY's reader: passes its bytes through an [`escapes::Filter`] and keeps the last OSC 7
 /// directory in `cwd`.
 pub struct Reader {
-    pub file: File,
+    file: File,
     /// The tab's shell: an OSC 7 counts only while it holds the foreground.
-    pub shell: u32,
-    pub filter: escapes::Filter,
-    /// What the filter passed on, before it goes into the caller's buffer.
-    pub out: Vec<u8>,
-    pub host: String,
-    pub cwd: Arc<Mutex<Option<PathBuf>>>,
+    shell: u32,
+    filter: escapes::Filter,
+    /// What the filter passed on; `out[sent..]` did not fit the caller's buffer yet.
+    out: Vec<u8>,
+    sent: usize,
+    host: String,
+    cwd: Arc<Mutex<Option<PathBuf>>>,
+}
+
+impl Reader {
+    pub fn new(file: File, shell: u32, host: String, cwd: Arc<Mutex<Option<PathBuf>>>) -> Self {
+        Reader {
+            file,
+            shell,
+            filter: Default::default(),
+            out: Vec::new(),
+            sent: 0,
+            host,
+            cwd,
+        }
+    }
 }
 
 impl Read for Reader {
-    /// Reads only as much as leaves room for what the filter holds, so a held escape it lets
-    /// go always fits in `buf`.
+    /// Hands on what the filter let go before reading more, so a read reports `WouldBlock` only
+    /// when nothing waits, and alacritty's loop blocks on the terminal once its buffer is full.
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let room = buf.len().saturating_sub(self.filter.held());
-        if room == 0 {
-            return Err(io::ErrorKind::WouldBlock.into());
+        if self.sent == self.out.len() {
+            let n = self.file.read(buf)?;
+            self.out.clear();
+            self.sent = 0;
+            let uri = self.filter.feed(&buf[..n], &mut self.out);
+            if let Some(uri) = uri
+                && fg_pgrp(self.shell) == Some(self.shell)
+                && let Some(path) = osc7_dir(
+                    &uri,
+                    &self.host,
+                    Path::new(&format!("/proc/{}/cwd", self.shell)),
+                )
+            {
+                *self.cwd.lock().unwrap() = Some(path);
+            }
         }
-        let n = self.file.read(&mut buf[..room])?;
-        self.out.clear();
-        let uri = self.filter.feed(&buf[..n], &mut self.out);
-        buf[..self.out.len()].copy_from_slice(&self.out);
-        if let Some(uri) = uri
-            && fg_pgrp(self.shell) == Some(self.shell)
-            && let Some(path) = osc7_dir(
-                &uri,
-                &self.host,
-                Path::new(&format!("/proc/{}/cwd", self.shell)),
-            )
-        {
-            *self.cwd.lock().unwrap() = Some(path);
-        }
-        Ok(self.out.len())
+        let n = buf.len().min(self.out.len() - self.sent);
+        buf[..n].copy_from_slice(&self.out[self.sent..][..n]);
+        self.sent += n;
+        Ok(n)
     }
 }
 
@@ -141,19 +157,17 @@ mod tests {
         assert!(!needs_confirm(None, 100), "the shell is gone");
     }
 
+    fn reader(rx: std::os::unix::net::UnixStream) -> Reader {
+        let file = File::from(std::os::fd::OwnedFd::from(rx));
+        Reader::new(file, 0, String::new(), Default::default())
+    }
+
     #[test]
     fn a_held_escape_comes_back_within_the_buffer() {
         use std::io::Write;
         use std::os::unix::net::UnixStream;
         let (mut tx, rx) = UnixStream::pair().unwrap();
-        let mut r = Reader {
-            file: File::from(std::os::fd::OwnedFd::from(rx)),
-            shell: 0,
-            filter: Default::default(),
-            out: Vec::new(),
-            host: String::new(),
-            cwd: Default::default(),
-        };
+        let mut r = reader(rx);
         let osc = b"\x1b]7;file:///tmp\x07";
         let mut buf = [0u8; 20];
         tx.write_all(&osc[..10]).unwrap();
@@ -166,6 +180,27 @@ mod tests {
             got.extend_from_slice(&buf[..n]);
         }
         assert_eq!(got, [&osc[..], b"after"].concat());
+    }
+
+    #[test]
+    fn a_read_stops_only_once_nothing_waits_even_past_a_held_escape() {
+        use std::io::Write;
+        use std::os::unix::net::UnixStream;
+        let (mut tx, rx) = UnixStream::pair().unwrap();
+        rx.set_nonblocking(true).unwrap();
+        let mut r = reader(rx);
+        let sent = [&b"\x1b]7;file:///tmp\x07"[..], b"after"].concat();
+        tx.write_all(&sent).unwrap();
+        let mut got = Vec::new();
+        let mut buf = [0u8; 4];
+        loop {
+            match r.read(&mut buf) {
+                Ok(n) => got.extend_from_slice(&buf[..n]),
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
+                Err(e) => panic!("{e}"),
+            }
+        }
+        assert_eq!(got, sent, "a 4-byte buffer takes every waiting byte");
     }
 
     #[test]
