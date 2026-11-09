@@ -1165,9 +1165,12 @@ What a consent prompt remembers, and where:
   ("An application" without one). The session the portal starts for
   Reprise's own server doesn't light it this way. A restored grant also shows a
   balloon, "<app> is controlling this computer", named and drawn from the
-  app's desktop entry. Its Stop and forget ends the session and deletes the
-  app's `remote-desktop` tokens from the permission store; a token the
-  frontend holds only in memory (persist mode 1) restores nothing either
+  app's desktop entry. It comes from Reprise at critical urgency, so the
+  app's own balloon setting, Do Not Disturb, a screen share, a full-screen
+  window and quiet hours don't hold it, and it stays until dismissed; one
+  raised under the lock is still up after unlock. Its Stop and forget ends
+  the session and deletes the app's `remote-desktop` tokens from the
+  permission store; a token the frontend holds only in memory (persist mode 1) restores nothing either
   until a prompt is allowed with Remember again. A restored ScreenCast
   shows no balloon, as the screen-sharing dot already covers it. A screen cast's app is
   named the same way, by the app the portal names on the cast's PipeWire
@@ -1316,7 +1319,7 @@ sharing and remote control grants yet.
   `MZ`. The desktop, Explorer, search, the Start menu's Documents, jump
   lists and Quick Launch all ask the same way. Enter picks Run on a
   script's question and Cancel on the others. Search records a file in the
-  recent files only once it opens. Run sets the trust marker below, so the
+  recent files only once it opens. Run sets the trust marker above, so the
   file opens unasked until it changes; `confirm_scripts = false` turns the
   question off. A script
   runs with no window (`script_open = "run"`, the default) or in your
@@ -1415,6 +1418,12 @@ sharing and remote control grants yet.
   [X11 programs](#x11-programs). Run a program you don't trust as a
   Wayland client or in a Flatpak without X11 access: it can't connect to
   the server, network access or not.
+- **A level meter lights the microphone.** Every capture stream on a
+  microphone lights it, pavucontrol's meter included. A meter marks its
+  stream `stream.monitor` and `resample.peaks`, but a PipeWire program sets
+  those on its own stream and applies them in its own process, and a peak
+  stream at the source's rate still passes the full signal. Any recorder
+  could set them, so the indicator doesn't read them.
 - **Privileged globals have no allow-list.** Any unsandboxed program can
   capture the screen, read the clipboard, inject input or lock and unlock
   the screen through the globals above. Sandboxing is the only way to keep
