@@ -212,7 +212,9 @@ every default. The journal names each (`journalctl -b -u reprise-login`).
 
 Settings > Login Manager writes the file through `pkexec
 reprise-login-settings`, which asks for an administrator's password on each save, refuses a file with an unknown key or a bad value, rewrites it from the
-values it read (comments go) and reloads reprise-login.
+values it read (comments go) and reloads reprise-login. A file changed after
+the page read it, by hand or from another session while the password prompt
+was up, is not saved over: the page says so and shows the file as it is.
 
 | Key | Values | Default |
 | --- | --- | --- |

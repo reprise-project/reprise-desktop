@@ -1,9 +1,11 @@
 //! Writes the machine settings for `reprise-login-settings`.
 
+use std::fs::File;
 use std::io;
+use std::os::fd::AsRawFd as _;
 use std::path::Path;
 
-use repriselogin::machine::MachineConfig;
+use repriselogin::machine::{MachineConfig, file_tag, parse_save_request};
 
 use crate::atomic;
 
@@ -15,17 +17,51 @@ pub const MAX_INPUT: usize = 16 * 1024;
 pub enum Error {
     /// Every warning the input raised.
     Invalid(Vec<String>),
+    /// The file is no longer the one the settings were read from.
+    Changed,
     Io(io::Error),
 }
 
-/// Validates `input` and atomically replaces `path` with its settings. Invalid input leaves `path`
-/// untouched.
+/// Validates `input`, a `save_request`, and atomically replaces `path` with its settings while
+/// `path` still has the tag the request expects. Invalid input or a changed file leaves `path`
+/// untouched. A lock on the directory runs one save at a time.
 pub fn apply(input: &str, path: &Path) -> Result<(), Error> {
-    let (config, warnings) = MachineConfig::parse(input);
+    let Some((expect, toml)) = parse_save_request(input) else {
+        return Err(Error::Invalid(vec![
+            "the settings do not say which file they replace".into(),
+        ]));
+    };
+    let (config, warnings) = MachineConfig::parse(toml);
     if !warnings.is_empty() {
         return Err(Error::Invalid(warnings));
     }
+    let _lock = lock_dir(path).map_err(Error::Io)?;
+    let now = match std::fs::read(path) {
+        Ok(bytes) => Some(bytes),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+        Err(e) => return Err(Error::Io(e)),
+    };
+    if file_tag(now.as_deref()) != expect {
+        return Err(Error::Changed);
+    }
     atomic::replace(path, config.to_toml().as_bytes(), 0o755, 0o644).map_err(Error::Io)
+}
+
+/// An exclusive `flock` on `path`'s directory, made when missing, held until the file drops.
+fn lock_dir(path: &Path) -> io::Result<File> {
+    let dir = path.parent().unwrap_or(Path::new("."));
+    atomic::make_dir(dir, 0o755)?;
+    let d = File::open(dir)?;
+    loop {
+        // SAFETY: flock on a descriptor this function owns.
+        if unsafe { libc::flock(d.as_raw_fd(), libc::LOCK_EX) } == 0 {
+            return Ok(d);
+        }
+        let e = io::Error::last_os_error();
+        if e.kind() != io::ErrorKind::Interrupted {
+            return Err(e);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -36,6 +72,12 @@ mod tests {
     use repriselogin::machine::MachineRemote;
 
     use super::*;
+    use repriselogin::machine::save_request;
+
+    /// `toml` as a save request expecting `path` as it is now.
+    fn req(path: &Path, toml: &str) -> String {
+        save_request(&file_tag(std::fs::read(path).ok().as_deref()), toml)
+    }
 
     #[test]
     fn apply_writes_the_parsed_settings_atomically() {
@@ -43,7 +85,7 @@ mod tests {
         let path = dir.path().join("login.toml");
         std::fs::write(&path, "[login]\nshow_users = true\n").unwrap();
         let input = "[login]\nshow_users = false\n[remote_desktop]\nenabled = true\nport = 3390\n";
-        apply(input, &path).unwrap();
+        apply(&req(&path, input), &path).unwrap();
         let (config, warnings) = MachineConfig::parse(&std::fs::read_to_string(&path).unwrap());
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(config, MachineConfig::parse(input).0);
@@ -67,7 +109,7 @@ mod tests {
         std::fs::set_permissions(&victim, Permissions::from_mode(0o600)).unwrap();
         let path = dir.path().join("login.toml");
         std::os::unix::fs::symlink(&victim, dir.path().join("login.toml.tmp")).unwrap();
-        apply("[login]\nshow_users = false\n", &path).unwrap();
+        apply(&req(&path, "[login]\nshow_users = false\n"), &path).unwrap();
         assert_eq!(std::fs::read_to_string(&victim).unwrap(), "victim");
         let mode = std::fs::metadata(&victim).unwrap().permissions().mode();
         assert_eq!(mode & 0o7777, 0o600);
@@ -88,11 +130,8 @@ mod tests {
         let Some(dir) = std::env::var_os(CHILD_DIR) else {
             return;
         };
-        apply(
-            "[login]\nshow_users = false\n",
-            &Path::new(&dir).join("login.toml"),
-        )
-        .unwrap();
+        let path = Path::new(&dir).join("login.toml");
+        apply(&req(&path, "[login]\nshow_users = false\n"), &path).unwrap();
     }
 
     #[test]
@@ -138,7 +177,11 @@ mod tests {
         let path = dir.path().join("login.toml");
         std::fs::create_dir(&path).unwrap();
         std::fs::write(path.join("keep"), "").unwrap();
-        let err = apply("[login]\nshow_users = false\n", &path).unwrap_err();
+        let err = apply(
+            &save_request("none", "[login]\nshow_users = false\n"),
+            &path,
+        )
+        .unwrap_err();
         assert!(matches!(err, Error::Io(_)), "{err:?}");
         let mut names: Vec<_> = std::fs::read_dir(dir.path())
             .unwrap()
@@ -154,7 +197,9 @@ mod tests {
         let path = dir.path().join("login.toml");
         let before = "[remote_desktop]\nport = 3390\n";
         std::fs::write(&path, before).unwrap();
-        let Err(Error::Invalid(warnings)) = apply("[remote_desktop]\nport = 0\n", &path) else {
+        let Err(Error::Invalid(warnings)) =
+            apply(&req(&path, "[remote_desktop]\nport = 0\n"), &path)
+        else {
             panic!("port 0 is refused as invalid");
         };
         assert_eq!(warnings.len(), 1, "{warnings:?}");
@@ -166,7 +211,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("login.toml");
         apply(
-            "[other]\nkey = 1\n[remote_desktop]\ngroup = \"rdp\"\n",
+            &req(
+                &path,
+                "[other]\nkey = 1\n[remote_desktop]\ngroup = \"rdp\"\n",
+            ),
             &path,
         )
         .unwrap();
@@ -183,5 +231,53 @@ mod tests {
                 ..MachineRemote::default()
             }
         );
+    }
+
+    #[test]
+    fn a_file_changed_since_it_was_read_is_left_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("login.toml");
+        std::fs::write(&path, "[remote_desktop]\nenabled = true\n").unwrap();
+        let stale = req(&path, "[remote_desktop]\nenabled = true\nport = 3390\n");
+        let turned_off = "[remote_desktop]\nenabled = false\n";
+        std::fs::write(&path, turned_off).unwrap();
+        assert!(matches!(apply(&stale, &path), Err(Error::Changed)));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), turned_off);
+        std::fs::remove_file(&path).unwrap();
+        assert!(
+            matches!(apply(&stale, &path), Err(Error::Changed)),
+            "a removed file is a change too"
+        );
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn a_request_without_its_tag_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("login.toml");
+        let Err(Error::Invalid(w)) = apply("[login]\nshow_users = false\n", &path) else {
+            panic!("the bare TOML of an older Settings is refused");
+        };
+        assert_eq!(w, ["the settings do not say which file they replace"]);
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn a_save_waits_for_the_one_holding_the_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("login.toml");
+        let held = lock_dir(&path).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let p = path.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(apply(&req(&p, "[login]\nshow_users = false\n"), &p).is_ok());
+        });
+        assert!(
+            rx.recv_timeout(std::time::Duration::from_millis(300))
+                .is_err(),
+            "the save waits"
+        );
+        drop(held);
+        assert_eq!(rx.recv_timeout(std::time::Duration::from_secs(5)), Ok(true));
     }
 }
