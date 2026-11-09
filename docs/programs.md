@@ -69,7 +69,8 @@ The file manager, and the default for folders.
 - **Preview** (Space): a window over Explorer shows the one selected file: a
   picture fitted to the screen, the first 256 KB of a text file, the
   thumbnail another program left in the shared cache (a PDF's, a video's), a
-  font's sample, else its icon, type, size and date. The arrows step to the
+  font's sample (drawn by a helper in the thumbnailers' bubblewrap jail, so
+  none without bubblewrap), else its icon, type, size and date. The arrows step to the
   previous and next item in the view's order and move the selection with it;
   Enter opens the file, Space or Escape closes the preview. A file on a
   mount that stopped answering shows its card until the read comes back.

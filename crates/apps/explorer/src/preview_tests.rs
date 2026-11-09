@@ -20,7 +20,67 @@ fn png(w: u32, h: u32) -> Vec<u8> {
 }
 
 fn read_at(path: &Path, route: Route) -> Loaded {
-    read(path, route, &Decoders::default_set(), None, (400, 300), 1)
+    let fonts = FontSampler {
+        runner: None,
+        exe: "/nonexistent".into(),
+    };
+    read(
+        path,
+        route,
+        &Decoders::default_set(),
+        None,
+        &fonts,
+        (400, 300),
+        1,
+    )
+}
+
+/// A sampler whose helper is a script copying `sample` to its output, run unconfined in `dir`.
+fn fake_sampler(dir: &Path, sample: &Path) -> FontSampler {
+    use std::os::unix::fs::PermissionsExt;
+    let exe = dir.join("helper");
+    let body = format!(
+        "#!/bin/sh\n[ \"$1\" = --font-sample ] && [ \"$4\" = 1 ] && cp '{}' \"$6\"\n",
+        sample.display()
+    );
+    std::fs::write(&exe, body).expect("write");
+    std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    FontSampler {
+        runner: Some(reprisefs::thumbnailers::Runner {
+            slot_dir: dir.to_path_buf(),
+            scratch: dir.to_path_buf(),
+            deadline: std::time::Duration::from_secs(5),
+            jail: reprisefs::thumbnailers::Jail::Bare,
+        }),
+        exe,
+    }
+}
+
+#[test]
+fn a_font_sample_is_drawn_by_the_helper_and_none_without_a_jail() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let sample = dir.path().join("sample.png");
+    std::fs::write(&sample, png(120, 80)).expect("write");
+    let font = dir.path().join("face.ttf");
+    std::fs::write(&font, "not a font Explorer ever parses").expect("write");
+    let mut fonts = fake_sampler(dir.path(), &sample);
+    let at = |fonts: &FontSampler| {
+        read(
+            &font,
+            Route::Font,
+            &Decoders::default_set(),
+            None,
+            fonts,
+            (400, 300),
+            1,
+        )
+    };
+    match at(&fonts) {
+        Loaded::Picture(c) => assert_eq!((c.width, c.height), (120, 80)),
+        _ => panic!("the helper's sample lands"),
+    }
+    fonts.runner = None;
+    assert!(matches!(at(&fonts), Loaded::Nothing), "no jail, no sample");
 }
 
 #[test]
@@ -70,23 +130,33 @@ fn a_picture_decodes_fitted_text_reads_its_head_and_the_rest_keeps_the_card() {
 }
 
 #[test]
-fn a_font_file_reads_as_its_sample_inside_the_max() {
+fn the_font_sample_helper_writes_the_sample_inside_the_max() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let out = dir.path().join("out.png");
     let tahoma = reprisekit::pins::fonts().join("tahoma.ttf");
-    match read_at(&tahoma, Route::Font) {
-        Loaded::Picture(c) => {
-            assert!(
-                c.width <= 400 && c.height <= 300,
-                "{}x{}",
-                c.width,
-                c.height
-            );
-            assert!(
-                c.height > 200,
-                "the sample's rows down to the 72 px pangram"
-            );
-        }
-        _ => panic!("tahoma.ttf has a sample"),
-    }
+    let args = ["400", "300", "1"].map(std::ffi::OsString::from);
+    let args = [&args[..], &[tahoma.into(), out.clone().into()]].concat();
+    serve_font_sample(&args).expect("a sample");
+    let c = reprisekit::icontheme::png_to_canvas(&std::fs::read(&out).expect("read"), 4096)
+        .expect("a PNG");
+    assert!(
+        c.width <= 400 && c.height <= 300,
+        "{}x{}",
+        c.width,
+        c.height
+    );
+    assert!(
+        c.height > 200,
+        "the sample's rows down to the 72 px pangram"
+    );
+    let broken = dir.path().join("broken.ttf");
+    std::fs::write(&broken, "not a font").expect("write");
+    let args = ["400", "300", "1"].map(std::ffi::OsString::from);
+    let args = [&args[..], &[broken.into(), out.into()]].concat();
+    assert!(
+        serve_font_sample(&args).is_err(),
+        "a broken font has no face"
+    );
 }
 
 #[test]
