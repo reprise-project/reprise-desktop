@@ -156,6 +156,9 @@ login screen, Settings, User Accounts and each session's `reprise-rdp
 older program can't talk to a newer daemon, and a hand-over server that
 started before the upgrade can't report its clients, so a background
 session it serves counts as having none and its disconnect time starts.
+Sessions started before the upgrade share no clipboard with Remote Desktop
+clients until they log off, and the journal says "the desktop's lock is
+unknown: GetActive ...".
 
 ### Remote logins
 
