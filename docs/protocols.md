@@ -166,7 +166,10 @@ replaces none of its bus names (notifications, the tray, the screensaver and
 the settings portal). The programs it launches still get its display, while
 D-Bus-activated services, the portals, balloons and the Remote Desktop server
 stay with the other session, and its Log Off tells neither the portal nor the
-Remote Desktop server. A tray applet's autostart (`--tray`) finds the other
+Remote Desktop server. reprise-login's hand-over server waits for the display of the
+session reprise-login opened, so a remote login that starts a session beside
+a text-login Reprise reaches the new session on its first connection. A tray
+applet's autostart (`--tray`) finds the other
 session's copy running and leaves its window alone. A session started by a
 login manager always publishes, starts the target and takes the bus names
 over. After a text-login Reprise, it takes `org.freedesktop.ScreenSaver` too,

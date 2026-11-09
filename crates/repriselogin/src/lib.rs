@@ -18,6 +18,14 @@ pub const SOCKET_ENV: &str = "REPRISE_LOGIN_SOCKET";
 /// Set to `1` in a session started on a VT nobody shows: its compositor starts locked.
 pub const BACKGROUND_ENV: &str = "REPRISE_LOGIN_BACKGROUND";
 pub const GREETER_USER: &str = "reprise-greeter";
+/// The PAM services of the user sessions reprise-login opens, as logind records them (`SERVICE=`).
+/// A user has at most one such session, the one remote logins are handed over to.
+pub const USER_SERVICES: [&str; 4] = [
+    "reprise-login",
+    "reprise-login-autologin",
+    "reprise-login-remote",
+    "reprise-login-remote-nla",
+];
 
 /// Lines of PAM text kept and shown.
 pub const PROMPT_LINES: usize = 2;

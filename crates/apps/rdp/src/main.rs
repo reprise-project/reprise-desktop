@@ -74,6 +74,9 @@ fn main() -> ExitCode {
         },
         _ => None,
     };
+    if hand_over.is_some() {
+        wayland::hand_over_mode();
+    }
     if hand_over.is_none() && reprisebus::login::manager_runs() {
         log::info!("reprise-login takes this computer's remote connections; this server stays off");
         return ExitCode::SUCCESS;

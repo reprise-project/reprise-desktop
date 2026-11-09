@@ -35,6 +35,12 @@ fn modes_name_their_pam_service_and_argument() {
             "reprise-login-check"
         ]
     );
+    let opening = [Mode::Login, Mode::Autologin, Mode::Remote, Mode::RemoteNla];
+    assert_eq!(
+        opening.map(Mode::service),
+        repriselogin::USER_SERVICES,
+        "the modes that open a user session"
+    );
     let args: Vec<_> = MODES.iter().map(|m| m.as_arg()).collect();
     assert_eq!(
         args[4..],
