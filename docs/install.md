@@ -28,10 +28,16 @@ logs under its desktop entry id, such as `reprise-sound`, or under its
 program name when it has no entry. Each runs in an `app-reprise-*.scope` of
 the user manager, so journald's rate limit for a program that floods its log
 applies to `user@<uid>.service` and leaves the compositor's session lines
-alone. Reprise's own programs mark their lines with the same priorities, so
-`-t reprise-sound -p warning` lists that program's warnings and errors. The
-apps and tray helpers log their own info lines and their libraries' warnings
-(`warn,reprise=info`) unless `RUST_LOG` says otherwise.
+alone. That budget (`RateLimitBurst=` lines per `RateLimitIntervalSec=` in
+journald.conf, counted per priority) is shared by every app scope and user
+service: a program flooding at one priority drops the other programs' lines
+at that priority until the interval ends, and the system journal says
+`Suppressed N messages from user@<uid>.service`. A unit's `LogRateLimit*=`
+settings don't apply to user units. Reprise's own programs mark their lines
+with the same priorities, so `-t reprise-sound -p warning` lists that
+program's warnings and errors. The apps and tray helpers log their own info
+lines and their libraries' warnings (`warn,reprise=info`) unless `RUST_LOG`
+says otherwise.
 Started from a terminal, Reprise logs to the terminal and its programs
 inherit it; `REPRISE_LOG_STDERR=1` keeps the log on stderr anywhere.
 `RUST_LOG` sets the level, as in `RUST_LOG=reprise=debug`.
