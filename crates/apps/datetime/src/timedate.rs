@@ -106,6 +106,8 @@ pub enum Failure {
     Dismissed,
     /// timedated stopped waiting for the password prompt.
     TimedOut,
+    /// polkit refused the call; timedated's message.
+    Denied(String),
     Text(String),
 }
 
@@ -115,8 +117,15 @@ impl Failure {
         match self {
             Failure::Dismissed => None,
             Failure::TimedOut => Some(reprisebus::polkit::TIMED_OUT.into()),
-            Failure::Text(msg) => Some(format!("The clock could not be changed: {msg}")),
+            Failure::Denied(msg) | Failure::Text(msg) => {
+                Some(format!("The clock could not be changed: {msg}"))
+            }
         }
+    }
+
+    /// The call that stopped was never authorized, so it changed nothing.
+    pub fn refused(&self) -> bool {
+        !matches!(self, Failure::Text(_))
     }
 }
 
@@ -147,12 +156,20 @@ fn describe(method: &str, e: zbus::Error, dismissed: impl FnOnce() -> bool) -> F
             log::warn!("{method}: timedated stopped waiting for the password prompt");
             return Failure::TimedOut;
         }
-        Some(reprisebus::polkit::Refusal::Denied) | None => {}
+        Some(reprisebus::polkit::Refusal::Denied) => {
+            log::warn!("{method}: {e}");
+            return Failure::Denied(message(e));
+        }
+        None => {}
     }
     log::error!("{method}: {e}");
+    Failure::Text(message(e))
+}
+
+fn message(e: zbus::Error) -> String {
     match reprisebus::error::message(&e) {
-        Some(msg) => Failure::Text(msg.into()),
-        None => text(e),
+        Some(msg) => msg.into(),
+        None => e.to_string(),
     }
 }
 
@@ -170,10 +187,9 @@ mod tests {
             )
         };
         assert_eq!(describe("SetNTP", denied(), || true), Failure::Dismissed);
-        assert_eq!(
-            describe("SetNTP", denied(), || false),
-            Failure::Text("Permission denied".into())
-        );
+        let refused = describe("SetNTP", denied(), || false);
+        assert_eq!(refused, Failure::Denied("Permission denied".into()));
+        assert!(refused.refused());
         let other = describe(
             "SetTime",
             error(
@@ -183,6 +199,10 @@ mod tests {
             || panic!("only a refusal asks whether the prompt was dismissed"),
         );
         assert_eq!(other, Failure::Text("NTP is on".into()));
+        assert!(
+            !other.refused(),
+            "timedated's own error may follow a half-done change"
+        );
     }
 
     #[test]
