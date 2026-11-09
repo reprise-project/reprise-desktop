@@ -185,6 +185,13 @@ impl State {
         let modes = self.key_modes();
         let globals = self.global_binds();
         let mut routed = crate::keyroute::route(&modes, &k, &self.config.keybinds, &globals);
+        if k.pressed
+            && self.inputproto.source == InputSource::App
+            && crate::keyroute::machine_key(&k.syms)
+        {
+            log::info!("an app's input pressed {:?}; dropped", routed.route);
+            routed.route = KeyRoute::Swallow;
+        }
         if k.pressed && self.edit_menu_key(&routed.route, &k.syms, k.mods) {
             routed.route = KeyRoute::Swallow;
         }
@@ -375,11 +382,6 @@ impl State {
             }
         };
         match routed.route {
-            KeyRoute::PowerKey | KeyRoute::SleepKey | KeyRoute::VtSwitch(_)
-                if self.inputproto.source == InputSource::App =>
-            {
-                log::info!("an app's input pressed {:?}; dropped", routed.route);
-            }
             KeyRoute::PowerKey => {
                 let a = self.config.power.power_button;
                 crate::power::run_action(self, a, origin);

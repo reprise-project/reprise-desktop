@@ -961,6 +961,30 @@ fn vt_switch(modes: &Modes, k: &KeyPress) -> Option<u32> {
     (k.pressed && modes.can_switch_vt).then(|| sym - KEY_XF86Switch_VT_1 + 1)
 }
 
+/// Not in xkbcommon 0.9's keysym table.
+const KEY_XF86WWAN: u32 = 0x1008_ffb4;
+pub(crate) const KEY_XF86RFKILL: u32 = 0x1008_ffb5;
+
+/// Whether a key with `syms` is the machine's own: power, sleep, a VT or a radio toggle, which no
+/// app's input may press.
+#[expect(non_upper_case_globals)] // xkb keysym names in patterns
+pub fn machine_key(syms: &[u32]) -> bool {
+    syms.iter().any(|&s| {
+        matches!(
+            s,
+            KEY_XF86PowerOff
+                | KEY_XF86Sleep
+                | KEY_XF86Suspend
+                | KEY_XF86Hibernate
+                | KEY_XF86WLAN
+                | KEY_XF86Bluetooth
+                | KEY_XF86UWB
+                | KEY_XF86WWAN
+                | KEY_XF86RFKILL
+        ) || (KEY_XF86Switch_VT_1..=KEY_XF86Switch_VT_12).contains(&s)
+    })
+}
+
 /// The built-in action of a media keysym; None for any other key.
 #[expect(non_upper_case_globals)] // xkb keysym names in patterns
 pub fn media_action_for(sym: u32) -> Option<Action> {

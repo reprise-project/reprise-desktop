@@ -315,3 +315,33 @@ fn a_physical_lock_key_in_lock_mode_keeps_the_console_dialog_and_leaves_the_remo
     assert!(!h.state.desktop_locked(), "the remote side stays unlocked");
     assert!(covers(&h, Side::Remote).is_empty());
 }
+
+/// Each of `codes` pressed and released through the keys object `keys`.
+fn keys_tap(h: &mut Harness, keys: crate::remotekeys::KeysId, codes: &[u32]) {
+    for &c in codes {
+        h.state.keys_key(keys, c, true);
+        h.state.keys_key(keys, c, false);
+    }
+}
+
+#[test]
+fn the_servers_keys_object_types_into_the_remote_lock() {
+    let (mut h, _portal, _lock) = in_lock_mode();
+    h.from(InputSource::Remote, lockview::lock_desktop);
+    let server = h.state.keys_create(None);
+    keys_tap(&mut h, server, &HUNTER2);
+    assert_eq!(field(&h, Side::Remote), "hunter2");
+    assert_eq!(field(&h, Side::Console), "", "the console's field is apart");
+}
+
+#[test]
+fn the_servers_keys_object_types_into_the_lock_and_an_apps_does_not() {
+    let mut h = Harness::with_config(Config::default());
+    h.output("eDP-1", 1920, 1080);
+    lockview::lock(&mut h.state);
+    let server = h.state.keys_create(None);
+    let app = h.state.keys_create(Some("org.example.Remote".into()));
+    keys_tap(&mut h, server, &HUNTER2);
+    keys_tap(&mut h, app, &[X]);
+    assert_eq!(field(&h, Side::Console), "hunter2");
+}

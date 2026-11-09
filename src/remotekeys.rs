@@ -22,6 +22,15 @@ struct Keys {
     syms: Vec<(u32, u32)>,
 }
 
+impl Keys {
+    fn source(&self) -> InputSource {
+        match self.app {
+            Some(_) => InputSource::App,
+            None => InputSource::Remote,
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct KeysState {
     objects: Vec<Keys>,
@@ -70,8 +79,20 @@ impl State {
         crate::privacy::control_changed(self);
     }
 
+    /// Whether a press on `id` is an app's under the lock, which goes nowhere. The server's keys
+    /// type into the lock.
+    fn keys_locked_out(&self, id: KeysId) -> bool {
+        let app = self
+            .inputproto
+            .keys
+            .objects
+            .iter()
+            .any(|k| k.id == id && k.app.is_some());
+        app && self.app_input_locked()
+    }
+
     pub fn keys_key(&mut self, id: KeysId, code: u32, pressed: bool) {
-        if pressed && self.app_input_locked() {
+        if pressed && self.keys_locked_out(id) {
             log::debug!("keys: keycode {code} dropped under the lock");
             return;
         }
@@ -82,11 +103,12 @@ impl State {
             log::debug!("keys: ignoring keycode {code}");
             return;
         }
-        self.keys_inject(code, pressed);
+        let source = k.source();
+        self.keys_inject(source, code, pressed);
     }
 
     pub fn keys_keysym(&mut self, id: KeysId, sym: u32, pressed: bool) {
-        if pressed && self.app_input_locked() {
+        if pressed && self.keys_locked_out(id) {
             log::debug!("keys: keysym {sym:#x} dropped under the lock");
             return;
         }
@@ -115,7 +137,8 @@ impl State {
         if pressed && down.is_none() {
             k.syms.push((sym, code));
         }
-        self.keys_inject(code, pressed);
+        let source = k.source();
+        self.keys_inject(source, code, pressed);
     }
 
     pub fn keys_destroy(&mut self, id: KeysId) {
@@ -123,16 +146,34 @@ impl State {
         let Some(i) = keys.iter().position(|k| k.id == id) else {
             return;
         };
-        for code in keys.swap_remove(i).held {
-            self.keys_inject(code, false);
+        let k = keys.swap_remove(i);
+        let source = k.source();
+        for code in k.held {
+            self.keys_inject(source, code, false);
         }
         crate::privacy::control_changed(self);
     }
 
+    /// Let go of every key the apps' objects hold, as no user activity.
+    pub fn keys_release_apps(&mut self) {
+        let held: Vec<u32> = (self.inputproto.keys.objects.iter_mut())
+            .filter(|k| k.app.is_some())
+            .flat_map(|k| {
+                k.syms.clear();
+                std::mem::take(&mut k.held)
+            })
+            .collect();
+        self.with_source(InputSource::App, |s| {
+            for code in held {
+                s.handle_key(evdev_key(code), false, InputTime::now());
+            }
+        });
+    }
+
     /// One key through the physical keyboard's path, past an InputCapture
     /// as a libei sender's keys go.
-    fn keys_inject(&mut self, code: u32, pressed: bool) {
-        self.with_source(InputSource::App, |s| {
+    fn keys_inject(&mut self, source: InputSource, code: u32, pressed: bool) {
+        self.with_source(source, |s| {
             crate::idle::notify_activity(s);
             s.handle_key(evdev_key(code), pressed, InputTime::now());
         });
