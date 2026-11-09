@@ -4,7 +4,8 @@
 //! it lets in: they connect on a listening socket the sandbox hands us,
 //! and every client from it carries that context (`ClientSandbox`). A
 //! Flatpak app that skipped the context still shows `/.flatpak-info` in
-//! its process root. Such a client is shown none of `PRIVILEGED_GLOBALS`,
+//! its process root, and a process that is gone or can't be inspected by
+//! the time it is accepted counts as sandboxed too. Such a client is shown none of `PRIVILEGED_GLOBALS`,
 //! except the data control globals for the apps `[clipboard]
 //! trusted_apps` names; `reprise_input_v1` is shown to the installed
 //! reprise-portal alone.
@@ -12,6 +13,7 @@
 //! Every privileged global is made with `filter(name)` as its
 //! `can_view`, which Smithay also applies to every bind.
 
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::net::UnixStream;
 use std::sync::{Arc, RwLock};
 
@@ -104,15 +106,25 @@ impl From<&SecurityContext> for Sandbox {
     }
 }
 
+/// What a client's process showed of a sandbox as it connected.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Process {
+    #[default]
+    Host,
+    /// Its root holds Flatpak's `/.flatpak-info`, which a Flatpak app has even without a
+    /// security context.
+    Flatpak,
+    /// Gone by the time it was inspected, or not ours to inspect.
+    Unknown,
+}
+
 /// What the filter knows of one client, fixed when it connects.
 #[derive(Debug, Default)]
 pub struct ClientSandbox {
     /// The sandbox engine and app id of the sandbox socket it came in
     /// on (wp-security-context-v1), when it came in on one.
     pub context: Option<Sandbox>,
-    /// Its process sees Flatpak's `/.flatpak-info`, which a Flatpak app
-    /// has even without a security context.
-    pub flatpak: bool,
+    pub process: Process,
     pub pid: Option<i32>,
 }
 
@@ -124,18 +136,16 @@ impl ClientSandbox {
             .ok()
             .map(|c| c.pid.as_raw_nonzero().get())
             .filter(|&p| p > 0);
-        let flatpak = pid.is_some_and(|p| {
-            std::fs::exists(format!("/proc/{p}/root/.flatpak-info")).unwrap_or(false)
-        });
+        let process = pid.map_or(Process::Unknown, |p| inspect(stream, p));
         ClientSandbox {
             context,
-            flatpak,
+            process,
             pid,
         }
     }
 
     pub fn sandboxed(&self) -> bool {
-        self.context.is_some() || self.flatpak
+        self.context.is_some() || self.process != Process::Host
     }
 
     /// The Flatpak app id of its sandbox: its context's when Flatpak
@@ -148,7 +158,7 @@ impl ClientSandbox {
             .and_then(|c| c.app_id.clone())
             .filter(|id| !id.is_empty());
         ctx.or_else(|| {
-            let pid = self.pid.filter(|_| self.flatpak)?;
+            let pid = self.pid.filter(|_| self.process == Process::Flatpak)?;
             reprisefs::flatpak::app_of_pid(pid as u32)
         })
     }
@@ -168,6 +178,116 @@ impl ClientSandbox {
             })
         })
     }
+}
+
+/// What `stream`'s peer, process `pid` as it connected, shows of a sandbox. Every read goes
+/// through `/proc/<pid>`, and counts only if the peer still runs after them: its pidfd says it
+/// was not reaped (so the pid was not reused) and its `stat` that it is no zombie.
+fn inspect(stream: &UnixStream, pid: i32) -> Process {
+    let Some(pidfd) = peer_pidfd(stream, pid) else {
+        return Process::Unknown;
+    };
+    let Ok(dir) = std::fs::File::open(format!("/proc/{pid}")) else {
+        return Process::Unknown;
+    };
+    let Some(root) = open_at(&dir, c"root", libc::O_PATH | libc::O_DIRECTORY) else {
+        return Process::Unknown;
+    };
+    let flatpak = exists_at(&root, c".flatpak-info");
+    let running = read_at(&dir, c"stat").is_some_and(|s| runs(&s));
+    if !running || !alive(&pidfd) {
+        return Process::Unknown;
+    }
+    match flatpak {
+        Some(true) => Process::Flatpak,
+        Some(false) => Process::Host,
+        None => Process::Unknown,
+    }
+}
+
+fn open_at(dir: &impl AsRawFd, name: &std::ffi::CStr, flags: libc::c_int) -> Option<OwnedFd> {
+    // SAFETY: `name` is NUL-terminated and `dir` an open directory.
+    let fd = unsafe { libc::openat(dir.as_raw_fd(), name.as_ptr(), flags | libc::O_CLOEXEC) };
+    // SAFETY: a fresh fd nothing else owns.
+    (fd >= 0).then(|| unsafe { OwnedFd::from_raw_fd(fd) })
+}
+
+fn read_at(dir: &impl AsRawFd, name: &std::ffi::CStr) -> Option<String> {
+    let fd = open_at(dir, name, libc::O_RDONLY)?;
+    std::io::read_to_string(std::fs::File::from(fd)).ok()
+}
+
+/// Whether `name` exists under `dir`; None when that can't be told.
+fn exists_at(dir: &impl AsRawFd, name: &std::ffi::CStr) -> Option<bool> {
+    // SAFETY: an all-zero stat is valid for fstatat to fill.
+    let mut st: libc::stat = unsafe { std::mem::zeroed() };
+    // SAFETY: `name` is NUL-terminated, `st` live, `dir` an open directory.
+    let r = unsafe {
+        libc::fstatat(
+            dir.as_raw_fd(),
+            name.as_ptr(),
+            &mut st,
+            libc::AT_SYMLINK_NOFOLLOW,
+        )
+    };
+    if r == 0 {
+        return Some(true);
+    }
+    (std::io::Error::last_os_error().raw_os_error() == Some(libc::ENOENT)).then_some(false)
+}
+
+/// Whether `/proc/<pid>/stat` describes a process that has not exited: its state, after the
+/// command's closing parenthesis, is neither zombie nor dead.
+fn runs(stat: &str) -> bool {
+    stat.rsplit_once(')')
+        .and_then(|(_, rest)| rest.trim_start().chars().next())
+        .is_some_and(|state| !matches!(state, 'Z' | 'X' | 'x'))
+}
+
+/// `SO_PEERPIDFD` (Linux 6.5): a pidfd for the process that connected.
+const SO_PEERPIDFD: libc::c_int = 77;
+
+/// A pidfd for `stream`'s peer: `SO_PEERPIDFD`, or on a kernel without it `pidfd_open` of the
+/// `SO_PEERCRED` pid, which a pid reused before this call fools. None when the peer is gone.
+fn peer_pidfd(stream: &UnixStream, pid: i32) -> Option<OwnedFd> {
+    let mut fd: libc::c_int = -1;
+    let mut len = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
+    // SAFETY: `fd` and `len` are live and sized for the option's int.
+    let r = unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_SOCKET,
+            SO_PEERPIDFD,
+            (&raw mut fd).cast(),
+            &mut len,
+        )
+    };
+    if r == 0 && fd >= 0 {
+        // SAFETY: the kernel handed us a fresh pidfd nothing else owns.
+        return Some(unsafe { OwnedFd::from_raw_fd(fd) });
+    }
+    if std::io::Error::last_os_error().raw_os_error() != Some(libc::ENOPROTOOPT) {
+        return None;
+    }
+    // SAFETY: pidfd_open takes a pid and flags and returns a new fd or -1.
+    let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
+    // SAFETY: a fresh fd nothing else owns.
+    (fd >= 0).then(|| unsafe { OwnedFd::from_raw_fd(fd as libc::c_int) })
+}
+
+/// Whether the process `pidfd` names has not been reaped.
+fn alive(pidfd: &OwnedFd) -> bool {
+    // SAFETY: signal 0 through a pidfd only checks that the process exists.
+    let r = unsafe {
+        libc::syscall(
+            libc::SYS_pidfd_send_signal,
+            pidfd.as_raw_fd(),
+            0,
+            std::ptr::null::<libc::siginfo_t>(),
+            0,
+        )
+    };
+    r == 0
 }
 
 /// The pid a harness client takes to pass as the installed portal.
@@ -315,9 +435,82 @@ mod tests {
                 engine: Some(engine.into()),
                 app_id: Some(app_id.into()),
             }),
-            flatpak: false,
+            process: Process::Host,
             pid: None,
         }
+    }
+
+    /// A stream accepted from a child process that connected and exited, reaped before the
+    /// accept with `reap`, else left a zombie (unless another test's reaper takes it).
+    fn from_exited_child(reap: bool) -> UnixStream {
+        use std::os::unix::ffi::OsStrExt;
+        let path = crate::harness::scratch().join(format!("exited-peer-{reap}"));
+        let _ = std::fs::remove_file(&path);
+        let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        // SAFETY: an all-zero sockaddr_un is valid; the path fits, being a short scratch path.
+        let mut addr: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+        addr.sun_family = libc::AF_UNIX as libc::sa_family_t;
+        for (d, s) in addr.sun_path.iter_mut().zip(path.as_os_str().as_bytes()) {
+            *d = *s as libc::c_char;
+        }
+        // SAFETY: the child makes only async-signal-safe calls before `_exit`.
+        let pid = unsafe { libc::fork() };
+        assert!(pid >= 0, "fork");
+        if pid == 0 {
+            // SAFETY: as above; `addr` was built before the fork.
+            unsafe {
+                let fd = libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0);
+                let len = std::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t;
+                libc::connect(fd, (&raw const addr).cast(), len);
+                libc::_exit(0);
+            }
+        }
+        let flags = libc::WEXITED | if reap { 0 } else { libc::WNOWAIT };
+        // SAFETY: an all-zero siginfo_t is valid for waitid to fill.
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        // SAFETY: `info` is live; ECHILD only means another reaper took the child first.
+        unsafe { libc::waitid(libc::P_PID, pid as libc::id_t, &mut info, flags) };
+        listener.accept().unwrap().0
+    }
+
+    #[test]
+    fn a_peer_gone_before_its_accept_is_sandboxed() {
+        let s = ClientSandbox::of_stream(&from_exited_child(true), None);
+        assert!(s.pid.is_some(), "the kernel still names the peer's pid");
+        assert!(s.sandboxed(), "a reaped peer can't be inspected");
+        assert!(!visible("zwp_virtual_keyboard_manager_v1", &s, &[], || {
+            false
+        }));
+    }
+
+    #[test]
+    fn a_peer_that_exited_unreaped_is_sandboxed() {
+        let s = ClientSandbox::of_stream(&from_exited_child(false), None);
+        assert!(s.sandboxed(), "a zombie's root can't be inspected");
+        if let Some(pid) = s.pid {
+            // SAFETY: reaps the test's own child; ECHILD if a reaper took it already.
+            unsafe { libc::waitpid(pid, std::ptr::null_mut(), 0) };
+        }
+    }
+
+    #[test]
+    fn a_process_state_is_read_after_the_last_parenthesis() {
+        assert!(runs("42 (foot) S 1 42"));
+        assert!(
+            !runs("42 (a) Z (b) Z 1"),
+            "a command may hold a parenthesis"
+        );
+        assert!(runs("42 (a) Z (b) R 1"));
+        assert!(!runs("42 (foot) X 1"));
+        assert!(!runs(""));
+    }
+
+    #[test]
+    fn a_live_peer_outside_a_sandbox_is_not_sandboxed() {
+        let (ours, _theirs) = UnixStream::pair().unwrap();
+        let s = ClientSandbox::of_stream(&ours, None);
+        assert_eq!(s.process, Process::Host);
+        assert!(!s.sandboxed());
     }
 
     #[test]
@@ -343,7 +536,7 @@ mod tests {
     #[test]
     fn a_flatpak_without_a_context_is_sandboxed_too() {
         let s = ClientSandbox {
-            flatpak: true,
+            process: Process::Flatpak,
             ..ClientSandbox::default()
         };
         assert!(!visible(
