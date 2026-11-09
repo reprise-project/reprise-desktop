@@ -87,8 +87,18 @@ pub enum ShortcutEvent {
     Changed,
 }
 
+/// Whose RemoteDesktop session an input object serves.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Owner {
+    /// Reprise's remote desktop server, for the session started without a dialog
+    /// (`crate::trusted`).
+    Server,
+    /// An app, by the app id the frontend gave, "" when it gave none.
+    App(String),
+}
+
 enum Cmd {
-    ConnectSender(OwnedFd, u32, u32, bool),
+    ConnectSender(OwnedFd, u32, u32, Owner),
     CreateCapture(u32, async_channel::Sender<CaptureEvent>),
     ConnectReceiver(u32, OwnedFd, u32),
     SetBarriers(u32, Vec<Barrier>),
@@ -99,7 +109,7 @@ enum Cmd {
     DestroyCapture(u32),
     CreateShortcuts(u32, String, async_channel::Sender<ShortcutEvent>),
     DestroyShortcuts(u32),
-    CreateKeys(u32),
+    CreateKeys(u32, Owner),
     Key(u32, u32, bool),
     Keysym(u32, u32, bool),
     DestroyKeys(u32),
@@ -319,7 +329,7 @@ impl Link {
             registry_queue_init::<State>(&conn).map_err(|e| format!("registry: {e}"))?;
         let qh = queue.handle();
         let input: RepriseInputV1 = globals
-            .bind(&qh, 2..=9, ())
+            .bind(&qh, 2..=10, ())
             .map_err(|e| format!("reprise_input_v1: {e}"))?;
         let shortcuts = input.version() >= 3;
         let keys = input.version() >= 4;
@@ -420,11 +430,11 @@ impl Link {
         (s.zones.clone(), s.zone_set)
     }
 
-    /// A sender gets the devices in the `reprise_input_v1` mask `devices` and no others; a
-    /// `remote_session` one is the remote desktop server's, counted as a user at the computer.
-    pub fn connect_sender(&self, fd: OwnedFd, devices: u32, remote_session: bool) -> EisHandle {
+    /// A sender gets the devices in the `reprise_input_v1` mask `devices` and no others; the
+    /// server's is counted as a user at the computer, an app's shows the sharing indicator.
+    pub fn connect_sender(&self, fd: OwnedFd, devices: u32, owner: Owner) -> EisHandle {
         let id = self.alloc();
-        self.send(Cmd::ConnectSender(fd, id, devices, remote_session));
+        self.send(Cmd::ConnectSender(fd, id, devices, owner));
         EisHandle {
             link: self.clone(),
             id,
@@ -470,12 +480,12 @@ impl Link {
         })
     }
 
-    pub fn create_keys(&self) -> Option<KeysHandle> {
+    pub fn create_keys(&self, owner: Owner) -> Option<KeysHandle> {
         if !self.keys {
             return None;
         }
         let id = self.alloc();
-        self.send(Cmd::CreateKeys(id));
+        self.send(Cmd::CreateKeys(id, owner));
         Some(KeysHandle {
             link: self.clone(),
             id,
@@ -597,15 +607,23 @@ impl State {
 
     fn handle(&mut self, qh: &QueueHandle<State>, cmd: Cmd) {
         match cmd {
-            Cmd::ConnectSender(fd, id, devices, remote_session) => {
-                let kind = if remote_session && self.input.version() >= 7 {
-                    Kind::RemoteSession
-                } else {
-                    Kind::Sender
+            Cmd::ConnectSender(fd, id, devices, owner) => {
+                let v = self.input.version();
+                let c = match owner {
+                    Owner::App(app) if v >= 10 => {
+                        self.input
+                            .connect_app_sender(fd.as_fd(), devices, app, qh, ())
+                    }
+                    Owner::Server if v >= 7 => (self.input).connect_eis(
+                        fd.as_fd(),
+                        Kind::RemoteSession,
+                        None,
+                        devices,
+                        qh,
+                        (),
+                    ),
+                    _ => (self.input).connect_eis(fd.as_fd(), Kind::Sender, None, devices, qh, ()),
                 };
-                let c = self
-                    .input
-                    .connect_eis(fd.as_fd(), kind, None, devices, qh, ());
                 self.eis.insert(id, c);
             }
             Cmd::CreateCapture(id, tx) => {
@@ -676,8 +694,13 @@ impl State {
                     s.destroy();
                 }
             }
-            Cmd::CreateKeys(id) => {
-                let k = self.input.create_keys(qh, ());
+            Cmd::CreateKeys(id, owner) => {
+                let k = match owner {
+                    Owner::App(app) if self.input.version() >= 10 => {
+                        self.input.create_app_keys(app, qh, ())
+                    }
+                    _ => self.input.create_keys(qh, ()),
+                };
                 self.keys.insert(id, k);
             }
             Cmd::Key(id, code, pressed) => {
@@ -1160,11 +1183,14 @@ pub(crate) mod tests {
     fn only_a_v4_compositor_gets_keys_objects() {
         let (link, _hang_up, _fake) = start_with_fake(3);
         assert!(
-            link.create_keys().is_none(),
+            link.create_keys(Owner::Server).is_none(),
             "a v3 global has no create_keys"
         );
         let (link, _hang_up, _fake) = start_with_fake(4);
-        assert!(link.create_keys().is_some(), "a v4 global has create_keys");
+        assert!(
+            link.create_keys(Owner::Server).is_some(),
+            "a v4 global has create_keys"
+        );
     }
 
     /// Past `MAX_SHORTCUTS` live objects the link makes no more, so the compositor never ends it with `too_many`; a dropped one frees a place.
@@ -1300,9 +1326,89 @@ pub(crate) mod tests {
         assert!(link.pick_color().is_none(), "a v5 global has no pick_color");
     }
 
+    /// The requests `reprise_input_v1` gets until `stop` arrives: opcode and the string at
+    /// `at` in the body, if any.
+    fn named_requests(
+        version: u32,
+        stop: u32,
+        at: impl Fn(u32) -> Option<usize> + Send + 'static,
+        drive: impl FnOnce(&Link),
+    ) -> Vec<(u32, Option<String>)> {
+        let (ours, mut theirs) = UnixStream::pair().unwrap();
+        let compositor = std::thread::spawn(move || {
+            let input = fake_compositor(&mut theirs, 2, version);
+            theirs
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut seen = Vec::new();
+            loop {
+                let (object, opcode, body) = request(&mut theirs).unwrap();
+                if object != input {
+                    continue;
+                }
+                let name = at(opcode).map(|i| {
+                    let len = u32::from_ne_bytes(body[i..i + 4].try_into().unwrap()) as usize;
+                    String::from_utf8(body[i + 4..i + 4 + len - 1].to_vec()).unwrap()
+                });
+                seen.push((opcode, name));
+                if opcode == stop {
+                    break seen;
+                }
+            }
+        });
+        let link = Link::start_on(Connection::from_socket(ours).unwrap(), false).unwrap();
+        drive(&link);
+        compositor.join().unwrap()
+    }
+
+    #[test]
+    fn a_v10_compositor_hears_which_app_an_input_object_serves() {
+        const CONNECT_EIS: u32 = 0;
+        const CREATE_KEYS: u32 = 4;
+        const CONNECT_APP_SENDER: u32 = 9;
+        const CREATE_APP_KEYS: u32 = 10;
+        let at = |op| match op {
+            CONNECT_APP_SENDER => Some(8),
+            CREATE_APP_KEYS => Some(4),
+            _ => None,
+        };
+        let app = || Owner::App("org.example.Remote".into());
+        let seen = named_requests(10, CREATE_APP_KEYS, at, |link| {
+            let (fd, _peer) = UnixStream::pair().unwrap();
+            let _server_keys = link.create_keys(Owner::Server);
+            let _eis = link.connect_sender(fd.into(), Device::Keyboard as u32, app());
+            let _keys = link.create_keys(app());
+            std::thread::sleep(Duration::from_millis(50));
+        });
+        let named = Some("org.example.Remote".to_string());
+        assert_eq!(
+            seen,
+            [
+                (CREATE_KEYS, None),
+                (CONNECT_APP_SENDER, named.clone()),
+                (CREATE_APP_KEYS, named)
+            ]
+        );
+        let seen = named_requests(9, CREATE_KEYS, at, |link| {
+            let (fd, _peer) = UnixStream::pair().unwrap();
+            let _eis = link.connect_sender(fd.into(), Device::Keyboard as u32, app());
+            let _keys = link.create_keys(app());
+            std::thread::sleep(Duration::from_millis(50));
+        });
+        assert_eq!(
+            seen,
+            [(CONNECT_EIS, None), (CREATE_KEYS, None)],
+            "a v9 compositor gets the requests it knows"
+        );
+    }
+
     #[test]
     fn only_the_remote_desktop_servers_sender_is_a_remote_session() {
         for (version, remote_session, kind) in [(7, true, 3), (7, false, 1), (6, true, 1)] {
+            let owner = match remote_session {
+                true => Owner::Server,
+                false => Owner::App("org.example.App".into()),
+            };
             let (ours, mut theirs) = UnixStream::pair().unwrap();
             let compositor = std::thread::spawn(move || {
                 let input = fake_compositor(&mut theirs, 2, version);
@@ -1318,7 +1424,7 @@ pub(crate) mod tests {
             });
             let link = Link::start_on(Connection::from_socket(ours).unwrap(), false).unwrap();
             let (fd, _peer) = UnixStream::pair().unwrap();
-            let _eis = link.connect_sender(fd.into(), Device::Keyboard as u32, remote_session);
+            let _eis = link.connect_sender(fd.into(), Device::Keyboard as u32, owner);
             assert_eq!(
                 compositor.join().unwrap(),
                 kind,
@@ -1411,7 +1517,7 @@ pub(crate) mod tests {
         let link = Link::start_on(Connection::from_socket(ours).unwrap(), false).unwrap();
         let keys: Vec<KeysHandle> = (0..REQUESTS)
             .map(|_| {
-                let k = link.create_keys().unwrap();
+                let k = link.create_keys(Owner::Server).unwrap();
                 std::thread::sleep(Duration::from_millis(1));
                 k
             })

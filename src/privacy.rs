@@ -1,5 +1,6 @@
-//! The taskbar's privacy indicators: a record dot while an output or window is captured, a microphone while an app
-//! records, a camera while one films, each with the app's name in its tooltip (names come from PipeWire).
+//! The taskbar's privacy indicators: a record dot while an output or window is captured or an app's RemoteDesktop
+//! session holds input, a microphone while an app records, a camera while one films, each with the app's name in its
+//! tooltip (capture names come from PipeWire, controlling apps from the portal).
 
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -38,6 +39,9 @@ pub struct Privacy {
     live_at: Option<Instant>,
     sharing: bool,
     hold: Option<RegistrationToken>,
+    /// The app ids of the apps whose RemoteDesktop sessions hold input, sorted, "" for an unnamed
+    /// one (`control_changed`).
+    controlling: Vec<String>,
     mic_apps: Vec<String>,
     share_apps: Vec<String>,
     camera_apps: Vec<String>,
@@ -68,8 +72,14 @@ impl Privacy {
         }
     }
 
+    /// Whether a capture is shared: the dot shows, and balloons wait.
     pub fn sharing_shown(&self) -> bool {
         self.sharing
+    }
+
+    /// Whether the tray's dot shows: a capture is shared or an app controls this computer.
+    pub fn dot_shown(&self) -> bool {
+        self.sharing || !self.controlling.is_empty()
     }
 
     pub fn mic_shown(&self) -> bool {
@@ -78,10 +88,6 @@ impl Privacy {
 
     pub fn camera_shown(&self) -> bool {
         !self.camera_apps.is_empty() || !self.camera_holders.is_empty()
-    }
-
-    pub fn sharing_tip(&self) -> String {
-        share_label(&self.share_apps, self.screen, self.window)
     }
 
     pub fn mic_tip(&self) -> String {
@@ -116,6 +122,62 @@ pub fn camera_tip(state: &State) -> String {
     names.sort();
     names.dedup();
     using_label(&names, "camera")
+}
+
+/// The dot's tooltip: what is shared, and which apps control this computer, a line each.
+pub fn sharing_tip(state: &State) -> String {
+    let p = &state.privacy;
+    let mut lines = Vec::new();
+    if p.sharing {
+        lines.push(share_label(&p.share_apps, p.screen, p.window));
+    }
+    if !p.controlling.is_empty() {
+        let mut names: Vec<String> = (p.controlling.iter())
+            .map(|id| app_name(state, id))
+            .collect();
+        names.sort();
+        names.dedup();
+        lines.push(control_label(&names));
+    }
+    lines.join("\n")
+}
+
+/// An app id's name in its desktop entry, else the id; an empty id is "An application".
+fn app_name(state: &State, id: &str) -> String {
+    if id.is_empty() {
+        return "An application".into();
+    }
+    reprisefs::apps::entry_for_app_id(&state.app_index, id, |_| true)
+        .map(|e| e.name.clone())
+        .unwrap_or_else(|| id.to_string())
+}
+
+fn control_label(apps: &[String]) -> String {
+    match apps {
+        [] => "An application is controlling this computer".into(),
+        [one] => format!("{one} is controlling this computer"),
+        [rest @ .., last] => format!(
+            "{} and {last} are controlling this computer",
+            rest.join(", ")
+        ),
+    }
+}
+
+/// An app's RemoteDesktop sender bound or lost a device, or its keys object came or went:
+/// the dot shows while any app holds input.
+pub fn control_changed(state: &mut State) {
+    let mut apps: Vec<String> = (state.inputproto.eis.app_senders())
+        .chain(state.inputproto.keys.apps())
+        .map(String::from)
+        .collect();
+    apps.sort();
+    apps.dedup();
+    if apps == state.privacy.controlling {
+        return;
+    }
+    log::info!("apps controlling input: {apps:?}");
+    state.privacy.controlling = apps;
+    state.redraw_taskbars();
 }
 
 fn using_label(apps: &[String], what: &str) -> String {
@@ -727,7 +789,7 @@ mod tests {
         );
         c.ext_frame(&mut h, &mut s);
         assert!(h.state.privacy.sharing_shown(), "the second frame shares");
-        assert_eq!(h.state.privacy.sharing_tip(), "Your screen is being shared");
+        assert_eq!(sharing_tip(&h.state), "Your screen is being shared");
         crate::notifyview::show(&mut h.state, note(1));
         assert!(
             !crate::notifyview::balloon_up(&h.state),
@@ -831,6 +893,94 @@ mod tests {
         assert!(
             !h.state.privacy.sharing_shown(),
             "the dot goes HOLD after the last frame"
+        );
+    }
+
+    fn dot(h: &crate::harness::Harness) -> Option<String> {
+        use crate::tray::builtin::{Builtin, label, shown};
+        (shown(&h.state).contains(&Builtin::Sharing))
+            .then(|| label(&h.state, Builtin::Sharing).unwrap())
+    }
+
+    #[test]
+    fn an_apps_sender_shows_the_dot_naming_the_app_while_it_has_a_device() {
+        use crate::inputproto::DEVICE_KEYBOARD;
+        let mut h = capturing();
+        let peer = h.ei_keyboard_as(
+            crate::eis::Kind::Sender,
+            false,
+            DEVICE_KEYBOARD,
+            "org.example.Remote",
+        );
+        assert_eq!(
+            dot(&h).as_deref(),
+            Some("org.example.Remote is controlling this computer")
+        );
+        assert!(
+            !h.state.privacy.sharing_shown(),
+            "balloons don't wait for it"
+        );
+        h.ei_close(peer);
+        assert_eq!(dot(&h), None, "the dot goes with the sender");
+    }
+
+    #[test]
+    fn an_apps_keys_object_shows_the_dot_while_it_lives() {
+        let mut h = capturing();
+        let keys = h.state.keys_create(Some(String::new()));
+        assert_eq!(
+            dot(&h).as_deref(),
+            Some("An application is controlling this computer")
+        );
+        h.state.keys_destroy(keys);
+        assert_eq!(dot(&h), None);
+    }
+
+    #[test]
+    fn the_remote_desktop_servers_input_shows_no_dot() {
+        let mut h = capturing();
+        let _peer = h.ei_remote_session();
+        let _keys = h.state.keys_create(None);
+        assert_eq!(dot(&h), None);
+    }
+
+    #[test]
+    fn only_an_older_portals_create_keys_counts_as_an_apps() {
+        let mut h = capturing();
+        let mut portal = h.connect_portal();
+        let server = portal.create_keys(10);
+        h.roundtrip(&mut portal);
+        assert_eq!(dot(&h), None, "a v10 create_keys is the server's");
+        let old = portal.create_keys(9);
+        h.roundtrip(&mut portal);
+        assert_eq!(
+            dot(&h).as_deref(),
+            Some("An application is controlling this computer")
+        );
+        let app = portal.create_app_keys("org.example.Remote");
+        h.roundtrip(&mut portal);
+        assert_eq!(
+            dot(&h).as_deref(),
+            Some("An application and org.example.Remote are controlling this computer")
+        );
+        for k in [server, old, app] {
+            k.destroy();
+        }
+        h.roundtrip(&mut portal);
+        assert_eq!(dot(&h), None);
+    }
+
+    #[test]
+    fn a_shared_screen_and_a_controlling_app_share_the_tooltip() {
+        let mut h = capturing();
+        let mut c = h.connect_capture(SIZE);
+        let mut s = c.ext_session(&mut h);
+        c.ext_frame(&mut h, &mut s);
+        c.ext_frame(&mut h, &mut s);
+        let _keys = h.state.keys_create(Some("org.example.Remote".into()));
+        assert_eq!(
+            dot(&h).as_deref(),
+            Some("Your screen is being shared\norg.example.Remote is controlling this computer")
         );
     }
 

@@ -4,7 +4,7 @@
     reprise private protocol: input injection and capture for reprise-portal.
   </copyright>
 
-  <interface name="reprise_input_v1" version="9">
+  <interface name="reprise_input_v1" version="10">
     <description summary="EIS sockets and pointer barriers for the portal">
       One global. connect_eis hands the compositor one end of a socketpair
       to run libei's EIS side on; create_capture makes an object that owns
@@ -15,6 +15,8 @@
       the sandboxed apps with a window. pick_color opens the colour picker.
       remote_capture marks a capture connection as the remote desktop
       server's. lock_screen starts lock mode for the remote desktop server.
+      connect_app_sender and create_app_keys name the app a sender or keys
+      object serves.
     </description>
 
     <enum name="kind">
@@ -120,6 +122,34 @@
         set_layout asks.
       </description>
       <arg name="id" type="new_id" interface="reprise_lock_screen_v1"/>
+    </request>
+
+    <request name="connect_app_sender" since="10">
+      <description summary="run an EIS server for an app's RemoteDesktop session">
+        connect_eis for a plain sender, naming the app the portal granted
+        the session to: its app id from xdg-desktop-portal, empty when it
+        has none. From version 10 the portal connects every app's sender
+        this way. While such a sender has a device, the compositor shows
+        the sharing indicator with the app's name.
+      </description>
+      <arg name="id" type="new_id" interface="reprise_eis_client_v1"/>
+      <arg name="fd" type="fd"/>
+      <arg name="devices" type="uint" summary="a mask of device bits"/>
+      <arg name="app_id" type="string"/>
+    </request>
+
+    <request name="create_app_keys" since="10">
+      <description summary="press keys for an app's RemoteDesktop session">
+        create_keys naming the app the session was granted to, as for
+        connect_app_sender. From version 10 the portal makes an app's keys
+        object this way and create_keys only for the session it starts
+        for the remote desktop server. While an app's keys object lives,
+        the compositor shows the sharing indicator with the app's name; a
+        keys object made with create_keys on an older version counts as
+        an unnamed app's.
+      </description>
+      <arg name="id" type="new_id" interface="reprise_keys_v1"/>
+      <arg name="app_id" type="string"/>
     </request>
   </interface>
 

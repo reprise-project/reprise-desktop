@@ -429,7 +429,7 @@ pub(crate) mod tests {
             let begun = begin(&conn, Some(caller), trust, Some(&link)).await;
             begun.map(|locked| pick(locked.as_ref()))
         });
-        let _marker = link.create_keys();
+        let _marker = link.create_keys(crate::inputlink::Owner::Server);
         Some((pick, fake.join().unwrap()))
     }
 
@@ -510,7 +510,7 @@ pub(crate) mod tests {
             begin(&conn, Some(me), Trust::HandOver, Some(&link)).await
         });
         assert!(matches!(unowned, Err(NotBegun)), "nobody owns the name");
-        let _marker = link.create_keys();
+        let _marker = link.create_keys(crate::inputlink::Owner::Server);
         fake.join().unwrap();
 
         let (pick, layouts) = begun(&[], me, Trust::HandOver, never).unwrap();
@@ -588,7 +588,7 @@ pub(crate) mod tests {
             publish(&server, &THIRD).await;
             within(follow).await.unwrap();
         });
-        let _marker = link.create_keys();
+        let _marker = link.create_keys(crate::inputlink::Owner::Server);
         assert_eq!(
             fake.join().unwrap(),
             [words(&FIRST), words(&SECOND), words(&THIRD)],
@@ -619,7 +619,7 @@ pub(crate) mod tests {
                 sessions.lock().unwrap().is_empty(),
                 "ended({reason}) closes the session"
             );
-            let _marker = link.create_keys();
+            let _marker = link.create_keys(crate::inputlink::Owner::Server);
             assert_eq!(fake.join().unwrap(), [words(&FIRST)]);
         }
 
@@ -659,7 +659,7 @@ pub(crate) mod tests {
             sessions.lock().unwrap().is_empty(),
             "a screen more than the session casts closes it"
         );
-        let _marker = link.create_keys();
+        let _marker = link.create_keys(crate::inputlink::Owner::Server);
         fake.join().unwrap();
     }
 }

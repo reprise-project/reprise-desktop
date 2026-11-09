@@ -1,7 +1,7 @@
 //! `org.freedesktop.impl.portal.RemoteDesktop` v2 over libei: input granted by the permit dialog,
 //! or without it to the enabled server (`trusted`); keycode and keysym Notify use reprise_keys_v1.
 
-use crate::inputlink::{Link, LockScreenHandle, live};
+use crate::inputlink::{Link, LockScreenHandle, Owner, live};
 use crate::inputproto::reprise_input_v1::Device;
 use crate::wayland::Target;
 use crate::{
@@ -26,6 +26,8 @@ pub(crate) struct RemoteSession {
     granted: bool,
     /// Started for the remote desktop server without a dialog (`crate::trusted`).
     trusted: bool,
+    /// The app id the frontend created the session for.
+    app_id: String,
     eis: Option<crate::inputlink::EisHandle>,
     keys: Option<crate::inputlink::KeysHandle>,
     pub(crate) screencast: CastState,
@@ -88,6 +90,7 @@ impl RemoteDesktop {
                 crate::sender(&hdr),
                 SessionKind::RemoteDesktop(RemoteSession {
                     devices: DEVICE_KEYBOARD | DEVICE_POINTER,
+                    app_id: app_id.clone(),
                     ..Default::default()
                 }),
             ),
@@ -428,7 +431,15 @@ impl RemoteSession {
         self.granted = true;
         self.lock = lock;
         if self.devices & DEVICE_KEYBOARD != 0 && !self.lock_ended() {
-            self.keys = link.and_then(Link::create_keys);
+            self.keys = link.and_then(|l| l.create_keys(self.owner()));
+        }
+    }
+
+    /// Whose session this is, so the compositor names the app while it holds input.
+    fn owner(&self) -> Owner {
+        match self.trusted {
+            true => Owner::Server,
+            false => Owner::App(self.app_id.clone()),
         }
     }
 
@@ -455,7 +466,7 @@ impl RemoteDesktop {
             return Err(zbus::fdo::Error::Failed("lock mode ended".into()));
         }
         let (ours, theirs) = crate::inputlink::socketpair()?;
-        s.eis = Some(link.connect_sender(ours, s.devices, s.trusted));
+        s.eis = Some(link.connect_sender(ours, s.devices, s.owner()));
         Ok(theirs)
     }
 

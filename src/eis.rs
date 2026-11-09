@@ -74,6 +74,8 @@ pub struct EisClient {
     pub kind: Kind,
     /// A sender with someone at the other end: `reprise_input_v1`'s remote_session.
     present: bool,
+    /// The app id the portal named for an app's sender, "" when it named none.
+    app: String,
     allowed: BitFlags<DeviceCapability>,
     pub capture: Option<CaptureId>,
     context: eis::Context,
@@ -140,6 +142,14 @@ impl EisState {
 
     pub fn get_mut(&mut self, id: EisId) -> Option<&mut EisClient> {
         self.clients.iter_mut().find(|c| c.id == id)
+    }
+
+    /// The app ids of the apps' senders that have a device, "" for an unnamed app.
+    pub fn app_senders(&self) -> impl Iterator<Item = &str> {
+        (self.clients.iter())
+            .filter(|c| c.kind == Kind::Sender && !c.present)
+            .filter(|c| c.seat.is_some() && c.devices.is_some())
+            .map(|c| c.app.as_str())
     }
 }
 
@@ -340,6 +350,7 @@ impl State {
         present: bool,
         capture: Option<CaptureId>,
         devices: u32,
+        app: String,
     ) -> Result<EisId, String> {
         let stream = UnixStream::from(fd);
         refuse_fds(&stream).map_err(|e| format!("cannot refuse fds on the EIS socket: {e}"))?;
@@ -369,6 +380,7 @@ impl State {
             id,
             kind,
             present: present && kind == Kind::Sender,
+            app,
             allowed: allowed_caps(devices),
             capture,
             context,
@@ -411,6 +423,7 @@ impl State {
         }
         log::info!("eis: {:?} client gone", c.kind);
         crate::power::remote_control_changed(self);
+        crate::privacy::control_changed(self);
     }
 
     /// Disconnect every sender, releasing nothing it holds.
@@ -584,6 +597,7 @@ impl State {
                 }
                 self.eis_send_modifiers(id);
                 crate::power::remote_control_changed(self);
+                crate::privacy::control_changed(self);
             }
             EisRequest::DeviceClosed(_) => {
                 if let Some(d) = self
@@ -595,6 +609,7 @@ impl State {
                     d.remove_all();
                 }
                 crate::power::remote_control_changed(self);
+                crate::privacy::control_changed(self);
             }
             other => self.eis_inject(id, other),
         }
