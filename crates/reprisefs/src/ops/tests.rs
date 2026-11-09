@@ -1425,6 +1425,30 @@ fn copy_dir_all_keeps_folder_modes_and_mtimes() {
 }
 
 #[test]
+fn a_copy_off_a_drive_carries_only_the_trust_marker() {
+    let t = tempfile::tempdir().unwrap();
+    let from = t.path().join("app.desktop");
+    fs::write(&from, "[Desktop Entry]\nType=Application\nExec=true\n").unwrap();
+    if crate::apps::set_trusted(&from).is_err() || !set_user_test(&from) {
+        eprintln!("SKIPPED: {} takes no user xattrs", t.path().display());
+        return;
+    }
+    let copy = |name: &str, from_drive: bool| {
+        let to = t.path().join(name);
+        super::fileio::copy_xattrs_as(&from, &fs::File::create(&to).unwrap(), from_drive);
+        to
+    };
+    let off = copy("off.desktop", true);
+    assert_eq!(user_test(&off), None, "user.test stays on the drive");
+    assert!(
+        crate::apps::is_trusted(&off),
+        "the trust marker is made anew"
+    );
+    let local = copy("local.desktop", false);
+    assert_eq!(user_test(&local).as_deref(), Some(&b"1"[..]));
+}
+
+#[test]
 fn copy_new_keeps_a_read_only_launcher_trusted() {
     use std::os::unix::fs::PermissionsExt;
     let t = tempfile::tempdir().unwrap();

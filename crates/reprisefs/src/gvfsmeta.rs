@@ -4,6 +4,7 @@
 //! names in its `uuid-...` or `label-...` tree, the rest in `root`. Numbers in both files are
 //! big-endian. Writes go through gvfsd-metadata on the session bus, which owns the files.
 
+use crate::places::mount_points;
 use reprisebus::mutex::lock;
 use std::collections::{BTreeSet, HashMap};
 use std::os::unix::ffi::OsStrExt;
@@ -286,17 +287,6 @@ fn mount_point(mountinfo: &[u8], dev: u64, file: &Path) -> Option<PathBuf> {
     mount_points(mountinfo, dev)
         .filter(|m| file.starts_with(m))
         .max_by_key(|m| m.as_os_str().len())
-}
-
-/// Each mount point of device `dev` in `mountinfo`.
-fn mount_points(mountinfo: &[u8], dev: u64) -> impl Iterator<Item = PathBuf> + '_ {
-    let want = format!("{}:{}", libc::major(dev), libc::minor(dev));
-    mountinfo.split(|&b| b == b'\n').filter_map(move |line| {
-        let mut fields = line.split(|&b| b == b' ');
-        let numbers = fields.nth(2)?;
-        let mount = fields.nth(1)?;
-        (numbers == want.as_bytes()).then(|| crate::places::mount_path(mount))
-    })
 }
 
 type Loaded = Arc<(Vec<u8>, Option<Vec<u8>>)>;

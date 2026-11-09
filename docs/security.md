@@ -1224,6 +1224,11 @@ sharing and remote control grants yet.
   only into real folders. An archive with a hidden top-level entry stays in
   its new folder, as with Extract to, so Extract Here can't add autostart
   entries or settings to a home folder.
+- **Copying from a drive.** A copy from a drive (a mount under `/run/media`
+  or `/media`) onto another device carries no extended attributes: no POSIX
+  ACLs, `user.*` attributes or `security.*` labels, which name another
+  machine's users. The launcher trust marker is the one exception, made anew
+  only when the original's verifies under your key.
 - **Programs and scripts.** A file with the owner's execute bit that starts
   with `#!` or is an ELF binary runs when you open it, from the desktop,
   Explorer or a search. A script runs with no window (`script_open = "run"`,

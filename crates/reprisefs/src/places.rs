@@ -385,6 +385,23 @@ pub(crate) fn mount_path(field: &[u8]) -> PathBuf {
     PathBuf::from(OsString::from_vec(unescape_mount(field)))
 }
 
+/// Each mount point of device `dev` in `mountinfo` (`/proc/self/mountinfo`).
+pub(crate) fn mount_points(mountinfo: &[u8], dev: u64) -> impl Iterator<Item = PathBuf> + '_ {
+    let want = format!("{}:{}", libc::major(dev), libc::minor(dev));
+    mountinfo.split(|&b| b == b'\n').filter_map(move |line| {
+        let mut fields = line.split(|&b| b == b' ');
+        let numbers = fields.nth(2)?;
+        let mount = fields.nth(1)?;
+        (numbers == want.as_bytes()).then(|| mount_path(mount))
+    })
+}
+
+/// Whether device `dev` is mounted as a drive, under `/run/media` or `/media` where udisks
+/// mounts the drives a user plugs in or opens, per `mountinfo`.
+pub(crate) fn drive_device(mountinfo: &[u8], dev: u64) -> bool {
+    mount_points(mountinfo, dev).any(|m| m.starts_with("/run/media") || m.starts_with("/media"))
+}
+
 /// The kernel names block devices in ASCII, so nothing is lost.
 fn mount_device(field: &[u8]) -> String {
     String::from_utf8_lossy(&unescape_mount(field)).into_owned()
@@ -677,6 +694,20 @@ fn root_of(mounts: &[u8]) -> Option<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_device_mounted_under_the_drive_roots_is_a_drive() {
+        let info = b"36 1 8:2 / / rw - ext4 /dev/sda2 rw\n\
+            90 36 8:17 / /run/media/u/STICK rw - vfat /dev/sdb1 rw\n\
+            91 36 7:0 / /media/My\\040Disk rw - ext4 /dev/loop0 rw\n\
+            92 36 8:3 / /home rw - ext4 /dev/sda3 rw\n\
+            93 36 8:4 / /mediadata rw - ext4 /dev/sda4 rw\n";
+        assert!(drive_device(info, libc::makedev(8, 17)));
+        assert!(drive_device(info, libc::makedev(7, 0)));
+        for dev in [(8, 2), (8, 3), (8, 4), (8, 99)] {
+            assert!(!drive_device(info, libc::makedev(dev.0, dev.1)), "{dev:?}");
+        }
+    }
 
     #[test]
     fn the_trash_is_watched_from_its_nearest_existing_folder() {
