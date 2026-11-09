@@ -510,16 +510,23 @@ fn caps_lock_shows_its_notice() {
 
 #[test]
 fn a_held_backspace_repeats() {
+    // The delay outlasts the test, so only the ticks driven here repeat.
     let (mut h, _d) = login_with(repriselogin::Interface::Classic, Vec::new(), |c| {
-        c.keyboard.repeat_delay = 20;
-        c.keyboard.repeat_rate = 100;
+        c.keyboard.repeat_delay = 60_000;
     });
     tap(&mut h, &[KEY_A, KEY_N, KEY_N, KEY_A]);
     assert_eq!(model(&h).name.text, "anna");
     h.key(BACKSPACE, true);
-    h.run_for(150);
+    assert_eq!(model(&h).name.text, "ann", "the press");
+    for left in ["an", "a", ""] {
+        h.state.field_repeat_tick();
+        assert_eq!(model(&h).name.text, left);
+    }
     h.key(BACKSPACE, false);
-    assert!(model(&h).name.text.is_empty(), "{:?}", model(&h).name.text);
+    assert!(
+        h.state.key_input.field_repeat.is_none(),
+        "the release ends it"
+    );
 }
 
 #[test]
