@@ -93,10 +93,11 @@ pub const STORE_MAX: usize = 1 << 20;
 pub const TITLE_MAX: usize = 256;
 
 /// `t` as the tab, the caption and the taskbar show it: its first [`TITLE_MAX`] chars without
-/// control characters.
+/// control characters, bidi controls or zero-width characters.
 fn shown_title(t: &str) -> String {
+    let format = |c: char| matches!(c, '\u{61c}' | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{2069}' | '\u{feff}');
     t.chars()
-        .filter(|c| !c.is_control())
+        .filter(|&c| !c.is_control() && !format(c))
         .take(TITLE_MAX)
         .collect()
 }
@@ -156,6 +157,7 @@ impl Tab {
         let osc7 = Arc::new(Mutex::new(None));
         let reader = cwd::Reader {
             file: pty.file().try_clone()?,
+            shell: pid,
             filter: Default::default(),
             out: Vec::new(),
             host: cwd::hostname(),
@@ -196,9 +198,10 @@ impl Tab {
         self.pid
     }
 
-    /// The directory a new tab opened from this one starts in: the last OSC 7, else the shell's.
+    /// The directory a new tab opened from this one starts in: the last OSC 7 while it names a
+    /// directory, else the shell's.
     pub fn cwd(&self) -> Option<PathBuf> {
-        let reported = self.osc7.lock().unwrap().clone();
+        let reported = self.osc7.lock().unwrap().clone().filter(|p| p.is_dir());
         reported.or_else(|| cwd::cwd_of(self.pid))
     }
 
@@ -444,6 +447,14 @@ mod tests {
     #[test]
     fn a_title_loses_its_control_characters() {
         assert_eq!(shown_title("a\nb\u{9b}c\td"), "abcd");
+    }
+
+    #[test]
+    fn a_title_loses_its_bidi_and_zero_width_characters() {
+        assert_eq!(
+            shown_title("a\u{202e}b\u{200b}c\u{2066}d\u{feff}e\u{61c}"),
+            "abcde"
+        );
     }
 
     #[test]

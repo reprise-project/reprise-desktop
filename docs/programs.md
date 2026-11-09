@@ -248,7 +248,9 @@ your login shell. The window closes when its last tab's program exits, and
 closing a tab or the window while something other than the shell runs there
 asks first. Programs see `TERM=xterm-256color` and `COLORTERM=truecolor`.
 
-- **Tabs:** + opens your shell in the open tab's directory; the arrow beside
+- **Tabs:** + opens your shell in the open tab's directory (the one its
+  shell last reported with OSC 7 while it held the foreground, else the
+  shell's own); the arrow beside
   it lists the shell, your profiles and the `Host` entries of
   `~/.ssh/config` (and the files it includes). Drag a tab to reorder it,
   middle-click it to close it.
@@ -266,13 +268,14 @@ asks first. Programs see `TERM=xterm-256color` and `COLORTERM=truecolor`.
   from a paste. A paste holding a line end into a program that has not
   turned on bracketed paste asks first, showing its first lines.
 - **Titles:** a program's title (OSC 0 and 2) names its tab, window and
-  taskbar button, cut to its first 256 characters.
+  taskbar button, cut to its first 256 characters and without control, bidi
+  or zero-width characters.
 - **Clipboard from programs:** a program can copy to the clipboard and the
   primary selection with OSC 52 (up to 1 MiB) while its tab is the open one
   in a focused window; it can't read them back.
 - **Drop:** files dropped on the window type their paths into the open tab,
-  quoted for the shell where needed, and web links their address, each
-  followed by a space; dropped text types as it came. A drop goes in as a
+  quoted for the shell where needed, and web links their address, quoted
+  the same way, each followed by a space; dropped text types as it came. A drop goes in as a
   paste and brings the window to the front.
 - **Options** (Settings): the shell, cursor shape and blinking, the
   multi-line paste question, scrollback lines (10000 by default, at most

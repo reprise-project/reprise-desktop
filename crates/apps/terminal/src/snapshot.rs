@@ -132,6 +132,9 @@ fn shape(s: TermCursor) -> CursorShape {
     }
 }
 
+/// The most zero-width chars a cell draws; copying and Find read them all from the `Term`.
+const MARKS_SHOWN: usize = 8;
+
 fn convert(
     cell: &alacritty_terminal::term::cell::Cell,
     colors: &Colors,
@@ -161,10 +164,12 @@ fn convert(
     // A tab stop keeps its '\t' in the cell it starts at, for copying.
     Cell {
         ch: if blank || cell.c == '\t' { ' ' } else { cell.c },
-        extra: cell
-            .zerowidth()
-            .filter(|_| !blank)
-            .map(|z| z.iter().collect::<String>().into_boxed_str()),
+        extra: cell.zerowidth().filter(|_| !blank).map(|z| {
+            z.iter()
+                .take(MARKS_SHOWN)
+                .collect::<String>()
+                .into_boxed_str()
+        }),
         fg: resolve(cell.fg, colors, scheme, fg, bg),
         bg: resolve(cell.bg, colors, scheme, fg, bg),
         flags,
@@ -322,6 +327,14 @@ mod tests {
         assert_eq!((row[3].fg, row[3].bg), (s.fg, s.bg));
         assert!(row[3].flags.contains(Flags::INVERSE));
         assert_eq!(snap.bg, s.bg);
+    }
+
+    #[test]
+    fn a_cell_shows_at_most_eight_combining_marks() {
+        let mut t = term(4, 1);
+        feed(&mut t, format!("e{}", "\u{301}".repeat(100)).as_bytes());
+        let snap = filled(&t);
+        assert_eq!(snap.row_text(0), format!("e{}", "\u{301}".repeat(8)));
     }
 
     #[test]

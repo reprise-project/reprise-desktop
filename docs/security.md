@@ -1233,7 +1233,12 @@ sharing and remote control grants yet.
   without bound. An OSC 52 copy reaches the clipboard only from the open
   tab of a focused terminal window and only up to 1 MiB, so a background
   tab can't swap what you are about to paste; reading the clipboard with
-  OSC 52 is refused.
+  OSC 52 is refused. A title loses its bidi and zero-width characters, so it
+  can't pass for another window's. A directory reported with OSC 7 picks
+  where the next tab opens only while the tab's shell itself holds the
+  foreground and the directory exists. A dropped web link is typed
+  shell-quoted like a path, and an ssh `Host` from `~/.ssh/config` is
+  passed after `--`, one starting with `-` left out of the menu.
 - **Launchers.** A `.desktop` file in a folder (the desktop, Explorer)
   runs only when it is executable and carries the `user.reprise.trusted`
   extended attribute, which Allow Launching sets. Extracting an archive

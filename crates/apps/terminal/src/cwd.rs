@@ -61,6 +61,8 @@ pub fn osc7_path(uri: &str, local: &str) -> Option<PathBuf> {
 /// directory in `cwd`.
 pub struct Reader {
     pub file: File,
+    /// The tab's shell: an OSC 7 counts only while it holds the foreground.
+    pub shell: u32,
     pub filter: escapes::Filter,
     /// What the filter passed on, before it goes into the caller's buffer.
     pub out: Vec<u8>,
@@ -81,6 +83,7 @@ impl Read for Reader {
         let uri = self.filter.feed(&buf[..n], &mut self.out);
         buf[..self.out.len()].copy_from_slice(&self.out);
         if let Some(uri) = uri
+            && fg_pgrp(self.shell) == Some(self.shell)
             && let Some(path) = osc7_path(&uri, &self.host)
         {
             *self.cwd.lock().unwrap() = Some(path);
@@ -129,6 +132,7 @@ mod tests {
         let (mut tx, rx) = UnixStream::pair().unwrap();
         let mut r = Reader {
             file: File::from(std::os::fd::OwnedFd::from(rx)),
+            shell: 0,
             filter: Default::default(),
             out: Vec::new(),
             host: String::new(),
@@ -146,7 +150,6 @@ mod tests {
             got.extend_from_slice(&buf[..n]);
         }
         assert_eq!(got, [&osc[..], b"after"].concat());
-        assert_eq!(*r.cwd.lock().unwrap(), Some("/tmp".into()));
     }
 
     #[test]

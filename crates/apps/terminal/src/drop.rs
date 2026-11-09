@@ -1,5 +1,6 @@
 //! A drag dropped on a terminal window types into its open tab, as a paste: files as their
-//! shell-quoted paths and web links as they are, each followed by a space; text as it came.
+//! paths and web links as their address, both shell-quoted and each followed by a space; text
+//! as it came.
 
 use repriseapp::{Accept, DragAction, DropKind, Dropped, Event, Offered, Reply, Uri};
 use reprisekit::textedit::paths_line;
@@ -37,7 +38,7 @@ pub(crate) fn typed(data: &Dropped) -> String {
             uris.iter()
                 .map(|u| match u {
                     Uri::File(p) => paths_line(&[p]),
-                    Uri::Url { url, .. } => url.clone(),
+                    Uri::Url { url, .. } => paths_line(&[url.as_str()]),
                 })
                 .collect(),
         ),
@@ -72,14 +73,16 @@ mod tests {
     }
 
     #[test]
-    fn a_uri_list_types_its_files_as_paths_and_its_links_as_they_are() {
+    fn a_uri_list_types_its_files_as_paths_and_its_links_quoted_alike() {
         let list = "# a comment\r\nfile:///home/u/a%20b.txt\r\nfile://localhost/home/u/c\r\n\
-                    file://elsewhere/home/u/d\r\nhttps://example.com/?q=1&r=2\r\n";
+                    file://elsewhere/home/u/d\r\nhttps://example.com/?q=1&r=2\r\n\
+                    https://example.com/a\r\nhttps://x.test/$(id)\r\n";
         let uris =
             repriseapp::dnd::decode_drop(list.as_bytes(), DropKind::Uris, repriseapp::URI_LIST);
         assert_eq!(
             typed(&uris),
-            "'/home/u/a b.txt' /home/u/c https://example.com/?q=1&r=2 ",
+            "'/home/u/a b.txt' /home/u/c 'https://example.com/?q=1&r=2' https://example.com/a \
+             'https://x.test/$(id)' ",
             "another host's file is not here and is left out"
         );
     }

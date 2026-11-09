@@ -41,7 +41,7 @@ fn scan(text: &str) -> (Vec<String>, Vec<String>) {
         if key.eq_ignore_ascii_case("host") {
             hosts.extend(
                 words
-                    .filter(|w| !w.contains(['*', '?']) && !w.starts_with('!'))
+                    .filter(|w| !w.contains(['*', '?']) && !w.starts_with(['!', '-']))
                     .map(str::to_owned),
             );
         } else if key.eq_ignore_ascii_case("include") {
@@ -112,6 +112,11 @@ mod tests {
     fn ssh_hosts_skip_wildcards() {
         let text = "Host a b *.lan !x\n  User me\nHost ?ab\nMatch host c exec true\n  Port 2\n# Host d\nhost=e\n";
         assert_eq!(parse(text), ["a", "b", "e"]);
+    }
+
+    #[test]
+    fn a_host_word_starting_with_a_dash_is_skipped() {
+        assert_eq!(parse("Host -oProxyCommand=x box\n"), ["box"]);
     }
 
     #[test]

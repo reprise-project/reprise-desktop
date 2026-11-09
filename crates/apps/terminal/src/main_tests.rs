@@ -211,6 +211,34 @@ fn new_tab_inherits_cwd() {
     });
 }
 
+/// Tab `tab`'s directory once its program has set the title `done`.
+fn cwd_when_done(t: &mut Terminal, ctx: &mut Ctx, tab: usize) -> Option<std::path::PathBuf> {
+    until("the title after the OSC 7 arrives", || {
+        t.event(MAIN, Event::Wake, ctx);
+        t.w.tabs.list[tab].title() == "done"
+    });
+    t.w.tabs.list[tab].cwd()
+}
+
+#[test]
+fn an_osc7_from_a_program_other_than_the_shell_is_ignored() {
+    let mut ctx = test_ctx();
+    let child = "printf '\\033]7;file:///usr\\007\\033]0;done\\007'; sleep 5";
+    let mut t = terminal(&["/bin/sh", "-c", &format!("set -m; sh -c \"{child}\"")]);
+    let shell = cwd::cwd_of(t.w.tabs.list[0].pid());
+    assert_ne!(shell.as_deref(), Some(Path::new("/usr")));
+    assert_eq!(cwd_when_done(&mut t, &mut ctx, 0), shell);
+}
+
+#[test]
+fn an_osc7_naming_no_directory_falls_back_to_the_shell_s() {
+    let mut ctx = test_ctx();
+    let script = "printf '\\033]7;file:///nonexistent-reprise\\007\\033]0;done\\007'; exec cat";
+    let mut t = terminal(&["/bin/sh", "-c", script]);
+    let shell = cwd::cwd_of(t.w.tabs.list[0].pid());
+    assert_eq!(cwd_when_done(&mut t, &mut ctx, 0), shell);
+}
+
 #[test]
 fn shortcuts_switch_close_and_zoom() {
     let mut ctx = test_ctx();
