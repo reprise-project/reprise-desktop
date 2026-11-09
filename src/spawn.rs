@@ -579,9 +579,8 @@ pub(crate) fn login_manager_session_runs_reprise() -> bool {
     })
 }
 
-/// Whether Reprise runs in another of the user's sessions that a login manager opened, or in one
-/// logind opened before this one's: the sessions a text login that deferred goes on deferring to,
-/// so of two that deferred to one session the older takes the user manager once it ends.
+/// Whether Reprise runs in another of the user's sessions that a login manager or an older
+/// logind session opened; a deferred text login keeps deferring to those.
 pub(crate) fn login_manager_or_older_session_runs_reprise() -> bool {
     let cgroup = reprisebus::logind::own_cgroup();
     let own = reprisebus::logind::session_of_cgroup(&cgroup).map(|id| {

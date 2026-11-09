@@ -106,9 +106,8 @@ pub fn label_for(file_name: &str, globs: &MimeDb, shown: Extensions) -> String {
     stem.to_string()
 }
 
-/// `text` as one line of the UI from a source Reprise doesn't control (a drive's label): control
-/// and format characters (bidi marks, zero widths, tags) and line breaks dropped, at most `max`
-/// characters kept.
+/// Outside `text` (a drive's label) as one UI line of at most `max` characters, without control
+/// or format characters (bidi marks, zero widths, tags) or line breaks.
 pub fn shown_line(text: &str, max: usize) -> String {
     text.chars()
         .filter(|&c| !c.is_control() && !invisible(c))

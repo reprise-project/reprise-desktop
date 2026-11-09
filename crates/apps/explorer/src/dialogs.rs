@@ -51,11 +51,8 @@ pub struct Confirm {
     /// Undo stopped at an item its Recycle Bin refuses: Yes undoes again, erasing it
     /// ([`reprisefs::undo::UndoStack::undo_erasing`]).
     pub undo_erase: bool,
-    /// The question before running `paths[0]` (`confirm_scripts`), about what [`Asked`] says:
-    /// Run runs a script as the [`ScriptOpen`] says, Open in Notepad opens it there.
-    ///
-    /// [`Asked`]: reprisefs::program::Asked
-    /// [`ScriptOpen`]: reprisefs::program::ScriptOpen
+    /// The question before running `paths[0]` (`confirm_scripts`): Run runs a script as the
+    /// `ScriptOpen` says, Open in Notepad opens it there.
     pub script: Option<(reprisefs::program::ScriptOpen, reprisefs::program::Asked)>,
     /// The question before mounting the disk image `paths[0]`: Mount mounts it.
     pub mount: bool,

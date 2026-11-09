@@ -496,9 +496,8 @@ fn prepare_socket(sock: &UnixStream) -> io::Result<()> {
     sock.set_write_timeout(Some(WRITE_WAIT))
 }
 
-/// `pam_authenticate` and the account step; Ok says whether the password expired unchanged. A
-/// remote login's `PAM_RHOST` is set for both, so the auth log names the address, and cleared
-/// after, so logind opens a local seat0 session.
+/// `pam_authenticate` and the account step; Ok says whether the password expired unchanged.
+/// `PAM_RHOST` is set for both, for the auth log, and cleared after so logind opens seat0.
 fn check(
     pam: &mut impl LoginPam,
     rhost: Option<&str>,

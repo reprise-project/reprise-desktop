@@ -784,9 +784,8 @@ impl Dialog {
         }
     }
 
-    /// The question before the `program` file at `path` runs (`confirm_scripts`): Run runs it
-    /// (a script as `open` says) and remembers the pick, a script's Open in Notepad opens it
-    /// there, Cancel leaves it. Run is the default for a script, Cancel for a binary.
+    /// The question before the `program` file at `path` runs (`confirm_scripts`); Run remembers
+    /// the pick and runs a script as `open` says.
     pub fn ask_run(
         path: std::path::PathBuf,
         open: reprisefs::program::ScriptOpen,
@@ -813,9 +812,8 @@ impl Dialog {
         Dialog::run_question(&path, asked, buttons)
     }
 
-    /// The question before the file at `path`, whose type's program runs it, opens in `with` (a
-    /// desktop entry id) or its default program: Run opens it and remembers the pick, into the
-    /// recent files with `recent`; Cancel, the default, leaves it.
+    /// The question before `path`, which its type's program runs, opens in `with` (a desktop
+    /// entry id) or its default program; Run remembers the pick, Cancel is the default.
     pub fn ask_open(path: std::path::PathBuf, with: Option<String>, recent: bool) -> Dialog {
         let asked = reprisefs::program::Asked::Typed;
         let labels = asked.buttons();

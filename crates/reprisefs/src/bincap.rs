@@ -420,13 +420,8 @@ pub(crate) fn gone(files: &Path) {
     }
 }
 
-/// Erase the oldest items of the trash at `root` (by their `.trashinfo`
-/// DeletionDate, an item with none counting as oldest, then by name)
-/// until `incoming` more bytes fit under `cap`, given it holds `used`.
-/// Each goes with its `.trashinfo`, reached without following a link
-/// ([`crate::bindir::BinDir`]). Returns what the trash holds after, and
-/// the `files/` path of each item erased. An item that cannot be erased
-/// stops the purge with its error.
+/// Erase the trash at `root`'s oldest items, never through a link, until `incoming` more bytes
+/// fit under `cap`; returns what it holds after and each erased item's `files/` path.
 pub(crate) fn make_room(
     root: &Path,
     used: u64,

@@ -6,9 +6,8 @@ use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 
-/// `renameat2(RENAME_NOREPLACE)`. Where the file system lacks it, a file is hard-linked then
-/// unlinked, which also never replaces; a folder, or a file where links fail, is checked then
-/// renamed.
+/// `renameat2(RENAME_NOREPLACE)`; without it a file is hard-linked then unlinked, and a folder
+/// (or a file where links fail) is checked then renamed.
 pub(crate) fn rename_free(
     from_dir: BorrowedFd,
     from: &CStr,

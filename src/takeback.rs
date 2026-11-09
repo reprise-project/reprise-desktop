@@ -47,10 +47,8 @@ pub trait World {
     fn run(&mut self, argv: &[String]);
 }
 
-/// Nothing happens while a Reprise session the text-login `env` gives way to runs, or while
-/// `manager` (the user manager's `WAYLAND_DISPLAY`) names another display that accepts
-/// connections. Otherwise the bus names come back, and the variables and the target too when
-/// `manager` names one of `holder`'s: the displays of the session this one gave way to.
+/// Takes the bus names back unless the session `env` gives way to runs or `manager` (the user
+/// manager's display) still accepts; the variables and target too when `manager` is `holder`'s.
 pub fn take_back(
     env: &SessionEnv,
     manager: Option<&str>,
@@ -325,9 +323,8 @@ fn took(state: &mut State, outcome: Outcome) {
     state.env.defers_user_units = false;
 }
 
-/// Sends [`Msg::Ended`] for each session logind removes, and [`Msg::Holder`] for the compositor
-/// of each other Reprise session holding the tray's name; then one `Ended` if `defers`, for a
-/// holder that ended before this watch began.
+/// Sends [`Msg::Ended`] for each session logind removes (once more up front if `defers`), and
+/// [`Msg::Holder`] for each other Reprise session's compositor holding the tray's name.
 async fn watch(ended: Sender<Msg>, defers: bool) {
     use crate::power::{LOGIN1_MANAGER, LOGIN1_NAME, LOGIN1_PATH, signal_rule};
     use futures_util::stream::{BoxStream, SelectAll, StreamExt};
@@ -436,9 +433,8 @@ mod tests {
         }
     }
 
-    /// Answers `gives_way` in turn from `gives_way`, the last one repeating; `live` are the
-    /// displays that accept a connection. `did` lists what was done, commands by their first
-    /// three words.
+    /// Answers `gives_way` in turn, the last repeating; `live` displays accept a connection.
+    /// `did` lists what was done, commands by their first three words.
     struct Fake {
         gives_way: Vec<bool>,
         asked: std::cell::RefCell<Vec<GivesWay>>,

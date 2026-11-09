@@ -398,11 +398,8 @@ pub fn file_uri(path: &Path) -> String {
     uri
 }
 
-/// The PNG at `entry` and its text, if the file is no larger than `cap`
-/// and its text vouches for `path` as `meta` describes it, on the file system
-/// `volume` names when the entry names one. A hit's mtime is touched, since
-/// the trim judges use by it; a read-only cache still answers, it just
-/// forgets in write order.
+/// The PNG at `entry` and its text, if it is within `cap` and vouches for `path`, `meta` and
+/// `volume`. A hit's mtime is touched, since the trim judges use by it.
 fn read_valid(
     entry: &Path,
     path: &Path,

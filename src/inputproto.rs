@@ -111,9 +111,8 @@ impl InputProto {
 }
 
 impl State {
-    /// Whether an app's RemoteDesktop input is held back: the side it lands on is locked, by the
-    /// desktop's lock or a locker client's. In lock mode that is the remote side, as an app's
-    /// input is never the computer's own. Only releases of what it holds still go.
+    /// Whether an app's RemoteDesktop input is held back because the side it lands on (the remote
+    /// one in lock mode) is locked; only releases of what it holds still go.
     pub fn app_input_locked(&self) -> bool {
         self.desktop_locked() || crate::sessionlock::holds_input(self)
     }
