@@ -68,6 +68,7 @@ impl EventListener for Proxy {
                 TermEvent::PtyWrite(s) => inbox.replies.push(Answer::Text(s)),
                 TermEvent::ColorRequest(i, f) => inbox.replies.push(Answer::Colour(i, f)),
                 TermEvent::TextAreaSizeRequest(f) => inbox.replies.push(Answer::Size(f)),
+                TermEvent::ClipboardStore(_, text) if text.len() > STORE_MAX => return,
                 TermEvent::ClipboardStore(ClipboardType::Clipboard, text) => {
                     inbox.copied.clipboard = Some(text)
                 }
@@ -84,6 +85,9 @@ impl EventListener for Proxy {
         self.waker.wake();
     }
 }
+
+/// The most text one OSC 52 store puts on a clipboard, in bytes; a larger store is dropped.
+pub const STORE_MAX: usize = 1 << 20;
 
 /// The longest title a program can set, in chars.
 pub const TITLE_MAX: usize = 256;
@@ -440,6 +444,27 @@ mod tests {
     #[test]
     fn a_title_loses_its_control_characters() {
         assert_eq!(shown_title("a\nb\u{9b}c\td"), "abcd");
+    }
+
+    #[test]
+    fn a_store_over_the_cap_is_dropped() {
+        let inbox = Arc::new(Mutex::new(Inbox::default()));
+        let proxy = Proxy {
+            inbox: inbox.clone(),
+            waker: Waker::noop(),
+        };
+        let store = |n| TermEvent::ClipboardStore(ClipboardType::Clipboard, "x".repeat(n));
+        proxy.send_event(store(STORE_MAX + 1));
+        assert_eq!(inbox.lock().unwrap().copied.clipboard, None);
+        proxy.send_event(store(STORE_MAX));
+        let kept = inbox
+            .lock()
+            .unwrap()
+            .copied
+            .clipboard
+            .as_ref()
+            .map(String::len);
+        assert_eq!(kept, Some(STORE_MAX));
     }
 
     #[test]

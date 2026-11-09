@@ -4,10 +4,11 @@
 
 /// The longest OSC payload passed on, in bytes; a longer one is dropped whole.
 pub const OSC_MAX: usize = 64 << 10;
-/// The longest OSC 52 payload passed on: the base64 of a 1 MiB store and its selector. Past
+/// The longest OSC 52 payload passed on: the base64 of a [`STORE_MAX`](crate::tab::STORE_MAX)
+/// store and its selector. Past
 /// [`OSC_MAX`] an OSC 52 streams to the parser instead of being held, so past this cap its rest
 /// becomes one byte no base64 decodes.
-pub const OSC52_MAX: usize = (1usize << 20).div_ceil(3) * 4 + 64;
+pub const OSC52_MAX: usize = crate::tab::STORE_MAX.div_ceil(3) * 4 + 64;
 /// The deepest the title stack grows (CSI 22 t pushes, CSI 23 t pops); a push past it is dropped.
 pub const DEPTH_MAX: usize = 16;
 /// The longest CSI held while it may still be a push past [`DEPTH_MAX`]; a longer one is dropped.

@@ -1182,6 +1182,7 @@ fn a_program_s_clipboard_store_is_copied() {
     let script =
         "printf '\\033]52;c;aGVsbG8=\\007\\033]52;p;d29ybGQ=\\007\\033]52;c;?\\007'; sleep 5";
     let mut t = terminal(&["sh", "-c", script]);
+    t.event(MAIN, Event::Focus(true), &mut ctx);
     let (mut copy, mut primary) = (None, None);
     until("both stores arrive", || {
         let reply = t.event(MAIN, Event::Wake, &mut ctx);
@@ -1195,6 +1196,35 @@ fn a_program_s_clipboard_store_is_copied() {
         t.w.tabs.list[0].written.borrow().is_empty(),
         "a load request is not answered"
     );
+}
+
+const STORE_THEN_DONE: &str = "printf '\\033]52;c;aGVsbG8=\\007\\033]0;done\\007'; sleep 5";
+
+/// What `t` copies until tab `tab` takes the title its program sets after its store.
+fn copied_until_done(t: &mut Terminal, ctx: &mut Ctx, tab: usize) -> Option<String> {
+    let mut copy = None;
+    until("the title after the store arrives", || {
+        copy = t.event(MAIN, Event::Wake, ctx).copy.or(copy.take());
+        t.w.tabs.list[tab].title() == "done"
+    });
+    copy
+}
+
+#[test]
+fn a_store_from_an_unfocused_window_is_dropped() {
+    let mut ctx = test_ctx();
+    let mut t = terminal(&["sh", "-c", STORE_THEN_DONE]);
+    assert_eq!(copied_until_done(&mut t, &mut ctx, 0), None);
+}
+
+#[test]
+fn a_store_from_a_background_tab_is_dropped() {
+    let mut ctx = test_ctx();
+    let mut t = terminal(&["sh", "-c", STORE_THEN_DONE]);
+    t.event(MAIN, Event::Focus(true), &mut ctx);
+    t.spawn_tab(&launch(&["sleep", "5"]), None);
+    assert_eq!(t.w.tabs.strip.open, 1, "the new tab is open");
+    assert_eq!(copied_until_done(&mut t, &mut ctx, 0), None);
 }
 
 #[test]
