@@ -16,9 +16,8 @@
 //! The X input focus and `_NET_WM_ICON` go through a second connection
 //! on a thread of its own (`helper`).
 //!
-//! Xwayland runs with `-auth` and a cookie (`auth`), so a program needs `XAUTHORITY` as well as
-//! the socket: a same-user process that can reach the abstract socket, such as a Flatpak app
-//! with network access and no X11 access, is refused.
+//! Xwayland runs with `-auth` and a cookie (`auth`): a program that reaches a socket without
+//! `XAUTHORITY`, such as a Flatpak with network access and no X11 access, is refused.
 //!
 //! The server starts lazily: Reprise holds the display and its sockets
 //! from login (`sockets`), so `DISPLAY` is good at once, and spawns
@@ -231,6 +230,13 @@ fn watch(state: &mut State) {
     }
 }
 
+/// Xwayland's arguments past Smithay's own: the handed-over sockets and the cookie file.
+fn server_args(sockets: Vec<String>, auth: &std::path::Path) -> Vec<std::ffi::OsString> {
+    let mut args: Vec<std::ffi::OsString> = sockets.into_iter().map(Into::into).collect();
+    args.extend(["-auth".into(), auth.as_os_str().to_owned()]);
+    args
+}
+
 /// An X11 program connected: spawn Xwayland with the display's sockets,
 /// so it answers the program.
 fn spawn(state: &mut State) {
@@ -245,13 +251,12 @@ fn spawn(state: &mut State) {
         return;
     };
     let display = sockets.display();
-    let auth = cookie.path().as_os_str().to_owned();
+    let auth = cookie.path().to_owned();
     let handed = match sockets.hand_over() {
         Ok(h) => h,
         Err(e) => return give_up(state, &e.to_string()),
     };
-    let mut args: Vec<std::ffi::OsString> = handed.args().into_iter().map(Into::into).collect();
-    args.extend(["-auth".into(), auth]);
+    let args = server_args(handed.args(), &auth);
     let spawned = crate::spawn::with_signals_unblocked(|| {
         XWayland::spawn(
             &state.dh,
@@ -1097,6 +1102,18 @@ mod tests {
     use super::*;
 
     use reprisekit::classic::frame::FrameGeometry;
+
+    #[test]
+    fn xwayland_is_told_the_cookie_file() {
+        let args = server_args(
+            vec!["-listenfd".into(), "7".into()],
+            std::path::Path::new("/run/user/1000/reprise/xauth-1"),
+        );
+        assert_eq!(
+            args,
+            ["-listenfd", "7", "-auth", "/run/user/1000/reprise/xauth-1"]
+        );
+    }
 
     fn xterm() -> Premap {
         Premap {
