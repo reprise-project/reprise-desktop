@@ -1214,6 +1214,16 @@ sharing and remote control grants yet.
   says why. Restore walks the folders from the drive's top without following
   a link, so an item never lands off its drive. The home trash keeps
   absolute paths.
+- **Extracting archives.** Each archive comes out into a fresh folder of its
+  own. An entry from the root or with a `..` step refuses the archive before
+  anything is written, and so does one past the folder's limits: 90% of its
+  free space, and 1,000,000 entries or its free inodes, whichever is fewer.
+  A symbolic link that resolves outside the extraction, or a file hard-linked
+  from outside it, refuses it afterwards and the folder is removed. Extract
+  Here then moves the entries into place, writing over nothing and merging
+  only into real folders. An archive with a hidden top-level entry stays in
+  its new folder, as with Extract to, so Extract Here can't add autostart
+  entries or settings to a home folder.
 - **Programs and scripts.** A file with the owner's execute bit that starts
   with `#!` or is an ELF binary runs when you open it, from the desktop,
   Explorer or a search. A script runs with no window (`script_open = "run"`,

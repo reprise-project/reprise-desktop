@@ -68,7 +68,7 @@ fn run(c: &Compress, m: &Meter, path: Option<&OsStr>, send: &dyn Fn(ArchiveEvent
         Err(e) => {
             let name = c.zip.file_name().unwrap_or_default().to_string_lossy();
             let why = match e {
-                Failure::Tool(why) | Failure::Climbs(why) => why,
+                Failure::Tool(why) | Failure::Climbs(why) | Failure::Refused(why) => why,
                 Failure::Cancelled => "the operation was cancelled.".into(),
             };
             Some(ArchiveEvent::Failed {

@@ -48,8 +48,12 @@ The file manager, and the default for folders.
   rename with F2, Move To, Copy To, Open With, and Send To a zip file, the
   desktop, a mail, a removable drive or a phone KDE Connect reaches. An archive (zip, 7z, tar plain or
   compressed) has Extract Here, which writes over nothing already there, and
-  Extract to, into a new folder named after it; an archive with an entry
-  that would land outside that folder is refused. Compress to 'name.zip'
+  Extract to, into a new folder named after it. An archive with a hidden
+  top-level entry (`.config`, `.local`) goes into a new folder for Extract
+  Here too. One with an entry or a link that would land outside its folder,
+  or that would fill more than 90% of the free space or hold more than
+  1,000,000 entries, is refused ([security.md](security.md#programs-and-files)).
+  Compress to 'name.zip'
   (or Send To > Compressed (zipped) Folder) zips the selection beside it,
   named after the one item or the folder of several, with progress and
   Cancel; a cancelled or failed zip leaves no file behind. F2 with several

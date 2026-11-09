@@ -1,11 +1,12 @@
-//! Extracting archives with `bsdtar`, which reads zip, 7z and tar plain or compressed. `-P` is
-//! never passed, so bsdtar strips a leading `/` and will not write through a symlink.
+//! Extracting archives with `bsdtar`, which reads zip, 7z and tar plain or compressed. Each archive
+//! comes out into a fresh folder of its own, which is checked for links leading out of it, then
+//! kept (Extract to) or moved into place (Extract Here). `-P` is never passed.
 
 use crate::names;
 use crate::progress::{Decision, Meter, Phase, Totals};
 use std::ffi::{OsStr, OsString};
 use std::io::Read;
-use std::os::fd::AsRawFd;
+use std::os::fd::{AsFd, AsRawFd, FromRawFd};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -33,6 +34,12 @@ const SUFFIXES: [&str; 10] = [
 
 const SLICE_MS: i32 = 50;
 
+/// The share of a folder's free space one extraction may fill, in percent.
+pub const FREE_SHARE_PERCENT: u64 = 90;
+
+/// The most entries one archive extracts; fewer where the file system has fewer free inodes.
+pub const MAX_ENTRIES: u64 = 1_000_000;
+
 pub fn is_archive(mime: &str) -> bool {
     MIMES.contains(&mime)
 }
@@ -49,24 +56,89 @@ pub fn folder_name(archive: &OsStr) -> OsString {
 }
 
 pub fn list_argv(archive: &Path) -> Vec<OsString> {
-    vec!["bsdtar".into(), "-tf".into(), archive.into()]
+    ["bsdtar", "-tv", "--numeric-owner", "-f"]
+        .map(OsString::from)
+        .into_iter()
+        .chain([archive.into()])
+        .collect()
 }
 
-/// `keep_old` leaves a file already in `into` as it is instead of writing over it.
-pub fn extract_argv(archive: &Path, into: &Path, keep_old: bool) -> Vec<OsString> {
-    let mut v: Vec<OsString> = vec!["bsdtar".into(), "-xv".into()];
-    if keep_old {
-        v.push("-k".into());
-    }
-    v.extend(["-f".into(), archive.into(), "-C".into(), into.into()]);
-    v
+pub fn extract_argv(archive: &Path, into: &Path) -> Vec<OsString> {
+    ["bsdtar", "-xv", "-f"]
+        .map(OsString::from)
+        .into_iter()
+        .chain([archive.into(), "-C".into(), into.into()])
+        .collect()
 }
 
-/// Whether a listed entry name reaches above the folder it is extracted into.
+/// Whether a listed entry name lands outside the folder it is extracted into: a `..` step, or a
+/// path from the root (which bsdtar would strip).
 pub fn climbs_out(entry: &[u8]) -> bool {
     Path::new(OsStr::from_bytes(entry))
         .components()
-        .any(|c| c == Component::ParentDir)
+        .any(|c| matches!(c, Component::ParentDir | Component::RootDir))
+}
+
+/// What an archive's listing holds.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Listed {
+    pub(crate) entries: u64,
+    /// The bytes its files hold, as their headers say.
+    pub(crate) bytes: u64,
+    /// A top-level entry's name starts with a `.`.
+    pub(crate) hidden: bool,
+}
+
+/// How much one extraction may write into a folder.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Limits {
+    pub(crate) bytes: u64,
+    pub(crate) entries: u64,
+}
+
+impl Limits {
+    /// [`FREE_SHARE_PERCENT`] of `free` bytes, and [`MAX_ENTRIES`] or `inodes` free, whichever
+    /// is fewer (`None`: the file system does not count them).
+    pub(crate) fn from_free(free: u64, inodes: Option<u64>) -> Limits {
+        Limits {
+            bytes: (u128::from(free) * u128::from(FREE_SHARE_PERCENT) / 100) as u64,
+            entries: inodes.map_or(MAX_ENTRIES, |n| n.min(MAX_ENTRIES)),
+        }
+    }
+
+    /// [`Limits::from_free`] of the file system holding `dir`; none it cannot ask.
+    fn of(dir: &Path) -> Limits {
+        let Ok(c) = std::ffi::CString::new(dir.as_os_str().as_bytes()) else {
+            return Limits::from_free(u64::MAX, None);
+        };
+        // SAFETY: `c` is NUL-terminated and `st` is a writable `statvfs` the call fills in.
+        let st = unsafe {
+            let mut st: libc::statvfs = std::mem::zeroed();
+            if libc::statvfs(c.as_ptr(), &mut st) != 0 {
+                return Limits::from_free(u64::MAX, None);
+            }
+            st
+        };
+        let free = (st.f_bavail as u64).saturating_mul(st.f_frsize as u64);
+        Limits::from_free(free, (st.f_files > 0).then_some(st.f_favail as u64))
+    }
+
+    pub(crate) fn admit(self, l: Listed) -> Result<(), Failure> {
+        if l.entries > self.entries {
+            return Err(Failure::Refused(format!(
+                "it holds {} entries, more than the {} one extraction here takes.",
+                l.entries, self.entries
+            )));
+        }
+        if l.bytes > self.bytes {
+            return Err(Failure::Refused(format!(
+                "it expands to {}, more than the {} the free space here allows.",
+                crate::props::short_size(l.bytes),
+                crate::props::short_size(self.bytes)
+            )));
+        }
+        Ok(())
+    }
 }
 
 /// One archive of a batch: into its own folder, or `here` beside it.
@@ -102,6 +174,8 @@ pub struct ArchiveJob {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Failure {
     Climbs(String),
+    /// Why Reprise will not extract it.
+    Refused(String),
     Tool(String),
     Cancelled,
 }
@@ -112,15 +186,15 @@ impl Failure {
             Failure::Climbs(entry) => format!(
                 "Cannot extract {name}: it holds {entry}, which would land outside the folder."
             ),
-            Failure::Tool(why) => format!("Cannot extract {name}: {why}"),
+            Failure::Tool(why) | Failure::Refused(why) => format!("Cannot extract {name}: {why}"),
             Failure::Cancelled => format!("Cannot extract {name}: the operation was cancelled."),
         }
     }
 }
 
 impl ArchiveJob {
-    /// Lists every archive first (the totals, and a `..` entry refuses its archive), then extracts
-    /// each in order on a thread. A failed archive holds the job for a [`Decision`].
+    /// Lists every archive first (the totals; an entry landing outside refuses its archive), then
+    /// extracts each in order on a thread. A failed archive holds the job for a [`Decision`].
     pub fn extract(items: Vec<Archive>, wake: impl Fn() + Send + 'static) -> ArchiveJob {
         let meter = Arc::new(Meter::default());
         meter.ask_on_failure();
@@ -184,7 +258,7 @@ impl ArchiveJob {
 
 fn run(items: &[Archive], m: &Meter, send: &dyn Fn(ArchiveEvent) -> bool) {
     let name = |a: &Archive| a.src.file_name().unwrap_or_default().to_owned();
-    let mut lists: Vec<Result<u64, Failure>> = Vec::new();
+    let mut lists: Vec<Result<Listed, Failure>> = Vec::new();
     for a in items {
         m.set_current(&name(a));
         let listed = list(&a.src, m);
@@ -192,8 +266,11 @@ fn run(items: &[Archive], m: &Meter, send: &dyn Fn(ArchiveEvent) -> bool) {
             send(ArchiveEvent::Finished);
             return;
         }
-        if let Ok(n) = listed {
-            m.add_totals(Totals { bytes: 0, items: n });
+        if let Ok(l) = listed {
+            m.add_totals(Totals {
+                bytes: 0,
+                items: l.entries,
+            });
         }
         lists.push(listed);
     }
@@ -209,12 +286,15 @@ fn run(items: &[Archive], m: &Meter, send: &dyn Fn(ArchiveEvent) -> bool) {
         m.set_current(&name(a));
         if std::mem::take(&mut again) && lists[index].is_err() {
             lists[index] = list(&a.src, m);
-            if let Ok(n) = lists[index] {
-                m.add_totals(Totals { bytes: 0, items: n });
+            if let Ok(l) = lists[index] {
+                m.add_totals(Totals {
+                    bytes: 0,
+                    items: l.entries,
+                });
             }
         }
         let r = match &lists[index] {
-            Ok(_) => extract(a, m, done),
+            Ok(l) => extract(a, m, done, *l),
             Err(e) => Err(e.clone()),
         };
         let ev = match r {
@@ -242,8 +322,8 @@ fn run(items: &[Archive], m: &Meter, send: &dyn Fn(ArchiveEvent) -> bool) {
                 Decision::Pending | Decision::Abort => break,
             }
         }
-        if let Ok(n) = lists[index] {
-            done += n;
+        if let Ok(l) = lists[index] {
+            done += l.entries;
             m.settle(Totals {
                 bytes: 0,
                 items: done,
@@ -254,26 +334,42 @@ fn run(items: &[Archive], m: &Meter, send: &dyn Fn(ArchiveEvent) -> bool) {
     send(ArchiveEvent::Finished);
 }
 
-/// How many entries `archive` lists, refusing one that climbs out.
-fn list(archive: &Path, m: &Meter) -> Result<u64, Failure> {
-    count(&list_argv(archive), m)
+fn list(archive: &Path, m: &Meter) -> Result<Listed, Failure> {
+    listing(&list_argv(archive), m)
 }
 
-/// Counts the lines `argv` prints, draining its stderr on a thread so a chatty listing cannot
-/// fill that pipe and stall.
-fn count(argv: &[OsString], m: &Meter) -> Result<u64, Failure> {
-    let mut child = spawn(argv, true, None)?;
+/// Reads the `bsdtar -tv` listing `argv` prints, refusing an entry that lands outside, and
+/// draining its stderr on a thread so a chatty listing cannot fill that pipe and stall.
+fn listing(argv: &[OsString], m: &Meter) -> Result<Listed, Failure> {
+    let mut child = spawn_with(argv, true, c_dates)?;
     let out = child.stdout.take().ok_or_else(no_pipe)?;
     let mut err = child.stderr.take().ok_or_else(no_pipe)?;
     let drain = std::thread::spawn(move || tail(&mut err, STDERR_TAIL));
-    let mut n = 0;
+    let mut got = Listed::default();
     let mut climbs = None;
-    let read = lines(&mut child, out, m, |entry| {
+    let mut unread = false;
+    let read = lines(&mut child, out, m, |line| {
+        let Some((kind, size, rest)) = listed_line(line) else {
+            unread = true;
+            return true;
+        };
+        let cut = |sep: &[u8]| {
+            (rest.windows(sep.len()))
+                .position(|w| w == sep)
+                .map_or(rest, |at| &rest[..at])
+        };
+        let entry = match kind {
+            b'l' => cut(b" -> "),
+            b'h' => cut(b" link to "),
+            _ => rest,
+        };
         if climbs_out(entry) {
             climbs = Some(String::from_utf8_lossy(entry).into_owned());
             return false;
         }
-        n += 1;
+        got.entries += 1;
+        got.bytes = got.bytes.saturating_add(size);
+        got.hidden |= hidden_at_top(entry);
         true
     });
     let status = finish(child, &read);
@@ -282,31 +378,64 @@ fn count(argv: &[OsString], m: &Meter) -> Result<u64, Failure> {
         return Err(Failure::Climbs(entry));
     }
     match status? {
-        true => Ok(n),
+        true if unread => Err(Failure::Tool(UNREAD.into())),
+        true => Ok(got),
         false => Err(Failure::Tool(said(&stderr, UNREAD))),
     }
 }
 
-/// Extracts `a`, the batch having counted `before` items: into a new folder named after it,
-/// which a failure removes again, or beside it, writing over nothing already there.
-fn extract(a: &Archive, m: &Meter, before: u64) -> Result<PathBuf, Failure> {
+/// The listing's dates in the C locale's three words, the rest of the locale kept.
+fn c_dates(cmd: &mut Command) {
+    if let Some(all) = std::env::var_os("LC_ALL") {
+        cmd.env_remove("LC_ALL").env("LC_CTYPE", all);
+    }
+    cmd.env("LC_TIME", "C");
+}
+
+/// The type letter, size and the rest (the name, then a link's target) of a `bsdtar -tv
+/// --numeric-owner` line: mode, links, uid, gid, size, a three-word date, one space.
+fn listed_line(line: &[u8]) -> Option<(u8, u64, &[u8])> {
+    let mut rest = line;
+    let mut words = [&line[..0]; 8];
+    for w in &mut words {
+        rest = &rest[rest.iter().position(|&b| b != b' ')?..];
+        (*w, rest) = rest.split_at(rest.iter().position(|&b| b == b' ')?);
+    }
+    let size = std::str::from_utf8(words[4]).ok()?.parse().ok()?;
+    Some((*words[0].first()?, size, rest.strip_prefix(b" ")?))
+}
+
+fn hidden_at_top(entry: &[u8]) -> bool {
+    let first = Path::new(OsStr::from_bytes(entry))
+        .components()
+        .find_map(|c| match c {
+            Component::Normal(n) => Some(n.as_bytes().starts_with(b".")),
+            _ => None,
+        });
+    first == Some(true)
+}
+
+/// Extracts `a`, the batch having counted `before` items, into a fresh folder that Extract to keeps
+/// and Extract Here merges into place. docs/security.md "Extracting archives" has the rules.
+fn extract(a: &Archive, m: &Meter, before: u64, listed: Listed) -> Result<PathBuf, Failure> {
     let dir = a
         .src
         .parent()
         .ok_or_else(|| Failure::Tool("it has no folder".into()))?;
-    let into = match a.here {
-        true => dir.to_path_buf(),
-        false => make_folder(dir, &folder_name(a.src.file_name().unwrap_or_default()))?,
-    };
-    let undo = |e: Failure| {
-        if !a.here
-            && let Err(e) = crate::ops::remove_tree(&into)
-        {
+    Limits::of(dir).admit(listed)?;
+    let here = a.here && !listed.hidden;
+    let name = folder_name(a.src.file_name().unwrap_or_default());
+    let into = make_folder(dir, &if here { staging(&name) } else { name })?;
+    let remove = || {
+        if let Err(e) = crate::ops::remove_tree(&into) {
             log::warn!("reprisefs: cannot remove {}: {e}", into.display());
         }
+    };
+    let undo = |e: Failure| {
+        remove();
         e
     };
-    let argv = extract_argv(&a.src, &into, a.here);
+    let argv = extract_argv(&a.src, &into);
     let mut child = spawn(&argv, false, None).map_err(undo)?;
     let err = child.stderr.take().ok_or_else(no_pipe).map_err(undo)?;
     let mut n = 0;
@@ -329,7 +458,133 @@ fn extract(a: &Archive, m: &Meter, before: u64) -> Result<PathBuf, Failure> {
     if !ok {
         return Err(undo(Failure::Tool(said(last.as_bytes(), UNREAD))));
     }
-    Ok(into)
+    match leads_out(&into) {
+        Ok(None) => {}
+        Ok(Some(entry)) => {
+            return Err(undo(Failure::Refused(format!(
+                "it holds {entry}, a link to outside the folder."
+            ))));
+        }
+        Err(e) => return Err(undo(Failure::Tool(e.to_string()))),
+    }
+    if !here {
+        return Ok(into);
+    }
+    let merged = merge_into(&into, dir);
+    remove();
+    merged.map(|()| dir.to_path_buf())
+}
+
+/// The hidden folder Extract Here fills before moving its entries into place.
+fn staging(name: &OsStr) -> OsString {
+    let mut s = OsString::from(".");
+    s.push(name);
+    s.push(".extracting");
+    s
+}
+
+/// The first entry under `root`, a folder just extracted into, that leads outside it: a link
+/// that does not resolve beneath `root`, or a file with a hard link from elsewhere.
+pub(crate) fn leads_out(root: &Path) -> std::io::Result<Option<String>> {
+    use std::os::unix::fs::MetadataExt;
+    let base = std::fs::File::open(root)?;
+    let mut linked: std::collections::HashMap<(u64, u64), (u64, PathBuf)> = Default::default();
+    let mut dirs = vec![PathBuf::new()];
+    while let Some(rel) = dirs.pop() {
+        for e in std::fs::read_dir(root.join(&rel))? {
+            let e = e?;
+            let (kind, rel) = (e.file_type()?, rel.join(e.file_name()));
+            if kind.is_dir() {
+                dirs.push(rel);
+            } else if kind.is_symlink() {
+                if !resolves_beneath(&base, &rel)? {
+                    return Ok(Some(rel.to_string_lossy().into_owned()));
+                }
+            } else if let Ok(meta) = e.metadata()
+                && meta.nlink() > 1
+            {
+                let seen = linked.entry((meta.dev(), meta.ino())).or_insert((0, rel));
+                seen.0 += 1;
+            }
+        }
+    }
+    let out = linked.into_values().find(|(seen, path)| {
+        std::fs::symlink_metadata(root.join(path)).is_ok_and(|m| m.nlink() > *seen)
+    });
+    Ok(out.map(|(_, path)| path.to_string_lossy().into_owned()))
+}
+
+/// Whether link `rel` under the folder open as `base` resolves inside it, or to nothing.
+fn resolves_beneath(base: &std::fs::File, rel: &Path) -> std::io::Result<bool> {
+    let path = std::ffi::CString::new(rel.as_os_str().as_bytes())?;
+    // SAFETY: an all-zero `open_how` is a valid value of a plain C struct.
+    let mut how: libc::open_how = unsafe { std::mem::zeroed() };
+    how.flags = (libc::O_PATH | libc::O_CLOEXEC) as u64;
+    how.resolve = libc::RESOLVE_BENEATH;
+    // SAFETY: `path` is NUL-terminated, `how` is an `open_how` of the size passed, and `base` is
+    // an open folder.
+    let fd = unsafe {
+        libc::syscall(
+            libc::SYS_openat2,
+            base.as_raw_fd(),
+            path.as_ptr(),
+            &how,
+            std::mem::size_of::<libc::open_how>(),
+        )
+    };
+    if fd >= 0 {
+        // SAFETY: `fd` was just opened and is owned by nothing else.
+        drop(unsafe { std::os::fd::OwnedFd::from_raw_fd(fd as i32) });
+        return Ok(true);
+    }
+    let e = std::io::Error::last_os_error();
+    match e.raw_os_error() {
+        Some(libc::EXDEV) => Ok(false),
+        Some(libc::ENOENT | libc::ELOOP | libc::ENOTDIR | libc::EACCES) => Ok(true),
+        _ => Err(e),
+    }
+}
+
+/// Move what folder `from` holds into `to`, keeping what `to` has: a folder in both is merged
+/// into (never through a link), one meeting a non-folder there refuses.
+fn merge_into(from: &Path, to: &Path) -> Result<(), Failure> {
+    use crate::ops::at::{c_path, cwd, open_dir};
+    let io = |e: std::io::Error| Failure::Tool(e.to_string());
+    let from = open_dir(cwd(), &c_path(from).map_err(io)?, true).map_err(io)?;
+    let to = open_dir(cwd(), &c_path(to).map_err(io)?, true).map_err(io)?;
+    merge_at(from.as_fd(), to.as_fd(), Path::new(""))
+}
+
+fn merge_at(
+    from: std::os::fd::BorrowedFd,
+    to: std::os::fd::BorrowedFd,
+    rel: &Path,
+) -> Result<(), Failure> {
+    use crate::ops::at::{open_dir, rename_free};
+    let io = |e: std::io::Error| Failure::Tool(e.to_string());
+    for (name, is_dir) in crate::ops::entries_at(from).map_err(io)? {
+        match rename_free(from, &name, to, &name) {
+            Ok(()) => continue,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(io(e)),
+        }
+        if !is_dir {
+            continue;
+        }
+        let rel = rel.join(OsStr::from_bytes(name.to_bytes()));
+        let there = open_dir(to, &name, false).map_err(|_| {
+            Failure::Refused(format!(
+                "it holds the folder {}, which is not a folder here.",
+                rel.display()
+            ))
+        })?;
+        merge_at(
+            open_dir(from, &name, false).map_err(io)?.as_fd(),
+            there.as_fd(),
+            &rel,
+        )?;
+    }
+    Ok(())
 }
 
 /// Makes the first free folder `name`, `name (2)`... in `dir`.
@@ -399,10 +654,21 @@ pub(crate) fn spawn(
     stdout: bool,
     path: Option<&OsStr>,
 ) -> Result<Child, Failure> {
+    spawn_with(argv, stdout, |cmd| {
+        if let Some(path) = path {
+            cmd.env("PATH", path);
+        }
+    })
+}
+
+/// [`spawn`], `env` setting the command's environment.
+fn spawn_with(
+    argv: &[OsString],
+    stdout: bool,
+    env: impl FnOnce(&mut Command),
+) -> Result<Child, Failure> {
     let mut cmd = Command::new(&argv[0]);
-    if let Some(path) = path {
-        cmd.env("PATH", path);
-    }
+    env(&mut cmd);
     cmd.args(&argv[1..])
         .stdin(Stdio::null())
         .stderr(Stdio::piped());
@@ -535,16 +801,14 @@ mod tests {
     #[test]
     fn the_argv_lists_and_extracts_with_bsdtar_and_never_passes_p() {
         let (a, d) = (Path::new("/d/-x.zip"), Path::new("/d/-x"));
-        assert_eq!(list_argv(a), ["bsdtar", "-tf", "/d/-x.zip"]);
         assert_eq!(
-            extract_argv(a, d, false),
-            ["bsdtar", "-xv", "-f", "/d/-x.zip", "-C", "/d/-x"],
-            "a name like an option is an option's argument"
+            list_argv(a),
+            ["bsdtar", "-tv", "--numeric-owner", "-f", "/d/-x.zip"]
         );
         assert_eq!(
-            extract_argv(a, Path::new("/d"), true),
-            ["bsdtar", "-xv", "-k", "-f", "/d/-x.zip", "-C", "/d"],
-            "Extract Here writes over nothing"
+            extract_argv(a, d),
+            ["bsdtar", "-xv", "-f", "/d/-x.zip", "-C", "/d/-x"],
+            "a name like an option is an option's argument"
         );
     }
 
@@ -590,7 +854,7 @@ mod tests {
         let argv: Vec<OsString> = ["sh", "-c", script].map(OsString::from).to_vec();
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
-            let _ = tx.send(count(&argv, &Meter::default()));
+            let _ = tx.send(listing(&argv, &Meter::default()));
         });
         let res = rx
             .recv_timeout(std::time::Duration::from_secs(20))
@@ -604,13 +868,13 @@ mod tests {
     }
 
     #[test]
-    fn an_entry_with_a_parent_step_climbs_out() {
+    fn an_entry_with_a_parent_step_or_from_the_root_climbs_out() {
         for (entry, climbs) in [
             ("a/b.txt", false),
             ("../b.txt", true),
             ("a/../../b", true),
             ("a/..b/c", false),
-            ("/etc/passwd", false),
+            ("/etc/passwd", true),
             ("..", true),
         ] {
             assert_eq!(climbs_out(entry.as_bytes()), climbs, "{entry}");
@@ -725,6 +989,238 @@ mod tests {
             .map(|e| e.unwrap().file_name())
             .collect();
         assert_eq!(left, ["pack.tar"], "the half folder is removed");
+    }
+
+    fn only(src: &Path, here: bool) -> Vec<ArchiveEvent> {
+        run_job(
+            vec![Archive {
+                src: src.to_path_buf(),
+                here,
+            }],
+            Decision::Abort,
+        )
+    }
+
+    fn names_in(dir: &Path) -> Vec<String> {
+        let mut v: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn extract_here_puts_an_archive_with_hidden_entries_in_a_new_folder() {
+        let t = tempfile::tempdir().unwrap();
+        let (d, src) = (t.path().join("d"), t.path().join("src"));
+        std::fs::create_dir_all(src.join(".config/autostart")).unwrap();
+        std::fs::create_dir(&d).unwrap();
+        std::fs::write(src.join(".config/autostart/x.desktop"), "x").unwrap();
+        std::fs::write(src.join("a.txt"), "a").unwrap();
+        std::os::unix::fs::symlink("a.txt", src.join("ln")).unwrap();
+        let tar = d.join("pack.tar");
+        bsdtar(
+            &src,
+            &["-cf", tar.to_str().unwrap(), ".config", "a.txt", "ln"],
+        );
+        let got = only(&tar, true);
+        assert!(
+            matches!(&got[..], [ArchiveEvent::Landed { into, .. }, ArchiveEvent::Finished]
+                if *into == d.join("pack")),
+            "{got:?}"
+        );
+        assert_eq!(names_in(&d), ["pack", "pack.tar"]);
+        assert!(d.join("pack/.config/autostart/x.desktop").exists());
+        assert_eq!(
+            std::fs::read_link(d.join("pack/ln")).unwrap(),
+            Path::new("a.txt"),
+            "a link inside the archive's own tree comes out"
+        );
+    }
+
+    #[test]
+    fn an_archive_with_a_link_out_of_its_folder_is_refused_and_leaves_nothing() {
+        let t = tempfile::tempdir().unwrap();
+        let (d, src) = (t.path().join("d"), t.path().join("src"));
+        std::fs::create_dir(&d).unwrap();
+        for (i, links) in [
+            &[("ln", "/etc")][..],
+            &[("ln", "../../x")],
+            &[("sub/b", ".."), ("ln", "sub/b/..")],
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let _ = std::fs::remove_dir_all(&src);
+            std::fs::create_dir_all(src.join("sub")).unwrap();
+            for (name, target) in links {
+                std::os::unix::fs::symlink(target, src.join(name)).unwrap();
+            }
+            let tar = d.join(format!("pack{i}.tar"));
+            bsdtar(&src, &["-cf", tar.to_str().unwrap(), "sub", "ln"]);
+            for here in [false, true] {
+                let got = only(&tar, here);
+                assert!(
+                    matches!(&got[..], [ArchiveEvent::Failed { text, .. }, ArchiveEvent::Finished]
+                        if text.contains("ln")),
+                    "{links:?} here={here}: {got:?}"
+                );
+                let mut want: Vec<String> = (0..=i).map(|n| format!("pack{n}.tar")).collect();
+                want.sort();
+                assert_eq!(names_in(&d), want, "{links:?} here={here}: nothing lands");
+            }
+        }
+    }
+
+    #[test]
+    fn an_archive_with_an_absolute_entry_is_refused_and_extracts_nothing() {
+        let t = tempfile::tempdir().unwrap();
+        let (d, src) = (t.path().join("d"), t.path().join("src"));
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::create_dir(&d).unwrap();
+        std::fs::write(src.join("b"), "b").unwrap();
+        let tar = d.join("abs.tar");
+        bsdtar(
+            &src,
+            &["-cf", tar.to_str().unwrap(), "-P", "-s", ",^b,/abs/b,", "b"],
+        );
+        for here in [false, true] {
+            let got = only(&tar, here);
+            assert!(
+                matches!(&got[..], [ArchiveEvent::Failed { text, .. }, ArchiveEvent::Finished]
+                    if text.contains("/abs/b")),
+                "here={here}: {got:?}"
+            );
+            assert_eq!(names_in(&d), ["abs.tar"], "here={here}");
+        }
+    }
+
+    #[test]
+    fn extract_here_merges_into_a_folder_there_and_never_through_a_link() {
+        let t = tempfile::tempdir().unwrap();
+        let (d, src, away) = (
+            t.path().join("d"),
+            t.path().join("src"),
+            t.path().join("away"),
+        );
+        for dir in [
+            d.join("real"),
+            src.join("real"),
+            src.join("linked"),
+            away.clone(),
+        ] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        std::fs::write(d.join("real/old.txt"), "old").unwrap();
+        std::fs::write(src.join("real/new.txt"), "new").unwrap();
+        std::fs::write(src.join("linked/x"), "x").unwrap();
+        std::os::unix::fs::symlink(&away, d.join("linked")).unwrap();
+        let (one, two) = (d.join("one.tar"), d.join("two.tar"));
+        bsdtar(&src, &["-cf", one.to_str().unwrap(), "real"]);
+        bsdtar(&src, &["-cf", two.to_str().unwrap(), "linked"]);
+
+        let got = only(&one, true);
+        assert!(
+            matches!(
+                &got[..],
+                [ArchiveEvent::Landed { .. }, ArchiveEvent::Finished]
+            ),
+            "{got:?}"
+        );
+        assert_eq!(names_in(&d.join("real")), ["new.txt", "old.txt"]);
+
+        let got = only(&two, true);
+        assert!(
+            matches!(&got[..], [ArchiveEvent::Failed { text, .. }, ArchiveEvent::Finished]
+                if text.contains("linked")),
+            "{got:?}"
+        );
+        assert_eq!(
+            std::fs::read_dir(&away).unwrap().count(),
+            0,
+            "nothing lands through the link"
+        );
+        assert_eq!(names_in(&d), ["linked", "one.tar", "real", "two.tar"]);
+    }
+
+    #[test]
+    fn a_file_hard_linked_from_outside_the_extraction_leads_out() {
+        let t = tempfile::tempdir().unwrap();
+        let root = t.path().join("pack");
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        std::fs::write(root.join("sub/a"), "a").unwrap();
+        std::fs::hard_link(root.join("sub/a"), root.join("b")).unwrap();
+        assert_eq!(
+            leads_out(&root).unwrap(),
+            None,
+            "links within the folder are fine"
+        );
+        std::fs::write(t.path().join("secret"), "s").unwrap();
+        std::fs::hard_link(t.path().join("secret"), root.join("sub/c")).unwrap();
+        assert_eq!(leads_out(&root).unwrap().as_deref(), Some("sub/c"));
+    }
+
+    #[test]
+    fn the_listing_counts_entries_sums_file_sizes_and_sees_hidden_ones() {
+        let t = tempfile::tempdir().unwrap();
+        let src = t.path().join("src");
+        std::fs::create_dir_all(src.join("dir name")).unwrap();
+        std::fs::write(src.join("dir name/a b"), "abc").unwrap();
+        std::fs::write(src.join("e"), "12345").unwrap();
+        std::fs::hard_link(src.join("e"), src.join("dir name/e2")).unwrap();
+        std::os::unix::fs::symlink("e", src.join("l -> x")).unwrap();
+        let tar = t.path().join("p.tar");
+        bsdtar(
+            &src,
+            &["-cf", tar.to_str().unwrap(), "e", "dir name", "l -> x"],
+        );
+        let got = list(&tar, &Meter::default()).unwrap();
+        assert_eq!(
+            got,
+            Listed {
+                entries: 5,
+                bytes: 8,
+                hidden: false
+            },
+            "a hard link adds no bytes"
+        );
+        std::fs::write(src.join(".rc"), "").unwrap();
+        bsdtar(&src, &["-cf", tar.to_str().unwrap(), "e", ".rc"]);
+        assert!(list(&tar, &Meter::default()).unwrap().hidden);
+    }
+
+    #[test]
+    fn an_extraction_takes_ninety_percent_of_the_free_space_and_a_million_entries() {
+        let at = |bytes, entries| Listed {
+            entries,
+            bytes,
+            hidden: false,
+        };
+        let limits = Limits::from_free(1000, None);
+        assert_eq!(
+            limits,
+            Limits {
+                bytes: 900,
+                entries: 1_000_000
+            }
+        );
+        assert!(limits.admit(at(900, 1_000_000)).is_ok());
+        let e = limits.admit(at(901, 1)).unwrap_err();
+        assert!(
+            matches!(&e, Failure::Refused(why) if why.contains("expands to")),
+            "{e:?}"
+        );
+        let e = limits.admit(at(1, 1_000_001)).unwrap_err();
+        assert!(
+            matches!(&e, Failure::Refused(why) if why.contains("1000001 entries")),
+            "{e:?}"
+        );
+        assert_eq!(
+            Limits::from_free(1000, Some(7)).entries,
+            7,
+            "fewer free inodes cap it lower"
+        );
     }
 
     #[test]
