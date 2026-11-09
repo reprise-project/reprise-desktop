@@ -51,7 +51,7 @@ pub mod proto {
     wayland_scanner::generate_server_code!("protocols/reprise-input-v1.xml");
 }
 
-const VERSION: u32 = 9;
+const VERSION: u32 = 10;
 
 pub const DEVICE_KEYBOARD: u32 = 1;
 pub const DEVICE_POINTER: u32 = 2;
@@ -196,48 +196,27 @@ impl Dispatch2<RepriseInputV1, State> for InputData {
                         return;
                     }
                 };
-                let cap = capture
-                    .as_ref()
-                    .and_then(|c| c.data::<CaptureData>())
-                    .map(|d| d.0)
-                    .filter(|&c| state.inputproto.capture.get(c).is_some());
-                if kind == crate::eis::Kind::Receiver && cap.is_none() {
-                    resource.post_error(Error::CaptureRequired, "receiver needs a capture");
-                    return;
-                }
-                if kind == crate::eis::Kind::Sender && cap.is_some() {
-                    resource.post_error(Error::CaptureForbidden, "sender with a capture");
-                    return;
-                }
-                if kind == crate::eis::Kind::Sender
-                    && crate::console::asked_in_lock_mode(state, &resource.id())
-                {
-                    log::info!("connect_eis: a sender asked for before lock mode's end refused");
-                    data_init.init(id, EisClientData(None));
-                    return;
-                }
-                match state.eis_connect(fd, kind, present, cap, devices) {
-                    Ok(ec) => {
-                        if let Some(c) = cap {
-                            // A capture has one receiver; a second replaces the first, and disconnecting
-                            // the old one releases the capture if active.
-                            let old = state.inputproto.capture.get(c).and_then(|c| c.receiver);
-                            if let Some(old) = old {
-                                state.eis_disconnect(old);
-                            }
-                            if let Some(c) = state.inputproto.capture.get_mut(c) {
-                                c.receiver = Some(ec);
-                            }
-                        }
-                        data_init.init(id, EisClientData(Some(ec)));
-                    }
-                    Err(e) => {
-                        log::warn!("connect_eis: {e}");
-                        // A live resource with no client behind it: the portal still owns it and
-                        // destroys it when it gives up.
-                        data_init.init(id, EisClientData(None));
-                    }
-                }
+                let ask = EisAsk {
+                    kind,
+                    present,
+                    devices,
+                    app: String::new(),
+                };
+                connect_eis(state, resource, data_init, id, fd, capture, ask);
+            }
+            Request::ConnectAppSender {
+                id,
+                fd,
+                devices,
+                app_id,
+            } => {
+                let ask = EisAsk {
+                    kind: crate::eis::Kind::Sender,
+                    present: false,
+                    devices,
+                    app: app_id,
+                };
+                connect_eis(state, resource, data_init, id, fd, None, ask);
             }
             Request::CreateCapture { id } => {
                 let held = state.inputproto.capture.count_for_client(resource);
@@ -260,7 +239,13 @@ impl Dispatch2<RepriseInputV1, State> for InputData {
                 state.inputproto.shortcuts.create(sid, r, app_id);
             }
             Request::CreateKeys { id } => {
-                let kid = state.inputproto.keys.create();
+                // From version 10 an app's keys come through create_app_keys.
+                let app = (resource.version() < 10).then(String::new);
+                let kid = state.keys_create(app);
+                data_init.init(id, KeysData(kid));
+            }
+            Request::CreateAppKeys { id, app_id } => {
+                let kid = state.keys_create(Some(app_id));
                 data_init.init(id, KeysData(kid));
             }
             Request::WatchSandboxed { id } => {
@@ -284,6 +269,73 @@ impl Dispatch2<RepriseInputV1, State> for InputData {
                 }
             }
             Request::Destroy => {}
+        }
+    }
+}
+
+/// What a connect_eis or connect_app_sender asks for, besides its object, fd and capture.
+struct EisAsk {
+    kind: crate::eis::Kind,
+    present: bool,
+    devices: u32,
+    app: String,
+}
+
+fn connect_eis(
+    state: &mut State,
+    resource: &RepriseInputV1,
+    data_init: &mut DataInit<'_, State>,
+    id: New<RepriseEisClientV1>,
+    fd: std::os::fd::OwnedFd,
+    capture: Option<RepriseInputCaptureV1>,
+    ask: EisAsk,
+) {
+    use reprise_input_v1::Error;
+    let EisAsk {
+        kind,
+        present,
+        devices,
+        app,
+    } = ask;
+    let cap = capture
+        .as_ref()
+        .and_then(|c| c.data::<CaptureData>())
+        .map(|d| d.0)
+        .filter(|&c| state.inputproto.capture.get(c).is_some());
+    if kind == crate::eis::Kind::Receiver && cap.is_none() {
+        resource.post_error(Error::CaptureRequired, "receiver needs a capture");
+        return;
+    }
+    if kind == crate::eis::Kind::Sender && cap.is_some() {
+        resource.post_error(Error::CaptureForbidden, "sender with a capture");
+        return;
+    }
+    if kind == crate::eis::Kind::Sender && crate::console::asked_in_lock_mode(state, &resource.id())
+    {
+        log::info!("connect_eis: a sender asked for before lock mode's end refused");
+        data_init.init(id, EisClientData(None));
+        return;
+    }
+    match state.eis_connect(fd, kind, present, cap, devices, app) {
+        Ok(ec) => {
+            if let Some(c) = cap {
+                // A capture has one receiver; a second replaces the first, and disconnecting
+                // the old one releases the capture if active.
+                let old = state.inputproto.capture.get(c).and_then(|c| c.receiver);
+                if let Some(old) = old {
+                    state.eis_disconnect(old);
+                }
+                if let Some(c) = state.inputproto.capture.get_mut(c) {
+                    c.receiver = Some(ec);
+                }
+            }
+            data_init.init(id, EisClientData(Some(ec)));
+        }
+        Err(e) => {
+            log::warn!("connect_eis: {e}");
+            // A live resource with no client behind it: the portal still owns it and
+            // destroys it when it gives up.
+            data_init.init(id, EisClientData(None));
         }
     }
 }

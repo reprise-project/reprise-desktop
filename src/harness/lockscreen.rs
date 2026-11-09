@@ -7,6 +7,7 @@ use wayland_client::{self as wc, Connection, QueueHandle};
 
 use super::input_client::reprise_eis_client_v1::RepriseEisClientV1;
 use super::input_client::reprise_input_v1::{Kind, RepriseInputV1};
+use super::input_client::reprise_keys_v1::RepriseKeysV1;
 use super::input_client::reprise_lock_screen_v1::{self, RepriseLockScreenV1};
 use super::{ClientSide, TestClient};
 
@@ -56,9 +57,23 @@ impl TestClient {
         );
         theirs
     }
+
+    /// Bind `reprise_input_v1` at `version` and make a keys object with `create_keys`.
+    pub fn create_keys(&self, version: u32) -> RepriseKeysV1 {
+        let input: RepriseInputV1 = self.bind("reprise_input_v1", version);
+        input.create_keys(&self.qh(), ())
+    }
+
+    /// Bind `reprise_input_v1` v10 and make a keys object for `app_id`, as the portal does for
+    /// an app's session.
+    pub fn create_app_keys(&self, app_id: &str) -> RepriseKeysV1 {
+        let input: RepriseInputV1 = self.bind("reprise_input_v1", 10);
+        input.create_app_keys(app_id.into(), &self.qh(), ())
+    }
 }
 
 wc::delegate_noop!(ClientSide: ignore RepriseEisClientV1);
+wc::delegate_noop!(ClientSide: ignore RepriseKeysV1);
 
 impl LockScreen {
     /// Send `monitors` as (x, y, width, height, scale percent), primary first.

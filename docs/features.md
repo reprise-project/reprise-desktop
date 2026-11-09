@@ -725,7 +725,8 @@ the screen takes the interface of the last session used at this computer.
 
 ## Privacy and security
 
-- **Indicators.** A red dot while the screen is shared or recorded, a
+- **Indicators.** A red dot while the screen is shared or recorded, or
+  while a program controls the keyboard or mouse through the portal, a
   microphone while a program records, a camera while one films and a pin
   while one reads your location. The tooltips name the program. A screenshot
   is not sharing: it shows no dot and holds back no balloons.

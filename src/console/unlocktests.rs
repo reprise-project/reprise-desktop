@@ -335,7 +335,7 @@ fn a_console_unlock_cuts_every_remote_desktop_session_off() {
     let (_portal, _lock) = begin(&mut h);
     let mut peer = h.ei_remote_session();
     h.ei_hear(&mut peer);
-    let keys = h.state.inputproto.keys.create();
+    let keys = h.state.keys_create(None);
     let (x, y) = centre(&h, t.id);
     h.remote_click(x, y);
     h.state.keys_key(keys, SHIFT, true);
@@ -401,7 +401,7 @@ fn a_locker_taking_the_lock_mid_run_cuts_every_sender_off() {
     let (mut portal, lock) = begin(&mut h);
     let mut peer = h.ei_remote_session();
     h.ei_hear(&mut peer);
-    let keys = h.state.inputproto.keys.create();
+    let keys = h.state.keys_create(None);
     let mut locker = h.connect();
     let (_locked, _surface) = h.map_lock_surface(&mut locker);
     h.roundtrip(&mut portal);
@@ -431,7 +431,7 @@ fn a_console_unlock_cuts_a_permitted_remote_desktop_session_off() {
     let t = mapped(&mut h, &mut c, 100, 100);
     h.state.focus_window(t.id);
     let (_portal, _lock) = begin(&mut h);
-    let mut peer = h.ei_keyboard_as(Kind::Sender, false, DEVICE_KEYBOARD | DEVICE_POINTER);
+    let mut peer = h.ei_keyboard_as(Kind::Sender, false, DEVICE_KEYBOARD | DEVICE_POINTER, "");
     h.ei_hear(&mut peer);
     let capture = h.ei_keyboard(Kind::Receiver);
     unlock_at_the_computer(&mut h);

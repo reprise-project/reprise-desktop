@@ -1067,7 +1067,13 @@ What a consent prompt remembers, and where:
   tick Remember, the portal returns a restore token, and xdg-desktop-portal
   keeps it in its permission store (tables `screencast` and
   `remote-desktop`). A token names the app it was issued to and restores
-  only for that app. Without Remember nothing is kept.
+  only for that app. Without Remember nothing is kept. A restored
+  RemoteDesktop grant starts without a prompt, but the app can't use it
+  unseen: while an app's session holds the keyboard (a keys object for
+  NotifyKeyboard) or a libei sender with a device, the screen-sharing dot
+  shows, its tooltip naming the app by the app id the frontend gave
+  ("An application" without one). The session the portal starts for
+  Reprise's own server doesn't light it this way.
 - **Screenshot:** the prompt has no Remember. xdg-desktop-portal keeps its
   own `screenshot` permission, and once that says yes a non-interactive
   screenshot is taken without a prompt.

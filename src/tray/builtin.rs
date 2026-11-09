@@ -49,7 +49,7 @@ pub fn shown(state: &State) -> Vec<Builtin> {
             Builtin::Notifications,
             state.notify.log.bell_shown() || state.notify.quiet.automatic(),
         ),
-        (Builtin::Sharing, state.privacy.sharing_shown()),
+        (Builtin::Sharing, state.privacy.dot_shown()),
         (Builtin::Microphone, state.privacy.mic_shown()),
         (Builtin::Camera, state.privacy.camera_shown()),
         (Builtin::Location, state.location.shown()),
@@ -120,7 +120,7 @@ pub fn label(state: &State, b: Builtin) -> Option<String> {
             let until = log.dnd_until.map(crate::taskbar::time_text);
             Some(bell_tip(log.unseen, quiet, until.as_deref()))
         }
-        Builtin::Sharing => Some(state.privacy.sharing_tip()),
+        Builtin::Sharing => Some(crate::privacy::sharing_tip(state)),
         Builtin::Microphone => Some(state.privacy.mic_tip()),
         Builtin::Camera => Some(crate::privacy::camera_tip(state)),
         Builtin::Location => Some(crate::location::tip(state)),
