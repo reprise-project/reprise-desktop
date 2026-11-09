@@ -436,8 +436,14 @@ impl Bins {
     pub fn files_dirs(&self) -> Vec<PathBuf> {
         self.roots()
             .into_iter()
-            .map(|r| r.join("files"))
-            .filter(|f| f.symlink_metadata().is_ok_and(|m| m.is_dir()))
+            .filter_map(|r| {
+                let files = r.join("files");
+                let meta = match r == self.home {
+                    true => files.metadata(),
+                    false => files.symlink_metadata(),
+                };
+                meta.is_ok_and(|m| m.is_dir()).then_some(files)
+            })
             .collect()
     }
 
@@ -672,14 +678,8 @@ fn info_name(name: &std::ffi::OsStr) -> std::ffi::OsString {
     info
 }
 
-/// Delete the trashed item at `files` (an entry of a trash's `files/`)
-/// for good, once [`check_listed`] finds it is still the item `expected`
-/// records: the entry through [`crate::ops::erase`]'s checks (so one
-/// holding a mount point is refused), then its info file, both reached
-/// without following a link ([`BinDir`]). An item with no info file goes
-/// all the same. Once the entry is gone the item is gone, since the bin
-/// lists `files/`: an info file that cannot be removed is logged and left,
-/// not an error.
+/// Delete trashed item `files` for good through [`BinDir`], once [`check_listed`] finds it is
+/// still `expected`. The bin lists `files/`, so a record left behind is only logged.
 pub fn erase_trashed(files: &Path, expected: Option<&Trashed>) -> io::Result<()> {
     erase_trashed_with(files, expected, None)
 }
@@ -706,13 +706,8 @@ pub(crate) fn erase_trashed_with(
     Ok(())
 }
 
-/// Move `t` back to its original path for the Recycle Bin's Restore, and
-/// return where it landed. A parent folder that has gone since is made
-/// again. A name taken since keeps what holds it, and `t` comes back
-/// beside it under the first free `name (2)`, `name (3)`... On success
-/// the info file goes too. An item of a drive's trash goes back only
-/// under that drive's top, through folders that are not links
-/// ([`bindir::restore_beneath`]).
+/// Move `t` back to its original path, making gone folders and numbering a taken name, and
+/// return where it landed; a drive's item only onto its drive ([`bindir::restore_beneath`]).
 pub fn restore_free(t: &Trashed) -> io::Result<PathBuf> {
     let (Some(dir), Some(name)) = (t.original.parent(), t.original.file_name()) else {
         return Err(io::Error::new(
@@ -744,14 +739,8 @@ pub fn restore_free(t: &Trashed) -> io::Result<PathBuf> {
     unreachable!("numbered never ends")
 }
 
-/// Delete everything under `root`'s `files/` and `info/`, returning how
-/// many top-level entries of `files/` went. Each entry goes through
-/// [`crate::ops::erase`]'s checks (so one holding a mount point is
-/// refused), then its `.trashinfo`, all reached without following a link
-/// ([`BinDir`]): a `files` or `info` that is a link is removed, not
-/// walked. An entry that fails keeps its info file and the rest carry on;
-/// the error counts the failures and carries the first one. An info file
-/// with no data left goes too, and so does the `directorysizes` cache.
+/// Delete everything in the trash at `root` through [`BinDir`], returning how many items went.
+/// A failed item keeps its record and the rest carry on; the error carries the first failure.
 pub fn empty_in(root: &Path) -> io::Result<usize> {
     empty_with(root, None)
 }

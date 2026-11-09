@@ -6,7 +6,9 @@ use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 
-/// `renameat2(RENAME_NOREPLACE)`, or where the file system lacks it a check then a rename.
+/// `renameat2(RENAME_NOREPLACE)`. Where the file system lacks it, a file is hard-linked then
+/// unlinked, which also never replaces; a folder, or a file where links fail, is checked then
+/// renamed.
 pub(crate) fn rename_free(
     from_dir: BorrowedFd,
     from: &CStr,
@@ -31,6 +33,29 @@ pub(crate) fn rename_free(
     };
     match rename(libc::RENAME_NOREPLACE) {
         Err(e) if e.raw_os_error() == Some(libc::EINVAL) => {
+            let file = stat_at(from_dir, from)?.st_mode & libc::S_IFMT != libc::S_IFDIR;
+            // SAFETY: both names are NUL-terminated and both folders are open.
+            let linked = file
+                && unsafe {
+                    libc::linkat(
+                        from_dir.as_raw_fd(),
+                        from.as_ptr(),
+                        to_dir.as_raw_fd(),
+                        to.as_ptr(),
+                        0,
+                    )
+                } == 0;
+            if linked {
+                let moved = super::unlink_at(from_dir, from, 0);
+                if moved.is_err() {
+                    let _ = super::unlink_at(to_dir, to, 0);
+                }
+                return moved;
+            }
+            let e = io::Error::last_os_error();
+            if file && e.raw_os_error() == Some(libc::EEXIST) {
+                return Err(io::ErrorKind::AlreadyExists.into());
+            }
             if stat_at(to_dir, to).is_ok() {
                 return Err(io::ErrorKind::AlreadyExists.into());
             }

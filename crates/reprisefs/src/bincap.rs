@@ -1,6 +1,7 @@
 //! The Recycle Bin's settings (`[recycle_bin]` in `config.toml`): per-drive trash or
 //! remove-immediately, and the trash size cap.
 
+use crate::bindir::BinDir;
 use reprisebus::mutex::lock;
 use std::collections::{BTreeMap, HashMap};
 use std::ffi::{OsStr, OsString};
@@ -278,8 +279,8 @@ pub fn drive_size(root: &Path) -> u64 {
 
 type DirSizes = BTreeMap<Vec<u8>, (u64, i64)>;
 
-fn read_dir_sizes(root: &Path) -> DirSizes {
-    let text = std::fs::read(root.join("directorysizes")).unwrap_or_default();
+fn read_dir_sizes(bin: &BinDir) -> DirSizes {
+    let text = bin.read_sizes().unwrap_or_default();
     text.split(|&b| b == b'\n')
         .filter_map(|line| {
             let mut f = line.splitn(3, |&b| b == b' ');
@@ -291,13 +292,13 @@ fn read_dir_sizes(root: &Path) -> DirSizes {
         .collect()
 }
 
-fn write_dir_sizes(root: &Path, sizes: &DirSizes) {
+fn write_dir_sizes(bin: &BinDir, root: &Path, sizes: &DirSizes) {
     let mut text = String::new();
     for (name, (size, mtime)) in sizes {
         let name = crate::trash::percent_encode(Path::new(OsStr::from_bytes(name)));
         text.push_str(&format!("{size} {mtime} {name}\n"));
     }
-    if let Err(e) = crate::ops::write_atomic(&root.join("directorysizes"), text.as_bytes()) {
+    if let Err(e) = bin.write_sizes(text.as_bytes()) {
         log::warn!(
             "trash: could not write {}/directorysizes: {e}",
             root.display()
@@ -320,10 +321,10 @@ struct Held {
 
 fn held(root: &Path) -> Vec<Held> {
     let mut out = Vec::new();
-    let Ok(bin) = crate::bindir::BinDir::open(root) else {
+    let Ok(bin) = BinDir::open(root) else {
         return out;
     };
-    let cached = read_dir_sizes(root);
+    let cached = read_dir_sizes(&bin);
     let mut kept = DirSizes::new();
     for name in bin.files() {
         crate::progress::step();
@@ -345,7 +346,7 @@ fn held(root: &Path) -> Vec<Held> {
         out.push(Held { name, size });
     }
     if kept != cached {
-        write_dir_sizes(root, &kept);
+        write_dir_sizes(&bin, root, &kept);
     }
     out
 }
@@ -377,6 +378,12 @@ pub fn used(root: &Path) -> u64 {
     total
 }
 
+/// Holds the lock every [`used`] takes until the guard drops.
+#[cfg(test)]
+pub(crate) fn stall_totals() -> impl Drop {
+    lock(&TOTALS)
+}
+
 fn remember(root: &Path, total: u64) {
     let Some(now) = stamp(root) else {
         return;
@@ -389,10 +396,11 @@ fn remember(root: &Path, total: u64) {
 pub(crate) fn took(root: &Path, t: &crate::trash::Trashed, size: u64, before: u64) {
     if std::fs::symlink_metadata(&t.files).is_ok_and(|m| m.is_dir())
         && let Some(name) = t.files.file_name()
+        && let Ok(bin) = BinDir::open(root)
     {
-        let mut sizes = read_dir_sizes(root);
+        let mut sizes = read_dir_sizes(&bin);
         sizes.insert(name.as_bytes().to_vec(), (size, info_mtime(root, name)));
-        write_dir_sizes(root, &sizes);
+        write_dir_sizes(&bin, root, &sizes);
     }
     remember(root, before.saturating_add(size));
 }
@@ -403,9 +411,12 @@ pub(crate) fn gone(files: &Path) {
     else {
         return;
     };
-    let mut sizes = read_dir_sizes(root);
+    let Ok(bin) = BinDir::open(root) else {
+        return;
+    };
+    let mut sizes = read_dir_sizes(&bin);
     if sizes.remove(name.as_bytes()).is_some() {
-        write_dir_sizes(root, &sizes);
+        write_dir_sizes(&bin, root, &sizes);
     }
 }
 
@@ -425,7 +436,7 @@ pub(crate) fn make_room(
     if used.saturating_add(incoming) <= cap {
         return Ok((used, Vec::new()));
     }
-    let Ok(bin) = crate::bindir::BinDir::open(root) else {
+    let Ok(bin) = BinDir::open(root) else {
         return Ok((used, Vec::new()));
     };
     let info = |name: &OsStr| {

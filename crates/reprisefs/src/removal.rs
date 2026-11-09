@@ -375,7 +375,6 @@ mod tests {
 
     #[test]
     fn a_removal_that_stops_answering_fails_as_not_responding_and_finishes() {
-        use std::os::unix::ffi::OsStrExt;
         let t = tempfile::tempdir().unwrap();
         let a = t.path().join("a.txt");
         std::fs::write(&a, "a").unwrap();
@@ -383,11 +382,8 @@ mod tests {
         std::fs::write(&b, "b").unwrap();
         let root = t.path().join("Trash");
         std::fs::create_dir_all(root.join("files")).unwrap();
-        // Reading a FIFO with no writer blocks, as a call on a drive that stopped answering does.
-        let info = root.join("directorysizes");
-        let c = std::ffi::CString::new(info.as_os_str().as_bytes()).unwrap();
-        // SAFETY: `c` is a NUL-terminated path that outlives the call.
-        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        // Trashing b.txt waits on this lock as a call on a drive that stopped answering waits.
+        let stall = crate::bincap::stall_totals();
         let (wtx, woke) = channel();
         let job = RemoveJob::start_metered(
             vec![
@@ -421,9 +417,8 @@ mod tests {
             meter.cancelled(),
             "the stuck call stops the job once it returns"
         );
-        assert!(b.exists(), "nothing goes past the stuck read");
-        let writer = std::fs::OpenOptions::new().write(true).open(&info).unwrap();
-        drop(writer);
+        assert!(b.exists(), "nothing goes past the stuck call");
+        drop(stall);
     }
 
     #[test]

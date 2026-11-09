@@ -12,6 +12,9 @@ use std::path::{Component, Path, PathBuf};
 /// The most of a `.trashinfo` read: a record is a path and a date.
 const INFO_MAX: u64 = 64 * 1024;
 
+/// The most of a `directorysizes` read: a line per trashed folder.
+const SIZES_MAX: u64 = 1024 * 1024;
+
 /// One of a trash's `files/` and `info/`.
 enum Sub {
     Missing,
@@ -20,8 +23,8 @@ enum Sub {
     Stray,
 }
 
-/// A trash opened from its drive's top, or the home trash by its path. A drive trash opens only
-/// as a real `.Trash-$uid` of this user's or `$uid` in a real sticky `.Trash`.
+/// A trash opened from its drive's top, or the home trash by its path, links and all. A drive
+/// trash opens only as a real `.Trash-$uid` of this user's or `$uid` in a real sticky `.Trash`.
 pub(crate) struct BinDir {
     root: OwnedFd,
     files: Sub,
@@ -38,7 +41,7 @@ impl BinDir {
             Some(top) => open_drive_root(top, root, uid)?,
             None => open_dir(cwd(), &c_path(root)?, true)?,
         };
-        let sub = |name: &CStr| match open_dir(root_fd.as_fd(), name, false) {
+        let sub = |name: &CStr| match open_dir(root_fd.as_fd(), name, drive.is_none()) {
             Ok(fd) if drive.is_none() || stat_fd(fd.as_fd())?.st_uid == uid => Ok(Sub::Dir(fd)),
             Ok(_) => Ok(Sub::Stray),
             Err(e) if e.raw_os_error() == Some(libc::ENOENT) => Ok(Sub::Missing),
@@ -116,6 +119,52 @@ impl BinDir {
         }
     }
 
+    /// The `directorysizes` cache's bytes, a regular file only; `None` when it is missing, a
+    /// link, too big or unreadable.
+    pub(crate) fn read_sizes(&self) -> Option<Vec<u8>> {
+        let flags = libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_NOCTTY;
+        let fd = open_at(self.root.as_fd(), c"directorysizes", flags).ok()?;
+        crate::ops::read_opened(&std::fs::File::from(fd), SIZES_MAX).ok()
+    }
+
+    /// Replace `directorysizes` with `bytes` through a fresh temp file and a rename, which
+    /// replaces a link there and never writes through it.
+    pub(crate) fn write_sizes(&self, bytes: &[u8]) -> io::Result<()> {
+        use std::hash::{BuildHasher, Hasher};
+        use std::io::Write;
+        let flags = libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW;
+        let (tmp, fd) = loop {
+            let tag = std::hash::RandomState::new().build_hasher().finish();
+            let tmp = std::ffi::CString::new(format!(".directorysizes.{tag:016x}.tmp"))?;
+            // SAFETY: `tmp` is NUL-terminated and the root is an open folder.
+            let fd = unsafe {
+                libc::openat(
+                    self.root.as_raw_fd(),
+                    tmp.as_ptr(),
+                    flags | libc::O_CLOEXEC,
+                    0o600,
+                )
+            };
+            if fd >= 0 {
+                // SAFETY: `fd` was just opened and is owned by nothing else.
+                break (tmp, unsafe {
+                    <OwnedFd as std::os::fd::FromRawFd>::from_raw_fd(fd)
+                });
+            }
+            let e = io::Error::last_os_error();
+            if e.kind() != io::ErrorKind::AlreadyExists {
+                return Err(e);
+            }
+        };
+        let written = std::fs::File::from(fd)
+            .write_all(bytes)
+            .and_then(|()| rename_over(self.root.as_fd(), &tmp, c"directorysizes"));
+        if written.is_err() {
+            let _ = crate::ops::unlink_at(self.root.as_fd(), &tmp, 0);
+        }
+        written
+    }
+
     fn files_fd(&self) -> io::Result<BorrowedFd<'_>> {
         match &self.files {
             Sub::Dir(fd) => Ok(fd.as_fd()),
@@ -125,7 +174,8 @@ impl BinDir {
 }
 
 /// Move drive trash item `files` back to `dir/name` under `top` through folders made when gone and
-/// never links, numbered beside a taken name; `InvalidData` when `dir` is not under `top`.
+/// never links, numbered beside a taken name; `InvalidData` when `dir` is not under `top`. A
+/// failure removes the folders it made.
 pub(crate) fn restore_beneath(
     bin: &BinDir,
     files: &Path,
@@ -135,15 +185,50 @@ pub(crate) fn restore_beneath(
 ) -> io::Result<PathBuf> {
     let rel = beneath(top, dir).ok_or_else(outside)?;
     let from = c_name(files.file_name().ok_or_else(outside)?)?;
-    let mut at = open_dir(cwd(), &c_path(top)?, true)?;
+    let mut made = Vec::new();
+    let landed = (|| {
+        let at = open_steps(&c_path(top)?, &rel, &mut made)?;
+        let src = bin.files_fd()?;
+        for candidate in crate::names::numbered(name, crate::names::paren) {
+            let to = c_name(&candidate)?;
+            match rename_free(src, &from, at.as_fd(), &to) {
+                Ok(()) => return Ok(top.join(&rel).join(candidate)),
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(e) if e.raw_os_error() == Some(libc::EXDEV) => return Err(other_drive()),
+                Err(e) => return Err(e),
+            }
+        }
+        unreachable!("numbered never ends")
+    })();
+    if landed.is_err() {
+        for (parent, part) in made.iter().rev() {
+            let _ = crate::ops::unlink_at(parent.as_fd(), part, libc::AT_REMOVEDIR);
+        }
+    }
+    landed
+}
+
+/// Open `rel` under `top` one step at a time, making a missing folder (noted in `made` with its
+/// parent) and refusing a link, a file or another file system on the way.
+fn open_steps(
+    top: &CStr,
+    rel: &Path,
+    made: &mut Vec<(OwnedFd, std::ffi::CString)>,
+) -> io::Result<OwnedFd> {
+    let mut at = open_dir(cwd(), top, true)?;
+    let dev = stat_fd(at.as_fd())?.st_dev;
     for part in rel.components() {
         let part = c_name(part.as_os_str())?;
         // SAFETY: `part` is NUL-terminated; mkdirat takes the umask like any new folder.
-        if unsafe { libc::mkdirat(at.as_raw_fd(), part.as_ptr(), 0o777) } != 0 {
+        let new = unsafe { libc::mkdirat(at.as_raw_fd(), part.as_ptr(), 0o777) } == 0;
+        if !new {
             let e = io::Error::last_os_error();
             if e.raw_os_error() != Some(libc::EEXIST) {
                 return Err(e);
             }
+        }
+        if new {
+            made.push((at.try_clone()?, part.clone()));
         }
         at = open_dir(at.as_fd(), &part, false).map_err(|e| match e.raw_os_error() {
             Some(libc::ELOOP | libc::ENOTDIR) => io::Error::new(
@@ -152,23 +237,18 @@ pub(crate) fn restore_beneath(
             ),
             _ => e,
         })?;
-    }
-    let src = bin.files_fd()?;
-    for candidate in crate::names::numbered(name, crate::names::paren) {
-        let to = c_name(&candidate)?;
-        match rename_free(src, &from, at.as_fd(), &to) {
-            Ok(()) => return Ok(top.join(rel).join(candidate)),
-            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
-            Err(e) if e.raw_os_error() == Some(libc::EXDEV) => {
-                return Err(io::Error::new(
-                    io::ErrorKind::CrossesDevices,
-                    "its original folder is on another drive",
-                ));
-            }
-            Err(e) => return Err(e),
+        if stat_fd(at.as_fd())?.st_dev != dev {
+            return Err(other_drive());
         }
     }
-    unreachable!("numbered never ends")
+    Ok(at)
+}
+
+fn other_drive() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::CrossesDevices,
+        "its original folder is on another drive",
+    )
 }
 
 /// `path` relative to `top` when it lies under it, named by plain steps only (no `.`, `..` or
@@ -205,6 +285,14 @@ fn open_drive_root(top: &Path, root: &Path, uid: u32) -> io::Result<OwnedFd> {
         return Err(refused("the drive's Recycle Bin is not yours"));
     }
     Ok(own)
+}
+
+fn rename_over(dir: BorrowedFd, from: &CStr, to: &CStr) -> io::Result<()> {
+    // SAFETY: both names are NUL-terminated and `dir` is an open folder.
+    match unsafe { libc::renameat(dir.as_raw_fd(), from.as_ptr(), dir.as_raw_fd(), to.as_ptr()) } {
+        0 => Ok(()),
+        _ => Err(io::Error::last_os_error()),
+    }
 }
 
 fn not_a_bin(e: io::Error) -> io::Error {
