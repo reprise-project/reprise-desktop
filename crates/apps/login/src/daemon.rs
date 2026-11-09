@@ -1809,9 +1809,7 @@ fn table_entry(
 
 /// Whether `service` is the PAM service of a user session reprise-login starts.
 fn user_service(service: &str) -> bool {
-    [Mode::Login, Mode::Autologin, Mode::Remote, Mode::RemoteNla]
-        .iter()
-        .any(|m| m.service() == service)
+    repriselogin::USER_SERVICES.contains(&service)
 }
 
 /// Whether `service` is the PAM service of a remote login's session.
