@@ -254,7 +254,11 @@ pub fn image_sources(img: &ImageData) -> Vec<IconSource> {
         .collect()
 }
 
-/// A picture file the icon loader leaves alone, a JPEG cover say, as [`image_sources`] gives.
+/// Bytes read of a picture file.
+const MAX_PICTURE_BYTES: u64 = 32 << 20;
+
+/// A picture file the icon loader leaves alone, a JPEG cover say, as [`image_sources`] gives. Only
+/// a regular file is read, so a FIFO or device a sender names can't hold the caller.
 pub fn picture_file_sources(path: &Path) -> Vec<IconSource> {
     let Ok(img) = decode_picture(path) else {
         return Vec::new();
@@ -273,7 +277,12 @@ pub fn picture_file_sources(path: &Path) -> Vec<IconSource> {
 }
 
 fn decode_picture(path: &Path) -> image::ImageResult<image::DynamicImage> {
-    crate::wallpaper::decode_with(path, MAX_PICTURE_SIDE, Some(MAX_PICTURE_ALLOC))
+    if !std::fs::metadata(path)?.is_file() {
+        return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput).into());
+    }
+    let bytes = reprisefs::ops::read_regular(path, MAX_PICTURE_BYTES)?;
+    let reader = image::ImageReader::new(std::io::Cursor::new(bytes));
+    crate::wallpaper::limited(reader, MAX_PICTURE_SIDE, Some(MAX_PICTURE_ALLOC))
 }
 
 /// A [`program_key`]'s limit, as long as a desktop id may be.
@@ -634,6 +643,26 @@ mod tests {
             picture_file_sources(&tall).is_empty(),
             "a side past 4096 is refused"
         );
+    }
+
+    #[test]
+    fn a_picture_path_naming_a_fifo_is_refused_without_blocking() {
+        use std::os::unix::ffi::OsStrExt;
+        let dir = crate::harness::scratch();
+        std::fs::create_dir_all(&dir).unwrap();
+        let fifo = dir.join("notify-picture-fifo.jpg");
+        let _ = std::fs::remove_file(&fifo);
+        let c = std::ffi::CString::new(fifo.as_os_str().as_bytes()).unwrap();
+        // SAFETY: `c` is a NUL-terminated path.
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(picture_file_sources(&fifo));
+        });
+        let sources = rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("reading the FIFO blocked");
+        assert!(sources.is_empty());
     }
 
     #[test]

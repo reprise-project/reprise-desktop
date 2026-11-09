@@ -7,9 +7,11 @@ use crate::tray::{
 use reprisekit::icon::IconSource;
 use std::collections::HashMap;
 use std::os::fd::RawFd;
+use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use zbus::Connection;
 use zbus::message::Header;
 use zbus::object_server::SignalEmitter;
@@ -155,7 +157,8 @@ impl Notifications {
         let hints = notify::hints(hints);
         let sound = hints.balloon_sound();
         let entry = hints.desktop_entry.as_deref().and_then(desktop_entry);
-        let (app_icon, image) = notification_icons(&self.icons, &hints, app_icon, entry.as_ref());
+        let (app_icon, image) =
+            notification_icons(&self.icons, &hints, app_icon, entry.as_ref()).await;
         let key = clip(
             notify::program_key(hints.desktop_entry.as_deref(), &app_name),
             notify::KEY_CHARS,
@@ -276,11 +279,34 @@ fn desktop_entry(hint: &str) -> Option<reprisefs::apps::AppEntry> {
     reprisefs::apps::parse_desktop(&text, &id)
 }
 
+/// How long a picture file gets to be read and decoded; past it the notification shows without it.
+const PICTURE_WITHIN: Duration = Duration::from_secs(2);
+
+/// [`notify::picture_file_sources`] on a thread of its own, so the bus thread waits at most
+/// [`PICTURE_WITHIN`].
+async fn picture_file(path: PathBuf) -> Vec<IconSource> {
+    let (tx, rx) = async_channel::bounded(1);
+    let spawned = std::thread::Builder::new()
+        .name("notify-picture".into())
+        .spawn(move || {
+            let _ = tx.send_blocking(notify::picture_file_sources(&path));
+        });
+    if spawned.is_err() {
+        return Vec::new();
+    }
+    let decoded = async { rx.recv().await.unwrap_or_default() };
+    let late = async {
+        async_io::Timer::after(PICTURE_WITHIN).await;
+        Vec::new()
+    };
+    futures_lite::future::or(decoded, late).await
+}
+
 /// `(app_icon, image)`: the app icon name, else the desktop entry's icon;
 /// the `image-data` hint, else `image-path`. Each is the first that resolves.
-pub(super) fn notification_icons(
+pub(super) async fn notification_icons(
     icons: &Icons,
-    hints: &notify::Hints,
+    hints: &notify::Hints<'_>,
     app_icon: String,
     entry: Option<&reprisefs::apps::AppEntry>,
 ) -> (Vec<IconSource>, Vec<IconSource>) {
@@ -289,29 +315,27 @@ pub(super) fn notification_icons(
             .map(|name| decode_named_at(&mut lock(icons), &name, &[], &NOTIFY_SIZES))
             .unwrap_or_default()
     };
-    let image = hints
-        .image
-        .as_ref()
+    let mut image = (hints.image.as_ref())
         .map(notify::image_sources)
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| {
-            let path = hints
-                .image_path
-                .as_deref()
-                .map(|p| match p.strip_prefix("file://") {
-                    Some(rest) => String::from_utf8_lossy(&reprisefs::trash::percent_decode(rest))
-                        .into_owned(),
-                    None => p.to_string(),
-                });
-            let file = path.clone().filter(|p| p.starts_with('/'));
-            let sources = named(path);
-            match file {
-                Some(file) if sources.is_empty() => {
-                    notify::picture_file_sources(std::path::Path::new(&file))
+        .unwrap_or_default();
+    if image.is_empty() {
+        let path = hints
+            .image_path
+            .as_deref()
+            .map(|p| match p.strip_prefix("file://") {
+                Some(rest) => {
+                    String::from_utf8_lossy(&reprisefs::trash::percent_decode(rest)).into_owned()
                 }
-                _ => sources,
-            }
-        });
+                None => p.to_string(),
+            });
+        let file = path.clone().filter(|p| p.starts_with('/'));
+        image = named(path);
+        if image.is_empty()
+            && let Some(file) = file
+        {
+            image = picture_file(PathBuf::from(file)).await;
+        }
+    }
     let app = [Some(app_icon), entry.and_then(|e| e.icon.clone())]
         .into_iter()
         .map(named)
