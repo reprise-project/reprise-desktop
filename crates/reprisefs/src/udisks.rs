@@ -304,12 +304,16 @@ fn disk_of(path: &str, p: &Props) -> Disk {
     }
 }
 
+/// The most of a drive's label shown, in characters: NTFS's longest.
+const LABEL_MAX: usize = 32;
+
 fn volume_of(path: &str, ifaces: &HashMap<String, Props>, block: &Props) -> Volume {
     let fs = ifaces.get(FILESYSTEM_IFACE);
     let crypt = ifaces.get(ENCRYPTED_IFACE);
-    let label = Some(text(block, "IdLabel"))
+    let shown = |key| Some(crate::names::shown_line(&text(block, key), LABEL_MAX));
+    let label = shown("IdLabel")
         .filter(|l| !l.is_empty())
-        .or_else(|| Some(text(block, "HintName")).filter(|l| !l.is_empty()));
+        .or_else(|| shown("HintName").filter(|l| !l.is_empty()));
     Volume {
         path: path.to_string(),
         device: dev_name(block, "Device"),
@@ -1191,6 +1195,27 @@ pub(crate) mod tests {
         assert_eq!(drives[0].mount, PathBuf::from("/run/media/u/BOOT"));
         assert_eq!(drives[0].device, "/dev/loop0p1");
         assert!(drives[0].removable && !drives[0].optical);
+    }
+
+    #[test]
+    fn a_drive_label_loses_control_and_bidi_characters_and_its_tail_past_32() {
+        let path = |p: &str| OwnedObjectPath::try_from(p.to_string()).unwrap();
+        let mut m = Objects::new();
+        for (dev, label) in [
+            ("sdc1", "\u{202e}gpj.exe\tHome\u{7}"),
+            ("sdd1", "\u{2066}\n\u{200f}"),
+            ("sde1", &"x".repeat(40)),
+        ] {
+            let mut p = partition(dev, "sdc", "vfat", &[]);
+            let block = p.get_mut(BLOCK_IFACE).unwrap();
+            block.insert("IdLabel".into(), s(label));
+            m.insert(path(&format!("{BD}/{dev}")), p);
+        }
+        let snap = fold(&m);
+        let name = |d: &str| snap.volume_by_device(d).unwrap().name(None);
+        assert_eq!(name("/dev/sdc1"), "gpj.exeHome");
+        assert_eq!(name("/dev/sdd1"), "Removable Disk", "nothing left to show");
+        assert_eq!(name("/dev/sde1"), "x".repeat(32));
     }
 
     #[test]
