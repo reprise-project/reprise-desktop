@@ -349,7 +349,8 @@ desktop and stays out of the way when it's missing.
 **Security**
 
 - polkit, for the admin password prompt, for saving Settings > Login Manager
-  (pkexec), and for the login manager's rule that keeps every session not
+  (pkexec), for User Accounts' Ask for a new password at the next login
+  (`pkexec chage`), and for the login manager's rule that keeps every session not
   on screen, Switch User's and background ones alike, from switching the
   console
 - gnome-keyring, for saved passwords and the Secret portal. The login
