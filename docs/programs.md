@@ -50,8 +50,8 @@ The file manager, and the default for folders.
   desktop, a mail, a removable drive or a phone KDE Connect reaches. An archive (zip, 7z, tar plain or
   compressed) has Extract Here, which writes over nothing already there, and
   Extract to, into a new folder named after it. An archive with a hidden
-  top-level entry (`.config`, `.local`) goes into a new folder for Extract
-  Here too. One with an entry or a link that would land outside its folder,
+  top-level entry (`.config`, `.local`), or with a link to nothing in the
+  archive, goes into a new folder for Extract Here too. One with an entry or a link that would land outside its folder,
   or that would fill more than 90% of the free space or hold more than
   1,000,000 entries or the free inodes, whichever is fewer, is refused ([security.md](security.md#programs-and-files)).
   Compress to 'name.zip'
