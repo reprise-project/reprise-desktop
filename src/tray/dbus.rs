@@ -667,10 +667,15 @@ fn name_flags(defers: bool) -> zbus::fdo::RequestNameFlags {
     }
 }
 
-/// `org.freedesktop.ScreenSaver` as [`name_flags`] asks for it, except that no later owner may
-/// take it over: reprise-rdp trusts the desktop's lock only from the compositor.
+/// `org.freedesktop.ScreenSaver` as [`name_flags`] asks for it, except that a session that doesn't
+/// defer queues for it, so it gets the name whenever its holder leaves.
 fn screensaver_flags(defers: bool) -> zbus::fdo::RequestNameFlags {
-    name_flags(defers).difference(zbus::fdo::RequestNameFlags::ALLOW_REPLACEMENT)
+    let flags = name_flags(defers);
+    if defers {
+        flags
+    } else {
+        flags.difference(zbus::fdo::RequestNameFlags::DO_NOT_QUEUE)
+    }
 }
 
 /// Serves `org.freedesktop.ScreenSaver` on both its paths and asks for the name.
