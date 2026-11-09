@@ -588,8 +588,10 @@ another program).
 ## User Accounts
 
 Change your name, picture and password. With admin rights, add and remove
-accounts, choosing what happens to their files. A new account can be told to
-pick its own password at first login. While reprise-login is installed, your
+accounts, choosing what happens to their files. A new account is made with a
+password. It, or another account's Password tab, can ask for a new password
+at the next login: the account logs in with the password it has, then picks a
+new one. While reprise-login is installed, your
 account's Password tab also creates, changes and removes your Remote Desktop
 password ([features.md](features.md#remote-logins));
 `reprise-accounts --remote-password` opens it there.
