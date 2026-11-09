@@ -434,7 +434,8 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   the label as the icon's tooltip.
 - **History.** A bell in the tray keeps the session's notifications, grouped
   per program, each group with its own Clear. The arrows walk it, Enter runs
-  a notification, Delete dismisses it and the Menu key lists its actions.
+  a notification, Delete dismisses it and the Menu key lists its actions. It
+  keeps the newest 50, at most 20 of them from any one program.
 - **Bursts fold together.** A program that sends more than three balloons in
   ten seconds gets one "5 new from Mail" balloon instead.
 - **Per program.** Right-click a program's group in the history, or press the

@@ -435,8 +435,8 @@ fn changed(state: &mut State) {
     crate::notifycenter::refresh(state);
 }
 
-/// The bus counts ids up from 1, so no client's notification shares this one.
-const OWN_ID: u32 = u32::MAX;
+/// The bus never gives a client's notification this id.
+pub(crate) const OWN_ID: u32 = u32::MAX;
 
 const OWN_APP: &str = "Reprise";
 

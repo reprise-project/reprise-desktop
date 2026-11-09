@@ -19,6 +19,9 @@ use crate::compositor::State;
 
 const IFACE: &str = "com.canonical.Unity.LauncherEntry";
 const RETRY: Duration = Duration::from_secs(5);
+/// Apps one sender may light, and entries in all.
+const MAX_APPS_PER_SENDER: usize = 8;
+const MAX_ENTRIES: usize = 256;
 
 #[derive(Clone, Debug, PartialEq)]
 enum Msg {
@@ -84,7 +87,7 @@ pub struct Entries {
 fn app_key(uri: &str) -> Option<String> {
     let id = uri.strip_prefix("application://")?;
     let id = id.strip_suffix(".desktop").unwrap_or(id);
-    (!id.is_empty()).then(|| id.to_ascii_lowercase())
+    (!id.is_empty() && id.len() <= 255).then(|| id.to_ascii_lowercase())
 }
 
 impl Entries {
@@ -124,8 +127,15 @@ impl Entries {
                 app,
                 props,
             } => {
+                let key = (sender, app.clone());
+                if !self.by_sender.contains_key(&key) {
+                    let theirs = self.by_sender.keys().filter(|(s, _)| *s == key.0).count();
+                    if theirs >= MAX_APPS_PER_SENDER || self.by_sender.len() >= MAX_ENTRIES {
+                        return Applied::default();
+                    }
+                }
                 self.clock += 1;
-                let e = self.by_sender.entry((sender, app.clone())).or_default();
+                let e = self.by_sender.entry(key).or_default();
                 let before = e.clone();
                 e.pid = pid;
                 e.progress = props.progress.unwrap_or(e.progress).clamp(0.0, 1.0);
@@ -514,6 +524,24 @@ mod tests {
             .build(&("application://mail.desktop", props))
             .unwrap();
         assert_eq!(update_of(&msg), None);
+    }
+
+    #[test]
+    fn a_sender_keeps_at_most_8_apps_and_a_long_uri_is_dropped() {
+        let mut e = Entries::default();
+        for i in 0..MAX_APPS_PER_SENDER + 2 {
+            e.apply(props(
+                ":1.5",
+                &format!("app{i}"),
+                counted(Some(1), Some(true)),
+            ));
+        }
+        let shown = |e: &Entries, app: &str| e.badge(&[app.to_string()]).is_some();
+        assert!(shown(&e, "app7"));
+        assert!(!shown(&e, "app8"), "past the sender's share");
+        e.apply(props(":1.6", "other", counted(Some(1), Some(true))));
+        assert!(shown(&e, "other"), "another sender has its own share");
+        assert_eq!(app_key(&format!("application://{}", "a".repeat(256))), None);
     }
 
     #[test]

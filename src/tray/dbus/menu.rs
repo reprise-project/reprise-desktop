@@ -1,6 +1,7 @@
 use super::uncached_proxy;
 use crate::tray::{DEFAULT_PROP, MenuNode, TrayItem};
 use reprisebus::bounded::{self, Dict, Value};
+use reprisefs::names::shown_line;
 use serde::de::{self, Deserialize, Deserializer, IgnoredAny, SeqAccess, Visitor};
 use zbus::{Connection, Message, Signature, Type, Variant};
 
@@ -27,7 +28,7 @@ fn node_of(id: i32, props: &Dict) -> MenuNode {
     let mut toggle_state: Option<i64> = None;
     for (k, v) in props.iter() {
         match (k, v) {
-            ("label", Value::Str(s)) => node.label = s.chars().take(LABEL_CHARS).collect(),
+            ("label", Value::Str(s)) => node.label = shown_line(s, LABEL_CHARS),
             ("enabled", Value::Bool(b)) => node.enabled = *b,
             ("visible", Value::Bool(b)) => node.visible = *b,
             ("type", Value::Str(s)) => node.separator = s == "separator",

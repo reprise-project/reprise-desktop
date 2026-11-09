@@ -4,6 +4,7 @@
 
 use crate::raster::Canvas;
 use repriseaudio::sounds::Sound;
+use reprisefs::names::shown_line;
 use reprisekit::icon::IconSource;
 use serde::de::{self, Deserialize, Deserializer, IgnoredAny, SeqAccess, Visitor};
 use std::collections::HashMap;
@@ -37,7 +38,7 @@ pub fn actions(raw: &[String]) -> Vec<(String, String)> {
         if key.is_empty() || key.len() > ACTION_KEY_BYTES || out.iter().any(|(k, _)| k == key) {
             continue;
         }
-        out.push((key.clone(), super::clip(label.clone(), ACTION_LABEL_CHARS)));
+        out.push((key.clone(), shown_line(label, ACTION_LABEL_CHARS)));
         if out.len() == MAX_ACTIONS {
             break;
         }
@@ -123,6 +124,77 @@ impl<'de> Visitor<'de> for HintVisitor {
     }
 }
 
+/// Hints kept of a `Notify` call, and strings of its action list; the rest are skipped unread.
+pub const MAX_HINTS: usize = 64;
+const MAX_ACTION_STRINGS: usize = 4 * MAX_ACTIONS;
+
+/// A `Notify` call's hints: the first [`MAX_HINTS`] whose key is at most 255 bytes.
+pub struct HintMap<'a>(pub HashMap<String, Hint<'a>>);
+
+impl Type for HintMap<'_> {
+    const SIGNATURE: &'static Signature = <HashMap<&str, Hint<'_>>>::SIGNATURE;
+}
+
+impl<'de> Deserialize<'de> for HintMap<'de> {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V;
+        impl<'de> Visitor<'de> for V {
+            type Value = HintMap<'de>;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("notification hints")
+            }
+
+            fn visit_map<A: de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> Result<HintMap<'de>, A::Error> {
+                let mut out = HashMap::new();
+                while let Some(key) = map.next_key::<&str>()? {
+                    if out.len() < MAX_HINTS && key.len() <= 255 {
+                        out.insert(key.to_owned(), map.next_value::<Hint<'de>>()?);
+                    } else {
+                        map.next_value::<IgnoredAny>()?;
+                    }
+                }
+                Ok(HintMap(out))
+            }
+        }
+        d.deserialize_map(V)
+    }
+}
+
+/// A `Notify` call's action list: its first strings, enough for [`MAX_ACTIONS`] pairs twice over.
+pub struct ActionList(pub Vec<String>);
+
+impl Type for ActionList {
+    const SIGNATURE: &'static Signature = <Vec<&str>>::SIGNATURE;
+}
+
+impl<'de> Deserialize<'de> for ActionList {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V;
+        impl<'de> Visitor<'de> for V {
+            type Value = ActionList;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("notification actions")
+            }
+
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<ActionList, A::Error> {
+                let mut out = Vec::new();
+                while let Some(s) = seq.next_element::<&str>()? {
+                    if out.len() < MAX_ACTION_STRINGS {
+                        out.push(s.to_owned());
+                    }
+                }
+                Ok(ActionList(out))
+            }
+        }
+        d.deserialize_seq(V)
+    }
+}
+
 #[derive(Debug, Default, PartialEq)]
 pub struct Hints<'a> {
     pub urgency: Urgency,
@@ -201,8 +273,8 @@ pub fn icon_keys(actions: &[(String, String)]) -> impl Iterator<Item = &str> {
 }
 
 /// Notification pictures show at most 96 px a side and are scaled down to it. `image-data`'s
-/// bytes are already in memory, so only its arithmetic needs bounding.
-const MAX_IMAGE_SIDE: i32 = 8192;
+/// bytes are already in memory; its side is capped so each resample stays cheap.
+const MAX_IMAGE_SIDE: i32 = 1024;
 /// A picture file's side; its decoder's memory is bounded by [`MAX_PICTURE_ALLOC`].
 const MAX_PICTURE_SIDE: u32 = 4096;
 /// Bytes a picture file's decoder may allocate: 8-bit RGBA at [`MAX_PICTURE_SIDE`] square.
@@ -211,8 +283,16 @@ const MAX_PICTURE_ALLOC: u64 = MAX_PICTURE_SIDE as u64 * MAX_PICTURE_SIDE as u64
 /// `image-data` decoded at each of [`super::NOTIFY_SIZES`], fitted inside
 /// a square canvas with its aspect kept and the rest clear.
 pub fn image_sources(img: &ImageData) -> Vec<IconSource> {
-    let ok = (1..=MAX_IMAGE_SIDE).contains(&img.width)
-        && (1..=MAX_IMAGE_SIDE).contains(&img.height)
+    if img.width > MAX_IMAGE_SIDE || img.height > MAX_IMAGE_SIDE {
+        return Vec::new();
+    }
+    fitted(img)
+}
+
+/// [`image_sources`] for pixels of any side.
+fn fitted(img: &ImageData) -> Vec<IconSource> {
+    let ok = img.width >= 1
+        && img.height >= 1
         && img.bits == 8
         && (img.channels == 3 || img.channels == 4)
         && (img.channels == 4) == img.alpha;
@@ -265,7 +345,7 @@ pub fn picture_file_sources(path: &Path) -> Vec<IconSource> {
     };
     let rgba = img.into_rgba8();
     let (w, h) = (rgba.width() as i32, rgba.height() as i32);
-    image_sources(&ImageData {
+    fitted(&ImageData {
         width: w,
         height: h,
         stride: w * 4,
@@ -302,7 +382,17 @@ pub fn program_key(hint: Option<&str>, app_name: &str) -> String {
     }
 }
 
+/// `markup` as text, its line breaks kept and every other control and format character dropped.
 pub fn plain_text(markup: &str) -> String {
+    let text = markup_text(markup);
+    let lines: Vec<String> = text
+        .split('\n')
+        .map(|l| shown_line(l, usize::MAX))
+        .collect();
+    lines.join("\n")
+}
+
+fn markup_text(markup: &str) -> String {
     let mut out = String::with_capacity(markup.len());
     let mut rest = markup;
     while let Some(i) = rest.find(['<', '&']) {
@@ -322,7 +412,7 @@ pub fn plain_text(markup: &str) -> String {
                 .to_ascii_lowercase();
             match name.as_str() {
                 "br" => out.push('\n'),
-                "img" => out.push_str(&plain_text(&attribute(tag, "alt").unwrap_or_default())),
+                "img" => out.push_str(&markup_text(&attribute(tag, "alt").unwrap_or_default())),
                 _ => {}
             }
             rest = &rest[end + 1..];
@@ -431,6 +521,35 @@ mod tests {
     }
 
     #[test]
+    fn image_data_past_1024_a_side_is_refused() {
+        let img = |w: i32| ImageData {
+            width: w,
+            height: 1,
+            stride: w * 4,
+            alpha: true,
+            bits: 8,
+            channels: 4,
+            data: &[0; 4 * 1025],
+        };
+        assert_eq!(
+            image_sources(&img(1024)).len(),
+            crate::tray::NOTIFY_SIZES.len()
+        );
+        assert!(image_sources(&img(1025)).is_empty());
+    }
+
+    #[test]
+    fn shown_text_drops_bidi_zero_width_and_control_characters() {
+        let shown = actions(&["k".into(), "Op\u{202e}en\u{200b}\u{0}".into()]);
+        assert_eq!(shown[0].1, "Open");
+        assert_eq!(
+            plain_text("a\u{202e}b&#x202E;c\nd\u{7}"),
+            "abc\nd",
+            "line breaks stay in a body"
+        );
+    }
+
+    #[test]
     fn actions_pair_up_and_drop_what_cannot_come_back() {
         let raw: Vec<String> = [
             "default", "", "open", "Open", "open", "Again", "", "Blank", "odd",
@@ -456,6 +575,25 @@ mod tests {
     fn round_trip(map: HashMap<&str, Variant<'_>>) -> Vec<u8> {
         let ctxt = Context::new(LE, 0);
         to_bytes(ctxt, &map).unwrap().to_vec()
+    }
+
+    #[test]
+    fn a_notify_call_keeps_its_first_hints_and_action_strings() {
+        let keys: Vec<String> = (0..MAX_HINTS + 40).map(|i| format!("x-{i}")).collect();
+        let map: HashMap<&str, Variant> = keys
+            .iter()
+            .map(|k| (k.as_str(), Variant::from(true)))
+            .collect();
+        let bytes = round_trip(map);
+        let data = zbus::wire::serialized::Data::new(&bytes[..], Context::new(LE, 0));
+        let (kept, _): (HintMap, _) = data.deserialize().unwrap();
+        assert_eq!(kept.0.len(), MAX_HINTS);
+
+        let strings: Vec<String> = (0..200).map(|i| i.to_string()).collect();
+        let bytes = to_bytes(Context::new(LE, 0), &strings).unwrap().to_vec();
+        let data = zbus::wire::serialized::Data::new(&bytes[..], Context::new(LE, 0));
+        let (list, _): (ActionList, _) = data.deserialize().unwrap();
+        assert_eq!(list.0, strings[..4 * MAX_ACTIONS]);
     }
 
     fn rgba(w: i32, h: i32) -> ImageData<'static> {

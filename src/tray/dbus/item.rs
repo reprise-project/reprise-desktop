@@ -1,6 +1,7 @@
 use super::{ITEM_IFACE, Icons, Sizes, lock, sizes_now, uncached_proxy};
-use crate::tray::{ItemIcon, TrayItem, clip, decode_named_at, item_pixmaps};
+use crate::tray::{ItemIcon, TrayItem, decode_named_at, item_pixmaps};
 use reprisebus::bounded;
+use reprisefs::names::shown_line;
 use reprisekit::controls::tooltip::TIP_CHARS;
 use reprisekit::icon::IconSource;
 use std::path::PathBuf;
@@ -81,11 +82,11 @@ fn pixmaps_of(body: &Option<Body>) -> Option<Pixmaps<'_>> {
 }
 
 pub(super) fn item_texts(title: Option<String>, tip: Option<ToolTip>) -> (String, String) {
-    let title = clip(title.unwrap_or_default(), TIP_CHARS);
+    let title = shown_line(&title.unwrap_or_default(), TIP_CHARS);
     let tooltip = tip
-        .map(|t| t.2)
+        .map(|t| shown_line(t.2, TIP_CHARS))
         .filter(|s| !s.trim().is_empty())
-        .map_or_else(|| title.clone(), |s| s.chars().take(TIP_CHARS).collect());
+        .unwrap_or_else(|| title.clone());
     (title, tooltip)
 }
 
