@@ -730,11 +730,8 @@ pub fn spawn_argv<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
     spawn_argv_in(argv, None, None, env, launch);
 }
 
-/// `spawn_argv` in working directory `dir`, or reprise's own when `None`. The process runs in
-/// `app-reprise-<name>-*.scope` (xdg-desktop-portal reads a host app's id there), `name` being
-/// `app`, the desktop entry id the command came from, else the program's name. The scope moves a
-/// chatty program's log off the compositor's journald rate limit onto the one every app shares
-/// (docs/install.md, Logs).
+/// `spawn_argv` in `dir` (else reprise's own) inside `app-reprise-<name>-*.scope`, which gives the
+/// portal its app id: `name` is `app`, the desktop entry id, else the program's name.
 pub fn spawn_argv_in<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
     argv: &[S],
     app: Option<&str>,

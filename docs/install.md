@@ -158,7 +158,9 @@ started before the upgrade can't report its clients, so a background
 session it serves counts as having none and its disconnect time starts.
 Sessions started before the upgrade share no clipboard with Remote Desktop
 clients until they log off, and the journal says "the desktop's lock is
-unknown: GetActive ...".
+unknown: GetActive ...". Log each session off once after upgrading: until
+then a password prompt cancelled in Date and Time, Network or Updates shows
+as a refusal.
 
 ### Remote logins
 

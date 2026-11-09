@@ -92,7 +92,7 @@ impl Inhibits {
 #[derive(Clone)]
 pub struct Shared {
     inhibits: Arc<Mutex<Inhibits>>,
-    /// Whether the desktop is locked.
+    /// Whether the desktop is locked; locked until the compositor first reports it.
     active: Arc<AtomicBool>,
     events: Sender<TrayEvent>,
     eventfd: RawFd,
@@ -102,7 +102,7 @@ impl Shared {
     pub fn new(events: Sender<TrayEvent>, eventfd: RawFd) -> Shared {
         Shared {
             inhibits: Arc::new(Mutex::new(Inhibits::default())),
-            active: Arc::default(),
+            active: Arc::new(AtomicBool::new(true)),
             events,
             eventfd,
         }

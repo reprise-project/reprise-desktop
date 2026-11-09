@@ -1008,3 +1008,29 @@ fn get_active_and_active_changed_follow_the_desktops_lock() {
         }
     });
 }
+
+#[test]
+fn get_active_reads_locked_before_the_first_lock_report() {
+    let Some(bus) = crate::testbus::bus() else {
+        eprintln!("no dbus-daemon; skipped");
+        return;
+    };
+    zbus::block_on(async {
+        let (_lp, ours, _fd) = screensaver_on(&bus.1).await;
+        let other = zbus::connection::Builder::address(bus.1.as_str())
+            .build()
+            .await
+            .unwrap();
+        let reply = other
+            .call_method(
+                Some(ours.unique_name().unwrap().as_str()),
+                SCREENSAVER_PATHS[0],
+                Some(SCREENSAVER_NAME),
+                "GetActive",
+                &(),
+            )
+            .await
+            .unwrap();
+        assert!(reply.body().deserialize::<bool>().unwrap());
+    });
+}

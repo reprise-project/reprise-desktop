@@ -428,9 +428,8 @@ impl<S> Clipboard<S> {
         }
     }
 
-    /// The desktop unlocked: the client's newest copy while locked goes to the desktop. When the
-    /// client copied nothing it offers (a client sends an empty list as it connects), the
-    /// desktop's newest copy while locked is offered to the client.
+    /// The desktop unlocked: the client's newest copy while locked goes to the desktop, else (a
+    /// client sends an empty list as it connects) the desktop's newest is offered to the client.
     pub fn unlock(&mut self, d: &mut impl Desktop<Sink = S>) {
         let Some(held) = self.locked.take() else {
             return;

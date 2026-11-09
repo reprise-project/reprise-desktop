@@ -1393,10 +1393,8 @@ impl Daemon {
         }
     }
 
-    /// A lost link with viewers, or one recovery opened from the last run's list that has not
-    /// reported yet, reopens once, keeping its count meanwhile, at a login's pace if one waits.
-    /// Any other loss zeroes the count and refuses the logins waiting on it; the next login for
-    /// `uid` reopens it.
+    /// A lost link with viewers, or one from the last run's list not yet reported, reopens once
+    /// and keeps its count; any other loss zeroes it and refuses the logins waiting on it.
     pub(super) fn intake_lost(&mut self, now: Instant, uid: u32, out: &mut Vec<Effect>) {
         let reported = self.remote.linked.remove(&uid);
         let id = self.sessions.by_uid(uid).map(|e| e.id.clone());
@@ -1433,8 +1431,7 @@ impl Daemon {
         }
     }
 
-    /// Links every session that may have a client: a background one, whose count alone starts
-    /// its time, and while remote logins are off one the last run counted a client in. Looks up
+    /// Links every session that may have a client (docs/security.md, Remote logins), and looks up
     /// the group for the others while remote logins are on.
     pub(super) fn open_intakes(&mut self, out: &mut Vec<Effect>) {
         let users: BTreeMap<u32, (String, bool)> = (self.sessions.iter())

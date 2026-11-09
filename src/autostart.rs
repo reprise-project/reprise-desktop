@@ -99,9 +99,8 @@ fn to_launch<'a>(run: &'a [Entry], running: &[String], session: Option<&str>) ->
         .collect()
 }
 
-/// `launch` each of `run`. After a crash, an entry with an app scope of `session` in `list()`
-/// waits `grace` and starts only if its scope is gone from the listing then: a program still
-/// exiting does not keep it from starting.
+/// `launch` each of `run`. After a crash, an entry whose app scope of `session` is in `list()`
+/// starts only if that scope is gone after `grace`, so a program still exiting doesn't block it.
 fn launch_left(
     run: &[Entry],
     after_crash: bool,
