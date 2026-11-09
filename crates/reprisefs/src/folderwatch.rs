@@ -431,17 +431,35 @@ mod tests {
         assert!(watch.take_changed(), "the named entry is");
     }
 
-    /// Each view's watch is an inotify instance, and a user gets max_user_instances of them.
+    /// Whether an inotify instance open in this process watches `dir`, read from its fdinfo.
+    fn watched(dir: &Path) -> bool {
+        use std::os::unix::fs::MetadataExt;
+        let meta = std::fs::metadata(dir).expect("stat");
+        // fdinfo prints the kernel's dev_t: major in the bits above 20.
+        let sdev = (u64::from(libc::major(meta.dev())) << 20) | u64::from(libc::minor(meta.dev()));
+        let entry = format!(" ino:{:x} sdev:{sdev:x} ", meta.ino());
+        std::fs::read_dir("/proc/self/fdinfo")
+            .expect("fdinfo")
+            .flatten()
+            .any(|fd| std::fs::read_to_string(fd.path()).is_ok_and(|s| s.contains(&entry)))
+    }
+
+    /// Each view's watch is an inotify instance, and a user gets max_user_instances of them. The
+    /// thread closes the instance after the drop, so the test waits for it.
     #[test]
     fn a_dropped_watch_frees_its_inotify_instance() {
-        let limit: usize = std::fs::read_to_string("/proc/sys/fs/inotify/max_user_instances")
-            .ok()
-            .and_then(|s| s.trim().parse().ok())
-            .unwrap_or(128);
         let dir = tempfile::tempdir().expect("tempdir");
-        for _ in 0..limit + 1 {
-            let mut watch = Watch::new(|| {}).expect("inotify");
-            watch.watch(dir.path());
+        let mut watch = Watch::new(|| {}).expect("inotify");
+        watch.watch(dir.path());
+        assert!(watched(dir.path()), "the watch holds an instance");
+        drop(watch);
+        let until = Instant::now() + Duration::from_secs(30);
+        while watched(dir.path()) {
+            assert!(
+                Instant::now() < until,
+                "the dropped watch's instance is still open"
+            );
+            std::thread::sleep(Duration::from_millis(1));
         }
     }
 
