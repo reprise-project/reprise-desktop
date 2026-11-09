@@ -122,7 +122,7 @@ pub fn drain_signalfd(fd: &std::os::fd::OwnedFd) {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SessionEnv {
     pub wayland_display: String,
-    pub x11_display: Option<String>,
+    pub x11: Option<X11Env>,
     /// `XDG_CURRENT_DESKTOP`: xdg-desktop-portal's `<desktop>-portals.conf` key and the
     /// autostart filter. A TTY start leaves it unset, so it is filled in at startup.
     pub desktop: String,
@@ -161,6 +161,13 @@ pub struct SessionEnv {
     pub defers_user_units: bool,
 }
 
+/// How programs reach the X11 display: `DISPLAY` and the `XAUTHORITY` file with its cookie.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct X11Env {
+    pub display: String,
+    pub authority: String,
+}
+
 /// What the login manager and pam_systemd set that services outside our process tree still need.
 const FORWARDED: [&str; 3] = ["XDG_SESSION_DESKTOP", "XDG_SEAT", "XDG_SEAT_PATH"];
 
@@ -177,7 +184,7 @@ impl SessionEnv {
     ) -> SessionEnv {
         SessionEnv {
             wayland_display,
-            x11_display: None,
+            x11: None,
             desktop: std::env::var("XDG_CURRENT_DESKTOP")
                 .ok()
                 .filter(|v| !v.is_empty())
@@ -262,8 +269,9 @@ impl SessionEnv {
             // GTK3 opens its file dialogs through the portal.
             ("GTK_USE_PORTAL", "1".into()),
         ];
-        if let Some(d) = &self.x11_display {
-            v.push(("DISPLAY", d.clone()));
+        if let Some(x) = &self.x11 {
+            v.push(("DISPLAY", x.display.clone()));
+            v.push(("XAUTHORITY", x.authority.clone()));
         }
         v.extend(self.login.iter().cloned());
         v
@@ -419,7 +427,7 @@ fn write_portal_gtk_drop_in(runtime: &std::path::Path, theme: &str) -> std::io::
 /// Every variable `export_session_env` can publish.
 fn exported_names() -> Vec<&'static str> {
     let every = SessionEnv {
-        x11_display: Some(String::new()),
+        x11: Some(X11Env::default()),
         login: FORWARDED.map(|k| (k, String::new())).to_vec(),
         ..SessionEnv::default()
     };
@@ -721,8 +729,9 @@ fn with_session_env(c: &mut std::process::Command, env: &SessionEnv, launch: Opt
     if let Some(qt) = env.qt_platform_theme() {
         c.env("QT_QPA_PLATFORMTHEME", qt);
     }
-    if env.x11_display.is_none() {
+    if env.x11.is_none() {
         c.env_remove("DISPLAY");
+        c.env_remove("XAUTHORITY");
     }
     reprisebus::instance::Handoff {
         token: launch.map(|l| l.token.clone()),
@@ -1145,7 +1154,10 @@ mod tests {
     fn env(x11: Option<&str>) -> SessionEnv {
         SessionEnv {
             wayland_display: "wayland-9".into(),
-            x11_display: x11.map(str::to_string),
+            x11: x11.map(|d| X11Env {
+                display: d.into(),
+                authority: format!("/run/user/1000/reprise/xauth-{}", &d[1..]),
+            }),
             desktop: "reprise".into(),
             colors: "k=v".into(),
             interface: reprisekit::interface::Interface::Classic,
@@ -1319,6 +1331,7 @@ mod tests {
             reprisefs::sysinfo::RENDERER_ENV,
             "GTK_USE_PORTAL",
             "DISPLAY",
+            "XAUTHORITY",
             "XDG_SESSION_DESKTOP",
             "XDG_SEAT",
             "XDG_SEAT_PATH",
@@ -1718,8 +1731,9 @@ mod tests {
             env_of(&c, "WAYLAND_DISPLAY"),
             Some(Some("wayland-9".into()))
         );
-        // No X11 display: DISPLAY is removed rather than inherited.
+        // No X11 display: DISPLAY and its cookie are removed rather than inherited.
         assert_eq!(env_of(&c, "DISPLAY"), Some(None));
+        assert_eq!(env_of(&c, "XAUTHORITY"), Some(None));
     }
 
     #[test]
@@ -1758,6 +1772,10 @@ mod tests {
         assert_eq!(env_of(&c, "XDG_ACTIVATION_TOKEN"), Some(None));
         assert_eq!(env_of(&c, "DESKTOP_STARTUP_ID"), Some(None));
         assert_eq!(env_of(&c, "DISPLAY"), Some(Some(":1".into())));
+        assert_eq!(
+            env_of(&c, "XAUTHORITY"),
+            Some(Some("/run/user/1000/reprise/xauth-1".into()))
+        );
     }
 
     /// The desktop name, the colours, the interface, Blue's variant and

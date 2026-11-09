@@ -28,7 +28,7 @@ const HOMES: [(&str, &str); 4] = [
 ];
 
 /// Variables that lead to the user's own files, buses or displays.
-const DROPPED: [&str; 7] = [
+const DROPPED: [&str; 8] = [
     "XDG_CONFIG_DIRS",
     "XDG_DATA_DIRS",
     "DBUS_SESSION_BUS_ADDRESS",
@@ -36,6 +36,7 @@ const DROPPED: [&str; 7] = [
     "WAYLAND_DISPLAY",
     "WAYLAND_SOCKET",
     "DISPLAY",
+    "XAUTHORITY",
 ];
 
 /// The process's session folder, removed as it exits.

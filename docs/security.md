@@ -102,6 +102,16 @@ Inside it there is no isolation, as on any X11 desktop: an X11 program can
 read the keys typed into other X11 windows, read their pixels, grab the
 pointer and inject input into them through XTEST.
 
+The server listens on `/tmp/.X11-unix/X<n>` and on the abstract socket of
+the same name, and admits only a client that presents its
+MIT-MAGIC-COOKIE-1. Reprise writes a random cookie for each session to
+`$XDG_RUNTIME_DIR/reprise/xauth-<n>` (mode 0600) and hands programs its path
+in `XAUTHORITY` beside `DISPLAY`; Flatpak copies it into an app with X11
+access. A Flatpak app without X11 access but with network access shares the
+host's network namespace and so reaches the abstract socket, but it has no
+cookie to present and is refused. Code running as you outside a sandbox can
+read the file, the same boundary as the Wayland socket.
+
 Wayland programs are not exposed to this. An X11 program sees only the X11
 windows, hears keys only while an X11 window has the focus, and can't
 capture or drive Wayland windows.
@@ -1179,7 +1189,8 @@ sharing and remote control grants yet.
 
 - **No per-app Xwayland.** Every X11 program shares one server; see
   [X11 programs](#x11-programs). Run a program you don't trust as a
-  Wayland client or in a Flatpak without X11 access.
+  Wayland client or in a Flatpak without X11 access: it can't connect to
+  the server, network access or not.
 - **Privileged globals have no allow-list.** Any unsandboxed program can
   capture the screen, read the clipboard, inject input or lock and unlock
   the screen through the globals above. Sandboxing is the only way to keep
