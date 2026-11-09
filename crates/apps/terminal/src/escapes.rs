@@ -17,6 +17,9 @@ const CSI_HELD_MAX: usize = 64;
 const CSI_PARAMS: usize = 32;
 
 const ESC: u8 = 0x1b;
+/// What a dropped escape is replaced with: its ESC ends any string the parser is in (DCS, APC)
+/// as the dropped one would have, and ST does nothing else.
+const ST: &[u8] = b"\x1b\\";
 
 #[derive(Default)]
 enum State {
@@ -26,12 +29,13 @@ enum State {
     Esc,
     /// An OSC, held whole until it ends.
     Osc,
-    /// An OSC 52 past [`OSC_MAX`], passed on as it comes; its payload bytes so far.
+    /// An OSC 52 past [`OSC_MAX`], passed on as it comes up to [`OSC52_MAX`] and its end; its
+    /// payload bytes so far.
     Osc52(usize),
-    /// An OSC past its cap, dropped up to its end.
+    /// An OSC past its cap, replaced by [`ST`] and dropped up to its end.
     OscDrop,
     Csi(Csi),
-    /// A CSI held past [`CSI_HELD_MAX`], dropped up to its end.
+    /// A CSI held past [`CSI_HELD_MAX`], replaced by [`ST`] and dropped up to its end.
     CsiDrop,
 }
 
@@ -160,6 +164,7 @@ impl Filter {
                 }
                 _ => {
                     self.held.clear();
+                    out.extend_from_slice(ST);
                     self.state = State::OscDrop;
                 }
             },
@@ -170,10 +175,11 @@ impl Filter {
                     *n += 1;
                     out.push(b);
                 }
-                _ => {
+                _ if *n == OSC52_MAX => {
+                    *n += 1;
                     out.push(0xff);
-                    self.state = State::OscDrop;
                 }
+                _ => {}
             },
             State::OscDrop => match b {
                 0x07 => self.state = State::Ground,
@@ -196,6 +202,7 @@ impl Filter {
                     let change = csi.stack_change(b);
                     if change > 0 && self.depth >= DEPTH_MAX {
                         self.held.clear();
+                        out.extend_from_slice(ST);
                     } else {
                         self.depth = self.depth.saturating_add_signed(change.into());
                         out.append(&mut self.held);
@@ -225,6 +232,7 @@ impl Filter {
                         self.held.push(b);
                     } else {
                         self.held.clear();
+                        out.extend_from_slice(ST);
                         self.state = State::CsiDrop;
                     }
                 }
@@ -291,15 +299,16 @@ mod tests {
         out
     }
 
-    /// What a `Term` sends while it parses `bytes` through a [`Filter`].
-    fn events(bytes: &[u8]) -> Vec<Event> {
-        #[derive(Clone, Default)]
-        struct Sink(Arc<Mutex<Vec<Event>>>);
-        impl EventListener for Sink {
-            fn send_event(&self, ev: Event) {
-                self.0.lock().unwrap().push(ev);
-            }
+    #[derive(Clone, Default)]
+    struct Sink(Arc<Mutex<Vec<Event>>>);
+    impl EventListener for Sink {
+        fn send_event(&self, ev: Event) {
+            self.0.lock().unwrap().push(ev);
         }
+    }
+
+    /// A `Term` that parsed `bytes` through a [`Filter`], and the events it sent.
+    fn parsed(bytes: &[u8]) -> (Term<Sink>, Vec<Event>) {
         let sink = Sink::default();
         let mut term = Term::new(Config::default(), &TermSize::new(80, 24), sink.clone());
         let mut parser: Processor = Processor::new();
@@ -309,7 +318,22 @@ mod tests {
             filter.feed(chunk, &mut out);
             parser.advance(&mut term, &out);
         }
-        std::mem::take(&mut *sink.0.lock().unwrap())
+        let events = std::mem::take(&mut *sink.0.lock().unwrap());
+        (term, events)
+    }
+
+    fn events(bytes: &[u8]) -> Vec<Event> {
+        parsed(bytes).1
+    }
+
+    /// The text on the first line after `bytes`.
+    fn first_line(bytes: &[u8]) -> String {
+        use alacritty_terminal::grid::Dimensions;
+        use alacritty_terminal::index::{Column, Line};
+        let (term, _) = parsed(bytes);
+        let row = &term.grid()[Line(0)];
+        let text: String = (0..term.columns()).map(|c| row[Column(c)].c).collect();
+        text.trim_end().to_owned()
     }
 
     fn titles(events: &[Event]) -> Vec<String> {
@@ -324,7 +348,11 @@ mod tests {
 
     #[test]
     fn plain_output_and_short_escapes_pass_unchanged_across_reads() {
-        let all: &[u8] = b"ls\r\n\x1b[1;31mred\x1b[0m \x1b]0;a title\x07\x1b]8;;http://x\x1b\\link\x1b[22t\x1b[23t";
+        let all: &[u8] = "ls\r\n\x1b[1;31mred\x1b[0m \x1b]0;a title\x07\x1b]8;;http://x\x1b\\link\
+             \x1b[22t\x1b[23t é€😀 \x1bP1$qm\x1b\\\x1b_apc\x1b\\\x1b(B\x1b[1\x18\x1b]0;x\x1a\
+             \x1b]2;y\x1b[0m\x07"
+            .as_bytes();
+        let all: &[u8] = &[all, &b"\x9d0;c1\x9c\x7f\xff"[..]].concat();
         for cut in 0..all.len() {
             assert_eq!(filtered(&[&all[..cut], &all[cut..]]), all, "split at {cut}");
         }
@@ -335,7 +363,7 @@ mod tests {
         let mut long = b"\x1b]0;".to_vec();
         long.resize(4 + OSC_MAX + 1, b'x');
         long.extend_from_slice(b"\x07after");
-        assert_eq!(filtered(&[&long]), b"after");
+        assert_eq!(filtered(&[&long]), [ST, b"after"].concat());
         assert!(titles(&events(&long)).is_empty(), "no title is set");
     }
 
@@ -352,7 +380,7 @@ mod tests {
         let mut long = b"\x1b\x01]0;".to_vec();
         long.resize(5 + OSC_MAX + 1, b'x');
         long.push(0x07);
-        assert_eq!(filtered(&[&long]), b"\x01");
+        assert_eq!(filtered(&[&long]), [&b"\x01"[..], ST].concat());
     }
 
     #[test]
@@ -363,7 +391,7 @@ mod tests {
         for _ in 0..80 {
             f.feed(&[b'x'; 64 << 10], &mut out);
         }
-        assert!(out.is_empty());
+        assert_eq!(out, ST);
         assert!(f.held() <= 2 + OSC_MAX, "held {}", f.held());
     }
 
@@ -392,6 +420,45 @@ mod tests {
     }
 
     #[test]
+    fn a_capped_osc_ends_where_the_parser_ends_it() {
+        for head in [&b"\x1b]0;"[..], b"\x1b]52;c;"] {
+            for end in [&b"\x07"[..], b"\x18", b"\x1b\\"] {
+                let mut seq = head.to_vec();
+                seq.resize(head.len() + OSC52_MAX + 1024, b'A');
+                seq.extend_from_slice(end);
+                seq.extend_from_slice(b"after");
+                let what = format!("{} ended by {}", head.escape_ascii(), end.escape_ascii());
+                assert_eq!(first_line(&seq), "after", "{what}");
+                assert!(
+                    !events(&seq)
+                        .iter()
+                        .any(|e| matches!(e, Event::Title(..) | Event::ClipboardStore(..))),
+                    "{what} sets nothing"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_dropped_escape_still_ends_the_string_before_it() {
+        let mut long = b"\x1b]0;".to_vec();
+        long.resize(4 + OSC_MAX + 1, b'x');
+        long.push(0x07);
+        let pushes = "\x1b[22t".repeat(DEPTH_MAX);
+        for before in [&b"\x1bPq"[..], b"\x1b_apc", b"\x1b(", b"\x1b"] {
+            let what = before.escape_ascii();
+            let osc = [before, &long[..], &b"after"[..]].concat();
+            assert_eq!(first_line(&osc), "after", "{what} then a long OSC");
+            let push = [pushes.as_bytes(), before, &b"\x1b[22tafter"[..]].concat();
+            assert_eq!(
+                first_line(&push),
+                "after",
+                "{what} then a push past the cap"
+            );
+        }
+    }
+
+    #[test]
     fn title_pushes_past_the_depth_cap_are_dropped() {
         let mut seq = String::new();
         for i in 1..=40 {
@@ -416,7 +483,7 @@ mod tests {
         }
         out.clear();
         f.feed(push, &mut out);
-        assert!(out.is_empty(), "the stack is full");
+        assert_eq!(out, ST, "the stack is full");
         f.feed(b"\x1b[23t", &mut out);
         out.clear();
         f.feed(push, &mut out);
@@ -446,7 +513,7 @@ mod tests {
         f.feed(b"t", &mut out);
         assert_eq!(
             out,
-            &others[..others.len() - 6],
+            [&others[..others.len() - 6], ST].concat(),
             "the zero-padded push is dropped"
         );
     }
