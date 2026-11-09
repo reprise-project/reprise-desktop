@@ -149,32 +149,17 @@ fn describe(method: &str, e: zbus::Error, dismissed: impl FnOnce() -> bool) -> F
         }
         Some(reprisebus::polkit::Refusal::Denied) | None => {}
     }
-    match &e {
-        zbus::Error::MethodError(name, Some(msg), _) => {
-            log::error!("{method}: {name}: {msg}");
-            Failure::Text(msg.clone())
-        }
-        _ => {
-            log::error!("{method}: {e}");
-            text(e)
-        }
+    log::error!("{method}: {e}");
+    match reprisebus::error::message(&e) {
+        Some(msg) => Failure::Text(msg.into()),
+        None => text(e),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn error(name: &'static str, text: &str) -> zbus::Error {
-        let msg = zbus::Message::method_call(PATH, "SetNTP")
-            .build(&())
-            .expect("a method call");
-        zbus::Error::MethodError(
-            name.try_into().expect("an error name"),
-            Some(text.into()),
-            msg,
-        )
-    }
+    use reprisebus::error::reply as error;
 
     #[test]
     fn access_denied_is_a_dismissal_or_a_refusal() {

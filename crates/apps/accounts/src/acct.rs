@@ -587,15 +587,14 @@ where
 }
 
 fn describe(method: &str, e: zbus::Error) -> Failure {
-    match &e {
-        zbus::Error::MethodError(name, msg, _) => {
-            log::error!("{method}: {name}: {msg:?}");
-            failure(name, msg.as_deref(), reprisebus::polkit::dismissed)
-        }
-        _ => {
-            log::error!("{method}: {e}");
-            Failure::Text(e.to_string())
-        }
+    log::error!("{method}: {e}");
+    match reprisebus::error::name(&e) {
+        Some(name) => failure(
+            &name,
+            reprisebus::error::message(&e),
+            reprisebus::polkit::dismissed,
+        ),
+        None => Failure::Text(e.to_string()),
     }
 }
 
@@ -765,6 +764,14 @@ mod tests {
             || panic!("only a PermissionDenied asks whether the prompt was dismissed"),
         );
         assert_eq!(other, Failure::Text("running 'useradd' failed".into()));
+        let unreached = reprisebus::error::reply(
+            "org.freedesktop.DBus.Error.ServiceUnknown",
+            "The name is not activatable",
+        );
+        assert_eq!(
+            describe("CreateUser", unreached),
+            Failure::Text("The name is not activatable".into())
+        );
     }
 
     #[test]

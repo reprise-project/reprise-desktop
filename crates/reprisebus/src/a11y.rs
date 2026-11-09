@@ -236,12 +236,12 @@ impl KeyEcho {
                     ))
                 };
                 // A restarted bus leaves the old connection closed: join the new one and retry.
-                let sent = notify(&conn).or_else(|e| match e {
-                    zbus::Error::MethodError(..) | zbus::Error::FDO(_) => Err(e),
-                    _ => {
-                        conn = a11y_bus()?;
-                        notify(&conn)
+                let sent = notify(&conn).or_else(|e| {
+                    if crate::error::name(&e).is_some() {
+                        return Err(e);
                     }
+                    conn = a11y_bus()?;
+                    notify(&conn)
                 });
                 if let Err(e) = sent {
                     log::debug!("NotifyListenersSync: {e}");

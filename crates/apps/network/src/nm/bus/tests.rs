@@ -102,16 +102,10 @@ fn a_refused_stats_refresh_rate_has_no_balloon() {
 
 #[test]
 fn a_dismissed_prompt_has_no_message_box_and_a_refusal_has_one() {
-    let msg = zbus::Message::method_call("/", "ActivateConnection")
-        .build(&())
-        .unwrap();
     let denied = || {
-        zbus::Error::MethodError(
-            "org.freedesktop.NetworkManager.PermissionDenied"
-                .try_into()
-                .unwrap(),
-            Some("Not authorized to control networking.".into()),
-            msg.clone(),
+        reprisebus::error::reply(
+            "org.freedesktop.NetworkManager.PermissionDenied",
+            "Not authorized to control networking.",
         )
     };
     let dismissed = auth_failure(denied(), || true);

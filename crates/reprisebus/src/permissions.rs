@@ -25,7 +25,7 @@ pub fn location_answers() -> zbus::Result<Vec<(String, bool)>> {
         &(LOCATION, LOCATION),
     ));
     let reply = match reply {
-        Err(zbus::Error::MethodError(name, _, _)) if name.as_str() == NOT_FOUND => {
+        Err(e) if crate::error::name(&e).is_some_and(|n| n == NOT_FOUND) => {
             return Ok(Vec::new());
         }
         r => r?,

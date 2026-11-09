@@ -607,7 +607,7 @@ fn logind_flags(override_inhibitors: bool) -> u64 {
 /// (before 257); the plain call lets polkit decide on the inhibitors there.
 fn too_old_for_flags(e: &zbus::Error) -> bool {
     matches!(
-        error_name(e),
+        reprisebus::error::name(e).as_deref(),
         Some("org.freedesktop.DBus.Error.UnknownMethod" | "org.freedesktop.DBus.Error.InvalidArgs")
     )
 }
@@ -658,23 +658,15 @@ fn failure(e: &zbus::Error, dismissed: impl FnOnce() -> bool) -> Option<Refused>
         Some(reprisebus::polkit::Refusal::TimedOut) => {
             Some(Refused::Failed(reprisebus::polkit::TIMED_OUT.to_string()))
         }
-        None if error_name(e) == Some("org.freedesktop.login1.BlockedByInhibitorLock") => {
-            Some(Refused::Held(Vec::new()))
-        }
-        None => Some(Refused::Failed(match e {
-            _ if error_name(e) == Some("org.freedesktop.DBus.Error.Timeout") => {
-                reprisebus::polkit::TIMED_OUT.to_string()
+        None => Some(match reprisebus::error::name(e).as_deref() {
+            Some("org.freedesktop.login1.BlockedByInhibitorLock") => Refused::Held(Vec::new()),
+            Some("org.freedesktop.DBus.Error.Timeout") => {
+                Refused::Failed(reprisebus::polkit::TIMED_OUT.to_string())
             }
-            zbus::Error::MethodError(_, Some(m), _) => m.clone(),
-            e => e.to_string(),
-        })),
-    }
-}
-
-fn error_name(e: &zbus::Error) -> Option<&str> {
-    match e {
-        zbus::Error::MethodError(name, _, _) => Some(name.as_str()),
-        _ => None,
+            _ => Refused::Failed(
+                reprisebus::error::message(e).map_or_else(|| e.to_string(), String::from),
+            ),
+        }),
     }
 }
 
@@ -1389,29 +1381,18 @@ mod tests {
         assert_eq!(refused_by("maybe"), Some(Refused::NotAllowed));
     }
 
-    fn method_error(name: &'static str, text: &str) -> zbus::Error {
-        let msg = zbus::Message::method_call("/", "M")
-            .build(&())
-            .expect("a method call");
-        zbus::Error::MethodError(
-            zbus::names::OwnedErrorName::try_from(name).expect("an error name"),
-            Some(text.into()),
-            msg,
-        )
-    }
-
     #[test]
     fn a_dismissed_prompt_is_no_refusal_and_other_errors_keep_their_text() {
-        let denied = method_error(
+        let denied = reprisebus::error::reply(
             "org.freedesktop.DBus.Error.AccessDenied",
             "Permission denied",
         );
         assert_eq!(failure(&denied, || true), None);
         assert_eq!(failure(&denied, || false), Some(Refused::NotAllowed));
-        let other = method_error("org.freedesktop.login1.OperationInProgress", "Busy");
+        let other = reprisebus::error::reply("org.freedesktop.login1.OperationInProgress", "Busy");
         let got = failure(&other, || panic!("only a refusal asks about the prompt"));
         assert_eq!(got, Some(Refused::Failed("Busy".into())));
-        let late = method_error(
+        let late = reprisebus::error::reply(
             "org.freedesktop.DBus.Error.NoReply",
             "Method call timed out",
         );
@@ -1419,7 +1400,13 @@ mod tests {
             failure(&late, || false),
             Some(Refused::Failed(reprisebus::polkit::TIMED_OUT.into()))
         );
-        let blocked = method_error(
+        let timeout =
+            reprisebus::error::reply("org.freedesktop.DBus.Error.Timeout", "Connection timed out");
+        assert_eq!(
+            failure(&timeout, || false),
+            Some(Refused::Failed(reprisebus::polkit::TIMED_OUT.into()))
+        );
+        let blocked = reprisebus::error::reply(
             "org.freedesktop.login1.BlockedByInhibitorLock",
             "Operation denied due to active block inhibitor",
         );
@@ -1430,9 +1417,11 @@ mod tests {
     fn an_override_skips_the_inhibitors_and_an_old_logind_falls_back() {
         assert_eq!(logind_flags(true), 0x10);
         assert_eq!(logind_flags(false), 0);
-        let old = method_error("org.freedesktop.DBus.Error.UnknownMethod", "Unknown method");
+        let old =
+            reprisebus::error::reply("org.freedesktop.DBus.Error.UnknownMethod", "Unknown method");
         assert!(too_old_for_flags(&old));
-        let blocked = method_error("org.freedesktop.login1.BlockedByInhibitorLock", "Blocked");
+        let blocked =
+            reprisebus::error::reply("org.freedesktop.login1.BlockedByInhibitorLock", "Blocked");
         assert!(!too_old_for_flags(&blocked));
     }
 

@@ -199,12 +199,9 @@ const LEAVING: std::time::Duration = std::time::Duration::from_secs(2);
 /// Whether `e` came from an instance that was exiting, and it has left. NoReply
 /// from a running service is a prompt left open past the call's timeout.
 fn quit_under(e: &zbus::Error, running: impl Fn() -> bool) -> bool {
-    let zbus::Error::MethodError(name, _, _) = e else {
-        return false;
-    };
-    match name.as_str() {
-        "org.freedesktop.DBus.Error.NoReply" => !running(),
-        "org.freedesktop.DBus.Error.UnknownMethod" => {
+    match reprisebus::error::name(e).as_deref() {
+        Some("org.freedesktop.DBus.Error.NoReply") => !running(),
+        Some("org.freedesktop.DBus.Error.UnknownMethod") => {
             let until = std::time::Instant::now() + LEAVING;
             while running() {
                 if std::time::Instant::now() >= until {
@@ -340,6 +337,7 @@ pub mod fake {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use reprisebus::error::reply;
 
     #[test]
     fn the_error_argument_is_the_outcome() {
@@ -358,16 +356,7 @@ mod tests {
 
     #[test]
     fn not_privileged_is_a_dismissal_or_a_refusal() {
-        let msg = zbus::Message::method_call("/", "PrinterDelete")
-            .build(&())
-            .expect("a method call");
-        let error = |name: &'static str| {
-            zbus::Error::MethodError(
-                zbus::names::OwnedErrorName::try_from(name).expect("an error name"),
-                Some("Not authorized".into()),
-                msg.clone(),
-            )
-        };
+        let error = |name| reply(name, "Not authorized");
         let not_privileged = || error(NOT_PRIVILEGED);
         assert_eq!(
             describe("PrinterDelete", not_privileged(), || true),
@@ -385,19 +374,8 @@ mod tests {
         assert!(matches!(other, Error::Refused(_)));
     }
 
-    fn bus_failure(name: &'static str, text: &str) -> zbus::Error {
-        let msg = zbus::Message::method_call("/", "PrinterSetEnabled")
-            .build(&())
-            .expect("a method call");
-        zbus::Error::MethodError(
-            zbus::names::OwnedErrorName::try_from(name).expect("an error name"),
-            Some(text.into()),
-            msg,
-        )
-    }
-
     fn no_reply() -> zbus::Error {
-        bus_failure(
+        reply(
             "org.freedesktop.DBus.Error.NoReply",
             "Remote peer disconnected",
         )
@@ -409,7 +387,7 @@ mod tests {
         let call = || {
             sent += 1;
             if sent == 1 {
-                Err(bus_failure(
+                Err(reply(
                     "org.freedesktop.DBus.Error.UnknownMethod",
                     "Object does not exist at path \u{201c}/\u{201d}",
                 ))
