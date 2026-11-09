@@ -5,18 +5,21 @@ use std::io::{self, Write as _};
 use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _, PermissionsExt as _};
 use std::path::Path;
 
+/// Makes `dir` in `mode` when it is missing.
+pub fn make_dir(dir: &Path, mode: u32) -> io::Result<()> {
+    if !dir.exists() {
+        DirBuilder::new().recursive(true).mode(mode).create(dir)?;
+        // The modes here and in `replace` are masked by the umask, which a caller may pass on.
+        std::fs::set_permissions(dir, Permissions::from_mode(mode))?;
+    }
+    Ok(())
+}
+
 /// Writes `bytes` to `path.tmp` in `file_mode`, syncs it and renames it over `path`, then syncs
 /// the directory, made in `dir_mode` when missing. A failure before the rename removes the tmp.
 pub fn replace(path: &Path, bytes: &[u8], dir_mode: u32, file_mode: u32) -> io::Result<()> {
     let dir = path.parent().unwrap_or(Path::new("."));
-    if !dir.exists() {
-        DirBuilder::new()
-            .recursive(true)
-            .mode(dir_mode)
-            .create(dir)?;
-        // The modes here and below are masked by the umask, which a caller may pass on.
-        std::fs::set_permissions(dir, Permissions::from_mode(dir_mode))?;
-    }
+    make_dir(dir, dir_mode)?;
     let mut tmp = path.as_os_str().to_owned();
     tmp.push(".tmp");
     // unlink does not follow a planted symlink, and O_EXCL | O_NOFOLLOW refuses one planted since.

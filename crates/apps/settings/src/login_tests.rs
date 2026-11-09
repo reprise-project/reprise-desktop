@@ -1,7 +1,9 @@
 use super::*;
 use reprisekit::controls::{form, pagelist, propsheet};
 use repriselogin::Interface;
-use repriselogin::machine::{LoginConfig, MachineConfig, MachineRemote};
+use repriselogin::machine::{
+    LoginConfig, MachineConfig, MachineRemote, file_tag, parse_save_request,
+};
 use std::cell::RefCell;
 use std::io;
 use std::os::unix::process::ExitStatusExt;
@@ -113,12 +115,35 @@ fn exited(code: i32, stderr: &str) -> Output {
 }
 
 thread_local! {
+    /// The settings of each save request a helper stand-in got, and the tag each expected.
     static SENT: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    static TAGS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    /// The file a stand-in for another administrator writes to while the prompt is up, and what.
+    static MEANWHILE: RefCell<Option<(PathBuf, &'static str)>> = const { RefCell::new(None) };
 }
 
-fn helper_saves(toml: &str) -> io::Result<Output> {
+/// Keeps what a helper stand-in was sent.
+fn record(input: &str) {
+    let (tag, toml) = parse_save_request(input).expect("a save request");
     SENT.with(|s| s.borrow_mut().push(toml.into()));
+    TAGS.with(|t| t.borrow_mut().push(tag.into()));
+}
+
+fn helper_saves(input: &str) -> io::Result<Output> {
+    record(input);
     Ok(exited(0, ""))
+}
+
+/// The helper when the file was rewritten while its prompt was up: it finds the tag changed.
+fn helper_finds_it_changed(input: &str) -> io::Result<Output> {
+    record(input);
+    if let Some((path, text)) = MEANWHILE.with(|m| m.borrow_mut().take()) {
+        std::fs::write(path, text)?;
+    }
+    Ok(exited(
+        3,
+        "/etc/reprise/login.toml changed since the settings were read\n",
+    ))
 }
 
 fn helper_refuses(_: &str) -> io::Result<Output> {
@@ -235,8 +260,8 @@ fn apply_sends_the_edited_machine_settings_to_the_helper() {
     assert!(!a.dirty(), "a save leaves nothing to apply");
 }
 
-fn helper_dismissed(toml: &str) -> io::Result<Output> {
-    SENT.with(|s| s.borrow_mut().push(toml.into()));
+fn helper_dismissed(input: &str) -> io::Result<Output> {
+    record(input);
     Ok(exited(126, ""))
 }
 
@@ -249,7 +274,11 @@ fn sent_interfaces() -> Vec<Option<Interface>> {
 
 /// The app on `tag`'s files with the page open, `run` as the helper and nothing sent yet.
 fn saving_app(tag: &str, run: fn(&str) -> io::Result<Output>) -> SettingsApp {
-    let mut a = app(&tmp(tag));
+    saving_app_in(&tmp(tag), run)
+}
+
+fn saving_app_in(dir: &Path, run: fn(&str) -> io::Result<Output>) -> SettingsApp {
+    let mut a = app(dir);
     a.login_run = run;
     open_login(&mut a);
     SENT.with(|s| s.borrow_mut().clear());
@@ -422,11 +451,25 @@ fn a_refused_helper_shows_its_reasons() {
 
 #[test]
 fn each_helper_exit_tells_its_own_message() {
+    use loginhost::Unsaved;
     let cfg = MachineConfig::default();
+    let exits = |code: i32, stderr: &'static str| {
+        loginhost::apply(&cfg, "none", &move |_: &str| Ok(exited(code, stderr)))
+    };
     let told = |code: i32, stderr: &'static str| {
-        loginhost::apply(&cfg, &move |_: &str| Ok(exited(code, stderr)))
+        exits(code, stderr).map_err(|e| match e {
+            Unsaved::Failed(why) => why,
+            Unsaved::Changed => panic!("exit {code} is no changed file"),
+        })
     };
     assert_eq!(told(0, ""), Ok(()));
+    assert_eq!(
+        exits(
+            3,
+            "/etc/reprise/login.toml changed since the settings were read\n"
+        ),
+        Err(Unsaved::Changed)
+    );
     assert_eq!(
         told(1, "/etc/reprise/login.toml: Read-only file system\n"),
         Err("The login manager's settings could not be saved.\n\n\
@@ -463,25 +506,29 @@ fn each_helper_exit_tells_its_own_message() {
         told(127, "No authentication agent found.\n"),
         Err("The change was not authorized.\n\nNo authentication agent found.".into())
     );
-    let missing = loginhost::apply(&cfg, &|_: &str| {
+    let missing = loginhost::apply(&cfg, "none", &|_: &str| {
         Err(io::Error::from(io::ErrorKind::NotFound))
     });
     assert_eq!(
         missing,
-        Err("The login manager's settings could not be saved.\n\nentity not found".into())
+        Err(Unsaved::Failed(
+            "The login manager's settings could not be saved.\n\nentity not found".into()
+        ))
     );
 }
 
 #[test]
 fn a_missing_helper_is_named_and_pkexec_never_runs() {
-    let missing = loginhost::apply(&MachineConfig::default(), &|toml: &str| {
-        loginhost::run_helper(Path::new("/nonexistent/reprise-login-settings"), toml)
+    let missing = loginhost::apply(&MachineConfig::default(), "none", &|input: &str| {
+        loginhost::run_helper(Path::new("/nonexistent/reprise-login-settings"), input)
     });
     assert_eq!(
         missing,
-        Err("The login manager's settings could not be saved.\n\n\
+        Err(loginhost::Unsaved::Failed(
+            "The login manager's settings could not be saved.\n\n\
              /nonexistent/reprise-login-settings is not installed."
-            .into())
+                .into()
+        ))
     );
 }
 
@@ -764,4 +811,44 @@ fn second_client_radio_writes_the_key() {
     let table = doc["remote_desktop"].as_table().expect("the section");
     let rd = repriseconf::remote::from_table(&table.to_string().parse().unwrap());
     assert_eq!(rd.second_client, repriseconf::remote::SecondClient::Replace);
+}
+
+#[test]
+fn a_save_names_the_file_it_read_so_a_newer_one_is_not_replaced() {
+    let text = "[login]\ninterface = \"blue\"\n";
+    for file in [Some(text), None] {
+        let dir = tmp(&format!("tag-{}", file.is_some()));
+        if let Some(t) = file {
+            std::fs::write(dir.join("login.toml"), t).unwrap();
+        }
+        let mut a = saving_app_in(&dir, helper_saves);
+        TAGS.with(|t| t.borrow_mut().clear());
+        apply_glass(&mut a);
+        a.wake();
+        assert_eq!(
+            TAGS.with(|t| t.borrow().clone()),
+            [file_tag(file.map(str::as_bytes))],
+            "the save expects the file its reread found, a missing one too"
+        );
+    }
+}
+
+#[test]
+fn a_file_changed_while_the_prompt_was_up_is_shown_and_not_overwritten() {
+    let dir = tmp("changed-during");
+    let path = dir.join("login.toml");
+    std::fs::write(&path, "[remote_desktop]\nenabled = true\n").unwrap();
+    let mut a = saving_app_in(&dir, helper_finds_it_changed);
+    let turned_off = "[remote_desktop]\nenabled = false\n";
+    MEANWHILE.with(|m| *m.borrow_mut() = Some((path.clone(), turned_off)));
+    apply_glass(&mut a);
+    a.wake();
+    assert_eq!(error_text(&a).as_deref(), Some(CHANGED));
+    assert_eq!(login(&a).checked("login_remote"), Some(false));
+    assert_eq!(
+        combo_text(login(&a), "login_interface"),
+        "The last one used"
+    );
+    assert!(!a.dirty(), "the page holds the file as it is now");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), turned_off);
 }
