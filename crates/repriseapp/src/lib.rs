@@ -46,6 +46,7 @@ mod textinput;
 pub mod thumbs;
 pub mod unlock;
 mod windows;
+mod wire;
 
 use drag::{Asked, Incoming, Outgoing};
 use look::Look;
