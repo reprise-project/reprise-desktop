@@ -35,7 +35,8 @@ Such a program can bind every global Reprise offers, including these:
   `ext_image_copy_capture_manager_v1` and its capture sources): copies any
   screen or window without asking. A capture that keeps running draws the
   red capture border while it does (`[privacy] capture_border`); a single
-  screenshot draws none. The one exception is the Remote Desktop server's
+  screenshot draws none, but every captured frame shows the screen-sharing
+  dot for 3 s, so screenshots taken in a loop show it too. The one exception is the Remote Desktop server's
   capture, which goes without it unless `[remote_desktop] capture_border`
   is set: the portal marks that capture's connection through
   `reprise_input_v1`, which only the installed reprise-portal can bind, and
@@ -58,7 +59,9 @@ tools. Reprise has no allow-list for them.
 
 A client is sandboxed when it connects through a socket a sandbox opened
 with `wp_security_context_manager_v1` (Flatpak does this), or when its
-process sees `/.flatpak-info` (a Flatpak app that connected without one).
+process sees `/.flatpak-info` (a Flatpak app that connected without one),
+or when it runs in a snap: in a `snap.*` scope snapd made for it, or under
+a `snap.*` AppArmor profile.
 Reprise looks at the process that connected through a pidfd. One that has
 exited by then, or whose root Reprise can't open, counts as sandboxed too,
 so a Flatpak app can't pass as a host program by connecting and exiting
@@ -134,6 +137,13 @@ external locker's gets the keyboard or the pointer and virtual keyboards are
 dropped. Of the keys, only the power, sleep and media keys (but not the
 Wi-Fi key), the VT switch keys and the layout switch act; the rest go to the
 lock screen.
+
+An app's RemoteDesktop session (its libei sender and its NotifyKeyboard
+keys) presses, types, moves and scrolls nothing while any lock is up, the
+lock screen and a locker's included; only the release of a key or button it
+holds still goes, so nothing stays down. Locked or not, it never presses the
+power, sleep or VT switch keys. Reprise's own remote desktop server is not
+an app here: its viewer types into the lock screen.
 
 The built-in Unlock Computer dialog checks the password in a helper
 process: the compositor starts itself again as `reprise

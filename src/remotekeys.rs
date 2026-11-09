@@ -71,6 +71,10 @@ impl State {
     }
 
     pub fn keys_key(&mut self, id: KeysId, code: u32, pressed: bool) {
+        if pressed && self.app_input_locked() {
+            log::debug!("keys: keycode {code} dropped under the lock");
+            return;
+        }
         let Some(k) = self.inputproto.keys.get_mut(id) else {
             return;
         };
@@ -82,6 +86,10 @@ impl State {
     }
 
     pub fn keys_keysym(&mut self, id: KeysId, sym: u32, pressed: bool) {
+        if pressed && self.app_input_locked() {
+            log::debug!("keys: keysym {sym:#x} dropped under the lock");
+            return;
+        }
         let Some(k) = self.inputproto.keys.get_mut(id) else {
             return;
         };

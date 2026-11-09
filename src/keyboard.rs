@@ -375,6 +375,11 @@ impl State {
             }
         };
         match routed.route {
+            KeyRoute::PowerKey | KeyRoute::SleepKey | KeyRoute::VtSwitch(_)
+                if self.inputproto.source == InputSource::App =>
+            {
+                log::info!("an app's input pressed {:?}; dropped", routed.route);
+            }
             KeyRoute::PowerKey => {
                 let a = self.config.power.power_button;
                 crate::power::run_action(self, a, origin);

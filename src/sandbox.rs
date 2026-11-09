@@ -114,6 +114,8 @@ pub enum Process {
     /// Its root holds Flatpak's `/.flatpak-info`, which a Flatpak app has even without a
     /// security context.
     Flatpak,
+    /// It runs in a snap: a `snap.*` scope or AppArmor profile.
+    Snap,
     /// Gone by the time it was inspected, or not ours to inspect.
     Unknown,
 }
@@ -194,15 +196,32 @@ fn inspect(stream: &UnixStream, pid: i32) -> Process {
         return Process::Unknown;
     };
     let flatpak = exists_at(&root, c".flatpak-info");
+    let snap = read_at(&dir, c"cgroup").is_some_and(|c| snap_cgroup(&c))
+        || read_at(&dir, c"attr/apparmor/current").is_some_and(|l| snap_label(&l));
     let running = read_at(&dir, c"stat").is_some_and(|s| runs(&s));
     if !running || !alive(&pidfd) {
         return Process::Unknown;
     }
     match flatpak {
         Some(true) => Process::Flatpak,
+        Some(false) if snap => Process::Snap,
         Some(false) => Process::Host,
         None => Process::Unknown,
     }
+}
+
+/// Whether `/proc/<pid>/cgroup` puts the process in a scope snapd made for a snap's app,
+/// `snap.<snap>.<app>-<uuid>.scope`.
+fn snap_cgroup(cgroup: &str) -> bool {
+    cgroup.lines().any(|l| {
+        let unit = l.rsplit('/').next().unwrap_or("");
+        unit.starts_with("snap.") && unit.ends_with(".scope")
+    })
+}
+
+/// Whether an AppArmor label, `snap.<snap>.<app> (enforce)`, is a snap's profile.
+fn snap_label(label: &str) -> bool {
+    label.trim_start().starts_with("snap.")
 }
 
 fn open_at(dir: &impl AsRawFd, name: &std::ffi::CStr, flags: libc::c_int) -> Option<OwnedFd> {
@@ -491,6 +510,22 @@ mod tests {
             // SAFETY: reaps the test's own child; ECHILD if a reaper took it already.
             unsafe { libc::waitpid(pid, std::ptr::null_mut(), 0) };
         }
+    }
+
+    #[test]
+    fn a_snaps_scope_or_profile_marks_it_a_snap() {
+        let user = "0::/user.slice/user-1000.slice/user@1000.service/app.slice";
+        assert!(snap_cgroup(&format!(
+            "{user}/snap.firefox.firefox-0f3a9c1e-2b4d-4e8a-9c2f-1d2e3f4a5b6c.scope\n"
+        )));
+        assert!(!snap_cgroup(&format!("{user}/app-reprise-foot-3.scope\n")));
+        assert!(
+            !snap_cgroup(&format!("{user}/snap.mount\n")),
+            "a unit that is no scope"
+        );
+        assert!(snap_label("snap.firefox.firefox (enforce)\n"));
+        assert!(!snap_label("unconfined\n"));
+        assert!(!snap_label("/usr/bin/foot (complain)\n"));
     }
 
     #[test]
