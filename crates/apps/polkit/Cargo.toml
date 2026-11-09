@@ -19,6 +19,7 @@ test = false
 [dependencies]
 repriseapp = { path = "../../repriseapp" }
 reprisebus = { path = "../../reprisebus" }
+reprisefs = { path = "../../reprisefs" }
 reprisekit = { path = "../../reprisekit" }
 zbus.workspace = true
 zbus_polkit = "6.0"

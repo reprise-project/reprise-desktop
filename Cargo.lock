@@ -4603,6 +4603,7 @@ dependencies = [
  "log",
  "repriseapp",
  "reprisebus",
+ "reprisefs",
  "reprisekit",
  "zbus 6.2.1",
  "zbus_polkit",

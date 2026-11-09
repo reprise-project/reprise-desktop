@@ -500,7 +500,7 @@ fn runs_elsewhere(
 ) -> bool {
     procs.into_iter().any(|(c, cgroup)| {
         c.trim_end() == comm
-            && reprisefs::scope::session_of_cgroup(&cgroup)
+            && reprisebus::logind::session_of_cgroup(&cgroup)
                 .is_some_and(|s| Some(s) != own && online.contains(&s))
     })
 }
@@ -510,10 +510,8 @@ fn runs_elsewhere(
 pub fn another_session_runs_reprise() -> bool {
     let read = |p: &str| std::fs::read_to_string(p).unwrap_or_default();
     let comm = read("/proc/self/comm");
-    let own = read("/proc/self/cgroup");
-    // SAFETY: getuid cannot fail and touches no memory.
-    let uid = unsafe { libc::getuid() };
-    let record = read(&format!("/run/systemd/users/{uid}"));
+    let own = reprisebus::logind::own_cgroup();
+    let record = reprisebus::logind::own_user_record();
     let me = std::process::id();
     let Ok(dir) = std::fs::read_dir("/proc") else {
         return false;
@@ -527,8 +525,8 @@ pub fn another_session_runs_reprise() -> bool {
     });
     runs_elsewhere(
         comm.trim_end(),
-        reprisefs::scope::session_of_cgroup(&own),
-        &reprisefs::scope::online_sessions(&record),
+        reprisebus::logind::session_of_cgroup(&own),
+        &reprisebus::logind::online_sessions(&record),
         procs,
     )
 }
