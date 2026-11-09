@@ -234,7 +234,7 @@ impl Host {
                 s.access.state.dirty = true;
                 s.title = title.clone();
                 if let Some(w) = s.window.toplevel() {
-                    w.set_title(title);
+                    w.set_title(crate::wire::text(&title));
                 }
             }
             if s.caption != caption

@@ -1221,6 +1221,13 @@ sharing and remote control grants yet.
 
 ## Programs and files
 
+- **Terminal output.** Whatever a program in the terminal prints (a `cat`
+  of a downloaded file, a remote host over ssh) is untrusted. A title it
+  sets shows its first 256 characters without control characters. Every
+  Reprise program cuts the titles, app ids and tags it sends the compositor
+  to 1024 bytes, since the compositor disconnects a client whose request
+  outgrows its 4096-byte buffer, and that would close all of the program's
+  windows.
 - **Launchers.** A `.desktop` file in a folder (the desktop, Explorer)
   runs only when it is executable and carries the `user.reprise.trusted`
   extended attribute, which Allow Launching sets. Extracting an archive
