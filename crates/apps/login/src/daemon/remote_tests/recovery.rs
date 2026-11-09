@@ -279,6 +279,103 @@ fn with_remote_logins_off_recovery_links_only_background_sessions() {
     );
 }
 
+/// Recovers anna's console session `c1` on screen and bert's `c3`, which the last run counted a
+/// client in.
+fn bert_viewed_at_restart(remote: MachineRemote) -> (Run, Vec<Effect>) {
+    let mut run = Run::machine(config(remote));
+    run.d
+        .viewed_before(Some(BTreeSet::from(["c3".to_string()])));
+    let found = vec![
+        logind("c1", "anna", ANNA, 7, "user", Mode::Login.service()),
+        logind("c3", "bert", BERT, 8, "user", Mode::Login.service()),
+    ];
+    let effects = run.d.recover(found, Some("c1"));
+    (run, effects)
+}
+
+#[test]
+fn a_console_session_with_a_client_at_a_restart_is_linked_with_remote_logins_off() {
+    let mut run = anna_recovered(enabled(), "c1", Mode::Login.service());
+    run.on(link_member(ANNA, Some(ANNA), true));
+    run.on(Input::IntakeOpen { uid: ANNA });
+    run.viewers(ANNA, 1);
+    assert_eq!(run.d.viewed_ids(), BTreeSet::from(["c1".to_string()]));
+    run.viewers(ANNA, 0);
+    assert_eq!(run.d.viewed_ids(), BTreeSet::new());
+
+    let (mut run, effects) = bert_viewed_at_restart(MachineRemote::default());
+    assert_eq!(
+        effects,
+        [Effect::OpenIntake { uid: BERT }],
+        "only the session that had a client is linked"
+    );
+    assert_eq!(run.on(Input::IntakeOpen { uid: BERT }), []);
+    assert_eq!(
+        run.viewers(BERT, 1),
+        [Effect::Inhibit(Inhibit::SleepAndIdle)],
+        "the client still connected keeps the computer awake"
+    );
+}
+
+#[test]
+fn a_session_linked_at_a_restart_stays_listed_and_reopens_once_until_its_link_reports() {
+    let (mut run, _) = bert_viewed_at_restart(MachineRemote::default());
+    assert_eq!(
+        run.d.viewed_ids(),
+        BTreeSet::from(["c3".to_string()]),
+        "listed for a second restart before the link reports"
+    );
+    assert_eq!(
+        run.on(Input::IntakeLost { uid: BERT }),
+        [Effect::ReopenIntake { uid: BERT }]
+    );
+    assert_eq!(run.d.viewed_ids(), BTreeSet::from(["c3".to_string()]));
+    assert_eq!(run.on(Input::IntakeOpen { uid: BERT }), []);
+    run.viewers(BERT, 0);
+    assert_eq!(run.d.viewed_ids(), BTreeSet::new());
+}
+
+#[test]
+fn a_session_linked_at_a_restart_is_looked_up_once_remote_logins_turn_on_after_its_link_ended() {
+    let (mut run, _) = bert_viewed_at_restart(MachineRemote::default());
+    run.on(Input::IntakeOpen { uid: BERT });
+    run.viewers(BERT, 1);
+    run.viewers(BERT, 0);
+    run.on(Input::IntakeLost { uid: BERT });
+    let effects = run.on(Input::ConfigReloaded(config(enabled())));
+    assert!(effects.contains(&link_look_up(BERT, "bert")), "{effects:?}");
+    assert!(
+        !effects.contains(&Effect::OpenIntake { uid: BERT }),
+        "{effects:?}"
+    );
+}
+
+#[test]
+fn with_remote_logins_on_a_restart_looks_up_the_group_for_a_session_that_had_a_client() {
+    let (run, effects) = bert_viewed_at_restart(enabled());
+    assert_eq!(
+        effects,
+        [link_look_up(ANNA, "anna"), link_look_up(BERT, "bert")]
+    );
+    assert_eq!(run.d.viewed_ids(), BTreeSet::new());
+}
+
+#[test]
+fn a_session_with_a_client_read_after_a_restart_is_linked_with_remote_logins_off() {
+    let mut run = Run::machine(config(MachineRemote::default()));
+    run.d
+        .viewed_before(Some(BTreeSet::from(["c3".to_string()])));
+    run.d.recover_unread(vec![unread("c3", BERT, "seat0")]);
+    run.d.recover(vec![], Some("g1"));
+    assert_eq!(run.d.viewed_ids(), BTreeSet::from(["c3".to_string()]));
+    let read = Input::SessionRead {
+        session: logind("c3", "bert", BERT, 8, "user", Mode::Login.service()),
+        seat_active: Some("g1".into()),
+    };
+    assert_eq!(run.on(read), [Effect::OpenIntake { uid: BERT }]);
+    assert_eq!(run.d.viewed_ids(), BTreeSet::from(["c3".to_string()]));
+}
+
 #[test]
 fn a_recovered_background_session_outside_the_group_is_linked_without_a_look_up() {
     let mut run = Run::machine(config(enabled()));

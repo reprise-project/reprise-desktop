@@ -847,7 +847,14 @@ sessions off the seat only those a remote login started count as background
 ones, until a remote login reaches the others again. reprise-login links each background session
 whatever `enabled` and the user's group say, since a client may still be
 connected, and starts its time once the session's hand-over server reports
-no client, or fails to report within the link's wait. A seat0 session
+no client, or fails to report within the link's wait. It also keeps the
+list of sessions whose hand-over server counted a client in
+`/run/reprise-login/viewed-sessions` (root, 0600). A restart while remote
+logins are off links those whatever the group says, so a client connected
+to a console session keeps the computer awake; each one is linked that way
+once, and leaves the list when its server first reports. With remote
+logins on, a restart looks up the group for them as for any console
+session. A seat0 session
 logind can't describe at that restart holds back its user's remote logins,
 which are refused, until logind describes it (asked again every 5 seconds)
 or it ends.
