@@ -174,8 +174,8 @@ fn a_login_for_the_console_users_session_hands_over_to_it() {
     let found = vec![logind("c1", "anna", ANNA, 7, "user", "reprise-login")];
     assert_eq!(
         run.d.recover(found, Some("c1")),
-        [link_look_up(ANNA, "anna")],
-        "the session on the console is neither locked nor a background one"
+        [],
+        "the session on the console is neither locked, a background one nor linked"
     );
     let mut effects = run.verify(7, 1, "anna", ANNA);
     assert_eq!(
