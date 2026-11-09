@@ -991,8 +991,19 @@ impl TestClient {
     /// A clipboard selection offering `mimes`, set while the client has the keyboard. The source
     /// answers every read with `bytes`.
     pub fn copy(&mut self, mimes: &[&str], bytes: &[u8]) -> wl_data_source::WlDataSource {
+        self.copy_answering(mimes, Answers::same(bytes))
+    }
+
+    /// A clipboard selection offering each type of `offers`, answering its reads with that
+    /// type's bytes.
+    pub fn copy_each(&mut self, offers: &[(&str, &[u8])]) -> wl_data_source::WlDataSource {
+        let mimes: Vec<&str> = offers.iter().map(|(m, _)| *m).collect();
+        self.copy_answering(&mimes, Answers::each(offers))
+    }
+
+    fn copy_answering(&mut self, mimes: &[&str], answers: Answers) -> wl_data_source::WlDataSource {
         let device = self.data_device();
-        let source = self.data_source(mimes, bytes);
+        let source = self.source_answering(mimes, answers);
         device.set_selection(Some(&source), 0);
         source
     }
@@ -1000,10 +1011,24 @@ impl TestClient {
     /// A clipboard selection offering `mimes` through data control, as a clipboard manager sets
     /// one without the keyboard. The source answers every read with `bytes`.
     pub fn control_copy(&mut self, mimes: &[&str], bytes: &[u8]) -> ExtDataControlSourceV1 {
+        self.control_copy_answering(mimes, Answers::same(bytes))
+    }
+
+    /// [`TestClient::copy_each`] through data control.
+    pub fn control_copy_each(&mut self, offers: &[(&str, &[u8])]) -> ExtDataControlSourceV1 {
+        let mimes: Vec<&str> = offers.iter().map(|(m, _)| *m).collect();
+        self.control_copy_answering(&mimes, Answers::each(offers))
+    }
+
+    fn control_copy_answering(
+        &mut self,
+        mimes: &[&str],
+        answers: Answers,
+    ) -> ExtDataControlSourceV1 {
         let qh = self.qh();
         let manager = (self.side.data_control.as_ref()).expect("ext_data_control_manager_v1");
         let device = manager.get_data_device(self.seat(), &qh, ());
-        let source = manager.create_data_source(&qh, Arc::from(bytes));
+        let source = manager.create_data_source(&qh, answers);
         for m in mimes {
             source.offer(m.to_string());
         }
@@ -1038,9 +1063,17 @@ impl TestClient {
     /// A data source offering `mimes`, answering every read with `bytes`. The `target` events it
     /// hears land in [`ClientSide::source_targets`].
     pub fn data_source(&mut self, mimes: &[&str], bytes: &[u8]) -> wl_data_source::WlDataSource {
+        self.source_answering(mimes, Answers::same(bytes))
+    }
+
+    fn source_answering(
+        &mut self,
+        mimes: &[&str],
+        answers: Answers,
+    ) -> wl_data_source::WlDataSource {
         let qh = self.qh();
         let manager = (self.side.data_manager.as_ref()).expect("wl_data_device_manager");
-        let source = manager.create_data_source(&qh, Arc::from(bytes));
+        let source = manager.create_data_source(&qh, answers);
         for m in mimes {
             source.offer(m.to_string());
         }
@@ -1303,7 +1336,7 @@ pub struct ClientSide {
     pub source_targets: Vec<Option<String>>,
     /// How each drag a source started ended: true for `dnd_finished`, false for `cancelled`.
     pub source_ends: Vec<bool>,
-    /// The type of each `wl_data_source.send` a source heard.
+    /// The type of each `send` a data device or data control source heard.
     pub source_sends: Vec<String>,
     data_device: Option<wl_data_device::WlDataDevice>,
     /// Every offer the data device made, with the types it named.
@@ -1722,12 +1755,45 @@ impl wc::Dispatch<wl_data_offer::WlDataOffer, ()> for ClientSide {
         }
     }
 }
-impl wc::Dispatch<wl_data_source::WlDataSource, Arc<[u8]>> for ClientSide {
+/// What a test source answers a read with: the bytes listed for its type, else `rest`.
+#[derive(Clone)]
+pub struct Answers {
+    rest: Arc<[u8]>,
+    by_type: Arc<[(String, Arc<[u8]>)]>,
+}
+
+impl Answers {
+    fn same(bytes: &[u8]) -> Answers {
+        Answers {
+            rest: Arc::from(bytes),
+            by_type: Arc::new([]),
+        }
+    }
+
+    fn each(offers: &[(&str, &[u8])]) -> Answers {
+        Answers {
+            rest: Arc::new([]),
+            by_type: (offers.iter())
+                .map(|(m, b)| (m.to_string(), Arc::from(*b)))
+                .collect(),
+        }
+    }
+
+    fn send(&self, mime: &str, fd: std::os::fd::OwnedFd) {
+        use std::io::Write;
+        let bytes = (self.by_type.iter())
+            .find(|(m, _)| m == mime)
+            .map_or(&self.rest, |(_, b)| b);
+        let _ = std::fs::File::from(fd).write_all(bytes);
+    }
+}
+
+impl wc::Dispatch<wl_data_source::WlDataSource, Answers> for ClientSide {
     fn event(
         st: &mut Self,
         _: &wl_data_source::WlDataSource,
         ev: wl_data_source::Event,
-        bytes: &Arc<[u8]>,
+        answers: &Answers,
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
@@ -1736,9 +1802,8 @@ impl wc::Dispatch<wl_data_source::WlDataSource, Arc<[u8]>> for ClientSide {
             wl_data_source::Event::DndFinished => st.source_ends.push(true),
             wl_data_source::Event::Cancelled => st.source_ends.push(false),
             wl_data_source::Event::Send { mime_type, fd } => {
-                use std::io::Write;
+                answers.send(&mime_type, fd);
                 st.source_sends.push(mime_type);
-                let _ = std::fs::File::from(fd).write_all(bytes);
             }
             _ => {}
         }
@@ -1761,18 +1826,18 @@ impl wc::Dispatch<ExtDataControlDeviceV1, ()> for ClientSide {
     ]);
 }
 
-impl wc::Dispatch<ExtDataControlSourceV1, Arc<[u8]>> for ClientSide {
+impl wc::Dispatch<ExtDataControlSourceV1, Answers> for ClientSide {
     fn event(
-        _: &mut Self,
+        st: &mut Self,
         _: &ExtDataControlSourceV1,
         ev: ext_data_control_source_v1::Event,
-        bytes: &Arc<[u8]>,
+        answers: &Answers,
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        if let ext_data_control_source_v1::Event::Send { fd, .. } = ev {
-            use std::io::Write;
-            let _ = std::fs::File::from(fd).write_all(bytes);
+        if let ext_data_control_source_v1::Event::Send { mime_type, fd } = ev {
+            answers.send(&mime_type, fd);
+            st.source_sends.push(mime_type);
         }
     }
 }
