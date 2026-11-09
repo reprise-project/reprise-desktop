@@ -239,30 +239,25 @@ pub fn layout_around(
         .collect()
 }
 
+/// `name` as at most two label lines inside `max_w`, the second ellipsized. Lines break at a
+/// single space, as [`wrap_edit`] does, so runs of spaces show; a control character shows as
+/// U+FFFD. A name of spaces alone is no line.
 pub fn wrap_label(text: &TextRenderer, name: &str, max_w: i32, size_px: u32) -> Vec<String> {
-    let words: Vec<&str> = name.split_whitespace().collect();
-    if words.is_empty() {
+    if name.trim().is_empty() {
         return Vec::new();
     }
-    let mut first = String::new();
-    let mut i = 0;
-    while i < words.len() {
-        let cand = if first.is_empty() {
-            words[i].to_string()
-        } else {
-            format!("{first} {}", words[i])
-        };
-        if !first.is_empty() && text.measure(&cand, false, size_px) > max_w {
-            break;
-        }
-        first = cand;
-        i += 1;
+    let shown: String = (name.chars())
+        .map(|c| if c.is_control() { '\u{fffd}' } else { c })
+        .collect();
+    let words: Vec<&str> = shown.split(' ').collect();
+    let mut end = 1;
+    while end < words.len() && text.measure(&words[..=end].join(" "), false, size_px) <= max_w {
+        end += 1;
     }
-    let rest = words[i..].join(" ");
     let fit = |s: &str| text.ellipsize(s, max_w, false, size_px).into_owned();
-    let mut lines = vec![fit(&first)];
-    if !rest.is_empty() {
-        lines.push(fit(&rest));
+    let mut lines = vec![fit(&words[..end].join(" "))];
+    if end < words.len() {
+        lines.push(fit(&words[end..].join(" ")));
     }
     lines
 }
@@ -967,6 +962,22 @@ mod tests {
         assert_eq!(lines.len(), 1);
         assert!(lines[0].ends_with("..."));
         assert!(wrap_label(&t, "   ", max_w, size).is_empty());
+    }
+
+    #[test]
+    fn wrap_label_keeps_runs_of_spaces_and_marks_control_characters() {
+        let t = text();
+        let size = 11;
+        let wide = 400;
+        assert_eq!(wrap_label(&t, "a  b.txt", wide, size), ["a  b.txt"]);
+        assert_eq!(wrap_label(&t, " a.txt", wide, size), [" a.txt"]);
+        assert_eq!(wrap_label(&t, "a\tb.txt", wide, size), ["a\u{fffd}b.txt"]);
+        let max_w = t.measure("Photos Etc", false, size) + 2;
+        assert_eq!(
+            wrap_label(&t, "Photos Etc  More", max_w, size),
+            ["Photos Etc", " More"],
+            "the break takes one space"
+        );
     }
 
     #[test]
