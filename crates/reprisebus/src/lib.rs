@@ -184,6 +184,16 @@ fn owner_item(m: Message, name: &str) -> Option<Item> {
     .map(Item::Owner)
 }
 
+/// Whether a signal came from `owner`: broadcast, or when `addressed`, also sent to us alone.
+fn from_owner(
+    sender: Option<&str>,
+    destination: Option<&str>,
+    owner: Option<&str>,
+    addressed: bool,
+) -> bool {
+    sent_by(sender, owner) && (addressed || destination.is_none())
+}
+
 /// Every signal matching `rules` that `name`'s current owner broadcast,
 /// plus [`Signal::OwnerChanged`] each time the name changes hands. The
 /// owner is read once and then followed through the bus's
@@ -197,6 +207,25 @@ pub async fn signals(
     conn: &Connection,
     name: &'static str,
     rules: Vec<OwnedMatchRule>,
+) -> BoxStream<'static, Signal> {
+    owner_stream(conn, name, rules, false).await
+}
+
+/// [`signals`], plus those the owner sent to this connection alone, as a notification server
+/// sends a notification's signals to the program that sent it.
+pub async fn owner_signals(
+    conn: &Connection,
+    name: &'static str,
+    rules: Vec<OwnedMatchRule>,
+) -> BoxStream<'static, Signal> {
+    owner_stream(conn, name, rules, true).await
+}
+
+async fn owner_stream(
+    conn: &Connection,
+    name: &'static str,
+    rules: Vec<OwnedMatchRule>,
+    addressed: bool,
 ) -> BoxStream<'static, Signal> {
     let mut items: SelectAll<BoxStream<'static, Item>> = SelectAll::new();
     // Subscribed before the owner is read, so a change in between is seen.
@@ -238,10 +267,11 @@ pub async fn signals(
                     let accepted = {
                         let hdr = m.header();
                         let sender = hdr.sender().map(|s| s.as_str());
-                        let accepted = broadcast_by(
+                        let accepted = from_owner(
                             sender,
                             hdr.destination().map(|d| d.as_str()),
                             owner.as_deref(),
+                            addressed,
                         );
                         if !accepted {
                             log::debug!("dropping a signal from {sender:?}, which is not {name}");
@@ -283,6 +313,17 @@ mod tests {
         assert!(
             !broadcast_by(Some(":1.5"), None, None),
             "nothing owns the name"
+        );
+    }
+
+    #[test]
+    fn an_owner_signal_may_be_addressed_to_us_only_where_asked() {
+        assert!(from_owner(Some(":1.5"), None, Some(":1.5"), false));
+        assert!(!from_owner(Some(":1.5"), Some(":1.7"), Some(":1.5"), false));
+        assert!(from_owner(Some(":1.5"), Some(":1.7"), Some(":1.5"), true));
+        assert!(
+            !from_owner(Some(":1.9"), Some(":1.7"), Some(":1.5"), true),
+            "addressed to us by another peer"
         );
     }
 

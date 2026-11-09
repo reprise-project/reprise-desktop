@@ -340,6 +340,16 @@ impl Loop {
             .await
     }
 
+    /// The emitter of notification `id`'s signals, addressed to the connection that sent it: a
+    /// typed reply or an activation token is for that program alone. None when no sender is on
+    /// record.
+    async fn to_sender(&self, id: u32) -> Option<SignalEmitter<'static>> {
+        let sender = lock(&self.senders).0.get(&id)?.0.clone();
+        let name = zbus::names::BusName::try_from(sender).ok()?;
+        let iface = self.notifications().await.ok()?;
+        Some(iface.signal_emitter().to_owned().set_destination(name))
+    }
+
     /// Run `call` beside the loop, so a peer that never answers holds up only its own call.
     fn spawn(&mut self, call: impl Future<Output = ()> + Send + 'static) {
         let done = futures_util::stream::once(call).filter_map(|()| std::future::ready(None));
@@ -513,11 +523,10 @@ impl Loop {
                 }
             }
             TrayCommand::NotificationClosed { id, reason } => {
-                if let Ok(iface) = self.notifications().await {
-                    lock(&self.senders).0.remove(&id);
-                    let _ = Notifications::notification_closed(iface.signal_emitter(), id, reason)
-                        .await;
+                if let Some(to) = self.to_sender(id).await {
+                    let _ = Notifications::notification_closed(&to, id, reason).await;
                 }
+                lock(&self.senders).0.remove(&id);
             }
             TrayCommand::NotResponding(hung) => {
                 lock(&self.responding).hung = hung.clone();
@@ -541,18 +550,16 @@ impl Loop {
                 }
             }
             TrayCommand::Replied { id, text } => {
-                if let Ok(iface) = self.notifications().await {
-                    let emitter = iface.signal_emitter();
-                    let _ = Notifications::notification_replied(emitter, id, &text).await;
+                if let Some(to) = self.to_sender(id).await {
+                    let _ = Notifications::notification_replied(&to, id, &text).await;
                 }
             }
             TrayCommand::ActionInvoked { id, key, token } => {
-                if let Ok(iface) = self.notifications().await {
-                    let emitter = iface.signal_emitter();
+                if let Some(to) = self.to_sender(id).await {
                     if let Some(token) = token {
-                        let _ = Notifications::activation_token(emitter, id, &token).await;
+                        let _ = Notifications::activation_token(&to, id, &token).await;
                     }
-                    let _ = Notifications::action_invoked(emitter, id, &key).await;
+                    let _ = Notifications::action_invoked(&to, id, &key).await;
                 }
             }
             TrayCommand::Appearance(a) => settings::update(&self.conn, &self.appearance, a).await,

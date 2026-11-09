@@ -1143,6 +1143,10 @@ activation token, X11 urgency) but can't take the keyboard through
 `xdg_activation_v1`. A program trusted with foreign toplevel management can,
 since that protocol focuses any window it names.
 
+A notification's `ActivationToken`, `ActionInvoked`, `NotificationReplied`
+and `NotificationClosed` signals go only to the connection that sent it, so
+no other program sees the token or the text typed into its reply field.
+
 ## The portal
 
 `reprise-portal` is the xdg-desktop-portal backend. It answers only calls

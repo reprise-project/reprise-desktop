@@ -597,7 +597,7 @@ pub async fn watch(conn: zbus::Connection, book: Shared) {
             return;
         }
     };
-    let mut signals = reprisebus::signals(&conn, SERVER, rules).await;
+    let mut signals = reprisebus::owner_signals(&conn, SERVER, rules).await;
     // The token the server sent last, for the `ActionInvoked` that follows.
     let mut token: Option<(u32, String)> = None;
     while let Some(sig) = signals.next().await {
