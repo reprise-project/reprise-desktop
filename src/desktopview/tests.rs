@@ -1399,3 +1399,59 @@ fn documents_and_home_pin_and_unpin_from_their_menus() {
     }
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// The question `open_document` raised, as the actions of its buttons.
+fn asked(h: &crate::harness::Harness) -> Vec<crate::dialog::DialogAction> {
+    let d = &h
+        .state
+        .dialogs
+        .views
+        .last()
+        .expect("the run question")
+        .dialog;
+    d.buttons.iter().map(|b| b.action.clone()).collect()
+}
+
+#[test]
+fn opening_a_program_or_a_runnable_type_asks_and_records_only_on_run() {
+    use crate::dialog::DialogAction;
+    use reprisefs::program::{Confirm, Program};
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    let dir = crate::harness::scratch().join("open-document");
+    std::fs::create_dir_all(&dir).unwrap();
+    let elf = dir.join("invoice.pdf");
+    std::fs::copy("/usr/bin/true", &elf).unwrap();
+    h.state.open_recent_with(None, &elf);
+    assert_eq!(
+        asked(&h),
+        [
+            DialogAction::Script {
+                path: elf.clone(),
+                run: Some(ScriptOpen::Run),
+                program: Program::Binary,
+            },
+            DialogAction::Cancel
+        ]
+    );
+    h.state.close_dialog_at(h.state.dialogs.views.len() - 1);
+
+    let exe = dir.join("setup.exe");
+    std::fs::write(&exe, b"MZ").unwrap();
+    let mime = reprisefs::apps::mime_globs().mime_of_name("setup.exe");
+    if !mime.is_some_and(|m| reprisefs::program::runs_in_its_program(&m)) {
+        eprintln!("SKIPPED: shared-mime-info gives .exe no runnable type here");
+        return;
+    }
+    h.state.open_document(&exe, None, Confirm::Ask, true);
+    match &asked(&h)[..] {
+        [
+            DialogAction::OpenRunnable { path, recent, .. },
+            DialogAction::Cancel,
+        ] => {
+            assert_eq!(path, &exe);
+            assert!(*recent, "Run, not the question, records the file");
+        }
+        other => panic!("{other:?}"),
+    }
+}

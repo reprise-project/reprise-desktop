@@ -489,7 +489,7 @@ impl Explorer {
             Command::CopyTo => self.open_browse(false, ctx),
             Command::Drop(op) => self.drop_pending(op, ctx),
             Command::DropCancel => self.cancel_pending_drop(),
-            Command::OpenWith(i) => self.open_with(i),
+            Command::OpenWith(i) => self.open_with(i, ctx),
             Command::ChooseProgram => self.choose_program(ctx),
             Command::Undo => self.undo_last(ctx),
             Command::Properties => self.properties(ctx),

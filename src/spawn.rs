@@ -1203,7 +1203,7 @@ mod tests {
                 .unwrap()
                 .action
             {
-                crate::config::Action::Exec { argv, .. } => argv,
+                crate::config::Action::Exec { argv, .. } => argv.unwrap(),
                 a => panic!("{a:?}"),
             }
         };

@@ -69,8 +69,10 @@ fn button(id: &'static str, x: i32, text: &str, default: bool) -> Item {
     )
 }
 
+/// `app`'s command line, empty for an entry Reprise refuses to run.
 pub fn command_for(app: &AppEntry, terminal: &str) -> String {
     let argv: Vec<String> = apps::launch_argv(app, terminal)
+        .unwrap_or_default()
         .iter()
         .map(|a| a.to_string_lossy().into_owned())
         .collect();

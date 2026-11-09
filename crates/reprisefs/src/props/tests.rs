@@ -186,7 +186,7 @@ fn open_file_asks_the_file_system_nothing() {
         exec_line: "viewer %F".into(),
         ..app("viewer.desktop", &["image/svg+xml"])
     };
-    let open = |d| open_file(dir.path(), d, "foot");
+    let open = |d| open_file(dir.path(), d, "foot").unwrap();
     assert_eq!(
         open(Some(&viewer)),
         Opening {
@@ -209,7 +209,7 @@ fn open_in_looks_up_the_types_default_program_and_runs_as_it() {
         exec_line: "player %f".into(),
         ..app("player.desktop", &["application/x-reprise-test"])
     };
-    let open = |p: &Path| open_in(p, &db, std::slice::from_ref(&player), "foot");
+    let open = |p: &Path| open_in(p, &db, std::slice::from_ref(&player), "foot").unwrap();
     assert_eq!(
         open(&song),
         Opening {

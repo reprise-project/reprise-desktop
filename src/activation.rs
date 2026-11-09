@@ -252,10 +252,23 @@ impl State {
         crate::spawn::spawn_argv_in(argv, Some(app), None, &self.env, Some(&launch))
     }
 
+    /// Start the desktop entry `app` with no file, in its app scope.
+    pub fn launch_entry(&mut self, app: &reprisefs::apps::AppEntry) {
+        match reprisefs::apps::launch_argv(app, &self.config.terminal) {
+            Ok(argv) => self.spawn_app_activated(&argv, &app.id),
+            Err(refused) => self.exec_refused(&refused),
+        }
+    }
+
+    /// The error box for a desktop entry Reprise refuses to run; nothing runs.
+    pub fn exec_refused(&mut self, refused: &reprisefs::apps::ExecRefused) {
+        let d = crate::dialog::Dialog::error(&refused.name, refused.to_string());
+        self.open_dialog(d);
+    }
+
     /// `spawn_app_activated` for launcher `app`. One that runs `xdg-open <file>` (a Quick Launch
-    /// document shortcut) on a regular file opens it in its default program and that program's
-    /// scope, as the file's desktop icon does. The file is checked off the loop on a
-    /// [`State::spawn_job`].
+    /// document shortcut) on a regular file opens it as the file's desktop icon does
+    /// ([`State::open_document`]). The file is checked off the loop on a [`State::spawn_job`].
     pub fn spawn_launcher_activated(&mut self, argv: &[std::ffi::OsString], app: &str) {
         if crate::spawn::xdg_open_file(argv).is_none() {
             return self.spawn_app_activated(argv, app);
@@ -263,24 +276,14 @@ impl State {
         let (argv, app) = (argv.to_vec(), app.to_string());
         self.spawn_job(move || {
             let doc = crate::spawn::xdg_open_document(&argv);
-            Box::new(move |state: &mut State| {
-                if let Some(open) = doc.and_then(|file| state.document_opening(&file)) {
-                    return state.spawn_opening_activated(&open);
+            Box::new(move |state: &mut State| match doc {
+                Some(file) => {
+                    let how = reprisefs::program::Confirm::on_open(state.config.confirm_scripts);
+                    state.open_document(&file, None, how, false)
                 }
-                state.spawn_app_activated(&argv, &app)
+                None => state.spawn_app_activated(&argv, &app),
             })
         });
-    }
-
-    fn document_opening(&self, file: &std::path::Path) -> Option<reprisefs::props::Opening> {
-        let name = file.file_name()?.to_string_lossy();
-        let mime = self.with_mime(|db| db.mime_of_name(&name))?;
-        let default = reprisefs::props::default_app_entry(&mime, &self.app_index)?;
-        Some(reprisefs::props::open_file(
-            file,
-            Some(default),
-            &self.config.terminal,
-        ))
     }
 }
 

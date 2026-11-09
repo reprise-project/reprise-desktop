@@ -57,17 +57,12 @@ impl State {
             MenuPick::Run(a) => self.run_action(&a, 0),
             MenuPick::App(a) => self.launch_app(&a),
             MenuPick::Document(d) => {
-                // Documents lists the document folders, then recent files; neither is stat'ed.
-                let folder = self.recent.is_document_dir(&d);
-                let open = if folder {
-                    reprisefs::props::Opening {
-                        argv: reprisefs::apps::open_folder_argv(&d),
-                        app: None,
-                    }
+                // Documents lists the document folders, then recent files.
+                if self.recent.is_document_dir(&d) {
+                    self.spawn_argv_activated(&reprisefs::apps::open_folder_argv(&d));
                 } else {
-                    self.open_file(&d)
-                };
-                self.spawn_opening_activated(&open);
+                    self.open_recent_with(None, &d);
+                }
             }
             MenuPick::Window { window, row } => self.window_menu_action(window, row),
             MenuPick::Taskbar(cmd) => self.taskbar_command(cmd),
@@ -110,16 +105,6 @@ impl State {
                 }
             }
         }
-    }
-
-    /// How the recent file `path` opens, with no stat.
-    pub fn open_file(&self, path: &std::path::Path) -> reprisefs::props::Opening {
-        let mime = (path.file_name())
-            .and_then(|n| reprisefs::apps::mime_globs().mime_of_name(&n.to_string_lossy()));
-        let default = mime
-            .as_deref()
-            .and_then(|m| reprisefs::props::default_app_entry(m, &self.app_index));
-        reprisefs::props::open_file(path, default, &self.config.terminal)
     }
 
     /// The `task_manager` command, else Reprise's Task Manager.
