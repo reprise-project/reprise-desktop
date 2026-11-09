@@ -77,8 +77,12 @@ pub fn line(
             c.engine.as_deref().unwrap_or("(unnamed)"),
             c.app_id.as_deref().unwrap_or("(no app id)")
         ));
-    } else if sandbox.flatpak {
-        who.push_str(", flatpak");
+    } else {
+        match sandbox.process {
+            crate::sandbox::Process::Host => {}
+            crate::sandbox::Process::Flatpak => who.push_str(", flatpak"),
+            crate::sandbox::Process::Unknown => who.push_str(", not inspected"),
+        }
     }
     match reason {
         DisconnectReason::ProtocolError(e) => (
@@ -141,7 +145,7 @@ mod tests {
                 engine: Some("org.flatpak".into()),
                 app_id: Some("org.signal.Signal".into()),
             }),
-            flatpak: true,
+            process: crate::sandbox::Process::Flatpak,
             pid: Some(42),
         }
     }
