@@ -20,6 +20,8 @@ const USER_IFACE: &str = "org.freedesktop.Accounts.User";
 const READ_TIMEOUT: Duration = Duration::from_secs(5);
 /// A change waits on the polkit agent, which gives up after 120 s.
 const APPLY_TIMEOUT: Duration = Duration::from_secs(150);
+/// DeleteUser with its files returns once `userdel -r` has removed the home.
+const DELETE_TIMEOUT: Duration = Duration::from_secs(3600);
 
 /// The first and past-the-last uid of a person's account, as login.defs
 /// hands them out.
@@ -44,6 +46,19 @@ pub struct User {
     pub you: bool,
     /// logind lists a session of the account that is not closing.
     pub logged_on: bool,
+    pub password_mode: PasswordMode,
+}
+
+/// AccountsService's `PasswordMode`, read from the shadow entry.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PasswordMode {
+    #[default]
+    Regular,
+    /// The password was last changed on day 0: it must be changed at the next login, and it
+    /// may be empty until then.
+    AtLogin,
+    /// An empty password.
+    Empty,
 }
 
 impl User {
@@ -95,7 +110,7 @@ pub enum Op {
     },
     /// The account keeps its password and must pick a new one at its next login.
     Expire {
-        login: String,
+        path: String,
     },
     OwnPassword {
         current: Zeroizing<String>,
@@ -155,6 +170,14 @@ fn user_of(path: &str, m: &HashMap<String, OwnedVariant>, me: u32) -> Option<Use
         .get("AccountType")
         .and_then(|v| v.downcast_ref::<i32>().ok())
         .unwrap_or(TYPE_STANDARD);
+    let password_mode = match m
+        .get("PasswordMode")
+        .and_then(|v| v.downcast_ref::<i32>().ok())
+    {
+        Some(1) => PasswordMode::AtLogin,
+        Some(2) => PasswordMode::Empty,
+        _ => PasswordMode::Regular,
+    };
     Some(User {
         path: path.into(),
         uid,
@@ -165,6 +188,7 @@ fn user_of(path: &str, m: &HashMap<String, OwnedVariant>, me: u32) -> Option<Use
         home: text(m, "HomeDirectory"),
         you: uid == me,
         logged_on: false,
+        password_mode,
     })
 }
 
@@ -296,14 +320,41 @@ pub fn refusal(ops: &[Op], rows: &[User]) -> Option<String> {
 pub fn apply(ops: &[Op]) -> Result<(), Failure> {
     removing_pictures(ops, |ops| {
         check_fresh(ops)?;
+        let deletes_files = ops.iter().any(|op| {
+            matches!(
+                op,
+                Op::Delete {
+                    remove_files: true,
+                    ..
+                }
+            )
+        });
+        let timeout = match deletes_files {
+            true => DELETE_TIMEOUT,
+            false => APPLY_TIMEOUT,
+        };
         zbus::block_on(async {
-            let conn = connect(APPLY_TIMEOUT).await.map_err(|e| e.to_string())?;
-            for op in ops {
-                run(&conn, op).await?;
+            let conn = connect(timeout).await.map_err(|e| e.to_string())?;
+            for (i, op) in ops.iter().enumerate() {
+                run(&conn, op).await.map_err(|why| told(ops, i, why))?;
             }
             Ok(())
         })
     })
+}
+
+/// Why an expiry failed after the new password before it was set.
+pub const PASSWORD_KEPT: &str =
+    "The new password was set, but the account will not be asked for a new one at the next login.";
+
+/// What to tell of `why`, the failure of `ops[i]`. An expiry after a new password says that
+/// password was set, even for a dismissed prompt.
+fn told(ops: &[Op], i: usize, why: Failure) -> Failure {
+    let set = ops[..i].iter().any(|op| matches!(op, Op::Password { .. }));
+    match &ops[i] {
+        Op::Expire { .. } if set => Failure::Text(format!("{PASSWORD_KEPT}{}", and_why(why))),
+        _ => why,
+    }
 }
 
 /// AccountsService refuses none of what [`refusal`] does, so `ops` that delete or demote are
@@ -365,7 +416,7 @@ async fn run(conn: &zbus::Connection, op: &Op) -> Result<(), Failure> {
             let hash = passwd::crypt(password)?;
             user_call(conn, path, "SetPassword", &(hash.as_str(), "")).await
         }
-        Op::Expire { login } => expire(login),
+        Op::Expire { path } => expire(&user_name(conn, path).await?),
         Op::OwnPassword { current, new } => {
             let (current, new) = (current.clone(), new.clone());
             // passwd talks over a terminal and waits on its own pace:
@@ -408,7 +459,8 @@ async fn run(conn: &zbus::Connection, op: &Op) -> Result<(), Failure> {
                 expire(login).map_err(|why| {
                     Failure::Text(format!(
                         "The account {login} was made with its password, but it will not ask \
-                         for a new one at the first login.{}",
+                         for a new one at the first login. Tick Ask for a new password at the \
+                         next login on its Password tab.{}",
                         and_why(why)
                     ))
                 })?;
@@ -467,6 +519,25 @@ fn and_why(why: Failure) -> String {
     match why {
         Failure::Text(t) if !t.is_empty() => format!("\n\n{t}"),
         _ => String::new(),
+    }
+}
+
+/// The account's user name as it is now, which a rename since the sheet opened changed.
+async fn user_name(conn: &zbus::Connection, path: &str) -> Result<String, Failure> {
+    let reply = conn
+        .call_method(
+            Some(DEST),
+            path,
+            Some("org.freedesktop.DBus.Properties"),
+            "Get",
+            &(USER_IFACE, "UserName"),
+        )
+        .await
+        .map_err(|e| describe("UserName", e))?;
+    let v: OwnedVariant = reply.body().deserialize().map_err(|e| e.to_string())?;
+    match v.downcast_ref::<&str>() {
+        Ok(name) if !name.is_empty() => Ok(name.to_string()),
+        _ => Err(Failure::Text(format!("{path} has no user name"))),
     }
 }
 
@@ -640,11 +711,41 @@ mod tests {
     }
 
     #[test]
-    fn expiring_a_password_runs_chage_through_pkexec_and_sets_no_password() {
+    fn expiring_runs_chage_through_pkexec_with_the_name_after_the_options() {
         let c = expire_command("-bert");
         assert_eq!(c.get_program(), PKEXEC);
         let args: Vec<_> = c.get_args().map(|a| a.to_str().unwrap()).collect();
         assert_eq!(args, [CHAGE, "-d", "0", "--", "-bert"]);
+    }
+
+    #[test]
+    fn an_expiry_failing_after_a_new_password_says_the_password_was_set() {
+        let set = Op::Password {
+            path: "/u/1001".into(),
+            password: Zeroizing::new("temp-pw1".into()),
+        };
+        let expire = Op::Expire {
+            path: "/u/1001".into(),
+        };
+        let both = [set, expire.clone()];
+        assert_eq!(
+            told(&both, 1, Failure::Dismissed),
+            Failure::Text(PASSWORD_KEPT.into())
+        );
+        assert_eq!(
+            told(&both, 1, Failure::Text("chage failed".into())),
+            Failure::Text(format!("{PASSWORD_KEPT}\n\nchage failed"))
+        );
+        assert_eq!(
+            told(&[expire], 0, Failure::Dismissed),
+            Failure::Dismissed,
+            "nothing changed without a new password"
+        );
+        assert_eq!(
+            told(&both, 0, Failure::Dismissed),
+            Failure::Dismissed,
+            "the password itself was dismissed"
+        );
     }
 
     #[test]
@@ -699,6 +800,7 @@ mod tests {
             Variant::from("/var/lib/AccountsService/icons/x"),
         );
         put("HomeDirectory", Variant::from("/home/x"));
+        put("PasswordMode", Variant::from(2i32));
         m
     }
 
@@ -716,6 +818,7 @@ mod tests {
             (1000, "jo", "Jo Doe", true, true)
         );
         assert_eq!(u.kind(), "Administrator");
+        assert_eq!(u.password_mode, PasswordMode::Empty);
         assert_eq!(user_of("/u/5", &props(5, "svc", "", 0, true), 1000), None);
         let sam = user_of("/u/1001", &props(1001, "sam", " ", 0, false), 1000).unwrap();
         assert_eq!(

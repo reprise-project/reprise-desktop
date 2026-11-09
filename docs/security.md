@@ -780,7 +780,8 @@ characters or more and must differ from the login password.
 - Locking the login password (`passwd -l`) leaves the Remote Desktop
   password working. To stop it, the user removes it in User Accounts, or
   take the user out of `reprise-remote`. An expired account
-  (`chage -E`) is refused either way, by the account step.
+  (`chage -E`) or password (`chage -d 0`) is refused either way, by the
+  account step, until the password is changed at the computer.
 - Setting one leaves TLS logins on: a client set to TLS still logs on with
   the login password.
 - An entry whose name now has another uid is dropped from the file when
@@ -1153,12 +1154,18 @@ sharing and remote control grants yet.
   launches only: a program that leaves its session on purpose
   (`systemd-run --user --scope`) is judged by the display session again
   (see Same-user code in the next section).
-- **Account passwords.** User Accounts never leaves an account without a
-  password. Add Account needs one, and "Ask for a new password at the next
-  login" keeps the account's password and expires it (`pkexec chage -d 0`),
-  so whoever logs in types that password before picking a new one. pkexec
-  asks for an administrator's password for it, a prompt of its own beside
-  AccountsService's for the rest of the change.
+- **Account passwords.** User Accounts never removes a password. Add
+  Account needs one, and "Ask for a new password at the next login" keeps
+  the account's password and expires it (`pkexec chage -d 0`), so whoever
+  logs in types that password before picking a new one. pkexec asks for an
+  administrator's password for it, a prompt of its own beside
+  AccountsService's for the rest of the change. An account whose
+  AccountsService `PasswordMode` says it has no password, or may have none
+  until its next login (an empty hash left by `passwd -d`), is refused the
+  box alone, so a password is typed for it. The change happens at the login
+  screen or a text console: until then Remote Desktop logins, TLS and NLA
+  alike, and Remote Desktop password changes are refused by the account
+  step.
 - **Ending the session.** With `[session] end_processes = true` (the
   default), Log Off stops the `app-reprise-*` scopes and, after a display
   manager login, terminates the login session, so windowless programs Reprise

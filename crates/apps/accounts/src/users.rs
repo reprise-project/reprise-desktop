@@ -347,7 +347,7 @@ pub(crate) mod tests {
             icon: String::new(),
             home: format!("/home/{login}"),
             you,
-            logged_on: false,
+            ..User::default()
         }
     }
 
