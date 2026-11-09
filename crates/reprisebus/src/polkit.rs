@@ -90,15 +90,12 @@ pub fn refusal(
     refused: impl FnOnce(&str) -> bool,
     dismissed: impl FnOnce() -> bool,
 ) -> Option<Refusal> {
-    let name = match e {
-        zbus::Error::InputOutput(io) if io.kind() == std::io::ErrorKind::TimedOut => {
-            return Some(Refusal::TimedOut);
-        }
-        zbus::Error::MethodError(name, _, _) => name.to_string(),
-        // zbus turns a reply named `org.freedesktop.DBus.Error.*` into its `fdo::Error`.
-        zbus::Error::FDO(fdo) => zbus::DBusError::name(&**fdo).to_string(),
-        _ => return None,
-    };
+    if let zbus::Error::InputOutput(io) = e
+        && io.kind() == std::io::ErrorKind::TimedOut
+    {
+        return Some(Refusal::TimedOut);
+    }
+    let name = crate::error::name(e)?;
     if name == NO_REPLY {
         return Some(Refusal::TimedOut);
     }
@@ -149,15 +146,8 @@ pub async fn allowed_without_prompt(conn: &zbus::Connection, action: &str) -> bo
 mod tests {
     use super::*;
 
-    fn error(name: &'static str) -> zbus::Error {
-        let msg = zbus::Message::method_call("/", "M")
-            .build(&())
-            .expect("a method call");
-        zbus::Error::MethodError(
-            zbus::names::OwnedErrorName::try_from(name).expect("an error name"),
-            Some("Not authorized".into()),
-            msg,
-        )
+    fn error(name: &str) -> zbus::Error {
+        crate::error::reply(name, "Not authorized")
     }
 
     #[test]
@@ -234,15 +224,7 @@ mod tests {
 
     #[test]
     fn a_reply_named_in_the_dbus_namespace_is_a_refusal_or_a_timeout_too() {
-        let call = zbus::Message::method_call("/", "M")
-            .build(&())
-            .expect("a method call");
-        let reply = |name: &str| {
-            let m = zbus::Message::error(&call.header(), name)
-                .build(&("Permission denied",))
-                .expect("an error reply");
-            zbus::Error::from(m)
-        };
+        let reply = |name| crate::error::reply(name, "Permission denied");
         let denied = reply("org.freedesktop.DBus.Error.AccessDenied");
         let refused = |n: &str| n == "org.freedesktop.DBus.Error.AccessDenied";
         assert_eq!(refusal(&denied, refused, || true), Some(Refusal::Dismissed));

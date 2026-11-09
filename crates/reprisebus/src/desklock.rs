@@ -143,8 +143,13 @@ async fn read(
 /// Whether `e` says the owner has no `GetActive`, as a compositor from before it doesn't; the
 /// owner can't grow one without the name changing hands.
 fn lacks_get_active(e: &zbus::Error) -> bool {
-    use zbus::fdo::Error::{UnknownInterface, UnknownMethod};
-    matches!(e, zbus::Error::FDO(e) if matches!(**e, UnknownMethod(_) | UnknownInterface(_)))
+    matches!(
+        crate::error::name(e).as_deref(),
+        Some(
+            "org.freedesktop.DBus.Error.UnknownMethod"
+                | "org.freedesktop.DBus.Error.UnknownInterface"
+        )
+    )
 }
 
 #[cfg(test)]
