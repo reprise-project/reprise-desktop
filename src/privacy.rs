@@ -20,7 +20,7 @@ const HOLD: Duration = Duration::from_secs(5);
 #[cfg(test)]
 const HOLD: Duration = Duration::from_millis(500);
 
-/// How long the dot shows after a process's second still within this time of its first, so
+/// How long the dot shows after a program's second still within this time of its first, so
 /// captures repeated slower than a recording (a screenshot loop) show and a single one does not.
 #[cfg(not(test))]
 const STILL_HOLD: Duration = Duration::from_secs(3);
@@ -50,8 +50,8 @@ pub struct Privacy {
     /// The app ids of the apps whose RemoteDesktop sessions hold input, sorted, "" for an unnamed
     /// one (`control_changed`).
     controlling: Vec<String>,
-    /// The processes that took a still within `STILL_HOLD`, by pid, and when.
-    takers: Vec<(i32, Instant)>,
+    /// The programs that took a still within `STILL_HOLD`, and when.
+    takers: Vec<(Taker, Instant)>,
     /// While `STILL_HOLD` after a repeated still: whether one showed a screen and one a window.
     still: Option<(bool, bool)>,
     still_until: Option<Instant>,
@@ -168,7 +168,21 @@ fn still_label(screen: bool, window: bool) -> String {
     .into()
 }
 
-/// `client` was handed a frame of a `window` or a screen; its process's second within `STILL_HOLD`
+/// Who took a still: its executable, so a shell loop of one-shot screenshot tools counts as one
+/// taker, else its pid.
+#[derive(Debug, PartialEq, Eq)]
+enum Taker {
+    Exe(std::path::PathBuf),
+    Pid(i32),
+}
+
+impl Taker {
+    fn of(pid: i32) -> Taker {
+        std::fs::read_link(format!("/proc/{pid}/exe")).map_or(Taker::Pid(pid), Taker::Exe)
+    }
+}
+
+/// `client` was handed a frame of a `window` or a screen; its program's second within `STILL_HOLD`
 /// lights the dot. Called after the fill, so the frame that lights the dot never shows it.
 pub fn frame_taken(state: &mut State, client: Option<&Client>, window: bool) {
     let Some(pid) = client
@@ -177,13 +191,14 @@ pub fn frame_taken(state: &mut State, client: Option<&Client>, window: bool) {
     else {
         return;
     };
+    let taker = Taker::of(pid);
     let now = Instant::now();
     let p = &mut state.privacy;
     p.takers
-        .retain(|&(_, at)| now.duration_since(at) < STILL_HOLD);
-    let again = p.takers.iter().any(|&(t, _)| t == pid);
-    p.takers.retain(|&(t, _)| t != pid);
-    p.takers.push((pid, now));
+        .retain(|(_, at)| now.duration_since(*at) < STILL_HOLD);
+    let again = p.takers.iter().any(|(t, _)| *t == taker);
+    p.takers.retain(|(t, _)| *t != taker);
+    p.takers.push((taker, now));
     if !again {
         return;
     }
@@ -1021,6 +1036,25 @@ mod tests {
         c.ext_frame(&mut h, &mut s);
         c.ext_end(&mut h, s);
         assert_eq!(dot(&h), None, "one ext still, after the last one's hold");
+    }
+
+    #[test]
+    fn two_runs_of_one_program_are_one_taker() {
+        let run = || {
+            std::process::Command::new("sleep")
+                .arg("5")
+                .spawn()
+                .unwrap()
+        };
+        let (mut a, mut b) = (run(), run());
+        let taker = |c: &std::process::Child| Taker::of(c.id() as i32);
+        assert_eq!(taker(&a), taker(&b), "a shell loop of one-shot tools");
+        assert_ne!(taker(&a), Taker::of(std::process::id() as i32));
+        for c in [&mut a, &mut b] {
+            let _ = c.kill();
+            let _ = c.wait();
+        }
+        assert_eq!(taker(&a), Taker::Pid(a.id() as i32), "a process gone");
     }
 
     #[test]
