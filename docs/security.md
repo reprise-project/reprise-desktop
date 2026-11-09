@@ -1203,7 +1203,9 @@ sharing and remote control grants yet.
   the file's filesystem id, inode and SHA-256 of its contents, so an edit
   that keeps the inode (Notepad's save, a rewrite on another machine) drops
   it, and the launcher or program asks again. Reprise's own rewrites of a
-  launcher it trusts mark the new contents.
+  launcher it trusts mark the new contents. The contents are hashed only
+  when a marker is there, and a file over 128 MiB is never trusted, so a
+  large AppImage or installer asks on every open.
 - **Drive Recycle Bins.** A drive's trash is used only as `.Trash-$uid`, a
   real folder of yours, or as `$uid` in a real `.Trash` with the sticky bit,
   as the freedesktop trash spec asks. Listing it, Delete, Empty Recycle Bin,

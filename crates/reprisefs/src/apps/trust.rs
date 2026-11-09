@@ -1,6 +1,5 @@
-//! The launcher trust marker: `user.reprise.trusted` holding HMAC-SHA256 of the file's
-//! filesystem id, inode and contents under a per-user key, so an archive, another user's copy or
-//! an edit cannot carry it.
+//! The trust marker `user.reprise.trusted`: an HMAC of the file's filesystem id, inode and
+//! contents under a per-user key (docs/security.md).
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::{Digest, Sha256};
 use std::io;
@@ -10,7 +9,13 @@ use std::path::{Path, PathBuf};
 
 pub(crate) const TRUST_XATTR: &std::ffi::CStr = c"user.reprise.trusted";
 const KEY_LEN: usize = 32;
+/// HMAC-SHA256's output.
+const MARKER_LEN: usize = 32;
 type Key = [u8; KEY_LEN];
+
+/// The largest file the trust check hashes, in bytes. A bigger one is never trusted, so opening
+/// it always asks.
+pub const TRUST_HASH_MAX: u64 = 128 << 20;
 
 /// What the marker covers: the file's `f_fsid` and inode, and the SHA-256 of its contents.
 /// st_dev is left out: btrfs subvolumes and NVMe or dm devices can get another number at each
@@ -44,7 +49,7 @@ fn ident(path: &Path) -> io::Result<Ident> {
 }
 
 /// The [`Ident`] of the open `file`, whose contents are read from the start without moving its
-/// offset. Reads the whole file.
+/// offset. Reads the whole file, which must be regular and at most [`TRUST_HASH_MAX`].
 fn ident_fd(file: &std::fs::File) -> io::Result<Ident> {
     use std::os::unix::fs::FileExt;
     let meta = file.metadata()?;
@@ -52,6 +57,12 @@ fn ident_fd(file: &std::fs::File) -> io::Result<Ident> {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "not a regular file",
+        ));
+    }
+    if meta.len() > TRUST_HASH_MAX {
+        return Err(io::Error::new(
+            io::ErrorKind::FileTooLarge,
+            "too large to hash for trust",
         ));
     }
     // SAFETY: an all-zero statvfs is a valid value of a plain C struct.
@@ -172,7 +183,7 @@ fn cpath(path: &Path) -> io::Result<std::ffi::CString> {
 }
 
 /// Whether the file at `path` (followed through a symlink) is one the user allowed to run, as it
-/// was then. Reads the whole file.
+/// was then. A marked file is read whole, so a host calls this off its event loop.
 pub fn is_trusted(path: &Path) -> bool {
     key().is_ok_and(|k| is_trusted_with(&k, path))
 }
@@ -181,9 +192,14 @@ fn is_trusted_with(key: &Key, path: &Path) -> bool {
     let Ok(file) = open(path) else {
         return false;
     };
-    let Ok(id) = ident_fd(&file) else {
+    let Some(marker) = marker_of(&file) else {
         return false;
     };
+    ident_fd(&file).is_ok_and(|id| verifies_with(key, &marker, &id))
+}
+
+/// The open `file`'s marker, None when it has none of the HMAC's length.
+fn marker_of(file: &std::fs::File) -> Option<Vec<u8>> {
     let mut buf = [0u8; 64];
     // SAFETY: the fd is open, the attribute name is NUL-terminated and `buf` is writable for
     // its length, all live across the call.
@@ -195,7 +211,8 @@ fn is_trusted_with(key: &Key, path: &Path) -> bool {
             buf.len(),
         )
     };
-    usize::try_from(n).is_ok_and(|n| verifies_with(key, &buf[..n], &id))
+    let n = usize::try_from(n).ok().filter(|&n| n == MARKER_LEN)?;
+    Some(buf[..n].to_vec())
 }
 
 /// Mark the file at `path` trusted as it is now; any later change to its contents drops it.
@@ -371,6 +388,52 @@ mod tests {
         let Some(path) = marked(t.path()) else { return };
         assert!(is_trusted_with(&key().unwrap(), &path));
         assert!(!is_trusted_with(&[8; KEY_LEN], &path));
+    }
+
+    #[test]
+    fn a_file_past_the_hash_cap_is_never_trusted_even_with_a_right_marker() {
+        let t = tempfile::tempdir().unwrap();
+        let Some(path) = marked(t.path()) else { return };
+        let file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+        file.set_len(TRUST_HASH_MAX + 1).unwrap();
+        let mut hash = Sha256::new();
+        hash.update(b"[Desktop Entry]\nExec=true\n");
+        let zeros = vec![0u8; 1 << 20];
+        let mut left = TRUST_HASH_MAX + 1 - 26;
+        while left > 0 {
+            let n = left.min(zeros.len() as u64) as usize;
+            hash.update(&zeros[..n]);
+            left -= n as u64;
+        }
+        // SAFETY: an all-zero statvfs is a valid value of a plain C struct.
+        let mut buf: libc::statvfs = unsafe { std::mem::zeroed() };
+        // SAFETY: the fd is open and `buf` is writable across the call.
+        assert_eq!(unsafe { libc::fstatvfs(file.as_raw_fd(), &mut buf) }, 0);
+        let id = Ident {
+            fsid: buf.f_fsid,
+            ino: std::fs::metadata(&path).unwrap().ino(),
+            contents: hash.finalize().into(),
+        };
+        put_raw(&path, &value(&key().unwrap(), &id));
+        assert!(!is_trusted(&path));
+        assert!(set_trusted(&path).is_err(), "nor can it be marked");
+    }
+
+    #[test]
+    fn an_unmarked_large_file_is_untrusted_without_being_read() {
+        let t = tempfile::tempdir().unwrap();
+        let path = t.path().join("big.AppImage");
+        std::fs::File::create(&path)
+            .unwrap()
+            .set_len(16 << 30)
+            .unwrap();
+        let at = std::time::Instant::now();
+        assert!(!is_trusted(&path));
+        assert!(
+            at.elapsed() < std::time::Duration::from_millis(500),
+            "answered in {:?}",
+            at.elapsed()
+        );
     }
 
     #[test]
