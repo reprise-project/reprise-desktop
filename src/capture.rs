@@ -955,8 +955,8 @@ fn session_damage(session: &SessionRef) -> &RefCell<SessionDamage> {
 
 impl ScreencopyHandler for State {
     fn screencopy_frame(&mut self, screencopy: Screencopy) {
-        crate::privacy::frame_taken(self, false);
         let key = wlr_key(&screencopy);
+        let client = screencopy.wl_client();
         if screencopy.with_damage && screencopy.info.output.current_mode().is_some() {
             let output = screencopy.info.output.clone();
             if first_copy(&screencopy) {
@@ -968,6 +968,7 @@ impl ScreencopyHandler for State {
         } else {
             fill_wlr(self, screencopy);
         }
+        crate::privacy::frame_taken(self, client.as_ref(), false);
         crate::captureborder::wlr_frame(self, key);
         crate::privacy::captures_changed(self);
     }
@@ -1071,9 +1072,8 @@ impl ImageCopyCaptureHandler for State {
             crate::captureborder::refresh(self);
         }
         let shows = shown(&session.source());
-        if let Some(on) = &shows {
-            crate::privacy::frame_taken(self, matches!(on, Shown::Window(_)));
-        }
+        let window = matches!(shows, Some(Shown::Window(_)));
+        let taken = shows.is_some();
         let changed = fresh(session).get();
         match shows {
             None => frame.fail(CaptureFailureReason::Stopped),
@@ -1093,6 +1093,9 @@ impl ImageCopyCaptureHandler for State {
                 });
                 self.wake_window(w);
             }
+        }
+        if taken {
+            crate::privacy::frame_taken(self, session.client().as_ref(), window);
         }
     }
 
