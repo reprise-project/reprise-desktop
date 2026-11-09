@@ -51,15 +51,28 @@ pub enum IdleMsg {
     Release,
 }
 
-/// The inhibitions not yet closed, by request handle, the monitor sessions by path with the
-/// frontend that made each, the way to the idle task, whether the screen is locked and whether the
-/// compositor is ending the session.
+/// The open inhibitions by request handle, the monitor sessions by path with their frontend, the
+/// way to the idle task, what the desktop's lock reads from and whether the session is ending.
 pub struct Inhibits {
     held: Mutex<HashMap<String, Held>>,
     monitors: Mutex<HashMap<String, String>>,
     idle: async_channel::Sender<IdleMsg>,
-    locked: AtomicBool,
+    lock: Mutex<LockSources>,
     ending: AtomicBool,
+}
+
+/// The compositor's lock once its owner is verified, else logind's `LockedHint` for the
+/// compositor's session; locked while neither is known.
+#[derive(Default)]
+struct LockSources {
+    desktop: Option<bool>,
+    hint: Option<bool>,
+}
+
+impl LockSources {
+    fn locked(&self) -> bool {
+        self.desktop.or(self.hint).unwrap_or(true)
+    }
 }
 
 pub type Shared = Arc<Inhibits>;
@@ -71,7 +84,7 @@ pub fn shared() -> (Shared, async_channel::Receiver<IdleMsg>) {
         held: Mutex::default(),
         monitors: Mutex::default(),
         idle: tx,
-        locked: AtomicBool::new(false),
+        lock: Mutex::default(),
         ending: AtomicBool::new(false),
     };
     (Arc::new(shared), rx)
@@ -106,10 +119,23 @@ impl Inhibits {
     }
 
     fn monitor_state(&self) -> HashMap<&'static str, Variant<'static>> {
-        state(
-            self.locked.load(Ordering::Relaxed),
-            self.ending.load(Ordering::Relaxed),
-        )
+        let locked = self.lock.lock().unwrap().locked();
+        state(locked, self.ending.load(Ordering::Relaxed))
+    }
+
+    /// Applies `change` to the lock's sources and tells every monitor session when the lock moves.
+    async fn set_lock(&self, conn: &zbus::Connection, change: impl FnOnce(&mut LockSources)) {
+        let moved = {
+            let mut sources = self.lock.lock().unwrap();
+            let before = sources.locked();
+            change(&mut sources);
+            let after = sources.locked();
+            (after != before).then_some(after)
+        };
+        if let Some(locked) = moved {
+            log::info!("Inhibit monitor: screensaver-active {locked}");
+            emit_all(conn, self).await;
+        }
     }
 }
 
@@ -365,9 +391,37 @@ impl SessionEnd {
     }
 }
 
+/// Follows the desktop's lock for every monitor session: the compositor `pid`'s, with its logind
+/// session's `LockedHint` standing in while that can't be read.
+pub async fn watch_lock(conn: zbus::Connection, shared: Shared, pid: u32) {
+    let hint = async {
+        match zbus::Connection::system().await {
+            Ok(system) => follow_hint(&conn, &system, &shared, pid).await,
+            Err(e) => log::warn!("Inhibit monitor: no system bus ({e}); no LockedHint stands in"),
+        }
+    };
+    futures_lite::future::zip(follow_desktop(&conn, &shared, pid), hint).await;
+}
+
+async fn follow_desktop(conn: &zbus::Connection, shared: &Shared, pid: u32) {
+    use reprisebus::desklock::Lock;
+    let report = |lock: Lock| async move {
+        let desktop = match lock {
+            Lock::Locked => Some(true),
+            Lock::Unlocked => Some(false),
+            Lock::Unknown(why) => {
+                log::warn!("Inhibit monitor: the desktop's lock is unknown: {why}");
+                None
+            }
+        };
+        shared.set_lock(conn, |s| s.desktop = desktop).await;
+    };
+    let ended = reprisebus::desklock::follow(conn, || Ok(pid), &report).await;
+    report(Lock::Unknown(ended)).await;
+}
+
 /// The `LockedHint` a `PropertiesChanged` from a logind session carries: Some(value) when it
-/// changed, Some(None) when it was invalidated and must be read again, None when the signal is
-/// about other properties.
+/// changed, Some(None) when it must be read again, None when the signal is about other properties.
 fn locked_hint_change(
     iface: &str,
     changed: &HashMap<String, zbus::OwnedVariant>,
@@ -385,7 +439,7 @@ fn locked_hint_change(
         .then_some(None)
 }
 
-/// This session's `LockedHint`; None when logind cannot say.
+/// The session's `LockedHint`; None when logind cannot say.
 async fn read_locked(system: &zbus::Connection, session: &ObjectPath<'_>) -> Option<bool> {
     let reply = system
         .call_method(
@@ -401,32 +455,28 @@ async fn read_locked(system: &zbus::Connection, session: &ObjectPath<'_>) -> Opt
     bool::try_from(v).ok()
 }
 
-/// Follow this session's lock through logind and tell every monitor session when it changes. The
-/// portal runs as a user service outside any session, so logind's `auto` is the user's display
-/// session.
-pub async fn watch_lock(conn: zbus::Connection, shared: Shared) {
+/// Follows `LockedHint` on `system` for the logind session of the compositor `pid`.
+async fn follow_hint(
+    conn: &zbus::Connection,
+    system: &zbus::Connection,
+    shared: &Shared,
+    pid: u32,
+) {
     use futures_lite::StreamExt;
-    let system = match zbus::Connection::system().await {
-        Ok(c) => c,
-        Err(e) => {
-            log::warn!("Inhibit monitor: no system bus ({e}); the lock is not followed");
-            return;
-        }
-    };
     let session = system
         .call_method(
             Some(LOGIND),
             LOGIND_PATH,
             Some(LOGIND_MANAGER),
-            "GetSession",
-            &("auto",),
+            "GetSessionByPID",
+            &(pid,),
         )
         .await
         .and_then(|m| m.body().deserialize::<OwnedObjectPath>());
     let session = match session {
         Ok(s) => s,
         Err(e) => {
-            log::warn!("Inhibit monitor: no logind session ({e}); the lock is not followed");
+            log::warn!("Inhibit monitor: no logind session for the compositor ({e})");
             return;
         }
     };
@@ -445,41 +495,28 @@ pub async fn watch_lock(conn: zbus::Connection, shared: Shared) {
             return;
         }
     };
-    let mut signals = reprisebus::signals(&system, LOGIND, rules).await;
-    let set = |locked: bool| {
-        let (conn, shared) = (conn.clone(), shared.clone());
-        async move {
-            if shared.locked.swap(locked, Ordering::Relaxed) == locked {
-                return;
-            }
-            log::info!("Inhibit monitor: screensaver-active {locked}");
-            emit_all(&conn, &shared).await;
-        }
-    };
-    if let Some(locked) = read_locked(&system, &session).await {
-        set(locked).await;
-    }
+    let mut signals = reprisebus::signals(system, LOGIND, rules).await;
+    let set = |hint: Option<bool>| shared.set_lock(conn, move |s| s.hint = hint);
+    set(read_locked(system, &session).await).await;
     while let Some(sig) = signals.next().await {
-        let reread = match sig {
-            reprisebus::Signal::OwnerChanged => true,
+        let hint = match sig {
+            reprisebus::Signal::OwnerChanged => None,
             reprisebus::Signal::Message(m) => {
                 type Changed = (String, HashMap<String, zbus::OwnedVariant>, Vec<String>);
                 let Ok((iface, changed, invalidated)) = m.body().deserialize::<Changed>() else {
                     continue;
                 };
                 match locked_hint_change(&iface, &changed, &invalidated) {
-                    Some(Some(locked)) => {
-                        set(locked).await;
-                        false
-                    }
-                    Some(None) => true,
-                    None => false,
+                    Some(hint) => hint,
+                    None => continue,
                 }
             }
         };
-        if reread && let Some(locked) = read_locked(&system, &session).await {
-            set(locked).await;
-        }
+        let hint = match hint {
+            Some(hint) => Some(hint),
+            None => read_locked(system, &session).await,
+        };
+        set(hint).await;
     }
 }
 
@@ -625,6 +662,7 @@ impl Monitor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lockmode::tests::{Bus, bus, connect};
 
     #[test]
     fn reasons_are_clipped_by_chars() {
@@ -847,27 +885,316 @@ mod tests {
         });
     }
 
-    /// Needs a bus: `dbus-run-session cargo test -- --ignored`.
-    #[test]
-    #[ignore]
-    fn a_monitor_gets_its_first_state_on_a_session_bus() {
+    struct Desktop(Arc<AtomicBool>);
+
+    #[zbus::interface(name = "org.freedesktop.ScreenSaver")]
+    impl Desktop {
+        fn get_active(&self) -> bool {
+            self.0.load(Ordering::SeqCst)
+        }
+
+        #[zbus(signal)]
+        async fn active_changed(emitter: &SignalEmitter<'_>, active: bool) -> zbus::Result<()>;
+    }
+
+    /// The compositor's `org.freedesktop.ScreenSaver` on `bus`, served from this process.
+    struct Compositor(zbus::Connection, Arc<AtomicBool>);
+
+    impl Compositor {
+        async fn on(bus: &Bus, active: bool) -> Compositor {
+            let active = Arc::new(AtomicBool::new(active));
+            let conn = zbus::connection::Builder::address(bus.1.as_str())
+                .serve_at(SCREENSAVER_PATH, Desktop(active.clone()))
+                .name(SCREENSAVER)
+                .build()
+                .await
+                .unwrap();
+            Compositor(conn, active)
+        }
+
+        async fn lock(&self, active: bool) {
+            self.1.store(active, Ordering::SeqCst);
+            let emitter = SignalEmitter::new(&self.0, SCREENSAVER_PATH).unwrap();
+            Desktop::active_changed(&emitter, active).await.unwrap();
+        }
+    }
+
+    const SESSION_PATH: &str = "/org/freedesktop/login1/session/_31";
+
+    struct Manager;
+
+    #[zbus::interface(name = "org.freedesktop.login1.Manager")]
+    impl Manager {
+        #[zbus(name = "GetSessionByPID")]
+        fn get_session_by_pid(&self, _pid: u32) -> OwnedObjectPath {
+            OwnedObjectPath::try_from(SESSION_PATH).unwrap()
+        }
+    }
+
+    struct Session(bool);
+
+    #[zbus::interface(name = "org.freedesktop.login1.Session")]
+    impl Session {
+        #[zbus(property)]
+        fn locked_hint(&self) -> bool {
+            self.0
+        }
+    }
+
+    /// logind on `bus`, whose one session's `LockedHint` is `locked`.
+    struct Logind(zbus::Connection);
+
+    impl Logind {
+        async fn on(bus: &Bus, locked: bool) -> Logind {
+            let conn = zbus::connection::Builder::address(bus.1.as_str())
+                .serve_at(LOGIND_PATH, Manager)
+                .serve_at(SESSION_PATH, Session(locked))
+                .name(LOGIND)
+                .build()
+                .await
+                .unwrap();
+            Logind(conn)
+        }
+
+        async fn hint(&self, locked: bool) {
+            let session = self.0.object_server();
+            let session = session.interface::<_, Session>(SESSION_PATH).await.unwrap();
+            session.get_mut().await.0 = locked;
+            let emitter = session.signal_emitter();
+            session
+                .get()
+                .await
+                .locked_hint_changed(emitter)
+                .await
+                .unwrap();
+        }
+    }
+
+    const MONITOR: &str = "/org/freedesktop/portal/desktop/session/1_1/m";
+
+    /// A portal on `bus`, which also stands in for the system bus, following the lock of the
+    /// compositor `pid` with one monitor session; the frontend's `StateChanged` stream.
+    async fn portal(bus: &Bus, pid: u32) -> (zbus::Connection, zbus::MessageStream) {
+        let (shared, _rx) = super::shared();
+        let client = connect(bus).await;
+        let frontend = crate::Frontend::default();
+        frontend.set(client.unique_name().map(|n| n.to_string()));
+        let portal = zbus::connection::Builder::address(bus.1.as_str())
+            .serve_at(
+                crate::PATH,
+                Inhibit {
+                    shared: shared.clone(),
+                    frontend,
+                },
+            )
+            .serve_at(
+                crate::PATH,
+                SessionEnd {
+                    shared: shared.clone(),
+                },
+            )
+            .build()
+            .await
+            .unwrap();
+        let rule = zbus::MatchRule::builder()
+            .msg_type(zbus::message::Type::Signal)
+            .interface("org.freedesktop.impl.portal.Inhibit")
+            .member("StateChanged")
+            .build()
+            .unwrap();
+        let states = zbus::MessageStream::for_match_rule(rule, &client, None)
+            .await
+            .unwrap();
+        let request = "/org/freedesktop/portal/desktop/request/1_1/r";
+        client
+            .call_method(
+                portal.unique_name().map(|n| n.as_str()),
+                crate::PATH,
+                Some("org.freedesktop.impl.portal.Inhibit"),
+                "CreateMonitor",
+                &(
+                    ObjectPath::try_from(request).unwrap(),
+                    ObjectPath::try_from(MONITOR).unwrap(),
+                    "org.example.App",
+                    "",
+                ),
+            )
+            .await
+            .unwrap();
+        let (conn, system) = (portal.clone(), connect(bus).await);
+        zruntime::spawn(async move {
+            let desktop = follow_desktop(&conn, &shared, pid);
+            futures_lite::future::zip(desktop, follow_hint(&conn, &system, &shared, pid)).await;
+        })
+        .detach();
+        (portal, states)
+    }
+
+    /// Whether the frontend hears (screensaver-active, session-state) `want` within 5 s.
+    async fn hears(states: &mut zbus::MessageStream, want: (bool, u32)) -> bool {
         use futures_lite::StreamExt;
+        let until = async_io::Timer::after(std::time::Duration::from_secs(5));
+        let heard = async {
+            while let Some(Ok(m)) = states.next().await {
+                type Body = (OwnedObjectPath, HashMap<String, zbus::OwnedVariant>);
+                let (path, state): Body = m.body().deserialize().unwrap();
+                assert_eq!(path.as_str(), MONITOR);
+                let active = bool::try_from(state["screensaver-active"].clone()).unwrap();
+                let session = u32::try_from(state["session-state"].clone()).unwrap();
+                if (active, session) == want {
+                    return true;
+                }
+            }
+            false
+        };
+        futures_lite::future::or(heard, async {
+            until.await;
+            false
+        })
+        .await
+    }
+
+    /// Every (screensaver-active, session-state) the frontend hears up to the first query-end,
+    /// within 5 s.
+    async fn heard_until_query_end(states: &mut zbus::MessageStream) -> Vec<(bool, u32)> {
+        use futures_lite::StreamExt;
+        let mut heard = Vec::new();
+        let until = async_io::Timer::after(std::time::Duration::from_secs(5));
+        let listen = async {
+            while let Some(Ok(m)) = states.next().await {
+                type Body = (OwnedObjectPath, HashMap<String, zbus::OwnedVariant>);
+                let (_, state): Body = m.body().deserialize().unwrap();
+                let active = bool::try_from(state["screensaver-active"].clone()).unwrap();
+                let session = u32::try_from(state["session-state"].clone()).unwrap();
+                heard.push((active, session));
+                if session == SESSION_QUERY_END {
+                    return;
+                }
+            }
+        };
+        futures_lite::future::or(listen, async {
+            until.await;
+        })
+        .await;
+        heard
+    }
+
+    /// The compositor's `SessionEnd.Query(ending)`.
+    async fn end_session(portal: &zbus::Connection, bus: &Bus, ending: bool) {
+        connect(bus)
+            .await
+            .call_method(
+                portal.unique_name().map(|n| n.as_str()),
+                crate::PATH,
+                Some("org.reprise.SessionEnd"),
+                "Query",
+                &(ending,),
+            )
+            .await
+            .unwrap();
+    }
+
+    #[test]
+    fn the_remote_sides_lock_reads_active() {
+        let Some(bus) = bus() else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
+        zbus::block_on(async {
+            let compositor = Compositor::on(&bus, false).await;
+            let (_portal, mut states) = portal(&bus, std::process::id()).await;
+            assert!(hears(&mut states, (false, SESSION_RUNNING)).await);
+            compositor.lock(true).await;
+            assert!(hears(&mut states, (true, SESSION_RUNNING)).await);
+            compositor.lock(false).await;
+            assert!(hears(&mut states, (false, SESSION_RUNNING)).await);
+        });
+    }
+
+    #[test]
+    fn an_unverified_owner_reads_logind_locked_hint() {
+        let Some(bus) = bus() else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
+        zbus::block_on(async {
+            let logind = Logind::on(&bus, false).await;
+            let _stranger = Compositor::on(&bus, true).await;
+            let (_portal, mut states) = portal(&bus, 1).await;
+            assert!(hears(&mut states, (false, SESSION_RUNNING)).await);
+            logind.hint(true).await;
+            assert!(hears(&mut states, (true, SESSION_RUNNING)).await);
+            logind.hint(false).await;
+            assert!(hears(&mut states, (false, SESSION_RUNNING)).await);
+        });
+    }
+
+    #[test]
+    fn a_verified_compositor_wins_over_locked_hint() {
+        let Some(bus) = bus() else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
+        zbus::block_on(async {
+            let logind = Logind::on(&bus, true).await;
+            let _compositor = Compositor::on(&bus, false).await;
+            let (portal, mut states) = portal(&bus, std::process::id()).await;
+            assert!(hears(&mut states, (false, SESSION_RUNNING)).await);
+            logind.hint(false).await;
+            logind.hint(true).await;
+            // Time for a hint that wrongly won to reach the monitors before the query-end fence.
+            async_io::Timer::after(std::time::Duration::from_millis(300)).await;
+            end_session(&portal, &bus, true).await;
+            let heard = heard_until_query_end(&mut states).await;
+            assert_eq!(heard.last(), Some(&(false, SESSION_QUERY_END)), "{heard:?}");
+            assert!(heard.iter().all(|(active, _)| !active), "{heard:?}");
+        });
+    }
+
+    #[test]
+    fn a_lock_while_the_session_ends_keeps_query_end() {
+        let Some(bus) = bus() else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
+        zbus::block_on(async {
+            let compositor = Compositor::on(&bus, false).await;
+            let (portal, mut states) = portal(&bus, std::process::id()).await;
+            assert!(hears(&mut states, (false, SESSION_RUNNING)).await);
+            end_session(&portal, &bus, true).await;
+            assert!(hears(&mut states, (false, SESSION_QUERY_END)).await);
+            compositor.lock(true).await;
+            assert!(hears(&mut states, (true, SESSION_QUERY_END)).await);
+            end_session(&portal, &bus, false).await;
+            assert!(hears(&mut states, (true, SESSION_RUNNING)).await);
+        });
+    }
+
+    #[test]
+    fn a_monitor_first_hears_locked_before_any_reading() {
+        use futures_lite::StreamExt;
+        let Some(bus) = bus() else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
         zbus::block_on(async {
             let (shared, _rx) = super::shared();
-            let client = zbus::Connection::session().await.unwrap();
+            let client = connect(&bus).await;
+            client.request_name(crate::FRONTEND).await.unwrap();
             let frontend = crate::Frontend::default();
             frontend.set(client.unique_name().map(|n| n.to_string()));
-            let portal = zbus::connection::Builder::session()
+            let portal = zbus::connection::Builder::address(bus.1.as_str())
                 .serve_at(
                     crate::PATH,
                     Inhibit {
                         shared: shared.clone(),
-                        frontend,
+                        frontend: frontend.clone(),
                     },
                 )
                 .build()
                 .await
                 .unwrap();
+            let _ = frontend.conn.set(portal.clone());
             let mut states = zbus::MessageStream::for_match_rule(
                 zbus::MatchRule::builder()
                     .msg_type(zbus::message::Type::Signal)
@@ -903,7 +1230,10 @@ mod tests {
                         .await
                 }
             };
-            let stranger = zbus::connection::Builder::session().build().await.unwrap();
+            let stranger = zbus::connection::Builder::address(bus.1.as_str())
+                .build()
+                .await
+                .unwrap();
             let refused = monitor(stranger).await.unwrap_err();
             assert!(
                 matches!(
@@ -936,7 +1266,8 @@ mod tests {
             assert_eq!(path.as_str(), session);
             assert_eq!(
                 bool::try_from(state["screensaver-active"].clone()),
-                Ok(false)
+                Ok(true),
+                "a lock not yet read reads as locked"
             );
             assert_eq!(u32::try_from(state["session-state"].clone()), Ok(1));
         });

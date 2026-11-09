@@ -15,7 +15,16 @@ use std::path::{Path, PathBuf};
 
 const FRONTEND: &str = "org.freedesktop.portal.Desktop";
 
-pub struct Compositor(UnixStream);
+pub struct Compositor {
+    stream: UnixStream,
+    pid: u32,
+}
+
+impl Compositor {
+    pub fn pid(&self) -> u32 {
+        self.pid
+    }
+}
 
 /// Connect to the compositor on `WAYLAND_DISPLAY`, checking that the process
 /// on the socket runs a binary named `reprise`.
@@ -34,13 +43,14 @@ pub fn connect() -> Result<Compositor, String> {
             exe.display()
         ));
     }
-    Ok(Compositor(stream))
+    let pid = u32::try_from(pid).map_err(|_| format!("the compositor's pid {pid}"))?;
+    Ok(Compositor { stream, pid })
 }
 
 /// Exit once the compositor closes the connection; the frontend sees the bus
 /// name go, and a later call starts a portal that checks again.
 pub fn exit_with(c: Compositor) {
-    let mut stream = c.0;
+    let mut stream = c.stream;
     let spawned = std::thread::Builder::new()
         .name("compositor watch".into())
         .spawn(move || {

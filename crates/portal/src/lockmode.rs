@@ -211,7 +211,7 @@ async fn close(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::inputlink::tests::{fake_compositor, link_on, put_string, request, send};
     use crate::remotedesktop::RemoteSession;
@@ -237,7 +237,7 @@ mod tests {
     const UNAVAILABLE: u32 = 2;
     const REPLACED: u32 = 3;
 
-    struct Bus(Child, String);
+    pub(crate) struct Bus(Child, pub(crate) String);
 
     impl Drop for Bus {
         fn drop(&mut self) {
@@ -247,7 +247,7 @@ mod tests {
     }
 
     /// A private session bus.
-    fn bus() -> Option<Bus> {
+    pub(crate) fn bus() -> Option<Bus> {
         let mut child = Command::new("dbus-daemon")
             .args(["--session", "--nofork", "--print-address"])
             .stdout(Stdio::piped())
@@ -261,7 +261,7 @@ mod tests {
         Some(Bus(child, line.trim().to_string()))
     }
 
-    async fn connect(bus: &Bus) -> zbus::Connection {
+    pub(crate) async fn connect(bus: &Bus) -> zbus::Connection {
         zbus::connection::Builder::address(bus.1.as_str())
             .build()
             .await
