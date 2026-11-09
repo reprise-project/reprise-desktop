@@ -27,13 +27,6 @@ const STILL_HOLD: Duration = Duration::from_secs(3);
 #[cfg(test)]
 const STILL_HOLD: Duration = Duration::from_millis(300);
 
-const SKIPPED_APPS: [&str; 4] = [
-    "org.PulseAudio.pavucontrol",
-    "org.gnome.VolumeControl",
-    "org.kde.kmixd",
-    "org.kde.plasma-pa",
-];
-
 #[derive(Default)]
 pub struct Privacy {
     /// What the last ongoing captures showed: a screen or area, a window.
@@ -470,9 +463,10 @@ struct NodeInfo {
     /// `application.name`, from the node, else from its client: a
     /// screencast consumer (OBS, Chromium) names only the client.
     app: String,
-    app_id: String,
     client: u32,
     running: bool,
+    /// `stream.monitor`: a level meter's peak stream, which records nothing.
+    monitor: bool,
 }
 
 /// The registry view the thread keeps: nodes by id, links as
@@ -501,6 +495,26 @@ struct Apps {
     mic: Vec<String>,
     share: Vec<String>,
     camera: Vec<String>,
+}
+
+impl NodeInfo {
+    /// A node from its registry global, whose props hold only PipeWire's node global keys.
+    fn from_global<'a>(get: impl Fn(&str) -> Option<&'a str>) -> NodeInfo {
+        let get = |k: &str| get(k).unwrap_or("").to_string();
+        NodeInfo {
+            class: get("media.class"),
+            name: get("node.name"),
+            app: get("application.name"),
+            client: get("client.id").parse().unwrap_or(0),
+            running: false,
+            monitor: false,
+        }
+    }
+
+    /// Takes in the full props a bound node's info event carries.
+    fn note_props<'a>(&mut self, get: impl Fn(&str) -> Option<&'a str>) {
+        self.monitor = matches!(get("stream.monitor"), Some("true" | "1"));
+    }
 }
 
 impl Graph {
@@ -553,8 +567,7 @@ impl Graph {
             .values()
             .filter(|(out, _)| self.nodes.get(out).is_some_and(&from))
             .filter_map(|(_, inp)| self.nodes.get(inp))
-            .filter(|n| n.class.starts_with(class) && (n.running || !running))
-            .filter(|n| !SKIPPED_APPS.contains(&n.app_id.as_str()))
+            .filter(|n| n.class.starts_with(class) && (n.running || !running) && !n.monitor)
             .map(|n| self.consumer_name(n))
             .collect();
         apps.sort();
@@ -624,18 +637,9 @@ fn mic_thread(
                 let get = |k: &str| props.get(k).unwrap_or("").to_string();
                 match &obj.type_ {
                     ObjectType::Node => {
-                        let class = get("media.class");
-                        graph.borrow_mut().nodes.insert(
-                            obj.id,
-                            NodeInfo {
-                                class: class.clone(),
-                                name: get("node.name"),
-                                app: get("application.name"),
-                                app_id: get("application.id"),
-                                client: get("client.id").parse().unwrap_or(0),
-                                running: false,
-                            },
-                        );
+                        let node = NodeInfo::from_global(|k| props.get(k));
+                        let class = node.class.clone();
+                        graph.borrow_mut().nodes.insert(obj.id, node);
                         if (class.starts_with("Stream/Input/Audio")
                             || class.starts_with("Stream/Input/Video"))
                             && let Some(registry) = registry_weak.upgrade()
@@ -649,8 +653,15 @@ fn mic_thread(
                                 .info(move |info| {
                                     let running =
                                         matches!(info.state(), pipewire::node::NodeState::Running);
+                                    let props = info.props().filter(|_| {
+                                        info.change_mask()
+                                            .contains(pipewire::node::NodeChangeMask::PROPS)
+                                    });
                                     if let Some(n) = graph2.borrow_mut().nodes.get_mut(&id) {
                                         n.running = running;
+                                        if let Some(p) = props {
+                                            n.note_props(|k| p.get(k));
+                                        }
                                     }
                                     report2();
                                 })
@@ -726,10 +737,74 @@ mod tests {
             class: class.into(),
             name: String::new(),
             app: app.into(),
-            app_id: String::new(),
             client: 0,
             running,
+            monitor: false,
         }
+    }
+
+    type Keys = &'static [(&'static str, &'static str)];
+
+    /// pavucontrol's Input Devices meter on a microphone: its node global, then the props its
+    /// info event adds (PipeWire 1.6, pipewire-pulse).
+    const METER_GLOBAL: Keys = &[
+        ("object.serial", "66"),
+        ("factory.id", "7"),
+        ("client.id", "59"),
+        ("client.api", "pipewire-pulse"),
+        ("application.name", "PulseAudio Volume Control"),
+        ("node.name", "PulseAudio Volume Control"),
+        ("media.class", "Stream/Input/Audio"),
+    ];
+    const METER_INFO: Keys = &[
+        ("application.id", "org.PulseAudio.pavucontrol"),
+        ("application.process.binary", "pavucontrol"),
+        ("media.name", "Peak detect"),
+        ("resample.peaks", "true"),
+        ("stream.monitor", "true"),
+        ("target.object", "55"),
+    ];
+
+    /// `pw-record --target testmic`: its node global, then the props its info event adds.
+    const RECORD_GLOBAL: Keys = &[
+        ("object.serial", "83"),
+        ("factory.id", "9"),
+        ("client.id", "59"),
+        ("application.name", "pw-record"),
+        ("node.name", "pw-record"),
+        ("media.class", "Stream/Input/Audio"),
+    ];
+    const RECORD_INFO: Keys = &[
+        ("media.category", "Capture"),
+        ("media.role", "Music"),
+        ("media.name", "/tmp/rec.wav"),
+        ("stream.is-live", "true"),
+        ("target.object", "testmic"),
+    ];
+
+    /// A running stream as the registry and then its info event describe it.
+    fn stream(global: Keys, info: Keys) -> NodeInfo {
+        let find = |set: Keys| move |k: &str| set.iter().find(|(key, _)| *key == k).map(|p| p.1);
+        let mut n = NodeInfo::from_global(find(global));
+        n.running = true;
+        n.note_props(find(info));
+        n
+    }
+
+    #[test]
+    fn a_level_meter_does_not_light_the_microphone_and_a_recording_does() {
+        let mut g = Graph::default();
+        g.nodes.insert(55, node("Audio/Source", "", false));
+        g.nodes.insert(60, stream(METER_GLOBAL, METER_INFO));
+        g.links.insert(100, (55, 60));
+        assert_eq!(
+            g.recording(),
+            Vec::<String>::new(),
+            "a level meter records nothing"
+        );
+        g.nodes.insert(61, stream(RECORD_GLOBAL, RECORD_INFO));
+        g.links.insert(101, (55, 61));
+        assert_eq!(g.recording(), vec!["pw-record".to_string()]);
     }
 
     #[test]
@@ -757,16 +832,12 @@ mod tests {
     }
 
     #[test]
-    fn an_idle_stream_and_a_volume_applet_are_skipped() {
+    fn an_idle_stream_is_skipped() {
         let mut g = Graph::default();
         g.nodes.insert(1, node("Audio/Source/Virtual", "", false));
         g.nodes
             .insert(10, node("Stream/Input/Audio", "Zoom", false));
-        let mut pav = node("Stream/Input/Audio", "pavucontrol", true);
-        pav.app_id = "org.PulseAudio.pavucontrol".into();
-        g.nodes.insert(11, pav);
         g.links.insert(100, (1, 10));
-        g.links.insert(101, (1, 11));
         assert!(g.recording().is_empty());
         g.nodes.get_mut(&10).unwrap().running = true;
         assert_eq!(g.recording(), vec!["Zoom".to_string()]);
@@ -797,9 +868,8 @@ mod tests {
         let mut cast = node("Video/Source", "Chromium", true);
         cast.name = SCREENCAST_NODE.into();
         g.nodes.insert(1, cast);
-        let mut consumer = node("Stream/Input/Video", "Volume Control", false);
-        consumer.app_id = "org.PulseAudio.pavucontrol".into();
-        g.nodes.insert(10, consumer);
+        g.nodes
+            .insert(10, node("Stream/Input/Video", "Volume Control", false));
         g.links.insert(100, (1, 10));
         assert_eq!(g.sharing(), vec!["Chromium".to_string()]);
     }

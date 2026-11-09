@@ -601,10 +601,7 @@ pub(crate) async fn pick_and_cast(
     let id = app_id.to_string();
     let mut casts = match blocking::unblock(move || {
         let _turn = lock(&CAST_TURN);
-        let app = cast::CastFor {
-            name: crate::remotedesktop::display_name(&id),
-            id,
-        };
+        let app = crate::remotedesktop::display_name(&id);
         start_each(
             &targets,
             |t| {

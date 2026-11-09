@@ -83,13 +83,13 @@ pub struct Cast {
 }
 
 impl Cast {
-    /// Start capturing `target`, for the remote desktop server when `remote`, on a node named
-    /// for `app`; returns once PipeWire assigned the node.
+    /// Start capturing `target`, for the remote desktop server when `remote`, on a node whose
+    /// `application.name` is `app` (unset when empty); returns once PipeWire assigned the node.
     pub fn start(
         target: Target,
         cursor: CursorMode,
         remote: bool,
-        app: CastFor,
+        app: String,
     ) -> Result<Cast, String> {
         let (tx, rx) = std::sync::mpsc::channel::<NodeReport>();
         let (stop, stop_rx) = pipewire::channel::channel::<()>();
@@ -262,19 +262,11 @@ fn cursor_plane(
     })
 }
 
-/// The app a cast is for, "" when unknown. Its name goes on the node as `application.name`, which
-/// the compositor's sharing tooltip reads.
-#[derive(Clone, Debug, Default)]
-pub struct CastFor {
-    pub id: String,
-    pub name: String,
-}
-
 fn run(
     target: Target,
     cursor: CursorMode,
     remote: bool,
-    app: &CastFor,
+    app: &str,
     report: std::sync::mpsc::Sender<NodeReport>,
     stop_rx: pipewire::channel::Receiver<()>,
 ) -> Result<(), String> {
@@ -322,13 +314,8 @@ fn run(
         *pipewire::keys::NODE_NAME => "reprise-screencast",
         *pipewire::keys::MEDIA_ROLE => "Screen",
     };
-    for (key, value) in [
-        (*pipewire::keys::APP_ID, &app.id),
-        (*pipewire::keys::APP_NAME, &app.name),
-    ] {
-        if !value.is_empty() {
-            props.insert(key, value.as_str());
-        }
+    if !app.is_empty() {
+        props.insert(*pipewire::keys::APP_NAME, app);
     }
     let stream = StreamRc::new(core, "reprise-screencast", props).map_err(|e| e.to_string())?;
 
