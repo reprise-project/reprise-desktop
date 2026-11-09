@@ -684,7 +684,7 @@ impl Harness {
     /// A libei client of `kind` on a socket pair, as the portal hands one out, that binds the
     /// keyboard and text on the seat it is offered; returns once the compositor made its device.
     pub fn ei_keyboard(&mut self, kind: crate::eis::Kind) -> EiPeer {
-        self.ei_keyboard_as(kind, false, crate::inputproto::DEVICE_KEYBOARD)
+        self.ei_keyboard_as(kind, false, crate::inputproto::DEVICE_KEYBOARD, "")
     }
 
     /// [`Harness::ei_keyboard`] for the remote desktop server's sender, which counts as present
@@ -695,15 +695,18 @@ impl Harness {
             crate::eis::Kind::Sender,
             true,
             DEVICE_KEYBOARD | DEVICE_POINTER,
+            "",
         )
     }
 
-    /// [`Harness::ei_keyboard`] with `present` and the `devices` mask it binds.
+    /// [`Harness::ei_keyboard`] with `present`, the `devices` mask it binds and the `app` the
+    /// portal named for it.
     pub fn ei_keyboard_as(
         &mut self,
         kind: crate::eis::Kind,
         present: bool,
         devices: u32,
+        app: &str,
     ) -> EiPeer {
         use reis::{
             PendingRequestResult, ei,
@@ -712,7 +715,7 @@ impl Harness {
         };
         let (ours, theirs) = UnixStream::pair().expect("socket pair");
         let id = (self.state)
-            .eis_connect(ours.into(), kind, present, None, devices)
+            .eis_connect(ours.into(), kind, present, None, devices, app.into())
             .expect("eis_connect");
         let context = ei::Context::new(theirs).expect("ei context");
         let context_type = match kind {

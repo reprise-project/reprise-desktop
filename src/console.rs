@@ -172,7 +172,7 @@ pub fn stop(state: &mut State, reason: Reason) {
         return;
     }
     state.eis_revoke_senders();
-    state.inputproto.keys.revoke_all();
+    state.keys_revoke_all();
     for id in std::mem::take(&mut state.console.objects) {
         if let Ok(r) = RepriseLockScreenV1::from_id(&state.dh, id.clone()) {
             crate::inputproto::send_ended(&r, reason);
@@ -188,7 +188,7 @@ pub fn console_unlocked(state: &mut State) {
     log::info!("lock mode: the console unlocked");
     if state.console.objects.is_empty() {
         state.eis_revoke_senders();
-        state.inputproto.keys.revoke_all();
+        state.keys_revoke_all();
     }
     stop(state, Reason::ConsoleUnlocked);
     if remote_side(state) {

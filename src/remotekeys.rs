@@ -13,6 +13,9 @@ pub struct KeysId(u64);
 
 struct Keys {
     id: KeysId,
+    /// The app id of the app whose session this serves, "" when unnamed; None for the remote
+    /// desktop server's.
+    app: Option<String>,
     held: Vec<u32>,
     /// The key each keysym went down on, so its release finds it after a
     /// layout change.
@@ -26,11 +29,12 @@ pub struct KeysState {
 }
 
 impl KeysState {
-    pub fn create(&mut self) -> KeysId {
+    pub fn create(&mut self, app: Option<String>) -> KeysId {
         self.next_id += 1;
         let id = KeysId(self.next_id);
         self.objects.push(Keys {
             id,
+            app,
             held: Vec::new(),
             syms: Vec::new(),
         });
@@ -46,13 +50,26 @@ impl KeysState {
         self.objects.iter().any(|k| k.id == id)
     }
 
-    /// Forget every object and the keys it holds, releasing none: its later requests do nothing.
-    pub fn revoke_all(&mut self) {
-        self.objects.clear();
+    /// The app ids of the apps' objects, "" for an unnamed app.
+    pub fn apps(&self) -> impl Iterator<Item = &str> {
+        self.objects.iter().filter_map(|k| k.app.as_deref())
     }
 }
 
 impl State {
+    /// A keys object for `app`, as [`KeysState::create`] takes it.
+    pub fn keys_create(&mut self, app: Option<String>) -> KeysId {
+        let id = self.inputproto.keys.create(app);
+        crate::privacy::control_changed(self);
+        id
+    }
+
+    /// Forget every object and the keys it holds, releasing none: its later requests do nothing.
+    pub fn keys_revoke_all(&mut self) {
+        self.inputproto.keys.objects.clear();
+        crate::privacy::control_changed(self);
+    }
+
     pub fn keys_key(&mut self, id: KeysId, code: u32, pressed: bool) {
         let Some(k) = self.inputproto.keys.get_mut(id) else {
             return;
@@ -101,6 +118,7 @@ impl State {
         for code in keys.swap_remove(i).held {
             self.keys_inject(code, false);
         }
+        crate::privacy::control_changed(self);
     }
 
     /// One key through the physical keyboard's path, past an InputCapture
