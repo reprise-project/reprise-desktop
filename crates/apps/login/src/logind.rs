@@ -357,13 +357,13 @@ fn listening_inodes(table: &str, port: u16) -> Vec<u64> {
 
 /// Whether `e` is systemd's answer for a unit that isn't installed.
 fn no_such_unit(e: &zbus::Error) -> bool {
-    matches!(e, zbus::Error::MethodError(name, ..) if name.as_str() == NO_SUCH_UNIT)
+    reprisebus::error::name(e).is_some_and(|n| n == NO_SUCH_UNIT)
 }
 
 /// `Subscribe()`'s result, with a connection that was already subscribed counted as success.
 fn subscribed(r: zbus::Result<()>) -> zbus::Result<()> {
     match r {
-        Err(zbus::Error::MethodError(name, ..)) if name.as_str() == ALREADY_SUBSCRIBED => Ok(()),
+        Err(e) if reprisebus::error::name(&e).is_some_and(|n| n == ALREADY_SUBSCRIBED) => Ok(()),
         r => r,
     }
 }
@@ -400,11 +400,10 @@ pub fn keyboard_from(
 /// Whether `e` says the session is gone: logind's `NoSuchSession`, or `UnknownObject` from a
 /// session object that went away. A greeter of the last daemon is often gone this way.
 pub fn session_gone(e: &zbus::Error) -> bool {
-    match e {
-        zbus::Error::FDO(e) => matches!(**e, zbus::fdo::Error::UnknownObject(_)),
-        zbus::Error::MethodError(name, ..) => name.as_str() == NO_SUCH_SESSION,
-        _ => false,
-    }
+    matches!(
+        reprisebus::error::name(e).as_deref(),
+        Some(NO_SUCH_SESSION | "org.freedesktop.DBus.Error.UnknownObject")
+    )
 }
 
 /// logind's sessions as one `ListSessions` lists them.

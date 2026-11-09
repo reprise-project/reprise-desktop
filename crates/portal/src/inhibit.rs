@@ -494,7 +494,7 @@ async fn follow_hint(
             .await;
         match reply {
             Ok(reply) => reply.body().deserialize::<OwnedObjectPath>().map(Some),
-            Err(zbus::Error::MethodError(name, ..)) if name.as_str() == NO_SESSION => Ok(None),
+            Err(e) if reprisebus::error::name(&e).is_some_and(|n| n == NO_SESSION) => Ok(None),
             Err(e) => Err(e),
         }
     })

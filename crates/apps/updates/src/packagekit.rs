@@ -102,13 +102,13 @@ fn hints(interactive: bool) -> Vec<String> {
 }
 
 fn failed(e: zbus::Error) -> Error {
-    if let zbus::Error::MethodError(name, _, _) = &e
-        && matches!(
-            name.as_str(),
+    if matches!(
+        reprisebus::error::name(&e).as_deref(),
+        Some(
             "org.freedesktop.DBus.Error.ServiceUnknown"
                 | "org.freedesktop.DBus.Error.NameHasNoOwner"
         )
-    {
+    ) {
         return Error::Unavailable;
     }
     Error::Failed(e.to_string())
@@ -302,6 +302,17 @@ pub async fn install(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_daemon_the_bus_cannot_reach_is_unavailable() {
+        for name in [
+            "org.freedesktop.DBus.Error.ServiceUnknown",
+            "org.freedesktop.DBus.Error.NameHasNoOwner",
+        ] {
+            let e = reprisebus::error::reply(name, "The name is not activatable");
+            assert_eq!(failed(e), Error::Unavailable, "{name}");
+        }
+    }
 
     #[test]
     fn not_authorized_is_a_dismissal_or_a_refusal() {

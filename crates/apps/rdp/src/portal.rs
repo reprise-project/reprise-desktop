@@ -265,8 +265,12 @@ async fn close_on(conn: &Connection, session: &OwnedObjectPath) {
 /// Close answered by no session object: the frontend closes a session itself when a request
 /// on it fails, as Start does with no screen to share.
 fn already_closed(e: &zbus::Error) -> bool {
-    use zbus::fdo::Error as Fdo;
-    matches!(e, zbus::Error::FDO(e) if matches!(**e, Fdo::UnknownMethod(_) | Fdo::UnknownObject(_)))
+    matches!(
+        reprisebus::error::name(e).as_deref(),
+        Some(
+            "org.freedesktop.DBus.Error.UnknownMethod" | "org.freedesktop.DBus.Error.UnknownObject"
+        )
+    )
 }
 
 type Options = HashMap<&'static str, Variant<'static>>;

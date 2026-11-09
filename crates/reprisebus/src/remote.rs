@@ -13,6 +13,7 @@ pub const UNIT: &str = "app-org.reprise.RemoteDesktop.service";
 const SYSTEMD: &str = "org.freedesktop.systemd1";
 const SYSTEMD_PATH: &str = "/org/freedesktop/systemd1";
 const MANAGER: &str = "org.freedesktop.systemd1.Manager";
+const UNKNOWN_METHOD: &str = "org.freedesktop.DBus.Error.UnknownMethod";
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Status {
@@ -134,8 +135,7 @@ async fn power_ending_on(conn: &Connection) -> Result<(), String> {
         (server(conn).await).inspect_err(|e| log::warn!("remote desktop, PowerEnding: {e}"))?;
     let call = |method| conn.call_method(Some(server.as_str()), PATH, Some(INTERFACE), method, &());
     match call("PowerEnding").await {
-        // zbus reports a reply named as a `fdo::Error` as that variant.
-        Err(zbus::Error::FDO(e)) if matches!(*e, zbus::fdo::Error::UnknownMethod(_)) => {
+        Err(e) if crate::error::name(&e).is_some_and(|n| n == UNKNOWN_METHOD) => {
             told("SessionEnding", call("SessionEnding").await)
         }
         reply => told("PowerEnding", reply),
@@ -249,10 +249,7 @@ fn told(what: &str, reply: zbus::Result<zbus::Message>) -> Result<(), String> {
         Err(e) => e,
     };
     log::warn!("remote desktop, {what}: {e}");
-    Err(match e {
-        zbus::Error::MethodError(_, Some(msg), _) => msg,
-        e => e.to_string(),
-    })
+    Err(crate::error::message(&e).map_or_else(|| e.to_string(), String::from))
 }
 
 #[cfg(test)]
@@ -361,6 +358,18 @@ mod tests {
         fn session_ending(&self) {
             self.0.store(true, std::sync::atomic::Ordering::SeqCst);
         }
+    }
+
+    #[test]
+    fn a_failed_call_tells_the_servers_message() {
+        let e = crate::error::reply(
+            "org.freedesktop.DBus.Error.Failed",
+            "no client at 192.0.2.8:1",
+        );
+        assert_eq!(
+            told("DisconnectClient", Err(e)),
+            Err("no client at 192.0.2.8:1".into())
+        );
     }
 
     #[test]

@@ -465,13 +465,11 @@ impl From<zbus::Error> for Error {
                 message: reprisebus::polkit::TIMED_OUT.into(),
             };
         }
-        match &e {
-            zbus::Error::MethodError(name, detail, _) => {
-                classify(name.as_str(), detail.as_deref().unwrap_or(""))
-            }
-            other => Error {
+        match reprisebus::error::name(&e) {
+            Some(name) => classify(&name, reprisebus::error::message(&e).unwrap_or("")),
+            None => Error {
                 kind: ErrorKind::Other,
-                message: other.to_string(),
+                message: e.to_string(),
             },
         }
     }
@@ -1033,6 +1031,16 @@ pub(crate) mod tests {
             classify("org.freedesktop.UDisks2.Error.Failed", "x").kind,
             ErrorKind::Other
         );
+    }
+
+    #[test]
+    fn a_reply_named_in_the_dbus_namespace_reads_as_its_message() {
+        let e = Error::from(reprisebus::error::reply(
+            "org.freedesktop.DBus.Error.UnknownObject",
+            "No such interface on object",
+        ));
+        assert_eq!(e.kind, ErrorKind::Other);
+        assert_eq!(e.message, "No such interface on object");
     }
 
     #[test]

@@ -176,11 +176,9 @@ fn quiet(cmd: &Cmd) -> bool {
 }
 
 pub(crate) fn error_of(e: &zbus::Error) -> String {
-    match e {
-        zbus::Error::MethodError(name, detail, _) => {
-            plain_error(name.as_str(), detail.as_deref().unwrap_or(""))
-        }
-        other => other.to_string(),
+    match reprisebus::error::name(e) {
+        Some(name) => plain_error(&name, reprisebus::error::message(e).unwrap_or("")),
+        None => e.to_string(),
     }
 }
 
@@ -368,15 +366,16 @@ mod tests {
 
     #[test]
     fn a_method_error_reads_through_plain_error() {
-        let e = zbus::Error::MethodError(
-            zbus::names::OwnedErrorName::try_from("org.bluez.Error.NotReady").unwrap(),
-            Some("Resource Not Ready".into()),
-            zbus::Message::method_call("/", "X").build(&()).unwrap(),
-        );
+        let e = reprisebus::error::reply("org.bluez.Error.NotReady", "Resource Not Ready");
         assert_eq!(
             error_of(&e),
             "Bluetooth is not ready. Make sure it is turned on."
         );
+        let denied = reprisebus::error::reply(
+            "org.freedesktop.DBus.Error.AccessDenied",
+            "Rejected send message",
+        );
+        assert_eq!(error_of(&denied), "Rejected send message");
     }
 
     #[test]

@@ -65,19 +65,16 @@ pub type Asks<'a> = &'a mut dyn FnMut(Option<Request>);
 type Dict = HashMap<String, OwnedVariant>;
 
 fn failed(e: zbus::Error) -> Error {
-    if let zbus::Error::MethodError(name, detail, _) = &e {
-        if matches!(
-            name.as_str(),
+    if matches!(
+        reprisebus::error::name(&e).as_deref(),
+        Some(
             "org.freedesktop.DBus.Error.ServiceUnknown"
                 | "org.freedesktop.DBus.Error.NameHasNoOwner"
-        ) {
-            return Error::Unavailable;
-        }
-        if let Some(d) = detail {
-            return Error::Failed(sentence(d));
-        }
+        )
+    ) {
+        return Error::Unavailable;
     }
-    Error::Failed(e.to_string())
+    Error::Failed(reprisebus::error::message(&e).map_or_else(|| e.to_string(), sentence))
 }
 
 /// fwupd answers `AuthFailed` for a dismissed prompt and a refused password
@@ -99,12 +96,14 @@ fn sentence(s: &str) -> String {
 }
 
 fn nothing_newer(e: &zbus::Error) -> bool {
-    matches!(e, zbus::Error::MethodError(name, _, _) if matches!(
-        name.as_str(),
-        "org.freedesktop.fwupd.NothingToDo"
-            | "org.freedesktop.fwupd.NotSupported"
-            | "org.freedesktop.fwupd.NotFound"
-    ))
+    matches!(
+        reprisebus::error::name(e).as_deref(),
+        Some(
+            "org.freedesktop.fwupd.NothingToDo"
+                | "org.freedesktop.fwupd.NotSupported"
+                | "org.freedesktop.fwupd.NotFound"
+        )
+    )
 }
 
 fn text(d: &Dict, key: &str) -> String {
@@ -592,16 +591,7 @@ mod tests {
 
     #[test]
     fn auth_failed_is_a_dismissal_or_a_refusal() {
-        let msg = zbus::Message::method_call("/", "Install")
-            .build(&())
-            .unwrap();
-        let error = |name: &str| {
-            zbus::Error::MethodError(
-                name.try_into().unwrap(),
-                Some("Failed to obtain auth".into()),
-                msg.clone(),
-            )
-        };
+        let error = |name| reprisebus::error::reply(name, "Failed to obtain auth");
         let auth_failed = || error("org.freedesktop.fwupd.AuthFailed");
         assert_eq!(install_failed(auth_failed(), || true), Error::Dismissed);
         assert_eq!(
@@ -612,6 +602,17 @@ mod tests {
             panic!("only AuthFailed asks whether the prompt was dismissed")
         });
         assert_eq!(other, Error::Failed("Failed to obtain auth.".into()));
+    }
+
+    #[test]
+    fn a_daemon_the_bus_cannot_reach_is_unavailable() {
+        for name in [
+            "org.freedesktop.DBus.Error.ServiceUnknown",
+            "org.freedesktop.DBus.Error.NameHasNoOwner",
+        ] {
+            let e = reprisebus::error::reply(name, "The name is not activatable");
+            assert_eq!(failed(e), Error::Unavailable, "{name}");
+        }
     }
 
     #[test]
