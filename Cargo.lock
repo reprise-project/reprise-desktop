@@ -4890,6 +4890,7 @@ dependencies = [
  "tempfile",
  "zbus 6.2.1",
  "zeroize",
+ "zruntime",
 ]
 
 [[package]]

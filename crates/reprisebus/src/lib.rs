@@ -26,6 +26,7 @@
 //! turns its user unit on or off. Synchronous callers [`wait`] on it.
 //! [`bluez`] lists BlueZ's paired devices and follows whether one is connected.
 //! [`kdeconnect`] follows the phones KDE Connect reaches.
+//! [`desklock`] follows the compositor's desktop lock on `org.freedesktop.ScreenSaver`.
 //! [`peer`] tells which process a session bus peer is and whether it runs in a Flatpak sandbox.
 //! [`mutex`] locks a mutex even when its holder panicked.
 //! [`login`] asks the system manager whether reprise-login runs.
@@ -36,6 +37,7 @@ pub mod a11y;
 pub mod appearance;
 pub mod bluez;
 pub mod charge;
+pub mod desklock;
 pub mod filetransfer;
 pub mod fprint;
 pub mod instance;
