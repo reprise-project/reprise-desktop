@@ -1285,16 +1285,18 @@ sharing and remote control grants yet.
   runs with no window (`script_open = "run"`, the default) or in your
   terminal (`script_open = "terminal"`). Programs started from desktop
   entries in the application folders never ask, and neither does a program
-  the system installed: opened by a path under `/usr` that stays there,
-  on `/usr`'s file system, owned by root and writable by no one else.
+  the system installed: a file whose real path is under `/usr` or `/opt`,
+  where the file, its folders and the folders of the name it was opened by
+  are all root's and writable by no one else.
 - **Disk images.** Opening an `.iso` or `.img` asks before it is mounted,
   since the kernel's file system driver then parses a file that may come
   from anywhere, and those drivers aren't hardened against hostile images.
-  Explorer, the desktop, search, the Start menu's Documents, jump lists and
-  Quick Launch all ask, and Mount mounts it in Reprise, not in the type's
-  program. The image is set up read-only on its loop device and each file
-  system mounted with `ro`. Explorer's menu rows (Mount, and Open and Open
-  With, which hand it to a program) are explicit choices and don't ask.
+  Explorer, the desktop, search, the Start menu's Documents and Quick Launch
+  all ask, and Mount mounts it in Reprise, not in the type's program. The
+  image is set up read-only on its loop device and each file system mounted
+  with `ro`. Explorer's menu rows (Mount, and Open and Open With, which hand
+  it to a program), Open With and a jump list's row, which opens it in that
+  list's program, are explicit choices and don't ask.
 - **Exec lines.** A desktop entry's `Exec` is split with no shell, and a
   field code standing as an argument of its own (`%f`, `%u`) becomes
   exactly one argument per file or URL, never shell text, so

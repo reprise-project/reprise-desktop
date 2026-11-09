@@ -41,7 +41,7 @@ The file manager, and the default for folders.
   whole image's file system, or each partition's when it has none, then
   Explorer goes into the first. A double-click or Enter asks Mount / Cancel
   first; the menu's Mount row mounts unasked. Opening one from the desktop, a search,
-  Recent Items, a jump list or Quick Launch asks the same and then opens its folder in
+  Recent Items or Quick Launch asks the same and then opens its folder in
   Explorer. It stays in Computer until Eject unmounts
   it and detaches it; its menu's Open still hands it to its program.
 - **File operations** run in the background, so a big copy doesn't freeze

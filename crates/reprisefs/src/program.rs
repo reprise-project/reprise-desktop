@@ -213,22 +213,29 @@ pub fn asks_first(path: &Path, how: Confirm) -> bool {
     }
 }
 
-/// Whether `path` is a file the system installed: named and resolving under `/usr`, on `/usr`'s
-/// file system, owned by root and writable by no one else.
+/// Whether `path` is a program the system installed, as [`root_owned`] says of the real paths
+/// of its folder and of the file it resolves to.
 fn installed(path: &Path) -> bool {
     use std::os::unix::fs::MetadataExt;
-    let usr = Path::new("/usr");
-    if !path.starts_with(usr) {
-        return false;
-    }
-    let (Ok(real), Ok(meta), Ok(top)) = (
-        std::fs::canonicalize(path),
-        std::fs::metadata(path),
-        std::fs::metadata(usr),
-    ) else {
+    let (Some(dir), Ok(real)) = (path.parent(), std::fs::canonicalize(path)) else {
         return false;
     };
-    real.starts_with(usr) && meta.uid() == 0 && meta.mode() & 0o022 == 0 && meta.dev() == top.dev()
+    let Ok(dir) = std::fs::canonicalize(dir) else {
+        return false;
+    };
+    root_owned(&dir, &real, |p| {
+        let meta = std::fs::symlink_metadata(p).ok()?;
+        Some((meta.uid(), meta.mode()))
+    })
+}
+
+/// Whether file `real` lies under `/usr` or `/opt`, and it, `dir` (the folder it was named in)
+/// and every folder above either are root's and writable by no one else; `stat` gives uid, mode.
+fn root_owned(dir: &Path, real: &Path, stat: impl Fn(&Path) -> Option<(u32, u32)>) -> bool {
+    let only_root = |p: &Path| stat(p).is_some_and(|(uid, mode)| uid == 0 && mode & 0o022 == 0);
+    (real.starts_with("/usr") || real.starts_with("/opt"))
+        && real.ancestors().all(only_root)
+        && dir.ancestors().all(only_root)
 }
 
 /// Types whose program runs the file rather than showing it: `.exe`, `.msi`, `.bat` and `.lnk`
@@ -627,6 +634,48 @@ mod tests {
         let climb = Path::new("/usr/..").join(copy.strip_prefix("/").unwrap());
         for path in [copy, link, climb] {
             assert!(asks_first(&path, Confirm::Ask), "{}", path.display());
+        }
+        if std::fs::read_link("/bin").is_ok_and(|l| l == Path::new("usr/bin")) {
+            let through = Path::new("/bin/true");
+            assert!(!asks_first(through, Confirm::Ask), "{}", through.display());
+        }
+    }
+
+    #[test]
+    fn a_root_program_runs_unasked_only_when_no_one_else_can_write_its_folders() {
+        let (dir, file) = (0o40755, 0o100755);
+        let tree = [
+            ("/", (0, dir)),
+            ("/usr", (0, dir)),
+            ("/usr/bin", (0, dir)),
+            ("/usr/bin/tool", (0, file)),
+            ("/usr/local", (0, 0o42775)),
+            ("/usr/local/bin", (0, dir)),
+            ("/usr/local/bin/tool", (0, file)),
+            ("/opt", (0, dir)),
+            ("/opt/app", (0, dir)),
+            ("/opt/app/run", (0, file)),
+            ("/opt/mine", (1000, dir)),
+            ("/opt/mine/run", (0, file)),
+            ("/home", (0, dir)),
+            ("/home/u", (1000, 0o40700)),
+            ("/srv", (0, dir)),
+            ("/srv/tool", (0, file)),
+        ];
+        let stat = |p: &Path| tree.iter().find(|(q, _)| Path::new(q) == p).map(|e| e.1);
+        for (named_in, real, unasked) in [
+            ("/usr/bin", "/usr/bin/tool", true),
+            ("/usr/local/bin", "/usr/local/bin/tool", false),
+            ("/home/u", "/usr/bin/tool", false),
+            ("/opt/mine", "/opt/mine/run", false),
+            ("/srv", "/srv/tool", false),
+            ("/opt/app", "/opt/app/run", true),
+        ] {
+            assert_eq!(
+                root_owned(Path::new(named_in), Path::new(real), stat),
+                unasked,
+                "{real} opened from {named_in}"
+            );
         }
     }
 
