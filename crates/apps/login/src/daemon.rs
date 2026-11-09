@@ -449,6 +449,9 @@ pub struct Daemon {
     endings: HashMap<String, Ending>,
     /// The background sessions' ids as the last run of the daemon left them, if it did.
     background_before: Option<BTreeSet<String>>,
+    /// The ids of the sessions the last run of the daemon counted a client in, each kept only
+    /// until recovery passes it over or the link it opened first reports.
+    viewed_before: BTreeSet<String>,
     /// seat0 showed no session when `recover` ran.
     seat_empty: bool,
     /// Removals of unknown sessions while a start, console or remote, is in flight, with
@@ -479,6 +482,7 @@ impl Daemon {
             after_orphans: AfterOrphans::Nothing,
             endings: HashMap::new(),
             background_before: None,
+            viewed_before: BTreeSet::new(),
             seat_empty: false,
             removed_early: Vec::new(),
             notice: None,
@@ -507,6 +511,22 @@ impl Daemon {
     /// The last run's [`Daemon::background_ids`], for `recover` and sessions read late.
     pub fn background_before(&mut self, ids: Option<BTreeSet<String>>) {
         self.background_before = ids;
+    }
+
+    /// The ids of the sessions whose hand-over server counts a client, and of those linked at
+    /// recovery whose link has not reported yet, which the next run links while remote logins are
+    /// off.
+    pub fn viewed_ids(&self) -> BTreeSet<String> {
+        (self.sessions.iter())
+            .filter(|e| self.remote.viewers.contains_key(&e.uid))
+            .map(|e| e.id.clone())
+            .chain(self.viewed_before.iter().cloned())
+            .collect()
+    }
+
+    /// The last run's [`Daemon::viewed_ids`], for `recover` and sessions read late.
+    pub fn viewed_before(&mut self, ids: Option<BTreeSet<String>>) {
+        self.viewed_before = ids.unwrap_or_default();
     }
 
     /// Whether logind's removal of session `id` changes anything here: an orphan, a session of
@@ -546,6 +566,10 @@ impl Daemon {
             }
         }
         self.open_intakes(&mut out);
+        let (sessions, unread) = (&self.sessions, &self.remote.unread);
+        let linked = |id: &String| sessions.by_id(id).is_some_and(|e| !e.background);
+        let enabled = self.config.remote.enabled;
+        (self.viewed_before).retain(|id| unread.contains_key(id) || (!enabled && linked(id)));
         self.update_inhibit(&mut out);
         out
     }
@@ -1485,6 +1509,7 @@ impl Daemon {
             return self.orphan_gone(world, id, seat_active, out);
         }
         self.endings.remove(id);
+        self.viewed_before.remove(id);
         let Some(entry) = self.sessions.remove(id) else {
             // It may have been on screen, as recovery could not tell.
             if unread && seat_active.is_none() {
