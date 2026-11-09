@@ -28,6 +28,7 @@ fn runner(dir: &Path, deadline: Duration) -> Runner {
         slot_dir: dir.to_path_buf(),
         scratch: dir.to_path_buf(),
         deadline,
+        jail: Jail::Bare,
     }
 }
 
@@ -257,4 +258,84 @@ fn with_every_slot_taken_nothing_runs() {
         Err(RunError::Failed(_))
     ));
     assert!(ran.exists(), "it runs once a slot frees");
+}
+
+/// A runner in `dir` confined as thumbnailers run in a session; None where bubblewrap or a
+/// systemd user manager cannot run.
+fn jailed(dir: &Path, deadline: Duration) -> Option<Runner> {
+    let jail = Jail::find(std::env::var_os("PATH").as_deref())?;
+    let Jail::Bwrap { bwrap, systemd_run } = &jail else {
+        return None;
+    };
+    let runs = |argv: &[&std::ffi::OsStr]| {
+        Command::new(argv[0])
+            .args(&argv[1..])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+    };
+    let bw = [
+        bwrap.as_os_str(),
+        "--ro-bind".as_ref(),
+        "/".as_ref(),
+        "/".as_ref(),
+    ];
+    let scope = [
+        systemd_run.as_os_str(),
+        "--user".as_ref(),
+        "--scope".as_ref(),
+    ];
+    let ok = runs(
+        &[
+            &bw[..],
+            &["--unshare-all".as_ref(), "/usr/bin/true".as_ref()],
+        ]
+        .concat(),
+    ) && runs(&[&scope[..], &["--quiet".as_ref(), "/usr/bin/true".as_ref()]].concat());
+    ok.then(|| Runner {
+        jail,
+        ..runner(dir, deadline)
+    })
+}
+
+#[test]
+fn without_bubblewrap_there_is_no_jail() {
+    let dir = tempfile::tempdir().unwrap();
+    script(dir.path(), "systemd-run", "true");
+    assert_eq!(Jail::find(Some(dir.path().as_os_str())), None);
+    script(dir.path(), "bwrap", "true");
+    assert!(Jail::find(Some(dir.path().as_os_str())).is_some());
+}
+
+#[test]
+fn a_jailed_thumbnailer_sees_only_its_input_and_output_and_no_network() {
+    let dir = tempfile::tempdir().unwrap();
+    let Some(r) = jailed(dir.path(), Duration::from_secs(10)) else {
+        eprintln!("SKIPPED: bubblewrap or a systemd user manager cannot run here");
+        return;
+    };
+    let host_net = std::fs::read_link("/proc/self/ns/net").unwrap();
+    let secret = dir.path().join("secret");
+    std::fs::write(&secret, "x").unwrap();
+    let escaped = dir.path().join("escaped");
+    let input = dir.path().join("doc.pdf");
+    std::fs::write(&input, png(4, 4)).unwrap();
+    let fake = script(
+        dir.path(),
+        "jail.sh",
+        &format!(
+            "touch '{escaped}' 2>/dev/null\n\
+             [ -e '{secret}' ] && exit 10\n\
+             [ \"$(readlink /proc/self/ns/net)\" = '{net}' ] && exit 11\n\
+             [ \"$$\" -lt 10 ] || exit 12\n\
+             cp \"$1\" \"$2\"",
+            escaped = escaped.display(),
+            secret = secret.display(),
+            net = host_net.display(),
+        ),
+    );
+    let t = Thumbnailer::parse(&entry(&format!("{} %i %o", fake.display()), "a/b"), "j").unwrap();
+    assert_eq!(r.run(&t, &input, 128), Ok(png(4, 4)));
+    assert!(!escaped.exists(), "nothing outside the output is written");
 }

@@ -437,7 +437,8 @@ suspend_after = 0            # run [power] standby
 #                            # whichever program wrote them. Read as a window or dialog opens
 # external_thumbnailers = true
 #                            # PDFs, videos, fonts and other types get thumbnails from the
-#                            # installed freedesktop thumbnailers; false: pictures only
+#                            # installed freedesktop thumbnailers, each run in a bubblewrap
+#                            # jail (none run without bubblewrap); false: pictures only
 
 # [launcher]                 # the Super+Space launcher
 # search_files = true        # false finds programs only; true also lists files and folders

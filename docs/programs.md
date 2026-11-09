@@ -95,8 +95,9 @@ The file manager, and the default for folders.
   1, its 256 px `large` size at scale 2. Files Reprise does not decode
   itself (PDFs, videos, fonts) get theirs from the freedesktop thumbnailers
   installed in `share/thumbnailers`, two at a time at idle priority, each
-  stopped after 10 seconds; a file one fails on is not tried again until
-  it changes. The Browse... dialogs of Run and
+  in a bubblewrap jail capped at 512 MB and stopped after 10 seconds; a
+  file one fails on is not tried again until it changes. Without
+  bubblewrap no thumbnailer runs. The Browse... dialogs of Run and
   Open With read the same cache and leave the pictures it lacks to Explorer,
   so the desktop itself never decodes a picture. Folders update by
   themselves, no F5 needed.
