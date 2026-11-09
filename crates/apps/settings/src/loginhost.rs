@@ -6,10 +6,11 @@ use crate::{SettingsApp, pages, take};
 use repriselogin::front::FINGERPRINT;
 use repriselogin::machine::{MACHINE_CONFIG, MachineConfig, file_tag, save_request};
 use repriselogin::users::Source;
-use std::io::{self, Write};
+use std::io::{self, Read as _, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::{Child, Command, Output, Stdio};
 use std::sync::mpsc::Receiver;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 /// The helper that replaces `MACHINE_CONFIG` with the TOML on its stdin, as root.
@@ -17,6 +18,8 @@ const HELPER: &str = "/usr/lib/reprise/reprise-login-settings";
 const PKEXEC: &str = "/usr/bin/pkexec";
 /// How often the open page reads the front's fingerprint again.
 const POLL: Duration = Duration::from_secs(2);
+/// How often a save looks whether pkexec has exited.
+const EXIT_POLL: Duration = Duration::from_millis(50);
 
 /// The files the page reads.
 #[derive(Clone, Debug)]
@@ -57,11 +60,32 @@ type Read = Result<MachineConfig, String>;
 pub(crate) struct Saving {
     sent: MachineConfig,
     rx: Receiver<Ended>,
+    withdraw: Withdraw,
     /// An OK, Cancel or close waits on it.
     pub(crate) quit: bool,
     /// Cancel or a close: the sheet closes when it ends, saved or not, and nothing follows it.
     discard: bool,
+    /// Apply or OK was pressed while it ran: the edits made since are saved after it.
+    again: bool,
 }
+
+/// The pkexec a save runs, which Cancel or a close stops while its password prompt is up.
+#[derive(Clone, Default)]
+pub(crate) struct Withdraw(Arc<Mutex<Option<Child>>>);
+
+impl Withdraw {
+    /// Kills the save's pkexec. Until polkit lets it in, pkexec runs with the user's real uid,
+    /// so the signal reaches it, and polkitd drops the prompt of a caller that went away. Once
+    /// it runs the helper as root the signal is refused and the save lands.
+    pub(crate) fn stop(&self) {
+        if let Some(c) = self.0.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+            let _ = c.kill();
+        }
+    }
+}
+
+/// Runs the helper with a save request on its stdin, as [`pkexec`] does.
+pub(crate) type Run = fn(&str, &Withdraw) -> io::Result<Output>;
 
 const NOT_SAVED: &str = "The login manager's settings could not be saved.";
 const NOT_AUTHORIZED: &str = "The change was not authorized.";
@@ -108,17 +132,23 @@ pub(crate) fn apply(
 }
 
 /// `pkexec` running [`HELPER`] with `input` on its stdin.
-pub(crate) fn pkexec(input: &str) -> io::Result<Output> {
-    run_helper(Path::new(HELPER), input)
+pub(crate) fn pkexec(input: &str, withdraw: &Withdraw) -> io::Result<Output> {
+    run_helper(Path::new(PKEXEC), Path::new(HELPER), input, withdraw)
 }
 
-/// `pkexec` running `helper`; a missing helper is named without asking for a password.
-pub(crate) fn run_helper(helper: &Path, input: &str) -> io::Result<Output> {
+/// `pkexec` running `helper`, which `withdraw` can stop; a missing helper is named without
+/// asking for a password.
+pub(crate) fn run_helper(
+    pkexec: &Path,
+    helper: &Path,
+    input: &str,
+    withdraw: &Withdraw,
+) -> io::Result<Output> {
     if !helper.exists() {
         let why = format!("{} is not installed.", helper.display());
         return Err(io::Error::new(io::ErrorKind::NotFound, why));
     }
-    let mut child = Command::new(PKEXEC)
+    let mut child = Command::new(pkexec)
         .arg(helper)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
@@ -128,7 +158,27 @@ pub(crate) fn run_helper(helper: &Path, input: &str) -> io::Result<Output> {
         .stdin
         .take()
         .map(|mut s| s.write_all(input.as_bytes()));
-    let out = child.wait_with_output()?;
+    let stderr = child.stderr.take();
+    let slot = &withdraw.0;
+    *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(child);
+    let status = loop {
+        let mut held = slot.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(status) = held.as_mut().map(Child::try_wait).transpose()?.flatten() {
+            held.take();
+            break status;
+        }
+        drop(held);
+        std::thread::sleep(EXIT_POLL);
+    };
+    let mut why = Vec::new();
+    if let Some(mut e) = stderr {
+        e.read_to_end(&mut why)?;
+    }
+    let out = Output {
+        status,
+        stdout: Vec::new(),
+        stderr: why,
+    };
     match wrote {
         // A refusal before the helper read its input closes the pipe; its exit tells why.
         Some(Err(e)) if out.status.success() => Err(e),
@@ -305,7 +355,11 @@ impl SettingsApp {
     /// file first and sends nothing when it no longer reads as the page loaded it; the helper
     /// refuses a file changed after that reread.
     pub(crate) fn apply_login(&mut self) {
-        if !self.login_dirty() || self.login_job.is_some() {
+        if !self.login_dirty() {
+            return;
+        }
+        if let Some(s) = &mut self.login_job {
+            s.again = true;
             return;
         }
         let Some(l) = &self.login else {
@@ -318,8 +372,10 @@ impl SettingsApp {
             self.login_files.config.clone(),
         );
         let sent = cfg.clone();
+        let withdraw = Withdraw::default();
+        let w = withdraw.clone();
         let rx = self.login_spawn(move || match read_tagged(&path) {
-            Ok((now, tag)) if now == loaded => match apply(&cfg, &tag, &run) {
+            Ok((now, tag)) if now == loaded => match apply(&cfg, &tag, &|input| run(input, &w)) {
                 Ok(()) => Ended::Saved(read(&path)),
                 Err(Unsaved::Changed) => Ended::Changed(read(&path)),
                 Err(Unsaved::Failed(why)) => Ended::Failed(why),
@@ -329,17 +385,20 @@ impl SettingsApp {
         self.login_job = Some(Saving {
             sent,
             rx,
+            withdraw,
             quit: false,
             discard: false,
+            again: false,
         });
     }
 
-    /// Drop the page's unsaved changes; a save under way still lands.
+    /// Drop the page's unsaved changes, and a save under way while its prompt is up.
     pub(crate) fn revert_login(&mut self) {
         if let Some(l) = &mut self.login {
             l.want = match &mut self.login_job {
                 Some(s) => {
                     s.discard = true;
+                    s.withdraw.stop();
                     s.sent.clone()
                 }
                 None => l.loaded.clone(),
@@ -348,15 +407,18 @@ impl SettingsApp {
         self.show_login();
     }
 
-    /// The sheet is closing without OK: a save under way ends it saved or not.
+    /// The sheet is closing without OK: a save under way is stopped while its prompt is up, and
+    /// ends it saved or not.
     pub(crate) fn close_login(&mut self) {
         if let Some(s) = &mut self.login_job {
             s.discard = true;
+            s.withdraw.stop();
         }
     }
 
     /// A save ended: show the file as it now reads, or why nothing was saved. Edits made while it
-    /// ran stay for the next save; a file changed since the page loaded it replaces them.
+    /// ran are saved after it when Apply or OK was pressed meanwhile, else left for Apply; a file
+    /// changed since the page loaded it replaces them.
     pub(crate) fn login_done(&mut self) -> Option<bool> {
         let done = match take(&self.login_job.as_ref()?.rx) {
             Ok(None) => return None,
@@ -382,7 +444,7 @@ impl SettingsApp {
         {
             self.fail(&why);
         }
-        if saved && !s.discard {
+        if saved && !s.discard && (s.again || s.quit) {
             self.apply_login();
             if let Some(next) = &mut self.login_job {
                 next.quit = s.quit;

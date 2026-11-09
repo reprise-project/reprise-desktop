@@ -18,7 +18,7 @@ use reprisekit::textedit::TextEdit;
 use reprisekit::theme::TextUnits;
 use zeroize::Zeroizing;
 
-use crate::acct::{Op, User};
+use crate::acct::{ONLY_ADMIN, Op, User};
 use crate::picture::Source;
 
 pub const CLIENT: (i32, i32) = (398, 410);
@@ -366,6 +366,9 @@ impl Props {
             });
         }
         if self.pending_admin() != self.user.admin {
+            if self.last_admin && !self.pending_admin() {
+                return Err(ONLY_ADMIN.into());
+            }
             ops.push(Op::Admin {
                 path: path.clone(),
                 admin: self.pending_admin(),
@@ -513,9 +516,17 @@ impl Props {
         page.set_check(AT_LOGIN, false);
     }
 
+    /// `last` makes this the only administrator: Standard greys, and a pick of it goes back
+    /// to Administrator.
     pub fn set_last_admin(&mut self, last: bool) {
         self.last_admin = last;
-        self.sheet.pages[TAB_GENERAL].set_enabled(STANDARD, !last);
+        let page = &mut self.sheet.pages[TAB_GENERAL];
+        page.set_enabled(STANDARD, !last);
+        if last {
+            page.set_check(STANDARD, false);
+            page.set_check(ADMIN, true);
+        }
+        self.sync();
     }
 
     /// Show `remote` as the Password page's Remote Desktop password section, keeping what is
@@ -569,6 +580,7 @@ mod tests {
             icon: String::new(),
             home: "/home/jo".into(),
             you,
+            logged_on: false,
         }
     }
 
@@ -820,6 +832,36 @@ mod tests {
                 .map(|i| &i.control),
             Some(Control::Radio { enabled: false, .. })
         ));
+    }
+
+    #[test]
+    fn standard_picked_before_becoming_the_only_administrator_goes_back() {
+        let mut p = Props::new(user(true, true), None, false, TextUnits::ONE);
+        let page = &mut p.sheet.pages[TAB_GENERAL];
+        page.focus_id(STANDARD);
+        let ev = page.key(form::Key::Space);
+        p.event(propsheet::Event::Page(TAB_GENERAL, ev), no_file);
+        assert!(
+            p.dirty(),
+            "Standard picked while another administrator was there"
+        );
+        p.set_last_admin(true);
+        assert_eq!(p.sheet.pages[TAB_GENERAL].checked(ADMIN), Some(true));
+        assert!(!p.dirty(), "nothing is left to apply");
+        assert_eq!(p.event(propsheet::Event::Ok, no_file), Outcome::Close);
+    }
+
+    #[test]
+    fn the_only_administrator_is_never_demoted() {
+        let mut p = Props::new(user(true, true), None, false, TextUnits::ONE);
+        let page = &mut p.sheet.pages[TAB_GENERAL];
+        page.set_check(ADMIN, false);
+        page.set_check(STANDARD, true);
+        p.last_admin = true;
+        assert_eq!(
+            p.event(propsheet::Event::Apply, no_file),
+            Outcome::Refuse(ONLY_ADMIN.into())
+        );
     }
 
     #[test]

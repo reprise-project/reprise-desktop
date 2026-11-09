@@ -402,7 +402,8 @@ matched control focused.
     the front is off. OK and Apply save through `pkexec`, which asks for an
     administrator's password on each save,
     and say why when the login manager refuses
-    the settings.
+    the settings. Cancel or closing the window while that prompt is up
+    withdraws the save.
   - **Software Updates...**
   - **Advanced:** the task manager, screenshots, the update restart notice,
     the Turn Off commands, the low disk space warning, the thumbnail cache
@@ -588,7 +589,9 @@ another program).
 ## User Accounts
 
 Change your name, picture and password. With admin rights, add and remove
-accounts, choosing what happens to their files. A new account is made with a
+accounts, choosing what happens to their files. An account that is logged on
+can't be deleted, and the only administrator can't be made standard or
+deleted. A new account is made with a
 password. It, or another account's Password tab, can ask for a new password
 at the next login: the account logs in with the password it has, then picks a
 new one. While reprise-login is installed, your

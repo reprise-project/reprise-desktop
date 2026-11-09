@@ -36,6 +36,7 @@ use reprisekit::theme::{TextUnits, Theme};
 
 use acct::{Op, User};
 use rdpassword::RdPasswordDialog;
+use repriselogin::account::AccountRefusal;
 
 const PROPS: WinId = WinId::named("props");
 const ADD: WinId = WinId::named("add");
@@ -51,9 +52,12 @@ const ROW_PX: u32 = 32;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum After {
     Read,
-    /// Properties' Apply; OK closes the sheet when it succeeds.
+    /// Properties' Apply from sheet number `sheet` (see `sheets`), for account `uid`; OK closes
+    /// the sheet when it succeeds.
     Props {
         close: bool,
+        sheet: u64,
+        uid: u32,
     },
     Add,
     Remove,
@@ -64,6 +68,8 @@ type Answer = (Result<(), acct::Failure>, zbus::Result<Vec<User>>);
 struct AccountsApp {
     users: users::Users,
     props: Option<props::Props>,
+    /// How many Properties sheets have opened: the open one's number.
+    sheets: u64,
     add: Option<adduser::AddUser>,
     browse: Option<FileDlg>,
     browse_host: Host,
@@ -89,6 +95,7 @@ impl AccountsApp {
         AccountsApp {
             users: users::Users::new(),
             props: None,
+            sheets: 0,
             add: None,
             browse: None,
             browse_host: Host::default(),
@@ -163,9 +170,16 @@ impl AccountsApp {
         if let Some((from, ended)) = self.remote.change_landed() {
             changed = true;
             let sender = self.rd_password.take_if(|d| d.generation == from);
-            if let (remote::Ended::Refused(r), Some(mut d)) = (ended, sender) {
-                d.refused(r);
-                self.rd_password = Some(d);
+            if let remote::Ended::Refused(r) = ended {
+                // A failure may be a reply that came too late for a change the daemon made.
+                if r == AccountRefusal::Failed {
+                    self.remote.reading = None;
+                    self.read_remote(Duration::ZERO);
+                }
+                if let Some(mut d) = sender {
+                    d.refused(r);
+                    self.rd_password = Some(d);
+                }
             }
         }
         if changed {
@@ -320,6 +334,8 @@ impl AccountsApp {
                     .fail("The accounts could not be read. Is AccountsService installed?".into());
             }
         }
+        let mine = |sheet| matches!(after, After::Props { sheet: s, .. } if s == sheet);
+        let ours = mine(self.sheets) && self.props.is_some();
         if let Some(p) = &self.props {
             let uid = p.user.uid;
             let last = self.last_admin(uid);
@@ -328,7 +344,9 @@ impl AccountsApp {
                 Some(u) => {
                     let p = self.props.as_mut().expect("checked above");
                     p.set_last_admin(last);
-                    if let After::Props { close } = after {
+                    if let After::Props { close, .. } = after
+                        && ours
+                    {
                         if done.is_ok() {
                             p.applied(u);
                             if close {
@@ -345,7 +363,15 @@ impl AccountsApp {
             self.add = None;
         }
         if let Err(acct::Failure::Text(why)) = done {
-            self.fail(why);
+            // An Apply from a sheet closed since says whose account it was for.
+            let whose = match after {
+                After::Props { uid, .. } if !ours => self.user(uid).map(User::named),
+                _ => None,
+            };
+            match whose {
+                Some(name) => self.fail(format!("The account {name}:\n\n{why}")),
+                None => self.fail(why),
+            }
         }
         if std::mem::take(&mut self.open_yours)
             && let Some(uid) = self.users.rows.iter().find(|u| u.you).map(|u| u.uid)
@@ -386,6 +412,7 @@ impl AccountsApp {
         let px = self.forms.text.px(props::PREVIEW_PX);
         let face = sheet_face(&u, px, self.face.as_ref());
         let last = self.last_admin(uid);
+        self.sheets += 1;
         self.props = Some(props::Props::new(u, face, last, self.forms.text));
         self.show_remote();
         self.read_remote(Duration::ZERO);
@@ -395,6 +422,10 @@ impl AccountsApp {
         let Some(u) = self.user(uid) else {
             return;
         };
+        if u.logged_on {
+            let why = acct::logged_on_text(u);
+            return self.fail(why);
+        }
         let b = MsgBox::new(
             "Delete Account",
             Fields {
@@ -535,13 +566,29 @@ impl AccountsApp {
             props::Outcome::None => Reply::none(),
             props::Outcome::Redraw => Reply::redraw(),
             props::Outcome::Apply(ops) => {
-                if !self.run(ops, After::Props { close: false }) {
+                let (sheet, uid) = (self.sheets, p.user.uid);
+                if !self.run(
+                    ops,
+                    After::Props {
+                        close: false,
+                        sheet,
+                        uid,
+                    },
+                ) {
                     p_unapplied(&mut self.props);
                 }
                 Reply::redraw_all()
             }
             props::Outcome::ApplyAndClose(ops) => {
-                if !self.run(ops, After::Props { close: true }) {
+                let (sheet, uid) = (self.sheets, p.user.uid);
+                if !self.run(
+                    ops,
+                    After::Props {
+                        close: true,
+                        sheet,
+                        uid,
+                    },
+                ) {
                     p_unapplied(&mut self.props);
                 }
                 Reply::redraw_all()
@@ -1016,9 +1063,93 @@ mod tests {
             you: false,
         }];
         assert!(
-            !app.run(ops, After::Props { close: false }),
+            !app.run(
+                ops,
+                After::Props {
+                    close: false,
+                    sheet: 0,
+                    uid: 1000
+                }
+            ),
             "a second job is dropped"
         );
         assert!(!file.exists(), "the dropped Apply's picture is gone");
+    }
+
+    use crate::users::tests::user;
+
+    fn test_ctx() -> Ctx {
+        Ctx {
+            theme: Theme::default(),
+            text: TextRenderer::load(&reprisekit::theme::FontConfig::default()).into(),
+            icons: reprisekit::icontheme::IconCache::new(reprisekit::icontheme::IconTheme::load(
+                "test",
+                &[],
+            )),
+            caret_on: true,
+            size: users::CLIENT,
+            maximized: false,
+            origin: (0, 0),
+            wake: repriseapp::Waker::noop(),
+            heads: Default::default(),
+            want_tick: Default::default(),
+            output_size: None,
+            at_pick: false,
+            text_size: 100,
+        }
+    }
+
+    fn error_text(app: &AccountsApp) -> Option<String> {
+        app.error.as_ref().map(|b| b.fields.text.clone())
+    }
+
+    #[test]
+    fn an_apply_from_a_closed_sheet_lands_on_no_other_sheet() {
+        let rows = vec![user(1000, "jo", true, true), user(1001, "al", false, false)];
+        let mut app = AccountsApp::new();
+        app.users.refresh(rows.clone(), vec![None, None]);
+        app.open_props(1000);
+        let after = After::Props {
+            close: true,
+            sheet: app.sheets,
+            uid: 1000,
+        };
+        app.props = None;
+        app.open_props(1001);
+        let p = app.props.as_mut().unwrap();
+        let page = &mut p.sheet.pages[props::TAB_GENERAL];
+        page.focus_id("name");
+        let ev = page.key(form::Key::Char('x'));
+        p.event(propsheet::Event::Page(props::TAB_GENERAL, ev), |_| {
+            Err(String::new())
+        });
+        let (tx, rx) = channel();
+        let failed = Err(acct::Failure::Text("Not authorized.".into()));
+        tx.send((failed, Ok(rows))).unwrap();
+        app.job = Some((rx, after));
+        assert!(app.accounts_done());
+        let p = app.props.as_ref().expect("al's sheet stays open");
+        assert_eq!(p.user.uid, 1001);
+        assert!(p.dirty(), "al's edit stays");
+        assert_eq!(
+            error_text(&app).as_deref(),
+            Some("The account jo:\n\nNot authorized.")
+        );
+    }
+
+    #[test]
+    fn a_logged_on_account_is_not_offered_for_deletion() {
+        let mut al = user(1001, "al", false, false);
+        al.real_name = "Al Bo".into();
+        al.logged_on = true;
+        let mut app = AccountsApp::new();
+        app.users
+            .refresh(vec![user(1000, "jo", true, true), al], vec![None, None]);
+        app.ask_remove(1001, &mut test_ctx());
+        assert!(app.remove.is_none(), "no Delete question");
+        assert_eq!(
+            error_text(&app).as_deref(),
+            Some("Al Bo (al) is logged on. Delete the account once they have logged off.")
+        );
     }
 }
