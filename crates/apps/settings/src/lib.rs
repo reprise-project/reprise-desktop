@@ -411,7 +411,7 @@ struct SettingsApp {
     login: Option<loginhost::Login>,
     login_files: loginhost::Files,
     login_source: fn() -> repriselogin::users::Source,
-    login_run: fn(&str) -> std::io::Result<std::process::Output>,
+    login_run: loginhost::Run,
     login_users: Option<Receiver<Vec<String>>>,
     login_job: Option<loginhost::Saving>,
     /// The page's next read of the front's fingerprint.

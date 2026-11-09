@@ -14,8 +14,9 @@ use repriselogin::account::{
 };
 use repriselogin::frame::{read_msg, write_msg};
 
-/// How long a create, change or remove may take; it waits for the login password's check.
-pub const TIMEOUT: Duration = Duration::from_secs(30);
+/// How long a create, change or remove may take: past the login manager's own bound, its 5 s
+/// group look-up and 25 s password check, with room for storing the password.
+pub const TIMEOUT: Duration = Duration::from_secs(40);
 const STATUS_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// `req` sent over one connection to the socket at `path`, and the one reply read back.

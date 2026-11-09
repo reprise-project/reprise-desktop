@@ -1,4 +1,5 @@
 use super::*;
+use loginhost::Withdraw;
 use reprisekit::controls::{form, pagelist, propsheet};
 use repriselogin::Interface;
 use repriselogin::machine::{
@@ -8,6 +9,7 @@ use std::cell::RefCell;
 use std::io;
 use std::os::unix::process::ExitStatusExt;
 use std::process::{ExitStatus, Output};
+use std::time::Duration;
 
 fn tmp(tag: &str) -> PathBuf {
     let p = std::env::temp_dir().join(format!(
@@ -129,13 +131,13 @@ fn record(input: &str) {
     TAGS.with(|t| t.borrow_mut().push(tag.into()));
 }
 
-fn helper_saves(input: &str) -> io::Result<Output> {
+fn helper_saves(input: &str, _: &Withdraw) -> io::Result<Output> {
     record(input);
     Ok(exited(0, ""))
 }
 
 /// The helper when the file was rewritten while its prompt was up: it finds the tag changed.
-fn helper_finds_it_changed(input: &str) -> io::Result<Output> {
+fn helper_finds_it_changed(input: &str, _: &Withdraw) -> io::Result<Output> {
     record(input);
     if let Some((path, text)) = MEANWHILE.with(|m| m.borrow_mut().take()) {
         std::fs::write(path, text)?;
@@ -146,7 +148,7 @@ fn helper_finds_it_changed(input: &str) -> io::Result<Output> {
     ))
 }
 
-fn helper_refuses(_: &str) -> io::Result<Output> {
+fn helper_refuses(_: &str, _: &Withdraw) -> io::Result<Output> {
     Ok(exited(
         2,
         "remote_desktop.port: 0 is not between 1 and 65535\n",
@@ -260,7 +262,7 @@ fn apply_sends_the_edited_machine_settings_to_the_helper() {
     assert!(!a.dirty(), "a save leaves nothing to apply");
 }
 
-fn helper_dismissed(input: &str) -> io::Result<Output> {
+fn helper_dismissed(input: &str, _: &Withdraw) -> io::Result<Output> {
     record(input);
     Ok(exited(126, ""))
 }
@@ -273,11 +275,11 @@ fn sent_interfaces() -> Vec<Option<Interface>> {
 }
 
 /// The app on `tag`'s files with the page open, `run` as the helper and nothing sent yet.
-fn saving_app(tag: &str, run: fn(&str) -> io::Result<Output>) -> SettingsApp {
+fn saving_app(tag: &str, run: loginhost::Run) -> SettingsApp {
     saving_app_in(&tmp(tag), run)
 }
 
-fn saving_app_in(dir: &Path, run: fn(&str) -> io::Result<Output>) -> SettingsApp {
+fn saving_app_in(dir: &Path, run: loginhost::Run) -> SettingsApp {
     let mut a = app(dir);
     a.login_run = run;
     open_login(&mut a);
@@ -298,20 +300,35 @@ fn apply_glass(a: &mut SettingsApp) {
 }
 
 #[test]
-fn an_edit_made_during_a_save_stays_and_is_sent_after_it() {
+fn an_edit_made_during_a_save_stays_for_the_next_apply() {
     let mut a = saving_app("edit-during", helper_saves);
     apply_glass(&mut a);
     pick(&mut a, "login_interface", 0);
     a.wake();
     assert_eq!(combo_text(login(&a), "login_interface"), "Classic");
+    assert!(
+        a.login_job.is_none(),
+        "no second password prompt on its own"
+    );
+    assert_eq!(sent_interfaces(), [Some(Interface::Glass)]);
+    assert!(a.dirty(), "Apply stays lit for the edit");
+}
+
+#[test]
+fn apply_pressed_again_during_a_save_sends_the_edit_after_it() {
+    let mut a = saving_app("apply-during", helper_saves);
+    apply_glass(&mut a);
+    pick(&mut a, "login_interface", 0);
+    a.sheet_event(propsheet::Event::Apply);
+    a.wake();
+    a.wake();
     assert_eq!(
         sent_interfaces(),
         [Some(Interface::Glass), Some(Interface::Classic)],
         "the edit goes in a second save"
     );
-    a.wake();
     assert!(a.login_job.is_none(), "no third save");
-    assert_eq!(SENT.with(|s| s.borrow().len()), 2);
+    assert!(!a.dirty());
 }
 
 #[test]
@@ -347,7 +364,7 @@ fn ok_during_a_failed_save_keeps_the_sheet_open_with_why() {
 #[test]
 fn cancel_or_a_close_during_a_save_closes_when_it_ends_saved_or_not() {
     let runs = [
-        ("saved", helper_saves as fn(&str) -> io::Result<Output>),
+        ("saved", helper_saves as loginhost::Run),
         ("dismissed", helper_dismissed),
     ];
     for ((tag, run), cancel) in runs.into_iter().flat_map(|r| [(r, true), (r, false)]) {
@@ -520,7 +537,9 @@ fn each_helper_exit_tells_its_own_message() {
 #[test]
 fn a_missing_helper_is_named_and_pkexec_never_runs() {
     let missing = loginhost::apply(&MachineConfig::default(), "none", &|input: &str| {
-        loginhost::run_helper(Path::new("/nonexistent/reprise-login-settings"), input)
+        let pkexec = Path::new("/usr/bin/pkexec");
+        let helper = Path::new("/nonexistent/reprise-login-settings");
+        loginhost::run_helper(pkexec, helper, input, &Withdraw::default())
     });
     assert_eq!(
         missing,
@@ -851,4 +870,23 @@ fn a_file_changed_while_the_prompt_was_up_is_shown_and_not_overwritten() {
     );
     assert!(!a.dirty(), "the page holds the file as it is now");
     assert_eq!(std::fs::read_to_string(&path).unwrap(), turned_off);
+}
+
+#[test]
+fn a_withdrawn_save_stops_its_helper_at_once() {
+    let dir = tmp("withdraw");
+    let helper = dir.join("helper");
+    std::fs::write(&helper, "exec sleep 30\n").unwrap();
+    let withdraw = Withdraw::default();
+    let w = withdraw.clone();
+    let start = std::time::Instant::now();
+    let run =
+        std::thread::spawn(move || loginhost::run_helper(Path::new("/bin/sh"), &helper, "", &w));
+    while !run.is_finished() && start.elapsed() < Duration::from_secs(10) {
+        withdraw.stop();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let out = run.join().unwrap().unwrap();
+    assert_eq!(out.status.signal(), Some(9), "killed: {out:?}");
+    assert!(start.elapsed() < Duration::from_secs(10));
 }
