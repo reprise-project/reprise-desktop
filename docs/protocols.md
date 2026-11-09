@@ -168,8 +168,14 @@ D-Bus-activated services, the portals, balloons and the Remote Desktop server
 stay with the other session, and its Log Off tells neither the portal nor the
 Remote Desktop server. A tray applet's autostart (`--tray`) finds the other
 session's copy running and leaves its window alone. A session started by a
-login manager always publishes and starts the target. Whichever session ends
-first leaves the other's variables, units and app scopes running.
+login manager always publishes, starts the target and takes the bus names
+over. After a text-login Reprise, it takes `org.freedesktop.ScreenSaver` too,
+so inhibits and the lock are its own, and the text-login session gets that
+name back when it ends. When the login manager's session runs first, a later
+text-login Reprise takes only names nobody holds, so its programs'
+`org.freedesktop.ScreenSaver` inhibits hold off the first session's idle
+timer. Whichever session ends first leaves the
+other's variables, units and app scopes running.
 
 XDG autostart honours `OnlyShowIn`, `NotShowIn`, `Hidden` and `TryExec`.
 An entry marked `X-systemd-skip=true` or `X-GNOME-HiddenUnderSystemd=true`

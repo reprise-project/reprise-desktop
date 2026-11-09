@@ -250,6 +250,12 @@ mod tests {
         compositor.store(1, Ordering::SeqCst);
         let _replacing = owner(&bus.1, false);
         assert!(reads(&rx, unknown), "an owner of another process");
+        compositor.store(std::process::id(), Ordering::SeqCst);
+        let _back = owner(&bus.1, true);
+        assert!(
+            reads(&rx, |l| *l == Lock::Locked),
+            "read again once the name changes hands"
+        );
     }
 
     #[test]
