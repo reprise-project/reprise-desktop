@@ -266,6 +266,11 @@ user's server.
 - freetype2, fontconfig, PAM, libxcrypt, dbus, PipeWire 1.4 or later, zlib
   and FFmpeg 9 (with libx264, which Remote Desktop encodes on when the GPU
   cannot, and libopus, which it sends sound to the client in)
+- dbus-broker, or dbus-daemon 1.15 or later, whose peer credentials carry a
+  process fd: Remote Desktop and the Inhibit portal check by it which process
+  owns a name. On an older bus Settings reads Remote Desktop as off, its
+  clipboard stays cut, and the portal's `screensaver-active` follows logind's
+  `LockedHint`, which in lock mode stays true while the remote side is unlocked
 - Xwayland, for X11 programs. Reprise starts it on the first X11 connection
   and stops it when X11 programs have gone quiet.
 - A UI font: Wine's Tahoma is recommended (`ttf-tahoma` on Arch, from the

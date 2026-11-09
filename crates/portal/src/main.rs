@@ -1326,7 +1326,8 @@ fn main() {
             .unwrap_or_else(|e| fail(e));
         zruntime::spawn(notification::watch(conn.clone(), notes)).detach();
         zruntime::spawn(inhibit::run_idle(conn.clone(), idle)).detach();
-        zruntime::spawn(inhibit::watch_lock(conn.clone(), inhibits.clone())).detach();
+        let pid = compositor.pid();
+        zruntime::spawn(inhibit::watch_lock(conn.clone(), inhibits.clone(), pid)).detach();
         if let Some(link) = background_link {
             zruntime::spawn(background::announce(conn.clone(), link)).detach();
         }

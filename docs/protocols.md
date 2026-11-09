@@ -137,9 +137,12 @@ Reprise also hosts `org.freedesktop.Notifications`, the StatusNotifierWatcher
 for the tray, `org.freedesktop.ScreenSaver` and the GeoClue2 agent.
 `org.freedesktop.ScreenSaver` takes inhibits, and its `GetActive` and
 `ActiveChanged` report the desktop's lock: this computer's, or the remote
-side's in lock mode. The Inhibit portal's `screensaver-active` follows
-logind's LockedHint instead, which is this computer's lock, so in lock mode it
-reads true while `GetActive` reads the remote side's lock. Reprise follows
+side's in lock mode. The Inhibit portal's `screensaver-active` reports the
+same lock once the bus confirms that the name's owner is the compositor the
+portal serves. Until then, and while nothing owns the name, another process
+owns it, the bus gives no process fds or `GetActive` fails, it reports
+logind's `LockedHint` for the compositor's session, which in lock mode is this
+computer's lock, and true while that can't be read either. Reprise follows
 `com.canonical.Unity.LauncherEntry`'s `Update` signal: `progress` and
 `progress-visible` draw on the task buttons of the windows whose app id or
 desktop file matches the entry's `application://<id>.desktop`, and Reprise's
