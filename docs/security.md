@@ -60,13 +60,18 @@ tools. Reprise has no allow-list for them.
 
 A client is sandboxed when it connects through a socket a sandbox opened
 with `wp_security_context_manager_v1` (Flatpak does this), or when its
-process sees `/.flatpak-info` (a Flatpak app that connected without one),
-or when it runs in a snap: in a `snap.*` scope snapd made for it, or under
-a `snap.*` AppArmor profile.
-Reprise looks at the process that connected through a pidfd. One that has
-exited by then, or whose root Reprise can't open, counts as sandboxed too,
-so a Flatpak app can't pass as a host program by connecting and exiting
-before the connection is accepted.
+process sees `/.flatpak-info` (a Flatpak app that connected without one) or
+runs in Flatpak's `app-flatpak-*.scope`, or when it runs in a strict or
+devmode snap: under a `snap.*` AppArmor profile, or in a `snap.*` scope
+where AppArmor shows no label. A classic snap runs unconfined, so it counts
+as a host program. Reprise looks at the process that connected through a
+pidfd. One that has exited by then counts as sandboxed, so a Flatpak app
+can't pass as a host program by connecting and exiting before the
+connection is accepted. A process that hides its root (a non-dumpable one,
+such as a password manager or a program with file capabilities) is judged
+by its cgroup instead, and counts as sandboxed only when it also runs in a
+pid namespace of its own, as bubblewrap's are. The client log marks a
+process it could inspect neither way ", not inspected".
 A sandboxed client sees none of the globals above. It also doesn't see
 `wp_security_context_manager_v1` itself, so it can't open a socket of its
 own under another app id. The full list is `PRIVILEGED_GLOBALS` in
