@@ -65,9 +65,8 @@ impl Drop for Cookie {
     }
 }
 
-/// One Xauthority entry: family, address, display number, name and data, each but the family
-/// length-prefixed, all big-endian. A wildcard entry with the display's number is what Flatpak
-/// copies into an app with X11 access.
+/// One Xauthority entry: family, then address, display number, name and data length-prefixed,
+/// all big-endian. Flatpak copies a wildcard entry with the display's number into X11 apps.
 fn entry(display: u32, data: &[u8]) -> Vec<u8> {
     let number = display.to_string();
     let mut out = FAMILY_WILD.to_be_bytes().to_vec();
