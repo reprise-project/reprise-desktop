@@ -413,8 +413,9 @@ all through it.
 
 Disconnect in the session ends every client and leaves the session running.
 It is offered only on the remote side of lock mode, or off the seat while a
-remote client drives the session (any libei sender with a seat and devices
-counts), in the Log Off and Turn Off dialogs and Glass's Shut down options.
+remote client drives the session (the remote desktop server's libei sender
+with a seat and devices counts; an app's sender lights the screen-sharing
+dot instead), in the Log Off and Turn Off dialogs and Glass's Shut down options.
 Nothing opens those from a locked screen, the login screen or a client that
 hasn't logged in, and a press checks again that Disconnect is still offered,
 so a dialog left open across an unlock at the computer does nothing. It
@@ -1083,7 +1084,10 @@ What a consent prompt remembers, and where:
   NotifyKeyboard) or a libei sender with a device, the screen-sharing dot
   shows, its tooltip naming the app by the app id the frontend gave
   ("An application" without one). The session the portal starts for
-  Reprise's own server doesn't light it this way.
+  Reprise's own server doesn't light it this way. A screen cast's app is
+  named the same way, by the app the portal names on the cast's PipeWire
+  node, which only the portal can set; a consumer's own name is used only
+  when the node carries none.
 - **Screenshot:** the prompt has no Remember. xdg-desktop-portal keeps its
   own `screenshot` permission, and once that says yes a non-interactive
   screenshot is taken without a prompt.

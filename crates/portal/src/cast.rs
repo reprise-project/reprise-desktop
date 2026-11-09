@@ -83,9 +83,14 @@ pub struct Cast {
 }
 
 impl Cast {
-    /// Start capturing `target`, for the remote desktop server when `remote`; returns once
-    /// PipeWire assigned the node.
-    pub fn start(target: Target, cursor: CursorMode, remote: bool) -> Result<Cast, String> {
+    /// Start capturing `target`, for the remote desktop server when `remote`, on a node named
+    /// for `app`; returns once PipeWire assigned the node.
+    pub fn start(
+        target: Target,
+        cursor: CursorMode,
+        remote: bool,
+        app: CastFor,
+    ) -> Result<Cast, String> {
         let (tx, rx) = std::sync::mpsc::channel::<NodeReport>();
         let (stop, stop_rx) = pipewire::channel::channel::<()>();
         let (ended_tx, ended) = std::sync::mpsc::channel::<()>();
@@ -93,7 +98,7 @@ impl Cast {
             .name("reprise-portal-cast".into())
             .spawn(move || {
                 let _ended = ended_tx;
-                if let Err(e) = run(target, cursor, remote, tx.clone(), stop_rx) {
+                if let Err(e) = run(target, cursor, remote, &app, tx.clone(), stop_rx) {
                     log::warn!("cast thread: {e}");
                     let _ = tx.send(Err(e));
                 }
@@ -257,10 +262,20 @@ fn cursor_plane(
     })
 }
 
+/// The app a cast is for: the id the frontend gave and its desktop entry's name, either empty
+/// when unknown. They go on the node as `application.id` and `application.name`, which the
+/// compositor's sharing tooltip reads.
+#[derive(Clone, Debug, Default)]
+pub struct CastFor {
+    pub id: String,
+    pub name: String,
+}
+
 fn run(
     target: Target,
     cursor: CursorMode,
     remote: bool,
+    app: &CastFor,
     report: std::sync::mpsc::Sender<NodeReport>,
     stop_rx: pipewire::channel::Receiver<()>,
 ) -> Result<(), String> {
@@ -303,16 +318,20 @@ fn run(
     let main_loop = pipewire::main_loop::MainLoopRc::new(None).map_err(|e| e.to_string())?;
     let context = pipewire::context::ContextRc::new(&main_loop, None).map_err(|e| e.to_string())?;
     let core = context.connect_rc(None).map_err(|e| e.to_string())?;
-    let stream = StreamRc::new(
-        core,
-        "reprise-screencast",
-        pipewire::properties::properties! {
-            *pipewire::keys::MEDIA_CLASS => "Video/Source",
-            *pipewire::keys::NODE_NAME => "reprise-screencast",
-            *pipewire::keys::MEDIA_ROLE => "Screen",
-        },
-    )
-    .map_err(|e| e.to_string())?;
+    let mut props = pipewire::properties::properties! {
+        *pipewire::keys::MEDIA_CLASS => "Video/Source",
+        *pipewire::keys::NODE_NAME => "reprise-screencast",
+        *pipewire::keys::MEDIA_ROLE => "Screen",
+    };
+    for (key, value) in [
+        (*pipewire::keys::APP_ID, &app.id),
+        (*pipewire::keys::APP_NAME, &app.name),
+    ] {
+        if !value.is_empty() {
+            props.insert(key, value.as_str());
+        }
+    }
+    let stream = StreamRc::new(core, "reprise-screencast", props).map_err(|e| e.to_string())?;
 
     let data = Data {
         wl,

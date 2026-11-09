@@ -598,11 +598,23 @@ pub(crate) async fn pick_and_cast(
         }
     };
     let targets: Vec<_> = chosen.targets.iter().map(|(t, _)| t.clone()).collect();
+    let id = app_id.to_string();
     let mut casts = match blocking::unblock(move || {
         let _turn = lock(&CAST_TURN);
+        let app = cast::CastFor {
+            name: crate::remotedesktop::display_name(&id),
+            id,
+        };
         start_each(
             &targets,
-            |t| Cast::start(t.clone(), cursor_mode_for(cursor_mode, t), remote),
+            |t| {
+                Cast::start(
+                    t.clone(),
+                    cursor_mode_for(cursor_mode, t),
+                    remote,
+                    app.clone(),
+                )
+            },
             Cast::stop,
         )
     })
