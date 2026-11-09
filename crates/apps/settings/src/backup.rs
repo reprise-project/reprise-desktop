@@ -35,7 +35,7 @@ pub struct Entry {
 
 /// What a bundle carries. Left out on purpose: `state.toml` (the session's open programs and the
 /// Run history), `location.toml` (location answers given on this machine), `trust.key` (a per-user
-/// secret), the clipboard history (private) and `volume.toml` (this machine's sound devices).
+/// secret) and `volume.toml` (this machine's sound devices).
 pub const ENTRIES: &[Entry] = &[
     Entry {
         root: Root::Config,

@@ -799,6 +799,93 @@ mod tests {
         assert_eq!(got.extras.len(), 1);
     }
 
+    /// The types a copied password is offered as: KeePassXC's through Qt's data device, Firefox's
+    /// through GTK 3's, and the Bitwarden desktop app's through arboard's data control source.
+    const QT: &[&str] = &["text/plain", HINT];
+    const GTK3: &[&str] = &[
+        "UTF8_STRING",
+        "COMPOUND_TEXT",
+        "TEXT",
+        "STRING",
+        "text/plain;charset=utf-8",
+        "text/plain",
+        HINT,
+    ];
+    const ARBOARD: &[&str] = &[
+        "text/plain;charset=utf-8",
+        "text/plain",
+        "STRING",
+        "UTF8_STRING",
+        "TEXT",
+        HINT,
+    ];
+
+    /// A client's copy of `mimes`, the hint answering `hint` and every other type `text`.
+    fn copy_hinted(
+        c: &mut crate::harness::TestClient,
+        mimes: &[&str],
+        text: &[u8],
+        hint: &[u8],
+        control: bool,
+    ) {
+        let offers: Vec<(&str, &[u8])> = (mimes.iter())
+            .map(|&m| (m, if m == HINT { hint } else { text }))
+            .collect();
+        if control {
+            c.control_copy_each(&offers);
+        } else {
+            c.copy_each(&offers);
+        }
+    }
+
+    /// Turns the loop until the history has read what it reads of `c`'s selection.
+    fn read_over(h: &mut crate::harness::Harness, c: &mut crate::harness::TestClient) {
+        let end = std::time::Instant::now() + Duration::from_secs(3);
+        loop {
+            h.roundtrip(c);
+            h.run_for(5);
+            if !c.side.source_sends.is_empty() && h.state.panels.history.capture.is_none() {
+                return;
+            }
+            assert!(std::time::Instant::now() < end, "the read never ended");
+        }
+    }
+
+    #[test]
+    fn a_password_managers_copy_is_never_read_nor_kept_after_its_program_quits() {
+        for (who, mimes, control) in [
+            ("Qt", QT, false),
+            ("GTK 3", GTK3, false),
+            ("arboard", ARBOARD, true),
+        ] {
+            let mut h = crate::harness::Harness::new();
+            h.output("TEST-1", 1024, 768);
+            let mut c = h.connect();
+            h.map_toplevel(&mut c, "test.app", 300, 200);
+            copy_hinted(&mut c, mimes, b"hunter2", b"secret", control);
+            read_over(&mut h, &mut c);
+            assert_eq!(c.side.source_sends, [HINT], "{who}: only the hint is read");
+            assert_eq!(h.state.panels.history.history.entries().count(), 0, "{who}");
+            drop(c);
+            h.run_for(50);
+            assert!(
+                !h.state.clip_has_text(),
+                "{who}: the copy leaves with its program"
+            );
+        }
+    }
+
+    #[test]
+    fn a_copy_whose_hint_is_public_is_recorded() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        h.map_toplevel(&mut c, "test.app", 300, 200);
+        copy_hinted(&mut c, QT, b"alice", b"public", false);
+        read_over(&mut h, &mut c);
+        assert_eq!(labels(&h.state.panels.history.history), ["alice"]);
+    }
+
     #[test]
     fn a_read_stops_at_the_steps_limit() {
         let mut buf = Vec::new();
