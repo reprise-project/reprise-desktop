@@ -1207,13 +1207,18 @@ sharing and remote control grants yet.
   `files` and `info` folders from the drive's top without following a link.
   A `files` or `info` that is a link is never entered: Empty Recycle Bin
   removes the link itself, and until then the drive counts as one without a
-  Recycle Bin. A link in the bin goes as a link.
+  Recycle Bin. A link in the bin goes as a link. The `directorysizes` cache
+  is read only as a regular file of at most 1 MiB, and is written through a
+  fresh file renamed into place, so a link there is replaced, never
+  followed. Emptying a folder of any depth keeps a bounded number of folders
+  open and stops at another file system.
 - **Restore from a drive.** A drive's `.trashinfo` names a path relative to
   the drive's top. An absolute one counts only when it lies on that drive,
   and no path may climb out with `..`; the item stays in the bin and Restore
   says why. Restore walks the folders from the drive's top without following
-  a link, so an item never lands off its drive. The home trash keeps
-  absolute paths.
+  a link or entering another file system, so an item never lands off its
+  drive, and a failed Restore removes the folders it made. The home trash
+  keeps absolute paths, and its `files` and `info` may be links.
 - **Extracting archives.** Each archive comes out into a fresh folder of its
   own. An entry from the root or with a `..` step refuses the archive before
   anything is written, and so does one past the folder's limits: 90% of its

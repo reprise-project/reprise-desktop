@@ -229,3 +229,85 @@ fn a_drive_restore_makes_its_folders_and_numbers_a_taken_name() {
         d.top.join("new/deep/a (2).txt")
     );
 }
+
+#[test]
+fn the_size_cache_is_never_read_or_written_through_a_link() {
+    let d = drive();
+    fs::create_dir_all(d.root.join("files/dir")).unwrap();
+    fs::write(d.root.join("files/dir/a"), "abc").unwrap();
+    fs::create_dir(d.root.join("info")).unwrap();
+    let old = trash::trashinfo(Path::new("dir"), 1_000_000);
+    fs::write(d.root.join("info/dir.trashinfo"), old).unwrap();
+    let sizes = d.root.join("directorysizes");
+    symlink(d.victim.join("keep.txt"), &sizes).unwrap();
+    crate::bincap::used(&d.root);
+    assert_eq!(
+        fs::read_to_string(d.victim.join("keep.txt")).unwrap(),
+        "mine"
+    );
+    assert!(
+        fs::symlink_metadata(&sizes).unwrap().is_file(),
+        "the cache replaces the link"
+    );
+
+    fs::remove_file(&sizes).unwrap();
+    let c = std::ffi::CString::new(sizes.as_os_str().as_encoded_bytes()).unwrap();
+    // SAFETY: `c` is a NUL-terminated path that outlives the call.
+    assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+    crate::bincap::gone(&d.root.join("files/dir"));
+}
+
+/// Folder `top/name` holding up to `levels` folders each inside the last, made by descriptor
+/// since the path outgrows `PATH_MAX`; returns how many levels the file system allowed.
+fn deep_tree(top: &Path, name: &str, levels: usize) -> usize {
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    fs::create_dir(top.join(name)).unwrap();
+    let mut at = OwnedFd::from(fs::File::open(top.join(name)).unwrap());
+    for level in 0..levels {
+        // SAFETY: the name is NUL-terminated and `at` is an open folder.
+        if unsafe { libc::mkdirat(at.as_raw_fd(), c"d".as_ptr(), 0o755) } != 0 {
+            let e = io::Error::last_os_error();
+            // A path-based security module refuses a path past PATH_MAX.
+            assert_eq!(
+                e.raw_os_error(),
+                Some(libc::ENAMETOOLONG),
+                "level {level}: {e}"
+            );
+            return level;
+        }
+        // SAFETY: as above.
+        let fd = unsafe {
+            libc::openat(
+                at.as_raw_fd(),
+                c"d".as_ptr(),
+                libc::O_RDONLY | libc::O_DIRECTORY,
+            )
+        };
+        assert!(fd >= 0, "level {level}: {}", io::Error::last_os_error());
+        // SAFETY: `fd` was just opened and is owned by nothing else.
+        at = unsafe { OwnedFd::from_raw_fd(fd) };
+    }
+    levels
+}
+
+#[test]
+fn empty_removes_a_tree_thousands_of_folders_deep() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path().join("Trash");
+    fs::create_dir_all(root.join("files")).unwrap();
+    fs::create_dir_all(root.join("info")).unwrap();
+    let levels = deep_tree(&root.join("files"), "deep", 10_000);
+    assert!(levels >= 4_000, "only {levels} levels");
+    let info = trash::trashinfo(Path::new("deep"), 1_000_000);
+    fs::write(root.join("info/deep.trashinfo"), info).unwrap();
+    // Depth must cost heap, not stack: a small stack overflows on a walk that recurses.
+    let emptied = std::thread::Builder::new()
+        .stack_size(256 * 1024)
+        .spawn(move || trash::empty_in(&root).map(|n| (n, root)))
+        .unwrap()
+        .join()
+        .expect("the walk returns");
+    let (n, root) = emptied.unwrap();
+    assert_eq!(n, 1);
+    assert_eq!(fs::read_dir(root.join("files")).unwrap().count(), 0);
+}
