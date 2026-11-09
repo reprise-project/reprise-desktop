@@ -182,6 +182,13 @@ fn text_mime(mimes: &[String]) -> Option<&'static str> {
     (TEXT_MIMES.into_iter().chain([LATIN1_MIME])).find(|t| mimes.iter().any(|m| m == t))
 }
 
+/// The newest copy of each side while the desktop is locked.
+#[derive(Default)]
+struct Held {
+    client: Option<Vec<ClipboardFormat>>,
+    desktop: Option<Vec<String>>,
+}
+
 /// A program's paste waiting on the client. The first in the queue has its request out.
 struct Paste<S> {
     /// `None` once the client copied again; its answer is then dropped.
@@ -202,6 +209,8 @@ pub struct Clipboard<S> {
     asked: VecDeque<Option<(String, Kind)>>,
     reading: bool,
     pastes: VecDeque<Paste<S>>,
+    /// What came while the desktop is locked; see [`Clipboard::lock`].
+    locked: Option<Held>,
     /// When the client's answer to the first paste is due, while its request is out.
     deadline: Option<Instant>,
     /// Until when the answer to a request that timed out may still come. Nothing is sent
@@ -222,6 +231,7 @@ impl<S> Clipboard<S> {
             asked: VecDeque::new(),
             reading: false,
             pastes: VecDeque::new(),
+            locked: None,
             deadline: None,
             late: None,
             answer_limit,
@@ -235,6 +245,10 @@ impl<S> Clipboard<S> {
     /// The desktop's clipboard changed to a copy offering `mimes` (none when it was cleared).
     pub fn desktop_copied(&mut self, mimes: Vec<String>) {
         self.client_owns = false;
+        if let Some(held) = &mut self.locked {
+            held.desktop = Some(mimes);
+            return;
+        }
         self.send(ClipboardMessage::SendInitiateCopy(formats_for(&mimes)));
         self.desktop = mimes;
     }
@@ -242,20 +256,12 @@ impl<S> Clipboard<S> {
     /// The client copied something offered as `formats`.
     pub fn client_copied(&mut self, formats: &[ClipboardFormat], d: &mut impl Desktop<Sink = S>) {
         log::debug!("clipboard: the client offers {formats:?}");
-        let mut pastes = std::mem::take(&mut self.pastes).into_iter();
-        if self.deadline.is_some()
-            && let Some(mut asked) = pastes.next()
-        {
-            if let Some(sink) = asked.sink.take() {
-                d.deliver(sink, asked.kind, None);
-            }
-            self.pastes.push_back(asked);
+        if let Some(held) = &mut self.locked {
+            log::info!("clipboard: the desktop is locked; the client's copy waits for the unlock");
+            held.client = Some(formats.to_vec());
+            return;
         }
-        for p in pastes {
-            if let Some(sink) = p.sink {
-                d.deliver(sink, p.kind, None);
-            }
-        }
+        self.end_pastes(d);
         self.client = ClientFormats::of(formats);
         let mimes = self.client.mimes();
         if !mimes.is_empty() {
@@ -296,7 +302,7 @@ impl<S> Clipboard<S> {
         }
         self.reading = false;
         self.asked.pop_front();
-        self.answer(bytes);
+        self.answer(bytes.filter(|_| self.locked.is_none()));
         self.read_next(d);
     }
 
@@ -313,11 +319,11 @@ impl<S> Clipboard<S> {
             && let Some(first) = self.asked.front()
         {
             match first {
-                Some((mime, kind)) => {
+                Some((mime, kind)) if self.locked.is_none() => {
                     d.read(mime, *kind);
                     self.reading = true;
                 }
-                None => {
+                _ => {
                     self.asked.pop_front();
                     self.answer(None);
                 }
@@ -331,6 +337,10 @@ impl<S> Clipboard<S> {
             d.deliver(sink, Kind::Text, None);
             return;
         };
+        if self.locked.is_some() {
+            d.deliver(sink, kind, None);
+            return;
+        }
         self.pastes.push_back(Paste {
             sink: Some(sink),
             kind,
@@ -406,6 +416,51 @@ impl<S> Clipboard<S> {
             && let Some(sink) = paste.sink
         {
             d.deliver(sink, paste.kind, None);
+        }
+    }
+
+    /// The desktop locked. Nothing is sent: each paste either way fails until [`Clipboard::unlock`],
+    /// and the pastes waiting on the client end empty.
+    pub fn lock(&mut self, d: &mut impl Desktop<Sink = S>) {
+        if self.locked.is_none() {
+            self.end_pastes(d);
+            self.locked = Some(Held::default());
+        }
+    }
+
+    /// The desktop unlocked: the client's newest copy while locked goes to the desktop. When the
+    /// client copied nothing it offers (a client sends an empty list as it connects), the
+    /// desktop's newest copy while locked is offered to the client.
+    pub fn unlock(&mut self, d: &mut impl Desktop<Sink = S>) {
+        let Some(held) = self.locked.take() else {
+            return;
+        };
+        if let Some(formats) = held.client {
+            self.client_copied(&formats, d);
+        }
+        if !self.client_owns
+            && let Some(mimes) = held.desktop
+        {
+            self.desktop_copied(mimes);
+        }
+    }
+
+    /// Every waiting paste ends empty. The one whose request is out keeps its place without its
+    /// sink, so the answer still due is matched to it and dropped.
+    fn end_pastes(&mut self, d: &mut impl Desktop<Sink = S>) {
+        let mut pastes = std::mem::take(&mut self.pastes).into_iter();
+        if self.deadline.is_some()
+            && let Some(mut asked) = pastes.next()
+        {
+            if let Some(sink) = asked.sink.take() {
+                d.deliver(sink, asked.kind, None);
+            }
+            self.pastes.push_back(asked);
+        }
+        for p in pastes {
+            if let Some(sink) = p.sink {
+                d.deliver(sink, p.kind, None);
+            }
         }
     }
 
@@ -519,19 +574,23 @@ fn take_answer(response: &FormatDataResponse<'_>, limit: usize) -> Option<Vec<u8
 }
 
 /// Gives each connection's server a [`Backend`] that starts the desktop side once the client's
-/// clipboard channel is up; nothing crosses until the client is shown the session.
+/// clipboard channel is up; nothing crosses until the client is shown the session, nor while the
+/// desktop is locked.
 pub struct Factory {
     events: Option<UnboundedSender<ServerEvent>>,
     shown: watch::Receiver<bool>,
+    locked: watch::Receiver<bool>,
     cut: Cut,
 }
 
 impl Factory {
-    /// `shown` is the connection's [`crate::listen::Shown`]; `cut` stops its bridge.
-    pub fn new(shown: watch::Receiver<bool>, cut: Cut) -> Factory {
+    /// `shown` is the connection's [`crate::listen::Shown`], `locked` the desktop's lock
+    /// ([`crate::desklock`]); `cut` stops its bridge.
+    pub fn new(shown: watch::Receiver<bool>, locked: watch::Receiver<bool>, cut: Cut) -> Factory {
         Factory {
             events: None,
             shown,
+            locked,
             cut,
         }
     }
@@ -582,6 +641,7 @@ impl CliprdrBackendFactory for Factory {
         Box::new(Backend {
             events: self.events.clone(),
             shown: self.shown.clone(),
+            locked: self.locked.clone(),
             cut: self.cut.clone(),
             desktop: None,
         })
@@ -599,6 +659,7 @@ impl CliprdrServerFactory for Factory {
 struct Backend {
     events: Option<UnboundedSender<ServerEvent>>,
     shown: watch::Receiver<bool>,
+    locked: watch::Receiver<bool>,
     cut: Cut,
     desktop: Option<wlclip::Link>,
 }
@@ -626,8 +687,8 @@ impl CliprdrBackend for Backend {
         if self.desktop.is_none()
             && let Some(events) = &self.events
         {
-            let shown = self.shown.clone();
-            self.desktop = self.cut.keep(|| wlclip::start(events.clone(), shown));
+            let (shown, locked) = (self.shown.clone(), self.locked.clone());
+            self.desktop = (self.cut).keep(|| wlclip::start(events.clone(), shown, locked));
         }
     }
 
@@ -669,7 +730,11 @@ mod tests {
     #[test]
     fn the_clipboard_channel_takes_a_picture_answer_over_the_limit_without_ending_the_connection() {
         use ironrdp_server::CliprdrServerFactory as _;
-        let factory = Factory::new(watch::channel(false).1, Cut::default());
+        let factory = Factory::new(
+            watch::channel(false).1,
+            watch::channel(false).1,
+            Cut::default(),
+        );
         let limit = factory.max_message_size().expect("a limit");
         let eight_k_dib = 7680 * 4320 * 4 + 40;
         assert!(eight_k_dib > PICTURE_MAX && limit > eight_k_dib, "{limit}");
@@ -679,8 +744,9 @@ mod tests {
     fn a_cut_stops_the_bridge_and_any_started_later() {
         let (rdp, _events) = mpsc::unbounded_channel();
         let on_shown = watch::channel(false).1;
+        let unlocked = watch::channel(false).1;
         let cut = Cut::default();
-        let link = (cut.keep(|| wlclip::start(rdp.clone(), on_shown.clone())))
+        let link = (cut.keep(|| wlclip::start(rdp.clone(), on_shown.clone(), unlocked.clone())))
             .expect("a bridge before the cut");
         assert!(link.alive());
         cut.cut();
@@ -1120,5 +1186,135 @@ mod tests {
         c.desktop_copied(mimes(&["text/plain"]));
         c.stop(&mut d);
         assert_eq!(d.cleared, 0, "a later desktop copy stays");
+    }
+
+    fn answers(rx: &mut mpsc::UnboundedReceiver<ServerEvent>) -> Vec<(bool, Vec<u8>)> {
+        (sent(rx).into_iter())
+            .map(|m| match m {
+                ClipboardMessage::SendFormatData(r) => (r.is_error(), r.data().to_vec()),
+                other => panic!("an answer, got {other:?}"),
+            })
+            .collect()
+    }
+
+    fn lists(rx: &mut mpsc::UnboundedReceiver<ServerEvent>) -> Vec<Vec<(u32, Option<String>)>> {
+        (sent(rx).into_iter())
+            .map(|m| match m {
+                ClipboardMessage::SendInitiateCopy(f) => ids(&f),
+                other => panic!("a format list, got {other:?}"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_lock_sends_the_client_nothing_and_fails_its_pastes() {
+        let (mut c, mut d, mut rx) = session();
+        c.desktop_copied(mimes(&["UTF8_STRING"]));
+        c.client_asks(ClipboardFormatId::CF_UNICODETEXT, &mut d);
+        sent(&mut rx);
+        c.lock(&mut d);
+        assert!(sent(&mut rx).is_empty(), "no format list at the lock");
+        c.desktop_read(Some(b"secret".to_vec()), &mut d);
+        c.client_asks(ClipboardFormatId::CF_UNICODETEXT, &mut d);
+        assert_eq!(
+            answers(&mut rx),
+            [(true, vec![]), (true, vec![])],
+            "a read under way at the lock and a paste after it both fail"
+        );
+        assert_eq!(d.reads.len(), 1, "nothing more is read");
+        c.desktop_copied(mimes(&["UTF8_STRING", "image/png"]));
+        assert!(
+            sent(&mut rx).is_empty(),
+            "a copy while locked is not offered"
+        );
+    }
+
+    #[test]
+    fn a_lock_fails_the_sessions_pastes_of_the_clients_copy() {
+        let (mut c, mut d, mut rx) = session();
+        c.client_copied(&client_text(), &mut d);
+        c.desktop_pastes("UTF8_STRING", 1, &mut d);
+        sent(&mut rx);
+        c.lock(&mut d);
+        assert_eq!(d.delivered, [(1, Kind::Text, None)], "a waiting paste ends");
+        assert_eq!(d.cleared, 0, "the client's copy stays the selection");
+        c.desktop_pastes("UTF8_STRING", 2, &mut d);
+        c.client_sent(Some(utf16_text(b"late")), &mut d);
+        assert_eq!(
+            d.delivered,
+            [(1, Kind::Text, None), (2, Kind::Text, None)],
+            "a paste while locked fails and the late answer is dropped"
+        );
+        assert!(sent(&mut rx).is_empty(), "the client is asked for nothing");
+    }
+
+    #[test]
+    fn the_clients_newest_copy_while_locked_lands_in_the_session_at_unlock() {
+        let (mut c, mut d, mut rx) = session();
+        c.lock(&mut d);
+        c.client_copied(&client_text(), &mut d);
+        c.client_copied(&[ClipboardFormat::new(ClipboardFormatId::CF_DIB)], &mut d);
+        c.desktop_copied(mimes(&["UTF8_STRING"]));
+        assert!(
+            d.offered.is_empty(),
+            "nothing reaches the session while locked"
+        );
+        c.unlock(&mut d);
+        assert_eq!(d.offered, [vec!["image/png"]]);
+        assert!(
+            sent(&mut rx).is_empty(),
+            "the client's clipboard is left alone"
+        );
+    }
+
+    #[test]
+    fn an_empty_client_list_while_locked_lets_the_sessions_copy_through_at_unlock() {
+        let (mut c, mut d, mut rx) = session();
+        c.lock(&mut d);
+        c.desktop_copied(mimes(&["UTF8_STRING"]));
+        c.client_copied(&[], &mut d);
+        c.unlock(&mut d);
+        assert_eq!(lists(&mut rx), [vec![(13, None)]]);
+    }
+
+    #[test]
+    fn a_session_copy_while_locked_is_announced_at_unlock() {
+        let (mut c, mut d, mut rx) = session();
+        c.desktop_copied(mimes(&["UTF8_STRING"]));
+        sent(&mut rx);
+        c.lock(&mut d);
+        c.desktop_copied(mimes(&["UTF8_STRING", "image/png"]));
+        c.unlock(&mut d);
+        assert_eq!(
+            lists(&mut rx),
+            [vec![
+                (13, None),
+                (8, None),
+                (0xC0A0, Some("PNG".to_string()))
+            ]]
+        );
+        c.client_asks(ClipboardFormatId::CF_UNICODETEXT, &mut d);
+        c.desktop_read(Some(b"t".to_vec()), &mut d);
+        assert_eq!(answers(&mut rx), [(false, b"t".to_vec())]);
+    }
+
+    #[test]
+    fn an_unlock_with_nothing_new_sends_nothing() {
+        let (mut c, mut d, mut rx) = session();
+        c.client_copied(&client_text(), &mut d);
+        sent(&mut rx);
+        c.lock(&mut d);
+        c.unlock(&mut d);
+        assert!(sent(&mut rx).is_empty());
+        assert_eq!(
+            (d.offered.len(), d.cleared),
+            (1, 0),
+            "the client's copy stays"
+        );
+        c.desktop_pastes("UTF8_STRING", 1, &mut d);
+        assert!(
+            matches!(sent(&mut rx)[..], [ClipboardMessage::SendInitiatePaste(_)]),
+            "the client is asked again"
+        );
     }
 }

@@ -51,6 +51,34 @@ pub fn connect() -> Result<Connection, String> {
     connect_to(&name)
 }
 
+/// The pid of the process serving the session's display, from its socket's peer credentials.
+pub fn compositor_pid() -> Result<u32, String> {
+    let conn = connect()?;
+    let fd = conn.backend().poll_fd().as_raw_fd();
+    let mut cred = libc::ucred {
+        pid: 0,
+        uid: 0,
+        gid: 0,
+    };
+    let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    // SAFETY: `fd` is the connection's socket, open while `conn` lives, and `cred` and `len`
+    // describe a writable `ucred`.
+    let got = unsafe {
+        libc::getsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            (&raw mut cred).cast(),
+            &raw mut len,
+        )
+    };
+    if got != 0 {
+        let e = io::Error::last_os_error();
+        return Err(format!("the compositor's credentials: {e}"));
+    }
+    u32::try_from(cred.pid).map_err(|_| format!("the compositor's pid {}", cred.pid))
+}
+
 fn connect_to(name: &str) -> Result<Connection, String> {
     let runtime = std::env::var_os("XDG_RUNTIME_DIR").ok_or("XDG_RUNTIME_DIR is not set")?;
     let socket = PathBuf::from(runtime).join(name);
