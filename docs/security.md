@@ -1252,7 +1252,9 @@ sharing and remote control grants yet.
   OSC 52 is refused. A title loses its bidi and zero-width characters, so it
   can't pass for another window's. A directory reported with OSC 7 picks
   where the next tab opens only while the tab's shell itself holds the
-  foreground and the directory exists. A dropped web link is typed
+  foreground, the URL names this computer or no host, and the directory is
+  the one the tab's process is in, so a host reached through ssh can't
+  pick one. A dropped web link is typed
   shell-quoted like a path, and an ssh `Host` from `~/.ssh/config` is
   passed after `--`, one starting with `-` left out of the menu.
 - **Launchers.** A `.desktop` file in a folder (the desktop, Explorer)
