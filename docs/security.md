@@ -143,6 +143,32 @@ it, from the background.
 An X11 window's process id comes from its own `_NET_WM_PID` property, so
 the focus rules below take an X11 program's word for which program it is.
 
+## The clipboard history
+
+`[clipboard] history` keeps the last 25 copies in the compositor's memory
+and never on disk; they go when the session ends. A copy whose
+`x-kde-passwordManagerHint` type reads `secret` is not kept, and that type
+is all Reprise reads of it, so the password never leaves the program that
+copied it. KeePassXC, KWalletManager, the Bitwarden desktop app and
+`wl-copy --sensitive` mark their copies this way, and Firefox marks its
+saved passwords and whatever is copied in a private window.
+A marked copy also leaves the clipboard when its program quits. An unmarked
+copy is kept like any other, a password copied out of a text file
+included.
+
+Nothing is recorded while the desktop is locked, and Super+V doesn't open.
+What was recorded before the lock stays until the session ends or
+`history` is turned off.
+
+No program can list the history. An entry reaches a program only as the
+clipboard: when you pick it in Super+V, or as the newest copy kept after
+its program quit. The clipboard is read by data control clients and the
+focused window. A sandboxed program sees no data control global unless
+`[clipboard] trusted_apps` names it, and Reprise has no clipboard portal.
+
+The compositor's memory isn't locked, so a kept copy can reach swap, and a
+core dump of a crash holds the history.
+
 ## The lock screen
 
 The lock follows `ext-session-lock-v1`. While it holds, no window but an
