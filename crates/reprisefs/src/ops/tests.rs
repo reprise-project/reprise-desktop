@@ -1425,7 +1425,7 @@ fn copy_dir_all_keeps_folder_modes_and_mtimes() {
 }
 
 #[test]
-fn a_copy_off_a_drive_carries_only_the_trust_marker() {
+fn a_copy_off_a_drive_carries_no_attributes_and_no_trust() {
     let t = tempfile::tempdir().unwrap();
     let from = t.path().join("app.desktop");
     fs::write(&from, "[Desktop Entry]\nType=Application\nExec=true\n").unwrap();
@@ -1440,12 +1440,29 @@ fn a_copy_off_a_drive_carries_only_the_trust_marker() {
     };
     let off = copy("off.desktop", true);
     assert_eq!(user_test(&off), None, "user.test stays on the drive");
-    assert!(
-        crate::apps::is_trusted(&off),
-        "the trust marker is made anew"
-    );
+    assert!(!crate::apps::is_trusted(&off), "no trust comes off a drive");
     let local = copy("local.desktop", false);
     assert_eq!(user_test(&local).as_deref(), Some(&b"1"[..]));
+    assert!(
+        crate::apps::is_trusted(&local),
+        "the trust marker is made anew"
+    );
+}
+
+#[test]
+fn a_copy_leaves_a_drive_only_from_a_drive_mount_onto_another_device() {
+    let info = b"36 1 8:2 / / rw - ext4 /dev/sda2 rw\n\
+        90 36 8:17 / /run/media/u/STICK rw - vfat /dev/sdb1 rw\n";
+    let (root, stick) = (libc::makedev(8, 2), libc::makedev(8, 17));
+    assert!(super::fileio::off_a_drive(info, stick, root));
+    assert!(
+        !super::fileio::off_a_drive(info, stick, stick),
+        "within the drive"
+    );
+    assert!(
+        !super::fileio::off_a_drive(info, root, stick),
+        "onto the drive"
+    );
 }
 
 #[test]
