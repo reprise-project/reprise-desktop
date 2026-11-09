@@ -990,11 +990,12 @@ list of sessions whose hand-over server counted a client in
 logins are off links those whatever the group says, so a client connected
 to a console session keeps the computer awake; each one is linked that way
 once, and leaves the list when its server first reports. With remote
-logins on, a restart looks up the group for them as for any console
-session. A seat0 session
-logind can't describe at that restart holds back its user's remote logins,
-which are refused, until logind describes it (asked again every 5 seconds)
-or it ends.
+logins on, a restart looks up the group for them first. A restart, or
+turning remote logins on, links no other console session, so no hand-over
+server starts where no client is; the user's next remote login links it.
+A seat0 session logind can't describe at that restart holds back its
+user's remote logins, which are refused, until logind describes it (asked
+again every 5 seconds) or it ends.
 
 ### Accepted risks
 

@@ -309,9 +309,9 @@ impl Daemon {
         if listed {
             self.viewed_before.insert(s.id.clone());
         }
-        let clients = entry.background || listed;
+        let (clients, wanted) = (entry.background || listed, entry.background || viewed);
         self.sessions.insert(entry);
-        if !self.remote.linked.contains(&uid) {
+        if wanted && !self.remote.linked.contains(&uid) {
             self.open_intake(uid, user, clients, out);
         }
         self.update_inhibit(out);
@@ -1439,11 +1439,13 @@ impl Daemon {
         }
     }
 
-    /// Links every session that may have a client (docs/security.md, Remote logins), and looks up
-    /// the group for the others while remote logins are on.
+    /// Links every session that may have a client (docs/security.md, Remote logins), looking up
+    /// the group first for a listed console session while remote logins are on. Other sessions
+    /// are linked by their user's next remote login.
     pub(super) fn open_intakes(&mut self, out: &mut Vec<Effect>) {
         let users: BTreeMap<u32, (String, bool)> = (self.sessions.iter())
             .filter(|e| !self.remote.linked.contains(&e.uid))
+            .filter(|e| e.background || self.viewed_before.contains(&e.id))
             .map(|e| (e.uid, (e.user.clone(), self.may_have_clients(e))))
             .collect();
         for (uid, (user, clients)) in users {

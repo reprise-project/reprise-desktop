@@ -26,23 +26,11 @@ fn the_daemon_starts_the_front_on_its_port_or_frees_the_port_at_start() {
 }
 
 #[test]
-fn turning_remote_on_starts_the_front_and_opens_the_intakes_of_group_members() {
+fn turning_remote_on_starts_the_front_and_links_no_console_session_without_a_client() {
     let mut run = anna_recovered(MachineRemote::default(), "c1", Mode::Login.service());
     assert_eq!(
         run.on(Input::ConfigReloaded(config(enabled()))),
-        [
-            Effect::Front(FrontUnit::Start { port: 3389 }),
-            link_look_up(ANNA, "anna")
-        ]
-    );
-    assert_eq!(
-        run.on(link_member(ANNA, Some(ANNA), true)),
-        [Effect::OpenIntake { uid: ANNA }]
-    );
-    assert_eq!(
-        run.on(Input::ConfigReloaded(config(enabled()))),
-        [Effect::Front(FrontUnit::Start { port: 3389 })],
-        "no second look-up"
+        [Effect::Front(FrontUnit::Start { port: 3389 })]
     );
 }
 
