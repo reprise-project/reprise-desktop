@@ -1,4 +1,5 @@
 pub mod accountipc;
+pub mod accountwatch;
 pub mod atomic;
 pub mod backgrounds;
 pub mod config;
