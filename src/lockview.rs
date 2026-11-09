@@ -545,9 +545,10 @@ pub fn engage(state: &mut State) {
     log::info!("session locked");
 }
 
-/// Close what the desktop has open and end its gestures, run `raise`, then take every grab and
-/// focus from clients. Lock mode's end seals again with no `raise`.
+/// Release what apps' input holds, close what the desktop has open and end its gestures, run
+/// `raise`, then take every grab and focus from clients. Lock mode's end seals with no `raise`.
 pub fn seal(state: &mut State, raise: impl FnOnce(&mut State)) {
+    state.app_input_release_held();
     state.close_menu();
     state.release_capture();
     state.switcher_cancel();

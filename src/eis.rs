@@ -442,6 +442,18 @@ impl State {
         }
     }
 
+    /// Let go of every key and button the apps' senders and keys objects hold.
+    pub fn app_input_release_held(&mut self) {
+        let senders: Vec<EisId> = (self.inputproto.eis.clients.iter())
+            .filter(|c| c.kind == Kind::Sender && c.source() == InputSource::App)
+            .map(|c| c.id)
+            .collect();
+        for id in senders {
+            self.eis_release_held(id);
+        }
+        self.keys_release_apps();
+    }
+
     fn eis_release_held(&mut self, id: EisId) {
         let Some(c) = self.inputproto.eis.get_mut(id) else {
             return;
@@ -626,7 +638,8 @@ impl State {
             return;
         }
         let source = c.source();
-        if source == InputSource::App && self.app_input_locked() && !releases_held(c, &r) {
+        // The lock let go of what apps held as it engaged (`app_input_release_held`).
+        if source == InputSource::App && self.app_input_locked() {
             log::debug!("eis: an app's {r:?} dropped under the lock");
             return;
         }
@@ -986,21 +999,6 @@ pub(crate) fn sealed_memfd(bytes: &[u8]) -> Option<OwnedFd> {
         return None;
     }
     Some(fd)
-}
-
-/// Whether `r` lets go of a key or button `c` holds, which an app's sender may still do under
-/// the lock so nothing stays down; its frames go too.
-fn releases_held(c: &EisClient, r: &EisRequest) -> bool {
-    match r {
-        EisRequest::KeyboardKey(k) => {
-            k.state == eis::keyboard::KeyState::Released && c.pressed_keys.contains(&k.key)
-        }
-        EisRequest::Button(b) => {
-            b.state == eis::button::ButtonState::Released && c.pressed_buttons.contains(&b.button)
-        }
-        EisRequest::Frame(_) => true,
-        _ => false,
-    }
 }
 
 pub(crate) const KEYS: RangeInclusive<u32> = 0..=0x2ff;
@@ -1591,6 +1589,25 @@ mod tests {
         assert_eq!(c.side.keys, [], "no key reaches the lock");
     }
 
+    fn send_key(
+        h: &mut crate::harness::Harness,
+        peer: &crate::harness::EiPeer,
+        device: &reis::event::Device,
+        code: u32,
+        pressed: bool,
+    ) {
+        let keyboard = (device.interface::<reis::ei::Keyboard>()).expect("the device has keys");
+        device.device().start_emulating(0, 0);
+        let state = match pressed {
+            true => reis::ei::keyboard::KeyState::Press,
+            false => reis::ei::keyboard::KeyState::Released,
+        };
+        keyboard.key(code, state);
+        device.device().frame(0, 0);
+        let _ = peer.context.flush();
+        h.run_for(5);
+    }
+
     #[test]
     fn an_apps_power_and_sleep_keys_run_no_power_action() {
         const POWER: u32 = 116;
@@ -1601,20 +1618,107 @@ mod tests {
         let mut h = crate::harness::Harness::with_config(config);
         h.output("TEST-1", 1024, 768);
         let keys = h.state.keys_create(Some(String::new()));
+        let (peer, keyboard) = sender_keyboard(&mut h);
         for code in [POWER, SLEEP] {
             h.state.keys_key(keys, code, true);
             h.state.keys_key(keys, code, false);
+            send_key(&mut h, &peer, &keyboard, code, true);
+            send_key(&mut h, &peer, &keyboard, code, false);
             assert!(
                 h.state.active_dialog_id().is_none(),
                 "key {code} asks nothing"
             );
         }
-        h.key(SLEEP, true);
-        h.key(SLEEP, false);
+        let server = h.state.keys_create(None);
+        h.state.keys_key(server, SLEEP, true);
+        h.state.keys_key(server, SLEEP, false);
         assert!(
             h.state.active_dialog_id().is_some(),
-            "the computer's own key asks"
+            "the remote desktop server's keys ask"
         );
+    }
+
+    #[test]
+    fn an_apps_ctrl_alt_f2_reaches_no_window() {
+        const CTRL: u32 = 29;
+        const ALT: u32 = 56;
+        const F2: u32 = 60;
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "test.app", 200, 200);
+        h.state.focus_window(t.id);
+        let (peer, keyboard) = sender_keyboard(&mut h);
+        h.roundtrip(&mut c);
+        c.side.keys.clear();
+        for (code, pressed) in [(CTRL, true), (ALT, true), (F2, true), (F2, false)] {
+            send_key(&mut h, &peer, &keyboard, code, pressed);
+        }
+        h.roundtrip(&mut c);
+        assert!(
+            !c.side.keys.iter().any(|k| k.0 == F2),
+            "the VT key goes nowhere: {:?}",
+            c.side.keys
+        );
+    }
+
+    #[test]
+    fn an_apps_radio_keys_do_nothing() {
+        use crate::keys::KEY_XF86Bluetooth;
+        const BLUETOOTH: u32 = 237;
+        const WLAN: u32 = 238;
+        const RFKILL: u32 = 247;
+        let mut config = crate::config::Config::default();
+        config.keybinds.push(crate::config::Keybind {
+            mods: 0,
+            keysym: KEY_XF86Bluetooth,
+            action: crate::config::Action::Wifi,
+        });
+        config.keybinds.push(crate::config::Keybind {
+            mods: 0,
+            keysym: crate::keyroute::KEY_XF86RFKILL,
+            action: crate::config::Action::Wifi,
+        });
+        let mut h = crate::harness::Harness::with_config(config);
+        h.output("TEST-1", 1024, 768);
+        let jobs = h.state.key_input.media.capture();
+        let keys = h.state.keys_create(Some(String::new()));
+        let (peer, keyboard) = sender_keyboard(&mut h);
+        for code in [BLUETOOTH, WLAN, RFKILL] {
+            h.state.keys_key(keys, code, true);
+            h.state.keys_key(keys, code, false);
+            send_key(&mut h, &peer, &keyboard, code, true);
+            send_key(&mut h, &peer, &keyboard, code, false);
+        }
+        assert_eq!(jobs.try_iter().count(), 0, "no radio turns");
+        for code in [BLUETOOTH, WLAN, RFKILL] {
+            h.key(code, true);
+            h.key(code, false);
+        }
+        let wifi = jobs.try_iter().filter(|j| *j == crate::media::Job::Wifi);
+        assert_eq!(wifi.count(), 3, "the computer's own keys turn them");
+    }
+
+    #[test]
+    fn a_key_an_app_holds_into_the_lock_is_released() {
+        const SHIFT: u32 = 42;
+        const CTRL: u32 = 29;
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let (peer, keyboard) = sender_keyboard(&mut h);
+        let keys = h.state.keys_create(Some(String::new()));
+        send_key(&mut h, &peer, &keyboard, SHIFT, true);
+        h.state.keys_key(keys, CTRL, true);
+        let mods = |h: &crate::harness::Harness| {
+            let m = h.state.seat.get_keyboard().unwrap().modifier_state();
+            (m.shift, m.ctrl)
+        };
+        assert_eq!(mods(&h), (true, true), "both held");
+        crate::lockview::engage(&mut h.state);
+        assert_eq!(mods(&h), (false, false), "the lock lets both go");
+        send_key(&mut h, &peer, &keyboard, SHIFT, false);
+        h.state.keys_key(keys, CTRL, false);
+        assert_eq!(mods(&h), (false, false));
     }
 
     #[test]

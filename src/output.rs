@@ -825,8 +825,7 @@ impl State {
     }
 
     /// The seat pointer's position held on the desktop's outputs (`console::on_desk`): itself on
-    /// one, else the nearest point of any (a 1x1 box at 0,0 with none). A position that is not
-    /// finite leaves the pointer where it is.
+    /// one, else the nearest point of any (0,0 with none); a non-finite one keeps the pointer's.
     pub fn clamp_to_layout(&self, pos: Point<f64, Logical>) -> Point<f64, Logical> {
         if !(pos.x.is_finite() && pos.y.is_finite()) {
             return self.pointer_location();

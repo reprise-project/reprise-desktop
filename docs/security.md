@@ -141,10 +141,13 @@ lock screen.
 
 An app's RemoteDesktop session (its libei sender and its NotifyKeyboard
 keys) presses, types, moves and scrolls nothing while any lock is up, the
-lock screen and a locker's included; only the release of a key or button it
-holds still goes, so nothing stays down. Locked or not, it never presses the
-power, sleep or VT switch keys. Reprise's own remote desktop server is not
-an app here: its viewer types into the lock screen.
+lock screen and a locker's included. The keys and buttons it holds are
+released as the lock comes up, so none stays down at the lock screen.
+Locked or not, it never presses the power, sleep, VT switch or radio keys
+(Wi-Fi, Bluetooth, the airplane-mode key). Reprise's own remote desktop
+server is not an app here: its viewer types the password into the lock
+screen, in lock mode and at the computer's own lock, through libei or its
+keys object.
 
 The built-in Unlock Computer dialog checks the password in a helper
 process: the compositor starts itself again as `reprise
