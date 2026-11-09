@@ -188,13 +188,49 @@ impl Explorer {
         image.then_some(it)
     }
 
+    /// Opening the selected disk image: asks before [`Explorer::mount_image`] mounts it.
+    pub(crate) fn ask_mount_image(&mut self, ctx: &mut Ctx) -> Reply {
+        let Some(it) = self.selected_disk_image() else {
+            return Reply::none();
+        };
+        if self.holds_a_job() {
+            return Reply::none();
+        }
+        let path = it.path.clone();
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        self.dialog = Some(Dialog::Confirm(crate::dialogs::Confirm {
+            title: reprisefs::udisks::MOUNT_TITLE,
+            text: reprisefs::udisks::mount_text(&name),
+            min_text_h: None,
+            template: reprisekit::controls::dlgtemplate::Template::MessageBox,
+            icon: crate::chrome_icon(ctx, &["dialog-warning", "dialog-question"], 32),
+            paths: vec![path.clone()],
+            erase: false,
+            empty_bin: false,
+            bin: None,
+            focus: None,
+            too_big: None,
+            undo_erase: false,
+            script: None,
+            mount: true,
+            job: None,
+        }));
+        Reply::redraw_all()
+    }
+
     /// Mount: the selected disk image set up read-only and mounted, then its folder shown. A
     /// refusal or an image with nothing to mount raises a box.
     pub(crate) fn mount_image(&mut self, ctx: &mut Ctx) -> Reply {
         let Some(it) = self.selected_disk_image() else {
             return Reply::none();
         };
-        let (path, name) = (it.path.clone(), it.label().to_string());
+        let path = it.path.clone();
+        self.mount_image_at(path, ctx)
+    }
+
+    /// [`Explorer::mount_image`] for the disk image at `path`.
+    pub(crate) fn mount_image_at(&mut self, path: std::path::PathBuf, ctx: &mut Ctx) -> Reply {
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
         let title = format!("Could not mount {name}");
         let Some(udisks) = self.udisks.clone() else {
             return self.message_box(&title, "UDisks2 is not running.".into(), ctx);

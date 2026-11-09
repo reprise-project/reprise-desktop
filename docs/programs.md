@@ -39,7 +39,8 @@ The file manager, and the default for folders.
   that list, so a slow server can't stall it. A disk image (`.iso`, raw
   `.img`) opens by mounting it read-only, Mount being its default row: the
   whole image's file system, or each partition's when it has none, then
-  Explorer goes into the first. It stays in Computer until Eject unmounts
+  Explorer goes into the first. A double-click or Enter asks Mount / Cancel
+  first; the menu's Mount row mounts unasked. It stays in Computer until Eject unmounts
   it and detaches it; its menu's Open still hands it to its program.
 - **File operations** run in the background, so a big copy doesn't freeze
   anything. A copy, move, delete, Restore or Empty Recycle Bin that takes

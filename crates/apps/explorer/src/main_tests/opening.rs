@@ -376,3 +376,38 @@ fn a_file_opened_late_opens_when_another_answer_lands_in_the_same_wake() {
     assert_eq!(ex.place, Place::Folder(sub));
     assert!(spawned, "the file opens in its program");
 }
+
+/// Opening a disk image asks before it is mounted; the menu's Mount row is the answer itself.
+#[test]
+fn opening_a_disk_image_asks_before_mounting_it() {
+    use reprisekit::controls::{dlgtemplate::BUTTON_IDS, form::Event};
+    let dir = tempfile::tempdir().expect("a temp dir");
+    std::fs::write(dir.path().join("stick.img"), b"image").expect("write");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.items[0].mime = Some("application/x-raw-disk-image".into());
+    ex.sv.selection.set_only(Some(0));
+    let mounting = |ex: &crate::Explorer| match &ex.dialog {
+        Some(crate::dialogs::Dialog::Message { title, .. }) => title == "Could not mount stick.img",
+        _ => false,
+    };
+
+    ex.open_selected(&mut ctx);
+    match &ex.dialog {
+        Some(crate::dialogs::Dialog::Confirm(c)) => {
+            assert_eq!(c.title, "Mount Disk Image");
+            assert_eq!(c.buttons(), ["&Mount", "Cancel"]);
+        }
+        _ => panic!("the question is up before any mount"),
+    }
+    ex.dialog_outcome(Event::Pressed(BUTTON_IDS[1]), &mut ctx);
+    assert!(ex.dialog.is_none(), "Cancel mounts nothing");
+
+    ex.open_selected(&mut ctx);
+    ex.dialog_outcome(Event::Default, &mut ctx);
+    assert!(mounting(&ex), "Mount mounts it (here with no UDisks2)");
+    ex.dialog = None;
+
+    ex.run(crate::commands::Command::MountImage, &mut ctx);
+    assert!(mounting(&ex), "the Mount row mounts unasked");
+}

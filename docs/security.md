@@ -1251,6 +1251,12 @@ sharing and remote control grants yet.
   runs with no window (`script_open = "run"`, the default) or in your
   terminal (`script_open = "terminal"`). Programs started from desktop
   entries in the application folders never ask.
+- **Disk images.** Opening an `.iso` or `.img` in Explorer asks before it is
+  mounted, since the kernel's file system driver then parses a file that
+  may come from anywhere, and those drivers aren't hardened against hostile
+  images. The image is set up read-only on its loop device and each file
+  system mounted with `ro`. The menu's Mount row is the explicit choice and
+  doesn't ask.
 - **Thumbnailers.** Thumbnails and Tiles hand each file Reprise doesn't
   decode itself to its installed `.thumbnailer` program as the folder
   shows, with no click. Each runs under bubblewrap in a systemd user scope:
