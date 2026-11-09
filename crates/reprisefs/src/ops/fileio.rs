@@ -144,7 +144,25 @@ pub(crate) fn copy_meta(
 /// one the file system or the process cannot read or set is skipped. File
 /// capabilities are never copied, since they were granted to the old bytes.
 /// The launcher trust marker names the inode, so a valid one is made anew for `to`.
+/// From a drive onto another device only that marker is carried: a drive's
+/// ACLs and labels name another machine's users.
 pub fn copy_xattrs(from: &Path, to: &std::fs::File) {
+    copy_xattrs_as(from, to, from_drive(from, to));
+}
+
+/// Whether `from` is on a drive ([`crate::places::drive_device`]) and `to` is not on its device.
+fn from_drive(from: &Path, to: &std::fs::File) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let (Ok(src), Ok(dst)) = (std::fs::symlink_metadata(from), to.metadata()) else {
+        return false;
+    };
+    src.dev() != dst.dev()
+        && std::fs::read("/proc/self/mountinfo")
+            .is_ok_and(|info| crate::places::drive_device(&info, src.dev()))
+}
+
+/// [`copy_xattrs`], carrying only the trust marker when `from_drive`.
+pub(super) fn copy_xattrs_as(from: &Path, to: &std::fs::File, from_drive: bool) {
     use std::os::fd::AsRawFd;
     use std::os::unix::ffi::OsStrExt;
     let Ok(src) = std::ffi::CString::new(from.as_os_str().as_bytes()) else {
@@ -162,6 +180,9 @@ pub fn copy_xattrs(from: &Path, to: &std::fs::File) {
         let Ok(name) = std::ffi::CString::new(name) else {
             continue;
         };
+        if from_drive && name.as_c_str() != crate::apps::TRUST_XATTR {
+            continue;
+        }
         // SAFETY: `src` and `name` are NUL-terminated and `buf` is writable
         // for `len`.
         let value = read_sized(|buf, len| unsafe {
