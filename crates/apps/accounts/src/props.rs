@@ -77,6 +77,8 @@ pub struct Props {
     units: TextUnits,
     /// The Remote Desktop password section on Password; `None` hides it.
     remote: Option<Section>,
+    /// A change is under way: Apply and OK grey until it lands.
+    busy: bool,
 }
 
 fn secret(id: &'static str, y: i32) -> Item {
@@ -265,6 +267,7 @@ impl Props {
             picture: None,
             units: u,
             remote: None,
+            busy: false,
         };
         p.sync();
         p
@@ -328,7 +331,15 @@ impl Props {
 
     fn sync(&mut self) {
         let dirty = self.dirty();
-        self.sheet.set_apply_enabled(dirty);
+        self.sheet.set_apply_enabled(dirty && !self.busy);
+        for page in &mut self.sheet.pages {
+            page.set_enabled(propsheet::OK, !self.busy);
+        }
+    }
+
+    pub fn set_busy(&mut self, busy: bool) {
+        self.busy = busy;
+        self.sync();
     }
 
     /// The calls for what changed, or why it cannot be applied.
@@ -458,6 +469,7 @@ impl Props {
                 self.sync();
                 Outcome::Redraw
             }
+            propsheet::Event::Apply | propsheet::Event::Ok if self.busy => Outcome::None,
             propsheet::Event::Apply => self.submit(false, picture_file),
             propsheet::Event::Ok => self.submit(true, picture_file),
             propsheet::Event::Cancel => Outcome::Close,
@@ -862,6 +874,30 @@ mod tests {
             p.event(propsheet::Event::Apply, no_file),
             Outcome::Refuse(ONLY_ADMIN.into())
         );
+    }
+
+    #[test]
+    fn apply_and_ok_grey_while_a_change_is_under_way() {
+        let mut p = Props::new(user(false, false), None, false, TextUnits::ONE);
+        type_into(&mut p, TAB_GENERAL, NAME, " Jr");
+        p.set_busy(true);
+        let ok_lit = |p: &Props| {
+            matches!(
+                p.sheet.pages[TAB_GENERAL]
+                    .item(propsheet::OK)
+                    .map(|i| &i.control),
+                Some(Control::Button { enabled: true, .. })
+            )
+        };
+        assert!(!ok_lit(&p));
+        assert_eq!(p.event(propsheet::Event::Ok, no_file), Outcome::None);
+        assert_eq!(p.event(propsheet::Event::Apply, no_file), Outcome::None);
+        p.set_busy(false);
+        assert!(ok_lit(&p));
+        assert!(matches!(
+            p.event(propsheet::Event::Apply, no_file),
+            Outcome::Apply(_)
+        ));
     }
 
     #[test]

@@ -168,11 +168,12 @@ impl Dialogue {
 }
 
 const QUIET: Duration = Duration::from_secs(20);
+const PASSWD: &str = "/usr/bin/passwd";
 /// How long an answer waits for `passwd` to turn echo off after its prompt.
 const ECHO_WAIT: Duration = Duration::from_secs(1);
 
 pub fn change_own(current: &str, new: &str) -> Result<(), String> {
-    talk(Command::new("passwd"), current, new)
+    talk(Command::new(PASSWD), current, new)
 }
 
 fn talk(mut cmd: Command, current: &str, new: &str) -> Result<(), String> {
