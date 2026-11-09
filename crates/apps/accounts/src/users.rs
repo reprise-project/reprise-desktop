@@ -47,6 +47,8 @@ pub struct Users {
     pub list_focus: bool,
     pub failed: Option<String>,
     pub loaded: bool,
+    /// A change is under way: Remove greys until it lands.
+    pub busy: bool,
 }
 
 /// The list's entries: your account under one heading, the rest under another.
@@ -113,6 +115,7 @@ impl Users {
             list_focus: false,
             failed: None,
             loaded: false,
+            busy: false,
         };
         u.write();
         u
@@ -171,7 +174,8 @@ impl Users {
         let live = self.failed.is_none() && self.loaded;
         self.form.set_enabled(ADD, live);
         // Your own account cannot be deleted from inside its session.
-        self.form.set_enabled(REMOVE, picked == Some(false));
+        self.form
+            .set_enabled(REMOVE, picked == Some(false) && !self.busy);
         self.form.set_enabled(PROPS, picked.is_some());
     }
 
@@ -182,7 +186,7 @@ impl Users {
                 self.list_focus = false;
                 match (id, self.selected()) {
                     (ADD, _) => Outcome::Add,
-                    (REMOVE, Some(u)) if !u.you => Outcome::Remove(u.uid),
+                    (REMOVE, Some(u)) if !u.you && !self.busy => Outcome::Remove(u.uid),
                     (PROPS, Some(u)) => Outcome::Properties(u.uid),
                     (CLOSE, _) => Outcome::Close,
                     _ => Outcome::Redraw,
@@ -232,9 +236,14 @@ impl Users {
         None
     }
 
+    pub fn set_busy(&mut self, busy: bool) {
+        self.busy = busy;
+        self.write();
+    }
+
     pub fn delete_key(&self) -> Outcome {
         match self.selected() {
-            Some(u) if !u.you => Outcome::Remove(u.uid),
+            Some(u) if !u.you && !self.busy => Outcome::Remove(u.uid),
             _ => Outcome::None,
         }
     }

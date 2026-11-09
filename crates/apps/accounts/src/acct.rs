@@ -18,6 +18,8 @@ const IFACE: &str = "org.freedesktop.Accounts";
 const USER_IFACE: &str = "org.freedesktop.Accounts.User";
 
 const READ_TIMEOUT: Duration = Duration::from_secs(5);
+/// A change waits on the polkit agent, which gives up after 120 s.
+const APPLY_TIMEOUT: Duration = Duration::from_secs(150);
 
 /// The first and past-the-last uid of a person's account, as login.defs
 /// hands them out.
@@ -113,12 +115,11 @@ pub enum Op {
     },
 }
 
-async fn connect(timeout: Option<Duration>) -> zbus::Result<zbus::Connection> {
-    let b = zbus::connection::Builder::system();
-    match timeout {
-        Some(t) => b.method_timeout(t).build().await,
-        None => b.build().await,
-    }
+async fn connect(timeout: Duration) -> zbus::Result<zbus::Connection> {
+    zbus::connection::Builder::system()
+        .method_timeout(timeout)
+        .build()
+        .await
 }
 
 pub fn people(passwd: &str) -> Vec<String> {
@@ -184,7 +185,7 @@ pub fn read() -> zbus::Result<Vec<User>> {
     // SAFETY: getuid cannot fail and touches no memory.
     let me = unsafe { libc::getuid() };
     zbus::block_on(async {
-        let conn = connect(Some(READ_TIMEOUT)).await?;
+        let conn = connect(READ_TIMEOUT).await?;
         let reply = conn
             .call_method(Some(DEST), PATH, Some(IFACE), "ListCachedUsers", &())
             .await?;
@@ -296,7 +297,7 @@ pub fn apply(ops: &[Op]) -> Result<(), Failure> {
     removing_pictures(ops, |ops| {
         check_fresh(ops)?;
         zbus::block_on(async {
-            let conn = connect(None).await.map_err(|e| e.to_string())?;
+            let conn = connect(APPLY_TIMEOUT).await.map_err(|e| e.to_string())?;
             for op in ops {
                 run(&conn, op).await?;
             }

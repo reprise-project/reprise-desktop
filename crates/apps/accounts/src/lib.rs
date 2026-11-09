@@ -46,6 +46,7 @@ const ERROR: WinId = WinId::named("error");
 const RD_PASSWORD: WinId = WinId::named("rd_password");
 
 const TITLE: &str = "User Accounts";
+const BUSY: &str = "Another change is still being made. Try again once it is done.";
 
 const ROW_PX: u32 = 32;
 
@@ -271,7 +272,19 @@ impl AccountsApp {
             }
         });
         self.job = Some((rx, after));
+        self.set_busy(true);
         true
+    }
+
+    /// Greys what would start a second job while one runs.
+    fn set_busy(&mut self, busy: bool) {
+        self.users.set_busy(busy);
+        if let Some(p) = &mut self.props {
+            p.set_busy(busy);
+        }
+        if let Some(d) = &mut self.add {
+            d.set_busy(busy);
+        }
     }
 
     fn fail(&mut self, text: String) {
@@ -323,6 +336,7 @@ impl AccountsApp {
         };
         let after = *after;
         self.job = None;
+        self.set_busy(false);
         match read {
             Ok(rows) => {
                 let pictures = self.row_pictures(&rows);
@@ -340,7 +354,11 @@ impl AccountsApp {
             let uid = p.user.uid;
             let last = self.last_admin(uid);
             match self.user(uid).cloned() {
-                None => self.props = None,
+                None => {
+                    self.props = None;
+                    self.browse = None;
+                    self.rd_password = None;
+                }
                 Some(u) => {
                     let p = self.props.as_mut().expect("checked above");
                     p.set_last_admin(last);
@@ -361,6 +379,9 @@ impl AccountsApp {
         }
         if after == After::Add && done.is_ok() {
             self.add = None;
+        }
+        if let Some(d) = &mut self.add {
+            d.set_taken(self.users.rows.iter().map(|u| u.login.clone()).collect());
         }
         if let Err(acct::Failure::Text(why)) = done {
             // An Apply from a sheet closed since says whose account it was for.
@@ -413,7 +434,9 @@ impl AccountsApp {
         let face = sheet_face(&u, px, self.face.as_ref());
         let last = self.last_admin(uid);
         self.sheets += 1;
-        self.props = Some(props::Props::new(u, face, last, self.forms.text));
+        let mut p = props::Props::new(u, face, last, self.forms.text);
+        p.set_busy(self.job.is_some());
+        self.props = Some(p);
         self.show_remote();
         self.read_remote(Duration::ZERO);
     }
@@ -431,7 +454,7 @@ impl AccountsApp {
             Fields {
                 text: format!(
                     "Delete the account {}?\nTheir files in {} can stay on this computer or go with the account.",
-                    u.shown_name(),
+                    u.named(),
                     u.home
                 ),
                 icon: ctx.icons.get("dialog-question", 32),
@@ -528,7 +551,9 @@ impl AccountsApp {
             users::Outcome::Add => {
                 if self.add.is_none() {
                     let taken = self.users.rows.iter().map(|u| u.login.clone()).collect();
-                    self.add = Some(adduser::AddUser::new(taken));
+                    let mut d = adduser::AddUser::new(taken);
+                    d.set_busy(self.job.is_some());
+                    self.add = Some(d);
                 }
                 Reply::redraw_all()
             }
@@ -660,7 +685,9 @@ impl AccountsApp {
                         uid,
                         remove_files: b == 0,
                     };
-                    self.run(vec![op], After::Remove);
+                    if !self.run(vec![op], After::Remove) {
+                        self.fail(BUSY.into());
+                    }
                 }
                 Reply::redraw_all()
             }
@@ -1135,6 +1162,55 @@ mod tests {
             error_text(&app).as_deref(),
             Some("The account jo:\n\nNot authorized.")
         );
+    }
+
+    #[test]
+    fn the_delete_question_names_the_user_name_too() {
+        let mut al = user(1001, "mallory", false, false);
+        al.real_name = "Jo Doe".into();
+        let mut app = AccountsApp::new();
+        app.users
+            .refresh(vec![user(1000, "jo", true, true), al], vec![None, None]);
+        app.ask_remove(1001, &mut test_ctx());
+        let text = app.remove.as_ref().map(|(_, b)| b.fields.text.clone());
+        assert!(
+            text.as_deref()
+                .is_some_and(|t| t.starts_with("Delete the account Jo Doe (mallory)?\n")),
+            "{text:?}"
+        );
+    }
+
+    #[test]
+    fn a_sheet_whose_account_went_closes_with_its_dialogs() {
+        let rows = vec![user(1000, "jo", true, true), user(1001, "al", false, false)];
+        let mut app = AccountsApp::new();
+        app.users.refresh(rows.clone(), vec![None, None]);
+        app.open_props(1001);
+        app.open_rd_password(remotepassword::Action::Create);
+        let (tx, rx) = channel();
+        tx.send((Ok(()), Ok(rows[..1].to_vec()))).unwrap();
+        app.job = Some((rx, After::Remove));
+        assert!(app.accounts_done());
+        assert!(app.props.is_none());
+        assert!(
+            app.rd_password.is_none(),
+            "no dialog is left without its sheet"
+        );
+    }
+
+    #[test]
+    fn remove_greys_until_the_change_under_way_lands() {
+        let rows = vec![user(1000, "jo", true, true), user(1001, "al", false, false)];
+        let mut app = AccountsApp::new();
+        app.users.refresh(rows.clone(), vec![None, None]);
+        app.users.list.select_row(Some(1));
+        let (tx, rx) = channel();
+        app.job = Some((rx, After::Read));
+        app.set_busy(true);
+        assert_eq!(app.users.delete_key(), users::Outcome::None);
+        tx.send((Ok(()), Ok(rows))).unwrap();
+        assert!(app.accounts_done());
+        assert_eq!(app.users.delete_key(), users::Outcome::Remove(1001));
     }
 
     #[test]
