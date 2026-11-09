@@ -455,12 +455,8 @@ fn extract(
     limits(dir).admit(listed)?;
     let here = a.here && !listed.hidden;
     let name = folder_name(a.src.file_name().unwrap_or_default());
-    let into = make_folder(dir, &if here { staging(&name) } else { name })?;
-    let remove = || {
-        if let Err(e) = crate::ops::remove_tree(&into) {
-            log::warn!("reprisefs: cannot remove {}: {e}", into.display());
-        }
-    };
+    let into = make_folder(dir, &if here { staging(&name) } else { name.clone() })?;
+    let remove = || discard(&into);
     let undo = |e: Failure| {
         remove();
         e
@@ -490,19 +486,22 @@ fn extract(
     }
     let io = |e: std::io::Error| Failure::Tool(e.to_string());
     let modes = open_up(&into).map_err(io).map_err(undo)?;
-    match leads_out(&into) {
-        Ok(None) => {}
-        Ok(Some(entry)) => {
-            return Err(undo(Failure::Refused(format!(
-                "it holds {entry}, a link to outside the folder."
-            ))));
-        }
-        Err(e) => return Err(undo(io(e))),
+    let reach = leads_out(&into).map_err(io).map_err(undo)?;
+    if let Some(entry) = reach.out {
+        return Err(undo(Failure::Refused(format!(
+            "it holds {entry}, a link to outside the folder."
+        ))));
     }
-    if !here {
-        set_modes(&into, &modes, |_| true)
-            .map_err(io)
-            .map_err(undo)?;
+    // Merged into `dir`, a link to nothing in the archive could name what `dir` already holds.
+    if !here || reach.dangles {
+        let into = match here {
+            true => set_apart(dir, &into, &name).map_err(undo)?,
+            false => into.clone(),
+        };
+        if let Err(e) = set_modes(&into, &modes, |_| true) {
+            discard(&into);
+            return Err(io(e));
+        }
         return Ok(into);
     }
     let merged = merge_into(&into, dir);
@@ -574,6 +573,28 @@ fn set_modes(
     Ok(())
 }
 
+fn discard(folder: &Path) {
+    if let Err(e) = crate::ops::remove_tree(folder) {
+        log::warn!("reprisefs: cannot remove {}: {e}", folder.display());
+    }
+}
+
+/// Renames the staging folder `from` in `dir` to the first free `name`, `name (2)`... there.
+fn set_apart(dir: &Path, from: &Path, name: &OsStr) -> Result<PathBuf, Failure> {
+    use crate::ops::at::{c_name, c_path, cwd, open_dir, rename_free};
+    let io = |e: std::io::Error| Failure::Tool(e.to_string());
+    let at = open_dir(cwd(), &c_path(dir).map_err(io)?, true).map_err(io)?;
+    let from = c_name(from.file_name().unwrap_or_default()).map_err(io)?;
+    loop {
+        let free = names::first_free(name, |c| dir.join(c).symlink_metadata().is_ok());
+        match rename_free(at.as_fd(), &from, at.as_fd(), &c_name(&free).map_err(io)?) {
+            Ok(()) => return Ok(dir.join(free)),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(io(e)),
+        }
+    }
+}
+
 /// The hidden folder Extract Here fills before moving its entries into place.
 fn staging(name: &OsStr) -> OsString {
     let mut s = OsString::from(".");
@@ -582,10 +603,19 @@ fn staging(name: &OsStr) -> OsString {
     s
 }
 
-/// The first entry under `root`, a folder just extracted into, that leads outside it: a link
-/// that does not resolve beneath `root`, or a file with a hard link from elsewhere.
-pub(crate) fn leads_out(root: &Path) -> std::io::Result<Option<String>> {
+/// Where the entries under a folder just extracted into lead.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct Reach {
+    /// The first that leads outside it: a link that does not resolve beneath it, or a file with
+    /// a hard link from elsewhere.
+    pub(crate) out: Option<String>,
+    /// A link resolves to nothing in it.
+    pub(crate) dangles: bool,
+}
+
+pub(crate) fn leads_out(root: &Path) -> std::io::Result<Reach> {
     use std::os::unix::fs::MetadataExt;
+    let mut reach = Reach::default();
     let base = std::fs::File::open(root)?;
     let mut linked: std::collections::HashMap<(u64, u64), (u64, PathBuf)> = Default::default();
     let mut dirs = vec![PathBuf::new()];
@@ -596,8 +626,13 @@ pub(crate) fn leads_out(root: &Path) -> std::io::Result<Option<String>> {
             if kind.is_dir() {
                 dirs.push(rel);
             } else if kind.is_symlink() {
-                if !resolves_beneath(&base, &rel)? {
-                    return Ok(Some(rel.to_string_lossy().into_owned()));
+                match resolves(&base, &rel)? {
+                    Resolves::Beneath => {}
+                    Resolves::Nothing => reach.dangles = true,
+                    Resolves::Outside => {
+                        reach.out = Some(rel.to_string_lossy().into_owned());
+                        return Ok(reach);
+                    }
                 }
             } else if let Ok(meta) = e.metadata()
                 && meta.nlink() > 1
@@ -610,12 +645,19 @@ pub(crate) fn leads_out(root: &Path) -> std::io::Result<Option<String>> {
     let out = linked.into_values().find(|(seen, path)| {
         std::fs::symlink_metadata(root.join(path)).is_ok_and(|m| m.nlink() > *seen)
     });
-    Ok(out.map(|(_, path)| path.to_string_lossy().into_owned()))
+    reach.out = out.map(|(_, path)| path.to_string_lossy().into_owned());
+    Ok(reach)
 }
 
-/// Whether link `rel` under the folder open as `base` resolves inside it, or to nothing; one
-/// through a folder it cannot search counts as outside.
-fn resolves_beneath(base: &std::fs::File, rel: &Path) -> std::io::Result<bool> {
+enum Resolves {
+    Beneath,
+    Nothing,
+    Outside,
+}
+
+/// Where link `rel` under the folder open as `base` resolves; one through a folder it cannot
+/// search counts as outside.
+fn resolves(base: &std::fs::File, rel: &Path) -> std::io::Result<Resolves> {
     let path = std::ffi::CString::new(rel.as_os_str().as_bytes())?;
     // SAFETY: an all-zero `open_how` is a valid value of a plain C struct.
     let mut how: libc::open_how = unsafe { std::mem::zeroed() };
@@ -635,13 +677,12 @@ fn resolves_beneath(base: &std::fs::File, rel: &Path) -> std::io::Result<bool> {
     if fd >= 0 {
         // SAFETY: `fd` was just opened and is owned by nothing else.
         drop(unsafe { std::os::fd::OwnedFd::from_raw_fd(fd as i32) });
-        return Ok(true);
+        return Ok(Resolves::Beneath);
     }
     let e = std::io::Error::last_os_error();
     match e.raw_os_error() {
-        Some(libc::EXDEV) => Ok(false),
-        Some(libc::EACCES) => Ok(false),
-        Some(libc::ENOENT | libc::ELOOP | libc::ENOTDIR) => Ok(true),
+        Some(libc::EXDEV | libc::EACCES) => Ok(Resolves::Outside),
+        Some(libc::ENOENT | libc::ELOOP | libc::ENOTDIR) => Ok(Resolves::Nothing),
         _ => Err(e),
     }
 }
@@ -1178,6 +1219,44 @@ mod tests {
     }
 
     #[test]
+    fn extract_here_puts_an_archive_with_a_link_to_nothing_in_it_in_a_new_folder() {
+        let t = tempfile::tempdir().unwrap();
+        let (d, src) = (t.path().join("d"), t.path().join("src"));
+        std::fs::create_dir_all(d.join(".ssh")).unwrap();
+        std::fs::write(d.join(".ssh/id"), "key").unwrap();
+        std::fs::create_dir_all(src.join("pkg")).unwrap();
+        std::fs::write(src.join("a.txt"), "a").unwrap();
+        for (i, (name, target)) in [("docs", ".ssh"), ("pkg/lnk", "../.ssh")]
+            .into_iter()
+            .enumerate()
+        {
+            let _ = std::fs::remove_file(src.join(name));
+            std::os::unix::fs::symlink(target, src.join(name)).unwrap();
+            let tar = d.join(format!("pack{i}.tar"));
+            let top = name.split('/').next().unwrap();
+            let mut args = vec!["-cf", tar.to_str().unwrap(), "a.txt", "pkg"];
+            args.extend((top != "pkg").then_some(top));
+            bsdtar(&src, &args);
+            let got = only(&tar, true);
+            let into = d.join(format!("pack{i}"));
+            assert!(
+                matches!(&got[..], [ArchiveEvent::Landed { into: at, .. }, ArchiveEvent::Finished]
+                    if *at == into),
+                "{name}: {got:?}"
+            );
+            assert_eq!(
+                std::fs::read_link(into.join(name)).unwrap(),
+                Path::new(target)
+            );
+            assert!(into.join("a.txt").exists(), "{name}");
+            assert!(!d.join("a.txt").exists(), "{name}: nothing merges into d");
+            std::fs::remove_file(src.join(name)).unwrap();
+        }
+        assert_eq!(names_in(&d.join(".ssh")), ["id"]);
+        assert!(!d.join("docs").exists() && !d.join("pkg").exists());
+    }
+
+    #[test]
     fn an_archive_with_a_link_out_of_its_folder_is_refused_and_leaves_nothing() {
         let t = tempfile::tempdir().unwrap();
         let (d, src) = (t.path().join("d"), t.path().join("src"));
@@ -1290,13 +1369,13 @@ mod tests {
         std::fs::write(root.join("sub/a"), "a").unwrap();
         std::fs::hard_link(root.join("sub/a"), root.join("b")).unwrap();
         assert_eq!(
-            leads_out(&root).unwrap(),
+            leads_out(&root).unwrap().out,
             None,
             "links within the folder are fine"
         );
         std::fs::write(t.path().join("secret"), "s").unwrap();
         std::fs::hard_link(t.path().join("secret"), root.join("sub/c")).unwrap();
-        assert_eq!(leads_out(&root).unwrap().as_deref(), Some("sub/c"));
+        assert_eq!(leads_out(&root).unwrap().out.as_deref(), Some("sub/c"));
     }
 
     #[test]

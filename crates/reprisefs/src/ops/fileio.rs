@@ -1,5 +1,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 /// The bytes of the regular file at `path` (a link to one is followed), at most
 /// `max`. The open does not block and takes no controlling tty, so a FIFO or
@@ -152,8 +154,39 @@ fn from_drive(from: &Path, to: &std::fs::File) -> bool {
         return false;
     };
     src.dev() != dst.dev()
-        && std::fs::read("/proc/self/mountinfo")
-            .is_ok_and(|info| off_a_drive(&info, src.dev(), dst.dev()))
+        && mounts_for(&MOUNTS, src.dev(), Instant::now(), || {
+            std::fs::read("/proc/self/mountinfo").ok()
+        })
+        .is_some_and(|info| off_a_drive(&info, src.dev(), dst.dev()))
+}
+
+/// How long one read of the mount table answers [`from_drive`] for the devices it lists.
+pub(super) const MOUNTS_FRESH: Duration = Duration::from_secs(2);
+
+pub(super) type HeldMounts = Mutex<Option<(Instant, Arc<[u8]>)>>;
+
+static MOUNTS: HeldMounts = Mutex::new(None);
+
+/// The mount table `held` keeps, read again with `read` once it is [`MOUNTS_FRESH`] old or
+/// when it lists no mount of device `dev`.
+pub(super) fn mounts_for(
+    held: &HeldMounts,
+    dev: u64,
+    now: Instant,
+    read: impl FnOnce() -> Option<Vec<u8>>,
+) -> Option<Arc<[u8]>> {
+    let mut held = held
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some((at, info)) = held.as_ref()
+        && now.saturating_duration_since(*at) < MOUNTS_FRESH
+        && crate::places::mount_points(info, dev).next().is_some()
+    {
+        return Some(info.clone());
+    }
+    let info: Arc<[u8]> = read()?.into();
+    *held = Some((now, info.clone()));
+    Some(info)
 }
 
 /// Whether a copy from device `src` onto `dst` leaves a drive ([`crate::places::drive_device`]).
