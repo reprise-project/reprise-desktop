@@ -68,7 +68,7 @@ pub fn launch(choice: &Choice, s: &Settings) -> Launch {
             None => launch(&Choice::Shell, s),
         },
         Choice::Ssh(h) => Launch {
-            argv: Some(vec!["ssh".into(), h.into()]),
+            argv: Some(vec!["ssh".into(), "--".into(), h.into()]),
             name: Some(format!("ssh {h}")),
         },
     }
@@ -156,7 +156,11 @@ mod tests {
     #[test]
     fn a_host_runs_ssh() {
         let l = launch(&Choice::Ssh("box".into()), &Settings::default());
-        assert_eq!(l.argv, Some(vec!["ssh".into(), "box".into()]));
+        assert_eq!(
+            l.argv,
+            Some(vec!["ssh".into(), "--".into(), "box".into()]),
+            "the host is never read as an option"
+        );
         assert_eq!(l.name.as_deref(), Some("ssh box"));
     }
 }
