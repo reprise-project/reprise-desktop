@@ -176,7 +176,7 @@ pub(crate) async fn watch(conn: zbus::Connection, sessions: Sessions, notices: N
             return;
         }
     };
-    let mut signals = reprisebus::signals(&conn, SERVER, rules).await;
+    let mut signals = reprisebus::owner_signals(&conn, SERVER, rules).await;
     while let Some(sig) = signals.next().await {
         let m = match sig {
             reprisebus::Signal::Message(m) => m,
