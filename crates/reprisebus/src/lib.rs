@@ -29,6 +29,7 @@
 //! [`peer`] tells which process a session bus peer is and whether it runs in a Flatpak sandbox.
 //! [`mutex`] locks a mutex even when its holder panicked.
 //! [`login`] asks the system manager whether reprise-login runs.
+//! [`logind`] reads logind's session of a process and its user's display session.
 //! [`testsession`] gives a test binary a session of its own.
 
 pub mod a11y;
@@ -42,6 +43,7 @@ pub mod journal;
 pub mod kdeconnect;
 pub mod launcher;
 pub mod login;
+pub mod logind;
 pub mod mutex;
 pub mod notify;
 pub mod peer;

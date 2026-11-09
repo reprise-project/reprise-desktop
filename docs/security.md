@@ -1118,8 +1118,15 @@ sharing and remote control grants yet.
   isn't its user's display session, such as a Reprise started from a text
   login while the user has a graphical session or an earlier ssh login,
   starts its programs unscoped, in its own session. Their prompts stay in
-  it: the polkit agent runs once per user, so with the other session's
-  agent running, `pkexec` asks on its own terminal. The portal sees them
+  it: each Reprise session runs its own polkit agent, which registers with
+  polkit for its `XDG_SESSION_ID` and holds `reprise.polkit.session<id>` on
+  the user bus. An agent that polkit would judge by another session, such as
+  one started as a user unit, doesn't start, so it can't take the display
+  session's prompts to another screen. When another session becomes the
+  display session, programs scoped before are judged by it; its agent fails
+  a prompt whose program runs in another session or in an app scope named
+  with another session's `XDG_SESSION_ID`, so the prompt never shows on the
+  wrong screen. The portal sees the session's programs
   with no app id, Task Manager's program list is empty, Log Off leaves
   their windowless ones running, and after a crash autostart starts its
   entries again beside copies that still run. This covers Reprise's
@@ -1158,7 +1165,9 @@ sharing and remote control grants yet.
   desktops. An inhibitor on a surface that shows nowhere doesn't count, and
   none holds off a lock that is already up.
 - **Same-user code.** A program running as you can ptrace or preload the
-  portal, the compositor or anything else of yours. Reprise doesn't defend
+  portal, the compositor or anything else of yours, or take the
+  `reprise.polkit.session<id>` name of a session before its agent does, so
+  that session gets no password prompts. Reprise doesn't defend
   against that, and doesn't treat it as a vulnerability.
 
 ## Reporting

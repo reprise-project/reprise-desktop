@@ -1,5 +1,5 @@
-//! reprise-polkit's record of dismissed password prompts, on the session bus.
-//! A service behind polkit answers the same error for a dismissed prompt and
+//! reprise-polkit's record of dismissed password prompts, on the session bus under one [`name`]
+//! per logind session. A service behind polkit answers the same error for a dismissed prompt and
 //! a refused password; a program asks here which one it was.
 //! [`allowed_without_prompt`] asks polkit itself whether an action needs a password.
 
@@ -7,21 +7,55 @@ use std::collections::HashMap;
 
 use zbus::Variant;
 
-pub const NAME: &str = "reprise.polkit";
 pub const PATH: &str = "/reprise/polkit/Dismissals";
 pub const INTERFACE: &str = "reprise.polkit.Dismissals";
+
+/// The session bus name of the reprise-polkit serving logind session `session`. None for an id
+/// with a byte other than a letter or digit, which logind never gives.
+pub fn name(session: &str) -> Option<String> {
+    let id = !session.is_empty() && session.bytes().all(|b| b.is_ascii_alphanumeric());
+    id.then(|| format!("reprise.polkit.session{session}"))
+}
+
+/// The logind session polkitd judges a process by, and whose agent shows its prompts: the session
+/// its `cgroup` listing is in, else its user's display session from logind's user `record`.
+pub fn judged_session<'a>(cgroup: &'a str, record: &'a str) -> Option<&'a str> {
+    crate::logind::session_of_cgroup(cgroup).or_else(|| crate::logind::display_of_user(record))
+}
+
+/// [`judged_session`] of this process.
+pub fn own_judged_session() -> Option<String> {
+    let (cgroup, record) = (
+        crate::logind::own_cgroup(),
+        crate::logind::own_user_record(),
+    );
+    judged_session(&cgroup, &record).map(String::from)
+}
+
+/// [`name`] of the agent polkitd sends the prompts of the process with these files to.
+fn agent_name(cgroup: &str, record: &str) -> Option<String> {
+    judged_session(cgroup, record).and_then(name)
+}
 
 /// Whether the last password prompt polkit opened for this process was
 /// dismissed, forgetting it once asked. False when reprise-polkit does not
 /// answer. Blocks for at most [`crate::METHOD_TIMEOUT`].
 pub fn dismissed() -> bool {
+    let (cgroup, record) = (
+        crate::logind::own_cgroup(),
+        crate::logind::own_user_record(),
+    );
+    let Some(agent) = agent_name(&cgroup, &record) else {
+        log::warn!("no logind session whose reprise-polkit would know of a dismissed prompt");
+        return false;
+    };
     let answer = crate::session().and_then(|conn| {
-        crate::wait(conn.call_method(Some(NAME), PATH, Some(INTERFACE), "Take", &()))?
+        crate::wait(conn.call_method(Some(agent.as_str()), PATH, Some(INTERFACE), "Take", &()))?
             .body()
             .deserialize::<bool>()
     });
     answer.unwrap_or_else(|e| {
-        log::warn!("reprise-polkit does not say whether the prompt was dismissed: {e}");
+        log::warn!("{agent} does not say whether the prompt was dismissed: {e}");
         false
     })
 }
@@ -119,6 +153,34 @@ mod tests {
             Some("Not authorized".into()),
             msg,
         )
+    }
+
+    #[test]
+    fn each_logind_session_has_its_own_agent_name() {
+        assert_eq!(name("3").as_deref(), Some("reprise.polkit.session3"));
+        assert_eq!(name("c2").as_deref(), Some("reprise.polkit.sessionc2"));
+        for bad in ["", "3.1", "3-1", "3 1", "*"] {
+            assert_eq!(name(bad), None, "{bad:?} is no logind session id");
+        }
+    }
+
+    #[test]
+    fn a_program_asks_the_agent_of_the_session_polkit_judges_it_by() {
+        let record = "NAME=ann\nDISPLAY=3\nSESSIONS=7 3\n";
+        let in_session = "0::/user.slice/user-1000.slice/session-7.scope\n";
+        assert_eq!(
+            agent_name(in_session, record).as_deref(),
+            Some("reprise.polkit.session7"),
+            "a program in its own session asks that session's agent"
+        );
+        let app_scope =
+            "0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-reprise-x-1.scope\n";
+        assert_eq!(
+            agent_name(app_scope, record).as_deref(),
+            Some("reprise.polkit.session3"),
+            "an app scope is judged by the display session"
+        );
+        assert_eq!(agent_name(app_scope, "NAME=ann\nSESSIONS=7\n"), None);
     }
 
     #[test]

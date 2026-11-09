@@ -50,9 +50,16 @@ pub fn start(state: &mut State, session_begun: std::thread::JoinHandle<()>, afte
     state.spawn_job(move || {
         let _ = session_begun.join();
         let run = find(&desktops);
-        launch_left(&run, after_crash, running_scopes, DYING_GRACE, |e| {
-            launch(e, &terminal, &env)
-        });
+        let session = reprisefs::scope::launch_session();
+        let session = session.as_deref();
+        launch_left(
+            &run,
+            after_crash,
+            session,
+            running_scopes,
+            DYING_GRACE,
+            |e| launch(e, &terminal, &env),
+        );
         Box::new(move |state: &mut State| crate::session::restore(state, &run))
     });
 }
@@ -74,13 +81,16 @@ fn find(desktops: &[String]) -> Vec<Entry> {
     })
 }
 
-/// The entries of `run` with no app scope among `running` units.
-fn to_launch<'a>(run: &'a [Entry], running: &[String]) -> Vec<&'a Entry> {
+/// The entries of `run` with no app scope among `running` units that logind session `session`
+/// launched: another session's copy does not stand in for this session's.
+fn to_launch<'a>(run: &'a [Entry], running: &[String], session: Option<&str>) -> Vec<&'a Entry> {
+    let own =
+        |u: &str| session.is_none_or(|s| reprisefs::scope::launch_session_of_scope(u) == Some(s));
     run.iter()
         .filter(|e| {
             let left = running
                 .iter()
-                .any(|u| reprisefs::scope::is_app_scope(u, &e.id));
+                .any(|u| reprisefs::scope::is_app_scope(u, &e.id) && own(u));
             if left {
                 log::info!("autostart: {} still runs from before the crash", e.id);
             }
@@ -89,12 +99,13 @@ fn to_launch<'a>(run: &'a [Entry], running: &[String]) -> Vec<&'a Entry> {
         .collect()
 }
 
-/// `launch` each of `run`. After a crash, an entry with an app scope in `list()` waits `grace` and
-/// starts only if its scope is gone from the listing then: a program still exiting does not keep
-/// it from starting.
+/// `launch` each of `run`. After a crash, an entry with an app scope of `session` in `list()`
+/// waits `grace` and starts only if its scope is gone from the listing then: a program still
+/// exiting does not keep it from starting.
 fn launch_left(
     run: &[Entry],
     after_crash: bool,
+    session: Option<&str>,
     list: impl Fn() -> Vec<String>,
     grace: Duration,
     mut launch: impl FnMut(&Entry),
@@ -103,7 +114,7 @@ fn launch_left(
         run.iter().for_each(launch);
         return;
     }
-    let first = to_launch(run, &list());
+    let first = to_launch(run, &list(), session);
     let waiting: Vec<Entry> = run
         .iter()
         .filter(|e| !first.iter().any(|f| f.id == e.id))
@@ -114,7 +125,9 @@ fn launch_left(
         return;
     }
     std::thread::sleep(grace);
-    to_launch(&waiting, &list()).into_iter().for_each(launch);
+    to_launch(&waiting, &list(), session)
+        .into_iter()
+        .for_each(launch);
 }
 
 /// The user manager's app scopes that still have a process; none when it does not answer within
@@ -271,9 +284,27 @@ mod tests {
                 .unwrap();
         let run = [sync, entry("[Desktop Entry]\nExec=a\n")];
         let ids = |l: Vec<&Entry>| l.iter().map(|e| e.id.clone()).collect::<Vec<_>>();
-        assert_eq!(ids(to_launch(&run, &[])), ["syncthing.desktop", "a"]);
+        assert_eq!(ids(to_launch(&run, &[], None)), ["syncthing.desktop", "a"]);
         let running = ["app-reprise-syncthing-1ax2.scope".to_string()];
-        assert_eq!(ids(to_launch(&run, &running)), ["a"]);
+        assert_eq!(ids(to_launch(&run, &running, None)), ["a"]);
+    }
+
+    #[test]
+    fn after_a_crash_only_this_sessions_scope_of_an_entry_keeps_it_from_starting() {
+        let polkit = reprisefs::autostart::parse(
+            "reprise-polkit.desktop",
+            "[Desktop Entry]\nExec=p\n",
+            false,
+        )
+        .unwrap();
+        let run = [polkit];
+        let display = ["app-reprise-reprise\\x2dpolkit-s3x1ax2x0.scope".to_string()];
+        assert_eq!(
+            to_launch(&run, &display, Some("7")).len(),
+            1,
+            "session 3's agent"
+        );
+        assert!(to_launch(&run, &display, Some("3")).is_empty());
     }
 
     #[test]
@@ -292,7 +323,7 @@ mod tests {
                     .next()
                     .expect("one listing more than expected")
             };
-            launch_left(&run, after_crash, list, Duration::ZERO, |e| {
+            launch_left(&run, after_crash, None, list, Duration::ZERO, |e| {
                 got.push(e.id.clone())
             });
             got
