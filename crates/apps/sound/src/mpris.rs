@@ -43,7 +43,7 @@ struct Entry {
 }
 
 fn cut(s: &str) -> String {
-    s.chars().take(TEXT_CHARS).collect()
+    reprisefs::names::shown_line(s, TEXT_CHARS)
 }
 
 /// `xesam:artist` is a list of names; some players send one string.

@@ -6,6 +6,8 @@ use crate::tray::notify::Urgency;
 use std::collections::VecDeque;
 
 pub const MAX_ENTRIES: usize = 50;
+/// Entries one program keeps, so its flood can't push the others out.
+pub const MAX_PER_PROGRAM: usize = 20;
 
 /// Balloons Do Not Disturb holds while it is on by itself; past this the oldest stays in the history
 /// only.
@@ -98,7 +100,8 @@ impl Log {
     /// Keep `n`, arrived at `time`, at the top: one with the same id is
     /// replaced (and stays open). `looking` is whether the history is on
     /// screen, where nothing is unseen. Returns the ids that fell off the
-    /// end while still open, which expire.
+    /// end, or past their program's [`MAX_PER_PROGRAM`], while still open,
+    /// which expire.
     pub fn record(&mut self, n: &Notification, time: i64, looking: bool) -> Vec<u32> {
         self.entries.retain(|e| e.n.id != n.id);
         self.entries.insert(
@@ -114,7 +117,15 @@ impl Log {
         if !looking {
             self.unseen = (self.unseen + 1).min(self.entries.len());
         }
-        let dropped = self.entries.split_off(self.entries.len().min(MAX_ENTRIES));
+        let mut dropped = Vec::new();
+        if let Some(oldest) = (self.entries.iter().enumerate())
+            .filter(|(_, e)| e.n.key == n.key)
+            .map(|(i, _)| i)
+            .nth(MAX_PER_PROGRAM)
+        {
+            dropped.push(self.entries.remove(oldest));
+        }
+        dropped.extend(self.entries.split_off(self.entries.len().min(MAX_ENTRIES)));
         self.unseen = self.unseen.min(self.entries.len());
         dropped
             .into_iter()
@@ -196,6 +207,24 @@ mod tests {
     }
 
     #[test]
+    fn one_program_keeps_at_most_its_share_of_the_history() {
+        let from = |id: u32, key: &str| Notification {
+            key: key.into(),
+            ..note(id)
+        };
+        let mut log = Log::default();
+        log.record(&from(1, "mail"), 1, false);
+        let mut dropped = Vec::new();
+        for id in 2..=30 {
+            dropped.extend(log.record(&from(id, "spam"), id as i64, false));
+        }
+        let spam = log.entries.iter().filter(|e| e.n.key == "spam").count();
+        assert_eq!(spam, MAX_PER_PROGRAM);
+        assert!(log.get(1).is_some(), "another program's entry stays");
+        assert_eq!(dropped, (2..=10).collect::<Vec<u32>>(), "the oldest close");
+    }
+
+    #[test]
     fn newest_first_and_a_replace_moves_to_the_top() {
         let mut log = Log::default();
         log.record(&note(1), 10, false);
@@ -211,14 +240,18 @@ mod tests {
 
     #[test]
     fn past_fifty_the_oldest_falls_off_and_expires_if_open() {
+        let own = |id: u32| Notification {
+            key: format!("p{id}"),
+            ..note(id)
+        };
         let mut log = Log::default();
         for id in 1..=MAX_ENTRIES as u32 {
-            assert!(log.record(&note(id), 0, false).is_empty());
+            assert!(log.record(&own(id), 0, false).is_empty());
         }
-        assert_eq!(log.record(&note(100), 0, false), vec![1]);
+        assert_eq!(log.record(&own(100), 0, false), vec![1]);
         log.close(2);
         assert_eq!(
-            log.record(&note(101), 0, false),
+            log.record(&own(101), 0, false),
             Vec::<u32>::new(),
             "a closed entry falls off without a signal"
         );

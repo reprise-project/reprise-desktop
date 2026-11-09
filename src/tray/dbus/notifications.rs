@@ -4,6 +4,7 @@ use crate::tray::{
     ACTION_ICON_SIZES, BODY_CHARS, NOTIFY_SIZES, Notification, REPLY_SEND, Reply, SUMMARY_CHARS,
     TrayEvent, clip, decode_named_at, notify,
 };
+use reprisefs::names::shown_line;
 use reprisekit::icon::IconSource;
 use std::collections::HashMap;
 use std::os::fd::RawFd;
@@ -38,7 +39,8 @@ impl Senders {
     }
 
     /// The id for a notification from `sender`: `replaces` when it may replace it (`left` says
-    /// the [`Senders::other_sender`] has left the bus), else `fresh()`.
+    /// the [`Senders::other_sender`] has left the bus, and `sender` takes its place), else the
+    /// next of `fresh()` that is neither 0, the compositor's own nor open.
     pub(super) fn claim(
         &mut self,
         sender: &str,
@@ -46,16 +48,21 @@ impl Senders {
         app: &str,
         replaces: u32,
         left: bool,
-        fresh: impl FnOnce() -> u32,
+        mut fresh: impl FnMut() -> u32,
     ) -> u32 {
+        let same_app = |a: &String| !app.is_empty() && a == app;
         let id = match self.0.get(&replaces) {
             Some((s, _, _)) if s == sender => replaces,
-            Some((_, a, p))
-                if !app.is_empty() && a == app && ((pid.is_some() && *p == pid) || left) =>
-            {
+            Some((_, a, p)) if same_app(a) && pid.is_some() && *p == pid && !left => {
                 return replaces;
             }
-            _ => fresh(),
+            Some((_, a, _)) if same_app(a) && left => replaces,
+            _ => loop {
+                let id = fresh();
+                if id != 0 && id != crate::notifyview::OWN_ID && !self.0.contains_key(&id) {
+                    break id;
+                }
+            },
         };
         self.0
             .insert(id, (sender.to_string(), app.to_string(), pid));
@@ -132,8 +139,8 @@ impl Notifications {
         app_icon: String,
         summary: String,
         body: String,
-        actions: Vec<String>,
-        hints: HashMap<String, notify::Hint<'_>>,
+        actions: notify::ActionList,
+        hints: notify::HintMap<'_>,
         expire_timeout: i32,
         #[zbus(header)] hdr: Header<'_>,
         #[zbus(connection)] conn: &Connection,
@@ -145,16 +152,10 @@ impl Notifications {
             Some(other) => !on_bus(conn, &other).await,
             None => false,
         };
-        let id = lock(&self.senders).claim(
-            &sender,
-            pid,
-            &app_name,
-            replaces_id,
-            left,
-            // Ids start at 1; 0 is "none" in the protocol.
-            || self.next_id.fetch_add(1, Ordering::Relaxed).max(1),
-        );
-        let hints = notify::hints(hints);
+        let id = lock(&self.senders).claim(&sender, pid, &app_name, replaces_id, left, || {
+            self.next_id.fetch_add(1, Ordering::Relaxed)
+        });
+        let hints = notify::hints(hints.0);
         let sound = hints.balloon_sound();
         let entry = hints.desktop_entry.as_deref().and_then(desktop_entry);
         let (app_icon, image) =
@@ -163,9 +164,9 @@ impl Notifications {
             notify::program_key(hints.desktop_entry.as_deref(), &app_name),
             notify::KEY_CHARS,
         );
-        let app = clip(entry.map_or(app_name, |e| e.name), SUMMARY_CHARS);
+        let app = shown_line(&entry.map_or(app_name, |e| e.name), SUMMARY_CHARS);
         lock(&self.programs).saw(&key, &app);
-        let actions = notify::actions(&actions);
+        let actions = notify::actions(&actions.0);
         let action_icons = if hints.action_icons {
             action_icons(&self.icons, &actions)
         } else {
@@ -175,12 +176,12 @@ impl Notifications {
             .iter()
             .any(|(k, _)| k == notify::INLINE_REPLY)
             .then(|| Reply {
-                placeholder: clip(
-                    hints.reply_placeholder.unwrap_or_default(),
+                placeholder: shown_line(
+                    &hints.reply_placeholder.unwrap_or_default(),
                     notify::ACTION_LABEL_CHARS,
                 ),
-                send: clip(
-                    hints.reply_send.unwrap_or_else(|| REPLY_SEND.into()),
+                send: shown_line(
+                    &hints.reply_send.unwrap_or_else(|| REPLY_SEND.into()),
                     notify::ACTION_LABEL_CHARS,
                 ),
             });
@@ -191,7 +192,7 @@ impl Notifications {
                 id,
                 app,
                 key,
-                summary: clip(summary, SUMMARY_CHARS),
+                summary: shown_line(&summary, SUMMARY_CHARS),
                 body: clip(notify::plain_text(&body), BODY_CHARS),
                 app_icon,
                 image,
