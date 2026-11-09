@@ -87,7 +87,8 @@ impl Extensions {
 /// file type ("New Text Document" for `New Text Document.txt`) and keeps an unknown one
 /// (`notes.foo`); a type is known when the shared-mime-info `globs` (`apps::mime_globs`) match.
 /// Only the last extension goes (`a.tar.gz` -> `a.tar`), and a name that is all extension
-/// (`.txt`) keeps it.
+/// (`.txt`) keeps it. A name whose rest itself ends in a known extension keeps the last one too,
+/// so `report.pdf.sh` never reads as `report.pdf`.
 pub fn label_for(file_name: &str, globs: &MimeDb, shown: Extensions) -> String {
     let path = Path::new(file_name);
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
@@ -97,7 +98,9 @@ pub fn label_for(file_name: &str, globs: &MimeDb, shown: Extensions) -> String {
         Extensions::HideLaunchers => ext == "desktop",
         Extensions::Show => false,
     };
-    if ext.is_empty() || stem.is_empty() || !hides {
+    let rest = Path::new(stem);
+    let poses = rest.extension().is_some() && apps::mime_of_in(globs, rest).is_some();
+    if ext.is_empty() || stem.is_empty() || !hides || poses {
         return file_name.to_string();
     }
     stem.to_string()
@@ -213,6 +216,32 @@ mod tests {
         assert_eq!(label("README"), "README");
         assert_eq!(label("foo."), "foo.");
         assert_eq!(label(".txt"), ".txt");
+    }
+
+    #[test]
+    fn a_label_keeps_the_extension_when_what_is_left_ends_in_a_known_one() {
+        let globs = MimeDb::parse([
+            "50:application/pdf:*.pdf\n50:application/x-shellscript:*.sh\n\
+             50:application/x-desktop:*.desktop\n50:text/x-readme:README*\n50:text/plain:*.txt\n",
+        ]);
+        for (name, shown, want) in [
+            ("report.pdf.sh", Extensions::Hide, "report.pdf.sh"),
+            (
+                "report.pdf.desktop",
+                Extensions::HideLaunchers,
+                "report.pdf.desktop",
+            ),
+            ("report.pdf.desktop", Extensions::Hide, "report.pdf.desktop"),
+            ("report.pdf", Extensions::Hide, "report"),
+            ("v1.2 notes.txt", Extensions::Hide, "v1.2 notes"),
+            ("README.txt", Extensions::Hide, "README"),
+        ] {
+            assert_eq!(
+                label_for(name, &globs, shown),
+                want,
+                "{name} under {shown:?}"
+            );
+        }
     }
 
     #[test]
