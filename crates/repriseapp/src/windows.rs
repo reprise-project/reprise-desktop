@@ -6,6 +6,7 @@ use crate::sizing::{
     at_pick, bounded, configured_size, held_size, opening_size, rebounded, regrown, sane_side,
     sane_size,
 };
+use crate::wire;
 use crate::{
     Caption, Child, Event, Flyout, Host, MAIN, MIN_SIZE, Scaling, Shell, Slot, WinId, access,
 };
@@ -74,7 +75,7 @@ impl Host {
         activation.request_token(
             &self.qh,
             RequestData {
-                app_id: Some(self.app.app_id()),
+                app_id: Some(wire::text(&self.app.app_id()).to_owned()),
                 seat_and_serial: Some((seat.clone(), self.last_serial)),
                 surface,
                 udata,
@@ -107,8 +108,12 @@ impl Host {
     /// Make `window` the child of the foreign `handle`, and modal to it
     /// when the program asks. Runs before the window's first commit, so
     /// it maps already centred on its owner. None when the compositor has
-    /// no importer; the window then stays ownerless.
+    /// no importer or `handle` is over [`wire::TEXT_MAX`]; the window then stays ownerless.
     fn import_parent(&self, handle: &str, window: &Window) -> Option<Foreign> {
+        if handle.len() > wire::TEXT_MAX {
+            log::warn!("a {}-byte parent handle is not imported", handle.len());
+            return None;
+        }
         let surface = window.wl_surface();
         let imported = if let Some(v2) = &self.importer_v2 {
             let i = v2.import_toplevel(handle.to_string(), &self.qh, ForeignParent);
@@ -187,8 +192,8 @@ impl Host {
             self.xdg_shell
                 .create_window(surface, WindowDecorations::RequestServer, &self.qh);
         let title = self.app.title();
-        window.set_title(title.clone());
-        window.set_app_id(self.app.app_id());
+        window.set_title(wire::text(&title));
+        window.set_app_id(wire::text(&self.app.app_id()));
         window.set_min_size(Some((min.0 as u32, min.1 as u32)));
         if self.app.fixed() {
             window.set_max_size(Some((w as u32, h as u32)));
@@ -369,8 +374,8 @@ impl Host {
             let window =
                 self.xdg_shell
                     .create_window(surface, WindowDecorations::RequestServer, &self.qh);
-            window.set_title(c.title.clone());
-            window.set_app_id(app_id.clone());
+            window.set_title(wire::text(&c.title));
+            window.set_app_id(wire::text(&app_id));
             let min = match c.fixed {
                 true => size,
                 false => self.app.min_size(c.id).map_or(size, sane_size),
@@ -420,7 +425,7 @@ impl Host {
                     && let Some(w) = s.window.toplevel()
                 {
                     s.title = c.title.clone();
-                    w.set_title(c.title.clone());
+                    w.set_title(wire::text(&c.title));
                 }
                 if s.caption != caption
                     && let Some(w) = s.window.toplevel()
@@ -555,7 +560,7 @@ impl Host {
             &self.qh,
             surface,
             Layer::Overlay,
-            Some(self.app.app_id()),
+            Some(wire::text(&self.app.app_id())),
             output,
         );
         // The whole output, taskbar included, so a click anywhere else lands here.
@@ -730,7 +735,7 @@ pub(crate) fn send_tag(
     tag: &str,
 ) {
     if let Some(m) = manager {
-        m.set_toplevel_tag(window.xdg_toplevel(), tag.into());
+        m.set_toplevel_tag(window.xdg_toplevel(), wire::text(tag).into());
     }
 }
 

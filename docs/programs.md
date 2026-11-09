@@ -265,6 +265,8 @@ asks first. Programs see `TERM=xterm-256color` and `COLORTERM=truecolor`.
 - **Paste:** control characters other than tab and line ends are dropped
   from a paste. A paste holding a line end into a program that has not
   turned on bracketed paste asks first, showing its first lines.
+- **Titles:** a program's title (OSC 0 and 2) names its tab, window and
+  taskbar button, cut to its first 256 characters.
 - **Drop:** files dropped on the window type their paths into the open tab,
   quoted for the shell where needed, and web links their address, each
   followed by a space; dropped text types as it came. A drop goes in as a

@@ -86,7 +86,7 @@ impl EventListener for Proxy {
 }
 
 /// The longest title a program can set, in chars.
-pub const TITLE_MAX: usize = 1024;
+pub const TITLE_MAX: usize = 256;
 
 /// `t` as the tab, the caption and the taskbar show it: its first [`TITLE_MAX`] chars without
 /// control characters.
@@ -439,5 +439,11 @@ mod tests {
     #[test]
     fn a_title_loses_its_control_characters() {
         assert_eq!(shown_title("a\nb\u{9b}c\td"), "abcd");
+    }
+
+    #[test]
+    fn a_title_of_four_byte_chars_is_cut_to_256_chars() {
+        let shown = shown_title(&"\u{1F600}".repeat(1024));
+        assert_eq!(shown.chars().count(), 256);
     }
 }
