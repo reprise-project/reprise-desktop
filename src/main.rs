@@ -361,9 +361,8 @@ fn run(
     let another_session = spawn::another_session_on_bus();
     // A display manager's session takes the user manager over; a text login defers to the
     // Reprise session already running.
-    state.env.defers_user_units = state.env.logind_session.is_none()
-        && state.env.parent.is_empty()
-        && spawn::another_session_runs_reprise();
+    state.env.defers_user_units =
+        state.env.is_text_login() && spawn::another_session_runs_reprise();
     if state.env.defers_user_units {
         log::info!("another Reprise session of this user runs; its user manager setup stays");
     }
