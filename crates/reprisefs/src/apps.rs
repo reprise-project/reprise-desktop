@@ -468,6 +468,7 @@ pub fn shortcut_at(path: &Path, meta: &std::fs::Metadata) -> Option<Shortcut> {
     let file_name = path.file_name()?.to_string_lossy();
     if !file_name.ends_with(".desktop")
         || !meta.is_file()
+        || meta.len() > DESKTOP_FILE_MAX
         || meta.permissions().mode() & 0o111 == 0
         || !is_trusted(path)
     {
