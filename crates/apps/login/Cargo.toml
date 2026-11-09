@@ -29,6 +29,7 @@ libc.workspace = true
 zeroize = { workspace = true, features = ["serde"] }
 reprisebus = { path = "../../reprisebus" }
 futures-util.workspace = true
+inotify.workspace = true
 tokio = { workspace = true, features = ["rt", "net", "time", "macros", "io-util", "sync", "signal"] }
 zbus.workspace = true
 

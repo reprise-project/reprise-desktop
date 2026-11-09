@@ -26,7 +26,7 @@ use reprise_login::remembered::{Remembered, STATE_PATH};
 use reprise_login::remotepw::{self, STORE};
 use reprise_login::vt::{self, GREETER_VT};
 use reprise_login::worker::{FromWorker, LOG_FD, Mode, ToWorker, worker_main};
-use reprise_login::{pidfd, users};
+use reprise_login::{accountwatch, pidfd, users};
 use repriselogin::GREETER_USER;
 use repriselogin::account::ACCOUNT_SOCKET;
 use repriselogin::frame::{self, FrameError};
@@ -188,6 +188,7 @@ async fn run() -> Result<(), String> {
         .map_err(|e| log::warn!("/dev/tty{GREETER_VT}: {e}"))
         .ok();
     follow_console(events.clone());
+    follow_accounts(events.clone());
 
     let gate = Rc::new(RefCell::new(Gate::new(greeter.uid)));
     let (input, mut sockets) = mpsc::channel(ipc::QUEUE);
@@ -442,6 +443,15 @@ fn follow_console(events: Events) {
         });
     if let Err(e) = spawned {
         log::warn!("no thread to follow the console's VT: {e}");
+    }
+}
+
+/// Feeds `AccountsChanged` after each write of `/etc/group` or `/etc/passwd`; without the watch,
+/// the front's list follows group changes only at the other reads security.md names.
+fn follow_accounts(events: Events) {
+    let written = move || events.send(Event::Input(Input::AccountsChanged)).is_ok();
+    if let Err(e) = accountwatch::follow(Path::new("/etc"), accountwatch::FILES, written) {
+        log::warn!("not watching /etc's account files: {e}");
     }
 }
 

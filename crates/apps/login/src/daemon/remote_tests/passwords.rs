@@ -294,6 +294,56 @@ fn a_user_put_back_in_the_remote_group_gets_their_password_to_the_front_again() 
 }
 
 #[test]
+fn a_user_put_back_in_the_remote_group_reaches_the_front_when_the_group_file_is_written() {
+    let mut run = remote_run(enabled());
+    let anna = stored("anna", ANNA, "Remote1!");
+    run.d.set_remote_passwords(vec![anna.clone()]);
+    run.on(Input::FrontLinked);
+    run.on(Input::Front(FrontRequest::Hello));
+    assert_eq!(quiet(run.on(listed(&anna, 1, Some(ANNA), false))), []);
+    assert_eq!(
+        run.on(Input::AccountsChanged),
+        [listed_look_up(&anna, 2)],
+        "a written group file reads the group again"
+    );
+    let added = run.on(listed(&anna, 2, Some(ANNA), true));
+    assert_eq!(
+        logs(&added),
+        ["anna is in reprise-remote; the front takes their Remote Desktop password"]
+    );
+    assert_eq!(quiet(added), [nla_users(&[&anna])]);
+}
+
+#[test]
+fn a_user_taken_out_of_the_remote_group_leaves_the_front_when_the_group_file_is_written() {
+    let mut run = remote_run(enabled());
+    let anna = stored("anna", ANNA, "Remote1!");
+    run.d.set_remote_passwords(vec![anna.clone()]);
+    run.on(Input::FrontLinked);
+    run.on(Input::Front(FrontRequest::Hello));
+    assert_eq!(
+        quiet(run.on(listed(&anna, 1, Some(ANNA), true))),
+        [nla_users(&[&anna])]
+    );
+    assert_eq!(run.on(Input::AccountsChanged), [listed_look_up(&anna, 2)]);
+    assert_eq!(
+        quiet(run.on(listed(&anna, 2, Some(ANNA), false))),
+        [nla_users(&[])]
+    );
+    assert_eq!(run.on(tls(7, "anna", "pw")), looked_up(7, "anna"));
+    assert_eq!(
+        quiet(run.on(Input::Member {
+            key: LookUpKey::Conn(7),
+            uid: Some(ANNA),
+            member: false,
+            failed: false,
+        })),
+        [],
+        "the login is refused and agrees with the list"
+    );
+}
+
+#[test]
 fn a_session_look_up_that_disagrees_with_the_front_s_list_reads_the_group_again_after_the_round() {
     let mut run = anna_recovered(enabled(), "c1", Mode::Login.service());
     let anna = stored("anna", ANNA, "Remote1!");

@@ -186,6 +186,8 @@ pub enum Input {
     },
     /// `MACHINE_CONFIG` was read again, on SIGHUP.
     ConfigReloaded(MachineConfig),
+    /// `/etc/group` or `/etc/passwd` was written, so a group's members may have changed.
+    AccountsChanged,
     /// A request on account link `link` from `uid`, whose account is `user`.
     Account {
         link: u64,
@@ -767,6 +769,7 @@ impl Daemon {
             Input::Viewers { uid, count } => self.viewers_reported(now, uid, count, &mut out),
             Input::Forwarded { conn, ok } => self.forwarded(now, world, conn, ok, &mut out),
             Input::ConfigReloaded(config) => self.config_reloaded(now, config, &mut out),
+            Input::AccountsChanged => self.look_up_listed(&mut out),
             Input::Account {
                 link,
                 uid,
