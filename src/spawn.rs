@@ -204,6 +204,12 @@ impl SessionEnv {
         }
     }
 
+    /// Started from a text login, not nested: a login manager's session started later takes the
+    /// user manager over.
+    pub fn is_text_login(&self) -> bool {
+        self.logind_session.is_none() && self.parent.is_empty()
+    }
+
     /// Take the look that launched programs read. Returns whether any changed, so the session
     /// bus needs them.
     pub fn set_look(
@@ -276,7 +282,17 @@ impl SessionEnv {
 /// bus-activated services find the compositor. [`begin_session`] publishes first; this runs when
 /// `DISPLAY` is known and when colours change. Best effort.
 pub fn export_session_env(env: &SessionEnv) {
+    publish(env, login_manager_session_runs_reprise);
+}
+
+/// [`export_session_env`], unless this is a text-login session and `taken_over` says a login
+/// manager's Reprise session has since taken the user manager over.
+fn publish(env: &SessionEnv, taken_over: impl FnOnce() -> bool) {
     if env.defers_user_units {
+        return;
+    }
+    if env.is_text_login() && taken_over() {
+        log::info!("a login manager's Reprise session runs; its user manager variables stay");
         return;
     }
     let argv = export_argv(env);
@@ -508,6 +524,19 @@ fn runs_elsewhere(
 /// Whether another of the user's logind sessions runs Reprise: its user manager, portals and
 /// app scopes are then shared with that session.
 pub fn another_session_runs_reprise() -> bool {
+    reprise_runs_in_another(|_| true)
+}
+
+/// Whether Reprise runs in another of the user's sessions that a login manager opened.
+fn login_manager_session_runs_reprise() -> bool {
+    reprise_runs_in_another(|id| {
+        let record = reprisebus::logind::session_record(id);
+        reprisebus::logind::type_of_session(&record) == Some("wayland")
+    })
+}
+
+/// Whether Reprise runs in another of the user's online sessions that `counts`.
+fn reprise_runs_in_another(counts: impl Fn(&str) -> bool) -> bool {
     let read = |p: &str| std::fs::read_to_string(p).unwrap_or_default();
     let comm = read("/proc/self/comm");
     let own = reprisebus::logind::own_cgroup();
@@ -523,10 +552,15 @@ pub fn another_session_runs_reprise() -> bool {
         let cgroup = std::fs::read_to_string(format!("/proc/{pid}/cgroup")).ok()?;
         Some((comm, cgroup))
     });
+    let mut online = reprisebus::logind::online_sessions(&record);
+    online.retain(|id| counts(id));
+    if online.is_empty() {
+        return false;
+    }
     runs_elsewhere(
         comm.trim_end(),
         reprisebus::logind::session_of_cgroup(&own),
-        &reprisebus::logind::online_sessions(&record),
+        &online,
         procs,
     )
 }
@@ -1411,6 +1445,37 @@ mod tests {
             ..env(None)
         };
         assert_eq!(begin_commands(&e), Vec::<Vec<String>>::new());
+    }
+
+    #[test]
+    fn a_text_login_stops_publishing_once_a_login_managers_reprise_session_runs() {
+        let publishes = |e: &SessionEnv, taken_over: bool| {
+            record();
+            publish(e, || taken_over);
+            recorded() == ["dbus-update-activation-environment"]
+        };
+        let tty = env(None);
+        assert!(publishes(&tty, false), "alone, a text login publishes");
+        assert!(
+            !publishes(&tty, true),
+            "taken over, it leaves the variables"
+        );
+        let dm = SessionEnv {
+            logind_session: Some("7".into()),
+            ..env(None)
+        };
+        assert!(
+            publishes(&dm, true),
+            "a login manager's session always publishes"
+        );
+        let nested = SessionEnv {
+            parent: vec![("WAYLAND_DISPLAY", "wayland-0".into())],
+            ..env(None)
+        };
+        assert!(
+            publishes(&nested, true),
+            "a nested run publishes to its parent"
+        );
     }
 
     /// The user's other Reprise session keeps the variables, the session target, the portals
