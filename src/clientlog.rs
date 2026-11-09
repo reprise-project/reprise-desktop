@@ -81,6 +81,7 @@ pub fn line(
         match sandbox.process {
             crate::sandbox::Process::Host => {}
             crate::sandbox::Process::Flatpak => who.push_str(", flatpak"),
+            crate::sandbox::Process::Snap => who.push_str(", snap"),
             crate::sandbox::Process::Unknown => who.push_str(", not inspected"),
         }
     }

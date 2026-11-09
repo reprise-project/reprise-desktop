@@ -19,6 +19,13 @@ const HOLD: Duration = Duration::from_secs(5);
 #[cfg(test)]
 const HOLD: Duration = Duration::from_millis(500);
 
+/// How long the dot shows after any captured frame, so captures repeated slower than a
+/// recording (a screenshot loop) still show.
+#[cfg(not(test))]
+const STILL_HOLD: Duration = Duration::from_secs(3);
+#[cfg(test)]
+const STILL_HOLD: Duration = Duration::from_millis(300);
+
 const SKIPPED_APPS: [&str; 4] = [
     "org.PulseAudio.pavucontrol",
     "org.gnome.VolumeControl",
@@ -42,6 +49,10 @@ pub struct Privacy {
     /// The app ids of the apps whose RemoteDesktop sessions hold input, sorted, "" for an unnamed
     /// one (`control_changed`).
     controlling: Vec<String>,
+    /// While `STILL_HOLD` after a captured frame: whether one showed a screen and one a window.
+    still: Option<(bool, bool)>,
+    still_until: Option<Instant>,
+    still_timer: Option<RegistrationToken>,
     mic_apps: Vec<String>,
     share_apps: Vec<String>,
     camera_apps: Vec<String>,
@@ -77,9 +88,10 @@ impl Privacy {
         self.sharing
     }
 
-    /// Whether the tray's dot shows: a capture is shared or an app controls this computer.
+    /// Whether the tray's dot shows: a capture is shared or was taken within `STILL_HOLD`, or an
+    /// app controls this computer.
     pub fn dot_shown(&self) -> bool {
-        self.sharing || !self.controlling.is_empty()
+        self.sharing || self.still.is_some() || !self.controlling.is_empty()
     }
 
     pub fn mic_shown(&self) -> bool {
@@ -130,6 +142,8 @@ pub fn sharing_tip(state: &State) -> String {
     let mut lines = Vec::new();
     if p.sharing {
         lines.push(share_label(&p.share_apps, p.screen, p.window));
+    } else if let Some((screen, window)) = p.still {
+        lines.push(still_label(screen, window));
     }
     if !p.controlling.is_empty() {
         let mut names: Vec<String> = (p.controlling.iter())
@@ -140,6 +154,51 @@ pub fn sharing_tip(state: &State) -> String {
         lines.push(control_label(&names));
     }
     lines.join("\n")
+}
+
+fn still_label(screen: bool, window: bool) -> String {
+    match (screen, window) {
+        (true, true) => "Your screen and a window were captured",
+        (false, true) => "A window was captured",
+        _ => "Your screen was captured",
+    }
+    .into()
+}
+
+/// A client asked for a frame of a `window` or a screen: the dot shows for `STILL_HOLD` from now.
+pub fn frame_taken(state: &mut State, window: bool) {
+    let p = &mut state.privacy;
+    let was = p.still;
+    let (screen, win) = was.unwrap_or_default();
+    p.still = Some((screen || !window, win || window));
+    p.still_until = Some(Instant::now() + STILL_HOLD);
+    if p.still_timer.is_none() {
+        let timer = Timer::from_duration(STILL_HOLD);
+        match state
+            .handle
+            .insert_source(timer, |_, _, state| still_fired(state))
+        {
+            Ok(t) => state.privacy.still_timer = Some(t),
+            Err(e) => log::warn!("privacy: still timer: {e}"),
+        }
+    }
+    if state.privacy.still != was {
+        state.redraw_taskbars();
+    }
+}
+
+fn still_fired(state: &mut State) -> TimeoutAction {
+    let p = &mut state.privacy;
+    if let Some(until) = p.still_until
+        && until > Instant::now()
+    {
+        return TimeoutAction::ToInstant(until);
+    }
+    p.still = None;
+    p.still_until = None;
+    p.still_timer = None;
+    state.redraw_taskbars();
+    TimeoutAction::Drop
 }
 
 /// An app id's name in its desktop entry, else the id; an empty id is "An application".
@@ -771,7 +830,11 @@ mod tests {
             c.ext_frame(&mut h, &mut s);
             c.ext_end(&mut h, s);
         }
-        assert!(!h.state.privacy.sharing_shown(), "no sharing dot");
+        assert!(!h.state.privacy.sharing_shown(), "no sharing");
+        assert!(
+            h.state.privacy.dot_shown(),
+            "each one shows the dot for a moment"
+        );
         assert!(crate::captureborder::ongoing(&h.state).is_empty());
         crate::notifyview::show(&mut h.state, note(1));
         assert!(crate::notifyview::balloon_up(&h.state), "the balloon shows");
@@ -903,6 +966,27 @@ mod tests {
     }
 
     #[test]
+    fn a_screenshot_shows_the_dot_for_a_moment() {
+        let mut h = capturing();
+        screenshot(&mut h);
+        assert_eq!(dot(&h).as_deref(), Some("Your screen was captured"));
+        assert!(
+            !h.state.privacy.sharing_shown(),
+            "balloons don't wait for it"
+        );
+        for _ in 0..3 {
+            h.run_for(STILL_HOLD.mul_f32(0.6).as_millis() as u64);
+            screenshot(&mut h);
+            assert!(dot(&h).is_some(), "screenshots in a loop keep the dot");
+        }
+        let last = std::time::Instant::now();
+        let left =
+            (last + STILL_HOLD.mul_f32(1.3)).saturating_duration_since(std::time::Instant::now());
+        h.run_for(left.as_millis() as u64);
+        assert_eq!(dot(&h), None, "the dot goes once they stop");
+    }
+
+    #[test]
     fn an_apps_sender_shows_the_dot_naming_the_app_while_it_has_a_device() {
         use crate::inputproto::DEVICE_KEYBOARD;
         let mut h = capturing();
@@ -985,14 +1069,14 @@ mod tests {
     }
 
     #[test]
-    fn screenshots_every_few_seconds_after_a_cast_do_not_hold_the_dot() {
+    fn screenshots_every_few_seconds_after_a_cast_do_not_hold_balloons() {
         let mut h = capturing();
         let ended = cast_with_held_balloon(&mut h);
         for k in 1..=5 {
             run_until(&mut h, ended, 0.4 * k as f32);
             screenshot(&mut h);
         }
-        assert!(!h.state.privacy.sharing_shown(), "no sharing dot");
+        assert!(!h.state.privacy.sharing_shown(), "no sharing");
         assert!(crate::notifyview::balloon_up(&h.state), "the balloon shows");
     }
 }
