@@ -47,6 +47,10 @@ use tokio::sync::{Notify, mpsc, oneshot, watch};
 #[cfg(test)]
 use display::Grey;
 
+/// The filter without RUST_LOG. zbus logs each connection's handshake at info and passes its spans
+/// to `log` under `tracing::span`.
+const DEFAULT_FILTER: &str = "info,rustls=error,zbus=warn,tracing::span=warn";
+
 /// The logger, with `default_filter` unless RUST_LOG is set. ironrdp and sspi stay at info even
 /// under RUST_LOG=debug: ironrdp's debug records carry the mstshash cookie, a typed user name.
 fn logger(default_filter: &str, prefixed: bool) -> journal::Builder {
@@ -58,7 +62,7 @@ fn logger(default_filter: &str, prefixed: bool) -> journal::Builder {
 }
 
 fn main() -> ExitCode {
-    logger("info,rustls=error", journal::on_stream()).init();
+    logger(DEFAULT_FILTER, journal::on_stream()).init();
     ffmpeg::util::log::set_level(ffmpeg::util::log::Level::Error);
     let Some(user) = std::env::var("USER").ok().filter(|u| !u.is_empty()) else {
         log::error!("USER is not set");
@@ -655,5 +659,23 @@ mod tests {
         assert!(!enabled("ironrdp_acceptor::connection", log::Level::Debug));
         assert!(!enabled("sspi::ntlm", log::Level::Debug));
         assert!(enabled("ironrdp_server::server", log::Level::Info));
+    }
+
+    #[test]
+    fn the_default_filter_keeps_zbus_to_warnings() {
+        let logger = super::journal::Builder::new()
+            .parse_filters(super::DEFAULT_FILTER)
+            .build();
+        let enabled = |target, level| {
+            logger.enabled(&log::Metadata::builder().target(target).level(level).build())
+        };
+        assert!(enabled("reprise_rdp::handover", log::Level::Info));
+        for dep in ["zbus::connection::handshake::common", "tracing::span"] {
+            assert!(
+                !enabled(dep, log::Level::Info),
+                "{dep} does not log at info"
+            );
+            assert!(enabled(dep, log::Level::Warn), "{dep} logs warnings");
+        }
     }
 }
