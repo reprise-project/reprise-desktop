@@ -1261,6 +1261,14 @@ sharing and remote control grants yet.
   pick one. A dropped web link is typed
   shell-quoted like a path, and an ssh `Host` from `~/.ssh/config` is
   passed after `--`, one starting with `-` left out of the menu.
+- **Bus data.** What a program sends the compositor and `reprise-sound`
+  over the session bus (notifications, tray items and their menus,
+  LauncherEntry updates, media players' properties) is read only from a
+  body of 4 MiB or less, and only at the types Reprise uses: a byte array
+  or any other unused value is skipped unread, a dictionary keeps 64
+  entries, a string 4096 bytes, a string list 16 strings, and a tray menu
+  its first level, up to 256 rows. A player's title, artist and name show
+  256 characters at most.
 - **Launchers.** A `.desktop` file in a folder (the desktop, Explorer)
   runs only when it is executable and carries the `user.reprise.trusted`
   extended attribute, which Allow Launching sets. Extracting an archive

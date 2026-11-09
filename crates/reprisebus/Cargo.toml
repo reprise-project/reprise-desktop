@@ -19,7 +19,9 @@ futures-util.workspace = true
 log.workspace = true
 env_logger.workspace = true
 libc.workspace = true
+serde.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+zbus = { workspace = true, features = ["p2p"] }
