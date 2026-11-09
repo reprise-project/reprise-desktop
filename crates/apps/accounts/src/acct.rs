@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use zbus::{OwnedObjectPath, OwnedVariant};
@@ -23,8 +24,9 @@ const UID_MAX: u32 = 60000;
 
 const TYPE_STANDARD: i32 = 0;
 const TYPE_ADMIN: i32 = 1;
-/// AccountsService's `PasswordMode`: set at the next login.
-const MODE_SET_AT_LOGIN: i32 = 1;
+
+const PKEXEC: &str = "/usr/bin/pkexec";
+const CHAGE: &str = "/usr/bin/chage";
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct User {
@@ -77,8 +79,9 @@ pub enum Op {
         path: String,
         password: Zeroizing<String>,
     },
-    PasswordAtLogin {
-        path: String,
+    /// The account keeps its password and must pick a new one at its next login.
+    Expire {
+        login: String,
     },
     OwnPassword {
         current: Zeroizing<String>,
@@ -88,7 +91,9 @@ pub enum Op {
         login: String,
         real_name: String,
         admin: bool,
-        password: Option<Zeroizing<String>>,
+        password: Zeroizing<String>,
+        /// Ask for a new password at the first login.
+        expire: bool,
     },
     Delete {
         uid: u32,
@@ -290,9 +295,7 @@ async fn run(conn: &zbus::Connection, op: &Op) -> Result<(), Failure> {
             let hash = passwd::crypt(password)?;
             user_call(conn, path, "SetPassword", &(hash.as_str(), "")).await
         }
-        Op::PasswordAtLogin { path } => {
-            user_call(conn, path, "SetPasswordMode", &(MODE_SET_AT_LOGIN,)).await
-        }
+        Op::Expire { login } => expire(login),
         Op::OwnPassword { current, new } => {
             let (current, new) = (current.clone(), new.clone());
             // passwd talks over a terminal and waits on its own pace:
@@ -307,6 +310,7 @@ async fn run(conn: &zbus::Connection, op: &Op) -> Result<(), Failure> {
             real_name,
             admin,
             password,
+            expire: then_expire,
         } => {
             let t = if *admin { TYPE_ADMIN } else { TYPE_STANDARD };
             let path: OwnedObjectPath = interactive(
@@ -317,14 +321,29 @@ async fn run(conn: &zbus::Connection, op: &Op) -> Result<(), Failure> {
                 &(login.as_str(), real_name.as_str(), t),
             )
             .await?;
+            // A new account is locked until SetPassword gives it one.
             let path = path.as_str().to_string();
-            match password {
-                Some(p) => {
-                    let hash = passwd::crypt(p)?;
-                    user_call(conn, &path, "SetPassword", &(hash.as_str(), "")).await
-                }
-                None => user_call(conn, &path, "SetPasswordMode", &(MODE_SET_AT_LOGIN,)).await,
+            let unset = |why| {
+                Failure::Text(format!(
+                    "The account {login} was made, but its password was not set. Set one on \
+                     the Password tab of its Properties.{}",
+                    and_why(why)
+                ))
+            };
+            let hash = passwd::crypt(password).map_err(|e| unset(e.into()))?;
+            user_call(conn, &path, "SetPassword", &(hash.as_str(), ""))
+                .await
+                .map_err(unset)?;
+            if *then_expire {
+                expire(login).map_err(|why| {
+                    Failure::Text(format!(
+                        "The account {login} was made with its password, but it will not ask \
+                         for a new one at the first login.{}",
+                        and_why(why)
+                    ))
+                })?;
             }
+            Ok(())
         }
         Op::Delete { uid, remove_files } => {
             interactive::<_, ()>(
@@ -336,6 +355,48 @@ async fn run(conn: &zbus::Connection, op: &Op) -> Result<(), Failure> {
             )
             .await
         }
+    }
+}
+
+/// `chage -d 0` through pkexec: the password stays, and PAM asks for a new one once it is
+/// typed. AccountsService has no call that expires a password and keeps it.
+fn expire_command(login: &str) -> Command {
+    let mut c = Command::new(PKEXEC);
+    c.args([CHAGE, "-d", "0", "--", login])
+        .env("LC_ALL", "C")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+    c
+}
+
+fn expire(login: &str) -> Result<(), Failure> {
+    let out = expire_command(login)
+        .output()
+        .map_err(|e| format!("{PKEXEC}: {e}"))?;
+    let why = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    match out.status.code() {
+        Some(0) => Ok(()),
+        // pkexec's 126: the prompt dismissed; 127: not authorized, or pkexec failed.
+        Some(126) => Err(Failure::Dismissed),
+        Some(127) if why.is_empty() || why.contains("Not authorized") => {
+            Err(Failure::Text(reprisebus::polkit::NOT_ALLOWED.into()))
+        }
+        _ => {
+            log::error!("{CHAGE} -d 0 {login}: {}: {why}", out.status);
+            Err(Failure::Text(format!(
+                "The account {login} could not be set to ask for a new password.{}",
+                and_why(Failure::Text(why))
+            )))
+        }
+    }
+}
+
+/// `why` after a blank line, for the end of a message; nothing for a dismissed prompt.
+fn and_why(why: Failure) -> String {
+    match why {
+        Failure::Text(t) if !t.is_empty() => format!("\n\n{t}"),
+        _ => String::new(),
     }
 }
 
@@ -466,6 +527,14 @@ mod tests {
         });
         assert_eq!(done, Err(Failure::Dismissed));
         assert!(!file.exists(), "the saved picture is gone after the call");
+    }
+
+    #[test]
+    fn expiring_a_password_runs_chage_through_pkexec_and_sets_no_password() {
+        let c = expire_command("-bert");
+        assert_eq!(c.get_program(), PKEXEC);
+        let args: Vec<_> = c.get_args().map(|a| a.to_str().unwrap()).collect();
+        assert_eq!(args, [CHAGE, "-d", "0", "--", "-bert"]);
     }
 
     #[test]

@@ -149,7 +149,7 @@ impl AddUser {
                 AT_LOGIN,
                 X + 12,
                 py + 72,
-                "As&k for a password at the first login",
+                "As&k for a new password at the first login",
             ),
             Item::label(HINT, Rect::new(X, py + 100, CLIENT.0 - 2 * X, LINE_H), ""),
             Item::button(
@@ -193,11 +193,8 @@ impl AddUser {
         if let Some(p) = login_problem(self.text(LOGIN), &self.taken) {
             return Some(p);
         }
-        if self.at_login() {
-            return None;
-        }
         if self.text(PASSWORD).is_empty() {
-            Some("Type a password, or let them pick one at the first login.")
+            Some("Type a password for the account.")
         } else if self.text(PASSWORD) != self.text(CONFIRM) {
             Some("The passwords do not match.")
         } else {
@@ -206,9 +203,6 @@ impl AddUser {
     }
 
     fn sync(&mut self) {
-        let at_login = self.at_login();
-        self.form.set_enabled(PASSWORD, !at_login);
-        self.form.set_enabled(CONFIRM, !at_login);
         let problem = self.problem();
         let typed = !self.text(FULL).is_empty() || !self.text(LOGIN).is_empty();
         self.form
@@ -251,8 +245,8 @@ impl AddUser {
                     login: self.text(LOGIN).to_string(),
                     real_name: self.text(FULL).trim().to_string(),
                     admin: self.form.checked(ADMIN) == Some(true),
-                    password: (!self.at_login())
-                        .then(|| Zeroizing::new(self.text(PASSWORD).to_string())),
+                    password: Zeroizing::new(self.text(PASSWORD).to_string()),
+                    expire: self.at_login(),
                 })
             }
             form::Event::Pressed(CANCEL) | form::Event::Cancel => Outcome::Cancel,
@@ -349,10 +343,7 @@ mod tests {
         assert!(!create_live(&d));
         type_into(&mut d, FULL, "Sam Lee");
         assert_eq!(d.text(LOGIN), "sam", "filled in from the full name");
-        assert_eq!(
-            d.problem(),
-            Some("Type a password, or let them pick one at the first login.")
-        );
+        assert_eq!(d.problem(), Some("Type a password for the account."));
         type_into(&mut d, PASSWORD, "pw12345!");
         type_into(&mut d, CONFIRM, "pw12345?");
         assert_eq!(d.problem(), Some("The passwords do not match."));
@@ -367,34 +358,39 @@ mod tests {
                 login: "sam".into(),
                 real_name: "Sam Lee".into(),
                 admin: false,
-                password: Some(Zeroizing::new("pw12345!".into())),
+                password: Zeroizing::new("pw12345!".into()),
+                expire: false,
             })
         );
     }
 
+    fn tick(d: &mut AddUser, id: &str) {
+        d.form.focus_id(id);
+        let ev = d.form.key(form::Key::Space);
+        d.event(ev);
+    }
+
     #[test]
-    fn a_typed_user_name_stays_and_first_login_needs_no_password() {
+    fn a_new_account_always_gets_a_password_even_one_asked_for_again_at_login() {
         let mut d = AddUser::new(Vec::new());
         type_into(&mut d, LOGIN, "lee");
         type_into(&mut d, FULL, "Sam");
-        assert_eq!(d.text(LOGIN), "lee");
-        d.form.focus_id(AT_LOGIN);
-        let ev = d.form.key(form::Key::Space);
-        d.event(ev);
-        assert!(matches!(
-            d.form.item(PASSWORD).map(|i| &i.control),
-            Some(Control::Edit { enabled: false, .. })
-        ));
-        d.form.focus_id(ADMIN);
-        let ev = d.form.key(form::Key::Space);
-        d.event(ev);
+        assert_eq!(d.text(LOGIN), "lee", "a typed user name stays");
+        tick(&mut d, AT_LOGIN);
+        tick(&mut d, ADMIN);
+        assert_eq!(d.problem(), Some("Type a password for the account."));
+        assert!(!create_live(&d));
+        assert_eq!(d.event(form::Event::Default), Outcome::None);
+        type_into(&mut d, PASSWORD, "first-pw1");
+        type_into(&mut d, CONFIRM, "first-pw1");
         assert_eq!(
             d.event(form::Event::Default),
             Outcome::Create(Op::Create {
                 login: "lee".into(),
                 real_name: "Sam".into(),
                 admin: true,
-                password: None,
+                password: Zeroizing::new("first-pw1".into()),
+                expire: true,
             })
         );
     }

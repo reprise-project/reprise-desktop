@@ -327,10 +327,6 @@ impl Props {
     }
 
     fn sync(&mut self) {
-        let at_login = self.sheet.pages[TAB_PASSWORD].checked(AT_LOGIN) == Some(true);
-        let page = &mut self.sheet.pages[TAB_PASSWORD];
-        page.set_enabled(NEW, !at_login);
-        page.set_enabled(CONFIRM, !at_login);
         let dirty = self.dirty();
         self.sheet.set_apply_enabled(dirty);
     }
@@ -344,21 +340,18 @@ impl Props {
         let mut ops = Vec::new();
         let path = self.user.path.clone();
         let page = &self.sheet.pages[TAB_PASSWORD];
+        let at_login = page.checked(AT_LOGIN) == Some(true);
         if self.password_typed() {
-            let new = page.edit_text(NEW);
-            let at_login = page.checked(AT_LOGIN) == Some(true);
-            if self.user.you {
-                let current = page.edit_text(CURRENT);
-                if current.is_empty() {
-                    return Err("Type your current password first.".into());
-                }
-                if new.is_empty() {
-                    return Err("Type a new password.".into());
-                }
-            } else if !at_login && new.is_empty() {
+            let (new, confirm) = (page.edit_text(NEW), page.edit_text(CONFIRM));
+            if self.user.you && page.edit_text(CURRENT).is_empty() {
+                return Err("Type your current password first.".into());
+            }
+            // The box alone keeps the account's password; it only has to be changed at login.
+            let keeps = at_login && new.is_empty() && confirm.is_empty();
+            if new.is_empty() && !keeps {
                 return Err("Type a new password.".into());
             }
-            if !at_login && new != page.edit_text(CONFIRM) {
+            if new != confirm {
                 return Err("The new passwords do not match. Type them again.".into());
             }
         }
@@ -387,18 +380,22 @@ impl Props {
         }
         if self.password_typed() {
             let new = Zeroizing::new(page.edit_text(NEW).to_string());
-            ops.push(if self.user.you {
-                Op::OwnPassword {
+            if self.user.you {
+                ops.push(Op::OwnPassword {
                     current: Zeroizing::new(page.edit_text(CURRENT).to_string()),
                     new,
-                }
-            } else if page.checked(AT_LOGIN) == Some(true) {
-                Op::PasswordAtLogin { path }
-            } else {
-                Op::Password {
+                });
+            } else if !new.is_empty() {
+                ops.push(Op::Password {
                     path,
                     password: new,
-                }
+                });
+            }
+        }
+        // After any new password: setting one marks it changed today.
+        if at_login && !self.user.you {
+            ops.push(Op::Expire {
+                login: self.user.login.clone(),
             });
         }
         Ok(ops)
@@ -855,23 +852,63 @@ mod tests {
         assert!(!p.dirty());
     }
 
-    #[test]
-    fn another_accounts_password_is_set_or_left_to_their_next_login() {
-        let mut p = Props::new(user(false, false), None, false, TextUnits::ONE);
-        assert!(p.sheet.pages[TAB_PASSWORD].item(CURRENT).is_none());
+    fn tick_at_login(p: &mut Props) {
         let page = &mut p.sheet.pages[TAB_PASSWORD];
         page.focus_id(AT_LOGIN);
         let ev = page.key(form::Key::Space);
         p.event(propsheet::Event::Page(TAB_PASSWORD, ev), no_file);
+    }
+
+    #[test]
+    fn asking_for_a_new_password_at_the_next_login_keeps_the_one_they_have() {
+        let mut p = Props::new(user(false, true), None, false, TextUnits::ONE);
+        assert!(p.sheet.pages[TAB_PASSWORD].item(CURRENT).is_none());
+        tick_at_login(&mut p);
         assert!(matches!(
             p.sheet.pages[TAB_PASSWORD].item(NEW).map(|i| &i.control),
-            Some(Control::Edit { enabled: false, .. })
+            Some(Control::Edit { enabled: true, .. })
         ));
         assert_eq!(
             p.event(propsheet::Event::Apply, no_file),
-            Outcome::Apply(vec![Op::PasswordAtLogin {
-                path: "/u/1000".into()
-            }])
+            Outcome::Apply(vec![Op::Expire { login: "jo".into() }])
+        );
+    }
+
+    #[test]
+    fn a_new_password_for_another_account_can_be_asked_for_again_at_login() {
+        let mut p = Props::new(user(false, false), None, false, TextUnits::ONE);
+        type_into(&mut p, TAB_PASSWORD, NEW, "temp-pw1");
+        type_into(&mut p, TAB_PASSWORD, CONFIRM, "temp-pw1");
+        let set = Op::Password {
+            path: "/u/1000".into(),
+            password: Zeroizing::new("temp-pw1".into()),
+        };
+        tick_at_login(&mut p);
+        assert_eq!(
+            p.event(propsheet::Event::Apply, no_file),
+            Outcome::Apply(vec![set.clone(), Op::Expire { login: "jo".into() }]),
+            "the new password is set first, then made to need changing"
+        );
+        tick_at_login(&mut p);
+        assert_eq!(
+            p.event(propsheet::Event::Ok, no_file),
+            Outcome::ApplyAndClose(vec![set])
+        );
+    }
+
+    #[test]
+    fn a_half_typed_password_is_refused_with_the_box_ticked() {
+        let mut p = Props::new(user(false, false), None, false, TextUnits::ONE);
+        tick_at_login(&mut p);
+        type_into(&mut p, TAB_PASSWORD, CONFIRM, "temp-pw1");
+        assert_eq!(
+            p.event(propsheet::Event::Apply, no_file),
+            Outcome::Refuse("Type a new password.".into())
+        );
+        type_into(&mut p, TAB_PASSWORD, NEW, "temp-pw2");
+        assert_eq!(
+            p.event(propsheet::Event::Apply, no_file),
+            Outcome::Refuse("The new passwords do not match. Type them again.".into())
         );
     }
 
