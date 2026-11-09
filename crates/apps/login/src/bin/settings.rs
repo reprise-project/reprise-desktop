@@ -1,6 +1,5 @@
-//! `pkexec reprise-login-settings`: replaces `MACHINE_CONFIG` with the settings of the save request
-//! on stdin. Exit 0 is applied, 2 is refused with one reason per line on stderr, 3 is a file
-//! changed since the request's settings were read, 1 is any other failure.
+//! `pkexec reprise-login-settings`: replaces `MACHINE_CONFIG` with the save request on stdin.
+//! Its exits are listed in docs/programs.md.
 
 use std::ffi::CString;
 use std::io::Read as _;
@@ -71,6 +70,10 @@ fn main() -> ExitCode {
         Err(Error::Changed) => {
             eprintln!("{MACHINE_CONFIG} changed since the settings were read");
             return ExitCode::from(3);
+        }
+        Err(Error::Busy) => {
+            eprintln!("another save of {MACHINE_CONFIG} is under way; try again");
+            return ExitCode::from(1);
         }
         Err(Error::Io(e)) => {
             eprintln!("{MACHINE_CONFIG}: {e}");
