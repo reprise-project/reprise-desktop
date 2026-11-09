@@ -176,7 +176,9 @@ session on its first connection. A tray
 applet's autostart (`--tray`) finds the other
 session's copy running and leaves its window alone. A session started by a
 login manager always publishes, starts the target and takes the bus names
-over. After a text-login Reprise, it takes `org.freedesktop.ScreenSaver` too,
+over, and a text-login Reprise started before it publishes no more while it
+runs, so a later look change or Xwayland start there leaves the variables
+alone. After a text-login Reprise, it takes `org.freedesktop.ScreenSaver` too,
 so inhibits and the lock are its own, and the text-login session gets that
 name back when it ends. When the login manager's session runs first, a later
 text-login Reprise takes only names nobody holds, so its programs'
