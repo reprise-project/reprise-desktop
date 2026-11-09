@@ -127,7 +127,11 @@ impl DateTimeApp {
                         self.system = system;
                     }
                     if let Some(s) = &mut self.sheet {
-                        s.unapplied(&self.system);
+                        if failure.refused() {
+                            s.refused(&self.system, now());
+                        } else {
+                            s.unapplied(&self.system);
+                        }
                     }
                     if let Some(text) = failure.message() {
                         self.error = Some(MsgBox::new(
