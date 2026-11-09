@@ -79,10 +79,12 @@ pub enum DialogAction {
     },
     EndProgram(i32),
     TurnOn(crate::keyfilter::Aid),
-    /// The script question's answer for `path`: run it as `run` says, or (None) open it in Notepad.
+    /// The run question's answer for `path`, about what `asked` says: run it (a script as `run`
+    /// says), or (None) open it in Notepad.
     Script {
         path: std::path::PathBuf,
         run: Option<reprisefs::program::ScriptOpen>,
+        asked: reprisefs::program::Asked,
     },
     /// Answer the too-big-for-the-bin question, then ask the next or delete the batch.
     TooBig {
@@ -529,6 +531,7 @@ pub enum Outcome {
     Script {
         path: std::path::PathBuf,
         run: Option<reprisefs::program::ScriptOpen>,
+        asked: reprisefs::program::Asked,
     },
     /// Run what the user typed in the field: spawned like `Spawn`, and
     /// remembered in the Run history.

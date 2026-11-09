@@ -51,9 +51,12 @@ pub struct Confirm {
     /// Undo stopped at an item its Recycle Bin refuses: Yes undoes again, erasing it
     /// ([`reprisefs::undo::UndoStack::undo_erasing`]).
     pub undo_erase: bool,
-    /// The question before running the script `paths[0]` (`confirm_scripts`): Run runs it as
-    /// this says, Open in Notepad opens it there.
-    pub script: Option<reprisefs::program::ScriptOpen>,
+    /// The question before running `paths[0]` (`confirm_scripts`), about what [`Asked`] says:
+    /// Run runs a script as the [`ScriptOpen`] says, Open in Notepad opens it there.
+    ///
+    /// [`Asked`]: reprisefs::program::Asked
+    /// [`ScriptOpen`]: reprisefs::program::ScriptOpen
+    pub script: Option<(reprisefs::program::ScriptOpen, reprisefs::program::Asked)>,
     /// An item of the job counting on this meter failed and the job holds for the answer:
     /// Skip, Retry or Cancel ([`reprisefs::progress::Decision`]).
     pub job: Option<std::sync::Arc<reprisefs::progress::Meter>>,
@@ -64,8 +67,10 @@ pub(crate) const FAILED_BUTTONS: [&str; 3] = ["&Skip", "&Retry", "Cancel"];
 
 impl Confirm {
     pub(crate) fn buttons(&self) -> Vec<String> {
+        if let Some((_, asked)) = self.script {
+            return asked.buttons().iter().map(|s| s.to_string()).collect();
+        }
         let labels: &[&str] = match &self.too_big {
-            _ if self.script.is_some() => &reprisefs::program::ASK_BUTTONS,
             _ if self.job.is_some() => &FAILED_BUTTONS,
             Some(q) if q.many() => &[dlgtemplate::YES, "Yes to &All", dlgtemplate::NO, "Cancel"],
             _ => &[dlgtemplate::YES, dlgtemplate::NO],
@@ -399,11 +404,13 @@ impl Explorer {
         }
     }
 
-    /// Ask whether to run the script at `path` (as `open` says) or open it in Notepad.
+    /// Ask whether to run the file at `path`, a script as `open` says, or (a script) open it in
+    /// Notepad.
     pub(crate) fn ask_run(
         &mut self,
         path: &std::path::Path,
         open: reprisefs::program::ScriptOpen,
+        asked: reprisefs::program::Asked,
         ctx: &mut Ctx,
     ) -> Reply {
         if self.holds_a_job() {
@@ -412,7 +419,7 @@ impl Explorer {
         let name = path.file_name().unwrap_or_default().to_string_lossy();
         self.dialog = Some(Dialog::Confirm(Confirm {
             title: reprisefs::program::ASK_TITLE,
-            text: reprisefs::program::ask_text(&name),
+            text: asked.text(&name),
             min_text_h: None,
             template: Template::MessageBox,
             icon: crate::chrome_icon(ctx, &["dialog-warning", "dialog-question"], 32),
@@ -423,14 +430,14 @@ impl Explorer {
             focus: None,
             too_big: None,
             undo_erase: false,
-            script: Some(open),
+            script: Some((open, asked)),
             job: None,
         }));
         Reply::redraw_all()
     }
 
     /// The answer to [`Explorer::ask_run`]: the button `out` pressed, by its place in
-    /// [`reprisefs::program::ASK_BUTTONS`].
+    /// [`reprisefs::program::Asked::buttons`].
     fn script_answered(&mut self, out: form::Event, ctx: &mut Ctx) -> Reply {
         let pick = match out {
             form::Event::Default => 0,
@@ -444,7 +451,7 @@ impl Explorer {
             _ => return Reply::redraw(),
         };
         let Some(Dialog::Confirm(Confirm {
-            script: Some(open),
+            script: Some((open, asked)),
             mut paths,
             ..
         })) = self.dialog.take()
@@ -454,9 +461,10 @@ impl Explorer {
         let Some(path) = paths.pop() else {
             return Reply::redraw_all();
         };
+        let notepad = asked == reprisefs::program::Asked::Script;
         let reply = match pick {
             0 => self.open_file(&path, true, open, reprisefs::program::Confirm::Allow, ctx),
-            1 => Reply {
+            1 if notepad => Reply {
                 spawn: vec![reprisefs::program::notepad_argv(&path)],
                 spawn_app: Some("reprise-notepad".into()),
                 ..Reply::default()

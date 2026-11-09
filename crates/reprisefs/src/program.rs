@@ -135,8 +135,8 @@ pub fn run_rows(program: Program, open: ScriptOpen) -> Option<[(ScriptOpen, bool
     (program == Program::Script).then(|| both.map(|o| (o, o == open)))
 }
 
-/// How opening a program file treats the `confirm_scripts` question
-/// (Run / Open in Notepad / Cancel), which only a script is asked.
+/// How opening a program file, or a file its type's program runs, treats the `confirm_scripts`
+/// question ([`Asked`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Confirm {
     /// Ask unless Run was picked for this file before.
@@ -154,11 +154,52 @@ impl Confirm {
     }
 }
 
-/// Whether opening the `program` at `path` asks first, as `how` says. [`Confirm::Allow`] marks
-/// the file ([`crate::apps::set_trusted`]) so it runs bare from then on; a file system without
-/// `user.` xattrs asks again next time. Reads and writes an xattr, so a host calls it off its
-/// event loop.
-pub fn asks_first(path: &Path, program: Program, how: Confirm) -> bool {
+/// What the run question is about, which picks its text and buttons and what Run does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Asked {
+    /// A `#!` script: Run, Open in Notepad, Cancel.
+    Script,
+    /// An ELF program: Run, Cancel.
+    Binary,
+    /// A file whose type's program runs it ([`runs_in_its_program`]): Run opens it there.
+    Typed,
+}
+
+impl Asked {
+    pub fn of(program: Program) -> Asked {
+        match program {
+            Program::Script => Asked::Script,
+            Program::Binary => Asked::Binary,
+        }
+    }
+
+    /// The buttons, Run first and the default.
+    pub fn buttons(self) -> &'static [&'static str] {
+        match self {
+            Asked::Script => &["&Run", "Open in &Notepad", "Cancel"],
+            Asked::Binary | Asked::Typed => &["&Run", "Cancel"],
+        }
+    }
+
+    /// The text for the file `name`.
+    pub fn text(self, name: &str) -> String {
+        match self {
+            Asked::Script => format!(
+                "\"{name}\" is a script. Running it can change or delete your files.\n\n\
+                 Do you want to run it, or open it in Notepad to read it first?"
+            ),
+            Asked::Binary | Asked::Typed => format!(
+                "\"{name}\" is a program. Running it can change or delete your files.\n\n\
+                 Do you want to run it?"
+            ),
+        }
+    }
+}
+
+/// Whether opening `path` asks first, as `how` says. [`Confirm::Allow`] marks the file
+/// ([`crate::apps::set_trusted`]) so it opens bare from then on; a file system without `user.`
+/// xattrs asks again next time. Reads and writes an xattr, so a host calls it off its event loop.
+pub fn asks_first(path: &Path, how: Confirm) -> bool {
     match how {
         Confirm::Skip => false,
         Confirm::Allow => {
@@ -167,23 +208,34 @@ pub fn asks_first(path: &Path, program: Program, how: Confirm) -> bool {
             }
             false
         }
-        Confirm::Ask => program == Program::Script && !crate::apps::is_trusted(path),
+        Confirm::Ask => !crate::apps::is_trusted(path),
     }
+}
+
+/// Types whose program runs the file rather than showing it: `.exe`, `.msi`, `.bat` and `.lnk`
+/// files under Wine, Java archives, AppImages and executables named by type.
+const RUNNABLE_TYPES: [&str; 12] = [
+    "application/x-msdownload",
+    "application/x-ms-dos-executable",
+    "application/x-dosexec",
+    "application/x-ms-ne-executable",
+    "application/x-lx-executable",
+    "application/x-msi",
+    "application/x-bat",
+    "application/x-ms-shortcut",
+    "application/java-archive",
+    "application/x-java-archive",
+    "application/vnd.appimage",
+    "application/x-executable",
+];
+
+/// Whether `mime`'s program runs a file of that type, so opening it asks first as a program does.
+pub fn runs_in_its_program(mime: &str) -> bool {
+    RUNNABLE_TYPES.contains(&mime.to_ascii_lowercase().as_str())
 }
 
 /// The question's caption.
 pub const ASK_TITLE: &str = "Open File";
-
-/// The question's buttons, Run first and the default.
-pub const ASK_BUTTONS: [&str; 3] = ["&Run", "Open in &Notepad", "Cancel"];
-
-/// The question's text for the script `name`.
-pub fn ask_text(name: &str) -> String {
-    format!(
-        "\"{name}\" is a script. Running it can change or delete your files.\n\n\
-         Do you want to run it, or open it in Notepad to read it first?"
-    )
-}
 
 /// The argument vector that opens the file at `path` in Notepad, the question's second button.
 pub fn notepad_argv(path: &Path) -> Vec<OsString> {
@@ -508,19 +560,54 @@ mod tests {
     }
 
     #[test]
-    fn a_script_asks_until_run_is_picked_and_a_binary_never_asks() {
+    fn a_script_or_a_binary_asks_until_run_is_picked() {
         let t = tempfile::tempdir().unwrap();
-        let path = t.path().join("a.sh");
-        std::fs::write(&path, "#!/bin/sh\n").unwrap();
-        assert!(asks_first(&path, Program::Script, Confirm::Ask));
-        assert!(!asks_first(&path, Program::Binary, Confirm::Ask));
-        assert!(!asks_first(&path, Program::Script, Confirm::Skip));
-        assert!(!asks_first(&path, Program::Script, Confirm::Allow));
-        if crate::apps::is_trusted(&path) {
-            assert!(
-                !asks_first(&path, Program::Script, Confirm::Ask),
-                "Run is remembered"
-            );
+        for (name, bytes) in [
+            ("a.sh", &b"#!/bin/sh\n"[..]),
+            ("a.pdf", &b"\x7fELF\x02\x01\x01\0"[..]),
+        ] {
+            let path = t.path().join(name);
+            std::fs::write(&path, bytes).unwrap();
+            assert!(asks_first(&path, Confirm::Ask), "{name}");
+            assert!(!asks_first(&path, Confirm::Skip), "{name}");
+            assert!(!asks_first(&path, Confirm::Allow), "{name}");
+            if crate::apps::is_trusted(&path) {
+                assert!(
+                    !asks_first(&path, Confirm::Ask),
+                    "Run is remembered for {name}"
+                );
+            }
         }
+    }
+
+    #[test]
+    fn an_exe_an_msi_a_java_archive_and_an_appimage_run_in_their_programs() {
+        for mime in [
+            "application/x-msdownload",
+            "application/x-msi",
+            "application/java-archive",
+            "application/vnd.appimage",
+            "Application/X-Executable",
+        ] {
+            assert!(runs_in_its_program(mime), "{mime}");
+        }
+        for mime in ["application/pdf", "text/x-shellscript", "application/zip"] {
+            assert!(!runs_in_its_program(mime), "{mime}");
+        }
+    }
+
+    #[test]
+    fn a_script_question_offers_notepad_and_a_program_question_run_or_cancel() {
+        assert_eq!(
+            Asked::Script.buttons(),
+            ["&Run", "Open in &Notepad", "Cancel"]
+        );
+        assert_eq!(Asked::Binary.buttons(), ["&Run", "Cancel"]);
+        assert_eq!(Asked::Typed.buttons(), ["&Run", "Cancel"]);
+        assert_eq!(
+            Asked::of(Program::Binary).text("a.pdf"),
+            "\"a.pdf\" is a program. Running it can change or delete your files.\n\n\
+             Do you want to run it?"
+        );
     }
 }
