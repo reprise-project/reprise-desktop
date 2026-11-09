@@ -160,7 +160,8 @@ fn start(state: &mut State, goal: Goal, cmd: Option<String>, critical: bool, ori
         })
         .map_err(|e| log::warn!("session end: no report channel: {}", e.error))
         .ok();
-    let stop = spawn_poll(tx, !state.env.defers_user_units);
+    let ask_portal = asks_portal(&state.env, crate::spawn::another_session_runs_reprise);
+    let stop = spawn_poll(tx, ask_portal);
     let timer = state
         .handle
         .insert_source(Timer::from_duration(PROMPT_AFTER), |_, _, state| {
@@ -882,8 +883,13 @@ fn sync_prompt(state: &mut State) {
     }
 }
 
-/// Polls the inhibitors; `ask_portal` is off beside another Reprise session, whose programs the
-/// shared portal's inhibitors and monitors belong to.
+/// Whether a session end asks the portal, moving its monitors to query-end: not beside another
+/// Reprise session of the user, which shares the portal, whichever of the two started first.
+fn asks_portal(env: &crate::spawn::SessionEnv, another_runs: impl FnOnce() -> bool) -> bool {
+    !env.defers_user_units && !another_runs()
+}
+
+/// Polls the inhibitors, and the portal's with `ask_portal`.
 fn spawn_poll(
     tx: channel::Sender<Vec<Holder>>,
     ask_portal: bool,
@@ -1179,6 +1185,24 @@ mod tests {
         );
         go_on(&mut h.state, Goal::LogOff, None, false);
         assert!(h.state.ended_clients.is_empty(), "its clients stay");
+    }
+
+    #[test]
+    fn a_session_end_beside_another_reprise_session_leaves_the_shared_portal_running() {
+        let alone = crate::spawn::SessionEnv::default();
+        assert!(asks_portal(&alone, || false), "the only session asks");
+        assert!(
+            !asks_portal(&alone, || true),
+            "a session another one started beside leaves it"
+        );
+        let deferring = crate::spawn::SessionEnv {
+            defers_user_units: true,
+            ..alone
+        };
+        assert!(
+            !asks_portal(&deferring, || true),
+            "a deferring one leaves it"
+        );
     }
 
     #[test]

@@ -398,8 +398,11 @@ locks the computer's side first, then calls `Disconnect` on
 `org.reprise.RemoteDesktop` on the user's session bus. A committed Log Off,
 Turn Off or Restart with a client connected calls `SessionEnding` there,
 which ends every client as logged off. Any process of the user can call
-either method and drop that user's clients; the session keeps running, and
-no other user can reach the bus. A process in a Flatpak sandbox is refused
+`Disconnect` and drop that user's clients; the session keeps running, and
+no other user can reach the bus. The server takes `SessionEnding` only from
+the compositor whose display it serves, so another Reprise session of the
+same user logging off leaves its clients connected. A process in a Flatpak
+sandbox is refused
 these calls and the client list, and a change to the list is signalled
 without the addresses.
 
