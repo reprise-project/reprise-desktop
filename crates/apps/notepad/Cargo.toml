@@ -24,4 +24,5 @@ log.workspace = true
 reprisebus = { path = "../../reprisebus" }
 
 [dev-dependencies]
+libc.workspace = true
 tempfile.workspace = true

@@ -1,9 +1,10 @@
 //! The launcher trust marker: `user.reprise.trusted` holding HMAC-SHA256 of the file's
-//! filesystem id and inode under a per-user key, so an archive or another user's copy cannot
-//! carry it.
+//! filesystem id, inode and contents under a per-user key, so an archive, another user's copy or
+//! an edit cannot carry it.
 use hmac::{Hmac, KeyInit, Mac};
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
 use std::io;
+use std::os::fd::AsRawFd;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
@@ -11,52 +12,85 @@ pub(crate) const TRUST_XATTR: &std::ffi::CStr = c"user.reprise.trusted";
 const KEY_LEN: usize = 32;
 type Key = [u8; KEY_LEN];
 
-/// A file's `(f_fsid, inode)`. st_dev is left out: btrfs subvolumes and NVMe or dm devices
-/// can get another number at each boot, while f_fsid follows the filesystem's UUID.
-type Ident = (libc::c_ulong, u64);
+/// What the marker covers: the file's `f_fsid` and inode, and the SHA-256 of its contents.
+/// st_dev is left out: btrfs subvolumes and NVMe or dm devices can get another number at each
+/// boot, while f_fsid follows the filesystem's UUID.
+#[derive(Debug, PartialEq, Eq)]
+struct Ident {
+    fsid: libc::c_ulong,
+    ino: u64,
+    contents: [u8; 32],
+}
 
-fn mac(key: &Key, (fsid, ino): Ident) -> Hmac<Sha256> {
+fn mac(key: &Key, id: &Ident) -> Hmac<Sha256> {
     let mut m = Hmac::<Sha256>::new_from_slice(key).expect("HMAC takes any key length");
-    m.update(format!("{fsid:x}:{ino}").as_bytes());
+    m.update(format!("{:x}:{}:", id.fsid, id.ino).as_bytes());
+    m.update(&id.contents);
     m
 }
 
-fn fsid_of(rc: libc::c_int, buf: &libc::statvfs) -> io::Result<libc::c_ulong> {
-    if rc == 0 {
-        Ok(buf.f_fsid)
-    } else {
-        Err(io::Error::last_os_error())
-    }
+/// The regular file at `path` (followed through a symlink), open to read; the open does not
+/// block on a FIFO.
+fn open(path: &Path) -> io::Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY)
+        .open(path)
 }
 
 fn ident(path: &Path) -> io::Result<Ident> {
-    let c = cpath(path)?;
-    // SAFETY: an all-zero statvfs is a valid value of a plain C struct.
-    let mut buf: libc::statvfs = unsafe { std::mem::zeroed() };
-    // SAFETY: `c` is NUL-terminated and `buf` is writable, both live across the call.
-    let rc = unsafe { libc::statvfs(c.as_ptr(), &mut buf) };
-    Ok((fsid_of(rc, &buf)?, std::fs::metadata(path)?.ino()))
+    ident_fd(&open(path)?)
 }
 
+/// The [`Ident`] of the open `file`, whose contents are read from the start without moving its
+/// offset. Reads the whole file.
 fn ident_fd(file: &std::fs::File) -> io::Result<Ident> {
-    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::FileExt;
+    let meta = file.metadata()?;
+    if !meta.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "not a regular file",
+        ));
+    }
     // SAFETY: an all-zero statvfs is a valid value of a plain C struct.
     let mut buf: libc::statvfs = unsafe { std::mem::zeroed() };
     // SAFETY: the fd is open and `buf` is writable across the call.
-    let rc = unsafe { libc::fstatvfs(file.as_raw_fd(), &mut buf) };
-    Ok((fsid_of(rc, &buf)?, file.metadata()?.ino()))
+    if unsafe { libc::fstatvfs(file.as_raw_fd(), &mut buf) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let mut hash = Sha256::new();
+    let mut chunk = vec![0u8; 64 * 1024];
+    let mut at = 0;
+    loop {
+        match file.read_at(&mut chunk, at) {
+            Ok(0) => break,
+            Ok(n) => {
+                hash.update(&chunk[..n]);
+                at += n as u64;
+            }
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(Ident {
+        fsid: buf.f_fsid,
+        ino: meta.ino(),
+        contents: hash.finalize().into(),
+    })
 }
 
-fn value(key: &Key, id: Ident) -> Vec<u8> {
+fn value(key: &Key, id: &Ident) -> Vec<u8> {
     mac(key, id).finalize().into_bytes().to_vec()
 }
 
 /// Whether `value` is the marker for the file at `path`.
 pub(crate) fn verifies(value: &[u8], path: &Path) -> bool {
-    key().is_ok_and(|k| ident(path).is_ok_and(|id| verifies_with(&k, value, id)))
+    key().is_ok_and(|k| ident(path).is_ok_and(|id| verifies_with(&k, value, &id)))
 }
 
-fn verifies_with(key: &Key, value: &[u8], id: Ident) -> bool {
+fn verifies_with(key: &Key, value: &[u8], id: &Ident) -> bool {
     mac(key, id).verify_slice(value).is_ok()
 }
 
@@ -130,57 +164,47 @@ fn read_key(path: &Path) -> io::Result<Key> {
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "trust.key is not 32 bytes"))
 }
 
+#[cfg(test)]
 fn cpath(path: &Path) -> io::Result<std::ffi::CString> {
     use std::os::unix::ffi::OsStrExt;
     std::ffi::CString::new(path.as_os_str().as_bytes())
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "path holds a NUL"))
 }
 
-/// Whether the `.desktop` file at `path` (followed through a symlink) is one the user
-/// allowed to run.
+/// Whether the file at `path` (followed through a symlink) is one the user allowed to run, as it
+/// was then. Reads the whole file.
 pub fn is_trusted(path: &Path) -> bool {
     key().is_ok_and(|k| is_trusted_with(&k, path))
 }
 
 fn is_trusted_with(key: &Key, path: &Path) -> bool {
-    let (Ok(c), Ok(id)) = (cpath(path), ident(path)) else {
+    let Ok(file) = open(path) else {
+        return false;
+    };
+    let Ok(id) = ident_fd(&file) else {
         return false;
     };
     let mut buf = [0u8; 64];
-    // SAFETY: `c` and the attribute name are NUL-terminated and `buf` is
-    // writable for its length, all live across the call.
+    // SAFETY: the fd is open, the attribute name is NUL-terminated and `buf` is writable for
+    // its length, all live across the call.
     let n = unsafe {
-        libc::getxattr(
-            c.as_ptr(),
+        libc::fgetxattr(
+            file.as_raw_fd(),
             TRUST_XATTR.as_ptr(),
             buf.as_mut_ptr().cast(),
             buf.len(),
         )
     };
-    usize::try_from(n).is_ok_and(|n| verifies_with(key, &buf[..n], id))
+    usize::try_from(n).is_ok_and(|n| verifies_with(key, &buf[..n], &id))
 }
 
+/// Mark the file at `path` trusted as it is now; any later change to its contents drops it.
 pub fn set_trusted(path: &Path) -> io::Result<()> {
-    let c = cpath(path)?;
-    let v = value(&key()?, ident(path)?);
-    // SAFETY: `c` and the name are NUL-terminated and the value is
-    // readable for its length, all live across the call.
-    let rc = unsafe {
-        libc::setxattr(
-            c.as_ptr(),
-            TRUST_XATTR.as_ptr(),
-            v.as_ptr().cast(),
-            v.len(),
-            0,
-        )
-    };
-    if rc == 0 {
-        Ok(())
-    } else {
-        Err(io::Error::last_os_error())
-    }
+    let file = open(path)?;
+    mark(&file, &file)
 }
 
+/// Allow the `.desktop` file at `path` to launch: the execute bit and the trust marker.
 pub fn allow_launching(path: &Path) -> io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
     let mode = std::fs::metadata(path)?.permissions().mode();
@@ -188,14 +212,21 @@ pub fn allow_launching(path: &Path) -> io::Result<()> {
     set_trusted(path)
 }
 
+/// [`set_trusted`] for an open `file`, which may be open for writing only; its contents are read
+/// through a second, read-only open of the same file.
 pub(crate) fn set_trusted_fd(file: &std::fs::File) -> io::Result<()> {
-    use std::os::fd::AsRawFd;
-    let v = value(&key()?, ident_fd(file)?);
+    let again = open(Path::new(&format!("/proc/self/fd/{}", file.as_raw_fd())))?;
+    mark(&again, file)
+}
+
+/// Mark `target` with the marker of `read`, an open of the same file to read.
+fn mark(read: &std::fs::File, target: &std::fs::File) -> io::Result<()> {
+    let v = value(&key()?, &ident_fd(read)?);
     // SAFETY: the fd is open for the call, the name is NUL-terminated and
     // the value is readable for its length.
     let rc = unsafe {
         libc::fsetxattr(
-            file.as_raw_fd(),
+            target.as_raw_fd(),
             TRUST_XATTR.as_ptr(),
             v.as_ptr().cast(),
             v.len(),
@@ -270,6 +301,21 @@ mod tests {
     }
 
     #[test]
+    fn editing_a_trusted_file_in_place_drops_its_trust() {
+        use std::os::unix::fs::MetadataExt;
+        let t = tempfile::tempdir().unwrap();
+        let Some(path) = marked(t.path()) else { return };
+        let ino = std::fs::metadata(&path).unwrap().ino();
+        std::fs::write(&path, "[Desktop Entry]\nExec=false\n").unwrap();
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().ino(),
+            ino,
+            "the same inode"
+        );
+        assert!(!is_trusted(&path));
+    }
+
+    #[test]
     fn a_marker_copied_raw_onto_another_file_is_not_trusted() {
         let t = tempfile::tempdir().unwrap();
         let Some(path) = marked(t.path()) else { return };
@@ -280,12 +326,34 @@ mod tests {
     }
 
     #[test]
-    fn the_marker_covers_the_filesystem_id_and_inode_alone() {
+    fn the_marker_covers_the_filesystem_id_the_inode_and_the_contents() {
         let k = key().unwrap();
-        let v = value(&k, (0x1234_5678_9abc_def0, 42));
-        assert!(verifies_with(&k, &v, (0x1234_5678_9abc_def0, 42)));
-        assert!(!verifies_with(&k, &v, (0x1234_5678_9abc_def1, 42)));
-        assert!(!verifies_with(&k, &v, (0x1234_5678_9abc_def0, 43)));
+        let id = |fsid, ino, contents| Ident {
+            fsid,
+            ino,
+            contents,
+        };
+        let v = value(&k, &id(0x1234_5678_9abc_def0, 42, [1; 32]));
+        assert!(verifies_with(
+            &k,
+            &v,
+            &id(0x1234_5678_9abc_def0, 42, [1; 32])
+        ));
+        assert!(!verifies_with(
+            &k,
+            &v,
+            &id(0x1234_5678_9abc_def1, 42, [1; 32])
+        ));
+        assert!(!verifies_with(
+            &k,
+            &v,
+            &id(0x1234_5678_9abc_def0, 43, [1; 32])
+        ));
+        assert!(!verifies_with(
+            &k,
+            &v,
+            &id(0x1234_5678_9abc_def0, 42, [2; 32])
+        ));
     }
 
     #[test]

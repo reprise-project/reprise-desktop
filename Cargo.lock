@@ -4479,6 +4479,7 @@ dependencies = [
 name = "reprise-notepad"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "log",
  "repriseapp",
  "reprisebus",
