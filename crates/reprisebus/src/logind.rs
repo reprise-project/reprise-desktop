@@ -32,6 +32,19 @@ pub fn service_of_session(record: &str) -> Option<&str> {
     (!service.is_empty()).then_some(service)
 }
 
+/// `TYPE=` of logind's record of a session: "wayland" for a login manager's, "tty" for a text
+/// login.
+pub fn type_of_session(record: &str) -> Option<&str> {
+    let kind = record.lines().find_map(|l| l.strip_prefix("TYPE="))?;
+    (!kind.is_empty()).then_some(kind)
+}
+
+/// `MONOTONIC=` of logind's record of a session: when it opened, in µs of `CLOCK_MONOTONIC`.
+pub fn opened_of_session(record: &str) -> Option<u64> {
+    let opened = record.lines().find_map(|l| l.strip_prefix("MONOTONIC="))?;
+    opened.parse().ok()
+}
+
 /// logind's record of session `id`; empty when there is none.
 pub fn session_record(id: &str) -> String {
     std::fs::read_to_string(format!("/run/systemd/sessions/{id}")).unwrap_or_default()
@@ -82,5 +95,14 @@ mod tests {
         assert_eq!(online_sessions(record), ["11", "3"]);
         assert!(online_sessions("NAME=ann\nONLINE_SESSIONS=\n").is_empty());
         assert!(online_sessions("NAME=ann\n").is_empty());
+    }
+
+    #[test]
+    fn a_sessions_type_and_opening_time_are_its_logind_record_keys() {
+        let record = "UID=1001\nTYPE=wayland\nREALTIME=1794209212031473\nMONOTONIC=10194893\n";
+        assert_eq!(type_of_session(record), Some("wayland"));
+        assert_eq!(opened_of_session(record), Some(10_194_893));
+        assert_eq!(type_of_session("TYPE=\n"), None);
+        assert_eq!(opened_of_session("UID=1001\n"), None);
     }
 }

@@ -301,6 +301,9 @@ impl RdpServerDisplay for Display {
         if self.session.is_none() {
             let lock = self.join();
             let picture = probed(&mut self.picture).await;
+            let serving = tokio::task::spawn_blocking(crate::wayland::portal_ready).await;
+            (serving.unwrap_or_else(|e| Err(e.to_string())))
+                .map_err(|e| unshared("the screen is not shared", e))?;
             let opened = portal::open_when_ready(portal::open, self.links.portal_wait).await;
             let mut grant = opened.map_err(|e| unshared("the screen is not shared", e))?;
             for screen in &grant.screens {
