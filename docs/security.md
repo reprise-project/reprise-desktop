@@ -154,7 +154,10 @@ copied it. KeePassXC, KWalletManager, the Bitwarden desktop app and
 saved passwords and whatever is copied in a private window.
 A marked copy also leaves the clipboard when its program quits. An unmarked
 copy is kept like any other, a password copied out of a text file
-included.
+included. A Remote Desktop client's copy is marked when the client lists
+`ExcludeClipboardContentFromMonitorProcessing` or
+`CanIncludeInClipboardHistory` with it (see
+[Remote Desktop](#remote-desktop)).
 
 Nothing is recorded while the desktop is locked, and Super+V doesn't open.
 What was recorded before the lock stays until the session ends or
@@ -510,7 +513,20 @@ the client still holds. A copy on either side only lists its formats to the
 other, and `reprise-rdp` fetches the bytes when a program on the other side
 reads them. With `[clipboard] history` on, Reprise reads every new copy for
 the history, so a client's text or picture crosses as soon as it is copied.
-Text and pictures cross, files and the primary selection don't. Text over
+Text and pictures cross, files and the primary selection don't.
+A session copy offering `x-kde-passwordManagerHint` reaches the client
+listing the registered formats `ExcludeClipboardContentFromMonitorProcessing`,
+`CanIncludeInClipboardHistory` and `CanUploadToCloudClipboard`, answered
+with no data, 0 and 0, which keep it out of the client's clipboard history
+and cloud clipboard. The hint's value isn't read, so any value counts, and
+the hint itself isn't listed. A client copy listing
+`ExcludeClipboardContentFromMonitorProcessing` or
+`CanIncludeInClipboardHistory` is offered in the session with the hint, read
+as `secret` without asking the client, so the history skips it and its
+text doesn't cross until a program pastes it.
+`CanIncludeInClipboardHistory` counts whatever its value, as reading it would
+ask the client for data before any paste. FreeRDP's X11 client lists only
+formats it knows, so a mark set on such a client doesn't cross. Text over
 16 MiB and pictures over 64 MiB are refused, measured on the wire, and a
 clipboard message over 128 MiB ends the client's connection. The server's
 units cap its memory at 1 GiB (`MemoryMax=`).

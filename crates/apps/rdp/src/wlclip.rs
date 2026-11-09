@@ -467,7 +467,7 @@ pub(crate) fn read_for_client(pipe: &OwnedFd, mime: &str, kind: Kind) -> Option<
     // UTF-8 text is at most 3/2 the size of its UTF-16.
     let read_limit = match kind {
         Kind::Text => kind.limit() / 2 * 3,
-        Kind::Dib | Kind::Png => kind.limit(),
+        Kind::Dib | Kind::Png | Kind::Mark => kind.limit(),
     };
     match read_bounded(pipe, read_limit, PASTE_TIMEOUT) {
         Ok(bytes) => match kind.to_client(mime, &bytes) {
