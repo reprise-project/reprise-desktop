@@ -1323,14 +1323,25 @@ fn write_document_replaces_a_symlink_target_and_writes_hard_links_in_place() {
 }
 
 #[test]
-fn write_document_keeps_xattrs() {
+fn write_document_keeps_xattrs_but_drops_the_trust_marker() {
     let dir = std::env::temp_dir().join(format!("reprise-notepad-xattr-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("mkdir");
     let doc = dir.join("doc.txt");
     std::fs::write(&doc, "old").expect("write");
+    let c = std::ffi::CString::new(doc.as_os_str().as_encoded_bytes()).expect("path");
+    // SAFETY: both strings are NUL-terminated and the value is readable for its length.
+    let set = unsafe {
+        libc::setxattr(
+            c.as_ptr(),
+            c"user.test".as_ptr(),
+            b"kept".as_ptr().cast(),
+            4,
+            0,
+        )
+    };
     // A file system without `user.` xattrs has nothing to keep.
-    if reprisefs::apps::set_trusted(&doc).is_err() {
+    if set != 0 || reprisefs::apps::set_trusted(&doc).is_err() {
         std::fs::remove_dir_all(&dir).ok();
         return;
     }
@@ -1338,7 +1349,22 @@ fn write_document_keeps_xattrs() {
     write_document(&doc, &["new"], Format::default()).expect("save");
 
     assert_eq!(std::fs::read_to_string(&doc).expect("read"), "new");
-    assert!(reprisefs::apps::is_trusted(&doc), "user.* xattr kept");
+    let c = std::ffi::CString::new(doc.as_os_str().as_encoded_bytes()).expect("path");
+    let mut buf = [0u8; 8];
+    // SAFETY: both strings are NUL-terminated and `buf` is writable for its length.
+    let n = unsafe {
+        libc::getxattr(
+            c.as_ptr(),
+            c"user.test".as_ptr(),
+            buf.as_mut_ptr().cast(),
+            8,
+        )
+    };
+    assert_eq!(&buf[..usize::try_from(n).expect("user.test kept")], b"kept");
+    assert!(
+        !reprisefs::apps::is_trusted(&doc),
+        "an edited file is no longer trusted"
+    );
     std::fs::remove_dir_all(&dir).ok();
 }
 

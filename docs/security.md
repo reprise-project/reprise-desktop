@@ -1199,7 +1199,11 @@ sharing and remote control grants yet.
   runs only when it is executable and carries the `user.reprise.trusted`
   extended attribute, which Allow Launching sets. Extracting an archive
   restores the execute bit but not the attribute, so a downloaded launcher
-  can't pose as a program.
+  can't pose as a program. The attribute is an HMAC under a per-user key of
+  the file's filesystem id, inode and SHA-256 of its contents, so an edit
+  that keeps the inode (Notepad's save, a rewrite on another machine) drops
+  it, and the launcher or program asks again. Reprise's own rewrites of a
+  launcher it trusts mark the new contents.
 - **Drive Recycle Bins.** A drive's trash is used only as `.Trash-$uid`, a
   real folder of yours, or as `$uid` in a real `.Trash` with the sticky bit,
   as the freedesktop trash spec asks. Listing it, Delete, Empty Recycle Bin,
