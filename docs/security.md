@@ -1153,6 +1153,12 @@ sharing and remote control grants yet.
   launches only: a program that leaves its session on purpose
   (`systemd-run --user --scope`) is judged by the display session again
   (see Same-user code in the next section).
+- **Account passwords.** User Accounts never leaves an account without a
+  password. Add Account needs one, and "Ask for a new password at the next
+  login" keeps the account's password and expires it (`pkexec chage -d 0`),
+  so whoever logs in types that password before picking a new one. pkexec
+  asks for an administrator's password for it, a prompt of its own beside
+  AccountsService's for the rest of the change.
 - **Ending the session.** With `[session] end_processes = true` (the
   default), Log Off stops the `app-reprise-*` scopes and, after a display
   manager login, terminates the login session, so windowless programs Reprise
