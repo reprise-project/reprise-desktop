@@ -6,6 +6,7 @@
 //! `org.reprise.SessionEnd` gives the compositor. A call that cannot hold what it asked for fails
 //! and holds nothing.
 
+use reprisebus::desklock::RETRY;
 use std::collections::HashMap;
 use std::os::fd::OwnedFd;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -24,6 +25,7 @@ const LOGIND: &str = "org.freedesktop.login1";
 const LOGIND_PATH: &str = "/org/freedesktop/login1";
 const LOGIND_MANAGER: &str = "org.freedesktop.login1.Manager";
 const LOGIND_SESSION: &str = "org.freedesktop.login1.Session";
+const NO_SESSION: &str = "org.freedesktop.login1.NoSessionForPID";
 const PROPERTIES: &str = "org.freedesktop.DBus.Properties";
 const SESSION_RUNNING: u32 = 1;
 const SESSION_QUERY_END: u32 = 2;
@@ -395,12 +397,29 @@ impl SessionEnd {
 /// session's `LockedHint` standing in while that can't be read.
 pub async fn watch_lock(conn: zbus::Connection, shared: Shared, pid: u32) {
     let hint = async {
-        match zbus::Connection::system().await {
-            Ok(system) => follow_hint(&conn, &system, &shared, pid).await,
-            Err(e) => log::warn!("Inhibit monitor: no system bus ({e}); no LockedHint stands in"),
-        }
+        let system = until_answered("no system bus", zbus::Connection::system).await;
+        follow_hint(&conn, &system, &shared, pid).await
     };
     futures_lite::future::zip(follow_desktop(&conn, &shared, pid), hint).await;
+}
+
+/// `ask` again every [`RETRY`] until it succeeds; the first failure is logged as `what`.
+async fn until_answered<T, F: Future<Output = zbus::Result<T>>>(
+    what: &str,
+    mut ask: impl FnMut() -> F,
+) -> T {
+    let mut logged = false;
+    loop {
+        match ask().await {
+            Ok(answer) => return answer,
+            Err(e) if !logged => {
+                log::warn!("Inhibit monitor: {what} ({e}); asking again until it answers");
+                logged = true;
+            }
+            Err(_) => {}
+        }
+        async_io::Timer::after(RETRY).await;
+    }
 }
 
 async fn follow_desktop(conn: &zbus::Connection, shared: &Shared, pid: u32) {
@@ -463,22 +482,28 @@ async fn follow_hint(
     pid: u32,
 ) {
     use futures_lite::StreamExt;
-    let session = system
-        .call_method(
-            Some(LOGIND),
-            LOGIND_PATH,
-            Some(LOGIND_MANAGER),
-            "GetSessionByPID",
-            &(pid,),
-        )
-        .await
-        .and_then(|m| m.body().deserialize::<OwnedObjectPath>());
-    let session = match session {
-        Ok(s) => s,
-        Err(e) => {
-            log::warn!("Inhibit monitor: no logind session for the compositor ({e})");
-            return;
+    let session = until_answered("no logind session for the compositor", || async {
+        let reply = system
+            .call_method(
+                Some(LOGIND),
+                LOGIND_PATH,
+                Some(LOGIND_MANAGER),
+                "GetSessionByPID",
+                &(pid,),
+            )
+            .await;
+        match reply {
+            Ok(reply) => reply.body().deserialize::<OwnedObjectPath>().map(Some),
+            Err(zbus::Error::MethodError(name, ..)) if name.as_str() == NO_SESSION => Ok(None),
+            Err(e) => Err(e),
         }
+    })
+    .await;
+    let Some(session) = session else {
+        log::warn!(
+            "Inhibit monitor: the compositor is in no logind session; no LockedHint stands in"
+        );
+        return;
     };
     let rule = zbus::MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
@@ -1125,6 +1150,21 @@ mod tests {
             logind.hint(true).await;
             assert!(hears(&mut states, (true, SESSION_RUNNING)).await);
             logind.hint(false).await;
+            assert!(hears(&mut states, (false, SESSION_RUNNING)).await);
+        });
+    }
+
+    #[test]
+    fn a_logind_that_answers_late_still_stands_in() {
+        let Some(bus) = bus() else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
+        zbus::block_on(async {
+            let _stranger = Compositor::on(&bus, false).await;
+            let (_portal, mut states) = portal(&bus, 1).await;
+            async_io::Timer::after(std::time::Duration::from_millis(300)).await;
+            let _logind = Logind::on(&bus, false).await;
             assert!(hears(&mut states, (false, SESSION_RUNNING)).await);
         });
     }

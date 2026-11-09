@@ -372,10 +372,8 @@ impl Links {
         st.links.insert(uid, link);
     }
 
-    /// Queues `handover` with `fd` on `uid`'s link, answered by `Forwarded`; a link still opening
-    /// tries every [`RETRY`] from then and for the deadline at least, and a uid with none gets one
-    /// opened. False, closing `fd`, when the link holds [`MAX_FORWARDS`] or the hand-over does not
-    /// fit a frame.
+    /// Queues `handover` with `fd` on `uid`'s link, opened if missing and tried every [`RETRY`] while
+    /// opening; false, closing `fd`, past [`MAX_FORWARDS`] or when it doesn't fit a frame.
     pub fn forward(&self, uid: u32, conn: u64, fd: OwnedFd, handover: Box<HandOver>) -> bool {
         let frame = match frame::encode(&IntakeMessage::HandOver(handover)) {
             Ok(frame) => frame,

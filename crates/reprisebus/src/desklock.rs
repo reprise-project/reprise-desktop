@@ -11,7 +11,7 @@ use zbus::Connection;
 const NAME: &str = "org.freedesktop.ScreenSaver";
 const PATH: &str = "/org/freedesktop/ScreenSaver";
 /// How soon a check that failed on this side, not on the owner's, is tried again.
-const RETRY: Duration = Duration::from_secs(1);
+pub const RETRY: Duration = Duration::from_secs(1);
 
 #[derive(Clone, PartialEq, Debug)]
 pub enum Lock {
@@ -117,9 +117,16 @@ async fn read(
         why: format!("the compositor to check {NAME}'s owner against: {e}"),
         again: true,
     })?;
-    if !crate::peer::is_process(conn, &owner, pid).await {
-        let why = format!("{NAME} is held by {owner}, not the compositor");
-        return Err(Unread { why, again: false });
+    match crate::peer::is_process(conn, &owner, pid).await {
+        Ok(true) => {}
+        Ok(false) => {
+            let why = format!("{NAME} is held by {owner}, not the compositor");
+            return Err(Unread { why, again: false });
+        }
+        Err(e) => {
+            let why = format!("the process behind {owner}: {e}");
+            return Err(Unread { why, again: true });
+        }
     }
     let reply = conn
         .call_method(Some(owner.as_str()), PATH, Some(NAME), "GetActive", &())

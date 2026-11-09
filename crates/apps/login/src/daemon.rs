@@ -515,9 +515,8 @@ impl Daemon {
         self.background_before = ids;
     }
 
-    /// The ids of the sessions whose hand-over server counts a client, and of those linked at
-    /// recovery whose link has not reported yet, which the next run links while remote logins are
-    /// off.
+    /// The sessions whose hand-over server counts a client, and those linked at recovery that
+    /// have not reported yet: the next run links them while remote logins are off.
     pub fn viewed_ids(&self) -> BTreeSet<String> {
         (self.sessions.iter())
             .filter(|e| self.remote.viewers.contains_key(&e.uid))
