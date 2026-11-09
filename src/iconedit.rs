@@ -180,8 +180,10 @@ impl State {
         }
         self.clip_files(move |state, clip| {
             for path in &clip.paths {
-                let argv = reprisefs::apps::open_argv(&app, &state.config.terminal, path);
-                state.spawn_app_activated(&argv, &app.id);
+                match reprisefs::apps::open_argv(&app, &state.config.terminal, path) {
+                    Ok(argv) => state.spawn_app_activated(&argv, &app.id),
+                    Err(refused) => return state.exec_refused(&refused),
+                }
             }
         });
     }

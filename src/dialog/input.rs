@@ -1040,10 +1040,15 @@ impl Dialog {
             },
             DialogAction::EndProgram(pid) => Outcome::EndProgram(*pid),
             DialogAction::TurnOn(aid) => Outcome::TurnOn(*aid),
-            DialogAction::Script { path, run, asked } => Outcome::Script {
+            DialogAction::Script { path, run, program } => Outcome::Script {
                 path: path.clone(),
                 run: *run,
-                asked: *asked,
+                program: *program,
+            },
+            DialogAction::OpenRunnable { path, with, recent } => Outcome::OpenRunnable {
+                path: path.clone(),
+                with: with.clone(),
+                recent: *recent,
             },
             DialogAction::TooBig { asker, answer } => Outcome::TooBig {
                 asker: asker.clone(),

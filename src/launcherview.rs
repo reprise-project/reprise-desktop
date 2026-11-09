@@ -269,7 +269,7 @@ impl State {
                 let apps = &self.app_index;
                 enum Launch {
                     App(reprisefs::apps::AppEntry),
-                    File(std::path::PathBuf, crate::desktop::FileFacts),
+                    File(crate::desktop::FileFacts),
                     Copy(String),
                     Setting(Setting),
                     Window(WindowId),
@@ -288,12 +288,12 @@ impl State {
                         .search
                         .files
                         .get(i)
-                        .map(|p| Launch::File(p.clone(), v.search.facts_of(p))),
+                        .map(|p| Launch::File(v.search.facts_of(p))),
                 };
                 self.close_launcher();
                 match launch {
                     Some(Launch::App(entry)) => self.launch_app(&entry),
-                    Some(Launch::File(path, facts)) => self.open_found(&path, &facts),
+                    Some(Launch::File(facts)) => self.open_found(&facts),
                     Some(Launch::Copy(answer)) => self.clip_copy(&answer),
                     Some(Launch::Setting(s)) => self.open_setting(s),
                     Some(Launch::Window(w)) => self.bring_up(w),

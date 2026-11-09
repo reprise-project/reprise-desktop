@@ -167,16 +167,10 @@ impl State {
         }
     }
 
+    /// Open the recent file `path` in `entry`, else its default program, as
+    /// [`State::open_document`] does.
     pub(crate) fn open_recent_with(&mut self, entry: Option<&AppEntry>, path: &std::path::Path) {
-        match entry {
-            Some(e) => {
-                let argv = reprisefs::apps::open_argv(e, &self.config.terminal, path);
-                self.spawn_app_activated(&argv, &e.id);
-            }
-            None => {
-                let open = self.open_file(path);
-                self.spawn_opening_activated(&open);
-            }
-        }
+        let how = reprisefs::program::Confirm::on_open(self.config.confirm_scripts);
+        self.open_document(path, entry.cloned(), how, false);
     }
 }

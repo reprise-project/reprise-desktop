@@ -227,12 +227,16 @@ impl Explorer {
             None => return Reply::none(),
             Some(PasteTo::App(app)) => {
                 let terminal = repriseconf::terminal();
-                return Reply {
-                    spawn: (clip.paths.iter())
-                        .map(|p| reprisefs::apps::open_argv(&app, &terminal, p))
-                        .collect(),
-                    spawn_app: Some(app.id),
-                    ..Default::default()
+                let spawn = (clip.paths.iter())
+                    .map(|p| reprisefs::apps::open_argv(&app, &terminal, p))
+                    .collect();
+                return match spawn {
+                    Ok(spawn) => Reply {
+                        spawn,
+                        spawn_app: Some(app.id),
+                        ..Default::default()
+                    },
+                    Err(refused) => self.exec_refused(&refused, ctx),
                 };
             }
             Some(PasteTo::Folder(dir)) => (dir, false),
@@ -1056,11 +1060,11 @@ impl Explorer {
         self.put_all(&paths, &dir, &|_| Some(op), false, ctx)
     }
 
-    pub fn open_for(&self, it: &Item) -> reprisefs::props::Opening {
+    pub fn open_for(&self, it: &Item) -> Result<reprisefs::props::Opening, apps::ExecRefused> {
         use reprisefs::props::Opening;
-        match it.shortcut.as_deref() {
+        Ok(match it.shortcut.as_deref() {
             Some(apps::Shortcut::App(app)) => Opening {
-                argv: apps::launch_argv(app, &repriseconf::terminal()),
+                argv: apps::launch_argv(app, &repriseconf::terminal())?,
                 app: Some(app.id.clone()),
             },
             Some(apps::Shortcut::Link(link)) => Opening {
@@ -1072,8 +1076,13 @@ impl Explorer {
                 &self.globs,
                 &self.app_index,
                 &repriseconf::terminal(),
-            ),
-        }
+            )?,
+        })
+    }
+
+    /// The box for a desktop entry Reprise refuses to run; nothing runs.
+    pub(crate) fn exec_refused(&mut self, refused: &apps::ExecRefused, ctx: &mut Ctx) -> Reply {
+        self.message_box(&refused.name, refused.to_string(), ctx)
     }
 
     pub fn build_open_with(&mut self, i: usize, ctx: &mut Ctx) -> Vec<(String, Option<Canvas>)> {
@@ -1098,7 +1107,7 @@ impl Explorer {
             .collect()
     }
 
-    pub fn open_with(&mut self, i: usize) -> Reply {
+    pub fn open_with(&mut self, i: usize, ctx: &mut Ctx) -> Reply {
         let Some(path) = self.open_with_path.clone() else {
             return Reply::none();
         };
@@ -1109,15 +1118,14 @@ impl Explorer {
         else {
             return Reply::none();
         };
-        Reply {
-            redraw: true,
-            spawn: vec![reprisefs::apps::open_argv(
-                app,
-                &repriseconf::terminal(),
-                &path,
-            )],
-            spawn_app: Some(app.id.clone()),
-            ..Default::default()
+        match reprisefs::apps::open_argv(app, &repriseconf::terminal(), &path) {
+            Ok(argv) => Reply {
+                redraw: true,
+                spawn: vec![argv],
+                spawn_app: Some(app.id.clone()),
+                ..Default::default()
+            },
+            Err(refused) => self.exec_refused(&refused, ctx),
         }
     }
 
@@ -1233,15 +1241,14 @@ impl Explorer {
             self.props_set_opens_with(app.name.clone(), icon);
             return Reply::redraw_all();
         }
-        Reply {
-            redraw_all: true,
-            spawn: vec![reprisefs::apps::open_argv(
-                &app,
-                &repriseconf::terminal(),
-                &c.path,
-            )],
-            spawn_app: Some(app.id),
-            ..Default::default()
+        match reprisefs::apps::open_argv(&app, &repriseconf::terminal(), &c.path) {
+            Ok(argv) => Reply {
+                redraw_all: true,
+                spawn: vec![argv],
+                spawn_app: Some(app.id),
+                ..Default::default()
+            },
+            Err(refused) => self.exec_refused(&refused, ctx),
         }
     }
 

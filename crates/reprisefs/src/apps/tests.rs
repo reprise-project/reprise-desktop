@@ -32,7 +32,7 @@ fn a_link_file_round_trips_and_keeps_its_keys_to_itself() {
 fn parses_application_and_strips_codes() {
     let e = parse_desktop(FIREFOX, "firefox.desktop").unwrap();
     assert_eq!(e.name, "Firefox");
-    assert_eq!(launch_argv(&e, "foot"), ["firefox"]);
+    assert_eq!(launch_argv(&e, "foot").unwrap(), ["firefox"]);
     assert!(!e.terminal);
     assert_eq!(
         strip_field_codes("app %F --flag %c \"%k\" %%"),
@@ -204,7 +204,11 @@ fn a_shortcut_opens_the_path_it_was_made_for() {
         let cmd = open_command_for(Path::new(p)).unwrap();
         let text = launcher_text("s", None, Launch::Exec(&cmd)).unwrap();
         let entry = parse_desktop(&text, "s.desktop").unwrap();
-        assert_eq!(launch_argv(&entry, "foot"), ["xdg-open", p], "{text}");
+        assert_eq!(
+            launch_argv(&entry, "foot").unwrap(),
+            ["xdg-open", p],
+            "{text}"
+        );
     }
 }
 
@@ -319,7 +323,10 @@ fn terminal_entries_wrap_in_terminal() {
     )
     .unwrap();
     assert!(e.terminal);
-    assert_eq!(launch_argv(&e, "alacritty"), ["alacritty", "-e", "htop"]);
+    assert_eq!(
+        launch_argv(&e, "alacritty").unwrap(),
+        ["alacritty", "-e", "htop"]
+    );
 }
 
 #[test]
@@ -331,7 +338,7 @@ fn launch_argv_passes_shell_syntax_through_as_plain_arguments() {
     )
     .unwrap();
     assert_eq!(
-        launch_argv(&e, "foot"),
+        launch_argv(&e, "foot").unwrap(),
         ["prog", "$HOME", "`id`;", "*.txt", "a b"]
     );
 }
@@ -344,7 +351,7 @@ fn an_entry_without_a_file_code_opens_with_no_file() {
     )
     .unwrap();
     assert_eq!(
-        open_argv(&e, "foot", Path::new("/home/u/-rf")),
+        open_argv(&e, "foot", Path::new("/home/u/-rf")).unwrap(),
         ["gnome-terminal", "--daemon"]
     );
 }
@@ -358,11 +365,11 @@ fn icon_and_name_codes_expand_from_the_entry() {
     )
     .unwrap();
     assert_eq!(
-        open_argv(&e, "foot", Path::new("/tmp/a")),
+        open_argv(&e, "foot", Path::new("/tmp/a")).unwrap(),
         ["ed", "--icon", "ed", "--title", "My Ed", "--x", "/tmp/a"]
     );
     assert_eq!(
-        launch_argv(&e, "foot"),
+        launch_argv(&e, "foot").unwrap(),
         ["ed", "--icon", "ed", "--title", "My Ed", "--x"]
     );
 }
@@ -379,6 +386,7 @@ fn open_argv_fills_the_file_slot_with_the_path_bytes() {
     let path = Path::new(std::ffi::OsStr::from_bytes(b"/home/u/it's a\xff.txt"));
     let open = |exec, terminal, term| -> Vec<Vec<u8>> {
         open_argv(&entry(exec, terminal), term, path)
+            .unwrap()
             .iter()
             .map(|a| a.as_bytes().to_vec())
             .collect()
@@ -733,7 +741,7 @@ fn open_with_lists_the_handlers_by_name_and_text_editors_for_text() {
     assert_eq!(open_with(&apps, "inode/directory"), vec![3]);
     assert!(open_with(&apps, "audio/ogg").is_empty());
     assert_eq!(
-        open_argv(&apps[0], "foot", Path::new("/home/u/my notes.txt")),
+        open_argv(&apps[0], "foot", Path::new("/home/u/my notes.txt")).unwrap(),
         ["foot", "-e", "vim", "/home/u/my notes.txt"]
     );
     assert!(
@@ -759,7 +767,7 @@ fn a_browsed_program_gets_an_unshown_entry_that_opens_its_file() {
     assert_eq!(e.icon.as_deref(), Some("application-x-executable"));
     assert_eq!(e.mime_types, ["text/x-python"]);
     assert_eq!(
-        open_argv(&e, "foot", Path::new("/home/u/a b.py")),
+        open_argv(&e, "foot", Path::new("/home/u/a b.py")).unwrap(),
         ["/opt/My Tools/view$1", "/home/u/a b.py"]
     );
     let text = std::fs::read_to_string(dir.join(&e.id)).unwrap();
@@ -911,4 +919,123 @@ fn a_subtitle_is_the_generic_name_else_the_comment_never_the_name_again() {
     );
     assert_eq!(subtitle(&entry("GenericName=Firefox\n")), None);
     assert_eq!(subtitle(&entry("GenericName= \n")), None);
+}
+
+/// File names that break out of shell quoting or read as options.
+fn hostile_names(dir: &Path) -> Vec<PathBuf> {
+    let pwned = dir.join("pwned");
+    let p = pwned.display();
+    [
+        format!("a'; touch {p}; '.txt"),
+        format!("a\"; touch {p}; \".txt"),
+        format!("$(touch {p}).pdf"),
+        format!("`touch {p}`.pdf"),
+        format!("x\\';touch {p};#.txt"),
+        format!("a\ntouch {p}\n.txt"),
+    ]
+    .into_iter()
+    .map(|n| dir.join(n))
+    .chain([PathBuf::from("-n")])
+    .collect()
+}
+
+fn exec_entry(exec: &str) -> AppEntry {
+    let text = format!("[Desktop Entry]\nType=Application\nName=My Ed\nExec={exec}\n");
+    parse_desktop(&text, "x.desktop").unwrap()
+}
+
+#[test]
+fn a_field_code_inside_quotes_refuses_the_entry_and_runs_nothing() {
+    let t = tempfile::tempdir().unwrap();
+    for exec in [
+        r#"sh -c "tool %f""#,
+        r#"sh -c "tool '%f'""#,
+        r#"sh -c "tool \"%f\"""#,
+        r#"fish -c "tool %f""#,
+        r#"bash -c "web %u""#,
+        r#"sh -c "tool --name %c""#,
+    ] {
+        let e = exec_entry(exec);
+        let refused = Err(ExecRefused {
+            name: "My Ed".into(),
+        });
+        for path in hostile_names(t.path()) {
+            assert_eq!(open_argv(&e, "foot", &path), refused, "{exec} on {path:?}");
+        }
+        assert_eq!(launch_argv(&e, "foot"), refused, "{exec}");
+    }
+    assert_eq!(
+        refused_text(),
+        "Reprise cannot run 'My Ed' safely: its command line has a field code inside quotes."
+    );
+}
+
+fn refused_text() -> String {
+    ExecRefused {
+        name: "My Ed".into(),
+    }
+    .to_string()
+}
+
+#[test]
+fn a_field_code_standing_alone_is_one_argument_the_shell_reads_as_data() {
+    use std::os::unix::ffi::OsStrExt;
+    let t = tempfile::tempdir().unwrap();
+    let sh = exec_entry(r#"sh -c "printf '%%s' \"\$1\"" sh %f"#);
+    let fish = exec_entry(r#"fish -c "printf '%%s' \$argv[1]" %f"#);
+    for path in hostile_names(t.path()) {
+        let argv = open_argv(&sh, "foot", &path).unwrap();
+        assert_eq!(
+            argv,
+            [
+                OsString::from("sh"),
+                "-c".into(),
+                "printf '%s' \"$1\"".into(),
+                "sh".into(),
+                path.clone().into()
+            ]
+        );
+        let out = std::process::Command::new(&argv[0])
+            .args(&argv[1..])
+            .output()
+            .unwrap();
+        assert_eq!(
+            std::ffi::OsStr::from_bytes(&out.stdout),
+            path.as_os_str(),
+            "sh prints the name as it is"
+        );
+        let fish_argv = open_argv(&fish, "foot", &path).unwrap();
+        assert_eq!(fish_argv.len(), 4);
+        assert_eq!(
+            fish_argv[3],
+            path.as_os_str(),
+            "fish gets the name as $argv[1]"
+        );
+    }
+    assert!(
+        !t.path().join("pwned").exists(),
+        "no name ran as shell text"
+    );
+}
+
+#[test]
+fn a_quoted_program_a_literal_percent_and_escapes_keep_their_old_reading() {
+    let path = Path::new("/home/u/a b.txt");
+    assert_eq!(
+        open_argv(
+            &exec_entry(r#""/opt/my app/bin" "100%% \"done\"" --file=%f"#),
+            "foot",
+            path
+        ),
+        Ok(vec![
+            OsString::from("/opt/my app/bin"),
+            "100% \"done\"".into(),
+            "--file=/home/u/a b.txt".into()
+        ])
+    );
+    assert_eq!(
+        launch_argv(&exec_entry(r#"tool "50% off" "\%f""#), "foot"),
+        Ok(vec![OsString::from("tool"), "50off".into(), "\\%f".into()]),
+        "a percent before no code, and an escaped one, are no field codes"
+    );
 }

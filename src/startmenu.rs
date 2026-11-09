@@ -272,8 +272,7 @@ impl State {
     pub fn launch_app(&mut self, entry: &AppEntry) {
         self.launches.record(&entry.id);
         crate::state::save_start(&self.launches);
-        let argv = reprisefs::apps::launch_argv(entry, &self.config.terminal);
-        self.spawn_app_activated(&argv, &entry.id);
+        self.launch_entry(entry);
     }
 }
 

@@ -784,37 +784,65 @@ impl Dialog {
         }
     }
 
-    /// The question before the file at `path` runs (`confirm_scripts`), about what `asked` says:
-    /// Run runs it (a script as `open` says) and remembers the pick, a script's Open in Notepad
-    /// opens it there, Cancel leaves it.
+    /// The question before the `program` file at `path` runs (`confirm_scripts`): Run runs it
+    /// (a script as `open` says) and remembers the pick, a script's Open in Notepad opens it
+    /// there, Cancel leaves it. Run is the default for a script, Cancel for a binary.
     pub fn ask_run(
         path: std::path::PathBuf,
         open: reprisefs::program::ScriptOpen,
-        asked: reprisefs::program::Asked,
+        program: reprisefs::program::Program,
     ) -> Dialog {
-        use reprisefs::program::{ASK_TITLE, Asked};
-        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        use reprisefs::program::{Asked, Program};
+        let asked = Asked::of(program);
         let labels = asked.buttons();
         let script = |run| DialogAction::Script {
             path: path.clone(),
             run,
-            asked,
+            program,
         };
-        let mut buttons = vec![button(labels[0], script(Some(open)), true)];
-        if asked == Asked::Script {
+        let is_script = program == Program::Script;
+        let mut buttons = vec![button(labels[0], script(Some(open)), is_script)];
+        if is_script {
             buttons.push(button(labels[1], script(None), false));
         }
         buttons.push(button(
             labels[labels.len() - 1],
             DialogAction::Cancel,
-            false,
+            !is_script,
         ));
+        Dialog::run_question(&path, asked, buttons)
+    }
+
+    /// The question before the file at `path`, whose type's program runs it, opens in `with` (a
+    /// desktop entry id) or its default program: Run opens it and remembers the pick, into the
+    /// recent files with `recent`; Cancel, the default, leaves it.
+    pub fn ask_open(path: std::path::PathBuf, with: Option<String>, recent: bool) -> Dialog {
+        let asked = reprisefs::program::Asked::Typed;
+        let labels = asked.buttons();
+        let run = DialogAction::OpenRunnable {
+            path: path.clone(),
+            with,
+            recent,
+        };
+        let buttons = vec![
+            button(labels[0], run, false),
+            button(labels[1], DialogAction::Cancel, true),
+        ];
+        Dialog::run_question(&path, asked, buttons)
+    }
+
+    fn run_question(
+        path: &std::path::Path,
+        asked: reprisefs::program::Asked,
+        buttons: Vec<DialogButton>,
+    ) -> Dialog {
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
         Dialog {
             icon: Some("dialog-warning".into()),
             text: asked.text(&name),
             buttons,
             ..Dialog::new(
-                ASK_TITLE,
+                reprisefs::program::ASK_TITLE,
                 Style::Classic {
                     template: Template::MessageBox,
                     text_h: None,

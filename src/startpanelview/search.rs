@@ -186,7 +186,7 @@ impl State {
             Copy(String),
             App(Box<AppEntry>),
             Setting(Setting),
-            File(std::path::PathBuf, crate::desktop::FileFacts),
+            File(crate::desktop::FileFacts),
         }
         let run = match v.result_kinds.get(g) {
             Some(ResultKind::Calc) => v.answer.clone().map(|(_, a)| Run::Copy(a)),
@@ -200,7 +200,7 @@ impl State {
                 .search
                 .files
                 .get(r)
-                .map(|p| Run::File(p.clone(), v.search.facts_of(p))),
+                .map(|p| Run::File(v.search.facts_of(p))),
             None => None,
         };
         self.close_start_panel();
@@ -208,7 +208,7 @@ impl State {
             Some(Run::Copy(answer)) => self.clip_copy(&answer),
             Some(Run::App(entry)) => self.launch_app(&entry),
             Some(Run::Setting(s)) => self.open_setting(s),
-            Some(Run::File(path, facts)) => self.open_found(&path, &facts),
+            Some(Run::File(facts)) => self.open_found(&facts),
             None => {}
         }
     }

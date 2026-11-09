@@ -234,6 +234,16 @@ pub fn runs_in_its_program(mime: &str) -> bool {
     RUNNABLE_TYPES.contains(&mime.to_ascii_lowercase().as_str())
 }
 
+/// Whether opening the file at `path`, of type `mime` by its name, runs it in its type's program:
+/// a [`runs_in_its_program`] type, or a name with no type whose first bytes are an `.exe`'s `MZ`,
+/// which `xdg-open` would sniff. Reads the file's head when its name has no type.
+pub fn opens_as_a_program(path: &Path, mime: Option<&str>) -> bool {
+    match mime {
+        Some(mime) => runs_in_its_program(mime),
+        None => head(path, 2).is_ok_and(|h| h == b"MZ"),
+    }
+}
+
 /// The question's caption.
 pub const ASK_TITLE: &str = "Open File";
 

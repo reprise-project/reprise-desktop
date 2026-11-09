@@ -1,12 +1,14 @@
 use std::path::{Path, PathBuf};
 
-use reprisefs::program::{Asked, Confirm, Program, ScriptOpen};
+use reprisefs::apps::AppEntry;
+use reprisefs::program::{Confirm, Program, ScriptOpen};
 use reprisefs::{apps, names, ops};
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 
 use crate::{
     compositor::State,
     desktop::{self, IconId, Target},
+    dialog::Dialog,
     fsjobs::Action,
 };
 
@@ -153,10 +155,8 @@ impl State {
         };
         let argv: Vec<std::ffi::OsString> = match &entry.target {
             Target::Launch(app) => {
-                let argv = apps::launch_argv(app, &self.config.terminal);
-                let app = app.id.clone();
-                self.spawn_app_activated(&argv, &app);
-                return;
+                let app = app.clone();
+                return self.launch_entry(&app);
             }
             Target::Uri(_) => match desktop::place_argv(entry) {
                 Some(argv) => argv.into_iter().map(Into::into).collect(),
@@ -169,40 +169,57 @@ impl State {
             // No stat: the file or folder may be on a mount that does not answer.
             Target::Open(dir) if entry.is_dir => apps::open_folder_argv(dir),
             Target::Open(file) => {
-                let mime = view.mime.mime_of_name(&entry.name);
-                let default = mime
-                    .as_deref()
-                    .and_then(|m| reprisefs::props::default_app_entry(m, &self.app_index));
-                let open = reprisefs::props::open_file(file, default, &self.config.terminal);
                 let file = file.clone();
-                return self.open_plain(&file, mime.as_deref(), open, how);
+                return self.open_document(&file, None, how, false);
             }
         };
         self.spawn_argv_activated(&argv);
     }
 
-    /// Open the file at `path` of type `mime` as `open` says. A type its program runs
-    /// ([`reprisefs::program::runs_in_its_program`]) that `how` asks about first raises
-    /// [`Dialog::ask_run`] instead; the trust check reads an xattr, so it runs off the loop.
-    pub(crate) fn open_plain(
+    /// Open the file at `path` in `with`, else its type's default program: the desktop, the
+    /// Start menu's Documents, jump lists and search open files here. A program file runs as
+    /// [`Self::run_program`] says, and a file its type's program runs
+    /// ([`reprisefs::program::opens_as_a_program`]) raises [`Dialog::ask_open`] first as `how`
+    /// says. With `recent` the path goes into the recent files once it opens. The type, the
+    /// program check and the trust marker read the disk, so they run off the loop.
+    pub(crate) fn open_document(
         &mut self,
         path: &Path,
-        mime: Option<&str>,
-        open: reprisefs::props::Opening,
+        with: Option<AppEntry>,
         how: Confirm,
+        recent: bool,
     ) {
-        if !mime.is_some_and(reprisefs::program::runs_in_its_program) {
-            return self.spawn_opening_activated(&open);
-        }
         let path = path.to_path_buf();
+        let programs = with.is_none().then(|| self.app_index.clone());
+        let open = self.config.script_open;
         self.spawn_job(move || {
-            let asks = reprisefs::program::asks_first(&path, how);
+            let program = (std::fs::metadata(&path).ok())
+                .and_then(|m| reprisefs::program::program(&path, &m));
+            let mime = (path.file_name())
+                .and_then(|n| apps::mime_globs().mime_of_name(&n.to_string_lossy()));
+            let asks = program.is_none()
+                && reprisefs::program::opens_as_a_program(&path, mime.as_deref())
+                && reprisefs::program::asks_first(&path, how);
+            let with = with.or_else(|| {
+                let default =
+                    reprisefs::props::default_app_entry(mime.as_deref()?, programs.as_ref()?);
+                default.cloned()
+            });
             Box::new(move |state: &mut State| {
+                if let Some(program) = program {
+                    return state.run_program(&path, program, open, how);
+                }
                 if asks {
-                    let d = crate::dialog::Dialog::ask_run(path, ScriptOpen::Run, Asked::Typed);
-                    state.open_dialog(d);
-                } else {
-                    state.spawn_opening_activated(&open);
+                    let d = Dialog::ask_open(path, with.map(|e| e.id), recent);
+                    return state.open_dialog(d);
+                }
+                let terminal = &state.config.terminal;
+                match reprisefs::props::open_file(&path, with.as_ref(), terminal) {
+                    Ok(opening) => state.spawn_opening_activated(&opening),
+                    Err(refused) => return state.exec_refused(&refused),
+                }
+                if recent {
+                    state.record_recent(vec![path], with);
                 }
             }) as crate::fsjobs::OnLoop
         });
@@ -226,7 +243,7 @@ impl State {
         self.spawn_job(move || {
             if reprisefs::program::asks_first(&path, how) {
                 return Box::new(move |state: &mut State| {
-                    let d = crate::dialog::Dialog::ask_run(path, open, Asked::of(program));
+                    let d = Dialog::ask_run(path, open, program);
                     state.open_dialog(d);
                 }) as crate::fsjobs::OnLoop;
             }
@@ -246,6 +263,16 @@ impl State {
                 }
             })
         });
+    }
+
+    /// A script's Run row: the icon `index` it was aimed at runs unasked as `open` says; the rest
+    /// of the selection opens as a double-click would.
+    fn run_aimed(&mut self, index: usize, open: ScriptOpen) {
+        let how = Confirm::on_open(self.config.confirm_scripts);
+        for i in self.selection_around(index) {
+            let how = if i == index { Confirm::Skip } else { how };
+            self.open_icon_as(i, open, how);
+        }
     }
 
     pub(crate) fn open_selection(&mut self, index: usize) {
@@ -337,8 +364,10 @@ impl State {
             return;
         };
         for path in &paths {
-            let argv = apps::open_argv(&app, &self.config.terminal, path);
-            self.spawn_app_activated(&argv, &app.id);
+            match apps::open_argv(&app, &self.config.terminal, path) {
+                Ok(argv) => self.spawn_app_activated(&argv, &app.id),
+                Err(refused) => return self.exec_refused(&refused),
+            }
         }
         self.record_recent(paths, Some(app));
     }
@@ -354,7 +383,10 @@ impl State {
                     app: None,
                 }
             } else {
-                reprisefs::props::open_file(&path, editor.as_ref(), &self.config.terminal)
+                match reprisefs::props::open_file(&path, editor.as_ref(), &self.config.terminal) {
+                    Ok(open) => open,
+                    Err(refused) => return self.exec_refused(&refused),
+                }
             };
             self.spawn_opening_activated(&open);
         }
@@ -387,7 +419,7 @@ impl State {
             }
             Dc::Run(open) => {
                 if let Some(i) = target {
-                    self.open_selection_as(i, open, Confirm::Skip);
+                    self.run_aimed(i, open);
                 }
             }
             Dc::Explore => {
