@@ -166,7 +166,10 @@ replaces none of its bus names (notifications, the tray, the screensaver and
 the settings portal). The programs it launches still get its display, while
 D-Bus-activated services, the portals, balloons and the Remote Desktop server
 stay with the other session, and its Log Off tells neither the portal nor the
-Remote Desktop server. reprise-login's hand-over server waits for the display of the
+Remote Desktop server. Whichever session started first, a Log Off while the
+other runs leaves the shared portal's inhibitors and monitors alone, and the
+Remote Desktop server ends its clients only when the compositor it serves
+logs off. reprise-login's hand-over server waits for the display of the
 session reprise-login opened, so a remote login that starts a session beside
 a text-login Reprise reaches the new session on its first connection. A tray
 applet's autostart (`--tray`) finds the other
