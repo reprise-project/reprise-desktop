@@ -72,6 +72,8 @@ pub struct Thumbnails {
     /// measured: on the first write and every [`REMEASURE`] after.
     used: Option<(u64, Instant)>,
     seq: u64,
+    /// The UUID of the file system on a device ([`volume_uuid`]).
+    volume: fn(u64) -> Option<String>,
 }
 
 impl Thumbnails {
@@ -82,6 +84,7 @@ impl Thumbnails {
             max_bytes,
             used: None,
             seq: 0,
+            volume: volume_uuid,
         }
     }
 
@@ -117,7 +120,8 @@ impl Thumbnails {
     /// disk for the file `meta` describes. A hit counts as a use for the
     /// cap.
     pub fn get(&self, path: &Path, meta: &Metadata, edge: u32) -> Option<Hit> {
-        let (png, text) = read_valid(&self.entry(path, edge)?, path, meta, max_entry(edge))?;
+        let entry = self.entry(path, edge)?;
+        let (png, text) = read_valid(&entry, path, meta, self.volume, max_entry(edge))?;
         let num = |k: &str| key_of(&text, k).and_then(|v| v.parse().ok());
         let dims = num("Thumb::Image::Width").zip(num("Thumb::Image::Height"));
         let software = key_of(&text, "Software").map(str::to_string);
@@ -132,7 +136,7 @@ impl Thumbnails {
     /// describes it. A hit counts as a use for the cap.
     pub fn failed(&self, path: &Path, meta: &Metadata) -> bool {
         self.fail_entry(path)
-            .and_then(|e| read_valid(&e, path, meta, max_entry(1)))
+            .and_then(|e| read_valid(&e, path, meta, self.volume, max_entry(1)))
             .is_some()
     }
 
@@ -206,6 +210,7 @@ impl Thumbnails {
             ("Thumb::Size", meta.len().to_string()),
             ("Software", self.program.clone()),
         ];
+        text.extend((self.volume)(meta.dev()).map(|v| (VOLUME_KEY, v)));
         text.extend_from_slice(extra);
         let bytes = match encode(&thumb, &text) {
             Ok(b) => b,
@@ -394,10 +399,17 @@ pub fn file_uri(path: &Path) -> String {
 }
 
 /// The PNG at `entry` and its text, if the file is no larger than `cap`
-/// and its text vouches for `path` as `meta` describes it. A hit's mtime
-/// is touched, since the trim judges use by it; a read-only cache still
-/// answers, it just forgets in write order.
-fn read_valid(entry: &Path, path: &Path, meta: &Metadata, cap: u64) -> Option<(Vec<u8>, Text)> {
+/// and its text vouches for `path` as `meta` describes it, on the file system
+/// `volume` names when the entry names one. A hit's mtime is touched, since
+/// the trim judges use by it; a read-only cache still answers, it just
+/// forgets in write order.
+fn read_valid(
+    entry: &Path,
+    path: &Path,
+    meta: &Metadata,
+    volume: fn(u64) -> Option<String>,
+    cap: u64,
+) -> Option<(Vec<u8>, Text)> {
     let mut f = std::fs::File::open(entry).ok()?;
     if f.metadata().ok()?.len() > cap {
         return None;
@@ -408,6 +420,11 @@ fn read_valid(entry: &Path, path: &Path, meta: &Metadata, cap: u64) -> Option<(V
     if !vouches(&text, &file_uri(path), meta) {
         return None;
     }
+    if let Some(v) = key_of(&text, VOLUME_KEY)
+        && volume(meta.dev()).as_deref() != Some(v)
+    {
+        return None;
+    }
     if let Ok(f) = std::fs::File::options().write(true).open(entry) {
         let _ = f.set_modified(SystemTime::now());
     }
@@ -415,6 +432,41 @@ fn read_valid(entry: &Path, path: &Path, meta: &Metadata, cap: u64) -> Option<(V
 }
 
 type Text = Vec<(String, String)>;
+
+/// The text key naming the file system an entry's file was on, so another stick mounted at the
+/// same path never shows this one's pictures.
+const VOLUME_KEY: &str = "X-Reprise-Volume";
+
+/// How long [`volume_uuid`] trusts its list of devices.
+const VOLUMES_FOR: Duration = Duration::from_secs(2);
+
+/// The UUID of the block file system on device `dev` (a file's `st_dev`), from
+/// `/dev/disk/by-uuid`; None for one with no block device (btrfs subvolumes, tmpfs, FUSE).
+fn volume_uuid(dev: u64) -> Option<String> {
+    use std::os::unix::fs::FileTypeExt;
+    type Volumes = Option<(Instant, Vec<(u64, String)>)>;
+    static VOLUMES: std::sync::Mutex<Volumes> = std::sync::Mutex::new(None);
+    let mut held = reprisebus::mutex::lock(&VOLUMES);
+    if held
+        .as_ref()
+        .is_none_or(|(at, _)| at.elapsed() > VOLUMES_FOR)
+    {
+        let list = std::fs::read_dir("/dev/disk/by-uuid")
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+            .filter_map(|e| {
+                let m = std::fs::metadata(e.path()).ok()?;
+                m.file_type()
+                    .is_block_device()
+                    .then(|| (m.rdev(), e.file_name().to_string_lossy().into_owned()))
+            })
+            .collect();
+        *held = Some((Instant::now(), list));
+    }
+    let (_, list) = held.as_ref()?;
+    list.iter().find(|(d, _)| *d == dev).map(|(_, u)| u.clone())
+}
 
 fn key_of<'a>(text: &'a [(String, String)], k: &str) -> Option<&'a str> {
     text.iter().find(|(key, _)| key == k).map(|(_, v)| v.trim())
@@ -528,6 +580,25 @@ mod tests {
     fn put(cache: &mut Thumbnails, src: &Path, meta: &Metadata) {
         let px = pixels(10, 10, [7, 7, 7, 255]);
         cache.put(src, meta, EDGE, rgba(10, 10, &px), DIMS);
+    }
+
+    #[test]
+    fn an_entry_made_on_another_volume_at_the_same_path_is_a_miss() {
+        let (_dir, src, mut cache) = setup(1 << 20);
+        let meta = std::fs::metadata(&src).unwrap();
+        cache.volume = |_| Some("AAAA-0001".into());
+        put(&mut cache, &src, &meta);
+        cache.put_failed(&src, &meta);
+        assert!(cache.get(&src, &meta, EDGE).is_some());
+        assert!(cache.failed(&src, &meta));
+        cache.volume = |_| Some("BBBB-0002".into());
+        assert!(
+            cache.get(&src, &meta, EDGE).is_none(),
+            "another stick mounted at the same path"
+        );
+        assert!(!cache.failed(&src, &meta));
+        cache.volume = |_| None;
+        assert!(cache.get(&src, &meta, EDGE).is_none());
     }
 
     #[test]
