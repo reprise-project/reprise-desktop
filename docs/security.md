@@ -1226,7 +1226,9 @@ sharing and remote control grants yet.
   A symbolic link that resolves outside the extraction, or a file hard-linked
   from outside it, refuses it afterwards and the folder is removed. Extract
   Here then moves the entries into place, writing over nothing and merging
-  only into real folders. An archive with a hidden top-level entry stays in
+  only into real folders; if one can't move, the ones moved go back. Folders
+  get their archived modes once everything is in place, so read-only ones
+  extract too. An archive with a hidden top-level entry stays in
   its new folder, as with Extract to, so Extract Here can't add autostart
   entries or settings to a home folder.
 - **Copying from a drive.** A copy from a drive (a mount under `/run/media`

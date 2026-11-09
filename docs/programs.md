@@ -52,7 +52,7 @@ The file manager, and the default for folders.
   top-level entry (`.config`, `.local`) goes into a new folder for Extract
   Here too. One with an entry or a link that would land outside its folder,
   or that would fill more than 90% of the free space or hold more than
-  1,000,000 entries, is refused ([security.md](security.md#programs-and-files)).
+  1,000,000 entries or the free inodes, whichever is fewer, is refused ([security.md](security.md#programs-and-files)).
   Compress to 'name.zip'
   (or Send To > Compressed (zipped) Folder) zips the selection beside it,
   named after the one item or the folder of several, with progress and
