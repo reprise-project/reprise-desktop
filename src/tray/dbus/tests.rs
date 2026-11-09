@@ -869,3 +869,110 @@ fn a_session_deferring_to_another_takes_only_free_names_and_replaces_none() {
     assert!(!deferring.contains(RequestNameFlags::ALLOW_REPLACEMENT));
     assert_eq!(name_flags(false), RequestNameFlags::default());
 }
+
+/// A loop on a private bus hosting the screensaver as the compositor does, and its connection.
+async fn screensaver_on(bus: &str) -> (Loop, Connection, OwnedFd) {
+    let (tx, _events) = std::sync::mpsc::channel();
+    // SAFETY: eventfd takes no pointers; the result is checked below.
+    let fd = unsafe { libc::eventfd(0, libc::EFD_NONBLOCK | libc::EFD_CLOEXEC) };
+    assert!(fd >= 0, "eventfd failed");
+    // SAFETY: `fd` was just opened and nothing else owns it.
+    let fd = unsafe { OwnedFd::from_raw_fd(fd) };
+    let conn = zbus::connection::Builder::address(bus)
+        .build()
+        .await
+        .unwrap();
+    let lp = test_loop(conn.clone(), tx, fd.as_raw_fd());
+    host_screensaver(&conn, &lp.screensaver, false)
+        .await
+        .unwrap();
+    (lp, conn, fd)
+}
+
+#[test]
+fn no_later_owner_takes_the_screensaver_name_from_the_compositor() {
+    let Some(bus) = crate::testbus::bus() else {
+        eprintln!("no dbus-daemon; skipped");
+        return;
+    };
+    zbus::block_on(async {
+        let (_lp, ours, _fd) = screensaver_on(&bus.1).await;
+        let other = zbus::connection::Builder::address(bus.1.as_str())
+            .build()
+            .await
+            .unwrap();
+        assert!(
+            own(&other, SCREENSAVER_NAME, name_flags(false))
+                .await
+                .is_err()
+        );
+        let owner = other
+            .call_method(
+                Some(DBUS_IFACE),
+                "/org/freedesktop/DBus",
+                Some(DBUS_IFACE),
+                "GetNameOwner",
+                &(SCREENSAVER_NAME,),
+            )
+            .await
+            .unwrap();
+        let owner: String = owner.body().deserialize().unwrap();
+        assert_eq!(owner, ours.unique_name().unwrap().as_str());
+    });
+}
+
+#[test]
+fn get_active_and_active_changed_follow_the_desktops_lock() {
+    let Some(bus) = crate::testbus::bus() else {
+        eprintln!("no dbus-daemon; skipped");
+        return;
+    };
+    zbus::block_on(async {
+        let (mut lp, ours, _fd) = screensaver_on(&bus.1).await;
+        let other = zbus::connection::Builder::address(bus.1.as_str())
+            .build()
+            .await
+            .unwrap();
+        let rule = zbus::MatchRule::builder()
+            .msg_type(zbus::message::Type::Signal)
+            .interface(SCREENSAVER_NAME)
+            .member("ActiveChanged")
+            .build()
+            .unwrap();
+        let mut changes = zbus::MessageStream::for_match_rule(rule, &other, None)
+            .await
+            .unwrap();
+        lp.handle_command(TrayCommand::Locked(true)).await;
+        let mut heard = Vec::new();
+        for _ in SCREENSAVER_PATHS {
+            let next = futures_lite::future::or(async { changes.next().await }, async {
+                async_io::Timer::after(Duration::from_secs(5)).await;
+                None
+            });
+            let Some(Ok(m)) = next.await else {
+                break;
+            };
+            let path = m.header().path().map(|p| p.to_string());
+            heard.push((path, m.body().deserialize::<bool>().unwrap()));
+        }
+        heard.sort();
+        let mut want: Vec<_> = (SCREENSAVER_PATHS.iter())
+            .map(|p| (Some(p.to_string()), true))
+            .collect();
+        want.sort();
+        assert_eq!(heard, want, "ActiveChanged(true) on each path");
+        for path in SCREENSAVER_PATHS {
+            let reply = other
+                .call_method(
+                    Some(ours.unique_name().unwrap().as_str()),
+                    path,
+                    Some(SCREENSAVER_NAME),
+                    "GetActive",
+                    &(),
+                )
+                .await
+                .unwrap();
+            assert!(reply.body().deserialize::<bool>().unwrap(), "{path}");
+        }
+    });
+}

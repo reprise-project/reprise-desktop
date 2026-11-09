@@ -133,15 +133,19 @@ and icons). `reprise-portals.conf` hands **Secret** to gnome-keyring,
 sharing. It names no **Lockdown** backend, so GNOME's lockdown keys (location,
 camera, microphone, printing) don't apply and `[privacy] location` alone turns location off.
 
-Reprise also hosts `org.freedesktop.Notifications`, the
-StatusNotifierWatcher for the tray, `org.freedesktop.ScreenSaver` and the
-GeoClue2 agent. It follows `com.canonical.Unity.LauncherEntry`'s `Update`
-signal: `progress` and `progress-visible` draw on the task buttons of the
-windows whose app id or desktop file matches the entry's
-`application://<id>.desktop`, and Reprise's own `progress-paused` key shows the
-progress as paused. `count` and `count-visible` badge every task button of the
-app, pinned ones included, and `urgent` turning on asks for attention on the
-app's unfocused windows.
+Reprise also hosts `org.freedesktop.Notifications`, the StatusNotifierWatcher
+for the tray, `org.freedesktop.ScreenSaver` and the GeoClue2 agent.
+`org.freedesktop.ScreenSaver` takes inhibits, and its `GetActive` and
+`ActiveChanged` report the desktop's lock: this computer's, or the remote
+side's in lock mode. The Inhibit portal's `screensaver-active` follows
+logind's LockedHint instead, which is this computer's lock, so in lock mode it
+reads true while `GetActive` reads the remote side's lock. Reprise follows
+`com.canonical.Unity.LauncherEntry`'s `Update` signal: `progress` and
+`progress-visible` draw on the task buttons of the windows whose app id or
+desktop file matches the entry's `application://<id>.desktop`, and Reprise's
+own `progress-paused` key shows the progress as paused. `count` and
+`count-visible` badge every task button of the app, pinned ones included, and
+`urgent` turning on asks for attention on the app's unfocused windows.
 
 ## The session
 

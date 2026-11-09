@@ -130,6 +130,8 @@ mod tabs;
 mod tabsproto;
 mod tabview;
 mod taskpreview;
+#[cfg(test)]
+mod testbus;
 mod textinput;
 mod tooltip;
 mod toplevels;

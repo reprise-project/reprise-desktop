@@ -1,12 +1,14 @@
-//! The `org.freedesktop.ScreenSaver` inhibit service on the compositor's bus connection: while any cookie is held the
-//! idle timer is paused. A cookie goes with `UnInhibit` from its peer, or when that peer leaves the bus.
+//! `org.freedesktop.ScreenSaver` on the compositor's bus connection: a cookie pauses the idle timer until `UnInhibit`
+//! from its peer or that peer leaving the bus; `GetActive` and `ActiveChanged` follow the desktop's lock.
 
 use super::TrayEvent;
 use crate::mutex::lock;
 use std::os::fd::RawFd;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use zbus::message::Header;
+use zbus::object_server::SignalEmitter;
 
 pub const SCREENSAVER_NAME: &str = "org.freedesktop.ScreenSaver";
 pub const SCREENSAVER_PATHS: [&str; 2] = ["/org/freedesktop/ScreenSaver", "/ScreenSaver"];
@@ -90,6 +92,8 @@ impl Inhibits {
 #[derive(Clone)]
 pub struct Shared {
     inhibits: Arc<Mutex<Inhibits>>,
+    /// Whether the desktop is locked.
+    active: Arc<AtomicBool>,
     events: Sender<TrayEvent>,
     eventfd: RawFd,
 }
@@ -98,9 +102,14 @@ impl Shared {
     pub fn new(events: Sender<TrayEvent>, eventfd: RawFd) -> Shared {
         Shared {
             inhibits: Arc::new(Mutex::new(Inhibits::default())),
+            active: Arc::default(),
             events,
             eventfd,
         }
+    }
+
+    pub fn set_active(&self, locked: bool) {
+        self.active.store(locked, Ordering::Release);
     }
 
     /// Run `f` on the cookies, and tell the main loop when that took the
@@ -176,6 +185,13 @@ impl ScreenSaver {
         }
         Ok(cookie)
     }
+
+    fn get_active(&self) -> bool {
+        self.0.active.load(Ordering::Acquire)
+    }
+
+    #[zbus(signal)]
+    pub async fn active_changed(emitter: &SignalEmitter<'_>, active: bool) -> zbus::Result<()>;
 
     #[zbus(name = "UnInhibit")]
     async fn un_inhibit(&self, cookie: u32, #[zbus(header)] hdr: Header<'_>) {

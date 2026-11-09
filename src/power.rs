@@ -1260,8 +1260,7 @@ mod tests {
     }
 
     mod logind {
-        use std::io::{BufRead, BufReader};
-        use std::process::{Child, Command, Stdio};
+        use crate::testbus::bus;
         use std::sync::atomic::{AtomicU32, Ordering};
         use std::sync::{Arc, Mutex};
         use std::time::{Duration, Instant};
@@ -1270,29 +1269,6 @@ mod tests {
             Call, Hint, LOGIN1_MANAGER, LOGIN1_NAME, LOGIN1_PATH, Report, session_proxy,
             watch_session, watch_sleep,
         };
-
-        struct Bus(Child, String);
-
-        impl Drop for Bus {
-            fn drop(&mut self) {
-                let _ = self.0.kill();
-                let _ = self.0.wait();
-            }
-        }
-
-        fn bus() -> Option<Bus> {
-            let mut child = Command::new("dbus-daemon")
-                .args(["--session", "--nofork", "--print-address"])
-                .stdout(Stdio::piped())
-                .stderr(Stdio::null())
-                .spawn()
-                .ok()?;
-            let mut line = String::new();
-            BufReader::new(child.stdout.take()?)
-                .read_line(&mut line)
-                .ok()?;
-            Some(Bus(child, line.trim().to_string()))
-        }
 
         /// Refuses `Inhibit` while `refusals` lasts, then hands out /dev/null.
         struct FakeManager {

@@ -145,6 +145,29 @@ fn the_remote_password_unlocks_the_remote_side_and_not_the_console() {
 }
 
 #[test]
+fn lock_mode_publishes_only_the_remote_sides_lock() {
+    let (mut h, _portal, _lock) = in_lock_mode();
+    let (_tx, _wake, heard) = crate::tray::headless(&mut h.state);
+    let sent = |h: &mut Harness| -> Vec<bool> {
+        h.dispatch();
+        (std::iter::from_fn(|| heard.try_recv().ok()))
+            .filter_map(|c| match c {
+                crate::tray::TrayCommand::Locked(l) => Some(l),
+                _ => None,
+            })
+            .collect()
+    };
+    assert_eq!(
+        sent(&mut h),
+        [false],
+        "unlocked while only the console is locked"
+    );
+    lockview::lock_remote(&mut h.state);
+    assert_eq!(sent(&mut h), [true]);
+    assert!(sent(&mut h).is_empty(), "once per change");
+}
+
+#[test]
 fn leaving_lock_mode_drops_the_remote_lock() {
     let (mut h, mut portal, lock) = in_lock_mode();
     lockview::lock_remote(&mut h.state);

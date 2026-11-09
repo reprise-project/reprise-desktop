@@ -296,6 +296,9 @@ pub enum TrayCommand {
     IconSizes(Vec<i32>),
     /// The windows not answering pings changed: `NotRespondingChanged` goes out.
     NotResponding(Vec<reprisebus::tray::Hung>),
+    /// The desktop locked or unlocked ([`State::desktop_locked`]): `GetActive` answers it and
+    /// `ActiveChanged` goes out.
+    Locked(bool),
     Shutdown,
 }
 
@@ -362,6 +365,8 @@ pub struct Tray {
     left_hidden: HashMap<String, usize>,
     /// The [`icons::icon_sizes`] the D-Bus thread decodes item icons at.
     icon_sizes: Vec<i32>,
+    /// The desktop's lock as last sent, `None` before the first.
+    locked: Option<bool>,
 }
 
 impl Tray {
@@ -583,6 +588,7 @@ fn install(
         icon_cache: HashMap::new(),
         left_hidden: HashMap::new(),
         icon_sizes: drawn_sizes(state),
+        locked: None,
     });
 }
 
@@ -600,6 +606,17 @@ pub fn shutdown(state: &mut State) {
 
 pub fn notification_closed(state: &mut State, id: u32, reason: u32) {
     send(state, TrayCommand::NotificationClosed { id, reason });
+}
+
+/// Sends [`TrayCommand::Locked`] when the desktop's lock changed.
+pub(crate) fn publish_lock(state: &mut State) {
+    let locked = state.desktop_locked();
+    let Some(tray) = state.tray.as_mut() else {
+        return;
+    };
+    if tray.locked.replace(locked) != Some(locked) {
+        tray.send(TrayCommand::Locked(locked));
+    }
 }
 
 /// Queue a command for the D-Bus thread, if the tray is up. A click or a
