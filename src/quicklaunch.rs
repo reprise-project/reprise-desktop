@@ -174,7 +174,7 @@ mod tests {
 
     fn exec(argv: &[&str], app: &str) -> Action {
         Action::Exec {
-            argv: argv.iter().map(Into::into).collect(),
+            argv: Ok(argv.iter().map(Into::into).collect()),
             app: app.into(),
         }
     }

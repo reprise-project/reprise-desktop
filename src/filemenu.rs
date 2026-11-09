@@ -70,60 +70,39 @@ impl State {
         file_menu(found_menu(facts, self.config.script_open), mime.as_deref())
     }
 
-    /// How a found `path` opens, from its `facts`: as its icon on the desktop would.
-    pub(crate) fn found_opening(&self, path: &Path, facts: &desktop::FileFacts) -> Opening {
-        match &facts.target {
+    /// How a found folder, launcher, program or web link opens, from its `facts`: as its icon on
+    /// the desktop would. A file opens through [`State::open_document`].
+    fn found_opening(&self, facts: &desktop::FileFacts) -> Result<Opening, apps::ExecRefused> {
+        Ok(match &facts.target {
             Target::Open(dir) if facts.is_dir => Opening {
                 argv: apps::open_folder_argv(dir),
                 app: None,
             },
-            Target::Open(file) => {
-                let mime = (path.file_name())
-                    .and_then(|n| self.with_mime(|db| db.mime_of_name(&n.to_string_lossy())));
-                let default = mime
-                    .as_deref()
-                    .and_then(|m| reprisefs::props::default_app_entry(m, &self.app_index));
-                reprisefs::props::open_file(file, default, &self.config.terminal)
-            }
             target => Opening {
                 argv: self.with_mime(|db| {
                     desktop::open_argv(target, db, &self.app_index, &self.config.terminal)
-                }),
+                })?,
                 app: target.app().map(str::to_string),
             },
-        }
+        })
     }
 
-    /// Open a found `path` as its `facts` say: a program runs, anything else opens as
-    /// [`Self::found_opening`] says.
-    pub(crate) fn open_found(&mut self, path: &Path, facts: &desktop::FileFacts) {
+    /// Open a found path as its `facts` say: a program runs, a file opens as
+    /// [`State::open_document`] says and goes into the recent files once it does.
+    pub(crate) fn open_found(&mut self, facts: &desktop::FileFacts) {
         let how = Confirm::on_open(self.config.confirm_scripts);
-        self.open_found_as(path, facts, self.config.script_open, how);
+        self.open_found_as(facts, self.config.script_open, how);
     }
 
     /// [`Self::open_found`], a script running as `open` says.
-    fn open_found_as(
-        &mut self,
-        path: &Path,
-        facts: &desktop::FileFacts,
-        open: ScriptOpen,
-        how: Confirm,
-    ) {
+    fn open_found_as(&mut self, facts: &desktop::FileFacts, open: ScriptOpen, how: Confirm) {
         match &facts.target {
             Target::Run(file, program) => self.run_program(file, *program, open, how),
-            Target::Open(file) if !facts.is_dir => {
-                let open = self.found_opening(path, facts);
-                let mime = (file.file_name())
-                    .and_then(|n| self.with_mime(|db| db.mime_of_name(&n.to_string_lossy())));
-                self.open_plain(file, mime.as_deref(), open.clone(), how);
-                let app = (open.app.as_deref())
-                    .and_then(|id| self.app_index.iter().find(|a| a.id == id).cloned());
-                self.record_recent(vec![file.clone()], app);
-            }
-            _ => {
-                let open = self.found_opening(path, facts);
-                self.spawn_opening_activated(&open);
-            }
+            Target::Open(file) if !facts.is_dir => self.open_document(file, None, how, true),
+            _ => match self.found_opening(facts) {
+                Ok(open) => self.spawn_opening_activated(&open),
+                Err(refused) => self.exec_refused(&refused),
+            },
         }
     }
 
@@ -137,8 +116,8 @@ impl State {
         use DesktopCommand as Dc;
         let source = || vec![DragSource::file(path.clone())];
         match cmd {
-            Dc::Open | Dc::Explore => self.open_found(&path, facts),
-            Dc::Run(open) => self.open_found_as(&path, facts, open, Confirm::Skip),
+            Dc::Open | Dc::Explore => self.open_found(facts),
+            Dc::Run(open) => self.open_found_as(facts, open, Confirm::Skip),
             Dc::AllowLaunching => {
                 if facts.allow_launching {
                     self.allow_launching(&[path]);

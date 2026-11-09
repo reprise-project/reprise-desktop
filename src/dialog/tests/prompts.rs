@@ -1,5 +1,4 @@
 use super::*;
-use reprisefs::program::Asked;
 
 #[test]
 fn delete_badge_pins_at_scale_1_and_2() {
@@ -642,9 +641,9 @@ fn a_key_aid_prompt_without_settings_greys_settings_and_leaves_s_inert() {
 
 #[test]
 fn the_script_question_runs_on_enter_and_offers_notepad() {
-    use reprisefs::program::ScriptOpen;
+    use reprisefs::program::{Program, ScriptOpen};
     let path = std::path::PathBuf::from("/home/u/setup.sh");
-    let mut d = Dialog::ask_run(path.clone(), ScriptOpen::Terminal, Asked::Script);
+    let mut d = Dialog::ask_run(path.clone(), ScriptOpen::Terminal, Program::Script);
     let labels: Vec<&str> = d.buttons.iter().map(|b| b.label.as_str()).collect();
     assert_eq!(labels, ["&Run", "Open in &Notepad", "Cancel"]);
     assert_eq!(
@@ -652,7 +651,7 @@ fn the_script_question_runs_on_enter_and_offers_notepad() {
         Outcome::Script {
             path: path.clone(),
             run: Some(ScriptOpen::Terminal),
-            asked: Asked::Script,
+            program: Program::Script,
         }
     );
     assert_eq!(
@@ -660,29 +659,38 @@ fn the_script_question_runs_on_enter_and_offers_notepad() {
         Outcome::Script {
             path,
             run: None,
-            asked: Asked::Script
+            program: Program::Script,
         }
     );
     assert_eq!(d.key(Key::Escape), Outcome::Close);
 }
 
 #[test]
-fn the_program_question_offers_run_or_cancel() {
-    use reprisefs::program::ScriptOpen;
+fn the_program_question_offers_run_or_cancel_with_cancel_on_enter() {
+    use reprisefs::program::{Program, ScriptOpen};
     let path = std::path::PathBuf::from("/media/u/STICK/setup.exe");
-    for asked in [Asked::Binary, Asked::Typed] {
-        let mut d = Dialog::ask_run(path.clone(), ScriptOpen::Run, asked);
+    let mut binary = Dialog::ask_run(path.clone(), ScriptOpen::Run, Program::Binary);
+    let mut typed = Dialog::ask_open(path.clone(), Some("wine.desktop".into()), true);
+    for d in [&mut binary, &mut typed] {
         let labels: Vec<&str> = d.buttons.iter().map(|b| b.label.as_str()).collect();
         assert_eq!(labels, ["&Run", "Cancel"]);
         assert!(d.text.contains("is a program"), "{}", d.text);
-        assert_eq!(
-            d.key(Key::Enter),
-            Outcome::Script {
-                path: path.clone(),
-                run: Some(ScriptOpen::Run),
-                asked,
-            }
-        );
-        assert_eq!(d.press(1), Outcome::Close, "Cancel");
+        assert_eq!(d.key(Key::Enter), Outcome::Close, "Cancel is the default");
     }
+    assert_eq!(
+        binary.press(0),
+        Outcome::Script {
+            path: path.clone(),
+            run: Some(ScriptOpen::Run),
+            program: Program::Binary,
+        }
+    );
+    assert_eq!(
+        typed.press(0),
+        Outcome::OpenRunnable {
+            path,
+            with: Some("wine.desktop".into()),
+            recent: true,
+        }
+    );
 }

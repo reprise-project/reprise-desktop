@@ -204,6 +204,59 @@ pub(crate) fn split_exec(
     argv
 }
 
+/// The field codes the Desktop Entry spec names, deprecated ones included.
+const FIELD_CODES: &str = "fFuUdDnNickvm";
+
+/// Whether `exec` puts a field code inside a quoted argument, which the Desktop Entry spec
+/// forbids: a shell given that argument would read a file's name as shell text.
+fn quotes_a_field_code(exec: &str) -> bool {
+    let mut quoted = false;
+    let mut chars = exec.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => quoted = !quoted,
+            '\\' if quoted => {
+                chars.next();
+            }
+            '%' if chars
+                .next()
+                .is_some_and(|code| quoted && FIELD_CODES.contains(code)) =>
+            {
+                return true;
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// A desktop entry that [`open_argv`] and [`launch_argv`] refuse to run: its `Exec` has a field
+/// code inside quotes. Its text is the message a host shows.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExecRefused {
+    pub name: String,
+}
+
+impl std::fmt::Display for ExecRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Reprise cannot run '{}' safely: its command line has a field code inside quotes.",
+            self.name
+        )
+    }
+}
+
+fn refuse_quoted_codes(entry: &AppEntry) -> Result<(), ExecRefused> {
+    if quotes_a_field_code(&entry.exec_line) {
+        log::warn!("{}: Exec has a field code inside quotes; not run", entry.id);
+        return Err(ExecRefused {
+            name: entry.name.clone(),
+        });
+    }
+    Ok(())
+}
+
 fn list_contains(value: &str, needle: &str) -> bool {
     value.split(';').any(|s| s.trim() == needle)
 }
@@ -1073,8 +1126,14 @@ pub fn chooser_groups(
 /// the entry's `Exec` split by [`exec_argv`]'s rules, with the path's own
 /// bytes in the first `%f`/`%F` and its `file://` URI in a `%u`/`%U`. An
 /// entry with neither code takes no file, as the spec says. A
-/// `Terminal=true` entry runs under [`in_terminal`].
-pub fn open_argv(entry: &AppEntry, terminal: &str, path: &Path) -> Vec<OsString> {
+/// `Terminal=true` entry runs under [`in_terminal`]. A field code fills a whole argument as
+/// exactly the path, never shell text; one inside quotes refuses the entry.
+pub fn open_argv(
+    entry: &AppEntry,
+    terminal: &str,
+    path: &Path,
+) -> Result<Vec<OsString>, ExecRefused> {
+    refuse_quoted_codes(entry)?;
     // The spec allows one file code per line; any after the first drop.
     let mut used = false;
     let argv = split_exec(&entry.exec_line, |code| {
@@ -1087,15 +1146,14 @@ pub fn open_argv(entry: &AppEntry, terminal: &str, path: &Path) -> Vec<OsString>
         used = true;
         vec![v]
     });
-    wrap(entry, terminal, argv)
+    Ok(wrap(entry, terminal, argv))
 }
 
-pub fn launch_argv(entry: &AppEntry, terminal: &str) -> Vec<OsString> {
-    wrap(
-        entry,
-        terminal,
-        split_exec(&entry.exec_line, |code| entry_field(entry, code)),
-    )
+/// The argument vector that starts `entry` with no file; refused as [`open_argv`] refuses.
+pub fn launch_argv(entry: &AppEntry, terminal: &str) -> Result<Vec<OsString>, ExecRefused> {
+    refuse_quoted_codes(entry)?;
+    let argv = split_exec(&entry.exec_line, |code| entry_field(entry, code));
+    Ok(wrap(entry, terminal, argv))
 }
 
 /// What the field code `code` stands for that names `entry` itself: `%i` is `--icon <Icon>`

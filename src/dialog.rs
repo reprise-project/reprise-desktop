@@ -79,12 +79,19 @@ pub enum DialogAction {
     },
     EndProgram(i32),
     TurnOn(crate::keyfilter::Aid),
-    /// The run question's answer for `path`, about what `asked` says: run it (a script as `run`
+    /// The run question's answer for the `program` file at `path`: run it (a script as `run`
     /// says), or (None) open it in Notepad.
     Script {
         path: std::path::PathBuf,
         run: Option<reprisefs::program::ScriptOpen>,
-        asked: reprisefs::program::Asked,
+        program: reprisefs::program::Program,
+    },
+    /// The run question's Run for a file its type's program runs: open it in `with` (a desktop
+    /// entry id), else its default program, into the recent files with `recent`.
+    OpenRunnable {
+        path: std::path::PathBuf,
+        with: Option<String>,
+        recent: bool,
     },
     /// Answer the too-big-for-the-bin question, then ask the next or delete the batch.
     TooBig {
@@ -531,7 +538,13 @@ pub enum Outcome {
     Script {
         path: std::path::PathBuf,
         run: Option<reprisefs::program::ScriptOpen>,
-        asked: reprisefs::program::Asked,
+        program: reprisefs::program::Program,
+    },
+    /// [`DialogAction::OpenRunnable`].
+    OpenRunnable {
+        path: std::path::PathBuf,
+        with: Option<String>,
+        recent: bool,
     },
     /// Run what the user typed in the field: spawned like `Spawn`, and
     /// remembered in the Run history.

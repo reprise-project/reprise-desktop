@@ -5,9 +5,9 @@ use repriseconf::config::file::FileGlobalShortcut;
 pub enum Action {
     Spawn(String),
     /// An argument vector run with no shell (a Quick Launch application entry, `reprisefs::apps::launch_argv`),
-    /// and the desktop entry id it came from.
+    /// or the entry's refusal, and the desktop entry id it came from.
     Exec {
-        argv: Vec<std::ffi::OsString>,
+        argv: Result<Vec<std::ffi::OsString>, reprisefs::apps::ExecRefused>,
         app: String,
     },
     Terminal,

@@ -394,13 +394,13 @@ pub fn open_argv(
     mime: &apps::MimeDb,
     programs: &[AppEntry],
     terminal: &str,
-) -> Vec<std::ffi::OsString> {
-    match target {
-        Target::Launch(app) => apps::launch_argv(app, terminal),
-        Target::Open(path) => reprisefs::props::open_in(path, mime, programs, terminal).argv,
+) -> Result<Vec<std::ffi::OsString>, apps::ExecRefused> {
+    Ok(match target {
+        Target::Launch(app) => apps::launch_argv(app, terminal)?,
+        Target::Open(path) => reprisefs::props::open_in(path, mime, programs, terminal)?.argv,
         Target::Run(path, _) => vec![path.into()],
         Target::Uri(uri) => vec!["xdg-open".into(), uri.into()],
-    }
+    })
 }
 
 /// `dir`'s files as desktop icons. It reads the files, so a host runs it off its event loop; a
@@ -715,7 +715,7 @@ mod tests {
             let exec = place_command(e).unwrap();
             let text = apps::launcher_text("s", None, apps::Launch::Exec(&exec)).unwrap();
             let app = apps::parse_desktop(&text, "s.desktop").unwrap();
-            apps::launch_argv(&app, "foot")
+            apps::launch_argv(&app, "foot").unwrap()
         };
         let bin = recycle_bin(PathBuf::from("/t/files"), false);
         assert_eq!(argv(&bin), ["reprise-explorer", "Recycle Bin"]);
@@ -1447,7 +1447,7 @@ mod tests {
             "[Desktop Entry]\nType=Application\nName=Tool\nExec=reprise-tool --go\n",
         )
         .unwrap();
-        let argv = || open_argv(&file_target(&path), &apps::MimeDb::empty(), &[], "foot");
+        let argv = || open_argv(&file_target(&path), &apps::MimeDb::empty(), &[], "foot").unwrap();
         assert_eq!(file_target(&path), Target::Open(path.clone()));
         assert!(can_allow_launching_at(&path, &file_target(&path)));
         assert_eq!(argv(), ["xdg-open".into(), path.clone().into_os_string()]);
@@ -1502,7 +1502,7 @@ mod tests {
             let from_scan = target(&p.file_name().unwrap().to_string_lossy());
             assert_eq!(file_target(p), from_scan, "{}", p.display());
         }
-        let argv = |t: &Target| open_argv(t, &globs, &[], "foot");
+        let argv = |t: &Target| open_argv(t, &globs, &[], "foot").unwrap();
         assert_eq!(argv(&target("hi.sh")), [script.into_os_string()]);
         assert_eq!(
             argv(&target("photo.png")),

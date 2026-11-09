@@ -208,11 +208,11 @@ fn opening_an_elf_file_asks_run_or_cancel() {
         question(&ex).expect("the question is up"),
         ["&Run", "Cancel"]
     );
-    ex.dialog_outcome(Event::Pressed(BUTTON_IDS[1]), &mut ctx);
-    assert!(ex.dialog.is_none(), "Cancel closes it");
+    ex.dialog_outcome(Event::Default, &mut ctx);
+    assert!(ex.dialog.is_none(), "Cancel, the default, closes it");
 
     ex.open_selected(&mut ctx);
-    ex.dialog_outcome(Event::Default, &mut ctx);
+    ex.dialog_outcome(Event::Pressed(BUTTON_IDS[0]), &mut ctx);
     match ex.dialog.take() {
         Some(crate::dialogs::Dialog::Message { text, .. }) => assert_eq!(
             text,
@@ -222,39 +222,44 @@ fn opening_an_elf_file_asks_run_or_cancel() {
     }
 }
 
-/// Opening a type its program runs (a `.exe` under Wine) asks Run / Cancel before the
-/// program opens it, with or without the execute bit.
+/// Opening a type its program runs (a `.exe` under Wine), or a file with no type whose first
+/// bytes are `MZ`, asks Run / Cancel before the program opens it, with or without the execute bit.
 #[test]
 fn opening_a_runnable_type_asks_before_its_program_opens_it() {
     use reprisekit::controls::{dlgtemplate::BUTTON_IDS, form::Event};
-    let dir = tempfile::tempdir().expect("a temp dir");
-    let exe = dir.path().join("setup.exe");
-    std::fs::write(&exe, b"MZ\x90\0").expect("write");
-    let mut ctx = test_ctx();
-    let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
-    ex.globs = Arc::new(reprisefs::apps::MimeDb::parse([
-        "50:application/x-msdownload:*.exe\n",
-    ]));
-    ex.sv.selection.set_only(Some(0));
+    for name in ["setup.exe", "invoice"] {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let exe = dir.path().join(name);
+        std::fs::write(&exe, b"MZ\x90\0").expect("write");
+        let mut ctx = test_ctx();
+        let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+        ex.globs = Arc::new(reprisefs::apps::MimeDb::parse([
+            "50:application/x-msdownload:*.exe\n",
+        ]));
+        ex.sv.selection.set_only(Some(0));
 
-    let reply = ex.open_selected(&mut ctx);
-    assert!(reply.spawn.is_empty(), "nothing opens before the answer");
-    assert_eq!(
-        question(&ex).expect("the question is up"),
-        ["&Run", "Cancel"]
-    );
-    let reply = ex.dialog_outcome(Event::Pressed(BUTTON_IDS[1]), &mut ctx);
-    assert!(
-        reply.spawn.is_empty() && ex.dialog.is_none(),
-        "Cancel opens nothing"
-    );
+        let reply = ex.open_selected(&mut ctx);
+        assert!(
+            reply.spawn.is_empty(),
+            "{name}: nothing opens before the answer"
+        );
+        assert_eq!(
+            question(&ex).expect("the question is up"),
+            ["&Run", "Cancel"]
+        );
+        let reply = ex.dialog_outcome(Event::Default, &mut ctx);
+        assert!(
+            reply.spawn.is_empty() && ex.dialog.is_none(),
+            "Cancel, the default, opens nothing"
+        );
 
-    ex.open_selected(&mut ctx);
-    let reply = ex.dialog_outcome(Event::Default, &mut ctx);
-    assert!(
-        opens(&reply, &exe),
-        "Run opens it in its program: {reply:?}"
-    );
+        ex.open_selected(&mut ctx);
+        let reply = ex.dialog_outcome(Event::Pressed(BUTTON_IDS[0]), &mut ctx);
+        assert!(
+            opens(&reply, &exe),
+            "Run opens it in its program: {reply:?}"
+        );
+    }
 }
 
 /// Opening a program file reads it on a listing thread: on a dead mount the window goes on at
@@ -400,11 +405,11 @@ fn opening_a_disk_image_asks_before_mounting_it() {
         }
         _ => panic!("the question is up before any mount"),
     }
-    ex.dialog_outcome(Event::Pressed(BUTTON_IDS[1]), &mut ctx);
-    assert!(ex.dialog.is_none(), "Cancel mounts nothing");
+    ex.dialog_outcome(Event::Default, &mut ctx);
+    assert!(ex.dialog.is_none(), "Cancel, the default, mounts nothing");
 
     ex.open_selected(&mut ctx);
-    ex.dialog_outcome(Event::Default, &mut ctx);
+    ex.dialog_outcome(Event::Pressed(BUTTON_IDS[0]), &mut ctx);
     assert!(mounting(&ex), "Mount mounts it (here with no UDisks2)");
     ex.dialog = None;
 

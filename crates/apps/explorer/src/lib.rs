@@ -121,7 +121,7 @@ pub(crate) enum Opened {
     /// A file `confirm_scripts` asks about first, as [`Asked`] says; a script runs as the
     /// [`ScriptOpen`] says once Run is picked.
     Ask(ScriptOpen, reprisefs::program::Asked),
-    Open(reprisefs::props::Opening),
+    Open(Result<reprisefs::props::Opening, reprisefs::apps::ExecRefused>),
 }
 
 /// How long a listing is waited for before the window goes on. Tests wait as long as it takes.
@@ -1303,13 +1303,7 @@ impl Explorer {
             return self.go(place, ctx);
         }
         if it.shortcut.is_some() {
-            let open = self.open_for(&it);
-            return Reply {
-                redraw: true,
-                spawn: vec![open.argv],
-                spawn_app: open.app,
-                ..Default::default()
-            };
+            return self.opened(&it.path, Opened::Open(self.open_for(&it)), ctx);
         }
         self.open_file(&it.path, it.exec, open, how, ctx)
     }
@@ -1326,11 +1320,8 @@ impl Explorer {
         Reply::none()
     }
 
-    /// Runs the program file at `path` in its own folder and an app scope named after it, or
-    /// opens a file that is no program in its program; a file `how` asks about first (a program,
-    /// or a type its program runs) raises [`Explorer::ask_run`] instead. Telling a program (its first bytes), the
-    /// run and the opening (whether it is a folder) read the file, so they go on a listing
-    /// thread; a later answer (a dead mount) lands on a wake ([`Explorer::take_opened`]).
+    /// Runs the program file at `path`, or opens another file in its type's program, unless `how`
+    /// asks first ([`Explorer::ask_run`]). Reads the file off the loop ([`Explorer::take_opened`]).
     pub(crate) fn open_file(
         &mut self,
         path: &Path,
@@ -1350,13 +1341,15 @@ impl Explorer {
                 .and_then(|m| reprisefs::program::program(&path, &m));
             let Some(program) = program else {
                 let mime = reprisefs::apps::mime_of_in(&globs, &path);
-                if (mime.as_deref()).is_some_and(reprisefs::program::runs_in_its_program)
+                if reprisefs::program::opens_as_a_program(&path, mime.as_deref())
                     && reprisefs::program::asks_first(&path, how)
                 {
                     return Opened::Ask(open, reprisefs::program::Asked::Typed);
                 }
                 let open = reprisefs::props::open_in(&path, &globs, &apps, &terminal);
-                if repriseconf::recent_files() {
+                if let Ok(open) = &open
+                    && repriseconf::recent_files()
+                {
                     let app = (open.app.as_deref()).and_then(|id| apps.iter().find(|a| a.id == id));
                     if let Err(e) = reprisefs::recent::record(&[(&path, app, mime.as_deref())]) {
                         log::warn!("recent files: could not record {}: {e}", path.display());
@@ -1412,12 +1405,13 @@ impl Explorer {
 
     fn opened(&mut self, path: &Path, opened: Opened, ctx: &mut Ctx) -> Reply {
         match opened {
-            Opened::Open(open) => Reply {
+            Opened::Open(Ok(open)) => Reply {
                 redraw: true,
                 spawn: vec![open.argv],
                 spawn_app: open.app,
                 ..Default::default()
             },
+            Opened::Open(Err(refused)) => self.exec_refused(&refused, ctx),
             Opened::Ran(Ok(())) => Reply::redraw(),
             Opened::Ask(open, asked) => self.ask_run(path, open, asked, ctx),
             Opened::Ran(Err(e)) => {

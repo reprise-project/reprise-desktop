@@ -83,8 +83,16 @@ impl Confirm {
         labels.iter().map(|s| s.to_string()).collect()
     }
 
-    /// The button Enter presses when the box opens: No on a delete that erases.
+    /// The button Enter presses when the box opens: No on a delete that erases, Cancel on the
+    /// mount and program questions, Run on the script question.
     pub(crate) fn default_button(&self) -> usize {
+        let cancel_last = match self.script {
+            Some((_, asked)) => asked != reprisefs::program::Asked::Script,
+            None => self.mount,
+        };
+        if cancel_last {
+            return self.buttons().len() - 1;
+        }
         dlgtemplate::delete_default_index(&self.buttons(), self.erase)
     }
 
@@ -447,8 +455,12 @@ impl Explorer {
     /// The answer to [`Explorer::ask_run`]: the button `out` pressed, by its place in
     /// [`reprisefs::program::Asked::buttons`].
     fn script_answered(&mut self, out: form::Event, ctx: &mut Ctx) -> Reply {
+        let default = match &self.dialog {
+            Some(Dialog::Confirm(c)) => c.default_button(),
+            _ => 0,
+        };
         let pick = match out {
-            form::Event::Default => 0,
+            form::Event::Default => default,
             form::Event::Cancel => 2,
             form::Event::Pressed(id) => match dlgtemplate::BUTTON_IDS.iter().position(|&b| b == id)
             {
@@ -910,9 +922,10 @@ impl Explorer {
                 form::Event::Pressed(id) if id == msgbox::OK => Answer::Close,
                 _ => Answer::Stay,
             },
-            Dialog::Confirm(_) => match out {
+            Dialog::Confirm(c) => match out {
                 form::Event::Cancel => Answer::Close,
                 form::Event::Pressed(id) if id == msgbox::button_id(1) => Answer::Close,
+                form::Event::Default if c.mount => Answer::Close,
                 form::Event::Default => Answer::Accept,
                 form::Event::Pressed(id) if id == msgbox::button_id(0) => Answer::Accept,
                 _ => Answer::Stay,

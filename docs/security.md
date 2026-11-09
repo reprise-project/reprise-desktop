@@ -1248,8 +1248,13 @@ sharing and remote control grants yet.
   for a script, Run / Cancel for a binary, whatever its name. A file whose
   type's program runs it (`.exe`, `.msi`, `.bat`, `.lnk`, `.jar`,
   `.appimage`) asks Run / Cancel before that program opens it, execute bit
-  or not. Run sets the trust marker below, so the file opens unasked until
-  it changes; `confirm_scripts = false` turns the question off. A script
+  or not, as does a file with no type by its name whose first bytes are
+  `MZ`. The desktop, Explorer, search, the Start menu's Documents, jump
+  lists and Quick Launch all ask the same way. Enter picks Run on a
+  script's question and Cancel on the others. Search records a file in the
+  recent files only once it opens. Run sets the trust marker below, so the
+  file opens unasked until it changes; `confirm_scripts = false` turns the
+  question off. A script
   runs with no window (`script_open = "run"`, the default) or in your
   terminal (`script_open = "terminal"`). Programs started from desktop
   entries in the application folders never ask.
@@ -1258,7 +1263,15 @@ sharing and remote control grants yet.
   may come from anywhere, and those drivers aren't hardened against hostile
   images. The image is set up read-only on its loop device and each file
   system mounted with `ro`. The menu's Mount row is the explicit choice and
-  doesn't ask.
+  doesn't ask. The desktop and search hand a disk image to its type's
+  program, which may mount it without asking.
+- **Exec lines.** A desktop entry's `Exec` is split with no shell, and a
+  field code standing as an argument of its own (`%f`, `%u`) becomes
+  exactly one argument per file or URL, never shell text, so
+  `sh -c "tool \"\$1\"" sh %f` is safe. A field code inside a quoted
+  argument, which the Desktop Entry spec forbids, refuses the entry: Reprise
+  shows that it cannot run it safely and runs nothing, since
+  `sh -c "tool '%f'"` would read a file's name as shell commands.
 - **Thumbnailers.** Thumbnails and Tiles hand each file Reprise doesn't
   decode itself to its installed `.thumbnailer` program as the folder
   shows, with no click. Each runs under bubblewrap in a systemd user scope:

@@ -947,17 +947,21 @@ pub fn default_app_entry<'a>(mime: &str, apps: &'a [AppEntry]) -> Option<&'a App
 }
 
 /// How a `path` the caller knows is a file opens in `default`, else `xdg-open`, with no stat.
-pub fn open_file(path: &Path, default: Option<&AppEntry>, terminal: &str) -> Opening {
-    match default {
+pub fn open_file(
+    path: &Path,
+    default: Option<&AppEntry>,
+    terminal: &str,
+) -> Result<Opening, apps::ExecRefused> {
+    Ok(match default {
         Some(app) => Opening {
-            argv: apps::open_argv(app, terminal, path),
+            argv: apps::open_argv(app, terminal, path)?,
             app: Some(app.id.clone()),
         },
         None => Opening {
             argv: vec!["xdg-open".into(), path.into()],
             app: None,
         },
-    }
+    })
 }
 
 /// A command that opens a path, and the desktop entry id it runs as (its app scope): the default
@@ -970,19 +974,24 @@ pub struct Opening {
 
 /// How `path` opens, with its default program looked up from `globs` and `apps`. Everything that
 /// opens a file on its own comes here.
-pub fn open_in(path: &Path, globs: &MimeDb, apps: &[AppEntry], terminal: &str) -> Opening {
+pub fn open_in(
+    path: &Path,
+    globs: &MimeDb,
+    apps: &[AppEntry],
+    terminal: &str,
+) -> Result<Opening, apps::ExecRefused> {
     let mime = apps::mime_of_in(globs, path);
     let default = mime.as_deref().and_then(|m| default_app_entry(m, apps));
-    match default.filter(|_| !path.is_dir()) {
+    Ok(match default.filter(|_| !path.is_dir()) {
         Some(app) => Opening {
-            argv: apps::open_argv(app, terminal, path),
+            argv: apps::open_argv(app, terminal, path)?,
             app: Some(app.id.clone()),
         },
         None => Opening {
             argv: apps::open_argv_for(path),
             app: None,
         },
-    }
+    })
 }
 
 pub fn default_app(mime: &str, apps: &[AppEntry]) -> Option<usize> {

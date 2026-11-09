@@ -1,6 +1,6 @@
 use crate::compositor::State;
 use crate::dialog::{self, Dialog, Outcome};
-use reprisefs::program::{Asked, Confirm, Program};
+use reprisefs::program::Confirm;
 
 use super::*;
 
@@ -232,27 +232,17 @@ impl State {
                 self.close_dialog();
                 self.end_program(pid);
             }
-            Outcome::Script { path, run, asked } => {
+            Outcome::Script { path, run, program } => {
                 self.close_dialog();
-                match (run, asked) {
-                    (None, _) => {
-                        self.spawn_argv_activated(&reprisefs::program::notepad_argv(&path))
-                    }
-                    (Some(_), Asked::Typed) => {
-                        let open =
-                            self.found_opening(&path, &crate::desktop::FileFacts::plain(&path));
-                        let mime = (path.file_name()).and_then(|n| {
-                            self.with_mime(|db| db.mime_of_name(&n.to_string_lossy()))
-                        });
-                        self.open_plain(&path, mime.as_deref(), open, Confirm::Allow);
-                    }
-                    (Some(open), Asked::Script) => {
-                        self.run_program(&path, Program::Script, open, Confirm::Allow)
-                    }
-                    (Some(open), Asked::Binary) => {
-                        self.run_program(&path, Program::Binary, open, Confirm::Allow)
-                    }
+                match run {
+                    Some(open) => self.run_program(&path, program, open, Confirm::Allow),
+                    None => self.spawn_argv_activated(&reprisefs::program::notepad_argv(&path)),
                 }
+            }
+            Outcome::OpenRunnable { path, with, recent } => {
+                self.close_dialog();
+                let with = with.and_then(|id| self.app_index.iter().find(|a| a.id == id).cloned());
+                self.open_document(&path, with, Confirm::Allow, recent);
             }
             Outcome::TurnOn(aid) => {
                 self.close_dialog();

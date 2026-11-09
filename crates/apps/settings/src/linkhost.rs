@@ -17,10 +17,16 @@ pub(crate) fn find(id: &str, dirs: &[PathBuf]) -> Option<AppEntry> {
 
 /// Start `entry` in its app scope.
 pub(crate) fn launch(entry: &AppEntry, terminal: &str) -> Reply {
-    Reply {
-        spawn: vec![launch_argv(entry, terminal)],
-        spawn_app: Some(entry.id.clone()),
-        ..Reply::redraw()
+    match launch_argv(entry, terminal) {
+        Ok(argv) => Reply {
+            spawn: vec![argv],
+            spawn_app: Some(entry.id.clone()),
+            ..Reply::redraw()
+        },
+        Err(refused) => {
+            log::warn!("{refused}");
+            Reply::redraw()
+        }
     }
 }
 
@@ -30,7 +36,9 @@ pub(crate) fn start(id: &str) -> bool {
     let Some(e) = find(id, &dirs()) else {
         return false;
     };
-    let argv = launch_argv(&e, &repriseconf::terminal());
+    let Ok(argv) = launch_argv(&e, &repriseconf::terminal()) else {
+        return false;
+    };
     match repriseapp::spawn_in(&argv, None, Some(&e.id)) {
         Ok(()) => true,
         Err(err) => {
