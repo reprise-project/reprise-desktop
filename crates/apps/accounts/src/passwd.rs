@@ -253,9 +253,8 @@ fn talk(mut cmd: Command, current: &str, new: &str) -> Result<(), String> {
     }
 }
 
-/// Waits up to [`ECHO_WAIT`] for the terminal to stop echoing. `passwd`'s conversation turns
-/// echo off with `TCSAFLUSH` after it writes a prompt: an answer written before then is echoed
-/// back and then thrown away, and `passwd` waits for it.
+/// Waits up to [`ECHO_WAIT`] for the terminal to stop echoing: `passwd` turns echo off with
+/// `TCSAFLUSH` after its prompt, which echoes and then drops an answer written before then.
 fn wait_echo_off(master: &std::fs::File) {
     let end = Instant::now() + ECHO_WAIT;
     loop {

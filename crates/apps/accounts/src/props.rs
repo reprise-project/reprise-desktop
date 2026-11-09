@@ -18,7 +18,7 @@ use reprisekit::textedit::TextEdit;
 use reprisekit::theme::TextUnits;
 use zeroize::Zeroizing;
 
-use crate::acct::{ONLY_ADMIN, Op, User};
+use crate::acct::{ONLY_ADMIN, Op, PasswordMode, User};
 use crate::picture::Source;
 
 pub const CLIENT: (i32, i32) = (398, 410);
@@ -43,6 +43,13 @@ const AT_LOGIN: &str = "at_login";
 const FACE_PX: u32 = 48;
 pub const PREVIEW_PX: u32 = 96;
 const STOCK_PX: u32 = 32;
+
+/// Why the box alone is refused on an account with no password.
+pub const NO_PASSWORD: &str = "This account has no password. Type a new one for it.";
+/// Why the box alone is refused on an account that may have none until its next login.
+pub const MAYBE_NO_PASSWORD: &str = "This account already has to pick a new password at its \
+                                     next login, and may have none until then. Type a new one \
+                                     for it.";
 
 const X: i32 = 16;
 const FIELD_X: i32 = 150;
@@ -362,6 +369,11 @@ impl Props {
             if new.is_empty() && !keeps {
                 return Err("Type a new password.".into());
             }
+            match self.user.password_mode {
+                PasswordMode::Empty if keeps => return Err(NO_PASSWORD.into()),
+                PasswordMode::AtLogin if keeps => return Err(MAYBE_NO_PASSWORD.into()),
+                _ => {}
+            }
             if new != confirm {
                 return Err("The new passwords do not match. Type them again.".into());
             }
@@ -409,7 +421,7 @@ impl Props {
         // After any new password: setting one marks it changed today.
         if at_login && !self.user.you {
             ops.push(Op::Expire {
-                login: self.user.login.clone(),
+                path: self.user.path.clone(),
             });
         }
         Ok(ops)
@@ -593,6 +605,7 @@ mod tests {
             home: "/home/jo".into(),
             you,
             logged_on: false,
+            password_mode: PasswordMode::Regular,
         }
     }
 
@@ -948,7 +961,9 @@ mod tests {
         ));
         assert_eq!(
             p.event(propsheet::Event::Apply, no_file),
-            Outcome::Apply(vec![Op::Expire { login: "jo".into() }])
+            Outcome::Apply(vec![Op::Expire {
+                path: "/u/1000".into()
+            }])
         );
     }
 
@@ -964,7 +979,12 @@ mod tests {
         tick_at_login(&mut p);
         assert_eq!(
             p.event(propsheet::Event::Apply, no_file),
-            Outcome::Apply(vec![set.clone(), Op::Expire { login: "jo".into() }]),
+            Outcome::Apply(vec![
+                set.clone(),
+                Op::Expire {
+                    path: "/u/1000".into()
+                }
+            ]),
             "the new password is set first, then made to need changing"
         );
         tick_at_login(&mut p);
@@ -972,6 +992,30 @@ mod tests {
             p.event(propsheet::Event::Ok, no_file),
             Outcome::ApplyAndClose(vec![set])
         );
+    }
+
+    #[test]
+    fn the_box_alone_is_refused_on_an_account_that_may_have_no_password() {
+        for (mode, why) in [
+            (PasswordMode::Empty, NO_PASSWORD),
+            (PasswordMode::AtLogin, MAYBE_NO_PASSWORD),
+        ] {
+            let mut u = user(false, false);
+            u.password_mode = mode;
+            let mut p = Props::new(u, None, false, TextUnits::ONE);
+            tick_at_login(&mut p);
+            assert_eq!(
+                p.event(propsheet::Event::Apply, no_file),
+                Outcome::Refuse(why.into()),
+                "{mode:?}"
+            );
+            type_into(&mut p, TAB_PASSWORD, NEW, "temp-pw1");
+            type_into(&mut p, TAB_PASSWORD, CONFIRM, "temp-pw1");
+            assert!(
+                matches!(p.event(propsheet::Event::Apply, no_file), Outcome::Apply(ops) if ops.len() == 2),
+                "{mode:?}: a typed password goes with the box"
+            );
+        }
     }
 
     #[test]
