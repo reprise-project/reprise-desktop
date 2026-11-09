@@ -1864,6 +1864,13 @@ pub fn main(args: Vec<std::ffi::OsString>) {
         }
         return;
     }
+    if args.first().is_some_and(|a| a == preview::FONT_SAMPLE) {
+        if let Err(e) = preview::serve_font_sample(&args[1..]) {
+            log::warn!("font sample: {e}");
+            std::process::exit(1);
+        }
+        return;
+    }
     reprisefs::sendto::follow_phones();
     repriseapp::run(Box::new(Lazy {
         start: parse_args(args),

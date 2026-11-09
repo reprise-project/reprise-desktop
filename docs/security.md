@@ -1250,7 +1250,9 @@ sharing and remote control grants yet.
   folder, no session bus or display socket, `MemoryMax=512M` and a 10
   second deadline, after which its process group is killed. Without
   bubblewrap no thumbnailer runs; the built-in picture decoders (Rust, in
-  Explorer or its `--thumbnailer` helper) still do.
+  Explorer or its `--thumbnailer` helper) still do. A font's sample in the
+  Space preview is drawn the same way, by `reprise-explorer --font-sample`
+  in the jail, so FreeType never parses a font file inside Explorer.
 - **App scopes.** A program started from a desktop entry runs in a systemd
   scope `app-reprise-<app id>-<n>.scope`, where xdg-desktop-portal reads a
   host app's id. The scope is for identification and cleanup, not
