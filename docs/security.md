@@ -437,12 +437,13 @@ units cap its memory at 1 GiB (`MemoryMax=`).
 The clipboard follows the desktop's lock: this computer's lock in show mode,
 the remote side's in lock mode. The compositor reports it as
 `org.freedesktop.ScreenSaver`'s `GetActive` and `ActiveChanged` on the
-session bus and holds that name so no other process can take it over.
-`reprise-rdp` believes the name only while the bus reports its owner to be
-the process serving the session's display. While the name has no owner,
-another process owns it or the owner doesn't answer, the clipboard is held
-as if locked, and the server logs why. While locked, no format list goes
-either way, so the client machine's own clipboard stays as it is. Each paste
+session bus. `reprise-rdp` believes the name only while the bus reports its
+owner to be the process serving the session's display, so the user's second
+Reprise session holding the name holds the first session's clipboard until
+it ends. While the name has no owner, another process owns it or the owner
+doesn't answer, the clipboard is held as if locked, and the server logs why.
+While locked, no format list goes either way, so the client machine's own
+clipboard stays as it is. Each paste
 the client asks for is answered with a failure, a read already under way
 included, and a paste in the session of something copied on the client ends
 empty. A copy on the client during the lock waits: on unlock the client's
@@ -1176,8 +1177,10 @@ sharing and remote control grants yet.
 - **Same-user code.** A program running as you can ptrace or preload the
   portal, the compositor or anything else of yours, or take the
   `reprise.polkit.session<id>` name of a session before its agent does, so
-  that session gets no password prompts. Reprise doesn't defend
-  against that, and doesn't treat it as a vulnerability.
+  that session gets no password prompts, or take
+  `org.freedesktop.ScreenSaver`, so its Remote Desktop clipboard stays held.
+  Reprise doesn't defend against that, and doesn't treat it as a
+  vulnerability.
 
 ## Reporting
 

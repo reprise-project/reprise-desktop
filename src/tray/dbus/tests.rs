@@ -889,24 +889,11 @@ async fn screensaver_on(bus: &str) -> (Loop, Connection, OwnedFd) {
     (lp, conn, fd)
 }
 
-#[test]
-fn no_later_owner_takes_the_screensaver_name_from_the_compositor() {
-    let Some(bus) = crate::testbus::bus() else {
-        eprintln!("no dbus-daemon; skipped");
-        return;
-    };
-    zbus::block_on(async {
-        let (_lp, ours, _fd) = screensaver_on(&bus.1).await;
-        let other = zbus::connection::Builder::address(bus.1.as_str())
-            .build()
-            .await
-            .unwrap();
-        assert!(
-            own(&other, SCREENSAVER_NAME, name_flags(false))
-                .await
-                .is_err()
-        );
-        let owner = other
+/// Whether `conn` sees `org.freedesktop.ScreenSaver` owned by `want` within 5 s.
+async fn screensaver_owned_by(conn: &Connection, want: &Connection) -> bool {
+    let want = want.unique_name().unwrap().to_string();
+    for _ in 0..100 {
+        let owner = conn
             .call_method(
                 Some(DBUS_IFACE),
                 "/org/freedesktop/DBus",
@@ -915,9 +902,54 @@ fn no_later_owner_takes_the_screensaver_name_from_the_compositor() {
                 &(SCREENSAVER_NAME,),
             )
             .await
+            .and_then(|m| m.body().deserialize::<String>());
+        if owner.as_deref() == Ok(want.as_str()) {
+            return true;
+        }
+        async_io::Timer::after(Duration::from_millis(50)).await;
+    }
+    false
+}
+
+#[test]
+fn a_later_session_takes_the_screensaver_name_and_hands_it_back_when_it_leaves() {
+    let Some(bus) = crate::testbus::bus() else {
+        eprintln!("no dbus-daemon; skipped");
+        return;
+    };
+    zbus::block_on(async {
+        let (_first_lp, first, _first_fd) = screensaver_on(&bus.1).await;
+        let (_second_lp, second, _second_fd) = screensaver_on(&bus.1).await;
+        assert!(
+            screensaver_owned_by(&first, &second).await,
+            "the later session"
+        );
+        second.release_name(SCREENSAVER_NAME).await.unwrap();
+        assert!(
+            screensaver_owned_by(&second, &first).await,
+            "the earlier session again"
+        );
+    });
+}
+
+#[test]
+fn a_session_gets_the_screensaver_name_once_a_holder_allowing_no_replacement_leaves() {
+    let Some(bus) = crate::testbus::bus() else {
+        eprintln!("no dbus-daemon; skipped");
+        return;
+    };
+    zbus::block_on(async {
+        let holder = zbus::connection::Builder::address(bus.1.as_str())
+            .build()
+            .await
             .unwrap();
-        let owner: String = owner.body().deserialize().unwrap();
-        assert_eq!(owner, ours.unique_name().unwrap().as_str());
+        own(&holder, SCREENSAVER_NAME, name_flags(true))
+            .await
+            .unwrap();
+        let (_lp, ours, _fd) = screensaver_on(&bus.1).await;
+        assert!(screensaver_owned_by(&ours, &holder).await);
+        holder.release_name(SCREENSAVER_NAME).await.unwrap();
+        assert!(screensaver_owned_by(&holder, &ours).await, "queued for it");
     });
 }
 
