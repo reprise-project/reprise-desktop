@@ -45,6 +45,21 @@ pub fn is_disk_image(mime: &str) -> bool {
     IMAGE_MIMES.contains(&mime)
 }
 
+/// The caption of the question before a disk image is mounted.
+pub const MOUNT_TITLE: &str = "Mount Disk Image";
+
+/// The question's buttons, Mount first and the default.
+pub const MOUNT_BUTTONS: [&str; 2] = ["&Mount", "Cancel"];
+
+/// The question's text for the disk image `name`.
+pub fn mount_text(name: &str) -> String {
+    format!(
+        "\"{name}\" is a disk image. Mounting it has this computer read the file system \
+         inside, which an image from someone you do not trust can use to harm it. It mounts \
+         read-only.\n\nDo you want to mount it?"
+    )
+}
+
 /// One interface's properties as `GetManagedObjects` returns them.
 pub type Props = HashMap<String, OwnedVariant>;
 /// Every object UDisks2 has, by path, with its interfaces.
@@ -619,6 +634,14 @@ impl Udisks {
         Ok(PathBuf::from(at))
     }
 
+    /// [`Udisks::mount`] read-only.
+    fn mount_read_only(&self, volume: &str) -> Result<PathBuf, Error> {
+        let options = HashMap::from([("options", Variant::from("ro"))]);
+        let reply = self.call(volume, FILESYSTEM_IFACE, "Mount", &(options,))?;
+        let at: String = reply.body().deserialize()?;
+        Ok(PathBuf::from(at))
+    }
+
     pub fn unmount(&self, volume: &str) -> Result<(), Error> {
         self.call(volume, FILESYSTEM_IFACE, "Unmount", &(no_options(),))
             .map(|_| ())
@@ -641,8 +664,8 @@ impl Udisks {
             .map(|_| ())
     }
 
-    /// Set disk image `file` up read-only on a loop device and mount its file system, or each
-    /// partition's when the whole image holds none; where the first went. An image already set up
+    /// Set disk image `file` up read-only on a loop device and mount its file system read-only,
+    /// or each partition's when the whole image holds none; where the first went. An image already set up
     /// by this user is reused. With nothing mountable on it the loop device is removed again.
     pub fn mount_image(&self, file: &Path) -> Result<PathBuf, Error> {
         let file = std::fs::canonicalize(file).map_err(io_error)?;
@@ -655,7 +678,7 @@ impl Udisks {
         for v in &volumes {
             let at = match v.mounts.first() {
                 Some(m) => Ok(m.clone()),
-                None => self.mount(&v.path),
+                None => self.mount_read_only(&v.path),
             };
             if let Err(e) = &at {
                 log::info!("mounting {} of {}: {e}", v.device, file.display());
@@ -1299,9 +1322,12 @@ pub(crate) mod tests {
 
         #[zbus::interface(name = "org.freedesktop.UDisks2.Filesystem")]
         impl Filesystem {
-            fn mount(&self, _options: HashMap<String, OwnedVariant>) -> String {
+            fn mount(&self, options: HashMap<String, OwnedVariant>) -> String {
+                let how = options
+                    .get("options")
+                    .and_then(|v| String::try_from(v.clone()).ok());
                 let mut st = self.0.lock().unwrap();
-                st.calls.push(format!("Mount {}", self.1));
+                st.calls.push(format!("Mount {} options={how:?}", self.1));
                 st.mounted.push(self.1.to_string());
                 format!("/run/media/u/{}", self.1)
             }
@@ -1388,7 +1414,13 @@ pub(crate) mod tests {
             };
             let at = f.udisks.mount_image(&f.file).expect("mounted");
             assert_eq!(at, PathBuf::from("/run/media/u/loop0"));
-            assert_eq!(calls(&f), ["LoopSetup read-only=Some(true)", "Mount loop0"]);
+            assert_eq!(
+                calls(&f),
+                [
+                    "LoopSetup read-only=Some(true)",
+                    "Mount loop0 options=Some(\"ro\")"
+                ]
+            );
         }
 
         #[test]
@@ -1402,8 +1434,8 @@ pub(crate) mod tests {
                 calls(&f),
                 [
                     "LoopSetup read-only=Some(true)",
-                    "Mount loop0p1",
-                    "Mount loop0p2"
+                    "Mount loop0p1 options=Some(\"ro\")",
+                    "Mount loop0p2 options=Some(\"ro\")"
                 ]
             );
         }
@@ -1414,7 +1446,7 @@ pub(crate) mod tests {
                 return;
             };
             f.udisks.mount_image(&f.file).expect("mounted");
-            assert_eq!(calls(&f), ["Mount loop0"]);
+            assert_eq!(calls(&f), ["Mount loop0 options=Some(\"ro\")"]);
         }
 
         #[test]
