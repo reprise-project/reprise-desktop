@@ -281,9 +281,8 @@ fn served_session(xdg: Option<&str>, judged: Option<&str>) -> Result<Served, Str
     })
 }
 
-/// The logind session other than `session` that a prompt's subject belongs to, by its
-/// `/proc/<pid>/cgroup` listing: its `session-<id>.scope`, or the session its Reprise app scope
-/// was launched from.
+/// The logind session other than `session` a prompt's subject belongs to, by its cgroup: its
+/// `session-<id>.scope`, or the session its Reprise app scope was launched from.
 fn foreign_session<'a>(cgroup: &'a str, session: &str) -> Option<&'a str> {
     reprisebus::logind::session_of_cgroup(cgroup)
         .or_else(|| reprisefs::scope::launch_session_of_cgroup(cgroup))
