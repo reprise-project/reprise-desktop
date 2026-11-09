@@ -524,6 +524,18 @@ impl Loop {
                     let _ = Shell::not_responding_changed(iface.signal_emitter(), &hung).await;
                 }
             }
+            TrayCommand::Locked(locked) => {
+                self.screensaver.set_active(locked);
+                for path in SCREENSAVER_PATHS {
+                    let iface = (self.conn.object_server())
+                        .interface::<_, screensaver::ScreenSaver>(path)
+                        .await;
+                    if let Ok(iface) = iface {
+                        let emitter = iface.signal_emitter();
+                        let _ = screensaver::ScreenSaver::active_changed(emitter, locked).await;
+                    }
+                }
+            }
             TrayCommand::Replied { id, text } => {
                 if let Ok(iface) = self.notifications().await {
                     let emitter = iface.signal_emitter();
@@ -655,6 +667,31 @@ fn name_flags(defers: bool) -> zbus::fdo::RequestNameFlags {
     }
 }
 
+/// `org.freedesktop.ScreenSaver` as [`name_flags`] asks for it, except that no later owner may
+/// take it over: reprise-rdp trusts the desktop's lock only from the compositor.
+fn screensaver_flags(defers: bool) -> zbus::fdo::RequestNameFlags {
+    name_flags(defers).difference(zbus::fdo::RequestNameFlags::ALLOW_REPLACEMENT)
+}
+
+/// Serves `org.freedesktop.ScreenSaver` on both its paths and asks for the name.
+async fn host_screensaver(
+    conn: &Connection,
+    shared: &screensaver::Shared,
+    defers: bool,
+) -> Result<(), String> {
+    for path in SCREENSAVER_PATHS {
+        conn.object_server()
+            .at(path, screensaver::ScreenSaver(shared.clone()))
+            .await
+            .map_err(|e| format!("object server (screensaver): {e}"))?;
+    }
+    match own(conn, SCREENSAVER_NAME, screensaver_flags(defers)).await {
+        Ok(_) => log::info!("screensaver: hosting {SCREENSAVER_NAME}"),
+        Err(e) => log::info!("screensaver: {SCREENSAVER_NAME}: {e}; inhibits go to its owner"),
+    }
+    Ok(())
+}
+
 async fn own(
     conn: &Connection,
     name: &str,
@@ -735,16 +772,7 @@ async fn setup(
         Err(_) => log::info!("notifications: {NOTIFY_NAME} already owned; balloons off"),
     }
     let screensaver = screensaver::Shared::new(events.clone(), eventfd);
-    for path in SCREENSAVER_PATHS {
-        conn.object_server()
-            .at(path, screensaver::ScreenSaver(screensaver.clone()))
-            .await
-            .map_err(|e| format!("object server (screensaver): {e}"))?;
-    }
-    match own(&conn, SCREENSAVER_NAME, flags).await {
-        Ok(_) => log::info!("screensaver: hosting {SCREENSAVER_NAME}"),
-        Err(e) => log::info!("screensaver: {SCREENSAVER_NAME}: {e}; inhibits go to its owner"),
-    }
+    host_screensaver(&conn, &screensaver, defers).await?;
     let current = Arc::new(Mutex::new(appearance));
     conn.object_server()
         .at(
