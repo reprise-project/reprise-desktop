@@ -280,6 +280,7 @@ impl Daemon {
         if self.remote.unread.remove(&s.id).is_none() {
             return;
         }
+        let viewed = self.viewed_before.remove(&s.id);
         if s.closing {
             if seat_active.is_none_or(|a| a == s.id) {
                 self.bring_greeter(out);
@@ -289,7 +290,7 @@ impl Daemon {
         let Some(entry) = table_entry(&s, seat_active, self.background_before.as_ref()) else {
             return;
         };
-        let (uid, user, background) = (entry.uid, entry.user.clone(), entry.background);
+        let (uid, user) = (entry.uid, entry.user.clone());
         if let Some(e) = (self.sessions.by_uid(uid)).or_else(|| self.sessions.by_user(&user)) {
             self.remote.left_out.insert(s.id.clone());
             return out.push(Effect::Log(
@@ -301,9 +302,15 @@ impl Daemon {
                 ),
             ));
         }
+        // Linked from the last run's list, the id stays there until the link first reports.
+        let listed = viewed && !self.config.remote.enabled && !entry.background;
+        if listed {
+            self.viewed_before.insert(s.id.clone());
+        }
+        let clients = entry.background || listed;
         self.sessions.insert(entry);
         if !self.remote.linked.contains(&uid) {
-            self.open_intake(uid, user, background, out);
+            self.open_intake(uid, user, clients, out);
         }
         self.update_inhibit(out);
     }
@@ -1386,13 +1393,16 @@ impl Daemon {
         }
     }
 
-    /// A lost link with viewers reopens once, keeping its count meanwhile, at a login's pace if
-    /// one waits. Any other loss zeroes the count and refuses the logins waiting on it; the next
-    /// login for `uid` reopens it.
+    /// A lost link with viewers, or one recovery opened from the last run's list that has not
+    /// reported yet, reopens once, keeping its count meanwhile, at a login's pace if one waits.
+    /// Any other loss zeroes the count and refuses the logins waiting on it; the next login for
+    /// `uid` reopens it.
     pub(super) fn intake_lost(&mut self, now: Instant, uid: u32, out: &mut Vec<Effect>) {
         let reported = self.remote.linked.remove(&uid);
-        let viewed = self.remote.viewers.contains_key(&uid);
-        if viewed && self.sessions.by_uid(uid).is_some() && self.remote.reopening.insert(uid) {
+        let id = self.sessions.by_uid(uid).map(|e| e.id.clone());
+        let pending = (id.as_ref()).is_some_and(|id| self.viewed_before.contains(id));
+        let viewed = pending || self.remote.viewers.contains_key(&uid);
+        if viewed && id.is_some() && self.remote.reopening.insert(uid) {
             out.push(Effect::ReopenIntake { uid });
             if !self.conns(Step::Linking { uid }).is_empty() {
                 out.push(Effect::OpenIntake { uid });
@@ -1400,6 +1410,9 @@ impl Daemon {
             return;
         }
         self.remote.reopening.remove(&uid);
+        if let Some(id) = &id {
+            self.viewed_before.remove(id);
+        }
         self.set_viewers(now, uid, 0, out);
         if !reported
             && let Some(e) = self.sessions.by_uid(uid)
@@ -1420,21 +1433,26 @@ impl Daemon {
         }
     }
 
-    /// Links every background session, whose count alone starts its time; looks up the group
-    /// for the others while remote logins are on.
+    /// Links every session that may have a client: a background one, whose count alone starts
+    /// its time, and while remote logins are off one the last run counted a client in. Looks up
+    /// the group for the others while remote logins are on.
     pub(super) fn open_intakes(&mut self, out: &mut Vec<Effect>) {
         let users: BTreeMap<u32, (String, bool)> = (self.sessions.iter())
             .filter(|e| !self.remote.linked.contains(&e.uid))
-            .map(|e| (e.uid, (e.user.clone(), e.background)))
+            .map(|e| (e.uid, (e.user.clone(), self.may_have_clients(e))))
             .collect();
-        for (uid, (user, background)) in users {
-            self.open_intake(uid, user, background, out);
+        for (uid, (user, clients)) in users {
+            self.open_intake(uid, user, clients, out);
         }
     }
 
-    /// Links `uid`'s background session, or looks up its user for `link_member`.
-    fn open_intake(&mut self, uid: u32, user: String, background: bool, out: &mut Vec<Effect>) {
-        if background {
+    fn may_have_clients(&self, e: &SessionEntry) -> bool {
+        e.background || (!self.config.remote.enabled && self.viewed_before.contains(&e.id))
+    }
+
+    /// Links `uid`'s session if it may have clients, else looks up its user for `link_member`.
+    fn open_intake(&mut self, uid: u32, user: String, clients: bool, out: &mut Vec<Effect>) {
+        if clients {
             self.open_link(uid, out);
         } else if self.config.remote.enabled {
             out.push(Effect::LookUp {
@@ -1479,6 +1497,7 @@ impl Daemon {
         let Some(e) = self.sessions.by_uid(uid) else {
             return;
         };
+        self.viewed_before.remove(&e.id);
         if count == 0 && e.background && !self.remote.disconnects.contains_key(&e.id) {
             let id = e.id.clone();
             self.arm_disconnected(now, id, out);

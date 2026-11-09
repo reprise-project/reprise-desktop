@@ -1,5 +1,5 @@
-//! The ids of the background sessions, kept in the runtime directory across restarts of the
-//! daemon so a restart treats each session as the last run did.
+//! Lists of session ids, the background ones and those with a client, kept in the runtime
+//! directory across restarts of the daemon so a restart treats each session as the last run did.
 
 use std::collections::BTreeSet;
 use std::io;
@@ -8,6 +8,7 @@ use std::path::Path;
 use crate::atomic;
 
 pub const BACKGROUNDS: &str = "/run/reprise-login/background-sessions";
+pub const VIEWED: &str = "/run/reprise-login/viewed-sessions";
 
 /// The ids `path` holds, one a line; None when there is no readable file.
 pub fn load(path: &Path) -> Option<BTreeSet<String>> {
