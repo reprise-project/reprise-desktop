@@ -784,30 +784,35 @@ impl Dialog {
         }
     }
 
-    /// The question before the script at `path` runs (`confirm_scripts`): Run runs it as `open`
-    /// says and remembers the pick, Open in Notepad opens it there, Cancel leaves it.
-    pub fn ask_script(path: std::path::PathBuf, open: reprisefs::program::ScriptOpen) -> Dialog {
-        use reprisefs::program::{ASK_BUTTONS, ASK_TITLE, ask_text};
+    /// The question before the file at `path` runs (`confirm_scripts`), about what `asked` says:
+    /// Run runs it (a script as `open` says) and remembers the pick, a script's Open in Notepad
+    /// opens it there, Cancel leaves it.
+    pub fn ask_run(
+        path: std::path::PathBuf,
+        open: reprisefs::program::ScriptOpen,
+        asked: reprisefs::program::Asked,
+    ) -> Dialog {
+        use reprisefs::program::{ASK_TITLE, Asked};
         let name = path.file_name().unwrap_or_default().to_string_lossy();
+        let labels = asked.buttons();
+        let script = |run| DialogAction::Script {
+            path: path.clone(),
+            run,
+            asked,
+        };
+        let mut buttons = vec![button(labels[0], script(Some(open)), true)];
+        if asked == Asked::Script {
+            buttons.push(button(labels[1], script(None), false));
+        }
+        buttons.push(button(
+            labels[labels.len() - 1],
+            DialogAction::Cancel,
+            false,
+        ));
         Dialog {
             icon: Some("dialog-warning".into()),
-            text: ask_text(&name),
-            buttons: vec![
-                button(
-                    ASK_BUTTONS[0],
-                    DialogAction::Script {
-                        path: path.clone(),
-                        run: Some(open),
-                    },
-                    true,
-                ),
-                button(
-                    ASK_BUTTONS[1],
-                    DialogAction::Script { path, run: None },
-                    false,
-                ),
-                button(ASK_BUTTONS[2], DialogAction::Cancel, false),
-            ],
+            text: asked.text(&name),
+            buttons,
             ..Dialog::new(
                 ASK_TITLE,
                 Style::Classic {

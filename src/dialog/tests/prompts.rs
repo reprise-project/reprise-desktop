@@ -1,4 +1,5 @@
 use super::*;
+use reprisefs::program::Asked;
 
 #[test]
 fn delete_badge_pins_at_scale_1_and_2() {
@@ -643,16 +644,45 @@ fn a_key_aid_prompt_without_settings_greys_settings_and_leaves_s_inert() {
 fn the_script_question_runs_on_enter_and_offers_notepad() {
     use reprisefs::program::ScriptOpen;
     let path = std::path::PathBuf::from("/home/u/setup.sh");
-    let mut d = Dialog::ask_script(path.clone(), ScriptOpen::Terminal);
+    let mut d = Dialog::ask_run(path.clone(), ScriptOpen::Terminal, Asked::Script);
     let labels: Vec<&str> = d.buttons.iter().map(|b| b.label.as_str()).collect();
     assert_eq!(labels, ["&Run", "Open in &Notepad", "Cancel"]);
     assert_eq!(
         d.key(Key::Enter),
         Outcome::Script {
             path: path.clone(),
-            run: Some(ScriptOpen::Terminal)
+            run: Some(ScriptOpen::Terminal),
+            asked: Asked::Script,
         }
     );
-    assert_eq!(d.press(1), Outcome::Script { path, run: None });
+    assert_eq!(
+        d.press(1),
+        Outcome::Script {
+            path,
+            run: None,
+            asked: Asked::Script
+        }
+    );
     assert_eq!(d.key(Key::Escape), Outcome::Close);
+}
+
+#[test]
+fn the_program_question_offers_run_or_cancel() {
+    use reprisefs::program::ScriptOpen;
+    let path = std::path::PathBuf::from("/media/u/STICK/setup.exe");
+    for asked in [Asked::Binary, Asked::Typed] {
+        let mut d = Dialog::ask_run(path.clone(), ScriptOpen::Run, asked);
+        let labels: Vec<&str> = d.buttons.iter().map(|b| b.label.as_str()).collect();
+        assert_eq!(labels, ["&Run", "Cancel"]);
+        assert!(d.text.contains("is a program"), "{}", d.text);
+        assert_eq!(
+            d.key(Key::Enter),
+            Outcome::Script {
+                path: path.clone(),
+                run: Some(ScriptOpen::Run),
+                asked,
+            }
+        );
+        assert_eq!(d.press(1), Outcome::Close, "Cancel");
+    }
 }

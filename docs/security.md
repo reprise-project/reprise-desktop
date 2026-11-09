@@ -1238,10 +1238,15 @@ sharing and remote control grants yet.
   drive runs only once you allow it again.
 - **Programs and scripts.** A file with the owner's execute bit that starts
   with `#!` or is an ELF binary runs when you open it, from the desktop,
-  Explorer or a search. A script runs with no window (`script_open = "run"`,
-  the default) or in your terminal (`script_open = "terminal"`). The
-  execute bit is the only gate: an archive that restores it gives you a
-  program that runs on a double-click.
+  Explorer or a search. The first open asks: Run / Open in Notepad / Cancel
+  for a script, Run / Cancel for a binary, whatever its name. A file whose
+  type's program runs it (`.exe`, `.msi`, `.bat`, `.lnk`, `.jar`,
+  `.appimage`) asks Run / Cancel before that program opens it, execute bit
+  or not. Run sets the trust marker below, so the file opens unasked until
+  it changes; `confirm_scripts = false` turns the question off. A script
+  runs with no window (`script_open = "run"`, the default) or in your
+  terminal (`script_open = "terminal"`). Programs started from desktop
+  entries in the application folders never ask.
 - **Thumbnailers.** Thumbnails and Tiles hand each file Reprise doesn't
   decode itself to its installed `.thumbnailer` program as the folder
   shows, with no click. Each runs under bubblewrap in a systemd user scope:

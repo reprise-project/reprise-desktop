@@ -111,16 +111,18 @@ impl State {
     ) {
         match &facts.target {
             Target::Run(file, program) => self.run_program(file, *program, open, how),
+            Target::Open(file) if !facts.is_dir => {
+                let open = self.found_opening(path, facts);
+                let mime = (file.file_name())
+                    .and_then(|n| self.with_mime(|db| db.mime_of_name(&n.to_string_lossy())));
+                self.open_plain(file, mime.as_deref(), open.clone(), how);
+                let app = (open.app.as_deref())
+                    .and_then(|id| self.app_index.iter().find(|a| a.id == id).cloned());
+                self.record_recent(vec![file.clone()], app);
+            }
             _ => {
                 let open = self.found_opening(path, facts);
                 self.spawn_opening_activated(&open);
-                if let Target::Open(file) = &facts.target
-                    && !facts.is_dir
-                {
-                    let app = (open.app.as_deref())
-                        .and_then(|id| self.app_index.iter().find(|a| a.id == id).cloned());
-                    self.record_recent(vec![file.clone()], app);
-                }
             }
         }
     }

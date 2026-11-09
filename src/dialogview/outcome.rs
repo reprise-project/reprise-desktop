@@ -1,6 +1,6 @@
 use crate::compositor::State;
 use crate::dialog::{self, Dialog, Outcome};
-use reprisefs::program::{Confirm, Program};
+use reprisefs::program::{Asked, Confirm, Program};
 
 use super::*;
 
@@ -232,11 +232,26 @@ impl State {
                 self.close_dialog();
                 self.end_program(pid);
             }
-            Outcome::Script { path, run } => {
+            Outcome::Script { path, run, asked } => {
                 self.close_dialog();
-                match run {
-                    Some(open) => self.run_program(&path, Program::Script, open, Confirm::Allow),
-                    None => self.spawn_argv_activated(&reprisefs::program::notepad_argv(&path)),
+                match (run, asked) {
+                    (None, _) => {
+                        self.spawn_argv_activated(&reprisefs::program::notepad_argv(&path))
+                    }
+                    (Some(_), Asked::Typed) => {
+                        let open =
+                            self.found_opening(&path, &crate::desktop::FileFacts::plain(&path));
+                        let mime = (path.file_name()).and_then(|n| {
+                            self.with_mime(|db| db.mime_of_name(&n.to_string_lossy()))
+                        });
+                        self.open_plain(&path, mime.as_deref(), open, Confirm::Allow);
+                    }
+                    (Some(open), Asked::Script) => {
+                        self.run_program(&path, Program::Script, open, Confirm::Allow)
+                    }
+                    (Some(open), Asked::Binary) => {
+                        self.run_program(&path, Program::Binary, open, Confirm::Allow)
+                    }
                 }
             }
             Outcome::TurnOn(aid) => {

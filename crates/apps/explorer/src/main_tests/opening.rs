@@ -89,7 +89,12 @@ fn the_script_question_fits_its_button_labels() {
     const FOCUS_INSET: i32 = 4;
     let mut ctx = test_ctx();
     let mut ex = test_explorer(Place::Folder(std::env::temp_dir()), &mut ctx);
-    ex.ask_run(std::path::Path::new("/tmp/a.sh"), ScriptOpen::Run, &mut ctx);
+    ex.ask_run(
+        std::path::Path::new("/tmp/a.sh"),
+        ScriptOpen::Run,
+        reprisefs::program::Asked::Script,
+        &mut ctx,
+    );
     let Some(crate::dialogs::Dialog::Confirm(c)) = &ex.dialog else {
         panic!("the script question is up");
     };
@@ -171,6 +176,85 @@ fn opening_an_executable_script_asks_before_it_runs() {
         ex.open_selected(&mut ctx);
         assert!(ex.dialog.is_none(), "Run is remembered for the file");
     }
+}
+
+/// The question up in `ex`, as its buttons.
+fn question(ex: &crate::Explorer) -> Option<Vec<String>> {
+    match &ex.dialog {
+        Some(crate::dialogs::Dialog::Confirm(c)) if c.script.is_some() => {
+            assert_eq!(c.title, "Open File");
+            Some(c.buttons())
+        }
+        _ => None,
+    }
+}
+
+/// Opening an executable ELF file asks Run / Cancel, whatever its name; Run runs it.
+#[test]
+fn opening_an_elf_file_asks_run_or_cancel() {
+    use reprisekit::controls::{dlgtemplate::BUTTON_IDS, form::Event};
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let elf = dir.path().join("invoice.pdf");
+    std::fs::write(&elf, b"\x7fELF\x02\x01\x01\0").expect("write");
+    std::fs::set_permissions(&elf, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.sv.selection.set_only(Some(0));
+
+    let reply = ex.open_selected(&mut ctx);
+    assert!(reply.spawn.is_empty(), "nothing spawns before the answer");
+    assert_eq!(
+        question(&ex).expect("the question is up"),
+        ["&Run", "Cancel"]
+    );
+    ex.dialog_outcome(Event::Pressed(BUTTON_IDS[1]), &mut ctx);
+    assert!(ex.dialog.is_none(), "Cancel closes it");
+
+    ex.open_selected(&mut ctx);
+    ex.dialog_outcome(Event::Default, &mut ctx);
+    match ex.dialog.take() {
+        Some(crate::dialogs::Dialog::Message { text, .. }) => assert_eq!(
+            text,
+            "Cannot run invoice.pdf: It is not a program this computer can run."
+        ),
+        _ => panic!("Run tried to run it"),
+    }
+}
+
+/// Opening a type its program runs (a `.exe` under Wine) asks Run / Cancel before the
+/// program opens it, with or without the execute bit.
+#[test]
+fn opening_a_runnable_type_asks_before_its_program_opens_it() {
+    use reprisekit::controls::{dlgtemplate::BUTTON_IDS, form::Event};
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let exe = dir.path().join("setup.exe");
+    std::fs::write(&exe, b"MZ\x90\0").expect("write");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.globs = Arc::new(reprisefs::apps::MimeDb::parse([
+        "50:application/x-msdownload:*.exe\n",
+    ]));
+    ex.sv.selection.set_only(Some(0));
+
+    let reply = ex.open_selected(&mut ctx);
+    assert!(reply.spawn.is_empty(), "nothing opens before the answer");
+    assert_eq!(
+        question(&ex).expect("the question is up"),
+        ["&Run", "Cancel"]
+    );
+    let reply = ex.dialog_outcome(Event::Pressed(BUTTON_IDS[1]), &mut ctx);
+    assert!(
+        reply.spawn.is_empty() && ex.dialog.is_none(),
+        "Cancel opens nothing"
+    );
+
+    ex.open_selected(&mut ctx);
+    let reply = ex.dialog_outcome(Event::Default, &mut ctx);
+    assert!(
+        opens(&reply, &exe),
+        "Run opens it in its program: {reply:?}"
+    );
 }
 
 /// Opening a program file reads it on a listing thread: on a dead mount the window goes on at

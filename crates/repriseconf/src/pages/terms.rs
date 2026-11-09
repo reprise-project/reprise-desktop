@@ -339,7 +339,7 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
             ("dp_script_end", "When a script ends:"),
             (
                 "dp_confirm_scripts",
-                "Ask before running a script the first time",
+                "Ask before running a program the first time",
             ),
             ("dp_filter", "Filter:"),
             ("dp_change", "Change..."),
