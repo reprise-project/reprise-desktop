@@ -390,6 +390,10 @@ fn thumbnail(
     let made = match (&make.external, &thumbnailer) {
         (Some(x), Some(t)) => match x.runner.run(t, path, edge) {
             Err(RunError::Busy) => return None,
+            Err(RunError::NoJail(why)) => {
+                no_jail(&why);
+                return None;
+            }
             Err(RunError::Failed(why)) => {
                 log::debug!("thumbnail {}: {why}", path.display());
                 None
@@ -414,6 +418,14 @@ fn thumbnail(
         }
     }
     made
+}
+
+/// Log, once per process, that the jail does not start, so only the built-in decoders run.
+fn no_jail(why: &str) {
+    static LOGGED: std::sync::Once = std::sync::Once::new();
+    LOGGED.call_once(|| {
+        log::warn!("thumbnailers: bubblewrap does not start here ({why}); built-in decoders only");
+    });
 }
 
 /// A thumbnailer's PNG fitted inside an `edge` square, with the picture size it reported.
@@ -982,12 +994,11 @@ mod tests {
             decoders,
             globs: MimeGlobs::at(vec![dir.join("globs2")]),
             external: Some(External {
-                runner: Runner {
-                    slot_dir: dir.to_path_buf(),
-                    scratch: dir.to_path_buf(),
-                    deadline: Duration::from_secs(5),
-                    jail: reprisefs::thumbnailers::Jail::Bare,
-                },
+                runner: Runner::new(
+                    dir,
+                    Duration::from_secs(5),
+                    reprisefs::thumbnailers::Jail::Bare,
+                ),
                 installed: Box::new(move || list.clone()),
             }),
         }

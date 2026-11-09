@@ -1,13 +1,12 @@
-//! The freedesktop thumbnailers named by `thumbnailers/*.thumbnailer` in the data folders, and
-//! [`Runner::run`]: no shell, idle priority, inside a [`Jail`], its process group killed past
-//! [`DEADLINE`].
+//! The freedesktop `*.thumbnailer` programs and [`Runner::run`]: no shell, idle priority, inside
+//! a [`Jail`], its process group killed past [`DEADLINE`].
 
 use std::ffi::OsString;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
 
 /// Thumbnailers running at once, counted across every Reprise process.
@@ -215,6 +214,9 @@ pub fn installed() -> Arc<Thumbnailers> {
 pub enum RunError {
     /// Every slot stayed taken for the whole deadline: nothing ran, so try again later.
     Busy,
+    /// The jail does not start here, or not around this file: nothing ran, so the file is not
+    /// marked failed.
+    NoJail(String),
     /// It ran and left no usable PNG, or was killed at the deadline.
     Failed(String),
 }
@@ -311,9 +313,22 @@ pub struct Runner {
     pub scratch: PathBuf,
     pub deadline: Duration,
     pub jail: Jail,
+    /// Whether the jail ran `true`, tried at the first run.
+    starts: OnceLock<Result<(), String>>,
 }
 
 impl Runner {
+    /// Slots and scratch folders in `dir`.
+    pub fn new(dir: &Path, deadline: Duration, jail: Jail) -> Runner {
+        Runner {
+            slot_dir: dir.to_path_buf(),
+            scratch: dir.to_path_buf(),
+            deadline,
+            jail,
+            starts: OnceLock::new(),
+        }
+    }
+
     /// Slots and scratch folders in `$XDG_RUNTIME_DIR` (else the temp folder), each run in the
     /// bubblewrap [`Jail`]. None without bubblewrap: no thumbnailer runs unconfined.
     pub fn jailed() -> Option<Runner> {
@@ -322,12 +337,7 @@ impl Runner {
             .map(PathBuf::from)
             .filter(|p| p.is_absolute())
             .unwrap_or_else(std::env::temp_dir);
-        Some(Runner {
-            slot_dir: dir.clone(),
-            scratch: dir,
-            deadline: DEADLINE,
-            jail,
-        })
+        Some(Runner::new(&dir, DEADLINE, jail))
     }
 
     /// The PNG `t` makes of `input` fitted inside `size` px. Its header is checked (at most
@@ -335,16 +345,63 @@ impl Runner {
     pub fn run(&self, t: &Thumbnailer, input: &Path, size: u32) -> Result<Vec<u8>, RunError> {
         let _slot = self.slot().ok_or(RunError::Busy)?;
         let scratch = Scratch::new(&self.scratch).map_err(|e| fail("no scratch folder", e))?;
+        if let Err(why) = self
+            .starts
+            .get_or_init(|| self.jail_runs_true(&scratch.0, &scratch.0))
+        {
+            return Err(RunError::NoJail(why.clone()));
+        }
         let output = scratch.0.join("thumbnail.png");
         let argv = (self.jail)
             .wrap(t.argv(input, &output, size), input, &scratch.0)
             .ok_or_else(|| RunError::Failed(format!("{}: no program to run", t.id)))?;
-        let (program, args) = argv
-            .split_first()
-            .ok_or(RunError::Failed("no Exec".into()))?;
+        let status = self.wait(&argv, &scratch.0).map_err(|e| fail(&t.id, e))?;
+        if !status.success() {
+            // bubblewrap's own setup (a bind it cannot make) fails before the thumbnailer runs.
+            if let Err(why) = self.jail_runs_true(input, &scratch.0) {
+                return Err(RunError::NoJail(why));
+            }
+            return Err(RunError::Failed(format!("{}: {status}", t.id)));
+        }
+        // The jail wrote this folder, so a symlink it left there is not followed out of it.
+        let png = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_NOCTTY)
+            .open(&output)
+            .and_then(|f| crate::ops::read_opened(&f, MAX_PNG_BYTES))
+            .map_err(|e| fail(&t.id, e))?;
+        let header = png::Decoder::new(std::io::Cursor::new(&png))
+            .read_info()
+            .map_err(|e| fail(&t.id, e))?;
+        let (w, h) = (header.info().width, header.info().height);
+        if w == 0 || h == 0 || w > MAX_SIDE || h > MAX_SIDE {
+            return Err(RunError::Failed(format!("{}: a {w}x{h} PNG", t.id)));
+        }
+        Ok(png)
+    }
+
+    /// Whether the jail starts `true` around `input` and `scratch`; why not when it does not.
+    fn jail_runs_true(&self, input: &Path, scratch: &Path) -> Result<(), String> {
+        if self.jail == Jail::Bare {
+            return Ok(());
+        }
+        let argv = (self.jail)
+            .wrap(vec![os("true")], input, scratch)
+            .ok_or("no true to run")?;
+        match self.wait(&argv, scratch) {
+            Ok(status) if status.success() => Ok(()),
+            Ok(status) => Err(format!("bubblewrap or systemd-run: {status}")),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Run `argv` in `dir` at idle priority in a process group of its own, which is killed when
+    /// it ends or at the deadline.
+    fn wait(&self, argv: &[OsString], dir: &Path) -> Result<std::process::ExitStatus, String> {
+        let (program, args) = argv.split_first().ok_or("no Exec")?;
         let mut cmd = Command::new(program);
         cmd.args(args)
-            .current_dir(&scratch.0)
+            .current_dir(dir)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -358,7 +415,7 @@ impl Runner {
                 Ok(())
             });
         }
-        let mut child = cmd.spawn().map_err(|e| fail(&t.id, e))?;
+        let mut child = cmd.spawn().map_err(|e| e.to_string())?;
         let group = child.id() as libc::pid_t;
         let end = Instant::now() + self.deadline;
         let status = loop {
@@ -369,27 +426,16 @@ impl Runner {
                     kill_group(group);
                     // A child stuck on a dead mount may outlive SIGKILL for a while.
                     std::thread::spawn(move || child.wait());
-                    return Err(RunError::Failed(match waited {
-                        Err(e) => format!("{}: {e}", t.id),
-                        _ => format!("{}: no thumbnail within {:?}", t.id, self.deadline),
-                    }));
+                    return Err(match waited {
+                        Err(e) => e.to_string(),
+                        _ => format!("no thumbnail within {:?}", self.deadline),
+                    });
                 }
             }
         };
         // Whatever it left running in its group goes with it.
         kill_group(group);
-        if !status.success() {
-            return Err(RunError::Failed(format!("{}: {status}", t.id)));
-        }
-        let png = crate::ops::read_regular(&output, MAX_PNG_BYTES).map_err(|e| fail(&t.id, e))?;
-        let header = png::Decoder::new(std::io::Cursor::new(&png))
-            .read_info()
-            .map_err(|e| fail(&t.id, e))?;
-        let (w, h) = (header.info().width, header.info().height);
-        if w == 0 || h == 0 || w > MAX_SIDE || h > MAX_SIDE {
-            return Err(RunError::Failed(format!("{}: a {w}x{h} PNG", t.id)));
-        }
-        Ok(png)
+        Ok(status)
     }
 
     /// One of the [`SLOTS`] lock files, held until the file is dropped; None when all stay taken

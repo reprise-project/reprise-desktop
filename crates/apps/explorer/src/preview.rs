@@ -99,11 +99,12 @@ pub(crate) struct FontSampler {
 }
 
 impl FontSampler {
-    /// Explorer's own program, jailed as the thumbnailers are; no runner without bubblewrap.
+    /// Explorer's own program on `PATH`, which an upgrade replaces under a running Explorer,
+    /// jailed as the thumbnailers are; no runner without bubblewrap.
     pub(crate) fn installed() -> FontSampler {
         FontSampler {
             runner: reprisefs::thumbnailers::Runner::jailed(),
-            exe: std::env::current_exe().unwrap_or_default(),
+            exe: reprisefs::thumbpipe::PROGRAM.into(),
         }
     }
 

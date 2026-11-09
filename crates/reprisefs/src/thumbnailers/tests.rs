@@ -24,12 +24,7 @@ fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
 }
 
 fn runner(dir: &Path, deadline: Duration) -> Runner {
-    Runner {
-        slot_dir: dir.to_path_buf(),
-        scratch: dir.to_path_buf(),
-        deadline,
-        jail: Jail::Bare,
-    }
+    Runner::new(dir, deadline, Jail::Bare)
 }
 
 #[test]
@@ -293,10 +288,7 @@ fn jailed(dir: &Path, deadline: Duration) -> Option<Runner> {
         ]
         .concat(),
     ) && runs(&[&scope[..], &["--quiet".as_ref(), "/usr/bin/true".as_ref()]].concat());
-    ok.then(|| Runner {
-        jail,
-        ..runner(dir, deadline)
-    })
+    ok.then(|| Runner::new(dir, deadline, jail))
 }
 
 #[test]
@@ -338,4 +330,104 @@ fn a_jailed_thumbnailer_sees_only_its_input_and_output_and_no_network() {
     let t = Thumbnailer::parse(&entry(&format!("{} %i %o", fake.display()), "a/b"), "j").unwrap();
     assert_eq!(r.run(&t, &input, 128), Ok(png(4, 4)));
     assert!(!escaped.exists(), "nothing outside the output is written");
+}
+
+/// A jail of shell scripts standing in for systemd-run and bubblewrap: bwrap fails on any
+/// argument holding `refuse`, else both run what follows their `--`.
+fn fake_jail(dir: &Path, refuse: &str) -> Jail {
+    let skip = "while [ \"$1\" != -- ]; do shift; done; shift; exec \"$@\"";
+    Jail::Bwrap {
+        systemd_run: script(dir, "systemd-run", skip),
+        bwrap: script(
+            dir,
+            "bwrap",
+            &format!("for a; do case \"$a\" in *{refuse}*) exit 1;; esac; done\n{skip}"),
+        ),
+    }
+}
+
+#[test]
+fn a_jail_that_does_not_start_runs_nothing_and_marks_nothing_failed() {
+    let dir = tempfile::tempdir().unwrap();
+    let ran = dir.path().join("ran");
+    let fake = script(dir.path(), "f.sh", &format!("touch '{}'", ran.display()));
+    let t = Thumbnailer::parse(&entry(&format!("{} %i %o", fake.display()), "a/b"), "f").unwrap();
+    let input = dir.path().join("a.pdf");
+    std::fs::write(&input, b"%PDF").unwrap();
+    let r = Runner::new(
+        dir.path(),
+        Duration::from_secs(5),
+        fake_jail(dir.path(), "--unshare-all"),
+    );
+    assert!(matches!(r.run(&t, &input, 128), Err(RunError::NoJail(_))));
+    assert!(!ran.exists(), "the thumbnailer never ran");
+}
+
+#[test]
+fn a_file_the_jail_cannot_bind_is_not_marked_failed_and_a_failing_thumbnailer_is() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = script(dir.path(), "f.sh", "exit 3");
+    let t = Thumbnailer::parse(&entry(&format!("{} %i %o", fake.display()), "a/b"), "f").unwrap();
+    let r = Runner::new(
+        dir.path(),
+        Duration::from_secs(5),
+        fake_jail(dir.path(), "unbindable"),
+    );
+    let unbindable = dir.path().join("unbindable.pdf");
+    let plain = dir.path().join("plain.pdf");
+    for p in [&unbindable, &plain] {
+        std::fs::write(p, b"%PDF").unwrap();
+    }
+    assert!(matches!(
+        r.run(&t, &unbindable, 128),
+        Err(RunError::NoJail(_))
+    ));
+    assert!(matches!(r.run(&t, &plain, 128), Err(RunError::Failed(_))));
+}
+
+#[test]
+fn the_jail_shares_only_the_system_the_input_and_the_scratch_folder() {
+    let jail = Jail::Bwrap {
+        bwrap: "/usr/bin/bwrap".into(),
+        systemd_run: "/usr/bin/systemd-run".into(),
+    };
+    let (input, scratch) = ("/home/u/Videos/a.mp4", "/run/user/1000/reprise-thumb-1");
+    let argv = jail
+        .wrap(vec!["true".into()], Path::new(input), Path::new(scratch))
+        .unwrap();
+    let args: Vec<&str> = argv.iter().map(|a| a.to_str().unwrap()).collect();
+    for flag in [
+        "--unshare-all",
+        "--die-with-parent",
+        "--new-session",
+        "--clearenv",
+    ] {
+        assert!(args.contains(&flag), "{flag}");
+    }
+    let after = |flag: &str| -> Vec<&str> {
+        (args.windows(2).filter(|w| w[0] == flag))
+            .map(|w| w[1])
+            .collect()
+    };
+    assert_eq!(after("--bind"), [scratch], "the one writable bind");
+    let system = ["/usr", "/bin", "/sbin", "/lib", "/lib64", "/lib32"];
+    for from in after("--ro-bind") {
+        assert!(from == input || system.contains(&from), "{from}");
+    }
+    for from in after("--ro-bind-try") {
+        assert!(
+            from.starts_with("/etc/") || from == "/var/cache/fontconfig",
+            "{from}"
+        );
+    }
+    let set = after("--setenv");
+    assert!(
+        set.iter()
+            .all(|v| ["PATH", "HOME", "LANG", "LC_ALL"].contains(v)),
+        "{set:?}"
+    );
+    let home = args
+        .windows(3)
+        .find(|w| w[0] == "--setenv" && w[1] == "HOME");
+    assert_eq!(home.map(|w| w[2]), Some(scratch));
 }

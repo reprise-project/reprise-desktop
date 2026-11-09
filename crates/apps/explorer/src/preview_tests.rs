@@ -46,12 +46,11 @@ fn fake_sampler(dir: &Path, sample: &Path) -> FontSampler {
     std::fs::write(&exe, body).expect("write");
     std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).expect("chmod");
     FontSampler {
-        runner: Some(reprisefs::thumbnailers::Runner {
-            slot_dir: dir.to_path_buf(),
-            scratch: dir.to_path_buf(),
-            deadline: std::time::Duration::from_secs(5),
-            jail: reprisefs::thumbnailers::Jail::Bare,
-        }),
+        runner: Some(reprisefs::thumbnailers::Runner::new(
+            dir,
+            std::time::Duration::from_secs(5),
+            reprisefs::thumbnailers::Jail::Bare,
+        )),
         exe,
     }
 }
