@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use reprisefs::apps::AppEntry;
 use reprisefs::program::{Confirm, Program, ScriptOpen};
-use reprisefs::{apps, names, ops};
+use reprisefs::{apps, names, ops, udisks};
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 
 use crate::{
@@ -178,7 +178,8 @@ impl State {
 
     /// Open the file at `path` in `with`, else its type's default program: the desktop, the
     /// Start menu's Documents, jump lists and search open files here. A program file runs as
-    /// [`Self::run_program`] says, and a file its type's program runs
+    /// [`Self::run_program`] says, a disk image with no `with` raises [`Dialog::ask_mount`], and
+    /// a file its type's program runs
     /// ([`reprisefs::program::opens_as_a_program`]) raises [`Dialog::ask_open`] first as `how`
     /// says. With `recent` the path goes into the recent files once it opens. The type, the
     /// program check and the trust marker read the disk, so they run off the loop.
@@ -197,7 +198,9 @@ impl State {
                 .and_then(|m| reprisefs::program::program(&path, &m));
             let mime = (path.file_name())
                 .and_then(|n| apps::mime_globs().mime_of_name(&n.to_string_lossy()));
+            let image = with.is_none() && mime.as_deref().is_some_and(udisks::is_disk_image);
             let asks = program.is_none()
+                && !image
                 && reprisefs::program::opens_as_a_program(&path, mime.as_deref())
                 && reprisefs::program::asks_first(&path, how);
             let with = with.or_else(|| {
@@ -208,6 +211,9 @@ impl State {
             Box::new(move |state: &mut State| {
                 if let Some(program) = program {
                     return state.run_program(&path, program, open, how);
+                }
+                if image {
+                    return state.open_dialog(Dialog::ask_mount(path));
                 }
                 if asks {
                     let d = Dialog::ask_open(path, with.map(|e| e.id), recent);
@@ -220,6 +226,30 @@ impl State {
                 }
                 if recent {
                     state.record_recent(vec![path], with);
+                }
+            }) as crate::fsjobs::OnLoop
+        });
+    }
+
+    /// Mount: the disk image at `path` set up read-only and mounted as Explorer's Mount does, then
+    /// its folder opened; a failure raises a box. UDisks2 is a bus call, so it runs off the loop.
+    pub(crate) fn mount_image(&mut self, path: &Path) {
+        let path = path.to_path_buf();
+        self.spawn_job(move || {
+            let mounted = match reprisefs::udisks::Udisks::system() {
+                Some(udisks) => udisks.mount_image(&path).map_err(|e| (e.kind, e.message)),
+                None => Err((
+                    reprisefs::udisks::ErrorKind::Other,
+                    "UDisks2 is not running.".into(),
+                )),
+            };
+            Box::new(move |state: &mut State| match mounted {
+                Ok(at) => state.spawn_argv_activated(&apps::open_folder_argv(&at)),
+                Err((reprisefs::udisks::ErrorKind::Cancelled, _)) => {}
+                Err((_, text)) => {
+                    let name = path.file_name().unwrap_or_default().to_string_lossy();
+                    let title = format!("Could not mount {name}");
+                    state.open_dialog(Dialog::error(&title, text));
                 }
             }) as crate::fsjobs::OnLoop
         });

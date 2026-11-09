@@ -196,9 +196,10 @@ impl Asked {
     }
 }
 
-/// Whether opening `path` asks first, as `how` says. [`Confirm::Allow`] marks the file
-/// ([`crate::apps::set_trusted`]) so it opens bare from then on; a file system without `user.`
-/// xattrs asks again next time. Reads and writes an xattr, so a host calls it off its event loop.
+/// Whether opening `path` asks first, as `how` says; a program the system [`installed`] never
+/// asks. [`Confirm::Allow`] marks the file ([`crate::apps::set_trusted`]) so it opens bare from
+/// then on; a file system without `user.` xattrs asks again next time. Reads and writes an
+/// xattr, so a host calls it off its event loop.
 pub fn asks_first(path: &Path, how: Confirm) -> bool {
     match how {
         Confirm::Skip => false,
@@ -208,8 +209,26 @@ pub fn asks_first(path: &Path, how: Confirm) -> bool {
             }
             false
         }
-        Confirm::Ask => !crate::apps::is_trusted(path),
+        Confirm::Ask => !installed(path) && !crate::apps::is_trusted(path),
     }
+}
+
+/// Whether `path` is a file the system installed: named and resolving under `/usr`, on `/usr`'s
+/// file system, owned by root and writable by no one else.
+fn installed(path: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let usr = Path::new("/usr");
+    if !path.starts_with(usr) {
+        return false;
+    }
+    let (Ok(real), Ok(meta), Ok(top)) = (
+        std::fs::canonicalize(path),
+        std::fs::metadata(path),
+        std::fs::metadata(usr),
+    ) else {
+        return false;
+    };
+    real.starts_with(usr) && meta.uid() == 0 && meta.mode() & 0o022 == 0 && meta.dev() == top.dev()
 }
 
 /// Types whose program runs the file rather than showing it: `.exe`, `.msi`, `.bat` and `.lnk`
@@ -587,6 +606,27 @@ mod tests {
                     "Run is remembered for {name}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn a_program_the_system_installed_runs_unasked_and_a_copy_or_link_of_it_asks() {
+        use std::os::unix::fs::MetadataExt;
+        let installed = Path::new("/usr/bin/true");
+        let meta = std::fs::symlink_metadata(installed).unwrap();
+        if meta.uid() != 0 || !meta.is_file() {
+            eprintln!("SKIPPED: /usr/bin/true is no root-owned file here");
+            return;
+        }
+        assert!(!asks_first(installed, Confirm::Ask));
+        let t = tempfile::tempdir().unwrap();
+        let copy = t.path().join("true");
+        std::fs::copy(installed, &copy).unwrap();
+        let link = t.path().join("invoice.pdf");
+        std::os::unix::fs::symlink(installed, &link).unwrap();
+        let climb = Path::new("/usr/..").join(copy.strip_prefix("/").unwrap());
+        for path in [copy, link, climb] {
+            assert!(asks_first(&path, Confirm::Ask), "{}", path.display());
         }
     }
 

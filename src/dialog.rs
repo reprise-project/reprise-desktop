@@ -93,6 +93,8 @@ pub enum DialogAction {
         with: Option<String>,
         recent: bool,
     },
+    /// The Mount Disk Image question's Mount for the disk image at this path.
+    MountImage(std::path::PathBuf),
     /// Answer the too-big-for-the-bin question, then ask the next or delete the batch.
     TooBig {
         asker: Box<reprisefs::bincap::TooBig>,
@@ -546,6 +548,8 @@ pub enum Outcome {
         with: Option<String>,
         recent: bool,
     },
+    /// [`DialogAction::MountImage`].
+    MountImage(std::path::PathBuf),
     /// Run what the user typed in the field: spawned like `Spawn`, and
     /// remembered in the Run history.
     Run(String),
