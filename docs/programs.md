@@ -99,7 +99,8 @@ The file manager, and the default for folders.
   installed in `share/thumbnailers`, two at a time at idle priority, each
   in a bubblewrap jail capped at 512 MB and stopped after 10 seconds; a
   file one fails on is not tried again until it changes. Without
-  bubblewrap no thumbnailer runs. An entry Reprise writes names the UUID of
+  bubblewrap, or where it can't start, no thumbnailer runs and no file is
+  marked failed. An entry Reprise writes names the UUID of
   the file system its file was on, so a different stick mounted at the same
   path never shows the last one's pictures. The Browse... dialogs of Run and
   Open With read the same cache and leave the pictures it lacks to Explorer,
