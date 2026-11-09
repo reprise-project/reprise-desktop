@@ -79,25 +79,41 @@ pub enum Step {
 }
 
 /// The talk with `passwd`: three prompts (current, new, new again), each a line ending in a colon.
-/// Other output between prompts is kept for the error box.
+/// Other output between prompts is kept for the error box, in buffers wiped when dropped.
 #[derive(Default)]
 pub struct Dialogue {
     answered: usize,
-    pending: String,
-    pub said: Vec<String>,
+    pending: Zeroizing<String>,
+    said: Zeroizing<Vec<String>>,
+}
+
+/// Appends `s` to `buf`, moving to a larger buffer first so no copy is left in a freed one.
+fn push_wiped(buf: &mut Zeroizing<String>, s: &str) {
+    if buf.capacity() - buf.len() < s.len() {
+        let mut grown = String::with_capacity((buf.len() + s.len()).max(2 * buf.capacity()));
+        grown.push_str(buf);
+        *buf = Zeroizing::new(grown);
+    }
+    buf.push_str(s);
 }
 
 impl Dialogue {
     pub fn feed(&mut self, out: &str) -> Step {
-        self.pending.push_str(&out.replace('\r', ""));
+        let mut clean = Zeroizing::new(String::with_capacity(out.len()));
+        clean.extend(out.chars().filter(|&c| c != '\r'));
+        push_wiped(&mut self.pending, &clean);
         let tail = self.pending.trim_end();
         if !tail.ends_with(':') {
             return Step::Wait;
         }
-        let mut lines: Vec<String> = self.pending.lines().map(str::to_string).collect();
-        lines.pop();
-        self.said
-            .extend(lines.into_iter().filter(|l| !l.trim().is_empty()));
+        let mut lines: Zeroizing<Vec<String>> =
+            Zeroizing::new(self.pending.lines().map(str::to_string).collect());
+        let before_prompt = lines.len().saturating_sub(1);
+        self.said.extend(
+            lines
+                .drain(..before_prompt)
+                .filter(|l| !l.trim().is_empty()),
+        );
         self.pending.clear();
         let i = self.answered;
         self.answered += 1;
@@ -152,6 +168,8 @@ impl Dialogue {
 }
 
 const QUIET: Duration = Duration::from_secs(20);
+/// How long an answer waits for `passwd` to turn echo off after its prompt.
+const ECHO_WAIT: Duration = Duration::from_secs(1);
 
 pub fn change_own(current: &str, new: &str) -> Result<(), String> {
     talk(Command::new("passwd"), current, new)
@@ -184,7 +202,7 @@ fn talk(mut cmd: Command, current: &str, new: &str) -> Result<(), String> {
     let answers = [current, new, new];
     let mut talk = Dialogue::default();
     let mut file = std::fs::File::from(master);
-    let mut buf = [0u8; 512];
+    let mut buf = Zeroizing::new([0u8; 512]);
     let mut last = Instant::now();
     let refused = loop {
         let mut pfd = libc::pollfd {
@@ -203,14 +221,16 @@ fn talk(mut cmd: Command, current: &str, new: &str) -> Result<(), String> {
             }
             continue;
         }
-        let read = match file.read(&mut buf) {
+        let read = match file.read(&mut buf[..]) {
             Ok(0) | Err(_) => break None,
             Ok(r) => r,
         };
         last = Instant::now();
-        match talk.feed(&String::from_utf8_lossy(&buf[..read])) {
+        let text = Zeroizing::new(String::from_utf8_lossy(&buf[..read]).into_owned());
+        match talk.feed(&text) {
             Step::Wait => {}
             Step::Answer(i) => {
+                wait_echo_off(&file);
                 let mut line = Zeroizing::new(Vec::with_capacity(answers[i].len() + 1));
                 line.extend_from_slice(answers[i].as_bytes());
                 line.push(b'\n');
@@ -229,6 +249,26 @@ fn talk(mut cmd: Command, current: &str, new: &str) -> Result<(), String> {
         Some(why) => Err(why),
         None if status.success() => Ok(()),
         None => Err(talk.why()),
+    }
+}
+
+/// Waits up to [`ECHO_WAIT`] for the terminal to stop echoing. `passwd`'s conversation turns
+/// echo off with `TCSAFLUSH` after it writes a prompt: an answer written before then is echoed
+/// back and then thrown away, and `passwd` waits for it.
+fn wait_echo_off(master: &std::fs::File) {
+    let end = Instant::now() + ECHO_WAIT;
+    loop {
+        let mut t = std::mem::MaybeUninit::<libc::termios>::uninit();
+        // SAFETY: tcgetattr fills the termios on success; on a pty master Linux reports the
+        // pair's settings, which are the slave's.
+        let echo = unsafe {
+            libc::tcgetattr(master.as_raw_fd(), t.as_mut_ptr()) == 0
+                && t.assume_init().c_lflag & libc::ECHO != 0
+        };
+        if !echo || Instant::now() >= end {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(5));
     }
 }
 
@@ -288,6 +328,31 @@ mod tests {
             talk(fake_passwd(), "wrong", "new pw"),
             Err("The current password is not correct.".into())
         );
+        assert!(
+            start.elapsed() < Duration::from_secs(10),
+            "no wait for the quiet timeout"
+        );
+    }
+
+    /// A stand-in for passwd that, like PAM's terminal conversation, throws away input that
+    /// came before it turned echo off after each prompt.
+    fn slow_echo_passwd() -> Command {
+        let mut c = Command::new("bash");
+        c.arg("-c").arg(
+            "ask() { printf '%s' \"$1\"; sleep 0.3; while read -r -t 0.05 _; do :; done; \
+                     stty -echo; read -r \"$2\"; stty echo; printf '\\n'; }; \
+             ask 'Current password: ' a; ask 'New password: ' b; ask 'Retype new password: ' c; \
+             if [ \"$a\" = old ] && [ \"$b\" = \"$c\" ]; then \
+               echo 'passwd: password updated successfully'; \
+             else echo 'passwd: Authentication token manipulation error'; exit 10; fi",
+        );
+        c
+    }
+
+    #[test]
+    fn each_answer_waits_until_passwd_has_turned_echo_off() {
+        let start = Instant::now();
+        assert_eq!(talk(slow_echo_passwd(), "old", "new pw"), Ok(()));
         assert!(
             start.elapsed() < Duration::from_secs(10),
             "no wait for the quiet timeout"
