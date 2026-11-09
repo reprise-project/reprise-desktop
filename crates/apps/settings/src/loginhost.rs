@@ -10,7 +10,7 @@ use std::io::{self, Read as _, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::mpsc::Receiver;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 /// The helper that replaces `MACHINE_CONFIG` with the TOML on its stdin, as root.
@@ -71,16 +71,27 @@ pub(crate) struct Saving {
 
 /// The pkexec a save runs, which Cancel or a close stops while its password prompt is up.
 #[derive(Clone, Default)]
-pub(crate) struct Withdraw(Arc<Mutex<Option<Child>>>);
+pub(crate) struct Withdraw(Arc<Mutex<Pkexec>>);
+
+#[derive(Default)]
+struct Pkexec {
+    child: Option<Child>,
+    stopped: bool,
+}
 
 impl Withdraw {
-    /// Kills the save's pkexec. Until polkit lets it in, pkexec runs with the user's real uid,
-    /// so the signal reaches it, and polkitd drops the prompt of a caller that went away. Once
-    /// it runs the helper as root the signal is refused and the save lands.
+    /// Kills the save's pkexec, or keeps it from starting. pkexec keeps the user's real uid
+    /// until polkit lets it in, so the kill lands while the prompt is up; later the save lands.
     pub(crate) fn stop(&self) {
-        if let Some(c) = self.0.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+        let mut p = self.lock();
+        p.stopped = true;
+        if let Some(c) = p.child.as_mut() {
             let _ = c.kill();
         }
+    }
+
+    fn lock(&self) -> MutexGuard<'_, Pkexec> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner())
     }
 }
 
@@ -148,23 +159,35 @@ pub(crate) fn run_helper(
         let why = format!("{} is not installed.", helper.display());
         return Err(io::Error::new(io::ErrorKind::NotFound, why));
     }
-    let mut child = Command::new(pkexec)
-        .arg(helper)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()?;
-    let wrote = child
-        .stdin
-        .take()
-        .map(|mut s| s.write_all(input.as_bytes()));
-    let stderr = child.stderr.take();
-    let slot = &withdraw.0;
-    *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(child);
+    let (stdin, stderr) = {
+        let mut p = withdraw.lock();
+        if p.stopped {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "The save was withdrawn.",
+            ));
+        }
+        let mut child = Command::new(pkexec)
+            .arg(helper)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()?;
+        let pipes = (child.stdin.take(), child.stderr.take());
+        p.child = Some(child);
+        pipes
+    };
+    let wrote = stdin.map(|mut s| s.write_all(input.as_bytes()));
     let status = loop {
-        let mut held = slot.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(status) = held.as_mut().map(Child::try_wait).transpose()?.flatten() {
-            held.take();
+        let mut held = withdraw.lock();
+        if let Some(status) = held
+            .child
+            .as_mut()
+            .map(Child::try_wait)
+            .transpose()?
+            .flatten()
+        {
+            held.child.take();
             break status;
         }
         drop(held);

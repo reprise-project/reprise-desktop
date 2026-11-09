@@ -719,11 +719,13 @@ network time.
   port and passes it to the front. `/usr/lib/reprise/reprise-login-settings`
   is the helper Settings > Login Manager saves through: run by `pkexec`, it
   takes the whole file as TOML on stdin, after a first line that names the
-  file the settings were read from, and checks it. Holding a lock on
-  `/etc/reprise`, it writes `/etc/reprise/login.toml` only while that file is
-  still the one named, then reloads reprise-login. It exits 0 when saved, 2
-  when refused, with a reason per line on stderr, 3 when the file changed
-  since it was read, and 1 on any other failure. See [security.md](security.md#remote-logins).
+  file the settings were read from, and checks it. Holding
+  `/etc/reprise/.login.toml.lock` (root's, 0600), it writes
+  `/etc/reprise/login.toml` only while that file is still the one named, then
+  reloads reprise-login. It exits 0 when saved, 2 when refused, with a reason
+  per line on stderr, 3 when the file changed since it was read, and 1 on any
+  other failure, another save holding the lock for 5 s included. See
+  [security.md](security.md#remote-logins).
 - **About Reprise.** Version, operating system, kernel, model, processor,
   graphics, memory (in kilobytes, total and available), disk, displays and
   uptime, with a Copy button for bug reports. The programs' own Help > About

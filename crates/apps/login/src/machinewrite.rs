@@ -1,9 +1,11 @@
 //! Writes the machine settings for `reprise-login-settings`.
 
-use std::fs::File;
+use std::fs::{File, OpenOptions, Permissions};
 use std::io;
 use std::os::fd::AsRawFd as _;
-use std::path::Path;
+use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use repriselogin::machine::{MachineConfig, file_tag, parse_save_request};
 
@@ -12,6 +14,10 @@ use crate::atomic;
 /// The longest settings text the helper reads, in bytes.
 pub const MAX_INPUT: usize = 16 * 1024;
 
+/// How long a save waits for another one to finish before it gives up.
+pub const LOCK_WAIT: Duration = Duration::from_secs(5);
+const LOCK_POLL: Duration = Duration::from_millis(50);
+
 /// Why [`apply`] failed.
 #[derive(Debug)]
 pub enum Error {
@@ -19,13 +25,18 @@ pub enum Error {
     Invalid(Vec<String>),
     /// The file is no longer the one the settings were read from.
     Changed,
+    /// Another save held the lock for all of [`LOCK_WAIT`].
+    Busy,
     Io(io::Error),
 }
 
-/// Validates `input`, a `save_request`, and atomically replaces `path` with its settings while
-/// `path` still has the tag the request expects. Invalid input or a changed file leaves `path`
-/// untouched. A lock on the directory runs one save at a time.
+/// Atomically replaces `path` with the settings of `input`, a `save_request`, while `path` has
+/// the tag it expects; else `path` is untouched. [`lock_path`] runs one save at a time.
 pub fn apply(input: &str, path: &Path) -> Result<(), Error> {
+    apply_waiting(input, path, LOCK_WAIT)
+}
+
+fn apply_waiting(input: &str, path: &Path, wait: Duration) -> Result<(), Error> {
     let Some((expect, toml)) = parse_save_request(input) else {
         return Err(Error::Invalid(vec![
             "the settings do not say which file they replace".into(),
@@ -35,7 +46,7 @@ pub fn apply(input: &str, path: &Path) -> Result<(), Error> {
     if !warnings.is_empty() {
         return Err(Error::Invalid(warnings));
     }
-    let _lock = lock_dir(path).map_err(Error::Io)?;
+    let _lock = lock(path, wait)?;
     let now = match std::fs::read(path) {
         Ok(bytes) => Some(bytes),
         Err(e) if e.kind() == io::ErrorKind::NotFound => None,
@@ -47,28 +58,46 @@ pub fn apply(input: &str, path: &Path) -> Result<(), Error> {
     atomic::replace(path, config.to_toml().as_bytes(), 0o755, 0o644).map_err(Error::Io)
 }
 
-/// An exclusive `flock` on `path`'s directory, made when missing, held until the file drops.
-fn lock_dir(path: &Path) -> io::Result<File> {
+/// `.NAME.lock` beside `path`.
+pub fn lock_path(path: &Path) -> PathBuf {
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    path.with_file_name(format!(".{name}.lock"))
+}
+
+/// An exclusive `flock` on [`lock_path`], made 0600 when missing, held until the file drops.
+/// The directory itself is not locked: any account can open it, and so hold its lock.
+fn lock(path: &Path, wait: Duration) -> Result<File, Error> {
     let dir = path.parent().unwrap_or(Path::new("."));
-    atomic::make_dir(dir, 0o755)?;
-    let d = File::open(dir)?;
+    atomic::make_dir(dir, 0o755).map_err(Error::Io)?;
+    let f = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(lock_path(path))
+        .map_err(Error::Io)?;
+    f.set_permissions(Permissions::from_mode(0o600))
+        .map_err(Error::Io)?;
+    let until = Instant::now() + wait;
     loop {
         // SAFETY: flock on a descriptor this function owns.
-        if unsafe { libc::flock(d.as_raw_fd(), libc::LOCK_EX) } == 0 {
-            return Ok(d);
+        if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+            return Ok(f);
         }
         let e = io::Error::last_os_error();
-        if e.kind() != io::ErrorKind::Interrupted {
-            return Err(e);
+        match e.raw_os_error() {
+            Some(libc::EWOULDBLOCK) if Instant::now() >= until => return Err(Error::Busy),
+            Some(libc::EWOULDBLOCK) => std::thread::sleep(LOCK_POLL),
+            Some(libc::EINTR) => {}
+            _ => return Err(Error::Io(e)),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::fs::Permissions;
-    use std::os::unix::fs::PermissionsExt;
-
     use repriselogin::machine::MachineRemote;
 
     use super::*;
@@ -93,11 +122,12 @@ mod tests {
         assert_eq!((config.remote.enabled, config.remote.port), (true, 3390));
         let mode = std::fs::metadata(&path).unwrap().permissions().mode();
         assert_eq!(mode & 0o7777, 0o644);
-        let names: Vec<_> = std::fs::read_dir(dir.path())
+        let mut names: Vec<_> = std::fs::read_dir(dir.path())
             .unwrap()
             .map(|e| e.unwrap().file_name())
             .collect();
-        assert_eq!(names, ["login.toml"]);
+        names.sort();
+        assert_eq!(names, [".login.toml.lock", "login.toml"]);
     }
 
     #[test]
@@ -188,7 +218,7 @@ mod tests {
             .map(|e| e.unwrap().file_name())
             .collect();
         names.sort();
-        assert_eq!(names, ["login.toml"]);
+        assert_eq!(names, [".login.toml.lock", "login.toml"]);
     }
 
     #[test]
@@ -266,7 +296,7 @@ mod tests {
     fn a_save_waits_for_the_one_holding_the_lock() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("login.toml");
-        let held = lock_dir(&path).unwrap();
+        let held = lock(&path, Duration::ZERO).unwrap();
         let (tx, rx) = std::sync::mpsc::channel();
         let p = path.clone();
         std::thread::spawn(move || {
@@ -279,5 +309,44 @@ mod tests {
         );
         drop(held);
         assert_eq!(rx.recv_timeout(std::time::Duration::from_secs(5)), Ok(true));
+    }
+
+    #[test]
+    fn a_lock_on_the_directory_does_not_hold_up_a_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("login.toml");
+        let d = File::open(dir.path()).unwrap();
+        // SAFETY: flock on a descriptor the test owns.
+        assert_eq!(unsafe { libc::flock(d.as_raw_fd(), libc::LOCK_EX) }, 0);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let p = path.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(apply(&req(&p, "[login]\nshow_users = false\n"), &p).is_ok());
+        });
+        assert_eq!(rx.recv_timeout(Duration::from_secs(3)), Ok(true));
+        let mode = std::fs::metadata(lock_path(&path))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o7777, 0o600, "only root opens the lock");
+    }
+
+    #[test]
+    fn a_save_held_up_past_its_wait_gives_up() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("login.toml");
+        let _held = lock(&path, Duration::ZERO).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let p = path.clone();
+        std::thread::spawn(move || {
+            let r = apply_waiting(
+                &req(&p, "[login]\nshow_users = false\n"),
+                &p,
+                Duration::from_millis(200),
+            );
+            let _ = tx.send(matches!(r, Err(Error::Busy)));
+        });
+        assert_eq!(rx.recv_timeout(Duration::from_secs(3)), Ok(true));
+        assert!(!path.exists());
     }
 }
