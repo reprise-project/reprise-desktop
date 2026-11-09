@@ -556,10 +556,14 @@ manager](#login-manager):
   `reprise-rdp-handover.socket` at `$XDG_RUNTIME_DIR/reprise-rdp/handover.sock`
   (0600, in a 0700 directory). It takes connections from reprise-login only
   and stops when its last client leaves, or once no client has been listed
-  for 60 s since it started. It connects only to the display whose
-  compositor runs in the user's reprise-login session, judged by the logind
-  session of the process behind the socket, so a text-login Reprise of the
-  same user never gets a remote login's picture, input or clipboard.
+  for 60 s since it started. It connects only to a display whose compositor
+  runs in the user's reprise-login session, judged by the logind session of
+  the process behind the socket: the one the user manager names, else any
+  Wayland socket in `$XDG_RUNTIME_DIR`. It opens the portal session only once
+  that session's start has restarted the portals and the portal backend's
+  `WAYLAND_DISPLAY` is that display. So the remote client's picture, input,
+  clipboard and lock check follow the reprise-login session, never a
+  text-login Reprise of the same user.
 
 The port is held by `reprise-login-rdp.socket`: systemd binds it in
 `sockets.target`, before any user's service starts, and passes it to the
