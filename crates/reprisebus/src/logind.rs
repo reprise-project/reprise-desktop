@@ -25,6 +25,18 @@ pub fn display_of_user(record: &str) -> Option<&str> {
     (!display.is_empty()).then_some(display)
 }
 
+/// `SERVICE=` of logind's record of a session (`/run/systemd/sessions/<id>`): the PAM service
+/// that opened it.
+pub fn service_of_session(record: &str) -> Option<&str> {
+    let service = record.lines().find_map(|l| l.strip_prefix("SERVICE="))?;
+    (!service.is_empty()).then_some(service)
+}
+
+/// logind's record of session `id`; empty when there is none.
+pub fn session_record(id: &str) -> String {
+    std::fs::read_to_string(format!("/run/systemd/sessions/{id}")).unwrap_or_default()
+}
+
 /// This process's `/proc/self/cgroup` listing; empty when unreadable.
 pub fn own_cgroup() -> String {
     std::fs::read_to_string("/proc/self/cgroup").unwrap_or_default()
