@@ -106,6 +106,16 @@ pub fn label_for(file_name: &str, globs: &MimeDb, shown: Extensions) -> String {
     stem.to_string()
 }
 
+/// `text` as one line of the UI from a source Reprise doesn't control (a drive's label): control
+/// characters and bidi formatting marks dropped, at most `max` characters kept.
+pub fn shown_line(text: &str, max: usize) -> String {
+    let bidi = |c: char| matches!(c, '\u{061c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}');
+    text.chars()
+        .filter(|&c| !c.is_control() && !bidi(c))
+        .take(max)
+        .collect()
+}
+
 pub fn new_folder_name(existing: &[String]) -> String {
     unique_name("New Folder", existing)
 }
