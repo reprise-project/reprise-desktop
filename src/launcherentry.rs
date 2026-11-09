@@ -9,11 +9,11 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use futures_util::stream::{self, StreamExt};
+use reprisebus::bounded::{self, Dict, Value};
 use reprisefs::apps::AppEntry;
 use reprisekit::taskbar::TaskProgress;
 use smithay::reexports::calloop::LoopHandle;
 use smithay::reexports::calloop::channel::{self, Event, Sender};
-use zbus::OwnedVariant;
 
 use crate::compositor::State;
 
@@ -237,47 +237,26 @@ fn latest<'a, K>(entries: impl Iterator<Item = (K, &'a Entry)>) -> Option<&'a En
     entries.map(|(_, e)| e).max_by_key(|e| e.since)
 }
 
-/// The sender, app key and keys of an `Update`.
+/// The sender, app key and keys of an `Update`; None for a body over [`bounded::MAX_BODY`].
 fn update_of(msg: &zbus::Message) -> Option<(String, String, Props)> {
     let sender = msg.header().sender()?.to_string();
-    let (uri, props) = msg
-        .body()
-        .deserialize::<(String, HashMap<String, OwnedVariant>)>()
-        .ok()?;
-    Some((sender, app_key(&uri)?, props_of(props)))
+    let (uri, props) = bounded::decode::<(String, Dict)>(msg).ok()?;
+    Some((sender, app_key(&uri)?, props_of(&props)))
 }
 
-fn props_of(props: HashMap<String, OwnedVariant>) -> Props {
-    let mut p = Props::default();
-    for (k, v) in props {
-        match k.as_str() {
-            "progress" => p.progress = f64::try_from(v).ok(),
-            "progress-visible" => p.visible = bool::try_from(v).ok(),
-            "progress-paused" => p.paused = bool::try_from(v).ok(),
-            "count" => p.count = count_of(&v),
-            "count-visible" => p.count_visible = bool::try_from(v).ok(),
-            "urgent" => p.urgent = bool::try_from(v).ok(),
-            _ => {}
-        }
+fn props_of(props: &Dict) -> Props {
+    let get = |k| props.get(k);
+    Props {
+        progress: get("progress").and_then(Value::float),
+        visible: get("progress-visible").and_then(Value::bool),
+        paused: get("progress-paused").and_then(Value::bool),
+        // The convention's int64, or any other integer a sender picks; a negative one is 0.
+        count: get("count")
+            .and_then(Value::int)
+            .map(|n| u32::try_from(n.max(0)).unwrap_or(u32::MAX)),
+        count_visible: get("count-visible").and_then(Value::bool),
+        urgent: get("urgent").and_then(Value::bool),
     }
-    p
-}
-
-/// `count` as a count: the convention's int64, or any other integer a sender picks; a negative
-/// one is 0.
-fn count_of(v: &zbus::Variant<'_>) -> Option<u32> {
-    use zbus::Variant as Value;
-    let n: i128 = match v {
-        Value::I64(n) => (*n).into(),
-        Value::U64(n) => (*n).into(),
-        Value::I32(n) => (*n).into(),
-        Value::U32(n) => (*n).into(),
-        Value::I16(n) => (*n).into(),
-        Value::U16(n) => (*n).into(),
-        Value::U8(n) => (*n).into(),
-        _ => return None,
-    };
-    Some(u32::try_from(n.max(0)).unwrap_or(u32::MAX))
 }
 
 enum Seen {
@@ -484,17 +463,26 @@ mod tests {
         );
     }
 
+    fn decoded(props: Vec<(&str, zbus::Variant<'static>)>) -> Props {
+        let props: HashMap<&str, zbus::Variant> = props.into_iter().collect();
+        let msg = zbus::Message::signal("/", IFACE, "Update")
+            .sender(":1.5")
+            .build(&("application://mail.desktop", props))
+            .unwrap();
+        update_of(&msg).unwrap().2
+    }
+
     #[test]
     fn count_count_visible_and_urgent_parse_from_their_variants() {
         use zbus::Variant as Value;
-        let v = |val: Value<'static>| OwnedVariant::try_from(val).unwrap();
-        let p = props_of(HashMap::from([
-            ("count".to_string(), v(Value::I64(12))),
-            ("count-visible".to_string(), v(Value::Bool(true))),
-            ("urgent".to_string(), v(Value::Bool(true))),
-            ("progress".to_string(), v(Value::F64(0.5))),
-            ("unknown".to_string(), v(Value::Bool(true))),
-        ]));
+        let p = decoded(vec![
+            ("count", Value::I64(12)),
+            ("count-visible", Value::Bool(true)),
+            ("urgent", Value::Bool(true)),
+            ("progress", Value::F64(0.5)),
+            ("unknown", Value::Bool(true)),
+            ("icon", Value::from(vec![0u8; 64])),
+        ]);
         assert_eq!(
             p,
             Props {
@@ -505,16 +493,27 @@ mod tests {
                 ..Props::default()
             }
         );
-        let count = |val| props_of(HashMap::from([("count".to_string(), v(val))])).count;
+        let count = |val| decoded(vec![("count", val)]).count;
         assert_eq!(count(Value::I32(3)), Some(3), "an int32 count is taken too");
         assert_eq!(count(Value::U64(7)), Some(7));
         assert_eq!(count(Value::I64(-4)), Some(0), "a negative count is none");
         assert_eq!(count(Value::Str("5".into())), None);
-        let wrong = props_of(HashMap::from([(
-            "count-visible".to_string(),
-            v(Value::I32(1)),
-        )]));
+        let wrong = decoded(vec![("count-visible", Value::I32(1))]);
         assert_eq!(wrong.count_visible, None, "a mistyped key is left out");
+    }
+
+    #[test]
+    fn an_update_over_the_body_cap_is_dropped_unread() {
+        let junk = vec![0u8; 4 << 20];
+        let props = HashMap::from([
+            ("count", zbus::Variant::from(3i64)),
+            ("junk", zbus::Variant::from(&junk[..])),
+        ]);
+        let msg = zbus::Message::signal("/", IFACE, "Update")
+            .sender(":1.5")
+            .build(&("application://mail.desktop", props))
+            .unwrap();
+        assert_eq!(update_of(&msg), None);
     }
 
     #[test]

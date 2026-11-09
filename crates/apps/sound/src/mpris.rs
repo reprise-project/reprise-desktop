@@ -1,12 +1,12 @@
 //! The media player the volume popup's strip shows, followed over MPRIS on the session bus: the newest Playing player, else the one that played last and is Paused. A thread follows every player's `PropertiesChanged` and the players coming and going, and sends the pick on change.
 
 use futures_util::stream::{self, StreamExt};
+use reprisebus::bounded::{self, Dict, Value};
 use reprisekit::controls::volumepopup::{NowPlaying, Transport};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use zbus::OwnedVariant;
 use zbus::{Connection, MatchRule, Message, MessageStream};
 
 const ROOT: &str = "org.mpris.MediaPlayer2";
@@ -14,6 +14,8 @@ const PREFIX: &str = "org.mpris.MediaPlayer2.";
 const PATH: &str = "/org/mpris/MediaPlayer2";
 const PLAYER: &str = "org.mpris.MediaPlayer2.Player";
 const PROPERTIES: &str = "org.freedesktop.DBus.Properties";
+/// Chars kept of a title, an artist list and a player's name.
+const TEXT_CHARS: usize = 256;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Status {
@@ -40,20 +42,17 @@ struct Entry {
     active: u64,
 }
 
-fn bool_of(v: &OwnedVariant) -> Option<bool> {
-    bool::try_from(v.clone()).ok()
-}
-
-fn string_of(v: &OwnedVariant) -> Option<String> {
-    String::try_from(v.clone()).ok()
+fn cut(s: &str) -> String {
+    s.chars().take(TEXT_CHARS).collect()
 }
 
 /// `xesam:artist` is a list of names; some players send one string.
-fn artists_of(v: &OwnedVariant) -> Option<String> {
-    Vec::<String>::try_from(v.clone())
-        .map(|a| a.join(", "))
-        .ok()
-        .or_else(|| string_of(v))
+fn artists_of(v: &Value) -> Option<String> {
+    match v {
+        Value::Strs(a) => Some(cut(&a.join(", "))),
+        Value::Str(s) => Some(cut(s)),
+        _ => None,
+    }
 }
 
 fn file_name(url: &str) -> String {
@@ -78,33 +77,35 @@ fn file_name(url: &str) -> String {
 }
 
 impl Entry {
-    fn apply(&mut self, props: &HashMap<String, OwnedVariant>) -> bool {
+    fn apply(&mut self, props: &Dict) -> bool {
         let was = self.status;
-        for (k, v) in props {
-            match k.as_str() {
+        for (k, v) in props.iter() {
+            let flag = || v.bool().unwrap_or(false);
+            match k {
                 "PlaybackStatus" => {
-                    self.status = match string_of(v).as_deref() {
+                    self.status = match v.str() {
                         Some("Playing") => Status::Playing,
                         Some("Paused") => Status::Paused,
                         _ => Status::Stopped,
                     }
                 }
                 "Metadata" => {
-                    let meta =
-                        HashMap::<String, OwnedVariant>::try_from(v.clone()).unwrap_or_default();
-                    let get = |k: &str| meta.get(k);
-                    self.title = get("xesam:title").and_then(string_of).unwrap_or_default();
-                    self.artist = get("xesam:artist").and_then(artists_of).unwrap_or_default();
-                    self.file = get("xesam:url")
-                        .and_then(string_of)
-                        .map(|u| file_name(&u))
+                    let meta = v.dict().cloned().unwrap_or_default();
+                    let text = |k| meta.get(k).and_then(Value::str);
+                    self.title = text("xesam:title").map(cut).unwrap_or_default();
+                    self.artist = meta
+                        .get("xesam:artist")
+                        .and_then(artists_of)
+                        .unwrap_or_default();
+                    self.file = text("xesam:url")
+                        .map(|u| cut(&file_name(u)))
                         .unwrap_or_default();
                 }
-                "CanControl" => self.can_control = bool_of(v).unwrap_or(false),
-                "CanGoPrevious" => self.can_previous = bool_of(v).unwrap_or(false),
-                "CanGoNext" => self.can_next = bool_of(v).unwrap_or(false),
-                "CanPlay" => self.can_play = bool_of(v).unwrap_or(false),
-                "CanPause" => self.can_pause = bool_of(v).unwrap_or(false),
+                "CanControl" => self.can_control = flag(),
+                "CanGoPrevious" => self.can_previous = flag(),
+                "CanGoNext" => self.can_next = flag(),
+                "CanPlay" => self.can_play = flag(),
+                "CanPause" => self.can_pause = flag(),
                 _ => {}
             }
         }
@@ -143,9 +144,9 @@ impl Players {
         self.clock
     }
 
-    pub fn add(&mut self, name: &str, props: &HashMap<String, OwnedVariant>, identity: String) {
+    pub fn add(&mut self, name: &str, props: &Dict, identity: String) {
         let mut e = Entry {
-            identity,
+            identity: cut(&identity),
             // MPRIS: a player that does not say is controllable.
             can_control: true,
             ..Entry::default()
@@ -155,7 +156,7 @@ impl Players {
         self.players.insert(name.to_string(), e);
     }
 
-    pub fn changed(&mut self, name: &str, props: &HashMap<String, OwnedVariant>) {
+    pub fn changed(&mut self, name: &str, props: &Dict) {
         let now = self.clock + 1;
         if let Some(e) = self.players.get_mut(name)
             && e.apply(props)
@@ -246,21 +247,14 @@ enum Run {
     Closed,
 }
 
-async fn read(conn: &Connection, name: &str) -> Option<(HashMap<String, OwnedVariant>, String)> {
-    let get_all = |iface: &'static str| async move {
-        conn.call_method(Some(name), PATH, Some(PROPERTIES), "GetAll", &(iface,))
-            .await
-            .ok()?
-            .body()
-            .deserialize::<HashMap<String, OwnedVariant>>()
-            .ok()
+async fn read(conn: &Connection, name: &str) -> Option<(Dict, String)> {
+    let player = bounded::proxy(conn, name, PATH, PLAYER).await.ok()?;
+    let props = bounded::properties(&player).await.ok()?;
+    let identity = match bounded::proxy(conn, name, PATH, ROOT).await {
+        Ok(root) => bounded::property::<String>(&root, "Identity").await.ok(),
+        Err(_) => None,
     };
-    let props = get_all(PLAYER).await?;
-    let identity = get_all(ROOT)
-        .await
-        .and_then(|root| root.get("Identity").and_then(string_of))
-        .unwrap_or_default();
-    Some((props, identity))
+    Some((props, identity.unwrap_or_default()))
 }
 
 async fn owner(dbus: &zbus::fdo::DBusProxy<'_>, name: &str) -> Option<String> {
@@ -270,10 +264,8 @@ async fn owner(dbus: &zbus::fdo::DBusProxy<'_>, name: &str) -> Option<String> {
 
 enum Wake {
     Owner(String, String, String),
-    Props(
-        String,
-        Option<(String, HashMap<String, OwnedVariant>, Vec<String>)>,
-    ),
+    /// A `PropertiesChanged` and its sender, decoded only once the sender is known to own a player.
+    Props(String, Message),
 }
 
 fn wake_of(m: &Message) -> Option<Wake> {
@@ -283,7 +275,15 @@ fn wake_of(m: &Message) -> Option<Wake> {
         return Some(Wake::Owner(name, old, new));
     }
     let sender = h.sender()?.to_string();
-    Some(Wake::Props(sender, m.body().deserialize().ok()))
+    Some(Wake::Props(sender, m.clone()))
+}
+
+/// What a `PropertiesChanged` says moved; None when a key was invalidated or the body is over
+/// [`bounded::MAX_BODY`] or of another type, so the player is read again.
+fn changes_of(m: &Message) -> Option<Dict> {
+    let body = bounded::within(m.body(), bounded::MAX_BODY).ok()?;
+    let (_, changed, invalidated) = body.deserialize::<(&str, Dict, Vec<&str>)>().ok()?;
+    invalidated.is_empty().then_some(changed)
 }
 
 async fn run(feed: &mut Feed, shared: &Mutex<Option<Connection>>) -> Run {
@@ -371,15 +371,17 @@ async fn run(feed: &mut Feed, shared: &Mutex<Option<Connection>>) -> Run {
                     players.add(&name, &props, identity);
                 }
             }
-            Wake::Props(sender, body) => {
+            Wake::Props(sender, msg) => {
                 let names = owners.get(&sender).cloned().unwrap_or_default();
+                let changes = if names.is_empty() {
+                    None
+                } else {
+                    changes_of(&msg)
+                };
                 for name in names {
-                    match &body {
-                        // The signal carries what moved; an invalidated key, or a body that did not parse, is read again.
-                        Some((_, changed, invalidated)) if invalidated.is_empty() => {
-                            players.changed(&name, changed);
-                        }
-                        _ => {
+                    match &changes {
+                        Some(changed) => players.changed(&name, changed),
+                        None => {
                             if let Some((props, _)) = read(&conn, &name).await {
                                 players.changed(&name, &props);
                             }
@@ -435,14 +437,15 @@ mod tests {
     use super::*;
     use zbus::Variant;
 
-    fn props(entries: Vec<(&str, Variant<'static>)>) -> HashMap<String, OwnedVariant> {
-        entries
-            .into_iter()
-            .map(|(k, v)| (k.to_string(), v.try_to_owned().unwrap()))
-            .collect()
+    fn props(entries: Vec<(&str, Variant<'static>)>) -> Dict {
+        let map: HashMap<&str, Variant> = entries.into_iter().collect();
+        let msg = Message::signal(PATH, PROPERTIES, "PropertiesChanged")
+            .build(&map)
+            .unwrap();
+        bounded::decode(&msg).unwrap()
     }
 
-    fn status(s: &str) -> HashMap<String, OwnedVariant> {
+    fn status(s: &str) -> Dict {
         props(vec![("PlaybackStatus", Variant::from(s.to_string()))])
     }
 
@@ -528,6 +531,35 @@ mod tests {
         );
         let (_, np) = p.pick().unwrap();
         assert!(!np.can_next && !np.can_pause, "uncontrollable: all greyed");
+    }
+
+    #[test]
+    fn titles_artists_and_player_names_are_cut() {
+        let mut p = Players::default();
+        let long = "x".repeat(10_000);
+        let meta: HashMap<String, Variant<'static>> = HashMap::from([
+            ("xesam:title".to_string(), Variant::from(long.clone())),
+            ("xesam:artist".to_string(), Variant::from(long.clone())),
+        ]);
+        p.add(
+            "org.mpris.MediaPlayer2.a",
+            &props(vec![
+                ("PlaybackStatus", Variant::from("Playing")),
+                ("Metadata", Variant::from(meta)),
+            ]),
+            long.clone(),
+        );
+        let (_, np) = p.pick().unwrap();
+        assert_eq!(np.title.chars().count(), TEXT_CHARS);
+        assert_eq!(np.artist.chars().count(), TEXT_CHARS);
+        p.changed(
+            "org.mpris.MediaPlayer2.a",
+            &props(vec![(
+                "Metadata",
+                Variant::from(HashMap::<String, Variant<'static>>::new()),
+            )]),
+        );
+        assert_eq!(p.pick().unwrap().1.title.chars().count(), TEXT_CHARS);
     }
 
     #[test]

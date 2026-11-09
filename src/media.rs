@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::Duration;
 
+use reprisebus::bounded;
 use smithay::reexports::calloop::{
     RegistrationToken, channel,
     timer::{TimeoutAction, Timer},
@@ -565,6 +566,10 @@ async fn perform_display(
 
 const PLAYER_NAME_MAX: usize = 64;
 
+const MPRIS_PATH: &str = "/org/mpris/MediaPlayer2";
+const MPRIS_ROOT: &str = "org.mpris.MediaPlayer2";
+const MPRIS_PLAYER: &str = "org.mpris.MediaPlayer2.Player";
+
 /// A player's name for the OSD: any session-bus peer sets `Identity`, so it is cut to PLAYER_NAME_MAX chars.
 fn player_name(mut identity: String) -> String {
     if let Some((end, _)) = identity.char_indices().nth(PLAYER_NAME_MAX) {
@@ -585,32 +590,16 @@ async fn pick_player(conn: &Connection) -> Option<(String, String)> {
         .collect();
     let mut first = None;
     for name in names {
-        let Ok(player) = Proxy::new(
-            conn,
-            name.as_str(),
-            "/org/mpris/MediaPlayer2",
-            "org.mpris.MediaPlayer2.Player",
-        )
-        .await
-        else {
+        let Ok(player) = bounded::proxy(conn, &name, MPRIS_PATH, MPRIS_PLAYER).await else {
             continue;
         };
-        let playing = player
-            .get_property::<String>("PlaybackStatus")
+        let playing = bounded::property::<String>(&player, "PlaybackStatus")
             .await
             .is_ok_and(|s| s == "Playing");
         if playing || first.is_none() {
-            let identity = match Proxy::new(
-                conn,
-                name.as_str(),
-                "/org/mpris/MediaPlayer2",
-                "org.mpris.MediaPlayer2",
-            )
-            .await
-            {
+            let identity = match bounded::proxy(conn, &name, MPRIS_PATH, MPRIS_ROOT).await {
                 // The name is cosmetic: a player that answers neither the proxy nor the property still gets its key press.
-                Ok(root) => root
-                    .get_property::<String>("Identity")
+                Ok(root) => bounded::property::<String>(&root, "Identity")
                     .await
                     .unwrap_or_else(|_| name.clone()),
                 Err(_) => name.clone(),
@@ -678,15 +667,15 @@ async fn perform(buses: &mut Buses, job: Job) -> Option<Report> {
 
 async fn player(conn: &Connection, method: &'static str) -> Option<Report> {
     let (bus, name) = pick_player(conn).await?;
-    let player = Proxy::new(
-        conn,
-        bus.as_str(),
-        "/org/mpris/MediaPlayer2",
-        "org.mpris.MediaPlayer2.Player",
+    conn.call_method(
+        Some(bus.as_str()),
+        MPRIS_PATH,
+        Some(MPRIS_PLAYER),
+        method,
+        &(),
     )
     .await
     .ok()?;
-    player.call_method(method, &()).await.ok()?;
     Some(Report::Player { name, verb: method })
 }
 
