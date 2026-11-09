@@ -176,13 +176,8 @@ impl State {
         self.spawn_argv_activated(&argv);
     }
 
-    /// Open the file at `path` in `with`, else its type's default program: the desktop, the
-    /// Start menu's Documents, jump lists and search open files here. A program file runs as
-    /// [`Self::run_program`] says, a disk image with no `with` raises [`Dialog::ask_mount`], and
-    /// a file its type's program runs
-    /// ([`reprisefs::program::opens_as_a_program`]) raises [`Dialog::ask_open`] first as `how`
-    /// says. With `recent` the path goes into the recent files once it opens. The type, the
-    /// program check and the trust marker read the disk, so they run off the loop.
+    /// Open `path` in `with`, else its type's default program, asking first as security.md
+    /// "Programs and scripts" says; the disk checks run off the loop.
     pub(crate) fn open_document(
         &mut self,
         path: &Path,

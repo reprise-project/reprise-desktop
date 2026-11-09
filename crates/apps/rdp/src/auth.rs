@@ -95,9 +95,8 @@ pub enum Verdict {
     Prompted,
 }
 
-/// The verdict in the helper's output: `= 0` accepts and `= 12` (`PAM_NEW_AUTHTOK_REQD`) accepts
-/// an expired password, unless a `?` or `??` prompt came first; `E` lines before another code are
-/// PAM's reason.
+/// The helper's verdict: `= 0`, or `= 12` (`PAM_NEW_AUTHTOK_REQD`, expired) accepts unless a `?`
+/// or `??` prompt came first; `E` lines before another code are PAM's reason.
 pub fn helper_verdict(lines: &str) -> Verdict {
     let mut verdict = Verdict::Rejected;
     let mut notices = Vec::new();

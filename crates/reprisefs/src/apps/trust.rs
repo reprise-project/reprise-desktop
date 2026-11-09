@@ -17,9 +17,8 @@ type Key = [u8; KEY_LEN];
 /// it always asks.
 pub const TRUST_HASH_MAX: u64 = 128 << 20;
 
-/// What the marker covers: the file's `f_fsid` and inode, and the SHA-256 of its contents.
-/// st_dev is left out: btrfs subvolumes and NVMe or dm devices can get another number at each
-/// boot, while f_fsid follows the filesystem's UUID.
+/// What the marker covers: `f_fsid`, inode and the contents' SHA-256. Not st_dev, which btrfs
+/// subvolumes and NVMe or dm devices can change at each boot; f_fsid follows the UUID.
 #[derive(Debug, PartialEq, Eq)]
 struct Ident {
     fsid: libc::c_ulong,

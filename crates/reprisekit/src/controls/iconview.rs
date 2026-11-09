@@ -239,9 +239,8 @@ pub fn layout_around(
         .collect()
 }
 
-/// `name` as at most two label lines inside `max_w`, the second ellipsized. Lines break at a
-/// single space, as [`wrap_edit`] does, so runs of spaces show; a control character shows as
-/// U+FFFD. A name of spaces alone is no line.
+/// `name` as at most two label lines inside `max_w`, the second ellipsized, broken as
+/// [`wrap_edit`] breaks; a control character shows as U+FFFD, and spaces alone are no line.
 pub fn wrap_label(text: &TextRenderer, name: &str, max_w: i32, size_px: u32) -> Vec<String> {
     if name.trim().is_empty() {
         return Vec::new();
