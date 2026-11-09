@@ -43,6 +43,19 @@ pub const PNG_MIME: &str = "image/png";
 const PNG_ID: ClipboardFormatId = ClipboardFormatId(0xC0A0);
 const PNG_NAME: &str = "PNG";
 
+/// A password manager's mark on a copy; Reprise's history skips a copy whose hint reads `secret`.
+const HINT_MIME: &str = "x-kde-passwordManagerHint";
+const SECRET: &[u8] = b"secret";
+/// The registered formats that keep a copy out of the client's clipboard history and cloud
+/// clipboard: any data for the first, a DWORD 0 for the others.
+const EXCLUDE_NAME: &str = "ExcludeClipboardContentFromMonitorProcessing";
+const HISTORY_NAME: &str = "CanIncludeInClipboardHistory";
+const CLOUD_NAME: &str = "CanUploadToCloudClipboard";
+const EXCLUDE_ID: ClipboardFormatId = ClipboardFormatId(0xC0A1);
+const HISTORY_ID: ClipboardFormatId = ClipboardFormatId(0xC0A2);
+const CLOUD_ID: ClipboardFormatId = ClipboardFormatId(0xC0A3);
+const DWORD_ZERO: [u8; 4] = [0; 4];
+
 /// A clipboard format both sides can carry, named for its bytes on the wire.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -50,6 +63,8 @@ pub enum Kind {
     Text,
     Dib,
     Png,
+    /// [`HINT_MIME`]'s value, passed as is.
+    Mark,
 }
 
 impl Kind {
@@ -57,6 +72,7 @@ impl Kind {
         match self {
             Kind::Text => TEXT_MAX,
             Kind::Dib | Kind::Png => PICTURE_MAX,
+            Kind::Mark => SECRET.len(),
         }
     }
 
@@ -64,6 +80,7 @@ impl Kind {
         match self {
             Kind::Text => "text",
             Kind::Dib | Kind::Png => "picture",
+            Kind::Mark => "mark",
         }
     }
 
@@ -79,7 +96,7 @@ impl Kind {
             )),
             Kind::Text => Ok(utf16_text(desktop)),
             Kind::Dib => png_to_dib(desktop),
-            Kind::Png => Ok(desktop.to_vec()),
+            Kind::Png | Kind::Mark => Ok(desktop.to_vec()),
         }
     }
 
@@ -88,7 +105,7 @@ impl Kind {
         match self {
             Kind::Text => Ok(utf8_text(client)),
             Kind::Dib => dib_to_png(client),
-            Kind::Png => Ok(client.to_vec()),
+            Kind::Png | Kind::Mark => Ok(client.to_vec()),
         }
     }
 }
@@ -124,19 +141,24 @@ struct ClientFormats {
     text: Option<ClipboardFormatId>,
     dib: Option<ClipboardFormatId>,
     png: Option<ClipboardFormatId>,
+    /// The copy lists the exclude or history format. Its presence is enough: asking the
+    /// history format's DWORD would send a request before any paste.
+    secret: bool,
 }
 
 impl ClientFormats {
     fn of(formats: &[ClipboardFormat]) -> ClientFormats {
         let has = |id| formats.iter().any(|f| f.id == id).then_some(id);
-        let png = formats
-            .iter()
-            .find(|f| f.name.as_ref().is_some_and(|n| n.value() == PNG_NAME))
-            .map(|f| f.id);
+        let named = |name: &str| {
+            (formats.iter())
+                .find(|f| f.name.as_ref().is_some_and(|n| n.value() == name))
+                .map(|f| f.id)
+        };
         ClientFormats {
             text: has(ClipboardFormatId::CF_UNICODETEXT),
             dib: has(ClipboardFormatId::CF_DIB),
-            png,
+            png: named(PNG_NAME),
+            secret: named(EXCLUDE_NAME).or(named(HISTORY_NAME)).is_some(),
         }
     }
 
@@ -147,6 +169,9 @@ impl ClientFormats {
         }
         if self.dib.is_some() || self.png.is_some() {
             mimes.push(PNG_MIME);
+        }
+        if self.secret && !mimes.is_empty() {
+            mimes.push(HINT_MIME);
         }
         mimes
     }
@@ -163,7 +188,8 @@ impl ClientFormats {
     }
 }
 
-/// The formats the client is offered for a desktop copy of `mimes`.
+/// The formats the client is offered for a desktop copy of `mimes`. A copy carrying the hint
+/// lists the history formats; any hint counts, so its value is never read.
 fn formats_for(mimes: &[String]) -> Vec<ClipboardFormat> {
     let mut formats = Vec::new();
     if text_mime(mimes).is_some() {
@@ -175,7 +201,20 @@ fn formats_for(mimes: &[String]) -> Vec<ClipboardFormat> {
             ClipboardFormat::new(PNG_ID).with_name(ClipboardFormatName::new_static(PNG_NAME)),
         );
     }
+    if !formats.is_empty() && marked(mimes) {
+        for (id, name) in [
+            (EXCLUDE_ID, EXCLUDE_NAME),
+            (HISTORY_ID, HISTORY_NAME),
+            (CLOUD_ID, CLOUD_NAME),
+        ] {
+            formats.push(ClipboardFormat::new(id).with_name(ClipboardFormatName::new_static(name)));
+        }
+    }
     formats
+}
+
+fn marked(mimes: &[String]) -> bool {
+    mimes.iter().any(|m| m == HINT_MIME)
 }
 
 fn text_mime(mimes: &[String]) -> Option<&'static str> {
@@ -187,6 +226,13 @@ fn text_mime(mimes: &[String]) -> Option<&'static str> {
 struct Held {
     client: Option<Vec<ClipboardFormat>>,
     desktop: Option<Vec<String>>,
+}
+
+/// How a client's request is answered, in turn.
+enum Ask {
+    Read(String, Kind),
+    Fixed(&'static [u8]),
+    Fail,
 }
 
 /// A program's paste waiting on the client. The first in the queue has its request out.
@@ -206,7 +252,7 @@ pub struct Clipboard<S> {
     /// The types of the desktop's copy the client was last offered.
     desktop: Vec<String>,
     /// The client's requests; the first is being read.
-    asked: VecDeque<Option<(String, Kind)>>,
+    asked: VecDeque<Ask>,
     reading: bool,
     pastes: VecDeque<Paste<S>>,
     /// What came while the desktop is locked; see [`Clipboard::lock`].
@@ -276,22 +322,18 @@ impl<S> Clipboard<S> {
 
     /// The client pastes `format`.
     pub fn client_asks(&mut self, format: ClipboardFormatId, d: &mut impl Desktop<Sink = S>) {
-        let kind = match format {
-            ClipboardFormatId::CF_UNICODETEXT => Some(Kind::Text),
-            ClipboardFormatId::CF_DIB => Some(Kind::Dib),
-            PNG_ID => Some(Kind::Png),
-            _ => None,
+        let has_png = self.desktop.iter().any(|m| m == PNG_MIME);
+        let read = |mime: Option<&str>, kind| mime.map_or(Ask::Fail, |m| Ask::Read(m.into(), kind));
+        let ask = match format {
+            EXCLUDE_ID | HISTORY_ID | CLOUD_ID if !marked(&self.desktop) => Ask::Fail,
+            EXCLUDE_ID => Ask::Fixed(&[]),
+            HISTORY_ID | CLOUD_ID => Ask::Fixed(&DWORD_ZERO),
+            ClipboardFormatId::CF_UNICODETEXT => read(text_mime(&self.desktop), Kind::Text),
+            ClipboardFormatId::CF_DIB => read(has_png.then_some(PNG_MIME), Kind::Dib),
+            PNG_ID => read(has_png.then_some(PNG_MIME), Kind::Png),
+            _ => Ask::Fail,
         };
-        let mime = kind.and_then(|k| match k {
-            Kind::Text => text_mime(&self.desktop),
-            Kind::Dib | Kind::Png => self
-                .desktop
-                .iter()
-                .any(|m| m == PNG_MIME)
-                .then_some(PNG_MIME),
-        });
-        self.asked
-            .push_back(kind.zip(mime).map(|(k, m)| (m.to_string(), k)));
+        self.asked.push_back(ask);
         self.read_next(d);
     }
 
@@ -319,9 +361,13 @@ impl<S> Clipboard<S> {
             && let Some(first) = self.asked.front()
         {
             match first {
-                Some((mime, kind)) if self.locked.is_none() => {
+                Ask::Read(mime, kind) if self.locked.is_none() => {
                     d.read(mime, *kind);
                     self.reading = true;
+                }
+                &Ask::Fixed(bytes) if self.locked.is_none() => {
+                    self.asked.pop_front();
+                    self.answer(Some(bytes.to_vec()));
                 }
                 _ => {
                     self.asked.pop_front();
@@ -333,6 +379,11 @@ impl<S> Clipboard<S> {
 
     /// A program pastes the client's copy as `mime` into `sink`.
     pub fn desktop_pastes(&mut self, mime: &str, sink: S, d: &mut impl Desktop<Sink = S>) {
+        if mime == HINT_MIME && self.client.secret {
+            let secret = self.locked.is_none().then(|| SECRET.to_vec());
+            d.deliver(sink, Kind::Mark, secret);
+            return;
+        }
         let Some((format, kind)) = self.client.for_mime(mime) else {
             d.deliver(sink, Kind::Text, None);
             return;
@@ -963,6 +1014,129 @@ mod tests {
                 vec![],
             ]
         );
+    }
+
+    #[test]
+    fn a_password_managers_session_copy_reaches_the_client_marked_for_no_history() {
+        let (mut c, mut d, mut rx) = session();
+        c.desktop_copied(mimes(&[
+            "text/plain;charset=utf-8",
+            "x-kde-passwordManagerHint",
+        ]));
+        assert_eq!(
+            lists(&mut rx),
+            [vec![
+                (13, None),
+                (
+                    0xC0A1,
+                    Some("ExcludeClipboardContentFromMonitorProcessing".to_string())
+                ),
+                (0xC0A2, Some("CanIncludeInClipboardHistory".to_string())),
+                (0xC0A3, Some("CanUploadToCloudClipboard".to_string())),
+            ]],
+            "the hint itself is not listed"
+        );
+        c.client_asks(ClipboardFormatId::CF_UNICODETEXT, &mut d);
+        c.client_asks(ClipboardFormatId(0xC0A1), &mut d);
+        c.client_asks(ClipboardFormatId(0xC0A2), &mut d);
+        c.client_asks(ClipboardFormatId(0xC0A3), &mut d);
+        assert_eq!(d.reads.len(), 1, "only the text is read from the session");
+        assert!(answers(&mut rx).is_empty(), "the answers wait for the text");
+        c.desktop_read(Some(b"pw".to_vec()), &mut d);
+        assert_eq!(
+            answers(&mut rx),
+            [
+                (false, b"pw".to_vec()),
+                (false, vec![]),
+                (false, vec![0, 0, 0, 0]),
+                (false, vec![0, 0, 0, 0]),
+            ],
+            "in turn: the text, an empty exclude, and DWORD 0 for history and cloud"
+        );
+
+        c.lock(&mut d);
+        c.client_asks(ClipboardFormatId(0xC0A2), &mut d);
+        assert_eq!(answers(&mut rx), [(true, vec![])], "nothing while locked");
+
+        let (mut c, mut d, mut rx) = session();
+        c.desktop_copied(mimes(&["UTF8_STRING"]));
+        sent(&mut rx);
+        c.client_asks(ClipboardFormatId(0xC0A1), &mut d);
+        c.client_asks(ClipboardFormatId(0xC0A2), &mut d);
+        assert_eq!(
+            answers(&mut rx),
+            [(true, vec![]), (true, vec![])],
+            "an unmarked copy fails both"
+        );
+        c.desktop_copied(mimes(&["x-kde-passwordManagerHint"]));
+        assert_eq!(
+            lists(&mut rx),
+            [vec![]],
+            "a hint with nothing to paste lists nothing"
+        );
+    }
+
+    fn named(id: u32, name: &'static str) -> ClipboardFormat {
+        ClipboardFormat::new(ClipboardFormatId(id)).with_name(ClipboardFormatName::new_static(name))
+    }
+
+    #[test]
+    fn a_client_copy_kept_out_of_its_history_offers_the_session_the_secret_hint() {
+        let marks = [
+            named(0xC1A4, "ExcludeClipboardContentFromMonitorProcessing"),
+            named(0xC1A7, "CanIncludeInClipboardHistory"),
+        ];
+        for mark in marks {
+            let (mut c, mut d, mut rx) = session();
+            let mut formats = client_text();
+            formats.push(mark.clone());
+            c.client_copied(&formats, &mut d);
+            assert_eq!(
+                d.offered,
+                [vec![
+                    "text/plain;charset=utf-8",
+                    "UTF8_STRING",
+                    "text/plain",
+                    "TEXT",
+                    "x-kde-passwordManagerHint"
+                ]],
+                "{mark:?}"
+            );
+            c.desktop_pastes("x-kde-passwordManagerHint", 4, &mut d);
+            let delivered: Vec<_> = (d.delivered.iter())
+                .map(|(s, _, b)| (*s, b.clone()))
+                .collect();
+            assert_eq!(delivered, [(4, Some(b"secret".to_vec()))], "{mark:?}");
+            assert!(
+                sent(&mut rx).is_empty(),
+                "the hint is answered without asking the client"
+            );
+            c.lock(&mut d);
+            c.desktop_pastes("x-kde-passwordManagerHint", 5, &mut d);
+            assert_eq!(d.delivered[1].2, None, "no hint while locked");
+        }
+
+        let (mut c, mut d, _rx) = session();
+        let mut formats = client_text();
+        formats.push(named(0xC1A9, "CanUploadToCloudClipboard"));
+        c.client_copied(&formats, &mut d);
+        assert!(
+            !d.offered[0].contains(&"x-kde-passwordManagerHint"),
+            "{:?}",
+            d.offered
+        );
+        c.desktop_pastes("x-kde-passwordManagerHint", 4, &mut d);
+        assert_eq!(d.delivered[0].2, None);
+
+        let (mut c, mut d, _rx) = session();
+        c.client_copied(
+            &[named(
+                0xC1A4,
+                "ExcludeClipboardContentFromMonitorProcessing",
+            )],
+            &mut d,
+        );
+        assert!(d.offered.is_empty(), "a mark alone is not a copy");
     }
 
     #[test]
