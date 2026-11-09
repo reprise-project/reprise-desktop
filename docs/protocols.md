@@ -93,9 +93,12 @@ confinement holds, every motion goes through as it comes.
 - **Reprise's own:** `reprise_input_v1`, for the installed reprise-portal
   only ([security.md](security.md)): libei sockets, input capture barriers,
   global shortcuts, RemoteDesktop keys, the sandboxed apps with a window, the
-  colour picker, the remote desktop server's capture connection, and since
+  colour picker, the remote desktop server's capture connection, since
   version 9 lock mode (`lock_screen`: virtual screens laid out as the remote
-  client's monitors while the session stays locked on the computer's own)
+  client's monitors while the session stays locked on the computer's own),
+  and since version 10 the app a libei sender or keys object serves
+  (`connect_app_sender`, `create_app_keys`), which the screen-sharing dot
+  names; from version 10 `create_keys` is the remote desktop server's alone
 
 ## Portals
 

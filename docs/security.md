@@ -87,7 +87,9 @@ contexts are matched. A listed app can read everything you copy. See
 
 One more global, `reprise_input_v1`, carries remote control, input capture,
 global shortcuts, the list of sandboxed apps with a window, the colour
-picker and, from version 9, lock mode ([Lock mode](#lock-mode)) between the
+picker, from version 9 lock mode ([Lock mode](#lock-mode)) and from version
+10 the app each libei sender or keys object serves (`connect_app_sender`,
+`create_app_keys`, so the screen-sharing dot can name it) between the
 compositor and the portal. Reprise offers it only to a client whose process
 runs `reprise-portal` from `/usr/bin` or `/usr/local/bin`. That keeps other
 clients from binding it directly; it is no boundary against code running as
