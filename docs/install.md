@@ -160,7 +160,13 @@ Sessions started before the upgrade share no clipboard with Remote Desktop
 clients until they log off, and the journal says "the desktop's lock is
 unknown: GetActive ...". Log each session off once after upgrading: until
 then a password prompt cancelled in Date and Time, Network or Updates shows
-as a refusal.
+as a refusal. Sessions started before the upgrade keep the old X11 and input
+rules until they log off: X11 programs connect without the cookie, and an
+app's remote control shows no dot and still reaches the lock screen. A
+Settings window open across the upgrade can't save Login Manager: close it
+and open it again. After a Turn Off in a session started before the
+upgrade, the other session's remote clients are dropped without being told
+the computer is turning off.
 
 ### Remote logins
 

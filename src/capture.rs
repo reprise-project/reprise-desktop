@@ -1094,7 +1094,8 @@ impl ImageCopyCaptureHandler for State {
                 self.wake_window(w);
             }
         }
-        if taken {
+        // An ongoing session already lights the sharing dot; only its first frame is a still.
+        if taken && !asked(session).ongoing() {
             crate::privacy::frame_taken(self, session.client().as_ref(), window);
         }
     }

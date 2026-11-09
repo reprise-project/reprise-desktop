@@ -1118,7 +1118,7 @@ impl Daemon {
                     msg: ToWorker::Answer(None),
                 }),
             },
-            FromWorker::Authenticated { user, uid } => {
+            FromWorker::Authenticated { user, uid, .. } => {
                 if let Phase::Authenticating { .. } = c.phase {
                     self.authenticated(now, worker, user, uid, out);
                 }

@@ -1369,6 +1369,7 @@ mod tests {
                     FromWorker::Authenticated {
                         user: "anna".into(),
                         uid: 1000,
+                        expired: false,
                     },
                     FromWorker::Failed {
                         kind: ErrorKind::Failed,
@@ -1790,6 +1791,7 @@ mod tests {
                 FromWorker::Authenticated {
                     user: "anna".into(),
                     uid: 1000,
+                    expired: false,
                 },
             ),
             Input::SessionRemoved {
@@ -1897,6 +1899,7 @@ mod tests {
         let authenticated = FromWorker::Authenticated {
             user: "anna".into(),
             uid: 1001,
+            expired: false,
         };
         let effects = handle(Input::Worker(worker, authenticated)).await;
         let start = effects.iter().find_map(|e| match e {

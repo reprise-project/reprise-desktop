@@ -127,9 +127,8 @@ pub(crate) fn apply(
         true => head.to_string(),
         false => format!("{head}\n\n{why}"),
     };
-    // The helper's exits: 0 saved, 1 the write failed, 2 refused (a reason per line), 3 the file
-    // changed; pkexec's 126: the prompt dismissed, 127: polkit said "Not authorized" or pkexec
-    // failed.
+    // The helper's exits are in docs/programs.md; pkexec's 126 is a dismissed prompt, 127 a
+    // refusal or its own failure.
     let why = match out.status.code() {
         Some(0) => return Ok(()),
         Some(3) => return Err(Unsaved::Changed),

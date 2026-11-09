@@ -41,8 +41,8 @@ Such a program can bind every global Reprise offers, including these:
   server's capture, which goes without it unless `[remote_desktop] capture_border`
   is set: the portal marks that capture's connection through
   `reprise_input_v1`, which only the installed reprise-portal can bind, and
-  only for the session it starts without a dialog for the server's enabled
-  unit.
+  only for a session it starts without a dialog for the server (its enabled
+  unit, or reprise-login's hand-over server; see below).
 - **Session lock** (`ext_session_lock_manager_v1`): locks the screen and
   draws the lock screen. See [The lock screen](#the-lock-screen).
 - **Output management, power and gamma** (`zwlr_output_manager_v1`,
@@ -101,7 +101,12 @@ Desktop on in Settings is the consent. The portal skips the dialog only for
 the app id `org.reprise.RemoteDesktop`, only while the user unit
 `app-org.reprise.RemoteDesktop.service` is enabled and active, and only when
 that unit's main process runs `reprise-rdp` from `/usr/bin` or
-`/usr/local/bin` and is the process that asked. A sandboxed app's requests
+`/usr/local/bin` and is the process that asked. Under reprise-login it also
+skips it, for any app id, when the process that asked is the main process of
+the active `reprise-rdp-handover.service` running `reprise-rdp` from one of
+those paths. Either way the session is the server's: its input lights no
+dot, types into the lock screen, and is not kept from the power, sleep, VT
+switch and radio keys. A sandboxed app's requests
 reach the portal through its bus proxy, so they never pass. Such a session
 gets the keyboard, the pointer and every screen whose top left lies at a
 non-negative position in the layout, or every screen when none does, and
@@ -147,9 +152,12 @@ Wi-Fi key), the VT switch keys and the layout switch act; the rest go to the
 lock screen.
 
 An app's RemoteDesktop session (its libei sender and its NotifyKeyboard
-keys) presses, types, moves and scrolls nothing while any lock is up, the
-lock screen and a locker's included. The keys and buttons it holds are
-released as the lock comes up, so none stays down at the lock screen.
+keys) presses, types, moves and scrolls nothing while the desktop it lands
+on is locked, by the lock screen or a locker. In lock mode that desktop is
+the remote side: an app's input reaches the remote side's windows while that
+side is unlocked and never the computer's own lock. The keys and buttons it
+holds are released as the lock comes up, so none stays down at the lock
+screen.
 Locked or not, it never presses the power, sleep, VT switch or radio keys
 (Wi-Fi, Bluetooth, the airplane-mode key). Reprise's own remote desktop
 server is not an app here: its viewer types the password into the lock
@@ -161,7 +169,9 @@ process: the compositor starts itself again as `reprise
 --password-conversation=USER` and writes the password to its stdin, never
 to argv or the environment. The helper runs PAM's `reprise` service
 (`/etc/pam.d/reprise`, or `login` when that file is missing) and reports
-the verdict on stdout; only a success unlocks. A further prompt from the
+the verdict on stdout; only a success unlocks. It runs PAM's `auth` alone,
+not `account`, so an expired password, `/run/nologin` or a time rule never
+keeps the right password out of the session that runs behind the lock. A further prompt from the
 stack (a one-time code, a security key PIN) relabels the field, and its
 answer goes to the same helper's stdin. A helper that hangs is given up
 after 90 s and the dialog asks again. Reprise zeroes the password copies
@@ -181,6 +191,9 @@ may claim the reader itself. If the locker crashes the session stays locked
 and the dialog comes back. A locker may take over a lock that has none, the
 dialog's or a crashed locker's, and unlock it. A locker whose lock has ended
 can't unlock a lock taken after it.
+
+The lock screen shows no sharing dot; a cast of a screen goes on showing
+the lock.
 
 The screen saver draws above the lock. Photos runs as Blank while the
 desktop is locked, so no picture from `[screensaver] folder` shows to whoever
@@ -340,7 +353,10 @@ Lock mode's remote Unlock dialog runs the same helper under the same
 service.
 A further PAM prompt fails the login, and so does a helper with no verdict
 within 30 s, which is killed. A refusal by the account stack (an expired
-account or password) is logged with PAM's reason. On each login `pam_unix`
+account, `chage -E`) is logged with PAM's reason. A password that must be
+changed (`chage -d 0`) still logs in, and the server logs that it has
+expired: the server serves the session that already runs, and the change is
+asked at the next login that starts a new one. On each login `pam_unix`
 logs `setuid failed` at debug priority: it tries to become root before it
 runs `unix_chkpwd` for the account check, which the helper, running as you,
 can't do. `unix_chkpwd` is setuid root, so the check still runs.
@@ -540,6 +556,10 @@ The dialog backs off after failures like a login from one address: the first
 three are free, the fourth starts a 2 s wait that doubles with each further
 failure up to 60 s, and a success or 20 minutes without a failure clears
 them. During the wait the dialog refuses to check and says how long is left.
+A right password that must be changed (`chage -d 0`) unlocks and clears the
+failures like any success. A notice that the password has expired goes to the
+notification history; its balloon waits, as every balloon does while the
+screen is shared.
 
 Unlocking at the computer, by password, fingerprint or logind's `Unlock`,
 ends lock mode: every libei sender, the server's and any other the portal
@@ -702,7 +722,11 @@ For each login the daemon checks, in order:
    `session`. Both set `PAM_RHOST` to the client's address for `auth` and
    `account`.
 5. A session: the user's own, or a new background one while fewer than
-   `max_sessions` run.
+   `max_sessions` run. An account step that says the password must be
+   changed (`chage -d 0`) asks for no change here: the login reaches the
+   user's running session, here or in the background, and with none running
+   it is refused like any account refusal, since a new session asks for the
+   change at the login screen or a text console.
 
 Every refusal reprise-login makes waits until 3 s after the login reached
 the daemon, whatever refused it, so an unknown name, a name outside the
@@ -816,8 +840,9 @@ characters or more and must differ from the login password.
 - Locking the login password (`passwd -l`) leaves the Remote Desktop
   password working. To stop it, the user removes it in User Accounts, or
   take the user out of `reprise-remote`. An expired account
-  (`chage -E`) or password (`chage -d 0`) is refused either way, by the
-  account step, until the password is changed at the computer.
+  (`chage -E`) is refused either way by the account step. An expired
+  password (`chage -d 0`) reaches only a session that already runs
+  ([Checks](#checks)) until it is changed at the computer.
 - Setting one leaves TLS logins on: a client set to TLS still logs on with
   the login password.
 - An entry whose name now has another uid is dropped from the file when
@@ -1211,12 +1236,18 @@ sharing and remote control grants yet.
   logs in types that password before picking a new one. pkexec asks for an
   administrator's password for it, a prompt of its own beside
   AccountsService's for the rest of the change. An account whose
-  AccountsService `PasswordMode` says it has no password, or may have none
-  until its next login (an empty hash left by `passwd -d`), is refused the
-  box alone, so a password is typed for it. The change happens at the login
-  screen or a text console: until then Remote Desktop logins, TLS and NLA
-  alike, and Remote Desktop password changes are refused by the account
-  step.
+  AccountsService `PasswordMode` says it has no password (an empty hash, as
+  `passwd -d` leaves), or may have none until its next login (one the old
+  box emptied), is refused the box alone, so a password is typed for it. The
+  change happens at the next login that starts a session, at the login
+  screen or a text console. Reaching a session that already runs doesn't ask
+  for it: the lock screen, lock mode's remote Unlock dialog, logging in again
+  at the login screen to a running session, a Remote Desktop login into one
+  (TLS and NLA alike) and the user's own Remote Desktop server all take the
+  old password. Until the change, a Remote Desktop login that would start a
+  new session, a Remote Desktop password change and the login screen's
+  administrator form (Shut Down and Restart while someone is logged on)
+  refuse the account by the account step.
 - **Ending the session.** With `[session] end_processes = true` (the
   default), Log Off stops the `app-reprise-*` scopes and, after a display
   manager login, terminates the login session, so windowless programs Reprise
