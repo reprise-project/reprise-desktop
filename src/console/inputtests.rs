@@ -112,6 +112,32 @@ fn in_lock_mode_remote_keys_reach_the_focused_window_while_the_console_is_locked
 }
 
 #[test]
+fn in_lock_mode_an_apps_keys_reach_the_remote_window_until_the_remote_side_locks() {
+    let (mut h, _portal, _lock) = in_lock_mode();
+    let (mut c, _) = remote_window(&mut h);
+    let keys = h.state.keys_create(Some("org.example.Deskflow".into()));
+    h.state.keys_key(keys, A, true);
+    h.state.keys_key(keys, A, false);
+    h.roundtrip(&mut c);
+    assert_eq!(keys_heard(&c), [(A, true), (A, false)]);
+    assert_eq!(lock_input(&h), "", "the console's dialog hears nothing");
+    h.from(InputSource::Remote, crate::lockview::lock_desktop);
+    h.roundtrip(&mut c);
+    c.side.key_log.clear();
+    h.state.keys_key(keys, A, true);
+    h.state.keys_key(keys, A, false);
+    h.roundtrip(&mut c);
+    assert_eq!(keys_heard(&c), [], "the remote side's lock holds it back");
+    let remote = h
+        .state
+        .lock
+        .remote
+        .as_ref()
+        .expect("the remote side is locked");
+    assert_eq!(remote.state.input, "", "and its dialog hears nothing");
+}
+
+#[test]
 fn in_lock_mode_the_physical_pointer_stays_on_the_physical_outputs() {
     let (mut h, _portal, _lock) = in_lock_mode();
     let seat = h.state.pointer_location();

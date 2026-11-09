@@ -450,7 +450,9 @@ are.
 ## Lock, power and session
 
 - **Lock screen** with a password or a fingerprint, whichever comes first.
-  The password also unlocks your keyring if it was left locked. Prefer
+  The password also unlocks your keyring if it was left locked. An expired
+  password still unlocks; the next login that starts a new session asks for
+  a new one. Prefer
   swaylock? `[power] locker` runs it, and if it crashes Reprise's own lock
   comes back. With more than one keyboard layout, the Unlock dialog shows
   the active one in its corner, as the taskbar does.
@@ -549,7 +551,9 @@ the screen takes the interface of the last session used at this computer.
   logged on, the screen first asks for an administrator's name and
   password: a member of `wheel`, never root. Shutting down then ends every
   session, unsaved work included. A wrong password and a name that isn't an
-  administrator's are both refused 3 s after the last answer.
+  administrator's are both refused 3 s after the last answer. An
+  administrator whose password must be changed is refused until they log
+  in and change it.
 - **PAM's messages.** A wrong name or password gets one fixed message.
   What PAM says during the login (an account locked after failed logins,
   `/run/nologin`'s text, an expired account) stays on screen in its words.
@@ -897,7 +901,8 @@ no port forwarding; allow the port in your firewall if you run one.
   The client's screens have a lock of their own: they lock after
   `[idle] lock_after` without remote input, from Start > Lock or with the
   lock key, and their Unlock dialog checks the password as a login does
-  ([security.md](security.md#lock-mode)). Unlocking at this computer, by
+  ([security.md](security.md#lock-mode)). A password that must be changed
+  still unlocks them, and the notification history says it has expired. Unlocking at this computer, by
   password, fingerprint or `loginctl unlock-session`, ends lock mode: every
   client is disconnected, told another connection took over so it doesn't
   reconnect, and the windows come back here. When the last client leaves,
@@ -995,7 +1000,8 @@ them, asked on each save.
   of its on switch, and its User Accounts... button opens your account's
   Password tab.
 - **Into your session.** If you're logged in, here or in the background,
-  the client joins that session, and your Remote Desktop settings (this
+  the client joins that session, even while your password is marked to be
+  changed at the next login, and your Remote Desktop settings (this
   computer's screen, `second_client`, `max_viewers`, picture and sound)
   apply as they do to your own server. Your Remote Desktop page shows no
   port and greys New Certificate...: the computer has one certificate for
@@ -1005,7 +1011,8 @@ them, asked on each save.
   the login screen or someone else's session. The session is locked here
   (switching to its VT shows its Unlock dialog), and its clients always
   work on screens of their own, as in lock mode. Several users can each have one, up to
-  `max_sessions` sessions in all, console ones included. Logging in at the
+  `max_sessions` sessions in all, console ones included. A password that must be changed
+  starts none: log in at the computer first. Logging in at the
   login screen brings it to the monitor, and its windows go to this
   computer's screens, each at its place relative to the screen it was on.
 - **And back.** Switch User, or a VT switch key, sends a session on the

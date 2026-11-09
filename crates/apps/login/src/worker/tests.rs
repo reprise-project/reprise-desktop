@@ -201,6 +201,7 @@ fn worker_messages_round_trip() {
         FromWorker::Authenticated {
             user: "anna".into(),
             uid: 1000,
+            expired: false,
         },
         FromWorker::Started {
             session_id: "3".into(),
@@ -268,6 +269,7 @@ fn authenticated_names_the_account_pam_resolved() {
     let m = FromWorker::Authenticated {
         user: "anna".into(),
         uid: 1000,
+        expired: false,
     };
     let frame = repriselogin::frame::encode(&m).unwrap();
     assert_eq!(
@@ -562,11 +564,13 @@ fn the_check_stack_refuses_root_before_its_password() {
 
 type Calls = Rc<std::cell::RefCell<Vec<String>>>;
 
-/// A PAM transaction that records its calls; `authenticate` asks `prompt` first if set.
+/// A PAM transaction that records its calls; `authenticate` asks `prompt` first if set, and the
+/// account step finds the password `expired` if set.
 struct FakePam {
     calls: Calls,
     conv: Box<dyn Converse>,
     prompt: Option<(AuthKind, &'static str)>,
+    expired: bool,
     env: Vec<(String, String)>,
     groups: Vec<libc::gid_t>,
 }
@@ -615,8 +619,16 @@ impl LoginPam for FakePam {
         Ok(())
     }
 
-    fn account(&mut self) -> Result<(), PamError> {
-        self.call("acct_mgmt")
+    fn account(&mut self, change_expired: bool) -> Result<(), PamError> {
+        self.call("acct_mgmt")?;
+        match (self.expired, change_expired) {
+            (false, _) => Ok(()),
+            (true, true) => self.call("chauthtok"),
+            (true, false) => Err(PamError {
+                code: reprisepam::ffi::PAM_NEW_AUTHTOK_REQD,
+                text: "Authentication token is no longer valid; new one required".into(),
+            }),
+        }
     }
 
     fn user(&self) -> Option<String> {
@@ -695,6 +707,17 @@ fn run_login_with(
     prompt: Option<(AuthKind, &'static str)>,
     own_fails: bool,
 ) -> Ran {
+    run_login_as(mode, queued, prompt, own_fails, false)
+}
+
+/// `run_login_with`, the account step finding the password expired when `expired`.
+fn run_login_as(
+    mode: Mode,
+    queued: Vec<ToWorker>,
+    prompt: Option<(AuthKind, &'static str)>,
+    own_fails: bool,
+    expired: bool,
+) -> Ran {
     let (mut worker, mut daemon) = UnixStream::pair().unwrap();
     for m in &queued {
         write_msg(&mut daemon, m).unwrap();
@@ -706,6 +729,7 @@ fn run_login_with(
             calls: calls.clone(),
             conv,
             prompt,
+            expired,
             env: Vec::new(),
             groups: Vec::new(),
         })
@@ -780,7 +804,8 @@ fn rhost_is_set_for_authentication_and_cleared_before_the_session_opens() {
             },
             FromWorker::Authenticated {
                 user: "anna".into(),
-                uid: 1000
+                uid: 1000,
+                expired: false
             }
         ],
         "a remote login relays its prompt as a console one does"
@@ -915,7 +940,8 @@ fn a_check_worker_ends_after_authenticated_and_opens_nothing() {
             },
             FromWorker::Authenticated {
                 user: "anna".into(),
-                uid: 1000
+                uid: 1000,
+                expired: false
             }
         ]
     );
@@ -1087,4 +1113,32 @@ fn no_process_outside_the_worker_can_claim_its_vt() {
         code, 0,
         "0: the VT stays the worker's; 1: the session process claimed it; 2: own_session failed; 3: the VT did not open; 5: no pty; 6: the worker could not own it; 7: no session process"
     );
+}
+
+#[test]
+fn a_resume_or_remote_check_reports_an_expired_password_and_a_new_login_changes_it() {
+    let authed = |expired| FromWorker::Authenticated {
+        user: "anna".into(),
+        uid: 1000,
+        expired,
+    };
+    for (mode, rhost, prompt) in [
+        (Mode::Reauth, None, PASSWORD),
+        (Mode::Remote, Some("192.0.2.7"), PASSWORD),
+        (Mode::RemoteNla, Some("192.0.2.7"), None),
+    ] {
+        let queued = vec![begin(rhost), answer("pw")];
+        let ran = run_login_as(mode, queued, prompt, false, true);
+        assert!(
+            !ran.pam.contains(&"chauthtok".into()),
+            "{mode:?}: {:?}",
+            ran.pam
+        );
+        assert_eq!(ran.sent.last(), Some(&authed(true)), "{mode:?}");
+    }
+    for mode in [Mode::Login, Mode::Check] {
+        let ran = run_login_as(mode, vec![begin(None), answer("pw")], PASSWORD, false, true);
+        assert_eq!(ran.pam[1..], ["acct_mgmt", "chauthtok"], "{mode:?}");
+        assert_eq!(ran.sent.last(), Some(&authed(false)), "{mode:?}");
+    }
 }

@@ -17,6 +17,7 @@ use std::time::Duration;
 use repriselogin::frame::{FrameError, read_msg, write_msg};
 use repriselogin::greeter::{AuthKind, ErrorKind};
 use repriselogin::{BACKGROUND_ENV, GREETER_USER, SESSION_SOCKET, SOCKET_ENV};
+use reprisepam::ffi;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
@@ -103,6 +104,12 @@ impl Mode {
     fn opens_session(self) -> bool {
         !matches!(self, Mode::Reauth | Mode::Check)
     }
+
+    /// Whether the check changes an expired password. A resume or a remote login may reach a
+    /// running session, so it reports one in `Authenticated` and the daemon decides.
+    fn changes_expired(self) -> bool {
+        !matches!(self, Mode::Reauth | Mode::Remote | Mode::RemoteNla)
+    }
 }
 
 /// The daemon to the worker. `Answer` carries `None` for Info and Error.
@@ -155,6 +162,9 @@ pub enum FromWorker {
     Authenticated {
         user: String,
         uid: u32,
+        /// The password is right and must be changed, which this mode left unchanged.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        expired: bool,
     },
     Started {
         session_id: String,
@@ -427,18 +437,21 @@ fn login<P: LoginPam, V: Vts>(
         Ok(pam) => pam,
         Err(e) => return Login::Done(fail(sock, ErrorKind::Failed, &e.to_string())),
     };
-    let checked = check(&mut pam, rhost.as_deref());
+    let checked = check(&mut pam, rhost.as_deref(), mode.changes_expired());
     if cancelled() {
         return Login::Done(1);
     }
     // The entered name stays out of the log: it may be a password typed into the name field.
-    if let Err((e, kind, text)) = checked {
-        log::warn!("worker: login refused: {e}");
-        return Login::Done(match refused.get() {
-            true => fail(sock, ErrorKind::Refused, REFUSED_PROMPT),
-            false => fail(sock, kind, &text),
-        });
-    }
+    let expired = match checked {
+        Ok(expired) => expired,
+        Err((e, kind, text)) => {
+            log::warn!("worker: login refused: {e}");
+            return Login::Done(match refused.get() {
+                true => fail(sock, ErrorKind::Refused, REFUSED_PROMPT),
+                false => fail(sock, kind, &text),
+            });
+        }
+    };
     let account = match account_of(pam.user(), lookup) {
         Ok(account) => account,
         Err(text) => return Login::Done(fail(sock, ErrorKind::Failed, &text)),
@@ -446,6 +459,7 @@ fn login<P: LoginPam, V: Vts>(
     let authenticated = FromWorker::Authenticated {
         user: account.name.clone(),
         uid: account.uid,
+        expired,
     };
     if write_msg(sock, &authenticated).is_err() {
         return Login::Done(1);
@@ -482,12 +496,14 @@ fn prepare_socket(sock: &UnixStream) -> io::Result<()> {
     sock.set_write_timeout(Some(WRITE_WAIT))
 }
 
-/// `pam_authenticate` and the account step. A remote login's `PAM_RHOST` is set for both, so
-/// the auth log names the address, and cleared after, so logind opens a local seat0 session.
+/// `pam_authenticate` and the account step; Ok says whether the password expired unchanged. A
+/// remote login's `PAM_RHOST` is set for both, so the auth log names the address, and cleared
+/// after, so logind opens a local seat0 session.
 fn check(
     pam: &mut impl LoginPam,
     rhost: Option<&str>,
-) -> Result<(), (PamError, ErrorKind, String)> {
+    change_expired: bool,
+) -> Result<bool, (PamError, ErrorKind, String)> {
     let failed = |e: PamError| {
         let text = e.to_string();
         (e, ErrorKind::Failed, text)
@@ -495,13 +511,22 @@ fn check(
     if rhost.is_some() {
         pam.set_item_rhost(rhost).map_err(failed)?;
     }
-    if let Some(refused) = refusal(pam.authenticate(), || pam.account()) {
+    let mut expired = false;
+    let authenticated = pam.authenticate();
+    let account = || match pam.account(change_expired) {
+        Err(e) if !change_expired && e.code == ffi::PAM_NEW_AUTHTOK_REQD => {
+            expired = true;
+            Ok(())
+        }
+        r => r,
+    };
+    if let Some(refused) = refusal(authenticated, account) {
         return Err(refused);
     }
     if rhost.is_some() {
         pam.set_item_rhost(None).map_err(failed)?;
     }
-    Ok(())
+    Ok(expired)
 }
 
 /// Why the login stops before its session: a failed password gets the fixed text, and an account
@@ -748,8 +773,9 @@ impl Creds for Pam {
 trait LoginPam: Creds {
     fn set_item_rhost(&mut self, rhost: Option<&str>) -> Result<(), PamError>;
     fn authenticate(&mut self) -> Result<(), PamError>;
-    /// `pam_acct_mgmt`, changing an expired password through the conversation.
-    fn account(&mut self) -> Result<(), PamError>;
+    /// `pam_acct_mgmt`, with `change_expired` changing an expired password through the
+    /// conversation.
+    fn account(&mut self, change_expired: bool) -> Result<(), PamError>;
     fn user(&self) -> Option<String>;
     fn set_tty(&mut self, tty: &str) -> Result<(), PamError>;
     fn putenv(&mut self, key: &str, value: &str) -> Result<(), PamError>;
@@ -766,8 +792,8 @@ impl LoginPam for Pam {
         Pam::authenticate(self)
     }
 
-    fn account(&mut self) -> Result<(), PamError> {
-        Pam::account(self)
+    fn account(&mut self, change_expired: bool) -> Result<(), PamError> {
+        Pam::account(self, change_expired)
     }
 
     fn user(&self) -> Option<String> {

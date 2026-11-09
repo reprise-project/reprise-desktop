@@ -121,6 +121,53 @@ fn a_login_for_a_user_with_a_session_hands_over_to_it_without_starting_one() {
     );
 }
 
+fn authed_expired(user: &str, uid: u32) -> FromWorker {
+    FromWorker::Authenticated {
+        user: user.into(),
+        uid,
+        expired: true,
+    }
+}
+
+#[test]
+fn an_expired_password_reconnects_to_the_running_session() {
+    let mut run = anna_recovered(enabled(), "g1", Mode::Login.service());
+    run.on(tls(7, "anna", "pw"));
+    run.on(member(7, ANNA));
+    run.worker(1, secret("Password: "));
+    assert_eq!(
+        run.worker(1, authed_expired("anna", ANNA)),
+        [
+            front(FrontEvent::Verified { conn: 7 }),
+            to_worker(1, ToWorker::Cancel),
+            Effect::OpenIntake { uid: ANNA },
+        ]
+    );
+}
+
+#[test]
+fn an_expired_password_starts_no_session_and_counts_as_a_failure() {
+    let mut run = remote_run(enabled());
+    run.on(tls(7, "anna", "pw"));
+    run.on(member(7, ANNA));
+    run.worker(2, secret("Password: "));
+    let effects = run.worker(2, authed_expired("anna", ANNA));
+    assert_eq!(quiet(effects), [Effect::Kill(WorkerId(2))]);
+    assert_eq!(run.after(REFUSE_DELAY).fire(Timer::Refuse(7)), denied(7, 0));
+    for conn in 8..=10 {
+        let w = conn as u32 - 5;
+        run.on(tls(conn, "anna", "pw"));
+        run.on(member(conn, ANNA));
+        run.worker(w, secret("Password: "));
+        run.worker(w, authed_expired("anna", ANNA));
+    }
+    assert_eq!(
+        quiet(run.on(tls(11, "anna", "pw"))),
+        armed(11),
+        "the fifth login after four refusals is refused without a look-up"
+    );
+}
+
 #[test]
 fn a_login_for_the_console_users_session_hands_over_to_it() {
     let mut run = Run::machine(config(enabled()));

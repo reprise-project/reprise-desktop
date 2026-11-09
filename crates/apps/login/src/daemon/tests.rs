@@ -118,6 +118,7 @@ pub(super) fn authed(user: &str, uid: u32) -> FromWorker {
     FromWorker::Authenticated {
         user: user.into(),
         uid,
+        expired: false,
     }
 }
 

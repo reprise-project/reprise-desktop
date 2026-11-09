@@ -145,6 +145,31 @@ fn the_remote_password_unlocks_the_remote_side_and_not_the_console() {
 }
 
 #[test]
+fn a_remote_password_that_must_be_changed_unlocks_with_a_notice_and_no_back_off() {
+    let (mut h, _portal, _lock) = in_lock_mode();
+    h.state.lock.helpers = Helpers {
+        password: |_, _| sh(r#"read p; [ "$p" = hunter2 ] && echo '= 12' || echo '= 7'"#),
+        finger: |_| None,
+        ..Helpers::default()
+    };
+    for _ in 0..5 {
+        h.from(InputSource::Remote, lockview::lock_desktop);
+        remote_submit(&mut h, "hunter2");
+        settle(&mut h);
+        assert!(!h.state.desktop_locked(), "the remote side unlocks");
+    }
+    assert!(h.state.console_locked(), "the console stays locked");
+    assert!(
+        crate::notifyview::balloon_up(&h.state),
+        "a notice says the password has expired"
+    );
+    assert!(
+        (h.state.lock.remote_backoff.wait(Instant::now())).is_zero(),
+        "no unlock counts as a failure"
+    );
+}
+
+#[test]
 fn lock_mode_publishes_only_the_remote_sides_lock() {
     let (mut h, _portal, _lock) = in_lock_mode();
     let (_tx, _wake, heard) = crate::tray::headless(&mut h.state);

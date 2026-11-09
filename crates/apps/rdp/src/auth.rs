@@ -86,6 +86,8 @@ fn now() -> std::time::Instant {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Verdict {
     Accepted,
+    /// The right password, which must be changed at the next login to a new session.
+    Expired,
     Rejected,
     /// PAM refused the login and said why, e.g. for an expired account.
     Refused(String),
@@ -93,8 +95,9 @@ pub enum Verdict {
     Prompted,
 }
 
-/// The verdict in the helper's output: `= 0` accepts unless a `?` or `??` prompt came first;
-/// `E` lines before another code are PAM's reason.
+/// The verdict in the helper's output: `= 0` accepts and `= 12` (`PAM_NEW_AUTHTOK_REQD`) accepts
+/// an expired password, unless a `?` or `??` prompt came first; `E` lines before another code are
+/// PAM's reason.
 pub fn helper_verdict(lines: &str) -> Verdict {
     let mut verdict = Verdict::Rejected;
     let mut notices = Vec::new();
@@ -108,6 +111,7 @@ pub fn helper_verdict(lines: &str) -> Verdict {
         if let Some(rc) = line.strip_prefix("= ") {
             verdict = match rc {
                 "0" => Verdict::Accepted,
+                "12" => Verdict::Expired,
                 _ if notices.is_empty() => Verdict::Rejected,
                 _ => Verdict::Refused(notices.join(" ")),
             };
@@ -258,7 +262,13 @@ impl PasswordCheck {
                 .await
                 .map_err(io::Error::other)??;
         match verdict {
-            Verdict::Accepted => {
+            Verdict::Accepted | Verdict::Expired => {
+                if verdict == Verdict::Expired {
+                    log::info!(
+                        "{peer}: {}'s password has expired; logged in to the running session",
+                        self.user
+                    );
+                }
                 self.throttle.lock().unwrap().succeeded(peer.ip(), attempt);
                 return Ok(true);
             }
@@ -514,6 +524,7 @@ pub(crate) mod tests {
     fn the_helper_lines_give_the_verdict() {
         assert_eq!(helper_verdict("= 0\n"), Verdict::Accepted);
         assert_eq!(helper_verdict("= 7\n"), Verdict::Rejected);
+        assert_eq!(helper_verdict("= 12\n"), Verdict::Expired);
         assert_eq!(
             helper_verdict("E Your account has expired.\nE Ask the admin.\n= 7\n"),
             Verdict::Refused("Your account has expired. Ask the admin.".into())
@@ -703,6 +714,30 @@ pub(crate) mod tests {
             e.to_string().ends_with("gave no verdict within 200ms"),
             "{e}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_password_that_must_be_changed_logs_in_to_the_running_session() {
+        crate::listen::tests::capture_log();
+        let dir = tempfile::tempdir().unwrap();
+        let _scripts = SCRIPTS.lock().await;
+        let path = script(dir.path(), "read -r pw\necho '= 12'\n");
+        let throttle = Arc::<Mutex<Throttle>>::default();
+        let check = PasswordCheck::new(
+            "alice".into(),
+            &path,
+            SocketAddr::new(A, 50000),
+            throttle.clone(),
+        );
+        let decision = check
+            .validate(&credentials("alice", "secret"))
+            .await
+            .unwrap();
+        assert_eq!(decision, CredentialDecision::Accept);
+        assert_eq!(throttle.lock().unwrap().failures(A), 0, "not a failure");
+        assert!(crate::listen::tests::logged(
+            "192.0.2.1:50000: alice's password has expired; logged in to the running session"
+        ));
     }
 
     #[tokio::test]

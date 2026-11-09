@@ -1,32 +1,5 @@
-//! X11 programs through Xwayland: the X server, Reprise as its window
-//! manager, and the clipboard between X11 and Wayland.
-//!
-//! Reprise runs Smithay's `X11Wm` in-process, like other Smithay
-//! compositors do, started once Xwayland reports ready, so Reprise keeps
-//! the X stacking order, override-redirect menus and icons in its own
-//! hands. A managed X11 window becomes a `window::Window` of
-//! `Kind::X11` when Xwayland ties a `wl_surface` to it
-//! (`surface_associated`), maps on that surface's first buffer like an xdg
-//! toplevel, and goes when the X window unmaps. Menus and tooltips
-//! (override-redirect) are windows too, frameless at their own position.
-//!
-//! Xwayland draws at scale 1 and the scene scales its surfaces up on a
-//! scaled output; X11 coordinates are layout coordinates.
-//!
-//! The X input focus and `_NET_WM_ICON` go through a second connection
-//! on a thread of its own (`helper`).
-//!
-//! Xwayland runs with `-auth` and a cookie (`auth`): a program that reaches a socket without
-//! `XAUTHORITY`, such as a Flatpak with network access and no X11 access, is refused.
-//!
-//! The server starts lazily: Reprise holds the display and its sockets
-//! from login (`sockets`), so `DISPLAY` is good at once, and spawns
-//! Xwayland on the first connection to them. Once no X11 program has been
-//! connected for `helper::IDLE_GRACE` the server is stopped, and the
-//! sockets wait for the next one. A server that dies after running
-//! [`RESTART_AFTER`] waits on the same display likewise; one that dies
-//! sooner is left down, so a server that cannot run is not started over
-//! and over.
+//! X11 programs through Xwayland, spawned on the first connection to the sockets held from login: the server under `-auth` (`auth`), Smithay's `X11Wm` in-process as its window manager, and the clipboard between X11 and Wayland.
+//! An X11 window becomes a `window::Window` of `Kind::X11` once Xwayland ties a `wl_surface` to it; Xwayland draws at scale 1, so X11 coordinates are layout coordinates.
 
 mod auth;
 mod helper;

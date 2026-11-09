@@ -420,12 +420,15 @@ fn on_result(state: &mut State, side: Side) -> PostAction {
         p.helper.source.disarm();
     }
     match verdict {
-        Some(Ok(())) => {
+        Some(Ok(passed)) => {
             l.state.verifying = false;
             if side == Side::Remote {
                 state.lock.remote_backoff.succeeded();
             }
             unlock_side(state, side);
+            if passed == lock::Passed::Expired {
+                crate::notifyview::notice(state, lock::EXPIRED_SUMMARY, lock::EXPIRED_BODY);
+            }
         }
         Some(Err(notices)) => abort_verification(state, side, &lock::failure_text(&notices)),
         None => {

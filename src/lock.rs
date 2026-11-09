@@ -27,6 +27,10 @@ use zeroize::{Zeroize, Zeroizing};
 pub const INCORRECT: &str = "The password is incorrect. Please retry.";
 /// Shown when the password could not be checked at all (the helper did not start, died or hung).
 pub const UNAVAILABLE: &str = "The password could not be checked. Please retry.";
+/// The notice after an unlock with a password that must be changed.
+pub const EXPIRED_SUMMARY: &str = "Your password has expired";
+pub const EXPIRED_BODY: &str =
+    "Change it now. The next login to a new session will ask for a new password.";
 /// Shown on the message area's first line while Caps Lock is on.
 pub const CAPS_LOCK: &str = "Caps Lock is on.";
 /// Shown when the fingerprint conversation ended with PAM_MAXTRIES: too
@@ -214,7 +218,14 @@ impl LockState {
 
 /// A verifier's answer: `Ok` to unlock, or `Err` with the text PAM sent with the rejection (empty
 /// for a plain wrong password), cleaned by `repriselogin::add_prompt_lines`.
-pub type Verdict = Result<(), Vec<String>>;
+pub type Verdict = Result<Passed, Vec<String>>;
+
+/// A right password; `Expired` when the account step says it must be changed at the next login.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Passed {
+    Current,
+    Expired,
+}
 
 /// Answers a PAM prompt after the password: its text and whether it
 /// echoes, to the answer, or None to end the conversation.
@@ -282,7 +293,8 @@ pub fn backoff_text(wait: Duration) -> String {
     format!("Too many incorrect passwords. Wait {secs} {unit} and retry.")
 }
 
-/// PAM through libpam with `service`; with `account`, its account stack too.
+/// PAM through libpam with `service`; with `account`, its account stack too, which passes a
+/// password that must be changed as [`Passed::Expired`].
 pub struct PamVerifier {
     pub service: &'static str,
     pub account: bool,
@@ -304,8 +316,8 @@ impl PamVerifier {
 
 impl Verifier for PamVerifier {
     fn verify(&self, user: &str, password: &str, ask: &mut Ask<'_>) -> Verdict {
-        // Unlocking runs no account stack: an expired password, /run/nologin or a time rule
-        // would fail after the right password and leave the live session behind it unreachable.
+        // The console's unlock runs no account stack: an expired password, /run/nologin or a time
+        // rule would fail after the right password and leave the live session behind it unreachable.
         let service = self.service;
         let (Ok(cservice), Ok(cuser)) = (CString::new(service), CString::new(user)) else {
             return Err(Vec::new());
@@ -327,14 +339,19 @@ impl Verifier for PamVerifier {
             );
             return Err(Vec::new());
         }
-        let rc = authenticate_then_account(
+        let checked = authenticate_then_account(
             self.account,
             // SAFETY: `handle` is the live handle pam_start just returned.
             || unsafe { ffi::pam_authenticate(handle, 0) },
             // SAFETY: as above; pam_authenticate succeeded on it.
             || unsafe { ffi::pam_acct_mgmt(handle, 0) },
         );
-        if rc != ffi::PAM_SUCCESS {
+        let rc = match checked {
+            Ok(Passed::Current) => ffi::PAM_SUCCESS,
+            Ok(Passed::Expired) => ffi::PAM_NEW_AUTHTOK_REQD,
+            Err(rc) => rc,
+        };
+        if checked.is_err() {
             log::warn!(
                 "pam: refused {user}: {} {:?}",
                 pam_text(handle, rc),
@@ -343,23 +360,26 @@ impl Verifier for PamVerifier {
         }
         // SAFETY: `handle` is live and not used after this call.
         unsafe { ffi::pam_end(handle, rc) };
-        if rc == ffi::PAM_SUCCESS {
-            Ok(())
-        } else {
-            Err(creds.notices.take())
-        }
+        checked.map_err(|_| creds.notices.take())
     }
 }
 
-/// `authenticate`, then with `account` `acct_mgmt`: the first failure, or success.
+/// `authenticate`, then with `account` `acct_mgmt`: the first failure's code, or the password's
+/// standing.
 fn authenticate_then_account(
     account: bool,
     authenticate: impl FnOnce() -> c_int,
     acct_mgmt: impl FnOnce() -> c_int,
-) -> c_int {
+) -> Result<Passed, c_int> {
     match authenticate() {
-        ffi::PAM_SUCCESS if account => acct_mgmt(),
-        rc => rc,
+        ffi::PAM_SUCCESS if account => match acct_mgmt() {
+            ffi::PAM_SUCCESS => Ok(Passed::Current),
+            // The password is right and only its age is at fault; the session it unlocks runs.
+            ffi::PAM_NEW_AUTHTOK_REQD => Ok(Passed::Expired),
+            rc => Err(rc),
+        },
+        ffi::PAM_SUCCESS => Ok(Passed::Current),
+        rc => Err(rc),
     }
 }
 
@@ -946,27 +966,49 @@ mod tests {
                 rc
             }
         };
-        const EXPIRED: c_int = 13;
+        const ACCT_EXPIRED: c_int = 13;
         let ok = || ffi::PAM_SUCCESS;
-        assert_eq!(authenticate_then_account(true, ok, acct(EXPIRED)), EXPIRED);
+        assert_eq!(
+            authenticate_then_account(true, ok, acct(ACCT_EXPIRED)),
+            Err(ACCT_EXPIRED)
+        );
         assert!(account_ran.take());
         assert_eq!(
             authenticate_then_account(true, ok, acct(ffi::PAM_SUCCESS)),
-            ffi::PAM_SUCCESS
+            Ok(Passed::Current)
         );
         assert!(account_ran.take());
         let wrong = || ffi::PAM_AUTH_ERR;
         assert_eq!(
             authenticate_then_account(true, wrong, acct(ffi::PAM_SUCCESS)),
-            ffi::PAM_AUTH_ERR
+            Err(ffi::PAM_AUTH_ERR)
         );
         assert!(!account_ran.take(), "a wrong password ends it");
         assert_eq!(
-            authenticate_then_account(false, ok, acct(EXPIRED)),
-            ffi::PAM_SUCCESS,
+            authenticate_then_account(false, ok, acct(ACCT_EXPIRED)),
+            Ok(Passed::Current),
             "unlocking ignores the account"
         );
         assert!(!account_ran.take());
+    }
+
+    #[test]
+    fn a_right_password_that_must_be_changed_unlocks_and_says_so() {
+        let ok = || ffi::PAM_SUCCESS;
+        let expired = || ffi::PAM_NEW_AUTHTOK_REQD;
+        assert_eq!(
+            authenticate_then_account(true, ok, expired),
+            Ok(Passed::Expired)
+        );
+        assert_eq!(
+            authenticate_then_account(true, expired, || ffi::PAM_SUCCESS),
+            Err(ffi::PAM_NEW_AUTHTOK_REQD),
+            "only the account step's word counts"
+        );
+        assert_eq!(
+            authenticate_then_account(true, || ffi::PAM_AUTH_ERR, expired),
+            Err(ffi::PAM_AUTH_ERR)
+        );
     }
 
     #[test]

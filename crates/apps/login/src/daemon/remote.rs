@@ -48,6 +48,8 @@ pub const GONE_CHECK: Duration = Duration::from_secs(600);
 const MOST_SESSIONS: &str = "the computer runs its most sessions";
 pub(super) const ASKED_MORE: &str = "PAM asked for more than the password";
 pub(super) const NEVER_ASKED: &str = "PAM passed the login without asking for its password";
+/// A password that must be changed reaches only a running session; a new one asks for the change.
+const EXPIRED_NEW: &str = "the password has expired and the user has no session to reconnect to";
 
 /// A user's Remote Desktop password as the store keeps it: 32 uppercase hex characters.
 #[derive(Clone, PartialEq, Eq)]
@@ -936,6 +938,12 @@ impl Daemon {
                 out.push(Effect::Kill(worker));
                 let why = format!("PAM's account {got} is not the looked-up {uid}");
                 self.refuse(now, conn, &why, out);
+            }
+            FromWorker::Authenticated { expired: true, .. }
+                if self.sessions.by_uid(uid).is_none() =>
+            {
+                out.push(Effect::Kill(worker));
+                self.refuse(now, conn, EXPIRED_NEW, out);
             }
             FromWorker::Authenticated { user, .. } => self.verified(now, world, conn, user, out),
             FromWorker::Failed { text, .. } => self.refuse(now, conn, &text, out),

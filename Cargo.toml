@@ -98,7 +98,7 @@ ironrdp-rdpsnd = { git = "https://github.com/reprise-project/IronRDP.git", rev =
 ironrdp-server = { git = "https://github.com/reprise-project/IronRDP.git", rev = "21e37966a1b584b585d90ead77aaae440ed43168", features = ["egfx"] }
 ironrdp-svc = { git = "https://github.com/reprise-project/IronRDP.git", rev = "21e37966a1b584b585d90ead77aaae440ed43168" }
 ironrdp-tokio = { git = "https://github.com/reprise-project/IronRDP.git", rev = "21e37966a1b584b585d90ead77aaae440ed43168" }
-libc = "0.2"
+libc = "0.2.191"
 log = "0.4"
 md4 = { version = "0.11", default-features = false }
 pipewire = "0.10"
