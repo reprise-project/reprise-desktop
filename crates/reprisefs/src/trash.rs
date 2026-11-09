@@ -9,9 +9,11 @@ use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
 
 use crate::bincap::{self, Fate, Policy, Rule};
+use crate::bindir::{self, BinDir};
 use crate::locale;
 use crate::ops::{copy_dir_all, refuse_holding_mount, refuse_mount_point};
 use crate::places;
+use crate::progress::Meter;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Trashed {
@@ -284,7 +286,7 @@ impl Bins {
         let shared = top.join(".Trash");
         if sticky_dir(&shared) {
             let own = shared.join(self.uid.to_string());
-            if own_dir(&own, self.uid) && (make || writable(&own)) {
+            if own_dir(&own, self.uid) && sound(&own, self.uid) && (make || writable(&own)) {
                 return Some(own);
             }
             if std::fs::symlink_metadata(&own).is_err()
@@ -299,7 +301,7 @@ impl Bins {
         }
         let own = top.join(format!(".Trash-{}", self.uid));
         if own_dir(&own, self.uid) {
-            return (make || writable(&own)).then_some(own);
+            return (sound(&own, self.uid) && (make || writable(&own))).then_some(own);
         }
         if std::fs::symlink_metadata(&own).is_ok() {
             return None;
@@ -435,7 +437,7 @@ impl Bins {
         self.roots()
             .into_iter()
             .map(|r| r.join("files"))
-            .filter(|f| f.is_dir())
+            .filter(|f| f.symlink_metadata().is_ok_and(|m| m.is_dir()))
             .collect()
     }
 
@@ -481,6 +483,17 @@ fn own_dir(p: &Path, uid: u32) -> bool {
     std::fs::symlink_metadata(p).is_ok_and(|m| m.is_dir() && m.uid() == uid)
 }
 
+/// Whether the drive trash at `root` has its `files` and `info` as real folders of `uid`'s, or
+/// not yet at all: one that leads elsewhere takes nothing.
+fn sound(root: &Path, uid: u32) -> bool {
+    ["files", "info"].into_iter().all(|sub| {
+        own_dir(&root.join(sub), uid) || {
+            std::fs::symlink_metadata(root.join(sub))
+                .is_err_and(|e| e.kind() == io::ErrorKind::NotFound)
+        }
+    })
+}
+
 fn writable(p: &Path) -> bool {
     let Ok(c) = std::ffi::CString::new(p.as_os_str().as_bytes()) else {
         return false;
@@ -496,7 +509,7 @@ fn create_bin(root: &Path) -> io::Result<()> {
 /// The drive top a trash at `root` records paths against: the folder
 /// holding `.Trash-$uid`, or the one holding `.Trash/$uid`. `None` for
 /// any other trash: the home trash records absolute paths.
-fn topdir_of(root: &Path) -> Option<&Path> {
+pub(crate) fn topdir_of(root: &Path) -> Option<&Path> {
     let parent = root.parent()?;
     if root.file_name()?.as_bytes().starts_with(b".Trash-") {
         Some(parent)
@@ -519,26 +532,34 @@ pub fn restore(t: &Trashed) -> io::Result<()> {
 /// The trashed item at `files`, an entry of a trash's `files/`, with the
 /// original path and deletion date its `info/NAME.trashinfo` records.
 /// Fails with `NotFound` when there is no info file, and `InvalidData`
-/// when it names no absolute path.
+/// when it names no absolute path, or for a drive's trash a path off that
+/// drive.
 pub fn trashed(files: &Path) -> io::Result<Trashed> {
     let info = info_path(files)?;
-    let body = std::fs::read_to_string(&info).map_err(|e| match e.kind() {
-        io::ErrorKind::NotFound => io::Error::new(
-            io::ErrorKind::NotFound,
-            "the Recycle Bin has no record of where it came from",
-        ),
-        _ => e,
-    })?;
+    let root = bin_root(files)?;
+    let body = BinDir::open(root)
+        .and_then(|bin| bin.read_info(info.file_name().unwrap_or_default()))
+        .map_err(|e| match e.kind() {
+            io::ErrorKind::NotFound => io::Error::new(
+                io::ErrorKind::NotFound,
+                "the Recycle Bin has no record of where it came from",
+            ),
+            _ => e,
+        })?;
     // A relative record is against the drive's top, or for the home
     // trash the folder holding it.
-    let root = info.parent().and_then(Path::parent);
-    let base = root.and_then(|r| topdir_of(r).or(r.parent()));
-    let original = original_path(&body, base).ok_or_else(|| {
+    let top = topdir_of(root);
+    let original = original_path(&body, top.or(root.parent())).ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::InvalidData,
             "the Recycle Bin's record of where it came from is unreadable",
         )
     })?;
+    if let Some(top) = top
+        && bindir::beneath(top, &original).is_none()
+    {
+        return Err(bindir::outside());
+    }
     Ok(Trashed {
         original,
         files: files.to_path_buf(),
@@ -625,42 +646,61 @@ pub fn check_listed(files: &Path, expected: Option<&Trashed>) -> io::Result<()> 
 }
 
 fn info_path(files: &Path) -> io::Result<PathBuf> {
-    let (Some(name), Some(root)) = (files.file_name(), files.parent().and_then(Path::parent))
-    else {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "not an item in the Recycle Bin",
-        ));
-    };
-    let mut info_name = name.to_os_string();
-    info_name.push(".trashinfo");
-    Ok(root.join("info").join(info_name))
+    let (name, root) = (item_name(files)?, bin_root(files)?);
+    Ok(root.join("info").join(info_name(name)))
+}
+
+fn item_name(files: &Path) -> io::Result<&std::ffi::OsStr> {
+    files.file_name().ok_or_else(not_in_bin)
+}
+
+/// The trash holding `files`, an entry of its `files/`.
+fn bin_root(files: &Path) -> io::Result<&Path> {
+    files.parent().and_then(Path::parent).ok_or_else(not_in_bin)
+}
+
+fn not_in_bin() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidInput,
+        "not an item in the Recycle Bin",
+    )
+}
+
+fn info_name(name: &std::ffi::OsStr) -> std::ffi::OsString {
+    let mut info = name.to_os_string();
+    info.push(".trashinfo");
+    info
 }
 
 /// Delete the trashed item at `files` (an entry of a trash's `files/`)
 /// for good, once [`check_listed`] finds it is still the item `expected`
-/// records: the entry through [`crate::ops::erase`] (so one holding a
-/// mount point is refused), then its info file. An item with no info
-/// file goes all the same. Once the entry is gone the item is gone,
-/// since the bin lists `files/`: an info file that cannot be removed is
-/// logged and left, not an error.
+/// records: the entry through [`crate::ops::erase`]'s checks (so one
+/// holding a mount point is refused), then its info file, both reached
+/// without following a link ([`BinDir`]). An item with no info file goes
+/// all the same. Once the entry is gone the item is gone, since the bin
+/// lists `files/`: an info file that cannot be removed is logged and left,
+/// not an error.
 pub fn erase_trashed(files: &Path, expected: Option<&Trashed>) -> io::Result<()> {
-    erase_trashed_with(files, expected, crate::ops::erase)
+    erase_trashed_with(files, expected, None)
 }
 
-/// [`erase_trashed`], the entry going through `erase`.
+/// [`erase_trashed`], each file counted on `meter` when given.
 pub(crate) fn erase_trashed_with(
     files: &Path,
     expected: Option<&Trashed>,
-    erase: impl Fn(&Path) -> io::Result<()>,
+    meter: Option<&Meter>,
 ) -> io::Result<()> {
-    let info = info_path(files)?;
+    let (name, root) = (item_name(files)?, bin_root(files)?);
     check_listed(files, expected)?;
-    erase(files)?;
-    if let Err(e) = std::fs::remove_file(&info)
+    let bin = BinDir::open(root)?;
+    if let Some(m) = meter {
+        m.hold()?;
+    }
+    bin.erase(name, files, meter)?;
+    if let Err(e) = bin.unlink_info(&info_name(name))
         && e.kind() != io::ErrorKind::NotFound
     {
-        log::warn!("trash: left {} behind: {e}", info.display());
+        log::warn!("trash: left the record of {} behind: {e}", files.display());
     }
     bincap::gone(files);
     Ok(())
@@ -670,7 +710,9 @@ pub(crate) fn erase_trashed_with(
 /// return where it landed. A parent folder that has gone since is made
 /// again. A name taken since keeps what holds it, and `t` comes back
 /// beside it under the first free `name (2)`, `name (3)`... On success
-/// the info file goes too.
+/// the info file goes too. An item of a drive's trash goes back only
+/// under that drive's top, through folders that are not links
+/// ([`bindir::restore_beneath`]).
 pub fn restore_free(t: &Trashed) -> io::Result<PathBuf> {
     let (Some(dir), Some(name)) = (t.original.parent(), t.original.file_name()) else {
         return Err(io::Error::new(
@@ -678,6 +720,14 @@ pub fn restore_free(t: &Trashed) -> io::Result<PathBuf> {
             "it has no original location",
         ));
     };
+    let root = bin_root(&t.files)?;
+    if let Some(top) = topdir_of(root) {
+        let bin = BinDir::open(root)?;
+        let to = bindir::restore_beneath(&bin, &t.files, top, dir, name)?;
+        let _ = bin.unlink_info(&info_name(item_name(&t.files)?));
+        bincap::gone(&t.files);
+        return Ok(to);
+    }
     std::fs::create_dir_all(dir)?;
     for candidate in crate::names::numbered(name, crate::names::paren) {
         let to = dir.join(candidate);
@@ -696,21 +746,22 @@ pub fn restore_free(t: &Trashed) -> io::Result<PathBuf> {
 
 /// Delete everything under `root`'s `files/` and `info/`, returning how
 /// many top-level entries of `files/` went. Each entry goes through
-/// [`crate::ops::erase`] (so one holding a mount point is refused), then
-/// its `.trashinfo`. An entry that fails keeps its info file and the rest
-/// carry on; the error counts the failures and carries the first one. An
-/// info file with no data left goes too, and so does the
-/// `directorysizes` cache.
+/// [`crate::ops::erase`]'s checks (so one holding a mount point is
+/// refused), then its `.trashinfo`, all reached without following a link
+/// ([`BinDir`]): a `files` or `info` that is a link is removed, not
+/// walked. An entry that fails keeps its info file and the rest carry on;
+/// the error counts the failures and carries the first one. An info file
+/// with no data left goes too, and so does the `directorysizes` cache.
 pub fn empty_in(root: &Path) -> io::Result<usize> {
-    empty_with(root, crate::ops::erase)
+    empty_with(root, None)
 }
 
-/// [`empty_in`], each entry going through `erase`; an `Interrupted` from it stops at once.
-pub(crate) fn empty_with(
-    root: &Path,
-    erase: impl Fn(&Path) -> io::Result<()>,
-) -> io::Result<usize> {
-    let (files_dir, info_dir) = (root.join("files"), root.join("info"));
+/// [`empty_in`], each file counted on `meter` when given; a cancel stops at once.
+pub(crate) fn empty_with(root: &Path, meter: Option<&Meter>) -> io::Result<usize> {
+    let bin = match BinDir::open(root) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(0),
+        bin => bin?,
+    };
     let mut count = 0;
     let mut failed = 0;
     let mut first: Option<io::Error> = None;
@@ -722,33 +773,38 @@ pub(crate) fn empty_with(
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
         r => r,
     };
-    if let Ok(rd) = std::fs::read_dir(&files_dir) {
-        for entry in rd.flatten() {
-            let mut info = entry.file_name();
-            info.push(".trashinfo");
-            match erase(&entry.path())
-                .and_then(|()| gone(std::fs::remove_file(info_dir.join(info))))
-            {
-                Ok(()) => count += 1,
-                Err(e) if e.kind() == io::ErrorKind::Interrupted => return Err(e),
-                Err(e) => fail(e),
+    for name in bin.files() {
+        let path = root.join("files").join(&name);
+        let erased = (|| {
+            if let Some(m) = meter {
+                m.set_current(&name);
+                m.hold()?;
             }
+            bin.erase(&name, &path, meter)?;
+            gone(bin.unlink_info(&info_name(&name)))
+        })();
+        match erased {
+            Ok(()) => count += 1,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => return Err(e),
+            Err(e) => fail(e),
         }
     }
-    if let Ok(rd) = std::fs::read_dir(&info_dir) {
-        for entry in rd.flatten() {
-            let name = entry.file_name();
-            let stem = name.as_bytes().strip_suffix(b".trashinfo");
-            let data = stem.map(|s| files_dir.join(std::ffi::OsStr::from_bytes(s)));
-            if data.is_some_and(|d| std::fs::symlink_metadata(d).is_ok()) {
-                continue;
-            }
-            if let Err(e) = gone(std::fs::remove_file(entry.path())) {
-                fail(e);
-            }
+    let left: HashSet<std::ffi::OsString> = bin.files().into_iter().collect();
+    for name in bin.infos() {
+        let stem = name.as_bytes().strip_suffix(b".trashinfo");
+        if stem.is_some_and(|s| left.contains(std::ffi::OsStr::from_bytes(s))) {
+            continue;
+        }
+        if let Err(e) = gone(bin.unlink_info(&name)) {
+            fail(e);
         }
     }
-    let _ = std::fs::remove_file(root.join("directorysizes"));
+    if let Err(e) = bin.clear_strays() {
+        log::warn!(
+            "trash: left a link or the size cache in {}: {e}",
+            root.display()
+        );
+    }
     match first {
         None => Ok(count),
         Some(e) => Err(io::Error::new(

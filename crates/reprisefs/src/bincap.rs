@@ -319,29 +319,28 @@ struct Held {
 }
 
 fn held(root: &Path) -> Vec<Held> {
-    let cached = read_dir_sizes(root);
-    let mut kept = DirSizes::new();
     let mut out = Vec::new();
-    let Ok(rd) = std::fs::read_dir(root.join("files")) else {
+    let Ok(bin) = crate::bindir::BinDir::open(root) else {
         return out;
     };
-    for e in rd.flatten() {
+    let cached = read_dir_sizes(root);
+    let mut kept = DirSizes::new();
+    for name in bin.files() {
         crate::progress::step();
-        let Ok(m) = std::fs::symlink_metadata(e.path()) else {
+        let Some(st) = bin.stat(&name) else {
             continue;
         };
-        let name = e.file_name();
-        let size = if m.is_dir() {
+        let size = if st.st_mode & libc::S_IFMT == libc::S_IFDIR {
             let mtime = info_mtime(root, &name);
             let key = name.as_bytes().to_vec();
             let size = match cached.get(&key) {
                 Some(&(size, t)) if t == mtime => size,
-                _ => item_size(&e.path(), u64::MAX).unwrap_or(0),
+                _ => item_size(&root.join("files").join(&name), u64::MAX).unwrap_or(0),
             };
             kept.insert(key, (size, mtime));
             size
         } else {
-            m.len()
+            st.st_size as u64
         };
         out.push(Held { name, size });
     }
@@ -413,9 +412,10 @@ pub(crate) fn gone(files: &Path) {
 /// Erase the oldest items of the trash at `root` (by their `.trashinfo`
 /// DeletionDate, an item with none counting as oldest, then by name)
 /// until `incoming` more bytes fit under `cap`, given it holds `used`.
-/// Each goes with its `.trashinfo`. Returns what the trash holds after,
-/// and the `files/` path of each item erased. An item that cannot be
-/// erased stops the purge with its error.
+/// Each goes with its `.trashinfo`, reached without following a link
+/// ([`crate::bindir::BinDir`]). Returns what the trash holds after, and
+/// the `files/` path of each item erased. An item that cannot be erased
+/// stops the purge with its error.
 pub(crate) fn make_room(
     root: &Path,
     used: u64,
@@ -425,13 +425,18 @@ pub(crate) fn make_room(
     if used.saturating_add(incoming) <= cap {
         return Ok((used, Vec::new()));
     }
+    let Ok(bin) = crate::bindir::BinDir::open(root) else {
+        return Ok((used, Vec::new()));
+    };
+    let info = |name: &OsStr| {
+        let mut info = name.to_os_string();
+        info.push(".trashinfo");
+        info
+    };
     let mut items: Vec<(i64, Held)> = held(root)
         .into_iter()
         .map(|h| {
-            let mut info = h.name.clone();
-            info.push(".trashinfo");
-            let when = std::fs::read_to_string(root.join("info").join(info))
-                .ok()
+            let when = (bin.read_info(&info(&h.name)).ok())
                 .and_then(|body| crate::trash::deletion_date(&body))
                 .unwrap_or(i64::MIN);
             (when, h)
@@ -445,10 +450,8 @@ pub(crate) fn make_room(
             break;
         }
         let files = root.join("files").join(&h.name);
-        crate::ops::erase_stepped(&files)?;
-        let mut info = h.name.clone();
-        info.push(".trashinfo");
-        if let Err(e) = std::fs::remove_file(root.join("info").join(info))
+        bin.erase(&h.name, &files, None)?;
+        if let Err(e) = bin.unlink_info(&info(&h.name))
             && e.kind() != io::ErrorKind::NotFound
         {
             log::warn!("trash: left the record of {} behind: {e}", files.display());

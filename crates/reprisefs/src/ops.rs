@@ -1,5 +1,6 @@
 //! File operations, and the argument vectors and shell quoting around them.
 
+pub(crate) mod at;
 mod copy;
 mod erase;
 mod fileio;
@@ -10,7 +11,7 @@ pub use copy::copy_dir_all;
 use copy::copy_dir_until;
 pub(crate) use copy::{copy_new, remove_tree};
 pub use erase::erase;
-pub(crate) use erase::{erase_counted, erase_stepped};
+pub(crate) use erase::{entries_at, erase_at, erase_counted, erase_stepped, unlink_at};
 pub(crate) use fileio::read_opened;
 pub use fileio::{copy_xattrs, create_temp_beside, read_regular, write_atomic};
 pub use mounts::{is_mount_point, mount_root, refuse_holding_mount, refuse_mount_point};
