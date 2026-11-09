@@ -1,5 +1,5 @@
 //! The lock screen's PAM conversations, each in a child of the compositor binary so no PAM module runs in the compositor and the lock can end one at any time: the fingerprint's (`--fingerprint-conversation USER`) and the password's (`--password-conversation USER`, the password on stdin).
-//! A child writes `I <info>` and `E <error>` lines and `= <pam_authenticate rc>` last; only `= 0` unlocks.
+//! A child writes `I <info>` and `E <error>` lines and `= <pam_authenticate rc>` last; only `= 0` unlocks, and for the password also `= 12` (`PAM_NEW_AUTHTOK_REQD`): the right password, expired.
 //! The password's child asks a further prompt with `? <text>` (blind) or `?? <text>` (echoed) and reads its answer as the next line of stdin, which stays open until the conversation ends.
 //! reprise-rdp and lock mode's remote Unlock dialog run it as `--rdp-password-conversation USER`, under the Remote Desktop PAM service.
 
@@ -96,7 +96,8 @@ impl PasswordAnswer {
                 None
             }
             Line::Prompt(_) => None,
-            Line::Result(ffi::PAM_SUCCESS) => Some(Ok(())),
+            Line::Result(ffi::PAM_SUCCESS) => Some(Ok(lock::Passed::Current)),
+            Line::Result(ffi::PAM_NEW_AUTHTOK_REQD) => Some(Ok(lock::Passed::Expired)),
             Line::Result(_) => Some(Err(std::mem::take(&mut self.notices))),
         }
     }
@@ -271,7 +272,8 @@ impl PasswordFor {
         }
     }
 
-    /// A remote login also passes the account stack, so an expired or locked account is refused.
+    /// A remote login also passes the account stack, so an expired or locked account is refused; a
+    /// password that must be changed still reaches the running session it serves.
     fn verifier(self) -> lock::PamVerifier {
         lock::PamVerifier {
             service: self.service(),
@@ -331,7 +333,8 @@ fn password_conversation(v: &dyn Verifier, user: &str, mut input: impl Read, mut
     };
     let mut lines = String::new();
     match &verdict {
-        Ok(()) => lines.push_str(&format!("= {}\n", ffi::PAM_SUCCESS)),
+        Ok(lock::Passed::Current) => lines.push_str(&format!("= {}\n", ffi::PAM_SUCCESS)),
+        Ok(lock::Passed::Expired) => lines.push_str(&format!("= {}\n", ffi::PAM_NEW_AUTHTOK_REQD)),
         Err(notices) => {
             for t in notices {
                 lines.push_str(&format!("E {t}\n"));
@@ -542,7 +545,8 @@ pub(crate) mod tests {
     #[test]
     fn the_password_conversation_carries_the_verifiers_verdict_back() {
         let locked = vec!["Account locked.".to_string(), "(10 minutes left)".into()];
-        for expected in [Ok(()), Err(Vec::new()), Err(locked)] {
+        let passed = [Ok(lock::Passed::Current), Ok(lock::Passed::Expired)];
+        for expected in passed.into_iter().chain([Err(Vec::new()), Err(locked)]) {
             let mut out = Vec::new();
             password_conversation(
                 &FakeVerifier(expected.clone()),
@@ -573,7 +577,7 @@ pub(crate) mod tests {
                 code.as_deref().map(String::as_str),
                 pin.as_deref().map(String::as_str),
             ) {
-                ("hunter2", Some("123456"), Some("4321")) => Ok(()),
+                ("hunter2", Some("123456"), Some("4321")) => Ok(lock::Passed::Current),
                 _ => Err(Vec::new()),
             }
         }
@@ -611,7 +615,7 @@ pub(crate) mod tests {
                 code.as_deref().map(String::as_str),
                 pin.as_deref().map(String::as_str),
             ) {
-                (lock::INPUT_CAPACITY, Some("123456"), Some("4321")) => Ok(()),
+                (lock::INPUT_CAPACITY, Some("123456"), Some("4321")) => Ok(lock::Passed::Current),
                 _ => Err(Vec::new()),
             }
         }

@@ -184,7 +184,10 @@ over, and a text-login Reprise started before it publishes no more while it
 runs, so a later look change or Xwayland start there leaves the variables
 alone. After a text-login Reprise, it takes `org.freedesktop.ScreenSaver` too,
 so inhibits and the lock are its own, and the text-login session gets that
-name back when it ends. When the login manager's session runs first, a later
+name back when it ends. The user manager's variables don't come back
+with it: until the text-login Reprise's next look change or Xwayland start
+publishes again, D-Bus-activated services, the portals included, look for the
+ended session's display. When the login manager's session runs first, a later
 text-login Reprise takes only names nobody holds, so its programs'
 `org.freedesktop.ScreenSaver` inhibits hold off the first session's idle
 timer. Whichever session ends first leaves the

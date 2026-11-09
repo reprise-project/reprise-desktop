@@ -123,9 +123,23 @@ pub fn session_ending() -> Result<(), String> {
 }
 
 /// [`session_ending`] for the computer turning off or restarting; the server takes it from any
-/// of the user's sessions.
+/// of the user's sessions. A server started before `PowerEnding` existed gets `SessionEnding`.
 pub fn power_ending() -> Result<(), String> {
-    call("PowerEnding")
+    let conn = session()?;
+    crate::wait(power_ending_on(&conn))
+}
+
+async fn power_ending_on(conn: &Connection) -> Result<(), String> {
+    let server =
+        (server(conn).await).inspect_err(|e| log::warn!("remote desktop, PowerEnding: {e}"))?;
+    let call = |method| conn.call_method(Some(server.as_str()), PATH, Some(INTERFACE), method, &());
+    match call("PowerEnding").await {
+        // zbus reports a reply named as a `fdo::Error` as that variant.
+        Err(zbus::Error::FDO(e)) if matches!(*e, zbus::fdo::Error::UnknownMethod(_)) => {
+            told("SessionEnding", call("SessionEnding").await)
+        }
+        reply => told("PowerEnding", reply),
+    }
 }
 
 /// End the session of the client at `address`, as [`Client::address`] gives it.
@@ -337,6 +351,34 @@ mod tests {
             assert_eq!(status.listening, "0.0.0.0:3389");
             assert_eq!(status.clients.len(), 1);
             assert_eq!(status.clients[0].user, "user");
+        });
+    }
+
+    struct OlderServer(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+    #[zbus::interface(name = "org.reprise.RemoteDesktop")]
+    impl OlderServer {
+        fn session_ending(&self) {
+            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn power_ending_on_a_server_without_it_ends_the_session_instead() {
+        let Some(bus) = bus() else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
+        zbus::block_on(async move {
+            let connect = || zbus::connection::Builder::address(bus.1.as_str()).build();
+            let conn = connect().await.unwrap();
+            let server = connect().await.unwrap();
+            let told = std::sync::Arc::default();
+            let older = OlderServer(std::sync::Arc::clone(&told));
+            server.object_server().at(PATH, older).await.unwrap();
+            server.request_name(NAME).await.unwrap();
+            assert_eq!(power_ending_on(&conn).await, Ok(()));
+            assert!(told.load(std::sync::atomic::Ordering::SeqCst));
         });
     }
 

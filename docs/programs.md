@@ -595,8 +595,11 @@ don't count), and the only administrator can't be made standard or deleted.
 Add Account sets a password; it, and the Password tab of another account, can
 also ask for a new one at the next login: the account logs on with its
 password at this computer, at the login screen or a text console, then picks
-a new one. Until then its Remote Desktop logins, TLS and NLA alike, and its
-Remote Desktop password changes are refused. On an account with no password,
+a new one. Until then a Remote Desktop login reaches only a session of it
+that already runs, and its Remote Desktop password changes and, for an
+administrator, the login screen's Shut Down and Restart are refused.
+Unlocking a running session takes the old password
+([security.md](security.md#programs-and-files)). On an account with no password,
 or one that may have none until its next login, the box alone is refused:
 type a new password for it. While reprise-login is installed, your
 account's Password tab also creates, changes and removes your Remote Desktop

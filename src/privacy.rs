@@ -1052,6 +1052,23 @@ mod tests {
     }
 
     #[test]
+    fn only_a_casts_first_frame_is_counted_as_a_still() {
+        let mut h = capturing();
+        let mut c = h.connect_capture(SIZE);
+        let mut s = c.ext_session(&mut h);
+        for _ in 0..4 {
+            c.ext_frame(&mut h, &mut s);
+        }
+        assert!(h.state.privacy.sharing_shown());
+        assert_eq!(
+            h.state.privacy.still, None,
+            "the cast lights only the sharing dot"
+        );
+        assert_eq!(h.state.privacy.takers.len(), 1);
+        c.ext_end(&mut h, s);
+    }
+
+    #[test]
     fn a_screenshot_during_the_linger_does_not_extend_it() {
         let mut h = capturing();
         let ended = cast_with_held_balloon(&mut h);

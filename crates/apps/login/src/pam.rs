@@ -34,10 +34,11 @@ pub trait PamOps {
     fn chauthtok(&mut self, flags: c_int) -> c_int;
 }
 
-/// `pam_acct_mgmt`, then on `PAM_NEW_AUTHTOK_REQD` `pam_chauthtok` for the expired password.
-pub fn account_steps(ops: &mut impl PamOps) -> c_int {
+/// `pam_acct_mgmt`, then on `PAM_NEW_AUTHTOK_REQD` with `change` `pam_chauthtok` for the expired
+/// password; without, that code is the answer.
+pub fn account_steps(ops: &mut impl PamOps, change: bool) -> c_int {
     match ops.acct_mgmt() {
-        ffi::PAM_NEW_AUTHTOK_REQD => ops.chauthtok(ffi::PAM_CHANGE_EXPIRED_AUTHTOK),
+        ffi::PAM_NEW_AUTHTOK_REQD if change => ops.chauthtok(ffi::PAM_CHANGE_EXPIRED_AUTHTOK),
         rc => rc,
     }
 }
@@ -126,8 +127,8 @@ impl Pam {
     }
 
     /// The account stack; an expired password is changed through the conversation.
-    pub fn account(&mut self) -> Result<(), PamError> {
-        let rc = account_steps(self);
+    pub fn account(&mut self, change_expired: bool) -> Result<(), PamError> {
+        let rc = account_steps(self, change_expired);
         self.check(rc)
     }
 
@@ -480,12 +481,23 @@ mod tests {
             chauthtok_flags: vec![],
             chauthtok_rc: ffi::PAM_SUCCESS,
         };
-        assert_eq!(account_steps(&mut ops), ffi::PAM_SUCCESS);
+        assert_eq!(account_steps(&mut ops, true), ffi::PAM_SUCCESS);
         assert_eq!(ops.chauthtok_flags, [ffi::PAM_CHANGE_EXPIRED_AUTHTOK]);
 
         ops.acct = vec![ffi::PAM_NEW_AUTHTOK_REQD];
         ops.chauthtok_rc = PAM_AUTH_ERR;
-        assert_eq!(account_steps(&mut ops), PAM_AUTH_ERR);
+        assert_eq!(account_steps(&mut ops, true), PAM_AUTH_ERR);
+    }
+
+    #[test]
+    fn without_a_change_an_expired_password_is_reported() {
+        let mut ops = FakeOps {
+            acct: vec![ffi::PAM_NEW_AUTHTOK_REQD],
+            chauthtok_flags: vec![],
+            chauthtok_rc: ffi::PAM_SUCCESS,
+        };
+        assert_eq!(account_steps(&mut ops, false), ffi::PAM_NEW_AUTHTOK_REQD);
+        assert!(ops.chauthtok_flags.is_empty());
     }
 
     #[test]
@@ -495,7 +507,7 @@ mod tests {
             chauthtok_flags: vec![],
             chauthtok_rc: ffi::PAM_SUCCESS,
         };
-        assert_eq!(account_steps(&mut ops), PAM_AUTH_ERR);
+        assert_eq!(account_steps(&mut ops, true), PAM_AUTH_ERR);
         assert!(ops.chauthtok_flags.is_empty());
     }
 }
