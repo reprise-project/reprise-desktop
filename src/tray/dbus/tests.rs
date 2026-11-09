@@ -163,6 +163,13 @@ fn item_texts_clip_the_title_and_the_tooltip() {
 }
 
 #[test]
+fn item_texts_drop_bidi_and_control_characters() {
+    let tip: ToolTip = ("", vec![], "Tip\u{202e}\u{0}", "");
+    let (title, tooltip) = item_texts(Some("Ti\u{200b}tle\n".into()), Some(tip));
+    assert_eq!((title.as_str(), tooltip.as_str()), ("Title", "Tip"));
+}
+
+#[test]
 fn icon_pixmap_variant_decodes_borrowing_the_pixels() {
     use zbus::wire::{LE, serialized::Context, to_bytes};
     let list = vec![(2i32, 1i32, vec![7u8; 8])];
@@ -822,6 +829,15 @@ fn every_change_signal_reads_the_item_again() {
 }
 
 #[test]
+fn a_fresh_id_skips_the_compositors_own_and_open_ones() {
+    let mut senders = Senders::default();
+    let mut ids = [7, u32::MAX, 0, 7, 8].into_iter();
+    let mut fresh = || ids.next().unwrap();
+    assert_eq!(senders.claim(":1.7", None, "a", 0, false, &mut fresh), 7);
+    assert_eq!(senders.claim(":1.8", None, "b", 0, false, &mut fresh), 8);
+}
+
+#[test]
 fn only_its_sender_replaces_or_closes_a_balloon() {
     let mut senders = Senders::default();
     let mut next = 1;
@@ -902,8 +918,8 @@ fn a_new_process_under_the_same_app_name_replaces_a_balloon_whose_sender_left() 
         senders.claim(":1.9", Some(9), "notify-send", a, true, &mut fresh),
         a
     );
-    assert!(senders.owns(a, ":1.7"), "the stored sender stays");
-    assert!(!senders.owns(a, ":1.9"));
+    assert!(senders.owns(a, ":1.9"), "the new sender is on record");
+    assert!(!senders.owns(a, ":1.7"));
 }
 
 #[test]

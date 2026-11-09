@@ -571,13 +571,28 @@ const MPRIS_ROOT: &str = "org.mpris.MediaPlayer2";
 const MPRIS_PLAYER: &str = "org.mpris.MediaPlayer2.Player";
 
 /// A player's name for the OSD: any session-bus peer sets `Identity`, so it is cut to PLAYER_NAME_MAX chars.
-fn player_name(mut identity: String) -> String {
-    if let Some((end, _)) = identity.char_indices().nth(PLAYER_NAME_MAX) {
-        identity.truncate(end);
-    }
-    identity
+fn player_name(identity: String) -> String {
+    reprisefs::names::shown_line(&identity, PLAYER_NAME_MAX)
 }
 
+/// How long a player gets to answer a property read; one that doesn't is passed over.
+const PLAYER_ANSWER: Duration = Duration::from_millis(300);
+
+/// `name`'s property `prop` of `iface`, None when it doesn't answer within [`PLAYER_ANSWER`].
+async fn player_property(conn: &Connection, name: &str, iface: &str, prop: &str) -> Option<String> {
+    let read = async {
+        let proxy = bounded::proxy(conn, name, MPRIS_PATH, iface).await.ok()?;
+        bounded::property::<String>(&proxy, prop).await.ok()
+    };
+    let late = async {
+        async_io::Timer::after(PLAYER_ANSWER).await;
+        None
+    };
+    futures_lite::future::or(read, late).await
+}
+
+/// The player a media key goes to and its name for the OSD: the first that reports Playing, else
+/// the first that answers. Every player is asked at once.
 async fn pick_player(conn: &Connection) -> Option<(String, String)> {
     let dbus = zbus::fdo::DBusProxy::new(conn).await.ok()?;
     let names: Vec<String> = dbus
@@ -588,29 +603,19 @@ async fn pick_player(conn: &Connection) -> Option<(String, String)> {
         .map(|n| n.to_string())
         .filter(|n| n.starts_with("org.mpris.MediaPlayer2."))
         .collect();
-    let mut first = None;
-    for name in names {
-        let Ok(player) = bounded::proxy(conn, &name, MPRIS_PATH, MPRIS_PLAYER).await else {
-            continue;
-        };
-        let playing = bounded::property::<String>(&player, "PlaybackStatus")
-            .await
-            .is_ok_and(|s| s == "Playing");
-        if playing || first.is_none() {
-            let identity = match bounded::proxy(conn, &name, MPRIS_PATH, MPRIS_ROOT).await {
-                // The name is cosmetic: a player that answers neither the proxy nor the property still gets its key press.
-                Ok(root) => bounded::property::<String>(&root, "Identity")
-                    .await
-                    .unwrap_or_else(|_| name.clone()),
-                Err(_) => name.clone(),
-            };
-            first = Some((name, player_name(identity)));
-            if playing {
-                break;
-            }
-        }
-    }
-    first
+    let asked = names
+        .iter()
+        .map(|name| player_property(conn, name, MPRIS_PLAYER, "PlaybackStatus"));
+    let statuses = futures_util::future::join_all(asked).await;
+    let answered = || names.iter().zip(&statuses).filter(|(_, s)| s.is_some());
+    let (name, _) = answered()
+        .find(|(_, s)| s.as_deref() == Some("Playing"))
+        .or_else(|| answered().next())?;
+    // The name is cosmetic: a player that doesn't give it still gets its key press.
+    let identity = player_property(conn, name, MPRIS_ROOT, "Identity")
+        .await
+        .unwrap_or_else(|| name.clone());
+    Some((name.clone(), player_name(identity)))
 }
 
 async fn perform(buses: &mut Buses, job: Job) -> Option<Report> {
@@ -1032,6 +1037,7 @@ mod tests {
     fn a_player_name_is_cut_to_64_chars() {
         assert_eq!(player_name("mpv".into()), "mpv");
         assert_eq!(player_name("\u{e9}".repeat(100)), "\u{e9}".repeat(64));
+        assert_eq!(player_name("m\u{202e}p\u{0}v".into()), "mpv");
     }
 
     #[test]

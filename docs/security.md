@@ -1266,15 +1266,19 @@ sharing and remote control grants yet.
   shell-quoted like a path, and an ssh `Host` from `~/.ssh/config` is
   passed after `--`, one starting with `-` left out of the menu.
 - **Bus data.** What a program sends the compositor and `reprise-sound`
-  over the session bus (notifications, tray items and their menus,
-  LauncherEntry updates, media players' properties) is read only from a
-  body of 4 MiB or less, and only at the types Reprise uses: a byte array
+  over the session bus (tray items and their menus, LauncherEntry updates,
+  media players' properties) is read only from a body of 4 MiB or less, and only at the types Reprise uses: a byte array
   or any other unused value is skipped unread, a dictionary keeps 64
   entries, a string 4096 bytes, a string list 16 strings, and a tray menu
-  its first level, up to 256 rows. A player's title, artist and name show
-  256 characters at most. A notification's `image-path` picture is read
-  only from a regular file of 32 MiB or less, opened without blocking, and
-  decoded off the bus thread; one that takes over 2 s is left out.
+  its first level, up to 256 rows. A notification keeps its first 64 hints
+  and 64 action strings, and an `image-data` picture of 1024 px a side at
+  most; a program lights at most 8 apps' task buttons through LauncherEntry.
+  Notification, tray and player text loses its control, bidi and zero-width
+  characters, so it can't reorder or hide what it shows. A player's title,
+  artist and name show 256 characters at most. A notification's
+  `image-path` picture is read only from a regular file of 32 MiB or less,
+  opened without blocking, and decoded off the bus thread; one that takes
+  over 2 s is left out.
 - **Launchers.** A `.desktop` file in a folder (the desktop, Explorer)
   runs only when it is executable and carries the `user.reprise.trusted`
   extended attribute, which Allow Launching sets. Extracting an archive
