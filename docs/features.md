@@ -759,7 +759,10 @@ the screen takes the interface of the last session used at this computer.
 - **Screen sharing** in browsers, video calls and OBS, of a whole screen or
   one window.
 - **Remote control.** Tools can drive the keyboard and mouse once you allow
-  them. Reprise's own server for RDP clients is [Remote Desktop](#remote-desktop).
+  them. One you allowed with Remember starts without asking and shows a
+  balloon, "<app> is controlling this computer"; its Stop and forget ends the
+  session and forgets the choice, so the next start asks again. Reprise's own
+  server for RDP clients is [Remote Desktop](#remote-desktop).
 - **One keyboard and mouse across computers** with Deskflow. Super+Shift+Esc
   always takes them back.
 - **VM viewers and remote desktops get your shortcuts,** Super and Alt+Tab

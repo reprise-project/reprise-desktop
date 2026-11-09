@@ -27,7 +27,7 @@ pub(crate) struct RemoteSession {
     /// Started for the remote desktop server without a dialog (`crate::trusted`).
     trusted: bool,
     /// The app id the frontend created the session for.
-    app_id: String,
+    pub(crate) app_id: String,
     eis: Option<crate::inputlink::EisHandle>,
     keys: Option<crate::inputlink::KeysHandle>,
     pub(crate) screencast: CastState,
@@ -41,7 +41,19 @@ pub struct RemoteDesktop {
     /// pretending to grant.
     pub link: Option<Link>,
     pub frontend: crate::Frontend,
+    pub notices: crate::remotenotice::Notices,
+    pub ask: Ask,
 }
+
+/// The permit dialog, [`crate::permit::ask`] outside tests.
+pub type Ask = fn(
+    crate::permit::Kind,
+    &str,
+    Vec<String>,
+    bool,
+    Option<String>,
+    Arc<AtomicBool>,
+) -> crate::permit::Answer;
 
 #[derive(SerializeDict, Type)]
 #[zvariant(signature = "a{sv}")]
@@ -136,7 +148,9 @@ impl RemoteDesktop {
         {
             s.persist = p;
         }
-        let restored = (options.get("restore_data")).and_then(|v| our_grant(v, &app_id));
+        let restored = (options.get("restore_data"))
+            .and_then(|v| our_grant(v, &app_id))
+            .filter(|_| !self.notices.forgotten(&app_id));
         if let Some(granted) = restored {
             s.devices &= granted;
         }
@@ -212,8 +226,9 @@ impl RemoteDesktop {
             }
             let id = app_id.clone();
             let parent = parent.clone();
+            let ask = self.ask;
             let answer = blocking::unblock(move || {
-                crate::permit::ask(
+                ask(
                     crate::permit::Kind::RemoteControl(crate::permit::Devices::from_mask(devices)),
                     &id,
                     Vec::new(),
@@ -229,7 +244,12 @@ impl RemoteDesktop {
                 None => return Ok((RESPONSE_CANCELLED, empty())),
             }
             match answer {
-                crate::permit::Answer::Allow { remember: r } => remember = r,
+                crate::permit::Answer::Allow { remember: r } => {
+                    remember = r;
+                    if r {
+                        self.notices.remembered(&app_id);
+                    }
+                }
                 crate::permit::Answer::Deny | crate::permit::Answer::Dismissed => {
                     log::info!("RemoteDesktop.Start for {app_id:?} denied");
                     return Ok((RESPONSE_CANCELLED, empty()));
@@ -295,6 +315,10 @@ impl RemoteDesktop {
                 }
             }
             None => return Ok((RESPONSE_CANCELLED, empty())),
+        }
+        if restored && !trusted {
+            let show = self.notices.clone().show(conn.clone(), key, app_id.clone());
+            zruntime::spawn(show).detach();
         }
         let restore_data =
             (persist > 0).then(|| crate::restore_data(&app_id, &grant(devices, kept.as_ref())));
@@ -538,11 +562,14 @@ pub(crate) fn display_name(app_id: &str) -> String {
     if app_id.is_empty() {
         return String::new();
     }
+    app_entry(app_id).map_or_else(|| app_id.to_string(), |a| a.name)
+}
+
+/// The desktop entry of `app_id`, with or without its `.desktop`.
+pub(crate) fn app_entry(app_id: &str) -> Option<reprisefs::apps::AppEntry> {
     let apps = reprisefs::apps::scan(&reprisefs::apps::default_dirs());
-    apps.iter()
+    apps.into_iter()
         .find(|a| a.id == app_id || a.id.strip_suffix(".desktop") == Some(app_id))
-        .map(|a| a.name.clone())
-        .unwrap_or_else(|| app_id.to_string())
 }
 
 #[cfg(test)]
@@ -551,6 +578,7 @@ mod tests {
     use crate::inputlink::tests::{fake_compositor, link_on, request, send};
     use crate::{RESTORE_VENDOR, restore_data};
     use std::os::unix::net::UnixStream;
+    use std::sync::Mutex;
     use std::time::Duration;
 
     const APP: &str = "org.example.Remote";
@@ -604,6 +632,8 @@ mod tests {
             sessions: sessions.clone(),
             link: Some(link),
             frontend: crate::Frontend::default(),
+            notices: Default::default(),
+            ask: never_asked,
         };
         let keys = |key: &str| {
             let mut map = sessions.lock().unwrap();
@@ -614,6 +644,326 @@ mod tests {
         assert!(portal.connect_sender("/ended").is_err());
         assert!(keys("/shown"), "a session without lock mode gets its keys");
         assert!(portal.connect_sender("/shown").is_ok(), "and its sender");
+    }
+
+    fn never_asked(
+        _: crate::permit::Kind,
+        _: &str,
+        _: Vec<String>,
+        _: bool,
+        _: Option<String>,
+        _: Arc<AtomicBool>,
+    ) -> crate::permit::Answer {
+        crate::permit::Answer::Deny
+    }
+
+    fn allowed(
+        _: crate::permit::Kind,
+        _: &str,
+        _: Vec<String>,
+        _: bool,
+        _: Option<String>,
+        _: Arc<AtomicBool>,
+    ) -> crate::permit::Answer {
+        crate::permit::Answer::Allow { remember: true }
+    }
+
+    /// Each Notify's app name, summary and actions.
+    type Noted = Arc<Mutex<Vec<(String, String, Vec<String>)>>>;
+
+    struct FakeNotifications(Noted);
+
+    #[zbus::interface(name = "org.freedesktop.Notifications")]
+    impl FakeNotifications {
+        #[allow(clippy::too_many_arguments)]
+        fn notify(
+            &self,
+            app_name: String,
+            _replaces_id: u32,
+            _app_icon: String,
+            summary: String,
+            _body: String,
+            actions: Vec<String>,
+            _hints: HashMap<String, OwnedVariant>,
+            _expire_timeout: i32,
+        ) -> u32 {
+            let mut noted = self.0.lock().unwrap();
+            noted.push((app_name, summary, actions));
+            40 + noted.len() as u32
+        }
+    }
+
+    /// The `remote-desktop` table: token to data.
+    type Table = Arc<Mutex<HashMap<String, OwnedVariant>>>;
+
+    struct FakeStore(Table);
+
+    #[zbus::interface(name = "org.freedesktop.impl.portal.PermissionStore")]
+    impl FakeStore {
+        fn list(&self, table: String) -> Vec<String> {
+            match table.as_str() {
+                "remote-desktop" => self.0.lock().unwrap().keys().cloned().collect(),
+                _ => Vec::new(),
+            }
+        }
+
+        fn lookup(
+            &self,
+            table: String,
+            id: String,
+        ) -> zbus::fdo::Result<(HashMap<String, Vec<String>>, OwnedVariant)> {
+            let table = (table == "remote-desktop").then(|| self.0.lock().unwrap());
+            match table.as_ref().and_then(|t| t.get(&id)) {
+                Some(data) => Ok((HashMap::new(), data.clone())),
+                None => Err(zbus::fdo::Error::Failed("no such entry".into())),
+            }
+        }
+
+        fn delete(&self, table: String, id: String) -> zbus::fdo::Result<()> {
+            let gone = table == "remote-desktop" && self.0.lock().unwrap().remove(&id).is_some();
+            match gone {
+                true => Ok(()),
+                false => Err(zbus::fdo::Error::Failed("no such entry".into())),
+            }
+        }
+    }
+
+    /// The portal's RemoteDesktop with `ask` for its dialog, a notification server and a
+    /// permission store holding `table`, on a private bus.
+    struct Desk {
+        _bus: crate::lockmode::tests::Bus,
+        client: zbus::Connection,
+        portal: zbus::Connection,
+        fakes: zbus::Connection,
+        sessions: Sessions,
+        noted: Noted,
+        table: Table,
+    }
+
+    impl Desk {
+        async fn on(bus: crate::lockmode::tests::Bus, ask: Ask, table: &[(&str, &str)]) -> Desk {
+            let (ours, mut theirs) = UnixStream::pair().unwrap();
+            std::thread::spawn(move || {
+                fake_compositor(&mut theirs, 2, 10);
+                while request(&mut theirs).is_ok() {}
+            });
+            let noted = Noted::default();
+            let table: Table = Arc::new(Mutex::new(
+                (table.iter())
+                    .map(|(app, id)| {
+                        let data =
+                            restore_data(app, &grant(DEVICE_KEYBOARD | DEVICE_POINTER, None));
+                        (id.to_string(), Variant::from(data).try_to_owned().unwrap())
+                    })
+                    .collect(),
+            ));
+            let fakes = zbus::connection::Builder::address(bus.1.as_str())
+                .name("org.freedesktop.Notifications")
+                .serve_at(
+                    "/org/freedesktop/Notifications",
+                    FakeNotifications(noted.clone()),
+                )
+                .build()
+                .await
+                .unwrap();
+            fakes
+                .request_name("org.freedesktop.impl.portal.PermissionStore")
+                .await
+                .unwrap();
+            fakes
+                .object_server()
+                .at(
+                    "/org/freedesktop/impl/portal/PermissionStore",
+                    FakeStore(table.clone()),
+                )
+                .await
+                .unwrap();
+            let client = crate::lockmode::tests::connect(&bus).await;
+            let frontend = crate::Frontend::default();
+            frontend.set(client.unique_name().map(|n| n.to_string()));
+            let sessions = Sessions::default();
+            let notices = crate::remotenotice::Notices::default();
+            let portal = zbus::connection::Builder::address(bus.1.as_str())
+                .serve_at(
+                    crate::PATH,
+                    RemoteDesktop {
+                        sessions: sessions.clone(),
+                        link: Some(link_on(ours)),
+                        frontend,
+                        notices: notices.clone(),
+                        ask,
+                    },
+                )
+                .build()
+                .await
+                .unwrap();
+            let watch = crate::remotenotice::watch(portal.clone(), sessions.clone(), notices);
+            zruntime::spawn(watch).detach();
+            Desk {
+                _bus: bus,
+                client,
+                portal,
+                fakes,
+                sessions,
+                noted,
+                table,
+            }
+        }
+
+        async fn call<B, R>(&self, method: &str, body: &B) -> R
+        where
+            B: serde::Serialize + zbus::zvariant::DynamicType,
+            R: serde::de::DeserializeOwned + zbus::zvariant::Type,
+        {
+            let dest = self.portal.unique_name().unwrap().to_string();
+            let iface = Some("org.freedesktop.impl.portal.RemoteDesktop");
+            (self
+                .client
+                .call_method(Some(dest.as_str()), crate::PATH, iface, method, body))
+            .await
+            .unwrap()
+            .body()
+            .deserialize()
+            .unwrap()
+        }
+
+        /// CreateSession, SelectDevices (with `restore` for a remembered grant) and Start for
+        /// `app_id` as session `n`; Start's response code.
+        async fn start(&self, n: u32, app_id: &str, restore: bool) -> u32 {
+            let session = format!("/org/freedesktop/portal/desktop/session/1_99/s{n}");
+            let request = format!("/org/freedesktop/portal/desktop/request/1_99/r{n}");
+            let handle = ObjectPath::try_from(request.as_str()).unwrap();
+            let path = ObjectPath::try_from(session.as_str()).unwrap();
+            let none: HashMap<&str, Variant<'_>> = HashMap::new();
+            let (code, _): (u32, HashMap<String, OwnedVariant>) = self
+                .call("CreateSession", &(&handle, &path, app_id, &none))
+                .await;
+            assert_eq!(code, RESPONSE_OK);
+            let mut options: HashMap<&str, Variant<'_>> = HashMap::new();
+            options.insert("types", Variant::U32(DEVICE_KEYBOARD | DEVICE_POINTER));
+            options.insert("persist_mode", Variant::U32(2));
+            if restore {
+                options.insert("restore_data", token(app_id, &grant(3, None)));
+            }
+            let (code, _): (u32, HashMap<String, OwnedVariant>) = self
+                .call("SelectDevices", &(&handle, &path, app_id, &options))
+                .await;
+            assert_eq!(code, RESPONSE_OK);
+            let (code, _): (u32, HashMap<String, OwnedVariant>) = self
+                .call("Start", &(&handle, &path, app_id, "", &none))
+                .await;
+            code
+        }
+
+        fn session(&self, n: u32) -> Option<bool> {
+            let key = format!("/org/freedesktop/portal/desktop/session/1_99/s{n}");
+            let mut map = self.sessions.lock().unwrap();
+            map.get_mut(&key)
+                .and_then(SessionData::remote_mut)
+                .map(|s| s.restored)
+        }
+
+        /// The balloons so far, once `n` have come or after 5 s.
+        async fn balloons(&self, n: usize) -> Vec<(String, String, Vec<String>)> {
+            for _ in 0..500 {
+                if self.noted.lock().unwrap().len() >= n {
+                    break;
+                }
+                async_io::Timer::after(Duration::from_millis(10)).await;
+            }
+            self.noted.lock().unwrap().clone()
+        }
+    }
+
+    fn controlled(app_id: &str) -> (String, String, Vec<String>) {
+        (
+            app_id.to_string(),
+            format!("{app_id} is controlling this computer"),
+            vec!["forget".to_string(), "Stop and forget".to_string()],
+        )
+    }
+
+    #[test]
+    fn a_start_from_a_remembered_grant_shows_one_balloon() {
+        let Some(bus) = crate::lockmode::tests::bus() else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
+        zbus::block_on(async {
+            let desk = Desk::on(bus, never_asked, &[]).await;
+            assert_eq!(desk.start(1, APP, true).await, RESPONSE_OK, "no dialog");
+            assert_eq!(desk.balloons(1).await, [controlled(APP)]);
+            async_io::Timer::after(Duration::from_millis(200)).await;
+            assert_eq!(desk.balloons(2).await.len(), 1, "exactly one balloon");
+        });
+    }
+
+    #[test]
+    fn a_start_the_dialog_allowed_shows_no_balloon() {
+        let Some(bus) = crate::lockmode::tests::bus() else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
+        zbus::block_on(async {
+            let desk = Desk::on(bus, allowed, &[]).await;
+            assert_eq!(desk.start(1, APP, false).await, RESPONSE_OK);
+            let other = "org.example.Other";
+            assert_eq!(desk.start(2, other, true).await, RESPONSE_OK);
+            assert_eq!(
+                desk.balloons(1).await,
+                [controlled(other)],
+                "only the remembered start shows a balloon"
+            );
+        });
+    }
+
+    #[test]
+    fn stop_and_forget_ends_the_session_and_deletes_the_grant() {
+        let Some(bus) = crate::lockmode::tests::bus() else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
+        zbus::block_on(async {
+            let other = "org.example.Other";
+            let desk = Desk::on(bus, never_asked, &[(APP, "token-a"), (other, "token-b")]).await;
+            assert_eq!(desk.start(1, APP, true).await, RESPONSE_OK);
+            assert_eq!(desk.balloons(1).await.len(), 1);
+            let emitter = zbus::object_server::SignalEmitter::new(
+                &desk.fakes,
+                "/org/freedesktop/Notifications",
+            )
+            .unwrap();
+            for _ in 0..500 {
+                if desk.session(1).is_none() {
+                    break;
+                }
+                // What the server sends for a button: the click, then the balloon closing.
+                let server = "org.freedesktop.Notifications";
+                let click = (41u32, "forget");
+                (emitter.emit(server, "ActionInvoked", &click))
+                    .await
+                    .unwrap();
+                (emitter.emit(server, "NotificationClosed", &(41u32, 2u32)))
+                    .await
+                    .unwrap();
+                async_io::Timer::after(Duration::from_millis(10)).await;
+            }
+            assert_eq!(desk.session(1), None, "the session ended");
+            for _ in 0..500 {
+                if !desk.table.lock().unwrap().contains_key("token-a") {
+                    break;
+                }
+                async_io::Timer::after(Duration::from_millis(10)).await;
+            }
+            let left: Vec<String> = desk.table.lock().unwrap().keys().cloned().collect();
+            assert_eq!(left, ["token-b"], "only the app's own grant is deleted");
+            assert_eq!(desk.start(2, APP, true).await, RESPONSE_CANCELLED);
+            assert_eq!(
+                desk.session(2),
+                Some(false),
+                "a token the frontend still holds restores nothing and the dialog asks"
+            );
+        });
     }
 
     fn token(app_id: &str, grant: &str) -> Variant<'static> {

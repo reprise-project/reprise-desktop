@@ -27,6 +27,7 @@ mod owner;
 mod permit;
 mod picker;
 mod remotedesktop;
+mod remotenotice;
 mod screenshot;
 mod shortcutconf;
 mod stills;
@@ -182,7 +183,7 @@ fn check_frontend(sender: Option<&str>, owner: Option<&str>) -> zbus::fdo::Resul
 /// End a session already taken out of the map: cancel its dialog, stop
 /// its cast, signal `Closed` and take its object off the bus. The EIS
 /// client and the capture object go with `data`.
-async fn end_session(conn: &zbus::Connection, key: &str, data: Option<SessionData>) {
+pub(crate) async fn end_session(conn: &zbus::Connection, key: &str, data: Option<SessionData>) {
     if let Some(mut s) = data {
         if let Some(c) = s.picking.take() {
             c.store(true, Ordering::SeqCst);
@@ -1114,6 +1115,7 @@ async fn serve(
     source_types: u32,
     link: Option<inputlink::Link>,
     notes: notification::Shared,
+    notices: remotenotice::Notices,
     inhibits: inhibit::Shared,
     frontend: &Frontend,
 ) -> zbus::Result<zbus::Connection> {
@@ -1140,6 +1142,8 @@ async fn serve(
                 sessions: sessions.clone(),
                 link: link.clone(),
                 frontend: frontend(),
+                notices,
+                ask: permit::ask,
             },
         )
         .serve_at(
@@ -1311,6 +1315,7 @@ fn main() {
     let sessions: Sessions = Arc::new(Mutex::new(HashMap::new()));
     zbus::block_on(async move {
         let notes = notification::Shared::default();
+        let notices = remotenotice::Notices::default();
         let (inhibits, idle) = inhibit::shared();
         let frontend = Frontend::default();
         let fail = |e: zbus::Error| -> ! {
@@ -1322,6 +1327,7 @@ fn main() {
             source_types,
             link,
             notes.clone(),
+            notices.clone(),
             inhibits.clone(),
             &frontend,
         )
@@ -1334,6 +1340,7 @@ fn main() {
             .await
             .unwrap_or_else(|e| fail(e));
         zruntime::spawn(notification::watch(conn.clone(), notes)).detach();
+        zruntime::spawn(remotenotice::watch(conn.clone(), sessions.clone(), notices)).detach();
         zruntime::spawn(inhibit::run_idle(conn.clone(), idle)).detach();
         let pid = compositor.pid();
         zruntime::spawn(inhibit::watch_lock(conn.clone(), inhibits.clone(), pid)).detach();
@@ -1659,7 +1666,8 @@ mod tests {
             for line in text.lines() {
                 if let Some(rest) = line.trim().strip_prefix(PREFIX)
                     && let Some((name, _)) = rest.split_once('"')
-                    && !["Request", "Session"].contains(&name)
+                    // PermissionStore is xdg-desktop-portal's, served here only by a test fake.
+                    && !["Request", "Session", "PermissionStore"].contains(&name)
                 {
                     defined.insert(format!("org.freedesktop.impl.portal.{name}"));
                 }

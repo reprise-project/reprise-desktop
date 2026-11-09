@@ -1095,7 +1095,13 @@ What a consent prompt remembers, and where:
   NotifyKeyboard) or a libei sender with a device, the screen-sharing dot
   shows, its tooltip naming the app by the app id the frontend gave
   ("An application" without one). The session the portal starts for
-  Reprise's own server doesn't light it this way. A screen cast's app is
+  Reprise's own server doesn't light it this way. A restored grant also shows a
+  balloon, "<app> is controlling this computer", named and drawn from the
+  app's desktop entry. Its Stop and forget ends the session and deletes the
+  app's `remote-desktop` tokens from the permission store; a token the
+  frontend holds only in memory (persist mode 1) restores nothing either
+  until a prompt is allowed with Remember again. A restored ScreenCast
+  shows no balloon, as the screen-sharing dot already covers it. A screen cast's app is
   named the same way, by the app the portal names on the cast's PipeWire
   node, which only the portal can set; a consumer's own name is used only
   when the node carries none.
@@ -1233,7 +1239,8 @@ sharing and remote control grants yet.
 - **No clipboard portal.** A sandboxed program gets the clipboard only while
   its window has the focus, or through `[clipboard] trusted_apps`.
 - **No permissions page.** Remembered screen sharing and remote control
-  grants are revoked with `flatpak permission-remove`.
+  grants are revoked with `flatpak permission-remove`, and a remote control
+  grant also with Stop and forget on the balloon its restored session shows.
 - **Background sessions get polkit's inactive grants** under
   reprise-login, and its active ones while their user is active elsewhere;
   see [Accepted risks](#accepted-risks).
