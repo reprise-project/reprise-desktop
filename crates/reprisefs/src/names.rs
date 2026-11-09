@@ -107,13 +107,41 @@ pub fn label_for(file_name: &str, globs: &MimeDb, shown: Extensions) -> String {
 }
 
 /// `text` as one line of the UI from a source Reprise doesn't control (a drive's label): control
-/// characters and bidi formatting marks dropped, at most `max` characters kept.
+/// and format characters (bidi marks, zero widths, tags) and line breaks dropped, at most `max`
+/// characters kept.
 pub fn shown_line(text: &str, max: usize) -> String {
-    let bidi = |c: char| matches!(c, '\u{061c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}');
     text.chars()
-        .filter(|&c| !c.is_control() && !bidi(c))
+        .filter(|&c| !c.is_control() && !invisible(c))
         .take(max)
         .collect()
+}
+
+/// Whether `c` is a format character (Unicode's Cf) or a line or paragraph separator.
+fn invisible(c: char) -> bool {
+    matches!(
+        c,
+        '\u{00ad}'
+            | '\u{0600}'..='\u{0605}'
+            | '\u{061c}'
+            | '\u{06dd}'
+            | '\u{070f}'
+            | '\u{0890}'..='\u{0891}'
+            | '\u{08e2}'
+            | '\u{180e}'
+            | '\u{200b}'..='\u{200f}'
+            | '\u{2028}'..='\u{202e}'
+            | '\u{2060}'..='\u{2064}'
+            | '\u{2066}'..='\u{206f}'
+            | '\u{feff}'
+            | '\u{fff9}'..='\u{fffb}'
+            | '\u{110bd}'
+            | '\u{110cd}'
+            | '\u{13430}'..='\u{1343f}'
+            | '\u{1bca0}'..='\u{1bca3}'
+            | '\u{1d173}'..='\u{1d17a}'
+            | '\u{e0001}'
+            | '\u{e0020}'..='\u{e007f}'
+    )
 }
 
 pub fn new_folder_name(existing: &[String]) -> String {
@@ -192,6 +220,13 @@ pub fn failed_text(old: &str, e: &std::io::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_shown_line_drops_zero_widths_tags_soft_hyphens_and_line_separators() {
+        let label = "\u{feff}Ho\u{200b}me\u{2028}Di\u{00ad}sk\u{2060}\u{e0041}\u{2029}";
+        assert_eq!(shown_line(label, 32), "HomeDisk");
+        assert_eq!(shown_line("Caf\u{e9} \u{1f4be}", 32), "Caf\u{e9} \u{1f4be}");
+    }
 
     #[test]
     fn copy_and_shortcut_names_number_past_existing_ones() {
