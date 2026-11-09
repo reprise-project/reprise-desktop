@@ -356,21 +356,51 @@ pub fn begin_commands(env: &SessionEnv) -> Vec<Vec<String>> {
 }
 
 /// Run `begin_commands` in order on a thread of its own: each waits for the last, so the
-/// target's units start with the variables published. The thread ends once the start is queued.
-pub fn begin_session(env: &SessionEnv) -> std::thread::JoinHandle<()> {
+/// target's units start with the variables published. The thread runs `then` and ends once the
+/// start is queued.
+pub fn begin_session(
+    env: &SessionEnv,
+    then: impl FnOnce() + Send + 'static,
+) -> std::thread::JoinHandle<()> {
     let cmds = begin_commands(env);
     std::thread::spawn(move || {
         for argv in cmds {
-            let mut c = std::process::Command::new(&argv[0]);
-            c.args(&argv[1..]);
-            detach(&mut c);
-            match c.status() {
-                Ok(st) if !st.success() => log::warn!("{argv:?} exited with {st}"),
-                Ok(_) => {}
-                Err(e) => log::warn!("{argv:?}: {e}"),
-            }
+            run_to_end(&argv);
         }
+        then();
     })
+}
+
+/// The command that unsets the variables another session published that `env` doesn't, e.g. its
+/// `DISPLAY` and `XAUTHORITY` when this one has no X11.
+pub(crate) fn unset_unpublished(env: &SessionEnv) -> Option<Vec<String>> {
+    let published = env.pairs();
+    let stale: Vec<String> = exported_names()
+        .into_iter()
+        .filter(|k| !published.iter().any(|(p, _)| p == k))
+        .map(String::from)
+        .collect();
+    (!stale.is_empty()).then(|| {
+        let mut c = vec![
+            "systemctl".into(),
+            "--user".into(),
+            "unset-environment".into(),
+        ];
+        c.extend(stale);
+        c
+    })
+}
+
+/// Run `argv` and wait for it; a failure is logged.
+pub(crate) fn run_to_end(argv: &[String]) {
+    let mut c = std::process::Command::new(&argv[0]);
+    c.args(&argv[1..]);
+    detach(&mut c);
+    match c.status() {
+        Ok(st) if !st.success() => log::warn!("{argv:?} exited with {st}"),
+        Ok(_) => {}
+        Err(e) => log::warn!("{argv:?}: {e}"),
+    }
 }
 
 /// The GTK portal backend's unit; it draws GTK3's print dialog (`Print=gtk` in
@@ -382,25 +412,31 @@ const PORTAL_GTK_UNIT: &str = "xdg-desktop-portal-gtk.service";
 /// `$XDG_RUNTIME_DIR`. A running backend restarts to read it. No-op when the drop-in already
 /// says `theme`, on a nested run or beside another Reprise session.
 pub fn theme_portal_gtk(env: &SessionEnv, theme: &str) {
+    if portal_gtk_drop_in(env, theme) {
+        let mut c = std::process::Command::new("sh");
+        c.arg("-c").arg(format!(
+            "systemctl --user daemon-reload && systemctl --user --no-block try-restart {PORTAL_GTK_UNIT}"
+        ));
+        if let Err(e) = start(c, "restart xdg-desktop-portal-gtk", None) {
+            log::warn!("{PORTAL_GTK_UNIT}: {e}; the print dialog keeps its theme");
+        }
+    }
+}
+
+/// Write [`theme_portal_gtk`]'s drop-in, without the restart. Returns whether it changed, so the
+/// user manager needs a `daemon-reload`.
+pub(crate) fn portal_gtk_drop_in(env: &SessionEnv, theme: &str) -> bool {
     if !env.parent.is_empty() || env.defers_user_units {
-        return;
+        return false;
     }
     let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR") else {
-        return;
+        return false;
     };
-    match write_portal_gtk_drop_in(std::path::Path::new(&runtime), theme) {
-        Ok(false) => {}
-        Ok(true) => {
-            let mut c = std::process::Command::new("sh");
-            c.arg("-c").arg(format!(
-                "systemctl --user daemon-reload && systemctl --user --no-block try-restart {PORTAL_GTK_UNIT}"
-            ));
-            if let Err(e) = start(c, "restart xdg-desktop-portal-gtk", None) {
-                log::warn!("{PORTAL_GTK_UNIT}: {e}; the print dialog keeps its theme");
-            }
-        }
-        Err(e) => log::warn!("{PORTAL_GTK_UNIT} drop-in: {e}; the print dialog keeps its theme"),
-    }
+    write_portal_gtk_drop_in(std::path::Path::new(&runtime), theme)
+        .inspect_err(|e| {
+            log::warn!("{PORTAL_GTK_UNIT} drop-in: {e}; the print dialog keeps its theme")
+        })
+        .unwrap_or(false)
 }
 
 /// Write the `GTK_THEME` drop-in for the GTK portal backend under `runtime`. Returns whether
@@ -536,17 +572,42 @@ pub fn another_session_runs_reprise() -> bool {
 }
 
 /// Whether Reprise runs in another of the user's sessions that a login manager opened.
-fn login_manager_session_runs_reprise() -> bool {
+pub(crate) fn login_manager_session_runs_reprise() -> bool {
     reprise_runs_in_another(|id| {
         let record = reprisebus::logind::session_record(id);
         reprisebus::logind::type_of_session(&record) == Some("wayland")
     })
 }
 
+/// Whether Reprise runs in another of the user's sessions that a login manager opened, or in one
+/// logind opened before this one's: the sessions a text login that deferred goes on deferring to,
+/// so of two that deferred to one session the older takes the user manager once it ends.
+pub(crate) fn login_manager_or_older_session_runs_reprise() -> bool {
+    let cgroup = reprisebus::logind::own_cgroup();
+    let own = reprisebus::logind::session_of_cgroup(&cgroup).map(|id| {
+        let opened = reprisebus::logind::opened_of_session(&reprisebus::logind::session_record(id));
+        (opened, id)
+    });
+    reprise_runs_in_another(|id| {
+        let record = reprisebus::logind::session_record(id);
+        reprisebus::logind::type_of_session(&record) == Some("wayland")
+            || opened_before((reprisebus::logind::opened_of_session(&record), id), own)
+    })
+}
+
+/// Whether session `other` opened before `own`, each as logind's opening time and its id. An
+/// unknown time, or an unknown own session, counts as opened before.
+fn opened_before(other: (Option<u64>, &str), own: Option<(Option<u64>, &str)>) -> bool {
+    match (other, own) {
+        ((Some(at), id), Some((Some(own_at), own_id))) => (at, id) < (own_at, own_id),
+        _ => true,
+    }
+}
+
 /// Whether Reprise runs in another of the user's online sessions that `counts`.
 fn reprise_runs_in_another(counts: impl Fn(&str) -> bool) -> bool {
     let read = |p: &str| std::fs::read_to_string(p).unwrap_or_default();
-    let comm = read("/proc/self/comm");
+    let own_comm = read("/proc/self/comm");
     let own = reprisebus::logind::own_cgroup();
     let record = reprisebus::logind::own_user_record();
     let me = std::process::id();
@@ -557,6 +618,8 @@ fn reprise_runs_in_another(counts: impl Fn(&str) -> bool) -> bool {
         let pid: u32 = e.ok()?.file_name().to_str()?.parse().ok()?;
         (pid != me).then_some(())?;
         let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
+        // A compositor that exited but isn't reaped yet runs no session.
+        (comm != own_comm || !exited(pid)).then_some(())?;
         let cgroup = std::fs::read_to_string(format!("/proc/{pid}/cgroup")).ok()?;
         Some((comm, cgroup))
     });
@@ -566,11 +629,20 @@ fn reprise_runs_in_another(counts: impl Fn(&str) -> bool) -> bool {
         return false;
     }
     runs_elsewhere(
-        comm.trim_end(),
+        own_comm.trim_end(),
         reprisebus::logind::session_of_cgroup(&own),
         &online,
         procs,
     )
+}
+
+/// Whether process `pid` exited and waits to be reaped: its `/proc/<pid>/stat` state is Z or X.
+fn exited(pid: u32) -> bool {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default();
+    let state = stat
+        .rsplit_once(')')
+        .and_then(|(_, rest)| rest.split_whitespace().next());
+    matches!(state, Some("Z" | "X"))
 }
 
 /// Run `end_commands` as the compositor exits.
@@ -1555,6 +1627,60 @@ mod tests {
             &["3"],
             [("reprise".into(), cg("3"))]
         ));
+    }
+
+    #[test]
+    fn of_two_sessions_that_deferred_only_the_one_logind_opened_later_goes_on_deferring() {
+        let t1 = (Some(100), "4");
+        let t2 = (Some(200), "6");
+        assert!(opened_before(t1, Some(t2)), "the later one gives way");
+        assert!(!opened_before(t2, Some(t1)), "the older one takes back");
+        assert!(
+            opened_before((None, "4"), Some(t2)),
+            "an unknown time gives way"
+        );
+        assert!(opened_before(t2, None), "so does an unknown own session");
+    }
+
+    #[test]
+    fn taking_back_unsets_what_another_session_published_and_this_one_does_not() {
+        let tty = SessionEnv {
+            login: vec![("XDG_SEAT", "seat0".into())],
+            ..SessionEnv::default()
+        };
+        assert_eq!(
+            unset_unpublished(&tty),
+            Some(argv(&[
+                "systemctl",
+                "--user",
+                "unset-environment",
+                "DISPLAY",
+                "XAUTHORITY",
+                "XDG_SESSION_DESKTOP",
+                "XDG_SEAT_PATH"
+            ]))
+        );
+        let every = SessionEnv {
+            x11: Some(X11Env::default()),
+            login: FORWARDED.map(|k| (k, String::new())).to_vec(),
+            ..SessionEnv::default()
+        };
+        assert_eq!(unset_unpublished(&every), None);
+    }
+
+    #[test]
+    fn a_compositor_that_exited_unreaped_runs_no_session() {
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let pid = child.id();
+        for _ in 0..500 {
+            if exited(pid) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(exited(pid), "an unreaped child");
+        child.wait().unwrap();
+        assert!(!exited(std::process::id()));
     }
 
     #[test]

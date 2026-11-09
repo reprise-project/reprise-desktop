@@ -26,9 +26,9 @@ use crate::sessionlock::CoverWait;
 
 const UPOWER_NAME: &str = "org.freedesktop.UPower";
 const UPOWER_PATH: &str = "/org/freedesktop/UPower";
-const LOGIN1_NAME: &str = "org.freedesktop.login1";
-const LOGIN1_PATH: &str = "/org/freedesktop/login1";
-const LOGIN1_MANAGER: &str = "org.freedesktop.login1.Manager";
+pub(crate) const LOGIN1_NAME: &str = "org.freedesktop.login1";
+pub(crate) const LOGIN1_PATH: &str = "/org/freedesktop/login1";
+pub(crate) const LOGIN1_MANAGER: &str = "org.freedesktop.login1.Manager";
 const LOGIN1_SESSION: &str = "org.freedesktop.login1.Session";
 const PROPERTIES: &str = "org.freedesktop.DBus.Properties";
 /// Well under logind's `InhibitDelayMaxSec` (5 s by default).
@@ -51,7 +51,7 @@ const LOGIN_MANAGER: &str = "Reprise login manager";
 const DARKENED_RECORD: &str = "reprise-darkened";
 
 /// None only if a component does not parse as a bus name or path.
-fn signal_rule(
+pub(crate) fn signal_rule(
     sender: &str,
     path: &str,
     interface: &str,

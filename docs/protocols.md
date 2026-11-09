@@ -184,14 +184,22 @@ over, and a text-login Reprise started before it publishes no more while it
 runs, so a later look change or Xwayland start there leaves the variables
 alone. After a text-login Reprise, it takes `org.freedesktop.ScreenSaver` too,
 so inhibits and the lock are its own, and the text-login session gets that
-name back when it ends. The user manager's variables don't come back
-with it: until the text-login Reprise's next look change or Xwayland start
-publishes again, D-Bus-activated services, the portals included, look for the
-ended session's display. When the login manager's session runs first, a later
-text-login Reprise takes only names nobody holds, so its programs'
-`org.freedesktop.ScreenSaver` inhibits hold off the first session's idle
-timer. Whichever session ends first leaves the
-other's variables, units and app scopes running.
+name back when it ends. Once that session's compositor exits, or logind
+removes a session, the text-login Reprise asks again for the bus names nobody
+holds, replacing no holder, unless a Reprise session it gives way to runs or
+the user manager names another display that still accepts connections (a
+desktop of the user that is not Reprise). When the user manager still names
+the display of the session it gave way to and that display is gone, it also
+unsets the variables it doesn't publish, publishes its own, and restarts the
+target and so the portals on its own display; a login manager's session
+started meanwhile keeps its names and the target. When the login manager's
+session runs first, a later text-login Reprise takes only names nobody holds,
+so its programs' `org.freedesktop.ScreenSaver` inhibits hold off the first
+session's idle timer, and it takes the user manager and the names back the
+same way. Of two text-login sessions that gave way to one, the one logind
+opened first takes back and the other goes on giving way to it. A session
+that ends while the other runs leaves that session's units and app scopes
+running.
 
 XDG autostart honours `OnlyShowIn`, `NotShowIn`, `Hidden` and `TryExec`.
 An entry marked `X-systemd-skip=true` or `X-GNOME-HiddenUnderSystemd=true`

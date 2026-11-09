@@ -361,6 +361,7 @@ fn test_loop(conn: Connection, events: Sender<TrayEvent>, eventfd: RawFd) -> Loo
         next_fetch: 0,
         item_stops: HashMap::new(),
         published: None,
+        idle_watcher: None,
         screensaver: screensaver::Shared::new(events, eventfd),
         streams: SelectAll::new(),
         appearance: Arc::new(Mutex::new(
@@ -1032,5 +1033,111 @@ fn get_active_reads_locked_before_the_first_lock_report() {
             .await
             .unwrap();
         assert!(reply.body().deserialize::<bool>().unwrap());
+    });
+}
+
+async fn owner_of(conn: &Connection, name: &str) -> Option<String> {
+    let reply = conn
+        .call_method(
+            Some(DBUS_IFACE),
+            "/org/freedesktop/DBus",
+            Some(DBUS_IFACE),
+            "GetNameOwner",
+            &(name,),
+        )
+        .await
+        .ok()?;
+    reply.body().deserialize().ok()
+}
+
+#[test]
+fn a_session_taking_its_names_back_takes_only_free_ones_and_a_later_session_replaces_them() {
+    let Some(bus) = crate::testbus::bus() else {
+        eprintln!("no dbus-daemon; skipped");
+        return;
+    };
+    zbus::block_on(async {
+        let connect = || zbus::connection::Builder::address(bus.1.as_str()).build();
+        let ours = connect().await.unwrap();
+        let newer = connect().await.unwrap();
+        own(&newer, NOTIFY_NAME, name_flags(false)).await.unwrap();
+        let (tx, _events) = std::sync::mpsc::channel();
+        let mut lp = test_loop(ours.clone(), tx, -1);
+        lp.retake_names().await;
+        let us = ours.unique_name().map(|n| n.to_string());
+        assert_eq!(
+            owner_of(&ours, SETTINGS_NAME).await,
+            us,
+            "a name nobody held"
+        );
+        assert_eq!(owner_of(&ours, SCREENSAVER_NAME).await, us);
+        assert_eq!(
+            owner_of(&ours, NOTIFY_NAME).await,
+            newer.unique_name().map(|n| n.to_string()),
+            "a session started meanwhile keeps its own"
+        );
+        let later = connect().await.unwrap();
+        own(&later, SETTINGS_NAME, name_flags(false)).await.unwrap();
+        own(&later, SCREENSAVER_NAME, screensaver_flags(false))
+            .await
+            .unwrap();
+        later.release_name(SCREENSAVER_NAME).await.unwrap();
+        assert!(
+            screensaver_owned_by(&ours, &ours).await,
+            "queued for the screensaver name, it gets it back"
+        );
+    });
+}
+
+#[test]
+fn a_session_that_joined_another_watcher_hosts_its_own_once_it_takes_the_name_back() {
+    let Some(bus) = crate::testbus::bus() else {
+        eprintln!("no dbus-daemon; skipped");
+        return;
+    };
+    zbus::block_on(async {
+        let connect = || zbus::connection::Builder::address(bus.1.as_str()).build();
+        let ours = connect().await.unwrap();
+        let (registrations, registered) = async_channel::unbounded();
+        let items: WatcherItems = Arc::default();
+        let watcher = Watcher {
+            items: items.clone(),
+            registrations,
+        };
+        ours.object_server()
+            .at(WATCHER_PATH, watcher)
+            .await
+            .unwrap();
+        let (tx, _events) = std::sync::mpsc::channel();
+        let mut lp = test_loop(ours.clone(), tx, -1);
+        lp.idle_watcher = Some((items, registered));
+        lp.retake_names().await;
+        let app = connect().await.unwrap();
+        app.call_method(
+            Some(WATCHER_NAME),
+            WATCHER_PATH,
+            Some(WATCHER_IFACE),
+            "RegisterStatusNotifierItem",
+            &("/StatusNotifierItem",),
+        )
+        .await
+        .unwrap();
+        let app_name = app.unique_name().unwrap().to_string();
+        match lp.streams.next().await {
+            Some(Wake::Registered { bus, path }) => {
+                assert_eq!(
+                    (bus, path),
+                    (app_name.clone(), "/StatusNotifierItem".into())
+                )
+            }
+            _ => panic!("the registration reaches the loop"),
+        }
+        let listed: Vec<String> = Proxy::new(&app, WATCHER_NAME, WATCHER_PATH, WATCHER_IFACE)
+            .await
+            .unwrap()
+            .get_property("RegisteredStatusNotifierItems")
+            .await
+            .unwrap();
+        assert_eq!(listed, [format!("{app_name}/StatusNotifierItem")]);
     });
 }
