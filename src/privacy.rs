@@ -1,6 +1,6 @@
 //! The taskbar's privacy indicators: a record dot while an output or window is captured or an app's RemoteDesktop
 //! session holds input, a microphone while an app records, a camera while one films, each with the app's name in its
-//! tooltip (capture names come from PipeWire, controlling apps from the portal).
+//! tooltip (from PipeWire, a screencast's from the portal's word on its node, controlling apps from the portal).
 
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -482,10 +482,22 @@ impl Graph {
         })
     }
 
-    /// The apps consuming a Reprise screencast, sorted, deduplicated. A
-    /// paused consumer still holds the stream, so Running is not required.
+    /// The apps a Reprise screencast is shared with, sorted, deduplicated: each by the
+    /// `application.name` the portal put on the cast's node, which only the node's owner sets,
+    /// else by the consumer's own word. A paused consumer still holds the stream, so Running is
+    /// not required.
     fn sharing(&self) -> Vec<String> {
-        self.consumers("Stream/Input/Video", false, |o| o.name == SCREENCAST_NODE)
+        let mut apps: Vec<String> = (self.links.values())
+            .filter_map(|(out, inp)| Some((self.nodes.get(out)?, self.nodes.get(inp)?)))
+            .filter(|(o, i)| o.name == SCREENCAST_NODE && i.class.starts_with("Stream/Input/Video"))
+            .map(|(o, i)| match o.app.is_empty() {
+                false => o.app.clone(),
+                true => self.consumer_name(i),
+            })
+            .collect();
+        apps.sort();
+        apps.dedup();
+        apps
     }
 
     /// The apps filming right now: Running video capture streams fed by a
@@ -511,18 +523,21 @@ impl Graph {
             .filter_map(|(_, inp)| self.nodes.get(inp))
             .filter(|n| n.class.starts_with(class) && (n.running || !running))
             .filter(|n| !SKIPPED_APPS.contains(&n.app_id.as_str()))
-            .map(|n| {
-                let client = self.clients.get(&n.client).filter(|c| !c.is_empty());
-                match (n.app.is_empty(), client) {
-                    (false, _) => n.app.clone(),
-                    (true, Some(c)) => c.clone(),
-                    (true, None) => "An application".to_string(),
-                }
-            })
+            .map(|n| self.consumer_name(n))
             .collect();
         apps.sort();
         apps.dedup();
         apps
+    }
+
+    /// A consumer by its own `application.name`, from its node, else its client.
+    fn consumer_name(&self, n: &NodeInfo) -> String {
+        let client = self.clients.get(&n.client).filter(|c| !c.is_empty());
+        match (n.app.is_empty(), client) {
+            (false, _) => n.app.clone(),
+            (true, Some(c)) => c.clone(),
+            (true, None) => "An application".to_string(),
+        }
     }
 
     fn report(&self) -> Apps {
@@ -742,6 +757,19 @@ mod tests {
         g.links.insert(101, (2, 11));
         assert_eq!(g.sharing(), vec!["obs".to_string()]);
         assert!(g.recording().is_empty());
+    }
+
+    #[test]
+    fn a_screencast_is_named_by_the_portals_word_on_its_node() {
+        let mut g = Graph::default();
+        let mut cast = node("Video/Source", "Chromium", true);
+        cast.name = SCREENCAST_NODE.into();
+        g.nodes.insert(1, cast);
+        let mut consumer = node("Stream/Input/Video", "Volume Control", false);
+        consumer.app_id = "org.PulseAudio.pavucontrol".into();
+        g.nodes.insert(10, consumer);
+        g.links.insert(100, (1, 10));
+        assert_eq!(g.sharing(), vec!["Chromium".to_string()]);
     }
 
     #[test]
