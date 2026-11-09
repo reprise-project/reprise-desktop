@@ -196,12 +196,16 @@ fn new_tab_inherits_cwd() {
         t.w.tabs.list[1].cwd().as_deref() == Some(Path::new("/"))
     });
 
-    let osc7 = "printf '\\033]7;file://localhost/usr\\007'; exec cat";
-    t.spawn_tab(&launch(&["/bin/sh", "-c", osc7]), None);
-    until("the shell reports /usr", || {
-        t.w.tabs.list[2].cwd().as_deref() == Some(Path::new("/usr"))
+    let tmp = tempfile::tempdir().unwrap();
+    let link = tmp.path().join("usr");
+    std::os::unix::fs::symlink("/usr", &link).unwrap();
+    let l = link.display();
+    let osc7 = format!("cd {l} && printf '\\033]7;file://localhost{l}\\007'; exec cat");
+    t.spawn_tab(&launch(&["/bin/sh", "-c", &osc7]), None);
+    until("the shell reports its directory by the link's name", || {
+        t.w.tabs.list[2].cwd() == Some(link.clone())
     });
-    assert_ne!(
+    assert_eq!(
         cwd::cwd_of(t.w.tabs.list[2].pid()).as_deref(),
         Some(Path::new("/usr"))
     );
@@ -223,11 +227,18 @@ fn cwd_when_done(t: &mut Terminal, ctx: &mut Ctx, tab: usize) -> Option<std::pat
 #[test]
 fn an_osc7_from_a_program_other_than_the_shell_is_ignored() {
     let mut ctx = test_ctx();
-    let child = "printf '\\033]7;file:///usr\\007\\033]0;done\\007'; sleep 5";
+    let tmp = tempfile::tempdir().unwrap();
+    let link = tmp.path().join("here");
+    std::os::unix::fs::symlink(std::env::current_dir().unwrap(), &link).unwrap();
+    let l = link.display();
+    let child = format!("printf '\\033]7;file://{l}\\007\\033]0;done\\007'; sleep 5");
     let mut t = terminal(&["/bin/sh", "-c", &format!("set -m; sh -c \"{child}\"")]);
     let shell = cwd::cwd_of(t.w.tabs.list[0].pid());
-    assert_ne!(shell.as_deref(), Some(Path::new("/usr")));
-    assert_eq!(cwd_when_done(&mut t, &mut ctx, 0), shell);
+    assert_eq!(
+        cwd_when_done(&mut t, &mut ctx, 0),
+        shell,
+        "not the link's name"
+    );
 }
 
 #[test]

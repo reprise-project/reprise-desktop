@@ -3,7 +3,7 @@
 
 use std::fs::File;
 use std::io::{self, Read};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use crate::escapes;
@@ -57,6 +57,18 @@ pub fn osc7_path(uri: &str, local: &str) -> Option<PathBuf> {
     Some(std::ffi::OsString::from_vec(out).into())
 }
 
+/// The directory an OSC 7 `uri` names when it is `shell_cwd` itself, by the name the shell gave
+/// it; a host reached through ssh reports its own directories, which this machine may also have.
+pub fn osc7_dir(uri: &str, local: &str, shell_cwd: &Path) -> Option<PathBuf> {
+    use std::os::unix::fs::MetadataExt;
+    let path = osc7_path(uri, local)?;
+    let (at, cwd) = (
+        std::fs::metadata(&path).ok()?,
+        std::fs::metadata(shell_cwd).ok()?,
+    );
+    (at.is_dir() && at.dev() == cwd.dev() && at.ino() == cwd.ino()).then_some(path)
+}
+
 /// The PTY's reader: passes its bytes through an [`escapes::Filter`] and keeps the last OSC 7
 /// directory in `cwd`.
 pub struct Reader {
@@ -84,7 +96,11 @@ impl Read for Reader {
         buf[..self.out.len()].copy_from_slice(&self.out);
         if let Some(uri) = uri
             && fg_pgrp(self.shell) == Some(self.shell)
-            && let Some(path) = osc7_path(&uri, &self.host)
+            && let Some(path) = osc7_dir(
+                &uri,
+                &self.host,
+                Path::new(&format!("/proc/{}/cwd", self.shell)),
+            )
         {
             *self.cwd.lock().unwrap() = Some(path);
         }
@@ -160,5 +176,30 @@ mod tests {
         assert_eq!(p("file://localhost/a%20b"), Some("/a b".into()));
         assert_eq!(p("file://other/home/me"), None, "another machine's path");
         assert_eq!(p("http://box/x"), None);
+    }
+
+    #[test]
+    fn an_osc7_counts_only_for_the_directory_the_shell_is_in() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (here, other) = (tmp.path().join("here"), tmp.path().join("other"));
+        std::fs::create_dir(&here).unwrap();
+        std::fs::create_dir(&other).unwrap();
+        let link = tmp.path().join("link");
+        std::os::unix::fs::symlink(&here, &link).unwrap();
+        let at = |uri: String| osc7_dir(&uri, "box", &here);
+        let (h, o, l) = (here.display(), other.display(), link.display());
+        assert_eq!(at(format!("file://{h}")), Some(here.clone()));
+        assert_eq!(
+            at(format!("file://box{l}")),
+            Some(link.clone()),
+            "a link keeps its name"
+        );
+        assert_eq!(
+            at(format!("file://{o}")),
+            None,
+            "a directory the shell is not in, as an ssh host reports"
+        );
+        assert_eq!(at(format!("file://{h}/gone")), None, "a missing directory");
+        assert_eq!(at(format!("file://elsewhere{h}")), None, "another machine");
     }
 }

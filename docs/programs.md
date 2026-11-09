@@ -249,8 +249,8 @@ closing a tab or the window while something other than the shell runs there
 asks first. Programs see `TERM=xterm-256color` and `COLORTERM=truecolor`.
 
 - **Tabs:** + opens your shell in the open tab's directory (the one its
-  shell last reported with OSC 7 while it held the foreground, else the
-  shell's own); the arrow beside
+  shell is in, by the name the shell last reported with OSC 7 while it
+  held the foreground); the arrow beside
   it lists the shell, your profiles and the `Host` entries of
   `~/.ssh/config` (and the files it includes). Drag a tab to reorder it,
   middle-click it to close it.
