@@ -1,4 +1,4 @@
-//! The agent's side of polkit: registration for this logind session and
+//! The agent's side of polkit: registration for its own logind session and
 //! `AuthenticationAgent` at `/reprise/polkit/Agent`. `BeginAuthentication` stays
 //! pending until the dialog is done; zbus runs each call on its own task so
 //! `CancelAuthentication` gets through. Dismissed prompts are kept for
@@ -14,7 +14,6 @@ use zbus::OwnedVariant;
 use zbus::message::Header;
 
 pub const PATH: &str = "/reprise/polkit/Agent";
-const BUS_NAME: &str = reprisebus::polkit::NAME;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Outcome {
@@ -160,6 +159,7 @@ type Dismissals = Arc<Mutex<Dismissed>>;
 struct Agent {
     poster: repriseapp::Poster<Msg>,
     dismissed: Dismissals,
+    session: String,
 }
 
 #[zbus::interface(name = "org.freedesktop.PolicyKit1.AuthenticationAgent")]
@@ -177,6 +177,21 @@ impl Agent {
         #[zbus(header)] hdr: Header<'_>,
     ) -> Result<(), Error> {
         check_caller(conn, &hdr).await?;
+        let pid: Option<u32> = details
+            .get("polkit.subject-pid")
+            .and_then(|p| p.parse().ok());
+        // polkitd names the subject by pid alone, so there is no start time to pin it with.
+        let cgroup =
+            pid.and_then(|pid| std::fs::read_to_string(format!("/proc/{pid}/cgroup")).ok());
+        if let Some(other) = (cgroup.as_deref()).and_then(|c| foreign_session(c, &self.session)) {
+            log::warn!(
+                "refusing {action_id}: its program belongs to session {other}, not session {}",
+                self.session
+            );
+            return Err(Error::Failed(format!(
+                "the program belongs to session {other}, not to this screen's session"
+            )));
+        }
         // NSS can block on the network (LDAP, SSSD); off the executor, so
         // the connection keeps serving CancelAuthentication meanwhile.
         let (users, me) = blocking::unblock(move || (users_of(&identities), current_user())).await;
@@ -196,10 +211,7 @@ impl Agent {
         match wait.recv().await {
             Ok(Outcome::Success) => Ok(()),
             Ok(Outcome::Cancelled) => {
-                if let Some(pid) = details
-                    .get("polkit.subject-pid")
-                    .and_then(|p| p.parse().ok())
-                {
+                if let Some(pid) = pid {
                     lock(&self.dismissed).record(pid, Instant::now());
                 }
                 Err(Error::Cancelled("cancelled by the user".into()))
@@ -242,18 +254,40 @@ impl DismissalsIface {
     }
 }
 
-/// The logind session to register for: `auto` resolves to the caller's session,
-/// or the user's display session outside one.
-async fn session_id(conn: &zbus::Connection) -> zbus::Result<String> {
-    zbus::Proxy::new(
-        conn,
-        "org.freedesktop.login1",
-        "/org/freedesktop/login1/session/auto",
-        "org.freedesktop.login1.Session",
-    )
-    .await?
-    .get_property::<String>("Id")
-    .await
+/// The logind session an agent serves, and the bus name it takes for it.
+#[derive(Debug, PartialEq, Eq)]
+struct Served {
+    session: String,
+    name: String,
+}
+
+/// The agent's `XDG_SESSION_ID`, inherited from the compositor, when polkitd judges the agent by it
+/// too (`judged`). A user unit is judged by the display session, whose name it must not take.
+fn served_session(xdg: Option<&str>, judged: Option<&str>) -> Result<Served, String> {
+    let own = xdg
+        .filter(|s| !s.is_empty())
+        .ok_or("no XDG_SESSION_ID: not started in a logind session")?;
+    if judged != Some(own) {
+        return Err(format!(
+            "polkitd judges this process by session {}, not its own session {own}",
+            judged.unwrap_or("none")
+        ));
+    }
+    let name = reprisebus::polkit::name(own)
+        .ok_or_else(|| format!("session {own:?} has no reprise-polkit name"))?;
+    Ok(Served {
+        session: own.to_owned(),
+        name,
+    })
+}
+
+/// The logind session other than `session` that a prompt's subject belongs to, by its
+/// `/proc/<pid>/cgroup` listing: its `session-<id>.scope`, or the session its Reprise app scope
+/// was launched from.
+fn foreign_session<'a>(cgroup: &'a str, session: &str) -> Option<&'a str> {
+    reprisebus::logind::session_of_cgroup(cgroup)
+        .or_else(|| reprisefs::scope::launch_session_of_cgroup(cgroup))
+        .filter(|s| *s != session)
 }
 
 /// polkit's `(sa{sv})` subject for the logind session `session`. zbus_polkit's `Subject` has no
@@ -263,7 +297,9 @@ fn subject(session: &str) -> (&'static str, HashMap<&'static str, OwnedVariant>)
     ("unix-session", HashMap::from([("session-id", id)]))
 }
 
-async fn single_instance(dismissed: Dismissals) {
+/// Takes the served session's agent name, exiting when another reprise-polkit holds it.
+async fn single_instance(served: &Served, dismissed: Dismissals) {
+    let name = &served.name;
     let Ok(conn) = zbus::Connection::session().await else {
         return;
     };
@@ -278,10 +314,10 @@ async fn single_instance(dismissed: Dismissals) {
         log::warn!("cannot serve {}: {e}", reprisebus::polkit::INTERFACE);
     }
     let owned = conn
-        .request_name_with_flags(BUS_NAME, zbus::fdo::RequestNameFlags::DO_NOT_QUEUE)
+        .request_name_with_flags(name.as_str(), zbus::fdo::RequestNameFlags::DO_NOT_QUEUE)
         .await;
     if !matches!(owned, Ok(zbus::fdo::RequestNameReply::PrimaryOwner)) {
-        log::info!("another reprise-polkit owns {BUS_NAME}; exiting");
+        log::info!("another reprise-polkit owns {name}; exiting");
         std::process::exit(0);
     }
     let _ = SESSION_BUS.set(conn);
@@ -290,8 +326,19 @@ async fn single_instance(dismissed: Dismissals) {
 static SESSION_BUS: std::sync::OnceLock<zbus::Connection> = std::sync::OnceLock::new();
 
 async fn run(poster: repriseapp::Poster<Msg>, ready: Sender<bool>) {
+    let xdg = std::env::var("XDG_SESSION_ID").ok();
+    let judged = reprisebus::polkit::own_judged_session();
+    let served = match served_session(xdg.as_deref(), judged.as_deref()) {
+        Ok(s) => s,
+        Err(e) => {
+            log::warn!("{e}; no polkit agent");
+            let _ = ready.send(false);
+            return;
+        }
+    };
     let dismissed = Dismissals::default();
-    single_instance(dismissed.clone()).await;
+    single_instance(&served, dismissed.clone()).await;
+    let session = served.session;
     let conn = match zbus::Connection::system().await {
         Ok(c) => c,
         Err(e) => {
@@ -300,15 +347,11 @@ async fn run(poster: repriseapp::Poster<Msg>, ready: Sender<bool>) {
             return;
         }
     };
-    let session = match session_id(&conn).await {
-        Ok(s) => s,
-        Err(e) => {
-            log::warn!("cannot find the logind session ({e}); no polkit agent");
-            let _ = ready.send(false);
-            return;
-        }
+    let agent = Agent {
+        poster,
+        dismissed,
+        session: session.clone(),
     };
-    let agent = Agent { poster, dismissed };
     if let Err(e) = conn.object_server().at(PATH, agent).await {
         log::warn!("cannot serve the agent: {e}");
         let _ = ready.send(false);
@@ -411,6 +454,78 @@ mod tests {
             Error::AccessDenied(String::new()).name().as_str(),
             "org.freedesktop.DBus.Error.AccessDenied"
         );
+    }
+
+    const USER_RECORD: &str = "NAME=ann\nDISPLAY=3\nSESSIONS=7 3\n";
+
+    fn judged(cgroup: &str) -> Option<&str> {
+        reprisebus::polkit::judged_session(cgroup, USER_RECORD)
+    }
+
+    #[test]
+    fn the_agent_registers_for_its_own_session() {
+        let tty = judged("0::/user.slice/user-1000.slice/session-7.scope\n");
+        let served = |session: &str| Served {
+            session: session.into(),
+            name: format!("reprise.polkit.session{session}"),
+        };
+        assert_eq!(served_session(Some("7"), tty), Ok(served("7")));
+        let (kind, details) = subject("7");
+        assert_eq!(kind, "unix-session");
+        let id = details
+            .get("session-id")
+            .map(|v| String::try_from(v.clone()));
+        assert_eq!(id, Some(Ok("7".to_string())));
+        let app_scope = judged(
+            "0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-reprise-p-1.scope\n",
+        );
+        assert_eq!(
+            served_session(Some("3"), app_scope),
+            Ok(served("3")),
+            "the display session's agent runs in an app scope"
+        );
+    }
+
+    #[test]
+    fn an_agent_outside_its_session_serves_none() {
+        let unit = judged("0::/user.slice/user-1000.slice/user@1000.service/app.slice/x.service\n");
+        assert!(served_session(None, unit).is_err(), "a user unit");
+        assert!(
+            served_session(Some("7"), unit).is_err(),
+            "polkit judges a user unit by the display session"
+        );
+        let tty = judged("0::/user.slice/user-1000.slice/session-7.scope\n");
+        assert!(served_session(Some("3"), tty).is_err());
+        assert!(served_session(Some(""), tty).is_err());
+        assert!(
+            served_session(Some("3.1"), Some("3.1")).is_err(),
+            "an id with no bus name"
+        );
+    }
+
+    #[test]
+    fn a_prompt_for_a_program_of_another_session_is_refused() {
+        let app = |tag: &str| {
+            format!(
+                "0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-reprise-foot-{tag}1ax5x0.scope\n"
+            )
+        };
+        let session = |id: &str| format!("0::/user.slice/user-1000.slice/session-{id}.scope\n");
+        assert_eq!(
+            foreign_session(&app("s7x"), "3"),
+            Some("7"),
+            "launched from session 7 before session 3 became the display session"
+        );
+        assert_eq!(foreign_session(&session("7"), "3"), Some("7"));
+        assert_eq!(foreign_session(&app("s3x"), "3"), None);
+        assert_eq!(foreign_session(&session("3"), "3"), None);
+        assert_eq!(
+            foreign_session(&app(""), "3"),
+            None,
+            "an app scope with no session"
+        );
+        let unit = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/x.service\n";
+        assert_eq!(foreign_session(unit, "3"), None, "a user service");
     }
 
     #[test]

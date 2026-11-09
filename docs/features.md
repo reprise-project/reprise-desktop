@@ -741,6 +741,8 @@ the screen takes the interface of the last session used at this computer.
   programs can; [security.md](security.md) draws the line.
 - **Admin prompts.** A polkit agent asks for the password, or a finger, when
   a program needs root. The password goes to polkit, never to the program.
+  Each Reprise session of a user has its own agent, so a program started
+  in a session prompts on that session's screen.
 - **Location.** Reprise is the geoclue agent. It asks before a sandboxed
   program gets your location, remembers the answer if you like, and one
   switch turns location off for everyone. A prompt left unanswered for 24 s
