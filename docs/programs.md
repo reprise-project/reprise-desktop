@@ -73,7 +73,8 @@ The file manager, and the default for folders.
   programs, Flatpaks included. A right-drag asks whether to copy, move or
   make a shortcut. Drop a link from a browser and you get a link file.
 - **Recycle Bin** on the freedesktop trash, shared with every other Linux
-  program, with Restore and the original location of everything in it.
+  program, with Restore and the original location of everything in it. An
+  item in a drive's Recycle Bin goes back only onto that drive.
   Recycle Bin Properties can empty items older than a number of days, at
   login and then daily.
 - **Properties** (Alt+Enter): size, dates, Read-only, Hidden and

@@ -1,5 +1,8 @@
 use super::{refuse_holding_mount, refuse_mount_point};
+use crate::progress::Meter;
+use std::ffi::CStr;
 use std::io;
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd};
 use std::path::Path;
 
 /// Remove `path` for good: a folder with everything under it, a file or
@@ -18,29 +21,77 @@ pub fn erase(path: &Path) -> io::Result<()> {
 /// [`erase`] one file at a time into `meter`: each file or link removed counts as an item, a pause
 /// holds before the next, and a cancel stops with `Interrupted`, keeping what is left. Folders are
 /// opened without following links, so one swapped for a link on the way is never walked into.
-pub(crate) fn erase_counted(path: &Path, meter: &crate::progress::Meter) -> io::Result<()> {
+pub(crate) fn erase_counted(path: &Path, meter: &Meter) -> io::Result<()> {
     meter.hold()?;
-    erase_tree(path, meter, true)
+    erase_tree(path, Some(meter))
 }
 
 /// [`erase`], each entry a step of this thread's job ([`crate::progress::step`]) without counting
 /// on its bar or taking its pause and cancel: the purge of a bin, the original of a move.
 pub(crate) fn erase_stepped(path: &Path) -> io::Result<()> {
     match crate::progress::current() {
-        Some(meter) => erase_tree(path, &meter, false),
+        Some(_) => erase_tree(path, None),
         None => erase(path),
     }
 }
 
-/// Remove `path` one entry at a time, `counted` on `meter` (each file an item, a pause and cancel
-/// between two) or only stepping it.
-fn erase_tree(path: &Path, meter: &crate::progress::Meter, counted: bool) -> io::Result<()> {
+/// [`erase`] of `name` in the folder open as `dir`, counted on `meter` as [`erase_counted`] or
+/// else stepped; `path` names it for the mount checks.
+pub(crate) fn erase_at(
+    dir: BorrowedFd,
+    name: &CStr,
+    path: &Path,
+    meter: Option<&Meter>,
+) -> io::Result<()> {
+    refuse_mount_point(path)?;
+    if !is_dir_at(dir, name)? {
+        unlink_at(dir, name, 0)?;
+        if let Some(m) = meter {
+            m.removed();
+        }
+        return Ok(());
+    }
+    refuse_holding_mount(path)?;
+    remove_tree_at(dir.as_raw_fd(), name, meter)
+}
+
+/// Whether `name` in the folder open as `dir` is a folder, not a link to one.
+fn is_dir_at(dir: BorrowedFd, name: &CStr) -> io::Result<bool> {
+    // SAFETY: a zeroed `stat` is a valid out-buffer; `name` is NUL-terminated.
+    let (r, mode) = unsafe {
+        let mut st: libc::stat = std::mem::zeroed();
+        let r = libc::fstatat(
+            dir.as_raw_fd(),
+            name.as_ptr(),
+            &mut st,
+            libc::AT_SYMLINK_NOFOLLOW,
+        );
+        (r, st.st_mode)
+    };
+    if r != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(mode & libc::S_IFMT == libc::S_IFDIR)
+}
+
+/// `unlinkat(dir, name, flags)`.
+pub(crate) fn unlink_at(dir: BorrowedFd, name: &CStr, flags: libc::c_int) -> io::Result<()> {
+    // SAFETY: `name` is NUL-terminated and outlives the call; `dir` is an open folder.
+    if unsafe { libc::unlinkat(dir.as_raw_fd(), name.as_ptr(), flags) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+/// Remove `path` one entry at a time, each file counted on `meter` (an item, a pause and cancel
+/// between two) or, without one, only stepping this thread's job.
+fn erase_tree(path: &Path, meter: Option<&Meter>) -> io::Result<()> {
     use std::os::unix::ffi::OsStrExt;
     refuse_mount_point(path)?;
     if !std::fs::symlink_metadata(path)?.is_dir() {
         std::fs::remove_file(path)?;
-        if counted {
-            meter.removed();
+        if let Some(m) = meter {
+            m.removed();
         }
         return Ok(());
     }
@@ -57,22 +108,16 @@ fn erase_tree(path: &Path, meter: &crate::progress::Meter, counted: bool) -> io:
         parent
     })?;
     let name = std::ffi::CString::new(name.as_bytes())?;
-    remove_tree_at(
-        std::os::fd::AsRawFd::as_raw_fd(&parent),
-        &name,
-        meter,
-        counted,
-    )
+    remove_tree_at(parent.as_raw_fd(), &name, meter)
 }
 
 /// Remove folder `name` in the folder open at `parent` with everything under it, children first.
 fn remove_tree_at(
     parent: std::os::fd::RawFd,
-    name: &std::ffi::CStr,
-    meter: &crate::progress::Meter,
-    counted: bool,
+    name: &CStr,
+    meter: Option<&Meter>,
 ) -> io::Result<()> {
-    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    use std::os::fd::{FromRawFd, OwnedFd};
     let flags = libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC;
     // SAFETY: `name` is NUL-terminated and outlives the call; `parent` is an open folder.
     let fd = unsafe { libc::openat(parent, name.as_ptr(), flags) };
@@ -81,21 +126,20 @@ fn remove_tree_at(
     }
     // SAFETY: `fd` was just opened and is owned by nothing else.
     let dir = unsafe { OwnedFd::from_raw_fd(fd) };
-    for (child, is_dir) in entries_at(&dir)? {
-        if counted {
-            meter.hold()?;
-        } else {
-            crate::progress::step();
+    for (child, is_dir) in entries_at(dir.as_fd())? {
+        match meter {
+            Some(m) => m.hold()?,
+            None => crate::progress::step(),
         }
         if is_dir {
-            remove_tree_at(dir.as_raw_fd(), &child, meter, counted)?;
+            remove_tree_at(dir.as_raw_fd(), &child, meter)?;
         } else {
             // SAFETY: as for `openat` above.
             if unsafe { libc::unlinkat(dir.as_raw_fd(), child.as_ptr(), 0) } != 0 {
                 return Err(io::Error::last_os_error());
             }
-            if counted {
-                meter.removed();
+            if let Some(m) = meter {
+                m.removed();
             }
         }
     }
@@ -107,8 +151,7 @@ fn remove_tree_at(
 }
 
 /// The names in the folder open as `dir`, each with whether it is a folder (not a link to one).
-fn entries_at(dir: &std::os::fd::OwnedFd) -> io::Result<Vec<(std::ffi::CString, bool)>> {
-    use std::os::fd::AsRawFd;
+pub(crate) fn entries_at(dir: BorrowedFd) -> io::Result<Vec<(std::ffi::CString, bool)>> {
     // SAFETY: `dup` of an open descriptor; `fdopendir` takes the copy and `closedir` closes it.
     let copy = unsafe { libc::dup(dir.as_raw_fd()) };
     if copy < 0 {
@@ -122,6 +165,9 @@ fn entries_at(dir: &std::os::fd::OwnedFd) -> io::Result<Vec<(std::ffi::CString, 
         unsafe { libc::close(copy) };
         return Err(e);
     }
+    // The copy shares `dir`'s offset, which an earlier listing left at the end.
+    // SAFETY: `stream` is open.
+    unsafe { libc::rewinddir(stream) };
     let mut out = Vec::new();
     loop {
         // SAFETY: `stream` is open until the `closedir` below.
