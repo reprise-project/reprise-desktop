@@ -33,10 +33,12 @@
 //! [`login`] asks the system manager whether reprise-login runs.
 //! [`logind`] reads logind's session of a process and its user's display session.
 //! [`testsession`] gives a test binary a session of its own.
+//! [`bounded`] decodes what another peer sends within size caps, never as a `Variant` tree.
 
 pub mod a11y;
 pub mod appearance;
 pub mod bluez;
+pub mod bounded;
 pub mod charge;
 pub mod desklock;
 pub mod error;

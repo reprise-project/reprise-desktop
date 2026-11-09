@@ -1,29 +1,19 @@
 use super::uncached_proxy;
 use crate::tray::{DEFAULT_PROP, MenuNode, TrayItem};
-use std::collections::HashMap;
-use zbus::Connection;
-use zbus::{OwnedVariant, Variant};
+use reprisebus::bounded::{self, Dict, Value};
+use serde::de::{self, Deserialize, Deserializer, IgnoredAny, SeqAccess, Visitor};
+use zbus::{Connection, Message, Signature, Type, Variant};
 
 const MENU_IFACE: &str = "com.canonical.dbusmenu";
 
-/// A peer's menu is cut to these as it is parsed, so label widths and the menu canvas stay
-/// bounded.
+/// A peer's menu is cut to these as it is decoded, so label widths and the menu canvas stay
+/// bounded. Only the first level is read, as `GetLayout` asks for; deeper rows are skipped unread.
 pub(super) const LABEL_CHARS: usize = 255;
 pub(super) const MENU_ROWS: usize = 256;
 
-fn parse_node(v: &OwnedVariant) -> Option<MenuNode> {
-    let Variant::Structure(s) = &**v else {
-        return None;
-    };
-    let fields = s.fields();
-    let Variant::I32(id) = fields.first()? else {
-        return None;
-    };
-    let Variant::Dict(props) = fields.get(1)? else {
-        return None;
-    };
+fn node_of(id: i32, props: &Dict) -> MenuNode {
     let mut node = MenuNode {
-        id: *id,
+        id,
         label: String::new(),
         separator: false,
         enabled: true,
@@ -33,44 +23,128 @@ fn parse_node(v: &OwnedVariant) -> Option<MenuNode> {
         has_children: false,
         default: false,
     };
-    let mut toggle_type: Option<String> = None;
-    let mut toggle_state: Option<i32> = None;
+    let mut toggle_type: Option<&str> = None;
+    let mut toggle_state: Option<i64> = None;
     for (k, v) in props.iter() {
-        let Variant::Str(k) = k else { continue };
-        let v = match v {
-            Variant::Variant(inner) => &**inner,
-            other => other,
-        };
-        match (k.as_str(), v) {
-            ("label", Variant::Str(s)) => node.label = s.chars().take(LABEL_CHARS).collect(),
-            ("enabled", Variant::Bool(b)) => node.enabled = *b,
-            ("visible", Variant::Bool(b)) => node.visible = *b,
-            ("type", Variant::Str(s)) => node.separator = s.as_str() == "separator",
-            ("toggle-type", Variant::Str(s)) => toggle_type = Some(s.as_str().to_string()),
-            ("toggle-state", Variant::I32(i)) => toggle_state = Some(*i),
-            ("children-display", Variant::Str(s)) => node.has_children = s.as_str() == "submenu",
-            (DEFAULT_PROP, Variant::Bool(b)) => node.default = *b,
+        match (k, v) {
+            ("label", Value::Str(s)) => node.label = s.chars().take(LABEL_CHARS).collect(),
+            ("enabled", Value::Bool(b)) => node.enabled = *b,
+            ("visible", Value::Bool(b)) => node.visible = *b,
+            ("type", Value::Str(s)) => node.separator = s == "separator",
+            ("toggle-type", Value::Str(s)) => toggle_type = Some(s),
+            ("toggle-state", Value::Int(i)) => toggle_state = Some(*i),
+            ("children-display", Value::Str(s)) => node.has_children = s == "submenu",
+            (DEFAULT_PROP, Value::Bool(b)) => node.default = *b,
             _ => {}
         }
     }
-    if matches!(toggle_type.as_deref(), Some("checkmark") | Some("radio")) {
+    if matches!(toggle_type, Some("checkmark") | Some("radio")) {
         node.checked = Some(toggle_state == Some(1));
-        node.radio = toggle_type.as_deref() == Some("radio");
+        node.radio = toggle_type == Some("radio");
     }
-    Some(node)
+    node
 }
 
-/// The first `MENU_ROWS` well-formed children of a `GetLayout` reply, in order; malformed children
-/// are skipped.
-pub(super) fn parse_layout(children: &[OwnedVariant]) -> Vec<MenuNode> {
-    children
-        .iter()
-        .filter_map(parse_node)
-        .take(MENU_ROWS)
-        .collect()
+/// A row: `(ia{sv}av)`, its own children skipped unread.
+struct Row(MenuNode);
+
+impl Type for Row {
+    const SIGNATURE: &'static Signature = <(i32, Dict, Vec<Variant<'_>>)>::SIGNATURE;
 }
 
-type LayoutReply = (u32, (i32, HashMap<String, OwnedVariant>, Vec<OwnedVariant>));
+impl<'de> Deserialize<'de> for Row {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V;
+        impl<'de> Visitor<'de> for V {
+            type Value = Row;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a menu row")
+            }
+
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Row, A::Error> {
+                let missing = |n| de::Error::invalid_length(n, &V);
+                let id: i32 = seq.next_element()?.ok_or_else(|| missing(0))?;
+                let props: Dict = seq.next_element()?.ok_or_else(|| missing(1))?;
+                seq.next_element::<IgnoredAny>()?;
+                Ok(Row(node_of(id, &props)))
+            }
+        }
+        d.deserialize_tuple(3, V)
+    }
+}
+
+/// A child of the reply: a variant holding a [`Row`], else nothing.
+struct Child(Option<MenuNode>);
+
+impl<'de> Deserialize<'de> for Child {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V;
+        impl<'de> Visitor<'de> for V {
+            type Value = Child;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a menu child variant")
+            }
+
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Child, A::Error> {
+                let sig: Signature = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(0, &V))?;
+                if sig == *Row::SIGNATURE {
+                    Ok(Child(seq.next_element::<Row>()?.map(|r| r.0)))
+                } else {
+                    seq.next_element::<IgnoredAny>()?;
+                    Ok(Child(None))
+                }
+            }
+        }
+        d.deserialize_any(V)
+    }
+}
+
+/// The first [`MENU_ROWS`] well-formed children, in order; the rest are skipped unread.
+struct Children(Vec<MenuNode>);
+
+impl Type for Children {
+    const SIGNATURE: &'static Signature = <Vec<Variant<'_>>>::SIGNATURE;
+}
+
+impl<'de> Deserialize<'de> for Children {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V;
+        impl<'de> Visitor<'de> for V {
+            type Value = Children;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("menu children")
+            }
+
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Children, A::Error> {
+                let mut out = Vec::new();
+                loop {
+                    if out.len() < MENU_ROWS {
+                        match seq.next_element::<Child>()? {
+                            Some(Child(node)) => out.extend(node),
+                            None => break,
+                        }
+                    } else if seq.next_element::<IgnoredAny>()?.is_none() {
+                        break;
+                    }
+                }
+                Ok(Children(out))
+            }
+        }
+        d.deserialize_seq(V)
+    }
+}
+
+/// The rows of a `GetLayout` reply, `(u(ia{sv}av))`; None for a reply over
+/// [`bounded::MAX_BODY`] or of another type.
+pub(super) fn parse_layout(reply: &Message) -> Option<Vec<MenuNode>> {
+    let (_, (_, _, children)) = bounded::decode::<(u32, (i32, Dict, Children))>(reply).ok()?;
+    Some(children.0)
+}
 
 pub(super) async fn get_layout(
     conn: &Connection,
@@ -98,8 +172,7 @@ pub(super) async fn get_layout(
         .call_method("GetLayout", &(parent, 1i32, props.as_slice()))
         .await
         .ok()?;
-    let (_, (_, _, children)): LayoutReply = reply.body().deserialize().ok()?;
-    Some(parse_layout(&children))
+    parse_layout(&reply)
 }
 
 pub(super) async fn send_menu_event(conn: &Connection, item: &TrayItem, node: i32) {

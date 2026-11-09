@@ -884,10 +884,10 @@ async fn setup(
         {
             streams.push(s);
         }
-        let existing: Vec<String> = foreign
-            .get_property("RegisteredStatusNotifierItems")
-            .await
-            .unwrap_or_default();
+        let existing: Vec<String> =
+            reprisebus::bounded::property(&foreign, "RegisteredStatusNotifierItems")
+                .await
+                .unwrap_or_default();
         for s in existing {
             let (bus, path) = split_service(&s);
             push_known_item(&mut streams, bus, path);

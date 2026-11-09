@@ -1,5 +1,6 @@
 use super::{ITEM_IFACE, Icons, Sizes, lock, sizes_now, uncached_proxy};
 use crate::tray::{ItemIcon, TrayItem, clip, decode_named_at, item_pixmaps};
+use reprisebus::bounded;
 use reprisekit::controls::tooltip::TIP_CHARS;
 use reprisekit::icon::IconSource;
 use std::path::PathBuf;
@@ -13,28 +14,16 @@ async fn prop<T>(proxy: &Proxy<'_>, name: &str) -> Option<T>
 where
     T: serde::de::DeserializeOwned + zbus::Type,
 {
-    proxy.get_property::<T>(name).await.ok()
+    bounded::property::<T>(proxy, name).await.ok()
 }
 
 pub(super) type Pixmaps<'a> = Vec<(i32, i32, &'a [u8])>;
 
 pub(super) type ToolTip<'a> = (&'a str, Pixmaps<'a>, &'a str, &'a str);
 
-/// One property's `Properties.Get` reply body, for decoding in place with [`as_variant::Deserialize`].
-/// [`prop`]'s `OwnedVariant` holds each `ay` byte as its own `Variant`: gigabytes for a 128 MiB pixmap.
+/// One property's reply body, for decoding pixmaps in place with [`as_variant::Deserialize`].
 async fn prop_body(proxy: &Proxy<'_>, name: &str) -> Option<Body> {
-    let reply = proxy
-        .connection()
-        .call_method(
-            Some(proxy.destination()),
-            proxy.path(),
-            Some("org.freedesktop.DBus.Properties"),
-            "Get",
-            &(proxy.interface(), name),
-        )
-        .await
-        .ok()?;
-    Some(reply.body())
+    bounded::property_body(proxy, name).await.ok()
 }
 
 /// `name` from the theme (and the item's `IconThemePath`) at `sizes`, unless `pixmaps` stand in.

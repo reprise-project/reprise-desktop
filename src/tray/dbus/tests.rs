@@ -12,14 +12,24 @@ use std::collections::HashMap;
 use std::os::fd::FromRawFd;
 use std::sync::atomic::AtomicUsize;
 use std::sync::mpsc::Receiver;
+use zbus::Variant;
 use zbus::as_variant;
-use zbus::{OwnedVariant, Variant};
 
-fn child(id: i32, props: Vec<(&str, Variant<'static>)>) -> OwnedVariant {
+fn child(id: i32, props: Vec<(&str, Variant<'static>)>) -> Variant<'static> {
     let map: HashMap<&str, Variant> = props.into_iter().collect();
     Variant::from((id, map, Vec::<Variant>::new()))
         .try_to_owned()
         .unwrap()
+        .into()
+}
+
+/// A `GetLayout` reply's rows, parsed from a message carrying `children`.
+fn parse(children: &[Variant<'static>]) -> Vec<MenuNode> {
+    let props = HashMap::<&str, Variant>::new();
+    let msg = zbus::Message::signal("/menu", "com.canonical.dbusmenu", "Reply")
+        .build(&(1u32, (0i32, props, children)))
+        .unwrap();
+    parse_layout(&msg).expect("a well-formed reply")
 }
 
 #[test]
@@ -44,7 +54,7 @@ fn parse_layout_extracts_nodes() {
             ],
         ),
     ];
-    let nodes = parse_layout(&children);
+    let nodes = parse(&children);
     assert_eq!(nodes.len(), 3);
     assert_eq!(
         nodes[0],
@@ -65,7 +75,7 @@ fn parse_layout_extracts_nodes() {
     assert!(!nodes[2].visible);
     assert!(nodes[2].has_children);
     assert_eq!(nodes[2].checked, None);
-    let radio = parse_layout(&[child(
+    let radio = parse(&[child(
         10,
         vec![
             ("label", Variant::from("Balanced")),
@@ -93,7 +103,7 @@ fn parse_layout_reads_variant_wrapped_properties() {
             (DEFAULT_PROP, Variant::from(true)),
         ],
     )];
-    let Variant::Structure(s) = &*children[0] else {
+    let Variant::Structure(s) = &children[0] else {
         panic!("fixture is not a structure");
     };
     let Some(Variant::Dict(props)) = s.fields().get(1) else {
@@ -104,7 +114,7 @@ fn parse_layout_reads_variant_wrapped_properties() {
         "fixture is not in the a{{sv}} wire shape"
     );
     assert_eq!(
-        parse_layout(&children),
+        parse(&children),
         vec![MenuNode {
             id: 3,
             label: "_Connect".into(),
@@ -122,10 +132,10 @@ fn parse_layout_reads_variant_wrapped_properties() {
 #[test]
 fn parse_layout_clips_labels_and_caps_rows() {
     let long = "x".repeat(LABEL_CHARS + 1000);
-    let children: Vec<OwnedVariant> = (0..MENU_ROWS as i32 + 10)
+    let children: Vec<Variant<'static>> = (0..MENU_ROWS as i32 + 10)
         .map(|id| child(id, vec![("label", Variant::from(long.clone()))]))
         .collect();
-    let nodes = parse_layout(&children);
+    let nodes = parse(&children);
     assert_eq!(nodes.len(), MENU_ROWS);
     assert!(nodes.iter().all(|n| n.label.chars().count() == LABEL_CHARS));
 }
@@ -346,9 +356,67 @@ fn a_needs_attention_item_shows_its_attention_icon_with_the_overlay_in_the_corne
 }
 
 #[test]
+fn a_rows_own_children_are_skipped() {
+    let nested = vec![child(9, vec![("label", Variant::from("Deeper"))])];
+    let props = HashMap::from([("label", Variant::from("Top"))]);
+    let row = Variant::from((4i32, props, nested));
+    let nodes = parse(&[row]);
+    assert_eq!(nodes.len(), 1);
+    assert_eq!((nodes[0].id, nodes[0].label.as_str()), (4, "Top"));
+}
+
+#[test]
 fn parse_layout_skips_malformed_children() {
-    let junk = Variant::from(42i32).try_to_owned().unwrap();
-    assert!(parse_layout(&[junk]).is_empty());
+    assert!(parse(&[Variant::from(42i32), Variant::from("row")]).is_empty());
+}
+
+/// The rows `get_layout` reads from a menu that answers `GetLayout` with `children`.
+fn layout_served(children: Vec<Variant<'static>>) -> Option<Vec<MenuNode>> {
+    zbus::block_on(async {
+        let (ours, theirs) = peers(Duration::from_secs(10)).await;
+        let mut calls = zbus::MessageStream::from(&theirs);
+        let serve = async {
+            while let Some(Ok(m)) = calls.next().await {
+                let hdr = m.header();
+                match hdr.member().map(|m| m.as_str()) {
+                    Some("GetLayout") => {
+                        let props = HashMap::<&str, Variant>::new();
+                        let body = (1u32, (0i32, props, children.clone()));
+                        let _ = theirs.reply(&hdr, &body).await;
+                    }
+                    _ => {
+                        let _ = theirs.reply(&hdr, &false).await;
+                    }
+                }
+            }
+            std::future::pending().await
+        };
+        let item = TrayItem {
+            service: ":1.1".into(),
+            menu_path: Some("/menu".into()),
+            ..TrayItem::default()
+        };
+        futures_lite::future::or(super::menu::get_layout(&ours, &item, 0), serve).await
+    })
+}
+
+#[test]
+fn a_menu_reply_over_the_body_cap_is_refused() {
+    let small = |id: i32| {
+        let props = HashMap::from([("label", Variant::from("Open"))]);
+        Variant::from((id, props, Vec::<Variant>::new()))
+    };
+    assert_eq!(
+        layout_served(vec![small(1)]).map(|rows| rows.len()),
+        Some(1)
+    );
+    let icon = vec![0u8; 4 << 20];
+    let props = HashMap::from([
+        ("label", Variant::from("Open")),
+        ("icon-data", Variant::from(icon)),
+    ]);
+    let big = Variant::from((2i32, props, Vec::<Variant>::new()));
+    assert_eq!(layout_served(vec![small(1), big]), None);
 }
 
 fn test_loop(conn: Connection, events: Sender<TrayEvent>, eventfd: RawFd) -> Loop {
