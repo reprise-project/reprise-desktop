@@ -111,6 +111,12 @@ impl InputProto {
 }
 
 impl State {
+    /// Whether an app's RemoteDesktop input is held back: some lock is up, the console's, the
+    /// desktop's or a locker client's. Only releases of what it holds still go.
+    pub fn app_input_locked(&self) -> bool {
+        self.console_locked() || self.desktop_locked() || crate::sessionlock::holds_input(self)
+    }
+
     /// Run `f` with `source` as the input being handled, then put the last one back.
     pub fn with_source<R>(&mut self, source: InputSource, f: impl FnOnce(&mut State) -> R) -> R {
         let was = std::mem::replace(&mut self.inputproto.source, source);

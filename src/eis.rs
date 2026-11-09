@@ -626,6 +626,10 @@ impl State {
             return;
         }
         let source = c.source();
+        if source == InputSource::App && self.app_input_locked() && !releases_held(c, &r) {
+            log::debug!("eis: an app's {r:?} dropped under the lock");
+            return;
+        }
         self.with_source(source, |s| {
             crate::idle::notify_activity(s);
             s.eis_inject_inner(id, r);
@@ -635,6 +639,21 @@ impl State {
     fn eis_inject_inner(&mut self, id: EisId, r: EisRequest) {
         let time = InputTime::now();
         match r {
+            EisRequest::PointerMotion(m) if !(m.dx.is_finite() && m.dy.is_finite()) => {
+                log::debug!("eis: ignoring a motion by {}, {}", m.dx, m.dy);
+            }
+            EisRequest::PointerMotionAbsolute(m)
+                if !(m.dx_absolute.is_finite() && m.dy_absolute.is_finite()) =>
+            {
+                log::debug!(
+                    "eis: ignoring a motion to {}, {}",
+                    m.dx_absolute,
+                    m.dy_absolute
+                );
+            }
+            EisRequest::ScrollDelta(s) if !(s.dx.is_finite() && s.dy.is_finite()) => {
+                log::debug!("eis: ignoring a scroll by {}, {}", s.dx, s.dy);
+            }
             EisRequest::PointerMotion(m) => {
                 let delta: Point<f64, Logical> = (m.dx as f64, m.dy as f64).into();
                 let pos = self.pointer_location() + delta;
@@ -967,6 +986,21 @@ pub(crate) fn sealed_memfd(bytes: &[u8]) -> Option<OwnedFd> {
         return None;
     }
     Some(fd)
+}
+
+/// Whether `r` lets go of a key or button `c` holds, which an app's sender may still do under
+/// the lock so nothing stays down; its frames go too.
+fn releases_held(c: &EisClient, r: &EisRequest) -> bool {
+    match r {
+        EisRequest::KeyboardKey(k) => {
+            k.state == eis::keyboard::KeyState::Released && c.pressed_keys.contains(&k.key)
+        }
+        EisRequest::Button(b) => {
+            b.state == eis::button::ButtonState::Released && c.pressed_buttons.contains(&b.button)
+        }
+        EisRequest::Frame(_) => true,
+        _ => false,
+    }
 }
 
 pub(crate) const KEYS: RangeInclusive<u32> = 0..=0x2ff;
@@ -1415,7 +1449,9 @@ mod tests {
         let mut c = h.connect();
         let (_lock, _surface) = h.map_lock_surface(&mut c);
         assert!(crate::sessionlock::holds_input(&h.state));
-        let (peer, keyboard) = sender_keyboard(&mut h);
+        let mut peer = h.ei_remote_session();
+        h.ei_hear(&mut peer);
+        let keyboard = resumed::<reis::ei::Text>(&peer);
         h.roundtrip(&mut c);
         c.side.keys.clear();
         send_keysym(&mut h, &peer, &keyboard, 0x0101_F600);
@@ -1447,6 +1483,138 @@ mod tests {
         let panel = h.state.start_panel.as_ref().expect("Start is open");
         assert_eq!(panel.model.query(), "café");
         assert_eq!(c.side.keys, [], "the window behind hears nothing");
+    }
+
+    /// The resumed device of `peer` with interface `I`.
+    fn resumed<I: reis::ei::Interface>(peer: &crate::harness::EiPeer) -> reis::event::Device {
+        (peer.heard.iter())
+            .find_map(|e| match e {
+                reis::event::EiEvent::DeviceResumed(r) if r.device.interface::<I>().is_some() => {
+                    Some(r.device.clone())
+                }
+                _ => None,
+            })
+            .expect("the device is resumed")
+    }
+
+    fn app_pointer(
+        h: &mut crate::harness::Harness,
+    ) -> (crate::harness::EiPeer, reis::event::Device) {
+        let mut peer = h.ei_keyboard_as(Kind::Sender, false, crate::inputproto::DEVICE_POINTER, "");
+        h.ei_hear(&mut peer);
+        let device = resumed::<reis::ei::Pointer>(&peer);
+        device.device().start_emulating(0, 0);
+        (peer, device)
+    }
+
+    fn move_by(
+        h: &mut crate::harness::Harness,
+        peer: &crate::harness::EiPeer,
+        device: &reis::event::Device,
+        (dx, dy): (f32, f32),
+    ) {
+        let pointer = device.interface::<reis::ei::Pointer>().unwrap();
+        pointer.motion_relative(dx, dy);
+        device.device().frame(0, 0);
+        let _ = peer.context.flush();
+        h.run_for(5);
+    }
+
+    fn click(
+        h: &mut crate::harness::Harness,
+        peer: &crate::harness::EiPeer,
+        device: &reis::event::Device,
+    ) {
+        let button = device.interface::<reis::ei::Button>().unwrap();
+        for state in [
+            reis::ei::button::ButtonState::Press,
+            reis::ei::button::ButtonState::Released,
+        ] {
+            button.button(0x110, state);
+            device.device().frame(0, 0);
+        }
+        let _ = peer.context.flush();
+        h.run_for(5);
+    }
+
+    #[test]
+    fn a_nan_motion_leaves_the_pointer_where_it_was() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let (peer, device) = app_pointer(&mut h);
+        move_by(&mut h, &peer, &device, (10.0, 10.0));
+        let before = h.state.pointer_location();
+        move_by(&mut h, &peer, &device, (f32::NAN, 0.0));
+        move_by(&mut h, &peer, &device, (f32::INFINITY, 0.0));
+        assert_eq!(h.state.pointer_location(), before);
+        move_by(&mut h, &peer, &device, (5.0, 0.0));
+        assert_eq!(
+            h.state.pointer_location(),
+            before + Point::<f64, Logical>::from((5.0, 0.0)),
+            "motion goes on"
+        );
+    }
+
+    #[test]
+    fn an_apps_text_does_not_reach_the_locker_holding_the_lock() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let (_lock, _surface) = h.map_lock_surface(&mut c);
+        let (peer, keyboard) = sender_keyboard(&mut h);
+        h.roundtrip(&mut c);
+        c.side.keys.clear();
+        send_keysym(&mut h, &peer, &keyboard, 'a' as u32);
+        h.roundtrip(&mut c);
+        assert_eq!(c.side.keys, [], "the locker hears nothing");
+    }
+
+    #[test]
+    fn under_the_lock_an_apps_pointer_and_keys_do_nothing() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let (_lock, _surface) = h.map_lock_surface(&mut c);
+        let (peer, device) = app_pointer(&mut h);
+        let keys = h.state.keys_create(Some(String::new()));
+        h.roundtrip(&mut c);
+        c.side.keys.clear();
+        c.side.buttons.clear();
+        let before = h.state.pointer_location();
+        move_by(&mut h, &peer, &device, (40.0, 30.0));
+        click(&mut h, &peer, &device);
+        h.state.keys_key(keys, 30, true);
+        h.state.keys_key(keys, 30, false);
+        h.roundtrip(&mut c);
+        assert_eq!(h.state.pointer_location(), before, "the pointer stays");
+        assert_eq!(c.side.buttons, [], "no click reaches the lock");
+        assert_eq!(c.side.keys, [], "no key reaches the lock");
+    }
+
+    #[test]
+    fn an_apps_power_and_sleep_keys_run_no_power_action() {
+        const POWER: u32 = 116;
+        const SLEEP: u32 = 142;
+        let mut config = crate::config::Config::default();
+        config.power.power_button = crate::config::PowerAction::Ask;
+        config.power.sleep_button = crate::config::PowerAction::Ask;
+        let mut h = crate::harness::Harness::with_config(config);
+        h.output("TEST-1", 1024, 768);
+        let keys = h.state.keys_create(Some(String::new()));
+        for code in [POWER, SLEEP] {
+            h.state.keys_key(keys, code, true);
+            h.state.keys_key(keys, code, false);
+            assert!(
+                h.state.active_dialog_id().is_none(),
+                "key {code} asks nothing"
+            );
+        }
+        h.key(SLEEP, true);
+        h.key(SLEEP, false);
+        assert!(
+            h.state.active_dialog_id().is_some(),
+            "the computer's own key asks"
+        );
     }
 
     #[test]

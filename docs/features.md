@@ -729,7 +729,8 @@ the screen takes the interface of the last session used at this computer.
   while a program controls the keyboard or mouse through the portal, a
   microphone while a program records, a camera while one films and a pin
   while one reads your location. The tooltips name the program. A screenshot
-  is not sharing: it shows no dot and holds back no balloons.
+  shows the dot for 3 s, so screenshots in a loop show it too, but holds
+  back no balloons.
 - **Capture border.** A red border on the screen around the screen, window
   or area being recorded or shared. Recordings never show it, and a single
   screenshot draws none. Settings > Privacy turns it off. The Remote Desktop
