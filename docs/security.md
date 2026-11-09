@@ -1227,7 +1227,10 @@ sharing and remote control grants yet.
   Reprise program cuts the titles, app ids and tags it sends the compositor
   to 1024 bytes, since the compositor disconnects a client whose request
   outgrows its 4096-byte buffer, and that would close all of the program's
-  windows.
+  windows. The terminal drops an OSC sequence longer than 64 KiB (an OSC 52
+  one longer than a 1 MiB store) before it reaches the parser, and a title
+  push (CSI 22 t) past 16 deep, so output can't make a tab hold memory
+  without bound.
 - **Launchers.** A `.desktop` file in a folder (the desktop, Explorer)
   runs only when it is executable and carries the `user.reprise.trusted`
   extended attribute, which Allow Launching sets. Extracting an archive

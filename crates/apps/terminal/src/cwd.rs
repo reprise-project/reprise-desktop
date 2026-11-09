@@ -6,6 +6,8 @@ use std::io::{self, Read};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use crate::escapes;
+
 /// The working directory of process `pid`.
 pub fn cwd_of(pid: u32) -> Option<PathBuf> {
     std::fs::read_link(format!("/proc/{pid}/cwd")).ok()
@@ -55,71 +57,35 @@ pub fn osc7_path(uri: &str, local: &str) -> Option<PathBuf> {
     Some(std::ffi::OsString::from_vec(out).into())
 }
 
-/// The longest OSC kept; a longer one is dropped.
-const MAX_OSC: usize = 4096;
-
-/// Picks OSC 7 sequences out of a byte stream split anywhere.
-#[derive(Default)]
-pub struct Osc7 {
-    state: State,
-    buf: Vec<u8>,
-}
-
-#[derive(Default, Clone, Copy, PartialEq, Eq)]
-enum State {
-    #[default]
-    Ground,
-    Esc,
-    Osc,
-    OscEsc,
-}
-
-impl Osc7 {
-    /// Feed the next bytes; the URI of the last OSC 7 they complete.
-    pub fn feed(&mut self, bytes: &[u8]) -> Option<String> {
-        let mut found = None;
-        for &b in bytes {
-            self.state = match (self.state, b) {
-                (State::Ground | State::Esc, 0x1b) => State::Esc,
-                (State::Esc | State::OscEsc, b']') => {
-                    self.buf.clear();
-                    State::Osc
-                }
-                (State::Osc, 0x07) | (State::OscEsc, b'\\') => {
-                    if let Some(uri) = self.buf.strip_prefix(b"7;") {
-                        found = Some(String::from_utf8_lossy(uri).into_owned());
-                    }
-                    State::Ground
-                }
-                (State::Osc, 0x1b) => State::OscEsc,
-                (State::Osc, b) if self.buf.len() < MAX_OSC => {
-                    self.buf.push(b);
-                    State::Osc
-                }
-                _ => State::Ground,
-            };
-        }
-        found
-    }
-}
-
-/// The PTY's reader: passes every byte on and keeps the last OSC 7 directory in `cwd`.
+/// The PTY's reader: passes its bytes through an [`escapes::Filter`] and keeps the last OSC 7
+/// directory in `cwd`.
 pub struct Reader {
     pub file: File,
-    pub scan: Osc7,
+    pub filter: escapes::Filter,
+    /// What the filter passed on, before it goes into the caller's buffer.
+    pub out: Vec<u8>,
     pub host: String,
     pub cwd: Arc<Mutex<Option<PathBuf>>>,
 }
 
 impl Read for Reader {
+    /// Reads only as much as leaves room for what the filter holds, so a held escape it lets
+    /// go always fits in `buf`.
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let n = self.file.read(buf)?;
-        if let Some(uri) = self.scan.feed(&buf[..n])
+        let room = buf.len().saturating_sub(self.filter.held());
+        if room == 0 {
+            return Err(io::ErrorKind::WouldBlock.into());
+        }
+        let n = self.file.read(&mut buf[..room])?;
+        self.out.clear();
+        let uri = self.filter.feed(&buf[..n], &mut self.out);
+        buf[..self.out.len()].copy_from_slice(&self.out);
+        if let Some(uri) = uri
             && let Some(path) = osc7_path(&uri, &self.host)
         {
             *self.cwd.lock().unwrap() = Some(path);
         }
-        Ok(n)
+        Ok(self.out.len())
     }
 }
 
@@ -157,6 +123,33 @@ mod tests {
     }
 
     #[test]
+    fn a_held_escape_comes_back_within_the_buffer() {
+        use std::io::Write;
+        use std::os::unix::net::UnixStream;
+        let (mut tx, rx) = UnixStream::pair().unwrap();
+        let mut r = Reader {
+            file: File::from(std::os::fd::OwnedFd::from(rx)),
+            filter: Default::default(),
+            out: Vec::new(),
+            host: String::new(),
+            cwd: Default::default(),
+        };
+        let osc = b"\x1b]7;file:///tmp\x07";
+        let mut buf = [0u8; 20];
+        tx.write_all(&osc[..10]).unwrap();
+        assert_eq!(r.read(&mut buf).unwrap(), 0, "an unended OSC is held");
+        tx.write_all(&osc[10..]).unwrap();
+        tx.write_all(b"after").unwrap();
+        let mut got = Vec::new();
+        while got.len() < osc.len() + 5 {
+            let n = r.read(&mut buf).unwrap();
+            got.extend_from_slice(&buf[..n]);
+        }
+        assert_eq!(got, [&osc[..], b"after"].concat());
+        assert_eq!(*r.cwd.lock().unwrap(), Some("/tmp".into()));
+    }
+
+    #[test]
     fn osc7_paths_are_local_and_decoded() {
         let p = |u: &str| osc7_path(u, "box");
         assert_eq!(p("file://box/home/me"), Some("/home/me".into()));
@@ -164,22 +157,5 @@ mod tests {
         assert_eq!(p("file://localhost/a%20b"), Some("/a b".into()));
         assert_eq!(p("file://other/home/me"), None, "another machine's path");
         assert_eq!(p("http://box/x"), None);
-    }
-
-    #[test]
-    fn osc7_found_across_chunks_with_either_terminator() {
-        let mut s = Osc7::default();
-        assert_eq!(s.feed(b"hi \x1b]0;title\x07 \x1b]7;file://h"), None);
-        assert_eq!(s.feed(b"/x\x1b"), None);
-        assert_eq!(s.feed(b"\\ more"), Some("file://h/x".into()));
-        assert_eq!(
-            s.feed(b"\x1b]7;file:///a\x07\x1b]7;file:///b\x07"),
-            Some("file:///b".into())
-        );
-        assert_eq!(
-            s.feed(b"\x1b[31m\x1b]70;x\x07"),
-            None,
-            "OSC 70 is not OSC 7"
-        );
     }
 }
