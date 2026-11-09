@@ -8,7 +8,7 @@ use crate::deadline::ACTION_DEADLINE;
 use crate::progress::{self, Decision, Meter, Phase, Snapshot, Totals};
 use crate::trash::{self, Bins, Trashed};
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
@@ -95,27 +95,22 @@ impl Removal {
     }
 
     fn run(&self, bins: Option<&Bins>, m: &Meter) -> io::Result<Removed> {
-        let erase = |p: &Path| crate::ops::erase_counted(p, m);
         match self {
             Removal::Trash { path, known } => {
                 let bins = bins.ok_or_else(|| io::Error::other("cannot find the Recycle Bin"))?;
                 let (trashed, purged) = bins.trash_measured(path, *known)?;
                 Ok(Removed::Trashed { trashed, purged })
             }
-            Removal::Erase(path) => erase(path).map(|()| Removed::Erased),
+            Removal::Erase(path) => crate::ops::erase_counted(path, m).map(|()| Removed::Erased),
             Removal::EraseTrashed { files, record } => {
-                trash::erase_trashed_with(files, record.as_ref(), erase).map(|()| Removed::Erased)
+                trash::erase_trashed_with(files, record.as_ref(), Some(m)).map(|()| Removed::Erased)
             }
             Removal::Restore { files, record } => {
                 trash::check_listed(files, record.as_ref())?;
                 let t = trash::trashed(files)?;
                 trash::restore_free(&t).map(Removed::Restored)
             }
-            Removal::Empty(root) => trash::empty_with(root, |p: &Path| {
-                m.set_current(p.file_name().unwrap_or(p.as_os_str()));
-                erase(p)
-            })
-            .map(Removed::Emptied),
+            Removal::Empty(root) => trash::empty_with(root, Some(m)).map(Removed::Emptied),
         }
     }
 }
@@ -279,6 +274,7 @@ impl RemoveJob {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
     use std::sync::mpsc::channel;
     use std::time::Duration;
 
@@ -383,11 +379,12 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let a = t.path().join("a.txt");
         std::fs::write(&a, "a").unwrap();
+        let b = t.path().join("b.txt");
+        std::fs::write(&b, "b").unwrap();
         let root = t.path().join("Trash");
-        std::fs::create_dir_all(root.join("files/x")).unwrap();
-        std::fs::create_dir_all(root.join("info")).unwrap();
+        std::fs::create_dir_all(root.join("files")).unwrap();
         // Reading a FIFO with no writer blocks, as a call on a drive that stopped answering does.
-        let info = root.join("info/x.trashinfo");
+        let info = root.join("directorysizes");
         let c = std::ffi::CString::new(info.as_os_str().as_bytes()).unwrap();
         // SAFETY: `c` is a NUL-terminated path that outlives the call.
         assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
@@ -395,12 +392,12 @@ mod tests {
         let job = RemoveJob::start_metered(
             vec![
                 Removal::Erase(a.clone()),
-                Removal::EraseTrashed {
-                    files: root.join("files/x"),
-                    record: None,
+                Removal::Trash {
+                    path: b.clone(),
+                    known: None,
                 },
             ],
-            None,
+            Some(Bins::new(root.clone(), Vec::new())),
             Arc::new(Meter::default()),
             Duration::from_millis(300),
             move || {
@@ -424,10 +421,7 @@ mod tests {
             meter.cancelled(),
             "the stuck call stops the job once it returns"
         );
-        assert!(
-            root.join("files/x").exists(),
-            "nothing goes past the stuck read"
-        );
+        assert!(b.exists(), "nothing goes past the stuck read");
         let writer = std::fs::OpenOptions::new().write(true).open(&info).unwrap();
         drop(writer);
     }

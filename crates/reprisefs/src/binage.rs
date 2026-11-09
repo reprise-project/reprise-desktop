@@ -17,30 +17,30 @@ pub fn expired(deleted: i64, now: i64, days: u16) -> bool {
 }
 
 /// Erase each item of the trash at `root` that [`expired`] at `now`, returning how many went.
-/// An item whose `.trashinfo` has no readable `DeletionDate` stays.
+/// An item whose `.trashinfo` has no readable `DeletionDate` stays. The trash is walked
+/// without following a link ([`crate::bindir::BinDir`]).
 pub fn purge_in(root: &Path, days: u16, now: i64) -> usize {
     if days == 0 {
         return 0;
     }
-    let (files_dir, info_dir) = (root.join("files"), root.join("info"));
-    let Ok(rd) = std::fs::read_dir(&info_dir) else {
+    let Ok(bin) = crate::bindir::BinDir::open(root) else {
         return 0;
     };
     let mut count = 0;
-    for entry in rd.flatten() {
-        let name = entry.file_name();
+    for name in bin.infos() {
         let Some(stem) = name.as_bytes().strip_suffix(b".trashinfo") else {
             continue;
         };
-        let body = std::fs::read_to_string(entry.path()).unwrap_or_default();
+        let body = bin.read_info(&name).unwrap_or_default();
         if !trash::deletion_date(&body).is_some_and(|d| expired(d, now, days)) {
             continue;
         }
-        let files = files_dir.join(std::ffi::OsStr::from_bytes(stem));
-        if std::fs::symlink_metadata(&files).is_err() {
-            let _ = std::fs::remove_file(entry.path());
+        let stem = std::ffi::OsStr::from_bytes(stem);
+        if bin.stat(stem).is_none() {
+            let _ = bin.unlink_info(&name);
             continue;
         }
+        let files = root.join("files").join(stem);
         let listed = trash::trashed(&files).ok();
         match trash::erase_trashed(&files, listed.as_ref()) {
             Ok(()) => count += 1,

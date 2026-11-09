@@ -1200,6 +1200,20 @@ sharing and remote control grants yet.
   extended attribute, which Allow Launching sets. Extracting an archive
   restores the execute bit but not the attribute, so a downloaded launcher
   can't pose as a program.
+- **Drive Recycle Bins.** A drive's trash is used only as `.Trash-$uid`, a
+  real folder of yours, or as `$uid` in a real `.Trash` with the sticky bit,
+  as the freedesktop trash spec asks. Listing it, Delete, Empty Recycle Bin,
+  the `older_than_days` purge and the room a full bin makes all reach its
+  `files` and `info` folders from the drive's top without following a link.
+  A `files` or `info` that is a link is never entered: Empty Recycle Bin
+  removes the link itself, and until then the drive counts as one without a
+  Recycle Bin. A link in the bin goes as a link.
+- **Restore from a drive.** A drive's `.trashinfo` names a path relative to
+  the drive's top. An absolute one counts only when it lies on that drive,
+  and no path may climb out with `..`; the item stays in the bin and Restore
+  says why. Restore walks the folders from the drive's top without following
+  a link, so an item never lands off its drive. The home trash keeps
+  absolute paths.
 - **Programs and scripts.** A file with the owner's execute bit that starts
   with `#!` or is an ELF binary runs when you open it, from the desktop,
   Explorer or a search. A script runs with no window (`script_open = "run"`,
