@@ -229,6 +229,17 @@ impl Sheet {
         self.sheet.set_apply_enabled(self.dirty());
     }
 
+    /// The change was not authorized: the controls go back to `system`, what the host read
+    /// back, the date and time follow the clock again and Apply greys.
+    pub fn refused(&mut self, system: &System, now: Local) {
+        self.sheet.pages[TAB_DATE].set_check("ntp", system.ntp);
+        if let Some(i) = self.zones.iter().position(|z| *z == system.zone) {
+            self.sheet.pages[TAB_ZONE].set_combo("zone", i);
+        }
+        self.write_zone();
+        self.applied(system, now);
+    }
+
     /// Take control `id`'s new value.
     fn read(&mut self, id: &'static str) {
         let page = &mut self.sheet.pages[TAB_DATE];
@@ -622,6 +633,54 @@ mod tests {
         );
         assert!(!s.dirty());
         assert_eq!(s.event(propsheet::Event::Ok), Outcome::Close);
+    }
+
+    #[test]
+    fn a_refused_apply_puts_back_what_timedated_reports() {
+        let synced = System {
+            ntp: true,
+            ..system()
+        };
+        let mut s = Sheet::new(&synced, &zones(), now(), 0, true);
+        s.sheet.pages[TAB_ZONE].set_combo("zone", 2);
+        s.event(propsheet::Event::Page(
+            TAB_ZONE,
+            form::Event::Changed("zone"),
+        ));
+        s.sheet.pages[TAB_DATE].set_check("ntp", false);
+        s.event(propsheet::Event::Page(
+            TAB_DATE,
+            form::Event::Changed("ntp"),
+        ));
+        let page = &mut s.sheet.pages[TAB_DATE];
+        page.focus_id("time");
+        let ev = page.key(form::Key::Up);
+        s.event(propsheet::Event::Page(TAB_DATE, ev));
+        assert!(matches!(
+            s.event(propsheet::Event::Apply),
+            Outcome::Apply(Change {
+                ntp: Some(false),
+                zone: Some(_),
+                time: Some(_),
+            })
+        ));
+
+        let later = Local { s: 30, ..now() };
+        s.refused(&synced, later);
+        let page = &s.sheet.pages[TAB_DATE];
+        assert_eq!(page.checked("ntp"), Some(true), "network time is still on");
+        assert!(matches!(&page.item("time").unwrap().control, Control::Time(t) if !t.enabled));
+        assert_eq!(s.shown(), later, "the time follows the clock again");
+        assert_eq!(s.pending_zone(), "Europe/Budapest");
+        assert!(matches!(
+            &s.sheet.pages[TAB_ZONE].item("city").unwrap().control,
+            Control::Label { text, .. } if text == "Budapest"
+        ));
+        assert!(!s.dirty());
+        assert!(matches!(
+            &page.item(propsheet::APPLY).unwrap().control,
+            Control::Button { enabled: false, .. }
+        ));
     }
 
     #[test]

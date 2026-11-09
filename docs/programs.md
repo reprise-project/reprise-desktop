@@ -678,7 +678,8 @@ fonts folder says Installed (system).
 ## Date and Time Properties
 
 Double-click the clock. A month grid, an analog clock, the time zone and
-network time.
+network time. When the password prompt for Apply is cancelled or refused, the
+sheet goes back to the clock's settings as they are.
 
 ## Smaller things
 
