@@ -7,7 +7,8 @@ use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
 pub const NAME: &[u8] = b"MIT-MAGIC-COOKIE-1";
-/// Xauth's family for an entry that matches any address.
+/// Xauth's families: a local connection from the host named by the address, and any address.
+const FAMILY_LOCAL: u16 = 256;
 const FAMILY_WILD: u16 = 0xffff;
 
 /// An authority file holding one random cookie for one display; dropping it removes the file.
@@ -39,7 +40,8 @@ impl Cookie {
                 .create_new(true)
                 .mode(0o600)
                 .open(&tmp)?;
-            f.write_all(&entry(display, &data))?;
+            f.write_all(&entry(FAMILY_LOCAL, &hostname(), display, &data))?;
+            f.write_all(&entry(FAMILY_WILD, b"", display, &data))?;
             f.sync_all()?;
             fs::rename(&tmp, &path)
         })();
@@ -59,6 +61,15 @@ impl Cookie {
     }
 }
 
+fn hostname() -> Vec<u8> {
+    let mut buf = [0u8; 256];
+    // SAFETY: `buf` is writable for its length; the name is NUL-terminated when it fits.
+    if unsafe { libc::gethostname(buf.as_mut_ptr().cast(), buf.len()) } != 0 {
+        return Vec::new();
+    }
+    buf.iter().take_while(|&&b| b != 0).copied().collect()
+}
+
 impl Drop for Cookie {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.path);
@@ -66,11 +77,11 @@ impl Drop for Cookie {
 }
 
 /// One Xauthority entry: family, then address, display number, name and data length-prefixed,
-/// all big-endian. Flatpak copies a wildcard entry with the display's number into X11 apps.
-fn entry(display: u32, data: &[u8]) -> Vec<u8> {
+/// all big-endian. Some clients (python-xlib) match only a local entry for their host.
+fn entry(family: u16, address: &[u8], display: u32, data: &[u8]) -> Vec<u8> {
     let number = display.to_string();
-    let mut out = FAMILY_WILD.to_be_bytes().to_vec();
-    for field in [&[][..], number.as_bytes(), NAME, data] {
+    let mut out = family.to_be_bytes().to_vec();
+    for field in [address, number.as_bytes(), NAME, data] {
         out.extend((field.len() as u16).to_be_bytes());
         out.extend(field);
     }
@@ -82,16 +93,43 @@ mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
 
+    /// An entry's family, then its address, display number, name and data.
+    type Entry = (u16, [Vec<u8>; 4]);
+
+    /// The entries of an Xauthority file.
+    fn entries(mut bytes: &[u8]) -> Vec<Entry> {
+        let field = |b: &mut &[u8]| {
+            let n = u16::from_be_bytes([b[0], b[1]]) as usize;
+            let f = b[2..2 + n].to_vec();
+            *b = &b[2 + n..];
+            f
+        };
+        let mut out = Vec::new();
+        while !bytes.is_empty() {
+            let family = u16::from_be_bytes([bytes[0], bytes[1]]);
+            bytes = &bytes[2..];
+            out.push((family, std::array::from_fn(|_| field(&mut bytes))));
+        }
+        out
+    }
+
     #[test]
-    fn a_cookie_file_is_one_wildcard_entry_for_its_display() {
+    fn a_cookie_file_has_an_entry_for_this_host_and_a_wildcard_one() {
         let dir = crate::harness::scratch().join("xauth-entry");
         let c = Cookie::write(&dir, 7).unwrap();
-        let bytes = fs::read(c.path()).unwrap();
-        let mut expect = vec![0xff, 0xff, 0, 0, 0, 1, b'7', 0, 18];
-        expect.extend(NAME);
-        expect.extend([0, 16]);
-        expect.extend(c.data());
-        assert_eq!(bytes, expect);
+        let host = fs::read_to_string("/proc/sys/kernel/hostname").unwrap();
+        let host = host.trim_end().as_bytes().to_vec();
+        let cookie = |family: u16, address: Vec<u8>| -> Entry {
+            (
+                family,
+                [address, b"7".to_vec(), NAME.to_vec(), c.data().to_vec()],
+            )
+        };
+        assert_eq!(
+            entries(&fs::read(c.path()).unwrap()),
+            [cookie(256, host), cookie(0xffff, Vec::new())],
+            "FamilyLocal for clients that match only their host, then FamilyWild"
+        );
         let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode(c.path()), 0o600);
         assert_eq!(mode(&dir), 0o700);
