@@ -1297,7 +1297,7 @@ impl Explorer {
             return self.mount_and_open(v, ctx);
         }
         if self.selected_disk_image().is_some() {
-            return self.mount_image(ctx);
+            return self.ask_mount_image(ctx);
         }
         if let Some(place) = folder_place(&it) {
             return self.go(place, ctx);

@@ -57,6 +57,8 @@ pub struct Confirm {
     /// [`Asked`]: reprisefs::program::Asked
     /// [`ScriptOpen`]: reprisefs::program::ScriptOpen
     pub script: Option<(reprisefs::program::ScriptOpen, reprisefs::program::Asked)>,
+    /// The question before mounting the disk image `paths[0]`: Mount mounts it.
+    pub mount: bool,
     /// An item of the job counting on this meter failed and the job holds for the answer:
     /// Skip, Retry or Cancel ([`reprisefs::progress::Decision`]).
     pub job: Option<std::sync::Arc<reprisefs::progress::Meter>>,
@@ -69,6 +71,9 @@ impl Confirm {
     pub(crate) fn buttons(&self) -> Vec<String> {
         if let Some((_, asked)) = self.script {
             return asked.buttons().iter().map(|s| s.to_string()).collect();
+        }
+        if self.mount {
+            return reprisefs::udisks::MOUNT_BUTTONS.map(String::from).to_vec();
         }
         let labels: &[&str] = match &self.too_big {
             _ if self.job.is_some() => &FAILED_BUTTONS,
@@ -329,6 +334,7 @@ impl Explorer {
             too_big: None,
             undo_erase: false,
             script: None,
+            mount: false,
             job: None,
         }));
         Reply::redraw_all()
@@ -374,6 +380,7 @@ impl Explorer {
             too_big: None,
             undo_erase: false,
             script: None,
+            mount: false,
             job: Some(meter),
         }));
         Reply::redraw_all()
@@ -431,6 +438,7 @@ impl Explorer {
             too_big: None,
             undo_erase: false,
             script: Some((open, asked)),
+            mount: false,
             job: None,
         }));
         Reply::redraw_all()
@@ -964,6 +972,10 @@ impl Explorer {
             }
             Answer::Accept => match self.dialog.take() {
                 Some(Dialog::Confirm(c)) if c.empty_bin => self.empty_bin_now(ctx),
+                Some(Dialog::Confirm(c)) if c.mount => match c.paths.first() {
+                    Some(path) => self.mount_image_at(path.clone(), ctx),
+                    None => Reply::redraw_all(),
+                },
                 Some(Dialog::Confirm(c)) if c.undo_erase => self.undo_with(true, ctx),
                 Some(Dialog::Confirm(Confirm {
                     bin: Some(items), ..
