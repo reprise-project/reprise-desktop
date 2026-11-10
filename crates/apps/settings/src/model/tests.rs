@@ -676,6 +676,7 @@ fn save_round_trips_every_field() {
         hot_corner: "top-right".into(),
         screenshot_save: false,
         clipboard_history: false,
+        clipboard_trusted: vec!["org.example.Pass".into()],
         interface: "blue".into(),
         color_scheme: "Olive Green".into(),
         glass_color: "#102030".into(),

@@ -520,11 +520,17 @@ mod tests {
             (Page::Startup, SIDE_LIST),
             (Page::Keyboard, SIDE_LIST),
             (Page::DefaultPrograms, SIDE_LIST),
-            (Page::Privacy, SIDE_LIST),
         ] {
             let (was, now) = grower(p, id);
             assert_eq!(now, was + large.dh, "{}: {id}", p.label());
         }
+        let (loc_was, loc_now) = grower(Page::Privacy, SIDE_LIST);
+        let (clip_was, clip_now) = grower(Page::Privacy, crate::clipaccess::LIST);
+        assert_eq!(
+            (loc_now - loc_was) + (clip_now - clip_was),
+            large.dh,
+            "Privacy's two lists share the extra height"
+        );
     }
 
     #[test]

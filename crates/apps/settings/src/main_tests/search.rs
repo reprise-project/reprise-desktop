@@ -29,7 +29,7 @@ fn enter_on_a_found_control_takes_the_keyboard_from_the_location_list() {
     pages::fill_locations(&mut a.locations, &[("Maps".into(), true)]);
     press_side_row(&mut a, &mut ctx, 0, 1000);
     assert!(a.locations_focus);
-    find(&mut a, &mut ctx, "clipboard");
+    find(&mut a, &mut ctx, "history");
     assert_eq!(
         a.search_hits[Page::Privacy.index()],
         Some(Hit::Keyword(Some("clipboard_history"))),

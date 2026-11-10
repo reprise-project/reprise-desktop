@@ -69,6 +69,8 @@ pub struct Settings {
     pub hot_corner: String,
     pub screenshot_save: bool,
     pub clipboard_history: bool,
+    /// `[clipboard] trusted_apps`: the Flatpak app ids given the clipboard in the background.
+    pub clipboard_trusted: Vec<String>,
 
     /// `[appearance] interface`: "classic", "blue" or "glass".
     /// [`Settings::for_interface`] leaves it at Classic, the compositor's
@@ -458,6 +460,7 @@ impl Settings {
             hot_corner: c.hot_corner.name().into(),
             screenshot_save: c.screenshot.save,
             clipboard_history: c.clipboard.history,
+            clipboard_trusted: c.clipboard.trusted_apps.clone(),
 
             interface: Interface::Classic.as_str().into(),
             color_scheme: c.color_scheme.clone().unwrap_or_default(),

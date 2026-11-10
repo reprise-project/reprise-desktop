@@ -383,6 +383,7 @@ fn privacy_holds_location_history_and_the_sharing_border() {
         keys_on(&built(), Page::Privacy),
         [
             "clipboard.history",
+            "clipboard.trusted_apps",
             "privacy.recent_files",
             "privacy.location",
             "privacy.capture_border"
@@ -400,14 +401,34 @@ fn privacy_holds_location_history_and_the_sharing_border() {
     }
     let s = built();
     let p = Page::Privacy;
-    assert_eq!(rect(&s, p, "location_group"), Rect::new(20, 44, 358, 168));
+    assert_eq!(rect(&s, p, "location_group"), Rect::new(20, 44, 358, 139));
     assert_eq!(rect(&s, p, PRIVACY_LOCATION), Rect::new(GX, 66, 13, 13));
-    assert_eq!(locations(Area::MIN), Rect::new(GX, 88, 251, 114));
+    assert_eq!(locations(Area::MIN), Rect::new(GX, 88, 251, 85));
     assert_eq!(rect(&s, p, FORGET), Rect::new(291, 88, 75, 23));
-    assert_eq!(rect(&s, p, "history_group"), Rect::new(20, 222, 358, 70));
-    assert_eq!(rect(&s, p, "clipboard_history"), Rect::new(GX, 266, 13, 13));
-    assert_eq!(rect(&s, p, "sharing_group"), Rect::new(20, 302, 358, 48));
-    assert_eq!(rect(&s, p, "capture_border"), Rect::new(GX, 324, 13, 13));
+    assert_eq!(
+        rect(&s, p, "clip_access_group"),
+        Rect::new(20, 193, 358, 117)
+    );
+    assert_eq!(rect(&s, p, "clip_access_note"), Rect::new(GX, 215, 334, 26));
+    assert_eq!(
+        rect(&s, p, crate::clipaccess::LIST),
+        Rect::new(GX, 245, 334, 55)
+    );
+    assert_eq!(rect(&s, p, "history_group"), Rect::new(20, 320, 358, 70));
+    assert_eq!(rect(&s, p, "clipboard_history"), Rect::new(GX, 364, 13, 13));
+    assert_eq!(rect(&s, p, "sharing_group"), Rect::new(20, 400, 358, 48));
+    assert_eq!(rect(&s, p, "capture_border"), Rect::new(GX, 422, 13, 13));
+    let tall = Area { w: 358, dh: 41 };
+    let clip = privacy(tall).item(crate::clipaccess::LIST).unwrap().rect;
+    assert_eq!(
+        (locations(tall).height, clip.height),
+        (85 + 20, 55 + 21),
+        "the two lists share the extra height"
+    );
+    assert_eq!(
+        privacy(tall).item("sharing_group").unwrap().rect.bottom(),
+        448 + 41
+    );
     assert_eq!(LOCATION_COLUMNS[1].0, "Answer");
     inside_page(&s, p);
 }

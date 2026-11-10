@@ -47,6 +47,9 @@ impl SettingsApp {
                 {
                     return self.notify_changed(id);
                 }
+                if p == Page::Privacy.index() && id == crate::clipaccess::LIST {
+                    return self.clip_changed();
+                }
                 if id == pages::REMOTE_ALLOW {
                     self.remote_toggled();
                     return Reply::redraw();
