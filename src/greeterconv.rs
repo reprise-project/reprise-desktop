@@ -113,8 +113,7 @@ impl Conversation {
         } else {
             None
         }?;
-        m.password.wipe();
-        m.set_busy(true);
+        m.sent();
         Some(req)
     }
 

@@ -71,6 +71,11 @@ pub fn draw_spinner(
     }
 }
 
+/// How long the ring takes to turn from step 0 to `step`.
+pub fn spin_elapsed(step: u32) -> std::time::Duration {
+    std::time::Duration::from_millis(u64::from(step) * u64::from(glass::logon::SPIN_STEP_MS))
+}
+
 /// The ring's step `busy_for` after the screen first showed busy, and when the next step is due.
 pub fn spin_step(busy_for: std::time::Duration) -> (u32, std::time::Duration) {
     let step_ms = u64::from(glass::logon::SPIN_STEP_MS);
@@ -79,4 +84,14 @@ pub fn spin_step(busy_for: std::time::Duration) -> (u32, std::time::Duration) {
         glass::logon::spin_step(busy_for),
         std::time::Duration::from_millis(next),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_ring_turned_for_a_steps_time_stands_at_that_step() {
+        for step in 0..crate::glass::logon::SPIN_STEPS {
+            assert_eq!(super::spin_step(super::spin_elapsed(step)).0, step);
+        }
+    }
 }
