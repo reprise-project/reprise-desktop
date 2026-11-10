@@ -459,6 +459,31 @@ pub fn seat_caps_lock(state: &State) -> bool {
 thread_local! {
     /// The next draw of a login screen panics, as a painter's bug would.
     pub static DRAW_PANICS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The time [`now`] gives on this thread while a test holds the clock.
+    static CLOCK: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) };
+}
+
+/// The time a login or lock screen's frame is drawn for; a test may hold it ([`hold_clock`]).
+pub fn now() -> Instant {
+    #[cfg(test)]
+    if let Some(t) = CLOCK.get() {
+        return t;
+    }
+    Instant::now()
+}
+
+/// Stop [`now`] on this thread, so a test's frames land at the times it sets however slow it
+/// runs; [`pass`] moves it on.
+#[cfg(test)]
+pub fn hold_clock() {
+    CLOCK.set(Some(Instant::now()));
+}
+
+/// Move the held clock on by `ms`.
+#[cfg(test)]
+pub fn pass(ms: u64) {
+    let t = CLOCK.get().expect("the clock is held");
+    CLOCK.set(Some(t + std::time::Duration::from_millis(ms)));
 }
 
 /// Draw the login screen again with the Caps Lock and layout the keyboard has now.
@@ -497,7 +522,7 @@ fn draw(state: &mut State, host: &Host) -> bool {
     }
     v.model.column = logon_column(&v.model, &theme, b);
     let l = logon_layout(&v.model, &theme, text, b);
-    let canvas = play(v, &l, (&theme, text, scale), Instant::now());
+    let canvas = play(v, &l, (&theme, text, scale), now());
     v.layout = Some(l);
     let shown = !v.hidden;
     crate::output::upload_scaled(&mut state.scene, buffer, &canvas, scale);
@@ -576,7 +601,7 @@ fn play(
 /// `output` is about to render: the change playing there draws its next frame, once the session
 /// fade shows the output, or settles; then Glass's busy ring turns, paced to its steps.
 pub fn frame(state: &mut State, host: &Host, output: &Output) {
-    let now = Instant::now();
+    let now = now();
     let dark = crate::sessionfade::hides(state, output);
     let Some((v, _)) = (host.view)(state) else {
         return;
