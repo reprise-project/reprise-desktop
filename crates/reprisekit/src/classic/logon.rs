@@ -105,13 +105,20 @@ fn geometry(theme: &Theme, output: Rect) -> Geometry {
 
 pub fn layout(m: &Logon, theme: &Theme, _text: &TextRenderer, output: Rect) -> LogonLayout {
     let g = geometry(theme, output);
+    // Without Shut Down... the row stays right-aligned: OK and Cancel move into its place.
+    let (ok, cancel) = match m.offers_power() {
+        true => (g.ok, g.cancel),
+        false => (g.cancel, g.power),
+    };
     let mut parts = vec![
         (Part::Name, g.name),
         (Part::Password, g.password),
-        (Part::Submit, g.ok),
-        (Part::Cancel, g.cancel),
-        (Part::Power, g.power),
+        (Part::Submit, ok),
+        (Part::Cancel, cancel),
     ];
+    if m.offers_power() {
+        parts.push((Part::Power, g.power));
+    }
     if m.unlocking() && m.offers_switch_user() {
         parts.push((Part::SwitchUser, g.switch));
     }
@@ -246,15 +253,13 @@ pub fn draw(
         Part::Submit | Part::Cancel | Part::Power | Part::SwitchUser => m.focus,
         _ => Part::Submit,
     };
-    let switch = (l.rect(Part::SwitchUser)).map(|r| (Part::SwitchUser, r, strings::switch_user()));
-    for (part, r, caption) in [
-        (Part::Submit, g.ok, strings::ok()),
-        (Part::Cancel, g.cancel, strings::cancel()),
-        (Part::Power, g.power, strings::shut_down()),
-    ]
-    .into_iter()
-    .chain(switch)
-    {
+    for (part, caption) in [
+        (Part::Submit, strings::ok()),
+        (Part::Cancel, strings::cancel()),
+        (Part::Power, strings::shut_down()),
+        (Part::SwitchUser, strings::switch_user()),
+    ] {
+        let Some(r) = l.rect(part) else { continue };
         let enabled = !m.busy || part == Part::Power;
         widgets::draw_button(
             c,

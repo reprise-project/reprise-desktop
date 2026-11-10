@@ -229,7 +229,9 @@ pub fn layout(m: &Logon, theme: &Theme, text: &TextRenderer, output: Rect) -> Lo
         POWER + POWER_GAP + label,
         POWER,
     );
-    parts.push((Part::Power, power));
+    if m.offers_power() {
+        parts.push((Part::Power, power));
+    }
     if m.unlocking() && m.offers_switch_user() {
         let w = POWER + POWER_GAP + text.measure(&switch_label(), false, design_px(theme));
         let x = output.right() - POWER_X - w;

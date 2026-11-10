@@ -164,8 +164,8 @@ pub enum Purpose {
     /// An administrator's, to turn the computer off or restart it while others are logged on.
     Admin(PowerAction),
     /// The one user's password, to unlock their session; Switch User is offered when
-    /// `switch_user`.
-    Unlock { switch_user: bool },
+    /// `switch_user`, the power button and menu when `power`.
+    Unlock { switch_user: bool, power: bool },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -328,10 +328,15 @@ impl Logon {
 
     /// The lock screen for `user`'s session: only their password, the name fixed, their tile
     /// noted Locked, and no other user listed.
-    pub fn locked(interface: Interface, mut user: LogonUser, switch_user: bool) -> Logon {
+    pub fn locked(
+        interface: Interface,
+        mut user: LogonUser,
+        switch_user: bool,
+        power: bool,
+    ) -> Logon {
         user.note = Some(UserNote::Locked);
         let mut m = Logon::new(interface, vec![user], true, None);
-        m.purpose = Purpose::Unlock { switch_user };
+        m.purpose = Purpose::Unlock { switch_user, power };
         m.screen = match interface {
             Interface::Classic => Screen::Typed,
             _ => Screen::Tile(0),
@@ -350,9 +355,15 @@ impl Logon {
     /// screen's when it lists users.
     pub fn offers_switch_user(&self) -> bool {
         match self.purpose {
-            Purpose::Unlock { switch_user } => switch_user,
+            Purpose::Unlock { switch_user, .. } => switch_user,
             _ => !self.users.is_empty(),
         }
+    }
+
+    /// Whether the screen shows the power button and menu: always, except on a lock whose host
+    /// has no power to offer.
+    pub fn offers_power(&self) -> bool {
+        !matches!(self.purpose, Purpose::Unlock { power: false, .. })
     }
 
     /// The dialog's title, where the screen has one.
@@ -391,7 +402,7 @@ impl Logon {
         let tiles = (0..self.users.len()).map(Tile);
         let switch = self.offers_switch_user().then_some(SwitchUser);
         let unlocking = self.unlocking();
-        match (self.interface, self.screen) {
+        let mut stops = match (self.interface, self.screen) {
             (_, Screen::Message) => vec![MessageOk],
             (Interface::Classic, _) if unlocking => [Password]
                 .into_iter()
@@ -418,14 +429,19 @@ impl Logon {
                 .chain(switch)
                 .chain([Power, PowerMenu])
                 .collect(),
+        };
+        if !self.offers_power() {
+            stops.retain(|p| !matches!(p, Power | PowerMenu));
         }
+        stops
     }
 
     /// While busy only Enter on a focused Power does anything.
     pub fn key(&mut self, key: LogonKey) -> Option<LogonAction> {
         if self.busy {
             return (key == LogonKey::Enter && self.focus == Part::Power)
-                .then_some(LogonAction::Power);
+                .then(|| self.press(Part::Power))
+                .flatten();
         }
         match key {
             LogonKey::Edit(k) => {
@@ -481,6 +497,7 @@ impl Logon {
 
     fn press(&mut self, part: Part) -> Option<LogonAction> {
         match part {
+            Part::Power | Part::PowerMenu if !self.offers_power() => None,
             Part::Name => None,
             Part::Password | Part::Submit => self.submit(),
             Part::Cancel => self.leave_admin().or_else(|| self.clear()),

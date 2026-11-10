@@ -8,6 +8,8 @@ Blue locked busy @1 ec938ce50bd113d1
 Blue locked busy @2 5eb6a8c1a8715573
 Blue locked switch user hot @1 a9b1a7b757767012
 Blue locked switch user hot @2 5544366575c6474f
+Blue locked without power @1 5f66c0d22e70d714
+Blue locked without power @2 b5ec2b3922de5e4d
 Blue locked without switch user @1 9404b103a631214e
 Blue locked without switch user @2 b36872a6eb5d19cb
 Olive locked @1 c0db7e7ec5941ea8
@@ -20,6 +22,8 @@ Olive locked busy @1 ab94c5782ba0371e
 Olive locked busy @2 5a0dc5d5b402b775
 Olive locked switch user hot @1 9802ac657fdb2c31
 Olive locked switch user hot @2 3f9457623511092c
+Olive locked without power @1 2d8fb42bfd53ec62
+Olive locked without power @2 af4c9fc436e731f6
 Olive locked without switch user @1 fb3a88c940cceade
 Olive locked without switch user @2 8dc9d2c4c12ea436
 Silver locked @1 2c2df706c172fa4a
@@ -32,6 +36,8 @@ Silver locked busy @1 89668204eec1393c
 Silver locked busy @2 87b4f79ee70c9d48
 Silver locked switch user hot @1 196731eda74dbd5f
 Silver locked switch user hot @2 f12dd7275b84feeb
+Silver locked without power @1 71454e9f707ea14e
+Silver locked without power @2 f0d186551c6a4831
 Silver locked without switch user @1 9877c91af5964928
 Silver locked without switch user @2 2b0b9afdd328a64f
 Slate locked @1 86682695e01a2739
@@ -44,6 +50,8 @@ Slate locked busy @1 b7c2719845504289
 Slate locked busy @2 cd86ac614a0d82f2
 Slate locked switch user hot @1 08f62558cb6bdc8c
 Slate locked switch user hot @2 242c356adf48d666
+Slate locked without power @1 164974e1669e3944
+Slate locked without power @2 a3eb3fa8ed42b4dc
 Slate locked without switch user @1 a0c6250bf5a4487e
 Slate locked without switch user @2 dec1f647f02c4a08
 Sapphire locked @1 c85360f63964001c
@@ -56,6 +64,8 @@ Sapphire locked busy @1 cb2844b249774c01
 Sapphire locked busy @2 cbd14934b37a4158
 Sapphire locked switch user hot @1 eed4882cc4500931
 Sapphire locked switch user hot @2 fae41eeea20ac439
+Sapphire locked without power @1 0b1cec8cb799cf2f
+Sapphire locked without power @2 dce1a2c2aefeae77
 Sapphire locked without switch user @1 1676548beb167d2f
 Sapphire locked without switch user @2 10cb56ec2d044a5d
 Obsidian locked @1 ce33fb8b90247094
@@ -68,6 +78,8 @@ Obsidian locked busy @1 d7b9483c34facdd7
 Obsidian locked busy @2 5f91c2dba45c1def
 Obsidian locked switch user hot @1 95f313cae04ecf35
 Obsidian locked switch user hot @2 70c8500f821d009e
+Obsidian locked without power @1 e5a6439bac0c5cda
+Obsidian locked without power @2 13a29360cde7c3fc
 Obsidian locked without switch user @1 0be53c027209f1be
 Obsidian locked without switch user @2 1e8926b8e64aead2
 Ember locked @1 20ded963973b6197
@@ -80,6 +92,8 @@ Ember locked busy @1 23d742c624d37ded
 Ember locked busy @2 794745c6c8a89e66
 Ember locked switch user hot @1 14e9d7531066d376
 Ember locked switch user hot @2 bb8298717d4fba38
+Ember locked without power @1 9fe0a905c6194455
+Ember locked without power @2 6d3cfc8dad95cad2
 Ember locked without switch user @1 5f061a6a669d9ad7
 Ember locked without switch user @2 54f3f3ed6a49c5ac
 Cobalt locked @1 db16f12460e88cd1
@@ -92,6 +106,8 @@ Cobalt locked busy @1 0954df207c243040
 Cobalt locked busy @2 b944cd0ffe241433
 Cobalt locked switch user hot @1 008097e5e85afa50
 Cobalt locked switch user hot @2 9cbd57552f2604a5
+Cobalt locked without power @1 69a6493ad53bc100
+Cobalt locked without power @2 345fc02f8516eff3
 Cobalt locked without switch user @1 653d7482cf32011e
 Cobalt locked without switch user @2 0fead32b571584d7
 Carbon locked @1 b7ee59972e6016f0
@@ -104,6 +120,8 @@ Carbon locked busy @1 8f1cc6b531619430
 Carbon locked busy @2 dcd2ba3384a89846
 Carbon locked switch user hot @1 1b5b439c23d81335
 Carbon locked switch user hot @2 03498f74a1e68d54
+Carbon locked without power @1 3bd0bb2795d6a517
+Carbon locked without power @2 2e3207525718a962
 Carbon locked without switch user @1 07350f4acbd331a1
 Carbon locked without switch user @2 222de260036c3034
 Steel locked @1 9eaafd27a268a9e7
@@ -116,5 +134,7 @@ Steel locked busy @1 1d895d62d66814ed
 Steel locked busy @2 186988dced9bd437
 Steel locked switch user hot @1 8f2ada38ab16b6a6
 Steel locked switch user hot @2 9c86e62b3711cb5f
+Steel locked without power @1 9ab6501a95473fe4
+Steel locked without power @2 ea578b05f946203d
 Steel locked without switch user @1 0629d5ad897beb60
 Steel locked without switch user @2 13f3dea8fe3b0bd5
