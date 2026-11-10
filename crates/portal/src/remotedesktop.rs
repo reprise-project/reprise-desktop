@@ -820,7 +820,7 @@ mod tests {
                     RemoteDesktop {
                         sessions: sessions.clone(),
                         link: Some(link_on(ours)),
-                        frontend,
+                        frontend: frontend.clone(),
                         notices: notices.clone(),
                         ask,
                     },
@@ -828,6 +828,7 @@ mod tests {
                 .build()
                 .await
                 .unwrap();
+            let _ = frontend.conn.set(portal.clone());
             let watch = crate::remotenotice::watch(portal.clone(), sessions.clone(), notices);
             zruntime::spawn(watch).detach();
             Desk {
