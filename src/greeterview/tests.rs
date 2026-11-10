@@ -3,6 +3,8 @@ use crate::compositor::Host;
 use crate::config::{Action, Keybind};
 use crate::harness::Harness;
 use crate::keys::{KEY_Delete, KEY_r, MOD_ALT, MOD_CTRL};
+use reprisekit::logon::Part;
+use reprisekit::raster::Canvas;
 use repriselogin::greeter::ErrorKind;
 use zeroize::Zeroizing;
 
@@ -153,6 +155,7 @@ fn model(h: &Harness) -> &Logon {
         .login
         .as_ref()
         .expect("the login screen")
+        .view
         .model
 }
 
@@ -166,6 +169,7 @@ fn tap(h: &mut Harness, keys: &[u32]) {
 fn click_part(h: &mut Harness, part: Part) {
     let g = h.state.greeter.login.as_ref().unwrap();
     let r = g
+        .view
         .layout
         .as_ref()
         .unwrap()
@@ -436,7 +440,7 @@ fn presses_beside_the_turn_off_dialog_do_nothing() {
     let (mut h, _d) = login(repriselogin::Interface::Classic);
     click_part(&mut h, Part::Power);
     assert_eq!(h.state.dialogs.views.len(), 1, "the Turn Off dialog");
-    let parts = (h.state.greeter.login.as_ref().unwrap().layout.as_ref())
+    let parts = (h.state.greeter.login.as_ref().unwrap().view.layout.as_ref())
         .unwrap()
         .parts
         .clone();
@@ -539,7 +543,7 @@ fn the_wheel_over_the_tiles_steps_through_them() {
     let users = vec![user("anna"), user("bob"), user("carol")];
     let (mut h, _d) = login_with(repriselogin::Interface::Blue, users, |_| {});
     assert_eq!(model(&h).focus, Part::Tile(0));
-    let r = (h.state.greeter.login.as_ref().unwrap().layout.as_ref())
+    let r = (h.state.greeter.login.as_ref().unwrap().view.layout.as_ref())
         .and_then(|l| l.rect(Part::Tile(0)))
         .unwrap();
     h.pointer_to((r.x + 4) as f64, (r.y + 4) as f64);
@@ -556,15 +560,15 @@ fn every_output_is_covered_and_only_the_first_has_the_screen() {
     let (mut h, _d) = login(repriselogin::Interface::Classic);
     h.output("TEST-2", 800, 600);
     let g = h.state.greeter.login.as_ref().unwrap();
-    assert_eq!(g.covers.len(), 2);
-    for c in &g.covers {
+    assert_eq!(g.view.covers.len(), 2);
+    for c in &g.view.covers {
         assert_eq!(
             h.state.scene.parent(c.tree),
             Some(h.state.layers.background),
             "under any dialog"
         );
     }
-    let screens: Vec<String> = (g.covers.iter())
+    let screens: Vec<String> = (g.view.covers.iter())
         .filter(|c| c.screen.is_some())
         .map(|c| c.output.name())
         .collect();
@@ -573,7 +577,7 @@ fn every_output_is_covered_and_only_the_first_has_the_screen() {
         .find(|o| o.name() == "TEST-1")
         .cloned();
     assert_eq!(
-        g.layout.as_ref().unwrap().output,
+        g.view.layout.as_ref().unwrap().output,
         h.state.layout_box(first.as_ref())
     );
 }
@@ -605,7 +609,7 @@ fn shown_at(interface: repriselogin::Interface, w: i32, h: i32, scale: f64) -> (
     );
     hn.state.update_layout();
     let g = hn.state.greeter.login.as_mut().unwrap();
-    for (i, u) in g.model.users.iter_mut().enumerate() {
+    for (i, u) in g.view.model.users.iter_mut().enumerate() {
         u.picture = Some(userpic::draw(userpic::ALL[i], userpic::SAVED_PX));
     }
     redraw(&mut hn.state);
@@ -615,7 +619,7 @@ fn shown_at(interface: repriselogin::Interface, w: i32, h: i32, scale: f64) -> (
 /// The first output as the scene shows it: the cover's backdrop, then the screen over it.
 fn capture(h: &Harness) -> Canvas {
     let g = h.state.greeter.login.as_ref().unwrap();
-    let o = g.covers[0].output.clone();
+    let o = g.view.covers[0].output.clone();
     let b = h.state.layout_box(Some(&o));
     let s = h.state.draw_scale_at(Some(&o));
     let theme = h.state.config.theme.scaled(s);
@@ -633,7 +637,8 @@ fn capture(h: &Harness) -> Canvas {
             c
         }
     };
-    let (_, screen) = super::screen(&mut g.model.clone(), &theme, &h.state.text, b, s);
+    let (_, screen) =
+        crate::logonview::screen(&mut g.view.model.clone(), &theme, &h.state.text, b, s);
     out.blit_canvas(0, 0, &screen);
     out
 }
@@ -684,14 +689,14 @@ fn render_greeter_preview() {
         }
         let full = t.elapsed() / N;
         let g = h.state.greeter.login.as_ref().unwrap();
-        let o = g.covers[0].output.clone();
+        let o = g.view.covers[0].output.clone();
         let b = h.state.layout_box(Some(&o));
         let theme = h.state.config.theme.scaled(2);
-        let mut m = g.model.clone();
+        let mut m = g.view.model.clone();
         let paint = |m: &mut Logon| {
             let t = std::time::Instant::now();
             for _ in 0..N {
-                super::screen(m, &theme, &h.state.text, b, 2);
+                crate::logonview::screen(m, &theme, &h.state.text, b, 2);
             }
             t.elapsed() / N
         };
@@ -724,14 +729,14 @@ fn the_screen_goes_on_the_greetings_primary_output_while_it_is_connected() {
         });
         h.output("TEST-2", 800, 600);
         let g = h.state.greeter.login.as_ref().unwrap();
-        let screens: Vec<String> = (g.covers.iter())
+        let screens: Vec<String> = (g.view.covers.iter())
             .filter(|c| c.screen.is_some())
             .map(|c| c.output.name())
             .collect();
         assert_eq!(screens, [on], "{named} primary");
         let o = (h.state.scene.outputs().iter()).find(|o| o.name() == on);
         assert_eq!(
-            g.layout.as_ref().unwrap().output,
+            g.view.layout.as_ref().unwrap().output,
             h.state.layout_box(o),
             "{named} primary"
         );
@@ -772,7 +777,7 @@ fn a_background_that_does_not_load_gives_back_the_interfaces_own_look() {
         let default = crate::greeter::default_wallpaper(crate::greeter::interface(interface));
         assert_eq!(h.state.config.wallpaper.image, default, "{interface:?}");
         let g = h.state.greeter.login.as_ref().unwrap();
-        let rect = g.covers[0].rect;
+        let rect = g.view.covers[0].rect;
         assert_eq!(
             h.state.scene.enabled(rect),
             interface == repriselogin::Interface::Classic,
