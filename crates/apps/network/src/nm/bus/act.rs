@@ -24,6 +24,15 @@ pub(super) async fn command(conn: &Connection, cmd: &Cmd) -> Result<Option<NmMsg
     }
 }
 
+/// Refuse to activate a profile that would wait on a secret agent: NetworkManager fails it
+/// without a word. A profile that can't be read is left to `ActivateConnection` to refuse.
+async fn needs_no_agent(conn: &Connection, conn_path: &str, why: &str) -> Result<(), Failure> {
+    match settings_of(conn, conn_path).await {
+        Ok(s) if needs_agent(&s) => Err(why.into()),
+        _ => Ok(()),
+    }
+}
+
 async fn settings_of(
     conn: &Connection,
     conn_path: &str,
@@ -197,7 +206,10 @@ pub(super) async fn act(conn: &Connection, cmd: &Cmd) -> Result<(), Failure> {
         } => {
             let known = connection_for(conn, ssid).await;
             match connect_plan(known.as_deref(), key.as_ref()) {
-                ConnectPlan::Activate(connection) => activate(conn, &connection, device, ap).await,
+                ConnectPlan::Activate(connection) => {
+                    needs_no_agent(conn, &connection, WIFI_NEEDS_AGENT).await?;
+                    activate(conn, &connection, device, ap).await
+                }
                 ConnectPlan::Rekey { conn_path, key } => {
                     let offered = ap_key_mgmt(conn, ap).await;
                     rekey(conn, &conn_path, key, offered).await?;
@@ -243,7 +255,10 @@ pub(super) async fn act(conn: &Connection, cmd: &Cmd) -> Result<(), Failure> {
             }
             activate(conn, "/", device, "/").await
         }
-        Cmd::VpnUp(connection) => activate(conn, connection, "/", "/").await,
+        Cmd::VpnUp(connection) => {
+            needs_no_agent(conn, connection, VPN_NEEDS_AGENT).await?;
+            activate(conn, connection, "/", "/").await
+        }
         Cmd::VpnDown(connection) => {
             let manager = proxy(conn, MANAGER_PATH, NAME).await?;
             let actives = manager

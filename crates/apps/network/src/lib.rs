@@ -976,6 +976,16 @@ impl NetApp {
                 self.dial(device, ap, ssid, None, false);
                 Reply::redraw()
             }
+            chooser::Outcome::NeedsAgent => {
+                let title = self
+                    .snapshot
+                    .devices
+                    .iter()
+                    .find(|d| d.path == device)
+                    .map_or_else(|| "Network Connections".into(), |d| d.shell_name.clone());
+                self.tell(&title, nm::WIFI_NEEDS_AGENT);
+                Reply::redraw_all()
+            }
             chooser::Outcome::Hidden => {
                 self.key = Some(keydlg::KeyDialog::hidden());
                 Reply::redraw_all()

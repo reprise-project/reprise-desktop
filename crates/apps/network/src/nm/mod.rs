@@ -142,8 +142,8 @@ pub struct AccessPoint {
     pub known: bool,
     /// The saved connection has no key NetworkManager can use on its
     /// own: its `psk-flags` leave the passphrase to a secret agent, the
-    /// way plasma-nm and nm-applet keep it in a wallet. Connecting asks
-    /// for the key and writes it into the profile.
+    /// way plasma-nm and nm-applet keep it in a wallet. Reprise runs no
+    /// agent, so it can't connect it.
     pub keyless: bool,
     pub active: bool,
 }
@@ -778,17 +778,82 @@ pub fn plugin_update(
     out
 }
 
-/// `psk-flags` bit 0 (agent-owned) and bit 1 (not saved) both hand the
-/// passphrase to a secret agent, which this desktop has none of.
-pub const PSK_FLAGS_AGENT: u32 = 0x1 | 0x2;
+/// Secret flags agent-owned (0x1) and not saved (0x2): NetworkManager asks a secret agent for
+/// the secret each time it connects. Reprise runs none, so it never writes such a secret into a
+/// profile, and a profile that needs one can't be connected from here.
+pub const AGENT_FLAGS: u32 = 0x1 | 0x2;
+
+/// The message for a Wi-Fi profile whose key [`AGENT_FLAGS`] leave to a secret agent.
+pub const WIFI_NEEDS_AGENT: &str =
+    "This network asks for its key each time it connects, and Reprise can't ask for it yet.";
+/// The message for a VPN whose password or key [`AGENT_FLAGS`] leave to a secret agent.
+pub const VPN_NEEDS_AGENT: &str = "This connection asks for its password or key each time it \
+     connects, and Reprise can't ask for it yet.";
+
+/// `flags` when they leave their secret to a secret agent, else 0.
+pub fn agent_flags(flags: u32) -> u32 {
+    if flags & AGENT_FLAGS != 0 { flags } else { 0 }
+}
 
 /// Whether a profile's security group leaves NetworkManager a key it can
 /// dial with: an open profile, or a PSK one whose `psk-flags` keep the
 /// passphrase in the profile.
 pub fn psk_in_profile(security: &Props) -> bool {
     match text(security, "key-mgmt").as_str() {
-        "wpa-psk" | "sae" => uint(security, "psk-flags") & PSK_FLAGS_AGENT == 0,
+        "wpa-psk" | "sae" => agent_flags(uint(security, "psk-flags")) == 0,
         _ => true,
+    }
+}
+
+/// Whether connecting the saved profile `s` (`GetSettings`) takes a secret its flags leave to a
+/// secret agent: a Wi-Fi key, an 802.1X password or key password, an OpenVPN password or a
+/// WireGuard key. An OpenVPN key's password is left out: the plugin asks for one only when the
+/// key file is encrypted.
+pub fn needs_agent(s: &HashMap<String, Props>) -> bool {
+    let asked = |g: &Props, key: &str| agent_flags(uint(g, key)) != 0;
+    if s.get("802-11-wireless-security")
+        .is_some_and(|g| !psk_in_profile(g))
+    {
+        return true;
+    }
+    if let Some(x) = s.get("802-1x") {
+        let eap = x
+            .get("eap")
+            .and_then(|v| Vec::<String>::try_from(v.clone()).ok())
+            .unwrap_or_default();
+        let key = if eap == ["tls"] {
+            "private-key-password-flags"
+        } else {
+            "password-flags"
+        };
+        if asked(x, key) {
+            return true;
+        }
+    }
+    let conn = s.get("connection");
+    match conn.map(|c| text(c, "type")).as_deref() {
+        Some("vpn") => {
+            let Some(vpn) = s
+                .get("vpn")
+                .filter(|v| text(v, "service-type").ends_with(".openvpn"))
+            else {
+                return false;
+            };
+            let data: Vec<(String, String)> = vpn
+                .get("data")
+                .and_then(|v| HashMap::<String, String>::try_from(v.clone()).ok())
+                .unwrap_or_default()
+                .into_iter()
+                .collect();
+            crate::ovpn::from_data("", &data).needs_agent()
+        }
+        Some("wireguard") => s.get("wireguard").is_some_and(|wg| {
+            asked(wg, "private-key-flags")
+                || dicts(wg, "peers")
+                    .iter()
+                    .any(|p| asked(p, "preshared-key-flags"))
+        }),
+        _ => false,
     }
 }
 
@@ -1184,6 +1249,77 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn a_profile_needs_an_agent_when_a_secret_it_dials_with_is_left_to_one() {
+        let group = |name: &str, entries: Vec<(&str, Variant<'static>)>| {
+            HashMap::from([(name.to_string(), props(entries))])
+        };
+        let wifi = |flags: u32| {
+            group(
+                "802-11-wireless-security",
+                vec![
+                    ("key-mgmt", Variant::from("wpa-psk")),
+                    ("psk-flags", Variant::from(flags)),
+                ],
+            )
+        };
+        assert!(!needs_agent(&wifi(0)));
+        assert!(needs_agent(&wifi(1)) && needs_agent(&wifi(2)));
+        let dot1x = |eap: &str, key: &str, flags: u32| {
+            group(
+                "802-1x",
+                vec![
+                    ("eap", Variant::from(vec![eap.to_string()])),
+                    (key, Variant::from(flags)),
+                ],
+            )
+        };
+        assert!(needs_agent(&dot1x("peap", "password-flags", 2)));
+        assert!(!needs_agent(&dot1x("tls", "password-flags", 2)));
+        assert!(needs_agent(&dot1x("tls", "private-key-password-flags", 1)));
+        let openvpn = |ty: &str, flags: &str| {
+            let mut s = group("connection", vec![("type", Variant::from("vpn"))]);
+            s.extend(group(
+                "vpn",
+                vec![
+                    (
+                        "service-type",
+                        Variant::from("org.freedesktop.NetworkManager.openvpn"),
+                    ),
+                    (
+                        "data",
+                        Variant::from(HashMap::from([
+                            ("connection-type".to_string(), ty.to_string()),
+                            ("password-flags".to_string(), flags.to_string()),
+                        ])),
+                    ),
+                ],
+            ));
+            s
+        };
+        assert!(needs_agent(&openvpn("password", "2")));
+        assert!(!needs_agent(&openvpn("password", "0")));
+        assert!(
+            !needs_agent(&openvpn("tls", "2")),
+            "a certificate login asks no password"
+        );
+        let wireguard = |key: u32, psk: u32| {
+            let mut s = group("connection", vec![("type", Variant::from("wireguard"))]);
+            let peer = HashMap::from([("preshared-key-flags".to_string(), Variant::from(psk))]);
+            s.extend(group(
+                "wireguard",
+                vec![
+                    ("private-key-flags", Variant::from(key)),
+                    ("peers", Variant::from(vec![peer])),
+                ],
+            ));
+            s
+        };
+        assert!(!needs_agent(&wireguard(0, 4)));
+        assert!(needs_agent(&wireguard(1, 4)));
+        assert!(needs_agent(&wireguard(0, 2)));
     }
 
     #[test]

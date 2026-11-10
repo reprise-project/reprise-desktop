@@ -498,7 +498,11 @@ Pick a Wi-Fi network from the list, create a hotspot (its Status counts the
 devices that joined it), write a WireGuard
 tunnel with its own key generator, or import a VPN file. When NetworkManager
 won't show a saved WireGuard key, its field is empty and keeps the key as long
-as no other key is changed.
+as no other key is changed. A network or VPN whose profile leaves its key or
+password to a secret agent (another desktop's wallet, or "ask every time")
+can't be connected from here: Reprise runs no secret agent, so it says so
+instead of saving what you would type, and the VPN's Properties grey that
+field.
 
 An enterprise (802.1X) network, the kind campuses and offices run, asks for
 its login when you pick it: PEAP, TTLS or TLS, an anonymous identity, the

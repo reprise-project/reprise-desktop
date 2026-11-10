@@ -10,7 +10,7 @@ use std::net::IpAddr;
 
 use zbus::Variant;
 
-use crate::nm::{Props, Psk};
+use crate::nm::{AGENT_FLAGS, Props, Psk, agent_flags};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Peer {
@@ -24,6 +24,9 @@ pub struct Peer {
     /// NetworkManager holds a preshared key it did not give out; an empty
     /// `preshared_key` keeps it.
     pub stored_psk: bool,
+    /// The preshared key's flags when they leave it to a secret agent, else 0: the key is then
+    /// never written, and the flags go back as they were.
+    pub psk_flags: u32,
 }
 
 /// One WireGuard connection: the `[Interface]` and every `[Peer]`, plus
@@ -43,18 +46,24 @@ pub struct Config {
     /// NetworkManager holds a private key it did not give out; an empty
     /// `private_key` keeps it.
     pub stored_key: bool,
+    /// The private key's flags when they leave it to a secret agent, else 0, as
+    /// [`Peer::psk_flags`].
+    pub key_flags: u32,
 }
 
-/// What a save says about one secret: a new value, the stored one kept, or none.
+/// What a save says about one secret: a new value, the stored one kept, none, or one a secret
+/// agent keeps under these flags.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Secret<'a> {
     New(&'a str),
     Kept,
     None,
+    Agent(u32),
 }
 
-fn secret(value: &str, stored: bool) -> Secret<'_> {
+fn secret(value: &str, stored: bool, agent: u32) -> Secret<'_> {
     match value.trim() {
+        _ if agent != 0 => Secret::Agent(agent),
         "" if stored => Secret::Kept,
         "" => Secret::None,
         v => Secret::New(v),
@@ -63,13 +72,13 @@ fn secret(value: &str, stored: bool) -> Secret<'_> {
 
 impl Config {
     fn private_secret(&self) -> Secret<'_> {
-        secret(&self.private_key, self.stored_key)
+        secret(&self.private_key, self.stored_key, self.key_flags)
     }
 }
 
 impl Peer {
     fn psk_secret(&self) -> Secret<'_> {
-        secret(&self.preshared_key, self.stored_psk)
+        secret(&self.preshared_key, self.stored_psk, self.psk_flags)
     }
 }
 
@@ -320,7 +329,9 @@ pub fn check(cfg: &Config) -> Option<Problem> {
             "The interface name must be 1 to 15 characters, with no spaces, / or :.",
         );
     }
-    if cfg.private_secret() != Secret::Kept && decode_key(&cfg.private_key).is_none() {
+    if !matches!(cfg.private_secret(), Secret::Kept | Secret::Agent(_))
+        && decode_key(&cfg.private_key).is_none()
+    {
         return bad(
             Field::PrivateKey,
             "The private key must be a 44-character WireGuard key. Click Generate for a new one.",
@@ -362,7 +373,8 @@ pub fn check(cfg: &Config) -> Option<Problem> {
                 &format!("Peer {n}'s public key must be a 44-character WireGuard key."),
             );
         }
-        if !p.preshared_key.is_empty() && decode_key(&p.preshared_key).is_none() {
+        if p.psk_flags == 0 && !p.preshared_key.is_empty() && decode_key(&p.preshared_key).is_none()
+        {
             return bad(
                 Field::PresharedKey(i),
                 &format!(
@@ -388,8 +400,6 @@ pub fn check(cfg: &Config) -> Option<Problem> {
 
 pub type Settings = HashMap<String, HashMap<String, Variant<'static>>>;
 
-/// A secret flag: the secret is never saved, so there is nothing to keep.
-const SECRET_NOT_SAVED: u32 = 0x2;
 /// `preshared-key-flags` for a peer with no preshared key: not required,
 /// so NetworkManager asks no secret agent for one. It is also the flags'
 /// value when a peer's settings leave them out.
@@ -398,7 +408,7 @@ const SECRET_NOT_REQUIRED: u32 = 0x4;
 /// `cfg` as NetworkManager's setting groups. With an `owner` the profile
 /// is that login's own (`settings.modify.own`), else system-wide. Every
 /// secret goes in with flags 0, so NetworkManager keeps it itself; a kept
-/// one goes in as its flags alone.
+/// one, or one an agent keeps, goes in as its flags alone.
 pub fn settings(cfg: &Config, owner: Option<&str>) -> Settings {
     let mut connection: HashMap<String, Variant<'static>> = HashMap::from([
         ("id".to_string(), Variant::from(cfg.name.trim().to_string())),
@@ -449,12 +459,18 @@ pub fn settings(cfg: &Config, owner: Option<&str>) -> Settings {
                     m.insert("preshared-key".into(), Variant::from(k.to_string()));
                     m.insert("preshared-key-flags".into(), Variant::from(0u32));
                 }
+                Secret::Agent(flags) => {
+                    m.insert("preshared-key-flags".into(), Variant::from(flags));
+                }
             }
             m
         })
         .collect();
     let mut wireguard: HashMap<String, Variant<'static>> = HashMap::from([
-        ("private-key-flags".to_string(), Variant::from(0u32)),
+        (
+            "private-key-flags".to_string(),
+            Variant::from(cfg.key_flags),
+        ),
         ("peers".to_string(), Variant::from(peers)),
     ]);
     if let Secret::New(k) = cfg.private_secret() {
@@ -624,6 +640,7 @@ pub fn from_settings(
     let conn = group("connection");
     let wg = group("wireguard");
     let secret = secrets.and_then(|s| s.get("wireguard"));
+    let key_flags = agent_flags(uint(wg, "private-key-flags").unwrap_or(0));
     let secret_peers: HashMap<String, String> = secret
         .map(|s| {
             dicts(s, "peers")
@@ -638,14 +655,14 @@ pub fn from_settings(
             let public_key = text(p, "public-key");
             let flags = uint(p, "preshared-key-flags").unwrap_or(SECRET_NOT_REQUIRED);
             Peer {
-                stored_psk: secrets.is_none()
-                    && flags & (SECRET_NOT_SAVED | SECRET_NOT_REQUIRED) == 0,
+                stored_psk: secrets.is_none() && flags & (AGENT_FLAGS | SECRET_NOT_REQUIRED) == 0,
                 preshared_key: Psk::new(
                     secret_peers
                         .get(&public_key)
                         .map(String::as_str)
                         .unwrap_or_default(),
                 ),
+                psk_flags: agent_flags(flags),
                 public_key,
                 endpoint: text(p, "endpoint"),
                 allowed_ips: strings(p, "allowed-ips"),
@@ -693,8 +710,8 @@ pub fn from_settings(
             .and_then(|p| u16::try_from(p).ok()),
         mtu: uint(wg, "mtu").filter(|&m| m != 0),
         peers,
-        stored_key: secrets.is_none()
-            && uint(wg, "private-key-flags").unwrap_or(0) & SECRET_NOT_SAVED == 0,
+        stored_key: secrets.is_none() && key_flags == 0,
+        key_flags,
     }
 }
 
@@ -957,6 +974,24 @@ AllowedIPs = 0.0.0.0/0
     }
 
     #[test]
+    fn keys_an_agent_keeps_are_never_written_and_keep_their_flags() {
+        let mut c = good();
+        c.key_flags = 2;
+        c.peers[0].psk_flags = 1;
+        c.peers[0].preshared_key = Psk::new(KEY_A);
+        assert_eq!(check(&c), None);
+        let s = settings(&c, None);
+        assert!(!s["wireguard"].contains_key("private-key"));
+        assert_eq!(s["wireguard"]["private-key-flags"], Variant::from(2u32));
+        let peers =
+            Vec::<HashMap<String, Variant>>::try_from(s["wireguard"]["peers"].clone()).unwrap();
+        assert!(!peers[0].contains_key("preshared-key"));
+        assert_eq!(peers[0]["preshared-key-flags"], Variant::from(1u32));
+        c.private_key = Psk::new("");
+        assert_eq!(check(&c), None, "an agent's key needs none typed");
+    }
+
+    #[test]
     fn a_kept_key_beside_a_changed_one_is_a_problem() {
         let mut c = kept();
         c.peers[0].preshared_key = Psk::new(KEY_A);
@@ -1004,7 +1039,13 @@ AllowedIPs = 0.0.0.0/0
             [true, false, false],
             "flags 0 store a key; none (not required) and not-saved do not"
         );
-        assert!(!from_settings(&profile(Some(2)), None).stored_key);
+        let flags: Vec<u32> = c.peers.iter().map(|p| p.psk_flags).collect();
+        assert_eq!(flags, [0, 0, 2], "only an agent's flags are carried");
+        for f in [1, 2] {
+            let agent = from_settings(&profile(Some(f)), None);
+            assert!(!agent.stored_key, "flags {f}");
+            assert_eq!(agent.key_flags, f);
+        }
         let given = from_settings(&profile(None), Some(&HashMap::new()));
         assert!(!given.stored_key, "secrets given out leave nothing hidden");
         assert!(given.peers.iter().all(|p| !p.stored_psk));
