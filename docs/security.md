@@ -1425,6 +1425,14 @@ sharing and remote control grants yet.
   a secret to a secret agent (agent-owned or not saved) keeps them: Reprise
   never writes that secret, greys its field, and refuses to connect the
   profile with a note, since it runs no agent to answer NetworkManager.
+- **Bluetooth pairing.** Reprise's pairing agent answers only bluetoothd. A
+  pairing request Settings didn't start (a nearby device pairing from its
+  side, or a program calling `Device1.Pair`) opens a box whose Enter
+  refuses, and accepting it pairs without trusting the device, so it can't
+  connect a service (keyboard input included) until you connect it or tick
+  "Connect to this device automatically". A second request waits for the
+  open box to close, so a click meant for one device's box can't land on
+  another's.
 - **Ending the session.** With `[session] end_processes = true` (the
   default), Log Off stops the `app-reprise-*` scopes and, after a display
   manager login, terminates the login session, so windowless programs Reprise

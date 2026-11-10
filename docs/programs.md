@@ -525,7 +525,11 @@ login above). Its profile is marked hidden so NetworkManager looks for it by nam
 
 Pair with the Add Bluetooth Device Wizard, connect and disconnect, rename a
 device, see its battery, and turn Bluetooth or discoverability on and off.
-Pairing requests from a device show up as a prompt.
+Pairing requests from a device show up as a prompt naming it by name and
+address, one at a time. A request you didn't start (the Add wizard or a
+Connect) starts on "Do not allow it" or "No, they are different", and an
+accepted one pairs without trusting the device unless you tick "Connect to
+this device automatically".
 
 The tray icon's menu lists the connected devices with their battery
 ("Headphones — 80%"), and a click on one opens its Properties; its tooltip
