@@ -3,8 +3,10 @@
 
 use std::fs::File;
 use std::io::{self, Read};
+use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use crate::escapes;
 
@@ -57,11 +59,10 @@ pub fn osc7_path(uri: &str, local: &str) -> Option<PathBuf> {
     Some(std::ffi::OsString::from_vec(out).into())
 }
 
-/// The directory an OSC 7 `uri` names when it is `shell_cwd` itself, by the name the shell gave
-/// it; a host reached through ssh reports its own directories, which this machine may also have.
-pub fn osc7_dir(uri: &str, local: &str, shell_cwd: &Path) -> Option<PathBuf> {
+/// `path` from an OSC 7 when it is `shell_cwd` itself, by the name the shell gave it; a host
+/// reached through ssh reports its own directories, which this machine may also have.
+pub fn osc7_dir(path: PathBuf, shell_cwd: &Path) -> Option<PathBuf> {
     use std::os::unix::fs::MetadataExt;
-    let path = osc7_path(uri, local)?;
     let (at, cwd) = (
         std::fs::metadata(&path).ok()?,
         std::fs::metadata(shell_cwd).ok()?,
@@ -69,8 +70,32 @@ pub fn osc7_dir(uri: &str, local: &str, shell_cwd: &Path) -> Option<PathBuf> {
     (at.is_dir() && at.dev() == cwd.dev() && at.ino() == cwd.ino()).then_some(path)
 }
 
+/// How long a new tab waits on the stat of its directory; a dead network mount never answers.
+const CHECK_WAIT: Duration = Duration::from_millis(200);
+
+/// Where a tab opened from shell `pid`'s starts: `reported`, its last OSC 7, when that is the
+/// shell's own directory, else the shell's; home when the stat takes past [`CHECK_WAIT`].
+pub fn start_dir(reported: Option<PathBuf>, pid: u32) -> Option<PathBuf> {
+    let found = within(CHECK_WAIT, move || {
+        let shell = PathBuf::from(format!("/proc/{pid}/cwd"));
+        let named = reported.and_then(|p| osc7_dir(p, &shell));
+        named.or_else(|| cwd_of(pid).filter(|d| d.is_dir()))
+    });
+    found.unwrap_or_else(|| std::env::var_os("HOME").map(PathBuf::from))
+}
+
+/// `f`'s result from a thread of its own, or None once `wait` passes; the thread is left behind.
+fn within<T: Send + 'static>(wait: Duration, f: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let spawned = std::thread::Builder::new()
+        .name("reprise-terminal-cwd".into())
+        .spawn(move || tx.send(f()));
+    spawned.ok()?;
+    rx.recv_timeout(wait).ok()
+}
+
 /// The PTY's reader: passes its bytes through an [`escapes::Filter`] and keeps the last OSC 7
-/// directory in `cwd`.
+/// path in `cwd` as reported, touching no file system, since this thread also writes the keys.
 pub struct Reader {
     file: File,
     /// The tab's shell: an OSC 7 counts only while it holds the foreground.
@@ -95,6 +120,12 @@ impl Reader {
             cwd,
         }
     }
+
+    fn shell_in_front(&self) -> bool {
+        // SAFETY: tcgetpgrp only reads the foreground group of the open PTY master `file` holds.
+        let pgrp = unsafe { libc::tcgetpgrp(self.file.as_raw_fd()) };
+        u32::try_from(pgrp).is_ok_and(|g| g == self.shell)
+    }
 }
 
 impl Read for Reader {
@@ -107,12 +138,8 @@ impl Read for Reader {
             self.sent = 0;
             let uri = self.filter.feed(&buf[..n], &mut self.out);
             if let Some(uri) = uri
-                && fg_pgrp(self.shell) == Some(self.shell)
-                && let Some(path) = osc7_dir(
-                    &uri,
-                    &self.host,
-                    Path::new(&format!("/proc/{}/cwd", self.shell)),
-                )
+                && self.shell_in_front()
+                && let Some(path) = osc7_path(&uri, &self.host)
             {
                 *self.cwd.lock().unwrap() = Some(path);
             }
@@ -203,6 +230,54 @@ mod tests {
         assert_eq!(got, sent, "a 4-byte buffer takes every waiting byte");
     }
 
+    /// The PTY thread also writes the keys typed, so a stat on a dead mount there would freeze the
+    /// tab: a directory that doesn't exist still lands as reported.
+    #[test]
+    fn the_reader_keeps_an_osc7_unchecked() {
+        use alacritty_terminal::event::WindowSize;
+        use alacritty_terminal::tty::{self, Options, Shell};
+        let script = r"printf '\033]7;file:///nonexistent-reprise\007'; exec sleep 5";
+        let options = Options {
+            shell: Some(Shell::new(
+                "/bin/sh".into(),
+                vec!["-c".into(), script.into()],
+            )),
+            working_directory: None,
+            drain_on_exit: false,
+            env: Default::default(),
+        };
+        let size = WindowSize {
+            num_lines: 24,
+            num_cols: 80,
+            cell_width: 8,
+            cell_height: 16,
+        };
+        let pty = tty::new(&options, size, 0).unwrap();
+        let cwd = Arc::new(Mutex::new(None));
+        let file = pty.file().try_clone().unwrap();
+        let mut r = Reader::new(file, pty.child().id(), String::new(), cwd.clone());
+        let mut buf = [0u8; 256];
+        for _ in 0..500 {
+            if cwd.lock().unwrap().is_some() {
+                break;
+            }
+            match r.read(&mut buf) {
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
+                Err(_) => break,
+                Ok(_) => {}
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(*cwd.lock().unwrap(), Some("/nonexistent-reprise".into()));
+    }
+
+    #[test]
+    fn a_check_past_its_wait_gives_up() {
+        let slow = || std::thread::sleep(Duration::from_secs(1));
+        assert_eq!(within(Duration::from_millis(20), slow), None);
+        assert_eq!(within(Duration::from_secs(5), || 7), Some(7));
+    }
+
     #[test]
     fn osc7_paths_are_local_and_decoded() {
         let p = |u: &str| osc7_path(u, "box");
@@ -221,7 +296,7 @@ mod tests {
         std::fs::create_dir(&other).unwrap();
         let link = tmp.path().join("link");
         std::os::unix::fs::symlink(&here, &link).unwrap();
-        let at = |uri: String| osc7_dir(&uri, "box", &here);
+        let at = |uri: String| osc7_path(&uri, "box").and_then(|p| osc7_dir(p, &here));
         let (h, o, l) = (here.display(), other.display(), link.display());
         assert_eq!(at(format!("file://{h}")), Some(here.clone()));
         assert_eq!(

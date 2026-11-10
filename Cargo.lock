@@ -4717,6 +4717,7 @@ name = "reprise-terminal"
 version = "0.1.0"
 dependencies = [
  "alacritty_terminal",
+ "libc",
  "log",
  "polling",
  "repriseapp",
