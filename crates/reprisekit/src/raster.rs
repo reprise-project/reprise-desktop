@@ -101,6 +101,21 @@ fn mix_px(a: u32, moves: impl Iterator<Item = (u32, u32)> + Clone) -> u32 {
     (ch(24).max(r).max(g).max(b) << 24) | (r << 16) | (g << 8) | b
 }
 
+/// [`mix_px`] of one or two moves (a level of 0 adds none) written out, for the crossfades each
+/// frame of a transition runs.
+#[inline]
+fn mix2_px(a: u32, (b, lb): (u32, u32), (c, lc): (u32, u32)) -> u32 {
+    let (lb, lc) = (lb as i32, lc as i32);
+    let ch = |shift: u32| {
+        let x = ((a >> shift) & 0xFF) as i32;
+        let moved =
+            lb * (((b >> shift) & 0xFF) as i32 - x) + lc * (((c >> shift) & 0xFF) as i32 - x);
+        (255 * x + moved + 127).div_euclid(255).clamp(0, 255) as u32
+    };
+    let (r, g, b) = (ch(16), ch(8), ch(0));
+    (ch(24).max(r).max(g).max(b) << 24) | (r << 16) | (g << 8) | b
+}
+
 impl Canvas {
     pub fn new(width: u32, height: u32) -> Self {
         Canvas::with_scale(width, height, 1)
@@ -411,11 +426,35 @@ impl Canvas {
         let r = r.intersect(&self.bounds());
         let s = self.scale;
         let dw = (self.width as i32 * s) as usize;
-        for y in r.y * s..(r.y + r.height) * s {
-            for x in r.x * s..(r.x + r.width) * s {
-                let i = y as usize * dw + x as usize;
-                let moves = levels.iter().map(|&(c, l)| (c.pixels[i], l));
-                self.pixels[i] = mix_px(self.pixels[i], moves);
+        let (x0, x1) = ((r.x * s) as usize, ((r.x + r.width) * s) as usize);
+        // A pixel all of them share stays as it is; one or two canvases (a crossfade) go row by row.
+        for y in (r.y * s..(r.y + r.height) * s).map(|y| y as usize * dw) {
+            let row = y + x0..y + x1;
+            if let [(b, lb)] | [(b, lb), (_, 0)] = levels.as_slice() {
+                let ours = self.pixels[row.clone()].iter_mut();
+                for (a, &pb) in ours.zip(&b.pixels[row]) {
+                    if pb != *a {
+                        *a = mix2_px(*a, (pb, *lb), (0, 0));
+                    }
+                }
+                continue;
+            }
+            if let &[(b, lb), (c, lc)] = levels.as_slice() {
+                let ours = self.pixels[row.clone()].iter_mut();
+                let theirs = b.pixels[row.clone()].iter().zip(&c.pixels[row]);
+                for (a, (&pb, &pc)) in ours.zip(theirs) {
+                    if pb != *a || pc != *a {
+                        *a = mix2_px(*a, (pb, lb), (pc, lc));
+                    }
+                }
+                continue;
+            }
+            for i in row {
+                let a = self.pixels[i];
+                if levels.iter().any(|(c, _)| c.pixels[i] != a) {
+                    let moves = levels.iter().map(|&(c, l)| (c.pixels[i], l));
+                    self.pixels[i] = mix_px(a, moves);
+                }
             }
         }
     }
@@ -440,7 +479,9 @@ impl Canvas {
             for x in dst.x * s..(dst.x + dst.width) * s {
                 let i = y as usize * dw + x as usize;
                 let j = (y - dy * s) as usize * dw + (x - dx * s) as usize;
-                self.pixels[i] = mix_px(self.pixels[i], std::iter::once((other.pixels[j], l)));
+                if other.pixels[j] != self.pixels[i] {
+                    self.pixels[i] = mix2_px(self.pixels[i], (other.pixels[j], l), (0, 0));
+                }
             }
         }
     }
