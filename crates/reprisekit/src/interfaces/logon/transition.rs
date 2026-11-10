@@ -22,6 +22,9 @@ pub struct Transition {
     was: Option<Canvas>,
     now: Canvas,
     rect: Rect,
+    /// How far below its place a slice starts, device px; the rect keeps this much under the
+    /// screen after.
+    rise: i32,
     flight: Option<Flight>,
 }
 
@@ -50,9 +53,14 @@ pub struct Drawn<'a> {
 }
 
 impl Drawn<'_> {
+    fn size(&self) -> (u32, u32) {
+        let (o, s) = (self.l.output, self.s);
+        ((o.width * s) as u32, (o.height * s) as u32)
+    }
+
     fn canvas(&self, m: &Logon, l: &LogonLayout, show: Show) -> Canvas {
-        let (o, s) = (l.output, self.s);
-        let mut c = Canvas::new((o.width * s) as u32, (o.height * s) as u32);
+        let ((w, h), s) = (self.size(), self.s);
+        let mut c = Canvas::new(w, h);
         let text = self.text.for_output(s);
         match m.interface {
             Interface::Classic => crate::classic::logon::draw(&mut c, m, l, self.theme, text, s),
@@ -105,6 +113,12 @@ fn join(a: Rect, b: Rect) -> Rect {
 impl Transition {
     /// `motion` on the screen `d` draws; None when it shows at once or changes nothing.
     pub fn begin(motion: &Motion, d: &Drawn) -> Option<Transition> {
+        Transition::begin_over(motion, d, None)
+    }
+
+    /// [`Transition::begin`] with `shown`, the canvas the screen before showed, standing in for
+    /// that screen where no frame flies off it.
+    pub fn begin_over(motion: &Motion, d: &Drawn, shown: Option<Canvas>) -> Option<Transition> {
         let plan = plan(motion.change, d)?;
         let (was_m, was_l) = d.before(motion);
         let flight = plan.carried.and_then(|(part, ms)| {
@@ -112,8 +126,12 @@ impl Transition {
             let to = glass::pose(d.m, d.l, d.theme, d.s, part)?;
             Some(Flight { part, from, to, ms })
         });
+        let size = |c: &Canvas| (c.width, c.height) == d.size();
+        let shown = shown.filter(|c| flight.is_none() && size(c));
         let show = flight.as_ref().map_or(Show::All, |f| Show::AllBut(f.part));
-        let was = plan.out.map(|_| d.canvas(&was_m, &was_l, show));
+        let was = plan
+            .out
+            .map(|_| shown.unwrap_or_else(|| d.canvas(&was_m, &was_l, show)));
         Transition::build(motion.change, plan, d, was, flight, Rect::default())
     }
 
@@ -168,6 +186,7 @@ impl Transition {
             was,
             now,
             rect,
+            rise,
             flight,
         })
     }
@@ -181,7 +200,10 @@ impl Transition {
         {
             f.to = to;
         }
-        let changed = self.base.differing_rect(&self.now);
+        let mut changed = self.base.differing_rect(&self.now);
+        if !changed.is_empty() {
+            changed.height += self.rise;
+        }
         self.rect = join(self.rect, changed).intersect(&self.base.bounds());
     }
 
@@ -204,6 +226,25 @@ impl Transition {
     /// screen); `m` is the screen after. Returns the rect drawn.
     pub fn frame(&self, c: &mut Canvas, m: &Logon, at: u32) -> Rect {
         self.compose(c, m, at, true);
+        self.rect
+    }
+
+    /// The screen after at rest, the canvas a host shows under the frames.
+    pub fn rest(&self, m: &Logon) -> Canvas {
+        let mut c = self.now.clone();
+        if let Some(f) = &self.flight {
+            glass::draw_posed(&mut c, m, f.part, &f.to, self.s);
+        }
+        c
+    }
+
+    /// The screen after at rest, drawn into [`Transition::rect`] of `c` (the canvas the frames
+    /// drew into), its changes since `refresh_now` included. Returns the rect drawn.
+    pub fn settle(&self, c: &mut Canvas, m: &Logon) -> Rect {
+        copy_in(c, &self.now, self.rect);
+        if let Some(f) = &self.flight {
+            glass::draw_posed(c, m, f.part, &f.to, self.s);
+        }
         self.rect
     }
 
