@@ -4,7 +4,7 @@
 use crate::mutex::lock;
 use std::collections::HashMap;
 use std::io::Read;
-use std::os::fd::{AsFd, AsRawFd};
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use zbus::Connection;
@@ -33,62 +33,89 @@ async fn identity_under(conn: &Connection, peer: &str, proc: &Path) -> AppIdenti
     let Ok(Some(fd)) = process_fd(conn, peer).await else {
         return AppIdentity::Unknown;
     };
-    let Some(pid) = pid_of(&fd) else {
-        return AppIdentity::Unknown;
-    };
-    let seen = Seen::read(&proc.join(pid.to_string()));
-    // As in `sandboxed_under`: a pidfd still showing `pid` after the reads means they were the
-    // peer's.
-    match pid_of(&fd) == Some(pid) {
-        true => seen.identity(),
-        false => AppIdentity::Unknown,
+    match pid_of(&fd).and_then(|pid| i32::try_from(pid).ok()) {
+        Some(pid) => placement(fd.as_fd(), pid, proc).into(),
+        None => AppIdentity::Unknown,
     }
 }
 
-/// What `/proc/<pid>` showed of a process. The rules are the compositor's sandbox filter's
-/// (docs/security.md, "Sandboxed programs"), which a non-dumpable process passes on its cgroup.
+impl From<Placement> for AppIdentity {
+    fn from(placement: Placement) -> Self {
+        match placement {
+            Placement::Host { desktop_id } => AppIdentity::Host { desktop_id },
+            Placement::Flatpak {
+                app_id: Some(app_id),
+            }
+            | Placement::Snap {
+                app_id: Some(app_id),
+            } => AppIdentity::Sandboxed { app_id },
+            _ => AppIdentity::Unknown,
+        }
+    }
+}
+
+/// Where a process runs, by the rules of docs/security.md, "Sandboxed programs". The compositor's
+/// sandbox filter and [`app_identity`] both read it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Placement {
+    /// Outside any sandbox; `desktop_id` names the Reprise app scope it runs in (no `.desktop`).
+    Host { desktop_id: Option<String> },
+    /// Its root holds Flatpak's `/.flatpak-info`, or it runs in an `app-flatpak-*` scope; `app_id`
+    /// is None when neither names an app.
+    Flatpak { app_id: Option<String> },
+    /// A strict or devmode snap: a `snap.*` AppArmor profile, else a `snap.*` scope; `app_id`,
+    /// `<snap>_<app>`, is None when neither names an app.
+    Snap { app_id: Option<String> },
+    /// Gone by the time it was read, or hiding its root inside a pid namespace.
+    Unknown,
+}
+
+/// Where the process `pidfd` names, `pid` here, runs, read from `proc` (`/proc` outside tests).
+/// The reads count only if it still runs after them: its pidfd unreaped (so `pid` was not
+/// reused), no zombie.
+pub fn placement(pidfd: BorrowedFd<'_>, pid: i32, proc: &Path) -> Placement {
+    let Ok(dir) = std::fs::File::open(proc.join(pid.to_string())) else {
+        return Placement::Unknown;
+    };
+    let root = open_at(&dir, c"root", libc::O_PATH | libc::O_DIRECTORY);
+    let seen = Seen {
+        flatpak_info: root.as_ref().and_then(flatpak_info_at),
+        cgroup: read_at(&dir, c"cgroup"),
+        label: read_at(&dir, c"attr/apparmor/current"),
+        pid_namespaced: read_at(&dir, c"status").map(|s| pid_namespaced(&s)),
+    };
+    let running = read_at(&dir, c"stat").is_some_and(|s| runs(&s));
+    match running && alive(pidfd) {
+        true => seen.placement(),
+        false => Placement::Unknown,
+    }
+}
+
+/// What `/proc/<pid>` showed of a live process. A non-dumpable process hides its root and
+/// AppArmor label; its cgroup and status stay readable.
 #[derive(Debug, Default)]
 struct Seen {
-    /// The text of the `/.flatpak-info` at its root: Some(None) when there is none, an empty text
-    /// when it can't be read, None when the root can't be opened.
+    /// The text of the `/.flatpak-info` at its root, empty when it can't be read; Some(None)
+    /// when there is none, None when that can't be told.
     flatpak_info: Option<Option<String>>,
     cgroup: Option<String>,
     label: Option<String>,
     /// Whether it runs in a pid namespace of its own, as bubblewrap puts every Flatpak app.
     pid_namespaced: Option<bool>,
-    /// Neither a zombie nor dead.
-    running: bool,
 }
 
 impl Seen {
-    fn read(dir: &Path) -> Seen {
-        let text = |name: &str| std::fs::read_to_string(dir.join(name)).ok();
-        Seen {
-            flatpak_info: flatpak_info(&dir.join("root/.flatpak-info")),
-            cgroup: text("cgroup"),
-            label: text("attr/apparmor/current"),
-            pid_namespaced: text("status").map(|s| pid_namespaced(&s)),
-            running: text("stat").is_some_and(|s| runs(&s)),
-        }
-    }
-
-    fn identity(&self) -> AppIdentity {
-        let sandboxed = |app_id: Option<String>| {
-            app_id.map_or(AppIdentity::Unknown, |app_id| AppIdentity::Sandboxed {
-                app_id,
-            })
-        };
-        if !self.running {
-            return AppIdentity::Unknown;
-        }
+    fn placement(&self) -> Placement {
         let scopes = || self.cgroup.as_deref().into_iter().flat_map(units);
         if let Some(Some(info)) = &self.flatpak_info {
-            return sandboxed(app_of_flatpak_info(info));
+            let app_id = app_of_flatpak_info(info);
+            return Placement::Flatpak { app_id };
         }
         if let Some(unit) =
             scopes().find(|u| u.starts_with("app-flatpak-") && u.ends_with(".scope"))
         {
-            return sandboxed(flatpak_scope_app(unit));
+            let app_id = flatpak_scope_app(unit);
+            return Placement::Flatpak { app_id };
         }
         // A classic snap runs `unconfined` in a snap scope; only without a label does the scope
         // decide.
@@ -98,15 +125,15 @@ impl Seen {
                 .map(snap_of_scope),
         };
         if let Some(app_id) = snap {
-            return sandboxed(app_id);
+            return Placement::Snap { app_id };
         }
-        let host = AppIdentity::Host {
+        let host = Placement::Host {
             desktop_id: scopes().find_map(scope_app),
         };
         match self.flatpak_info {
             Some(_) => host,
             None if self.cgroup.is_some() && self.pid_namespaced == Some(false) => host,
-            None => AppIdentity::Unknown,
+            None => Placement::Unknown,
         }
     }
 }
@@ -114,25 +141,62 @@ impl Seen {
 /// The most of a `.flatpak-info` read; Flatpak writes a few KiB.
 const INFO_BYTES: u64 = 64 * 1024;
 
-/// [`Seen::flatpak_info`] from `path`, opened without following a link or blocking on a FIFO.
-fn flatpak_info(path: &Path) -> Option<Option<String>> {
-    use std::os::unix::fs::OpenOptionsExt;
-    let opened = std::fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW | libc::O_NOCTTY)
-        .open(path);
-    let file = match opened {
-        Ok(file) => file,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Some(None),
-        Err(e) if e.raw_os_error() == Some(libc::ELOOP) => return Some(Some(String::new())),
-        Err(_) => return None,
+/// [`Seen::flatpak_info`] under the root `root`. Whether it is there is told without following a
+/// link; its text is read only from a regular file, opened without blocking on a FIFO.
+fn flatpak_info_at(root: &OwnedFd) -> Option<Option<String>> {
+    const INFO: &std::ffi::CStr = c".flatpak-info";
+    // SAFETY: an all-zero stat is valid for fstatat to fill.
+    let mut st: libc::stat = unsafe { std::mem::zeroed() };
+    // SAFETY: `INFO` is NUL-terminated, `st` live, `root` an open directory.
+    let r = unsafe {
+        libc::fstatat(
+            root.as_raw_fd(),
+            INFO.as_ptr(),
+            &mut st,
+            libc::AT_SYMLINK_NOFOLLOW,
+        )
     };
+    if r != 0 {
+        let absent = std::io::Error::last_os_error().raw_os_error() == Some(libc::ENOENT);
+        return absent.then_some(None);
+    }
+    let flags = libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_NOCTTY;
     let mut text = String::new();
-    let regular = file.metadata().is_ok_and(|m| m.is_file());
-    if !regular || file.take(INFO_BYTES).read_to_string(&mut text).is_err() {
-        text.clear();
+    if let Some(fd) = open_at(root, INFO, flags) {
+        let file = std::fs::File::from(fd);
+        let regular = file.metadata().is_ok_and(|m| m.is_file());
+        if !regular || file.take(INFO_BYTES).read_to_string(&mut text).is_err() {
+            text.clear();
+        }
     }
     Some(Some(text))
+}
+
+fn open_at(dir: &impl AsRawFd, name: &std::ffi::CStr, flags: libc::c_int) -> Option<OwnedFd> {
+    // SAFETY: `name` is NUL-terminated and `dir` an open directory.
+    let fd = unsafe { libc::openat(dir.as_raw_fd(), name.as_ptr(), flags | libc::O_CLOEXEC) };
+    // SAFETY: a fresh fd nothing else owns.
+    (fd >= 0).then(|| unsafe { OwnedFd::from_raw_fd(fd) })
+}
+
+fn read_at(dir: &impl AsRawFd, name: &std::ffi::CStr) -> Option<String> {
+    let fd = open_at(dir, name, libc::O_RDONLY)?;
+    std::io::read_to_string(std::fs::File::from(fd)).ok()
+}
+
+/// Whether the process `pidfd` names has not been reaped.
+fn alive(pidfd: BorrowedFd<'_>) -> bool {
+    // SAFETY: signal 0 through a pidfd only checks that the process exists.
+    let r = unsafe {
+        libc::syscall(
+            libc::SYS_pidfd_send_signal,
+            pidfd.as_raw_fd(),
+            0,
+            std::ptr::null::<libc::siginfo_t>(),
+            0,
+        )
+    };
+    r == 0
 }
 
 /// `name` in the `[Application]` group of a `.flatpak-info` or instance `info` key file.
@@ -531,66 +595,128 @@ pub(crate) mod tests {
         });
     }
 
-    fn seen(
-        info: Option<Option<&str>>,
-        cgroup: &str,
-        label: Option<&str>,
-        ns: bool,
-    ) -> AppIdentity {
+    #[test]
+    fn a_flatpak_info_that_cant_be_read_still_marks_a_sandbox() {
+        let Some(bus) = bus() else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
+        let proc = proc_showing(&[("cgroup", USER), ("status", "NSpid:\t4242\n")]);
+        let info = proc
+            .path()
+            .join(std::process::id().to_string())
+            .join("root/.flatpak-info");
+        // A socket can't be opened, even by root.
+        let _socket = std::os::unix::net::UnixListener::bind(&info).unwrap();
+        assert_eq!(identity_on(&bus, proc.path()).0, AppIdentity::Unknown);
+    }
+
+    fn seen(info: Option<Option<&str>>, cgroup: &str, label: Option<&str>, ns: bool) -> Placement {
         Seen {
             flatpak_info: info.map(|i| i.map(String::from)),
             cgroup: Some(cgroup.into()),
             label: label.map(Into::into),
             pid_namespaced: Some(ns),
-            running: true,
         }
-        .identity()
+        .placement()
     }
 
     #[test]
-    fn a_process_is_named_by_its_root_scope_or_profile() {
-        let sandboxed = |id: &str| AppIdentity::Sandboxed { app_id: id.into() };
-        let host = AppIdentity::Host { desktop_id: None };
-        let flatpak = format!("{USER}/app-flatpak-org.example.my-app-12345.scope\n");
+    fn a_process_is_placed_by_its_root_scope_or_profile() {
+        let flatpak = |id: Option<&str>| Placement::Flatpak {
+            app_id: id.map(Into::into),
+        };
+        let snapped = |id: Option<&str>| Placement::Snap {
+            app_id: id.map(Into::into),
+        };
+        let host = Placement::Host { desktop_id: None };
+        let in_flatpak = format!("{USER}/app-flatpak-org.example.my-app-12345.scope\n");
         let snap = format!("{USER}/snap.code.code-0f3a9c1e-2b4d-4e8a-9c2f-1d2e3f4a5b6c.scope\n");
+        let foot = format!("{USER}/app-reprise-foot-3.scope\n");
         let enforce = Some("snap.code.code-insiders (enforce)\n");
         let unconfined = Some("unconfined\n");
+        let info = Some(Some("[Application]\nname=org.example.App\n"));
         assert_eq!(
-            seen(None, &flatpak, None, true),
-            sandboxed("org.example.my-app"),
+            seen(info, &foot, unconfined, true),
+            flatpak(Some("org.example.App"))
+        );
+        assert_eq!(
+            seen(None, &in_flatpak, None, true),
+            flatpak(Some("org.example.my-app")),
             "a hidden root in a Flatpak scope"
         );
         assert_eq!(
-            seen(Some(Some("[Application]\n")), USER, None, true),
-            AppIdentity::Unknown,
+            seen(Some(Some("[Application]\n")), USER, None, false),
+            flatpak(None),
             "a .flatpak-info naming no app"
         );
         assert_eq!(
             seen(Some(None), &snap, enforce, false),
-            sandboxed("code_code-insiders")
+            snapped(Some("code_code-insiders"))
         );
-        assert_eq!(seen(Some(None), &snap, None, false), sandboxed("code_code"));
+        assert_eq!(
+            seen(Some(None), &snap, None, false),
+            snapped(Some("code_code")),
+            "a snap scope without AppArmor"
+        );
+        assert_eq!(seen(None, &snap, None, false), snapped(Some("code_code")));
         assert_eq!(
             seen(Some(None), &snap, unconfined, false),
             host,
             "a classic snap"
         );
+        let unnamed = format!("{USER}/snap.code.code.scope\n");
         assert_eq!(
-            seen(
-                Some(None),
-                &format!("{USER}/snap.code.code.scope\n"),
-                None,
-                false
-            ),
-            AppIdentity::Unknown,
+            seen(Some(None), &unnamed, None, false),
+            snapped(None),
             "a snap scope naming no app"
         );
         assert_eq!(
+            seen(Some(None), &format!("{USER}/snap.mount\n"), None, false),
+            host,
+            "a unit that is no scope"
+        );
+        let in_foot = Placement::Host {
+            desktop_id: Some("foot".into()),
+        };
+        assert_eq!(seen(Some(None), &foot, unconfined, false), in_foot);
+        assert_eq!(seen(None, &foot, None, false), in_foot, "a hidden root");
+        assert_eq!(
             seen(None, USER, None, true),
-            AppIdentity::Unknown,
+            Placement::Unknown,
             "a hidden root in a pid namespace outside any app scope"
         );
-        assert_eq!(seen(None, USER, None, false), host, "a hidden root");
+        let blind = Seen::default().placement();
+        assert_eq!(blind, Placement::Unknown, "nothing readable");
+    }
+
+    #[test]
+    fn a_sandbox_naming_no_app_is_an_unknown_app() {
+        let unnamed = AppIdentity::from(Placement::Flatpak { app_id: None });
+        assert_eq!(unnamed, AppIdentity::Unknown);
+        assert_eq!(
+            AppIdentity::from(Placement::Snap { app_id: None }),
+            AppIdentity::Unknown
+        );
+    }
+
+    #[test]
+    fn nspid_counts_the_pid_namespaces() {
+        assert!(!pid_namespaced("Name:\tfoot\nNSpid:\t4242\n"));
+        assert!(pid_namespaced("Name:\tbwrap\nNSpid:\t4242\t2\n"));
+        assert!(!pid_namespaced(""));
+    }
+
+    #[test]
+    fn a_process_state_is_read_after_the_last_parenthesis() {
+        assert!(runs("42 (foot) S 1 42"));
+        assert!(
+            !runs("42 (a) Z (b) Z 1"),
+            "a command may hold a parenthesis"
+        );
+        assert!(runs("42 (a) Z (b) R 1"));
+        assert!(!runs("42 (foot) X 1"));
+        assert!(!runs(""));
     }
 
     #[test]
