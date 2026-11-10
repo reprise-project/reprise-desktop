@@ -19,6 +19,8 @@ pub struct TextEdit {
     secret: bool,
     read_only: bool,
     cue: String,
+    /// A cap below [`MAX_LEN`], in bytes.
+    limit: Option<usize>,
 }
 
 impl std::fmt::Debug for TextEdit {
@@ -590,6 +592,7 @@ impl TextEdit {
             secret: false,
             read_only: false,
             cue: String::new(),
+            limit: None,
         }
     }
 
@@ -619,7 +622,17 @@ impl TextEdit {
             secret: true,
             read_only: false,
             cue: String::new(),
+            limit: None,
         }
+    }
+
+    /// Typing and pastes stop at `bytes`, on a char boundary.
+    pub fn set_limit(&mut self, bytes: usize) {
+        self.limit = Some(bytes.min(MAX_LEN));
+    }
+
+    fn max_len(&self) -> usize {
+        self.limit.unwrap_or(MAX_LEN)
     }
 
     pub fn is_secret(&self) -> bool {
@@ -727,7 +740,7 @@ impl TextEdit {
         match key {
             EditKey::Insert(mut s) => {
                 let sel = self.selection();
-                let room = MAX_LEN.saturating_sub(self.text.len() - sel.len());
+                let room = self.max_len().saturating_sub(self.text.len() - sel.len());
                 s.truncate(s.floor_char_boundary(room));
                 if !s.is_empty() || !sel.is_empty() {
                     // A paste or replacing insert is its own undo step, but typed chars run together with the typing after them.
@@ -889,10 +902,10 @@ impl TextEdit {
         (self.caret, self.anchor) != (caret, anchor)
     }
 
-    /// Paste: the first line of clipboard text that fits in `MAX_LEN`, replacing the selection. Control chars and chars in `banned` are dropped. A password goes to PAM a line at a time, so a stray line break must never reach it.
+    /// Paste: the first line of clipboard text that fits in the field's cap, replacing the selection. Control chars and chars in `banned` are dropped. A password goes to PAM a line at a time, so a stray line break must never reach it.
     pub fn paste(&mut self, text: &str, banned: &[char]) -> bool {
         let first = text.split(['\r', '\n']).next().unwrap_or("");
-        let first = &first[..first.floor_char_boundary(MAX_LEN)];
+        let first = &first[..first.floor_char_boundary(self.max_len())];
         // Sized up front: a collect would grow through smaller buffers, each freed with a prefix of the line in it.
         let mut line = String::with_capacity(first.len());
         line.extend(

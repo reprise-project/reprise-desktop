@@ -1,5 +1,4 @@
-//! Classic's login screen: the "Log On to Reprise" dialog centred on the desktop colour, with the
-//! Reprise band, User name and Password rows, a two-line message area and three buttons. The lock
+//! Classic's login screen: the "Log On to Reprise" dialog centred on the desktop colour. The lock
 //! fixes the name and puts Switch User at the start of the button row.
 
 use crate::art::logo;

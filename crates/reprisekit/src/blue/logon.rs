@@ -1,6 +1,5 @@
-//! Blue's welcome screen: dark bands top and bottom, the Reprise mark left of a middle rule, a
-//! column of user tiles right of it, and Turn off computer in the bottom band. The lock opens its
-//! one tile and puts Switch User at the bottom band's right end.
+//! Blue's welcome screen: dark bands, the Reprise mark left of a middle rule and the user tiles
+//! right of it. The lock opens its one tile and puts Switch User at the bottom band's right end.
 
 use std::cell::RefCell;
 use std::rc::Rc;
