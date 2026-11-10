@@ -67,6 +67,59 @@ pub struct Motion {
     pub was: Was,
 }
 
+/// A stretch of a change, ms from its start.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Window {
+    pub from: u32,
+    pub len: u32,
+}
+
+impl Window {
+    pub const fn new(from: u32, len: u32) -> Window {
+        Window { from, len }
+    }
+
+    pub fn end(self) -> u32 {
+        self.from + self.len
+    }
+
+    /// How far through the window `at` ms into the change is, 0 to 1.
+    pub fn at(self, at: u32) -> f32 {
+        match self.len {
+            0 if at >= self.from => 1.0,
+            0 => 0.0,
+            len => (at.saturating_sub(self.from) as f32 / len as f32).min(1.0),
+        }
+    }
+}
+
+/// A slice of the screen after a change: the device columns it holds (all of them when None),
+/// when it fades in, and how far below its place it starts, device px.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Slice {
+    pub columns: Option<(i32, i32)>,
+    pub window: Window,
+    pub rise: i32,
+}
+
+/// How a change plays: when the screen before fades out (None: it starts from the chrome alone),
+/// the screen after in slices, and the picture frame that flies with how long it takes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Plan {
+    pub out: Option<Window>,
+    pub into: Vec<Slice>,
+    pub carried: Option<(Part, u32)>,
+}
+
+impl Plan {
+    /// How long the change takes, ms.
+    pub fn ms(&self) -> u32 {
+        let into = self.into.iter().map(|s| s.window.end());
+        let rest = [self.out.map(Window::end), self.carried.map(|c| c.1)];
+        into.chain(rest.into_iter().flatten()).max().unwrap_or(0)
+    }
+}
+
 impl Logon {
     /// Note `change` before the screen changes, unless nothing may move. A change the host has
     /// not taken yet keeps the screen it began from.

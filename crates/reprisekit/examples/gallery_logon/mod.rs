@@ -2,6 +2,7 @@
 //! written to `target/reprisekit-gallery-logon@<scale>.png`.
 
 mod glass;
+pub mod motion;
 
 use reprisekit::art::userpic;
 use reprisekit::blue::Variant;
@@ -19,7 +20,7 @@ const OUTPUT: Rect = Rect::new(0, 0, 800, 600);
 const GAP: i32 = 10;
 const COLS: i32 = 3;
 
-fn users() -> Vec<LogonUser> {
+pub fn users() -> Vec<LogonUser> {
     [
         ("alice", "Alice Liddell"),
         ("bob", ""),
