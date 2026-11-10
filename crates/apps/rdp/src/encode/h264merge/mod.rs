@@ -270,6 +270,14 @@ mod tests {
         frames: 24,
         skipped: &[4, 15],
     };
+    /// libx264 with Reprise's two-encoder options: two slices with deblocking fields, IDRs on
+    /// both views at frames 0 and 10.
+    const X264_SLICES: Fixture = Fixture {
+        main: fixture!("main-x264.h264"),
+        aux: fixture!("aux-x264.h264"),
+        frames: 24,
+        skipped: &[4, 15],
+    };
     /// [`ONE_SLICE`] merged.
     const MERGED: &[u8] = fixture!("merged.h264");
     /// One IDR from libx264, which codes POC type 0.
@@ -438,6 +446,12 @@ mod tests {
     fn a_merged_three_slice_stream_decodes_to_each_views_own_pictures() {
         assert_eq!(nal_units(&access_units(THREE_SLICES.main)[1]).len(), 3);
         assert_decodes_to_each_views_own_pictures(&THREE_SLICES);
+    }
+
+    #[test]
+    fn merged_x264_views_with_deblocking_fields_decode_to_each_views_own_pictures() {
+        assert_eq!(nal_units(&access_units(X264_SLICES.main)[1]).len(), 2);
+        assert_decodes_to_each_views_own_pictures(&X264_SLICES);
     }
 
     #[test]

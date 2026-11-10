@@ -928,10 +928,13 @@ no port forwarding; allow the port in your firewall if you run one.
   30, 60, 120 or 144, never more than the screen's refresh rate; both apply to a connected client at once. With Balanced or
   Sharp, a client that offers it and VA-API, NVENC or x264 coding, the
   picture is sent in full colour (AVC444), so small coloured text stays
-  sharp. VA-API codes its two halves on two encoders and sends them as one
-  stream in the AVC444v2 layout, which takes under a fifth of the bandwidth
-  of one encoder; if the two won't merge, one encoder codes both in the
-  AVC444 layout for the rest of the connection.
+  sharp. Each of its two halves is coded on an encoder of its own and the
+  two go out as one stream: under a third of the bandwidth of one encoder
+  coding both, and under a fifth in the AVC444v2 layout, which goes out
+  where the coded width is a whole number of 32-pixel columns. If the two
+  won't merge, one encoder codes both until the encoder is next set up
+  ([`avc444_split_encoders`](configuration.md#remote-desktop) turns the
+  two encoders off).
   Speed and Vulkan send reduced colour, which takes less bandwidth.
 - **Keyboard and mouse.** Keys go by position and this computer's keyboard
   layout reads them. Characters the client sends as text are typed as they

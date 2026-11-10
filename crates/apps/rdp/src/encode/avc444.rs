@@ -9,7 +9,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Views are whole macroblocks: the auxiliary luma interleaves U and V rows per 16 lines.
 const MACROBLOCK: u32 = 16;
-/// FreeRDP finds a v2 view's V half at the surface width rounded up to this, halved.
+/// FreeRDP before 3.18 finds a v2 view's V half at the surface width rounded up to 16, halved;
+/// later ones round it up to this.
 const V2_WIDTH: u32 = 32;
 
 /// Where the auxiliary view keeps the chroma samples the main view drops.
@@ -23,13 +24,11 @@ pub enum AuxLayout {
 }
 
 impl AuxLayout {
-    /// The size both views are coded at: `size` in whole macroblocks, for V2 at least as wide
-    /// as clients take the halves to be.
-    pub fn view_size(self, size: (u32, u32)) -> (u32, u32) {
-        let (w, h) = view_size(size);
-        match self {
-            AuxLayout::V1 => (w, h),
-            AuxLayout::V2 => (size.0.next_multiple_of(V2_WIDTH), h),
+    /// The layout for pictures coded at `target`: V2 where every client finds its V halves.
+    pub fn of(target: (u32, u32)) -> AuxLayout {
+        match view_size(target).0.is_multiple_of(V2_WIDTH) {
+            true => AuxLayout::V2,
+            false => AuxLayout::V1,
         }
     }
 }
@@ -168,7 +167,7 @@ fn views_in(
     helpers: usize,
     thread: fn() -> std::thread::Builder,
 ) -> Flat {
-    let (w, h) = layout.view_size(src.size);
+    let (w, h) = view_size(src.size);
     let columns = w / MACROBLOCK;
     let mut blocks = vec![true; (columns * (h / MACROBLOCK)) as usize];
     if src.size.0 == 0 || src.size.1 == 0 {
@@ -353,7 +352,7 @@ pub fn view_size((width, height): (u32, u32)) -> (u32, u32) {
 /// column and row.
 #[cfg(test)]
 pub fn split_v1(src: &Planes444) -> (Nv12, Nv12) {
-    let (main, [u, v]) = main_view(src, AuxLayout::V1);
+    let (main, [u, v]) = main_view(src);
     let (w, h) = (main.width as usize, main.height as usize);
     let mut aux_uv = Vec::with_capacity(w * h / 2);
     for y in (0..h).step_by(2) {
@@ -380,7 +379,7 @@ pub fn split_v1(src: &Planes444) -> (Nv12, Nv12) {
 /// quarters of the odd rows' U and V at columns 4x and 4x + 2 (B6 to B9).
 #[cfg(test)]
 pub fn split_v2(src: &Planes444) -> (Nv12, Nv12) {
-    let (main, [u, v]) = main_view(src, AuxLayout::V2);
+    let (main, [u, v]) = main_view(src);
     let (w, h) = (main.width as usize, main.height as usize);
     let mut aux_y = Vec::with_capacity(w * h);
     for row in 0..h {
@@ -404,10 +403,10 @@ pub fn split_v2(src: &Planes444) -> (Nv12, Nv12) {
     (main, aux)
 }
 
-/// The main view of `src` at `layout`'s view size, and its padded U and V planes.
+/// The main view of `src` at its view size, and its padded U and V planes.
 #[cfg(test)]
-fn main_view(src: &Planes444, layout: AuxLayout) -> (Nv12, [Vec<u8>; 2]) {
-    let (w, h) = layout.view_size((src.width, src.height));
+fn main_view(src: &Planes444) -> (Nv12, [Vec<u8>; 2]) {
+    let (w, h) = view_size((src.width, src.height));
     let (y, u, v) = (
         pad(&src.y, src, w, h),
         pad(&src.u, src, w, h),
@@ -558,10 +557,10 @@ pub struct Flat {
 }
 
 impl Flat {
-    /// `src`'s macroblocks, its last column and row repeated to `layout`'s view size.
+    /// `src`'s macroblocks, its last column and row repeated to its view size.
     #[cfg(test)]
-    pub fn of(src: &Planes444, layout: AuxLayout) -> Flat {
-        let (w, h) = layout.view_size((src.width, src.height));
+    pub fn of(src: &Planes444) -> Flat {
+        let (w, h) = view_size((src.width, src.height));
         let (columns, rows) = (w / MACROBLOCK, h / MACROBLOCK);
         let at = |x: u32, y: u32| {
             let (x, y) = (x.min(src.width.max(1) - 1), y.min(src.height.max(1) - 1));
@@ -911,22 +910,34 @@ pub(crate) mod tests {
     #[test]
     fn v2_split_then_combine_returns_the_picture_at_odd_sizes() {
         for (size, view) in [
-            ((13, 21), (32, 32)),
-            ((33, 18), (64, 32)),
-            ((100, 50), (128, 64)),
+            ((13, 21), (16, 32)),
+            ((33, 18), (48, 32)),
+            ((100, 50), (112, 64)),
             ((64, 48), (64, 48)),
         ] {
             let src = random(size, 5);
             let (main, aux) = split_v2(&src);
-            assert_eq!((main.width, main.height), view, "{size:?}: 32-column views");
+            assert_eq!(
+                (main.width, main.height),
+                view,
+                "{size:?}: whole macroblocks"
+            );
             assert_returns(&crop(&combine_v2(&main, &aux), size), &src);
         }
-        assert_eq!(AuxLayout::V1.view_size((1000, 50)), (1008, 64));
-        assert_eq!(
-            AuxLayout::V2.view_size((1000, 50)),
-            (1024, 64),
-            "the V halves start where clients look for them"
-        );
+    }
+
+    #[test]
+    fn v2_goes_out_only_at_widths_whose_views_are_whole_32_columns() {
+        for (width, layout) in [
+            (1680, AuxLayout::V1),
+            (1700, AuxLayout::V1),
+            (1000, AuxLayout::V1),
+            (1720, AuxLayout::V2),
+            (1920, AuxLayout::V2),
+            (1366, AuxLayout::V2),
+        ] {
+            assert_eq!(AuxLayout::of((width, 1050)), layout, "{width} px wide");
+        }
     }
 
     #[test]
@@ -1005,8 +1016,8 @@ pub(crate) mod tests {
                     }
                     AuxLayout::V2 => split_v2(&planes),
                 };
-                let flat = Flat::of(&planes, layout);
-                let view = layout.view_size(size);
+                let flat = Flat::of(&planes);
+                let view = view_size(size);
                 for &n in helpers {
                     let (mut m, mut a) = (padded_view(view), padded_view(view));
                     let src = Rgb {
@@ -1115,7 +1126,7 @@ pub(crate) mod tests {
             (4..6, 2..4) | (17, _) => red,
             _ => ((x * 6) as u8, (x * 6) as u8, (x * 6) as u8),
         });
-        let flat = Flat::of(&picture, AuxLayout::V1);
+        let flat = Flat::of(&picture);
         assert_eq!(flat.columns, 3);
         assert_eq!(flat.blocks, [true, false, true, true, false, true]);
         let rect = |x, y, width, height| Rect {
@@ -1129,7 +1140,7 @@ pub(crate) mod tests {
         assert!(!flat.covers(&[rect(0, 0, 16, 16), rect(16, 16, 2, 2)]));
         let edge = rgb((33, 18), |x, _| if x == 32 { red } else { (9, 9, 9) });
         assert_eq!(
-            Flat::of(&edge, AuxLayout::V1).blocks,
+            Flat::of(&edge).blocks,
             [true, true, true, true, true, true],
             "the padding repeats the last column, so its blocks are flat"
         );

@@ -1,4 +1,5 @@
-//! The SPS, PPS and slice header syntax of H.264 7.3, as far as `h264_vaapi` codes it.
+//! The SPS, PPS and slice header syntax of H.264 7.3, as far as `h264_vaapi`, `h264_nvenc` and
+//! libx264 with one reference code it.
 
 use super::Error;
 use super::bits::{Reader, Writer, escape, unescape};
@@ -125,10 +126,11 @@ pub fn two_refs(nal: &[u8]) -> Result<(Vec<u8>, Sps), Error> {
 pub struct Pps {
     pub id: u32,
     num_ref_idx_l0_default_active_minus1: u32,
+    deblocking_fields: bool,
 }
 
 /// The fields of `nal`, a PPS, if [`Slice::parse`] reads its slice headers: CABAC, one slice
-/// group, no weighted prediction, no deblocking or redundant-picture fields.
+/// group, no weighted prediction, no redundant-picture fields.
 pub fn pps(nal: &[u8]) -> Result<Pps, Error> {
     let rbsp = unescape(&nal[1..]);
     let mut r = Reader::new(&rbsp);
@@ -144,12 +146,13 @@ pub fn pps(nal: &[u8]) -> Result<Pps, Error> {
     r.se()?; // pic_init_qp_minus26
     r.se()?; // pic_init_qs_minus26
     r.se()?; // chroma_qp_index_offset
-    unsupported(!r.flag()?, "deblocking fields in slice headers")?;
+    let deblocking_fields = r.flag()?;
     r.flag()?; // constrained_intra_pred_flag
     unsupported(!r.flag()?, "redundant pictures")?;
     Ok(Pps {
         id,
         num_ref_idx_l0_default_active_minus1,
+        deblocking_fields,
     })
 }
 
@@ -176,6 +179,8 @@ pub struct Slice {
     no_output_of_prior_pics: bool,
     cabac_init_idc: u32,
     qp_delta: i32,
+    /// disable_deblocking_filter_idc and, unless it is 1, the alpha and beta offsets.
+    deblocking: Option<(u32, i32, i32)>,
     data: Vec<u8>,
 }
 
@@ -225,6 +230,14 @@ impl Slice {
         }
         let cabac_init_idc = if slice_type % 5 == 2 { 0 } else { r.ue()? };
         let qp_delta = r.se()?;
+        let deblocking = match pps.deblocking_fields {
+            false => None,
+            true => match r.ue()? {
+                1 => Some((1, 0, 0)),
+                idc @ (0 | 2) => Some((idc, r.se()?, r.se()?)),
+                _ => return Err(Error::Malformed("a disable_deblocking_filter_idc over 2")),
+            },
+        };
         while !r.aligned() {
             if !r.flag()? {
                 return Err(Error::Malformed("a cabac_alignment_one_bit of 0"));
@@ -239,6 +252,7 @@ impl Slice {
             no_output_of_prior_pics,
             cabac_init_idc,
             qp_delta,
+            deblocking,
             data: r.rest().to_vec(),
         })
     }
@@ -294,6 +308,13 @@ impl Slice {
             w.ue(self.cabac_init_idc);
         }
         w.se(self.qp_delta);
+        if let Some((idc, alpha, beta)) = self.deblocking {
+            w.ue(idc);
+            if idc != 1 {
+                w.se(alpha);
+                w.se(beta);
+            }
+        }
         while !w.aligned() {
             w.flag(true); // cabac_alignment_one_bit
         }

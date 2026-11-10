@@ -130,6 +130,9 @@ pub struct RemoteDesktop {
     pub capture_border: bool,
     pub laptop_screen: LaptopScreen,
     pub second_client: SecondClient,
+    /// AVC444 codes each view on its own encoder and merges the two streams; off codes both on
+    /// one encoder.
+    pub avc444_split_encoders: bool,
 }
 
 impl Default for RemoteDesktop {
@@ -146,6 +149,7 @@ impl Default for RemoteDesktop {
             capture_border: false,
             laptop_screen: LaptopScreen::Lock,
             second_client: SecondClient::Join,
+            avc444_split_encoders: true,
         }
     }
 }
@@ -251,6 +255,13 @@ fn read(t: &toml::Table) -> (RemoteDesktop, Vec<&'static str>) {
         second_client: key(t, "second_client", &mut bad, d.second_client, |v| {
             v.clone().try_into().ok()
         }),
+        avc444_split_encoders: key(
+            t,
+            "avc444_split_encoders",
+            &mut bad,
+            d.avc444_split_encoders,
+            toml::Value::as_bool,
+        ),
     };
     (rd, bad)
 }
@@ -444,6 +455,32 @@ quality = \"sharp\"",
                 "capture_border = {text}"
             );
         }
+    }
+
+    #[test]
+    fn avc444_split_encoders_is_on_unless_false() {
+        for (text, want, invalid) in [
+            ("false", false, false),
+            ("true", true, false),
+            ("\"off\"", true, true),
+        ] {
+            let t: toml::Table =
+                toml::from_str(&format!("avc444_split_encoders = {text}")).unwrap();
+            let (rd, bad) = read(&t);
+            assert_eq!(
+                rd.avc444_split_encoders, want,
+                "avc444_split_encoders = {text}"
+            );
+            assert_eq!(
+                bad.contains(&"avc444_split_encoders"),
+                invalid,
+                "avc444_split_encoders = {text}"
+            );
+        }
+        assert!(
+            from_table(&toml::Table::new()).avc444_split_encoders,
+            "a missing key"
+        );
     }
 
     #[test]

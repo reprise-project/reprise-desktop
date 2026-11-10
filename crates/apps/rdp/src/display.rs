@@ -360,10 +360,12 @@ impl RdpServerDisplay for Display {
                     on: false,
                 });
                 let device = picture.device.clone();
+                let split = self.links.config.borrow().avc444_split_encoders;
                 let worker = Worker::spawn(move || {
                     Switch::new(Box::new(move |backend, quality, frame_rate| {
-                        Ffmpeg::new(backend, &device, frame_rate, quality)
-                            .map(|f| Box::new(f) as Box<dyn Encoder>)
+                        let mut f = Ffmpeg::new(backend, &device, frame_rate, quality)?;
+                        f.set_split_encoders(split);
+                        Ok(Box::new(f) as Box<dyn Encoder>)
                     }))
                 })
                 .map_err(|e| ServerError::io("no encoding thread", e))?;
