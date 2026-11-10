@@ -1,5 +1,6 @@
 //! Blue's welcome screen: dark bands top and bottom, the Reprise mark left of a middle rule, a
-//! column of user tiles right of it, and Turn off computer in the bottom band.
+//! column of user tiles right of it, and Turn off computer in the bottom band. The lock opens its
+//! one tile and puts Switch User at the bottom band's right end.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -16,7 +17,7 @@ use crate::shape::{
     self, CLEAR, Px, Stops, centre, ellipse, over, premul, radial, rounded, rounded4, shares,
     stroke, unpack,
 };
-use crate::text::{Align, TextRenderer};
+use crate::text::{Align, TextRenderer, split_mnemonic};
 use crate::textedit::{Caret, TextEdit, edit_first_visible};
 use crate::theme::{Color, TextUnits, Theme};
 
@@ -229,11 +230,28 @@ pub fn layout(m: &Logon, theme: &Theme, text: &TextRenderer, output: Rect) -> Lo
         POWER,
     );
     parts.push((Part::Power, power));
+    if m.unlocking() && m.offers_switch_user() {
+        let w = POWER + POWER_GAP + text.measure(&switch_label(), false, design_px(theme));
+        let x = output.right() - POWER_X - w;
+        parts.push((
+            Part::SwitchUser,
+            Rect {
+                x,
+                width: w,
+                ..power
+            },
+        ));
+    }
     LogonLayout {
         output,
         parts,
         dialog: None,
     }
+}
+
+/// Switch User without its access-key marker: the screen draws no underlines.
+fn switch_label() -> String {
+    split_mnemonic(&strings::switch_user()).0
 }
 
 fn solid(c: Color) -> Px {
@@ -567,22 +585,26 @@ fn draw_titled(
     if let Some(field) = l.rect(Part::Password) {
         draw_password_row(c, m, l, theme, sc, field, k, &pen);
     }
-    if let Some(power) = l.rect(Part::Power) {
-        let mark = powerpanel::tile(
-            Hue::Red,
-            Mark::Off,
-            state_of(m, Part::Power, true),
+    for (part, hue, mark, words) in [
+        (Part::Power, Hue::Red, Mark::Off, strings::turn_off()),
+        (Part::SwitchUser, Hue::Green, Mark::Arrows, switch_label()),
+    ] {
+        let Some(r) = l.rect(part) else { continue };
+        let tile = powerpanel::tile(
+            hue,
+            mark,
+            state_of(m, part, !m.busy || part == Part::Power),
             POWER,
             s,
         );
-        let at = pen.at(power);
-        c.blit_over(at.x, at.y, &mark);
+        let at = pen.at(r);
+        c.blit_over(at.x, at.y, &tile);
         let label = Rect {
-            x: power.x + POWER + POWER_GAP,
-            width: power.width - POWER - POWER_GAP,
-            ..power
+            x: r.x + POWER + POWER_GAP,
+            width: r.width - POWER - POWER_GAP,
+            ..r
         };
-        pen.line(c, label, &strings::turn_off(), false, px, Align::Left);
+        pen.line(c, label, &words, false, px, Align::Left);
     }
 }
 
@@ -609,7 +631,12 @@ fn draw_mark(c: &mut Canvas, m: &Logon, f: &Frame, k: Lines, pen: &Pen) {
     }
     let begin_y = top + LOGO + BEGIN_GAP;
     let begin = Rect::new(left, begin_y, right - left, k.line);
-    pen.line(c, begin, &strings::begin(), false, pen.px, Align::Right);
+    let words = if m.unlocking() {
+        strings::unlock_begin()
+    } else {
+        strings::begin()
+    };
+    pen.line(c, begin, &words, false, pen.px, Align::Right);
     if m.screen == Screen::Tiles
         && let Some(msg) = &m.message
     {

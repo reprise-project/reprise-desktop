@@ -220,12 +220,14 @@ fn geometry(m: &Logon, theme: &Theme, output: Rect, button_w: i32) -> Geometry {
             y += field_h;
             g.notice = Some(centred(text_w, y, note_h));
             y += note_h + SWITCH_GAP;
-            g.parts
-                .push((Part::SwitchUser, centred(button_w, y, button_h)));
+            if m.offers_switch_user() {
+                g.parts
+                    .push((Part::SwitchUser, centred(button_w, y, button_h)));
+            }
         }
         Screen::Typed => {
             let h = frame + PICTURE_GAP + name_h + ROW_GAP + 2 * field_h + ROW_GAP + note_h;
-            let listed = !m.users.is_empty();
+            let listed = m.offers_switch_user();
             let mut y = top(h + if listed { SWITCH_GAP + button_h } else { 0 });
             g.frame = Some((Part::OtherUser, centred(frame, y, frame)));
             y += frame + PICTURE_GAP;
@@ -310,8 +312,10 @@ fn button_caption(m: &Logon) -> Option<String> {
         _ if m.busy => None,
         Screen::Message => Some(plain(&strings::ok())),
         Screen::Tiles => None,
-        Screen::Typed if m.users.is_empty() => None,
-        Screen::Typed | Screen::Tile(_) => Some(plain(&strings::switch_user())),
+        Screen::Typed | Screen::Tile(_) if m.offers_switch_user() => {
+            Some(plain(&strings::switch_user()))
+        }
+        Screen::Typed | Screen::Tile(_) => None,
     }
 }
 

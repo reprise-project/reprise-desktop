@@ -87,7 +87,8 @@ impl Conversation {
         self.asked = true;
         self.notes.clear();
         match purpose {
-            Purpose::Login => {
+            // The greeter builds no lock screen; a lock submits to its own helper.
+            Purpose::Login | Purpose::Unlock { .. } => {
                 self.admin = false;
                 GreeterRequest::CreateSession { user }
             }

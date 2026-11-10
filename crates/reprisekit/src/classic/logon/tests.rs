@@ -247,3 +247,91 @@ fn a_prompt_label_draws_its_ampersand() {
         assert!(c == want, "@{s}: the label reads {asked:?}");
     }
 }
+
+fn locked_states() -> Vec<(&'static str, Logon)> {
+    let user = crate::logon::LogonUser {
+        name: "anna".into(),
+        real_name: "Anna Novak".into(),
+        picture: None,
+        note: None,
+    };
+    let rest = Logon::locked(Interface::Classic, user.clone(), true);
+    let mut typed = rest.clone();
+    typed.key(crate::logon::LogonKey::Text("hunter2"));
+    let mut caps = typed.clone();
+    caps.caps_lock = true;
+    caps.layout = Some("EN".into());
+    let mut failed = typed.clone();
+    failed.fail(strings::incorrect());
+    let mut busy = typed.clone();
+    busy.set_busy(true);
+    let mut switch_focused = rest.clone();
+    switch_focused.focus = Part::SwitchUser;
+    let alone = Logon::locked(Interface::Classic, user, false);
+    vec![
+        ("locked", rest),
+        ("locked typed", typed),
+        ("locked caps lock and badge", caps),
+        ("locked failed", failed),
+        ("locked busy", busy),
+        ("locked switch user focused", switch_focused),
+        ("locked without switch user", alone),
+    ]
+}
+
+#[test]
+fn classic_lock_pins_at_scale_1_and_2() {
+    crate::pins::fonts();
+    let mut got = Vec::new();
+    for (name, m) in locked_states() {
+        for s in [1, 2] {
+            got.push((format!("{name} @{s}"), fnv(&drawn(&m, s).0)));
+        }
+    }
+    crate::pins::check("classic/logon-locked", &got);
+}
+
+#[test]
+fn the_classic_lock_fixes_the_name_and_starts_the_button_row_with_switch_user() {
+    let (_, m) = locked_states().remove(0);
+    for s in [1, 2] {
+        let (c, l, theme) = drawn(&m, s);
+        let name = l.rect(Part::Name).unwrap().scaled(s);
+        assert_eq!(
+            c.get(name.right() - 4 * s, name.y + name.height / 2),
+            theme.colors.button_face.argb(),
+            "@{s}: the fixed name keeps the face colour"
+        );
+        let g = geometry(&theme, OUTPUT);
+        let switch = l.rect(Part::SwitchUser).expect("Switch User");
+        assert_eq!(switch.x, g.label_x, "Switch User lines up with the labels");
+        assert_eq!(switch.y, g.ok.y, "on the button row");
+        assert!(switch.right() < g.ok.x, "left of OK");
+    }
+    let (_, alone) = locked_states().pop().unwrap();
+    let l = drawn(&alone, 1).1;
+    assert_eq!(
+        l.rect(Part::SwitchUser),
+        None,
+        "no Switch User unless offered"
+    );
+    assert!(l.rect(Part::Power).is_some(), "Shut Down... stays");
+}
+
+#[test]
+fn the_classic_lock_states_are_distinct() {
+    let hashes: Vec<_> = (locked_states().iter())
+        .map(|(n, m)| (*n, fnv(&drawn(m, 1).0)))
+        .collect();
+    for (i, (a, ha)) in hashes.iter().enumerate() {
+        for (b, hb) in &hashes[i + 1..] {
+            assert_ne!(ha, hb, "{a} and {b} draw the same");
+        }
+    }
+    let login = Logon::new(Interface::Classic, Vec::new(), false, Some("anna"));
+    assert_ne!(
+        fnv(&drawn(&login, 1).0),
+        hashes[0].1,
+        "the lock differs from the login dialog"
+    );
+}

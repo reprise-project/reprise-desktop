@@ -95,6 +95,18 @@ pub mod text {
     pub fn remote() -> String {
         tr!("logon-remote")
     }
+    pub fn locked() -> String {
+        tr!("logon-locked")
+    }
+    pub fn unlock_title() -> String {
+        tr!("logon-unlock-title")
+    }
+    pub fn locked_heading() -> String {
+        tr!("logon-locked-heading")
+    }
+    pub fn unlock_begin() -> String {
+        tr!("logon-unlock-begin")
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -121,6 +133,7 @@ pub enum UserNote {
     LoggedOn,
     /// Logged on from another computer.
     Remote,
+    Locked,
 }
 
 impl UserNote {
@@ -129,6 +142,7 @@ impl UserNote {
         match self {
             UserNote::LoggedOn => text::logged_on(),
             UserNote::Remote => text::remote(),
+            UserNote::Locked => text::locked(),
         }
     }
 }
@@ -146,6 +160,9 @@ pub enum Purpose {
     Login,
     /// An administrator's, to turn the computer off or restart it while others are logged on.
     Admin(PowerAction),
+    /// The one user's password, to unlock their session; Switch User is offered when
+    /// `switch_user`.
+    Unlock { switch_user: bool },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -186,6 +203,8 @@ pub enum LogonAction {
     Power,
     PowerMenu,
     NextLayout,
+    /// Leave the lock for the login screen; the session stays locked.
+    SwitchUser,
 }
 
 /// A question the login conversation asks after the password; `echo` shows the answer as typed.
@@ -300,6 +319,43 @@ impl Logon {
         m
     }
 
+    /// The lock screen for `user`'s session: only their password, the name fixed, their tile
+    /// noted Locked, and no other user listed.
+    pub fn locked(interface: Interface, mut user: LogonUser, switch_user: bool) -> Logon {
+        user.note = Some(UserNote::Locked);
+        let mut m = Logon::new(interface, vec![user], true, None);
+        m.purpose = Purpose::Unlock { switch_user };
+        m.screen = match interface {
+            Interface::Classic => Screen::Typed,
+            _ => Screen::Tile(0),
+        };
+        m.name = TextEdit::new(m.users[0].name.clone(), false);
+        m.name.set_read_only(true);
+        m.focus = Part::Password;
+        m
+    }
+
+    pub fn unlocking(&self) -> bool {
+        matches!(self.purpose, Purpose::Unlock { .. })
+    }
+
+    /// Whether the screen shows Switch User: the lock's when its host offers it, the login
+    /// screen's when it lists users.
+    pub fn offers_switch_user(&self) -> bool {
+        match self.purpose {
+            Purpose::Unlock { switch_user } => switch_user,
+            _ => !self.users.is_empty(),
+        }
+    }
+
+    /// The dialog's title, where the screen has one.
+    pub fn title(&self) -> String {
+        match self.purpose {
+            Purpose::Unlock { .. } => text::unlock_title(),
+            _ => text::title(),
+        }
+    }
+
     /// The user a submit logs on: the name shown, trimmed, unless it is empty or the screen
     /// only lists the users.
     pub fn user(&self) -> Option<String> {
@@ -326,9 +382,20 @@ impl Logon {
     pub fn stops(&self) -> Vec<Part> {
         use Part::*;
         let tiles = (0..self.users.len()).map(Tile);
-        let switch = (!self.users.is_empty()).then_some(SwitchUser);
+        let switch = self.offers_switch_user().then_some(SwitchUser);
+        let unlocking = self.unlocking();
         match (self.interface, self.screen) {
             (_, Screen::Message) => vec![MessageOk],
+            (Interface::Classic, _) if unlocking => [Password]
+                .into_iter()
+                .chain(switch)
+                .chain([Submit, Cancel, Power])
+                .collect(),
+            (Interface::Blue, _) if unlocking => [Password, Submit]
+                .into_iter()
+                .chain(switch)
+                .chain([Power])
+                .collect(),
             (Interface::Classic, _) => vec![Name, Password, Submit, Cancel, Power],
             (Interface::Blue, Screen::Tiles) => tiles.chain([Power]).collect(),
             (Interface::Blue, Screen::Tile(_)) => vec![Password, Submit, Power],
@@ -396,6 +463,7 @@ impl Logon {
             return None;
         }
         match part {
+            Part::Name if self.unlocking() => None,
             Part::Name | Part::Password => {
                 self.focus = part;
                 None
@@ -412,6 +480,7 @@ impl Logon {
             Part::Tile(i) if self.screen == Screen::Tile(i) => None,
             Part::Tile(i) => self.open(Screen::Tile(i)),
             Part::OtherUser => self.open(Screen::Typed),
+            Part::SwitchUser if self.unlocking() => Some(LogonAction::SwitchUser),
             Part::SwitchUser => self.leave_admin().or_else(|| self.open(Screen::Tiles)),
             Part::Power => Some(LogonAction::Power),
             Part::PowerMenu => Some(LogonAction::PowerMenu),
@@ -438,8 +507,13 @@ impl Logon {
     }
 
     fn escape(&mut self) -> Option<LogonAction> {
-        if self.purpose != Purpose::Login {
-            return self.leave_admin();
+        match self.purpose {
+            Purpose::Admin(_) => return self.leave_admin(),
+            Purpose::Unlock { .. } if self.screen == Screen::Message => {
+                return self.press(Part::MessageOk);
+            }
+            Purpose::Unlock { .. } => return self.clear(),
+            Purpose::Login => {}
         }
         let listed = !self.users.is_empty();
         match (self.interface, self.screen) {
@@ -467,7 +541,7 @@ impl Logon {
     /// Back from the administrator's form to the screen a login starts on, with a
     /// [`LogonAction::Cancel`] for the conversation; None on a login's form.
     fn leave_admin(&mut self) -> Option<LogonAction> {
-        if self.purpose == Purpose::Login {
+        if !matches!(self.purpose, Purpose::Admin(_)) {
             return None;
         }
         self.purpose = Purpose::Login;
@@ -487,10 +561,15 @@ impl Logon {
         self.busy = true;
     }
 
-    /// The administrator's form's heading, shown where a message goes when there is none.
+    /// The administrator's form's heading, shown where a message goes when there is none. Classic's
+    /// lock says it is locked there, having no tile to carry the note.
     pub fn heading(&self) -> Option<String> {
         match self.purpose {
             Purpose::Login => None,
+            Purpose::Unlock { .. } if self.interface == Interface::Classic => {
+                Some(text::locked_heading())
+            }
+            Purpose::Unlock { .. } => None,
             Purpose::Admin(PowerAction::PowerOff) => Some(text::admin_shut_down()),
             Purpose::Admin(PowerAction::Reboot) => Some(text::admin_restart()),
         }
@@ -513,11 +592,16 @@ impl Logon {
         self.message.clone().or_else(|| self.heading())
     }
 
-    /// Cancel: both fields emptied, the conversation dropped and the focus on the name.
+    /// Cancel: both fields emptied, the conversation dropped and the focus on the name. The lock
+    /// keeps its name and empties only the password.
     fn clear(&mut self) -> Option<LogonAction> {
         self.forget();
-        self.name = TextEdit::new("", false);
-        self.focus = Part::Name;
+        if self.unlocking() {
+            self.focus = Part::Password;
+        } else {
+            self.name = TextEdit::new("", false);
+            self.focus = Part::Name;
+        }
         Some(LogonAction::Cancel)
     }
 
@@ -543,12 +627,12 @@ impl Logon {
         waiting.then_some(LogonAction::Cancel)
     }
 
-    /// The password wiped, the prompt and message gone, the name editable again.
+    /// The password wiped, the prompt and message gone, the name editable again unless locked.
     fn forget(&mut self) {
         self.wipe_password();
         self.prompt = None;
         self.message = None;
-        self.name.set_read_only(false);
+        self.name.set_read_only(self.unlocking());
     }
 
     fn wipe_password(&mut self) {
@@ -612,7 +696,7 @@ impl Logon {
         self.wipe_password();
         self.going_down = false;
         self.prompt = None;
-        self.name.set_read_only(false);
+        self.name.set_read_only(self.unlocking());
         self.busy = false;
         self.message = Some(text);
         self.focus = self.home();
@@ -686,7 +770,7 @@ pub fn hit(l: &LogonLayout, x: i32, y: i32) -> Option<Part> {
 /// with the focus on the focused part. The message, Caps Lock notice included, is a label.
 pub fn access(m: &Logon, l: &LogonLayout, tree: &mut Tree) {
     let parent = match l.dialog {
-        Some(r) => tree.push(ROOT, "dialog", ax::titled(Role::Dialog, r, &text::title())),
+        Some(r) => tree.push(ROOT, "dialog", ax::titled(Role::Dialog, r, &m.title())),
         None => ROOT,
     };
     let live = |p: Part| !m.busy || p == Part::Power;

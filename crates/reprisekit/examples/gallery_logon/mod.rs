@@ -1,6 +1,6 @@
-//! The login screen at 800x600 (Classic's states, each interface's start and administrator's form,
-//! Blue's states in three schemes, Glass over its wallpaper, Classic and Blue over a dark picture,
-//! Blue over a bright one) written to `target/reprisekit-gallery-logon@<scale>.png`.
+//! The login screen at 800x600 (Classic's states, each interface's start, administrator's form and
+//! lock, Blue's states in three schemes, Glass over its wallpaper, Classic and Blue over a dark
+//! picture, Blue over a bright one) written to `target/reprisekit-gallery-logon@<scale>.png`.
 
 mod glass;
 
@@ -66,10 +66,13 @@ fn screens() -> Vec<(Logon, Variant, Option<&'static str>)> {
         m.over_picture = true;
         (m, Variant::Blue, Some(picture))
     });
+    let locks = [Interface::Classic, Interface::Blue, Interface::Glass]
+        .map(|i| Logon::locked(i, users().remove(0), true));
     [empty, filled, message, busy, caps, badge]
         .into_iter()
         .chain(starts)
         .chain(admins)
+        .chain(locks)
         .map(|m| (m, Variant::Blue))
         .chain(blue_screens())
         .chain(glass::screens().into_iter().map(|m| (m, Variant::Blue)))
