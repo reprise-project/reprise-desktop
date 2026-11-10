@@ -673,15 +673,8 @@ impl Logind {
         &self,
         send: impl Fn(String, bool) -> bool,
     ) -> zbus::Result<()> {
-        let rule = zbus::MatchRule::builder()
-            .msg_type(zbus::message::Type::Signal)
-            .interface("org.freedesktop.DBus.Properties")
-            .member("PropertiesChanged")
-            .path_namespace(SESSIONS)
-            .arg(0, SESSION)
-            .build()?;
         // Subscribed before the reads, so a change in between is seen.
-        let mut changes = zbus::MessageStream::for_match_rule(rule, &self.conn, None).await?;
+        let mut changes = reprisebus::signals(&self.conn, LOGIN1, vec![locked_hint_rule()?]).await;
         for (id, _, _, _, path) in self.manager.list_sessions().await? {
             let Ok(locked) = self.session(path).await?.locked_hint().await else {
                 continue;
@@ -690,8 +683,10 @@ impl Logind {
                 return Ok(());
             }
         }
-        while let Some(msg) = changes.next().await {
-            let Ok(msg) = msg else { continue };
+        while let Some(sig) = changes.next().await {
+            let reprisebus::Signal::Message(msg) = sig else {
+                continue;
+            };
             let Some(change) = zbus::fdo::PropertiesChanged::from_message(msg.clone()) else {
                 continue;
             };
@@ -710,9 +705,10 @@ impl Logind {
                 continue;
             };
             if !send(id, locked) {
-                break;
+                return Ok(());
             }
         }
+        log::warn!("logind's LockedHint changes stopped; the tiles keep the notes they have");
         Ok(())
     }
 
@@ -731,6 +727,19 @@ impl Logind {
             locale.x11_options().await.ok(),
         )
     }
+}
+
+/// logind's own `PropertiesChanged` on a session; the bus drops another peer's.
+fn locked_hint_rule() -> zbus::Result<zbus::OwnedMatchRule> {
+    let rule = zbus::MatchRule::builder()
+        .msg_type(zbus::message::Type::Signal)
+        .sender(LOGIN1)
+        .interface("org.freedesktop.DBus.Properties")
+        .member("PropertiesChanged")
+        .path_namespace(SESSIONS)
+        .arg(0, SESSION)
+        .build()?;
+    Ok(rule.into())
 }
 
 /// `fd` with `FD_CLOEXEC` set. zbus receives fds without it, and a worker spawned while one
@@ -1473,6 +1482,18 @@ mod tests {
         assert_eq!(flags(&r) & libc::FD_CLOEXEC, 0, "a bare pipe is inherited");
         let r = cloexec(r).unwrap();
         assert_eq!(flags(&r) & libc::FD_CLOEXEC, libc::FD_CLOEXEC);
+    }
+
+    #[test]
+    fn the_locked_hint_watch_hears_only_logind() {
+        let rule = locked_hint_rule().unwrap();
+        assert_eq!(rule.sender().map(|s| s.as_str()), Some(LOGIN1));
+        assert_eq!(rule.member().map(|m| m.as_str()), Some("PropertiesChanged"));
+        let shown = rule.to_string();
+        assert!(
+            shown.contains(&format!("path_namespace='{SESSIONS}'")),
+            "{shown}"
+        );
     }
 
     /// Lets every ready task of the `LocalSet` run.

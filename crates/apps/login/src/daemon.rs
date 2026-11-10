@@ -1507,7 +1507,8 @@ impl Daemon {
             }
             // Only the session on screen may hand the console to the login screen.
             SessionRequest::SwitchUser if seat_active.as_deref() == Some(id) => {
-                self.notice = Some(Notice::SwitchUser);
+                // A notice still waiting for a login screen goes first.
+                self.notice.get_or_insert(Notice::SwitchUser);
                 self.bring_greeter(out)
             }
             SessionRequest::SwitchUser => {}
@@ -1525,12 +1526,12 @@ impl Daemon {
         // A closing session can still be seat0's active one; nothing else is on screen then.
         let seat_active = seat_active.filter(|a| a != id);
         let unread = self.remote.unread.remove(id).is_some() | self.remote.left_out.remove(id);
+        self.locked.remove(id);
         if self.orphans.iter().any(|o| o.id == id) {
             return self.orphan_gone(world, id, seat_active, out);
         }
         self.endings.remove(id);
         self.viewed_before.remove(id);
-        self.locked.remove(id);
         let Some(entry) = self.sessions.remove(id) else {
             // It may have been on screen, as recovery could not tell.
             if unread && seat_active.is_none() {
