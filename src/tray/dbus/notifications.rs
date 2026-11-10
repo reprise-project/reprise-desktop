@@ -4,6 +4,7 @@ use crate::tray::{
     ACTION_ICON_SIZES, BODY_CHARS, NOTIFY_SIZES, Notification, REPLY_SEND, Reply, SUMMARY_CHARS,
     TrayEvent, clip, decode_named_at, notify,
 };
+use repriseaudio::sounds::Sound;
 use reprisebus::peer::{AppIdentity, Identities};
 use reprisefs::names::shown_line;
 use reprisekit::icon::IconSource;
@@ -276,12 +277,17 @@ pub(super) fn action_icons(
 
 /// The app name, app icon and `desktop-entry` a notification from `identity` goes under: a
 /// sandboxed app's own app id, nothing for an unknown sender, a host's own (docs/security.md).
-fn as_sent_by(
+/// Only a host names a picture or sound file, which would be read with the user's rights.
+pub(super) fn as_sent_by(
     identity: &AppIdentity,
     hints: &mut notify::Hints<'_>,
     app_name: String,
     app_icon: String,
 ) -> (String, String) {
+    if !matches!(identity, AppIdentity::Host { .. }) {
+        hints.image_path.take_if(|p| p.contains('/'));
+        hints.sound.take_if(|s| matches!(s, Sound::File(_)));
+    }
     match identity {
         AppIdentity::Host { .. } => (app_name, app_icon),
         AppIdentity::Sandboxed { app_id } => {
