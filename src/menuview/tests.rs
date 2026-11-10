@@ -24,6 +24,24 @@ fn the_edit_menu_over_the_start_panel_unrolls_facing_the_press() {
 }
 
 #[test]
+fn under_reduce_motion_the_start_panel_and_its_menus_open_whole() {
+    let config = crate::config::Config::parse(
+        "startmenu_style = \"glass\"\n[effects]\nreduce_motion = true\nmenu_animation = \"slide\"\n",
+    )
+    .unwrap();
+    let mut h = crate::harness::Harness::with_config(config);
+    h.output("TEST-1", 1024, 768);
+    h.pointer_to(512.0, 400.0);
+    h.state.toggle_start_from_keys();
+    h.dispatch();
+    assert!(h.state.start_panel.is_some(), "the Start panel is open");
+    h.pointer_to(600.0, 100.0);
+    assert!(h.state.open_edit_menu(Some((600, 100))));
+    let menu = h.state.menus.first().expect("the edit menu is open");
+    assert_eq!(menu.opening, None, "neither unrolled nor faded");
+}
+
+#[test]
 fn an_open_start_menu_row_takes_an_icon_installed_while_it_is_open() {
     let config = crate::config::Config {
         startmenu: vec![MenuEntry::item(

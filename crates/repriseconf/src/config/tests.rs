@@ -1215,3 +1215,41 @@ fn the_logon_animation_is_on_under_every_interface_and_reads_off() {
     let off = Config::parse("[effects]\nlogon_animation = false\n").unwrap();
     assert!(!off.effects.logon_animation);
 }
+
+#[test]
+fn reduce_motion_turns_every_motion_off_whatever_its_own_key_says() {
+    let text = "[appearance]\ninterface = \"glass\"\n[effects]\nreduce_motion = true\n\
+                window_animation = true\nhover_fade = true\ntaskbar_slide = true\n\
+                taskbar_hide_ms = 300\nmenu_animation = \"slide\"\nsession_fade = true\n\
+                logon_animation = true\n[workspaces]\nanimation = \"slide\"\nanimation_ms = 300\n";
+    let c = Config::parse(text).unwrap();
+    let fx = c.effects;
+    assert!(fx.reduce_motion);
+    assert!(
+        !fx.opens() && !fx.closes(),
+        "windows open and close at once"
+    );
+    assert_eq!(fx.hover_ms(), (0, 0), "highlights light at once");
+    assert!(!fx.taskbar_slide);
+    assert_eq!(fx.taskbar_hide_ms, 0);
+    assert_eq!(fx.menu_animation, MenuAnimation::None);
+    assert_eq!(fx.session_fade_ms(), (0, 0));
+    assert!(!fx.logon_animation, "the lock follows it");
+    assert!(!c.workspace_animation.enabled());
+    assert_eq!(c.workspace_animation.ms, 0, "a lifted swipe lands at once");
+    assert_eq!(fx.motion_ms(350), 0);
+}
+
+#[test]
+fn reduce_motion_is_off_by_default_and_leaves_the_motion_keys_alone() {
+    let text = "[appearance]\ninterface = \"glass\"\n[effects]\nmenu_animation = \"slide\"\n\
+                [workspaces]\nanimation = \"fade\"\n";
+    let c = Config::parse(text).unwrap();
+    assert!(!c.effects.reduce_motion);
+    assert!(c.effects.opens() && c.effects.taskbar_slide && c.effects.logon_animation);
+    assert_eq!(c.effects.menu_animation, MenuAnimation::Slide);
+    assert!(c.workspace_animation.enabled());
+    assert_eq!(c.effects.motion_ms(350), 350);
+    let off = Config::parse("[effects]\nreduce_motion = false\n").unwrap();
+    assert_eq!(off, Config::parse("").unwrap());
+}

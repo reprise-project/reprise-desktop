@@ -490,6 +490,31 @@ mod tests {
     }
 
     #[test]
+    fn under_reduce_motion_a_window_opens_and_closes_without_animating() {
+        for reduce in [false, true] {
+            let config = crate::config::Config::parse(&format!(
+                "[appearance]\ninterface = \"glass\"\n[effects]\nreduce_motion = {reduce}\n"
+            ))
+            .unwrap();
+            let mut h = crate::harness::Harness::with_config(config);
+            h.output("TEST-1", 1024, 768);
+            let mut c = h.connect();
+            let w = h.map_toplevel(&mut c, "one", 300, 200).id;
+            assert_eq!(
+                h.state.window_anims.list.is_empty(),
+                reduce,
+                "reduce_motion = {reduce}: an opening runs only without it"
+            );
+            h.state.finish_window_anims();
+            h.state.window_closing(w);
+            assert!(
+                !reduce || h.state.window_anims.list.is_empty(),
+                "no closing either"
+            );
+        }
+    }
+
+    #[test]
     fn ease_runs_from_0_to_1_ahead_of_linear() {
         assert_eq!(ease(0.0), 0.0);
         assert_eq!(ease(1.0), 1.0);

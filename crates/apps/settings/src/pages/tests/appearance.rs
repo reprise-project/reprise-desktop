@@ -835,27 +835,28 @@ fn the_effects_page_geometry() {
     let s = built();
     let p = Page::Effects;
     assert_eq!(p.label(), "Effects");
-    assert_eq!(rect(&s, p, "window_animation"), Rect::new(GX, 66, 13, 13));
-    assert_eq!(rect(&s, p, "open_label"), Rect::new(50, 92, 40, 13));
-    assert_eq!(rect(&s, p, "window_open_ms"), Rect::new(94, 88, 50, 20));
-    assert_eq!(rect(&s, p, "close_label"), Rect::new(190, 92, 40, 13));
-    assert_eq!(rect(&s, p, "window_close_ms"), Rect::new(234, 88, 50, 20));
-    assert_eq!(rect(&s, p, "close_units"), Rect::new(288, 92, 20, 13));
-    assert_eq!(rect(&s, p, "hover_fade"), Rect::new(GX, 122, 13, 13));
-    assert_eq!(rect(&s, p, "in_label"), Rect::new(50, 148, 40, 13));
-    assert_eq!(rect(&s, p, "hover_in_ms"), Rect::new(94, 144, 50, 20));
-    assert_eq!(rect(&s, p, "in_units"), Rect::new(148, 148, 20, 13));
-    assert_eq!(rect(&s, p, "out_label"), Rect::new(190, 148, 40, 13));
-    assert_eq!(rect(&s, p, "hover_out_ms"), Rect::new(234, 144, 50, 20));
-    assert_eq!(rect(&s, p, "out_units"), Rect::new(288, 148, 20, 13));
-    assert_eq!(rect(&s, p, "session_fade"), Rect::new(GX, 178, 13, 13));
-    assert_eq!(rect(&s, p, "logon_animation"), Rect::new(GX, 200, 13, 13));
-    assert_eq!(rect(&s, p, "menus_group"), Rect::new(20, 234, 358, 74));
-    assert_eq!(rect(&s, p, "menu_shadow"), Rect::new(96, 252, 50, 20));
-    assert_eq!(rect(&s, p, "menu_hover_ms"), Rect::new(246, 252, 50, 20));
-    assert_eq!(rect(&s, p, "menu_hover_units"), Rect::new(300, 256, 20, 13));
-    assert_eq!(rect(&s, p, "menu_fade_ms"), Rect::new(96, 278, 50, 20));
-    assert_eq!(rect(&s, p, "menu_animation"), Rect::new(246, 278, 110, 21));
+    assert_eq!(rect(&s, p, "reduce_motion"), Rect::new(GX, 66, 13, 13));
+    assert_eq!(rect(&s, p, "window_animation"), Rect::new(GX, 88, 13, 13));
+    assert_eq!(rect(&s, p, "open_label"), Rect::new(50, 114, 40, 13));
+    assert_eq!(rect(&s, p, "window_open_ms"), Rect::new(94, 110, 50, 20));
+    assert_eq!(rect(&s, p, "close_label"), Rect::new(190, 114, 40, 13));
+    assert_eq!(rect(&s, p, "window_close_ms"), Rect::new(234, 110, 50, 20));
+    assert_eq!(rect(&s, p, "close_units"), Rect::new(288, 114, 20, 13));
+    assert_eq!(rect(&s, p, "hover_fade"), Rect::new(GX, 144, 13, 13));
+    assert_eq!(rect(&s, p, "in_label"), Rect::new(50, 170, 40, 13));
+    assert_eq!(rect(&s, p, "hover_in_ms"), Rect::new(94, 166, 50, 20));
+    assert_eq!(rect(&s, p, "in_units"), Rect::new(148, 170, 20, 13));
+    assert_eq!(rect(&s, p, "out_label"), Rect::new(190, 170, 40, 13));
+    assert_eq!(rect(&s, p, "hover_out_ms"), Rect::new(234, 166, 50, 20));
+    assert_eq!(rect(&s, p, "out_units"), Rect::new(288, 170, 20, 13));
+    assert_eq!(rect(&s, p, "session_fade"), Rect::new(GX, 200, 13, 13));
+    assert_eq!(rect(&s, p, "logon_animation"), Rect::new(GX, 222, 13, 13));
+    assert_eq!(rect(&s, p, "menus_group"), Rect::new(20, 256, 358, 74));
+    assert_eq!(rect(&s, p, "menu_shadow"), Rect::new(96, 274, 50, 20));
+    assert_eq!(rect(&s, p, "menu_hover_ms"), Rect::new(246, 274, 50, 20));
+    assert_eq!(rect(&s, p, "menu_hover_units"), Rect::new(300, 278, 20, 13));
+    assert_eq!(rect(&s, p, "menu_fade_ms"), Rect::new(96, 300, 50, 20));
+    assert_eq!(rect(&s, p, "menu_animation"), Rect::new(246, 300, 110, 21));
     inside_page(&s, p);
 }
 
@@ -864,15 +865,15 @@ fn effects_put_units_after_their_fields() {
     let s = built();
     let p = Page::Effects;
     assert_eq!(lines(&s, p, "open_label"), ["&Open:"]);
-    assert_eq!(rect(&s, p, "open_units"), Rect::new(GX + 116, 92, 20, 13));
+    assert_eq!(rect(&s, p, "open_units"), Rect::new(GX + 116, 114, 20, 13));
     assert_eq!(
         rect(&s, p, "shadow_units"),
-        Rect::new(GX + 118, 256, 20, 13)
+        Rect::new(GX + 118, 278, 20, 13)
     );
     assert_eq!(lines(&s, p, "shadow_units"), ["px"]);
     assert_eq!(
         rect(&s, p, "menu_fade_units"),
-        Rect::new(GX + 118, 282, 20, 13)
+        Rect::new(GX + 118, 304, 20, 13)
     );
     inside_page(&s, p);
 }
@@ -934,6 +935,89 @@ fn the_effect_spins_grey_with_their_check() {
     );
     set_check(&mut s, &mut got, "hover_fade", false);
     assert!(!enabled_on(&s, p, "hover_in_ms") && !enabled_on(&s, p, "hover_out_ms"));
+}
+
+#[test]
+fn reduce_motion_greys_every_motion_and_shows_on_magnifier_and_filters_too() {
+    let mut got = Settings::for_interface("glass");
+    let mut s = with(&got);
+    let p = Page::Effects;
+    let motion = [
+        "window_animation",
+        "window_open_ms",
+        "hover_fade",
+        "hover_in_ms",
+        "session_fade",
+        "logon_animation",
+        "menu_fade_ms",
+        "menu_animation",
+    ];
+    assert!(motion.iter().all(|id| enabled_on(&s, p, id)));
+    set_check(&mut s, &mut got, "reduce_motion", true);
+    assert!(got.reduce_motion);
+    for id in motion {
+        assert!(!enabled_on(&s, p, id), "{id} greys");
+    }
+    assert!(enabled_on(&s, p, "menu_shadow"), "the shadow is no motion");
+    let vision = Page::MagnifierFilters;
+    assert_eq!(
+        s.pages[vision.index()].checked(crate::magnifierpage::REDUCE_MOTION),
+        Some(true),
+        "the same switch on Magnifier & Filters"
+    );
+    set_check(&mut s, &mut got, "reduce_motion", false);
+    assert!(motion.iter().all(|id| enabled_on(&s, p, id)));
+    assert_eq!(
+        s.pages[vision.index()].checked(crate::magnifierpage::REDUCE_MOTION),
+        Some(false)
+    );
+}
+
+#[test]
+fn reduce_motion_greys_the_task_slide_and_desktop_switch_with_a_note() {
+    let mut got = Settings {
+        desktops: 4,
+        desktop_animation: "slide".into(),
+        ..Settings::for_interface("glass")
+    };
+    let mut s = with(&got);
+    let held = [
+        (Page::Taskbar, "taskbar_slide"),
+        (Page::VirtualDesktops, "animation_label"),
+        (Page::VirtualDesktops, "desktop_animation"),
+        (Page::VirtualDesktops, "duration_label"),
+        (Page::VirtualDesktops, "desktop_animation_ms"),
+        (Page::VirtualDesktops, "duration_units"),
+    ];
+    let notes = [
+        (Page::Taskbar, "taskbar_slide_note"),
+        (Page::VirtualDesktops, "desktop_animation_note"),
+    ];
+    assert!(held.iter().all(|&(p, id)| enabled_on(&s, p, id)));
+    for (p, id) in notes {
+        assert_eq!(lines(&s, p, id), [""], "{id} is blank");
+    }
+    set_check(&mut s, &mut got, "reduce_motion", true);
+    for (p, id) in held {
+        assert!(!enabled_on(&s, p, id), "{id} greys");
+    }
+    assert_eq!(
+        lines(&s, Page::Taskbar, "taskbar_slide_note"),
+        ["(Reduce motion)"]
+    );
+    assert_eq!(
+        lines(&s, Page::VirtualDesktops, "desktop_animation_note"),
+        ["Off while Reduce motion is on (Effects page)"]
+    );
+    assert!(
+        enabled_on(&s, Page::VirtualDesktops, "desktops"),
+        "the desktop count is no motion"
+    );
+    set_check(&mut s, &mut got, "reduce_motion", false);
+    assert!(held.iter().all(|&(p, id)| enabled_on(&s, p, id)));
+    for (p, id) in notes {
+        assert_eq!(lines(&s, p, id), [""], "{id} is blank again");
+    }
 }
 
 #[test]

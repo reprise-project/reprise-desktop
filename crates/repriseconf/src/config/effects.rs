@@ -112,6 +112,9 @@ pub struct EffectsConfig {
     /// The lock screen's transitions and busy ring, on under every interface; Classic has none.
     /// The greeter sets it from `[login] animation`.
     pub logon_animation: bool,
+    /// Every motion off or instant. `Config::parse` folds it into the keys above, so it is kept
+    /// only for the motion no key times ([`EffectsConfig::motion_ms`]) and the settings portal.
+    pub reduce_motion: bool,
 }
 
 impl EffectsConfig {
@@ -132,7 +135,24 @@ impl EffectsConfig {
             session_fade_in_ms: 600,
             session_fade_out_ms: 400,
             logon_animation: true,
+            reduce_motion: false,
         }
+    }
+
+    /// Turns every `[effects]` motion key off: what `reduce_motion` does to them.
+    pub fn hold_still(&mut self) {
+        self.window_animation = false;
+        self.hover_fade = false;
+        self.taskbar_slide = false;
+        self.taskbar_hide_ms = 0;
+        self.menu_animation = MenuAnimation::None;
+        self.session_fade = false;
+        self.logon_animation = false;
+    }
+
+    /// `ms`, or 0 while `reduce_motion` is on: the time of a motion no key of its own times.
+    pub fn motion_ms(&self, ms: u32) -> u32 {
+        if self.reduce_motion { 0 } else { ms }
     }
 
     pub fn opens(&self) -> bool {

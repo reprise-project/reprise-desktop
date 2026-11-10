@@ -50,6 +50,7 @@ pub struct SnapBar {
     y: Tween,
     work: Rect,
     size: (i32, i32),
+    still: bool,
 }
 
 impl SnapBar {
@@ -61,6 +62,15 @@ impl SnapBar {
             y: Tween::new(y, y, now, 0, Ease::OutCubic),
             work,
             size,
+            still: false,
+        }
+    }
+
+    /// The bar moves between stages at once instead of sliding.
+    pub fn still(self) -> SnapBar {
+        SnapBar {
+            still: true,
+            ..self
         }
     }
 
@@ -106,10 +116,10 @@ impl SnapBar {
         if next == self.stage {
             return false;
         }
-        let ms = if next == Stage::Expanded {
-            EXPAND_MS
-        } else {
-            SLIDE_MS
+        let ms = match next {
+            _ if self.still => 0,
+            Stage::Expanded => EXPAND_MS,
+            _ => SLIDE_MS,
         };
         self.stage = next;
         let to = f64::from(rect(self.work, self.size, next).y);
@@ -194,6 +204,20 @@ mod tests {
         assert_eq!(b.stage(), Stage::Collapsed);
         assert!(b.motion(900, 600, t0));
         assert_eq!(b.stage(), Stage::Hidden);
+    }
+
+    #[test]
+    fn a_still_bar_stands_at_each_stage_at_once() {
+        let t0 = Instant::now();
+        let mut b = SnapBar::new(WORK, SIZE, t0).still();
+        b.motion(900, 300, t0);
+        assert!(b.settled(t0));
+        assert_eq!(b.rect(t0), rect(WORK, SIZE, Stage::Collapsed));
+        b.motion(900, 6, t0);
+        assert!(b.settled(t0));
+        assert_eq!(b.rect(t0), rect(WORK, SIZE, Stage::Expanded));
+        b.end(t0);
+        assert_eq!(b.rect(t0), rect(WORK, SIZE, Stage::Hidden));
     }
 
     #[test]

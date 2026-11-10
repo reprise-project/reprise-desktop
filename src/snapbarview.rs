@@ -291,11 +291,15 @@ fn create(state: &mut State, w: WindowId, out: &Output, now: Instant) {
         layout.width,
         layout.height
     );
+    let mut model = SnapBar::new(work, (layout.width, layout.height), now);
+    if state.config.effects.reduce_motion {
+        model = model.still();
+    }
     state.snap_bar.shown = Some(Bar {
         window: w,
         output: out.clone(),
         work,
-        model: SnapBar::new(work, (layout.width, layout.height), now),
+        model,
         picks,
         layout,
         icons,
