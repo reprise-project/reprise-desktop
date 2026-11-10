@@ -305,8 +305,20 @@ impl State {
             return;
         }
         let now = Instant::now();
-        st.out = Tween::new(0.0, 1.0, now, OPEN_MS, Ease::Out);
-        st.shade = Tween::new(0.0, 1.0, now, OPEN_MS, Ease::Linear);
+        st.out = Tween::new(
+            0.0,
+            1.0,
+            now,
+            self.config.effects.motion_ms(OPEN_MS),
+            Ease::Out,
+        );
+        st.shade = Tween::new(
+            0.0,
+            1.0,
+            now,
+            self.config.effects.motion_ms(OPEN_MS),
+            Ease::Linear,
+        );
         st.stepping = true;
         let area = st.area;
         let hidden = self.hide_for_flip(area);
@@ -406,7 +418,12 @@ impl State {
         st.selected = switcher::step(st.selected, st.entries.len(), backwards);
         let to = st.roll.target() + if backwards { -1.0 } else { 1.0 };
         if st.revealed() {
-            st.roll.queue(to, Instant::now(), ROLL_MS, QUEUE_MS);
+            st.roll.queue(
+                to,
+                Instant::now(),
+                self.config.effects.motion_ms(ROLL_MS),
+                self.config.effects.motion_ms(QUEUE_MS),
+            );
         } else {
             st.roll = Tween::at(to);
         }
@@ -429,7 +446,12 @@ impl State {
         st.selected = k;
         let to = st.roll.target() + ahead as f64;
         if st.revealed() {
-            st.roll.queue(to, Instant::now(), ROLL_MS, QUEUE_MS);
+            st.roll.queue(
+                to,
+                Instant::now(),
+                self.config.effects.motion_ms(ROLL_MS),
+                self.config.effects.motion_ms(QUEUE_MS),
+            );
         } else {
             st.roll = Tween::at(to);
         }
@@ -455,7 +477,8 @@ impl State {
         st.selected = k;
         st.pick = true;
         let to = st.roll.target() + ahead as f64;
-        st.roll.retarget(to, Instant::now(), PICK_MS);
+        st.roll
+            .retarget(to, Instant::now(), self.config.effects.motion_ms(PICK_MS));
         self.flip_moved();
     }
 
@@ -794,8 +817,15 @@ impl State {
             st.top = k;
         }
         let now = Instant::now();
-        st.out = Tween::new(st.out.value(now), 0.0, now, CLOSE_MS, Ease::InOut);
-        st.shade.retarget(0.0, now, CLOSE_MS);
+        st.out = Tween::new(
+            st.out.value(now),
+            0.0,
+            now,
+            self.config.effects.motion_ms(CLOSE_MS),
+            Ease::InOut,
+        );
+        st.shade
+            .retarget(0.0, now, self.config.effects.motion_ms(CLOSE_MS));
         st.pick = false;
         self.scene.set_input(st.dim, Input::Passthrough);
         let output = st.output.clone();
@@ -833,8 +863,9 @@ impl State {
     /// into its place. False when it was not one of the open stack's.
     pub(crate) fn flip_forget(&mut self, entry: Entry) -> bool {
         let now = Instant::now();
+        let roll_ms = self.config.effects.motion_ms(ROLL_MS);
         let leaving = self.switcher.leaving.as_mut();
-        if let Some(pic) = leaving.and_then(|st| forget_entry(st, entry, now)) {
+        if let Some(pic) = leaving.and_then(|st| forget_entry(st, entry, now, roll_ms)) {
             if let Some(id) = pic.thumb {
                 self.thumb_drop(id);
             }
@@ -844,7 +875,7 @@ impl State {
             }
         }
         let open = self.switcher.stack.as_mut();
-        let Some(pic) = open.and_then(|st| forget_entry(st, entry, now)) else {
+        let Some(pic) = open.and_then(|st| forget_entry(st, entry, now, roll_ms)) else {
             return false;
         };
         if let Some(id) = pic.thumb {
@@ -878,13 +909,14 @@ impl State {
             return;
         }
         let now = Instant::now();
+        let roll_ms = self.config.effects.motion_ms(ROLL_MS);
         for e in fresh {
             let size = self.entry_size(e, area);
             let flat = self.flip_flats(&[e], area)[0];
             let Some(st) = self.switcher.stack.as_mut() else {
                 return;
             };
-            join_entry(st, e, size, flat, now);
+            join_entry(st, e, size, flat, now, roll_ms);
         }
         self.flip_moved();
     }
@@ -953,7 +985,14 @@ fn logical(r: Rect) -> Rectangle<i32, Logical> {
 /// desktop: the position, the selection and the top entry move so every
 /// card keeps its place (`flip::insert_roll`). A step rolling onto the
 /// desktop ends on `entry`, which takes the selection; a pick does not.
-fn join_entry(st: &mut Stack, entry: Entry, size: (i32, i32), flat: Option<Rect>, now: Instant) {
+fn join_entry(
+    st: &mut Stack,
+    entry: Entry,
+    size: (i32, i32),
+    flat: Option<Rect>,
+    now: Instant,
+    roll_ms: u32,
+) {
     let n = st.entries.len();
     let i = (st.entries.iter())
         .position(|&e| e == Entry::Desktop)
@@ -961,7 +1000,7 @@ fn join_entry(st: &mut Stack, entry: Entry, size: (i32, i32), flat: Option<Rect>
     let (at, to) = flip::insert_roll(st.roll.value(now), st.roll.target(), n, i, !st.pick);
     st.roll = Tween::at(at);
     if to != at {
-        st.roll.retarget(to, now, ROLL_MS);
+        st.roll.retarget(to, now, roll_ms);
     }
     if st.selected > i || (st.selected == i && to.rem_euclid((n + 1) as f64) != i as f64) {
         st.selected += 1;
@@ -979,7 +1018,7 @@ fn join_entry(st: &mut Stack, entry: Entry, size: (i32, i32), flat: Option<Rect>
 /// the cards in front stay and the ones behind move up one
 /// (`flip::forget_roll`). Returns its picture, for its live thumb to drop;
 /// None when it was not one of `st`'s.
-fn forget_entry(st: &mut Stack, entry: Entry, now: Instant) -> Option<Pic> {
+fn forget_entry(st: &mut Stack, entry: Entry, now: Instant, roll_ms: u32) -> Option<Pic> {
     let k = st.entries.iter().position(|&e| e == entry)?;
     let n = st.entries.len();
     if st.pick && st.selected == k {
@@ -989,7 +1028,7 @@ fn forget_entry(st: &mut Stack, entry: Entry, now: Instant) -> Option<Pic> {
     let (at, to) = flip::forget_roll(st.roll.value(now), st.roll.target(), n, k);
     st.roll = Tween::at(at);
     if to != at {
-        st.roll.retarget(to, now, ROLL_MS);
+        st.roll.retarget(to, now, roll_ms);
     }
     st.entries.remove(k);
     st.sizes.remove(k);
@@ -1039,6 +1078,29 @@ mod tests {
         crate::configwatch::reload(&mut h.state, wide);
         h.dispatch();
         assert!(stacked(&h).is_none(), "leaving Glass ends it");
+    }
+
+    #[test]
+    fn under_reduce_motion_the_stack_opens_rolls_and_leaves_at_once() {
+        let config =
+            Config::parse("[appearance]\ninterface = \"glass\"\n[effects]\nreduce_motion = true\n")
+                .unwrap();
+        let mut h = Harness::with_config(config);
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        h.map_toplevel(&mut c, "one", 300, 200);
+        h.map_toplevel(&mut c, "two", 300, 200);
+        h.state.open_flip(crate::keys::MOD_LOGO);
+        h.state.flip_reveal();
+        let now = Instant::now();
+        let st = h.state.switcher.stack.as_ref().expect("the stack is up");
+        assert!(!st.moving(now), "the cards stand in the stack at once");
+        h.state.flip_step(false);
+        let st = h.state.switcher.stack.as_ref().unwrap();
+        assert!(!st.moving(now), "a step stands at once");
+        h.state.switcher_cancel();
+        let gone = h.state.switcher.leaving.as_ref();
+        assert!(gone.is_none_or(|st| !st.moving(now)), "no flight back");
     }
 
     #[test]

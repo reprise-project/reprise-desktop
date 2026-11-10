@@ -1009,6 +1009,9 @@ impl Config {
             if let Some(v) = e.logon_animation {
                 fx.logon_animation = v;
             }
+            if let Some(v) = e.reduce_motion {
+                fx.reduce_motion = v;
+            }
             if let Some(name) = &e.menu_animation {
                 fx.menu_animation = MenuAnimation::from_name(name).ok_or_else(|| {
                     format!(
@@ -1329,6 +1332,11 @@ impl Config {
                     suspend_after: seconds("battery.suspend_after", b.suspend_after)?,
                 };
             }
+        }
+        if cfg.effects.reduce_motion {
+            cfg.effects.hold_still();
+            cfg.workspace_animation.style = SwitchStyle::None;
+            cfg.workspace_animation.ms = 0;
         }
         // Last: the text size scales the theme `[metrics]` and `[fonts]` made.
         cfg.theme = cfg.theme.with_text_size(cfg.accessibility.text_size);

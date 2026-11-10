@@ -1,6 +1,6 @@
 //! The binding between each control and its [`Settings`] field: writing, reading back and greying.
 
-use super::appearance::{ANIM_CONTROLS, HOVER_CONTROLS, NL_CONTROLS, NL_TIMES};
+use super::appearance::{ANIM_CONTROLS, HOVER_CONTROLS, MOTION_CONTROLS, NL_CONTROLS, NL_TIMES};
 use super::desktop::{
     DESKTOP_CONTROLS, DRAG_SNAP_CONTROLS, DURATION_CONTROLS, FLIP_NOTE, FPS_CONTROLS,
     GLOW_CONTROLS, OVERVIEW_NOTE, REVEAL_CONTROLS, SEARCH_NOTE, flip_note, overview_note,
@@ -284,6 +284,8 @@ pub(super) fn binds() -> Vec<Bind> {
         Bind::Flag("taskbar_slide", lens!(taskbar_slide)),
         Bind::Flag("session_fade", lens!(session_fade)),
         Bind::Flag("logon_animation", lens!(logon_animation)),
+        Bind::Flag("reduce_motion", lens!(reduce_motion)),
+        Bind::Flag(crate::magnifierpage::REDUCE_MOTION, lens!(reduce_motion)),
         Bind::Steps("double_click_ms", lens!(double_click_ms), DOUBLE_CLICK),
         Bind::Text("kb_model", lens!(kb_model)),
         Bind::Text("kb_options", lens!(kb_options)),
@@ -719,13 +721,21 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
         "slow_delay_value",
         &format!("{}.{} seconds", tenths / 10, tenths % 10),
     );
-    crate::magnifierpage::follow(&mut sheet.pages[Page::MagnifierFilters.index()], s);
+    let vision = &mut sheet.pages[Page::MagnifierFilters.index()];
+    crate::magnifierpage::follow(vision, s);
+    vision.set_check(crate::magnifierpage::REDUCE_MOTION, s.reduce_motion);
     let fx = &mut sheet.pages[Page::Effects.index()];
+    fx.set_check("reduce_motion", s.reduce_motion);
+    let moving = !s.reduce_motion;
+    for id in MOTION_CONTROLS {
+        fx.set_enabled(id, moving);
+    }
+    fx.set_enabled("menu_animation", moving);
     for id in ANIM_CONTROLS {
-        fx.set_enabled(id, s.window_animation);
+        fx.set_enabled(id, moving && s.window_animation);
     }
     for id in HOVER_CONTROLS {
-        fx.set_enabled(id, s.hover_fade);
+        fx.set_enabled(id, moving && s.hover_fade);
     }
     let np = &mut sheet.pages[Page::Notifications.index()];
     for id in QUIET_TIMES {

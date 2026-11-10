@@ -164,8 +164,9 @@ impl State {
         }
     }
 
-    /// Freeze the screen behind Welcome panel `id` and fade it to grey. Taken once the panel has the
-    /// keyboard, so windows and task buttons show inactive, with the panel's tree off.
+    /// Freeze the screen behind Welcome panel `id` and fade it to grey, or grey it at once under
+    /// `reduce_motion`. Taken once the panel has the keyboard, so windows and task buttons show
+    /// inactive, with the panel's tree off.
     fn grey_the_screen_under(&mut self, id: u64) {
         let Some(v) = self.dialogs.views.iter().find(|v| v.id == id) else {
             return;
@@ -187,8 +188,13 @@ impl State {
             .buffer_set_canvas(node, &c.pixels, c.width as i32, c.height as i32);
         self.scene
             .buffer_set_dest_size(node, Some((b.width, b.height).into()));
-        self.scene.set_opacity(node, 0.0);
-        let fade = self.fade_still(id, node);
+        let fade = match self.config.effects.reduce_motion {
+            true => None,
+            false => {
+                self.scene.set_opacity(node, 0.0);
+                self.fade_still(id, node)
+            }
+        };
         if let Some(v) = self.dialogs.views.iter_mut().find(|v| v.id == id) {
             v.fade = fade;
         }

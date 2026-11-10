@@ -804,4 +804,21 @@ mod tests {
         // SAFETY: `handle` is live and not used after this call.
         assert_eq!(unsafe { ffi::pam_end(handle, rc) }, ffi::PAM_SUCCESS);
     }
+
+    #[test]
+    fn under_reduce_motion_the_lock_comes_up_without_its_entrance() {
+        let config = crate::config::Config::parse(
+            "[appearance]\ninterface = \"glass\"\n[effects]\nreduce_motion = true\n",
+        )
+        .unwrap();
+        let mut h = crate::harness::Harness::with_config(config);
+        h.output("TEST-1", 1024, 768);
+        h.state.lock.helpers = crate::lockview::Helpers {
+            finger: |_| None,
+            ..Default::default()
+        };
+        crate::lockview::lock(&mut h.state);
+        let l = h.state.lock.console.as_ref().expect("locked");
+        assert!(l.view.play.is_none(), "the screen stands still");
+    }
 }

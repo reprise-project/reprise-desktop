@@ -801,6 +801,7 @@ fn save_round_trips_every_field() {
         taskbar_slide: true,
         session_fade: false,
         logon_animation: false,
+        reduce_motion: true,
         double_click_ms: 400,
         kb_layout: "hu".into(),
         kb_variant: "nodeadkeys".into(),

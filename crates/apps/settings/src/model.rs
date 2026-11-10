@@ -288,6 +288,8 @@ pub struct Settings {
     pub taskbar_slide: bool,
     pub session_fade: bool,
     pub logon_animation: bool,
+    /// `[effects] reduce_motion`, on two pages: Effects and Magnifier & Filters.
+    pub reduce_motion: bool,
     pub double_click_ms: i64,
 
     pub kb_layout: String,
@@ -603,6 +605,7 @@ impl Settings {
             taskbar_slide: fx.taskbar_slide,
             session_fade: fx.session_fade,
             logon_animation: fx.logon_animation,
+            reduce_motion: fx.reduce_motion,
             double_click_ms: m.double_click_ms.into(),
 
             kb_layout: c.keyboard.layout.clone(),

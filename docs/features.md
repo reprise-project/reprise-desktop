@@ -487,7 +487,8 @@ are.
   and pointer reach the desktop from the fade's first frame. An unlock from
   another VT, through `loginctl` or a locker goes at once, and the remote
   side of lock mode never moves. Settings > Effects > Animate the lock
-  screen (`[effects] logon_animation`) keeps it all still.
+  screen (`[effects] logon_animation`) keeps it all still, as does Reduce
+  motion everywhere (`reduce_motion`).
 - **Idle steps.** Screen saver, lock, screen off and suspend, each with its
   own timeout, and separate timeouts on battery.
 - **Lock on sleep.** The screen locks before the machine suspends, whatever
@@ -736,6 +737,11 @@ the screen takes the interface of the last session used at this computer.
   real colours.
 - **Larger text** at 125% to 200% without changing the scale. The taskbar,
   menus, captions, Notepad and your GTK and Qt programs grow with it.
+- **Reduce motion** (`[effects] reduce_motion`, on the Effects and Magnifier
+  & Filters pages) turns every animation off at once: windows, menus,
+  fades, slides, the switchers and the lock screen cut straight to their
+  end. GTK programs and others reading the settings portal's
+  `reduced-motion` stop animating too.
 - **StickyKeys and SlowKeys,** offered when you press Shift five times or
   hold the right Shift for eight seconds.
 - **MouseKeys:** the keypad moves the pointer, clicks and drags; hold Ctrl

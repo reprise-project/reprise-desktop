@@ -332,6 +332,7 @@ pub struct FileEffects {
     pub session_fade_in_ms: Option<i64>,
     pub session_fade_out_ms: Option<i64>,
     pub logon_animation: Option<bool>,
+    pub reduce_motion: Option<bool>,
 }
 
 #[derive(Deserialize, Default)]

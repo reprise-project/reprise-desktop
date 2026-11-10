@@ -167,7 +167,11 @@ fn set(state: &mut State, tree: TreeId, open: bool) {
     }) else {
         return;
     };
-    let ms = if side { 0 } else { SLIDE_MS };
+    let ms = if side {
+        0
+    } else {
+        state.config.effects.motion_ms(SLIDE_MS)
+    };
     let now = Instant::now();
     let Some(bar) = state.bar_mut(tree) else {
         return;
@@ -712,6 +716,23 @@ mod tests {
         );
         h.click(x2, y);
         assert!(!open(&h, tree));
+    }
+
+    #[test]
+    fn under_reduce_motion_the_run_opens_and_shuts_at_once() {
+        let (mut h, tree) = hidden_two();
+        h.state.config.effects.reduce_motion = true;
+        let (x, y) = arrow(&h, tree);
+        h.click(x, y);
+        assert!(open(&h, tree));
+        let now = std::time::Instant::now();
+        let reveal = |h: &Harness| h.state.bar(tree).expect("bar").tray_reveal;
+        assert!(reveal(&h).settled(now), "no slide");
+        let (x2, y) = arrow(&h, tree);
+        assert!(x2 < x, "the run is open already");
+        h.click(x2, y);
+        assert!(!open(&h, tree));
+        assert_eq!(reveal(&h).x(now), 0, "shut at once");
     }
 
     #[test]

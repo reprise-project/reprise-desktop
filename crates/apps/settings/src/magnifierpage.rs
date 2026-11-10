@@ -2,7 +2,7 @@
 //! `color_filter_intensity`) with a preview of what it does to six colours, and the magnifier's
 //! following (`[accessibility] magnifier_follow`) with the keys that zoom. The intensity greys unless a
 //! colour-blind correction is picked; the preview follows the pending choice, the zoom keys' note the
-//! pending `[[keybinds]]`.
+//! pending `[[keybinds]]`. Below, the same Reduce motion check box as the Effects page's.
 
 use reprisekit::classic::widgets::LINE_H;
 use reprisekit::colorfilter::{self, Filter};
@@ -39,6 +39,10 @@ const CELL: (i32, i32) = (16, 12);
 
 const TOP: i32 = 44;
 const MAG_TOP: i32 = TOP + 120;
+const MOTION_TOP: i32 = MAG_TOP + 103;
+
+/// The Effects page's `reduce_motion` check box, shown here too.
+pub const REDUCE_MOTION: &str = "vision_reduce_motion";
 
 /// The preview's rect: the swatch in a 2 px sunken frame, at the group's right.
 pub fn preview_rect(a: Area) -> Rect {
@@ -97,6 +101,20 @@ pub fn page(a: Area) -> Form {
             MAG_NOTE,
             Rect::new(GX, MAG_TOP + 42, gw, NOTE_LINES as i32 * LINE_H),
             Control::Lines(Vec::new()),
+        ),
+        group(a, "motion_group", MOTION_TOP, 62, "Motion"),
+        Item::check(
+            REDUCE_MOTION,
+            GX,
+            MOTION_TOP + 20,
+            "&Reduce motion everywhere",
+        ),
+        Item::new(
+            "motion_note",
+            Rect::new(GX, MOTION_TOP + 38, gw, LINE_H),
+            Control::Lines(vec![
+                "GTK and Qt programs that follow it stop animating too.".into(),
+            ]),
         ),
     ])
 }
