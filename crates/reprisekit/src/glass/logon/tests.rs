@@ -357,3 +357,98 @@ fn the_glass_lock_shows_switch_user_only_when_offered_and_keeps_power() {
         assert!(!hashes[i + 1..].contains(a), "{} repeats", states[i].0);
     }
 }
+
+fn busy() -> Logon {
+    let mut m = tile();
+    m.key(LogonKey::Text("abc"));
+    m.set_busy(true);
+    m
+}
+
+/// The busy screen at `step` and its ring's device rect.
+fn spun(step: u32, s: i32) -> (Canvas, Rect) {
+    let mut m = busy();
+    m.spin = step;
+    let theme = crate::interfaces::theme_for(Interface::Glass).scaled(s);
+    let text = TextRenderer::load(&theme.fonts);
+    let (c, l) = drawn(&m, s);
+    let ring = spinner_rect(&m, &l, &theme, text.for_output(s), s).expect("busy shows the ring");
+    (c, ring)
+}
+
+#[test]
+fn glass_spinner_steps_pin_at_scale_1_and_2() {
+    crate::pins::fonts();
+    let mut got = Vec::new();
+    for step in [0, 15, 30, 45] {
+        for s in [1, 2] {
+            got.push((format!("step {step} @{s}"), fnv(&spun(step, s).0)));
+        }
+    }
+    crate::pins::check("glass/logon-spin", &got);
+}
+
+#[test]
+fn a_quarter_of_the_steps_turns_the_ring_a_quarter_clockwise() {
+    for s in [1, 2] {
+        let (still, r) = spun(0, s);
+        let (turned, _) = spun(SPIN_STEPS / 4, s);
+        let n = r.width;
+        for y in 0..n {
+            for x in 0..n {
+                let want = still.get(r.x + y, r.y + n - 1 - x);
+                let got = turned.get(r.x + x, r.y + y);
+                let off =
+                    (0..4).map(|k| ((want >> (8 * k)) & 0xFF).abs_diff((got >> (8 * k)) & 0xFF));
+                assert!(
+                    off.max().unwrap() <= 1,
+                    "@{s} ({x}, {y}): {got:08x}, turned from {want:08x}"
+                );
+            }
+        }
+        assert_ne!(fnv(&still), fnv(&turned), "@{s}: the ring moved");
+    }
+}
+
+#[test]
+fn the_ring_alone_redraws_to_the_whole_screens_pixels() {
+    let theme = crate::interfaces::theme_for(Interface::Glass).scaled(2);
+    let text = TextRenderer::load(&theme.fonts);
+    let (mut c, l) = drawn(&busy(), 2);
+    let mut m = busy();
+    m.spin = 7;
+    draw_spinner(&mut c, &m, &l, &theme, text.for_output(2), 2);
+    assert!(
+        c.pixels == drawn(&m, 2).0.pixels,
+        "step 7 drawn alone equals step 7 drawn whole"
+    );
+    let r = spinner_rect(&m, &l, &theme, text.for_output(2), 2).unwrap();
+    let alpha: Vec<u32> = (r.y..r.bottom())
+        .flat_map(|y| (r.x..r.right()).map(move |x| (x, y)))
+        .map(|(x, y)| c.get(x, y) >> 24)
+        .collect();
+    assert!(
+        alpha.iter().any(|a| (1..255).contains(a)),
+        "the ring's edge is anti-aliased at 2"
+    );
+    assert_eq!(alpha[0], 0, "the ring's corner is clear");
+}
+
+#[test]
+fn the_ring_steps_with_time_and_comes_round() {
+    use std::time::Duration;
+    let step = |ms| spin_step(Duration::from_millis(ms));
+    assert_eq!(step(0), 0);
+    assert_eq!(step(u64::from(SPIN_STEP_MS) - 1), 0);
+    assert_eq!(step(u64::from(SPIN_STEP_MS)), 1);
+    assert_eq!(
+        step(u64::from(SPIN_STEP_MS * SPIN_STEPS)),
+        0,
+        "a whole turn"
+    );
+    let theme = crate::interfaces::theme_for(Interface::Glass);
+    let text = TextRenderer::load(&theme.fonts);
+    let (_, l) = drawn(&tile(), 1);
+    let ring = spinner_rect(&tile(), &l, &theme, &text, 1);
+    assert_eq!(ring, None, "no ring while not busy");
+}

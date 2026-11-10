@@ -70,8 +70,11 @@ const HALO_INK: Color = Color::rgb(0x00, 0x00, 0x00);
 /// The white glow round a lit picture frame: its reach and its alpha at the frame.
 const GLOW: i32 = 8;
 const GLOW_ALPHA: f64 = 110.0;
-/// The spinner's head, radians clockwise from the top.
+/// The spinner's head at step 0, radians clockwise from the top.
 const SPIN_HEAD: f64 = 0.8;
+/// The ring turns clockwise in steps: this many a turn, each shown this long.
+pub const SPIN_STEPS: u32 = 60;
+pub const SPIN_STEP_MS: u32 = 20;
 
 const INK: Color = Color::rgb(0xFF, 0xFF, 0xFF);
 const NOTE_INK: Color = Color::rgb(0xE4, 0xEE, 0xFA);
@@ -343,6 +346,14 @@ pub fn layout(m: &Logon, theme: &Theme, text: &TextRenderer, output: Rect) -> Lo
     }
 }
 
+/// The width of the screen's one centred button (Switch User or OK), as laid out.
+fn button_width(l: &LogonLayout) -> i32 {
+    [Part::SwitchUser, Part::MessageOk]
+        .into_iter()
+        .find_map(|p| l.rect(p))
+        .map_or(0, |r| r.width)
+}
+
 /// `c` covers `l.output` at scale `s` and starts clear: the host lays it over the wallpaper.
 /// `theme` is the output's (`Theme::scaled(s)`) and `text` its renderer.
 pub fn draw(
@@ -353,11 +364,7 @@ pub fn draw(
     text: &TextRenderer,
     s: i32,
 ) {
-    let button_w = [Part::SwitchUser, Part::MessageOk]
-        .into_iter()
-        .find_map(|p| l.rect(p))
-        .map_or(0, |r| r.width);
-    let g = geometry(m, theme, l.output, button_w);
+    let g = geometry(m, theme, l.output, button_width(l));
     let o = l.output;
     let at = |r: Rect| Rect::new(r.x - o.x, r.y - o.y, r.width, r.height).scaled(s);
     let u = theme.text;
@@ -472,16 +479,12 @@ pub fn draw(
             left_label(c, text, row, line, ui, INK, s);
         }
     }
-    if let Some(r) = g.busy {
-        let r = at(r);
-        let px = u.px(BUSY_PX) * s as u32;
-        let word = m.busy_text();
-        let w = (SPINNER + ICON_GAP) * s + text.measure(&word, false, px);
-        let x = r.x + (r.width - w) / 2;
-        spinner(c, x, r.y, s);
-        let left = x + (SPINNER + ICON_GAP) * s;
+    if let Some(b) = busy_row(m, &g, theme, text, o, s) {
+        spinner(c, b.ring.x, b.ring.y, s, m.spin);
+        let left = b.ring.right() + ICON_GAP * s;
+        let r = b.row;
         let row = Rect::new(left, r.y - r.height / 2, r.right() - left, 2 * r.height);
-        left_label(c, text, row, &word, px, INK, s);
+        left_label(c, text, row, &b.word, b.px, INK, s);
     }
 
     if let Some(r) = l.rect(Part::Power) {
@@ -492,6 +495,68 @@ pub fn draw(
         label(c, text, at(r), short, ui, INK, s);
     }
     wordmark(c, text, at(g.mark), u.px(MARK_PX) * s as u32, s);
+}
+
+/// The busy row in device px: the ring's square and the row it is centred in with the busy text.
+struct Busy {
+    ring: Rect,
+    row: Rect,
+    word: String,
+    px: u32,
+}
+
+fn busy_row(
+    m: &Logon,
+    g: &Geometry,
+    theme: &Theme,
+    text: &TextRenderer,
+    o: Rect,
+    s: i32,
+) -> Option<Busy> {
+    let r = g.busy?;
+    let r = Rect::new(r.x - o.x, r.y - o.y, r.width, r.height).scaled(s);
+    let px = theme.text.px(BUSY_PX) * s as u32;
+    let word = m.busy_text();
+    let w = (SPINNER + ICON_GAP) * s + text.measure(&word, false, px);
+    let ring = Rect::new(r.x + (r.width - w) / 2, r.y, SPINNER * s, SPINNER * s);
+    Some(Busy {
+        ring,
+        row: r,
+        word,
+        px,
+    })
+}
+
+/// The busy ring's device rect on the canvas `draw` fills, while the screen is busy.
+pub fn spinner_rect(
+    m: &Logon,
+    l: &LogonLayout,
+    theme: &Theme,
+    text: &TextRenderer,
+    s: i32,
+) -> Option<Rect> {
+    let g = geometry(m, theme, l.output, button_width(l));
+    busy_row(m, &g, theme, text, l.output, s).map(|b| b.ring)
+}
+
+/// The ring alone drawn again at `m.spin` over what `draw` left in its rect.
+pub fn draw_spinner(
+    c: &mut Canvas,
+    m: &Logon,
+    l: &LogonLayout,
+    theme: &Theme,
+    text: &TextRenderer,
+    s: i32,
+) {
+    if let Some(r) = spinner_rect(m, l, theme, text, s) {
+        c.clear_rect(r);
+        spinner(c, r.x, r.y, s, m.spin);
+    }
+}
+
+/// The ring's step `busy_for` after the screen first showed busy.
+pub fn spin_step(busy_for: std::time::Duration) -> u32 {
+    ((busy_for.as_millis() / u128::from(SPIN_STEP_MS)) % u128::from(SPIN_STEPS)) as u32
 }
 
 fn lit_cell(c: &mut Canvas, r: Rect, face: Face, s: i32) {
@@ -700,16 +765,18 @@ fn error_icon(c: &mut Canvas, x: i32, y: i32, s: i32) {
     c.blit_over(x, y, &img);
 }
 
-/// At device (`x`, `y`); the ring's light fades back from its head.
-fn spinner(c: &mut Canvas, x: i32, y: i32, s: i32) {
+/// At device (`x`, `y`), turned `step` of [`SPIN_STEPS`]; the ring's light fades back from its
+/// head.
+fn spinner(c: &mut Canvas, x: i32, y: i32, s: i32, step: u32) {
     let k = f64::from(s);
     let half = f64::from(SPINNER) * k / 2.0;
     let tau = std::f64::consts::TAU;
+    let head = SPIN_HEAD + f64::from(step % SPIN_STEPS) * tau / f64::from(SPIN_STEPS);
     let img = shape::draw(SPINNER, SPINNER, s, |x, y| {
         let outer = ellipse(x, y, half, half, half, half);
         let inner = ellipse(x, y, half, half, half - 4.0 * k, half - 4.0 * k);
         let turn = (x + 0.5 - half).atan2(half - y - 0.5);
-        let t = 1.0 - (SPIN_HEAD - turn).rem_euclid(tau) / tau;
+        let t = 1.0 - (head - turn).rem_euclid(tau) / tau;
         shape::scale(Stops(&SPIN).at(t), (outer - inner).max(0.0))
     });
     c.blit_over(x, y, &img);
