@@ -284,3 +284,29 @@ fn an_autologin_user_or_an_unreadable_login_toml_keeps_restart_off() {
     std::fs::create_dir(dir.join("dir")).unwrap();
     assert!(autologin(&dir.join("dir")), "a read that fails");
 }
+
+#[test]
+fn a_power_menu_with_no_rows_draws_no_power_button() {
+    let power = |h: &Harness| {
+        let l = h.state.lock.console.as_ref().expect("locked");
+        l.part(Part::Power).or(l.part(Part::PowerMenu))
+    };
+    for interface in ["classic", "blue", "glass"] {
+        let (mut h, _) = locked_with(interface, || true, false);
+        assert!(power(&h).is_some(), "{interface}: Stand By alone");
+        h.state.config.power.standby = " ".into();
+        lockview::redraw(&mut h.state);
+        assert_eq!(
+            power(&h),
+            None,
+            "{interface}: no Stand By, no reprise-login"
+        );
+        let (mut h, _daemon) = locked_in(interface, || false);
+        h.state.config.power.standby = String::new();
+        lockview::redraw(&mut h.state);
+        assert!(
+            power(&h).is_some(),
+            "{interface}: Restart and Turn Off may be offered"
+        );
+    }
+}

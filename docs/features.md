@@ -476,7 +476,8 @@ are.
   logind, so a program's block inhibitor still holds it off; Restart and
   Turn Off close your programs without their save prompts. There is no
   power on the lock in lock mode nor while a remote viewer drives the
-  computer ([security.md](security.md)).
+  computer ([security.md](security.md)), and none when the menu would be
+  empty: no `[power] standby` and another display manager.
 - **Idle steps.** Screen saver, lock, screen off and suspend, each with its
   own timeout, and separate timeouts on battery.
 - **Lock on sleep.** The screen locks before the machine suspends, whatever

@@ -22,10 +22,17 @@ pub enum LockPower {
     TurnOff,
 }
 
-/// Only the console's lock offers power, and not in lock mode nor while a remote viewer drives
-/// the seat: whoever is at the computer reaches it, nobody from afar.
+/// Only the console's lock offers power, outside lock mode and while no remote viewer drives the
+/// seat, and only with a row to offer: Stand By, or Restart and Turn Off under reprise-login.
 pub fn offered(state: &State, side: Side) -> bool {
-    side == Side::Console && !crate::console::remote_side(state) && !state.remote_controlled()
+    side == Side::Console
+        && !crate::console::remote_side(state)
+        && !state.remote_controlled()
+        && (standby(state) || state.login_link.is_some())
+}
+
+fn standby(state: &State) -> bool {
+    !state.config.power.standby.trim().is_empty()
 }
 
 /// Whether the input being handled may reach the menu: only the computer's own devices.
@@ -60,7 +67,7 @@ fn show(state: &mut State, alone: bool) {
     if menu_open(state) {
         return;
     }
-    let rows = rows(!state.config.power.standby.trim().is_empty(), alone);
+    let rows = rows(standby(state), alone);
     if !alone {
         lockview::refused(state, logon::text::unlock_to_power());
     }
