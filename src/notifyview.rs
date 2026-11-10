@@ -48,7 +48,7 @@ use reply::start_reply;
 use stack::{Item, arrived, display_next, enqueue, fold, foldable, in_burst, slot_of, take_all};
 
 /// Default and clamp for how long a balloon stays up (ms). A request of 0 ("never") is held to
-/// `MAX_MS`; only a critical notification stays until dealt with.
+/// `MAX_MS`; a critical notification stays until dealt with unless it asks for a time.
 const DEFAULT_MS: i32 = 7000;
 const MIN_MS: i32 = 3000;
 const MAX_MS: i32 = 20000;
@@ -718,10 +718,10 @@ fn balloon_sound<'a>(
     n.sound.as_ref().filter(|_| on && n.urgency != Urgency::Low)
 }
 
-/// `None` for a critical notification, which stays until dealt with.
+/// `None` for a critical notification asking for no time, which stays until dealt with.
 fn timeout_ms(n: &Notification) -> Option<i32> {
     if n.urgency == Urgency::Critical {
-        return None;
+        return (n.expire_timeout > 0).then(|| n.expire_timeout.max(MIN_MS));
     }
     Some(match n.expire_timeout {
         t if t < 0 => DEFAULT_MS,

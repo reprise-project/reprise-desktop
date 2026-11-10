@@ -270,7 +270,7 @@ fn the_queue_drops_its_oldest_past_the_cap() {
 }
 
 #[test]
-fn a_critical_balloon_never_times_out() {
+fn a_critical_balloon_stays_unless_its_sender_sets_a_timeout() {
     let mut n = Notification::new(1, "Hi".into(), String::new());
     assert_eq!(timeout_ms(&n), Some(DEFAULT_MS));
     n.expire_timeout = 0;
@@ -278,7 +278,32 @@ fn a_critical_balloon_never_times_out() {
     n.expire_timeout = 100;
     assert_eq!(timeout_ms(&n), Some(MIN_MS));
     n.urgency = Urgency::Critical;
-    assert_eq!(timeout_ms(&n), None);
+    assert_eq!(timeout_ms(&n), Some(MIN_MS));
+    n.expire_timeout = 30_000;
+    assert_eq!(timeout_ms(&n), Some(30_000), "past MAX_MS when asked");
+    for never in [-1, 0] {
+        n.expire_timeout = never;
+        assert_eq!(timeout_ms(&n), None, "{never}");
+    }
+}
+
+#[test]
+fn a_note_behind_a_timed_critical_balloon_in_classic_waits_only_for_its_timeout() {
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    let mut grant = note(1, "Reprise");
+    grant.urgency = Urgency::Critical;
+    grant.expire_timeout = 30_000;
+    show(&mut h.state, grant);
+    show(&mut h.state, note(2, "Mail"));
+    let v = &h.state.notify;
+    assert!(v.stack.len() == 1 && v.stack[0].item.is(1));
+    assert!(v.queue.len() == 1 && v.queue[0].is(2), "Mail waits");
+    let due = v.stack[0]
+        .clock
+        .due()
+        .expect("the critical balloon times out");
+    assert!(due <= Instant::now() + Duration::from_secs(30));
 }
 
 /// An open reply row collapses once idle, but not while the pointer rests in the balloon; a
@@ -360,6 +385,18 @@ fn a_burst_takes_its_programs_queued_balloons() {
     assert_eq!(at, Some(1));
     assert!(q.iter().all(|i| i.note().is_some_and(|n| n.app == "Chat")));
     assert_eq!(take_queued(&mut q, "Mail"), (Vec::new(), None));
+}
+
+#[test]
+fn a_burst_leaves_critical_notes_out() {
+    let mut crit = note(2, "Reprise");
+    crit.urgency = Urgency::Critical;
+    let (a, c) = (Item::Note(note(1, "Reprise")), Item::Note(crit.clone()));
+    assert_eq!(fold_from(&[(&c, false), (&a, false)], "Reprise"), vec![1]);
+    let mut q: VecDeque<Item> = [Item::Note(crit), Item::Note(note(3, "Reprise"))].into();
+    let (taken, _) = take_queued(&mut q, "Reprise");
+    assert_eq!(taken.iter().map(|n| n.id).collect::<Vec<_>>(), [3]);
+    assert!(q.len() == 1 && q[0].is(2), "the critical one stays queued");
 }
 
 #[test]

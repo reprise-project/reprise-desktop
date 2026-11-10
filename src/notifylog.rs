@@ -101,7 +101,7 @@ impl Log {
     /// replaced (and stays open). `looking` is whether the history is on
     /// screen, where nothing is unseen. Returns the ids that fell off the
     /// end, or past their program's [`MAX_PER_PROGRAM`], while still open,
-    /// which expire.
+    /// which expire; an open critical one goes only when nothing else can.
     pub fn record(&mut self, n: &Notification, time: i64, looking: bool) -> Vec<u32> {
         self.entries.retain(|e| e.n.id != n.id);
         self.entries.insert(
@@ -118,20 +118,36 @@ impl Log {
             self.unseen = (self.unseen + 1).min(self.entries.len());
         }
         let mut dropped = Vec::new();
-        if let Some(oldest) = (self.entries.iter().enumerate())
+        let mine: Vec<usize> = (self.entries.iter().enumerate())
             .filter(|(_, e)| e.n.key == n.key)
             .map(|(i, _)| i)
-            .nth(MAX_PER_PROGRAM)
-        {
-            dropped.push(self.entries.remove(oldest));
+            .collect();
+        if mine.len() > MAX_PER_PROGRAM {
+            let i = self.evictee(&mine);
+            dropped.push(self.entries.remove(i));
         }
-        dropped.extend(self.entries.split_off(self.entries.len().min(MAX_ENTRIES)));
+        while self.entries.len() > MAX_ENTRIES {
+            let all: Vec<usize> = (0..self.entries.len()).collect();
+            let i = self.evictee(&all);
+            dropped.push(self.entries.remove(i));
+        }
         self.unseen = self.unseen.min(self.entries.len());
         dropped
             .into_iter()
             .filter(|e| e.open)
             .map(|e| e.n.id)
             .collect()
+    }
+
+    /// Of `among` (indices, newest first), the oldest older than the new entry that isn't open and
+    /// critical, else the oldest.
+    fn evictee(&self, among: &[usize]) -> usize {
+        let kept = |i: usize| {
+            let e = &self.entries[i];
+            e.open && e.n.urgency == Urgency::Critical
+        };
+        let free = among.iter().rev().find(|&&i| i != 0 && !kept(i));
+        *free.or(among.last()).expect("an entry to drop")
     }
 
     pub fn get(&self, id: u32) -> Option<&Entry> {
@@ -222,6 +238,31 @@ mod tests {
         assert_eq!(spam, MAX_PER_PROGRAM);
         assert!(log.get(1).is_some(), "another program's entry stays");
         assert_eq!(dropped, (2..=10).collect::<Vec<u32>>(), "the oldest close");
+    }
+
+    #[test]
+    fn an_open_critical_entry_outlasts_both_caps() {
+        let from = |id: u32, key: &str| Notification {
+            key: key.into(),
+            ..note(id)
+        };
+        let mut log = Log::default();
+        let mut grant = from(1, "Reprise");
+        grant.urgency = Urgency::Critical;
+        log.record(&grant, 0, false);
+        let mut dropped = Vec::new();
+        for id in 2..=30 {
+            dropped.extend(log.record(&from(id, "Reprise"), 0, false));
+        }
+        for id in 31..=100 {
+            dropped.extend(log.record(&from(id, &format!("p{id}")), 0, false));
+        }
+        assert!(log.get(1).is_some_and(|e| e.open), "{dropped:?}");
+        assert!(!dropped.contains(&1));
+        assert_eq!(log.entries.len(), MAX_ENTRIES);
+        log.close(1);
+        log.record(&from(101, "p101"), 0, false);
+        assert!(log.get(1).is_none(), "once closed it may go");
     }
 
     #[test]
