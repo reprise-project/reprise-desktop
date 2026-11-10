@@ -285,6 +285,8 @@ pub struct Logon {
     /// The screen lies over a picture: Classic leaves the space around its dialog clear, Blue dims
     /// its field.
     pub over_picture: bool,
+    /// The busy ring's step, which the host advances while the screen is busy.
+    pub spin: u32,
     /// The screen [`Screen::Message`]'s OK goes back to.
     back: Screen,
     /// An administrator's power request succeeded and the computer is going down.
@@ -327,6 +329,7 @@ impl Logon {
             first_tile: 0,
             column: COLUMN,
             over_picture: false,
+            spin: 0,
             back: Screen::Typed,
             going_down: false,
         };
