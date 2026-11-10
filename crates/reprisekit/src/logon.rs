@@ -306,13 +306,15 @@ pub struct Logon {
 }
 
 impl Logon {
+    /// With `show_users` off the screen lists no one, whatever `users` holds.
     pub fn new(
         interface: Interface,
         users: Vec<LogonUser>,
         show_users: bool,
         last_user: Option<&str>,
     ) -> Logon {
-        let listed = show_users && !users.is_empty();
+        let users = if show_users { users } else { Vec::new() };
+        let listed = !users.is_empty();
         let last = last_user.and_then(|n| users.iter().position(|u| u.name == n));
         let screen = match interface {
             Interface::Blue if listed => Screen::Tiles,
@@ -536,9 +538,8 @@ impl Logon {
             Part::Tile(i) if self.screen == Screen::Tile(i) => None,
             Part::Tile(i) => self.open(Screen::Tile(i)),
             Part::OtherUser => self.open(Screen::Typed),
-            Part::SwitchUser if self.unlocking() => {
-                (self.offers_switch_user()).then_some(LogonAction::SwitchUser)
-            }
+            Part::SwitchUser if !self.offers_switch_user() => None,
+            Part::SwitchUser if self.unlocking() => Some(LogonAction::SwitchUser),
             Part::SwitchUser => self.leave_admin().or_else(|| self.open(Screen::Tiles)),
             Part::Power => Some(LogonAction::Power),
             Part::PowerMenu => Some(LogonAction::PowerMenu),

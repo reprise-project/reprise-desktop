@@ -60,6 +60,33 @@ fn show_users_off_starts_typed_everywhere() {
 }
 
 #[test]
+fn show_users_off_offers_no_switch_user_but_the_lock_still_does() {
+    let theme = Theme::default();
+    let text = TextRenderer::load(&theme.fonts);
+    let output = Rect::new(0, 0, 1024, 768);
+    for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        let mut m = Logon::new(i, users(3), false, None);
+        assert!(!m.offers_switch_user(), "{i:?}");
+        assert!(
+            !m.stops().contains(&Part::SwitchUser),
+            "{i:?}: Tab skips it"
+        );
+        let l = crate::interfaces::logon::logon_layout(&m, &theme, &text, output);
+        assert_eq!(l.rect(Part::SwitchUser), None, "{i:?}: not drawn");
+        m.click(Part::SwitchUser);
+        assert_eq!(m.pick_user(), None, "{i:?}");
+        assert_eq!(m.screen, Screen::Typed, "{i:?}: the typed form stays");
+        let mut lock = Logon::locked(i, users(1).remove(0), true, true);
+        let l = crate::interfaces::logon::logon_layout(&lock, &theme, &text, output);
+        assert!(
+            l.rect(Part::SwitchUser).is_some(),
+            "{i:?}: the lock shows it"
+        );
+        assert_eq!(lock.click(Part::SwitchUser), Some(LogonAction::SwitchUser));
+    }
+}
+
+#[test]
 fn left_and_right_step_through_the_tiles_as_up_and_down_do() {
     let left = LogonKey::Edit(EditKey::Left {
         select: false,
