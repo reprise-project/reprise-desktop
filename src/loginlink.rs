@@ -526,26 +526,22 @@ mod tests {
         crate::lockview::lock_remote(&mut h.state);
         let switch_on = |side| {
             let l = h.state.lock.on(side).expect("locked");
-            l.outputs
-                .iter()
-                .map(|lo| lo.buttons.switch_user.is_some())
-                .collect::<Vec<_>>()
+            l.part(reprisekit::logon::Part::SwitchUser).is_some()
         };
-        assert_eq!(
+        assert!(
             switch_on(Side::Console),
-            [true],
             "the computer's own lock offers it"
         );
-        assert_eq!(switch_on(Side::Remote), [false]);
+        assert!(!switch_on(Side::Remote));
     }
 
     #[test]
-    fn the_unlock_dialogs_switch_user_asks_the_daemon() {
+    fn the_lock_screens_switch_user_asks_the_daemon() {
         let (mut h, mut theirs) = linked();
         crate::lockview::lock(&mut h.state);
         let l = h.state.lock.console.as_ref().unwrap();
-        let r = l.outputs[0].buttons.switch_user.expect("Switch User shows");
-        let at = smithay::utils::Point::from((f64::from(r.x + 2), f64::from(r.y + 2)));
+        let at = l.part(reprisekit::logon::Part::SwitchUser);
+        let at = at.expect("Switch User shows");
         crate::lockview::button(&mut h.state, Side::Console, crate::input::BTN_LEFT, at);
         assert!(h.state.console_locked(), "the lock stays up");
         assert_eq!(heard(&mut theirs), SessionRequest::SwitchUser);

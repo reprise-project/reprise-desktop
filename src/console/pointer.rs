@@ -1,5 +1,5 @@
 //! The computer's own pointer in lock mode: a position on the Console outputs that drives only
-//! the console's lock dialog, apart from the seat's pointer on the Remote outputs.
+//! the console's lock screen, apart from the seat's pointer on the Remote outputs.
 
 use smithay::backend::input::InputTime;
 use smithay::input::pointer::{CursorIcon, CursorImageStatus};
@@ -45,7 +45,7 @@ pub fn by(state: &mut State, delta: Point<f64, Logical>) {
     to(state, state.console.pointer + delta);
 }
 
-/// A button of the computer's: a press goes to the console's lock dialog where its pointer is.
+/// A button of the computer's: a press goes to the console's lock screen where its pointer is.
 pub fn button(state: &mut State, button: u32, pressed: bool) {
     if pressed {
         let at = state.console.pointer;

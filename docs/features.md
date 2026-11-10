@@ -463,8 +463,15 @@ are.
   password still unlocks; the next login that starts a new session asks for
   a new one. Prefer
   swaylock? `[power] locker` runs it, and if it crashes Reprise's own lock
-  comes back. With more than one keyboard layout, the Unlock dialog shows
-  the active one in its corner, as the taskbar does.
+  comes back. With more than one keyboard layout, the lock screen shows
+  the active one, as the taskbar does.
+- **The lock is the login screen, locked.** Your tile (Classic: the Log On
+  dialog with your name fixed) says Locked and takes your password; nobody
+  else's tile shows. Classic draws it on the desktop colour, Blue on its
+  welcome field, Glass over your own wallpaper and water. The screen goes
+  on the primary monitor, the others show the backdrop. Its power button
+  and menu (Stand By, Restart, Turn Off) go through logind, so a program's
+  block inhibitor still holds them off; in lock mode it has none.
 - **Idle steps.** Screen saver, lock, screen off and suspend, each with its
   own timeout, and separate timeouts on battery.
 - **Lock on sleep.** The screen locks before the machine suspends, whatever
@@ -552,7 +559,7 @@ the screen takes the interface of the last session used at this computer.
 - **Switching users.** Each user's session runs on a VT of its own. Switch
   User in the Log Off dialog, or on the lock screen, brings the login
   screen back while your session keeps running, locked; its tile says
-  Logged on. Logging in again goes straight back to it, unlocked. One
+  Logged on, or Locked while it is. Logging in again goes straight back to it, unlocked. One
   session per user: a second login resumes the first. After a restart of
   the login manager, a session it can't read yet keeps a login of that user
   waiting.
@@ -926,11 +933,11 @@ no port forwarding; allow the port in your firewall if you run one.
   `[power] locker` set, lock mode is off, connections run as Stays on, and
   Settings greys the Locks choice.
 - **Locks in lock mode.** This computer's keyboard and mouse reach only
-  its Unlock dialog, and its screens turn off after the idle screen-off
+  its lock screen, and its screens turn off after the idle screen-off
   time without input here, whatever the client does; idle suspend waits.
   The client's screens have a lock of their own: they lock after
   `[idle] lock_after` without remote input, from Start > Lock or with the
-  lock key, and their Unlock dialog checks the password as a login does
+  lock key, and their lock screen checks the password as a login does
   ([security.md](security.md#lock-mode)). A password that must be changed
   still unlocks them, and the notification history says it has expired. Unlocking at this computer, by
   password, fingerprint or `loginctl unlock-session`, ends lock mode: every
@@ -1039,7 +1046,7 @@ them, asked on each save.
 - **A session in the background.** If you're not logged in, your session
   starts on a VT of its own and this computer's screen stays as it was, on
   the login screen or someone else's session. The session is locked here
-  (switching to its VT shows its Unlock dialog), and its clients always
+  (switching to its VT shows its lock screen), and its clients always
   work on screens of their own, as in lock mode. Several users can each have one, up to
   `max_sessions` sessions in all, console ones included. A password that must be changed
   starts none: log in at the computer first. Logging in at the

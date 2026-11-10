@@ -68,6 +68,8 @@ pub struct Modes {
     /// A Super key went down on its own and nothing else since.
     pub super_tap_armed: bool,
     pub menus_open: bool,
+    /// The lock screen's power menu is open, the one menu under the lock.
+    pub lock_menu: bool,
     /// The top dialog has the keyboard (see `dialogview::has_keyboard`).
     pub dialog_has_keyboard: bool,
     /// That dialog is a Welcome panel, which keeps even the switcher's
@@ -291,7 +293,10 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
         return plain(KeyRoute::VtSwitch(n));
     }
     if modes.locked {
-        return plain(KeyRoute::Lock);
+        return plain(match modes.lock_menu && k.pressed {
+            true => menu_key(k),
+            false => KeyRoute::Lock,
+        });
     }
     if modes.captured {
         // The receiver may hang or the portal never release: this chord is

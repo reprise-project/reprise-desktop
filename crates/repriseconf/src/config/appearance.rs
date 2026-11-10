@@ -256,7 +256,6 @@ pub struct WallpaperConfig {
     /// A picture file, or a built-in's `reprise:` URI (`builtin_path`).
     pub image: Option<PathBuf>,
     pub position: reprisekit::wallpaper::Position,
-    pub lock_screen: bool,
     pub slideshow: Option<PathBuf>,
     pub interval: u32,
     pub shuffle: bool,
@@ -283,7 +282,6 @@ impl Default for WallpaperConfig {
         WallpaperConfig {
             image: None,
             position: Default::default(),
-            lock_screen: false,
             slideshow: None,
             interval: 30,
             shuffle: false,

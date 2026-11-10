@@ -507,12 +507,8 @@ impl Config {
                 }
             }
         }
-        cfg.wallpaper.lock_screen = cfg.interface != Interface::Classic;
         let mut image_set = false;
         if let Some(w) = file.wallpaper {
-            if let Some(v) = w.lock_screen {
-                cfg.wallpaper.lock_screen = v;
-            }
             image_set = w.image.is_some();
             let picture = |s: &str| match reprisekit::wallpapers::Builtin::from_uri(s) {
                 Some(b) => Ok(Some(builtin_path(

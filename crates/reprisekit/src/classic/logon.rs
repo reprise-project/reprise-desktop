@@ -14,8 +14,8 @@ use crate::text::{Align, TextRenderer};
 use crate::textedit::{Caret, TextEdit, edit_first_visible};
 use crate::theme::Theme;
 
-/// The client area under the caption, design px at 100% text; the Unlock dialog's padding,
-/// label column, rows and buttons.
+/// The client area under the caption, design px at 100% text: padding, label column, rows and
+/// buttons.
 const CLIENT_W: i32 = 352;
 const PAD: i32 = 12;
 /// The band sits one face row under the caption, with an etched rule under it.

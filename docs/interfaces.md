@@ -57,9 +57,6 @@ Colour schemes: **Blue** (the default), Olive Green, Silver, Slate, Sapphire,
 Obsidian, Ember, Cobalt, Carbon and Steel. Each brings its own art. None of
 them is dark; Blue is a daytime look.
 
-Blue's defaults match Classic's, except that the lock screen shows your
-wallpaper.
-
 The caption title wants Trebuchet MS and the Start button Franklin Gothic
 Medium. Reprise doesn't ship either; see [assets.md](assets.md#fonts).
 
@@ -166,7 +163,6 @@ every default you haven't set.
 | `[switcher] style` | `icons` | `thumbnails` |
 | `[switcher] desktop`, `peek`, `flip` | off | on |
 | `[effects] window_animation`, `hover_fade`, `taskbar_slide` | off | on |
-| `[wallpaper] lock_screen` | Classic off, Blue on | on |
 
 Most of what Glass turns on, the other looks can have too. Set the key and
 Classic gets pinned programs, jump lists, Peek, a Show desktop strip,

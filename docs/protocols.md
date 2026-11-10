@@ -126,9 +126,9 @@ confinement holds, every motion goes through as it comes.
   whether one may. xdg-desktop-portal writes the autostart entries Flatpak
   apps ask for itself
 - **Wallpaper:** after a prompt showing the picture, a copy of it in
-  `~/.local/share/reprise/wallpapers` becomes `[wallpaper] image`, and with
-  `set-on` both also turns `lock_screen` on. The lock screen alone is
-  refused, since it shows the desktop's picture or none
+  `~/.local/share/reprise/wallpapers` becomes `[wallpaper] image`; `set-on`
+  both does the same, as the Glass lock screen shows the desktop's picture.
+  The lock screen alone is refused, since it has no picture of its own
 
 The compositor serves **Settings** (the light or dark look, contrast, fonts
 and icons). `reprise-portals.conf` hands **Secret** to gnome-keyring,

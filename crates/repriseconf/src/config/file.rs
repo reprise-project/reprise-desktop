@@ -612,7 +612,9 @@ pub struct FileTaskbar {
 pub struct FileWallpaper {
     pub image: Option<String>,
     pub position: Option<String>,
-    pub lock_screen: Option<bool>,
+    /// Retired: the lock screen's backdrop follows the interface. Read only to be ignored.
+    #[allow(dead_code)]
+    pub lock_screen: Option<serde::de::IgnoredAny>,
     pub slideshow: Option<String>,
     pub interval: Option<i64>,
     pub shuffle: Option<bool>,

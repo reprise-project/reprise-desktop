@@ -25,13 +25,13 @@ pub(super) const HUNTER2: [u32; 7] = [35, 22, 49, 20, 18, 19, 3];
 
 fn covers(h: &Harness, side: Side) -> Vec<String> {
     (h.state.lock.on(side).iter())
-        .flat_map(|l| l.outputs.iter().map(|lo| lo.output.name()))
+        .flat_map(|l| l.covered())
         .collect()
 }
 
 fn field(h: &Harness, side: Side) -> String {
     let l = h.state.lock.on(side).expect("the side is locked");
-    l.state.input.clone()
+    l.input().to_owned()
 }
 
 pub(super) fn sh(script: &str) -> Command {
@@ -63,7 +63,7 @@ fn remote_submit(h: &mut Harness, password: &str) {
 }
 
 fn verifying(h: &Harness, side: Side) -> bool {
-    h.state.lock.on(side).is_some_and(|l| l.state.verifying)
+    h.state.lock.on(side).is_some_and(|l| l.verifying())
 }
 
 /// Turn the loop until neither side is verifying (or 5 s pass).
@@ -76,7 +76,7 @@ pub(super) fn settle(h: &mut Harness) {
 }
 
 fn message(h: &Harness, side: Side) -> Option<String> {
-    h.state.lock.on(side)?.state.message.clone()
+    h.state.lock.on(side)?.message()
 }
 
 fn assert_remote_locked(h: &Harness) {
@@ -141,7 +141,7 @@ fn the_remote_password_unlocks_the_remote_side_and_not_the_console() {
     assert!(h.state.console_locked(), "the console stays locked");
     assert_eq!(covers(&h, Side::Console), ["eDP-1"]);
     let console = h.state.lock.console.as_ref().unwrap();
-    assert!(!console.state.verifying && console.pending.is_none());
+    assert!(!console.verifying() && console.pending.is_none());
 }
 
 #[test]
@@ -220,7 +220,7 @@ fn a_physical_dead_key_never_combines_with_a_remote_key() {
         compose::COMPILE_NO_FLAGS,
     )
     .expect("the table compiles");
-    h.state.lock.console.as_mut().unwrap().compose = Some(Compose::over(&table));
+    h.state.lock.console.as_mut().unwrap().view.compose = Some(Compose::over(&table));
     h.state.compose = Some(table);
     h.from(InputSource::Remote, lockview::lock_desktop);
     h.key(APOSTROPHE, true);
@@ -308,7 +308,7 @@ fn the_console_password_ends_lock_mode_and_the_remote_lock_with_it() {
 fn both_sides_verifying_at_once_each_get_their_own_verdict() {
     let (mut h, _portal, _lock) = in_lock_mode();
     h.state.lock.helpers = Helpers {
-        password: |_, _| sh(r#"read p; sleep 0.2; [ "$p" = hunter2 ] && echo '= 0' || echo '= 7'"#),
+        password: |_, _| sh(r#"read p; sleep 1; [ "$p" = hunter2 ] && echo '= 0' || echo '= 7'"#),
         finger: |_| None,
         ..Helpers::default()
     };
@@ -335,7 +335,7 @@ fn a_physical_lock_key_in_lock_mode_keeps_the_console_dialog_and_leaves_the_remo
         .console
         .as_ref()
         .expect("the console stays locked");
-    assert!(console.dialog_shown(), "the console's dialog is up");
+    assert!(console.screen_shown(), "the console's dialog is up");
     assert_eq!(covers(&h, Side::Console), ["eDP-1"]);
     assert!(!h.state.desktop_locked(), "the remote side stays unlocked");
     assert!(covers(&h, Side::Remote).is_empty());

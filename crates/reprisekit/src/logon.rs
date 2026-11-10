@@ -107,6 +107,9 @@ pub mod text {
     pub fn unlock_begin() -> String {
         tr!("logon-unlock-begin")
     }
+    pub fn stand_by() -> String {
+        tr!("powerpanel-stand-by")
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -256,6 +259,9 @@ pub struct Logon {
     pub password: TextEdit,
     pub prompt: Option<Prompt>,
     pub message: Option<String>,
+    /// Standing text the message area shows while there is no message (a fingerprint reader's
+    /// prompt); the host sets and clears it.
+    pub hint: Option<String>,
     pub busy: bool,
     pub caps_lock: bool,
     pub layout: Option<String>,
@@ -301,6 +307,7 @@ impl Logon {
             password: TextEdit::secret(),
             prompt: None,
             message: None,
+            hint: None,
             busy: false,
             caps_lock: false,
             layout: None,
@@ -584,12 +591,19 @@ impl Logon {
         }
     }
 
-    /// The message area's text: the busy text, else the message, else the heading.
+    /// The message area's text: the busy text, else [`Logon::standing`].
     pub fn said(&self) -> Option<String> {
         if self.busy {
             return Some(self.busy_text());
         }
-        self.message.clone().or_else(|| self.heading())
+        self.standing()
+    }
+
+    /// The message, else the hint, else the heading.
+    pub fn standing(&self) -> Option<String> {
+        (self.message.clone())
+            .or_else(|| self.hint.clone())
+            .or_else(|| self.heading())
     }
 
     /// Cancel: both fields emptied, the conversation dropped and the focus on the name. The lock
@@ -811,7 +825,7 @@ pub fn access(m: &Logon, l: &LogonLayout, tree: &mut Tree) {
         }
     }
     let notice = m.caps_lock.then(text::caps_lock);
-    let message = m.message.clone().or_else(|| m.heading());
+    let message = m.standing();
     let said: Vec<String> = notice.into_iter().chain(message).collect();
     if !said.is_empty() {
         let r = l.dialog.unwrap_or(l.output);

@@ -39,10 +39,8 @@ pub enum Kind {
     InputCapture(Devices),
     Shortcuts,
     Background,
-    /// A new desktop picture, also behind the lock screen when `lock_screen`.
-    Wallpaper {
-        lock_screen: bool,
-    },
+    /// A new desktop picture.
+    Wallpaper,
 }
 
 /// Which input devices a RemoteControl or InputCapture grant covers, so the
@@ -77,7 +75,7 @@ impl Devices {
 }
 
 impl Kind {
-    const ALL: [Kind; 11] = [
+    const ALL: [Kind; 10] = [
         Kind::RemoteControl(Devices::Keyboard),
         Kind::RemoteControl(Devices::Pointer),
         Kind::RemoteControl(Devices::Both),
@@ -87,8 +85,7 @@ impl Kind {
         Kind::InputCapture(Devices::Both),
         Kind::Shortcuts,
         Kind::Background,
-        Kind::Wallpaper { lock_screen: false },
-        Kind::Wallpaper { lock_screen: true },
+        Kind::Wallpaper,
     ];
 
     fn arg(self) -> &'static str {
@@ -102,8 +99,7 @@ impl Kind {
             Kind::InputCapture(Devices::Both) => "capture",
             Kind::Shortcuts => "shortcuts",
             Kind::Background => "background",
-            Kind::Wallpaper { lock_screen: false } => "wallpaper",
-            Kind::Wallpaper { lock_screen: true } => "wallpaper-lock",
+            Kind::Wallpaper => "wallpaper",
         }
     }
 
@@ -118,7 +114,7 @@ impl Kind {
             Kind::InputCapture(_) => "Input capture",
             Kind::Shortcuts => "Keyboard shortcuts",
             Kind::Background => "Running in the background",
-            Kind::Wallpaper { .. } => "Desktop background",
+            Kind::Wallpaper => "Desktop background",
         }
     }
 
@@ -129,7 +125,7 @@ impl Kind {
             Kind::InputCapture(_) => "input-mouse",
             Kind::Shortcuts => "input-keyboard",
             Kind::Background => "system-run",
-            Kind::Wallpaper { .. } => "preferences-desktop-wallpaper",
+            Kind::Wallpaper => "preferences-desktop-wallpaper",
         }
     }
 
@@ -140,7 +136,7 @@ impl Kind {
             Kind::InputCapture(d) => format!("{who} wants to capture your {}.", d.noun()),
             Kind::Shortcuts => format!("{who} wants to use keyboard shortcuts."),
             Kind::Background => format!("{who} is running in the background."),
-            Kind::Wallpaper { .. } => format!("{who} wants to change your desktop background."),
+            Kind::Wallpaper => format!("{who} wants to change your desktop background."),
         }
     }
 
@@ -158,10 +154,7 @@ impl Kind {
             Kind::InputCapture(_) => "At a screen edge it takes it. Super+Shift+Esc ends it.",
             Kind::Shortcuts => "Change the keys on Reprise Settings' Keyboard page.",
             Kind::Background => "It has no open window. Deny closes it.",
-            Kind::Wallpaper { lock_screen: false } => "The picture goes behind the desktop icons.",
-            Kind::Wallpaper { lock_screen: true } => {
-                "The picture goes on the desktop and the lock screen."
-            }
+            Kind::Wallpaper => "The picture goes behind the desktop icons.",
         }
     }
 }
@@ -485,7 +478,7 @@ mod tests {
             preview: Some("/pictures/dunes.jpg".into()),
             ..Default::default()
         };
-        let kind = Kind::Wallpaper { lock_screen: false };
+        let kind = Kind::Wallpaper;
         let f = build_form(kind, &input);
         let monitor = f.item("preview").unwrap();
         assert_eq!(monitor.control, Control::Monitor(Screen::Black));

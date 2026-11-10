@@ -813,11 +813,7 @@ fn restore_defaults_takes_a_pages_keys_from_its_controls() {
         assert!(advanced.contains(&key.to_string()), "{key} in {advanced:?}");
     }
     let saver = keys_on(&s, Page::ScreenSaverLock);
-    for key in [
-        "screensaver.name",
-        "idle.lock_after",
-        "wallpaper.lock_screen",
-    ] {
+    for key in ["screensaver.name", "idle.lock_after"] {
         assert!(saver.contains(&key.to_string()), "{key} in {saver:?}");
     }
     for p in [Page::Display, Page::Tablet, Page::Backup] {

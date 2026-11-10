@@ -1,7 +1,7 @@
 //! The lock screen's PAM conversations, each in a child of the compositor binary so no PAM module runs in the compositor and the lock can end one at any time: the fingerprint's (`--fingerprint-conversation USER`) and the password's (`--password-conversation USER`, the password on stdin).
 //! A child writes `I <info>` and `E <error>` lines and `= <pam_authenticate rc>` last; only `= 0` unlocks, and for the password also `= 12` (`PAM_NEW_AUTHTOK_REQD`): the right password, expired.
 //! The password's child asks a further prompt with `? <text>` (blind) or `?? <text>` (echoed) and reads its answer as the next line of stdin, which stays open until the conversation ends.
-//! reprise-rdp and lock mode's remote Unlock dialog run it as `--rdp-password-conversation USER`, under the Remote Desktop PAM service.
+//! reprise-rdp and lock mode's remote lock screen run it as `--rdp-password-conversation USER`, under the Remote Desktop PAM service.
 
 use crate::lock::{self, Verdict, Verifier};
 use repriselogin::{add_prompt_lines, clean_prompt};
@@ -102,7 +102,7 @@ impl PasswordAnswer {
         }
     }
 
-    /// The notices so far, for the dialog to show with a further prompt.
+    /// The notices so far, for the screen to show with a further prompt.
     pub fn take_notices(&mut self) -> Vec<String> {
         std::mem::take(&mut self.notices)
     }
@@ -256,7 +256,7 @@ pub fn reap_ended(now: Instant) -> Option<Instant> {
 }
 
 /// Who a password conversation checks the password for: the console's lock, or a Remote Desktop
-/// login and lock mode's remote Unlock dialog.
+/// login and lock mode's remote lock screen.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PasswordFor {
     Unlock,

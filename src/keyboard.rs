@@ -68,7 +68,7 @@ pub struct KeyInput {
     pub field_repeat: Option<FieldRepeat>,
 }
 
-/// A key held in a field route (`imefield::field_route`) or the lock dialog: what it was and where it
+/// A key held in a field route (`imefield::field_route`) or the lock screen: what it was and where it
 /// went, so each tick runs it again while the route, the focus and the key itself stay.
 #[derive(Debug)]
 pub struct FieldRepeat {
@@ -265,7 +265,7 @@ impl State {
         // The seat follows every key; only the client's route reaches the
         // focused client. A release goes where its press went. Under the
         // lock, `lockview::key` decides each key: a locker's own surface
-        // takes it through the seat, else the lock dialog's field does.
+        // takes it through the seat, else the lock screen's field does.
         let forward = match routed.route {
             KeyRoute::Client => pressed || released.is_none(),
             // An X11 program ends its own side of its drag on Escape.
@@ -608,6 +608,7 @@ impl State {
             switcher_open: self.switcher.is_open(),
             super_tap_armed: self.key_input.super_tap_armed,
             menus_open: !self.menus.is_empty(),
+            lock_menu: crate::lockview::power_menu_open(self),
             dialog_has_keyboard: self.dialog_has_keyboard(),
             dialog_modal: self.dialog_is_modal(),
             dialog_windowed: (self.dialogs.views.last()).is_some_and(|v| v.dialog.windowed()),
@@ -1472,17 +1473,9 @@ mod tests {
         h.state.config.keyboard.repeat_rate = 25;
         h.state.lock.helpers.finger = |_| None;
         crate::lockview::lock(&mut h.state);
-        let field = |h: &crate::harness::Harness| {
-            h.state.lock.console.as_ref().unwrap().state.input.clone()
-        };
-        h.state
-            .lock
-            .console
-            .as_mut()
-            .unwrap()
-            .state
-            .input
-            .push_str("secret");
+        let field =
+            |h: &crate::harness::Harness| h.state.lock.console.as_ref().unwrap().input().to_owned();
+        h.state.lock.console.as_mut().unwrap().set_input("secret");
         hold(&mut h, KEY_BACKSPACE, |h| field(h).is_empty());
         assert!(h.state.console_locked());
         h.key(KEY_A, true);

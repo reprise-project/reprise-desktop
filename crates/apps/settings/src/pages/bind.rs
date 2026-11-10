@@ -296,7 +296,6 @@ pub(super) fn binds() -> Vec<Bind> {
         Bind::Text("reboot", lens!(reboot)),
         Bind::Text("hibernate", lens!(hibernate)),
         Bind::Flag("lock_on_sleep", lens!(lock_on_sleep)),
-        Bind::Flag("lock_wallpaper", lens!(lock_wallpaper)),
         Bind::Num("lock_after", lens!(lock_after)),
         Bind::Num("lock_fade", lens!(lock_fade)),
         Bind::Num(crate::saverpage::AWAY_AFTER, lens!(away_after_s)),

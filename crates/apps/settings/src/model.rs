@@ -307,9 +307,6 @@ pub struct Settings {
     pub lock_on_sleep: bool,
     /// `[power] locker`, read only: the Remote Desktop page greys its Lock radio while it is set.
     pub power_locker: String,
-    /// `[wallpaper] lock_screen`: off under Classic, on under Blue and
-    /// Glass ([`Settings::for_interface`]).
-    pub lock_wallpaper: bool,
 
     pub lock_after: i64,
     pub blank_after: i64,
@@ -622,7 +619,6 @@ impl Settings {
             hibernate: c.power.hibernate.clone(),
             lock_on_sleep: c.power.lock_on_sleep,
             power_locker: c.power.locker.clone(),
-            lock_wallpaper: c.wallpaper.lock_screen,
 
             lock_after: c.idle.lock_after.into(),
             blank_after: c.idle.blank_after.into(),
