@@ -294,7 +294,7 @@ fn glass_hit_finds_arrow_switch_user_and_power() {
 
 fn locked_states() -> Vec<(&'static str, Logon)> {
     let user = users(1).remove(0);
-    let rest = Logon::locked(Interface::Glass, user.clone(), true);
+    let rest = Logon::locked(Interface::Glass, user.clone(), true, true);
     let mut typed = rest.clone();
     typed.key(LogonKey::Text("hunter2"));
     typed.caps_lock = true;
@@ -305,12 +305,14 @@ fn locked_states() -> Vec<(&'static str, Logon)> {
     let mut busy = rest.clone();
     busy.key(LogonKey::Text("hunter2"));
     busy.set_busy(true);
-    let alone = Logon::locked(Interface::Glass, user, false);
+    let alone = Logon::locked(Interface::Glass, user.clone(), false, true);
+    let powerless = Logon::locked(Interface::Glass, user, true, false);
     vec![
         ("locked", rest),
         ("locked typed with caps lock and badge", typed),
         ("locked failed", failed),
         ("locked busy", busy),
+        ("locked without power", powerless),
         ("locked without switch user", alone),
     ]
 }

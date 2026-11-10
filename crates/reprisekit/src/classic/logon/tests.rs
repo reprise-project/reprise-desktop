@@ -255,7 +255,7 @@ fn locked_states() -> Vec<(&'static str, Logon)> {
         picture: None,
         note: None,
     };
-    let rest = Logon::locked(Interface::Classic, user.clone(), true);
+    let rest = Logon::locked(Interface::Classic, user.clone(), true, true);
     let mut typed = rest.clone();
     typed.key(crate::logon::LogonKey::Text("hunter2"));
     let mut caps = typed.clone();
@@ -267,7 +267,8 @@ fn locked_states() -> Vec<(&'static str, Logon)> {
     busy.set_busy(true);
     let mut switch_focused = rest.clone();
     switch_focused.focus = Part::SwitchUser;
-    let alone = Logon::locked(Interface::Classic, user, false);
+    let alone = Logon::locked(Interface::Classic, user.clone(), false, true);
+    let powerless = Logon::locked(Interface::Classic, user, true, false);
     vec![
         ("locked", rest),
         ("locked typed", typed),
@@ -275,6 +276,7 @@ fn locked_states() -> Vec<(&'static str, Logon)> {
         ("locked failed", failed),
         ("locked busy", busy),
         ("locked switch user focused", switch_focused),
+        ("locked without power", powerless),
         ("locked without switch user", alone),
     ]
 }
@@ -316,6 +318,19 @@ fn the_classic_lock_fixes_the_name_and_starts_the_button_row_with_switch_user() 
         "no Switch User unless offered"
     );
     assert!(l.rect(Part::Power).is_some(), "Shut Down... stays");
+}
+
+#[test]
+fn the_classic_lock_without_power_moves_ok_and_cancel_into_shut_downs_place() {
+    let mut states = locked_states().into_iter();
+    let (_, m) = states.find(|(n, _)| *n == "locked without power").unwrap();
+    assert!(!m.offers_power());
+    let (_, l, theme) = drawn(&m, 1);
+    let g = geometry(&theme, OUTPUT);
+    assert_eq!(l.rect(Part::Power), None, "no Shut Down...");
+    assert_eq!(l.rect(Part::Cancel), Some(g.power), "Cancel ends the row");
+    assert_eq!(l.rect(Part::Submit), Some(g.cancel), "OK left of it");
+    assert!(l.rect(Part::SwitchUser).is_some(), "Switch User stays");
 }
 
 #[test]

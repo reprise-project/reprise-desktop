@@ -163,6 +163,7 @@ pub fn key(state: &mut State, host: &Host, typed: Option<Typed>) {
     };
     let m = &mut v.model;
     let action = match &t {
+        Typed::PowerKey if !m.offers_power() => None,
         Typed::PowerKey => Some(match m.interface {
             Interface::Glass => LogonAction::PowerMenu,
             _ => LogonAction::Power,

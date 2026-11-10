@@ -10,5 +10,7 @@ locked busy @1 b4770fc09ed2abca
 locked busy @2 66d4547ee57198c6
 locked switch user focused @1 39146e9116e311db
 locked switch user focused @2 e87ab0dbca08d9bd
+locked without power @1 197a23441a3e5067
+locked without power @2 f0492ac543df76c9
 locked without switch user @1 2f1a7dae6ab40733
 locked without switch user @2 4f2d7f2eba044c75
