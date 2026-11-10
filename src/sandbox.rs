@@ -1,7 +1,8 @@
 //! The sandbox filter: which globals a client may see and bind, by its security context and what
 //! its process shows (docs/security.md, "Sandboxed programs").
 
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use reprisebus::peer::{Placement, placement};
+use std::os::fd::{AsFd, AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::net::UnixStream;
 use std::sync::{Arc, RwLock};
 
@@ -170,133 +171,18 @@ impl ClientSandbox {
     }
 }
 
-/// What `stream`'s peer, process `pid` as it connected, shows of a sandbox. The reads count only
-/// if the peer still runs after them: its pidfd unreaped (so the pid was not reused), no zombie.
+/// What `stream`'s peer, process `pid` as it connected, shows of a sandbox
+/// ([`reprisebus::peer::placement`]).
 fn inspect(stream: &UnixStream, pid: i32) -> Process {
     let Some(pidfd) = peer_pidfd(stream, pid) else {
         return Process::Unknown;
     };
-    let Ok(dir) = std::fs::File::open(format!("/proc/{pid}")) else {
-        return Process::Unknown;
-    };
-    let flatpak_info = open_at(&dir, c"root", libc::O_PATH | libc::O_DIRECTORY)
-        .and_then(|root| exists_at(&root, c".flatpak-info"));
-    let seen = Seen {
-        flatpak_info,
-        cgroup: read_at(&dir, c"cgroup"),
-        label: read_at(&dir, c"attr/apparmor/current"),
-        pid_namespaced: read_at(&dir, c"status").map(|s| pid_namespaced(&s)),
-    };
-    let running = read_at(&dir, c"stat").is_some_and(|s| runs(&s));
-    if !running || !alive(&pidfd) {
-        return Process::Unknown;
+    match placement(pidfd.as_fd(), pid, std::path::Path::new("/proc")) {
+        Placement::Host { .. } => Process::Host,
+        Placement::Flatpak { .. } => Process::Flatpak,
+        Placement::Snap { .. } => Process::Snap,
+        Placement::Unknown => Process::Unknown,
     }
-    seen.process()
-}
-
-/// What `/proc/<pid>` showed of a live peer. A non-dumpable process hides its root and AppArmor
-/// label; its cgroup and status stay readable.
-#[derive(Debug, Default)]
-struct Seen {
-    /// Whether its root holds `/.flatpak-info`; None when the root can't be opened.
-    flatpak_info: Option<bool>,
-    cgroup: Option<String>,
-    label: Option<String>,
-    /// Whether it runs in a pid namespace of its own, as bubblewrap puts every Flatpak app.
-    pid_namespaced: Option<bool>,
-}
-
-impl Seen {
-    fn process(&self) -> Process {
-        let cgroup = self.cgroup.as_deref();
-        if self.flatpak_info == Some(true) || cgroup.is_some_and(flatpak_cgroup) {
-            return Process::Flatpak;
-        }
-        // A classic snap runs `unconfined` in a snap scope; only without a label does the scope
-        // decide.
-        let snap = match self.label.as_deref() {
-            Some(label) => snap_label(label),
-            None => cgroup.is_some_and(snap_cgroup),
-        };
-        if snap {
-            return Process::Snap;
-        }
-        match self.flatpak_info {
-            Some(_) => Process::Host,
-            None if cgroup.is_some() && self.pid_namespaced == Some(false) => Process::Host,
-            None => Process::Unknown,
-        }
-    }
-}
-
-/// The systemd unit a `/proc/<pid>/cgroup` line puts the process in.
-fn units(cgroup: &str) -> impl Iterator<Item = &str> {
-    cgroup.lines().map(|l| l.rsplit('/').next().unwrap_or(""))
-}
-
-/// Whether `/proc/<pid>/cgroup` puts the process in the scope Flatpak made for an app,
-/// `app-flatpak-<app id>-<n>.scope`.
-fn flatpak_cgroup(cgroup: &str) -> bool {
-    units(cgroup).any(|u| u.starts_with("app-flatpak-") && u.ends_with(".scope"))
-}
-
-/// Whether `/proc/<pid>/cgroup` puts the process in a scope snapd made for a snap's app,
-/// `snap.<snap>.<app>-<uuid>.scope`.
-fn snap_cgroup(cgroup: &str) -> bool {
-    units(cgroup).any(|u| u.starts_with("snap.") && u.ends_with(".scope"))
-}
-
-/// Whether an AppArmor label, `snap.<snap>.<app> (enforce)`, is a snap's profile.
-fn snap_label(label: &str) -> bool {
-    label.trim_start().starts_with("snap.")
-}
-
-/// Whether `/proc/<pid>/status` gives the process more than one pid (`NSpid`), one per nested
-/// pid namespace.
-fn pid_namespaced(status: &str) -> bool {
-    status
-        .lines()
-        .find_map(|l| l.strip_prefix("NSpid:"))
-        .is_some_and(|pids| pids.split_whitespace().count() > 1)
-}
-
-fn open_at(dir: &impl AsRawFd, name: &std::ffi::CStr, flags: libc::c_int) -> Option<OwnedFd> {
-    // SAFETY: `name` is NUL-terminated and `dir` an open directory.
-    let fd = unsafe { libc::openat(dir.as_raw_fd(), name.as_ptr(), flags | libc::O_CLOEXEC) };
-    // SAFETY: a fresh fd nothing else owns.
-    (fd >= 0).then(|| unsafe { OwnedFd::from_raw_fd(fd) })
-}
-
-fn read_at(dir: &impl AsRawFd, name: &std::ffi::CStr) -> Option<String> {
-    let fd = open_at(dir, name, libc::O_RDONLY)?;
-    std::io::read_to_string(std::fs::File::from(fd)).ok()
-}
-
-/// Whether `name` exists under `dir`; None when that can't be told.
-fn exists_at(dir: &impl AsRawFd, name: &std::ffi::CStr) -> Option<bool> {
-    // SAFETY: an all-zero stat is valid for fstatat to fill.
-    let mut st: libc::stat = unsafe { std::mem::zeroed() };
-    // SAFETY: `name` is NUL-terminated, `st` live, `dir` an open directory.
-    let r = unsafe {
-        libc::fstatat(
-            dir.as_raw_fd(),
-            name.as_ptr(),
-            &mut st,
-            libc::AT_SYMLINK_NOFOLLOW,
-        )
-    };
-    if r == 0 {
-        return Some(true);
-    }
-    (std::io::Error::last_os_error().raw_os_error() == Some(libc::ENOENT)).then_some(false)
-}
-
-/// Whether `/proc/<pid>/stat` describes a process that has not exited: its state, after the
-/// command's closing parenthesis, is neither zombie nor dead.
-fn runs(stat: &str) -> bool {
-    stat.rsplit_once(')')
-        .and_then(|(_, rest)| rest.trim_start().chars().next())
-        .is_some_and(|state| !matches!(state, 'Z' | 'X' | 'x'))
 }
 
 /// A pidfd for `stream`'s peer: `SO_PEERPIDFD`, or on a kernel without it `pidfd_open` of the
@@ -325,21 +211,6 @@ fn peer_pidfd(stream: &UnixStream, pid: i32) -> Option<OwnedFd> {
     let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
     // SAFETY: a fresh fd nothing else owns.
     (fd >= 0).then(|| unsafe { OwnedFd::from_raw_fd(fd as libc::c_int) })
-}
-
-/// Whether the process `pidfd` names has not been reaped.
-fn alive(pidfd: &OwnedFd) -> bool {
-    // SAFETY: signal 0 through a pidfd only checks that the process exists.
-    let r = unsafe {
-        libc::syscall(
-            libc::SYS_pidfd_send_signal,
-            pidfd.as_raw_fd(),
-            0,
-            std::ptr::null::<libc::siginfo_t>(),
-            0,
-        )
-    };
-    r == 0
 }
 
 /// The pid a harness client takes to pass as the installed portal.
@@ -586,74 +457,6 @@ mod tests {
             libc::waitpid(pid, std::ptr::null_mut(), 0);
         }
         assert_eq!(s.process, Process::Host);
-    }
-
-    fn seen(flatpak_info: Option<bool>, cgroup: &str, label: Option<&str>, ns: bool) -> Process {
-        Seen {
-            flatpak_info,
-            cgroup: Some(cgroup.into()),
-            label: label.map(Into::into),
-            pid_namespaced: Some(ns),
-        }
-        .process()
-    }
-
-    #[test]
-    fn a_process_is_placed_by_its_root_scope_and_profile() {
-        let user = "0::/user.slice/user-1000.slice/user@1000.service/app.slice";
-        let snap = format!("{user}/snap.code.code-0f3a9c1e-2b4d-4e8a-9c2f-1d2e3f4a5b6c.scope\n");
-        let flatpak = format!("{user}/app-flatpak-org.example.App-12345.scope\n");
-        let host = format!("{user}/app-reprise-foot-3.scope\n");
-        let enforce = Some("snap.code.code (enforce)\n");
-        let unconfined = Some("unconfined\n");
-        assert_eq!(seen(Some(false), &snap, enforce, false), Process::Snap);
-        assert_eq!(
-            seen(Some(false), &snap, unconfined, false),
-            Process::Host,
-            "a classic snap"
-        );
-        assert_eq!(
-            seen(Some(false), &snap, None, false),
-            Process::Snap,
-            "a snap scope without AppArmor"
-        );
-        assert_eq!(seen(Some(true), &host, unconfined, true), Process::Flatpak);
-        assert_eq!(seen(Some(false), &host, unconfined, false), Process::Host);
-        assert_eq!(
-            seen(Some(false), &format!("{user}/snap.mount\n"), None, false),
-            Process::Host,
-            "a unit that is no scope"
-        );
-        // A non-dumpable process hides its root and its profile.
-        assert_eq!(seen(None, &host, None, false), Process::Host);
-        assert_eq!(seen(None, &flatpak, None, true), Process::Flatpak);
-        assert_eq!(seen(None, &snap, None, false), Process::Snap);
-        assert_eq!(
-            seen(None, &host, None, true),
-            Process::Unknown,
-            "a pid namespace outside any app scope"
-        );
-        let blind = Seen::default().process();
-        assert_eq!(blind, Process::Unknown, "nothing readable");
-    }
-
-    #[test]
-    fn nspid_counts_the_pid_namespaces() {
-        assert!(!pid_namespaced("Name:\tfoot\nNSpid:\t4242\n"));
-        assert!(pid_namespaced("Name:\tbwrap\nNSpid:\t4242\t2\n"));
-        assert!(!pid_namespaced(""));
-    }
-
-    #[test]
-    fn a_process_state_is_read_after_the_last_parenthesis() {
-        assert!(runs("42 (foot) S 1 42"));
-        assert!(
-            !runs("42 (a) Z (b) Z 1"),
-            "a command may hold a parenthesis"
-        );
-        assert!(runs("42 (a) Z (b) R 1"));
-        assert!(!runs("42 (foot) X 1"));
-        assert!(!runs(""));
     }
 
     #[test]
