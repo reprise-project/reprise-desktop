@@ -23,7 +23,7 @@ reprisebus = { path = "../../reprisebus" }
 reprisefs = { path = "../../reprisefs" }
 repriseaudio = { path = "../../repriseaudio" }
 repriseconf = { path = "../../repriseconf" }
-repriselogin = { path = "../../repriselogin" }
+repriselogin = { path = "../../repriselogin", features = ["picture"] }
 toml_edit.workspace = true
 inotify.workspace = true
 xcursor = "0.3"
@@ -31,4 +31,5 @@ log.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+image.workspace = true
 tempfile.workspace = true

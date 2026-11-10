@@ -222,6 +222,21 @@ was up, is not saved over: the page says so and shows the file as it is.
 | `show_users` | `true` lists the accounts on the Blue and Glass screens, with each one's picture from AccountsService. `false` asks for a typed user name there, as Classic always does | `true` |
 | `autologin_user` | an account name. Each time reprise-login starts with no session running (one logind can't describe yet counts as running), it logs that user in without a password; a logout brings the login screen. A name the screen wouldn't list shows the login screen, and the journal says why. `""` counts as unset | unset |
 | `greeter_socket` | `true` lets the login screen listen on a Wayland socket in its runtime directory, so screenshot and input tools can reach it while testing. Any process of the `reprise-greeter` user can then reach the login screen: type into it, capture it, draw over it. Leave it `false` on a machine people use | `false` |
+| `background` | what the login screen shows behind it in every interface: a built-in wallpaper's `"reprise:design/variant"` name (as `[wallpaper] image` takes), or `"/var/lib/reprise-login/background"`, the picture Settings > Login Manager > Browse... copied there. Any other path is refused, so the screen reads no file from a user's home. A picture missing or that doesn't decode leaves the default | Classic's desktop colour, Blue's welcome field, Glass's default wallpaper |
+
+`[[outputs]]` tables in the same file set what the login screen runs on each
+connector, with the `name`, `mode`, `scale`, `transform`, `position` and
+`primary` keys of a session's `[[outputs]]`
+([features.md](features.md#displays)). `scale` takes 1 to 4 in steps of 0.25, `position`
+at most 65536 from the origin either way, and the file at most 16 tables;
+past that every table is refused. A connector not listed, a turned-off
+monitor included, runs its preferred mode at scale 1. Positions apply as
+written whichever monitors are connected. The login screen goes on the
+`primary` output while it is connected, else on the leftmost. Settings >
+Login Manager > Use My Display Settings fills them from the screens as your
+session runs them now, a saved monitor layout and its primary included, and
+Reset removes them. Like `[login]`, they apply the next time the login
+screen starts.
 
 The login screen lists accounts with a uid between `UID_MIN` and `UID_MAX`
 of `/etc/login.defs` (1000 and 60000 when unset) and a shell listed in

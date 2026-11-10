@@ -33,6 +33,8 @@ const GLOW_REACH: (f64, f64) = (0.6, 1.1);
 /// The top rule's alpha along it, brightest over the glow; the middle rule's peak alpha.
 const TOP_RULE: [(f64, u8); 3] = [(0.0, 90), (0.3, 255), (1.0, 40)];
 const SPLIT_PEAK: u8 = 210;
+/// Over a picture, the field is black at this alpha, so the white text reads on a bright one.
+const PICTURE_DIM: u8 = 102;
 const LOGO: i32 = 48;
 const LOGO_GAP: i32 = 10;
 const BEGIN_GAP: i32 = 10;
@@ -246,6 +248,11 @@ fn faded<const N: usize>(c: Color, stops: [(f64, u8); N]) -> [(f64, Px); N] {
 /// The screen without its text and parts, `w` x `h` design px at `d`: the bands, their lit
 /// rules (the bottom one in the scheme's accent), the field with its glow and the middle rule.
 pub fn backdrop(sc: &Scheme, w: i32, h: i32, d: i32) -> Canvas {
+    drawn_backdrop(sc, w, h, d, true)
+}
+
+/// [`backdrop`], with the field a [`PICTURE_DIM`] black over a picture when `field` is false.
+fn drawn_backdrop(sc: &Scheme, w: i32, h: i32, d: i32, field: bool) -> Canvas {
     let f = frame(Rect::new(0, 0, w, h));
     let band = solid(sc.welcome_band);
     let top_rule = faded(sc.welcome_rule, TOP_RULE);
@@ -255,6 +262,7 @@ pub fn backdrop(sc: &Scheme, w: i32, h: i32, d: i32) -> Canvas {
         (1.0, solid(sc.welcome_field)),
     ];
     let split = faded(sc.welcome_rule, [(0.0, 0), (0.5, SPLIT_PEAK), (1.0, 0)]);
+    let dim = premul(Color::rgb(0, 0, 0), PICTURE_DIM);
     let (split_y0, split_y1) = (f.middle.y + SPLIT_INSET, f.middle.bottom() - SPLIT_INSET);
     let k = f64::from(d);
     let mh = f64::from(f.middle.height);
@@ -275,7 +283,10 @@ pub fn backdrop(sc: &Scheme, w: i32, h: i32, d: i32) -> Canvas {
         if row >= f.bottom.y {
             return over(Stops(&bottom_rule).at(along), band);
         }
-        let field = radial(x, y, cx, cy, rx, ry, &Stops(&glow));
+        let field = match field {
+            true => radial(x, y, cx, cy, rx, ry, &Stops(&glow)),
+            false => dim,
+        };
         if col == f.split && (split_y0..split_y1).contains(&row) {
             let t =
                 (centre(y as i32, d) + 0.5 - f64::from(split_y0)) / f64::from(split_y1 - split_y0);
@@ -290,12 +301,12 @@ const KEPT_BACKDROPS: usize = 4;
 
 /// [`backdrop`] for the last few schemes and sizes asked, kept since typing repaints the whole
 /// screen.
-fn cached_backdrop(sc: &Scheme, w: i32, h: i32, d: i32) -> Rc<Canvas> {
-    type Kept = Vec<((&'static str, i32, i32, i32), Rc<Canvas>)>;
+fn cached_backdrop(sc: &Scheme, w: i32, h: i32, d: i32, field: bool) -> Rc<Canvas> {
+    type Kept = Vec<((&'static str, i32, i32, i32, bool), Rc<Canvas>)>;
     thread_local! {
         static KEPT: RefCell<Kept> = const { RefCell::new(Vec::new()) };
     }
-    let key = (sc.name, w, h, d);
+    let key = (sc.name, w, h, d, field);
     KEPT.with_borrow_mut(|kept| {
         if let Some((_, c)) = kept.iter().find(|(k, _)| *k == key) {
             return Rc::clone(c);
@@ -303,7 +314,7 @@ fn cached_backdrop(sc: &Scheme, w: i32, h: i32, d: i32) -> Rc<Canvas> {
         if kept.len() == KEPT_BACKDROPS {
             kept.remove(0);
         }
-        let c = Rc::new(backdrop(sc, w, h, d));
+        let c = Rc::new(drawn_backdrop(sc, w, h, d, field));
         kept.push((key, Rc::clone(&c)));
         c
     })
@@ -438,6 +449,8 @@ struct Pen<'a> {
     px: u32,
     name_px: u32,
     ink: Color,
+    /// The canvas is translucent where text goes: it lies over a picture.
+    over: bool,
 }
 
 impl Pen<'_> {
@@ -449,7 +462,25 @@ impl Pen<'_> {
     fn line(&self, c: &mut Canvas, r: Rect, text: &str, bold: bool, px: u32, align: Align) {
         let r = self.at(r);
         let shown = self.text.ellipsize(text, r.width, bold, px);
-        self.text.draw(c, r, &shown, bold, self.ink, align, px);
+        self.put(self.text, c, r, &shown, bold, px, align);
+    }
+
+    /// `text` in `with` in device rect `r`.
+    #[expect(clippy::too_many_arguments)]
+    fn put(
+        &self,
+        with: &TextRenderer,
+        c: &mut Canvas,
+        r: Rect,
+        text: &str,
+        bold: bool,
+        px: u32,
+        align: Align,
+    ) {
+        match self.over {
+            true => with.draw_over(c, r, text, bold, self.ink, align, px),
+            false => with.draw(c, r, text, bold, self.ink, align, px),
+        }
     }
 
     /// `msg` wrapped to design width `w`, cut to `room` lines.
@@ -468,7 +499,7 @@ impl Pen<'_> {
     ) {
         for (i, line) in lines.iter().enumerate() {
             let r = self.at(Rect::new(x, y + i as i32 * k.line, w, k.line));
-            self.text.draw(c, r, line, false, self.ink, align, self.px);
+            self.put(self.text, c, r, line, false, self.px, align);
         }
     }
 }
@@ -510,8 +541,15 @@ fn draw_titled(
         px,
         name_px: theme.text.px(NAME_PX) * s as u32,
         ink: sc.welcome_text,
+        over: m.over_picture,
     };
-    c.blit_canvas(0, 0, &cached_backdrop(sc, o.width, o.height, s));
+    let backdrop = cached_backdrop(sc, o.width, o.height, s, !m.over_picture);
+    if m.over_picture {
+        c.clear_rect(c.bounds());
+        c.blit_over(0, 0, &backdrop);
+    } else {
+        c.blit_canvas(0, 0, &backdrop);
+    }
     draw_mark(c, m, &f, k, &pen);
     for (i, r) in l.parts.iter().filter_map(|&(p, r)| match p {
         Part::Tile(i) => Some((i, r)),
@@ -563,7 +601,7 @@ fn draw_mark(c: &mut Canvas, m: &Logon, f: &Frame, k: Lines, pen: &Pen) {
     let word_w = t.measure(MARK, spec.bold, mark_px);
     let word = pen.at(Rect::new(right, top, 0, LOGO));
     let word = Rect::new(word.x - word_w, word.y, word_w, word.height);
-    t.draw(c, word, MARK, spec.bold, pen.ink, Align::Left, mark_px);
+    pen.put(t, c, word, MARK, spec.bold, mark_px, Align::Left);
     let logo_x = word.x - (LOGO_GAP + LOGO) * s;
     logo::draw_any(c, logo_x, word.y, LOGO * s, pen.ink);
     if m.screen == Screen::Typed {

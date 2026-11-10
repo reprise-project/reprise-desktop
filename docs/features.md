@@ -571,6 +571,15 @@ the screen takes the interface of the last session used at this computer.
   badge shows the active one, and clicking it moves to the next.
 - **Autologin.** `[login] autologin_user` logs one user in when the
   computer starts. Logging off brings the login screen.
+- **Background and screens.** Settings > Login Manager picks the picture
+  behind the screen in all three designs: a built-in wallpaper or a picture
+  of your own of at most 64 million pixels, which the login manager keeps
+  a copy of, scaled down to at most 7680x4320 pixels' worth in its own
+  shape. Classic's dialog and Blue's bands and tiles then sit over it,
+  Blue's field darkened so its white text reads. Use My Display Settings
+  gives the login screen each monitor's resolution, scale, rotation and
+  place as your session runs them, and puts it on your primary monitor;
+  without it every monitor runs its preferred mode at 100%.
 - **Remote logins.** A user connected from another computer has a tile
   that says Connected remotely. Logging in here as that user brings the
   session to this screen. For a background session, or one in lock mode,

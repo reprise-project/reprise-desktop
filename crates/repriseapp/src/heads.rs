@@ -105,6 +105,7 @@ pub struct Head {
     /// Empty when the compositor did not say.
     pub make: String,
     pub model: String,
+    pub serial: String,
     /// In the compositor's order.
     pub modes: Vec<HeadMode>,
     /// Which of `modes` runs; None on a disabled head or a custom mode.
@@ -184,6 +185,7 @@ pub enum In {
     Description(ObjId, String),
     Make(ObjId, String),
     Model(ObjId, String),
+    SerialNumber(ObjId, String),
     /// A head, then its new mode.
     Mode(ObjId, ObjId),
     ModeSize(ObjId, i32, i32),
@@ -338,6 +340,11 @@ impl Model {
             In::Model(h, s) => {
                 if let Some(d) = self.draft(h) {
                     d.head.model = s;
+                }
+            }
+            In::SerialNumber(h, s) => {
+                if let Some(d) = self.draft(h) {
+                    d.head.serial = s;
                 }
             }
             In::Mode(h, m) => {
@@ -668,6 +675,7 @@ mod tests {
             In::Name(10, "DP-1".into()),
             In::Make(10, "Dell Inc.".into()),
             In::Model(10, "DELL U2412M".into()),
+            In::SerialNumber(10, "0G8VT".into()),
             In::Mode(10, 11),
             In::ModeSize(11, 1920, 1080),
             In::ModeRefresh(11, 60_000),
@@ -707,6 +715,7 @@ mod tests {
                 description: String::new(),
                 make: "Dell Inc.".into(),
                 model: "DELL U2412M".into(),
+                serial: "0G8VT".into(),
                 modes: vec![
                     HeadMode {
                         preferred: true,

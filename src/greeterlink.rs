@@ -146,6 +146,8 @@ mod tests {
             last_user: Some("anna".into()),
             keyboard: Keyboard::default(),
             notice: None,
+            outputs: Vec::new(),
+            background: None,
         }
     }
 

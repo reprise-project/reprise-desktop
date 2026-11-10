@@ -242,7 +242,13 @@ processes:
   network socket, only the two unix sockets below and the two of [Remote
   logins](#remote-logins). It reads
   `/etc/reprise/login.toml` and keeps the last user and interface in
-  `/var/lib/reprise-login/state.toml` (0600, in a 0700 directory).
+  `/var/lib/reprise-login/state.toml` (0600, in a 0711 directory every
+  account may pass through but not list, for the login screen's picture
+  below; any account can still tell by name whether a file there exists and
+  when it changed). Before it names the picture to the login screen it
+  checks that it is a file of at most 160 MB whose PNG header gives at most
+  7680x4320 pixels' worth and 16384 a side; it decodes none of it, and the
+  login screen falls back to its default when the rest doesn't decode.
 - **A PAM worker** per login, and one for the login screen: the daemon
   starts itself again as `reprise-login --worker`, as root. One worker holds
   one PAM handle from `pam_authenticate` to `pam_close_session`, so a module
@@ -255,12 +261,31 @@ processes:
   its home is `/var/lib/reprise-greeter` (0750). The worker sets
   `no_new_privs` before it starts the login screen, so a setuid program
   gains it nothing. It reads user pictures from AccountsService's
-  directory and can read no more of a user's files than any other account.
+  directory and its background from `/var/lib/reprise-login/background`,
+  and can read no more of a user's files than any other account.
   It listens on no Wayland socket, so the user services logind starts for
   `reprise-greeter` can't reach it; `[login] greeter_socket` opens one for
   testing.
 - **Sessions** run as their user, through the user's login shell, with the
   environment PAM set.
+- **The settings helper**, `reprise-login-settings`, runs as root through
+  `pkexec`, which asks for an administrator's password on each save. It
+  takes the settings and, for the background, a picture's bytes on stdin:
+  Settings reads the picked file as the user, so the helper never opens a
+  path a user named and no symlink can point it at another account's file.
+  It refuses a picture over 32 MB, or one that isn't a PNG, JPEG or BMP of
+  at most 16384 pixels a side and 64 million pixels that decodes whole
+  within the decoder's memory limit, before it writes anything. It decodes
+  with the same pure-Rust decoders and limits as the compositor, and
+  Settings decodes the file the same way before it asks for the password,
+  saying which of these it refuses. The copy holds only the pixels, scaled
+  down to 7680x4320 pixels' worth in the picture's own shape, turned the
+  way the photo's orientation says, as an 8-bit PNG: a photo's EXIF and
+  text stay behind, since every account can read it. It goes to
+  `/var/lib/reprise-login/background` (root's, 0644) through a temporary
+  file opened `O_EXCL | O_NOFOLLOW`, renamed over whatever is there, a
+  symlink included, without following it, once the settings are written.
+  Settings that show no picture remove it.
 
 The sockets live in `/run/reprise-login` (0755, root):
 

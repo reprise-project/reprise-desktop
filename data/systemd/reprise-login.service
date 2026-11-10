@@ -18,7 +18,7 @@ RuntimeDirectory=reprise-login
 RuntimeDirectoryMode=0755
 RuntimeDirectoryPreserve=yes
 StateDirectory=reprise-login
-StateDirectoryMode=0700
+StateDirectoryMode=0711
 
 [Install]
 Alias=display-manager.service

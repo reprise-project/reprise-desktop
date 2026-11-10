@@ -40,7 +40,11 @@ pub use lists::{
     fit_shortcut_columns, list_key, new_list, new_location_list, new_shortcut_list,
     show_locations_loading,
 };
-pub use login::{NOT_RUNNING, follow_login, login_manager, read_login, show_login};
+pub use login::{
+    LOGIN_BACKGROUND, LOGIN_BROWSE, LOGIN_RESET_DISPLAYS, LOGIN_USE_DISPLAYS, NOT_RUNNING,
+    Picture as LoginPicture, follow_login, login_manager, read_login, read_login_background,
+    show_login,
+};
 pub use system::{
     RD_PASSWORD_ACCOUNTS, REMOTE_ALLOW, REMOTE_DISCONNECT, REMOTE_REGENERATE, advanced, backup,
     managed, notifications, privacy, remote_desktop, selected_client, show_remote, sound, startup,

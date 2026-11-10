@@ -8,6 +8,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use repriselogin::greeter::Greeting;
+use repriselogin::machine::{BACKGROUND_PICTURE, Background, LoginOutput};
 use smithay::reexports::calloop::{EventLoop, Interest, Mode, PostAction, generic::Generic};
 
 use crate::compositor::{Host, State};
@@ -140,20 +141,19 @@ fn hold_power_keys() {
     }
 }
 
-/// The defaults, in the greeting's interface and keyboard layout, with no idle lock: the login
-/// screen is what a lock would cover. Glass's screen lies over its default wallpaper.
+/// The defaults, in the greeting's interface, keyboard layout and outputs, with no idle lock: the
+/// login screen is what a lock would cover, over the greeting's background or its default look.
 pub fn config_from(g: &Greeting) -> Config {
     let interface = interface(g.interface);
-    let glass = reprisekit::glass::Settings::default();
-    let wallpaper = (interface == reprisekit::interface::Interface::Glass)
-        .then(|| reprisekit::interfaces::default_wallpaper(interface))
-        .flatten()
-        .map(|b| PathBuf::from(reprisekit::interfaces::resolve_wallpaper(b, &glass).uri()));
+    let shown = background(g);
+    if let (Some(Background::Builtin(uri)), None) = (&g.background, &shown) {
+        log::warn!("greeter: no built-in wallpaper {uri}");
+    }
     let base = repriseconf::config::Config {
         interface,
         theme: reprisekit::interfaces::theme_for(interface),
         wallpaper: crate::config::WallpaperConfig {
-            image: wallpaper,
+            image: shown.or_else(|| default_wallpaper(interface)),
             ..Default::default()
         },
         keyboard: crate::config::KeyboardConfig {
@@ -167,11 +167,55 @@ pub fn config_from(g: &Greeting) -> Config {
             lock_fade: 0,
             ..Default::default()
         },
+        outputs: g.outputs.iter().map(output).collect(),
         ..Default::default()
     };
     Config {
         base,
         ..Config::default()
+    }
+}
+
+/// The greeting's background as a wallpaper path; None without one, or for a built-in this build
+/// does not draw.
+pub fn background(g: &Greeting) -> Option<PathBuf> {
+    match g.background.as_ref()? {
+        Background::Picture => Some(BACKGROUND_PICTURE.into()),
+        Background::Builtin(uri) => match reprisekit::wallpapers::Builtin::from_uri(uri) {
+            Some(Ok(b)) => Some(drawn(b)),
+            _ => None,
+        },
+    }
+}
+
+/// What the login screen lies over without a background: Glass's default wallpaper, and
+/// nothing on Classic and Blue, whose backdrop is a colour.
+pub fn default_wallpaper(interface: reprisekit::interface::Interface) -> Option<PathBuf> {
+    (interface == reprisekit::interface::Interface::Glass)
+        .then(|| reprisekit::interfaces::default_wallpaper(interface))
+        .flatten()
+        .map(drawn)
+}
+
+fn drawn(b: reprisekit::wallpapers::Builtin) -> PathBuf {
+    let glass = reprisekit::glass::Settings::default();
+    PathBuf::from(reprisekit::interfaces::resolve_wallpaper(b, &glass).uri())
+}
+
+/// A greeting's output as the `[[outputs]]` table the session's own outputs take.
+fn output(o: &LoginOutput) -> crate::config::OutputConfig {
+    crate::config::OutputConfig {
+        name: o.name.clone(),
+        scale: o.scale(),
+        mode: o.mode.map(|m| crate::config::OutputMode {
+            width: m.width as i32,
+            height: m.height as i32,
+            refresh_mhz: m.refresh_mhz.map(|r| r as i32),
+        }),
+        adaptive_sync: None,
+        transform: crate::config::Transform::parse(o.transform.name()).unwrap_or_default(),
+        position: o.position,
+        primary: o.primary,
     }
 }
 
@@ -211,6 +255,8 @@ mod tests {
                 options: "caps:escape".into(),
             },
             notice: None,
+            outputs: Vec::new(),
+            background: None,
         }
     }
 
@@ -263,6 +309,159 @@ mod tests {
                 ..greeting()
             };
             assert_eq!(config_from(&g).wallpaper.image, None, "{i:?}");
+        }
+    }
+
+    #[test]
+    fn the_greetings_outputs_become_the_login_screens_outputs() {
+        use repriselogin::machine::{LoginMode, Transform};
+        let g = Greeting {
+            outputs: vec![
+                LoginOutput {
+                    name: "DP-1".into(),
+                    mode: Some(LoginMode {
+                        width: 2560,
+                        height: 1440,
+                        refresh_mhz: Some(59_951),
+                    }),
+                    quarters: 5,
+                    transform: Transform::Rotate90,
+                    position: Some((-1440, 0)),
+                    primary: true,
+                },
+                LoginOutput::named("eDP-1"),
+            ],
+            ..greeting()
+        };
+        let config = config_from(&g);
+        assert_eq!(
+            config.outputs,
+            [
+                crate::config::OutputConfig {
+                    name: "DP-1".into(),
+                    scale: 1.25,
+                    mode: Some(crate::config::OutputMode::parse("2560x1440@59.951").unwrap()),
+                    adaptive_sync: None,
+                    transform: crate::config::Transform::Rotate90,
+                    position: Some((-1440, 0)),
+                    primary: true,
+                },
+                crate::config::OutputConfig {
+                    name: "eDP-1".into(),
+                    scale: 1.0,
+                    mode: None,
+                    adaptive_sync: None,
+                    transform: crate::config::Transform::Normal,
+                    position: None,
+                    primary: false,
+                },
+            ]
+        );
+        assert!(config_from(&greeting()).outputs.is_empty());
+    }
+
+    #[test]
+    fn every_greeting_transform_is_the_sessions_of_that_name() {
+        for t in repriselogin::machine::Transform::ALL {
+            let g = Greeting {
+                outputs: vec![LoginOutput {
+                    transform: t,
+                    ..LoginOutput::named("DP-1")
+                }],
+                ..greeting()
+            };
+            assert_eq!(config_from(&g).outputs[0].transform.name(), t.name());
+        }
+    }
+
+    #[test]
+    fn an_output_comes_up_at_the_greetings_scale_and_transform() {
+        let g = Greeting {
+            outputs: vec![LoginOutput {
+                quarters: 6,
+                transform: repriselogin::machine::Transform::Rotate180,
+                ..LoginOutput::named("DP-1")
+            }],
+            ..greeting()
+        };
+        let mut h = Harness::with_host(config_from(&g), Host::Greeter);
+        let dp = h.head("DP-1", 1920, 1080);
+        let other = h.head("HDMI-A-1", 1280, 1024);
+        for o in [&dp, &other] {
+            h.state.set_in_layout(o, false);
+            h.state.set_in_layout(o, true);
+        }
+        h.dispatch();
+        assert_eq!(dp.current_scale().fractional_scale(), 1.5);
+        assert_eq!(dp.current_transform(), smithay::utils::Transform::_180);
+        assert_eq!(
+            other.current_scale().fractional_scale(),
+            1.0,
+            "unlisted: scale 1"
+        );
+        assert_eq!(other.current_transform(), smithay::utils::Transform::Normal);
+    }
+
+    #[test]
+    fn the_background_lies_under_every_interface() {
+        for i in [
+            repriselogin::Interface::Classic,
+            repriselogin::Interface::Blue,
+            repriselogin::Interface::Glass,
+        ] {
+            let image = |background| {
+                let g = Greeting {
+                    interface: i,
+                    background: Some(background),
+                    ..greeting()
+                };
+                config_from(&g).wallpaper.image.clone()
+            };
+            assert_eq!(
+                image(Background::Picture),
+                Some(PathBuf::from(BACKGROUND_PICTURE)),
+                "{i:?}"
+            );
+            assert_eq!(
+                image(Background::Builtin("reprise:tarn/dusk".into())),
+                Some(PathBuf::from("reprise:tarn/dusk")),
+                "{i:?}"
+            );
+        }
+        let g = Greeting {
+            interface: repriselogin::Interface::Blue,
+            background: Some(Background::Builtin("reprise:nothing/here".into())),
+            ..greeting()
+        };
+        assert_eq!(config_from(&g).wallpaper.image, None, "an unknown built-in");
+    }
+
+    #[test]
+    fn a_background_leaves_classic_and_blue_clear_around_their_parts() {
+        for (i, background, over) in [
+            (
+                repriselogin::Interface::Classic,
+                Some(Background::Picture),
+                true,
+            ),
+            (
+                repriselogin::Interface::Blue,
+                Some(Background::Picture),
+                true,
+            ),
+            (repriselogin::Interface::Classic, None, false),
+            (repriselogin::Interface::Blue, None, false),
+        ] {
+            let g = Greeting {
+                interface: i,
+                background,
+                ..greeting()
+            };
+            let mut h = Harness::with_host(config_from(&g), Host::Greeter);
+            h.output("TEST-1", 1024, 768);
+            crate::greeterview::setup(&mut h.state, g);
+            let login = h.state.greeter.login.as_ref().expect("the login screen");
+            assert_eq!(login.model.over_picture, over, "{i:?}");
         }
     }
 

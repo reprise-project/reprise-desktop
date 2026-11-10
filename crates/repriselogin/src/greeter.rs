@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use crate::Interface;
+use crate::machine::{Background, LoginOutput};
 
 #[derive(PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -89,6 +90,11 @@ pub struct Greeting {
     pub last_user: Option<String>,
     pub keyboard: Keyboard,
     pub notice: Option<Notice>,
+    /// `MACHINE_CONFIG`'s `[[outputs]]`: what the login screen runs on each connector.
+    #[serde(default)]
+    pub outputs: Vec<LoginOutput>,
+    #[serde(default)]
+    pub background: Option<Background>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -214,6 +220,8 @@ mod tests {
             last_user: None,
             keyboard: Keyboard::default(),
             notice: Some(Notice::SessionEndedEarly),
+            outputs: Vec::new(),
+            background: None,
         };
         let json = body(&GreeterReply::Greeting(g.clone()));
         assert!(json.starts_with(r#"{"greeting":{"interface":"classic","#));
@@ -222,6 +230,55 @@ mod tests {
             decode::<GreeterReply>(json.as_bytes()).unwrap(),
             GreeterReply::Greeting(g)
         );
+    }
+
+    #[test]
+    fn a_greeting_carries_the_outputs_and_the_background() {
+        use crate::machine::{LoginMode, Transform};
+        let g = Greeting {
+            interface: Interface::Blue,
+            show_users: true,
+            users: vec![],
+            last_user: None,
+            keyboard: Keyboard::default(),
+            notice: None,
+            outputs: vec![LoginOutput {
+                name: "DP-1".into(),
+                mode: Some(LoginMode {
+                    width: 2560,
+                    height: 1440,
+                    refresh_mhz: Some(59_951),
+                }),
+                quarters: 5,
+                transform: Transform::Rotate270,
+                position: Some((-2560, 0)),
+                primary: true,
+            }],
+            background: Some(Background::Picture),
+        };
+        let json = body(&GreeterReply::Greeting(g.clone()));
+        assert!(
+            json.contains(
+                r#""outputs":[{"name":"DP-1","mode":{"width":2560,"height":1440,"refresh_mhz":59951},"quarters":5,"transform":"270","position":[-2560,0],"primary":true}]"#
+            ),
+            "{json}"
+        );
+        assert!(json.ends_with(r#""background":"picture"}}"#), "{json}");
+        assert_eq!(
+            decode::<GreeterReply>(json.as_bytes()).unwrap(),
+            GreeterReply::Greeting(g)
+        );
+        let builtin = serde_json::to_string(&Background::Builtin("reprise:tarn/dusk".into()));
+        assert_eq!(builtin.unwrap(), r#"{"builtin":"reprise:tarn/dusk"}"#);
+    }
+
+    #[test]
+    fn a_greeting_without_outputs_or_background_still_decodes() {
+        let json = r#"{"greeting":{"interface":"glass","show_users":true,"users":[],"last_user":null,"keyboard":{"layout":"","variant":"","options":""},"notice":null}}"#;
+        let GreeterReply::Greeting(g) = decode::<GreeterReply>(json.as_bytes()).unwrap() else {
+            panic!("a greeting");
+        };
+        assert_eq!((g.outputs, g.background), (vec![], None));
     }
 
     #[test]

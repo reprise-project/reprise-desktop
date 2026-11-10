@@ -928,6 +928,8 @@ impl Daemon {
             last_user: self.remembered.last_user.clone(),
             keyboard: world.keyboard.clone(),
             notice: None,
+            outputs: self.config.outputs.clone(),
+            background: self.config.login.background.clone(),
         };
         while !greeting.users.is_empty()
             && frame::encode(&GreeterReply::Greeting(greeting.clone())).is_err()

@@ -11,7 +11,12 @@ description = "The wire protocol of reprise-login with its greeter, user session
 [lints]
 workspace = true
 
+[features]
+# `machine::decode_picture`, for reprise-login-settings and Settings.
+picture = ["dep:image"]
+
 [dependencies]
+image = { workspace = true, optional = true }
 libc.workspace = true
 md4 = { workspace = true, features = ["zeroize"] }
 serde = { workspace = true, features = ["derive"] }

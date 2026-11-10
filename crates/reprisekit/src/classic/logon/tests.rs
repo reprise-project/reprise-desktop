@@ -29,6 +29,8 @@ fn states() -> Vec<(&'static str, Logon)> {
     let mut badge = filled.clone();
     badge.layout = Some("EN".into());
     badge.caps_lock = true;
+    let mut over_picture = filled.clone();
+    over_picture.over_picture = true;
     vec![
         ("empty", empty),
         ("name filled", filled),
@@ -39,6 +41,7 @@ fn states() -> Vec<(&'static str, Logon)> {
         ("admin shut down", admin(PowerAction::PowerOff, "")),
         ("admin restart filled", admin(PowerAction::Reboot, "anna")),
         ("shutting down", going_down()),
+        ("over a picture", over_picture),
     ]
 }
 
@@ -129,6 +132,27 @@ fn the_classic_dialog_is_centred_and_ok_wears_the_default_ring() {
             power.right(),
             name.right(),
             "the buttons line up with the fields"
+        );
+    }
+}
+
+#[test]
+fn over_a_picture_only_the_dialog_is_drawn() {
+    let mut m = Logon::new(Interface::Classic, Vec::new(), false, Some("alice"));
+    m.over_picture = true;
+    for s in [1, 2] {
+        let (c, l, theme) = drawn(&m, s);
+        let d = l.dialog.expect("a dialog").scaled(s);
+        assert_eq!(c.get(0, 0), 0, "@{s}: the picture shows around the dialog");
+        assert_eq!(
+            c.get(d.x - 1, d.y + d.height / 2),
+            0,
+            "@{s}: up to its edge"
+        );
+        assert_eq!(
+            c.get(d.x, d.y),
+            theme.colors.button_face.argb(),
+            "@{s}: the frame"
         );
     }
 }

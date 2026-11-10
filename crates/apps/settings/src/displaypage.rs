@@ -216,6 +216,11 @@ impl Display {
             .any(|(h, p)| h.position != *p)
     }
 
+    /// The outputs in the layout, as they run.
+    pub fn heads(&self) -> &[Head] {
+        &self.heads
+    }
+
     pub fn names(&self) -> Vec<String> {
         self.heads.iter().map(|h| h.name.clone()).collect()
     }
@@ -709,6 +714,7 @@ pub(crate) fn test_head(name: &str) -> Head {
         description: String::new(),
         make: "Dell Inc.".into(),
         model: "DELL U2412M".into(),
+        serial: String::new(),
         // The compositor's order, not the trackbar's.
         modes: vec![
             m(1920, 1080, 60_000, true),

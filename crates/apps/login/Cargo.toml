@@ -20,7 +20,7 @@ name = "reprise-login-settings"
 path = "src/bin/settings.rs"
 
 [dependencies]
-repriselogin = { path = "../../repriselogin" }
+repriselogin = { path = "../../repriselogin", features = ["picture"] }
 reprisepam = { path = "../../reprisepam" }
 serde = { workspace = true, features = ["derive"] }
 toml.workspace = true
@@ -29,6 +29,7 @@ libc.workspace = true
 zeroize = { workspace = true, features = ["serde"] }
 reprisebus = { path = "../../reprisebus" }
 futures-util.workspace = true
+image.workspace = true
 inotify.workspace = true
 tokio = { workspace = true, features = ["rt", "net", "time", "macros", "io-util", "sync", "signal"] }
 zbus.workspace = true
