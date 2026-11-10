@@ -86,12 +86,18 @@ impl Sessions {
     }
 
     /// The login screen's note for each user, keyed by user name; `remote` says whether a
-    /// uid's session has remote clients.
-    pub fn notes(&self, remote: impl Fn(u32) -> bool) -> HashMap<String, Note> {
+    /// uid's session has remote clients, which outranks `locked` on a session id.
+    pub fn notes(
+        &self,
+        remote: impl Fn(u32) -> bool,
+        locked: impl Fn(&str) -> bool,
+    ) -> HashMap<String, Note> {
         (self.entries.iter())
             .map(|e| {
                 let note = if remote(e.uid) {
                     Note::Remote
+                } else if locked(&e.id) {
+                    Note::Locked
                 } else {
                     Note::LoggedOn
                 };
@@ -154,7 +160,7 @@ mod tests {
 
     #[test]
     fn notes_mark_every_user_with_a_session_logged_on_or_remote() {
-        let notes = table().notes(|uid| uid == 1008);
+        let notes = table().notes(|uid| uid == 1008, |_| false);
         assert_eq!(
             notes,
             HashMap::from([
@@ -162,7 +168,19 @@ mod tests {
                 ("bert".to_string(), Note::Remote),
             ])
         );
-        assert!(Sessions::default().notes(|_| true).is_empty());
+        assert!(Sessions::default().notes(|_| true, |_| true).is_empty());
+    }
+
+    #[test]
+    fn a_locked_session_is_noted_locked_unless_it_has_remote_clients() {
+        let notes = table().notes(|uid| uid == 1008, |_| true);
+        assert_eq!(
+            notes,
+            HashMap::from([
+                ("anna".to_string(), Note::Locked),
+                ("bert".to_string(), Note::Remote),
+            ])
+        );
     }
 
     #[test]

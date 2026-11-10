@@ -258,6 +258,7 @@ async fn run() -> Result<(), String> {
         tokio::task::spawn_local(follow_leader(id, logind.clone(), events.clone()));
     }
     tokio::task::spawn_local(read_unread(unread, logind.clone(), events.clone()));
+    tokio::task::spawn_local(follow_locked_hints(logind.clone(), events.clone()));
     tokio::task::spawn_local(follow_removals(removed, logind, events));
     rt.run_effects(effects);
     rt.run_effects(rewrite);
@@ -398,6 +399,18 @@ async fn follow_removals(mut removed: SessionRemovedStream, logind: Logind, even
     let _ = events.send(Event::Lost(
         "logind's SessionRemoved signal stream ended".into(),
     ));
+}
+
+/// Feeds `LockedHint` for each session, so the login screen can say which are locked; without
+/// it the tiles say Logged on.
+async fn follow_locked_hints(logind: Logind, events: Events) {
+    let send = |id, locked| {
+        let hint = Input::LockedHint { id, locked };
+        events.send(Event::Input(hint)).is_ok()
+    };
+    if let Err(e) = logind.follow_locked_hints(send).await {
+        log::warn!("not following the sessions' LockedHint: {e}");
+    }
 }
 
 /// Ends recovered session `id` once its leader exits: logind then keeps it closing, with no

@@ -398,6 +398,11 @@ locks, and the connected client keeps its desktop. A reprise-login that
 starts locks no session: a logind lock would lock a session's client out
 too.
 
+The login screen marks a session's tile Locked from its logind
+`LockedHint`. reprise-login reads the hint from logind itself; a
+`PropertiesChanged` signal on a session's path only prompts that read, so
+another bus client sending one changes no tile.
+
 The session unlocks on logind's `Unlock`, so it can't tell reprise-login's
 resume from `loginctl unlock-session` run by root, by an admin polkit lets
 lock and unlock sessions, or by any process of the session's own user,

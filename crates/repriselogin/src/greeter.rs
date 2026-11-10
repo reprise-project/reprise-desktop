@@ -111,12 +111,16 @@ pub enum Note {
     LoggedOn,
     /// Logged on from another computer.
     Remote,
+    /// Logged on, with the session locked.
+    Locked,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Notice {
     SessionEndedEarly,
+    /// A session's Switch User brought the screen: it opens on the users to pick from.
+    SwitchUser,
 }
 
 /// XKB names, as in `XKB_DEFAULT_LAYOUT` and friends; empty means unset.
@@ -209,6 +213,11 @@ mod tests {
             r#"{"power_as":{"action":"reboot","user":"anna"}}"#
         );
         assert_eq!(serde_json::to_string(&Note::Remote).unwrap(), r#""remote""#);
+        assert_eq!(serde_json::to_string(&Note::Locked).unwrap(), r#""locked""#);
+        assert_eq!(
+            serde_json::to_string(&Notice::SwitchUser).unwrap(),
+            r#""switch_user""#
+        );
     }
 
     #[test]

@@ -357,6 +357,35 @@ fn a_later_greeting_brings_the_tiles_notes_up_to_date() {
 }
 
 #[test]
+fn a_greeting_brought_by_switch_user_opens_on_the_tiles_with_the_locked_tile_noted() {
+    let mut anna = user("anna");
+    anna.note = Some(Note::Locked);
+    let users = vec![anna, user("bob")];
+    let glass = repriselogin::Interface::Glass;
+    let (mut h, mut d) = login_with(glass, users.clone(), |_| {});
+    assert_eq!(model(&h).screen, logon::Screen::Tile(0));
+    let switched = Greeting {
+        interface: glass,
+        show_users: true,
+        users,
+        last_user: Some("anna".into()),
+        keyboard: Default::default(),
+        notice: Some(Notice::SwitchUser),
+        outputs: Vec::new(),
+        background: None,
+    };
+    d.says(&mut h, GreeterReply::Greeting(switched.clone()));
+    assert_eq!(model(&h).screen, logon::Screen::Tiles, "the running screen");
+    assert_eq!(model(&h).users[0].note, Some(UserNote::Locked));
+    setup(&mut h.state, switched);
+    assert_eq!(
+        model(&h).screen,
+        logon::Screen::Tiles,
+        "a new screen, not the last user's tile"
+    );
+}
+
+#[test]
 fn replies_once_the_link_is_lost_change_nothing() {
     let (mut h, mut d) = logged_in();
     d.0.shutdown(std::net::Shutdown::Read).unwrap();
