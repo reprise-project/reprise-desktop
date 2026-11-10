@@ -144,7 +144,7 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
         }
     };
     for (i, it) in form.items.iter().enumerate() {
-        let focused = form.focus == Some(i);
+        let focused = form.focus == Some(i) && it.focusable();
         let cue = focused && cues;
         let placed = form.at(it);
         let r = placed.scaled(s);

@@ -397,3 +397,37 @@ fn monitor_and_sample_render_once_per_input() {
         "the kept sample draws what a fresh render does"
     );
 }
+
+#[test]
+fn a_greyed_focused_button_shows_no_ring_until_it_lights_again() {
+    use crate::interface::Interface;
+    for interface in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        let theme = crate::interfaces::theme_for(interface);
+        let text = TextRenderer::load(&theme.fonts);
+        let (p, px) = (theme.paint(), theme.fonts.size_px);
+        let shot = |f: &Form| {
+            let mut c = Canvas::new(180, 45);
+            c.fill_rect(c.bounds(), theme.colors.button_face);
+            draw(&mut c, &text, &p, f, true, px);
+            c
+        };
+        let mut f = Form::new(vec![
+            Item::button("reset", Rect::new(10, 10, 75, 23), "&Reset", true, false),
+            Item::button("apply", Rect::new(90, 10, 75, 23), "&Apply", true, false),
+        ]);
+        f.focus_id("reset");
+        let ringed = shot(&f);
+        f.set_enabled("reset", false);
+        let mut unfocused = f.clone();
+        unfocused.set_focus(None);
+        assert!(
+            shot(&f) == shot(&unfocused),
+            "{interface:?}: a greyed focused button draws as a greyed one"
+        );
+        f.set_enabled("reset", true);
+        assert!(
+            shot(&f) == ringed,
+            "{interface:?}: lit again, the focused button shows its ring"
+        );
+    }
+}
