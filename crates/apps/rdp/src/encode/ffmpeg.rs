@@ -1,7 +1,7 @@
 //! H.264 through FFmpeg on a backend the probe found, at a constant QP with no B-frames: one
 //! access unit out for each frame in, or both AVC444 views of it.
 
-use super::avc444;
+use super::avc444::{self, AuxLayout};
 use super::colour;
 use super::h264merge::Merge;
 use super::hwmap::{self, Converter, Devices};
@@ -125,9 +125,15 @@ impl Ffmpeg {
         let devices = self.devices.as_ref();
         let (input, coded) = match avc444 {
             true => {
-                let views =
-                    Views::new(devices, &self.node, fourcc, size, target).map_err(Failed::Views)?;
-                (Input::Avc444(views), avc444::view_size(target))
+                // v2 keeps each row of chroma in place, which only a view predicted from its own
+                // last picture gains from.
+                let layout = match self.merge {
+                    Some(_) => AuxLayout::V2,
+                    None => AuxLayout::V1,
+                };
+                let views = Views::new(devices, &self.node, fourcc, size, target, layout)
+                    .map_err(Failed::Views)?;
+                (Input::Avc444(views), layout.view_size(target))
             }
             false => {
                 let c = Converter::new(devices, fourcc, size, target, self.frame_rate)?;
@@ -141,13 +147,19 @@ impl Ffmpeg {
         };
         let encoder = self.encoder(coded, pixel, frames, avc444)?;
         let aux = match avc444 && self.merge.is_some() {
-            true => Some(AuxEncoder {
-                encoder: self
-                    .encoder(coded, pixel, frames, avc444)
-                    .map_err(Failed::Merge)?,
-                pts: 0,
-                idr: false,
-            }),
+            true => {
+                let opened = self.encoder(coded, pixel, frames, avc444);
+                #[cfg(test)]
+                let opened = match tests::aux_open_fails() {
+                    true => Err(EncodeError("the aux encoder did not open".into())),
+                    false => opened,
+                };
+                Some(AuxEncoder {
+                    encoder: opened.map_err(Failed::Merge)?,
+                    pts: 0,
+                    idr: false,
+                })
+            }
             false => None,
         };
         Ok(Open {
@@ -256,7 +268,7 @@ impl Ffmpeg {
                 let read = avc444::read_rect(&regions);
                 // A merged aux view predicts from its own last picture, so all of it is drawn.
                 let drawn = match open.aux {
-                    Some(_) => Rect::full(avc444::view_size(target)),
+                    Some(_) => Rect::full(views.layout.view_size(target)),
                     None => read,
                 };
                 let split = views.split(frame, drawn).map_err(Failed::Views)?;
@@ -288,7 +300,16 @@ impl Ffmpeg {
                         false => (main, Some(next(split.aux, false)?.0)),
                     },
                 };
-                (since, Encoded::Avc444 { main, aux, regions })
+                let layout = views.layout;
+                (
+                    since,
+                    Encoded::Avc444 {
+                        main,
+                        aux,
+                        regions,
+                        layout,
+                    },
+                )
             }
         };
         open.since_idr = coded.0;
@@ -854,7 +875,9 @@ pub(crate) mod tests {
 
     fn views(encoded: Encoded) -> (Vec<u8>, Option<Vec<u8>>, Vec<Rect>) {
         match encoded {
-            Encoded::Avc444 { main, aux, regions } => (main, aux, regions),
+            Encoded::Avc444 {
+                main, aux, regions, ..
+            } => (main, aux, regions),
             _ => panic!("AVC444 views"),
         }
     }
@@ -1222,6 +1245,15 @@ pub(crate) mod tests {
         TAPPED.with(|t| t.borrow_mut().replace(Vec::new()).unwrap_or_default())
     }
 
+    thread_local! {
+        static FAIL_AUX_OPEN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+
+    /// Whether the next aux encoder is to fail to open, once.
+    pub(super) fn aux_open_fails() -> bool {
+        FAIL_AUX_OPEN.take()
+    }
+
     fn vaapi() -> Ffmpeg {
         silence();
         let backend = (crate::encode::probe::probe().1.into_iter())
@@ -1534,6 +1566,98 @@ pub(crate) mod tests {
             1,
             "one journal line"
         );
+    }
+
+    #[test]
+    #[ignore = "needs VA-API H.264 on /dev/dri/renderD128; run with --ignored where it has one"]
+    fn an_aux_encoder_that_fails_to_open_codes_both_views_on_one_encoder() {
+        crate::listen::tests::capture_log();
+        let gbm = render_node();
+        let mut encoder = vaapi();
+        let mut decoder = Decoder::new();
+        let size = (192, 128);
+        tapped();
+        FAIL_AUX_OPEN.set(true);
+        for t in 0..4 {
+            let pixel = |x: u32, y: u32| [(x * 2) as u8, (y * 3 + t) as u8, (x + t * 8) as u8];
+            let (mut frame, _, _bo) = crate::encode::split::tests::dmabuf_frame(&gbm, size, pixel);
+            frame.damage = vec![Rect::full(size)];
+            let Ok(Encoded::Avc444 {
+                main,
+                aux,
+                regions,
+                layout,
+            }) = encoder.encode(&frame, t == 0)
+            else {
+                panic!("frame {t}: AVC444 views");
+            };
+            let kind = decoder.decode(&main).kind();
+            if let Some(aux) = aux {
+                decoder.decode(&aux);
+            }
+            let want = match t {
+                0 => ::ffmpeg::picture::Type::I,
+                _ => ::ffmpeg::picture::Type::P,
+            };
+            assert_eq!((kind, regions), (want, vec![Rect::full(size)]), "frame {t}");
+            assert_eq!(
+                (layout, tapped().len()),
+                (AuxLayout::V1, 0),
+                "frame {t}: one encoder, the v1 layout"
+            );
+        }
+        assert!(encoder.merge.is_none());
+        let line = "VA-API H.264 cannot merge the AVC444 views, coding both on one encoder: \
+                    the aux encoder did not open";
+        assert_eq!(
+            crate::listen::tests::times_logged(line),
+            1,
+            "one journal line"
+        );
+    }
+
+    #[test]
+    #[ignore = "needs VA-API H.264 on /dev/dri/renderD128; run with --ignored where it has one"]
+    fn merged_v2_views_decode_through_one_decoder_to_the_picture() {
+        let gbm = render_node();
+        let desktop = Desktop::new();
+        let size = Desktop::size(0);
+        let mut encoder = vaapi();
+        let mut decoder = Decoder::new();
+        for t in [18, 19] {
+            let pixel = desktop.pixel(t);
+            let (mut frame, data, _bo) =
+                crate::encode::split::tests::dmabuf_frame(&gbm, size, &pixel);
+            frame.damage = vec![Rect::full(size)];
+            let Ok(Encoded::Avc444 {
+                main,
+                aux: Some(aux),
+                layout,
+                ..
+            }) = encoder.encode(&frame, t == 18)
+            else {
+                panic!("frame {t}: both AVC444 views");
+            };
+            assert_eq!(layout, AuxLayout::V2, "merged views take the v2 layout");
+            let (main, aux) = (nv12(&decoder.decode(&main)), nv12(&decoder.decode(&aux)));
+            assert_eq!(
+                (main.width, main.height),
+                (224, 144),
+                "32 columns, whole macroblocks"
+            );
+            let stride = data.len() / size.1 as usize;
+            let src = avc444::Planes444::from_rgb(&data, stride, size, XRGB8888);
+            let back = avc444::tests::crop(&avc444::combine_v2(&main, &aux), size);
+            let (full, half) = (
+                chroma_psnr(&back, &src),
+                chroma_psnr(&main_only(&main, size), &src),
+            );
+            eprintln!("frame {t}: chroma {full:.1} dB, {half:.1} dB from the main view");
+            assert!(
+                full > 32.0 && full > half + 2.0,
+                "frame {t}: chroma {full:.1} dB, {half:.1} dB from the main view alone"
+            );
+        }
     }
 
     const COLOUR_SIZE: (u32, u32) = (1920, 1080);
@@ -1857,13 +1981,21 @@ pub(crate) mod tests {
         assert!(error <= 3, "AVC420: a patch is off by {error}");
 
         encoder.set_avc444(true);
-        let (main, aux, regions) = views(encoder.encode(&frame, true).unwrap());
+        let Encoded::Avc444 {
+            main,
+            aux,
+            regions,
+            layout,
+        } = encoder.encode(&frame, true).unwrap()
+        else {
+            panic!("AVC444 views");
+        };
         assert_eq!(regions, [Rect::full(half)]);
         let mut decoder = Decoder::new();
         let main = nv12(&decoder.decode(&main));
         assert_eq!((main.width, main.height), (960, 544), "whole macroblocks");
         let back = match aux {
-            Some(aux) => avc444::combine_v1(&main, &nv12(&decoder.decode(&aux))),
+            Some(aux) => avc444::combine(layout, &main, &nv12(&decoder.decode(&aux))),
             None => main_only(&main, (main.width, main.height)),
         };
         let error = patch_error(shown_444(&avc444::tests::crop(&back, half)), 2);
@@ -1909,8 +2041,14 @@ pub(crate) mod tests {
                     assert_eq!((picture.width(), picture.height()), target);
                     patch_error(shown_420(&picture), 3)
                 }
-                Encoded::Avc444 { main, aux, regions } => {
+                Encoded::Avc444 {
+                    main,
+                    aux,
+                    regions,
+                    layout,
+                } => {
                     assert_eq!(regions, [Rect::full(target)]);
+                    assert_eq!(layout, AuxLayout::V1, "one encoder codes the v1 layout");
                     let main = nv12(&decoder.decode(&main));
                     assert_eq!((main.width, main.height), (640, 368));
                     let aux = nv12(&decoder.decode(&aux.expect("the lines need the aux view")));

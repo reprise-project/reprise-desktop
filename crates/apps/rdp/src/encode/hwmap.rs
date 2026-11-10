@@ -327,7 +327,7 @@ impl Converter {
         let sw = sw_pixel(fourcc)?;
         let route = match devices {
             Some(d) if d.gpu == Gpu::Cuda => Route::Cuda(CudaViews::new(
-                &d.node, &d.device, size, target, target, false,
+                &d.node, &d.device, size, target, target, None,
             )?),
             Some(d) => {
                 let mapped = frames(&d.device, d.gpu.pixel(), sw, size, 0)?;

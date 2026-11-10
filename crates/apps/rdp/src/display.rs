@@ -1018,10 +1018,20 @@ impl Live {
                 self.coding("AVC420");
                 !self.send(Video::Avc420(&data), &regions)
             }
-            Ok(Encoded::Avc444 { main, aux, regions }) => {
+            Ok(Encoded::Avc444 {
+                main,
+                aux,
+                regions,
+                layout,
+            }) => {
                 self.coding("AVC444");
                 let aux = aux.as_deref();
-                !self.send(Video::Avc444 { main: &main, aux }, &regions)
+                let video = Video::Avc444 {
+                    main: &main,
+                    aux,
+                    layout,
+                };
+                !self.send(video, &regions)
             }
             Ok(Encoded::Nothing) => false,
             Err(e) => {

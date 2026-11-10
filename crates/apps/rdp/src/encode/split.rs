@@ -2,7 +2,7 @@
 //! textures copied into CUDA frames for NVENC, or split on the CPU for the software encoder.
 
 use super::EncodeError;
-use super::avc444::{self, Flat};
+use super::avc444::{self, AuxLayout, Flat};
 use super::colour;
 use super::cuda;
 use super::gl::{self, Gl, gl_err};
@@ -36,6 +36,7 @@ pub struct Views {
     pub size: (u32, u32),
     pub target: (u32, u32),
     pub fourcc: u32,
+    pub layout: AuxLayout,
     route: Route,
 }
 
@@ -57,19 +58,21 @@ enum Route {
 }
 
 impl Views {
-    /// Views of `size` pictures in DRM `fourcc` scaled to `target`, drawn on `devices`' GPU (render
-    /// node `node`), else on the CPU; VA-API and CUDA take them from the GPU.
+    /// `layout` views of `size` pictures in DRM `fourcc` scaled to `target`, drawn on `devices`'
+    /// GPU (render node `node`), else on the CPU; VA-API and CUDA take them from the GPU.
     pub fn new(
         devices: Option<&Devices>,
         node: &Path,
         fourcc: u32,
         size: (u32, u32),
         target: (u32, u32),
+        layout: AuxLayout,
     ) -> Result<Views, EncodeError> {
-        let view = avc444::view_size(target);
+        let view = layout.view_size(target);
         let route = match devices {
             Some(d) if d.gpu == Gpu::Vaapi => {
-                let split = Box::new(GpuSplit::new(node, size, target, Target::Dmabufs)?);
+                let split = GpuSplit::new(node, size, target, Target::Dmabufs, layout)?;
+                let split = Box::new(split);
                 let mapped = hwmap::frames(
                     &d.device,
                     ffi::AVPixelFormat::VAAPI,
@@ -99,9 +102,14 @@ impl Views {
                     split,
                 }
             }
-            Some(d) if d.gpu == Gpu::Cuda => {
-                Route::Cuda(CudaViews::new(node, &d.device, size, target, view, true)?)
-            }
+            Some(d) if d.gpu == Gpu::Cuda => Route::Cuda(CudaViews::new(
+                node,
+                &d.device,
+                size,
+                target,
+                view,
+                Some(layout),
+            )?),
             Some(_) => {
                 return Err(EncodeError(
                     "the views are drawn for VA-API and CUDA only".into(),
@@ -120,6 +128,7 @@ impl Views {
             size,
             target,
             fourcc,
+            layout,
             route,
         })
     }
@@ -143,7 +152,7 @@ impl Views {
     }
 
     /// `frame`'s views, as new references to frames the next split overwrites. Clients read
-    /// the auxiliary view inside `read` only; outside it repeats the main view.
+    /// the auxiliary view inside `read` only; outside it a V1 view repeats the main view.
     pub fn split(&mut self, frame: &Frame, read: Rect) -> Result<Split, EncodeError> {
         match &mut self.route {
             Route::Gpu {
@@ -160,7 +169,7 @@ impl Views {
                     hwmap::check(writable, "frame buffer")?;
                 }
                 let mut flat = None;
-                let (target, fourcc) = (self.target, self.fourcc);
+                let (target, fourcc, layout) = (self.target, self.fourcc, self.layout);
                 let views = |data: &[u8], stride: u32| {
                     let src = avc444::Rgb {
                         data,
@@ -168,7 +177,7 @@ impl Views {
                         size: target,
                         fourcc,
                     };
-                    flat = Some(avc444::views(src, nv12(main), nv12(aux), read));
+                    flat = Some(avc444::views(src, nv12(main), nv12(aux), read, layout));
                 };
                 match rescale {
                     Some(rescale) => rescale.read(frame, views)?,
@@ -204,18 +213,21 @@ pub struct CudaViews {
 
 impl CudaViews {
     /// Views of `size` pictures scaled to `target` on render node `node`, copied out at `coded`
-    /// (at most the views' size) into CUDA device `cuda`'s frames: both with `aux`, else the main.
+    /// (at most the views' size) into CUDA device `cuda`'s frames: both with an `aux` layout,
+    /// else the main.
     pub fn new(
         node: &Path,
         cuda: &Ref,
         size: (u32, u32),
         target: (u32, u32),
         coded: (u32, u32),
-        aux: bool,
+        aux: Option<AuxLayout>,
     ) -> Result<CudaViews, EncodeError> {
-        let split = Box::new(GpuSplit::new(node, size, target, Target::Textures)?);
+        let layout = aux.unwrap_or(AuxLayout::V1);
+        let split = GpuSplit::new(node, size, target, Target::Textures, layout)?;
+        let split = Box::new(split);
         let planes: Vec<glow::Texture> = (split.views.iter())
-            .take(if aux { 2 } else { 1 })
+            .take(if aux.is_some() { 2 } else { 1 })
             .flat_map(|v| [v.luma.texture, v.chroma.texture])
             .collect();
         Ok(CudaViews {
@@ -388,6 +400,7 @@ struct GpuSplit {
     source: (u32, u32),
     /// The picture's size in the views.
     size: (u32, u32),
+    layout: AuxLayout,
     /// Dropped after the objects above are deleted.
     gl: Rc<Gl>,
 }
@@ -398,6 +411,7 @@ impl GpuSplit {
         source: (u32, u32),
         size: (u32, u32),
         target: Target,
+        layout: AuxLayout,
     ) -> Result<GpuSplit, EncodeError> {
         let mut split = GpuSplit {
             programs: Vec::new(),
@@ -409,14 +423,15 @@ impl GpuSplit {
             framebuffers: Vec::new(),
             source,
             size,
+            layout,
             gl: Rc::new(Gl::new(node)?),
         };
-        let (w, h) = avc444::view_size(size);
+        let (w, h) = layout.view_size(size);
         let gl = &split.gl.gl;
         // SAFETY: GL calls on the current context; drop deletes what was made if one fails.
         unsafe {
             for pass in 0..PASSES {
-                let p = program(gl, pass, size, source != size)?;
+                let p = program(gl, pass, size, source != size, layout)?;
                 split.programs.push(p);
                 split
                     .read_rects
@@ -457,7 +472,7 @@ impl GpuSplit {
     fn draw(&mut self, frame: &Frame, read: Rect) -> Result<Flat, EncodeError> {
         let texels = self.passes(frame, read, PASSES)?;
         Ok(Flat {
-            columns: avc444::view_size(self.size).0 / MACROBLOCK,
+            columns: self.layout.view_size(self.size).0 / MACROBLOCK,
             blocks: (texels.as_chunks::<4>().0.iter())
                 .map(|t| t[0] > 127)
                 .collect(),
@@ -578,10 +593,15 @@ impl Drop for GpuSplit {
     }
 }
 
-/// The source of pass `pass` of split.frag, sampling a picture of another size if `scaled`.
-pub(super) fn fragment(pass: usize, scaled: bool) -> String {
+/// The source of pass `pass` of split.frag drawing `layout`'s aux view, sampling a picture of
+/// another size if `scaled`.
+pub(super) fn fragment(pass: usize, scaled: bool, layout: AuxLayout) -> String {
     let scaled = if scaled { "#define SCALED\n" } else { "" };
-    format!("#version 300 es\n{scaled}#define PASS {pass}\n{FRAGMENT}")
+    let v2 = match layout {
+        AuxLayout::V1 => "",
+        AuxLayout::V2 => "#define AUX_V2\n",
+    };
+    format!("#version 300 es\n{scaled}{v2}#define PASS {pass}\n{FRAGMENT}")
 }
 
 /// Pass `pass` of split.frag for pictures of `size`, its uniforms set.
@@ -590,14 +610,17 @@ unsafe fn program(
     pass: usize,
     size: (u32, u32),
     scaled: bool,
+    layout: AuxLayout,
 ) -> Result<glow::Program, EncodeError> {
-    let fragment = fragment(pass, scaled);
+    let fragment = fragment(pass, scaled, layout);
     // SAFETY: GL calls on the caller's current context.
     unsafe {
         let program =
             gl::program(gl, &fragment).map_err(|e| EncodeError(format!("pass {pass}: {}", e.0)))?;
         let at = |name| gl.get_uniform_location(program, name);
         gl.uniform_2_i32(at("size").as_ref(), size.0 as i32, size.1 as i32);
+        let view = layout.view_size(size).0 as i32;
+        gl.uniform_1_i32(at("view_width").as_ref(), view);
         let fixed = |[r, g, b]: [i32; 3]| (r as f32, g as f32, b as f32);
         for (name, k) in [("ky", colour::Y), ("ku", colour::U), ("kv", colour::V)] {
             let (r, g, b) = fixed(k);
@@ -889,37 +912,56 @@ pub(crate) mod tests {
             width: 48,
             height: 32,
         };
-        let mut views = Views::new(None, Path::new(RENDER_NODE), XRGB8888, size, size).unwrap();
-        let split = views.split(&frame, read).unwrap();
         let planes = Planes444::from_rgb(&data, stride, size, XRGB8888);
-        let (main, mut aux) = avc444::split_v1(&planes);
-        avc444::keep_main_outside(&main, &mut aux, read);
-        let view = avc444::view_size(size);
-        let back = |f: &frame::Video| {
-            assert!(f.stride(0) > view.0 as usize, "FFmpeg pads the rows");
-            let rows = |i: usize, n: u32| -> Vec<u8> {
-                (0..n as usize)
-                    .flat_map(|r| &f.data(i)[r * f.stride(i)..][..view.0 as usize])
-                    .copied()
-                    .collect()
+        for layout in [AuxLayout::V1, AuxLayout::V2] {
+            let node = Path::new(RENDER_NODE);
+            let mut views = Views::new(None, node, XRGB8888, size, size, layout).unwrap();
+            let split = views.split(&frame, read).unwrap();
+            let (main, aux) = reference(&planes, read, layout);
+            let view = layout.view_size(size);
+            let back = |f: &frame::Video| {
+                let padded = f.stride(0) > view.0 as usize;
+                assert!(padded || layout == AuxLayout::V2, "FFmpeg pads the v1 rows");
+                let rows = |i: usize, n: u32| -> Vec<u8> {
+                    (0..n as usize)
+                        .flat_map(|r| &f.data(i)[r * f.stride(i)..][..view.0 as usize])
+                        .copied()
+                        .collect()
+                };
+                avc444::Nv12 {
+                    y: rows(0, view.1),
+                    uv: rows(1, view.1 / 2),
+                    width: view.0,
+                    height: view.1,
+                }
             };
-            avc444::Nv12 {
-                y: rows(0, view.1),
-                uv: rows(1, view.1 / 2),
-                width: view.0,
-                height: view.1,
+            assert_eq!(back(&split.main), main, "the {layout:?} main view");
+            assert_eq!(back(&split.aux), aux, "the {layout:?} auxiliary view");
+            assert_eq!(split.flat, Flat::of(&planes, layout));
+        }
+    }
+
+    /// The views of `planes` the split draws for `layout`: a V1 aux shows the main view outside
+    /// `read`, a V2 aux is whole.
+    fn reference(
+        planes: &Planes444,
+        read: Rect,
+        layout: AuxLayout,
+    ) -> (avc444::Nv12, avc444::Nv12) {
+        match layout {
+            AuxLayout::V1 => {
+                let (main, mut aux) = avc444::split_v1(planes);
+                avc444::keep_main_outside(&main, &mut aux, read);
+                (main, aux)
             }
-        };
-        assert_eq!(back(&split.main), main, "the main view");
-        assert_eq!(back(&split.aux), aux, "the auxiliary view");
-        assert_eq!(split.flat, Flat::of(&planes));
+            AuxLayout::V2 => avc444::split_v2(planes),
+        }
     }
 
     #[test]
     #[ignore = "needs OpenGL ES on /dev/dri/renderD128; run with --ignored where it has one"]
     fn gpu_split_equals_cpu_split() {
         let size = (100, 50);
-        let mut split = GpuSplit::new(Path::new(RENDER_NODE), size, size, Target::Dmabufs).unwrap();
         let gbm = gbm::Device::new(
             File::options()
                 .read(true)
@@ -956,25 +998,23 @@ pub(crate) mod tests {
             width: 48,
             height: 32,
         };
-        let flat = split.draw(&frame, read).unwrap();
         let stride = data.len() / 50;
         let planes = Planes444::from_rgb(&data, stride, size, XRGB8888);
-        let (main, mut aux) = avc444::split_v1(&planes);
-        avc444::keep_main_outside(&main, &mut aux, read);
-        assert_eq!(
-            read_back(&split.views[0], avc444::view_size(size)),
-            main,
-            "the main view"
-        );
-        assert_eq!(
-            read_back(&split.views[1], avc444::view_size(size)),
-            aux,
-            "the auxiliary view"
-        );
-        assert_eq!(flat, Flat::of(&planes));
+        for layout in [AuxLayout::V1, AuxLayout::V2] {
+            let node = Path::new(RENDER_NODE);
+            let mut split = GpuSplit::new(node, size, size, Target::Dmabufs, layout).unwrap();
+            let flat = split.draw(&frame, read).unwrap();
+            let (main, aux) = reference(&planes, read, layout);
+            let view = layout.view_size(size);
+            let at = format!("the {layout:?} views at {view:?}");
+            assert_eq!(read_back(&split.views[0], view), main, "main of {at}");
+            assert_eq!(read_back(&split.views[1], view), aux, "aux of {at}");
+            assert_eq!(flat, Flat::of(&planes, layout));
+        }
         let grey: Vec<bool> = (0..28).map(|i| (3..7).contains(&i)).collect();
         assert_eq!(
-            flat.blocks, grey,
+            Flat::of(&planes, AuxLayout::V1).blocks,
+            grey,
             "only the grey macroblocks clear of the lines are flat"
         );
     }
@@ -985,18 +1025,20 @@ pub(crate) mod tests {
         use crate::encode::ffmpeg::tests::{colour_pixel, patch_error, shown_444};
         let (source, half) = ((1920, 1080), (960, 540));
         let node = Path::new(RENDER_NODE);
-        let mut split = GpuSplit::new(node, source, half, Target::Dmabufs).unwrap();
         let gbm = gbm::Device::new(File::options().read(true).write(true).open(node).unwrap());
         let (frame, _, _bo) = dmabuf_frame(&gbm.unwrap(), source, colour_pixel());
-        split.draw(&frame, Rect::full(half)).unwrap();
-        let view = avc444::view_size(half);
-        assert_eq!(view, (960, 544));
-        let (main, aux) = (
-            read_back(&split.views[0], view),
-            read_back(&split.views[1], view),
-        );
-        let back = avc444::tests::crop(&avc444::combine_v1(&main, &aux), half);
-        let error = patch_error(shown_444(&back), 2);
-        assert!(error <= 3, "a patch is off by {error}");
+        for layout in [AuxLayout::V1, AuxLayout::V2] {
+            let mut split = GpuSplit::new(node, source, half, Target::Dmabufs, layout).unwrap();
+            split.draw(&frame, Rect::full(half)).unwrap();
+            let view = layout.view_size(half);
+            assert_eq!(view, (960, 544));
+            let (main, aux) = (
+                read_back(&split.views[0], view),
+                read_back(&split.views[1], view),
+            );
+            let back = avc444::tests::crop(&avc444::combine(layout, &main, &aux), half);
+            let error = patch_error(shown_444(&back), 2);
+            assert!(error <= 3, "{layout:?}: a patch is off by {error}");
+        }
     }
 }

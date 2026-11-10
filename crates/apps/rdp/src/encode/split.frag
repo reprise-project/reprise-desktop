@@ -1,5 +1,5 @@
-// MS-RDPEGFX 3.3.8.3.2 views as RGBA texels of four luma bytes or two U,V pairs. Every value
-// of encode/colour.rs's integer maths stays below 2^24, so floats repeat it exactly.
+// MS-RDPEGFX 3.3.8.3.2 views (3.3.8.3.3 with AUX_V2) as RGBA texels of four luma bytes or two
+// U,V pairs. Every value of encode/colour.rs's integer maths stays below 2^24, so floats repeat it.
 precision highp float;
 precision highp int;
 
@@ -11,8 +11,10 @@ uniform vec3 ky;
 uniform vec3 ku;
 uniform vec3 kv;
 uniform float y_offset;
-// Where clients read the auxiliary view; elsewhere it repeats the main view.
+// Where clients read a v1 auxiliary view; elsewhere it repeats the main view.
 uniform ivec4 read_rect;
+// The views' width.
+uniform int view_width;
 
 layout(location = 0) out vec4 out0;
 layout(location = 1) out vec4 out1;
@@ -44,6 +46,26 @@ bool readable(ivec2 at) {
     return all(greaterThanEqual(at, read_rect.xy)) && all(lessThan(at, read_rect.zw));
 }
 
+#ifdef AUX_V2
+// The left half holds the odd columns' U, the right half their V.
+float aux_luma(ivec2 at, float main_luma) {
+    int halfw = view_width / 2;
+    bool is_v = at.x >= halfw;
+    vec2 c = uv(rgb(ivec2(2 * (is_v ? at.x - halfw : at.x) + 1, at.y)));
+    return is_v ? c.y : c.x;
+}
+
+// Chroma sample `cx` of chroma row `row`: the odd row's U at two even columns in the first
+// quarter, V in the second.
+vec2 aux_chroma(int cx, int row) {
+    int quarter = view_width / 4;
+    bool is_v = cx >= quarter;
+    ivec2 p = ivec2(4 * (is_v ? cx - quarter : cx), 2 * row + 1);
+    vec2 a = uv(rgb(p));
+    vec2 b = uv(rgb(p + ivec2(2, 0)));
+    return is_v ? vec2(a.y, b.y) : vec2(a.x, b.x);
+}
+#else
 // Rows 0 to 7 of each macroblock row hold its odd U rows, rows 8 to 15 its odd V rows.
 float aux_luma(ivec2 at, float main_luma) {
     if (!readable(at)) {
@@ -53,6 +75,7 @@ float aux_luma(ivec2 at, float main_luma) {
     vec2 c = uv(rgb(ivec2(at.x, at.y - within + 2 * (within % 8) + 1)));
     return within < 8 ? c.x : c.y;
 }
+#endif
 
 void main() {
     ivec2 at = ivec2(gl_FragCoord.xy);
@@ -67,7 +90,7 @@ void main() {
     out1 = a / 255.0;
 #elif PASS == 1
     // Both views' chroma for two 2x2 blocks, and a flag where both have one colour. The client's
-    // reverse filter undoes the main view's rounded average; the aux view keeps the top right.
+    // reverse filter undoes the main view's rounded average; a v1 aux view keeps the top right.
     vec4 m;
     vec4 x;
     bool same = true;
@@ -78,7 +101,11 @@ void main() {
         vec2 c = uv(rgb(p + ivec2(0, 1)));
         vec2 d = uv(rgb(p + ivec2(1, 1)));
         vec2 average = floor((a + b + c + d + 2.0) / 4.0);
+#ifdef AUX_V2
+        vec2 kept = aux_chroma(at.x * 2 + i, at.y);
+#else
         vec2 kept = readable(p) ? b : average;
+#endif
         same = same && a == b && a == c && a == d;
         if (i == 0) {
             m.xy = average;

@@ -929,8 +929,9 @@ no port forwarding; allow the port in your firewall if you run one.
   Sharp, a client that offers it and VA-API, NVENC or x264 coding, the
   picture is sent in full colour (AVC444), so small coloured text stays
   sharp. VA-API codes its two halves on two encoders and sends them as one
-  stream, which takes under a third of the bandwidth of one encoder; if the
-  two won't merge, one encoder codes both for the rest of the connection.
+  stream in the AVC444v2 layout, which takes under a fifth of the bandwidth
+  of one encoder; if the two won't merge, one encoder codes both in the
+  AVC444 layout for the rest of the connection.
   Speed and Vulkan send reduced colour, which takes less bandwidth.
 - **Keyboard and mouse.** Keys go by position and this computer's keyboard
   layout reads them. Characters the client sends as text are typed as they

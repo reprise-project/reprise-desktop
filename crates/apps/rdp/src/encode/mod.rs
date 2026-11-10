@@ -51,6 +51,7 @@ pub enum Encoded {
         main: Vec<u8>,
         aux: Option<Vec<u8>>,
         regions: Vec<Rect>,
+        layout: avc444::AuxLayout,
     },
     Nothing,
 }
@@ -574,11 +575,13 @@ mod tests {
         );
         for pass in 0..split::PASSES {
             assert_eq!(
-                split::fragment(pass, false),
+                split::fragment(pass, false, avc444::AuxLayout::V1),
                 format!("#version 300 es\n#define PASS {pass}\n{}", split::FRAGMENT),
                 "pass {pass} reads the picture texel by texel"
             );
-            assert!(split::fragment(pass, true).contains("#define SCALED\n"));
+            assert!(
+                split::fragment(pass, true, avc444::AuxLayout::V1).contains("#define SCALED\n")
+            );
         }
     }
 
