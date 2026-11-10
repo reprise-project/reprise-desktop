@@ -25,6 +25,8 @@ pub enum Press {
 #[derive(Default)]
 pub struct DisplayHost {
     pub model: Display,
+    /// Every head the compositor lists, disabled ones too: the set a saved layout is kept for.
+    pub connected: Vec<Head>,
     /// `repriseconf::displays::path()`; a scratch file in tests.
     pub layouts: std::path::PathBuf,
     pub flow: Flow,
@@ -36,6 +38,7 @@ pub struct DisplayHost {
 
 impl SettingsApp {
     pub(crate) fn heads_changed(&mut self, heads: Vec<Head>) -> Reply {
+        self.display.connected = heads.clone();
         self.display.model.set_heads(heads);
         self.display.model.layouts_saved = self.display.layouts.exists();
         displaypage::refresh(&mut self.sheet, &self.display.model);

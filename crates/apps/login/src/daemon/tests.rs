@@ -1,6 +1,6 @@
 use repriselogin::frame::{MAX_FRAME, encode};
 use repriselogin::greeter::{AuthKind, ErrorKind, Greeting, Note};
-use repriselogin::machine::{LoginConfig, MachineConfig};
+use repriselogin::machine::{Background, LoginConfig, LoginOutput, MachineConfig};
 use repriselogin::{GREETER_USER, Interface};
 use zeroize::Zeroizing;
 
@@ -453,8 +453,36 @@ fn the_greeting_marks_users_with_a_session_logged_on() {
             last_user: Some("bert".into()),
             keyboard: world().keyboard,
             notice: None,
+            outputs: Vec::new(),
+            background: None,
         }
     );
+}
+
+#[test]
+fn the_greeting_carries_the_machine_outputs_and_background() {
+    let outputs = vec![
+        LoginOutput {
+            quarters: 6,
+            position: Some((0, 0)),
+            primary: true,
+            ..LoginOutput::named("DP-1")
+        },
+        LoginOutput::named("eDP-1"),
+    ];
+    let mut run = Run::machine(MachineConfig {
+        login: LoginConfig {
+            background: Some(Background::Picture),
+            ..LoginConfig::default()
+        },
+        outputs: outputs.clone(),
+        ..MachineConfig::default()
+    });
+    assert_eq!(run.recover(vec![]), vec![]);
+    assert_eq!(run.start(), greeter_spawn(1));
+    let g = run.greeting();
+    assert_eq!(g.outputs, outputs);
+    assert_eq!(g.background, Some(Background::Picture));
 }
 
 #[test]

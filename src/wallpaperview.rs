@@ -379,7 +379,10 @@ impl State {
                     crate::lockview::refit(state);
                     state.warm_switcher_still_soon();
                 }
-                None => state.clear_wallpaper(),
+                None => {
+                    state.clear_wallpaper();
+                    crate::greeterview::background_failed(state);
+                }
             }
         });
         if let Err(e) = inserted {

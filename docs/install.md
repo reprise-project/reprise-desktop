@@ -105,9 +105,15 @@ reprise-login shows the login screen on VT 1 in Classic, Blue or Glass
 ([features](features.md#login-screen)) and starts each user's Reprise
 session on a VT of its own, from VT 7 up, through the user's login shell.
 `/etc/reprise/login.toml` picks the interface, whether the screen lists
-users, a user to log in automatically
+users, a user to log in automatically, the picture behind the screen, each
+screen's resolution, scale, rotation and place
 ([configuration](configuration.md#login-manager)), and whether users may log
-in from another computer ([Remote logins](#remote-logins)).
+in from another computer ([Remote logins](#remote-logins)). Without
+`[[outputs]]` there every screen runs its preferred mode at 100%; Settings >
+Login Manager > Use My Display Settings copies the screens as your session
+runs them. A picture picked there is copied to
+`/var/lib/reprise-login/background`, so the login screen never reads a
+user's home.
 
 Ctrl+Alt+F1 brings the login screen back whenever none is showing, for
 another user to log in. Ctrl+Alt+F2 reaches a text login on tty2 at any

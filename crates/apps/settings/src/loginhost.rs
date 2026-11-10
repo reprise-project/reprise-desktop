@@ -3,8 +3,13 @@
 
 use crate::registry::{self, Page};
 use crate::{SettingsApp, pages, take};
+use repriseapp::heads::Head;
+use repriseconf::displays::{Layouts, Monitor, monitor_ids, outputs_fingerprint};
 use repriselogin::front::FINGERPRINT;
-use repriselogin::machine::{MACHINE_CONFIG, MachineConfig, file_tag, save_request};
+use repriselogin::machine::{
+    Background, LoginMode, LoginOutput, MACHINE_CONFIG, MAX_OUTPUTS, MAX_PICTURE, MachineConfig,
+    Transform, decode_picture, file_tag, picture_magic, save_request,
+};
 use repriselogin::users::Source;
 use std::io::{self, Read as _, Write};
 use std::path::{Path, PathBuf};
@@ -44,6 +49,28 @@ pub(crate) struct Login {
     pub(crate) want: MachineConfig,
     users: Vec<String>,
     fingerprint: Option<String>,
+    /// A picture browsed for the background, sent with the next save.
+    pub(crate) picked: Option<PathBuf>,
+}
+
+impl Login {
+    /// The pictures the background combo offers, `picked` naming the browsed one.
+    fn picture<'a>(&self, picked: Option<&'a str>) -> pages::LoginPicture<'a> {
+        pages::LoginPicture {
+            picked,
+            saved: self.loaded.login.background == Some(Background::Picture),
+        }
+    }
+
+    fn picked_name(&self) -> Option<String> {
+        let p = self.picked.as_deref()?;
+        Some(
+            p.file_name()
+                .unwrap_or(p.as_os_str())
+                .to_string_lossy()
+                .into_owned(),
+        )
+    }
 }
 
 /// How a save ended; each but `Failed` carries the file as it reads after.
@@ -59,6 +86,7 @@ type Read = Result<MachineConfig, String>;
 /// A save under way and the settings it sent.
 pub(crate) struct Saving {
     sent: MachineConfig,
+    sent_picture: Option<PathBuf>,
     rx: Receiver<Ended>,
     withdraw: Withdraw,
     /// An OK, Cancel or close waits on it.
@@ -96,7 +124,7 @@ impl Withdraw {
 }
 
 /// Runs the helper with a save request on its stdin, as [`pkexec`] does.
-pub(crate) type Run = fn(&str, &Withdraw) -> io::Result<Output>;
+pub(crate) type Run = fn(&[u8], &Withdraw) -> io::Result<Output>;
 
 const NOT_SAVED: &str = "The login manager's settings could not be saved.";
 const NOT_AUTHORIZED: &str = "The change was not authorized.";
@@ -113,14 +141,15 @@ pub(crate) enum Unsaved {
     Failed(String),
 }
 
-/// Save `cfg` through `run`, which hands the save request to the helper's stdin and returns how
-/// it exited. The helper replaces only a file that still has `tag`.
+/// Save `cfg` and a new background `picture` through `run`, which hands the save request to the
+/// helper's stdin and returns how it exited. The helper replaces only a file that still has `tag`.
 pub(crate) fn apply(
     cfg: &MachineConfig,
+    picture: Option<&[u8]>,
     tag: &str,
-    run: &dyn Fn(&str) -> io::Result<Output>,
+    run: &dyn Fn(&[u8]) -> io::Result<Output>,
 ) -> Result<(), Unsaved> {
-    let out = run(&save_request(tag, &cfg.to_toml()))
+    let out = run(&save_request(tag, &cfg.to_toml(), picture))
         .map_err(|e| Unsaved::Failed(format!("{NOT_SAVED}\n\n{e}")))?;
     let why = String::from_utf8_lossy(&out.stderr).trim_end().to_string();
     let with_why = |head: &str| match why.is_empty() {
@@ -142,7 +171,7 @@ pub(crate) fn apply(
 }
 
 /// `pkexec` running [`HELPER`] with `input` on its stdin.
-pub(crate) fn pkexec(input: &str, withdraw: &Withdraw) -> io::Result<Output> {
+pub(crate) fn pkexec(input: &[u8], withdraw: &Withdraw) -> io::Result<Output> {
     run_helper(Path::new(PKEXEC), Path::new(HELPER), input, withdraw)
 }
 
@@ -151,7 +180,7 @@ pub(crate) fn pkexec(input: &str, withdraw: &Withdraw) -> io::Result<Output> {
 pub(crate) fn run_helper(
     pkexec: &Path,
     helper: &Path,
-    input: &str,
+    input: &[u8],
     withdraw: &Withdraw,
 ) -> io::Result<Output> {
     if !helper.exists() {
@@ -176,7 +205,7 @@ pub(crate) fn run_helper(
         p.child = Some(child);
         pipes
     };
-    let wrote = stdin.map(|mut s| s.write_all(input.as_bytes()));
+    let wrote = stdin.map(|mut s| s.write_all(input));
     let status = loop {
         let mut held = withdraw.lock();
         if let Some(status) = held
@@ -245,6 +274,68 @@ fn read_tagged(path: &Path) -> Result<(MachineConfig, String), String> {
     ))
 }
 
+/// The picture at `path`, read as the user so the helper never opens a path of theirs, and
+/// decoded as the helper will, so one it refuses is named before the password is asked.
+fn read_picture(path: &Path) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    let read = std::fs::File::open(path)
+        .and_then(|f| f.take(MAX_PICTURE as u64 + 1).read_to_end(&mut bytes));
+    if let Err(e) = read {
+        return Err(format!("{NOT_SAVED}\n\n{}: {e}", path.display()));
+    }
+    match decode_picture(&bytes) {
+        Ok(_) => Ok(bytes),
+        Err(why) => Err(format!(
+            "{NOT_SAVED}\n\n{} can't be the login screen's background: {why}.",
+            path.display()
+        )),
+    }
+}
+
+/// `heads` as the login screen's outputs, `primary` the name of the primary one: each runs the
+/// mode, scale, transform and place it runs now.
+pub(crate) fn login_outputs(heads: &[Head], primary: Option<&str>) -> Vec<LoginOutput> {
+    (heads.iter().take(MAX_OUTPUTS))
+        .map(|h| LoginOutput {
+            name: h.name.clone(),
+            mode: h.current_mode().map(|m| LoginMode {
+                width: m.width.max(1) as u32,
+                height: m.height.max(1) as u32,
+                refresh_mhz: (m.refresh_mhz > 0).then_some(m.refresh_mhz as u32),
+            }),
+            quarters: (h.scale * 4.0).round().clamp(4.0, 16.0) as u8,
+            transform: Transform::parse(h.transform.name()).unwrap_or_default(),
+            position: Some(h.position),
+            primary: Some(h.name.as_str()) == primary,
+        })
+        .collect()
+}
+
+/// The output the session takes as primary: the one the saved layout in `layouts` marks for the
+/// `connected` monitors under `config`'s `[[outputs]]`, else the one `config` marks.
+pub(crate) fn session_primary(connected: &[Head], layouts: &str, config: &str) -> Option<String> {
+    let monitors: Vec<Monitor<'_>> = (connected.iter())
+        .map(|h| Monitor {
+            connector: &h.name,
+            make: &h.make,
+            model: &h.model,
+            serial: &h.serial,
+        })
+        .collect();
+    let ids = monitor_ids(&monitors);
+    let outputs = (repriseconf::config::Config::parse_lenient(config))
+        .map(|(c, _)| c.outputs)
+        .unwrap_or_default();
+    let saved = Layouts::parse(layouts);
+    let marked = (saved.find(&ids, &outputs_fingerprint(&outputs)))
+        .and_then(|l| l.monitors.iter().find(|(_, m)| m.primary))
+        .and_then(|(id, _)| ids.iter().position(|i| i == id));
+    match marked {
+        Some(i) => Some(connected[i].name.clone()),
+        None => crate::outputwrite::read_primary(config),
+    }
+}
+
 /// The Remote Desktop front's fingerprint; `None` while it is not running.
 pub(crate) fn machine_fingerprint() -> Option<String> {
     fingerprint(Path::new(FINGERPRINT))
@@ -281,6 +372,7 @@ impl SettingsApp {
             loaded,
             users: Vec::new(),
             fingerprint: fingerprint(&self.login_files.fingerprint),
+            picked: None,
         });
         self.show_login();
         let source = self.login_source;
@@ -351,72 +443,163 @@ impl SettingsApp {
         let Some(l) = &self.login else {
             return;
         };
+        let picked = l.picked_name();
         pages::show_login(
             &mut self.sheet.pages[Page::LoginManager.index()],
             &l.want,
             &l.users,
             l.fingerprint.as_deref(),
+            l.picture(picked.as_deref()),
         );
     }
 
     pub(crate) fn login_dirty(&self) -> bool {
-        self.login.as_ref().is_some_and(|l| l.want != l.loaded)
+        (self.login.as_ref()).is_some_and(|l| l.want != l.loaded || l.picked.is_some())
     }
 
-    /// Control `id` on the page moved.
+    /// Control `id` on the page moved; the background combo's rows follow its pick.
     pub(crate) fn login_changed(&mut self, id: &str) {
         let page = &mut self.sheet.pages[Page::LoginManager.index()];
         if let Some(l) = &mut self.login {
-            pages::read_login(page, id, &mut l.want);
+            if id == pages::LOGIN_BACKGROUND {
+                let picked = l.picked_name();
+                let picture = l.picture(picked.as_deref());
+                pages::read_login_background(page, &mut l.want, picture);
+                if l.want.login.background != Some(Background::Picture) {
+                    l.picked = None;
+                }
+            } else {
+                pages::read_login(page, id, &mut l.want);
+            }
         }
         pages::follow_login(page);
+        if id == pages::LOGIN_BACKGROUND {
+            self.show_login();
+        }
+        self.sync_apply();
+    }
+
+    /// Use My Display Settings: the login screen is to run each output as the session runs it now.
+    pub(crate) fn login_use_displays(&mut self) {
+        let read = |p: &Path| std::fs::read_to_string(p).unwrap_or_default();
+        let (layouts, config) = (read(&self.display.layouts), read(&self.path));
+        let primary = session_primary(&self.display.connected, &layouts, &config);
+        let outputs = login_outputs(self.display.model.heads(), primary.as_deref());
+        if outputs.is_empty() {
+            return self.fail("No screens are listed, so there are no display settings to use.");
+        }
+        if let Some(l) = &mut self.login {
+            l.want.outputs = outputs;
+        }
+        self.show_login();
+        self.sync_apply();
+    }
+
+    /// Reset: each output back to its preferred mode at 100% on the login screen.
+    pub(crate) fn login_reset_displays(&mut self) {
+        if let Some(l) = &mut self.login {
+            l.want.outputs.clear();
+        }
+        self.show_login();
+        self.sync_apply();
+    }
+
+    /// Browse... picked `path` for the login screen's background, sent with the next save.
+    pub(crate) fn login_picture(&mut self, path: PathBuf) {
+        let name = path
+            .file_name()
+            .unwrap_or(path.as_os_str())
+            .to_string_lossy();
+        let mut head = [0; 8];
+        let read = std::fs::File::open(&path).and_then(|mut f| {
+            let len = f.metadata()?.len();
+            let n = f.read(&mut head)?;
+            Ok((len, n))
+        });
+        match read {
+            Ok((len, _)) if len > MAX_PICTURE as u64 => {
+                return self.fail(&format!(
+                    "'{name}' is larger than {} MB, too large for the login screen.",
+                    MAX_PICTURE >> 20
+                ));
+            }
+            Ok((_, n)) if !picture_magic(&head[..n]) => {
+                return self.fail(&format!(
+                    "'{name}' is not a PNG, JPEG or BMP picture, which the login screen shows."
+                ));
+            }
+            Ok(_) => {}
+            Err(e) => return self.fail(&format!("Cannot open '{name}': {e}.")),
+        }
+        if let Some(l) = &mut self.login {
+            l.want.login.background = Some(Background::Picture);
+            l.picked = Some(path);
+        }
+        self.show_login();
         self.sync_apply();
     }
 
     /// Save the page's changes off the loop unless a save is under way. The save rereads the
     /// file first and sends nothing when it no longer reads as the page loaded it; the helper
-    /// refuses a file changed after that reread.
-    pub(crate) fn apply_login(&mut self) {
+    /// refuses a file changed after that reread. False when the page holds settings it refuses.
+    pub(crate) fn apply_login(&mut self) -> bool {
         if !self.login_dirty() {
-            return;
+            return true;
         }
         if let Some(s) = &mut self.login_job {
             s.again = true;
-            return;
+            return true;
         }
         let Some(l) = &self.login else {
-            return;
+            return true;
         };
+        let (_, warnings) = MachineConfig::parse(&l.want.to_toml());
+        if !warnings.is_empty() {
+            self.fail(&format!("{NOT_SAVED}\n\n{}", warnings.join("\n")));
+            return false;
+        }
         let (cfg, loaded, run, path) = (
             l.want.clone(),
             l.loaded.clone(),
             self.login_run,
             self.login_files.config.clone(),
         );
-        let sent = cfg.clone();
+        let (sent, sent_picture) = (cfg.clone(), l.picked.clone());
+        let picked = l.picked.clone();
         let withdraw = Withdraw::default();
         let w = withdraw.clone();
-        let rx = self.login_spawn(move || match read_tagged(&path) {
-            Ok((now, tag)) if now == loaded => match apply(&cfg, &tag, &|input| run(input, &w)) {
-                Ok(()) => Ended::Saved(read(&path)),
-                Err(Unsaved::Changed) => Ended::Changed(read(&path)),
-                Err(Unsaved::Failed(why)) => Ended::Failed(why),
-            },
-            now => Ended::Changed(now.map(|(config, _)| config)),
+        let rx = self.login_spawn(move || {
+            let picture = match picked.as_deref().map(read_picture).transpose() {
+                Ok(p) => p,
+                Err(why) => return Ended::Failed(why),
+            };
+            match read_tagged(&path) {
+                Ok((now, tag)) if now == loaded => {
+                    match apply(&cfg, picture.as_deref(), &tag, &|input| run(input, &w)) {
+                        Ok(()) => Ended::Saved(read(&path)),
+                        Err(Unsaved::Changed) => Ended::Changed(read(&path)),
+                        Err(Unsaved::Failed(why)) => Ended::Failed(why),
+                    }
+                }
+                now => Ended::Changed(now.map(|(config, _)| config)),
+            }
         });
         self.login_job = Some(Saving {
             sent,
+            sent_picture,
             rx,
             withdraw,
             quit: false,
             discard: false,
             again: false,
         });
+        true
     }
 
     /// Drop the page's unsaved changes, and a save under way while its prompt is up.
     pub(crate) fn revert_login(&mut self) {
         if let Some(l) = &mut self.login {
+            l.picked = None;
             l.want = match &mut self.login_job {
                 Some(s) => {
                     s.discard = true;
@@ -450,7 +633,8 @@ impl SettingsApp {
         let s = self.login_job.take()?;
         let (saved, why) = match done {
             Ended::Saved(now) => {
-                let unedited = self.login.as_ref().is_some_and(|l| l.want == s.sent);
+                let unedited = (self.login.as_ref())
+                    .is_some_and(|l| l.want == s.sent && l.picked == s.sent_picture);
                 self.login_reread(Ok(now.unwrap_or_else(|_| s.sent.clone())), unedited);
                 (true, None)
             }
@@ -483,6 +667,7 @@ impl SettingsApp {
             if let Ok(now) = now {
                 if replace {
                     l.want = now.clone();
+                    l.picked = None;
                 }
                 l.loaded = now;
             }

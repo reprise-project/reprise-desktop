@@ -4421,6 +4421,7 @@ name = "reprise-login"
 version = "0.1.0"
 dependencies = [
  "futures-util",
+ "image",
  "inotify",
  "libc",
  "log",
@@ -4661,6 +4662,7 @@ dependencies = [
 name = "reprise-settings"
 version = "0.1.0"
 dependencies = [
+ "image",
  "inotify",
  "log",
  "repriseapp",
@@ -4944,6 +4946,7 @@ dependencies = [
 name = "repriselogin"
 version = "0.1.0"
 dependencies = [
+ "image",
  "libc",
  "md4",
  "serde",

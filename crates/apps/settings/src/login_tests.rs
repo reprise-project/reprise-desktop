@@ -1,9 +1,11 @@
 use super::*;
 use loginhost::Withdraw;
+use repriseapp::heads::Head;
 use reprisekit::controls::{form, pagelist, propsheet};
 use repriselogin::Interface;
 use repriselogin::machine::{
-    LoginConfig, MachineConfig, MachineRemote, file_tag, parse_save_request,
+    BACKGROUND_PICTURE, Background, LoginConfig, LoginMode, LoginOutput, MachineConfig,
+    MachineRemote, Transform, file_tag, parse_save_request,
 };
 use std::cell::RefCell;
 use std::io;
@@ -117,27 +119,30 @@ fn exited(code: i32, stderr: &str) -> Output {
 }
 
 thread_local! {
-    /// The settings of each save request a helper stand-in got, and the tag each expected.
+    /// The settings of each save request a helper stand-in got, the tag each expected and the
+    /// picture each carried.
     static SENT: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     static TAGS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    static PICTURES: RefCell<Vec<Option<Vec<u8>>>> = const { RefCell::new(Vec::new()) };
     /// The file a stand-in for another administrator writes to while the prompt is up, and what.
     static MEANWHILE: RefCell<Option<(PathBuf, &'static str)>> = const { RefCell::new(None) };
 }
 
 /// Keeps what a helper stand-in was sent.
-fn record(input: &str) {
-    let (tag, toml) = parse_save_request(input).expect("a save request");
-    SENT.with(|s| s.borrow_mut().push(toml.into()));
-    TAGS.with(|t| t.borrow_mut().push(tag.into()));
+fn record(input: &[u8]) {
+    let req = parse_save_request(input).expect("a save request");
+    SENT.with(|s| s.borrow_mut().push(req.toml.into()));
+    TAGS.with(|t| t.borrow_mut().push(req.tag.into()));
+    PICTURES.with(|p| p.borrow_mut().push(req.picture.map(<[u8]>::to_vec)));
 }
 
-fn helper_saves(input: &str, _: &Withdraw) -> io::Result<Output> {
+fn helper_saves(input: &[u8], _: &Withdraw) -> io::Result<Output> {
     record(input);
     Ok(exited(0, ""))
 }
 
 /// The helper when the file was rewritten while its prompt was up: it finds the tag changed.
-fn helper_finds_it_changed(input: &str, _: &Withdraw) -> io::Result<Output> {
+fn helper_finds_it_changed(input: &[u8], _: &Withdraw) -> io::Result<Output> {
     record(input);
     if let Some((path, text)) = MEANWHILE.with(|m| m.borrow_mut().take()) {
         std::fs::write(path, text)?;
@@ -148,7 +153,7 @@ fn helper_finds_it_changed(input: &str, _: &Withdraw) -> io::Result<Output> {
     ))
 }
 
-fn helper_refuses(_: &str, _: &Withdraw) -> io::Result<Output> {
+fn helper_refuses(_: &[u8], _: &Withdraw) -> io::Result<Output> {
     Ok(exited(
         2,
         "remote_desktop.port: 0 is not between 1 and 65535\n",
@@ -256,13 +261,14 @@ fn apply_sends_the_edited_machine_settings_to_the_helper() {
                 end_disconnected_after_min: Some(60),
                 ..MachineRemote::default()
             },
+            outputs: Vec::new(),
         }
     );
     assert!(a.error.is_none());
     assert!(!a.dirty(), "a save leaves nothing to apply");
 }
 
-fn helper_dismissed(input: &str, _: &Withdraw) -> io::Result<Output> {
+fn helper_dismissed(input: &[u8], _: &Withdraw) -> io::Result<Output> {
     record(input);
     Ok(exited(126, ""))
 }
@@ -471,7 +477,9 @@ fn each_helper_exit_tells_its_own_message() {
     use loginhost::Unsaved;
     let cfg = MachineConfig::default();
     let exits = |code: i32, stderr: &'static str| {
-        loginhost::apply(&cfg, "none", &move |_: &str| Ok(exited(code, stderr)))
+        loginhost::apply(&cfg, None, "none", &move |_: &[u8]| {
+            Ok(exited(code, stderr))
+        })
     };
     let told = |code: i32, stderr: &'static str| {
         exits(code, stderr).map_err(|e| match e {
@@ -523,7 +531,7 @@ fn each_helper_exit_tells_its_own_message() {
         told(127, "No authentication agent found.\n"),
         Err("The change was not authorized.\n\nNo authentication agent found.".into())
     );
-    let missing = loginhost::apply(&cfg, "none", &|_: &str| {
+    let missing = loginhost::apply(&cfg, None, "none", &|_: &[u8]| {
         Err(io::Error::from(io::ErrorKind::NotFound))
     });
     assert_eq!(
@@ -536,11 +544,16 @@ fn each_helper_exit_tells_its_own_message() {
 
 #[test]
 fn a_missing_helper_is_named_and_pkexec_never_runs() {
-    let missing = loginhost::apply(&MachineConfig::default(), "none", &|input: &str| {
-        let pkexec = Path::new("/usr/bin/pkexec");
-        let helper = Path::new("/nonexistent/reprise-login-settings");
-        loginhost::run_helper(pkexec, helper, input, &Withdraw::default())
-    });
+    let missing = loginhost::apply(
+        &MachineConfig::default(),
+        None,
+        "none",
+        &|input: &[u8]| {
+            let pkexec = Path::new("/usr/bin/pkexec");
+            let helper = Path::new("/nonexistent/reprise-login-settings");
+            loginhost::run_helper(pkexec, helper, input, &Withdraw::default())
+        },
+    );
     assert_eq!(
         missing,
         Err(loginhost::Unsaved::Failed(
@@ -881,7 +894,7 @@ fn a_withdrawn_save_stops_its_helper_at_once() {
     let w = withdraw.clone();
     let start = std::time::Instant::now();
     let run =
-        std::thread::spawn(move || loginhost::run_helper(Path::new("/bin/sh"), &helper, "", &w));
+        std::thread::spawn(move || loginhost::run_helper(Path::new("/bin/sh"), &helper, b"", &w));
     while !ran.exists() && start.elapsed() < Duration::from_secs(10) {
         std::thread::sleep(Duration::from_millis(20));
     }
@@ -899,8 +912,412 @@ fn a_save_withdrawn_before_pkexec_starts_never_starts_it() {
     let withdraw = Withdraw::default();
     withdraw.stop();
     let start = std::time::Instant::now();
-    let out = loginhost::run_helper(Path::new("/bin/sh"), &helper, "", &withdraw);
+    let out = loginhost::run_helper(Path::new("/bin/sh"), &helper, b"", &withdraw);
     assert!(out.is_err(), "nothing ran: {out:?}");
     assert!(!ran.exists());
     assert!(start.elapsed() < Duration::from_secs(5));
+}
+
+fn head(name: &str, mode: (i32, i32, i32), scale: f64, position: (i32, i32)) -> Head {
+    let m = repriseapp::heads::HeadMode {
+        width: mode.0,
+        height: mode.1,
+        refresh_mhz: mode.2,
+        preferred: false,
+    };
+    Head {
+        name: name.into(),
+        modes: vec![m],
+        current: Some(0),
+        enabled: true,
+        position,
+        scale,
+        ..Head::default()
+    }
+}
+
+/// The app with the page open on `dir`'s files, its Display page listing DP-1 rotated at 125%
+/// left of eDP-1 at 200%, with `config` as config.toml and no saved layouts.
+fn with_screens_in(dir: &Path, config: &str) -> SettingsApp {
+    std::fs::write(dir.join("config.toml"), config).unwrap();
+    let mut a = saving_app_in(dir, helper_saves);
+    a.display.layouts = dir.join("displays.toml");
+    let mut dp = head("DP-1", (2560, 1440, 143_912), 1.25, (0, 0));
+    dp.transform = repriseapp::heads::Transform::Rotate90;
+    a.heads_changed(vec![
+        dp,
+        head("eDP-1", (2880, 1800, 60_000), 2.0, (1440, 0)),
+    ]);
+    a
+}
+
+const EDP_PRIMARY: &str = "[[outputs]]\nname = \"eDP-1\"\nprimary = true\n";
+
+/// [`with_screens_in`] with eDP-1 primary in config.toml.
+fn with_screens(tag: &str) -> SettingsApp {
+    with_screens_in(&tmp(tag), EDP_PRIMARY)
+}
+
+fn sent_primary(i: usize) -> Vec<String> {
+    (sent_config(i).outputs.into_iter())
+        .filter(|o| o.primary)
+        .map(|o| o.name)
+        .collect()
+}
+
+fn press(a: &mut SettingsApp, id: &'static str) {
+    a.sheet_event(propsheet::Event::Page(
+        Page::LoginManager.index(),
+        form::Event::Pressed(id),
+    ));
+}
+
+fn sent_config(i: usize) -> MachineConfig {
+    let sent = SENT.with(|s| s.borrow().clone());
+    let (c, warnings) = MachineConfig::parse(&sent[i]);
+    assert_eq!(warnings, Vec::<String>::new());
+    c
+}
+
+#[test]
+fn use_my_display_settings_sends_each_screen_as_it_runs() {
+    let mut a = with_screens("use-displays");
+    assert_eq!(label(login(&a), "login_screens"), "Screens: automatic");
+    assert!(!lit(login(&a), "login_reset_displays"), "nothing to reset");
+    press(&mut a, "login_use_displays");
+    assert_eq!(
+        label(login(&a), "login_screens"),
+        "Screens: 2, from your display settings"
+    );
+    assert!(lit(login(&a), "login_reset_displays"));
+    assert!(a.dirty(), "Apply saves them");
+    a.sheet_event(propsheet::Event::Apply);
+    a.wake();
+    assert_eq!(
+        sent_config(0).outputs,
+        [
+            LoginOutput {
+                name: "DP-1".into(),
+                mode: Some(LoginMode {
+                    width: 2560,
+                    height: 1440,
+                    refresh_mhz: Some(143_912),
+                }),
+                quarters: 5,
+                transform: Transform::Rotate90,
+                position: Some((0, 0)),
+                primary: false,
+            },
+            LoginOutput {
+                name: "eDP-1".into(),
+                mode: Some(LoginMode {
+                    width: 2880,
+                    height: 1800,
+                    refresh_mhz: Some(60_000),
+                }),
+                quarters: 8,
+                transform: Transform::Normal,
+                position: Some((1440, 0)),
+                primary: true,
+            },
+        ]
+    );
+    assert_eq!(PICTURES.with(|p| p.borrow().clone()), [None]);
+    assert!(!a.dirty());
+}
+
+#[test]
+fn reset_sends_no_screens_so_each_runs_its_preferred_mode() {
+    let dir = tmp("reset-displays");
+    std::fs::write(
+        dir.join("login.toml"),
+        "[[outputs]]\nname = \"DP-1\"\nscale = 2\n",
+    )
+    .unwrap();
+    let mut a = saving_app_in(&dir, helper_saves);
+    assert_eq!(
+        label(login(&a), "login_screens"),
+        "Screens: 1, from your display settings"
+    );
+    press(&mut a, "login_reset_displays");
+    assert_eq!(label(login(&a), "login_screens"), "Screens: automatic");
+    assert!(!lit(login(&a), "login_reset_displays"));
+    a.sheet_event(propsheet::Event::Apply);
+    a.wake();
+    assert_eq!(sent_config(0).outputs, []);
+}
+
+#[test]
+fn use_my_display_settings_without_screens_says_so() {
+    let mut a = saving_app("no-screens", helper_saves);
+    press(&mut a, "login_use_displays");
+    assert_eq!(
+        error_text(&a).as_deref(),
+        Some("No screens are listed, so there are no display settings to use.")
+    );
+    assert!(!a.dirty());
+}
+
+#[test]
+fn the_background_offers_the_default_and_each_built_in() {
+    let mut a = saving_app("background-rows", helper_saves);
+    let rows = combo_rows(login(&a), "login_background");
+    assert_eq!(rows[0], "Default");
+    assert!(rows.contains(&"Tarn (dusk)".to_string()), "{rows:?}");
+    assert!(!rows.contains(&"Picture".to_string()), "no picture yet");
+    assert_eq!(combo_text(login(&a), "login_background"), "Default");
+    let dusk = rows.iter().position(|r| r == "Tarn (dusk)").unwrap();
+    pick(&mut a, "login_background", dusk);
+    a.sheet_event(propsheet::Event::Apply);
+    a.wake();
+    assert_eq!(
+        sent_config(0).login.background,
+        Some(Background::Builtin("reprise:tarn/dusk".into()))
+    );
+
+    let dir = tmp("background-default");
+    std::fs::write(
+        dir.join("login.toml"),
+        "[login]\nbackground = \"reprise:tarn/dusk\"\n",
+    )
+    .unwrap();
+    let mut a = saving_app_in(&dir, helper_saves);
+    assert_eq!(combo_text(login(&a), "login_background"), "Tarn (dusk)");
+    pick(&mut a, "login_background", 0);
+    a.sheet_event(propsheet::Event::Apply);
+    a.wake();
+    assert_eq!(sent_config(0).login.background, None, "Default");
+}
+
+#[test]
+fn a_browsed_picture_goes_with_the_next_save_and_then_shows_as_picture() {
+    let dir = tmp("background-picture");
+    let photo = dir.join("sunset.png");
+    std::fs::write(&photo, png()).unwrap();
+    let mut a = saving_app_in(&dir, helper_saves);
+    a.login_picture(photo.clone());
+    assert_eq!(combo_text(login(&a), "login_background"), "sunset.png");
+    assert!(a.dirty());
+    a.sheet_event(propsheet::Event::Apply);
+    a.wake();
+    assert_eq!(
+        sent_config(0).login.background,
+        Some(Background::Picture),
+        "the settings name the copy"
+    );
+    assert_eq!(PICTURES.with(|p| p.borrow().clone()), [Some(png())]);
+    assert!(!a.dirty(), "the picture went with the save");
+
+    std::fs::write(
+        dir.join("login.toml"),
+        format!("[login]\nbackground = \"{BACKGROUND_PICTURE}\"\n"),
+    )
+    .unwrap();
+    let a = saving_app_in(&dir, helper_saves);
+    assert_eq!(combo_text(login(&a), "login_background"), "Picture");
+}
+
+#[test]
+fn picking_another_background_drops_the_browsed_picture() {
+    let dir = tmp("background-drop");
+    let photo = dir.join("sunset.png");
+    std::fs::write(&photo, png()).unwrap();
+    let mut a = saving_app_in(&dir, helper_saves);
+    a.login_picture(photo);
+    assert!(a.dirty());
+    pick(&mut a, "login_background", 0);
+    assert!(!a.dirty(), "back to the file's Default");
+    assert!(
+        !combo_rows(login(&a), "login_background").contains(&"sunset.png".to_string()),
+        "the picture's row goes"
+    );
+}
+
+#[test]
+fn a_picture_past_the_helpers_limit_is_refused_when_browsed() {
+    let dir = tmp("background-huge");
+    let photo = dir.join("huge.png");
+    let f = std::fs::File::create(&photo).unwrap();
+    f.set_len(repriselogin::machine::MAX_PICTURE as u64 + 1)
+        .unwrap();
+    let mut a = saving_app_in(&dir, helper_saves);
+    a.login_picture(photo);
+    assert_eq!(
+        error_text(&a).as_deref(),
+        Some("'huge.png' is larger than 32 MB, too large for the login screen.")
+    );
+    assert!(!a.dirty());
+}
+
+/// A 4x3 picture as a PNG.
+fn png() -> Vec<u8> {
+    let mut out = io::Cursor::new(Vec::new());
+    (image::RgbImage::from_pixel(4, 3, image::Rgb([10, 120, 200])))
+        .write_to(&mut out, image::ImageFormat::Png)
+        .unwrap();
+    out.into_inner()
+}
+
+#[test]
+fn a_picture_the_helper_would_refuse_is_named_before_the_password() {
+    let whole = png();
+    let mut wide = io::Cursor::new(Vec::new());
+    (image::GrayImage::new(16385, 1).write_to(&mut wide, image::ImageFormat::Png)).unwrap();
+    for (name, bytes, why) in [
+        (
+            "cut.png",
+            whole[..whole.len() - 20].to_vec(),
+            "the picture is damaged or cut short",
+        ),
+        (
+            "wide.png",
+            wide.into_inner(),
+            "the picture is wider or taller than 16384 pixels",
+        ),
+    ] {
+        let dir = tmp(&format!("background-refused-{name}"));
+        let photo = dir.join(name);
+        std::fs::write(&photo, &bytes).unwrap();
+        let mut a = saving_app_in(&dir, helper_saves);
+        a.login_picture(photo.clone());
+        a.sheet_event(propsheet::Event::Apply);
+        a.wake();
+        assert!(
+            SENT.with(|s| s.borrow().is_empty()),
+            "{name}: no password asked"
+        );
+        assert_eq!(
+            error_text(&a),
+            Some(format!(
+                "The login manager's settings could not be saved.\n\n{} can't be the login \
+                 screen's background: {why}.",
+                photo.display()
+            ))
+        );
+        assert!(a.dirty(), "{name}: the pick stays");
+    }
+}
+
+#[test]
+fn use_my_display_settings_marks_the_primary_the_session_runs() {
+    use repriseconf::displays::{Layout, Layouts, MonitorLayout, outputs_fingerprint};
+    let dir = tmp("primary-saved-layout");
+    let config = EDP_PRIMARY;
+    let (parsed, _) = repriseconf::config::Config::parse_lenient(config).unwrap();
+    let outputs = parsed.outputs;
+    let monitor = |primary| MonitorLayout {
+        enabled: true,
+        mode: None,
+        position: (0, 0),
+        scale: 1.0,
+        transform: repriseconf::config::Transform::Normal,
+        primary,
+    };
+    let layouts = Layouts {
+        outputs_seen: outputs_fingerprint(&outputs),
+        list: vec![Layout::new(vec![
+            ("DP-1".into(), monitor(true)),
+            ("eDP-1".into(), monitor(false)),
+        ])],
+    };
+    std::fs::write(dir.join("displays.toml"), layouts.render()).unwrap();
+    let mut a = with_screens_in(&dir, config);
+    press(&mut a, "login_use_displays");
+    a.sheet_event(propsheet::Event::Apply);
+    a.wake();
+    assert_eq!(
+        sent_primary(0),
+        ["DP-1"],
+        "the saved layout's over config.toml's"
+    );
+
+    let mut a = with_screens_in(&tmp("primary-none"), "");
+    press(&mut a, "login_use_displays");
+    a.sheet_event(propsheet::Event::Apply);
+    a.wake();
+    assert_eq!(
+        sent_primary(0),
+        Vec::<String>::new(),
+        "none picked, none sent"
+    );
+}
+
+#[test]
+fn a_picture_browsed_while_a_save_waits_goes_with_the_next_apply() {
+    let dir = tmp("browse-during-save");
+    std::fs::write(
+        dir.join("login.toml"),
+        format!("[login]\nbackground = \"{BACKGROUND_PICTURE}\"\n"),
+    )
+    .unwrap();
+    let photo = dir.join("lake.png");
+    std::fs::write(&photo, png()).unwrap();
+    let mut a = saving_app_in(&dir, helper_saves);
+    apply_glass(&mut a);
+    a.login_picture(photo);
+    a.wake();
+    assert_eq!(combo_text(login(&a), "login_background"), "lake.png");
+    assert!(a.dirty(), "the picture is left to save");
+    a.sheet_event(propsheet::Event::Apply);
+    a.wake();
+    assert_eq!(PICTURES.with(|p| p.borrow().clone()), [None, Some(png())]);
+}
+
+#[test]
+fn a_file_that_is_no_picture_is_refused_when_browsed_whatever_its_name() {
+    let dir = tmp("background-gif");
+    let photo = dir.join("cat.png");
+    std::fs::write(&photo, b"GIF89a\x04\x00\x03\x00").unwrap();
+    let mut a = saving_app_in(&dir, helper_saves);
+    a.login_picture(photo);
+    assert_eq!(
+        error_text(&a).as_deref(),
+        Some("'cat.png' is not a PNG, JPEG or BMP picture, which the login screen shows.")
+    );
+    assert!(!a.dirty());
+}
+
+#[test]
+fn settings_the_helper_would_refuse_are_never_sent() {
+    let dir = tmp("refused-before-pkexec");
+    let mut a = with_screens_in(&dir, "");
+    let mut heads = a.display.connected.clone();
+    heads[0].name = "DP 1; reboot".into();
+    a.heads_changed(heads);
+    press(&mut a, "login_use_displays");
+    a.sheet_event(propsheet::Event::Apply);
+    a.wake();
+    assert!(SENT.with(|s| s.borrow().is_empty()), "no password asked");
+    let why = error_text(&a).expect("why it was not saved");
+    assert!(
+        why.starts_with("The login manager's settings could not be saved.\n\n"),
+        "{why}"
+    );
+    assert!(a.dirty(), "the edit stays");
+}
+
+#[test]
+fn the_saved_picture_stays_offered_after_another_background_is_picked() {
+    let dir = tmp("background-saved-row");
+    std::fs::write(
+        dir.join("login.toml"),
+        format!("[login]\nbackground = \"{BACKGROUND_PICTURE}\"\n"),
+    )
+    .unwrap();
+    let mut a = saving_app_in(&dir, helper_saves);
+    pick(&mut a, "login_background", 0);
+    assert_eq!(combo_text(login(&a), "login_background"), "Default");
+    let rows = combo_rows(login(&a), "login_background");
+    let picture = (rows.iter().position(|r| r == "Picture"))
+        .unwrap_or_else(|| panic!("a Picture row in {rows:?}"));
+    pick(&mut a, "login_background", picture);
+    assert!(!a.dirty(), "back to the saved picture");
+}
+
+#[test]
+fn every_display_transform_keeps_its_name_on_the_login_screen() {
+    for t in repriseapp::heads::Transform::ALL {
+        let login = Transform::parse(t.name()).map(Transform::name);
+        assert_eq!(login, Some(t.name()), "{t:?}");
+    }
 }

@@ -117,6 +117,18 @@ impl SettingsApp {
                     self.open_add(pick);
                     Reply::redraw_all()
                 }
+                pages::LOGIN_BROWSE => {
+                    self.open_add(Pick::LoginBackground);
+                    Reply::redraw_all()
+                }
+                pages::LOGIN_USE_DISPLAYS => {
+                    self.login_use_displays();
+                    Reply::redraw_all()
+                }
+                pages::LOGIN_RESET_DISPLAYS => {
+                    self.login_reset_displays();
+                    Reply::redraw()
+                }
                 displaypage::IDENTIFY => self.identify(),
                 displaypage::FORGET => self.forget_layouts(),
                 pages::TRAY_CUSTOMIZE => {

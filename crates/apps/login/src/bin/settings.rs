@@ -1,13 +1,13 @@
-//! `pkexec reprise-login-settings`: replaces `MACHINE_CONFIG` with the save request on stdin.
-//! Its exits are listed in docs/programs.md.
+//! `pkexec reprise-login-settings`: replaces `MACHINE_CONFIG` and `BACKGROUND_PICTURE` with the
+//! save request on stdin. Its exits are listed in docs/programs.md.
 
 use std::ffi::CString;
 use std::io::Read as _;
 use std::path::Path;
 use std::process::{Command, ExitCode};
 
-use reprise_login::machinewrite::{self, Error, MAX_INPUT};
-use repriselogin::machine::MACHINE_CONFIG;
+use reprise_login::machinewrite::{self, Error, MAX_REQUEST};
+use repriselogin::machine::{BACKGROUND_PICTURE, MACHINE_CONFIG};
 
 const UNIT: &str = "reprise-login.service";
 const SYSTEMCTL: &str = "/usr/bin/systemctl";
@@ -45,21 +45,18 @@ fn main() -> ExitCode {
     }
     let mut input = Vec::new();
     if let Err(e) = std::io::stdin()
-        .take(MAX_INPUT as u64 + 1)
+        .take(MAX_REQUEST as u64 + 1)
         .read_to_end(&mut input)
     {
         eprintln!("reading the settings: {e}");
         return ExitCode::from(1);
     }
-    if input.len() > MAX_INPUT {
+    if input.len() > MAX_REQUEST {
         eprintln!("the settings are too long");
         return ExitCode::from(2);
     }
-    let Ok(input) = String::from_utf8(input) else {
-        eprintln!("the settings are not UTF-8");
-        return ExitCode::from(2);
-    };
-    match machinewrite::apply(&input, Path::new(MACHINE_CONFIG)) {
+    let picture = Path::new(BACKGROUND_PICTURE);
+    match machinewrite::apply(&input, Path::new(MACHINE_CONFIG), picture) {
         Ok(()) => {}
         Err(Error::Invalid(warnings)) => {
             for w in warnings {

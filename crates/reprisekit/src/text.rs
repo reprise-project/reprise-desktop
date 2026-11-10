@@ -766,6 +766,29 @@ impl TextRenderer {
         self.draw_clipped(canvas, rect, rect, text, bold, color, align, size_px);
     }
 
+    /// [`TextRenderer::draw`] onto a translucent canvas, as [`TextRenderer::draw_run_over`].
+    #[expect(clippy::too_many_arguments)]
+    pub fn draw_over(
+        &self,
+        canvas: &mut Canvas,
+        rect: Rect,
+        text: &str,
+        bold: bool,
+        color: Color,
+        align: Align,
+        size_px: u32,
+    ) {
+        let Some(baseline) = self.baseline(rect, bold, size_px) else {
+            return;
+        };
+        let width = match align {
+            Align::Left => 0,
+            Align::Center | Align::Right => self.measure(text, bold, size_px),
+        };
+        let pen = align.pen(rect, width);
+        self.draw_run_over(canvas, pen, baseline, rect, text, bold, color, size_px);
+    }
+
     #[expect(clippy::too_many_arguments)]
     pub fn draw_clipped(
         &self,

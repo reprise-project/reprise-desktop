@@ -1,6 +1,6 @@
 //! The login screen at 800x600 (Classic's states, each interface's start and administrator's form,
-//! Blue's states in three schemes, Glass over its wallpaper) written to
-//! `target/reprisekit-gallery-logon@<scale>.png`.
+//! Blue's states in three schemes, Glass over its wallpaper, Classic and Blue over a dark picture,
+//! Blue over a bright one) written to `target/reprisekit-gallery-logon@<scale>.png`.
 
 mod glass;
 
@@ -37,7 +37,8 @@ fn users() -> Vec<LogonUser> {
     .collect()
 }
 
-fn screens() -> Vec<(Logon, Variant)> {
+/// Each screen, its Blue scheme and the built-in wallpaper standing in for a picture beneath.
+fn screens() -> Vec<(Logon, Variant, Option<&'static str>)> {
     let empty = Logon::new(Interface::Classic, Vec::new(), false, None);
     let mut filled = Logon::new(Interface::Classic, Vec::new(), false, Some("alice"));
     filled.key(LogonKey::Text("hunter2"));
@@ -56,6 +57,15 @@ fn screens() -> Vec<(Logon, Variant)> {
         m.admin(PowerAction::PowerOff);
         m
     });
+    let pictured = [
+        (filled.clone(), "tarn/dusk"),
+        (starts[1].clone(), "tarn/dusk"),
+        (starts[1].clone(), "tarn/day"),
+    ]
+    .map(|(mut m, picture)| {
+        m.over_picture = true;
+        (m, Variant::Blue, Some(picture))
+    });
     [empty, filled, message, busy, caps, badge]
         .into_iter()
         .chain(starts)
@@ -63,6 +73,8 @@ fn screens() -> Vec<(Logon, Variant)> {
         .map(|m| (m, Variant::Blue))
         .chain(blue_screens())
         .chain(glass::screens().into_iter().map(|m| (m, Variant::Blue)))
+        .map(|(m, v)| (m, v, None))
+        .chain(pictured)
         .collect()
 }
 
@@ -99,7 +111,7 @@ pub fn render(scale: i32) -> Canvas {
         at(rows, OUTPUT.height) as u32,
     );
     c.fill_rect(c.bounds(), Color::rgb(0x60, 0x60, 0x60));
-    for (i, (m, v)) in screens.iter().enumerate() {
+    for (i, (m, v, picture)) in screens.iter().enumerate() {
         let theme =
             theme_with(m.interface, *v, &reprisekit::glass::Settings::default()).scaled(scale);
         let text = TextRenderer::load(&theme.fonts);
@@ -112,7 +124,15 @@ pub fn render(scale: i32) -> Canvas {
             Some(b) if m.interface == Interface::Glass => wallpapers::render(b, w, h, 0),
             _ => Canvas::new(w, h),
         };
-        draw_logon(&mut screen, m, &l, &theme, text.for_output(scale), scale);
+        if let Some(picture) = picture {
+            let picture = wallpapers::Builtin::parse(picture).expect("a built-in");
+            let mut over = Canvas::new(w, h);
+            draw_logon(&mut over, m, &l, &theme, text.for_output(scale), scale);
+            screen = wallpapers::render(picture, w, h, 0);
+            screen.blit_over(0, 0, &over);
+        } else {
+            draw_logon(&mut screen, m, &l, &theme, text.for_output(scale), scale);
+        }
         let i = i as i32;
         c.blit_canvas(
             at(i % COLS, OUTPUT.width),

@@ -1,10 +1,36 @@
-//! The machine settings in `MACHINE_CONFIG`: `[login]` and `[remote_desktop]`.
+//! The machine settings in `MACHINE_CONFIG`: `[login]`, `[remote_desktop]` and `[[outputs]]`.
 
 use std::ops::RangeInclusive;
 
+use serde::{Deserialize, Serialize};
+
 use crate::Interface;
 
+mod outputs;
+#[cfg(feature = "picture")]
+mod picture;
+
+pub use outputs::{LoginMode, LoginOutput, MAX_OUTPUTS, Transform};
+#[cfg(feature = "picture")]
+pub use picture::decode_picture;
+
 pub const MACHINE_CONFIG: &str = "/etc/reprise/login.toml";
+/// Where `reprise-login-settings` keeps the login screen's picture: root's, readable by all.
+pub const BACKGROUND_PICTURE: &str = "/var/lib/reprise-login/background";
+/// The largest background picture `reprise-login-settings` takes, in bytes.
+pub const MAX_PICTURE: usize = 32 * 1024 * 1024;
+/// The widest and tallest picture the helper takes, as `reprisekit::wallpaper::MAX_SIDE`.
+pub const PICTURE_MAX_SIDE: u32 = 16384;
+/// The most pixels the helper takes: a 48 MP phone photo fits, and decoding one this large stays
+/// under 600 MiB, progressive JPEG included.
+pub const PICTURE_MAX_PIXELS: u64 = 64_000_000;
+
+/// Whether `head`, a file's first bytes, opens a PNG, JPEG or BMP: the kinds the helper takes.
+pub fn picture_magic(head: &[u8]) -> bool {
+    head.starts_with(b"\x89PNG\r\n\x1a\n")
+        || head.starts_with(b"\xff\xd8\xff")
+        || head.starts_with(b"BM")
+}
 
 /// The first line of a save request: `expect ` and the [`file_tag`] of the file the settings
 /// were read from, so the helper replaces only that file.
@@ -22,21 +48,100 @@ pub fn file_tag(bytes: Option<&[u8]>) -> String {
     format!("{hash:016x}")
 }
 
-/// What Settings sends `reprise-login-settings`: the expected tag, then the settings as TOML.
-pub fn save_request(tag: &str, toml: &str) -> String {
-    format!("{EXPECT}{tag}\n{toml}")
+/// The line before a picture in a save request: `picture ` and its length in bytes.
+const PICTURE: &str = "picture ";
+
+/// A [`save_request`] taken apart.
+#[derive(Debug, PartialEq, Eq)]
+pub struct SaveRequest<'a> {
+    pub tag: &'a str,
+    /// A new picture for [`BACKGROUND_PICTURE`].
+    pub picture: Option<&'a [u8]>,
+    pub toml: &'a str,
 }
 
-/// The tag and the TOML of a [`save_request`]; `None` without the tag line.
-pub fn parse_save_request(input: &str) -> Option<(&str, &str)> {
-    let (first, toml) = input.split_once('\n')?;
-    Some((first.strip_prefix(EXPECT)?, toml))
+/// What Settings sends `reprise-login-settings`: the expected tag, then a new background
+/// picture after its length, then the settings as TOML.
+pub fn save_request(tag: &str, toml: &str, picture: Option<&[u8]>) -> Vec<u8> {
+    let mut out = format!("{EXPECT}{tag}\n").into_bytes();
+    if let Some(p) = picture {
+        out.extend_from_slice(format!("{PICTURE}{}\n", p.len()).as_bytes());
+        out.extend_from_slice(p);
+    }
+    out.extend_from_slice(toml.as_bytes());
+    out
+}
+
+/// The parts of a [`save_request`], or why `input` is none.
+pub fn parse_save_request(input: &[u8]) -> Result<SaveRequest<'_>, String> {
+    let no_tag = || "the settings do not say which file they replace".to_string();
+    let (first, mut rest) = first_line(input).ok_or_else(no_tag)?;
+    let tag = first.strip_prefix(EXPECT).ok_or_else(no_tag)?;
+    let mut picture = None;
+    if rest.starts_with(PICTURE.as_bytes()) {
+        let cut = || "the picture is cut short".to_string();
+        let (head, after) = first_line(rest).ok_or_else(cut)?;
+        let len: usize = (head[PICTURE.len()..].parse()).map_err(|_| cut())?;
+        if after.len() < len {
+            return Err(cut());
+        }
+        picture = Some(&after[..len]);
+        rest = &after[len..];
+    }
+    let toml = std::str::from_utf8(rest).map_err(|_| "the settings are not UTF-8".to_string())?;
+    Ok(SaveRequest { tag, picture, toml })
+}
+
+/// `b`'s first line as text, and what follows its newline.
+fn first_line(b: &[u8]) -> Option<(&str, &[u8])> {
+    let at = b.iter().position(|&c| c == b'\n')?;
+    Some((std::str::from_utf8(&b[..at]).ok()?, &b[at + 1..]))
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MachineConfig {
     pub login: LoginConfig,
     pub remote: MachineRemote,
+    /// What the login screen runs on each connector; one not listed runs its preferred mode at
+    /// scale 1.
+    pub outputs: Vec<LoginOutput>,
+}
+
+/// `[login] background`: what the login screen shows behind it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Background {
+    /// A built-in wallpaper's `reprise:` URI.
+    Builtin(String),
+    /// The picture at [`BACKGROUND_PICTURE`].
+    Picture,
+}
+
+impl Background {
+    fn parse(s: &str) -> Result<Background, String> {
+        if s == BACKGROUND_PICTURE {
+            return Ok(Background::Picture);
+        }
+        let builtin = s.strip_prefix("reprise:").is_some_and(|rest| {
+            (1..=64).contains(&rest.len())
+                && rest
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"/-".contains(&b))
+        });
+        match builtin {
+            true => Ok(Background::Builtin(s.into())),
+            false => Err(format!(
+                "\"{s}\" is neither a built-in wallpaper nor {BACKGROUND_PICTURE}"
+            )),
+        }
+    }
+
+    pub fn as_str(&self) -> &str {
+        match self {
+            Background::Builtin(uri) => uri,
+            Background::Picture => BACKGROUND_PICTURE,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -47,6 +152,8 @@ pub struct LoginConfig {
     pub autologin_user: Option<String>,
     /// Lets the login screen listen on a Wayland socket, for capture tools while testing.
     pub greeter_socket: bool,
+    /// `None` shows the interface's own backdrop.
+    pub background: Option<Background>,
 }
 
 impl Default for LoginConfig {
@@ -56,6 +163,7 @@ impl Default for LoginConfig {
             show_users: true,
             autologin_user: None,
             greeter_socket: false,
+            background: None,
         }
     }
 }
@@ -110,6 +218,9 @@ impl MachineConfig {
                 }
             }
         }
+        if let Some(outputs) = table.get("outputs") {
+            config.outputs = outputs::parse(outputs, &mut warnings);
+        }
         (config, warnings)
     }
 
@@ -124,6 +235,9 @@ impl MachineConfig {
             line(&mut out, "autologin_user", user.as_str());
         }
         line(&mut out, "greeter_socket", l.greeter_socket);
+        if let Some(b) = &l.background {
+            line(&mut out, "background", b.as_str());
+        }
         out.push_str("\n[remote_desktop]\n");
         let r = &self.remote;
         line(&mut out, "enabled", r.enabled);
@@ -133,6 +247,7 @@ impl MachineConfig {
         if let Some(min) = r.end_disconnected_after_min {
             line(&mut out, "end_disconnected_after", i64::from(min));
         }
+        outputs::render(&mut out, &self.outputs);
         out
     }
 }
@@ -207,6 +322,7 @@ impl LoginConfig {
                 let s = string(value)?;
                 self.autologin_user = (!s.is_empty()).then(|| s.to_owned());
             }
+            "background" => self.background = Some(Background::parse(string(value)?)?),
             _ => return Err("unknown key".into()),
         }
         Ok(())
@@ -253,6 +369,7 @@ mod tests {
                 show_users: false,
                 autologin_user: Some("anna".into()),
                 greeter_socket: true,
+                background: None,
             }
         );
         assert!(warnings.is_empty(), "{warnings:?}");
@@ -366,6 +483,7 @@ mod tests {
                 show_users: false,
                 autologin_user: Some("anna \"the admin\"".into()),
                 greeter_socket: true,
+                background: Some(Background::Builtin("reprise:tarn/dusk".into())),
             },
             remote: MachineRemote {
                 enabled: true,
@@ -374,6 +492,7 @@ mod tests {
                 max_sessions: 2,
                 end_disconnected_after_min: Some(90),
             },
+            outputs: vec![LoginOutput::named("DP-1")],
         };
         assert_eq!(MachineConfig::parse(&c.to_toml()), (c, vec![]));
         let d = MachineConfig::default();
@@ -388,8 +507,76 @@ mod tests {
             .find("[remote_desktop]")
             .expect("a [remote_desktop] table");
         assert!(login < remote, "{text}");
-        for unset in ["interface", "autologin_user", "end_disconnected_after"] {
+        for unset in [
+            "interface",
+            "autologin_user",
+            "end_disconnected_after",
+            "background",
+            "outputs",
+        ] {
             assert!(!text.contains(unset), "{text}");
         }
+    }
+
+    #[test]
+    fn the_background_is_a_built_in_or_the_copied_picture() {
+        let (config, warnings) =
+            MachineConfig::parse(&format!("[login]\nbackground = \"{BACKGROUND_PICTURE}\"\n"));
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(config.login.background, Some(Background::Picture));
+        let (config, warnings) =
+            MachineConfig::parse("[login]\nbackground = \"reprise:caustic/hue-200-dark\"\n");
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(
+            config.login.background,
+            Some(Background::Builtin("reprise:caustic/hue-200-dark".into()))
+        );
+        for bad in [
+            "/home/anna/sunset.jpg",
+            "/var/lib/reprise-login/state.toml",
+            "reprise:",
+            "reprise:../../x",
+            "file:///etc/shadow",
+        ] {
+            let (config, warnings) =
+                MachineConfig::parse(&format!("[login]\nbackground = \"{bad}\"\n"));
+            assert_eq!(warnings.len(), 1, "{bad}: {warnings:?}");
+            assert_eq!(config.login.background, None, "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_save_request_carries_its_tag_a_picture_and_the_settings() {
+        let picture = b"\x89PNG\nnot text\n";
+        let req = save_request("00ff", "[login]\nshow_users = false\n", Some(picture));
+        assert_eq!(
+            parse_save_request(&req),
+            Ok(SaveRequest {
+                tag: "00ff",
+                picture: Some(picture),
+                toml: "[login]\nshow_users = false\n",
+            })
+        );
+        let req = save_request("none", "[login]\n", None);
+        assert_eq!(req, b"expect none\n[login]\n");
+        assert_eq!(parse_save_request(&req).unwrap().picture, None);
+    }
+
+    #[test]
+    fn a_save_request_cut_short_or_without_its_tag_is_refused() {
+        let req = save_request("00ff", "[login]\n", Some(b"0123456789"));
+        let cut = &req[..req.len() - "[login]\n".len() - 3];
+        assert_eq!(
+            parse_save_request(cut),
+            Err("the picture is cut short".into())
+        );
+        assert_eq!(
+            parse_save_request(b"[login]\nshow_users = false\n"),
+            Err("the settings do not say which file they replace".into())
+        );
+        assert_eq!(
+            parse_save_request(b"expect none\n\xff"),
+            Err("the settings are not UTF-8".into())
+        );
     }
 }

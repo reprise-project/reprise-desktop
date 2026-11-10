@@ -1616,12 +1616,12 @@ fn variable_refresh_rate_words_find_display() {
 /// The Remote Logins group: off with the front not running, then on with its fingerprint.
 #[test]
 fn the_remote_logins_group_pins_its_pixels_in_every_look() {
-    let row = Rect::new(20, 152, 358, 158);
+    let row = Rect::new(20, 264, 358, 158);
     let mut f = login_manager(Area::MIN);
     let off = row_pins(&f, row);
     let mut c = repriselogin::machine::MachineConfig::default();
     c.remote.enabled = true;
-    show_login(&mut f, &c, &[], Some("3F:9A:01"));
+    show_login(&mut f, &c, &[], Some("3F:9A:01"), Default::default());
     let on = row_pins(&f, row);
     assert_eq!(
         [off, on],
@@ -1633,23 +1633,30 @@ fn the_remote_logins_group_pins_its_pixels_in_every_look() {
     );
 }
 
-/// The Login Screen group with the defaults, then Blue, no user list and an automatic logon.
+/// The Login Screen group with the defaults, then Blue, no user list, an automatic logon, a
+/// built-in background and two screens.
 #[test]
 fn the_login_screen_group_pins_its_pixels_in_every_look() {
-    let row = Rect::new(20, 44, 358, 98);
+    let row = Rect::new(20, 44, 358, 210);
     let mut f = login_manager(Area::MIN);
     let unset = row_pins(&f, row);
     let mut c = repriselogin::machine::MachineConfig::default();
     c.login.interface = Some(repriselogin::Interface::Blue);
     c.login.show_users = false;
     c.login.autologin_user = Some("anna".into());
-    show_login(&mut f, &c, &["anna".into()], None);
+    c.login.background = Some(repriselogin::machine::Background::Builtin(
+        "reprise:tarn/dusk".into(),
+    ));
+    c.outputs = ["DP-1", "eDP-1"]
+        .map(repriselogin::machine::LoginOutput::named)
+        .into();
+    show_login(&mut f, &c, &["anna".into()], None, Default::default());
     let set = row_pins(&f, row);
     assert_eq!(
         [unset, set],
         [
-            [0x66906fad015804f2, 0x1c36c36a279a0411, 0x9e3567829c5158a2],
-            [0xd562090bc7a5d904, 0x5d593a36c3b4dce7, 0x47e809cee3925083],
+            [0x4c4e12f671c0e4cf, 0xc8ee891d6438c6aa, 0xfe3626b1cde194f5],
+            [0x7a99cc6838bcb904, 0xf06f3f9e103f9f34, 0xdb40ddb0f85ae503],
         ],
         "defaults, set; Classic, Blue, Glass"
     );
