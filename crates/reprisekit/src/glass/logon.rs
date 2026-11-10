@@ -6,7 +6,8 @@ use super::panel::{self, Fade, LightBox};
 use super::tint::{self, Surface};
 use crate::art::logo;
 use crate::logon::{
-    Logon, LogonLayout, LogonUser, Part, Screen, Show, UserNote, message_lines, text as strings,
+    Change, Logon, LogonLayout, LogonUser, Part, Plan, Screen, Show, Slice, UserNote, Window,
+    message_lines, text as strings,
 };
 use crate::paint::{self, Paint};
 use crate::pointer::Interaction;
@@ -77,6 +78,22 @@ const SPIN_HEAD: f64 = 0.8;
 /// The ring turns clockwise in steps: this many a turn, each shown this long.
 pub const SPIN_STEPS: u32 = 60;
 pub const SPIN_STEP_MS: u32 = 20;
+/// Transitions, ms. A picked frame flies for `PICK_MS`, back for `BACK_MS` while the tiles come
+/// in `STAGGER_MS` apart from it outward.
+const PICK_MS: u32 = 320;
+const BACK_MS: u32 = 300;
+const STAGGER_MS: u32 = 30;
+/// Coming forward, each tile fades in over `ENTER_TILE_MS` rising `RISE` design px,
+/// `ENTER_STAGGER_MS` after the one before up to the `ENTER_STAGGERED`th; a block over
+/// `ENTER_BLOCK_MS`.
+const ENTER_TILE_MS: u32 = 240;
+const ENTER_STAGGER_MS: u32 = 40;
+const ENTER_STAGGERED: usize = 4;
+const ENTER_BLOCK_MS: u32 = 360;
+const RISE: i32 = 12;
+/// The block out and the next in, half each; the busy text alone.
+const CROSS_MS: u32 = 240;
+const STATUS_MS: u32 = 160;
 
 const INK: Color = Color::rgb(0xFF, 0xFF, 0xFF);
 const NOTE_INK: Color = Color::rgb(0xE4, 0xEE, 0xFA);
@@ -438,9 +455,229 @@ fn frames(g: &Geometry) -> Vec<FrameAt> {
 }
 
 fn frame_at(c: &mut Canvas, m: &Logon, f: &FrameAt, o: Rect, s: i32) {
-    let r = Rect::new(f.rect.x - o.x, f.rect.y - o.y, f.rect.width, f.rect.height).scaled(s);
-    let picture = user_of(m, f.part).and_then(|u| u.picture.as_ref());
-    tile(c, r, picture, f.pad, f.radius, face(m, f.part), s);
+    draw_posed(c, m, f.part, &f.pose(m, o, s), s);
+}
+
+impl FrameAt {
+    fn pose(&self, m: &Logon, o: Rect, s: i32) -> Pose {
+        let r = self.rect;
+        Pose {
+            rect: Rect::new(r.x - o.x, r.y - o.y, r.width, r.height).scaled(s),
+            pad: f64::from(self.pad * s),
+            radius: self.radius,
+            look: Look::of(face(m, self.part)),
+        }
+    }
+}
+
+/// A picture frame's place on the canvas, its padding (device px), corner radius and look: what
+/// a transition moves between.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Pose {
+    pub rect: Rect,
+    pad: f64,
+    radius: f64,
+    look: Look,
+}
+
+impl Pose {
+    /// `a` at `u` = 0, `b` at 1.
+    pub fn between(a: &Pose, b: &Pose, u: f64) -> Pose {
+        let at = |x: i32, y: i32| lerp(f64::from(x), f64::from(y), u).round() as i32;
+        let (ra, rb) = (a.rect, b.rect);
+        Pose {
+            rect: Rect::new(
+                at(ra.x, rb.x),
+                at(ra.y, rb.y),
+                at(ra.width, rb.width),
+                at(ra.height, rb.height),
+            ),
+            pad: lerp(a.pad, b.pad, u),
+            radius: lerp(a.radius, b.radius, u),
+            look: Look::between(&a.look, &b.look, u),
+        }
+    }
+
+    /// The device rect the frame's drawing covers, its glow included.
+    pub fn reach(&self, s: i32) -> Rect {
+        self.rect.inset(-GLOW * s)
+    }
+}
+
+/// `a` at `u` = 0 and `b` at 1, exactly.
+fn lerp(a: f64, b: f64, u: f64) -> f64 {
+    (1.0 - u) * a + u * b
+}
+
+fn lerp_px(a: Px, b: Px, u: f64) -> Px {
+    let c = |k: usize| lerp(a.1[k], b.1[k], u);
+    (lerp(a.0, b.0, u), [c(0), c(1), c(2)])
+}
+
+/// A glass box's face as numbers a transition can ease: the glow's share, the outline, the
+/// light line, the sheen's lift and the pressed shade's share.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Look {
+    glow: f64,
+    outline: Px,
+    line: Px,
+    lift: f64,
+    shade: f64,
+}
+
+impl Look {
+    fn of(face: Face) -> Look {
+        let (outline, line, lift, shade) = match face {
+            Face::Rest => (OUTLINE, LINE, 0.0, 0.0),
+            Face::Hot => (OUTLINE, LINE_LIT, LIFT_HOT, 0.0),
+            Face::Focused => (OUTLINE, LINE_LIT, LIFT_FOCUS, 0.0),
+            Face::Pressed => (OUTLINE_PRESSED, LINE, 0.0, 1.0),
+        };
+        let glow = match face {
+            Face::Hot | Face::Focused => 1.0,
+            Face::Rest | Face::Pressed => 0.0,
+        };
+        Look {
+            glow,
+            outline,
+            line,
+            lift,
+            shade,
+        }
+    }
+
+    fn between(a: &Look, b: &Look, u: f64) -> Look {
+        Look {
+            glow: lerp(a.glow, b.glow, u),
+            outline: lerp_px(a.outline, b.outline, u),
+            line: lerp_px(a.line, b.line, u),
+            lift: lerp(a.lift, b.lift, u),
+            shade: lerp(a.shade, b.shade, u),
+        }
+    }
+}
+
+/// `part`'s frame as [`draw`] lays it out on `m`'s screen.
+pub fn pose(m: &Logon, l: &LogonLayout, theme: &Theme, s: i32, part: Part) -> Option<Pose> {
+    let g = geometry(m, theme, l.output, button_width(l));
+    let f = frames(&g).into_iter().find(|f| f.part == part)?;
+    Some(f.pose(m, l.output, s))
+}
+
+/// `part`'s picture frame at `pose`, with no picture holding a person's outline.
+pub fn draw_posed(c: &mut Canvas, m: &Logon, part: Part, pose: &Pose, s: i32) {
+    let picture = user_of(m, part).and_then(|u| u.picture.as_ref());
+    let r = pose.rect;
+    if pose.look.glow > 0.0 {
+        glow(c, r, pose.radius, pose.look.glow, s);
+    }
+    glass_box_look(c, r, pose.radius, &pose.look, s);
+    let inner = r.inset(pose.pad.round() as i32);
+    let (w, h) = (inner.width, inner.height);
+    if w <= 0 || h <= 0 {
+        return;
+    }
+    let k = f64::from(s);
+    let pic = picture.map(|p| p.resample_box(w as u32, h as u32));
+    for y in 0..h {
+        for x in 0..w {
+            let (fx, fy) = (f64::from(x), f64::from(y));
+            let cov = rounded(fx, fy, f64::from(w), f64::from(h), PICTURE_R * k);
+            if cov <= 0.0 {
+                continue;
+            }
+            let p = match &pic {
+                Some(p) => shape::unpack(p.get(x, y)),
+                None => person(
+                    (centre(x, s) + 0.5) / f64::from(w / s),
+                    (centre(y, s) + 0.5) / f64::from(h / s),
+                ),
+            };
+            put_over(c, inner.x + x, inner.y + y, shape::scale(p, cov));
+        }
+    }
+}
+
+/// How `change` plays on Glass, `m` and `l` being the screen after it.
+pub fn plan(change: Change, m: &Logon, l: &LogonLayout, s: i32) -> Plan {
+    let whole = |from: u32, len: u32, rise: i32| {
+        vec![Slice {
+            columns: None,
+            window: Window::new(from, len),
+            rise,
+        }]
+    };
+    let share = |ms: u32, pct: u32| ms * pct / 100;
+    let o = l.output;
+    // Each tile's columns run to the middle of the gaps either side.
+    let cells: Vec<(Part, i32, i32)> = (l.parts.iter())
+        .filter(|(p, _)| matches!(p, Part::Tile(_) | Part::OtherUser))
+        .map(|&(p, r)| (p, (r.x - o.x) * s, (r.right() - o.x) * s))
+        .collect();
+    let columns = |k: usize| {
+        let left = (k > 0).then(|| (cells[k - 1].2 + cells[k].1) / 2);
+        let right = (k + 1 < cells.len()).then(|| (cells[k].2 + cells[k + 1].1) / 2);
+        Some((left.unwrap_or(i32::MIN), right.unwrap_or(i32::MAX)))
+    };
+    match change {
+        Change::Pick(part) => Plan {
+            out: Some(Window::new(0, share(PICK_MS, 35))),
+            into: whole(share(PICK_MS, 40), share(PICK_MS, 60), 0),
+            carried: Some((part, PICK_MS)),
+        },
+        Change::Back(part) if m.screen == Screen::Tiles => {
+            let picked = cells.iter().position(|c| c.0 == part).unwrap_or(0);
+            let into = (0..cells.len())
+                .map(|k| Slice {
+                    columns: columns(k),
+                    window: Window::new(
+                        k.abs_diff(picked) as u32 * STAGGER_MS + share(BACK_MS, 30),
+                        share(BACK_MS, 70),
+                    ),
+                    rise: 0,
+                })
+                .collect();
+            Plan {
+                out: Some(Window::new(0, share(BACK_MS, 35))),
+                into,
+                carried: Some((part, BACK_MS)),
+            }
+        }
+        Change::Enter if m.screen == Screen::Tiles => Plan {
+            out: None,
+            into: (0..cells.len())
+                .map(|k| Slice {
+                    columns: columns(k),
+                    window: Window::new(
+                        k.min(ENTER_STAGGERED) as u32 * ENTER_STAGGER_MS,
+                        ENTER_TILE_MS,
+                    ),
+                    rise: RISE * s,
+                })
+                .collect(),
+            carried: None,
+        },
+        Change::Enter => Plan {
+            out: None,
+            into: whole(0, ENTER_BLOCK_MS, RISE * s),
+            carried: None,
+        },
+        Change::Status => Plan {
+            out: Some(Window::new(0, STATUS_MS)),
+            into: whole(0, STATUS_MS, 0),
+            carried: None,
+        },
+        Change::Admin | Change::Back(_) => Plan {
+            out: Some(Window::new(0, CROSS_MS)),
+            into: whole(0, CROSS_MS, 0),
+            carried: None,
+        },
+        Change::Busy | Change::Fail | Change::Ask | Change::MessageOk | Change::Idle => Plan {
+            out: Some(Window::new(0, CROSS_MS / 2)),
+            into: whole(CROSS_MS / 2, CROSS_MS / 2, 0),
+            carried: None,
+        },
+    }
 }
 
 fn face(m: &Logon, part: Part) -> Face {
@@ -650,43 +887,6 @@ fn lit_cell(c: &mut Canvas, r: Rect, face: Face, s: i32) {
     c.blit_over(r.x, r.y, &panel::light_box(b, r.width / s, r.height / s, s));
 }
 
-/// With no picture the frame holds a person's outline.
-fn tile(
-    c: &mut Canvas,
-    r: Rect,
-    picture: Option<&Canvas>,
-    pad: i32,
-    radius: f64,
-    face: Face,
-    s: i32,
-) {
-    if matches!(face, Face::Hot | Face::Focused) {
-        glow(c, r, radius, s);
-    }
-    glass_box(c, r, radius, face, s);
-    let inner = r.inset(pad * s);
-    let (w, h) = (inner.width, inner.height);
-    let k = f64::from(s);
-    let pic = picture.map(|p| p.resample_box(w as u32, h as u32));
-    for y in 0..h {
-        for x in 0..w {
-            let (fx, fy) = (f64::from(x), f64::from(y));
-            let cov = rounded(fx, fy, f64::from(w), f64::from(h), PICTURE_R * k);
-            if cov <= 0.0 {
-                continue;
-            }
-            let p = match &pic {
-                Some(p) => shape::unpack(p.get(x, y)),
-                None => person(
-                    (centre(x, s) + 0.5) / f64::from(w / s),
-                    (centre(y, s) + 0.5) / f64::from(h / s),
-                ),
-            };
-            put_over(c, inner.x + x, inner.y + y, shape::scale(p, cov));
-        }
-    }
-}
-
 /// (`u`, `v`) in the unit square.
 fn person(u: f64, v: f64) -> Px {
     let head = (u - 0.5).hypot(v - 0.40) < 0.17;
@@ -699,7 +899,8 @@ fn person(u: f64, v: f64) -> Px {
     }
 }
 
-fn glow(c: &mut Canvas, r: Rect, radius: f64, s: i32) {
+/// `strength` of the glow, 1 for a lit frame's.
+fn glow(c: &mut Canvas, r: Rect, radius: f64, strength: f64, s: i32) {
     let reach = GLOW * s;
     let k = f64::from(s);
     for y in -reach..r.height + reach {
@@ -710,7 +911,7 @@ fn glow(c: &mut Canvas, r: Rect, radius: f64, s: i32) {
             if dist <= 0.0 || dist >= f64::from(GLOW) {
                 continue;
             }
-            let a = GLOW_ALPHA * (1.0 - dist / f64::from(GLOW)).powi(2);
+            let a = GLOW_ALPHA * strength * (1.0 - dist / f64::from(GLOW)).powi(2);
             put_over(c, r.x + x, r.y + y, grey(a));
         }
     }
@@ -718,14 +919,18 @@ fn glow(c: &mut Canvas, r: Rect, radius: f64, s: i32) {
 
 /// The glass colour from `[glass]`'s defaults under an outline, a light line and a sheen.
 fn glass_box(c: &mut Canvas, r: Rect, radius: f64, face: Face, s: i32) {
+    glass_box_look(c, r, radius, &Look::of(face), s);
+}
+
+fn glass_box_look(c: &mut Canvas, r: Rect, radius: f64, look: &Look, s: i32) {
     let (w, h) = (r.width / s, r.height / s);
     let glass = tint::plain(&Settings::default(), Surface::Active);
-    let (outline, line, lift, body) = match face {
-        Face::Rest => (OUTLINE, LINE, 0.0, glass),
-        Face::Hot => (OUTLINE, LINE_LIT, LIFT_HOT, glass),
-        Face::Focused => (OUTLINE, LINE_LIT, LIFT_FOCUS, glass),
-        Face::Pressed => (OUTLINE_PRESSED, LINE, 0.0, over(PRESSED_SHADE, glass)),
+    let body = if look.shade > 0.0 {
+        over(shape::scale(PRESSED_SHADE, look.shade), glass)
+    } else {
+        glass
     };
+    let (outline, line, lift) = (look.outline, look.line, look.lift);
     let hh = f64::from(h);
     let px = ringed(w, h, radius, 2, s, |_, y, ring| match ring {
         0 => outline,

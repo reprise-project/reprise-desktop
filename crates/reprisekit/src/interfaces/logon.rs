@@ -7,6 +7,9 @@ use crate::text::TextRenderer;
 use crate::theme::Theme;
 use crate::{blue, classic, glass};
 
+mod transition;
+pub use transition::{Drawn, Transition};
+
 pub fn logon_layout(m: &Logon, theme: &Theme, text: &TextRenderer, output: Rect) -> LogonLayout {
     match m.interface {
         Interface::Classic => classic::logon::layout(m, theme, text, output),

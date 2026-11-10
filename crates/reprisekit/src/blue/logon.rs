@@ -9,7 +9,8 @@ use crate::blue::Variant;
 use crate::blue::powerpanel::{self, Glaze, Hue, Mark, RIM, TileState, glaze, title_text};
 use crate::blue::scheme::Scheme;
 use crate::logon::{
-    Logon, LogonLayout, Part, Screen, Show, UserNote, message_lines, text as strings,
+    Change, Logon, LogonLayout, Part, Plan, Screen, Show, Slice, UserNote, Window, message_lines,
+    text as strings,
 };
 use crate::paint::{Paint, draw_edit};
 use crate::pointer::Interaction;
@@ -75,6 +76,10 @@ const MESSAGE_LINES: usize = 2;
 const POWER: i32 = 26;
 const POWER_X: i32 = 24;
 const POWER_GAP: i32 = 8;
+/// Transitions, ms: the column opening or closing a tile, coming forward, the message lines.
+const OPEN_MS: u32 = 180;
+const ENTER_MS: u32 = 240;
+const MESSAGE_MS: u32 = 160;
 
 /// The output's bands and middle, and the middle rule's column.
 struct Frame {
@@ -521,6 +526,27 @@ impl Pen<'_> {
         for (i, line) in lines.iter().enumerate() {
             let r = self.at(Rect::new(x, y + i as i32 * k.line, w, k.line));
             self.put(self.text, c, r, line, false, self.px, align);
+        }
+    }
+}
+
+/// How `change` plays on Blue: crossfades only; the busy text changes at once.
+pub fn plan(change: Change) -> Option<Plan> {
+    let fade = |out: bool, ms: u32| Plan {
+        out: out.then_some(Window::new(0, ms)),
+        into: vec![Slice {
+            columns: None,
+            window: Window::new(0, ms),
+            rise: 0,
+        }],
+        carried: None,
+    };
+    match change {
+        Change::Pick(_) | Change::Back(_) | Change::Admin => Some(fade(true, OPEN_MS)),
+        Change::Enter => Some(fade(false, ENTER_MS)),
+        Change::Busy | Change::Status => None,
+        Change::Fail | Change::Ask | Change::Idle | Change::MessageOk => {
+            Some(fade(true, MESSAGE_MS))
         }
     }
 }

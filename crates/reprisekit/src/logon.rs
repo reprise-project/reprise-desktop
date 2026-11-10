@@ -10,7 +10,7 @@ use crate::text::TextRenderer;
 use crate::textedit::{EditKey, TextEdit};
 
 mod motion;
-pub use motion::{Change, Motion, Moves, Was};
+pub use motion::{Change, Motion, Moves, Plan, Slice, Was, Window};
 
 /// The login screen's strings, one accessor per Fluent id.
 pub mod text {
