@@ -677,6 +677,25 @@ fn a_menu_opening_onto_a_left_taskbar_stays_right_of_it() {
     );
 }
 
+#[test]
+fn a_window_as_large_as_its_bounds_opens_wholly_inside_the_work_area() {
+    let mut h = crate::harness::Harness::new();
+    let out = h.output("TEST-1", 1280, 720);
+    let mut c = h.connect();
+    let first = h.map_toplevel(&mut c, "test.a", 300, 200);
+    let (bw, bh) = c.side.shells[first.shell].bounds;
+    let area = h.state.usable_area(Some(&out));
+    for app in ["test.b", "test.c"] {
+        let t = h.map_toplevel(&mut c, app, bw, bh);
+        let frame = h.state.win(t.id).unwrap().frame_rect();
+        assert_eq!(
+            (frame.y, frame.bottom()),
+            (area.y, area.bottom()),
+            "{app}'s frame fills the work area's height"
+        );
+    }
+}
+
 /// Two mapped toplevels on one output with the desktop holding the keyboard; the second's
 /// window marked override-redirect when `menu`.
 fn behind_the_desktop(

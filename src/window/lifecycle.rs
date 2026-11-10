@@ -362,13 +362,14 @@ impl State {
                     }
                     Position::Cascade => {
                         let app_id = self.win(w).map(Window::app).unwrap_or_default();
-                        match self
+                        let at = match self
                             .newest_of_app(&app_id, Some(w))
                             .and_then(|p| self.win(p))
                         {
                             Some(p) => cascade_from((p.x, p.y), s, area, &m),
                             None => cascade_position(0, area, &m),
-                        }
+                        };
+                        keep_inside(at, s, area)
                     }
                 }
             }
@@ -381,7 +382,7 @@ impl State {
                     .filter(|x| x.mapped && !x.override_redirect)
                     .count()
                     .saturating_sub(1);
-                cascade_position(index, area, &m)
+                keep_inside(cascade_position(index, area, &m), total, area)
             }
         };
         // An X11 client that placed itself away from the origin keeps that place unless a rule
