@@ -194,6 +194,46 @@ fn messages_read_as_sentences() {
     assert_eq!(sentence("Done!"), "Done!");
 }
 
+#[test]
+fn a_printer_address_loses_its_user_and_password_in_logs_and_messages() {
+    assert_eq!(
+        without_userinfo("smb://alice:hunter2@srv/queue"),
+        "smb://srv/queue"
+    );
+    assert_eq!(
+        without_userinfo("Bad device-uri \"ipp://bob@[::1]:631/ipp\" and ipp://h/p@x"),
+        "Bad device-uri \"ipp://[::1]:631/ipp\" and ipp://h/p@x"
+    );
+    assert_eq!(without_userinfo("usb://HP/LaserJet"), "usb://HP/LaserJet");
+    assert!(
+        !sentence("bad device-uri smb://alice:hunter2@srv/q").contains("hunter2"),
+        "cupsd's and cups-pk-helper's messages"
+    );
+    assert!(
+        !Error::from(http::Error::Failed("smb://alice:hunter2@srv/q".into()))
+            .text()
+            .contains("hunter2")
+    );
+    let change = Change {
+        device_uri: Some("smb://alice:hunter2@srv/q".into()),
+        ..Change::default()
+    };
+    let new = NewPrinter {
+        name: "Laser".into(),
+        device_uri: "ipp://alice:hunter2@srv/ipp".into(),
+        driver: Driver::Everywhere,
+        info: String::new(),
+        location: String::new(),
+    };
+    for logged in [format!("{change:?}"), format!("{new:?}")] {
+        assert!(
+            !logged.contains("hunter2") && !logged.contains("alice"),
+            "{logged}"
+        );
+        assert!(logged.contains("://srv/"), "{logged}");
+    }
+}
+
 fn client(helper: &Arc<pkhelper::fake::Fake>) -> Client {
     Client {
         server: Server::Tcp("localhost:631".into()),

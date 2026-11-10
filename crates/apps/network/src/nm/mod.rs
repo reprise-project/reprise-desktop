@@ -544,8 +544,9 @@ pub enum CaSource {
 }
 
 /// What an 802.1X network is joined with. `domain` is the suffix the server certificate's
-/// name must end in; the paths are absolute.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// name must end in; the paths are absolute. `Debug` shows the EAP method only, so a logged
+/// `Cmd` names no login.
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct Enterprise {
     pub eap: Eap,
     pub anonymous_identity: String,
@@ -557,6 +558,14 @@ pub struct Enterprise {
     pub client_cert: Option<std::path::PathBuf>,
     pub private_key: Option<std::path::PathBuf>,
     pub private_key_password: Psk,
+}
+
+impl std::fmt::Debug for Enterprise {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Enterprise")
+            .field("eap", &self.eap)
+            .finish_non_exhaustive()
+    }
 }
 
 /// The secret a network is joined with.
@@ -903,13 +912,14 @@ mod tests {
     }
 
     #[test]
-    fn logged_connect_does_not_carry_enterprise_passwords() {
+    fn logged_connect_carries_no_enterprise_login() {
         let cmd = Cmd::Connect {
             device: "/dev/0".into(),
             ap: "/ap/1".into(),
             ssid: "campus".into(),
             key: Some(Key::Enterprise(Box::new(Enterprise {
                 identity: "alice".into(),
+                anonymous_identity: "anon@uni.example".into(),
                 password: Psk::new("hunter2"),
                 private_key_password: Psk::new("swordfish"),
                 ..Enterprise::default()
@@ -917,9 +927,10 @@ mod tests {
             hidden: false,
         };
         let logged = format!("{cmd:?}");
-        assert!(!logged.contains("hunter2"), "{logged}");
-        assert!(!logged.contains("swordfish"), "{logged}");
-        assert!(logged.contains("alice"));
+        for said in ["hunter2", "swordfish", "alice", "anon@"] {
+            assert!(!logged.contains(said), "{logged}");
+        }
+        assert!(logged.contains("Peap"), "{logged}");
     }
 
     #[test]
