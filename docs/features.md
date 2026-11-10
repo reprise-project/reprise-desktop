@@ -934,7 +934,7 @@ no port forwarding; allow the port in your firewall if you run one.
   where the coded width is a whole number of 32-pixel columns. If the two
   won't merge, one encoder codes both until the encoder is next set up
   ([`avc444_split_encoders`](configuration.md#remote-desktop) turns the
-  two encoders off).
+  two encoders off). One encoder sends the AVC444 layout, never AVC444v2.
   Speed and Vulkan send reduced colour, which takes less bandwidth.
 - **Keyboard and mouse.** Keys go by position and this computer's keyboard
   layout reads them. Characters the client sends as text are typed as they

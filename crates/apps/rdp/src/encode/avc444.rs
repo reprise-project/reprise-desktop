@@ -24,7 +24,8 @@ pub enum AuxLayout {
 }
 
 impl AuxLayout {
-    /// The layout for pictures coded at `target`: V2 where every client finds its V halves.
+    /// The layout for views coded at `target` on two encoders: V2 where every client finds its
+    /// V halves.
     pub fn of(target: (u32, u32)) -> AuxLayout {
         match view_size(target).0.is_multiple_of(V2_WIDTH) {
             true => AuxLayout::V2,

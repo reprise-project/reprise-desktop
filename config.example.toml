@@ -413,7 +413,8 @@ suspend_after = 0            # run [power] standby
 # second_client = "join"     # "join": a computer logging in joins those connected;
 #                            # "replace": it ends them, even with max_viewers connected
 # avc444_split_encoders = true  # false codes both full-colour views on one encoder, which
-#                            # costs about three times the bytes
+#                            # costs about three times the bytes; only two encoders send
+#                            # the AVC444v2 layout
 
 # [debug]                    # Settings > Advanced also sets these
 # overlay = false            # true shows frame rate, render times, damage, clients

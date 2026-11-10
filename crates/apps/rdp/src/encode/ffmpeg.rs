@@ -32,7 +32,7 @@ pub struct Ffmpeg {
     /// The size pictures are coded at; None for each frame's own.
     target: Option<(u32, u32)>,
     /// AVC444 codes each view on its own encoder and merges them into one stream; None codes
-    /// both views through one encoder. One merge lasts as long as this encoder.
+    /// both views through one encoder, in the v1 layout. One merge lasts as long as this encoder.
     merge: Option<Merge>,
     open: Option<Open>,
 }
@@ -135,9 +135,15 @@ impl Ffmpeg {
         avc444: bool,
     ) -> Result<Open, Failed> {
         let devices = self.devices.as_ref();
+        let merged = avc444 && self.merge.is_some();
         let (input, coded) = match avc444 {
             true => {
-                let layout = AuxLayout::of(target);
+                // One encoder codes v2 in about twice v1's bytes: v1's aux view repeats the main
+                // view outside the read rect, which the encoder predicts from.
+                let layout = match merged {
+                    true => AuxLayout::of(target),
+                    false => AuxLayout::V1,
+                };
                 let views = Views::new(devices, &self.node, fourcc, size, target, layout)
                     .map_err(Failed::Views)?;
                 (Input::Avc444(views), avc444::view_size(target))
@@ -152,7 +158,6 @@ impl Ffmpeg {
             Input::Avc420(c) => (c.pixel(), c.frames()),
             Input::Avc444(v) => (v.pixel(), v.frames()),
         };
-        let merged = avc444 && self.merge.is_some();
         let encoder = self.encoder(coded, pixel, frames, avc444, merged)?;
         let aux = match merged {
             true => {
@@ -1728,8 +1733,8 @@ pub(crate) mod tests {
             assert_eq!((kind, regions), (want, vec![Rect::full(size)]), "frame {t}");
             assert_eq!(
                 (layout, tapped().len()),
-                (AuxLayout::V2, 0),
-                "frame {t}: one encoder, still the v2 layout"
+                (AuxLayout::V1, 0),
+                "frame {t}: one encoder, the v1 layout"
             );
         }
         assert!(encoder.merge.is_none());
@@ -2193,19 +2198,37 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn an_aux_view_that_fails_to_code_codes_both_views_on_one_encoder() {
+    fn an_aux_view_that_fails_to_code_codes_both_views_on_one_encoder_in_v1() {
         crate::listen::tests::capture_log();
         let mut encoder = x264_avc444();
         let mut decoder = Decoder::new();
         tapped();
         for t in 0..5 {
             FAIL_AUX_SEND.set(t == 2);
-            let (frame, _) = picture((160, 96), |x, y| rgb(x, y, t));
-            let (main, aux, regions) = views(encoder.encode(&frame, t == 0).unwrap());
-            let kind = decoder.decode(&main).kind();
-            if let Some(aux) = aux {
-                decoder.decode(&aux);
-            }
+            let (frame, planes) = picture((160, 96), |x, y| rgb(x, y, t));
+            let Encoded::Avc444 {
+                main,
+                aux,
+                regions,
+                layout,
+            } = encoder.encode(&frame, t == 0).unwrap()
+            else {
+                panic!("frame {t}: AVC444 views");
+            };
+            let main = decoder.decode(&main);
+            let kind = main.kind();
+            let main = nv12(&main);
+            let aux = nv12(&decoder.decode(&aux.expect("a coloured picture needs the aux view")));
+            let back = avc444::tests::crop(&avc444::combine(layout, &main, &aux), (160, 96));
+            let expected = match t {
+                0 | 1 => AuxLayout::V2,
+                _ => AuxLayout::V1,
+            };
+            assert_eq!(layout, expected, "frame {t}: v2 on two encoders, v1 on one");
+            assert!(
+                chroma_psnr(&back, &planes) > 35.0,
+                "frame {t}: views in {layout:?}"
+            );
             let want = match t {
                 0 | 2 => ::ffmpeg::picture::Type::I,
                 _ => ::ffmpeg::picture::Type::P,
@@ -2232,7 +2255,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn split_encoders_off_codes_both_views_on_one_encoder_in_v2() {
+    fn split_encoders_off_codes_both_views_on_one_encoder_in_v1() {
         let mut encoder = x264_avc444();
         encoder.set_split_encoders(false);
         tapped();
@@ -2245,7 +2268,7 @@ pub(crate) mod tests {
             else {
                 panic!("frame {t}: AVC444 views");
             };
-            assert_eq!((layout, tapped().len()), (AuxLayout::V2, 0), "frame {t}");
+            assert_eq!((layout, tapped().len()), (AuxLayout::V1, 0), "frame {t}");
             let main = nv12(&decoder.decode(&main));
             let aux = nv12(&decoder.decode(&aux.expect("a coloured picture needs the aux view")));
             let back = avc444::tests::crop(&avc444::combine(layout, &main, &aux), (160, 96));
