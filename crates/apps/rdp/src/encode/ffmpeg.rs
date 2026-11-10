@@ -1444,6 +1444,10 @@ pub(crate) mod tests {
             let shown = |t: u32| desktop.pixel(if t == 45 { 44 } else { t });
             let pixel = shown(t);
             let (mut frame, _bo) = match &gbm {
+                Some(gbm) if encoder.backend == Backend::Nvenc => {
+                    let (frame, bo) = tiled_frame(gbm, size, &pixel);
+                    (frame, Some(bo))
+                }
                 Some(gbm) => {
                     let (frame, _, bo) =
                         crate::encode::split::tests::dmabuf_frame(gbm, size, &pixel);
@@ -1478,6 +1482,39 @@ pub(crate) mod tests {
         sent
     }
 
+    /// A dma-buf frame of `pixel` in the driver's own layout: NVIDIA's GL samples no LINEAR one.
+    fn tiled_frame(
+        gbm: &gbm::Device<std::fs::File>,
+        (w, h): (u32, u32),
+        pixel: impl Fn(u32, u32) -> [u8; 3],
+    ) -> (Frame, gbm::BufferObject<()>) {
+        let flags = gbm::BufferObjectFlags::RENDERING;
+        let mut bo = (gbm.create_buffer_object::<()>(w, h, gbm::Format::Xrgb8888, flags)).unwrap();
+        bo.map_mut(0, 0, w, h, |m| {
+            let stride = m.stride() as usize;
+            let buf = m.buffer_mut();
+            for y in 0..h {
+                for x in 0..w {
+                    let [r, g, b] = pixel(x, y);
+                    buf[y as usize * stride + x as usize * 4..][..4]
+                        .copy_from_slice(&[b, g, r, 255]);
+                }
+            }
+        })
+        .unwrap();
+        let buffer = FrameBuffer::Dmabuf {
+            objects: vec![Arc::new(bo.fd().unwrap())],
+            fourcc: XRGB8888,
+            modifier: bo.modifier().into(),
+            planes: vec![crate::stream::Plane {
+                object: 0,
+                offset: bo.offset(0),
+                stride: bo.stride(),
+            }],
+        };
+        (Frame::unleased(buffer, (w, h)), bo)
+    }
+
     /// Whether Annex B `au` holds an IDR slice.
     fn idr(au: &[u8]) -> bool {
         au.windows(4)
@@ -1494,6 +1531,23 @@ pub(crate) mod tests {
     #[ignore = "needs VA-API H.264 on /dev/dri/renderD128; run with --ignored where it has one"]
     fn merged_avc444_views_decode_to_each_view_encoders_own_pictures() {
         assert_merged_views_decode_to_their_own_pictures(&mut vaapi());
+    }
+
+    #[test]
+    #[ignore = "needs an NVIDIA GPU with NVENC"]
+    fn merged_nvenc_avc444_views_decode_to_each_view_encoders_own_pictures() {
+        let mut encoder = nvenc();
+        encoder.set_avc444(true);
+        assert_merged_views_decode_to_their_own_pictures(&mut encoder);
+        assert!(encoder.merge.is_some(), "the views merged to the end");
+    }
+
+    #[test]
+    #[ignore = "needs an NVIDIA GPU with NVENC"]
+    fn merged_nvenc_avc444_views_turn_into_idrs_together() {
+        let mut encoder = nvenc();
+        encoder.set_avc444(true);
+        assert_views_turn_into_idrs_together(&mut encoder);
     }
 
     #[test]
@@ -2009,12 +2063,20 @@ pub(crate) mod tests {
         let (frame, _bo) = colour_frame(&gl, false, &colour_rects()).unwrap();
         let mut encoder = nvenc();
         encoder.set_avc444(true);
-        let (main, aux, regions) = views(encoder.encode(&frame, true).unwrap());
+        let Encoded::Avc444 {
+            main,
+            aux,
+            regions,
+            layout,
+        } = encoder.encode(&frame, true).unwrap()
+        else {
+            panic!("AVC444 views");
+        };
         assert_eq!(regions, [Rect::full(COLOUR_SIZE)]);
         let mut decoder = Decoder::new();
         let main = nv12(&decoder.decode(&main));
         let aux = nv12(&decoder.decode(&aux.expect("the lines need the auxiliary view")));
-        let back = avc444::tests::crop(&avc444::combine_v1(&main, &aux), COLOUR_SIZE);
+        let back = avc444::tests::crop(&avc444::combine(layout, &main, &aux), COLOUR_SIZE);
         let only_main = main_only(&main, COLOUR_SIZE);
         let error = patch_error(shown_444(&back), 1);
         assert!(error <= 3, "a patch is off by {error}");
