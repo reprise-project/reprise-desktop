@@ -1393,13 +1393,16 @@ sharing and remote control grants yet.
   by every item do the reads, from a shared queue of 64 in which one app
   holds at most 4. A read waits at most 10 seconds for a thread and then
   gets 2 seconds; past either, or past its app's share, the item keeps the
-  icons it showed and is read once more 2 seconds later. A hung read holds
+  icons it showed (unless their names changed) and is read once more 2
+  seconds later. A hung read holds
   one thread and never starts another, and a removed item's read is
   dropped. An item sending more than 100 change signals in a second isn't
   listened to for 5 seconds, so a flood stops at the bus daemon instead of
   queueing there until the daemon disconnects the tray. If the tray's
-  connection is lost anyway, it closes it, connects again and takes its
-  names back. Customize keeps a sandboxed app's desktop entry icon for it,
+  connection is lost anyway, it closes it and connects again, backing off
+  up to 30 seconds while that fails, and asks for its names again. It then
+  drops the inhibits, notifications and watches of every peer that left
+  the bus meanwhile. Customize keeps a sandboxed app's desktop entry icon for it,
   never the path it sent, and drops a path from a choice saved without
   that guarantee.
 - **Launchers.** A `.desktop` file in a folder (the desktop, Explorer)

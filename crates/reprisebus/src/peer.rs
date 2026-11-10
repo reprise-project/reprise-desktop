@@ -452,6 +452,11 @@ impl Identities {
         lock(&self.known).remove(name);
     }
 
+    /// Forget every name, for a new connection: it never hears of names that left before it.
+    pub fn clear(&self) {
+        lock(&self.known).clear();
+    }
+
     /// Where the files `peer` on `conn` names are, read afresh on each call; a Flatpak root
     /// lives as long as its holder keeps it.
     pub async fn files(&self, conn: &Connection, peer: &str) -> Files {
