@@ -849,12 +849,13 @@ fn the_effects_page_geometry() {
     assert_eq!(rect(&s, p, "hover_out_ms"), Rect::new(234, 144, 50, 20));
     assert_eq!(rect(&s, p, "out_units"), Rect::new(288, 148, 20, 13));
     assert_eq!(rect(&s, p, "session_fade"), Rect::new(GX, 178, 13, 13));
-    assert_eq!(rect(&s, p, "menus_group"), Rect::new(20, 212, 358, 74));
-    assert_eq!(rect(&s, p, "menu_shadow"), Rect::new(96, 230, 50, 20));
-    assert_eq!(rect(&s, p, "menu_hover_ms"), Rect::new(246, 230, 50, 20));
-    assert_eq!(rect(&s, p, "menu_hover_units"), Rect::new(300, 234, 20, 13));
-    assert_eq!(rect(&s, p, "menu_fade_ms"), Rect::new(96, 256, 50, 20));
-    assert_eq!(rect(&s, p, "menu_animation"), Rect::new(246, 256, 110, 21));
+    assert_eq!(rect(&s, p, "logon_animation"), Rect::new(GX, 200, 13, 13));
+    assert_eq!(rect(&s, p, "menus_group"), Rect::new(20, 234, 358, 74));
+    assert_eq!(rect(&s, p, "menu_shadow"), Rect::new(96, 252, 50, 20));
+    assert_eq!(rect(&s, p, "menu_hover_ms"), Rect::new(246, 252, 50, 20));
+    assert_eq!(rect(&s, p, "menu_hover_units"), Rect::new(300, 256, 20, 13));
+    assert_eq!(rect(&s, p, "menu_fade_ms"), Rect::new(96, 278, 50, 20));
+    assert_eq!(rect(&s, p, "menu_animation"), Rect::new(246, 278, 110, 21));
     inside_page(&s, p);
 }
 
@@ -866,12 +867,12 @@ fn effects_put_units_after_their_fields() {
     assert_eq!(rect(&s, p, "open_units"), Rect::new(GX + 116, 92, 20, 13));
     assert_eq!(
         rect(&s, p, "shadow_units"),
-        Rect::new(GX + 118, 234, 20, 13)
+        Rect::new(GX + 118, 256, 20, 13)
     );
     assert_eq!(lines(&s, p, "shadow_units"), ["px"]);
     assert_eq!(
         rect(&s, p, "menu_fade_units"),
-        Rect::new(GX + 118, 260, 20, 13)
+        Rect::new(GX + 118, 282, 20, 13)
     );
     inside_page(&s, p);
 }

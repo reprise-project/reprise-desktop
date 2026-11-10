@@ -221,9 +221,10 @@ pub fn night_light(a: Area) -> Form {
 }
 
 /// The Effects page: window animations and the fade of hovered buttons, each a check with its two durations
-/// indented under it, and the screen's fade; then the menus' shadow, timings and opening.
+/// indented under it, the screen's fade and the lock screen's motion; then the menus' shadow, timings
+/// and opening.
 pub fn effects(a: Area) -> Form {
-    let mut items = vec![group(a, "effects_group", 44, 158, "Windows")];
+    let mut items = vec![group(a, "effects_group", 44, 180, "Windows")];
     items.push(Item::check(
         "window_animation",
         GX,
@@ -270,48 +271,54 @@ pub fn effects(a: Area) -> Form {
         178,
         "&Fade the screen at log on and log off",
     ));
-    items.push(group(a, "menus_group", 212, 74, "Menus"));
+    items.push(Item::check(
+        "logon_animation",
+        GX,
+        200,
+        "Animate the &lock screen",
+    ));
+    items.push(group(a, "menus_group", 234, 74, "Menus"));
     items.extend(spin(
         "shadow_label",
         "menu_shadow",
         GX,
-        234,
+        256,
         60,
         "&Shadow:",
         (0, 32),
     ));
-    items.push(Item::label_at("shadow_units", GX + 118, 234, 20, "px"));
+    items.push(Item::label_at("shadow_units", GX + 118, 256, 20, "px"));
     items.extend(spin(
         "hover_label",
         "menu_hover_ms",
         GX + 140,
-        234,
+        256,
         70,
         "Ho&ver:",
         (0, 9999),
     ));
-    items.push(Item::label_at("menu_hover_units", GX + 268, 234, 20, "ms"));
+    items.push(Item::label_at("menu_hover_units", GX + 268, 256, 20, "ms"));
     items.extend(spin(
         "fade_label",
         "menu_fade_ms",
         GX,
-        260,
+        282,
         60,
         "Ti&me:",
         (0, 9999),
     ));
-    items.push(Item::label_at("menu_fade_units", GX + 118, 260, 20, "ms"));
+    items.push(Item::label_at("menu_fade_units", GX + 118, 282, 20, "ms"));
     items.push(Item::label_at(
         "menu_animation_label",
         GX + 140,
-        260,
+        282,
         70,
         "A&nimation:",
     ));
     items.push(choice(
         "menu_animation",
         GX + 214,
-        256,
+        278,
         110,
         MENU_ANIMATIONS,
     ));

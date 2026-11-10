@@ -210,6 +210,7 @@ pub(super) fn fields() -> Vec<Field> {
         Field::Int(k("effects", "hover_out_ms"), lens!(hover_out_ms)),
         Field::Flag(k("effects", "taskbar_slide"), lens!(taskbar_slide)),
         Field::Flag(k("effects", "session_fade"), lens!(session_fade)),
+        Field::Flag(k("effects", "logon_animation"), lens!(logon_animation)),
         Field::Int(k("metrics", "double_click_ms"), lens!(double_click_ms)),
         Field::Text(k("keyboard", "layout"), lens!(kb_layout)),
         Field::Text(k("keyboard", "variant"), lens!(kb_variant)),

@@ -11,6 +11,7 @@ use repriselogin::machine::{Background, MachineConfig};
 
 pub const LOGIN_INTERFACE: &str = "login_interface";
 pub const LOGIN_SHOW_USERS: &str = "login_show_users";
+pub const LOGIN_ANIMATION: &str = "login_animation";
 pub const LOGIN_AUTOLOGIN: &str = "login_autologin";
 pub const LOGIN_REMOTE: &str = "login_remote";
 pub const LOGIN_PORT: &str = "login_port";
@@ -86,6 +87,7 @@ pub fn login_manager(a: Area) -> Form {
             interfaces.len(),
         ),
         Item::check(LOGIN_SHOW_USERS, GX, 92, "&Show users"),
+        Item::check(LOGIN_ANIMATION, COMBO_X, 92, "A&nimate the screen"),
         Item::label_at(
             "login_autologin_label",
             GX,
@@ -308,6 +310,7 @@ pub fn show_login(
         .unwrap_or(INTERFACES.len() - 1);
     page.set_combo(LOGIN_INTERFACE, interface);
     page.set_check(LOGIN_SHOW_USERS, c.login.show_users);
+    page.set_check(LOGIN_ANIMATION, c.login.animation);
     let rows = autologin_rows(c, users);
     let picked_user = match &c.login.autologin_user {
         Some(u) => rows
@@ -390,6 +393,7 @@ pub fn read_login(page: &Form, id: &str, c: &mut MachineConfig) -> bool {
             }
         }
         LOGIN_SHOW_USERS => c.login.show_users = page.checked(id) == Some(true),
+        LOGIN_ANIMATION => c.login.animation = page.checked(id) == Some(true),
         LOGIN_AUTOLOGIN => {
             if let Some((row, name)) = combo(id) {
                 c.login.autologin_user = (row > 0).then_some(name);
