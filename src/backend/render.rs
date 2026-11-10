@@ -304,6 +304,8 @@ pub(crate) fn advance(state: &mut State, output: &Output) {
     crate::dim::frame(state);
     crate::autohideview::frame(state, output);
     crate::snapbarview::frame(state, output);
+    crate::greeterview::frame(state, output);
+    crate::lockview::frame(state, output);
 }
 
 /// Apply the commits timed to show by the refresh this frame lands on.

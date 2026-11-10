@@ -856,12 +856,15 @@ const CONSOLE: Host = Host {
     view: |s| Some((&mut s.lock.console.as_mut()?.view, &s.text)),
     act: |s, a| act(s, Side::Console, a),
     caps_lock: |s| caps_lock(s, Side::Console),
+    moves: logonview::moves,
 };
 
 const REMOTE: Host = Host {
     view: |s| Some((&mut s.lock.remote.as_mut()?.view, &s.text)),
     act: |s, a| act(s, Side::Remote, a),
     caps_lock: |s| caps_lock(s, Side::Remote),
+    // Its frames go through the remote side's encoder, where motion buys nothing.
+    moves: |_| reprisekit::logon::Moves::Off,
 };
 
 pub(crate) fn host(side: Side) -> &'static Host {
@@ -1010,6 +1013,14 @@ pub fn repaint_wall(state: &mut State, output: &Output) {
     }
 }
 
+/// `output` is about to render: the lock's screen there steps what plays on it.
+pub fn frame(state: &mut State, output: &Output) {
+    let side = crate::console::side_of(output);
+    if state.lock.on(side).is_some() {
+        logonview::frame(state, host(side), output);
+    }
+}
+
 /// Re-cover each locked side's outputs after a layout, theme or wallpaper change.
 pub fn refit(state: &mut State) {
     if state.lock.console.is_none() && state.lock.remote.is_none() {
@@ -1147,10 +1158,9 @@ fn submit(state: &mut State, side: Side) {
     if m.password.text.is_empty() {
         return;
     }
-    m.set_busy(true);
-    m.message = None;
     let password = Zeroizing::new(m.password.text.clone());
-    m.password.wipe();
+    m.sent();
+    m.message = None;
     if let Some(p) = l.pending.as_mut() {
         if let Err(e) = p.helper.conversation.answer(password.as_bytes()) {
             log::error!("lock: cannot answer the password conversation's prompt: {e}");

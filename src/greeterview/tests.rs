@@ -820,3 +820,176 @@ fn a_background_that_does_not_load_gives_back_the_interfaces_own_look() {
         );
     }
 }
+
+/// A Glass greeter on its two users' tiles, at rest; `tune` adjusts the config.
+fn glass_tiles(tune: impl FnOnce(&mut crate::config::Config)) -> (Harness, Daemon) {
+    let users = vec![user("anna"), user("bob")];
+    let (mut h, d) = login_with(repriselogin::Interface::Glass, users, tune);
+    click_part(&mut h, Part::SwitchUser);
+    if view(&mut h).play.is_some() {
+        settle(&mut h);
+    }
+    assert_eq!(model(&h).screen, logon::Screen::Tiles);
+    (h, d)
+}
+
+fn view(h: &mut Harness) -> &mut crate::logonview::LogonView {
+    &mut h
+        .state
+        .greeter
+        .login
+        .as_mut()
+        .expect("the login screen")
+        .view
+}
+
+/// The asks made by the frame about to render on the screen's output, what plays on it begun
+/// `ago` ms before when given.
+fn next_frame(h: &mut Harness, ago: Option<u64>) -> Vec<String> {
+    if let (Some(ms), Some(p)) = (ago, view(h).play.as_mut()) {
+        p.since = Some(std::time::Instant::now() - std::time::Duration::from_millis(ms));
+    }
+    let o = h.state.scene.outputs()[0].clone();
+    crate::backend::take_asks();
+    crate::backend::advance(&mut h.state, &o);
+    let asks = crate::backend::take_asks();
+    asks.into_iter().map(|(o, _)| o).collect()
+}
+
+/// Ms the change playing takes.
+fn play_ms(h: &mut Harness) -> u64 {
+    u64::from(view(h).play.as_ref().expect("a change plays").t.ms())
+}
+
+/// Let the change playing run to its end.
+fn settle(h: &mut Harness) {
+    let ms = play_ms(h);
+    next_frame(h, Some(ms + 1));
+}
+
+/// The screen at rest as its model draws it whole.
+fn at_rest(h: &mut Harness) -> Canvas {
+    let o = h.state.scene.outputs()[0].clone();
+    let b = h.state.layout_box(Some(&o));
+    let s = h.state.draw_scale_at(Some(&o));
+    let theme = h.state.config.theme.scaled(s);
+    let mut m = model(h).clone();
+    crate::logonview::screen(&mut m, &theme, &h.state.text, b, s).1
+}
+
+fn shown(h: &mut Harness) -> Canvas {
+    view(h).shown.clone().expect("the screen was drawn")
+}
+
+#[test]
+fn a_settled_transition_asks_no_more_frames() {
+    let (mut h, _d) = glass_tiles(|_| {});
+    click_part(&mut h, Part::Tile(0));
+    let p = view(&mut h).play.as_ref().expect("the pick plays");
+    assert_eq!(p.t.change, logon::Change::Pick(Part::Tile(0)));
+    assert!(p.since.is_none(), "the clock waits for the first frame");
+    assert_eq!(next_frame(&mut h, None), ["TEST-1"]);
+    assert!(view(&mut h).play.as_ref().unwrap().since.is_some());
+    assert_eq!(next_frame(&mut h, Some(100)), ["TEST-1"], "mid-pick asks");
+    assert!(
+        shown(&mut h) != at_rest(&mut h),
+        "mid-pick is between the screens"
+    );
+    let ms = play_ms(&mut h);
+    next_frame(&mut h, Some(ms + 1));
+    assert!(view(&mut h).play.is_none(), "the pick ended");
+    assert!(
+        shown(&mut h) == at_rest(&mut h),
+        "the end is the screen at rest"
+    );
+    assert_eq!(next_frame(&mut h, None), Vec::<String>::new());
+}
+
+#[test]
+fn the_ring_turns_while_busy_and_asks_nothing_once_the_failure_settles() {
+    let (mut h, mut d) = glass_tiles(|_| {});
+    click_part(&mut h, Part::Tile(0));
+    settle(&mut h);
+    tap(&mut h, &[KEY_P, KEY_W, ENTER]);
+    assert_eq!(
+        d.heard(),
+        repriselogin::greeter::GreeterRequest::CreateSession {
+            user: "anna".into()
+        }
+    );
+    assert!(model(&h).busy);
+    assert_eq!(
+        view(&mut h).play.as_ref().map(|p| p.t.change),
+        Some(logon::Change::Busy)
+    );
+    settle(&mut h);
+    next_frame(&mut h, None);
+    assert_eq!(model(&h).spin, 0, "the ring starts from step 0");
+    h.run_for(70);
+    next_frame(&mut h, None);
+    assert!(
+        model(&h).spin >= 3,
+        "the ring turned, at step {}",
+        model(&h).spin
+    );
+    assert!(
+        shown(&mut h) == at_rest(&mut h),
+        "the turned ring is the one drawn whole"
+    );
+    d.says(
+        &mut h,
+        GreeterReply::Error {
+            kind: ErrorKind::Auth,
+            text: "Authentication failure".into(),
+        },
+    );
+    assert!(!model(&h).busy);
+    assert_eq!(
+        view(&mut h).play.as_ref().map(|p| p.t.change),
+        Some(logon::Change::Fail)
+    );
+    settle(&mut h);
+    assert_eq!(next_frame(&mut h, None), Vec::<String>::new());
+    assert_eq!(model(&h).spin, 0);
+}
+
+#[test]
+fn keys_typed_during_a_pick_reach_the_password_box() {
+    let (mut h, _d) = glass_tiles(|_| {});
+    click_part(&mut h, Part::Tile(0));
+    next_frame(&mut h, Some(30));
+    tap(&mut h, &[KEY_A, KEY_A, KEY_A]);
+    assert_eq!(model(&h).password.text, "aaa");
+    assert!(view(&mut h).play.is_some(), "the pick still plays");
+    settle(&mut h);
+    let rest = at_rest(&mut h);
+    assert!(shown(&mut h) == rest, "three bullets in the box at rest");
+}
+
+#[test]
+fn a_click_mid_pick_lands_on_the_screen_it_goes_to() {
+    let (mut h, _d) = glass_tiles(|_| {});
+    click_part(&mut h, Part::Tile(0));
+    next_frame(&mut h, Some(120));
+    let p = view(&mut h).play.as_ref().unwrap();
+    let (from, to) = (p.t.carried_at(0), p.t.carried_at(p.t.ms()));
+    click_part(&mut h, Part::SwitchUser);
+    assert_eq!(model(&h).screen, logon::Screen::Tiles);
+    let p = view(&mut h).play.as_ref().expect("the way back plays");
+    assert_eq!(p.t.change, logon::Change::Back(Part::Tile(0)));
+    let start = p.t.carried_at(0);
+    assert!(
+        start != from && start != to,
+        "the frame flies back from where it was: {start:?}, not {from:?} or {to:?}"
+    );
+}
+
+#[test]
+fn with_logon_animation_off_nothing_plays() {
+    let (mut h, _d) = glass_tiles(|c| c.effects.logon_animation = false);
+    click_part(&mut h, Part::Tile(0));
+    assert_eq!(model(&h).screen, logon::Screen::Tile(0));
+    assert!(view(&mut h).play.is_none());
+    assert_eq!(next_frame(&mut h, None), Vec::<String>::new());
+    assert!(shown(&mut h) == at_rest(&mut h));
+}

@@ -396,3 +396,55 @@ fn keys_typed_while_the_block_fades_in_show_at_the_end() {
         "the end shows three bullets"
     );
 }
+
+/// Prints the mean cost of one frame (compose plus a copy of its rect, as the host's upload
+/// does) of each Glass and Blue change on a 1920x1080 output at scales 1 and 2. Run with
+/// `--ignored --nocapture`; the budget is 8 ms.
+#[test]
+#[ignore]
+fn transition_frame_cost() {
+    const FULL_HD: Rect = Rect::new(0, 0, 1920, 1080);
+    const FRAMES: u32 = 30;
+    for (changes, v) in [
+        (glass_changes(), Variant::Blue),
+        (blue_changes(), Variant::Blue),
+    ] {
+        for (name, m0, act) in changes {
+            for s in [1, 2] {
+                let mut m = m0.clone();
+                act(&mut m);
+                let Some(motion) = m.take_motion() else {
+                    continue;
+                };
+                let theme = theme(&m, v).scaled(s);
+                let text = TextRenderer::load(&theme.fonts);
+                let l = logon_layout(&m, &theme, &text, FULL_HD);
+                let d = Drawn {
+                    m: &m,
+                    l: &l,
+                    theme: &theme,
+                    text: &text,
+                    s,
+                };
+                let Some(t) = Transition::begin(&motion, &d) else {
+                    continue;
+                };
+                let (w, h) = ((FULL_HD.width * s) as u32, (FULL_HD.height * s) as u32);
+                let mut c = Canvas::new(w, h);
+                draw_logon(&mut c, &m, &l, &theme, text.for_output(s), s);
+                let mut shown = c.clone();
+                let start = std::time::Instant::now();
+                for i in 0..FRAMES {
+                    let r = t.frame(&mut c, &m, t.ms() * i / FRAMES);
+                    copy_in(&mut shown, &c, r);
+                }
+                let ms = start.elapsed().as_secs_f64() * 1000.0 / f64::from(FRAMES);
+                let r = t.rect();
+                println!(
+                    "{:?} {name} @{s}: {ms:.2} ms/frame, rect {}x{}",
+                    m.interface, r.width, r.height
+                );
+            }
+        }
+    }
+}

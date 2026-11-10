@@ -47,6 +47,7 @@ const HOST: Host = Host {
     view: |s| Some((&mut s.greeter.login.as_mut()?.view, &s.text)),
     act,
     caps_lock: logonview::seat_caps_lock,
+    moves: logonview::moves,
 };
 
 fn user_note(note: Note) -> UserNote {
@@ -277,6 +278,11 @@ pub fn background_failed(state: &mut State) {
 
 pub fn redraw(state: &mut State) {
     logonview::redraw(state, &HOST);
+}
+
+/// `output` is about to render: the login screen there steps what plays on it.
+pub fn frame(state: &mut State, output: &smithay::output::Output) {
+    logonview::frame(state, &HOST, output);
 }
 
 #[cfg(test)]
