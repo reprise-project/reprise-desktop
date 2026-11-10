@@ -33,6 +33,8 @@ pub(crate) struct RemoteSession {
     pub(crate) screencast: CastState,
     /// Held while the session casts lock mode's screens (`crate::lockmode`).
     pub(crate) lock: Option<Arc<crate::inputlink::LockScreenHandle>>,
+    /// The balloon a start from a remembered grant showed.
+    pub(crate) notice: Option<crate::remotenotice::Shown>,
 }
 
 pub struct RemoteDesktop {
@@ -317,7 +319,8 @@ impl RemoteDesktop {
             None => return Ok((RESPONSE_CANCELLED, empty())),
         }
         if restored && !trusted {
-            let show = self.notices.clone().show(conn.clone(), key, app_id.clone());
+            let sessions = self.sessions.clone();
+            let show = (self.notices.clone()).show(conn.clone(), sessions, key, app_id.clone());
             zruntime::spawn(show).detach();
         }
         let restore_data =
@@ -671,15 +674,18 @@ mod tests {
     #[derive(Clone, Debug, PartialEq)]
     struct Note {
         app_name: String,
+        replaces_id: u32,
         summary: String,
         actions: Vec<String>,
         urgency: Option<u8>,
         desktop_entry: Option<String>,
+        expire_timeout: i32,
     }
 
     type Noted = Arc<Mutex<Vec<Note>>>;
+    type Closed = Arc<Mutex<Vec<u32>>>;
 
-    struct FakeNotifications(Noted);
+    struct FakeNotifications(Noted, Closed);
 
     #[zbus::interface(name = "org.freedesktop.Notifications")]
     impl FakeNotifications {
@@ -687,24 +693,33 @@ mod tests {
         fn notify(
             &self,
             app_name: String,
-            _replaces_id: u32,
+            replaces_id: u32,
             _app_icon: String,
             summary: String,
             _body: String,
             actions: Vec<String>,
             hints: HashMap<String, OwnedVariant>,
-            _expire_timeout: i32,
+            expire_timeout: i32,
         ) -> u32 {
             let mut noted = self.0.lock().unwrap();
             noted.push(Note {
                 app_name,
+                replaces_id,
                 summary,
                 actions,
                 urgency: hints.get("urgency").and_then(|v| u8::try_from(v).ok()),
                 desktop_entry: (hints.get("desktop-entry"))
                     .and_then(|v| String::try_from(v.try_clone().ok()?).ok()),
+                expire_timeout,
             });
-            40 + noted.len() as u32
+            match replaces_id {
+                0 => 40 + noted.len() as u32,
+                id => id,
+            }
+        }
+
+        fn close_notification(&self, id: u32) {
+            self.1.lock().unwrap().push(id);
         }
     }
 
@@ -752,6 +767,7 @@ mod tests {
         fakes: zbus::Connection,
         sessions: Sessions,
         noted: Noted,
+        closed: Closed,
         table: Table,
     }
 
@@ -762,7 +778,7 @@ mod tests {
                 fake_compositor(&mut theirs, 2, 10);
                 while request(&mut theirs).is_ok() {}
             });
-            let noted = Noted::default();
+            let (noted, closed) = (Noted::default(), Closed::default());
             let table: Table = Arc::new(Mutex::new(
                 (table.iter())
                     .map(|(app, id)| {
@@ -776,7 +792,7 @@ mod tests {
                 .name("org.freedesktop.Notifications")
                 .serve_at(
                     "/org/freedesktop/Notifications",
-                    FakeNotifications(noted.clone()),
+                    FakeNotifications(noted.clone(), closed.clone()),
                 )
                 .build()
                 .await
@@ -821,6 +837,7 @@ mod tests {
                 fakes,
                 sessions,
                 noted,
+                closed,
                 table,
             }
         }
@@ -870,6 +887,43 @@ mod tests {
             code
         }
 
+        /// Close session `n` as the frontend does.
+        async fn close(&self, n: u32) {
+            let session = format!("/org/freedesktop/portal/desktop/session/1_99/s{n}");
+            let dest = self.portal.unique_name().unwrap().to_string();
+            let iface = Some("org.freedesktop.impl.portal.Session");
+            (self.client)
+                .call_method(Some(dest.as_str()), session.as_str(), iface, "Close", &())
+                .await
+                .unwrap();
+        }
+
+        /// Whether session `n` holds its balloon's id, within 5 s.
+        async fn noticed(&self, n: u32) -> bool {
+            let key = format!("/org/freedesktop/portal/desktop/session/1_99/s{n}");
+            for _ in 0..500 {
+                let held = (self.sessions.lock().unwrap().get_mut(&key))
+                    .and_then(SessionData::remote_mut)
+                    .is_some_and(|s| s.notice.is_some());
+                if held {
+                    return true;
+                }
+                async_io::Timer::after(Duration::from_millis(10)).await;
+            }
+            false
+        }
+
+        /// The balloons closed so far, once `n` have or after 5 s.
+        async fn closes(&self, n: usize) -> Vec<u32> {
+            for _ in 0..500 {
+                if self.closed.lock().unwrap().len() >= n {
+                    break;
+                }
+                async_io::Timer::after(Duration::from_millis(10)).await;
+            }
+            self.closed.lock().unwrap().clone()
+        }
+
         fn session(&self, n: u32) -> Option<bool> {
             let key = format!("/org/freedesktop/portal/desktop/session/1_99/s{n}");
             let mut map = self.sessions.lock().unwrap();
@@ -891,15 +945,51 @@ mod tests {
     }
 
     /// Critical and from Reprise, not the app, so neither the app's mute nor Do Not Disturb holds
-    /// it, and it stays up past a lock.
+    /// it, and it stays up past a lock for 30 s.
     fn controlled(app_id: &str) -> Note {
         Note {
             app_name: "Reprise".to_string(),
+            replaces_id: 0,
             summary: format!("{app_id} is controlling this computer"),
             actions: vec!["forget".to_string(), "Stop and forget".to_string()],
             urgency: Some(2),
             desktop_entry: None,
+            expire_timeout: 30_000,
         }
+    }
+
+    #[test]
+    fn an_app_keeps_one_balloon_which_closes_with_its_last_session() {
+        let Some(bus) = crate::lockmode::tests::bus() else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
+        zbus::block_on(async {
+            let desk = Desk::on(bus, never_asked, &[]).await;
+            assert_eq!(desk.start(1, APP, true).await, RESPONSE_OK);
+            assert!(desk.noticed(1).await);
+            assert_eq!(desk.start(2, APP, true).await, RESPONSE_OK);
+            assert!(desk.noticed(2).await);
+            let second = Note {
+                replaces_id: 41,
+                ..controlled(APP)
+            };
+            assert_eq!(
+                desk.balloons(2).await[1],
+                second,
+                "the restart reuses the balloon"
+            );
+            desk.close(1).await;
+            async_io::Timer::after(Duration::from_millis(200)).await;
+            let none: [u32; 0] = [];
+            assert_eq!(
+                *desk.closed.lock().unwrap(),
+                none,
+                "the second session still has it"
+            );
+            desk.close(2).await;
+            assert_eq!(desk.closes(1).await, [41]);
+        });
     }
 
     #[test]
@@ -946,14 +1036,16 @@ mod tests {
             let other = "org.example.Other";
             let desk = Desk::on(bus, never_asked, &[(APP, "token-a"), (other, "token-b")]).await;
             assert_eq!(desk.start(1, APP, true).await, RESPONSE_OK);
-            assert_eq!(desk.balloons(1).await.len(), 1);
+            assert!(desk.noticed(1).await);
+            assert_eq!(desk.start(3, APP, true).await, RESPONSE_OK);
+            assert!(desk.noticed(3).await);
             let emitter = zbus::object_server::SignalEmitter::new(
                 &desk.fakes,
                 "/org/freedesktop/Notifications",
             )
             .unwrap();
             for _ in 0..500 {
-                if desk.session(1).is_none() {
+                if desk.session(1).is_none() && desk.session(3).is_none() {
                     break;
                 }
                 // What the server sends for a button: the click, then the balloon closing.
@@ -968,6 +1060,7 @@ mod tests {
                 async_io::Timer::after(Duration::from_millis(10)).await;
             }
             assert_eq!(desk.session(1), None, "the session ended");
+            assert_eq!(desk.session(3), None, "and every other session of the app");
             for _ in 0..500 {
                 if !desk.table.lock().unwrap().contains_key("token-a") {
                     break;
