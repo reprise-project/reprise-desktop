@@ -138,6 +138,10 @@ camera, microphone, printing) don't apply and `[privacy] location` alone turns l
 
 Reprise also hosts `org.freedesktop.Notifications`, the StatusNotifierWatcher
 for the tray, `org.freedesktop.ScreenSaver` and the GeoClue2 agent.
+`ActionInvoked`, `ActivationToken`, `NotificationReplied` and
+`NotificationClosed` go only to the connection that sent or last replaced the
+notification, as KDE Plasma sends them, so a client that waits for them on a
+connection of its own (notify-rust's `handle_action`) never hears them.
 `org.freedesktop.ScreenSaver` takes inhibits, and its `GetActive` and
 `ActiveChanged` report the desktop's lock: this computer's, or the remote
 side's in lock mode. The Inhibit portal's `screensaver-active` reports the

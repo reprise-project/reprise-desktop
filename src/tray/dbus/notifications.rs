@@ -17,9 +17,8 @@ use zbus::Connection;
 use zbus::message::Header;
 use zbus::object_server::SignalEmitter;
 
-/// Connection, app name and PID per open notification. A replace is honoured from the connection,
-/// or under the same app name from its process or once it left the bus (`notify-send -r` is a new
-/// process each time); a close only from the connection.
+/// Connection, app name and PID per open notification. A replace from the connection, the same
+/// app's process, or once it left the bus (`notify-send -r`) takes it over; a close only from it.
 #[derive(Default)]
 pub(super) struct Senders(pub(super) HashMap<u32, (String, String, Option<i32>)>);
 
@@ -53,9 +52,7 @@ impl Senders {
         let same_app = |a: &String| !app.is_empty() && a == app;
         let id = match self.0.get(&replaces) {
             Some((s, _, _)) if s == sender => replaces,
-            Some((_, a, p)) if same_app(a) && pid.is_some() && *p == pid && !left => {
-                return replaces;
-            }
+            Some((_, a, p)) if same_app(a) && pid.is_some() && *p == pid && !left => replaces,
             Some((_, a, _)) if same_app(a) && left => replaces,
             _ => loop {
                 let id = fresh();
