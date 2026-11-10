@@ -1,7 +1,8 @@
 use super::{TrayCommand, TrayItem, builtin, send};
 use crate::compositor::State;
 use crate::icontheme::{
-    ExtraTree, IconCache, MAX_ICON_BYTES, bare_name, decode_bytes, is_icon_file, list_at_most,
+    ExtraTree, IconCache, MAX_ICON_BYTES, MAX_ICON_DIMENSION, bare_name, decode_bytes,
+    is_icon_file, list_at_most,
 };
 use crate::mutex::lock;
 use crate::raster::Canvas;
@@ -13,27 +14,28 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-/// Largest `IconPixmap` side the tray keeps. It draws at most 32 px per step of
-/// draw scale, so a bigger entry only costs memory.
-const MAX_PIXMAP_SIDE: i32 = 256;
+/// Largest `IconPixmap` side read, 4 MiB an entry; Electron apps send only 512 px.
+const MAX_PIXMAP_SIDE: i32 = MAX_ICON_DIMENSION as i32;
 
 /// For each of `sizes`, the px the icon is drawn at ([`icon_sizes`]), the smallest
-/// `IconPixmap` entry at least that wide, else the widest: drawing shrinks it.
+/// `IconPixmap` entry at least that wide, else the widest, shrunk to the widest size it serves.
 pub fn item_pixmaps(raw: &[(i32, i32, &[u8])], sizes: &[i32]) -> Vec<IconSource> {
     let usable = || {
         raw.iter()
             .enumerate()
             .filter(|(_, (w, h, b))| pixmap_len(*w, *h, b.len()).is_some())
     };
-    let mut picked: Vec<usize> = Vec::with_capacity(sizes.len());
+    let mut picked: Vec<(usize, i32)> = Vec::with_capacity(sizes.len());
     for &size in sizes {
         let fit = usable()
             .filter(|(_, (w, ..))| *w >= size)
             .min_by_key(|(_, (w, ..))| *w);
-        if let Some((i, _)) = fit.or_else(|| usable().max_by_key(|(_, (w, ..))| *w))
-            && !picked.contains(&i)
-        {
-            picked.push(i);
+        let Some((i, _)) = fit.or_else(|| usable().max_by_key(|(_, (w, ..))| *w)) else {
+            continue;
+        };
+        match picked.iter_mut().find(|(p, _)| *p == i) {
+            Some((_, served)) => *served = (*served).max(size),
+            None => picked.push((i, size)),
         }
     }
     if picked.is_empty() && !raw.is_empty() {
@@ -41,7 +43,14 @@ pub fn item_pixmaps(raw: &[(i32, i32, &[u8])], sizes: &[i32]) -> Vec<IconSource>
     }
     picked
         .into_iter()
-        .filter_map(|i| pixmap_to_source(raw[i].0, raw[i].1, raw[i].2))
+        .filter_map(|(i, served)| {
+            let source = pixmap_to_source(raw[i].0, raw[i].1, raw[i].2)?;
+            let wider = source.width.max(source.height) > u32::try_from(served).ok()?;
+            Some(match wider {
+                true => IconSource::from(source.to_canvas(served)),
+                false => source,
+            })
+        })
         .collect()
 }
 

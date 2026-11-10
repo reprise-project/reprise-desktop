@@ -737,8 +737,8 @@ fn pixmap_to_source_rejects_oversized_claims_regardless_of_buffer_len() {
 }
 
 #[test]
-fn item_pixmaps_keeps_an_entry_per_drawn_size_of_at_most_256_px() {
-    let pixels = vec![0u8; 1024 * 1024 * 4];
+fn item_pixmaps_keeps_an_entry_per_drawn_size_of_at_most_1024_px_shrunk_to_it() {
+    let pixels = vec![0u8; 1025 * 1025 * 4];
     let entry = |side: i32| (side, side, &pixels[..(side * side * 4) as usize]);
     let mut raw: Vec<_> = (0..30).map(|_| entry(1024)).collect();
     raw.extend([16, 20, 22, 32, 48, 64, 256, 300].map(entry));
@@ -746,22 +746,32 @@ fn item_pixmaps_keeps_an_entry_per_drawn_size_of_at_most_256_px() {
     let widths: Vec<u32> = kept.iter().map(|p| p.width).collect();
     assert_eq!(
         widths,
-        [16, 32, 64],
-        "the smallest entry at least each drawn size"
+        [16, 32, 50],
+        "the smallest entry at least each drawn size, the 64 px one shrunk to 50"
     );
-    let kept = item_pixmaps(&raw, &[16, 300]);
+    let kept = item_pixmaps(&raw, &[16, 2000]);
     let widths: Vec<u32> = kept.iter().map(|p| p.width).collect();
-    assert_eq!(widths, [16, 256], "the widest kept entry past them all");
+    assert_eq!(widths, [16, 1024], "the widest entry past them all");
 
     let big: Vec<_> = (0..30).map(|_| entry(256)).collect();
-    assert_eq!(
-        item_pixmaps(&big, &[16, 32]).len(),
-        1,
-        "one 256 px entry out of 30"
-    );
+    let kept = item_pixmaps(&big, &[16, 32]);
+    let widths: Vec<u32> = kept.iter().map(|p| p.width).collect();
+    assert_eq!(widths, [32], "one 256 px entry out of 30, shrunk to 32");
     assert!(
-        item_pixmaps(&[entry(1024)], &[16]).is_empty(),
-        "1024 px is dropped"
+        item_pixmaps(&[entry(1025)], &[16]).is_empty(),
+        "1025 px is dropped"
+    );
+}
+
+#[test]
+fn an_items_only_pixmap_of_512_px_is_kept_shrunk_to_the_widest_drawn_size() {
+    let pixels: Vec<u8> = [0xFF, 0x00, 0x00, 0xFF].repeat(512 * 512);
+    let kept = item_pixmaps(&[(512, 512, &pixels[..])], &[16, 20, 32]);
+    let sides: Vec<(u32, u32)> = kept.iter().map(|p| (p.width, p.height)).collect();
+    assert_eq!(sides, [(32, 32)]);
+    assert!(
+        kept[0].pixels.iter().all(|&p| p == 0xFF00_00FF),
+        "opaque blue"
     );
 }
 
