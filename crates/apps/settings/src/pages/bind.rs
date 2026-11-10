@@ -2,9 +2,9 @@
 
 use super::appearance::{ANIM_CONTROLS, HOVER_CONTROLS, MOTION_CONTROLS, NL_CONTROLS, NL_TIMES};
 use super::desktop::{
-    DESKTOP_CONTROLS, DRAG_SNAP_CONTROLS, DURATION_CONTROLS, FLIP_NOTE, FPS_CONTROLS,
-    GLOW_CONTROLS, OVERVIEW_NOTE, REVEAL_CONTROLS, SEARCH_NOTE, flip_note, overview_note,
-    search_note,
+    DESKTOP_CONTROLS, DESKTOP_MOTION_NOTE, DRAG_SNAP_CONTROLS, DURATION_CONTROLS, FLIP_NOTE,
+    FPS_CONTROLS, GLOW_CONTROLS, MOTION_NOTE, OVERVIEW_NOTE, REVEAL_CONTROLS, SEARCH_NOTE,
+    SLIDE_MOTION_NOTE, SLIDE_MOTION_TEXT, flip_note, overview_note, search_note,
 };
 use super::input::{MOUSE_KEYS_CONTROLS, SLOW_CONTROLS, STICKY_CONTROLS};
 use super::system::{
@@ -685,9 +685,14 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
     for id in ["pager_mark_label", "pager_mark"] {
         dp.set_enabled(id, many && s.interface == "glass");
     }
-    for id in DURATION_CONTROLS {
-        dp.set_enabled(id, many && s.desktop_animation != "none");
+    let moving = !s.reduce_motion;
+    for id in ["animation_label", "desktop_animation"] {
+        dp.set_enabled(id, many && moving);
     }
+    for id in DURATION_CONTROLS {
+        dp.set_enabled(id, many && moving && s.desktop_animation != "none");
+    }
+    dp.set_text(DESKTOP_MOTION_NOTE, if moving { "" } else { MOTION_NOTE });
     for page in &mut sheet.pages {
         if let Some(Control::Check { enabled, .. }) = page
             .item_mut("two_finger_tap_right_click")
@@ -726,7 +731,6 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
     vision.set_check(crate::magnifierpage::REDUCE_MOTION, s.reduce_motion);
     let fx = &mut sheet.pages[Page::Effects.index()];
     fx.set_check("reduce_motion", s.reduce_motion);
-    let moving = !s.reduce_motion;
     for id in MOTION_CONTROLS {
         fx.set_enabled(id, moving);
     }
@@ -749,6 +753,11 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
         tb.set_enabled(id, s.taskbar_auto_hide);
     }
     tb.set_enabled(TRAY_CUSTOMIZE, s.taskbar_tray_overflow);
+    tb.set_enabled("taskbar_slide", moving);
+    tb.set_text(
+        SLIDE_MOTION_NOTE,
+        if moving { "" } else { SLIDE_MOTION_TEXT },
+    );
     for id in FPS_CONTROLS {
         tb.set_enabled(id, live);
     }

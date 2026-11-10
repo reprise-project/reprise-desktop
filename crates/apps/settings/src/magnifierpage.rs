@@ -112,9 +112,7 @@ pub fn page(a: Area) -> Form {
         Item::new(
             "motion_note",
             Rect::new(GX, MOTION_TOP + 38, gw, LINE_H),
-            Control::Lines(vec![
-                "GTK and Qt programs that follow it stop animating too.".into(),
-            ]),
+            Control::Lines(vec!["GTK programs stop animating too.".into()]),
         ),
     ])
 }

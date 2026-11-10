@@ -464,7 +464,8 @@ suspend_after = 0            # run [power] standby
 #                            # (a later one comes up from below), "fade", "zoom" (the old desktop
 #                            # shrinks as it fades) or "wipe" (an edge sweeps the old one away);
 #                            # a three-finger swipe slides after the fingers whatever is set here
-# animation_ms = 200         # 0 to 2000; 0 is no animation, and a lifted swipe lands at once
+# animation_ms = 200         # 0 to 2000; 0 is no animation, and a lifted swipe lands at once;
+#                            # [effects] reduce_motion = true overrides both with no animation
 # wheel_on_desktop = false   # true: the wheel over the desktop steps desktops as over the pager
 # names = ["Work", "Chat"]   # each desktop's name, first for desktop 1, in the pager's tip and the
 #                            # Move to desktop menus; "" or a missing one is "Desktop N"
@@ -498,9 +499,9 @@ suspend_after = 0            # run [power] standby
 # logon_animation = true     # the lock screen's transitions, its fade at unlock and Glass's
 #                            # busy ring turning; [login] animation in login.toml does the
 #                            # same for the login screen
-# reduce_motion = false      # true: every motion off or at once, over the keys above and
-#                            # [workspaces] animation; GTK and other programs reading the
-#                            # settings portal are told to stop animating too
+# reduce_motion = false      # true: the desktop's motion off or at once, over the keys above
+#                            # and [workspaces] animation; GTK programs are told through the
+#                            # settings portal to stop animating too
 
 # [accessibility]            # keyboard and pointer aids, for every program and the desktop's own keys
 # sticky_keys = false        # a tap of Shift, Ctrl, Alt or Super holds it for the next key

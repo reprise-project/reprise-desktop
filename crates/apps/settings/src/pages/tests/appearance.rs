@@ -974,6 +974,53 @@ fn reduce_motion_greys_every_motion_and_shows_on_magnifier_and_filters_too() {
 }
 
 #[test]
+fn reduce_motion_greys_the_task_slide_and_desktop_switch_with_a_note() {
+    let mut got = Settings {
+        desktops: 4,
+        desktop_animation: "slide".into(),
+        ..Settings::for_interface("glass")
+    };
+    let mut s = with(&got);
+    let held = [
+        (Page::Taskbar, "taskbar_slide"),
+        (Page::VirtualDesktops, "animation_label"),
+        (Page::VirtualDesktops, "desktop_animation"),
+        (Page::VirtualDesktops, "duration_label"),
+        (Page::VirtualDesktops, "desktop_animation_ms"),
+        (Page::VirtualDesktops, "duration_units"),
+    ];
+    let notes = [
+        (Page::Taskbar, "taskbar_slide_note"),
+        (Page::VirtualDesktops, "desktop_animation_note"),
+    ];
+    assert!(held.iter().all(|&(p, id)| enabled_on(&s, p, id)));
+    for (p, id) in notes {
+        assert_eq!(lines(&s, p, id), [""], "{id} is blank");
+    }
+    set_check(&mut s, &mut got, "reduce_motion", true);
+    for (p, id) in held {
+        assert!(!enabled_on(&s, p, id), "{id} greys");
+    }
+    assert_eq!(
+        lines(&s, Page::Taskbar, "taskbar_slide_note"),
+        ["(Reduce motion)"]
+    );
+    assert_eq!(
+        lines(&s, Page::VirtualDesktops, "desktop_animation_note"),
+        ["Off while Reduce motion is on (Effects page)"]
+    );
+    assert!(
+        enabled_on(&s, Page::VirtualDesktops, "desktops"),
+        "the desktop count is no motion"
+    );
+    set_check(&mut s, &mut got, "reduce_motion", false);
+    assert!(held.iter().all(|&(p, id)| enabled_on(&s, p, id)));
+    for (p, id) in notes {
+        assert_eq!(lines(&s, p, id), [""], "{id} is blank again");
+    }
+}
+
+#[test]
 fn the_night_light_page_geometry() {
     let s = built();
     let p = Page::NightLight;

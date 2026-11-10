@@ -1,5 +1,5 @@
 //! The `org.freedesktop.impl.portal.Settings` backend, served from the compositor's bus connection so GTK, Qt and browsers learn through xdg-desktop-portal whether the look is dark and what its accent is.
-//! Four namespaces are answered, everything else is NotFound (`reprise-portals.conf` names no other Settings backend): `org.freedesktop.appearance`, `org.reprise.appearance` (the whole look, for Reprise's programs), `org.gnome.desktop.interface` (theme, icons, cursor, font, font smoothing, overlay scrolling and animations for GTK3, and an empty `gtk-im-module` for GTK4, which the session points at the portal via `GTK_USE_PORTAL`) and `button-layout` of `org.gnome.desktop.wm.preferences` for client-drawn captions.
+//! Four namespaces are answered, everything else is NotFound (`reprise-portals.conf` names no other Settings backend): `org.freedesktop.appearance`, `org.reprise.appearance` (the whole look, for Reprise's programs), `org.gnome.desktop.interface` (theme, icons, cursor, font, font smoothing and overlay scrolling for GTK3, `enable-animations` for GTK3 and GTK4, and an empty `gtk-im-module` for GTK4, which the session points at the portal via `GTK_USE_PORTAL`) and `button-layout` of `org.gnome.desktop.wm.preferences` for client-drawn captions.
 
 use crate::config::{Config, FontSmoothing};
 use crate::mutex::lock;
@@ -22,7 +22,7 @@ const GNOME_WM: &str = "org.gnome.desktop.wm.preferences";
 /// light, `contrast` 1 for the High Contrast schemes, `accent` sRGB in
 /// 0..1, `reduced-motion` 1 under `[effects] reduce_motion`. The Reprise
 /// one is the look as the environment hands it to a program. The GNOME
-/// one is GTK3's theme, icons, cursor, font and font smoothing.
+/// one is GTK's theme, icons, cursor, font, font smoothing and animations.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Appearance {
     pub color_scheme: u32,

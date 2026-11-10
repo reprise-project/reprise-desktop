@@ -139,7 +139,7 @@ impl EffectsConfig {
         }
     }
 
-    /// Turns every keyed motion off: what `reduce_motion` does to them.
+    /// Turns every `[effects]` motion key off: what `reduce_motion` does to them.
     pub fn hold_still(&mut self) {
         self.window_animation = false;
         self.hover_fade = false;

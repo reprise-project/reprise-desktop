@@ -164,9 +164,8 @@ impl State {
         }
     }
 
-    /// Freeze the screen behind Welcome panel `id` and fade it to grey, or grey it at once under
-    /// `reduce_motion`. Taken once the panel has the keyboard, so windows and task buttons show
-    /// inactive, with the panel's tree off.
+    /// Freeze the screen behind Welcome panel `id` and fade it to grey. Taken once the panel has the
+    /// keyboard, so windows and task buttons show inactive, with the panel's tree off.
     fn grey_the_screen_under(&mut self, id: u64) {
         let Some(v) = self.dialogs.views.iter().find(|v| v.id == id) else {
             return;

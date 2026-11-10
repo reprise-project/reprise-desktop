@@ -192,19 +192,16 @@ struct Pan {
     from: (f64, f64),
     to: (f64, f64),
     started: Instant,
-    takes: Duration,
 }
 
 impl Pan {
-    fn at(&self, now: Instant) -> ((f64, f64), bool) {
+    /// Where a pan that `takes` this long is at `now`, and whether it is done.
+    fn at(&self, now: Instant, takes: Duration) -> ((f64, f64), bool) {
         let gone = now.saturating_duration_since(self.started);
-        if gone >= self.takes {
+        if gone >= takes {
             return (self.to, true);
         }
-        let t = gone.as_secs_f64() / self.takes.as_secs_f64();
-        if t >= 1.0 {
-            return (self.to, true);
-        }
+        let t = gone.as_secs_f64() / takes.as_secs_f64();
         let e = 1.0 - (1.0 - t).powi(3);
         let mix = |a: f64, b: f64| a + (b - a) * e;
         (
@@ -221,25 +218,22 @@ struct Track {
     focus: Option<Area>,
     pan: Option<Pan>,
     since: Instant,
-    /// How long a pan takes: `PAN`, or none under `[effects] reduce_motion`.
-    pan_takes: Duration,
 }
 
 impl Track {
-    fn new(now: Instant, still: bool) -> Track {
+    fn new(now: Instant) -> Track {
         Track {
             pointer: None,
             focus: None,
             pan: None,
             since: now,
-            pan_takes: if still { Duration::ZERO } else { PAN },
         }
     }
 }
 
 /// One frame's view at `now`: a moved `pointer` (None off the output) pushes the view and stops
-/// any pan; otherwise a moved `focus` starts a pan. A focus counts once it moves, or when it
-/// shows up after the zoom settled (`SETTLE`).
+/// any pan; otherwise a moved `focus` starts a pan of `pan`, read each frame so zero lands one
+/// under way. A focus counts once it moves, or when it shows up after the zoom settled (`SETTLE`).
 fn track(
     zoom: Zoom,
     t: &mut Track,
@@ -247,6 +241,7 @@ fn track(
     focus: Option<Area>,
     size: (f64, f64),
     now: Instant,
+    pan: Duration,
 ) -> Zoom {
     let moved = pointer.is_some() && pointer != t.pointer;
     t.pointer = pointer;
@@ -267,12 +262,11 @@ fn track(
                 from: (zoom.x, zoom.y),
                 to: (want.x, want.y),
                 started: now,
-                takes: t.pan_takes,
             });
         }
     }
-    if let Some(pan) = t.pan {
-        let ((x, y), done) = pan.at(now);
+    if let Some(p) = t.pan {
+        let ((x, y), done) = p.at(now, pan);
         (zoom.x, zoom.y) = (x, y);
         if done {
             t.pan = None;
@@ -289,6 +283,8 @@ pub struct Magnifier {
     color: Option<Option<reprisefx::ColorFx>>,
     /// The filter `color-filter` turns back on.
     last_filter: Option<Filter>,
+    /// `[effects] reduce_motion`: the view jumps instead of panning.
+    pub still: bool,
 }
 
 struct OutputZoom {
@@ -376,7 +372,6 @@ impl State {
         let Some((geo, size)) = geometry(&output) else {
             return;
         };
-        let still = self.config.effects.reduce_motion;
         let m = &mut self.magnifier;
         m.retain(self.scene.outputs());
         let p = (
@@ -392,7 +387,7 @@ impl State {
         match m.outputs.iter_mut().find(|z| z.output == output) {
             Some(z) => {
                 if !old.active() {
-                    z.track = Track::new(now, still);
+                    z.track = Track::new(now);
                 }
                 z.zoom = zoom;
                 z.track.pan = None;
@@ -400,7 +395,7 @@ impl State {
             None => m.outputs.push(OutputZoom {
                 output: output.clone(),
                 zoom,
-                track: Track::new(now, still),
+                track: Track::new(now),
                 frame: None,
             }),
         }
@@ -537,11 +532,12 @@ pub fn output_elements(
         magnifier.outputs.push(OutputZoom {
             output: output.clone(),
             zoom: Zoom::OFF,
-            track: Track::new(Instant::now(), false),
+            track: Track::new(Instant::now()),
             frame: None,
         });
         magnifier.outputs.len() - 1
     });
+    let pan = if magnifier.still { Duration::ZERO } else { PAN };
     let z = &mut magnifier.outputs[i];
     let Parts {
         scene,
@@ -557,7 +553,7 @@ pub fn output_elements(
     if zoomed {
         let seen = on_output.then_some(p);
         let now = Instant::now();
-        z.zoom = track(z.zoom, &mut z.track, seen, focus, size, now);
+        z.zoom = track(z.zoom, &mut z.track, seen, focus, size, now, pan);
         if let (Some(pan), Some((x, y, w, h))) = (z.track.pan, focus)
             && pan.started == now
         {
@@ -829,47 +825,93 @@ mod tests {
             from: (0.0, 0.0),
             to: (100.0, 50.0),
             started: t0,
-            takes: PAN,
         };
-        assert_eq!(pan.at(t0), ((0.0, 0.0), false));
-        let ((x, _), done) = pan.at(t0 + PAN / 2);
+        assert_eq!(pan.at(t0, PAN), ((0.0, 0.0), false));
+        let ((x, _), done) = pan.at(t0 + PAN / 2, PAN);
         assert!(!done && x > 50.0, "past halfway at half time: {x}");
-        assert_eq!(pan.at(t0 + PAN), ((100.0, 50.0), true));
+        assert_eq!(pan.at(t0 + PAN, PAN), ((100.0, 50.0), true));
     }
 
     #[test]
     fn under_reduce_motion_the_view_jumps_to_a_moved_caret() {
         let t0 = Instant::now();
-        let mut t = Track::new(t0, true);
+        let mut t = Track::new(t0);
         let ptr = Some((500.0, 300.0));
         let caret = |x| Some((x, 300.0, 2.0, 16.0));
-        let z = track(at(8, 400.0, 200.0), &mut t, ptr, caret(600.0), SIZE, t0);
-        let z = track(z, &mut t, ptr, caret(950.0), SIZE, t0 + SETTLE);
+        let z = track(
+            at(8, 400.0, 200.0),
+            &mut t,
+            ptr,
+            caret(600.0),
+            SIZE,
+            t0,
+            Duration::ZERO,
+        );
+        let z = track(
+            z,
+            &mut t,
+            ptr,
+            caret(950.0),
+            SIZE,
+            t0 + SETTLE,
+            Duration::ZERO,
+        );
         assert_eq!(z.x, 532.0, "the caret 60 in from the right edge at once");
+        assert!(t.pan.is_none(), "no pan left running");
+    }
+
+    #[test]
+    fn reduce_motion_turned_on_mid_pan_lands_it_on_the_next_frame() {
+        let t0 = Instant::now();
+        let mut t = Track::new(t0);
+        let ptr = Some((500.0, 300.0));
+        let caret = |x| Some((x, 300.0, 2.0, 16.0));
+        let z = track(
+            at(8, 400.0, 200.0),
+            &mut t,
+            ptr,
+            caret(600.0),
+            SIZE,
+            t0,
+            PAN,
+        );
+        let t1 = t0 + SETTLE;
+        let z = track(z, &mut t, ptr, caret(950.0), SIZE, t1, PAN);
+        assert!(t.pan.is_some());
+        let z = track(
+            z,
+            &mut t,
+            ptr,
+            caret(950.0),
+            SIZE,
+            t1 + PAN / 4,
+            Duration::ZERO,
+        );
+        assert_eq!(z.x, 532.0, "the view is where the pan was going");
         assert!(t.pan.is_none(), "no pan left running");
     }
 
     #[test]
     fn the_view_pans_to_a_caret_that_moves_and_the_pointer_wins() {
         let t0 = Instant::now();
-        let mut t = Track::new(t0, false);
+        let mut t = Track::new(t0);
         let ptr = Some((500.0, 300.0));
         let mut z = at(8, 400.0, 200.0);
         let caret = |x| Some((x, 300.0, 2.0, 16.0));
-        z = track(z, &mut t, ptr, caret(600.0), SIZE, t0);
+        z = track(z, &mut t, ptr, caret(600.0), SIZE, t0, PAN);
         assert_eq!((z.x, z.y), (400.0, 200.0), "the pointer was first seen");
         // The caret moves out of view to the right: a pan starts.
         let t1 = t0 + SETTLE;
-        z = track(z, &mut t, ptr, caret(950.0), SIZE, t1);
+        z = track(z, &mut t, ptr, caret(950.0), SIZE, t1, PAN);
         assert!(t.pan.is_some());
         assert_eq!(z.x, 400.0, "the pan starts where the view is");
-        z = track(z, &mut t, ptr, caret(950.0), SIZE, t1 + PAN / 2);
+        z = track(z, &mut t, ptr, caret(950.0), SIZE, t1 + PAN / 2, PAN);
         assert!(z.x > 400.0 && z.x < 532.0, "under way: {}", z.x);
-        z = track(z, &mut t, ptr, caret(950.0), SIZE, t1 + PAN);
+        z = track(z, &mut t, ptr, caret(950.0), SIZE, t1 + PAN, PAN);
         assert_eq!(z.x, 532.0, "the caret 60 in from the right edge");
         assert!(t.pan.is_none());
         // The caret stays: the still pointer does not pull the view back.
-        z = track(z, &mut t, ptr, caret(950.0), SIZE, t1 + PAN * 2);
+        z = track(z, &mut t, ptr, caret(950.0), SIZE, t1 + PAN * 2, PAN);
         assert_eq!(z.x, 532.0);
         // The caret moves away again, and the pointer moves at once.
         z = track(
@@ -879,6 +921,7 @@ mod tests {
             caret(100.0),
             SIZE,
             t1 + PAN * 3,
+            PAN,
         );
         assert!(t.pan.is_none(), "the pointer wins");
         assert_eq!(z.x, 520.0, "pushed by the pointer, not panned to the caret");
@@ -887,19 +930,27 @@ mod tests {
     #[test]
     fn typing_during_a_pan_keeps_it_going() {
         let t0 = Instant::now();
-        let mut t = Track::new(t0, false);
+        let mut t = Track::new(t0);
         let ptr = Some((500.0, 300.0));
         let caret = |x| Some((x, 300.0, 2.0, 16.0));
-        let mut z = track(at(8, 400.0, 200.0), &mut t, ptr, caret(600.0), SIZE, t0);
+        let mut z = track(
+            at(8, 400.0, 200.0),
+            &mut t,
+            ptr,
+            caret(600.0),
+            SIZE,
+            t0,
+            PAN,
+        );
         let t1 = t0 + SETTLE;
-        z = track(z, &mut t, ptr, caret(950.0), SIZE, t1);
+        z = track(z, &mut t, ptr, caret(950.0), SIZE, t1, PAN);
         let first = t.pan.unwrap();
         // A Backspace lands a quarter into the pan; its caret fits the
         // view the pan ends at.
-        z = track(z, &mut t, ptr, caret(940.0), SIZE, t1 + PAN / 4);
+        z = track(z, &mut t, ptr, caret(940.0), SIZE, t1 + PAN / 4, PAN);
         assert_eq!(t.pan, Some(first), "the same pan");
         // One past it extends the pan from where the view is.
-        track(z, &mut t, ptr, caret(1100.0), SIZE, t1 + PAN / 2);
+        track(z, &mut t, ptr, caret(1100.0), SIZE, t1 + PAN / 2, PAN);
         let next = t.pan.unwrap();
         assert_eq!(next.to.0, 682.0);
         assert!(
@@ -912,16 +963,16 @@ mod tests {
     #[test]
     fn a_caret_showing_up_right_after_the_zoom_is_not_followed() {
         let t0 = Instant::now();
-        let mut t = Track::new(t0, false);
+        let mut t = Track::new(t0);
         let z = at(8, 400.0, 200.0);
         let ptr = Some((500.0, 300.0));
-        let z = track(z, &mut t, ptr, None, SIZE, t0);
+        let z = track(z, &mut t, ptr, None, SIZE, t0, PAN);
         let far = Some((1500.0, 900.0, 2.0, 16.0));
-        let z = track(z, &mut t, ptr, far, SIZE, t0 + SETTLE / 2);
+        let z = track(z, &mut t, ptr, far, SIZE, t0 + SETTLE / 2, PAN);
         assert!(t.pan.is_none() && z.x == 400.0, "taken as where it is");
-        let mut late = Track::new(t0, false);
+        let mut late = Track::new(t0);
         late.pointer = ptr;
-        track(z, &mut late, ptr, far, SIZE, t0 + SETTLE);
+        track(z, &mut late, ptr, far, SIZE, t0 + SETTLE, PAN);
         assert!(late.pan.is_some(), "after settling, a new focus pans");
     }
 

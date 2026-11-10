@@ -214,6 +214,10 @@ fn the_virtual_desktops_page_geometry() {
         rect(&s, p, "desktop_names_note"),
         Rect::new(50, 264, 316, 13)
     );
+    assert_eq!(
+        rect(&s, p, "desktop_animation_note"),
+        Rect::new(20, 296, 358, 13)
+    );
     inside_page(&s, p);
 }
 
@@ -591,6 +595,10 @@ fn the_taskbar_page_geometry() {
         );
     }
     assert_eq!(rect(&s, p, TRAY_CUSTOMIZE), Rect::new(294, 167, 84, 23));
+    assert_eq!(
+        rect(&s, p, "taskbar_slide_note"),
+        Rect::new(282, 208, 96, 13)
+    );
     assert_eq!(rect(&s, p, "taskbar_note"), Rect::new(20, 228, 358, 39));
     assert_eq!(rect(&s, p, "taskbar_auto_hide").y, 272);
     for (i, id) in REVEAL_CONTROLS.into_iter().enumerate() {

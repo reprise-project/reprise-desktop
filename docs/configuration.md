@@ -336,22 +336,28 @@ Classic Start menu and the Quick Launch buttons. The buttons and their order liv
 | `session_fade` | the screen fades in from black at log on and out to black when the session ends; the fade in waits a second after the display's mode is set, so a monitor syncing to it shows the whole fade | on |
 | `session_fade_in_ms`, `session_fade_out_ms` | how long, 0 for at once | 600, 400 |
 | `logon_animation` | the lock screen's transitions on Blue and Glass, its fade out after a right password or fingerprint, and Glass's busy ring turning; off, each screen shows at once, the ring stands still and an unlock takes the lock down at once. Settings > Effects > Animate the lock screen. The login screen follows `[login] animation` in `/etc/reprise/login.toml` | on |
-| `reduce_motion` | every motion in the session off or at once, whatever the keys above and `[workspaces] animation` say (see below). Settings > Effects > Reduce motion everywhere, also on Magnifier & Filters | off |
+| `reduce_motion` | the session's animations off or at once, whatever the keys above and `[workspaces] animation` say (see below). Settings > Effects > Reduce motion everywhere, also on Magnifier & Filters | off |
 
-`reduce_motion = true` turns off window, notification and dialog-dimming
-animations, highlight fades, the taskbar's slides (task buttons, auto-hide,
-the notification area's arrow), menu and Start menu openings with the Start
-menu's crossfades, the screen's fade at log on and log off, the lock screen's
-transitions (as `logon_animation = false`), desktop switch animations (a
-lifted swipe lands at once), the 3D switcher's flight and rolls, the snap
-bar's slide, wallpaper crossfades, the grey fade behind Log Off and Turn Off
-and the magnifier's pan to the caret. Each cuts straight to its end. What
-moves because you move it stays: a swipe follows your fingers and a dragged
-window your pointer. Progress and busy indicators keep moving, and so do the
-desktop water, the screen savers and the slideshow's turns. The settings
+`reduce_motion = true` turns off window and notification animations, the
+fade of the inactive-window dim, highlight fades, the taskbar's slides (task
+buttons, auto-hide, the notification area's arrow), menu and Start menu
+openings with the Start menu's crossfades, the screen's fade at log on and log
+off, the lock screen's transitions and Glass's busy ring there (as
+`logon_animation = false`), desktop switch animations (a lifted swipe lands at
+once), the 3D switcher's flight and rolls, the snap bar's slide, wallpaper
+crossfades, the grey fade behind Log Off and Turn Off and the magnifier's pan
+to the caret, which jumps instead. Each cuts straight to its end. Settings
+greys the keys it overrides. What moves because you move it stays: a swipe
+follows your fingers and a dragged window your pointer. Reprise's progress
+dialogs keep moving, and so do the screen savers and the slideshow's turns.
+Desktop water, rain and the fluids keep running: they are a wallpaper you
+picked, and `[wallpaper] water = "off"` stills them. `[idle] lock_fade` still
+dims the screen before the lock, as the time to move the mouse. The settings
 portal tells programs too: `org.freedesktop.appearance` `reduced-motion` is 1
-and `org.gnome.desktop.interface` `enable-animations` is false, which GTK
-reads. The login screen keeps its own `[login] animation`.
+and `org.gnome.desktop.interface` `enable-animations` is false. GTK programs
+read `enable-animations`: GTK's own spinner stands still, while libadwaita
+keeps its spinners turning. The login screen keeps its own `[login]
+animation`.
 
 ## Things to try
 

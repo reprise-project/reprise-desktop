@@ -738,10 +738,9 @@ the screen takes the interface of the last session used at this computer.
 - **Larger text** at 125% to 200% without changing the scale. The taskbar,
   menus, captions, Notepad and your GTK and Qt programs grow with it.
 - **Reduce motion** (`[effects] reduce_motion`, on the Effects and Magnifier
-  & Filters pages) turns every animation off at once: windows, menus,
+  & Filters pages) turns the desktop's animations off: windows, menus,
   fades, slides, the switchers and the lock screen cut straight to their
-  end. GTK programs and others reading the settings portal's
-  `reduced-motion` stop animating too.
+  end. GTK programs, told through the settings portal, stop animating too.
 - **StickyKeys and SlowKeys,** offered when you press Shift five times or
   hold the right Shift for eight seconds.
 - **MouseKeys:** the keypad moves the pointer, clicks and drags; hold Ctrl
