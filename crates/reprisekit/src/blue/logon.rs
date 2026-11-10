@@ -73,8 +73,6 @@ const GO_GLOSS: ((f64, f64), (f64, f64)) = ((11.0, 6.0), (9.0, 6.0));
 const BADGE: i32 = 16;
 const BADGE_R: f64 = 3.0;
 const MESSAGE_LINES: usize = 2;
-/// The typed form's message runs on into the free space under it.
-const TYPED_LINES: usize = 4;
 const POWER: i32 = 26;
 const POWER_X: i32 = 24;
 const POWER_GAP: i32 = 8;
@@ -827,8 +825,10 @@ fn draw_password_row(
             .draw(c, at, short, false, pen.ink, Align::Center, pen.px);
     }
     let w = right - field.x;
+    let top = field.bottom() + ROW_GAP;
+    // The typed form's message runs on into the free space down to the bottom band.
     let room = match m.screen {
-        Screen::Typed => TYPED_LINES,
+        Screen::Typed => ((frame(l.output).bottom.y - top) / k.line).max(0) as usize,
         _ => MESSAGE_LINES,
     };
     let mut lines = Vec::new();
@@ -836,15 +836,9 @@ fn draw_password_row(
         lines.extend(pen.wrapped(&strings::caps_lock(), w, 1));
     }
     if let Some(msg) = m.said() {
-        lines.extend(pen.wrapped(&msg, w, room - lines.len()));
+        lines.extend(pen.wrapped(&msg, w, room.saturating_sub(lines.len())));
     }
-    pen.lines(
-        c,
-        &lines,
-        (field.x, field.bottom() + ROW_GAP, w),
-        k,
-        Align::Left,
-    );
+    pen.lines(c, &lines, (field.x, top, w), k, Align::Left);
 }
 
 /// A white field showing `part`'s edit; a read-only one keeps the face colour.
