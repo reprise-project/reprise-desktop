@@ -495,8 +495,9 @@ suspend_after = 0            # run [power] standby
 #                            # every interface
 # session_fade_in_ms = 600   # 0 to 2000; 0 shows the desktop at once
 # session_fade_out_ms = 400  # 0 to 2000; 0 ends at once
-# logon_animation = true    # the lock screen's transitions and Glass's busy ring
-#                            # turning; login.toml's [login] animation sets the login screen's
+# logon_animation = true     # the lock screen's transitions, its fade at unlock and Glass's
+#                            # busy ring turning; [login] animation in login.toml does the
+#                            # same for the login screen
 
 # [accessibility]            # keyboard and pointer aids, for every program and the desktop's own keys
 # sticky_keys = false        # a tap of Shift, Ctrl, Alt or Super holds it for the next key
