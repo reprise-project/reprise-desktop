@@ -5,7 +5,9 @@ use super::Settings;
 use super::panel::{self, Fade, LightBox};
 use super::tint::{self, Surface};
 use crate::art::logo;
-use crate::logon::{Logon, LogonLayout, Part, Screen, UserNote, message_lines, text as strings};
+use crate::logon::{
+    Logon, LogonLayout, LogonUser, Part, Screen, Show, UserNote, message_lines, text as strings,
+};
 use crate::paint::{self, Paint};
 use crate::pointer::Interaction;
 use crate::raster::{Canvas, Rect};
@@ -364,27 +366,118 @@ pub fn draw(
     text: &TextRenderer,
     s: i32,
 ) {
+    draw_shown(c, m, l, theme, text, s, Show::All);
+}
+
+/// [`draw`] limited to `show`. The picture frames go on last, so a frame drawn with
+/// [`draw_frame`] over `Show::AllBut` its part gives the whole screen.
+pub fn draw_shown(
+    c: &mut Canvas,
+    m: &Logon,
+    l: &LogonLayout,
+    theme: &Theme,
+    text: &TextRenderer,
+    s: i32,
+    show: Show,
+) {
     let g = geometry(m, theme, l.output, button_width(l));
+    if show != Show::Chrome {
+        draw_block(c, m, l, &g, theme, text, s);
+    }
     let o = l.output;
     let at = |r: Rect| Rect::new(r.x - o.x, r.y - o.y, r.width, r.height).scaled(s);
-    let u = theme.text;
     let ui = ui_px(theme) * s as u32;
-    let face = |part: Part| match m.lit {
+    if let Some(r) = l.rect(Part::Power) {
+        power_button(c, at(r), face(m, Part::Power), face(m, Part::PowerMenu), s);
+    }
+    if let (Some(r), Some(short)) = (l.rect(Part::Layout), m.layout.as_deref()) {
+        glass_box(c, at(r), BUTTON_R, face(m, Part::Layout), s);
+        label(c, text, at(r), short, ui, INK, s);
+    }
+    wordmark(c, text, at(g.mark), theme.text.px(MARK_PX) * s as u32, s);
+    if show == Show::Chrome {
+        return;
+    }
+    for f in frames(&g) {
+        if show != Show::AllBut(f.part) {
+            frame_at(c, m, &f, o, s);
+        }
+    }
+}
+
+/// `part`'s picture frame alone, as [`draw`] draws it.
+pub fn draw_frame(c: &mut Canvas, m: &Logon, l: &LogonLayout, theme: &Theme, s: i32, part: Part) {
+    let g = geometry(m, theme, l.output, button_width(l));
+    if let Some(f) = frames(&g).into_iter().find(|f| f.part == part) {
+        frame_at(c, m, &f, l.output, s);
+    }
+}
+
+/// A picture frame on the screen: its part, design rect, padding and corner radius.
+struct FrameAt {
+    part: Part,
+    rect: Rect,
+    pad: i32,
+    radius: f64,
+}
+
+fn frames(g: &Geometry) -> Vec<FrameAt> {
+    let big = (g.frame.iter()).map(|&(part, rect)| FrameAt {
+        part,
+        rect,
+        pad: FRAME_PAD,
+        radius: FRAME_R,
+    });
+    let small = (g.tiles.iter()).map(|&(part, rect, _, _)| FrameAt {
+        part,
+        rect,
+        pad: SMALL_PAD,
+        radius: SMALL_R,
+    });
+    big.chain(small).collect()
+}
+
+fn frame_at(c: &mut Canvas, m: &Logon, f: &FrameAt, o: Rect, s: i32) {
+    let r = Rect::new(f.rect.x - o.x, f.rect.y - o.y, f.rect.width, f.rect.height).scaled(s);
+    let picture = user_of(m, f.part).and_then(|u| u.picture.as_ref());
+    tile(c, r, picture, f.pad, f.radius, face(m, f.part), s);
+}
+
+fn face(m: &Logon, part: Part) -> Face {
+    match m.lit {
         Some((p, Interaction::Pressed)) if p == part => Face::Pressed,
         Some((p, Interaction::Hot)) if p == part => Face::Hot,
         _ if m.focus == part => Face::Focused,
         _ => Face::Rest,
-    };
-    let user = |part: Part| match part {
+    }
+}
+
+fn user_of(m: &Logon, part: Part) -> Option<&LogonUser> {
+    match part {
         Part::Tile(i) => m.users.get(i),
         _ => None,
-    };
-    let note = |part: Part| user(part).and_then(|u| u.note).map(UserNote::text);
+    }
+}
 
-    if let Some((part, r)) = g.frame {
-        let picture = user(part).and_then(|u| u.picture.as_ref());
-        tile(c, at(r), picture, FRAME_PAD, FRAME_R, face(part), s);
-        let shown = user(part).map_or_else(strings::other_user, |u| u.shown().to_owned());
+/// Everything but the chrome and the picture frames.
+fn draw_block(
+    c: &mut Canvas,
+    m: &Logon,
+    l: &LogonLayout,
+    g: &Geometry,
+    theme: &Theme,
+    text: &TextRenderer,
+    s: i32,
+) {
+    let o = l.output;
+    let at = |r: Rect| Rect::new(r.x - o.x, r.y - o.y, r.width, r.height).scaled(s);
+    let u = theme.text;
+    let ui = ui_px(theme) * s as u32;
+    let face = |part: Part| face(m, part);
+    let note = |part: Part| user_of(m, part).and_then(|u| u.note).map(UserNote::text);
+
+    if let Some((part, _)) = g.frame {
+        let shown = user_of(m, part).map_or_else(strings::other_user, |u| u.shown().to_owned());
         if let Some(r) = g.name {
             label(c, text, at(r), &shown, u.px(NAME_PX) * s as u32, INK, s);
         }
@@ -409,7 +502,7 @@ pub fn draw(
             }
         }
     }
-    for &(part, frame, name, note_at) in &g.tiles {
+    for &(part, _, name, note_at) in &g.tiles {
         let lit = if m.focus == part {
             Face::Focused
         } else {
@@ -420,9 +513,7 @@ pub fn draw(
         {
             lit_cell(c, at(cell), lit, s);
         }
-        let picture = user(part).and_then(|u| u.picture.as_ref());
-        tile(c, at(frame), picture, SMALL_PAD, SMALL_R, face(part), s);
-        let shown = user(part).map_or_else(strings::other_user, |u| u.shown().to_owned());
+        let shown = user_of(m, part).map_or_else(strings::other_user, |u| u.shown().to_owned());
         label(c, text, at(name), &shown, ui, INK, s);
         if let Some(words) = note(part) {
             label(c, text, at(note_at), &words, ui, NOTE_INK, s);
@@ -479,22 +570,13 @@ pub fn draw(
             left_label(c, text, row, line, ui, INK, s);
         }
     }
-    if let Some(b) = busy_row(m, &g, theme, text, o, s) {
+    if let Some(b) = busy_row(m, g, theme, text, o, s) {
         spinner(c, b.ring.x, b.ring.y, s, m.spin);
         let left = b.ring.right() + ICON_GAP * s;
         let r = b.row;
         let row = Rect::new(left, r.y - r.height / 2, r.right() - left, 2 * r.height);
         left_label(c, text, row, &b.word, b.px, INK, s);
     }
-
-    if let Some(r) = l.rect(Part::Power) {
-        power_button(c, at(r), face(Part::Power), face(Part::PowerMenu), s);
-    }
-    if let (Some(r), Some(short)) = (l.rect(Part::Layout), m.layout.as_deref()) {
-        glass_box(c, at(r), BUTTON_R, face(Part::Layout), s);
-        label(c, text, at(r), short, ui, INK, s);
-    }
-    wordmark(c, text, at(g.mark), u.px(MARK_PX) * s as u32, s);
 }
 
 /// The busy row in device px: the ring's square and the row it is centred in with the busy text.

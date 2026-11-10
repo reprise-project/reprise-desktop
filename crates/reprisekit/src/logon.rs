@@ -824,6 +824,15 @@ impl LogonLayout {
     }
 }
 
+/// What a painter draws: the whole screen, the chrome alone (what never moves: the power button,
+/// the badge, the marks and Blue's backdrop), or the whole screen but one part's picture frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Show {
+    All,
+    Chrome,
+    AllBut(Part),
+}
+
 pub fn hit(l: &LogonLayout, x: i32, y: i32) -> Option<Part> {
     l.parts
         .iter()
