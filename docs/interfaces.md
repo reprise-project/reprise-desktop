@@ -36,6 +36,10 @@ Colour schemes (`[appearance] color_scheme`):
 size: frame width, caption height, taskbar height and so on. Both work under
 every interface.
 
+The lock screen is the Log On dialog titled Unlock Reprise, on the desktop
+colour, with your name fixed; under reprise-login, Switch User... starts
+the button row.
+
 ## Reprise Blue
 
 Glossy skinned frames with a 26 px caption, a bold white title with a drop
@@ -52,6 +56,10 @@ the program folders as cascading menus. The right side has Documents, Recent
 Items, Pictures, Music, Computer, Control Panel, Printers, Help and Support
 and Run. Log Off and Turn Off Computer sit in the bottom band. Type a letter
 to jump to the row it starts. Every colour comes from the scheme.
+
+The lock screen is the welcome screen with only your tile, open for the
+password; under reprise-login, Switch User sits at the right end of the
+bottom band.
 
 Colour schemes: **Blue** (the default), Olive Green, Silver, Slate, Sapphire,
 Obsidian, Ember, Cobalt, Carbon and Steel. Each brings its own art. None of
@@ -80,6 +88,9 @@ only over the part that changed. A still desktop does no blur work at all.
 Typing in the middle of a window doesn't either. At output scale 2 and
 up it blurs a quarter-resolution copy of the desktop: the same spread for
 a quarter of the work.
+
+The lock screen is the login screen's picture tile, yours alone and marked
+Locked, over your own wallpaper and water.
 
 ### Colour and material
 
