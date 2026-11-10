@@ -785,7 +785,7 @@ fn let_go_now(state: &mut State) {
 
 /// Fade the covers leaving `output` to their opacity for this frame; one that faded out goes.
 fn fade_out(state: &mut State, output: &Output) {
-    let now = Instant::now();
+    let now = logonview::now();
     let mut more = false;
     for mut l in std::mem::take(&mut state.lock.leaving) {
         if l.output != *output {
@@ -2150,6 +2150,7 @@ mod tests {
     #[test]
     fn the_unlock_fade_takes_no_input_and_the_lock_is_off_at_once() {
         let mut h = locked_glass();
+        logonview::hold_clock();
         check(&mut h, "hunter2");
         assert!(!h.state.console_locked(), "unlocked at once");
         assert_eq!(h.state.lock.leaving.len(), 1, "the cover fades out");
@@ -2159,14 +2160,15 @@ mod tests {
         );
         let tree = h.state.lock.leaving[0].tree;
         assert_eq!(next_frame(&mut h), ["TEST-1"]);
-        h.state.lock.leaving[0].since = Some(Instant::now() - Duration::from_millis(100));
+        h.state.lock.leaving[0].since = Some(logonview::now() - Duration::from_millis(100));
         next_frame(&mut h);
         let half = h.state.scene.opacity(tree).unwrap();
         assert!(
             half > 0.3 && half < 0.7,
             "half way it is half faded: {half}"
         );
-        h.state.lock.leaving[0].since = Some(Instant::now() - Duration::from_millis(UNLOCK_MS + 1));
+        h.state.lock.leaving[0].since =
+            Some(logonview::now() - Duration::from_millis(UNLOCK_MS + 1));
         assert_eq!(next_frame(&mut h), Vec::<String>::new());
         assert!(h.state.lock.leaving.is_empty());
         assert_eq!(h.state.scene.opacity(tree), None, "the cover is gone");
