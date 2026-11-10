@@ -145,6 +145,7 @@ logon-locked = Locked
 logon-unlock-title = Unlock Reprise
 logon-locked-heading = This computer is locked.
 logon-unlock-begin = To unlock, type your password
+logon-unlock-to-power = Unlock the computer to restart or turn it off.
 
 ## Calculator
 calc-degrees = &Degrees

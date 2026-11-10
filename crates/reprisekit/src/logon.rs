@@ -110,6 +110,12 @@ pub mod text {
     pub fn stand_by() -> String {
         tr!("powerpanel-stand-by")
     }
+    pub fn turn_off_row() -> String {
+        tr!("powerpanel-turn-off")
+    }
+    pub fn unlock_to_power() -> String {
+        tr!("logon-unlock-to-power")
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -247,6 +253,9 @@ impl std::fmt::Debug for LogonKey<'_> {
 /// How many tiles a screen shows at once unless the host says otherwise.
 pub const COLUMN: usize = 5;
 
+/// The most a lock's field holds, in bytes: the lock's PAM conversation reads no longer line.
+pub const UNLOCK_MAX: usize = 512;
+
 /// `name` holds the user the screen is about, typed or the tile's. The host reads `password.text`
 /// on [`LogonAction::Submit`] and sets `caps_lock`, `layout` (the badge's short name) and `lit`.
 #[derive(Clone, Debug)]
@@ -343,6 +352,7 @@ impl Logon {
         };
         m.name = TextEdit::new(m.users[0].name.clone(), false);
         m.name.set_read_only(true);
+        m.password = m.fresh_password(false);
         m.focus = Part::Password;
         m
     }
@@ -409,10 +419,9 @@ impl Logon {
                 .chain(switch)
                 .chain([Submit, Cancel, Power])
                 .collect(),
-            (Interface::Blue, _) if unlocking => [Password, Submit]
+            (Interface::Blue, _) if unlocking => [Password, Submit, Power]
                 .into_iter()
                 .chain(switch)
-                .chain([Power])
                 .collect(),
             (Interface::Classic, _) => vec![Name, Password, Submit, Cancel, Power],
             (Interface::Blue, Screen::Tiles) => tiles.chain([Power]).collect(),
@@ -504,7 +513,9 @@ impl Logon {
             Part::Tile(i) if self.screen == Screen::Tile(i) => None,
             Part::Tile(i) => self.open(Screen::Tile(i)),
             Part::OtherUser => self.open(Screen::Typed),
-            Part::SwitchUser if self.unlocking() => Some(LogonAction::SwitchUser),
+            Part::SwitchUser if self.unlocking() => {
+                (self.offers_switch_user()).then_some(LogonAction::SwitchUser)
+            }
             Part::SwitchUser => self.leave_admin().or_else(|| self.open(Screen::Tiles)),
             Part::Power => Some(LogonAction::Power),
             Part::PowerMenu => Some(LogonAction::PowerMenu),
@@ -679,8 +690,20 @@ impl Logon {
     fn wipe_password(&mut self) {
         self.password.wipe();
         if !self.password.is_secret() {
-            self.password = TextEdit::secret();
+            self.password = self.fresh_password(false);
         }
+    }
+
+    /// An empty password or prompt answer field, capped at [`UNLOCK_MAX`] on a lock.
+    fn fresh_password(&self, echo: bool) -> TextEdit {
+        let mut edit = match echo {
+            true => TextEdit::new("", false),
+            false => TextEdit::secret(),
+        };
+        if self.unlocking() {
+            edit.set_limit(UNLOCK_MAX);
+        }
+        edit
     }
 
     fn focused_edit(&mut self) -> Option<&mut TextEdit> {
@@ -717,11 +740,7 @@ impl Logon {
     /// The conversation asks `prompt`: the password field takes its answer, emptied, and the name
     /// stays fixed until the conversation ends.
     pub fn ask(&mut self, prompt: Prompt) {
-        self.password = if prompt.echo {
-            TextEdit::new("", false)
-        } else {
-            TextEdit::secret()
-        };
+        self.password = self.fresh_password(prompt.echo);
         self.name.set_read_only(true);
         self.prompt = Some(prompt);
         self.busy = false;

@@ -696,3 +696,91 @@ fn switch_users_screen_opens_on_the_tiles_in_blue_and_glass() {
         "the lock lists no one to pick"
     );
 }
+
+#[test]
+fn a_locks_field_holds_512_bytes_under_a_prompt_and_after_a_failure_too() {
+    let long = "p".repeat(600);
+    for i in ALL {
+        let mut m = locked(i, false);
+        typed(&mut m, &long);
+        assert_eq!(m.password.text.len(), UNLOCK_MAX, "{i:?}");
+        m.set_busy(true);
+        m.fail(text::incorrect());
+        m.click(Part::MessageOk);
+        typed(&mut m, &long);
+        assert_eq!(m.password.text.len(), UNLOCK_MAX, "{i:?}: after a failure");
+        for echo in [false, true] {
+            m.ask(Prompt {
+                text: "Code:".into(),
+                echo,
+            });
+            typed(&mut m, &long);
+            assert_eq!(m.password.text.len(), UNLOCK_MAX, "{i:?}: echo {echo}");
+        }
+    }
+    let mut login = Logon::new(Interface::Classic, Vec::new(), false, Some("alice"));
+    typed(&mut login, &long);
+    assert_eq!(
+        login.password.text.len(),
+        600,
+        "the login screen's is not capped"
+    );
+}
+
+#[test]
+fn a_lock_without_switch_user_never_answers_it() {
+    for i in ALL {
+        let mut m = locked(i, false);
+        assert_eq!(m.click(Part::SwitchUser), None, "{i:?}");
+        m.focus = Part::SwitchUser;
+        assert_eq!(m.key(LogonKey::Enter), None, "{i:?}: nor a left focus");
+    }
+}
+
+#[test]
+fn the_blue_lock_tabs_through_the_bottom_band_left_to_right() {
+    let mut m = locked(Interface::Blue, true);
+    let mut seen = vec![m.focus];
+    for _ in 0..4 {
+        m.key(LogonKey::Tab { back: false });
+        seen.push(m.focus);
+    }
+    use Part::*;
+    assert_eq!(seen, [Password, Submit, Power, SwitchUser, Password]);
+}
+
+#[test]
+fn the_blue_and_glass_locks_read_out_the_locked_tile_and_their_buttons() {
+    let theme = Theme::default();
+    let fonts = TextRenderer::load(&theme.fonts);
+    let output = Rect::new(0, 0, 1024, 768);
+    for i in [Interface::Blue, Interface::Glass] {
+        for power in [true, false] {
+            let mut user = users(1).remove(0);
+            user.real_name = "User Zero".into();
+            let m = Logon::locked(i, user, true, power);
+            let l = crate::interfaces::logon::logon_layout(&m, &theme, &fonts, output);
+            let mut tree = Tree::new(ax::node(Role::Window, l.output));
+            access(&m, &l, &mut tree);
+            let tile = tree.nodes().find(|(_, n)| n.role() == Role::ListItem);
+            let tile = tile.map(|(_, n)| (n.label().map(str::to_owned), n.description()));
+            let tile = tile.map(|(l, d)| (l, d.map(str::to_owned)));
+            assert_eq!(
+                tile,
+                Some((Some("User Zero".into()), Some("Locked".into()))),
+                "{i:?}"
+            );
+            let buttons: Vec<String> = (tree.nodes())
+                .filter(|(_, n)| n.role() == Role::Button)
+                .filter_map(|(_, n)| n.label().map(str::to_owned))
+                .collect();
+            assert!(
+                buttons.iter().any(|b| b == "Switch User"),
+                "{i:?}: {buttons:?}"
+            );
+            let powers = [text::turn_off(), text::power_off(), text::power_options()];
+            let named = buttons.iter().any(|b| powers.contains(b));
+            assert_eq!(named, power, "{i:?} power {power}: {buttons:?}");
+        }
+    }
+}
