@@ -16,6 +16,18 @@ const PLAYER: &str = "org.mpris.MediaPlayer2.Player";
 const PROPERTIES: &str = "org.freedesktop.DBus.Properties";
 /// Chars kept of a title, an artist list and a player's name.
 const TEXT_CHARS: usize = 256;
+/// What [`Entry::apply`] reads, asked one by one when `GetAll` is too large.
+const WANTED: &[&str] = &[
+    "PlaybackStatus",
+    "Metadata",
+    "CanControl",
+    "CanGoPrevious",
+    "CanGoNext",
+    "CanPlay",
+    "CanPause",
+];
+/// How long a player gets to answer; one that doesn't holds up the strip no longer.
+const REPLY_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Status {
@@ -249,7 +261,7 @@ enum Run {
 
 async fn read(conn: &Connection, name: &str) -> Option<(Dict, String)> {
     let player = bounded::proxy(conn, name, PATH, PLAYER).await.ok()?;
-    let props = bounded::properties(&player).await.ok()?;
+    let props = bounded::properties_of(&player, WANTED).await.ok()?;
     let identity = match bounded::proxy(conn, name, PATH, ROOT).await {
         Ok(root) => bounded::property::<String>(&root, "Identity").await.ok(),
         Err(_) => None,
@@ -286,8 +298,13 @@ fn changes_of(m: &Message) -> Option<Dict> {
     invalidated.is_empty().then_some(changed)
 }
 
+fn timed(b: zbus::connection::Builder<'_>) -> zbus::connection::Builder<'_> {
+    b.method_timeout(REPLY_TIMEOUT)
+}
+
 async fn run(feed: &mut Feed, shared: &Mutex<Option<Connection>>) -> Run {
-    let conn = match Connection::session().await {
+    let conn = timed(zbus::connection::Builder::session()).build();
+    let conn = match conn.await {
         Ok(c) => c,
         Err(e) => {
             log::info!("no session bus ({e}); no player to show");
@@ -586,5 +603,26 @@ mod tests {
             )]),
         );
         assert_eq!(p.pick().unwrap().1.title, "mpv");
+    }
+
+    #[test]
+    fn a_player_that_never_answers_is_passed_over() {
+        let (a, b) = std::os::unix::net::UnixStream::pair().unwrap();
+        let (done, read_done) = channel();
+        std::thread::spawn(move || {
+            zbus::block_on(async {
+                let (server, client) = futures_util::join!(
+                    zbus::connection::Builder::unix_stream(a)
+                        .server(zbus::Guid::generate())
+                        .p2p()
+                        .build(),
+                    timed(zbus::connection::Builder::unix_stream(b).p2p()).build(),
+                );
+                let (_server, client) = (server.unwrap(), client.unwrap());
+                let _ = done.send(read(&client, "org.mpris.MediaPlayer2.hung").await);
+            })
+        });
+        let read = read_done.recv_timeout(Duration::from_secs(5));
+        assert_eq!(read.expect("read gave up"), None);
     }
 }

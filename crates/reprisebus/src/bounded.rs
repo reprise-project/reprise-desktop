@@ -113,6 +113,26 @@ pub async fn properties(proxy: &Proxy<'_>) -> Result<Dict, Refused> {
     Ok(within(reply.body(), MAX_BODY)?.deserialize::<Dict>()?)
 }
 
+/// `names` of `proxy`'s interface: one `GetAll`, else a `Get` each when that is over
+/// [`MAX_BODY`], one still over it reading as [`Value::Other`] and one the peer lacks left out.
+pub async fn properties_of(proxy: &Proxy<'_>, names: &[&str]) -> Result<Dict, Refused> {
+    match properties(proxy).await {
+        Err(Refused::TooLarge(_)) => {}
+        all => return all,
+    }
+    let mut out = Vec::new();
+    for &name in names {
+        let value = match property_body(proxy, name).await {
+            Ok(body) => body.deserialize::<Value>()?,
+            Err(Refused::TooLarge(_)) => Value::Other,
+            Err(Refused::Bus(zbus::Error::MethodError(..) | zbus::Error::FDO(_))) => continue,
+            Err(e) => return Err(e),
+        };
+        out.push((name.to_string(), value));
+    }
+    Ok(Dict(out))
+}
+
 /// A variant's value: a number, a string, a string list or an `a{sv}`, each cut; any other type
 /// is `Other`.
 #[derive(Clone, Debug, PartialEq)]
@@ -414,6 +434,66 @@ mod tests {
             };
             futures_lite::future::or(read, serve).await
         })
+    }
+
+    #[test]
+    fn an_oversized_getall_falls_back_to_each_property_and_drops_only_the_large_one() {
+        use futures_util::StreamExt;
+        let art = "x".repeat(MAX_BODY + 1);
+        let value = |name: &str| match name {
+            "PlaybackStatus" => Some(Variant::from("Playing")),
+            "Metadata" => Some(Variant::from(HashMap::from([(
+                "mpris:artUrl",
+                art.as_str(),
+            )]))),
+            _ => None,
+        };
+        let got = zbus::block_on(async {
+            let (a, b) = std::os::unix::net::UnixStream::pair().unwrap();
+            let (server, client) = futures_util::join!(
+                zbus::connection::Builder::unix_stream(a)
+                    .server(zbus::Guid::generate())
+                    .p2p()
+                    .build(),
+                zbus::connection::Builder::unix_stream(b).p2p().build(),
+            );
+            let (server, client) = (server.unwrap(), client.unwrap());
+            let mut calls = zbus::MessageStream::from(&server);
+            let serve = async {
+                while let Some(Ok(m)) = calls.next().await {
+                    let h = m.header();
+                    if h.member().is_some_and(|n| n.as_str() == "GetAll") {
+                        let all: HashMap<&str, Variant> = ["PlaybackStatus", "Metadata"]
+                            .into_iter()
+                            .filter_map(|n| Some((n, value(n)?)))
+                            .collect();
+                        let _ = server.reply(&h, &all).await;
+                        continue;
+                    }
+                    let (_, name): (String, String) = m.body().deserialize().unwrap();
+                    let _ = match value(&name) {
+                        Some(v) => server.reply(&h, &v).await,
+                        None => {
+                            let e = "org.freedesktop.DBus.Error.InvalidArgs";
+                            server.reply_error(&h, e, &"no such property").await
+                        }
+                    };
+                }
+                std::future::pending().await
+            };
+            let read = async {
+                let p = proxy(&client, "org.example.P", "/p", "org.example.P").await?;
+                properties_of(&p, &["PlaybackStatus", "Metadata", "CanPlay"]).await
+            };
+            futures_lite::future::or(read, serve).await
+        });
+        let d = got.unwrap();
+        assert_eq!(
+            d.get("PlaybackStatus").and_then(Value::str),
+            Some("Playing")
+        );
+        assert_eq!(d.get("Metadata"), Some(&Value::Other), "too large to read");
+        assert_eq!(d.get("CanPlay"), None, "a property the peer lacks");
     }
 
     #[test]
