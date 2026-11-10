@@ -4,6 +4,7 @@ use crate::tray::{
     ACTION_ICON_SIZES, BODY_CHARS, NOTIFY_SIZES, Notification, REPLY_SEND, Reply, SUMMARY_CHARS,
     TrayEvent, clip, decode_named_at, notify,
 };
+use reprisebus::peer::{AppIdentity, Identities};
 use reprisefs::names::shown_line;
 use reprisekit::icon::IconSource;
 use std::collections::HashMap;
@@ -114,6 +115,7 @@ pub(super) struct Notifications {
     pub(super) senders: Arc<Mutex<Senders>>,
     pub(super) programs: Arc<Mutex<Programs>>,
     pub(super) icons: Icons,
+    pub(super) identities: Arc<Identities>,
 }
 
 pub(super) const CAPABILITIES: [&str; 7] = [
@@ -143,6 +145,9 @@ impl Notifications {
         #[zbus(connection)] conn: &Connection,
     ) -> u32 {
         let sender = hdr.sender().map_or("", |s| s.as_str()).to_string();
+        let mut hints = notify::hints(hints.0);
+        let identity = self.identities.of(conn, &sender).await;
+        let (app_name, app_icon) = as_sent_by(&identity, &mut hints, app_name, app_icon);
         let pid = owner_pid(conn, &sender).await;
         let other = lock(&self.senders).other_sender(replaces_id, &sender, pid, &app_name);
         let left = match other {
@@ -152,7 +157,6 @@ impl Notifications {
         let id = lock(&self.senders).claim(&sender, pid, &app_name, replaces_id, left, || {
             self.next_id.fetch_add(1, Ordering::Relaxed)
         });
-        let hints = notify::hints(hints.0);
         let sound = hints.balloon_sound();
         let entry = hints.desktop_entry.as_deref().and_then(desktop_entry);
         let (app_icon, image) =
@@ -270,7 +274,28 @@ pub(super) fn action_icons(
         .collect()
 }
 
-fn desktop_entry(hint: &str) -> Option<reprisefs::apps::AppEntry> {
+/// The app name, app icon and `desktop-entry` a notification from `identity` goes under: a
+/// sandboxed app's own app id, nothing for an unknown sender, a host's own (docs/security.md).
+fn as_sent_by(
+    identity: &AppIdentity,
+    hints: &mut notify::Hints<'_>,
+    app_name: String,
+    app_icon: String,
+) -> (String, String) {
+    match identity {
+        AppIdentity::Host { .. } => (app_name, app_icon),
+        AppIdentity::Sandboxed { app_id } => {
+            hints.desktop_entry = Some(app_id.clone());
+            (app_id.clone(), String::new())
+        }
+        AppIdentity::Unknown => {
+            hints.desktop_entry = None;
+            (String::new(), String::new())
+        }
+    }
+}
+
+pub(super) fn desktop_entry(hint: &str) -> Option<reprisefs::apps::AppEntry> {
     let id = notify::desktop_id(hint)?;
     let path = reprisefs::apps::find_file(&id)?;
     let text = reprisefs::apps::read_desktop_file(&path).ok()?;
