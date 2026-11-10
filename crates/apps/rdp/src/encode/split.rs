@@ -307,9 +307,9 @@ struct ViewBuffer {
     modifier: u64,
 }
 
-/// The row pitch encoders take a view in: Intel's reads each row from a 64-byte boundary, AMD's
-/// linear surfaces are 256-byte aligned. Mesa pads Intel's LINEAR R8 rows no wider than asked.
-const PITCH_ALIGN: u32 = 256;
+/// The row pitch encoders take a view or a LINEAR frame in: Intel's reads each row from a 64-byte
+/// boundary, AMD's are 256-byte aligned. Mesa pads Intel's LINEAR rows no wider than asked.
+pub(super) const PITCH_ALIGN: u32 = 256;
 
 /// An NV12 view's R8 buffer: its size, and the rows before the chroma plane.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -740,7 +740,8 @@ pub(crate) mod tests {
     use crate::stream::XRGB8888;
     use std::fs::File;
 
-    /// A LINEAR XRGB8888 dma-buf of `size` holding `pixel`'s colours, as a stream frame.
+    /// A LINEAR XRGB8888 dma-buf of `size` holding `pixel`'s colours, as a stream frame; its
+    /// rows are a multiple of [`PITCH_ALIGN`] bytes, as the portal allocates them.
     pub(crate) fn dmabuf_frame(
         gbm: &gbm::Device<File>,
         size: (u32, u32),
@@ -749,7 +750,7 @@ pub(crate) mod tests {
         let (w, h) = size;
         let mut bo = gbm
             .create_buffer_object_with_modifiers2::<()>(
-                w,
+                w.next_multiple_of(PITCH_ALIGN / 4),
                 h,
                 gbm::Format::Xrgb8888,
                 [gbm::Modifier::Linear].into_iter(),

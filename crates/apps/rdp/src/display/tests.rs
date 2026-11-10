@@ -921,6 +921,44 @@ async fn a_shared_memory_frame_waits_on_a_gpu_encoder() {
     assert_eq!(*c.coded.lock().unwrap(), [(VAAPI, true, 25)]);
 }
 
+/// A LINEAR frame whose rows are `stride` bytes apart.
+fn linear(stride: u32) -> Frame {
+    let mut frame = dmabuf(DRM_FORMAT_MOD_LINEAR);
+    if let FrameBuffer::Dmabuf { planes, .. } = &mut frame.buffer {
+        planes.push(stream::Plane {
+            object: 0,
+            offset: 0,
+            stride,
+        });
+    }
+    frame
+}
+
+#[tokio::test]
+async fn va_api_waits_past_a_linear_frame_off_256_byte_rows() {
+    crate::listen::tests::capture_log();
+    let mut c = coding(&[VAAPI]);
+    c.live.take(linear(10648));
+    let t0 = Instant::now();
+    for ms in [0, 1000] {
+        c.live.start(t0 + Duration::from_millis(ms));
+        assert!(!c.live.busy, "VA-API is not handed 10648-byte LINEAR rows");
+    }
+    assert_eq!(
+        crate::listen::tests::times_logged(
+            "VA-API H.264 cannot read the stream's buffers (LINEAR, pitch 10648); \
+             asking the stream again"
+        ),
+        1
+    );
+    code(&mut c.live, linear(10752)).await;
+    assert_eq!(
+        *c.coded.lock().unwrap(),
+        [(VAAPI, true, 25)],
+        "the next frame, in 256-byte rows, goes out"
+    );
+}
+
 #[tokio::test]
 async fn bitmaps_ask_the_stream_for_linear_every_hold() {
     crate::listen::tests::capture_log();

@@ -14,6 +14,7 @@ pub mod split;
 
 use crate::stream::{DRM_FORMAT_MOD_LINEAR, Frame, FrameBuffer, Rect};
 use bitmap::Bitmap;
+use hwmap::Gpu;
 use ironrdp_server::BitmapUpdate;
 use probe::Backend;
 use repriseconf::remote::Quality;
@@ -208,11 +209,19 @@ impl Switch {
 }
 
 /// Whether `backend` (None: the bitmap encoder) can be handed `frame`: the CPU reads shared
-/// memory and LINEAR dma-bufs, a GPU dma-bufs only.
+/// memory and LINEAR dma-bufs, a GPU dma-bufs only, VA-API LINEAR ones in [`split::PITCH_ALIGN`].
 pub fn reads(backend: Option<Backend>, frame: &Frame) -> bool {
     match (&frame.buffer, backend.and_then(Backend::gpu)) {
         (FrameBuffer::Shm { .. }, gpu) => gpu.is_none(),
         (FrameBuffer::Dmabuf { modifier, .. }, None) => *modifier == DRM_FORMAT_MOD_LINEAR,
+        (
+            FrameBuffer::Dmabuf {
+                modifier, planes, ..
+            },
+            Some(Gpu::Vaapi),
+        ) if *modifier == DRM_FORMAT_MOD_LINEAR => {
+            (planes.iter()).all(|p| p.stride.is_multiple_of(split::PITCH_ALIGN))
+        }
         (FrameBuffer::Dmabuf { .. }, Some(_)) => true,
     }
 }
@@ -435,6 +444,37 @@ mod tests {
         assert!(reads(Some(VAAPI), &dmabuf(Y_TILED)));
         assert!(!reads(Some(Backend::X264), &dmabuf(Y_TILED)));
         assert!(reads(None, &dmabuf(DRM_FORMAT_MOD_LINEAR)));
+    }
+
+    #[test]
+    fn va_api_takes_a_linear_frame_only_with_256_byte_rows() {
+        let linear = |stride| {
+            let mut frame = dmabuf(DRM_FORMAT_MOD_LINEAR);
+            if let FrameBuffer::Dmabuf { planes, .. } = &mut frame.buffer {
+                planes.push(crate::stream::Plane {
+                    object: 0,
+                    offset: 0,
+                    stride,
+                });
+            }
+            frame
+        };
+        for stride in [10648, 5464, 7684] {
+            assert!(
+                !reads(Some(VAAPI), &linear(stride)),
+                "VA-API is not handed LINEAR rows of {stride} bytes"
+            );
+            assert!(
+                reads(Some(Backend::X264), &linear(stride)),
+                "x264 reads them"
+            );
+            assert!(
+                reads(Some(Backend::Vulkan), &linear(stride)),
+                "Vulkan maps them"
+            );
+        }
+        assert!(reads(Some(VAAPI), &linear(10752)));
+        assert!(reads(Some(VAAPI), &linear(7680)));
     }
 
     /// The targets each encoder a [`Switch`] made was given.
