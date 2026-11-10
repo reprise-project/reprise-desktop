@@ -460,6 +460,27 @@ fn the_greeting_marks_users_with_a_session_logged_on() {
 }
 
 #[test]
+fn show_users_off_greets_with_no_users_and_a_typed_name_still_resumes() {
+    let config = LoginConfig {
+        show_users: false,
+        ..LoginConfig::default()
+    };
+    let mut run = Run::new(config, Remembered::default());
+    run.recover(vec![anna_on_7()]);
+    assert_eq!(run.start(), vec![]);
+    assert_eq!(
+        run.session("c1", SessionRequest::SwitchUser),
+        greeter_spawn(1)
+    );
+    let greeting = run.greeting();
+    assert_eq!(
+        (greeting.show_users, greeting.users, greeting.notice),
+        (false, vec![], Some(Notice::SwitchUser))
+    );
+    assert_eq!(run.greeter(create("anna")), spawn(2, Mode::Reauth, "anna"));
+}
+
+#[test]
 fn the_greeting_carries_the_machine_outputs_and_background() {
     let outputs = vec![
         LoginOutput {
