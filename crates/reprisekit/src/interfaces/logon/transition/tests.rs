@@ -235,10 +235,34 @@ fn check(name: &str, p: &Played) {
         p.at(ms).pixels == after.pixels,
         "{name} @{s}: ends on the static screen"
     );
-    let mid = p.at(ms / 2);
+    let mut mid = p.at(ms / 2);
     assert!(
         mid.pixels != start.pixels && mid.pixels != after.pixels,
         "{name} @{s}: moves"
+    );
+    p.t.settle(&mut mid, &p.m);
+    assert!(
+        mid.pixels == after.pixels,
+        "{name} @{s}: settles from midway on the static screen"
+    );
+    assert!(
+        p.t.rest(&p.m).pixels == after.pixels,
+        "{name} @{s}: rests on the static screen"
+    );
+    let l = p.layout();
+    let d = Drawn {
+        m: &p.m,
+        l: &l,
+        theme: &p.theme,
+        text: &p.text,
+        s,
+    };
+    let over = Transition::begin_over(&p.motion, &d, Some(p.before())).expect("it plays");
+    let mut c = after.clone();
+    over.frame(&mut c, &p.m, ms / 2);
+    assert!(
+        c.pixels == p.at(ms / 2).pixels,
+        "{name} @{s}: over the canvas shown before, the same frames"
     );
     let r = p.t.rect();
     let w = after.width as i32;
@@ -395,6 +419,36 @@ fn keys_typed_while_the_block_fades_in_show_at_the_end() {
         p.at(p.t.ms()).pixels == p.still(&p.m).pixels,
         "the end shows three bullets"
     );
+    let mut mid = p.at(p.t.ms() / 2);
+    p.t.settle(&mut mid, &p.m);
+    assert!(
+        mid.pixels == p.still(&p.m).pixels,
+        "settled, the box shows three bullets"
+    );
+}
+
+#[test]
+fn a_line_that_comes_up_under_an_entering_block_ends_in_place() {
+    for s in [1, 2] {
+        let user = users(1).remove(0);
+        let mut lock = Logon::locked(Interface::Glass, user, false, false);
+        lock.moves = Moves::Full;
+        let mut p = play(lock, Variant::Blue, s, Logon::enter);
+        p.m.caps_lock = true;
+        let l = p.layout();
+        let d = Drawn {
+            m: &p.m,
+            l: &l,
+            theme: &p.theme,
+            text: &p.text,
+            s,
+        };
+        p.t.refresh_now(&d);
+        assert!(
+            p.at(p.t.ms()).pixels == p.still(&p.m).pixels,
+            "@{s}: the Caps Lock line ends under the box"
+        );
+    }
 }
 
 /// Prints the median and worst cost of one frame (compose plus a copy of its rect, as the host's upload
@@ -450,6 +504,94 @@ fn transition_frame_cost() {
                     ms[ms.len() - 1],
                     r.width,
                     r.height
+                );
+            }
+        }
+    }
+}
+
+/// Prints the median cost of a click's draw and of the settle frame against painting the screen
+/// whole, per change, 1920x1080 at scales 1 and 2. Run with `--ignored --nocapture`.
+#[test]
+#[ignore]
+fn click_and_settle_cost() {
+    const FULL_HD: Rect = Rect::new(0, 0, 1920, 1080);
+    const RUNS: usize = 11;
+    let median = |mut ms: Vec<f64>| {
+        ms.sort_by(f64::total_cmp);
+        ms[ms.len() / 2]
+    };
+    let time = |f: &mut dyn FnMut()| {
+        median(
+            (0..RUNS)
+                .map(|_| {
+                    let start = std::time::Instant::now();
+                    f();
+                    start.elapsed().as_secs_f64() * 1000.0
+                })
+                .collect(),
+        )
+    };
+    for (changes, v) in [
+        (glass_changes(), Variant::Blue),
+        (blue_changes(), Variant::Blue),
+    ] {
+        for (name, m0, act) in changes {
+            for s in [1, 2] {
+                let mut m = m0.clone();
+                act(&mut m);
+                let Some(motion) = m.take_motion() else {
+                    continue;
+                };
+                let theme = theme(&m, v).scaled(s);
+                let text = TextRenderer::load(&theme.fonts);
+                let l = logon_layout(&m, &theme, &text, FULL_HD);
+                let d = Drawn {
+                    m: &m,
+                    l: &l,
+                    theme: &theme,
+                    text: &text,
+                    s,
+                };
+                let (w, h) = ((FULL_HD.width * s) as u32, (FULL_HD.height * s) as u32);
+                let mut shown = Canvas::new(w, h);
+                let whole = |shown: &mut Canvas| {
+                    let mut c = Canvas::new(w, h);
+                    draw_logon(&mut c, &m, &l, &theme, text.for_output(s), s);
+                    shown.pixels.copy_from_slice(&c.pixels);
+                    c
+                };
+                let painted_click = time(&mut || {
+                    let mut c = whole(&mut shown);
+                    if let Some(t) = Transition::begin(&motion, &d) {
+                        t.frame(&mut c, &m, 0);
+                    }
+                });
+                let mut befores: Vec<Canvas> = (0..RUNS).map(|_| shown.clone()).collect();
+                let click = time(&mut || {
+                    let before = befores.pop();
+                    if let Some(t) = Transition::begin_over(&motion, &d, before) {
+                        let mut c = t.rest(&m);
+                        t.frame(&mut c, &m, 0);
+                        shown.pixels.copy_from_slice(&c.pixels);
+                    }
+                });
+                let Some(t) = Transition::begin(&motion, &d) else {
+                    continue;
+                };
+                let settle_whole = time(&mut || {
+                    whole(&mut shown);
+                });
+                let mut c = whole(&mut shown);
+                t.frame(&mut c, &m, t.ms() / 2);
+                let settle_rect = time(&mut || {
+                    let r = t.settle(&mut c, &m);
+                    copy_in(&mut shown, &c, r);
+                });
+                println!(
+                    "{:?} {name} @{s}: click {click:.2} ms (painted whole {painted_click:.2} \
+                     ms), settle {settle_rect:.2} ms (painted whole {settle_whole:.2} ms)",
+                    m.interface,
                 );
             }
         }
