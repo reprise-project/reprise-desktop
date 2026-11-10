@@ -303,16 +303,20 @@ pub struct Logon {
     back: Screen,
     /// An administrator's power request succeeded and the computer is going down.
     going_down: bool,
+    /// Where the tiles' focus goes when the administrator's form is left.
+    admin_from: Part,
 }
 
 impl Logon {
+    /// With `show_users` off the screen lists no one, whatever `users` holds.
     pub fn new(
         interface: Interface,
         users: Vec<LogonUser>,
         show_users: bool,
         last_user: Option<&str>,
     ) -> Logon {
-        let listed = show_users && !users.is_empty();
+        let users = if show_users { users } else { Vec::new() };
+        let listed = !users.is_empty();
         let last = last_user.and_then(|n| users.iter().position(|u| u.name == n));
         let screen = match interface {
             Interface::Blue if listed => Screen::Tiles,
@@ -347,6 +351,7 @@ impl Logon {
             starting: false,
             back: Screen::Typed,
             going_down: false,
+            admin_from: Part::Tile(0),
         };
         m.focus = m.home();
         if let Part::Tile(i) = m.focus {
@@ -465,20 +470,25 @@ impl Logon {
         stops
     }
 
-    /// While busy only Enter on a focused Power does anything.
+    /// While busy only Tab and Enter on a focused Power do anything.
     pub fn key(&mut self, key: LogonKey) -> Option<LogonAction> {
         if self.busy {
-            return (key == LogonKey::Enter && self.focus == Part::Power)
-                .then(|| self.press(Part::Power))
-                .flatten();
+            return match key {
+                LogonKey::Tab { back } => self.tab(back),
+                LogonKey::Enter if self.focus == Part::Power => self.press(Part::Power),
+                _ => None,
+            };
         }
         match key {
-            LogonKey::Edit(k) => {
-                if let Some(edit) = self.focused_edit() {
+            LogonKey::Edit(k) => match (self.focused_edit(), k) {
+                (Some(edit), k) => {
                     edit.key(k);
+                    None
                 }
-                None
-            }
+                (None, EditKey::Left { .. }) => self.step(false),
+                (None, EditKey::Right { .. }) => self.step(true),
+                (None, _) => None,
+            },
             LogonKey::Text(s) => {
                 if let Some(edit) = self.focused_edit() {
                     edit.key(EditKey::Insert(s.to_owned()));
@@ -493,19 +503,21 @@ impl Logon {
                 part => self.press(part),
             },
             LogonKey::Escape => self.escape(),
-            LogonKey::Tab { back } => {
-                let stops = self.stops();
-                let n = stops.len();
-                self.focus = match stops.iter().position(|&p| p == self.focus) {
-                    Some(at) if back => stops[(at + n - 1) % n],
-                    Some(at) => stops[(at + 1) % n],
-                    None => stops[0],
-                };
-                None
-            }
+            LogonKey::Tab { back } => self.tab(back),
             LogonKey::Up => self.step(false),
             LogonKey::Down => self.step(true),
         }
+    }
+
+    fn tab(&mut self, back: bool) -> Option<LogonAction> {
+        let stops = self.stops();
+        let n = stops.len();
+        self.focus = match stops.iter().position(|&p| p == self.focus) {
+            Some(at) if back => stops[(at + n - 1) % n],
+            Some(at) => stops[(at + 1) % n],
+            None => stops[0],
+        };
+        None
     }
 
     /// A click on `part`: a field takes the focus, anything else is pressed. While busy only
@@ -533,9 +545,8 @@ impl Logon {
             Part::Tile(i) if self.screen == Screen::Tile(i) => None,
             Part::Tile(i) => self.open(Screen::Tile(i)),
             Part::OtherUser => self.open(Screen::Typed),
-            Part::SwitchUser if self.unlocking() => {
-                (self.offers_switch_user()).then_some(LogonAction::SwitchUser)
-            }
+            Part::SwitchUser if !self.offers_switch_user() => None,
+            Part::SwitchUser if self.unlocking() => Some(LogonAction::SwitchUser),
             Part::SwitchUser => self.leave_admin().or_else(|| self.open(Screen::Tiles)),
             Part::Power => Some(LogonAction::Power),
             Part::PowerMenu => Some(LogonAction::PowerMenu),
@@ -584,6 +595,14 @@ impl Logon {
     /// The administrator's form for `action`, empty, in place of whatever the screen showed. The
     /// host has dropped any login in progress.
     pub fn admin(&mut self, action: PowerAction) {
+        if !matches!(self.purpose, Purpose::Admin(_)) {
+            self.admin_from = match (self.screen, self.focus) {
+                (Screen::Tiles, part) | (_, part @ Part::Power) => part,
+                (Screen::Tile(i), _) => Part::Tile(i),
+                (Screen::Typed, _) if self.interface == Interface::Glass => Part::OtherUser,
+                _ => Part::Tile(self.selected().unwrap_or(0)),
+            };
+        }
         self.note(Change::Admin);
         self.starting = false;
         self.purpose = Purpose::Admin(action);
@@ -596,8 +615,8 @@ impl Logon {
         self.focus = Part::Name;
     }
 
-    /// Back from the administrator's form to the screen a login starts on, with a
-    /// [`LogonAction::Cancel`] for the conversation; None on a login's form.
+    /// Back from the administrator's form to the screen a login starts on, the tiles' focus where
+    /// it was, with a [`LogonAction::Cancel`] for the conversation; None on a login's form.
     fn leave_admin(&mut self) -> Option<LogonAction> {
         if !matches!(self.purpose, Purpose::Admin(_)) {
             return None;
@@ -606,6 +625,15 @@ impl Logon {
         if self.interface != Interface::Classic && !self.users.is_empty() {
             self.name = TextEdit::new("", false);
             self.open(Screen::Tiles);
+            let from = self.admin_from;
+            if self.stops().contains(&from) {
+                self.focus = from;
+                match from {
+                    Part::Tile(i) => self.scroll_to(i),
+                    Part::OtherUser => self.scroll_to(self.users.len()),
+                    _ => {}
+                }
+            }
             return Some(LogonAction::Cancel);
         }
         self.clear()
@@ -742,16 +770,26 @@ impl Logon {
         }
     }
 
-    fn step(&mut self, down: bool) -> Option<LogonAction> {
-        let Part::Tile(i) = self.focus else {
-            return None;
+    /// The focus to the next or previous tile; Glass's row ends at Other user.
+    fn step(&mut self, forward: bool) -> Option<LogonAction> {
+        let n = self.users.len();
+        let row = self.interface == Interface::Glass && self.screen == Screen::Tiles;
+        let i = match self.focus {
+            Part::Tile(i) => i,
+            Part::OtherUser if row => n,
+            _ => return None,
         };
-        let j = if down {
-            (i + 1).min(self.users.len().saturating_sub(1))
+        let last = if row { n } else { n.saturating_sub(1) };
+        let j = if forward {
+            (i + 1).min(last)
         } else {
             i.saturating_sub(1)
         };
-        self.focus = Part::Tile(j);
+        self.focus = if j == n {
+            Part::OtherUser
+        } else {
+            Part::Tile(j)
+        };
         self.scroll_to(j);
         None
     }

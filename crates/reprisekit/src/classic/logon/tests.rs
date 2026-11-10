@@ -40,6 +40,7 @@ fn states() -> Vec<(&'static str, Logon)> {
         ("layout badge", badge),
         ("admin shut down", admin(PowerAction::PowerOff, "")),
         ("admin restart filled", admin(PowerAction::Reboot, "anna")),
+        ("admin shut down caps lock and badge", admin_caps()),
         ("shutting down", going_down()),
         ("over a picture", over_picture),
     ]
@@ -63,6 +64,14 @@ fn going_down() -> Logon {
     m
 }
 
+/// The administrator's form under Caps Lock with the layout badge.
+fn admin_caps() -> Logon {
+    let mut m = admin(PowerAction::PowerOff, "");
+    m.caps_lock = true;
+    m.layout = Some("EN".into());
+    m
+}
+
 fn drawn(m: &Logon, s: i32) -> (Canvas, LogonLayout, Theme) {
     let theme = Theme::default().scaled(s);
     let text = TextRenderer::load(&theme.fonts);
@@ -79,6 +88,19 @@ fn classic_logon_pins_at_scale_1_and_2() {
     for (name, m) in states() {
         for s in [1, 2] {
             got.push((format!("{name} @{s}"), fnv(&drawn(&m, s).0)));
+        }
+    }
+    // The test fonts fit the heading in two rows, so the grown dialog is laid out by hand.
+    let m = admin_caps();
+    for pct in [100, 125] {
+        for s in [1, 2] {
+            let theme = Theme::default().with_text_size(pct).scaled(s);
+            let text = TextRenderer::load(&theme.fonts);
+            let l = laid_out(&m, &theme, OUTPUT, 4);
+            let mut c = Canvas::new((OUTPUT.width * s) as u32, (OUTPUT.height * s) as u32);
+            draw(&mut c, &m, &l, &theme, text.for_output(s), s);
+            let name = format!("admin caps lock and badge in 4 rows {pct}% @{s}");
+            got.push((name, fnv(&c)));
         }
     }
     crate::pins::check("classic/logon", &got);
@@ -172,6 +194,36 @@ fn a_focused_button_takes_the_default_ring() {
 }
 
 #[test]
+fn a_greyed_ok_holding_the_focus_while_verifying_draws_no_focus_and_takes_no_enter() {
+    let mut focused = Logon::new(Interface::Classic, Vec::new(), false, Some("alice"));
+    focused.key(crate::logon::LogonKey::Text("hunter2"));
+    focused.key(crate::logon::LogonKey::Tab { back: false });
+    assert_eq!(focused.focus, Part::Submit);
+    let mut plain = focused.clone();
+    plain.focus = Part::Password;
+    focused.set_busy(true);
+    plain.set_busy(true);
+    for s in [1, 2] {
+        let ((a, l, _), (b, _, _)) = (drawn(&focused, s), drawn(&plain, s));
+        let ok = l.rect(Part::Submit).unwrap().scaled(s);
+        let differ = (ok.y..ok.bottom())
+            .flat_map(|y| (ok.x..ok.right()).map(move |x| (x, y)))
+            .filter(|&(x, y)| a.get(x, y) != b.get(x, y))
+            .count();
+        assert_eq!(
+            differ, 0,
+            "@{s}: the greyed OK draws as one without the focus"
+        );
+    }
+    assert_eq!(focused.key(crate::logon::LogonKey::Enter), None);
+    assert_eq!(
+        focused.focus,
+        Part::Submit,
+        "the focus stays for when it lights"
+    );
+}
+
+#[test]
 fn the_dialog_grows_with_the_text_and_the_badge_stays_at_the_message_end() {
     let mut m = Logon::new(Interface::Classic, Vec::new(), false, None);
     m.layout = Some("EN".into());
@@ -204,7 +256,7 @@ fn busy_says_verifying_on_the_first_free_message_line() {
     caps.caps_lock = true;
     let inked = |m: &Logon| -> Vec<bool> {
         let (c, _, theme) = drawn(m, 1);
-        let r = geometry(&theme, OUTPUT).message;
+        let r = geometry(&theme, OUTPUT, MESSAGE_LINES).message;
         let h = r.height / MESSAGE_LINES as i32;
         let face = theme.colors.button_face.argb();
         (0..MESSAGE_LINES as i32)
@@ -231,7 +283,7 @@ fn a_prompt_label_draws_its_ampersand() {
         let (c, l, theme) = drawn(&m, s);
         let text = TextRenderer::load(&theme.fonts);
         let px = theme.fonts.size_px * s as u32 / theme.scale.max(1) as u32;
-        let g = geometry(&theme, OUTPUT);
+        let g = geometry(&theme, OUTPUT, MESSAGE_LINES);
         let row = l.rect(Part::Password).unwrap().scaled(s);
         let r = Rect::new(
             g.label_x * s,
@@ -305,7 +357,7 @@ fn the_classic_lock_fixes_the_name_and_starts_the_button_row_with_switch_user() 
             theme.colors.button_face.argb(),
             "@{s}: the fixed name keeps the face colour"
         );
-        let g = geometry(&theme, OUTPUT);
+        let g = geometry(&theme, OUTPUT, MESSAGE_LINES);
         let switch = l.rect(Part::SwitchUser).expect("Switch User");
         assert_eq!(switch.x, g.label_x, "Switch User lines up with the labels");
         assert_eq!(switch.y, g.ok.y, "on the button row");
@@ -327,7 +379,7 @@ fn the_classic_lock_without_power_moves_ok_and_cancel_into_shut_downs_place() {
     let (_, m) = states.find(|(n, _)| *n == "locked without power").unwrap();
     assert!(!m.offers_power());
     let (_, l, theme) = drawn(&m, 1);
-    let g = geometry(&theme, OUTPUT);
+    let g = geometry(&theme, OUTPUT, MESSAGE_LINES);
     assert_eq!(l.rect(Part::Power), None, "no Shut Down...");
     assert_eq!(l.rect(Part::Cancel), Some(g.power), "Cancel ends the row");
     assert_eq!(l.rect(Part::Submit), Some(g.cancel), "OK left of it");
@@ -350,4 +402,78 @@ fn the_classic_lock_states_are_distinct() {
         hashes[0].1,
         "the lock differs from the login dialog"
     );
+}
+
+/// Checks the admin form at scale `s`, with and without Caps Lock: the message gets the heading's
+/// lines plus the notice's row, and every one of them is inked.
+fn assert_admin_heading_whole(theme: &Theme, text: &TextRenderer, s: i32) {
+    let mut m = Logon::new(Interface::Classic, Vec::new(), false, None);
+    m.admin(PowerAction::PowerOff);
+    let mut caps = m.clone();
+    caps.caps_lock = true;
+    let width = (CLIENT_W - 2 * PAD) * s;
+    let t = text.for_output(s);
+    let n = crate::text::wrap(t, &strings::admin_shut_down(), width, theme.fonts.size_px).len();
+    for m in [&m, &caps] {
+        let l = layout(m, theme, text, OUTPUT);
+        let rows = n + usize::from(m.caps_lock);
+        let flag = m.caps_lock;
+        assert_eq!(
+            l.dialog,
+            Some(geometry(theme, OUTPUT, rows.max(MESSAGE_LINES)).dialog),
+            "@{s}, caps {flag}: the message is {rows} rows"
+        );
+        let mut c = Canvas::new((OUTPUT.width * s) as u32, (OUTPUT.height * s) as u32);
+        draw(&mut c, m, &l, theme, t, s);
+        let (password, ok) = (
+            l.rect(Part::Password).unwrap(),
+            l.rect(Part::Submit).unwrap(),
+        );
+        let left = (l.dialog.unwrap().x + PAD) * s;
+        let face = theme.colors.button_face.argb();
+        for row in 0..rows as i32 {
+            let top = (password.bottom() + ROW_GAP + row * LINE_H) * s;
+            let inked = (top..top + LINE_H * s)
+                .flat_map(|y| (left..ok.x * s).map(move |x| (x, y)))
+                .any(|(x, y)| c.get(x, y) != face);
+            assert!(
+                inked,
+                "@{s}, caps {flag}: row {} of {rows} is inked",
+                row + 1
+            );
+        }
+    }
+}
+
+#[test]
+fn the_admin_heading_and_the_caps_lock_notice_both_show_whole() {
+    crate::pins::fonts();
+    for s in [1, 2] {
+        let theme = Theme::default().scaled(s);
+        let text = TextRenderer::load(&theme.fonts);
+        assert_admin_heading_whole(&theme, &text, s);
+    }
+}
+
+#[test]
+fn the_admin_heading_shows_whole_in_a_wider_face_under_caps_lock_too() {
+    for s in [1, 2] {
+        let mut theme = Theme::default().scaled(s);
+        theme.fonts.family = vec!["DejaVu Sans".into()];
+        let text = TextRenderer::load(&theme.fonts);
+        if !text.has_face("DejaVu Sans") {
+            crate::pins::skip!("DejaVu Sans is not installed");
+        }
+        let width = (CLIENT_W - 2 * PAD) * s;
+        let lines = crate::text::wrap(
+            text.for_output(s),
+            &strings::admin_shut_down(),
+            width,
+            theme.fonts.size_px,
+        );
+        if s == 1 {
+            assert_eq!(lines.len(), 3, "the heading needs a third line");
+        }
+        assert_admin_heading_whole(&theme, &text, s);
+    }
 }

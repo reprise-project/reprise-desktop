@@ -107,7 +107,12 @@ fn drawn(m: &Logon, v: Variant, s: i32) -> (Canvas, LogonLayout) {
 
 /// Draws the wordmark in Tahoma Bold, since its own faces are whichever the machine installs.
 fn shown(m: &Logon, v: Variant, s: i32, show: Show) -> (Canvas, LogonLayout) {
-    let theme = blue_theme(v).scaled(s);
+    shown_at(m, v, s, 100, show)
+}
+
+/// [`shown`] with the text at `pct` percent.
+fn shown_at(m: &Logon, v: Variant, s: i32, pct: u32, show: Show) -> (Canvas, LogonLayout) {
+    let theme = blue_theme(v).with_text_size(pct).scaled(s);
     let text = TextRenderer::load(&theme.fonts);
     let title = TextRenderer::load(
         &TextSpec {
@@ -131,6 +136,15 @@ fn blue_logon_pins_per_scheme_at_scale_1_and_2() {
         for (name, m) in states() {
             for s in [1, 2] {
                 got.push((format!("{v:?} {name} @{s}"), fnv(&drawn(&m, v, s).0)));
+            }
+        }
+        let mut caps = admin(PowerAction::PowerOff, "");
+        caps.caps_lock = true;
+        for pct in [125, 150] {
+            for s in [1, 2] {
+                let (c, _) = shown_at(&caps, v, s, pct, Show::All);
+                let name = format!("{v:?} admin shut down caps lock {pct}% @{s}");
+                got.push((name, fnv(&c)));
             }
         }
     }
@@ -627,5 +641,52 @@ fn the_blue_chrome_is_the_same_on_every_screen_and_holds_no_column() {
             backdrop.get(x, y),
             "{v:?}: the backdrop under a tile"
         );
+    }
+}
+
+#[test]
+fn the_admin_heading_shows_whole_in_a_wider_face_at_every_text_size() {
+    let dejavu = |mut t: Theme| {
+        t.fonts.family = vec!["DejaVu Sans".into()];
+        t
+    };
+    if !TextRenderer::load(&dejavu(blue_theme(Variant::Blue)).fonts).has_face("DejaVu Sans") {
+        crate::pins::skip!("DejaVu Sans is not installed");
+    }
+    let mut plain = Logon::new(Interface::Blue, Vec::new(), false, None);
+    plain.caps_lock = true;
+    let mut admin = plain.clone();
+    admin.admin(PowerAction::PowerOff);
+    for pct in [100, 125, 150, 175, 200] {
+        for s in [1, 2] {
+            let theme = dejavu(blue_theme(Variant::Blue).with_text_size(pct).scaled(s));
+            let text = TextRenderer::load(&theme.fonts);
+            let t = text.for_output(s);
+            let px = design_px(&theme) * s as u32;
+            let heading = crate::text::wrap(t, &strings::admin_shut_down(), TILE_W * s, px);
+            let drawn = |m: &Logon| {
+                let l = layout(m, &theme, &text, OUTPUT);
+                let mut c = Canvas::new((OUTPUT.width * s) as u32, (OUTPUT.height * s) as u32);
+                draw_titled(&mut c, m, &l, &theme, t, &text, s, Show::All);
+                (c, l)
+            };
+            let ((c, l), (base, _)) = (drawn(&admin), drawn(&plain));
+            let field = l.rect(Part::Password).unwrap();
+            let k = lines(theme.text);
+            let n = heading.len() as i32;
+            let top = field.bottom() + ROW_GAP + n * k.line;
+            assert!(
+                top + k.line <= frame(OUTPUT).bottom.y,
+                "{pct}% @{s}: above the bottom band"
+            );
+            let inked = (top * s..(top + k.line) * s)
+                .flat_map(|y| (field.x * s..(field.x + TILE_W) * s).map(move |x| (x, y)))
+                .filter(|&(x, y)| c.get(x, y) != base.get(x, y))
+                .count();
+            assert!(
+                inked > 0,
+                "{pct}% @{s}: the heading's line {n} of {n} under Caps Lock"
+            );
+        }
     }
 }

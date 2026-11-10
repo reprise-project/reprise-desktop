@@ -60,6 +60,86 @@ fn show_users_off_starts_typed_everywhere() {
 }
 
 #[test]
+fn show_users_off_offers_no_switch_user_but_the_lock_still_does() {
+    let theme = Theme::default();
+    let text = TextRenderer::load(&theme.fonts);
+    let output = Rect::new(0, 0, 1024, 768);
+    for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        let mut m = Logon::new(i, users(3), false, None);
+        assert!(!m.offers_switch_user(), "{i:?}");
+        assert!(
+            !m.stops().contains(&Part::SwitchUser),
+            "{i:?}: Tab skips it"
+        );
+        let l = crate::interfaces::logon::logon_layout(&m, &theme, &text, output);
+        assert_eq!(l.rect(Part::SwitchUser), None, "{i:?}: not drawn");
+        m.click(Part::SwitchUser);
+        assert_eq!(m.pick_user(), None, "{i:?}");
+        assert_eq!(m.screen, Screen::Typed, "{i:?}: the typed form stays");
+        let mut lock = Logon::locked(i, users(1).remove(0), true, true);
+        let l = crate::interfaces::logon::logon_layout(&lock, &theme, &text, output);
+        assert!(
+            l.rect(Part::SwitchUser).is_some(),
+            "{i:?}: the lock shows it"
+        );
+        assert_eq!(lock.click(Part::SwitchUser), Some(LogonAction::SwitchUser));
+    }
+}
+
+#[test]
+fn left_and_right_step_through_the_tiles_as_up_and_down_do() {
+    let left = LogonKey::Edit(EditKey::Left {
+        select: false,
+        word: false,
+    });
+    let right = LogonKey::Edit(EditKey::Right {
+        select: false,
+        word: false,
+    });
+    let mut g = Logon::new(Interface::Glass, users(2), true, None);
+    g.key(LogonKey::Escape);
+    let mut seen = vec![g.focus];
+    for key in [&right, &right, &right, &left, &left, &left] {
+        g.key(key.clone());
+        seen.push(g.focus);
+    }
+    use Part::{OtherUser, Tile};
+    let row = [
+        Tile(0),
+        Tile(1),
+        OtherUser,
+        OtherUser,
+        Tile(1),
+        Tile(0),
+        Tile(0),
+    ];
+    assert_eq!(seen, row, "Glass's row ends at Other user");
+    g.key(LogonKey::Down);
+    g.key(LogonKey::Down);
+    assert_eq!(g.focus, OtherUser, "Down reaches Other user too");
+
+    let mut b = Logon::new(Interface::Blue, users(3), true, None);
+    b.key(right.clone());
+    assert_eq!(b.focus, Tile(1), "Blue's column");
+    b.key(left.clone());
+    assert_eq!(b.focus, Tile(0));
+
+    let mut blue_tile = Logon::new(Interface::Blue, users(3), true, None);
+    blue_tile.click(Tile(1));
+    let glass_tile = Logon::new(Interface::Glass, users(3), true, Some("user1"));
+    for mut m in [blue_tile, glass_tile] {
+        let i = m.interface;
+        typed(&mut m, "ab");
+        let at = (m.screen, m.focus);
+        m.key(left.clone());
+        assert_eq!(m.password.caret(), 1, "{i:?}: Left moves the caret");
+        m.key(right.clone());
+        assert_eq!(m.password.caret(), 2, "{i:?}: Right moves it back");
+        assert_eq!((m.screen, m.focus), at, "{i:?}: the tile stays");
+    }
+}
+
+#[test]
 fn enter_with_a_password_submits_the_shown_user() {
     let mut m = Logon::new(Interface::Classic, Vec::new(), false, None);
     typed(&mut m, "alice");
@@ -235,17 +315,19 @@ fn a_logon_keys_debug_hides_the_typed_text() {
 }
 
 #[test]
-fn busy_ignores_everything_but_power() {
+fn busy_ignores_everything_but_tab_and_power() {
     let mut m = Logon::new(Interface::Classic, Vec::new(), false, Some("alice"));
     typed(&mut m, "pw");
     m.set_busy(true);
-    for key in [
+    let ignored = [
         LogonKey::Text("x"),
         LogonKey::Edit(EditKey::Backspace { word: false }),
         LogonKey::Enter,
         LogonKey::Escape,
-        LogonKey::Tab { back: false },
-    ] {
+        LogonKey::Up,
+        LogonKey::Down,
+    ];
+    for key in &ignored {
         assert_eq!(m.key(key.clone()), None, "{key:?}");
     }
     assert_eq!((m.password.text.as_str(), m.focus), ("pw", Part::Password));
@@ -253,6 +335,22 @@ fn busy_ignores_everything_but_power() {
         assert_eq!(m.click(part), None, "{part:?}");
     }
     assert_eq!(m.click(Part::Power), Some(LogonAction::Power));
+
+    assert_eq!(m.key(LogonKey::Tab { back: false }), None);
+    assert_eq!(m.focus, Part::Submit, "Tab moves on while busy");
+    assert_eq!(m.key(LogonKey::Enter), None, "the greyed OK takes no Enter");
+    m.key(LogonKey::Tab { back: true });
+    assert_eq!(m.focus, Part::Password, "Shift+Tab moves back");
+    m.key(LogonKey::Tab { back: true });
+    m.key(LogonKey::Tab { back: true });
+    assert_eq!(m.focus, Part::Power, "Shut Down... is reachable");
+    assert_eq!(m.key(LogonKey::Enter), Some(LogonAction::Power));
+    for key in &ignored[..2] {
+        m.key(LogonKey::Tab { back: false });
+        m.key(key.clone());
+    }
+    assert_eq!(m.name.text, "alice", "no text goes in while busy");
+    assert_eq!(m.password.text, "pw");
 }
 
 #[test]
@@ -432,6 +530,37 @@ fn the_admin_form_starts_empty_and_escape_leaves_it() {
     c.admin(PowerAction::Reboot);
     assert_eq!(c.click(Part::Cancel), Some(LogonAction::Cancel));
     assert_eq!(c.purpose, Purpose::Login);
+}
+
+#[test]
+fn leaving_the_admin_form_gives_the_focus_back_to_what_had_it() {
+    let mut b = Logon::new(Interface::Blue, users(3), true, None);
+    b.key(LogonKey::Down);
+    b.admin(PowerAction::PowerOff);
+    b.key(LogonKey::Escape);
+    assert_eq!((b.screen, b.focus), (Screen::Tiles, Part::Tile(1)));
+
+    let mut g = Logon::new(Interface::Glass, users(3), true, Some("user2"));
+    g.admin(PowerAction::Reboot);
+    g.key(LogonKey::Escape);
+    assert_eq!(
+        (g.screen, g.focus),
+        (Screen::Tiles, Part::Tile(2)),
+        "an open tile's user"
+    );
+
+    let mut other = Logon::new(Interface::Glass, users(3), true, None);
+    other.click(Part::OtherUser);
+    other.admin(PowerAction::PowerOff);
+    other.key(LogonKey::Escape);
+    assert_eq!(other.focus, Part::OtherUser, "Other user's form");
+
+    let mut power = Logon::new(Interface::Blue, users(3), true, Some("user1"));
+    power.focus = Part::Power;
+    power.admin(PowerAction::PowerOff);
+    power.admin(PowerAction::Reboot);
+    power.key(LogonKey::Escape);
+    assert_eq!(power.focus, Part::Power, "the button that asked for it");
 }
 
 #[test]
