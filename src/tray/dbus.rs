@@ -340,9 +340,7 @@ impl Loop {
             .await
     }
 
-    /// The emitter of notification `id`'s signals, addressed to the connection that sent it: a
-    /// typed reply or an activation token is for that program alone. None when no sender is on
-    /// record.
+    /// Notification `id`'s signals, addressed to its sender: a typed reply or token is for it alone.
     async fn to_sender(&self, id: u32) -> Option<SignalEmitter<'static>> {
         let sender = lock(&self.senders).0.get(&id)?.0.clone();
         let name = zbus::names::BusName::try_from(sender).ok()?;

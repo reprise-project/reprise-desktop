@@ -1439,9 +1439,8 @@ impl Daemon {
         }
     }
 
-    /// Links every session that may have a client (docs/security.md, Remote logins), looking up
-    /// the group first for a listed console session while remote logins are on. Other sessions
-    /// are linked by their user's next remote login.
+    /// Links every session that may have a client, looking up the group first for a listed
+    /// console session while remote logins are on (docs/security.md, Background sessions).
     pub(super) fn open_intakes(&mut self, out: &mut Vec<Effect>) {
         let users: BTreeMap<u32, (String, bool)> = (self.sessions.iter())
             .filter(|e| !self.remote.linked.contains(&e.uid))
