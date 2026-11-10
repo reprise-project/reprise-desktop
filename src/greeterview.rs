@@ -59,8 +59,8 @@ pub struct Greeter {
     pub started: bool,
 }
 
-/// One output's cover in `layers.background`: the interface's backdrop, and on the first output
-/// the login screen.
+/// One output's cover in `layers.background`: the interface's backdrop, and on one output the
+/// login screen.
 struct Cover {
     output: Output,
     tree: TreeId,
@@ -102,6 +102,7 @@ pub fn setup(state: &mut State, g: Greeting) {
         .collect();
     let interface = crate::greeter::interface(g.interface);
     let mut model = Logon::new(interface, users, g.show_users, g.last_user.as_deref());
+    model.over_picture = crate::greeter::background(&g).is_some();
     if g.notice == Some(Notice::SessionEndedEarly) {
         model.info(logon::text::session_ended_early());
     }
@@ -420,15 +421,24 @@ fn open_power_menu(state: &mut State) {
     state.redraw_menu(0);
 }
 
-/// Cover every output and put the screen on the first in layout order (left to right, then
-/// top to bottom), after the login screen starts and whenever the layout changes.
+/// Cover every output, clear over a background, with the screen on the greeting's primary one
+/// while it is shown, else the first left to right, then top to bottom. Runs on layout changes.
 pub fn refit(state: &mut State) {
     let mut shown: Vec<(Output, Rect)> = (state.scene.outputs().iter())
         .map(|o| (o.clone(), state.layout_box(Some(o))))
         .filter(|(_, b)| b.width > 0)
         .collect();
     shown.sort_by_key(|(_, b)| (b.x, b.y));
-    let color = cover_color(state);
+    let primary = state.config.primary_output_name();
+    let screen_on = (shown.iter())
+        .position(|(o, _)| Some(o.name().as_str()) == primary)
+        .unwrap_or(0);
+    let over_picture = (state.greeter.login.as_ref()).is_some_and(|g| g.model.over_picture);
+    let color = if over_picture {
+        None
+    } else {
+        cover_color(state)
+    };
     let Some(g) = state.greeter.login.as_mut() else {
         return;
     };
@@ -462,7 +472,7 @@ pub fn refit(state: &mut State) {
             .scene
             .rect_set_color(c.rect, color.unwrap_or([0.0; 4]));
         state.scene.set_enabled(c.rect, color.is_some());
-        match (i == 0, c.screen) {
+        match (i == screen_on, c.screen) {
             (true, None) => c.screen = Some(state.scene.buffer_create(c.tree)),
             (false, Some(screen)) => {
                 state.scene.destroy(screen);
@@ -475,6 +485,22 @@ pub fn refit(state: &mut State) {
         g.covers = covers;
     }
     redraw(state);
+}
+
+/// The greeting's background did not load: the login screen takes its interface's own look.
+pub fn background_failed(state: &mut State) {
+    let Some(g) = state.greeter.login.as_mut() else {
+        return;
+    };
+    if !g.model.over_picture {
+        return;
+    }
+    log::warn!("greeter: the background did not load; showing the default");
+    g.model.over_picture = false;
+    let fallback = crate::greeter::default_wallpaper(state.config.interface);
+    state.config.wallpaper.image = fallback.clone();
+    state.set_wallpaper(fallback.as_deref());
+    refit(state);
 }
 
 /// The backdrop behind the screen: the desktop colour on Classic, the scheme's welcome field on

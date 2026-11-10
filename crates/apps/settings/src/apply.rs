@@ -259,7 +259,9 @@ impl SettingsApp {
         if !self.apply_defaults() {
             ok = false;
         }
-        self.apply_login();
+        if !self.apply_login() {
+            ok = false;
+        }
         self.sync_apply();
         ok
     }

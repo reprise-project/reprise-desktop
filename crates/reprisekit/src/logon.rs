@@ -246,6 +246,9 @@ pub struct Logon {
     pub first_tile: usize,
     /// How many tiles are in view at once, for keeping the selection in view.
     pub column: usize,
+    /// The screen lies over a picture: Classic leaves the space around its dialog clear, Blue dims
+    /// its field.
+    pub over_picture: bool,
     /// The screen [`Screen::Message`]'s OK goes back to.
     back: Screen,
     /// An administrator's power request succeeded and the computer is going down.
@@ -286,6 +289,7 @@ impl Logon {
             lit: None,
             first_tile: 0,
             column: COLUMN,
+            over_picture: false,
             back: Screen::Typed,
             going_down: false,
         };

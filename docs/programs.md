@@ -415,10 +415,16 @@ matched control focused.
     and the red border around what is being shared.
   - **Date and Time...** and **User Accounts...**
   - **Login Manager:** for the whole computer, in `/etc/reprise/login.toml`.
-    Login Screen: the interface (or the last one used), Show users, and a
-    user to log on automatically. Remote Logins: Allow remote logins to this
-    computer, the port, a note naming the group whose members may log on,
-    Sessions at most, End disconnected sessions after (Never, 15 minutes, 1 hour, 4
+    Login Screen: the interface (or the last one used), Show users, a
+    user to log on automatically, the Background (Default, a built-in
+    wallpaper, or a picture Browse... picks), and Screens: Use My Display
+    Settings copies each screen's mode, scale, rotation, place and the
+    primary one as your session runs them, Reset goes back to each
+    screen's preferred mode at 100%. Browse... takes a PNG, JPEG or BMP;
+    Apply decodes it before asking for the password and says why it
+    refuses one. Remote Logins: Allow remote logins to this computer, the
+    port, a note naming the group whose members may log on, Sessions at
+    most, End disconnected sessions after (Never, 15 minutes, 1 hour, 4
     hours or 1 day), and the certificate fingerprint, or Not running while
     the front is off. OK and Apply save through `pkexec`, which asks for an
     administrator's password on each save,
@@ -756,12 +762,14 @@ sheet goes back to the clock's settings as they are.
   port and passes it to the front. `/usr/lib/reprise/reprise-login-settings`
   is the helper Settings > Login Manager saves through: run by `pkexec`, it
   takes the whole file as TOML on stdin, after a first line that names the
-  file the settings were read from, and checks it. Holding
+  file the settings were read from and, for a new background, a
+  `picture LENGTH` line and the picture's bytes, and checks them. Holding
   `/etc/reprise/.login.toml.lock` (root's, 0600), it writes
-  `/etc/reprise/login.toml` only while that file is still the one named, then
-  reloads reprise-login. It exits 0 when saved, 2 when refused, with a reason
-  per line on stderr, 3 when the file changed since it was read, and 1 on any
-  other failure, another save holding the lock for 5 s included. See
+  `/etc/reprise/login.toml` only while that file is still the one named,
+  then the picture's pixels as a PNG to `/var/lib/reprise-login/background`,
+  and reloads reprise-login. It exits 0 when saved, 2 when refused, with a
+  reason per line on stderr, 3 when the file changed since it was read, and 1
+  on any other failure, another save holding the lock for 5 s included. See
   [security.md](security.md#remote-logins).
 - **About Reprise.** Version, operating system, kernel, model, processor,
   graphics, memory (in kilobytes, total and available), disk, displays and

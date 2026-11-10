@@ -2,11 +2,12 @@
 //! (`repriselogin::machine`) rather than in `config.toml`.
 
 use super::{Area, GX, edit, group, spin};
-use reprisekit::classic::widgets::LINE_H;
+use reprisekit::classic::widgets::{BUTTON_W, LINE_H};
 use reprisekit::controls::form::{Control, Form, Item};
 use reprisekit::raster::Rect;
+use reprisekit::wallpapers::{Builtin, Design};
 use repriselogin::Interface;
-use repriselogin::machine::MachineConfig;
+use repriselogin::machine::{Background, MachineConfig};
 
 pub const LOGIN_INTERFACE: &str = "login_interface";
 pub const LOGIN_SHOW_USERS: &str = "login_show_users";
@@ -17,6 +18,11 @@ pub const LOGIN_GROUP_NOTE: &str = "login_group_note";
 pub const LOGIN_SESSIONS: &str = "login_sessions";
 pub const LOGIN_END_AFTER: &str = "login_end_after";
 pub const LOGIN_FINGERPRINT: &str = "login_fingerprint";
+pub const LOGIN_BACKGROUND: &str = "login_background";
+pub const LOGIN_BROWSE: &str = "login_browse";
+pub const LOGIN_SCREENS: &str = "login_screens";
+pub const LOGIN_USE_DISPLAYS: &str = "login_use_displays";
+pub const LOGIN_RESET_DISPLAYS: &str = "login_reset_displays";
 
 /// What the fingerprint field shows while the Remote Desktop front has none to give.
 pub const NOT_RUNNING: &str = "Not running";
@@ -31,6 +37,10 @@ const INTERFACES: [(Option<Interface>, &str); 4] = [
 
 /// The first row of the automatic logon combo; the listed users follow it.
 const NOBODY: &str = "Nobody";
+/// The background combo's first row: the interface's own backdrop.
+const DEFAULT_BACKGROUND: &str = "Default";
+/// The background row of a picture already copied for the login screen.
+const PICTURE: &str = "Picture";
 const DROP_ROWS: usize = 8;
 
 /// The end disconnected sessions combo's rows, in minutes; `None` never ends them.
@@ -52,6 +62,10 @@ const REMOTE_CONTROLS: [&str; 6] = [
     LOGIN_END_AFTER,
 ];
 
+/// How far the Remote Logins group sits below where it would without the background and
+/// screen rows.
+const REMOTE_DY: i32 = 112;
+
 const LABEL_W: i32 = 130;
 const COMBO_X: i32 = GX + LABEL_W + 4;
 const COMBO_W: i32 = 150;
@@ -61,7 +75,7 @@ pub fn login_manager(a: Area) -> Form {
     let interfaces: Vec<&str> = INTERFACES.iter().map(|i| i.1).collect();
     let ends: Vec<&str> = END_AFTER.iter().map(|e| e.1).collect();
     let mut items = vec![
-        group(a, "login_screen_group", 44, 98, "Login Screen"),
+        group(a, "login_screen_group", 44, 98 + REMOTE_DY, "Login Screen"),
         Item::label_at("login_interface_label", GX, 70, LABEL_W, "&Interface:"),
         Item::combo(
             LOGIN_INTERFACE,
@@ -87,11 +101,51 @@ pub fn login_manager(a: Area) -> Form {
             &[NOBODY],
             1,
         ),
-        group(a, "login_remote_group", 152, 158, "Remote Logins"),
+        Item::label_at("login_background_label", GX, 146, LABEL_W, "&Background:"),
+        Item::combo(
+            LOGIN_BACKGROUND,
+            COMBO_X,
+            142,
+            a.combo(COMBO_W),
+            &[DEFAULT_BACKGROUND],
+            1,
+        ),
+        Item::button_at(
+            LOGIN_BROWSE,
+            a.gright() - BUTTON_W,
+            168,
+            BUTTON_W,
+            "Bro&wse...",
+            true,
+        ),
+        Item::label_at(LOGIN_SCREENS, GX, 202, a.gw() - 18, ""),
+        Item::button_at(
+            LOGIN_USE_DISPLAYS,
+            GX,
+            220,
+            170,
+            "Use M&y Display Settings",
+            true,
+        ),
+        Item::button_at(
+            LOGIN_RESET_DISPLAYS,
+            GX + 176,
+            220,
+            BUTTON_W,
+            "R&eset",
+            false,
+        ),
+        group(
+            a,
+            "login_remote_group",
+            152 + REMOTE_DY,
+            158,
+            "Remote Logins",
+        ),
         Item::check(
             LOGIN_REMOTE,
             GX,
-            174,
+            174 + REMOTE_DY,
             "Allow &remote logins to this computer",
         ),
     ];
@@ -99,7 +153,7 @@ pub fn login_manager(a: Area) -> Form {
         "login_port_label",
         LOGIN_PORT,
         a.gright() - 86,
-        174,
+        174 + REMOTE_DY,
         32,
         "&Port:",
         (1, 65535),
@@ -107,7 +161,7 @@ pub fn login_manager(a: Area) -> Form {
     items.push(
         Item::new(
             LOGIN_GROUP_NOTE,
-            Rect::new(GX, 194, a.gw() - 18, 2 * LINE_H),
+            Rect::new(GX, 194 + REMOTE_DY, a.gw() - 18, 2 * LINE_H),
             Control::Lines(Vec::new()),
         )
         .under_check(),
@@ -116,7 +170,7 @@ pub fn login_manager(a: Area) -> Form {
         "login_sessions_label",
         LOGIN_SESSIONS,
         GX,
-        230,
+        230 + REMOTE_DY,
         LABEL_W,
         "Sessions at &most:",
         (1, 50),
@@ -125,14 +179,14 @@ pub fn login_manager(a: Area) -> Form {
         Item::label_at(
             "login_end_after_label",
             GX,
-            256,
+            256 + REMOTE_DY,
             LABEL_W + 60,
             "End &disconnected sessions after:",
         ),
         Item::combo(
             LOGIN_END_AFTER,
             COMBO_X + 60,
-            252,
+            252 + REMOTE_DY,
             a.combo(COMBO_W - 60),
             &ends,
             ends.len(),
@@ -140,15 +194,72 @@ pub fn login_manager(a: Area) -> Form {
         Item::label_at(
             "login_fingerprint_label",
             GX,
-            282,
+            282 + REMOTE_DY,
             LABEL_W,
             "Certificate &fingerprint:",
         ),
-        edit(LOGIN_FINGERPRINT, COMBO_X, 278, a.gright() - COMBO_X).read_only(),
+        edit(
+            LOGIN_FINGERPRINT,
+            COMBO_X,
+            278 + REMOTE_DY,
+            a.gright() - COMBO_X,
+        )
+        .read_only(),
     ]);
     let mut page = Form::new(items);
-    show_login(&mut page, &MachineConfig::default(), &[], None);
+    show_login(
+        &mut page,
+        &MachineConfig::default(),
+        &[],
+        None,
+        Picture::default(),
+    );
     page
+}
+
+/// The background combo's rows: the interface's own, each built-in by name, then a built-in
+/// `c` names that they lack, and the picture `picked` names, else the one `c` or the file shows.
+fn background_rows(c: &MachineConfig, picture: Picture<'_>) -> Vec<(Option<Background>, String)> {
+    let mut rows = vec![(None, DEFAULT_BACKGROUND.to_string())];
+    rows.extend(Design::ALL.iter().flat_map(|&d| {
+        (d.variants().iter()).filter_map(move |v| {
+            let b = Builtin::named(d, v)?;
+            Some((
+                Some(Background::Builtin(b.uri())),
+                crate::backgroundpage::builtin_label(b),
+            ))
+        })
+    }));
+    if let Some(b @ Background::Builtin(uri)) = &c.login.background
+        && !rows.iter().any(|r| r.0.as_ref() == Some(b))
+    {
+        rows.push((Some(b.clone()), uri.clone()));
+    }
+    let shows = picture.saved || c.login.background == Some(Background::Picture);
+    match picture.picked {
+        Some(name) => rows.push((Some(Background::Picture), name.to_string())),
+        None if shows => rows.push((Some(Background::Picture), PICTURE.to_string())),
+        None => {}
+    }
+    rows
+}
+
+/// The pictures the background combo offers beside the built-ins.
+#[derive(Clone, Copy, Default)]
+pub struct Picture<'a> {
+    /// A picture browsed and not saved yet, by name.
+    pub picked: Option<&'a str>,
+    /// The file shows the picture already copied for the login screen.
+    pub saved: bool,
+}
+
+/// What the Screens line says of `c`'s outputs.
+fn screens_note(c: &MachineConfig) -> String {
+    match c.outputs.len() {
+        0 => "Screens: automatic".into(),
+        1 => "Screens: 1, from your display settings".into(),
+        n => format!("Screens: {n}, from your display settings"),
+    }
 }
 
 /// The automatic logon combo's users: `users`, then the one `c` names when they lack it.
@@ -182,9 +293,15 @@ fn set_updown(page: &mut Form, id: &str, v: u32) {
     }
 }
 
-/// Put `c` on the page, offering `users` for automatic logon; `fingerprint` is the Remote
-/// Desktop front's, `None` while it is not running.
-pub fn show_login(page: &mut Form, c: &MachineConfig, users: &[String], fingerprint: Option<&str>) {
+/// Put `c` on the page, offering `users` for automatic logon and `picture` as a background;
+/// `fingerprint` is the Remote Desktop front's, `None` while it is not running.
+pub fn show_login(
+    page: &mut Form,
+    c: &MachineConfig,
+    users: &[String],
+    fingerprint: Option<&str>,
+    picture: Picture<'_>,
+) {
     let interface = INTERFACES
         .iter()
         .position(|i| i.0 == c.login.interface)
@@ -192,7 +309,7 @@ pub fn show_login(page: &mut Form, c: &MachineConfig, users: &[String], fingerpr
     page.set_combo(LOGIN_INTERFACE, interface);
     page.set_check(LOGIN_SHOW_USERS, c.login.show_users);
     let rows = autologin_rows(c, users);
-    let picked = match &c.login.autologin_user {
+    let picked_user = match &c.login.autologin_user {
         Some(u) => rows
             .iter()
             .skip(1)
@@ -200,7 +317,15 @@ pub fn show_login(page: &mut Form, c: &MachineConfig, users: &[String], fingerpr
             .map_or(0, |i| i + 1),
         None => 0,
     };
-    page.set_combo_rows(LOGIN_AUTOLOGIN, &rows, picked, DROP_ROWS);
+    page.set_combo_rows(LOGIN_AUTOLOGIN, &rows, picked_user, DROP_ROWS);
+    let backgrounds = background_rows(c, picture);
+    let shown = (backgrounds.iter())
+        .position(|r| r.0 == c.login.background)
+        .unwrap_or(0);
+    let labels: Vec<String> = backgrounds.into_iter().map(|r| r.1).collect();
+    page.set_combo_rows(LOGIN_BACKGROUND, &labels, shown, DROP_ROWS);
+    page.set_text(LOGIN_SCREENS, &screens_note(c));
+    page.set_enabled(LOGIN_RESET_DISPLAYS, !c.outputs.is_empty());
     let r = &c.remote;
     page.set_check(LOGIN_REMOTE, r.enabled);
     set_updown(page, LOGIN_PORT, r.port.into());
@@ -232,6 +357,16 @@ pub fn follow_login(page: &mut Form) {
     if let Some(it) = page.item_mut(LOGIN_GROUP_NOTE) {
         let blank = Item::new(LOGIN_GROUP_NOTE, it.rect, Control::Blank);
         *it = std::mem::replace(it, blank).enabled(on);
+    }
+}
+
+/// Read the background combo back into `c`, which the page shows with `picture`.
+pub fn read_login_background(page: &Form, c: &mut MachineConfig, picture: Picture<'_>) {
+    let rows = background_rows(c, picture);
+    if let Some(row) = page.combo_selected(LOGIN_BACKGROUND)
+        && let Some((b, _)) = rows.into_iter().nth(row)
+    {
+        c.login.background = b;
     }
 }
 

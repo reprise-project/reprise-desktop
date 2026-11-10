@@ -853,7 +853,7 @@ impl App for SettingsApp {
                 id: ADD_WIN,
                 title: match self.add_for {
                     Pick::Autostart => "Add",
-                    Pick::Wallpaper => "Browse",
+                    Pick::Wallpaper | Pick::LoginBackground => "Browse",
                     Pick::SlideFolder => "Browse for Folder",
                     Pick::Program => "Browse",
                     Pick::Export => "Export",

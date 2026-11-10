@@ -198,6 +198,7 @@ impl Dispatch2<ZwlrOutputHeadV1, Host> for HeadData {
             E::Description { description } => In::Description(h, description),
             E::Make { make } => In::Make(h, make),
             E::Model { model } => In::Model(h, model),
+            E::SerialNumber { serial_number } => In::SerialNumber(h, serial_number),
             E::Mode { mode } => {
                 let m = id(&mode);
                 if let Some(o) = host.outputs.as_mut() {

@@ -135,7 +135,9 @@ pub fn draw(
     let px = theme.fonts.size_px * s as u32 / theme.scale.max(1) as u32;
     let p = Paint { s, ..theme.paint() };
     let cs = &theme.colors;
-    c.fill_rect(at(o), cs.background);
+    if !m.over_picture {
+        c.fill_rect(at(o), cs.background);
+    }
 
     let dialog = at(g.dialog);
     c.fill_rect(dialog, cs.button_face);

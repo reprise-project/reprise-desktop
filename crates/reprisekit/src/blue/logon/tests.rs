@@ -58,6 +58,8 @@ fn states() -> Vec<(&'static str, Logon)> {
     busy.key(LogonKey::Text("hunter2"));
     busy.set_busy(true);
     let typed = Logon::new(Interface::Blue, Vec::new(), false, None);
+    let mut over_picture = rest.clone();
+    over_picture.over_picture = true;
     vec![
         ("tiles at rest", rest),
         ("tile hot", hot),
@@ -69,6 +71,7 @@ fn states() -> Vec<(&'static str, Logon)> {
         ("admin restart filled", admin(PowerAction::Reboot, "anna")),
         ("shutting down", going_down()),
         ("remote note", remote()),
+        ("tiles over a picture", over_picture),
     ]
 }
 
@@ -217,6 +220,105 @@ fn the_bands_and_the_field_take_each_schemes_colours() {
             "{v:?}: the glow side is brighter than the far side"
         );
     }
+}
+
+#[test]
+fn over_a_picture_the_field_dims_it_and_the_bands_stay() {
+    let mut m = Logon::new(Interface::Blue, users(), true, None);
+    m.over_picture = true;
+    for s in [1, 2] {
+        let (c, l) = drawn(&m, Variant::Blue, s);
+        let sc = Variant::Blue.scheme();
+        let f = frame(l.output);
+        let mark_side = (f.middle.x + 8) * s;
+        for y in [
+            f.middle.y + 4,
+            f.middle.y + f.middle.height / 2,
+            f.bottom.y - 4,
+        ] {
+            assert_eq!(
+                c.get(mark_side, y * s),
+                u32::from(PICTURE_DIM) << 24,
+                "@{s}: the field at {y} is translucent black"
+            );
+        }
+        assert_eq!(
+            c.get(mark_side, 10 * s),
+            sc.welcome_band.argb(),
+            "@{s}: top band"
+        );
+        assert_eq!(
+            c.get(mark_side, (OUTPUT.height - 10) * s),
+            sc.welcome_band.argb(),
+            "@{s}: bottom band"
+        );
+        let rule = c.get(f.split * s, (f.middle.y + f.middle.height / 2) * s);
+        assert!(
+            alpha(rule) > u32::from(PICTURE_DIM),
+            "@{s}: the middle rule stays"
+        );
+    }
+}
+
+/// `m` drawn at `s` over a picture of one colour, `picture`.
+fn laid_over(m: &Logon, picture: Color, s: i32) -> (Canvas, LogonLayout) {
+    let (screen, l) = drawn(m, Variant::Blue, s);
+    let mut c = Canvas::new(screen.width, screen.height);
+    c.fill_rect(c.bounds(), picture);
+    c.blit_over(0, 0, &screen);
+    (c, l)
+}
+
+/// The WCAG contrast ratio of two opaque pixels.
+fn contrast(a: u32, b: u32) -> f64 {
+    let lum = |p: u32| {
+        let [b, g, r, _] = p.to_le_bytes();
+        let lin = |c: u8| {
+            let c = f64::from(c) / 255.0;
+            if c <= 0.04045 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+    };
+    let (hi, lo) = (lum(a).max(lum(b)), lum(a).min(lum(b)));
+    (hi + 0.05) / (lo + 0.05)
+}
+
+#[test]
+fn over_a_bright_or_dark_picture_the_text_reads_with_no_dark_rim() {
+    crate::pins::fonts();
+    let mut m = Logon::new(Interface::Blue, users(), true, None);
+    m.over_picture = true;
+    let ink = Variant::Blue.scheme().welcome_text.argb();
+    let mut got = Vec::new();
+    for (name, picture) in [
+        ("bright", Color::rgb(0xFF, 0xF4, 0xC8)),
+        ("dark", Color::rgb(0x18, 0x20, 0x30)),
+    ] {
+        for s in [1, 2] {
+            let (c, l) = laid_over(&m, picture, s);
+            got.push((format!("tiles over a {name} picture @{s}"), fnv(&c)));
+            let f = frame(l.output);
+            let field = c.get((f.middle.x + 8) * s, (f.middle.y + 4) * s);
+            assert!(
+                contrast(ink, field) >= 3.0,
+                "{name} @{s}: the text reads on the field, {:.2}",
+                contrast(ink, field)
+            );
+            let darker = ((f.middle.y * s)..(f.bottom.y * s))
+                .flat_map(|y| (0..f.split * s).map(move |x| (x, y)))
+                .filter(|&(x, y)| luma(c.get(x, y)) + 1 < luma(field))
+                .count();
+            assert_eq!(
+                darker, 0,
+                "{name} @{s}: the white mark and text lay nothing darker than the field"
+            );
+        }
+    }
+    crate::pins::check("blue/logon_over_picture", &got);
 }
 
 #[test]
@@ -369,14 +471,19 @@ fn caps_lock_goes_under_the_field_on_both_screens() {
 #[test]
 fn the_backdrop_is_kept_for_each_output_size() {
     let sc = Variant::Blue.scheme();
-    let a = cached_backdrop(sc, 64, 48, 1);
-    let b = cached_backdrop(sc, 80, 60, 1);
+    let a = cached_backdrop(sc, 64, 48, 1, true);
+    let b = cached_backdrop(sc, 80, 60, 1, true);
     assert!(
-        Rc::ptr_eq(&a, &cached_backdrop(sc, 64, 48, 1)),
+        Rc::ptr_eq(&a, &cached_backdrop(sc, 64, 48, 1, true)),
         "the first size"
     );
     assert!(
-        Rc::ptr_eq(&b, &cached_backdrop(sc, 80, 60, 1)),
+        Rc::ptr_eq(&b, &cached_backdrop(sc, 80, 60, 1, true)),
         "the second size"
+    );
+    let clear = cached_backdrop(sc, 64, 48, 1, false);
+    assert!(
+        !Rc::ptr_eq(&a, &clear),
+        "over a picture, a backdrop of its own"
     );
 }

@@ -123,6 +123,8 @@ fn login_with(
         last_user: None,
         keyboard: Default::default(),
         notice: None,
+        outputs: Vec::new(),
+        background: None,
     };
     let mut config = crate::greeter::config_from(&greeting);
     // Glass's wallpaper draws on a thread into the cache; the screen is what these tests read.
@@ -343,6 +345,8 @@ fn a_later_greeting_brings_the_tiles_notes_up_to_date() {
         last_user: None,
         keyboard: Default::default(),
         notice: None,
+        outputs: Vec::new(),
+        background: None,
     };
     d.says(&mut h, GreeterReply::Greeting(fresh));
     assert_eq!(model(&h).users[0].note, None, "anna logged off");
@@ -699,6 +703,80 @@ fn render_greeter_preview() {
             "{name} 3840x2160 at scale 2: redraw {full:?}, of it painting {painting:?}, \
              {:?} without pictures",
             paint(&mut m)
+        );
+    }
+}
+
+#[test]
+fn the_screen_goes_on_the_greetings_primary_output_while_it_is_connected() {
+    let primary = |name: &str| crate::config::OutputConfig {
+        name: name.into(),
+        scale: 1.0,
+        mode: None,
+        adaptive_sync: None,
+        transform: crate::config::Transform::Normal,
+        position: None,
+        primary: true,
+    };
+    for (named, on) in [("TEST-2", "TEST-2"), ("HDMI-A-9", "TEST-1")] {
+        let (mut h, _d) = login_with(repriselogin::Interface::Classic, Vec::new(), |c| {
+            c.outputs = vec![primary(named)]
+        });
+        h.output("TEST-2", 800, 600);
+        let g = h.state.greeter.login.as_ref().unwrap();
+        let screens: Vec<String> = (g.covers.iter())
+            .filter(|c| c.screen.is_some())
+            .map(|c| c.output.name())
+            .collect();
+        assert_eq!(screens, [on], "{named} primary");
+        let o = (h.state.scene.outputs().iter()).find(|o| o.name() == on);
+        assert_eq!(
+            g.layout.as_ref().unwrap().output,
+            h.state.layout_box(o),
+            "{named} primary"
+        );
+    }
+}
+
+#[test]
+fn a_background_that_does_not_load_gives_back_the_interfaces_own_look() {
+    let junk = crate::harness::scratch().join("not-a-picture.png");
+    std::fs::write(&junk, b"not a picture").unwrap();
+    for interface in [
+        repriselogin::Interface::Classic,
+        repriselogin::Interface::Glass,
+    ] {
+        let greeting = Greeting {
+            interface,
+            show_users: true,
+            users: Vec::new(),
+            last_user: None,
+            keyboard: Default::default(),
+            notice: None,
+            outputs: Vec::new(),
+            background: Some(repriselogin::machine::Background::Picture),
+        };
+        let mut config = crate::greeter::config_from(&greeting);
+        config.wallpaper.image = Some(junk.clone());
+        let mut h = Harness::with_host(config, Host::Greeter);
+        h.output("TEST-1", 1024, 768);
+        setup(&mut h.state, greeting);
+        h.state.apply_wallpaper_config();
+        for _ in 0..100 {
+            if !model(&h).over_picture {
+                break;
+            }
+            h.run_for(20);
+        }
+        assert!(!model(&h).over_picture, "{interface:?}");
+        let default = crate::greeter::default_wallpaper(crate::greeter::interface(interface));
+        assert_eq!(h.state.config.wallpaper.image, default, "{interface:?}");
+        let g = h.state.greeter.login.as_ref().unwrap();
+        let rect = g.covers[0].rect;
+        assert_eq!(
+            h.state.scene.enabled(rect),
+            interface == repriselogin::Interface::Classic,
+            "Classic's desktop colour is back; Glass lies over its wallpaper"
         );
     }
 }

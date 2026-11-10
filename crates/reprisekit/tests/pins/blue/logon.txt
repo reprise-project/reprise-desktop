@@ -18,6 +18,8 @@ Blue shutting down @1 8fabc4c204e8d810
 Blue shutting down @2 8ff28da33e1ed9d2
 Blue remote note @1 51e873e9e613f75b
 Blue remote note @2 983fdcde3248286c
+Blue tiles over a picture @1 55a5526adfe20699
+Blue tiles over a picture @2 70c5334efce8ed19
 Olive tiles at rest @1 a2bf134a9680b13f
 Olive tiles at rest @2 4c2cfab3b9575e19
 Olive tile hot @1 ccef92cf03c14145
@@ -38,6 +40,8 @@ Olive shutting down @1 cb681026e3258e62
 Olive shutting down @2 4daddebc8ef4161e
 Olive remote note @1 2b012377b92f6f1d
 Olive remote note @2 a7120a5646d5628b
+Olive tiles over a picture @1 19f55769334e881f
+Olive tiles over a picture @2 1f6ebf962067672f
 Silver tiles at rest @1 b40ad42a3dca8a8b
 Silver tiles at rest @2 058ea8054cda2073
 Silver tile hot @1 1139b559a82c2d53
@@ -58,6 +62,8 @@ Silver shutting down @1 593d7eccc6c8b16c
 Silver shutting down @2 1ada8000259a6a65
 Silver remote note @1 4b222bf94a848f56
 Silver remote note @2 49fa47aefb5158a7
+Silver tiles over a picture @1 2d0d505650c3a440
+Silver tiles over a picture @2 8dcc1bf1cb652bb4
 Slate tiles at rest @1 ef402b80e3dcb1ef
 Slate tiles at rest @2 7cfc71afb8d8bc35
 Slate tile hot @1 333a8bb625eb3e67
@@ -78,6 +84,8 @@ Slate shutting down @1 d8f434bf7134f21a
 Slate shutting down @2 d6aa2a7dc18fcd52
 Slate remote note @1 8e272005611dad66
 Slate remote note @2 aae2a34f512d1a64
+Slate tiles over a picture @1 47d2c452487c03a2
+Slate tiles over a picture @2 65e938596f89d7ea
 Sapphire tiles at rest @1 ce2435f4aef2589a
 Sapphire tiles at rest @2 72fb38697eba3ab5
 Sapphire tile hot @1 f9066bea0d8fcf11
@@ -98,6 +106,8 @@ Sapphire shutting down @1 bb65de28a7a6a5ec
 Sapphire shutting down @2 3717ada5eb308678
 Sapphire remote note @1 4aff5d08862136fa
 Sapphire remote note @2 dec1b80f77420efe
+Sapphire tiles over a picture @1 4a73c06605ec3c18
+Sapphire tiles over a picture @2 3c0614757f064e6a
 Obsidian tiles at rest @1 135ec7815b0a1ec2
 Obsidian tiles at rest @2 0d233aaa3ea21f5c
 Obsidian tile hot @1 d60f91d2ab2bf6a6
@@ -118,6 +128,8 @@ Obsidian shutting down @1 760af97bc420c5fc
 Obsidian shutting down @2 4e1deca57b0b7fbb
 Obsidian remote note @1 55056935c462ac0c
 Obsidian remote note @2 0b6e3e4d642463bd
+Obsidian tiles over a picture @1 56e7359fa1501a8a
+Obsidian tiles over a picture @2 d86ccd98e7f2757f
 Ember tiles at rest @1 7054d3cd52741dba
 Ember tiles at rest @2 f30ef269dcb3972d
 Ember tile hot @1 58913011e570e8ea
@@ -138,6 +150,8 @@ Ember shutting down @1 de63a932c9a1a988
 Ember shutting down @2 6e1a66c42c586387
 Ember remote note @1 6b173e3a25a498da
 Ember remote note @2 f230b4736369a006
+Ember tiles over a picture @1 95b057c75f78589c
+Ember tiles over a picture @2 d041782f1915a3a7
 Cobalt tiles at rest @1 c5d7c320f81fcbaf
 Cobalt tiles at rest @2 d32188b682f48e13
 Cobalt tile hot @1 065cb78e454728e5
@@ -158,6 +172,8 @@ Cobalt shutting down @1 d487cc0e2f309ca2
 Cobalt shutting down @2 e546d132f76b367a
 Cobalt remote note @1 d33fd25204de2faa
 Cobalt remote note @2 e01ff773b7231b8a
+Cobalt tiles over a picture @1 45d6bd7403873343
+Cobalt tiles over a picture @2 077e708aa076ae25
 Carbon tiles at rest @1 bcc65175fe56636a
 Carbon tiles at rest @2 95420ded3adf4ca0
 Carbon tile hot @1 a862faf33d3f2079
@@ -178,6 +194,8 @@ Carbon shutting down @1 a8ece879bb1d7bb8
 Carbon shutting down @2 5264e5dc407b80bc
 Carbon remote note @1 1899a8443330e3c4
 Carbon remote note @2 787c7bf8119000cd
+Carbon tiles over a picture @1 fa76e315a7d8a6f6
+Carbon tiles over a picture @2 95e014c97445ed41
 Steel tiles at rest @1 5c0e3ec110b61b65
 Steel tiles at rest @2 724d378ec086619d
 Steel tile hot @1 0be1864efb293e21
@@ -198,3 +216,5 @@ Steel shutting down @1 4ecf80c1d57e71d3
 Steel shutting down @2 d6b93753ef05ae6d
 Steel remote note @1 39615b8d4c26c18f
 Steel remote note @2 1128b84754e03bbd
+Steel tiles over a picture @1 c6ff9a8aec1ccede
+Steel tiles over a picture @2 43b4fee2f7a159ea

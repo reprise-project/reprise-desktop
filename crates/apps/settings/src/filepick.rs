@@ -1,5 +1,5 @@
-//! The file dialog behind Startup Add..., the Background Browse... buttons, Browse for a program
-//! and the Backup page's Export... and Import....
+//! The file dialog behind Startup Add..., the Background and Login Manager Browse... buttons,
+//! Browse for a program and the Backup page's Export... and Import....
 
 use crate::{SettingsApp, autostart, wallpapers};
 use repriseapp::filedlg::{Resolved, Step, type_keep};
@@ -12,6 +12,8 @@ use repriseapp::{Ctx, Event, Reply};
 pub(crate) enum Pick {
     Autostart,
     Wallpaper,
+    /// The Login Manager page's Browse...: the login screen's picture.
+    LoginBackground,
     SlideFolder,
     /// The Open With chooser's Browse...: a program file.
     Program,
@@ -64,7 +66,7 @@ impl SettingsApp {
                     ],
                 },
             ),
-            Pick::Wallpaper => (
+            Pick::Wallpaper | Pick::LoginBackground => (
                 wallpapers::start_dir(),
                 true,
                 Fields {
@@ -187,6 +189,10 @@ impl SettingsApp {
                             Pick::Wallpaper => match wallpapers::refusal(&path) {
                                 Some(why) => self.fail(&why),
                                 None => self.browsed(path),
+                            },
+                            Pick::LoginBackground => match wallpapers::refusal(&path) {
+                                Some(why) => self.fail(&why),
+                                None => self.login_picture(path),
                             },
                             Pick::Program if !path.is_file() => {
                                 log::warn!("{} is not a file", path.display());

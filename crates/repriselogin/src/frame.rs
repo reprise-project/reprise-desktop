@@ -354,6 +354,8 @@ mod tests {
                 options: "grp:alt_shift_toggle".into(),
             },
             notice: None,
+            outputs: Vec::new(),
+            background: None,
         }
     }
 
