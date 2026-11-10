@@ -74,9 +74,17 @@ pub enum Placement {
 /// The reads count only if it still runs after them: its pidfd unreaped (so `pid` was not
 /// reused), no zombie.
 pub fn placement(pidfd: BorrowedFd<'_>, pid: i32, proc: &Path) -> Placement {
-    let Ok(dir) = std::fs::File::open(proc.join(pid.to_string())) else {
-        return Placement::Unknown;
-    };
+    seen_live(pidfd, pid, proc).map_or(Placement::Unknown, |s| s.placement())
+}
+
+/// The Flatpak app the process `pidfd` names runs as, read as [`placement`] does but only from
+/// what the app can't write ([`Seen::scoped_flatpak_app`]). A grant reads this one.
+pub fn scoped_flatpak_app(pidfd: BorrowedFd<'_>, pid: i32, proc: &Path) -> Option<String> {
+    seen_live(pidfd, pid, proc)?.scoped_flatpak_app()
+}
+
+fn seen_live(pidfd: BorrowedFd<'_>, pid: i32, proc: &Path) -> Option<Seen> {
+    let dir = std::fs::File::open(proc.join(pid.to_string())).ok()?;
     let root = open_at(&dir, c"root", libc::O_PATH | libc::O_DIRECTORY);
     let seen = Seen {
         flatpak_info: root.as_ref().and_then(flatpak_info_at),
@@ -85,10 +93,7 @@ pub fn placement(pidfd: BorrowedFd<'_>, pid: i32, proc: &Path) -> Placement {
         pid_namespaced: read_at(&dir, c"status").map(|s| pid_namespaced(&s)),
     };
     let running = read_at(&dir, c"stat").is_some_and(|s| runs(&s));
-    match running && alive(pidfd) {
-        true => seen.placement(),
-        false => Placement::Unknown,
-    }
+    (running && alive(pidfd)).then_some(seen)
 }
 
 /// What `/proc/<pid>` showed of a live process. A non-dumpable process hides its root and
@@ -135,6 +140,24 @@ impl Seen {
             None if self.cgroup.is_some() && self.pid_namespaced == Some(false) => host,
             None => Placement::Unknown,
         }
+    }
+
+    /// The app of the user manager's `app-flatpak-<id>-<n>.scope` it runs in, in a pid namespace,
+    /// under no snap profile, with a readable `/.flatpak-info` naming the same app.
+    fn scoped_flatpak_app(&self) -> Option<String> {
+        let snap = (self.label.as_deref()).is_some_and(|l| l.trim_start().starts_with("snap."));
+        if snap || self.pid_namespaced != Some(true) {
+            return None;
+        }
+        let app = self
+            .cgroup
+            .as_deref()?
+            .lines()
+            .find_map(user_flatpak_scope_app)?;
+        let Some(Some(info)) = &self.flatpak_info else {
+            return None;
+        };
+        (app_of_flatpak_info(info).as_ref() == Some(&app)).then_some(app)
     }
 }
 
@@ -218,6 +241,19 @@ pub fn app_of_flatpak_info(info: &str) -> Option<String> {
 /// The systemd unit each line of a `/proc/<pid>/cgroup` puts the process in.
 fn units(cgroup: &str) -> impl Iterator<Item = &str> {
     cgroup.lines().map(|l| l.rsplit('/').next().unwrap_or(""))
+}
+
+/// The app of a cgroup v2 line that puts the process right in a Flatpak scope of a user manager's
+/// app.slice: `0::/user.slice/user-<uid>.slice/user@<uid>.service/app.slice/app-flatpak-…`.
+fn user_flatpak_scope_app(line: &str) -> Option<String> {
+    let rest = line.strip_prefix("0::/user.slice/user-")?;
+    let (uid, rest) = rest.split_once(".slice/user@")?;
+    let (manager, unit) = rest.split_once(".service/app.slice/")?;
+    let uid_ok = !uid.is_empty() && uid.bytes().all(|b| b.is_ascii_digit()) && uid == manager;
+    if !uid_ok || unit.contains('/') {
+        return None;
+    }
+    flatpak_scope_app(unit)
 }
 
 /// The app id in the scope Flatpak runs an app in, `app-flatpak-<app id>-<pid>.scope`.
@@ -688,6 +724,91 @@ pub(crate) mod tests {
         );
         let blind = Seen::default().placement();
         assert_eq!(blind, Placement::Unknown, "nothing readable");
+    }
+
+    #[test]
+    fn a_grant_reads_the_app_from_the_flatpak_scope_alone() {
+        let scoped = |info: Option<Option<&str>>, cgroup: &str, label: Option<&str>, ns: bool| {
+            Seen {
+                flatpak_info: info.map(|i| i.map(String::from)),
+                cgroup: Some(cgroup.into()),
+                label: label.map(Into::into),
+                pid_namespaced: Some(ns),
+            }
+            .scoped_flatpak_app()
+        };
+        let pass = format!("{USER}/app-flatpak-org.example.Pass-4242.scope\n");
+        let foot = format!("{USER}/app-reprise-foot-3.scope\n");
+        let info = |app: &str| format!("[Application]\nname={app}\n");
+        let says_pass = info("org.example.Pass");
+        let says_pass = Some(Some(says_pass.as_str()));
+        let expected = Some("org.example.Pass".to_string());
+        assert_eq!(scoped(says_pass, &pass, None, true), expected);
+        assert_eq!(scoped(None, &pass, None, true), None, "a hidden root");
+        assert_eq!(
+            scoped(says_pass, &foot, None, true),
+            None,
+            "a .flatpak-info outside a Flatpak scope"
+        );
+        let says_other = info("org.example.Other");
+        assert_eq!(
+            scoped(Some(Some(&says_other)), &pass, None, true),
+            None,
+            "a .flatpak-info naming another app"
+        );
+        assert_eq!(
+            scoped(Some(None), &pass, None, true),
+            None,
+            "a Flatpak scope without a .flatpak-info"
+        );
+        assert_eq!(
+            scoped(says_pass, &pass, Some("snap.code.code (enforce)\n"), true),
+            None,
+            "under a snap profile"
+        );
+        assert_eq!(
+            scoped(says_pass, &pass, None, false),
+            None,
+            "outside a pid namespace"
+        );
+        assert_eq!(
+            Seen::default().scoped_flatpak_app(),
+            None,
+            "nothing readable"
+        );
+    }
+
+    #[test]
+    fn a_grant_reads_only_a_flatpak_scope_right_in_the_user_managers_app_slice() {
+        let info = "[Application]\nname=org.example.Pass\n".to_string();
+        let scoped = |cgroup: String| {
+            Seen {
+                flatpak_info: Some(Some(info.clone())),
+                cgroup: Some(cgroup),
+                label: None,
+                pid_namespaced: Some(true),
+            }
+            .scoped_flatpak_app()
+        };
+        let unit = "app-flatpak-org.example.Pass-1.scope";
+        assert_eq!(
+            scoped(format!("{USER}/{unit}\n")).as_deref(),
+            Some("org.example.Pass")
+        );
+        for (cgroup, why) in [
+            (
+                format!("{USER}/podman-1.scope/{unit}\n"),
+                "a delegated subtree",
+            ),
+            (format!("0::/system.slice/{unit}\n"), "a system unit"),
+            (
+                format!("0::/user.slice/user-1000.slice/user@1001.service/app.slice/{unit}\n"),
+                "another user's manager",
+            ),
+            (format!("1:name=systemd:/{unit}\n"), "a cgroup v1 line"),
+        ] {
+            assert_eq!(scoped(cgroup), None, "{why}");
+        }
     }
 
     #[test]

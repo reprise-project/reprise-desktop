@@ -758,7 +758,11 @@ the screen takes the interface of the last session used at this computer.
   stray Enter never grants anything.
 - **Sandboxed programs get less.** Flatpaks can't see the desktop's
   privileged protocols, such as input injection or screen capture. Other
-  programs can; [security.md](security.md) draws the line.
+  programs can; [security.md](security.md) draws the line. A Flatpak's X11
+  side may copy while one of its own windows has the focus; any X11 program
+  can read a copy made through X11. Settings > Privacy > Clipboard Access lists the installed Flatpaks; a
+  ticked one, such as a clipboard manager, reads the clipboard in the
+  background too.
 - **Admin prompts.** A polkit agent asks for the password, or a finger, when
   a program needs root. The password goes to polkit, never to the program.
   Each Reprise session of a user has its own agent, so a program started

@@ -51,6 +51,7 @@ pub(super) fn fields() -> Vec<Field> {
         Field::Text(k("overview", "hot_corner"), lens!(hot_corner)),
         Field::Flag(k("screenshot", "save"), lens!(screenshot_save)),
         Field::Flag(k("clipboard", "history"), lens!(clipboard_history)),
+        Field::Strings(k("clipboard", "trusted_apps"), lens!(clipboard_trusted)),
         Field::Text(INTERFACE, lens!(interface)),
         Field::Text(k("appearance", "color_scheme"), lens!(color_scheme)),
         Field::Text(k("glass", "color"), lens!(glass_color)),

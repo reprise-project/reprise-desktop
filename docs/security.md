@@ -82,7 +82,8 @@ which asks you first.
 `[clipboard] trusted_apps` gives the two data control globals back to the
 Flatpak apps it names, and nothing else. The app id is the one Flatpak put
 on the security context, not one the app chose, and only Flatpak's
-contexts are matched. A listed app can read everything you copy. See
+contexts are matched. A listed app can read everything you copy. Settings >
+Privacy > Clipboard Access ticks apps into the list. See
 [flatpak-clipboard.md](flatpak-clipboard.md).
 
 One more global, `reprise_input_v1`, carries remote control, input capture,
@@ -136,9 +137,44 @@ Wayland programs are not exposed to this. An X11 program sees only the X11
 windows, hears keys only while an X11 window has the focus, and can't
 capture or drive Wayland windows.
 
-The clipboard bridge between X11 and Wayland opens only while an X11 window
-has the focus: an X11 program can't read the Wayland clipboard, or replace
-it, from the background.
+A copy made through X11 stays with the program that made it, in the
+Xwayland server, and any X11 program can read it there at any time, whatever
+has the focus, until it is cleared or replaced. Reprise doesn't stand between
+X11 programs. A Flatpak app that uses X11 is not isolated from other X11
+programs: they can read its copies, as they can its keys and pixels.
+
+The clipboard bridge between X11 and Wayland opens while an X11 window has
+the focus: only then may an X11 program read the Wayland clipboard or primary
+selection, or replace them. Electron apps, Proton Pass among them, open X11
+windows by default on Reprise, so their copy buttons take this path.
+One exception serves a Flatpak app whose window is a Wayland one and whose
+copy buttons fall back to X11: while a Wayland window of Flatpak app P has the
+focus, an X11 program may replace the clipboard (not the primary selection)
+when the window it names as the owner was created by a process right in P's
+`app-flatpak-<P>-<n>.scope` under the user manager's `app.slice`, in a pid
+namespace, under no snap profile, with a readable `/.flatpak-info` naming P.
+P comes from the security context Flatpak opened for that window, not from
+the app. Nothing is read through the exception.
+
+Each take is ruled when a TARGETS reply reaches Reprise, from the focus and
+the selection's owner at that moment; nothing is remembered from an earlier
+take. An X11 program letting go of the clipboard empties it, whatever has
+the focus, when an X11 program's copy is on it. A refused take leaves the
+clipboard as it was. While the clipboard holds an X11 copy, a Wayland paste
+reads from whichever X11 program owns the selection now, so any X11 program
+that takes it, naming any window as the owner (the root window included) and
+with no focus, replaces what Wayland windows paste. The paste still offers
+the earlier copy's types, and the clipboard history keeps showing the earlier
+copy. That holds for a copy made in an X11 window and for one taken through
+the exception alike.
+
+X11 doesn't say which client took a selection, only which window it named as
+the owner, and a client may name any window. So while P has the focus, any
+X11 program that names one of P's X11 windows replaces the clipboard as P
+would. The creator's pid is the one Xwayland recorded at its connection, so a
+pid reused since then names whatever process holds it now: an X11 program
+whose connecting process exited passes as P while one of P's processes holds
+that pid, with no window of P's named.
 
 An X11 window's process id comes from its own `_NET_WM_PID` property, so
 the focus rules below take an X11 program's word for which program it is.
@@ -1493,7 +1529,19 @@ sharing and remote control grants yet.
   the screen through the globals above. Sandboxing is the only way to keep
   a program from them.
 - **No clipboard portal.** A sandboxed program gets the clipboard only while
-  its window has the focus, or through `[clipboard] trusted_apps`.
+  one of its windows has the focus, or through `[clipboard] trusted_apps`.
+- **X11 programs can replace the clipboard.** While the clipboard holds an
+  X11 copy, any X11 program that takes the selection replaces what Wayland
+  windows paste, with no focus. While a Wayland window of a Flatpak app has
+  the focus, any X11 program can also replace a Wayland copy by naming that
+  app's X11 window as its owner, or through a recycled pid
+  ([X11 programs](#x11-programs)). It reads nothing that way.
+- **X11 copies are readable by every X11 program.** A copy made through X11,
+  a Flatpak app's included, can be read by any X11 program until it is
+  cleared. Listing a password manager that copies through X11 in
+  `[clipboard] trusted_apps` keeps its copies on the Wayland clipboard, and
+  lets it read the clipboard in the background
+  ([flatpak-clipboard.md](flatpak-clipboard.md#copy-buttons)).
 - **No permissions page.** Remembered screen sharing and remote control
   grants are revoked with `flatpak permission-remove`, and a remote control
   grant also with Stop and forget on the balloon its restored session shows.

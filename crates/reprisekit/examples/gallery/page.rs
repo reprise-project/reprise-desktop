@@ -398,6 +398,27 @@ fn page_dialogs(mut c: Canvas, theme: &Theme, text: &TextRenderer, mono: &TextRe
             },
         ),
         Item::new(
+            "checked_list",
+            Rect::new(545, 310, 172, 55),
+            Control::ListBox {
+                list: listbox::ListBox {
+                    checks: vec![true, false, true],
+                    detail: vec![String::new(), String::new(), "not installed".into()],
+                    ..listbox::ListBox::new(
+                        ["Pass", "Notes", "org.example.Gone"]
+                            .map(String::from)
+                            .to_vec(),
+                        None,
+                    )
+                },
+                icons: vec![
+                    Some(swatch16(Color::rgb(0, 128, 0))),
+                    Some(swatch16(Color::rgb(0, 0, 160))),
+                    None,
+                ],
+            },
+        ),
+        Item::new(
             "tree",
             Rect::new(545, 404, 172, 84),
             Control::Tree({

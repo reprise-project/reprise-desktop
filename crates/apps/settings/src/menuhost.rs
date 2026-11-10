@@ -134,6 +134,9 @@ impl SettingsApp {
         if let Some(d) = self.add_item.as_mut().filter(|d| d.icons_due) {
             d.set_icons(&mut get);
         }
+        if self.clip_icons_due {
+            self.set_clip_icons(&mut get);
+        }
         if self.location_icons_due {
             for (row, name) in self.locations.rows.iter_mut().zip(&self.location_icons) {
                 row.icon = name

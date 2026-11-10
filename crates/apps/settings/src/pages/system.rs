@@ -10,7 +10,7 @@ use crate::model::{
     FRAME_RATES, GLASS_NOTIFY_STYLES, LOCK_GRACES, REMOTE_ENCODERS, REMOTE_QUALITIES, Shortcut,
     keys_for,
 };
-use crate::notifypage;
+use crate::{clipaccess, notifypage};
 use reprisebus::remote::{Client, Status};
 use repriseconf::ThumbnailCache;
 use reprisekit::classic::widgets::{BUTTON_GAP, BUTTON_W, LINE_H};
@@ -175,12 +175,17 @@ pub(super) fn clipboard_label(binds: &[Shortcut]) -> String {
     }
 }
 
-/// The location check, its answers (a `ListView` the host draws at [`locations`]) with
-/// Forget, the recent files and clipboard histories, and the border around a shared screen.
+/// The location check, its answers (a `ListView` the host draws at [`locations`]) and Forget,
+/// the Clipboard Access list, the histories and the shared-screen border. The lists share `dh`.
 pub fn privacy(a: Area) -> Form {
-    let dh = a.dh;
+    let location_end = locations(a).bottom() + 10;
+    let clip_y = location_end + 10;
+    let list_y = clip_y + 22 + 2 * LINE_H + 4;
+    let list_h = clipaccess::ROWS as i32 * listbox::ROW_H + 4 + a.dh - a.dh / 2;
+    let clip_end = list_y + list_h + 10;
+    let y = clip_end + 10;
     Form::new(vec![
-        group(a, "location_group", 44, 168 + dh, "Location"),
+        group(a, "location_group", 44, location_end - 44, "Location"),
         Item::check(
             PRIVACY_LOCATION,
             GX,
@@ -188,19 +193,43 @@ pub fn privacy(a: Area) -> Form {
             "Let programs ask for your &location",
         ),
         button(FORGET, a.gright() - BUTTON_W, locations(a).y, "F&orget"),
-        group(a, "history_group", 222 + dh, 70, "History"),
+        group(
+            a,
+            "clip_access_group",
+            clip_y,
+            clip_end - clip_y,
+            "Clipboard Access",
+        ),
+        Item::new(
+            "clip_access_note",
+            Rect::new(GX, clip_y + 22, a.gw(), 2 * LINE_H),
+            Control::Lines(vec![
+                "A ticked program can read and replace what you copy,".into(),
+                "even in the background. Changes apply when it restarts.".into(),
+            ]),
+        ),
+        Item::new(
+            clipaccess::LIST,
+            Rect::new(GX, list_y, a.gw(), list_h),
+            Control::ListBox {
+                list: ListBox::new(Vec::new(), None),
+                icons: Vec::new(),
+            },
+        )
+        .named("Clipboard Access"),
+        group(a, "history_group", y, 70, "History"),
         Item::check(
             "recent_files",
             GX,
-            244 + dh,
+            y + 22,
             "Show recently used &files in menus and file dialogs",
         ),
-        Item::check(CLIPBOARD_HISTORY, GX, 266 + dh, &clipboard_label(&[])),
-        group(a, "sharing_group", 302 + dh, 48, "Screen Sharing"),
+        Item::check(CLIPBOARD_HISTORY, GX, y + 44, &clipboard_label(&[])),
+        group(a, "sharing_group", y + 80, 48, "Screen Sharing"),
         Item::check(
             "capture_border",
             GX,
-            324 + dh,
+            y + 102,
             "Show a red &border around what is being shared",
         ),
     ])

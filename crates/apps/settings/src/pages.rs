@@ -227,10 +227,10 @@ pub fn list(a: Area) -> Rect {
 pub const COLUMNS: [(&str, i32); 3] = [("Startup Item", 164), ("Command", 114), ("Location", 60)];
 
 /// The Privacy page's list of remembered location answers, under its check,
-/// with Forget beside it. It takes the page's extra height; rows past its foot scroll,
+/// with Forget beside it. It takes half the page's extra height; rows past its foot scroll,
 /// so Program takes what Answer and the scrollbar leave ([`fit_location_columns`]).
 pub fn locations(a: Area) -> Rect {
-    Rect::new(GX, 88, a.gw() - BUTTON_W - 8, 114 + a.dh)
+    Rect::new(GX, 88, a.gw() - BUTTON_W - 8, 85 + a.dh / 2)
 }
 pub const LOCATION_COLUMNS: [(&str, i32); 2] = [("Program", 161), ("Answer", 70)];
 pub const PRIVACY_LOCATION: &str = "privacy_location";

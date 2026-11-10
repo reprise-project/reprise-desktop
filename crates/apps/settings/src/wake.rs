@@ -113,6 +113,20 @@ impl SettingsApp {
                 changed = true;
             }
         }
+        if let Some(rx) = &self.clip_reading {
+            let found = match take(rx) {
+                Ok(found) => found,
+                Err(()) => {
+                    log::warn!("the Flatpak program read ended without a result");
+                    Some(Vec::new())
+                }
+            };
+            if let Some(found) = found {
+                self.clip_reading = None;
+                self.show_clip_apps(found);
+                changed = true;
+            }
+        }
         changed |= self.remote_done();
         changed |= self.login_users_done();
         changed |= self.login_poll_done();

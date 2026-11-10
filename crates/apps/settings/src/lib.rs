@@ -13,6 +13,7 @@ mod backgroundhost;
 mod backgroundpage;
 mod backup;
 mod backuphost;
+mod clipaccess;
 mod colorhost;
 mod configwatch;
 mod cursors;
@@ -388,6 +389,14 @@ struct SettingsApp {
     locations_due: bool,
     locating: Option<Receiver<Located>>,
 
+    /// The Flatpak installations the Clipboard Access list reads, the first time the Privacy page
+    /// shows; `clip_reading` holds the read under way.
+    flatpak_installs: Vec<PathBuf>,
+    clip_installed: Option<Vec<clipaccess::Installed>>,
+    clip_reading: Option<Receiver<Vec<clipaccess::Installed>>>,
+    clip_rows: Vec<clipaccess::Row>,
+    clip_icons_due: bool,
+
     pads: Vec<reprisebus::tray::Pad>,
     pad_picked: usize,
     pads_fresh: bool,
@@ -689,6 +698,15 @@ impl SettingsApp {
             location_file: repriseconf::location::path(),
             locations_due: true,
             locating: None,
+            flatpak_installs: if cfg!(test) {
+                Vec::new()
+            } else {
+                reprisefs::flatpak::installations()
+            },
+            clip_installed: None,
+            clip_reading: None,
+            clip_rows: Vec::new(),
+            clip_icons_due: false,
             xkb,
             system_layout,
             add_layout: None,
@@ -968,6 +986,7 @@ impl App for SettingsApp {
         }
         reply.redraw |= self.ensure_pads();
         reply.redraw |= self.ensure_notify_programs();
+        reply.redraw |= self.ensure_clip_apps();
         reply.redraw |= self.ensure_away_devices();
         self.prime_icons(ctx);
         if reply.quit

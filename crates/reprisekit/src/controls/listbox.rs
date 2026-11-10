@@ -35,7 +35,7 @@ pub struct ListBox {
     /// launcher's folder of a file row), cut to the row with an ellipsis.
     /// A missing or empty entry draws nothing.
     pub detail: Vec<String>,
-    /// Parallel to `items`: each row's check box, in place of its icon.
+    /// Parallel to `items`: each row's check box, before its icon.
     /// Empty for a list with no check boxes.
     pub checks: Vec<bool>,
 }
@@ -163,7 +163,7 @@ pub enum Hit {
 }
 
 /// Row `i`'s check box, when it is in view: the look's check box side
-/// square, in the icon's place.
+/// square, at the row's start.
 pub fn check_box(lb: &ListBox, lay: &Layout, i: usize) -> Option<Rect> {
     if i >= lb.checks.len() || i < lb.top || i >= lb.top + lay.visible {
         return None;
@@ -237,8 +237,26 @@ pub fn top_at(lb: &ListBox, lay: &Layout, y: i32, grab: i32) -> usize {
     }
 }
 
+/// A row's icon x: after its check box in a checked list.
+fn icon_x(lb: &ListBox) -> i32 {
+    if lb.checks.is_empty() {
+        ICON_X
+    } else {
+        CHECK_TEXT_X
+    }
+}
+
+/// A row's label x: a checked list leaves room for icons only when it is given some.
+fn text_x(lb: &ListBox, icons: &[Option<Canvas>]) -> i32 {
+    match (lb.checks.is_empty(), icons.is_empty()) {
+        (true, _) => TEXT_X,
+        (false, true) => CHECK_TEXT_X,
+        (false, false) => CHECK_TEXT_X + TEXT_X - ICON_X,
+    }
+}
+
 /// Draw the box; `icons` is parallel to the items (16 px, or None for
-/// no icon). A partly visible last row is clipped.
+/// no icon), drawn after the check boxes in a checked list. A partly visible last row is clipped.
 #[expect(clippy::too_many_arguments)]
 pub fn draw(
     c: &mut Canvas,
@@ -287,17 +305,14 @@ pub fn draw(
             if b.bottom() <= inner.bottom() {
                 draw_list_check(c, p, b, checked);
             }
-        } else if let Some(Some(ic)) = icons.get(i) {
-            let iy = y + glyph_dy;
-            let clip = Rect::new(inner.x + ICON_X * s, iy, ic.width as i32, ic.height as i32)
-                .intersect(&inner);
-            c.blit_over_clipped(inner.x + ICON_X * s, iy, ic, clip);
         }
-        let text_x = if lb.checks.is_empty() {
-            TEXT_X
-        } else {
-            CHECK_TEXT_X
-        };
+        let icon_x = inner.x + icon_x(lb) * s;
+        if let Some(Some(ic)) = icons.get(i) {
+            let iy = y + glyph_dy;
+            let clip = Rect::new(icon_x, iy, ic.width as i32, ic.height as i32).intersect(&inner);
+            c.blit_over_clipped(icon_x, iy, ic, clip);
+        }
+        let text_x = text_x(lb, icons);
         let tx = inner.x + text_x * s;
         let tw = text.measure(&lb.items[i], false, px);
         let (fg, bg) = if lb.selected == Some(i) && !boxed {
@@ -569,6 +584,48 @@ mod tests {
         assert!(
             label.is_some_and(|x| x >= 2 + 25),
             "the label 25 px in: {label:?}"
+        );
+    }
+
+    #[test]
+    fn a_checked_list_given_icons_draws_each_after_its_box() {
+        let theme = Theme::default();
+        let text = TextRenderer::load(&FontConfig::default());
+        let cs = &theme.colors;
+        let mut lb = ListBox::new(vec!["Pass".into(), "Notes".into()], None);
+        lb.checks = vec![true, false];
+        let l = layout(&lb, Rect::new(0, 0, 150, 60), &ControlMetrics::CLASSIC);
+        let mut icon = Canvas::new(16, 16);
+        icon.fill_rect(Rect::new(0, 0, 16, 16), Color::rgb(0, 128, 0));
+        let mut c = Canvas::new(150, 60);
+        let icons = [Some(icon), None];
+        draw(
+            &mut c,
+            &text,
+            &classic_paint(cs, 1),
+            &lb,
+            &l,
+            &icons,
+            None,
+            11,
+        );
+        let green = Color::rgb(0, 128, 0).argb();
+        assert_eq!(c.get(2 + 25, 2), green, "the icon 25 px in");
+        assert_eq!(c.get(2 + 25 + 15, 17), green, "16 px square");
+        assert_eq!(c.get(2 + 24, 8), cs.window.argb(), "clear of the box");
+        assert_ne!(c.get(8, 4), green, "the box keeps its frame");
+        let ink = cs.window_text.argb();
+        let label =
+            |y0: i32| (2 + 25 + 16..150).find(|&x| (y0..y0 + 13).any(|y| c.get(x, y) == ink));
+        assert!(
+            label(4).is_some_and(|x| x >= 2 + 25 + 19),
+            "the label 19 px past the icon: {:?}",
+            label(4)
+        );
+        assert!(
+            label(21).is_some_and(|x| x >= 2 + 25 + 19),
+            "a row without an icon keeps the label in line: {:?}",
+            label(21)
         );
     }
 
