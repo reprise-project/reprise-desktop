@@ -8,7 +8,9 @@ use crate::art::{logo, userpic};
 use crate::blue::Variant;
 use crate::blue::powerpanel::{self, Glaze, Hue, Mark, RIM, TileState, glaze, title_text};
 use crate::blue::scheme::Scheme;
-use crate::logon::{Logon, LogonLayout, Part, Screen, UserNote, message_lines, text as strings};
+use crate::logon::{
+    Logon, LogonLayout, Part, Screen, Show, UserNote, message_lines, text as strings,
+};
 use crate::paint::{Paint, draw_edit};
 use crate::pointer::Interaction;
 use crate::raster::{Canvas, Rect};
@@ -533,10 +535,25 @@ pub fn draw(
     text: &TextRenderer,
     s: i32,
 ) {
-    draw_titled(c, m, l, theme, text, &powerpanel::title_renderer(), s);
+    draw_shown(c, m, l, theme, text, s, Show::All);
 }
 
-/// [`draw`] with the wordmark in `title`, an unscaled renderer.
+/// [`draw`] limited to `show`; Blue moves no picture frame, so `Show::AllBut` draws it all.
+pub fn draw_shown(
+    c: &mut Canvas,
+    m: &Logon,
+    l: &LogonLayout,
+    theme: &Theme,
+    text: &TextRenderer,
+    s: i32,
+    show: Show,
+) {
+    let title = powerpanel::title_renderer();
+    draw_titled(c, m, l, theme, text, &title, s, show);
+}
+
+/// [`draw_shown`] with the wordmark in `title`, an unscaled renderer.
+#[expect(clippy::too_many_arguments)]
 fn draw_titled(
     c: &mut Canvas,
     m: &Logon,
@@ -545,6 +562,7 @@ fn draw_titled(
     text: &TextRenderer,
     title: &TextRenderer,
     s: i32,
+    show: Show,
 ) {
     let sc = Variant::of(&theme.look).scheme();
     let o = l.output;
@@ -569,49 +587,71 @@ fn draw_titled(
     } else {
         c.blit_canvas(0, 0, &backdrop);
     }
-    draw_mark(c, m, &f, k, &pen);
+    let block = show != Show::Chrome;
+    draw_mark(c, m, &f, k, &pen, block);
+    if block {
+        draw_column(c, m, l, theme, sc, k, &pen);
+    }
+    let Some(r) = l.rect(Part::Power) else {
+        return;
+    };
+    draw_button(c, m, Part::Power, r, &pen);
+}
+
+/// The tiles, the typed fields, the password row and Switch User.
+fn draw_column(
+    c: &mut Canvas,
+    m: &Logon,
+    l: &LogonLayout,
+    theme: &Theme,
+    sc: &Scheme,
+    k: Lines,
+    pen: &Pen,
+) {
+    let px = pen.px;
     for (i, r) in l.parts.iter().filter_map(|&(p, r)| match p {
         Part::Tile(i) => Some((i, r)),
         _ => None,
     }) {
-        draw_tile(c, m, sc, i, r, k, &pen);
+        draw_tile(c, m, sc, i, r, k, pen);
     }
     if m.screen == Screen::Typed
         && let Some(name) = l.rect(Part::Name)
     {
         let label = Rect::new(name.x, name.y - k.line, name.width, k.line);
         pen.line(c, label, &strings::user_name(), false, px, Align::Left);
-        draw_field(c, m, theme, sc, Part::Name, name, &pen);
+        draw_field(c, m, theme, sc, Part::Name, name, pen);
     }
     if let Some(field) = l.rect(Part::Password) {
-        draw_password_row(c, m, l, theme, sc, field, k, &pen);
+        draw_password_row(c, m, l, theme, sc, field, k, pen);
     }
-    for (part, hue, mark, words) in [
-        (Part::Power, Hue::Red, Mark::Off, strings::turn_off()),
-        (Part::SwitchUser, Hue::Green, Mark::Arrows, switch_label()),
-    ] {
-        let Some(r) = l.rect(part) else { continue };
-        let tile = powerpanel::tile(
-            hue,
-            mark,
-            state_of(m, part, !m.busy || part == Part::Power),
-            POWER,
-            s,
-        );
-        let at = pen.at(r);
-        c.blit_over(at.x, at.y, &tile);
-        let label = Rect {
-            x: r.x + POWER + POWER_GAP,
-            width: r.width - POWER - POWER_GAP,
-            ..r
-        };
-        pen.line(c, label, &words, false, px, Align::Left);
+    if let Some(r) = l.rect(Part::SwitchUser) {
+        draw_button(c, m, Part::SwitchUser, r, pen);
     }
+}
+
+/// Turn off computer or Switch User at design `r`: the coloured tile and its words beside it.
+fn draw_button(c: &mut Canvas, m: &Logon, part: Part, r: Rect, pen: &Pen) {
+    let (hue, mark, words) = match part {
+        Part::Power => (Hue::Red, Mark::Off, strings::turn_off()),
+        _ => (Hue::Green, Mark::Arrows, switch_label()),
+    };
+    let state = state_of(m, part, !m.busy || part == Part::Power);
+    let tile = powerpanel::tile(hue, mark, state, POWER, pen.s);
+    let at = pen.at(r);
+    c.blit_over(at.x, at.y, &tile);
+    let label = Rect {
+        x: r.x + POWER + POWER_GAP,
+        width: r.width - POWER - POWER_GAP,
+        ..r
+    };
+    pen.line(c, label, &words, false, pen.px, Align::Left);
 }
 
 /// The logo and wordmark right-aligned against the middle rule, with "To begin" under them
 /// and, on the tiles, the message under that.
-fn draw_mark(c: &mut Canvas, m: &Logon, f: &Frame, k: Lines, pen: &Pen) {
+/// Only the logo and wordmark unless `whole`.
+fn draw_mark(c: &mut Canvas, m: &Logon, f: &Frame, k: Lines, pen: &Pen, whole: bool) {
     let s = pen.s;
     let right = f.split - SIDE_GAP;
     let left = f.middle.x + SIDE_GAP;
@@ -627,7 +667,7 @@ fn draw_mark(c: &mut Canvas, m: &Logon, f: &Frame, k: Lines, pen: &Pen) {
     pen.put(t, c, word, MARK, spec.bold, mark_px, Align::Left);
     let logo_x = word.x - (LOGO_GAP + LOGO) * s;
     logo::draw_any(c, logo_x, word.y, LOGO * s, pen.ink);
-    if m.screen == Screen::Typed {
+    if !whole || m.screen == Screen::Typed {
         return;
     }
     let begin_y = top + LOGO + BEGIN_GAP;
