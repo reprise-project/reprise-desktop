@@ -283,6 +283,7 @@ pub(super) fn binds() -> Vec<Bind> {
         Bind::Num("hover_out_ms", lens!(hover_out_ms)),
         Bind::Flag("taskbar_slide", lens!(taskbar_slide)),
         Bind::Flag("session_fade", lens!(session_fade)),
+        Bind::Flag("logon_animation", lens!(logon_animation)),
         Bind::Steps("double_click_ms", lens!(double_click_ms), DOUBLE_CLICK),
         Bind::Text("kb_model", lens!(kb_model)),
         Bind::Text("kb_options", lens!(kb_options)),

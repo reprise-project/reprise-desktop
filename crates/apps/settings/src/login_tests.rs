@@ -1321,3 +1321,27 @@ fn every_display_transform_keeps_its_name_on_the_login_screen() {
         assert_eq!(login, Some(t.name()), "{t:?}");
     }
 }
+
+#[test]
+fn the_animate_box_reads_and_saves_the_login_screens_animation() {
+    let dir = tmp("animation");
+    std::fs::write(dir.join("login.toml"), "[login]\nanimation = false\n").unwrap();
+    let mut a = app(&dir);
+    a.login_run = helper_saves;
+    open_login(&mut a);
+    assert_eq!(login(&a).checked("login_animation"), Some(false));
+    let page = &mut a.sheet.pages[Page::LoginManager.index()];
+    page.set_check("login_animation", true);
+    changed(&mut a, Page::LoginManager, "login_animation");
+    SENT.with(|s| s.borrow_mut().clear());
+    a.sheet_event(propsheet::Event::Apply);
+    a.wake();
+    let sent = SENT.with(|s| s.borrow().clone());
+    assert_eq!(sent.len(), 1, "one save");
+    assert!(MachineConfig::parse(&sent[0]).0.login.animation);
+    assert!(
+        !sent[0].contains("animation"),
+        "on is the default: {}",
+        sent[0]
+    );
+}

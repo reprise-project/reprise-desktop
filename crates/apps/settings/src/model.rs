@@ -287,6 +287,7 @@ pub struct Settings {
     pub hover_out_ms: i64,
     pub taskbar_slide: bool,
     pub session_fade: bool,
+    pub logon_animation: bool,
     pub double_click_ms: i64,
 
     pub kb_layout: String,
@@ -601,6 +602,7 @@ impl Settings {
             hover_out_ms: fx.hover_out_ms.into(),
             taskbar_slide: fx.taskbar_slide,
             session_fade: fx.session_fade,
+            logon_animation: fx.logon_animation,
             double_click_ms: m.double_click_ms.into(),
 
             kb_layout: c.keyboard.layout.clone(),

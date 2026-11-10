@@ -88,6 +88,7 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
             ("hover_in_ms", "In:"),
             ("hover_out_ms", "Out:"),
             ("session_fade", "Fade the screen at log on and log off"),
+            ("logon_animation", "Animate the lock screen"),
             ("menu_shadow", "Shadow:"),
             ("menu_hover_ms", "Hover:"),
             ("menu_fade_ms", "Time:"),
@@ -386,6 +387,7 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
         Page::LoginManager => &[
             ("login_interface", "Interface:"),
             ("login_show_users", "Show users"),
+            ("login_animation", "Animate the screen"),
             ("login_autologin", "Log on automatically as:"),
             ("login_background", "Background:"),
             ("login_browse", "Browse..."),
