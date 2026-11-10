@@ -357,3 +357,19 @@ fn each_tagged_window_of_an_app_reopens_at_its_own_place() {
         "an untagged window keeps the app's own place"
     );
 }
+
+#[test]
+fn a_kept_apps_second_window_as_tall_as_the_work_area_opens_inside_it() {
+    let mut h = one_screen();
+    let mut c = h.connect();
+    let area = h.state.usable_area(h.state.scene.outputs().first());
+    leave_at(&mut h, &mut c, (area.x, area.y), (600, area.height));
+    let t = h.map_toplevel(&mut c, APP, 300, 200);
+    let first = frame_of(&h, t);
+    assert_eq!(first.height, area.height, "the kept frame fills the height");
+    let client = h.state.win(t.id).unwrap().geom.client;
+    let t = h.map_toplevel(&mut c, APP, client.width, client.height);
+    let r = frame_of(&h, t);
+    assert_eq!((r.y, r.bottom()), (area.y, area.bottom()));
+    assert!(r.x > first.x, "the second window still cascades: {r:?}");
+}
