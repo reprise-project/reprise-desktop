@@ -945,12 +945,13 @@ mod tests {
                     crate::PATH,
                     Notification {
                         book: book.clone(),
-                        frontend,
+                        frontend: frontend.clone(),
                     },
                 )
                 .build()
                 .await
                 .unwrap();
+            let _ = frontend.conn.set(portal.clone());
             zruntime::spawn(watch(portal.clone(), book.clone())).detach();
             let dest = portal.unique_name().unwrap().to_string();
             let mut invoked = zbus::MessageStream::for_match_rule(

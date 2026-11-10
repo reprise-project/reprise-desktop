@@ -838,12 +838,13 @@ mod tests {
                     crate::PATH,
                     Inhibit {
                         shared: shared.clone(),
-                        frontend,
+                        frontend: frontend.clone(),
                     },
                 )
                 .build()
                 .await
                 .unwrap();
+            let _ = frontend.conn.set(portal.clone());
             zruntime::spawn(run_idle(portal.clone(), rx)).detach();
             let dest = portal.unique_name().unwrap().to_string();
             let handles = [
@@ -1009,7 +1010,7 @@ mod tests {
                 crate::PATH,
                 Inhibit {
                     shared: shared.clone(),
-                    frontend,
+                    frontend: frontend.clone(),
                 },
             )
             .serve_at(
@@ -1021,6 +1022,7 @@ mod tests {
             .build()
             .await
             .unwrap();
+        let _ = frontend.conn.set(portal.clone());
         let rule = zbus::MatchRule::builder()
             .msg_type(zbus::message::Type::Signal)
             .interface("org.freedesktop.impl.portal.Inhibit")
