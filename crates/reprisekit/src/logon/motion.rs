@@ -5,8 +5,8 @@ use super::{Logon, Part, Screen};
 use crate::interface::Interface;
 use crate::textedit::{EditKey, TextEdit};
 
-/// How much the screen may move. The host sets it from the interface, `[effects]
-/// logon_animation` and whether the screen is seen from another computer.
+/// How much the screen may move. The host sets it from `[effects] logon_animation` and whether
+/// the screen is seen from another computer; Classic never moves.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Moves {
     Full,
@@ -21,7 +21,7 @@ pub enum Change {
     Pick(Part),
     /// From one user's screen back to the tiles.
     Back(Part),
-    /// The screen came forward: a later greeting, the lock engaging.
+    /// The screen came forward: the greeter starting or its seat coming back, the lock engaging.
     Enter,
     Busy,
     /// The busy text changed: the session is starting, or the computer going down.
@@ -152,7 +152,7 @@ impl Logon {
         }
     }
 
-    /// The screen comes forward: on a later greeting, or as the lock engages.
+    /// The screen comes forward: as the greeter starts or its seat comes back, or the lock engages.
     pub fn enter(&mut self) {
         self.note(Change::Enter);
     }
