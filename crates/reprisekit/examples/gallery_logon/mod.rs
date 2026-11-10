@@ -1,6 +1,5 @@
-//! The login screen at 800x600 (Classic's states, each interface's start, administrator's form and
-//! lock, Blue's states in three schemes, Glass over its wallpaper, Classic and Blue over a dark
-//! picture, Blue over a bright one) written to `target/reprisekit-gallery-logon@<scale>.png`.
+//! The login screen's states and locks in each interface at 800x600, some over a picture,
+//! written to `target/reprisekit-gallery-logon@<scale>.png`.
 
 mod glass;
 
