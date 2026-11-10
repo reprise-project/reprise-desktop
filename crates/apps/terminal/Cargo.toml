@@ -22,6 +22,7 @@ repriseapp = { path = "../../repriseapp" }
 reprisekit = { path = "../../reprisekit" }
 repriseconf = { path = "../../repriseconf" }
 reprisebus = { path = "../../reprisebus" }
+libc.workspace = true
 log.workspace = true
 polling = "3"
 serde = { workspace = true, features = ["derive"] }
