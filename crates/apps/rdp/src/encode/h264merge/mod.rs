@@ -1,9 +1,5 @@
 //! Two single-reference H.264 streams, one per AVC444 view, rewritten into the one stream a
 //! single decoder plays, each view predicting from its own previous picture.
-#![cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the two-encoder AVC444 path is its user")
-)]
 
 mod bits;
 mod syntax;

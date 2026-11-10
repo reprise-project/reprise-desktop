@@ -3,6 +3,7 @@
 
 use super::avc444;
 use super::colour;
+use super::h264merge::Merge;
 use super::hwmap::{self, Converter, Devices};
 use super::probe::Backend;
 use super::split::Views;
@@ -14,8 +15,9 @@ use std::path::{Path, PathBuf};
 
 /// Pictures from one IDR to the next when no keyframe is asked for.
 const IDR_INTERVAL: u32 = 300;
-/// With AVC444, so that a view predicts from its own previous picture. FFmpeg's VA-API H.264
-/// ignores it and predicts from the previous frame only.
+/// With AVC444 on one encoder, so that a view predicts from its own previous picture. FFmpeg's
+/// VA-API H.264 ignores it and predicts from the previous frame only, so it codes each view on
+/// its own encoder.
 const AVC444_REFS: i32 = 2;
 
 pub struct Ffmpeg {
@@ -29,6 +31,9 @@ pub struct Ffmpeg {
     no_views: Option<(u32, u32)>,
     /// The size pictures are coded at; None for each frame's own.
     target: Option<(u32, u32)>,
+    /// With VA-API, AVC444 codes each view on its own encoder and merges them into one stream;
+    /// None codes both views through one encoder. One merge lasts the session.
+    merge: Option<Merge>,
     open: Option<Open>,
 }
 
@@ -37,9 +42,18 @@ struct Open {
     quality: Quality,
     input: Input,
     encoder: ::ffmpeg::encoder::video::Encoder,
+    /// The auxiliary view's own encoder when the views merge.
+    aux: Option<AuxEncoder>,
     /// Pictures since the last IDR.
     since_idr: u32,
     pts: i64,
+}
+
+struct AuxEncoder {
+    encoder: ::ffmpeg::encoder::video::Encoder,
+    pts: i64,
+    /// The main view's last IDR went out without an aux view, so the next one is an IDR.
+    idr: bool,
 }
 
 enum Input {
@@ -60,10 +74,11 @@ impl Input {
     }
 }
 
-/// Why a frame was not coded: the AVC444 views failed, which AVC420 may still code, or the
-/// encoder did.
+/// Why a frame was not coded: the AVC444 views failed, which AVC420 may still code, the two
+/// view encoders or their merge failed, which one encoder may still code, or the encoder did.
 enum Failed {
     Views(EncodeError),
+    Merge(EncodeError),
     Coding(EncodeError),
 }
 
@@ -94,6 +109,7 @@ impl Ffmpeg {
             avc444: false,
             no_views: None,
             target: None,
+            merge: matches!(backend, Backend::Vaapi { .. }).then(Merge::default),
             open: None,
         })
     }
@@ -123,6 +139,35 @@ impl Ffmpeg {
             Input::Avc420(c) => (c.pixel(), c.frames()),
             Input::Avc444(v) => (v.pixel(), v.frames()),
         };
+        let encoder = self.encoder(coded, pixel, frames, avc444)?;
+        let aux = match avc444 && self.merge.is_some() {
+            true => Some(AuxEncoder {
+                encoder: self
+                    .encoder(coded, pixel, frames, avc444)
+                    .map_err(Failed::Merge)?,
+                pts: 0,
+                idr: false,
+            }),
+            false => None,
+        };
+        Ok(Open {
+            quality: self.quality,
+            input,
+            encoder,
+            aux,
+            since_idr: 0,
+            pts: 0,
+        })
+    }
+
+    /// An encoder of `coded` pictures in `pixel`, taking them from `frames` on a GPU.
+    fn encoder(
+        &self,
+        coded: (u32, u32),
+        pixel: ::ffmpeg::format::Pixel,
+        frames: Option<*mut ffi::AVBufferRef>,
+        avc444: bool,
+    ) -> Result<::ffmpeg::encoder::video::Encoder, EncodeError> {
         let name = self.backend.codec();
         let codec = ::ffmpeg::encoder::find_by_name(name)
             .ok_or_else(|| EncodeError(format!("FFmpeg has no {name}")))?;
@@ -158,16 +203,8 @@ impl Ffmpeg {
                 (*c).hw_frames_ctx = ffi::av_buffer_ref(frames);
             }
         }
-        let encoder = ctx
-            .open_with(options(self.backend, self.quality, avc444))
-            .map_err(|e| EncodeError(format!("{name}: {e}")))?;
-        Ok(Open {
-            quality: self.quality,
-            input,
-            encoder,
-            since_idr: 0,
-            pts: 0,
-        })
+        ctx.open_with(options(self.backend, self.quality, avc444))
+            .map_err(|e| EncodeError(format!("{name}: {e}")))
     }
 
     fn code(&mut self, frame: &Frame, keyframe: bool, avc444: bool) -> Result<Encoded, Failed> {
@@ -217,13 +254,39 @@ impl Ffmpeg {
                 // an IDR the encoder makes on its own still decodes them right.
                 let regions = regions(n);
                 let read = avc444::read_rect(&regions);
-                let split = views.split(frame, read).map_err(Failed::Views)?;
+                // A merged aux view predicts from its own last picture, so all of it is drawn.
+                let drawn = match open.aux {
+                    Some(_) => Rect::full(avc444::view_size(target)),
+                    None => read,
+                };
+                let split = views.split(frame, drawn).map_err(Failed::Views)?;
                 let (main, key) = next(split.main, n == 0)?;
                 let since = if key { 0 } else { n };
                 // LC 1 applies to the bounds of the regions, undamaged blocks between them too.
-                let aux = match split.flat.covers(&[read]) {
-                    true => None,
-                    false => Some(next(split.aux, false)?.0),
+                let flat = split.flat.covers(&[read]);
+                let (main, aux) = match (&mut open.aux, self.merge.as_mut()) {
+                    (Some(a), Some(merge)) => {
+                        #[cfg(test)]
+                        tests::tap(false, &main);
+                        let main = merge.main(&main).map_err(merge_failed)?;
+                        a.idr |= key;
+                        let aux = match flat {
+                            true => None,
+                            false => {
+                                let data =
+                                    send(&mut a.encoder, split.aux, a.idr, &mut a.pts, codec)?.0;
+                                #[cfg(test)]
+                                tests::tap(true, &data);
+                                a.idr = false;
+                                Some(merge.aux(&data).map_err(merge_failed)?)
+                            }
+                        };
+                        (main, aux)
+                    }
+                    _ => match flat {
+                        true => (main, None),
+                        false => (main, Some(next(split.aux, false)?.0)),
+                    },
                 };
                 (since, Encoded::Avc444 { main, aux, regions })
             }
@@ -231,6 +294,10 @@ impl Ffmpeg {
         open.since_idr = coded.0;
         Ok(coded.1)
     }
+}
+
+fn merge_failed(e: super::h264merge::Error) -> Failed {
+    Failed::Merge(EncodeError(e.to_string()))
 }
 
 /// `input` through `encoder` as the next frame, an IDR if `idr`: its access unit and whether
@@ -354,6 +421,15 @@ impl Encoder for Ffmpeg {
                 self.open = None;
                 self.code(frame, true, false).map_err(Failed::into_error)
             }
+            Err(Failed::Merge(e)) => {
+                log::warn!(
+                    "{} cannot merge the AVC444 views, coding both on one encoder: {e}",
+                    self.backend.label()
+                );
+                self.merge = None;
+                self.open = None;
+                self.encode(frame, true)
+            }
             Err(Failed::Coding(e)) => Err(e),
         }
     }
@@ -362,7 +438,7 @@ impl Encoder for Ffmpeg {
 impl Failed {
     fn into_error(self) -> EncodeError {
         match self {
-            Failed::Views(e) | Failed::Coding(e) => e,
+            Failed::Views(e) | Failed::Merge(e) | Failed::Coding(e) => e,
         }
     }
 }
@@ -1124,6 +1200,339 @@ pub(crate) mod tests {
             kind(encoder.encode(&dmabuf, true)),
             "AVC444",
             "the next dma-buf frame"
+        );
+    }
+
+    /// Access units in send order, true for the aux view's.
+    type Units = Vec<(bool, Vec<u8>)>;
+
+    thread_local! {
+        /// The view encoders' own access units from the first [`tapped`] on.
+        static TAPPED: std::cell::RefCell<Option<Units>> = const {
+            std::cell::RefCell::new(None)
+        };
+    }
+
+    pub(super) fn tap(aux: bool, au: &[u8]) {
+        TAPPED.with(|t| (t.borrow_mut().as_mut()).map(|v| v.push((aux, au.to_vec()))));
+    }
+
+    /// The access units tapped since the last call.
+    fn tapped() -> Units {
+        TAPPED.with(|t| t.borrow_mut().replace(Vec::new()).unwrap_or_default())
+    }
+
+    fn vaapi() -> Ffmpeg {
+        silence();
+        let backend = (crate::encode::probe::probe().1.into_iter())
+            .map(|(b, _)| b)
+            .find(|b| matches!(b, Backend::Vaapi { .. }))
+            .expect("VA-API H.264 on this machine");
+        let mut encoder =
+            Ffmpeg::new(backend, Path::new(RENDER_NODE), 60, Quality::Balanced).unwrap();
+        encoder.set_avc444(true);
+        encoder
+    }
+
+    fn render_node() -> gbm::Device<std::fs::File> {
+        let file = std::fs::File::options()
+            .read(true)
+            .write(true)
+            .open(RENDER_NODE);
+        gbm::Device::new(file.unwrap()).unwrap()
+    }
+
+    /// A window of text that moves except in frames 13-34, a pane of 1-px coloured text that
+    /// scrolls in 13-24, a grey bar alone in 25-33, all grey in 31-33, a smaller screen from 41.
+    struct Desktop {
+        text: Vec<[u8; 3]>,
+    }
+
+    const TEXT: (u32, u32) = (120, 400);
+
+    impl Desktop {
+        fn new() -> Desktop {
+            let mut seed = 0x2545_f491_4f6c_dd1du64;
+            let mut next = move || {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                seed
+            };
+            let colours = [
+                [220, 220, 220],
+                [86, 156, 214],
+                [206, 145, 120],
+                [106, 153, 85],
+            ];
+            let text = (0..TEXT.0 * TEXT.1)
+                .map(|i| {
+                    let (x, y) = (i % TEXT.0, i / TEXT.0);
+                    let r = next();
+                    match (x % 6 < 4 && y % 12 < 8, r % 5) {
+                        (true, 0 | 1) => colours[(r / 5 % 4) as usize],
+                        _ => [30, 30, 30],
+                    }
+                })
+                .collect();
+            Desktop { text }
+        }
+
+        fn size(t: u32) -> (u32, u32) {
+            if t < 41 { (200, 136) } else { (184, 120) }
+        }
+
+        fn pixel(&self, t: u32) -> impl Fn(u32, u32) -> [u8; 3] + '_ {
+            let h = Desktop::size(t).1;
+            let scroll = 3 * (t.clamp(12, 24) - 12);
+            let step = (t.min(12) + t.max(34) - 34) as i32;
+            let window = (20 + 3 * step, 10 + step);
+            let progress = 4 * (t.clamp(24, 33) - 24);
+            let grey = (31..=33).contains(&t);
+            move |x, y| {
+                let (wx, wy) = (x as i32 - window.0, y as i32 - window.1);
+                let c = if (0..72).contains(&wx) && (0..48).contains(&wy) {
+                    match ((wx + wy * 3) % 11, wy < 10) {
+                        (_, true) => [43, 87, 154],
+                        (0, false) => [200, 30, 30],
+                        _ => [243, 243, 243],
+                    }
+                } else if y >= h - 24 {
+                    match (x >= 100 && x < 100 + progress, (h - 16..h - 8).contains(&y)) {
+                        (true, true) => [154, 154, 154],
+                        _ => [58, 58, 58],
+                    }
+                } else if x >= 8 && x < 8 + TEXT.0 && y >= 8 && y < h - 32 {
+                    self.text[((y - 8 + scroll) * TEXT.0 + x - 8) as usize]
+                } else {
+                    [24, 40, 64]
+                };
+                match grey {
+                    true => [c[1]; 3],
+                    false => c,
+                }
+            }
+        }
+    }
+
+    /// The bounds of the pixels that differ between `a` and `b` in each 64-px column.
+    fn changed(
+        a: &dyn Fn(u32, u32) -> [u8; 3],
+        b: &dyn Fn(u32, u32) -> [u8; 3],
+        size: (u32, u32),
+    ) -> Vec<Rect> {
+        let (w, h) = size;
+        (0..w.div_ceil(64))
+            .filter_map(|column| {
+                let xs = column * 64..(column * 64 + 64).min(w);
+                let points: Vec<(u32, u32)> = (0..h)
+                    .flat_map(|y| xs.clone().map(move |x| (x, y)))
+                    .filter(|&(x, y)| a(x, y) != b(x, y))
+                    .collect();
+                let (x0, x1) = (
+                    points.iter().map(|p| p.0).min()?,
+                    points.iter().map(|p| p.0).max()?,
+                );
+                let (y0, y1) = (
+                    points.iter().map(|p| p.1).min()?,
+                    points.iter().map(|p| p.1).max()?,
+                );
+                Some(Rect {
+                    x: x0,
+                    y: y0,
+                    width: x1 + 1 - x0,
+                    height: y1 + 1 - y0,
+                })
+            })
+            .collect()
+    }
+
+    /// One frame of the desktop: the merged views sent, and the view encoders' own.
+    struct Sent {
+        t: u32,
+        main: Vec<u8>,
+        aux: Option<Vec<u8>>,
+        own_main: Option<Vec<u8>>,
+        own_aux: Option<Vec<u8>>,
+    }
+
+    const KEYFRAMES: [u32; 3] = [0, 27, 32];
+
+    /// `encoder` over the desktop's 50 frames, keyframes asked for at [`KEYFRAMES`], Sharp from
+    /// frame 35, and frame 45 unchanged.
+    fn code_desktop(encoder: &mut Ffmpeg) -> Vec<Sent> {
+        let gbm = render_node();
+        let desktop = Desktop::new();
+        tapped();
+        let mut sent = Vec::new();
+        for t in 0..50 {
+            if t == 35 {
+                encoder.set_quality(Quality::Sharp);
+            }
+            let size = Desktop::size(t);
+            let shown = |t: u32| desktop.pixel(if t == 45 { 44 } else { t });
+            let pixel = shown(t);
+            let (mut frame, _, _bo) = crate::encode::split::tests::dmabuf_frame(&gbm, size, &pixel);
+            frame.damage = match t {
+                0 | 41 => vec![Rect::full(size)],
+                45 => vec![],
+                _ => changed(&shown(t - 1), &pixel, size),
+            };
+            let encoded = encoder.encode(&frame, KEYFRAMES.contains(&t)).unwrap();
+            let own = tapped();
+            let own_view = |aux| {
+                own.iter()
+                    .find(|(a, _)| *a == aux)
+                    .map(|(_, au)| au.clone())
+            };
+            match encoded {
+                Encoded::Avc444 { main, aux, .. } => sent.push(Sent {
+                    t,
+                    main,
+                    aux,
+                    own_main: own_view(false),
+                    own_aux: own_view(true),
+                }),
+                Encoded::Nothing => assert_eq!(t, 45, "frame {t} codes"),
+                _ => panic!("frame {t}: AVC444 views"),
+            }
+        }
+        sent
+    }
+
+    /// Whether Annex B `au` holds an IDR slice.
+    fn idr(au: &[u8]) -> bool {
+        au.windows(4)
+            .any(|w| w[..3] == [0, 0, 1] && w[3] & 0x1f == 5)
+    }
+
+    #[test]
+    #[ignore = "needs VA-API H.264 on /dev/dri/renderD128; run with --ignored where it has one"]
+    fn merged_avc444_views_decode_to_each_view_encoders_own_pictures() {
+        let sent = code_desktop(&mut vaapi());
+        let (mut merged, mut main, mut aux) = (Decoder::new(), Decoder::new(), Decoder::new());
+        let mut pictures = 0;
+        for s in &sent {
+            let own = s.own_main.as_ref().expect("the main view's own encoder");
+            assert_eq!(
+                nv12(&merged.decode(&s.main)),
+                nv12(&main.decode(own)),
+                "frame {}: main view",
+                s.t
+            );
+            assert_eq!(s.aux.is_some(), s.own_aux.is_some(), "frame {}", s.t);
+            if let (Some(a), Some(own)) = (&s.aux, &s.own_aux) {
+                assert_eq!(
+                    nv12(&merged.decode(a)),
+                    nv12(&aux.decode(own)),
+                    "frame {}: aux view",
+                    s.t
+                );
+                pictures += 1;
+            }
+            pictures += 1;
+        }
+        let skipped: Vec<u32> = (sent.iter())
+            .filter(|s| s.aux.is_none())
+            .map(|s| s.t)
+            .collect();
+        assert!(
+            skipped.contains(&32),
+            "an aux view skipped on an IDR: {skipped:?}"
+        );
+        assert!(
+            skipped.iter().any(|t| (25..31).contains(t)),
+            "the grey bar skips the aux view: {skipped:?}"
+        );
+        assert!(pictures > 80, "{pictures} pictures");
+    }
+
+    #[test]
+    #[ignore = "needs VA-API H.264 on /dev/dri/renderD128; run with --ignored where it has one"]
+    fn merged_avc444_views_turn_into_idrs_together() {
+        let sent = code_desktop(&mut vaapi());
+        let kinds: Vec<(u32, bool, Option<bool>)> = (sent.iter())
+            .map(|s| {
+                let own_aux = s.own_aux.as_deref().map(idr);
+                (s.t, idr(s.own_main.as_ref().unwrap()), own_aux)
+            })
+            .filter(|&(_, main, aux)| main || aux == Some(true))
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                (0, true, Some(true)),
+                (27, true, Some(true)),
+                (32, true, None),
+                (34, false, Some(true)),
+                (35, true, Some(true)),
+                (41, true, Some(true)),
+            ],
+            "keyframes, a new quality and a new size make both views IDRs; an aux view skipped \
+             on an IDR makes the next one an IDR"
+        );
+        for s in sent.iter().filter(|s| idr(s.own_main.as_ref().unwrap())) {
+            assert!(
+                idr(&s.main),
+                "frame {}: the merged main view is an IDR",
+                s.t
+            );
+            assert!(
+                !s.aux.as_deref().is_some_and(idr),
+                "frame {}: one IDR a frame",
+                s.t
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "needs VA-API H.264 on /dev/dri/renderD128; run with --ignored where it has one"]
+    fn a_merge_error_codes_both_views_on_one_encoder_from_then_on() {
+        crate::listen::tests::capture_log();
+        let gbm = render_node();
+        let mut encoder = vaapi();
+        let mut decoder = Decoder::new();
+        let size = (192, 128);
+        let picture =
+            |t: u32| move |x: u32, y: u32| [(x * 2) as u8, (y * 3 + t) as u8, (x + t * 8) as u8];
+        let mut code = |t: u32, encoder: &mut Ffmpeg| {
+            let (mut frame, _, _bo) =
+                crate::encode::split::tests::dmabuf_frame(&gbm, size, picture(t));
+            frame.damage = vec![Rect::full(size)];
+            let coded = encoder.encode(&frame, t == 0);
+            let (main, aux, regions) = views(coded.unwrap_or_else(|e| panic!("frame {t}: {e}")));
+            let main = decoder.decode(&main);
+            if let Some(aux) = aux {
+                decoder.decode(&aux);
+            }
+            (main.kind(), regions, tapped().len())
+        };
+        tapped();
+        for t in 0..3 {
+            assert_eq!(code(t, &mut encoder).2, 2, "frame {t}: two encoders");
+        }
+        // A merge that never saw the main view's IDR refuses its next picture.
+        encoder.merge = Some(Merge::default());
+        let (kind, regions, own) = code(3, &mut encoder);
+        assert_eq!(
+            (kind, regions, own),
+            (::ffmpeg::picture::Type::I, vec![Rect::full(size)], 1),
+            "the main view the merge refused, then the frame again on one encoder as an IDR of \
+             the whole picture"
+        );
+        assert!(encoder.merge.is_none());
+        for t in 4..8 {
+            let (kind, _, own) = code(t, &mut encoder);
+            assert_eq!((kind, own), (::ffmpeg::picture::Type::P, 0), "frame {t}");
+        }
+        encoder.set_target(Some((160, 128)));
+        assert_eq!(code(8, &mut encoder).2, 0, "a reopened encoder stays alone");
+        let line = "VA-API H.264 cannot merge the AVC444 views, coding both on one encoder: \
+                    H.264 merge out of order: a slice before the main view's SPS and PPS";
+        assert_eq!(
+            crate::listen::tests::times_logged(line),
+            1,
+            "one journal line"
         );
     }
 
