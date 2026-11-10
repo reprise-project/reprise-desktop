@@ -535,10 +535,12 @@ mod tests {
             rank("lock screen"),
             [
                 Setting::Page(Page::ScreenSaverLock),
+                Setting::Page(Page::Effects),
                 Setting::Page(Page::Keyboard),
                 Setting::Page(Page::RemoteDesktop)
             ],
-            "Remote Desktop by its wait before locking on a screen change"
+            "Effects by its Animate the lock screen box, Remote Desktop by its wait before locking \
+             on a screen change"
         );
         assert_eq!(rank("hot corner"), [Setting::Page(Page::Switcher)]);
         assert_eq!(rank("notifications"), [Setting::Page(Page::Notifications)]);
