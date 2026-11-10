@@ -204,7 +204,7 @@ fn busy_says_verifying_on_the_first_free_message_line() {
     caps.caps_lock = true;
     let inked = |m: &Logon| -> Vec<bool> {
         let (c, _, theme) = drawn(m, 1);
-        let r = geometry(&theme, OUTPUT).message;
+        let r = geometry(&theme, OUTPUT, MESSAGE_LINES).message;
         let h = r.height / MESSAGE_LINES as i32;
         let face = theme.colors.button_face.argb();
         (0..MESSAGE_LINES as i32)
@@ -231,7 +231,7 @@ fn a_prompt_label_draws_its_ampersand() {
         let (c, l, theme) = drawn(&m, s);
         let text = TextRenderer::load(&theme.fonts);
         let px = theme.fonts.size_px * s as u32 / theme.scale.max(1) as u32;
-        let g = geometry(&theme, OUTPUT);
+        let g = geometry(&theme, OUTPUT, MESSAGE_LINES);
         let row = l.rect(Part::Password).unwrap().scaled(s);
         let r = Rect::new(
             g.label_x * s,
@@ -305,7 +305,7 @@ fn the_classic_lock_fixes_the_name_and_starts_the_button_row_with_switch_user() 
             theme.colors.button_face.argb(),
             "@{s}: the fixed name keeps the face colour"
         );
-        let g = geometry(&theme, OUTPUT);
+        let g = geometry(&theme, OUTPUT, MESSAGE_LINES);
         let switch = l.rect(Part::SwitchUser).expect("Switch User");
         assert_eq!(switch.x, g.label_x, "Switch User lines up with the labels");
         assert_eq!(switch.y, g.ok.y, "on the button row");
@@ -327,7 +327,7 @@ fn the_classic_lock_without_power_moves_ok_and_cancel_into_shut_downs_place() {
     let (_, m) = states.find(|(n, _)| *n == "locked without power").unwrap();
     assert!(!m.offers_power());
     let (_, l, theme) = drawn(&m, 1);
-    let g = geometry(&theme, OUTPUT);
+    let g = geometry(&theme, OUTPUT, MESSAGE_LINES);
     assert_eq!(l.rect(Part::Power), None, "no Shut Down...");
     assert_eq!(l.rect(Part::Cancel), Some(g.power), "Cancel ends the row");
     assert_eq!(l.rect(Part::Submit), Some(g.cancel), "OK left of it");
@@ -350,4 +350,39 @@ fn the_classic_lock_states_are_distinct() {
         hashes[0].1,
         "the lock differs from the login dialog"
     );
+}
+
+#[test]
+fn the_admin_heading_runs_to_a_third_line_in_a_wider_face() {
+    let mut theme = Theme::default();
+    theme.fonts.family = vec!["DejaVu Sans".into()];
+    let text = TextRenderer::load(&theme.fonts);
+    if !text.has_face("DejaVu Sans") {
+        crate::pins::skip!("DejaVu Sans is not installed");
+    }
+    let width = CLIENT_W - 2 * PAD;
+    let heading = crate::text::wrap(
+        &text,
+        &strings::admin_shut_down(),
+        width,
+        theme.fonts.size_px,
+    );
+    assert_eq!(heading.len(), 3, "{heading:?}");
+    let mut m = Logon::new(Interface::Classic, Vec::new(), false, None);
+    m.admin(PowerAction::PowerOff);
+    let l = layout(&m, &theme, &text, OUTPUT);
+    let mut c = Canvas::new(OUTPUT.width as u32, OUTPUT.height as u32);
+    draw(&mut c, &m, &l, &theme, text.for_output(1), 1);
+    let (password, ok) = (
+        l.rect(Part::Password).unwrap(),
+        l.rect(Part::Submit).unwrap(),
+    );
+    let left = l.dialog.unwrap().x + PAD;
+    let top = password.bottom() + ROW_GAP + 2 * LINE_H;
+    let face = theme.colors.button_face.argb();
+    let inked = (top..top + LINE_H)
+        .flat_map(|y| (left..ok.x).map(move |x| (x, y)))
+        .filter(|&(x, y)| c.get(x, y) != face)
+        .count();
+    assert!(inked > 0, "the heading's third line is drawn");
 }

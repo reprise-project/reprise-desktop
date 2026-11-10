@@ -27,6 +27,8 @@ const LABEL_W: i32 = 90;
 const ROW_H: i32 = 20;
 const ROW_GAP: i32 = 8;
 const MESSAGE_LINES: usize = 2;
+/// The most rows the message grows to, for a heading that needs more than two.
+const MESSAGE_MAX: usize = 4;
 const BADGE_GAP: i32 = 6;
 /// The band's wordmark: the product's name, never translated.
 const MARK: &str = "Reprise";
@@ -47,8 +49,9 @@ struct Geometry {
     badge: Rect,
 }
 
-/// The frame and caption come from `theme`'s metrics; the client grows with its text size.
-fn geometry(theme: &Theme, output: Rect) -> Geometry {
+/// The frame and caption come from `theme`'s metrics; the client grows with its text size and
+/// the message's `rows`.
+fn geometry(theme: &Theme, output: Rect, rows: usize) -> Geometry {
     let u = theme.text;
     let s = theme.scale.max(1);
     let frame = theme.metrics.frame_width / s;
@@ -56,7 +59,7 @@ fn geometry(theme: &Theme, output: Rect) -> Geometry {
     let name_y = BAND_Y + BAND_H + RULE + PAD;
     let password_y = name_y + ROW_H + ROW_GAP;
     let message_y = password_y + ROW_H + ROW_GAP;
-    let buttons_y = message_y + MESSAGE_LINES as i32 * LINE_H + ROW_GAP;
+    let buttons_y = message_y + rows as i32 * LINE_H + ROW_GAP;
     let (cw, ch) = (u.len(CLIENT_W), u.len(buttons_y + BUTTON_H + PAD));
     let (w, h) = (cw + 2 * frame, ch + 2 * frame + caption_h);
     let dialog = Rect::new(
@@ -74,7 +77,7 @@ fn geometry(theme: &Theme, output: Rect) -> Geometry {
         let (y, h) = span(top, ROW_H);
         Rect::new(field_x, y, client.right() - u.len(PAD) - field_x, h)
     };
-    let (my, mh) = span(message_y, MESSAGE_LINES as i32 * LINE_H);
+    let (my, mh) = span(message_y, rows as i32 * LINE_H);
     let message = Rect::new(client.x + u.len(PAD), my, cw - 2 * u.len(PAD), mh);
     let (bw, bh) = (u.len(BUTTON_W), u.len(BUTTON_H));
     let button = |right: i32| Rect::new(right - bw, y(buttons_y), bw, bh);
@@ -102,8 +105,27 @@ fn geometry(theme: &Theme, output: Rect) -> Geometry {
     }
 }
 
-pub fn layout(m: &Logon, theme: &Theme, _text: &TextRenderer, output: Rect) -> LogonLayout {
-    let g = geometry(theme, output);
+/// The message's rows: two, or as many as the heading wraps to. A message or Caps Lock notice
+/// takes the rows it finds, so the dialog keeps its size while the form is up.
+fn message_rows(m: &Logon, theme: &Theme, text: &TextRenderer) -> usize {
+    let badge = m.layout.as_ref().map_or(0, |_| ICON_SIZE + BADGE_GAP);
+    let width = theme.text.len(CLIENT_W) - 2 * theme.text.len(PAD) - badge;
+    let px = theme.fonts.size_px / theme.scale.max(1) as u32;
+    let lines = m
+        .heading()
+        .map_or(0, |h| crate::text::wrap(text, &h, width, px).len());
+    lines.clamp(MESSAGE_LINES, MESSAGE_MAX)
+}
+
+/// The rows `l` was laid out with: the count whose dialog it is.
+fn laid_rows(theme: &Theme, l: &LogonLayout) -> usize {
+    (MESSAGE_LINES..=MESSAGE_MAX)
+        .find(|&n| Some(geometry(theme, l.output, n).dialog) == l.dialog)
+        .unwrap_or(MESSAGE_LINES)
+}
+
+pub fn layout(m: &Logon, theme: &Theme, text: &TextRenderer, output: Rect) -> LogonLayout {
+    let g = geometry(theme, output, message_rows(m, theme, text));
     // Without Shut Down... the row stays right-aligned: OK and Cancel move into its place.
     let (ok, cancel) = match m.offers_power() {
         true => (g.ok, g.cancel),
@@ -141,7 +163,8 @@ pub fn draw(
     text: &TextRenderer,
     s: i32,
 ) {
-    let g = geometry(theme, l.output);
+    let rows = laid_rows(theme, l);
+    let g = geometry(theme, l.output, rows);
     let o = l.output;
     let at = |r: Rect| Rect::new(r.x - o.x, r.y - o.y, r.width, r.height).scaled(s);
     let px = theme.fonts.size_px * s as u32 / theme.scale.max(1) as u32;
@@ -235,10 +258,10 @@ pub fn draw(
         );
     }
     if let Some(msg) = m.said() {
-        let room = MESSAGE_LINES - lines.len();
+        let room = rows - lines.len();
         lines.extend(message_lines(text, &msg, width, px, room));
     }
-    let line_h = message.height / MESSAGE_LINES as i32;
+    let line_h = message.height / rows as i32;
     for (i, line) in lines.iter().enumerate() {
         let r = Rect::new(message.x, message.y + i as i32 * line_h, width, line_h);
         text.draw(c, r, line, false, cs.button_text, Align::Left, px);

@@ -629,3 +629,39 @@ fn the_blue_chrome_is_the_same_on_every_screen_and_holds_no_column() {
         );
     }
 }
+
+#[test]
+fn the_admin_heading_runs_to_a_third_line_in_a_wider_face() {
+    let mut theme = blue_theme(Variant::Blue);
+    theme.fonts.family = vec!["DejaVu Sans".into()];
+    let text = TextRenderer::load(&theme.fonts);
+    if !text.has_face("DejaVu Sans") {
+        crate::pins::skip!("DejaVu Sans is not installed");
+    }
+    let heading = crate::text::wrap(
+        &text,
+        &strings::admin_shut_down(),
+        TILE_W,
+        design_px(&theme),
+    );
+    assert_eq!(heading.len(), 3, "{heading:?}");
+    let drawn = |m: &Logon| {
+        let l = layout(m, &theme, &text, OUTPUT);
+        let mut c = Canvas::new(OUTPUT.width as u32, OUTPUT.height as u32);
+        let t = text.for_output(1);
+        draw_titled(&mut c, m, &l, &theme, t, t, 1, Show::All);
+        (c, l)
+    };
+    let login = Logon::new(Interface::Blue, Vec::new(), false, None);
+    let mut admin = login.clone();
+    admin.admin(PowerAction::PowerOff);
+    let ((c, l), (plain, _)) = (drawn(&admin), drawn(&login));
+    let field = l.rect(Part::Password).unwrap();
+    let k = lines(theme.text);
+    let top = field.bottom() + ROW_GAP + 2 * k.line;
+    let inked = (top..top + k.line)
+        .flat_map(|y| (field.x..field.x + TILE_W).map(move |x| (x, y)))
+        .filter(|&(x, y)| c.get(x, y) != plain.get(x, y))
+        .count();
+    assert!(inked > 0, "the heading's third line is drawn");
+}

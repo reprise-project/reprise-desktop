@@ -73,6 +73,8 @@ const GO_GLOSS: ((f64, f64), (f64, f64)) = ((11.0, 6.0), (9.0, 6.0));
 const BADGE: i32 = 16;
 const BADGE_R: f64 = 3.0;
 const MESSAGE_LINES: usize = 2;
+/// The typed form's message runs on into the free space under it.
+const TYPED_LINES: usize = 4;
 const POWER: i32 = 26;
 const POWER_X: i32 = 24;
 const POWER_GAP: i32 = 8;
@@ -825,12 +827,16 @@ fn draw_password_row(
             .draw(c, at, short, false, pen.ink, Align::Center, pen.px);
     }
     let w = right - field.x;
+    let room = match m.screen {
+        Screen::Typed => TYPED_LINES,
+        _ => MESSAGE_LINES,
+    };
     let mut lines = Vec::new();
     if m.caps_lock {
         lines.extend(pen.wrapped(&strings::caps_lock(), w, 1));
     }
     if let Some(msg) = m.said() {
-        lines.extend(pen.wrapped(&msg, w, MESSAGE_LINES - lines.len()));
+        lines.extend(pen.wrapped(&msg, w, room - lines.len()));
     }
     pen.lines(
         c,
