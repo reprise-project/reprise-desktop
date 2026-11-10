@@ -110,6 +110,7 @@ pub struct EffectsConfig {
     pub session_fade_in_ms: u32,
     pub session_fade_out_ms: u32,
     /// The lock screen's transitions and busy ring, on under every interface; Classic has none.
+    /// The greeter sets it from `[login] animation`.
     pub logon_animation: bool,
 }
 

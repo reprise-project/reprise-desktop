@@ -83,9 +83,8 @@ pub const SPIN_STEP_MS: u32 = 20;
 const PICK_MS: u32 = 320;
 const BACK_MS: u32 = 300;
 const STAGGER_MS: u32 = 30;
-/// Coming forward, each tile fades in over `ENTER_TILE_MS` rising `RISE` design px,
-/// `ENTER_STAGGER_MS` after the one before up to the `ENTER_STAGGERED`th; a block over
-/// `ENTER_BLOCK_MS`.
+/// Coming forward, tiles rise into place one after another and a block rises whole; `RISE` is
+/// design px.
 const ENTER_TILE_MS: u32 = 240;
 const ENTER_STAGGER_MS: u32 = 40;
 const ENTER_STAGGERED: usize = 4;
