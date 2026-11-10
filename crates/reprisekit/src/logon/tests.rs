@@ -121,8 +121,22 @@ fn left_and_right_step_through_the_tiles_as_up_and_down_do() {
     let mut b = Logon::new(Interface::Blue, users(3), true, None);
     b.key(right.clone());
     assert_eq!(b.focus, Tile(1), "Blue's column");
-    b.key(left);
+    b.key(left.clone());
     assert_eq!(b.focus, Tile(0));
+
+    let mut blue_tile = Logon::new(Interface::Blue, users(3), true, None);
+    blue_tile.click(Tile(1));
+    let glass_tile = Logon::new(Interface::Glass, users(3), true, Some("user1"));
+    for mut m in [blue_tile, glass_tile] {
+        let i = m.interface;
+        typed(&mut m, "ab");
+        let at = (m.screen, m.focus);
+        m.key(left.clone());
+        assert_eq!(m.password.caret(), 1, "{i:?}: Left moves the caret");
+        m.key(right.clone());
+        assert_eq!(m.password.caret(), 2, "{i:?}: Right moves it back");
+        assert_eq!((m.screen, m.focus), at, "{i:?}: the tile stays");
+    }
 }
 
 #[test]
@@ -516,6 +530,37 @@ fn the_admin_form_starts_empty_and_escape_leaves_it() {
     c.admin(PowerAction::Reboot);
     assert_eq!(c.click(Part::Cancel), Some(LogonAction::Cancel));
     assert_eq!(c.purpose, Purpose::Login);
+}
+
+#[test]
+fn leaving_the_admin_form_gives_the_focus_back_to_what_had_it() {
+    let mut b = Logon::new(Interface::Blue, users(3), true, None);
+    b.key(LogonKey::Down);
+    b.admin(PowerAction::PowerOff);
+    b.key(LogonKey::Escape);
+    assert_eq!((b.screen, b.focus), (Screen::Tiles, Part::Tile(1)));
+
+    let mut g = Logon::new(Interface::Glass, users(3), true, Some("user2"));
+    g.admin(PowerAction::Reboot);
+    g.key(LogonKey::Escape);
+    assert_eq!(
+        (g.screen, g.focus),
+        (Screen::Tiles, Part::Tile(2)),
+        "an open tile's user"
+    );
+
+    let mut other = Logon::new(Interface::Glass, users(3), true, None);
+    other.click(Part::OtherUser);
+    other.admin(PowerAction::PowerOff);
+    other.key(LogonKey::Escape);
+    assert_eq!(other.focus, Part::OtherUser, "Other user's form");
+
+    let mut power = Logon::new(Interface::Blue, users(3), true, Some("user1"));
+    power.focus = Part::Power;
+    power.admin(PowerAction::PowerOff);
+    power.admin(PowerAction::Reboot);
+    power.key(LogonKey::Escape);
+    assert_eq!(power.focus, Part::Power, "the button that asked for it");
 }
 
 #[test]

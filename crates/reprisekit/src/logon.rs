@@ -303,6 +303,8 @@ pub struct Logon {
     back: Screen,
     /// An administrator's power request succeeded and the computer is going down.
     going_down: bool,
+    /// Where the tiles' focus goes when the administrator's form is left.
+    admin_from: Part,
 }
 
 impl Logon {
@@ -349,6 +351,7 @@ impl Logon {
             starting: false,
             back: Screen::Typed,
             going_down: false,
+            admin_from: Part::Tile(0),
         };
         m.focus = m.home();
         if let Part::Tile(i) = m.focus {
@@ -592,6 +595,14 @@ impl Logon {
     /// The administrator's form for `action`, empty, in place of whatever the screen showed. The
     /// host has dropped any login in progress.
     pub fn admin(&mut self, action: PowerAction) {
+        if !matches!(self.purpose, Purpose::Admin(_)) {
+            self.admin_from = match (self.screen, self.focus) {
+                (Screen::Tiles, part) | (_, part @ Part::Power) => part,
+                (Screen::Tile(i), _) => Part::Tile(i),
+                (Screen::Typed, _) if self.interface == Interface::Glass => Part::OtherUser,
+                _ => Part::Tile(self.selected().unwrap_or(0)),
+            };
+        }
         self.note(Change::Admin);
         self.starting = false;
         self.purpose = Purpose::Admin(action);
@@ -604,8 +615,8 @@ impl Logon {
         self.focus = Part::Name;
     }
 
-    /// Back from the administrator's form to the screen a login starts on, with a
-    /// [`LogonAction::Cancel`] for the conversation; None on a login's form.
+    /// Back from the administrator's form to the screen a login starts on, the tiles' focus where
+    /// it was, with a [`LogonAction::Cancel`] for the conversation; None on a login's form.
     fn leave_admin(&mut self) -> Option<LogonAction> {
         if !matches!(self.purpose, Purpose::Admin(_)) {
             return None;
@@ -614,6 +625,15 @@ impl Logon {
         if self.interface != Interface::Classic && !self.users.is_empty() {
             self.name = TextEdit::new("", false);
             self.open(Screen::Tiles);
+            let from = self.admin_from;
+            if self.stops().contains(&from) {
+                self.focus = from;
+                match from {
+                    Part::Tile(i) => self.scroll_to(i),
+                    Part::OtherUser => self.scroll_to(self.users.len()),
+                    _ => {}
+                }
+            }
             return Some(LogonAction::Cancel);
         }
         self.clear()
