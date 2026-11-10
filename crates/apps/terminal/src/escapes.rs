@@ -19,6 +19,7 @@ const ESC: u8 = 0x1b;
 const ST: &[u8] = b"\x1b\\";
 
 #[derive(Default)]
+#[cfg_attr(test, derive(Debug, PartialEq))]
 enum State {
     #[default]
     Ground,
@@ -38,6 +39,7 @@ enum State {
 
 /// What a CSI so far tells about whether vte carries it out as CSI 22 t or CSI 23 t.
 #[derive(Default)]
+#[cfg_attr(test, derive(Debug, PartialEq))]
 struct Csi {
     /// The first parameter, saturating like vte's.
     first: u16,
@@ -55,6 +57,21 @@ impl Csi {
             && self.seps < CSI_PARAMS
             && self.first <= 22
             && (self.seps == 0 || self.first == 22)
+    }
+
+    /// Take a parameter, intermediate or private-marker byte (0x20 to 0x3f).
+    fn param(&mut self, b: u8) {
+        match b {
+            b'0'..=b'9' if self.seps == 0 => {
+                self.first = self
+                    .first
+                    .saturating_mul(10)
+                    .saturating_add((b - b'0').into())
+            }
+            b':' | b';' => self.seps += 1,
+            b' '..=b'/' | b'<'..=b'?' => self.marked = true,
+            _ => {}
+        }
     }
 
     /// The title stack change vte makes for final byte `b`: +1, -1 or 0.
@@ -78,6 +95,9 @@ pub struct Filter {
     held: Vec<u8>,
     /// The title stack depth as vte keeps it, counted from the pushes and pops passed on.
     depth: usize,
+    /// Takes every escape byte through [`Self::byte`], for tests that check the runs against it.
+    #[cfg(test)]
+    byte_path: bool,
 }
 
 impl Filter {
@@ -87,16 +107,25 @@ impl Filter {
         let mut found = None;
         let mut i = 0;
         while i < input.len() {
-            if matches!(self.state, State::Ground) {
-                let plain = input[i..]
-                    .iter()
-                    .position(|&b| b == ESC)
-                    .unwrap_or(input.len() - i);
-                out.extend_from_slice(&input[i..i + plain]);
-                i += plain;
-                if i == input.len() {
-                    break;
+            match self.state {
+                State::Ground => {
+                    let run = self.pass(&input[i..]);
+                    out.extend_from_slice(&input[i..i + run]);
+                    i += run;
                 }
+                State::Osc if self.runs() => {
+                    let room = (2 + OSC_MAX - self.held.len()).min(input.len() - i);
+                    let run = input[i..i + room]
+                        .iter()
+                        .position(|&b| b < 0x20)
+                        .unwrap_or(room);
+                    self.held.extend_from_slice(&input[i..i + run]);
+                    i += run;
+                }
+                _ => {}
+            }
+            if i == input.len() {
+                break;
             }
             if let Some(uri) = self.byte(input[i], out) {
                 found = Some(uri);
@@ -104,6 +133,61 @@ impl Filter {
             i += 1;
         }
         found
+    }
+
+    /// How much of `input`, from Ground, [`Self::byte`] passes on unchanged: text, whole CSIs and
+    /// two-byte escapes while the stack has room. Counts their stack changes; stops at other ESCs.
+    fn pass(&mut self, input: &[u8]) -> usize {
+        let mut i = 0;
+        loop {
+            i += input[i..]
+                .iter()
+                .position(|&b| b == ESC)
+                .unwrap_or(input.len() - i);
+            if !self.runs() {
+                return i;
+            }
+            match input.get(i + 1) {
+                Some(b'[') if self.depth < DEPTH_MAX => {
+                    let mut csi = Csi::default();
+                    let Some(len) = input[i + 2..].iter().position(|&b| {
+                        let param = matches!(b, 0x20..=0x3f);
+                        if param {
+                            csi.param(b);
+                        }
+                        !param
+                    }) else {
+                        return i;
+                    };
+                    let end = input[i + 2 + len];
+                    if !matches!(end, 0x40..=0x7e) {
+                        return i;
+                    }
+                    let change = csi.stack_change(end);
+                    self.depth = self.depth.saturating_add_signed(change.into());
+                    i += 3 + len;
+                }
+                Some(&b) if matches!(b, 0x20..=0x7e) && b != b'[' && b != b']' => {
+                    if b == b'c' {
+                        self.depth = 0;
+                    }
+                    i += 2;
+                }
+                _ => return i,
+            }
+        }
+    }
+
+    /// Whether [`Self::feed`] passes whole escapes and OSC payload runs at once.
+    fn runs(&self) -> bool {
+        #[cfg(test)]
+        {
+            !self.byte_path
+        }
+        #[cfg(not(test))]
+        {
+            true
+        }
     }
 
     fn byte(&mut self, b: u8, out: &mut Vec<u8>) -> Option<String> {
@@ -203,17 +287,7 @@ impl Filter {
                     self.state = State::Ground;
                 }
                 _ => {
-                    match b {
-                        b'0'..=b'9' if csi.seps == 0 => {
-                            csi.first = csi
-                                .first
-                                .saturating_mul(10)
-                                .saturating_add((b - b'0').into())
-                        }
-                        b':' | b';' => csi.seps += 1,
-                        b' '..=b'/' | b'<'..=b'?' => csi.marked = true,
-                        _ => {}
-                    }
+                    csi.param(b);
                     if !csi.held {
                         out.push(b);
                     } else if !csi.may_push() {
@@ -533,5 +607,182 @@ mod tests {
             None,
             "OSC 70 is not OSC 7"
         );
+    }
+
+    /// xorshift64*, so a failing case replays from its printed seed.
+    struct Rng(u64);
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 >> 12;
+            self.0 ^= self.0 << 25;
+            self.0 ^= self.0 >> 27;
+            self.0.wrapping_mul(0x2545_f491_4f6c_dd1d)
+        }
+        fn below(&mut self, n: usize) -> usize {
+            (self.next() % n as u64) as usize
+        }
+    }
+
+    /// Bytes built from the pieces the filter's states turn on, runs past the caps included.
+    fn noise(rng: &mut Rng, pieces: usize) -> Vec<u8> {
+        const TOKENS: &[&[u8]] = &[
+            b"\x1b",
+            b"[",
+            b"]",
+            b"\x1b[",
+            b"\x1b]",
+            b"\x1b[22t",
+            b"\x1b[23t",
+            b"\x1b[22;0t",
+            b"\x1b[0022t",
+            b"\x1b[?22t",
+            b"\x1b[220t",
+            b"\x1b[22 t",
+            b"\x1b[22:1t",
+            b"\x1bc",
+            b"\x1b(B",
+            b"\x1b(c",
+            b"\x1bP",
+            b"\x1b_",
+            b"\x1b\\",
+            b"\x1b]7;file:///a",
+            b"\x1b]0;",
+            b"\x1b]52;c;",
+            b"52;",
+            b"7;",
+            b"0",
+            b"1",
+            b"2",
+            b"22",
+            b"23",
+            b"9",
+            b";",
+            b":",
+            b"t",
+            b"m",
+            b"H",
+            b"c",
+            b"@",
+            b"~",
+            b"\x07",
+            b"\x18",
+            b"\x1a",
+            b"\x00",
+            b"\x01",
+            b"\x0a",
+            b"\x1c",
+            b"\x1f",
+            b"\x7f",
+            b"\x80",
+            b"\x9b",
+            b"\x9c",
+            b"\x9d",
+            b"\xff",
+            b" ",
+            b"<",
+            b"?",
+            b"!",
+            b"x",
+            b"A",
+            b"\x1b[0m",
+            b"\x1b[01;34m",
+            b"\x1b[38;5;244m",
+            b"\x1b[12;60H",
+            b"\xc3\xa9",
+            b"\xc3",
+            b"\xa9",
+        ];
+        let mut out = Vec::new();
+        for _ in 0..pieces {
+            match rng.below(40) {
+                0 => {
+                    let n = [100, 4096, OSC_MAX - 4, 70_000][rng.below(4)] + rng.below(8);
+                    out.resize(out.len() + n, b"xA2;"[rng.below(4)]);
+                }
+                1 => out.extend(std::iter::repeat_n(b"\x1b[22t", rng.below(20)).flatten()),
+                2 => {
+                    let n = [CSI_HELD_MAX, CSI_PARAMS][rng.below(2)] - 4 + rng.below(8);
+                    out.extend_from_slice(b"\x1b[");
+                    out.resize(out.len() + n, b"0;"[rng.below(2)]);
+                }
+                _ => out.extend_from_slice(TOKENS[rng.below(TOKENS.len())]),
+            }
+        }
+        out
+    }
+
+    /// Feeds `input` in reads of the lengths `reads` gives to a filter taking runs and to one
+    /// taking every escape byte by byte; returns where their output, OSC 7 or state first differs.
+    fn diverges(input: &[u8], mut reads: impl Iterator<Item = usize>) -> Option<String> {
+        let mut runs = Filter::default();
+        let mut bytes = Filter {
+            byte_path: true,
+            ..Filter::default()
+        };
+        let (mut a, mut b) = (Vec::new(), Vec::new());
+        let mut i = 0;
+        while i < input.len() {
+            let n = reads.next().unwrap_or(usize::MAX).min(input.len() - i);
+            let read = &input[i..i + n];
+            let (ua, ub) = (runs.feed(read, &mut a), bytes.feed(read, &mut b));
+            if ua != ub {
+                return Some(format!(
+                    "OSC 7 after byte {i}+{n}: {ua:?}, byte path {ub:?}"
+                ));
+            }
+            if a != b {
+                return Some(format!("output after byte {i}+{n}"));
+            }
+            if (&runs.state, runs.depth) != (&bytes.state, bytes.depth) || runs.held != bytes.held {
+                return Some(format!(
+                    "after byte {i}+{n}: {:?} depth {} held {}, byte path {:?} depth {} held {}",
+                    runs.state,
+                    runs.depth,
+                    runs.held.len(),
+                    bytes.state,
+                    bytes.depth,
+                    bytes.held.len()
+                ));
+            }
+            a.clear();
+            b.clear();
+            i += n;
+        }
+        None
+    }
+
+    #[test]
+    fn runs_pass_on_what_the_byte_path_does_across_random_reads() {
+        let mut seeds = Rng(0x9e37_79b9_7f4a_7c15);
+        for case in 0..3000 {
+            let seed = seeds.next() | 1;
+            let mut rng = Rng(seed);
+            let pieces = 1 + rng.below(400);
+            let input = noise(&mut rng, pieces);
+            let reads = std::iter::from_fn(|| {
+                let max = [1, 7, 64, 4096, 70_000][rng.below(5)];
+                Some(1 + rng.below(max))
+            });
+            if let Some(at) = diverges(&input, reads) {
+                panic!("case {case} seed {seed:#x}: {at}");
+            }
+        }
+    }
+
+    #[test]
+    fn runs_pass_on_what_the_byte_path_does_with_a_read_cut_at_the_osc_cap() {
+        let cap = 2 + OSC_MAX;
+        for head in [&b"\x1b]0;"[..], b"\x1b]7;", b"\x1b]52;c;"] {
+            for len in cap - 1..=cap + 1 {
+                let mut input = head.to_vec();
+                input.resize(len, b'x');
+                input.extend_from_slice(b"\x07after");
+                for cut in cap - 3..=cap + 3 {
+                    if let Some(at) = diverges(&input, [cut].into_iter()) {
+                        panic!("{} of {len} cut at {cut}: {at}", head.escape_ascii());
+                    }
+                }
+            }
+        }
     }
 }
