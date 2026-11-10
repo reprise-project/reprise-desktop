@@ -317,8 +317,9 @@ fn parse_icon(v: &OwnedVariant) -> Icon {
         return Icon::None;
     };
     match kind.as_str() {
+        // The compositor reads a name with a `/` as a file, which the app may not have shared.
         "themed" => Vec::<String>::try_from(inner)
-            .map(Icon::Themed)
+            .map(|names| Icon::Themed(names.into_iter().filter(|n| !n.contains('/')).collect()))
             .unwrap_or_default(),
         "bytes" => Vec::<u8>::try_from(inner)
             .map(Icon::Bytes)
@@ -753,6 +754,13 @@ mod tests {
         let list = |k: &str| Vec::<String>::try_from(opts[k].clone()).unwrap();
         assert_eq!(list("button-purpose"), [REPLY_PURPOSE]);
         assert_eq!(list("category"), [IM_CATEGORY]);
+    }
+
+    #[test]
+    fn a_themed_icon_names_no_file() {
+        let themed = |names: Vec<&str>| owned(("themed", Variant::from(names)));
+        let icon = parse_icon(&themed(vec!["/home/u/Pictures/x.png", "a/b", "mail"]));
+        assert_eq!(icon, Icon::Themed(vec!["mail".into()]));
     }
 
     #[test]

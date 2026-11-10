@@ -1303,7 +1303,13 @@ sharing and remote control grants yet.
   is read, or shows too little of itself, gets no name or icon at all. A
   program outside a sandbox is trusted as you are and keeps the name it
   gives, and so does the notification portal, which forwards a sandboxed
-  app's notification under the app id xdg-desktop-portal checked.
+  app's notification under the app id xdg-desktop-portal checked. Only a
+  program outside a sandbox names a file for a notification to read with
+  your rights: an `image-path` or `sound-file` path from any other sender is
+  dropped (an icon name and a sound name stay), and the portal forwards
+  only themed icon names without a `/`. A sandboxed app's tray icon can
+  still name an icon file by path or `IconThemePath`; it shows only in the
+  tray, and nothing of it goes back to the app.
 - **Launchers.** A `.desktop` file in a folder (the desktop, Explorer)
   runs only when it is executable and carries the `user.reprise.trusted`
   extended attribute, which Allow Launching sets. Extracting an archive

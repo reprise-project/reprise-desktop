@@ -1,11 +1,13 @@
 use super::item::{Pixmaps, ToolTip, decode_names, icon_ref, item_texts};
 use super::menu::{LABEL_CHARS, MENU_ROWS, parse_layout};
-use super::notifications::{CAPABILITIES, action_icons, notification_icons};
+use super::notifications::{CAPABILITIES, action_icons, as_sent_by, notification_icons};
 use super::watcher::{
     Admission, MAX_REGISTRATIONS, MAX_REGISTRATIONS_PER_SENDER, admit, resolve_registration,
 };
 use super::*;
 use crate::tray::{DEFAULT_PROP, MenuNode, NOTIFY_SIZES, Notification, item_pixmaps, notify};
+use repriseaudio::sounds::Sound;
+use reprisebus::peer::AppIdentity;
 use reprisekit::controls::tooltip::TIP_CHARS;
 use reprisekit::icon::IconSource;
 use std::collections::HashMap;
@@ -1457,5 +1459,43 @@ fn a_sandboxed_apps_tray_icon_is_kept_and_listed_under_its_own_app() {
     assert_eq!(
         (host.key.as_str(), host.title.as_str()),
         ("org.mozilla.firefox", "Firefox")
+    );
+}
+
+#[test]
+fn a_sandboxed_or_unknown_sender_names_no_file_to_read() {
+    let sound = |s: &str| Sound::File(s.into());
+    let sent = |identity: &AppIdentity, image: &str, sound: Option<Sound>| {
+        let mut hints = notify::Hints {
+            image_path: Some(image.into()),
+            sound,
+            ..notify::Hints::default()
+        };
+        as_sent_by(identity, &mut hints, "App".into(), String::new());
+        (hints.image_path, hints.sound)
+    };
+    let app = AppIdentity::Sandboxed {
+        app_id: "org.example.App".into(),
+    };
+    for identity in [&app, &AppIdentity::Unknown] {
+        for path in [
+            "/home/u/Pictures/x.png",
+            "file:///home/u/x.png",
+            "x/../y.png",
+        ] {
+            let got = sent(identity, path, Some(sound("/home/u/a.oga")));
+            assert_eq!(got, (None, None), "{identity:?} naming {path}");
+        }
+        let named = sent(identity, "mail-unread", Some(Sound::Name("bell".into())));
+        assert_eq!(
+            named,
+            (Some("mail-unread".into()), Some(Sound::Name("bell".into())))
+        );
+    }
+    let host = AppIdentity::Host { desktop_id: None };
+    let got = sent(&host, "/home/u/x.png", Some(sound("/home/u/a.oga")));
+    assert_eq!(
+        got,
+        (Some("/home/u/x.png".into()), Some(sound("/home/u/a.oga")))
     );
 }
