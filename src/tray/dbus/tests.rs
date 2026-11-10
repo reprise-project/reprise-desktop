@@ -900,8 +900,8 @@ fn another_connection_under_the_same_app_name_gets_a_fresh_id() {
         "another connection of its process replaces it"
     );
     assert!(
-        senders.owns(a, ":1.7"),
-        "and the first sender still owns it"
+        senders.owns(a, ":1.9"),
+        "and its signals go to the replacing connection"
     );
 }
 
