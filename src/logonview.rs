@@ -8,7 +8,7 @@ use reprisekit::interfaces::logon::{
     Drawn, Transition, draw_logon, draw_spinner, logon_column, logon_layout, spin_elapsed,
     spin_step, spinner_rect,
 };
-use reprisekit::logon::{self, Logon, LogonAction, LogonKey, LogonLayout, Moves, Part};
+use reprisekit::logon::{self, Logon, LogonAction, LogonKey, LogonLayout, Motion, Moves, Part};
 use reprisekit::pointer::Interaction;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
@@ -71,6 +71,10 @@ pub struct Play {
     pub since: Option<Instant>,
     /// The device size of the canvas it plays on.
     size: (u32, u32),
+    /// The change it plays, which builds it again over a new layout.
+    motion: Motion,
+    /// A refit came since it was built: the next draw builds it again at the same point.
+    relaid: bool,
 }
 
 impl Play {
@@ -373,13 +377,16 @@ pub struct Refit {
     pub removed: Vec<Output>,
 }
 
-/// Cover `fit.outputs` and only those, then draw the screen at rest.
+/// Cover `fit.outputs` and only those, then draw the screen again; a change playing carries on
+/// over the new layout from where it was.
 pub fn refit(state: &mut State, host: &Host, fit: Fit<'_>) -> Refit {
     let mut changed = Refit::default();
     let Some((v, _)) = (host.view)(state) else {
         return changed;
     };
-    v.play = None;
+    if let Some(p) = v.play.as_mut() {
+        p.relaid = true;
+    }
     v.model.take_motion();
     let mut covers = std::mem::take(&mut v.covers);
     covers.retain(|c| {
@@ -501,8 +508,8 @@ fn draw(state: &mut State, host: &Host) -> bool {
     true
 }
 
-/// Start, carry on or drop what plays on `v`'s screen after its model changed; the screen at rest
-/// with the frame for `now` over it. A screen no longer busy has its ring back at step 0.
+/// Start, carry on, rebuild or drop what plays on `v`'s screen; the screen at rest with the frame
+/// for `now` over it. A screen no longer busy has its ring back at step 0.
 fn play(
     v: &mut LogonView,
     l: &LogonLayout,
@@ -511,7 +518,11 @@ fn play(
 ) -> Canvas {
     let motion = v.model.take_motion();
     let size = ((l.output.width * s) as u32, (l.output.height * s) as u32);
-    let prev = (v.play.take()).filter(|p| p.size == size && p.at(now) < p.t.ms());
+    let prev = (v.play.take()).filter(|p| p.at(now) < p.t.ms());
+    let (prev, relaid) = match prev {
+        Some(p) if p.relaid || p.size != size => (None, Some(p)),
+        p => (p, None),
+    };
     let shown = v.shown.take();
     if !v.hidden && v.model.moves == Moves::Full {
         let d = Drawn {
@@ -521,19 +532,29 @@ fn play(
             text,
             s,
         };
-        let fresh = |t| Play {
+        let fresh = |t, motion| Play {
             t,
             since: None,
             size,
+            motion,
+            relaid: false,
         };
         v.play = match (motion, prev) {
-            (Some(m), None) => Transition::begin_over(&m, &d, shown).map(fresh),
-            (Some(m), Some(p)) => Transition::then(&p.t, p.at(now), &m, &d).map(fresh),
+            (Some(m), None) => Transition::begin_over(&m, &d, shown).map(|t| fresh(t, m)),
+            (Some(m), Some(p)) => Transition::then(&p.t, p.at(now), &m, &d).map(|t| fresh(t, m)),
             (None, Some(mut p)) => {
                 p.t.refresh_now(&d);
                 Some(p)
             }
-            (None, None) => None,
+            (None, None) => relaid.and_then(|p| {
+                let t = Transition::begin(&p.motion, &d)?;
+                Some(Play {
+                    t,
+                    size,
+                    relaid: false,
+                    ..p
+                })
+            }),
         };
     }
     let mut canvas = match &v.play {
