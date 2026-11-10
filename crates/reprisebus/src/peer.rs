@@ -741,6 +741,15 @@ pub(crate) mod tests {
         let ids = Identities::under(host.path());
         let gone = connect().unique_name().unwrap().to_string();
         zbus::block_on(async {
+            // A dropped connection closes its socket after the drop returns.
+            let dbus = zbus::fdo::DBusProxy::new(&us).await.unwrap();
+            let gone_name = zbus::names::BusName::try_from(gone.as_str()).unwrap();
+            for _ in 0..500 {
+                if !dbus.name_has_owner(gone_name.clone()).await.unwrap() {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
             assert_eq!(ids.of(&us, &gone).await, AppIdentity::Unknown, "left");
             assert_eq!(ids.of(&us, ":1.999").await, AppIdentity::Unknown);
             assert_eq!(
