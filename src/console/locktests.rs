@@ -384,3 +384,24 @@ fn the_servers_keys_object_types_into_the_lock_and_an_apps_does_not() {
     keys_tap(&mut h, app, &[X]);
     assert_eq!(field(&h, Side::Console), "hunter2");
 }
+
+#[test]
+fn the_remote_sides_lock_neither_enters_nor_fades() {
+    let config = Config::parse("[appearance]\ninterface = \"glass\"\n").unwrap();
+    let (mut h, _portal, _lock) = in_lock_mode_with(config);
+    hunter2(&mut h);
+    h.from(InputSource::Remote, lockview::lock_desktop);
+    let remote = h
+        .state
+        .lock
+        .on(Side::Remote)
+        .expect("the remote side is locked");
+    assert!(
+        remote.view.play.is_none(),
+        "nothing plays on the remote side"
+    );
+    remote_submit(&mut h, "hunter2");
+    settle(&mut h);
+    assert!(!h.state.desktop_locked(), "the remote side unlocks");
+    assert!(h.state.lock.leaving.is_empty(), "its covers go at once");
+}

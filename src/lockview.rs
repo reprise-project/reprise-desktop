@@ -52,7 +52,20 @@ pub struct LockScreen {
     /// Where reprise-login's screen lists this user (`find_listed`), so the tiles agree.
     pub listed_at: usize,
     pub back: crate::lockback::LoginBack,
+    /// Covers an unlock let go, fading out over the desktop.
+    pub leaving: Vec<Leaving>,
 }
+
+/// A cover a right password or fingerprint let go: it takes no input and fades out.
+pub struct Leaving {
+    pub output: Output,
+    pub tree: TreeId,
+    /// When its first frame of fading was drawn.
+    pub since: Option<Instant>,
+}
+
+/// How long the covers take to fade out once the lock lets go, ms.
+const UNLOCK_MS: u64 = 200;
 
 impl LockScreen {
     pub fn new(dh: &smithay::reexports::wayland_server::DisplayHandle) -> LockScreen {
@@ -65,6 +78,7 @@ impl LockScreen {
             seat_away: false,
             listed_at: 0,
             back: Default::default(),
+            leaving: Vec::new(),
         }
     }
 
@@ -310,7 +324,7 @@ fn on_finger(state: &mut State) -> PostAction {
     }
     if accepted {
         log::info!("lock: fingerprint accepted");
-        unlock_side(state, Side::Console);
+        unlock_side(state, Side::Console, true);
         return PostAction::Remove;
     }
     if ended {
@@ -419,7 +433,7 @@ fn on_result(state: &mut State, side: Side) -> PostAction {
             if side == Side::Remote {
                 state.lock.remote_backoff.succeeded();
             }
-            unlock_side(state, side);
+            unlock_side(state, side, true);
             if passed == lock::Passed::Expired {
                 crate::notifyview::notice(state, lock::EXPIRED_SUMMARY, lock::EXPIRED_BODY);
             }
@@ -535,8 +549,14 @@ pub fn engage(state: &mut State) {
     }
     crate::state::save_screen_locked(true);
     crate::idle::end_dim(state);
+    let_go_now(state);
     seal(state, |s| raise(s, Side::Console));
     refit_side(state, Side::Console);
+    // The covers are opaque from their first frame; only the screen on them comes in.
+    if let Some(l) = state.lock.console.as_mut() {
+        l.view.model.enter();
+    }
+    redraw(state);
     state.set_cursor("default");
     crate::power::hint(state, crate::power::Hint::Locked(true));
     crate::idle::inhibition_changed(state);
@@ -673,8 +693,10 @@ fn cancel_interaction(state: &mut State) {
 /// What had the keyboard when a lock engaged: the window, the layer surface, whether the desktop.
 type Refocus = (Option<WindowId>, Option<WlSurface>, bool);
 
-/// Take `side`'s lock's scene nodes, sources and child down without touching focus.
-fn teardown(state: &mut State, side: Side) -> Option<Refocus> {
+/// Take `side`'s lock's scene nodes, sources and child down without touching focus; with `fade`,
+/// its covers fade out where [`fades`] allows.
+fn teardown(state: &mut State, side: Side, fade: bool) -> Option<Refocus> {
+    let fade = fade && side == Side::Console && fades(state);
     let mut l = state.lock.slot(side).take()?;
     l.pending = None;
     // The fingerprint child is interrupted and frees the reader as it ends. A new lock's conversation
@@ -689,21 +711,93 @@ fn teardown(state: &mut State, side: Side) -> Option<Refocus> {
         crate::lockpower::close(state);
     }
     for c in &l.view.covers {
-        state.scene.destroy(c.tree);
-        state.water.drop_pane(&c.output.name(), Pane::Lock);
+        match fade {
+            true => let_go(state, c.output.clone(), c.tree),
+            false => destroy_cover(state, &c.output, c.tree),
+        }
     }
     Some((l.prev_focus, l.prev_focused_layer, l.prev_desktop))
 }
 
+fn destroy_cover(state: &mut State, output: &Output, tree: TreeId) {
+    state.scene.destroy(tree);
+    state.water.drop_pane(&output.name(), Pane::Lock);
+}
+
+/// Whether an unlock fades the covers out: the screen moves, and the session has the seat to
+/// draw the fade on. A resume through reprise-login unlocks while away and drops them at once.
+fn fades(state: &State) -> bool {
+    state.config.interface != Interface::Classic
+        && logonview::moves(state) == reprisekit::logon::Moves::Full
+        && crate::backend::session_active(state)
+}
+
+/// Let `tree`, a cover on `output`, fade out from the next frame, the pointer passing through it.
+/// A timer takes it down should no frame come (an output that is off).
+fn let_go(state: &mut State, output: Output, tree: TreeId) {
+    let leaves: Vec<_> = state.scene.children(tree).to_vec();
+    for n in leaves {
+        state.scene.set_input(n, reprisescene::Input::Passthrough);
+    }
+    if state.lock.leaving.is_empty() {
+        let wait = Duration::from_millis(UNLOCK_MS * 2);
+        let timer = state
+            .handle
+            .insert_source(Timer::from_duration(wait), |_, _, state| {
+                let_go_now(state);
+                TimeoutAction::Drop
+            });
+        if let Err(e) = timer {
+            log::warn!("lock: cannot time the unlock fade: {}", e.error);
+        }
+    }
+    state.lock.leaving.push(Leaving {
+        output,
+        tree,
+        since: None,
+    });
+}
+
+/// Take down every cover still fading out.
+fn let_go_now(state: &mut State) {
+    for l in std::mem::take(&mut state.lock.leaving) {
+        destroy_cover(state, &l.output, l.tree);
+    }
+}
+
+/// Fade the covers leaving `output` to their opacity for this frame; one that faded out goes.
+fn fade_out(state: &mut State, output: &Output) {
+    let now = Instant::now();
+    let mut more = false;
+    for mut l in std::mem::take(&mut state.lock.leaving) {
+        if l.output != *output {
+            state.lock.leaving.push(l);
+            continue;
+        }
+        let since = *l.since.get_or_insert(now);
+        let t = now.saturating_duration_since(since).as_secs_f32() * 1000.0 / UNLOCK_MS as f32;
+        if t >= 1.0 {
+            destroy_cover(state, &l.output, l.tree);
+            continue;
+        }
+        state.scene.set_opacity(l.tree, 1.0 - t);
+        state.lock.leaving.push(l);
+        more = true;
+    }
+    if more {
+        crate::backend::schedule(state, output);
+    }
+}
+
 /// Unlock from logind's `Unlock` or a locker: the session and, in lock mode, the remote side.
 pub fn unlock(state: &mut State) {
-    unlock_side(state, Side::Console);
-    unlock_side(state, Side::Remote);
+    unlock_side(state, Side::Console, false);
+    unlock_side(state, Side::Remote, false);
 }
 
 /// Lock mode ended: the remote side's lock goes with its outputs, handing nothing focus.
 pub fn drop_remote(state: &mut State) {
-    if teardown(state, Side::Remote).is_some() {
+    if teardown(state, Side::Remote, false).is_some() {
         crate::idle::inhibition_changed(state);
         log::info!("lock mode: the remote side's lock ends with it");
     }
@@ -711,8 +805,9 @@ pub fn drop_remote(state: &mut State) {
 
 /// Unlock `side`, from its correct password or a whole unlock, and hand focus back unless the
 /// desktop is still locked. The console's unlock ends lock mode and keeps the remote side's focus.
-fn unlock_side(state: &mut State, side: Side) {
-    let Some(mut prev) = teardown(state, side) else {
+/// With `fade` (a right password or fingerprint), the covers fade out after it.
+fn unlock_side(state: &mut State, side: Side, fade: bool) {
+    let Some(mut prev) = teardown(state, side, fade) else {
         return;
     };
     if side == Side::Console {
@@ -1013,8 +1108,12 @@ pub fn repaint_wall(state: &mut State, output: &Output) {
     }
 }
 
-/// `output` is about to render: the lock's screen there steps what plays on it.
+/// `output` is about to render: the lock's screen there steps what plays on it, and covers an
+/// unlock let go fade.
 pub fn frame(state: &mut State, output: &Output) {
+    if !state.lock.leaving.is_empty() {
+        fade_out(state, output);
+    }
     let side = crate::console::side_of(output);
     if state.lock.on(side).is_some() {
         logonview::frame(state, host(side), output);
@@ -1975,5 +2074,97 @@ mod tests {
         redraw(&mut h.state);
         let l = h.state.lock.console.as_ref().unwrap();
         assert!(!splashes(l, beside), "a locker's own screen has no water");
+    }
+
+    /// Locked under Glass behind its screen, "hunter2" the password.
+    fn locked_glass() -> crate::harness::Harness {
+        let config = "[appearance]\ninterface = \"glass\"\n";
+        let mut h =
+            crate::harness::Harness::with_config(crate::config::Config::parse(config).unwrap());
+        h.output("TEST-1", 1024, 768);
+        h.state.lock.helpers = Helpers {
+            password: |_, _| sh(r#"read p; [ "$p" = hunter2 ] && echo '= 0' || echo '= 7'"#),
+            finger: |_| None,
+            ..Helpers::default()
+        };
+        lock(&mut h.state);
+        h
+    }
+
+    /// The asks the frame about to render on TEST-1 makes.
+    fn next_frame(h: &mut crate::harness::Harness) -> Vec<String> {
+        let o = h.state.scene.outputs()[0].clone();
+        crate::backend::take_asks();
+        crate::backend::advance(&mut h.state, &o);
+        (crate::backend::take_asks().into_iter())
+            .map(|(o, _)| o)
+            .collect()
+    }
+
+    fn middle(h: &crate::harness::Harness) -> Point<f64, Logical> {
+        let b = h.state.layout_box(None);
+        Point::from((f64::from(b.width / 2), f64::from(b.height / 2)))
+    }
+
+    #[test]
+    fn the_lock_screen_enters_over_opaque_covers_on_its_first_frame() {
+        let mut h = locked_glass();
+        let l = h.state.lock.console.as_ref().unwrap();
+        let p = l.view.play.as_ref().expect("the screen enters");
+        assert_eq!(p.t.change, logon::Change::Enter);
+        assert!(p.since.is_none());
+        let c = &l.view.covers[0];
+        assert_eq!(
+            h.state.scene.opacity(c.tree),
+            Some(1.0),
+            "the cover is whole"
+        );
+        assert_eq!(next_frame(&mut h), ["TEST-1"]);
+        let l = h.state.lock.console.as_ref().unwrap();
+        assert!(l.view.play.as_ref().unwrap().since.is_some());
+    }
+
+    #[test]
+    fn the_unlock_fade_takes_no_input_and_the_lock_is_off_at_once() {
+        let mut h = locked_glass();
+        check(&mut h, "hunter2");
+        assert!(!h.state.console_locked(), "unlocked at once");
+        assert_eq!(h.state.lock.leaving.len(), 1, "the cover fades out");
+        assert!(
+            matches!(h.state.scene_hit(middle(&h)), Hit::Desktop { .. }),
+            "a press reaches the desktop through the fading cover"
+        );
+        let tree = h.state.lock.leaving[0].tree;
+        assert_eq!(next_frame(&mut h), ["TEST-1"]);
+        h.state.lock.leaving[0].since = Some(Instant::now() - Duration::from_millis(100));
+        next_frame(&mut h);
+        let half = h.state.scene.opacity(tree).unwrap();
+        assert!(
+            half > 0.3 && half < 0.7,
+            "half way it is half faded: {half}"
+        );
+        h.state.lock.leaving[0].since = Some(Instant::now() - Duration::from_millis(UNLOCK_MS + 1));
+        assert_eq!(next_frame(&mut h), Vec::<String>::new());
+        assert!(h.state.lock.leaving.is_empty());
+        assert_eq!(h.state.scene.opacity(tree), None, "the cover is gone");
+    }
+
+    #[test]
+    fn an_unlock_while_away_drops_the_covers_at_once() {
+        let mut h = locked_glass();
+        seat_away(&mut h.state, true);
+        check(&mut h, "hunter2");
+        assert!(!h.state.console_locked());
+        assert!(h.state.lock.leaving.is_empty());
+    }
+
+    #[test]
+    fn a_classic_lock_neither_enters_nor_fades() {
+        let mut h = locked(|_, _| sh(r#"read p; [ "$p" = hunter2 ] && echo '= 0' || echo '= 7'"#));
+        let l = h.state.lock.console.as_ref().unwrap();
+        assert!(l.view.play.is_none());
+        check(&mut h, "hunter2");
+        assert!(!h.state.console_locked());
+        assert!(h.state.lock.leaving.is_empty());
     }
 }
