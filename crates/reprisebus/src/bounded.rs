@@ -1,7 +1,5 @@
-//! What another session-bus peer sends, decoded within bounds. A body over [`MAX_BODY`] is refused
-//! before it is read, and values land in [`Value`] and [`Dict`], which keep numbers, strings and
-//! string lists, cut each, and skip every other type unread. An `OwnedVariant` holds one `Variant`
-//! per array element, so a 64 MiB `ay` decoded into one takes gigabytes.
+//! What another session-bus peer sends, decoded within bounds: a body over [`MAX_BODY`] is
+//! refused, other types skipped unread.
 
 use serde::de::{self, Deserialize, DeserializeOwned, Deserializer, IgnoredAny, MapAccess};
 use serde::de::{SeqAccess, Visitor};
