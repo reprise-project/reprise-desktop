@@ -595,10 +595,10 @@ the screen takes the interface of the last session used at this computer.
   and grows into the big picture as the rest of the row fades out and the
   password box fades in; Switch User and Escape fly it back as the other
   tiles return one after another, and a login screen that comes up or
-  comes back (Switch User, a log off) brings its tiles up into place; a
-  tile's note changing while it shows (a session locking in the background)
-  changes in place. While
-  the password is checked a ring turns beside Verifying..., which becomes
+  comes back (Switch User, a log off) brings its tiles up into place as
+  the screen fades in from black; a tile's note changing while it shows (a
+  session locking in the background) changes in place. While the password
+  is checked a ring turns beside Verifying..., which becomes
   Welcome once the password is right and the session starts. A wrong
   password crossfades to its message. Blue crossfades its column as a tile
   opens or closes and as messages come and go. Keys and clicks during a
