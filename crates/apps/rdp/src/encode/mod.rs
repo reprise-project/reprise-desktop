@@ -62,6 +62,11 @@ impl std::fmt::Display for EncodeError {
     }
 }
 
+/// The threads a picture's CPU conversion and scaling are split across, at most 8.
+pub fn cpu_threads() -> usize {
+    std::thread::available_parallelism().map_or(1, |n| n.get().min(8))
+}
+
 /// Builds the H.264 encoder of a backend, coding at a quality and a frame rate.
 pub type Make = Box<dyn FnMut(Backend, Quality, u32) -> Result<Box<dyn Encoder>, EncodeError>>;
 

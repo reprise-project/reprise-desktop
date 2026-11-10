@@ -9,6 +9,7 @@ use crate::stream::{ABGR8888, ARGB8888, Frame, FrameBuffer, Plane, XBGR8888, XRG
 use ffmpeg::ffi;
 use ffmpeg::format::Pixel;
 use ffmpeg::frame;
+use ffmpeg::software::scaling::Flags;
 use std::ffi::{CStr, CString};
 use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
@@ -308,7 +309,7 @@ enum Route {
     /// Drawn as the AVC444 main view, which is the picture in 4:2:0, into CUDA frames.
     Cuda(CudaViews),
     Cpu {
-        sws: ffmpeg::software::scaling::Context,
+        sws: Scaler,
         out: frame::Video,
     },
 }
@@ -337,21 +338,10 @@ impl Converter {
                 }
             }
             None => {
-                let mut sws = scaler(Pixel::from(sw), size, Pixel::YUV420P, target)?;
-                // SAFETY: a live scaler; the coefficient tables are static.
-                unsafe {
-                    let bt709 = ffi::sws_getCoefficients(ffi::SWS_CS_ITU709);
-                    ffi::sws_setColorspaceDetails(
-                        sws.as_mut_ptr(),
-                        bt709,
-                        1,
-                        bt709,
-                        i32::from(FULL_RANGE),
-                        0,
-                        1 << 16,
-                        1 << 16,
-                    );
-                }
+                let to = ffi::AVPixelFormat::YUV420P;
+                let sws = Scaler::new(sw, size, to, target, super::cpu_threads())?;
+                // SAFETY: a live scaler.
+                unsafe { to_bt709(sws.0.as_ptr()) };
                 Route::Cpu {
                     sws,
                     out: frame::Video::new(Pixel::YUV420P, target.0, target.1),
@@ -401,25 +391,11 @@ impl Converter {
                 // SAFETY: `out` is a frame this converter owns.
                 let writable = unsafe { ffi::av_frame_make_writable(out.as_mut_ptr()) };
                 check(writable, "frame buffer")?;
-                let (w, h) = self.size;
-                read_rgb(frame, (w, h), |pixels, stride| {
-                    let src = [pixels.as_ptr()];
-                    let stride = [stride as libc::c_int];
-                    // SAFETY: `pixels` holds `h` rows of `stride` bytes, each at least `w`
-                    // pixels wide; `out` is a writable YUV 4:2:0 frame of the scaler's target.
-                    unsafe {
-                        let o = out.as_mut_ptr();
-                        ffi::sws_scale(
-                            sws.as_mut_ptr(),
-                            src.as_ptr(),
-                            stride.as_ptr(),
-                            0,
-                            h as i32,
-                            (*o).data.as_ptr(),
-                            (*o).linesize.as_ptr(),
-                        );
-                    }
+                let mut scaled = Ok(());
+                read_rgb(frame, self.size, |pixels, stride| {
+                    scaled = sws.scale(pixels, stride, out);
                 })?;
+                scaled?;
                 let mut copy = frame::Video::empty();
                 // SAFETY: `copy` is empty and takes a new reference to `out`'s buffers.
                 let shared = unsafe { ffi::av_frame_ref(copy.as_mut_ptr(), out.as_ptr()) };
@@ -432,29 +408,97 @@ impl Converter {
     }
 }
 
-/// A bilinear swscale context from `from` pixels of `size` to `to` pixels of `target`.
-fn scaler(
-    from: Pixel,
-    size: (u32, u32),
-    to: Pixel,
-    target: (u32, u32),
-) -> Result<ffmpeg::software::scaling::Context, EncodeError> {
-    ffmpeg::software::scaling::Context::get(
-        from,
-        size.0,
-        size.1,
-        to,
-        target.0,
-        target.1,
-        ffmpeg::software::scaling::Flags::BILINEAR | ffmpeg::software::scaling::Flags::ACCURATE_RND,
-    )
-    .map_err(|e| EncodeError(format!("colour conversion: {e}")))
+/// A bilinear swscale context from `from` pixels of `size` to `to` pixels of `target`, which
+/// slices each picture across `threads` threads.
+pub(super) struct Scaler(NonNull<ffi::SwsContext>);
+
+impl Scaler {
+    pub(super) fn new(
+        from: ffi::AVPixelFormat,
+        size: (u32, u32),
+        to: ffi::AVPixelFormat,
+        target: (u32, u32),
+        threads: usize,
+    ) -> Result<Scaler, EncodeError> {
+        let none = || EncodeError("colour conversion: no scaler".into());
+        // SAFETY: fields of a context not yet initialized; drop frees it if the init fails.
+        unsafe {
+            let sws = Scaler(NonNull::new(ffi::sws_alloc_context()).ok_or_else(none)?);
+            let c = sws.0.as_ptr();
+            (*c).flags = (Flags::BILINEAR | Flags::ACCURATE_RND).bits() as libc::c_uint;
+            (*c).threads = threads as libc::c_int;
+            ((*c).src_w, (*c).src_h) = (size.0 as libc::c_int, size.1 as libc::c_int);
+            ((*c).dst_w, (*c).dst_h) = (target.0 as libc::c_int, target.1 as libc::c_int);
+            ((*c).src_format, (*c).dst_format) = (from.0, to.0);
+            check(
+                ffi::sws_init_context(c, ptr::null_mut(), ptr::null_mut()),
+                "colour conversion",
+            )?;
+            Ok(sws)
+        }
+    }
+
+    /// The picture in `pixels`, rows `stride` bytes apart, scaled into `out`, a writable frame
+    /// of the target.
+    pub(super) fn scale(
+        &mut self,
+        pixels: &[u8],
+        stride: u32,
+        out: &mut frame::Video,
+    ) -> Result<(), EncodeError> {
+        unsafe extern "C" fn borrowed(_: *mut libc::c_void, _: *mut u8) {}
+        let mut src = frame::Video::empty();
+        // Only sws_scale_frame slices across threads; the borrowed buffer saves it a copy.
+        // SAFETY: `src` describes `pixels`, which outlive it, and its buffer frees nothing.
+        unsafe {
+            let (s, c) = (src.as_mut_ptr(), self.0.as_ptr());
+            ((*s).format, (*s).width, (*s).height) = ((*c).src_format, (*c).src_w, (*c).src_h);
+            if pixels.len() < stride as usize * (*s).height as usize {
+                return Err(EncodeError("the frame is smaller than its size".into()));
+            }
+            (*s).data[0] = pixels.as_ptr().cast_mut();
+            (*s).linesize[0] = stride as libc::c_int;
+            (*s).buf[0] = ffi::av_buffer_create(
+                (*s).data[0],
+                pixels.len(),
+                Some(borrowed),
+                ptr::null_mut(),
+                ffi::AV_BUFFER_FLAG_READONLY,
+            );
+            if (*s).buf[0].is_null() {
+                return Err(EncodeError("colour conversion: no source buffer".into()));
+            }
+            check(
+                ffi::sws_scale_frame(c, out.as_mut_ptr(), s),
+                "colour conversion",
+            )?;
+        }
+        Ok(())
+    }
+}
+
+impl Drop for Scaler {
+    fn drop(&mut self) {
+        let mut c = self.0.as_ptr();
+        // SAFETY: the context this owns, freed once.
+        unsafe { ffi::sws_free_context(&mut c) };
+    }
+}
+
+/// Sets scaler `c` to write [`colour`]'s YUV from full-range RGB.
+unsafe fn to_bt709(c: *mut ffi::SwsContext) {
+    // SAFETY: the caller's live scaler; the coefficient tables are static.
+    unsafe {
+        let bt709 = ffi::sws_getCoefficients(ffi::SWS_CS_ITU709);
+        let full = i32::from(FULL_RANGE);
+        ffi::sws_setColorspaceDetails(c, bt709, 1, bt709, full, 0, 1 << 16, 1 << 16);
+    }
 }
 
 /// Pictures of DRM `fourcc` scaled on the CPU to a target size, in the same format.
 pub(super) struct Rescale {
     size: (u32, u32),
-    sws: ffmpeg::software::scaling::Context,
+    sws: Scaler,
     out: frame::Video,
 }
 
@@ -464,11 +508,11 @@ impl Rescale {
         size: (u32, u32),
         target: (u32, u32),
     ) -> Result<Rescale, EncodeError> {
-        let pixel = Pixel::from(sw_pixel(fourcc)?);
+        let pixel = sw_pixel(fourcc)?;
         Ok(Rescale {
             size,
-            sws: scaler(pixel, size, pixel, target)?,
-            out: frame::Video::new(pixel, target.0, target.1),
+            sws: Scaler::new(pixel, size, pixel, target, super::cpu_threads())?,
+            out: frame::Video::new(Pixel::from(pixel), target.0, target.1),
         })
     }
 
@@ -479,24 +523,11 @@ impl Rescale {
         f: impl FnOnce(&[u8], u32),
     ) -> Result<(), EncodeError> {
         let Rescale { size, sws, out } = self;
+        let mut scaled = Ok(());
         read_rgb(frame, *size, |pixels, stride| {
-            let src = [pixels.as_ptr()];
-            let stride = [stride as libc::c_int];
-            // SAFETY: `pixels` holds `size.1` rows of `stride` bytes; `out` is a writable frame
-            // of the scaler's target.
-            unsafe {
-                let o = out.as_mut_ptr();
-                ffi::sws_scale(
-                    sws.as_mut_ptr(),
-                    src.as_ptr(),
-                    stride.as_ptr(),
-                    0,
-                    size.1 as i32,
-                    (*o).data.as_ptr(),
-                    (*o).linesize.as_ptr(),
-                );
-            }
+            scaled = sws.scale(pixels, stride, out);
         })?;
+        scaled?;
         f(out.data(0), out.stride(0) as u32);
         Ok(())
     }
@@ -697,4 +728,91 @@ pub fn download(hw: &frame::Video) -> Result<frame::Video, EncodeError> {
     let copied = unsafe { ffi::av_hwframe_transfer_data(out.as_mut_ptr(), hw.as_ptr(), 0) };
     check(copied, "download")?;
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `data`, rows `stride` bytes apart, through sws_scale on one thread.
+    fn one_thread(
+        (from, size): (ffi::AVPixelFormat, (u32, u32)),
+        (to, target): (ffi::AVPixelFormat, (u32, u32)),
+        data: &[u8],
+        stride: usize,
+    ) -> frame::Video {
+        let (from, to) = (Pixel::from(from), Pixel::from(to));
+        let flags = Flags::BILINEAR | Flags::ACCURATE_RND;
+        let get = ffmpeg::software::scaling::Context::get;
+        let mut sws = get(from, size.0, size.1, to, target.0, target.1, flags).unwrap();
+        let mut out = frame::Video::new(to, target.0, target.1);
+        // SAFETY: a live scaler; `data` holds the source rows and `out` the target's.
+        unsafe {
+            if to == Pixel::YUV420P {
+                to_bt709(sws.as_mut_ptr());
+            }
+            let o = out.as_mut_ptr();
+            ffi::sws_scale(
+                sws.as_mut_ptr(),
+                [data.as_ptr()].as_ptr(),
+                [stride as libc::c_int].as_ptr(),
+                0,
+                size.1 as i32,
+                (*o).data.as_ptr(),
+                (*o).linesize.as_ptr(),
+            );
+        }
+        out
+    }
+
+    /// Plane `i` of `f` without the padding past `bytes` a row.
+    fn rows(f: &frame::Video, i: usize, bytes: usize, rows: usize) -> Vec<u8> {
+        (0..rows)
+            .flat_map(|r| &f.data(i)[r * f.stride(i)..][..bytes])
+            .copied()
+            .collect()
+    }
+
+    #[test]
+    fn sliced_scaling_equals_one_thread() {
+        let mut seed = 0x2545_F491_4F6C_DD1D_u64;
+        let (bgra, yuv) = (ffi::AVPixelFormat::BGRA, ffi::AVPixelFormat::YUV420P);
+        for (size, to, target) in [
+            ((322, 182), yuv, (322, 182)),
+            ((1922, 1082), yuv, (1922, 1082)),
+            ((322, 182), yuv, (160, 90)),
+            ((321, 181), bgra, (200, 117)),
+        ] {
+            let stride = size.0 as usize * 4 + 16;
+            let data: Vec<u8> = (0..stride * size.1 as usize)
+                .map(|_| {
+                    seed ^= seed << 13;
+                    seed ^= seed >> 7;
+                    seed ^= seed << 17;
+                    (seed >> 24) as u8
+                })
+                .collect();
+            let want = one_thread((bgra, size), (to, target), &data, stride);
+            for threads in [1, 3, 8] {
+                let mut sws = Scaler::new(bgra, size, to, target, threads).unwrap();
+                if to == yuv {
+                    // SAFETY: a live scaler.
+                    unsafe { to_bt709(sws.0.as_ptr()) };
+                }
+                let mut out = frame::Video::new(Pixel::from(to), target.0, target.1);
+                sws.scale(&data, stride as u32, &mut out).unwrap();
+                let (w, h) = (target.0 as usize, target.1 as usize);
+                let planes = match to == yuv {
+                    true => vec![(0, w, h), (1, w / 2, h / 2), (2, w / 2, h / 2)],
+                    false => vec![(0, w * 4, h)],
+                };
+                for (i, bytes, n) in planes {
+                    assert!(
+                        rows(&out, i, bytes, n) == rows(&want, i, bytes, n),
+                        "plane {i} of {size:?} to {target:?} on {threads} threads equals one thread's"
+                    );
+                }
+            }
+        }
+    }
 }

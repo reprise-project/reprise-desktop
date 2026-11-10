@@ -9,6 +9,7 @@ use crate::stream::{ABGR8888, Rect, XBGR8888};
 const MACROBLOCK: u32 = 16;
 
 /// A 4:4:4 picture in the [`colour`] YUV, each plane `width * height` bytes.
+#[cfg(test)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Planes444 {
     pub y: Vec<u8>,
@@ -20,6 +21,7 @@ pub struct Planes444 {
 
 /// A 4:2:0 picture: `width * height` luma bytes, then `height / 2` rows of `width` bytes of
 /// interleaved U and V.
+#[cfg(test)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Nv12 {
     pub y: Vec<u8>,
@@ -28,6 +30,7 @@ pub struct Nv12 {
     pub height: u32,
 }
 
+#[cfg(test)]
 impl Planes444 {
     /// Converts pixels of DRM `fourcc` (one of the stream's four) with rows `stride` bytes apart.
     pub fn from_rgb(
@@ -61,6 +64,176 @@ impl Planes444 {
     }
 }
 
+/// Pixels of DRM `fourcc` (one of the stream's four), rows `stride` bytes apart.
+#[derive(Clone, Copy)]
+pub struct Rgb<'a> {
+    pub data: &'a [u8],
+    pub stride: usize,
+    pub size: (u32, u32),
+    pub fourcc: u32,
+}
+
+/// A plane in memory, rows `stride` bytes apart.
+pub struct PlaneMut<'a> {
+    pub data: &'a mut [u8],
+    pub stride: usize,
+}
+
+/// An NV12 view in memory, of [`view_size`].
+pub struct Nv12Mut<'a> {
+    pub y: PlaneMut<'a>,
+    pub uv: PlaneMut<'a>,
+}
+
+/// `src`'s views in `main` and `aux`, as `split_v1` and `keep_main_outside` make them, and its
+/// flat macroblocks, in bands of macroblock rows on [`super::cpu_threads`] threads.
+pub fn views(src: Rgb, main: Nv12Mut, aux: Nv12Mut, read: Rect) -> Flat {
+    views_in(src, main, aux, read, super::cpu_threads())
+}
+
+fn views_in(src: Rgb, main: Nv12Mut, aux: Nv12Mut, read: Rect, bands: usize) -> Flat {
+    let (w, h) = view_size(src.size);
+    let columns = w / MACROBLOCK;
+    let mut blocks = vec![true; (columns * (h / MACROBLOCK)) as usize];
+    if src.size.0 == 0 || src.size.1 == 0 {
+        return Flat { columns, blocks };
+    }
+    let (w, h) = (w as usize, h as usize);
+    for view in [&main, &aux] {
+        for (p, rows) in [(&view.y, h), (&view.uv, h / 2)] {
+            assert!(
+                p.stride >= w && p.data.len() >= (rows - 1) * p.stride + w,
+                "a view plane holds {rows} rows of {w} bytes"
+            );
+        }
+    }
+    let per = (h / MACROBLOCK as usize).div_ceil(bands.max(1));
+    let rows = per * MACROBLOCK as usize;
+    fn band(plane: PlaneMut<'_>, rows: usize) -> impl Iterator<Item = PlaneMut<'_>> {
+        let stride = plane.stride;
+        (plane.data.chunks_mut(rows * stride)).map(move |data| PlaneMut { data, stride })
+    }
+    let parts = (band(main.y, rows).zip(band(main.uv, rows / 2)))
+        .zip(band(aux.y, rows).zip(band(aux.uv, rows / 2)))
+        .zip(blocks.chunks_mut(per * columns as usize))
+        .enumerate()
+        .map(|(i, (((my, muv), (ay, auv)), blocks))| Band {
+            top: i * rows,
+            main: Nv12Mut { y: my, uv: muv },
+            aux: Nv12Mut { y: ay, uv: auv },
+            blocks,
+        });
+    std::thread::scope(|s| {
+        let mut parts = parts;
+        let first = parts.next();
+        for b in parts {
+            s.spawn(move || b.draw(src, read, w));
+        }
+        if let Some(b) = first {
+            b.draw(src, read, w);
+        }
+    });
+    Flat { columns, blocks }
+}
+
+/// Whole macroblock rows of both views from `top` on, and their flat flags.
+struct Band<'a> {
+    top: usize,
+    main: Nv12Mut<'a>,
+    aux: Nv12Mut<'a>,
+    blocks: &'a mut [bool],
+}
+
+impl Band<'_> {
+    fn draw(self, src: Rgb, read: Rect, w: usize) {
+        let Band {
+            top,
+            main,
+            mut aux,
+            blocks,
+        } = self;
+        let mb = MACROBLOCK as usize;
+        let rows = blocks.len() / (w / mb) * mb;
+        let last = src.size.1 as usize - 1;
+        let (mut u, mut v) = ([vec![0; w], vec![0; w]], [vec![0; w], vec![0; w]]);
+        let average = |a: u8, b: u8, c: u8, d: u8| {
+            ((u32::from(a) + u32::from(b) + u32::from(c) + u32::from(d) + 2) / 4) as u8
+        };
+        for r in (0..rows).step_by(2) {
+            for i in 0..2 {
+                let luma = &mut main.y.data[(r + i) * main.y.stride..][..w];
+                yuv_row(src, (top + r + i).min(last), luma, &mut u[i], &mut v[i]);
+            }
+            let (u0, u1, v0, v1) = (&u[0], &u[1], &v[0], &v[1]);
+            let main_uv = &mut main.uv.data[r / 2 * main.uv.stride..][..w];
+            let aux_uv = &mut aux.uv.data[r / 2 * aux.uv.stride..][..w];
+            let flags = &mut blocks[r / mb * (w / mb)..][..w / mb];
+            for x in (0..w).step_by(2) {
+                main_uv[x] = average(u0[x], u0[x + 1], u1[x], u1[x + 1]);
+                main_uv[x + 1] = average(v0[x], v0[x + 1], v1[x], v1[x + 1]);
+                aux_uv[x] = u0[x + 1];
+                aux_uv[x + 1] = v0[x + 1];
+                let same =
+                    |p: &[u8], q: &[u8]| p[x] == p[x + 1] && p[x] == q[x] && q[x] == q[x + 1];
+                if !(same(u0, u1) && same(v0, v1)) {
+                    flags[x / mb] = false;
+                }
+            }
+            // B4 and B5: the odd row's U and V are auxiliary luma rows `half` and 8 + `half`.
+            let (mb_top, half) = (r - r % mb, (r % mb) / 2);
+            for (row, plane) in [(mb_top + half, u1), (mb_top + mb / 2 + half, v1)] {
+                aux.y.data[row * aux.y.stride..][..w].copy_from_slice(plane);
+            }
+        }
+        let rows_in =
+            |y: usize| (read.y as usize..read.y.saturating_add(read.height) as usize).contains(&y);
+        let (left, right) = (read.x as usize, read.x.saturating_add(read.width) as usize);
+        for r in 0..rows {
+            let (lo, hi) = match rows_in(top + r) {
+                true => (left.min(w), right.min(w)),
+                false => (w, w),
+            };
+            keep_outside(&main.y, &mut aux.y, r, lo, hi, w);
+        }
+        for c in 0..rows / 2 {
+            let (lo, hi) = match rows_in(top + 2 * c) {
+                true => (
+                    left.next_multiple_of(2).min(w),
+                    right.next_multiple_of(2).min(w),
+                ),
+                false => (w, w),
+            };
+            keep_outside(&main.uv, &mut aux.uv, c, lo, hi, w);
+        }
+    }
+}
+
+/// Row `r` of `aux` takes `main`'s bytes outside `lo..hi`.
+fn keep_outside(main: &PlaneMut, aux: &mut PlaneMut, r: usize, lo: usize, hi: usize, w: usize) {
+    let (m, a) = (
+        &main.data[r * main.stride..][..w],
+        &mut aux.data[r * aux.stride..][..w],
+    );
+    a[..lo].copy_from_slice(&m[..lo]);
+    a[hi..].copy_from_slice(&m[hi..]);
+}
+
+/// Row `row` of `src` as Y, U and V, its last pixel repeated to the planes' width.
+fn yuv_row(src: Rgb, row: usize, y: &mut [u8], u: &mut [u8], v: &mut [u8]) {
+    let width = src.size.0 as usize;
+    let rgb_first = matches!(src.fourcc, XBGR8888 | ABGR8888);
+    let pixels = src.data[row * src.stride..][..width * 4].as_chunks::<4>().0;
+    let planes = (y.iter_mut()).zip(u.iter_mut()).zip(v.iter_mut());
+    for (&[a, g, c, _], ((y, u), v)) in pixels.iter().zip(planes) {
+        let (r, b) = if rgb_first { (a, c) } else { (c, a) };
+        [*y, *u, *v] = colour::yuv(r, g, b);
+    }
+    for p in [y, u, v] {
+        let edge = p[width - 1];
+        p[width..].fill(edge);
+    }
+}
+
 /// The size both views are coded at: `size` rounded up to whole macroblocks.
 pub fn view_size((width, height): (u32, u32)) -> (u32, u32) {
     (
@@ -71,6 +244,7 @@ pub fn view_size((width, height): (u32, u32)) -> (u32, u32) {
 
 /// The main and auxiliary views of `src`, both [`view_size`]; the padding repeats the last
 /// column and row.
+#[cfg(test)]
 pub fn split_v1(src: &Planes444) -> (Nv12, Nv12) {
     let (w, h) = view_size((src.width, src.height));
     let (y, u, v) = (
@@ -118,6 +292,7 @@ pub fn split_v1(src: &Planes444) -> (Nv12, Nv12) {
 }
 
 /// `plane` of `src` at `w` by `h`, the last column and row repeated; black for an empty `src`.
+#[cfg(test)]
 fn pad(plane: &[u8], src: &Planes444, w: u32, h: u32) -> Vec<u8> {
     let (sw, sh) = (src.width as usize, src.height as usize);
     if sw == 0 || sh == 0 {
@@ -134,6 +309,7 @@ fn pad(plane: &[u8], src: &Planes444, w: u32, h: u32) -> Vec<u8> {
 
 /// Whether auxiliary luma row `row` carries V, and which row: in each macroblock row, rows 0
 /// to 7 hold the odd U rows (B4) and rows 8 to 15 the odd V rows (B5).
+#[cfg(test)]
 fn aux_luma_source(row: usize) -> (bool, usize) {
     let half = MACROBLOCK as usize / 2;
     let (top, within) = (row - row % (2 * half), row % (2 * half));
@@ -189,6 +365,7 @@ pub struct Flat {
 
 impl Flat {
     /// `src`'s macroblocks, its last column and row repeated to [`view_size`].
+    #[cfg(test)]
     pub fn of(src: &Planes444) -> Flat {
         let (w, h) = view_size((src.width, src.height));
         let (columns, rows) = (w / MACROBLOCK, h / MACROBLOCK);
@@ -251,6 +428,7 @@ pub fn read_rect(regions: &[Rect]) -> Rect {
 
 /// `aux` showing `main`'s picture outside `read` (whole macroblocks), which clients never read
 /// there: a view predicted from the other then codes only what changed.
+#[cfg(test)]
 pub fn keep_main_outside(main: &Nv12, aux: &mut Nv12, read: Rect) {
     let w = main.width as usize;
     let inside = |x: u32, y: u32| {
@@ -512,6 +690,90 @@ pub(crate) mod tests {
         assert_eq!(p.v, [rv, bv, rv, rv]);
         let p = Planes444::from_rgb(&data, 12, (2, 2), ABGR8888);
         assert_eq!(p.y, [by, ry, by, by], "R, G, B, A in memory");
+    }
+
+    /// A view of `size` in planes whose rows are wider than it, filled with 0xAA.
+    fn padded_view((w, h): (u32, u32)) -> [(Vec<u8>, usize); 2] {
+        let (w, h) = (w as usize, h as usize);
+        [(w + 7, h), (w + 3, h / 2)].map(|(stride, rows)| (vec![0xAA; stride * rows], stride))
+    }
+
+    fn read_view(planes: &[(Vec<u8>, usize); 2], (w, h): (u32, u32)) -> Nv12 {
+        let rows = |(data, stride): &(Vec<u8>, usize), n: u32| -> Vec<u8> {
+            (0..n as usize)
+                .flat_map(|r| &data[r * stride..][..w as usize])
+                .copied()
+                .collect()
+        };
+        Nv12 {
+            y: rows(&planes[0], h),
+            uv: rows(&planes[1], h / 2),
+            width: w,
+            height: h,
+        }
+    }
+
+    #[test]
+    fn banded_views_equal_the_split_at_odd_sizes() {
+        let rect = |x, y, width, height| Rect {
+            x,
+            y,
+            width,
+            height,
+        };
+        let cases = [
+            ((13, 21), rect(0, 0, 16, 32)),
+            ((33, 18), rect(16, 0, 16, 32)),
+            ((100, 50), rect(16, 16, 48, 32)),
+            ((250, 171), rect(32, 48, 96, 64)),
+            ((64, 64), rect(0, 0, 0, 0)),
+            ((1, 1), rect(0, 0, 16, 16)),
+        ];
+        let mut rng = Rng(11);
+        for (size, read) in cases {
+            let (w, h) = (size.0 as usize, size.1 as usize);
+            let stride = w * 4 + 12;
+            // Greys on the left, whose chroma is flat; colours on the right.
+            let mut data = rng.plane(stride * h);
+            for row in data.chunks_exact_mut(stride) {
+                for px in row[..w * 4].as_chunks_mut::<4>().0[..w / 2].iter_mut() {
+                    *px = [px[0]; 4];
+                }
+            }
+            for fourcc in [XRGB8888, ABGR8888] {
+                let planes = Planes444::from_rgb(&data, stride, size, fourcc);
+                let (main, mut aux) = split_v1(&planes);
+                keep_main_outside(&main, &mut aux, read);
+                let flat = Flat::of(&planes);
+                let view = view_size(size);
+                for bands in [1, 2, 3, 4, 9] {
+                    let (mut m, mut a) = (padded_view(view), padded_view(view));
+                    fn nv12([y, uv]: &mut [(Vec<u8>, usize); 2]) -> Nv12Mut<'_> {
+                        Nv12Mut {
+                            y: PlaneMut {
+                                data: &mut y.0,
+                                stride: y.1,
+                            },
+                            uv: PlaneMut {
+                                data: &mut uv.0,
+                                stride: uv.1,
+                            },
+                        }
+                    }
+                    let src = Rgb {
+                        data: &data,
+                        stride,
+                        size,
+                        fourcc,
+                    };
+                    let got = views_in(src, nv12(&mut m), nv12(&mut a), read, bands);
+                    let at = format!("{size:?} {fourcc:#x} in {bands} bands");
+                    assert_eq!(read_view(&m, view), main, "the main view of {at}");
+                    assert_eq!(read_view(&a, view), aux, "the auxiliary view of {at}");
+                    assert_eq!(got, flat, "the flat macroblocks of {at}");
+                }
+            }
+        }
     }
 
     #[test]

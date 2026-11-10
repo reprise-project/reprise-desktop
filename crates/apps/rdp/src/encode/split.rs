@@ -2,7 +2,7 @@
 //! textures copied into CUDA frames for NVENC, or split on the CPU for the software encoder.
 
 use super::EncodeError;
-use super::avc444::{self, Flat, Planes444};
+use super::avc444::{self, Flat};
 use super::colour;
 use super::cuda;
 use super::gl::{self, Gl, gl_err};
@@ -159,23 +159,25 @@ impl Views {
                     let writable = unsafe { ffi::av_frame_make_writable(f.as_mut_ptr()) };
                     hwmap::check(writable, "frame buffer")?;
                 }
-                let mut planes = None;
+                let mut flat = None;
                 let (target, fourcc) = (self.target, self.fourcc);
-                let planes_of = |pixels: &[u8], stride: u32| {
-                    planes = Some(Planes444::from_rgb(pixels, stride as usize, target, fourcc));
+                let views = |data: &[u8], stride: u32| {
+                    let src = avc444::Rgb {
+                        data,
+                        stride: stride as usize,
+                        size: target,
+                        fourcc,
+                    };
+                    flat = Some(avc444::views(src, nv12(main), nv12(aux), read));
                 };
                 match rescale {
-                    Some(rescale) => rescale.read(frame, planes_of)?,
-                    None => hwmap::read_rgb(frame, self.size, planes_of)?,
+                    Some(rescale) => rescale.read(frame, views)?,
+                    None => hwmap::read_rgb(frame, self.size, views)?,
                 }
-                let planes = planes.expect("read_rgb calls back on success");
-                let (m, mut a) = avc444::split_v1(&planes);
-                avc444::keep_main_outside(&m, &mut a, read);
-                fill(main, &m);
-                fill(aux, &a);
+                let flat = flat.expect("read_rgb calls back on success");
                 tag(main);
                 tag(aux);
-                referenced(main, aux, Flat::of(&planes))
+                referenced(main, aux, flat)
             }
         }
     }
@@ -264,14 +266,21 @@ fn tag(f: &mut frame::Video) {
     f.set_color_space(ffmpeg::color::Space::BT709);
 }
 
-/// `view`'s planes copied into `f`, an NV12 frame of its size.
-fn fill(f: &mut frame::Video, view: &avc444::Nv12) {
-    let w = view.width as usize;
-    for (plane, bytes) in [(0, &view.y), (1, &view.uv)] {
-        let stride = f.stride(plane);
-        let data = f.data_mut(plane);
-        for (y, line) in bytes.chunks_exact(w).enumerate() {
-            data[y * stride..][..w].copy_from_slice(line);
+/// The planes of `f`, a writable NV12 frame in memory.
+fn nv12(f: &mut frame::Video) -> avc444::Nv12Mut<'_> {
+    // SAFETY: luma is `height` rows of its stride and chroma half as many, apart from each
+    // other; both borrow `f`.
+    unsafe {
+        let p = f.as_mut_ptr();
+        let plane = |i: usize, rows: usize| {
+            let stride = (*p).linesize[i] as usize;
+            let data = std::slice::from_raw_parts_mut((*p).data[i], rows * stride);
+            avc444::PlaneMut { data, stride }
+        };
+        let rows = (*p).height as usize;
+        avc444::Nv12Mut {
+            y: plane(0, rows),
+            uv: plane(1, rows / 2),
         }
     }
 }
@@ -736,6 +745,7 @@ unsafe fn dmabuf_view(gl: &Gl, size: (u32, u32)) -> Result<View, EncodeError> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::encode::avc444::Planes444;
     use crate::encode::probe::RENDER_NODE;
     use crate::stream::XRGB8888;
     use std::fs::File;
