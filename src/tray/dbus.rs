@@ -9,11 +9,11 @@ use futures_util::stream::{BoxStream, SelectAll, StreamExt};
 use reprisebus::peer::Identities;
 use std::collections::{HashMap, HashSet};
 use std::os::fd::{AsRawFd, OwnedFd, RawFd};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use zbus::message::Header;
 use zbus::object_server::{InterfaceRef, SignalEmitter};
 use zbus::proxy::CacheProperties;
@@ -239,15 +239,46 @@ enum Wake {
         name: String,
         new_owner: String,
     },
+    /// A read's item, and whether its named icons were decoded.
     Fetched {
         key: String,
         fetch: u64,
         item: Option<Box<TrayItem>>,
+        decoded: bool,
     },
+    Unmuted(String),
+    /// The connection to the bus is gone.
+    Lost,
 }
 
 /// How long a change signal waits for its read, so a burst of them costs one read.
 const SETTLE: Duration = Duration::from_millis(50);
+
+/// When a read whose named icons weren't decoded is tried once more.
+const RETRY_AFTER: Duration = Duration::from_secs(2);
+
+/// Change signals an item may send within [`CHANGE_WINDOW`]; past that its match rules are dropped
+/// for [`MUTED_FOR`], so a flood stops at the bus daemon, which would disconnect a slow reader.
+const MAX_CHANGES: u32 = 100;
+const CHANGE_WINDOW: Duration = Duration::from_secs(1);
+const MUTED_FOR: Duration = Duration::from_secs(5);
+
+struct Changes {
+    since: Instant,
+    count: u32,
+}
+
+impl Changes {
+    /// Counts one at `now`: whether the item is past [`MAX_CHANGES`] in its window.
+    fn note(&mut self, now: Instant) -> bool {
+        if now.duration_since(self.since) >= CHANGE_WINDOW {
+            self.since = now;
+            self.count = 0;
+        }
+        self.count += 1;
+        self.count > MAX_CHANGES
+    }
+}
 
 struct Fetch {
     /// Tells its result from that of a fetch dropped with a removed item.
@@ -256,6 +287,16 @@ struct Fetch {
     reading: Arc<AtomicBool>,
     /// A change arrived during the read and needs a read of its own.
     again: bool,
+    /// The one read again after a read whose named icons weren't decoded.
+    retry: bool,
+    /// Dropped with the fetch, which ends its read.
+    _stop: async_channel::Sender<()>,
+}
+
+#[derive(Debug, PartialEq)]
+enum Ended {
+    Shutdown,
+    Lost,
 }
 
 type WatcherItems = Arc<Mutex<Vec<Published>>>;
@@ -269,6 +310,10 @@ struct Loop {
     next_fetch: u64,
     /// Dropping an item's sender ends its signal streams, and their match rules with them.
     item_stops: HashMap<String, async_channel::Sender<()>>,
+    changes: HashMap<String, Changes>,
+    /// Items whose signals are dropped for flooding, until their `Unmuted`.
+    muted: HashSet<String>,
+    muted_for: Duration,
     published: Option<WatcherItems>,
     /// The watcher's items and registrations while another process holds its name.
     idle_watcher: Option<(WatcherItems, async_channel::Receiver<Wake>)>,
@@ -290,14 +335,14 @@ impl Loop {
     /// The watch comes first, so a change the item makes while being read is read as well.
     async fn track(&mut self, bus: String, path: String) {
         self.watch_item(&bus, &path).await;
-        self.fetch(bus, path, Duration::ZERO);
+        self.fetch(bus, path, Duration::ZERO, false);
     }
 
     /// Subscribe to [`ITEM_SIGNALS`] on an item, unless already watching it; each fires
     /// `ItemChanged`.
     async fn watch_item(&mut self, bus: &str, path: &str) {
         let key = format!("{bus}{path}");
-        if self.item_stops.contains_key(&key) {
+        if self.item_stops.contains_key(&key) || self.muted.contains(&key) {
             return;
         }
         let Ok(proxy) = uncached_proxy(&self.conn, bus, path, ITEM_IFACE).await else {
@@ -357,7 +402,9 @@ impl Loop {
         self.streams.push(pumped(done));
     }
 
-    fn fetch(&mut self, bus: String, path: String, settle: Duration) {
+    /// Read the item after `settle`, unless a read of it is under way; `retry` marks the one
+    /// read again after a read whose named icons weren't decoded.
+    fn fetch(&mut self, bus: String, path: String, settle: Duration, retry: bool) {
         let key = format!("{bus}{path}");
         if let Some(f) = self.fetching.get_mut(&key) {
             f.again |= f.reading.load(Ordering::Relaxed);
@@ -366,12 +413,15 @@ impl Loop {
         let fetch = self.next_fetch;
         self.next_fetch += 1;
         let reading = Arc::new(AtomicBool::new(false));
+        let (stop, stopped) = async_channel::bounded::<()>(1);
         self.fetching.insert(
             key.clone(),
             Fetch {
                 id: fetch,
                 reading: reading.clone(),
                 again: false,
+                retry,
+                _stop: stop,
             },
         );
         let (conn, icons, sizes) = (self.conn.clone(), self.icons.clone(), self.sizes.clone());
@@ -381,57 +431,127 @@ impl Loop {
                 async_io::Timer::after(settle).await;
             }
             reading.store(true, Ordering::Relaxed);
-            let item = fetch_item(&conn, &icons, &sizes, &identities, &bus, &path)
-                .await
-                .map(Box::new);
-            Wake::Fetched { key, fetch, item }
+            let read = fetch_item(&conn, &icons, &sizes, &identities, &bus, &path).await;
+            let decoded = read.as_ref().is_none_or(|r| r.1);
+            let item = read.map(|r| Box::new(r.0));
+            Wake::Fetched {
+                key,
+                fetch,
+                item,
+                decoded,
+            }
         };
-        self.streams.push(pumped(futures_util::stream::once(read)));
+        let read = futures_util::stream::once(read).take_until(async move {
+            let _ = stopped.recv().await;
+        });
+        self.streams.push(pumped(read));
     }
 
-    async fn fetched(&mut self, key: String, fetch: u64, item: Option<Box<TrayItem>>) {
+    async fn fetched(
+        &mut self,
+        key: String,
+        fetch: u64,
+        item: Option<Box<TrayItem>>,
+        decoded: bool,
+    ) {
         if self.fetching.get(&key).is_none_or(|f| f.id != fetch) {
             return;
         }
-        let again = self.fetching.remove(&key).is_some_and(|f| f.again);
+        let Some(done) = self.fetching.remove(&key) else {
+            return;
+        };
+        let retry = !decoded && !done.retry;
         match item {
-            Some(item) if self.items.get(&key) == Some(item.as_ref()) => {}
-            Some(item) => {
-                let item = *item;
-                let existed = self.items.insert(key.clone(), item.clone()).is_some();
-                self.emit(if existed {
-                    TrayEvent::Updated(item)
-                } else {
-                    TrayEvent::Added(item)
-                });
+            Some(mut item) => {
+                if !decoded && let Some(old) = self.items.get(&key) {
+                    keep_named(&mut item, old);
+                }
+                self.show(key.clone(), *item);
             }
             None if self.items.contains_key(&key) => {}
             None => {
                 log::warn!("tray: could not read item {key}");
                 // Registered but unreadable: never advertise it as one of ours,
                 // and stop watching it unless a change asked for another read.
-                if !again {
+                if !done.again {
                     self.item_stops.remove(&key);
                 }
                 self.unpublish(&key).await;
             }
         }
-        if again {
+        let (bus, path) = split_service(&key);
+        if done.again {
+            self.fetch(bus, path, SETTLE, false);
+        } else if retry {
+            self.fetch(bus, path, RETRY_AFTER, true);
+        }
+    }
+
+    /// Store a read item and tell the compositor, unless it is unchanged.
+    fn show(&mut self, key: String, item: TrayItem) {
+        if self.items.get(&key) == Some(&item) {
+            return;
+        }
+        let existed = self.items.insert(key, item.clone()).is_some();
+        self.emit(if existed {
+            TrayEvent::Updated(item)
+        } else {
+            TrayEvent::Added(item)
+        });
+    }
+
+    /// A change signal from the item `key`: read it again, or stop listening to it for a while
+    /// when it sends too many.
+    fn item_changed(&mut self, key: String, now: Instant) {
+        let changes = self.changes.entry(key.clone()).or_insert(Changes {
+            since: now,
+            count: 0,
+        });
+        if !changes.note(now) {
+            self.refresh_item(&key);
+            return;
+        }
+        if self.muted.insert(key.clone()) {
+            log::warn!(
+                "tray: {key} sent over {MAX_CHANGES} changes within {CHANGE_WINDOW:?}; ignoring it for {:?}",
+                self.muted_for
+            );
+            self.item_stops.remove(&key);
+            let after = self.muted_for;
+            let unmute = async move {
+                async_io::Timer::after(after).await;
+                Wake::Unmuted(key)
+            };
+            self.streams
+                .push(futures_util::stream::once(unmute).boxed());
+        }
+    }
+
+    /// Listen to a muted item again, and read it for what it changed meanwhile.
+    async fn unmuted(&mut self, key: String) {
+        if !self.muted.remove(&key) {
+            return;
+        }
+        self.changes.remove(&key);
+        if self.items.contains_key(&key) || self.fetching.contains_key(&key) {
             let (bus, path) = split_service(&key);
-            self.fetch(bus, path, SETTLE);
+            self.watch_item(&bus, &path).await;
+            self.fetch(bus, path, Duration::ZERO, false);
         }
     }
 
     fn refresh_item(&mut self, key: &str) {
         if self.items.contains_key(key) || self.fetching.contains_key(key) {
             let (bus, path) = split_service(key);
-            self.fetch(bus, path, SETTLE);
+            self.fetch(bus, path, SETTLE, false);
         }
     }
 
     async fn remove_item(&mut self, key: &str) {
         let was_fetching = self.fetching.remove(key).is_some();
         self.item_stops.remove(key);
+        self.changes.remove(key);
+        self.muted.remove(key);
         if self.items.remove(key).is_none() {
             if was_fetching {
                 self.unpublish(key).await;
@@ -619,7 +739,7 @@ impl Loop {
         }
     }
 
-    async fn run(mut self) {
+    async fn run(mut self) -> Ended {
         while let Some(wake) = self.streams.next().await {
             match wake {
                 Wake::Command(cmd) => {
@@ -627,6 +747,13 @@ impl Loop {
                         break;
                     }
                 }
+                Wake::Lost => {
+                    for id in self.items.keys() {
+                        self.emit(TrayEvent::Removed(id.clone()));
+                    }
+                    return Ended::Lost;
+                }
+                Wake::Unmuted(key) => self.unmuted(key).await,
                 Wake::Registered { bus, path } => self.track(bus, path).await,
                 Wake::ForeignRegistered(s) => {
                     let (bus, path) = split_service(&s);
@@ -636,8 +763,13 @@ impl Loop {
                     let (bus, path) = split_service(&s);
                     self.remove_item(&format!("{bus}{path}")).await;
                 }
-                Wake::ItemChanged(key) => self.refresh_item(&key),
-                Wake::Fetched { key, fetch, item } => self.fetched(key, fetch, item).await,
+                Wake::ItemChanged(key) => self.item_changed(key, Instant::now()),
+                Wake::Fetched {
+                    key,
+                    fetch,
+                    item,
+                    decoded,
+                } => self.fetched(key, fetch, item, decoded).await,
                 Wake::Owner { name, new_owner } => {
                     if new_owner.is_empty() {
                         self.remove_items_on(&name).await;
@@ -658,6 +790,20 @@ impl Loop {
                 }
             }
         }
+        Ended::Shutdown
+    }
+}
+
+/// `item`'s named icons, where it would have decoded them, from `old`.
+fn keep_named(item: &mut TrayItem, old: &TrayItem) {
+    if item::named(&item.icon_name, &item.pixmaps).is_some() {
+        item.named = old.named.clone();
+    }
+    if item::named(&item.attention.name, &item.attention.pixmaps).is_some() {
+        item.attention.named = old.attention.named.clone();
+    }
+    if item::named(&item.overlay.name, &item.overlay.pixmaps).is_some() {
+        item.overlay.named = old.overlay.named.clone();
     }
 }
 
@@ -759,29 +905,52 @@ async fn own(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn setup(
+/// What outlives a connection to the bus: the compositor's side, and what clients set up
+/// through the services.
+struct Kept {
     events: Sender<TrayEvent>,
     eventfd: RawFd,
     commands: async_channel::Receiver<TrayCommand>,
-    appearance: Appearance,
-    icon_theme: String,
+    appearance: Arc<Mutex<Appearance>>,
+    icons: Icons,
+    sizes: Sizes,
     pads: crate::tabletpad::Shared,
-    sizes: Vec<i32>,
+    senders: Arc<Mutex<Senders>>,
+    programs: Arc<Mutex<Programs>>,
+    responding: Arc<Mutex<Responding>>,
+    identities: Arc<Identities>,
+    screensaver: screensaver::Shared,
+    /// So a notification's id is never reused by a later connection.
+    next_id: Arc<AtomicU32>,
     defers: bool,
-) -> Result<Loop, String> {
-    let flags = name_flags(defers);
-    let icons: Icons = Arc::new(Mutex::new(load_icons(&icon_theme)));
-    let senders: Arc<Mutex<Senders>> = Arc::default();
-    let programs: Arc<Mutex<Programs>> = Arc::default();
-    let identities: Arc<Identities> = Arc::default();
-    let conn = zbus::connection::Builder::session()
+}
+
+/// Connect to the session bus, or the bus at `address`, and serve the tray's services on it.
+async fn setup(kept: &Kept, address: Option<&str>) -> Result<Loop, String> {
+    let (events, eventfd) = (kept.events.clone(), kept.eventfd);
+    let flags = name_flags(kept.defers);
+    let (icons, senders, identities) = (
+        kept.icons.clone(),
+        kept.senders.clone(),
+        kept.identities.clone(),
+    );
+    let builder = match address {
+        Some(address) => zbus::connection::Builder::address(address),
+        None => zbus::connection::Builder::session(),
+    };
+    let conn = builder
         .method_timeout(METHOD_TIMEOUT)
         .build()
         .await
         .map_err(|e| format!("session bus: {e}"))?;
     let mut streams: SelectAll<BoxStream<'static, Wake>> = SelectAll::new();
-    streams.push(commands.map(Wake::Command).boxed());
+    streams.push(kept.commands.clone().map(Wake::Command).boxed());
+    let closing = conn.clone();
+    let lost = async move {
+        closing.closed().await;
+        Wake::Lost
+    };
+    streams.push(futures_util::stream::once(lost).boxed());
 
     let dbus = Proxy::new(&conn, DBUS_IFACE, "/org/freedesktop/DBus", DBUS_IFACE)
         .await
@@ -814,9 +983,9 @@ async fn setup(
             Notifications {
                 events: events.clone(),
                 eventfd,
-                next_id: std::sync::atomic::AtomicU32::new(1),
+                next_id: kept.next_id.clone(),
                 senders: senders.clone(),
-                programs: programs.clone(),
+                programs: kept.programs.clone(),
                 icons: icons.clone(),
                 identities: identities.clone(),
             },
@@ -827,9 +996,9 @@ async fn setup(
         Ok(_) => log::info!("notifications: hosting {NOTIFY_NAME}"),
         Err(_) => log::info!("notifications: {NOTIFY_NAME} already owned; balloons off"),
     }
-    let screensaver = screensaver::Shared::new(events.clone(), eventfd);
-    host_screensaver(&conn, &screensaver, defers).await?;
-    let current = Arc::new(Mutex::new(appearance));
+    let screensaver = kept.screensaver.clone();
+    host_screensaver(&conn, &screensaver, kept.defers).await?;
+    let current = kept.appearance.clone();
     conn.object_server()
         .at(
             SETTINGS_PATH,
@@ -845,15 +1014,15 @@ async fn setup(
             log::warn!("settings portal: {SETTINGS_NAME}: {e}; dark mode stays unknown to portals")
         }
     }
-    let responding = Arc::new(Mutex::new(Responding::default()));
+    let responding = kept.responding.clone();
     conn.object_server()
         .at(
             reprisebus::tray::PATH,
             Shell {
                 events: events.clone(),
                 eventfd,
-                pads,
-                programs,
+                pads: kept.pads.clone(),
+                programs: kept.programs.clone(),
                 responding: responding.clone(),
             },
         )
@@ -920,13 +1089,16 @@ async fn setup(
         fetching: HashMap::new(),
         next_fetch: 0,
         item_stops: HashMap::new(),
+        changes: HashMap::new(),
+        muted: HashSet::new(),
+        muted_for: MUTED_FOR,
         published,
         idle_watcher,
         screensaver,
         streams,
         appearance: current,
         icons,
-        sizes: Arc::new(Mutex::new(sizes)),
+        sizes: kept.sizes.clone(),
         senders,
         responding,
         identities,
@@ -936,6 +1108,37 @@ async fn setup(
 fn push_known_item(streams: &mut SelectAll<BoxStream<'static, Wake>>, bus: String, path: String) {
     let once = futures_util::stream::once(std::future::ready(Wake::Registered { bus, path }));
     streams.push(once.boxed());
+}
+
+/// When the tray connects again after losing its connection: at first soon, then backing
+/// off while connections keep dying within [`STEADY`] of being made.
+const RECONNECT_FIRST: Duration = Duration::from_secs(1);
+const RECONNECT_MOST: Duration = Duration::from_secs(30);
+const STEADY: Duration = Duration::from_secs(60);
+
+/// Serve the tray on the session bus, or the bus at `address`, connecting again whenever the
+/// connection is lost, until a shutdown or a connection that can't be set up.
+async fn serve(kept: &Kept, address: Option<&str>) {
+    let mut pause = Duration::ZERO;
+    loop {
+        let began = Instant::now();
+        let lp = match setup(kept, address).await {
+            Ok(l) => l,
+            Err(e) => {
+                emit(&kept.events, kept.eventfd, TrayEvent::Unavailable(e));
+                return;
+            }
+        };
+        if lp.run().await == Ended::Shutdown {
+            return;
+        }
+        pause = match pause.is_zero() || began.elapsed() >= STEADY {
+            true => RECONNECT_FIRST,
+            false => (pause * 2).min(RECONNECT_MOST),
+        };
+        log::warn!("tray: lost the session bus connection; connecting again in {pause:?}");
+        async_io::Timer::after(pause).await;
+    }
 }
 
 /// Start the D-Bus thread. `None` means it could not be spawned; a later bus failure arrives as
@@ -956,23 +1159,23 @@ pub fn start(
             // The thread owns its copy of the eventfd, so the loop side can close its own without
             // waiting for a stalled peer.
             let fd = eventfd.as_raw_fd();
-            zbus::block_on(async move {
-                match setup(
-                    events.clone(),
-                    fd,
-                    rx,
-                    appearance,
-                    icon_theme,
-                    pads,
-                    icon_sizes,
-                    defers,
-                )
-                .await
-                {
-                    Ok(l) => l.run().await,
-                    Err(e) => emit(&events, fd, TrayEvent::Unavailable(e)),
-                }
-            });
+            let kept = Kept {
+                events: events.clone(),
+                eventfd: fd,
+                commands: rx,
+                appearance: Arc::new(Mutex::new(appearance)),
+                icons: Arc::new(Mutex::new(load_icons(&icon_theme))),
+                sizes: Arc::new(Mutex::new(icon_sizes)),
+                pads,
+                senders: Arc::default(),
+                programs: Arc::default(),
+                responding: Arc::default(),
+                identities: Arc::default(),
+                screensaver: screensaver::Shared::new(events, fd),
+                next_id: Arc::new(AtomicU32::new(1)),
+                defers,
+            };
+            zbus::block_on(serve(&kept, None));
             drop(eventfd);
         })
         .ok()?;

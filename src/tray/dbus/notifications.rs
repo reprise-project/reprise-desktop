@@ -112,7 +112,7 @@ async fn on_bus(conn: &Connection, name: &str) -> bool {
 pub(super) struct Notifications {
     pub(super) events: Sender<TrayEvent>,
     pub(super) eventfd: RawFd,
-    pub(super) next_id: std::sync::atomic::AtomicU32,
+    pub(super) next_id: Arc<std::sync::atomic::AtomicU32>,
     pub(super) senders: Arc<Mutex<Senders>>,
     pub(super) programs: Arc<Mutex<Programs>>,
     pub(super) icons: Icons,
