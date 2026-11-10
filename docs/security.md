@@ -1390,9 +1390,16 @@ sharing and remote control grants yet.
   within the icon caps, its type checked before it is opened to read, an
   SVG from a sandbox embedding a raster image is refused, and one read of
   an item's icons takes at most 16 MiB and 64 folders. Two threads shared
-  by every item do the reads, from a queue of one read per item. An item
-  whose read isn't done within 2 seconds, its wait included, shows without
-  those icons, and a hung read holds one thread and never starts another. Customize keeps a sandboxed app's desktop entry icon for it,
+  by every item do the reads, from a shared queue of 64 in which one app
+  holds at most 4. A read waits at most 10 seconds for a thread and then
+  gets 2 seconds; past either, or past its app's share, the item keeps the
+  icons it showed and is read once more 2 seconds later. A hung read holds
+  one thread and never starts another, and a removed item's read is
+  dropped. An item sending more than 100 change signals in a second isn't
+  listened to for 5 seconds, so a flood stops at the bus daemon instead of
+  queueing there until the daemon disconnects the tray. If the tray's
+  connection is lost anyway, it closes it, connects again and takes its
+  names back. Customize keeps a sandboxed app's desktop entry icon for it,
   never the path it sent, and drops a path from a choice saved without
   that guarantee.
 - **Launchers.** A `.desktop` file in a folder (the desktop, Explorer)

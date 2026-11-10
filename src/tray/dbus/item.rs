@@ -1,4 +1,4 @@
-use super::decoders::Decoders;
+use super::decoders::{Decoders, Limits};
 use super::watcher::MAX_REGISTRATIONS;
 use super::{ITEM_IFACE, Icons, Sizes, sizes_now, uncached_proxy};
 use crate::tray::{IconFiles, ItemIcon, TrayItem, decode_item_icons, item_pixmaps};
@@ -32,24 +32,30 @@ async fn prop_body(proxy: &Proxy<'_>, name: &str) -> Option<Body> {
     bounded::property_body(proxy, name).await.ok()
 }
 
-/// How long an item's names get to be read and decoded, queue included; past it the item shows
-/// without them.
+/// How long an item's names may wait for a decoding thread, and then take to read and decode;
+/// past either the item keeps the icons it had.
+const NAMED_WAIT: Duration = Duration::from_secs(10);
 const NAMED_WITHIN: Duration = Duration::from_secs(2);
 
 /// Two threads, so a hung read leaves one; the queue holds one fetch per registered item.
-static DECODERS: LazyLock<Decoders> =
-    LazyLock::new(|| Decoders::new(2, MAX_REGISTRATIONS, NAMED_WITHIN));
+static DECODERS: LazyLock<Decoders> = LazyLock::new(|| {
+    Decoders::new(Limits {
+        threads: 2,
+        queue: MAX_REGISTRATIONS,
+        per_app: 4,
+        wait: NAMED_WAIT,
+        within: NAMED_WITHIN,
+    })
+});
 
 /// Decode the item's icon, attention icon and overlay names at `sizes`, each unless pixmaps
-/// stand in, on the shared [`DECODERS`].
+/// stand in, on the shared [`DECODERS`] as the item's app. False when they weren't decoded.
 pub(super) async fn decode_names(
     icons: &Icons,
     files: IconFiles,
     item: &mut TrayItem,
     sizes: &[i32],
-) {
-    let named =
-        |name: &Option<String>, pixmaps: &[IconSource]| name.clone().filter(|_| pixmaps.is_empty());
+) -> bool {
     let names = [
         named(&item.icon_name, &item.pixmaps),
         named(&item.attention.name, &item.attention.pixmaps),
@@ -64,13 +70,22 @@ pub(super) async fn decode_names(
                 let names = names.each_ref().map(Option::as_deref);
                 decode_item_icons(&icons, &files, names, theme.as_deref(), &sizes)
             };
-            DECODERS.run(decode).await.unwrap_or_default()
+            match DECODERS.run(&item.key, decode).await {
+                Some(decoded) => decoded,
+                None => return false,
+            }
         }
     };
     let [main, attention, overlay] = decoded.map(Arc::from);
     item.named = main;
     item.attention.named = attention;
     item.overlay.named = overlay;
+    true
+}
+
+/// `name` when it is to be decoded: set, and no pixmaps standing in.
+pub(super) fn named(name: &Option<String>, pixmaps: &[IconSource]) -> Option<String> {
+    name.clone().filter(|_| pixmaps.is_empty())
 }
 
 /// The name keys the icon cache, so the `PATH_MAX` cap bounds it.
@@ -93,6 +108,7 @@ pub(super) fn item_texts(title: Option<String>, tip: Option<ToolTip>) -> (String
     (title, tooltip)
 }
 
+/// The item at `bus` `path`, and whether its named icons were decoded: when not, it has none.
 pub(super) async fn fetch_item(
     conn: &Connection,
     icons: &Icons,
@@ -100,7 +116,21 @@ pub(super) async fn fetch_item(
     identities: &Identities,
     bus: &str,
     path: &str,
-) -> Option<TrayItem> {
+) -> Option<(TrayItem, bool)> {
+    let (mut item, files, sizes) = read_item(conn, sizes, identities, bus, path).await?;
+    let decoded = decode_names(icons, files, &mut item, &sizes).await;
+    Some((item, decoded))
+}
+
+/// The item's properties as a [`TrayItem`] without its named icons, where those may be opened
+/// from, and the sizes read for. Every reply body is dropped on return.
+async fn read_item(
+    conn: &Connection,
+    sizes: &Sizes,
+    identities: &Identities,
+    bus: &str,
+    path: &str,
+) -> Option<(TrayItem, IconFiles, Vec<i32>)> {
     let proxy = uncached_proxy(conn, bus, path, ITEM_IFACE).await.ok()?;
     // Concurrent, so a silent peer costs one METHOD_TIMEOUT, not one per property.
     let (
@@ -145,10 +175,27 @@ pub(super) async fn fetch_item(
         log::warn!("tray: {bus}{path} answered none of Title/IconName/IconPixmap/Menu");
         return None;
     }
+    // Read after the properties, so a size change during the read is decoded by it.
+    let sizes = sizes_now(sizes);
+    let pixmaps: Arc<[IconSource]> = item_pixmaps(&pixmaps.unwrap_or_default(), &sizes).into();
+    let attention = ItemIcon {
+        name: icon_ref(attention_name),
+        pixmaps: item_pixmaps(&pixmaps_of(&attention_pixmaps).unwrap_or_default(), &sizes).into(),
+        named: Arc::from([]),
+    };
+    let overlay = ItemIcon {
+        name: icon_ref(overlay_name),
+        pixmaps: item_pixmaps(&pixmaps_of(&overlay_pixmaps).unwrap_or_default(), &sizes).into(),
+        named: Arc::from([]),
+    };
     let icon_name = icon_ref(icon_name);
-    let has_names = [&icon_name, &attention_name, &overlay_name]
-        .iter()
-        .any(|n| n.is_some());
+    let has_names = [
+        named(&icon_name, &pixmaps),
+        named(&attention.name, &attention.pixmaps),
+        named(&overlay.name, &overlay.pixmaps),
+    ]
+    .iter()
+    .any(Option::is_some);
     // A sandboxed app's item is kept and listed under its own app, whatever `Id` and `Title` say.
     let (key, title, files, saved_icon) = match &identity {
         AppIdentity::Host { .. } => {
@@ -168,9 +215,7 @@ pub(super) async fn fetch_item(
         AppIdentity::Unknown => (item_key(None, None, bus), None, IconFiles::Refused, None),
     };
     let (title, tooltip) = item_texts(title, tip);
-    // Read after the properties, so a size change during the read is decoded by it.
-    let sizes = sizes_now(sizes);
-    let mut item = TrayItem {
+    let item = TrayItem {
         id: format!("{bus}{path}"),
         key,
         service: bus.to_string(),
@@ -180,7 +225,7 @@ pub(super) async fn fetch_item(
         icon_name,
         icon_theme_path: icon_ref(theme_path).map(PathBuf::from),
         saved_icon,
-        pixmaps: item_pixmaps(&pixmaps.unwrap_or_default(), &sizes).into(),
+        pixmaps,
         named: Arc::from([]),
         menu_path: menu.map(|p| p.as_str().to_string()).filter(|p| p != "/"),
         passive: status
@@ -188,20 +233,10 @@ pub(super) async fn fetch_item(
             .is_some_and(|s| s.eq_ignore_ascii_case("Passive")),
         pid,
         needs_attention: status.is_some_and(|s| s.eq_ignore_ascii_case("NeedsAttention")),
-        attention: ItemIcon {
-            name: icon_ref(attention_name),
-            pixmaps: item_pixmaps(&pixmaps_of(&attention_pixmaps).unwrap_or_default(), &sizes)
-                .into(),
-            named: Arc::from([]),
-        },
-        overlay: ItemIcon {
-            name: icon_ref(overlay_name),
-            pixmaps: item_pixmaps(&pixmaps_of(&overlay_pixmaps).unwrap_or_default(), &sizes).into(),
-            named: Arc::from([]),
-        },
+        attention,
+        overlay,
     };
-    decode_names(icons, files, &mut item, &sizes).await;
-    Some(item)
+    Some((item, files, sizes))
 }
 
 /// Where a sandboxed item of `app_id` opens files from: only as that same app, read again now.
