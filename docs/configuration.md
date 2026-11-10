@@ -219,8 +219,8 @@ was up, is not saved over: the page says so and shows the file as it is.
 | Key | Values | Default |
 | --- | --- | --- |
 | `interface` | `"classic"`, `"blue"` or `"glass"`: the login screen's design ([features.md](features.md#login-screen)) | the `[appearance] interface` of the last session used at this computer under reprise-login; `"classic"` before any |
-| `show_users` | `true` lists the accounts on the Blue and Glass screens, with each one's picture from AccountsService. `false` asks for a typed user name there, as Classic always does | `true` |
-| `autologin_user` | an account name. Each time reprise-login starts with no session running (one logind can't describe yet counts as running), it logs that user in without a password; a logout brings the login screen. A name the screen wouldn't list shows the login screen, and the journal says why. `""` counts as unset | unset |
+| `show_users` | `true` lists the accounts on the Blue and Glass screens, with each one's picture from AccountsService. `false` asks for a typed user name there, as Classic always does, and the screen gets no user list, Switch User's included | `true` |
+| `autologin_user` | an account name. Each time reprise-login starts with no session running (one logind can't describe yet counts as running), it logs that user in without a password; a logout brings the login screen. A name that isn't a login account (below) shows the login screen, and the journal says why; `show_users` doesn't change which names it takes. `""` counts as unset | unset |
 | `greeter_socket` | `true` lets the login screen listen on a Wayland socket in its runtime directory, so screenshot and input tools can reach it while testing. Any process of the `reprise-greeter` user can then reach the login screen: type into it, capture it, draw over it. Leave it `false` on a machine people use | `false` |
 | `background` | what the login screen shows behind it in every interface: a built-in wallpaper's `"reprise:design/variant"` name (as `[wallpaper] image` takes), or `"/var/lib/reprise-login/background"`, the picture Settings > Login Manager > Browse... copied there. Any other path is refused, so the screen reads no file from a user's home. A picture missing or that doesn't decode leaves the default | Classic's desktop colour, Blue's welcome field, Glass's default wallpaper |
 
@@ -238,11 +238,12 @@ session runs them now, a saved monitor layout and its primary included, and
 Reset removes them. Like `[login]`, they apply the next time the login
 screen starts.
 
-The login screen lists accounts with a uid between `UID_MIN` and `UID_MAX`
-of `/etc/login.defs` (1000 and 60000 when unset) and a shell listed in
-`/etc/shells` that isn't `nologin` or `false`, by name, at most 100.
-Classic fills in the user who last logged in, and Glass opens on that
-user's picture. reprise-login keeps that user and the last interface in
+A login account has a uid between `UID_MIN` and `UID_MAX` of
+`/etc/login.defs` (1000 and 60000 when unset) and a shell listed in
+`/etc/shells` that isn't `nologin` or `false`. With `show_users` on, the
+login screen lists them by name, at most 100.
+Classic fills in the user who last logged in, and Glass with `show_users`
+on opens on that user's picture. reprise-login keeps that user and the last interface in
 `/var/lib/reprise-login/state.toml`.
 
 ### Remote logins

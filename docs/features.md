@@ -565,7 +565,8 @@ the screen takes the interface of the last session used at this computer.
   User in the Log Off dialog, or on the lock screen, brings the login
   screen back while your session keeps running, locked. Blue and Glass
   open on the user tiles, not on yours; a session's tile says Locked while
-  it is, Logged on otherwise. Logging in again goes straight back to it, unlocked. One
+  it is, Logged on otherwise. With `show_users` off they open on the typed
+  form, filled in with the last user's name. Logging in again goes straight back to it, unlocked. One
   session per user: a second login resumes the first. After a restart of
   the login manager, a session it can't read yet keeps a login of that user
   waiting.
