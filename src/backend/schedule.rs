@@ -131,6 +131,8 @@ pub(super) fn queue_render(state: &mut State, head: Head) {
 /// (`framepace::ask_at`). Glass re-blurs the moving water at `[glass] blur_rate`, like a
 /// program's content.
 pub fn schedule_step(state: &mut State, output: &Output, at: std::time::Instant) {
+    #[cfg(test)]
+    ASKED.with_borrow_mut(|a| a.push((output.name(), Ask::Content)));
     let head = match screen_of(output) {
         Some(Screen::Monitor(head)) => head,
         Some(Screen::Virtual) => return crate::virtualout::ask(state, output, Ask::Content),
