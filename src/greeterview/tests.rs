@@ -127,6 +127,7 @@ fn login_with(
         notice: None,
         outputs: Vec::new(),
         background: None,
+        animation: true,
     };
     let mut config = crate::greeter::config_from(&greeting);
     // Glass's wallpaper draws on a thread into the cache; the screen is what these tests read.
@@ -351,6 +352,7 @@ fn a_later_greeting_brings_the_tiles_notes_up_to_date() {
         notice: None,
         outputs: Vec::new(),
         background: None,
+        animation: true,
     };
     d.says(&mut h, GreeterReply::Greeting(fresh));
     assert_eq!(model(&h).users[0].note, None, "anna logged off");
@@ -373,6 +375,7 @@ fn a_greeting_brought_by_switch_user_opens_on_the_tiles_with_the_locked_tile_not
         notice: Some(Notice::SwitchUser),
         outputs: Vec::new(),
         background: None,
+        animation: true,
     };
     d.says(&mut h, GreeterReply::Greeting(switched.clone()));
     assert_eq!(model(&h).screen, logon::Screen::Tiles, "the running screen");
@@ -791,6 +794,7 @@ fn a_background_that_does_not_load_gives_back_the_interfaces_own_look() {
             notice: None,
             outputs: Vec::new(),
             background: Some(repriselogin::machine::Background::Picture),
+            animation: true,
         };
         let mut config = crate::greeter::config_from(&greeting);
         config.wallpaper.image = Some(junk.clone());

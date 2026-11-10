@@ -148,6 +148,7 @@ mod tests {
             notice: None,
             outputs: Vec::new(),
             background: None,
+            animation: true,
         }
     }
 

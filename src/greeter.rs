@@ -149,7 +149,7 @@ pub fn config_from(g: &Greeting) -> Config {
     if let (Some(Background::Builtin(uri)), None) = (&g.background, &shown) {
         log::warn!("greeter: no built-in wallpaper {uri}");
     }
-    let base = repriseconf::config::Config {
+    let mut base = repriseconf::config::Config {
         interface,
         theme: reprisekit::interfaces::theme_for(interface),
         wallpaper: crate::config::WallpaperConfig {
@@ -170,6 +170,7 @@ pub fn config_from(g: &Greeting) -> Config {
         outputs: g.outputs.iter().map(output).collect(),
         ..Default::default()
     };
+    base.effects.logon_animation = g.animation;
     Config {
         base,
         ..Config::default()
@@ -262,6 +263,7 @@ mod tests {
             notice: None,
             outputs: Vec::new(),
             background: None,
+            animation: true,
         }
     }
 
@@ -468,6 +470,16 @@ mod tests {
             let login = h.state.greeter.login.as_ref().expect("the login screen");
             assert_eq!(login.view.model.over_picture, over, "{i:?}");
         }
+    }
+
+    #[test]
+    fn the_login_screen_animates_as_login_toml_says() {
+        assert!(config_from(&greeting()).effects.logon_animation);
+        let g = Greeting {
+            animation: false,
+            ..greeting()
+        };
+        assert!(!config_from(&g).effects.logon_animation);
     }
 
     #[test]
