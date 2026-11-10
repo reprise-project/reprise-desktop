@@ -320,3 +320,27 @@ fn space_as_an_editing_key_still_works_the_focused_control() {
     );
     assert!(matches!(&e.items[1].control, Control::Edit { edit, .. } if edit.text == " "));
 }
+
+#[test]
+fn a_greyed_focused_button_keeps_the_focus_and_takes_only_tab() {
+    let mut f = Form::new(vec![
+        Item::button("back", Rect::new(10, 10, 75, 23), "&Back", true, false),
+        Item::button("reset", Rect::new(90, 10, 75, 23), "&Reset", true, false),
+        Item::button("apply", Rect::new(170, 10, 75, 23), "&Apply", true, false),
+    ]);
+    let reset = f.index_of("reset");
+    f.focus_id("reset");
+    f.set_enabled("reset", false);
+    assert_eq!(f.focus, reset);
+    assert_eq!(f.key(Key::Enter), Event::None);
+    assert_eq!(f.key(Key::Space), Event::None);
+    assert_eq!(f.focus, reset);
+    f.set_enabled("reset", true);
+    assert_eq!(f.key(Key::Enter), Event::Pressed("reset"));
+    f.set_enabled("reset", false);
+    f.key(Key::Tab { back: false });
+    assert_eq!(f.focus, f.index_of("apply"));
+    f.set_focus(reset);
+    f.key(Key::Tab { back: true });
+    assert_eq!(f.focus, f.index_of("back"));
+}

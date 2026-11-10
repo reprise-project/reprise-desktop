@@ -29,7 +29,7 @@ pub mod tooltip;
 /// `Pressed` pushed and `Hot` at rest. A greyed label is etched on Classic's
 /// button, unless the style registers a Disabled push button ink: then it is
 /// inked once, flat, in that. A default button in an inactive window
-/// (`p.active` false) draws as a plain one.
+/// (`p.active` false) draws as a plain one, and a greyed one shows no focus.
 #[expect(clippy::too_many_arguments)]
 pub fn draw_button(
     c: &mut Canvas,
@@ -44,6 +44,7 @@ pub fn draw_button(
     px: u32,
 ) {
     let default = default && p.active;
+    let focus = focus && enabled;
     let label = &*p.label(label);
     if let Some(st) = p.look.style()
         && styled::button::draw_button(st, c, text, p, r, label, default, ptr, enabled, focus, px)
@@ -1304,6 +1305,30 @@ mod tests {
             assert!(
                 button(true, true) != button(true, false),
                 "{interface:?}: active default is ringed"
+            );
+        }
+    }
+
+    #[test]
+    fn a_greyed_button_draws_no_focus_rectangle_in_any_look() {
+        for interface in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            let theme = theme_for(interface);
+            let text = crate::text::TextRenderer::load(&theme.fonts);
+            let p = theme.paint();
+            let button = |enabled, focus| {
+                let mut c = Canvas::new(75, 23);
+                let (ptr, px) = (Interaction::Idle, theme.fonts.size_px);
+                let r = c.bounds();
+                draw_button(&mut c, &text, &p, r, "OK", false, ptr, enabled, focus, px);
+                c
+            };
+            assert!(
+                button(false, true) == button(false, false),
+                "{interface:?}: a greyed focused button draws as a greyed one"
+            );
+            assert!(
+                button(true, true) != button(true, false),
+                "{interface:?}: an enabled focused button shows its focus"
             );
         }
     }
