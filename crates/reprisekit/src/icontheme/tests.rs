@@ -1,6 +1,7 @@
 use super::cache::{HIT_CAP, MISS_CAP};
 use super::decode::{
-    SVG_MAX_BYTES, SVG_MAX_LAYERS, SVG_MAX_NODES, SVG_MAX_PRIMITIVES, svg_over_budget,
+    SPENT, SVG_MAX_BYTES, SVG_MAX_IMAGES, SVG_MAX_LAYERS, SVG_MAX_NODES, SVG_MAX_PICTURE_PIXELS,
+    SVG_MAX_PRIMITIVES, svg_over_budget,
 };
 use super::*;
 use crate::raster::Canvas;
@@ -402,6 +403,360 @@ fn a_peer_svg_embedding_a_raster_image_is_refused() {
     fs::remove_file(&p).unwrap();
 }
 
+/// An 8x8 baseline JPEG of #ff0000.
+const RED_JPEG: &str = "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAMCAgMCAgMDAwMEAwMEBQgFBQQEBQoHBwYIDAoMDAsKCwsNDhIQDQ4RDgsLEBYQERMUFRUVDA8XGBYUGBIUFRT/2wBDAQMEBAUEBQkFBQkUDQsNFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBT/wAARCAAIAAgDAREAAhEBAxEB/8QAFAABAAAAAAAAAAAAAAAAAAAACP/EABQQAQAAAAAAAAAAAAAAAAAAAAD/xAAVAQEBAAAAAAAAAAAAAAAAAAAHCf/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/ADoDFU3/2Q==";
+
+fn base64(s: &str) -> Vec<u8> {
+    let digit = |c: u8| match c {
+        b'A'..=b'Z' => c - b'A',
+        b'a'..=b'z' => c - b'a' + 26,
+        b'0'..=b'9' => c - b'0' + 52,
+        b'+' => 62,
+        _ => 63,
+    } as u32;
+    let digits: Vec<u32> = s.bytes().filter(|&c| c != b'=').map(digit).collect();
+    digits
+        .chunks(4)
+        .flat_map(|q| {
+            let n = (q.iter().enumerate()).fold(0, |n, (i, d)| n | d << (18 - 6 * i));
+            n.to_be_bytes()[1..q.len()].to_vec()
+        })
+        .collect()
+}
+
+/// A percent-encoded `data:` URL of `bytes`.
+fn data_url(mime: &str, bytes: &[u8]) -> String {
+    let data: String = bytes.iter().map(|b| format!("%{b:02X}")).collect();
+    format!("data:{mime},{data}")
+}
+
+/// A 16x16 SVG drawing `body` after defining `<image id="i">` from `bytes` of type `mime`.
+fn embedding(mime: &str, bytes: &[u8], body: &str) -> String {
+    let href = data_url(mime, bytes);
+    format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="16" height="16"><defs><image id="i" width="16" height="16" href="{href}"/></defs>{body}</svg>"##
+    )
+}
+
+/// Runs `f` and returns the pictures it decoded and the bytes usvg handed the resolver.
+fn spent<T>(f: impl FnOnce() -> T) -> (T, usize, usize) {
+    SPENT.with(|s| s.set((0, 0)));
+    let out = f();
+    let (decoded, handed) = SPENT.with(|s| s.get());
+    (out, decoded, handed)
+}
+
+const USE: &str = r##"<use xlink:href="#i"/>"##;
+
+#[test]
+fn a_host_svg_embedding_a_png_or_a_jpeg_draws_its_pixels() {
+    let p = tmp("embedding-raster.svg");
+    let red_png = png_bytes(2, 2, &[255, 0, 0, 255].repeat(4));
+    fs::write(&p, embedding("image/png", &red_png, USE)).unwrap();
+    assert_eq!(decode(&p, 16).unwrap().get(8, 8), 0xFFFF_0000);
+
+    fs::write(&p, embedding("image/jpeg", &base64(RED_JPEG), USE)).unwrap();
+    let px = decode(&p, 16).unwrap().get(8, 8);
+    let [a, r, g, b] = px.to_be_bytes();
+    assert!(
+        a == 0xFF && r > 0xF0 && g < 0x10 && b < 0x10,
+        "opaque red, not {px:08x}"
+    );
+    fs::remove_file(&p).unwrap();
+}
+
+#[test]
+fn an_svg_embedding_an_image_past_the_limits_is_refused() {
+    let over = |svg: String| {
+        let tree = resvg::usvg::Tree::from_data(svg.as_bytes(), &Default::default()).unwrap();
+        svg_over_budget(&tree, true)
+    };
+    let side = MAX_ICON_DIMENSION as usize;
+    let wide = png_bytes(side as u32 + 1, 1, &vec![0; (side + 1) * 4]);
+    assert_eq!(
+        over(embedding("image/png", &wide, USE)),
+        Some("an embedded image past the size limit")
+    );
+    let mut tall = base64(RED_JPEG);
+    let sof = tall.windows(2).position(|m| m == [0xFF, 0xC0]).unwrap();
+    tall[sof + 5..sof + 7].copy_from_slice(&(side as u16 + 1).to_be_bytes());
+    assert_eq!(
+        over(embedding("image/jpeg", &tall, USE)),
+        Some("an embedded image past the size limit")
+    );
+    let dot = png_bytes(1, 1, &[255, 0, 0, 255]);
+    let mut bad_crc = dot.clone();
+    bad_crc[29] ^= 0xFF;
+    assert_eq!(
+        over(embedding("image/png", &bad_crc, USE)),
+        Some("an unreadable embedded image")
+    );
+
+    let uses = |n: usize| over(embedding("image/png", &dot, &USE.repeat(n)));
+    assert_eq!(uses(SVG_MAX_IMAGES), None);
+    assert_eq!(uses(SVG_MAX_IMAGES + 1), Some("too many embedded images"));
+
+    let side = SVG_MAX_PICTURE_PIXELS.isqrt() as u32;
+    let square = png_bytes(side, side, &vec![0; (side * side * 4) as usize]);
+    let squares = |n: usize| over(embedding("image/png", &square, &USE.repeat(n)));
+    assert_eq!(squares(1), None);
+    assert_eq!(squares(2), Some("embedded pictures past the pixel budget"));
+
+    let nested = r#"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><rect width="1" height="1"/></svg>"#;
+    let svgs = |n: usize| {
+        over(embedding(
+            "image/svg+xml",
+            nested.as_bytes(),
+            &USE.repeat(n),
+        ))
+    };
+    assert_eq!(svgs(SVG_MAX_IMAGES), None);
+    assert_eq!(svgs(SVG_MAX_IMAGES + 1), Some("too many embedded images"));
+}
+
+#[test]
+fn a_host_svg_embedding_a_gif_draws_all_but_the_gif() {
+    const GIF: &[u8] = b"GIF89a\x01\x00\x01\x00\x00\x00\x00;";
+    let p = tmp("embedding-gif.svg");
+    let body = r##"<rect width="8" height="16" fill="#0000ff"/><use xlink:href="#i" x="8"/>"##;
+    fs::write(&p, embedding("image/gif", GIF, body)).unwrap();
+    let c = decode(&p, 16).expect("the icon draws");
+    assert_eq!((c.get(4, 8), c.get(12, 8)), (0xFF00_00FF, 0));
+    fs::remove_file(&p).unwrap();
+}
+
+/// A 16x16 SVG whose `kib` KiB picture is drawn `10^levels` times through nested `<use>` groups.
+fn fan_out(kib: usize, levels: u32) -> String {
+    let mut payload = png_bytes(1, 1, &[255, 0, 0, 255]);
+    payload.resize(kib << 10, 0);
+    let mut groups = String::new();
+    for l in 1..=levels {
+        let uses = format!(r##"<use xlink:href="#l{}"/>"##, l - 1).repeat(10);
+        groups += &format!(r#"<g id="l{l}">{uses}</g>"#);
+    }
+    let image = embedding("image/png", &payload, "");
+    let image = image.replacen(r#"id="i""#, r#"id="l0""#, 1);
+    image.replacen(
+        "</defs>",
+        &format!(r##"{groups}</defs><use xlink:href="#l{levels}"/>"##),
+        1,
+    )
+}
+
+#[test]
+fn an_svg_drawing_its_picture_a_thousand_times_decodes_it_once() {
+    let p = tmp("fan-out.svg");
+    let thousand = fan_out(16, 3);
+    assert!(thousand.len() < SVG_MAX_BYTES);
+    let (drawn, decoded, handed) = spent(|| decode_bytes(&p, thousand.as_bytes(), 16, true));
+    assert_eq!(drawn.map(|c| c.get(8, 8)), Some(0xFFFF_0000));
+    assert_eq!(decoded, 1);
+    assert!(
+        handed < 16 << 10,
+        "usvg reads the 16 KiB picture's bytes less than once, not {handed} bytes"
+    );
+    let (refused, decoded, _) = spent(|| decode_bytes(&p, thousand.as_bytes(), 16, false));
+    assert!(refused.is_none());
+    assert_eq!(decoded, 0);
+}
+
+#[test]
+fn an_svg_decodes_only_the_pictures_it_draws() {
+    let p = tmp("unused.svg");
+    let nested = |i: usize| {
+        let svg = format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><rect width="1" height="1" fill="red" data-i="{i}"/></svg>"#
+        );
+        data_url("image/svg+xml", svg.as_bytes())
+    };
+    let mut defs: String = (0..50)
+        .map(|i| {
+            format!(
+                r#"<image id="i{i}" width="16" height="16" href="{}"/>"#,
+                nested(i)
+            )
+        })
+        .collect();
+    defs += &format!(r#"<foo href="{}"/>"#, nested(50));
+    let svg = |body: &str| {
+        format!(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="16" height="16"><defs>{defs}</defs><a href="{}"><rect width="8" height="16" fill="#0000ff"/></a>{body}</svg>"##,
+            nested(51)
+        )
+    };
+    let (none, decoded, _) = spent(|| decode_bytes(&p, svg("").as_bytes(), 16, true));
+    assert_eq!(
+        none.map(|c| (c.get(4, 8), c.get(12, 8))),
+        Some((0xFF00_00FF, 0))
+    );
+    assert_eq!(decoded, 0, "no picture is drawn");
+    let one = svg(r##"<use xlink:href="#i7" x="8"/>"##);
+    let (one, decoded, _) = spent(|| decode_bytes(&p, one.as_bytes(), 16, true));
+    assert_eq!(one.map(|c| c.get(12, 8)), Some(0xFFFF_0000));
+    assert_eq!(decoded, 1);
+}
+
+#[test]
+fn a_host_svg_draws_without_an_embedded_svg_past_the_budget() {
+    let p = tmp("nested-over.svg");
+    let mut nested = String::from(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><defs><rect id="r0" width="1" height="1" fill="red"/>"#,
+    );
+    for l in 1..=4 {
+        let uses = format!(r##"<use href="#r{}"/>"##, l - 1).repeat(10);
+        nested += &format!(r#"<g id="r{l}">{uses}</g>"#);
+    }
+    nested += r##"</defs><use href="#r4"/></svg>"##;
+    let body = r##"<rect width="8" height="16" fill="#0000ff"/><use xlink:href="#i" x="8"/>"##;
+    let svg = embedding("image/svg+xml", nested.as_bytes(), body);
+    let c = decode_bytes(&p, svg.as_bytes(), 16, true).expect("the icon draws");
+    assert_eq!((c.get(4, 8), c.get(12, 8)), (0xFF00_00FF, 0));
+}
+
+/// Runs `f` and returns the warnings logged on this thread meanwhile.
+fn warnings<T>(f: impl FnOnce() -> T) -> (T, Vec<String>) {
+    use std::sync::{Mutex, Once};
+    use std::thread::{ThreadId, current};
+    static LINES: Mutex<Vec<(ThreadId, String)>> = Mutex::new(Vec::new());
+    struct Capture;
+    impl log::Log for Capture {
+        fn enabled(&self, m: &log::Metadata) -> bool {
+            m.level() <= log::Level::Warn
+        }
+        fn log(&self, r: &log::Record) {
+            if self.enabled(r.metadata()) {
+                let line = format!("{}: {}", r.target(), r.args());
+                LINES.lock().unwrap().push((current().id(), line));
+            }
+        }
+        fn flush(&self) {}
+    }
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        log::set_logger(&Capture).expect("no other reprisekit test sets a logger");
+        log::set_max_level(log::LevelFilter::Warn);
+    });
+    let me = current().id();
+    let out = f();
+    let mut lines = LINES.lock().unwrap();
+    let mine = lines.iter().filter(|(t, _)| *t == me);
+    let mine = mine.map(|(_, l)| l.clone()).collect();
+    lines.retain(|(t, _)| *t != me);
+    (out, mine)
+}
+
+#[test]
+fn a_host_svg_draws_its_filtered_masks_past_the_picture_budgets_blank_without_a_warning() {
+    let p = tmp("masks.svg");
+    let side = SVG_MAX_PICTURE_PIXELS.isqrt() as u32 + 44;
+    let head = r##"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><filter id="a" x="0%" y="0%" width="100%" height="100%"><feColorMatrix in="SourceGraphic" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 1 0"/></filter><rect width="8" height="16" fill="#0000ff"/>"##;
+    let mut masks = String::new();
+    for i in 0..9u8 {
+        let mut white = vec![255; (side * side * 4) as usize];
+        white[0] = i;
+        let href = data_url("image/png", &png_bytes(side, side, &white));
+        masks += &format!(
+            r##"<mask id="m{i}"><g filter="url(#a)"><image width="16" height="16" href="{href}"/></g></mask><rect x="8" width="8" height="16" fill="red" mask="url(#m{i})"/>"##
+        );
+    }
+    let svg = format!("{head}{masks}</svg>");
+    assert!(svg.len() < SVG_MAX_BYTES);
+    let unmasked = format!("{head}</svg>");
+    for px in [16, 48] {
+        let (c, warned) = warnings(|| decode_bytes(&p, svg.as_bytes(), px, true));
+        assert_eq!(warned, Vec::<String>::new());
+        let c = c.expect("the icon draws");
+        let unmasked = decode_bytes(&p, unmasked.as_bytes(), px, true).unwrap();
+        assert!(c.pixels == unmasked.pixels, "the masked rects draw nothing");
+    }
+    assert!(decode_bytes(&p, svg.as_bytes(), 16, false).is_none());
+}
+
+#[test]
+fn an_svg_whose_entities_expand_past_the_file_cap_is_refused() {
+    let p = tmp("entities.svg");
+    let doc = |decls: &str, body: &str| {
+        format!(
+            r#"<!DOCTYPE svg [{decls}]><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" fill="red"/>{body}</svg>"#
+        )
+    };
+    let elements = doc(
+        &format!(r#"<!ENTITY e "{}">"#, "<g/>".repeat(1000)),
+        &"&e;".repeat(100),
+    );
+    let text = doc(
+        &format!(r#"<!ENTITY t "{}">"#, "A".repeat(1000)),
+        &format!("<desc>{}</desc>", "&t;".repeat(2000)),
+    );
+    for svg in [elements, text] {
+        for images in [true, false] {
+            assert!(decode_bytes(&p, svg.as_bytes(), 16, images).is_none());
+        }
+    }
+    let uri = r#"<!DOCTYPE svg [<!ENTITY ns "http://www.w3.org/2000/svg">]><svg xmlns="&ns;" width="16" height="16"><rect width="16" height="16" fill="red"/></svg>"#;
+    assert_eq!(
+        decode_bytes(&p, uri.as_bytes(), 16, false).map(|c| c.get(8, 8)),
+        Some(0xFFFF_0000)
+    );
+}
+
+#[test]
+fn an_svg_draws_a_picture_named_through_an_entity_or_both_href_attributes() {
+    let p = tmp("hrefs.svg");
+    let red = data_url("image/png", &png_bytes(1, 1, &[255, 0, 0, 255]));
+    let head = r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="16" height="16">"#;
+    let entity = format!(
+        r#"<!DOCTYPE svg [<!ENTITY u "{red}">]>{head}<image width="4" height="16" href="&u;"/><image x="6" width="4" height="16" href="&u;"/><image x="12" width="4" height="16" href="&u;"/></svg>"#
+    );
+    let (c, decoded, _) = spent(|| decode_bytes(&p, entity.as_bytes(), 16, true));
+    let c = c.expect("the icon draws");
+    assert_eq!(
+        [2, 8, 14].map(|x| c.get(x, 8)),
+        [0xFFFF_0000; 3],
+        "each expansion draws"
+    );
+    assert_eq!(decoded, 1, "the entity's one picture");
+
+    let both =
+        format!(r#"{head}<image width="16" height="16" xlink:href="{red}" href="{red}"/></svg>"#);
+    assert_eq!(
+        decode_bytes(&p, both.as_bytes(), 16, true).map(|c| c.get(8, 8)),
+        Some(0xFFFF_0000)
+    );
+}
+
+#[test]
+fn an_svg_whose_picture_href_has_an_overlong_name_is_refused() {
+    let p = tmp("qname.svg");
+    let red = data_url("image/png", &png_bytes(1, 1, &[255, 0, 0, 255]));
+    let svg = |prefix: &str| {
+        format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><image xmlns:{prefix}="http://www.w3.org/1999/xlink" width="16" height="16" {prefix}:href="{red}"/></svg>"#
+        )
+    };
+    assert_eq!(
+        decode_bytes(&p, svg("q").as_bytes(), 16, true).map(|c| c.get(8, 8)),
+        Some(0xFFFF_0000)
+    );
+    let long = svg(&"q".repeat(70_000));
+    assert!(long.len() < SVG_MAX_BYTES);
+    assert!(decode_bytes(&p, long.as_bytes(), 16, true).is_none());
+}
+
+#[test]
+fn cargo_lock_holds_one_png_and_one_zune_jpeg() {
+    let lock =
+        fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../Cargo.lock")).unwrap();
+    for name in ["png", "zune-jpeg"] {
+        let entry = format!("name = \"{name}\"\n");
+        assert_eq!(
+            lock.matches(&entry).count(),
+            1,
+            "one {name}, so the embedded picture's header is read by the decoder resvg draws with"
+        );
+    }
+}
+
 #[test]
 fn missing_theme_still_has_hicolor_in_chain() {
     let root = scratch();
@@ -448,13 +803,19 @@ fn size_matching_rules() {
     assert_eq!(scalable.distance(100, 1), 36);
 }
 
-fn write_png(path: &Path, w: u32, h: u32, rgba: &[u8]) {
-    let file = fs::File::create(path).unwrap();
-    let mut enc = png::Encoder::new(file, w, h);
+fn png_bytes(w: u32, h: u32, rgba: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut enc = png::Encoder::new(&mut out, w, h);
     enc.set_color(png::ColorType::Rgba);
     enc.set_depth(png::BitDepth::Eight);
     let mut writer = enc.write_header().unwrap();
     writer.write_image_data(rgba).unwrap();
+    writer.finish().unwrap();
+    out
+}
+
+fn write_png(path: &Path, w: u32, h: u32, rgba: &[u8]) {
+    fs::write(path, png_bytes(w, h, rgba)).unwrap();
 }
 
 fn tmp(name: &str) -> PathBuf {

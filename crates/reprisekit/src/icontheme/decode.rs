@@ -1,7 +1,9 @@
 use crate::icon::premultiply;
 use crate::raster::Canvas;
+use resvg::usvg::{ImageKind, Size, roxmltree};
 use std::borrow::Cow;
 use std::path::Path;
+use std::sync::{Mutex, OnceLock, PoisonError};
 
 /// Largest icon side accepted from a file or peer; bounds decode buffers at 4 MiB.
 pub const MAX_ICON_DIMENSION: u32 = 1024;
@@ -149,9 +151,36 @@ pub(super) const SVG_MAX_LAYERS: usize = 1_000;
 pub(super) const SVG_MAX_PRIMITIVES: usize = 256;
 /// Path segments stroked or filled, dashes included.
 pub(super) const SVG_MAX_SEGMENTS: f32 = 100_000.0;
+/// Embedded PNG, JPEG and SVG pictures drawn, each use of one counted again.
+pub(super) const SVG_MAX_IMAGES: usize = 4;
+/// Pixels of every embedded PNG and JPEG drawn, summed; each is decoded again per use.
+pub(super) const SVG_MAX_PICTURE_PIXELS: usize = 256 * 256;
+/// Pictures usvg may ask for while parsing, each decoded once, before the rest draw blank; it
+/// asks for some it then drops.
+const SVG_MAX_PICTURE_USES: usize = 2 * SVG_MAX_IMAGES;
+
+/// Width and height of an embedded PNG or JPEG as the decoder resvg draws it with reads its
+/// header; `None` when that fails or for another kind.
+fn raster_size(kind: &ImageKind) -> Option<(u32, u32)> {
+    match kind {
+        ImageKind::PNG(data) => {
+            let reader = png::Decoder::new(std::io::Cursor::new(data.as_slice()))
+                .read_info()
+                .ok()?;
+            Some((reader.info().width, reader.info().height))
+        }
+        ImageKind::JPEG(data) => {
+            let mut decoder = zune_jpeg::JpegDecoder::new(std::io::Cursor::new(data.as_slice()));
+            decoder.decode_headers().ok()?;
+            let (w, h) = decoder.dimensions()?;
+            Some((u32::try_from(w).ok()?, u32::try_from(h).ok()?))
+        }
+        _ => None,
+    }
+}
 
 /// Why `tree` is refused, or `None` within the limits; the walk stops at the first one passed. An
-/// embedded raster image is refused unless `images`, and drawn blank (no resvg `raster-images`).
+/// embedded image is refused unless `images`.
 pub(super) fn svg_over_budget(tree: &resvg::usvg::Tree, images: bool) -> Option<&'static str> {
     use resvg::usvg::{Group, Node, Path, filter::Kind};
     #[derive(Default)]
@@ -161,6 +190,8 @@ pub(super) fn svg_over_budget(tree: &resvg::usvg::Tree, images: bool) -> Option<
         layers: usize,
         primitives: usize,
         segments: f32,
+        images: usize,
+        pixels: usize,
         over: Option<&'static str>,
     }
     impl Cost {
@@ -173,7 +204,30 @@ pub(super) fn svg_over_budget(tree: &resvg::usvg::Tree, images: bool) -> Option<
                 self.over = Some("too many layers");
             } else if self.primitives > SVG_MAX_PRIMITIVES {
                 self.over = Some("too many filter primitives");
+            } else if self.images > SVG_MAX_IMAGES {
+                self.over = Some("too many embedded images");
             }
+        }
+        fn image(&mut self, kind: &ImageKind) {
+            if let ImageKind::SVG(tree) = kind {
+                // resvg draws it through a layer the size of the canvas; a [`blank`] draws
+                // nothing more.
+                self.layers += 1;
+                self.images += usize::from(tree.root().has_children());
+                return;
+            }
+            self.images += 1;
+            self.over = match raster_size(kind) {
+                None => Some("an unreadable embedded image"),
+                Some((w, h)) if w > MAX_ICON_DIMENSION || h > MAX_ICON_DIMENSION => {
+                    Some("an embedded image past the size limit")
+                }
+                Some((w, h)) => {
+                    self.pixels += w as usize * h as usize;
+                    (self.pixels > SVG_MAX_PICTURE_PIXELS)
+                        .then_some("embedded pictures past the pixel budget")
+                }
+            };
         }
     }
     /// The segments `p` draws, plus dashes counted along the control polygon (never shorter
@@ -226,6 +280,7 @@ pub(super) fn svg_over_budget(tree: &resvg::usvg::Tree, images: bool) -> Option<
                     match other {
                         Node::Path(p) => c.segments += segments(p),
                         Node::Image(_) if c.no_images => c.over = Some("an embedded image"),
+                        Node::Image(image) => c.image(image.kind()),
                         _ => {}
                     }
                     if c.over.is_none() {
@@ -248,31 +303,263 @@ pub(super) fn svg_over_budget(tree: &resvg::usvg::Tree, images: bool) -> Option<
     cost.over
 }
 
-fn decode_svg(path: &Path, bytes: &[u8], px: u32, images: bool) -> Option<Canvas> {
-    use resvg::tiny_skia;
+#[cfg(test)]
+thread_local! {
+    /// Pictures decoded, and bytes usvg handed the picture resolver, on this thread.
+    pub(super) static SPENT: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+}
+
+/// Mime of the stand-in `data:` href [`hoist_pictures`] writes, its data the picture's index.
+const PICTURE_MIME: &str = "image/x-reprise-picture";
+
+/// An embedded picture's `data:` href, decoded the first time usvg asks for it, and its
+/// [`blank`] once one stands in for it.
+struct Picture {
+    href: String,
+    decoded: OnceLock<Decoded>,
+    blank: OnceLock<Option<ImageKind>>,
+}
+
+/// A picture's size when known, and what usvg draws with its PNG or JPEG pixels; None when left
+/// out.
+struct Decoded {
+    size: Option<Size>,
+    drawn: Option<(ImageKind, usize)>,
+}
+
+/// An SVG's text with each `data:` href replaced by a stand-in, and the pictures they held.
+struct Hoisted {
+    text: String,
+    pictures: Vec<Picture>,
+}
+
+/// Parses `text` as usvg does once its entities pass [`entities_over_budget`]: roxmltree
+/// expands every reference again, with no limit.
+fn parse_xml(text: &str) -> Result<roxmltree::Document<'_>, &'static str> {
+    if let Some(why) = entities_over_budget(text) {
+        return Err(why);
+    }
+    let options = roxmltree::ParsingOptions {
+        allow_dtd: true,
+        ..Default::default()
+    };
+    roxmltree::Document::parse_with_options(text, options).map_err(|_| "bad xml")
+}
+
+/// Why the entities `text` declares are refused: a value holding markup or a reference, or more
+/// than `SVG_MAX_BYTES` once every reference expands to the longest value.
+fn entities_over_budget(text: &str) -> Option<&'static str> {
+    let space = |c: char| c.is_ascii_whitespace();
+    let mut longest = 0;
+    for decl in text.split("<!ENTITY").skip(1) {
+        let decl = decl.trim_start_matches(space);
+        let decl = decl
+            .strip_prefix('%')
+            .unwrap_or(decl)
+            .trim_start_matches(space);
+        let decl = decl
+            .trim_start_matches(|c| !space(c))
+            .trim_start_matches(space);
+        // An external entity is never loaded.
+        let Some(quote) = decl.chars().next().filter(|&c| c == '"' || c == '\'') else {
+            continue;
+        };
+        let Some((value, _)) = decl[1..].split_once(quote) else {
+            return Some("bad xml");
+        };
+        if value.contains(['<', '&']) {
+            return Some("an entity holding markup");
+        }
+        longest = longest.max(value.len());
+    }
+    const BUILT_IN: [&str; 6] = ["#", "lt;", "gt;", "amp;", "apos;", "quot;"];
+    let references = (text.split('&').skip(1))
+        .filter(|r| !BUILT_IN.iter().any(|b| r.starts_with(b)))
+        .count();
+    (references.saturating_mul(longest) > SVG_MAX_BYTES).then_some("entities past the size limit")
+}
+
+/// Every `href` attribute holding a `data:` URL, with its value's range in the text.
+fn data_hrefs<'a>(
+    doc: &'a roxmltree::Document,
+) -> impl Iterator<Item = (std::ops::Range<usize>, &'a str)> {
+    doc.descendants()
+        .flat_map(|n| n.attributes())
+        .filter(|a| a.name() == "href" && data_url::DataUrl::process(a.value()).is_ok())
+        .map(|a| (a.range_value(), a.value()))
+}
+
+/// Replaces each `data:` href of `doc` with a stand-in naming its picture: usvg decodes an href
+/// again for every `<use>` copy of it, so a small file could ask for gigabytes.
+fn hoist_pictures(doc: &roxmltree::Document) -> Result<Hoisted, &'static str> {
+    let text = doc.input_text();
+    let mut hrefs: Vec<_> = data_hrefs(doc).collect();
+    hrefs.sort_by_key(|(r, _)| (r.start, r.end));
+    let mut out = String::with_capacity(text.len());
+    let (mut at, mut pictures) = (0, Vec::<Picture>::new());
+    let mut index = std::collections::HashMap::new();
+    for (range, value) in hrefs {
+        let (Some(before), Some(_)) = (text.get(at..range.start), text.get(range.clone())) else {
+            return Err("an embedded image out of place");
+        };
+        let i = *index.entry(value).or_insert_with(|| {
+            pictures.push(Picture {
+                href: value.to_owned(),
+                decoded: OnceLock::new(),
+                blank: OnceLock::new(),
+            });
+            pictures.len() - 1
+        });
+        out += before;
+        out += &format!("data:{PICTURE_MIME},{i}");
+        at = range.end;
+    }
+    out += &text[at..];
+    Ok(Hoisted {
+        text: out,
+        pictures,
+    })
+}
+
+fn decode_picture(href: &str) -> Decoded {
+    let mut size = None;
+    let drawn = drawn_picture(href, &mut size);
+    Decoded { size, drawn }
+}
+
+/// The picture a `data:` href holds, as usvg reads it, and its PNG or JPEG pixels, setting `size`
+/// once read; None for GIF, WebP, a side past 1024, or an SVG embedding pictures or over budget.
+fn drawn_picture(href: &str, size: &mut Option<Size>) -> Option<(ImageKind, usize)> {
     use resvg::usvg;
-    // No file references: the name comes from a peer, and usvg's default resolver would read
-    // any `<image href>` path. Data URIs stay.
-    let options = usvg::Options {
+    #[cfg(test)]
+    SPENT.with(|s| s.set((s.get().0 + 1, s.get().1)));
+    let url = data_url::DataUrl::process(href).ok()?;
+    let (data, _) = url.decode_to_vec().ok()?;
+    let no_pictures = usvg::Options {
         image_href_resolver: usvg::ImageHrefResolver {
+            resolve_data: Box::new(|_, _, _| None),
             resolve_string: Box::new(|_, _| None),
-            ..Default::default()
         },
         ..Default::default()
     };
+    let mime = format!("{}/{}", url.mime_type().type_, url.mime_type().subtype);
+    // usvg reads a UTF-8 payload of these types as an SVG, with its own parser.
+    if matches!(mime.as_str(), "image/svg+xml" | "text/plain")
+        && let Ok(text) = std::str::from_utf8(&data)
+    {
+        let doc = parse_xml(text).ok()?;
+        if data_hrefs(&doc).next().is_some() {
+            return None;
+        }
+        let tree = usvg::Tree::from_xmltree(&doc, &no_pictures).ok()?;
+        *size = Some(tree.size());
+        return svg_over_budget(&tree, true)
+            .is_none()
+            .then_some((ImageKind::SVG(tree), 0));
+    }
+    let read = usvg::ImageHrefResolver::default_data_resolver();
+    let kind = read(&mime, data.into(), &no_pictures)?;
+    let (w, h) = raster_size(&kind)?;
+    *size = Size::from_wh(w as f32, h as f32);
+    (w <= MAX_ICON_DIMENSION && h <= MAX_ICON_DIMENSION).then_some((kind, w as usize * h as usize))
+}
+
+/// An SVG of `size` (1x1 when unknown) that draws nothing. It stands in for a picture left out:
+/// usvg would drop the element, leaving a filter or mask over it no box and logging a warning.
+fn blank(size: Option<Size>) -> Option<ImageKind> {
+    use resvg::usvg;
+    let (w, h) = size.map_or((1.0, 1.0), |s| (s.width(), s.height()));
+    let text = format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}"/>"#);
+    let tree = usvg::Tree::from_str(&text, &usvg::Options::default()).ok()?;
+    Some(ImageKind::SVG(tree))
+}
+
+/// usvg's tree of the SVG `text`. Its embedded pictures are decoded when usvg first asks for
+/// one, and one past the picture budgets draws [`blank`]; unless `images`, any refuses the SVG.
+fn svg_tree(text: &str, images: bool) -> Result<resvg::usvg::Tree, String> {
+    let doc = parse_xml(text)?;
+    if data_hrefs(&doc).next().is_none() {
+        return tree_with(&doc, &[]);
+    }
+    if !images {
+        return Err("an embedded image".into());
+    }
+    let hoisted = hoist_pictures(&doc)?;
+    drop(doc);
+    let doc = parse_xml(&hoisted.text)?;
+    let stand_in = format!("data:{PICTURE_MIME},");
+    if data_hrefs(&doc).any(|(_, v)| !v.starts_with(&stand_in)) {
+        return Err("an embedded image out of place".into());
+    }
+    tree_with(&doc, &hoisted.pictures)
+}
+
+/// usvg's tree of `doc`, whose stand-in hrefs index `pictures`.
+fn tree_with(doc: &roxmltree::Document, pictures: &[Picture]) -> Result<resvg::usvg::Tree, String> {
+    use resvg::usvg;
+    #[derive(Default)]
+    struct Spent {
+        calls: usize,
+        drawn: usize,
+        pixels: usize,
+    }
+    let spent = Mutex::new(Spent::default());
+    // No file references: the name comes from a peer, and usvg's default resolver would read
+    // any `<image href>` path.
+    let options = usvg::Options {
+        image_href_resolver: usvg::ImageHrefResolver {
+            resolve_data: Box::new(|mime, data, _| {
+                #[cfg(test)]
+                SPENT.with(|s| s.set((s.get().0, s.get().1 + data.len())));
+                let mut spent = spent.lock().unwrap_or_else(PoisonError::into_inner);
+                spent.calls += 1;
+                if mime != PICTURE_MIME {
+                    return None;
+                }
+                let index: usize = std::str::from_utf8(&data).ok()?.parse().ok()?;
+                let p = pictures.get(index)?;
+                let open = spent.calls <= SVG_MAX_PICTURE_USES && spent.drawn < SVG_MAX_IMAGES;
+                let decoded = if open {
+                    Some(p.decoded.get_or_init(|| decode_picture(&p.href)))
+                } else {
+                    p.decoded.get()
+                };
+                if let Some((kind, pixels)) = decoded.and_then(|d| d.drawn.as_ref())
+                    && open
+                    && spent.pixels + pixels <= SVG_MAX_PICTURE_PIXELS
+                {
+                    spent.drawn += 1;
+                    spent.pixels += pixels;
+                    return Some(kind.clone());
+                }
+                let size = decoded.and_then(|d| d.size);
+                p.blank.get_or_init(|| blank(size)).clone()
+            }),
+            resolve_string: Box::new(|_, _| None),
+        },
+        ..Default::default()
+    };
+    usvg::Tree::from_xmltree(doc, &options).map_err(|e| e.to_string())
+}
+
+fn decode_svg(path: &Path, bytes: &[u8], px: u32, images: bool) -> Option<Canvas> {
+    use resvg::tiny_skia;
     if bytes.len() > SVG_MAX_BYTES {
         log::warn!("icon {}: svg larger than an icon", path.display());
         return None;
     }
-    let tree = match usvg::Tree::from_data(bytes, &options) {
+    let tree = std::str::from_utf8(bytes)
+        .map_err(|_| "not utf-8".to_string())
+        .and_then(|text| svg_tree(text, images));
+    let tree = match tree {
         Ok(t) => t,
-        Err(e) => {
-            log::warn!("icon {}: bad svg: {e}", path.display());
+        Err(why) => {
+            log::warn!("icon {}: svg refused: {why}", path.display());
             return None;
         }
     };
     if let Some(why) = svg_over_budget(&tree, images) {
-        log::warn!("icon {}: refusing an svg with {why}", path.display());
+        log::warn!("icon {}: svg refused: {why}", path.display());
         return None;
     }
     let size = tree.size();
