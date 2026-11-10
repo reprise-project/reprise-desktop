@@ -1,6 +1,6 @@
 use super::act::{act, hotspot_settings, import_error};
 use super::call::{auth_failure, clean};
-use super::wifi::{key_mgmt_for, profile_owner, rekey_mgmt, rekeyed, wifi_settings};
+use super::wifi::{agent_held, key_mgmt_for, profile_owner, rekey_mgmt, rekeyed, wifi_settings};
 use super::*;
 use zbus::Variant;
 
@@ -561,6 +561,13 @@ fn an_enterprise_login_rewrites_a_saved_profile_as_wpa_eap() {
     );
     assert_eq!(s["802-1x"]["identity"], Variant::from("alice"));
     assert_eq!(s["connection"]["uuid"], Variant::from("u-1"));
+    let current = HashMap::from([(
+        "802-11-wireless-security".to_string(),
+        props(vec![
+            ("key-mgmt", Variant::from("wpa-psk")),
+            ("psk-flags", Variant::from(0u32)),
+        ]),
+    )]);
     let key = psk("hunter22");
     let s = rekeyed(current, &key, "sae");
     assert_eq!(
@@ -571,6 +578,77 @@ fn an_enterprise_login_rewrites_a_saved_profile_as_wpa_eap() {
             ("psk-flags".to_string(), Variant::from(0u32)),
         ]),
         "a passphrase keeps the profile's own key-mgmt"
+    );
+}
+
+#[test]
+fn a_rekey_never_writes_a_key_the_profile_leaves_to_an_agent() {
+    for flags in [1u32, 2, 3] {
+        let current = HashMap::from([(
+            "802-11-wireless-security".to_string(),
+            props(vec![
+                ("key-mgmt", Variant::from("wpa-psk")),
+                ("psk-flags", Variant::from(flags)),
+            ]),
+        )]);
+        let key = psk("hunter22");
+        assert!(agent_held(&current, &key), "flags {flags}");
+        let s = rekeyed(current, &key, "wpa-psk");
+        assert_eq!(
+            s["802-11-wireless-security"],
+            HashMap::from([
+                ("key-mgmt".to_string(), Variant::from("wpa-psk")),
+                ("psk-flags".to_string(), Variant::from(flags)),
+            ]),
+            "flags {flags}: no psk, the flags as they were"
+        );
+    }
+}
+
+#[test]
+fn an_enterprise_rekey_never_writes_a_password_an_agent_keeps() {
+    let current = |flags_key: &str, flags: u32| {
+        HashMap::from([
+            (
+                "802-11-wireless-security".to_string(),
+                props(vec![("key-mgmt", Variant::from("wpa-eap"))]),
+            ),
+            (
+                "802-1x".to_string(),
+                props(vec![(flags_key, Variant::from(flags))]),
+            ),
+        ])
+    };
+    let peap = Key::Enterprise(Box::new(Enterprise {
+        identity: "alice".into(),
+        password: Psk::new("hunter22"),
+        ..Enterprise::default()
+    }));
+    let saved = current("password-flags", 2);
+    assert!(agent_held(&saved, &peap));
+    let s = rekeyed(saved, &peap, "wpa-psk");
+    assert!(!s["802-1x"].contains_key("password"));
+    assert_eq!(s["802-1x"]["password-flags"], Variant::from(2u32));
+    assert_eq!(s["802-1x"]["identity"], Variant::from("alice"));
+
+    let tls = Key::Enterprise(Box::new(Enterprise {
+        eap: Eap::Tls,
+        identity: "alice".into(),
+        private_key: Some("/home/alice/alice.key".into()),
+        private_key_password: Psk::new("swordfish"),
+        ..Enterprise::default()
+    }));
+    let saved = current("private-key-password-flags", 1);
+    assert!(agent_held(&saved, &tls));
+    let s = rekeyed(saved, &tls, "wpa-psk");
+    assert!(!s["802-1x"].contains_key("private-key-password"));
+    assert_eq!(
+        s["802-1x"]["private-key-password-flags"],
+        Variant::from(1u32)
+    );
+    assert!(
+        !agent_held(&current("password-flags", 0), &peap),
+        "flags 0: NetworkManager keeps it"
     );
 }
 

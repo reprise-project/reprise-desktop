@@ -44,6 +44,8 @@ const PEER_FIELD_X: i32 = FIELD_X;
 const PEER_FIELD_W: i32 = CLIENT.0 - 26 - PEER_FIELD_X;
 const PEER_ROW_Y: i32 = GROUP.y + 22;
 pub const KEEP_CUE: &str = "Leave empty to keep the saved key";
+/// The cue of a greyed secret field whose flags leave the secret to a secret agent.
+pub const AGENT_CUE: &str = "Asked each time; Reprise can't ask yet";
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Outcome {
@@ -183,7 +185,11 @@ fn iface_page(cfg: &wg::Config) -> Form {
         ),
         Item::lines_at("note", LABEL_X, row_y(7) + 8, FIELD_RIGHT - LABEL_X, &note),
     ]);
-    if cfg.stored_key {
+    if cfg.key_flags != 0 {
+        set_cue(&mut f, "key", AGENT_CUE);
+        f.set_enabled("key", false);
+        f.set_enabled("generate", false);
+    } else if cfg.stored_key {
         set_cue(&mut f, "key", KEEP_CUE);
     }
     f
@@ -297,6 +303,7 @@ pub struct WgSheet {
     /// The sheet shows no MTU; a loaded or imported one rides along.
     mtu: Option<u32>,
     stored_key: bool,
+    key_flags: u32,
 }
 
 impl WgSheet {
@@ -309,6 +316,7 @@ impl WgSheet {
             shown: None,
             mtu: cfg.mtu,
             stored_key: cfg.stored_key,
+            key_flags: cfg.key_flags,
         };
         s.show_peer((!cfg.peers.is_empty()).then_some(0));
         s.sheet.pages[TAB_IFACE].focus_id("name");
@@ -357,7 +365,14 @@ impl WgSheet {
         let f = self.peers_form();
         set_field(f, "pk", &peer.public_key);
         set_field(f, "psk", &peer.preshared_key);
-        set_cue(f, "psk", if peer.stored_psk { KEEP_CUE } else { "" });
+        let cue = if peer.psk_flags != 0 {
+            AGENT_CUE
+        } else if peer.stored_psk {
+            KEEP_CUE
+        } else {
+            ""
+        };
+        set_cue(f, "psk", cue);
         set_field(f, "endpoint", &peer.endpoint);
         set_field(f, "allowed", &wg::join(&peer.allowed_ips));
         set_field(
@@ -368,6 +383,7 @@ impl WgSheet {
         for id in PEER_FIELDS {
             f.set_enabled(id, live);
         }
+        f.set_enabled("psk", live && peer.psk_flags == 0);
         f.set_enabled("remove", live);
     }
 
@@ -400,6 +416,7 @@ impl WgSheet {
         let peer = wg::Peer {
             public_key,
             stored_psk,
+            psk_flags: self.peers[i].psk_flags,
             preshared_key: Psk::new(f.edit_text("psk").trim()),
             endpoint: f.edit_text("endpoint").trim().to_string(),
             allowed_ips: wg::split(f.edit_text("allowed")),
@@ -408,7 +425,7 @@ impl WgSheet {
             keepalive: keepalive.parse::<u16>().ok().filter(|&k| k != 0),
         };
         self.peers[i] = peer;
-        if !stored_psk {
+        if !stored_psk && self.peers[i].psk_flags == 0 {
             set_cue(self.peers_form(), "psk", "");
         }
     }
@@ -426,6 +443,7 @@ impl WgSheet {
             mtu: self.mtu,
             peers: self.peers.clone(),
             stored_key: self.stored_key,
+            key_flags: self.key_flags,
         }
     }
 
@@ -643,12 +661,10 @@ const TAB_GENERAL: usize = 0;
 const TAB_AUTH: usize = 1;
 const BROWSE_W: i32 = 75;
 pub const KEEP_PASSWORD_CUE: &str = "Leave empty to keep the saved password";
-/// The cue of a password the profile leaves to a secret agent.
-pub const ASKED_PASSWORD_CUE: &str = "Not saved; type it to connect";
 
 fn password_cue(cfg: &ovpn::Config, flags_key: &str) -> &'static str {
     if cfg.asked(flags_key) {
-        ASKED_PASSWORD_CUE
+        AGENT_CUE
     } else {
         KEEP_PASSWORD_CUE
     }
@@ -782,6 +798,8 @@ pub struct OvpnSheet {
     pub sheet: PropSheet,
     pub conn_path: String,
     rest: Vec<(String, String)>,
+    /// The password and the key's password are left to a secret agent: their fields stay grey.
+    asked: (bool, bool),
 }
 
 impl OvpnSheet {
@@ -791,6 +809,7 @@ impl OvpnSheet {
             sheet: PropSheet::with_buttons(&OVPN_TABS, pages, CLIENT, Buttons::OkCancel),
             conn_path: conn_path.to_string(),
             rest: cfg.rest.clone(),
+            asked: (cfg.asked("password-flags"), cfg.asked("cert-pass-flags")),
         };
         s.sync_enabled();
         s.sheet.pages[TAB_GENERAL].focus_id("name");
@@ -814,9 +833,10 @@ impl OvpnSheet {
     fn sync_enabled(&mut self) {
         let a = self.auth();
         let g = &mut self.sheet.pages[TAB_GENERAL];
-        for id in ["user_l", "user", "password_l", "password"] {
+        for id in ["user_l", "user", "password_l"] {
             g.set_enabled(id, a.user());
         }
+        g.set_enabled("password", a.user() && !self.asked.0);
         let p = &mut self.sheet.pages[TAB_AUTH];
         for id in ["ca_l", "ca", "ca_browse"] {
             p.set_enabled(id, a.ca());
@@ -829,10 +849,10 @@ impl OvpnSheet {
             "key",
             "key_browse",
             "keypass_l",
-            "keypass",
         ] {
             p.set_enabled(id, a.certs());
         }
+        p.set_enabled("keypass", a.certs() && !self.asked.1);
         for id in [
             "static_l",
             "static",
@@ -944,7 +964,7 @@ mod tests {
                 keepalive: Some(25),
                 ..wg::Peer::default()
             }],
-            stored_key: false,
+            ..wg::Config::default()
         }
     }
 
@@ -1305,23 +1325,37 @@ mod tests {
     }
 
     #[test]
-    fn a_password_left_to_an_agent_says_so_and_ok_asks_for_it() {
+    fn a_password_left_to_an_agent_is_greyed_and_says_reprise_cant_ask() {
         let mut cfg = ovpn_cfg();
         cfg.rest.push(("password-flags".into(), "1".into()));
         let mut s = OvpnSheet::new("/Settings/5", &cfg);
-        assert_eq!(
-            cue_of(&s.sheet.pages[TAB_GENERAL], "password"),
-            ASKED_PASSWORD_CUE
+        let g = &s.sheet.pages[TAB_GENERAL];
+        assert_eq!(cue_of(g, "password"), AGENT_CUE);
+        assert!(!live(g, "password"));
+        let a = &s.sheet.pages[TAB_AUTH];
+        assert_eq!(cue_of(a, "keypass"), KEEP_PASSWORD_CUE);
+        assert!(live(a, "keypass"));
+        assert!(
+            matches!(s.event(propsheet::Event::Ok), Outcome::SaveOpenVpn(_)),
+            "OK saves without a password"
         );
-        assert_eq!(
-            cue_of(&s.sheet.pages[TAB_AUTH], "keypass"),
-            KEEP_PASSWORD_CUE
-        );
-        s.sheet.open_tab(TAB_AUTH);
-        assert!(matches!(s.event(propsheet::Event::Ok), Outcome::Problem(_)));
-        assert_eq!(s.sheet.tabs.open, TAB_GENERAL);
-        let f = &s.sheet.pages[TAB_GENERAL];
-        assert_eq!(f.focus(), f.index_of("password"));
+    }
+
+    #[test]
+    fn keys_left_to_an_agent_are_greyed_and_say_reprise_cant_ask() {
+        let mut c = cfg();
+        c.key_flags = 2;
+        c.peers[0].psk_flags = 1;
+        let mut s = WgSheet::new(&c, Some("/Settings/4".into()));
+        let f = &s.sheet.pages[TAB_IFACE];
+        assert_eq!(cue_of(f, "key"), AGENT_CUE);
+        assert!(!live(f, "key") && !live(f, "generate"));
+        let p = &s.sheet.pages[TAB_PEERS];
+        assert_eq!(cue_of(p, "psk"), AGENT_CUE);
+        assert!(!live(p, "psk"));
+        s.take_peer_fields();
+        assert_eq!(s.config().key_flags, 2);
+        assert_eq!(s.config().peers[0].psk_flags, 1);
     }
 
     #[test]

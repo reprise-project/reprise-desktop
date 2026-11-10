@@ -65,6 +65,8 @@ pub enum Outcome {
         security: nm::Security,
         needs_key: bool,
     },
+    /// A saved network whose key a secret agent keeps: Reprise can't join it.
+    NeedsAgent,
     /// The last row: join a network that is in no scan.
     Hidden,
     Disconnect,
@@ -80,7 +82,7 @@ pub struct NetRow {
     pub strength: u8,
     pub security: nm::Security,
     pub known: bool,
-    /// Saved, but without a key NetworkManager can dial with.
+    /// Saved, but its key is left to a secret agent ([`nm::AccessPoint::keyless`]).
     pub keyless: bool,
     pub active: bool,
     pub tag: String,
@@ -370,11 +372,14 @@ impl Chooser {
         if row.security == nm::Security::Wep {
             return Outcome::None;
         }
+        if row.known && row.keyless {
+            return Outcome::NeedsAgent;
+        }
         Outcome::Connect {
             ap: row.ap.clone(),
             ssid: row.ssid.clone(),
             security: row.security,
-            needs_key: row.security != nm::Security::Open && (!row.known || row.keyless),
+            needs_key: row.security != nm::Security::Open && !row.known,
         }
     }
 
@@ -859,11 +864,10 @@ mod tests {
         assert!(rows[0].enabled && !rows[1].enabled);
     }
 
-    /// A profile another desktop's applet made keeps its key in that
-    /// desktop's wallet; NetworkManager cannot dial it alone, so the row
-    /// asks for the key as an unsaved network would.
+    /// A profile another desktop's applet made keeps its key in that desktop's wallet; a key typed
+    /// here would be saved into the profile, so the row asks for none.
     #[test]
-    fn a_saved_network_without_its_key_asks_for_one() {
+    fn a_saved_network_whose_key_an_agent_keeps_asks_for_none() {
         let ctx = ctx();
         let mut d = device();
         d.wifi = Some(nm::Wifi {
@@ -878,15 +882,7 @@ mod tests {
         let mut c = Chooser::new(&d, TextUnits::ONE);
         let (x, y) = slot_point(&ctx, &c, 0);
         c.press(one(x, y), BTN_LEFT, &ctx);
-        assert_eq!(
-            c.press(two(x, y), BTN_LEFT, &ctx),
-            Outcome::Connect {
-                ap: "/ap/6".into(),
-                ssid: "Office".into(),
-                security: nm::Security::Psk,
-                needs_key: true,
-            }
-        );
+        assert_eq!(c.press(two(x, y), BTN_LEFT, &ctx), Outcome::NeedsAgent);
     }
 
     /// At 200% the window, its pane, list, rows and button grow with the text: the third grown
