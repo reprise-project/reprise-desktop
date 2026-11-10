@@ -64,7 +64,8 @@ pub struct LogonView {
     pub ring: Option<Instant>,
 }
 
-/// A change playing: its transition and when its first frame was drawn.
+/// A change playing: its transition and when its first frame showed, drawn with no session
+/// fade's black over it.
 pub struct Play {
     pub t: Transition,
     pub since: Option<Instant>,
@@ -551,10 +552,11 @@ fn play(
     canvas
 }
 
-/// `output` is about to render: the change playing there draws its next frame and asks for the
-/// one after, or settles and asks nothing; then Glass's busy ring turns, paced to its steps.
+/// `output` is about to render: the change playing there draws its next frame, once the session
+/// fade shows the output, or settles; then Glass's busy ring turns, paced to its steps.
 pub fn frame(state: &mut State, host: &Host, output: &Output) {
     let now = Instant::now();
+    let dark = crate::sessionfade::hides(state, output);
     let Some((v, _)) = (host.view)(state) else {
         return;
     };
@@ -568,6 +570,9 @@ pub fn frame(state: &mut State, host: &Host, output: &Output) {
         return;
     }
     if let Some(p) = v.play.as_mut() {
+        if p.since.is_none() && dark {
+            return;
+        }
         p.since.get_or_insert(now);
         let at = p.at(now);
         let Some(mut c) = v.shown.take() else {

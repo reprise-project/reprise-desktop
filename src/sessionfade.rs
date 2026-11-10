@@ -276,6 +276,15 @@ impl<K: PartialEq + Clone, T> Fade<K, T> {
         }
     }
 
+    /// Whether `key`'s screen is all black still: its fade in, or the one its first frame
+    /// starts, has not begun to show it.
+    pub fn hides(&self, key: &K) -> bool {
+        match self.ins.iter().find(|e| e.key == *key) {
+            Some(e) => matches!(e.state, In::Waiting(..) | In::Drawn(_)),
+            None => self.opening.is_some(),
+        }
+    }
+
     /// The outputs that faded in since the last call, with their timelines.
     pub fn take_faded(&mut self) -> Vec<(K, Timeline)> {
         std::mem::take(&mut self.faded)
@@ -333,6 +342,16 @@ impl SessionFade {
     pub fn fading_out(&self) -> bool {
         self.fade.out_left(Instant::now()).is_some()
     }
+
+    #[cfg(test)]
+    pub fn fade_mut(&mut self) -> &mut Fade<Output, Then> {
+        &mut self.fade
+    }
+}
+
+/// Whether `output` is all black under its fade in still; see [`Fade::hides`].
+pub fn hides(state: &State, output: &Output) -> bool {
+    state.session_fade.fade.hides(output)
 }
 
 /// The black over `output`'s next screen frame, if any, and whether the frame after it is due

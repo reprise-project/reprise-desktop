@@ -1099,3 +1099,41 @@ fn the_screen_enters_when_the_seat_comes_back_and_its_clock_waits_for_the_first_
     assert_eq!(next_frame(&mut h, None), ["TEST-1"]);
     assert!(view(&mut h).play.as_ref().unwrap().since.is_some());
 }
+
+#[test]
+fn a_fresh_greeters_tiles_enter_once_the_session_fade_begins_to_show_them() {
+    let (mut h, _d) = login_with(repriselogin::Interface::Glass, Vec::new(), |_| {});
+    h.state.session_fade = crate::sessionfade::SessionFade::new(600);
+    setup(
+        &mut h.state,
+        glass_greeting(Some(Note::Locked), Some(Notice::SwitchUser)),
+    );
+    let o = h.state.scene.outputs()[0].clone();
+    let ms = std::time::Duration::from_millis;
+    let armed = std::time::Instant::now() - ms(2000);
+    let since = |h: &mut Harness| view(h).play.as_ref().expect("the tiles come in").since;
+    next_frame(&mut h, None);
+    assert!(
+        since(&mut h).is_none(),
+        "the first frame is under the black"
+    );
+    let fade = h.state.session_fade.fade_mut();
+    fade.frame(&o, true, armed);
+    fade.modeset(&o, armed);
+    fade.presented(&o, armed + ms(37));
+    next_frame(&mut h, None);
+    assert!(
+        since(&mut h).is_none(),
+        "the clock waits through the black after the modeset"
+    );
+    h.state
+        .session_fade
+        .fade_mut()
+        .presented(&o, armed + ms(1038));
+    assert_eq!(next_frame(&mut h, None), ["TEST-1"]);
+    assert!(since(&mut h).is_some(), "the clock starts with the fade in");
+    assert!(
+        shown(&mut h) != at_rest(&mut h),
+        "the tiles are still on their way in"
+    );
+}
