@@ -452,7 +452,7 @@ fn the_greeting_marks_users_with_a_session_logged_on() {
             ],
             last_user: Some("bert".into()),
             keyboard: world().keyboard,
-            notice: None,
+            notice: Some(Notice::SwitchUser),
             outputs: Vec::new(),
             background: None,
         }
@@ -581,6 +581,44 @@ fn a_login_whose_account_has_a_session_resumes_it_without_starting_one() {
         resumed(7, "anna")
     );
     assert_eq!(run.exited(1), vec![], "the greeter left");
+}
+
+#[test]
+fn switch_user_brings_a_login_screen_that_opens_on_the_users() {
+    let mut run = Run::new(LoginConfig::default(), Remembered::default());
+    run.recover(vec![anna_on_7()]);
+    assert_eq!(
+        run.session("c1", SessionRequest::SwitchUser),
+        greeter_spawn(1)
+    );
+    assert_eq!(run.greeting().notice, Some(Notice::SwitchUser));
+    assert_eq!(run.greeting().notice, None, "only the screen it brought");
+}
+
+#[test]
+fn a_session_logind_reports_locked_is_noted_locked() {
+    let mut run = Run::new(LoginConfig::default(), Remembered::default());
+    run.on(Input::LockedHint {
+        id: "c1".into(),
+        locked: true,
+    });
+    run.recover(vec![anna_on_7()]);
+    run.session("c1", SessionRequest::SwitchUser);
+    let note = |run: &mut Run| run.greeting().users[0].note;
+    assert_eq!(
+        note(&mut run),
+        Some(Note::Locked),
+        "reported before it joined"
+    );
+    let greeted = run.on(Input::LockedHint {
+        id: "c1".into(),
+        locked: false,
+    });
+    assert!(
+        greeted.iter().any(|e| matches!(e,
+            Effect::Reply(GreeterReply::Greeting(g)) if g.users[0].note == Some(Note::LoggedOn))),
+        "the running screen hears it: {greeted:?}"
+    );
 }
 
 #[test]

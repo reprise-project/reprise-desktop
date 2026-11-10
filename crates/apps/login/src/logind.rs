@@ -22,6 +22,7 @@ use crate::daemon::{FrontUnit, Inhibit, LogindSession, Unread};
 const LOGIN1: &str = "org.freedesktop.login1";
 const SESSION: &str = "org.freedesktop.login1.Session";
 const SEAT0: &str = "/org/freedesktop/login1/seat/seat0";
+const SESSIONS: &str = "/org/freedesktop/login1/session";
 /// A session logind keeps after its leader is gone, until its last process exits.
 const CLOSING: &str = "closing";
 /// logind's error for a session id it does not know.
@@ -664,6 +665,55 @@ impl Logind {
             false
         };
         Ok(tokio::time::timeout(wait, dropped).await.unwrap_or(false))
+    }
+
+    /// Calls `send(id, locked)` with every session's `LockedHint`, then on each change, until it
+    /// returns false. A signal only prompts a read from logind, so a forged one changes nothing.
+    pub async fn follow_locked_hints(
+        &self,
+        send: impl Fn(String, bool) -> bool,
+    ) -> zbus::Result<()> {
+        let rule = zbus::MatchRule::builder()
+            .msg_type(zbus::message::Type::Signal)
+            .interface("org.freedesktop.DBus.Properties")
+            .member("PropertiesChanged")
+            .path_namespace(SESSIONS)
+            .arg(0, SESSION)
+            .build()?;
+        // Subscribed before the reads, so a change in between is seen.
+        let mut changes = zbus::MessageStream::for_match_rule(rule, &self.conn, None).await?;
+        for (id, _, _, _, path) in self.manager.list_sessions().await? {
+            let Ok(locked) = self.session(path).await?.locked_hint().await else {
+                continue;
+            };
+            if !send(id, locked) {
+                return Ok(());
+            }
+        }
+        while let Some(msg) = changes.next().await {
+            let Ok(msg) = msg else { continue };
+            let Some(change) = zbus::fdo::PropertiesChanged::from_message(msg.clone()) else {
+                continue;
+            };
+            let Ok(args) = change.args() else { continue };
+            let named = args.changed_properties().contains_key("LockedHint")
+                || args.invalidated_properties().contains(&"LockedHint");
+            let path = msg
+                .header()
+                .path()
+                .map(|p| OwnedObjectPath::from(p.to_owned()));
+            let (true, Some(path)) = (named, path) else {
+                continue;
+            };
+            let s = self.session(path).await?;
+            let (Ok(id), Ok(locked)) = (s.id().await, s.locked_hint().await) else {
+                continue;
+            };
+            if !send(id, locked) {
+                break;
+            }
+        }
+        Ok(())
     }
 
     /// The console keyboard from localed, `us` when it names none.

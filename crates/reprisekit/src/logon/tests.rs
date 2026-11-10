@@ -663,3 +663,36 @@ fn a_lock_without_power_shows_and_answers_no_power_button() {
         assert!(l.rect(Part::Power).is_some(), "{i:?}: offered, it shows");
     }
 }
+
+#[test]
+fn switch_users_screen_opens_on_the_tiles_in_blue_and_glass() {
+    for i in [Interface::Blue, Interface::Glass] {
+        let mut m = Logon::new(i, users(3), true, Some("user1"));
+        m.click(Part::Tile(1));
+        typed(&mut m, "half");
+        assert_eq!(m.pick_user(), None, "{i:?}: nothing was waiting");
+        assert_eq!(m.screen, Screen::Tiles, "{i:?}");
+        assert!(m.password.text.is_empty(), "{i:?}: the password is wiped");
+        m.click(Part::Tile(2));
+        m.ask(Prompt {
+            text: "Code:".into(),
+            echo: true,
+        });
+        assert_eq!(m.pick_user(), Some(LogonAction::Cancel), "{i:?}");
+        assert_eq!((m.screen, m.prompt.clone()), (Screen::Tiles, None), "{i:?}");
+    }
+    let mut classic = Logon::new(Interface::Classic, users(3), true, Some("user1"));
+    assert_eq!(classic.pick_user(), None);
+    assert_eq!(classic.screen, Screen::Typed, "Classic has no tiles");
+    let mut busy = Logon::new(Interface::Glass, users(3), true, Some("user1"));
+    busy.set_busy(true);
+    busy.pick_user();
+    assert_eq!(busy.screen, Screen::Tile(1), "a check in progress stays");
+    let mut lock = Logon::locked(Interface::Glass, users(1).remove(0), true, true);
+    lock.pick_user();
+    assert_eq!(
+        lock.screen,
+        Screen::Tile(0),
+        "the lock lists no one to pick"
+    );
+}

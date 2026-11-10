@@ -53,6 +53,7 @@ fn user_note(note: Note) -> UserNote {
     match note {
         Note::LoggedOn => UserNote::LoggedOn,
         Note::Remote => UserNote::Remote,
+        Note::Locked => UserNote::Locked,
     }
 }
 
@@ -71,6 +72,9 @@ pub fn setup(state: &mut State, g: Greeting) {
     model.over_picture = crate::greeter::background(&g).is_some();
     if g.notice == Some(Notice::SessionEndedEarly) {
         model.info(logon::text::session_ended_early());
+    }
+    if g.notice == Some(Notice::SwitchUser) && g.show_users {
+        model.pick_user();
     }
     state.greeter.login = Some(Greeter {
         view: LogonView::new(model, state.compose.as_ref().map(Compose::over)),
@@ -91,7 +95,9 @@ pub fn reply(state: &mut State, reply: GreeterReply) {
         return;
     };
     if let GreeterReply::Greeting(fresh) = &reply {
-        regreet(g, fresh);
+        if let Some(action) = regreet(g, fresh) {
+            act(state, action);
+        }
         return redraw(state);
     }
     for step in g.conv.on_reply(reply) {
@@ -101,8 +107,8 @@ pub fn reply(state: &mut State, reply: GreeterReply) {
 }
 
 /// A later Greeting: the running screen came forward, so its tiles' notes and the notice
-/// catch up with the sessions.
-fn regreet(g: &mut Greeter, fresh: &Greeting) {
+/// catch up with the sessions, and Switch User's opens on the tiles.
+fn regreet(g: &mut Greeter, fresh: &Greeting) -> Option<LogonAction> {
     for u in &mut g.view.model.users {
         let note = fresh
             .users
@@ -111,9 +117,12 @@ fn regreet(g: &mut Greeter, fresh: &Greeting) {
             .and_then(|f| f.note);
         u.note = note.map(user_note);
     }
-    if fresh.notice == Some(Notice::SessionEndedEarly) {
-        g.view.model.info(logon::text::session_ended_early());
+    match fresh.notice {
+        Some(Notice::SessionEndedEarly) => g.view.model.info(logon::text::session_ended_early()),
+        Some(Notice::SwitchUser) if fresh.show_users => return g.view.model.pick_user(),
+        _ => {}
     }
+    None
 }
 
 fn apply(state: &mut State, step: Step) {
