@@ -59,6 +59,13 @@ impl Asked {
 #[cfg(test)]
 thread_local! {
     static ASKED: std::cell::RefCell<Vec<(String, Ask)>> = const { std::cell::RefCell::new(Vec::new()) };
+    static STEPS: std::cell::RefCell<Vec<std::time::Instant>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// When the step frames asked on this thread since the last call start (`schedule_step`).
+#[cfg(test)]
+pub fn take_steps() -> Vec<std::time::Instant> {
+    STEPS.with_borrow_mut(std::mem::take)
 }
 
 /// The asks made on this thread since the last call, by output name.
@@ -132,7 +139,10 @@ pub(super) fn queue_render(state: &mut State, head: Head) {
 /// program's content.
 pub fn schedule_step(state: &mut State, output: &Output, at: std::time::Instant) {
     #[cfg(test)]
-    ASKED.with_borrow_mut(|a| a.push((output.name(), Ask::Content)));
+    {
+        ASKED.with_borrow_mut(|a| a.push((output.name(), Ask::Content)));
+        STEPS.with_borrow_mut(|s| s.push(at));
+    }
     let head = match screen_of(output) {
         Some(Screen::Monitor(head)) => head,
         Some(Screen::Virtual) => return crate::virtualout::ask(state, output, Ask::Content),

@@ -61,7 +61,7 @@ pub struct LogonView {
     /// The canvas last shown on the screen's buffer, which frames draw into.
     pub shown: Option<Canvas>,
     /// When the busy ring would have been at step 0 had it turned since; None while it stands.
-    ring: Option<Instant>,
+    pub ring: Option<Instant>,
 }
 
 /// A change playing: its transition and when its first frame was drawn.
