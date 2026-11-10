@@ -1387,3 +1387,81 @@ fn blit_alpha_inks_each_device_pixel_of_the_source_at_its_alpha() {
     assert_eq!(c.get(2, 1), 0xFFFF_0000, "full alpha is the ink");
     assert_eq!(c.get(3, 1), 0xFF80_0000, "half alpha is half the ink");
 }
+
+/// A 6x4 canvas whose pixel at (x, y) is opaque grey `10 * (y * 6 + x) + 5`.
+fn numbered_6x4() -> Canvas {
+    let px = (0..24u32)
+        .map(|i| 0xFF00_0000 | ((10 * i + 5) * 0x01_01_01))
+        .collect();
+    Canvas::from_pixels(6, 4, px)
+}
+
+#[test]
+fn mix_shifted_lays_the_slice_down_moved_and_leaves_the_rest() {
+    let base = Canvas::new(6, 4);
+    let other = numbered_6x4();
+    let slice = Rect::new(1, 1, 2, 2);
+    let mut m = base.clone();
+    m.mix_shifted(&other, slice, (2, -1), 1.0);
+    assert_eq!(m.get(3, 0), other.get(1, 1), "the slice's corner, moved");
+    assert_eq!(m.get(4, 1), other.get(2, 2), "the far corner, moved");
+    let touched = |x: i32, y: i32| (3..5).contains(&x) && (0..2).contains(&y);
+    for y in 0..4 {
+        for x in 0..6 {
+            if !touched(x, y) {
+                assert_eq!(m.get(x, y), 0, "({x}, {y}) lies outside the moved slice");
+            }
+        }
+    }
+    let mut kept = base.clone();
+    kept.mix_shifted(&other, slice, (2, -1), 0.0);
+    assert_eq!(kept.pixels, base.pixels, "level 0 keeps these pixels");
+    let mut same = base.clone();
+    same.mix_shifted(&other, other.bounds(), (0, 0), 1.0);
+    assert_eq!(
+        same.pixels, other.pixels,
+        "unmoved at level 1, the other's exactly"
+    );
+}
+
+#[test]
+fn mix_shifted_cuts_what_the_move_takes_past_the_bounds() {
+    let other = numbered_6x4();
+    for offset in [(5, 0), (-5, 0), (0, 3), (0, -3), (9, 9)] {
+        let mut m = Canvas::new(6, 4);
+        m.mix_shifted(&other, other.bounds(), offset, 1.0);
+        let (dx, dy) = offset;
+        for y in 0..4 {
+            for x in 0..6 {
+                let (sx, sy) = (x - dx, y - dy);
+                let want = match (0..6).contains(&sx) && (0..4).contains(&sy) {
+                    true => other.get(sx, sy),
+                    false => 0,
+                };
+                assert_eq!(m.get(x, y), want, "{offset:?} at ({x}, {y})");
+            }
+        }
+    }
+}
+
+#[test]
+fn mix_shifted_moves_whole_logical_pixels_at_scale_two() {
+    let mut other = Canvas::with_scale(2, 1, 2);
+    other.pixels[..2].fill(0xFF_FF_00_00);
+    other.pixels[4..6].fill(0xFF_FF_00_00);
+    let mut m = Canvas::with_scale(2, 1, 2);
+    m.mix_shifted(&other, Rect::new(0, 0, 1, 1), (1, 0), 1.0);
+    assert_eq!(
+        m.pixels,
+        [
+            0,
+            0,
+            0xFF_FF_00_00,
+            0xFF_FF_00_00,
+            0,
+            0,
+            0xFF_FF_00_00,
+            0xFF_FF_00_00
+        ]
+    );
+}
