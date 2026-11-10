@@ -1,13 +1,10 @@
-//! The PTY's output on its way to the parser: an overlong OSC and a title push past
-//! [`DEPTH_MAX`] are dropped, and OSC 7 is picked out. It follows vte 0.15's states as far as
-//! these sequences need: ESC starts an escape from any state, ESC ] an OSC, ESC [ a CSI.
+//! The PTY's output on its way to vte 0.15's parser, whose states it follows as far as needed:
+//! overlong OSCs and title pushes past [`DEPTH_MAX`] are dropped, OSC 7 is picked out.
 
 /// The longest OSC payload passed on, in bytes; a longer one is dropped whole.
 pub const OSC_MAX: usize = 64 << 10;
-/// The longest OSC 52 payload passed on: the base64 of a [`STORE_MAX`](crate::tab::STORE_MAX)
-/// store and its selector. Past
-/// [`OSC_MAX`] an OSC 52 streams to the parser instead of being held, so past this cap its rest
-/// becomes one byte no base64 decodes.
+/// The longest OSC 52 passed on: a [`STORE_MAX`](crate::tab::STORE_MAX) store in base64 and its
+/// selector. Past [`OSC_MAX`] the rest streams to the parser and no longer decodes.
 pub const OSC52_MAX: usize = crate::tab::STORE_MAX.div_ceil(3) * 4 + 64;
 /// The deepest the title stack grows (CSI 22 t pushes, CSI 23 t pops); a push past it is dropped.
 pub const DEPTH_MAX: usize = 16;
