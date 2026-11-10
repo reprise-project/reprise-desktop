@@ -1418,6 +1418,13 @@ sharing and remote control grants yet.
   new session, a Remote Desktop password change and the login screen's
   administrator form (Shut Down and Restart while someone is logged on)
   refuse the account by the account step.
+- **Network secrets.** A Wi-Fi key, 802.1X password, VPN password or
+  WireGuard key typed in Network Connections goes into its NetworkManager
+  profile with flags 0, which NetworkManager stores in
+  `/etc/NetworkManager/system-connections`. A saved profile whose flags leave
+  a secret to a secret agent (agent-owned or not saved) keeps them: Reprise
+  never writes that secret, greys its field, and refuses to connect the
+  profile with a note, since it runs no agent to answer NetworkManager.
 - **Ending the session.** With `[session] end_processes = true` (the
   default), Log Off stops the `app-reprise-*` scopes and, after a display
   manager login, terminates the login session, so windowless programs Reprise
@@ -1461,6 +1468,9 @@ sharing and remote control grants yet.
   surface, a popup on either) or through the portal's Inhibit, as on other
   desktops. An inhibitor on a surface that shows nowhere doesn't count, and
   none holds off a lock that is already up.
+- **No NetworkManager secret agent.** A profile that asks for its password
+  each time, or keeps it in another desktop's wallet, can't be connected
+  from Reprise; `nmcli --ask connection up` can.
 - **Same-user code.** A program running as you can ptrace or preload the
   portal, the compositor or anything else of yours, or take the
   `reprise.polkit.session<id>` name of a session before its agent does, so

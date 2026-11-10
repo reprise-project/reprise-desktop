@@ -35,17 +35,54 @@ pub(super) fn wifi_settings<'a>(
     }
     out.insert("802-11-wireless".into(), wireless);
     if let Some(key) = key {
-        secure(&mut out, key, key_mgmt);
+        secure(&mut out, key, key_mgmt, Held::default());
     }
     out
 }
 
+/// A saved profile's secret flags that leave a secret to an agent ([`agent_flags`]); 0 where
+/// NetworkManager keeps the secret, and for a new profile.
+#[derive(Clone, Copy, Default)]
+struct Held {
+    psk: u32,
+    password: u32,
+    key_password: u32,
+}
+
+impl Held {
+    fn of(current: &HashMap<String, Props>) -> Held {
+        let flags =
+            |group: &str, key: &str| current.get(group).map_or(0, |g| agent_flags(uint(g, key)));
+        Held {
+            psk: flags("802-11-wireless-security", "psk-flags"),
+            password: flags("802-1x", "password-flags"),
+            key_password: flags("802-1x", "private-key-password-flags"),
+        }
+    }
+
+    /// Whether `key` would join with a secret an agent holds: typing it here can't connect.
+    fn leaves(self, key: &Key) -> bool {
+        match key {
+            Key::Psk(_) | Key::Sae(_) => self.psk != 0,
+            Key::Enterprise(e) if e.eap == Eap::Tls => self.key_password != 0,
+            Key::Enterprise(_) => self.password != 0,
+        }
+    }
+}
+
+/// Whether rekeying `current` (`GetSettings`) with `key` would need a secret agent.
+pub(super) fn agent_held(current: &HashMap<String, Props>, key: &Key) -> bool {
+    Held::of(current).leaves(key)
+}
+
 /// Put `key` into `settings`' security groups: a passphrase under `key_mgmt`, or an 802.1X
-/// login as `wpa-eap` with its own `802-1x` group.
+/// login as `wpa-eap` with its own `802-1x` group. A secret `held` by an agent goes in as its
+/// flags alone.
 fn secure<'a>(
     settings: &mut HashMap<String, HashMap<String, Variant<'a>>>,
     key: &'a Key,
     key_mgmt: &str,
+    held: Held,
 ) {
     let security = settings
         .entry("802-11-wireless-security".into())
@@ -58,22 +95,26 @@ fn secure<'a>(
                 key_mgmt
             };
             security.insert("key-mgmt".into(), Variant::from(key_mgmt.to_string()));
-            security.insert("psk".into(), Variant::from(&**psk));
-            security.insert("psk-flags".into(), Variant::from(0u32));
+            if held.psk == 0 {
+                security.insert("psk".into(), Variant::from(&**psk));
+            } else {
+                security.remove("psk");
+            }
+            security.insert("psk-flags".into(), Variant::from(held.psk));
         }
         Key::Enterprise(e) => {
             security.insert("key-mgmt".into(), Variant::from("wpa-eap"));
             security.remove("psk");
             security.remove("psk-flags");
-            settings.insert("802-1x".into(), dot1x(e));
+            settings.insert("802-1x".into(), dot1x(e, held));
         }
     }
 }
 
 /// The `802-1x` group for `e`. Secrets carry flags 0 so NetworkManager stores them in the
-/// profile; an empty private-key password is marked not required (0x4), as an unencrypted key
-/// needs none.
-fn dot1x(e: &Enterprise) -> HashMap<String, Variant<'_>> {
+/// profile, unless `held` keeps an agent's flags; an empty private-key password is marked not
+/// required (0x4), as an unencrypted key needs none.
+fn dot1x(e: &Enterprise, held: Held) -> HashMap<String, Variant<'_>> {
     let mut g = HashMap::from([
         (
             "eap".to_string(),
@@ -110,8 +151,10 @@ fn dot1x(e: &Enterprise) -> HashMap<String, Variant<'_>> {
                 _ => "phase2-auth",
             };
             g.insert(phase2.into(), Variant::from(e.inner.label().to_lowercase()));
-            g.insert("password".into(), Variant::from(&*e.password));
-            g.insert("password-flags".into(), Variant::from(0u32));
+            if held.password == 0 {
+                g.insert("password".into(), Variant::from(&*e.password));
+            }
+            g.insert("password-flags".into(), Variant::from(held.password));
         }
         Eap::Tls => {
             if let Some(cert) = &e.client_cert {
@@ -120,7 +163,12 @@ fn dot1x(e: &Enterprise) -> HashMap<String, Variant<'_>> {
             if let Some(key) = &e.private_key {
                 g.insert("private-key".into(), Variant::from(cert_path(key)));
             }
-            if e.private_key_password.is_empty() {
+            if held.key_password != 0 {
+                g.insert(
+                    "private-key-password-flags".into(),
+                    Variant::from(held.key_password),
+                );
+            } else if e.private_key_password.is_empty() {
                 g.insert("private-key-password-flags".into(), Variant::from(4u32));
             } else {
                 g.insert(
@@ -232,7 +280,8 @@ pub(super) async fn connection_for(conn: &Connection, ssid: &Ssid) -> Option<Str
 }
 
 /// Write a new key into a saved connection. `GetSettings` omits secrets and `Update` replaces
-/// the whole profile, so the map sent back is everything else plus the key.
+/// the whole profile, so the map sent back is everything else plus the key. A key the profile
+/// leaves to an agent is refused: saved it would land on disk, unsaved it can't connect.
 pub(super) async fn rekey(
     conn: &Connection,
     conn_path: &str,
@@ -242,13 +291,17 @@ pub(super) async fn rekey(
     let p = proxy(conn, conn_path, CONNECTION_IFACE).await?;
     let reply = p.call_method("GetSettings", &()).await.map_err(clean)?;
     let current: HashMap<String, Props> = reply.body().deserialize().map_err(clean)?;
+    if agent_held(&current, key) {
+        return Err(WIFI_NEEDS_AGENT.into());
+    }
     call_auth::<_, ()>(&p, "Update", &(rekeyed(current, key, offered),))
         .await
         .map(|_| ())
 }
 
 /// `current` with `key` in place of its key. A passphrase keeps a PSK profile's own
-/// `key-mgmt`, else takes `offered`; an 802.1X login replaces the whole `802-1x` group.
+/// `key-mgmt`, else takes `offered`; an 802.1X login replaces the whole `802-1x` group. Secret
+/// flags that leave a secret to an agent stay, and that secret is left out.
 pub(super) fn rekeyed<'a>(
     current: HashMap<String, Props>,
     key: &'a Key,
@@ -259,6 +312,7 @@ pub(super) fn rekeyed<'a>(
         .map(|s| text(s, "key-mgmt"))
         .unwrap_or_default();
     let key_mgmt = rekey_mgmt(&key_mgmt, offered).to_string();
+    let held = Held::of(&current);
     let mut settings: HashMap<String, HashMap<String, Variant<'a>>> = current
         .into_iter()
         .map(|(group, entries)| {
@@ -269,6 +323,6 @@ pub(super) fn rekeyed<'a>(
             (group, entries)
         })
         .collect();
-    secure(&mut settings, key, &key_mgmt);
+    secure(&mut settings, key, &key_mgmt, held);
     settings
 }
