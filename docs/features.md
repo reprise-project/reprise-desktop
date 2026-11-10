@@ -777,9 +777,10 @@ the screen takes the interface of the last session used at this computer.
   one window.
 - **Remote control.** Tools can drive the keyboard and mouse once you allow
   them. One you allowed with Remember starts without asking and shows a
-  balloon, "<app> is controlling this computer", that stays until you close
-  it, even under Do Not Disturb; its Stop and forget ends the
-  session and forgets the choice, so the next start asks again. Reprise's own
+  balloon, "<app> is controlling this computer", even under Do Not Disturb.
+  After 30 s it waits in the history until you close it or the session
+  ends; its Stop and forget ends the
+  app's sessions and forgets the choice, so the next start asks again. Reprise's own
   server for RDP clients is [Remote Desktop](#remote-desktop).
 - **One keyboard and mouse across computers** with Deskflow. Super+Shift+Esc
   always takes them back.

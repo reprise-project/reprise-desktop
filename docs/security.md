@@ -1171,9 +1171,13 @@ What a consent prompt remembers, and where:
   balloon, "<app> is controlling this computer", named and drawn from the
   app's desktop entry. It comes from Reprise at critical urgency, so the
   app's own balloon setting, Do Not Disturb, a screen share, a full-screen
-  window and quiet hours don't hold it, and it stays until dismissed; one
-  raised under the lock is still up after unlock. Its Stop and forget ends
-  the session and deletes the app's `remote-desktop` tokens from the
+  window and quiet hours don't hold it. It is up for 30 s, then stays open in
+  the history until dismissed, and neither the history's caps nor a burst of
+  notifications takes it out; one raised under the lock
+  is still up after unlock. Each app has one: a later restored session
+  replaces it, and it closes when the app's last session ends. Its Stop and
+  forget, on the balloon or in the history, ends every session of the app
+  and deletes the app's `remote-desktop` tokens from the
   permission store; a token the frontend holds only in memory (persist mode 1) restores nothing either
   until a prompt is allowed with Remember again. A restored ScreenCast
   shows no balloon, as the screen-sharing dot already covers it. A screen cast's app is
