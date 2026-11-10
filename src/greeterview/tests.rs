@@ -993,3 +993,37 @@ fn with_logon_animation_off_nothing_plays() {
     assert_eq!(next_frame(&mut h, None), Vec::<String>::new());
     assert!(shown(&mut h) == at_rest(&mut h));
 }
+
+#[test]
+fn a_right_password_says_welcome_while_the_session_starts() {
+    let (mut h, mut d) = logged_in();
+    assert_eq!(model(&h).said(), Some(logon::text::verifying()));
+    d.says(&mut h, GreeterReply::Success);
+    assert_eq!(
+        d.heard(),
+        repriselogin::greeter::GreeterRequest::StartSession
+    );
+    assert_eq!(model(&h).said(), Some(logon::text::welcome()));
+}
+
+#[test]
+fn a_later_greeting_enters_when_its_first_frame_draws() {
+    let (mut h, mut d) = glass_tiles(|_| {});
+    let fresh = Greeting {
+        interface: repriselogin::Interface::Glass,
+        show_users: true,
+        users: vec![user("anna"), user("bob")],
+        last_user: None,
+        keyboard: Default::default(),
+        notice: None,
+        outputs: Vec::new(),
+        background: None,
+        animation: true,
+    };
+    d.says(&mut h, GreeterReply::Greeting(fresh));
+    let p = view(&mut h).play.as_ref().expect("the screen enters");
+    assert_eq!(p.t.change, logon::Change::Enter);
+    assert!(p.since.is_none(), "the clock waits while the VT is away");
+    assert_eq!(next_frame(&mut h, None), ["TEST-1"]);
+    assert!(view(&mut h).play.as_ref().unwrap().since.is_some());
+}
