@@ -602,7 +602,8 @@ the screen takes the interface of the last session used at this computer.
   Welcome once the password is right and the session starts. A wrong
   password crossfades to its message. Blue crossfades its column as a tile
   opens or closes and as messages come and go. Keys and clicks during a
-  change go to the screen it changes to. Settings > Login Manager > Animate
+  change go to the screen it changes to, and a change carries on from
+  where it was when the screen's resolution or scale changes. Settings > Login Manager > Animate
   the screen (`[login] animation`) shows each screen at once, the ring
   standing still.
 - **Caps Lock and layouts.** "Caps Lock is on." shows under the password
