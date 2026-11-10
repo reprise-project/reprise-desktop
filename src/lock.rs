@@ -394,6 +394,13 @@ pub fn real_name() -> String {
     found.clone()
 }
 
+/// Where the login screen lists `user` among `source`'s accounts; 0 when it isn't listed.
+pub fn listed_at(source: repriselogin::users::Source, user: &str) -> usize {
+    (source.listed().iter())
+        .position(|e| e.name == user)
+        .unwrap_or(0)
+}
+
 fn pick_user(passwd: Option<String>, user: Option<String>, logname: Option<String>) -> String {
     [passwd, user, logname]
         .into_iter()
@@ -531,6 +538,7 @@ mod tests {
             real_name: String::new(),
             picture: None,
             note: None,
+            stock: 0,
         };
         Logon::locked(reprisekit::interface::Interface::Classic, user, false, true)
     }
@@ -590,6 +598,14 @@ mod tests {
         m.password
             .key(reprisekit::textedit::EditKey::Insert("hunter".into()));
         m
+    }
+
+    #[test]
+    fn the_lock_finds_its_user_where_the_login_screen_lists_it() {
+        let at = |user| listed_at(repriselogin::users::sample(), user);
+        assert_eq!(at("zoe"), 2);
+        assert_eq!(at("anna"), 0);
+        assert_eq!(at("nobody-listed"), 0);
     }
 
     #[test]

@@ -84,6 +84,16 @@ pub fn account_name(typed: &str) -> &str {
     name.split('@').next().unwrap_or(name)
 }
 
+/// Whether a logind session of `class` holds someone's work, so the login screen and the lock
+/// keep Restart and Turn Off back for it. Unknown classes count; closing ones are logged off.
+pub fn holds_work(class: &str, closing: bool) -> bool {
+    !closing
+        && !matches!(
+            class,
+            "greeter" | "lock-screen" | "manager" | "manager-early"
+        )
+}
+
 pub fn clean_prompt(raw: &str) -> Vec<String> {
     let mut v = Vec::new();
     add_prompt_lines(&mut v, raw);
@@ -93,6 +103,26 @@ pub fn clean_prompt(raw: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn greeters_lock_screens_service_managers_and_closing_sessions_hold_no_work() {
+        for class in [
+            "user",
+            "user-early",
+            "user-incomplete",
+            "user-light",
+            "background",
+            "background-light",
+            "none",
+            "a-class-from-a-later-systemd",
+        ] {
+            assert!(holds_work(class, false), "{class}");
+            assert!(!holds_work(class, true), "{class}, closing");
+        }
+        for class in ["greeter", "lock-screen", "manager", "manager-early"] {
+            assert!(!holds_work(class, false), "{class}");
+        }
+    }
 
     #[test]
     fn interface_names_round_trip() {

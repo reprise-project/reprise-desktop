@@ -1,21 +1,37 @@
+use std::os::unix::net::UnixStream;
+
 use super::*;
 use crate::harness::Harness;
 use crate::input::BTN_LEFT;
 use reprisekit::interface::Interface;
 use reprisekit::logon::Part;
 
-/// Locked under `interface` on TEST-1, no fingerprint conversation, `alone` answering.
-fn locked_in(interface: &str, alone: fn() -> bool) -> Harness {
+/// Locked under `interface` on TEST-1, no fingerprint conversation, `alone` answering; when
+/// `linked`, under reprise-login, with the daemon's end of the link returned.
+fn locked_with(
+    interface: &str,
+    alone: fn() -> bool,
+    linked: bool,
+) -> (Harness, Option<UnixStream>) {
     let config = format!("[appearance]\ninterface = \"{interface}\"\n");
     let mut h = Harness::with_config(crate::config::Config::parse(&config).unwrap());
     h.output("TEST-1", 1024, 768);
     h.state.lock.helpers.finger = |_| None;
     h.state.lock.helpers.alone = alone;
+    let daemon = linked.then(|| {
+        let (ours, theirs) = UnixStream::pair().unwrap();
+        crate::loginlink::install(&mut h.state, crate::loginlink::LoginLink::from_stream(ours));
+        theirs
+    });
     lockview::lock(&mut h.state);
-    h
+    (h, daemon)
 }
 
-fn locked(alone: fn() -> bool) -> Harness {
+fn locked_in(interface: &str, alone: fn() -> bool) -> (Harness, Option<UnixStream>) {
+    locked_with(interface, alone, true)
+}
+
+fn locked(alone: fn() -> bool) -> (Harness, Option<UnixStream>) {
     locked_in("classic", alone)
 }
 
@@ -24,8 +40,16 @@ fn part(h: &Harness, part: Part) -> Option<smithay::utils::Point<f64, smithay::u
 }
 
 fn press(h: &mut Harness, p: Part) {
+    press_from(h, InputSource::Physical, p);
+}
+
+fn press_from(h: &mut Harness, source: InputSource, p: Part) {
     let at = part(h, p).unwrap_or_else(|| panic!("{p:?} shows"));
-    lockview::button(&mut h.state, Side::Console, BTN_LEFT, at);
+    h.from(source, |s| lockview::button(s, Side::Console, BTN_LEFT, at));
+}
+
+fn pick_from(h: &mut Harness, source: InputSource, p: LockPower) {
+    h.from(source, |s| pick(s, p));
 }
 
 /// Turn the loop until the power menu is open (or 5 s pass), then its rows.
@@ -69,22 +93,71 @@ fn ending(h: &Harness) -> bool {
 #[test]
 fn the_lock_offers_restart_and_turn_off_only_while_the_session_is_alone() {
     use LockPower::*;
-    let mut h = locked(|| true);
+    let (mut h, _daemon) = locked(|| true);
     press(&mut h, Part::Power);
     assert_eq!(menu_rows(&mut h), [StandBy, Restart, TurnOff]);
-    let mut h = locked(|| false);
+    assert_eq!(message(&h), None);
+    let (mut h, _daemon) = locked(|| false);
     press(&mut h, Part::Power);
     assert_eq!(menu_rows(&mut h), [StandBy], "another session or autologin");
+    assert_eq!(
+        message(&h),
+        Some(logon::text::unlock_to_power()),
+        "the lock says why"
+    );
+}
+
+#[test]
+fn outside_reprise_login_the_lock_offers_only_stand_by() {
+    let (mut h, _) = locked_with("classic", || true, false);
+    h.state.config.power.poweroff = "true".into();
+    press(&mut h, Part::Power);
+    assert_eq!(menu_rows(&mut h), [LockPower::StandBy]);
+    pick_from(&mut h, InputSource::Physical, LockPower::TurnOff);
+    until(&mut h, "the lock says why", |h| message(h).is_some());
+    assert!(!ending(&h));
+}
+
+#[test]
+fn power_from_any_input_but_the_computers_own_reaches_nothing() {
+    let (mut h, _daemon) = locked(|| true);
+    h.state.config.power.poweroff = "true".into();
+    for source in [InputSource::Remote, InputSource::App, InputSource::Other] {
+        press_from(&mut h, source, Part::Power);
+        h.run_for(20);
+        assert!(!menu_open(&h.state), "{source:?} opens no menu");
+        pick_from(&mut h, source, LockPower::TurnOff);
+        h.run_for(20);
+        assert!(!ending(&h), "{source:?} ends nothing");
+    }
+}
+
+#[test]
+fn a_letter_on_the_lock_menu_picks_no_row() {
+    const KEY_R: u32 = 19;
+    const KEY_U: u32 = 22;
+    let (mut h, _daemon) = locked(|| true);
+    h.state.config.power.reboot = "true".into();
+    h.state.config.power.poweroff = "true".into();
+    press(&mut h, Part::Power);
+    menu_rows(&mut h);
+    for code in [KEY_R, KEY_U] {
+        h.key(code, true);
+        h.key(code, false);
+    }
+    h.run_for(20);
+    assert!(menu_open(&h.state), "the menu stays open");
+    assert!(!ending(&h));
 }
 
 #[test]
 fn a_turn_off_picked_after_someone_else_logged_on_ends_nothing() {
-    let mut h = locked(|| true);
+    let (mut h, _daemon) = locked(|| true);
     press(&mut h, Part::Power);
     menu_rows(&mut h);
     h.state.lock.helpers.alone = || false;
     for p in [LockPower::Restart, LockPower::TurnOff] {
-        pick(&mut h.state, p);
+        pick_from(&mut h, InputSource::Physical, p);
         until(&mut h, "the lock says why", |h| message(h).is_some());
         assert_eq!(message(&h), Some(logon::text::unlock_to_power()));
         assert!(!ending(&h), "{p:?} ends nothing");
@@ -93,15 +166,15 @@ fn a_turn_off_picked_after_someone_else_logged_on_ends_nothing() {
 
 #[test]
 fn a_turn_off_picked_while_alone_ends_the_session() {
-    let mut h = locked(|| true);
+    let (mut h, _daemon) = locked(|| true);
     h.state.config.power.poweroff = "true".into();
-    pick(&mut h.state, LockPower::TurnOff);
+    pick_from(&mut h, InputSource::Physical, LockPower::TurnOff);
     until(&mut h, "the session ends", ending);
 }
 
 #[test]
 fn the_glass_locks_power_button_opens_the_menu() {
-    let mut h = locked_in("glass", || true);
+    let (mut h, _daemon) = locked_in("glass", || true);
     assert_eq!(h.state.config.interface, Interface::Glass);
     press(&mut h, Part::Power);
     assert_eq!(menu_rows(&mut h).len(), 3);
@@ -113,7 +186,7 @@ fn a_key_on_the_open_menu_picks_its_row() {
     const KEY_ENTER: u32 = 28;
     const KEY_DOWN: u32 = 108;
     let slept = scratch("key").join("slept");
-    let mut h = locked(|| true);
+    let (mut h, _daemon) = locked(|| true);
     h.state.config.power.standby = format!("touch {}", slept.display());
     press(&mut h, Part::Power);
     menu_rows(&mut h);
@@ -141,14 +214,14 @@ fn lock_mode_closes_the_power_menu_and_refuses_its_rows() {
     assert!(crate::console::remote_side(&h.state));
     assert!(!menu_open(&h.state), "the menu closes");
     assert_eq!(part(&h, Part::Power), None, "the button goes");
-    pick(&mut h.state, LockPower::TurnOff);
+    pick_from(&mut h, InputSource::Physical, LockPower::TurnOff);
     h.run_for(20);
     assert!(!ending(&h));
 }
 
 #[test]
 fn a_locker_taking_over_closes_the_power_menu() {
-    let mut h = locked(|| true);
+    let (mut h, _daemon) = locked(|| true);
     press(&mut h, Part::Power);
     menu_rows(&mut h);
     let mut c = h.connect();
@@ -158,15 +231,15 @@ fn a_locker_taking_over_closes_the_power_menu() {
 
 #[test]
 fn a_remote_viewer_driving_the_seat_reaches_no_power() {
-    let mut h = locked(|| true);
+    let (mut h, _daemon) = locked(|| true);
     let _peer = h.ei_remote_session();
     assert!(h.state.remote_controlled());
     lockview::redraw(&mut h.state);
     assert_eq!(part(&h, Part::Power), None);
-    open(&mut h.state, Side::Console);
+    h.from(InputSource::Physical, |s| open(s, Side::Console));
     h.run_for(20);
     assert!(!menu_open(&h.state));
-    pick(&mut h.state, LockPower::TurnOff);
+    pick_from(&mut h, InputSource::Physical, LockPower::TurnOff);
     h.run_for(20);
     assert!(!ending(&h));
 }
@@ -177,7 +250,7 @@ fn neither_lock_in_lock_mode_draws_a_power_button() {
         let l = h.state.lock.on(side).expect("locked");
         l.part(Part::Power).or(l.part(Part::PowerMenu))
     };
-    let h = locked(|| true);
+    let (h, _daemon) = locked(|| true);
     assert!(power(&h, Side::Console).is_some(), "outside lock mode");
     let (mut h, _portal, _lock) = crate::console::tests::in_lock_mode();
     lockview::lock_remote(&mut h.state);
@@ -187,7 +260,7 @@ fn neither_lock_in_lock_mode_draws_a_power_button() {
 
 #[test]
 fn the_power_menu_opens_over_the_lock_and_closes_with_it() {
-    let mut h = locked(|| true);
+    let (mut h, _daemon) = locked(|| true);
     press(&mut h, Part::Power);
     menu_rows(&mut h);
     assert_eq!(h.state.menus.len(), 1);
@@ -197,22 +270,6 @@ fn the_power_menu_opens_over_the_lock_and_closes_with_it() {
     );
     lockview::unlock(&mut h.state);
     assert!(h.state.menus.is_empty());
-}
-
-#[test]
-fn greeters_lock_screens_and_service_managers_hold_no_work() {
-    for class in [
-        "user",
-        "user-early",
-        "user-incomplete",
-        "background",
-        "background-light",
-    ] {
-        assert!(holds_work(class), "{class}");
-    }
-    for class in ["greeter", "lock-screen", "manager", "manager-early", "none"] {
-        assert!(!holds_work(class), "{class}");
-    }
 }
 
 #[test]

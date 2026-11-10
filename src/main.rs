@@ -380,6 +380,7 @@ fn run(
     tray::setup(&mut state);
     backend::init(&mut state)?;
     loginlink::setup(&mut state);
+    lockview::find_listed(&mut state);
     // After the seat is ours: a start that cannot take it never stops the scopes.
     spawn::stop_stale_scopes(
         &state.env,

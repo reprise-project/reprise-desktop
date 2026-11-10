@@ -667,7 +667,7 @@ fn draw_tile(c: &mut Canvas, m: &Logon, sc: &Scheme, i: usize, r: Rect, k: Lines
     let picture = match &user.picture {
         Some(p) => p,
         None => {
-            stock = userpic::draw(userpic::ALL[i % userpic::ALL.len()], n);
+            stock = userpic::draw(userpic::ALL[user.stock % userpic::ALL.len()], n);
             &stock
         }
     };
