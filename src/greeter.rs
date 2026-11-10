@@ -461,7 +461,7 @@ mod tests {
             h.output("TEST-1", 1024, 768);
             crate::greeterview::setup(&mut h.state, g);
             let login = h.state.greeter.login.as_ref().expect("the login screen");
-            assert_eq!(login.model.over_picture, over, "{i:?}");
+            assert_eq!(login.view.model.over_picture, over, "{i:?}");
         }
     }
 
