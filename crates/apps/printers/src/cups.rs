@@ -90,7 +90,7 @@ impl From<http::Error> for Error {
         match e {
             http::Error::Unreachable(_) => Error::NotRunning,
             http::Error::Denied => Error::Denied,
-            http::Error::Failed(why) => Error::Refused(why),
+            http::Error::Failed(why) => Error::Refused(without_userinfo(&why)),
         }
     }
 }
@@ -175,10 +175,30 @@ fn login_name() -> String {
         .unwrap_or_default()
 }
 
+/// `s` with the user name and password taken out of every URL in it (`smb://user:pass@host`
+/// reads `smb://host`), for the log and the message boxes.
+pub fn without_userinfo(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(i) = rest.find("://") {
+        let (head, tail) = rest.split_at(i + 3);
+        out.push_str(head);
+        let end = tail
+            .find(|c: char| {
+                matches!(c, '/' | '?' | '#' | '"' | '\'' | '>' | ')') || c.is_whitespace()
+            })
+            .unwrap_or(tail.len());
+        let host = tail[..end].rfind('@').map_or(0, |at| at + 1);
+        rest = &tail[host..];
+    }
+    out.push_str(rest);
+    out
+}
+
 /// cupsd's messages come lowercase and unpunctuated at times; a box
 /// shows a sentence.
 pub fn sentence(s: &str) -> String {
-    let s = s.trim();
+    let s = without_userinfo(s.trim());
     let mut out: String = s
         .chars()
         .take(1)

@@ -3,14 +3,29 @@
 use super::*;
 
 /// What Properties changes on a printer, field by field: `None` leaves
-/// it.
-#[derive(Clone, Debug, Default, PartialEq)]
+/// it. `Debug` drops the address's user name and password.
+#[derive(Clone, Default, PartialEq)]
 pub struct Change {
     pub info: Option<String>,
     pub location: Option<String>,
     pub device_uri: Option<String>,
     pub shared: Option<bool>,
     pub defaults: Vec<(String, Value)>,
+}
+
+impl std::fmt::Debug for Change {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Change")
+            .field("info", &self.info)
+            .field("location", &self.location)
+            .field(
+                "device_uri",
+                &self.device_uri.as_deref().map(without_userinfo),
+            )
+            .field("shared", &self.shared)
+            .field("defaults", &self.defaults)
+            .finish()
+    }
 }
 
 impl Change {
@@ -197,13 +212,26 @@ pub enum Driver {
     File(std::path::PathBuf),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// A queue to add. `Debug` drops the address's user name and password.
+#[derive(Clone, PartialEq, Eq)]
 pub struct NewPrinter {
     pub name: String,
     pub device_uri: String,
     pub driver: Driver,
     pub info: String,
     pub location: String,
+}
+
+impl std::fmt::Debug for NewPrinter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NewPrinter")
+            .field("name", &self.name)
+            .field("device_uri", &without_userinfo(&self.device_uri))
+            .field("driver", &self.driver)
+            .field("info", &self.info)
+            .field("location", &self.location)
+            .finish()
+    }
 }
 
 pub fn add(c: &Client, p: &NewPrinter) -> Result<()> {
