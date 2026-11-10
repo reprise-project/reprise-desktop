@@ -86,12 +86,12 @@ use outputs::{Probe, asks_scan, connector_disconnected, scan_connectors};
 pub(crate) use render::{advance, send_frame_callbacks};
 pub use render::{answer_frames, take_stats};
 use render::{committed, retired, vblank};
-#[cfg(test)]
-pub use schedule::take_asks;
 pub use schedule::{
     Ask, cursor_outputs, schedule, schedule_all, schedule_on, schedule_pointer, schedule_shows_at,
     schedule_step,
 };
+#[cfg(test)]
+pub use schedule::{take_asks, take_steps};
 pub use session::on_input;
 use session::{activate, device_reset_done, pause};
 use steps::on_quiet;

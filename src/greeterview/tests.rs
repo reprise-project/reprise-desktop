@@ -958,6 +958,35 @@ fn the_ring_turns_while_busy_and_asks_nothing_once_the_failure_settles() {
 }
 
 #[test]
+fn the_ring_draws_and_asks_for_frames_only_on_its_steps() {
+    let (mut h, mut d) = glass_tiles(|_| {});
+    click_part(&mut h, Part::Tile(0));
+    settle(&mut h);
+    tap(&mut h, &[KEY_P, KEY_W, ENTER]);
+    let _ = d.heard();
+    settle(&mut h);
+    let ms = std::time::Duration::from_millis;
+    let since = std::time::Instant::now() - ms(25);
+    view(&mut h).ring = Some(since);
+    crate::backend::take_steps();
+    next_frame(&mut h, None);
+    assert_eq!(model(&h).spin, 1);
+    assert_eq!(
+        crate::backend::take_steps(),
+        [since + ms(40)],
+        "the next step's frame"
+    );
+    let drawn = shown(&mut h);
+    next_frame(&mut h, None);
+    assert_eq!(
+        crate::backend::take_steps(),
+        [since + ms(40)],
+        "a frame between steps asks for the step again"
+    );
+    assert!(shown(&mut h) == drawn, "and draws nothing");
+}
+
+#[test]
 fn keys_typed_during_a_pick_reach_the_password_box() {
     let (mut h, _d) = glass_tiles(|_| {});
     click_part(&mut h, Part::Tile(0));
