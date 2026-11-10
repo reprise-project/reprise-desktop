@@ -77,6 +77,7 @@ mod livepreview;
 mod location;
 mod logbridge;
 mod loginlink;
+mod logonview;
 mod media;
 mod menuview;
 mod miniview;
