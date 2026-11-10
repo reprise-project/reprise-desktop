@@ -452,3 +452,75 @@ fn the_ring_steps_with_time_and_comes_round() {
     let ring = spinner_rect(&tile(), &l, &theme, &text, 1);
     assert_eq!(ring, None, "no ring while not busy");
 }
+
+fn shown(m: &Logon, s: i32, show: Show) -> (Canvas, LogonLayout) {
+    let theme = crate::interfaces::theme_for(Interface::Glass).scaled(s);
+    let text = TextRenderer::load(&theme.fonts);
+    let l = layout(m, &theme, &text, OUTPUT);
+    let mut c = Canvas::new((OUTPUT.width * s) as u32, (OUTPUT.height * s) as u32);
+    draw_shown(&mut c, m, &l, &theme, text.for_output(s), s, show);
+    (c, l)
+}
+
+#[test]
+fn a_frame_drawn_over_all_but_it_gives_the_whole_screen() {
+    let mut tile_hot = tile();
+    tile_hot.lit = Some((Part::Tile(0), Interaction::Hot));
+    let mut tiles = tile();
+    tiles.click(Part::SwitchUser);
+    let mut typed = tiles.clone();
+    typed.click(Part::OtherUser);
+    let cases = [
+        ("tile", tile(), Part::Tile(0)),
+        ("tile hot", tile_hot, Part::Tile(0)),
+        ("tiles, focused", tiles.clone(), Part::Tile(0)),
+        ("tiles, other", tiles, Part::Tile(1)),
+        ("typed", typed, Part::OtherUser),
+    ];
+    for (name, m, part) in cases {
+        for s in [1, 2] {
+            let theme = crate::interfaces::theme_for(Interface::Glass).scaled(s);
+            let (mut c, l) = shown(&m, s, Show::AllBut(part));
+            let whole = drawn(&m, s).0;
+            assert!(
+                c.pixels != whole.pixels,
+                "{name} @{s}: the frame is left out"
+            );
+            draw_frame(&mut c, &m, &l, &theme, s, part);
+            assert!(
+                c.pixels == whole.pixels,
+                "{name} @{s}: the frame completes the screen"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_chrome_is_the_same_on_every_screen_and_holds_no_block() {
+    let mut tiles = tile();
+    tiles.click(Part::SwitchUser);
+    let mut message = tile();
+    message.fail(strings::incorrect());
+    let (chrome, l) = shown(&tile(), 1, Show::Chrome);
+    for (name, m) in [("tiles", tiles), ("message", message), ("busy", busy())] {
+        assert!(
+            shown(&m, 1, Show::Chrome).0.pixels == chrome.pixels,
+            "{name}: the chrome draws as on the tile"
+        );
+    }
+    let frame = l.rect(Part::Tile(0)).unwrap();
+    let field = l.rect(Part::Password).unwrap();
+    for r in [frame, field] {
+        for y in r.y..r.bottom() {
+            for x in r.x..r.right() {
+                assert_eq!(chrome.get(x, y), 0, "({x}, {y}) is clear without the block");
+            }
+        }
+    }
+    let power = l.rect(Part::Power).unwrap();
+    assert_ne!(
+        chrome.get(power.x + 4, power.y + 4),
+        0,
+        "the power button is chrome"
+    );
+}

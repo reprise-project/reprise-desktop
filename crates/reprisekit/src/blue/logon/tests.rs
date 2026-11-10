@@ -101,8 +101,12 @@ fn remote() -> Logon {
     m
 }
 
-/// Draws the wordmark in Tahoma Bold, since its own faces are whichever the machine installs.
 fn drawn(m: &Logon, v: Variant, s: i32) -> (Canvas, LogonLayout) {
+    shown(m, v, s, Show::All)
+}
+
+/// Draws the wordmark in Tahoma Bold, since its own faces are whichever the machine installs.
+fn shown(m: &Logon, v: Variant, s: i32, show: Show) -> (Canvas, LogonLayout) {
     let theme = blue_theme(v).scaled(s);
     let text = TextRenderer::load(&theme.fonts);
     let title = TextRenderer::load(
@@ -115,7 +119,7 @@ fn drawn(m: &Logon, v: Variant, s: i32) -> (Canvas, LogonLayout) {
     );
     let l = layout(m, &theme, &text, OUTPUT);
     let mut c = Canvas::new((OUTPUT.width * s) as u32, (OUTPUT.height * s) as u32);
-    draw_titled(&mut c, m, &l, &theme, text.for_output(s), &title, s);
+    draw_titled(&mut c, m, &l, &theme, text.for_output(s), &title, s, show);
     (c, l)
 }
 
@@ -589,4 +593,39 @@ fn a_user_without_a_picture_gets_the_stock_picture_of_its_place_in_the_list() {
         "the third stock picture"
     );
     assert_ne!(lock(2, None), lock(0, None));
+}
+
+#[test]
+fn the_blue_chrome_is_the_same_on_every_screen_and_holds_no_column() {
+    let tiles = Logon::new(Interface::Blue, users(), true, None);
+    let mut tile = tiles.clone();
+    tile.click(Part::Tile(1));
+    let mut typed = Logon::new(Interface::Blue, Vec::new(), true, None);
+    typed.key(LogonKey::Text("carol"));
+    for v in [Variant::Blue, Variant::Olive] {
+        let (chrome, l) = shown(&tiles, v, 1, Show::Chrome);
+        for m in [&tile, &typed] {
+            assert!(
+                shown(m, v, 1, Show::Chrome).0.pixels == chrome.pixels,
+                "{v:?}: the chrome draws as on the tiles"
+            );
+        }
+        assert!(
+            chrome.pixels != drawn(&tiles, v, 1).0.pixels,
+            "{v:?}: the tiles are left out"
+        );
+        let all_but = shown(&tiles, v, 1, Show::AllBut(Part::Tile(0))).0;
+        assert!(
+            all_but.pixels == drawn(&tiles, v, 1).0.pixels,
+            "{v:?}: no frame is carried"
+        );
+        let backdrop = backdrop(v.scheme(), OUTPUT.width, OUTPUT.height, 1);
+        let r = l.rect(Part::Tile(0)).unwrap();
+        let (x, y) = (r.x + r.width / 2, r.y + r.height / 2);
+        assert_eq!(
+            chrome.get(x, y),
+            backdrop.get(x, y),
+            "{v:?}: the backdrop under a tile"
+        );
+    }
 }
