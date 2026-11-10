@@ -317,7 +317,7 @@ fn both_sides_verifying_at_once_each_get_their_own_verdict() {
         password: |_, _| {
             let gate = verdict_gate();
             sh(&format!(
-                r#"read p; while [ ! -e '{}' ]; do sleep 0.01; done; [ "$p" = hunter2 ] && echo '= 0' || echo '= 7'"#,
+                r#"read p; i=0; while [ ! -e '{}' ] && [ $i -lt 1000 ]; do sleep 0.01; i=$((i+1)); done; [ "$p" = hunter2 ] && echo '= 0' || echo '= 7'"#,
                 gate.display()
             ))
         },

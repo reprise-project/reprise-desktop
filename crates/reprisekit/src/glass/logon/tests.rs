@@ -29,6 +29,7 @@ fn users(n: usize) -> Vec<LogonUser> {
             },
             picture: (i == 0).then(|| userpic::draw(userpic::ALL[3], 128)),
             note: (i == 1).then_some(UserNote::LoggedOn),
+            stock: i,
         })
         .collect()
 }

@@ -1,5 +1,5 @@
-//! The lock's power menu: Stand By, plus Restart and Turn Off while the session is the
-//! computer's only one and no one logs in by themselves after a restart.
+//! The lock's power menu: Stand By, plus Restart and Turn Off under reprise-login while the
+//! session is the computer's only one and no one logs in by themselves after a restart.
 
 use std::path::Path;
 
@@ -8,6 +8,7 @@ use reprisekit::logon;
 
 use crate::compositor::State;
 use crate::console::Side;
+use crate::inputproto::InputSource;
 use crate::lockview::{self, Origin};
 use crate::menuview::MenuKind;
 use crate::startmenu::MenuItem;
@@ -27,12 +28,25 @@ pub fn offered(state: &State, side: Side) -> bool {
     side == Side::Console && !crate::console::remote_side(state) && !state.remote_controlled()
 }
 
+/// Whether the input being handled may reach the menu: only the computer's own devices.
+fn at_the_computer(state: &State) -> bool {
+    state.inputproto.source == InputSource::Physical
+}
+
+/// `Helpers::alone`, or never alone outside reprise-login, whose autologin can't be read.
+fn alone_check(state: &State) -> fn() -> bool {
+    match state.login_link {
+        Some(_) => state.lock.helpers.alone,
+        None => || false,
+    }
+}
+
 /// Open the menu over the screen once `Helpers::alone` has answered off the loop.
 pub fn open(state: &mut State, side: Side) {
-    if !offered(state, side) || menu_open(state) {
+    if !offered(state, side) || !at_the_computer(state) || menu_open(state) {
         return;
     }
-    let alone = state.lock.helpers.alone;
+    let alone = alone_check(state);
     state.spawn_job(move || {
         let alone = alone();
         Box::new(move |state: &mut State| show(state, alone))
@@ -47,8 +61,11 @@ fn show(state: &mut State, alone: bool) {
         return;
     }
     let rows = rows(!state.config.power.standby.trim().is_empty(), alone);
+    if !alone {
+        lockview::refused(state, logon::text::unlock_to_power());
+    }
     if rows.is_empty() {
-        return lockview::refused(state, logon::text::unlock_to_power());
+        return;
     }
     let items = (rows.iter()).map(|r| MenuItem::item(&label(*r))).collect();
     let host = lockview::host(Side::Console);
@@ -73,14 +90,14 @@ fn label(p: LockPower) -> String {
 
 /// A picked row; Restart and Turn Off ask `Helpers::alone` again first.
 pub fn pick(state: &mut State, p: LockPower) {
-    if !offered(state, Side::Console) {
+    if !offered(state, Side::Console) || !at_the_computer(state) {
         return;
     }
     if p == LockPower::StandBy {
         let cmd = state.config.power.standby.clone();
         return crate::sessionend::sleep(state, crate::sessionend::Act::StandBy, cmd);
     }
-    let alone = state.lock.helpers.alone;
+    let alone = alone_check(state);
     state.spawn_job(move || {
         let alone = alone();
         Box::new(move |state: &mut State| end(state, p, alone))
@@ -151,21 +168,15 @@ async fn only_session() -> zbus::Result<bool> {
         if path == own {
             continue;
         }
-        let class: String = (crate::power::session_proxy(&conn, path).await?)
-            .get_property("Class")
-            .await?;
-        if holds_work(&class) {
+        let session = crate::power::session_proxy(&conn, path).await?;
+        let class: String = session.get_property("Class").await?;
+        let closing = session.get_property::<String>("State").await? == "closing";
+        if repriselogin::holds_work(&class, closing) {
             log::info!("lock: session {id} of {user} ({class}) keeps Restart and Turn Off off");
             return Ok(false);
         }
     }
     Ok(true)
-}
-
-/// logind's user and background classes, their early and light kinds included; greeters, lock
-/// screens and service managers hold no one's work.
-fn holds_work(class: &str) -> bool {
-    class.starts_with("user") || class.starts_with("background")
 }
 
 #[cfg(test)]

@@ -10,6 +10,7 @@ fn users(n: usize) -> Vec<LogonUser> {
             real_name: format!("User {i}"),
             picture: None,
             note: None,
+            stock: i,
         })
         .collect()
 }

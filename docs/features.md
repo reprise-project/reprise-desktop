@@ -470,13 +470,13 @@ are.
   else's tile shows. Classic draws it on the desktop colour, Blue on its
   welcome field, Glass over your own wallpaper and water. The screen goes
   on the primary monitor, the others show the backdrop. Its power button
-  opens a menu with Stand By (when `[power] standby` is set), and with
-  Restart and Turn Off while nobody else is logged on (remotely included)
-  and no user logs in by themselves. Each goes through logind, so a
-  program's block inhibitor still holds it off; Restart and Turn Off close
-  your programs without their save prompts. There is no power on the lock
-  in lock mode nor while a remote viewer drives the computer
-  ([security.md](security.md)).
+  opens a menu with Stand By (when `[power] standby` is set), and under
+  reprise-login with Restart and Turn Off while nobody else is logged on
+  (remotely included) and no user logs in by themselves. Each goes through
+  logind, so a program's block inhibitor still holds it off; Restart and
+  Turn Off close your programs without their save prompts. There is no
+  power on the lock in lock mode nor while a remote viewer drives the
+  computer ([security.md](security.md)).
 - **Idle steps.** Screen saver, lock, screen off and suspend, each with its
   own timeout, and separate timeouts on battery.
 - **Lock on sleep.** The screen locks before the machine suspends, whatever
@@ -570,12 +570,12 @@ the screen takes the interface of the last session used at this computer.
   the login manager, a session it can't read yet keeps a login of that user
   waiting.
 - **Shut Down and Restart** from the login screen. While anyone is still
-  logged on, the screen first asks for an administrator's name and
-  password: a member of `wheel`, never root. Shutting down then ends every
-  session, unsaved work included. A wrong password and a name that isn't an
-  administrator's are both refused 3 s after the last answer. An
-  administrator whose password must be changed is refused until they log
-  in and change it.
+  logged on (remotely or without a desktop included), the screen first asks
+  for an administrator's name and password: a member of `wheel`, never root.
+  Shutting down then ends every session, unsaved work included. A wrong
+  password and a name that isn't an administrator's are both refused 3 s
+  after the last answer. An administrator whose password must be changed is
+  refused until they log in and change it.
 - **PAM's messages.** A wrong name or password gets one fixed message.
   What PAM says during the login (an account locked after failed logins,
   `/run/nologin`'s text, an expired account) stays on screen in its words.

@@ -124,6 +124,8 @@ pub struct LogonUser {
     pub real_name: String,
     pub picture: Option<Canvas>,
     pub note: Option<UserNote>,
+    /// The stock picture Blue shows without `picture`: the user's place in the login screen's list.
+    pub stock: usize,
 }
 
 impl LogonUser {
