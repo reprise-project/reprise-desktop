@@ -185,6 +185,18 @@ impl Form {
     }
 
     pub fn key(&mut self, key: Key) -> Event {
+        // A control greyed while focused keeps the focus but takes no key: a second Enter on a
+        // button greyed by its own press does nothing until the host lights it again.
+        if self.focus.is_some_and(|i| !self.items[i].focusable()) {
+            return match key {
+                Key::Tab { back } => self.move_focus(back),
+                Key::Escape => Event::Cancel,
+                Key::Access(ch) => self.access_key(ch),
+                Key::Char(ch) if self.consent.is_none() => self.access_key(ch),
+                Key::Edit(k) => flat_key(&k).map_or(Event::None, |flat| self.key(flat)),
+                _ => Event::None,
+            };
+        }
         let key = match key {
             Key::NewLine => match self.focus.map(|i| &self.items[i].control) {
                 Some(Control::Memo(_)) if self.open_combo().is_none() => {

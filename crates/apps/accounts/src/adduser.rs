@@ -395,6 +395,23 @@ mod tests {
         assert!(!create_live(&d));
     }
 
+    #[test]
+    fn a_second_enter_on_create_during_a_job_keeps_the_focus_and_does_nothing() {
+        let mut d = AddUser::new(Vec::new());
+        type_into(&mut d, FULL, "Sam Lee");
+        type_into(&mut d, PASSWORD, "pw12345!");
+        type_into(&mut d, CONFIRM, "pw12345!");
+        d.form.focus_id(CREATE);
+        let ev = d.form.key(form::Key::Enter);
+        assert!(matches!(d.event(ev), Outcome::Create(_)));
+        d.set_busy(true);
+        let ev = d.form.key(form::Key::Enter);
+        assert_eq!(d.event(ev), Outcome::None);
+        assert_eq!(d.form.focus(), d.form.index_of(CREATE));
+        d.set_busy(false);
+        assert_eq!(d.form.focus(), d.form.index_of(CREATE));
+    }
+
     fn tick(d: &mut AddUser, id: &str) {
         d.form.focus_id(id);
         let ev = d.form.key(form::Key::Space);
