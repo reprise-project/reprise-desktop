@@ -923,10 +923,14 @@ fn the_ring_turns_while_busy_and_asks_nothing_once_the_failure_settles() {
         Some(logon::Change::Busy)
     );
     settle(&mut h);
-    next_frame(&mut h, None);
+    assert_eq!(
+        next_frame(&mut h, None),
+        ["TEST-1"],
+        "the ring asks for its next step"
+    );
     assert_eq!(model(&h).spin, 0, "the ring starts from step 0");
     h.run_for(70);
-    next_frame(&mut h, None);
+    assert_eq!(next_frame(&mut h, None), ["TEST-1"]);
     assert!(
         model(&h).spin >= 3,
         "the ring turned, at step {}",
