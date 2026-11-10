@@ -33,7 +33,7 @@ while an editor saves it doesn't.
 | `[fonts]`, `[icons]`, `[cursor]` | UI font, icon theme, pointer theme |
 | `[toolkits]` | how GTK and Qt programs are themed |
 | `[glass]` | Glass's colour, material, mode and its schedule, blur and notification_style |
-| `[wallpaper]` | picture, slideshow, lock screen picture, water |
+| `[wallpaper]` | picture, slideshow, water |
 | `[screensaver]`, `[idle]` | savers and the idle steps |
 | `[power]` | Turn Off commands, lid and buttons, battery alarms, external locker |
 | `[lock]` | `away_device`, `away_after_s`: lock when a paired Bluetooth device goes away ([features.md](features.md#lock-power-and-session)) |
@@ -102,12 +102,13 @@ are sharp at any resolution. `reprise:tarn` alone is its first variant.
 or mode changes. Without an `image` key, Blue shows `tarn/blue` and Glass
 `flow/glass`; Classic keeps its desktop colour. Drawn pictures are cached in
 `$XDG_CACHE_HOME/reprise/wallpapers`, so a login shows them at once; until
-one is ready the desktop shows its colour. The lock screen, desktop water and
-the Background page's monitor show a built-in like any picture.
+one is ready the desktop shows its colour. Glass's lock screen, desktop water
+and the Background page's monitor show a built-in like any picture; Classic's
+and Blue's lock screens draw the welcome backdrop.
 
 Desktop water ripples the wallpaper: the pointer leaves a wake over bare
 desktop, and clicks, dropped icons and windows opening, closing or moving make
-waves. The lock screen's picture ripples too. It pauses under a fullscreen
+waves. Glass's lock screen picture ripples too. It pauses under a fullscreen
 window. The screen draws the water only in the frames it steps in, so a
 `water_rate` below the refresh rate draws fewer frames. Rain on its own draws
 about 30 frames a second, each running the steps since the last, so its

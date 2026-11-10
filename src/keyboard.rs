@@ -608,7 +608,7 @@ impl State {
             switcher_open: self.switcher.is_open(),
             super_tap_armed: self.key_input.super_tap_armed,
             menus_open: !self.menus.is_empty(),
-            lock_menu: crate::lockview::power_menu_open(self),
+            lock_menu: crate::lockpower::menu_open(self),
             dialog_has_keyboard: self.dialog_has_keyboard(),
             dialog_modal: self.dialog_is_modal(),
             dialog_windowed: (self.dialogs.views.last()).is_some_and(|v| v.dialog.windowed()),

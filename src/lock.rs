@@ -1,9 +1,5 @@
-//! The lock screen's PAM password check, which runs in a helper child beside the fingerprint's
-//! (see `lockfinger.rs`), and what a fingerprint line does to the screen. Nothing in here touches
-//! the scene or the seat; `lockview.rs` does that.
-//!
-//! The verifier zeroes the copies it owns. libpam wipes its own, except in modules that copy the
-//! answer elsewhere.
+//! The lock screen's PAM password check, run in a helper child beside the fingerprint's, and what
+//! a fingerprint line does to the screen. The verifier zeroes the copies of the password it owns.
 
 use reprisekit::logon::Logon;
 use repriselogin::add_prompt_lines;
@@ -28,10 +24,9 @@ pub const EXPIRED_BODY: &str =
 pub const FINGER_TOO_MANY: &str = "Too many fingerprint attempts. Type your password to unlock.";
 
 /// The longest answer the password conversation reads, in bytes: libpam's `PAM_MAX_RESP_SIZE`.
-pub const INPUT_CAPACITY: usize = 512;
+/// The lock's field stops there.
+pub const INPUT_CAPACITY: usize = reprisekit::logon::UNLOCK_MAX;
 
-/// A PAM prompt after the password: its text labels the field, and `echo` shows the answer as
-/// typed instead of as stars.
 pub use reprisekit::logon::Prompt;
 
 /// Apply one line of the fingerprint conversation to the lock screen `m`. Returns true only for
@@ -225,7 +220,7 @@ fn authenticate_then_account(
 
 /// What the conversation answers with, across every `converse` call of
 /// one `pam_authenticate`. The password is zeroed with it. `notices`
-/// collects the error and info text PAM sends for the dialog.
+/// collects the error and info text PAM sends for the screen.
 struct Credentials<'a> {
     user: CString,
     password: Zeroizing<Vec<u8>>,
@@ -385,6 +380,18 @@ pub fn current_user() -> String {
         let _ = FOUND.set(name.clone());
     }
     name
+}
+
+/// The full name the lock's tile shows, from the passwd entry; looked up once, at startup, as
+/// [`current_user`] is. Empty when there is none.
+pub fn real_name() -> String {
+    static FOUND: OnceLock<String> = OnceLock::new();
+    let found = FOUND.get_or_init(|| {
+        // SAFETY: getuid has no preconditions.
+        let uid = unsafe { libc::getuid() };
+        reprisefs::sysinfo::full_name(uid).unwrap_or_default()
+    });
+    found.clone()
 }
 
 fn pick_user(passwd: Option<String>, user: Option<String>, logname: Option<String>) -> String {
@@ -557,20 +564,32 @@ mod tests {
             ffi::PAM_CONV_ERR,
             -1,
         ] {
-            let mut m = screen();
+            let mut m = typed_screen();
             finger(&mut m, Line::Info("Swipe your finger".into()));
+            finger(&mut m, Line::Error("Failed to match fingerprint".into()));
+            m.message = None;
             assert!(
                 !finger(&mut m, Line::Result(rc)),
                 "PAM code {rc} does not unlock"
             );
             assert_eq!(m.hint, None);
             assert_eq!(m.message, None, "code {rc} adds no text of its own");
+            assert_eq!(m.password.text, "hunter", "code {rc} leaves the password");
         }
-        let mut m = screen();
+        let mut m = typed_screen();
         finger(&mut m, Line::Info("Swipe your finger".into()));
         assert!(!finger(&mut m, Line::Result(ffi::PAM_MAXTRIES)));
         assert_eq!(m.hint, None);
         assert_eq!(m.message.as_deref(), Some(FINGER_TOO_MANY));
+        assert_eq!(m.password.text, "hunter", "too many fingers leave it too");
+    }
+
+    /// The screen with "hunter" typed into its field.
+    fn typed_screen() -> Logon {
+        let mut m = screen();
+        m.password
+            .key(reprisekit::textedit::EditKey::Insert("hunter".into()));
+        m
     }
 
     #[test]
