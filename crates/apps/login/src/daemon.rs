@@ -139,6 +139,11 @@ pub enum Input {
     Unlocked {
         id: String,
     },
+    /// Session `id`'s `LockedHint` as logind reports it, at the start and on each change.
+    LockedHint {
+        id: String,
+        locked: bool,
+    },
     /// logind's `SwitchTo(vt)` failed.
     SwitchFailed {
         vt: u16,
@@ -460,6 +465,8 @@ pub struct Daemon {
     /// seat0's active session.
     removed_early: Vec<(String, Option<String>)>,
     notice: Option<Notice>,
+    /// The sessions logind reports `LockedHint` set for, by id, in the table yet or not.
+    locked: BTreeSet<String>,
     /// The running greeter came forward or its notes changed: it gets a fresh Greeting once the
     /// input is handled.
     regreet: bool,
@@ -488,6 +495,7 @@ impl Daemon {
             seat_empty: false,
             removed_early: Vec::new(),
             notice: None,
+            locked: BTreeSet::new(),
             regreet: false,
             next_worker: 1,
             unlocks: 0,
@@ -678,6 +686,13 @@ impl Daemon {
                 }) if *resumed == id);
                 if resuming {
                     self.finish_resume(false, &mut out);
+                }
+            }
+            Input::LockedHint { id, locked } => {
+                if locked {
+                    self.locked.insert(id);
+                } else {
+                    self.locked.remove(&id);
                 }
             }
             Input::SwitchFailed { vt } => self.switch_failed(vt, &mut out),
@@ -1492,6 +1507,7 @@ impl Daemon {
             }
             // Only the session on screen may hand the console to the login screen.
             SessionRequest::SwitchUser if seat_active.as_deref() == Some(id) => {
+                self.notice = Some(Notice::SwitchUser);
                 self.bring_greeter(out)
             }
             SessionRequest::SwitchUser => {}
@@ -1514,6 +1530,7 @@ impl Daemon {
         }
         self.endings.remove(id);
         self.viewed_before.remove(id);
+        self.locked.remove(id);
         let Some(entry) = self.sessions.remove(id) else {
             // It may have been on screen, as recovery could not tell.
             if unread && seat_active.is_none() {

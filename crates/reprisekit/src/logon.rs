@@ -623,6 +623,16 @@ impl Logon {
             .or_else(|| self.heading())
     }
 
+    /// Switch User's screen: Blue and Glass show the users to pick from, a waiting prompt
+    /// cancelled. Classic, a lock, an administrator's form and a check in progress stay.
+    pub fn pick_user(&mut self) -> Option<LogonAction> {
+        let listed = self.interface != Interface::Classic && !self.users.is_empty();
+        if !listed || self.busy || self.purpose != Purpose::Login {
+            return None;
+        }
+        self.open(Screen::Tiles)
+    }
+
     /// Cancel: both fields emptied, the conversation dropped and the focus on the name. The lock
     /// keeps its name and empties only the password.
     fn clear(&mut self) -> Option<LogonAction> {

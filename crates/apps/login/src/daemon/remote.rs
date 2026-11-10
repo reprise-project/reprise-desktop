@@ -632,8 +632,10 @@ impl Daemon {
     }
 
     pub(super) fn notes(&self) -> HashMap<String, Note> {
-        self.sessions
-            .notes(|uid| self.remote.viewers.contains_key(&uid))
+        self.sessions.notes(
+            |uid| self.remote.viewers.contains_key(&uid),
+            |id| self.locked.contains(id),
+        )
     }
 
     pub(super) fn front_request(
