@@ -276,6 +276,10 @@ remote viewer drives the seat, and an open power menu closes when either
 begins or a locker takes over. Without `[power] standby` outside
 reprise-login the menu would be empty, and no power button shows.
 
+Under reprise-login the lock draws the login screen's background, reading
+`/etc/reprise/login.toml` and `/var/lib/reprise-login/background` (root's,
+0644) off the loop; it writes neither.
+
 When `/etc/pam.d/reprise-fingerprint` is installed, a second helper runs
 the fingerprint conversation while the screen shows. Either one succeeding
 unlocks. A fingerprint conversation that ends without success (too many

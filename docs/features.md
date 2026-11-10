@@ -468,7 +468,9 @@ are.
 - **The lock is the login screen, locked.** Your tile (Classic: the Log On
   dialog with your name fixed) says Locked and takes your password; nobody
   else's tile shows. Classic draws it on the desktop colour, Blue on its
-  welcome field, Glass over your own wallpaper and water. The screen goes
+  welcome field, Glass over your own wallpaper and water; under
+  reprise-login with a login screen background set, all three lie over
+  that picture instead, Blue dimming it as the login screen does. The screen goes
   on the primary monitor, the others show the backdrop. Its power button
   opens a menu with Stand By (when `[power] standby` is set), and under
   reprise-login with Restart and Turn Off while nobody else is logged on
