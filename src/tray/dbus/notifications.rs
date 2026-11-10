@@ -302,8 +302,8 @@ pub(super) fn as_sent_by(
 }
 
 pub(super) fn desktop_entry(hint: &str) -> Option<reprisefs::apps::AppEntry> {
-    let id = notify::desktop_id(hint)?;
-    let path = reprisefs::apps::find_file(&id)?;
+    let (path, id) = (notify::desktop_ids(hint).into_iter())
+        .find_map(|id| Some((reprisefs::apps::find_file(&id)?, id)))?;
     let text = reprisefs::apps::read_desktop_file(&path).ok()?;
     reprisefs::apps::parse_desktop(&text, &id)
 }
