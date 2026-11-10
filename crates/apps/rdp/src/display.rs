@@ -921,6 +921,11 @@ impl Live {
     /// [`HOLD`], and after two the next encoder in the order takes over (bitmaps after the last).
     fn hold(&mut self, frame: Frame, now: Instant, h264: bool) {
         let buffer = match &frame.buffer {
+            FrameBuffer::Dmabuf {
+                modifier: DRM_FORMAT_MOD_LINEAR,
+                planes,
+                ..
+            } if !planes.is_empty() => format!("LINEAR, pitch {}", planes[0].stride),
             FrameBuffer::Dmabuf { modifier, .. } => format!("modifier {modifier:#x}"),
             FrameBuffer::Shm { .. } => "shared memory".to_string(),
         };

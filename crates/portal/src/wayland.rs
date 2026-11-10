@@ -839,8 +839,8 @@ impl Gbm {
             .map_err(|e| format!("no plane count for {format:?} with {modifier:#x}: {e}"))
     }
 
-    /// Allocate a bo the compositor can render into, letting GBM pick
-    /// from `modifiers` (the implicit modifier is never passed on).
+    /// Allocate a bo the compositor can render into, letting GBM pick from `modifiers` (the
+    /// implicit modifier is never passed on); a LINEAR bo may be wider than `w`.
     pub fn allocate(
         &self,
         w: u32,
@@ -858,16 +858,38 @@ impl Gbm {
         if mods.is_empty() {
             return Err("no explicit modifiers to allocate with".into());
         }
-        self.device
-            .create_buffer_object_with_modifiers2(
-                w,
-                h,
-                format,
-                mods.into_iter(),
-                gbm::BufferObjectFlags::RENDERING,
-            )
-            .map_err(|e| format!("gbm_bo_create_with_modifiers2 {w}x{h} {format:?}: {e}"))
+        let create = |w: u32, mods: Vec<gbm::Modifier>| {
+            self.device
+                .create_buffer_object_with_modifiers2(
+                    w,
+                    h,
+                    format,
+                    mods.into_iter(),
+                    gbm::BufferObjectFlags::RENDERING,
+                )
+                .map_err(|e| format!("gbm_bo_create_with_modifiers2 {w}x{h} {format:?}: {e}"))
+        };
+        let bo = create(w, mods)?;
+        match linear_width(bo.modifier().into(), bo.stride(), w, bo.bpp()) {
+            Some(wider) => create(wider, vec![gbm::Modifier::Linear]),
+            None => Ok(bo),
+        }
     }
+}
+
+/// The byte multiple a LINEAR capture buffer's rows start on: Intel's video engines read each
+/// row from a 64-byte boundary, and AMD pads LINEAR rows to 256.
+const LINEAR_PITCH: u32 = 256;
+
+/// The width a LINEAR bo of `width` `bpp`-bit pixels is allocated again at for rows on
+/// [`LINEAR_PITCH`] bytes, as GBM takes no pitch; None when `stride` is on one or it is tiled.
+fn linear_width(modifier: u64, stride: u32, width: u32, bpp: u32) -> Option<u32> {
+    if modifier != u64::from(gbm::Modifier::Linear) || stride.is_multiple_of(LINEAR_PITCH) {
+        return None;
+    }
+    let bytes = (bpp / 8).max(1);
+    let pixels = LINEAR_PITCH >> bytes.trailing_zeros().min(LINEAR_PITCH.trailing_zeros());
+    Some(width.next_multiple_of(pixels))
 }
 
 pub struct Plane {
@@ -1382,6 +1404,45 @@ mod tests {
             dmabuf_device: None,
             dmabuf_formats: Vec::new(),
         }
+    }
+
+    #[test]
+    fn a_linear_buffer_at_an_odd_width_is_widened_to_256_byte_rows() {
+        let linear = u64::from(gbm::Modifier::Linear);
+        for (width, stride, wider) in [(2662, 10648, 2688), (1366, 5464, 1408), (1921, 7684, 1984)]
+        {
+            assert_eq!(
+                linear_width(linear, stride, width, 32),
+                Some(wider),
+                "a {width}-wide XRGB8888 LINEAR buffer is allocated {wider} wide"
+            );
+            assert_eq!(
+                wider * 4 % LINEAR_PITCH,
+                0,
+                "{wider} px rows are 256-byte multiples"
+            );
+        }
+        assert_eq!(
+            linear_width(linear, 7680, 1920, 32),
+            None,
+            "1920 px rows already are"
+        );
+        assert_eq!(
+            linear_width(linear, 10752, 2662, 32),
+            None,
+            "a driver that pads to 256 bytes keeps its buffer"
+        );
+        assert_eq!(
+            linear_width(linear, 2662 * 3, 2662, 24),
+            Some(2816),
+            "24 bpp: 256 px"
+        );
+        let y_tiled = 0x0100_0000_0000_0002;
+        assert_eq!(
+            linear_width(y_tiled, 10648, 2662, 32),
+            None,
+            "a tiled buffer is kept"
+        );
     }
 
     #[test]
