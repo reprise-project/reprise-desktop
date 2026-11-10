@@ -384,9 +384,10 @@ pub fn sleep(state: &mut State, act: Act, cmd: String) {
 /// Run `cmd` off the loop, on logind when it names a logind action; a refusal shows a message box.
 fn attempt(state: &mut State, act: Act, cmd: String, override_inhibitors: bool) {
     let env = state.env.clone();
+    let interactive = prompts(state);
     state.spawn_job(move || {
         let failed = match logind_verb(&cmd) {
-            Some(verb) => zbus::block_on(call(verb, override_inhibitors)),
+            Some(verb) => zbus::block_on(call(verb, override_inhibitors, interactive)),
             None => run(&cmd, &env),
         };
         Box::new(move |state: &mut State| {
@@ -395,6 +396,12 @@ fn attempt(state: &mut State, act: Act, cmd: String, override_inhibitors: bool) 
             }
         })
     });
+}
+
+/// Whether polkit may ask for a password: not while the session is locked, where its prompt
+/// would map under the lock and the screen would stay faded out waiting for it.
+fn prompts(state: &State) -> bool {
+    !state.console_locked()
 }
 
 /// What a refusal's message box names.
@@ -449,7 +456,12 @@ fn refuse(state: &mut State, act: Act, why: &Refused) {
         crate::crash::not_ending();
     }
     crate::sessionfade::restore(state);
-    crate::lockview::refused(state, refusal_text(act, why));
+    // Anyone at the computer reads the lock: it names no program.
+    let unnamed = match why {
+        Refused::Held(_) => Refused::Held(Vec::new()),
+        why => why.clone(),
+    };
+    crate::lockview::refused(state, refusal_text(act, &unnamed));
     state.open_dialog(crate::dialog::Dialog::error(
         act.title(),
         refusal_text(act, why),
@@ -613,7 +625,7 @@ fn too_old_for_flags(e: &zbus::Error) -> bool {
     )
 }
 
-async fn call(verb: Verb, override_inhibitors: bool) -> Option<Refused> {
+async fn call(verb: Verb, override_inhibitors: bool, interactive: bool) -> Option<Refused> {
     // No method timeout: a password prompt stays up as long as polkit lets it.
     let conn = match zbus::Connection::system().await {
         Ok(c) => c,
@@ -627,16 +639,19 @@ async fn call(verb: Verb, override_inhibitors: bool) -> Option<Refused> {
             .cache_properties(zbus::proxy::CacheProperties::No)
             .build()
             .await?;
-        let interactive = zbus::proxy::MethodFlags::ALLOW_INTERACTIVE_AUTH;
+        let auth = match interactive {
+            true => zbus::proxy::MethodFlags::ALLOW_INTERACTIVE_AUTH,
+            false => zbus::proxy::MethodFlags::empty(),
+        };
         let flags = logind_flags(override_inhibitors);
         match proxy
-            .call_with_flags::<_, _, ()>(verb.method_with_flags(), interactive, &(flags,))
+            .call_with_flags::<_, _, ()>(verb.method_with_flags(), auth, &(flags,))
             .await
         {
             Err(e) if too_old_for_flags(&e) => {
                 log::info!("session end: {}: {e}", verb.method_with_flags());
                 proxy
-                    .call_with_flags::<_, _, ()>(verb.method(), interactive, &(true,))
+                    .call_with_flags::<_, _, ()>(verb.method(), auth, &(interactive,))
                     .await
             }
             r => r,
@@ -644,7 +659,8 @@ async fn call(verb: Verb, override_inhibitors: bool) -> Option<Refused> {
     }
     .await;
     let e = reply.err()?;
-    Some(with_holders(&conn, verb, failure(&e, reprisebus::polkit::dismissed)?).await)
+    let dismissed = || interactive && reprisebus::polkit::dismissed();
+    Some(with_holders(&conn, verb, failure(&e, dismissed)?).await)
 }
 
 /// A failed logind call as a refusal; a dismissed password prompt is none.
@@ -1309,6 +1325,33 @@ mod tests {
         crate::crash::ending();
         refuse(&mut h.state, Act::TurnOff, &Refused::NotAllowed);
         assert!(!crate::crash::is_ending());
+    }
+
+    fn locked() -> crate::harness::Harness {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.state.lock.helpers.finger = |_| None;
+        crate::lockview::lock(&mut h.state);
+        h
+    }
+
+    #[test]
+    fn the_lock_names_no_program_holding_off_a_turn_off() {
+        let mut h = locked();
+        let held = Refused::Held(vec![holder("backup", "Copying the photos", true)]);
+        refuse(&mut h.state, Act::TurnOff, &held);
+        let l = h.state.lock.console.as_ref().unwrap();
+        let shown = l.message().unwrap_or_default();
+        assert!(shown.contains("A program is preventing it."), "{shown}");
+        assert!(!shown.contains("backup"), "{shown}");
+    }
+
+    #[test]
+    fn a_locked_session_asks_logind_without_a_password_prompt() {
+        let mut h = locked();
+        assert!(!prompts(&h.state));
+        crate::lockview::unlock(&mut h.state);
+        assert!(prompts(&h.state));
     }
 
     #[test]

@@ -52,7 +52,7 @@ impl State {
             self.repoint(pos, time);
             return;
         }
-        // Under the desktop's lock a press goes to the lock dialog (`press`), never to what is
+        // Under the desktop's lock a press goes to the lock screen (`press`), never to what is
         // open under it.
         let locked = self.desktop_locked();
         if !locked && self.panels.region.is_some() {

@@ -276,7 +276,7 @@ impl State {
             self.capture_frame();
             return true;
         }
-        // The lock owns the pointer: a crossing under it must not start a capture, or the lock dialog would never see a click again.
+        // The lock owns the pointer: a crossing under it must not start a capture, or the lock screen would never see a click again.
         if self.console_holds_input() {
             return false;
         }

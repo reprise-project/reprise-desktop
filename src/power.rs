@@ -303,7 +303,7 @@ async fn run(reports: Sender<Report>, calls: async_channel::Receiver<Call>) {
 
 /// By `XDG_SESSION_ID`, else by our pid. Not `session/auto`, which is the
 /// D-Bus caller's session as logind sees it and may be another one.
-async fn session_path(login1: &Proxy<'_>) -> zbus::Result<OwnedObjectPath> {
+pub(crate) async fn session_path(login1: &Proxy<'_>) -> zbus::Result<OwnedObjectPath> {
     let reply = match std::env::var("XDG_SESSION_ID") {
         Ok(id) if !id.is_empty() => login1.call_method("GetSession", &(id,)).await?,
         _ => {
@@ -315,7 +315,10 @@ async fn session_path(login1: &Proxy<'_>) -> zbus::Result<OwnedObjectPath> {
     reply.body().deserialize()
 }
 
-async fn session_proxy(conn: &Connection, path: OwnedObjectPath) -> zbus::Result<Proxy<'static>> {
+pub(crate) async fn session_proxy(
+    conn: &Connection,
+    path: OwnedObjectPath,
+) -> zbus::Result<Proxy<'static>> {
     zbus::proxy::Builder::new(conn)
         .destination(LOGIN1_NAME)
         .path(path)

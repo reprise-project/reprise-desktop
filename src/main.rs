@@ -183,6 +183,7 @@ mod launches;
 mod layer;
 mod lock;
 mod lockfinger;
+mod lockpower;
 mod lockview;
 mod magnifier;
 mod malloc;
@@ -360,6 +361,7 @@ fn run(
     sandbox::set_trusted(&state.config.clipboard.trusted_apps);
     // Before any lock: a lock raised while nsswitch hangs would leave the desktop on screen.
     lock::current_user();
+    lock::real_name();
     let another_session = spawn::another_session_on_bus();
     // A display manager's session takes the user manager over; a text login defers to the
     // Reprise session already running.

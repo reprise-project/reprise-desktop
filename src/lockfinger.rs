@@ -129,8 +129,8 @@ impl Conversation {
         Ok(c)
     }
 
-    /// Write `line` and a newline to the child's stdin. A blocking write that cannot block: a pipe
-    /// holds far more than `lock::INPUT_CAPACITY`, and the child reads each line before it asks again.
+    /// Write `line` and a newline to the child's stdin. Cannot block: the lock's field stops at
+    /// `lock::INPUT_CAPACITY`, under a pipe's one page, and the child reads each line before it asks.
     pub fn answer(&mut self, line: &[u8]) -> std::io::Result<()> {
         let stdin = self.stdin.as_mut().ok_or(std::io::ErrorKind::BrokenPipe)?;
         stdin.write_all(line)?;

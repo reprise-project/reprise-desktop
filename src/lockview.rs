@@ -1,6 +1,5 @@
-//! The lock screen on the scene, one lock per side in lock mode: the login screen's locked state
-//! hosted through `logonview` in `layers.lock`, input routing and the PAM children. Pure state
-//! lives in `lock.rs`, `lockfinger.rs` and `reprisekit::logon`.
+//! The lock screen on the scene, one per side in lock mode: the login screen's locked state hosted
+//! through `logonview` in `layers.lock`, its input routing and its PAM children.
 
 use std::os::fd::BorrowedFd;
 use std::process::Command;
@@ -22,7 +21,7 @@ use smithay::{
 };
 
 use reprisekit::interface::Interface;
-use reprisekit::logon::{self, Logon, LogonAction, LogonUser, Purpose};
+use reprisekit::logon::{Logon, LogonAction, LogonUser, Purpose};
 use reprisescene::{BufferId, TreeId};
 use zeroize::Zeroizing;
 
@@ -33,9 +32,7 @@ use crate::input::{BTN_LEFT, Hit, Interaction};
 use crate::lock;
 use crate::lockfinger;
 use crate::logonview::{self, Fit, Host, LogonView};
-use crate::menuview::MenuKind;
 use crate::sessionlock::{ClientLock, SessionLock};
-use crate::startmenu::MenuItem;
 use crate::wallpaperview::LockWall;
 use crate::waterview::{Pane, Picture};
 use crate::window::WindowId;
@@ -102,6 +99,8 @@ pub struct Helpers {
     pub finger: fn(&str) -> Option<Command>,
     pub verify_timeout: Duration,
     pub finger_retry: Duration,
+    /// Whether the power menu offers Restart and Turn Off (`lockpower::alone`); runs off the loop.
+    pub alone: fn() -> bool,
 }
 
 impl Default for Helpers {
@@ -111,6 +110,7 @@ impl Default for Helpers {
             finger: lockfinger::finger_command,
             verify_timeout: Duration::from_secs(90),
             finger_retry: Duration::from_secs(2),
+            alone: crate::lockpower::alone,
         }
     }
 }
@@ -436,6 +436,8 @@ pub fn lock(state: &mut State) {
     }
     crate::crash::set_locked(true);
     if state.console_locked() {
+        // Lock mode may have begun: the screen drops its power button and menu.
+        redraw(state);
         return;
     }
     engage(state);
@@ -604,7 +606,7 @@ fn raise(state: &mut State, side: Side) {
     }
     let me = LogonUser {
         name: user.clone(),
-        real_name: String::new(),
+        real_name: lock::real_name(),
         picture: state.start_pictures.largest(),
         note: None,
     };
@@ -612,7 +614,7 @@ fn raise(state: &mut State, side: Side) {
         state.config.interface,
         me,
         crate::loginlink::offered(state, side),
-        has_power(state, side),
+        crate::lockpower::offered(state, side),
     );
     let compose = state.compose.as_ref().map(Compose::over);
     state.read_user_pictures(vec![PICTURE]);
@@ -677,7 +679,7 @@ fn teardown(state: &mut State, side: Side) -> Option<Refocus> {
     }
     if side == Side::Console {
         crate::sessionlock::stop_timers(state);
-        close_power_menu(state);
+        crate::lockpower::close(state);
     }
     for c in &l.view.covers {
         state.scene.destroy(c.tree);
@@ -855,7 +857,7 @@ const REMOTE: Host = Host {
     caps_lock: |s| caps_lock(s, Side::Remote),
 };
 
-fn host(side: Side) -> &'static Host {
+pub(crate) fn host(side: Side) -> &'static Host {
     match side {
         Side::Console => &CONSOLE,
         Side::Remote => &REMOTE,
@@ -1017,14 +1019,23 @@ fn caps_lock(state: &State, side: Side) -> bool {
     logonview::seat_caps_lock(state)
 }
 
-/// Bring `side`'s screen up to what it shows now: Switch User while the link offers it, and the
-/// screen hidden while a locker holds the lock or starts to.
+/// Bring `side`'s screen up to what it offers now (interface, Switch User, power), hidden while a
+/// locker holds the lock or starts to; the power menu closes with the power it offered.
 fn prepare(state: &mut State, side: Side) {
     let switch_user = crate::loginlink::offered(state, side);
-    let power = has_power(state, side);
-    if let Some(l) = state.lock.on_mut(side) {
-        l.view.model.purpose = Purpose::Unlock { switch_user, power };
-        l.view.hidden = !l.screen_shown();
+    let power = crate::lockpower::offered(state, side);
+    let interface = state.config.interface;
+    let Some(l) = state.lock.on_mut(side) else {
+        return;
+    };
+    if l.view.model.interface != interface {
+        let user = l.view.model.users[0].clone();
+        l.view.model = Logon::locked(interface, user, switch_user, power);
+    }
+    l.view.model.purpose = Purpose::Unlock { switch_user, power };
+    l.view.hidden = !l.screen_shown();
+    if side == Side::Console && (!power || l.view.hidden) {
+        crate::lockpower::close(state);
     }
 }
 
@@ -1045,14 +1056,20 @@ pub fn reset(l: &mut Lock) {
     l.view.model = Logon::locked(m.interface, user, m.offers_switch_user(), m.offers_power());
 }
 
-/// The user picture landed: the console's screen shows it.
+/// The user picture landed: both sides' screens show it.
 pub fn picture_read(state: &mut State) {
     let picture = state.start_pictures.largest();
-    let Some(l) = state.lock.console.as_mut() else {
-        return;
-    };
-    if l.view.model.users[0].picture != picture {
-        l.view.model.users[0].picture = picture;
+    let mut changed = false;
+    for l in [state.lock.console.as_mut(), state.lock.remote.as_mut()]
+        .into_iter()
+        .flatten()
+    {
+        if l.view.model.users[0].picture != picture {
+            l.view.model.users[0].picture = picture.clone();
+            changed = true;
+        }
+    }
+    if changed {
         redraw(state);
     }
 }
@@ -1178,79 +1195,8 @@ fn act(state: &mut State, side: Side, action: LogonAction) {
         }
         LogonAction::SwitchUser if side == Side::Console => crate::loginlink::switch_user(state),
         LogonAction::SwitchUser => {}
-        LogonAction::Power => power(state, side, false),
-        LogonAction::PowerMenu => power(state, side, true),
+        LogonAction::Power | LogonAction::PowerMenu => crate::lockpower::open(state, side),
         LogonAction::NextLayout => state.next_layout(),
-    }
-}
-
-/// What the lock's power menu does: each through `sessionend`, on logind, so its block
-/// inhibitors hold.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LockPower {
-    StandBy,
-    Restart,
-    TurnOff,
-}
-
-/// Only the console's lock outside lock mode shows the power button and menu: in lock mode the
-/// computer is in use from afar.
-fn has_power(state: &State, side: Side) -> bool {
-    side == Side::Console && !crate::console::remote_side(state)
-}
-
-/// The power button (Glass turns off at once, as the login screen does) or the power menu.
-fn power(state: &mut State, side: Side, menu: bool) {
-    if !has_power(state, side) {
-        return;
-    }
-    if !menu && state.config.interface == Interface::Glass {
-        return power_pick(state, LockPower::TurnOff);
-    }
-    let sleeps = !state.config.power.standby.trim().is_empty();
-    let rows: Vec<LockPower> = (sleeps.then_some(LockPower::StandBy).into_iter())
-        .chain([LockPower::Restart, LockPower::TurnOff])
-        .collect();
-    let items = (rows.iter())
-        .map(|r| {
-            MenuItem::item(&match r {
-                LockPower::StandBy => logon::text::stand_by(),
-                LockPower::Restart => logon::text::restart(),
-                LockPower::TurnOff => logon::text::power_off(),
-            })
-        })
-        .collect();
-    logonview::open_power_menu(state, &CONSOLE, items, MenuKind::LockPower(rows));
-}
-
-/// A row of the lock's power menu, picked.
-pub fn power_pick(state: &mut State, p: LockPower) {
-    use reprisekit::controls::endsession::Goal;
-    let cfg = &state.config.power;
-    match p {
-        LockPower::StandBy => {
-            let cmd = cfg.standby.clone();
-            crate::sessionend::sleep(state, crate::sessionend::Act::StandBy, cmd);
-        }
-        LockPower::Restart => {
-            let cmd = Some(cfg.reboot.clone());
-            crate::sessionend::begin(state, Goal::Restart, cmd, Origin::Console);
-        }
-        LockPower::TurnOff => {
-            let cmd = Some(cfg.poweroff.clone());
-            crate::sessionend::begin(state, Goal::TurnOff, cmd, Origin::Console);
-        }
-    }
-}
-
-/// The lock's power menu is open; no other menu opens while locked.
-pub fn power_menu_open(state: &State) -> bool {
-    (state.menus.iter()).any(|m| matches!(m.kind, MenuKind::LockPower(_)))
-}
-
-fn close_power_menu(state: &mut State) {
-    if power_menu_open(state) {
-        state.close_menu();
     }
 }
 
@@ -1264,20 +1210,20 @@ pub fn key(state: &mut State, pressed: bool, handle: &KeysymHandle<'_>) -> bool 
             return true;
         }
     }
-    redraw_on_caps(state, side);
-    if !pressed || !screen_shows(state, side) {
+    if !screen_shows(state, side) {
         return false;
     }
-    let typed = {
-        let Ok(xkb) = handle.xkb().lock() else {
-            return false;
-        };
-        // SAFETY: the state reference does not outlive the lock guard.
-        decode(state, side, unsafe { xkb.state() }, handle.raw_code())
+    let typed = match pressed {
+        true => {
+            let Ok(xkb) = handle.xkb().lock() else {
+                return false;
+            };
+            // SAFETY: the state reference does not outlive the lock guard.
+            decode(state, side, unsafe { xkb.state() }, handle.raw_code())
+        }
+        false => None,
     };
-    if typed.is_some() {
-        logonview::key(state, host(side), typed);
-    }
+    logonview::key(state, host(side), typed);
     false
 }
 
@@ -1293,16 +1239,8 @@ pub fn key_with(state: &mut State, pressed: bool, xkb: &xkb::State, code: Keycod
     }
 }
 
-fn screen_shows(state: &State, side: Side) -> bool {
+pub(crate) fn screen_shows(state: &State, side: Side) -> bool {
     state.lock.on(side).is_some_and(Lock::screen_shown)
-}
-
-fn redraw_on_caps(state: &mut State, side: Side) {
-    if screen_shows(state, side)
-        && (state.lock.on(side)).is_some_and(|l| l.view.model.caps_lock != caps_lock(state, side))
-    {
-        redraw(state);
-    }
 }
 
 /// The key `code` under `xkb`, through `side`'s compose sequence; None while it types nothing.
@@ -1351,7 +1289,7 @@ pub fn button(state: &mut State, side: Side, button: u32, pos: Point<f64, Logica
     if crate::sessionlock::holds_input(state) {
         return;
     }
-    if power_menu_open(state) {
+    if crate::lockpower::menu_open(state) {
         match state.scene_hit(pos) {
             Hit::Menu { depth, row } => state.menu_row_press(depth, row, button),
             _ => state.close_menu(),
@@ -1378,7 +1316,7 @@ pub fn motion(state: &mut State, pos: Point<f64, Logical>, time: InputTime) {
     if crate::sessionlock::motion(state, pos, time) {
         return;
     }
-    if power_menu_open(state)
+    if crate::lockpower::menu_open(state)
         && let Hit::Menu { depth, row } = state.scene_hit(pos)
     {
         state.pointer_motion(None, pos, time);
@@ -1437,7 +1375,7 @@ impl Lock {
     }
 
     /// The middle of `part` on the screen, in layout coordinates.
-    pub fn part(&self, part: logon::Part) -> Option<Point<f64, Logical>> {
+    pub fn part(&self, part: reprisekit::logon::Part) -> Option<Point<f64, Logical>> {
         let r = self.view.layout.as_ref()?.rect(part)?;
         let (x, y) = (r.x + r.width / 2, r.y + r.height / 2);
         Some(Point::from((f64::from(x), f64::from(y))))
@@ -1447,6 +1385,7 @@ impl Lock {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use reprisekit::logon;
 
     #[test]
     fn a_panic_while_the_lock_covers_the_outputs_restarts_locked() {
@@ -1843,6 +1782,10 @@ mod tests {
         let m = &h.state.lock.console.as_ref().unwrap().view.model;
         assert_eq!(m.users.len(), 1);
         assert_eq!(m.users[0].name, lock::current_user());
+        // SAFETY: getuid has no preconditions.
+        let uid = unsafe { libc::getuid() };
+        let full = reprisefs::sysinfo::full_name(uid).unwrap_or_default();
+        assert_eq!(m.users[0].real_name, full, "the tile shows the full name");
         assert!(m.name.is_read_only());
         assert!(m.unlocking());
     }
@@ -1863,14 +1806,33 @@ mod tests {
         h.output("TEST-2", 800, 600);
         refit(&mut h.state);
         press(&mut h, logon::Part::SwitchUser);
+        let (scene, layers) = (&h.state.scene, &h.state.layers);
+        let top = scene.children(scene.root());
+        let lock_layer = reprisescene::NodeId::from(layers.lock);
+        let at = top
+            .iter()
+            .position(|&n| n == lock_layer)
+            .expect("the lock layer");
+        assert_eq!(
+            top[at + 1..],
+            [layers.saver.into()],
+            "only the saver is above it"
+        );
+        assert!(scene.enabled(layers.lock));
         let l = h.state.lock.console.as_ref().unwrap();
         assert_eq!(l.covered(), ["TEST-1", "TEST-2"]);
         for c in &l.view.covers {
+            let name = c.output.name();
             assert!(
                 crate::console::tests::under_lock_layer(&h, c.tree.into()),
-                "{} is covered in the lock layer",
-                c.output.name()
+                "{name} is covered in the lock layer"
             );
+            assert!(
+                scene.enabled(c.tree) && scene.enabled(c.rect),
+                "{name}'s cover shows"
+            );
+            let alpha = scene.rect_color(c.rect).map(|c| c[3]);
+            assert_eq!(alpha, Some(1.0), "{name}'s backdrop is opaque");
         }
     }
 
@@ -1919,6 +1881,16 @@ mod tests {
     }
 
     #[test]
+    fn an_interface_change_while_locked_redraws_the_screen_in_the_new_one() {
+        let mut h = locked(|_, _| sh("exit 0"));
+        h.state.config.interface = Interface::Glass;
+        refit(&mut h.state);
+        let m = &h.state.lock.console.as_ref().unwrap().view.model;
+        assert_eq!(m.interface, Interface::Glass);
+        assert!(m.unlocking() && m.name.is_read_only(), "still the lock");
+    }
+
+    #[test]
     fn the_screen_keeps_the_water_out() {
         let mut h = locked(|_, _| sh("exit 0"));
         let l = h.state.lock.console.as_ref().unwrap();
@@ -1930,33 +1902,5 @@ mod tests {
         redraw(&mut h.state);
         let l = h.state.lock.console.as_ref().unwrap();
         assert!(!splashes(l, beside), "a locker's own screen has no water");
-    }
-
-    #[test]
-    fn neither_lock_in_lock_mode_draws_a_power_button() {
-        let power = |h: &crate::harness::Harness, side| {
-            let l = h.state.lock.on(side).expect("locked");
-            l.part(logon::Part::Power)
-                .or(l.part(logon::Part::PowerMenu))
-        };
-        let h = locked(|_, _| sh("exit 0"));
-        assert!(power(&h, Side::Console).is_some(), "outside lock mode");
-        let (mut h, _portal, _lock) = crate::console::tests::in_lock_mode();
-        lock_remote(&mut h.state);
-        assert_eq!(power(&h, Side::Remote), None, "the remote side's lock");
-        assert_eq!(power(&h, Side::Console), None, "the computer's own lock");
-    }
-
-    #[test]
-    fn the_power_menu_opens_over_the_lock_and_closes_with_it() {
-        let mut h = locked(|_, _| sh("exit 0"));
-        press(&mut h, logon::Part::Power);
-        assert_eq!(h.state.menus.len(), 1, "Shut Down... opens the menu");
-        assert!(
-            crate::console::tests::under_lock_layer(&h, h.state.menus[0].tree.into()),
-            "above the covers"
-        );
-        unlock(&mut h.state);
-        assert!(h.state.menus.is_empty());
     }
 }
