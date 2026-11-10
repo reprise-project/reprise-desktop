@@ -19,12 +19,12 @@ fn unsupported(ok: bool, what: &'static str) -> Result<(), Error> {
 }
 
 /// Reads fields and writes them back unchanged unless replaced.
-struct Copy<'a> {
+struct Rewrite<'a> {
     r: Reader<'a>,
     w: Writer,
 }
 
-impl Copy<'_> {
+impl Rewrite<'_> {
     fn u(&mut self, n: u32) -> Result<u32, Error> {
         let v = self.r.u(n)?;
         self.w.u(n, v);
@@ -49,10 +49,10 @@ impl Copy<'_> {
 }
 
 /// `nal`, an SPS, with `max_num_ref_frames` and `max_dec_frame_buffering` [`REFS`], and its
-/// fields. A level that fits a frame holds at least four in its DPB, so the level stays.
+/// fields. A level that fits a frame holds at least two in its DPB, so the level stays.
 pub fn two_refs(nal: &[u8]) -> Result<(Vec<u8>, Sps), Error> {
     let rbsp = unescape(&nal[1..]);
-    let mut c = Copy {
+    let mut c = Rewrite {
         r: Reader::new(&rbsp),
         w: Writer::default(),
     };
@@ -65,10 +65,11 @@ pub fn two_refs(nal: &[u8]) -> Result<(Vec<u8>, Sps), Error> {
     c.ue()?; // bit_depth_chroma_minus8
     c.flag()?; // qpprime_y_zero_transform_bypass_flag
     unsupported(!c.flag()?, "scaling matrices")?;
-    let log2_max_frame_num = c.ue()? + 4;
-    if log2_max_frame_num > 16 {
+    let log2_max_frame_num_minus4 = c.ue()?;
+    if log2_max_frame_num_minus4 > 12 {
         return Err(Error::Malformed("log2_max_frame_num over 16"));
     }
+    let log2_max_frame_num = log2_max_frame_num_minus4 + 4;
     unsupported(c.ue()? == 2, "a POC type other than 2")?;
     c.replace_ue(REFS)?; // max_num_ref_frames
     c.flag()?; // gaps_in_frame_num_value_allowed_flag
@@ -120,9 +121,15 @@ pub fn two_refs(nal: &[u8]) -> Result<(Vec<u8>, Sps), Error> {
     Ok((out, Sps { log2_max_frame_num }))
 }
 
-/// The id of `nal`, a PPS, if [`Slice::parse`] reads its slice headers: CABAC, one slice
+/// What a slice header's syntax needs from the PPS.
+pub struct Pps {
+    pub id: u32,
+    num_ref_idx_l0_default_active_minus1: u32,
+}
+
+/// The fields of `nal`, a PPS, if [`Slice::parse`] reads its slice headers: CABAC, one slice
 /// group, no weighted prediction, no deblocking or redundant-picture fields.
-pub fn pps_id(nal: &[u8]) -> Result<u32, Error> {
+pub fn pps(nal: &[u8]) -> Result<Pps, Error> {
     let rbsp = unescape(&nal[1..]);
     let mut r = Reader::new(&rbsp);
     let id = r.ue()?;
@@ -130,7 +137,7 @@ pub fn pps_id(nal: &[u8]) -> Result<u32, Error> {
     unsupported(r.flag()?, "CAVLC")?;
     r.flag()?; // bottom_field_pic_order_in_frame_present_flag: no field under POC type 2
     unsupported(r.ue()? == 0, "slice groups")?;
-    r.ue()?; // num_ref_idx_l0_default_active_minus1
+    let num_ref_idx_l0_default_active_minus1 = r.ue()?;
     r.ue()?; // num_ref_idx_l1_default_active_minus1
     unsupported(!r.flag()?, "weighted prediction")?;
     r.u(2)?; // weighted_bipred_idc
@@ -140,12 +147,17 @@ pub fn pps_id(nal: &[u8]) -> Result<u32, Error> {
     unsupported(!r.flag()?, "deblocking fields in slice headers")?;
     r.flag()?; // constrained_intra_pred_flag
     unsupported(!r.flag()?, "redundant pictures")?;
-    Ok(id)
+    Ok(Pps {
+        id,
+        num_ref_idx_l0_default_active_minus1,
+    })
 }
 
 /// How a slice's picture is marked and predicted in the merged stream.
 pub enum Picture {
-    MainIdr,
+    MainIdr {
+        idr_pic_id: u16,
+    },
     /// A main picture that drops the previous main, `difference_of_pic_nums_minus1` before it.
     Main {
         drop: u32,
@@ -156,10 +168,11 @@ pub enum Picture {
 /// A slice header's fields the rewrite keeps, and the RBSP from its slice data on.
 pub struct Slice {
     pub idr: bool,
-    pub pps_id: u32,
-    first_mb: u32,
+    pub first_mb: u32,
+    /// `frame_num` as the source encoder coded it.
+    pub frame_num: u32,
+    pps_id: u32,
     slice_type: u32,
-    idr_pic_id: u32,
     no_output_of_prior_pics: bool,
     cabac_init_idc: u32,
     qp_delta: i32,
@@ -167,10 +180,11 @@ pub struct Slice {
 }
 
 impl Slice {
-    /// `nal`, a P or I slice under a PPS [`pps_id`] accepts.
-    pub fn parse(nal: &[u8], sps: &Sps) -> Result<Slice, Error> {
+    /// `nal`, a P or I reference slice under `pps`, a PPS [`pps`] accepts. Its P slices
+    /// must have one active reference: with more, CABAC slice data codes `ref_idx_l0`.
+    pub fn parse(nal: &[u8], sps: &Sps, pps: &Pps) -> Result<Slice, Error> {
         let idr = nal[0] & 0x1f == 5;
-        let reference = nal[0] >> 5 != 0;
+        unsupported(nal[0] >> 5 != 0, "a non-reference picture")?;
         let rbsp = unescape(&nal[1..]);
         let mut r = Reader::new(&rbsp);
         let first_mb = r.ue()?;
@@ -180,19 +194,24 @@ impl Slice {
         }
         unsupported(matches!(slice_type % 5, 0 | 2), "slices other than P and I")?;
         let pps_id = r.ue()?;
-        r.u(sps.log2_max_frame_num)?; // frame_num
-        let idr_pic_id = if idr { r.ue()? } else { 0 };
+        unsupported(pps_id == pps.id, "a slice under another PPS")?;
+        let frame_num = r.u(sps.log2_max_frame_num)?;
+        if idr {
+            r.ue()?; // idr_pic_id
+        }
         if slice_type.is_multiple_of(5) {
+            let mut active_minus1 = pps.num_ref_idx_l0_default_active_minus1;
             if r.flag()? {
-                r.ue()?; // num_ref_idx_l0_active_minus1
+                active_minus1 = r.ue()?;
             }
+            unsupported(active_minus1 == 0, "more than one active reference")?;
             unsupported(!r.flag()?, "a reordered reference list")?;
         }
         let mut no_output_of_prior_pics = false;
-        if reference && idr {
+        if idr {
             no_output_of_prior_pics = r.flag()?;
             unsupported(!r.flag()?, "a long-term IDR")?;
-        } else if reference && r.flag()? {
+        } else if r.flag()? {
             // The encoder's MMCOs drop its own previous picture; build writes the merged ones.
             loop {
                 match r.ue()? {
@@ -214,9 +233,9 @@ impl Slice {
         Ok(Slice {
             idr,
             first_mb,
-            slice_type,
+            frame_num,
             pps_id,
-            idr_pic_id,
+            slice_type,
             no_output_of_prior_pics,
             cabac_init_idc,
             qp_delta,
@@ -231,17 +250,20 @@ impl Slice {
     /// The slice NAL unit as `picture` at `frame_num`, a reference picture with one active
     /// reference.
     pub fn build(&self, picture: &Picture, frame_num: u32, sps: &Sps) -> Vec<u8> {
-        let idr = matches!(picture, Picture::MainIdr);
+        let idr_pic_id = match picture {
+            Picture::MainIdr { idr_pic_id } => Some(*idr_pic_id),
+            _ => None,
+        };
         let mut w = Writer::default();
         w.u(1, 0); // forbidden_zero_bit
         w.u(2, 3); // nal_ref_idc
-        w.u(5, if idr { 5 } else { 1 });
+        w.u(5, if idr_pic_id.is_some() { 5 } else { 1 });
         w.ue(self.first_mb);
         w.ue(self.slice_type);
         w.ue(self.pps_id);
         w.u(sps.log2_max_frame_num, frame_num);
-        if idr {
-            w.ue(self.idr_pic_id);
+        if let Some(id) = idr_pic_id {
+            w.ue(id.into());
         }
         if self.is_p() {
             w.flag(true); // num_ref_idx_active_override_flag
@@ -254,7 +276,7 @@ impl Slice {
             }
         }
         match picture {
-            Picture::MainIdr => {
+            Picture::MainIdr { .. } => {
                 w.flag(self.no_output_of_prior_pics);
                 w.flag(false); // long_term_reference_flag
             }
