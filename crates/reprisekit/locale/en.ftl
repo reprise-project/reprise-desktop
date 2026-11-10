@@ -141,6 +141,10 @@ logon-admin-restart = Other people are logged on to this computer. Type an admin
 logon-shutting-down = Shutting down...
 logon-restarting = Restarting...
 logon-remote = Connected remotely
+logon-locked = Locked
+logon-unlock-title = Unlock Reprise
+logon-locked-heading = This computer is locked.
+logon-unlock-begin = To unlock, type your password
 
 ## Calculator
 calc-degrees = &Degrees

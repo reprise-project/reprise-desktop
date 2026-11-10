@@ -1,5 +1,6 @@
 //! Classic's login screen: the "Log On to Reprise" dialog centred on the desktop colour, with the
-//! Reprise band, User name and Password rows, a two-line message area and three buttons.
+//! Reprise band, User name and Password rows, a two-line message area and three buttons. The lock
+//! fixes the name and puts Switch User at the start of the button row.
 
 use crate::art::logo;
 use crate::classic::indicator;
@@ -43,6 +44,7 @@ struct Geometry {
     ok: Rect,
     cancel: Rect,
     power: Rect,
+    switch: Rect,
     badge: Rect,
 }
 
@@ -91,6 +93,7 @@ fn geometry(theme: &Theme, output: Rect) -> Geometry {
         ok,
         cancel,
         power,
+        switch: Rect::new(client.x + u.len(PAD), y(buttons_y), bw, bh),
         badge: Rect::new(
             power.right() - ICON_SIZE,
             message.bottom() - ICON_SIZE,
@@ -109,6 +112,9 @@ pub fn layout(m: &Logon, theme: &Theme, _text: &TextRenderer, output: Rect) -> L
         (Part::Cancel, g.cancel),
         (Part::Power, g.power),
     ];
+    if m.unlocking() && m.offers_switch_user() {
+        parts.push((Part::SwitchUser, g.switch));
+    }
     if m.layout.is_some() {
         parts.push((Part::Layout, g.badge));
     }
@@ -159,15 +165,7 @@ pub fn draw(
         caption.width - 8 * s,
         caption.height,
     );
-    text.draw(
-        c,
-        title,
-        &strings::title(),
-        true,
-        cs.title_text,
-        Align::Left,
-        px,
-    );
+    text.draw(c, title, &m.title(), true, cs.title_text, Align::Left, px);
 
     let band = at(g.band);
     c.hgradient_stepped(band, cs.active_title, cs.gradient_active_title);
@@ -245,14 +243,18 @@ pub fn draw(
     }
 
     let default = match m.focus {
-        Part::Submit | Part::Cancel | Part::Power => m.focus,
+        Part::Submit | Part::Cancel | Part::Power | Part::SwitchUser => m.focus,
         _ => Part::Submit,
     };
+    let switch = (l.rect(Part::SwitchUser)).map(|r| (Part::SwitchUser, r, strings::switch_user()));
     for (part, r, caption) in [
         (Part::Submit, g.ok, strings::ok()),
         (Part::Cancel, g.cancel, strings::cancel()),
         (Part::Power, g.power, strings::shut_down()),
-    ] {
+    ]
+    .into_iter()
+    .chain(switch)
+    {
         let enabled = !m.busy || part == Part::Power;
         widgets::draw_button(
             c,

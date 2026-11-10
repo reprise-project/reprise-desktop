@@ -508,3 +508,119 @@ fn the_admin_heading_is_read_out_with_the_form() {
         .and_then(|(_, n)| n.value().map(str::to_owned));
     assert_eq!(said, Some(text::admin_shut_down()));
 }
+
+const ALL: [Interface; 3] = [Interface::Classic, Interface::Blue, Interface::Glass];
+
+fn locked(i: Interface, switch_user: bool) -> Logon {
+    Logon::locked(i, users(1).remove(0), switch_user)
+}
+
+#[test]
+fn the_lock_opens_on_its_users_password_with_the_name_fixed() {
+    for i in ALL {
+        let m = locked(i, true);
+        let screen = match i {
+            Interface::Classic => Screen::Typed,
+            _ => Screen::Tile(0),
+        };
+        assert_eq!((m.screen, m.focus), (screen, Part::Password), "{i:?}");
+        assert_eq!(m.user().as_deref(), Some("user0"), "{i:?}");
+        assert!(m.name.is_read_only(), "{i:?}: the name is fixed");
+        assert_eq!(m.users.len(), 1, "{i:?}: the lock lists only its user");
+        assert_eq!(m.users[0].note, Some(UserNote::Locked), "{i:?}");
+    }
+    assert_eq!(UserNote::Locked.text(), "Locked");
+}
+
+#[test]
+fn escape_and_cancel_on_the_lock_only_clear_the_password() {
+    for i in ALL {
+        let mut m = locked(i, true);
+        let screen = m.screen;
+        typed(&mut m, "half");
+        assert_eq!(m.key(LogonKey::Escape), Some(LogonAction::Cancel), "{i:?}");
+        assert!(m.password.text.is_empty(), "{i:?}: the password is wiped");
+        assert_eq!((m.screen, m.focus), (screen, Part::Password), "{i:?}");
+        assert_eq!(m.name.text, "user0", "{i:?}: the name stays");
+        assert!(m.name.is_read_only(), "{i:?}: and stays fixed");
+        typed(&mut m, "again");
+        m.click(Part::Cancel);
+        assert!(m.password.text.is_empty(), "{i:?}: Cancel wipes it too");
+        assert_eq!((m.screen, m.name.text.as_str()), (screen, "user0"));
+        m.click(Part::Name);
+        typed(&mut m, "x");
+        m.key(LogonKey::Edit(EditKey::Backspace { word: true }));
+        assert_eq!(m.name.text, "user0", "{i:?}: nothing edits the name");
+    }
+}
+
+#[test]
+fn the_lock_offers_switch_user_only_when_the_host_says_so() {
+    for i in ALL {
+        let mut on = locked(i, true);
+        assert!(on.stops().contains(&Part::SwitchUser), "{i:?}");
+        assert_eq!(on.click(Part::SwitchUser), Some(LogonAction::SwitchUser));
+        assert_eq!(on.users.len(), 1, "{i:?}: the lock still lists one user");
+        assert_ne!(
+            on.screen,
+            Screen::Tiles,
+            "{i:?}: the tiles are the greeter's"
+        );
+        let off = locked(i, false);
+        assert!(!off.stops().contains(&Part::SwitchUser), "{i:?}");
+        for p in off.stops() {
+            assert!(
+                !matches!(p, Part::OtherUser | Part::Tile(_)),
+                "{i:?}: {p:?}"
+            );
+        }
+        assert!(
+            off.stops().contains(&Part::Power),
+            "{i:?}: the power button stays"
+        );
+    }
+}
+
+#[test]
+fn a_failed_unlock_keeps_the_user_fixed() {
+    for i in ALL {
+        let mut m = locked(i, true);
+        typed(&mut m, "wrong");
+        let sent = m.key(LogonKey::Enter);
+        assert_eq!(
+            sent,
+            Some(LogonAction::Submit {
+                user: "user0".into()
+            }),
+            "{i:?}"
+        );
+        m.set_busy(true);
+        m.fail(text::incorrect());
+        assert!(m.password.text.is_empty(), "{i:?}");
+        assert!(m.name.is_read_only(), "{i:?}");
+        if i == Interface::Glass {
+            assert_eq!(m.screen, Screen::Message);
+            m.click(Part::MessageOk);
+            assert_eq!((m.screen, m.focus), (Screen::Tile(0), Part::Password));
+        }
+        assert_eq!(m.user().as_deref(), Some("user0"), "{i:?}");
+    }
+}
+
+#[test]
+fn the_classic_lock_says_it_is_locked_and_names_its_dialog() {
+    let m = locked(Interface::Classic, false);
+    assert_eq!(m.said(), Some(text::locked_heading()));
+    assert_ne!(m.title(), text::title());
+    let l = classic_layout(&m);
+    let mut tree = Tree::new(ax::node(Role::Window, l.output));
+    access(&m, &l, &mut tree);
+    let dialog = tree.nodes().find(|(_, n)| n.role() == Role::Dialog);
+    assert_eq!(
+        dialog.and_then(|(_, n)| n.label().map(str::to_owned)),
+        Some(text::unlock_title())
+    );
+    for i in [Interface::Blue, Interface::Glass] {
+        assert_eq!(locked(i, false).said(), None, "{i:?}: the tile says Locked");
+    }
+}

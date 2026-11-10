@@ -1,0 +1,120 @@
+Blue locked @1 29f5826f5b80f04f
+Blue locked @2 a57d6e83b5735d2b
+Blue locked typed with caps lock and badge @1 bb974fc657a7915e
+Blue locked typed with caps lock and badge @2 51cd3562e13f4787
+Blue locked failed @1 32bfda146d5246fc
+Blue locked failed @2 d6f16986bf276d1c
+Blue locked busy @1 ec938ce50bd113d1
+Blue locked busy @2 5eb6a8c1a8715573
+Blue locked switch user hot @1 a9b1a7b757767012
+Blue locked switch user hot @2 5544366575c6474f
+Blue locked without switch user @1 9404b103a631214e
+Blue locked without switch user @2 b36872a6eb5d19cb
+Olive locked @1 c0db7e7ec5941ea8
+Olive locked @2 75a7cc1e91b4536c
+Olive locked typed with caps lock and badge @1 2ff54e9bf8d8e212
+Olive locked typed with caps lock and badge @2 3e71d047c7bf78f8
+Olive locked failed @1 150fc036014bc91f
+Olive locked failed @2 5194f3ad5bed840f
+Olive locked busy @1 ab94c5782ba0371e
+Olive locked busy @2 5a0dc5d5b402b775
+Olive locked switch user hot @1 9802ac657fdb2c31
+Olive locked switch user hot @2 3f9457623511092c
+Olive locked without switch user @1 fb3a88c940cceade
+Olive locked without switch user @2 8dc9d2c4c12ea436
+Silver locked @1 2c2df706c172fa4a
+Silver locked @2 2b90056230d13eaf
+Silver locked typed with caps lock and badge @1 5f6aba71c9b09292
+Silver locked typed with caps lock and badge @2 96c642d2b4627a02
+Silver locked failed @1 c5ffe82409f3fa77
+Silver locked failed @2 84087fed6b638e0e
+Silver locked busy @1 89668204eec1393c
+Silver locked busy @2 87b4f79ee70c9d48
+Silver locked switch user hot @1 196731eda74dbd5f
+Silver locked switch user hot @2 f12dd7275b84feeb
+Silver locked without switch user @1 9877c91af5964928
+Silver locked without switch user @2 2b0b9afdd328a64f
+Slate locked @1 86682695e01a2739
+Slate locked @2 4be3a5bba03ae9ba
+Slate locked typed with caps lock and badge @1 6543d6a769fd9789
+Slate locked typed with caps lock and badge @2 14cdb52bbcb37766
+Slate locked failed @1 b2907f004189e290
+Slate locked failed @2 da9de79168a59774
+Slate locked busy @1 b7c2719845504289
+Slate locked busy @2 cd86ac614a0d82f2
+Slate locked switch user hot @1 08f62558cb6bdc8c
+Slate locked switch user hot @2 242c356adf48d666
+Slate locked without switch user @1 a0c6250bf5a4487e
+Slate locked without switch user @2 dec1f647f02c4a08
+Sapphire locked @1 c85360f63964001c
+Sapphire locked @2 45fdfa943f48c51d
+Sapphire locked typed with caps lock and badge @1 e637d2e9ffd13f3c
+Sapphire locked typed with caps lock and badge @2 69cfd64560cf2b4d
+Sapphire locked failed @1 95449780807d655d
+Sapphire locked failed @2 d00a3b2e94494bfd
+Sapphire locked busy @1 cb2844b249774c01
+Sapphire locked busy @2 cbd14934b37a4158
+Sapphire locked switch user hot @1 eed4882cc4500931
+Sapphire locked switch user hot @2 fae41eeea20ac439
+Sapphire locked without switch user @1 1676548beb167d2f
+Sapphire locked without switch user @2 10cb56ec2d044a5d
+Obsidian locked @1 ce33fb8b90247094
+Obsidian locked @2 f4376a9ceb72039e
+Obsidian locked typed with caps lock and badge @1 90cd915b4aeefd61
+Obsidian locked typed with caps lock and badge @2 f11c530efc709f04
+Obsidian locked failed @1 004771ed8b9f1215
+Obsidian locked failed @2 aed7be693014a2e6
+Obsidian locked busy @1 d7b9483c34facdd7
+Obsidian locked busy @2 5f91c2dba45c1def
+Obsidian locked switch user hot @1 95f313cae04ecf35
+Obsidian locked switch user hot @2 70c8500f821d009e
+Obsidian locked without switch user @1 0be53c027209f1be
+Obsidian locked without switch user @2 1e8926b8e64aead2
+Ember locked @1 20ded963973b6197
+Ember locked @2 9a8954277c3cf20c
+Ember locked typed with caps lock and badge @1 bb727b9e2499d20b
+Ember locked typed with caps lock and badge @2 1ba93e7dc1d913d0
+Ember locked failed @1 c065e0ccd1d2e35b
+Ember locked failed @2 edd5049f632c7a73
+Ember locked busy @1 23d742c624d37ded
+Ember locked busy @2 794745c6c8a89e66
+Ember locked switch user hot @1 14e9d7531066d376
+Ember locked switch user hot @2 bb8298717d4fba38
+Ember locked without switch user @1 5f061a6a669d9ad7
+Ember locked without switch user @2 54f3f3ed6a49c5ac
+Cobalt locked @1 db16f12460e88cd1
+Cobalt locked @2 9dc38bf760107649
+Cobalt locked typed with caps lock and badge @1 a51854e5c39cf4a2
+Cobalt locked typed with caps lock and badge @2 01bb60bae936e7ef
+Cobalt locked failed @1 4fc3127a34b59ee1
+Cobalt locked failed @2 55cf0bd32f8e7b2d
+Cobalt locked busy @1 0954df207c243040
+Cobalt locked busy @2 b944cd0ffe241433
+Cobalt locked switch user hot @1 008097e5e85afa50
+Cobalt locked switch user hot @2 9cbd57552f2604a5
+Cobalt locked without switch user @1 653d7482cf32011e
+Cobalt locked without switch user @2 0fead32b571584d7
+Carbon locked @1 b7ee59972e6016f0
+Carbon locked @2 eac0225540021890
+Carbon locked typed with caps lock and badge @1 6a13de7831f29c49
+Carbon locked typed with caps lock and badge @2 5b23302dfe900517
+Carbon locked failed @1 3f6c644eab6f14c9
+Carbon locked failed @2 b0fccbe213c563a5
+Carbon locked busy @1 8f1cc6b531619430
+Carbon locked busy @2 dcd2ba3384a89846
+Carbon locked switch user hot @1 1b5b439c23d81335
+Carbon locked switch user hot @2 03498f74a1e68d54
+Carbon locked without switch user @1 07350f4acbd331a1
+Carbon locked without switch user @2 222de260036c3034
+Steel locked @1 9eaafd27a268a9e7
+Steel locked @2 d99cff71fed9dd7f
+Steel locked typed with caps lock and badge @1 ae30f99eb1f6d097
+Steel locked typed with caps lock and badge @2 66f141d2bd1096cf
+Steel locked failed @1 85e5601960f1f3cb
+Steel locked failed @2 10214d156ce9c14a
+Steel locked busy @1 1d895d62d66814ed
+Steel locked busy @2 186988dced9bd437
+Steel locked switch user hot @1 8f2ada38ab16b6a6
+Steel locked switch user hot @2 9c86e62b3711cb5f
+Steel locked without switch user @1 0629d5ad897beb60
+Steel locked without switch user @2 13f3dea8fe3b0bd5

@@ -1,0 +1,14 @@
+locked @1 41be55058bd772ee
+locked @2 e5aa2965d08a0905
+locked typed @1 321d65d347e12c8a
+locked typed @2 0cd18a669cd97006
+locked caps lock and badge @1 b1b492e513b13997
+locked caps lock and badge @2 f4d2961bfb7f1ce7
+locked failed @1 b1b6422c72fd874e
+locked failed @2 2cc2b27724c46a85
+locked busy @1 b4770fc09ed2abca
+locked busy @2 66d4547ee57198c6
+locked switch user focused @1 39146e9116e311db
+locked switch user focused @2 e87ab0dbca08d9bd
+locked without switch user @1 2f1a7dae6ab40733
+locked without switch user @2 4f2d7f2eba044c75
