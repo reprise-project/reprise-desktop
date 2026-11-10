@@ -109,6 +109,8 @@ pub struct EffectsConfig {
     pub session_fade: bool,
     pub session_fade_in_ms: u32,
     pub session_fade_out_ms: u32,
+    /// The lock screen's transitions and busy ring, on under every interface; Classic has none.
+    pub logon_animation: bool,
 }
 
 impl EffectsConfig {
@@ -128,6 +130,7 @@ impl EffectsConfig {
             session_fade: true,
             session_fade_in_ms: 600,
             session_fade_out_ms: 400,
+            logon_animation: true,
         }
     }
 

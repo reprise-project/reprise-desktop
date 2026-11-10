@@ -1006,6 +1006,9 @@ impl Config {
             if let Some(v) = e.session_fade {
                 fx.session_fade = v;
             }
+            if let Some(v) = e.logon_animation {
+                fx.logon_animation = v;
+            }
             if let Some(name) = &e.menu_animation {
                 fx.menu_animation = MenuAnimation::from_name(name).ok_or_else(|| {
                     format!(

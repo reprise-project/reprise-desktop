@@ -455,6 +455,7 @@ fn the_greeting_marks_users_with_a_session_logged_on() {
             notice: Some(Notice::SwitchUser),
             outputs: Vec::new(),
             background: None,
+            animation: true,
         }
     );
 }

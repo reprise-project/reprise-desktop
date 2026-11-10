@@ -95,6 +95,13 @@ pub struct Greeting {
     pub outputs: Vec<LoginOutput>,
     #[serde(default)]
     pub background: Option<Background>,
+    /// `[login] animation`.
+    #[serde(default = "on")]
+    pub animation: bool,
+}
+
+fn on() -> bool {
+    true
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -231,6 +238,7 @@ mod tests {
             notice: Some(Notice::SessionEndedEarly),
             outputs: Vec::new(),
             background: None,
+            animation: true,
         };
         let json = body(&GreeterReply::Greeting(g.clone()));
         assert!(json.starts_with(r#"{"greeting":{"interface":"classic","#));
@@ -264,6 +272,7 @@ mod tests {
                 primary: true,
             }],
             background: Some(Background::Picture),
+            animation: true,
         };
         let json = body(&GreeterReply::Greeting(g.clone()));
         assert!(
@@ -272,7 +281,10 @@ mod tests {
             ),
             "{json}"
         );
-        assert!(json.ends_with(r#""background":"picture"}}"#), "{json}");
+        assert!(
+            json.ends_with(r#""background":"picture","animation":true}}"#),
+            "{json}"
+        );
         assert_eq!(
             decode::<GreeterReply>(json.as_bytes()).unwrap(),
             GreeterReply::Greeting(g)
@@ -288,6 +300,10 @@ mod tests {
             panic!("a greeting");
         };
         assert_eq!((g.outputs, g.background), (vec![], None));
+        assert!(
+            g.animation,
+            "a daemon that sends no animation key leaves it on"
+        );
     }
 
     #[test]
