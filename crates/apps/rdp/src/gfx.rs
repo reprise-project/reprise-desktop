@@ -313,6 +313,38 @@ impl GfxServerFactory for Factory {
     }
 }
 
+/// The bytes of a capability set IronRDP doesn't model that [`offered`] writes out.
+const UNKNOWN_DATA_SHOWN: usize = 64;
+
+/// The journal line naming every capability set in `pdu`: its version, its first four bytes as
+/// flags, its length and, for a version IronRDP doesn't model, its bytes.
+fn offered(pdu: &CapabilitiesAdvertisePdu) -> String {
+    let sets: Vec<String> = (pdu.0.iter())
+        .map(|set| {
+            let flags = match set.data.first_chunk::<4>() {
+                Some(flags) => format!("{:#010x}", u32::from_le_bytes(*flags)),
+                None => "-".into(),
+            };
+            let mut line = format!(
+                "{:#010x} flags {flags} len {}",
+                u32::from(set.version),
+                set.data.len()
+            );
+            if !set.version.is_known() {
+                line.push_str(" data ");
+                for byte in set.data.iter().take(UNKNOWN_DATA_SHOWN) {
+                    line.push_str(&format!("{byte:02x}"));
+                }
+                if set.data.len() > UNKNOWN_DATA_SHOWN {
+                    line.push_str("...");
+                }
+            }
+            line
+        })
+        .collect();
+    format!("client offers graphics capabilities: {}", sets.join("; "))
+}
+
 /// Logs the negotiation, counts advertisements and tells the display it is done. Runs with the
 /// pipeline server locked, so it never takes [`Gfx::link`].
 struct Handler {
@@ -321,7 +353,8 @@ struct Handler {
 }
 
 impl GraphicsPipelineHandler for Handler {
-    fn capabilities_advertise(&mut self, _: &CapabilitiesAdvertisePdu) {
+    fn capabilities_advertise(&mut self, pdu: &CapabilitiesAdvertisePdu) {
+        log::info!("{}", offered(pdu));
         self.advertised.fetch_add(1, Ordering::Relaxed);
     }
 
@@ -336,8 +369,9 @@ pub(crate) mod tests {
     use super::*;
     use ironrdp_dvc::DvcProcessor;
     use ironrdp_egfx::pdu::{
-        CapabilitiesV81Flags, Codec1Type, FrameAcknowledgePdu, GfxPdu, QueueDepth,
-        WireToSurface1Pdu, encode_avc420_bitmap_stream,
+        CapabilitiesV81Flags, CapabilitiesV107Flags, CapabilityVersion, Codec1Type,
+        FrameAcknowledgePdu, GfxPdu, QueueDepth, RawCapabilitySet, WireToSurface1Pdu,
+        encode_avc420_bitmap_stream,
     };
     use ironrdp_pdu::gcc::{Monitor, MonitorFlags};
     use ironrdp_pdu::geometry::ExclusiveRectangle;
@@ -453,6 +487,43 @@ pub(crate) mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    #[test]
+    fn the_offered_line_names_each_set_and_the_bytes_of_an_unknown_one() {
+        let mut pdu = CapabilitiesAdvertisePdu::from_typed(&[CapabilitySet::V10_7 {
+            flags: CapabilitiesV107Flags::SMALL_CACHE,
+        }]);
+        let hevc = [0x00, 0x04, 0x00, 0x00];
+        pdu.0.push(RawCapabilitySet::new(
+            CapabilityVersion(0x000B_0200),
+            hevc.to_vec(),
+        ));
+        pdu.0.push(RawCapabilitySet::new(
+            CapabilityVersion(0x0001_0000),
+            vec![0x02, 0x00, 0x00, 0x10, 0xab],
+        ));
+        assert_eq!(
+            offered(&pdu),
+            "client offers graphics capabilities: \
+             0x000a0701 flags 0x00000002 len 4; \
+             0x000b0200 flags 0x00000400 len 4 data 00040000; \
+             0x00010000 flags 0x10000002 len 5 data 02000010ab"
+        );
+    }
+
+    #[test]
+    fn the_offered_line_cuts_unknown_data_at_64_bytes() {
+        let mut pdu = CapabilitiesAdvertisePdu(Vec::new());
+        pdu.0.push(RawCapabilitySet::new(
+            CapabilityVersion(0x0001_0000),
+            vec![0xee; 70],
+        ));
+        let line = offered(&pdu);
+        assert!(
+            line.ends_with(&format!("len 70 data {}...", "ee".repeat(64))),
+            "{line}"
+        );
     }
 
     #[test]
