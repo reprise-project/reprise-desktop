@@ -1368,9 +1368,33 @@ sharing and remote control grants yet.
   program outside a sandbox names a file for a notification to read with
   your rights: an `image-path` or `sound-file` path from any other sender is
   dropped (an icon name and a sound name stay), and the portal forwards
-  only themed icon names without a `/`. A sandboxed app's tray icon can
-  still name an icon file by path or `IconThemePath`; it shows only in the
-  tray, and nothing of it goes back to the app.
+  only themed icon names without a `/`. A tray icon file a Flatpak app names
+  (`IconName`, `AttentionIconName`, `OverlayIconName` as a path, or a name
+  under `IconThemePath`) is opened inside the app's own sandbox. The bus
+  peer is often the app's `xdg-dbus-proxy`, whose root shows the host's
+  folders, so the root is taken from the sandbox Flatpak recorded for the
+  instance the peer's `.flatpak-info` names
+  (`$XDG_RUNTIME_DIR/.flatpak/<instance>/bwrapinfo.json`, which only
+  programs outside the sandbox can write): its `child-pid`, only while that
+  process shows the same app and instance in the mount namespace recorded,
+  not the host's, and still runs once its root is open. That namespace must
+  also be the peer's own, unless the peer's `.flatpak-info` says it is the
+  proxy, which runs outside it. `openat2` keeps
+  absolute links and `..` inside that root and refuses magic links such as
+  `/proc/self/root`. A snap's opens only beneath its own folders
+  (`/snap/<snap>`, `~/snap/<snap>`, `$XDG_RUNTIME_DIR/snap.<snap>`, a
+  parallel instance's under either name), with no link or `..` out, since
+  a snap sees the whole home. An owner that shows too little of itself, or
+  whose sandbox doesn't check out, names no file; its pixmaps and theme
+  names still show. Either way the file is a regular `.png` or `.svg`
+  within the icon caps, its type checked before it is opened to read, an
+  SVG from a sandbox embedding a raster image is refused, and one read of
+  an item's icons takes at most 16 MiB and 64 folders. Two threads shared
+  by every item do the reads, from a queue of one read per item. An item
+  whose read isn't done within 2 seconds, its wait included, shows without
+  those icons, and a hung read holds one thread and never starts another. Customize keeps a sandboxed app's desktop entry icon for it,
+  never the path it sent, and drops a path from a choice saved without
+  that guarantee.
 - **Launchers.** A `.desktop` file in a folder (the desktop, Explorer)
   runs only when it is executable and carries the `user.reprise.trusted`
   extended attribute, which Allow Launching sets. Extracting an archive

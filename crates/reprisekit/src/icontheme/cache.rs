@@ -342,7 +342,7 @@ fn loadable(name: &str, px: i32) -> bool {
 }
 
 /// `name` without the extension some `.desktop` files carry in `Icon=`; the spec says to strip it.
-fn bare_name(name: &str) -> &str {
+pub fn bare_name(name: &str) -> &str {
     name.strip_suffix(".png")
         .or_else(|| name.strip_suffix(".svg"))
         .or_else(|| name.strip_suffix(".xpm"))

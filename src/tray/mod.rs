@@ -16,8 +16,8 @@ mod tests;
 pub(crate) use customize::customize_icon_landed;
 pub use customize::{Remembered, apply_choices, customize};
 pub use icons::{
-    ACTION_ICON_SIZES, NOTIFY_SIZES, bar_icons, closest, decode_named_at, invalidate_icons,
-    item_icon, item_pixmaps, sync_icon_sizes,
+    ACTION_ICON_SIZES, IconFiles, NOTIFY_SIZES, bar_icons, closest, decode_item_icons,
+    decode_named_at, invalidate_icons, item_icon, item_pixmaps, sync_icon_sizes,
 };
 pub use menu::{
     DEFAULT_PROP, MenuNode, Submenus, forget_output, menu_activate, menu_hover, menus_closed,
@@ -62,6 +62,9 @@ pub struct TrayItem {
     pub tooltip: String,
     pub icon_name: Option<String>,
     pub icon_theme_path: Option<PathBuf>,
+    /// What a Customize choice keeps as the item's icon: `icon_name` outside a sandbox, else the
+    /// app's desktop entry icon, so no path a sandbox named is read in a later session.
+    pub saved_icon: Option<String>,
     pub pixmaps: Arc<[IconSource]>,
     pub named: Arc<[IconSource]>,
     pub menu_path: Option<String>,
@@ -581,7 +584,7 @@ fn install(
     state.tray = Some(Tray {
         items: Vec::new(),
         hidden: Vec::new(),
-        choices: crate::state::load().tray_icons,
+        choices: customize::trusted_icons(crate::state::load().tray_icons),
         flyout: None,
         events,
         commands,

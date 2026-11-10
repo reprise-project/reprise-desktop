@@ -507,6 +507,7 @@ mod tests {
                     behaviour: Behaviour::Hide,
                     name: "Network".into(),
                     icon: Some("network-wired".into()),
+                    icon_trusted: true,
                 },
             ),
             (
@@ -515,6 +516,7 @@ mod tests {
                     behaviour: Behaviour::Mute,
                     name: "Mail".into(),
                     icon: None,
+                    icon_trusted: true,
                 },
             ),
         ]);

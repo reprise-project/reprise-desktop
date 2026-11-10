@@ -1,11 +1,17 @@
 use super::{TrayCommand, TrayItem, builtin, send};
 use crate::compositor::State;
-use crate::icontheme::IconCache;
+use crate::icontheme::{
+    ExtraTree, IconCache, MAX_ICON_BYTES, bare_name, decode_bytes, is_icon_file, list_at_most,
+};
+use crate::mutex::lock;
 use crate::raster::Canvas;
+use reprisefs::confined::Confined;
 use reprisekit::controls::shellview;
 use reprisekit::icon::{IconSource, premultiply};
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::collections::{HashMap, HashSet};
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 /// Largest `IconPixmap` side the tray keeps. It draws at most 32 px per step of
 /// draw scale, so a bigger entry only costs memory.
@@ -88,6 +94,129 @@ pub fn decode_named_at(
         .filter_map(|&px| icons.get_with_extra(name, px, extra))
         .map(IconSource::from)
         .collect()
+}
+
+/// Where an item's named icon files open from, by where its program runs.
+#[derive(Debug)]
+pub enum IconFiles {
+    /// By path, as the user opens them.
+    Host,
+    /// Only where its sandbox lets the program open them itself.
+    Confined(Confined),
+    /// Nowhere: a name is looked up in the theme only.
+    Refused,
+}
+
+impl IconFiles {
+    /// An SVG from a sandbox may not embed a raster image: its decoded size is past the budget.
+    fn decode(&self, path: &Path, bytes: &[u8], px: u32) -> Option<Canvas> {
+        decode_bytes(path, bytes, px, matches!(self, IconFiles::Host))
+    }
+
+    fn list(&self, dir: &Path, max: usize) -> HashSet<OsString> {
+        match self {
+            IconFiles::Host => list_at_most(dir, max),
+            IconFiles::Confined(files) => files.list(dir, max),
+            IconFiles::Refused => HashSet::new(),
+        }
+    }
+}
+
+/// The most one decode of an item's names reads of the files they name, all three together.
+pub const FETCH_BYTES: u64 = 2 * MAX_ICON_BYTES;
+
+/// One decode's reads of an item's files, [`FETCH_BYTES`] in all.
+struct Reads<'a> {
+    files: &'a IconFiles,
+    left: u64,
+}
+
+impl Reads<'_> {
+    fn read(&mut self, path: &Path) -> Option<Vec<u8>> {
+        if !is_icon_file(path) {
+            return None;
+        }
+        let max = self.left.min(MAX_ICON_BYTES);
+        let read = match self.files {
+            IconFiles::Host => reprisefs::ops::read_regular(path, max),
+            IconFiles::Confined(files) => files.read(path, max),
+            IconFiles::Refused => return None,
+        };
+        match read {
+            Ok(bytes) => {
+                self.left -= bytes.len() as u64;
+                Some(bytes)
+            }
+            Err(e) => {
+                log::debug!("tray: icon {}: {e}", path.display());
+                None
+            }
+        }
+    }
+}
+
+/// An item's icon, attention and overlay `names` (None where pixmaps stand in) at each of
+/// `sizes`, their files read through `files`; `icons` is locked only for theme lookups.
+pub fn decode_item_icons(
+    icons: &Mutex<IconCache>,
+    files: &IconFiles,
+    names: [Option<&str>; 3],
+    theme_path: Option<&Path>,
+    sizes: &[i32],
+) -> [Vec<IconSource>; 3] {
+    let mut reads = Reads {
+        files,
+        left: FETCH_BYTES,
+    };
+    // One tree for the three names, so its folder cap holds for the item.
+    let mut tree = theme_path.map(|dir| ExtraTree::new(dir, |d: &Path, max| files.list(d, max)));
+    names.map(|name| {
+        name.map_or_else(Vec::new, |name| {
+            decode_item_icon(icons, &mut reads, name, tree.as_mut(), sizes)
+        })
+    })
+}
+
+fn decode_item_icon<F: FnMut(&Path, usize) -> HashSet<OsString>>(
+    icons: &Mutex<IconCache>,
+    reads: &mut Reads,
+    name: &str,
+    tree: Option<&mut ExtraTree<F>>,
+    sizes: &[i32],
+) -> Vec<IconSource> {
+    let files = reads.files;
+    if name.starts_with('/') {
+        let path = Path::new(name);
+        let Some(bytes) = reads.read(path) else {
+            return Vec::new();
+        };
+        return (sizes.iter())
+            .filter_map(|&px| files.decode(path, &bytes, u32::try_from(px).ok()?))
+            .map(IconSource::from)
+            .collect();
+    }
+    let bare = bare_name(name);
+    let mut tree = tree.filter(|_| !bare.contains('/'));
+    // The bytes of each file read, kept for the other sizes only while it decodes.
+    let mut read: HashMap<PathBuf, Option<Vec<u8>>> = HashMap::new();
+    let mut out = Vec::with_capacity(sizes.len());
+    for &px in sizes {
+        let own = (tree.as_mut().zip(u32::try_from(px).ok())).and_then(|(tree, dpx)| {
+            tree.files(bare, px).into_iter().find_map(|path| {
+                let bytes = read
+                    .entry(path.clone())
+                    .or_insert_with(|| reads.read(&path));
+                let decoded = files.decode(&path, bytes.as_deref()?, dpx);
+                if decoded.is_none() {
+                    *bytes = None;
+                }
+                decoded
+            })
+        });
+        let found = own.or_else(|| lock(icons).get_with_extra(name, px, &[]));
+        out.extend(found.map(IconSource::from));
+    }
+    out
 }
 
 pub fn closest(sources: &[IconSource], px: i32) -> Option<Canvas> {

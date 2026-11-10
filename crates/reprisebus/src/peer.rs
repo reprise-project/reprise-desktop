@@ -5,6 +5,7 @@ use crate::mutex::lock;
 use std::collections::HashMap;
 use std::io::Read;
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use zbus::Connection;
@@ -91,9 +92,25 @@ fn seen_live(pidfd: BorrowedFd<'_>, pid: i32, proc: &Path) -> Option<Seen> {
         cgroup: read_at(&dir, c"cgroup"),
         label: read_at(&dir, c"attr/apparmor/current"),
         pid_namespaced: read_at(&dir, c"status").map(|s| pid_namespaced(&s)),
+        mnt_ns: ns_at(&dir, c"ns/mnt"),
     };
     let running = read_at(&dir, c"stat").is_some_and(|s| runs(&s));
     (running && alive(pidfd)).then_some(seen)
+}
+
+/// Where the files a peer names by path are, read afresh for each use.
+#[derive(Debug)]
+pub enum Files {
+    /// Outside any sandbox: the user's own.
+    Host,
+    /// A Flatpak app's: what lies under its sandbox's root, held open, is what it can open.
+    /// The root is the app's own, never that of the `xdg-dbus-proxy` the bus may name.
+    Flatpak { app_id: String, root: OwnedFd },
+    /// A snap's, `app_id` `<snap>_<app>`: it sees the whole home, so only `snap`'s own folders
+    /// count. `snap` is the instance name.
+    Snap { app_id: String, snap: String },
+    /// Gone, or not told apart: none.
+    Unknown,
 }
 
 /// What `/proc/<pid>` showed of a live process. A non-dumpable process hides its root and
@@ -107,6 +124,8 @@ struct Seen {
     label: Option<String>,
     /// Whether it runs in a pid namespace of its own, as bubblewrap puts every Flatpak app.
     pid_namespaced: Option<bool>,
+    /// The inode of its mount namespace.
+    mnt_ns: Option<u64>,
 }
 
 impl Seen {
@@ -183,16 +202,28 @@ fn flatpak_info_at(root: &OwnedFd) -> Option<Option<String>> {
         let absent = std::io::Error::last_os_error().raw_os_error() == Some(libc::ENOENT);
         return absent.then_some(None);
     }
+    Some(Some(
+        read_small_at(root, INFO, INFO_BYTES).unwrap_or_default(),
+    ))
+}
+
+/// The text of regular file `name` in `dir`, at most `max` bytes, its last step no link and
+/// opened without blocking on a FIFO.
+fn read_small_at(dir: &impl AsRawFd, name: &std::ffi::CStr, max: u64) -> Option<String> {
     let flags = libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_NOCTTY;
+    let file = std::fs::File::from(open_at(dir, name, flags)?);
     let mut text = String::new();
-    if let Some(fd) = open_at(root, INFO, flags) {
-        let file = std::fs::File::from(fd);
-        let regular = file.metadata().is_ok_and(|m| m.is_file());
-        if !regular || file.take(INFO_BYTES).read_to_string(&mut text).is_err() {
-            text.clear();
-        }
-    }
-    Some(Some(text))
+    let regular = file.metadata().is_ok_and(|m| m.is_file());
+    (regular && file.take(max).read_to_string(&mut text).is_ok()).then_some(text)
+}
+
+/// The inode of the namespace `name` (`ns/mnt`) in a `/proc/<pid>` folder `dir`.
+fn ns_at(dir: &impl AsRawFd, name: &std::ffi::CStr) -> Option<u64> {
+    // SAFETY: an all-zero stat is valid for fstatat to fill.
+    let mut st: libc::stat = unsafe { std::mem::zeroed() };
+    // SAFETY: `name` is NUL-terminated, `st` live, `dir` an open directory.
+    let r = unsafe { libc::fstatat(dir.as_raw_fd(), name.as_ptr(), &mut st, 0) };
+    (r == 0).then_some(st.st_ino)
 }
 
 fn open_at(dir: &impl AsRawFd, name: &std::ffi::CStr, flags: libc::c_int) -> Option<OwnedFd> {
@@ -222,20 +253,42 @@ fn alive(pidfd: BorrowedFd<'_>) -> bool {
     r == 0
 }
 
+/// A pidfd for process `pid`, as it is now.
+fn pidfd_open(pid: i32) -> Option<OwnedFd> {
+    // SAFETY: pidfd_open takes no pointers; a non-negative result is a fresh fd.
+    let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
+    // SAFETY: a fresh fd nothing else owns.
+    (fd >= 0).then(|| unsafe { OwnedFd::from_raw_fd(fd as i32) })
+}
+
 /// `name` in the `[Application]` group of a `.flatpak-info` or instance `info` key file.
 pub fn app_of_flatpak_info(info: &str) -> Option<String> {
+    key_of_flatpak_info(info, "Application", "name")
+}
+
+/// `key` in group `wanted` of a `.flatpak-info`, when it is set.
+fn key_of_flatpak_info(info: &str, wanted: &str, key: &str) -> Option<String> {
     let mut group = "";
     for line in info.lines().map(str::trim) {
         if let Some(g) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
             group = g;
-        } else if group == "Application"
+        } else if group == wanted
             && let Some((k, v)) = line.split_once('=')
-            && k.trim() == "name"
+            && k.trim() == key
         {
             return Some(v.trim().to_string()).filter(|v| !v.is_empty());
         }
     }
     None
+}
+
+/// The number `key` is set to at the top level of a `bwrapinfo.json`, which bubblewrap writes
+/// as one flat object of numbers.
+fn json_number(json: &str, key: &str) -> Option<u64> {
+    let at = json.find(&format!("\"{key}\""))? + key.len() + 2;
+    let value = json[at..].trim_start().strip_prefix(':')?.trim_start();
+    let digits = value.bytes().take_while(u8::is_ascii_digit).count();
+    value[..digits].parse().ok()
 }
 
 /// The systemd unit each line of a `/proc/<pid>/cgroup` puts the process in.
@@ -342,6 +395,8 @@ fn runs(stat: &str) -> bool {
 /// name is looked up by its current owner. [`Identities::forget`] a name once it leaves the bus.
 pub struct Identities {
     proc: PathBuf,
+    /// `$XDG_RUNTIME_DIR`, where Flatpak records each sandbox it runs.
+    runtime: Option<PathBuf>,
     known: Mutex<HashMap<String, AppIdentity>>,
 }
 
@@ -356,7 +411,17 @@ impl Identities {
     pub fn under(proc: impl Into<PathBuf>) -> Self {
         Identities {
             proc: proc.into(),
+            runtime: std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from),
             known: Mutex::default(),
+        }
+    }
+
+    /// These identities with Flatpak's records read from `runtime` in place of
+    /// `$XDG_RUNTIME_DIR`.
+    pub fn with_runtime_dir(self, runtime: impl Into<PathBuf>) -> Self {
+        Identities {
+            runtime: Some(runtime.into()),
+            ..self
         }
     }
 
@@ -385,6 +450,87 @@ impl Identities {
 
     pub fn forget(&self, name: &str) {
         lock(&self.known).remove(name);
+    }
+
+    /// Where the files `peer` on `conn` names are, read afresh on each call; a Flatpak root
+    /// lives as long as its holder keeps it.
+    pub async fn files(&self, conn: &Connection, peer: &str) -> Files {
+        if conn.unique_name().is_none() {
+            return Files::Unknown;
+        }
+        let Ok(Some(fd)) = process_fd(conn, peer).await else {
+            return Files::Unknown;
+        };
+        let Some(pid) = pid_of(&fd).and_then(|pid| i32::try_from(pid).ok()) else {
+            return Files::Unknown;
+        };
+        let Some(peer) = seen_live(fd.as_fd(), pid, &self.proc) else {
+            return Files::Unknown;
+        };
+        match (peer.placement(), peer.flatpak_info.flatten(), peer.mnt_ns) {
+            (Placement::Host { .. }, ..) => Files::Host,
+            (
+                Placement::Flatpak {
+                    app_id: Some(app_id),
+                },
+                Some(info),
+                Some(ns),
+            ) => match self.flatpak_root(&app_id, &info, ns) {
+                Some(root) => Files::Flatpak { app_id, root },
+                None => Files::Unknown,
+            },
+            (
+                Placement::Snap {
+                    app_id: Some(app_id),
+                },
+                ..,
+            ) => match app_id.rsplit_once('_') {
+                // An app name holds no `_`; a snap instance name may.
+                Some((snap, _)) => Files::Snap {
+                    snap: snap.to_string(),
+                    app_id,
+                },
+                None => Files::Unknown,
+            },
+            _ => Files::Unknown,
+        }
+    }
+
+    /// The root of the sandbox of the `app_id` instance its peer's `.flatpak-info` `info` names,
+    /// the peer in mount namespace `peer_ns`; docs/security.md lists what must check out.
+    fn flatpak_root(&self, app_id: &str, info: &str, peer_ns: u64) -> Option<OwnedFd> {
+        const RECORD_BYTES: u64 = 4096;
+        let instance = key_of_flatpak_info(info, "Instance", "instance-id")?;
+        if !instance.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        let proxied =
+            key_of_flatpak_info(info, "Instance", "session-bus-proxy").as_deref() == Some("true");
+        // Never the peer's own root: it may be the app's `xdg-dbus-proxy`, which shows the host's.
+        let folder = self.runtime.as_ref()?.join(".flatpak").join(&instance);
+        let record = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
+            .open(folder);
+        let json = read_small_at(&record.ok()?, c"bwrapinfo.json", RECORD_BYTES)?;
+        let child = i32::try_from(json_number(&json, "child-pid")?).ok()?;
+        let recorded_ns = json_number(&json, "mnt-namespace")?;
+        let pidfd = pidfd_open(child)?;
+        let host_ns = ns_at(
+            &std::fs::File::open(self.proc.join("self")).ok()?,
+            c"ns/mnt",
+        )?;
+        let dir = std::fs::File::open(self.proc.join(child.to_string())).ok()?;
+        let root = open_at(&dir, c"root", libc::O_PATH | libc::O_DIRECTORY)?;
+        let own = flatpak_info_at(&root).flatten()?;
+        let same = app_of_flatpak_info(&own).as_deref() == Some(app_id)
+            && key_of_flatpak_info(&own, "Instance", "instance-id") == Some(instance);
+        let ns = ns_at(&dir, c"ns/mnt");
+        // A proxied peer is the proxy, outside the sandbox; any other runs inside it.
+        let peer_fits = (ns == Some(peer_ns)) != proxied;
+        let walled = ns == Some(recorded_ns) && ns != Some(host_ns) && peer_fits;
+        let running = read_at(&dir, c"stat").is_some_and(|s| runs(&s));
+        (same && walled && running && alive(pidfd.as_fd())).then_some(root)
     }
 }
 
@@ -605,6 +751,244 @@ pub(crate) mod tests {
         );
     }
 
+    /// What `Identities` under `proc`, reading Flatpak's records in `runtime`, make of the files
+    /// of a fresh peer on `bus`.
+    fn files_on(bus: &Bus, proc: &Path, runtime: &Path) -> Files {
+        let connect =
+            || zbus::block_on(zbus::connection::Builder::address(bus.1.as_str()).build()).unwrap();
+        let (us, peer) = (connect(), connect());
+        let name = peer.unique_name().unwrap().to_string();
+        let ids = Identities::under(proc).with_runtime_dir(runtime);
+        zbus::block_on(ids.files(&us, &name))
+    }
+
+    const APP_INFO: &str = "[Application]\nname=org.example.App\n\n[Instance]\ninstance-id=7\n";
+
+    /// A sleeping process standing in for a sandbox's first one, killed on drop.
+    struct Sleeper(Child);
+
+    impl Drop for Sleeper {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    fn sleeper() -> Sleeper {
+        Sleeper(Command::new("sleep").arg("60").spawn().unwrap())
+    }
+
+    /// A `proc` where this process is the peer of instance 7 of `org.example.App` and `child` its
+    /// sandbox, each root holding its files, and a runtime folder recording `child`.
+    fn flatpak_run(
+        child: u32,
+        peer_files: &[(&str, &str)],
+        child_files: &[(&str, &str)],
+    ) -> (tempfile::TempDir, tempfile::TempDir) {
+        let proc = proc_showing(peer_files);
+        for (pid, path, text) in [
+            ("self", "ns/mnt", "host"),
+            (&std::process::id().to_string(), "ns/mnt", "peer"),
+            (&child.to_string(), "stat", "2 (bwrap) S 1 2\n"),
+            (&child.to_string(), "ns/mnt", "sandbox"),
+        ] {
+            let path = proc.path().join(pid).join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        let root = proc.path().join(child.to_string()).join("root");
+        for (path, text) in child_files {
+            let path = root.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        let ns = std::os::unix::fs::MetadataExt::ino(
+            &std::fs::metadata(proc.path().join(format!("{child}/ns/mnt"))).unwrap(),
+        );
+        let runtime = tempfile::tempdir().unwrap();
+        let record = runtime.path().join(".flatpak/7");
+        std::fs::create_dir_all(&record).unwrap();
+        let json = format!("{{\n    \"child-pid\": {child},\n    \"mnt-namespace\": {ns}\n}}\n");
+        std::fs::write(record.join("bwrapinfo.json"), json).unwrap();
+        (proc, runtime)
+    }
+
+    fn reads(files: Files, path: &std::ffi::CStr) -> Option<String> {
+        let Files::Flatpak { app_id, root } = files else {
+            panic!("a Flatpak peer's files are its sandbox's, got {files:?}");
+        };
+        assert_eq!(app_id, "org.example.App");
+        read_at(&root, path)
+    }
+
+    #[test]
+    fn a_flatpak_peers_files_are_under_its_sandboxs_root() {
+        let Some(bus) = bus() else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
+        let app = [
+            ("root/.flatpak-info", APP_INFO),
+            ("root/app/icon.png", "inside"),
+        ];
+        let (proc, runtime) = flatpak_run(std::process::id(), &app, &[]);
+        let files = files_on(&bus, proc.path(), runtime.path());
+        assert_eq!(reads(files, c"app/icon.png").as_deref(), Some("inside"));
+    }
+
+    #[test]
+    fn a_proxied_flatpak_peers_files_are_its_sandboxs_not_the_proxys() {
+        let Some(bus) = bus() else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
+        let proxied = format!("{APP_INFO}session-bus-proxy=true\n");
+        let proxy = [
+            ("root/.flatpak-info", proxied.as_str()),
+            ("root/home/u/x.png", "host"),
+        ];
+        let sandbox = [(".flatpak-info", APP_INFO), ("app/icon.png", "inside")];
+        let child = sleeper();
+        let (proc, runtime) = flatpak_run(child.0.id(), &proxy, &sandbox);
+        let files = || files_on(&bus, proc.path(), runtime.path());
+        assert_eq!(
+            reads(files(), c"home/u/x.png"),
+            None,
+            "the proxy's host folders"
+        );
+        assert_eq!(reads(files(), c"app/icon.png").as_deref(), Some("inside"));
+    }
+
+    #[test]
+    fn a_flatpak_sandbox_that_doesnt_check_out_names_no_files() {
+        let Some(bus) = bus() else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
+        let child = sleeper();
+        let pid = child.0.id().to_string();
+        let proxied = format!("{APP_INFO}session-bus-proxy=true\n");
+        let peer = [("root/.flatpak-info", proxied.as_str())];
+        let us = std::process::id().to_string();
+        let other_instance = APP_INFO.replace("=7", "=8");
+        let other_app = APP_INFO.replace("org.example.App", "org.example.Other");
+        let write = |path: PathBuf, text: &str| std::fs::write(path, text).unwrap();
+        let record = |runtime: &Path| runtime.join(".flatpak/7/bwrapinfo.json");
+        let info = |proc: &Path| proc.join(&pid).join("root/.flatpak-info");
+        let ns = |proc: &Path| {
+            let ns = proc.join(&pid).join("ns/mnt");
+            std::fs::remove_file(&ns).unwrap();
+            ns
+        };
+        type Tamper<'a> = &'a dyn Fn(&Path, &Path);
+        let cases: [(&str, Tamper); 8] = [
+            ("another instance", &|proc: &Path, _: &Path| {
+                write(info(proc), &other_instance)
+            }),
+            ("another app", &|proc: &Path, _: &Path| {
+                write(info(proc), &other_app)
+            }),
+            (
+                "a mount namespace other than the recorded one",
+                &|proc: &Path, _: &Path| write(ns(proc), "replaced"),
+            ),
+            (
+                "the host's mount namespace",
+                &|proc: &Path, runtime: &Path| {
+                    let ns = ns(proc);
+                    std::fs::hard_link(proc.join("self/ns/mnt"), &ns).unwrap();
+                    let ino = std::os::unix::fs::MetadataExt::ino(&std::fs::metadata(&ns).unwrap());
+                    let json = format!("{{\"child-pid\": {pid}, \"mnt-namespace\": {ino}}}");
+                    write(record(runtime), &json);
+                },
+            ),
+            ("an exited sandbox", &|proc: &Path, _: &Path| {
+                write(proc.join(&pid).join("stat"), "2 (bwrap) Z 1 2\n")
+            }),
+            ("no record", &|_: &Path, runtime: &Path| {
+                std::fs::remove_file(record(runtime)).unwrap()
+            }),
+            (
+                "a record naming the proxy",
+                &|proc: &Path, runtime: &Path| {
+                    let ns = proc.join(&us).join("ns/mnt");
+                    let ino = std::os::unix::fs::MetadataExt::ino(&std::fs::metadata(ns).unwrap());
+                    let json = format!("{{\"child-pid\": {us}, \"mnt-namespace\": {ino}}}");
+                    write(record(runtime), &json);
+                },
+            ),
+            (
+                "an unproxied peer outside the sandbox",
+                &|proc: &Path, _: &Path| write(proc.join(&us).join("root/.flatpak-info"), APP_INFO),
+            ),
+        ];
+        for (case, tamper) in cases {
+            let sandbox = [(".flatpak-info", APP_INFO), ("app/icon.png", "inside")];
+            let (proc, runtime) = flatpak_run(child.0.id(), &peer, &sandbox);
+            tamper(proc.path(), runtime.path());
+            let files = files_on(&bus, proc.path(), runtime.path());
+            assert!(matches!(files, Files::Unknown), "{case}: {files:?}");
+        }
+    }
+
+    #[test]
+    fn a_snap_peers_files_are_its_snaps() {
+        let Some(bus) = bus() else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
+        let proc = proc_showing(&[
+            ("attr/apparmor/current", "snap.chat_beta.chat (enforce)\n"),
+            ("cgroup", USER),
+        ]);
+        let Files::Snap { app_id, snap } = files_on(&bus, proc.path(), proc.path()) else {
+            panic!("a snap peer's files are its snap's");
+        };
+        assert_eq!(
+            (app_id.as_str(), snap.as_str()),
+            ("chat_beta_chat", "chat_beta")
+        );
+    }
+
+    #[test]
+    fn a_host_peers_files_are_the_users_and_a_gone_ones_none() {
+        let Some(bus) = bus() else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
+        let host = proc_showing(&[("cgroup", USER), ("status", "NSpid:\t4242\n")]);
+        assert!(matches!(
+            files_on(&bus, host.path(), host.path()),
+            Files::Host
+        ));
+        let zombie = proc_showing(&[
+            (
+                "root/.flatpak-info",
+                "[Application]\nname=org.example.App\n",
+            ),
+            ("stat", "42 (app) Z 1 42\n"),
+        ]);
+        assert!(matches!(
+            files_on(&bus, zombie.path(), zombie.path()),
+            Files::Unknown
+        ));
+        let hidden = proc_showing(&[(
+            "cgroup",
+            &format!("{USER}/app-flatpak-org.example.App-12.scope\n"),
+        )]);
+        std::fs::remove_dir(
+            hidden
+                .path()
+                .join(std::process::id().to_string())
+                .join("root"),
+        )
+        .unwrap();
+        assert!(
+            matches!(files_on(&bus, hidden.path(), hidden.path()), Files::Unknown),
+            "a Flatpak whose root can't be opened"
+        );
+    }
+
     #[test]
     fn an_identity_is_kept_until_its_name_is_forgotten() {
         let Some(bus) = bus() else {
@@ -653,6 +1037,7 @@ pub(crate) mod tests {
             cgroup: Some(cgroup.into()),
             label: label.map(Into::into),
             pid_namespaced: Some(ns),
+            ..Seen::default()
         }
         .placement()
     }
@@ -734,6 +1119,7 @@ pub(crate) mod tests {
                 cgroup: Some(cgroup.into()),
                 label: label.map(Into::into),
                 pid_namespaced: Some(ns),
+                ..Seen::default()
             }
             .scoped_flatpak_app()
         };
@@ -787,6 +1173,7 @@ pub(crate) mod tests {
                 cgroup: Some(cgroup),
                 label: None,
                 pid_namespaced: Some(true),
+                ..Seen::default()
             }
             .scoped_flatpak_app()
         };

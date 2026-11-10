@@ -1,12 +1,16 @@
-use super::{ITEM_IFACE, Icons, Sizes, lock, sizes_now, uncached_proxy};
-use crate::tray::{ItemIcon, TrayItem, decode_named_at, item_pixmaps};
+use super::decoders::Decoders;
+use super::watcher::MAX_REGISTRATIONS;
+use super::{ITEM_IFACE, Icons, Sizes, sizes_now, uncached_proxy};
+use crate::tray::{IconFiles, ItemIcon, TrayItem, decode_item_icons, item_pixmaps};
 use reprisebus::bounded;
-use reprisebus::peer::{AppIdentity, Identities};
+use reprisebus::peer::{AppIdentity, Files, Identities};
+use reprisefs::confined::Confined;
 use reprisefs::names::shown_line;
 use reprisekit::controls::tooltip::TIP_CHARS;
 use reprisekit::icon::IconSource;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
+use std::time::Duration;
 use zbus::as_variant;
 use zbus::message::Body;
 use zbus::{Connection, Proxy};
@@ -28,47 +32,45 @@ async fn prop_body(proxy: &Proxy<'_>, name: &str) -> Option<Body> {
     bounded::property_body(proxy, name).await.ok()
 }
 
-/// `name` from the theme (and the item's `IconThemePath`) at `sizes`, unless `pixmaps` stand in.
-fn named(
-    icons: &Icons,
-    name: Option<&str>,
-    pixmaps: &[IconSource],
-    theme_path: Option<&PathBuf>,
-    sizes: &[i32],
-) -> Arc<[IconSource]> {
-    match name {
-        Some(name) if pixmaps.is_empty() => {
-            let extra: Vec<PathBuf> = theme_path.into_iter().cloned().collect();
-            decode_named_at(&mut lock(icons), name, &extra, sizes).into()
-        }
-        _ => Arc::from([]),
-    }
-}
+/// How long an item's names get to be read and decoded, queue included; past it the item shows
+/// without them.
+const NAMED_WITHIN: Duration = Duration::from_secs(2);
 
-/// Decode the item's icon, attention icon and overlay names at `sizes`; true when any changed.
-pub(super) fn decode_names(icons: &Icons, item: &mut TrayItem, sizes: &[i32]) -> bool {
-    let theme = item.icon_theme_path.clone();
-    let main = named(
-        icons,
-        item.icon_name.as_deref(),
-        &item.pixmaps,
-        theme.as_ref(),
-        sizes,
-    );
-    let mut changed = main != item.named;
+/// Two threads, so a hung read leaves one; the queue holds one fetch per registered item.
+static DECODERS: LazyLock<Decoders> =
+    LazyLock::new(|| Decoders::new(2, MAX_REGISTRATIONS, NAMED_WITHIN));
+
+/// Decode the item's icon, attention icon and overlay names at `sizes`, each unless pixmaps
+/// stand in, on the shared [`DECODERS`].
+pub(super) async fn decode_names(
+    icons: &Icons,
+    files: IconFiles,
+    item: &mut TrayItem,
+    sizes: &[i32],
+) {
+    let named =
+        |name: &Option<String>, pixmaps: &[IconSource]| name.clone().filter(|_| pixmaps.is_empty());
+    let names = [
+        named(&item.icon_name, &item.pixmaps),
+        named(&item.attention.name, &item.attention.pixmaps),
+        named(&item.overlay.name, &item.overlay.pixmaps),
+    ];
+    let decoded = match names.iter().all(Option::is_none) {
+        true => Default::default(),
+        false => {
+            let (icons, theme, sizes) =
+                (icons.clone(), item.icon_theme_path.clone(), sizes.to_vec());
+            let decode = move || {
+                let names = names.each_ref().map(Option::as_deref);
+                decode_item_icons(&icons, &files, names, theme.as_deref(), &sizes)
+            };
+            DECODERS.run(decode).await.unwrap_or_default()
+        }
+    };
+    let [main, attention, overlay] = decoded.map(Arc::from);
     item.named = main;
-    for icon in [&mut item.attention, &mut item.overlay] {
-        let n = named(
-            icons,
-            icon.name.as_deref(),
-            &icon.pixmaps,
-            theme.as_ref(),
-            sizes,
-        );
-        changed |= n != icon.named;
-        icon.named = n;
-    }
-    changed
+    item.attention.named = attention;
+    item.overlay.named = overlay;
 }
 
 /// The name keys the icon cache, so the `PATH_MAX` cap bounds it.
@@ -143,20 +145,27 @@ pub(super) async fn fetch_item(
         log::warn!("tray: {bus}{path} answered none of Title/IconName/IconPixmap/Menu");
         return None;
     }
+    let icon_name = icon_ref(icon_name);
+    let has_names = [&icon_name, &attention_name, &overlay_name]
+        .iter()
+        .any(|n| n.is_some());
     // A sandboxed app's item is kept and listed under its own app, whatever `Id` and `Title` say.
-    let (key, title) = match &identity {
+    let (key, title, files, saved_icon) = match &identity {
         AppIdentity::Host { .. } => {
             let program = pid.and_then(program_name);
-            (item_key(sni_id.as_deref(), program.as_deref(), bus), title)
+            let key = item_key(sni_id.as_deref(), program.as_deref(), bus);
+            (key, title, IconFiles::Host, icon_name.clone())
         }
         AppIdentity::Sandboxed { app_id } => {
             let entry = super::notifications::desktop_entry(app_id);
-            (
-                app_id.clone(),
-                Some(entry.map_or(app_id.clone(), |e| e.name)),
-            )
+            let files = match has_names {
+                true => sandbox_files(identities.files(conn, bus).await, app_id),
+                false => IconFiles::Refused,
+            };
+            let (name, icon) = entry.map_or((app_id.clone(), None), |e| (e.name, e.icon));
+            (app_id.clone(), Some(name), files, icon)
         }
-        AppIdentity::Unknown => (item_key(None, None, bus), None),
+        AppIdentity::Unknown => (item_key(None, None, bus), None, IconFiles::Refused, None),
     };
     let (title, tooltip) = item_texts(title, tip);
     // Read after the properties, so a size change during the read is decoded by it.
@@ -168,8 +177,9 @@ pub(super) async fn fetch_item(
         path: path.to_string(),
         title,
         tooltip,
-        icon_name: icon_ref(icon_name),
+        icon_name,
         icon_theme_path: icon_ref(theme_path).map(PathBuf::from),
+        saved_icon,
         pixmaps: item_pixmaps(&pixmaps.unwrap_or_default(), &sizes).into(),
         named: Arc::from([]),
         menu_path: menu.map(|p| p.as_str().to_string()).filter(|p| p != "/"),
@@ -190,8 +200,21 @@ pub(super) async fn fetch_item(
             named: Arc::from([]),
         },
     };
-    decode_names(icons, &mut item, &sizes);
+    decode_names(icons, files, &mut item, &sizes).await;
     Some(item)
+}
+
+/// Where a sandboxed item of `app_id` opens files from: only as that same app, read again now.
+fn sandbox_files(files: Files, app_id: &str) -> IconFiles {
+    match files {
+        Files::Flatpak { app_id: a, root } if a == app_id => {
+            IconFiles::Confined(Confined::Root(root))
+        }
+        Files::Snap { app_id: a, snap } if a == app_id => {
+            IconFiles::Confined(Confined::snap(&snap))
+        }
+        _ => IconFiles::Refused,
+    }
 }
 
 fn item_key(sni_id: Option<&str>, program: Option<&str>, bus: &str) -> String {

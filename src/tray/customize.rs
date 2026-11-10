@@ -14,6 +14,21 @@ pub struct Remembered {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
+    /// Set when `icon` is a host item's own or a desktop entry's. A row without it may hold a
+    /// path a sandboxed app sent, so [`trusted_icons`] drops such a path.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub icon_trusted: bool,
+}
+
+/// `choices` as loaded, a path icon kept only where the row says it can be read.
+pub fn trusted_icons(mut choices: BTreeMap<String, Remembered>) -> BTreeMap<String, Remembered> {
+    for r in choices.values_mut() {
+        if !r.icon_trusted && r.icon.as_deref().is_some_and(|i| i.contains('/')) {
+            r.icon = None;
+        }
+        r.icon_trusted = true;
+    }
+    choices
 }
 
 fn item_name(item: &TrayItem) -> &str {
@@ -114,7 +129,7 @@ pub(super) fn remember(
         }
         let kept = choices.remove(key);
         let (name, icon) = match current.iter().find(|i| i.key == *key) {
-            Some(i) => (item_name(i).to_string(), i.icon_name.clone()),
+            Some(i) => (item_name(i).to_string(), i.saved_icon.clone()),
             None => kept.map_or_else(|| (key.clone(), None), |r| (r.name, r.icon)),
         };
         choices.insert(
@@ -123,6 +138,7 @@ pub(super) fn remember(
                 behaviour: *b,
                 name,
                 icon,
+                icon_trusted: true,
             },
         );
     }
