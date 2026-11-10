@@ -487,9 +487,9 @@ fn draw(state: &mut State, host: &Host) -> bool {
     if DRAW_PANICS.get() {
         panic!("draw_logon");
     }
-    let (l, mut canvas) = screen(&mut v.model, &theme, text, b, scale);
-    let d = (&theme, text, scale);
-    play(v, &l, d, &mut canvas, Instant::now());
+    v.model.column = logon_column(&v.model, &theme, b);
+    let l = logon_layout(&v.model, &theme, text, b);
+    let canvas = play(v, &l, (&theme, text, scale), Instant::now());
     v.layout = Some(l);
     let shown = !v.hidden;
     crate::output::upload_scaled(&mut state.scene, buffer, &canvas, scale);
@@ -501,18 +501,18 @@ fn draw(state: &mut State, host: &Host) -> bool {
 }
 
 /// Start, carry on or drop what plays on `v`'s screen after its model changed, and draw the
-/// frame for `now` over `canvas`, which holds the screen at rest. A screen no longer busy has its
-/// ring back at step 0.
+/// screen at rest with the frame for `now` over it. A screen no longer busy has its ring back at
+/// step 0.
 fn play(
     v: &mut LogonView,
     l: &LogonLayout,
     (theme, text, s): (&Theme, &TextRenderer, i32),
-    canvas: &mut Canvas,
     now: Instant,
-) {
+) -> Canvas {
     let motion = v.model.take_motion();
-    let size = (canvas.width, canvas.height);
+    let size = ((l.output.width * s) as u32, (l.output.height * s) as u32);
     let prev = (v.play.take()).filter(|p| p.size == size && p.at(now) < p.t.ms());
+    let shown = v.shown.take();
     if !v.hidden && v.model.moves == Moves::Full {
         let d = Drawn {
             m: &v.model,
@@ -527,7 +527,7 @@ fn play(
             size,
         };
         v.play = match (motion, prev) {
-            (Some(m), None) => Transition::begin(&m, &d).map(fresh),
+            (Some(m), None) => Transition::begin_over(&m, &d, shown).map(fresh),
             (Some(m), Some(p)) => Transition::then(&p.t, p.at(now), &m, &d).map(fresh),
             (None, Some(mut p)) => {
                 p.t.refresh_now(&d);
@@ -536,8 +536,12 @@ fn play(
             (None, None) => None,
         };
     }
+    let mut canvas = match &v.play {
+        Some(p) => p.t.rest(&v.model),
+        None => paint(&v.model, l, theme, text, s),
+    };
     if let Some(p) = &v.play {
-        p.t.frame(canvas, &v.model, p.at(now));
+        p.t.frame(&mut canvas, &v.model, p.at(now));
     }
     if v.play.is_some() || !v.model.busy {
         v.ring = None;
@@ -545,6 +549,7 @@ fn play(
     if !v.model.busy {
         v.model.spin = 0;
     }
+    canvas
 }
 
 /// `output` is about to render: the change playing on a screen there draws its next frame and
@@ -567,14 +572,15 @@ pub fn frame(state: &mut State, host: &Host, output: &Output) {
     if let Some(p) = v.play.as_mut() {
         p.since.get_or_insert(now);
         let at = p.at(now);
-        if at >= p.t.ms() {
-            v.play = None;
-            draw(state, host);
-            return turn(state, host, output, buffer, now);
-        }
         let Some(mut c) = v.shown.take() else {
             return;
         };
+        if at >= p.t.ms() {
+            let r = p.t.settle(&mut c, &v.model);
+            v.play = None;
+            show_within(state, host, buffer, c, r);
+            return turn(state, host, output, buffer, now);
+        }
         let r = p.t.frame(&mut c, &v.model, at);
         show_within(state, host, buffer, c, r);
         crate::backend::schedule(state, output);
@@ -624,6 +630,7 @@ fn turn(state: &mut State, host: &Host, output: &Output, buffer: BufferId, now: 
 }
 
 /// `m` laid out over `output` (layout coordinates) and drawn at `scale`, the canvas covering it.
+#[cfg(test)]
 pub fn screen(
     m: &mut Logon,
     theme: &Theme,
@@ -633,10 +640,14 @@ pub fn screen(
 ) -> (LogonLayout, Canvas) {
     m.column = logon_column(m, theme, output);
     let l = logon_layout(m, theme, text, output);
-    let mut c = Canvas::new(
-        (output.width * scale) as u32,
-        (output.height * scale) as u32,
-    );
-    draw_logon(&mut c, m, &l, theme, text.for_output(scale), scale);
+    let c = paint(m, &l, theme, text, scale);
     (l, c)
+}
+
+/// `m` at rest on a canvas covering `l`'s output at `scale`.
+fn paint(m: &Logon, l: &LogonLayout, theme: &Theme, text: &TextRenderer, scale: i32) -> Canvas {
+    let o = l.output;
+    let mut c = Canvas::new((o.width * scale) as u32, (o.height * scale) as u32);
+    draw_logon(&mut c, m, l, theme, text.for_output(scale), scale);
+    c
 }
