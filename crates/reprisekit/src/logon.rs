@@ -467,12 +467,14 @@ impl Logon {
         stops
     }
 
-    /// While busy only Enter on a focused Power does anything.
+    /// While busy only Tab and Enter on a focused Power do anything.
     pub fn key(&mut self, key: LogonKey) -> Option<LogonAction> {
         if self.busy {
-            return (key == LogonKey::Enter && self.focus == Part::Power)
-                .then(|| self.press(Part::Power))
-                .flatten();
+            return match key {
+                LogonKey::Tab { back } => self.tab(back),
+                LogonKey::Enter if self.focus == Part::Power => self.press(Part::Power),
+                _ => None,
+            };
         }
         match key {
             LogonKey::Edit(k) => match (self.focused_edit(), k) {
@@ -498,19 +500,21 @@ impl Logon {
                 part => self.press(part),
             },
             LogonKey::Escape => self.escape(),
-            LogonKey::Tab { back } => {
-                let stops = self.stops();
-                let n = stops.len();
-                self.focus = match stops.iter().position(|&p| p == self.focus) {
-                    Some(at) if back => stops[(at + n - 1) % n],
-                    Some(at) => stops[(at + 1) % n],
-                    None => stops[0],
-                };
-                None
-            }
+            LogonKey::Tab { back } => self.tab(back),
             LogonKey::Up => self.step(false),
             LogonKey::Down => self.step(true),
         }
+    }
+
+    fn tab(&mut self, back: bool) -> Option<LogonAction> {
+        let stops = self.stops();
+        let n = stops.len();
+        self.focus = match stops.iter().position(|&p| p == self.focus) {
+            Some(at) if back => stops[(at + n - 1) % n],
+            Some(at) => stops[(at + 1) % n],
+            None => stops[0],
+        };
+        None
     }
 
     /// A click on `part`: a field takes the focus, anything else is pressed. While busy only

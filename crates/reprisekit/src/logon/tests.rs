@@ -301,17 +301,19 @@ fn a_logon_keys_debug_hides_the_typed_text() {
 }
 
 #[test]
-fn busy_ignores_everything_but_power() {
+fn busy_ignores_everything_but_tab_and_power() {
     let mut m = Logon::new(Interface::Classic, Vec::new(), false, Some("alice"));
     typed(&mut m, "pw");
     m.set_busy(true);
-    for key in [
+    let ignored = [
         LogonKey::Text("x"),
         LogonKey::Edit(EditKey::Backspace { word: false }),
         LogonKey::Enter,
         LogonKey::Escape,
-        LogonKey::Tab { back: false },
-    ] {
+        LogonKey::Up,
+        LogonKey::Down,
+    ];
+    for key in &ignored {
         assert_eq!(m.key(key.clone()), None, "{key:?}");
     }
     assert_eq!((m.password.text.as_str(), m.focus), ("pw", Part::Password));
@@ -319,6 +321,22 @@ fn busy_ignores_everything_but_power() {
         assert_eq!(m.click(part), None, "{part:?}");
     }
     assert_eq!(m.click(Part::Power), Some(LogonAction::Power));
+
+    assert_eq!(m.key(LogonKey::Tab { back: false }), None);
+    assert_eq!(m.focus, Part::Submit, "Tab moves on while busy");
+    assert_eq!(m.key(LogonKey::Enter), None, "the greyed OK takes no Enter");
+    m.key(LogonKey::Tab { back: true });
+    assert_eq!(m.focus, Part::Password, "Shift+Tab moves back");
+    m.key(LogonKey::Tab { back: true });
+    m.key(LogonKey::Tab { back: true });
+    assert_eq!(m.focus, Part::Power, "Shut Down... is reachable");
+    assert_eq!(m.key(LogonKey::Enter), Some(LogonAction::Power));
+    for key in &ignored[..2] {
+        m.key(LogonKey::Tab { back: false });
+        m.key(key.clone());
+    }
+    assert_eq!(m.name.text, "alice", "no text goes in while busy");
+    assert_eq!(m.password.text, "pw");
 }
 
 #[test]
