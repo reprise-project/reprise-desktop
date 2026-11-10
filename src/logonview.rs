@@ -500,9 +500,8 @@ fn draw(state: &mut State, host: &Host) -> bool {
     true
 }
 
-/// Start, carry on or drop what plays on `v`'s screen after its model changed, and draw the
-/// screen at rest with the frame for `now` over it. A screen no longer busy has its ring back at
-/// step 0.
+/// Start, carry on or drop what plays on `v`'s screen after its model changed; the screen at rest
+/// with the frame for `now` over it. A screen no longer busy has its ring back at step 0.
 fn play(
     v: &mut LogonView,
     l: &LogonLayout,
@@ -552,9 +551,8 @@ fn play(
     canvas
 }
 
-/// `output` is about to render: the change playing on a screen there draws its next frame and
-/// asks for the one after; one that ends draws the screen at rest and asks for nothing. Glass's
-/// busy ring turns once nothing plays over it, paced to its steps.
+/// `output` is about to render: the change playing there draws its next frame and asks for the
+/// one after, or settles and asks nothing; then Glass's busy ring turns, paced to its steps.
 pub fn frame(state: &mut State, host: &Host, output: &Output) {
     let now = Instant::now();
     let Some((v, _)) = (host.view)(state) else {

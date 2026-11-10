@@ -430,7 +430,7 @@ impl Canvas {
         // A pixel all of them share stays as it is; one or two canvases (a crossfade) go row by row.
         for y in (r.y * s..(r.y + r.height) * s).map(|y| y as usize * dw) {
             let row = y + x0..y + x1;
-            if let [(b, lb)] | [(b, lb), (_, 0)] = levels.as_slice() {
+            if let [(b, lb)] = levels.as_slice() {
                 let ours = self.pixels[row.clone()].iter_mut();
                 for (a, &pb) in ours.zip(&b.pixels[row]) {
                     if pb != *a {

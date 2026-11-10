@@ -60,7 +60,8 @@ pub struct LockScreen {
 pub struct Leaving {
     pub output: Output,
     pub tree: TreeId,
-    /// When its first frame of fading was drawn.
+    /// When the lock let it go, and when its first frame of fading was drawn.
+    pub at: Instant,
     pub since: Option<Instant>,
 }
 
@@ -739,23 +740,40 @@ fn let_go(state: &mut State, output: Output, tree: TreeId) {
     for n in leaves {
         state.scene.set_input(n, reprisescene::Input::Passthrough);
     }
-    if state.lock.leaving.is_empty() {
-        let wait = Duration::from_millis(UNLOCK_MS * 2);
-        let timer = state
-            .handle
-            .insert_source(Timer::from_duration(wait), |_, _, state| {
-                let_go_now(state);
-                TimeoutAction::Drop
-            });
-        if let Err(e) = timer {
-            log::warn!("lock: cannot time the unlock fade: {}", e.error);
-        }
+    let timer = state
+        .handle
+        .insert_source(Timer::from_duration(STALLED), |_, _, state| {
+            let_go_stalled(state);
+            TimeoutAction::Drop
+        });
+    if let Err(e) = timer {
+        log::warn!("lock: cannot time the unlock fade: {}", e.error);
     }
     state.lock.leaving.push(Leaving {
         output,
         tree,
+        at: Instant::now(),
         since: None,
     });
+}
+
+/// How long a cover let go may wait for its first frame of fading.
+const STALLED: Duration = Duration::from_millis(UNLOCK_MS * 2);
+
+/// Take down the covers whose fade stalled: no frame since `STALLED` after they were let go, or
+/// none since their fade's end.
+fn let_go_stalled(state: &mut State) {
+    let now = Instant::now();
+    for l in std::mem::take(&mut state.lock.leaving) {
+        let stalled = match l.since {
+            Some(since) => now.saturating_duration_since(since) >= Duration::from_millis(UNLOCK_MS),
+            None => now.saturating_duration_since(l.at) >= STALLED,
+        };
+        match stalled {
+            true => destroy_cover(state, &l.output, l.tree),
+            false => state.lock.leaving.push(l),
+        }
+    }
 }
 
 /// Take down every cover still fading out.
@@ -2078,9 +2096,14 @@ mod tests {
 
     /// Locked under Glass behind its screen, "hunter2" the password.
     fn locked_glass() -> crate::harness::Harness {
-        let config = "[appearance]\ninterface = \"glass\"\n";
+        locked_glass_with("")
+    }
+
+    /// A Glass lock on TEST-1 that takes hunter2, `extra` added to its config.
+    fn locked_glass_with(extra: &str) -> crate::harness::Harness {
+        let config = format!("[appearance]\ninterface = \"glass\"\n{extra}");
         let mut h =
-            crate::harness::Harness::with_config(crate::config::Config::parse(config).unwrap());
+            crate::harness::Harness::with_config(crate::config::Config::parse(&config).unwrap());
         h.output("TEST-1", 1024, 768);
         h.state.lock.helpers = Helpers {
             password: |_, _| sh(r#"read p; [ "$p" = hunter2 ] && echo '= 0' || echo '= 7'"#),
@@ -2156,6 +2179,34 @@ mod tests {
         check(&mut h, "hunter2");
         assert!(!h.state.console_locked());
         assert!(h.state.lock.leaving.is_empty());
+    }
+
+    #[test]
+    fn a_second_unlock_soon_after_the_first_fades_out_whole() {
+        let mut h = locked_glass();
+        check(&mut h, "hunter2");
+        next_frame(&mut h);
+        h.run_for(250);
+        lock(&mut h.state);
+        check(&mut h, "hunter2");
+        next_frame(&mut h);
+        h.run_for(200);
+        assert_eq!(
+            h.state.lock.leaving.len(),
+            1,
+            "the first unlock's timer leaves the second fade to its frames"
+        );
+    }
+
+    #[test]
+    fn with_logon_animation_off_the_lock_neither_enters_nor_fades() {
+        let mut h = locked_glass_with("[effects]\nlogon_animation = false\n");
+        let l = h.state.lock.console.as_ref().unwrap();
+        assert!(l.view.play.is_none());
+        assert_eq!(next_frame(&mut h), Vec::<String>::new());
+        check(&mut h, "hunter2");
+        assert!(!h.state.console_locked());
+        assert!(h.state.lock.leaving.is_empty(), "the covers go at once");
     }
 
     #[test]

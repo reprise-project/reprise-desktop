@@ -1,6 +1,5 @@
-//! The login screen's transitions at a quarter of their way apart, a row each: Glass's pick, back
-//! to the tiles, tiles coming forward and busy, Blue's pick and coming forward, then Glass's ring
-//! at five steps. Written to `target/reprisekit-gallery-logon-motion@<scale>.png`.
+//! The login screen's transitions a quarter of their way apart, a row each, then Glass's ring at
+//! five steps; written to `target/reprisekit-gallery-logon-motion@<scale>.png`.
 
 use reprisekit::blue::Variant;
 use reprisekit::interface::Interface;
