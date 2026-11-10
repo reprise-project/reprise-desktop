@@ -1908,6 +1908,47 @@ fn a_read_whose_names_werent_decoded_keeps_the_icons_shown_and_reads_once_more()
 }
 
 #[test]
+fn a_read_whose_new_name_wasnt_decoded_shows_no_icon_of_the_old_name() {
+    let (tx, _events) = std::sync::mpsc::channel();
+    let picture: Arc<[IconSource]> =
+        Arc::from([IconSource::from(crate::raster::Canvas::new(16, 16))]);
+    let (named, reads) = zbus::block_on(async {
+        let (ours, _item) = peers(Duration::from_secs(1)).await;
+        let mut lp = test_loop(ours, tx, -1);
+        let key = ":1.1/item".to_string();
+        let shown = TrayItem {
+            id: key.clone(),
+            icon_name: Some("online".into()),
+            named: picture.clone(),
+            ..TrayItem::default()
+        };
+        lp.items.insert(key.clone(), shown.clone());
+        let away = TrayItem {
+            icon_name: Some("away".into()),
+            named: Arc::from([]),
+            ..shown
+        };
+        lp.fetch(
+            ":1.1".into(),
+            "/item".into(),
+            Duration::from_secs(60),
+            false,
+        );
+        let mut reads = 0;
+        while let Some(id) = lp.fetching.get(&key).map(|f| f.id)
+            && reads < 3
+        {
+            reads += 1;
+            lp.fetched(key.clone(), id, Some(Box::new(away.clone())), false)
+                .await;
+        }
+        (lp.items[&key].named.clone(), reads)
+    });
+    assert!(named.is_empty(), "the old name's icon is not shown");
+    assert_eq!(reads, 2, "one read, then one read again");
+}
+
+#[test]
 fn a_removed_items_read_never_reaches_it() {
     let (tx, _events) = std::sync::mpsc::channel();
     let titles = AtomicUsize::new(0);
@@ -1948,16 +1989,66 @@ struct Relay {
 /// Each link's socket to its client, and whether the link is cut.
 type Links = Arc<Mutex<Vec<(std::os::unix::net::UnixStream, Arc<AtomicBool>)>>>;
 
+/// Copies `from` to `to` with the fds that come along (the daemon hands out pidfds), until
+/// `from` ends or `to` fails; bytes read once `cut` is set are dropped.
+fn forward(
+    from: &std::os::unix::net::UnixStream,
+    to: &std::os::unix::net::UnixStream,
+    cut: &AtomicBool,
+) {
+    use rustix::net::{RecvAncillaryBuffer, RecvAncillaryMessage, RecvFlags, recvmsg};
+    use rustix::net::{SendAncillaryBuffer, SendAncillaryMessage, SendFlags, sendmsg};
+    use std::io::{IoSlice, IoSliceMut};
+    use std::mem::MaybeUninit;
+    use std::os::fd::AsFd;
+    let mut buf = [0u8; 4096];
+    loop {
+        let mut space = [MaybeUninit::uninit(); rustix::cmsg_space!(ScmRights(16))];
+        let mut came = RecvAncillaryBuffer::new(&mut space);
+        let iov = &mut [IoSliceMut::new(&mut buf)];
+        let n = match recvmsg(from, iov, &mut came, RecvFlags::CMSG_CLOEXEC) {
+            Ok(r) if r.bytes > 0 => r.bytes,
+            _ => return,
+        };
+        let fds: Vec<OwnedFd> = came
+            .drain()
+            .flat_map(|m| match m {
+                RecvAncillaryMessage::ScmRights(fds) => fds.collect(),
+                _ => Vec::new(),
+            })
+            .collect();
+        if cut.load(Ordering::Relaxed) {
+            continue;
+        }
+        let fds: Vec<_> = fds.iter().map(|f| f.as_fd()).collect();
+        let mut space = [MaybeUninit::uninit(); rustix::cmsg_space!(ScmRights(16))];
+        let mut along = SendAncillaryBuffer::new(&mut space);
+        if !fds.is_empty() {
+            along.push(SendAncillaryMessage::ScmRights(&fds));
+        }
+        let mut sent = 0;
+        while sent < n {
+            let iov = &[IoSlice::new(&buf[sent..n])];
+            match sendmsg(to, iov, &mut along, SendFlags::NOSIGNAL) {
+                Ok(k) => sent += k,
+                Err(_) => return,
+            }
+            along.clear();
+        }
+    }
+}
+
 impl Relay {
     fn to(daemon: &str) -> Relay {
-        use std::io::{Read, Write};
         use std::os::unix::net::{UnixListener, UnixStream};
         let daemon = daemon
             .strip_prefix("unix:path=")
             .and_then(|a| a.split(',').next())
             .expect("a dbus-daemon at a path")
             .to_string();
-        let path = crate::harness::scratch().join("relay");
+        static RELAYS: AtomicUsize = AtomicUsize::new(0);
+        let n = RELAYS.fetch_add(1, Ordering::Relaxed);
+        let path = crate::harness::scratch().join(format!("relay-{n}"));
         let _ = std::fs::remove_file(&path);
         let listener = UnixListener::bind(&path).unwrap();
         let links: Links = Arc::default();
@@ -1968,19 +2059,12 @@ impl Relay {
                 let upstream = UnixStream::connect(&daemon).unwrap();
                 let cut = Arc::new(AtomicBool::new(false));
                 lock(&kept).push((client.try_clone().unwrap(), cut.clone()));
-                let (mut from, mut to) =
-                    (client.try_clone().unwrap(), upstream.try_clone().unwrap());
+                let (from, to) = (client.try_clone().unwrap(), upstream.try_clone().unwrap());
                 std::thread::spawn(move || {
-                    let mut buf = [0u8; 4096];
-                    while let Ok(n @ 1..) = from.read(&mut buf) {
-                        if !cut.load(Ordering::Relaxed) && to.write_all(&buf[..n]).is_err() {
-                            break;
-                        }
-                    }
+                    forward(&from, &to, &cut);
                     let _ = to.shutdown(std::net::Shutdown::Both);
                 });
-                let (mut from, mut to) = (upstream, client);
-                std::thread::spawn(move || std::io::copy(&mut from, &mut to));
+                std::thread::spawn(move || forward(&upstream, &client, &AtomicBool::new(false)));
             }
         });
         Relay {
@@ -1997,60 +2081,260 @@ impl Relay {
     }
 }
 
+/// A tray serving on `bus` through a [`Relay`], on a thread of its own.
+struct Relayed {
+    relay: Relay,
+    commands: async_channel::Sender<TrayCommand>,
+    events: Receiver<TrayEvent>,
+    tray: JoinHandle<()>,
+}
+
+impl Relayed {
+    fn on(bus: &crate::testbus::Bus) -> Relayed {
+        let relay = Relay::to(&bus.1);
+        let (events, heard) = std::sync::mpsc::channel();
+        let (commands, rx) = async_channel::unbounded();
+        let kept = Kept {
+            events: events.clone(),
+            eventfd: -1,
+            commands: rx,
+            appearance: Arc::new(Mutex::new(
+                Appearance::of(&crate::config::Config::default()),
+            )),
+            icons: hicolor(),
+            sizes: Arc::new(Mutex::new(vec![16])),
+            pads: Arc::default(),
+            senders: Arc::default(),
+            programs: Arc::default(),
+            responding: Arc::default(),
+            identities: Arc::default(),
+            screensaver: screensaver::Shared::new(events, -1),
+            next_id: Arc::new(AtomicU32::new(1)),
+            defers: false,
+        };
+        let address = relay.address.clone();
+        let tray = std::thread::spawn(move || zbus::block_on(serve(&kept, Some(&address))));
+        Relayed {
+            relay,
+            commands,
+            events: heard,
+            tray,
+        }
+    }
+
+    /// Stops the tray; whether it was still serving.
+    fn stop(self) -> bool {
+        let serving = self.commands.send_blocking(TrayCommand::Shutdown).is_ok();
+        self.tray.join().unwrap();
+        serving
+    }
+}
+
+async fn observer(bus: &crate::testbus::Bus) -> Connection {
+    zbus::connection::Builder::address(bus.1.as_str())
+        .build()
+        .await
+        .unwrap()
+}
+
+/// The owner of `name` once there is one other than `not`.
+async fn new_owner(observer: &Connection, name: &str, not: Option<&str>) -> Option<String> {
+    let mut owner = None;
+    becomes(async || {
+        owner = owner_of(observer, name).await;
+        owner.is_some() && owner.as_deref() != not
+    })
+    .await;
+    owner.filter(|o| Some(o.as_str()) != not)
+}
+
 #[test]
 fn a_tray_dropped_by_the_bus_connects_again_and_takes_its_names_back() {
     let Some(bus) = crate::testbus::bus() else {
         eprintln!("no dbus-daemon; skipped");
         return;
     };
-    let relay = Relay::to(&bus.1);
-    let (events, _heard) = std::sync::mpsc::channel();
-    let (commands, rx) = async_channel::unbounded();
-    let kept = Kept {
-        events: events.clone(),
-        eventfd: -1,
-        commands: rx,
-        appearance: Arc::new(Mutex::new(
-            Appearance::of(&crate::config::Config::default()),
-        )),
-        icons: hicolor(),
-        sizes: Arc::new(Mutex::new(vec![16])),
-        pads: Arc::default(),
-        senders: Arc::default(),
-        programs: Arc::default(),
-        responding: Arc::default(),
-        identities: Arc::default(),
-        screensaver: screensaver::Shared::new(events, -1),
-        next_id: Arc::new(AtomicU32::new(1)),
-        defers: false,
-    };
-    let address = relay.address.clone();
-    let tray = std::thread::spawn(move || zbus::block_on(serve(&kept, Some(&address))));
+    let tray = Relayed::on(&bus);
     let (first, again) = zbus::block_on(async {
-        let observer = zbus::connection::Builder::address(bus.1.as_str())
+        let observer = observer(&bus).await;
+        let first = new_owner(&observer, NOTIFY_NAME, None).await;
+        tray.relay.cut();
+        let again = new_owner(&observer, NOTIFY_NAME, first.as_deref()).await;
+        (first, again)
+    });
+    tray.stop();
+    assert!(first.is_some(), "the tray hosts notifications");
+    assert!(
+        again.is_some(),
+        "a new connection hosts them after the cut, after {first:?}"
+    );
+}
+
+#[test]
+fn what_a_peer_left_behind_while_the_tray_was_off_the_bus_goes_once_it_is_back() {
+    let Some(bus) = crate::testbus::bus() else {
+        eprintln!("no dbus-daemon; skipped");
+        return;
+    };
+    let tray = Relayed::on(&bus);
+    let (holder, events) = zbus::block_on(async {
+        let observer = observer(&bus).await;
+        let first = new_owner(&observer, NOTIFY_NAME, None).await;
+        let peer = self::observer(&bus).await;
+        let holder = peer.unique_name().unwrap().to_string();
+        let path = SCREENSAVER_PATHS[0];
+        let inhibit = ("mpv", "video");
+        (peer.call_method(
+            Some(SCREENSAVER_NAME),
+            path,
+            Some(SCREENSAVER_NAME),
+            "Inhibit",
+            &inhibit,
+        ))
+        .await
+        .unwrap();
+        let note = (
+            "mpv",
+            0u32,
+            "",
+            "Hi",
+            "",
+            Vec::<&str>::new(),
+            HashMap::<&str, Variant>::new(),
+            -1i32,
+        );
+        (peer.call_method(
+            Some(NOTIFY_NAME),
+            NOTIFY_PATH,
+            Some(NOTIFY_NAME),
+            "Notify",
+            &note,
+        ))
+        .await
+        .unwrap();
+        let tray_iface = Some("org.reprise.Tray");
+        let (name, at) = (reprisebus::tray::NAME, reprisebus::tray::PATH);
+        (peer.call_method(Some(name), at, tray_iface, "WatchResponding", &()))
+            .await
+            .unwrap();
+        tray.relay.cut();
+        peer.close().await.unwrap();
+        new_owner(&observer, NOTIFY_NAME, first.as_deref()).await;
+        let mut events = Vec::new();
+        while let Some(ev) = next_event(&tray.events, Duration::from_secs(3)).await {
+            events.push(ev);
+        }
+        (holder, events)
+    });
+    tray.stop();
+    let saw = |f: &dyn Fn(&TrayEvent) -> bool| events.iter().any(f);
+    assert!(
+        saw(&|e| matches!(e, TrayEvent::ScreenSaverInhibited(false))),
+        "its inhibit is dropped"
+    );
+    assert!(
+        saw(&|e| matches!(e, TrayEvent::NotifySenderGone(n) if *n == holder)),
+        "its notifications are told it left"
+    );
+    assert!(
+        saw(&|e| matches!(e, TrayEvent::WatchResponding(false))),
+        "the ping round stops with its last watcher"
+    );
+}
+
+#[test]
+fn a_tray_whose_first_try_back_on_the_bus_fails_tries_again() {
+    let Some(bus) = crate::testbus::bus() else {
+        eprintln!("no dbus-daemon; skipped");
+        return;
+    };
+    let tray = Relayed::on(&bus);
+    let back = zbus::block_on(async {
+        let observer = observer(&bus).await;
+        let first = new_owner(&observer, NOTIFY_NAME, None).await;
+        let dbus = zbus::fdo::DBusProxy::new(&observer).await.unwrap();
+        let mut notify_owners = dbus
+            .receive_name_owner_changed_with_args(&[(0, NOTIFY_NAME)])
+            .await
+            .unwrap();
+        // Queued behind the tray, this connection holds the host name once the cut closes it.
+        let host = format!("org.kde.StatusNotifierHost-{}", std::process::id());
+        let flags = zbus::fdo::RequestNameFlags::empty();
+        observer
+            .request_name_with_flags(host.as_str(), flags)
+            .await
+            .unwrap();
+        tray.relay.cut();
+        let failed = async {
+            while let Some(change) = notify_owners.next().await {
+                let args = change.args().unwrap();
+                let left = args.new_owner().is_none();
+                let old = args.old_owner().as_ref().map(|o| o.to_string());
+                if left && old.is_some() && old != first {
+                    return true;
+                }
+            }
+            false
+        };
+        let timeout = async {
+            async_io::Timer::after(Duration::from_secs(10)).await;
+            false
+        };
+        assert!(
+            futures_lite::future::or(failed, timeout).await,
+            "a try back fails on the host name"
+        );
+        observer.release_name(host.as_str()).await.unwrap();
+        let mut back = None;
+        for _ in 0..3 {
+            back = back.or(new_owner(&observer, NOTIFY_NAME, None).await);
+        }
+        back
+    });
+    let serving = tray.stop();
+    assert!(serving, "the tray still serves");
+    assert!(back.is_some(), "and hosts notifications again");
+}
+
+#[test]
+fn an_item_registered_once_comes_back_after_the_tray_connects_again() {
+    let Some(bus) = crate::testbus::bus() else {
+        eprintln!("no dbus-daemon; skipped");
+        return;
+    };
+    let tray = Relayed::on(&bus);
+    let added = zbus::block_on(async {
+        let observer = observer(&bus).await;
+        new_owner(&observer, WATCHER_NAME, None).await;
+        let item = zbus::connection::Builder::address(bus.1.as_str())
+            .serve_at("/item", Answering)
             .build()
             .await
             .unwrap();
-        let mut first = None;
-        becomes(async || {
-            first = owner_of(&observer, NOTIFY_NAME).await;
-            first.is_some()
-        })
-        .await;
-        relay.cut();
-        let mut again = None;
-        becomes(async || {
-            again = owner_of(&observer, NOTIFY_NAME).await;
-            again.is_some() && again != first
-        })
-        .await;
-        (first, again)
+        let register = ("/item",);
+        (item.call_method(
+            Some(WATCHER_NAME),
+            WATCHER_PATH,
+            Some(WATCHER_IFACE),
+            "RegisterStatusNotifierItem",
+            &register,
+        ))
+        .await
+        .unwrap();
+        let mut added = 0;
+        let mut cut = false;
+        while let Some(ev) = next_event(&tray.events, Duration::from_secs(5)).await {
+            if matches!(ev, TrayEvent::Added(_)) {
+                added += 1;
+                if cut {
+                    break;
+                }
+                tray.relay.cut();
+                cut = true;
+            }
+        }
+        added
     });
-    commands.send_blocking(TrayCommand::Shutdown).unwrap();
-    tray.join().unwrap();
-    assert!(first.is_some(), "the tray hosts notifications");
-    assert!(
-        again.is_some() && again != first,
-        "a new connection hosts them after the cut: {first:?} then {again:?}"
-    );
+    tray.stop();
+    assert_eq!(added, 2, "shown, then shown again on the new connection");
 }

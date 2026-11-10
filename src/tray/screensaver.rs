@@ -108,6 +108,12 @@ impl Shared {
         }
     }
 
+    /// The peers holding a cookie.
+    pub fn holders(&self) -> Vec<String> {
+        let held = lock(&self.inhibits);
+        held.held.iter().map(|h| h.sender.clone()).collect()
+    }
+
     pub fn set_active(&self, locked: bool) {
         self.active.store(locked, Ordering::Release);
     }

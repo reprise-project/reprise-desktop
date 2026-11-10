@@ -293,10 +293,10 @@ struct Fetch {
     _stop: async_channel::Sender<()>,
 }
 
-#[derive(Debug, PartialEq)]
 enum Ended {
     Shutdown,
-    Lost,
+    /// With the items registered with the watcher it hosted.
+    Lost(Vec<Published>),
 }
 
 type WatcherItems = Arc<Mutex<Vec<Published>>>;
@@ -739,6 +739,55 @@ impl Loop {
         }
     }
 
+    /// `name` left the bus: drop what it registered, inhibited or watched.
+    async fn left(&mut self, name: &str) {
+        self.remove_items_on(name).await;
+        self.identities.forget(name);
+        if lock(&self.senders).sent_by(name) {
+            self.emit(TrayEvent::NotifySenderGone(name.to_string()));
+        }
+        if lock(&self.responding).left(name) {
+            self.emit(TrayEvent::WatchResponding(false));
+        }
+        let dropped = self.screensaver.update(|h| h.forget(name));
+        if dropped > 0 {
+            log::info!("screensaver: {name} left the bus; {dropped} cookie(s) dropped");
+        }
+    }
+
+    /// On a new connection, drop what peers that left while the tray was off the bus left
+    /// behind: the old connection never heard them go. On another bus, every peer is gone.
+    async fn forget_gone(&mut self, same_bus: bool) {
+        self.identities.clear();
+        let mut names: HashSet<String> = self.screensaver.holders().into_iter().collect();
+        names.extend(lock(&self.senders).0.values().map(|s| s.0.clone()));
+        names.extend(lock(&self.responding).watchers.iter().cloned());
+        let dbus = zbus::fdo::DBusProxy::new(&self.conn).await.ok();
+        for name in names {
+            let gone = match (&dbus, zbus::names::BusName::try_from(name.as_str())) {
+                _ if !same_bus => true,
+                (Some(dbus), Ok(bus)) => dbus.name_has_owner(bus).await.ok() == Some(false),
+                _ => false,
+            };
+            if gone {
+                self.left(&name).await;
+            }
+        }
+    }
+
+    /// Hosting the watcher again, take back the items registered with the old one; a client
+    /// that registers once at its start never registers them again.
+    fn readmit(&mut self, registered: Vec<Published>) {
+        let Some(published) = &self.published else {
+            return;
+        };
+        for p in &registered {
+            let (bus, path) = split_service(&p.key);
+            push_known_item(&mut self.streams, bus, path);
+        }
+        lock(published).extend(registered);
+    }
+
     async fn run(mut self) -> Ended {
         while let Some(wake) = self.streams.next().await {
             match wake {
@@ -751,7 +800,8 @@ impl Loop {
                     for id in self.items.keys() {
                         self.emit(TrayEvent::Removed(id.clone()));
                     }
-                    return Ended::Lost;
+                    let registered = self.published.map(|p| std::mem::take(&mut *lock(&p)));
+                    return Ended::Lost(registered.unwrap_or_default());
                 }
                 Wake::Unmuted(key) => self.unmuted(key).await,
                 Wake::Registered { bus, path } => self.track(bus, path).await,
@@ -772,20 +822,7 @@ impl Loop {
                 } => self.fetched(key, fetch, item, decoded).await,
                 Wake::Owner { name, new_owner } => {
                     if new_owner.is_empty() {
-                        self.remove_items_on(&name).await;
-                        self.identities.forget(&name);
-                        if lock(&self.senders).sent_by(&name) {
-                            self.emit(TrayEvent::NotifySenderGone(name.clone()));
-                        }
-                        if lock(&self.responding).left(&name) {
-                            self.emit(TrayEvent::WatchResponding(false));
-                        }
-                        let dropped = self.screensaver.update(|h| h.forget(&name));
-                        if dropped > 0 {
-                            log::info!(
-                                "screensaver: {name} left the bus; {dropped} cookie(s) dropped"
-                            );
-                        }
+                        self.left(&name).await;
                     }
                 }
             }
@@ -794,16 +831,21 @@ impl Loop {
     }
 }
 
-/// `item`'s named icons, where it would have decoded them, from `old`.
+/// `item`'s named icons, where it would have decoded the same names as `old`, from `old`.
 fn keep_named(item: &mut TrayItem, old: &TrayItem) {
-    if item::named(&item.icon_name, &item.pixmaps).is_some() {
+    if item.icon_theme_path != old.icon_theme_path {
+        return;
+    }
+    if item::named(&item.icon_name, &item.pixmaps).is_some() && item.icon_name == old.icon_name {
         item.named = old.named.clone();
     }
-    if item::named(&item.attention.name, &item.attention.pixmaps).is_some() {
-        item.attention.named = old.attention.named.clone();
+    let (new, was) = (&mut item.attention, &old.attention);
+    if item::named(&new.name, &new.pixmaps).is_some() && new.name == was.name {
+        new.named = was.named.clone();
     }
-    if item::named(&item.overlay.name, &item.overlay.pixmaps).is_some() {
-        item.overlay.named = old.overlay.named.clone();
+    let (new, was) = (&mut item.overlay, &old.overlay);
+    if item::named(&new.name, &new.pixmaps).is_some() && new.name == was.name {
+        new.named = was.named.clone();
     }
 }
 
@@ -1117,26 +1159,37 @@ const RECONNECT_MOST: Duration = Duration::from_secs(30);
 const STEADY: Duration = Duration::from_secs(60);
 
 /// Serve the tray on the session bus, or the bus at `address`, connecting again whenever the
-/// connection is lost, until a shutdown or a connection that can't be set up.
+/// connection is lost, until a shutdown or a first connection that can't be set up.
 async fn serve(kept: &Kept, address: Option<&str>) {
     let mut pause = Duration::ZERO;
+    let mut bus = None;
+    let mut registered = Vec::new();
     loop {
         let began = Instant::now();
-        let lp = match setup(kept, address).await {
-            Ok(l) => l,
-            Err(e) => {
+        match setup(kept, address).await {
+            Ok(mut lp) => {
+                let guid = lp.conn.server_guid().clone();
+                if let Some(was) = bus.replace(guid.clone()) {
+                    lp.forget_gone(was == guid).await;
+                    lp.readmit(std::mem::take(&mut registered));
+                }
+                match lp.run().await {
+                    Ended::Shutdown => return,
+                    Ended::Lost(items) => registered = items,
+                }
+                log::warn!("tray: lost the session bus connection");
+            }
+            Err(e) if bus.is_none() => {
                 emit(&kept.events, kept.eventfd, TrayEvent::Unavailable(e));
                 return;
             }
-        };
-        if lp.run().await == Ended::Shutdown {
-            return;
+            Err(e) => log::warn!("tray: could not serve on the session bus again: {e}"),
         }
         pause = match pause.is_zero() || began.elapsed() >= STEADY {
             true => RECONNECT_FIRST,
             false => (pause * 2).min(RECONNECT_MOST),
         };
-        log::warn!("tray: lost the session bus connection; connecting again in {pause:?}");
+        log::warn!("tray: connecting again in {pause:?}");
         async_io::Timer::after(pause).await;
     }
 }
