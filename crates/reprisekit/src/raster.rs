@@ -420,6 +420,31 @@ impl Canvas {
         }
     }
 
+    /// [`Canvas::mix`] toward `other`'s pixels of `r` moved by `(dx, dy)` (logical), cut to the
+    /// bounds; pixels the moved slice doesn't reach stay. Both have the same size and scale.
+    pub fn mix_shifted(&mut self, other: &Canvas, r: Rect, (dx, dy): (i32, i32), level: f32) {
+        debug_assert_eq!(
+            (self.width, self.height, self.scale),
+            (other.width, other.height, other.scale)
+        );
+        let l = (level.clamp(0.0, 1.0) * 255.0).round() as u32;
+        let src = r.intersect(&self.bounds());
+        let dst =
+            Rect::new(src.x + dx, src.y + dy, src.width, src.height).intersect(&self.bounds());
+        if l == 0 || dst.width <= 0 || dst.height <= 0 {
+            return;
+        }
+        let s = self.scale;
+        let dw = (self.width as i32 * s) as usize;
+        for y in dst.y * s..(dst.y + dst.height) * s {
+            for x in dst.x * s..(dst.x + dst.width) * s {
+                let i = y as usize * dw + x as usize;
+                let j = (y - dy * s) as usize * dw + (x - dx * s) as usize;
+                self.pixels[i] = mix_px(self.pixels[i], std::iter::once((other.pixels[j], l)));
+            }
+        }
+    }
+
     /// The smallest logical rect holding every pixel where this canvas
     /// and `other` differ, empty when none does: all a [`Canvas::mix`]
     /// between them changes. Both have the same size and scale.
