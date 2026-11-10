@@ -512,7 +512,7 @@ fn the_admin_heading_is_read_out_with_the_form() {
 const ALL: [Interface; 3] = [Interface::Classic, Interface::Blue, Interface::Glass];
 
 fn locked(i: Interface, switch_user: bool) -> Logon {
-    Logon::locked(i, users(1).remove(0), switch_user)
+    Logon::locked(i, users(1).remove(0), switch_user, true)
 }
 
 #[test]
@@ -638,5 +638,28 @@ fn a_hint_shows_while_no_message_does_and_outlasts_escape() {
         assert_eq!(m.said().as_deref(), Some("Place your finger"), "{i:?}");
         m.hint = None;
         assert_eq!(m.said(), heading, "{i:?}");
+    }
+}
+
+#[test]
+fn a_lock_without_power_shows_and_answers_no_power_button() {
+    let theme = Theme::default();
+    let text = TextRenderer::load(&theme.fonts);
+    let output = Rect::new(0, 0, 1024, 768);
+    let power = |p: &Part| matches!(p, Part::Power | Part::PowerMenu);
+    for i in ALL {
+        let mut m = Logon::locked(i, users(1).remove(0), true, false);
+        assert!(!m.offers_power(), "{i:?}");
+        assert!(!m.stops().iter().any(power), "{i:?}: Tab never reaches it");
+        let l = crate::interfaces::logon::logon_layout(&m, &theme, &text, output);
+        assert!(!l.parts.iter().any(|(p, _)| power(p)), "{i:?}: not drawn");
+        assert_eq!(m.click(Part::Power), None, "{i:?}");
+        assert_eq!(m.click(Part::PowerMenu), None, "{i:?}");
+        m.focus = Part::Power;
+        m.set_busy(true);
+        assert_eq!(m.key(LogonKey::Enter), None, "{i:?}: nor while busy");
+        let with = Logon::locked(i, users(1).remove(0), true, true);
+        let l = crate::interfaces::logon::logon_layout(&with, &theme, &text, output);
+        assert!(l.rect(Part::Power).is_some(), "{i:?}: offered, it shows");
     }
 }

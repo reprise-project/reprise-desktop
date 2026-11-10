@@ -490,7 +490,7 @@ fn the_backdrop_is_kept_for_each_output_size() {
 
 fn locked_states() -> Vec<(&'static str, Logon)> {
     let user = users().remove(0);
-    let rest = Logon::locked(Interface::Blue, user.clone(), true);
+    let rest = Logon::locked(Interface::Blue, user.clone(), true, true);
     let mut typed = rest.clone();
     typed.key(LogonKey::Text("hunter2"));
     typed.caps_lock = true;
@@ -503,13 +503,15 @@ fn locked_states() -> Vec<(&'static str, Logon)> {
     busy.set_busy(true);
     let mut switch_hot = rest.clone();
     switch_hot.lit = Some((Part::SwitchUser, Interaction::Hot));
-    let alone = Logon::locked(Interface::Blue, user, false);
+    let alone = Logon::locked(Interface::Blue, user.clone(), false, true);
+    let powerless = Logon::locked(Interface::Blue, user, true, false);
     vec![
         ("locked", rest),
         ("locked typed with caps lock and badge", typed),
         ("locked failed", failed),
         ("locked busy", busy),
         ("locked switch user hot", switch_hot),
+        ("locked without power", powerless),
         ("locked without switch user", alone),
     ]
 }

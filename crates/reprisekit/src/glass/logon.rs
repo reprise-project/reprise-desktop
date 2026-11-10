@@ -283,11 +283,13 @@ fn geometry(m: &Logon, theme: &Theme, output: Rect, button_w: i32) -> Geometry {
         POWER_W,
         POWER_H,
     );
-    g.parts.push((Part::Power, power));
-    g.parts.push((
-        Part::PowerMenu,
-        Rect::new(power.right(), power.y, MENU_W, POWER_H),
-    ));
+    if m.offers_power() {
+        g.parts.push((Part::Power, power));
+        g.parts.push((
+            Part::PowerMenu,
+            Rect::new(power.right(), power.y, MENU_W, POWER_H),
+        ));
+    }
     if m.layout.is_some() {
         let badge = Rect::new(output.x + EDGE, bottom - POWER_H, BADGE_W, POWER_H);
         g.parts.push((Part::Layout, badge));

@@ -612,6 +612,7 @@ fn raise(state: &mut State, side: Side) {
         state.config.interface,
         me,
         crate::loginlink::offered(state, side),
+        has_power(state, side),
     );
     let compose = state.compose.as_ref().map(Compose::over);
     state.read_user_pictures(vec![PICTURE]);
@@ -1020,8 +1021,9 @@ fn caps_lock(state: &State, side: Side) -> bool {
 /// screen hidden while a locker holds the lock or starts to.
 fn prepare(state: &mut State, side: Side) {
     let switch_user = crate::loginlink::offered(state, side);
+    let power = has_power(state, side);
     if let Some(l) = state.lock.on_mut(side) {
-        l.view.model.purpose = Purpose::Unlock { switch_user };
+        l.view.model.purpose = Purpose::Unlock { switch_user, power };
         l.view.hidden = !l.screen_shown();
     }
 }
@@ -1040,7 +1042,7 @@ pub fn redraw(state: &mut State) {
 pub fn reset(l: &mut Lock) {
     let m = &l.view.model;
     let user = m.users[0].clone();
-    l.view.model = Logon::locked(m.interface, user, m.offers_switch_user());
+    l.view.model = Logon::locked(m.interface, user, m.offers_switch_user(), m.offers_power());
 }
 
 /// The user picture landed: the console's screen shows it.
@@ -1191,10 +1193,15 @@ pub enum LockPower {
     TurnOff,
 }
 
-/// The power button (Glass turns off at once, as the login screen does) or the power menu. Only
-/// the console's lock outside lock mode has them: in lock mode the computer is in use from afar.
+/// Only the console's lock outside lock mode shows the power button and menu: in lock mode the
+/// computer is in use from afar.
+fn has_power(state: &State, side: Side) -> bool {
+    side == Side::Console && !crate::console::remote_side(state)
+}
+
+/// The power button (Glass turns off at once, as the login screen does) or the power menu.
 fn power(state: &mut State, side: Side, menu: bool) {
-    if side != Side::Console || crate::console::remote_side(state) {
+    if !has_power(state, side) {
         return;
     }
     if !menu && state.config.interface == Interface::Glass {
@@ -1923,6 +1930,21 @@ mod tests {
         redraw(&mut h.state);
         let l = h.state.lock.console.as_ref().unwrap();
         assert!(!splashes(l, beside), "a locker's own screen has no water");
+    }
+
+    #[test]
+    fn neither_lock_in_lock_mode_draws_a_power_button() {
+        let power = |h: &crate::harness::Harness, side| {
+            let l = h.state.lock.on(side).expect("locked");
+            l.part(logon::Part::Power)
+                .or(l.part(logon::Part::PowerMenu))
+        };
+        let h = locked(|_, _| sh("exit 0"));
+        assert!(power(&h, Side::Console).is_some(), "outside lock mode");
+        let (mut h, _portal, _lock) = crate::console::tests::in_lock_mode();
+        lock_remote(&mut h.state);
+        assert_eq!(power(&h, Side::Remote), None, "the remote side's lock");
+        assert_eq!(power(&h, Side::Console), None, "the computer's own lock");
     }
 
     #[test]

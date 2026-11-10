@@ -67,7 +67,7 @@ fn screens() -> Vec<(Logon, Variant, Option<&'static str>)> {
         (m, Variant::Blue, Some(picture))
     });
     let locks = [Interface::Classic, Interface::Blue, Interface::Glass]
-        .map(|i| Logon::locked(i, users().remove(0), true));
+        .map(|i| Logon::locked(i, users().remove(0), true, true));
     [empty, filled, message, busy, caps, badge]
         .into_iter()
         .chain(starts)

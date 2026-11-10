@@ -525,7 +525,7 @@ mod tests {
             picture: None,
             note: None,
         };
-        Logon::locked(reprisekit::interface::Interface::Classic, user, false)
+        Logon::locked(reprisekit::interface::Interface::Classic, user, false, true)
     }
 
     #[test]
