@@ -904,7 +904,12 @@ pub(crate) mod tests {
             }),
             (
                 "a mount namespace other than the recorded one",
-                &|proc: &Path, _: &Path| write(ns(proc), "replaced"),
+                &|proc: &Path, _: &Path| {
+                    // Written beside the old file first, so the new one can't reuse its inode.
+                    let new = proc.join(&pid).join("ns/mnt.new");
+                    write(new.clone(), "replaced");
+                    std::fs::rename(new, proc.join(&pid).join("ns/mnt")).unwrap();
+                },
             ),
             (
                 "the host's mount namespace",
