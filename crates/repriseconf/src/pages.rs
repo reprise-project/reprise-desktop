@@ -394,6 +394,7 @@ impl Page {
             Page::Privacy => &[
                 "location",
                 "clipboard",
+                "flatpak",
                 "recent files",
                 "history",
                 "screen sharing",
@@ -677,7 +678,7 @@ mod tests {
     #[test]
     fn a_keyword_hit_names_the_one_control_holding_the_words_the_label_lacks() {
         assert_eq!(
-            Page::Privacy.find("clipboard"),
+            Page::Privacy.find("history"),
             Some(Hit::Keyword(Some("clipboard_history")))
         );
         assert_eq!(

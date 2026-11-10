@@ -2,6 +2,7 @@
 //! An X11 window becomes a `window::Window` of `Kind::X11` once Xwayland ties a `wl_surface` to it; Xwayland draws at scale 1, so X11 coordinates are layout coordinates.
 
 mod auth;
+mod bridge;
 mod helper;
 pub mod menus;
 mod sockets;
@@ -488,12 +489,32 @@ impl State {
             .filter(|&w| self.win(w).is_some_and(|w| w.mapped))
     }
 
-    /// Whether the active window is an X11 one: only then may X11 clients
-    /// take or read the clipboard.
-    fn x11_focused(&self) -> bool {
-        self.focused
-            .and_then(|w| self.win(w))
-            .is_some_and(|w| w.x11().is_some())
+    /// The focused window, as the clipboard bridge sees it.
+    fn bridge_focus(&self) -> bridge::Focus {
+        match self.focused.and_then(|w| self.win(w)) {
+            None => bridge::Focus::None,
+            Some(w) if w.x11().is_some() => bridge::Focus::X11,
+            Some(w) => bridge::Focus::Wayland(crate::sandbox::window_context_app(w)),
+        }
+    }
+
+    /// [`bridge::verdict`] on `event` for `selection`, from the focus and the X11 owner now.
+    fn bridge_verdict(
+        &self,
+        xwm: XwmId,
+        event: bridge::Event,
+        selection: SelectionTarget,
+    ) -> bridge::Verdict {
+        let held = match selection {
+            SelectionTarget::Clipboard => current_data_device_selection_userdata(&self.seat),
+            SelectionTarget::Primary => current_primary_selection_userdata(&self.seat),
+        };
+        let x11_holds = held.is_some_and(|o| o.is_x11(xwm));
+        let owner_app = || {
+            let pid = self.xwayland.wm.as_ref()?.selection_owner_pid(selection)?;
+            crate::sandbox::x11_owner_app(pid, std::path::Path::new("/proc"))
+        };
+        bridge::verdict(event, selection, &self.bridge_focus(), x11_holds, owner_app)
     }
 
     /// Give X11 window `x` the X input focus and the top of the X
@@ -958,10 +979,8 @@ impl XwmHandler for State {
         }
     }
 
-    /// An X11 client reads the Wayland selections only while an X11
-    /// window is active.
-    fn allow_selection_access(&mut self, _xwm: XwmId, _selection: SelectionTarget) -> bool {
-        self.x11_focused()
+    fn allow_selection_access(&mut self, xwm: XwmId, selection: SelectionTarget) -> bool {
+        self.bridge_verdict(xwm, bridge::Event::Read, selection) == bridge::Verdict::Allow
     }
 
     /// An X11 client reads a Wayland selection: a client's is asked of
@@ -1003,10 +1022,10 @@ impl XwmHandler for State {
         }
     }
 
-    /// An X11 client took a selection: Wayland clients get it, while an
-    /// X11 window is active, as from any focused client.
+    /// An X11 client took a selection and listed its targets: Wayland clients get it as the
+    /// bridge rules.
     fn new_selection(&mut self, xwm: XwmId, selection: SelectionTarget, mime_types: Vec<String>) {
-        if !self.x11_focused() {
+        if self.bridge_verdict(xwm, bridge::Event::Targets, selection) != bridge::Verdict::Allow {
             return;
         }
         self.xwayland.selections[slot(selection)] = None;
@@ -1024,21 +1043,17 @@ impl XwmHandler for State {
     }
 
     fn cleared_selection(&mut self, xwm: XwmId, selection: SelectionTarget) {
+        if self.bridge_verdict(xwm, bridge::Event::Cleared, selection) != bridge::Verdict::Clear {
+            return;
+        }
         match selection {
             SelectionTarget::Clipboard => {
-                if current_data_device_selection_userdata(&self.seat).is_some_and(|o| o.is_x11(xwm))
-                {
-                    self.clip.offered.clear();
-                    self.clip.sandboxed = false;
-                    clear_data_device_selection(&self.dh, &self.seat);
-                    self.clipboard_changed();
-                }
+                self.clip.offered.clear();
+                self.clip.sandboxed = false;
+                clear_data_device_selection(&self.dh, &self.seat);
+                self.clipboard_changed();
             }
-            SelectionTarget::Primary => {
-                if current_primary_selection_userdata(&self.seat).is_some_and(|o| o.is_x11(xwm)) {
-                    clear_primary_selection(&self.dh, &self.seat);
-                }
-            }
+            SelectionTarget::Primary => clear_primary_selection(&self.dh, &self.seat),
         }
     }
 
@@ -1075,6 +1090,28 @@ mod tests {
     use super::*;
 
     use reprisekit::classic::frame::FrameGeometry;
+
+    #[test]
+    fn the_bridge_sees_a_wayland_windows_flatpak_app_as_the_focus() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let pass = "org.example.Pass";
+        let mut app = h.connect_in_flatpak(pass);
+        h.map_toplevel(&mut app, pass, 300, 200);
+        assert_eq!(
+            h.state.bridge_focus(),
+            bridge::Focus::Wayland(Some(pass.into()))
+        );
+        assert!(
+            h.state.clip_owner_sandboxed(),
+            "its X11 side's copy counts as sandboxed"
+        );
+        let mut host = h.connect();
+        h.map_toplevel(&mut host, "foot", 300, 200);
+        assert_eq!(h.state.bridge_focus(), bridge::Focus::Wayland(None));
+        h.state.focus_desktop();
+        assert_eq!(h.state.bridge_focus(), bridge::Focus::None);
+    }
 
     #[test]
     fn xwayland_is_told_the_cookie_file() {

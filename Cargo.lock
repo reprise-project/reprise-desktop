@@ -1458,7 +1458,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5150,7 +5150,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.4.15",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5163,7 +5163,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5551,7 +5551,7 @@ checksum = "149309498a5f7334b12ddae0cad8aba81ce785fe91755068867e017cf98fee46"
 [[package]]
 name = "smithay"
 version = "0.7.0"
-source = "git+https://github.com/reprise-project/smithay.git?rev=36918c686619b6b3bef549b8e2ed37bf4fc84769#36918c686619b6b3bef549b8e2ed37bf4fc84769"
+source = "git+https://github.com/reprise-project/smithay.git?rev=3303dd5e1ebcd803ad435db24adb02f1beca549a#3303dd5e1ebcd803ad435db24adb02f1beca549a"
 dependencies = [
  "appendlist",
  "bitflags 2.13.2",
@@ -5625,7 +5625,7 @@ dependencies = [
 [[package]]
 name = "smithay-drm-extras"
 version = "0.1.0"
-source = "git+https://github.com/reprise-project/smithay.git?rev=36918c686619b6b3bef549b8e2ed37bf4fc84769#36918c686619b6b3bef549b8e2ed37bf4fc84769"
+source = "git+https://github.com/reprise-project/smithay.git?rev=3303dd5e1ebcd803ad435db24adb02f1beca549a#3303dd5e1ebcd803ad435db24adb02f1beca549a"
 dependencies = [
  "drm 0.14.1",
  "libdisplay-info",
@@ -5879,10 +5879,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.6",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

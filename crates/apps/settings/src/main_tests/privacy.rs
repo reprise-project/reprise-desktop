@@ -135,3 +135,83 @@ fn forget_saved_layouts_drops_the_file_and_greys_the_button() {
     assert!(!app.display.layouts.exists());
     assert!(!forget(&app), "greyed once forgotten");
 }
+
+#[test]
+fn the_clipboard_access_list_reads_the_installed_apps_and_ticks_into_trusted_apps() {
+    let dir = tmp("clip-access");
+    let install = dir.join("flatpak");
+    let active = install.join("app/org.example.Pass/current/active");
+    std::fs::create_dir_all(&active).unwrap();
+    std::fs::write(
+        active.join("metadata"),
+        "[Application]\nname=org.example.Pass\n\n[Context]\nsockets=x11;wayland;\n",
+    )
+    .unwrap();
+    let exports = install.join("exports/share/applications");
+    std::fs::create_dir_all(&exports).unwrap();
+    std::fs::write(
+        exports.join("org.example.Pass.desktop"),
+        "[Desktop Entry]\nType=Application\nName=Pass\nExec=pass\n",
+    )
+    .unwrap();
+    let config = dir.join("config.toml");
+    std::fs::write(
+        &config,
+        "[clipboard]\ntrusted_apps = [\"org.example.Gone\"]\n",
+    )
+    .unwrap();
+    let mut app = SettingsApp::open(config, "us".into());
+    app.flatpak_installs = vec![install];
+    let list = |app: &SettingsApp| match app.sheet.pages[Page::Privacy.index()]
+        .item(crate::clipaccess::LIST)
+        .map(|i| &i.control)
+    {
+        Some(form::Control::ListBox { list, .. }) => (list.items.clone(), list.checks.clone()),
+        _ => panic!("the list is on the Privacy page"),
+    };
+    app.ensure_clip_apps();
+    assert!(
+        app.clip_reading.is_none(),
+        "no read while another page shows"
+    );
+
+    app.sheet.tabs.open = Page::Privacy.index();
+    app.ensure_clip_apps();
+    assert_eq!(list(&app).0, ["Loading..."]);
+    let found = app
+        .clip_reading
+        .take()
+        .expect("a read under way")
+        .recv()
+        .unwrap();
+    app.show_clip_apps(found);
+    app.ensure_clip_apps();
+    assert_eq!(
+        list(&app),
+        (
+            vec!["Pass".to_string(), "org.example.Gone".to_string()],
+            vec![false, true]
+        )
+    );
+
+    if let Some(form::Control::ListBox { list, .. }) = app.sheet.pages[Page::Privacy.index()]
+        .item_mut(crate::clipaccess::LIST)
+        .map(|i| &mut i.control)
+    {
+        list.toggle(0);
+        list.toggle(1);
+    }
+    let changed = form::Event::Changed(crate::clipaccess::LIST);
+    app.sheet_event(propsheet::Event::Page(Page::Privacy.index(), changed));
+    assert_eq!(app.want.clipboard_trusted, ["org.example.Pass"]);
+    assert!(app.dirty(), "Apply writes it");
+    app.ensure_clip_apps();
+    assert_eq!(
+        list(&app),
+        (
+            vec!["Pass".to_string(), "org.example.Gone".to_string()],
+            vec![true, false]
+        ),
+        "an unticked id that isn't installed stays until Apply"
+    );
+}

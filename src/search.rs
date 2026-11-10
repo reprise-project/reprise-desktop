@@ -600,7 +600,7 @@ mod tests {
     fn a_keyword_naming_one_control_opens_it_focused_in_the_keyword_tier() {
         let first = |q: &str| rank_settings(q, &[], &[], 8).first().copied();
         for (q, page, id) in [
-            ("clipboard", Page::Privacy, "clipboard_history"),
+            ("history", Page::Privacy, "clipboard_history"),
             ("quiet hours", Page::Notifications, "quiet_hours"),
             ("3d", Page::Switcher, "switcher_flip"),
             ("default browser", Page::DefaultPrograms, "dp_browser"),

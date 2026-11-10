@@ -142,16 +142,19 @@ impl ClientSandbox {
     /// The Flatpak app id of its sandbox: its context's when Flatpak
     /// opened that, else the one in its process's `/.flatpak-info`.
     pub fn flatpak_app(&self) -> Option<String> {
-        let ctx = self
-            .context
-            .as_ref()
-            .filter(|c| c.engine.as_deref() == Some(FLATPAK_ENGINE))
-            .and_then(|c| c.app_id.clone())
-            .filter(|id| !id.is_empty());
-        ctx.or_else(|| {
+        self.context_flatpak_app().or_else(|| {
             let pid = self.pid.filter(|_| self.process == Process::Flatpak)?;
             reprisefs::flatpak::app_of_pid(pid as u32)
         })
+    }
+
+    /// The app id Flatpak gave the security context it came in on, which the app can't change.
+    pub fn context_flatpak_app(&self) -> Option<String> {
+        self.context
+            .as_ref()
+            .filter(|c| c.engine.as_deref() == Some(FLATPAK_ENGINE))
+            .and_then(|c| c.app_id.clone())
+            .filter(|id| !id.is_empty())
     }
 
     /// Whether the client runs an installed reprise-portal, read afresh
@@ -207,10 +210,42 @@ fn peer_pidfd(stream: &UnixStream, pid: i32) -> Option<OwnedFd> {
     if std::io::Error::last_os_error().raw_os_error() != Some(libc::ENOPROTOOPT) {
         return None;
     }
+    pidfd_open(pid)
+}
+
+fn pidfd_open(pid: i32) -> Option<OwnedFd> {
     // SAFETY: pidfd_open takes a pid and flags and returns a new fd or -1.
     let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
     // SAFETY: a fresh fd nothing else owns.
     (fd >= 0).then(|| unsafe { OwnedFd::from_raw_fd(fd as libc::c_int) })
+}
+
+/// The Flatpak app whose scope process `pid` runs in, by [`reprisebus::peer::scoped_flatpak_app`]
+/// under `proc`. `pid` is the one the X server recorded at connect and the pidfd is taken now,
+/// so a pid reused since names the process holding it now.
+pub fn x11_owner_app(pid: u32, proc: &std::path::Path) -> Option<String> {
+    let pid = i32::try_from(pid).ok().filter(|&p| p > 0)?;
+    let pidfd = pidfd_open(pid)?;
+    reprisebus::peer::scoped_flatpak_app(pidfd.as_fd(), pid, proc)
+}
+
+/// A fresh `proc` under the harness scratch where this process runs in the user manager's unit
+/// `unit`, in a pid namespace, with `/.flatpak-info` text `info` at its root.
+#[cfg(test)]
+pub fn test_proc(unit: &str, info: Option<&str>) -> std::path::PathBuf {
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let proc = crate::harness::scratch().join(format!("proc-{n}"));
+    let dir = proc.join(std::process::id().to_string());
+    std::fs::create_dir_all(dir.join("root")).unwrap();
+    std::fs::write(dir.join("stat"), "42 (app) S 1 42\n").unwrap();
+    let slice = "/user.slice/user-1000.slice/user@1000.service/app.slice";
+    std::fs::write(dir.join("cgroup"), format!("0::{slice}/{unit}\n")).unwrap();
+    std::fs::write(dir.join("status"), "NSpid:\t42\t2\n").unwrap();
+    if let Some(info) = info {
+        std::fs::write(dir.join("root/.flatpak-info"), info).unwrap();
+    }
+    proc
 }
 
 /// The pid a harness client takes to pass as the installed portal.
@@ -300,6 +335,15 @@ impl SecurityContextHandler for State {
             log::warn!("sandbox socket: {}", e.error);
         }
     }
+}
+
+/// The app id Flatpak's security context gave the client of Wayland window `win`.
+pub fn window_context_app(win: &crate::window::Window) -> Option<String> {
+    let client = win.wl_client()?;
+    client
+        .get_data::<ClientState>()?
+        .sandbox
+        .context_flatpak_app()
 }
 
 /// The Flatpak app id of the sandbox `win`'s client runs in; an X11
@@ -565,5 +609,28 @@ mod tests {
         assert!(portal_exported(&root.join("abc/x.png")));
         assert!(!portal_exported(&root.join("abc/../../../etc/passwd")));
         assert!(!portal_exported(std::path::Path::new("/home/u/x.png")));
+    }
+
+    #[test]
+    fn an_x11_owner_is_named_by_its_flatpak_scope() {
+        let me = std::process::id();
+        let info = "[Application]\nname=org.example.Pass\n";
+        let pass = test_proc("app-flatpak-org.example.Pass-7.scope", Some(info));
+        assert_eq!(
+            x11_owner_app(me, &pass).as_deref(),
+            Some("org.example.Pass")
+        );
+        let claimed = test_proc("app-foot.scope", Some(info));
+        assert_eq!(
+            x11_owner_app(me, &claimed),
+            None,
+            "a .flatpak-info alone names no app"
+        );
+        assert_eq!(
+            x11_owner_app(u32::MAX, &pass),
+            None,
+            "no process answers to a pid above the kernel's limit"
+        );
+        assert_eq!(x11_owner_app(0, &pass), None);
     }
 }

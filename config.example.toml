@@ -329,9 +329,10 @@ suspend_after = 0            # run [power] standby
 #                            # a copy then leaves the clipboard when its program quits
 # terminal_apps = ["reprise.terminal", "foot", "kitty", "Alacritty", "org.wezfurlong.wezterm", "com.mitchellh.ghostty", "org.gnome.Console", "konsole", "xterm"]
 #                            # app ids a pick pastes into with Ctrl+Shift+V instead of Ctrl+V
-# trusted_apps = []          # Flatpak app ids given the clipboard managers' protocols, e.g.
-#                            # ["me.proton.Pass"] so its copy buttons work; they can read the clipboard too.
-#                            # See docs/flatpak-clipboard.md
+# trusted_apps = []          # Flatpak app ids given the clipboard managers' protocols, for a
+#                            # clipboard manager or sync tool; they read everything you copy
+#                            # and replace it, even in the background. Settings > Privacy > Clipboard Access
+#                            # ticks them. See docs/flatpak-clipboard.md
 
 # [notifications]
 # sound = true               # a balloon plays the sound its program asks for, else the
