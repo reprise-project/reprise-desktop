@@ -480,6 +480,14 @@ are.
   power on the lock in lock mode nor while a remote viewer drives the
   computer ([security.md](security.md)), and none when the menu would be
   empty: no `[power] standby` and another display manager.
+- **Lock and unlock in motion.** On Blue and Glass the lock's screen comes
+  in over its covers as the session locks and plays the login screen's
+  transitions ([Login screen](#login-screen)). A right password or
+  fingerprint fades the lock out over your desktop in 200 ms; your keys
+  and pointer reach the desktop from the fade's first frame. An unlock from
+  another VT, through `loginctl` or a locker goes at once, and the remote
+  side of lock mode never moves. Settings > Effects > Animate the lock
+  screen (`[effects] logon_animation`) keeps it all still.
 - **Idle steps.** Screen saver, lock, screen off and suspend, each with its
   own timeout, and separate timeouts on battery.
 - **Lock on sleep.** The screen locks before the machine suspends, whatever
@@ -583,6 +591,18 @@ the screen takes the interface of the last session used at this computer.
 - **PAM's messages.** A wrong name or password gets one fixed message.
   What PAM says during the login (an account locked after failed logins,
   `/run/nologin`'s text, an expired account) stays on screen in its words.
+- **Motion.** Classic stands still. On Glass a picked tile's picture flies
+  and grows into the big picture as the rest of the row fades out and the
+  password box fades in; Switch User and Escape fly it back as the other
+  tiles return one after another, and a login screen that comes back
+  (after Switch User or a log off) brings its tiles up into place. While
+  the password is checked a ring turns beside Verifying..., which becomes
+  Welcome once the password is right and the session starts. A wrong
+  password crossfades to its message. Blue crossfades its column as a tile
+  opens or closes and as messages come and go. Keys and clicks during a
+  change go to the screen it changes to. Settings > Login Manager > Animate
+  the screen (`[login] animation`) shows each screen at once, the ring
+  standing still.
 - **Caps Lock and layouts.** "Caps Lock is on." shows under the password
   while it is. With more than one keyboard layout set for the system, a
   badge shows the active one, and clicking it moves to the next.

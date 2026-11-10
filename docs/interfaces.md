@@ -59,7 +59,8 @@ to jump to the row it starts. Every colour comes from the scheme.
 
 The lock screen is the welcome screen with only your tile, open for the
 password; under reprise-login, Switch User sits at the right end of the
-bottom band.
+bottom band. On the login and lock screens the column crossfades as a tile
+opens or closes and as a message comes or goes.
 
 Colour schemes: **Blue** (the default), Olive Green, Silver, Slate, Sapphire,
 Obsidian, Ember, Cobalt, Carbon and Steel. Each brings its own art. None of
@@ -90,7 +91,10 @@ up it blurs a quarter-resolution copy of the desktop: the same spread for
 a quarter of the work.
 
 The lock screen is the login screen's picture tile, yours alone and marked
-Locked, over your own wallpaper and water.
+Locked, over your own wallpaper and water. On the login and lock screens a
+picked tile's picture flies into place, the tiles rise in one after another
+when the screen comes forward, and a ring turns while your password is
+checked.
 
 ### Colour and material
 

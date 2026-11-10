@@ -222,7 +222,7 @@ was up, is not saved over: the page says so and shows the file as it is.
 | `show_users` | `true` lists the accounts on the Blue and Glass screens, with each one's picture from AccountsService. `false` asks for a typed user name there, as Classic always does, and the screen gets no user list, Switch User's included | `true` |
 | `autologin_user` | an account name. Each time reprise-login starts with no session running (one logind can't describe yet counts as running), it logs that user in without a password; a logout brings the login screen. A name that isn't a login account (below) shows the login screen, and the journal says why; `show_users` doesn't change which names it takes. `""` counts as unset | unset |
 | `greeter_socket` | `true` lets the login screen listen on a Wayland socket in its runtime directory, so screenshot and input tools can reach it while testing. Any process of the `reprise-greeter` user can then reach the login screen: type into it, capture it, draw over it. Leave it `false` on a machine people use | `false` |
-| `animation` | `false` shows each of the login screen's screens at once, with Glass's busy ring standing still, as the lock does under `[effects] logon_animation = false` | `true` |
+| `animation` | `false` shows each of the login screen's screens at once, with Glass's busy ring standing still, as the lock does under `[effects] logon_animation = false`. Settings > Login Manager > Animate the screen | `true` |
 | `background` | what the login screen shows behind it in every interface: a built-in wallpaper's `"reprise:design/variant"` name (as `[wallpaper] image` takes), or `"/var/lib/reprise-login/background"`, the picture Settings > Login Manager > Browse... copied there. Any other path is refused, so the screen reads no file from a user's home. A picture missing or that doesn't decode leaves the default. A session's lock screen shows it too, read when the session starts and on each lock | Classic's desktop colour, Blue's welcome field, Glass's default wallpaper |
 
 `[[outputs]]` tables in the same file set what the login screen runs on each
@@ -335,7 +335,7 @@ Classic Start menu and the Quick Launch buttons. The buttons and their order liv
 | `taskbar_hide_ms` | how long auto-hide takes, 0 for at once | 200 |
 | `session_fade` | the screen fades in from black at log on and out to black when the session ends; the fade in waits a second after the display's mode is set, so a monitor syncing to it shows the whole fade | on |
 | `session_fade_in_ms`, `session_fade_out_ms` | how long, 0 for at once | 600, 400 |
-| `logon_animation` | the lock screen's transitions on Blue and Glass and Glass's busy ring turning; off, each screen shows at once and the ring stands still. The login screen follows `[login] animation` in `/etc/reprise/login.toml` | on |
+| `logon_animation` | the lock screen's transitions on Blue and Glass, its fade out after a right password or fingerprint, and Glass's busy ring turning; off, each screen shows at once, the ring stands still and an unlock takes the lock down at once. Settings > Effects > Animate the lock screen. The login screen follows `[login] animation` in `/etc/reprise/login.toml` | on |
 
 ## Things to try
 
