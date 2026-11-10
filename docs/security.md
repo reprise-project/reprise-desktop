@@ -282,7 +282,8 @@ Under reprise-login the lock draws the login screen's background, reading
 
 When `/etc/pam.d/reprise-fingerprint` is installed, a second helper runs
 the fingerprint conversation while the screen shows. Either one succeeding
-unlocks. A fingerprint conversation that ends without success (too many
+unlocks at once; on Blue and Glass the covers then fade out over the desktop
+for 200 ms, taking no input. A fingerprint conversation that ends without success (too many
 fingers that did not match) starts again after 2 s, the wait doubling up to
 30 s; one that finds no reader or no enrolled finger does not.
 
