@@ -18,3 +18,7 @@ shutting down @1 55e32604c837274a
 shutting down @2 54bacdf473c91800
 over a picture @1 582f977b53c5428f
 over a picture @2 b85727ea9e31ea0f
+admin caps lock and badge in 4 rows 100% @1 dc4e1ebfb4bac05e
+admin caps lock and badge in 4 rows 100% @2 5fe3acbfdd638845
+admin caps lock and badge in 4 rows 125% @1 9a9b288192226949
+admin caps lock and badge in 4 rows 125% @2 492b80a25bcab0c3

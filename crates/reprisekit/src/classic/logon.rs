@@ -28,7 +28,7 @@ const ROW_H: i32 = 20;
 const ROW_GAP: i32 = 8;
 const MESSAGE_LINES: usize = 2;
 /// The most rows the message grows to, for a heading that needs more than two.
-const MESSAGE_MAX: usize = 4;
+const MESSAGE_MAX: usize = 5;
 const BADGE_GAP: i32 = 6;
 /// The band's wordmark: the product's name, never translated.
 const MARK: &str = "Reprise";
@@ -105,16 +105,19 @@ fn geometry(theme: &Theme, output: Rect, rows: usize) -> Geometry {
     }
 }
 
-/// The message's rows: two, or as many as the heading wraps to. A message or Caps Lock notice
-/// takes the rows it finds, so the dialog keeps its size while the form is up.
+/// The message's rows: two, or a heading that wraps to more and a row for the Caps Lock notice,
+/// wrapped as [`draw`] does at the theme's scale. The dialog keeps its size while the form is up.
 fn message_rows(m: &Logon, theme: &Theme, text: &TextRenderer) -> usize {
+    let s = theme.scale.max(1);
     let badge = m.layout.as_ref().map_or(0, |_| ICON_SIZE + BADGE_GAP);
-    let width = theme.text.len(CLIENT_W) - 2 * theme.text.len(PAD) - badge;
-    let px = theme.fonts.size_px / theme.scale.max(1) as u32;
-    let lines = m
-        .heading()
-        .map_or(0, |h| crate::text::wrap(text, &h, width, px).len());
-    lines.clamp(MESSAGE_LINES, MESSAGE_MAX)
+    let width = (theme.text.len(CLIENT_W) - 2 * theme.text.len(PAD) - badge) * s;
+    let lines = m.heading().map_or(0, |h| {
+        crate::text::wrap(text.for_output(s), &h, width, theme.fonts.size_px).len()
+    });
+    match lines {
+        n if n > MESSAGE_LINES => (n + 1).min(MESSAGE_MAX),
+        _ => MESSAGE_LINES,
+    }
 }
 
 /// The rows `l` was laid out with: the count whose dialog it is.
@@ -125,7 +128,12 @@ fn laid_rows(theme: &Theme, l: &LogonLayout) -> usize {
 }
 
 pub fn layout(m: &Logon, theme: &Theme, text: &TextRenderer, output: Rect) -> LogonLayout {
-    let g = geometry(theme, output, message_rows(m, theme, text));
+    laid_out(m, theme, output, message_rows(m, theme, text))
+}
+
+/// [`layout`] with the message `rows` tall.
+fn laid_out(m: &Logon, theme: &Theme, output: Rect, rows: usize) -> LogonLayout {
+    let g = geometry(theme, output, rows);
     // Without Shut Down... the row stays right-aligned: OK and Cancel move into its place.
     let (ok, cancel) = match m.offers_power() {
         true => (g.ok, g.cancel),
