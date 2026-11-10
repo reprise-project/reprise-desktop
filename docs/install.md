@@ -168,7 +168,9 @@ and open it again. After a Turn Off in a session started before the
 upgrade, the other session's remote clients are dropped without being told
 the computer is turning off. Launchers you allowed and programs you ran
 before the upgrade ask once more: the trust marker now covers the file's
-contents, so allow each launcher again.
+contents, so allow each launcher again. Update `reprise`, `reprise-portal`
+and `reprise-apps` together: an older portal or tray helper misses the
+notification clicks a newer compositor sends.
 
 ### Remote logins
 
