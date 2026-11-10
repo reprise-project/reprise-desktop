@@ -1,6 +1,5 @@
-//! A change of the login screen played from rasters drawn once: the chrome, the screen before and
-//! the screen after, mixed inside the rect where they differ, with Glass's picked frame flying on
-//! top.
+//! A login screen change played from rasters drawn once (the chrome, the screen before and after)
+//! mixed inside the rect where they differ, Glass's picked frame flying on top.
 
 use crate::anim::Ease;
 use crate::glass::logon::{self as glass, Pose};

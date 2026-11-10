@@ -451,9 +451,8 @@ fn a_line_that_comes_up_under_an_entering_block_ends_in_place() {
     }
 }
 
-/// Prints the median and worst cost of one frame (compose plus a copy of its rect, as the host's upload
-/// does) of each Glass and Blue change on a 1920x1080 output at scales 1 and 2. Run with
-/// `--ignored --nocapture`; the budget is 8 ms.
+/// Prints the median and worst cost of a frame and the copy of its rect, per change, 1920x1080 at
+/// scales 1 and 2. Run with `--ignored --nocapture`; the budget is 8 ms.
 #[test]
 #[ignore]
 fn transition_frame_cost() {
