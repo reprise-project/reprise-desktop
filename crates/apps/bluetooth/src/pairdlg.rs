@@ -1,5 +1,6 @@
 //! Bluetooth Pairing Request: the modal box for a pairing the Add wizard is not running. Closing it
-//! unanswered refuses the request.
+//! unanswered refuses the request. A request the user did not start from Settings starts on its
+//! refusing answer and trusts the device only through its "trust" box.
 
 use reprisekit::classic::widgets::{BUTTON_H, BUTTON_W};
 use reprisekit::controls::form::{self, Form, Item};
@@ -14,10 +15,13 @@ pub const CLIENT: (i32, i32) = (380, 200);
 const BODY: Rect = Rect::new(12, 12, CLIENT.0 - 24, CLIENT.1 - 24 - BUTTON_H - 12);
 const OK: &str = "ok";
 const CANCEL: &str = "cancel";
+const TRUST: &str = "trust";
 
 pub struct PairDialog {
     pub req: AgentRequest,
     pub form: Form,
+    /// The user started this pairing from Settings.
+    started: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -29,8 +33,28 @@ pub enum Outcome {
 }
 
 impl PairDialog {
-    pub fn new(req: AgentRequest, name: &str, text: &TextRenderer, forms: &Theme) -> PairDialog {
-        let mut items = passkey::items(&req.ask, name, BODY, text, forms);
+    pub fn new(
+        req: AgentRequest,
+        name: &str,
+        started: bool,
+        text: &TextRenderer,
+        forms: &Theme,
+    ) -> PairDialog {
+        let mut items = passkey::items(&req.ask, name, BODY, text, forms, started);
+        if !started && req.done.is_some() {
+            let y = items
+                .iter()
+                .map(|i| i.rect.bottom())
+                .max()
+                .unwrap_or(BODY.y)
+                + 10;
+            items.push(Item::check(
+                TRUST,
+                BODY.x,
+                y,
+                "Connect to this device auto&matically",
+            ));
+        }
         let y = CLIENT.1 - 12 - BUTTON_H;
         let waits = req.done.is_some();
         items.push(Item::button(
@@ -50,9 +74,15 @@ impl PairDialog {
         let mut d = PairDialog {
             req,
             form: Form::new(items),
+            started,
         };
         d.sync();
         d
+    }
+
+    /// Whether accepting should trust the device, so it may connect its services on its own.
+    pub fn trusts(&self) -> bool {
+        self.started || self.form.checked(TRUST) == Some(true)
     }
 
     fn ok_live(&self) -> bool {
@@ -97,6 +127,11 @@ mod tests {
     use reprisekit::theme::{FontConfig, Theme};
 
     fn dialog(ask: Ask) -> (PairDialog, async_channel::Receiver<Answer>) {
+        asked(ask, true)
+    }
+
+    /// A box for `ask`; `started` when the user started the pairing from Settings.
+    fn asked(ask: Ask, started: bool) -> (PairDialog, async_channel::Receiver<Answer>) {
         let (done, wait) = async_channel::bounded(1);
         let req = AgentRequest {
             device: "/d/1".into(),
@@ -104,7 +139,10 @@ mod tests {
             done: Some(done),
         };
         let text = TextRenderer::load(&FontConfig::default());
-        (PairDialog::new(req, "Pad", &text, &Theme::default()), wait)
+        (
+            PairDialog::new(req, "Pad", started, &text, &Theme::default()),
+            wait,
+        )
     }
 
     /// The box fits its text for each request under every interface and text size.
@@ -127,7 +165,10 @@ mod tests {
                     ask,
                     done: None,
                 };
-                (name, PairDialog::new(req, "Pad", text, forms).form.clone())
+                (
+                    name,
+                    PairDialog::new(req, "Pad", false, text, forms).form.clone(),
+                )
             })
             .collect()
         });
@@ -146,6 +187,31 @@ mod tests {
         assert_eq!(d.event(form::Event::Cancel), Outcome::Done);
         drop(d);
         assert!(wait.try_recv().is_err(), "closed unanswered");
+    }
+
+    #[test]
+    fn a_request_nobody_started_refuses_by_default() {
+        for ask in [Ask::Confirm(7), Ask::Authorize] {
+            let (mut d, wait) = asked(ask.clone(), false);
+            assert_eq!(
+                d.event(form::Event::Default),
+                Outcome::Answered(Answer::Reject),
+                "{ask:?}"
+            );
+            assert_eq!(wait.try_recv(), Ok(Answer::Reject));
+        }
+    }
+
+    #[test]
+    fn only_a_started_pairing_or_the_ticked_box_trusts_the_device() {
+        let (d, _wait) = asked(Ask::Confirm(7), true);
+        assert!(d.trusts());
+        assert!(d.form.item(TRUST).is_none(), "no box to tick");
+        let (mut d, _wait) = asked(Ask::Confirm(7), false);
+        assert_eq!(d.form.checked(TRUST), Some(false), "off by default");
+        assert!(!d.trusts());
+        d.form.set_check(TRUST, true);
+        assert!(d.trusts());
     }
 
     #[test]

@@ -204,7 +204,7 @@ impl AddWizard {
             Step::Pairing => {
                 let name = self.target_name();
                 let items = match &self.ask {
-                    Some(req) => passkey::items(&req.ask, &name, INTERIOR_BODY, text, forms),
+                    Some(req) => passkey::items(&req.ask, &name, INTERIOR_BODY, text, forms, true),
                     None => {
                         let b = INTERIOR_BODY;
                         vec![

@@ -22,7 +22,7 @@ mod passkey;
 mod props;
 mod tray;
 
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::rc::Rc;
 use std::sync::mpsc::Receiver;
 
@@ -56,6 +56,8 @@ struct BtApp {
     wizard: Option<addwiz::AddWizard>,
     props: Option<props::PropsSheet>,
     pair: Option<pairdlg::PairDialog>,
+    /// Requests that came while the Pairing Request box was open, shown one after another.
+    pair_queue: VecDeque<bz::AgentRequest>,
     remove: Option<(String, MsgBox)>,
     error: Option<MsgBox>,
     icons: icons::Icons,
@@ -87,6 +89,7 @@ impl BtApp {
             wizard: None,
             props: None,
             pair: None,
+            pair_queue: VecDeque::new(),
             remove: None,
             error: None,
             icons: icons::Icons::new(),
@@ -183,6 +186,7 @@ impl BtApp {
         // Dropping the box answers its request Canceled.
         if self.snapshot.adapter.is_none() {
             self.pair = None;
+            self.pair_queue.clear();
         }
         if self.snapshot.adapter.is_none()
             || self
@@ -200,15 +204,9 @@ impl BtApp {
         self.push_state();
     }
 
-    /// The wizard takes the request for the device it is adding; any other opens the Pairing Request box.
+    /// The wizard takes the request for the device it is adding; any other opens the Pairing
+    /// Request box, or waits for the open one to close.
     fn agent(&mut self, req: bz::AgentRequest) {
-        let name = match self.device(&req.device) {
-            Some(d) => d.alias.clone(),
-            None => {
-                let last = req.device.rsplit('/').next().unwrap_or_default();
-                last.strip_prefix("dev_").unwrap_or(last).replace('_', ":")
-            }
-        };
         let (text, forms) = self.text_forms();
         let req = match &mut self.wizard {
             Some(w) => match w.agent(req, &text, &forms) {
@@ -217,11 +215,48 @@ impl BtApp {
             },
             None => req,
         };
-        // Replacing an open box drops its request, answering it Canceled.
-        self.pair = Some(pairdlg::PairDialog::new(req, &name, &text, &forms));
+        if self.pair.is_some() {
+            self.pair_queue.push_back(req);
+        } else {
+            self.open_pair(req);
+        }
     }
 
-    /// BlueZ cancelled the pending request held by the wizard or the Pairing Request box. A shown code is never waited on.
+    /// The Pairing Request box for `req`, naming the device by alias and address. A Connect the
+    /// user started from Devices counts as a pairing started here.
+    fn open_pair(&mut self, req: bz::AgentRequest) {
+        let address = {
+            let last = req.device.rsplit('/').next().unwrap_or_default();
+            last.strip_prefix("dev_").unwrap_or(last).replace('_', ":")
+        };
+        let name = match self.device(&req.device) {
+            Some(d) if !d.address.is_empty() && d.alias != d.address => {
+                format!("{} ({})", d.alias, d.address)
+            }
+            Some(d) => d.alias.clone(),
+            None => address,
+        };
+        let started = self.connecting.contains(&req.device);
+        let (text, forms) = self.text_forms();
+        self.pair = Some(pairdlg::PairDialog::new(req, &name, started, &text, &forms));
+    }
+
+    /// The next queued request once the box has closed; one BlueZ gave up on is skipped.
+    fn next_pair(&mut self) {
+        while self.pair.is_none() {
+            let Some(req) = self.pair_queue.pop_front() else {
+                return;
+            };
+            if req.done.as_ref().is_some_and(|d| d.is_closed()) {
+                continue;
+            }
+            self.open_pair(req);
+        }
+    }
+
+    /// BlueZ cancelled the pending request held by the wizard, the Pairing Request box or the
+    /// queue behind it. BlueZ waits on one request at a time, so every waiting one goes; a shown
+    /// code is never waited on.
     fn agent_cancel(&mut self) {
         let (text, forms) = self.text_forms();
         if let Some(w) = &mut self.wizard
@@ -229,8 +264,10 @@ impl BtApp {
         {
             return;
         }
+        self.pair_queue.retain(|r| r.done.is_none());
         if self.pair.as_ref().is_some_and(|d| d.req.done.is_some()) {
             self.pair = None;
+            self.next_pair();
         }
     }
 
@@ -780,13 +817,15 @@ impl BtApp {
         self.pair_outcome(out)
     }
 
-    /// A device paired from its own side is trusted like the wizard's, or the agent refuses every service it connects.
+    /// An accepted pairing trusts the device when [`pairdlg::PairDialog::trusts`] says so;
+    /// untrusted, the agent refuses every service it connects until the user connects it.
     fn pair_outcome(&mut self, out: pairdlg::Outcome) -> Reply {
         match out {
             pairdlg::Outcome::None => Reply::none(),
             pairdlg::Outcome::Redraw => Reply::redraw(),
             pairdlg::Outcome::Answered(a) => {
                 if let Some(d) = self.pair.take()
+                    && d.trusts()
                     && matches!(
                         a,
                         bz::Answer::Accept | bz::Answer::Pin(_) | bz::Answer::Passkey(_)
@@ -797,11 +836,13 @@ impl BtApp {
                         on: true,
                     });
                 }
+                self.next_pair();
                 Reply::redraw_all()
             }
             // Dropping the box answers an unanswered request Canceled.
             pairdlg::Outcome::Done => {
                 self.pair = None;
+                self.next_pair();
                 Reply::redraw_all()
             }
         }
@@ -1174,13 +1215,42 @@ mod tests {
         assert!(a.pair.is_some(), "no wizard: the dialog opens");
         let (d2, _w2) = async_channel::bounded(1);
         a.agent(bz::AgentRequest {
-            device: "/a/cans".into(),
+            device: "/a/other".into(),
             ask: Ask::Confirm(1),
             done: Some(d2),
         });
+        assert!(!w1.is_closed(), "the open box keeps its request");
+        let shown = |a: &BtApp| a.pair.as_ref().map(|d| d.req.ask.clone());
+        assert_eq!(shown(&a), Some(Ask::Authorize));
+        a.pair_outcome(pairdlg::Outcome::Done);
+        assert!(w1.is_closed(), "closed unanswered");
+        assert_eq!(
+            shown(&a),
+            Some(Ask::Confirm(1)),
+            "the queued one opens next"
+        );
+    }
+
+    #[test]
+    fn the_box_names_the_device_by_alias_and_address() {
+        let mut a = app();
+        let mut s = snap(true);
+        s.devices[0].address = "AA:BB:CC:DD:EE:FF".into();
+        a.snapshot_in(s);
+        let (done, _wait) = async_channel::bounded(1);
+        a.agent(bz::AgentRequest {
+            device: "/a/cans".into(),
+            ask: Ask::Authorize,
+            done: Some(done),
+        });
+        let f = &a.pair.as_ref().unwrap().form;
+        let said = match &f.item("sentence").unwrap().control {
+            form::Control::Lines(l) => l.join(" "),
+            other => panic!("sentence is {other:?}"),
+        };
         assert!(
-            w1.try_recv().is_err() && w1.is_closed(),
-            "the first request was dropped unanswered"
+            said.contains("Cans") && said.contains("AA:BB:CC:DD:EE:FF"),
+            "{said}"
         );
     }
 
@@ -1195,6 +1265,16 @@ mod tests {
         });
         a.agent_cancel();
         assert!(a.pair.is_some(), "a shown code stays up");
+        let (done, wait) = async_channel::bounded(1);
+        a.agent(bz::AgentRequest {
+            device: "/a/cans".into(),
+            ask: Ask::Authorize,
+            done: Some(done),
+        });
+        a.agent_cancel();
+        assert!(wait.is_closed(), "the queued request is dropped");
+        a.pair_outcome(pairdlg::Outcome::Done);
+        assert!(a.pair.is_none(), "nothing left to show");
         let (done, _wait) = async_channel::bounded(1);
         a.agent(bz::AgentRequest {
             device: "/a/cans".into(),
@@ -1270,8 +1350,27 @@ mod tests {
         assert!(a.remove.is_none());
     }
 
+    /// Accepts the open box's Confirm by picking its Yes radio and pressing OK; `trust` ticks
+    /// its trust box first when it has one.
+    fn accept(a: &mut BtApp, trust: bool) {
+        let d = a.pair.as_mut().unwrap();
+        for (id, on) in [(passkey::YES, true), (passkey::NO, false)] {
+            if let Some(form::Control::Radio { checked, .. }) =
+                d.form.item_mut(id).map(|i| &mut i.control)
+            {
+                *checked = on;
+            }
+        }
+        if trust {
+            d.form.set_check("trust", true);
+        }
+        let out = d.event(form::Event::Default);
+        assert_eq!(out, pairdlg::Outcome::Answered(bz::Answer::Accept));
+        a.pair_outcome(out);
+    }
+
     #[test]
-    fn accepting_the_pairing_request_trusts_the_device() {
+    fn an_accepted_pairing_trusts_the_device_only_when_started_here_or_ticked() {
         let (mut a, rx) = wired();
         let trusted = |rx: &async_channel::Receiver<bz::Cmd>| {
             std::iter::from_fn(|| rx.try_recv().ok())
@@ -1280,27 +1379,37 @@ mod tests {
                 })
                 .count()
         };
-        let (done, _wait) = async_channel::bounded(1);
-        a.agent(bz::AgentRequest {
-            device: "/a/cans".into(),
-            ask: Ask::Confirm(7),
-            done: Some(done),
-        });
-        let out = a.pair.as_mut().unwrap().event(form::Event::Default);
-        a.pair_outcome(out);
+        let confirm = |a: &mut BtApp| {
+            let (done, wait) = async_channel::bounded(1);
+            a.agent(bz::AgentRequest {
+                device: "/a/cans".into(),
+                ask: Ask::Confirm(7),
+                done: Some(done),
+            });
+            wait
+        };
+        let _wait = confirm(&mut a);
+        accept(&mut a, false);
         assert!(a.pair.is_none());
-        assert_eq!(trusted(&rx), 1, "accepted: trusted");
+        assert_eq!(
+            trusted(&rx),
+            0,
+            "nobody here started it: paired, not trusted"
+        );
 
-        let (done, _wait) = async_channel::bounded(1);
-        a.agent(bz::AgentRequest {
-            device: "/a/cans".into(),
-            ask: Ask::Confirm(7),
-            done: Some(done),
-        });
+        let _wait = confirm(&mut a);
+        accept(&mut a, true);
+        assert_eq!(trusted(&rx), 1, "the trust box ticked");
+
+        let _wait = confirm(&mut a);
         let out = a.pair.as_mut().unwrap().event(form::Event::Cancel);
         a.pair_outcome(out);
-        assert!(a.pair.is_none());
         assert_eq!(trusted(&rx), 0, "refused: not trusted");
+
+        a.toggle("/a/cans");
+        let _wait = confirm(&mut a);
+        accept(&mut a, false);
+        assert_eq!(trusted(&rx), 1, "a Connect from Devices started it");
     }
 
     /// Under Blue the scrollbar arrow lights under the pointer and goes cold after press, release and leave; each change asks for a redraw.

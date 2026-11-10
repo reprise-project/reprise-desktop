@@ -43,7 +43,16 @@ fn radio(id: &'static str, x: i32, y: i32, label: &str, checked: bool) -> Item {
     Item::radio(id, x, y, label, GROUP).checked(checked)
 }
 
-pub fn items(ask: &Ask, name: &str, body: Rect, text: &TextRenderer, forms: &Theme) -> Vec<Item> {
+/// The prompt's items in `body`. A Confirm or Authorize starts on its Yes radio when `accept`,
+/// else on its No radio.
+pub fn items(
+    ask: &Ask,
+    name: &str,
+    body: Rect,
+    text: &TextRenderer,
+    forms: &Theme,
+    accept: bool,
+) -> Vec<Item> {
     let wrap_w = forms.text.len(body.width);
     let lines = wrap(text, &sentence(ask, name), wrap_w, forms.fonts.size_px);
     let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
@@ -77,12 +86,18 @@ pub fn items(ask: &Ask, name: &str, body: Rect, text: &TextRenderer, forms: &The
             ));
         }
         Ask::Confirm(_) => {
-            out.push(radio(YES, body.x, y, "&Yes, the passkeys match", true));
-            out.push(radio(NO, body.x, y + 20, "No, they are &different", false));
+            out.push(radio(YES, body.x, y, "&Yes, the passkeys match", accept));
+            out.push(radio(
+                NO,
+                body.x,
+                y + 20,
+                "No, they are &different",
+                !accept,
+            ));
         }
         Ask::Authorize => {
-            out.push(radio(YES, body.x, y, "&Allow it to pair", true));
-            out.push(radio(NO, body.x, y + 20, "&Do not allow it", false));
+            out.push(radio(YES, body.x, y, "&Allow it to pair", accept));
+            out.push(radio(NO, body.x, y + 20, "&Do not allow it", !accept));
         }
         Ask::ShowPin(_) | Ask::ShowPasskey(_) => {}
     }
@@ -141,6 +156,7 @@ mod tests {
             Rect::new(10, 10, 300, 150),
             &text,
             &Theme::default(),
+            true,
         ))
     }
 
@@ -174,6 +190,22 @@ mod tests {
         pick_radio(&mut f, NO, true);
         pick_radio(&mut f, YES, false);
         assert_eq!(answer(&ask, &f), Some(Answer::Reject));
+    }
+
+    #[test]
+    fn a_refusing_prompt_starts_on_no() {
+        let text = TextRenderer::load(&FontConfig::default());
+        for ask in [Ask::Confirm(42), Ask::Authorize] {
+            let f = Form::new(items(
+                &ask,
+                "Pad",
+                Rect::new(10, 10, 300, 150),
+                &text,
+                &Theme::default(),
+                false,
+            ));
+            assert_eq!(answer(&ask, &f), Some(Answer::Reject), "{ask:?}");
+        }
     }
 
     #[test]
