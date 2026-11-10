@@ -8,6 +8,7 @@ pub mod colour;
 pub mod cuda;
 pub mod ffmpeg;
 pub mod gl;
+pub mod h264merge;
 pub mod hwmap;
 pub mod probe;
 pub mod split;

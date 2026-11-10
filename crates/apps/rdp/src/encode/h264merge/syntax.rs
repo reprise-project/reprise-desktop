@@ -1,0 +1,285 @@
+//! The SPS, PPS and slice header syntax of H.264 7.3, as far as `h264_vaapi` codes it.
+
+use super::Error;
+use super::bits::{Reader, Writer, escape, unescape};
+
+/// What a slice header's syntax needs from the SPS.
+pub struct Sps {
+    pub log2_max_frame_num: u32,
+}
+
+/// The reference frames the merged stream holds: the last main and the last aux picture.
+const REFS: u32 = 2;
+
+fn unsupported(ok: bool, what: &'static str) -> Result<(), Error> {
+    match ok {
+        true => Ok(()),
+        false => Err(Error::Unsupported(what)),
+    }
+}
+
+/// Reads fields and writes them back unchanged unless replaced.
+struct Copy<'a> {
+    r: Reader<'a>,
+    w: Writer,
+}
+
+impl Copy<'_> {
+    fn u(&mut self, n: u32) -> Result<u32, Error> {
+        let v = self.r.u(n)?;
+        self.w.u(n, v);
+        Ok(v)
+    }
+
+    fn flag(&mut self) -> Result<bool, Error> {
+        Ok(self.u(1)? == 1)
+    }
+
+    fn ue(&mut self) -> Result<u32, Error> {
+        let v = self.r.ue()?;
+        self.w.ue(v);
+        Ok(v)
+    }
+
+    fn replace_ue(&mut self, v: u32) -> Result<(), Error> {
+        self.r.ue()?;
+        self.w.ue(v);
+        Ok(())
+    }
+}
+
+/// `nal`, an SPS, with `max_num_ref_frames` and `max_dec_frame_buffering` [`REFS`], and its
+/// fields. A level that fits a frame holds at least four in its DPB, so the level stays.
+pub fn two_refs(nal: &[u8]) -> Result<(Vec<u8>, Sps), Error> {
+    let rbsp = unescape(&nal[1..]);
+    let mut c = Copy {
+        r: Reader::new(&rbsp),
+        w: Writer::default(),
+    };
+    unsupported(c.u(8)? == 100, "a profile other than High")?;
+    c.u(8)?; // constraint_set flags
+    c.u(8)?; // level_idc
+    c.ue()?; // seq_parameter_set_id
+    unsupported(c.ue()? == 1, "chroma other than 4:2:0")?;
+    c.ue()?; // bit_depth_luma_minus8
+    c.ue()?; // bit_depth_chroma_minus8
+    c.flag()?; // qpprime_y_zero_transform_bypass_flag
+    unsupported(!c.flag()?, "scaling matrices")?;
+    let log2_max_frame_num = c.ue()? + 4;
+    if log2_max_frame_num > 16 {
+        return Err(Error::Malformed("log2_max_frame_num over 16"));
+    }
+    unsupported(c.ue()? == 2, "a POC type other than 2")?;
+    c.replace_ue(REFS)?; // max_num_ref_frames
+    c.flag()?; // gaps_in_frame_num_value_allowed_flag
+    c.ue()?; // pic_width_in_mbs_minus1
+    c.ue()?; // pic_height_in_map_units_minus1
+    unsupported(c.flag()?, "field coding")?;
+    c.flag()?; // direct_8x8_inference_flag
+    if c.flag()? {
+        for _ in 0..4 {
+            c.ue()?; // frame_crop offsets
+        }
+    }
+    unsupported(c.flag()?, "an SPS without VUI")?;
+    if c.flag()? && c.u(8)? == 255 {
+        c.u(32)?; // sar_width, sar_height
+    }
+    if c.flag()? {
+        c.flag()?; // overscan_appropriate_flag
+    }
+    if c.flag()? {
+        c.u(4)?; // video_format, video_full_range_flag
+        if c.flag()? {
+            c.u(24)?; // colour_primaries, transfer_characteristics, matrix_coefficients
+        }
+    }
+    if c.flag()? {
+        c.ue()?; // chroma_sample_loc_type_top_field
+        c.ue()?; // chroma_sample_loc_type_bottom_field
+    }
+    if c.flag()? {
+        c.u(32)?; // num_units_in_tick
+        c.u(32)?; // time_scale
+        c.flag()?; // fixed_frame_rate_flag
+    }
+    unsupported(!c.flag()? && !c.flag()?, "HRD parameters")?;
+    c.flag()?; // pic_struct_present_flag
+    unsupported(c.flag()?, "an SPS without bitstream restrictions")?;
+    c.flag()?; // motion_vectors_over_pic_boundaries_flag
+    for _ in 0..5 {
+        c.ue()?; // max_bytes_per_pic_denom .. max_num_reorder_frames
+    }
+    c.replace_ue(REFS)?; // max_dec_frame_buffering
+    if !c.r.flag()? {
+        return Err(Error::Malformed("fields after the SPS's VUI"));
+    }
+    c.w.flag(true); // rbsp_stop_one_bit
+    let mut out = vec![nal[0]];
+    out.extend(escape(&c.w.into_bytes()));
+    Ok((out, Sps { log2_max_frame_num }))
+}
+
+/// The id of `nal`, a PPS, if [`Slice::parse`] reads its slice headers: CABAC, one slice
+/// group, no weighted prediction, no deblocking or redundant-picture fields.
+pub fn pps_id(nal: &[u8]) -> Result<u32, Error> {
+    let rbsp = unescape(&nal[1..]);
+    let mut r = Reader::new(&rbsp);
+    let id = r.ue()?;
+    r.ue()?; // seq_parameter_set_id
+    unsupported(r.flag()?, "CAVLC")?;
+    r.flag()?; // bottom_field_pic_order_in_frame_present_flag: no field under POC type 2
+    unsupported(r.ue()? == 0, "slice groups")?;
+    r.ue()?; // num_ref_idx_l0_default_active_minus1
+    r.ue()?; // num_ref_idx_l1_default_active_minus1
+    unsupported(!r.flag()?, "weighted prediction")?;
+    r.u(2)?; // weighted_bipred_idc
+    r.se()?; // pic_init_qp_minus26
+    r.se()?; // pic_init_qs_minus26
+    r.se()?; // chroma_qp_index_offset
+    unsupported(!r.flag()?, "deblocking fields in slice headers")?;
+    r.flag()?; // constrained_intra_pred_flag
+    unsupported(!r.flag()?, "redundant pictures")?;
+    Ok(id)
+}
+
+/// How a slice's picture is marked and predicted in the merged stream.
+pub enum Picture {
+    MainIdr,
+    /// A main picture that drops the previous main, `difference_of_pic_nums_minus1` before it.
+    Main {
+        drop: u32,
+    },
+    Aux,
+}
+
+/// A slice header's fields the rewrite keeps, and the RBSP from its slice data on.
+pub struct Slice {
+    pub idr: bool,
+    pub pps_id: u32,
+    first_mb: u32,
+    slice_type: u32,
+    idr_pic_id: u32,
+    no_output_of_prior_pics: bool,
+    cabac_init_idc: u32,
+    qp_delta: i32,
+    data: Vec<u8>,
+}
+
+impl Slice {
+    /// `nal`, a P or I slice under a PPS [`pps_id`] accepts.
+    pub fn parse(nal: &[u8], sps: &Sps) -> Result<Slice, Error> {
+        let idr = nal[0] & 0x1f == 5;
+        let reference = nal[0] >> 5 != 0;
+        let rbsp = unescape(&nal[1..]);
+        let mut r = Reader::new(&rbsp);
+        let first_mb = r.ue()?;
+        let slice_type = r.ue()?;
+        if slice_type > 9 {
+            return Err(Error::Malformed("a slice_type over 9"));
+        }
+        unsupported(matches!(slice_type % 5, 0 | 2), "slices other than P and I")?;
+        let pps_id = r.ue()?;
+        r.u(sps.log2_max_frame_num)?; // frame_num
+        let idr_pic_id = if idr { r.ue()? } else { 0 };
+        if slice_type.is_multiple_of(5) {
+            if r.flag()? {
+                r.ue()?; // num_ref_idx_l0_active_minus1
+            }
+            unsupported(!r.flag()?, "a reordered reference list")?;
+        }
+        let mut no_output_of_prior_pics = false;
+        if reference && idr {
+            no_output_of_prior_pics = r.flag()?;
+            unsupported(!r.flag()?, "a long-term IDR")?;
+        } else if reference && r.flag()? {
+            // The encoder's MMCOs drop its own previous picture; build writes the merged ones.
+            loop {
+                match r.ue()? {
+                    0 => break,
+                    1 | 2 | 4 | 6 => _ = r.ue()?,
+                    3 => _ = (r.ue()?, r.ue()?),
+                    5 => {}
+                    _ => return Err(Error::Malformed("an MMCO over 6")),
+                }
+            }
+        }
+        let cabac_init_idc = if slice_type % 5 == 2 { 0 } else { r.ue()? };
+        let qp_delta = r.se()?;
+        while !r.aligned() {
+            if !r.flag()? {
+                return Err(Error::Malformed("a cabac_alignment_one_bit of 0"));
+            }
+        }
+        Ok(Slice {
+            idr,
+            first_mb,
+            slice_type,
+            pps_id,
+            idr_pic_id,
+            no_output_of_prior_pics,
+            cabac_init_idc,
+            qp_delta,
+            data: r.rest().to_vec(),
+        })
+    }
+
+    pub fn is_p(&self) -> bool {
+        self.slice_type.is_multiple_of(5)
+    }
+
+    /// The slice NAL unit as `picture` at `frame_num`, a reference picture with one active
+    /// reference.
+    pub fn build(&self, picture: &Picture, frame_num: u32, sps: &Sps) -> Vec<u8> {
+        let idr = matches!(picture, Picture::MainIdr);
+        let mut w = Writer::default();
+        w.u(1, 0); // forbidden_zero_bit
+        w.u(2, 3); // nal_ref_idc
+        w.u(5, if idr { 5 } else { 1 });
+        w.ue(self.first_mb);
+        w.ue(self.slice_type);
+        w.ue(self.pps_id);
+        w.u(sps.log2_max_frame_num, frame_num);
+        if idr {
+            w.ue(self.idr_pic_id);
+        }
+        if self.is_p() {
+            w.flag(true); // num_ref_idx_active_override_flag
+            w.ue(0);
+            let aux = matches!(picture, Picture::Aux);
+            w.flag(aux); // ref_pic_list_modification_flag_l0
+            if aux {
+                // modification_of_pic_nums_idc 2 with long_term_pic_num 0, then 3 to end.
+                [2, 0, 3].into_iter().for_each(|v| w.ue(v));
+            }
+        }
+        match picture {
+            Picture::MainIdr => {
+                w.flag(self.no_output_of_prior_pics);
+                w.flag(false); // long_term_reference_flag
+            }
+            Picture::Main { drop } => {
+                w.flag(true); // adaptive_ref_pic_marking_mode_flag
+                [1, *drop, 0].into_iter().for_each(|v| w.ue(v));
+            }
+            Picture::Aux => {
+                w.flag(true);
+                // MMCO 4 with max_long_term_frame_idx_plus1 1, MMCO 6 with long_term_frame_idx 0.
+                [4, 1, 6, 0, 0].into_iter().for_each(|v| w.ue(v));
+            }
+        }
+        if self.slice_type % 5 != 2 {
+            w.ue(self.cabac_init_idc);
+        }
+        w.se(self.qp_delta);
+        while !w.aligned() {
+            w.flag(true); // cabac_alignment_one_bit
+        }
+        let header = w.into_bytes();
+        let mut rbsp = header[1..].to_vec();
+        rbsp.extend_from_slice(&self.data);
+        let mut nal = vec![header[0]];
+        nal.extend(escape(&rbsp));
+        nal
+    }
+}
