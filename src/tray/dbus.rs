@@ -19,6 +19,7 @@ use zbus::object_server::{InterfaceRef, SignalEmitter};
 use zbus::proxy::CacheProperties;
 use zbus::{Connection, Proxy};
 
+mod decoders;
 mod item;
 mod menu;
 mod notifications;
@@ -26,7 +27,7 @@ mod notifications;
 mod tests;
 mod watcher;
 
-use item::{call_item, decode_names, fetch_item, provide_token};
+use item::{call_item, fetch_item, provide_token};
 use menu::{get_layout, send_menu_event};
 use notifications::{Notifications, Programs, Senders};
 use watcher::{Published, Watcher, split_service};
@@ -609,13 +610,12 @@ impl Loop {
         }
     }
 
+    /// Reads every item again, for named icons from the new theme.
     fn retheme(&mut self, name: &str) {
         *lock(&self.icons) = load_icons(name);
-        let sizes = sizes_now(&self.sizes);
-        for item in self.items.values_mut() {
-            if decode_names(&self.icons, item, &sizes) {
-                emit(&self.events, self.eventfd, TrayEvent::Updated(item.clone()));
-            }
+        let keys: Vec<String> = self.items.keys().cloned().collect();
+        for key in keys {
+            self.refresh_item(&key);
         }
     }
 
