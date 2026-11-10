@@ -85,7 +85,7 @@ impl Views {
                         std::slice::from_ref(&buffer.fd),
                         NV12,
                         buffer.modifier,
-                        &buffer.planes(),
+                        &buffer.planes,
                         view,
                     )?;
                     let mut f = hwmap::map(&drm, &mapped, Gpu::Vaapi)?;
@@ -298,28 +298,52 @@ struct View {
 
 /// An NV12 view's dma-buf, chroma below luma.
 struct ViewBuffer {
+    /// Read back by the tests; `fd` keeps the buffer alive.
+    #[cfg_attr(not(test), allow(dead_code))]
     bo: gbm::BufferObject<()>,
     fd: Arc<OwnedFd>,
-    /// The rows before the chroma plane: the luma rows, rounded up to whole tiles.
-    luma_rows: u32,
+    /// Luma, then chroma: where GL draws them and what the encoder's import is told.
+    planes: [Plane; 2],
     modifier: u64,
 }
 
-impl ViewBuffer {
-    fn planes(&self) -> [Plane; 2] {
-        let stride = self.bo.stride();
-        [
-            Plane {
-                object: 0,
-                offset: 0,
-                stride,
-            },
-            Plane {
-                object: 0,
-                offset: stride * self.luma_rows,
-                stride,
-            },
-        ]
+/// The row pitch encoders take a view in: Intel's reads each row from a 64-byte boundary, AMD's
+/// linear surfaces are 256-byte aligned. Mesa pads Intel's LINEAR R8 rows no wider than asked.
+const PITCH_ALIGN: u32 = 256;
+
+/// An NV12 view's R8 buffer: its size, and the rows before the chroma plane.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Layout {
+    width: u32,
+    rows: u32,
+    /// The luma rows, rounded up to whole tiles.
+    luma_rows: u32,
+}
+
+impl Layout {
+    /// The buffer of a view of `size`.
+    fn of((w, h): (u32, u32)) -> Layout {
+        let luma_rows = h.next_multiple_of(TILE_ROWS);
+        Layout {
+            width: w.next_multiple_of(PITCH_ALIGN),
+            rows: luma_rows + h / 2,
+            luma_rows,
+        }
+    }
+
+    /// The planes in such a buffer whose rows are `stride` bytes apart, as its allocator reports.
+    fn planes(self, stride: u32) -> Result<[Plane; 2], EncodeError> {
+        if !stride.is_multiple_of(PITCH_ALIGN) {
+            return Err(EncodeError(format!(
+                "view buffer pitch {stride} is not a multiple of {PITCH_ALIGN}"
+            )));
+        }
+        let plane = |offset| Plane {
+            object: 0,
+            offset,
+            stride,
+        };
+        Ok([plane(0), plane(stride * self.luma_rows)])
     }
 }
 
@@ -659,13 +683,13 @@ const TILE_ROWS: u32 = 32;
 /// An NV12 view of `size` in a dma-buf, and its luma and chroma planes as GL textures.
 unsafe fn dmabuf_view(gl: &Gl, size: (u32, u32)) -> Result<View, EncodeError> {
     let (w, h) = size;
-    let luma_rows = h.next_multiple_of(TILE_ROWS);
+    let layout = Layout::of(size);
     let (bo, modifier) = [I915_Y_TILED, DRM_FORMAT_MOD_LINEAR]
         .into_iter()
         .find_map(|modifier| {
             let bo = gl.gbm.create_buffer_object_with_modifiers2::<()>(
-                w,
-                luma_rows + h / 2,
+                layout.width,
+                layout.rows,
                 gbm::Format::R8,
                 [gbm::Modifier::from(modifier)].into_iter(),
                 gbm::BufferObjectFlags::RENDERING,
@@ -677,15 +701,16 @@ unsafe fn dmabuf_view(gl: &Gl, size: (u32, u32)) -> Result<View, EncodeError> {
         bo.fd()
             .map_err(|e| EncodeError(format!("view buffer: {e}")))?,
     );
-    let stride = bo.stride();
+    let planes = layout.planes(bo.stride())?;
     let objects = std::slice::from_ref(&fd);
-    let texture = |offset, size: (u32, u32)| {
-        let plane = [Plane {
-            object: 0,
-            offset,
-            stride,
-        }];
-        let image = gl.import(objects, ABGR8888, modifier, &plane, size)?;
+    let texture = |plane: &Plane, size: (u32, u32)| {
+        let image = gl.import(
+            objects,
+            ABGR8888,
+            modifier,
+            std::slice::from_ref(plane),
+            size,
+        )?;
         // SAFETY: GL calls on the caller's current context.
         unsafe {
             let texture = gl.gl.create_texture().map_err(gl_err("texture"))?;
@@ -697,12 +722,12 @@ unsafe fn dmabuf_view(gl: &Gl, size: (u32, u32)) -> Result<View, EncodeError> {
         }
     };
     Ok(View {
-        luma: texture(0, (w / 4, h))?,
-        chroma: texture(stride * luma_rows, (w / 4, h / 2))?,
+        luma: texture(&planes[0], (w / 4, h))?,
+        chroma: texture(&planes[1], (w / 4, h / 2))?,
         buffer: Some(ViewBuffer {
             bo,
             fd,
-            luma_rows,
+            planes,
             modifier,
         }),
     })
@@ -767,7 +792,8 @@ pub(crate) mod tests {
     /// A view read back from its dma-buf.
     fn read_back(view: &View, (w, h): (u32, u32)) -> avc444::Nv12 {
         let view = view.buffer.as_ref().expect("a dma-buf view");
-        let rows = view.luma_rows + h / 2;
+        let layout = Layout::of((w, h));
+        let rows = layout.rows;
         let bytes = view
             .bo
             .map(0, 0, w, rows, |m| {
@@ -780,10 +806,51 @@ pub(crate) mod tests {
         let row = |y: u32| &bytes[(y * w) as usize..][..w as usize];
         avc444::Nv12 {
             y: (0..h).flat_map(row).copied().collect(),
-            uv: (view.luma_rows..rows).flat_map(row).copied().collect(),
+            uv: (layout.luma_rows..rows).flat_map(row).copied().collect(),
             width: w,
             height: h,
         }
+    }
+
+    #[test]
+    fn view_rows_start_on_256_byte_boundaries_at_odd_widths() {
+        for width in [2662, 2672, 1366, 1921] {
+            let view = avc444::view_size((width, 1391));
+            let layout = Layout::of(view);
+            assert!(
+                layout.width >= view.0 && layout.width.is_multiple_of(256),
+                "a {width}-wide picture's view rows are {} bytes, a multiple of 256",
+                layout.width
+            );
+            assert_eq!(
+                layout.luma_rows, 1408,
+                "luma rows rounded up to whole tiles"
+            );
+            assert_eq!(layout.rows, 1408 + 696, "chroma rows below them");
+            // A driver padding R8 rows no further than asked, as Intel's does.
+            let stride = layout.width;
+            let [luma, chroma] = layout.planes(stride).unwrap();
+            assert_eq!((luma.offset, luma.stride), (0, stride));
+            assert_eq!(
+                (chroma.offset, chroma.stride),
+                (stride * 1408, stride),
+                "chroma starts below the luma rows, at the buffer's own pitch"
+            );
+            let padded = stride * 2;
+            assert_eq!(
+                layout.planes(padded).unwrap()[1],
+                Plane {
+                    object: 0,
+                    offset: padded * 1408,
+                    stride: padded,
+                },
+                "a driver's wider pitch is passed through"
+            );
+        }
+        assert!(
+            Layout::of((2672, 1392)).planes(2672).is_err(),
+            "a pitch off a 256-byte boundary is refused"
+        );
     }
 
     #[test]
