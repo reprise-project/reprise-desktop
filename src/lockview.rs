@@ -51,6 +51,7 @@ pub struct LockScreen {
     pub seat_away: bool,
     /// Where reprise-login's screen lists this user (`find_listed`), so the tiles agree.
     pub listed_at: usize,
+    pub back: crate::lockback::LoginBack,
 }
 
 impl LockScreen {
@@ -63,6 +64,7 @@ impl LockScreen {
             helpers: Helpers::default(),
             seat_away: false,
             listed_at: 0,
+            back: Default::default(),
         }
     }
 
@@ -636,6 +638,7 @@ fn raise(state: &mut State, side: Side) {
         client: None,
         awaiting: false,
     });
+    crate::lockback::read(state);
 }
 
 fn cancel_interaction(state: &mut State) {
@@ -889,8 +892,9 @@ fn refit_side(state: &mut State, side: Side) {
         .filter(|o| crate::console::side_of(o) == side)
         .collect();
     let screen = screen_output(state, side);
+    let login = state.lock.back.shows();
     let glass = state.config.interface == Interface::Glass;
-    if !glass {
+    if !glass || login {
         unwall(state, side);
     }
     let color = (logonview::backdrop(state))
@@ -901,7 +905,7 @@ fn refit_side(state: &mut State, side: Side) {
         outputs,
         screen_on: screen.as_ref(),
         color: Some(color),
-        wall: glass,
+        wall: glass || login,
     };
     let changed = logonview::refit(state, host(side), fit);
     for o in &changed.removed {
@@ -911,7 +915,10 @@ fn refit_side(state: &mut State, side: Side) {
         crate::sessionlock::raise(state);
     }
     for (output, tree, wall) in walls(state, side) {
-        paint_wall(state, &output, tree, wall);
+        match login {
+            true => crate::lockback::paint(state, &output, wall),
+            false => paint_wall(state, &output, tree, wall),
+        }
     }
 }
 
@@ -997,7 +1004,7 @@ fn paint_wall(state: &mut State, output: &Output, tree: TreeId, wall: BufferId) 
 pub fn repaint_wall(state: &mut State, output: &Output) {
     let side = crate::console::side_of(output);
     let found = walls(state, side).into_iter().find(|(o, _, _)| o == output);
-    if let Some((output, tree, wall)) = found {
+    if let Some((output, tree, wall)) = found.filter(|_| !state.lock.back.shows()) {
         paint_wall(state, &output, tree, wall);
         state.redraw_all();
     }
@@ -1030,6 +1037,7 @@ fn prepare(state: &mut State, side: Side) {
     let switch_user = crate::loginlink::offered(state, side);
     let power = crate::lockpower::offered(state, side);
     let interface = state.config.interface;
+    let over_picture = state.lock.back.shows();
     let Some(l) = state.lock.on_mut(side) else {
         return;
     };
@@ -1038,6 +1046,7 @@ fn prepare(state: &mut State, side: Side) {
         l.view.model = Logon::locked(interface, user, switch_user, power);
     }
     l.view.model.purpose = Purpose::Unlock { switch_user, power };
+    l.view.model.over_picture = over_picture;
     l.view.hidden = !l.screen_shown();
     if side == Side::Console && (!power || l.view.hidden) {
         crate::lockpower::close(state);

@@ -179,7 +179,12 @@ pub fn config_from(g: &Greeting) -> Config {
 /// The greeting's background as a wallpaper path; None without one, or for a built-in this build
 /// does not draw.
 pub fn background(g: &Greeting) -> Option<PathBuf> {
-    match g.background.as_ref()? {
+    background_path(g.background.as_ref()?)
+}
+
+/// `b` as a wallpaper path, as [`background`].
+pub fn background_path(b: &Background) -> Option<PathBuf> {
+    match b {
         Background::Picture => Some(BACKGROUND_PICTURE.into()),
         Background::Builtin(uri) => match reprisekit::wallpapers::Builtin::from_uri(uri) {
             Some(Ok(b)) => Some(drawn(b)),
