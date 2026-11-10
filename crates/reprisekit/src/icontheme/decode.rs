@@ -151,7 +151,7 @@ pub(super) const SVG_MAX_PRIMITIVES: usize = 256;
 pub(super) const SVG_MAX_SEGMENTS: f32 = 100_000.0;
 
 /// Why `tree` is refused, or `None` within the limits; the walk stops at the first one passed. An
-/// embedded raster image is refused unless `images`: its decoded size is past the budget's reach.
+/// embedded raster image is refused unless `images`, and drawn blank (no resvg `raster-images`).
 pub(super) fn svg_over_budget(tree: &resvg::usvg::Tree, images: bool) -> Option<&'static str> {
     use resvg::usvg::{Group, Node, Path, filter::Kind};
     #[derive(Default)]

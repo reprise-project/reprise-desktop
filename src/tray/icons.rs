@@ -14,7 +14,8 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-/// Largest `IconPixmap` side read, 4 MiB an entry; Electron apps send only 512 px.
+/// Largest `IconPixmap` side read; the whole property must stay under 4 MiB, so a 1024 px
+/// entry never arrives. Electron apps send only 512 px.
 const MAX_PIXMAP_SIDE: i32 = MAX_ICON_DIMENSION as i32;
 
 /// For each of `sizes`, the px the icon is drawn at ([`icon_sizes`]), the smallest
@@ -117,7 +118,7 @@ pub enum IconFiles {
 }
 
 impl IconFiles {
-    /// An SVG from a sandbox may not embed a raster image: its decoded size is past the budget.
+    /// An SVG from a sandbox may not embed a raster image; a host's draws, the image left blank.
     fn decode(&self, path: &Path, bytes: &[u8], px: u32) -> Option<Canvas> {
         decode_bytes(path, bytes, px, matches!(self, IconFiles::Host))
     }
