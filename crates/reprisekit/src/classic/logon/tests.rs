@@ -40,6 +40,7 @@ fn states() -> Vec<(&'static str, Logon)> {
         ("layout badge", badge),
         ("admin shut down", admin(PowerAction::PowerOff, "")),
         ("admin restart filled", admin(PowerAction::Reboot, "anna")),
+        ("admin shut down caps lock and badge", admin_caps()),
         ("shutting down", going_down()),
         ("over a picture", over_picture),
     ]
@@ -403,12 +404,59 @@ fn the_classic_lock_states_are_distinct() {
     );
 }
 
-#[test]
-fn the_admin_headings_last_line_shows_in_a_wider_face_under_caps_lock_too() {
+/// Checks the admin form at scale `s`, with and without Caps Lock: the message gets the heading's
+/// lines plus the notice's row, and every one of them is inked.
+fn assert_admin_heading_whole(theme: &Theme, text: &TextRenderer, s: i32) {
     let mut m = Logon::new(Interface::Classic, Vec::new(), false, None);
     m.admin(PowerAction::PowerOff);
     let mut caps = m.clone();
     caps.caps_lock = true;
+    let width = (CLIENT_W - 2 * PAD) * s;
+    let t = text.for_output(s);
+    let n = crate::text::wrap(t, &strings::admin_shut_down(), width, theme.fonts.size_px).len();
+    for m in [&m, &caps] {
+        let l = layout(m, theme, text, OUTPUT);
+        let rows = n + usize::from(m.caps_lock);
+        let flag = m.caps_lock;
+        assert_eq!(
+            l.dialog,
+            Some(geometry(theme, OUTPUT, rows.max(MESSAGE_LINES)).dialog),
+            "@{s}, caps {flag}: the message is {rows} rows"
+        );
+        let mut c = Canvas::new((OUTPUT.width * s) as u32, (OUTPUT.height * s) as u32);
+        draw(&mut c, m, &l, theme, t, s);
+        let (password, ok) = (
+            l.rect(Part::Password).unwrap(),
+            l.rect(Part::Submit).unwrap(),
+        );
+        let left = (l.dialog.unwrap().x + PAD) * s;
+        let face = theme.colors.button_face.argb();
+        for row in 0..rows as i32 {
+            let top = (password.bottom() + ROW_GAP + row * LINE_H) * s;
+            let inked = (top..top + LINE_H * s)
+                .flat_map(|y| (left..ok.x * s).map(move |x| (x, y)))
+                .any(|(x, y)| c.get(x, y) != face);
+            assert!(
+                inked,
+                "@{s}, caps {flag}: row {} of {rows} is inked",
+                row + 1
+            );
+        }
+    }
+}
+
+#[test]
+fn the_admin_heading_and_the_caps_lock_notice_both_show_whole() {
+    crate::pins::fonts();
+    for s in [1, 2] {
+        let theme = Theme::default().scaled(s);
+        let text = TextRenderer::load(&theme.fonts);
+        assert_admin_heading_whole(&theme, &text, s);
+    }
+}
+
+#[test]
+fn the_admin_heading_shows_whole_in_a_wider_face_under_caps_lock_too() {
     for s in [1, 2] {
         let mut theme = Theme::default().scaled(s);
         theme.fonts.family = vec!["DejaVu Sans".into()];
@@ -417,43 +465,15 @@ fn the_admin_headings_last_line_shows_in_a_wider_face_under_caps_lock_too() {
             crate::pins::skip!("DejaVu Sans is not installed");
         }
         let width = (CLIENT_W - 2 * PAD) * s;
-        let t = text.for_output(s);
-        let n = crate::text::wrap(t, &strings::admin_shut_down(), width, theme.fonts.size_px).len();
-        if s == 1 {
-            assert_eq!(n, 3, "the heading needs a third line");
-        }
-        let l = layout(&m, &theme, &text, OUTPUT);
-        assert_eq!(
-            layout(&caps, &theme, &text, OUTPUT),
-            l,
-            "@{s}: Caps Lock keeps the dialog's size"
+        let lines = crate::text::wrap(
+            text.for_output(s),
+            &strings::admin_shut_down(),
+            width,
+            theme.fonts.size_px,
         );
-        // A heading of two lines gets no row for the notice, so Caps Lock takes its second.
-        let shown = if n > MESSAGE_LINES {
-            &[&m, &caps][..]
-        } else {
-            &[&m]
-        };
-        for &m in shown {
-            let mut c = Canvas::new((OUTPUT.width * s) as u32, (OUTPUT.height * s) as u32);
-            draw(&mut c, m, &l, &theme, t, s);
-            let (password, ok) = (
-                l.rect(Part::Password).unwrap(),
-                l.rect(Part::Submit).unwrap(),
-            );
-            let last = (n - 1 + usize::from(m.caps_lock)) as i32;
-            let left = (l.dialog.unwrap().x + PAD) * s;
-            let top = (password.bottom() + ROW_GAP + last * LINE_H) * s;
-            let face = theme.colors.button_face.argb();
-            let inked = (top..top + LINE_H * s)
-                .flat_map(|y| (left..ok.x * s).map(move |x| (x, y)))
-                .filter(|&(x, y)| c.get(x, y) != face)
-                .count();
-            let caps = m.caps_lock;
-            assert!(
-                inked > 0,
-                "@{s}, caps {caps}: the heading's line {n} of {n}"
-            );
+        if s == 1 {
+            assert_eq!(lines.len(), 3, "the heading needs a third line");
         }
+        assert_admin_heading_whole(&theme, &text, s);
     }
 }

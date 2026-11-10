@@ -27,7 +27,7 @@ const LABEL_W: i32 = 90;
 const ROW_H: i32 = 20;
 const ROW_GAP: i32 = 8;
 const MESSAGE_LINES: usize = 2;
-/// The most rows the message grows to, for a heading that needs more than two.
+/// The most rows the message grows to, for a long heading and the Caps Lock notice.
 const MESSAGE_MAX: usize = 5;
 const BADGE_GAP: i32 = 6;
 /// The band's wordmark: the product's name, never translated.
@@ -105,8 +105,8 @@ fn geometry(theme: &Theme, output: Rect, rows: usize) -> Geometry {
     }
 }
 
-/// The message's rows: two, or a heading that wraps to more and a row for the Caps Lock notice,
-/// wrapped as [`draw`] does at the theme's scale. The dialog keeps its size while the form is up.
+/// The message's rows: the heading's lines, wrapped as [`draw`] does at the theme's scale, plus
+/// one while the Caps Lock notice shows; never fewer than two.
 fn message_rows(m: &Logon, theme: &Theme, text: &TextRenderer) -> usize {
     let s = theme.scale.max(1);
     let badge = m.layout.as_ref().map_or(0, |_| ICON_SIZE + BADGE_GAP);
@@ -114,10 +114,7 @@ fn message_rows(m: &Logon, theme: &Theme, text: &TextRenderer) -> usize {
     let lines = m.heading().map_or(0, |h| {
         crate::text::wrap(text.for_output(s), &h, width, theme.fonts.size_px).len()
     });
-    match lines {
-        n if n > MESSAGE_LINES => (n + 1).min(MESSAGE_MAX),
-        _ => MESSAGE_LINES,
-    }
+    (lines + usize::from(m.caps_lock)).clamp(MESSAGE_LINES, MESSAGE_MAX)
 }
 
 /// The rows `l` was laid out with: the count whose dialog it is.
