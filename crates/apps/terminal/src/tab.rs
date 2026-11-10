@@ -112,7 +112,7 @@ pub struct Tab {
     window: Cell<WindowSize>,
     exit: Option<i32>,
     pid: u32,
-    /// The directory the shell last reported with OSC 7.
+    /// The directory the shell last reported with OSC 7, unchecked.
     osc7: Arc<Mutex<Option<PathBuf>>>,
     search: RefCell<Option<Search>>,
     /// Every write handed to the PTY, for the tests to read back.
@@ -191,11 +191,9 @@ impl Tab {
         self.pid
     }
 
-    /// The directory a new tab opened from this one starts in: the last OSC 7 while it names a
-    /// directory, else the shell's.
+    /// The directory a new tab opened from this one starts in ([`cwd::start_dir`]).
     pub fn cwd(&self) -> Option<PathBuf> {
-        let reported = self.osc7.lock().unwrap().clone().filter(|p| p.is_dir());
-        reported.or_else(|| cwd::cwd_of(self.pid))
+        cwd::start_dir(self.osc7.lock().unwrap().clone(), self.pid)
     }
 
     /// Whether a program other than the shell holds the foreground, so closing asks first.
