@@ -182,6 +182,7 @@ mod launcherview;
 mod launches;
 mod layer;
 mod lock;
+mod lockback;
 mod lockfinger;
 mod lockpower;
 mod lockview;
@@ -381,6 +382,7 @@ fn run(
     backend::init(&mut state)?;
     loginlink::setup(&mut state);
     lockview::find_listed(&mut state);
+    lockback::read(&mut state);
     // After the seat is ours: a start that cannot take it never stops the scopes.
     spawn::stop_stale_scopes(
         &state.env,
