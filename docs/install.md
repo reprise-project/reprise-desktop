@@ -240,6 +240,10 @@ user's server.
   library
 - A stuck main loop's backtrace is walked and named with the `backtrace`
   crate, built in; it needs no runtime library
+- SVG icons are drawn with the `resvg` crate, whose PNG and JPEG pictures
+  inside an icon are read out with `data-url` and decoded by the `png` and
+  `zune-jpeg` crates (`gif` and `image-webp` are built with them), built in;
+  they need no runtime library
 - The Remote Desktop server (`reprise-rdp`) is built on the IronRDP crates,
   Tokio, rustls and rcgen, built in. rustls's aws-lc-rs compiles its C library
   with the C compiler. IronRDP turns on flate2's zlib backend, which every

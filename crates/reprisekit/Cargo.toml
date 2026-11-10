@@ -29,8 +29,13 @@ unicode-segmentation = "1"
 unicode-blocks = "0.1"
 unicode_names2 = "4"
 png.workspace = true
-# No svgz: a gzipped file would inflate past the decoder's SVG byte cap.
-resvg = { version = "0.49", default-features = false }
+# No svgz: a gzipped file would inflate past the decoder's SVG byte cap. raster-images draws
+# embedded PNGs and JPEGs; GIF and WebP come along but are left out before parsing.
+resvg = { version = "0.49", default-features = false, features = ["raster-images"] }
+# usvg's data: URL reader, to decode each embedded picture once.
+data-url = "0.3"
+# resvg's JPEG decoder, to read an embedded JPEG's size the way resvg will.
+zune-jpeg = "0.5"
 zeroize.workspace = true
 accesskit = "0.25"
 emojis = "0.9"
