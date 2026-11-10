@@ -1,6 +1,7 @@
 use super::{ITEM_IFACE, Icons, Sizes, lock, sizes_now, uncached_proxy};
 use crate::tray::{ItemIcon, TrayItem, decode_named_at, item_pixmaps};
 use reprisebus::bounded;
+use reprisebus::peer::{AppIdentity, Identities};
 use reprisefs::names::shown_line;
 use reprisekit::controls::tooltip::TIP_CHARS;
 use reprisekit::icon::IconSource;
@@ -94,6 +95,7 @@ pub(super) async fn fetch_item(
     conn: &Connection,
     icons: &Icons,
     sizes: &Sizes,
+    identities: &Identities,
     bus: &str,
     path: &str,
 ) -> Option<TrayItem> {
@@ -113,6 +115,7 @@ pub(super) async fn fetch_item(
         attention_pixmaps,
         overlay_name,
         overlay_pixmaps,
+        identity,
     ) = futures_util::join!(
         prop::<String>(&proxy, "Id"),
         prop::<String>(&proxy, "Title"),
@@ -127,6 +130,7 @@ pub(super) async fn fetch_item(
         prop_body(&proxy, "AttentionIconPixmap"),
         prop::<String>(&proxy, "OverlayIconName"),
         prop_body(&proxy, "OverlayIconPixmap"),
+        identities.of(conn, bus),
     );
     let pixmaps = pixmaps_of(&pixmaps);
     let tip = tip
@@ -139,14 +143,24 @@ pub(super) async fn fetch_item(
         log::warn!("tray: {bus}{path} answered none of Title/IconName/IconPixmap/Menu");
         return None;
     }
+    // A sandboxed app's item is kept and listed under its own app, whatever `Id` and `Title` say.
+    let (key, title) = match &identity {
+        AppIdentity::Host { .. } => {
+            let program = pid.and_then(program_name);
+            (item_key(sni_id.as_deref(), program.as_deref(), bus), title)
+        }
+        AppIdentity::Sandboxed { app_id } => {
+            let entry = super::notifications::desktop_entry(app_id);
+            (
+                app_id.clone(),
+                Some(entry.map_or(app_id.clone(), |e| e.name)),
+            )
+        }
+        AppIdentity::Unknown => (item_key(None, None, bus), None),
+    };
     let (title, tooltip) = item_texts(title, tip);
     // Read after the properties, so a size change during the read is decoded by it.
     let sizes = sizes_now(sizes);
-    let key = item_key(
-        sni_id.as_deref(),
-        pid.and_then(program_name).as_deref(),
-        bus,
-    );
     let mut item = TrayItem {
         id: format!("{bus}{path}"),
         key,

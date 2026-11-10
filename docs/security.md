@@ -1284,6 +1284,23 @@ sharing and remote control grants yet.
   notification's `image-path` picture is read only from a regular file of
   32 MiB or less, opened without blocking, and decoded off the bus thread;
   one that takes over 2 s is left out.
+- **Who a notification or tray icon is from.** The compositor reads which
+  app a notification's sender or a tray icon's owner is from its process,
+  through the pidfd the bus gives for it, by the rules the Wayland filter
+  uses (see [Sandboxed programs](#sandboxed-programs)): a Flatpak app is
+  the app id in its `/.flatpak-info` or its `app-flatpak-*.scope`, a
+  strictly confined snap `<snap>_<app>` from its AppArmor profile or its
+  scope. A sandboxed app's notification shows under that app's own desktop
+  entry name and icon, else its app id, whatever `app_name`,
+  `desktop-entry` and `app_icon` it sends, and Don't Show Balloons and No
+  Sounds name it by that id; so it can't show a balloon as Reprise, Settings
+  or a password manager. Its tray icon is kept in Customize Notifications
+  under the same id and name, whatever its `Id` and `Title`, though it still
+  draws its own picture and tooltip. A sender that has left by the time it
+  is read, or shows too little of itself, gets no name or icon at all. A
+  program outside a sandbox is trusted as you are and keeps the name it
+  gives, and so does the notification portal, which forwards a sandboxed
+  app's notification under the app id xdg-desktop-portal checked.
 - **Launchers.** A `.desktop` file in a folder (the desktop, Explorer)
   runs only when it is executable and carries the `user.reprise.trusted`
   extended attribute, which Allow Launching sets. Extracting an archive

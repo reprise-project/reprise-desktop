@@ -8,22 +8,7 @@ pub fn app_of_pid(pid: u32) -> Option<String> {
     app_of_info(&std::fs::read_to_string(format!("/proc/{pid}/root/.flatpak-info")).ok()?)
 }
 
-/// `name` in the `[Application]` group of a `.flatpak-info` or instance
-/// `info` key file.
-pub fn app_of_info(info: &str) -> Option<String> {
-    let mut group = "";
-    for line in info.lines().map(str::trim) {
-        if let Some(g) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
-            group = g;
-        } else if group == "Application"
-            && let Some((k, v)) = line.split_once('=')
-            && k.trim() == "name"
-        {
-            return Some(v.trim().to_string()).filter(|v| !v.is_empty());
-        }
-    }
-    None
-}
+pub use reprisebus::peer::app_of_flatpak_info as app_of_info;
 
 #[cfg(test)]
 mod tests {

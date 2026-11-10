@@ -49,11 +49,13 @@ use std::thread::JoinHandle;
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TrayItem {
     pub id: String,
-    /// What its tray choice is kept under across restarts: its `Id`
-    /// property, else the program serving it, else its bus name.
+    /// What its tray choice is kept under across restarts: a sandboxed
+    /// app's own app id, else its `Id` property, else the program serving
+    /// it, else its bus name.
     pub key: String,
     pub service: String,
     pub path: String,
+    /// `Title`; a sandboxed app's own desktop entry name, else its app id.
     pub title: String,
     /// What the taskbar tooltip shows: the `ToolTip` property's title, or
     /// `Title` when the item has none. Empty means no tip.
@@ -158,10 +160,12 @@ pub fn clip(mut s: String, max: usize) -> String {
 pub struct Notification {
     pub id: u32,
     /// Who sent it: the `desktop-entry` hint's application name, else the
-    /// `app_name` it gave. May be empty.
+    /// `app_name` it gave; a sandboxed app's own app id stands in for both.
+    /// May be empty.
     pub app: String,
     /// The program as `[notifications] no_balloons` and `no_sounds` name it, and the history
-    /// groups it: the `desktop-entry` hint, else the `app_name`. See [`notify::program_key`].
+    /// groups it: the `desktop-entry` hint, else the `app_name`, a sandboxed app's own app id in
+    /// place of both. See [`notify::program_key`].
     pub key: String,
     pub summary: String,
     /// Plain text: any markup was reduced by `notify::plain_text`.

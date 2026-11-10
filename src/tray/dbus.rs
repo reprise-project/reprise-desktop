@@ -6,6 +6,7 @@ use super::{TrayCommand, TrayEvent, TrayItem};
 use crate::icontheme::{IconCache, IconTheme};
 use crate::mutex::lock;
 use futures_util::stream::{BoxStream, SelectAll, StreamExt};
+use reprisebus::peer::Identities;
 use std::collections::{HashMap, HashSet};
 use std::os::fd::{AsRawFd, OwnedFd, RawFd};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -277,6 +278,7 @@ struct Loop {
     sizes: Sizes,
     senders: Arc<Mutex<Senders>>,
     responding: Arc<Mutex<Responding>>,
+    identities: Arc<Identities>,
 }
 
 impl Loop {
@@ -372,12 +374,13 @@ impl Loop {
             },
         );
         let (conn, icons, sizes) = (self.conn.clone(), self.icons.clone(), self.sizes.clone());
+        let identities = self.identities.clone();
         let read = async move {
             if !settle.is_zero() {
                 async_io::Timer::after(settle).await;
             }
             reading.store(true, Ordering::Relaxed);
-            let item = fetch_item(&conn, &icons, &sizes, &bus, &path)
+            let item = fetch_item(&conn, &icons, &sizes, &identities, &bus, &path)
                 .await
                 .map(Box::new);
             Wake::Fetched { key, fetch, item }
@@ -638,6 +641,7 @@ impl Loop {
                 Wake::Owner { name, new_owner } => {
                     if new_owner.is_empty() {
                         self.remove_items_on(&name).await;
+                        self.identities.forget(&name);
                         if lock(&self.senders).sent_by(&name) {
                             self.emit(TrayEvent::NotifySenderGone(name.clone()));
                         }
@@ -770,6 +774,7 @@ async fn setup(
     let icons: Icons = Arc::new(Mutex::new(load_icons(&icon_theme)));
     let senders: Arc<Mutex<Senders>> = Arc::default();
     let programs: Arc<Mutex<Programs>> = Arc::default();
+    let identities: Arc<Identities> = Arc::default();
     let conn = zbus::connection::Builder::session()
         .method_timeout(METHOD_TIMEOUT)
         .build()
@@ -813,6 +818,7 @@ async fn setup(
                 senders: senders.clone(),
                 programs: programs.clone(),
                 icons: icons.clone(),
+                identities: identities.clone(),
             },
         )
         .await
@@ -923,6 +929,7 @@ async fn setup(
         sizes: Arc::new(Mutex::new(sizes)),
         senders,
         responding,
+        identities,
     })
 }
 

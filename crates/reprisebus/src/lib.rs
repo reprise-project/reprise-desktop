@@ -28,7 +28,8 @@
 //! [`kdeconnect`] follows the phones KDE Connect reaches.
 //! [`error`] reads the name and message of an error reply.
 //! [`desklock`] follows the compositor's desktop lock on `org.freedesktop.ScreenSaver`.
-//! [`peer`] tells which process a session bus peer is and whether it runs in a Flatpak sandbox.
+//! [`peer`] tells which process and which app a session bus peer is, and whether it runs in a
+//! Flatpak sandbox.
 //! [`mutex`] locks a mutex even when its holder panicked.
 //! [`login`] asks the system manager whether reprise-login runs.
 //! [`logind`] reads logind's session of a process and its user's display session.
