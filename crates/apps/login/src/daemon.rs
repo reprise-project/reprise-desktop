@@ -306,7 +306,8 @@ pub struct Unread {
 /// What the backend reads fresh for each `Hello`, start, power request and forwarded hand-over.
 #[derive(Clone, Debug, PartialEq)]
 pub struct World {
-    /// The accounts the login screen lists, as `repriselogin::users::Source::listed` picks them.
+    /// The login accounts, as `repriselogin::users::Source::listed` picks them; the greeting
+    /// carries them only with `show_users` on.
     pub users: Vec<UserEntry>,
     pub keyboard: Keyboard,
     /// `VT_GETSTATE`'s mask of open VTs 1-15.
@@ -634,7 +635,7 @@ impl Daemon {
                 (false, _) => out.push(Effect::Log(
                     Level::Info,
                     format!(
-                        "autologin_user {user:?} is not an account the login screen lists; \
+                        "autologin_user {user:?} is not a login account (uid range, shell); \
                      showing the login screen"
                     ),
                 )),
@@ -923,18 +924,21 @@ impl Daemon {
         });
     }
 
-    /// The configured interface, else the last one used; users capped to fit one frame.
+    /// The configured interface, else the last one used; users capped to fit one frame, none
+    /// while `show_users` is off.
     fn greeting(&mut self, world: &World) -> Greeting {
         let notes = self.notes();
         if let Some(g) = self.greeter.as_mut() {
             g.notes = Some(notes.clone());
         }
+        let show_users = self.config.login.show_users;
+        let listed = if show_users { MAX_USERS } else { 0 };
         let mut greeting = Greeting {
             interface: (self.config.login.interface)
                 .or(self.remembered.last_interface)
                 .unwrap_or(Interface::Classic),
-            show_users: self.config.login.show_users,
-            users: (world.users.iter().take(MAX_USERS))
+            show_users,
+            users: (world.users.iter().take(listed))
                 .map(|u| UserEntry {
                     note: notes.get(&u.name).copied(),
                     ..u.clone()
