@@ -5,7 +5,7 @@ use super::watcher::{
     Admission, MAX_REGISTRATIONS, MAX_REGISTRATIONS_PER_SENDER, admit, resolve_registration,
 };
 use super::*;
-use crate::tray::{DEFAULT_PROP, MenuNode, NOTIFY_SIZES, item_pixmaps, notify};
+use crate::tray::{DEFAULT_PROP, MenuNode, NOTIFY_SIZES, Notification, item_pixmaps, notify};
 use reprisekit::controls::tooltip::TIP_CHARS;
 use reprisekit::icon::IconSource;
 use std::collections::HashMap;
@@ -455,6 +455,7 @@ fn notification_signals(cmd: TrayCommand) -> Vec<(String, Option<String>)> {
             senders: lp.senders.clone(),
             programs: Arc::default(),
             icons: hicolor(),
+            identities: Arc::default(),
         };
         ours.object_server().at(NOTIFY_PATH, notes).await.unwrap();
         lock(&lp.senders)
@@ -535,6 +536,7 @@ fn test_loop(conn: Connection, events: Sender<TrayEvent>, eventfd: RawFd) -> Loo
         sizes: Arc::new(Mutex::new(vec![16])),
         senders: Arc::default(),
         responding: Arc::default(),
+        identities: Arc::default(),
     }
 }
 
@@ -999,7 +1001,8 @@ fn an_items_overlay_pixmap_is_read_with_its_other_properties() {
         };
         let icons: Icons = Arc::new(Mutex::new(IconCache::new(IconTheme::load("hicolor", &[]))));
         let sizes: Sizes = Arc::new(Mutex::new(vec![16]));
-        let fetch = fetch_item(&ours, &icons, &sizes, ":1.1", "/item");
+        let identities = Identities::default();
+        let fetch = fetch_item(&ours, &icons, &sizes, &identities, ":1.1", "/item");
         futures_lite::future::or(fetch, serve).await
     });
     let item = got.expect("the item is read");
@@ -1313,4 +1316,146 @@ fn a_session_that_joined_another_watcher_hosts_its_own_once_it_takes_the_name_ba
             .unwrap();
         assert_eq!(listed, [format!("{app_name}/StatusNotifierItem")]);
     });
+}
+
+/// A `proc` folder in which this process shows Flatpak's `/.flatpak-info` for `app_id`.
+fn flatpak_proc(name: &str, app_id: &str) -> std::path::PathBuf {
+    let proc = crate::harness::scratch().join(format!("proc-{name}"));
+    let dir = proc.join(std::process::id().to_string());
+    std::fs::create_dir_all(dir.join("root")).unwrap();
+    let info = format!("[Application]\nname={app_id}\n");
+    std::fs::write(dir.join("root/.flatpak-info"), info).unwrap();
+    std::fs::write(dir.join("stat"), "42 (app) S 1 42\n").unwrap();
+    proc
+}
+
+/// What a server reading its senders from `proc` (`/proc` when None) shows of a notification a
+/// peer on `bus` sends as `app_name` with the `desktop-entry` hint `entry`.
+fn notified(
+    bus: &crate::testbus::Bus,
+    proc: Option<&std::path::Path>,
+    app_name: &str,
+    entry: &str,
+) -> Notification {
+    let (tx, events) = std::sync::mpsc::channel();
+    // SAFETY: eventfd takes no pointers; the result is checked below.
+    let fd = unsafe { libc::eventfd(0, libc::EFD_NONBLOCK | libc::EFD_CLOEXEC) };
+    assert!(fd >= 0, "eventfd failed");
+    // SAFETY: `fd` was just opened and nothing else owns it.
+    let fd = unsafe { OwnedFd::from_raw_fd(fd) };
+    let identities = proc.map_or_else(Identities::default, Identities::under);
+    zbus::block_on(async {
+        let connect = || zbus::connection::Builder::address(bus.1.as_str());
+        let client = connect().build().await.unwrap();
+        let notes = Notifications {
+            events: tx,
+            eventfd: fd.as_raw_fd(),
+            next_id: std::sync::atomic::AtomicU32::new(1),
+            senders: Arc::default(),
+            programs: Arc::default(),
+            icons: hicolor(),
+            identities: Arc::new(identities),
+        };
+        let serving = connect().serve_at(NOTIFY_PATH, notes);
+        let server = serving.build().await.unwrap();
+        let hints = HashMap::from([("desktop-entry", Variant::from(entry))]);
+        let body = (
+            app_name,
+            0u32,
+            "",
+            "Hi",
+            "",
+            Vec::<&str>::new(),
+            hints,
+            -1i32,
+        );
+        let to = server.unique_name().unwrap().to_owned();
+        let call = client.call_method(Some(to), NOTIFY_PATH, Some(NOTIFY_NAME), "Notify", &body);
+        call.await.unwrap();
+    });
+    match events.recv_timeout(Duration::from_secs(5)) {
+        Ok(TrayEvent::Notify(n)) => n,
+        _ => panic!("no notification shown"),
+    }
+}
+
+#[test]
+fn a_sandboxed_senders_notification_goes_under_its_own_app() {
+    let Some(bus) = crate::testbus::bus() else {
+        eprintln!("no dbus-daemon; skipped");
+        return;
+    };
+    let proc = flatpak_proc("notify", "org.example.Spoofer");
+    let n = notified(&bus, Some(&proc), "Firefox", "firefox");
+    assert_eq!(n.app, "org.example.Spoofer");
+    assert_eq!(n.key, "org.example.Spoofer");
+}
+
+#[test]
+fn a_host_senders_notification_keeps_the_app_it_names() {
+    let Some(bus) = crate::testbus::bus() else {
+        eprintln!("no dbus-daemon; skipped");
+        return;
+    };
+    // The notification portal forwards a sandboxed app's notification this way: as a host
+    // program naming the app id it checked.
+    let n = notified(&bus, None, "org.example.Chat", "org.example.Chat");
+    assert_eq!(n.app, "org.example.Chat");
+    assert_eq!(n.key, "org.example.Chat");
+}
+
+/// A tray item claiming to be another app's.
+struct Spoofing;
+
+#[zbus::interface(name = "org.kde.StatusNotifierItem")]
+impl Spoofing {
+    #[zbus(property)]
+    fn id(&self) -> String {
+        "org.mozilla.firefox".into()
+    }
+
+    #[zbus(property)]
+    fn title(&self) -> String {
+        "Firefox".into()
+    }
+}
+
+/// [`Spoofing`] served by a peer on `bus`, as read by a host reading its owner from `proc`
+/// (`/proc` when None).
+fn spoofing_item(bus: &crate::testbus::Bus, proc: Option<&std::path::Path>) -> TrayItem {
+    let identities = proc.map_or_else(Identities::default, Identities::under);
+    zbus::block_on(async {
+        let connect = || zbus::connection::Builder::address(bus.1.as_str());
+        // Served from the start: an object added once the connection runs may miss a call that
+        // arrives first.
+        let theirs = connect().serve_at("/item", Spoofing).build().await.unwrap();
+        let ours = connect()
+            .method_timeout(METHOD_TIMEOUT)
+            .build()
+            .await
+            .unwrap();
+        let icons: Icons = Arc::new(Mutex::new(IconCache::new(IconTheme::load("hicolor", &[]))));
+        let sizes: Sizes = Arc::new(Mutex::new(vec![16]));
+        let owner = theirs.unique_name().unwrap().to_string();
+        fetch_item(&ours, &icons, &sizes, &identities, &owner, "/item").await
+    })
+    .expect("the item is read")
+}
+
+#[test]
+fn a_sandboxed_apps_tray_icon_is_kept_and_listed_under_its_own_app() {
+    let Some(bus) = crate::testbus::bus() else {
+        eprintln!("no dbus-daemon; skipped");
+        return;
+    };
+    let proc = flatpak_proc("item", "org.example.Spoofer");
+    let item = spoofing_item(&bus, Some(&proc));
+    assert_eq!(item.key, "org.example.Spoofer");
+    assert_eq!(item.title, "org.example.Spoofer");
+    assert_eq!(item.tooltip, "org.example.Spoofer");
+    let host = spoofing_item(&bus, None);
+    assert_eq!(
+        (host.key.as_str(), host.title.as_str()),
+        ("org.mozilla.firefox", "Firefox")
+    );
 }
