@@ -84,6 +84,7 @@ pub fn setup(state: &mut State, g: Greeting) {
         started: false,
     });
     refit(state);
+    came_forward(state);
 }
 
 /// One reply from reprise-login, in the order it sent them; none counts once the link is lost.
@@ -97,7 +98,7 @@ pub fn reply(state: &mut State, reply: GreeterReply) {
         return;
     };
     if let GreeterReply::Greeting(fresh) = &reply {
-        if let Some(action) = regreet(g, fresh) {
+        if let Some(action) = catch_up(g, fresh) {
             act(state, action);
         }
         return redraw(state);
@@ -108,14 +109,8 @@ pub fn reply(state: &mut State, reply: GreeterReply) {
     redraw(state);
 }
 
-/// A later Greeting: the running screen came forward, so its tiles' notes and the notice
-/// catch up with the sessions, Switch User's opens on the tiles, and the screen enters.
-fn regreet(g: &mut Greeter, fresh: &Greeting) -> Option<LogonAction> {
-    let action = catch_up(g, fresh);
-    g.view.model.enter();
-    action
-}
-
+/// A later Greeting, in place: the tiles' notes and the notice catch up with the sessions, and
+/// Switch User's opens on the tiles.
 fn catch_up(g: &mut Greeter, fresh: &Greeting) -> Option<LogonAction> {
     for u in &mut g.view.model.users {
         let note = fresh
@@ -147,6 +142,15 @@ fn apply(state: &mut State, step: Step) {
         return;
     }
     crate::greeterconv::show(&mut g.view.model, step);
+}
+
+/// The greeter started or its seat came back to it: the screen enters.
+pub fn came_forward(state: &mut State) {
+    let Some(g) = state.greeter.login.as_mut() else {
+        return;
+    };
+    g.view.model.enter();
+    redraw(state);
 }
 
 /// The link to reprise-login closed or broke: nothing can log in through this greeter.

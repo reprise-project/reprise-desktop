@@ -594,8 +594,10 @@ the screen takes the interface of the last session used at this computer.
 - **Motion.** Classic stands still. On Glass a picked tile's picture flies
   and grows into the big picture as the rest of the row fades out and the
   password box fades in; Switch User and Escape fly it back as the other
-  tiles return one after another, and a login screen that comes back
-  (after Switch User or a log off) brings its tiles up into place. While
+  tiles return one after another, and a login screen that comes up or
+  comes back (Switch User, a log off) brings its tiles up into place; a
+  tile's note changing while it shows (a session locking in the background)
+  changes in place. While
   the password is checked a ring turns beside Verifying..., which becomes
   Welcome once the password is right and the session starts. A wrong
   password crossfades to its message. Blue crossfades its column as a tile

@@ -1010,24 +1010,63 @@ fn a_right_password_says_welcome_while_the_session_starts() {
     assert_eq!(model(&h).said(), Some(logon::text::welcome()));
 }
 
-#[test]
-fn a_later_greeting_enters_when_its_first_frame_draws() {
-    let (mut h, mut d) = glass_tiles(|_| {});
-    let fresh = Greeting {
+/// A Glass greeting for anna and bob, anna's tile noted `anna`.
+fn glass_greeting(anna: Option<Note>, notice: Option<Notice>) -> Greeting {
+    let mut users = vec![user("anna"), user("bob")];
+    users[0].note = anna;
+    Greeting {
         interface: repriselogin::Interface::Glass,
         show_users: true,
-        users: vec![user("anna"), user("bob")],
-        last_user: None,
+        users,
+        last_user: Some("anna".into()),
         keyboard: Default::default(),
-        notice: None,
+        notice,
         outputs: Vec::new(),
         background: None,
         animation: true,
-    };
-    d.says(&mut h, GreeterReply::Greeting(fresh));
+    }
+}
+
+#[test]
+fn a_greeter_started_by_switch_user_brings_its_tiles_in() {
+    let (mut h, _d) = login_with(repriselogin::Interface::Glass, Vec::new(), |_| {});
+    setup(
+        &mut h.state,
+        glass_greeting(Some(Note::Locked), Some(Notice::SwitchUser)),
+    );
+    assert_eq!(model(&h).screen, logon::Screen::Tiles);
+    let p = view(&mut h).play.as_ref().expect("the tiles come in");
+    assert_eq!(p.t.change, logon::Change::Enter);
+    assert!(p.since.is_none(), "the clock waits for the first frame");
+    assert_eq!(next_frame(&mut h, None), ["TEST-1"]);
+    settle(&mut h);
+    assert!(shown(&mut h) == at_rest(&mut h));
+}
+
+#[test]
+fn a_greeting_that_changes_a_tiles_note_shows_it_in_place() {
+    let (mut h, mut d) = glass_tiles(|_| {});
+    click_part(&mut h, Part::Tile(0));
+    settle(&mut h);
+    tap(&mut h, &[KEY_A, KEY_A, KEY_A]);
+    d.says(
+        &mut h,
+        GreeterReply::Greeting(glass_greeting(Some(Note::Locked), None)),
+    );
+    assert_eq!(model(&h).users[0].note, Some(UserNote::Locked));
+    assert!(view(&mut h).play.is_none(), "nothing plays");
+    assert_eq!(model(&h).password.text, "aaa", "the typed password stays");
+    assert!(shown(&mut h) == at_rest(&mut h), "the note shows at once");
+    assert_eq!(next_frame(&mut h, None), Vec::<String>::new());
+}
+
+#[test]
+fn the_screen_enters_when_the_seat_comes_back_and_its_clock_waits_for_the_first_frame() {
+    let (mut h, _d) = glass_tiles(|_| {});
+    came_forward(&mut h.state);
     let p = view(&mut h).play.as_ref().expect("the screen enters");
     assert_eq!(p.t.change, logon::Change::Enter);
-    assert!(p.since.is_none(), "the clock waits while the VT is away");
+    assert!(p.since.is_none());
     assert_eq!(next_frame(&mut h, None), ["TEST-1"]);
     assert!(view(&mut h).play.as_ref().unwrap().since.is_some());
 }
