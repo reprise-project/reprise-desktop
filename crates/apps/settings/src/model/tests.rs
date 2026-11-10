@@ -109,6 +109,21 @@ fn effects_defaults_follow_the_files_interface() {
 }
 
 #[test]
+fn the_lock_screens_animation_is_on_under_every_interface_and_written_only_off() {
+    for text in ["", "[appearance]\ninterface = \"glass\"\n"] {
+        let mut want = load(text);
+        assert!(want.logon_animation, "{text:?}");
+        want.logon_animation = false;
+        let out = saved(text, &want);
+        assert!(out.contains("logon_animation = false"), "{out}");
+        assert_eq!(load(&out), want);
+        let mut back = want.clone();
+        back.logon_animation = true;
+        assert!(!saved(&out, &back).contains("logon_animation"));
+    }
+}
+
+#[test]
 fn the_session_fade_is_on_under_every_interface_and_written_only_off() {
     for text in ["", "[appearance]\ninterface = \"glass\"\n"] {
         let mut want = load(text);
@@ -785,6 +800,7 @@ fn save_round_trips_every_field() {
         hover_out_ms: 400,
         taskbar_slide: true,
         session_fade: false,
+        logon_animation: false,
         double_click_ms: 400,
         kb_layout: "hu".into(),
         kb_variant: "nodeadkeys".into(),

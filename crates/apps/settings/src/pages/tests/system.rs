@@ -1632,8 +1632,8 @@ fn the_remote_logins_group_pins_its_pixels_in_every_look() {
     );
 }
 
-/// The Login Screen group with the defaults, then Blue, no user list, an automatic logon, a
-/// built-in background and two screens.
+/// The Login Screen group with the defaults, then Blue, no user list, no animation, an automatic
+/// logon, a built-in background and two screens.
 #[test]
 fn the_login_screen_group_pins_its_pixels_in_every_look() {
     let row = Rect::new(20, 44, 358, 210);
@@ -1642,6 +1642,7 @@ fn the_login_screen_group_pins_its_pixels_in_every_look() {
     let mut c = repriselogin::machine::MachineConfig::default();
     c.login.interface = Some(repriselogin::Interface::Blue);
     c.login.show_users = false;
+    c.login.animation = false;
     c.login.autologin_user = Some("anna".into());
     c.login.background = Some(repriselogin::machine::Background::Builtin(
         "reprise:tarn/dusk".into(),
@@ -1654,8 +1655,8 @@ fn the_login_screen_group_pins_its_pixels_in_every_look() {
     assert_eq!(
         [unset, set],
         [
-            [0x4c4e12f671c0e4cf, 0xc8ee891d6438c6aa, 0xfe3626b1cde194f5],
-            [0x7a99cc6838bcb904, 0xf06f3f9e103f9f34, 0xdb40ddb0f85ae503],
+            [0xa4ea0bd356eff28c, 0x91bdb278df887822, 0x1a36414692717af4],
+            [0x353fb018516f3728, 0xf4482b2e2f3faf6c, 0xdebe09ab3fb2e605],
         ],
         "defaults, set; Classic, Blue, Glass"
     );
