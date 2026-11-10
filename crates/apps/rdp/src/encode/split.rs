@@ -268,8 +268,8 @@ fn tag(f: &mut frame::Video) {
 
 /// The planes of `f`, a writable NV12 frame in memory.
 fn nv12(f: &mut frame::Video) -> avc444::Nv12Mut<'_> {
-    // SAFETY: luma is `height` rows of its stride and chroma half as many, apart from each
-    // other; both borrow `f`.
+    // SAFETY: `f` comes from av_frame_get_buffer with positive linesizes, so luma is `height`
+    // rows of its stride and chroma, half as many, starts past its padded height; both borrow `f`.
     unsafe {
         let p = f.as_mut_ptr();
         let plane = |i: usize, rows: usize| {
@@ -862,6 +862,57 @@ pub(crate) mod tests {
             Layout::of((2672, 1392)).planes(2672).is_err(),
             "a pitch off a 256-byte boundary is refused"
         );
+    }
+
+    #[test]
+    fn cpu_views_of_a_shared_memory_frame_equal_the_split() {
+        let size = (100, 50);
+        let stride = 100 * 4 + 24;
+        let mut seed = 0x9E37_79B9_7F4A_7C15_u64;
+        let data: Vec<u8> = (0..stride * 50)
+            .map(|_| {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                (seed >> 24) as u8
+            })
+            .collect();
+        let buffer = FrameBuffer::Shm {
+            data: data.clone().into(),
+            fourcc: XRGB8888,
+            stride: stride as u32,
+        };
+        let frame = Frame::unleased(buffer, size);
+        let read = Rect {
+            x: 16,
+            y: 16,
+            width: 48,
+            height: 32,
+        };
+        let mut views = Views::new(None, Path::new(RENDER_NODE), XRGB8888, size, size).unwrap();
+        let split = views.split(&frame, read).unwrap();
+        let planes = Planes444::from_rgb(&data, stride, size, XRGB8888);
+        let (main, mut aux) = avc444::split_v1(&planes);
+        avc444::keep_main_outside(&main, &mut aux, read);
+        let view = avc444::view_size(size);
+        let back = |f: &frame::Video| {
+            assert!(f.stride(0) > view.0 as usize, "FFmpeg pads the rows");
+            let rows = |i: usize, n: u32| -> Vec<u8> {
+                (0..n as usize)
+                    .flat_map(|r| &f.data(i)[r * f.stride(i)..][..view.0 as usize])
+                    .copied()
+                    .collect()
+            };
+            avc444::Nv12 {
+                y: rows(0, view.1),
+                uv: rows(1, view.1 / 2),
+                width: view.0,
+                height: view.1,
+            }
+        };
+        assert_eq!(back(&split.main), main, "the main view");
+        assert_eq!(back(&split.aux), aux, "the auxiliary view");
+        assert_eq!(split.flat, Flat::of(&planes));
     }
 
     #[test]

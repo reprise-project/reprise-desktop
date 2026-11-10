@@ -18,6 +18,7 @@ use hwmap::Gpu;
 use ironrdp_server::BitmapUpdate;
 use probe::Backend;
 use repriseconf::remote::Quality;
+use std::sync::OnceLock;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 pub trait Encoder {
@@ -62,9 +63,26 @@ impl std::fmt::Display for EncodeError {
     }
 }
 
-/// The threads a picture's CPU conversion and scaling are split across, at most 8.
+/// The cores the CPU conversions of every screen share, at most 8.
 pub fn cpu_threads() -> usize {
-    std::thread::available_parallelism().map_or(1, |n| n.get().min(8))
+    static CORES: OnceLock<usize> = OnceLock::new();
+    *CORES.get_or_init(|| std::thread::available_parallelism().map_or(1, |n| n.get().min(8)))
+}
+
+/// The threads a `size` picture's CPU conversion or scaling is split across.
+pub fn cpu_threads_for(size: (u32, u32)) -> usize {
+    threads_for(cpu_threads(), size)
+}
+
+/// A thread's share of a picture: about 2 ms of conversion on one core. Smaller shares, or a
+/// split on two cores, cost more CPU in thread hand-offs than they save in time.
+const PIXELS_PER_THREAD: u64 = 1_000_000;
+
+fn threads_for(cores: usize, (w, h): (u32, u32)) -> usize {
+    match cores {
+        ..=2 => 1,
+        _ => (u64::from(w) * u64::from(h) / PIXELS_PER_THREAD).clamp(1, cores as u64) as usize,
+    }
 }
 
 /// Builds the H.264 encoder of a backend, coding at a quality and a frame rate.
@@ -306,6 +324,15 @@ fn run(mut switch: Switch, jobs: std::sync::mpsc::Receiver<Job>, done: Unbounded
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn conversions_split_only_large_pictures_on_more_than_two_cores() {
+        assert_eq!(threads_for(2, (3840, 2160)), 1, "two cores: one thread");
+        assert_eq!(threads_for(8, (1024, 768)), 1, "a small one: one thread");
+        assert_eq!(threads_for(8, (1920, 1080)), 2, "a million pixels a thread");
+        assert_eq!(threads_for(4, (3840, 2160)), 4, "at most the cores");
+        assert_eq!(threads_for(8, (0, 0)), 1);
+    }
 
     struct Broken;
 
