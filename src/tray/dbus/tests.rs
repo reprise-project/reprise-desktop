@@ -457,7 +457,7 @@ fn notification_signals(cmd: TrayCommand) -> Vec<(String, Option<String>)> {
         let notes = Notifications {
             events: tx,
             eventfd: fd.as_raw_fd(),
-            next_id: std::sync::atomic::AtomicU32::new(1),
+            next_id: Arc::new(std::sync::atomic::AtomicU32::new(1)),
             senders: lp.senders.clone(),
             programs: Arc::default(),
             icons: hicolor(),
@@ -531,6 +531,9 @@ fn test_loop(conn: Connection, events: Sender<TrayEvent>, eventfd: RawFd) -> Loo
         fetching: HashMap::new(),
         next_fetch: 0,
         item_stops: HashMap::new(),
+        changes: HashMap::new(),
+        muted: HashSet::new(),
+        muted_for: MUTED_FOR,
         published: None,
         idle_watcher: None,
         screensaver: screensaver::Shared::new(events, eventfd),
@@ -732,7 +735,7 @@ fn an_item_read_reaches_the_item_while_the_loop_is_busy() {
         let (ours, item) = peers(Duration::from_secs(10)).await;
         let calls = zbus::MessageStream::from(&item);
         let mut lp = test_loop(ours, tx, fd.as_raw_fd());
-        lp.fetch(":1.1".into(), "/answering".into(), Duration::ZERO);
+        lp.fetch(":1.1".into(), "/answering".into(), Duration::ZERO, false);
         let busy = async {
             for _ in 0..200 {
                 if titles.load(Ordering::Relaxed) > 0 {
@@ -1008,7 +1011,10 @@ fn an_items_overlay_pixmap_is_read_with_its_other_properties() {
         let icons: Icons = Arc::new(Mutex::new(IconCache::new(IconTheme::load("hicolor", &[]))));
         let sizes: Sizes = Arc::new(Mutex::new(vec![16]));
         let identities = Identities::default();
-        let fetch = fetch_item(&ours, &icons, &sizes, &identities, ":1.1", "/item");
+        let fetch = async {
+            let read = fetch_item(&ours, &icons, &sizes, &identities, ":1.1", "/item").await;
+            read.map(|r| r.0)
+        };
         futures_lite::future::or(fetch, serve).await
     });
     let item = got.expect("the item is read");
@@ -1376,7 +1382,7 @@ fn notified(
         let notes = Notifications {
             events: tx,
             eventfd: fd.as_raw_fd(),
-            next_id: std::sync::atomic::AtomicU32::new(1),
+            next_id: Arc::new(std::sync::atomic::AtomicU32::new(1)),
             senders: Arc::default(),
             programs: Arc::default(),
             icons: hicolor(),
@@ -1472,7 +1478,8 @@ fn served_item(
         let icons: Icons = Arc::new(Mutex::new(IconCache::new(IconTheme::load("hicolor", &[]))));
         let sizes: Sizes = Arc::new(Mutex::new(vec![16]));
         let owner = theirs.unique_name().unwrap().to_string();
-        fetch_item(&ours, &icons, &sizes, &identities, &owner, "/item").await
+        let read = fetch_item(&ours, &icons, &sizes, &identities, &owner, "/item").await;
+        read.map(|r| r.0)
     })
     .expect("the item is read")
 }
@@ -1657,18 +1664,32 @@ fn an_unknown_or_snapped_items_host_path_is_dropped() {
     }
 }
 
+fn decoders(threads: usize, queue: usize, per_app: usize, within: Duration) -> decoders::Decoders {
+    decoders::Decoders::new(decoders::Limits {
+        threads,
+        queue,
+        per_app,
+        wait: within,
+        within,
+    })
+}
+
 #[test]
 fn a_flood_of_icon_decodes_runs_at_most_two_at_once() {
     use std::sync::atomic::Ordering::SeqCst;
-    let decoders = decoders::Decoders::new(2, 64, Duration::from_secs(30));
+    let decoders = decoders(2, 64, 4, Duration::from_secs(30));
     let (live, most) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
-    let runs = (0..32).map(|_| {
+    let runs = (0..32).map(|i| {
         let (live, most) = (live.clone(), most.clone());
-        decoders.run(move || {
-            most.fetch_max(live.fetch_add(1, SeqCst) + 1, SeqCst);
-            std::thread::sleep(Duration::from_millis(5));
-            live.fetch_sub(1, SeqCst);
-        })
+        let decoders = &decoders;
+        async move {
+            let decode = move || {
+                most.fetch_max(live.fetch_add(1, SeqCst) + 1, SeqCst);
+                std::thread::sleep(Duration::from_millis(5));
+                live.fetch_sub(1, SeqCst);
+            };
+            decoders.run(&format!("app{i}"), decode).await
+        }
     });
     let done = zbus::block_on(futures_util::future::join_all(runs));
     assert!(
@@ -1685,15 +1706,19 @@ fn a_flood_of_icon_decodes_runs_at_most_two_at_once() {
 #[test]
 fn hung_icon_reads_hold_their_threads_and_later_decodes_give_up() {
     use std::sync::atomic::Ordering::SeqCst;
-    let decoders = decoders::Decoders::new(2, 4, Duration::from_millis(500));
+    let decoders = decoders(2, 4, 64, Duration::from_millis(500));
     let started = Arc::new(AtomicUsize::new(0));
     let (release, gate) = async_channel::bounded::<()>(1);
-    let runs = (0..22).map(|_| {
+    let runs = (0..22).map(|i| {
         let (started, gate) = (started.clone(), gate.clone());
-        decoders.run(move || {
-            started.fetch_add(1, SeqCst);
-            let _ = gate.recv_blocking();
-        })
+        let decoders = &decoders;
+        async move {
+            let decode = move || {
+                started.fetch_add(1, SeqCst);
+                let _ = gate.recv_blocking();
+            };
+            decoders.run(&format!("app{i}"), decode).await
+        }
     });
     let done = zbus::block_on(futures_util::future::join_all(runs));
     assert!(
@@ -1706,6 +1731,326 @@ fn hung_icon_reads_hold_their_threads_and_later_decodes_give_up() {
         "only the two threads started a read"
     );
     drop(release);
-    assert_eq!(zbus::block_on(decoders.run(|| 7)), Some(7));
+    assert_eq!(zbus::block_on(decoders.run("app", || 7)), Some(7));
     assert_eq!(started.load(SeqCst), 2, "decodes given up on never run");
+}
+
+#[test]
+fn one_apps_flood_of_decodes_waits_behind_its_own_share_and_another_apps_runs() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let decoders = decoders(2, 64, 4, Duration::from_millis(500));
+    let ran = Arc::new(AtomicUsize::new(0));
+    let flood = (0..40).map(|_| {
+        let ran = ran.clone();
+        decoders.run("flood", move || {
+            ran.fetch_add(1, SeqCst);
+            std::thread::sleep(Duration::from_millis(100));
+        })
+    });
+    let other = async {
+        async_io::Timer::after(Duration::from_millis(20)).await;
+        decoders.run("other", || 7).await
+    };
+    let (flood, other) =
+        zbus::block_on(async { futures_util::join!(futures_util::future::join_all(flood), other) });
+    assert_eq!(other, Some(7), "another app's decode runs");
+    assert_eq!(ran.load(SeqCst), 4, "the flooding app's share ran");
+    assert_eq!(flood.iter().filter(|d| d.is_some()).count(), 4);
+}
+
+#[test]
+fn a_decode_gets_its_whole_time_once_a_thread_takes_it() {
+    let decoders = decoders(1, 8, 4, Duration::from_millis(300));
+    let slow = || std::thread::sleep(Duration::from_millis(250));
+    let (first, second) = zbus::block_on(async {
+        futures_util::join!(decoders.run("a", slow), decoders.run("b", slow))
+    });
+    assert_eq!((first, second), (Some(()), Some(())));
+}
+
+#[test]
+fn a_panicking_decode_leaves_its_thread_to_the_next() {
+    let decoders = decoders(1, 8, 4, Duration::from_secs(5));
+    let panicked = zbus::block_on(decoders.run("a", || -> u32 { panic!("a bad icon") }));
+    assert_eq!(panicked, None);
+    assert_eq!(zbus::block_on(decoders.run("a", || 7)), Some(7));
+}
+
+/// A tray item with an icon name, for reads that need only some answer.
+struct Answering;
+
+#[zbus::interface(name = "org.kde.StatusNotifierItem")]
+impl Answering {
+    #[zbus(property)]
+    fn icon_name(&self) -> String {
+        "answering".into()
+    }
+}
+
+/// How many match rules the bus daemon at `conn` holds for `name`.
+async fn match_rules(conn: &Connection, name: &str) -> u32 {
+    let reply = conn
+        .call_method(
+            Some(DBUS_IFACE),
+            "/org/freedesktop/DBus",
+            Some("org.freedesktop.DBus.Debug.Stats"),
+            "GetConnectionStats",
+            &(name,),
+        )
+        .await
+        .expect("the bus daemon keeps connection stats");
+    let body = reply.body();
+    let stats: HashMap<String, Variant> = body.deserialize().unwrap();
+    match stats["MatchRules"] {
+        Variant::U32(n) => n,
+        ref other => panic!("MatchRules is {other:?}"),
+    }
+}
+
+/// Polls `f` every 20 ms for up to 5 s: whether it came true.
+async fn becomes(mut f: impl AsyncFnMut() -> bool) -> bool {
+    for _ in 0..250 {
+        if f().await {
+            return true;
+        }
+        async_io::Timer::after(Duration::from_millis(20)).await;
+    }
+    false
+}
+
+#[test]
+fn an_item_flooding_change_signals_is_dropped_at_the_bus_until_it_is_heard_again() {
+    let Some(bus) = crate::testbus::bus() else {
+        eprintln!("no dbus-daemon; skipped");
+        return;
+    };
+    let (muted, heard) = zbus::block_on(async {
+        let connect = || zbus::connection::Builder::address(bus.1.as_str());
+        let item = connect()
+            .serve_at("/item", Answering)
+            .build()
+            .await
+            .unwrap();
+        let ours = connect().build().await.unwrap();
+        let us = ours.unique_name().unwrap().to_string();
+        let (tx, _events) = std::sync::mpsc::channel();
+        let mut lp = test_loop(ours, tx, -1);
+        lp.muted_for = Duration::from_millis(500);
+        lp.track(item.unique_name().unwrap().to_string(), "/item".into())
+            .await;
+        let watching = match_rules(&item, &us).await;
+        assert!(watching >= ITEM_SIGNALS.len() as u32);
+        let script = async {
+            for _ in 0..MAX_CHANGES * 3 {
+                item.emit_signal(None::<()>, "/item", ITEM_IFACE, "NewIcon", &())
+                    .await
+                    .unwrap();
+            }
+            let fewer = watching - ITEM_SIGNALS.len() as u32;
+            let muted = becomes(async || match_rules(&item, &us).await == fewer).await;
+            let heard = becomes(async || match_rules(&item, &us).await == watching).await;
+            (muted, heard)
+        };
+        let run = async {
+            lp.run().await;
+            std::future::pending().await
+        };
+        futures_lite::future::or(script, run).await
+    });
+    assert!(muted, "the flood's match rules are dropped");
+    assert!(heard, "and come back once it is heard again");
+}
+
+#[test]
+fn a_read_whose_names_werent_decoded_keeps_the_icons_shown_and_reads_once_more() {
+    let (tx, events) = std::sync::mpsc::channel();
+    let picture: Arc<[IconSource]> =
+        Arc::from([IconSource::from(crate::raster::Canvas::new(16, 16))]);
+    let (named, reads) = zbus::block_on(async {
+        let (ours, _item) = peers(Duration::from_secs(1)).await;
+        let mut lp = test_loop(ours, tx, -1);
+        let key = ":1.1/item".to_string();
+        let shown = TrayItem {
+            id: key.clone(),
+            icon_name: Some("chat".into()),
+            named: picture.clone(),
+            ..TrayItem::default()
+        };
+        lp.items.insert(key.clone(), shown.clone());
+        let undecoded = TrayItem {
+            named: Arc::from([]),
+            ..shown
+        };
+        lp.fetch(
+            ":1.1".into(),
+            "/item".into(),
+            Duration::from_secs(60),
+            false,
+        );
+        let mut reads = 0;
+        while let Some(id) = lp.fetching.get(&key).map(|f| f.id)
+            && reads < 3
+        {
+            reads += 1;
+            let item = Some(Box::new(undecoded.clone()));
+            lp.fetched(key.clone(), id, item, false).await;
+        }
+        (lp.items[&key].named.clone(), reads)
+    });
+    assert_eq!(named, picture, "the icons shown are kept");
+    assert_eq!(reads, 2, "one read, then one read again");
+    assert!(
+        events
+            .try_iter()
+            .all(|e| !matches!(e, TrayEvent::Updated(_))),
+        "nothing changed for the compositor"
+    );
+}
+
+#[test]
+fn a_removed_items_read_never_reaches_it() {
+    let (tx, _events) = std::sync::mpsc::channel();
+    let titles = AtomicUsize::new(0);
+    zbus::block_on(async {
+        let (ours, item) = peers(Duration::from_secs(10)).await;
+        let calls = zbus::MessageStream::from(&item);
+        let mut lp = test_loop(ours, tx, -1);
+        lp.fetch(
+            ":1.1".into(),
+            "/answering".into(),
+            Duration::from_millis(100),
+            false,
+        );
+        lp.remove_item(":1.1/answering").await;
+        let wait = async_io::Timer::after(Duration::from_millis(500));
+        let serve = async {
+            serve_items(item.clone(), calls, &titles).await;
+            std::future::pending().await
+        };
+        futures_lite::future::or(
+            async {
+                wait.await;
+            },
+            serve,
+        )
+        .await;
+    });
+    assert_eq!(titles.load(Ordering::Relaxed), 0, "no Title read");
+}
+
+/// Clients' links to a bus daemon through this process. [`Relay::cut`] ends one as dbus-broker
+/// drops a peer: the client reads the end, the daemon keeps its names until the client closes.
+struct Relay {
+    address: String,
+    links: Links,
+}
+
+/// Each link's socket to its client, and whether the link is cut.
+type Links = Arc<Mutex<Vec<(std::os::unix::net::UnixStream, Arc<AtomicBool>)>>>;
+
+impl Relay {
+    fn to(daemon: &str) -> Relay {
+        use std::io::{Read, Write};
+        use std::os::unix::net::{UnixListener, UnixStream};
+        let daemon = daemon
+            .strip_prefix("unix:path=")
+            .and_then(|a| a.split(',').next())
+            .expect("a dbus-daemon at a path")
+            .to_string();
+        let path = crate::harness::scratch().join("relay");
+        let _ = std::fs::remove_file(&path);
+        let listener = UnixListener::bind(&path).unwrap();
+        let links: Links = Arc::default();
+        let kept = links.clone();
+        std::thread::spawn(move || {
+            for client in listener.incoming() {
+                let Ok(client) = client else { return };
+                let upstream = UnixStream::connect(&daemon).unwrap();
+                let cut = Arc::new(AtomicBool::new(false));
+                lock(&kept).push((client.try_clone().unwrap(), cut.clone()));
+                let (mut from, mut to) =
+                    (client.try_clone().unwrap(), upstream.try_clone().unwrap());
+                std::thread::spawn(move || {
+                    let mut buf = [0u8; 4096];
+                    while let Ok(n @ 1..) = from.read(&mut buf) {
+                        if !cut.load(Ordering::Relaxed) && to.write_all(&buf[..n]).is_err() {
+                            break;
+                        }
+                    }
+                    let _ = to.shutdown(std::net::Shutdown::Both);
+                });
+                let (mut from, mut to) = (upstream, client);
+                std::thread::spawn(move || std::io::copy(&mut from, &mut to));
+            }
+        });
+        Relay {
+            address: format!("unix:path={}", path.display()),
+            links,
+        }
+    }
+
+    fn cut(&self) {
+        for (client, cut) in lock(&self.links).drain(..) {
+            cut.store(true, Ordering::Relaxed);
+            let _ = client.shutdown(std::net::Shutdown::Write);
+        }
+    }
+}
+
+#[test]
+fn a_tray_dropped_by_the_bus_connects_again_and_takes_its_names_back() {
+    let Some(bus) = crate::testbus::bus() else {
+        eprintln!("no dbus-daemon; skipped");
+        return;
+    };
+    let relay = Relay::to(&bus.1);
+    let (events, _heard) = std::sync::mpsc::channel();
+    let (commands, rx) = async_channel::unbounded();
+    let kept = Kept {
+        events: events.clone(),
+        eventfd: -1,
+        commands: rx,
+        appearance: Arc::new(Mutex::new(
+            Appearance::of(&crate::config::Config::default()),
+        )),
+        icons: hicolor(),
+        sizes: Arc::new(Mutex::new(vec![16])),
+        pads: Arc::default(),
+        senders: Arc::default(),
+        programs: Arc::default(),
+        responding: Arc::default(),
+        identities: Arc::default(),
+        screensaver: screensaver::Shared::new(events, -1),
+        next_id: Arc::new(AtomicU32::new(1)),
+        defers: false,
+    };
+    let address = relay.address.clone();
+    let tray = std::thread::spawn(move || zbus::block_on(serve(&kept, Some(&address))));
+    let (first, again) = zbus::block_on(async {
+        let observer = zbus::connection::Builder::address(bus.1.as_str())
+            .build()
+            .await
+            .unwrap();
+        let mut first = None;
+        becomes(async || {
+            first = owner_of(&observer, NOTIFY_NAME).await;
+            first.is_some()
+        })
+        .await;
+        relay.cut();
+        let mut again = None;
+        becomes(async || {
+            again = owner_of(&observer, NOTIFY_NAME).await;
+            again.is_some() && again != first
+        })
+        .await;
+        (first, again)
+    });
+    commands.send_blocking(TrayCommand::Shutdown).unwrap();
+    tray.join().unwrap();
+    assert!(first.is_some(), "the tray hosts notifications");
+    assert!(
+        again.is_some() && again != first,
+        "a new connection hosts them after the cut: {first:?} then {again:?}"
+    );
 }
