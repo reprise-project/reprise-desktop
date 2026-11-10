@@ -172,6 +172,36 @@ fn a_focused_button_takes_the_default_ring() {
 }
 
 #[test]
+fn a_greyed_ok_holding_the_focus_while_verifying_draws_no_focus_and_takes_no_enter() {
+    let mut focused = Logon::new(Interface::Classic, Vec::new(), false, Some("alice"));
+    focused.key(crate::logon::LogonKey::Text("hunter2"));
+    focused.key(crate::logon::LogonKey::Tab { back: false });
+    assert_eq!(focused.focus, Part::Submit);
+    let mut plain = focused.clone();
+    plain.focus = Part::Password;
+    focused.set_busy(true);
+    plain.set_busy(true);
+    for s in [1, 2] {
+        let ((a, l, _), (b, _, _)) = (drawn(&focused, s), drawn(&plain, s));
+        let ok = l.rect(Part::Submit).unwrap().scaled(s);
+        let differ = (ok.y..ok.bottom())
+            .flat_map(|y| (ok.x..ok.right()).map(move |x| (x, y)))
+            .filter(|&(x, y)| a.get(x, y) != b.get(x, y))
+            .count();
+        assert_eq!(
+            differ, 0,
+            "@{s}: the greyed OK draws as one without the focus"
+        );
+    }
+    assert_eq!(focused.key(crate::logon::LogonKey::Enter), None);
+    assert_eq!(
+        focused.focus,
+        Part::Submit,
+        "the focus stays for when it lights"
+    );
+}
+
+#[test]
 fn the_dialog_grows_with_the_text_and_the_badge_stays_at_the_message_end() {
     let mut m = Logon::new(Interface::Classic, Vec::new(), false, None);
     m.layout = Some("EN".into());

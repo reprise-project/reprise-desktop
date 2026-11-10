@@ -142,7 +142,7 @@ pub fn draw_tab_focus(c: &mut Canvas, ring: Rect, s: i32, ink: Color) {
 }
 
 /// A push button: raised bevel, centred label with access key (etched when disabled), black default
-/// ring, dotted focus rect 4 px inside.
+/// ring, dotted focus rect 4 px inside unless disabled.
 /// `pushed` is the pointer holding it down: the bevel becomes a frame ring and the label moves a
 /// pixel down and right.
 #[expect(clippy::too_many_arguments)]
@@ -191,7 +191,7 @@ pub fn draw_button(
     } else {
         draw_disabled_label(c, text, p, content, label, Align::Center, px);
     }
-    if focus {
+    if focus && enabled {
         draw_focus_ring_screen(
             c,
             r.inset(4 * s),
