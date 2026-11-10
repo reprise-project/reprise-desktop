@@ -111,6 +111,7 @@ pub(crate) fn sender(hdr: &zbus::message::Header<'_>) -> String {
 pub(crate) struct Frontend {
     owner: Arc<Mutex<Option<String>>>,
     conn: Arc<std::sync::OnceLock<zbus::Connection>>,
+    identities: Arc<reprisebus::peer::Identities>,
 }
 
 impl Frontend {
@@ -119,7 +120,9 @@ impl Frontend {
     }
 
     /// AccessDenied unless the call came from xdg-desktop-portal: app ids,
-    /// restore data and handles are taken on its word only.
+    /// restore data and handles are taken on its word only. The owner of
+    /// `FRONTEND` must also run outside any sandbox, since a sandboxed app
+    /// may hold that name while xdg-desktop-portal does not.
     pub(crate) async fn check(&self, hdr: &zbus::message::Header<'_>) -> zbus::fdo::Result<()> {
         let cached = lock(&self.owner).clone();
         let sender = hdr.sender().map(|s| s.as_str());
@@ -132,7 +135,18 @@ impl Frontend {
         })
         .await;
         self.replace(&cached, owner);
-        verdict
+        verdict?;
+        let identity = match (conn, sender) {
+            (Some(c), Some(s)) => self.identities.of(c, s).await,
+            _ => reprisebus::peer::AppIdentity::Unknown,
+        };
+        match identity {
+            reprisebus::peer::AppIdentity::Host { .. } => Ok(()),
+            _ => Err(zbus::fdo::Error::AccessDenied(format!(
+                "{} owns {FRONTEND} but runs in a sandbox, or can't be told apart from one",
+                sender.unwrap_or("a peer without a name")
+            ))),
+        }
     }
 
     /// Take `owner` as the frontend's owner unless the cache moved off `cached` meanwhile: a
@@ -1641,6 +1655,75 @@ mod tests {
         assert_eq!(lock(&f.owner).as_deref(), Some(":1.50"));
         f.replace(&Some(":1.50".into()), Some(":1.51".into()));
         assert_eq!(lock(&f.owner).as_deref(), Some(":1.51"));
+    }
+
+    /// Answers `Check` with what [`Frontend::check`] makes of the caller.
+    struct Checked(Frontend);
+
+    #[zbus::interface(name = "org.example.Checked")]
+    impl Checked {
+        async fn check(
+            &self,
+            #[zbus(header)] hdr: zbus::message::Header<'_>,
+        ) -> zbus::fdo::Result<()> {
+            self.0.check(&hdr).await
+        }
+    }
+
+    /// Whether a caller owning `FRONTEND` passes [`Frontend::check`] when its process is read from
+    /// `proc` (`/proc` when None).
+    fn frontend_passes(proc: Option<&std::path::Path>) -> bool {
+        let Some(bus) = crate::lockmode::tests::bus() else {
+            eprintln!("no dbus-daemon; skipped");
+            return proc.is_none();
+        };
+        zbus::block_on(async {
+            let caller = crate::lockmode::tests::connect(&bus).await;
+            caller.request_name(FRONTEND).await.unwrap();
+            let identities =
+                proc.map_or_else(Default::default, reprisebus::peer::Identities::under);
+            let frontend = Frontend {
+                identities: Arc::new(identities),
+                ..Frontend::default()
+            };
+            frontend.set(caller.unique_name().map(|n| n.to_string()));
+            let portal = zbus::connection::Builder::address(bus.1.as_str())
+                .serve_at(PATH, Checked(frontend.clone()))
+                .build()
+                .await
+                .unwrap();
+            let _ = frontend.conn.set(portal.clone());
+            let dest = portal.unique_name().unwrap().to_string();
+            let call = caller.call_method(
+                Some(dest.as_str()),
+                PATH,
+                Some("org.example.Checked"),
+                "Check",
+                &(),
+            );
+            call.await.is_ok()
+        })
+    }
+
+    #[test]
+    fn a_sandboxed_app_owning_the_frontends_name_may_not_call() {
+        assert!(
+            frontend_passes(None),
+            "xdg-desktop-portal runs outside a sandbox"
+        );
+        let proc = tempfile::tempdir().unwrap();
+        let root = proc
+            .path()
+            .join(std::process::id().to_string())
+            .join("root");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join(".flatpak-info"),
+            "[Application]\nname=org.example.Squat\n",
+        )
+        .unwrap();
+        std::fs::write(root.with_file_name("stat"), "42 (squat) S 1 42\n").unwrap();
+        assert!(!frontend_passes(Some(proc.path())));
     }
 
     #[test]

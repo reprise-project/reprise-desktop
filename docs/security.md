@@ -1151,7 +1151,10 @@ no other program sees the token or the text typed into its reply field.
 
 `reprise-portal` is the xdg-desktop-portal backend. It answers only calls
 from the process that owns `org.freedesktop.portal.Desktop` on the session
-bus; any other caller gets AccessDenied. App ids, parent windows and
+bus and runs outside any sandbox, read through its pidfd by the rules in
+[Sandboxed programs](#sandboxed-programs); any other caller gets
+AccessDenied, so a sandboxed app that holds the name while
+xdg-desktop-portal is away can't speak for other apps. App ids, parent windows and
 restore data are taken on the frontend's word, and the frontend reads the
 app id from the sandbox.
 
