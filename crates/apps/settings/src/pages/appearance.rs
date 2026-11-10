@@ -224,7 +224,7 @@ pub fn night_light(a: Area) -> Form {
 /// indented under it, the screen's fade and the lock screen's motion; then the menus' shadow, timings
 /// and opening.
 pub fn effects(a: Area) -> Form {
-    let mut items = vec![group(a, "effects_group", 44, 180, "Windows")];
+    let mut items = vec![group(a, "effects_group", 44, 180, "Animation")];
     items.push(Item::check(
         "window_animation",
         GX,
