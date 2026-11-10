@@ -134,6 +134,7 @@ fn login_with(
     config.wallpaper.image = None;
     tune(&mut config);
     let mut h = Harness::with_host(config, Host::Greeter);
+    crate::logonview::hold_clock();
     h.output("TEST-1", 1024, 768);
     let (ours, theirs) = std::os::unix::net::UnixStream::pair().unwrap();
     theirs
@@ -847,7 +848,7 @@ fn view(h: &mut Harness) -> &mut crate::logonview::LogonView {
 /// `ago` ms before when given.
 fn next_frame(h: &mut Harness, ago: Option<u64>) -> Vec<String> {
     if let (Some(ms), Some(p)) = (ago, view(h).play.as_mut()) {
-        p.since = Some(std::time::Instant::now() - std::time::Duration::from_millis(ms));
+        p.since = Some(crate::logonview::now() - std::time::Duration::from_millis(ms));
     }
     let o = h.state.scene.outputs()[0].clone();
     crate::backend::take_asks();
@@ -929,7 +930,7 @@ fn the_ring_turns_while_busy_and_asks_nothing_once_the_failure_settles() {
         "the ring asks for its next step"
     );
     assert_eq!(model(&h).spin, 0, "the ring starts from step 0");
-    h.run_for(70);
+    crate::logonview::pass(70);
     assert_eq!(next_frame(&mut h, None), ["TEST-1"]);
     assert!(
         model(&h).spin >= 3,
@@ -966,7 +967,7 @@ fn the_ring_draws_and_asks_for_frames_only_on_its_steps() {
     let _ = d.heard();
     settle(&mut h);
     let ms = std::time::Duration::from_millis;
-    let since = std::time::Instant::now() - ms(25);
+    let since = crate::logonview::now() - ms(25);
     view(&mut h).ring = Some(since);
     crate::backend::take_steps();
     next_frame(&mut h, None);
