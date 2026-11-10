@@ -273,7 +273,8 @@ unlocking, does. Only the computer's own keyboard and pointer reach the
 menu, and its rows take no access keys, so a letter meant for the password
 picks nothing. There is no power in lock mode on either side, nor while a
 remote viewer drives the seat, and an open power menu closes when either
-begins or a locker takes over.
+begins or a locker takes over. Without `[power] standby` outside
+reprise-login the menu would be empty, and no power button shows.
 
 When `/etc/pam.d/reprise-fingerprint` is installed, a second helper runs
 the fingerprint conversation while the screen shows. Either one succeeding
