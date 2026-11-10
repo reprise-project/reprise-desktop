@@ -143,6 +143,10 @@ fn main() {
             &format!("reprisekit-gallery-logon@{}.png", n.max(1)),
         );
         write_preview(
+            &gallery_logon::motion::render(n.max(1)),
+            &format!("reprisekit-gallery-logon-motion@{}.png", n.max(1)),
+        );
+        write_preview(
             &gallery_paint::render(n.max(1)),
             &format!("reprisekit-gallery-paint@{}.png", n.max(1)),
         );
@@ -406,6 +410,10 @@ fn main() {
     );
     write_preview(&gallery_power::render(1), "reprisekit-gallery-power@1.png");
     write_preview(&gallery_logon::render(1), "reprisekit-gallery-logon@1.png");
+    write_preview(
+        &gallery_logon::motion::render(1),
+        "reprisekit-gallery-logon-motion@1.png",
+    );
     write_preview(
         &gallery_miniview::render(1),
         "reprisekit-gallery-mini-view@1.png",
