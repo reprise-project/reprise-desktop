@@ -91,11 +91,7 @@ impl Conversation {
                 self.admin = false;
                 GreeterRequest::CreateSession { user }
             }
-            Purpose::Unlock { .. } => {
-                log::error!("greeter: a lock screen submitted to the login manager");
-                self.admin = false;
-                GreeterRequest::CreateSession { user }
-            }
+            Purpose::Unlock { .. } => unreachable!("the greeter's screen is never a lock"),
             Purpose::Admin(action) => {
                 self.admin = true;
                 GreeterRequest::PowerAs {

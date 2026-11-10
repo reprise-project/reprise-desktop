@@ -860,9 +860,10 @@ async fn read_world(logind: &Logind, users: &mut UserList) -> World {
     }
 }
 
-/// Open sessions of class `user`, and those logind could not describe, which may be.
+/// Sessions holding someone's work (`repriselogin::holds_work`), and those logind could not
+/// describe, which may.
 fn user_sessions(listing: &Listing) -> u32 {
-    let open = (listing.found.iter()).filter(|s| s.class == "user" && !s.closing);
+    let open = (listing.found.iter()).filter(|s| repriselogin::holds_work(&s.class, s.closing));
     (open.count() + listing.unread.len()) as u32
 }
 
@@ -1655,7 +1656,7 @@ mod tests {
     }
 
     #[test]
-    fn the_sessions_logind_could_not_describe_count_as_user_sessions() {
+    fn sessions_holding_work_and_those_logind_could_not_describe_count() {
         let session = |id: &str, class: &str, closing| LogindSession {
             id: id.into(),
             user: "anna".into(),
@@ -1671,6 +1672,8 @@ mod tests {
                 session("c1", "user", false),
                 session("c2", "user", true),
                 session("c3", "greeter", false),
+                session("c5", "background", false),
+                session("c6", "manager", false),
             ],
             unread: vec![Unread {
                 id: "c4".into(),
@@ -1679,7 +1682,7 @@ mod tests {
                 seat: "seat0".into(),
             }],
         };
-        assert_eq!(user_sessions(&listing), 2);
+        assert_eq!(user_sessions(&listing), 3, "c1, c5 and the unread c4");
     }
 
     #[test]

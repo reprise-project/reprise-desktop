@@ -294,7 +294,7 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
     }
     if modes.locked {
         return plain(match modes.lock_menu && k.pressed {
-            true => menu_key(k),
+            true => lock_menu_key(k),
             false => KeyRoute::Lock,
         });
     }
@@ -688,6 +688,19 @@ fn menu_key(k: &KeyPress) -> KeyRoute {
         .copied()
         .find(|&s| s != KEY_Super_L && s != KEY_Super_R)
         .map_or(KeyRoute::Swallow, KeyRoute::Menu)
+}
+
+/// The lock's power menu moves and picks with the arrows, Enter and Escape only: a letter meant
+/// for the password must not pick a row that ends the session.
+#[expect(non_upper_case_globals)] // xkb keysym names in patterns
+fn lock_menu_key(k: &KeyPress) -> KeyRoute {
+    match menu_key(k) {
+        KeyRoute::Menu(
+            s @ (KEY_Up | KEY_Down | KEY_KP_Up | KEY_KP_Down | KEY_Home | KEY_End | KEY_Return
+            | KEY_KP_Enter | KEY_Escape),
+        ) => KeyRoute::Menu(s),
+        _ => KeyRoute::Swallow,
+    }
 }
 
 /// The held modifiers `mods` a press routed to `route` during a drag

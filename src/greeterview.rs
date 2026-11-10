@@ -59,12 +59,13 @@ fn user_note(note: Note) -> UserNote {
 
 /// Starts the login screen from reprise-login's `greeting`.
 pub fn setup(state: &mut State, g: Greeting) {
-    let users = (g.users.iter())
-        .map(|u| LogonUser {
+    let users = (g.users.iter().enumerate())
+        .map(|(stock, u)| LogonUser {
             name: u.name.clone(),
             real_name: u.real_name.clone(),
             picture: (u.picture.as_deref()).and_then(crate::startpanelview::picture::load_picture),
             note: u.note.map(user_note),
+            stock,
         })
         .collect();
     let interface = crate::greeter::interface(g.interface);

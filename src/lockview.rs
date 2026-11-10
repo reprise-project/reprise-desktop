@@ -49,6 +49,8 @@ pub struct LockScreen {
     pub helpers: Helpers,
     /// The session is paused (another VT or user has the seat); the fingerprint reader is not its.
     pub seat_away: bool,
+    /// Where reprise-login's screen lists this user (`find_listed`), so the tiles agree.
+    pub listed_at: usize,
 }
 
 impl LockScreen {
@@ -60,6 +62,7 @@ impl LockScreen {
             remote_backoff: lock::Backoff::default(),
             helpers: Helpers::default(),
             seat_away: false,
+            listed_at: 0,
         }
     }
 
@@ -609,6 +612,7 @@ fn raise(state: &mut State, side: Side) {
         real_name: lock::real_name(),
         picture: state.start_pictures.largest(),
         note: None,
+        stock: state.lock.listed_at,
     };
     let model = Logon::locked(
         state.config.interface,
@@ -1020,7 +1024,8 @@ fn caps_lock(state: &State, side: Side) -> bool {
 }
 
 /// Bring `side`'s screen up to what it offers now (interface, Switch User, power), hidden while a
-/// locker holds the lock or starts to; the power menu closes with the power it offered.
+/// locker holds the lock or starts to; the power menu closes with the power it offered. A new
+/// interface waits for a check in progress to end, as it rebuilds the screen.
 fn prepare(state: &mut State, side: Side) {
     let switch_user = crate::loginlink::offered(state, side);
     let power = crate::lockpower::offered(state, side);
@@ -1028,7 +1033,7 @@ fn prepare(state: &mut State, side: Side) {
     let Some(l) = state.lock.on_mut(side) else {
         return;
     };
-    if l.view.model.interface != interface {
+    if l.view.model.interface != interface && l.pending.is_none() {
         let user = l.view.model.users[0].clone();
         l.view.model = Logon::locked(interface, user, switch_user, power);
     }
@@ -1054,6 +1059,30 @@ pub fn reset(l: &mut Lock) {
     let m = &l.view.model;
     let user = m.users[0].clone();
     l.view.model = Logon::locked(m.interface, user, m.offers_switch_user(), m.offers_power());
+}
+
+/// Under reprise-login, finds off the loop where its screen lists this user, so Blue's lock and
+/// login screen give a user without a picture the same stock one.
+pub fn find_listed(state: &mut State) {
+    if state.login_link.is_none() {
+        return;
+    }
+    let user = lock::current_user();
+    state.spawn_job(move || {
+        let at = lock::listed_at(repriselogin::users::Source::read(), &user);
+        Box::new(move |state: &mut State| listed(state, at))
+    });
+}
+
+fn listed(state: &mut State, at: usize) {
+    state.lock.listed_at = at;
+    for l in [state.lock.console.as_mut(), state.lock.remote.as_mut()]
+        .into_iter()
+        .flatten()
+    {
+        l.view.model.users[0].stock = at;
+    }
+    redraw(state);
 }
 
 /// The user picture landed: both sides' screens show it.
@@ -1833,7 +1862,32 @@ mod tests {
             );
             let alpha = scene.rect_color(c.rect).map(|c| c[3]);
             assert_eq!(alpha, Some(1.0), "{name}'s backdrop is opaque");
+            let b = h.state.layout_box(Some(&c.output));
+            assert_eq!(
+                (scene.position(c.tree), scene.rect_size(c.rect)),
+                (Some((b.x, b.y).into()), Some((b.width, b.height).into())),
+                "{name}'s cover spans it"
+            );
         }
+    }
+
+    #[test]
+    fn an_interface_change_during_a_check_waits_for_its_verdict() {
+        let mut h = locked(|_, _| sh("read p; echo '?? Verification code:'; read c; echo '= 7'"));
+        let l = h.state.lock.console.as_mut().expect("locked");
+        l.set_input("hunter2");
+        submit(&mut h.state, Side::Console);
+        turn_until(&mut h, "the prompt arrives", |l| {
+            l.view.model.prompt.is_some()
+        });
+        h.state.config.interface = Interface::Blue;
+        redraw(&mut h.state);
+        let m = &h.state.lock.console.as_ref().unwrap().view.model;
+        assert_eq!(m.interface, Interface::Classic, "the screen waits");
+        assert!(m.prompt.is_some(), "its prompt stays");
+        check(&mut h, "123456");
+        let m = &h.state.lock.console.as_ref().unwrap().view.model;
+        assert_eq!(m.interface, Interface::Blue, "the verdict is in");
     }
 
     #[test]

@@ -254,6 +254,7 @@ fn locked_states() -> Vec<(&'static str, Logon)> {
         real_name: "Anna Novak".into(),
         picture: None,
         note: None,
+        stock: 0,
     };
     let rest = Logon::locked(Interface::Classic, user.clone(), true, true);
     let mut typed = rest.clone();

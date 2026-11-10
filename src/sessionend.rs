@@ -456,9 +456,10 @@ fn refuse(state: &mut State, act: Act, why: &Refused) {
         crate::crash::not_ending();
     }
     crate::sessionfade::restore(state);
-    // Anyone at the computer reads the lock: it names no program.
+    // Anyone at the computer reads the lock: it names no program and quotes no command's error.
     let unnamed = match why {
         Refused::Held(_) => Refused::Held(Vec::new()),
+        Refused::Failed(_) => Refused::Failed(LOCK_FAILED.into()),
         why => why.clone(),
     };
     crate::lockview::refused(state, refusal_text(act, &unnamed));
@@ -467,6 +468,9 @@ fn refuse(state: &mut State, act: Act, why: &Refused) {
         refusal_text(act, why),
     ));
 }
+
+/// What the lock shows for a failed command or call; the dialog under it keeps the error.
+const LOCK_FAILED: &str = "An error stopped it.";
 
 fn refusal_text(act: Act, why: &Refused) -> String {
     let reason = match why {
@@ -1344,6 +1348,17 @@ mod tests {
         let shown = l.message().unwrap_or_default();
         assert!(shown.contains("A program is preventing it."), "{shown}");
         assert!(!shown.contains("backup"), "{shown}");
+    }
+
+    #[test]
+    fn the_lock_quotes_no_failed_commands_error() {
+        let mut h = locked();
+        let failed = Refused::Failed("\"my-poweroff\" failed: /home/anna/.secret: denied".into());
+        refuse(&mut h.state, Act::TurnOff, &failed);
+        let l = h.state.lock.console.as_ref().unwrap();
+        let shown = l.message().unwrap_or_default();
+        assert!(shown.contains(LOCK_FAILED), "{shown}");
+        assert!(!shown.contains("my-poweroff"), "{shown}");
     }
 
     #[test]

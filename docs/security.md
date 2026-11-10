@@ -250,23 +250,30 @@ it holds. The field stops at 512 bytes, the longest answer the helper
 reads.
 
 The lock's power button opens a menu. Stand By is in it whenever `[power]
-standby` is set. Restart and Turn Off are in it only while logind lists no
-other session of any user on any seat, remote ones included (greeters, lock
-screens and service managers aside), and `/etc/reprise/login.toml` sets no
-`autologin_user`; so the lock never ends another user's work, nor restarts
-into a desktop that logs itself in unlocked. The check runs when the menu
-opens and again when a row is picked; failing then, the row ends nothing
-and the screen says to unlock first. Each row runs its `[power]` command,
-the default ones on logind without overriding its block inhibitors.
-Restart and Turn Off close the session's programs without their save
-prompts, as none can show over the lock. While the session is locked
-logind is called without interactive authorization, so a polkit rule that
-asks for a password refuses on the lock instead of leaving the screen
-faded out under a prompt nobody can reach. A refusal on the lock names no
-program; the message box under the lock, seen after unlocking, does.
-There is no power in lock mode on either side, nor while a remote viewer
-drives the seat, and an open power menu closes when either begins or a
-locker takes over.
+standby` is set. Restart and Turn Off are in it only under reprise-login
+(another display manager's autologin can't be read), while logind lists no
+other session holding someone's work on any seat, remote ones included, and
+`/etc/reprise/login.toml` sets no `autologin_user`; so the lock never ends
+another user's work, nor restarts into a desktop that logs itself in
+unlocked. Greeters, lock screens, service managers and closing (logged-off)
+sessions hold no work; any other class does, one a later systemd adds
+included. The login screen counts sessions the same way before it asks for
+an administrator. The check runs when the menu opens and again when a row
+is picked; failing then, the row ends nothing and the screen says to unlock
+first. A session that starts in the second or two between that check and
+logind's call isn't counted. Each row runs its `[power]` command, the
+default ones on logind without overriding its block inhibitors. Restart
+and Turn Off close the session's programs without their save prompts, as
+none can show over the lock. While the session is locked logind is called
+without interactive authorization, so a polkit rule that asks for a
+password refuses on the lock instead of leaving the screen faded out under
+a prompt nobody can reach. A refusal on the lock names no program and
+quotes no command's error; the message box under the lock, seen after
+unlocking, does. Only the computer's own keyboard and pointer reach the
+menu, and its rows take no access keys, so a letter meant for the password
+picks nothing. There is no power in lock mode on either side, nor while a
+remote viewer drives the seat, and an open power menu closes when either
+begins or a locker takes over.
 
 When `/etc/pam.d/reprise-fingerprint` is installed, a second helper runs
 the fingerprint conversation while the screen shows. Either one succeeding
@@ -434,9 +441,9 @@ and the last minutes before a scheduled shutdown), the login screen refuses
 logins and resumes alike. Switching to a session's VT (Ctrl+Alt+F7 for the
 first) still reaches its lock screen.
 
-While any user session runs, Shut Down and Restart on the login screen ask
-for an administrator's name and password, checked through the
-`reprise-login-check` PAM service; the account must be in `wheel`. That
+While any session holding someone's work runs (counted as the lock counts
+them), Shut Down and Restart on the login screen ask for an administrator's
+name and password, checked through the `reprise-login-check` PAM service; the account must be in `wheel`. That
 stack refuses root before it asks for a password. Every refusal, a wrong
 password or an account outside `wheel`, comes 3 s after the last answer, so
 the reply doesn't tell who is an administrator. Shutting down ends every

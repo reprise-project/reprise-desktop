@@ -39,6 +39,7 @@ fn users() -> Vec<LogonUser> {
         real_name: real.into(),
         picture: (i == 0).then(|| userpic::draw(userpic::ALL[5], 96)),
         note: (i == 1).then_some(UserNote::LoggedOn),
+        stock: i,
     })
     .collect()
 }
@@ -399,6 +400,7 @@ fn many(n: usize) -> Vec<LogonUser> {
             real_name: String::new(),
             picture: None,
             note: None,
+            stock: i,
         })
         .collect()
 }
@@ -564,4 +566,27 @@ fn the_blue_lock_opens_its_one_tile_and_ends_the_bottom_band_with_switch_user() 
     for (i, a) in drawn_all.iter().enumerate() {
         assert!(!drawn_all[i + 1..].contains(a), "{} repeats", states[i].0);
     }
+}
+
+#[test]
+fn a_user_without_a_picture_gets_the_stock_picture_of_its_place_in_the_list() {
+    crate::pins::fonts();
+    let lock = |stock, picture| {
+        let user = LogonUser {
+            name: "dave".into(),
+            real_name: String::new(),
+            picture,
+            note: None,
+            stock,
+        };
+        let m = Logon::locked(Interface::Blue, user, true, true);
+        fnv(&drawn(&m, Variant::Blue, 1).0)
+    };
+    let third = userpic::draw(userpic::ALL[2], PICTURE as u32);
+    assert_eq!(
+        lock(2, None),
+        lock(0, Some(third)),
+        "the third stock picture"
+    );
+    assert_ne!(lock(2, None), lock(0, None));
 }
