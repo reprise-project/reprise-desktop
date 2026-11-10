@@ -1202,3 +1202,16 @@ fn lock_away_device_takes_an_address_or_a_path() {
     }
     assert!(Config::parse("[lock]\naway_after_s = -1\n").is_err());
 }
+
+#[test]
+fn the_logon_animation_is_on_under_every_interface_and_reads_off() {
+    for interface in ["classic", "blue", "glass"] {
+        let text = format!("[appearance]\ninterface = \"{interface}\"\n");
+        assert!(
+            Config::parse(&text).unwrap().effects.logon_animation,
+            "{interface}"
+        );
+    }
+    let off = Config::parse("[effects]\nlogon_animation = false\n").unwrap();
+    assert!(!off.effects.logon_animation);
+}

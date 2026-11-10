@@ -154,6 +154,8 @@ pub struct LoginConfig {
     pub greeter_socket: bool,
     /// `None` shows the interface's own backdrop.
     pub background: Option<Background>,
+    /// The login screen's transitions and busy ring.
+    pub animation: bool,
 }
 
 impl Default for LoginConfig {
@@ -164,6 +166,7 @@ impl Default for LoginConfig {
             autologin_user: None,
             greeter_socket: false,
             background: None,
+            animation: true,
         }
     }
 }
@@ -237,6 +240,9 @@ impl MachineConfig {
         line(&mut out, "greeter_socket", l.greeter_socket);
         if let Some(b) = &l.background {
             line(&mut out, "background", b.as_str());
+        }
+        if !l.animation {
+            line(&mut out, "animation", false);
         }
         out.push_str("\n[remote_desktop]\n");
         let r = &self.remote;
@@ -317,6 +323,7 @@ impl LoginConfig {
                 self.interface = Some(i);
             }
             "show_users" => self.show_users = boolean(value)?,
+            "animation" => self.animation = boolean(value)?,
             "greeter_socket" => self.greeter_socket = boolean(value)?,
             "autologin_user" => {
                 let s = string(value)?;
@@ -370,6 +377,7 @@ mod tests {
                 autologin_user: Some("anna".into()),
                 greeter_socket: true,
                 background: None,
+                animation: true,
             }
         );
         assert!(warnings.is_empty(), "{warnings:?}");
@@ -484,6 +492,7 @@ mod tests {
                 autologin_user: Some("anna \"the admin\"".into()),
                 greeter_socket: true,
                 background: Some(Background::Builtin("reprise:tarn/dusk".into())),
+                animation: false,
             },
             remote: MachineRemote {
                 enabled: true,
@@ -516,6 +525,18 @@ mod tests {
         ] {
             assert!(!text.contains(unset), "{text}");
         }
+    }
+
+    #[test]
+    fn the_login_screen_animates_unless_animation_is_off() {
+        assert!(MachineConfig::default().login.animation);
+        let (config, errors) = MachineConfig::parse("[login]\nanimation = false\n");
+        assert_eq!((config.login.animation, errors), (false, vec![]));
+        assert!(config.to_toml().contains("animation = false"));
+        assert!(
+            !MachineConfig::default().to_toml().contains("animation"),
+            "on is left out"
+        );
     }
 
     #[test]

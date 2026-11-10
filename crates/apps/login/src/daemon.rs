@@ -949,6 +949,7 @@ impl Daemon {
             notice: None,
             outputs: self.config.outputs.clone(),
             background: self.config.login.background.clone(),
+            animation: self.config.login.animation,
         };
         while !greeting.users.is_empty()
             && frame::encode(&GreeterReply::Greeting(greeting.clone())).is_err()
