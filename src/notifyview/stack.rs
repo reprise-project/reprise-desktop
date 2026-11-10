@@ -157,14 +157,19 @@ pub(super) fn slot_of(items: &[&Item], id: u32) -> Option<usize> {
     items.iter().position(|i| i.is(id))
 }
 
-/// The stack notes from program `key` a new burst takes: all but one with an open reply (the bool).
+/// The stack notes from program `key` a new burst takes: all but a critical one and one with an
+/// open reply (the bool).
 pub(super) fn fold_from(items: &[(&Item, bool)], key: &str) -> Vec<usize> {
     items
         .iter()
         .enumerate()
-        .filter(|(_, (item, replying))| !replying && item.note().is_some_and(|n| n.key == key))
+        .filter(|(_, (item, replying))| !replying && item.note().is_some_and(|n| folds(n, key)))
         .map(|(i, _)| i)
         .collect()
+}
+
+fn folds(n: &Notification, key: &str) -> bool {
+    n.key == key && n.urgency != Urgency::Critical
 }
 
 pub(super) fn chip_count(queued: usize, cap: usize) -> Option<usize> {
@@ -273,7 +278,7 @@ pub(super) fn take_queued(
     let mut at = None;
     let mut i = 0;
     queue.retain(|q| {
-        let mine = q.note().is_some_and(|n| n.key == key);
+        let mine = q.note().is_some_and(|n| folds(n, key));
         if mine {
             at.get_or_insert(i);
             if let Item::Note(n) = q {
