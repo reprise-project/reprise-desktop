@@ -1,7 +1,9 @@
-//! "Create Hotspot": turns a Wi-Fi radio into an access point sharing this computer's connection. Asks for the network's name, its password (shown), WPA2 or WPA3, and the band.
+//! "Create Hotspot": turns a Wi-Fi radio into an access point sharing this computer's connection. Asks for the network's name, its password, WPA2 or WPA3, and the band.
 
 use reprisekit::classic::widgets::{BUTTON_GAP, BUTTON_H, BUTTON_W, LINE_H};
 use reprisekit::controls::form::{self, Control, Form, Item};
+use reprisekit::raster::Rect;
+use reprisekit::textedit::TextEdit;
 
 use crate::nm::{Band, Psk};
 
@@ -47,27 +49,34 @@ pub struct HotspotDialog {
 
 impl HotspotDialog {
     pub fn new(device: &str, ssid: &str) -> HotspotDialog {
-        let field = |id, y, text: &str| {
-            Item::edit(
-                id,
-                reprisekit::raster::Rect::new(FIELD_X, y, FIELD_W, FIELD_H),
-                text,
-                true,
-            )
-        };
+        let ssid_field = Item::edit(
+            "ssid",
+            Rect::new(FIELD_X, ROW_Y[0], FIELD_W, FIELD_H),
+            ssid,
+            true,
+        );
+        let password_field = Item::new(
+            "password",
+            Rect::new(FIELD_X, ROW_Y[1], FIELD_W, FIELD_H),
+            Control::Edit {
+                edit: TextEdit::secret(),
+                first: std::cell::Cell::new(0),
+                enabled: true,
+            },
+        );
         let label = |id, i: usize, text: &str| {
             Item::label_at(id, MARGIN, ROW_Y[i] + LABEL_DY, LABEL_W, text)
         };
         let items = vec![
             Item::lines(
                 "intro",
-                reprisekit::raster::Rect::new(MARGIN, MARGIN, CLIENT.0 - 2 * MARGIN, 2 * LINE_H),
+                Rect::new(MARGIN, MARGIN, CLIENT.0 - 2 * MARGIN, 2 * LINE_H),
                 &["Share this computer's connection with other devices over Wi-Fi."],
             ),
             label("ssid_l", 0, "Network &name:"),
-            field("ssid", ROW_Y[0], ssid),
+            ssid_field,
             label("password_l", 1, "&Password:"),
-            field("password", ROW_Y[1], ""),
+            password_field,
             label("security_l", 2, "&Security:"),
             Item::combo("security", FIELD_X, ROW_Y[2], FIELD_W, &SECURITY, 2),
             label("band_l", 3, "&Band:"),
@@ -81,7 +90,7 @@ impl HotspotDialog {
             ),
             Item::button(
                 "start",
-                reprisekit::raster::Rect::new(START_X, BTN_Y, BUTTON_W, BUTTON_H),
+                Rect::new(START_X, BTN_Y, BUTTON_W, BUTTON_H),
                 "&Start",
                 false,
                 true,
@@ -222,6 +231,17 @@ mod tests {
             }
         ));
         assert_eq!(d.event(form::Event::Cancel), Outcome::Cancel);
+    }
+
+    #[test]
+    fn the_password_is_a_secret_field() {
+        let mut d = HotspotDialog::new("/dev/3", "desk");
+        type_into(&mut d, "password", "correct horse");
+        match &d.form.item("password").unwrap().control {
+            Control::Edit { edit, .. } => assert!(edit.is_secret()),
+            other => panic!("password is {other:?}"),
+        }
+        assert_eq!(d.password(), "correct horse");
     }
 
     #[test]
