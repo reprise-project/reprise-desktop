@@ -130,6 +130,8 @@ impl Harness {
         // A lock would start the fingerprint conversation in /proc/self/exe, the test binary,
         // whenever the machine has the PAM service.
         state.lock.helpers.finger = |_| None;
+        // The harness draws no session fade's black, so none may hide a screen.
+        state.session_fade = crate::sessionfade::SessionFade::new(0);
         // The files a state rereads (`reload_remembered`, displays.toml): a write another test
         // queued would land in them.
         static HARNESSES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
