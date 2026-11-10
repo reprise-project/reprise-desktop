@@ -547,28 +547,33 @@ fn one_decode_of_an_items_names_reads_at_most_its_byte_budget() {
 }
 
 #[test]
-fn a_host_items_svg_may_embed_a_raster_image_and_a_sandboxed_ones_may_not() {
+fn a_host_items_svg_embedding_a_raster_draws_and_a_sandboxed_ones_is_refused() {
     const DOT: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
     let dir = crate::harness::scratch().join("tray-embedded");
     std::fs::create_dir_all(&dir).unwrap();
     let svg = format!(
-        r##"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><image width="16" height="16" href="data:image/png;base64,{DOT}"/></svg>"##
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="8" height="16" fill="#00f"/><image x="8" width="8" height="16" href="data:image/png;base64,{DOT}"/></svg>"##
     );
     std::fs::write(dir.join("tray.svg"), svg).unwrap();
     let icons = std::sync::Mutex::new(IconCache::new(crate::icontheme::IconTheme::load(
         "none",
         &[],
     )));
-    let drawn = |files: &super::IconFiles, name: &str| {
+    // resvg is built without raster images, so only the rect beside the picture draws.
+    let left = |files: &super::IconFiles, name: &str| {
         let [named, ..] =
             super::decode_item_icons(&icons, files, [Some(name), None, None], None, &[16]);
-        named.len()
+        super::closest(&named, 16).map(|c| c.get(4, 8))
     };
     let host = dir.join("tray.svg");
-    assert_eq!(drawn(&super::IconFiles::Host, host.to_str().unwrap()), 1);
+    assert_eq!(
+        left(&super::IconFiles::Host, host.to_str().unwrap()),
+        Some(0xFF00_00FF),
+        "a host item's SVG draws"
+    );
     let root = std::os::fd::OwnedFd::from(std::fs::File::open(&dir).unwrap());
     let confined = super::IconFiles::Confined(reprisefs::confined::Confined::Root(root));
-    assert_eq!(drawn(&confined, "/tray.svg"), 0);
+    assert_eq!(left(&confined, "/tray.svg"), None, "a sandbox's is refused");
 }
 
 #[test]
