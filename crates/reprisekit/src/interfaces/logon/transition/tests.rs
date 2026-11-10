@@ -397,14 +397,14 @@ fn keys_typed_while_the_block_fades_in_show_at_the_end() {
     );
 }
 
-/// Prints the mean cost of one frame (compose plus a copy of its rect, as the host's upload
+/// Prints the median and worst cost of one frame (compose plus a copy of its rect, as the host's upload
 /// does) of each Glass and Blue change on a 1920x1080 output at scales 1 and 2. Run with
 /// `--ignored --nocapture`; the budget is 8 ms.
 #[test]
 #[ignore]
 fn transition_frame_cost() {
     const FULL_HD: Rect = Rect::new(0, 0, 1920, 1080);
-    const FRAMES: u32 = 30;
+    const FRAMES: u32 = 60;
     for (changes, v) in [
         (glass_changes(), Variant::Blue),
         (blue_changes(), Variant::Blue),
@@ -433,16 +433,23 @@ fn transition_frame_cost() {
                 let mut c = Canvas::new(w, h);
                 draw_logon(&mut c, &m, &l, &theme, text.for_output(s), s);
                 let mut shown = c.clone();
-                let start = std::time::Instant::now();
-                for i in 0..FRAMES {
-                    let r = t.frame(&mut c, &m, t.ms() * i / FRAMES);
-                    copy_in(&mut shown, &c, r);
-                }
-                let ms = start.elapsed().as_secs_f64() * 1000.0 / f64::from(FRAMES);
+                let mut ms: Vec<f64> = (0..FRAMES)
+                    .map(|i| {
+                        let start = std::time::Instant::now();
+                        let r = t.frame(&mut c, &m, t.ms() * i / FRAMES);
+                        copy_in(&mut shown, &c, r);
+                        start.elapsed().as_secs_f64() * 1000.0
+                    })
+                    .collect();
+                ms.sort_by(f64::total_cmp);
                 let r = t.rect();
                 println!(
-                    "{:?} {name} @{s}: {ms:.2} ms/frame, rect {}x{}",
-                    m.interface, r.width, r.height
+                    "{:?} {name} @{s}: median {:.2} ms, worst {:.2} ms, rect {}x{}",
+                    m.interface,
+                    ms[ms.len() / 2],
+                    ms[ms.len() - 1],
+                    r.width,
+                    r.height
                 );
             }
         }

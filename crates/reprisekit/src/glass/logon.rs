@@ -903,10 +903,18 @@ fn person(u: f64, v: f64) -> Px {
 fn glow(c: &mut Canvas, r: Rect, radius: f64, strength: f64, s: i32) {
     let reach = GLOW * s;
     let k = f64::from(s);
+    let (w, h) = (f64::from(r.width), f64::from(r.height));
+    // Pixels whose middle lies on the box's straight cross are inside it, where no glow shows.
+    let rk = radius * k;
+    let cross = |v: f64, len: f64| v >= rk && v <= len - rk;
     for y in -reach..r.height + reach {
+        let py = f64::from(y) + 0.5;
+        let across = py > 0.0 && py < h;
         for x in -reach..r.width + reach {
-            let (w, h) = (f64::from(r.width), f64::from(r.height));
-            let (px, py) = (f64::from(x) + 0.5, f64::from(y) + 0.5);
+            let px = f64::from(x) + 0.5;
+            if across && px > 0.0 && px < w && (cross(px, w) || cross(py, h)) {
+                continue;
+            }
             let dist = shape::rounded_distance(px, py, w, h, radius * k) / k;
             if dist <= 0.0 || dist >= f64::from(GLOW) {
                 continue;
@@ -932,12 +940,17 @@ fn glass_box_look(c: &mut Canvas, r: Rect, radius: f64, look: &Look, s: i32) {
     };
     let (outline, line, lift) = (look.outline, look.line, look.lift);
     let hh = f64::from(h);
+    // The fill changes only from row to row, and `ringed` paints row by row.
+    let row = std::cell::Cell::new((f64::NAN, CLEAR));
     let px = ringed(w, h, radius, 2, s, |_, y, ring| match ring {
         0 => outline,
         1 => line,
+        _ if row.get().0 == y => row.get().1,
         _ => {
             let sheen = Stops(&SHEEN).at((y - 1.5) / (hh - 3.0));
-            over(shape::scale(WHITE, lift), over(sheen, body))
+            let fill = over(shape::scale(WHITE, lift), over(sheen, body));
+            row.set((y, fill));
+            fill
         }
     });
     lay(c, r.x, r.y, w * s, &px);
