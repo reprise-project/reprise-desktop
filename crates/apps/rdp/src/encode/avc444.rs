@@ -4,6 +4,8 @@
 use super::colour;
 use super::hwmap;
 use crate::stream::{ABGR8888, Rect, XBGR8888};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Views are whole macroblocks: the auxiliary luma interleaves U and V rows per 16 lines.
 const MACROBLOCK: u32 = 16;
@@ -85,13 +87,62 @@ pub struct Nv12Mut<'a> {
     pub uv: PlaneMut<'a>,
 }
 
-/// `src`'s views in `main` and `aux`, as `split_v1` and `keep_main_outside` make them, and its
-/// flat macroblocks, in bands of macroblock rows on [`super::cpu_threads`] threads.
+/// `src`'s views in `main` and `aux` and its flat macroblocks. Main is 4:2:0 with rounded 2x2
+/// chroma averages; aux carries the odd-column chroma and the B4/B5 rows inside `read`, and
+/// main's bytes outside it.
 pub fn views(src: Rgb, main: Nv12Mut, aux: Nv12Mut, read: Rect) -> Flat {
-    views_in(src, main, aux, read, super::cpu_threads())
+    let helpers = HELPERS.take(super::cpu_threads_for(src.size) - 1);
+    views_in(src, main, aux, read, helpers.0, std::thread::Builder::new)
 }
 
-fn views_in(src: Rgb, main: Nv12Mut, aux: Nv12Mut, read: Rect, bands: usize) -> Flat {
+/// Band helper threads converting now, across every screen's encoder.
+static HELPERS: std::sync::LazyLock<Budget> =
+    std::sync::LazyLock::new(|| Budget::new(super::cpu_threads() - 1));
+
+/// A count of threads shared by concurrent callers.
+struct Budget {
+    total: usize,
+    busy: AtomicUsize,
+}
+
+/// Threads taken from a [`Budget`] until dropped.
+struct Taken<'a>(usize, &'a Budget);
+
+impl Budget {
+    fn new(total: usize) -> Budget {
+        Budget {
+            total,
+            busy: AtomicUsize::new(0),
+        }
+    }
+
+    /// Up to `want` of the threads no one else holds.
+    fn take(&self, want: usize) -> Taken<'_> {
+        let mut got = 0;
+        let _ = (self.busy).try_update(Ordering::Relaxed, Ordering::Relaxed, |busy| {
+            got = want.min(self.total.saturating_sub(busy));
+            Some(busy + got)
+        });
+        Taken(got, self)
+    }
+}
+
+impl Drop for Taken<'_> {
+    fn drop(&mut self) {
+        self.1.busy.fetch_sub(self.0, Ordering::Relaxed);
+    }
+}
+
+/// [`views`] in `helpers + 1` bands of macroblock rows. The caller converts every band no
+/// helper thread built by `thread` picks up, so a failed spawn costs only time.
+fn views_in(
+    src: Rgb,
+    main: Nv12Mut,
+    aux: Nv12Mut,
+    read: Rect,
+    helpers: usize,
+    thread: fn() -> std::thread::Builder,
+) -> Flat {
     let (w, h) = view_size(src.size);
     let columns = w / MACROBLOCK;
     let mut blocks = vec![true; (columns * (h / MACROBLOCK)) as usize];
@@ -107,13 +158,13 @@ fn views_in(src: Rgb, main: Nv12Mut, aux: Nv12Mut, read: Rect, bands: usize) -> 
             );
         }
     }
-    let per = (h / MACROBLOCK as usize).div_ceil(bands.max(1));
+    let per = (h / MACROBLOCK as usize).div_ceil(helpers + 1);
     let rows = per * MACROBLOCK as usize;
     fn band(plane: PlaneMut<'_>, rows: usize) -> impl Iterator<Item = PlaneMut<'_>> {
         let stride = plane.stride;
         (plane.data.chunks_mut(rows * stride)).map(move |data| PlaneMut { data, stride })
     }
-    let parts = (band(main.y, rows).zip(band(main.uv, rows / 2)))
+    let parts: Vec<Band> = (band(main.y, rows).zip(band(main.uv, rows / 2)))
         .zip(band(aux.y, rows).zip(band(aux.uv, rows / 2)))
         .zip(blocks.chunks_mut(per * columns as usize))
         .enumerate()
@@ -122,16 +173,22 @@ fn views_in(src: Rgb, main: Nv12Mut, aux: Nv12Mut, read: Rect, bands: usize) -> 
             main: Nv12Mut { y: my, uv: muv },
             aux: Nv12Mut { y: ay, uv: auv },
             blocks,
-        });
+        })
+        .collect();
+    let helpers = helpers.min(parts.len() - 1);
+    let queue = Mutex::new(parts);
+    let work = || {
+        while let Some(b) = queue.lock().map_or(None, |mut q| q.pop()) {
+            b.convert(src, read, w);
+        }
+    };
     std::thread::scope(|s| {
-        let mut parts = parts;
-        let first = parts.next();
-        for b in parts {
-            s.spawn(move || b.draw(src, read, w));
+        for _ in 0..helpers {
+            if thread().spawn_scoped(s, work).is_err() {
+                break;
+            }
         }
-        if let Some(b) = first {
-            b.draw(src, read, w);
-        }
+        work();
     });
     Flat { columns, blocks }
 }
@@ -145,7 +202,7 @@ struct Band<'a> {
 }
 
 impl Band<'_> {
-    fn draw(self, src: Rgb, read: Rect, w: usize) {
+    fn convert(self, src: Rgb, read: Rect, w: usize) {
         let Band {
             top,
             main,
@@ -713,27 +770,30 @@ pub(crate) mod tests {
         }
     }
 
-    #[test]
-    fn banded_views_equal_the_split_at_odd_sizes() {
-        let rect = |x, y, width, height| Rect {
-            x,
-            y,
-            width,
-            height,
-        };
-        let cases = [
-            ((13, 21), rect(0, 0, 16, 32)),
-            ((33, 18), rect(16, 0, 16, 32)),
-            ((100, 50), rect(16, 16, 48, 32)),
-            ((250, 171), rect(32, 48, 96, 64)),
-            ((64, 64), rect(0, 0, 0, 0)),
-            ((1, 1), rect(0, 0, 16, 16)),
-        ];
+    fn nv12([y, uv]: &mut [(Vec<u8>, usize); 2]) -> Nv12Mut<'_> {
+        Nv12Mut {
+            y: PlaneMut {
+                data: &mut y.0,
+                stride: y.1,
+            },
+            uv: PlaneMut {
+                data: &mut uv.0,
+                stride: uv.1,
+            },
+        }
+    }
+
+    /// Checks `views_in` on `helpers` against the reference split of a random picture with greys
+    /// on the left, whose chroma is flat, and colours on the right.
+    fn check_bands(
+        cases: &[((u32, u32), Rect)],
+        helpers: &[usize],
+        thread: fn() -> std::thread::Builder,
+    ) {
         let mut rng = Rng(11);
-        for (size, read) in cases {
+        for &(size, read) in cases {
             let (w, h) = (size.0 as usize, size.1 as usize);
             let stride = w * 4 + 12;
-            // Greys on the left, whose chroma is flat; colours on the right.
             let mut data = rng.plane(stride * h);
             for row in data.chunks_exact_mut(stride) {
                 for px in row[..w * 4].as_chunks_mut::<4>().0[..w / 2].iter_mut() {
@@ -746,34 +806,65 @@ pub(crate) mod tests {
                 keep_main_outside(&main, &mut aux, read);
                 let flat = Flat::of(&planes);
                 let view = view_size(size);
-                for bands in [1, 2, 3, 4, 9] {
+                for &n in helpers {
                     let (mut m, mut a) = (padded_view(view), padded_view(view));
-                    fn nv12([y, uv]: &mut [(Vec<u8>, usize); 2]) -> Nv12Mut<'_> {
-                        Nv12Mut {
-                            y: PlaneMut {
-                                data: &mut y.0,
-                                stride: y.1,
-                            },
-                            uv: PlaneMut {
-                                data: &mut uv.0,
-                                stride: uv.1,
-                            },
-                        }
-                    }
                     let src = Rgb {
                         data: &data,
                         stride,
                         size,
                         fourcc,
                     };
-                    let got = views_in(src, nv12(&mut m), nv12(&mut a), read, bands);
-                    let at = format!("{size:?} {fourcc:#x} in {bands} bands");
+                    let got = views_in(src, nv12(&mut m), nv12(&mut a), read, n, thread);
+                    let at = format!("{size:?} {fourcc:#x} read {read:?} on {n} helpers");
                     assert_eq!(read_view(&m, view), main, "the main view of {at}");
                     assert_eq!(read_view(&a, view), aux, "the auxiliary view of {at}");
                     assert_eq!(got, flat, "the flat macroblocks of {at}");
                 }
             }
         }
+    }
+
+    fn rect(x: u32, y: u32, width: u32, height: u32) -> Rect {
+        Rect {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    #[test]
+    fn banded_views_equal_the_split_at_odd_sizes() {
+        let cases = [
+            ((13, 21), rect(0, 0, 16, 32)),
+            ((33, 18), rect(16, 0, 16, 32)),
+            ((100, 50), rect(16, 16, 48, 32)),
+            ((250, 171), rect(32, 48, 96, 64)),
+            ((64, 64), rect(0, 0, 0, 0)),
+            ((1, 1), rect(0, 0, 16, 16)),
+            ((33, 18), rect(32, 16, 32, 32)),
+            ((250, 171), rect(240, 160, 32, 32)),
+        ];
+        check_bands(&cases, &[0, 1, 2, 3, 8], std::thread::Builder::new);
+    }
+
+    #[test]
+    fn bands_whose_threads_fail_to_start_are_converted_by_the_caller() {
+        // A stack larger than the address space: every spawn fails.
+        let failing = || std::thread::Builder::new().stack_size(1 << 48);
+        check_bands(&[((250, 171), rect(32, 48, 96, 64))], &[1, 3], failing);
+    }
+
+    #[test]
+    fn a_budget_hands_out_only_the_threads_no_one_holds() {
+        let budget = Budget::new(3);
+        let first = budget.take(5);
+        assert_eq!(first.0, 3, "at most the budget");
+        assert_eq!(budget.take(2).0, 0, "none while the first holds them all");
+        drop(first);
+        let again = budget.take(2);
+        assert_eq!(again.0, 2, "returned on drop");
+        assert_eq!(budget.take(2).0, 1, "the rest");
     }
 
     #[test]
