@@ -291,3 +291,66 @@ fn glass_hit_finds_arrow_switch_user_and_power() {
     );
     assert_eq!(l.rect(Part::Password), None, "no field on the tiles");
 }
+
+fn locked_states() -> Vec<(&'static str, Logon)> {
+    let user = users(1).remove(0);
+    let rest = Logon::locked(Interface::Glass, user.clone(), true);
+    let mut typed = rest.clone();
+    typed.key(LogonKey::Text("hunter2"));
+    typed.caps_lock = true;
+    typed.layout = Some("EN".into());
+    let mut failed = rest.clone();
+    failed.key(LogonKey::Text("x"));
+    failed.fail(strings::incorrect());
+    let mut busy = rest.clone();
+    busy.key(LogonKey::Text("hunter2"));
+    busy.set_busy(true);
+    let alone = Logon::locked(Interface::Glass, user, false);
+    vec![
+        ("locked", rest),
+        ("locked typed with caps lock and badge", typed),
+        ("locked failed", failed),
+        ("locked busy", busy),
+        ("locked without switch user", alone),
+    ]
+}
+
+#[test]
+fn glass_lock_pins_at_scale_1_and_2() {
+    crate::pins::fonts();
+    let mut got = Vec::new();
+    for (name, m) in locked_states() {
+        for s in [1, 2] {
+            got.push((format!("{name} @{s}"), fnv(&drawn(&m, s).0)));
+        }
+    }
+    crate::pins::check("glass/logon-locked", &got);
+}
+
+#[test]
+fn the_glass_lock_shows_switch_user_only_when_offered_and_keeps_power() {
+    let states = locked_states();
+    let (c, with) = drawn(&states[0].1, 1);
+    let (_, without) = drawn(&states.last().unwrap().1, 1);
+    assert!(with.rect(Part::SwitchUser).is_some());
+    assert_eq!(without.rect(Part::SwitchUser), None);
+    for l in [&with, &without] {
+        assert!(l.rect(Part::Power).is_some() && l.rect(Part::PowerMenu).is_some());
+        assert_eq!(
+            l.rect(Part::Tile(0)),
+            with.rect(Part::Tile(0)),
+            "the tile stays put"
+        );
+    }
+    let mut login = tile();
+    login.users.truncate(1);
+    let (lc, _) = drawn(&login, 1);
+    assert!(
+        c != lc,
+        "the Locked line sets the lock apart from the login tile"
+    );
+    let hashes: Vec<u64> = states.iter().map(|(_, m)| fnv(&drawn(m, 1).0)).collect();
+    for (i, a) in hashes.iter().enumerate() {
+        assert!(!hashes[i + 1..].contains(a), "{} repeats", states[i].0);
+    }
+}

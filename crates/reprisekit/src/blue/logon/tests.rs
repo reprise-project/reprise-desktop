@@ -487,3 +487,79 @@ fn the_backdrop_is_kept_for_each_output_size() {
         "over a picture, a backdrop of its own"
     );
 }
+
+fn locked_states() -> Vec<(&'static str, Logon)> {
+    let user = users().remove(0);
+    let rest = Logon::locked(Interface::Blue, user.clone(), true);
+    let mut typed = rest.clone();
+    typed.key(LogonKey::Text("hunter2"));
+    typed.caps_lock = true;
+    typed.layout = Some("EN".into());
+    let mut failed = rest.clone();
+    failed.key(LogonKey::Text("x"));
+    failed.fail(strings::incorrect());
+    let mut busy = rest.clone();
+    busy.key(LogonKey::Text("hunter2"));
+    busy.set_busy(true);
+    let mut switch_hot = rest.clone();
+    switch_hot.lit = Some((Part::SwitchUser, Interaction::Hot));
+    let alone = Logon::locked(Interface::Blue, user, false);
+    vec![
+        ("locked", rest),
+        ("locked typed with caps lock and badge", typed),
+        ("locked failed", failed),
+        ("locked busy", busy),
+        ("locked switch user hot", switch_hot),
+        ("locked without switch user", alone),
+    ]
+}
+
+#[test]
+fn blue_lock_pins_per_scheme_at_scale_1_and_2() {
+    crate::pins::fonts();
+    let mut got = Vec::new();
+    for v in Variant::ALL {
+        for (name, m) in locked_states() {
+            for s in [1, 2] {
+                got.push((format!("{v:?} {name} @{s}"), fnv(&drawn(&m, v, s).0)));
+            }
+        }
+    }
+    crate::pins::check("blue/logon-locked", &got);
+}
+
+#[test]
+fn the_blue_lock_opens_its_one_tile_and_ends_the_bottom_band_with_switch_user() {
+    let states = locked_states();
+    let (_, l) = drawn(&states[0].1, Variant::Blue, 1);
+    assert_eq!(tiles_shown(&l), [0], "only the locked user's tile");
+    let tile = l.rect(Part::Tile(0)).unwrap();
+    assert!(
+        tile.height >= open_height(true, lines(blue_theme(Variant::Blue).text)),
+        "the tile stands open with its Locked line"
+    );
+    let switch = l.rect(Part::SwitchUser).expect("Switch User");
+    let power = l.rect(Part::Power).unwrap();
+    assert_eq!(
+        switch.right(),
+        OUTPUT.right() - POWER_X,
+        "at the band's right end"
+    );
+    assert_eq!(
+        (switch.y, switch.height),
+        (power.y, power.height),
+        "level with Turn off"
+    );
+    assert_eq!(hit(&l, switch.x + 2, switch.y + 2), Some(Part::SwitchUser));
+    let (_, alone) = states.last().unwrap();
+    assert_eq!(
+        drawn(alone, Variant::Blue, 1).1.rect(Part::SwitchUser),
+        None
+    );
+    let drawn_all: Vec<u64> = (states.iter())
+        .map(|(_, m)| fnv(&drawn(m, Variant::Blue, 1).0))
+        .collect();
+    for (i, a) in drawn_all.iter().enumerate() {
+        assert!(!drawn_all[i + 1..].contains(a), "{} repeats", states[i].0);
+    }
+}
