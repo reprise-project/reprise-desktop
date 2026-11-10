@@ -325,6 +325,84 @@ fn extra_roots_are_consulted_first() {
 }
 
 #[test]
+fn an_extra_folder_is_searched_as_a_hicolor_tree_then_flat() {
+    let root = fixture("test", INDEX, &[]);
+    let extra = root.join("extra");
+    for f in [
+        "hicolor/16x16/apps/tray.png",
+        "hicolor/22x22@2/status/tray.png",
+        "hicolor/48x48/status/tray.png",
+        "hicolor/scalable/apps/tray.svg",
+        "hicolor/16x16/apps/both.png",
+        "both.png",
+        "flat.svg",
+    ] {
+        let p = extra.join(f);
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(&p, b"").unwrap();
+    }
+    let t = IconTheme::load("test", std::slice::from_ref(&root));
+    let at = |name: &str, px: i32| {
+        let found = t.lookup_with_extra(name, px, 1, std::slice::from_ref(&extra));
+        found.map(|p| p.strip_prefix(&extra).unwrap().to_path_buf())
+    };
+    let path = |p: &str| Some(PathBuf::from(p));
+    assert_eq!(at("tray", 16), path("hicolor/16x16/apps/tray.png"));
+    assert_eq!(at("tray", 44), path("hicolor/22x22@2/status/tray.png"));
+    assert_eq!(at("tray", 32), path("hicolor/scalable/apps/tray.svg"));
+    assert_eq!(at("both", 16), path("hicolor/16x16/apps/both.png"));
+    assert_eq!(at("flat", 16), path("flat.svg"));
+    fs::remove_file(extra.join("hicolor/scalable/apps/tray.svg")).unwrap();
+    assert_eq!(
+        at("tray", 32),
+        path("hicolor/22x22@2/status/tray.png"),
+        "the closest bigger size"
+    );
+    assert_eq!(
+        at("tray", 64),
+        path("hicolor/48x48/status/tray.png"),
+        "then the closest smaller"
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn an_extra_tree_walk_stops_at_its_caps() {
+    let listed = std::cell::RefCell::new(Vec::new());
+    let list = |dir: &std::path::Path, max: usize| {
+        listed.borrow_mut().push(max);
+        let names: Vec<String> = match dir.strip_prefix("/x").unwrap().components().count() {
+            1 => (1..=500).map(|n| format!("{n}x{n}")).collect(),
+            2 => ('a'..='z').map(String::from).collect(),
+            _ => vec!["tray.png".into()],
+        };
+        names.into_iter().map(Into::into).take(max).collect()
+    };
+    let mut tree = ExtraTree::new(std::path::Path::new("/x"), list);
+    let files = tree.files("tray", 16);
+    assert_eq!(files.len(), EXTRA_MAX_FILES);
+    assert_eq!(files[0], PathBuf::from("/x/hicolor/16x16/a/tray.png"));
+    tree.files("tray", 48);
+    let listed = listed.borrow();
+    assert_eq!(listed.len(), EXTRA_MAX_FOLDERS, "folders listed");
+    assert!(listed.iter().all(|&max| max == EXTRA_MAX_ENTRIES));
+}
+
+#[test]
+fn a_peer_svg_embedding_a_raster_image_is_refused() {
+    const DOT: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+    let svg = format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><image width="16" height="16" href="data:image/png;base64,{DOT}"/></svg>"##
+    );
+    let p = tmp("embedding.svg");
+    fs::write(&p, &svg).unwrap();
+    assert!(decode(&p, 16).is_some(), "a theme's file");
+    assert!(decode_bytes(&p, svg.as_bytes(), 16, true).is_some());
+    assert!(decode_bytes(&p, svg.as_bytes(), 16, false).is_none());
+    fs::remove_file(&p).unwrap();
+}
+
+#[test]
 fn missing_theme_still_has_hicolor_in_chain() {
     let root = scratch();
     let t = IconTheme::load("does-not-exist", &[root]);
@@ -488,32 +566,38 @@ fn an_svg_past_the_render_budget_is_refused() {
     let icon = svg(&format!(
         r##"{blur}<g filter="url(#f)">{shape}</g><g opacity=".5">{shape}</g>"##
     ));
-    assert_eq!(svg_over_budget(&icon), None);
+    assert_eq!(svg_over_budget(&icon, true), None);
 
     let wide = svg(&format!(
         r##"<defs><filter id="f"><feMorphology radius="40"/></filter></defs><g filter="url(#f)">{shape}</g>"##
     ));
     assert_eq!(
-        svg_over_budget(&wide),
+        svg_over_budget(&wide, true),
         Some("an unbounded filter primitive")
     );
     let layers = svg(&format!(r##"<g opacity=".5">{shape}</g>"##).repeat(SVG_MAX_LAYERS + 1));
-    assert_eq!(svg_over_budget(&layers), Some("too many layers"));
+    assert_eq!(svg_over_budget(&layers, true), Some("too many layers"));
     let blurs = svg(&format!(
         r##"{blur}{}"##,
         format!(r##"<g filter="url(#f)">{shape}</g>"##).repeat(SVG_MAX_PRIMITIVES + 1)
     ));
-    assert_eq!(svg_over_budget(&blurs), Some("too many filter primitives"));
+    assert_eq!(
+        svg_over_budget(&blurs, true),
+        Some("too many filter primitives")
+    );
     // 0.01 units of dash on a 1000-unit line: 100 000 dashes.
     let dashes = svg(r##"<path d="M0 0H1000" stroke="#000" stroke-dasharray="0.005 0.005"/>"##);
-    assert_eq!(svg_over_budget(&dashes), Some("too many path segments"));
+    assert_eq!(
+        svg_over_budget(&dashes, true),
+        Some("too many path segments")
+    );
     // A mask is drawn once per element using it.
     let masked = svg(&format!(
         r##"<defs><mask id="m">{}</mask></defs>{}"##,
         shape.repeat(100),
         r##"<rect mask="url(#m)" width="4" height="4"/>"##.repeat(SVG_MAX_NODES / 100)
     ));
-    assert_eq!(svg_over_budget(&masked), Some("too many nodes"));
+    assert_eq!(svg_over_budget(&masked, true), Some("too many nodes"));
 
     // Past the byte cap, a file is refused before it is parsed.
     let p = tmp("padded.svg");

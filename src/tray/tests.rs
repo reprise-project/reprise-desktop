@@ -98,6 +98,7 @@ fn a_remembered_row_takes_its_icon_file_when_it_lands() {
         behaviour: Behaviour::Hide,
         name: String::new(),
         icon: Some(icon.into()),
+        icon_trusted: true,
     };
     let choices = [
         ("live".to_string(), kept(file)),
@@ -453,6 +454,7 @@ fn new_choices_move_items_and_keep_the_order_in_each_list() {
         behaviour: b,
         name: String::new(),
         icon: None,
+        icon_trusted: true,
     };
     choices.insert("b".to_string(), keep(Behaviour::Hide));
     choices.insert("p".to_string(), keep(Behaviour::Show));
@@ -474,12 +476,14 @@ fn ok_keeps_only_choices_away_from_auto_and_names_them() {
             behaviour: Behaviour::Hide,
             name: "Old Applet".into(),
             icon: Some("old".into()),
+            icon_trusted: true,
         },
     );
     let mut net = item(":1.4/StatusNotifierItem", false);
     net.key = "nm-applet".into();
     net.tooltip = "Network\nConnected".into();
-    net.icon_name = Some("network-wired".into());
+    net.icon_name = Some("/app/share/icons/network.png".into());
+    net.saved_icon = Some("network-wired".into());
     let picked = vec![
         ("nm-applet".to_string(), Behaviour::Show),
         ("gone".to_string(), Behaviour::Mute),
@@ -492,6 +496,7 @@ fn ok_keeps_only_choices_away_from_auto_and_names_them() {
             behaviour: Behaviour::Show,
             name: "Network".into(),
             icon: Some("network-wired".into()),
+            icon_trusted: true,
         }
     );
     assert_eq!(choices["gone"].behaviour, Behaviour::Mute);
@@ -502,6 +507,93 @@ fn ok_keeps_only_choices_away_from_auto_and_names_them() {
     remember(&mut choices, &[("gone".into(), Behaviour::Auto)], &[]);
     assert!(!choices.contains_key("gone"), "back to Auto: forgotten");
     assert!(!choices.contains_key("other"));
+}
+
+#[test]
+fn one_decode_of_an_items_names_reads_at_most_its_byte_budget() {
+    use std::io::Write;
+    let dir = crate::harness::scratch().join("tray-budget");
+    let at = dir.join("hicolor/16x16");
+    // A PNG signature and then nothing a decoder takes, as big as an icon file may be.
+    for context in ["a", "b"] {
+        std::fs::create_dir_all(at.join(context)).unwrap();
+        let mut f = std::fs::File::create(at.join(context).join("x.png")).unwrap();
+        f.write_all(b"\x89PNG\r\n\x1a\n").unwrap();
+        f.set_len(crate::icontheme::MAX_ICON_BYTES).unwrap();
+    }
+    std::fs::create_dir_all(at.join("c")).unwrap();
+    std::fs::write(
+        at.join("c/x.svg"),
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8"/></svg>"#,
+    )
+    .unwrap();
+    assert_eq!(
+        2 * crate::icontheme::MAX_ICON_BYTES,
+        super::icons::FETCH_BYTES
+    );
+    let icons = std::sync::Mutex::new(IconCache::new(crate::icontheme::IconTheme::load(
+        "none",
+        &[],
+    )));
+    let decoded = || {
+        let names = [Some("x"), None, None];
+        let [named, ..] =
+            super::decode_item_icons(&icons, &super::IconFiles::Host, names, Some(&dir), &[16]);
+        named.len()
+    };
+    assert_eq!(decoded(), 0, "the third file is past the budget");
+    std::fs::remove_file(at.join("a/x.png")).unwrap();
+    assert_eq!(decoded(), 1, "the second is within it");
+}
+
+#[test]
+fn a_host_items_svg_may_embed_a_raster_image_and_a_sandboxed_ones_may_not() {
+    const DOT: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+    let dir = crate::harness::scratch().join("tray-embedded");
+    std::fs::create_dir_all(&dir).unwrap();
+    let svg = format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><image width="16" height="16" href="data:image/png;base64,{DOT}"/></svg>"##
+    );
+    std::fs::write(dir.join("tray.svg"), svg).unwrap();
+    let icons = std::sync::Mutex::new(IconCache::new(crate::icontheme::IconTheme::load(
+        "none",
+        &[],
+    )));
+    let drawn = |files: &super::IconFiles, name: &str| {
+        let [named, ..] =
+            super::decode_item_icons(&icons, files, [Some(name), None, None], None, &[16]);
+        named.len()
+    };
+    let host = dir.join("tray.svg");
+    assert_eq!(drawn(&super::IconFiles::Host, host.to_str().unwrap()), 1);
+    let root = std::os::fd::OwnedFd::from(std::fs::File::open(&dir).unwrap());
+    let confined = super::IconFiles::Confined(reprisefs::confined::Confined::Root(root));
+    assert_eq!(drawn(&confined, "/tray.svg"), 0);
+}
+
+#[test]
+fn a_loaded_path_icon_is_kept_only_where_its_row_vouches_for_it() {
+    let row = |icon: &str, icon_trusted| Remembered {
+        behaviour: Behaviour::Hide,
+        name: String::new(),
+        icon: Some(icon.into()),
+        icon_trusted,
+    };
+    let loaded = super::customize::trusted_icons(std::collections::BTreeMap::from([
+        ("a".to_string(), row("/home/u/Pictures/x.png", false)),
+        ("b".to_string(), row("network-wired", false)),
+        ("c".to_string(), row("/usr/share/pixmaps/c.png", true)),
+    ]));
+    let icons: Vec<Option<&str>> = loaded.values().map(|r| r.icon.as_deref()).collect();
+    assert_eq!(
+        icons,
+        [
+            None,
+            Some("network-wired"),
+            Some("/usr/share/pixmaps/c.png")
+        ]
+    );
+    assert!(loaded.values().all(|r| r.icon_trusted));
 }
 
 #[test]

@@ -3,14 +3,19 @@
 
 mod cache;
 mod decode;
+mod extra;
 mod index;
 mod listing;
 #[cfg(test)]
 mod tests;
 
-pub use cache::{IconCache, grown_icon, load_icon};
+pub use cache::{IconCache, bare_name, grown_icon, load_icon};
 pub(crate) use decode::png_rgba;
-pub use decode::{MAX_ICON_DIMENSION, canvas_from_rgba, decode, decode_file, png_to_canvas};
+pub use decode::{
+    MAX_ICON_BYTES, MAX_ICON_DIMENSION, canvas_from_rgba, decode, decode_bytes, decode_file,
+    is_icon_file, png_to_canvas,
+};
+pub use extra::{EXTRA_MAX_ENTRIES, EXTRA_MAX_FILES, EXTRA_MAX_FOLDERS, ExtraTree};
 pub use index::{DirEntry, DirKind};
 pub use listing::{LISTING_PX, ListingIcons, ListingSizes, listing_px};
 
@@ -352,8 +357,8 @@ impl IconTheme {
         self.lookup_with_extra(name, size, scale, &[])
     }
 
-    /// `FindIconHelper` plus fallback from the spec. `extra` directories are searched flat
-    /// before the chain.
+    /// `FindIconHelper` plus fallback from the spec. `extra` directories are searched before
+    /// the chain, each as an [`ExtraTree`].
     pub fn lookup_with_extra(
         &self,
         name: &str,
@@ -374,14 +379,15 @@ impl IconTheme {
         extra: &[PathBuf],
         mut take: impl FnMut(PathBuf) -> Option<T>,
     ) -> Option<T> {
-        let files = EXTENSIONS.map(|ext| OsString::from(format!("{name}.{ext}")));
         for dir in extra {
-            for p in files.iter().map(|f| dir.join(f)).filter(|p| p.is_file()) {
+            let mut tree = ExtraTree::new(dir, list_at_most);
+            for p in tree.files(name, size * scale) {
                 if let Some(t) = take(p) {
                     return Some(t);
                 }
             }
         }
+        let files = EXTENSIONS.map(|ext| OsString::from(format!("{name}.{ext}")));
         for &i in self.order(size, scale).iter() {
             for p in self.files_listed(i, &self.dirs[i].path, name, &files) {
                 if let Some(t) = take(p) {
@@ -471,7 +477,17 @@ fn list_files(dir: &Path) -> HashSet<OsString> {
 
 /// Every entry name directly in `dir`; empty if unreadable.
 fn list_entries(dir: &Path) -> HashSet<OsString> {
+    list_at_most(dir, usize::MAX)
+}
+
+/// At most `max` of the entry names in `dir`; empty when it can't be read.
+pub fn list_at_most(dir: &Path, max: usize) -> HashSet<OsString> {
     std::fs::read_dir(dir)
-        .map(|rd| rd.filter_map(Result::ok).map(|e| e.file_name()).collect())
+        .map(|rd| {
+            rd.filter_map(Result::ok)
+                .map(|e| e.file_name())
+                .take(max)
+                .collect()
+        })
         .unwrap_or_default()
 }

@@ -1,19 +1,35 @@
 use std::io;
+use std::os::fd::{AsRawFd, OwnedFd};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-/// The bytes of the regular file at `path` (a link to one is followed), at most
-/// `max`. The open does not block and takes no controlling tty, so a FIFO or
-/// device fails with `InvalidInput` instead of hanging; a file over `max` fails
-/// with `FileTooLarge`. Every small file Reprise reads out of a user's folders is
-/// read through here or [`read_opened`].
+/// The regular file at `path` (links followed), at most `max` bytes, else `FileTooLarge`; a FIFO
+/// or device is never opened (`InvalidInput`). Small files from a user's folders read here.
 pub fn read_regular(path: &Path, max: u64) -> io::Result<Vec<u8>> {
     use std::os::unix::fs::OpenOptionsExt;
+    let held = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_PATH)
+        .open(path)?;
+    read_held(held.into(), max)
+}
+
+/// [`read_regular`] for a file held `O_PATH`, reopened to read through `/proc/self/fd` only once
+/// it is known to be a regular file.
+pub(crate) fn read_held(held: OwnedFd, max: u64) -> io::Result<Vec<u8>> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let held = std::fs::File::from(held);
+    if !held.metadata()?.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "not a regular file",
+        ));
+    }
     let file = std::fs::OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY)
-        .open(path)?;
+        .open(format!("/proc/self/fd/{}", held.as_raw_fd()))?;
     read_opened(&file, max)
 }
 

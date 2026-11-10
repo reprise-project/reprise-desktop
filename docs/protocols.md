@@ -137,8 +137,10 @@ sharing. It names no **Lockdown** backend, so GNOME's lockdown keys (location,
 camera, microphone, printing) don't apply and `[privacy] location` alone turns location off.
 
 Reprise also hosts `org.freedesktop.Notifications`, the StatusNotifierWatcher
-for the tray, `org.freedesktop.ScreenSaver` and the GeoClue2 agent.
-`ActionInvoked`, `ActivationToken`, `NotificationReplied` and
+for the tray, `org.freedesktop.ScreenSaver` and the GeoClue2 agent. A tray
+item's `IconThemePath` is searched as the base of a `hicolor` tree
+(`hicolor/<size>/<context>/`), then as a flat folder. `ActionInvoked`,
+`ActivationToken`, `NotificationReplied` and
 `NotificationClosed` go only to the connection that sent or last replaced the
 notification, as KDE Plasma sends them, so a client that waits for them on a
 connection of its own (notify-rust's `handle_action`) never hears them.

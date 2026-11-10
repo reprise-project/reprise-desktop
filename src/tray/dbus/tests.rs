@@ -5,7 +5,9 @@ use super::watcher::{
     Admission, MAX_REGISTRATIONS, MAX_REGISTRATIONS_PER_SENDER, admit, resolve_registration,
 };
 use super::*;
-use crate::tray::{DEFAULT_PROP, MenuNode, NOTIFY_SIZES, Notification, item_pixmaps, notify};
+use crate::tray::{
+    DEFAULT_PROP, IconFiles, MenuNode, NOTIFY_SIZES, Notification, item_pixmaps, notify,
+};
 use repriseaudio::sounds::Sound;
 use reprisebus::peer::AppIdentity;
 use reprisekit::controls::tooltip::TIP_CHARS;
@@ -306,16 +308,18 @@ fn an_item_name_is_decoded_here_at_the_drawn_sizes() {
         ..Default::default()
     };
     let drawn = [16, 24, 32, 48];
-    assert!(decode_names(&icons, &mut item, &drawn), "the name decoded");
+    let decode = |item: &mut TrayItem| {
+        zbus::block_on(decode_names(&icons, IconFiles::Host, item, &drawn));
+    };
+    decode(&mut item);
     let sizes: Vec<(u32, u32)> = item.named.iter().map(|s| (s.width, s.height)).collect();
     assert_eq!(sizes, [(16, 16), (24, 24), (32, 32), (48, 48)]);
     let at24 = crate::tray::closest(&item.named, 24).unwrap();
     assert_eq!(at24.get(12, 12), 0xFF00_00FF);
-    assert!(!decode_names(&icons, &mut item, &drawn), "nothing changed");
 
     item.attention.name = Some("peer".into());
     item.overlay.name = Some("peer".into());
-    assert!(decode_names(&icons, &mut item, &drawn));
+    decode(&mut item);
     assert_eq!(
         item.attention.named.len(),
         drawn.len(),
@@ -324,11 +328,11 @@ fn an_item_name_is_decoded_here_at_the_drawn_sizes() {
     assert_eq!(item.overlay.named.len(), drawn.len(), "and the overlay's");
 
     item.pixmaps = item_pixmaps(&[(1, 1, &[255u8, 255, 0, 0][..])], &drawn).into();
-    decode_names(&icons, &mut item, &drawn);
+    decode(&mut item);
     assert!(item.named.is_empty(), "pixmaps stand in for the name");
     item.pixmaps = Arc::from([]);
     item.icon_name = Some("absent".into());
-    decode_names(&icons, &mut item, &drawn);
+    decode(&mut item);
     assert!(item.named.is_empty());
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -1331,6 +1335,26 @@ fn flatpak_proc(name: &str, app_id: &str) -> std::path::PathBuf {
     proc
 }
 
+/// [`flatpak_proc`] in which this process is also its sandbox's first process, as instance 7,
+/// with a runtime folder holding Flatpak's record of it.
+fn flatpak_sandbox(name: &str, app_id: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+    let proc = flatpak_proc(name, app_id);
+    let dir = proc.join(std::process::id().to_string());
+    let info = format!("[Application]\nname={app_id}\n\n[Instance]\ninstance-id=7\n");
+    std::fs::write(dir.join("root/.flatpak-info"), info).unwrap();
+    for ns in [proc.join("self/ns"), dir.join("ns")] {
+        std::fs::create_dir_all(&ns).unwrap();
+        std::fs::write(ns.join("mnt"), "").unwrap();
+    }
+    let ns = std::os::unix::fs::MetadataExt::ino(&std::fs::metadata(dir.join("ns/mnt")).unwrap());
+    let runtime = crate::harness::scratch().join(format!("runtime-{name}"));
+    std::fs::create_dir_all(runtime.join(".flatpak/7")).unwrap();
+    let pid = std::process::id();
+    let json = format!("{{\"child-pid\": {pid}, \"mnt-namespace\": {ns}}}");
+    std::fs::write(runtime.join(".flatpak/7/bwrapinfo.json"), json).unwrap();
+    (proc, runtime)
+}
+
 /// What a server reading its senders from `proc` (`/proc` when None) shows of a notification a
 /// peer on `bus` sends as `app_name` with the `desktop-entry` hint `entry`.
 fn notified(
@@ -1426,11 +1450,20 @@ impl Spoofing {
 /// (`/proc` when None).
 fn spoofing_item(bus: &crate::testbus::Bus, proc: Option<&std::path::Path>) -> TrayItem {
     let identities = proc.map_or_else(Identities::default, Identities::under);
+    served_item(bus, identities, Spoofing)
+}
+
+/// `item` served by a peer on `bus`, as read by a host placing its owner through `identities`.
+fn served_item(
+    bus: &crate::testbus::Bus,
+    identities: Identities,
+    item: impl zbus::object_server::Interface,
+) -> TrayItem {
     zbus::block_on(async {
         let connect = || zbus::connection::Builder::address(bus.1.as_str());
         // Served from the start: an object added once the connection runs may miss a call that
         // arrives first.
-        let theirs = connect().serve_at("/item", Spoofing).build().await.unwrap();
+        let theirs = connect().serve_at("/item", item).build().await.unwrap();
         let ours = connect()
             .method_timeout(METHOD_TIMEOUT)
             .build()
@@ -1498,4 +1531,181 @@ fn a_sandboxed_or_unknown_sender_names_no_file_to_read() {
         got,
         (Some("/home/u/x.png".into()), Some(sound("/home/u/a.oga")))
     );
+}
+
+/// A tray item naming its icon by `icon` (a path or a name) under `theme_path`.
+struct Naming {
+    icon: String,
+    theme_path: String,
+}
+
+#[zbus::interface(name = "org.kde.StatusNotifierItem")]
+impl Naming {
+    #[zbus(property)]
+    fn id(&self) -> String {
+        "naming".into()
+    }
+
+    #[zbus(property)]
+    fn icon_name(&self) -> String {
+        self.icon.clone()
+    }
+
+    #[zbus(property)]
+    fn icon_theme_path(&self) -> String {
+        self.theme_path.clone()
+    }
+}
+
+/// An 8 px square SVG of one colour, `#rrggbb`.
+fn write_svg(path: &std::path::Path, fill: &str) {
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let svg = format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="{fill}"/></svg>"#
+    );
+    std::fs::write(path, svg).unwrap();
+}
+
+/// `icon` under `theme_path` as read from a peer placed through `identities`, at 16 px: the
+/// colour at its centre, None when nothing decoded.
+fn named_colour(
+    bus: &crate::testbus::Bus,
+    identities: Identities,
+    icon: &str,
+    theme_path: &str,
+) -> (Option<u32>, TrayItem) {
+    let naming = Naming {
+        icon: icon.into(),
+        theme_path: theme_path.into(),
+    };
+    let item = served_item(bus, identities, naming);
+    let colour = crate::tray::closest(&item.named, 16).map(|c| c.get(8, 8));
+    (colour, item)
+}
+
+const BLUE: u32 = 0xFF00_00FF;
+
+#[test]
+fn a_flatpak_items_icon_path_opens_inside_its_sandbox() {
+    let Some(bus) = crate::testbus::bus() else {
+        eprintln!("no dbus-daemon; skipped");
+        return;
+    };
+    let (proc, runtime) = flatpak_sandbox("icon-root", "org.example.App");
+    let ids = || Identities::under(&proc).with_runtime_dir(&runtime);
+    let root = proc.join(std::process::id().to_string()).join("root");
+    let icons = root.join("app/share/icons");
+    write_svg(
+        &icons.join("hicolor/16x16/apps/org.example.App.svg"),
+        "#0000ff",
+    );
+    let path = "/app/share/icons/hicolor/16x16/apps/org.example.App.svg";
+    let (colour, item) = named_colour(&bus, ids(), path, "");
+    assert_eq!(colour, Some(BLUE), "{path} in the sandbox");
+    assert_eq!(
+        item.saved_icon, None,
+        "Customize never keeps a sandbox's path"
+    );
+    let (colour, _) = named_colour(&bus, ids(), "org.example.App", "/app/share/icons");
+    assert_eq!(
+        colour,
+        Some(BLUE),
+        "a name under IconThemePath in the sandbox"
+    );
+    let on_host = icons.join("hicolor/16x16/apps/org.example.App.svg");
+    let (colour, _) = named_colour(&bus, ids(), on_host.to_str().unwrap(), "");
+    assert_eq!(colour, None, "a host path is not the sandbox's");
+}
+
+#[test]
+fn an_unknown_or_snapped_items_host_path_is_dropped() {
+    let Some(bus) = crate::testbus::bus() else {
+        eprintln!("no dbus-daemon; skipped");
+        return;
+    };
+    let host = crate::harness::scratch().join("icon-host");
+    write_svg(&host.join("hicolor/16x16/apps/x.svg"), "#0000ff");
+    let file = host.join("hicolor/16x16/apps/x.svg");
+    let (file, dir) = (file.to_str().unwrap(), host.to_str().unwrap());
+    let (colour, item) = named_colour(&bus, Identities::default(), file, "");
+    assert_eq!(colour, Some(BLUE), "a host item's path opens");
+    assert_eq!(item.saved_icon.as_deref(), Some(file));
+    assert_eq!(
+        named_colour(&bus, Identities::default(), "x", dir).0,
+        Some(BLUE)
+    );
+
+    let unknown = crate::harness::scratch().join("proc-unknown");
+    std::fs::create_dir_all(&unknown).unwrap();
+    let snap = crate::harness::scratch().join("proc-snap");
+    let at = snap.join(std::process::id().to_string());
+    std::fs::create_dir_all(at.join("attr/apparmor")).unwrap();
+    std::fs::write(
+        at.join("attr/apparmor/current"),
+        "snap.chat.chat (enforce)\n",
+    )
+    .unwrap();
+    std::fs::write(at.join("stat"), "42 (chat) S 1 42\n").unwrap();
+    for proc in [&unknown, &snap] {
+        let (colour, item) = named_colour(&bus, Identities::under(proc), file, "");
+        assert_eq!(colour, None, "{proc:?} naming {file}");
+        assert_eq!(item.saved_icon, None);
+        assert_eq!(
+            named_colour(&bus, Identities::under(proc), "x", dir).0,
+            None
+        );
+    }
+}
+
+#[test]
+fn a_flood_of_icon_decodes_runs_at_most_two_at_once() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let decoders = decoders::Decoders::new(2, 64, Duration::from_secs(30));
+    let (live, most) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+    let runs = (0..32).map(|_| {
+        let (live, most) = (live.clone(), most.clone());
+        decoders.run(move || {
+            most.fetch_max(live.fetch_add(1, SeqCst) + 1, SeqCst);
+            std::thread::sleep(Duration::from_millis(5));
+            live.fetch_sub(1, SeqCst);
+        })
+    });
+    let done = zbus::block_on(futures_util::future::join_all(runs));
+    assert!(
+        done.iter().all(Option::is_some),
+        "every queued decode finishes"
+    );
+    assert!(
+        most.load(SeqCst) <= 2,
+        "{} decodes ran at once",
+        most.load(SeqCst)
+    );
+}
+
+#[test]
+fn hung_icon_reads_hold_their_threads_and_later_decodes_give_up() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let decoders = decoders::Decoders::new(2, 4, Duration::from_millis(500));
+    let started = Arc::new(AtomicUsize::new(0));
+    let (release, gate) = async_channel::bounded::<()>(1);
+    let runs = (0..22).map(|_| {
+        let (started, gate) = (started.clone(), gate.clone());
+        decoders.run(move || {
+            started.fetch_add(1, SeqCst);
+            let _ = gate.recv_blocking();
+        })
+    });
+    let done = zbus::block_on(futures_util::future::join_all(runs));
+    assert!(
+        done.iter().all(Option::is_none),
+        "no decode finishes while reads hang"
+    );
+    assert_eq!(
+        started.load(SeqCst),
+        2,
+        "only the two threads started a read"
+    );
+    drop(release);
+    assert_eq!(zbus::block_on(decoders.run(|| 7)), Some(7));
+    assert_eq!(started.load(SeqCst), 2, "decodes given up on never run");
 }

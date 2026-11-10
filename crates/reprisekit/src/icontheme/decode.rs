@@ -150,11 +150,13 @@ pub(super) const SVG_MAX_PRIMITIVES: usize = 256;
 /// Path segments stroked or filled, dashes included.
 pub(super) const SVG_MAX_SEGMENTS: f32 = 100_000.0;
 
-/// Why `tree` is refused, or `None` within the limits. The walk stops at the first limit passed.
-pub(super) fn svg_over_budget(tree: &resvg::usvg::Tree) -> Option<&'static str> {
+/// Why `tree` is refused, or `None` within the limits; the walk stops at the first one passed. An
+/// embedded raster image is refused unless `images`: its decoded size is past the budget's reach.
+pub(super) fn svg_over_budget(tree: &resvg::usvg::Tree, images: bool) -> Option<&'static str> {
     use resvg::usvg::{Group, Node, Path, filter::Kind};
     #[derive(Default)]
     struct Cost {
+        no_images: bool,
         nodes: usize,
         layers: usize,
         primitives: usize,
@@ -221,10 +223,14 @@ pub(super) fn svg_over_budget(tree: &resvg::usvg::Tree) -> Option<&'static str> 
                 Node::Group(child) => walk(child, c),
                 other => {
                     c.nodes += 1;
-                    if let Node::Path(p) = other {
-                        c.segments += segments(p);
+                    match other {
+                        Node::Path(p) => c.segments += segments(p),
+                        Node::Image(_) if c.no_images => c.over = Some("an embedded image"),
+                        _ => {}
                     }
-                    c.check();
+                    if c.over.is_none() {
+                        c.check();
+                    }
                 }
             }
             n.subroots(|root| {
@@ -234,12 +240,15 @@ pub(super) fn svg_over_budget(tree: &resvg::usvg::Tree) -> Option<&'static str> 
             });
         }
     }
-    let mut cost = Cost::default();
+    let mut cost = Cost {
+        no_images: !images,
+        ..Cost::default()
+    };
     walk(tree.root(), &mut cost);
     cost.over
 }
 
-fn decode_svg(path: &Path, bytes: &[u8], px: u32) -> Option<Canvas> {
+fn decode_svg(path: &Path, bytes: &[u8], px: u32, images: bool) -> Option<Canvas> {
     use resvg::tiny_skia;
     use resvg::usvg;
     // No file references: the name comes from a peer, and usvg's default resolver would read
@@ -262,7 +271,7 @@ fn decode_svg(path: &Path, bytes: &[u8], px: u32) -> Option<Canvas> {
             return None;
         }
     };
-    if let Some(why) = svg_over_budget(&tree) {
+    if let Some(why) = svg_over_budget(&tree, images) {
         log::warn!("icon {}: refusing an svg with {why}", path.display());
         return None;
     }
@@ -304,8 +313,7 @@ pub fn decode(path: &Path, px: u32) -> Option<Canvas> {
     }
     // Gate on the extension before opening: a client-supplied path like `/dev/zero` must not
     // be read.
-    let ext = path.extension().and_then(|e| e.to_str());
-    if !ext.is_some_and(|e| e.eq_ignore_ascii_case("png") || e.eq_ignore_ascii_case("svg")) {
+    if !is_icon_file(path) {
         log::debug!("icon {}: unsupported file type", path.display());
         return None;
     }
@@ -316,11 +324,30 @@ pub fn decode(path: &Path, px: u32) -> Option<Canvas> {
             return None;
         }
     };
+    decode_read(path, &bytes, px, true)
+}
+
+/// Whether `path` names a file [`decode`] reads: a `.png` or `.svg`.
+pub fn is_icon_file(path: &Path) -> bool {
+    let ext = path.extension().and_then(|e| e.to_str());
+    ext.is_some_and(|e| e.eq_ignore_ascii_case("png") || e.eq_ignore_ascii_case("svg"))
+}
+
+/// [`decode`] for the bytes of an icon file a peer named, read elsewhere within
+/// [`MAX_ICON_BYTES`]. An SVG embedding a raster image is refused unless `images`.
+pub fn decode_bytes(path: &Path, bytes: &[u8], px: u32, images: bool) -> Option<Canvas> {
+    decode_read(path, bytes, px, images)
+}
+
+fn decode_read(path: &Path, bytes: &[u8], px: u32, images: bool) -> Option<Canvas> {
+    if px == 0 || px > MAX_ICON_DIMENSION {
+        return None;
+    }
     // The content picks the decoder: themes ship PNGs named `.svg`.
     if bytes.starts_with(PNG_SIGNATURE) {
-        decode_png(path, &bytes, px)
+        decode_png(path, bytes, px)
     } else {
-        decode_svg(path, &bytes, px)
+        decode_svg(path, bytes, px, images)
     }
 }
 
@@ -334,24 +361,30 @@ pub fn decode_file(path: &Path, px: i32, scale: i32) -> Option<Canvas> {
 
 const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
 
-const MAX_ICON_BYTES: u64 = 8 << 20;
+/// The most of an icon file read.
+pub const MAX_ICON_BYTES: u64 = 8 << 20;
 
-/// Read an icon file without stalling on a peer-chosen path: non-blocking open (FIFO), regular
-/// files only, read capped at `MAX_ICON_BYTES`.
+/// Read an icon file without stalling on a peer-chosen path: held `O_PATH` until it is known to
+/// be a regular file (a FIFO or device is never opened), read capped at `MAX_ICON_BYTES`.
 fn read_icon_file(path: &Path) -> std::io::Result<Vec<u8>> {
     use std::io::{Error, ErrorKind, Read};
+    use std::os::fd::AsRawFd;
     use std::os::unix::fs::OpenOptionsExt;
-    let f = std::fs::OpenOptions::new()
+    let held = std::fs::OpenOptions::new()
         .read(true)
-        .custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY)
+        .custom_flags(libc::O_PATH)
         .open(path)?;
-    let meta = f.metadata()?;
+    let meta = held.metadata()?;
     if !meta.file_type().is_file() {
         return Err(Error::new(ErrorKind::InvalidInput, "not a regular file"));
     }
     if meta.len() > MAX_ICON_BYTES {
         return Err(Error::new(ErrorKind::InvalidData, "larger than an icon"));
     }
+    let f = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY)
+        .open(format!("/proc/self/fd/{}", held.as_raw_fd()))?;
     let mut bytes = Vec::with_capacity(meta.len() as usize);
     f.take(MAX_ICON_BYTES).read_to_end(&mut bytes)?;
     Ok(bytes)
