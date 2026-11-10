@@ -60,6 +60,45 @@ fn show_users_off_starts_typed_everywhere() {
 }
 
 #[test]
+fn left_and_right_step_through_the_tiles_as_up_and_down_do() {
+    let left = LogonKey::Edit(EditKey::Left {
+        select: false,
+        word: false,
+    });
+    let right = LogonKey::Edit(EditKey::Right {
+        select: false,
+        word: false,
+    });
+    let mut g = Logon::new(Interface::Glass, users(2), true, None);
+    g.key(LogonKey::Escape);
+    let mut seen = vec![g.focus];
+    for key in [&right, &right, &right, &left, &left, &left] {
+        g.key(key.clone());
+        seen.push(g.focus);
+    }
+    use Part::{OtherUser, Tile};
+    let row = [
+        Tile(0),
+        Tile(1),
+        OtherUser,
+        OtherUser,
+        Tile(1),
+        Tile(0),
+        Tile(0),
+    ];
+    assert_eq!(seen, row, "Glass's row ends at Other user");
+    g.key(LogonKey::Down);
+    g.key(LogonKey::Down);
+    assert_eq!(g.focus, OtherUser, "Down reaches Other user too");
+
+    let mut b = Logon::new(Interface::Blue, users(3), true, None);
+    b.key(right.clone());
+    assert_eq!(b.focus, Tile(1), "Blue's column");
+    b.key(left);
+    assert_eq!(b.focus, Tile(0));
+}
+
+#[test]
 fn enter_with_a_password_submits_the_shown_user() {
     let mut m = Logon::new(Interface::Classic, Vec::new(), false, None);
     typed(&mut m, "alice");

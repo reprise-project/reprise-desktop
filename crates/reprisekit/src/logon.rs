@@ -473,12 +473,15 @@ impl Logon {
                 .flatten();
         }
         match key {
-            LogonKey::Edit(k) => {
-                if let Some(edit) = self.focused_edit() {
+            LogonKey::Edit(k) => match (self.focused_edit(), k) {
+                (Some(edit), k) => {
                     edit.key(k);
+                    None
                 }
-                None
-            }
+                (None, EditKey::Left { .. }) => self.step(false),
+                (None, EditKey::Right { .. }) => self.step(true),
+                (None, _) => None,
+            },
             LogonKey::Text(s) => {
                 if let Some(edit) = self.focused_edit() {
                     edit.key(EditKey::Insert(s.to_owned()));
@@ -742,16 +745,26 @@ impl Logon {
         }
     }
 
-    fn step(&mut self, down: bool) -> Option<LogonAction> {
-        let Part::Tile(i) = self.focus else {
-            return None;
+    /// The focus to the next or previous tile; Glass's row ends at Other user.
+    fn step(&mut self, forward: bool) -> Option<LogonAction> {
+        let n = self.users.len();
+        let row = self.interface == Interface::Glass && self.screen == Screen::Tiles;
+        let i = match self.focus {
+            Part::Tile(i) => i,
+            Part::OtherUser if row => n,
+            _ => return None,
         };
-        let j = if down {
-            (i + 1).min(self.users.len().saturating_sub(1))
+        let last = if row { n } else { n.saturating_sub(1) };
+        let j = if forward {
+            (i + 1).min(last)
         } else {
             i.saturating_sub(1)
         };
-        self.focus = Part::Tile(j);
+        self.focus = if j == n {
+            Part::OtherUser
+        } else {
+            Part::Tile(j)
+        };
         self.scroll_to(j);
         None
     }
