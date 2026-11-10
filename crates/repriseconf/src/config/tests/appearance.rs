@@ -858,18 +858,8 @@ fn wallpaper_water_rate_parses_and_defaults_to_refresh() {
 }
 
 #[test]
-fn wallpaper_lock_screen_defaults_by_interface() {
-    let on = |toml: &str| Config::parse(toml).unwrap().wallpaper.lock_screen;
-    assert!(!on(""), "off under Classic");
-    assert!(on("[appearance]\ninterface = \"blue\"\n"), "on under Blue");
-    assert!(
-        on("[appearance]\ninterface = \"glass\"\n"),
-        "on under Glass"
-    );
-    assert!(on("[wallpaper]\nlock_screen = true\n"));
-    assert!(!on(
-        "[appearance]\ninterface = \"glass\"\n[wallpaper]\nlock_screen = false\n"
-    ));
+fn an_old_wallpaper_lock_screen_key_still_loads() {
+    assert!(Config::parse("[wallpaper]\nlock_screen = true\n").is_ok());
 }
 
 #[test]

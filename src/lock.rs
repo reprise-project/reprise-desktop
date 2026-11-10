@@ -1,27 +1,19 @@
-//! Built-in lock screen: the dialog's state machine, the "Unlock Computer"
-//! dialog layout and drawing, and the PAM password check, which runs in a
-//! helper child beside the fingerprint's (see `lockfinger.rs`). Nothing in
-//! here touches the scene or the seat; `lockview.rs` does that.
+//! The lock screen's PAM password check, which runs in a helper child beside the fingerprint's
+//! (see `lockfinger.rs`), and what a fingerprint line does to the screen. Nothing in here touches
+//! the scene or the seat; `lockview.rs` does that.
 //!
-//! `LockState` and the verifier zero the copies they own. libpam wipes its
-//! own, except in modules that copy the answer elsewhere.
+//! The verifier zeroes the copies it owns. libpam wipes its own, except in modules that copy the
+//! answer elsewhere.
 
-use crate::raster::{Canvas, EdgeStyle, Rect};
-use crate::text::{Align, TextRenderer};
-use crate::theme::{Color, Metrics, Theme};
-use reprisekit::classic::indicator;
-use reprisekit::frame::{ButtonSet, Chrome, FrameGeometry, FrameState};
-use reprisekit::look::Look;
-use reprisekit::look::widgets::{draw_button, draw_edit_field};
-use reprisekit::pointer::Interaction;
-use repriselogin::{PROMPT_LINES, add_prompt_lines};
+use reprisekit::logon::Logon;
+use repriselogin::add_prompt_lines;
 use reprisepam::ffi;
 use std::cell::{Cell, RefCell};
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::path::Path;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
-use zeroize::{Zeroize, Zeroizing};
+use zeroize::Zeroizing;
 
 /// Shown after PAM rejects the password without saying why.
 pub const INCORRECT: &str = "The password is incorrect. Please retry.";
@@ -31,189 +23,37 @@ pub const UNAVAILABLE: &str = "The password could not be checked. Please retry."
 pub const EXPIRED_SUMMARY: &str = "Your password has expired";
 pub const EXPIRED_BODY: &str =
     "Change it now. The next login to a new session will ask for a new password.";
-/// Shown on the message area's first line while Caps Lock is on.
-pub const CAPS_LOCK: &str = "Caps Lock is on.";
 /// Shown when the fingerprint conversation ended with PAM_MAXTRIES: too
 /// many fingers did not match.
 pub const FINGER_TOO_MANY: &str = "Too many fingerprint attempts. Type your password to unlock.";
 
-/// Password field reservation in bytes, see `LockState::new`. Typing past
-/// it is refused. 512 is libpam's `PAM_MAX_RESP_SIZE`.
+/// The longest answer the password conversation reads, in bytes: libpam's `PAM_MAX_RESP_SIZE`.
 pub const INPUT_CAPACITY: usize = 512;
 
-/// A key the lock dialog cares about. Text is whatever xkb produced for the
-/// key in the current layout, so the password follows the configured keymap;
-/// it is borrowed so no copy of a password character outlives the press.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LockKey<'a> {
-    Text(&'a str),
-    Backspace,
-    Enter,
-    Escape,
-}
+/// A PAM prompt after the password: its text labels the field, and `echo` shows the answer as
+/// typed instead of as stars.
+pub use reprisekit::logon::Prompt;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LockButton {
-    Ok,
-    Cancel,
-    SwitchUser,
-}
-
-/// The dialog's state.
-#[derive(Default)]
-pub struct LockState {
-    /// The password typed so far, zeroed whenever it is cleared.
-    pub input: String,
-    pub message: Option<String>,
-    /// Gates every edit while the password helper is busy.
-    pub verifying: bool,
-    /// A further PAM prompt (a one-time code) the field answers in place of the password.
-    pub prompt: Option<Prompt>,
-    /// The fingerprint conversation's last PAM info text while it runs, shown with no message.
-    pub finger: Option<String>,
-    pub caps_lock: bool,
-    /// The active keyboard layout's short name while more than one is configured.
-    pub layout: Option<String>,
-    /// Shows the Switch User button.
-    pub switch_user: bool,
-}
-
-/// A PAM prompt after the password: its text labels the field, and `echo`
-/// shows the answer as typed instead of as stars.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Prompt {
-    pub text: String,
-    pub echo: bool,
-}
-
-/// By hand so a `{:?}` in a log line never carries the password: only
-/// its length is shown.
-impl std::fmt::Debug for LockState {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("LockState")
-            .field(
-                "input",
-                &format_args!("<{} chars>", self.input.chars().count()),
-            )
-            .field("message", &self.message)
-            .field("verifying", &self.verifying)
-            .field("prompt", &self.prompt)
-            .field("finger", &self.finger)
-            .field("caps_lock", &self.caps_lock)
-            .field("layout", &self.layout)
-            .field("switch_user", &self.switch_user)
-            .finish()
-    }
-}
-
-impl LockState {
-    pub fn new() -> LockState {
-        LockState {
-            // Reserve up front and never grow: `zeroize` can only wipe the
-            // live allocation, and a grown `String` leaves the old buffer,
-            // holding a prefix of the password, on the heap. Zeroing keeps
-            // the capacity, so this one reservation covers every retry.
-            input: String::with_capacity(INPUT_CAPACITY),
-            ..LockState::default()
-        }
-    }
-
-    /// Wipe the password. `Zeroize for String` clears the length and keeps the
-    /// capacity, so no separate `clear()` is needed.
-    fn clear_input(&mut self) {
-        self.input.zeroize();
-    }
-
-    pub fn reset(&mut self) {
-        self.clear_input();
-        self.message = None;
-        self.verifying = false;
-        self.prompt = None;
-    }
-
-    /// The conversation asks `prompt`: the field empties and answers it.
-    pub fn ask(&mut self, prompt: Prompt) {
-        self.clear_input();
-        self.message = None;
-        self.verifying = false;
-        self.prompt = Some(prompt);
-    }
-
-    pub fn take_input(&mut self) -> Zeroizing<String> {
-        Zeroizing::new(std::mem::replace(
-            &mut self.input,
-            String::with_capacity(INPUT_CAPACITY),
-        ))
-    }
-
-    pub fn key(&mut self, key: LockKey<'_>) -> bool {
-        if self.verifying {
-            return false;
-        }
-        match key {
-            LockKey::Text(s) => {
-                if self.input.len() + s.len() <= INPUT_CAPACITY {
-                    self.input.push_str(s);
-                }
-                false
+/// Apply one line of the fingerprint conversation to the lock screen `m`. Returns true only for
+/// PAM's success, which unlocks. The typed password is left alone: a finger that did not match
+/// says nothing about it.
+pub fn finger(m: &mut Logon, line: crate::lockfinger::Line) -> bool {
+    use crate::lockfinger::Line;
+    match line {
+        Line::Info(t) => m.hint = Some(t),
+        Line::Error(t) => m.info(t),
+        Line::Prompt(_) => {}
+        Line::Result(rc) => {
+            m.hint = None;
+            if rc == ffi::PAM_SUCCESS {
+                return true;
             }
-            LockKey::Backspace => {
-                self.input.pop();
-                false
-            }
-            LockKey::Enter => !self.input.is_empty(),
-            LockKey::Escape => {
-                self.clear_input();
-                self.message = None;
-                self.prompt = None;
-                false
+            if rc == ffi::PAM_MAXTRIES {
+                m.info(FINGER_TOO_MANY.into());
             }
         }
     }
-
-    pub fn button(&mut self, b: LockButton) -> bool {
-        if self.verifying {
-            return false;
-        }
-        match b {
-            LockButton::Ok => !self.input.is_empty(),
-            LockButton::Cancel => {
-                self.clear_input();
-                self.prompt = None;
-                false
-            }
-            LockButton::SwitchUser => false,
-        }
-    }
-
-    pub fn fail_with(&mut self, message: &str) {
-        self.clear_input();
-        self.message = Some(message.into());
-        self.verifying = false;
-        self.prompt = None;
-    }
-
-    /// Apply one line of the fingerprint conversation. Returns true only
-    /// for PAM's success, which unlocks. The typed password is left alone:
-    /// a finger that did not match says nothing about it.
-    pub fn finger(&mut self, line: crate::lockfinger::Line) -> bool {
-        use crate::lockfinger::Line;
-        match line {
-            Line::Info(t) => self.finger = Some(t),
-            Line::Error(t) => self.message = Some(t),
-            Line::Prompt(_) => {}
-            Line::Result(rc) => {
-                self.finger = None;
-                if rc == ffi::PAM_SUCCESS {
-                    return true;
-                }
-                if rc == ffi::PAM_MAXTRIES {
-                    self.message = Some(FINGER_TOO_MANY.into());
-                }
-            }
-        }
-        false
-    }
+    false
 }
 
 /// A verifier's answer: `Ok` to unlock, or `Err` with the text PAM sent with the rejection (empty
@@ -590,330 +430,6 @@ fn passwd_name() -> Option<String> {
         return Some(name);
     }
 }
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DialogLayout {
-    pub size: (i32, i32),
-    /// The frame a styled look draws around the body; None under Classic,
-    /// which draws its own.
-    pub frame: Option<FrameGeometry>,
-    pub caption: Rect,
-    pub user_box: Rect,
-    pub field: Rect,
-    pub message: Rect,
-    pub ok: Rect,
-    pub cancel: Rect,
-    /// Switch User at the bottom left, under reprise-login only.
-    pub switch_user: Option<Rect>,
-    /// The keyboard layout badge: the taskbar cell's size, at the message
-    /// area's bottom-right, above Cancel.
-    pub layout: Rect,
-}
-
-/// Unscaled dialog dimensions (logical px), multiplied by the theme scale.
-const DIALOG_W: i32 = 360;
-const DIALOG_H: i32 = 180;
-const PAD: i32 = 12;
-const LABEL_W: i32 = 90;
-const ROW_H: i32 = 20;
-const LINE_H: i32 = 13;
-const BUTTON_W: i32 = 75;
-const BUTTON_H: i32 = 23;
-
-/// The Unlock dialog's frame in a styled look: a fixed dialog's border and
-/// caption, without caption buttons.
-const CHROME: Chrome = Chrome {
-    buttons: ButtonSet::None,
-    ..Chrome::DIALOG
-};
-
-/// The dialog in `theme`'s look. Classic fits a window's border and the
-/// caption inside `DIALOG_W` x `DIALOG_H`. A styled look puts the style's
-/// frame around the client area Classic has under the default metrics, so
-/// the body keeps its size and the dialog grows by the frame's difference.
-/// The client grows with the text size (`theme.text`); so does Classic's
-/// whole dialog, by as much.
-pub fn dialog_layout(theme: &Theme, switch_user: bool) -> DialogLayout {
-    let s = theme.scale.max(1);
-    let u = theme.text;
-    let m = &theme.metrics;
-    let d = Metrics::DEFAULT;
-    let (cw, ch) = (
-        DIALOG_W - 2 * d.frame_width,
-        DIALOG_H - 2 * d.frame_width - d.caption_height,
-    );
-    let grow = (
-        (u.len(cw) - cw) * s,
-        (u.len(ch) - ch) * s + (m.caption_height - d.caption_height * s).max(0),
-    );
-    let (frame, caption, client) = match theme.look {
-        Look::Classic => {
-            let f = m.frame_width;
-            let (w, h) = (DIALOG_W * s + grow.0, DIALOG_H * s + grow.1);
-            let caption = Rect::new(f, f, w - 2 * f, m.caption_height);
-            let client = Rect::new(f, caption.bottom(), w - 2 * f, h - f - caption.bottom());
-            (None, caption, client)
-        }
-        Look::Styled(_) => {
-            let g = FrameGeometry::layout(m, u.len(cw) * s, u.len(ch) * s, false, CHROME);
-            (Some(g), g.caption, g.client)
-        }
-    };
-    // `v` 100% px from the client's top or left, at the text size, in device px.
-    let at = |v: i32| u.len(v) * s;
-    let box_x = client.x + at(PAD + LABEL_W);
-    let box_w = client.right() - at(PAD) - box_x;
-    let row = |top: i32| {
-        let top = PAD + top;
-        Rect::new(box_x, client.y + at(top), box_w, at(top + ROW_H) - at(top))
-    };
-    let user_box = row(24);
-    let field = row(52);
-    let message = Rect::new(
-        client.x + at(PAD),
-        client.y + at(PAD + 80),
-        client.width - 2 * at(PAD),
-        at(PROMPT_LINES as i32 * LINE_H),
-    );
-    let (bw, bh) = (at(BUTTON_W), at(BUTTON_H));
-    let by = client.bottom() - at(PAD) - bh;
-    let cancel = Rect::new(client.right() - at(PAD) - bw, by, bw, bh);
-    let ok = Rect::new(cancel.x - at(6) - bw, by, bw, bh);
-    let switch_user = switch_user.then(|| Rect::new(client.x + at(PAD), by, bw, bh));
-    let badge = theme.icon_size();
-    let layout = Rect::new(
-        cancel.right() - badge,
-        message.bottom() - badge,
-        badge,
-        badge,
-    );
-    let size = match frame {
-        Some(g) => g.total,
-        None => (DIALOG_W * s + grow.0, DIALOG_H * s + grow.1),
-    };
-    DialogLayout {
-        size,
-        frame,
-        caption,
-        user_box,
-        field,
-        message,
-        ok,
-        cancel,
-        switch_user,
-        layout,
-    }
-}
-
-const TITLE: &str = "Unlock Computer";
-
-/// The "Unlock Computer" dialog: a raised window frame with an
-/// active caption, two labelled rows, a message line and OK / Cancel.
-/// A styled look draws the frame and caption through the style, with
-/// `icon` (the lock icon at the theme's icon size) in the caption.
-pub fn draw_dialog(
-    theme: &Theme,
-    text: &TextRenderer,
-    icon: Option<&Canvas>,
-    user: &str,
-    state: &LockState,
-) -> Canvas {
-    let l = dialog_layout(theme, state.switch_user);
-    let (w, h) = l.size;
-    let mut c = Canvas::new(w.max(1) as u32, h.max(1) as u32);
-    match &l.frame {
-        Some(g) => {
-            let frame = FrameState {
-                title: TITLE,
-                active: true,
-                maximized: false,
-                pressed: None,
-                glow: reprisekit::frame::Glow::lit(None),
-                icon,
-                tabbed: false,
-            };
-            reprisekit::look::draw_dialog_frame(&mut c, theme, text, g, &frame, None);
-        }
-        None => draw_classic_frame(&mut c, theme, text, &l),
-    }
-    draw_body(&mut c, theme, text, &l, user, state);
-    c
-}
-
-fn draw_classic_frame(c: &mut Canvas, theme: &Theme, text: &TextRenderer, l: &DialogLayout) {
-    let s = theme.scale.max(1);
-    let cs = &theme.colors;
-    let px = theme.fonts.size_px;
-    let all = Rect::new(0, 0, l.size.0, l.size.1);
-    c.fill_rect(all, cs.button_face);
-    c.edge_t(all, EdgeStyle::WindowRaised, cs, s);
-
-    // The caption has no buttons, so the gradient's ramp is the whole
-    // band less 4 px (see `reprisekit::classic::widgets::caption_ramp`).
-    c.fill_rect(l.caption, cs.gradient_active_title);
-    c.hgradient_stepped(
-        Rect::new(
-            l.caption.x,
-            l.caption.y,
-            reprisekit::classic::widgets::caption_ramp(l.caption.width, 0, s),
-            l.caption.height,
-        ),
-        cs.active_title,
-        cs.gradient_active_title,
-    );
-    let title = Rect::new(
-        l.caption.x + 4 * s,
-        l.caption.y,
-        l.caption.width - 8 * s,
-        l.caption.height,
-    );
-    text.draw(c, title, TITLE, true, cs.title_text, Align::Left, px);
-}
-
-fn draw_body(
-    c: &mut Canvas,
-    theme: &Theme,
-    text: &TextRenderer,
-    l: &DialogLayout,
-    user: &str,
-    state: &LockState,
-) {
-    let s = theme.scale.max(1);
-    let cs = &theme.colors;
-    let px = theme.fonts.size_px;
-    let at = |v: i32| theme.text.len(v) * s;
-    let label_x = l.caption.x + at(PAD);
-    let body_y = l.caption.bottom() + at(PAD);
-    let line = Rect::new(label_x, body_y, l.size.0 - 2 * label_x, at(16));
-    text.draw(
-        c,
-        line,
-        "This computer is in use and has been locked.",
-        false,
-        cs.button_text,
-        Align::Left,
-        px,
-    );
-
-    let label = |c: &mut Canvas, r: Rect, s_: &str| {
-        text.draw(
-            c,
-            Rect::new(label_x, r.y, at(LABEL_W), r.height),
-            s_,
-            false,
-            cs.button_text,
-            Align::Left,
-            px,
-        );
-    };
-    // A styled look frames both fields with its edit border; Classic
-    // keeps a thin sunken ring.
-    let field = |c: &mut Canvas, r: Rect, fill: Color, focused: bool| {
-        if theme.look.style().is_some() {
-            draw_edit_field(c, &theme.paint(), r, fill, focused, Interaction::Idle);
-        } else {
-            c.fill_rect(r, fill);
-            c.edge_t(r, EdgeStyle::ThinSunken, cs, s);
-        }
-    };
-    label(c, l.user_box, "User name:");
-    // The user name is shown, not typed: its field stays face.
-    field(c, l.user_box, cs.button_face, false);
-    text.draw(
-        c,
-        l.user_box.inset(3 * s),
-        user,
-        false,
-        cs.button_text,
-        Align::Left,
-        px,
-    );
-
-    let prompt = state.prompt.as_ref();
-    let name = prompt.map_or("Password:", |p| p.text.as_str());
-    label(c, l.field, &text.ellipsize(name, at(LABEL_W), false, px));
-    field(c, l.field, cs.window, true);
-    let shown: std::borrow::Cow<str> = match prompt {
-        Some(p) if p.echo => state.input.as_str().into(),
-        _ => "*".repeat(state.input.chars().count()).into(),
-    };
-    text.draw(
-        c,
-        l.field.inset(3 * s),
-        &shown,
-        false,
-        cs.button_text,
-        Align::Left,
-        px,
-    );
-
-    let msg = if state.verifying {
-        Some("Verifying...")
-    } else {
-        (state.message.as_deref())
-            .or(prompt.map(|p| p.text.as_str()))
-            .or(state.finger.as_deref())
-    };
-    let width = match &state.layout {
-        Some(_) => l.layout.x - at(6) - l.message.x,
-        None => l.message.width,
-    };
-    let mut lines = Vec::new();
-    if state.caps_lock {
-        lines.push(text.ellipsize(CAPS_LOCK, width, false, px).into_owned());
-    }
-    if let Some(msg) = msg {
-        let room = PROMPT_LINES - lines.len();
-        lines.extend(message_lines(text, msg, width, px, room));
-    }
-    for (i, line) in lines.iter().enumerate() {
-        let line_h = at(LINE_H);
-        let r = Rect::new(l.message.x, l.message.y + i as i32 * line_h, width, line_h);
-        text.draw(c, r, line, false, cs.button_text, Align::Left, px);
-    }
-    if let Some(short) = &state.layout {
-        let badge = indicator::draw_layout(text, cs, short, l.layout.width, px);
-        c.blit_canvas(l.layout.x, l.layout.y, &badge);
-    }
-
-    let switch_user =
-        (l.switch_user).map(|r| (r, reprisekit::powerpanel::Choice::SwitchUser.label()));
-    let buttons = [(l.ok, "OK".to_string()), (l.cancel, "Cancel".to_string())];
-    for (r, caption) in buttons.into_iter().chain(switch_user) {
-        draw_button(
-            c,
-            text,
-            &theme.paint(),
-            r,
-            &caption,
-            false,
-            Interaction::Idle,
-            true,
-            false,
-            px,
-        );
-    }
-}
-
-/// `msg` wrapped to `width`, cut to `room` lines, with "..." closing the
-/// last line when text was cut and on any line still too wide.
-fn message_lines(text: &TextRenderer, msg: &str, width: i32, px: u32, room: usize) -> Vec<String> {
-    let mut lines = crate::text::wrap(text, msg, width, px);
-    if lines.len() > room {
-        lines.truncate(room);
-        let Some(last) = lines.last_mut() else {
-            return lines;
-        };
-        while text.measure(&format!("{last}..."), false, px) > width && last.pop().is_some() {}
-        last.truncate(last.trim_end().len());
-        last.push_str("...");
-    }
-    lines
-        .iter()
-        .map(|l| text.ellipsize(l, width, false, px).into_owned())
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     #[test]
@@ -943,15 +459,6 @@ mod tests {
             "Too many incorrect passwords. Wait 2 seconds and retry."
         );
         assert!(backoff_text(Duration::from_millis(200)).contains("Wait 1 second and"));
-    }
-
-    #[test]
-    fn debug_redacts_the_password() {
-        let mut st = super::LockState::new();
-        st.input.push_str("hunter2");
-        let shown = format!("{st:?}");
-        assert!(!shown.contains("hunter2"), "{shown}");
-        assert!(shown.contains("<7 chars>"), "{shown}");
     }
 
     use super::*;
@@ -1011,107 +518,34 @@ mod tests {
         );
     }
 
-    #[test]
-    fn typing_backspace_and_escape_edit_the_field() {
-        let mut s = LockState::new();
-        assert!(!s.key(LockKey::Text("ab")));
-        assert!(!s.key(LockKey::Text("c")));
-        assert_eq!(s.input, "abc");
-        assert!(!s.key(LockKey::Backspace));
-        assert_eq!(s.input, "ab");
-        s.message = Some(INCORRECT.into());
-        assert!(!s.key(LockKey::Escape));
-        assert_eq!(s.input, "");
-        // Escape also dismisses a stale failure message.
-        assert_eq!(s.message, None);
-        // Backspace on an empty field is harmless.
-        assert!(!s.key(LockKey::Backspace));
-    }
-
-    #[test]
-    fn enter_and_ok_submit_only_a_non_empty_field() {
-        let mut s = LockState::new();
-        assert!(!s.key(LockKey::Enter));
-        assert!(!s.button(LockButton::Ok));
-        s.key(LockKey::Text("x"));
-        assert!(s.key(LockKey::Enter));
-        assert!(s.button(LockButton::Ok));
-        // Cancel clears and never submits.
-        assert!(!s.button(LockButton::Cancel));
-        assert_eq!(s.input, "");
-    }
-
-    #[test]
-    fn input_is_ignored_while_verifying() {
-        let mut s = LockState::new();
-        s.key(LockKey::Text("x"));
-        s.verifying = true;
-        assert!(!s.key(LockKey::Text("y")));
-        assert!(!s.key(LockKey::Enter));
-        assert!(!s.button(LockButton::Ok));
-        assert_eq!(s.input, "x");
-    }
-
-    #[test]
-    fn fail_clears_input_and_sets_the_message() {
-        let mut s = LockState::new();
-        s.key(LockKey::Text("secret"));
-        s.verifying = true;
-        s.fail_with(INCORRECT);
-        assert_eq!(s.input, "");
-        assert!(!s.verifying);
-        assert_eq!(s.message.as_deref(), Some(INCORRECT));
-    }
-
-    #[test]
-    fn the_field_keeps_its_reserved_capacity() {
-        let mut s = LockState::new();
-        assert!(s.input.capacity() >= INPUT_CAPACITY);
-        s.key(LockKey::Text(&"x".repeat(300)));
-        s.key(LockKey::Escape);
-        assert_eq!(s.input, "");
-        assert!(s.input.capacity() >= INPUT_CAPACITY);
-        s.key(LockKey::Text(&"y".repeat(300)));
-        s.fail_with(INCORRECT);
-        assert!(s.input.capacity() >= INPUT_CAPACITY);
-        s.key(LockKey::Text("hunter2"));
-        assert_eq!(*s.take_input(), "hunter2");
-        assert!(s.input.capacity() >= INPUT_CAPACITY);
-    }
-
-    #[test]
-    fn typing_past_the_reservation_is_refused() {
-        let mut s = LockState::new();
-        let buf = s.input.as_ptr();
-        s.key(LockKey::Text(&"x".repeat(INPUT_CAPACITY - 1)));
-        // Two bytes would end past the reservation, so none of it is kept.
-        s.key(LockKey::Text("\u{e9}"));
-        assert_eq!(s.input.len(), INPUT_CAPACITY - 1);
-        s.key(LockKey::Text("y"));
-        s.key(LockKey::Text("z"));
-        assert_eq!(s.input.len(), INPUT_CAPACITY);
-        assert!(s.input.ends_with('y'));
-        assert_eq!(s.input.as_ptr(), buf);
+    fn screen() -> Logon {
+        let user = reprisekit::logon::LogonUser {
+            name: "someone".into(),
+            real_name: String::new(),
+            picture: None,
+            note: None,
+        };
+        Logon::locked(reprisekit::interface::Interface::Classic, user, false)
     }
 
     #[test]
     fn the_finger_prompt_shows_until_pam_answers_and_only_success_unlocks() {
         use crate::lockfinger::Line;
-        let mut s = LockState::new();
-        s.key(LockKey::Text("hunt"));
+        let mut m = screen();
+        m.key(reprisekit::logon::LogonKey::Text("hunt"));
         let prompt = "Place your finger on the fingerprint reader";
-        assert!(!s.finger(Line::Info(prompt.into())));
-        assert_eq!(s.finger.as_deref(), Some(prompt));
-        assert_eq!(s.message, None);
-        // A miss says so and keeps what was typed.
-        assert!(!s.finger(Line::Error("Failed to match fingerprint".into())));
-        assert_eq!(s.message.as_deref(), Some("Failed to match fingerprint"));
-        assert_eq!(s.input, "hunt");
-        // Escape clears the note; the standing prompt shows again.
-        s.key(LockKey::Escape);
-        assert_eq!(s.message, None);
-        assert_eq!(s.finger.as_deref(), Some(prompt));
-        assert!(s.finger(Line::Result(ffi::PAM_SUCCESS)));
+        assert!(!finger(&mut m, Line::Info(prompt.into())));
+        assert_eq!(m.said().as_deref(), Some(prompt));
+        assert_eq!(m.message, None);
+        assert!(!finger(
+            &mut m,
+            Line::Error("Failed to match fingerprint".into())
+        ));
+        assert_eq!(m.message.as_deref(), Some("Failed to match fingerprint"));
+        assert_eq!(m.password.text, "hunt", "a miss keeps what was typed");
+        m.message = None;
+        assert_eq!(m.said().as_deref(), Some(prompt), "the prompt shows again");
+        assert!(finger(&mut m, Line::Result(ffi::PAM_SUCCESS)));
     }
 
     #[test]
@@ -1123,17 +557,20 @@ mod tests {
             ffi::PAM_CONV_ERR,
             -1,
         ] {
-            let mut s = LockState::new();
-            s.finger(Line::Info("Swipe your finger".into()));
-            assert!(!s.finger(Line::Result(rc)), "PAM code {rc} does not unlock");
-            assert_eq!(s.finger, None);
-            assert_eq!(s.message, None, "code {rc} adds no text of its own");
+            let mut m = screen();
+            finger(&mut m, Line::Info("Swipe your finger".into()));
+            assert!(
+                !finger(&mut m, Line::Result(rc)),
+                "PAM code {rc} does not unlock"
+            );
+            assert_eq!(m.hint, None);
+            assert_eq!(m.message, None, "code {rc} adds no text of its own");
         }
-        let mut s = LockState::new();
-        s.finger(Line::Info("Swipe your finger".into()));
-        assert!(!s.finger(Line::Result(ffi::PAM_MAXTRIES)));
-        assert_eq!(s.finger, None);
-        assert_eq!(s.message.as_deref(), Some(FINGER_TOO_MANY));
+        let mut m = screen();
+        finger(&mut m, Line::Info("Swipe your finger".into()));
+        assert!(!finger(&mut m, Line::Result(ffi::PAM_MAXTRIES)));
+        assert_eq!(m.hint, None);
+        assert_eq!(m.message.as_deref(), Some(FINGER_TOO_MANY));
     }
 
     #[test]
@@ -1331,512 +768,5 @@ mod tests {
         );
         // SAFETY: `handle` is live and not used after this call.
         assert_eq!(unsafe { ffi::pam_end(handle, rc) }, ffi::PAM_SUCCESS);
-    }
-
-    use crate::raster::Canvas;
-    use crate::text::TextRenderer;
-    use crate::theme::{FontConfig, Theme};
-
-    #[test]
-    fn dialog_layout_scales_with_theme() {
-        let t1 = Theme::default();
-        let l1 = dialog_layout(&t1, false);
-        assert_eq!(l1.size, (360, 180));
-        assert_eq!(l1.ok.width, 75);
-        assert_eq!(l1.ok.height, 23);
-        assert!(l1.ok.right() + 6 == l1.cancel.x);
-        assert!(l1.cancel.right() <= 360 - t1.metrics.frame_width);
-        assert!(l1.field.y > l1.user_box.bottom());
-        assert!(l1.message.y > l1.field.bottom());
-        assert!(l1.ok.y > l1.message.bottom());
-        let l2 = dialog_layout(&t1.scaled(2), false);
-        assert_eq!(l2.size, (720, 360));
-        assert_eq!(l2.ok, l1.ok.scaled(2));
-        assert_eq!(l2.field, l1.field.scaled(2));
-    }
-
-    #[test]
-    fn the_unlock_dialog_has_switch_user_only_when_linked() {
-        let theme = Theme::default();
-        let plain = dialog_layout(&theme, false);
-        let l = dialog_layout(&theme, true);
-        assert_eq!(plain.switch_user, None);
-        let r = l.switch_user.expect("Switch User under reprise-login");
-        assert_eq!((r.x, r.y, r.width, r.height), (l.message.x, l.ok.y, 75, 23));
-        assert!(r.right() < l.ok.x);
-        let others = DialogLayout {
-            switch_user: None,
-            ..l.clone()
-        };
-        assert_eq!(others, plain, "nothing else moves");
-        let l2 = dialog_layout(&theme.scaled(2), true);
-        assert_eq!(l2.switch_user, Some(r.scaled(2)));
-
-        let text = TextRenderer::load(&FontConfig::default());
-        let bg = theme.colors.button_face.argb();
-        let mut s = LockState::new();
-        let c = draw_dialog(&theme, &text, None, "someone", &s);
-        assert!(!has_ink(&c, r, bg), "no button without the link");
-        s.switch_user = true;
-        let c = draw_dialog(&theme, &text, None, "someone", &s);
-        assert!(has_ink(&c, r.inset(3), bg), "the label");
-        assert_eq!(c.get(r.x, r.y + 5), theme.colors.button_hilight.argb());
-    }
-
-    #[test]
-    fn switch_user_dialog_pins_at_scale_1_and_2() {
-        reprisekit::pins::fonts();
-        let got = SWITCH_PINS.map(|(scale, _)| {
-            let theme = Theme::default().scaled(scale);
-            let text = TextRenderer::load(&theme.fonts);
-            let s = LockState {
-                switch_user: true,
-                ..LockState::new()
-            };
-            (scale, fnv(&draw_dialog(&theme, &text, None, "someone", &s)))
-        });
-        assert!(
-            got == SWITCH_PINS,
-            "pins changed; now:\n{}",
-            got.map(|(s, h)| format!("({s}, {h:#018x}),")).join("\n")
-        );
-    }
-
-    const SWITCH_PINS: [(i32, u64); 2] = [(1, 0xd858362cbb3e3958), (2, 0x919c472d738423eb)];
-
-    fn has_ink(c: &Canvas, r: crate::raster::Rect, bg: u32) -> bool {
-        (r.x..r.right()).any(|x| (r.y..r.bottom()).any(|y| c.get(x, y) != bg))
-    }
-
-    #[test]
-    fn draw_dialog_shows_caption_and_asterisks() {
-        let theme = Theme::default();
-        let text = TextRenderer::load(&FontConfig::default());
-        let l = dialog_layout(&theme, false);
-        let mut s = LockState::new();
-        let c = draw_dialog(&theme, &text, None, "someone", &s);
-        assert_eq!(c.width as i32, l.size.0);
-        assert_eq!(c.height as i32, l.size.1);
-        // Caption gradient starts with the active title color.
-        assert_eq!(
-            c.get(l.caption.x, l.caption.y + 2),
-            theme.colors.active_title.argb()
-        );
-        // Empty field: white interior only.
-        let inner = l.field.inset(2);
-        assert!(!has_ink(&c, inner, theme.colors.window.argb()));
-        s.key(LockKey::Text("abc"));
-        let c = draw_dialog(&theme, &text, None, "someone", &s);
-        assert!(has_ink(&c, inner, theme.colors.window.argb()));
-        // OK button is raised: left column hilight.
-        assert_eq!(
-            c.get(l.ok.x, l.ok.y + 5),
-            theme.colors.button_hilight.argb()
-        );
-    }
-
-    #[test]
-    fn draw_dialog_field_text_clears_the_sunken_ring_at_scale_4() {
-        // `edge_t` draws the field's sunken ring `s` px thick; the text rect
-        // must inset by `3 * s`, not a fixed 3 px, or at scale >= 4 the text
-        // starts on top of the ring instead of inside it.
-        let theme = Theme::default().scaled(4);
-        let text = TextRenderer::load(&theme.fonts);
-        let l = dialog_layout(&theme, false);
-        let s = LockState::new();
-        let c = draw_dialog(&theme, &text, None, "someone", &s);
-        let scale = theme.scale;
-        assert_eq!(
-            c.get(l.field.x + 4 * scale, l.field.y + l.field.height / 2),
-            theme.colors.window.argb()
-        );
-    }
-
-    #[test]
-    fn a_long_message_is_cut_to_two_lines_that_fit_the_area() {
-        let text = TextRenderer::load(&FontConfig::default());
-        let w = dialog_layout(&Theme::default(), false).message.width;
-        let one = message_lines(&text, INCORRECT, w, 11, PROMPT_LINES);
-        assert_eq!(one, [INCORRECT]);
-        let long = format!(
-            "{}\n{}",
-            "word ".repeat(40),
-            "y".repeat(repriselogin::PROMPT_CHARS)
-        );
-        let lines = message_lines(&text, &long, w, 11, PROMPT_LINES);
-        assert_eq!(lines.len(), PROMPT_LINES);
-        assert!(lines[1].ends_with("..."), "{lines:?}");
-        assert!(
-            lines.iter().all(|l| text.measure(l, false, 11) <= w),
-            "{lines:?}"
-        );
-    }
-
-    #[test]
-    fn two_message_lines_end_above_the_buttons() {
-        let theme = Theme::default();
-        let text = TextRenderer::load(&FontConfig::default());
-        let l = dialog_layout(&theme, false);
-        assert!(l.message.bottom() < l.ok.y);
-        let mut s = LockState::new();
-        s.fail_with("The account is locked due to 3 failed logins.\n(10 minutes left to unlock)");
-        let c = draw_dialog(&theme, &text, None, "someone", &s);
-        let bg = theme.colors.button_face.argb();
-        let half = l.message.height / 2;
-        let top = Rect::new(l.message.x, l.message.y, l.message.width, half);
-        let bottom = Rect::new(l.message.x, l.message.y + half, l.message.width, half);
-        assert!(has_ink(&c, top, bg) && has_ink(&c, bottom, bg));
-    }
-
-    #[test]
-    fn draw_dialog_message_and_verifying() {
-        let theme = Theme::default();
-        let text = TextRenderer::load(&FontConfig::default());
-        let l = dialog_layout(&theme, false);
-        let bg = theme.colors.button_face.argb();
-        let s = LockState::new();
-        let c = draw_dialog(&theme, &text, None, "someone", &s);
-        assert!(!has_ink(&c, l.message, bg));
-        let mut s = LockState::new();
-        s.fail_with(INCORRECT);
-        let c = draw_dialog(&theme, &text, None, "someone", &s);
-        assert!(has_ink(&c, l.message, bg));
-        let mut s = LockState::new();
-        s.verifying = true;
-        let c = draw_dialog(&theme, &text, None, "someone", &s);
-        assert!(has_ink(&c, l.message, bg));
-        // The reader's standing prompt fills an empty message area.
-        let mut s = LockState::new();
-        s.finger(crate::lockfinger::Line::Info("Place your finger".into()));
-        let c = draw_dialog(&theme, &text, None, "someone", &s);
-        assert!(has_ink(&c, l.message, bg));
-    }
-
-    /// A further prompt labels the field with its text, fills the empty
-    /// message area with it, and an echoed one shows the answer as typed.
-    #[test]
-    fn a_further_prompt_relabels_the_field() {
-        let theme = Theme::default();
-        let text = TextRenderer::load(&FontConfig::default());
-        let l = dialog_layout(&theme, false);
-        let s_ = theme.scale;
-        let label = Rect::new(l.caption.x + PAD, l.field.y, LABEL_W, l.field.height);
-        let pixels = |c: &Canvas, r: Rect| -> Vec<u32> {
-            (r.y..r.bottom())
-                .flat_map(|y| (r.x..r.right()).map(move |x| (x, y)))
-                .map(|(x, y)| c.get(x, y))
-                .collect()
-        };
-        let mut s = LockState::new();
-        s.key(LockKey::Text("1234"));
-        let password = draw_dialog(&theme, &text, None, "someone", &s);
-        s.ask(Prompt {
-            text: "Code:".into(),
-            echo: false,
-        });
-        assert_eq!(s.input, "", "the field is cleared for the answer");
-        s.key(LockKey::Text("1234"));
-        let blind = draw_dialog(&theme, &text, None, "someone", &s);
-        assert_ne!(
-            pixels(&password, label),
-            pixels(&blind, label),
-            "the label is the prompt's"
-        );
-        let inside = l.field.inset(3 * s_);
-        assert_eq!(
-            pixels(&password, inside),
-            pixels(&blind, inside),
-            "a blind answer shows stars"
-        );
-        assert!(has_ink(&blind, l.message, theme.colors.button_face.argb()));
-        s.prompt.as_mut().unwrap().echo = true;
-        let echoed = draw_dialog(&theme, &text, None, "someone", &s);
-        assert_ne!(
-            pixels(&blind, inside),
-            pixels(&echoed, inside),
-            "an echoed answer shows as typed"
-        );
-        s.fail_with(INCORRECT);
-        assert_eq!(s.prompt, None, "a verdict ends the prompt");
-    }
-
-    fn fnv(c: &Canvas) -> u64 {
-        [c.width, c.height].iter().chain(c.pixels.iter()).fold(
-            0xcbf2_9ce4_8422_2325_u64,
-            |h, &p| {
-                p.to_le_bytes().iter().fold(h, |h, &b| {
-                    (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
-                })
-            },
-        )
-    }
-
-    /// Caps Lock puts its notice on the message area's first line, under
-    /// the field, and leaves one line to the message.
-    #[test]
-    fn caps_lock_shows_a_notice_under_the_field() {
-        let theme = Theme::default();
-        let text = TextRenderer::load(&FontConfig::default());
-        let l = dialog_layout(&theme, false);
-        let bg = theme.colors.button_face.argb();
-        let line_h = LINE_H;
-        let first = Rect::new(l.message.x, l.message.y, l.message.width, line_h);
-        let second = Rect::new(l.message.x, l.message.y + line_h, l.message.width, line_h);
-        let mut s = LockState::new();
-        s.caps_lock = true;
-        let c = draw_dialog(&theme, &text, None, "someone", &s);
-        assert!(has_ink(&c, first, bg) && !has_ink(&c, second, bg));
-        s.fail_with(&format!("{}\n{}", "word ".repeat(40), "more"));
-        let c = draw_dialog(&theme, &text, None, "someone", &s);
-        assert!(has_ink(&c, second, bg), "the message keeps the second line");
-        let lines = message_lines(&text, s.message.as_deref().unwrap(), l.message.width, 11, 1);
-        assert_eq!(lines.len(), 1);
-        assert!(lines[0].ends_with("..."), "{lines:?}");
-    }
-
-    #[test]
-    fn caps_lock_dialog_pins_at_scale_1_and_2() {
-        reprisekit::pins::fonts();
-        let got = CAPS_PINS.map(|(scale, _)| {
-            let theme = Theme::default().scaled(scale);
-            let text = TextRenderer::load(&theme.fonts);
-            let mut s = LockState::new();
-            s.caps_lock = true;
-            s.key(LockKey::Text("abc"));
-            (scale, fnv(&draw_dialog(&theme, &text, None, "someone", &s)))
-        });
-        assert!(
-            got == CAPS_PINS,
-            "pins changed; now:\n{}",
-            got.map(|(s, h)| format!("({s}, {h:#018x}),")).join("\n")
-        );
-    }
-
-    const CAPS_PINS: [(i32, u64); 2] = [(1, 0x57f830b0b53ffdfc), (2, 0x68c13bf424ad086b)];
-
-    fn blue() -> Theme {
-        reprisekit::interfaces::theme_for(reprisekit::interface::Interface::Blue)
-    }
-
-    /// The layout badge sits at the message area's bottom-right, above
-    /// Cancel, in the taskbar cell's highlight in every look; the message
-    /// wraps short of it.
-    #[test]
-    fn the_layout_badge_fills_its_corner_only_when_set() {
-        assert_eq!(
-            dialog_layout(&Theme::default(), false).layout,
-            Rect::new(328, 124, 16, 16)
-        );
-        let glass = reprisekit::interfaces::theme_for(reprisekit::interface::Interface::Glass);
-        for look in [Theme::default(), blue(), glass] {
-            for scale in [1, 2] {
-                let theme = look.scaled(scale);
-                let text = TextRenderer::load(&theme.fonts);
-                let l = dialog_layout(&theme, false);
-                assert_eq!(l.layout.right(), l.cancel.right());
-                assert_eq!(l.layout.bottom(), l.message.bottom());
-                assert!(l.layout.bottom() <= l.cancel.y);
-                let mut s = LockState::new();
-                let without = draw_dialog(&theme, &text, None, "someone", &s);
-                s.layout = Some("EN".into());
-                let with = draw_dialog(&theme, &text, None, "someone", &s);
-                let hilight = theme.colors.hilight.argb();
-                let r = l.layout;
-                for (x, y) in [(r.x, r.y), (r.right() - 1, r.bottom() - 1)] {
-                    assert_eq!(with.get(x, y), hilight, "badge corner at {scale}x");
-                    assert_ne!(without.get(x, y), hilight, "no badge at {scale}x");
-                }
-                let outside = (0..with.height as i32)
-                    .flat_map(|y| (0..with.width as i32).map(move |x| (x, y)))
-                    .filter(|&(x, y)| !r.contains(x, y))
-                    .all(|(x, y)| with.get(x, y) == without.get(x, y));
-                assert!(outside, "the badge draws inside its rect at {scale}x");
-            }
-        }
-        let theme = Theme::default();
-        let text = TextRenderer::load(&theme.fonts);
-        let l = dialog_layout(&theme, false);
-        let mut s = LockState::new();
-        s.layout = Some("EN".into());
-        s.fail_with(&"word ".repeat(80));
-        let c = draw_dialog(&theme, &text, None, "someone", &s);
-        let gap = Rect::new(l.layout.x - 6, l.message.y, 6, l.message.height);
-        assert!(!has_ink(&c, gap, theme.colors.button_face.argb()));
-    }
-
-    /// Under Blue the dialog's caption is the style's 26 px band inside a
-    /// 3 px border, with no caption buttons, and the body keeps Classic's
-    /// client area: it sits 1 px left and 7 px lower in a dialog 2 px
-    /// narrower and 6 px taller. Scale 2 doubles every rect.
-    #[test]
-    fn a_blue_unlock_dialog_takes_the_styles_frame() {
-        let classic = dialog_layout(&Theme::default(), false);
-        let blue = blue();
-        let l = dialog_layout(&blue, false);
-        let frame = l.frame.expect("a styled look lays out a frame");
-        assert_eq!(l.size, (358, 186));
-        assert_eq!(l.caption, Rect::new(3, 3, 352, 26));
-        assert_eq!(frame.client, Rect::new(3, 29, 352, 154));
-        assert_eq!(frame.chrome.buttons, ButtonSet::None);
-        let mv = |r: Rect| Rect::new(r.x - 1, r.y + 7, r.width, r.height);
-        assert_eq!(l.user_box, mv(classic.user_box));
-        assert_eq!(l.field, mv(classic.field));
-        assert_eq!(l.message, mv(classic.message));
-        assert_eq!(l.ok, mv(classic.ok));
-        assert_eq!(l.cancel, mv(classic.cancel));
-        assert_eq!(classic.frame, None);
-        let l2 = dialog_layout(&blue.scaled(2), false);
-        assert_eq!(l2.size, (716, 372));
-        assert_eq!(l2.caption, l.caption.scaled(2));
-        assert_eq!(l2.ok, l.ok.scaled(2));
-        assert_eq!(l2.cancel, l.cancel.scaled(2));
-    }
-
-    /// Blue draws the caption band with the style's Caption part, active,
-    /// and the body on button face under it, with OK a Blue push button.
-    #[test]
-    fn a_blue_unlock_caption_is_the_styles_caption() {
-        use reprisekit::style::{Part, State};
-        let blue = blue();
-        let text = TextRenderer::load(&blue.fonts);
-        let l = dialog_layout(&blue, false);
-        let c = draw_dialog(&blue, &text, None, "someone", &LockState::new());
-        assert_eq!((c.width as i32, c.height as i32), l.size);
-        let top = Rect::new(0, 0, l.size.0, l.caption.bottom());
-        let mut want = Canvas::new(l.size.0 as u32, top.height as u32);
-        blue.look
-            .style()
-            .unwrap()
-            .draw(&mut want, top, Part::Caption, State::Normal, 1);
-        // Above the icon, past the title, and near the right end, where a
-        // dialog's close box would sit.
-        for (x, y) in [(12, 2), (200, 15), (l.caption.right() - 12, 15)] {
-            assert_eq!(c.get(x, y), want.get(x, y), "caption pixel ({x}, {y})");
-        }
-        assert_eq!(
-            c.get(l.caption.x + 5, l.caption.bottom() + 2),
-            blue.colors.button_face.argb(),
-            "the body is button face"
-        );
-        let mut button = Canvas::new(l.ok.width as u32, l.ok.height as u32);
-        let whole = button.bounds();
-        button.fill_rect(whole, blue.colors.button_face);
-        blue.look
-            .style()
-            .unwrap()
-            .draw(&mut button, whole, Part::PushButton, State::Normal, 1);
-        assert_eq!(
-            c.get(l.ok.x + 1, l.ok.y + 5),
-            button.get(1, 5),
-            "OK is the style's push button: its left border"
-        );
-    }
-
-    /// Under Blue both fields take the style's 1 px edit border:
-    /// the password field is window white inside it, the user name field
-    /// face. The caption shows the lock icon as given, 16x16.
-    #[test]
-    fn a_blue_unlock_dialog_frames_its_fields_with_the_edit_border_and_shows_its_icon() {
-        let blue = blue();
-        let text = TextRenderer::load(&blue.fonts);
-        let l = dialog_layout(&blue, false);
-        let line = reprisekit::blue::Variant::Blue
-            .scheme()
-            .edit_border
-            .normal
-            .rim
-            .argb();
-        let mut icon = Canvas::new(16, 16);
-        icon.fill_rect(icon.bounds(), Color::rgb(0xFF, 0x00, 0xFF));
-        let c = draw_dialog(&blue, &text, Some(&icon), "someone", &LockState::new());
-        for (r, inside, what) in [
-            (l.field, blue.colors.window, "password"),
-            (l.user_box, blue.colors.button_face, "user name"),
-        ] {
-            let y = r.y + r.height / 2;
-            assert_eq!(c.get(r.x, y), line, "{what} left edge is the edit line");
-            assert_eq!(
-                c.get(r.right() - 1, y),
-                line,
-                "{what} right edge is the edit line"
-            );
-            assert_eq!(
-                c.get(r.x + 1, y),
-                inside.argb(),
-                "{what} is {:08X} inside the border",
-                inside.argb()
-            );
-        }
-        let magenta = (l.caption.y..l.caption.bottom())
-            .flat_map(|y| (l.caption.x..l.caption.right()).map(move |x| (x, y)))
-            .filter(|&(x, y)| c.get(x, y) == 0xFFFF_00FF)
-            .count();
-        assert_eq!(magenta, 256, "the caption shows the 16x16 icon unscaled");
-    }
-
-    /// Renders the Unlock dialog (and under Blue) to `target/lock-preview.png` for eyeballing: `cargo test render_lock_preview -- --ignored`.
-    #[test]
-    #[ignore]
-    fn render_lock_preview() {
-        let blue = reprisekit::interfaces::theme_for(reprisekit::interface::Interface::Blue);
-        for (theme, file) in [
-            (Theme::default(), "lock-preview.png"),
-            (blue, "lock-blue-preview.png"),
-        ] {
-            let mut failed = LockState::new();
-            failed.key(LockKey::Text("secret"));
-            failed.fail_with(INCORRECT);
-            let mut caps = LockState::new();
-            caps.caps_lock = true;
-            caps.fail_with(INCORRECT);
-            let empty = LockState::new();
-            let canvases: Vec<Canvas> = [(1, &empty), (1, &failed), (1, &caps), (2, &empty)]
-                .into_iter()
-                .map(|(scale, state)| {
-                    let t = theme.scaled(scale);
-                    let text = TextRenderer::load(&t.fonts);
-                    draw_dialog(&t, &text, None, "someone", state)
-                })
-                .collect();
-            let gap = 8;
-            let w = canvases.iter().map(|c| c.width).max().unwrap() as i32 + 2 * gap;
-            let h: i32 = canvases.iter().map(|c| c.height as i32 + gap).sum::<i32>() + gap;
-            let mut out = Canvas::new(w as u32, h as u32);
-            out.fill_rect(out.bounds(), theme.colors.background);
-            let mut y = gap;
-            for c in &canvases {
-                out.blit_canvas(gap, y, c);
-                y += c.height as i32 + gap;
-            }
-            reprisekit::raster::write_preview(&out, file);
-        }
-    }
-
-    /// At 150% and 200% the dialog's client grows with the text: the rows hold a grown line, the
-    /// message clears the buttons, and every part sits inside the dialog. 100% is the 360x180
-    /// dialog.
-    #[test]
-    fn the_dialog_grows_with_the_text_size() {
-        assert_eq!(
-            dialog_layout(&Theme::default(), false).size,
-            (DIALOG_W, DIALOG_H)
-        );
-        for pct in [150, 200] {
-            let theme = Theme::default().with_text_size(pct);
-            let l = dialog_layout(&theme, false);
-            let px = theme.fonts.size_px as i32;
-            assert!(l.field.height >= px + 4, "{pct}%");
-            assert!(l.user_box.bottom() <= l.field.y, "{pct}%");
-            assert!(l.field.bottom() <= l.message.y, "{pct}%");
-            assert!(
-                l.message.bottom() <= l.ok.y,
-                "{pct}%: the message clears the buttons"
-            );
-            assert!(
-                l.cancel.right() <= l.size.0 && l.cancel.bottom() <= l.size.1,
-                "{pct}%"
-            );
-            assert!(l.caption.bottom() <= l.user_box.y, "{pct}%");
-        }
     }
 }

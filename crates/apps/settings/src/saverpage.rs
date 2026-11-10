@@ -54,7 +54,7 @@ pub fn page(a: Area) -> Form {
 
     items.push(Item::group(
         "lock_group",
-        Rect::new(X, 222, a.w, 160),
+        Rect::new(X, 222, a.w, 138),
         "Lock",
     ));
     let gw = a.gw();
@@ -85,30 +85,24 @@ pub fn page(a: Area) -> Form {
         290,
         "Lock the computer when it goes to &sleep",
     ));
-    items.push(Item::check(
-        "lock_wallpaper",
-        GX,
-        312,
-        "Show the wallpaper on the lock scree&n",
-    ));
     items.push(Item::label_at(
         "away_label",
         GX,
-        334,
+        312,
         gw,
         "Lock when this device &disconnects:",
     ));
-    items.push(Item::combo(AWAY, GX, 350, 150, &[NONE_ROW], AWAY_ROWS));
+    items.push(Item::combo(AWAY, GX, 328, 150, &[NONE_ROW], AWAY_ROWS));
     items.extend(spin(
         "away_after_label",
         AWAY_AFTER,
         GX + 160,
-        354,
+        332,
         40,
         "Aft&er:",
         (0, 3600),
     ));
-    items.push(Item::label_at("away_units", GX + 260, 354, 60, "seconds"));
+    items.push(Item::label_at("away_units", GX + 260, 332, 60, "seconds"));
     Form::new(items)
 }
 

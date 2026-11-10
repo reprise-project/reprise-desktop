@@ -171,7 +171,7 @@ fn after_a_console_unlock_the_console_keyboard_reaches_windows_again() {
 /// A fingerprint read at the computer, its conversation run.
 fn finger_at_the_computer(h: &mut Harness) {
     h.state.lock.helpers.finger = |_| Some(sh("echo '= 0'"));
-    crate::lockview::start_dialog_finger(&mut h.state);
+    crate::lockview::start_screen_finger(&mut h.state);
     let end = std::time::Instant::now() + std::time::Duration::from_secs(5);
     while h.state.console_locked() {
         assert!(std::time::Instant::now() < end, "the fingerprint is read");

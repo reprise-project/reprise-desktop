@@ -1052,7 +1052,7 @@ impl State {
     }
 
     /// A press on the lock screen at `at` (layout): a click in the lock water there unless the
-    /// dialog is over it.
+    /// screen's parts are over it.
     pub fn water_lock_click(&mut self, at: Point<f64, Logical>) {
         if !self.water_on() {
             return;
@@ -1074,9 +1074,7 @@ impl State {
     fn lock_splash_at(&self, at: Point<f64, Logical>) -> Option<Output> {
         let out = self.output_at(at.x, at.y)?;
         let l = self.lock.covering(&out)?;
-        let lo = l.outputs.iter().find(|lo| lo.output == out)?;
-        let dialog = l.dialog_shown().then_some(lo.dialog_rect);
-        lock_splash_allowed(dialog, (at.x, at.y)).then_some(out)
+        crate::lockview::splashes(l, at).then_some(out)
     }
 
     /// Give `out`'s lock cover its water: the lock pane, and its node in the cover's `tree` just
@@ -1408,11 +1406,6 @@ impl EdgeDrag {
     }
 }
 
-/// Only beside the built-in dialog; None (a locker holds the lock or is starting) keeps it still.
-fn lock_splash_allowed(dialog: Option<Rect>, at: (f64, f64)) -> bool {
-    dialog.is_some_and(|d| !d.contains(at.0.floor() as i32, at.1.floor() as i32))
-}
-
 /// `pos` (layout) in logical px of the output at `b`.
 fn local(b: Rect, pos: Point<f64, Logical>) -> (f32, f32) {
     (
@@ -1674,23 +1667,6 @@ mod tests {
         let panes = ctx.panes.borrow();
         let q = &panes[&("DP-1".to_string(), Pane::Desktop)].queue;
         assert_eq!(q.len(), 1, "five frames' edges wait as one");
-    }
-
-    #[test]
-    fn the_lock_dialog_keeps_the_water_out() {
-        let dialog = Some(Rect::new(800, 400, 320, 200));
-        assert!(
-            !lock_splash_allowed(dialog, (900.0, 500.0)),
-            "over the dialog"
-        );
-        assert!(
-            lock_splash_allowed(dialog, (100.0, 100.0)),
-            "over the wallpaper"
-        );
-        assert!(
-            !lock_splash_allowed(None, (100.0, 100.0)),
-            "a locker's own screen has no water"
-        );
     }
 
     #[test]

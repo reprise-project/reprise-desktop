@@ -228,7 +228,6 @@ pub(super) fn fields() -> Vec<Field> {
         Field::Text(k("power", "reboot"), lens!(reboot)),
         Field::Text(k("power", "hibernate"), lens!(hibernate)),
         Field::Flag(k("power", "lock_on_sleep"), lens!(lock_on_sleep)),
-        Field::Flag(k("wallpaper", "lock_screen"), lens!(lock_wallpaper)),
         Field::Int(k("idle", "lock_after"), lens!(lock_after)),
         Field::Text(k("lock", "away_device"), lens!(away_device)),
         Field::Int(k("lock", "away_after_s"), lens!(away_after_s)),

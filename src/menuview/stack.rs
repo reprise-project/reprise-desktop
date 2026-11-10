@@ -117,11 +117,13 @@ impl State {
         kind: MenuKind,
         from: MenuFrom,
     ) {
-        // A balloon's reply field sits on the overlay layer: its edit menu goes there too.
+        // A balloon's reply field sits on the overlay layer: its edit menu goes there too. The
+        // lock's power menu goes over the lock's covers.
         let layer = match kind {
             MenuKind::Edit {
                 editor: crate::caret::Editor::NotifyReply,
             } => self.layers.overlay,
+            MenuKind::LockPower(_) => self.layers.lock,
             _ => self.layers.menu,
         };
         let scene = &mut self.scene;

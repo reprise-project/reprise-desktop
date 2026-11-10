@@ -526,14 +526,6 @@ fn the_start_menu_style_defaults_follow_the_interface() {
 }
 
 #[test]
-fn the_lock_screen_wallpaper_defaults_on_under_blue_and_glass() {
-    assert!(!Settings::for_interface("").lock_wallpaper);
-    assert!(!Settings::for_interface("classic").lock_wallpaper);
-    assert!(Settings::for_interface("blue").lock_wallpaper);
-    assert!(Settings::for_interface("glass").lock_wallpaper);
-}
-
-#[test]
 fn a_new_interface_resets_the_scheme_and_the_unset_defaults() {
     let text = "[appearance]\ncolor_scheme = \"Brick\"\n[taskbar]\npinned = false\n";
     let loaded = load(text);
@@ -810,7 +802,6 @@ fn save_round_trips_every_field() {
         lock_on_sleep: false,
         // Read only: save never writes it.
         power_locker: String::new(),
-        lock_wallpaper: true,
         lock_after: 300,
         blank_after: 120,
         lock_fade: 4,

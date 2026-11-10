@@ -12,13 +12,6 @@ use zbus::ObjectPath;
 
 const IMAGE: repriseconf::Key = repriseconf::key("wallpaper", "image");
 const SLIDESHOW: repriseconf::Key = repriseconf::key("wallpaper", "slideshow");
-const LOCK_SCREEN: repriseconf::Key = repriseconf::key("wallpaper", "lock_screen");
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum SetOn {
-    Background,
-    Both,
-}
 
 pub struct Wallpaper {
     pub frontend: crate::Frontend,
@@ -43,12 +36,12 @@ impl Wallpaper {
         #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> zbus::fdo::Result<u32> {
         self.frontend.check(&hdr).await?;
-        let set_on = match options.get("set-on") {
-            None => Some(SetOn::Background),
-            Some(zbus::Variant::Str(s)) => set_on(s.as_str()),
-            Some(_) => None,
+        let takes = match options.get("set-on") {
+            None => true,
+            Some(zbus::Variant::Str(s)) => sets_the_desktop(s.as_str()),
+            Some(_) => false,
         };
-        let Some(set_on) = set_on else {
+        if !takes {
             log::info!("SetWallpaperURI for {app_id:?}: no lock screen picture of its own");
             return Ok(crate::RESPONSE_OTHER);
         };
@@ -81,10 +74,7 @@ impl Wallpaper {
                 app: crate::remotedesktop::display_name(&id),
                 ..input
             };
-            let kind = crate::permit::Kind::Wallpaper {
-                lock_screen: set_on == SetOn::Both,
-            };
-            crate::permit::ask_with(kind, input, &cancel).allowed()
+            crate::permit::ask_with(crate::permit::Kind::Wallpaper, input, &cancel).allowed()
         })
         .await;
         let _ = server.remove::<crate::Request, _>(handle.clone()).await;
@@ -95,7 +85,7 @@ impl Wallpaper {
         let name = file_name(&path);
         let dir = repriseconf::xdg_home("XDG_DATA_HOME", ".local/share").join("reprise/wallpapers");
         let config = repriseconf::config_path();
-        match blocking::unblock(move || install(&dir, &name, &bytes, set_on, &config)).await {
+        match blocking::unblock(move || install(&dir, &name, &bytes, &config)).await {
             Ok(to) => {
                 log::info!("SetWallpaperURI for {app_id:?}: {}", to.display());
                 Ok(crate::RESPONSE_OK)
@@ -108,14 +98,10 @@ impl Wallpaper {
     }
 }
 
-/// Where `set-on` puts the picture; None for the lock screen alone, which
-/// shows the desktop's picture or none.
-fn set_on(s: &str) -> Option<SetOn> {
-    match s {
-        "background" => Some(SetOn::Background),
-        "both" => Some(SetOn::Both),
-        _ => None,
-    }
+/// Whether `set-on` puts the picture on the desktop: `background`, or `both`, the lock screen
+/// showing the desktop's picture under Glass; not the lock screen alone, which has none of its own.
+fn sets_the_desktop(s: &str) -> bool {
+    matches!(s, "background" | "both")
 }
 
 /// The local path of a `file://` URI. The frontend turns a file descriptor into the host path
@@ -171,13 +157,7 @@ fn read_picture(path: &Path) -> Option<Vec<u8>> {
 
 /// Write `bytes` as `name` in `dir`, point `[wallpaper]` in `config` at the copy and delete the
 /// copy in `dir` the config named before.
-fn install(
-    dir: &Path,
-    name: &str,
-    bytes: &[u8],
-    set_on: SetOn,
-    config: &Path,
-) -> Result<PathBuf, String> {
+fn install(dir: &Path, name: &str, bytes: &[u8], config: &Path) -> Result<PathBuf, String> {
     use std::io::Write;
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let (mut file, to) =
@@ -193,7 +173,7 @@ fn install(
                 before = repriseconf::get(&doc, &IMAGE)
                     .and_then(|i| i.as_str())
                     .map(PathBuf::from);
-                apply(&mut doc, &to, set_on)?;
+                apply(&mut doc, &to)?;
                 Ok::<_, String>(doc.to_string())
             })
             .map_err(|e| e.to_string())?
@@ -209,15 +189,11 @@ fn install(
     Ok(to)
 }
 
-/// Set `image` as the picture, ending a slideshow, which would show in its
-/// place; `Both` also puts it behind the lock screen.
-fn apply(doc: &mut DocumentMut, image: &Path, set_on: SetOn) -> Result<(), String> {
+/// Set `image` as the picture, ending a slideshow, which would show in its place.
+fn apply(doc: &mut DocumentMut, image: &Path) -> Result<(), String> {
     let image = image.to_str().ok_or("the picture's path is not UTF-8")?;
     repriseconf::set(doc, &IMAGE, Value::from(image)).map_err(|e| e.to_string())?;
     repriseconf::remove(doc, &SLIDESHOW);
-    if set_on == SetOn::Both {
-        repriseconf::set(doc, &LOCK_SCREEN, Value::from(true)).map_err(|e| e.to_string())?;
-    }
     Ok(())
 }
 
@@ -252,29 +228,25 @@ mod tests {
 
     #[test]
     fn set_on_takes_background_and_both_but_not_the_lock_screen_alone() {
-        assert_eq!(set_on("background"), Some(SetOn::Background));
-        assert_eq!(set_on("both"), Some(SetOn::Both));
-        assert_eq!(set_on("lockscreen"), None);
-        assert_eq!(set_on("elsewhere"), None);
+        assert!(sets_the_desktop("background"));
+        assert!(sets_the_desktop("both"));
+        assert!(!sets_the_desktop("lockscreen"));
+        assert!(!sets_the_desktop("elsewhere"));
     }
 
     #[test]
-    fn the_picture_replaces_a_slideshow_and_both_turns_the_lock_screen_picture_on() {
+    fn the_picture_replaces_a_slideshow() {
         let mut doc: DocumentMut = "# mine\n[wallpaper]\nslideshow = \"~/Pictures\"\n\
-                                    position = \"center\"\nlock_screen = false\n"
+                                    position = \"center\"\n"
             .parse()
             .unwrap();
         let pic = Path::new("/home/u/.local/share/reprise/wallpapers/dunes.jpg");
-        apply(&mut doc, pic, SetOn::Background).unwrap();
+        apply(&mut doc, pic).unwrap();
         let cfg = repriseconf::config::Config::parse(&doc.to_string()).unwrap();
         assert_eq!(cfg.wallpaper.image.as_deref(), Some(pic));
         assert_eq!(cfg.wallpaper.slideshow, None);
-        assert!(!cfg.wallpaper.lock_screen);
         assert!(doc.to_string().starts_with("# mine\n"));
         assert!(doc.to_string().contains("position = \"center\""));
-        apply(&mut doc, pic, SetOn::Both).unwrap();
-        let cfg = repriseconf::config::Config::parse(&doc.to_string()).unwrap();
-        assert!(cfg.wallpaper.lock_screen);
     }
 
     #[test]
@@ -297,7 +269,7 @@ mod tests {
         let to = dir.path().join("wallpapers");
         assert_eq!(file_name(&png), "dot.png");
         let config = dir.path().join("config.toml");
-        let copied = install(&to, "dot.png", &bytes, SetOn::Background, &config).unwrap();
+        let copied = install(&to, "dot.png", &bytes, &config).unwrap();
         assert_eq!(copied, to.join("dot.png"));
         assert_eq!(std::fs::read(&copied).unwrap(), bytes);
         let written = std::fs::read_to_string(&config).unwrap();
@@ -335,10 +307,10 @@ mod tests {
         let to = dir.path().join("wallpapers");
         let config = dir.path().join("config.toml");
         let bytes = png(1, 1);
-        let first = install(&to, "a.png", &bytes, SetOn::Background, &config).unwrap();
-        let again = install(&to, "a.png", &bytes, SetOn::Background, &config).unwrap();
+        let first = install(&to, "a.png", &bytes, &config).unwrap();
+        let again = install(&to, "a.png", &bytes, &config).unwrap();
         assert_ne!(first, again);
-        let last = install(&to, "b.png", &bytes, SetOn::Background, &config).unwrap();
+        let last = install(&to, "b.png", &bytes, &config).unwrap();
         let left: Vec<PathBuf> = std::fs::read_dir(&to)
             .unwrap()
             .map(|e| e.unwrap().path())
@@ -355,8 +327,8 @@ mod tests {
         let own = to.join("my-own-photo.jpg");
         std::fs::write(&own, b"photo").unwrap();
         let bytes = png(1, 1);
-        let first = install(&to, "a.png", &bytes, SetOn::Background, &config).unwrap();
-        let last = install(&to, "b.png", &bytes, SetOn::Background, &config).unwrap();
+        let first = install(&to, "a.png", &bytes, &config).unwrap();
+        let last = install(&to, "b.png", &bytes, &config).unwrap();
         assert!(own.exists(), "my-own-photo.jpg is kept");
         assert!(!first.exists(), "a.png is replaced by b.png");
         assert!(last.exists());

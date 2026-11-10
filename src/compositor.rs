@@ -439,7 +439,7 @@ pub struct State {
     pub attention_flash: crate::attention::Flash,
     pub peek: crate::peek::Peek,
     pub titles: crate::retitle::Flush,
-    /// The Compose table each lock dialog's own compose state reads; None
+    /// The Compose table each login or lock screen's own compose state reads; None
     /// when the locale has no Compose file.
     pub compose: Option<smithay::input::keyboard::xkb::compose::Table>,
     pub notify: crate::notifyview::NotifyView,

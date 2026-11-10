@@ -80,7 +80,6 @@ while an editor saves it doesn't.
 | `interval` | minutes per picture, 1 to 1440 | 30 |
 | `shuffle` | random order instead of by name | `false` |
 | `desktops` | each virtual desktop's own picture, spelled as `image` is: entry 1 is desktop 1; `""` shows the picture above | none |
-| `lock_screen` | the picture behind the lock dialog too | off under Classic, on under Blue and Glass |
 | `water` | `off`, `calm`, `lively`, `rain`, `ink`, `glow`, `sparks` or `neon` | `off` |
 | `water_rate` | `refresh` (each screen's refresh rate) or 30 to 240 times a second | `refresh` |
 
@@ -184,7 +183,7 @@ logins](#remote-logins)).
 | `lock_on_leave` | `true` locks the session when the last logged-in computer leaves; `false` leaves it unlocked. Read as each computer logs in and leaves. In lock mode the session stays locked here when the last one leaves, whatever this says | `true` |
 | `lock_grace_s` | 0 to 60: seconds the lock waits when the last computer left because the screen it showed went (a monitor switched away or back), so it can reconnect; one shown the session in that time keeps it unlocked. `0` locks at once. Any other leave locks at once. Read as each computer leaves; unused in lock mode | `5` |
 | `capture_border` | `true` draws the red capture border around the screen the server shares while a computer is connected, if `[privacy] capture_border` is on; `false` leaves it off. The Sharing icon shows either way, and every other capture keeps its border. Read by the compositor on each save | `false` |
-| `laptop_screen` | `"lock"`: while a computer is connected, this computer's screens show the session lock and only their Unlock dialog takes this computer's keyboard and mouse; the viewer works on screens of its own, one per client monitor or one the size of its window. Unlocking here ends it and disconnects every computer. `"show"` keeps the session on this computer's screens as well. With `[power] locker` set, connections run as `"show"` and Settings greys the Locks choice. Read when a computer is shown the session while none is ([features.md](features.md#remote-desktop)) | `"lock"` |
+| `laptop_screen` | `"lock"`: while a computer is connected, this computer's screens show the session lock and only their lock screen takes this computer's keyboard and mouse; the viewer works on screens of its own, one per client monitor or one the size of its window. Unlocking here ends it and disconnects every computer. `"show"` keeps the session on this computer's screens as well. With `[power] locker` set, connections run as `"show"` and Settings greys the Locks choice. Read when a computer is shown the session while none is ([features.md](features.md#remote-desktop)) | `"lock"` |
 | `second_client` | `"join"`: a computer logging in while others are connected joins them. `"replace"`: it ends every other connection, each logged-in one told another connection took its place; in lock mode the screens stay locked here and take the new viewer's monitors. Read as each computer connects | `"join"` |
 
 `quality`, `frame_rate` and `encoder` reach a connected client at the next

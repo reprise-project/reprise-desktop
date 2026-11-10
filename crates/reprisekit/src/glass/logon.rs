@@ -384,9 +384,7 @@ pub fn draw(
         }
     }
     if let Some(r) = g.notice {
-        let notice = (m.caps_lock.then(strings::caps_lock))
-            .or_else(|| m.message.clone())
-            .or_else(|| m.heading());
+        let notice = (m.caps_lock.then(strings::caps_lock)).or_else(|| m.standing());
         if let Some(notice) = notice {
             // A second line runs into the gap above Switch User.
             let r = at(r);

@@ -13,7 +13,7 @@ use crate::lockview::Origin;
 #[derive(Default)]
 pub struct Keys {
     xkb: Option<xkb::State>,
-    /// Caps Lock in `xkb`, for the dialog's notice.
+    /// Caps Lock in `xkb`, for the screen's notice.
     pub caps_lock: bool,
 }
 
@@ -105,12 +105,12 @@ fn caps_on(s: &xkb::State) -> bool {
 }
 
 /// One of the computer's own keys in lock mode. The power, sleep, media and VT keys act as at
-/// the lock; every other key goes to the console's lock dialog.
+/// the lock; every other key goes to the console's lock screen.
 pub fn key(state: &mut State, code: Keycode, pressed: bool) {
     let Some(mut s) = state.console.keys.xkb.take() else {
         return;
     };
-    // The layout the seat has locked decodes here too, as the dialog's badge shows it.
+    // The layout the seat has locked decodes here too, as the screen's badge shows it.
     let group = state.key_input.layouts.current;
     s.update_mask(
         s.serialize_mods(xkb::STATE_MODS_DEPRESSED),
