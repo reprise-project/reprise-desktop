@@ -89,6 +89,13 @@ impl UserPictures {
         }
     }
 
+    /// The largest picture read at any size.
+    pub(crate) fn largest(&self) -> Option<Canvas> {
+        (self.read.values().flatten())
+            .max_by_key(|c| c.width)
+            .cloned()
+    }
+
     /// The read's id and the sizes it takes, or None while one runs and is not stuck.
     pub(super) fn start(&mut self, mut sizes: Vec<i32>, now: Instant) -> Option<(u64, Vec<i32>)> {
         let id = self.reads.start(now, ())?;
@@ -121,6 +128,7 @@ impl State {
                 if !state.start_pictures.land(id, found) {
                     return;
                 }
+                crate::lockview::picture_read(state);
                 let Some(p) = state.start_panel.as_ref() else {
                     return;
                 };

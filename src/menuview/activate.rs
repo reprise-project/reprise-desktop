@@ -89,6 +89,7 @@ impl State {
             MenuPick::Layout(i) => self.set_layout(i),
             MenuPick::NightLight(row) => crate::nightlight::pick(self, row),
             MenuPick::GreeterPower(a) => crate::greeterview::power(self, a),
+            MenuPick::LockPower(p) => crate::lockview::power_pick(self, p),
             MenuPick::Dnd(row) => crate::notifydnd::pick(self, row),
             MenuPick::StartPanel(row) => self.start_row(row),
             MenuPick::QuickOverflow(file) => {

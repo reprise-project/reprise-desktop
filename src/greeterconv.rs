@@ -62,7 +62,7 @@ pub struct Conversation {
     /// A `Power` request waits for its result. It goes out only while no login runs, so a
     /// result in `Idle` is its.
     power: bool,
-    /// This login's info and error notes, cleaned like the Unlock dialog's.
+    /// This login's info and error notes, cleaned like the lock screen's.
     notes: Vec<String>,
     /// The conversation in progress is a `PowerAs`'s, so its success turns the computer off.
     admin: bool,

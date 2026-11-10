@@ -229,7 +229,13 @@ server is not an app here: its viewer types the password into the lock
 screen, in lock mode and at the computer's own lock, through libei or its
 keys object.
 
-The built-in Unlock Computer dialog checks the password in a helper
+The built-in lock screen is the login screen's locked state, drawn by the
+session's own compositor: it lists only the session's user, with the name
+fixed, and never another user's tile, so nobody types another user's
+password into this session. Cancel and Escape only clear the field, and
+Switch User locks before it asks reprise-login for the login screen, which
+runs as `reprise-greeter` and gets no picture of the session. The screen
+checks the password in a helper
 process: the compositor starts itself again as `reprise
 --password-conversation=USER` and writes the password to its stdin, never
 to argv or the environment. The helper runs PAM's `reprise` service
@@ -239,22 +245,24 @@ not `account`, so an expired password, `/run/nologin` or a time rule never
 keeps the right password out of the session that runs behind the lock. A further prompt from the
 stack (a one-time code, a security key PIN) relabels the field, and its
 answer goes to the same helper's stdin. A helper that hangs is given up
-after 90 s and the dialog asks again. Reprise zeroes the password copies
-it holds.
+after 90 s and the screen asks again. Reprise zeroes the password copies
+it holds. The power button and menu (Stand By, Restart, Turn Off) go
+through logind without overriding its block inhibitors, as anyone at the
+computer could also hold the power key; in lock mode neither side has them.
 
 When `/etc/pam.d/reprise-fingerprint` is installed, a second helper runs
-the fingerprint conversation while the dialog shows. Either one succeeding
+the fingerprint conversation while the screen shows. Either one succeeding
 unlocks. A fingerprint conversation that ends without success (too many
 fingers that did not match) starts again after 2 s, the wait doubling up to
 30 s; one that finds no reader or no enrolled finger does not.
 
 `[power] locker` runs an external locker (swaylock, hyprlock, gtklock)
-instead of the dialog. The lock stays Reprise's: the screens are covered and
-focus is refused as with the dialog, and the locker draws on top and does
+instead of the screen. The lock stays Reprise's: the screens are covered and
+focus is refused as with the screen, and the locker draws on top and does
 its own PAM check. The fingerprint helper doesn't run under a locker, which
 may claim the reader itself. If the locker crashes the session stays locked
-and the dialog comes back. A locker may take over a lock that has none, the
-dialog's or a crashed locker's, and unlock it. A locker whose lock has ended
+and the screen comes back. A locker may take over a lock that has none, the
+screen's or a crashed locker's, and unlock it. A locker whose lock has ended
 can't unlock a lock taken after it.
 
 The lock screen shows no sharing dot; a cast of a screen goes on showing
@@ -434,12 +442,12 @@ takes every client's connection; only a certificate fingerprint other than
 the one Settings shows tells the client. Under reprise-login the login
 manager's socket holds the port from boot.
 
-It checks the password as the Unlock Computer dialog does, in a
+It checks the password as the lock screen does, in a
 `reprise --rdp-password-conversation USER` helper with the password on its
 stdin, but under its own PAM service, `reprise-rdp`: `pam_unix` for `auth`
 and `account` and nothing else. That stack has no pam_faillock, so wrong
 passwords sent over the network never lock the account at the lock screen.
-Lock mode's remote Unlock dialog runs the same helper under the same
+Lock mode's remote lock screen runs the same helper under the same
 service.
 A further PAM prompt fails the login, and so does a helper with no verdict
 within 30 s, which is killed. A refusal by the account stack (an expired
@@ -639,26 +647,26 @@ session.
 As lock mode starts, the compositor locks the session if it isn't locked.
 This is the session lock as at any other time: logind's LockedHint is true
 and every one of the computer's own screens is covered. The computer's
-keyboard and pointer reach only the Unlock dialog on those screens, besides
+keyboard and pointer reach only the lock screen on those screens, besides
 the keys that act at any lock screen. Its keys are read through a keyboard
 state of their own, so no key or modifier held at the computer reaches a
 window. The virtual screens have no cover and take only the client's input.
 
 The virtual screens lock on their own: after `lock_after` of remote
 idleness, from Start > Lock or the lock key on the remote side, and with
-logind's `Lock`, which locks both sides. Their Unlock dialog takes only
+logind's `Lock`, which locks both sides. Their lock screen takes only
 remote input, and its password unlocks only the virtual screens; the
 computer's own screens stay locked. The remote side's lock goes when lock
 mode ends, while the computer's stays.
 
-The virtual screens' Unlock dialog checks its password as a Remote Desktop
+The virtual screens' lock screen checks its password as a Remote Desktop
 login does, under the `reprise-rdp` service, never the lock screen's
 `reprise`. Wrong passwords typed on the remote side never reach pam_faillock
 or the fingerprint reader, so they can't lock the account at the computer.
 The dialog backs off after failures like a login from one address: the first
 three are free, the fourth starts a 2 s wait that doubles with each further
 failure up to 60 s, and a success or 20 minutes without a failure clears
-them. During the wait the dialog refuses to check and says how long is left.
+them. During the wait the screen refuses to check and says how long is left.
 A right password that must be changed (`chage -d 0`) unlocks and clears the
 failures like any success. A notice that the password has expired goes to the
 notification history; its balloon waits, as every balloon does while the
@@ -987,7 +995,7 @@ shell, on the first free VT from 7 up that isn't on screen. It is a logind
 session on seat0 with `Remote=no`, so polkit treats it as a local session
 that isn't active, unless another session of the same user is active (see
 [Accepted risks](#accepted-risks)). It comes up locked: switching to its VT
-at the computer shows its Unlock dialog, never its desktop, even when the
+at the computer shows its lock screen, never its desktop, even when the
 switch comes before its compositor starts (the worker marks the session's
 environment with `REPRISE_LOGIN_BACKGROUND=1`, and a compositor started
 with it locks whatever logind reports), and its clients always run in lock mode
@@ -1536,7 +1544,7 @@ sharing and remote control grants yet.
   box emptied), is refused the box alone, so a password is typed for it. The
   change happens at the next login that starts a session, at the login
   screen or a text console. Reaching a session that already runs doesn't ask
-  for it: the lock screen, lock mode's remote Unlock dialog, logging in again
+  for it: the lock screen, lock mode's remote lock screen, logging in again
   at the login screen to a running session, a Remote Desktop login into one
   (TLS and NLA alike) and the user's own Remote Desktop server all take the
   old password. Until the change, a Remote Desktop login that would start a

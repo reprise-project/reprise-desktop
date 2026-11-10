@@ -46,7 +46,6 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
             ("lock_after", "Lock after:"),
             ("lock_fade", "Fade before lock:"),
             ("lock_on_sleep", "Lock the computer when it goes to sleep"),
-            ("lock_wallpaper", "Show the wallpaper on the lock screen"),
             ("away_device", "Lock when this device disconnects:"),
             ("away_after_s", "After:"),
         ],

@@ -449,6 +449,7 @@ fn refuse(state: &mut State, act: Act, why: &Refused) {
         crate::crash::not_ending();
     }
     crate::sessionfade::restore(state);
+    crate::lockview::refused(state, refusal_text(act, why));
     state.open_dialog(crate::dialog::Dialog::error(
         act.title(),
         refusal_text(act, why),

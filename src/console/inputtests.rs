@@ -134,7 +134,7 @@ fn in_lock_mode_an_apps_keys_reach_the_remote_window_until_the_remote_side_locks
         .remote
         .as_ref()
         .expect("the remote side is locked");
-    assert_eq!(remote.state.input, "", "and its dialog hears nothing");
+    assert_eq!(remote.input(), "", "and its dialog hears nothing");
 }
 
 #[test]
@@ -212,16 +212,17 @@ fn in_lock_mode_the_computers_input_holds_off_only_its_own_screen_off() {
 }
 
 #[test]
-fn outside_lock_mode_eis_keys_still_unlock_the_lock_dialog() {
+fn outside_lock_mode_eis_keys_still_reach_the_lock_screen() {
     let mut h = Harness::new();
     h.output("eDP-1", 1920, 1080);
+    h.state.lock.helpers.password = |_, _| super::locktests::sh("read p; exec sleep 60");
     crate::lockview::lock(&mut h.state);
     h.remote_key(A, true);
     h.remote_key(A, false);
     assert_eq!(lock_input(&h), "a");
     h.remote_key(ENTER, true);
     let l = h.state.lock.console.as_ref().expect("locked");
-    assert!(l.state.verifying, "Enter hands the password to the check");
+    assert!(l.verifying(), "Enter hands the password to the check");
 }
 
 #[test]

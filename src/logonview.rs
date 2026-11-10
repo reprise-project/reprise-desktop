@@ -12,7 +12,7 @@ use reprisekit::textedit::{EditKey, key_for};
 use reprisekit::theme::Theme;
 use reprisescene::{BufferId, RectId, TreeId};
 use smithay::backend::input::InputTime;
-use smithay::input::keyboard::KeysymHandle;
+use smithay::input::keyboard::{Keycode, KeysymHandle, ModifiersState, xkb};
 use smithay::input::pointer::AxisFrame;
 use smithay::output::Output;
 use smithay::utils::{Logical, Point};
@@ -25,10 +25,11 @@ use crate::menuview::{MenuFrom, MenuKind};
 use crate::startmenu::{MenuItem, MenuStyle};
 
 /// One host of a login screen: where its view lives (with the text renderer, borrowed apart from
-/// it) and what the screen's actions do.
+/// it), what the screen's actions do, and the Caps Lock of the keys it reads.
 pub struct Host {
     pub view: fn(&mut State) -> Option<(&mut LogonView, &TextRenderer)>,
     pub act: fn(&mut State, LogonAction),
+    pub caps_lock: fn(&State) -> bool,
 }
 
 pub struct LogonView {
@@ -36,7 +37,9 @@ pub struct LogonView {
     pub covers: Vec<Cover>,
     /// The screen's parts on its output, in layout coordinates.
     pub layout: Option<LogonLayout>,
-    compose: Option<Compose>,
+    pub compose: Option<Compose>,
+    /// The screen is drawn but not shown, and takes no pointer.
+    pub hidden: bool,
     /// The wheel's sub-notch remainder, in 120ths.
     wheel: i32,
 }
@@ -48,16 +51,35 @@ impl LogonView {
             covers: Vec::new(),
             layout: None,
             compose,
+            hidden: false,
             wheel: 0,
         }
     }
+
+    /// The part under layout point `pos`; none while hidden.
+    pub fn part_at(&self, pos: Point<f64, Logical>) -> Option<Part> {
+        let l = self.layout.as_ref().filter(|_| !self.hidden)?;
+        logon::hit(l, pos.x.floor() as i32, pos.y.floor() as i32)
+    }
+
+    /// Whether `pos` lies on the screen's dialog or one of its parts; never while hidden.
+    pub fn covers_point(&self, pos: Point<f64, Logical>) -> bool {
+        let (x, y) = (pos.x.floor() as i32, pos.y.floor() as i32);
+        self.part_at(pos).is_some()
+            || (self.layout.as_ref())
+                .filter(|_| !self.hidden)
+                .and_then(|l| l.dialog)
+                .is_some_and(|d| d.contains(x, y))
+    }
 }
 
-/// One output's cover: the backdrop, and on the screen's output the login screen over it.
+/// One output's cover: the backdrop, a wall for a picture over it when asked for, and on the
+/// screen's output the login screen on top.
 pub struct Cover {
     pub output: Output,
     pub tree: TreeId,
     rect: RectId,
+    pub wall: Option<BufferId>,
     pub screen: Option<BufferId>,
 }
 
@@ -80,11 +102,21 @@ pub enum Typed {
 /// compose state are read, so nothing here reaches the keyboard's focus.
 pub fn decode(state: &mut State, host: &Host, h: &KeysymHandle<'_>) -> Option<Typed> {
     let mods = (state.seat.get_keyboard()).map(|k| k.modifier_state())?;
-    let (v, _) = (host.view)(state)?;
     let guard = h.xkb().lock().ok()?;
     // SAFETY: the state reference does not outlive the lock guard.
     let xkb = unsafe { guard.state() };
-    let code = h.raw_code();
+    decode_with(state, host, &mods, xkb, h.raw_code())
+}
+
+/// The key `code` under `xkb` with `mods` held, decoded for the login screen.
+pub fn decode_with(
+    state: &mut State,
+    host: &Host,
+    mods: &ModifiersState,
+    xkb: &xkb::State,
+    code: Keycode,
+) -> Option<Typed> {
+    let (v, _) = (host.view)(state)?;
     let fed = match v.compose.as_mut() {
         Some(c) => c.feed(xkb.key_get_one_sym(code).raw()),
         None => Fed::Plain,
@@ -119,7 +151,7 @@ pub fn decode(state: &mut State, host: &Host, h: &KeysymHandle<'_>) -> Option<Ty
 /// A key on the login screen, pressed (`typed`, from [`decode`]) or released: Caps Lock is
 /// followed either way. The power key asks, as the screen's own power button does.
 pub fn key(state: &mut State, host: &Host, typed: Option<Typed>) {
-    let caps = caps_lock(state);
+    let caps = (host.caps_lock)(state);
     let Some((v, _)) = (host.view)(state) else {
         return;
     };
@@ -175,8 +207,7 @@ pub fn click(state: &mut State, host: &Host, pos: Point<f64, Logical>) {
     let Some((v, _)) = (host.view)(state) else {
         return;
     };
-    let Some(part) = (v.layout.as_ref()).and_then(|l| logon::hit(l, pos.x as i32, pos.y as i32))
-    else {
+    let Some(part) = v.part_at(pos) else {
         return;
     };
     let action = v.model.click(part);
@@ -191,8 +222,7 @@ pub fn motion(state: &mut State, host: &Host, pos: Point<f64, Logical>, time: In
     let Some((v, _)) = (host.view)(state) else {
         return;
     };
-    let part = (v.layout.as_ref()).and_then(|l| logon::hit(l, pos.x as i32, pos.y as i32));
-    let lit = part.map(|p| (p, Interaction::Hot));
+    let lit = v.part_at(pos).map(|p| (p, Interaction::Hot));
     if v.model.lit != lit {
         v.model.lit = lit;
         redraw(state, host);
@@ -262,54 +292,100 @@ pub fn open_power_menu(state: &mut State, host: &Host, items: Vec<MenuItem>, kin
     state.redraw_menu(0);
 }
 
-/// Cover every shown output under `layer`, `color` behind (none leaves it clear), and put the
-/// screen on `screen_on`.
-pub fn refit(
-    state: &mut State,
-    host: &Host,
-    layer: TreeId,
-    screen_on: Option<&Output>,
-    color: Option<[f32; 4]>,
-) {
+/// The outputs with a layout box, left to right, then top to bottom.
+pub fn shown_outputs(state: &State) -> Vec<Output> {
     let mut shown: Vec<(Output, Rect)> = (state.scene.outputs().iter())
         .map(|o| (o.clone(), state.layout_box(Some(o))))
         .filter(|(_, b)| b.width > 0)
         .collect();
     shown.sort_by_key(|(_, b)| (b.x, b.y));
+    shown.into_iter().map(|(o, _)| o).collect()
+}
+
+/// The welcome backdrop: the desktop colour on Classic, the scheme's welcome field on Blue, and on
+/// Glass none, since a picture shows there.
+pub fn backdrop(state: &State) -> Option<[f32; 4]> {
+    let theme = &state.config.theme;
+    match state.config.interface {
+        Interface::Classic => Some(theme.colors.background.as_f32()),
+        Interface::Blue => {
+            let scheme = reprisekit::blue::Variant::of(&theme.look).scheme();
+            Some(scheme.welcome_field.as_f32())
+        }
+        Interface::Glass => None,
+    }
+}
+
+/// Where a host's covers go: `outputs` each get one under `layer`, `color` behind (none leaves it
+/// clear), a wall over it when `wall`, and the screen on `screen_on`.
+pub struct Fit<'a> {
+    pub layer: TreeId,
+    pub outputs: Vec<Output>,
+    pub screen_on: Option<&'a Output>,
+    pub color: Option<[f32; 4]>,
+    pub wall: bool,
+}
+
+/// The outputs a [`refit`] made covers for and those whose covers it took down.
+#[derive(Default)]
+pub struct Refit {
+    pub added: Vec<Output>,
+    pub removed: Vec<Output>,
+}
+
+/// Cover `fit.outputs` and only those, then draw the screen.
+pub fn refit(state: &mut State, host: &Host, fit: Fit<'_>) -> Refit {
+    let mut changed = Refit::default();
     let Some((v, _)) = (host.view)(state) else {
-        return;
+        return changed;
     };
     let mut covers = std::mem::take(&mut v.covers);
     covers.retain(|c| {
-        let kept = shown.iter().any(|(o, _)| *o == c.output);
+        let kept = fit.outputs.contains(&c.output);
         if !kept {
             state.scene.destroy(c.tree);
+            changed.removed.push(c.output.clone());
         }
         kept
     });
-    for (output, b) in &shown {
+    for output in &fit.outputs {
+        let b = state.layout_box(Some(output));
         let at = match covers.iter().position(|c| c.output == *output) {
             Some(at) => at,
             None => {
-                let tree = state.scene.tree_create(layer);
+                let tree = state.scene.tree_create(fit.layer);
                 let rect = state.scene.rect_create(tree, (b.width, b.height), [0.0; 4]);
                 covers.push(Cover {
                     output: output.clone(),
                     tree,
                     rect,
+                    wall: None,
                     screen: None,
                 });
+                changed.added.push(output.clone());
                 covers.len() - 1
             }
         };
         let c = &mut covers[at];
         state.scene.set_position(c.tree, b.x, b.y);
         state.scene.rect_set_size(c.rect, (b.width, b.height));
-        state
-            .scene
-            .rect_set_color(c.rect, color.unwrap_or([0.0; 4]));
-        state.scene.set_enabled(c.rect, color.is_some());
-        match (screen_on == Some(output), c.screen) {
+        (state.scene).rect_set_color(c.rect, fit.color.unwrap_or([0.0; 4]));
+        state.scene.set_enabled(c.rect, fit.color.is_some());
+        match (fit.wall, c.wall) {
+            (true, None) => {
+                let wall = state.scene.buffer_create(c.tree);
+                if let Some(screen) = c.screen {
+                    state.scene.place_below(wall, screen);
+                }
+                c.wall = Some(wall);
+            }
+            (false, Some(wall)) => {
+                state.scene.destroy(wall);
+                c.wall = None;
+            }
+            _ => {}
+        }
+        match (fit.screen_on == Some(output), c.screen) {
             (true, None) => c.screen = Some(state.scene.buffer_create(c.tree)),
             (false, Some(screen)) => {
                 state.scene.destroy(screen);
@@ -322,15 +398,23 @@ pub fn refit(
         v.covers = covers;
     }
     redraw(state, host);
+    changed
 }
 
-fn caps_lock(state: &State) -> bool {
+/// Caps Lock of the seat's keyboard.
+pub fn seat_caps_lock(state: &State) -> bool {
     (state.seat.get_keyboard()).is_some_and(|k| k.modifier_state().caps_lock)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The next draw of a login screen panics, as a painter's bug would.
+    pub static DRAW_PANICS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Draw the login screen again with the Caps Lock and layout the keyboard has now.
 pub fn redraw(state: &mut State, host: &Host) {
-    let caps = caps_lock(state);
+    let caps = (host.caps_lock)(state);
     let layout = state.layout_badge();
     let Some((v, _)) = (host.view)(state) else {
         return;
@@ -348,9 +432,15 @@ pub fn redraw(state: &mut State, host: &Host) {
     let Some((v, text)) = (host.view)(state) else {
         return;
     };
+    #[cfg(test)]
+    if DRAW_PANICS.get() {
+        panic!("draw_logon");
+    }
     let (l, canvas) = screen(&mut v.model, &theme, text, b, scale);
     v.layout = Some(l);
+    let shown = !v.hidden;
     crate::output::upload_scaled(&mut state.scene, buffer, &canvas, scale);
+    state.scene.set_enabled(buffer, shown);
     state.redraw_all();
 }
 

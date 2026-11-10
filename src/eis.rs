@@ -774,7 +774,7 @@ impl State {
     }
 
     /// Text goes where a key typing it would: the focused client, Reprise's field with the
-    /// keyboard, the lock dialog's field or the login screen's. Anywhere else it is dropped.
+    /// keyboard, the lock screen's field or the login screen's. Anywhere else it is dropped.
     fn eis_type_text(&mut self, text: &str) {
         let Some(first) = text.chars().next() else {
             return;

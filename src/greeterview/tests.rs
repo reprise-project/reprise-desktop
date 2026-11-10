@@ -632,7 +632,9 @@ fn capture(h: &Harness) -> Canvas {
         }
         _ => {
             let mut c = Canvas::new(w, hh);
-            let [r, g, bl, _] = cover_color(&h.state).unwrap().map(|v| (v * 255.0) as u8);
+            let [r, g, bl, _] = crate::logonview::backdrop(&h.state)
+                .unwrap()
+                .map(|v| (v * 255.0) as u8);
             c.fill_rect(c.bounds(), reprisekit::theme::Color::rgb(r, g, bl));
             c
         }

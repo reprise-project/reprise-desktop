@@ -624,3 +624,19 @@ fn the_classic_lock_says_it_is_locked_and_names_its_dialog() {
         assert_eq!(locked(i, false).said(), None, "{i:?}: the tile says Locked");
     }
 }
+
+#[test]
+fn a_hint_shows_while_no_message_does_and_outlasts_escape() {
+    for i in ALL {
+        let mut m = locked(i, false);
+        let heading = m.said();
+        m.hint = Some("Place your finger".into());
+        assert_eq!(m.said().as_deref(), Some("Place your finger"), "{i:?}");
+        m.info("Failed to match fingerprint".into());
+        assert_eq!(m.said().as_deref(), Some("Failed to match fingerprint"));
+        m.key(LogonKey::Escape);
+        assert_eq!(m.said().as_deref(), Some("Place your finger"), "{i:?}");
+        m.hint = None;
+        assert_eq!(m.said(), heading, "{i:?}");
+    }
+}

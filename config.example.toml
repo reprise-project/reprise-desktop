@@ -98,7 +98,6 @@ interface = "classic"        # classic | blue | glass; an unknown value falls ba
 #                            # hue-<0..359> and hue-<0..359>-dark. A built-in always fills the screen; position does not apply
 # position = "stretch"       # center | tile | stretch
 # desktops = ["", "reprise:tarn/dusk"]   # each virtual desktop's own picture, entry 1 for desktop 1; "" shows image (or the slideshow)
-# lock_screen = false        # the picture behind the lock screen's dialog too; off under classic, on under blue and glass
 # slideshow = "~/Pictures/Wallpapers"   # a folder whose pictures take turns in place of image, each fading into the next
 # interval = 30              # minutes each slideshow picture shows, 1 to 1440; the desktop menu's Next desktop background skips ahead
 # shuffle = false            # true: the slideshow picks at random instead of by file name (case ignored, numbers by value)

@@ -469,8 +469,7 @@ pub(crate) fn in_lock_mode_with(
 }
 
 fn covered(h: &Harness) -> Vec<String> {
-    let l = h.state.lock.console.as_ref().expect("locked");
-    l.outputs.iter().map(|lo| lo.output.name()).collect()
+    h.state.lock.console.as_ref().expect("locked").covered()
 }
 
 pub(crate) fn under_lock_layer(h: &Harness, node: reprisescene::NodeId) -> bool {
@@ -593,7 +592,7 @@ fn outside_lock_mode_every_check_is_as_before() {
                 .lock
                 .console
                 .as_ref()
-                .is_some_and(|l| l.outputs.len() == 1)
+                .is_some_and(|l| l.covered().len() == 1)
         }),
         ("b: no finger goes to a client", |h, _, _| {
             !h.state.clients_may_have_touch()
@@ -640,19 +639,18 @@ pub(crate) fn lock_input(h: &Harness) -> String {
         .console
         .as_ref()
         .expect("locked")
-        .state
-        .input
-        .clone()
+        .input()
+        .to_owned()
 }
 
-/// Type into the lock dialog, then click its Cancel button, which clears what was typed.
+/// Type into the lock screen, then click its Cancel button, which clears what was typed.
 pub(crate) fn click_lock_cancel(h: &mut Harness) {
-    h.state.lock.console.as_mut().expect("locked").state.input = "secret".into();
-    let c = h.state.lock.console.as_ref().unwrap().outputs[0]
-        .buttons
-        .cancel;
-    let (x, y) = (c.x + c.width / 2, c.y + c.height / 2);
-    h.click(f64::from(x), f64::from(y));
+    let l = h.state.lock.console.as_mut().expect("locked");
+    l.set_input("secret");
+    let at = l
+        .part(reprisekit::logon::Part::Cancel)
+        .expect("Cancel shows");
+    h.click(at.x, at.y);
 }
 
 #[test]

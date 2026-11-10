@@ -1,24 +1,24 @@
 //! ext-session-lock-v1: an external locker (swaylock, hyprlock, gtklock)
-//! draws the lock screen in place of the built-in dialog.
+//! draws the lock screen in place of the built-in screen.
 //!
 //! The lock stays Reprise's: a locker's lock engages the same `lockview`
-//! lock as the dialog, with its covers and refused focus, and the locker's
+//! lock as the screen, with its covers and refused focus, and the locker's
 //! surfaces go on top of the covers with the keyboard and pointer. A
 //! locker that crashes leaves the session locked, as the protocol asks, and
-//! the dialog comes back. A lock the compositor ends itself
-//! (`loginctl unlock-session`, a password typed into the dialog) sends the
+//! the screen comes back. A lock the compositor ends itself
+//! (`loginctl unlock-session`, a password typed into the screen) sends the
 //! locker `finished`.
 //!
 //! `locked` goes out once every output showing the layout has presented a
 //! frame with the cover, or after `LOCKED_WAIT_MS`.
 //!
 //! A second locker is refused while one holds the lock. A locker may take
-//! over a lock that has none (the dialog's or a crashed locker's) and
+//! over a lock that has none (the screen's or a crashed locker's) and
 //! unlock it; any client that can bind the global can already run
 //! `loginctl unlock-session`.
 //!
 //! `[power] locker` names a locker for Reprise's own lock to start: the lock
-//! engages at once with a bare cover, and the dialog shows only if no locker
+//! engages at once with a bare cover, and the screen shows only if no locker
 //! has taken over within `LOCKER_WAIT_MS`.
 
 use std::time::Duration;
@@ -52,7 +52,7 @@ use crate::compositor::State;
 /// cover (a hung display, say). The same bound a sleep waits for it.
 const LOCKED_WAIT_MS: u64 = 2000;
 
-/// How long the lock waits for the configured locker before the dialog shows.
+/// How long the lock waits for the configured locker before the screen shows.
 const LOCKER_WAIT_MS: u64 = 5000;
 
 /// The global and the two timers, kept in `State::lock`.
@@ -60,7 +60,7 @@ pub struct SessionLock {
     pub manager: SessionLockManagerState,
     /// Sends `locked` when an output is slow to present the cover.
     locked_timer: Option<RegistrationToken>,
-    /// Shows the dialog when the configured locker is slow to lock.
+    /// Shows the screen when the configured locker is slow to lock.
     locker_timer: Option<RegistrationToken>,
 }
 
@@ -141,7 +141,7 @@ impl<K: PartialEq> CoverWait<K> {
 }
 
 /// Start `[power] locker`, if set, for a lock that just engaged, holding
-/// the dialog back while it starts. Returns whether it started.
+/// the screen back while it starts. Returns whether it started.
 pub fn start_locker(state: &mut State) -> bool {
     let cmd = state.config.power.locker.trim().to_string();
     if cmd.is_empty() || !state.console_locked() {
@@ -198,8 +198,8 @@ fn locker_timed_out(state: &mut State) {
     }
     l.awaiting = false;
     let cmd = &state.config.power.locker;
-    log::warn!("session lock: {cmd:?} did not lock in time; showing the dialog");
-    crate::lockview::start_dialog_finger(state);
+    log::warn!("session lock: {cmd:?} did not lock in time; showing the lock screen");
+    crate::lockview::start_screen_finger(state);
     crate::lockview::redraw(state);
 }
 
@@ -272,11 +272,11 @@ impl SessionLockHandler for State {
             wait: Some(CoverWait::new(outputs)),
         };
         if let Some(l) = self.lock.console.as_mut() {
-            // Whatever was typed into the dialog goes, a check in flight
+            // Whatever was typed into the screen goes, a check in flight
             // ends with its child, and the reader is the locker's.
             l.pending = None;
             l.finger = None;
-            l.state.reset();
+            crate::lockview::reset(l);
             l.awaiting = false;
             l.client = Some(c);
         }
@@ -513,7 +513,7 @@ fn forget_dead_surfaces(state: &mut State) {
 }
 
 /// A locker whose lock went away without unlocking died: the session stays
-/// locked and the dialog comes back.
+/// locked and the screen comes back.
 pub fn check_alive(state: &mut State) {
     let dead = state
         .lock
@@ -531,8 +531,8 @@ pub fn check_alive(state: &mut State) {
     let p = state.pointer_location();
     state.pointer_motion(None, p, InputTime::now());
     state.set_cursor("default");
-    log::warn!("session lock: the locker went away without unlocking; showing the dialog");
-    crate::lockview::start_dialog_finger(state);
+    log::warn!("session lock: the locker went away without unlocking; showing the lock screen");
+    crate::lockview::start_screen_finger(state);
     crate::lockview::redraw(state);
 }
 

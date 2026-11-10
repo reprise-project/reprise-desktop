@@ -46,6 +46,7 @@ pub struct Greeter {
 const HOST: Host = Host {
     view: |s| Some((&mut s.greeter.login.as_mut()?.view, &s.text)),
     act,
+    caps_lock: logonview::seat_caps_lock,
 };
 
 fn user_note(note: Note) -> UserNote {
@@ -227,31 +228,25 @@ fn open_power_menu(state: &mut State) {
     logonview::open_power_menu(state, &HOST, items, kind);
 }
 
-/// Cover every output, clear over a background, with the screen on the greeting's primary one
-/// while it is shown, else the first left to right, then top to bottom. Runs on layout changes.
+/// Cover every output, clear over a background or Glass's wallpaper, with the screen on the
+/// greeting's primary one while shown, else the first in layout order. Runs on layout changes.
 pub fn refit(state: &mut State) {
-    let shown = (state.scene.outputs().iter())
-        .filter(|o| state.layout_box(Some(o)).width > 0)
-        .cloned()
-        .collect::<Vec<_>>();
+    let outputs = logonview::shown_outputs(state);
     let primary = state.config.primary_output_name();
-    let screen_on = (shown.iter())
+    let screen_on = (outputs.iter())
         .find(|o| Some(o.name().as_str()) == primary)
-        .or_else(|| {
-            (shown.iter()).min_by_key(|o| {
-                let b = state.layout_box(Some(o));
-                (b.x, b.y)
-            })
-        })
-        .cloned();
+        .or(outputs.first());
     let over_picture = (state.greeter.login.as_ref()).is_some_and(|g| g.view.model.over_picture);
-    let color = if over_picture {
-        None
-    } else {
-        cover_color(state)
+    let fit = logonview::Fit {
+        layer: state.layers.background,
+        screen_on,
+        color: (!over_picture)
+            .then(|| logonview::backdrop(state))
+            .flatten(),
+        wall: false,
+        outputs: outputs.clone(),
     };
-    let layer = state.layers.background;
-    logonview::refit(state, &HOST, layer, screen_on.as_ref(), color);
+    logonview::refit(state, &HOST, fit);
 }
 
 /// The greeting's background did not load: the login screen takes its interface's own look.
@@ -268,20 +263,6 @@ pub fn background_failed(state: &mut State) {
     state.config.wallpaper.image = fallback.clone();
     state.set_wallpaper(fallback.as_deref());
     refit(state);
-}
-
-/// The backdrop behind the screen: the desktop colour on Classic, the scheme's welcome field on
-/// Blue, and on Glass none, since its wallpaper lies under the cover (`greeter::config_from`).
-fn cover_color(state: &State) -> Option<[f32; 4]> {
-    let theme = &state.config.theme;
-    match state.config.interface {
-        Interface::Classic => Some(theme.colors.background.as_f32()),
-        Interface::Blue => {
-            let scheme = reprisekit::blue::Variant::of(&theme.look).scheme();
-            Some(scheme.welcome_field.as_f32())
-        }
-        Interface::Glass => None,
-    }
 }
 
 pub fn redraw(state: &mut State) {
