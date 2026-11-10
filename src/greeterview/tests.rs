@@ -1137,3 +1137,31 @@ fn a_fresh_greeters_tiles_enter_once_the_session_fade_begins_to_show_them() {
         "the tiles are still on their way in"
     );
 }
+
+#[test]
+fn a_scale_change_mid_enter_carries_the_enter_on_from_where_it_was() {
+    let (mut h, _d) = glass_tiles(|_| {});
+    came_forward(&mut h.state);
+    next_frame(&mut h, Some(0));
+    let since = view(&mut h).play.as_ref().unwrap().since;
+    let o = h.state.scene.outputs()[0].clone();
+    o.change_current_state(
+        None,
+        None,
+        Some(smithay::output::Scale::Fractional(2.0)),
+        None,
+    );
+    h.state.update_layout();
+    let p = view(&mut h).play.as_ref().expect("the Enter carries on");
+    assert_eq!(p.t.change, logon::Change::Enter);
+    assert_eq!(p.since, since, "it carries on from where it was");
+    let l = view(&mut h).layout.as_ref().unwrap().output;
+    assert_eq!((l.width, l.height), (512, 384), "laid out at scale 2");
+    assert!(
+        shown(&mut h) != at_rest(&mut h),
+        "the tiles are still on their way in"
+    );
+    assert_eq!(next_frame(&mut h, None), ["TEST-1"]);
+    settle(&mut h);
+    assert!(shown(&mut h) == at_rest(&mut h), "it ends at rest");
+}
