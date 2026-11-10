@@ -1,9 +1,14 @@
 //! A login screen's host glue, shared by the greeter and the lock: keys, pointer, power menu, and
 //! covers with the screen on one output and a backdrop on the rest.
 
+use std::time::Instant;
+
 use reprisekit::interface::Interface;
-use reprisekit::interfaces::logon::{draw_logon, logon_column, logon_layout};
-use reprisekit::logon::{self, Logon, LogonAction, LogonKey, LogonLayout, Part};
+use reprisekit::interfaces::logon::{
+    Drawn, Transition, draw_logon, draw_spinner, logon_column, logon_layout, spin_elapsed,
+    spin_step, spinner_rect,
+};
+use reprisekit::logon::{self, Logon, LogonAction, LogonKey, LogonLayout, Moves, Part};
 use reprisekit::pointer::Interaction;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
@@ -14,7 +19,7 @@ use smithay::backend::input::InputTime;
 use smithay::input::keyboard::{Keycode, KeysymHandle, ModifiersState, xkb};
 use smithay::input::pointer::AxisFrame;
 use smithay::output::Output;
-use smithay::utils::{Logical, Point};
+use smithay::utils::{Logical, Point, Rectangle};
 
 use crate::compose::{Compose, Fed};
 use crate::compositor::State;
@@ -29,6 +34,16 @@ pub struct Host {
     pub view: fn(&mut State) -> Option<(&mut LogonView, &TextRenderer)>,
     pub act: fn(&mut State, LogonAction),
     pub caps_lock: fn(&State) -> bool,
+    /// How much the screen may move.
+    pub moves: fn(&State) -> Moves,
+}
+
+/// The greeter's and the lock's screens move unless `[effects] logon_animation` is off.
+pub fn moves(state: &State) -> Moves {
+    match state.config.effects.logon_animation {
+        true => Moves::Full,
+        false => Moves::Off,
+    }
 }
 
 pub struct LogonView {
@@ -41,6 +56,27 @@ pub struct LogonView {
     pub hidden: bool,
     /// The wheel's sub-notch remainder, in 120ths.
     wheel: i32,
+    /// The change playing on the screen.
+    pub play: Option<Play>,
+    /// The canvas last shown on the screen's buffer, which frames draw into.
+    pub shown: Option<Canvas>,
+    /// When the busy ring would have been at step 0 had it turned since; None while it stands.
+    ring: Option<Instant>,
+}
+
+/// A change playing: its transition and when its first frame was drawn.
+pub struct Play {
+    pub t: Transition,
+    pub since: Option<Instant>,
+    /// The device size of the canvas it plays on.
+    size: (u32, u32),
+}
+
+impl Play {
+    /// Ms into the change at `now`; 0 until its first frame.
+    pub fn at(&self, now: Instant) -> u32 {
+        (self.since).map_or(0, |s| now.saturating_duration_since(s).as_millis() as u32)
+    }
 }
 
 impl LogonView {
@@ -52,6 +88,9 @@ impl LogonView {
             compose,
             hidden: false,
             wheel: 0,
+            play: None,
+            shown: None,
+            ring: None,
         }
     }
 
@@ -333,12 +372,14 @@ pub struct Refit {
     pub removed: Vec<Output>,
 }
 
-/// Cover `fit.outputs` and only those, then draw the screen.
+/// Cover `fit.outputs` and only those, then draw the screen at rest.
 pub fn refit(state: &mut State, host: &Host, fit: Fit<'_>) -> Refit {
     let mut changed = Refit::default();
     let Some((v, _)) = (host.view)(state) else {
         return changed;
     };
+    v.play = None;
+    v.model.take_motion();
     let mut covers = std::mem::take(&mut v.covers);
     covers.retain(|c| {
         let kept = fit.outputs.contains(&c.output);
@@ -414,34 +455,172 @@ thread_local! {
 
 /// Draw the login screen again with the Caps Lock and layout the keyboard has now.
 pub fn redraw(state: &mut State, host: &Host) {
+    if draw(state, host) {
+        state.redraw_all();
+    }
+}
+
+/// [`redraw`] without asking for a frame; false when there is no screen to draw. A change the
+/// model noted starts playing, or carries on from the one playing.
+fn draw(state: &mut State, host: &Host) -> bool {
     let caps = (host.caps_lock)(state);
     let layout = state.layout_badge();
+    let moves = (host.moves)(state);
     let Some((v, _)) = (host.view)(state) else {
-        return;
+        return false;
     };
     v.model.caps_lock = caps;
     v.model.layout = layout;
+    v.model.moves = moves;
     let Some((output, buffer)) =
         (v.covers.iter()).find_map(|c| Some((c.output.clone(), c.screen?)))
     else {
-        return;
+        return false;
     };
     let b = state.layout_box(Some(&output));
     let scale = state.draw_scale_at(Some(&output));
     let theme = state.config.theme.scaled(scale);
     let Some((v, text)) = (host.view)(state) else {
-        return;
+        return false;
     };
     #[cfg(test)]
     if DRAW_PANICS.get() {
         panic!("draw_logon");
     }
-    let (l, canvas) = screen(&mut v.model, &theme, text, b, scale);
+    let (l, mut canvas) = screen(&mut v.model, &theme, text, b, scale);
+    let d = (&theme, text, scale);
+    play(v, &l, d, &mut canvas, Instant::now());
     v.layout = Some(l);
     let shown = !v.hidden;
     crate::output::upload_scaled(&mut state.scene, buffer, &canvas, scale);
     state.scene.set_enabled(buffer, shown);
-    state.redraw_all();
+    if let Some((v, _)) = (host.view)(state) {
+        v.shown = Some(canvas);
+    }
+    true
+}
+
+/// Start, carry on or drop what plays on `v`'s screen after its model changed, and draw the
+/// frame for `now` over `canvas`, which holds the screen at rest. A screen no longer busy has its
+/// ring back at step 0.
+fn play(
+    v: &mut LogonView,
+    l: &LogonLayout,
+    (theme, text, s): (&Theme, &TextRenderer, i32),
+    canvas: &mut Canvas,
+    now: Instant,
+) {
+    let motion = v.model.take_motion();
+    let size = (canvas.width, canvas.height);
+    let prev = (v.play.take()).filter(|p| p.size == size && p.at(now) < p.t.ms());
+    if !v.hidden && v.model.moves == Moves::Full {
+        let d = Drawn {
+            m: &v.model,
+            l,
+            theme,
+            text,
+            s,
+        };
+        let fresh = |t| Play {
+            t,
+            since: None,
+            size,
+        };
+        v.play = match (motion, prev) {
+            (Some(m), None) => Transition::begin(&m, &d).map(fresh),
+            (Some(m), Some(p)) => Transition::then(&p.t, p.at(now), &m, &d).map(fresh),
+            (None, Some(mut p)) => {
+                p.t.refresh_now(&d);
+                Some(p)
+            }
+            (None, None) => None,
+        };
+    }
+    if let Some(p) = &v.play {
+        p.t.frame(canvas, &v.model, p.at(now));
+    }
+    if v.play.is_some() || !v.model.busy {
+        v.ring = None;
+    }
+    if !v.model.busy {
+        v.model.spin = 0;
+    }
+}
+
+/// `output` is about to render: the change playing on a screen there draws its next frame and
+/// asks for the one after; one that ends draws the screen at rest and asks for nothing. Glass's
+/// busy ring turns once nothing plays over it, paced to its steps.
+pub fn frame(state: &mut State, host: &Host, output: &Output) {
+    let now = Instant::now();
+    let Some((v, _)) = (host.view)(state) else {
+        return;
+    };
+    let Some(buffer) = (v.covers.iter())
+        .find(|c| c.output == *output)
+        .and_then(|c| c.screen)
+    else {
+        return;
+    };
+    if v.hidden {
+        return;
+    }
+    if let Some(p) = v.play.as_mut() {
+        p.since.get_or_insert(now);
+        let at = p.at(now);
+        if at >= p.t.ms() {
+            v.play = None;
+            draw(state, host);
+            return turn(state, host, output, buffer, now);
+        }
+        let Some(mut c) = v.shown.take() else {
+            return;
+        };
+        let r = p.t.frame(&mut c, &v.model, at);
+        show_within(state, host, buffer, c, r);
+        crate::backend::schedule(state, output);
+        return;
+    }
+    turn(state, host, output, buffer, now);
+}
+
+/// Show `c`, which differs from the canvas shown only inside `r`, and keep it as the one shown.
+fn show_within(state: &mut State, host: &Host, buffer: BufferId, c: Canvas, r: Rect) {
+    let (w, h) = (c.width as i32, c.height as i32);
+    let within = Rectangle::new((r.x, r.y).into(), (r.width, r.height).into());
+    (state.scene).buffer_set_canvas_within(buffer, &c.pixels, w, h, within);
+    if let Some((v, _)) = (host.view)(state) {
+        v.shown = Some(c);
+    }
+}
+
+/// Turn the busy ring to its step for `now` and ask for the frame of the next one.
+fn turn(state: &mut State, host: &Host, output: &Output, buffer: BufferId, now: Instant) {
+    let scale = state.draw_scale_at(Some(output));
+    let theme = state.config.theme.scaled(scale);
+    let Some((v, text)) = (host.view)(state) else {
+        return;
+    };
+    let m = &mut v.model;
+    if !m.busy || m.moves != Moves::Full {
+        return;
+    }
+    let Some(l) = v.layout.as_ref() else {
+        return;
+    };
+    let scaled = text.for_output(scale);
+    let Some(r) = spinner_rect(m, l, &theme, scaled, scale) else {
+        return;
+    };
+    let since = *(v.ring).get_or_insert_with(|| now - spin_elapsed(m.spin));
+    let (step, next) = spin_step(now.saturating_duration_since(since));
+    if step != m.spin
+        && let Some(mut c) = v.shown.take()
+    {
+        m.spin = step;
+        draw_spinner(&mut c, m, l, &theme, scaled, scale);
+        show_within(state, host, buffer, c, r);
+    }
+    crate::backend::schedule_step(state, output, since + next);
 }
 
 /// `m` laid out over `output` (layout coordinates) and drawn at `scale`, the canvas covering it.
