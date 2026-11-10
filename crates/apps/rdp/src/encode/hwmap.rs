@@ -339,7 +339,7 @@ impl Converter {
             }
             None => {
                 let to = ffi::AVPixelFormat::YUV420P;
-                let sws = Scaler::new(sw, size, to, target, super::cpu_threads())?;
+                let sws = Scaler::new(sw, size, to, target, super::cpu_threads_for(size))?;
                 // SAFETY: a live scaler.
                 unsafe { to_bt709(sws.0.as_ptr()) };
                 Route::Cpu {
@@ -408,11 +408,12 @@ impl Converter {
     }
 }
 
-/// A bilinear swscale context from `from` pixels of `size` to `to` pixels of `target`, which
-/// slices each picture across `threads` threads.
+/// A bilinear swscale context, slicing each picture across its threads.
 pub(super) struct Scaler(NonNull<ffi::SwsContext>);
 
 impl Scaler {
+    /// Scales `from` pixels of `size` to `to` pixels of `target` on `threads` threads; one
+    /// starts no pool.
     pub(super) fn new(
         from: ffi::AVPixelFormat,
         size: (u32, u32),
@@ -511,7 +512,7 @@ impl Rescale {
         let pixel = sw_pixel(fourcc)?;
         Ok(Rescale {
             size,
-            sws: Scaler::new(pixel, size, pixel, target, super::cpu_threads())?,
+            sws: Scaler::new(pixel, size, pixel, target, super::cpu_threads_for(size))?,
             out: frame::Video::new(Pixel::from(pixel), target.0, target.1),
         })
     }
