@@ -134,6 +134,7 @@ logon-failed = Reprise could not log you on. The reason is in the system journal
 logon-session-ended-early = The session ended as soon as it started. Its log is in the user journal.
 logon-power-off = Shut down
 logon-verifying = Verifying...
+logon-welcome = Welcome
 logon-power-options = Shut down options
 logon-user-name-cue = User name
 logon-admin-shut-down = Other people are logged on to this computer. Type an administrator's user name and password to shut it down.

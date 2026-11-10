@@ -9,6 +9,9 @@ use crate::raster::{Canvas, Rect};
 use crate::text::TextRenderer;
 use crate::textedit::{EditKey, TextEdit};
 
+mod motion;
+pub use motion::{Change, Motion, Moves, Was};
+
 /// The login screen's strings, one accessor per Fluent id.
 pub mod text {
     pub fn title() -> String {
@@ -73,6 +76,9 @@ pub mod text {
     }
     pub fn verifying() -> String {
         tr!("logon-verifying")
+    }
+    pub fn welcome() -> String {
+        tr!("logon-welcome")
     }
     pub fn power_options() -> String {
         tr!("logon-power-options")
@@ -287,6 +293,12 @@ pub struct Logon {
     pub over_picture: bool,
     /// The busy ring's step, which the host advances while the screen is busy.
     pub spin: u32,
+    /// The host's say in whether changes are noted in `motion`.
+    pub moves: Moves,
+    /// The last change the host has not taken yet.
+    pub motion: Option<Motion>,
+    /// The password was right and the session is starting.
+    starting: bool,
     /// The screen [`Screen::Message`]'s OK goes back to.
     back: Screen,
     /// An administrator's power request succeeded and the computer is going down.
@@ -330,6 +342,9 @@ impl Logon {
             column: COLUMN,
             over_picture: false,
             spin: 0,
+            moves: Moves::Off,
+            motion: None,
+            starting: false,
             back: Screen::Typed,
             going_down: false,
         };
@@ -526,6 +541,7 @@ impl Logon {
             Part::PowerMenu => Some(LogonAction::PowerMenu),
             Part::Layout => Some(LogonAction::NextLayout),
             Part::MessageOk => {
+                self.note(Change::MessageOk);
                 self.message = None;
                 self.screen = self.back;
                 self.focus = self.home();
@@ -568,6 +584,8 @@ impl Logon {
     /// The administrator's form for `action`, empty, in place of whatever the screen showed. The
     /// host has dropped any login in progress.
     pub fn admin(&mut self, action: PowerAction) {
+        self.note(Change::Admin);
+        self.starting = false;
         self.purpose = Purpose::Admin(action);
         self.going_down = false;
         self.busy = false;
@@ -596,6 +614,7 @@ impl Logon {
     /// The administrator's power request succeeded: the form stays busy until the computer is
     /// down.
     pub fn going_down(&mut self) {
+        self.note(Change::Status);
         self.wipe_password();
         self.going_down = true;
         self.busy = true;
@@ -620,6 +639,7 @@ impl Logon {
         match self.purpose {
             Purpose::Admin(PowerAction::PowerOff) if self.going_down => text::shutting_down(),
             Purpose::Admin(PowerAction::Reboot) if self.going_down => text::restarting(),
+            _ if self.starting => text::welcome(),
             _ => text::verifying(),
         }
     }
@@ -665,6 +685,9 @@ impl Logon {
     /// Go to `screen` with an empty password and no prompt or message. A tile shows its user;
     /// the tiles select the user shown; typed starts empty. Leaving a waiting prompt cancels it.
     fn open(&mut self, screen: Screen) -> Option<LogonAction> {
+        if let Some(change) = self.opening(screen) {
+            self.note(change);
+        }
         let waiting = self.prompt.is_some();
         self.forget();
         let selected = self.selected();
@@ -745,6 +768,8 @@ impl Logon {
     /// The conversation asks `prompt`: the password field takes its answer, emptied, and the name
     /// stays fixed until the conversation ends.
     pub fn ask(&mut self, prompt: Prompt) {
+        self.note(Change::Ask);
+        self.starting = false;
         self.password = self.fresh_password(prompt.echo);
         self.name.set_read_only(true);
         self.prompt = Some(prompt);
@@ -758,6 +783,8 @@ impl Logon {
     /// The login failed with `text`: the password is wiped, the name stays and the focus goes home.
     /// Glass shows the text on its own screen, whose OK comes back here without it.
     pub fn fail(&mut self, text: String) {
+        self.note(Change::Fail);
+        self.starting = false;
         self.wipe_password();
         self.going_down = false;
         self.prompt = None;
@@ -777,8 +804,15 @@ impl Logon {
         self.message = Some(text);
     }
 
+    /// Busy or not; ending a check without an answer is [`Change::Idle`].
     pub fn set_busy(&mut self, busy: bool) {
+        match (self.busy, busy) {
+            (false, true) => self.note(Change::Busy),
+            (true, false) => self.note(Change::Idle),
+            _ => {}
+        }
         self.busy = busy;
+        self.starting &= busy;
     }
 
     /// What a part is called to a screen reader.
