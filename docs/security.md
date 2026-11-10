@@ -246,9 +246,27 @@ keeps the right password out of the session that runs behind the lock. A further
 stack (a one-time code, a security key PIN) relabels the field, and its
 answer goes to the same helper's stdin. A helper that hangs is given up
 after 90 s and the screen asks again. Reprise zeroes the password copies
-it holds. The power button and menu (Stand By, Restart, Turn Off) go
-through logind without overriding its block inhibitors, as anyone at the
-computer could also hold the power key; in lock mode neither side has them.
+it holds. The field stops at 512 bytes, the longest answer the helper
+reads.
+
+The lock's power button opens a menu. Stand By is in it whenever `[power]
+standby` is set. Restart and Turn Off are in it only while logind lists no
+other session of any user on any seat, remote ones included (greeters, lock
+screens and service managers aside), and `/etc/reprise/login.toml` sets no
+`autologin_user`; so the lock never ends another user's work, nor restarts
+into a desktop that logs itself in unlocked. The check runs when the menu
+opens and again when a row is picked; failing then, the row ends nothing
+and the screen says to unlock first. Each row runs its `[power]` command,
+the default ones on logind without overriding its block inhibitors.
+Restart and Turn Off close the session's programs without their save
+prompts, as none can show over the lock. While the session is locked
+logind is called without interactive authorization, so a polkit rule that
+asks for a password refuses on the lock instead of leaving the screen
+faded out under a prompt nobody can reach. A refusal on the lock names no
+program; the message box under the lock, seen after unlocking, does.
+There is no power in lock mode on either side, nor while a remote viewer
+drives the seat, and an open power menu closes when either begins or a
+locker takes over.
 
 When `/etc/pam.d/reprise-fingerprint` is installed, a second helper runs
 the fingerprint conversation while the screen shows. Either one succeeding
@@ -668,7 +686,7 @@ The virtual screens' lock screen checks its password as a Remote Desktop
 login does, under the `reprise-rdp` service, never the lock screen's
 `reprise`. Wrong passwords typed on the remote side never reach pam_faillock
 or the fingerprint reader, so they can't lock the account at the computer.
-The dialog backs off after failures like a login from one address: the first
+The screen backs off after failures like a login from one address: the first
 three are free, the fourth starts a 2 s wait that doubles with each further
 failure up to 60 s, and a success or 20 minutes without a failure clears
 them. During the wait the screen refuses to check and says how long is left.

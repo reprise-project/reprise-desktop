@@ -470,8 +470,13 @@ are.
   else's tile shows. Classic draws it on the desktop colour, Blue on its
   welcome field, Glass over your own wallpaper and water. The screen goes
   on the primary monitor, the others show the backdrop. Its power button
-  and menu (Stand By, Restart, Turn Off) go through logind, so a program's
-  block inhibitor still holds them off; in lock mode it has none.
+  opens a menu with Stand By (when `[power] standby` is set), and with
+  Restart and Turn Off while nobody else is logged on (remotely included)
+  and no user logs in by themselves. Each goes through logind, so a
+  program's block inhibitor still holds it off; Restart and Turn Off close
+  your programs without their save prompts. There is no power on the lock
+  in lock mode nor while a remote viewer drives the computer
+  ([security.md](security.md)).
 - **Idle steps.** Screen saver, lock, screen off and suspend, each with its
   own timeout, and separate timeouts on battery.
 - **Lock on sleep.** The screen locks before the machine suspends, whatever

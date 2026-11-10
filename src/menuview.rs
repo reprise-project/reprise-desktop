@@ -136,7 +136,7 @@ pub enum MenuKind {
     /// The login screen's power menu: what each row asks of reprise-login.
     GreeterPower(Vec<repriselogin::greeter::PowerAction>),
     /// The lock screen's power menu, in `layers.lock`.
-    LockPower(Vec<crate::lockview::LockPower>),
+    LockPower(Vec<crate::lockpower::LockPower>),
     Dnd(Vec<Option<crate::notifydnd::Row>>),
     StartPanel {
         rows: Vec<Option<StartRow>>,
@@ -201,7 +201,7 @@ pub enum MenuPick {
     Layout(u32),
     NightLight(crate::nightlight::Row),
     GreeterPower(repriselogin::greeter::PowerAction),
-    LockPower(crate::lockview::LockPower),
+    LockPower(crate::lockpower::LockPower),
     Dnd(crate::notifydnd::Row),
     StartPanel(StartRow),
     TaskOverflow {

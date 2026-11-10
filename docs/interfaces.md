@@ -37,7 +37,7 @@ size: frame width, caption height, taskbar height and so on. Both work under
 every interface.
 
 The lock screen is the Log On dialog titled Unlock Reprise, on the desktop
-colour, with your name fixed; under reprise-login, Switch User... starts
+colour, with your name fixed; under reprise-login, Switch User starts
 the button row.
 
 ## Reprise Blue

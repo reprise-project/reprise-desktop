@@ -85,7 +85,7 @@ fn a_physical_key_held_across_lock_mode_start_never_reaches_the_remote() {
 }
 
 #[test]
-fn in_lock_mode_physical_typing_reaches_the_console_dialog_only() {
+fn in_lock_mode_physical_typing_reaches_the_console_screen_only() {
     let (mut h, _portal, _lock) = in_lock_mode();
     let (mut c, _) = remote_window(&mut h);
     h.key(SHIFT, true);
@@ -120,7 +120,7 @@ fn in_lock_mode_an_apps_keys_reach_the_remote_window_until_the_remote_side_locks
     h.state.keys_key(keys, A, false);
     h.roundtrip(&mut c);
     assert_eq!(keys_heard(&c), [(A, true), (A, false)]);
-    assert_eq!(lock_input(&h), "", "the console's dialog hears nothing");
+    assert_eq!(lock_input(&h), "", "the console's screen hears nothing");
     h.from(InputSource::Remote, crate::lockview::lock_desktop);
     h.roundtrip(&mut c);
     c.side.key_log.clear();
@@ -134,7 +134,7 @@ fn in_lock_mode_an_apps_keys_reach_the_remote_window_until_the_remote_side_locks
         .remote
         .as_ref()
         .expect("the remote side is locked");
-    assert_eq!(remote.input(), "", "and its dialog hears nothing");
+    assert_eq!(remote.input(), "", "and its screen hears nothing");
 }
 
 #[test]

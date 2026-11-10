@@ -129,7 +129,7 @@ pub enum KeyRoute {
     Media(Action),
     /// `XF86Switch_VT_n`.
     VtSwitch(u32),
-    /// Everything goes to the lock dialog.
+    /// Everything goes to the lock screen.
     Lock,
     /// Everything goes to the login screen (`greeterview`).
     Greeter,

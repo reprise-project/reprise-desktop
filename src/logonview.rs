@@ -1,6 +1,5 @@
-//! A login screen's host glue, shared by the greeter and the lock: keys with compose, the pointer
-//! and wheel, the power menu, and covers that put the screen on one output and a backdrop on the
-//! rest. Each host says where its view lives and what its actions do through a [`Host`].
+//! A login screen's host glue, shared by the greeter and the lock: keys, pointer, power menu, and
+//! covers with the screen on one output and a backdrop on the rest.
 
 use reprisekit::interface::Interface;
 use reprisekit::interfaces::logon::{draw_logon, logon_column, logon_layout};
@@ -78,7 +77,7 @@ impl LogonView {
 pub struct Cover {
     pub output: Output,
     pub tree: TreeId,
-    rect: RectId,
+    pub rect: RectId,
     pub wall: Option<BufferId>,
     pub screen: Option<BufferId>,
 }

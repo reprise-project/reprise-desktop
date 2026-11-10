@@ -87,8 +87,12 @@ impl Conversation {
         self.asked = true;
         self.notes.clear();
         match purpose {
-            // The greeter builds no lock screen; a lock submits to its own helper.
-            Purpose::Login | Purpose::Unlock { .. } => {
+            Purpose::Login => {
+                self.admin = false;
+                GreeterRequest::CreateSession { user }
+            }
+            Purpose::Unlock { .. } => {
+                log::error!("greeter: a lock screen submitted to the login manager");
                 self.admin = false;
                 GreeterRequest::CreateSession { user }
             }
@@ -260,7 +264,7 @@ impl Conversation {
         }
     }
 
-    /// A failed login's words: PAM's notes when it sent any, as the Unlock dialog shows them.
+    /// A failed login's words: PAM's notes when it sent any, as the lock screen shows them.
     fn failure(&self, kind: ErrorKind, text: &str) -> Failure {
         let notes = (!self.notes.is_empty()).then(|| self.notes.join("\n"));
         match kind {

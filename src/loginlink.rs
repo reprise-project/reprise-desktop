@@ -302,8 +302,16 @@ fn heard(state: &mut State, frames: &mut FrameReader, bytes: &[u8]) {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Whether the console was locked as each request went out.
+    static SENT_LOCKED: std::cell::RefCell<Vec<bool>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
 /// Send `msg`; a failure drops the link. Whether it went.
 fn send(state: &mut State, msg: &SessionRequest) -> bool {
+    #[cfg(test)]
+    SENT_LOCKED.with_borrow_mut(|v| v.push(state.console_locked()));
     let Some(stream) = state.login_link.as_mut().and_then(|l| l.stream.as_mut()) else {
         return false;
     };
@@ -468,9 +476,14 @@ mod tests {
         assert!(!h.state.console_locked(), "no link, no Switch User");
 
         let (mut h, mut theirs) = linked();
+        SENT_LOCKED.with_borrow_mut(Vec::clear);
         switch_user(&mut h.state);
-        assert!(h.state.console_locked());
         assert_eq!(heard(&mut theirs), SessionRequest::SwitchUser);
+        assert_eq!(
+            SENT_LOCKED.take(),
+            [true],
+            "the console was locked as the request went out"
+        );
     }
 
     #[test]

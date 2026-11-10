@@ -235,7 +235,7 @@ fn a_physical_dead_key_never_combines_with_a_remote_key() {
 }
 
 #[test]
-fn the_remote_dialog_checks_its_password_under_the_remote_service() {
+fn the_remote_screen_checks_its_password_under_the_remote_service() {
     let rdp = lockfinger::password_command("alice", PasswordFor::RemoteDesktop);
     let args: Vec<_> = rdp.get_args().collect();
     assert_eq!(args, ["--rdp-password-conversation=alice"]);
@@ -304,11 +304,23 @@ fn the_console_password_ends_lock_mode_and_the_remote_lock_with_it() {
     assert!(!h.state.desktop_locked());
 }
 
+/// The file both sides' checks wait for before they answer.
+fn verdict_gate() -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("reprise-verdict-gate-{}", std::process::id()))
+}
+
 #[test]
 fn both_sides_verifying_at_once_each_get_their_own_verdict() {
     let (mut h, _portal, _lock) = in_lock_mode();
+    let _ = std::fs::remove_file(verdict_gate());
     h.state.lock.helpers = Helpers {
-        password: |_, _| sh(r#"read p; sleep 1; [ "$p" = hunter2 ] && echo '= 0' || echo '= 7'"#),
+        password: |_, _| {
+            let gate = verdict_gate();
+            sh(&format!(
+                r#"read p; while [ ! -e '{}' ]; do sleep 0.01; done; [ "$p" = hunter2 ] && echo '= 0' || echo '= 7'"#,
+                gate.display()
+            ))
+        },
         finger: |_| None,
         ..Helpers::default()
     };
@@ -316,14 +328,16 @@ fn both_sides_verifying_at_once_each_get_their_own_verdict() {
     remote_submit(&mut h, "hunter2");
     tap(&mut h, &[X, ENTER]);
     assert!(verifying(&h, Side::Remote) && verifying(&h, Side::Console));
+    std::fs::write(verdict_gate(), b"").unwrap();
     settle(&mut h);
+    let _ = std::fs::remove_file(verdict_gate());
     assert!(!h.state.desktop_locked(), "the remote side unlocks");
     assert!(h.state.console_locked(), "the console stays locked");
     assert_eq!(message(&h, Side::Console).as_deref(), Some(lock::INCORRECT));
 }
 
 #[test]
-fn a_physical_lock_key_in_lock_mode_keeps_the_console_dialog_and_leaves_the_remote_side_alone() {
+fn a_physical_lock_key_in_lock_mode_keeps_the_console_screen_and_leaves_the_remote_side_alone() {
     let (mut h, _portal, _lock) = in_lock_mode();
     h.key(SUPER, true);
     h.key(L, true);
@@ -335,7 +349,7 @@ fn a_physical_lock_key_in_lock_mode_keeps_the_console_dialog_and_leaves_the_remo
         .console
         .as_ref()
         .expect("the console stays locked");
-    assert!(console.screen_shown(), "the console's dialog is up");
+    assert!(console.screen_shown(), "the console's screen is up");
     assert_eq!(covers(&h, Side::Console), ["eDP-1"]);
     assert!(!h.state.desktop_locked(), "the remote side stays unlocked");
     assert!(covers(&h, Side::Remote).is_empty());
