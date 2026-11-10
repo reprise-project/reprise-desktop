@@ -81,6 +81,7 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
             ("gtk4_colors", "GTK4 and libadwaita in the look's colours"),
         ],
         Page::Effects => &[
+            ("reduce_motion", "Reduce motion everywhere"),
             ("window_animation", "Animate windows opening and closing"),
             ("window_open_ms", "Open:"),
             ("window_close_ms", "Close:"),
@@ -291,6 +292,7 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
                 "magnifier_follow",
                 "When zoomed in, follow the text cursor and focus",
             ),
+            ("vision_reduce_motion", "Reduce motion everywhere"),
         ],
         Page::Sound => &[
             ("audio_devices", "Audio Devices..."),

@@ -1235,6 +1235,24 @@ fn with_window_animations_off_sheets_appear_settled() {
 }
 
 #[test]
+fn under_reduce_motion_sheets_and_droplets_arrive_open_and_leave_at_once() {
+    let t0 = Instant::now();
+    let c = crate::config::Config::parse(
+        "[appearance]\ninterface = \"glass\"\n[effects]\nreduce_motion = true\n",
+    )
+    .unwrap();
+    let e = c.effects;
+    assert!(Motion::arrive(&e, t0).settled(t0));
+    let mut drip = Motion::drip(&e, t0);
+    assert!(drip.settled(t0));
+    assert!(drip.aim_open(1.0, &e, t0));
+    assert!(drip.settled(t0), "a Droplet opens at once");
+    drip.leave(&e, t0);
+    assert!(drip.settled(t0));
+    assert_eq!(drip.k.value(t0), 0.0, "gone at once");
+}
+
+#[test]
 fn a_sheet_arrives_over_the_window_open_time_and_leaves_over_the_close_time() {
     let (t0, e) = (Instant::now(), glass_effects());
     let mut m = Motion::arrive(&e, t0);

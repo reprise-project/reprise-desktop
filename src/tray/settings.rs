@@ -1,5 +1,5 @@
 //! The `org.freedesktop.impl.portal.Settings` backend, served from the compositor's bus connection so GTK, Qt and browsers learn through xdg-desktop-portal whether the look is dark and what its accent is.
-//! Four namespaces are answered, everything else is NotFound (`reprise-portals.conf` names no other Settings backend): `org.freedesktop.appearance`, `org.reprise.appearance` (the whole look, for Reprise's programs), `org.gnome.desktop.interface` (theme, icons, cursor, font, font smoothing and overlay scrolling for GTK3, and an empty `gtk-im-module` for GTK4, which the session points at the portal via `GTK_USE_PORTAL`) and `button-layout` of `org.gnome.desktop.wm.preferences` for client-drawn captions.
+//! Four namespaces are answered, everything else is NotFound (`reprise-portals.conf` names no other Settings backend): `org.freedesktop.appearance`, `org.reprise.appearance` (the whole look, for Reprise's programs), `org.gnome.desktop.interface` (theme, icons, cursor, font, font smoothing and overlay scrolling for GTK3, `enable-animations` for GTK3 and GTK4, and an empty `gtk-im-module` for GTK4, which the session points at the portal via `GTK_USE_PORTAL`) and `button-layout` of `org.gnome.desktop.wm.preferences` for client-drawn captions.
 
 use crate::config::{Config, FontSmoothing};
 use crate::mutex::lock;
@@ -20,9 +20,9 @@ const GNOME_WM: &str = "org.gnome.desktop.wm.preferences";
 /// What the four namespaces say about the look. The freedesktop one is
 /// in the portal's own units: `color_scheme` 1 prefer dark / 2 prefer
 /// light, `contrast` 1 for the High Contrast schemes, `accent` sRGB in
-/// 0..1. The Reprise one is the look as the environment hands it to a
-/// program. The GNOME one is GTK3's theme, icons, cursor, font and font
-/// smoothing.
+/// 0..1, `reduced-motion` 1 under `[effects] reduce_motion`. The Reprise
+/// one is the look as the environment hands it to a program. The GNOME
+/// one is GTK's theme, icons, cursor, font, font smoothing and animations.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Appearance {
     pub color_scheme: u32,
@@ -54,6 +54,7 @@ pub struct Appearance {
     /// (`crate::toolkits`), which "reprise" names; None until written.
     pub gtk_generated: Option<&'static str>,
     pub font_smoothing: FontSmoothing,
+    pub reduce_motion: bool,
 }
 
 impl Appearance {
@@ -91,6 +92,7 @@ impl Appearance {
             gtk_theme: cfg.toolkits.gtk_theme.clone(),
             gtk_generated: None,
             font_smoothing: cfg.toolkits.font_smoothing,
+            reduce_motion: cfg.effects.reduce_motion,
         }
     }
 
@@ -130,6 +132,11 @@ impl Appearance {
                 zbus::Variant::U32(self.color_scheme),
             ),
             (NAMESPACE, "contrast", zbus::Variant::U32(self.contrast)),
+            (
+                NAMESPACE,
+                "reduced-motion",
+                zbus::Variant::U32(self.reduce_motion.into()),
+            ),
             (NAMESPACE, "accent-color", zbus::Variant::from(self.accent)),
             (
                 look::NAMESPACE,
@@ -236,6 +243,11 @@ impl Appearance {
                 GNOME,
                 "text-scaling-factor",
                 zbus::Variant::F64(self.text_size as f64 / 100.0),
+            ),
+            (
+                GNOME,
+                "enable-animations",
+                zbus::Variant::Bool(!self.reduce_motion),
             ),
             // GTK4 falls back to its simple module when the namespace lacks
             // this key; empty lets it pick text-input-v3 (input methods).
@@ -446,7 +458,7 @@ mod tests {
             current: Arc::new(Mutex::new(of(&ColorScheme::default(), Interface::Classic))),
         };
         let all = s.read_all(vec![]);
-        assert_eq!(all[NAMESPACE].len(), 3);
+        assert_eq!(all[NAMESPACE].len(), 4);
         let gnome = s.read_all(vec!["org.gnome.*".into()]);
         let mut namespaces = gnome.keys().collect::<Vec<_>>();
         namespaces.sort();
@@ -523,7 +535,7 @@ mod tests {
         };
         assert_eq!(
             light.read_all(vec![GNOME.into()])[GNOME].len(),
-            12,
+            13,
             "every key GTK takes from here"
         );
         assert_eq!(text(&light, "color-scheme"), "default");
@@ -749,6 +761,30 @@ mod tests {
         assert!(
             changed(&dark, &dark).is_empty(),
             "nothing moved, nothing signalled"
+        );
+    }
+
+    #[test]
+    fn reduce_motion_reaches_gtk_and_the_freedesktop_key_and_a_change_signals_both() {
+        let still = |on: bool| {
+            let c = crate::config::Config::parse(&format!("[effects]\nreduce_motion = {on}\n"));
+            Appearance::of(&c.unwrap())
+        };
+        let (moving, reduced) = (still(false), still(true));
+        assert_eq!(
+            moving.get(NAMESPACE, "reduced-motion"),
+            Some(zbus::Variant::U32(0))
+        );
+        assert_eq!(
+            moving.get(GNOME, "enable-animations"),
+            Some(zbus::Variant::Bool(true))
+        );
+        assert_eq!(
+            changed(&moving, &reduced),
+            [
+                (NAMESPACE, "reduced-motion", zbus::Variant::U32(1)),
+                (GNOME, "enable-animations", zbus::Variant::Bool(false)),
+            ]
         );
     }
 }

@@ -181,6 +181,7 @@ pub(super) fn render(state: &mut State, head: Head) {
     let filter = crate::magnifier::filter_matrix(&config.accessibility);
     let wanted = crate::glass::wanted(config);
     glass.update_screen_backdrop(&mut b.renderer, scene, &output, clear, wanted);
+    magnifier.still = config.effects.reduce_motion;
     let mut build = |renderer: &mut GlesRenderer| {
         crate::magnifier::output_elements(
             magnifier,

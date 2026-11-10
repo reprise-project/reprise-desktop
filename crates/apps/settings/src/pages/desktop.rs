@@ -147,6 +147,13 @@ pub(super) const DESKTOP_CONTROLS: [&str; 10] = [
 pub(super) const DURATION_CONTROLS: [&str; 3] =
     ["duration_label", "desktop_animation_ms", "duration_units"];
 
+/// Under the Virtual Desktops group and beside the Taskbar page's slide: blank, or the matching
+/// note while reduce motion greys those rows.
+pub(super) const DESKTOP_MOTION_NOTE: &str = "desktop_animation_note";
+pub(super) const SLIDE_MOTION_NOTE: &str = "taskbar_slide_note";
+pub(super) const MOTION_NOTE: &str = "Off while Reduce motion is on (Effects page)";
+pub(super) const SLIDE_MOTION_TEXT: &str = "(Reduce motion)";
+
 /// The Taskbar page's window picture rate, greyed while nothing shows a live picture.
 pub(super) const FPS_CONTROLS: [&str; 3] = ["fps_label", "previews_fps", "fps_units"];
 
@@ -223,7 +230,7 @@ pub fn virtual_desktops(a: Area) -> Form {
         "Apart by commas; an empty one keeps its number",
     ));
     items.extend(indented.into_iter().map(Item::under_check));
-
+    items.push(Item::label_at(DESKTOP_MOTION_NOTE, X, 296, a.w, ""));
     Form::new(items)
 }
 
@@ -273,9 +280,17 @@ pub fn taskbar(a: Area) -> Form {
             "Slide taskbar buttons as they are d&ragged",
         ),
     ];
+    let slide_y = 100 + 18 * (checks.len() as i32 - 1);
     for (i, (id, text)) in checks.into_iter().enumerate() {
         items.push(Item::check(id, X, 100 + 18 * i as i32, text));
     }
+    items.push(Item::label_at(
+        SLIDE_MOTION_NOTE,
+        X + 262,
+        slide_y,
+        a.w - 262,
+        "",
+    ));
     items.push(Item::button(
         TRAY_CUSTOMIZE,
         Rect::new(a.right() - CUSTOMIZE_W, 167, CUSTOMIZE_W, BUTTON_H),

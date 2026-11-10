@@ -220,105 +220,111 @@ pub fn night_light(a: Area) -> Form {
     Form::new(items)
 }
 
-/// The Effects page: window animations and the fade of hovered buttons, each a check with its two durations
-/// indented under it, the screen's fade and the lock screen's motion; then the menus' shadow, timings
-/// and opening.
+/// The Effects page: reduce motion over every other motion, then window animations and the fade of
+/// hovered buttons, each a check with its two durations indented under it, the screen's fade and the
+/// lock screen's motion; then the menus' shadow, timings and opening.
 pub fn effects(a: Area) -> Form {
-    let mut items = vec![group(a, "effects_group", 44, 180, "Animation")];
+    let mut items = vec![group(a, "effects_group", 44, 202, "Animation")];
+    items.push(Item::check(
+        "reduce_motion",
+        GX,
+        66,
+        "&Reduce motion everywhere",
+    ));
     items.push(Item::check(
         "window_animation",
         GX,
-        66,
+        88,
         "&Animate windows opening and closing",
     ));
     let mut anim = Vec::new();
     anim.extend(ms_spin(
         ["open_label", "window_open_ms", "open_units"],
         GX,
-        92,
+        114,
         "&Open:",
     ));
     anim.extend(ms_spin(
         ["close_label", "window_close_ms", "close_units"],
         GX + 140,
-        92,
+        114,
         "&Close:",
     ));
     items.extend(anim.into_iter().map(Item::under_check));
     items.push(Item::check(
         "hover_fade",
         GX,
-        122,
+        144,
         "Fade button &highlights",
     ));
     let mut hover = Vec::new();
     hover.extend(ms_spin(
         ["in_label", "hover_in_ms", "in_units"],
         GX,
-        148,
+        170,
         "&In:",
     ));
     hover.extend(ms_spin(
         ["out_label", "hover_out_ms", "out_units"],
         GX + 140,
-        148,
+        170,
         "O&ut:",
     ));
     items.extend(hover.into_iter().map(Item::under_check));
     items.push(Item::check(
         "session_fade",
         GX,
-        178,
+        200,
         "&Fade the screen at log on and log off",
     ));
     items.push(Item::check(
         "logon_animation",
         GX,
-        200,
+        222,
         "Animate the &lock screen",
     ));
-    items.push(group(a, "menus_group", 234, 74, "Menus"));
+    items.push(group(a, "menus_group", 256, 74, "Menus"));
     items.extend(spin(
         "shadow_label",
         "menu_shadow",
         GX,
-        256,
+        278,
         60,
         "&Shadow:",
         (0, 32),
     ));
-    items.push(Item::label_at("shadow_units", GX + 118, 256, 20, "px"));
+    items.push(Item::label_at("shadow_units", GX + 118, 278, 20, "px"));
     items.extend(spin(
         "hover_label",
         "menu_hover_ms",
         GX + 140,
-        256,
+        278,
         70,
         "Ho&ver:",
         (0, 9999),
     ));
-    items.push(Item::label_at("menu_hover_units", GX + 268, 256, 20, "ms"));
+    items.push(Item::label_at("menu_hover_units", GX + 268, 278, 20, "ms"));
     items.extend(spin(
         "fade_label",
         "menu_fade_ms",
         GX,
-        282,
+        304,
         60,
         "Ti&me:",
         (0, 9999),
     ));
-    items.push(Item::label_at("menu_fade_units", GX + 118, 282, 20, "ms"));
+    items.push(Item::label_at("menu_fade_units", GX + 118, 304, 20, "ms"));
     items.push(Item::label_at(
         "menu_animation_label",
         GX + 140,
-        282,
+        304,
         70,
         "A&nimation:",
     ));
     items.push(choice(
         "menu_animation",
         GX + 214,
-        278,
+        300,
         110,
         MENU_ANIMATIONS,
     ));
@@ -338,6 +344,18 @@ pub(super) const ANIM_CONTROLS: [&str; 6] = [
     "close_label",
     "window_close_ms",
     "close_units",
+];
+
+/// The Effects page's motion controls, greyed while reduce motion is on.
+pub(super) const MOTION_CONTROLS: [&str; 8] = [
+    "window_animation",
+    "hover_fade",
+    "session_fade",
+    "logon_animation",
+    "fade_label",
+    "menu_fade_ms",
+    "menu_fade_units",
+    "menu_animation_label",
 ];
 
 pub(super) const HOVER_CONTROLS: [&str; 6] = [

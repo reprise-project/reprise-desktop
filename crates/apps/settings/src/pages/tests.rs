@@ -98,8 +98,8 @@ fn every_bind_names_a_control_on_exactly_one_page() {
 
 /// Every page's text fits its rects under each interface, in Tahoma and in DejaVu Sans, the
 /// default family's second face, at each text size, Remote Desktop also as the login manager
-/// lays it out. Buttons do not widen, so each button's label must fit with room for the focus
-/// rect.
+/// lays it out and the reduce motion notes showing. Buttons do not widen, so each button's
+/// label must fit with room for the focus rect.
 #[test]
 fn every_page_fits_its_text_under_every_interface() {
     let pages = |i: reprisekit::interface::Interface| {
@@ -109,6 +109,15 @@ fn every_page_fits_its_text_under_every_interface() {
             .collect();
         let managed = remote_desktop(Area::MIN, None, false, Some(""));
         forms.push(("Remote Desktop, managed".into(), managed));
+        let still = with(&Settings {
+            interface: i.as_str().into(),
+            reduce_motion: true,
+            ..Settings::default()
+        });
+        for p in [Page::Taskbar, Page::VirtualDesktops] {
+            let label = format!("{}, reduce motion", p.label());
+            forms.push((label, still.pages[p.index()].clone()));
+        }
         forms
     };
     let over = reprisekit::interfaces::form_overflows(|i, _, _| pages(i));

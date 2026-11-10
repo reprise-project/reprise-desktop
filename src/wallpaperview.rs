@@ -502,7 +502,10 @@ impl State {
             return;
         }
         let mut next = self.new_wallpaper(path);
-        next.fade_for = fade_for;
+        next.fade_for = match self.config.effects.reduce_motion {
+            true => Duration::ZERO,
+            false => fade_for,
+        };
         if let Some(old) = self.wallpaper.take() {
             self.end_fade(old.fading, old.fade);
             next.fading = old.nodes.into_iter().map(|(_, n)| n.buffer).collect();
@@ -1129,6 +1132,23 @@ mod tests {
         );
         h.state.switch_desktop(0);
         assert_eq!(shown(&h), Some(Path::new("reprise:tarn/blue")));
+    }
+
+    #[test]
+    fn under_reduce_motion_a_desktop_switch_cuts_to_the_next_picture() {
+        let config = crate::config::Config::parse(
+            "[effects]\nreduce_motion = true\n[workspaces]\ncount = 3\nanimation = \"slide\"\n\
+             [wallpaper]\nimage = \"reprise:tarn/blue\"\n\
+             desktops = [\"\", \"reprise:tarn/dusk\"]\n",
+        )
+        .unwrap();
+        let mut h = crate::harness::Harness::with_config(config);
+        h.output("A-1", 320, 200);
+        h.state.apply_wallpaper_config();
+        h.state.switch_desktop(1);
+        assert_eq!(shown(&h), Some(Path::new("reprise:tarn/dusk")));
+        let w = h.state.wallpaper.as_ref().unwrap();
+        assert_eq!(w.fade_for, Duration::ZERO, "no crossfade");
     }
 
     #[test]
