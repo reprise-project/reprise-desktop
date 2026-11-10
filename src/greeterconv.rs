@@ -12,6 +12,8 @@ pub enum Step {
     Ask(Prompt),
     Note(String),
     Fail(Failure),
+    /// The password was right and the session is starting.
+    Starting,
     /// The session started: the greeter has done its job.
     Started,
     /// Turning off or restarting needs an administrator, since others are logged on.
@@ -220,7 +222,7 @@ impl Conversation {
             (Phase::Authenticating, GreeterReply::Success) => {
                 self.phase = Phase::Starting;
                 self.password = None;
-                vec![Step::Send(GreeterRequest::StartSession)]
+                vec![Step::Starting, Step::Send(GreeterRequest::StartSession)]
             }
             (Phase::Starting, GreeterReply::Success) => {
                 self.phase = Phase::Idle;
@@ -287,6 +289,7 @@ pub fn show(m: &mut Logon, step: Step) {
             Failure::PowerRefused => logon::text::power_refused(),
             Failure::PowerFailed => logon::text::power_failed(),
         }),
+        Step::Starting => m.starting(),
         Step::Idle => m.set_busy(false),
         Step::Admin(action) => m.admin(action),
         Step::GoingDown => m.going_down(),
@@ -400,7 +403,7 @@ mod tests {
         c.on_reply(prompt(AuthKind::Secret, "Password:"));
         assert_eq!(
             c.on_reply(GreeterReply::Success),
-            vec![Step::Send(GreeterRequest::StartSession)]
+            vec![Step::Starting, Step::Send(GreeterRequest::StartSession)]
         );
         assert_eq!(c.on_reply(GreeterReply::Success), vec![Step::Started]);
     }
@@ -494,7 +497,7 @@ mod tests {
         c.submit(Purpose::Login, "bob".into(), Zeroizing::new("pw".into()));
         assert_eq!(
             c.on_reply(GreeterReply::Success),
-            vec![Step::Send(GreeterRequest::StartSession)],
+            vec![Step::Starting, Step::Send(GreeterRequest::StartSession)],
             "the next login's success is its own"
         );
     }

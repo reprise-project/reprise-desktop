@@ -109,8 +109,14 @@ pub fn reply(state: &mut State, reply: GreeterReply) {
 }
 
 /// A later Greeting: the running screen came forward, so its tiles' notes and the notice
-/// catch up with the sessions, and Switch User's opens on the tiles.
+/// catch up with the sessions, Switch User's opens on the tiles, and the screen enters.
 fn regreet(g: &mut Greeter, fresh: &Greeting) -> Option<LogonAction> {
+    let action = catch_up(g, fresh);
+    g.view.model.enter();
+    action
+}
+
+fn catch_up(g: &mut Greeter, fresh: &Greeting) -> Option<LogonAction> {
     for u in &mut g.view.model.users {
         let note = fresh
             .users
