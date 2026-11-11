@@ -1458,7 +1458,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2453,7 +2453,7 @@ checksum = "791930b43c0d5973160d90a8f3894509f2b273430f5c5c73b668636d0287c5c0"
 [[package]]
 name = "ironrdp-acceptor"
 version = "0.12.0"
-source = "git+https://github.com/reprise-project/IronRDP.git?rev=2ce8f0dcca41e8c51f09693de0c770b499d2df8a#2ce8f0dcca41e8c51f09693de0c770b499d2df8a"
+source = "git+https://github.com/reprise-project/IronRDP.git?rev=995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24#995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24"
 dependencies = [
  "async-trait",
  "ironrdp-async",
@@ -2472,7 +2472,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-ainput"
 version = "0.10.0"
-source = "git+https://github.com/reprise-project/IronRDP.git?rev=2ce8f0dcca41e8c51f09693de0c770b499d2df8a#2ce8f0dcca41e8c51f09693de0c770b499d2df8a"
+source = "git+https://github.com/reprise-project/IronRDP.git?rev=995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24#995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24"
 dependencies = [
  "bitflags 2.13.2",
  "ironrdp-core",
@@ -2484,7 +2484,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-async"
 version = "0.12.0"
-source = "git+https://github.com/reprise-project/IronRDP.git?rev=2ce8f0dcca41e8c51f09693de0c770b499d2df8a#2ce8f0dcca41e8c51f09693de0c770b499d2df8a"
+source = "git+https://github.com/reprise-project/IronRDP.git?rev=995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24#995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24"
 dependencies = [
  "bytes",
  "ironrdp-connector",
@@ -2497,12 +2497,12 @@ dependencies = [
 [[package]]
 name = "ironrdp-bulk"
 version = "0.2.0"
-source = "git+https://github.com/reprise-project/IronRDP.git?rev=2ce8f0dcca41e8c51f09693de0c770b499d2df8a#2ce8f0dcca41e8c51f09693de0c770b499d2df8a"
+source = "git+https://github.com/reprise-project/IronRDP.git?rev=995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24#995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24"
 
 [[package]]
 name = "ironrdp-cliprdr"
 version = "0.9.0"
-source = "git+https://github.com/reprise-project/IronRDP.git?rev=2ce8f0dcca41e8c51f09693de0c770b499d2df8a#2ce8f0dcca41e8c51f09693de0c770b499d2df8a"
+source = "git+https://github.com/reprise-project/IronRDP.git?rev=995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24#995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24"
 dependencies = [
  "bitflags 2.13.2",
  "ironrdp-core",
@@ -2514,7 +2514,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-connector"
 version = "0.12.0"
-source = "git+https://github.com/reprise-project/IronRDP.git?rev=2ce8f0dcca41e8c51f09693de0c770b499d2df8a#2ce8f0dcca41e8c51f09693de0c770b499d2df8a"
+source = "git+https://github.com/reprise-project/IronRDP.git?rev=995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24#995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24"
 dependencies = [
  "ironrdp-core",
  "ironrdp-error",
@@ -2533,7 +2533,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-core"
 version = "0.3.1"
-source = "git+https://github.com/reprise-project/IronRDP.git?rev=2ce8f0dcca41e8c51f09693de0c770b499d2df8a#2ce8f0dcca41e8c51f09693de0c770b499d2df8a"
+source = "git+https://github.com/reprise-project/IronRDP.git?rev=995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24#995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24"
 dependencies = [
  "ironrdp-error",
 ]
@@ -2541,7 +2541,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-displaycontrol"
 version = "0.10.0"
-source = "git+https://github.com/reprise-project/IronRDP.git?rev=2ce8f0dcca41e8c51f09693de0c770b499d2df8a#2ce8f0dcca41e8c51f09693de0c770b499d2df8a"
+source = "git+https://github.com/reprise-project/IronRDP.git?rev=995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24#995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24"
 dependencies = [
  "ironrdp-core",
  "ironrdp-dvc",
@@ -2553,7 +2553,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-dvc"
 version = "0.10.0"
-source = "git+https://github.com/reprise-project/IronRDP.git?rev=2ce8f0dcca41e8c51f09693de0c770b499d2df8a#2ce8f0dcca41e8c51f09693de0c770b499d2df8a"
+source = "git+https://github.com/reprise-project/IronRDP.git?rev=995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24#995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24"
 dependencies = [
  "ironrdp-bulk",
  "ironrdp-core",
@@ -2565,7 +2565,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-echo"
 version = "0.6.0"
-source = "git+https://github.com/reprise-project/IronRDP.git?rev=2ce8f0dcca41e8c51f09693de0c770b499d2df8a#2ce8f0dcca41e8c51f09693de0c770b499d2df8a"
+source = "git+https://github.com/reprise-project/IronRDP.git?rev=995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24#995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24"
 dependencies = [
  "ironrdp-core",
  "ironrdp-dvc",
@@ -2576,7 +2576,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-egfx"
 version = "0.5.0"
-source = "git+https://github.com/reprise-project/IronRDP.git?rev=2ce8f0dcca41e8c51f09693de0c770b499d2df8a#2ce8f0dcca41e8c51f09693de0c770b499d2df8a"
+source = "git+https://github.com/reprise-project/IronRDP.git?rev=995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24#995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24"
 dependencies = [
  "bit_field",
  "bitflags 2.13.2",
@@ -2590,12 +2590,12 @@ dependencies = [
 [[package]]
 name = "ironrdp-error"
 version = "0.2.1"
-source = "git+https://github.com/reprise-project/IronRDP.git?rev=2ce8f0dcca41e8c51f09693de0c770b499d2df8a#2ce8f0dcca41e8c51f09693de0c770b499d2df8a"
+source = "git+https://github.com/reprise-project/IronRDP.git?rev=995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24#995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24"
 
 [[package]]
 name = "ironrdp-graphics"
 version = "0.11.0"
-source = "git+https://github.com/reprise-project/IronRDP.git?rev=2ce8f0dcca41e8c51f09693de0c770b499d2df8a#2ce8f0dcca41e8c51f09693de0c770b499d2df8a"
+source = "git+https://github.com/reprise-project/IronRDP.git?rev=995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24#995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24"
 dependencies = [
  "bit_field",
  "bitflags 2.13.2",
@@ -2612,7 +2612,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-pdu"
 version = "0.11.0"
-source = "git+https://github.com/reprise-project/IronRDP.git?rev=2ce8f0dcca41e8c51f09693de0c770b499d2df8a#2ce8f0dcca41e8c51f09693de0c770b499d2df8a"
+source = "git+https://github.com/reprise-project/IronRDP.git?rev=995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24#995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24"
 dependencies = [
  "bit_field",
  "bitflags 2.13.2",
@@ -2636,7 +2636,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-rdpdr"
 version = "0.9.0"
-source = "git+https://github.com/reprise-project/IronRDP.git?rev=2ce8f0dcca41e8c51f09693de0c770b499d2df8a#2ce8f0dcca41e8c51f09693de0c770b499d2df8a"
+source = "git+https://github.com/reprise-project/IronRDP.git?rev=995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24#995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24"
 dependencies = [
  "bitflags 2.13.2",
  "getrandom 0.3.4",
@@ -2650,7 +2650,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-rdpeai"
 version = "0.2.0"
-source = "git+https://github.com/reprise-project/IronRDP.git?rev=2ce8f0dcca41e8c51f09693de0c770b499d2df8a#2ce8f0dcca41e8c51f09693de0c770b499d2df8a"
+source = "git+https://github.com/reprise-project/IronRDP.git?rev=995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24#995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24"
 dependencies = [
  "ironrdp-core",
  "ironrdp-dvc",
@@ -2663,7 +2663,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-rdpei"
 version = "0.3.0"
-source = "git+https://github.com/reprise-project/IronRDP.git?rev=2ce8f0dcca41e8c51f09693de0c770b499d2df8a#2ce8f0dcca41e8c51f09693de0c770b499d2df8a"
+source = "git+https://github.com/reprise-project/IronRDP.git?rev=995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24#995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24"
 dependencies = [
  "bitflags 2.13.2",
  "ironrdp-core",
@@ -2676,7 +2676,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-rdpemt"
 version = "0.1.0"
-source = "git+https://github.com/reprise-project/IronRDP.git?rev=2ce8f0dcca41e8c51f09693de0c770b499d2df8a#2ce8f0dcca41e8c51f09693de0c770b499d2df8a"
+source = "git+https://github.com/reprise-project/IronRDP.git?rev=995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24#995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24"
 dependencies = [
  "ironrdp-core",
  "ironrdp-error",
@@ -2687,7 +2687,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-rdpeudp"
 version = "0.1.0"
-source = "git+https://github.com/reprise-project/IronRDP.git?rev=2ce8f0dcca41e8c51f09693de0c770b499d2df8a#2ce8f0dcca41e8c51f09693de0c770b499d2df8a"
+source = "git+https://github.com/reprise-project/IronRDP.git?rev=995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24#995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24"
 dependencies = [
  "bitflags 2.13.2",
  "ironrdp-core",
@@ -2698,7 +2698,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-rdpeudp-tokio"
 version = "0.2.0"
-source = "git+https://github.com/reprise-project/IronRDP.git?rev=2ce8f0dcca41e8c51f09693de0c770b499d2df8a#2ce8f0dcca41e8c51f09693de0c770b499d2df8a"
+source = "git+https://github.com/reprise-project/IronRDP.git?rev=995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24#995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24"
 dependencies = [
  "bytes",
  "ironrdp-async",
@@ -2717,7 +2717,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-rdpsnd"
 version = "0.11.0"
-source = "git+https://github.com/reprise-project/IronRDP.git?rev=2ce8f0dcca41e8c51f09693de0c770b499d2df8a#2ce8f0dcca41e8c51f09693de0c770b499d2df8a"
+source = "git+https://github.com/reprise-project/IronRDP.git?rev=995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24#995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24"
 dependencies = [
  "bitflags 2.13.2",
  "ironrdp-core",
@@ -2731,7 +2731,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-server"
 version = "0.14.0"
-source = "git+https://github.com/reprise-project/IronRDP.git?rev=2ce8f0dcca41e8c51f09693de0c770b499d2df8a#2ce8f0dcca41e8c51f09693de0c770b499d2df8a"
+source = "git+https://github.com/reprise-project/IronRDP.git?rev=995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24#995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2769,7 +2769,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-svc"
 version = "0.10.0"
-source = "git+https://github.com/reprise-project/IronRDP.git?rev=2ce8f0dcca41e8c51f09693de0c770b499d2df8a#2ce8f0dcca41e8c51f09693de0c770b499d2df8a"
+source = "git+https://github.com/reprise-project/IronRDP.git?rev=995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24#995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24"
 dependencies = [
  "bitflags 2.13.2",
  "ironrdp-core",
@@ -2779,7 +2779,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-tls"
 version = "0.3.0"
-source = "git+https://github.com/reprise-project/IronRDP.git?rev=2ce8f0dcca41e8c51f09693de0c770b499d2df8a#2ce8f0dcca41e8c51f09693de0c770b499d2df8a"
+source = "git+https://github.com/reprise-project/IronRDP.git?rev=995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24#995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24"
 dependencies = [
  "rustls-native-certs",
  "tokio",
@@ -2789,7 +2789,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-tokio"
 version = "0.12.0"
-source = "git+https://github.com/reprise-project/IronRDP.git?rev=2ce8f0dcca41e8c51f09693de0c770b499d2df8a#2ce8f0dcca41e8c51f09693de0c770b499d2df8a"
+source = "git+https://github.com/reprise-project/IronRDP.git?rev=995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24#995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24"
 dependencies = [
  "ironrdp-async",
  "ironrdp-connector",
@@ -5158,7 +5158,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.4.15",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5171,7 +5171,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5887,10 +5887,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.6",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
