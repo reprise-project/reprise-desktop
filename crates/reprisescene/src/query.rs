@@ -15,6 +15,7 @@ use crate::{
     Scene,
     cover::Covered,
     node::{Content, Node, NodeId},
+    scene::meet,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -54,7 +55,8 @@ impl<R: Renderer, D> Scene<R, D> {
         (!r.is_empty()).then_some(r)
     }
 
-    /// The box around everything `node` shows; `None` when it shows nothing or is hidden (itself or an ancestor disabled).
+    /// The box around everything `node` shows, cut to [`Scene::set_kept_on`] outputs; `None` when it
+    /// shows nothing or is hidden (itself or an ancestor disabled).
     pub fn extents(&self, node: impl Into<NodeId>) -> Option<Rectangle<i32, Logical>> {
         let node = node.into();
         let (pos, visible) = self.coords(node)?;
@@ -62,7 +64,8 @@ impl<R: Renderer, D> Scene<R, D> {
             return None;
         }
         let mut out: Option<Rectangle<i32, Logical>> = None;
-        self.extents_under(node, pos - self.node(node)?.position, &mut out);
+        let kept = self.kept_above(node);
+        self.extents_under(node, pos - self.node(node)?.position, kept, &mut out);
         out
     }
 
@@ -70,6 +73,7 @@ impl<R: Renderer, D> Scene<R, D> {
         &self,
         id: NodeId,
         origin: Point<i32, Logical>,
+        kept: Option<Rectangle<i32, Logical>>,
         out: &mut Option<Rectangle<i32, Logical>>,
     ) {
         let Some(n) = self.node(id).filter(|n| n.enabled) else {
@@ -77,10 +81,13 @@ impl<R: Renderer, D> Scene<R, D> {
         };
         let pos = origin + n.position;
         if let Content::Tree(children) = &n.content {
+            let kept = n.kept_rect().map_or(kept, |k| Some(meet(kept, k)));
             for c in children {
-                self.extents_under(*c, pos, out);
+                self.extents_under(*c, pos, kept, out);
             }
-        } else if let Some(r) = Self::leaf_rect(n, pos) {
+        } else if let Some(r) =
+            Self::leaf_rect(n, pos).and_then(|r| kept.map_or(Some(r), |k| r.intersection(k)))
+        {
             *out = Some(out.map_or(r, |o| o.merge(r)));
         }
     }
@@ -113,6 +120,12 @@ impl<R: Renderer, D> Scene<R, D> {
         let local = point - pos.to_f64();
         match &n.content {
             Content::Tree(_) if n.clip.is_some_and(|c| !c.contains(local.to_i32_floor())) => None,
+            Content::Tree(_)
+                if n.kept_rect()
+                    .is_some_and(|k| !k.contains(point.to_i32_floor())) =>
+            {
+                None
+            }
             Content::Tree(children) => children.iter().rev().find_map(|c| self.at(*c, pos, point)),
             Content::Surface(s) => {
                 if !n.input.accepts(local) {

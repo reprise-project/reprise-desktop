@@ -6,8 +6,8 @@ use reprisekit::controls::notifysheet::{
 };
 use reprisekit::taskbar::Edge;
 use reprisescene::{Input, NodeId};
+use smithay::output::Output;
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
-use smithay::utils::{Logical, Rectangle};
 use std::rc::Rc;
 use std::time::Instant;
 
@@ -160,7 +160,7 @@ pub(super) fn pose_balloon(
     now: Instant,
     edge: Option<Edge>,
     scale_from: f64,
-    bounds: Option<Rectangle<i32, Logical>>,
+    output: Option<&Output>,
 ) {
     let Some(drawn) = &b.drawn else {
         return;
@@ -206,7 +206,7 @@ pub(super) fn pose_balloon(
     };
     let at = (r.x + inset.0, r.y + inset.1);
     scene.set_position(b.tree, at.0, at.1);
-    scene.set_clip(b.tree, clip_to(bounds, at));
+    scene.set_kept_on(b.tree, output);
     scene.set_position(b.buffer, -inset.0, -inset.1);
     scene.buffer_set_dest_size(b.buffer, Some((r.width, r.height).into()));
     scene.set_opacity(b.tree, alpha);
@@ -234,15 +234,6 @@ pub(super) fn pose_balloon(
     if let (Some(backdrop), Some(pane)) = (b.backdrop.as_mut(), pane) {
         backdrop.set(scene, glass, b.glass_tree, Some(pane));
     }
-}
-
-/// `bounds` (layout) as a clip for a tree at `at`: a sheet's shadow stops at its output's edge
-/// rather than spilling onto the output beside it.
-pub(super) fn clip_to(
-    bounds: Option<Rectangle<i32, Logical>>,
-    at: (i32, i32),
-) -> Option<Rectangle<i32, Logical>> {
-    bounds.map(|o| Rectangle::new((o.loc.x - at.0, o.loc.y - at.1).into(), o.size))
 }
 
 pub(super) fn still(v: &NotifyView, now: Instant) -> bool {
@@ -306,9 +297,9 @@ pub(super) fn tick(state: &mut State) -> bool {
         glass,
         ..
     } = state;
-    let bounds = notify.bounds();
+    let output = notify.output.clone();
     for b in notify.stack.iter_mut().chain(notify.leaving.iter_mut()) {
-        pose_balloon(scene, glass, b, now, edge, scale_from, bounds);
+        pose_balloon(scene, glass, b, now, edge, scale_from, output.as_ref());
     }
     let (gone, kept): (Vec<Balloon>, Vec<Balloon>) = std::mem::take(&mut notify.leaving)
         .into_iter()

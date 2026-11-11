@@ -26,7 +26,6 @@ use reprisekit::taskbar::Edge;
 use reprisescene::{BufferId, TreeId};
 use smithay::output::Output;
 use smithay::reexports::calloop::RegistrationToken;
-use smithay::utils::{Logical, Rectangle};
 use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::time::{Duration, Instant};
@@ -190,13 +189,6 @@ pub struct NotifyView {
     /// The conditions that turn Do Not Disturb on by themselves, as last checked; the bell shows
     /// them.
     pub quiet: Suppress,
-}
-
-impl NotifyView {
-    /// The layout rect of the output the stack is placed on; sheets and the chip clip to it.
-    fn bounds(&self) -> Option<Rectangle<i32, Logical>> {
-        self.output.as_ref().and_then(reprisescene::output_rect)
-    }
 }
 
 /// How many notifications show at once: a stack of sheets, else one balloon.

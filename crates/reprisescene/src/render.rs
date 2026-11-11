@@ -589,6 +589,7 @@ impl<R: Renderer, D> Scene<R, D> {
                 Some(c) => Some(meet(clip, Rectangle::new(pos + c.loc, c.size))),
                 None => clip,
             };
+            let clip = n.kept_rect().map_or(clip, |k| Some(meet(clip, k)));
             for c in children.iter().rev() {
                 self.walk(*c, pos, alpha, left_out, pass, clip, visit);
             }
@@ -609,7 +610,8 @@ impl<R: Renderer, D> Scene<R, D> {
             }
         }
         if !Self::leaf_rect(n, pos)
-            .is_some_and(|r| r.overlaps(pass.view.area) && clip.is_none_or(|c| r.overlaps(c)))
+            .and_then(|r| clip.map_or(Some(r), |c| r.intersection(c)))
+            .is_some_and(|r| r.overlaps(pass.view.area))
         {
             return;
         }

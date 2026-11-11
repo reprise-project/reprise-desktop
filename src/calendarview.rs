@@ -173,6 +173,7 @@ fn open(state: &mut State, bar: TreeId) {
     let scene = &mut state.scene;
     let tree = scene.tree_create(state.layers.menu);
     crate::glass::leave_out(scene, tree);
+    crate::output::keep_on(scene, tree, &output);
     scene.set_data(tree, Some(SceneOwner::Calendar));
     // Before the buffer, so it lies beneath it.
     let glass_tree = scene.tree_create(tree);

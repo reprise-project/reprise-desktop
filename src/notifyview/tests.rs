@@ -1624,18 +1624,25 @@ fn a_sheet_draws_and_asks_for_frames_only_on_its_output() {
     let v = &h.state.notify;
     assert_eq!(frame_outputs(v), Some(vec![a.clone()]));
     let scene = &h.state.scene;
-    let tree = v.stack[0].tree;
-    let canvas = scene.extents(tree).expect("the sheet's canvas");
+    let (tree, buffer) = (v.stack[0].tree, v.stack[0].buffer);
     let beside = reprisescene::output_rect(&b).expect("TEST-2's place");
+    let (at, _) = scene.coords(buffer).expect("the sheet's place");
+    let size = scene.buffer_size(buffer).expect("the sheet's canvas");
     assert!(
-        canvas.overlaps(beside),
-        "the shadow reaches past TEST-1's edge: {canvas:?}"
+        Rectangle::new(at, size).overlaps(beside),
+        "the shadow reaches past TEST-1's edge"
     );
-    let (at, _) = scene.coords(tree).expect("the sheet's place");
-    let clip = scene.clip(tree).expect("a clip");
-    assert_eq!(
-        Rectangle::new(clip.loc + at, clip.size),
-        reprisescene::output_rect(&a).expect("TEST-1's place")
+    let shown = scene.extents(tree).expect("the sheet shows");
+    assert!(!shown.overlaps(beside), "cut at TEST-1's edge: {shown:?}");
+    assert_eq!(scene.outputs_of(tree), vec![a]);
+    crate::backend::take_asks();
+    h.state.redraw_changed(|s| s.scene.set_opacity(tree, 0.5));
+    let asked: Vec<String> = (crate::backend::take_asks().into_iter())
+        .map(|(o, _)| o)
+        .collect();
+    assert!(
+        !asked.is_empty() && asked.iter().all(|o| o == "TEST-1"),
+        "a change to the sheet asks TEST-1 alone: {asked:?}"
     );
 }
 

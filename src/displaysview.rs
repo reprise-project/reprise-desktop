@@ -86,6 +86,7 @@ fn open(state: &mut State, output: &Output, cell: Rect) {
     let scene = &mut state.scene;
     let tree = scene.tree_create(state.layers.menu);
     glass::leave_out(scene, tree);
+    crate::output::keep_on(scene, tree, output);
     scene.set_data(tree, Some(SceneOwner::Displays));
     // Before the buffer, so it lies beneath it.
     let glass_tree = scene.tree_create(tree);

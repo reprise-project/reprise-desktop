@@ -537,13 +537,27 @@ fn beside_a_side_bar_the_start_menu_hangs_level_with_start() {
 }
 
 #[test]
-fn a_menu_asks_for_frames_only_on_the_outputs_it_draws_on() {
+fn a_menu_at_an_outputs_edge_asks_and_draws_only_on_its_own_output() {
     let mut h = crate::harness::Harness::new();
-    h.output("TEST-1", 1024, 768);
-    h.output("TEST-2", 1024, 768);
-    let hover_asks = |h: &mut crate::harness::Harness, at: (i32, i32)| {
+    let left = h.output("TEST-1", 1024, 768);
+    let right = h.output("TEST-2", 1024, 768);
+    let open = |h: &mut crate::harness::Harness, at: (i32, i32)| {
         h.state.open_desktop_menu(at);
         h.run_for(400);
+        let m = h.state.menus.last().expect("the menu is open");
+        let scene = &h.state.scene;
+        let (pos, _) = scene.coords(m.shadow).expect("placed");
+        let size = scene.buffer_size(m.shadow).expect("the shadow is drawn");
+        let full = smithay::utils::Rectangle::new(pos, size);
+        let shown = scene.extents(m.shadow).expect("the shadow shows");
+        let on_right = (scene
+            .leaves_in(reprisescene::output_rect(&right).unwrap())
+            .iter())
+        .filter(|&&n| scene.find_data(n).map(|(t, _)| t) == Some(m.tree.into()))
+        .count();
+        (full, shown, on_right, scene.outputs_of(m.tree))
+    };
+    let hover_asks = |h: &mut crate::harness::Harness| {
         crate::backend::take_asks();
         h.state.menu_hover(0, Some(0));
         let mut asked: Vec<String> = crate::backend::take_asks()
@@ -554,13 +568,55 @@ fn a_menu_asks_for_frames_only_on_the_outputs_it_draws_on() {
         h.state.close_menu();
         asked
     };
-    assert_eq!(hover_asks(&mut h, (300, 300)), vec!["TEST-1"]);
-    let mut beside = hover_asks(&mut h, (1023, 300));
-    beside.sort();
+
+    let (full, shown, on_right, outputs) = open(&mut h, (300, 300));
+    assert_eq!(shown, full, "away from the edge the whole shadow shows");
+    assert_eq!((on_right, outputs), (0, vec![left.clone()]));
+    assert_eq!(hover_asks(&mut h), vec!["TEST-1"]);
+
+    let (full, shown, on_right, outputs) = open(&mut h, (1023, 300));
+    assert!(
+        full.loc.x + full.size.w > 1024,
+        "the shadow reaches past TEST-1's right edge: {full:?}"
+    );
     assert_eq!(
-        beside,
-        vec!["TEST-1", "TEST-2"],
-        "a menu at TEST-1's right edge casts its shadow onto TEST-2"
+        shown,
+        smithay::utils::Rectangle::new(full.loc, (1024 - full.loc.x, full.size.h).into()),
+        "the shadow stops at x = 1024"
+    );
+    assert_eq!(on_right, 0, "nothing of the menu draws on TEST-2");
+    assert_eq!(outputs, vec![left]);
+    assert_eq!(hover_asks(&mut h), vec!["TEST-1"]);
+}
+
+#[test]
+fn an_open_menus_shadow_follows_its_output_when_the_output_grows() {
+    let mut h = crate::harness::Harness::new();
+    let left = h.output("TEST-1", 1024, 768);
+    let right = h.output("TEST-2", 1024, 768);
+    h.state.open_desktop_menu((1023, 300));
+    h.run_for(400);
+    let shadow = h.state.menus[0].shadow;
+    let (pos, _) = h.state.scene.coords(shadow).expect("placed");
+    let size = h
+        .state
+        .scene
+        .buffer_size(shadow)
+        .expect("the shadow is drawn");
+    let full = smithay::utils::Rectangle::new(pos, size);
+    assert_ne!(h.state.scene.extents(shadow), Some(full), "cut at x = 1024");
+    let mode = smithay::output::Mode {
+        size: (1280, 768).into(),
+        refresh: 60_000,
+    };
+    left.change_current_state(Some(mode), None, None, None);
+    h.state.update_layout();
+    assert!(!h.state.menus.is_empty(), "the menu stays open");
+    assert_eq!(right.current_location().x, 1280);
+    assert_eq!(
+        h.state.scene.extents(shadow),
+        Some(full),
+        "inside the wider TEST-1 the whole shadow shows"
     );
 }
 
