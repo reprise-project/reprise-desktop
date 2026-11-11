@@ -160,8 +160,8 @@ impl CustomNode<GlesRenderer> for CardsNode {
         let draws = self.draws.borrow();
         let mut out = Vec::with_capacity(draws.len());
         for d in draws.iter() {
-            let texture = d.slot.borrow();
-            let Some(texture) = texture.as_ref() else {
+            let picture = d.slot.borrow();
+            let Some(texture) = picture.texture.as_ref() else {
                 continue;
             };
             let t = texture.size();
@@ -170,7 +170,7 @@ impl CustomNode<GlesRenderer> for CardsNode {
             let m = view.after(&d.to_screen).after(&texels);
             out.extend(
                 (d.card)
-                    .element(&fx, texture, m, d.alpha * alpha, true)
+                    .element(&fx, texture, picture.drawn, m, d.alpha * alpha, true)
                     .map(CustomElement::new),
             );
         }
@@ -631,10 +631,10 @@ impl State {
         };
         if !drawn {
             if let Some(id) = pic.thumb.take() {
-                *pic.slot.borrow_mut() = None;
+                pic.slot.borrow_mut().set(None);
                 self.thumb_drop(id);
             } else if pic.desk.take().is_some() {
-                *pic.slot.borrow_mut() = None;
+                pic.slot.borrow_mut().set(None);
             }
             return;
         }
@@ -657,7 +657,8 @@ impl State {
                     return;
                 };
                 let scale = f64::from(px.0) / f64::from(rect.width.max(1));
-                *slot.borrow_mut() = self.flip_still(tree, rect, scale);
+                let still = self.flip_still(tree, rect, scale);
+                slot.borrow_mut().set(still);
                 if let Some(pic) = self.flip_pic(leaving, k) {
                     pic.still = true;
                 }
@@ -669,7 +670,7 @@ impl State {
                 let Some(target) = self.tree_target(area, scale, true) else {
                     return;
                 };
-                *slot.borrow_mut() = Some(target.texture().clone());
+                slot.borrow_mut().set(Some(target.texture().clone()));
                 if let Some(pic) = self.flip_pic(leaving, k) {
                     pic.desk = Some(target);
                 }
@@ -703,8 +704,8 @@ impl State {
 
     /// A frame of the stack's output: the desktop's live picture of the
     /// open stack, or the leaving one, draws now when its last draw is
-    /// `[previews] fps` behind, else a timer asks for the frame that
-    /// draws it then (what changed meanwhile may bring no frame).
+    /// `[previews] fps` behind, else a timer draws it then and asks for a
+    /// frame if the desktop changed meanwhile.
     fn flip_desktop_tick(&mut self, leaving: bool) {
         let period = self.preview_period();
         let now = Instant::now();
@@ -725,16 +726,21 @@ impl State {
         let timer = self
             .handle
             .insert_source(Timer::from_duration(wait), move |_, _, state| {
-                let sw = &mut state.switcher;
-                for st in [sw.stack.as_mut(), sw.leaving.as_mut()]
-                    .into_iter()
-                    .flatten()
-                {
-                    if st.output == output {
-                        st.desk_timer = None;
+                for leaving in [false, true] {
+                    let sw = &mut state.switcher;
+                    let st = if leaving {
+                        &mut sw.leaving
+                    } else {
+                        &mut sw.stack
+                    };
+                    let Some(st) = st.as_mut().filter(|st| st.output == output) else {
+                        continue;
+                    };
+                    st.desk_timer = None;
+                    if state.flip_desktop_draw(leaving) {
+                        crate::backend::schedule(state, &output);
                     }
                 }
-                crate::backend::schedule(state, &output);
                 TimeoutAction::Drop
             });
         let timer = match timer {
@@ -758,23 +764,25 @@ impl State {
 
     /// Bring the desktop's live picture of the open stack, or the leaving
     /// one, up to date, while its card is drawn: draw what changed in the
-    /// background layer since its last draw, and its mipmaps after.
-    fn flip_desktop_draw(&mut self, leaving: bool) {
+    /// background layer since its last draw, and its mipmaps after. Whether
+    /// anything changed.
+    fn flip_desktop_draw(&mut self, leaving: bool) -> bool {
         let sw = &self.switcher;
         let st = if leaving { &sw.leaving } else { &sw.stack };
         let Some(k) =
             (st.as_ref()).and_then(|st| st.entries.iter().position(|&e| e == Entry::Desktop))
         else {
-            return;
+            return false;
         };
         let Some((area, scale)) = self.flip_desktop_view(leaving) else {
-            return;
+            return false;
         };
         let Some(mut target) = self.flip_pic(leaving, k).and_then(|p| p.desk.take()) else {
-            return;
+            return false;
         };
         let tree = self.layers.background;
-        if self.tree_render(tree, area, scale, &mut target) == Some(true)
+        let drew = self.tree_render(tree, area, scale, &mut target) == Some(true);
+        if drew
             && let Some(b) = self.backend.as_mut()
             && let Err(e) = reprisefx::mipmaps(&mut b.renderer, target.texture())
         {
@@ -782,6 +790,9 @@ impl State {
         }
         if let Some(pic) = self.flip_pic(leaving, k) {
             pic.desk = Some(target);
+            if drew {
+                pic.slot.borrow_mut().touch();
+            }
         }
         let sw = &mut self.switcher;
         if let Some(st) = (if leaving {
@@ -793,6 +804,7 @@ impl State {
         {
             st.desk_drawn = Some(Instant::now());
         }
+        drew
     }
 
     fn flip_pic(&mut self, leaving: bool, k: usize) -> Option<&mut Pic> {
@@ -954,7 +966,7 @@ impl State {
             if st.sizes[k] != size {
                 st.sizes[k] = size;
                 drop = st.pics[k].thumb.take();
-                *st.pics[k].slot.borrow_mut() = None;
+                st.pics[k].slot.borrow_mut().set(None);
             }
             let output = st.output.clone();
             if let Some(id) = drop {
