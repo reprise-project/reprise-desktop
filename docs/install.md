@@ -182,7 +182,7 @@ notification clicks a newer compositor sends.
 
 reprise-login can take RDP connections itself and log users in from another
 computer, into the session they left running or a new one in the
-background, several users at once ([features](features.md#remote-logins)).
+background, several users at once ([remote desktop](remote-desktop.md#remote-logins)).
 It ships off. To turn it on:
 
 1. Add each user who may log in remotely to the `reprise-remote` group:

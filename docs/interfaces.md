@@ -148,7 +148,7 @@ Hover a program for its jump list. The Shut down button turns the computer
 off, and the arrow next to it offers Log off, Lock, Restart, Sleep and
 Hibernate, with Switch user first under reprise-login. Where the session
 offers Disconnect, it comes first instead, and Sleep and Hibernate are left
-out ([features.md](features.md#remote-desktop)).
+out ([remote-desktop.md](remote-desktop.md#disconnecting)).
 
 ### Glass only
 
