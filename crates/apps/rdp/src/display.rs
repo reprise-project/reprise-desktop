@@ -222,6 +222,23 @@ impl Display {
         }
     }
 
+    /// The offer to a client whose monitors span no desktop: the size it asked for in lock mode,
+    /// whose screens are made at that size, else the size last told.
+    pub fn offer_whole(&self) -> impl Fn(DesktopSize) -> DesktopSize + Send + 'static {
+        let (told, console, replaces) = (
+            self.told.clone(),
+            self.console.clone(),
+            self.ending.replaces(),
+        );
+        move |asked| match console.would_own(replaces) {
+            true => {
+                told.offered(asked);
+                asked
+            }
+            false => told.get(),
+        }
+    }
+
     /// Joins the console's run once, or keeps the place its login took over; true when it locks
     /// the console. The run's owner publishes the client's monitors and Display Control layouts.
     fn join(&mut self) -> bool {
@@ -263,7 +280,7 @@ impl RdpServerDisplay for Display {
     }
 
     /// Runs on every activation: a client confirming the desktop its monitors span gets it, any
-    /// other the size this connection told last, which starts at [`Display::new`]'s `last`.
+    /// other the size this connection told last, from [`Display::offer_whole`] or `last` on.
     async fn request_initial_size(&mut self, client_size: DesktopSize) -> DesktopSize {
         self.client_size = Some(client_size);
         let confirmed = (client_size.width, client_size.height);
