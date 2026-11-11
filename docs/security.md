@@ -1390,8 +1390,9 @@ sharing and remote control grants yet.
   zero-width characters, so it can't reorder or hide what it shows. A
   player's title, artist and name show 256 characters at most. A
   notification's `image-path` picture is read only from a regular file of
-  32 MiB or less, opened without blocking, and decoded off the bus thread;
-  one that takes over 2 s is left out.
+  32 MiB or less, opened without blocking, and decoded on the tray icons'
+  two threads below, 4 at a time per sender; one that takes over 2 s,
+  counting its wait for a thread, is left out.
 - **Who a notification or tray icon is from.** The compositor reads which
   app a notification's sender or a tray icon's owner is from its process,
   through the pidfd the bus gives for it, by the rules the Wayland filter

@@ -1,4 +1,5 @@
-use super::item::{icon_ref, owner_pid};
+use super::decoders::Decoders;
+use super::item::{DECODERS, icon_ref, owner_pid};
 use super::{Icons, emit, lock};
 use crate::tray::{
     ACTION_ICON_SIZES, BODY_CHARS, NOTIFY_SIZES, Notification, REPLY_SEND, Reply, SUMMARY_CHARS,
@@ -161,7 +162,7 @@ impl Notifications {
         let sound = hints.balloon_sound();
         let entry = hints.desktop_entry.as_deref().and_then(desktop_entry);
         let (app_icon, image) =
-            notification_icons(&self.icons, &hints, app_icon, entry.as_ref()).await;
+            notification_icons(&self.icons, &sender, &hints, app_icon, entry.as_ref()).await;
         let key = clip(
             notify::program_key(hints.desktop_entry.as_deref(), &app_name),
             notify::KEY_CHARS,
@@ -311,19 +312,15 @@ pub(super) fn desktop_entry(hint: &str) -> Option<reprisefs::apps::AppEntry> {
 /// How long a picture file gets to be read and decoded; past it the notification shows without it.
 const PICTURE_WITHIN: Duration = Duration::from_secs(2);
 
-/// [`notify::picture_file_sources`] on a thread of its own, so the bus thread waits at most
-/// [`PICTURE_WITHIN`].
-async fn picture_file(path: PathBuf) -> Vec<IconSource> {
-    let (tx, rx) = async_channel::bounded(1);
-    let spawned = std::thread::Builder::new()
-        .name("notify-picture".into())
-        .spawn(move || {
-            let _ = tx.send_blocking(notify::picture_file_sources(&path));
-        });
-    if spawned.is_err() {
-        return Vec::new();
-    }
-    let decoded = async { rx.recv().await.unwrap_or_default() };
+/// [`notify::picture_file_sources`] on the shared [`DECODERS`] as `sender`'s, so the bus thread
+/// waits at most [`PICTURE_WITHIN`], counting the wait for a thread.
+pub(super) async fn picture_file(
+    decoders: &Decoders,
+    sender: &str,
+    path: PathBuf,
+) -> Vec<IconSource> {
+    let decode = move || notify::picture_file_sources(&path);
+    let decoded = async { decoders.run(sender, decode).await.unwrap_or_default() };
     let late = async {
         async_io::Timer::after(PICTURE_WITHIN).await;
         Vec::new()
@@ -332,9 +329,11 @@ async fn picture_file(path: PathBuf) -> Vec<IconSource> {
 }
 
 /// `(app_icon, image)`: the app icon name, else the desktop entry's icon;
-/// the `image-data` hint, else `image-path`. Each is the first that resolves.
+/// the `image-data` hint, else `image-path`. Each is the first that resolves. A picture file is
+/// decoded as `sender`'s.
 pub(super) async fn notification_icons(
     icons: &Icons,
+    sender: &str,
     hints: &notify::Hints<'_>,
     app_icon: String,
     entry: Option<&reprisefs::apps::AppEntry>,
@@ -362,7 +361,7 @@ pub(super) async fn notification_icons(
         if image.is_empty()
             && let Some(file) = file
         {
-            image = picture_file(PathBuf::from(file)).await;
+            image = picture_file(&DECODERS, sender, PathBuf::from(file)).await;
         }
     }
     let app = [Some(app_icon), entry.and_then(|e| e.icon.clone())]

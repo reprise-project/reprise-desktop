@@ -1,6 +1,8 @@
 use super::item::{Pixmaps, ToolTip, decode_names, icon_ref, item_texts};
 use super::menu::{LABEL_CHARS, MENU_ROWS, parse_layout};
-use super::notifications::{CAPABILITIES, action_icons, as_sent_by, notification_icons};
+use super::notifications::{
+    CAPABILITIES, action_icons, as_sent_by, notification_icons, picture_file,
+};
 use super::watcher::{
     Admission, MAX_REGISTRATIONS, MAX_REGISTRATIONS_PER_SENDER, admit, resolve_registration,
 };
@@ -214,6 +216,7 @@ fn a_picture_does_not_replace_the_app_icon() {
     };
     let (app, image) = zbus::block_on(notification_icons(
         &hicolor(),
+        "",
         &hints,
         blue_svg("both"),
         None,
@@ -228,7 +231,13 @@ fn image_path_is_the_picture_and_an_unresolved_app_icon_stays_empty() {
         image_path: Some(format!("file://{}", blue_svg("path"))),
         ..Default::default()
     };
-    let (app, image) = zbus::block_on(notification_icons(&hicolor(), &hints, String::new(), None));
+    let (app, image) = zbus::block_on(notification_icons(
+        &hicolor(),
+        "",
+        &hints,
+        String::new(),
+        None,
+    ));
     assert!(app.is_empty());
     assert_eq!(image.len(), NOTIFY_SIZES.len());
 }
@@ -245,7 +254,13 @@ fn a_jpeg_image_path_is_the_picture() {
         image_path: Some(format!("file://{}", file.display())),
         ..Default::default()
     };
-    let (_, image) = zbus::block_on(notification_icons(&hicolor(), &hints, String::new(), None));
+    let (_, image) = zbus::block_on(notification_icons(
+        &hicolor(),
+        "",
+        &hints,
+        String::new(),
+        None,
+    ));
     assert_eq!(image.len(), NOTIFY_SIZES.len());
     let big = image.iter().max_by_key(|s| s.width).unwrap();
     let mid = big.pixels[(big.height / 2 * big.width + big.width / 2) as usize];
@@ -273,6 +288,7 @@ fn the_desktop_entry_icon_stands_in_for_a_missing_app_icon() {
     let hints = notify::Hints::default();
     let (app, image) = zbus::block_on(notification_icons(
         &hicolor(),
+        "",
         &hints,
         String::new(),
         Some(&entry),
@@ -1774,6 +1790,48 @@ fn a_panicking_decode_leaves_its_thread_to_the_next() {
     let panicked = zbus::block_on(decoders.run("a", || -> u32 { panic!("a bad icon") }));
     assert_eq!(panicked, None);
     assert_eq!(zbus::block_on(decoders.run("a", || 7)), Some(7));
+}
+
+#[test]
+fn a_burst_of_notification_pictures_waits_for_the_decoders_and_each_arrives() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let dir = std::env::temp_dir().join(format!("reprise-notify-burst-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("avatar.png");
+    image::RgbaImage::from_pixel(48, 48, image::Rgba([0x20, 0x40, 0x80, 0xFF]))
+        .save(&file)
+        .unwrap();
+    let decoders = decoders(1, 64, 4, Duration::from_secs(5));
+    let (release, gate) = async_channel::bounded::<()>(1);
+    let held = decoders.run("tray", move || {
+        let _ = gate.recv_blocking();
+    });
+    let done = Arc::new(AtomicUsize::new(0));
+    let burst = (0..8).map(|i| {
+        let (done, file, decoders) = (done.clone(), file.clone(), &decoders);
+        async move {
+            let image = picture_file(decoders, &format!(":1.{i}"), file).await;
+            done.fetch_add(1, SeqCst);
+            image
+        }
+    });
+    let check = async {
+        async_io::Timer::after(Duration::from_millis(200)).await;
+        let early = done.load(SeqCst);
+        drop(release);
+        early
+    };
+    let (_, images, early) = zbus::block_on(async {
+        futures_util::join!(held, futures_util::future::join_all(burst), check)
+    });
+    assert_eq!(early, 0, "no picture decodes while the one thread is held");
+    for image in &images {
+        assert_eq!(image.len(), NOTIFY_SIZES.len());
+        let big = image.iter().max_by_key(|s| s.width).unwrap();
+        let mid = big.pixels[(big.height / 2 * big.width + big.width / 2) as usize];
+        assert_eq!(mid, 0xFF20_4080, "the picture's blue, opaque");
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 /// A tray item with an icon name, for reads that need only some answer.

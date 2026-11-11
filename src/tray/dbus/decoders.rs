@@ -6,7 +6,8 @@ use std::time::Duration;
 
 type Job = Box<dyn FnOnce() + Send>;
 
-/// Threads that read and decode tray items' named icons, shared by every item: a hung read holds
+/// Threads that read and decode tray items' named icons and notification pictures, shared by
+/// every app: a hung read holds
 /// one thread and never starts another, and an app floods only its own share of the queue.
 pub(super) struct Decoders {
     jobs: async_channel::Sender<Job>,
