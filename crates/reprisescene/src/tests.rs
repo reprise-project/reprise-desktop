@@ -333,6 +333,27 @@ fn a_watch_sees_what_a_destroy_or_a_hidden_tree_covered() {
 }
 
 #[test]
+fn a_watch_skips_where_a_moved_trees_child_never_showed() {
+    let mut s = TestScene::new();
+    let root = s.root();
+    let t = s.tree_create(root);
+    let shown = s.rect_create(t, (4, 4), RED);
+    let hidden = s.rect_create(t, (4, 4), RED);
+    s.set_position(hidden, 10, 0);
+    assert!(s.watch());
+    s.set_position(t, 100, 0);
+    s.set_enabled(hidden, false);
+    s.rect_set_color(shown, [0.0, 0.0, 1.0, 1.0]);
+    let mut seen = s.watched();
+    seen.sort_by_key(|r| (r.loc.x, r.size.w));
+    assert_eq!(
+        seen,
+        [rect(0, 0, 14, 4), rect(100, 0, 4, 4), rect(100, 0, 4, 4)],
+        "the tree before, and the shown child where it went; never 110,0"
+    );
+}
+
+#[test]
 fn setting_a_node_as_it_is_is_no_edit() {
     let mut s = TestScene::new();
     let root = s.root();
