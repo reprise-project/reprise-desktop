@@ -351,6 +351,7 @@ impl RdpServerDisplay for Display {
             }
             let mut lives = Vec::new();
             let mut kept = Vec::new();
+            let count = streams.len();
             for (screen, (stream, frames, sizes)) in streams.into_iter().enumerate() {
                 let path = self.gfx.as_ref().map(|gfx| H264 {
                     gfx: gfx.clone(),
@@ -360,10 +361,12 @@ impl RdpServerDisplay for Display {
                     on: false,
                 });
                 let device = picture.device.clone();
+                let split = self.links.config.borrow().avc444_split_encoders;
                 let worker = Worker::spawn(move || {
                     Switch::new(Box::new(move |backend, quality, frame_rate| {
-                        Ffmpeg::new(backend, &device, frame_rate, quality)
-                            .map(|f| Box::new(f) as Box<dyn Encoder>)
+                        let mut f = Ffmpeg::new(backend, &device, frame_rate, quality)?;
+                        f.set_split_encoders(split, count);
+                        Ok(Box::new(f) as Box<dyn Encoder>)
                     }))
                 })
                 .map_err(|e| ServerError::io("no encoding thread", e))?;
@@ -1018,10 +1021,20 @@ impl Live {
                 self.coding("AVC420");
                 !self.send(Video::Avc420(&data), &regions)
             }
-            Ok(Encoded::Avc444 { main, aux, regions }) => {
+            Ok(Encoded::Avc444 {
+                main,
+                aux,
+                regions,
+                layout,
+            }) => {
                 self.coding("AVC444");
                 let aux = aux.as_deref();
-                !self.send(Video::Avc444 { main: &main, aux }, &regions)
+                let video = Video::Avc444 {
+                    main: &main,
+                    aux,
+                    layout,
+                };
+                !self.send(video, &regions)
             }
             Ok(Encoded::Nothing) => false,
             Err(e) => {
