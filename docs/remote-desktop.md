@@ -1,6 +1,7 @@
 # Remote Desktop
 
-Reprise has its own RDP server, `reprise-rdp`. Another computer can use the
+Reprise has its own RDP server, `reprise-rdp`, built on
+[IronRDP](https://github.com/Devolutions/IronRDP). Another computer can use the
 session you're logged in to here, and the session moves between this screen
 and the client as you go. Under Reprise's login manager the users you allow
 can log in from another computer, several at once. Nothing listens until you
@@ -39,8 +40,15 @@ turn it on.
 
 ## Turning it on
 
-It's meant for the home network. Reprise opens no firewall port and sets up
-no port forwarding; allow the port in your firewall if you run one.
+> [!WARNING]
+> Remote Desktop is a network service that takes logins, and it has had no
+> formal security review. Use it with care. Keep it on your home network,
+> or reach it from outside through a VPN such as Tailscale or WireGuard.
+> Don't open the port to the internet.
+
+Reprise opens no firewall port and sets up no port forwarding. If you run a
+firewall, allow the port only from the networks you connect from (your LAN,
+or the `tailscale0` interface).
 
 - **In your session.** Settings > Remote Desktop > Allow remote connections to
   this computer enables and starts the user unit
@@ -65,16 +73,43 @@ no port forwarding; allow the port in your firewall if you run one.
 - **xfreerdp3 options.** `/multimon` puts each screen on a client monitor
   of its own, `/dynamic-resolution` resizes the client's screen with its
   window in lock mode, and `/sound:latency:20` shortens the sound's delay.
-- **Login.** Only your own account's name and password log in. A client
-  that insists on NLA is refused, and the journal says to choose TLS. After
-  a fourth wrong password from an address, each further try waits longer
-  ([security.md](security.md#remote-desktop)). Under reprise-login the
-  login manager takes the connections instead, and NLA works with a Remote
-  Desktop password ([Remote logins](#remote-logins)). There the journal
-  gives the hint to choose TLS, or to set a Remote Desktop password, in full
-  for the first refusal each minute and counts the rest in a line a minute.
+- **Login.** Which password you type depends on the client's security
+  setting and on who takes the connection ([Which
+  password](#which-password)). After a fourth wrong password from an
+  address, each further try waits longer
+  ([security.md](security.md#remote-desktop)).
 - **Clients.** xfreerdp3, Remmina and mstsc have been tried. mstsc
   logs in with NLA, so it needs reprise-login and a Remote Desktop password.
+
+## Which password
+
+RDP clients log in one of two ways. With TLS the client opens an encrypted
+connection first and then sends your name and password over it, so Reprise
+can check them like any login. With NLA (Network Level Authentication) the
+client proves it knows the password without sending it, and the server has to
+hold a copy of the password in a form NLA can check against. Your login
+password is stored in a form NLA can't use, which is why NLA needs a second
+password.
+
+| Who takes the connection | Client set to TLS | Client set to NLA |
+|---|---|---|
+| Your session's own server (Settings > Remote Desktop) | your login password | refused |
+| `reprise-login`, you have no Remote Desktop password | your login password | refused |
+| `reprise-login`, you have a Remote Desktop password | your login password | your Remote Desktop password |
+
+- **Most clients offer both.** xfreerdp3 and mstsc offer TLS and NLA, and
+  Reprise picks: NLA when the user name the client sends ahead belongs to
+  someone with a Remote Desktop password, TLS otherwise. So with no Remote
+  Desktop password, your login password works from any client that still
+  allows TLS.
+- **Clients that only do NLA** need `reprise-login` and a Remote Desktop
+  password. With xfreerdp3, `/sec:nla` forces NLA and `/sec:tls` forces TLS.
+- **A refusal says why.** The journal names the fix: choose TLS, or set a
+  Remote Desktop password. Under `reprise-login` it logs the first refusal
+  each minute in full and counts the rest in one line a minute.
+- **Setting one.** [Remote Desktop password](#remote-logins) below says
+  where; [security.md](security.md#remote-desktop-password) says how it is
+  stored.
 
 ## On the client
 
@@ -274,11 +309,8 @@ Login Manager holds its settings, and an administrator's password saves
 them, asked on each save.
 
 - **Connecting.** Point the client at this computer, port 3389 unless set
-  otherwise, with your user name. Over TLS (`xfreerdp3 /v:HOST /u:USER
-  /sec:tls`) you log on with your login password. With a Remote Desktop
-  password set, a client that offers NLA, as xfreerdp3 does by default, logs
-  on with that instead; set to TLS it still takes the login password. NLA
-  takes the name as `user`, `.\user`, `HOST\user`, `user@host` or `user@`
+  otherwise, with your user name and the password [Which
+  password](#which-password) names. NLA takes the name as `user`, `.\user`, `HOST\user`, `user@host` or `user@`
   ([security.md](security.md#remote-desktop-password)).
   Only xfreerdp has been tried with NLA.
 - **Remote Desktop password.** You set it in User Accounts, on the

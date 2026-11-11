@@ -82,8 +82,9 @@ interfaces](docs/interfaces.md) and [the bundled programs](docs/programs.md).
 
 ## Remote Desktop
 
-Reprise has its own RDP server, so the desktop at your desk is also the one
-you reach from the couch.
+Reprise has its own RDP server, built on
+[IronRDP](https://github.com/Devolutions/IronRDP), so the desktop at your
+desk is also the one you reach from the couch.
 
 - **One session, two places.** Connect from another computer and this
   screen locks while your windows move over to the client's monitors.
@@ -101,8 +102,10 @@ you reach from the couch.
 - **The usual extras.** Several monitors, the clipboard, sound, and a
   standby screen for a computer with no monitor plugged in.
 
-Nothing listens until you turn it on. [docs/remote-desktop.md](docs/remote-desktop.md)
-has the rest.
+Nothing listens until you turn it on. It has had no formal security review,
+so keep it on your home network or behind a VPN such as Tailscale, never open
+to the internet. [docs/remote-desktop.md](docs/remote-desktop.md) has the
+rest.
 
 ## Try it
 
