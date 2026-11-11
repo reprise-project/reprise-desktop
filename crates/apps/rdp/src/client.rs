@@ -88,7 +88,8 @@ fn monitor_scale(ex: &ExtendedMonitorInfo) -> Option<u32> {
     valid.then_some(ex.desktop_scale_factor)
 }
 
-/// Offers a client the desktop its monitors span and keeps them in its [`ClientLayout`].
+/// Offers a client the desktop its monitors span, keeps them in its [`ClientLayout`] and logs its
+/// RDP version and build.
 pub struct Handler(pub ClientLayout);
 
 impl ConnectionHandler for Handler {
@@ -102,6 +103,11 @@ impl ConnectionHandler for Handler {
     }
 
     fn on_connection_info(&mut self, info: &ConnectionInfo) {
+        log::info!(
+            "client offers RDP version {:#010x}, build {}",
+            u32::from(info.client_version),
+            info.client_build
+        );
         *self.0.0.lock().unwrap() = Some(Client {
             monitors: info.client_monitors.clone(),
             monitors_ex: info.client_monitors_ex.clone(),

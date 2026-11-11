@@ -746,7 +746,9 @@ sheet goes back to the clock's settings as they are.
   the session bus it is `org.reprise.RemoteDesktop`, which Settings reads for
   the status lines and the connected computers. Its journal lines name each
   client's address, logins, the encoder and why a connection ended
-  (`journalctl --user -u app-org.reprise.RemoteDesktop`). In lock mode
+  (`journalctl --user -u app-org.reprise.RemoteDesktop`); lines starting
+  `client offers` give each client's RDP version, build and graphics
+  capability sets. In lock mode
   its `ConsoleLayout` property holds the first client's monitors, which
   the portal hands the compositor to make that client's screens; each
   resize of the client's window updates it. See
