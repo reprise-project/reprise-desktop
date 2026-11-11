@@ -1222,3 +1222,25 @@ fn the_caret_inverts_its_column_so_a_stem_under_it_shows_white() {
         }
     }
 }
+
+#[test]
+fn the_drop_point_inverts_its_column_so_a_stem_under_it_shows_white() {
+    let (theme, text) = setup();
+    crate::pins::fonts();
+    let cs = &theme.colors;
+    let px = theme.fonts.size_px;
+    let p = classic_paint(cs, 1);
+    let inner = Rect::new(10, 10, 60, 15);
+    let e = TextEdit::new("AVA", false);
+    let mut off = Canvas::new(80, 35);
+    off.fill_rect(off.bounds(), cs.window);
+    draw_edit(&mut off, &text, &e, inner, px, &p, Caret::Hidden, 0);
+    let mut on = off.clone();
+    draw_edit_drop_point(&mut on, &text, &e, inner, px, &p, 0, 0);
+    let (top, h) = text.line(inner, false, px).unwrap();
+    assert_eq!(
+        crate::paint::inverted_bar(&off, &on, cs.window.argb()),
+        (Rect::new(inner.x, top, 1, h), true),
+        "the bar is the pen's column, over the A's foot"
+    );
+}
