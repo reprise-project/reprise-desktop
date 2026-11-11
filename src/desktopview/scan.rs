@@ -10,7 +10,7 @@ use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use crate::{
     compositor::State,
     desktop::{self, DesktopEntry, ICON_PX, Target},
-    dirwatch::{self, DirWatch, Want},
+    dirwatch::{self, Want},
 };
 
 const SETTLE_MS: u64 = 100;
@@ -258,7 +258,10 @@ impl State {
             config.desktop_extensions,
             view.bins.full,
         );
-        let adder = view.watch.as_ref().map(DirWatch::adder);
+        let adder = view.watch.as_mut().map(|w| {
+            w.hold();
+            w.adder()
+        });
         self.spawn_fs_job(move || {
             // Watch before reading, so a change between the two is not missed.
             let want = watch_wants(&dir, show_files, &system_icons);
@@ -286,7 +289,8 @@ impl State {
 
     /// Takes the desktop's own watches a rescan added, with `want` the folders it wanted, then
     /// adds the drives' bin folders the last drive bin read found, each on a file job of its own:
-    /// a drive that stopped answering since holds only its own.
+    /// a drive that stopped answering since holds only its own. An event a watch reported before
+    /// it was taken rescans.
     fn desktop_watched(&mut self, mut want: Vec<Want>, added: Option<dirwatch::Added>) {
         let State {
             desktop: Some(view),
@@ -304,9 +308,10 @@ impl State {
             return;
         };
         w.plan(&want);
-        if let Some(added) = added {
+        let hit = added.is_some_and(|added| {
             w.adopt(added);
-        }
+            w.replay()
+        });
         // A folder of the rescan's own that is missing was just looked for.
         let tried: Vec<&Path> = want[..tried].iter().map(|w| w.dir.as_path()).collect();
         let adds: Vec<_> = (w.plan(&want).each())
@@ -314,18 +319,29 @@ impl State {
                 !tried.contains(&dir.as_path()) && view.watch_adds.insert(dir.clone())
             })
             .collect();
+        for _ in &adds {
+            w.hold();
+        }
         for (dir, add) in adds {
             self.spawn_fs_job(move || {
                 let added = add.run();
                 Box::new(move |state: &mut State| {
-                    if let Some(view) = state.desktop.as_mut() {
-                        view.watch_adds.remove(&dir);
-                        if let Some(w) = view.watch.as_mut() {
-                            w.adopt(added);
-                        }
+                    let Some(view) = state.desktop.as_mut() else {
+                        return;
+                    };
+                    view.watch_adds.remove(&dir);
+                    let hit = view.watch.as_mut().is_some_and(|w| {
+                        w.adopt(added);
+                        w.replay()
+                    });
+                    if hit {
+                        state.settle_rescan();
                     }
                 })
             });
+        }
+        if hit {
+            self.settle_rescan();
         }
     }
 
