@@ -50,7 +50,7 @@ impl Rewrite<'_> {
 }
 
 /// `nal`, an SPS, with `max_num_ref_frames` and `max_dec_frame_buffering` [`REFS`] and without
-/// HRD or pic_struct, and its fields. A level that fits a frame holds at least two in its DPB.
+/// timing, HRD or pic_struct, and its fields. A level that fits a frame holds two in its DPB.
 pub fn two_refs(nal: &[u8]) -> Result<(Vec<u8>, Sps), Error> {
     let rbsp = unescape(&nal[1..]);
     let mut c = Rewrite {
@@ -100,11 +100,13 @@ pub fn two_refs(nal: &[u8]) -> Result<(Vec<u8>, Sps), Error> {
         c.ue()?; // chroma_sample_loc_type_top_field
         c.ue()?; // chroma_sample_loc_type_bottom_field
     }
-    if c.flag()? {
-        c.u(32)?; // num_units_in_tick
-        c.u(32)?; // time_scale
-        c.flag()?; // fixed_frame_rate_flag
+    if c.r.flag()? {
+        c.r.u(32)?; // num_units_in_tick
+        c.r.u(32)?; // time_scale
+        c.r.flag()?; // fixed_frame_rate_flag
     }
+    // Two pictures go out per frame, twice the rate the encoder's timing states.
+    c.w.flag(false); // timing_info_present_flag
     let nal_hrd = c.r.flag()?;
     if nal_hrd {
         skip_hrd(&mut c.r)?;
@@ -359,7 +361,8 @@ impl Slice {
 mod tests {
     use super::*;
 
-    /// `h264_nvenc`'s SPS for 1920x1080 with Reprise's options: NAL HRD, pic_struct, two refs.
+    /// `h264_nvenc`'s SPS for a 1920x1080 view on its own encoder (refs 1): timing, NAL HRD,
+    /// pic_struct and `max_num_ref_frames` 2.
     const NVENC_SPS: [u8; 39] = [
         0x67, 0x64, 0x00, 0x2a, 0xac, 0x2b, 0x60, 0x3c, 0x01, 0x13, 0x60, 0x2d, 0xc0, 0x40, 0x40,
         0x50, 0x00, 0x00, 0x3e, 0x80, 0x00, 0x1d, 0x4c, 0x0e, 0x00, 0x00, 0x07, 0xa1, 0x20, 0x00,
@@ -452,9 +455,9 @@ mod tests {
             f.ue("chroma_sample_loc_type_bottom_field");
         }
         if f.u("timing_info_present_flag", 1) == 1 {
-            f.u("num_units_in_tick", 32);
-            f.u("time_scale", 32);
-            f.u("fixed_frame_rate_flag", 1);
+            f.u("timing num_units_in_tick", 32);
+            f.u("timing time_scale", 32);
+            f.u("timing fixed_frame_rate_flag", 1);
         }
         let nal_hrd = f.u("nal_hrd_parameters_present_flag", 1) == 1;
         if nal_hrd {
@@ -484,22 +487,33 @@ mod tests {
         f.out
     }
 
-    #[test]
-    fn an_sps_with_hrd_and_pic_struct_keeps_every_other_field() {
-        let coded = fields(&NVENC_SPS);
-        for flag in ["nal_hrd_parameters_present_flag", "pic_struct_present_flag"] {
-            assert!(coded.contains(&(flag, 1)), "NVENC codes {flag} 1");
-        }
-        assert!(coded.contains(&("max_num_ref_frames", 2)));
-        let expected: Vec<_> = (coded.into_iter())
-            .filter(|(name, _)| !name.starts_with("hrd "))
+    /// `coded`'s fields without timing, HRD and pic_struct, as [`two_refs`] writes them.
+    fn without_timing_and_hrd(coded: Vec<(&'static str, u32)>) -> Vec<(&'static str, u32)> {
+        (coded.into_iter())
+            .filter(|(name, _)| !name.starts_with("hrd ") && !name.starts_with("timing "))
             .map(|(name, v)| match name {
-                "nal_hrd_parameters_present_flag"
+                "timing_info_present_flag"
+                | "nal_hrd_parameters_present_flag"
                 | "vcl_hrd_parameters_present_flag"
                 | "pic_struct_present_flag" => (name, 0),
                 _ => (name, v),
             })
-            .collect();
+            .collect()
+    }
+
+    #[test]
+    fn an_sps_with_timing_hrd_and_pic_struct_keeps_every_other_field() {
+        let coded = fields(&NVENC_SPS);
+        for flag in [
+            "timing_info_present_flag",
+            "nal_hrd_parameters_present_flag",
+            "pic_struct_present_flag",
+        ] {
+            assert!(coded.contains(&(flag, 1)), "NVENC codes {flag} 1");
+        }
+        assert!(coded.contains(&("max_num_ref_frames", 2)));
+        assert!(coded.contains(&("level_idc", 42)));
+        let expected = without_timing_and_hrd(coded);
         let (rewritten, sps) = two_refs(&NVENC_SPS).unwrap();
         assert_eq!(sps.log2_max_frame_num, 8);
         assert_eq!(fields(&rewritten), expected);
@@ -508,5 +522,72 @@ mod tests {
             rewritten,
             "a rewritten SPS stays as it is"
         );
+    }
+
+    /// A 1920x1080 SPS shaped like [`NVENC_SPS`], with NAL and VCL HRD as asked, each with two
+    /// SchedSelIdx entries.
+    fn sps_with_hrd(nal: bool, vcl: bool) -> Vec<u8> {
+        let mut w = Writer::default();
+        [(8, 100), (8, 0), (8, 42)]
+            .into_iter()
+            .for_each(|(n, v)| w.u(n, v));
+        [0, 1, 0, 0].into_iter().for_each(|v| w.ue(v));
+        w.u(2, 0); // qpprime_y_zero_transform_bypass_flag, seq_scaling_matrix_present_flag
+        [4, 2, 2].into_iter().for_each(|v| w.ue(v));
+        w.flag(false);
+        [119, 67].into_iter().for_each(|v| w.ue(v));
+        w.u(3, 0b111); // frame_mbs_only_flag, direct_8x8_inference_flag, frame_cropping_flag
+        [0, 0, 0, 4].into_iter().for_each(|v| w.ue(v));
+        w.u(3, 0b100); // vui_parameters_present_flag, no aspect ratio, no overscan
+        w.flag(true); // video_signal_type_present_flag
+        w.u(3, 5); // video_format
+        w.u(2, 0b11); // video_full_range_flag, colour_description_present_flag
+        w.u(24, 0x010101);
+        w.flag(false); // chroma_loc_info_present_flag
+        w.flag(true); // timing_info_present_flag
+        [(32, 1000), (32, 120_000), (1, 1)]
+            .into_iter()
+            .for_each(|(n, v)| w.u(n, v));
+        for present in [nal, vcl] {
+            w.flag(present);
+            if present {
+                w.ue(1);
+                w.u(8, 0x43);
+                for i in 0..2 {
+                    [9_999 + i, 49_999 + i].into_iter().for_each(|v| w.ue(v));
+                    w.flag(i == 1);
+                }
+                [23, 23, 23, 24].into_iter().for_each(|v| w.u(5, v));
+            }
+        }
+        if nal || vcl {
+            w.flag(true); // low_delay_hrd_flag
+        }
+        w.u(3, 0b111); // pic_struct_present_flag, bitstream_restriction_flag, mvs over bounds
+        [0, 0, 13, 9, 0, 2].into_iter().for_each(|v| w.ue(v));
+        w.flag(true); // rbsp_stop_one_bit
+        let mut nal = vec![0x67];
+        nal.extend(escape(&w.into_bytes()));
+        nal
+    }
+
+    #[test]
+    fn an_sps_with_vcl_hrd_alone_or_with_nal_hrd_keeps_every_other_field() {
+        for (nal, vcl) in [(false, true), (true, true), (true, false), (false, false)] {
+            let sps = sps_with_hrd(nal, vcl);
+            let coded = fields(&sps);
+            assert!(coded.contains(&("vcl_hrd_parameters_present_flag", vcl.into())));
+            assert_eq!(
+                coded.contains(&("hrd low_delay_hrd_flag", 1)),
+                nal || vcl,
+                "nal {nal}, vcl {vcl}: low_delay_hrd_flag"
+            );
+            let rewritten = two_refs(&sps).unwrap().0;
+            assert_eq!(
+                fields(&rewritten),
+                without_timing_and_hrd(coded),
+                "nal {nal}, vcl {vcl}"
+            );
+        }
     }
 }

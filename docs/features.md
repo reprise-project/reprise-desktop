@@ -929,10 +929,14 @@ no port forwarding; allow the port in your firewall if you run one.
   Sharp, a client that offers it and VA-API, NVENC or x264 coding, the
   picture is sent in full colour (AVC444), so small coloured text stays
   sharp. Each of its two halves is coded on an encoder of its own and the
-  two go out as one stream: under a third of the bandwidth of one encoder
-  coding both, and under a fifth in the AVC444v2 layout, which goes out
-  where the coded width is a whole number of 32-pixel columns. If the two
-  won't merge, one encoder codes both until the encoder is next set up
+  two go out as one stream, in the AVC444v2 layout where the coded width
+  is a whole number of 32-pixel columns. At Balanced that takes about a
+  sixth of the bandwidth of one encoder coding both on VA-API, two fifths
+  on x264 and under half on NVENC; in the AVC444 layout, under a third on
+  VA-API, two thirds on x264 and four fifths on NVENC. A GeForce runs 8
+  NVENC sessions at once, so past four screens a connection codes both
+  halves of each on one NVENC encoder. If the two won't merge, one
+  encoder codes both until the encoder is next set up
   ([`avc444_split_encoders`](configuration.md#remote-desktop) turns the
   two encoders off). One encoder sends the AVC444 layout, never AVC444v2.
   Speed and Vulkan send reduced colour, which takes less bandwidth.

@@ -351,6 +351,7 @@ impl RdpServerDisplay for Display {
             }
             let mut lives = Vec::new();
             let mut kept = Vec::new();
+            let count = streams.len();
             for (screen, (stream, frames, sizes)) in streams.into_iter().enumerate() {
                 let path = self.gfx.as_ref().map(|gfx| H264 {
                     gfx: gfx.clone(),
@@ -364,7 +365,7 @@ impl RdpServerDisplay for Display {
                 let worker = Worker::spawn(move || {
                     Switch::new(Box::new(move |backend, quality, frame_rate| {
                         let mut f = Ffmpeg::new(backend, &device, frame_rate, quality)?;
-                        f.set_split_encoders(split);
+                        f.set_split_encoders(split, count);
                         Ok(Box::new(f) as Box<dyn Encoder>)
                     }))
                 })

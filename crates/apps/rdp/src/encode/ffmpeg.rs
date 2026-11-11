@@ -15,10 +15,11 @@ use std::path::{Path, PathBuf};
 
 /// Pictures from one IDR to the next when no keyframe is asked for.
 const IDR_INTERVAL: u32 = 300;
-/// With AVC444 on one encoder, so that a view predicts from its own previous picture. FFmpeg's
-/// VA-API H.264 ignores it and predicts from the previous frame only, which the views' own
-/// encoders avoid.
+/// With AVC444 on one encoder, so each view predicts from its own previous picture; FFmpeg's
+/// VA-API H.264 ignores it.
 const AVC444_REFS: i32 = 2;
+/// NVENC sessions a GeForce driver runs at once.
+const NVENC_SESSIONS: usize = 8;
 
 pub struct Ffmpeg {
     backend: Backend,
@@ -119,9 +120,9 @@ impl Ffmpeg {
     }
 
     /// Whether AVC444 may code each view on its own encoder, `[remote_desktop]
-    /// avc444_split_encoders`; off codes both on one.
-    pub fn set_split_encoders(&mut self, on: bool) {
-        if !on {
+    /// avc444_split_encoders`, for one of a connection's `screens`; off codes both on one.
+    pub fn set_split_encoders(&mut self, on: bool, screens: usize) {
+        if !split_encoders(self.backend, on, screens) {
             self.merge = None;
         }
     }
@@ -336,6 +337,12 @@ impl Ffmpeg {
         open.since_idr = coded.0;
         Ok(coded.1)
     }
+}
+
+/// Whether `backend` codes each AVC444 view of `screens` on its own encoder: NVENC only while
+/// two sessions per screen fit in [`NVENC_SESSIONS`].
+fn split_encoders(backend: Backend, on: bool, screens: usize) -> bool {
+    on && (backend != Backend::Nvenc || 2 * screens <= NVENC_SESSIONS)
 }
 
 fn merge_failed(e: super::h264merge::Error) -> Failed {
@@ -1428,6 +1435,7 @@ pub(crate) mod tests {
         t: u32,
         main: Vec<u8>,
         aux: Option<Vec<u8>>,
+        layout: AuxLayout,
         own_main: Option<Vec<u8>>,
         own_aux: Option<Vec<u8>>,
     }
@@ -1473,10 +1481,13 @@ pub(crate) mod tests {
                     .map(|(_, au)| au.clone())
             };
             match encoded {
-                Encoded::Avc444 { main, aux, .. } => sent.push(Sent {
+                Encoded::Avc444 {
+                    main, aux, layout, ..
+                } => sent.push(Sent {
                     t,
                     main,
                     aux,
+                    layout,
                     own_main: own_view(false),
                     own_aux: own_view(true),
                 }),
@@ -1567,6 +1578,12 @@ pub(crate) mod tests {
         let (mut merged, mut main, mut aux) = (Decoder::new(), Decoder::new(), Decoder::new());
         let mut pictures = 0;
         for s in &sent {
+            let layout = if s.t < 41 {
+                AuxLayout::V2
+            } else {
+                AuxLayout::V1
+            };
+            assert_eq!(s.layout, layout, "frame {}: the layout sent", s.t);
             let own = s.own_main.as_ref().expect("the main view's own encoder");
             assert_eq!(
                 nv12(&merged.decode(&s.main)),
@@ -2257,7 +2274,7 @@ pub(crate) mod tests {
     #[test]
     fn split_encoders_off_codes_both_views_on_one_encoder_in_v1() {
         let mut encoder = x264_avc444();
-        encoder.set_split_encoders(false);
+        encoder.set_split_encoders(false, 1);
         tapped();
         let mut decoder = Decoder::new();
         for t in 0..3 {
@@ -2274,6 +2291,25 @@ pub(crate) mod tests {
             let back = avc444::tests::crop(&avc444::combine(layout, &main, &aux), (160, 96));
             assert!(chroma_psnr(&back, &planes) > 35.0, "frame {t}");
         }
+    }
+
+    #[test]
+    fn a_connection_past_four_screens_codes_each_on_one_gpu_encoder_where_sessions_are_capped() {
+        assert!(split_encoders(Backend::Nvenc, true, 4), "8 sessions fit");
+        assert!(
+            !split_encoders(Backend::Nvenc, true, 5),
+            "10 sessions don't"
+        );
+        for backend in [Backend::Vaapi { low_power: false }, Backend::X264] {
+            assert!(
+                split_encoders(backend, true, 16),
+                "{backend:?} has no session cap"
+            );
+        }
+        assert!(
+            !split_encoders(Backend::X264, false, 1),
+            "the key turns them off"
+        );
     }
 
     #[test]

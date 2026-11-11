@@ -30,17 +30,14 @@ impl std::fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
-/// Merges the access units of a main-view and an aux-view encoder, both one of FFmpeg's
-/// `h264_vaapi`, `h264_nvenc` or libx264 with one reference and no B-frames, fed in send
-/// order: each frame's main, then its aux.
+/// Merges two encoders' access units (`h264_vaapi`, `h264_nvenc` or libx264, one reference, no
+/// B-frames), fed per frame main then aux; slice data is copied unchanged.
 ///
-/// The SPS allows two reference frames. A main picture is short-term and drops the main
-/// picture before it (MMCO 1). An aux picture is never an IDR: it becomes long-term frame 0
-/// (MMCO 4, MMCO 6) and predicts from long-term frame 0 alone, so a frame without an aux
-/// leaves the last one in place. Slice data is copied unchanged.
+/// A main picture drops the previous main (MMCO 1). An aux is never an IDR: it becomes long-term
+/// frame 0 and predicts from it alone, so a frame without an aux keeps the last one.
 ///
-/// One `Merge` lasts the session: reopened encoders start on IDRs, which it takes as a restart.
-/// A frame with an `Err` must not be sent; the next IDR's `idr_pic_id` counts on that.
+/// One `Merge` lasts as long as the encoders' owner: reopened encoders start on IDRs, which it
+/// takes as a restart. A frame with an `Err` must not be sent; the next IDR's id counts on that.
 #[derive(Default)]
 pub struct Merge {
     /// The main view's SPS as coded, and its fields.
@@ -279,9 +276,8 @@ mod tests {
         frames: 24,
         skipped: &[4, 15],
     };
-    /// libx264 with Reprise's two-encoder options plus NAL HRD and pic_struct, so each picture
-    /// carries pic timing SEI and each IDR a buffering period. IDRs on both views at frames 0
-    /// and 8.
+    /// libx264 two-encoder options plus NAL HRD and pic_struct: pic timing SEI on each picture,
+    /// a buffering period on each IDR; IDRs at 0 and 8.
     const X264_HRD: Fixture = Fixture {
         main: fixture!("main-hrd.h264"),
         aux: fixture!("aux-hrd.h264"),
