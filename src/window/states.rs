@@ -44,6 +44,10 @@ impl State {
         if self.win(w).is_none_or(|x| x.shaded == on) || (on && !self.can_shade(w)) {
             return;
         }
+        self.redraw_changed(|s| s.shade(w, on));
+    }
+
+    fn shade(&mut self, w: WindowId, on: bool) {
         self.cancel_interaction_for(w);
         let Some(win) = self.win_mut(w) else {
             return;
@@ -57,11 +61,14 @@ impl State {
         }
         let at = self.pointer_location();
         self.repoint(at, smithay::backend::input::InputTime::now());
-        self.redraw_all();
     }
 
     /// Switch between our frame and the client's; the client area keeps its layout position.
     pub fn set_csd(&mut self, w: WindowId, csd: bool) {
+        self.redraw_changed(|s| s.switch_csd(w, csd));
+    }
+
+    fn switch_csd(&mut self, w: WindowId, csd: bool) {
         if csd {
             self.set_shaded(w, false);
         }
