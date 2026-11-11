@@ -157,7 +157,8 @@ impl<'a> Paint<'a> {
 }
 
 /// Draw `edit` left-aligned in `inner` from byte `first` (`edit_first_visible`): selection, caret
-/// and, focused, the canvas' preedit with its `TextSpot`, which a secret field never shows.
+/// and, focused, the canvas' preedit with its `TextSpot`, which a secret field never shows. The
+/// caret sits on the pen's column and inverts what is under it, a glyph's stem included.
 #[expect(clippy::too_many_arguments)]
 pub fn draw_edit(
     c: &mut Canvas,
@@ -239,7 +240,7 @@ pub fn draw_edit(
     let cx = at(edit.caret()).min(inner.right() - s);
     let bar = Rect::new(cx, line.y, s, line.height);
     if caret.shown() && bar_on {
-        c.fill_rect(bar, cs.button_text);
+        c.invert_rect(bar);
     }
     if caret.focused() {
         c.report_spot(own.spot(inner, bar));

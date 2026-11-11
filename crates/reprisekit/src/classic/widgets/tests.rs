@@ -1002,11 +1002,15 @@ fn a_preedit_draws_underlined_at_the_caret_and_the_spot_leaves_it_out() {
     let x1 = x0 + text.measure("hao", false, px);
     let ul = text.baseline(inner, false, px).unwrap() + 1;
     let ink = cs.button_text.argb();
-    assert!((x0..x1).all(|x| c.get(x, ul) == ink), "underline under hao");
+    let caret_x = inner.x + text.measure("niha", false, px);
+    assert!(
+        (x0..x1).all(|x| c.get(x, ul) == ink || x == caret_x),
+        "underline under hao"
+    );
+    assert_eq!(c.get(caret_x, ul), cs.window.argb(), "the caret inverts it");
     assert_ne!(c.get(x0 - 1, ul), ink, "not under ni");
     assert_ne!(c.get(x1, ul), ink, "not under ma");
     let spot = c.take_spot().expect("a focused field reports");
-    let caret_x = inner.x + text.measure("niha", false, px);
     assert_eq!(spot.caret, Rect::new(caret_x, 10, 1, 13));
     assert_eq!(spot.field, inner);
     let sur = spot.surrounding.expect("plain text");
@@ -1080,7 +1084,7 @@ fn a_selection_and_the_caret_cover_13_rows_from_the_text_area_s_top() {
     let px = theme.fonts.size_px;
     for h in [14, 15] {
         let inner = Rect::new(10, 10, 100, h);
-        let mut e = TextEdit::new("  hello", false);
+        let mut e = TextEdit::new("   hello", false);
         e.set_selection(0, 2);
         let mut c = Canvas::new(130, 40);
         c.fill_rect(c.bounds(), cs.window);
@@ -1173,4 +1177,48 @@ fn a_scrolled_multibyte_value_stays_on_char_boundaries() {
     let home = edit_first_visible(&text, &e, 40, px, first);
     assert_eq!(home, 0);
     let _visible = &e.text[home..];
+}
+
+#[test]
+fn the_caret_inverts_its_column_so_a_stem_under_it_shows_white() {
+    let (theme, text) = setup();
+    crate::pins::fonts();
+    let cs = &theme.colors;
+    let px = theme.fonts.size_px;
+    let inner = Rect::new(10, 10, 60, 15);
+    let mut e = TextEdit::new("AVA", false);
+    e.set_selection(0, 0);
+    let draw = |caret| {
+        let mut c = Canvas::new(80, 35);
+        c.fill_rect(c.bounds(), cs.window);
+        draw_edit(
+            &mut c,
+            &text,
+            &e,
+            inner,
+            px,
+            &classic_paint(cs, 1),
+            caret,
+            0,
+        );
+        c
+    };
+    let (off, on) = (draw(Caret::Hidden), draw(Caret::Shown));
+    let (top, h) = text.line(inner, false, px).unwrap();
+    let (ink, paper) = (cs.button_text.argb(), cs.window.argb());
+    let stem: Vec<i32> = (top..top + h)
+        .filter(|&y| off.get(inner.x, y) == ink)
+        .collect();
+    assert!(!stem.is_empty(), "the A's foot sits in the pen's column");
+    for y in top..top + h {
+        let want = if stem.contains(&y) { paper } else { ink };
+        assert_eq!(on.get(inner.x, y), want, "caret row {y}");
+    }
+    for y in 0..35 {
+        for x in 0..80 {
+            if x != inner.x || !(top..top + h).contains(&y) {
+                assert_eq!(on.get(x, y), off.get(x, y), "({x}, {y}) off the caret");
+            }
+        }
+    }
 }
