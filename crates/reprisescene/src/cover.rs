@@ -34,15 +34,18 @@ impl<R: Renderer, D> Scene<R, D> {
     }
 
     /// The surface nodes `output` draws none of, each under opaque leaves drawn above it at full
-    /// opacity. None below a custom node the output shows counts: glass blurs what lies beneath.
+    /// opacity and outside what every custom node the output draws reads
+    /// ([`CustomNode::reads_beneath`](crate::CustomNode::reads_beneath)). A custom node that
+    /// cannot say reads all of the output beneath it.
     pub(crate) fn covered_on(&self, output: &Output) -> Vec<NodeId> {
         let Some(view) = View::of(output) else {
             return Vec::new();
         };
         let inset = rounding_inset(view.scale.x);
         let mut opaque: Vec<Rectangle<i32, Logical>> = Vec::new();
-        let mut under_custom = false;
-        let mut out = Vec::new();
+        let mut hidden: Vec<(NodeId, Rectangle<i32, Logical>, usize)> = Vec::new();
+        let mut customs: Vec<Custom> = Vec::new();
+        let mut order = 0;
         let pass = Pass {
             view: &view,
             mode: Mode::Screen,
@@ -63,16 +66,23 @@ impl<R: Renderer, D> Scene<R, D> {
                 else {
                     return;
                 };
-                if under_custom {
-                    return;
-                }
-                let hidden = shown.subtract_rects(opaque.iter().copied()).is_empty();
+                order += 1;
+                let under = shown.subtract_rects(opaque.iter().copied()).is_empty();
                 match &n.content {
-                    Content::Surface(_) if hidden => out.push(id),
-                    Content::Custom(_) if !hidden => under_custom = true,
+                    Content::Surface(_) if under => hidden.push((id, shown, order)),
+                    Content::Custom(c) => customs.push(Custom {
+                        shown,
+                        hidden: under,
+                        order,
+                        reads: (c.reads_beneath(view.scale.x)).map(|rs| {
+                            (rs.into_iter())
+                                .map(|r| Rectangle::new(r.loc + pos, r.size))
+                                .collect()
+                        }),
+                    }),
                     _ => {}
                 }
-                if hidden || alpha < 1.0 {
+                if under || alpha < 1.0 {
                     return;
                 }
                 for r in opaque_parts(n, pos) {
@@ -81,8 +91,41 @@ impl<R: Renderer, D> Scene<R, D> {
                 }
             },
         );
-        out
+        let (reads, from) = reads(customs);
+        (hidden.into_iter())
+            .filter(|&(_, shown, at)| at < from && !reads.iter().any(|r| r.overlaps(shown)))
+            .map(|(id, _, _)| id)
+            .collect()
     }
+}
+
+/// A custom node the output shows part of, in walk order (front first).
+struct Custom {
+    shown: Rectangle<i32, Logical>,
+    /// Wholly under opaque leaves on the screen.
+    hidden: bool,
+    order: usize,
+    /// Layout; None for anywhere beneath.
+    reads: Option<Vec<Rectangle<i32, Logical>>>,
+}
+
+/// What the custom nodes drawn read: the rectangles glass reads, and the walk order past which
+/// everything is read. Glass reads a backdrop that can hold nodes stacked above it and leave
+/// opaque chrome out, so its reads count at any depth; glass hidden on the screen still draws
+/// into the backdrop of glass reading it.
+fn reads(mut customs: Vec<Custom>) -> (Vec<Rectangle<i32, Logical>>, usize) {
+    let mut reads: Vec<Rectangle<i32, Logical>> = Vec::new();
+    let mut from = usize::MAX;
+    while let Some(i) =
+        (customs.iter()).position(|c| !c.hidden || reads.iter().any(|r| r.overlaps(c.shown)))
+    {
+        let c = customs.swap_remove(i);
+        match c.reads {
+            Some(rs) => reads.extend(rs),
+            None => from = from.min(c.order),
+        }
+    }
+    (reads, from)
 }
 
 /// The layout rectangles leaf `n` at `pos` draws opaque at full opacity, as its elements report

@@ -128,6 +128,12 @@ pub trait CustomNode<R: Renderer> {
         true
     }
 
+    /// Where, node-local and logical, the pixels beneath it that its drawing at `scale` depends
+    /// on lie: glass reads its shapes grown by its blur. None for anywhere beneath (the default).
+    fn reads_beneath(&self, _scale: f64) -> Option<Vec<Rectangle<i32, Logical>>> {
+        None
+    }
+
     /// The node's elements, front to back, for a view at `scale` where the
     /// node's top-left lands at `location`, physical, from the view's
     /// top-left. `alpha` is the node's opacity times its ancestors'.
