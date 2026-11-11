@@ -1290,6 +1290,31 @@ mod tests {
     }
 
     #[test]
+    fn a_commit_from_a_window_its_output_does_not_draw_asks_for_no_frame() {
+        use crate::harness::{Harness, TestClient, Toplevel};
+        fn asks(h: &mut Harness, c: &mut TestClient, t: Toplevel) -> bool {
+            crate::backend::take_asks();
+            h.draw_self(c, t, 0xff40_4040);
+            !crate::backend::take_asks().is_empty()
+        }
+        let mut h = Harness::new();
+        let o = h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "printer", 200, 100);
+        let windows = h.state.layers.windows;
+        assert!(asks(&mut h, &mut c, t));
+        (h.state.scene).set_hidden_in(windows, reprisescene::output_rect(&o));
+        assert!(!asks(&mut h, &mut c, t), "under the 3D switcher's stack");
+        h.state.scene.set_hidden_in(windows, None);
+        assert!(asks(&mut h, &mut c, t));
+        h.state.set_minimized(t.id, true);
+        assert!(!asks(&mut h, &mut c, t), "minimized");
+        h.state.set_minimized(t.id, false);
+        h.state.step_desktop(crate::desktops::Step::Next, false);
+        assert!(!asks(&mut h, &mut c, t), "on another desktop");
+    }
+
+    #[test]
     fn a_commit_on_a_surface_with_no_role_asks_for_no_frame() {
         let mut h = crate::harness::Harness::new();
         h.output("TEST-1", 1024, 768);

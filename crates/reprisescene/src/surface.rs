@@ -64,14 +64,17 @@ pub struct SurfacePass {
 struct PassSurface {
     id: NodeId,
     surface: WlSurface,
-    /// The part of the output it shows, from its own top-left.
+    /// The part of the output it covers, from its own top-left.
     overlap: Option<Rectangle<i32, Logical>>,
+    /// It covers the output and is not hidden on it: the frame draws it.
+    drawn: bool,
     primary: Option<Output>,
 }
 
 impl SurfacePass {
+    /// The surfaces the frame draws, which take its frame callbacks and presentation feedback.
     fn shown(&self) -> impl Iterator<Item = &PassSurface> {
-        self.surfaces.iter().filter(|p| p.overlap.is_some())
+        self.surfaces.iter().filter(|p| p.drawn)
     }
 }
 
@@ -85,8 +88,9 @@ impl<R: Renderer, D> Scene<R, D> {
             .collect()
     }
 
-    /// The outputs a commit of `surface` can change: those its nodes overlap now and those that
-    /// showed it in their last frame. `None` when no node shows it.
+    /// The outputs a commit of `surface` can change: those drawing its nodes now
+    /// ([`Scene::outputs_of`]) and those that showed it in their last frame, less any it is now
+    /// hidden on. `None` when no node shows it.
     pub fn outputs_showing(&self, surface: &WlSurface) -> Option<Vec<Output>> {
         let mut found = false;
         let mut out: Vec<Output> = Vec::new();
@@ -98,7 +102,8 @@ impl<R: Renderer, D> Scene<R, D> {
                 continue;
             }
             found = true;
-            let entered = s.entered.iter().filter_map(|w| w.upgrade());
+            let entered =
+                (s.entered.iter().filter_map(|w| w.upgrade())).filter(|o| !self.hidden_on(id, o));
             for o in self.outputs_of(id).into_iter().chain(entered) {
                 if !out.contains(&o) {
                     out.push(o);
@@ -121,7 +126,7 @@ impl<R: Renderer, D> Scene<R, D> {
             let (pos, _) = self.coords(id).filter(|(_, visible)| *visible)?;
             let extents = bbox_from_surface_tree(&s.surface, pos);
             (!extents.is_empty())
-                .then(|| self.primary_in(extents))
+                .then(|| self.primary_in(id, extents))
                 .flatten()
         })
     }
@@ -156,11 +161,12 @@ impl<R: Renderer, D> Scene<R, D> {
             surfaces.push(PassSurface {
                 id,
                 surface: s.surface.clone(),
+                drawn: overlap.is_some() && !self.hidden_on(id, output),
                 overlap: overlap.map(|mut r| {
                     r.loc -= pos;
                     r
                 }),
-                primary: extents.and_then(|e| self.primary_in(e)),
+                primary: extents.and_then(|e| self.primary_in(id, e)),
             });
         }
         SurfacePass {
