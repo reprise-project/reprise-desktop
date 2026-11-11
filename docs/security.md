@@ -606,7 +606,7 @@ with the name, as it could reach the server's files and the session
 anyway.
 
 Each client the server ends is told why before its connection closes (the
-codes are in [features.md](features.md#remote-desktop)). The reason
+codes are in [remote-desktop.md](remote-desktop.md#disconnecting)). The reason
 goes to every client, also one that didn't say it reads reasons. It carries
 only the code, and only after the client logged in.
 

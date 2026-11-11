@@ -32,9 +32,9 @@ scrollbar is still there, even when you're not looking directly at it.
 Apparently these are features now.
 
 There's some selective memory involved. Reprise also has a searchable
-launcher, snap layouts, clipboard history, screen sharing, fractional scaling
-and support for hardware made this decade. I miss the desktop, not the
-afternoon spent getting a sound card to work.
+launcher, snap layouts, clipboard history, screen sharing, a remote desktop
+server, fractional scaling and support for hardware made this decade. I miss
+the desktop, not the afternoon spent getting a sound card to work.
 
 ## Why
 
@@ -80,6 +80,30 @@ feed in the Start menu, and there never will be.
 The long version: [every feature](docs/features.md), [the three
 interfaces](docs/interfaces.md) and [the bundled programs](docs/programs.md).
 
+## Remote Desktop
+
+Reprise has its own RDP server, so the desktop at your desk is also the one
+you reach from the couch.
+
+- **One session, two places.** Connect from another computer and this
+  screen locks while your windows move over to the client's monitors.
+  Unlock here and they come back, and the client is let go. Disconnect and
+  the session keeps running until you're back.
+- **Several people at once.** With Reprise's login manager, everyone in the
+  remote group can log in from another computer, into the session they left
+  running or a new one in the background, while someone else uses the
+  screen.
+- **Video on the GPU.** H.264 through VA-API on Intel and AMD or NVENC on
+  NVIDIA, with x264 on the CPU when there's no hardware encoder. The
+  default quality sends full colour, so small text stays sharp. Two
+  encoders per screen merge into one stream, which at 1080p on VA-API is
+  about a sixth of the bytes of one encoder.
+- **The usual extras.** Several monitors, the clipboard, sound, and a
+  standby screen for a computer with no monitor plugged in.
+
+Nothing listens until you turn it on. [docs/remote-desktop.md](docs/remote-desktop.md)
+has the rest.
+
 ## Try it
 
 Install the [requirements](docs/install.md#requirements), then:
@@ -104,6 +128,8 @@ back without eating your comments. See
   schemes and what each one turns on
 - [Programs](docs/programs.md): Explorer, Notepad, Reprise Settings and the
   rest
+- [Remote Desktop](docs/remote-desktop.md): your session from another
+  computer, and remote logins for several users
 - [Configuration](docs/configuration.md): the main sections of the config
   file
 - [Install](docs/install.md): requirements, building, packaging
