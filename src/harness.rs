@@ -47,6 +47,7 @@ use wayland_protocols_misc::{
         zwp_input_method_keyboard_grab_v2::{self as im_grab, ZwpInputMethodKeyboardGrabV2},
         zwp_input_method_manager_v2::ZwpInputMethodManagerV2,
         zwp_input_method_v2::{self as im, ZwpInputMethodV2},
+        zwp_input_popup_surface_v2::ZwpInputPopupSurfaceV2,
     },
     zwp_virtual_keyboard_v1::client::{
         zwp_virtual_keyboard_manager_v1::ZwpVirtualKeyboardManagerV1,
@@ -1115,6 +1116,20 @@ impl TestClient {
         im.grab = Some(im.obj.grab_keyboard(&qh, i));
     }
 
+    /// Input method `i`'s candidate popup, a `w`x`h` surface with its first buffer.
+    pub fn input_popup(&mut self, i: usize, w: i32, h: i32) -> WlSurface {
+        let qh = self.qh();
+        let surface = (self.side.compositor.as_ref())
+            .expect("wl_compositor")
+            .create_surface(&qh, ());
+        let _: ZwpInputPopupSurfaceV2 =
+            self.side.ims[i]
+                .obj
+                .get_input_popup_surface(&surface, &qh, ());
+        attach(self.side.shm.as_ref().expect("wl_shm"), &qh, &surface, w, h);
+        surface
+    }
+
     /// Input method `i` releases its keyboard grab.
     pub fn release_grab(&mut self, i: usize) {
         if let Some(g) = self.side.ims[i].grab.take() {
@@ -1847,6 +1862,7 @@ impl wc::Dispatch<ExtDataControlSourceV1, Answers> for ClientSide {
 wc::delegate_noop!(ClientSide: ignore ExtDataControlManagerV1);
 wc::delegate_noop!(ClientSide: ignore ExtDataControlOfferV1);
 wc::delegate_noop!(ClientSide: ignore WlSurface);
+wc::delegate_noop!(ClientSide: ignore ZwpInputPopupSurfaceV2);
 wc::delegate_noop!(ClientSide: ignore wl_shm::WlShm);
 wc::delegate_noop!(ClientSide: ignore wl_shm_pool::WlShmPool);
 wc::delegate_noop!(ClientSide: ignore WlBuffer);
