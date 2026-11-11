@@ -59,7 +59,6 @@ impl State {
             log::info!("{w:?} ({:?}) is urgent", win.app_id());
             self.ask_attention(w);
             self.redraw_taskbars();
-            self.redraw_all();
         }
     }
 }
@@ -86,7 +85,6 @@ impl State {
             self.ask_attention(w);
         }
         self.redraw_taskbars();
-        self.redraw_all();
     }
 }
 
@@ -267,5 +265,48 @@ mod tests {
             Attention::Steady
         );
         assert!(h.state.attention_flash.timer.is_none());
+    }
+
+    #[test]
+    fn an_ask_that_lights_no_new_button_asks_no_frame() {
+        use crate::backend::take_scene_outputs;
+        let config = crate::config::Config::parse(
+            "[appearance]\ninterface = \"glass\"\n[taskbar]\nattention_flash = 0\n",
+        )
+        .expect("config");
+        let mut h = Harness::with_config(config);
+        h.output("TEST-1", 1024, 768);
+        h.output("TEST-2", 1024, 768);
+        let mut c = h.connect();
+        let a = h.map_toplevel(&mut c, "test.a", 300, 200);
+        let b = h.map_toplevel(&mut c, "test.b", 300, 200);
+        let d = h.map_toplevel(&mut c, "test.b", 300, 200);
+        h.state.focus_window(a.id);
+        h.run_for(600);
+        let mut untrusted = |h: &mut Harness, t: crate::harness::Toplevel| {
+            take_scene_outputs();
+            let (token, _) = h.state.activation.create_external_token(None);
+            c.activate(token, t);
+            h.roundtrip(&mut c);
+            assert!(h.state.win(t.id).is_some_and(|w| w.attention.is_some()));
+            take_scene_outputs()
+        };
+        assert_eq!(
+            untrusted(&mut h, b),
+            ["TEST-1", "TEST-2"],
+            "test.b's button lights on both bars"
+        );
+        assert_eq!(
+            untrusted(&mut h, d),
+            Vec::<String>::new(),
+            "the combined button is lit already"
+        );
+        h.state.launcher_urgent("test.b");
+        assert_eq!(
+            take_scene_outputs(),
+            Vec::<String>::new(),
+            "both test.b windows ask already"
+        );
+        assert_eq!(h.state.focused, Some(a.id));
     }
 }

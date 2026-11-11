@@ -907,11 +907,10 @@ impl XwmHandler for State {
                 self.set_csd(w, !decorated(&window.motif_hints()));
                 self.redraw_all();
             }
-            WmWindowProperty::TransientFor => {
-                self.on_parent_changed(w);
-                self.redraw_taskbars();
-                self.redraw_all();
-            }
+            WmWindowProperty::TransientFor => self.redraw_changed(|s| {
+                s.on_parent_changed(w);
+                s.redraw_taskbars();
+            }),
             // New size hints can make a window fixed-size: its chrome
             // follows.
             WmWindowProperty::NormalHints => {
