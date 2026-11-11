@@ -273,6 +273,10 @@ impl State {
     }
 
     pub fn set_minimized(&mut self, w: WindowId, on: bool) {
+        self.redraw_changed(|s| s.minimize(w, on));
+    }
+
+    fn minimize(&mut self, w: WindowId, on: bool) {
         let w = if on { self.tabs.groups.shown_of(w) } else { w };
         let shown = self.ripple_frame(w);
         self.toplevels.dirty = true;
@@ -308,7 +312,6 @@ impl State {
             self.focus_window(w);
         }
         self.redraw_taskbars();
-        self.redraw_all();
     }
 
     /// A normal window that took a size of its own after acking every configure keeps it in its

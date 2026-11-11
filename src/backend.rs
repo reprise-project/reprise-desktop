@@ -91,7 +91,7 @@ pub use schedule::{
     schedule_step,
 };
 #[cfg(test)]
-pub use schedule::{take_asks, take_steps};
+pub use schedule::{take_asks, take_scene_outputs, take_steps};
 pub use session::on_input;
 use session::{activate, device_reset_done, pause};
 use steps::on_quiet;

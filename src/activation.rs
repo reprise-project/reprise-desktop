@@ -137,7 +137,6 @@ impl XdgActivationHandler for State {
         } else if !focused {
             self.ask_attention(w);
             self.redraw_taskbars();
-            self.redraw_all();
         }
     }
 }
