@@ -1106,11 +1106,22 @@ mod tests {
 
     #[test]
     fn two_runs_of_one_program_are_one_taker() {
+        use std::io::{BufRead, Write};
+        use std::process::Stdio;
         let run = || {
-            std::process::Command::new("sleep")
-                .arg("5")
+            let mut c = std::process::Command::new("cat")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
                 .spawn()
-                .unwrap()
+                .unwrap();
+            // spawn can return before /proc/<pid>/exe names the new image; the echo means it does.
+            c.stdin.as_mut().unwrap().write_all(b"up\n").unwrap();
+            let mut echo = String::new();
+            std::io::BufReader::new(c.stdout.as_mut().unwrap())
+                .read_line(&mut echo)
+                .unwrap();
+            assert_eq!(echo, "up\n");
+            c
         };
         let (mut a, mut b) = (run(), run());
         let taker = |c: &std::process::Child| Taker::of(c.id() as i32);

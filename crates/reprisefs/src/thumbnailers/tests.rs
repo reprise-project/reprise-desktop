@@ -191,22 +191,28 @@ fn past_the_deadline_the_whole_process_group_is_killed() {
     );
     let t =
         Thumbnailer::parse(&entry(&format!("{} %i %o", fake.display()), "a/b"), "hang").unwrap();
-    let r = runner(dir.path(), Duration::from_millis(300));
-    let asked = Instant::now();
-    assert!(matches!(
-        r.run(&t, Path::new("/home/u/a.mp4"), 128),
-        Err(RunError::Failed(_))
-    ));
-    assert!(
-        asked.elapsed() < Duration::from_secs(3),
-        "{:?}",
-        asked.elapsed()
-    );
-    let pid: i32 = std::fs::read_to_string(&pid_file)
-        .unwrap()
-        .trim()
-        .parse()
-        .unwrap();
+    // At idle priority on a busy machine the script may not reach its sleep within the
+    // deadline; each run that ends before the pid is written doubles it.
+    let mut deadline = Duration::from_millis(300);
+    let pid: i32 = loop {
+        assert!(deadline < DEADLINE, "the script never started its sleep");
+        let r = runner(dir.path(), deadline);
+        let asked = Instant::now();
+        assert!(matches!(
+            r.run(&t, Path::new("/home/u/a.mp4"), 128),
+            Err(RunError::Failed(_))
+        ));
+        assert!(
+            asked.elapsed() < deadline + Duration::from_secs(3),
+            "{:?}",
+            asked.elapsed()
+        );
+        let written = std::fs::read_to_string(&pid_file).ok();
+        if let Some(pid) = written.and_then(|p| p.trim().parse().ok()) {
+            break pid;
+        }
+        deadline *= 2;
+    };
     let end = Instant::now() + Duration::from_secs(5);
     let gone = loop {
         let state = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok();
@@ -248,6 +254,8 @@ fn with_every_slot_taken_nothing_runs() {
     );
     assert!(!ran.exists());
     drop(held);
+    // At idle priority on a busy machine the script can take longer than the slot wait above.
+    let r = runner(dir.path(), DEADLINE);
     assert!(matches!(
         r.run(&t, Path::new("/home/u/a.pdf"), 128),
         Err(RunError::Failed(_))
