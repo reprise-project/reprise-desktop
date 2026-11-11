@@ -17,7 +17,7 @@ mod select;
 #[cfg(test)]
 mod tests;
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 use std::os::fd::BorrowedFd;
 use std::path::{Path, PathBuf};
 
@@ -84,9 +84,6 @@ pub struct DesktopView {
     /// shows its caret there, without the selection, until the drag goes.
     pub rename_drop: Option<usize>,
     watch: Option<DirWatch>,
-    /// The folders a file job is adding to `watch`. One on a drive that never answers keeps its
-    /// job, and no second one starts.
-    watch_adds: HashSet<PathBuf>,
     /// Re-armed on every inotify wakeup; the rescan runs when it fires, so an unpack
     /// costs one scan, not one per file.
     settle: Option<RegistrationToken>,
@@ -265,7 +262,6 @@ pub(crate) fn create(
         rename_clicks: DoubleClick::default(),
         rename_drop: None,
         watch,
-        watch_adds: HashSet::new(),
         settle: None,
         drawn: Vec::new(),
         drawn_theme: None,

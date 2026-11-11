@@ -3,7 +3,7 @@
 //! changes, so open lists follow them.
 
 use crate::compositor::State;
-use crate::dirwatch::{DirWatch, Want};
+use crate::dirwatch::{DirWatch, Landed, Want};
 use crate::menuview::MenuKind;
 use crate::taskbar::JumpRow;
 use inotify::WatchMask;
@@ -83,36 +83,36 @@ pub fn setup(state: &mut State) {
 }
 
 /// Watches `user-dirs.dirs`, the document folders the last recent check read from it and the
-/// files the open lists show. Each folder is looked up on a file job of its own, since one may
-/// sit on a dead mount; a folder newly watched calls for a check, as a file may have gone
-/// before its watch came.
+/// files the open lists show, each folder added on a file job of its own.
 pub fn follow_recent(state: &mut State) {
     let mut want = document_wants(
         &reprisefs::places::user_dirs_file(),
         &state.recent.document_dir_paths(),
     );
     want.extend(file_wants(&listed_files(state)));
-    let recent = &mut state.recent;
-    let Some(w) = recent.folder_watch.as_mut() else {
+    let Some(w) = state.recent.folder_watch.as_mut() else {
         return;
     };
-    let adds: Vec<_> = (w.plan(&want).each())
-        .filter(|(dir, _)| recent.folder_adds.insert(dir.clone()))
-        .collect();
-    for (dir, add) in adds {
-        state.spawn_fs_job(move || {
-            let added = add.run();
-            Box::new(move |s: &mut State| {
-                s.recent.folder_adds.remove(&dir);
-                let new = (s.recent.folder_watch.as_mut()).is_some_and(|w| w.adopt(added));
-                if new {
-                    // A wider want on this folder that came while it was being added.
-                    follow_recent(s);
-                    s.check_recent();
-                }
-            })
-        });
+    let adds = w.plan(&want);
+    let adds = w.send(adds.each());
+    state.spawn_watch_adds(adds, |s| s.recent.folder_watch.as_mut(), folder_landed);
+}
+
+/// A folder's add landed: a want that widened while it was out is planned again, and the
+/// recent files and folders are checked when [`checks`] says so.
+fn folder_landed(state: &mut State, landed: Landed) {
+    if landed.grew {
+        follow_recent(state);
     }
+    if checks(landed) {
+        state.check_recent();
+    }
+}
+
+/// Whether a landing calls for a check: a change between the check that listed a file and its
+/// folder's watch starting reports no event, so a folder newly watched checks too.
+fn checks(landed: Landed) -> bool {
+    landed.grew || landed.hit
 }
 
 /// A menu or the Start panel closed: once the loop is idle, the watch drops the folders only
@@ -310,5 +310,93 @@ mod tests {
         std::fs::rename(&b, dir.join("b2.txt")).unwrap();
         assert!(w.drain(), "b.txt moved away");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Plans `want` on `w` and runs each add sent out, as the file jobs do, for landing later.
+    fn sent(w: &mut DirWatch, want: &[Want]) -> Vec<(PathBuf, crate::dirwatch::Added)> {
+        let adds = w.plan(want);
+        (w.send(adds.each()).into_iter())
+            .map(|(dir, add)| (dir, add.run()))
+            .collect()
+    }
+
+    #[test]
+    fn a_folder_made_and_a_listed_file_renamed_or_deleted_while_its_add_is_out_count_when_it_lands()
+    {
+        let home = std::env::temp_dir().join(format!("reprise-recentgap-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        for d in ["one", "two"] {
+            std::fs::create_dir_all(home.join(d)).unwrap();
+        }
+        let (a, b) = (home.join("one/a.txt"), home.join("two/b.txt"));
+        std::fs::write(&a, "").unwrap();
+        std::fs::write(&b, "").unwrap();
+        let mut want = folder_wants(&[home.join("Papers")]);
+        want.extend(file_wants(&[a.clone(), b.clone()]));
+        let mut w = DirWatch::new().unwrap();
+        let added = sent(&mut w, &want);
+        assert_eq!(added.len(), 3, "the home folder, one and two");
+
+        std::fs::create_dir(home.join("Papers")).unwrap();
+        std::fs::rename(&a, home.join("one/a2.txt")).unwrap();
+        std::fs::remove_file(&b).unwrap();
+        assert!(!w.drain(), "no add is taken yet");
+        let again = w.plan(&want);
+        assert!(w.send(again.each()).is_empty(), "each folder is out");
+        for (dir, added) in added {
+            let landed = w.land(&dir, added);
+            assert!(landed.hit, "the change in {} counts", dir.display());
+            assert!(checks(landed));
+        }
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn a_listed_file_deleted_before_its_folder_is_watched_reports_no_event_and_checks() {
+        let dir = std::env::temp_dir().join(format!("reprise-recentlate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let a = dir.join("a.txt");
+        std::fs::write(&a, "").unwrap();
+        assert!(a.is_file(), "the check lists a.txt");
+        std::fs::remove_file(&a).unwrap();
+
+        let mut w = DirWatch::new().unwrap();
+        let [(folder, added)] = sent(&mut w, &file_wants(&[a])).try_into().ok().unwrap();
+        let landed = w.land(&folder, added);
+        assert_eq!(
+            landed,
+            Landed {
+                grew: true,
+                hit: false
+            },
+            "no event reports a.txt gone, only its folder newly watched"
+        );
+        assert!(checks(landed), "a folder newly watched checks");
+        assert!(!w.drain());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_listed_files_folder_deleted_while_its_add_is_out_is_watched_again_once_made() {
+        let home = std::env::temp_dir().join(format!("reprise-recentgone-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(home.join("proj")).unwrap();
+        let a = home.join("proj/a.txt");
+        std::fs::write(&a, "").unwrap();
+        let want = file_wants(std::slice::from_ref(&a));
+        let mut w = DirWatch::new().unwrap();
+        let [(folder, added)] = sent(&mut w, &want).try_into().ok().unwrap();
+
+        std::fs::remove_dir_all(home.join("proj")).unwrap();
+        assert!(!w.drain(), "its add is not taken yet");
+        assert!(w.land(&folder, added).hit, "the folder went");
+        std::fs::create_dir(home.join("proj")).unwrap();
+        std::fs::write(&a, "").unwrap();
+        let [(folder, added)] = sent(&mut w, &want).try_into().ok().unwrap();
+        assert!(w.land(&folder, added).grew, "the new folder is watched");
+        std::fs::remove_file(&a).unwrap();
+        assert!(w.drain(), "a.txt deleted from the new folder");
+        let _ = std::fs::remove_dir_all(&home);
     }
 }

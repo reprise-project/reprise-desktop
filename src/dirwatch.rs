@@ -1,11 +1,13 @@
 //! A set of inotify watches on directories that may come and go; a watch whose directory is deleted or moved away
 //! is dropped and the next sync ([`DirWatch::plan`], then [`DirWatch::adopt`]) adds it again.
 
+use crate::compositor::State;
 use inotify::{EventMask, Inotify, WatchDescriptor, WatchMask, Watches};
+use std::collections::HashSet;
 use std::ffi::OsString;
 use std::io::{self, ErrorKind};
 use std::os::fd::{AsRawFd, RawFd};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Want {
@@ -36,6 +38,18 @@ pub struct DirWatch {
     holds: usize,
     /// More events came while holding than [`HELD_MAX`].
     held_over: bool,
+    /// The folders a [`DirWatch::send`] sent out and no [`DirWatch::land`] took back yet. One on
+    /// a drive that never answers keeps its job, and no second one starts.
+    adding: HashSet<PathBuf>,
+}
+
+/// What a [`DirWatch::land`] found.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Landed {
+    /// The add newly watched its folder or widened its watch, as [`DirWatch::adopt`].
+    pub grew: bool,
+    /// An event held while it was out calls for a rescan, as [`DirWatch::replay`].
+    pub hit: bool,
 }
 
 /// An event as read, for [`DirWatch::replay`].
@@ -185,6 +199,7 @@ impl DirWatch {
             held: None,
             holds: 0,
             held_over: false,
+            adding: HashSet::new(),
         })
     }
 
@@ -313,6 +328,29 @@ impl DirWatch {
         changed
     }
 
+    /// The adds of `adds` whose folder no add sent out is adding yet, each with a
+    /// [`DirWatch::hold`], for [`State::spawn_watch_adds`].
+    pub fn send(&mut self, adds: impl Iterator<Item = (PathBuf, Adds)>) -> Vec<(PathBuf, Adds)> {
+        let sent: Vec<_> = adds
+            .filter(|(dir, _)| self.adding.insert(dir.clone()))
+            .collect();
+        for _ in &sent {
+            self.hold();
+        }
+        sent
+    }
+
+    /// Takes the watches the add [`DirWatch::send`] sent out for `dir` made, then replays the
+    /// events held meanwhile.
+    pub fn land(&mut self, dir: &Path, added: Added) -> Landed {
+        self.adding.remove(dir);
+        let grew = self.adopt(added);
+        Landed {
+            grew,
+            hit: self.replay(),
+        }
+    }
+
     /// Read every pending event. True when any calls for a rescan: a change
     /// inside a watched directory, a watched directory going away (its
     /// watch is dropped, for `sync` to add again), or a queue overflow
@@ -394,6 +432,29 @@ impl DirWatch {
     fn overflowed(&mut self) {
         let gone = self.watched.iter().map(|w| w.wd.clone()).collect();
         self.forget(gone);
+    }
+}
+
+impl State {
+    /// Runs each add [`DirWatch::send`] sent out on a file job of its own, as a folder may sit on
+    /// a drive that stopped answering, then lands it in the watch `at` finds and passes what the
+    /// landing found to `landed`.
+    pub fn spawn_watch_adds(
+        &mut self,
+        adds: Vec<(PathBuf, Adds)>,
+        at: fn(&mut State) -> Option<&mut DirWatch>,
+        landed: fn(&mut State, Landed),
+    ) {
+        for (dir, add) in adds {
+            self.spawn_fs_job(move || {
+                let added = add.run();
+                Box::new(move |state: &mut State| {
+                    if let Some(found) = at(state).map(|w| w.land(&dir, added)) {
+                        landed(state, found);
+                    }
+                })
+            });
+        }
     }
 }
 

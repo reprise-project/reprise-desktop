@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::collections::HashSet;
 
 use super::drives::{drive_tops, drive_trash_wants, read_drive_bin};
 use super::layout::landing_cell;
