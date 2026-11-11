@@ -35,6 +35,10 @@ pub struct Ffmpeg {
     /// AVC444 codes each view on its own encoder and merges them into one stream; None codes
     /// both views through one encoder, in the v1 layout. One merge lasts as long as this encoder.
     merge: Option<Merge>,
+    /// `[remote_desktop] avc444_split_encoders` and the connection's screen count.
+    split: (bool, usize),
+    /// The journal was told how AVC444 codes its views.
+    views_logged: bool,
     open: Option<Open>,
 }
 
@@ -115,6 +119,8 @@ impl Ffmpeg {
                 Backend::Vaapi { .. } | Backend::Nvenc | Backend::X264
             )
             .then(Merge::default),
+            split: (true, 1),
+            views_logged: false,
             open: None,
         })
     }
@@ -122,9 +128,27 @@ impl Ffmpeg {
     /// Whether AVC444 may code each view on its own encoder, `[remote_desktop]
     /// avc444_split_encoders`, for one of a connection's `screens`; off codes both on one.
     pub fn set_split_encoders(&mut self, on: bool, screens: usize) {
+        self.split = (on, screens);
         if !split_encoders(self.backend, on, screens) {
             self.merge = None;
         }
+    }
+
+    /// The journal line naming whether AVC444 codes its views on two encoders or on one, and why.
+    fn views_line(&self) -> String {
+        let label = self.backend.label();
+        let (on, screens) = self.split;
+        let why = if self.merge.is_some() {
+            return format!("AVC444 views: two {label} encoders, merged");
+        } else if !on {
+            "avc444_split_encoders is off".to_string()
+        } else if !split_encoders(self.backend, on, screens) {
+            let sessions = 2 * screens;
+            format!("{screens} screens need {sessions} sessions, NVENC has {NVENC_SESSIONS}")
+        } else {
+            "merging them failed".to_string()
+        };
+        format!("AVC444 views: one {label} encoder, {why}")
     }
 
     /// Frames of `size` coded at `target`, which AVC444 pads to whole macroblocks.
@@ -261,6 +285,10 @@ impl Ffmpeg {
         if self.open.as_mut().filter(current).is_none() {
             self.open = None;
             self.open = Some(self.open(fourcc, size, target, avc444)?);
+            if avc444 && !self.views_logged {
+                log::info!("{}", self.views_line());
+                self.views_logged = true;
+            }
         }
         let codec = self.backend.codec();
         let open = self.open.as_mut().expect("opened above");
@@ -2314,6 +2342,7 @@ pub(crate) mod tests {
 
     #[test]
     fn split_encoders_off_codes_both_views_on_one_encoder_in_v1() {
+        crate::listen::tests::capture_log();
         let mut encoder = x264_avc444();
         encoder.set_split_encoders(false, 1);
         tapped();
@@ -2332,6 +2361,39 @@ pub(crate) mod tests {
             let back = avc444::tests::crop(&avc444::combine(layout, &main, &aux), (160, 96));
             assert!(chroma_psnr(&back, &planes) > 35.0, "frame {t}");
         }
+        let line = "AVC444 views: one Software H.264 encoder, avc444_split_encoders is off";
+        assert_eq!(
+            crate::listen::tests::times_logged(line),
+            1,
+            "one journal line for the encoder"
+        );
+    }
+
+    #[test]
+    fn the_journal_names_how_avc444_codes_its_views() {
+        let mut encoder = x264_avc444();
+        let line = |e: &Ffmpeg| e.views_line();
+        assert_eq!(
+            line(&encoder),
+            "AVC444 views: two Software H.264 encoders, merged"
+        );
+        encoder.merge = None;
+        assert_eq!(
+            line(&encoder),
+            "AVC444 views: one Software H.264 encoder, merging them failed"
+        );
+        encoder.set_split_encoders(false, 1);
+        assert_eq!(
+            line(&encoder),
+            "AVC444 views: one Software H.264 encoder, avc444_split_encoders is off"
+        );
+        let mut capped = x264_avc444();
+        capped.backend = Backend::Nvenc;
+        capped.set_split_encoders(true, 5);
+        assert_eq!(
+            line(&capped),
+            "AVC444 views: one NVENC H.264 encoder, 5 screens need 10 sessions, NVENC has 8"
+        );
     }
 
     #[test]

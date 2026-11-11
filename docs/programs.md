@@ -748,7 +748,9 @@ sheet goes back to the clock's settings as they are.
   client's address, logins, the encoder and why a connection ended
   (`journalctl --user -u app-org.reprise.RemoteDesktop`); lines starting
   `client offers` give each client's RDP version, build and graphics
-  capability sets. In lock mode
+  capability sets; a line starting `AVC444 views` says, once per screen's
+  encoder, whether AVC444 codes the two views on two encoders and merges
+  them, or on one and why. In lock mode
   its `ConsoleLayout` property holds the first client's monitors, which
   the portal hands the compositor to make that client's screens; each
   resize of the client's window updates it. See
