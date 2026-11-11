@@ -115,7 +115,20 @@ fn drawn(m: &Logon, s: i32) -> (Canvas, LogonLayout) {
 }
 
 fn drawn_with(m: &Logon, s: i32, preedit: Option<Preedit>) -> (Canvas, LogonLayout) {
-    let theme = crate::interfaces::theme_for(Interface::Glass).scaled(s);
+    drawn_in(m, s, preedit, crate::glass::Mode::Light)
+}
+
+fn drawn_in(
+    m: &Logon,
+    s: i32,
+    preedit: Option<Preedit>,
+    mode: crate::glass::Mode,
+) -> (Canvas, LogonLayout) {
+    let g = crate::glass::Settings {
+        mode,
+        ..Default::default()
+    };
+    let theme = crate::interfaces::theme_with(Interface::Glass, Default::default(), &g).scaled(s);
     let text = TextRenderer::load(&theme.fonts);
     let l = layout(m, &theme, &text, OUTPUT);
     let mut c = Canvas::new((OUTPUT.width * s) as u32, (OUTPUT.height * s) as u32);
@@ -328,6 +341,83 @@ fn glass_lock_pins_at_scale_1_and_2() {
         }
     }
     crate::pins::check("glass/logon-locked", &got);
+}
+
+/// The lock's field with its cue, with the cue and the caret blinked off, and with a password.
+fn lock_fields() -> Vec<(&'static str, Logon)> {
+    let user = users(1).remove(0);
+    let empty = Logon::locked(Interface::Glass, user, true, true);
+    let mut away = empty.clone();
+    away.focus = Part::Power;
+    let mut typed = empty.clone();
+    typed.key(LogonKey::Text("hunter2"));
+    vec![("cue", empty), ("cue unfocused", away), ("typed", typed)]
+}
+
+/// Device px of the lock's password field at `s`, and its inner left edge.
+fn lock_field(l: &LogonLayout, s: i32) -> (Rect, i32) {
+    let f = l.rect(Part::Password).unwrap().scaled(s);
+    (f, f.x + FIELD_PAD * s)
+}
+
+#[test]
+fn glass_lock_field_pins_in_both_modes_at_scale_1_and_2() {
+    crate::pins::fonts();
+    let mut got = Vec::new();
+    for mode in [crate::glass::Mode::Light, crate::glass::Mode::Dark] {
+        for (name, m) in lock_fields() {
+            for s in [1, 2] {
+                let (c, l) = drawn_in(&m, s, None, mode);
+                let (f, _) = lock_field(&l, s);
+                let mut field = Canvas::new(f.width as u32, f.height as u32);
+                for y in 0..f.height {
+                    for x in 0..f.width {
+                        field.pixels[(y * f.width + x) as usize] = c.get(f.x + x, f.y + y);
+                    }
+                }
+                got.push((format!("{mode:?} {name} @{s}"), fnv(&field)));
+            }
+        }
+    }
+    crate::pins::check("glass/logon-field", &got);
+}
+
+#[test]
+fn the_lock_field_inks_its_password_dark_in_both_modes() {
+    let (_, typed) = lock_fields().pop().unwrap();
+    for mode in [crate::glass::Mode::Light, crate::glass::Mode::Dark] {
+        let (c, l) = drawn_in(&typed, 1, None, mode);
+        let (f, x) = lock_field(&l, 1);
+        let darkest = (x..f.right() - FIELD_PAD)
+            .flat_map(|x| (f.y + 2..f.bottom() - 2).map(move |y| (x, y)))
+            .map(|(x, y)| (c.get(x, y) >> 8) as u8)
+            .min()
+            .unwrap();
+        assert!(
+            darkest < 0x20,
+            "{mode:?}: the dots ink in black, darkest {darkest:#x}"
+        );
+    }
+}
+
+#[test]
+fn the_lock_fields_caret_covers_none_of_the_cue() {
+    let (_, away) = lock_fields().swap_remove(1);
+    for mode in [crate::glass::Mode::Light, crate::glass::Mode::Dark] {
+        for s in [1, 2] {
+            let (c, l) = drawn_in(&away, s, None, mode);
+            let (f, x) = lock_field(&l, s);
+            for y in f.y + 2 * s..f.bottom() - 2 * s {
+                for cx in x..x + s {
+                    assert_eq!(
+                        c.get(cx, y),
+                        0xFFFF_FFFF,
+                        "{mode:?} @{s}: the caret's column ({cx}, {y}) holds no cue ink"
+                    );
+                }
+            }
+        }
+    }
 }
 
 #[test]
