@@ -248,10 +248,16 @@ impl State {
     }
 
     pub fn map_window(&mut self, w: WindowId) {
-        if self.win(w).is_some_and(|x| x.override_redirect) {
-            self.map_or_window(w);
-            return;
-        }
+        self.redraw_changed(|s| {
+            if s.win(w).is_some_and(|x| x.override_redirect) {
+                s.map_or_window(w);
+            } else {
+                s.map_managed(w);
+            }
+        });
+    }
+
+    fn map_managed(&mut self, w: WindowId) {
         self.note_app_id(w);
         self.watch_threads(w);
         let current = self.desktops.current;
@@ -539,7 +545,6 @@ impl State {
         self.flip_join();
         self.overview_refresh();
         self.redraw_taskbars();
-        self.redraw_all();
     }
 
     fn map_or_window(&mut self, w: WindowId) {
@@ -569,7 +574,6 @@ impl State {
         if wants {
             self.focus_window(w);
         }
-        self.redraw_all();
     }
 
     /// The one place that clears a `WindowId` from every holder outside `State::windows`.
@@ -615,6 +619,10 @@ impl State {
     }
 
     pub fn unmap_window(&mut self, w: WindowId) {
+        self.redraw_changed(|s| s.unmap(w));
+    }
+
+    fn unmap(&mut self, w: WindowId) {
         // Before anything hides it: its still is taken as it shows.
         self.window_closing(w);
         let was_focused = self.focused == Some(w);
@@ -642,10 +650,13 @@ impl State {
             self.focus_top();
         }
         self.redraw_taskbars();
-        self.redraw_all();
     }
 
     pub fn destroy_window(&mut self, w: WindowId) {
+        self.redraw_changed(|s| s.destroy(w));
+    }
+
+    fn destroy(&mut self, w: WindowId) {
         // A closing X11 menu or tooltip leaves the focus where it is.
         let refocus = self.focused == Some(w) || !self.win(w).is_some_and(|x| x.override_redirect);
         if self.win(w).is_some_and(|x| x.mapped) {
@@ -664,7 +675,6 @@ impl State {
             self.focus_top();
         }
         self.redraw_taskbars();
-        self.redraw_all();
     }
 
     pub fn cancel_interaction_for(&mut self, w: WindowId) {
