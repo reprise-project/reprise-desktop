@@ -274,6 +274,60 @@ fn a_frames_glass_reads_its_ring_and_not_its_client() {
 }
 
 #[test]
+fn a_frames_glass_says_it_reads_beneath_its_ring_as_far_as_its_feed_and_not_its_clients_middle() {
+    let m = reprisekit::theme::Theme::default().metrics;
+    let g = FrameGeometry::layout(&m, 400, 300, false, Chrome::WINDOW);
+    let pane = frame_pane(&g, CORNER, false);
+    let c = g.client;
+    let middle = Rectangle::new(
+        (c.x + c.width / 2, c.y + c.height / 2).into(),
+        (1, 1).into(),
+    );
+    for material in [Material::Frosted, Material::Smoked, Material::Molten] {
+        for (quality, scale) in [
+            (Quality::Full, 1.0),
+            (Quality::Coarse, 1.0),
+            (Quality::Full, 1.5),
+            (Quality::Full, 2.0),
+        ] {
+            let pass = Pass {
+                settings: Settings {
+                    material,
+                    ..Settings::default()
+                },
+                quality,
+                output: (1600, 1200).into(),
+                ..Pass::default()
+            };
+            let said = reads_beneath(&pane, &pass, scale);
+            let at = Point::from((60.0 * scale, 30.0 * scale));
+            let reads = Reads::of(&pane, at, pass.output, scale, &pass);
+            let s = &pass.settings;
+            let r = reprisefx::blur::reach(s.blur, material, quality, scale);
+            for n in &reads.needed {
+                let read = Rectangle::new(
+                    (n.loc.x - r, n.loc.y - r).into(),
+                    (n.size.w + 2 * r, n.size.h + 2 * r).into(),
+                );
+                let read = layout(read, (-60, -30).into(), scale);
+                let far = read.loc + read.size.to_point() - Point::from((1, 1));
+                for corner in [read.loc, far] {
+                    let corner = Rectangle::new(corner, (1, 1).into());
+                    assert!(
+                        said.iter().any(|x| x.contains_rect(corner)),
+                        "{material:?} {quality:?} x{scale}: {corner:?} of {read:?}"
+                    );
+                }
+            }
+            assert!(
+                !said.iter().any(|r| r.overlaps(middle)),
+                "{material:?} {quality:?} x{scale}: nothing under the client's middle"
+            );
+        }
+    }
+}
+
+#[test]
 fn a_frames_glass_is_fed_from_past_what_its_blur_reads() {
     let m = reprisekit::theme::Theme::default().metrics;
     let g = FrameGeometry::layout(&m, 400, 300, false, Chrome::WINDOW);

@@ -3,8 +3,10 @@
 //! hides and goes, and frame callbacks only from the primary output.
 
 use std::{
+    cell::Cell,
     io::Write,
     os::{fd::AsFd, unix::net::UnixStream},
+    rc::Rc,
     sync::Arc,
     time::Duration,
 };
@@ -584,6 +586,113 @@ fn a_surface_under_opaque_leaves_is_not_shown_by_that_output_and_takes_no_frames
         w.events(),
         ["frame"],
         "the frame it asked for under the cover"
+    );
+}
+
+/// Glass of `size` reading its rect grown by `grow` beneath it.
+struct Reading {
+    size: (i32, i32),
+    grow: Rc<Cell<i32>>,
+}
+
+impl reprisescene::CustomNode<DummyRenderer> for Reading {
+    fn size(&self) -> smithay::utils::Size<i32, smithay::utils::Logical> {
+        self.size.into()
+    }
+
+    fn reads_beneath(&self, _: f64) -> Option<Vec<Rectangle<i32, smithay::utils::Logical>>> {
+        let g = self.grow.get();
+        let (w, h) = self.size;
+        Some(vec![Rectangle::new(
+            (-g, -g).into(),
+            (w + 2 * g, h + 2 * g).into(),
+        )])
+    }
+
+    fn elements(
+        &self,
+        _: &mut DummyRenderer,
+        _: Point<f64, smithay::utils::Physical>,
+        _: smithay::utils::Scale<f64>,
+        _: f32,
+    ) -> Vec<reprisescene::CustomElement<DummyRenderer>> {
+        Vec::new()
+    }
+}
+
+#[test]
+fn a_surface_under_opaque_leaves_is_covered_unless_glass_shown_or_read_reads_it() {
+    let mut w = World::new();
+    let surface = w.surface();
+    let left = w.left.clone();
+    let mut scene = Scene::<DummyRenderer>::new();
+    scene.add_output(&left);
+    let root = scene.root();
+    let s = scene.surface_create(root, surface.clone());
+    scene.set_position(s, 10, 10);
+    let cover = scene.rect_create(root, (100, 100), [0.0, 0.0, 0.0, 1.0]);
+    let (covered, shown) = (Some(vec![]), Some(vec![left.clone()]));
+    let reading = |scene: &mut Scene<DummyRenderer>, size, at: (i32, i32), grow: &Rc<Cell<i32>>| {
+        let n = scene.custom_create(
+            root,
+            Box::new(Reading {
+                size,
+                grow: grow.clone(),
+            }),
+        );
+        scene.set_position(n, at.0, at.1);
+        n
+    };
+
+    let bar_grow = Rc::new(Cell::new(10));
+    let bar = reading(&mut scene, (100, 20), (0, 80), &bar_grow);
+    assert_eq!(
+        scene.outputs_showing(&surface),
+        covered,
+        "glass above whose reads end 20 px short"
+    );
+    bar_grow.set(35);
+    assert_eq!(
+        scene.outputs_showing(&surface),
+        shown,
+        "glass above reading 5 px of it"
+    );
+    bar_grow.set(10);
+
+    let low_grow = Rc::new(Cell::new(25));
+    let low = reading(&mut scene, (40, 5), (10, 60), &low_grow);
+    scene.place_below(low, cover);
+    assert_eq!(
+        scene.outputs_showing(&surface),
+        covered,
+        "glass under the cover that no glass reads"
+    );
+    scene.set_position(low, 10, 72);
+    assert_eq!(
+        scene.outputs_showing(&surface),
+        shown,
+        "glass under the cover read by the glass above, reading it"
+    );
+    scene.destroy(low);
+    scene.destroy(bar);
+
+    scene.rect_set_size(cover, (100, 60));
+    let beneath = reading(&mut scene, (100, 20), (0, 80), &bar_grow);
+    scene.lower_to_bottom(beneath);
+    assert_eq!(scene.outputs_showing(&surface), covered, "glass beneath");
+    bar_grow.set(35);
+    assert_eq!(
+        scene.outputs_showing(&surface),
+        shown,
+        "glass beneath it reading it: its backdrop can hold what lies above"
+    );
+    scene.destroy(beneath);
+    let pane = scene.custom_create(root, Box::new(Pane));
+    scene.lower_to_bottom(pane);
+    assert_eq!(
+        scene.outputs_showing(&surface),
+        covered,
+        "a custom node that reads all beneath it, beneath it"
     );
 }
 
