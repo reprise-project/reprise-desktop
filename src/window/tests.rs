@@ -171,7 +171,7 @@ fn client_limits_keep_zero_max_unbounded_and_cap_at_32767() {
 
 use super::draw::{client_glass_rects, client_holes};
 use super::owners::{modal_end, owner_chain_has, walk_owned};
-use super::place::{grown_back_inside, retheme_back_inside};
+use super::place::{grown_back_inside, retheme_back_inside, shrunk_origin};
 use super::*;
 use crate::raster::Rect;
 use crate::theme::Metrics;
@@ -904,6 +904,50 @@ fn a_window_hears_new_bounds_when_its_output_changes_mode_or_scale() {
         scaled.0 < first.0 && scaled.1 < first.1,
         "scale 2 halves the work area: {wide:?} -> {scaled:?}"
     );
+}
+
+#[test]
+fn a_shrunk_frame_moves_inside_the_work_area_at_its_new_size() {
+    let area = Rect::new(0, 0, 1280, 692);
+    let frame = Rect::new(32, 32, 768, 706);
+    assert_eq!(shrunk_origin(frame, (760, 680), (760, 666), area), (32, 0));
+    assert_eq!(
+        shrunk_origin(Rect::new(600, 32, 768, 706), (760, 680), (752, 666), area),
+        (520, 0)
+    );
+    assert_eq!(
+        shrunk_origin(Rect::new(32, 0, 768, 700), (760, 674), (760, 666), area),
+        (32, 0),
+        "a frame that fits at its new size stays"
+    );
+}
+
+#[test]
+fn a_window_shrunk_by_a_scale_change_stays_inside_the_work_area() {
+    use smithay::output::Scale;
+    for (w, h_px) in [(1920, 1080), (1366, 768)] {
+        for scale in [1.25, 1.5, 2.0] {
+            let mut h = crate::harness::Harness::new();
+            let o = h.output("TEST-1", w, h_px);
+            let mut c = h.connect();
+            let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+            h.roundtrip(&mut c);
+            h.resize_self(&mut c, t, 760, 680);
+            h.state.move_to(t.id, 32, 32);
+            o.change_current_state(None, None, Some(Scale::Fractional(scale)), None);
+            h.state.update_layout();
+            h.roundtrip(&mut c);
+            let area = h.state.usable_area(Some(&o));
+            let r = h.state.win(t.id).unwrap().frame_rect();
+            assert!(
+                r.x >= area.x
+                    && r.y >= area.y
+                    && r.right() <= area.right()
+                    && r.bottom() <= area.bottom(),
+                "{w}x{h_px} at {scale}: frame {r:?} inside work area {area:?}"
+            );
+        }
+    }
 }
 
 #[test]

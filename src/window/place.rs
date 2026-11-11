@@ -103,6 +103,21 @@ pub(super) fn shrunk_into(size: (i32, i32), was: (i32, i32), now: (i32, i32)) ->
     (side(size.0, was.0, now.0), side(size.1, was.1, now.1))
 }
 
+/// Where `frame` goes when its client of `client` is asked to shrink to `fit` inside `area`:
+/// inside `area` at the new size, moved as little as that takes.
+pub(super) fn shrunk_origin(
+    frame: Rect,
+    client: (i32, i32),
+    fit: (i32, i32),
+    area: Rect,
+) -> (i32, i32) {
+    let size = (
+        frame.width - client.0 + fit.0,
+        frame.height - client.1 + fit.1,
+    );
+    keep_inside((frame.x, frame.y), size, area)
+}
+
 /// Client size for a first configure; a CSD client is asked for the whole frame. A normal size
 /// fits `area` and goes under the client's `limits` only where they would not fit it.
 pub fn first_configure_size(
@@ -285,41 +300,44 @@ impl State {
     /// Send xdg toplevel `w` the bounds of the work area its frame's centre is on, when they
     /// differ from the ones it last heard.
     pub fn refresh_bounds(&mut self, w: WindowId) {
-        if self.set_bounds(w, false) {
+        if self.set_bounds(w, false).0 {
             self.send_configure(w);
         }
     }
 
     /// Put the bounds `refresh_bounds` sends into `w`'s pending state; true when they changed.
     /// With `shrink` (the work area changed under the window) a normal window that fitted the
-    /// old bounds and is larger than the new ones is also asked for a size inside them.
-    pub(super) fn set_bounds(&self, w: WindowId, shrink: bool) -> bool {
+    /// old bounds and is larger than the new ones is also asked for a size inside them, and
+    /// the frame origin that keeps it inside the work area at that size comes back with it.
+    pub(super) fn set_bounds(&self, w: WindowId, shrink: bool) -> (bool, Option<(i32, i32)>) {
         let Some(win) = self.win(w).filter(|w| w.mapped) else {
-            return false;
+            return (false, None);
         };
         let Some(t) = win.xdg() else {
-            return false;
+            return (false, None);
         };
         let r = win.frame_rect();
         let out = self.output_at((r.x + r.width / 2) as f64, (r.y + r.height / 2) as f64);
         let area = self.usable_area(out.as_ref());
         if out.is_none() || area.width <= 0 || area.height <= 0 {
-            return false;
+            return (false, None);
         }
         let most = area_client(&self.config.theme.metrics, area, win.chrome());
         let shrink = shrink && !win.maximized && !win.fullscreen && win.snapped.is_none();
         let own = win.client_size();
         t.with_pending_state(|s| {
             let was = s.bounds.replace(most.into());
+            let mut to = None;
             if shrink && let Some(was) = was {
                 // The size the configure would repeat, else the one the window took itself.
                 let size = s.size.map_or(own, |z| (z.w, z.h));
                 let fit = shrunk_into(size, (was.w, was.h), most);
                 if fit != size {
                     s.size = Some(fit.into());
+                    to = Some(shrunk_origin(r, own, fit, area)).filter(|&at| at != (r.x, r.y));
                 }
             }
-            was != s.bounds
+            (was != s.bounds, to)
         })
     }
 
