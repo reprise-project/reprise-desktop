@@ -531,7 +531,7 @@ pub fn draw_cell_at(
         let (cx, cy) = caret.unwrap_or((r.x + 5 * s, r.y + 2 * s));
         let bar = Rect::new(cx, cy, s, lay.step);
         if caret_state.shown() && bar_on {
-            c.fill_rect(bar, black);
+            c.invert_rect(bar);
         }
         if caret_state.focused() {
             c.report_spot(own.spot(r, bar));
@@ -1296,8 +1296,13 @@ mod tests {
         assert_eq!(c.get(x2 + docu - 1, by + 15), 0xFFFFFFFF);
         assert_eq!(c.get(x2 + docu + 1, by + 15), hl);
         assert_eq!(c.get(x2 + widest - 1, by + 15), hl);
-        assert_eq!(c.get(x2 + docu, by + 15), black);
-        assert_eq!(c.get(x2 + docu, by + 27), black);
+        let caret = 0xFF00_0000 | (!hl & 0x00FF_FFFF);
+        assert_eq!(
+            c.get(x2 + docu, by + 15),
+            caret,
+            "the caret inverts the selection"
+        );
+        assert_eq!(c.get(x2 + docu, by + 27), caret);
         let mut edit = TextEdit::new(name, false);
         edit.key(EditKey::Home { select: false });
         let c = draw_cell(
@@ -1315,6 +1320,27 @@ mod tests {
         assert_eq!(c.get(x1, by + 2), black);
         assert_eq!(c.get(x1, by + 14), black);
         assert!((0..CELL).all(|x| c.get(x, by + 15) != hl));
+    }
+
+    #[test]
+    fn the_rename_caret_inverts_its_column_so_a_stem_under_it_shows_white() {
+        crate::pins::fonts();
+        let theme = Theme::default();
+        let t = text();
+        let mut edit = TextEdit::new("AVA", false);
+        edit.key(EditKey::Home { select: false });
+        let draw = |caret| {
+            let rename = Some((&edit, caret));
+            draw_cell(&theme, &t, "AVA", None, false, None, rename, None)
+        };
+        let (off, on) = (draw(Caret::Hidden), draw(Caret::Shown));
+        let lay = edit_layout(&theme, &t, &edit, Cell::grown(theme.text).w);
+        let pen = &lay.lines[0];
+        assert_eq!(
+            crate::paint::inverted_bar(&off, &on, theme.colors.window.argb()),
+            (Rect::new(pen.x, pen.y, 1, lay.step), true),
+            "the bar is the pen's column, over the A's foot"
+        );
     }
 
     #[test]

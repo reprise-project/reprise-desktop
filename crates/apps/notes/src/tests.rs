@@ -348,12 +348,12 @@ fn a_note_pins_in_every_interface_at_scale_1_and_2() {
         }
     }
     let want: [(&str, u64); 6] = [
-        ("Classic@1", 0xb3bf_8645_3692_e902),
-        ("Classic@2", 0x5caa_6fd7_f119_c9d3),
-        ("Blue@1", 0x9d06_0d4b_2d93_78f7),
-        ("Blue@2", 0xc97f_9444_add7_d581),
-        ("Glass@1", 0x2d86_a4ae_3f45_6793),
-        ("Glass@2", 0xfe28_fe92_4f7e_fdb1),
+        ("Classic@1", 0x6529_c56c_3ac9_98d8),
+        ("Classic@2", 0xeec7_fbaf_8a12_90d3),
+        ("Blue@1", 0xc62b_c70d_a5dd_72fd),
+        ("Blue@2", 0x6660_a4b1_c6fb_1991),
+        ("Glass@1", 0x2f00_3064_3925_1969),
+        ("Glass@2", 0x1d5a_f944_6268_5865),
     ];
     let want: Vec<(String, u64)> = want.iter().map(|(k, h)| (k.to_string(), *h)).collect();
     assert_eq!(got, want);
@@ -447,12 +447,12 @@ fn a_wrapped_note_pins_in_every_interface_at_scale_1_and_2() {
         }
     }
     let want: [(&str, u64); 6] = [
-        ("Classic@1", 0xbd65_0eff_fafd_2165),
-        ("Classic@2", 0x635b_9319_cd6d_6fc9),
-        ("Blue@1", 0xcd9d_8fdb_3b76_0f80),
-        ("Blue@2", 0x6d8d_17f2_3dc6_8234),
-        ("Glass@1", 0xc0f3_985b_a5f1_eb75),
-        ("Glass@2", 0xa7dc_96fe_3f1e_2773),
+        ("Classic@1", 0x9cd8_3236_e964_9fc5),
+        ("Classic@2", 0x9675_554e_2085_de61),
+        ("Blue@1", 0xa22d_5490_24e3_7314),
+        ("Blue@2", 0x397f_19b4_19c0_dcd4),
+        ("Glass@1", 0x2162_d30d_b930_ff7d),
+        ("Glass@2", 0xad4a_aff2_c985_76f3),
     ];
     let want: Vec<(String, u64)> = want.iter().map(|(k, h)| (k.to_string(), *h)).collect();
     assert_eq!(got, want);

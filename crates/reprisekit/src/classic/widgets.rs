@@ -221,7 +221,7 @@ pub use crate::textedit::edit_first_visible;
 pub use crate::paint::draw_edit;
 
 /// Where a drag over a single-line field would drop its text: a bar the caret's size at byte
-/// `at`, over what [`draw_edit`] drew from `first`.
+/// `at`, inverting what [`draw_edit`] drew from `first` as the caret does.
 #[expect(clippy::too_many_arguments)]
 pub fn draw_edit_drop_point(
     c: &mut Canvas,
@@ -241,10 +241,7 @@ pub fn draw_edit_drop_point(
         .map_or(inner, |(y, h)| Rect::new(inner.x, y, inner.width, h))
         .intersect(&inner);
     let x = (inner.x + text.measure(&edit.text[first..at], false, px)).min(inner.right() - s);
-    c.fill_rect(
-        Rect::new(x, line.y, s, line.height).intersect(&inner),
-        p.cs.button_text,
-    );
+    c.invert_rect(Rect::new(x, line.y, s, line.height).intersect(&inner));
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
