@@ -678,6 +678,101 @@ fn capture(h: &Harness) -> Canvas {
     out
 }
 
+/// The screen of `h`, a greeter from [`shown_at`], on its password field with the change to it
+/// played out.
+fn on_password(h: &mut Harness, interface: repriselogin::Interface) {
+    match interface {
+        repriselogin::Interface::Classic => tap(h, &[KEY_A, KEY_N, KEY_N, KEY_A, ENTER]),
+        repriselogin::Interface::Blue => tap(h, &[DOWN, ENTER]),
+        repriselogin::Interface::Glass => {}
+    }
+    if view(h).play.is_some() {
+        settle(h);
+    }
+    assert_eq!(model(h).focus, Part::Password, "{interface:?}");
+}
+
+#[test]
+fn a_key_in_the_password_field_repaints_it_alone_and_leaves_the_screen_a_whole_redraw_draws() {
+    for interface in [
+        repriselogin::Interface::Classic,
+        repriselogin::Interface::Blue,
+        repriselogin::Interface::Glass,
+    ] {
+        for scale in [1, 2] {
+            let (mut h, _d) = shown_at(interface, 1280 * scale, 800 * scale, scale as f64);
+            h.output("TEST-2", 1024, 768);
+            on_password(&mut h, interface);
+            tap(&mut h, &[KEY_P]);
+            for key in [
+                KEY_W, KEY_4, BACKSPACE, KEY_2, BACKSPACE, BACKSPACE, BACKSPACE,
+            ] {
+                crate::backend::take_asks();
+                crate::logonview::DRAW_PANICS.set(true);
+                tap(&mut h, &[key]);
+                crate::logonview::DRAW_PANICS.set(false);
+                assert_eq!(
+                    crate::backend::take_scene_outputs(),
+                    ["TEST-1"],
+                    "{interface:?} at {scale}: only the screen's output is asked"
+                );
+                assert!(
+                    shown(&mut h).pixels == at_rest(&mut h).pixels,
+                    "{interface:?} at {scale}: the screen after key {key} is a whole redraw's"
+                );
+            }
+        }
+    }
+}
+
+/// Prints what a key typed into the password field costs each greeter at 1920x1080 and at
+/// 3840x2160 at scale 2, with a second output beside it: the time per key and per whole redraw,
+/// the device px a key changes and the outputs it asks for a frame. Run with `--ignored
+/// --nocapture`.
+#[test]
+#[ignore]
+fn typing_cost() {
+    for interface in [
+        repriselogin::Interface::Classic,
+        repriselogin::Interface::Blue,
+        repriselogin::Interface::Glass,
+    ] {
+        for (w, hh, scale) in [(1920, 1080, 1.0), (3840, 2160, 2.0)] {
+            let (mut h, _d) = shown_at(interface, w, hh, scale);
+            h.output("TEST-2", 1024, 768);
+            on_password(&mut h, interface);
+            tap(&mut h, &[KEY_P, KEY_W]);
+            const N: u32 = 40;
+            let t = std::time::Instant::now();
+            for _ in 0..N {
+                redraw(&mut h.state);
+            }
+            let whole = t.elapsed() / N;
+            let (mut spent, mut changed, mut asked) = (std::time::Duration::ZERO, 0, 0);
+            for i in 0..N {
+                let before = shown(&mut h);
+                crate::backend::take_asks();
+                let t = std::time::Instant::now();
+                match i % 2 {
+                    0 => logonview::type_text(&mut h.state, &HOST, "p"),
+                    _ => logonview::repeat_backspace(&mut h.state, &HOST),
+                }
+                spent += t.elapsed();
+                asked += crate::backend::take_scene_outputs().len();
+                let r = before.differing_rect(&shown(&mut h));
+                changed += r.width as u64 * r.height as u64;
+            }
+            eprintln!(
+                "{interface:?} {w}x{hh} at scale {scale}: a key {:?}, a whole redraw {whole:?}; \
+                 a key changes {} device px and asks {:.1} outputs",
+                spent / N,
+                changed / u64::from(N),
+                asked as f64 / f64::from(N),
+            );
+        }
+    }
+}
+
 /// Renders each greeter at rest and after a wrong password, at scales 1 and 2, to
 /// `target/greeter-preview/` and prints a redraw's cost. Run with `--ignored --nocapture`.
 #[test]

@@ -266,7 +266,7 @@ pub const UNLOCK_MAX: usize = 512;
 
 /// `name` holds the user the screen is about, typed or the tile's. The host reads `password.text`
 /// on [`LogonAction::Submit`] and sets `caps_lock`, `layout` (the badge's short name) and `lit`.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Logon {
     pub interface: Interface,
     pub users: Vec<LogonUser>,
@@ -380,6 +380,22 @@ impl Logon {
         m.password = m.fresh_password(false);
         m.focus = Part::Password;
         m
+    }
+
+    /// `self` with its name and password fields empty, the password never copied: a host keeps
+    /// one to tell later whether a change touched the fields alone.
+    pub fn outside_fields(&self) -> Logon {
+        Logon {
+            users: self.users.clone(),
+            name: TextEdit::default(),
+            password: TextEdit::default(),
+            prompt: self.prompt.clone(),
+            message: self.message.clone(),
+            hint: self.hint.clone(),
+            layout: self.layout.clone(),
+            motion: self.motion.clone(),
+            ..*self
+        }
     }
 
     pub fn unlocking(&self) -> bool {
