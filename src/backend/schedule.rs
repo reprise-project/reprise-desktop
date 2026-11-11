@@ -174,6 +174,8 @@ pub fn schedule_step(state: &mut State, output: &Output, at: std::time::Instant)
 /// Ask for the frame on `output` that shows at the first refresh at or after `at`
 /// (`framepace::start_for`): a timed commit's.
 pub fn schedule_shows_at(state: &mut State, output: &Output, at: std::time::Instant) {
+    #[cfg(test)]
+    ASKED.with_borrow_mut(|a| a.push((output.name(), Ask::Timed)));
     let head = match screen_of(output) {
         Some(Screen::Monitor(head)) => head,
         Some(Screen::Virtual) => return crate::virtualout::ask(state, output, Ask::Timed),
