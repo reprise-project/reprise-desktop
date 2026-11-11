@@ -1512,3 +1512,34 @@ fn bringing_a_rolled_up_window_up_from_its_task_button_rolls_it_down() {
     assert!(!win.shaded && !win.minimized);
     assert_eq!(h.state.focused, Some(t.id));
 }
+
+#[test]
+fn a_minimize_asks_only_the_outputs_it_changes() {
+    use crate::backend::{take_asks, take_scene_outputs};
+    let config =
+        crate::config::Config::parse("[appearance]\ninterface = \"glass\"\n").expect("config");
+    let mut h = crate::harness::Harness::with_config(config);
+    h.output("TEST-1", 1024, 768);
+    h.output("TEST-2", 1024, 768);
+    let mut c = h.connect();
+    let a = h.map_toplevel(&mut c, "app", 300, 200);
+    let b = h.map_toplevel(&mut c, "app", 300, 200);
+    h.state.move_to(a.id, 50, 50);
+    h.state.move_to(b.id, 500, 50);
+    h.state.focus_window(b.id);
+    h.run_for(600);
+    take_asks();
+    h.state.set_minimized(b.id, true);
+    assert_eq!(h.state.focused, Some(a.id), "a takes the focus");
+    assert_eq!(take_scene_outputs(), ["TEST-1"], "a and b lie on TEST-1");
+    h.state.move_to(a.id, 1200, 50);
+    h.run_for(600);
+    take_asks();
+    h.state.set_minimized(b.id, false);
+    assert_eq!(h.state.focused, Some(b.id));
+    assert_eq!(
+        take_scene_outputs(),
+        ["TEST-1", "TEST-2"],
+        "b comes back on TEST-1, a goes inactive on TEST-2"
+    );
+}

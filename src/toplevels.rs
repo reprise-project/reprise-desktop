@@ -441,7 +441,6 @@ impl State {
                     self.focus_window(w);
                 }
                 self.redraw_taskbars();
-                self.redraw_all();
             }
             R::Close => self.close(w),
             _ => {}
@@ -644,5 +643,46 @@ mod tests {
         watcher.destroy();
         h.roundtrip(&mut portal);
         assert!(h.state.toplevels.sandbox_watchers.is_empty());
+    }
+
+    #[test]
+    fn an_activate_request_asks_only_the_outputs_it_changes() {
+        use crate::backend::take_scene_outputs;
+        use smithay::reexports::wayland_server::Resource;
+        use zwlr_foreign_toplevel_handle_v1::Request as R;
+        let config =
+            crate::config::Config::parse("[appearance]\ninterface = \"glass\"\n").expect("config");
+        let mut h = crate::harness::Harness::with_config(config);
+        h.output("TEST-1", 1024, 768);
+        h.output("TEST-2", 1024, 768);
+        let mut c = h.connect();
+        let a = h.map_toplevel(&mut c, "app", 300, 200);
+        let b = h.map_toplevel(&mut c, "app", 300, 200);
+        h.state.move_to(a.id, 50, 50);
+        h.state.move_to(b.id, 500, 50);
+        h.state.focus_window(b.id);
+        h.run_for(600);
+        let client = (h.state.win(a.id).and_then(|x| x.wl_surface().client())).expect("client");
+        let seat = h
+            .state
+            .seat
+            .client_seats(&client)
+            .pop()
+            .expect("the client's seat");
+        let activate = |h: &mut crate::harness::Harness, w: WindowId| {
+            take_scene_outputs();
+            let seat = seat.clone();
+            h.state.wlr_toplevel_request(w, R::Activate { seat });
+            assert_eq!(h.state.focused, Some(w));
+            take_scene_outputs()
+        };
+        assert_eq!(activate(&mut h, a.id), ["TEST-1"], "a and b lie on TEST-1");
+        h.state.move_to(b.id, 1200, 50);
+        h.run_for(600);
+        assert_eq!(
+            activate(&mut h, b.id),
+            ["TEST-1", "TEST-2"],
+            "a goes inactive on TEST-1, b comes up on TEST-2"
+        );
     }
 }

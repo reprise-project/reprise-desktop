@@ -74,6 +74,18 @@ pub fn take_asks() -> Vec<(String, Ask)> {
     ASKED.with_borrow_mut(std::mem::take)
 }
 
+/// The outputs asked for a scene frame on this thread since the last call, sorted, each once.
+#[cfg(test)]
+pub fn take_scene_outputs() -> Vec<String> {
+    let mut on: Vec<String> = (take_asks().into_iter())
+        .filter(|(_, a)| *a == Ask::Scene)
+        .map(|(o, _)| o)
+        .collect();
+    on.sort();
+    on.dedup();
+    on
+}
+
 fn request(state: &mut State, output: &Output, ask: Ask) {
     #[cfg(test)]
     ASKED.with_borrow_mut(|a| a.push((output.name(), ask)));

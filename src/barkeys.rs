@@ -140,8 +140,10 @@ impl State {
         let Some(tree) = self.win(w).map(|x| x.tree) else {
             return;
         };
-        self.scene.raise_to_top(tree);
-        self.raise_children(w);
+        self.redraw_changed(|s| {
+            s.scene.raise_to_top(tree);
+            s.raise_children(w);
+        });
         self.ask_attention(w);
         let back = self.bar_shared.keys.map(|k| k.back);
         let order = &mut self.focus_order;
@@ -152,7 +154,6 @@ impl State {
         };
         order.insert(at.unwrap_or(order.len()), w);
         self.redraw_taskbars();
-        self.redraw_all();
     }
 
     pub fn end_bar_keys(&mut self) {
