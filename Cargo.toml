@@ -98,8 +98,8 @@ serde_json = "1"
 # frames read only by the same context, `data_device_selection_alive` for
 # a client selection whose source was destroyed, and `SelectionSource::client`
 # naming the client that set a selection.
-smithay = { git = "https://github.com/reprise-project/smithay.git", rev = "bc17012ae23b438b75079db0eb0420604e3f0a4b", default-features = false }
-smithay-drm-extras = { git = "https://github.com/reprise-project/smithay.git", rev = "bc17012ae23b438b75079db0eb0420604e3f0a4b" }
+smithay = { git = "https://github.com/reprise-project/smithay.git", rev = "c49da3b187f44314a1f3eac98a72900d01b2b267", default-features = false }
+smithay-drm-extras = { git = "https://github.com/reprise-project/smithay.git", rev = "c49da3b187f44314a1f3eac98a72900d01b2b267" }
 tempfile = "3"
 tokio = "1"
 tokio-rustls = "0.26.6"
