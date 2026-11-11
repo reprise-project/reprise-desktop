@@ -29,9 +29,11 @@ pub struct DirWatch {
     watched: Vec<Watched>,
     /// The merged want of the last [`DirWatch::plan`].
     want: Vec<Want>,
-    /// Events on descriptors not adopted yet, kept from [`DirWatch::hold`] to
-    /// [`DirWatch::replay`]; None when not holding.
+    /// Events on descriptors not adopted yet, kept while a [`DirWatch::hold`] is out; None when
+    /// none is.
     held: Option<Vec<Event>>,
+    /// [`DirWatch::hold`]s not replayed yet.
+    holds: usize,
     /// More events came while holding than [`HELD_MAX`].
     held_over: bool,
 }
@@ -181,6 +183,7 @@ impl DirWatch {
             watched: Vec::new(),
             want: Vec::new(),
             held: None,
+            holds: 0,
             held_over: false,
         })
     }
@@ -277,25 +280,34 @@ impl DirWatch {
         grew
     }
 
-    /// From now until [`DirWatch::replay`], keeps the events [`DirWatch::drain`] reads on
-    /// descriptors it does not know, so watches added on a thread lose nothing before
-    /// [`DirWatch::adopt`] takes them.
+    /// Until its [`DirWatch::replay`], keeps the events [`DirWatch::drain`] reads on descriptors
+    /// it does not know, so watches added on a thread lose nothing before [`DirWatch::adopt`]
+    /// takes them. Call once per add sent out.
     pub fn hold(&mut self) {
+        self.holds += 1;
         self.held.get_or_insert_with(Vec::new);
     }
 
-    /// Counts the events kept since [`DirWatch::hold`] against the watches adopted since, and
-    /// stops keeping them. True when any calls for a rescan, as in [`DirWatch::drain`].
+    /// Counts the events kept so far against the watches adopted since. Events on descriptors
+    /// still unknown stay kept while another hold is out, and are dropped with the last. True
+    /// when any calls for a rescan, as in [`DirWatch::drain`].
     pub fn replay(&mut self) -> bool {
+        self.holds = self.holds.saturating_sub(1);
         let held = self.held.take().unwrap_or_default();
+        if self.holds > 0 {
+            self.held = Some(Vec::new());
+        }
         if std::mem::take(&mut self.held_over) {
             self.overflowed();
             return true;
         }
         let mut gone = Vec::new();
         let mut changed = false;
-        for ev in &held {
-            changed |= self.count(ev, &mut gone).unwrap_or(false);
+        for ev in held {
+            match self.count(&ev, &mut gone) {
+                Some(hit) => changed |= hit,
+                None => self.keep(ev),
+            }
         }
         self.forget(gone);
         changed
@@ -690,6 +702,39 @@ mod tests {
             [home.join("conf")],
             "the folder deleted before the sync landed is not watched"
         );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn an_event_before_each_of_two_adds_lands_counts_when_that_add_lands() {
+        let home =
+            std::env::temp_dir().join(format!("reprise-dirwatch-holds-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        for d in ["C", "D"] {
+            std::fs::create_dir_all(home.join(d)).unwrap();
+        }
+        let want = |name: &str| Want {
+            dir: home.join(name),
+            mask: WatchMask::CREATE,
+            only: Vec::new(),
+        };
+        let mut w = DirWatch::new().unwrap();
+        let want = [want("C"), want("D")];
+        let adds: Vec<Adds> = (w.plan(&want).each()).map(|(_, add)| add).collect();
+        let [c, d] = adds.try_into().ok().unwrap();
+        w.hold();
+        w.hold();
+        let (c, d) = (c.run(), d.run());
+        std::fs::write(home.join("C/a"), "").unwrap();
+        std::fs::write(home.join("D/b"), "").unwrap();
+        assert!(!w.drain(), "neither add is taken yet");
+        w.adopt(c);
+        assert!(w.replay(), "the write in C counts once C's add lands");
+        std::fs::write(home.join("D/c"), "").unwrap();
+        assert!(!w.drain(), "D's add is still out");
+        w.adopt(d);
+        assert!(w.replay(), "the writes in D count once D's add lands");
+        assert!(w.held.is_none(), "the last replay stops keeping events");
         let _ = std::fs::remove_dir_all(&home);
     }
 
