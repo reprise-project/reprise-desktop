@@ -137,7 +137,7 @@ async fn start_leaving<L: Leave + 'static>(
             None,
             None,
             None,
-            ClientLayout::default(),
+            crate::client::Handler::asked(Default::default()),
         )
     };
     start_handled(local, config, logins, leave, handlers).await
@@ -496,7 +496,7 @@ async fn a_replacing_login_counts_as_shown_before_the_client_it_replaces_leaves(
                     None,
                     None,
                     None,
-                    ClientLayout::default(),
+                    crate::client::Handler::asked(Default::default()),
                 )
             };
             let leave = present.clone();
@@ -1626,7 +1626,7 @@ async fn loopback() -> (TcpStream, TcpStream, SocketAddr) {
 }
 
 #[tokio::test]
-async fn a_handed_over_connection_runs_to_the_session() {
+async fn a_handed_over_connection_runs_to_the_session_at_the_size_its_client_asks() {
     LocalSet::new()
         .run_until(async {
             let (client_end, stream, peer) = loopback().await;
@@ -1637,13 +1637,15 @@ async fn a_handed_over_connection_runs_to_the_session() {
             };
             let (check, budget) =
                 auth::HandedOverLogins::new("alice".into()).check(peer, admission);
-            let rdp = RdpServer::builder()
-                .with_addr(peer)
-                .with_no_security()
-                .with_input_handler(crate::input::Input::new(Default::default()).0)
-                .with_display_handler(crate::Grey)
-                .with_credential_validator(Some(check.clone()))
-                .build();
+            let handlers = (
+                crate::Grey,
+                crate::input::Input::new(Default::default()).0,
+                None,
+                None,
+                None,
+                crate::client::Handler::asked(Default::default()),
+            );
+            let rdp = connection_server(peer, None, handlers, check.clone());
             let (status, mut status_rx) = watch::channel(Status::default());
             let shared = Rc::new(Shared {
                 user: "alice".into(),
@@ -1677,6 +1679,15 @@ async fn a_handed_over_connection_runs_to_the_session() {
             ));
             let mut client_end = client_end;
             connect_over(&mut client, &mut client_end).await;
+            let ironrdp_connector::ClientConnectorState::Connected { result } = &client.state
+            else {
+                unreachable!("connect_over leaves it connected");
+            };
+            assert_eq!(
+                (result.desktop_size.width, result.desktop_size.height),
+                (1280, 800),
+                "the client is offered the 1280x800 it asked for"
+            );
             let listed = status_rx.wait_for(|s| !s.clients.is_empty());
             let listed = (tokio::time::timeout(WAIT, listed).await)
                 .expect("the client is listed")
@@ -1734,7 +1745,7 @@ fn serve_hand_overs(
             None,
             None,
             None,
-            ClientLayout::default(),
+            crate::client::Handler::asked(Default::default()),
         )
     };
     let logins = auth::HandedOverLogins::new("alice".into());
@@ -1873,7 +1884,7 @@ async fn a_stopping_server_drops_its_intake_at_once() {
                     None,
                     None,
                     None,
-                    ClientLayout::default(),
+                    crate::client::Handler::asked(Default::default()),
                 )
             };
             let logins = auth::HandedOverLogins::new("alice".into());

@@ -331,6 +331,58 @@ async fn a_whole_client_is_told_the_last_size() {
     assert_eq!(display.request_initial_size(asked).await, UNSHARED);
 }
 
+/// `display`'s client offered the desktop for no monitors when it asks for `asked`, then confirming
+/// what it was offered.
+async fn offered_and_confirmed(
+    display: &mut Display,
+    asked: DesktopSize,
+) -> (DesktopSize, DesktopSize) {
+    let mut handler = crate::client::Handler {
+        layout: display.client.clone(),
+        whole: Box::new(display.offer_whole()),
+    };
+    let offered = ironrdp_server::ConnectionHandler::choose_desktop_size(&mut handler, &[], asked);
+    (offered, display.request_initial_size(offered).await)
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_lock_mode_client_gets_the_size_it_asks_for_and_its_screen_is_made_at_it() {
+    let (console, _config, status) = console::tests::configured(LaptopScreen::Lock, false);
+    let mut display = on_console(crate::client::connected(vec![]), console);
+    let asked = DesktopSize {
+        width: 1920,
+        height: 1080,
+    };
+    assert_eq!(
+        offered_and_confirmed(&mut display, asked).await,
+        (asked, asked)
+    );
+    assert!(display.join(), "it locks the console");
+    assert_eq!(
+        status.borrow().console_layout,
+        [(0, 0, 1920, 1080, 100)],
+        "the screen is published at 1920x1080"
+    );
+    assert_eq!(
+        *display.told.last.lock().unwrap(),
+        UNSHARED,
+        "the next connection still starts at the size last told"
+    );
+}
+
+#[tokio::test]
+async fn a_client_shown_this_computers_screens_is_offered_the_last_size() {
+    let mut display = display(crate::client::connected(vec![]));
+    let asked = DesktopSize {
+        width: 1920,
+        height: 1080,
+    };
+    assert_eq!(
+        offered_and_confirmed(&mut display, asked).await,
+        (UNSHARED, UNSHARED)
+    );
+}
+
 #[tokio::test]
 async fn an_activation_repaints_the_last_frame() {
     let (mut live, _told, frames, _sizes) = live(DesktopSize {
