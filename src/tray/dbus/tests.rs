@@ -2139,7 +2139,7 @@ impl Relay {
     }
 }
 
-/// A tray serving on `bus` through a [`Relay`], on a thread of its own.
+/// A tray serving on `bus` through a [`Relay`], on a thread of its own, once its setup is done.
 struct Relayed {
     relay: Relay,
     commands: async_channel::Sender<TrayCommand>,
@@ -2171,7 +2171,30 @@ impl Relayed {
             defers: false,
         };
         let address = relay.address.clone();
-        let tray = std::thread::spawn(move || zbus::block_on(serve(&kept, Some(&address))));
+        // A cut before setup ends fails the first connection, which serve never retries, and a
+        // peer acting on the first name it sees can beat setup to the later ones.
+        let tray = zbus::block_on(async {
+            let observer = observer(bus).await;
+            let rule = zbus::MatchRule::builder()
+                .msg_type(zbus::message::Type::Signal)
+                .interface(WATCHER_IFACE)
+                .member("StatusNotifierHostRegistered")
+                .build()
+                .unwrap();
+            let mut hosts = zbus::MessageStream::for_match_rule(rule, &observer, None)
+                .await
+                .unwrap();
+            let tray = std::thread::spawn(move || zbus::block_on(serve(&kept, Some(&address))));
+            let set_up = futures_lite::future::or(async { hosts.next().await.is_some() }, async {
+                async_io::Timer::after(Duration::from_secs(30)).await;
+                false
+            });
+            assert!(
+                set_up.await,
+                "the tray registers its own host as setup's last step"
+            );
+            tray
+        });
         Relayed {
             relay,
             commands,
