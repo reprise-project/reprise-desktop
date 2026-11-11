@@ -186,12 +186,19 @@ impl<R: Renderer, D> Scene<R, D> {
     }
 
     /// `id` is about to be edited: under a watch, keep the rect it covers before its first edit.
+    /// Under an ancestor edited earlier in the watch, that ancestor's rect before holds it; its
+    /// rect now may lie where the ancestor moved it, never drawn there.
     fn saw(&mut self, id: NodeId) {
-        match &self.watch {
-            Some(w) if !w.nodes.contains(&id) => {}
-            _ => return,
+        let Some(w) = &self.watch else {
+            return;
+        };
+        if w.nodes.contains(&id) {
+            return;
         }
-        let was = self.extents(id);
+        let parent = |n: NodeId| self.node(n).and_then(|n| n.parent.map(|p| p.0));
+        let covered =
+            std::iter::successors(parent(id), |&a| parent(a)).any(|a| w.nodes.contains(&a));
+        let was = if covered { None } else { self.extents(id) };
         if let Some(w) = self.watch.as_mut() {
             w.nodes.insert(id);
             w.was.extend(was);

@@ -102,6 +102,7 @@ impl State {
         let Some(mut view) = self.desktop.take() else {
             return;
         };
+        let was = self.scene.outputs_of(view.tree);
         view.cells = if out.is_none() {
             Vec::new()
         } else if view.auto_arrange {
@@ -240,6 +241,7 @@ impl State {
         }
         changed |= !redraw.is_empty();
         let reread = undecoded && view.icons_read != (px, self.icons.file_drops());
+        let tree = view.tree;
         self.desktop = Some(view);
         if reread {
             self.rescan_desktop();
@@ -248,7 +250,7 @@ impl State {
             self.ime_field_drawn(crate::caret::Editor::Rename, spot, origin, scale);
         }
         if changed {
-            self.redraw_all();
+            self.redraw_nodes(was, &[tree.into()]);
         }
         self.water_obstacles();
     }
