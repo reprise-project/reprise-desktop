@@ -261,6 +261,10 @@ fn main() -> ExitCode {
                 links.clone(),
                 connection,
             );
+            let client = client::Handler {
+                layout,
+                whole: Box::new(display.offer_whole()),
+            };
             let clipboard: Box<dyn ironrdp_server::CliprdrServerFactory> =
                 Box::new(clipboard::Factory::new(on_shown, desktop_lock.clone(), cut));
             let sound: Box<dyn ironrdp_server::SoundServerFactory> =
@@ -271,7 +275,7 @@ fn main() -> ExitCode {
                 factory,
                 Some(clipboard),
                 Some(sound),
-                layout,
+                client,
             )
         };
         match intake {

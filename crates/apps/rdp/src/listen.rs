@@ -8,7 +8,7 @@ mod reason_tests;
 pub(crate) mod tests;
 
 use crate::auth::{Login, Logins};
-use crate::client::{self, ClientLayout};
+use crate::client;
 use crate::clipboard::Cut;
 use crate::console::{Console, Joined};
 use crate::control::{Client, Request, Status};
@@ -18,8 +18,8 @@ use crate::viewers::{Kick, LOGGING_IN_PER_IP, Refused, ViewerId, Viewers};
 use ironrdp_pdu::nego::SecurityProtocol;
 use ironrdp_pdu::rdp::server_error_info::ProtocolIndependentCode;
 use ironrdp_server::{
-    CliprdrServerFactory, ErrorInfo, GfxServerFactory, RdpServer, RdpServerDisplay,
-    RdpServerInputHandler, ReplayStep, Resumed, SoundServerFactory,
+    CliprdrServerFactory, CredentialValidator, ErrorInfo, GfxServerFactory, RdpServer,
+    RdpServerDisplay, RdpServerInputHandler, ReplayStep, Resumed, SoundServerFactory,
 };
 use repriseconf::remote::{RemoteDesktop, SecondClient};
 use repriselogin::handover::{HandOver, Step};
@@ -220,14 +220,14 @@ pub async fn shown(mut shown: watch::Receiver<bool>) -> bool {
 }
 
 /// What serves one connection: a display, an input handler, maybe a graphics pipeline, maybe a
-/// clipboard, maybe sound, and the layout its client sends, which the display reads.
+/// clipboard, maybe sound, and the handler of its client's setup, whose layout the display reads.
 pub type Handlers<D, I> = (
     D,
     I,
     Option<Box<dyn GfxServerFactory>>,
     Option<Box<dyn CliprdrServerFactory>>,
     Option<Box<dyn SoundServerFactory>>,
-    ClientLayout,
+    client::Handler,
 );
 
 /// Serve clients from `intake` through `logins` and `handlers`, closing one past `max_viewers`
@@ -308,22 +308,12 @@ pub async fn serve<D, I, L>(
                 let (check, budget) = logins.check(peer, admission);
                 let (shown, on_shown) = watch::channel(false);
                 let ending = Ending::new(replaces);
-                let (display, input, gfx, clipboard, sound, layout) =
-                    handlers(Shown(shown), ending.clone());
-                let builder = RdpServer::builder().with_addr(incoming.local_addr());
-                let builder = match &incoming {
-                    Incoming::Fresh(_, tls) => builder.with_tls(tls.clone()),
-                    Incoming::Resumed { .. } => builder.with_no_security(),
+                let tls = match &incoming {
+                    Incoming::Fresh(_, tls) => Some(tls.clone()),
+                    Incoming::Resumed { .. } => None,
                 };
-                let rdp = builder
-                    .with_input_handler(input)
-                    .with_display_handler(display)
-                    .with_credential_validator(Some(check.clone()))
-                    .with_gfx_factory(gfx)
-                    .with_cliprdr_factory(clipboard)
-                    .with_sound_factory(sound)
-                    .with_connection_handler(Some(Box::new(client::Handler(layout))))
-                    .build();
+                let handled = handlers(Shown(shown), ending.clone());
+                let rdp = connection_server(incoming.local_addr(), tls, handled, check.clone());
                 let viewer = Viewer { id, peer, kicked, ending, alive: alive.clone() };
                 let shared = shared.clone();
                 match incoming {
@@ -359,6 +349,35 @@ fn answer<L>(shared: &Shared<L>, request: Request) {
             let _ = reply.send(viewers.kick(&address, Kick::Asked));
         }
     }
+}
+
+/// The server of one connection at `local`: under `tls`, else past a TLS another process ran,
+/// with `handlers` and logging in through `check`.
+fn connection_server<D, I>(
+    local: SocketAddr,
+    tls: Option<tokio_rustls::TlsAcceptor>,
+    (display, input, gfx, clipboard, sound, client): Handlers<D, I>,
+    check: Arc<dyn CredentialValidator>,
+) -> RdpServer
+where
+    D: RdpServerDisplay + 'static,
+    I: RdpServerInputHandler + 'static,
+{
+    let builder = RdpServer::builder().with_addr(local);
+    let builder = match tls {
+        Some(tls) => builder.with_tls(tls),
+        None => builder.with_no_security(),
+    };
+    builder
+        .with_input_handler(input)
+        .with_display_handler(display)
+        .with_credential_validator(Some(check))
+        .with_gfx_factory(gfx)
+        .with_cliprdr_factory(clipboard)
+        .with_sound_factory(sound)
+        .with_honor_client_desktop_size(Some(client::LARGEST))
+        .with_connection_handler(Some(Box::new(client)))
+        .build()
 }
 
 /// A connection to serve: one accepted here, under the server's TLS, or one handed over past its

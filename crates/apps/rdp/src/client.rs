@@ -88,18 +88,41 @@ fn monitor_scale(ex: &ExtendedMonitorInfo) -> Option<u32> {
     valid.then_some(ex.desktop_scale_factor)
 }
 
-/// Offers a client the desktop its monitors span, keeps them in its [`ClientLayout`] and logs its
-/// RDP version and build.
-pub struct Handler(pub ClientLayout);
+/// The largest desktop a client may ask for, the acceptor's own bound.
+pub const LARGEST: DesktopSize = DesktopSize {
+    width: 8192,
+    height: 8192,
+};
+
+/// Offers a client the desktop its monitors span, else what `whole` makes of the size it asked
+/// for; keeps its monitors in its [`ClientLayout`] and logs its RDP version and build.
+pub struct Handler {
+    pub layout: ClientLayout,
+    pub whole: Box<dyn Fn(DesktopSize) -> DesktopSize + Send>,
+}
+
+impl Handler {
+    /// A handler offering a client whose monitors span no desktop the size it asked for.
+    #[cfg(test)]
+    pub fn asked(layout: ClientLayout) -> Handler {
+        Handler {
+            layout,
+            whole: Box::new(|asked| asked),
+        }
+    }
+}
 
 impl ConnectionHandler for Handler {
+    /// `asked` is the client's Client Core Data size: the server honours it up to [`LARGEST`].
     fn choose_desktop_size(
         &mut self,
         client_monitors: &[Monitor],
-        offered: DesktopSize,
+        asked: DesktopSize,
     ) -> DesktopSize {
-        layout::client_desktop(client_monitors)
-            .map_or(offered, |(width, height)| DesktopSize { width, height })
+        match layout::client_desktop(client_monitors) {
+            Some((width, height)) => DesktopSize { width, height },
+            None => (self.whole)(asked),
+        }
     }
 
     fn on_connection_info(&mut self, info: &ConnectionInfo) {
@@ -108,7 +131,7 @@ impl ConnectionHandler for Handler {
             u32::from(info.client_version),
             info.client_build
         );
-        *self.0.0.lock().unwrap() = Some(Client {
+        *self.layout.0.lock().unwrap() = Some(Client {
             monitors: info.client_monitors.clone(),
             monitors_ex: info.client_monitors_ex.clone(),
             scale: info.desktop_scale_factor,
@@ -139,7 +162,7 @@ pub fn scaled(
     info.client_monitors_ex = monitors_ex;
     info.desktop_scale_factor = scale;
     info.device_scale_factor = scale.map(|_| 100);
-    Handler(layout.clone()).on_connection_info(&info);
+    Handler::asked(layout.clone()).on_connection_info(&info);
     layout
 }
 
@@ -267,7 +290,7 @@ mod tests {
 
     #[test]
     fn two_client_monitors_are_offered_the_desktop_they_span() {
-        let mut handler = Handler(ClientLayout::default());
+        let mut handler = Handler::asked(ClientLayout::default());
         let offered = handler.choose_desktop_size(&two_monitors(), OFFERED);
         assert_eq!(
             offered,
@@ -279,7 +302,7 @@ mod tests {
     }
 
     #[test]
-    fn a_whole_client_keeps_the_offered_size() {
+    fn a_whole_client_is_offered_what_whole_makes_of_its_size() {
         let one = two_monitors()[..1].to_vec();
         let two_primaries = two_monitors()
             .into_iter()
@@ -288,10 +311,23 @@ mod tests {
                 ..m
             })
             .collect::<Vec<_>>();
+        let kept = DesktopSize {
+            width: 1024,
+            height: 768,
+        };
         for monitors in [vec![], one, two_primaries] {
-            let mut handler = Handler(ClientLayout::default());
+            let mut handler = Handler {
+                layout: ClientLayout::default(),
+                whole: Box::new(move |asked| {
+                    assert_eq!(
+                        asked, OFFERED,
+                        "whole is given the size the client asked for"
+                    );
+                    kept
+                }),
+            };
             let offered = handler.choose_desktop_size(&monitors, OFFERED);
-            assert_eq!(offered, OFFERED, "{monitors:?} keep 1920x1200");
+            assert_eq!(offered, kept, "{monitors:?} are offered 1024x768");
         }
     }
 }
