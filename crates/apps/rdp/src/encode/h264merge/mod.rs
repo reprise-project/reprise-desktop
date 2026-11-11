@@ -30,8 +30,9 @@ impl std::fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
-/// Merges the access units of a main-view and an aux-view encoder, both FFmpeg's `h264_vaapi`
-/// with one reference and no B-frames, fed in send order: each frame's main, then its aux.
+/// Merges the access units of a main-view and an aux-view encoder, both one of FFmpeg's
+/// `h264_vaapi`, `h264_nvenc` or libx264 with one reference and no B-frames, fed in send
+/// order: each frame's main, then its aux.
 ///
 /// The SPS allows two reference frames. A main picture is short-term and drops the main
 /// picture before it (MMCO 1). An aux picture is never an IDR: it becomes long-term frame 0
@@ -278,6 +279,15 @@ mod tests {
         frames: 24,
         skipped: &[4, 15],
     };
+    /// libx264 with Reprise's two-encoder options plus NAL HRD and pic_struct, so each picture
+    /// carries pic timing SEI and each IDR a buffering period. IDRs on both views at frames 0
+    /// and 8.
+    const X264_HRD: Fixture = Fixture {
+        main: fixture!("main-hrd.h264"),
+        aux: fixture!("aux-hrd.h264"),
+        frames: 16,
+        skipped: &[5],
+    };
     /// [`ONE_SLICE`] merged.
     const MERGED: &[u8] = fixture!("merged.h264");
     /// One IDR from libx264, which codes POC type 0.
@@ -455,6 +465,17 @@ mod tests {
     }
 
     #[test]
+    fn merged_views_with_hrd_and_pic_timing_decode_to_each_views_own_pictures() {
+        let sei = |stream: &[u8]| (nal_units(stream).iter()).any(|nal| nal[0] & 0x1f == 6);
+        assert!(sei(X264_HRD.main) && sei(X264_HRD.aux));
+        assert_decodes_to_each_views_own_pictures(&X264_HRD);
+        assert!(
+            !sei(&merged(&X264_HRD).concat()),
+            "the merged stream has no SEI"
+        );
+    }
+
+    #[test]
     fn the_first_aux_after_a_main_idr_must_be_an_idr() {
         let (main, aux) = (access_units(ONE_SLICE.main), access_units(ONE_SLICE.aux));
         let mut merge = Merge::default();
@@ -620,6 +641,7 @@ mod tests {
             ONE_SLICE.aux,
             THREE_SLICES.main,
             THREE_SLICES.aux,
+            X264_HRD.main,
             X264,
         ];
         let streams: Vec<_> = streams.into_iter().map(access_units).collect();

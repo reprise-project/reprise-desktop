@@ -49,8 +49,8 @@ impl Rewrite<'_> {
     }
 }
 
-/// `nal`, an SPS, with `max_num_ref_frames` and `max_dec_frame_buffering` [`REFS`], and its
-/// fields. A level that fits a frame holds at least two in its DPB, so the level stays.
+/// `nal`, an SPS, with `max_num_ref_frames` and `max_dec_frame_buffering` [`REFS`] and without
+/// HRD or pic_struct, and its fields. A level that fits a frame holds at least two in its DPB.
 pub fn two_refs(nal: &[u8]) -> Result<(Vec<u8>, Sps), Error> {
     let rbsp = unescape(&nal[1..]);
     let mut c = Rewrite {
@@ -105,8 +105,20 @@ pub fn two_refs(nal: &[u8]) -> Result<(Vec<u8>, Sps), Error> {
         c.u(32)?; // time_scale
         c.flag()?; // fixed_frame_rate_flag
     }
-    unsupported(!c.flag()? && !c.flag()?, "HRD parameters")?;
-    c.flag()?; // pic_struct_present_flag
+    let nal_hrd = c.r.flag()?;
+    if nal_hrd {
+        skip_hrd(&mut c.r)?;
+    }
+    let vcl_hrd = c.r.flag()?;
+    if vcl_hrd {
+        skip_hrd(&mut c.r)?;
+    }
+    if nal_hrd || vcl_hrd {
+        c.r.flag()?; // low_delay_hrd_flag
+    }
+    c.r.flag()?; // pic_struct_present_flag
+    // HRD and pic_struct require the buffering period and pic timing SEI the merge drops.
+    c.w.u(3, 0); // nal_hrd_parameters_present_flag, vcl_hrd_.., pic_struct_present_flag
     unsupported(c.flag()?, "an SPS without bitstream restrictions")?;
     c.flag()?; // motion_vectors_over_pic_boundaries_flag
     for _ in 0..5 {
@@ -120,6 +132,22 @@ pub fn two_refs(nal: &[u8]) -> Result<(Vec<u8>, Sps), Error> {
     let mut out = vec![nal[0]];
     out.extend(escape(&c.w.into_bytes()));
     Ok((out, Sps { log2_max_frame_num }))
+}
+
+/// Reads past `hrd_parameters()` (E.1.2).
+fn skip_hrd(r: &mut Reader) -> Result<(), Error> {
+    let cpb_cnt_minus1 = r.ue()?;
+    if cpb_cnt_minus1 > 31 {
+        return Err(Error::Malformed("a cpb_cnt_minus1 over 31"));
+    }
+    r.u(8)?; // bit_rate_scale, cpb_size_scale
+    for _ in 0..=cpb_cnt_minus1 {
+        r.ue()?; // bit_rate_value_minus1
+        r.ue()?; // cpb_size_value_minus1
+        r.flag()?; // cbr_flag
+    }
+    r.u(20)?; // the three delay lengths and time_offset_length
+    Ok(())
 }
 
 /// What a slice header's syntax needs from the PPS.
@@ -324,5 +352,161 @@ impl Slice {
         let mut nal = vec![header[0]];
         nal.extend(escape(&rbsp));
         nal
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `h264_nvenc`'s SPS for 1920x1080 with Reprise's options: NAL HRD, pic_struct, two refs.
+    const NVENC_SPS: [u8; 39] = [
+        0x67, 0x64, 0x00, 0x2a, 0xac, 0x2b, 0x60, 0x3c, 0x01, 0x13, 0x60, 0x2d, 0xc0, 0x40, 0x40,
+        0x50, 0x00, 0x00, 0x3e, 0x80, 0x00, 0x1d, 0x4c, 0x0e, 0x00, 0x00, 0x07, 0xa1, 0x20, 0x00,
+        0x07, 0xa1, 0x20, 0xbb, 0xca, 0x23, 0xe3, 0x85, 0x5c,
+    ];
+
+    /// Every field of an SPS in the subset [`two_refs`] reads, HRD fields named `hrd ...`.
+    struct Fields<'a> {
+        r: Reader<'a>,
+        out: Vec<(&'static str, u32)>,
+    }
+
+    impl Fields<'_> {
+        fn u(&mut self, name: &'static str, n: u32) -> u32 {
+            let v = self.r.u(n).unwrap();
+            self.out.push((name, v));
+            v
+        }
+
+        fn ue(&mut self, name: &'static str) -> u32 {
+            let v = self.r.ue().unwrap();
+            self.out.push((name, v));
+            v
+        }
+
+        fn hrd(&mut self) {
+            let cpb_cnt = self.ue("hrd cpb_cnt_minus1") + 1;
+            self.u("hrd bit_rate_scale", 4);
+            self.u("hrd cpb_size_scale", 4);
+            for _ in 0..cpb_cnt {
+                self.ue("hrd bit_rate_value_minus1");
+                self.ue("hrd cpb_size_value_minus1");
+                self.u("hrd cbr_flag", 1);
+            }
+            for name in [
+                "hrd initial_cpb_removal_delay_length_minus1",
+                "hrd cpb_removal_delay_length_minus1",
+                "hrd dpb_output_delay_length_minus1",
+                "hrd time_offset_length",
+            ] {
+                self.u(name, 5);
+            }
+        }
+    }
+
+    fn fields(nal: &[u8]) -> Vec<(&'static str, u32)> {
+        let rbsp = unescape(&nal[1..]);
+        let mut f = Fields {
+            r: Reader::new(&rbsp),
+            out: Vec::new(),
+        };
+        f.u("profile_idc", 8);
+        f.u("constraint_set_flags", 8);
+        f.u("level_idc", 8);
+        f.ue("seq_parameter_set_id");
+        f.ue("chroma_format_idc");
+        f.ue("bit_depth_luma_minus8");
+        f.ue("bit_depth_chroma_minus8");
+        f.u("qpprime_y_zero_transform_bypass_flag", 1);
+        f.u("seq_scaling_matrix_present_flag", 1);
+        f.ue("log2_max_frame_num_minus4");
+        f.ue("pic_order_cnt_type");
+        f.ue("max_num_ref_frames");
+        f.u("gaps_in_frame_num_value_allowed_flag", 1);
+        f.ue("pic_width_in_mbs_minus1");
+        f.ue("pic_height_in_map_units_minus1");
+        f.u("frame_mbs_only_flag", 1);
+        f.u("direct_8x8_inference_flag", 1);
+        if f.u("frame_cropping_flag", 1) == 1 {
+            (0..4).for_each(|_| _ = f.ue("frame_crop_offset"));
+        }
+        f.u("vui_parameters_present_flag", 1);
+        if f.u("aspect_ratio_info_present_flag", 1) == 1 && f.u("aspect_ratio_idc", 8) == 255 {
+            f.u("sar", 32);
+        }
+        if f.u("overscan_info_present_flag", 1) == 1 {
+            f.u("overscan_appropriate_flag", 1);
+        }
+        if f.u("video_signal_type_present_flag", 1) == 1 {
+            f.u("video_format", 3);
+            f.u("video_full_range_flag", 1);
+            if f.u("colour_description_present_flag", 1) == 1 {
+                f.u("colour_primaries", 8);
+                f.u("transfer_characteristics", 8);
+                f.u("matrix_coefficients", 8);
+            }
+        }
+        if f.u("chroma_loc_info_present_flag", 1) == 1 {
+            f.ue("chroma_sample_loc_type_top_field");
+            f.ue("chroma_sample_loc_type_bottom_field");
+        }
+        if f.u("timing_info_present_flag", 1) == 1 {
+            f.u("num_units_in_tick", 32);
+            f.u("time_scale", 32);
+            f.u("fixed_frame_rate_flag", 1);
+        }
+        let nal_hrd = f.u("nal_hrd_parameters_present_flag", 1) == 1;
+        if nal_hrd {
+            f.hrd();
+        }
+        let vcl_hrd = f.u("vcl_hrd_parameters_present_flag", 1) == 1;
+        if vcl_hrd {
+            f.hrd();
+        }
+        if nal_hrd || vcl_hrd {
+            f.u("hrd low_delay_hrd_flag", 1);
+        }
+        f.u("pic_struct_present_flag", 1);
+        f.u("bitstream_restriction_flag", 1);
+        f.u("motion_vectors_over_pic_boundaries_flag", 1);
+        f.ue("max_bytes_per_pic_denom");
+        f.ue("max_bits_per_mb_denom");
+        f.ue("log2_max_mv_length_horizontal");
+        f.ue("log2_max_mv_length_vertical");
+        f.ue("max_num_reorder_frames");
+        f.ue("max_dec_frame_buffering");
+        assert!(f.r.flag().unwrap(), "rbsp_stop_one_bit");
+        while !f.r.aligned() {
+            assert!(!f.r.flag().unwrap(), "rbsp_alignment_zero_bit");
+        }
+        assert!(f.r.rest().is_empty(), "bytes after the RBSP trailing bits");
+        f.out
+    }
+
+    #[test]
+    fn an_sps_with_hrd_and_pic_struct_keeps_every_other_field() {
+        let coded = fields(&NVENC_SPS);
+        for flag in ["nal_hrd_parameters_present_flag", "pic_struct_present_flag"] {
+            assert!(coded.contains(&(flag, 1)), "NVENC codes {flag} 1");
+        }
+        assert!(coded.contains(&("max_num_ref_frames", 2)));
+        let expected: Vec<_> = (coded.into_iter())
+            .filter(|(name, _)| !name.starts_with("hrd "))
+            .map(|(name, v)| match name {
+                "nal_hrd_parameters_present_flag"
+                | "vcl_hrd_parameters_present_flag"
+                | "pic_struct_present_flag" => (name, 0),
+                _ => (name, v),
+            })
+            .collect();
+        let (rewritten, sps) = two_refs(&NVENC_SPS).unwrap();
+        assert_eq!(sps.log2_max_frame_num, 8);
+        assert_eq!(fields(&rewritten), expected);
+        assert_eq!(
+            two_refs(&rewritten).unwrap().0,
+            rewritten,
+            "a rewritten SPS stays as it is"
+        );
     }
 }
