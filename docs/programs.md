@@ -399,7 +399,7 @@ matched control focused.
     Certificate... is greyed, the fingerprint is the login manager's, and a
     User Accounts... button opens your account's Password tab, where your
     Remote Desktop password is set
-    ([features.md](features.md#remote-logins)).
+    ([remote-desktop.md](remote-desktop.md#remote-logins)).
 - **System**
   - **Power Options...**
   - **Startup:** autostart entries, session restore and ending the programs
@@ -638,7 +638,7 @@ Unlocking a running session takes the old password
 or one that may have none until its next login, the box alone is refused:
 type a new password for it. While reprise-login is installed, your
 account's Password tab also creates, changes and removes your Remote Desktop
-password ([features.md](features.md#remote-logins));
+password ([remote-desktop.md](remote-desktop.md#remote-logins));
 `reprise-accounts --remote-password` opens it there.
 
 ## Software Updates
@@ -752,7 +752,7 @@ sheet goes back to the clock's settings as they are.
   its `ConsoleLayout` property holds the first client's monitors, which
   the portal hands the compositor to make that client's screens; each
   resize of the client's window updates it. See
-  [features.md](features.md#remote-desktop) for connecting and
+  [remote-desktop.md](remote-desktop.md) for connecting and
   [security.md](security.md#remote-desktop) for logins.
 - **Remote logins.** Under `reprise-login` with remote logins on,
   `reprise-login-rdp` listens on the port instead, as the system service
