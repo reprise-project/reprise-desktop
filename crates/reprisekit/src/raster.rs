@@ -612,6 +612,19 @@ impl Canvas {
         self.fill_raw(r, 0);
     }
 
+    /// Turn each pixel of `r` into its colour's complement, opaque: white goes black, a black
+    /// stem white. A translucent pixel is read as over black.
+    pub fn invert_rect(&mut self, r: Rect) {
+        let r = self.device_area(r);
+        let dw = self.device_size().0 as usize;
+        for y in r.y..r.bottom() {
+            let row = y as usize * dw;
+            for p in &mut self.pixels[row + r.x as usize..row + r.right() as usize] {
+                *p = 0xFF00_0000 | (!*p & 0x00FF_FFFF);
+            }
+        }
+    }
+
     fn fill_raw(&mut self, r: Rect, v: u32) {
         let r = self.device_area(r);
         if r.is_empty() {
