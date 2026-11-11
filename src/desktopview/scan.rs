@@ -314,32 +314,20 @@ impl State {
         });
         // A folder of the rescan's own that is missing was just looked for.
         let tried: Vec<&Path> = want[..tried].iter().map(|w| w.dir.as_path()).collect();
-        let adds: Vec<_> = (w.plan(&want).each())
-            .filter(|(dir, _)| {
-                !tried.contains(&dir.as_path()) && view.watch_adds.insert(dir.clone())
-            })
-            .collect();
-        for _ in &adds {
-            w.hold();
-        }
-        for (dir, add) in adds {
-            self.spawn_fs_job(move || {
-                let added = add.run();
-                Box::new(move |state: &mut State| {
-                    let Some(view) = state.desktop.as_mut() else {
-                        return;
-                    };
-                    view.watch_adds.remove(&dir);
-                    let hit = view.watch.as_mut().is_some_and(|w| {
-                        w.adopt(added);
-                        w.replay()
-                    });
-                    if hit {
-                        state.settle_rescan();
-                    }
-                })
-            });
-        }
+        let adds = w.plan(&want);
+        let adds = w.send(
+            adds.each()
+                .filter(|(dir, _)| !tried.contains(&dir.as_path())),
+        );
+        self.spawn_watch_adds(
+            adds,
+            |s| s.desktop.as_mut()?.watch.as_mut(),
+            |s, landed| {
+                if landed.hit {
+                    s.settle_rescan();
+                }
+            },
+        );
         if hit {
             self.settle_rescan();
         }
