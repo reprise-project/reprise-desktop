@@ -147,8 +147,8 @@ pub fn glyph(canvas: &mut Canvas, style: &Style, (x, y): (i32, i32), part: Part,
 /// The search field in its box `r` holding `edit`, its lines in `text` and the cue in `cue`
 /// ([`italic`]): the box and halo, then the cue in italic grey while empty, else the text, scrolled by
 /// whole characters to keep the caret in the field, its selection on the style's selection colour while
-/// `focused`; the caret while `focused` and `caret` (the blink) is on; the magnifier, or the clear
-/// glyph once there is text, at the box's right.
+/// `focused`; the caret while `focused` and `caret` (the blink) is on, inverting the opaque face and
+/// ink under it; the magnifier, or the clear glyph once there is text, at the box's right.
 ///
 /// While `focused` it also shows the canvas' preedit at the caret, underlined under the baseline with
 /// the caret inside it, and reports its [`crate::textedit::TextSpot`] on the canvas, as `draw_edit` does.
@@ -200,7 +200,7 @@ pub fn field(
         let (x, y) = (r.x + g.len(at::CUE_PEN), r.y + g.len(at::CUE_BASE));
         line(canvas, cue, x, y, clip, SEARCH_CUE, ink(INK_CUE), size);
         if caret && focused {
-            canvas.fill_rect(bar, ink(INK_STRONG));
+            canvas.invert_rect(bar);
         }
     } else {
         let (pen, y) = (r.x + g.len(at::TYPED_PEN), r.y + g.len(at::CUE_BASE));
@@ -243,7 +243,7 @@ pub fn field(
         let x = x_of(edit.caret().min(query.len())) + g.len(cx) - g.len(at::TYPED_PEN);
         bar.x = x.min(clip.right() - s);
         if caret && focused && x < clip.right() {
-            canvas.fill_rect(Rect::new(x, row.y, s, row.height), ink(INK_STRONG));
+            canvas.invert_rect(Rect::new(x, row.y, s, row.height));
         }
     }
     if focused {
@@ -374,6 +374,51 @@ mod tests {
         let mut away = draw(Preedit::new("ni".into(), 2, 2), false);
         assert_eq!(away.take_spot(), None, "an unfocused field reports nothing");
         assert_eq!(away.pixels, draw(None, false).pixels, "nor shows a preedit");
+    }
+
+    #[test]
+    fn the_caret_at_0_inverts_the_opaque_face_so_the_first_stem_shows_white_in_light_and_dark() {
+        use crate::glass::{Mode, Settings};
+        crate::pins::fonts();
+        let text = TextRenderer::load(&FontConfig::default());
+        let r = Rect::new(4, 4, FIELD.0, FIELD.1);
+        let mut edit = TextEdit::new("AVA", false);
+        edit.set_selection(0, 0);
+        let (pen, top) = (r.x + at::TYPED_PEN, r.y + at::CARET.1);
+        for mode in Mode::ALL {
+            let st = crate::glass::style(&Settings {
+                mode,
+                ..Settings::default()
+            });
+            let draw = |caret| {
+                let mut c = Canvas::new(240, 32);
+                field(
+                    &mut c,
+                    &st,
+                    &text,
+                    &text,
+                    r,
+                    &edit,
+                    true,
+                    caret,
+                    Grow::at(1),
+                );
+                c
+            };
+            let (off, on) = (draw(false), draw(true));
+            assert_eq!(
+                crate::paint::inverted_bar(&off, &on, 0xFFFF_FFFF),
+                (Rect::new(pen, top, 1, at::CARET.2), true),
+                "{mode:?}: the caret is the pen's column, over the A's foot"
+            );
+            for y in top..top + at::CARET.2 {
+                assert_eq!(
+                    off.get(pen, y) >> 24,
+                    0xFF,
+                    "{mode:?}: opaque face at row {y}"
+                );
+            }
+        }
     }
 
     #[test]
