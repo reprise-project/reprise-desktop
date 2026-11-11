@@ -739,17 +739,18 @@ pub(crate) mod tests {
         let us = connect();
         let host = proc_showing(&[("cgroup", USER), ("status", "NSpid:\t4242\n")]);
         let ids = Identities::under(host.path());
-        let gone = connect().unique_name().unwrap().to_string();
+        let leaving = connect();
+        let gone = leaving.unique_name().unwrap().to_string();
         zbus::block_on(async {
-            // A dropped connection closes its socket after the drop returns.
+            use futures_util::StreamExt;
             let dbus = zbus::fdo::DBusProxy::new(&us).await.unwrap();
-            let gone_name = zbus::names::BusName::try_from(gone.as_str()).unwrap();
-            for _ in 0..500 {
-                if !dbus.name_has_owner(gone_name.clone()).await.unwrap() {
-                    break;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(10));
-            }
+            let mut left = dbus
+                .receive_name_owner_changed_with_args(&[(0, gone.as_str())])
+                .await
+                .unwrap();
+            leaving.close().await.unwrap();
+            // A unique name changes owner only as it leaves.
+            left.next().await.unwrap();
             assert_eq!(ids.of(&us, &gone).await, AppIdentity::Unknown, "left");
             assert_eq!(ids.of(&us, ":1.999").await, AppIdentity::Unknown);
             assert_eq!(
