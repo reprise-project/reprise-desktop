@@ -6,7 +6,8 @@
 //!
 //! A surface's primary output passes its fifo barriers and commit timers (`frame_done`,
 //! `before_frame`), asked at commit for the frame a timer shows in (`ask_frame`); a surface no
-//! output shows has them passed at the refresh rate (`tick`).
+//! output shows (hidden, or covered by opaque windows) has them passed at the refresh rate
+//! without asking a frame (`tick`).
 //!
 //! A commit with a dmabuf waits for the buffer to be ready before it
 //! applies: on its explicit-sync acquire point when it set one, else on
@@ -562,6 +563,73 @@ mod tests {
         assert_eq!(buffer_scale(&server), 1, "the frame shows before its time");
         before_frame(&mut h.state, &output, at);
         assert_eq!(buffer_scale(&server), 2, "the frame shows at its time");
+    }
+
+    /// As a FIFO swapchain presents: a commit timed for `at`, waiting on the last barrier and
+    /// setting the next, with buffer scale `scale`.
+    fn present(
+        h: &mut Harness,
+        c: &mut TestClient,
+        surface: &ClientSurface,
+        (fifo, timer): (&WpFifoV1, &WpCommitTimerV1),
+        at: Duration,
+        scale: i32,
+    ) {
+        let secs = at.as_secs();
+        timer.set_timestamp((secs >> 32) as u32, secs as u32, at.subsec_nanos());
+        fifo.wait_barrier();
+        fifo.set_barrier();
+        surface.set_buffer_scale(scale);
+        surface.commit();
+        h.roundtrip(c);
+    }
+
+    #[test]
+    fn a_covered_surface_asks_no_frame_and_passes_its_barrier_and_timer_on_the_tick() {
+        use crate::backend::{Ask, take_asks};
+        let (mut h, output) = harness();
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "fifo", 200, 150);
+        let cover = h.map_toplevel(&mut c, "cover", 300, 200);
+        h.state.set_fullscreen(cover.id, true);
+        h.roundtrip(&mut c);
+        let surface = c.side.shells[t.shell].surface.clone();
+        let server = server_side(&h, &c, &surface);
+        let fifos: WpFifoManagerV1 = c.bind("wp_fifo_manager_v1", 1);
+        let fifo: WpFifoV1 = fifos.get_fifo(&surface, &c.qh(), ());
+        let timers: WpCommitTimingManagerV1 = c.bind("wp_commit_timing_manager_v1", 1);
+        let timer: WpCommitTimerV1 = timers.get_timer(&surface, &c.qh(), ());
+        fifo.set_barrier();
+        surface.commit();
+        h.roundtrip(&mut c);
+
+        take_asks();
+        let now = h.state.now();
+        present(&mut h, &mut c, &surface, (&fifo, &timer), now, 2);
+        assert!(
+            take_asks().contains(&(output.name(), Ask::Timed)),
+            "under a transparent cover the timed commit asks its frame"
+        );
+        tick(&mut h.state);
+        assert_eq!(buffer_scale(&server), 1, "the tick leaves it to its output");
+        frame_done(&mut h.state, &output);
+        let now = h.state.now();
+        before_frame(&mut h.state, &output, now);
+        assert_eq!(buffer_scale(&server), 2, "the output's frame passes it");
+
+        h.draw_opaque(&mut c, cover, 0xff00_0000);
+        assert_eq!(h.state.scene.surface_primary_output(&server), None);
+        take_asks();
+        let now = h.state.now();
+        present(&mut h, &mut c, &surface, (&fifo, &timer), now, 3);
+        assert_eq!(buffer_scale(&server), 2, "the covered commit waits");
+        tick(&mut h.state);
+        assert_eq!(
+            buffer_scale(&server),
+            3,
+            "the tick passes barrier and timer"
+        );
+        assert_eq!(take_asks(), vec![], "neither commit nor apply asks a frame");
     }
 
     #[test]
