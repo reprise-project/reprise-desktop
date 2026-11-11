@@ -57,7 +57,27 @@ use crate::{
 /// Where a whole-window thumb puts its texture for the host to draw: the
 /// same texture, drawn into again by every later render, until a new
 /// size makes a new one.
-pub type TextureSlot = Rc<RefCell<Option<GlesTexture>>>;
+pub type TextureSlot = Rc<RefCell<SlotPicture>>;
+
+/// A slot's texture, and a count of the changes to what it shows: the
+/// host redraws the picture only when the count moves.
+#[derive(Debug, Default)]
+pub struct SlotPicture {
+    pub texture: Option<GlesTexture>,
+    pub drawn: u64,
+}
+
+impl SlotPicture {
+    pub fn set(&mut self, texture: Option<GlesTexture>) {
+        self.texture = texture;
+        self.drawn += 1;
+    }
+
+    /// The texture was drawn into.
+    pub fn touch(&mut self) {
+        self.drawn += 1;
+    }
+}
 
 /// Names a live picture for as long as its host keeps it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -548,10 +568,12 @@ fn draw(
     };
     match &t.show {
         Show::Whole { slot, .. } => {
-            if fresh {
-                *slot.borrow_mut() = Some(target.texture().clone());
-            }
             let changed = fresh || !damage.is_empty();
+            if fresh {
+                slot.borrow_mut().set(Some(target.texture().clone()));
+            } else if changed {
+                slot.borrow_mut().touch();
+            }
             // The 3D switcher draws the picture smaller, from its mipmaps.
             if changed && let Err(e) = reprisefx::mipmaps(renderer, target.texture()) {
                 log::warn!("live preview: no mipmaps: {e}");

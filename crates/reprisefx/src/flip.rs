@@ -3,14 +3,15 @@
 //!
 //! The element covers the card's bounds on the output and draws them
 //! through the tilted-card program (`shaders`), which maps every pixel
-//! back into the picture. It reports its whole geometry as damage on
-//! every frame: the stack moves or its pictures change while it is up,
-//! and it is up only briefly.
+//! back into the picture. It damages its whole geometry when its map,
+//! alpha or picture changed since the card's last element, and nothing
+//! otherwise, so a stack standing still draws no frames.
 //!
 //! The host compiles the program once per renderer ([`FlipFx::new`]),
 //! keeps a [`FlipCard`] per card for the stack's life (one element Id),
 //! and per frame and output makes [`FlipCard::element`] with a map from
-//! the picture's texels to the output's physical pixels.
+//! the picture's texels to the output's physical pixels and a count it
+//! bumps on every draw into the picture.
 //!
 //! Cards are drawn far smaller than their pictures. On a GLES 3 context
 //! the card samples its picture's mipmaps (trilinear, through a sampler
@@ -118,6 +119,18 @@ pub fn mipmaps(renderer: &mut GlesRenderer, texture: &GlesTexture) -> Result<(),
 pub struct FlipCard {
     id: Id,
     commit: Cell<CommitCounter>,
+    last: Cell<Option<Look>>,
+}
+
+/// What a card's element draws: a new one takes a new commit.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Look {
+    texture: u32,
+    size: (i32, i32),
+    drawn: u64,
+    to_screen: Homography,
+    alpha: f32,
+    mipmapped: bool,
 }
 
 impl Default for FlipCard {
@@ -131,18 +144,20 @@ impl FlipCard {
         FlipCard {
             id: Id::new(),
             commit: Cell::new(CommitCounter::default()),
+            last: Cell::new(None),
         }
     }
 
     /// The card showing `texture` mapped to the output by `to_screen`
     /// (texels to physical pixels) at `alpha`; None when no part of it
-    /// lies in front of the eye or the map collapses. With `mipmapped`
-    /// the texture's mipmaps are built ([`mipmaps`]) and the card samples
-    /// them.
+    /// lies in front of the eye or the map collapses. `drawn` counts the
+    /// host's draws into `texture`. With `mipmapped` the texture's mipmaps
+    /// are built ([`mipmaps`]) and the card samples them.
     pub fn element(
         &self,
         fx: &FlipFx,
         texture: &GlesTexture,
+        drawn: u64,
         to_screen: Homography,
         alpha: f32,
         mipmapped: bool,
@@ -153,9 +168,19 @@ impl FlipCard {
             return None;
         }
         let back = to_screen.inverse()?;
+        let look = Look {
+            texture: texture.tex_id(),
+            size: (size.w, size.h),
+            drawn,
+            to_screen,
+            alpha,
+            mipmapped,
+        };
         let mut commit = self.commit.get();
-        commit.increment();
-        self.commit.set(commit);
+        if self.last.replace(Some(look)) != Some(look) {
+            commit.increment();
+            self.commit.set(commit);
+        }
         Some(FlipCardElement {
             id: self.id.clone(),
             commit,
@@ -205,8 +230,11 @@ impl Element for FlipCardElement {
     fn damage_since(
         &self,
         scale: Scale<f64>,
-        _commit: Option<CommitCounter>,
+        commit: Option<CommitCounter>,
     ) -> DamageSet<i32, Physical> {
+        if commit == Some(self.commit) {
+            return DamageSet::default();
+        }
         DamageSet::from_slice(&[Rectangle::from_size(self.geometry(scale).size)])
     }
 

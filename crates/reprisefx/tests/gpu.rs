@@ -1523,7 +1523,7 @@ fn an_unturned_card_shows_its_picture_scaled_into_place() {
     // Twice the size, top-left at (20, 10): 128x96.
     let m = Homography([[2.0, 0.0, 20.0], [0.0, 2.0, 10.0], [0.0, 0.0, 1.0]]);
     let card = FlipCard::new();
-    let el = card.element(&fx, &tex, m, 1.0, false).unwrap();
+    let el = card.element(&fx, &tex, 0, m, 1.0, false).unwrap();
     let (p, _) = r.render_elements(&[El::Card(el)]);
     for (x, y, want) in [
         (21, 11, [255, 0, 0]),
@@ -1539,6 +1539,27 @@ fn an_unturned_card_shows_its_picture_scaled_into_place() {
 }
 
 #[test]
+fn a_card_damages_the_frame_only_when_its_map_alpha_or_picture_changes() {
+    let Some(mut r) = rig(200, 120) else { return };
+    let fx = FlipFx::new(&mut r.renderer).expect("the card shader compiles");
+    let tex = quadrants(&mut r);
+    let m = Homography([[2.0, 0.0, 20.0], [0.0, 2.0, 10.0], [0.0, 0.0, 1.0]]);
+    let card = FlipCard::new();
+    let mut frame = |drawn: u64, m: Homography, alpha: f32| {
+        let el = card.element(&fx, &tex, drawn, m, alpha, false).unwrap();
+        r.render_elements(&[El::Card(el)]).1
+    };
+    assert!(frame(0, m, 1.0), "the first frame draws the card");
+    assert!(!frame(0, m, 1.0), "the same card again draws nothing");
+    assert!(frame(1, m, 1.0), "a draw into the picture redraws it");
+    assert!(!frame(1, m, 1.0));
+    let moved = Homography([[2.0, 0.0, 22.0], [0.0, 2.0, 10.0], [0.0, 0.0, 1.0]]);
+    assert!(frame(1, moved, 1.0), "a new map redraws it");
+    assert!(frame(1, moved, 0.5), "a new alpha redraws it");
+    assert!(!frame(1, moved, 0.5));
+}
+
+#[test]
 fn a_turned_card_lands_where_its_map_puts_each_quadrant() {
     let Some(mut r) = rig(320, 240) else { return };
     let fx = FlipFx::new(&mut r.renderer).expect("the card shader compiles");
@@ -1547,7 +1568,7 @@ fn a_turned_card_lands_where_its_map_puts_each_quadrant() {
     let cards = flip::layout(area, &[(64, 48)], 0.0, &flip::GEOMETRY);
     let m = cards[0].to_screen;
     let card = FlipCard::new();
-    let el = card.element(&fx, &tex, m, 1.0, false).unwrap();
+    let el = card.element(&fx, &tex, 0, m, 1.0, false).unwrap();
     let (p, _) = r.render_elements(&[El::Card(el)]);
     for (u, v, want) in [
         (16.0, 12.0, [255, 0, 0]),
@@ -1582,7 +1603,7 @@ fn a_half_faded_card_is_half_as_bright() {
     let tex = quadrants(&mut r);
     let m = Homography([[1.0, 0.0, 10.0], [0.0, 1.0, 10.0], [0.0, 0.0, 1.0]]);
     let card = FlipCard::new();
-    let el = card.element(&fx, &tex, m, 0.5, false).unwrap();
+    let el = card.element(&fx, &tex, 0, m, 0.5, false).unwrap();
     let (p, _) = r.render_elements(&[El::Card(el)]);
     let [red, ..] = p.at(20, 20);
     assert!((126..=129).contains(&red), "half red over black: {red}");
@@ -1607,7 +1628,7 @@ fn a_card_fades_its_pictures_glass_toward_clear_and_keeps_the_rest() {
         .expect("the picture uploads");
     let m = Homography([[1.0, 0.0, 4.0], [0.0, 1.0, 2.0], [0.0, 0.0, 1.0]]);
     let card = FlipCard::new();
-    let el = card.element(&fx, &tex, m, 1.0, false).unwrap();
+    let el = card.element(&fx, &tex, 0, m, 1.0, false).unwrap();
     let (p, _) = r.render_elements(&[El::Card(el)]);
     // 102 at alpha 0.4 keeps 0.25 + 0.75 * 0.4 of itself: 56.
     let [glass, ..] = p.at(12, 10);
@@ -1633,7 +1654,7 @@ fn a_card_draws_a_dark_one_pixel_outline_all_round_at_any_size() {
             [0.0, 0.0, 1.0],
         ]);
         let card = FlipCard::new();
-        let el = card.element(&fx, &tex, m, 1.0, false).unwrap();
+        let el = card.element(&fx, &tex, 0, m, 1.0, false).unwrap();
         let (p, _) = r.render_elements(&[El::Card(el)]);
         let (x1, y1) = (x0 + (64.0 * s) as i32 - 1, y0 + (32.0 * s) as i32 - 1);
         let mid = (y0 + y1) / 2;
@@ -1683,7 +1704,7 @@ fn a_fine_checker_drawn_at_a_quarter_size_is_an_even_grey() {
     // A quarter size, 32x32, off the pixel grid.
     let m = Homography([[0.25, 0.0, 8.3], [0.0, 0.25, 6.3], [0.0, 0.0, 1.0]]);
     let card = FlipCard::new();
-    let el = card.element(&fx, &tex, m, 1.0, true).unwrap();
+    let el = card.element(&fx, &tex, 0, m, 1.0, true).unwrap();
     let (p, _) = r.render_elements(&[El::Card(el)]);
     for y in 9..37 {
         for x in 11..39 {
