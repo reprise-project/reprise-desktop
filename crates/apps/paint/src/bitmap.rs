@@ -194,8 +194,16 @@ impl Bitmap {
     }
 
     pub fn invert(&mut self) {
-        for p in &mut self.px {
-            *p ^= 0x00FF_FFFF;
+        self.invert_rect(self.bounds());
+    }
+
+    pub fn invert_rect(&mut self, r: Rect) {
+        let r = r.intersect(&self.bounds());
+        for y in r.y..r.bottom() {
+            let row = (y * self.w) as usize;
+            for p in &mut self.px[row + r.x as usize..row + r.right() as usize] {
+                *p ^= 0x00FF_FFFF;
+            }
         }
     }
 
