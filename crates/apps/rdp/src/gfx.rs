@@ -1,9 +1,10 @@
 //! One connection's graphics pipeline channel (MS-RDPEGFX), which carries the H.264 frames: one
 //! surface per shared screen, the size of its target and mapped at it.
 
+use crate::encode::avc444::AuxLayout;
 use crate::layout::{Layout, Rect16};
 use crate::stream::Rect;
-use ironrdp_egfx::pdu::{Avc420Region, CapabilitiesAdvertisePdu, CapabilitySet};
+use ironrdp_egfx::pdu::{Avc420Region, CapabilitiesAdvertisePdu, CapabilitySet, Encoding};
 use ironrdp_egfx::server::{GraphicsPipelineHandler, GraphicsPipelineServer};
 use ironrdp_server::{
     EgfxServerMessage, GfxContext, GfxDvcBridge, GfxServerFactory, GfxServerHandle, ServerEvent,
@@ -198,9 +199,22 @@ impl Gfx {
         let ms = link.start.elapsed().as_millis() as u32;
         let queued = match video {
             Video::Avc420(data) => s.try_send_avc420_frame(surface_id, data, &region, ms),
-            Video::Avc444 { main, aux } => {
+            Video::Avc444 { main, aux, layout } => {
                 let aux_region = aux.map(|_| &region[..]);
-                s.try_send_avc444_frame(surface_id, main, &region, aux, aux_region, ms)
+                match layout {
+                    AuxLayout::V1 => {
+                        s.try_send_avc444_frame(surface_id, main, &region, aux, aux_region, ms)
+                    }
+                    AuxLayout::V2 => {
+                        let lc = match aux {
+                            Some(_) => Encoding::LUMA_AND_CHROMA,
+                            None => Encoding::LUMA,
+                        };
+                        s.try_send_avc444v2_frame(
+                            surface_id, lc, main, &region, aux, aux_region, ms,
+                        )
+                    }
+                }
             }
         };
         queued.is_ok() && flush(&link, &mut s)
@@ -245,13 +259,15 @@ impl Link {
     }
 }
 
-/// H.264 for the surface: one AVC420 access unit, or a picture's AVC444 views.
+/// H.264 for the surface: one AVC420 access unit, or a picture's AVC444 views, sent as AVC444v2
+/// in the v2 layout. Every capability set that allows AVC444 allows AVC444v2 too.
 #[derive(Clone, Copy)]
 pub enum Video<'a> {
     Avc420(&'a [u8]),
     Avc444 {
         main: &'a [u8],
         aux: Option<&'a [u8]>,
+        layout: AuxLayout,
     },
 }
 
@@ -821,48 +837,55 @@ pub(crate) mod tests {
 
     #[test]
     fn an_avc444_frame_carries_lc_and_its_views() {
-        use ironrdp_egfx::pdu::{Avc444BitmapStream, CapabilitiesV107Flags, Encoding};
-        let (gfx, _server, mut events) = opened_with(CapabilitySet::V10_7 {
-            flags: CapabilitiesV107Flags::empty(),
-        });
-        assert!(matches!(
-            gfx.prepare(&one((64, 64)), 0),
-            Prepared::Ready { avc444: true, .. }
-        ));
-        let block = Rect {
-            x: 16,
-            y: 32,
-            width: 16,
-            height: 16,
-        };
-        let (main, aux) = ([0, 0, 0, 1, 0x65], [0, 0, 0, 1, 0x41]);
-        let region = Avc420Region::new(16, 32, 32, 48, 22, 100);
-        let first = encode_avc420_bitmap_stream(std::slice::from_ref(&region), &main);
-        for (views, lc) in [(Some(&aux[..]), 0), (None, 1)] {
-            let video = Video::Avc444 {
-                main: &main,
-                aux: views,
+        use ironrdp_egfx::pdu::{Avc444BitmapStream, CapabilitiesV107Flags};
+        let layouts = [
+            (AuxLayout::V1, Codec1Type::Avc444),
+            (AuxLayout::V2, Codec1Type::Avc444v2),
+        ];
+        for (layout, codec) in layouts {
+            let (gfx, _server, mut events) = opened_with(CapabilitySet::V10_7 {
+                flags: CapabilitiesV107Flags::empty(),
+            });
+            assert!(matches!(
+                gfx.prepare(&one((64, 64)), 0),
+                Prepared::Ready { avc444: true, .. }
+            ));
+            let block = Rect {
+                x: 16,
+                y: 32,
+                width: 16,
+                height: 16,
             };
-            assert!(gfx.send(0, video, &[block], 22));
-            let pdus = sent(&mut events);
-            let w = last_frame(&pdus);
-            assert_eq!(w.codec_id, Codec1Type::Avc444);
-            let data = &w.bitmap_data;
-            let word = u32::from_le_bytes(data[..4].try_into().unwrap());
-            assert_eq!(word >> 30, lc, "LC");
-            assert_eq!(word & 0x3FFF_FFFF, first.len() as u32);
-            assert_eq!(data[4..4 + first.len()], first, "the main view first");
-            let rest =
-                views.map(|aux| encode_avc420_bitmap_stream(std::slice::from_ref(&region), aux));
-            assert_eq!(data[4 + first.len()..], rest.unwrap_or_default());
-            let stream: Avc444BitmapStream<'_> = ironrdp_core::decode(data).unwrap();
-            let encoding = match lc {
-                0 => Encoding::LUMA_AND_CHROMA,
-                _ => Encoding::LUMA,
-            };
-            assert_eq!(stream.encoding, encoding);
-            assert_eq!(stream.stream1.data, main);
-            assert_eq!(stream.stream2.map(|s| s.data), views);
+            let (main, aux) = ([0, 0, 0, 1, 0x65], [0, 0, 0, 1, 0x41]);
+            let region = Avc420Region::new(16, 32, 32, 48, 22, 100);
+            let first = encode_avc420_bitmap_stream(std::slice::from_ref(&region), &main);
+            for (views, lc) in [(Some(&aux[..]), 0), (None, 1)] {
+                let video = Video::Avc444 {
+                    main: &main,
+                    aux: views,
+                    layout,
+                };
+                assert!(gfx.send(0, video, &[block], 22));
+                let pdus = sent(&mut events);
+                let w = last_frame(&pdus);
+                assert_eq!(w.codec_id, codec, "the {layout:?} layout's codec");
+                let data = &w.bitmap_data;
+                let word = u32::from_le_bytes(data[..4].try_into().unwrap());
+                assert_eq!(word >> 30, lc, "LC");
+                assert_eq!(word & 0x3FFF_FFFF, first.len() as u32);
+                assert_eq!(data[4..4 + first.len()], first, "the main view first");
+                let rest = views
+                    .map(|aux| encode_avc420_bitmap_stream(std::slice::from_ref(&region), aux));
+                assert_eq!(data[4 + first.len()..], rest.unwrap_or_default());
+                let stream: Avc444BitmapStream<'_> = ironrdp_core::decode(data).unwrap();
+                let encoding = match lc {
+                    0 => Encoding::LUMA_AND_CHROMA,
+                    _ => Encoding::LUMA,
+                };
+                assert_eq!(stream.encoding, encoding);
+                assert_eq!(stream.stream1.data, main);
+                assert_eq!(stream.stream2.map(|s| s.data), views);
+            }
         }
     }
 

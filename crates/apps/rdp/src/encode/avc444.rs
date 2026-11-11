@@ -1,5 +1,5 @@
-//! The AVC444 colour split of MS-RDPEGFX 3.3.8.3.2 on the CPU: the main view carries luma and
-//! subsampled chroma, the auxiliary view the chroma samples the main view drops.
+//! The AVC444 colour split of MS-RDPEGFX 3.3.8.3.2 and 3.3.8.3.3 on the CPU: the main view
+//! carries luma and subsampled chroma, the auxiliary view the chroma samples the main view drops.
 
 use super::colour;
 use super::hwmap;
@@ -9,6 +9,30 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Views are whole macroblocks: the auxiliary luma interleaves U and V rows per 16 lines.
 const MACROBLOCK: u32 = 16;
+/// FreeRDP before 3.18 finds a v2 view's V half at the surface width rounded up to 16, halved;
+/// later ones round it up to this.
+const V2_WIDTH: u32 = 32;
+
+/// Where the auxiliary view keeps the chroma samples the main view drops.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AuxLayout {
+    /// AVC444 (3.3.8.3.2): the odd rows' U and V interleaved per macroblock row in its luma.
+    V1,
+    /// AVC444v2 (3.3.8.3.3): the odd columns in its luma, U left and V right, so every row
+    /// keeps its place and a vertical scroll predicts from the last picture.
+    V2,
+}
+
+impl AuxLayout {
+    /// The layout for views coded at `target` on two encoders: V2 where every client finds its
+    /// V halves.
+    pub fn of(target: (u32, u32)) -> AuxLayout {
+        match view_size(target).0.is_multiple_of(V2_WIDTH) {
+            true => AuxLayout::V2,
+            false => AuxLayout::V1,
+        }
+    }
+}
 
 /// A 4:4:4 picture in the [`colour`] YUV, each plane `width * height` bytes.
 #[cfg(test)]
@@ -87,12 +111,12 @@ pub struct Nv12Mut<'a> {
     pub uv: PlaneMut<'a>,
 }
 
-/// `src`'s views in `main` and `aux` and its flat macroblocks. Main is 4:2:0 with rounded 2x2
-/// chroma averages; aux carries the odd-column chroma and the B4/B5 rows inside `read`, and
-/// main's bytes outside it.
-pub fn views(src: Rgb, main: Nv12Mut, aux: Nv12Mut, read: Rect) -> Flat {
+/// `src`'s `layout` views in `main` and `aux` and its flat macroblocks. A V1 aux carries the
+/// odd-column chroma and B4/B5 rows inside `read` and main's bytes outside it; a V2 aux is whole.
+pub fn views(src: Rgb, main: Nv12Mut, aux: Nv12Mut, read: Rect, layout: AuxLayout) -> Flat {
     let helpers = HELPERS.take(super::cpu_threads_for(src.size) - 1);
-    views_in(src, main, aux, read, helpers.0, std::thread::Builder::new)
+    let thread = std::thread::Builder::new;
+    views_in(src, main, aux, read, layout, helpers.0, thread)
 }
 
 /// Band helper threads converting now, across every screen's encoder.
@@ -140,6 +164,7 @@ fn views_in(
     main: Nv12Mut,
     aux: Nv12Mut,
     read: Rect,
+    layout: AuxLayout,
     helpers: usize,
     thread: fn() -> std::thread::Builder,
 ) -> Flat {
@@ -179,7 +204,7 @@ fn views_in(
     let queue = Mutex::new(parts);
     let work = || {
         while let Some(b) = queue.lock().map_or(None, |mut q| q.pop()) {
-            b.convert(src, read, w);
+            b.convert(src, read, layout, w);
         }
     };
     std::thread::scope(|s| {
@@ -202,7 +227,7 @@ struct Band<'a> {
 }
 
 impl Band<'_> {
-    fn convert(self, src: Rgb, read: Rect, w: usize) {
+    fn convert(self, src: Rgb, read: Rect, layout: AuxLayout, w: usize) {
         let Band {
             top,
             main,
@@ -228,19 +253,44 @@ impl Band<'_> {
             for x in (0..w).step_by(2) {
                 main_uv[x] = average(u0[x], u0[x + 1], u1[x], u1[x + 1]);
                 main_uv[x + 1] = average(v0[x], v0[x + 1], v1[x], v1[x + 1]);
-                aux_uv[x] = u0[x + 1];
-                aux_uv[x + 1] = v0[x + 1];
+                if layout == AuxLayout::V1 {
+                    aux_uv[x] = u0[x + 1];
+                    aux_uv[x + 1] = v0[x + 1];
+                }
                 let same =
                     |p: &[u8], q: &[u8]| p[x] == p[x + 1] && p[x] == q[x] && q[x] == q[x + 1];
                 if !(same(u0, u1) && same(v0, v1)) {
                     flags[x / mb] = false;
                 }
             }
-            // B4 and B5: the odd row's U and V are auxiliary luma rows `half` and 8 + `half`.
-            let (mb_top, half) = (r - r % mb, (r % mb) / 2);
-            for (row, plane) in [(mb_top + half, u1), (mb_top + mb / 2 + half, v1)] {
-                aux.y.data[row * aux.y.stride..][..w].copy_from_slice(plane);
+            match layout {
+                AuxLayout::V1 => {
+                    // B4 and B5: the odd row's U and V are aux luma rows `half` and 8 + `half`.
+                    let (mb_top, half) = (r - r % mb, (r % mb) / 2);
+                    for (row, plane) in [(mb_top + half, u1), (mb_top + mb / 2 + half, v1)] {
+                        aux.y.data[row * aux.y.stride..][..w].copy_from_slice(plane);
+                    }
+                }
+                AuxLayout::V2 => {
+                    let (half, quarter) = (w / 2, w / 4);
+                    for (i, (u, v)) in [(u0, v0), (u1, v1)].into_iter().enumerate() {
+                        let luma = &mut aux.y.data[(r + i) * aux.y.stride..][..w];
+                        for x in 0..half {
+                            luma[x] = u[2 * x + 1];
+                            luma[half + x] = v[2 * x + 1];
+                        }
+                    }
+                    for (from, plane) in [(0, u1), (quarter, v1)] {
+                        for x in 0..quarter {
+                            aux_uv[2 * (from + x)] = plane[4 * x];
+                            aux_uv[2 * (from + x) + 1] = plane[4 * x + 2];
+                        }
+                    }
+                }
             }
+        }
+        if layout == AuxLayout::V2 {
+            return;
         }
         let rows_in =
             |y: usize| (read.y as usize..read.y.saturating_add(read.height) as usize).contains(&y);
@@ -303,12 +353,67 @@ pub fn view_size((width, height): (u32, u32)) -> (u32, u32) {
 /// column and row.
 #[cfg(test)]
 pub fn split_v1(src: &Planes444) -> (Nv12, Nv12) {
+    let (main, [u, v]) = main_view(src);
+    let (w, h) = (main.width as usize, main.height as usize);
+    let mut aux_uv = Vec::with_capacity(w * h / 2);
+    for y in (0..h).step_by(2) {
+        for x in (0..w).step_by(2) {
+            aux_uv.extend([u[y * w + x + 1], v[y * w + x + 1]]);
+        }
+    }
+    let mut aux_y = Vec::with_capacity(w * h);
+    for row in 0..h {
+        let (is_v, from) = aux_luma_source(row);
+        let plane = if is_v { &v } else { &u };
+        aux_y.extend_from_slice(&plane[from * w..][..w]);
+    }
+    let aux = Nv12 {
+        y: aux_y,
+        uv: aux_uv,
+        width: main.width,
+        height: main.height,
+    };
+    (main, aux)
+}
+
+/// [`split_v1`] in the v2 layout: luma halves of the odd columns' U and V (B4, B5), chroma
+/// quarters of the odd rows' U and V at columns 4x and 4x + 2 (B6 to B9).
+#[cfg(test)]
+pub fn split_v2(src: &Planes444) -> (Nv12, Nv12) {
+    let (main, [u, v]) = main_view(src);
+    let (w, h) = (main.width as usize, main.height as usize);
+    let mut aux_y = Vec::with_capacity(w * h);
+    for row in 0..h {
+        for p in [&u, &v] {
+            aux_y.extend((0..w / 2).map(|x| p[row * w + 2 * x + 1]));
+        }
+    }
+    let mut aux_uv = Vec::with_capacity(w * h / 2);
+    for row in (1..h).step_by(2) {
+        for p in [&u, &v] {
+            let line = &p[row * w..][..w];
+            aux_uv.extend(line.as_chunks::<4>().0.iter().flat_map(|c| [c[0], c[2]]));
+        }
+    }
+    let aux = Nv12 {
+        y: aux_y,
+        uv: aux_uv,
+        width: main.width,
+        height: main.height,
+    };
+    (main, aux)
+}
+
+/// The main view of `src` at its view size, and its padded U and V planes.
+#[cfg(test)]
+fn main_view(src: &Planes444) -> (Nv12, [Vec<u8>; 2]) {
     let (w, h) = view_size((src.width, src.height));
     let (y, u, v) = (
         pad(&src.y, src, w, h),
         pad(&src.u, src, w, h),
         pad(&src.v, src, w, h),
     );
+    let (width, height) = (w, h);
     let (w, h) = (w as usize, h as usize);
     let at = |x: usize, y: usize| y * w + x;
     let average = |p: &[u8], x, y| {
@@ -318,34 +423,19 @@ pub fn split_v1(src: &Planes444) -> (Nv12, Nv12) {
             .sum::<u32>();
         ((sum + 2) / 4) as u8
     };
-    let mut main_uv = Vec::with_capacity(w * h / 2);
-    let mut aux_uv = Vec::with_capacity(w * h / 2);
+    let mut uv = Vec::with_capacity(w * h / 2);
     for y in (0..h).step_by(2) {
         for x in (0..w).step_by(2) {
-            main_uv.extend([average(&u, x, y), average(&v, x, y)]);
-            aux_uv.extend([u[at(x + 1, y)], v[at(x + 1, y)]]);
+            uv.extend([average(&u, x, y), average(&v, x, y)]);
         }
     }
-    let mut aux_y = Vec::with_capacity(w * h);
-    for row in 0..h {
-        let (is_v, from) = aux_luma_source(row);
-        let plane = if is_v { &v } else { &u };
-        aux_y.extend_from_slice(&plane[from * w..][..w]);
-    }
-    let (width, height) = (w as u32, h as u32);
     let main = Nv12 {
         y,
-        uv: main_uv,
+        uv,
         width,
         height,
     };
-    let aux = Nv12 {
-        y: aux_y,
-        uv: aux_uv,
-        width,
-        height,
-    };
-    (main, aux)
+    (main, [u, v])
 }
 
 /// `plane` of `src` at `w` by `h`, the last column and row repeated; black for an empty `src`.
@@ -374,6 +464,15 @@ fn aux_luma_source(row: usize) -> (bool, usize) {
     (is_v, top + 2 * (within % half) + 1)
 }
 
+/// The 4:4:4 picture a client rebuilds from views of `layout`.
+#[cfg(test)]
+pub fn combine(layout: AuxLayout, main: &Nv12, aux: &Nv12) -> Planes444 {
+    match layout {
+        AuxLayout::V1 => combine_v1(main, aux),
+        AuxLayout::V2 => combine_v2(main, aux),
+    }
+}
+
 /// The 4:4:4 picture a client rebuilds from the two views, at the views' size. It always takes
 /// the reverse filter's value, skipping the spec's optional threshold of 30.
 #[cfg(test)]
@@ -390,10 +489,48 @@ pub fn combine_v1(main: &Nv12, aux: &Nv12) -> Planes444 {
     for y in (0..h).step_by(2) {
         for x in (0..w).step_by(2) {
             let c = y / 2 * w + x;
+            u[y * w + x + 1] = aux.uv[c];
+            v[y * w + x + 1] = aux.uv[c + 1];
+        }
+    }
+    reverse_filter(main, u, v)
+}
+
+/// [`combine_v1`] for v2 views, by MS-RDPEGFX 3.3.8.3.3's B4 to B9.
+#[cfg(test)]
+pub fn combine_v2(main: &Nv12, aux: &Nv12) -> Planes444 {
+    assert_eq!((main.width, main.height), (aux.width, aux.height));
+    let (w, h) = (main.width as usize, main.height as usize);
+    let (half, quarter) = (w / 2, w / 4);
+    let mut u = vec![0; w * h];
+    let mut v = vec![0; w * h];
+    for y in 0..h {
+        for x in 0..half {
+            u[y * w + 2 * x + 1] = aux.y[y * w + x];
+            v[y * w + 2 * x + 1] = aux.y[y * w + half + x];
+        }
+    }
+    for y in 0..h / 2 {
+        let (row, c) = ((2 * y + 1) * w, y * w);
+        for x in 0..quarter {
+            u[row + 4 * x] = aux.uv[c + 2 * x];
+            v[row + 4 * x] = aux.uv[c + 2 * (quarter + x)];
+            u[row + 4 * x + 2] = aux.uv[c + 2 * x + 1];
+            v[row + 4 * x + 2] = aux.uv[c + 2 * (quarter + x) + 1];
+        }
+    }
+    reverse_filter(main, u, v)
+}
+
+/// `main`'s luma with `u` and `v`, whose even-row, even-column samples come from the main
+/// view's 2x2 average and the block's other three.
+#[cfg(test)]
+fn reverse_filter(main: &Nv12, mut u: Vec<u8>, mut v: Vec<u8>) -> Planes444 {
+    let (w, h) = (main.width as usize, main.height as usize);
+    for y in (0..h).step_by(2) {
+        for x in (0..w).step_by(2) {
+            let c = y / 2 * w + x;
             let (at, right, below) = (y * w + x, y * w + x + 1, (y + 1) * w + x);
-            u[right] = aux.uv[c];
-            v[right] = aux.uv[c + 1];
-            // The reverse filter: the main view carries the block's average.
             for (plane, average) in [(&mut u, main.uv[c]), (&mut v, main.uv[c + 1])] {
                 let rest: i32 = [right, below, below + 1]
                     .map(|i| i32::from(plane[i]))
@@ -421,7 +558,7 @@ pub struct Flat {
 }
 
 impl Flat {
-    /// `src`'s macroblocks, its last column and row repeated to [`view_size`].
+    /// `src`'s macroblocks, its last column and row repeated to its view size.
     #[cfg(test)]
     pub fn of(src: &Planes444) -> Flat {
         let (w, h) = view_size((src.width, src.height));
@@ -736,6 +873,75 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn the_v2_split_matches_the_spec() {
+        let n = |x: u32, y: u32| (y * 7 + x) as u8;
+        let plane = |f: &dyn Fn(u32, u32) -> u8| -> Vec<u8> {
+            (0..16)
+                .flat_map(|y| (0..32).map(move |x| (x, y)))
+                .map(|(x, y)| f(x, y))
+                .collect()
+        };
+        let src = Planes444 {
+            y: plane(&|x, y| (x * 5 + y) as u8),
+            u: plane(&n),
+            v: plane(&|x, y| 255 - n(x, y)),
+            width: 32,
+            height: 16,
+        };
+        let (main, aux) = split_v2(&src);
+        assert_eq!((aux.width, aux.height), (32, 16));
+        assert_eq!(main.y, src.y, "B1 is the luma");
+        assert_eq!(main, split_v1(&src).0, "B2 and B3 are v1's");
+        let row3: Vec<u8> = (0..16).map(|x| n(2 * x + 1, 3)).collect();
+        assert_eq!(row(&aux.y, 32, 3)[..16], row3, "B4: U of the odd columns");
+        let v3: Vec<u8> = row3.iter().map(|u| 255 - u).collect();
+        assert_eq!(row(&aux.y, 32, 3)[16..], v3, "B5: V of the odd columns");
+        assert_eq!(
+            row(&aux.uv, 32, 2)[..6],
+            [35, 37, 39, 41, 43, 45],
+            "B6 and B8: U of row 5 at columns 0, 2, 4, 6, 8, 10"
+        );
+        assert_eq!(
+            row(&aux.uv, 32, 2)[16..20],
+            [220, 218, 216, 214],
+            "B7 and B9: V of row 5 at columns 0, 2, 4, 6"
+        );
+    }
+
+    #[test]
+    fn v2_split_then_combine_returns_the_picture_at_odd_sizes() {
+        for (size, view) in [
+            ((13, 21), (16, 32)),
+            ((33, 18), (48, 32)),
+            ((100, 50), (112, 64)),
+            ((64, 48), (64, 48)),
+        ] {
+            let src = random(size, 5);
+            let (main, aux) = split_v2(&src);
+            assert_eq!(
+                (main.width, main.height),
+                view,
+                "{size:?}: whole macroblocks"
+            );
+            assert_returns(&crop(&combine_v2(&main, &aux), size), &src);
+        }
+    }
+
+    #[test]
+    fn v2_goes_out_only_at_widths_whose_views_are_whole_32_columns() {
+        for (width, layout) in [
+            (1680, AuxLayout::V1),
+            (1700, AuxLayout::V1),
+            (1000, AuxLayout::V1),
+            (1720, AuxLayout::V2),
+            (1920, AuxLayout::V2),
+            (1366, AuxLayout::V2),
+        ] {
+            assert_eq!(AuxLayout::of((width, 1050)), layout, "{width} px wide");
+        }
+    }
+
+    #[test]
     fn from_rgb_converts_each_pixel_of_padded_rows_in_either_byte_order() {
         let (red, blue) = ([0, 0, 255, 0], [255, 0, 0, 0]);
         let data = [red, blue, [9; 4], red, red, [9; 4]].concat();
@@ -787,6 +993,7 @@ pub(crate) mod tests {
     /// on the left, whose chroma is flat, and colours on the right.
     fn check_bands(
         cases: &[((u32, u32), Rect)],
+        layout: AuxLayout,
         helpers: &[usize],
         thread: fn() -> std::thread::Builder,
     ) {
@@ -802,8 +1009,14 @@ pub(crate) mod tests {
             }
             for fourcc in [XRGB8888, ABGR8888] {
                 let planes = Planes444::from_rgb(&data, stride, size, fourcc);
-                let (main, mut aux) = split_v1(&planes);
-                keep_main_outside(&main, &mut aux, read);
+                let (main, aux) = match layout {
+                    AuxLayout::V1 => {
+                        let (main, mut aux) = split_v1(&planes);
+                        keep_main_outside(&main, &mut aux, read);
+                        (main, aux)
+                    }
+                    AuxLayout::V2 => split_v2(&planes),
+                };
                 let flat = Flat::of(&planes);
                 let view = view_size(size);
                 for &n in helpers {
@@ -814,8 +1027,10 @@ pub(crate) mod tests {
                         size,
                         fourcc,
                     };
-                    let got = views_in(src, nv12(&mut m), nv12(&mut a), read, n, thread);
-                    let at = format!("{size:?} {fourcc:#x} read {read:?} on {n} helpers");
+                    let (main_out, aux_out) = (nv12(&mut m), nv12(&mut a));
+                    let got = views_in(src, main_out, aux_out, read, layout, n, thread);
+                    let at =
+                        format!("{layout:?} {size:?} {fourcc:#x} read {read:?} on {n} helpers");
                     assert_eq!(read_view(&m, view), main, "the main view of {at}");
                     assert_eq!(read_view(&a, view), aux, "the auxiliary view of {at}");
                     assert_eq!(got, flat, "the flat macroblocks of {at}");
@@ -845,14 +1060,37 @@ pub(crate) mod tests {
             ((33, 18), rect(32, 16, 32, 32)),
             ((250, 171), rect(240, 160, 32, 32)),
         ];
-        check_bands(&cases, &[0, 1, 2, 3, 8], std::thread::Builder::new);
+        check_bands(
+            &cases,
+            AuxLayout::V1,
+            &[0, 1, 2, 3, 8],
+            std::thread::Builder::new,
+        );
+    }
+
+    #[test]
+    fn banded_v2_views_equal_the_split_at_odd_sizes() {
+        let cases = [
+            ((13, 21), rect(0, 0, 16, 32)),
+            ((33, 18), rect(16, 0, 16, 32)),
+            ((100, 50), rect(16, 16, 48, 32)),
+            ((250, 171), rect(32, 48, 96, 64)),
+            ((1, 1), rect(0, 0, 16, 16)),
+        ];
+        check_bands(
+            &cases,
+            AuxLayout::V2,
+            &[0, 1, 3, 8],
+            std::thread::Builder::new,
+        );
     }
 
     #[test]
     fn bands_whose_threads_fail_to_start_are_converted_by_the_caller() {
         // A stack larger than the address space: every spawn fails.
         let failing = || std::thread::Builder::new().stack_size(1 << 48);
-        check_bands(&[((250, 171), rect(32, 48, 96, 64))], &[1, 3], failing);
+        let case = [((250, 171), rect(32, 48, 96, 64))];
+        check_bands(&case, AuxLayout::V1, &[1, 3], failing);
     }
 
     #[test]
