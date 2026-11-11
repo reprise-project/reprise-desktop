@@ -1,6 +1,7 @@
 use crate::icon::premultiply;
 use crate::raster::Canvas;
-use resvg::usvg::{ImageKind, Size, roxmltree};
+use resvg::tiny_skia::{Rect, Transform};
+use resvg::usvg::{self, Group, ImageKind, Node, Paint, Size, roxmltree};
 use std::borrow::Cow;
 use std::path::Path;
 use std::sync::{Mutex, OnceLock, PoisonError};
@@ -140,17 +141,41 @@ fn shrink_to_ink(c: &Canvas, px: u32) -> Canvas {
     out
 }
 
-/// Render cost limits for an SVG icon: resvg has none, and a peer-named file can ask for
-/// seconds of work in a few hundred bytes. Stock theme icons fit well inside.
+/// Cost limits for an SVG icon: usvg and resvg have none, and a file a sandboxed app ships can
+/// ask for seconds of work in a few hundred bytes.
 pub(super) const SVG_MAX_BYTES: usize = 1 << 20;
-/// Nodes drawn, counting a mask or clip path once per element using it.
-pub(super) const SVG_MAX_NODES: usize = 10_000;
-/// Groups drawn through an offscreen layer.
-pub(super) const SVG_MAX_LAYERS: usize = 1_000;
-/// Filter primitives applied, each over a layer up to 4x the canvas.
-pub(super) const SVG_MAX_PRIMITIVES: usize = 256;
-/// Path segments stroked or filled, dashes included.
-pub(super) const SVG_MAX_SEGMENTS: f32 = 100_000.0;
+/// Work usvg may do to build an SVG's tree, and resvg to draw it at its output size, each in
+/// about nanoseconds of a desktop core; the weights below are resvg 0.49's.
+pub(super) const SVG_MAX_WORK: f64 = 75e6;
+/// Work to parse and convert one element, each `<use>` copy and each reference converted again
+/// counted once more.
+const WORK_ELEMENT: f64 = 4_000.0;
+/// Work to draw one node, besides the pixels it covers.
+const WORK_NODE: f64 = 6_000.0;
+/// Work per pixel: a solid fill, a gradient fill plus each of its stops, and a pattern or
+/// picture drawn bicubic.
+const WORK_FILL: f64 = 3.0;
+const WORK_GRADIENT: f64 = 18.0;
+const WORK_STOP: f64 = 1.0;
+const WORK_BICUBIC: f64 = 90.0;
+/// Work per offscreen pixmap, besides its pixels: an isolated group's layer, and the pixmaps a
+/// clip path and a mask over it each allocate and fill.
+const WORK_LAYER_PASS: f64 = 2_000.0;
+const WORK_CLIP_PASS: f64 = 8_000.0;
+const WORK_MASK_PASS: f64 = 16_000.0;
+/// Work per pixel of a layer (allocated, cleared, drawn back), of a clip path or mask over it
+/// (two pixmaps or more allocated, filled and applied), of a filter on it and of each primitive
+/// the filter applies; resvg blurs a standard deviation under 2 px with a slower filter.
+const WORK_LAYER: f64 = 18.0;
+const WORK_CLIP: f64 = 21.0;
+const WORK_MASK: f64 = 34.0;
+const WORK_FILTER: f64 = 40.0;
+const WORK_PRIMITIVE: f64 = 36.0;
+const WORK_BOX_BLUR: f64 = 165.0;
+const WORK_IIR_BLUR: f64 = 620.0;
+/// Work per pixel row a path edge spans, and per pair of edges the rasterizer sorts.
+const WORK_EDGE_ROW: f64 = 50.0;
+const WORK_EDGE_PAIR: f64 = 0.35;
 /// Embedded PNG, JPEG and SVG pictures drawn, each use of one counted again.
 pub(super) const SVG_MAX_IMAGES: usize = 4;
 /// Pixels of every embedded PNG and JPEG drawn, summed; each is decoded again per use.
@@ -179,45 +204,241 @@ fn raster_size(kind: &ImageKind) -> Option<(u32, u32)> {
     }
 }
 
-/// Why `tree` is refused, or `None` within the limits; the walk stops at the first one passed. An
-/// embedded image is refused unless `images`.
-pub(super) fn svg_over_budget(tree: &resvg::usvg::Tree, images: bool) -> Option<&'static str> {
-    use resvg::usvg::{Group, Node, Path, filter::Kind};
-    #[derive(Default)]
-    struct Cost {
-        no_images: bool,
-        nodes: usize,
-        layers: usize,
-        primitives: usize,
-        segments: f32,
-        images: usize,
-        pixels: usize,
-        over: Option<&'static str>,
-    }
-    impl Cost {
-        fn check(&mut self) {
-            if self.segments > SVG_MAX_SEGMENTS {
-                self.over = Some("too many path segments");
-            } else if self.nodes > SVG_MAX_NODES {
-                self.over = Some("too many nodes");
-            } else if self.layers > SVG_MAX_LAYERS {
-                self.over = Some("too many layers");
-            } else if self.primitives > SVG_MAX_PRIMITIVES {
-                self.over = Some("too many filter primitives");
-            } else if self.images > SVG_MAX_IMAGES {
-                self.over = Some("too many embedded images");
-            }
+/// Why `tree` is refused at `px` square, or `None` within the limits; the walk stops once over.
+/// An embedded image is refused unless `images`.
+pub(super) fn svg_over_budget(tree: &usvg::Tree, images: bool, px: u32) -> Option<&'static str> {
+    let side = px as f32;
+    let size = tree.size();
+    let ts = Transform::from_scale(side / size.width(), side / size.height());
+    let mut cost = Cost {
+        no_images: !images,
+        max_layer: (5.0 * side, 5.0 * side),
+        ..Cost::default()
+    };
+    cost.children(tree.root(), ts, (side, side));
+    cost.over
+}
+
+/// Why [`svg_over_budget`] refuses `tree` when its work does not shrink with the canvas.
+const PAST_BUDGET: &str = "past the render budget";
+
+/// The side `tree` is drawn at for `px`: `px`, or for one past the render budget at `px` the
+/// largest within it down to a quarter of `px`, scaled up after.
+pub(super) fn svg_side(tree: &usvg::Tree, images: bool, px: u32) -> Result<u32, &'static str> {
+    let floor = (px / 4).max(1);
+    let mut side = px;
+    loop {
+        match svg_over_budget(tree, images, side) {
+            None => return Ok(side),
+            Some(PAST_BUDGET) if side > floor => side = (side * 3 / 4).max(floor),
+            Some(why) => return Err(why),
         }
-        fn image(&mut self, kind: &ImageKind) {
-            if let ImageKind::SVG(tree) = kind {
-                // resvg draws it through a layer the size of the canvas; a [`blank`] draws
-                // nothing more.
-                self.layers += 1;
-                self.images += usize::from(tree.root().has_children());
+    }
+}
+
+/// What drawing a tree asks of resvg, mirroring its walk: each node with the device transform it
+/// is drawn with and the size of the pixmap it is drawn into.
+#[derive(Default)]
+struct Cost {
+    no_images: bool,
+    /// resvg's bound on a layer: five times the canvas each way.
+    max_layer: (f32, f32),
+    work: f64,
+    images: usize,
+    pixels: usize,
+    over: Option<&'static str>,
+}
+
+/// A device-space rect's pixels within a `target`-sized pixmap.
+fn area(r: Option<Rect>, target: (f32, f32)) -> f64 {
+    r.map_or(0.0, |r| {
+        r.width().min(target.0) as f64 * r.height().min(target.1) as f64
+    })
+}
+
+impl Cost {
+    fn add(&mut self, work: f64) {
+        self.work += work;
+        if self.work > SVG_MAX_WORK && self.over.is_none() {
+            self.over = Some(PAST_BUDGET);
+        }
+    }
+
+    fn children(&mut self, g: &Group, ts: Transform, target: (f32, f32)) {
+        for n in g.children() {
+            if self.over.is_some() {
                 return;
             }
+            self.add(WORK_NODE);
+            match n {
+                Node::Group(g) => self.group(g, ts, target),
+                Node::Path(p) => self.path(p, ts, target),
+                Node::Image(i) => self.image(i, ts, target),
+                Node::Text(t) => self.group(t.flattened(), ts, target),
+            }
+        }
+    }
+
+    fn group(&mut self, g: &Group, ts: Transform, target: (f32, f32)) {
+        use resvg::usvg::filter::Kind;
+        let ts = ts.pre_concat(g.transform());
+        if !g.should_isolate() {
+            return self.children(g, ts, target);
+        }
+        let Some(bbox) = g.layer_bounding_box().transform(ts) else {
+            return;
+        };
+        let layer = (
+            (bbox.width() + 4.0).min(self.max_layer.0),
+            (bbox.height() + 4.0).min(self.max_layer.1),
+        );
+        let pixels = layer.0 as f64 * layer.1 as f64;
+        self.add(WORK_LAYER_PASS + pixels * WORK_LAYER);
+        let (sx, sy) = ts.get_scale();
+        // resvg skips a standard deviation under 0.05 px on both axes.
+        let blur = |x: f32, y: f32| match (x * sx, y * sy) {
+            (x, y) if x >= 2.0 || y >= 2.0 => pixels * WORK_BOX_BLUR,
+            (x, y) if x >= 0.05 || y >= 0.05 => pixels * WORK_IIR_BLUR,
+            _ => 0.0,
+        };
+        self.add(g.filters().len() as f64 * pixels * WORK_FILTER);
+        for p in g.filters().iter().flat_map(|f| f.primitives()) {
+            self.add(match p.kind() {
+                // Per-pixel cost that grows with an attribute or a nested image; no stock theme
+                // uses them.
+                Kind::ConvolveMatrix(_)
+                | Kind::Morphology(_)
+                | Kind::Turbulence(_)
+                | Kind::DiffuseLighting(_)
+                | Kind::SpecularLighting(_)
+                | Kind::DisplacementMap(_)
+                | Kind::Image(_) => {
+                    self.over = Some("an unbounded filter primitive");
+                    return;
+                }
+                Kind::GaussianBlur(b) => blur(b.std_dev_x().get(), b.std_dev_y().get()),
+                Kind::DropShadow(d) => {
+                    blur(d.std_dev_x().get(), d.std_dev_y().get()) + pixels * WORK_PRIMITIVE
+                }
+                _ => pixels * WORK_PRIMITIVE,
+            });
+        }
+        self.children(g, ts, layer);
+        if let Some(c) = g.clip_path() {
+            self.clip(c, ts, layer);
+        }
+        let mut mask = g.mask();
+        while let Some(m) = mask {
+            self.add(WORK_MASK_PASS + pixels * WORK_MASK);
+            self.children(m.root(), ts, layer);
+            mask = m.mask();
+        }
+    }
+
+    /// A clip path over a `layer`-sized pixmap: resvg fills its paths into a pixmap of the same
+    /// size, and a child group with a clip path of its own into one more.
+    fn clip(&mut self, c: &usvg::ClipPath, ts: Transform, layer: (f32, f32)) {
+        let pixels = layer.0 as f64 * layer.1 as f64;
+        self.add(WORK_CLIP_PASS + pixels * WORK_CLIP);
+        self.clip_children(c.root(), ts.pre_concat(c.transform()), layer);
+        if let Some(c) = c.clip_path() {
+            self.clip(c, ts, layer);
+        }
+    }
+
+    fn clip_children(&mut self, g: &Group, ts: Transform, layer: (f32, f32)) {
+        for n in g.children() {
+            if self.over.is_some() {
+                return;
+            }
+            self.add(WORK_NODE);
+            match n {
+                Node::Path(p) if p.is_visible() && p.fill().is_some() => {
+                    self.add(area(p.bounding_box().transform(ts), layer) * WORK_FILL);
+                    self.edges(p, ts, layer);
+                }
+                Node::Text(t) => self.clip_children(t.flattened(), ts, layer),
+                Node::Group(g) => {
+                    let ts = ts.pre_concat(g.transform());
+                    if let Some(c) = g.clip_path() {
+                        let pixels = layer.0 as f64 * layer.1 as f64;
+                        self.add(WORK_LAYER_PASS + pixels * WORK_LAYER);
+                        self.clip_children(g, ts, layer);
+                        self.clip(c, ts, layer);
+                    } else {
+                        self.clip_children(g, ts, layer);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn path(&mut self, p: &usvg::Path, ts: Transform, target: (f32, f32)) {
+        if !p.is_visible() {
+            return;
+        }
+        if let Some(fill) = p.fill() {
+            let covered = area(p.bounding_box().transform(ts), target);
+            self.paint(fill.paint(), ts, covered);
+            self.edges(p, ts, target);
+        }
+        if let Some(stroke) = p.stroke() {
+            let rows = rows(p, ts, target.1);
+            let covered = area(p.stroke_bounding_box().transform(ts), target);
+            self.paint(stroke.paint(), ts, covered);
+            // The stroker outlines each side of every segment, a dash a closed outline of its own.
+            let n = segments(p);
+            let (sx, sy) = ts.get_scale();
+            let width = (stroke.width().get() * sx.max(sy)).min(target.1) as f64;
+            let rows = 2.0 * rows + n * 2.0 * (width + 1.0);
+            self.add(rows * WORK_EDGE_ROW + 4.0 * n * n * WORK_EDGE_PAIR);
+        }
+    }
+
+    /// The rasterizer's work on `p`'s fill outline.
+    fn edges(&mut self, p: &usvg::Path, ts: Transform, target: (f32, f32)) {
+        let n = p.data().verbs().len() as f64;
+        self.add(rows(p, ts, target.1) * WORK_EDGE_ROW + n * n * WORK_EDGE_PAIR);
+    }
+
+    fn paint(&mut self, paint: &Paint, ts: Transform, covered: f64) {
+        let gradient =
+            |stops: usize| WORK_NODE + covered * (WORK_GRADIENT + stops as f64 * WORK_STOP);
+        match paint {
+            Paint::Color(_) => self.add(covered * WORK_FILL),
+            Paint::LinearGradient(g) => self.add(gradient(g.stops().len())),
+            Paint::RadialGradient(g) => self.add(gradient(g.stops().len())),
+            Paint::Pattern(pattern) => {
+                // resvg draws the tile at the device scale, whatever its size.
+                let (sx, sy) = ts.pre_concat(pattern.transform()).get_scale();
+                let rect = pattern.rect();
+                let tile = ((rect.width() * sx).round(), (rect.height() * sy).round());
+                let pixels = tile.0 as f64 * tile.1 as f64;
+                self.add(WORK_LAYER_PASS + pixels * WORK_LAYER + covered * WORK_BICUBIC);
+                self.children(pattern.root(), Transform::from_scale(sx, sy), tile);
+            }
+        }
+    }
+
+    fn image(&mut self, image: &usvg::Image, ts: Transform, target: (f32, f32)) {
+        if !image.is_visible() {
+            return;
+        }
+        if self.no_images {
+            self.over = Some("an embedded image");
+            return;
+        }
+        let kind = image.kind();
+        if let ImageKind::SVG(tree) = kind {
+            // resvg draws it through a layer the size of the pixmap; a [`blank`] draws nothing
+            // more.
+            self.images += usize::from(tree.root().has_children());
+            self.add(WORK_LAYER_PASS + target.0 as f64 * target.1 as f64 * WORK_LAYER);
+            self.children(tree.root(), ts, target);
+        } else {
             self.images += 1;
-            self.over = match raster_size(kind) {
+            let refused = match raster_size(kind) {
                 None => Some("an unreadable embedded image"),
                 Some((w, h)) if w > MAX_ICON_DIMENSION || h > MAX_ICON_DIMENSION => {
                     Some("an embedded image past the size limit")
@@ -228,79 +449,38 @@ pub(super) fn svg_over_budget(tree: &resvg::usvg::Tree, images: bool) -> Option<
                         .then_some("embedded pictures past the pixel budget")
                 }
             };
+            if refused.is_some() {
+                self.over = refused;
+            }
+            let drawn = area(image.bounding_box().transform(ts), target);
+            self.add(drawn * WORK_BICUBIC);
+        }
+        if self.images > SVG_MAX_IMAGES {
+            self.over = Some("too many embedded images");
         }
     }
-    /// The segments `p` draws, plus dashes counted along the control polygon (never shorter
-    /// than the curve).
-    fn segments(p: &Path) -> f32 {
-        let data = p.data();
-        let mut n = data.verbs().len() as f32;
-        if let Some(dash) = p.stroke().and_then(|s| s.dasharray()) {
-            let period: f32 = dash.iter().sum();
-            let length: f32 = data.points().windows(2).map(|w| w[0].distance(w[1])).sum();
-            n += length / period.max(f32::MIN_POSITIVE) * dash.len() as f32;
-        }
-        n
+}
+
+/// The segments `p` draws, plus dashes counted along the control polygon (never shorter than
+/// the curve).
+fn segments(p: &usvg::Path) -> f64 {
+    let data = p.data();
+    let mut n = data.verbs().len() as f64;
+    if let Some(dash) = p.stroke().and_then(|s| s.dasharray()) {
+        let period: f32 = dash.iter().sum();
+        let length: f32 = data.points().windows(2).map(|w| w[0].distance(w[1])).sum();
+        n += (length / period.max(f32::MIN_POSITIVE)) as f64 * dash.len() as f64;
     }
-    fn walk(g: &Group, c: &mut Cost) {
-        c.nodes += 1;
-        if g.opacity().get() < 1.0
-            || g.mask().is_some()
-            || g.clip_path().is_some()
-            || !g.filters().is_empty()
-        {
-            c.layers += 1;
-        }
-        for p in g.filters().iter().flat_map(|f| f.primitives()) {
-            c.primitives += 1;
-            // Per-pixel cost that grows with an attribute or a nested image; no stock theme
-            // uses them.
-            if matches!(
-                p.kind(),
-                Kind::ConvolveMatrix(_)
-                    | Kind::Morphology(_)
-                    | Kind::Turbulence(_)
-                    | Kind::DiffuseLighting(_)
-                    | Kind::SpecularLighting(_)
-                    | Kind::DisplacementMap(_)
-                    | Kind::Image(_)
-            ) {
-                c.over = Some("an unbounded filter primitive");
-            }
-        }
-        c.check();
-        for n in g.children() {
-            if c.over.is_some() {
-                return;
-            }
-            match n {
-                Node::Group(child) => walk(child, c),
-                other => {
-                    c.nodes += 1;
-                    match other {
-                        Node::Path(p) => c.segments += segments(p),
-                        Node::Image(_) if c.no_images => c.over = Some("an embedded image"),
-                        Node::Image(image) => c.image(image.kind()),
-                        _ => {}
-                    }
-                    if c.over.is_none() {
-                        c.check();
-                    }
-                }
-            }
-            n.subroots(|root| {
-                if c.over.is_none() {
-                    walk(root, c)
-                }
-            });
-        }
-    }
-    let mut cost = Cost {
-        no_images: !images,
-        ..Cost::default()
+    n
+}
+
+/// Device pixel rows `p`'s edges span, each at most `height`, along its control polygon.
+fn rows(p: &usvg::Path, ts: Transform, height: f32) -> f64 {
+    let dy = |[a, b]: &[resvg::tiny_skia::Point; 2]| {
+        let dy = ts.ky * (b.x - a.x) + ts.sy * (b.y - a.y);
+        dy.abs().min(height) as f64 + 1.0
     };
-    walk(tree.root(), &mut cost);
-    cost.over
+    p.data().points().array_windows().map(dy).sum()
 }
 
 #[cfg(test)]
@@ -333,9 +513,10 @@ struct Hoisted {
     pictures: Vec<Picture>,
 }
 
-/// Parses `text` as usvg does once its entities pass [`entities_over_budget`]: roxmltree
-/// expands every reference again, with no limit.
-fn parse_xml(text: &str) -> Result<roxmltree::Document<'_>, &'static str> {
+/// Parses `text` as usvg does once its entities pass [`entities_over_budget`] (roxmltree
+/// expands every reference again, with no limit), refusing a document usvg would build too much
+/// from.
+pub(super) fn parse_xml(text: &str) -> Result<roxmltree::Document<'_>, &'static str> {
     if let Some(why) = entities_over_budget(text) {
         return Err(why);
     }
@@ -343,7 +524,148 @@ fn parse_xml(text: &str) -> Result<roxmltree::Document<'_>, &'static str> {
         allow_dtd: true,
         ..Default::default()
     };
-    roxmltree::Document::parse_with_options(text, options).map_err(|_| "bad xml")
+    let doc = roxmltree::Document::parse_with_options(text, options).map_err(|_| "bad xml")?;
+    // A reference too deep to price counts as infinite, and NaN once multiplied by no vertices.
+    let work = built_elements(&doc) * WORK_ELEMENT;
+    if work.is_nan() || work > SVG_MAX_WORK {
+        return Err("too many elements once uses and references expand");
+    }
+    Ok(doc)
+}
+
+/// Elements usvg builds from `doc`, over-estimated: a `<use>` copies its target, and a
+/// `url(#id)` or `href` converts its target again for each element under the one naming it (each
+/// vertex, for a marker). A `<style>` reference counts against every element.
+fn built_elements(doc: &roxmltree::Document) -> f64 {
+    use std::collections::HashMap;
+    type Node<'a, 'i> = roxmltree::Node<'a, 'i>;
+    /// Elements under a node, what usvg builds from them, and the vertices a marker can be drawn
+    /// at.
+    #[derive(Clone, Copy, Default)]
+    struct Built {
+        elements: f64,
+        built: f64,
+        vertices: f64,
+    }
+    struct Walk<'a, 'i> {
+        ids: HashMap<&'a str, Node<'a, 'i>>,
+        /// None while a walk of the node is under way.
+        seen: HashMap<roxmltree::NodeId, Option<Built>>,
+    }
+    const DEFINITIONS: [&str; 9] = [
+        "defs",
+        "clipPath",
+        "filter",
+        "linearGradient",
+        "marker",
+        "mask",
+        "pattern",
+        "radialGradient",
+        "symbol",
+    ];
+    /// The ids `value` names through `url(#id)`.
+    fn urls(value: &str) -> impl Iterator<Item = &str> {
+        value.split("url(").skip(1).filter_map(|r| {
+            let r = r.split(')').next()?.trim().trim_matches(['"', '\'']);
+            r.strip_prefix('#')
+        })
+    }
+    fn numbers(v: &str) -> f64 {
+        let tokens = v.split(|c: char| !(c.is_ascii_digit() || c == '.'));
+        tokens.filter(|t| !t.is_empty()).count() as f64
+    }
+    impl<'a, 'i> Walk<'a, 'i> {
+        fn walk(&mut self, n: Node<'a, 'i>, depth: usize) -> Built {
+            match self.seen.get(&n.id()) {
+                Some(Some(known)) => return *known,
+                // A reference back into itself, which usvg skips.
+                Some(None) => return Built::default(),
+                None if depth > 1024 => {
+                    return Built {
+                        built: f64::INFINITY,
+                        ..Built::default()
+                    };
+                }
+                None => {}
+            }
+            self.seen.insert(n.id(), None);
+            let mut b = Built {
+                elements: 1.0,
+                built: 1.0,
+                vertices: 0.0,
+            };
+            for c in n.children().filter(|c| c.is_element()) {
+                let built = self.walk(c, depth + 1);
+                b.elements += built.elements;
+                b.vertices += built.vertices;
+                // A definition is converted where it is named, not where it stands.
+                b.built += if DEFINITIONS.contains(&c.tag_name().name()) {
+                    built.elements
+                } else {
+                    built.built
+                };
+            }
+            let (mut refs, mut marked) = (0.0, 0.0);
+            for a in n.attributes() {
+                if matches!(a.name(), "d" | "points") {
+                    b.vertices += numbers(a.value()) / 2.0 + 1.0;
+                }
+                let copy = a.name() == "href" && n.has_tag_name("use");
+                // Each declaration of a `style` on its own, so `marker:none` names no marker.
+                let declarations: Vec<(&str, &str)> = match a.name() {
+                    "style" => (a.value().split(';'))
+                        .filter_map(|d| d.split_once(':'))
+                        .map(|(k, v)| (k.trim(), v))
+                        .collect(),
+                    name => vec![(name, a.value())],
+                };
+                for (name, value) in declarations {
+                    let ids: Vec<&str> = if name == "href" {
+                        value.strip_prefix('#').into_iter().collect()
+                    } else {
+                        urls(value).collect()
+                    };
+                    for id in ids {
+                        let Some(t) = self.ids.get(id).copied() else {
+                            continue;
+                        };
+                        let t = self.walk(t, depth + 1);
+                        if copy {
+                            b.elements += t.elements;
+                            b.built += t.built;
+                            b.vertices += t.vertices;
+                        } else if name.starts_with("marker") {
+                            marked += t.built;
+                        } else {
+                            refs += t.built;
+                        }
+                    }
+                }
+            }
+            b.built += refs * b.elements + marked * b.vertices;
+            self.seen.insert(n.id(), Some(b));
+            b
+        }
+    }
+    let mut ids = HashMap::new();
+    for n in doc.descendants() {
+        if let Some(id) = n.attribute("id") {
+            ids.entry(id).or_insert(n);
+        }
+    }
+    let mut w = Walk {
+        ids,
+        seen: HashMap::new(),
+    };
+    let root = w.walk(doc.root_element(), 0);
+    let styles = doc.descendants().filter(|n| n.has_tag_name("style"));
+    let mut built = root.built;
+    for id in styles.flat_map(|n| n.text()).flat_map(urls) {
+        if let Some(t) = w.ids.get(id).copied() {
+            built += w.walk(t, 0).built * (root.elements + root.vertices);
+        }
+    }
+    built
 }
 
 /// Why the entities `text` declares are refused: a value holding markup or a reference, or more
@@ -430,7 +752,6 @@ fn decode_picture(href: &str) -> Decoded {
 /// The picture a `data:` href holds, as usvg reads it, and its PNG or JPEG pixels, setting `size`
 /// once read; None for GIF, WebP, a side past 1024, or an SVG embedding pictures or over budget.
 fn drawn_picture(href: &str, size: &mut Option<Size>) -> Option<(ImageKind, usize)> {
-    use resvg::usvg;
     #[cfg(test)]
     SPENT.with(|s| s.set((s.get().0 + 1, s.get().1)));
     let url = data_url::DataUrl::process(href).ok()?;
@@ -453,7 +774,8 @@ fn drawn_picture(href: &str, size: &mut Option<Size>) -> Option<(ImageKind, usiz
         }
         let tree = usvg::Tree::from_xmltree(&doc, &no_pictures).ok()?;
         *size = Some(tree.size());
-        return svg_over_budget(&tree, true)
+        // At 1 px only its nodes count: the icon's own walk prices its pixels where it is drawn.
+        return svg_over_budget(&tree, true, 1)
             .is_none()
             .then_some((ImageKind::SVG(tree), 0));
     }
@@ -467,7 +789,6 @@ fn drawn_picture(href: &str, size: &mut Option<Size>) -> Option<(ImageKind, usiz
 /// An SVG of `size` (1x1 when unknown) that draws nothing. It stands in for a picture left out:
 /// usvg would drop the element, leaving a filter or mask over it no box and logging a warning.
 fn blank(size: Option<Size>) -> Option<ImageKind> {
-    use resvg::usvg;
     let (w, h) = size.map_or((1.0, 1.0), |s| (s.width(), s.height()));
     let text = format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}"/>"#);
     let tree = usvg::Tree::from_str(&text, &usvg::Options::default()).ok()?;
@@ -496,7 +817,6 @@ fn svg_tree(text: &str, images: bool) -> Result<resvg::usvg::Tree, String> {
 
 /// usvg's tree of `doc`, whose stand-in hrefs index `pictures`.
 fn tree_with(doc: &roxmltree::Document, pictures: &[Picture]) -> Result<resvg::usvg::Tree, String> {
-    use resvg::usvg;
     #[derive(Default)]
     struct Spent {
         calls: usize,
@@ -558,10 +878,6 @@ fn decode_svg(path: &Path, bytes: &[u8], px: u32, images: bool) -> Option<Canvas
             return None;
         }
     };
-    if let Some(why) = svg_over_budget(&tree, images) {
-        log::warn!("icon {}: svg refused: {why}", path.display());
-        return None;
-    }
     let size = tree.size();
     let bound = MAX_ICON_DIMENSION as f32;
     if size.width() <= 0.0 || size.height() <= 0.0 || size.width() > bound || size.height() > bound
@@ -574,14 +890,35 @@ fn decode_svg(path: &Path, bytes: &[u8], px: u32, images: bool) -> Option<Canvas
         );
         return None;
     }
-    let mut pixmap = tiny_skia::Pixmap::new(px, px)?;
-    let sx = px as f32 / size.width();
-    let sy = px as f32 / size.height();
+    let side = match svg_side(&tree, images, px) {
+        Ok(side) => side,
+        Err(why) => {
+            log::warn!("icon {}: svg refused at {px} px: {why}", path.display());
+            return None;
+        }
+    };
+    if side < px {
+        log::debug!("icon {}: drawn at {side} px for {px}", path.display());
+    }
+    let mut pixmap = tiny_skia::Pixmap::new(side, side)?;
+    let sx = side as f32 / size.width();
+    let sy = side as f32 / size.height();
     resvg::render(
         &tree,
         tiny_skia::Transform::from_scale(sx, sy),
         &mut pixmap.as_mut(),
     );
+    if side < px {
+        let mut full = tiny_skia::Pixmap::new(px, px)?;
+        let paint = tiny_skia::PixmapPaint {
+            quality: tiny_skia::FilterQuality::Bilinear,
+            ..Default::default()
+        };
+        let grow = px as f32 / side as f32;
+        let grow = tiny_skia::Transform::from_scale(grow, grow);
+        full.draw_pixmap(0, 0, pixmap.as_ref(), &paint, grow, None);
+        pixmap = full;
+    }
     let mut c = Canvas::new(px, px);
     for (i, p) in pixmap.pixels().iter().enumerate() {
         c.pixels[i] = (p.alpha() as u32) << 24
