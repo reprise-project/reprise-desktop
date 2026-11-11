@@ -153,15 +153,34 @@ impl<R: Renderer, D> Scene<R, D> {
         &self.outputs
     }
 
+    /// The outputs drawing `node`: those its extents overlap, less those it or an ancestor is
+    /// hidden in ([`Scene::set_hidden_in`]).
     pub fn outputs_of(&self, node: impl Into<NodeId>) -> Vec<Output> {
+        let node = node.into();
         let Some(e) = self.extents(node) else {
             return Vec::new();
         };
         self.outputs
             .iter()
             .filter(|o| output_rect(o).is_some_and(|r| r.overlaps(e)))
+            .filter(|o| !self.hidden_on(node, o))
             .cloned()
             .collect()
+    }
+
+    /// Whether `node` or an ancestor is hidden in `output`'s view ([`Scene::set_hidden_in`]).
+    pub(crate) fn hidden_on(&self, node: NodeId, output: &Output) -> bool {
+        let Some(area) = output_rect(output) else {
+            return false;
+        };
+        let mut at = Some(node);
+        while let Some(n) = at.and_then(|id| self.node(id)) {
+            if n.hidden_over(area) {
+                return true;
+            }
+            at = n.parent.map(|p| p.0);
+        }
+        false
     }
 
     /// Move `node` to (`x`, `y`): the outputs it overlapped before or overlaps after, the ones
@@ -180,13 +199,15 @@ impl<R: Renderer, D> Scene<R, D> {
 
     /// The output showing the largest part of `node`, ties to the first added; `None` if none shows it.
     pub fn primary_output(&self, node: impl Into<NodeId>) -> Option<Output> {
-        self.primary_in(self.extents(node)?)
+        let node = node.into();
+        self.primary_in(node, self.extents(node)?)
     }
 
-    /// The output showing the largest part of `e` (layout), ties to the first added.
-    pub(crate) fn primary_in(&self, e: Rectangle<i32, Logical>) -> Option<Output> {
+    /// The output showing the largest part of `e` (layout), ties to the first added, among
+    /// those `node` is not hidden on.
+    pub(crate) fn primary_in(&self, node: NodeId, e: Rectangle<i32, Logical>) -> Option<Output> {
         let mut best: Option<(i64, &Output)> = None;
-        for o in &self.outputs {
+        for o in self.outputs.iter().filter(|o| !self.hidden_on(node, o)) {
             let Some(i) = output_rect(o).and_then(|r| r.intersection(e)) else {
                 continue;
             };

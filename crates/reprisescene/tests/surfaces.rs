@@ -414,6 +414,43 @@ fn a_surface_is_shown_by_the_outputs_it_overlaps_and_those_it_was_last_drawn_on(
 }
 
 #[test]
+fn a_surface_hidden_on_an_output_is_not_shown_by_it_and_takes_no_frames_from_it() {
+    let mut w = World::new();
+    let surface = w.surface();
+    let mut scene = Scene::<DummyRenderer>::new();
+    scene.add_output(&w.left);
+    scene.add_output(&w.right);
+    let t = scene.tree_create(scene.root());
+    let s = scene.surface_create(t, surface.clone());
+    scene.set_position(s, 70, 10);
+    assert_eq!(w.rendered(&mut scene), ["enter L", "enter R"]);
+    scene.set_hidden_in(t, Some(Rectangle::new((0, 0).into(), (100, 100).into())));
+    assert_eq!(
+        scene.outputs_showing(&surface),
+        Some(vec![w.right.clone()]),
+        "the left output drew it last frame but draws it no more"
+    );
+    assert_eq!(scene.outputs_of(s), vec![w.right.clone()]);
+    assert_eq!(scene.primary_output(s), Some(w.right.clone()));
+    assert_eq!(
+        w.rendered(&mut scene),
+        [] as [String; 0],
+        "it stays on both outputs"
+    );
+    let at = Duration::from_millis(16);
+    scene.send_frames(&scene.surface_pass(&w.left), at, None);
+    assert_eq!(w.events(), [] as [String; 0], "no frame from the left");
+    scene.send_frames(&scene.surface_pass(&w.right), at, None);
+    assert_eq!(w.events(), ["frame"]);
+    scene.set_hidden_in(t, None);
+    assert_eq!(
+        scene.outputs_showing(&surface),
+        Some(vec![w.left.clone(), w.right.clone()])
+    );
+    assert_eq!(scene.primary_output(s), Some(w.left.clone()));
+}
+
+#[test]
 fn removing_an_output_makes_its_surfaces_leave() {
     let mut w = World::new();
     let surface = w.surface();
