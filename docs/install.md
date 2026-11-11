@@ -381,6 +381,11 @@ desktop and stays out of the way when it's missing.
   running `gnome-keyring-daemon --unlock`, typing the new password and
   Ctrl+D, or by one password login. Each autologin session then asks for
   that password the first time a program reads a secret.
+- kwallet-pam, for a KWallet that opens at login. The login manager's PAM
+  file (SDDM's or `reprise-login`) hands the login password to
+  pam_kwallet5, and autostart runs `pam_kwallet_init`. The wallet must be
+  named `kdewallet` and use the login password with classic (Blowfish)
+  encryption. The lock screen does not open a wallet left closed.
 - fprintd, for a fingerprint at the lock screen (enroll with
   `fprintd-enroll`) through the `reprise-fingerprint` PAM service, which
   keeps an account pam_faillock locked locked. The admin prompt takes one
