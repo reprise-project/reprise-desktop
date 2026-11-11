@@ -20,6 +20,9 @@ const IDR_INTERVAL: u32 = 300;
 const AVC444_REFS: i32 = 2;
 /// NVENC sessions a GeForce driver runs at once.
 const NVENC_SESSIONS: usize = 8;
+/// P pictures a change is still corrected in: at a constant QP an encoder leaves part of a
+/// change, such as a moved window's old edge, to the next pictures, outside their damage.
+const CARRIED: usize = 2;
 
 pub struct Ffmpeg {
     backend: Backend,
@@ -52,6 +55,9 @@ struct Open {
     /// Pictures since the last IDR.
     since_idr: u32,
     pts: i64,
+    /// The damage of the last [`CARRIED`] P pictures, oldest first, which the next picture's
+    /// regions cover too.
+    carried: Vec<Vec<Rect>>,
 }
 
 struct AuxEncoder {
@@ -207,6 +213,7 @@ impl Ffmpeg {
             aux,
             since_idr: 0,
             pts: 0,
+            carried: Vec::new(),
         })
     }
 
@@ -269,15 +276,23 @@ impl Ffmpeg {
             false => (hwmap::even(frame.size), hwmap::even(target)),
         };
         let damage = scaled(&frame.damage, size, target);
-        let regions = |n| match avc444 {
-            true => avc444::regions(target, n, &damage),
-            false => regions(target, n, &damage),
-        };
         let current =
             |o: &&mut Open| o.input.fits(size, target, fourcc, avc444) && o.quality == self.quality;
-        let n = match self.open.as_mut().filter(current) {
-            Some(o) if !keyframe && o.since_idr + 1 < IDR_INTERVAL => o.since_idr + 1,
-            _ => 0,
+        let (n, carried) = match self.open.as_mut().filter(current) {
+            Some(o) if !keyframe && o.since_idr + 1 < IDR_INTERVAL => {
+                (o.since_idr + 1, std::mem::take(&mut o.carried))
+            }
+            _ => (0, Vec::new()),
+        };
+        let mut changed = damage.clone();
+        for r in carried.iter().flatten() {
+            if !changed.contains(r) {
+                changed.push(*r);
+            }
+        }
+        let regions = |n| match avc444 {
+            true => avc444::regions(target, n, &changed),
+            false => regions(target, n, &changed),
         };
         if regions(n).is_empty() {
             return Ok(Encoded::Nothing);
@@ -363,6 +378,15 @@ impl Ffmpeg {
             }
         };
         open.since_idr = coded.0;
+        open.carried = match coded.0 {
+            0 => Vec::new(),
+            _ => {
+                let mut carried = carried;
+                carried.push(damage);
+                let old = carried.len().saturating_sub(CARRIED);
+                carried.split_off(old)
+            }
+        };
         Ok(coded.1)
     }
 }
@@ -811,13 +835,26 @@ pub(crate) mod tests {
         );
         let picture = decoder.decode(&data);
         assert_eq!((picture.width(), picture.height()), (64, 34));
+        let last_column = Rect {
+            x: 64,
+            y: 0,
+            width: 1,
+            height: 35,
+        };
+        assert!(
+            matches!(
+                encoder.encode(&frame(size, 1, vec![last_column]), false),
+                Ok(Encoded::Nothing)
+            ),
+            "damage only outside the coded picture codes nothing"
+        );
         let edge = Rect {
             x: 60,
             y: 30,
             width: 5,
             height: 5,
         };
-        let (_, regions) = avc(encoder.encode(&frame(size, 1, vec![edge]), false).unwrap());
+        let (_, regions) = avc(encoder.encode(&frame(size, 2, vec![edge]), false).unwrap());
         assert_eq!(
             regions,
             vec![Rect {
@@ -828,18 +865,107 @@ pub(crate) mod tests {
             }],
             "damage is clipped to the coded picture"
         );
-        let last_column = Rect {
-            x: 64,
-            y: 0,
-            width: 1,
-            height: 35,
+    }
+
+    /// The size of the window [`dragged_desktop`] draws.
+    const DRAGGED: (u32, u32) = (120, 90);
+
+    /// A smooth gradient with soft light curves, and a window at `at`: a light frame, a blue
+    /// title bar and light text on black.
+    fn dragged_desktop(x: u32, y: u32, at: (u32, u32)) -> (u8, u8, u8) {
+        let (wx, wy) = (x.wrapping_sub(at.0), y.wrapping_sub(at.1));
+        let (w, h) = DRAGGED;
+        if wx < w && wy < h {
+            return match (wx, wy) {
+                (0, _) | (_, 0) => (255, 255, 255),
+                _ if wx == w - 1 || wy == h - 1 => (64, 64, 64),
+                (_, 1..=18) => (10, 36, (106 + wx) as u8),
+                _ if wx % 6 < 4 && wy % 12 < 8 && (wx / 6 * 7 + wy / 12 * 3) % 5 < 3 => {
+                    (200, 200, 200)
+                }
+                _ => (12, 12, 12),
+            };
+        }
+        let (fx, fy) = (f64::from(x), f64::from(y));
+        let curve = (0..3)
+            .map(|k| {
+                let k = f64::from(k);
+                let centre = 40.0 + 60.0 * k + 18.0 * (fx / (31.0 + 9.0 * k) + k).sin();
+                (1.0 - (fy - centre).abs() / 1.5).max(0.0)
+            })
+            .fold(0.0, f64::max);
+        let mix = |base: f64, light: f64| (base + (light - base) * curve * 0.7) as u8;
+        (
+            mix(60.0 + fx / 3.0, 235.0),
+            mix(40.0 + fy / 2.0, 235.0),
+            mix(170.0 - fx / 4.0, 240.0),
+        )
+    }
+
+    #[test]
+    fn a_dragged_windows_old_edges_leave_no_streaks_on_the_client() {
+        silence();
+        let mut encoder =
+            Ffmpeg::new(Backend::X264, Path::new(RENDER_NODE), 60, Quality::Speed).unwrap();
+        let mut decoder = Decoder::new();
+        let at = |dx: u32| (8 + dx, 8 + dx / 3);
+        let window = |dx: u32| Rect {
+            x: at(dx).0,
+            y: at(dx).1,
+            width: DRAGGED.0,
+            height: DRAGGED.1,
         };
+        let size = (320, 192);
+        let path: Vec<u32> = (0..=192)
+            .step_by(16)
+            .chain((0..=192).rev().step_by(16))
+            .collect();
+        let mut client = vec![[0u8; 3]; (size.0 * size.1) as usize];
+        let mut decoded = None;
+        let mut before = path[0];
+        for (i, &dx) in path.iter().enumerate() {
+            let (mut frame, _) = picture(size, |x, y| dragged_desktop(x, y, at(dx)));
+            if i > 0 {
+                frame.damage = vec![window(before), window(dx)];
+            }
+            before = dx;
+            let (data, regions) = avc(encoder.encode(&frame, i == 0).unwrap());
+            let picture = decoder.decode(&data);
+            {
+                let shown = shown_420(&picture);
+                for r in &regions {
+                    for y in r.y..r.y + r.height {
+                        for x in r.x..r.x + r.width {
+                            client[(y * size.0 + x) as usize] = shown(x, y);
+                        }
+                    }
+                }
+            }
+            decoded = Some(picture);
+        }
+        let decoded = decoded.expect("pictures");
+        let shown = shown_420(&decoded);
+        let last = at(*path.last().unwrap());
+        let off = |p: [u8; 3], x: u32, y: u32| {
+            let (r, g, b) = dragged_desktop(x, y, last);
+            [r, g, b]
+                .iter()
+                .zip(p)
+                .map(|(&s, v)| s.abs_diff(v))
+                .max()
+                .unwrap()
+        };
+        let pixels = || (0..size.1).flat_map(|y| (0..size.0).map(move |x| (x, y)));
+        let client_off = pixels()
+            .filter(|&(x, y)| off(client[(y * size.0 + x) as usize], x, y) > 16)
+            .count();
+        let decoded_off = pixels()
+            .filter(|&(x, y)| off(shown(x, y), x, y) > 16)
+            .count();
         assert!(
-            matches!(
-                encoder.encode(&frame(size, 2, vec![last_column]), false),
-                Ok(Encoded::Nothing)
-            ),
-            "damage only outside the coded picture codes nothing"
+            client_off <= decoded_off,
+            "the client, which copies only the regions, is as close to the screen as the last \
+             decoded picture: {client_off} pixels off against {decoded_off}"
         );
     }
 
@@ -1179,8 +1305,24 @@ pub(crate) mod tests {
         );
         decoder.decode(&main);
         decoder.decode(&aux.unwrap());
+        let mut before: Option<(Paint, Vec<Rect>)> = None;
         for (what, pixel, damage, needs_aux) in steps {
-            let (mut frame, _) = picture(size, pixel);
+            if let Some((pixel, regions)) = before.take() {
+                let (mut still, _) = picture(size, pixel);
+                still.damage.clear();
+                for _ in 0..CARRIED {
+                    let (main, aux, again) = views(encoder.encode(&still, false).unwrap());
+                    assert_eq!(
+                        again, regions,
+                        "the pictures after a change send its regions"
+                    );
+                    decoder.decode(&main);
+                    if let Some(aux) = aux {
+                        decoder.decode(&aux);
+                    }
+                }
+            }
+            let (mut frame, _) = picture(size, &pixel);
             frame.damage = vec![damage];
             let (main, aux, regions) = views(encoder.encode(&frame, false).unwrap());
             assert_eq!(aux.is_some(), needs_aux, "{what}");
@@ -1195,6 +1337,7 @@ pub(crate) mod tests {
             if let Some(aux) = aux {
                 decoder.decode(&aux);
             }
+            before = Some((pixel, regions));
         }
     }
 
