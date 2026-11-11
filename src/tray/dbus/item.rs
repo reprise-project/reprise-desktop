@@ -37,8 +37,9 @@ async fn prop_body(proxy: &Proxy<'_>, name: &str) -> Option<Body> {
 const NAMED_WAIT: Duration = Duration::from_secs(10);
 const NAMED_WITHIN: Duration = Duration::from_secs(2);
 
-/// Two threads, so a hung read leaves one; the queue holds one fetch per registered item.
-static DECODERS: LazyLock<Decoders> = LazyLock::new(|| {
+/// Two threads for tray items' names and notification pictures, so a hung read leaves one; the
+/// queue holds one fetch per registered item.
+pub(super) static DECODERS: LazyLock<Decoders> = LazyLock::new(|| {
     Decoders::new(Limits {
         threads: 2,
         queue: MAX_REGISTRATIONS,
