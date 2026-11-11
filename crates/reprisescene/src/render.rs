@@ -63,15 +63,15 @@ impl View {
 /// How one walk of the scene goes: the view, which nodes it keeps and
 /// whether the hoist applies.
 #[derive(Clone, Copy)]
-struct Pass<'a> {
-    view: &'a View,
-    mode: Mode<'a>,
-    hoist: bool,
+pub(crate) struct Pass<'a> {
+    pub(crate) view: &'a View,
+    pub(crate) mode: Mode<'a>,
+    pub(crate) hoist: bool,
 }
 
 /// Which nodes a walk keeps.
 #[derive(Clone, Copy)]
-enum Mode<'a> {
+pub(crate) enum Mode<'a> {
     /// Everything shown: the screen.
     Screen,
     /// The screen without the subtrees [`Scene::set_in_pictures`] left
@@ -483,13 +483,15 @@ where
         );
         out
     }
+}
 
+impl<R: Renderer, D> Scene<R, D> {
     /// Visit the leaves `pass` keeps under `id` front to back (the top
     /// child first), `origin` being its parent's layout position, `alpha`
     /// the opacity above it and `left_out` whether an ancestor is left out
     /// of the backdrop. `clip` is the ancestors' clip, layout.
     #[allow(clippy::too_many_arguments)]
-    fn walk(
+    pub(crate) fn walk(
         &self,
         id: NodeId,
         origin: Point<i32, Logical>,
@@ -613,7 +615,13 @@ where
         }
         visit(id, n, pos, alpha, left_out, clip);
     }
+}
 
+impl<R, D> Scene<R, D>
+where
+    R: Renderer + ImportAll + ImportMem,
+    R::TextureId: Texture + Clone + Send + 'static,
+{
     /// The elements of leaf `n` at layout position `pos` and opacity
     /// `alpha` in `view`, cut to `clip` (layout).
     fn leaf_element(

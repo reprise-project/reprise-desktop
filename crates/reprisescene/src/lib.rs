@@ -16,9 +16,10 @@
 //! [`Scene::take_presentation_feedback`] serve the client surfaces on it,
 //! from one [`Scene::surface_pass`].
 //!
-//! Occlusion in the primary output uses the largest overlap of the node's
-//! box, not of its visible part.
+//! A surface wholly under opaque leaves takes no frames from that output; the
+//! primary output is the one drawing it whose overlap with its box is largest.
 
+mod cover;
 mod node;
 mod query;
 mod render;

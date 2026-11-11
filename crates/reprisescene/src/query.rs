@@ -13,6 +13,7 @@ use smithay::{
 
 use crate::{
     Scene,
+    cover::Covered,
     node::{Content, Node, NodeId},
 };
 
@@ -200,14 +201,20 @@ impl<R: Renderer, D> Scene<R, D> {
     /// The output showing the largest part of `node`, ties to the first added; `None` if none shows it.
     pub fn primary_output(&self, node: impl Into<NodeId>) -> Option<Output> {
         let node = node.into();
-        self.primary_in(node, self.extents(node)?)
+        self.primary_in(node, self.extents(node)?, &self.covered())
     }
 
     /// The output showing the largest part of `e` (layout), ties to the first added, among
-    /// those `node` is not hidden on.
-    pub(crate) fn primary_in(&self, node: NodeId, e: Rectangle<i32, Logical>) -> Option<Output> {
+    /// those `node` is neither hidden on nor `covered` on.
+    pub(crate) fn primary_in(
+        &self,
+        node: NodeId,
+        e: Rectangle<i32, Logical>,
+        covered: &Covered,
+    ) -> Option<Output> {
         let mut best: Option<(i64, &Output)> = None;
-        for o in self.outputs.iter().filter(|o| !self.hidden_on(node, o)) {
+        let drawn = |o: &&Output| !self.hidden_on(node, o) && !covered.on(node, o);
+        for o in self.outputs.iter().filter(drawn) {
             let Some(i) = output_rect(o).and_then(|r| r.intersection(e)) else {
                 continue;
             };
