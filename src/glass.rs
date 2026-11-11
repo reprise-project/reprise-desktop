@@ -1054,6 +1054,38 @@ impl Reads {
     }
 }
 
+/// What `pane` reads beneath it at `scale`, pane-local and logical: each shape's part outside the
+/// holes grown by what its picture's texels read (one texel, then the blur's reach) at either
+/// quality and the lens's reach, a pixel more for rounding.
+fn reads_beneath(pane: &Pane, pass: &Pass, scale: f64) -> Vec<Rectangle<i32, Logical>> {
+    let s = &pass.settings;
+    let blur = [Quality::Full, Quality::Coarse]
+        .map(|q| {
+            reprisefx::blur::reach(s.blur, s.material, q, scale)
+                + reprisefx::blur::texel(s.blur, s.material, q, scale)
+        })
+        .into_iter()
+        .max()
+        .unwrap_or(0);
+    let logical = |r: Rect| Rectangle::new((r.x, r.y).into(), (r.width, r.height).into());
+    let holes: Vec<Rectangle<i32, Logical>> = pane.holes.iter().map(|&h| logical(h)).collect();
+    (pane.shapes.iter())
+        .flat_map(|shape| {
+            let r = physical(shape.rect, Point::default(), Scale::from(scale));
+            let bend = Lens::new(s.material, r, pass.output, scale).map_or(0, |l| l.reach());
+            let g = (f64::from(blur + bend) / scale).ceil() as i32 + 1;
+            (logical(shape.rect).subtract_rects(holes.iter().copied()))
+                .into_iter()
+                .map(move |p| {
+                    Rectangle::new(
+                        (p.loc.x - g, p.loc.y - g).into(),
+                        (p.size.w + 2 * g, p.size.h + 2 * g).into(),
+                    )
+                })
+        })
+        .collect()
+}
+
 fn layout(
     r: Rectangle<i32, Physical>,
     origin: Point<i32, Logical>,
@@ -1356,6 +1388,11 @@ impl CustomNode<GlesRenderer> for GlassNode {
         (pane.shapes.iter())
             .filter_map(|s| logical(s.rect).intersection(area))
             .any(|part| !part.subtract_rects(holes.iter().copied()).is_empty())
+    }
+
+    fn reads_beneath(&self, scale: f64) -> Option<Vec<Rectangle<i32, Logical>>> {
+        let pass = self.ctx.pass.get();
+        Some(reads_beneath(&self.pane.borrow(), &pass, scale))
     }
 
     fn elements(
