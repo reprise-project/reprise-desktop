@@ -565,6 +565,9 @@ pub fn pose(m: &Logon, l: &LogonLayout, theme: &Theme, s: i32, part: Part) -> Op
 
 /// `part`'s picture frame at `pose`, with no picture holding a person's outline.
 pub fn draw_posed(c: &mut Canvas, m: &Logon, part: Part, pose: &Pose, s: i32) {
+    if !c.reaches(pose.reach(s)) {
+        return;
+    }
     let picture = user_of(m, part).and_then(|u| u.picture.as_ref());
     let r = pose.rect;
     if pose.look.glow > 0.0 {
@@ -930,6 +933,9 @@ fn glass_box(c: &mut Canvas, r: Rect, radius: f64, face: Face, s: i32) {
 }
 
 fn glass_box_look(c: &mut Canvas, r: Rect, radius: f64, look: &Look, s: i32) {
+    if !c.reaches(r) {
+        return;
+    }
     let (w, h) = (r.width / s, r.height / s);
     let glass = tint::plain(&Settings::default(), Surface::Active);
     let body = if look.shade > 0.0 {
@@ -956,6 +962,9 @@ fn glass_box_look(c: &mut Canvas, r: Rect, radius: f64, look: &Look, s: i32) {
 }
 
 fn arrow(c: &mut Canvas, r: Rect, face: Face, s: i32) {
+    if !c.reaches(Rect::new(r.x, r.y, ARROW * s, ARROW * s)) {
+        return;
+    }
     let k = f64::from(s);
     let n = f64::from(ARROW) * k;
     let half = n / 2.0;
@@ -996,6 +1005,9 @@ fn arrow(c: &mut Canvas, r: Rect, face: Face, s: i32) {
 /// One bar for both parts, each half lit on its own.
 fn power_button(c: &mut Canvas, r: Rect, power: Face, menu: Face, s: i32) {
     let (w, h) = (POWER_W + MENU_W, POWER_H);
+    if !c.reaches(Rect::new(r.x, r.y, w * s, h * s)) {
+        return;
+    }
     let hh = f64::from(h);
     let k = f64::from(s);
     let px = ringed(w, h, BUTTON_R, 2, s, |x, y, ring| {
@@ -1163,7 +1175,7 @@ fn inked(
     let m = HALO * s;
     let w = text.measure(words, false, px);
     let area = Rect::new(pen - m, r.y - m, w + 2 * m, r.height + 2 * m);
-    if area.is_empty() {
+    if !c.reaches(area) {
         return;
     }
     let local = Rect::new(0, 0, area.width, area.height);
@@ -1217,14 +1229,16 @@ fn wordmark(c: &mut Canvas, text: &TextRenderer, r: Rect, px: u32, s: i32) {
     let x = r.x + (r.width - total) / 2;
     let y = r.y + (r.height - mark) / 2;
     let area = Rect::new(x - m, y - m, mark + 2 * m, mark + 2 * m);
-    let drawn = logo::coverage_any(mark as usize);
-    let side = area.width as usize;
-    let mut cov = vec![0u8; side * side];
-    for (row, line) in drawn.chunks(mark as usize).enumerate() {
-        let at = (row + m as usize) * side + m as usize;
-        cov[at..at + line.len()].copy_from_slice(line);
+    if c.reaches(area) {
+        let drawn = logo::coverage_any(mark as usize);
+        let side = area.width as usize;
+        let mut cov = vec![0u8; side * side];
+        for (row, line) in drawn.chunks(mark as usize).enumerate() {
+            let at = (row + m as usize) * side + m as usize;
+            cov[at..at + line.len()].copy_from_slice(line);
+        }
+        ink_mask(c, area, &cov, INK, s);
     }
-    ink_mask(c, area, &cov, INK, s);
     let word = Rect::new(x + mark + MARK_GAP * s, r.y, w, r.height);
     left_label(c, text, word, WORD, px, INK, s);
 }

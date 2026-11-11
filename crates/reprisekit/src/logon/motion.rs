@@ -36,7 +36,7 @@ pub enum Change {
 
 /// The screen as it was when a change began, its typed text left out: a secret field holds as
 /// many stand-ins as it had characters, an echoed answer none.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Was(Box<Logon>);
 
 /// The stand-in a secret field of a [`Was`] holds per character; drawn masked like any other.
@@ -61,7 +61,7 @@ impl Was {
 }
 
 /// A change the host has not taken yet, with what the screen showed before it.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Motion {
     pub change: Change,
     pub was: Was,

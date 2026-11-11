@@ -346,6 +346,20 @@ fn cached_backdrop(sc: &Scheme, w: i32, h: i32, d: i32, field: bool) -> Rc<Canva
     })
 }
 
+/// [`band`] for the last scheme and size asked, kept since a key repaints the open tile's band
+/// under the password field.
+fn cached_band(sc: &Scheme, w: i32, h: i32, d: i32) -> Rc<Canvas> {
+    type Kept = Option<((&'static str, i32, i32, i32), Rc<Canvas>)>;
+    thread_local! {
+        static KEPT: RefCell<Kept> = const { RefCell::new(None) };
+    }
+    let key = (sc.name, w, h, d);
+    KEPT.with_borrow_mut(|kept| match kept {
+        Some((k, c)) if *k == key => Rc::clone(c),
+        _ => Rc::clone(&kept.insert((key, Rc::new(band(sc, w, h, d)))).1),
+    })
+}
+
 /// A hot or open tile's band, `w` x `h` design px at `d`: rounded on the left, fading out to the
 /// right.
 pub fn band(sc: &Scheme, w: i32, h: i32, d: i32) -> Canvas {
@@ -663,9 +677,11 @@ fn draw_button(c: &mut Canvas, m: &Logon, part: Part, r: Rect, pen: &Pen) {
         _ => (Hue::Green, Mark::Arrows, switch_label()),
     };
     let state = state_of(m, part, !m.busy || part == Part::Power);
-    let tile = powerpanel::tile(hue, mark, state, POWER, pen.s);
     let at = pen.at(r);
-    c.blit_over(at.x, at.y, &tile);
+    if c.reaches(Rect::new(at.x, at.y, POWER * pen.s, POWER * pen.s)) {
+        let tile = powerpanel::tile(hue, mark, state, POWER, pen.s);
+        c.blit_over(at.x, at.y, &tile);
+    }
     let label = Rect {
         x: r.x + POWER + POWER_GAP,
         width: r.width - POWER - POWER_GAP,
@@ -725,21 +741,23 @@ fn draw_tile(c: &mut Canvas, m: &Logon, sc: &Scheme, i: usize, r: Rect, k: Lines
         return;
     };
     let at = pen.at(r);
-    if banded(m, i) {
-        c.blit_over(at.x, at.y, &band(sc, r.width, r.height, s));
+    if banded(m, i) && c.reaches(at) {
+        c.blit_over(at.x, at.y, &cached_band(sc, r.width, r.height, s));
     }
-    let n = (PICTURE * s) as u32;
-    let stock;
-    let picture = match &user.picture {
-        Some(p) => p,
-        None => {
-            stock = userpic::draw(userpic::ALL[user.stock % userpic::ALL.len()], n);
-            &stock
-        }
-    };
     let (fx, fy) = (r.x + TILE_PAD, r.y + TILE_PAD);
     let f = pen.at(Rect::new(fx, fy, FRAMED, FRAMED));
-    c.blit_over(f.x, f.y, &framed(picture, sc.welcome_tile_frame, s));
+    if c.reaches(f) {
+        let n = (PICTURE * s) as u32;
+        let stock;
+        let picture = match &user.picture {
+            Some(p) => p,
+            None => {
+                stock = userpic::draw(userpic::ALL[user.stock % userpic::ALL.len()], n);
+                &stock
+            }
+        };
+        c.blit_over(f.x, f.y, &framed(picture, sc.welcome_tile_frame, s));
+    }
     let tx = fx + FRAMED + TEXT_GAP;
     let tw = r.right() - tx - TILE_PAD;
     let note = user.note.map(UserNote::text);
@@ -816,7 +834,9 @@ fn draw_password_row(
     draw_field(c, m, theme, sc, Part::Password, field, pen);
     if let Some(go_at) = l.rect(Part::Submit) {
         let at = pen.at(go_at);
-        c.blit_over(at.x, at.y, &go(state_of(m, Part::Submit, !m.busy), s));
+        if c.reaches(Rect::new(at.x, at.y, GO * s, GO * s)) {
+            c.blit_over(at.x, at.y, &go(state_of(m, Part::Submit, !m.busy), s));
+        }
     }
     if let (Some(short), Some(b)) = (&m.layout, l.rect(Part::Layout)) {
         let at = pen.at(b);
@@ -852,6 +872,10 @@ fn draw_field(
     pen: &Pen,
 ) {
     let s = pen.s;
+    let at = pen.at(r);
+    if !c.reaches(at) {
+        return;
+    }
     let cs = &theme.colors;
     let edit: TextEdit = match part {
         Part::Name => m.name.clone(),
@@ -863,7 +887,6 @@ fn draw_field(
     } else {
         cs.window
     };
-    let at = pen.at(r);
     c.blit_over(
         at.x,
         at.y,
