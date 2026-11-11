@@ -181,6 +181,7 @@ pub(super) fn fields() -> Vec<Field> {
             lens!(title_double_click),
         ),
         Field::Int(k("windows", "dim_inactive"), lens!(dim_inactive)),
+        Field::Int(k("windows", "hidden_frame_rate"), lens!(hidden_frame_rate)),
         Field::Flag(k("session", "restore"), lens!(session_restore)),
         Field::Flag(k("session", "end_processes"), lens!(session_end_processes)),
         Field::Flag(k("updates", "restart_notice"), lens!(restart_notice)),

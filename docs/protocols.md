@@ -69,6 +69,7 @@ confinement holds, every motion goes through as it comes.
   (when the GPU supports it), `wp_fifo_manager_v1` and
   `wp_commit_timing_manager_v1` (a window no display shows, minimised or on
   another desktop, has its fifo and timed commits applied at the refresh rate,
+  or at most `[windows] hidden_frame_rate` times a second when that is set,
   so a vsynced Vulkan program keeps running), `ext_background_effect_manager_v1`
   (under Glass, a framed window's blur region gets the frame's glass, blurred
   and tinted, and a region across the window's top runs the frame down into it

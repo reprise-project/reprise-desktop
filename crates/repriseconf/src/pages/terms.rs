@@ -223,6 +223,7 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
             ),
             ("title_double_click", "Double-clicking a title bar:"),
             ("dim_inactive", "Dim windows that don't have the focus:"),
+            ("hidden_frame_rate", "Frame rate of hidden windows:"),
         ],
         Page::Keyboard => &[
             ("kb_layouts", "Layouts:"),

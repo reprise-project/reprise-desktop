@@ -1032,6 +1032,17 @@ fn dim_inactive_is_off_by_default_and_takes_0_to_40() {
 }
 
 #[test]
+fn hidden_frame_rate_is_the_refresh_rate_by_default_and_takes_0_to_240() {
+    assert_eq!(Config::default().hidden_frame_rate, 0);
+    let c = Config::parse("[windows]\nhidden_frame_rate = 30\n").unwrap();
+    assert_eq!(c.hidden_frame_rate, 30);
+    for bad in ["241", "-1"] {
+        let e = Config::parse(&format!("[windows]\nhidden_frame_rate = {bad}\n")).unwrap_err();
+        assert!(e.contains("hidden_frame_rate"), "{e}");
+    }
+}
+
+#[test]
 fn the_snap_layout_picker_reads_its_switch_and_layouts() {
     let c = Config::parse("[window_snapping]\npicker = false\nlayouts = [\"1|1\", \"3|1:2\"]\n")
         .unwrap();

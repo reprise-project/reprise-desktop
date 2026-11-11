@@ -424,6 +424,9 @@ pub fn reload(state: &mut State, cfg: Config) {
     if changes.workspaces {
         state.set_desktop_count(state.config.workspaces);
     }
+    if old.hidden_frame_rate != state.config.hidden_frame_rate {
+        crate::surfaceproto::hidden_rate_changed(state);
+    }
     if old.window_tabs && !state.config.window_tabs {
         state.ungroup_all();
     }

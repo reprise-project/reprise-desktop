@@ -20,6 +20,9 @@ pub const SNAP_DISTANCE_MAX: i32 = 100;
 /// The most `[windows] dim_inactive` darkens, in percent.
 pub const DIM_INACTIVE_MAX: u8 = 40;
 
+/// The most frames a second `[windows] hidden_frame_rate` takes.
+pub const HIDDEN_FRAME_RATE_MAX: u32 = 240;
+
 impl Default for SnapConfig {
     fn default() -> Self {
         SnapConfig {
