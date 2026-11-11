@@ -1488,9 +1488,10 @@ pub fn select_drag(
     }
 }
 
-/// Draw the control: edge, box, lines from `view.top`, selection on `hilight`, the caret (1 px bar)
-/// in the blink's shown half, and the scrollbars the layout calls for. On a blink-only frame the
-/// caret bar is the damage (an empty rect when it is scrolled out of view).
+/// Draw the control: edge, box, lines from `view.top`, selection on `hilight`, the caret (a 1 px
+/// bar inverting what it covers) in the blink's shown half, and the scrollbars the layout calls
+/// for. On a blink-only frame the caret bar is the damage (an empty rect when it is scrolled out of
+/// view).
 #[expect(clippy::too_many_arguments)]
 pub fn draw(
     c: &mut Canvas,
@@ -1616,7 +1617,7 @@ pub fn draw(
             };
             let cx = col_x(col);
             if caret.shown() && bar_on && cx >= clip.x && cx < clip.right() {
-                c.fill_rect(Rect::new(cx, y, s, line_h), cs.button_text);
+                c.invert_rect(Rect::new(cx, y, s, line_h));
             }
             caret_bar = Some(Rect::new(cx.clamp(clip.x, clip.right() - s), y, s, line_h));
         }
@@ -1652,8 +1653,8 @@ pub fn draw(
     }
 }
 
-/// Where a drag over the control would drop its text: a bar the caret's size at `at`, over what
-/// `draw` drew.
+/// Where a drag over the control would drop its text: a bar the caret's size at `at`, inverting
+/// what `draw` drew as the caret does.
 #[expect(clippy::too_many_arguments)]
 pub fn draw_drop_point(
     c: &mut Canvas,
@@ -1675,10 +1676,7 @@ pub fn draw_drop_point(
     let line_h = m.line_h * s;
     let x = inner.x + s - view.left + x_of(text, m, edit, lay, at);
     let y = inner.y + s + row as i32 * line_h;
-    c.fill_rect(
-        Rect::new(x, y, s, line_h).intersect(&clip),
-        p.cs.button_text,
-    );
+    c.invert_rect(Rect::new(x, y, s, line_h).intersect(&clip));
 }
 
 /// A document past this many bytes gives its node only the text in view as its value.

@@ -261,6 +261,34 @@ pub(crate) fn classic_paint(cs: &ColorScheme, s: i32) -> Paint<'_> {
     }
 }
 
+/// The bar a caret drew over `off` to give `on`, every pixel of it `off`'s inverted, and whether
+/// it covers ink (a pixel other than `paper`).
+#[cfg(test)]
+#[track_caller]
+pub(crate) fn inverted_bar(off: &Canvas, on: &Canvas, paper: u32) -> (Rect, bool) {
+    let (w, h) = (off.width as i32, off.height as i32);
+    let changed: Vec<(i32, i32)> = (0..h)
+        .flat_map(|y| (0..w).map(move |x| (x, y)))
+        .filter(|&(x, y)| on.get(x, y) != off.get(x, y))
+        .collect();
+    assert!(!changed.is_empty(), "the caret changes pixels");
+    for &(x, y) in &changed {
+        let want = 0xFF00_0000 | (!off.get(x, y) & 0x00FF_FFFF);
+        assert_eq!(on.get(x, y), want, "({x}, {y}) is inverted");
+    }
+    let x0 = changed.iter().map(|p| p.0).min().unwrap();
+    let x1 = changed.iter().map(|p| p.0).max().unwrap() + 1;
+    let y0 = changed.iter().map(|p| p.1).min().unwrap();
+    let y1 = changed.iter().map(|p| p.1).max().unwrap() + 1;
+    let bar = Rect::new(x0, y0, x1 - x0, y1 - y0);
+    assert_eq!(
+        changed.len() as i32,
+        bar.width * bar.height,
+        "{bar:?} is whole"
+    );
+    (bar, changed.iter().any(|&(x, y)| off.get(x, y) != paper))
+}
+
 impl Theme {
     pub fn taskbar_shape(&self) -> TaskbarShape {
         self.look

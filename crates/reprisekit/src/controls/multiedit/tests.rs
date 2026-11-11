@@ -215,8 +215,11 @@ fn the_drop_point_draws_a_bar_at_its_position() {
     );
     let x = lay.inner.x + 1 + text.measure("a", false, m.font_px);
     let y = lay.inner.y + 1 + m.line_h;
-    let ink = theme.colors.button_text.argb();
-    assert!((y..y + m.line_h).all(|y| c.get(x, y) == ink), "the bar");
+    let inverted = |y| 0xFF00_0000 | (!before.get(x, y) & 0x00FF_FFFF);
+    assert!(
+        (y..y + m.line_h).all(|y| c.get(x, y) == inverted(y)),
+        "the bar"
+    );
     assert_eq!(c.get(x + 1, y), before.get(x + 1, y), "1 px wide");
     assert_eq!(c.get(x, y - 1), before.get(x, y - 1), "one line tall");
 
@@ -1080,4 +1083,35 @@ fn a_blink_only_frame_damages_just_the_caret_bar() {
             .all(|&i| bar.contains((i % 200) as i32, (i / 200) as i32)),
         "the blink changes nothing outside the bar"
     );
+}
+
+#[test]
+fn the_caret_and_the_drop_point_invert_their_column_so_a_stem_under_them_shows_white() {
+    crate::pins::fonts();
+    let text = TextRenderer::load(&FontConfig::default());
+    let theme = Theme::default();
+    let m = Metrics::default();
+    let mut t = e("AVA");
+    t.place(p(0, 0), false);
+    let lay = layout(&text, &m, &t, Rect::new(0, 0, 200, 60), 1);
+    let paint = classic_paint(&theme.colors, 1);
+    let draw_with = |caret| {
+        let mut c = Canvas::new(200, 60);
+        draw(&mut c, &text, &paint, &m, &t, View::default(), &lay, caret);
+        c
+    };
+    let off = draw_with(Caret::Hidden);
+    let pen = Rect::new(lay.inner.x + 1, lay.inner.y + 1, 1, m.line_h);
+    let paper = theme.colors.window.argb();
+    let on = draw_with(Caret::Shown);
+    assert_eq!(
+        crate::paint::inverted_bar(&off, &on, paper),
+        (pen, true),
+        "caret"
+    );
+    let mut drop = off.clone();
+    let at = p(0, 0);
+    draw_drop_point(&mut drop, &text, &paint, &m, &t, View::default(), &lay, at);
+    let bar = crate::paint::inverted_bar(&off, &drop, paper);
+    assert_eq!(bar, (pen, true), "drop point");
 }

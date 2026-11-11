@@ -386,7 +386,7 @@ pub fn draw(
                 );
             }
             let bar = Rect::new(cx, tr.y + 2 * s, s, tr.height - 4 * s);
-            c.fill_rect(bar, cs.button_text);
+            c.invert_rect(bar);
             if let Some(e) = &ud.edit {
                 c.report_spot(TextSpot {
                     digits: true,
@@ -617,12 +617,22 @@ mod tests {
         let l = layout(61, 282);
         let mut ud = UpDown::new(10, 1, 9999);
         ud.enter();
-        let render = |ud: &UpDown| {
+        let render_with = |ud: &UpDown, caret| {
             let mut c = Canvas::new(130, 320);
             c.fill_rect(c.bounds(), cs.button_face);
-            draw(&mut c, &text, &classic_paint(cs, 1), ud, &l, true, None, 11);
+            draw(
+                &mut c,
+                &text,
+                &classic_paint(cs, 1),
+                ud,
+                &l,
+                caret,
+                None,
+                11,
+            );
             c
         };
+        let render = |ud: &UpDown| render_with(ud, true);
         // "10" ends 2 px inside the white part's right edge, with the
         // caret at x 92; the highlight runs from the number's left edge,
         // 13 px tall from row 285, a pixel under the white part's top.
@@ -647,8 +657,56 @@ mod tests {
         let c = render(&ud);
         assert_eq!(c.get(x0, 285), cs.window.argb());
         let cx = x0 + text.measure("1", false, 11);
-        assert_eq!(c.get(cx, 290), cs.button_text.argb(), "caret after the 1");
+        let under = render_with(&ud, false).get(cx, 290);
+        let inverted = 0xFF00_0000 | (!under & 0x00FF_FFFF);
+        assert_eq!(c.get(cx, 290), inverted, "caret after the 1");
         assert_eq!(c.get(92, 290), cs.window.argb(), "no caret at the end");
+    }
+
+    #[test]
+    fn the_caret_inverts_its_column_so_a_digit_under_it_shows_white() {
+        crate::pins::fonts();
+        let theme = Theme::default();
+        let text = TextRenderer::load(&FontConfig::default());
+        let cs = &theme.colors;
+        let l = layout(61, 282);
+        let mut ud = UpDown::new(1470, 1, 9999);
+        ud.enter();
+        let shown = ud.shown();
+        let (tr, align) = text_rect(&ud, l.edit, 1);
+        let x0 = text_x(&text, &shown, tr, align, 11);
+        let mut inked = 0;
+        for at in 0..=shown.len() {
+            ud.place(at);
+            let render = |caret| {
+                let mut c = Canvas::new(130, 320);
+                c.fill_rect(c.bounds(), cs.button_face);
+                draw(
+                    &mut c,
+                    &text,
+                    &classic_paint(cs, 1),
+                    &ud,
+                    &l,
+                    caret,
+                    None,
+                    11,
+                );
+                c
+            };
+            let (bar, ink) =
+                crate::paint::inverted_bar(&render(false), &render(true), cs.window.argb());
+            let cx = x0 + text.measure(&shown[..at], false, 11);
+            assert_eq!(
+                bar,
+                Rect::new(cx, tr.y + 2, 1, tr.height - 4),
+                "caret at {at}"
+            );
+            inked += usize::from(ink);
+        }
+        assert!(
+            inked > 0,
+            "a digit's stem lies under the caret somewhere in {shown}"
+        );
     }
 
     #[test]
