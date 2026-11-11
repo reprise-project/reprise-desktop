@@ -3,7 +3,7 @@
 
 use std::sync::OnceLock;
 
-use crate::raster::Canvas;
+use crate::raster::{Canvas, Rect};
 use crate::theme::Color;
 
 const SIZES: [usize; 4] = [16, 24, 32, 48];
@@ -68,6 +68,9 @@ pub fn coverage_any(px: usize) -> Vec<u8> {
 
 /// [`draw`] through [`coverage_any`].
 pub fn draw_any(c: &mut Canvas, x: i32, y: i32, px: i32, color: Color) {
+    if !c.reaches(Rect::new(x, y, px, px)) {
+        return;
+    }
     let s = c.scale();
     let dev = (px * s).max(0) as usize;
     let mask = coverage_any(dev);

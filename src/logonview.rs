@@ -5,8 +5,8 @@ use std::time::Instant;
 
 use reprisekit::interface::Interface;
 use reprisekit::interfaces::logon::{
-    Drawn, Transition, draw_logon, draw_spinner, logon_column, logon_layout, spin_elapsed,
-    spin_step, spinner_rect,
+    Drawn, Transition, draw_logon, draw_spinner, logon_column, logon_layout, redraw_logon_fields,
+    spin_elapsed, spin_step, spinner_rect,
 };
 use reprisekit::logon::{self, Logon, LogonAction, LogonKey, LogonLayout, Motion, Moves, Part};
 use reprisekit::pointer::Interaction;
@@ -62,6 +62,9 @@ pub struct LogonView {
     pub shown: Option<Canvas>,
     /// When the busy ring would have been at step 0 had it turned since; None while it stands.
     pub ring: Option<Instant>,
+    /// The model outside its fields and the scale the canvas shown was last painted whole for;
+    /// None while a change plays and after, until the next whole paint.
+    painted: Option<(Logon, i32)>,
 }
 
 /// A change playing: its transition and when its first frame showed, drawn with no session
@@ -96,6 +99,7 @@ impl LogonView {
             play: None,
             shown: None,
             ring: None,
+            painted: None,
         }
     }
 
@@ -220,7 +224,7 @@ pub fn key(state: &mut State, host: &Host, typed: Option<Typed>) {
         Typed::Text(text) => m.key(LogonKey::Text(text.as_str())),
     };
     act(state, host, action);
-    redraw(state, host);
+    redraw_typed(state, host);
 }
 
 /// Text typed without a key (an input method, a remote keyboard), into the focused field.
@@ -233,7 +237,7 @@ pub fn type_text(state: &mut State, host: &Host, text: &str) {
     };
     let action = v.model.key(LogonKey::Text(text));
     act(state, host, action);
-    redraw(state, host);
+    redraw_typed(state, host);
 }
 
 /// A held Backspace repeats; no other key does, so no typed character is kept for a repeat.
@@ -243,7 +247,7 @@ pub fn repeat_backspace(state: &mut State, host: &Host) {
     };
     v.model
         .key(LogonKey::Edit(EditKey::Backspace { word: false }));
-    redraw(state, host);
+    redraw_typed(state, host);
 }
 
 /// A left press clicks the part under it.
@@ -493,26 +497,37 @@ pub fn redraw(state: &mut State, host: &Host) {
     }
 }
 
-/// [`redraw`] without asking for a frame; false when there is no screen to draw. A change the
-/// model noted starts playing, or carries on from the one playing.
-fn draw(state: &mut State, host: &Host) -> bool {
+/// [`redraw`] after a key: a change to the fields alone repaints just them and asks a frame only
+/// of the output whose pixels it changed.
+fn redraw_typed(state: &mut State, host: &Host) {
+    if !state.redraw_changed(|s| draw_fields(s, host)) {
+        redraw(state, host);
+    }
+}
+
+/// Where the screen draws, the model brought up to the keyboard and the host's say on motion:
+/// its output and buffer, the output's layout box, its draw scale and theme.
+fn screen_at(state: &mut State, host: &Host) -> Option<(Output, BufferId, Rect, i32, Theme)> {
     let caps = (host.caps_lock)(state);
     let layout = state.layout_badge();
     let moves = (host.moves)(state);
-    let Some((v, _)) = (host.view)(state) else {
-        return false;
-    };
+    let (v, _) = (host.view)(state)?;
     v.model.caps_lock = caps;
     v.model.layout = layout;
     v.model.moves = moves;
-    let Some((output, buffer)) =
-        (v.covers.iter()).find_map(|c| Some((c.output.clone(), c.screen?)))
-    else {
-        return false;
-    };
+    let (output, buffer) = (v.covers.iter()).find_map(|c| Some((c.output.clone(), c.screen?)))?;
     let b = state.layout_box(Some(&output));
     let scale = state.draw_scale_at(Some(&output));
     let theme = state.config.theme.scaled(scale);
+    Some((output, buffer, b, scale, theme))
+}
+
+/// [`redraw`] without asking for a frame; false when there is no screen to draw. A change the
+/// model noted starts playing, or carries on from the one playing.
+fn draw(state: &mut State, host: &Host) -> bool {
+    let Some((_, buffer, b, scale, theme)) = screen_at(state, host) else {
+        return false;
+    };
     let Some((v, text)) = (host.view)(state) else {
         return false;
     };
@@ -524,12 +539,40 @@ fn draw(state: &mut State, host: &Host) -> bool {
     let l = logon_layout(&v.model, &theme, text, b);
     let canvas = play(v, &l, (&theme, text, scale), now());
     v.layout = Some(l);
+    v.painted = (v.play.is_none()).then(|| (v.model.outside_fields(), scale));
     let shown = !v.hidden;
     crate::output::upload_scaled(&mut state.scene, buffer, &canvas, scale);
     state.scene.set_enabled(buffer, shown);
     if let Some((v, _)) = (host.view)(state) {
         v.shown = Some(canvas);
     }
+    true
+}
+
+/// Repaint the name and password fields alone over the canvas shown, when nothing but what they
+/// hold changed since it was painted whole; false, drawing nothing, otherwise.
+fn draw_fields(state: &mut State, host: &Host) -> bool {
+    let Some((_, buffer, b, scale, theme)) = screen_at(state, host) else {
+        return false;
+    };
+    let Some((v, text)) = (host.view)(state) else {
+        return false;
+    };
+    v.model.column = logon_column(&v.model, &theme, b);
+    let m = &v.model;
+    let same = |(was, at): &(Logon, i32)| *at == scale && m.outside_fields() == *was;
+    if v.play.is_some() || !v.painted.as_ref().is_some_and(same) {
+        return false;
+    }
+    let l = logon_layout(m, &theme, text, b);
+    if v.layout.as_ref() != Some(&l) {
+        return false;
+    }
+    let Some(mut c) = v.shown.take() else {
+        return false;
+    };
+    let r = redraw_logon_fields(&mut c, &v.model, &l, &theme, text.for_output(scale), scale);
+    show_within(state, host, buffer, c, r);
     true
 }
 

@@ -375,6 +375,12 @@ impl Canvas {
         }
     }
 
+    /// Whether drawing in logical `r` can change a pixel: `r` meets the bounds and the clip. A
+    /// painter that works out its pixels before laying them asks first.
+    pub fn reaches(&self, r: Rect) -> bool {
+        !r.intersect(&self.area()).is_empty()
+    }
+
     fn area(&self) -> Rect {
         let b = self.bounds();
         self.clip.map_or(b, |c| c.intersect(&b))
