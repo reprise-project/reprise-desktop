@@ -427,7 +427,7 @@ impl State {
             return;
         }
         for m in std::mem::take(&mut self.menus) {
-            self.scene.destroy(m.tree);
+            self.destroy_redrawn(m.tree);
         }
         self.menus_emptied();
     }
@@ -462,7 +462,6 @@ impl State {
             self.handle.remove(t);
         }
         self.redraw_taskbars();
-        self.redraw_all();
     }
 
     pub fn menus_access(&self) -> Option<reprisekit::access::Tree> {

@@ -559,6 +559,8 @@ impl State {
 }
 
 mod button;
+#[cfg(test)]
+mod clicktests;
 mod move_resize;
 mod pointer;
 #[cfg(test)]
