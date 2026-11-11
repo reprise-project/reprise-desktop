@@ -437,6 +437,49 @@ fn typed(p: &mut Paint, ctx: &mut Ctx, s: &str) {
 }
 
 #[test]
+fn the_text_caret_inverts_the_picture_so_a_stem_under_it_shows_white() {
+    reprisekit::pins::fonts();
+    let mut ctx = test_ctx();
+    let mut p = Paint::new(None);
+    p.doc.img = Bitmap::new(160, 100, WHITE);
+    p.doc.img.fill_rect(Rect::new(10, 10, 1, 4), BLACK);
+    p.doc.primary = 0xFFFF_0000;
+    p.doc.opts.opaque = false;
+    pick(&mut p, &mut ctx, Tool::Text);
+    p.text.font = textbox::Font {
+        family: "Tahoma".into(),
+        px: 13,
+        bold: false,
+    };
+    drag(&mut p, &mut ctx, (10, 10), (90, 25), BTN_LEFT);
+    let fit = p.text.fit(p.doc.text_box.unwrap());
+    assert_eq!(fit.x, 10, "the box starts on the stem");
+    let k = p.text.caret(fit.width);
+    assert_eq!((k.x, k.y), (0, 0), "an empty box has its caret at 0");
+    let (off, on) = (p.shown(fit, false), p.shown(fit, true));
+    for y in 0..fit.height {
+        for x in 0..fit.width {
+            let was = off.get(x, y).unwrap();
+            let want = if x == 0 && y < k.height {
+                was ^ 0x00FF_FFFF
+            } else {
+                was
+            };
+            assert_eq!(on.get(x, y), Some(want), "({x}, {y})");
+        }
+    }
+    assert_eq!(off.get(0, 0), Some(BLACK), "the stem shows through the box");
+    assert_eq!(on.get(0, 0), Some(WHITE), "and shows white under the caret");
+    let foot = k.height - 1;
+    assert_eq!(off.get(0, foot), Some(WHITE));
+    assert_eq!(
+        on.get(0, foot),
+        Some(BLACK),
+        "below the stem the caret is black, not the primary colour"
+    );
+}
+
+#[test]
 fn typed_text_wraps_at_the_box_and_lands_with_the_same_breaks() {
     reprisekit::pins::fonts();
     let mut ctx = test_ctx();

@@ -457,7 +457,7 @@ impl Paint {
     }
 
     /// The picture over `r` as shown: a moved selection laid on it, the text box's text and
-    /// caret.
+    /// caret, which inverts what it covers.
     pub(crate) fn shown(&self, r: Rect, caret_on: bool) -> Bitmap {
         let mut out = self.doc.composite(r);
         if let Some(b) = self.doc.text_box {
@@ -471,7 +471,7 @@ impl Paint {
             if caret_on {
                 let k = self.text.caret(b.width);
                 let k = Rect::new(moved.x + k.x.min(b.width - 1), moved.y + k.y, 1, k.height);
-                out.fill_rect(k.intersect(&moved), self.doc.primary);
+                out.invert_rect(k.intersect(&moved));
             }
         }
         out

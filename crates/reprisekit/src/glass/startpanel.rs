@@ -1346,11 +1346,25 @@ mod tests {
         p
     }
 
-    fn caret_x(d: &Drawn) -> Option<i32> {
-        let field = d.l.rect(Spot::Search).unwrap();
+    /// The search field's column whose caret rows invert between the blink's two halves.
+    fn caret_x(p: &StartPanel) -> Option<i32> {
+        let style = super::super::style(&Settings::default());
+        let text = TextRenderer::load(&font());
+        let l = layout(p);
+        let drawn = |on| {
+            let mut c = Canvas::new(l.canvas.width as u32, l.canvas.height as u32);
+            draw(&mut c, &style, &text, p, &l, None, on);
+            c
+        };
+        let (on, off) = (drawn(true), drawn(false));
+        let field = l.rect(Spot::Search).unwrap();
         let (_, cy, ch) = at::CARET;
-        let black = 0xFF00_0000 | INK_STRONG;
-        (field.x..field.right()).find(|&x| (0..ch).all(|dy| d.at(x, field.y + cy + dy) == black))
+        (field.x..field.right()).find(|&x| {
+            (0..ch).all(|dy| {
+                let (x, y) = (x - l.canvas.x, field.y + cy + dy - l.canvas.y);
+                on.get(x, y) == 0xFF00_0000 | (!off.get(x, y) & 0x00FF_FFFF)
+            })
+        })
     }
 
     #[test]
@@ -1376,16 +1390,18 @@ mod tests {
     #[test]
     fn a_long_query_scrolls_to_keep_the_caret_in_the_field() {
         let long = "a long search for something past the field's right edge";
-        let d = render(&typed(long, None), None);
-        let field = d.l.rect(Spot::Search).unwrap();
-        let x = caret_x(&d).expect("the caret shows");
+        let p = typed(long, None);
+        let field = layout(&p).rect(Spot::Search).unwrap();
+        let x = caret_x(&p).expect("the caret shows");
         assert!(
             x > field.x + at::TEXT_RIGHT / 2 && x < field.x + 1 + at::TEXT_RIGHT,
             "the caret at the end stands near the field's right, inside it: {x}"
         );
         let home = EditKey::Home { select: false };
-        let d = render(&typed(long, Some(home)), None);
-        assert_eq!(caret_x(&d), Some(field.x + at::CARET.0));
+        assert_eq!(
+            caret_x(&typed(long, Some(home))),
+            Some(field.x + at::CARET.0)
+        );
     }
 
     #[test]
