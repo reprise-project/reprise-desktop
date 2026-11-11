@@ -66,7 +66,7 @@ struct PassSurface {
     surface: WlSurface,
     /// The part of the output it covers, from its own top-left.
     overlap: Option<Rectangle<i32, Logical>>,
-    /// It covers the output and is not hidden on it: the frame draws it.
+    /// It meets the output and is neither hidden nor covered there: the frame draws it.
     drawn: bool,
     primary: Option<Output>,
 }
@@ -90,10 +90,11 @@ impl<R: Renderer, D> Scene<R, D> {
 
     /// The outputs a commit of `surface` can change: those drawing its nodes now
     /// ([`Scene::outputs_of`]) and those that showed it in their last frame, less any it is now
-    /// hidden on. `None` when no node shows it.
+    /// hidden on or covered on (lying wholly under opaque leaves). `None` when no node shows it.
     pub fn outputs_showing(&self, surface: &WlSurface) -> Option<Vec<Output>> {
         let mut found = false;
         let mut out: Vec<Output> = Vec::new();
+        let covered = self.covered();
         for (id, n) in self.live() {
             let Content::Surface(s) = &n.content else {
                 continue;
@@ -105,7 +106,7 @@ impl<R: Renderer, D> Scene<R, D> {
             let entered =
                 (s.entered.iter().filter_map(|w| w.upgrade())).filter(|o| !self.hidden_on(id, o));
             for o in self.outputs_of(id).into_iter().chain(entered) {
-                if !out.contains(&o) {
+                if !out.contains(&o) && !covered.on(id, &o) {
                     out.push(o);
                 }
             }
@@ -126,7 +127,7 @@ impl<R: Renderer, D> Scene<R, D> {
             let (pos, _) = self.coords(id).filter(|(_, visible)| *visible)?;
             let extents = bbox_from_surface_tree(&s.surface, pos);
             (!extents.is_empty())
-                .then(|| self.primary_in(id, extents))
+                .then(|| self.primary_in(id, extents, &self.covered()))
                 .flatten()
         })
     }
@@ -144,6 +145,7 @@ impl<R: Renderer, D> Scene<R, D> {
     /// [`Scene::send_frames`]. A surface away from the output that never entered it is left out.
     pub fn surface_pass(&self, output: &Output) -> SurfacePass {
         let area = output_rect(output);
+        let covered = self.covered();
         let mut surfaces = Vec::new();
         for (id, n) in self.live() {
             let Content::Surface(s) = &n.content else {
@@ -161,12 +163,12 @@ impl<R: Renderer, D> Scene<R, D> {
             surfaces.push(PassSurface {
                 id,
                 surface: s.surface.clone(),
-                drawn: overlap.is_some() && !self.hidden_on(id, output),
+                drawn: overlap.is_some() && !self.hidden_on(id, output) && !covered.on(id, output),
                 overlap: overlap.map(|mut r| {
                     r.loc -= pos;
                     r
                 }),
-                primary: extents.and_then(|e| self.primary_in(id, e)),
+                primary: extents.and_then(|e| self.primary_in(id, e, &covered)),
             });
         }
         SurfacePass {

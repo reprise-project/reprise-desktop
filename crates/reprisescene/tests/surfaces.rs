@@ -275,6 +275,28 @@ impl World {
         self.server.surfaces.last().cloned().unwrap()
     }
 
+    /// A 100x100 surface whose buffer is in `format`, with `opaque` as its opaque region; not
+    /// the surface [`World::request_frame`] asks frames for.
+    fn cover(&mut self, format: wl_shm::Format, opaque: Option<(i32, i32, i32, i32)>) -> WlSurface {
+        let qh = self.queue.handle();
+        let compositor = self.peer.compositor.clone().unwrap();
+        let surface = compositor.create_surface(&qh, ());
+        let mut file = tempfile::tempfile().unwrap();
+        file.write_all(&[0x80; 100 * 100 * 4]).unwrap();
+        let shm = self.peer.shm.as_ref().unwrap();
+        let pool = shm.create_pool(file.as_fd(), 100 * 100 * 4, &qh, ());
+        let buffer = pool.create_buffer(0, 100, 100, 400, format, &qh, ());
+        if let Some((x, y, w, h)) = opaque {
+            let region = compositor.create_region(&qh, ());
+            region.add(x, y, w, h);
+            surface.set_opaque_region(Some(&region));
+        }
+        surface.attach(Some(&buffer), 0, 0);
+        surface.commit();
+        self.pump();
+        self.server.surfaces.last().cloned().unwrap()
+    }
+
     fn request_frame(&mut self) {
         let surface = self.client_surface.clone().unwrap();
         surface.frame(&self.queue.handle(), ());
@@ -448,6 +470,175 @@ fn a_surface_hidden_on_an_output_is_not_shown_by_it_and_takes_no_frames_from_it(
         Some(vec![w.left.clone(), w.right.clone()])
     );
     assert_eq!(scene.primary_output(s), Some(w.left.clone()));
+}
+
+/// A custom node drawing nothing, standing in for glass.
+struct Pane;
+
+impl reprisescene::CustomNode<DummyRenderer> for Pane {
+    fn size(&self) -> smithay::utils::Size<i32, smithay::utils::Logical> {
+        (100, 100).into()
+    }
+
+    fn elements(
+        &self,
+        _: &mut DummyRenderer,
+        _: Point<f64, smithay::utils::Physical>,
+        _: smithay::utils::Scale<f64>,
+        _: f32,
+    ) -> Vec<reprisescene::CustomElement<DummyRenderer>> {
+        Vec::new()
+    }
+}
+
+#[test]
+fn a_surface_under_opaque_leaves_is_not_shown_by_that_output_and_takes_no_frames_from_it() {
+    let mut w = World::new();
+    let surface = w.surface();
+    let (left, right) = (w.left.clone(), w.right.clone());
+    let mut scene = Scene::<DummyRenderer>::new();
+    scene.add_output(&left);
+    scene.add_output(&right);
+    let root = scene.root();
+    let s = scene.surface_create(root, surface.clone());
+    scene.set_position(s, 10, 10);
+    assert_eq!(w.rendered(&mut scene), ["enter L"]);
+    let cover = scene.rect_create(root, (100, 100), [0.0, 0.0, 0.0, 1.0]);
+    assert_eq!(
+        scene.outputs_showing(&surface),
+        Some(vec![]),
+        "under an opaque rect"
+    );
+    assert_eq!(
+        scene.outputs_of(s),
+        vec![left.clone()],
+        "it still lies on the left output"
+    );
+    assert_eq!(scene.primary_output(s), None);
+    assert_eq!(
+        w.rendered(&mut scene),
+        [] as [String; 0],
+        "it stays entered"
+    );
+    scene.send_frames(&scene.surface_pass(&left), Duration::from_millis(16), None);
+    assert_eq!(w.events(), [] as [String; 0], "no frame under the cover");
+
+    let shown = Some(vec![left.clone()]);
+    scene.set_opacity(cover, 0.9);
+    assert_eq!(
+        scene.outputs_showing(&surface),
+        shown,
+        "a cover drawn translucent"
+    );
+    scene.set_opacity(cover, 1.0);
+    scene.rect_set_color(cover, [0.0, 0.0, 0.0, 0.5]);
+    assert_eq!(
+        scene.outputs_showing(&surface),
+        shown,
+        "a translucent colour"
+    );
+    scene.rect_set_color(cover, [0.0, 0.0, 0.0, 1.0]);
+    scene.rect_set_size(cover, (49, 100));
+    assert_eq!(
+        scene.outputs_showing(&surface),
+        shown,
+        "a cover a pixel short"
+    );
+    scene.rect_set_size(cover, (100, 100));
+    scene.raise_to_top(s);
+    assert_eq!(
+        scene.outputs_showing(&surface),
+        shown,
+        "raised above the cover"
+    );
+    scene.raise_to_top(cover);
+    let glass = scene.custom_create(root, Box::new(Pane));
+    scene.set_position(glass, 150, 0);
+    assert_eq!(
+        scene.outputs_showing(&surface),
+        Some(vec![]),
+        "glass on the other output"
+    );
+    scene.set_position(glass, 90, 90);
+    assert_eq!(
+        scene.outputs_showing(&surface),
+        shown,
+        "glass above on its output"
+    );
+    scene.destroy(glass);
+    assert_eq!(scene.outputs_showing(&surface), Some(vec![]));
+
+    scene.set_position(s, 70, 10);
+    assert_eq!(scene.outputs_showing(&surface), Some(vec![right.clone()]));
+    assert_eq!(
+        scene.primary_output(s),
+        Some(right.clone()),
+        "the output that draws it"
+    );
+    scene.set_position(s, 10, 10);
+    scene.set_enabled(cover, false);
+    assert_eq!(scene.outputs_showing(&surface), shown);
+    assert_eq!(scene.primary_output(s), Some(left.clone()));
+    scene.send_frames(&scene.surface_pass(&left), Duration::from_millis(32), None);
+    assert_eq!(
+        w.events(),
+        ["frame"],
+        "the frame it asked for under the cover"
+    );
+}
+
+#[test]
+fn a_surface_covers_what_lies_under_its_opaque_region_or_its_buffer_without_alpha() {
+    use wl_shm::Format::{Argb8888, Xrgb8888};
+    let mut w = World::new();
+    let surface = w.surface();
+    let mut scene = Scene::<DummyRenderer>::new();
+    scene.add_output(&w.left);
+    let root = scene.root();
+    let s = scene.surface_create(root, surface.clone());
+    scene.set_position(s, 10, 10);
+    for (format, opaque, covered) in [
+        (Argb8888, None, false),
+        (Argb8888, Some((0, 0, 100, 30)), false),
+        (Argb8888, Some((0, 0, 100, 100)), true),
+        (Xrgb8888, None, true),
+    ] {
+        let c = w.cover(format, opaque);
+        let node = scene.surface_create(root, c);
+        let showing = scene.outputs_showing(&surface).unwrap();
+        assert_eq!(
+            showing.is_empty(),
+            covered,
+            "{format:?} with opaque region {opaque:?}"
+        );
+        scene.destroy(node);
+    }
+}
+
+#[test]
+fn at_a_fractional_scale_a_cover_reaches_a_pixel_past_the_surface_it_covers() {
+    let mut w = World::new();
+    let surface = w.surface();
+    let left = w.left.clone();
+    left.change_current_state(
+        None,
+        None,
+        Some(smithay::output::Scale::Fractional(1.5)),
+        None,
+    );
+    let mut scene = Scene::<DummyRenderer>::new();
+    scene.add_output(&left);
+    let root = scene.root();
+    let s = scene.surface_create(root, surface.clone());
+    scene.set_position(s, 10, 10);
+    let cover = scene.rect_create(root, (50, 50), [0.0, 0.0, 0.0, 1.0]);
+    assert_eq!(
+        scene.outputs_showing(&surface),
+        Some(vec![left.clone()]),
+        "edge on edge"
+    );
+    scene.rect_set_size(cover, (51, 51));
+    assert_eq!(scene.outputs_showing(&surface), Some(vec![]));
 }
 
 #[test]
