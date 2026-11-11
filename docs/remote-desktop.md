@@ -80,6 +80,12 @@ or the `tailscale0` interface).
   ([security.md](security.md#remote-desktop)).
 - **Clients.** xfreerdp3, Remmina and mstsc have been tried. mstsc
   logs in with NLA, so it needs reprise-login and a Remote Desktop password.
+- **FreeRDP before 3.32.2.** On x86 its full-colour decoder puts the
+  auxiliary colour samples one column left, so coloured edges show dotted
+  fringes when the screen width is not a multiple of 32 or the server codes
+  both halves on one encoder. FreeRDP 3.32.2 and later draw them clean.
+  On an older client, a window width that is a multiple of 32 or quality
+  Speed avoids them.
 
 ## Which password
 
