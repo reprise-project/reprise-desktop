@@ -434,6 +434,8 @@ fn options(backend: Backend, quality: Quality, avc444: bool, merged: bool) -> Di
     if merged && backend == Backend::X264 {
         // Weighted prediction writes tables into slice headers that the merge doesn't rewrite.
         o.set("weightp", "none");
+        // Finds scrolled text past the preset's range; only one encoder per view has the CPU for it.
+        o.set("x264-params", "me=umh:merange=64");
     }
     o
 }
@@ -727,6 +729,45 @@ pub(crate) mod tests {
             let (data, _) = avc(encoder.encode(&frame(size, 0, damage), true).unwrap());
             assert_eq!(level_idc(&data), Some(level), "{rate} frames a second");
         }
+    }
+
+    fn x264_options(avc444: bool, merged: bool) -> Vec<(String, String)> {
+        let o = options(Backend::X264, Quality::Balanced, avc444, merged);
+        o.iter().map(|(k, v)| (k.into(), v.into())).collect()
+    }
+
+    #[test]
+    fn x264_searches_wide_motion_on_merged_views_only() {
+        let qp = Quality::Balanced.qp().to_string();
+        let pairs = |p: &[(&str, &str)]| -> Vec<(String, String)> {
+            [("qp", qp.as_str())]
+                .iter()
+                .chain(p)
+                .map(|&(k, v)| (k.into(), v.into()))
+                .collect()
+        };
+        let base = [
+            ("preset", "superfast"),
+            ("tune", "zerolatency"),
+            ("forced-idr", "1"),
+        ];
+        let single = [base.as_slice(), &[("sc_threshold", "0")]].concat();
+        let merged = [
+            single.as_slice(),
+            &[("weightp", "none"), ("x264-params", "me=umh:merange=64")],
+        ]
+        .concat();
+        assert_eq!(x264_options(false, false), pairs(&base), "AVC420");
+        assert_eq!(
+            x264_options(true, false),
+            pairs(&single),
+            "one-encoder AVC444"
+        );
+        assert_eq!(
+            x264_options(true, true),
+            pairs(&merged),
+            "merged AVC444 views"
+        );
     }
 
     #[test]
