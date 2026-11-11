@@ -1608,6 +1608,39 @@ mod harness_tests {
     }
 
     #[test]
+    fn the_candidate_popup_opens_under_a_zero_width_caret() {
+        let (mut h, mut c, t) = focused_client();
+        let mut m = input_method(&mut h, false);
+        let ti = c.text_input();
+        h.roundtrip(&mut c);
+        let text_input = &c.side.text_inputs[ti];
+        text_input.enable();
+        text_input.set_cursor_rectangle(40, 30, 0, 18);
+        text_input.commit();
+        h.roundtrip(&mut c);
+        h.roundtrip(&mut m);
+        m.input_popup(0, 120, 60);
+        h.roundtrip(&mut m);
+        let window = (h.state.windows.iter())
+            .find(|w| w.id == t.id)
+            .expect("the window")
+            .wl_surface()
+            .clone();
+        let scene = &h.state.scene;
+        let (origin, _) = scene
+            .coords(scene.surface_node(&window).expect("the window's node"))
+            .expect("the window is placed");
+        let popup = h.state.ime.popup.as_ref().expect("the candidate popup");
+        let (at, shown) = scene.coords(popup.node).expect("the popup is placed");
+        assert!(shown, "the popup is shown");
+        assert_eq!(
+            (at.x, at.y),
+            (origin.x + 40, origin.y + 48),
+            "the popup's top-left is the caret's bottom-left"
+        );
+    }
+
+    #[test]
     fn keys_under_a_locker_reach_its_surface_and_never_the_input_methods_grab() {
         let mut h = Harness::new();
         h.output("TEST-1", 1024, 768);
