@@ -533,6 +533,21 @@ impl Harness {
         self.roundtrip(c);
     }
 
+    /// [`Harness::draw_self`] with the whole surface marked opaque, as a program drawing no
+    /// transparency does.
+    pub fn draw_opaque(&mut self, c: &mut TestClient, t: Toplevel, argb: u32) {
+        let qh = c.qh();
+        let region = (c.side.compositor.as_ref())
+            .expect("wl_compositor")
+            .create_region(&qh, ());
+        region.add(0, 0, 1 << 16, 1 << 16);
+        c.side.shells[t.shell]
+            .surface
+            .set_opaque_region(Some(&region));
+        region.destroy();
+        self.draw_self(c, t, argb);
+    }
+
     /// A `w`x`h` xdg popup on toplevel `t`, mapped with its first buffer, that asks for the
     /// seat's grab under the last keyboard enter's serial, as a menu does.
     pub fn map_popup(&mut self, c: &mut TestClient, t: Toplevel, w: i32, h: i32) -> Popup {
@@ -1862,6 +1877,7 @@ impl wc::Dispatch<ExtDataControlSourceV1, Answers> for ClientSide {
 wc::delegate_noop!(ClientSide: ignore ExtDataControlManagerV1);
 wc::delegate_noop!(ClientSide: ignore ExtDataControlOfferV1);
 wc::delegate_noop!(ClientSide: ignore WlSurface);
+wc::delegate_noop!(ClientSide: wc::protocol::wl_region::WlRegion);
 wc::delegate_noop!(ClientSide: ignore ZwpInputPopupSurfaceV2);
 wc::delegate_noop!(ClientSide: ignore wl_shm::WlShm);
 wc::delegate_noop!(ClientSide: ignore wl_shm_pool::WlShmPool);
