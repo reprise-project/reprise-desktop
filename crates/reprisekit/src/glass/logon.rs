@@ -17,7 +17,7 @@ use crate::shape::{
     stroke,
 };
 use crate::style::{Part as StylePart, State};
-use crate::text::{Align, TextRenderer, split_mnemonic};
+use crate::text::{TextRenderer, split_mnemonic};
 use crate::textedit::{Caret, edit_first_visible};
 use crate::theme::{Color, Theme};
 
@@ -38,7 +38,7 @@ const NOTE_H: i32 = 16;
 const TILE_NAME_H: i32 = 20;
 const FIELD_W: i32 = 210;
 const FIELD_H: i32 = 24;
-const FIELD_PAD: i32 = 5;
+const FIELD_PAD: i32 = 6;
 const ARROW: i32 = 26;
 const ARROW_GAP: i32 = 6;
 const PICTURE_GAP: i32 = 10;
@@ -1082,8 +1082,7 @@ fn spinner(c: &mut Canvas, x: i32, y: i32, s: i32, step: u32) {
 }
 
 /// `part`'s edit in Glass's edit border at device `r`, the text drawn as every line edit's. The
-/// field is white in both modes, so its text takes the light scheme's ink. The cue starts one
-/// caret width in, clear of the caret at its start.
+/// field is white in both modes, so its text takes the light scheme's ink.
 #[expect(clippy::too_many_arguments)]
 fn field(
     c: &mut Canvas,
@@ -1100,6 +1099,7 @@ fn field(
         Part::Name => m.name.clone(),
         _ => m.password.clone(),
     };
+    edit.set_cue(cue);
     if edit.is_secret() {
         edit = edit.masked();
     }
@@ -1123,11 +1123,6 @@ fn field(
     );
     let first = edit_first_visible(text, &edit, inner.width, px, 0);
     let caret = Caret::new(m.focus == part && !m.busy, true);
-    let composing = caret.focused() && !edit.is_secret() && c.preedit().is_some();
-    if edit.text.is_empty() && !composing {
-        let at = Rect::new(inner.x + s, inner.y, inner.width - s, inner.height);
-        text.draw(c, at, cue, false, light.gray_text, Align::Left, px);
-    }
     paint::draw_edit(c, text, &edit, inner, px, p, caret, first);
 }
 

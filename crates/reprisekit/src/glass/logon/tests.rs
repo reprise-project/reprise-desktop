@@ -401,21 +401,41 @@ fn the_lock_field_inks_its_password_dark_in_both_modes() {
 }
 
 #[test]
-fn the_lock_fields_caret_covers_none_of_the_cue() {
-    let (_, away) = lock_fields().swap_remove(1);
+fn the_lock_fields_caret_inverts_the_column_the_cue_starts_on() {
+    let fields = lock_fields();
+    let (on, off) = (&fields[0].1, &fields[1].1);
     for mode in [crate::glass::Mode::Light, crate::glass::Mode::Dark] {
         for s in [1, 2] {
-            let (c, l) = drawn_in(&away, s, None, mode);
+            let (a, l) = drawn_in(on, s, None, mode);
+            let (b, _) = drawn_in(off, s, None, mode);
             let (f, x) = lock_field(&l, s);
+            let rows = f.y + 2 * s..f.bottom() - 2 * s;
+            if s == 1 {
+                let first_ink = (x - 1..f.right())
+                    .find(|&cx| rows.clone().any(|y| b.get(cx, y) != 0xFFFF_FFFF))
+                    .unwrap();
+                assert_eq!(first_ink, x, "{mode:?}: the cue's P stands on the pen");
+            }
+            let mut inverted = 0;
             for y in f.y + 2 * s..f.bottom() - 2 * s {
-                for cx in x..x + s {
-                    assert_eq!(
-                        c.get(cx, y),
-                        0xFFFF_FFFF,
-                        "{mode:?} @{s}: the caret's column ({cx}, {y}) holds no cue ink"
-                    );
+                for cx in x - s..f.right() - FIELD_PAD * s {
+                    let (got, under) = (a.get(cx, y), b.get(cx, y));
+                    if (x..x + s).contains(&cx) && got != under {
+                        assert_eq!(
+                            got,
+                            0xFF00_0000 | !under & 0x00FF_FFFF,
+                            "{mode:?} @{s}: ({cx}, {y}) under the caret is inverted"
+                        );
+                        inverted += 1;
+                    } else {
+                        assert_eq!(got, under, "{mode:?} @{s}: ({cx}, {y}) off the caret");
+                    }
                 }
             }
+            assert!(
+                inverted >= 12 * s * s,
+                "{mode:?} @{s}: the caret covers the line, {inverted} px"
+            );
         }
     }
 }

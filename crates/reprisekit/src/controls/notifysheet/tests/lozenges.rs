@@ -356,10 +356,10 @@ const LOZENGE_PINS: [u64; 16] = [
     0x6ee3b1fbd69cf289,
     0x5cfa4f92b72ef9b1,
     0x4ebec1f115eaee42,
-    0xaf867fd881b60a18,
-    0x89a6a152c4b44b12,
-    0x32c233c4d2699634,
-    0xee1ac479ac4980fe,
+    0x966b629ca23c81cf,
+    0x610df1191f13fe17,
+    0x2c14f7725c032efd,
+    0xea888da36db493e6,
 ];
 
 #[test]
