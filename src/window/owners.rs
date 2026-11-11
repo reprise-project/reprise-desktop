@@ -94,10 +94,11 @@ impl State {
         }
         win.on_top = on;
         let tree = win.tree;
-        self.restack();
-        self.scene.raise_to_top(tree);
-        self.raise_children(w);
-        self.redraw_all();
+        self.redraw_changed(|s| {
+            s.restack();
+            s.scene.raise_to_top(tree);
+            s.raise_children(w);
+        });
         self.on_top_changed(w);
     }
 

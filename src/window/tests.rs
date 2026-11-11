@@ -1543,3 +1543,91 @@ fn a_minimize_asks_only_the_outputs_it_changes() {
         "b comes back on TEST-1, a goes inactive on TEST-2"
     );
 }
+
+/// TEST-1 with TEST-2 on its right under Glass, and a client with nothing mapped yet.
+fn side_by_side() -> (crate::harness::Harness, crate::harness::TestClient) {
+    let config =
+        crate::config::Config::parse("[appearance]\ninterface = \"glass\"\n").expect("config");
+    let mut h = crate::harness::Harness::with_config(config);
+    h.output("TEST-1", 1024, 768);
+    h.output("TEST-2", 1024, 768);
+    let c = h.connect();
+    (h, c)
+}
+
+/// [`side_by_side`] with `a` at 50,50 on TEST-1 and `b` at 1200,50 on TEST-2, `b` focused.
+fn one_on_each() -> (
+    crate::harness::Harness,
+    crate::harness::TestClient,
+    crate::harness::Toplevel,
+    crate::harness::Toplevel,
+) {
+    let (mut h, mut c) = side_by_side();
+    let a = h.map_toplevel(&mut c, "app", 300, 200);
+    let b = h.map_toplevel(&mut c, "app", 300, 200);
+    h.state.move_to(a.id, 50, 50);
+    h.state.move_to(b.id, 1200, 50);
+    h.state.focus_window(b.id);
+    h.run_for(600);
+    crate::backend::take_asks();
+    (h, c, a, b)
+}
+
+#[test]
+fn a_window_without_a_task_button_maps_hides_and_closes_asking_only_its_output() {
+    use crate::backend::{take_asks, take_scene_outputs};
+    let (mut h, mut c) = side_by_side();
+    let t = h.map_toplevel_after(&mut c, "app", 300, 200, |h, c, t| {
+        h.state.set_tag(t.id, super::HELP_DIALOG_TAG);
+        h.roundtrip(c);
+        take_asks();
+    });
+    assert_eq!(take_scene_outputs(), ["TEST-1"], "it maps on TEST-1");
+    h.state.move_to(t.id, 1200, 50);
+    h.run_for(600);
+    take_asks();
+    unmap_self(&mut h, &mut c, t);
+    assert!(!h.state.win(t.id).is_some_and(|w| w.mapped));
+    assert_eq!(take_scene_outputs(), ["TEST-2"], "it hides from TEST-2");
+    h.resize_self(&mut c, t, 300, 200);
+    assert!(h.state.win(t.id).is_some_and(|w| w.mapped));
+    assert_eq!(take_scene_outputs(), ["TEST-2"], "it comes back on TEST-2");
+    h.run_for(600);
+    take_asks();
+    c.destroy(t);
+    h.roundtrip(&mut c);
+    assert!(h.state.win(t.id).is_none());
+    assert_eq!(take_scene_outputs(), ["TEST-2"], "it closes on TEST-2");
+}
+
+#[test]
+fn putting_a_window_on_top_asks_only_its_output() {
+    use crate::backend::take_scene_outputs;
+    let (mut h, _c, a, b) = one_on_each();
+    h.state.set_on_top(a.id, true);
+    assert_eq!(take_scene_outputs(), ["TEST-1"]);
+    h.state.set_on_top(b.id, true);
+    assert_eq!(take_scene_outputs(), ["TEST-2"]);
+}
+
+#[test]
+fn rolling_a_window_up_and_down_asks_only_its_output() {
+    use crate::backend::take_scene_outputs;
+    let (mut h, _c, a, _b) = one_on_each();
+    h.state.set_shaded(a.id, true);
+    assert!(h.state.win(a.id).is_some_and(|w| w.shaded));
+    assert_eq!(take_scene_outputs(), ["TEST-1"]);
+    h.state.set_shaded(a.id, false);
+    assert_eq!(take_scene_outputs(), ["TEST-1"]);
+}
+
+#[test]
+fn a_window_taking_its_own_frame_asks_only_its_output() {
+    use crate::backend::take_scene_outputs;
+    let (mut h, _c, _a, b) = one_on_each();
+    h.state.set_csd(b.id, true);
+    assert!(h.state.win(b.id).is_some_and(|w| w.csd));
+    assert_eq!(take_scene_outputs(), ["TEST-2"], "b's frame goes");
+    h.state.set_csd(b.id, false);
+    assert_eq!(take_scene_outputs(), ["TEST-2"], "b's frame comes back");
+}

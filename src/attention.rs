@@ -309,4 +309,25 @@ mod tests {
         );
         assert_eq!(h.state.focused, Some(a.id));
     }
+
+    #[test]
+    fn focusing_an_owner_whose_modal_dialog_has_the_focus_puts_its_button_out() {
+        let config =
+            crate::config::Config::parse("[taskbar]\nattention_flash = 0\n").expect("config");
+        let mut h = Harness::with_config(config);
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let a = h.map_toplevel(&mut c, "test.a", 300, 200);
+        let d = h.map_dialog(&mut c, "test.a", Some(a), "dialog", (200, 100));
+        h.state.win_mut(d.id).expect("the dialog").modal = true;
+        assert_eq!(h.state.focused, Some(d.id));
+        h.state.x11_urgency(a.id, true);
+        assert!(h.state.win(a.id).is_some_and(|w| w.attention.is_some()));
+        let draws = |h: &Harness| h.state.bars[0].draws;
+        let lit = draws(&h);
+        h.state.focus_window(a.id);
+        assert_eq!(h.state.focused, Some(d.id), "the dialog keeps the focus");
+        assert!(h.state.win(a.id).is_some_and(|w| w.attention.is_none()));
+        assert!(draws(&h) > lit, "the bar draws a's button out");
+    }
 }

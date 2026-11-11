@@ -905,7 +905,6 @@ impl XwmHandler for State {
             WmWindowProperty::Title | WmWindowProperty::Class => self.note_title(w),
             WmWindowProperty::MotifHints if !window.is_override_redirect() => {
                 self.set_csd(w, !decorated(&window.motif_hints()));
-                self.redraw_all();
             }
             WmWindowProperty::TransientFor => self.redraw_changed(|s| {
                 s.on_parent_changed(w);

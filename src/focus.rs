@@ -116,7 +116,7 @@ impl State {
         {
             self.show_desktop(d);
         }
-        self.clear_attention(owner);
+        let cleared = self.clear_attention(owner);
         let w = self.modal_target(owner);
         if w != owner {
             if let Some(tree) = self.win(owner).map(|x| x.tree) {
@@ -137,6 +137,9 @@ impl State {
             let held = self.seat.get_keyboard().and_then(|k| k.current_focus());
             if held != surface {
                 self.claim_keyboard(w);
+            }
+            if cleared {
+                self.redraw_taskbars();
             }
             return;
         }
