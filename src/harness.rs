@@ -201,6 +201,16 @@ impl Harness {
         }
     }
 
+    /// Every output shows a frame as the backend's render does afterwards: client surfaces enter
+    /// the outputs they lie on. The harness has no backend, so nothing else does.
+    pub fn show_frames(&mut self) {
+        let scene = &mut self.state.scene;
+        for output in scene.outputs().to_vec() {
+            let pass = scene.surface_pass(&output);
+            scene.update_surfaces(&pass, &Default::default());
+        }
+    }
+
     /// A `w`x`h` output at scale 1 put in the layout, as `backend::enable` does once it drives
     /// a connector.
     pub fn output(&mut self, name: &str, w: i32, h: i32) -> Output {
