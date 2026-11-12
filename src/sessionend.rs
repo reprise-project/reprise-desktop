@@ -918,9 +918,10 @@ fn sync_prompt(state: &mut State) {
     }
 }
 
-/// The prompt's picture ([`crate::icon::unread`]).
+/// The prompt's picture ([`crate::icon::unread_first`]): the warning sign, else the question mark.
 fn warning_icon(state: &mut State) -> Option<crate::raster::Canvas> {
-    crate::icon::unread(&mut state.icons, "dialog-warning", 32).map(Arc::unwrap_or_clone)
+    let names = ["dialog-warning", "dialog-question"];
+    crate::icon::unread_first(&mut state.icons, names, 32).map(Arc::unwrap_or_clone)
 }
 
 /// Icons landed while the prompt showed a stand-in for its picture: it looks it up again.
@@ -1105,11 +1106,9 @@ fn blocks(
 mod tests {
     use super::*;
 
-    #[test]
-    fn a_cold_warning_icon_lands_on_the_open_prompt() {
-        use reprisekit::controls::form::Control;
-        let root = crate::icon::svg_theme(&["dialog-warning"], &[]);
-        let mut h = crate::icon::two_outputs("classic", &root);
+    /// A harness with icons from `root` and the session-end prompt open.
+    fn prompted(root: &std::path::Path) -> crate::harness::Harness {
+        let mut h = crate::icon::two_outputs("classic", root);
         h.state.ending = Some(Ending {
             goal: Goal::LogOff,
             cmd: None,
@@ -1122,14 +1121,24 @@ mod tests {
             mode: Mode::Prompted,
         });
         sync_prompt(&mut h.state);
-        let picture = |h: &crate::harness::Harness| {
-            let i = prompt_index(&h.state).expect("the prompt");
-            let page = h.state.dialogs.views[i].dialog.form()?.open_page()?;
-            match &page.item("icon")?.control {
-                Control::Picture { canvas, .. } => canvas.clone(),
-                _ => None,
-            }
-        };
+        h
+    }
+
+    /// The open prompt's picture.
+    fn picture(h: &crate::harness::Harness) -> Option<crate::raster::Canvas> {
+        use reprisekit::controls::form::Control;
+        let i = prompt_index(&h.state).expect("the prompt");
+        let page = h.state.dialogs.views[i].dialog.form()?.open_page()?;
+        match &page.item("icon")?.control {
+            Control::Picture { canvas, .. } => canvas.clone(),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn a_cold_warning_icon_lands_on_the_open_prompt() {
+        let root = crate::icon::svg_theme(&["dialog-warning"], &[]);
+        let mut h = prompted(&root);
         let blank = picture(&h).expect("a stand-in in the picture's place");
         assert!(
             blank.pixels.iter().all(|&p| p == 0),
@@ -1139,6 +1148,18 @@ mod tests {
         assert!(
             picture(&h).is_some_and(|c| crate::icon::red(&c)),
             "the prompt took the icon"
+        );
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_warning_icon_that_never_decodes_gives_way_to_the_question_mark() {
+        let root = crate::icon::svg_theme(&["dialog-question"], &["dialog-warning"]);
+        let mut h = prompted(&root);
+        crate::icon::land(&mut h);
+        assert!(
+            picture(&h).is_some_and(|c| crate::icon::red(&c)),
+            "the question mark shows once the warning sign fails"
         );
         std::fs::remove_dir_all(&root).unwrap();
     }
