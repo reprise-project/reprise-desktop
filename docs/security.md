@@ -1444,8 +1444,12 @@ sharing and remote control grants yet.
   references would build past it is refused before usvg builds it, an
   embedded SVG picture builds within what is left or is left out, and one
   whose drawing at its size would cost past what the build left (every
-  filter primitive priced by its kind and region) is drawn as small as a
-  quarter of that size and scaled up, or refused, and one read of
+  filter primitive priced by its kind and region, each layer at the size
+  resvg allocates it: a rotated or skewed filtered group's layer stretched
+  by the inverse of its rotation and skew, an SVG picture's layers bounded
+  by five times the pixmap it lands in) or allocate more than 64 MiB of
+  pixmaps in all is drawn as small as a quarter of that size and scaled
+  up, or refused, and one read of
   an item's icons takes at most 16 MiB and 64 folders. Two threads shared
   by every item do the reads, from a shared queue of 64 in which one app
   holds at most 4. A read waits at most 10 seconds for a thread and then
