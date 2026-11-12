@@ -105,8 +105,8 @@ impl State {
         layouts.current = group;
         if layouts.switchable() {
             self.redraw_taskbars();
-            crate::lockview::redraw(self);
-            crate::greeterview::redraw(self);
+            crate::lockview::update(self);
+            crate::greeterview::update(self);
         }
     }
 

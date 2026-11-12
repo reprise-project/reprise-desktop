@@ -101,12 +101,12 @@ pub fn reply(state: &mut State, reply: GreeterReply) {
         if let Some(action) = catch_up(g, fresh) {
             act(state, action);
         }
-        return redraw(state);
+        return update(state);
     }
     for step in g.conv.on_reply(reply) {
         apply(state, step);
     }
-    redraw(state);
+    update(state);
 }
 
 /// A later Greeting, in place: the tiles' notes and the notice catch up with the sessions, and
@@ -288,6 +288,11 @@ pub fn background_failed(state: &mut State) {
 
 pub fn redraw(state: &mut State) {
     logonview::redraw(state, &HOST);
+}
+
+/// [`redraw`] after a change to the model alone: see [`logonview::update`].
+pub fn update(state: &mut State) {
+    logonview::update(state, &HOST);
 }
 
 /// `output` is about to render: the login screen there steps what plays on it.
