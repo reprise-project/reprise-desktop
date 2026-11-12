@@ -90,6 +90,74 @@ fn an_open_start_menu_row_takes_an_icon_installed_while_it_is_open() {
 }
 
 #[test]
+fn a_row_waiting_on_an_icon_file_shows_its_cold_stand_in_once_that_lands() {
+    let file = "/srv/icons/probe.png";
+    let config = crate::config::Config {
+        startmenu: vec![MenuEntry::item("Probe", file, MenuTarget::Programs)],
+        ..Default::default()
+    };
+    let mut h = crate::harness::Harness::with_config(config);
+    crate::fsjobs::setup(&mut h.state);
+    let root = crate::icon::svg_theme(&[crate::icon::STAND_IN], &[]);
+    let theme = reprisekit::icontheme::IconTheme::load("test", std::slice::from_ref(&root));
+    h.state.icons.set_theme(theme);
+    // The file's job never starts; the stand-in loads on the loop.
+    h.state.fsjobs.refuse_threads = true;
+    h.output("TEST-1", 1024, 768);
+    let bar = h.state.bars[0].tree;
+    h.state.open_start_menu(bar);
+    let icon = |h: &crate::harness::Harness| match &h.state.menus[0].items[0] {
+        MenuItem::Entry { icon, .. } => icon.clone().expect("the row's icon"),
+        MenuItem::Separator => unreachable!(),
+    };
+    assert!(
+        icon(&h).pixels.iter().all(|&p| p == 0),
+        "nothing has landed"
+    );
+    h.dispatch();
+    assert!(
+        crate::icon::tests::red(&icon(&h)),
+        "the row shows the stand-in"
+    );
+    let waits = &h.state.menus[0].icons.waits;
+    assert!(
+        waits.iter().any(|(row, f, _)| *row == 0 && f == file),
+        "the row still waits on its file: {waits:?}"
+    );
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn a_rows_own_icon_ends_its_wait_on_the_stand_in() {
+    let (file, stand_in) = ("/srv/icons/app.png", crate::icon::STAND_IN);
+    let waits = || vec![(0, file.to_string(), 16), (0, stand_in.to_string(), 16)];
+    let width = |items: &[MenuItem]| match &items[0] {
+        MenuItem::Entry { icon, .. } => icon.as_ref().map(|c| c.width),
+        MenuItem::Separator => None,
+    };
+    let (own, shown) = (Some(Canvas::new(16, 16)), Some(Canvas::new(8, 8)));
+
+    let mut items = vec![MenuItem::entry("Aaa")];
+    let mut w = waits();
+    assert!(land_icon(&mut items, &mut w, file, 16, &own));
+    assert!(w.is_empty(), "the stand-in is no longer waited on");
+    assert!(!land_icon(&mut items, &mut w, stand_in, 16, &shown));
+    assert_eq!(width(&items), Some(16), "the late stand-in leaves the icon");
+
+    let mut items = vec![MenuItem::entry("Aaa")];
+    let mut w = waits();
+    assert!(land_icon(&mut items, &mut w, stand_in, 16, &shown));
+    assert_eq!(width(&items), Some(8));
+    assert_eq!(
+        w,
+        [(0, file.to_string(), 16)],
+        "the file is still waited on"
+    );
+    assert!(land_icon(&mut items, &mut w, file, 16, &own));
+    assert_eq!(width(&items), Some(16));
+}
+
+#[test]
 fn an_icon_file_lands_on_its_waiting_rows_only() {
     let (file, other) = ("/srv/icons/app.png", "/srv/icons/other.png");
     let mut items = vec![

@@ -276,6 +276,21 @@ impl FormDialog {
         self.pages_mut().get_mut(i)
     }
 
+    /// Puts `icon` in the open page's "icon" picture, for an icon that landed after the form was
+    /// built. True when the picture changed.
+    pub fn set_icon(&mut self, icon: crate::raster::Canvas) -> bool {
+        use reprisekit::controls::form::Control;
+        let Some(form) = self.open_page_mut() else {
+            return false;
+        };
+        match form.item("icon").map(|i| &i.control) {
+            Some(Control::Picture { canvas, .. }) if canvas.as_ref() != Some(&icon) => {}
+            _ => return false,
+        }
+        form.set_picture("icon", icon);
+        true
+    }
+
     pub(crate) fn event(&mut self, ev: reprisekit::controls::form::Event) -> Outcome {
         let page = self.open_index();
         match self.kind {

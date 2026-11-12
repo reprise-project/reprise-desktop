@@ -34,11 +34,25 @@ impl State {
         icons: &mut RowIcons,
     ) -> Option<Canvas> {
         icons.from.push((row, RowIcon::Name(name.to_string()), px));
-        let icon = self.icons.get_unread(name, px).unwrap_or_else(|| {
-            icons.waits.push((row, name.to_string(), px));
-            crate::icon::stand_in(&mut self.icons, name, px)
-        });
+        let icon = match self.icons.get_unread(name, px) {
+            Some(icon) => icon,
+            None => {
+                self.wait_on(icons, row, name.to_string(), px);
+                crate::icon::stand_in(&mut self.icons, name, px)
+            }
+        };
         icon.map(Arc::unwrap_or_clone)
+    }
+
+    /// Notes row `row` waiting on icon file or theme name `key` at `px`, and on
+    /// [`crate::icon::STAND_IN`] while an icon file's stand-in is still decoding too.
+    fn wait_on(&mut self, icons: &mut RowIcons, row: usize, key: String, px: i32) {
+        let stand_in = crate::icon::STAND_IN;
+        let cold = key.starts_with('/') && self.icons.get_unread(stand_in, px).is_none();
+        icons.waits.push((row, key, px));
+        if cold {
+            icons.waits.push((row, stand_in.to_string(), px));
+        }
     }
 
     /// Window `w`'s icon at `px` for menu row `row`: one waiting on its icon file or theme name
@@ -55,7 +69,7 @@ impl State {
         let (icon, file) =
             crate::icon::window_icon_waiting(&mut self.icons, &self.app_index, win, px);
         if let Some(file) = file {
-            icons.waits.push((row, file, px));
+            self.wait_on(icons, row, file, px);
         }
         icon.map(Arc::unwrap_or_clone)
     }
