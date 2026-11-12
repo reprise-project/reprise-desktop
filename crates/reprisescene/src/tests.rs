@@ -284,57 +284,71 @@ fn changes_count_edits_and_not_reads() {
     assert!(s.changes() > moved, "a destroy counts");
 }
 
+/// A scene on L, R and X, side by side at x 0, 1000 and 2000, each 1000x800.
+fn three_outputs() -> TestScene {
+    let mut s = TestScene::new();
+    for (i, name) in ["L", "R", "X"].into_iter().enumerate() {
+        s.add_output(&output(name, 1000 * i as i32, 0, 1000, 800, 1.0));
+    }
+    s
+}
+
+fn watched_names(s: &mut TestScene) -> Vec<String> {
+    s.watched().iter().map(|o| o.name()).collect()
+}
+
 #[test]
 fn a_watch_sees_a_move_where_it_was_and_where_it_went() {
-    let mut s = TestScene::new();
+    let mut s = three_outputs();
     let root = s.root();
     let r = s.rect_create(root, (4, 4), RED);
     assert!(s.watch());
-    s.set_position(r, 10, 0);
+    s.set_position(r, 1010, 0);
     s.rect_set_color(r, [0.0, 0.0, 1.0, 1.0]);
-    let mut seen = s.watched();
-    seen.sort_by_key(|r| r.loc.x);
-    assert_eq!(seen, [rect(0, 0, 4, 4), rect(10, 0, 4, 4)]);
-    assert_eq!(s.watched(), [], "the watch ended");
+    assert_eq!(watched_names(&mut s), ["L", "R"]);
+    assert!(watched_names(&mut s).is_empty(), "the watch ended");
 }
 
 #[test]
 fn a_watch_sees_a_raised_sibling_and_not_its_parent() {
-    let mut s = TestScene::new();
+    let mut s = three_outputs();
     let root = s.root();
     let layer = s.tree_create(root);
     let a = s.rect_create(layer, (4, 4), RED);
     let b = s.rect_create(layer, (4, 4), RED);
-    s.set_position(b, 100, 0);
+    s.set_position(b, 1100, 0);
     assert!(s.watch());
     s.raise_to_top(b);
-    assert_eq!(s.watched(), [], "raising the top sibling moves nothing");
+    assert!(
+        watched_names(&mut s).is_empty(),
+        "raising the top sibling moves nothing"
+    );
     assert!(s.watch());
     s.raise_to_top(a);
-    assert_eq!(s.watched(), [rect(0, 0, 4, 4), rect(0, 0, 4, 4)]);
+    assert_eq!(watched_names(&mut s), ["L"]);
 }
 
 #[test]
 fn a_watch_sees_what_a_destroy_or_a_hidden_tree_covered() {
-    let mut s = TestScene::new();
+    let mut s = three_outputs();
     let root = s.root();
     let t = s.tree_create(root);
     let r = s.rect_create(t, (4, 4), RED);
     s.set_position(r, 3, 3);
     assert!(s.watch());
     s.set_enabled(t, false);
-    assert_eq!(s.watched(), [rect(3, 3, 4, 4)], "only before: hidden now");
+    assert_eq!(watched_names(&mut s), ["L"], "only before: hidden now");
     assert!(s.watch());
     s.set_enabled(t, true);
-    assert_eq!(s.watched(), [rect(3, 3, 4, 4)], "only after: hidden before");
+    assert_eq!(watched_names(&mut s), ["L"], "only after: hidden before");
     assert!(s.watch());
     s.destroy(t);
-    assert_eq!(s.watched(), [rect(3, 3, 4, 4)]);
+    assert_eq!(watched_names(&mut s), ["L"]);
 }
 
 #[test]
 fn a_watch_skips_a_canvas_edit_outside_the_source_box() {
-    let mut s = TestScene::new();
+    let mut s = three_outputs();
     let root = s.root();
     let b = s.buffer_create(root);
     s.buffer_set_canvas(b, &[0; 8 * 4], 8, 4);
@@ -347,12 +361,12 @@ fn a_watch_skips_a_canvas_edit_outside_the_source_box() {
     below[8 * 2] = 0xff00_0000;
     assert!(s.watch());
     s.buffer_set_canvas(b, &below, 8, 4);
-    assert_eq!(s.watched(), [], "row 2 lies outside the box");
+    assert!(s.watched().is_empty(), "row 2 lies outside the box");
     let mut inside = below;
     inside[3] = 0xff00_0000;
     assert!(s.watch());
     s.buffer_set_canvas(b, &inside, 8, 4);
-    assert_eq!(s.watched(), [rect(0, 0, 8, 1); 2], "before and after");
+    assert_eq!(watched_names(&mut s), ["L"], "before and after");
     let sharer = s.buffer_create(root);
     s.buffer_share(sharer, b);
     assert!(s.watch());
@@ -365,28 +379,109 @@ fn a_watch_skips_a_canvas_edit_outside_the_source_box() {
 
 #[test]
 fn a_watch_skips_where_a_moved_trees_child_never_showed() {
-    let mut s = TestScene::new();
+    let mut s = three_outputs();
     let root = s.root();
     let t = s.tree_create(root);
     let shown = s.rect_create(t, (4, 4), RED);
     let hidden = s.rect_create(t, (4, 4), RED);
-    s.set_position(hidden, 10, 0);
+    s.set_position(hidden, 1000, 0);
     assert!(s.watch());
-    s.set_position(t, 100, 0);
+    s.set_position(t, 1000, 0);
     s.set_enabled(hidden, false);
     s.rect_set_color(shown, [0.0, 0.0, 1.0, 1.0]);
-    let mut seen = s.watched();
-    seen.sort_by_key(|r| (r.loc.x, r.size.w));
     assert_eq!(
-        seen,
-        [rect(0, 0, 14, 4), rect(100, 0, 4, 4), rect(100, 0, 4, 4)],
-        "the tree before, and the shown child where it went; never 110,0"
+        watched_names(&mut s),
+        ["L", "R"],
+        "the tree before, and the shown child where it went; never X"
     );
 }
 
 #[test]
+fn a_watch_skips_an_output_where_an_opaque_cover_hides_the_edit_before_and_after() {
+    let mut s = three_outputs();
+    let root = s.root();
+    let bar = s.rect_create(root, (1500, 30), HALF);
+    s.set_position(bar, 0, 770);
+    let cover = s.tree_create(root);
+    s.rect_create(cover, (1000, 800), RED);
+    assert!(s.watch());
+    s.rect_set_color(bar, RED);
+    assert_eq!(watched_names(&mut s), ["R"], "L shows the cover");
+    assert!(s.watch());
+    s.set_opacity(cover, 0.5);
+    s.rect_set_color(bar, HALF);
+    assert_eq!(
+        watched_names(&mut s),
+        ["L", "R"],
+        "the cover fades: L shows the bar"
+    );
+    s.set_opacity(cover, 1.0);
+    assert!(s.watch());
+    s.set_enabled(cover, false);
+    s.rect_set_color(bar, RED);
+    assert_eq!(watched_names(&mut s), ["L", "R"], "the cover goes");
+}
+
+#[test]
+fn a_watch_judges_what_showed_by_the_scene_before_its_first_edit() {
+    let mut s = three_outputs();
+    let root = s.root();
+    let w = s.rect_create(root, (100, 100), RED);
+    s.set_position(w, 10, 10);
+    assert!(s.watch());
+    let cover = s.rect_create(root, (1000, 800), RED);
+    s.destroy(w);
+    s.set_position(cover, 1000, 0);
+    assert_eq!(
+        watched_names(&mut s),
+        ["L", "R"],
+        "L showed the rect before the cover came and went"
+    );
+}
+
+#[test]
+fn a_watch_judges_later_edits_by_an_output_it_found_covered() {
+    let mut s = three_outputs();
+    let root = s.root();
+    let [a, b] = [0, 1].map(|_| s.rect_create(root, (4, 4), RED));
+    let c = s.rect_create(root, (4, 4), RED);
+    s.set_position(c, 1100, 0);
+    let cover = s.rect_create(root, (1000, 800), RED);
+    assert!(s.watch());
+    s.rect_set_color(a, HALF);
+    s.rect_set_color(c, HALF);
+    s.set_position(b, 1010, 0);
+    assert_eq!(watched_names(&mut s), ["R"], "a and b were under the cover");
+    assert!(s.watch());
+    s.rect_set_color(a, RED);
+    s.lower_to_bottom(cover);
+    assert_eq!(watched_names(&mut s), ["L"], "the cover went under a");
+    assert!(s.watch());
+    s.rect_set_color(a, HALF);
+    assert_eq!(watched_names(&mut s), ["L"], "a shows");
+}
+
+#[test]
+fn a_watch_sees_a_hoisted_node_go_with_the_tree_it_draws_in() {
+    let mut s = three_outputs();
+    let root = s.root();
+    let windows = s.tree_create(root);
+    let on_top = s.tree_create(root);
+    let low = s.tree_create(windows);
+    let r = s.rect_create(low, (20, 20), RED);
+    s.set_position(r, 10, 10);
+    s.set_hoist(on_top, vec![low.into()]);
+    assert!(s.watch());
+    s.set_enabled(on_top, false);
+    assert_eq!(watched_names(&mut s), ["L"]);
+    assert!(s.watch());
+    s.set_enabled(on_top, true);
+    assert_eq!(watched_names(&mut s), ["L"]);
+}
+
+#[test]
 fn setting_a_node_as_it_is_is_no_edit() {
-    let mut s = TestScene::new();
+    let mut s = three_outputs();
     let root = s.root();
     let r = s.rect_create(root, (4, 4), RED);
     s.set_position(r, 2, 2);
@@ -394,20 +489,20 @@ fn setting_a_node_as_it_is_is_no_edit() {
     assert!(s.watch());
     s.set_position(r, 2, 2);
     s.set_enabled(r, true);
-    assert_eq!(s.watched(), []);
+    assert!(watched_names(&mut s).is_empty());
     assert_eq!(s.changes(), before);
 }
 
 #[test]
 fn a_second_watch_leaves_the_running_one_on() {
-    let mut s = TestScene::new();
+    let mut s = three_outputs();
     let root = s.root();
     assert!(s.watch());
     assert!(!s.watch(), "already on");
     let r = s.rect_create(root, (4, 4), RED);
-    assert_eq!(s.watched(), [rect(0, 0, 4, 4), rect(0, 0, 4, 4)]);
+    assert_eq!(watched_names(&mut s), ["L"]);
     s.set_position(r, 9, 9);
-    assert_eq!(s.watched(), [], "no watch, nothing kept");
+    assert!(watched_names(&mut s).is_empty(), "no watch, nothing kept");
 }
 
 #[test]
@@ -1259,7 +1354,7 @@ fn a_tree_kept_on_an_output_draws_hits_and_asks_only_inside_it_as_either_moves()
     s.set_kept_on(t, None);
     assert_eq!(
         s.watched(),
-        vec![rect(950, 10, 50, 100), rect(950, 10, 100, 100)],
+        [left.clone(), right.clone()],
         "letting go of the output shows the part past it"
     );
     assert_eq!(s.outputs_of(t), vec![left, right]);

@@ -432,15 +432,16 @@ impl State {
 
     fn complete_window_anim(&mut self, i: usize) {
         let a = self.window_anims.list.remove(i);
-        if a.opening
-            && let Some(tree) = self.win(a.window).map(|x| x.tree)
-        {
-            self.scene.set_opacity(tree, 1.0);
-        }
-        if let Some(s) = a.still {
-            self.scene.destroy(s.tree);
-            self.schedule_rect(s.rect);
-        }
+        self.redraw_changed(|state| {
+            if a.opening
+                && let Some(tree) = state.win(a.window).map(|x| x.tree)
+            {
+                state.scene.set_opacity(tree, 1.0);
+            }
+            if let Some(s) = a.still {
+                state.scene.destroy(s.tree);
+            }
+        });
     }
 
     fn on_some_output(&self, rect: Rect) -> bool {
@@ -512,6 +513,28 @@ mod tests {
                 "no closing either"
             );
         }
+    }
+
+    #[test]
+    fn an_opening_that_cannot_take_its_still_asks_a_frame_where_the_window_shows() {
+        let config = crate::config::Config::parse("[appearance]\ninterface = \"glass\"\n").unwrap();
+        let mut h = crate::harness::Harness::with_config(config);
+        let first = h.output("TEST-1", 1024, 768);
+        h.output("TEST-2", 1024, 768);
+        let mut c = h.connect();
+        let w = h.map_toplevel(&mut c, "one", 300, 200).id;
+        let tree = h.state.win(w).unwrap().tree;
+        assert!(
+            h.state.outputs_of_nodes(&[tree.into()]).is_empty(),
+            "the opening hides the window"
+        );
+        crate::backend::take_asks();
+        h.state.window_anims_frame(&first);
+        assert!(
+            h.state.window_anims.list.is_empty(),
+            "the harness renders no still, so the window just shows"
+        );
+        assert_eq!(crate::backend::take_scene_outputs(), ["TEST-1"]);
     }
 
     #[test]

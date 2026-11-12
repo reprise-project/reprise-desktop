@@ -67,6 +67,8 @@ pub(crate) struct Pass<'a> {
     pub(crate) view: &'a View,
     pub(crate) mode: Mode<'a>,
     pub(crate) hoist: bool,
+    /// Set by the visitor to end the walk early.
+    pub(crate) stop: Option<&'a Cell<bool>>,
 }
 
 /// Which nodes a walk keeps.
@@ -381,6 +383,7 @@ where
                 passed: &passed,
             },
             hoist: true,
+            stop: None,
         };
         let mut hit = false;
         self.walk(
@@ -409,6 +412,7 @@ where
             view: &View::new(area, 1.0),
             mode: Mode::Screen,
             hoist: true,
+            stop: None,
         };
         let mut out = Vec::new();
         self.walk(
@@ -446,6 +450,7 @@ where
                 view,
                 mode: Mode::Picture,
                 hoist: false,
+                stop: None,
             };
             self.walk_node(
                 id,
@@ -469,6 +474,7 @@ where
             view,
             mode,
             hoist: true,
+            stop: None,
         };
         self.walk(
             self.root().node(),
@@ -501,6 +507,9 @@ impl<R: Renderer, D> Scene<R, D> {
         clip: Clip,
         visit: &mut Visit<'_, R, D>,
     ) {
+        if pass.stop.is_some_and(Cell::get) {
+            return;
+        }
         let hoist = self.hoist.as_ref().filter(|_| pass.hoist);
         if hoist.is_some_and(|(_, nodes)| nodes.contains(&id)) {
             return;
