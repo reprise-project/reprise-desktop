@@ -379,7 +379,11 @@ fn a_sender_asked_for_before_the_portal_heard_the_console_unlock_is_refused() {
     h.roundtrip(&mut portal);
     assert_eq!(ended(&lock), [Reason::ConsoleUnlocked as u32]);
     assert!(h.state.inputproto.eis.is_empty(), "no sender is made");
-    theirs.set_nonblocking(true).expect("nonblocking");
+    // A child another test forks may hold the compositor's end until it execs: wait for the close.
+    let ceiling = std::time::Duration::from_secs(10);
+    theirs
+        .set_read_timeout(Some(ceiling))
+        .expect("read timeout");
     assert_eq!(
         theirs.read(&mut [0; 64]).ok(),
         Some(0),

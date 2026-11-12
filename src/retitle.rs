@@ -137,6 +137,8 @@ pub fn wait(last: Option<Instant>, now: Instant) -> Option<Duration> {
 pub struct WindowTitles {
     seen: Seen,
     pending: Changes,
+    /// Whether a pending change shows on a task button the bars drew before it came.
+    pending_bars: bool,
     drawn_at: Option<Instant>,
 }
 
@@ -170,10 +172,12 @@ impl State {
         if !changes.any() {
             return;
         }
+        let label = self.task_label(w);
         let Some(win) = self.win_mut(w) else {
             return;
         };
         win.titles.pending.merge(changes);
+        win.titles.pending_bars |= plan(changes, label).taskbars;
         if !std::mem::replace(&mut self.titles.idle, true) {
             self.handle.insert_idle(|state| {
                 state.titles.idle = false;
@@ -182,9 +186,10 @@ impl State {
         }
     }
 
-    /// Redraw for the pending changes (`plan`): the caption strip, and the
-    /// bars once if any window's button shows what changed. A window
-    /// redrawn under `MIN_INTERVAL` ago waits for the timer.
+    /// Redraw for the pending changes: the caption strip, and the bars once if
+    /// any window's button showed what changed when it came (`plan`); a bar
+    /// drawn since shows it already. A window redrawn under `MIN_INTERVAL` ago
+    /// waits for the timer.
     fn flush_titles(&mut self) {
         let now = Instant::now();
         let pending: Vec<WindowId> = (self.windows.iter())
@@ -195,7 +200,6 @@ impl State {
         let mut bars = false;
         let mut drawn = false;
         for w in pending {
-            let label = self.task_label(w);
             let Some(win) = self.win_mut(w) else {
                 continue;
             };
@@ -204,17 +208,16 @@ impl State {
                 continue;
             }
             let changes = std::mem::take(&mut win.titles.pending);
+            bars |= std::mem::take(&mut win.titles.pending_bars);
             win.titles.drawn_at = Some(now);
             let mapped = win.mapped;
             drawn = true;
             if changes.title || changes.app_id {
                 self.sync_toplevel(w);
             }
-            let plan = plan(changes, label);
-            if plan.caption && mapped {
+            if changes.any() && mapped {
                 self.redraw_caption(w);
             }
-            bars |= plan.taskbars;
         }
         if bars {
             self.redraw_taskbars();
@@ -239,6 +242,15 @@ impl State {
                 Err(e) => log::warn!("title timer: {}", e.error),
             }
         }
+    }
+
+    /// Whether a title change of `w` would draw at once: none waits, and none drew under
+    /// `MIN_INTERVAL` ago.
+    #[cfg(test)]
+    pub fn title_draws_at_once(&self, w: WindowId) -> bool {
+        self.win(w).is_some_and(|win| {
+            !win.titles.pending.any() && wait(win.titles.drawn_at, Instant::now()).is_none()
+        })
     }
 
     fn task_label(&self, w: WindowId) -> TaskLabel {
@@ -402,6 +414,24 @@ mod tests {
                 icon: true
             }
         );
+    }
+
+    #[test]
+    fn a_title_set_before_the_window_maps_redraws_no_bar_once_it_maps() {
+        let config = "[effects]\nwindow_animation = false\n";
+        let config = crate::config::Config::parse(config).unwrap();
+        let mut h = crate::harness::Harness::with_config(config);
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let t = h.map_titled(&mut c, "editor", "one", (300, 200));
+        let draws = |h: &crate::harness::Harness| h.state.bars[0].draws;
+        let mapped = draws(&h);
+        h.until("the titles drawn", |s| s.title_draws_at_once(t.id));
+        assert_eq!(draws(&h), mapped, "the map drew the title");
+        c.side.shells[t.shell].toplevel.set_title("two".into());
+        h.roundtrip(&mut c);
+        h.until("the titles drawn", |s| s.title_draws_at_once(t.id));
+        assert_eq!(draws(&h), mapped + 1, "a title the button showed");
     }
 
     #[test]

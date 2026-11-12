@@ -732,7 +732,7 @@ mod tests {
         c.copy(&["text/uri-list"], b"file:///tmp/a\r\n");
         h.roundtrip(&mut c);
         assert!(h.state.clip_has_files(), "the client's files are pastable");
-        drop(c);
+        c.hang_up();
         h.run_for(50);
         assert!(!h.state.clip_has_files(), "a gone client offers no files");
         assert!(!h.state.clip_has_text(), "nor the older recorded text");
@@ -898,9 +898,20 @@ mod tests {
         let sink = got.clone();
         h.state
             .clip_files(move |_, clip| *sink.borrow_mut() = Some(clip.paths));
-        h.run_for(100);
-        h.roundtrip(c);
-        h.run_for(100);
+        // A refused list never calls back: wait for the reads to end instead.
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            h.roundtrip(c);
+            let reading = h.state.clip.paste.is_some() || h.state.clip.portal_paste.is_some();
+            if got.borrow().is_some() || !reading {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < end,
+                "the paste ends within 10 s"
+            );
+            h.run_for(5);
+        }
         got.take()
     }
 
@@ -998,7 +1009,7 @@ mod tests {
             } else {
                 h.run_for(20);
             }
-            drop(a);
+            a.hang_up();
             h.run_for(50);
 
             let mut b = h.connect();

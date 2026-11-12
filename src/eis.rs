@@ -1137,7 +1137,7 @@ mod tests {
         use std::io::Write;
         let (mut client, relay, context) = relay();
         client.write_all(&[0u8; 3 * READ_CAP]).unwrap();
-        drop(client);
+        client.shutdown(std::net::Shutdown::Write).unwrap();
         for _ in 0..3 {
             assert_eq!(relay.fill(&context).unwrap(), READ_CAP);
             assert_eq!(context.read().unwrap(), 0, "the pair holds nothing more");

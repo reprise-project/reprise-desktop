@@ -199,7 +199,7 @@ mod tests {
         GreeterLink::from_stream(ours)
             .register(&h.state.handle)
             .unwrap();
-        drop(daemon);
+        daemon.shutdown(std::net::Shutdown::Both).unwrap();
         h.run_for(50);
         assert!(h.state.greeter.lost);
         assert!(h.state.greeter.heard.is_empty());
@@ -217,7 +217,7 @@ mod tests {
     #[test]
     fn a_failed_send_loses_the_link() {
         let (mut h, daemon) = linked();
-        drop(daemon);
+        daemon.shutdown(std::net::Shutdown::Both).unwrap();
         send(&mut h.state, &GreeterRequest::StartSession);
         assert!(h.state.greeter.lost);
         assert!(h.state.greeter_link.is_none(), "nothing more goes out");

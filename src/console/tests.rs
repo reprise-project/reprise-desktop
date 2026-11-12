@@ -386,7 +386,7 @@ fn a_locker_that_died_holding_the_lock_does_not_refuse_lock_mode() {
     let mut locker = h.connect();
     let _lock = h.take_lock(&mut locker);
     assert!(crate::sessionlock::holds_input(&h.state));
-    drop(locker);
+    locker.hang_up();
     h.dispatch();
     let mut portal = h.connect_portal();
     let lock = portal.lock_screen();
@@ -443,7 +443,8 @@ fn dropping_the_portal_connection_ends_lock_mode_and_keeps_the_lock() {
     second.set_layout(&[(0, 0, 1920, 1080, 100)]);
     h.roundtrip(&mut portal);
     assert!(remote_side(&h.state));
-    drop((first, second, portal));
+    drop((first, second));
+    portal.hang_up();
     h.run_for(50);
     assert!(!remote_side(&h.state), "lock mode ends");
     assert_eq!(output_names(&h), ["eDP-1"], "the remote screens go");
@@ -774,7 +775,7 @@ fn in_lock_mode_a_remote_window_retitled_asks_no_frame_of_the_locked_monitor() {
     let mut c = h.connect();
     let t = h.map_titled(&mut c, "test.app", "one", (400, 300));
     h.state.move_to(t.id, 2100, 200);
-    h.run_for(2 * crate::retitle::MIN_INTERVAL.as_millis() as u64 + 20);
+    h.until("the titles drawn", |s| s.title_draws_at_once(t.id));
     crate::backend::take_asks();
     c.side.shells[t.shell].toplevel.set_title("two".into());
     c.side.shells[t.shell].surface.commit();

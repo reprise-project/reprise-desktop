@@ -126,7 +126,7 @@ mod tests {
     fn a_closed_client_end_reads_as_hung_up() {
         let (server, client) = UnixStream::pair().unwrap();
         assert!(!socket_end(server.as_fd()).hung_up);
-        drop(client);
+        client.shutdown(std::net::Shutdown::Both).unwrap();
         assert!(socket_end(server.as_fd()).hung_up);
     }
 

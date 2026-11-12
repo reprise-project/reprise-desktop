@@ -842,7 +842,10 @@ mod tests {
 
         let listener = UnixListener::bind(&path).unwrap();
         h.run_for(1000);
-        assert!(!connected(&h.state), "no call before 2 s");
+        assert!(
+            !connected(&h.state) || gone.elapsed() >= RETRY,
+            "no call before 2 s"
+        );
         h.until("the link calls again", connected);
         assert!(gone.elapsed() >= RETRY, "no call before 2 s");
         let (mut second, _) = listener.accept().unwrap();

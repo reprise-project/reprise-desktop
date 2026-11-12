@@ -866,7 +866,7 @@ mod tests {
             read_over(&mut h, &mut c);
             assert_eq!(c.side.source_sends, [HINT], "{who}: only the hint is read");
             assert_eq!(h.state.panels.history.history.entries().count(), 0, "{who}");
-            drop(c);
+            c.hang_up();
             h.run_for(50);
             assert!(
                 !h.state.clip_has_text(),
