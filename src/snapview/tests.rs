@@ -1047,3 +1047,41 @@ fn the_snap_outline_asks_for_frames_only_on_its_output() {
         }
     }
 }
+
+#[test]
+fn the_snap_bar_asks_for_frames_only_on_its_output() {
+    use crate::harness::{Harness, LEFT};
+    let text = "[effects]\nreduce_motion = true\n";
+    let mut h = Harness::with_config(crate::config::Config::parse(text).unwrap());
+    let one = h.output("TEST-1", 1024, 768);
+    h.output("TEST-2", 1024, 768);
+    let mut c = h.connect();
+    let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+    let r = h.state.win(t.id).expect("window").frame_rect();
+    let (x, y) = (f64::from(r.x + 60), f64::from(r.y + 10));
+    h.pointer_to(x, y);
+    h.button(LEFT, true);
+    for (dx, y) in [(40.0, 40.0), (50.0, 30.0)] {
+        h.pointer_to(x + dx, y);
+        h.roundtrip(&mut c);
+        h.state.settle_moves();
+    }
+    assert!(
+        crate::snapbarview::bar_rect(&h.state, &one).is_some(),
+        "the bar shows on TEST-1"
+    );
+    crate::backend::take_asks();
+    h.button(LEFT, false);
+    crate::snapbarview::frame(&mut h.state, &one);
+    h.roundtrip(&mut c);
+    assert!(
+        crate::snapbarview::bar_rect(&h.state, &one).is_none(),
+        "the bar is gone once released"
+    );
+    let asked = crate::backend::take_asks();
+    assert!(!asked.is_empty(), "a frame is asked");
+    assert!(
+        asked.iter().all(|(o, _)| o == "TEST-1"),
+        "only TEST-1: {asked:?}"
+    );
+}
