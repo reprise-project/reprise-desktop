@@ -438,7 +438,7 @@ fn a_surface_is_shown_by_the_outputs_it_overlaps_and_those_it_was_last_drawn_on(
 }
 
 /// A watch over hiding a tree whose surface `gone` emptied after the right output drew it: the
-/// rects it reports, by the outputs they meet.
+/// outputs it reports.
 fn watched_outputs_after(gone: impl FnOnce(&mut World, wl_surface::WlSurface)) -> Vec<String> {
     let mut w = World::new();
     let surface = w.surface();
@@ -454,15 +454,7 @@ fn watched_outputs_after(gone: impl FnOnce(&mut World, wl_surface::WlSurface)) -
     assert_eq!(scene.extents(s), None, "its client state is gone");
     assert!(scene.watch());
     scene.set_enabled(t, false);
-    let rects = scene.watched();
-    [&w.left, &w.right]
-        .into_iter()
-        .filter(|o| {
-            let r = reprisescene::output_rect(o).unwrap();
-            rects.iter().any(|x| x.overlaps(r))
-        })
-        .map(|o| o.name())
-        .collect()
+    scene.watched().iter().map(|o| o.name()).collect()
 }
 
 #[test]

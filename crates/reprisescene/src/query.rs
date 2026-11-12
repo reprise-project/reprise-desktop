@@ -69,18 +69,18 @@ impl<R: Renderer, D> Scene<R, D> {
         out
     }
 
-    /// Where `node` may be on screen: its extents and, for each client surface under it, the boxes
-    /// of the outputs it entered. A surface's extents come from its client's state, which the
-    /// client can drop (a null buffer, a destroyed surface) before the scene hears of it.
-    pub(crate) fn may_show(&self, node: NodeId) -> Vec<Rectangle<i32, Logical>> {
-        let mut out: Vec<_> = self.extents(node).into_iter().collect();
+    /// The client surfaces under `node`, if it shows, each with an output it entered. A surface's
+    /// extents come from its client's state, which the client can drop (a null buffer, a
+    /// destroyed surface) before the scene hears of it; what it entered is the scene's own.
+    pub(crate) fn entered(&self, node: NodeId) -> Vec<(NodeId, Output)> {
+        let mut out = Vec::new();
         if self.coords(node).is_some_and(|(_, visible)| visible) {
             self.entered_under(node, &mut out);
         }
         out
     }
 
-    fn entered_under(&self, id: NodeId, out: &mut Vec<Rectangle<i32, Logical>>) {
+    fn entered_under(&self, id: NodeId, out: &mut Vec<(NodeId, Output)>) {
         let Some(n) = self.node(id).filter(|n| n.enabled) else {
             return;
         };
@@ -91,8 +91,12 @@ impl<R: Renderer, D> Scene<R, D> {
                 }
             }
             Content::Surface(s) => {
-                let entered = s.entered.iter().filter_map(|w| w.upgrade());
-                out.extend(entered.filter_map(|o| output_rect(&o)));
+                out.extend(
+                    s.entered
+                        .iter()
+                        .filter_map(|w| w.upgrade())
+                        .map(|o| (id, o)),
+                );
             }
             _ => {}
         }

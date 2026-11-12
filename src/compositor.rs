@@ -894,7 +894,7 @@ impl State {
         crate::backend::schedule_on(self, &was, crate::backend::Ask::Scene);
     }
 
-    /// Run `f`, then ask for a new frame on the outputs where it edited the scene
+    /// Run `f`, then ask for a new frame on the outputs whose pixels its scene edits changed
     /// (`Scene::watched`), or on every output if it moved glass's blur quality in or out of a
     /// drag's. What changes inside a custom node or a client surface, its owner asks for. Inside
     /// another `redraw_changed`, the outer one asks.
@@ -909,21 +909,14 @@ impl State {
         if !outer {
             return r;
         }
-        let rects = self.scene.watched();
+        let outputs = self.scene.watched();
         if quality(self) != before {
             self.redraw_all();
             return r;
         }
-        if rects.is_empty() {
-            return r;
+        if !outputs.is_empty() {
+            crate::backend::schedule_on(self, &outputs, crate::backend::Ask::Scene);
         }
-        let outputs: Vec<smithay::output::Output> = (self.scene.outputs().iter())
-            .filter(|o| {
-                reprisescene::output_rect(o).is_some_and(|g| rects.iter().any(|r| g.overlaps(*r)))
-            })
-            .cloned()
-            .collect();
-        crate::backend::schedule_on(self, &outputs, crate::backend::Ask::Scene);
         r
     }
 

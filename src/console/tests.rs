@@ -783,3 +783,35 @@ fn in_lock_mode_a_remote_window_retitled_asks_no_frame_of_the_locked_monitor() {
     let remote = crate::virtualout::remote_outputs(&h.state)[0].name();
     assert_eq!(crate::backend::take_scene_outputs(), [remote]);
 }
+
+#[test]
+fn in_lock_mode_a_remote_window_opening_and_closing_asks_no_frame_of_the_locked_monitor() {
+    let (mut h, mut portal, lock) = in_lock_mode();
+    lock.set_layout(&[(0, 0, 1280, 720, 100), (1280, 0, 1280, 720, 100)]);
+    h.roundtrip(&mut portal);
+    h.remote_pointer_to(2300.0, 300.0);
+    h.run_for(600);
+    crate::backend::take_asks();
+    let mut c = h.connect();
+    let t = h.map_toplevel(&mut c, "test.app", 400, 300);
+    assert_eq!(
+        crate::backend::take_scene_outputs(),
+        ["REMOTE-1", "REMOTE-2"],
+        "it opens on REMOTE-1 and both remote bars list it"
+    );
+    h.run_for(600);
+    let console = |asks: Vec<(String, crate::backend::Ask)>| asks.iter().any(|(o, _)| o == "eDP-1");
+    assert!(
+        !console(crate::backend::take_asks()),
+        "nor while it settles"
+    );
+    c.destroy(t);
+    h.roundtrip(&mut c);
+    assert_eq!(
+        crate::backend::take_scene_outputs(),
+        ["REMOTE-1", "REMOTE-2"],
+        "it closes on REMOTE-1 and leaves both remote bars"
+    );
+    h.run_for(600);
+    assert!(!console(crate::backend::take_asks()), "nor after");
+}
