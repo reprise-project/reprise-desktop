@@ -1,77 +1,99 @@
 //! The window's chrome: the toolbar and the address drop as built once, and the panels, tasks, latches
 //! and greyed menu rows that every navigation and selection change move.
 
-use crate::icons::chrome_icon;
+use crate::icons::chrome_icon_unread;
 use crate::place::Place;
 use crate::window;
 use crate::{Explorer, FOLDERS_ITEM};
 use repriseapp::Ctx;
+use repriseapp::iconjobs::IconWaits;
 use repriseapp::listjob::Job;
 use reprisefs::listing::Item;
 use reprisekit::art::viewsicon;
 use reprisekit::controls::addressbar::AddressBar;
 use reprisekit::controls::combo::ListItem;
 use reprisekit::controls::toolbar;
+use reprisekit::icontheme::IconCache;
+use reprisekit::raster::Canvas;
 use std::path::PathBuf;
 
 /// A selected shortcut's path and its status text, or the read of it still out.
 pub(crate) type LinkStatus = (PathBuf, Result<Option<String>, Job<Option<String>>>);
 
+/// `place`'s address bar icon, a blank stand-in noted in `waits` while it decodes.
+pub(crate) fn address_icon(
+    waits: &mut IconWaits,
+    icons: &mut IconCache,
+    place: &Place,
+) -> Option<Canvas> {
+    waits.first(icons, &[place.icon_name()], 16)
+}
+
 impl Explorer {
     pub(crate) fn build_toolbar(&mut self, ctx: &mut Ctx) {
-        let icon = |ctx: &mut Ctx, names: &[&str]| chrome_icon(ctx, names, 24);
+        let (waits, icons) = (&mut self.chrome_waits, &mut ctx.icons);
+        let mut icon = |names: &[&str]| chrome_icon_unread(waits, icons, names, 24);
+        let (back, forward, up, folders) = (
+            icon(&["go-previous"]),
+            icon(&["go-next"]),
+            icon(&["go-up"]),
+            icon(&["folder"]),
+        );
+        // Few themes carry a view icon, so the drawn one stands in rather than the placeholder.
+        let views = (waits.first(icons, &["view-list"], 24)).or_else(|| Some(viewsicon::draw24()));
         self.toolbar.items = vec![
             toolbar::Item::DropButton {
                 id: toolbar::BACK,
-                icon: icon(ctx, &["go-previous"]),
+                icon: back,
                 label: Some("Back".to_string()),
                 enabled: false,
             },
             toolbar::Item::DropButton {
                 id: toolbar::FORWARD,
-                icon: icon(ctx, &["go-next"]),
+                icon: forward,
                 label: Some(String::new()),
                 enabled: false,
             },
             toolbar::Item::Button {
                 id: toolbar::UP,
-                icon: icon(ctx, &["go-up"]),
+                icon: up,
                 label: None,
                 enabled: true,
             },
             toolbar::Item::Separator,
             toolbar::Item::Button {
                 id: toolbar::FOLDERS,
-                icon: icon(ctx, &["folder"]),
+                icon: folders,
                 label: Some("Folders".to_string()),
                 enabled: true,
             },
             toolbar::Item::Separator,
             toolbar::Item::DropButton {
                 id: toolbar::VIEWS,
-                // Few themes carry a view icon, so the drawn one stands in rather than the placeholder.
-                icon: ctx
-                    .icons
-                    .get("view-list", 24)
-                    .or_else(|| Some(viewsicon::draw24())),
+                icon: views,
                 label: None,
                 enabled: true,
             },
         ];
     }
 
+    fn go_icon(&mut self, ctx: &mut Ctx) -> Option<Canvas> {
+        let names = &["go-jump", "go-next"];
+        chrome_icon_unread(&mut self.chrome_waits, &mut ctx.icons, names, 20)
+    }
+
     /// The address drop's places: the shell tree, one row a place, the Desktop's places in the Folders tree's order with the drives under Computer.
     /// The field names `self.place`, which a window still reading its first folder already holds.
     pub(crate) fn build_address(&mut self, ctx: &mut Ctx) {
         let (rows, places) = self.address_rows(ctx);
-        let go = chrome_icon(ctx, &["go-jump", "go-next"], 20);
+        let go = self.go_icon(ctx);
         self.address = AddressBar::new(rows, 0, go);
         self.address_places = places;
-        let icon = ctx.icons.get(self.place.icon_name(), 16);
+        let icon = address_icon(&mut self.chrome_waits, &mut ctx.icons, &self.place);
         self.address.set_place(&self.place.address(), icon);
     }
 
-    fn address_rows(&self, ctx: &mut Ctx) -> (Vec<ListItem>, Vec<Place>) {
+    fn address_rows(&mut self, ctx: &mut Ctx) -> (Vec<ListItem>, Vec<Place>) {
         let mut shell: Vec<(String, Place, i32, &'static str)> = vec![(
             "Desktop".into(),
             Place::Desktop,
@@ -91,7 +113,8 @@ impl Explorer {
         let mut rows = Vec::new();
         let mut places = Vec::new();
         for (text, place, indent, icon) in shell {
-            rows.push(ListItem::shell(text, ctx.icons.get(icon, 16), indent));
+            let icon = self.chrome_waits.first(&mut ctx.icons, &[icon], 16);
+            rows.push(ListItem::shell(text, icon, indent));
             places.push(place);
         }
         (rows, places)
@@ -100,15 +123,22 @@ impl Explorer {
     /// The toolbar, address bar, Folders tree, status bar and task pane fetch their icons again
     /// from `ctx.icons`, now at another scale; what they show and their states stay.
     pub(crate) fn rescale_chrome(&mut self, ctx: &mut Ctx) {
+        self.rewear_chrome(ctx);
+        crate::foldertree::refetch_icons(&mut self.tree, &mut self.tree_places, &mut ctx.icons);
+        self.refill_tree_art(ctx);
+    }
+
+    /// The toolbar, address bar, status bar and task pane fetch their icons again: the names
+    /// their stand-ins waited on landed.
+    pub(crate) fn rewear_chrome(&mut self, ctx: &mut Ctx) {
+        self.chrome_waits = IconWaits::default();
         self.build_toolbar(ctx);
         let (rows, _) = self.address_rows(ctx);
         for (item, row) in self.address.combo.items.iter_mut().zip(rows) {
             item.icon = row.icon;
         }
-        self.address.combo.icon = ctx.icons.get(self.place.icon_name(), 16);
-        self.address.go_icon = chrome_icon(ctx, &["go-jump", "go-next"], 20);
-        crate::foldertree::refetch_icons(&mut self.tree, &mut self.tree_places, &mut ctx.icons);
-        self.refill_tree_art(ctx);
+        self.address.combo.icon = address_icon(&mut self.chrome_waits, &mut ctx.icons, &self.place);
+        self.address.go_icon = self.go_icon(ctx);
         self.pane_key = None;
         self.refresh_chrome(ctx);
     }
@@ -135,7 +165,7 @@ impl Explorer {
             .place
             .path()
             .map(|_| sized.filter(|i| !i.is_folder()).map(|i| i.size).sum());
-        let zone = ctx.icons.get("computer", 16);
+        let zone = self.chrome_waits.first(&mut ctx.icons, &["computer"], 16);
         self.status.panels =
             window::status_panels(self.items.len(), chosen.len(), bytes, "Computer", zone);
         // One item picked in the Recycle Bin says where it came from; one shortcut elsewhere, where it points.

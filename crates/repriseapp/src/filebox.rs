@@ -35,20 +35,23 @@ impl Host {
         }
     }
 
-    /// Notes whether the file dialog in `win` (or the one the box is over) has a box up now.
+    /// Notes whether the file dialog in `win` (or the one the box is over) has a box up now, and
+    /// redraws the box when its icon changed.
     pub(crate) fn follow_file_box(&mut self, win: WinId) {
         let owner = self.file_box.as_ref().map_or(win, |(o, _)| *o);
-        let child = match self.app.drop_file_dialog(owner) {
+        let (child, changed) = match self.app.drop_file_dialog(owner) {
             Some(f) => {
-                f.host.prime_box(&mut self.ctx.icons);
+                let changed = f.host.prime_box(&mut self.ctx.icons);
                 let forms = self.ctx.forms();
-                f.host
-                    .asking()
-                    .map(|m| m.child(FILE_BOX, &self.ctx.text, &forms))
+                let child = (f.host.asking()).map(|m| m.child(FILE_BOX, &self.ctx.text, &forms));
+                (child, changed)
             }
-            None => None,
+            None => (None, false),
         };
         self.file_box = child.map(|c| (owner, c));
+        if changed {
+            self.mark_dirty(FILE_BOX);
+        }
     }
 
     /// An event on the box: its answer goes to the dialog's host, which draws again.

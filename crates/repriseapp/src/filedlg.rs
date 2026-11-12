@@ -18,6 +18,7 @@ use reprisekit::text::TextRenderer;
 use reprisekit::textedit::keysym;
 use std::sync::Mutex;
 
+use crate::iconjobs::IconWaits;
 use crate::listicons::{ListIcons, ReadIcons};
 use crate::listjob::Job;
 use crate::oneshot::{MsgBox, Outcome};
@@ -471,6 +472,8 @@ enum Deleting {
 pub(crate) struct Ask {
     pub(crate) msg: MsgBox,
     icon: &'static str,
+    /// Set once [`Host::prime_box`] fetched `icon`: what it waits on to fetch it again.
+    primed: Option<IconWaits>,
     then: Then,
 }
 
@@ -883,7 +886,7 @@ impl Host {
             None => false,
         };
         let pinned = self.follow_pins(dlg);
-        let landed = self.icons_landed(dlg, cache);
+        let landed = self.icons_landed(dlg, cache) | self.box_landed(cache);
         self.take_listed(dlg, cache) || stepped || pinned || landed
     }
 
@@ -1223,6 +1226,7 @@ impl Host {
                     } else {
                         "user-trash-full"
                     },
+                    primed: None,
                     then: Then::Delete {
                         paths,
                         erase: mode.erase,
@@ -1282,6 +1286,7 @@ impl Host {
         self.ask = Some(Ask {
             msg: MsgBox::on_template(title, Template::MessageBox, fields),
             icon: ERASE_ICON,
+            primed: None,
             then: Then::TooBig(asker, dirs),
         });
     }
@@ -1292,13 +1297,28 @@ impl Host {
         self.ask.as_ref().map(|a| &a.msg)
     }
 
-    /// Gives the box its icon from `icons`, once.
-    pub(crate) fn prime_box(&mut self, icons: &mut IconCache) {
-        if let Some(a) = &mut self.ask
-            && a.msg.fields.icon.is_none()
-        {
-            a.msg.fields.icon = icons.get(a.icon, 32);
+    /// Gives the box its icon from `icons`, a blank stand-in while it decodes off the loop
+    /// ([`crate::iconjobs`]) and the icon once it landed: true when the icon changed.
+    pub(crate) fn prime_box(&mut self, icons: &mut IconCache) -> bool {
+        let Some(a) = &mut self.ask else {
+            return false;
+        };
+        if a.primed.as_ref().is_some_and(|w| !w.landed(icons)) {
+            return false;
         }
+        let mut waits = IconWaits::default();
+        let icon = waits.first(icons, &[a.icon], 32);
+        a.primed = Some(waits);
+        let changed = a.msg.fields.icon != icon;
+        a.msg.fields.icon = icon;
+        changed
+    }
+
+    /// Whether the box's icon landed since [`Host::prime_box`] gave it a stand-in.
+    fn box_landed(&self, icons: &mut IconCache) -> bool {
+        (self.ask.as_ref())
+            .and_then(|a| a.primed.as_ref())
+            .is_some_and(|w| w.landed(icons))
     }
 
     /// An event on the box's window. Closing it carries out its answer: Yes deletes, an answer
@@ -1579,6 +1599,7 @@ fn error_box(title: &str, text: String) -> Ask {
     Ask {
         msg: MsgBox::new(title, box_fields(text, &["OK"])),
         icon: "dialog-error",
+        primed: None,
         then: Then::Nothing,
     }
 }

@@ -1245,7 +1245,7 @@ fn change_icon_gives_a_folder_its_own_icon() {
     ex.finish_puts(&mut ctx);
     let page = |ev| reprisekit::controls::propsheet::Event::Page(2, ev);
     ex.props_outcome(page(form::Event::Pressed(CHANGE_ICON)), &mut ctx);
-    let Some(crate::dialogs::Dialog::ChangeIcon { form, name }) = ex.dialog.as_mut() else {
+    let Some(crate::dialogs::Dialog::ChangeIcon { form, name, .. }) = ex.dialog.as_mut() else {
         panic!("Change Icon is up");
     };
     assert_eq!(name, "sub");

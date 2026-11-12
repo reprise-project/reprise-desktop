@@ -111,13 +111,15 @@ fn tree_node(
 /// A node's closed and open icons at `icons`' scale; Err names one still decoding off the loop.
 fn node_icons(place: &Place, icons: &mut IconCache) -> Result<Worn, String> {
     let name = place.icon_name();
-    let icon = unread(icons, name)?;
-    let open_icon = if name == "folder" {
-        unread(icons, "folder-open")?.or_else(|| icon.clone())
-    } else {
-        icon.clone()
-    };
-    Ok((icon, open_icon))
+    let icon = unread(icons, name);
+    if name != "folder" {
+        let icon = icon?;
+        return Ok((icon.clone(), icon));
+    }
+    // Both asked for before either answers, so they decode in one batch.
+    let open_icon = unread(icons, "folder-open");
+    let icon = icon?;
+    Ok((icon.clone(), open_icon?.or(icon)))
 }
 
 /// A node's closed and open icons.

@@ -189,6 +189,8 @@ pub enum Dialog {
     ChangeIcon {
         form: Form,
         name: String,
+        /// The list's icons still decoding ([`crate::props_host::land_change_icons`]).
+        waits: repriseapp::iconjobs::IconWaits,
     },
     About(Form),
     Browse(crate::browse::Browse),
