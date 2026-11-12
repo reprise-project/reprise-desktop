@@ -1,6 +1,8 @@
 use std::process::Command;
 use std::time::{Duration, Instant};
 
+use reprisekit::logon::UserNote;
+use reprisekit::raster::Canvas;
 use smithay::input::keyboard::xkb::{self, compose};
 
 use super::Side;
@@ -203,6 +205,64 @@ fn leaving_lock_mode_drops_the_remote_lock() {
     assert!(h.state.lock.remote.is_none(), "the remote lock goes");
     assert!(h.state.console_locked(), "the console lock stays");
     assert_eq!(covers(&h, Side::Console), ["eDP-1"]);
+}
+
+fn console_note(h: &Harness) -> Option<UserNote> {
+    let l = h.state.lock.console.as_ref().expect("locked");
+    l.view.model.users[0].note
+}
+
+/// The console's lock screen as shown, and as its model draws whole with `note` and with no note.
+fn console_screens(h: &Harness, note: UserNote) -> [Canvas; 3] {
+    let o = h.state.console_primary().expect("a monitor");
+    let b = h.state.layout_box(Some(&o));
+    let s = h.state.draw_scale_at(Some(&o));
+    let theme = h.state.config.theme.scaled(s);
+    let v = &h.state.lock.console.as_ref().expect("locked").view;
+    let whole = |note: Option<UserNote>| {
+        let mut m = v.model.clone();
+        m.users[0].note = note;
+        crate::logonview::screen(&mut m, &theme, &h.state.text, b, s).1
+    };
+    let shown = v.shown.clone().expect("the screen was drawn");
+    [shown, whole(Some(note)), whole(None)]
+}
+
+#[test]
+fn the_console_lock_notes_the_user_connected_remotely_while_lock_mode_lasts() {
+    for interface in ["classic", "blue", "glass"] {
+        let config = format!("[appearance]\ninterface = \"{interface}\"\n");
+        let mut h = Harness::with_config(Config::parse(&config).unwrap());
+        h.output("eDP-1", 1920, 1080);
+        lockview::lock(&mut h.state);
+        h.state.lock.console.as_mut().unwrap().view.play = None;
+        lockview::update(&mut h.state);
+        let notes = [UserNote::Locked, UserNote::Remote, UserNote::Locked];
+        let mut portal = h.connect_portal();
+        let lock = portal.lock_screen();
+        for (i, note) in notes.into_iter().enumerate() {
+            match i {
+                1 => lock.set_layout(&[(0, 0, 1280, 720, 100)]),
+                2 => lock.object.destroy(),
+                _ => {}
+            }
+            h.roundtrip(&mut portal);
+            assert_eq!(super::remote_side(&h.state), i == 1);
+            assert_eq!(console_note(&h), Some(note), "{interface} step {i}");
+            let [shown, whole, bare] = console_screens(&h, note);
+            assert!(
+                shown == whole,
+                "{interface} step {i}: the screen shown is the one drawn whole, apart in {:?}",
+                shown.differing_rect(&whole)
+            );
+            assert_eq!(
+                whole != bare,
+                interface != "classic",
+                "{interface}: a tile shows {:?} under the name; Classic's dialog has no tile",
+                note.text()
+            );
+        }
+    }
 }
 
 #[test]
