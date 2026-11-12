@@ -6,7 +6,7 @@ use crate::frame::{ButtonSet, CaptionButton, Chrome, FrameGeometry, FrameState, 
 use crate::pointer::Interaction;
 use crate::raster::{Canvas, EdgeStyle, Rect};
 use crate::style::{Style, frame as style_frame, taskbar as style_taskbar};
-use crate::taskbar::{TaskbarLayout, TaskbarState};
+use crate::taskbar::{StateDamage, TaskbarLayout, TaskbarState};
 use crate::text::TextRenderer;
 use crate::theme::{Color, FontConfig, Theme};
 use std::cell::RefCell;
@@ -161,6 +161,21 @@ pub fn draw_taskbar(
     layout: &TaskbarLayout,
     state: &TaskbarState,
 ) {
+    draw_taskbar_on(canvas, theme, text, start_text, layout, state, false);
+}
+
+/// [`draw_taskbar`]; with `replace` a styled bar replaces what the canvas holds inside its clip,
+/// its background copied from the one kept for its size.
+#[allow(clippy::too_many_arguments)]
+fn draw_taskbar_on(
+    canvas: &mut Canvas,
+    theme: &Theme,
+    text: &TextRenderer,
+    start_text: &TextRenderer,
+    layout: &TaskbarLayout,
+    state: &TaskbarState,
+    replace: bool,
+) {
     let s = theme.scale.max(1);
     // The tray arrow shows focus by lighting as under the pointer, so it gets no ring.
     let ring = (state.focus)
@@ -176,7 +191,9 @@ pub fn draw_taskbar(
             }
         }
         Look::Styled(st) => {
-            style_taskbar::draw_taskbar(canvas, st, theme, text, start_text, layout, state);
+            style_taskbar::draw_taskbar_on(
+                canvas, st, theme, text, start_text, layout, state, replace,
+            );
             if let Some((_, r)) = ring {
                 classic::widgets::draw_focus_ring(canvas, r, s, st.bar_text);
             }
@@ -184,21 +201,50 @@ pub fn draw_taskbar(
     }
 }
 
-/// Redraw only Start's part of `canvas`, which [`draw_taskbar`] drew for a state that
-/// [`TaskbarState::same_but_start`] matches with `state`.
-pub fn redraw_taskbar_start(
+/// Redraw `r` of `canvas`, a bar [`draw_taskbar`] drew on `layout`, for `state`: the whole bar,
+/// or the [`taskbar_damage`] between the state it was drawn for and `state`.
+pub fn redraw_taskbar_within(
     canvas: &mut Canvas,
     theme: &Theme,
     text: &TextRenderer,
     start_text: &TextRenderer,
     layout: &TaskbarLayout,
     state: &TaskbarState,
+    r: Rect,
 ) {
-    let r = start_damage(theme, text, layout);
     canvas.with_clip(r, |c| {
-        c.clear_rect(r);
-        draw_taskbar(c, theme, text, start_text, layout, state);
+        // A styled bar's background is copied over the whole of `r`.
+        if theme.look.style().is_none() {
+            c.clear_rect(r);
+        }
+        draw_taskbar_on(c, theme, text, start_text, layout, state, true);
     });
+}
+
+/// Px along the bar, times the scale, that damage reaches past a changed cell: a part's outset
+/// lays art past its cell.
+const DAMAGE_PAD: i32 = 4;
+
+/// The rect of a bar drawn on `layout` that [`TaskbarState::damage`]'s `d` reaches, across the
+/// bar's whole thickness; None when nothing changed.
+pub fn taskbar_damage(
+    theme: &Theme,
+    text: &TextRenderer,
+    layout: &TaskbarLayout,
+    d: StateDamage,
+) -> Option<Rect> {
+    let start = d.start.then(|| start_damage(theme, text, layout));
+    let r = match (start, d.cells) {
+        (Some(a), Some(b)) => a.union(&b),
+        (a, b) => a.or(b)?,
+    };
+    let pad = DAMAGE_PAD * theme.scale.max(1);
+    let across = if layout.edge.is_side() {
+        Rect::new(0, r.y - pad, layout.width, r.height + 2 * pad)
+    } else {
+        Rect::new(r.x - pad, 0, r.width + 2 * pad, layout.height)
+    };
+    Some(across.intersect(&Rect::new(0, 0, layout.width, layout.height)))
 }
 
 /// The bar's rect that [`TaskbarState`]'s Start fields reach: Start's cell, the orb's rows and
@@ -765,8 +811,10 @@ mod tests {
     }
 
     #[test]
-    fn redrawing_only_start_gives_the_bar_a_full_draw_gives() {
-        use crate::taskbar::{BarSpan, ClockText, Edge, TaskEntry, TaskbarCounts};
+    fn redrawing_the_damage_gives_the_bar_a_full_draw_gives() {
+        use crate::taskbar::{Attention, BarSpan, ClockText, Edge, TaskEntry, TaskProgress};
+        use crate::taskbar::{TaskbarCounts, TaskbarHit};
+        use std::sync::Arc;
         let text = TextRenderer::load(&FontConfig::default());
         let counts = TaskbarCounts {
             quick: 2,
@@ -776,50 +824,103 @@ mod tests {
             show_desktop: true,
             ..TaskbarCounts::default()
         };
-        let state = |pressed: bool, hot: bool, focus: bool| {
+        let mut tray = Canvas::new(16, 16);
+        tray.fill_rect(Rect::new(2, 2, 12, 12), Color::rgb(200, 40, 40));
+        let tray = Arc::new(tray);
+        let base = || {
             let mut st = empty_taskbar_state();
-            st.start_pressed = pressed;
-            st.start_hot = hot;
-            st.start_focus = focus;
             st.quick_icons = vec![None, None];
             st.pager = vec![Default::default(); 2];
+            st.pager[0].current = true;
             st.tasks = ["Terminal", "Files", "Notes"]
                 .map(|t| TaskEntry {
                     title: t.into(),
                     active: t == "Files",
-                    attention: crate::taskbar::Attention::None,
+                    attention: Attention::None,
                     icon: None,
                     glow: None,
                 })
                 .into();
-            st.tray_icons = vec![None, None];
+            st.tray_icons = vec![None, Some(tray.clone())];
             st
         };
-        let states: Vec<_> = (0..8)
-            .map(|k| (k & 1 != 0, k & 2 != 0, k & 4 != 0))
-            .collect();
+        type Change = fn(&mut TaskbarState);
+        let change: Vec<(&str, Change)> = vec![
+            ("Start held", |st| st.start_pressed = true),
+            ("Start lit", |st| st.start_hot = true),
+            ("Start focused", |st| {
+                (st.start_pressed, st.start_focus) = (true, true)
+            }),
+            ("first lit", |st| st.task_hot = Some(0)),
+            ("middle lit", |st| st.task_hot = Some(1)),
+            ("last lit", |st| st.task_hot = Some(2)),
+            ("spot moved", |st| {
+                (st.task_hot, st.task_hot_x) = (Some(1), Some(30))
+            }),
+            ("held", |st| {
+                (st.task_hot, st.task_pressed) = (Some(2), Some(2))
+            }),
+            ("focus moved on", |st| {
+                st.tasks[1].active = false;
+                st.tasks[2].active = true;
+            }),
+            ("flashing", |st| st.tasks[0].attention = Attention::FlashOn),
+            ("retitled", |st| {
+                st.tasks[1].title = "Files and folders".into()
+            }),
+            ("glowing", |st| {
+                st.task_hot = Some(0);
+                st.tasks[0].glow = Some(Color::rgb(40, 200, 90));
+            }),
+            ("progress", |st| {
+                let p = TaskProgress {
+                    fraction: 0.5,
+                    paused: false,
+                };
+                st.task_progress = vec![None, Some(p), None];
+            }),
+            ("badge", |st| st.task_badge = vec![Some(3), None, None]),
+            ("Quick Launch lit", |st| st.quick_hot = Some(1)),
+            ("Quick Launch held", |st| st.quick_pressed = Some(0)),
+            ("pager lit", |st| st.pager_hot = Some(1)),
+            ("desktop switched", |st| {
+                st.pager[0].current = false;
+                st.pager[1].current = true;
+            }),
+            ("Show desktop lit", |st| st.show_desktop_hot = true),
+            ("tray cell gone", |st| st.tray_icons[1] = None),
+            ("tray cell drawn", |st| {
+                st.tray_icons[0] = Some(Arc::new(Canvas::new(16, 16)))
+            }),
+            ("clock", |st| st.clock = "00:01".into()),
+            ("keyboard on a button", |st| {
+                st.focus = Some(TaskbarHit::Task(1))
+            }),
+            ("clock and spot", |st| {
+                st.clock = "00:02".into();
+                (st.task_hot, st.task_hot_x) = (Some(0), Some(12));
+            }),
+        ];
         for interface in [Interface::Classic, Interface::Blue, Interface::Glass] {
-            let base = theme_for(interface);
-            let start_text = match base.look.style() {
+            let theme0 = theme_for(interface);
+            let start_text = match theme0.look.style() {
                 Some(st) => TextRenderer::load(&st.start_text.font()),
                 None => TextRenderer::load(&FontConfig::default()),
             };
-            let shape = base.taskbar_shape();
+            let shape = theme0.taskbar_shape();
             for edge in [Edge::Bottom, Edge::Top, Edge::Left] {
-                let length = if edge.is_side() { 700 } else { 1000 };
-                let thickness = if edge.is_side() {
-                    120
-                } else {
-                    base.metrics.taskbar_height
-                };
                 let span = BarSpan {
                     edge,
-                    length,
-                    thickness,
+                    length: if edge.is_side() { 700 } else { 1000 },
+                    thickness: if edge.is_side() {
+                        120
+                    } else {
+                        theme0.metrics.taskbar_height
+                    },
                 };
                 let clock = ClockText { time: 40, date: 60 };
                 let l = TaskbarLayout::compute_on(
-                    &base.metrics,
+                    &theme0.metrics,
                     &shape,
                     span,
                     true,
@@ -828,30 +929,46 @@ mod tests {
                     Default::default(),
                 );
                 for s in [1, 2] {
-                    let theme = base.scaled(s);
+                    let theme = theme0.scaled(s);
                     let layout = l.scaled(s);
+                    let whole = Rect::new(0, 0, layout.width, layout.height);
                     let draw = |st: &TaskbarState| {
                         let mut c = Canvas::new(layout.width as u32, layout.height as u32);
                         draw_taskbar(&mut c, &theme, &text, &start_text, &layout, st);
                         c
                     };
-                    for &(p0, h0, f0) in &states {
-                        let mut c = draw(&state(p0, h0, f0));
-                        for &(p1, h1, f1) in &states {
-                            let next = state(p1, h1, f1);
-                            assert!(next.same_but_start(&state(p0, h0, f0)));
-                            redraw_taskbar_start(
-                                &mut c,
-                                &theme,
-                                &text,
-                                &start_text,
-                                &layout,
-                                &next,
-                            );
-                            assert!(
-                                c.pixels == draw(&next).pixels,
-                                "{interface:?} {edge:?} scale {s}: ({p0} {h0} {f0}) -> ({p1} {h1} {f1})"
-                            );
+                    let redraw = |c: &mut Canvas, st: &TaskbarState, r: Rect| {
+                        redraw_taskbar_within(c, &theme, &text, &start_text, &layout, st, r);
+                    };
+                    let damage = |a: &TaskbarState, b: &TaskbarState| {
+                        taskbar_damage(&theme, &text, &layout, a.damage(b, &layout))
+                    };
+                    let what = format!("{interface:?} {edge:?} scale {s}");
+                    let from = base();
+                    let at_base = draw(&from);
+                    let mut fresh = Canvas::new(layout.width as u32, layout.height as u32);
+                    redraw(&mut fresh, &from, whole);
+                    assert!(fresh.pixels == at_base.pixels, "{what}: a whole redraw");
+                    assert_eq!(damage(&from, &base()), None, "{what}: the same state");
+                    for (name, f) in &change {
+                        let mut to = base();
+                        f(&mut to);
+                        let want = draw(&to);
+                        let mut over = at_base.clone();
+                        redraw(&mut over, &to, whole);
+                        assert!(
+                            over.pixels == want.pixels,
+                            "{what}: {name} over another bar"
+                        );
+                        for (a, b, pic, goal, way) in [
+                            (&from, &to, &at_base, &want, "there"),
+                            (&to, &from, &want, &at_base, "back"),
+                        ] {
+                            let r = damage(a, b)
+                                .unwrap_or_else(|| panic!("{what}: {name} {way}: no damage"));
+                            let mut c = pic.clone();
+                            redraw(&mut c, b, r);
+                            assert!(c.pixels == goal.pixels, "{what}: {name} {way} in {r:?}");
                         }
                     }
                 }
@@ -860,30 +977,76 @@ mod tests {
     }
 
     #[test]
-    fn a_state_differing_past_start_needs_a_full_draw() {
-        let base = empty_taskbar_state();
-        let mut clock = empty_taskbar_state();
-        clock.clock = "00:01".into();
-        assert!(!clock.same_but_start(&base), "the clock changed");
-        let mut focus = empty_taskbar_state();
-        focus.focus = Some(crate::taskbar::TaskbarHit::Start);
-        assert!(!focus.same_but_start(&base), "the focus moved");
-        let icon = Some(std::sync::Arc::new(Canvas::new(1, 1)));
-        let (mut a, mut b) = (empty_taskbar_state(), empty_taskbar_state());
+    fn a_change_damages_only_its_cells_and_their_neighbours() {
+        use crate::taskbar::{BarSpan, ClockText, Edge, TaskEntry, TaskbarCounts, TaskbarHit};
+        use std::sync::Arc;
+        let counts = TaskbarCounts {
+            tasks: 4,
+            tray: 1,
+            ..TaskbarCounts::default()
+        };
+        let span = BarSpan {
+            edge: Edge::Bottom,
+            length: 1000,
+            thickness: 30,
+        };
+        let l = TaskbarLayout::compute_on(
+            &Default::default(),
+            &TaskbarShape::CLASSIC,
+            span,
+            true,
+            counts,
+            ClockText { time: 40, date: 60 },
+            Default::default(),
+        );
+        let base = || {
+            let mut st = empty_taskbar_state();
+            st.tasks = (0..4)
+                .map(|i| TaskEntry {
+                    title: format!("{i}"),
+                    active: false,
+                    attention: Default::default(),
+                    icon: None,
+                    glow: None,
+                })
+                .collect();
+            st.tray_icons = vec![None];
+            st
+        };
+        let damage = |f: &dyn Fn(&mut TaskbarState)| {
+            let mut st = base();
+            f(&mut st);
+            base().damage(&st, &l)
+        };
+        let cells = |a: usize, b: usize| Some(l.tasks[a].union(&l.tasks[b]));
+        assert_eq!(damage(&|_| {}), StateDamage::default(), "nothing changed");
+        let lit = damage(&|st| st.task_hot = Some(2));
+        assert_eq!(lit.cells, cells(1, 3), "a lit button and its neighbours");
+        assert!(!lit.start, "Start stays");
+        let first = damage(&|st| st.task_hot = Some(0));
+        assert_eq!(
+            first.cells,
+            cells(0, 1),
+            "the first button has no neighbour before"
+        );
+        let clock = damage(&|st| st.clock = "00:01".into());
+        assert_eq!(clock.cells, Some(l.clock), "the clock");
+        let start = damage(&|st| st.start_hot = true);
+        assert_eq!((start.start, start.cells), (true, None), "Start alone");
+        let icon = Some(Arc::new(Canvas::new(1, 1)));
+        let (mut a, mut b) = (base(), base());
         a.start_icon = icon.clone();
-        b.start_icon = Some(std::sync::Arc::new(Canvas::new(1, 1)));
-        assert!(!a.same_but_start(&b), "another icon, even an equal one");
+        b.start_icon = Some(Arc::new(Canvas::new(1, 1)));
+        assert!(a.damage(&b, &l).start, "another icon, even an equal one");
         b.start_icon = icon;
-        assert!(a.same(&b), "the same icon");
-        b.start_pressed = true;
-        assert!(a.same_but_start(&b), "the same icon, Start pressed");
-        assert!(!a.same(&b), "Start pressed");
-        let mut hot = empty_taskbar_state();
-        hot.start_hot = true;
-        assert!(!hot.same(&base), "Start lit");
-        let mut focus = empty_taskbar_state();
-        focus.start_focus = true;
-        assert!(!focus.same(&base), "Start focused");
+        assert_eq!(a.damage(&b, &l), StateDamage::default(), "the same icon");
+        let focus = damage(&|st| st.focus = Some(TaskbarHit::Clock));
+        let whole = Rect::new(0, 0, l.width, l.height);
+        assert_eq!(
+            focus.cells,
+            Some(whole),
+            "the keyboard's ring redraws the bar"
+        );
     }
 
     #[test]

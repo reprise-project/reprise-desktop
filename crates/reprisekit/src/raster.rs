@@ -572,6 +572,22 @@ impl Canvas {
         c
     }
 
+    /// Replace this canvas's pixels inside the clip with `src`'s, a canvas of the same size and
+    /// scale.
+    pub fn copy_from(&mut self, src: &Canvas) {
+        assert_eq!(
+            (src.width, src.height, src.scale),
+            (self.width, self.height, self.scale),
+            "copy_from: another size"
+        );
+        let r = self.area().scaled(self.scale);
+        let (w, n) = (self.device_size().0 as usize, r.width.max(0) as usize);
+        for y in r.y..r.bottom() {
+            let at = y as usize * w + r.x as usize;
+            self.pixels[at..at + n].copy_from_slice(&src.pixels[at..at + n]);
+        }
+    }
+
     pub fn bounds(&self) -> Rect {
         Rect::new(0, 0, self.width as i32, self.height as i32)
     }

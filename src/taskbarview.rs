@@ -183,7 +183,7 @@ pub struct Bar {
     start_hot: bool,
     pub start_glow: HoverFade,
     start_mix: Option<StartMix>,
-    /// The last full bar picture, so a change to Start alone redraws only Start's part.
+    /// The last bar picture, so a redraw on the same layout draws again only the cells that changed.
     pub(crate) drawn: Option<DrawnBar>,
     /// By key, so a button closing under the pointer lights no neighbour that
     /// slides into its place.
@@ -206,10 +206,9 @@ pub struct Bar {
     pub tray_reveal_drawn: i32,
     #[cfg(test)]
     pub draws: usize,
+    /// Per redraw over a kept bar picture, the part it drew again; None for none.
     #[cfg(test)]
-    pub start_only_draws: usize,
-    #[cfg(test)]
-    pub kept_draws: usize,
+    pub drawn_parts: Vec<Option<Rect>>,
 }
 
 fn empty_layout() -> TaskbarLayout {
@@ -440,9 +439,7 @@ impl State {
             #[cfg(test)]
             draws: 0,
             #[cfg(test)]
-            start_only_draws: 0,
-            #[cfg(test)]
-            kept_draws: 0,
+            drawn_parts: Vec::new(),
         }
     }
 
