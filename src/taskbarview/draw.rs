@@ -420,12 +420,17 @@ impl State {
                 c
             })
         };
-        let draw_bar = |state: &TaskbarState| {
-            let mut canvas = Canvas::new(layout.width.max(1) as u32, layout.height as u32);
-            reprisekit::look::draw_taskbar(&mut canvas, &theme, text, start_text, &layout, state);
-            canvas
+        let whole = Rect::new(0, 0, layout.width.max(1), layout.height);
+        let redraw = |canvas: &mut Canvas, state: &TaskbarState, r: Rect| {
+            reprisekit::look::redraw_taskbar_within(
+                canvas, &theme, text, start_text, &layout, state, r,
+            );
         };
-        let draw = |state: &TaskbarState| (draw_bar(state), draw_orb(state));
+        let draw = |state: &TaskbarState| {
+            let mut canvas = Canvas::new(whole.width as u32, whole.height as u32);
+            redraw(&mut canvas, state, whole);
+            (canvas, draw_orb(state))
+        };
         let held = state.start_pressed;
         let fading = !bar.start_glow.settled(Instant::now()) && base.look.style().is_some();
         let painted = if fading {
@@ -447,44 +452,42 @@ impl State {
             true
         } else {
             bar.start_mix = None;
-            let (canvas, orb, kept) = match bar.drawn.take() {
-                Some(d) if d.scale == scale && d.layout == layout && d.state.same(&state) => {
-                    #[cfg(test)]
-                    {
-                        bar.kept_draws += 1;
+            let (canvas, orb, damage) = match bar.drawn.take() {
+                Some(d) if d.scale == scale && d.layout == layout => {
+                    let change = d.state.damage(&state, &layout);
+                    let damage = reprisekit::look::taskbar_damage(&theme, text, &layout, change);
+                    let mut canvas = d.canvas;
+                    if let Some(r) = damage {
+                        redraw(&mut canvas, &state, r);
                     }
-                    (d.canvas, d.orb, true)
-                }
-                Some(mut d)
-                    if d.scale == scale && d.layout == layout && d.state.same_but_start(&state) =>
-                {
                     #[cfg(test)]
-                    {
-                        bar.start_only_draws += 1;
-                    }
-                    reprisekit::look::redraw_taskbar_start(
-                        &mut d.canvas,
-                        &theme,
-                        text,
-                        start_text,
-                        &layout,
-                        &state,
-                    );
-                    (d.canvas, draw_orb(&state), false)
+                    bar.drawn_parts.push(damage);
+                    let orb = if change.start {
+                        draw_orb(&state)
+                    } else {
+                        d.orb
+                    };
+                    (canvas, orb.map(|c| (c, change.start)), damage)
                 }
-                _ => {
-                    let (canvas, orb) = draw(&state);
-                    (canvas, orb, false)
+                d => {
+                    let size = (whole.width as u32, whole.height as u32);
+                    let mut canvas = match d {
+                        Some(d) if (d.canvas.width, d.canvas.height) == size => d.canvas,
+                        _ => Canvas::new(size.0, size.1),
+                    };
+                    redraw(&mut canvas, &state, whole);
+                    (canvas, draw_orb(&state).map(|c| (c, true)), Some(whole))
                 }
             };
-            let up = self.upload_bar(bar, &canvas, orb.as_ref(), !kept, held, scale);
+            let orb_up = orb.as_ref().map(|(c, fresh)| (c, *fresh));
+            let up = self.upload_bar(bar, &canvas, damage, orb_up, held, scale);
             bar.orb_up = up.orb_up;
             bar.drawn = Some(DrawnBar {
                 state,
                 layout,
                 scale,
                 canvas,
-                orb,
+                orb: orb.map(|(c, _)| c),
             });
             up.painted
         };
@@ -565,8 +568,16 @@ impl State {
             c
         });
         let (held, scale) = (m.held, m.scale);
+        let whole = canvas.bounds();
         bar.orb_up = self
-            .upload_bar(bar, &canvas, orb.as_ref(), true, held, scale)
+            .upload_bar(
+                bar,
+                &canvas,
+                Some(whole),
+                orb.as_ref().map(|c| (c, true)),
+                held,
+                scale,
+            )
             .orb_up;
         self.place_bar(bar);
         if bar.start_glow.settled(now) {
@@ -582,14 +593,15 @@ impl State {
         .unwrap_or(false)
     }
 
-    /// Show `canvas` and `orb` on `bar`'s buffers; not `fresh` when they are the pictures it
-    /// showed last, which then upload nothing.
+    /// Show `canvas` and `orb` on `bar`'s buffers. `canvas` differs from the picture shown last
+    /// only inside `damage`, and none when None; an orb not fresh is the picture shown last. Either
+    /// unchanged uploads nothing.
     fn upload_bar(
         &mut self,
         bar: &mut Bar,
         canvas: &Canvas,
-        orb: Option<&Canvas>,
-        fresh: bool,
+        damage: Option<Rect>,
+        orb: Option<(&Canvas, bool)>,
         held: bool,
         scale: i32,
     ) -> Upload {
@@ -600,13 +612,15 @@ impl State {
         let (w, h) = (canvas.width as i32, canvas.height as i32);
         // Pixels changed only in rows a hidden bar keeps off its output ask no frame: the slide
         // that brings them on asks for its own.
-        let mut painted = fresh && {
-            let changed = scene.buffer_set_canvas(bar.buffer, &canvas.pixels, w, h);
+        let mut painted = damage.is_some_and(|r| {
+            let within =
+                smithay::utils::Rectangle::new((r.x, r.y).into(), (r.width, r.height).into());
+            let changed = scene.buffer_set_canvas_within(bar.buffer, &canvas.pixels, w, h, within);
             changed.overlaps(smithay::utils::Rectangle::new(
                 (rows.x * scale, rows.y * scale).into(),
                 (rows.width * scale, rows.height * scale).into(),
             ))
-        };
+        });
         bar.buffer_scale = scale;
         let l = &bar.layout;
         let over_menu = stands_over_menu(l, held, covered);
@@ -616,7 +630,7 @@ impl State {
         }
         let pictured = l.start_orb(held).is_some() && orb.is_some();
         match (l.start_orb(held), orb) {
-            (Some(r), Some(c)) => {
+            (Some(r), Some((c, fresh))) => {
                 if fresh {
                     painted |= upload_scaled(scene, bar.start_above, c, scale);
                 }
