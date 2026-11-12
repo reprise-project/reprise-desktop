@@ -485,23 +485,29 @@ fn notification_signals(cmd: TrayCommand) -> Vec<(String, Option<String>)> {
             .insert(5, (":1.1".into(), "mail".into(), None));
         let mut signals = zbus::MessageStream::from(&theirs);
         lp.handle_command(cmd).await;
+        // The command's signals are out once it returns; the end marker follows them.
+        (ours.emit_signal(None::<()>, "/end", "org.reprise.Test", "End", &()))
+            .await
+            .unwrap();
         let mut out = Vec::new();
         loop {
             let next = async { signals.next().await };
-            let quiet = async {
-                async_io::Timer::after(Duration::from_millis(300)).await;
+            let late = async {
+                async_io::Timer::after(CEILING).await;
                 None
             };
-            let Some(Ok(m)) = futures_lite::future::or(next, quiet).await else {
-                break;
+            let Some(Ok(m)) = futures_lite::future::or(next, late).await else {
+                panic!("the end marker arrives within {CEILING:?}");
             };
             let hdr = m.header();
-            if m.message_type() == zbus::message::Type::Signal {
-                out.push((
-                    hdr.member().map(|m| m.to_string()).unwrap_or_default(),
-                    hdr.destination().map(|d| d.to_string()),
-                ));
+            if m.message_type() != zbus::message::Type::Signal {
+                continue;
             }
+            let member = hdr.member().map(|m| m.to_string()).unwrap_or_default();
+            if member == "End" {
+                break;
+            }
+            out.push((member, hdr.destination().map(|d| d.to_string())));
         }
         out
     })
@@ -659,6 +665,28 @@ async fn register(wakes: &async_channel::Sender<Wake>, path: &str) {
     wakes.send(Wake::Registered { bus, path }).await.unwrap();
 }
 
+/// The longest a test waits for something the loop or a peer does.
+const CEILING: Duration = Duration::from_secs(10);
+
+/// Polls `done` every 10 ms until it holds, at most [`CEILING`].
+async fn until(what: &str, done: impl Fn() -> bool) {
+    let end = Instant::now() + CEILING;
+    while !done() {
+        assert!(Instant::now() < end, "{what} within {CEILING:?}");
+        async_io::Timer::after(Duration::from_millis(10)).await;
+    }
+}
+
+/// The `Title` reads once `n` have reached the item and 300 ms passed for any extra one.
+async fn reads_after(h: &Harness, n: usize) -> usize {
+    until(&format!("{n} Title reads"), || {
+        h.titles.load(Ordering::Relaxed) >= n
+    })
+    .await;
+    async_io::Timer::after(Duration::from_millis(300)).await;
+    h.titles.load(Ordering::Relaxed)
+}
+
 async fn next_event(events: &Receiver<TrayEvent>, within: Duration) -> Option<TrayEvent> {
     let tick = Duration::from_millis(10);
     for _ in 0..within.as_millis() / tick.as_millis() {
@@ -752,14 +780,7 @@ fn an_item_read_reaches_the_item_while_the_loop_is_busy() {
         let calls = zbus::MessageStream::from(&item);
         let mut lp = test_loop(ours, tx, fd.as_raw_fd());
         lp.fetch(":1.1".into(), "/answering".into(), Duration::ZERO, false);
-        let busy = async {
-            for _ in 0..200 {
-                if titles.load(Ordering::Relaxed) > 0 {
-                    break;
-                }
-                async_io::Timer::after(Duration::from_millis(10)).await;
-            }
-        };
+        let busy = until("the Title read", || titles.load(Ordering::Relaxed) > 0);
         let serve = async {
             serve_items(item.clone(), calls, &titles).await;
             std::future::pending().await
@@ -777,7 +798,7 @@ fn an_item_read_reaches_the_item_while_the_loop_is_busy() {
 fn a_burst_of_changes_reads_the_item_once() {
     let (reads, updates) = drive(async |h| {
         register(&h.wakes, "/answering").await;
-        let added = next_event(&h.events, Duration::from_secs(2)).await;
+        let added = next_event(&h.events, CEILING).await;
         assert!(
             matches!(added, Some(TrayEvent::Added(_))),
             "the item is added"
@@ -786,9 +807,9 @@ fn a_burst_of_changes_reads_the_item_once() {
             let key = ":1.1/answering".to_string();
             h.wakes.send(Wake::ItemChanged(key)).await.unwrap();
         }
-        async_io::Timer::after(Duration::from_millis(300)).await;
+        let reads = reads_after(h, 2).await;
         let updates = std::iter::from_fn(|| h.events.try_recv().ok()).count();
-        (h.titles.load(Ordering::Relaxed), updates)
+        (reads, updates)
     });
     assert_eq!(reads, 2, "one read adds the item and one follows the burst");
     assert_eq!(updates, 0, "an unchanged item sends no update");
@@ -798,13 +819,12 @@ fn a_burst_of_changes_reads_the_item_once() {
 fn a_change_during_the_first_read_reads_the_item_again() {
     let reads = drive(async |h| {
         register(&h.wakes, "/changing").await;
-        let added = next_event(&h.events, Duration::from_secs(2)).await;
+        let added = next_event(&h.events, CEILING).await;
         assert!(
             matches!(added, Some(TrayEvent::Added(_))),
             "the item is added"
         );
-        async_io::Timer::after(Duration::from_millis(300)).await;
-        h.titles.load(Ordering::Relaxed)
+        reads_after(h, 2).await
     });
     assert_eq!(
         reads, 2,
@@ -816,15 +836,14 @@ fn a_change_during_the_first_read_reads_the_item_again() {
 fn new_icon_sizes_read_every_item_again() {
     let reads = drive(async |h| {
         register(&h.wakes, "/answering").await;
-        let added = next_event(&h.events, Duration::from_secs(2)).await;
+        let added = next_event(&h.events, CEILING).await;
         assert!(
             matches!(added, Some(TrayEvent::Added(_))),
             "the item is added"
         );
         let sizes = TrayCommand::IconSizes(vec![16, 24]);
         h.wakes.send(Wake::Command(sizes)).await.unwrap();
-        async_io::Timer::after(Duration::from_millis(300)).await;
-        h.titles.load(Ordering::Relaxed)
+        reads_after(h, 2).await
     });
     assert_eq!(reads, 2, "a second Title read after the sizes changed");
 }
@@ -833,20 +852,20 @@ fn new_icon_sizes_read_every_item_again() {
 fn every_change_signal_reads_the_item_again() {
     let reads = drive(async |h| {
         register(&h.wakes, "/answering").await;
-        let added = next_event(&h.events, Duration::from_secs(2)).await;
+        let added = next_event(&h.events, CEILING).await;
         assert!(
             matches!(added, Some(TrayEvent::Added(_))),
             "the item is added"
         );
         let mut reads = Vec::new();
-        for signal in ["NewIcon", "NewTitle", "NewStatus", "NewToolTip", "NewMenu"] {
+        let signals = ["NewIcon", "NewTitle", "NewStatus", "NewToolTip", "NewMenu"];
+        for (signal, n) in signals.into_iter().zip(2..) {
             let msg = zbus::message::Message::signal("/answering", ITEM_IFACE, signal)
                 .sender(":1.1")
                 .build(&())
                 .unwrap();
             h.item.send(&msg).await.unwrap();
-            async_io::Timer::after(Duration::from_millis(200)).await;
-            reads.push((signal, h.titles.load(Ordering::Relaxed)));
+            reads.push((signal, reads_after(h, n).await));
         }
         reads
     });
@@ -1776,12 +1795,30 @@ fn one_apps_flood_of_decodes_waits_behind_its_own_share_and_another_apps_runs() 
 
 #[test]
 fn a_decode_gets_its_whole_time_once_a_thread_takes_it() {
-    let decoders = decoders(1, 8, 4, Duration::from_millis(300));
-    let slow = || std::thread::sleep(Duration::from_millis(250));
-    let (first, second) = zbus::block_on(async {
-        futures_util::join!(decoders.run("a", slow), decoders.run("b", slow))
+    let within = Duration::from_millis(300);
+    let decoders = decoders::Decoders::new(decoders::Limits {
+        threads: 1,
+        queue: 8,
+        per_app: 4,
+        wait: CEILING,
+        within,
     });
-    assert_eq!((first, second), (Some(()), Some(())));
+    let (release, gate) = async_channel::bounded::<()>(1);
+    let held = decoders.run("a", move || {
+        let _ = gate.recv_blocking();
+    });
+    let queued = Instant::now();
+    let second = async {
+        let decoded = decoders.run("b", || 7).await;
+        (decoded, queued.elapsed())
+    };
+    let free = async {
+        async_io::Timer::after(within * 2).await;
+        drop(release);
+    };
+    let (_, (second, took), ()) = zbus::block_on(async { futures_util::join!(held, second, free) });
+    assert!(took > within, "it waited {took:?} for the thread");
+    assert_eq!(second, Some(7), "and still ran");
 }
 
 #[test]
@@ -1893,7 +1930,8 @@ fn an_item_flooding_change_signals_is_dropped_at_the_bus_until_it_is_heard_again
         let us = ours.unique_name().unwrap().to_string();
         let (tx, _events) = std::sync::mpsc::channel();
         let mut lp = test_loop(ours, tx, -1);
-        lp.muted_for = Duration::from_millis(500);
+        // Long enough for the polls below to see the rules gone under any load.
+        lp.muted_for = Duration::from_secs(3);
         lp.track(item.unique_name().unwrap().to_string(), "/item".into())
             .await;
         let watching = match_rules(&item, &us).await;
@@ -2258,7 +2296,7 @@ fn what_a_peer_left_behind_while_the_tray_was_off_the_bus_goes_once_it_is_back()
         return;
     };
     let tray = Relayed::on(&bus);
-    let (holder, events) = zbus::block_on(async {
+    let gone = zbus::block_on(async {
         let observer = observer(&bus).await;
         let first = new_owner(&observer, NOTIFY_NAME, None).await;
         let peer = self::observer(&bus).await;
@@ -2302,25 +2340,26 @@ fn what_a_peer_left_behind_while_the_tray_was_off_the_bus_goes_once_it_is_back()
         peer.close().await.unwrap();
         new_owner(&observer, NOTIFY_NAME, first.as_deref()).await;
         let mut events = Vec::new();
-        while let Some(ev) = next_event(&tray.events, Duration::from_secs(3)).await {
+        let all_gone = |events: &[TrayEvent]| {
+            let saw = |f: &dyn Fn(&TrayEvent) -> bool| events.iter().any(f);
+            [
+                saw(&|e| matches!(e, TrayEvent::ScreenSaverInhibited(false))),
+                saw(&|e| matches!(e, TrayEvent::NotifySenderGone(n) if *n == holder)),
+                saw(&|e| matches!(e, TrayEvent::WatchResponding(false))),
+            ]
+        };
+        while all_gone(&events).contains(&false)
+            && let Some(ev) = next_event(&tray.events, CEILING).await
+        {
             events.push(ev);
         }
-        (holder, events)
+        all_gone(&events)
     });
     tray.stop();
-    let saw = |f: &dyn Fn(&TrayEvent) -> bool| events.iter().any(f);
-    assert!(
-        saw(&|e| matches!(e, TrayEvent::ScreenSaverInhibited(false))),
-        "its inhibit is dropped"
-    );
-    assert!(
-        saw(&|e| matches!(e, TrayEvent::NotifySenderGone(n) if *n == holder)),
-        "its notifications are told it left"
-    );
-    assert!(
-        saw(&|e| matches!(e, TrayEvent::WatchResponding(false))),
-        "the ping round stops with its last watcher"
-    );
+    let [inhibit, notifications, ping] = gone;
+    assert!(inhibit, "its inhibit is dropped");
+    assert!(notifications, "its notifications are told it left");
+    assert!(ping, "the ping round stops with its last watcher");
 }
 
 #[test]

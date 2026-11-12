@@ -202,6 +202,18 @@ impl Harness {
         }
     }
 
+    /// Turns of the loop until `done` holds, at most 10 s.
+    pub fn until(&mut self, what: &str, done: impl Fn(&State) -> bool) {
+        let end = std::time::Instant::now() + Duration::from_secs(10);
+        while !done(&self.state) {
+            assert!(std::time::Instant::now() < end, "{what} within 10 s");
+            self.event_loop
+                .dispatch(Some(Duration::from_millis(5)), &mut self.state)
+                .expect("dispatch");
+            self.state.turn_end();
+        }
+    }
+
     /// Every output shows a frame as the backend's render does afterwards: client surfaces enter
     /// the outputs they lie on. The harness has no backend, so nothing else does.
     pub fn show_frames(&mut self) {
