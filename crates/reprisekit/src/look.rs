@@ -874,8 +874,16 @@ mod tests {
         b.start_icon = Some(std::sync::Arc::new(Canvas::new(1, 1)));
         assert!(!a.same_but_start(&b), "another icon, even an equal one");
         b.start_icon = icon;
+        assert!(a.same(&b), "the same icon");
         b.start_pressed = true;
         assert!(a.same_but_start(&b), "the same icon, Start pressed");
+        assert!(!a.same(&b), "Start pressed");
+        let mut hot = empty_taskbar_state();
+        hot.start_hot = true;
+        assert!(!hot.same(&base), "Start lit");
+        let mut focus = empty_taskbar_state();
+        focus.start_focus = true;
+        assert!(!focus.same(&base), "Start focused");
     }
 
     #[test]
