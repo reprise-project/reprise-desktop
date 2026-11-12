@@ -82,6 +82,7 @@ fn play(mut m: Logon, v: Variant, s: i32, act: impl FnOnce(&mut Logon)) -> Playe
         theme: &theme,
         text: &text,
         s,
+        over: None,
     };
     let t = Transition::begin(&motion, &d).expect("the change plays");
     Played {
@@ -127,6 +128,7 @@ impl Played {
             theme: &self.theme,
             text: &self.text,
             s: self.s,
+            over: None,
         };
         d.canvas(&self.m, d.l, Show::Chrome)
     }
@@ -256,6 +258,7 @@ fn check(name: &str, p: &Played) {
         theme: &p.theme,
         text: &p.text,
         s,
+        over: None,
     };
     let over = Transition::begin_over(&p.motion, &d, Some(p.before())).expect("it plays");
     let mut c = after.clone();
@@ -311,6 +314,7 @@ fn blue_busy_and_status_show_at_once() {
         theme: &theme,
         text: &text,
         s: 1,
+        over: None,
     };
     assert!(Transition::begin(&motion, &d).is_none());
 }
@@ -380,6 +384,7 @@ fn escape_mid_pick_flies_back_from_where_the_frame_is() {
         theme: &p.theme,
         text: &p.text,
         s: 1,
+        over: None,
     };
     let back = Transition::then(&p.t, mid, &motion, &d).expect("the way back plays");
     assert_eq!(back.carried_at(0), p.t.carried_at(mid), "from where it is");
@@ -412,6 +417,7 @@ fn keys_typed_while_the_block_fades_in_show_at_the_end() {
         theme: &p.theme,
         text: &p.text,
         s: 1,
+        over: None,
     };
     p.t.refresh_now(&d);
     assert_eq!(p.m.password.text, "abc");
@@ -442,6 +448,7 @@ fn a_line_that_comes_up_under_an_entering_block_ends_in_place() {
             theme: &p.theme,
             text: &p.text,
             s,
+            over: None,
         };
         p.t.refresh_now(&d);
         assert!(
@@ -478,6 +485,7 @@ fn transition_frame_cost() {
                     theme: &theme,
                     text: &text,
                     s,
+                    over: None,
                 };
                 let Some(t) = Transition::begin(&motion, &d) else {
                     continue;
@@ -551,6 +559,7 @@ fn click_and_settle_cost() {
                     theme: &theme,
                     text: &text,
                     s,
+                    over: None,
                 };
                 let (w, h) = ((FULL_HD.width * s) as u32, (FULL_HD.height * s) as u32);
                 let mut shown = Canvas::new(w, h);

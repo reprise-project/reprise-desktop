@@ -435,6 +435,39 @@ pub fn notes(m: &Logon, l: &LogonLayout, theme: &Theme) -> Notes {
     }
 }
 
+/// Where `draw` paints from the model: the centre block grown by a lit frame's glow, and the power
+/// button, its menu and the badge grown by the text's halo.
+pub fn live(m: &Logon, l: &LogonLayout, theme: &Theme) -> Vec<Rect> {
+    let g = geometry(m, theme, l.output, button_width(l));
+    let chrome = [Part::Power, Part::PowerMenu, Part::Layout];
+    let doubled = |r: Rect| Rect {
+        height: 2 * r.height,
+        ..r
+    };
+    let rows = [
+        g.name,
+        g.note,
+        g.notice.map(doubled),
+        g.message,
+        g.busy.map(|r| {
+            doubled(Rect {
+                y: r.y - r.height / 2,
+                ..r
+            })
+        }),
+    ];
+    let block = (l.parts.iter())
+        .filter(|(p, _)| !chrome.contains(p))
+        .map(|&(_, r)| r)
+        .chain(g.frame.map(|(_, r)| r))
+        .chain(rows.into_iter().flatten())
+        .reduce(|a, b| a.union(&b));
+    let chrome = chrome.into_iter().filter_map(|p| l.rect(p));
+    (block.map(|b| b.inset(-GLOW)).into_iter())
+        .chain(chrome.map(|r| r.inset(-HALO)))
+        .collect()
+}
+
 /// `part`'s picture frame alone, as [`draw`] draws it.
 pub fn draw_frame(c: &mut Canvas, m: &Logon, l: &LogonLayout, theme: &Theme, s: i32, part: Part) {
     let g = geometry(m, theme, l.output, button_width(l));

@@ -775,6 +775,32 @@ pub fn notes(m: &Logon, l: &LogonLayout, theme: &Theme) -> Notes {
     }
 }
 
+/// Where `draw` paints from the model: the lines under the mark, the column of tiles and fields
+/// with their labels and notes, Switch User and the power button.
+pub fn live(m: &Logon, l: &LogonLayout, theme: &Theme) -> Vec<Rect> {
+    let (f, k) = (frame(l.output), lines(theme.text));
+    let mark = begin_line(&f, k).union(&tiles_said(&f, k));
+    let labelled = |r: Rect| Rect {
+        y: r.y - k.line,
+        height: r.height + k.line,
+        ..r
+    };
+    let column = (l.parts.iter())
+        .filter(|(p, _)| !matches!(p, Part::Power | Part::SwitchUser))
+        .map(|&(p, r)| match p {
+            Part::Name | Part::Password => labelled(r),
+            _ => r,
+        })
+        .chain(l.rect(Part::Password).map(|f| said_under(m, l, f, k).0))
+        .reduce(|a, b| a.union(&b));
+    let buttons = [Part::SwitchUser, Part::Power].map(|p| l.rect(p));
+    [Some(mark), column]
+        .into_iter()
+        .chain(buttons)
+        .flatten()
+        .collect()
+}
+
 fn draw_tile(c: &mut Canvas, m: &Logon, sc: &Scheme, i: usize, r: Rect, k: Lines, pen: &Pen) {
     let s = pen.s;
     let Some(user) = m.users.get(i) else {

@@ -391,7 +391,7 @@ fn abort_verification(state: &mut State, side: Side, message: &str) {
         l.pending = None;
         l.view.model.fail(message.into());
     }
-    redraw(state);
+    update(state);
 }
 
 /// What `side`'s password conversation said: a prompt relabels the field, a verdict unlocks or says
@@ -1299,7 +1299,7 @@ fn submit(state: &mut State, side: Side) {
         if let Some(p) = state.lock.on_mut(side).and_then(|l| l.pending.as_mut()) {
             p.timer = timer;
         }
-        redraw(state);
+        update(state);
         return;
     }
     if side == Side::Remote {
@@ -1337,7 +1337,7 @@ fn submit(state: &mut State, side: Side) {
             None => l.view.model.fail(lock::UNAVAILABLE.into()),
         }
     }
-    redraw(state);
+    update(state);
 }
 
 /// The remote side checks under the Remote Desktop PAM service, which has no pam_faillock.
@@ -1633,6 +1633,41 @@ mod tests {
         assert_eq!(message(&h).as_deref(), Some(lock::INCORRECT));
         check(&mut h, "hunter2");
         assert!(!h.state.console_locked());
+    }
+
+    #[test]
+    fn a_wrong_password_repaints_the_lock_in_part_and_leaves_it_as_a_whole_redraw_draws_it() {
+        for interface in ["classic", "blue", "glass"] {
+            let config = format!(
+                "[appearance]\ninterface = \"{interface}\"\n[effects]\nlogon_animation = false\n"
+            );
+            let config = crate::config::Config::parse(&config).unwrap();
+            let mut h = crate::harness::Harness::with_config(config);
+            h.output("TEST-1", 1024, 768);
+            h.state.lock.helpers = Helpers {
+                password: |_, _| sh("read p; echo '= 7'"),
+                finger: |_| None,
+                ..Helpers::default()
+            };
+            lock(&mut h.state);
+            logonview::DRAW_PANICS.set(true);
+            check(&mut h, "hunter1");
+            logonview::DRAW_PANICS.set(false);
+            assert_eq!(message(&h).as_deref(), Some(lock::INCORRECT), "{interface}");
+            let o = h.state.scene.outputs()[0].clone();
+            let (b, s) = (
+                h.state.layout_box(Some(&o)),
+                h.state.draw_scale_at(Some(&o)),
+            );
+            let theme = h.state.config.theme.scaled(s);
+            let v = &h.state.lock.console.as_ref().unwrap().view;
+            let whole = logonview::screen(&mut v.model.clone(), &theme, &h.state.text, b, s).1;
+            let shown = v.shown.as_ref().expect("the screen was drawn");
+            assert!(
+                shown.pixels == whole.pixels,
+                "{interface}: the screen is a whole redraw's"
+            );
+        }
     }
 
     #[test]
