@@ -17,6 +17,9 @@ use crate::raster::Rect;
 use crate::startmenu::{MenuLayout, MenuStyle};
 use crate::tray::notify::DEFAULT_ACTION;
 
+/// What an entry without an icon of its own shows: the first of these that draws.
+const INFO_ICONS: [&str; 2] = ["dialog-information", "help-about"];
+
 pub struct CenterView {
     model: History,
     /// Layout coordinates.
@@ -125,7 +128,7 @@ pub fn refresh(state: &mut State) {
             app: e.n.app.clone(),
             icon: crate::tray::closest(e.n.balloon_icon(), px)
                 .or_else(|| {
-                    let info = crate::icon::unread(&mut state.icons, "dialog-information", px);
+                    let info = crate::icon::unread_first(&mut state.icons, INFO_ICONS, px);
                     info.map(std::sync::Arc::unwrap_or_clone)
                 })
                 .map(Rc::new),
@@ -483,23 +486,43 @@ mod tests {
         n
     }
 
-    #[test]
-    fn a_cold_information_icon_lands_on_the_open_center() {
-        let root = crate::icon::svg_theme(&["dialog-information"], &[]);
-        let mut h = crate::icon::two_outputs("classic", &root);
+    /// A harness with icons from `root` and the center open on one notification without an icon.
+    fn centered(root: &std::path::Path) -> crate::harness::Harness {
+        let mut h = crate::icon::two_outputs("classic", root);
         let out = h.state.first_output().expect("an output");
         crate::notifyview::show(&mut h.state, mail(1));
         toggle(&mut h.state, &out, Rect::new(1000, 740, 16, 28));
-        let header = |h: &crate::harness::Harness| {
-            let v = h.state.notify.center.as_ref().expect("the center");
-            v.model.icons()[0].clone().expect("the group's icon")
-        };
+        h
+    }
+
+    /// The open center's first group header icon.
+    fn header(h: &crate::harness::Harness) -> Rc<crate::raster::Canvas> {
+        let v = h.state.notify.center.as_ref().expect("the center");
+        v.model.icons()[0].clone().expect("the group's icon")
+    }
+
+    #[test]
+    fn a_cold_information_icon_lands_on_the_open_center() {
+        let root = crate::icon::svg_theme(&["dialog-information"], &[]);
+        let mut h = centered(&root);
         assert!(
             header(&h).pixels.iter().all(|&p| p == 0),
             "the stand-in is blank"
         );
         crate::icon::land(&mut h);
         assert!(crate::icon::red(&header(&h)), "the center took the icon");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn an_information_icon_that_never_decodes_gives_way_to_help_about() {
+        let root = crate::icon::svg_theme(&["help-about"], &["dialog-information"]);
+        let mut h = centered(&root);
+        crate::icon::land(&mut h);
+        assert!(
+            crate::icon::red(&header(&h)),
+            "help-about shows once dialog-information fails"
+        );
         std::fs::remove_dir_all(&root).unwrap();
     }
 
