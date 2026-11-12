@@ -146,6 +146,11 @@ impl CustomNode<GlesRenderer> for CardsNode {
         self.extent
     }
 
+    /// Cards draw only their own pictures.
+    fn reads_beneath(&self, _scale: f64) -> Option<Vec<Rectangle<i32, Logical>>> {
+        Some(Vec::new())
+    }
+
     fn elements(
         &self,
         _renderer: &mut GlesRenderer,
@@ -1070,6 +1075,32 @@ mod tests {
 
     fn stacked(h: &Harness) -> Option<Vec<Entry>> {
         h.state.switcher.stack.as_ref().map(|st| st.entries.clone())
+    }
+
+    #[test]
+    fn a_window_under_an_opaque_fullscreen_one_asks_no_frames_while_the_stack_opens() {
+        use crate::harness::{TestClient, Toplevel};
+        fn asks(h: &mut Harness, c: &mut TestClient, t: Toplevel) -> bool {
+            crate::backend::take_asks();
+            h.draw_self(c, t, 0xff40_4040);
+            (crate::backend::take_asks().iter())
+                .any(|(_, a)| matches!(a, crate::backend::Ask::Commit(_)))
+        }
+        let mut h = Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "printer", 200, 100);
+        let f = h.map_toplevel(&mut c, "player", 300, 200);
+        h.state.set_fullscreen(f.id, true);
+        h.roundtrip(&mut c);
+        h.draw_opaque(&mut c, f, 0xff00_0000);
+        assert!(!asks(&mut h, &mut c, t), "covered before the stack");
+        h.state.open_flip(crate::keys::MOD_LOGO);
+        assert!(stacked(&h).is_some(), "the stack is up");
+        assert!(
+            !asks(&mut h, &mut c, t),
+            "the cards' node over it before they show"
+        );
     }
 
     #[test]

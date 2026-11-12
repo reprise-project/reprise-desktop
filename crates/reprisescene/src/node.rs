@@ -130,6 +130,7 @@ pub trait CustomNode<R: Renderer> {
 
     /// Where, node-local and logical, the pixels beneath it that its drawing at `scale` depends
     /// on lie: glass reads its shapes grown by its blur. None for anywhere beneath (the default).
+    /// A node drawing only its own textures blends like any leaf and reads nothing: `Some(vec![])`.
     fn reads_beneath(&self, _scale: f64) -> Option<Vec<Rectangle<i32, Logical>>> {
         None
     }

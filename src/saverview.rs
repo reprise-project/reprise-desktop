@@ -325,6 +325,11 @@ impl CustomNode<GlesRenderer> for MarksNode {
         self.extent
     }
 
+    /// Strokes blend over the black rect under them and read no texture.
+    fn reads_beneath(&self, _scale: f64) -> Option<Vec<Rectangle<i32, Logical>>> {
+        Some(Vec::new())
+    }
+
     fn elements(
         &self,
         _renderer: &mut GlesRenderer,
@@ -569,6 +574,27 @@ mod tests {
             Stroke::dot([15.0, 30.0], 3.0, [1.0, 0.0, 0.2, 1.0]),
             "a star is a dot on whole pixels"
         );
+    }
+
+    #[test]
+    fn a_window_under_starfield_or_mystify_asks_no_frames_until_it_stops() {
+        use crate::harness::{Harness, TestClient, Toplevel};
+        fn asks(h: &mut Harness, c: &mut TestClient, t: Toplevel) -> bool {
+            crate::backend::take_asks();
+            h.draw_self(c, t, 0xff40_4040);
+            (crate::backend::take_asks().iter())
+                .any(|(_, a)| matches!(a, crate::backend::Ask::Commit(_)))
+        }
+        let mut h = Harness::new();
+        h.output("TEST-1", 800, 600);
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "printer", 200, 100);
+        for kind in [Kind::Starfield, Kind::Mystify] {
+            start(&mut h.state, kind, false);
+            assert!(!asks(&mut h, &mut c, t), "under {kind:?}");
+            stop(&mut h.state);
+            assert!(asks(&mut h, &mut c, t), "after {kind:?} stops");
+        }
     }
 
     #[test]
