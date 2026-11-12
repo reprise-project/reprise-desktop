@@ -213,11 +213,29 @@ impl Harness {
     }
 
     /// A `w`x`h` output at scale 1 put in the layout, as `backend::enable` does once it drives
-    /// a connector.
+    /// a connector, showing its wallpaper.
     pub fn output(&mut self, name: &str, w: i32, h: i32) -> Output {
         let output = self.add_output(name, w, h, None);
         self.dispatch();
+        self.until_wallpaper_shown(&output);
         output
+    }
+
+    /// Turns the loop until `output` shows its wallpaper. A built-in draws on a thread and asks
+    /// every output for a frame when it lands, which a test counting asks would see at any step.
+    fn until_wallpaper_shown(&mut self, output: &Output) {
+        let end = std::time::Instant::now() + Duration::from_secs(30);
+        while !self.state.wallpaper_ready(output) {
+            assert!(
+                std::time::Instant::now() < end,
+                "{}'s wallpaper shows within 30 s",
+                output.name()
+            );
+            self.event_loop
+                .dispatch(Some(Duration::from_millis(5)), &mut self.state)
+                .expect("dispatch");
+            self.state.turn_end();
+        }
     }
 
     /// [`Harness::output`] asking for its place at `at`, the turn left running, as each monitor
