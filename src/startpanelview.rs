@@ -144,6 +144,7 @@ impl State {
         let tree = scene.tree_create(self.layers.menu);
         scene.set_data(tree, Some(SceneOwner::StartPanel));
         crate::glass::leave_out(scene, tree);
+        crate::output::keep_on(scene, tree, &output);
         let glass_tree = scene.tree_create(tree);
         let buffer = scene.buffer_create(tree);
         if opening == MenuAnimation::Fade {

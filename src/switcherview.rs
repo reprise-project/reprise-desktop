@@ -235,6 +235,9 @@ impl State {
         let tree = self.scene.tree_create(self.layers.menu);
         self.scene.set_data(tree, Some(SceneOwner::Switcher));
         crate::glass::leave_out(&mut self.scene, tree);
+        if let Some(o) = &out {
+            crate::output::keep_on(&mut self.scene, tree, o);
+        }
         let glass_tree = self.scene.tree_create(tree);
         let buffer = self.scene.buffer_create(tree);
         let badges = thumbnails.then(|| self.scene.buffer_create(tree));

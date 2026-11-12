@@ -1129,6 +1129,75 @@ fn nested_clips_intersect_and_cut_hits() {
 }
 
 #[test]
+fn a_tree_kept_on_an_output_draws_hits_and_asks_only_inside_it_as_either_moves() {
+    let mut s = TestScene::new();
+    let root = s.root();
+    let left = output("L", 0, 0, 1000, 800, 1.0);
+    let right = output("R", 1000, 0, 1000, 800, 1.0);
+    s.add_output(&left);
+    s.add_output(&right);
+    let below = s.rect_create(root, (2000, 800), RED);
+    let t = s.tree_create(root);
+    s.set_position(t, 950, 10);
+    let r = s.rect_create(t, (100, 100), RED);
+    s.set_kept_on(t, Some(&left));
+    let drawn = |s: &TestScene| -> Vec<Rectangle<i32, Physical>> {
+        let els = s.render_elements(&mut TestRenderer, &view(2000, 800));
+        (els.iter())
+            .map(|e| e.geometry(Scale::from(1.0)))
+            .filter(|g| g.size != (2000, 800).into())
+            .collect()
+    };
+    assert_eq!(drawn(&s), vec![prect(950, 10, 50, 100)], "cut at x = 1000");
+    assert_eq!(s.extents(t), Some(rect(950, 10, 50, 100)));
+    assert_eq!(s.extents(r), Some(rect(950, 10, 50, 100)));
+    assert_eq!(s.outputs_of(t), vec![left.clone()]);
+    assert!(
+        !s.leaves_in(rect(1000, 0, 1000, 800)).contains(&r.node()),
+        "the right output shows nothing of it"
+    );
+    assert_eq!(s.node_at(root, pt(990.0, 50.0)).unwrap().node, r.node());
+    assert_eq!(
+        s.node_at(root, pt(1010.0, 50.0)).unwrap().node,
+        below.node(),
+        "past the output the pointer reaches what lies below"
+    );
+    s.set_position(t, 900, 10);
+    assert_eq!(
+        drawn(&s),
+        vec![prect(900, 10, 100, 100)],
+        "the cut stays at the output's edge"
+    );
+    s.set_position(t, 1100, 10);
+    assert!(drawn(&s).is_empty(), "wholly outside draws nothing");
+    assert_eq!(s.extents(t), None);
+    assert!(s.outputs_of(t).is_empty());
+    s.set_position(t, 950, 10);
+    let wide = Mode {
+        size: (1200, 800).into(),
+        refresh: 60_000,
+    };
+    left.change_current_state(Some(wide), None, None, None);
+    right.change_current_state(None, None, None, Some((1200, 0).into()));
+    assert_eq!(
+        drawn(&s),
+        vec![prect(950, 10, 100, 100)],
+        "the cut follows the output's new size"
+    );
+    left.change_current_state(None, None, None, Some((-200, 0).into()));
+    assert_eq!(drawn(&s), vec![prect(950, 10, 50, 100)], "and its move");
+    right.change_current_state(None, None, None, Some((1000, 0).into()));
+    s.watch();
+    s.set_kept_on(t, None);
+    assert_eq!(
+        s.watched(),
+        vec![rect(950, 10, 50, 100), rect(950, 10, 100, 100)],
+        "letting go of the output shows the part past it"
+    );
+    assert_eq!(s.outputs_of(t), vec![left, right]);
+}
+
+#[test]
 fn opaque_region_is_reported_in_whole_physical_pixels() {
     let mut s = TestScene::new();
     let root = s.root();

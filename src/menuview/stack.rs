@@ -130,6 +130,7 @@ impl State {
         let tree = scene.tree_create(layer);
         scene.set_data(tree, Some(SceneOwner::Menu(depth)));
         crate::glass::leave_out(scene, tree);
+        crate::output::keep_on(scene, tree, &output);
         let shadow = scene.buffer_create(tree);
         scene.set_input(shadow, Input::Passthrough);
         let buffer = scene.buffer_create(tree);

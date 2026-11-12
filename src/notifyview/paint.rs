@@ -21,7 +21,7 @@ use crate::raster::{Canvas, Rect};
 
 use super::clock::{hold_clocks, rearm};
 use super::layout::{Drawn, Painted, lay_out_open, sheet_glass};
-use super::motion::{aim_open, arm_tick, clip_to, follow_slot, pose_balloon};
+use super::motion::{aim_open, arm_tick, follow_slot, pose_balloon};
 use super::pointer::{rehold, rehover};
 use super::stack::chip_count;
 use super::warm::warm_openings;
@@ -336,7 +336,7 @@ fn paint_one(
         glass,
         ..
     } = state;
-    let bounds = notify.bounds();
+    let output = notify.output.clone();
     let b = &mut notify.stack[i];
     b.opening = opening;
     b.glass = kept;
@@ -366,7 +366,15 @@ fn paint_one(
             size: (c.width as i32 / scale, c.height as i32 / scale),
         });
     }
-    pose_balloon(scene, glass, b, Instant::now(), edge, scale_from, bounds);
+    pose_balloon(
+        scene,
+        glass,
+        b,
+        Instant::now(),
+        edge,
+        scale_from,
+        output.as_ref(),
+    );
     if replying && let Some(canvas) = canvas.as_mut() {
         let origin = (at.0 - ox / scale, at.1 - oy / scale);
         let spot = canvas.take_spot();
@@ -399,8 +407,8 @@ fn draw_chip_at(state: &mut State, more: usize, at: (i32, i32), size: (i32, i32)
     );
     upload_scaled(&mut state.scene, c.buffer, &canvas, scale);
     state.scene.set_position(c.tree, at.0, at.1);
-    let bounds = state.notify.bounds();
-    state.scene.set_clip(c.tree, clip_to(bounds, at));
+    let output = state.notify.output.clone();
+    state.scene.set_kept_on(c.tree, output.as_ref());
     state.notify.chip = Some(Chip {
         at,
         size,
