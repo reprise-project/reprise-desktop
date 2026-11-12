@@ -1,7 +1,7 @@
 use super::cache::{HIT_CAP, MISS_CAP};
 use super::decode::{
-    SPENT, SVG_MAX_BYTES, SVG_MAX_IMAGES, SVG_MAX_PICTURE_PIXELS, parse_xml, svg_over_budget,
-    svg_side,
+    SPENT, SVG_MAX_BYTES, SVG_MAX_IMAGES, SVG_MAX_PICTURE_PIXELS, SVG_MAX_WORK, parse_xml,
+    svg_over_budget, svg_side,
 };
 use super::*;
 use crate::raster::Canvas;
@@ -469,7 +469,7 @@ fn a_host_svg_embedding_a_png_or_a_jpeg_draws_its_pixels() {
 fn an_svg_embedding_an_image_past_the_limits_is_refused() {
     let over = |svg: String| {
         let tree = resvg::usvg::Tree::from_data(svg.as_bytes(), &Default::default()).unwrap();
-        svg_over_budget(&tree, true, 16)
+        svg_over_budget(&tree, true, 16, SVG_MAX_WORK)
     };
     let side = MAX_ICON_DIMENSION as usize;
     let wide = png_bytes(side as u32 + 1, 1, &vec![0; (side + 1) * 4]);
@@ -930,8 +930,8 @@ fn an_icon_with_a_blur_and_a_faded_layer_draws_at_its_size() {
     let icon = budget_tree(&format!(
         r##"<filter id="f"><feGaussianBlur stdDeviation="1"/></filter><g filter="url(#f)">{SHAPE}</g><g opacity=".5">{SHAPE}</g>"##
     ));
-    assert_eq!(svg_side(&icon, true, 48), Ok(48));
-    assert_eq!(svg_side(&icon, true, 256), Ok(256));
+    assert_eq!(svg_side(&icon, true, 48, SVG_MAX_WORK), Ok(48));
+    assert_eq!(svg_side(&icon, true, 256, SVG_MAX_WORK), Ok(256));
 }
 
 /// Each takes seconds to draw at its size without the budget.
@@ -941,16 +941,19 @@ fn an_svg_whose_pixels_cost_past_the_budget_draws_smaller_and_is_scaled_up() {
         r##"<filter id="f">{}</filter><g filter="url(#f)">{SHAPE}</g>"##,
         r#"<feGaussianBlur stdDeviation="4"/>"#.repeat(64)
     ));
-    assert_eq!(svg_side(&blurs, true, 16), Ok(16));
-    let side = svg_side(&blurs, true, 128).unwrap();
+    assert_eq!(svg_side(&blurs, true, 16, SVG_MAX_WORK), Ok(16));
+    let side = svg_side(&blurs, true, 128, SVG_MAX_WORK).unwrap();
     assert!(
         (32..128).contains(&side),
         "drawn between 32 and 127 px, not {side}"
     );
-    assert_eq!(svg_side(&blurs, true, 512), Err("past the render budget"));
+    assert_eq!(
+        svg_side(&blurs, true, 512, SVG_MAX_WORK),
+        Err("past the render budget")
+    );
 
     let layers = budget_tree(&format!(r##"<g opacity=".5">{SHAPE}</g>"##).repeat(300));
-    assert!(svg_side(&layers, true, 256).is_ok_and(|s| s < 256));
+    assert!(svg_side(&layers, true, 256, SVG_MAX_WORK).is_ok_and(|s| s < 256));
 
     let p = tmp("blurs.svg");
     fs::write(
@@ -978,44 +981,180 @@ fn an_svg_of_two_hundred_clipped_layers_draws_smaller_at_96_px() {
         )
     });
     let clipped = budget_tree(&groups.collect::<String>());
-    assert_eq!(svg_side(&clipped, true, 48), Ok(48));
+    assert_eq!(svg_side(&clipped, true, 48, SVG_MAX_WORK), Ok(48));
     assert!(
-        svg_side(&clipped, true, 96).is_ok_and(|s| (24..96).contains(&s)),
+        svg_side(&clipped, true, 96, SVG_MAX_WORK).is_ok_and(|s| (24..96).contains(&s)),
         "drawn between 24 and 95 px"
     );
 }
 
 #[test]
 fn an_svg_whose_cost_does_not_shrink_with_its_size_is_refused() {
-    let wide = budget_tree(&format!(
-        r##"<filter id="f"><feMorphology radius="40"/></filter><g filter="url(#f)">{SHAPE}</g>"##
-    ));
-    assert_eq!(
-        svg_side(&wide, true, 48),
-        Err("an unbounded filter primitive")
-    );
     // The rasterizer sorts a path's crossing edges against each other.
     let zigzag = format!("M0 0{}", "L16 16L0 16L16 0L0 0".repeat(10_000));
     let crossing = budget_tree(&format!(r##"<path d="{zigzag}"/>"##));
-    assert_eq!(svg_side(&crossing, true, 16), Err("past the render budget"));
+    assert_eq!(
+        svg_side(&crossing, true, 16, SVG_MAX_WORK),
+        Err("past the render budget")
+    );
     // 0.0005 units of dash and gap on 61 units of path: about 120 000 dashes.
     let dashes = budget_tree(
         r##"<path d="M0 0L16 16L0 16L16 0" stroke="#000" stroke-dasharray="0.00025 0.00025"/>"##,
     );
-    assert_eq!(svg_side(&dashes, true, 16), Err("past the render budget"));
+    assert_eq!(
+        svg_side(&dashes, true, 16, SVG_MAX_WORK),
+        Err("past the render budget")
+    );
     // resvg draws a pattern tile at the device scale: 4000 px a side even at 16 px, a quarter
     // of 64.
     let tile = budget_tree(&format!(
         r##"<pattern id="p" width="4000" height="4000" patternUnits="userSpaceOnUse">{SHAPE}</pattern><rect width="16" height="16" fill="url(#p)"/>"##
     ));
-    assert_eq!(svg_side(&tile, true, 64), Err("past the render budget"));
+    assert_eq!(
+        svg_side(&tile, true, 64, SVG_MAX_WORK),
+        Err("past the render budget")
+    );
+}
+
+/// A shadow over a region four times the icon's size each way, as a flag theme draws one.
+fn shadowed_tree() -> resvg::usvg::Tree {
+    let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256"><filter id="f" x="-200%" y="-200%" width="400%" height="400%" color-interpolation-filters="sRGB"><feGaussianBlur in="SourceGraphic" stdDeviation="4.3"/><feOffset dy="4" result="o"/><feFlood flood-opacity=".4"/><feComposite in2="o" operator="in" result="s"/><feBlend in="SourceGraphic" in2="s"/></filter><g filter="url(#f)"><rect x="6" y="14" width="244" height="228" fill="#c00"/></g></svg>"##;
+    resvg::usvg::Tree::from_str(svg, &Default::default()).unwrap()
+}
+
+/// Each primitive is priced by its kind: the shadow's offset, flood, composite and blend cost
+/// a few percent of its blur.
+#[test]
+fn a_shadow_over_a_wide_region_draws_at_its_size_up_to_84_px() {
+    let shadowed = shadowed_tree();
+    for px in [16, 24, 32, 48, 64, 84] {
+        assert_eq!(svg_side(&shadowed, true, px, SVG_MAX_WORK), Ok(px));
+    }
+    let side = svg_side(&shadowed, true, 96, SVG_MAX_WORK).unwrap();
+    assert!(
+        (64..96).contains(&side),
+        "drawn between 64 and 95 px, not {side}"
+    );
+}
+
+/// resvg's IIR blur reads a region's columns from a buffer of f64 rows; rows a multiple of
+/// 256 px long land in the same cache sets.
+#[test]
+fn a_small_blur_over_rows_a_multiple_of_256_px_costs_more() {
+    let blurs = |width: u32| {
+        let svg = format!(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><filter id="f" filterUnits="userSpaceOnUse" x="0" y="0" width="{width}" height="100">{}</filter><g filter="url(#f)">{SHAPE}</g></svg>"##,
+            r#"<feGaussianBlur stdDeviation="0.5"/>"#.repeat(2)
+        );
+        resvg::usvg::Tree::from_str(&svg, &Default::default()).unwrap()
+    };
+    let (aliased, other) = (blurs(256), blurs(250));
+    // The least budget each draws within at 64 px, one pixel to a unit.
+    let cost = |tree: &resvg::usvg::Tree| {
+        let (mut lo, mut hi) = (0.0, 1e9);
+        while hi - lo > 1e4 {
+            let mid = (lo + hi) / 2.0;
+            match svg_over_budget(tree, true, 64, mid) {
+                None => hi = mid,
+                Some(_) => lo = mid,
+            }
+        }
+        hi
+    };
+    let ratio = cost(&aliased) / cost(&other);
+    assert!(
+        ratio > 1.5,
+        "a 256 px row costs 1.5 times a 250 px one or more, not {ratio}"
+    );
+}
+
+/// The primitives whose cost grows with an attribute are priced by it: a few draw, and a
+/// costly one draws smaller or is refused.
+#[test]
+fn every_filter_primitive_is_priced_by_its_attributes() {
+    let filtered = |primitive: &str| {
+        budget_tree(&format!(
+            r##"<rect id="r" width="8" height="8" fill="#0f0"/><filter id="f">{primitive}</filter><g filter="url(#f)">{SHAPE}</g>"##
+        ))
+    };
+    for cheap in [
+        r#"<feMorphology radius="1"/>"#,
+        r#"<feConvolveMatrix order="3" kernelMatrix="0 1 0 1 1 1 0 1 0"/>"#,
+        r#"<feTurbulence baseFrequency=".1" numOctaves="2"/>"#,
+        r#"<feDiffuseLighting><feDistantLight azimuth="45" elevation="45"/></feDiffuseLighting>"#,
+        r#"<feSpecularLighting><fePointLight x="4" y="4" z="10"/></feSpecularLighting>"#,
+        r#"<feDisplacementMap in2="SourceGraphic" scale="4"/>"#,
+        r##"<feImage href="#r"/>"##,
+    ] {
+        let tree = filtered(cheap);
+        assert_eq!(svg_side(&tree, true, 48, SVG_MAX_WORK), Ok(48), "{cheap}");
+    }
+    let octaves = filtered(r#"<feTurbulence baseFrequency=".1" numOctaves="1000000"/>"#);
+    assert_eq!(
+        svg_side(&octaves, true, 16, SVG_MAX_WORK),
+        Err("past the render budget")
+    );
+    let kernel = vec!["1"; 99 * 99].join(" ");
+    let order = filtered(&format!(
+        r#"<feConvolveMatrix order="99" kernelMatrix="{kernel}"/>"#
+    ));
+    let side = svg_side(&order, true, 48, SVG_MAX_WORK).unwrap();
+    assert!(
+        (12..48).contains(&side),
+        "drawn between 12 and 47 px, not {side}"
+    );
+    // A radius reads at most the whole region around each pixel.
+    let radius = filtered(r#"<feMorphology radius="1000"/>"#);
+    assert_eq!(svg_side(&radius, true, 16, SVG_MAX_WORK), Ok(16));
+    let side = svg_side(&radius, true, 256, SVG_MAX_WORK).unwrap();
+    assert!(
+        (64..256).contains(&side),
+        "drawn between 64 and 255 px, not {side}"
+    );
+}
+
+/// One budget covers usvg's build and resvg's draw.
+#[test]
+fn an_svg_whose_build_and_draw_together_pass_the_budget_is_refused() {
+    let p = tmp("rects.svg");
+    let rects = |n| budget_svg(&r##"<rect width="16" height="16" fill="#f00"/>"##.repeat(n));
+    assert!(decode_bytes(&p, rects(4_000).as_bytes(), 16, true).is_some());
+    let many = rects(8_000);
+    let tree = resvg::usvg::Tree::from_str(&many, &Default::default()).unwrap();
+    assert_eq!(
+        svg_side(&tree, true, 16, SVG_MAX_WORK),
+        Ok(16),
+        "its draw alone fits"
+    );
+    let (_, built) = parse_xml(&many, SVG_MAX_WORK).unwrap();
+    assert!(built < SVG_MAX_WORK, "its build alone fits");
+    assert!(decode_bytes(&p, many.as_bytes(), 16, true).is_none());
+}
+
+/// An embedded SVG picture builds within what the icon's build left.
+#[test]
+fn an_svg_whose_pictures_build_past_the_budget_together_draws_the_last_blank() {
+    let picture = |fill: &str| {
+        let unused = "<g/>".repeat(10_000);
+        format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="8" height="16"><defs>{unused}</defs><rect width="8" height="16" fill="{fill}"/></svg>"#
+        )
+    };
+    let red = data_url("image/svg+xml", picture("red").as_bytes());
+    let blue = data_url("image/svg+xml", picture("blue").as_bytes());
+    let svg = budget_svg(&format!(
+        r#"<image width="8" height="16" href="{red}"/><image x="8" width="8" height="16" href="{blue}"/>"#
+    ));
+    assert!(svg.len() < SVG_MAX_BYTES);
+    let c = decode_bytes(&tmp("pictures.svg"), svg.as_bytes(), 16, true).expect("the icon draws");
+    assert_eq!((c.get(4, 8), c.get(12, 8)), (0xFFFF_0000, 0));
 }
 
 /// usvg builds each of these into a tree of hundreds of thousands of nodes or more, taking
 /// a second or more, before a tree can be walked.
 #[test]
 fn an_svg_usvg_would_build_too_much_from_is_refused_before_it_does() {
-    let refused = |body: &str| parse_xml(&budget_svg(body)).err();
+    let refused = |body: &str| parse_xml(&budget_svg(body), SVG_MAX_WORK).err();
     let why = Some("too many elements once uses and references expand");
     let mut uses = String::from(r##"<rect id="g0" width="1" height="1"/>"##);
     for i in 1..=5 {
@@ -1068,7 +1207,7 @@ fn a_marker_too_deep_to_price_on_a_shape_without_vertices_is_refused() {
         r##"<marker id="m">{deep}</marker><rect width="1" height="1" marker-start="url(#m)"/>"##
     );
     assert_eq!(
-        parse_xml(&budget_svg(&body)).err(),
+        parse_xml(&budget_svg(&body), SVG_MAX_WORK).err(),
         Some("too many elements once uses and references expand")
     );
 }
@@ -2151,4 +2290,37 @@ fn only_directories_that_exist_and_changed_since_the_cache_are_listed() {
         "only parents that exist"
     );
     fs::remove_dir_all(system.parent().unwrap()).unwrap();
+}
+
+/// Adwaita's user-trash-full builds and draws at 96 px, the 48 px desktop at scale 2, for about
+/// 77e6 work together; an icon of its shape and cost draws at its size.
+#[test]
+fn an_icon_costing_what_user_trash_full_does_draws_at_96_px() {
+    let svg = trash_shaped(47, 95);
+    let (_, built) = parse_xml(&svg, SVG_MAX_WORK).unwrap();
+    let tree = resvg::usvg::Tree::from_str(&svg, &Default::default()).unwrap();
+    assert!(
+        svg_over_budget(&tree, true, 96, 75e6 - built).is_some(),
+        "its build and draw pass 75e6 together"
+    );
+    assert_eq!(svg_side(&tree, true, 96, SVG_MAX_WORK - built), Ok(96));
+}
+
+/// An icon shaped as Adwaita's user-trash-full: masks whose content is a recoloured layer, and
+/// paths under clip paths, on a 128-unit canvas.
+fn trash_shaped(masks: usize, clips: usize) -> String {
+    let mut body = String::from(
+        r#"<filter id="a" width="100%" height="100%" x="0%" y="0%"><feColorMatrix in="SourceGraphic" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 1 0"/></filter>"#,
+    );
+    for i in 0..masks {
+        body += &format!(
+            r##"<mask id="m{i}"><g filter="url(#a)"><rect width="128" height="128" fill-opacity="0.2"/></g></mask><g mask="url(#m{i})"><path d="M20 20h88v88H20z" fill="#3d3846"/></g>"##
+        );
+    }
+    for i in 0..clips {
+        body += &format!(
+            r##"<clipPath id="c{i}"><rect width="192" height="152"/></clipPath><g clip-path="url(#c{i})"><path d="M30 40h60v50H30z" fill="#9a9996"/></g>"##
+        );
+    }
+    format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128">{body}</svg>"#)
 }

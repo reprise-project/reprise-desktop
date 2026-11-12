@@ -1438,11 +1438,14 @@ sharing and remote control grants yet.
   picture is decoded (any other SVG icon decodes only the pictures it draws,
   each once and at most 8, draws at most 4 PNG, JPEG or SVG pictures
   holding 65,536 PNG and JPEG pixels in all, at most 1024 a side, and
-  leaves out GIF, WebP and any picture past these limits), an SVG whose
-  `<use>` copies and references would build too large a tree is refused
-  before usvg builds it, one whose drawing would cost past a budget of
-  about 75 ms of one core at its size is drawn as small as a quarter of
-  that size and scaled up, or refused, and one read of
+  leaves out GIF, WebP and any picture past these limits), an SVG is
+  priced against one budget of about 78 ms of one core's CPU time for
+  building its tree and drawing it together: one whose `<use>` copies and
+  references would build past it is refused before usvg builds it, an
+  embedded SVG picture builds within what is left or is left out, and one
+  whose drawing at its size would cost past what the build left (every
+  filter primitive priced by its kind and region) is drawn as small as a
+  quarter of that size and scaled up, or refused, and one read of
   an item's icons takes at most 16 MiB and 64 folders. Two threads shared
   by every item do the reads, from a shared queue of 64 in which one app
   holds at most 4. A read waits at most 10 seconds for a thread and then
