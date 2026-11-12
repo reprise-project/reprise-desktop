@@ -148,7 +148,7 @@ pub(crate) type ClockPainter =
     fn(time: (u32, u32, u32), seconds: bool, side: i32, d: i32) -> Canvas;
 
 /// A part's art, painted the first time it is asked for; clones share it.
-type Art = Arc<LazyLock<PartImage, Box<dyn FnOnce() -> PartImage + Send>>>;
+pub(crate) type Art = Arc<LazyLock<PartImage, Box<dyn FnOnce() -> PartImage + Send>>>;
 type Ink = Arc<LazyLock<Color, Box<dyn FnOnce() -> Color + Send>>>;
 
 /// The lit task buttons' art, painted the first time it is asked for; clones share it.
@@ -607,6 +607,11 @@ impl Style {
 
     pub fn part(&self, part: Part) -> Option<&PartImage> {
         self.parts.get(&part).map(|art| LazyLock::force(art))
+    }
+
+    /// `part`'s art itself, which a cache of pictures drawn from it holds as their key.
+    pub(crate) fn part_art(&self, part: Part) -> Option<Art> {
+        self.parts.get(&part).cloned()
     }
 
     /// Every part this style draws, in no particular order.

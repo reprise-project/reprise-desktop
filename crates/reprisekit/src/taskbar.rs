@@ -197,20 +197,20 @@ pub struct TaskbarState {
     pub meter: Option<[String; 2]>,
 }
 
-impl TaskbarState {
-    /// Whether a bar drawn for `self` is the bar drawn for `other`: [`Self::same_but_start`] with
-    /// Start's fields equal too.
-    pub fn same(&self, other: &Self) -> bool {
-        self.start_pressed == other.start_pressed
-            && self.start_focus == other.start_focus
-            && self.start_hot == other.start_hot
-            && self.same_but_start(other)
-    }
+/// What of a bar drawn for one [`TaskbarState`] a draw for another on the same layout changes:
+/// Start's part, and a box round the other cells that change (the whole bar for a change no cell
+/// bounds).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct StateDamage {
+    pub start: bool,
+    pub cells: Option<Rect>,
+}
 
-    /// Whether `self` and `other` differ at most in Start's own fields (`start_pressed`,
-    /// `start_focus`, `start_hot`), so a bar drawn for one needs only its Start part redrawn
-    /// (`look::redraw_taskbar_start`) for the other. Icons count as equal only when shared.
-    pub fn same_but_start(&self, other: &Self) -> bool {
+impl TaskbarState {
+    /// Which of `layout`'s cells a bar drawn for `self` redraws to show `other`. A task button's
+    /// change takes its neighbours, whose label edges meet it. Icons count as equal only when
+    /// shared.
+    pub fn damage(&self, other: &Self, layout: &TaskbarLayout) -> StateDamage {
         fn icon(a: &Option<Arc<Canvas>>, b: &Option<Arc<Canvas>>) -> bool {
             match (a, b) {
                 (Some(a), Some(b)) => Arc::ptr_eq(a, b),
@@ -218,16 +218,16 @@ impl TaskbarState {
                 _ => false,
             }
         }
-        fn icons(a: &[Option<Arc<Canvas>>], b: &[Option<Arc<Canvas>>]) -> bool {
-            a.len() == b.len() && a.iter().zip(b).all(|(a, b)| icon(a, b))
+        fn moved(a: Option<usize>, b: Option<usize>) -> [Option<usize>; 2] {
+            if a == b { [None, None] } else { [a, b] }
         }
         let Self {
-            start_pressed: _,
-            start_focus: _,
-            start_hot: _,
-            focus,
+            start_pressed,
+            start_focus,
+            start_hot,
             start_icon,
             orb_glow,
+            focus,
             quick_icons,
             quick_hot,
             quick_pressed,
@@ -251,6 +251,47 @@ impl TaskbarState {
             clock,
             meter,
         } = self;
+        let start = *start_pressed != other.start_pressed
+            || *start_focus != other.start_focus
+            || *start_hot != other.start_hot
+            || !icon(start_icon, &other.start_icon)
+            || *orb_glow != other.orb_glow;
+        let whole = *focus != other.focus
+            || *quick_drop != other.quick_drop
+            || *pager_mark != other.pager_mark
+            || *task_shift != other.task_shift
+            || *task_float != other.task_float
+            || quick_icons.len() != other.quick_icons.len()
+            || pager.len() != other.pager.len()
+            || tasks.len() != other.tasks.len()
+            || tray_icons.len() != other.tray_icons.len();
+        if whole {
+            let cells = Some(Rect::new(0, 0, layout.width, layout.height));
+            return StateDamage { start, cells };
+        }
+        let mut cells: Option<Rect> = None;
+        let mut add = |r: Option<&Rect>| {
+            if let Some(r) = r {
+                cells = Some(cells.map_or(*r, |c| c.union(r)));
+            }
+        };
+        let quick = (0..quick_icons.len())
+            .filter(|&i| !icon(&quick_icons[i], &other.quick_icons[i]))
+            .chain(moved(*quick_hot, other.quick_hot).into_iter().flatten())
+            .chain(
+                moved(*quick_pressed, other.quick_pressed)
+                    .into_iter()
+                    .flatten(),
+            );
+        for i in quick {
+            add(layout.quick.get(i));
+        }
+        let pagers = (0..pager.len())
+            .filter(|&i| pager[i] != other.pager[i])
+            .chain(moved(*pager_hot, other.pager_hot).into_iter().flatten());
+        for i in pagers {
+            add(layout.pager.get(i));
+        }
         let same_task = |a: &TaskEntry, b: &TaskEntry| {
             a.title == b.title
                 && a.active == b.active
@@ -258,32 +299,48 @@ impl TaskbarState {
                 && a.glow == b.glow
                 && icon(&a.icon, &b.icon)
         };
-        *focus == other.focus
-            && icon(start_icon, &other.start_icon)
-            && *orb_glow == other.orb_glow
-            && icons(quick_icons, &other.quick_icons)
-            && *quick_hot == other.quick_hot
-            && *quick_pressed == other.quick_pressed
-            && *quick_drop == other.quick_drop
-            && *quick_more == other.quick_more
-            && *pager == other.pager
-            && *pager_hot == other.pager_hot
-            && *pager_mark == other.pager_mark
-            && *task_hot == other.task_hot
-            && *task_pressed == other.task_pressed
-            && *task_hot_x == other.task_hot_x
-            && *task_shift == other.task_shift
-            && *task_float == other.task_float
-            && *task_progress == other.task_progress
-            && *task_badge == other.task_badge
-            && *show_desktop_hot == other.show_desktop_hot
-            && *more == other.more
-            && *chevron == other.chevron
-            && tasks.len() == other.tasks.len()
-            && tasks.iter().zip(&other.tasks).all(|(a, b)| same_task(a, b))
-            && icons(tray_icons, &other.tray_icons)
-            && *clock == other.clock
-            && *meter == other.meter
+        let lit = if *task_hot_x == other.task_hot_x {
+            [None; 4]
+        } else {
+            [*task_hot, other.task_hot, *task_pressed, other.task_pressed]
+        };
+        let changed = (0..tasks.len())
+            .filter(|&i| {
+                !same_task(&tasks[i], &other.tasks[i])
+                    || task_progress.get(i) != other.task_progress.get(i)
+                    || task_badge.get(i) != other.task_badge.get(i)
+            })
+            .chain(moved(*task_hot, other.task_hot).into_iter().flatten())
+            .chain(
+                moved(*task_pressed, other.task_pressed)
+                    .into_iter()
+                    .flatten(),
+            )
+            .chain(lit.into_iter().flatten());
+        for i in changed {
+            for k in i.saturating_sub(1)..=i + 1 {
+                add(layout.tasks.get(k));
+            }
+        }
+        for i in (0..tray_icons.len()).filter(|&i| !icon(&tray_icons[i], &other.tray_icons[i])) {
+            add(layout.tray.get(i));
+        }
+        let cell = |changed: bool, r: Option<Rect>| r.filter(|_| changed);
+        let rest = [
+            cell(*quick_more != other.quick_more, layout.quick_more),
+            cell(
+                *show_desktop_hot != other.show_desktop_hot,
+                layout.show_desktop,
+            ),
+            cell(*more != other.more, layout.more),
+            cell(*chevron != other.chevron, layout.chevron),
+            cell(*clock != other.clock, Some(layout.clock)),
+            cell(*meter != other.meter, layout.meter),
+        ];
+        for r in rest.iter().flatten() {
+            add(Some(r));
+        }
+        StateDamage { start, cells }
     }
 }
 

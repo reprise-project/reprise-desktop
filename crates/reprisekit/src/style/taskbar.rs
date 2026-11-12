@@ -1,9 +1,13 @@
 //! The taskbar drawn through a [`Style`].
 
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::sync::Arc;
+
 use crate::icon;
 use crate::raster::{Canvas, Rect};
-use crate::style::{Part, State, Style};
-use crate::taskbar::{PagerMark, PopupCell, TaskbarLayout, TaskbarState, quick_icon_origin};
+use crate::style::{Art, Part, State, Style};
+use crate::taskbar::{Edge, PagerMark, PopupCell, TaskbarLayout, TaskbarState, quick_icon_origin};
 use crate::text::{Align, TextRenderer};
 use crate::theme::Theme;
 
@@ -36,23 +40,33 @@ pub fn draw_taskbar(
     layout: &TaskbarLayout,
     state: &TaskbarState,
 ) {
+    draw_taskbar_on(canvas, style, theme, text, start_text, layout, state, false);
+}
+
+/// [`draw_taskbar`]; with `replace` the bar replaces what the canvas holds inside its clip, its
+/// background copied from the one kept for the bar's size.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn draw_taskbar_on(
+    canvas: &mut Canvas,
+    style: &Style,
+    theme: &Theme,
+    text: &TextRenderer,
+    start_text: &TextRenderer,
+    layout: &TaskbarLayout,
+    state: &TaskbarState,
+    replace: bool,
+) {
     let s = theme.scale.max(1);
     // `theme` is already at scale `s`, so its font size is in device pixels.
     let size = theme.fonts.size_px;
     let icon_px = theme.icon_size();
 
     let labelled = !layout.icons_only && style.part(Part::TaskLabel).is_some();
-    let full = Rect::new(0, 0, layout.width, layout.height);
-    layout.edge.draw_art(canvas, full, |canvas, along| {
-        style.draw(canvas, along, Part::Taskbar, State::Normal, s);
-        if labelled {
-            let (x0, x1) = (layout.tasks_x() - 5 * s, layout.tasks_limit() + 7 * s);
-            let row = Rect::new(x0, 0, x1 - x0, along.height);
-            style.draw(canvas, row, Part::LabelRow, State::Normal, s);
-        }
-        let well = layout.to_along(layout.notification);
-        style.draw(canvas, well, Part::TrayArea, State::Normal, s);
-    });
+    if replace {
+        canvas.copy_from(&background(canvas, style, layout, labelled, s));
+    } else {
+        draw_background(canvas, style, layout, labelled, s);
+    }
 
     let st = layout.start;
     if style.taskbar.orb {
@@ -393,6 +407,90 @@ pub fn draw_taskbar(
     }
 }
 
+/// The bar's band, its task row's label band and the tray's well.
+fn draw_background(
+    canvas: &mut Canvas,
+    style: &Style,
+    layout: &TaskbarLayout,
+    labelled: bool,
+    s: i32,
+) {
+    let full = Rect::new(0, 0, layout.width, layout.height);
+    layout.edge.draw_art(canvas, full, |canvas, along| {
+        style.draw(canvas, along, Part::Taskbar, State::Normal, s);
+        if let Some((x0, x1)) = label_row(layout, labelled, s) {
+            let row = Rect::new(x0, 0, x1 - x0, along.height);
+            style.draw(canvas, row, Part::LabelRow, State::Normal, s);
+        }
+        let well = layout.to_along(layout.notification);
+        style.draw(canvas, well, Part::TrayArea, State::Normal, s);
+    });
+}
+
+fn label_row(layout: &TaskbarLayout, labelled: bool, s: i32) -> Option<(i32, i32)> {
+    labelled.then(|| (layout.tasks_x() - 5 * s, layout.tasks_limit() + 7 * s))
+}
+
+/// What a bar's background is drawn from: the parts' art, held so it stays theirs alone, and the
+/// bar's size and cells.
+struct BackKey {
+    art: [Option<Art>; 3],
+    scale: (i32, i32),
+    size: (u32, u32),
+    edge: Edge,
+    row: Option<(i32, i32)>,
+    well: Rect,
+}
+
+impl PartialEq for BackKey {
+    fn eq(&self, o: &BackKey) -> bool {
+        let art = self.art.iter().zip(&o.art).all(|pair| match pair {
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            (a, b) => a.is_none() && b.is_none(),
+        });
+        art && (self.scale, self.size, self.edge, self.row, self.well)
+            == (o.scale, o.size, o.edge, o.row, o.well)
+    }
+}
+
+/// Backgrounds kept per thread, one per bar size and look.
+const BACKGROUNDS: usize = 4;
+
+/// [`draw_background`] on a clear canvas the size and scale of `canvas`, painted once per
+/// [`BackKey`].
+fn background(
+    canvas: &Canvas,
+    style: &Style,
+    layout: &TaskbarLayout,
+    labelled: bool,
+    s: i32,
+) -> Rc<Canvas> {
+    thread_local! {
+        static KEPT: RefCell<Vec<(BackKey, Rc<Canvas>)>> = const { RefCell::new(Vec::new()) };
+    }
+    let key = BackKey {
+        art: [Part::Taskbar, Part::LabelRow, Part::TrayArea].map(|p| style.part_art(p)),
+        scale: (s, canvas.scale()),
+        size: (canvas.width, canvas.height),
+        edge: layout.edge,
+        row: label_row(layout, labelled, s),
+        well: layout.notification,
+    };
+    KEPT.with_borrow_mut(|kept| {
+        let pic = match kept.iter().position(|(k, _)| *k == key) {
+            Some(i) => kept.remove(i).1,
+            None => {
+                let mut c = Canvas::with_scale(canvas.width, canvas.height, canvas.scale());
+                draw_background(&mut c, style, layout, labelled, s);
+                Rc::new(c)
+            }
+        };
+        kept.insert(0, (key, pic.clone()));
+        kept.truncate(BACKGROUNDS);
+        pic
+    })
+}
+
 /// Blits `image` at `at`, or the theme's chrome fallback at `px`, built once into `fallback`.
 fn blit_icon(
     canvas: &mut Canvas,
@@ -402,9 +500,13 @@ fn blit_icon(
     px: i32,
     at: (i32, i32),
 ) {
-    let ic =
-        image.unwrap_or_else(|| fallback.get_or_insert_with(|| icon::chrome_fallback(theme, px)));
-    canvas.blit_canvas(at.0, at.1, ic);
+    if let Some(ic) = image {
+        return canvas.blit_canvas(at.0, at.1, ic);
+    }
+    if canvas.reaches(Rect::new(at.0, at.1, px, px)) {
+        let ic = fallback.get_or_insert_with(|| icon::chrome_fallback(theme, px));
+        canvas.blit_canvas(at.0, at.1, ic);
+    }
 }
 
 fn edge_state(style: &Style, button: State) -> State {

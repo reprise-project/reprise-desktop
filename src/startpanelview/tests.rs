@@ -1038,12 +1038,17 @@ fn opening_and_closing_start_redraws_only_starts_part_of_the_bar() {
         h.output("TEST-1", 1024, 768);
         let bar = h.state.bars[0].tree;
         for open in [true, false] {
-            let before = h.state.bar(bar).unwrap().start_only_draws;
+            h.state.bar_mut(bar).unwrap().drawn_parts.clear();
             h.state.toggle_start(bar);
             assert_eq!(h.state.start_panel.is_some(), open);
             let b = h.state.bar(bar).unwrap();
-            assert_eq!(b.start_only_draws, before + 1, "{interface} open {open}");
             let d = b.drawn.as_ref().unwrap();
+            let part = b.drawn_parts.last().copied().flatten();
+            let start = d.layout.start_orb(true).unwrap_or(d.layout.start);
+            assert!(
+                part.is_some_and(|r| r.x <= start.x && r.right() < d.layout.width / 4),
+                "{interface} open {open}: Start's part, not {part:?}"
+            );
             assert_eq!(d.state.start_pressed, open);
             let theme = h.state.config.theme.scaled(d.scale);
             let mut want = Canvas::new(d.canvas.width, d.canvas.height);

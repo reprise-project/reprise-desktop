@@ -69,6 +69,9 @@ pub(super) fn draw_spot(
     s: i32,
 ) {
     draw_image_nth(canvas, &frames.base, r, state, n, s);
+    if !canvas.reaches(r) {
+        return;
+    }
     let mut gain = Canvas::new(r.width.max(0) as u32, r.height.max(0) as u32);
     let at = Rect::new(0, 0, r.width, r.height);
     draw_image_nth(&mut gain, &frames.gain, at, state, n, s);

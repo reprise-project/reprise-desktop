@@ -352,6 +352,21 @@ fn with_clip_limits_drawing_and_lifts_after() {
 }
 
 #[test]
+fn copy_from_replaces_only_the_pixels_inside_the_clip() {
+    let mut src = Canvas::with_scale(6, 4, 2);
+    src.fill_rect(src.bounds(), Color::rgb(255, 0, 0));
+    let mut c = Canvas::with_scale(6, 4, 2);
+    c.fill_rect(c.bounds(), Color::rgb(0, 0, 255));
+    c.with_clip(Rect::new(1, 1, 2, 2), |c| c.copy_from(&src));
+    let red: Vec<(i32, i32)> = (0..8)
+        .flat_map(|y| (0..12).map(move |x| (x, y)))
+        .filter(|&(x, y)| c.pixels[(y * 12 + x) as usize] == Color::rgb(255, 0, 0).argb())
+        .collect();
+    let want: Vec<(i32, i32)> = (2..6).flat_map(|y| (2..6).map(move |x| (x, y))).collect();
+    assert_eq!(red, want, "device x 2..6, y 2..6");
+}
+
+#[test]
 fn off_canvas_rects_are_ignored() {
     let mut c = Canvas::new(4, 4);
     let red = Color::rgb(255, 0, 0);

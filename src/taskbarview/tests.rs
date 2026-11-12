@@ -336,45 +336,90 @@ mod per_bar {
 }
 
 #[test]
-fn a_redraw_with_nothing_changed_keeps_the_bar_and_orb_pictures() {
+fn a_redraw_draws_again_only_the_cells_that_changed() {
     for interface in ["classic", "blue", "glass"] {
         let toml = format!("[appearance]\ninterface = \"{interface}\"\n");
         let mut h =
             crate::harness::Harness::with_config(crate::config::Config::parse(&toml).unwrap());
         h.output("TEST-1", 1024, 768);
         let mut c = h.connect();
-        h.map_titled(&mut c, "editor", "one", (300, 200));
+        let one = h.map_titled(&mut c, "editor", "one", (300, 200));
+        h.map_titled(&mut c, "other", "two", (300, 200));
         h.dispatch();
-        let kept = |h: &crate::harness::Harness| h.state.bars[0].kept_draws;
-        let before = kept(&h);
-        h.state.redraw_taskbars();
-        assert_eq!(kept(&h), before + 1, "{interface}: nothing changed");
-        crate::taskbar::TEST_CLOCK.set(crate::taskbar::TEST_CLOCK.get() + 60);
-        h.state.redraw_taskbars();
-        assert_eq!(kept(&h), before + 1, "{interface}: the clock turned");
-        h.state.notify.log.dnd = true;
-        h.state.redraw_taskbars();
-        assert_eq!(kept(&h), before + 1, "{interface}: the bell came");
-        let tray = |h: &crate::harness::Harness| {
-            let d = h.state.bars[0].drawn.as_ref().expect("drawn");
-            d.state.tray_icons.len()
+        let redraw = |h: &mut crate::harness::Harness| {
+            h.state.bars[0].drawn_parts.clear();
+            h.state.redraw_taskbars();
+            let b = &h.state.bars[0];
+            let d = b.drawn.as_ref().expect("drawn");
+            let mut want = Canvas::new(d.canvas.width, d.canvas.height);
+            let theme = h.state.config.theme.scaled(d.scale);
+            reprisekit::look::draw_taskbar(
+                &mut want,
+                &theme,
+                h.state.text.for_output(d.scale),
+                h.state.start_text.for_output(d.scale),
+                &d.layout,
+                &d.state,
+            );
+            assert!(
+                d.canvas.pixels == want.pixels,
+                "{interface}: the bar as a full draw gives it"
+            );
+            (b.drawn_parts.clone(), d.layout.clone())
         };
-        assert_eq!(tray(&h), 1, "{interface}: the bell's cell");
-        h.state.redraw_taskbars();
-        assert_eq!(kept(&h), before + 2, "{interface}: the bell drawn the same");
+        let (parts, _) = redraw(&mut h);
+        assert_eq!(parts, [None], "{interface}: nothing changed");
+        crate::taskbar::TEST_CLOCK.set(crate::taskbar::TEST_CLOCK.get() + 60);
+        let (parts, l) = redraw(&mut h);
+        let clock = |r: &Rect| r.x <= l.clock.x && r.right() >= l.clock.right();
+        match parts[..] {
+            [Some(r)] => assert!(clock(&r) && r.x > l.tasks[1].right(), "{interface}: {r:?}"),
+            _ => panic!("{interface}: the clock turned: {parts:?}"),
+        }
+        h.state.notify.log.dnd = true;
+        redraw(&mut h);
+        h.state.notify.log.unseen = 2;
+        let (parts, l) = redraw(&mut h);
+        match parts[..] {
+            [Some(r)] => assert!(
+                r.x <= l.tray[0].x && r.x > l.tasks[1].right(),
+                "{interface}: {r:?}"
+            ),
+            _ => panic!("{interface}: the bell's count changed: {parts:?}"),
+        }
+        let (parts, _) = redraw(&mut h);
+        assert_eq!(parts, [None], "{interface}: the bell drawn the same");
+        h.state.bars[0].task_hot = Some(TaskKey::Window(one.id));
+        let (parts, l) = redraw(&mut h);
+        match parts[..] {
+            [Some(r)] => assert!(
+                r.x <= l.tasks[0].x && r.right() < l.clock.x,
+                "{interface}: {r:?}"
+            ),
+            _ => panic!("{interface}: the first button lit: {parts:?}"),
+        }
     }
 }
 
-/// The time of one bar redraw with nothing changed and of one drawn from scratch, per look and
-/// scale. Run with `--ignored --nocapture` under `--profile vm`.
+/// The time of one bar redraw per look and scale: with nothing changed, the pointer moving between
+/// task buttons, the clock turning, a tray cell redrawn, and a bar drawn from scratch (as a button
+/// added or closed draws it). Run with `--ignored --nocapture` under `--profile vm`;
+/// `BAR_COST=glass:2` keeps one look and scale, `N` times as many rounds.
 #[test]
 #[ignore]
 fn bar_redraw_cost() {
     use crate::harness::Harness;
     use smithay::output::Scale;
-    const N: u32 = 100;
+    let only = std::env::var("BAR_COST").ok();
+    let n: u32 = if only.is_some() { 1000 } else { 100 };
     for look in ["classic", "blue", "glass"] {
         for (w, hh, scale) in [(1920, 1080, 1.0), (3840, 2160, 2.0)] {
+            if only
+                .as_ref()
+                .is_some_and(|o| *o != format!("{look}:{scale}"))
+            {
+                continue;
+            }
             let text = format!("[appearance]\ninterface = \"{look}\"\n");
             let mut h = Harness::with_config(crate::config::Config::parse(&text).unwrap());
             for name in ["TEST-1", "TEST-2"] {
@@ -383,24 +428,45 @@ fn bar_redraw_cost() {
             }
             h.state.update_layout();
             let mut c = h.connect();
-            h.map_titled(&mut c, "editor", "one", (300, 200));
-            h.map_titled(&mut c, "other", "two", (300, 200));
+            let one = h.map_titled(&mut c, "editor", "one", (300, 200));
+            let two = h.map_titled(&mut c, "other", "two", (300, 200));
+            h.state.notify.log.dnd = true;
             h.run_for(300);
             let bars = h.state.bars.len() as u32;
-            let t = std::time::Instant::now();
-            for _ in 0..N {
-                h.state.redraw_taskbars();
+            let time = |h: &mut Harness, f: &mut dyn FnMut(&mut Harness, u32)| {
+                let t = std::time::Instant::now();
+                for k in 0..n {
+                    f(h, k);
+                    h.state.redraw_taskbars();
+                }
+                t.elapsed() / (n * bars)
+            };
+            let same = time(&mut h, &mut |_, _| {});
+            let hover = time(&mut h, &mut |h, k| {
+                let id = if k % 2 == 0 { one.id } else { two.id };
+                for b in &mut h.state.bars {
+                    b.task_hot = Some(TaskKey::Window(id));
+                    b.task_hot_x = Some(20 + (k % 7) as i32);
+                }
+            });
+            for b in &mut h.state.bars {
+                (b.task_hot, b.task_hot_x) = (None, None);
             }
-            let same = t.elapsed() / (N * bars);
-            let t = std::time::Instant::now();
-            for _ in 0..N {
+            let clock = time(&mut h, &mut |_, _| {
+                crate::taskbar::TEST_CLOCK.set(crate::taskbar::TEST_CLOCK.get() + 60);
+            });
+            let tray = time(&mut h, &mut |h, k| {
+                h.state.notify.log.unseen = 1 + (k % 2) as usize;
+            });
+            let full = time(&mut h, &mut |h, _| {
                 for b in &mut h.state.bars {
                     b.drawn = None;
                 }
-                h.state.redraw_taskbars();
-            }
-            let full = t.elapsed() / (N * bars);
-            eprintln!("{look} x{scale}: unchanged bar redraw {same:?}, full bar draw {full:?}");
+            });
+            eprintln!(
+                "{look} x{scale}: unchanged {same:?}, hover {hover:?}, clock {clock:?}, \
+                 tray {tray:?}, full {full:?}"
+            );
         }
     }
 }
