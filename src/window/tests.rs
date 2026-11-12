@@ -1566,6 +1566,7 @@ fn a_minimize_asks_only_the_outputs_it_changes() {
     h.state.move_to(b.id, 500, 50);
     h.state.focus_window(b.id);
     h.run_for(600);
+    h.state.finish_window_anims();
     take_asks();
     h.state.set_minimized(b.id, true);
     assert_eq!(h.state.focused, Some(a.id), "a takes the focus");
@@ -1607,6 +1608,7 @@ fn one_on_each() -> (
     h.state.move_to(b.id, 1200, 50);
     h.state.focus_window(b.id);
     h.run_for(600);
+    h.state.finish_window_anims();
     crate::backend::take_asks();
     (h, c, a, b)
 }
@@ -1631,6 +1633,7 @@ fn a_window_without_a_task_button_maps_hides_and_closes_asking_only_its_output()
     assert!(h.state.win(t.id).is_some_and(|w| w.mapped));
     assert_eq!(take_scene_outputs(), ["TEST-2"], "it comes back on TEST-2");
     h.run_for(600);
+    h.state.finish_window_anims();
     take_asks();
     c.destroy(t);
     h.roundtrip(&mut c);

@@ -1,5 +1,7 @@
 //! Which leaves an output draws none of: those lying wholly under opaque leaves above them.
 
+use std::{cell::Cell, collections::HashSet};
+
 use smithay::{
     backend::renderer::{Renderer, utils::RendererSurfaceStateUserData},
     output::Output,
@@ -16,6 +18,15 @@ use crate::{
     node::{Content, Node, NodeId, Pixels},
     render::{Mode, Pass, View},
 };
+
+/// What an output shows ([`Scene::shows_of`]).
+pub(crate) struct Shows {
+    pub(crate) output: Output,
+    /// The leaves it draws part of and every tree above one.
+    pub(crate) shown: HashSet<NodeId>,
+    /// Every leaf on it, covered or not.
+    pub(crate) walked: HashSet<NodeId>,
+}
 
 /// Per output, the surface nodes it draws none of ([`Scene::covered_on`]).
 pub(crate) struct Covered(Vec<(Output, Vec<NodeId>)>);
@@ -37,7 +48,10 @@ impl<R: Renderer, D> Scene<R, D> {
 
     /// The surface nodes `output` draws none of ([`Scene::leaves_on`]).
     pub(crate) fn covered_on(&self, output: &Output) -> Vec<NodeId> {
-        (self.leaves_on(output).into_iter().flatten())
+        let Leaves::All(leaves) = self.leaves_on(output, None) else {
+            return Vec::new();
+        };
+        (leaves.into_iter())
             .filter(|l| l.surface && l.covered)
             .map(|l| l.id)
             .collect()
@@ -55,41 +69,92 @@ impl<R: Renderer, D> Scene<R, D> {
                 }
             }
         }
-        out.retain(|o| {
-            self.leaves_on(o).is_none_or(|leaves| {
-                (leaves.iter()).any(|l| !l.covered && nodes.iter().any(|&n| self.within(l.id, n)))
-            })
+        out.retain(|o| match self.seek_on(o, &|n| nodes.contains(&n)) {
+            Seek::NoView | Seek::Shown => true,
+            Seek::Not(s) => nodes.iter().any(|n| s.shown.contains(n)),
         });
         out
     }
 
-    fn within(&self, mut id: NodeId, tree: NodeId) -> bool {
-        loop {
-            if id == tree {
-                return true;
+    /// Whether `output` shows part of a node `sought` takes, by [`Scene::shows_of`]'s rule. The
+    /// walk ends at the first leaf of one that lies outside the opaque leaves above it; when none
+    /// does, [`Seek::Not`] holds what the output shows, which may still hold one (glass reads it).
+    pub(crate) fn seek_on(&self, output: &Output, sought: &dyn Fn(NodeId) -> bool) -> Seek {
+        match self.leaves_on(output, Some(&|id| self.draws_for(id, sought))) {
+            Leaves::NoView => Seek::NoView,
+            Leaves::Stopped => Seek::Shown,
+            Leaves::All(leaves) => Seek::Not(self.shows_of(output, leaves)),
+        }
+    }
+
+    /// The nodes `output` shows part of: each leaf not covered ([`Scene::leaves_on`]), the trees
+    /// above it and, for a hoisted node, the tree it draws in and those above.
+    fn shows_of(&self, output: &Output, leaves: Vec<Leaf>) -> Shows {
+        let mut s = Shows {
+            output: output.clone(),
+            shown: HashSet::new(),
+            walked: HashSet::new(),
+        };
+        let parent = |id: NodeId| self.node(id).and_then(|n| n.parent).map(|p| p.0);
+        for l in leaves {
+            s.walked.insert(l.id);
+            if l.covered {
+                continue;
             }
-            match self.node(id).and_then(|n| n.parent) {
-                Some(p) => id = p.0,
-                None => return false,
+            let mut at = Some(l.id);
+            while let Some(id) = at.filter(|&id| s.shown.insert(id)) {
+                at = parent(id);
             }
         }
+        if let Some((into, hoisted)) = &self.hoist
+            && hoisted.iter().any(|h| s.shown.contains(h))
+        {
+            s.shown
+                .extend(std::iter::successors(Some(*into), |&id| parent(id)));
+        }
+        s
+    }
+
+    /// Whether leaf `id` draws as part of a node `of` takes: itself, a tree above it or, for a
+    /// hoisted node, the tree it draws in or one above that.
+    fn draws_for(&self, id: NodeId, of: &dyn Fn(NodeId) -> bool) -> bool {
+        let up = |from| std::iter::successors(Some(from), |&n| self.node(n)?.parent.map(|p| p.0));
+        let mut hoisted = false;
+        for n in up(id) {
+            if of(n) {
+                return true;
+            }
+            hoisted |= self.hoist.as_ref().is_some_and(|(_, h)| h.contains(&n));
+        }
+        hoisted
+            && self
+                .hoist
+                .as_ref()
+                .is_some_and(|(into, _)| up(*into).any(of))
     }
 
     /// The leaves `output` shows part of, each covered when it lies under opaque leaves drawn
     /// above it at full opacity and outside what every custom node the output draws reads
     /// ([`CustomNode::reads_beneath`](crate::CustomNode::reads_beneath)). A custom node that
-    /// cannot say reads all of the output beneath it. `None` for an output with no view.
-    fn leaves_on(&self, output: &Output) -> Option<Vec<Leaf>> {
-        let view = View::of(output)?;
+    /// cannot say reads all of the output beneath it. Ends at the first leaf outside the opaque
+    /// leaves above it that `stop` takes.
+    fn leaves_on(&self, output: &Output, stop: Option<&dyn Fn(NodeId) -> bool>) -> Leaves {
+        let Some(view) = View::of(output) else {
+            return Leaves::NoView;
+        };
+        let stopped = Cell::new(false);
         let inset = rounding_inset(view.scale.x);
         let mut opaque: Vec<Rectangle<i32, Logical>> = Vec::new();
         let mut shown: Vec<Shown> = Vec::new();
         let mut customs: Vec<Custom> = Vec::new();
+        // The opaque rects meeting the leaf: the others subtract nothing.
+        let mut near: Vec<Rectangle<i32, Logical>> = Vec::new();
         let mut order = 0;
         let pass = Pass {
             view: &view,
             mode: Mode::Screen,
             hoist: true,
+            stop: Some(&stopped),
         };
         self.walk(
             self.root().node(),
@@ -107,7 +172,14 @@ impl<R: Renderer, D> Scene<R, D> {
                     return;
                 };
                 order += 1;
-                let under = rect.subtract_rects(opaque.iter().copied()).is_empty();
+                near.clear();
+                near.extend(opaque.iter().filter(|o| o.overlaps(rect)));
+                let under =
+                    !near.is_empty() && rect.subtract_rects(near.iter().copied()).is_empty();
+                if !under && stop.is_some_and(|f| f(id)) {
+                    stopped.set(true);
+                    return;
+                }
                 shown.push(Shown {
                     id,
                     surface: matches!(n.content, Content::Surface(_)),
@@ -136,8 +208,11 @@ impl<R: Renderer, D> Scene<R, D> {
                 }
             },
         );
+        if stopped.get() {
+            return Leaves::Stopped;
+        }
         let (reads, from) = reads(customs);
-        Some(
+        Leaves::All(
             (shown.into_iter())
                 .map(|s| Leaf {
                     id: s.id,
@@ -147,6 +222,21 @@ impl<R: Renderer, D> Scene<R, D> {
                 .collect(),
         )
     }
+}
+
+/// What [`Scene::leaves_on`] walked.
+enum Leaves {
+    NoView,
+    /// A leaf its `stop` took.
+    Stopped,
+    All(Vec<Leaf>),
+}
+
+/// What [`Scene::seek_on`] found.
+pub(crate) enum Seek {
+    NoView,
+    Shown,
+    Not(Shows),
 }
 
 /// A leaf in walk order (front first) and the part of it on the output.

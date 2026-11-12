@@ -30,6 +30,7 @@ fn on_first_of_two(interface: &str) -> (Harness, TestClient, WindowId) {
     h.state.move_to(a.id, x + 300, y + 100);
     h.dispatch();
     h.run_for(700);
+    h.state.finish_window_anims();
     (h, c, a.id)
 }
 

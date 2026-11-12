@@ -662,6 +662,7 @@ mod tests {
         h.state.move_to(b.id, 500, 50);
         h.state.focus_window(b.id);
         h.run_for(600);
+        h.state.finish_window_anims();
         let client = (h.state.win(a.id).and_then(|x| x.wl_surface().client())).expect("client");
         let seat = h
             .state

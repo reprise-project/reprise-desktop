@@ -25,6 +25,10 @@ use crate::node::{
     BufferId, BufferNode, Content, CustomId, CustomNode, Input, Node, NodeId, NodeType, Pixels,
     RectId, RectNode, SurfaceId, SurfaceNode, TreeId,
 };
+use crate::{
+    cover::{Seek, Shows},
+    output_rect,
+};
 
 /// A canvas copied into a buffer node's pixel memory, on any thread, so that
 /// [`Scene::buffer_set_prepared`] shows it without the copy. Clones share the memory.
@@ -76,12 +80,14 @@ pub struct Scene<R: Renderer, D = ()> {
     watch: Option<Watch>,
 }
 
-/// The nodes edited since [`Scene::watch`] and the layout rects they covered before their first
-/// edit.
+/// The nodes edited or made since [`Scene::watch`] and the outputs that showed them before.
 #[derive(Default)]
 struct Watch {
     nodes: std::collections::HashSet<NodeId>,
-    was: Vec<Rectangle<i32, Logical>>,
+    was: Vec<Output>,
+    /// What an output showed while no edited node showed on it: for every node not edited by
+    /// then, what it showed before the watch's first edit.
+    calm: Vec<Shows>,
 }
 
 impl<R: Renderer, D> Default for Scene<R, D> {
@@ -165,50 +171,109 @@ impl<R: Renderer, D> Scene<R, D> {
         true
     }
 
-    /// End the watch: the layout rects its edits changed, each edited node's rects before its
-    /// first edit (`Scene::may_show`) and its rect now. A sibling reorder counts as an edit of
-    /// the nodes that moved, not of their parent. Drawing inside a custom node or a client
-    /// surface is not an edit.
-    pub fn watched(&mut self) -> Vec<Rectangle<i32, Logical>> {
+    /// End the watch: the outputs whose pixels its edits changed, in [`Scene::outputs`] order.
+    /// Those that showed an edited node before the first edit and those showing one now, by the
+    /// cover rule of [`Scene::outputs_drawing`]: a node covered before and after changes no
+    /// pixel. A sibling reorder counts as an edit of the nodes that moved, not of their parent.
+    /// Drawing inside a custom node or a client surface is not an edit.
+    pub fn watched(&mut self) -> Vec<Output> {
         let Some(w) = self.watch.take() else {
             return Vec::new();
         };
-        let mut out = w.was;
-        out.extend(w.nodes.iter().filter_map(|&n| self.extents(n)));
+        if w.nodes.is_empty() {
+            return Vec::new();
+        }
+        let mut nodes = w.nodes;
         // A buffer shown through `buffer_share` changes with its source.
         let buffers = |n: &Node<R, D>| matches!(&n.content, Content::Buffer(_));
-        if w.nodes.iter().any(|&n| self.node(n).is_some_and(buffers)) {
-            let sharers: Vec<NodeId> = (self.live())
-                .filter(|(_, n)| matches!(&n.content, Content::Buffer(b) if b.shared.is_some()))
-                .map(|(id, _)| id)
-                .collect();
-            out.extend(sharers.into_iter().filter_map(|n| self.extents(n)));
+        if nodes.iter().any(|&n| self.node(n).is_some_and(buffers)) {
+            nodes.extend(
+                (self.live())
+                    .filter(|(_, n)| matches!(&n.content, Content::Buffer(b) if b.shared.is_some()))
+                    .map(|(id, _)| id),
+            );
         }
-        out
+        let rects: Vec<_> = nodes.iter().filter_map(|&n| self.reach(n)).collect();
+        let sought = |n: NodeId| nodes.contains(&n);
+        (self.outputs.iter())
+            .filter(|o| {
+                w.was.contains(o)
+                    || output_rect(o).is_some_and(|r| rects.iter().any(|e| e.overlaps(r)))
+                        && match self.seek_on(o, &sought) {
+                            Seek::NoView => false,
+                            Seek::Shown => true,
+                            Seek::Not(s) => nodes.iter().any(|n| s.shown.contains(n)),
+                        }
+            })
+            .cloned()
+            .collect()
     }
 
-    /// `id` is about to be edited: under a watch, keep where it may show before its first edit.
-    /// Under an ancestor edited earlier in the watch, that ancestor's rect before holds it; its
-    /// rect now may lie where the ancestor moved it, never drawn there.
+    /// `id` is about to be edited: under a watch, keep the outputs that showed it before the
+    /// watch's first edit.
     fn saw(&mut self, id: NodeId) {
-        let Some(w) = &self.watch else {
+        let Some(mut w) = self.watch.take() else {
             return;
         };
-        if w.nodes.contains(&id) {
-            return;
-        }
-        let parent = |n: NodeId| self.node(n).and_then(|n| n.parent.map(|p| p.0));
-        let covered =
-            std::iter::successors(parent(id), |&a| parent(a)).any(|a| w.nodes.contains(&a));
-        let was = if covered {
-            Vec::new()
-        } else {
-            self.may_show(id)
-        };
-        if let Some(w) = self.watch.as_mut() {
+        if !w.nodes.contains(&id) {
+            self.showed(&mut w, id);
             w.nodes.insert(id);
-            w.was.extend(was);
         }
+        self.watch = Some(w);
+    }
+
+    /// Add to `w.was` the outputs `id`, not yet edited in `w`, showed before `w`'s first edit.
+    /// Only those its extents meet can, and those a surface under it entered and is not walked
+    /// on (its client dropped its extents) count. Edits since change what shows on an output
+    /// only where an edited node shows now or showed then, and such an output counts; else it
+    /// shows as it did and is kept in `w.calm`.
+    fn showed(&self, w: &mut Watch, id: NodeId) {
+        let parent = |n: NodeId| self.node(n)?.parent.map(|p| p.0);
+        // An edited tree above it showed wherever it did.
+        if std::iter::successors(parent(id), |&a| parent(a)).any(|a| w.nodes.contains(&a)) {
+            return;
+        }
+        let rect = self.reach(id);
+        let entered = self.entered(id);
+        for o in &self.outputs {
+            let on = rect.is_some_and(|e| output_rect(o).is_some_and(|r| r.overlaps(e)));
+            let entered_o = entered.iter().filter(|(_, e)| e == o).map(|(s, _)| *s);
+            if w.was.contains(o) || !on && entered_o.clone().next().is_none() {
+                continue;
+            }
+            let dropped = |s: &Shows| entered_o.clone().any(|n| !s.walked.contains(&n));
+            let showed = match w.calm.iter().find(|s| s.output == *o) {
+                Some(s) => s.shown.contains(&id) || dropped(s),
+                None => match self.seek_on(o, &|n| n == id || w.nodes.contains(&n)) {
+                    Seek::NoView | Seek::Shown => true,
+                    Seek::Not(s) => {
+                        let edited = (w.nodes.iter()).any(|n| s.shown.contains(n));
+                        let showed = edited || s.shown.contains(&id) || dropped(&s);
+                        if !edited {
+                            w.calm.push(s);
+                        }
+                        showed
+                    }
+                },
+            };
+            if showed {
+                w.was.push(o.clone());
+            }
+        }
+    }
+
+    /// `id`'s extents and, when it is or holds the tree hoisted nodes draw in, theirs.
+    fn reach(&self, id: NodeId) -> Option<Rectangle<i32, Logical>> {
+        let mut out = self.extents(id);
+        let parent = |n: NodeId| self.node(n)?.parent.map(|p| p.0);
+        if let Some((into, hoisted)) = &self.hoist
+            && std::iter::successors(Some(*into), |&a| parent(a)).any(|a| a == id)
+        {
+            for e in hoisted.iter().filter_map(|&h| self.extents(h)) {
+                out = Some(out.map_or(e, |o| o.merge(e)));
+            }
+        }
+        out
     }
 
     /// `node_mut` for bookkeeping that changes nothing drawn (which
@@ -298,7 +363,10 @@ impl<R: Renderer, D> Scene<R, D> {
         if let Some(c) = self.children_mut(parent.0) {
             c.push(id);
         }
-        self.saw(id);
+        // A new node showed nowhere before.
+        if let Some(w) = self.watch.as_mut() {
+            w.nodes.insert(id);
+        }
         id
     }
 
@@ -663,18 +731,19 @@ impl<R: Renderer, D> Scene<R, D> {
         {
             return;
         }
-        let Some(s) = self.children_mut(parent.0) else {
-            return;
-        };
+        let s = self.children_of(parent.0);
         let slots: Vec<usize> = (0..s.len()).filter(|&i| nodes.contains(&s[i])).collect();
         if slots.len() != nodes.len() {
             return;
         }
-        for (&i, &n) in slots.iter().zip(nodes) {
-            s[i] = n;
-        }
         for &n in nodes {
             self.saw(n);
+        }
+        let Some(s) = self.children_mut(parent.0) else {
+            return;
+        };
+        for (&i, &n) in slots.iter().zip(nodes) {
+            s[i] = n;
         }
     }
 
@@ -876,8 +945,9 @@ impl<R: Renderer, D> Scene<R, D> {
                 Ok::<_, ()>(damage)
             });
         }
-        // The same pixels again are no edit; a change in place keeps the node's rect, so a watch
-        // may see it after the copy. Outside the source box it shows only through a sharer.
+        // The same pixels again are no edit; a change in place keeps the node's rect and what
+        // covers what, so a watch may see it after the copy. Outside the source box it shows only
+        // through a sharer.
         if !changed.is_empty() {
             self.changes += 1;
             if self.buffer_shows(buffer, changed) || self.any_shared() {

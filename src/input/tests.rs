@@ -483,6 +483,7 @@ fn a_click_on_a_window_asks_only_the_outputs_it_changes() {
     h.pointer_to(x, y);
     // Let the bars' slide-in of the new buttons finish.
     h.run_for(600);
+    h.state.finish_window_anims();
     crate::backend::take_asks();
     h.click(x, y);
     assert_eq!(h.state.focused, Some(a.id), "the click focuses a");
