@@ -21,8 +21,8 @@ use crate::menuview::{MenuFrom, MenuKind};
 use crate::output::upload_scaled;
 use crate::raster::Rect;
 use crate::search::{
-    CALC_ICONS, FileSearch, SearchOwner, Setting, WindowName, calc_icon, calc_row, file_icon_name,
-    file_row, file_row_icon, rank_apps, rank_settings, rank_windows, windows_first,
+    FileSearch, SearchOwner, Setting, WindowName, calc_icon, calc_row, file_icon_name, file_row,
+    file_row_icon, rank_apps, rank_settings, rank_windows, windows_first,
 };
 use crate::window::WindowId;
 
@@ -42,6 +42,8 @@ pub struct LauncherView {
     glass_tree: TreeId,
     backdrop: Backdrop,
     buffer: BufferId,
+    /// The last draw showed a stand-in for the picked row's big icon, so a landing draws again.
+    picked_waits: bool,
 }
 
 /// The launcher's key for a press the filter caught: Enter (Ctrl+Enter
@@ -103,6 +105,7 @@ impl State {
             glass_tree,
             backdrop: Backdrop::new(&self.glass),
             buffer,
+            picked_waits: false,
         });
         self.restart_caret();
         self.redraw_launcher();
@@ -467,7 +470,7 @@ impl State {
             settings,
             files,
         };
-        if v.model.refill_icons(refill) {
+        if v.model.refill_icons(refill) || v.picked_waits {
             self.redraw_launcher();
         }
     }
@@ -567,39 +570,19 @@ impl State {
             )),
         );
         v.backdrop.set(scene, glass, v.glass_tree, pane);
-        let icon_name = match v.model.picked() {
-            Some(Pick::Calc) => Some(CALC_ICONS[0].to_string()),
-            Some(Pick::Setting(i)) => v.settings.get(i).and_then(|s| s.icon(app_index)),
-            Some(Pick::Window(_)) => None,
-            Some(Pick::App(i)) => v
-                .matches
-                .get(i)
-                .and_then(|&ai| app_index.get(ai))
-                .and_then(|a| a.icon.clone()),
-            Some(Pick::File(i)) => v.search.files.get(i).map(|p| {
-                let empty;
-                let mime = match desktop.as_ref() {
-                    Some(d) => &d.mime,
-                    None => {
-                        empty = reprisefs::apps::MimeDb::empty();
-                        &empty
-                    }
-                };
-                file_icon_name(p, v.search.is_dir(p), mime, icons)
-            }),
-            None => None,
-        }
-        .unwrap_or_else(|| "system-search".to_string());
-        let window_icon = match v.model.picked() {
-            Some(Pick::Window(i)) => (v.windows.get(i))
-                .and_then(|&id| windows.iter().find(|w| w.id == id))
-                .and_then(|w| crate::icon::window_icon(icons, app_index, w, launcher::ICON * scale))
-                .map(std::sync::Arc::unwrap_or_clone),
-            _ => None,
+        let empty;
+        let mime = match desktop.as_ref() {
+            Some(d) => &d.mime,
+            None => {
+                empty = reprisefs::apps::MimeDb::empty();
+                &empty
+            }
         };
-        let icon = window_icon
-            .or_else(|| unread(icons, &icon_name, launcher::ICON * scale))
-            .unwrap_or_else(|| reprisekit::icon::fallback(&theme, launcher::ICON * scale));
+        let px = launcher::ICON * scale;
+        let waits = icons.waits();
+        let icon = picked_icon(v, icons, app_index, mime, windows, px)
+            .unwrap_or_else(|| reprisekit::icon::fallback(&theme, px));
+        v.picked_waits = icons.waits() != waits;
         let mut canvas = launcher::draw(
             &theme,
             text.for_output(scale),
@@ -647,6 +630,38 @@ impl State {
     }
 }
 
+/// The big icon beside the field at `px`: the picked row's, else the search glass; None draws
+/// the fallback glyph.
+fn picked_icon(
+    v: &LauncherView,
+    icons: &mut crate::icontheme::IconCache,
+    app_index: &[reprisefs::apps::AppEntry],
+    mime: &reprisefs::apps::MimeDb,
+    windows: &[crate::window::Window],
+    px: i32,
+) -> Option<crate::raster::Canvas> {
+    let name = match v.model.picked() {
+        Some(Pick::Calc) => return calc_icon(icons, px),
+        Some(Pick::Window(i)) => {
+            let win = (v.windows.get(i)).and_then(|&id| windows.iter().find(|w| w.id == id));
+            let icon = win.and_then(|w| crate::icon::window_icon(icons, app_index, w, px));
+            if let Some(icon) = icon {
+                return Some(std::sync::Arc::unwrap_or_clone(icon));
+            }
+            None
+        }
+        Some(Pick::Setting(i)) => v.settings.get(i).and_then(|s| s.icon(app_index)),
+        Some(Pick::App(i)) => (v.matches.get(i))
+            .and_then(|&ai| app_index.get(ai))
+            .and_then(|a| a.icon.clone()),
+        Some(Pick::File(i)) => {
+            (v.search.files.get(i)).map(|p| file_icon_name(p, v.search.is_dir(p), mime, icons))
+        }
+        None => None,
+    };
+    unread(icons, name.as_deref().unwrap_or("system-search"), px)
+}
+
 /// Icon `name` for a launcher row, its file never read on the loop ([`crate::icon::unread`]).
 fn unread(
     icons: &mut crate::icontheme::IconCache,
@@ -659,6 +674,7 @@ fn unread(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::search::CALC_ICONS;
     use reprisekit::textedit::EditKey;
 
     #[test]
@@ -804,6 +820,27 @@ mod tests {
             crate::icon::red(&calc_row_icon(&h)),
             "applications-accessories shows once accessories-calculator fails"
         );
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn the_picked_calculator_icon_gives_way_to_the_accessories_icon_and_draws_once_it_lands() {
+        let root = crate::icon::svg_theme(&["applications-accessories"], &[CALC_ICONS[0]]);
+        let mut h = crate::icon::two_outputs("classic", &root);
+        h.state.toggle_launcher();
+        typed(&mut h, "2+3");
+        let picked = |h: &crate::harness::Harness| {
+            let v = h.state.launcher.as_ref().expect("the launcher");
+            assert_eq!(v.model.picked(), Some(Pick::Calc));
+            v.picked_waits
+        };
+        assert!(picked(&h), "the big icon shows a stand-in");
+        crate::icon::land(&mut h);
+        assert!(!picked(&h), "the last draw had the big icon");
+        let waits = h.state.icons.waits();
+        let big = calc_icon(&mut h.state.icons, launcher::ICON).expect("the big icon");
+        assert!(crate::icon::red(&big), "applications-accessories at 32 px");
+        assert_eq!(h.state.icons.waits(), waits, "nothing left to wait on");
         std::fs::remove_dir_all(&root).unwrap();
     }
 

@@ -12,13 +12,11 @@ use crate::compositor::{SceneOwner, State};
 use crate::glass::{self, Backdrop};
 use crate::input::{BTN_LEFT, BTN_RIGHT};
 use crate::menuview::{MenuFrom, MenuKind};
+use crate::notifyview::INFO_ICONS;
 use crate::output::upload_scaled;
 use crate::raster::Rect;
 use crate::startmenu::{MenuLayout, MenuStyle};
 use crate::tray::notify::DEFAULT_ACTION;
-
-/// What an entry without an icon of its own shows: the first of these that draws.
-const INFO_ICONS: [&str; 2] = ["dialog-information", "help-about"];
 
 pub struct CenterView {
     model: History,
