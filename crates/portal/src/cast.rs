@@ -45,7 +45,8 @@ use pipewire::spa::sys as spa_sys;
 use pipewire::spa::utils::{Choice, ChoiceEnum, ChoiceFlags, Fraction, Id, Rectangle};
 use pipewire::stream::{StreamFlags, StreamRc, StreamState};
 use pipewire::sys as pw_sys;
-use std::cell::RefCell;
+use pipewire::types::ObjectType;
+use std::cell::{Cell, RefCell};
 use std::io::Cursor;
 use std::os::fd::AsRawFd;
 use std::rc::Rc;
@@ -208,7 +209,13 @@ struct Data {
     starved: bool,
     /// How long a starved driving stream waits for its next empty cycle.
     retry: Duration,
+    consumers: Consumers,
+    clock: Clock,
 }
+
+/// The stream node's clock io, null until PipeWire sets it; a `Cell`, so `io_changed` sets it
+/// without borrowing `Data`.
+type Clock = Rc<Cell<*mut spa_sys::spa_io_clock>>;
 
 /// A frame buffer of either kind.
 enum Buffer {
@@ -337,6 +344,7 @@ fn run(
     let main_loop = pipewire::main_loop::MainLoopRc::new(None).map_err(|e| e.to_string())?;
     let context = pipewire::context::ContextRc::new(&main_loop, None).map_err(|e| e.to_string())?;
     let core = context.connect_rc(None).map_err(|e| e.to_string())?;
+    let registry = core.get_registry_rc().map_err(|e| e.to_string())?;
     let mut props = pipewire::properties::properties! {
         *pipewire::keys::MEDIA_CLASS => "Video/Source",
         *pipewire::keys::NODE_NAME => "reprise-screencast",
@@ -369,7 +377,10 @@ fn run(
         wake_at: None,
         starved: false,
         retry: STARVED_RETRY,
+        consumers: Consumers::default(),
+        clock: Rc::new(Cell::new(std::ptr::null_mut())),
     };
+    let clock = data.clock.clone();
     let data_gbm = data.gbm.is_some();
     let fd = Fd(data.wl.fd());
     let timer_fd = Fd(data.timer.0.as_raw_fd());
@@ -386,6 +397,11 @@ fn run(
             // starts here.
             if streaming {
                 on_process(stream, d);
+            }
+        })
+        .io_changed(move |_, _, id, area, size| {
+            if id == spa_sys::SPA_IO_Clock {
+                clock.set(video_clock(area.cast(), size));
             }
         })
         .param_changed(|stream, d, id, pod| on_param(stream, &mut d.borrow_mut(), id, pod))
@@ -413,6 +429,28 @@ fn run(
     let _replies = main_loop.loop_().add_io(fd, IoFlags::IN, move |_| {
         on_process(&replies, &mut replies_data.borrow_mut());
     });
+    let (linked, linked_data) = (stream.clone(), data.clone());
+    let (unlinked, unlinked_data) = (stream.clone(), data.clone());
+    let _links = registry
+        .add_listener_local()
+        .global(move |g| {
+            if g.type_ == ObjectType::Link
+                && let Some(from) = (g.props.as_ref())
+                    .and_then(|p| p.get("link.output.node"))
+                    .and_then(|n| n.parse().ok())
+            {
+                let consumers = &mut linked_data.borrow_mut().consumers;
+                consumers.linked(g.id, from, linked.node_id());
+            }
+        })
+        .global_remove(move |id| {
+            let d = &mut *unlinked_data.borrow_mut();
+            if d.consumers.unlinked(id) {
+                log::info!("a consumer left; renewing the buffers it may still hold");
+                announce_formats(&unlinked, d);
+            }
+        })
+        .register();
     let timed = stream.clone();
     let _timer = main_loop.loop_().add_io(timer_fd, IoFlags::IN, move |_| {
         on_timer(&timed, &mut data.borrow_mut());
@@ -677,6 +715,36 @@ fn on_param(stream: &pipewire::stream::Stream, d: &mut Data, id: u32, pod: Optio
     }
 }
 
+/// Offer the formats again: every link renegotiates and PipeWire reallocates the buffers.
+fn announce_formats(stream: &pipewire::stream::Stream, d: &Data) {
+    let params = format_params(&d.constraints, d.format, d.gbm.is_some(), None, d.refresh);
+    let mut refs: Vec<&Pod> = params.iter().map(|p| &**p).collect();
+    if let Err(e) = stream.update_params(&mut refs) {
+        log::warn!("update_params: {e}");
+    }
+}
+
+/// The links out of the stream's node, by global id.
+#[derive(Default)]
+struct Consumers(Vec<u32>);
+
+impl Consumers {
+    /// A link from node `from` appeared; it counts when `from` is the stream's `node`.
+    fn linked(&mut self, link: u32, from: u32, node: u32) {
+        if from == node && !self.0.contains(&link) {
+            self.0.push(link);
+        }
+    }
+
+    /// Global `id` went. True when it was a link and another remains: PipeWire keeps the
+    /// buffers then, and a consumer killed while holding some leaves them busy for good.
+    fn unlinked(&mut self, id: u32) -> bool {
+        let before = self.0.len();
+        self.0.retain(|l| *l != id);
+        self.0.len() < before && !self.0.is_empty()
+    }
+}
+
 /// The modifier property of a negotiated format, if there is one.
 enum ModifierProp {
     /// The consumer's choice, still to be fixated: default first.
@@ -898,7 +966,7 @@ fn on_process(stream: &pipewire::stream::Stream, d: &mut Data) {
         match d.buffers.iter().position(|(k, _)| *k == buf as usize) {
             Some(i) => ask(d, i, buf as usize),
             // SAFETY: `buf` was dequeued from this stream just above.
-            None => unsafe { send(stream, buf) },
+            None => unsafe { send(stream, &d.clock, buf) },
         }
     }
     d.starved = buf.is_null() && d.asked.is_none() && d.held.is_none();
@@ -936,7 +1004,7 @@ fn on_timer(stream: &pipewire::stream::Stream, d: &mut Data) {
     }
     on_process(stream, d);
     if d.starved {
-        trigger(stream);
+        trigger(stream, &d.clock);
     }
 }
 
@@ -952,20 +1020,44 @@ fn ask(d: &mut Data, i: usize, buf: usize) {
 ///
 /// # Safety
 /// `buf` was dequeued from `stream` and not queued since.
-unsafe fn send(stream: &pipewire::stream::Stream, buf: *mut pw_sys::pw_buffer) {
+unsafe fn send(stream: &pipewire::stream::Stream, clock: &Clock, buf: *mut pw_sys::pw_buffer) {
     // SAFETY: as the caller promises.
     unsafe { stream.queue_raw_buffer(buf) };
-    trigger(stream);
+    trigger(stream, clock);
 }
 
-/// Start a graph cycle if `stream` drives its graph; a follower's buffers
-/// go out on the driver's cycles.
-fn trigger(stream: &pipewire::stream::Stream) {
-    if stream.is_driving()
-        && let Err(e) = stream.trigger_process()
-    {
+/// Start a graph cycle stamped now if `stream` drives its graph; a
+/// follower's buffers go out on the driver's cycles.
+fn trigger(stream: &pipewire::stream::Stream, clock: &Clock) {
+    if !stream.is_driving() {
+        return;
+    }
+    let clock = clock.get();
+    if !clock.is_null() {
+        let mut ts = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        // SAFETY: `clock` is the node's live clock io (`video_clock`); `ts` is a valid timespec.
+        unsafe {
+            libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts);
+            (*clock).nsec = ts.tv_sec as u64 * 1_000_000_000 + ts.tv_nsec as u64;
+        }
+    }
+    if let Err(e) = stream.trigger_process() {
         log::debug!("trigger_process: {e}");
     }
+}
+
+/// The node's clock io marked as timed by its `nsec`, or null. pipewiresrc clocks frames by it,
+/// and a rate clock nobody advances jumps back when a renegotiation restarts the driver.
+fn video_clock(area: *mut spa_sys::spa_io_clock, size: u32) -> *mut spa_sys::spa_io_clock {
+    if area.is_null() || (size as usize) < std::mem::size_of::<spa_sys::spa_io_clock>() {
+        return std::ptr::null_mut();
+    }
+    // SAFETY: PipeWire hands the stream a live clock io of `size` bytes, checked above.
+    unsafe { (*area).flags |= spa_sys::SPA_IO_CLOCK_FLAG_NO_RATE };
+    area
 }
 
 /// What a wake of the cast loop found on the compositor's side.
@@ -1057,10 +1149,7 @@ fn hand_on(
                     d.constraints.width,
                     d.constraints.height
                 );
-                let params =
-                    format_params(&d.constraints, d.format, d.gbm.is_some(), None, d.refresh);
-                let mut refs: Vec<&Pod> = params.iter().map(|p| &**p).collect();
-                let _ = stream.update_params(&mut refs);
+                announce_formats(stream, d);
             }
             Err(CaptureError::Failed(FailureReason::Stopped)) => {
                 corrupted(sb);
@@ -1071,7 +1160,7 @@ fn hand_on(
                 corrupted(sb);
             }
         }
-        send(stream, buf);
+        send(stream, &d.clock, buf);
     }
 }
 
@@ -2142,5 +2231,27 @@ mod tests {
         assert!(readable(fd), "a zero wait still fires");
         timer.clear();
         assert!(!readable(fd), "a read clears it, and it does not repeat");
+    }
+
+    #[test]
+    fn a_consumer_leaving_while_another_stays_renews_the_buffers() {
+        let mut c = Consumers::default();
+        c.linked(80, 60, 60);
+        c.linked(81, 60, 60);
+        assert!(c.unlinked(81), "one consumer of two left");
+        assert!(!c.unlinked(80), "the last consumer leaves no one to serve");
+    }
+
+    #[test]
+    fn only_links_out_of_the_stream_node_are_consumers() {
+        let mut c = Consumers::default();
+        c.linked(80, 60, 60);
+        c.linked(81, 60, 60);
+        c.linked(90, 70, 60);
+        assert!(!c.unlinked(90), "a link of another node");
+        assert!(!c.unlinked(60), "the node itself, not a link");
+        c.linked(81, 60, 60);
+        assert!(c.unlinked(81), "a link listed twice is one consumer");
+        assert!(!c.unlinked(80));
     }
 }
