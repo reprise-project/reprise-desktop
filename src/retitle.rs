@@ -406,7 +406,9 @@ mod tests {
 
     #[test]
     fn a_caption_retitled_asks_for_frames_only_on_its_windows_output() {
-        let config = crate::config::Config::parse("[appearance]\ninterface = \"glass\"\n").unwrap();
+        // The open animation would hold the window at opacity 0: no frame here steps it.
+        let config = "[appearance]\ninterface = \"glass\"\n[effects]\nwindow_animation = false\n";
+        let config = crate::config::Config::parse(config).unwrap();
         let mut h = crate::harness::Harness::with_config(config);
         h.output("TEST-1", 1024, 768);
         h.output("TEST-2", 1024, 768);

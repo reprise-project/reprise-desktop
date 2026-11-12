@@ -432,13 +432,16 @@ impl State {
         }
     }
 
-    /// The outputs bar `tree` draws on: its own and any its trees reach.
+    /// The outputs bar `tree` draws on: those its trees show on, and its own unless its trees lie
+    /// there wholly covered (a lock cover, an opaque window).
     fn bar_outputs(&self, tree: TreeId) -> Vec<Output> {
         let Some(b) = self.bar(tree) else {
             return Vec::new();
         };
-        let mut out = self.outputs_of_nodes(&[b.tree.into(), b.orb_tree.into()]);
-        if !out.contains(&b.output) {
+        let nodes = [b.tree.into(), b.orb_tree.into()];
+        let mut out = self.outputs_of_nodes(&nodes);
+        let covered = || (nodes.iter()).any(|&n| self.scene.outputs_of(n).contains(&b.output));
+        if !out.contains(&b.output) && !covered() {
             out.push(b.output.clone());
         }
         out

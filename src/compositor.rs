@@ -880,7 +880,7 @@ impl State {
     }
 
     /// Ask for a new frame for a change on the scene confined to `nodes`: on `was`, the outputs
-    /// they overlapped before it (`Scene::outputs_of`), and on those they overlap now.
+    /// showing them before it (`outputs_of_nodes`), and on those showing them now.
     pub fn redraw_nodes(
         &mut self,
         mut was: Vec<smithay::output::Output>,
@@ -935,17 +935,10 @@ impl State {
         self.redraw_nodes(was, &[]);
     }
 
-    /// The outputs `nodes` overlap, for `redraw_nodes`'s `was`.
+    /// The outputs showing part of `nodes` (`Scene::outputs_drawing`), for `redraw_nodes`'s
+    /// `was`. A node covered both before and after a change confined to it changes no pixel.
     pub fn outputs_of_nodes(&self, nodes: &[reprisescene::NodeId]) -> Vec<smithay::output::Output> {
-        let mut out = Vec::new();
-        for &n in nodes {
-            for o in self.scene.outputs_of(n) {
-                if !out.contains(&o) {
-                    out.push(o);
-                }
-            }
-        }
-        out
+        self.scene.outputs_drawing(nodes)
     }
 
     /// Ask every output for a new frame for what clients drew: nothing on
