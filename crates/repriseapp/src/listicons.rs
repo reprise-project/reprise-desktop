@@ -107,8 +107,8 @@ impl ReadIcons {
 }
 
 /// An Explorer or file dialog listing's icons: a new draw scale or List and Details icon size
-/// swaps the entries' icons without listing the folder again, theme icons at once and icon files
-/// once a thread decodes them.
+/// swaps the entries' icons without listing the folder again, theme icons at once (a cold SVG
+/// once [`crate::iconjobs`] lands it) and icon files once a thread decodes them.
 #[derive(Default)]
 pub struct ListIcons {
     icons: ListingIcons,
@@ -176,6 +176,18 @@ impl ListIcons {
         self.decoding = None;
         put_art(cache, &art, scale);
         true
+    }
+
+    /// Theme icons that landed in `cache` ([`crate::iconjobs`]): `entries` wearing a blank
+    /// stand-in take theirs. Gives whether an entry changed, and whether a name decodes at no
+    /// size, which a listing read again replaces with the next name.
+    pub fn landed(&mut self, cache: &mut IconCache, entries: &mut [Entry]) -> (bool, bool) {
+        if !self.icons.waits() {
+            return (false, false);
+        }
+        let (swaps, broken) = self.icons.landed(cache);
+        shellview::swap_icons(entries, &swaps);
+        (!swaps.is_empty(), !broken.is_empty())
     }
 
     /// The view now draws the `drawn` sizes ([`shellview::drawn_sizes`]): `entries` wear the theme

@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 
 pub struct Browse {
     pub bf: BrowseFolder,
-    pub places: Vec<Place>,
+    pub places: foldertree::Places,
     pub items: Vec<PathBuf>,
     pub mv: bool,
     /// The pick the buttons were last judged for; judging stats the folder, and
@@ -178,7 +178,7 @@ impl Explorer {
             drive_mounts: &self.drive_mounts,
         };
         let mut tree = TreeView::new(Vec::new(), Style::Picker);
-        let mut places = Vec::new();
+        let mut places = foldertree::Places::default();
         foldertree::build(&mut tree, &mut places, &mut ctx.icons);
         let here = items[0].parent().map(Place::from_path);
         let walk_to = here.clone().unwrap_or(Place::Desktop);
@@ -946,7 +946,7 @@ mod tests {
         tree.selected = Some(vec![0]);
         let mut b = Browse {
             bf: BrowseFolder::new(String::new(), "Copy".into(), tree),
-            places: vec![Place::Folder(one.clone()), Place::Folder(two.clone())],
+            places: vec![Place::Folder(one.clone()), Place::Folder(two.clone())].into(),
             items: vec![t.path().join("a.txt")],
             mv: false,
             judged: None,

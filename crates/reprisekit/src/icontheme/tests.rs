@@ -2217,6 +2217,10 @@ fn an_unread_listing_wears_a_stand_in_until_its_svg_lands() {
     cache.put_icons(&theme, art);
     let (swaps, refused) = icons.landed(&mut cache);
     assert_eq!(refused, ["broken"]);
+    assert!(
+        !cache.has_unread("broken") && cache.has_unread("drawn"),
+        "a name that landed broken no longer counts"
+    );
     assert_eq!(swaps.len(), 2);
     let worn = |s: &ListingSizes| s[0].as_ref().map(std::rc::Rc::as_ptr);
     let (_, new) = (swaps.iter())

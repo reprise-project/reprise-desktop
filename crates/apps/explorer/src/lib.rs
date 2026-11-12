@@ -172,7 +172,7 @@ pub struct Explorer {
     /// By path, for the thumbnails the worker hands back. Rebuilt by [`Explorer::resort`].
     item_index: HashMap<PathBuf, usize>,
     pub tree: TreeView,
-    pub tree_places: Vec<Place>,
+    pub tree_places: foldertree::Places,
     /// The Folders nodes whose children wear their own or special-folder icons, read again at a
     /// new scale.
     tree_art: Vec<Place>,
@@ -455,7 +455,7 @@ impl Explorer {
             items: Vec::new(),
             item_index: HashMap::new(),
             tree: TreeView::new(Vec::new(), Style::Explorer),
-            tree_places: Vec::new(),
+            tree_places: Default::default(),
             tree_art: Vec::new(),
             drive_mounts: Vec::new(),
             drives: Vec::new(),
@@ -1021,7 +1021,8 @@ impl Explorer {
         let drawn = shellview::drawn_sizes(self.sv.mode, list);
         let first = drawn.iter().position(|&d| d).unwrap_or(0);
         let probe = ctx.icons.probe_px();
-        // `has` decodes each name at the size the view draws, which the fetch below then reuses.
+        // `has_unread` decodes each small PNG at the size the view draws, which the fetch below
+        // then reuses.
         ctx.icons
             .set_probe_px(listing_px(list)[first] * ctx.icons.scale());
         // Resolved up front: `item_icon_with` asks what the theme carries, and the icons below want the cache mutable.
@@ -1030,7 +1031,7 @@ impl Explorer {
             .zip(&read_icons.own)
             .map(|(it, own)| {
                 reprisefs::icons::item_icon_with(it, own.as_deref(), &self.specials, &|n| {
-                    ctx.icons.has(n)
+                    ctx.icons.has_unread(n)
                 })
             })
             .collect();
@@ -1044,7 +1045,9 @@ impl Explorer {
                 }
             }
         }
-        let mut icons = ListingIcons::default().with_list(list).drawing(drawn);
+        let mut icons = (ListingIcons::default().with_list(list))
+            .drawing(drawn)
+            .unread();
         self.sv.hot = None;
         self.sv.entries = items
             .iter()
