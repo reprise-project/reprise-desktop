@@ -1,5 +1,5 @@
 //! A screen capture client for tests: wlr-screencopy shots and ext-image-copy-capture sessions
-//! of the first output, into shm buffers of the size the test gives.
+//! of the first output or a listed window, into shm buffers of the size the test gives.
 
 use std::os::{fd::AsFd, unix::net::UnixStream};
 use std::sync::Arc;
@@ -9,7 +9,12 @@ use wayland_client::{
     protocol::{wl_buffer::WlBuffer, wl_output::WlOutput, wl_registry, wl_shm, wl_shm_pool},
 };
 use wayland_protocols::ext::{
+    foreign_toplevel_list::v1::client::{
+        ext_foreign_toplevel_handle_v1::ExtForeignToplevelHandleV1,
+        ext_foreign_toplevel_list_v1::{self, ExtForeignToplevelListV1},
+    },
     image_capture_source::v1::client::{
+        ext_foreign_toplevel_image_capture_source_manager_v1::ExtForeignToplevelImageCaptureSourceManagerV1,
         ext_image_capture_source_v1::ExtImageCaptureSourceV1,
         ext_output_image_capture_source_manager_v1::ExtOutputImageCaptureSourceManagerV1,
     },
@@ -33,6 +38,8 @@ struct Side {
     globals: Vec<(u32, String, u32)>,
     /// Every ext session `buffer_size`, oldest first.
     buffer_sizes: Vec<(u32, u32)>,
+    /// The listed windows, oldest first.
+    toplevels: Vec<ExtForeignToplevelHandleV1>,
 }
 
 pub struct CaptureClient {
@@ -42,6 +49,7 @@ pub struct CaptureClient {
     output: WlOutput,
     wlr: ZwlrScreencopyManagerV1,
     sources: ExtOutputImageCaptureSourceManagerV1,
+    window_sources: ExtForeignToplevelImageCaptureSourceManagerV1,
     ext: ExtImageCopyCaptureManagerV1,
     size: (i32, i32),
 }
@@ -96,6 +104,10 @@ impl Harness {
         let sources = registry.bind(n, v, &qh, ());
         let (n, v) = global("ext_image_copy_capture_manager_v1", 1);
         let ext = registry.bind(n, v, &qh, ());
+        let (n, v) = global("ext_foreign_toplevel_list_v1", 1);
+        let _: ExtForeignToplevelListV1 = registry.bind(n, v, &qh, ());
+        let (n, v) = global("ext_foreign_toplevel_image_capture_source_manager_v1", 1);
+        let window_sources = registry.bind(n, v, &qh, ());
         if remote {
             let (n, v) = global("reprise_input_v1", 8);
             let input: RepriseInputV1 = registry.bind(n, v, &qh, ());
@@ -109,6 +121,7 @@ impl Harness {
             output,
             wlr,
             sources,
+            window_sources,
             ext,
             size: (w, h),
         };
@@ -165,6 +178,20 @@ impl CaptureClient {
     pub fn ext_session(&mut self, h: &mut Harness) -> ExtSession {
         let qh = self.queue.handle();
         let source = self.sources.create_source(&self.output, &qh, ());
+        self.session_of(h, source)
+    }
+
+    /// An ext session on the window listed last, no frame asked yet.
+    pub fn window_session(&mut self, h: &mut Harness) -> ExtSession {
+        self.roundtrip(h);
+        let qh = self.queue.handle();
+        let toplevel = self.side.toplevels.last().expect("a listed window");
+        let source = self.window_sources.create_source(toplevel, &qh, ());
+        self.session_of(h, source)
+    }
+
+    fn session_of(&mut self, h: &mut Harness, source: ExtImageCaptureSourceV1) -> ExtSession {
+        let qh = self.queue.handle();
         let session = self.ext.create_session(&source, Options::empty(), &qh, ());
         source.destroy();
         self.roundtrip(h);
@@ -234,6 +261,27 @@ wc::delegate_noop!(Side: ignore ExtOutputImageCaptureSourceManagerV1);
 wc::delegate_noop!(Side: ignore ExtImageCaptureSourceV1);
 wc::delegate_noop!(Side: ignore ExtImageCopyCaptureManagerV1);
 wc::delegate_noop!(Side: ignore ExtImageCopyCaptureFrameV1);
+wc::delegate_noop!(Side: ignore ExtForeignToplevelHandleV1);
+wc::delegate_noop!(Side: ignore ExtForeignToplevelImageCaptureSourceManagerV1);
+
+impl wc::Dispatch<ExtForeignToplevelListV1, ()> for Side {
+    fn event(
+        st: &mut Self,
+        _: &ExtForeignToplevelListV1,
+        ev: ext_foreign_toplevel_list_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &wc::QueueHandle<Self>,
+    ) {
+        if let ext_foreign_toplevel_list_v1::Event::Toplevel { toplevel } = ev {
+            st.toplevels.push(toplevel);
+        }
+    }
+
+    wc::event_created_child!(Side, ExtForeignToplevelListV1, [
+        ext_foreign_toplevel_list_v1::EVT_TOPLEVEL_OPCODE => (ExtForeignToplevelHandleV1, ()),
+    ]);
+}
 
 impl wc::Dispatch<ExtImageCopyCaptureSessionV1, ()> for Side {
     fn event(

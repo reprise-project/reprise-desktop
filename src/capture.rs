@@ -3,8 +3,9 @@
 //! tree, rendered into the client's shm or dmabuf buffer. A session's
 //! frame is filled at once when its source changed since the last one
 //! (and for the first); otherwise it, and every `copy_with_damage`,
-//! waits for the output's next drawn frame or the window's next commit,
-//! so an idle screen costs a screencast nothing. An output session's
+//! waits for the output's next drawn frame or the window's next commit
+//! that shows something new, so an idle screen or window costs a
+//! screencast nothing. An output session's
 //! frame reports the damage since its previous one; others report all.
 //! A pointer cursor session on an output copies the pointer's image and
 //! follows it over the output. A session is ongoing (a screencast, not a
@@ -75,6 +76,8 @@ pub struct Captures {
     /// Output frames whose render is in flight; one destroyed meanwhile never reaches its client.
     drawing: Vec<(FrameRef, SessionRef)>,
     readbacks: Readbacks,
+    /// Windows with a [`State::wake_window_soon`] timer armed.
+    waking: Vec<WindowId>,
 }
 
 enum Waiting {
@@ -186,14 +189,21 @@ pub fn output_drawn(state: &mut State, output: &Output) {
     }
 }
 
-/// `w` committed: a new size goes to its sessions as new constraints,
-/// and the frames waiting on it are filled.
-pub fn window_committed(state: &mut State, w: WindowId) {
+/// A commit in `w`'s surface tree applied; it `drew` unless it showed nothing new. A drawn commit
+/// makes its sessions' next frames due. Once the window's whole state is `applied` (any commit but
+/// a synchronized subsurface's), a new size goes to its sessions as new constraints and its due
+/// frames are filled; the others keep waiting, and the client is asked for its next frame.
+pub fn window_committed(state: &mut State, w: WindowId, drew: bool, applied: bool) {
     if state.captures.sessions.is_empty() {
         return;
     }
     let on = Some(Shown::Window(w));
-    state.captures.changed(&on);
+    if drew {
+        state.captures.changed(&on);
+    }
+    if !applied {
+        return;
+    }
     if let Some(c) = window_constraints(state, w) {
         for s in &state.captures.sessions {
             if shown(&s.source()) == on {
@@ -201,7 +211,14 @@ pub fn window_committed(state: &mut State, w: WindowId) {
             }
         }
     }
-    for waiting in take_waiting(state, |s| *s == on) {
+    let (due, unchanged): (Vec<Waiting>, Vec<Waiting>) = take_waiting(state, |s| *s == on)
+        .into_iter()
+        .partition(|w| matches!(w, Waiting::Ext { session, .. } if fresh(session).get()));
+    if !unchanged.is_empty() {
+        state.captures.waiting.extend(unchanged);
+        state.wake_window_soon(w);
+    }
+    for waiting in due {
         if let Waiting::Ext { session, frame } = waiting {
             fill_window(state, w, &session, frame);
         }
@@ -803,15 +820,20 @@ fn fill_wlr(state: &mut State, screencopy: Screencopy) {
 }
 
 impl State {
+    /// The output `w`'s frame callbacks for a waiting capture go out on: where its frame's
+    /// centre lies.
+    fn wake_output(&self, w: WindowId) -> Option<Output> {
+        let r = self.win(w)?.frame_rect();
+        self.output_at((r.x + r.width / 2) as f64, (r.y + r.height / 2) as f64)
+    }
+
     /// Ask `w`'s client for a frame for a capture waiting on its commit;
-    /// one minimized or off screen gets no frame callbacks otherwise.
+    /// one minimized, covered or off screen gets no frame callbacks otherwise.
     fn wake_window(&mut self, w: WindowId) {
-        let Some(win) = self.win(w) else {
+        let Some(output) = self.wake_output(w) else {
             return;
         };
-        let r = win.frame_rect();
-        let Some(output) = self.output_at((r.x + r.width / 2) as f64, (r.y + r.height / 2) as f64)
-        else {
+        let Some(win) = self.win(w) else {
             return;
         };
         smithay::desktop::utils::send_frames_surface_tree(
@@ -821,6 +843,31 @@ impl State {
             Some(std::time::Duration::ZERO),
             |_, _| Some(output.clone()),
         );
+    }
+
+    /// [`State::wake_window`] one refresh from now, while a capture still waits on `w`: its
+    /// client committed nothing new, and asked again at once it would commit again at once.
+    fn wake_window_soon(&mut self, w: WindowId) {
+        let Some(output) = self.wake_output(w) else {
+            return;
+        };
+        if self.captures.waking.contains(&w) {
+            return;
+        }
+        let refresh = output.current_mode().map_or(0, |m| m.refresh);
+        let timer = Timer::from_duration(crate::framepace::interval(refresh));
+        let armed = self.handle.insert_source(timer, move |_, _, state| {
+            state.captures.waking.retain(|x| *x != w);
+            let on = Some(Shown::Window(w));
+            if state.captures.waiting.iter().any(|x| x.shows() == on) {
+                state.wake_window(w);
+            }
+            TimeoutAction::Drop
+        });
+        match armed {
+            Ok(_) => self.captures.waking.push(w),
+            Err(e) => log::warn!("capture of window {w:?}: no wake timer: {}", e.error),
+        }
     }
 }
 
@@ -1317,6 +1364,33 @@ mod tests {
             (2 * on_1.w, 2 * on_1.h),
             "{on_1:?} at scale 1 doubles at scale 2"
         );
+    }
+
+    #[test]
+    fn a_window_commit_without_a_new_buffer_leaves_its_capture_frame_waiting() {
+        let mut h = Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "test.app", 200, 100);
+        let size = super::window_size(&h.state, t.id).expect("mapped");
+        let mut client = h.connect_capture((size.w, size.h));
+        let mut s = client.window_session(&mut h);
+        let session = h.state.captures.sessions[0].as_ref();
+        super::fresh(&session).clear();
+        client.ext_frame(&mut h, &mut s);
+        assert_eq!(h.state.captures.waiting.len(), 1, "the frame waits");
+
+        c.side.shells[t.shell].surface.commit();
+        h.roundtrip(&mut c);
+        assert_eq!(
+            h.state.captures.waiting.len(),
+            1,
+            "a bare commit leaves it waiting"
+        );
+        assert!(!super::fresh(&session).get(), "and the next frame not due");
+
+        h.draw_self(&mut c, t, 0xff20_4060);
+        assert!(h.state.captures.waiting.is_empty(), "a new buffer fills it");
     }
 
     #[test]
