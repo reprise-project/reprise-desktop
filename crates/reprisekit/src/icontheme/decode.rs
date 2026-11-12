@@ -210,6 +210,17 @@ const WORK_NEAR_LIGHT: f64 = 165.0;
 /// Work per pixel row a path edge spans, and per pair of edges the rasterizer sorts.
 const WORK_EDGE_ROW: f64 = 50.0;
 const WORK_EDGE_PAIR: f64 = 0.35;
+/// Bytes of every pixmap resvg allocates to draw an SVG, summed: a filter keeps each
+/// primitive's result alive, and the work budget alone allows about 150 MiB of cheap ones.
+const SVG_MAX_PIXMAP_BYTES: f64 = 64.0 * 1024.0 * 1024.0;
+/// Bytes per pixel: a pixmap, a clip path's (and its alpha mask), a mask's (and two alpha masks),
+/// a primitive's result and input copy, an IIR blur's f64 buffer, a drop shadow's extra pixmap.
+const BYTES_PIXMAP: f64 = 4.0;
+const BYTES_CLIP: f64 = 5.0;
+const BYTES_MASK: f64 = 6.0;
+const BYTES_PRIMITIVE: f64 = 8.0;
+const BYTES_IIR: f64 = 8.0;
+const BYTES_SHADOW: f64 = 4.0;
 /// Embedded PNG, JPEG and SVG pictures drawn, each use of one counted again.
 pub(super) const SVG_MAX_IMAGES: usize = 4;
 /// Pixels of every embedded PNG and JPEG drawn, summed; each is decoded again per use.
@@ -251,16 +262,19 @@ pub(super) fn svg_over_budget(
     let ts = Transform::from_scale(side / size.width(), side / size.height());
     let mut cost = Cost {
         no_images: !images,
-        max_layer: (5.0 * side, 5.0 * side),
         budget,
         ..Cost::default()
     };
-    cost.children(tree.root(), ts, (side, side));
+    let canvas = (side, side);
+    cost.pixmap(canvas, BYTES_PIXMAP);
+    cost.children(tree.root(), ts, canvas, layer_bound(canvas));
     cost.over
 }
 
-/// Why [`svg_over_budget`] refuses `tree` when its work does not shrink with the canvas.
+/// Why [`svg_over_budget`] refuses `tree` when its work, or its pixmaps' bytes, do not shrink
+/// with the canvas.
 const PAST_BUDGET: &str = "past the render budget";
+const PAST_PIXMAPS: &str = "pixmaps past the size limit";
 
 /// The side `tree` is drawn at for `px` within `budget` work: `px`, or for one past it at `px`
 /// the largest within it down to a quarter of `px`, scaled up after.
@@ -275,21 +289,22 @@ pub(super) fn svg_side(
     loop {
         match svg_over_budget(tree, images, side, budget) {
             None => return Ok(side),
-            Some(PAST_BUDGET) if side > floor => side = (side * 3 / 4).max(floor),
+            Some(PAST_BUDGET | PAST_PIXMAPS) if side > floor => side = (side * 3 / 4).max(floor),
             Some(why) => return Err(why),
         }
     }
 }
 
 /// What drawing a tree asks of resvg, mirroring its walk: each node with the device transform it
-/// is drawn with and the size of the pixmap it is drawn into.
+/// is drawn with, the size of the pixmap it is drawn into and the bound resvg puts on a layer
+/// under it.
 #[derive(Default)]
 struct Cost {
     no_images: bool,
-    /// resvg's bound on a layer: five times the canvas each way.
-    max_layer: (f32, f32),
     budget: f64,
     work: f64,
+    /// Bytes of the pixmaps allocated so far.
+    bytes: f64,
     images: usize,
     pixels: usize,
     over: Option<&'static str>,
@@ -302,6 +317,34 @@ fn area(r: Option<Rect>, target: (f32, f32)) -> f64 {
     })
 }
 
+/// resvg's bound on a layer drawn into a `target`-sized pixmap: five times it each way.
+fn layer_bound(target: (f32, f32)) -> (f32, f32) {
+    (5.0 * target.0, 5.0 * target.1)
+}
+
+/// The inverse of `ts`'s rotation and skew, as resvg takes them off a filtered group's layer;
+/// None when resvg skips the group.
+fn unrotation(ts: Transform) -> Option<Transform> {
+    let sx = ts.sx.hypot(ts.ky);
+    let sy = ts.kx.hypot(ts.sy);
+    Transform::from_row(ts.sx / sx, ts.ky / sx, ts.kx / sy, ts.sy / sy, 0.0, 0.0).invert()
+}
+
+/// The size of a `bound`-sized rect's box transformed by `t`, rounded out as resvg does, plus a
+/// margin for f32 error. Only `t`'s magnitudes count, so it grows steadily with a skew.
+fn stretched(bound: (f32, f32), t: Transform) -> (f32, f32) {
+    if !t.has_skew() {
+        return bound;
+    }
+    let (w, h) = (f64::from(bound.0), f64::from(bound.1));
+    let side = |a: f32, b: f32| {
+        let v = f64::from(a.abs()) * w + f64::from(b.abs()) * h;
+        let v = (v * (1.0 + 1e-6)).ceil() + 2.0;
+        if v.is_finite() { v as f32 } else { f32::MAX }
+    };
+    (side(t.sx, t.kx), side(t.ky, t.sy))
+}
+
 impl Cost {
     fn add(&mut self, work: f64) {
         self.work += work;
@@ -310,48 +353,70 @@ impl Cost {
         }
     }
 
-    fn children(&mut self, g: &Group, ts: Transform, target: (f32, f32)) {
+    /// Counts a `size` pixmap of `bytes` per pixel and answers its pixels.
+    fn pixmap(&mut self, size: (f32, f32), bytes: f64) -> f64 {
+        let pixels = size.0 as f64 * size.1 as f64;
+        self.bytes += pixels * bytes;
+        if self.bytes > SVG_MAX_PIXMAP_BYTES && self.over.is_none() {
+            self.over = Some(PAST_PIXMAPS);
+        }
+        pixels
+    }
+
+    fn children(&mut self, g: &Group, ts: Transform, target: (f32, f32), bound: (f32, f32)) {
         for n in g.children() {
             if self.over.is_some() {
                 return;
             }
             self.add(WORK_NODE);
             match n {
-                Node::Group(g) => self.group(g, ts, target),
-                Node::Path(p) => self.path(p, ts, target),
+                Node::Group(g) => self.group(g, ts, target, bound),
+                Node::Path(p) => self.path(p, ts, target, bound),
                 Node::Image(i) => self.image(i, ts, target),
-                Node::Text(t) => self.group(t.flattened(), ts, target),
+                Node::Text(t) => self.group(t.flattened(), ts, target, bound),
             }
         }
     }
 
-    fn group(&mut self, g: &Group, ts: Transform, target: (f32, f32)) {
+    fn group(&mut self, g: &Group, ts: Transform, target: (f32, f32), bound: (f32, f32)) {
         let ts = ts.pre_concat(g.transform());
         if !g.should_isolate() {
-            return self.children(g, ts, target);
+            return self.children(g, ts, target, bound);
         }
+        // resvg draws a filtered group's layer without its rotation and skew, and stretches the
+        // bound by their inverse: a steep skew asks for a far larger layer than the canvas.
+        let (ts, bound) = match g.filters() {
+            [] => (ts, bound),
+            _ => {
+                let Some(unrotate) = unrotation(ts) else {
+                    return;
+                };
+                (unrotate.pre_concat(ts), stretched(bound, unrotate))
+            }
+        };
         let Some(bbox) = g.layer_bounding_box().transform(ts) else {
             return;
         };
         // A filter region is not padded for anti-aliasing: it clips.
         let (w, h) = match g.filters() {
-            [] => (bbox.width() + 4.0, bbox.height() + 4.0),
+            [] => (bbox.width().ceil() + 4.0, bbox.height().ceil() + 4.0),
             _ => (bbox.width().ceil().max(1.0), bbox.height().ceil().max(1.0)),
         };
-        let layer = (w.min(self.max_layer.0), h.min(self.max_layer.1));
-        let pixels = layer.0 as f64 * layer.1 as f64;
+        let layer = (w.min(bound.0), h.min(bound.1));
+        let pixels = self.pixmap(layer, BYTES_PIXMAP);
         self.add(WORK_LAYER_PASS + pixels * WORK_LAYER);
         for f in g.filters() {
             self.filter(f, ts, layer);
         }
-        self.children(g, ts, layer);
+        self.children(g, ts, layer, bound);
         if let Some(c) = g.clip_path() {
             self.clip(c, ts, layer);
         }
         let mut mask = g.mask();
         while let Some(m) = mask {
+            self.pixmap(layer, BYTES_MASK);
             self.add(WORK_MASK_PASS + pixels * WORK_MASK);
-            self.children(m.root(), ts, layer);
+            self.children(m.root(), ts, layer, bound);
             mask = m.mask();
         }
     }
@@ -359,7 +424,7 @@ impl Cost {
     /// A filter over a `layer`-sized region: resvg runs each primitive over all of it.
     fn filter(&mut self, f: &usvg::filter::Filter, ts: Transform, layer: (f32, f32)) {
         use resvg::usvg::filter::{ColorInterpolation, Input, Kind, LightSource};
-        let pixels = layer.0 as f64 * layer.1 as f64;
+        let pixels = self.pixmap(layer, BYTES_PIXMAP);
         let (sx, sy) = ts.get_scale();
         let blur = |x: f32, y: f32| blur(x * sx, y * sy, layer.0);
         // A morphology reads up to the whole region around each pixel.
@@ -401,13 +466,27 @@ impl Cost {
                 }
                 Kind::DiffuseLighting(l) => light(l.light_source()),
                 Kind::SpecularLighting(l) => light(l.light_source()),
-                // Drawn into a pixmap of the region, at the device scale.
+                // Drawn into a pixmap of the region, at the device scale, which bounds its layers.
                 Kind::Image(i) => {
                     self.add(WORK_LAYER_PASS);
-                    self.children(i.root(), Transform::from_scale(sx, sy), layer);
+                    self.children(i.root(), Transform::from_scale(sx, sy), layer, layer);
                     WORK_FILL_REGION
                 }
             };
+            let iir = |x: f32, y: f32| {
+                let (x, y) = (x * sx, y * sy);
+                let iir = x < 2.0 && y < 2.0 && (x, y) != (0.0, 0.0);
+                if iir { BYTES_IIR } else { 0.0 }
+            };
+            let bytes = BYTES_PRIMITIVE
+                + match p.kind() {
+                    Kind::GaussianBlur(b) => iir(b.std_dev_x().get(), b.std_dev_y().get()),
+                    Kind::DropShadow(d) => {
+                        iir(d.std_dev_x().get(), d.std_dev_y().get()) + BYTES_SHADOW
+                    }
+                    _ => 0.0,
+                };
+            self.pixmap(layer, bytes);
             let sources = [Input::SourceGraphic, Input::SourceAlpha];
             let sources = sources.iter().filter(|i| p.kind().has_input(i)).count() as f64;
             let converted = if linear(p) {
@@ -422,7 +501,7 @@ impl Cost {
     /// A clip path over a `layer`-sized pixmap: resvg fills its paths into a pixmap of the same
     /// size, and a child group with a clip path of its own into one more.
     fn clip(&mut self, c: &usvg::ClipPath, ts: Transform, layer: (f32, f32)) {
-        let pixels = layer.0 as f64 * layer.1 as f64;
+        let pixels = self.pixmap(layer, BYTES_CLIP);
         self.add(WORK_CLIP_PASS + pixels * WORK_CLIP);
         self.clip_children(c.root(), ts.pre_concat(c.transform()), layer);
         if let Some(c) = c.clip_path() {
@@ -445,7 +524,7 @@ impl Cost {
                 Node::Group(g) => {
                     let ts = ts.pre_concat(g.transform());
                     if let Some(c) = g.clip_path() {
-                        let pixels = layer.0 as f64 * layer.1 as f64;
+                        let pixels = self.pixmap(layer, BYTES_PIXMAP);
                         self.add(WORK_LAYER_PASS + pixels * WORK_LAYER);
                         self.clip_children(g, ts, layer);
                         self.clip(c, ts, layer);
@@ -458,19 +537,19 @@ impl Cost {
         }
     }
 
-    fn path(&mut self, p: &usvg::Path, ts: Transform, target: (f32, f32)) {
+    fn path(&mut self, p: &usvg::Path, ts: Transform, target: (f32, f32), bound: (f32, f32)) {
         if !p.is_visible() {
             return;
         }
         if let Some(fill) = p.fill() {
             let covered = area(p.bounding_box().transform(ts), target);
-            self.paint(fill.paint(), ts, covered);
+            self.paint(fill.paint(), ts, covered, bound);
             self.edges(p, ts, target);
         }
         if let Some(stroke) = p.stroke() {
             let rows = rows(p, ts, target.1);
             let covered = area(p.stroke_bounding_box().transform(ts), target);
-            self.paint(stroke.paint(), ts, covered);
+            self.paint(stroke.paint(), ts, covered, bound);
             // The stroker outlines each side of every segment, a dash a closed outline of its own.
             let n = segments(p);
             let (sx, sy) = ts.get_scale();
@@ -486,7 +565,7 @@ impl Cost {
         self.add(rows(p, ts, target.1) * WORK_EDGE_ROW + n * n * WORK_EDGE_PAIR);
     }
 
-    fn paint(&mut self, paint: &Paint, ts: Transform, covered: f64) {
+    fn paint(&mut self, paint: &Paint, ts: Transform, covered: f64, bound: (f32, f32)) {
         let gradient =
             |stops: usize| WORK_NODE + covered * (WORK_GRADIENT + stops as f64 * WORK_STOP);
         match paint {
@@ -498,9 +577,9 @@ impl Cost {
                 let (sx, sy) = ts.pre_concat(pattern.transform()).get_scale();
                 let rect = pattern.rect();
                 let tile = ((rect.width() * sx).round(), (rect.height() * sy).round());
-                let pixels = tile.0 as f64 * tile.1 as f64;
+                let pixels = self.pixmap(tile, BYTES_PIXMAP);
                 self.add(WORK_LAYER_PASS + pixels * WORK_LAYER + covered * WORK_BICUBIC);
-                self.children(pattern.root(), Transform::from_scale(sx, sy), tile);
+                self.children(pattern.root(), Transform::from_scale(sx, sy), tile, bound);
             }
         }
     }
@@ -515,11 +594,12 @@ impl Cost {
         }
         let kind = image.kind();
         if let ImageKind::SVG(tree) = kind {
-            // resvg draws it through a layer the size of the pixmap; a [`blank`] draws nothing
-            // more.
+            // resvg draws it through a layer the size of the pixmap, bounding the picture's own
+            // layers by five times that; a [`blank`] draws nothing more.
             self.images += usize::from(tree.root().has_children());
-            self.add(WORK_LAYER_PASS + target.0 as f64 * target.1 as f64 * WORK_LAYER);
-            self.children(tree.root(), ts, target);
+            let pixels = self.pixmap(target, BYTES_PIXMAP);
+            self.add(WORK_LAYER_PASS + pixels * WORK_LAYER);
+            self.children(tree.root(), ts, target, layer_bound(target));
         } else {
             self.images += 1;
             let refused = match raster_size(kind) {
