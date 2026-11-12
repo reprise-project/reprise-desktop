@@ -234,6 +234,7 @@ impl State {
         let tree = scene.tree_create(self.layers.overlay);
         scene.set_data(tree, Some(SceneOwner::Osd));
         crate::glass::leave_out(scene, tree);
+        crate::output::keep_on(scene, tree, &out);
         scene.set_position(tree, at.0, at.1);
         let glass_tree = scene.tree_create(tree);
         let mut backdrop = Backdrop::new(&self.glass);

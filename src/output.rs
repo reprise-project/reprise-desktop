@@ -13,7 +13,7 @@
 use std::cell::Cell;
 
 use reprisekit::style::Part;
-use reprisescene::BufferId;
+use reprisescene::{BufferId, TreeId};
 use smithay::{
     backend::input::InputTime,
     output::{Output, Scale},
@@ -37,6 +37,12 @@ pub(crate) fn draw_scale(scale: f32) -> i32 {
     } else {
         1
     }
+}
+
+/// Keep popup `tree` inside `output`: its shadow stops at the output's edge instead of drawing,
+/// and asking for frames, on a neighbour.
+pub fn keep_on(scene: &mut DeskScene, tree: TreeId, output: &Output) {
+    scene.set_kept_on(tree, Some(output));
 }
 
 /// Show `canvas` in `sb` at `scale`; whether any of its pixels differ from those shown before.

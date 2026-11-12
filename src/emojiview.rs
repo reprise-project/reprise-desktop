@@ -134,6 +134,9 @@ impl State {
         let origin = crate::textinput::popup_origin(anchor, size, self.usable_area(out.as_ref()));
         let tree = self.scene.tree_create(self.layers.menu);
         crate::glass::leave_out(&mut self.scene, tree);
+        if let Some(o) = &out {
+            crate::output::keep_on(&mut self.scene, tree, o);
+        }
         self.scene.set_data(tree, Some(SceneOwner::EmojiView));
         self.scene.set_position(tree, origin.0, origin.1);
         // Before the buffer, so it lies beneath it.

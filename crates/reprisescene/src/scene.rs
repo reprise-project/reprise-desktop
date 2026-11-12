@@ -110,6 +110,7 @@ impl<R: Renderer, D> Scene<R, D> {
                     in_pictures: true,
                     opacity: 1.0,
                     clip: None,
+                    kept_on: None,
                     hidden_in: None,
                     input: Input::All,
                     data: None,
@@ -261,6 +262,7 @@ impl<R: Renderer, D> Scene<R, D> {
             in_pictures: true,
             opacity: 1.0,
             clip: None,
+            kept_on: None,
             hidden_in: None,
             input: Input::All,
             data: None,
@@ -482,6 +484,15 @@ impl<R: Renderer, D> Scene<R, D> {
         self.node(tree.0)?.clip
     }
 
+    /// Draw and hit `tree`'s leaves only inside `output` as it lies when drawn, so the cut follows
+    /// the output's moves and mode changes; None draws them whole. Clips intersect. Unlike
+    /// [`Scene::set_clip`], it also cuts [`Scene::extents`] and so the outputs asked.
+    pub fn set_kept_on(&mut self, tree: TreeId, output: Option<&Output>) {
+        let output = output.map(Output::downgrade);
+        let has = output.clone();
+        self.set_if(tree.0, |n| n.kept_on == has, |n| n.kept_on = output);
+    }
+
     /// The intersection of the clips of `node`'s ancestors, layout; None when none clips.
     pub(crate) fn clip_above(&self, node: NodeId) -> Option<Rectangle<i32, Logical>> {
         let mut out = None;
@@ -493,6 +504,22 @@ impl<R: Renderer, D> Scene<R, D> {
             if let Some(c) = n.clip {
                 let pos = self.coords(p).map(|(pos, _)| pos).unwrap_or_default();
                 out = Some(meet(out, Rectangle::new(pos + c.loc, c.size)));
+            }
+            if let Some(k) = n.kept_rect() {
+                out = Some(meet(out, k));
+            }
+            at = n.parent;
+        }
+        out
+    }
+
+    /// The intersection of `node`'s ancestors' [`Scene::set_kept_on`] outputs; None when none has one.
+    pub(crate) fn kept_above(&self, node: NodeId) -> Option<Rectangle<i32, Logical>> {
+        let mut out = None;
+        let mut at = self.node(node).and_then(|n| n.parent);
+        while let Some(n) = at.and_then(|p| self.node(p.0)) {
+            if let Some(k) = n.kept_rect() {
+                out = Some(meet(out, k));
             }
             at = n.parent;
         }

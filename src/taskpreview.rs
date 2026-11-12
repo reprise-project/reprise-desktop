@@ -262,6 +262,7 @@ fn show(state: &mut State, bar: TreeId, i: usize) {
     let tree = scene.tree_create(state.layers.menu);
     scene.set_data(tree, Some(SceneOwner::TaskPreview));
     crate::glass::leave_out(scene, tree);
+    crate::output::keep_on(scene, tree, &output);
     scene.set_position(tree, layout.rect.x, layout.rect.y);
     let glass_tree = scene.tree_create(tree);
     let buffer = scene.buffer_create(tree);

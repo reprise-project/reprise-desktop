@@ -422,6 +422,7 @@ fn show_tip(state: &mut State, target: Target, tip: &Tip, output: &Output, curso
     let scene = &mut state.scene;
     let tree = scene.tree_create(state.layers.overlay);
     crate::glass::leave_out(scene, tree);
+    crate::output::keep_on(scene, tree, output);
     let buffer = scene.buffer_create(tree);
     scene.set_input(buffer, Input::Passthrough);
     scene.set_position(tree, x, y);

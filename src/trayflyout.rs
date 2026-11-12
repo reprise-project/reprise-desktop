@@ -74,6 +74,7 @@ fn open(state: &mut State, output: Output) {
     let tree = scene.tree_create(state.layers.menu);
     scene.set_data(tree, Some(SceneOwner::TrayFlyout));
     crate::glass::leave_out(scene, tree);
+    crate::output::keep_on(scene, tree, &output);
     let glass_tree = scene.tree_create(tree);
     let buffer = scene.buffer_create(tree);
     let v = FlyoutView {
@@ -350,7 +351,7 @@ mod tests {
     }
 
     #[test]
-    fn a_shrinking_flyout_asks_the_output_its_old_shadow_covered() {
+    fn a_flyout_at_the_outputs_bottom_edge_keeps_its_shadow_off_the_output_below() {
         use crate::tray::{TrayEvent, TrayItem};
         use std::os::fd::AsRawFd;
         let config = crate::config::Config::parse("[appearance]\ninterface = \"glass\"\n").unwrap();
@@ -382,34 +383,41 @@ mod tests {
         let wrote = unsafe { libc::write(wake.as_raw_fd(), (&1u64 as *const u64).cast(), 8) };
         assert_eq!(wrote, 8);
         h.dispatch();
-        open(&mut h.state, top);
+        open(&mut h.state, top.clone());
         let theme = h.state.config.theme.clone();
         let two_rows = FlyoutLayout::compute(&theme, 5);
         let at = (400, 768 - two_rows.height);
         let v = view(&mut h.state).expect("the flyout is open");
         (v.layout, v.at) = (two_rows, at);
-        redraw(&mut h.state);
-        let v = view(&mut h.state).expect("the flyout is open");
-        let tree = v.tree;
-        assert_eq!(
-            h.state.scene.outputs_of(tree).len(),
-            2,
-            "the flyout's shadow below its bottom edge reaches TEST-2"
-        );
-
-        let v = view(&mut h.state).expect("the flyout is open");
-        v.layout = FlyoutLayout::compute(&theme, 1);
         crate::backend::take_asks();
         redraw(&mut h.state);
         let asked = crate::backend::take_asks();
+        let v = view(&mut h.state).expect("the flyout is open");
+        let (tree, buffer) = (v.tree, v.buffer);
+        let (pos, _) = h.state.scene.coords(buffer).expect("placed");
+        let size = h.state.scene.buffer_size(buffer).expect("drawn");
+        assert!(
+            pos.y + size.h > 768,
+            "the flyout's shadow reaches past TEST-1's bottom edge"
+        );
         assert_eq!(
-            h.state.scene.outputs_of(tree).len(),
-            1,
-            "one row shorter, the flyout and its shadow stay on TEST-1"
+            h.state.scene.outputs_of(tree),
+            vec![top],
+            "the flyout's shadow stops at TEST-1's bottom edge"
         );
         assert!(
-            asked.iter().any(|(o, _)| o == "TEST-2"),
-            "TEST-2 is asked to take the old shadow away: {asked:?}"
+            asked.iter().all(|(o, _)| o != "TEST-2"),
+            "TEST-2 is not asked: {asked:?}"
+        );
+        let below = reprisescene::output_rect(&below).unwrap();
+        assert!(
+            (h.state.scene.leaves_in(below).iter()).all(|&n| h
+                .state
+                .scene
+                .find_data(n)
+                .map(|(t, _)| t)
+                != Some(tree.into())),
+            "nothing of the flyout draws on TEST-2"
         );
     }
 }
