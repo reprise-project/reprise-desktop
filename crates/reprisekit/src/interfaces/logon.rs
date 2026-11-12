@@ -33,9 +33,81 @@ pub fn draw_logon(
     }
 }
 
+/// What [`redraw_logon_within`] repaints, design px within the output, to bring a canvas painted
+/// for `was` ([`Logon::drawn`]) on `was_l` up to `m` on `l`; None when `m.motion` is to play.
+pub fn logon_changed(
+    m: &Logon,
+    l: &LogonLayout,
+    was: &Logon,
+    was_l: &LogonLayout,
+    theme: &Theme,
+) -> Option<Vec<Rect>> {
+    if let Some(t) = m.touched_since(was).filter(|_| l.output == was_l.output) {
+        if l == was_l {
+            return Some(logon_touched(m, l, theme, t));
+        }
+        let unbadged = |l: &LogonLayout| {
+            let parts = l.parts.iter().filter(|(p, _)| *p != Part::Layout);
+            (l.dialog, parts.copied().collect::<Vec<_>>())
+        };
+        if unbadged(l) == unbadged(was_l) {
+            let mut rects = logon_touched(m, l, theme, t);
+            rects.extend(logon_touched(m, was_l, theme, t));
+            return Some(rects);
+        }
+    }
+    m.motion
+        .as_ref()
+        .map_or_else(|| logon_region(m, l, was, was_l, theme), |_| None)
+}
+
+/// Where screens drawn for `was` on `was_l` and for `m` on `l` can differ, design px within the
+/// output; None when their backdrops differ (interface, output, picture under the screen).
+pub fn logon_region(
+    m: &Logon,
+    l: &LogonLayout,
+    was: &Logon,
+    was_l: &LogonLayout,
+    theme: &Theme,
+) -> Option<Vec<Rect>> {
+    let backdrop = |m: &Logon, l: &LogonLayout| (m.interface, m.over_picture, l.output);
+    if backdrop(m, l) != backdrop(was, was_l) {
+        return None;
+    }
+    let mut rects = logon_live(was, was_l, theme);
+    rects.extend(logon_live(m, l, theme));
+    if l.dialog != was_l.dialog {
+        // A dialog that moves takes all it draws along.
+        rects.extend([was_l.dialog, l.dialog].into_iter().flatten());
+    }
+    Some(joined(rects))
+}
+
+/// Where the interface in force paints from `m`, design px within the output; the rest of the
+/// screen is its backdrop, its marks and the frame of a dialog it lays out.
+fn logon_live(m: &Logon, l: &LogonLayout, theme: &Theme) -> Vec<Rect> {
+    match m.interface {
+        Interface::Classic => classic::logon::live(theme, l),
+        Interface::Blue => blue::logon::live(m, l, theme),
+        Interface::Glass => glass::logon::live(m, l, theme),
+    }
+}
+
+/// `rects` with every two that meet made one, so no pixel is painted twice.
+fn joined(rects: Vec<Rect>) -> Vec<Rect> {
+    let mut out: Vec<Rect> = Vec::new();
+    for mut r in rects.into_iter().filter(|r| !r.is_empty()) {
+        while let Some(i) = out.iter().position(|o| o.intersects(r)) {
+            r = r.union(&out.swap_remove(i));
+        }
+        out.push(r);
+    }
+    out
+}
+
 /// Where `t` lies on `l`, design px within the output: the fields, the notes and the badge it
 /// touched.
-pub fn logon_touched(m: &Logon, l: &LogonLayout, theme: &Theme, t: Touched) -> Vec<Rect> {
+fn logon_touched(m: &Logon, l: &LogonLayout, theme: &Theme, t: Touched) -> Vec<Rect> {
     let notes = match m.interface {
         Interface::Classic => classic::logon::notes(theme, l),
         Interface::Blue => blue::logon::notes(m, l, theme),
@@ -135,6 +207,7 @@ mod tests {
     use super::*;
     use crate::art::userpic;
     use crate::logon::{LogonKey, LogonUser};
+    use crate::pointer::Interaction;
     use crate::textedit::EditKey;
 
     #[test]
@@ -220,11 +293,18 @@ mod tests {
             c
         }
 
-        /// `c`, drawn whole for `l`, brought up to `m` by repainting what `touched` names.
-        fn within(&self, c: &mut Canvas, m: &Logon, l: &LogonLayout, touched: Touched) -> Rect {
-            let rects = logon_touched(m, l, &self.theme, touched);
+        /// `c`, drawn whole for `was` on `was_l`, brought up to `m` on `l` by repainting what
+        /// [`logon_changed`] names; None when only a whole draw will do.
+        fn within(
+            &self,
+            c: &mut Canvas,
+            (m, l): (&Logon, &LogonLayout),
+            (was, was_l): (&Logon, &LogonLayout),
+        ) -> Option<Rect> {
+            let rects = logon_changed(m, l, was, was_l, &self.theme)?;
             let s = self.s;
-            redraw_logon_within(c, m, l, (&self.theme, self.text.for_output(s), s), &rects)
+            let drawn = (&self.theme, self.text.for_output(s), s);
+            Some(redraw_logon_within(c, m, l, drawn, &rects))
         }
     }
 
@@ -261,8 +341,8 @@ mod tests {
                         touched.is_some_and(|t| !t.said && !t.badge) && now == l,
                         "{what} at {s}: {k:?} changes the fields alone"
                     );
+                    let r = screen.within(&mut c, (&m, &now), (&was, &l)).unwrap();
                     l = now;
-                    let r = screen.within(&mut c, &m, &l, touched.unwrap());
                     let full = screen.whole(&m, &l);
                     assert!(!r.is_empty(), "{what} at {s}: a field is repainted");
                     assert!(
@@ -279,8 +359,7 @@ mod tests {
     fn redrawing_the_notes_alone_leaves_the_screen_a_whole_draw_draws() {
         const LONG: &str = "The login service did not answer in time, so nothing was checked. \
                             Try again in a moment, or ask whoever looks after this computer.";
-        type Step = (&'static str, fn(&mut Logon));
-        let steps: [Step; 12] = [
+        let steps: [Step; 16] = [
             ("caps on", |m| m.caps_lock = true),
             ("message", |m| m.info(crate::logon::text::incorrect())),
             ("caps off", |m| m.caps_lock = false),
@@ -295,6 +374,10 @@ mod tests {
             ("caps off under it", |m| m.caps_lock = false),
             ("message cleared again", |m| m.message = None),
             ("badge back", |m| m.layout = Some("EN".into())),
+            ("badge gone", |m| m.layout = None),
+            ("caps on without the badge", |m| m.caps_lock = true),
+            ("badge shown", |m| m.layout = Some("HU".into())),
+            ("caps off beside the badge", |m| m.caps_lock = false),
         ];
         let mut screens = on_a_field();
         for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
@@ -324,11 +407,10 @@ mod tests {
                     );
                     if now != l {
                         relaid.push(format!("{what} at {s}: {step}"));
-                        l = now;
-                        c = screen.whole(&m, &l);
-                        continue;
                     }
-                    screen.within(&mut c, &m, &l, touched.unwrap());
+                    let r = screen.within(&mut c, (&m, &now), (&was, &l));
+                    assert!(r.is_some(), "{what} at {s}: {step} repaints a part");
+                    l = now;
                     let full = screen.whole(&m, &l);
                     assert!(
                         c.pixels == full.pixels,
@@ -338,18 +420,212 @@ mod tests {
                 }
             }
         }
-        let caps = [
-            "caps on",
-            "caps off",
-            "caps on over the hint",
-            "caps off under it",
+        for s in [1, 2] {
+            let mut laid_again = vec![format!("Classic admin at {s}: caps on")];
+            for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+                let badge =
+                    ["badge gone", "badge shown"].map(|b| format!("{i:?} typed at {s}: {b}"));
+                laid_again.extend(badge);
+            }
+            for step in laid_again {
+                assert!(relaid.contains(&step), "{step} lays the screen out again");
+            }
+        }
+    }
+
+    type Step = (&'static str, fn(&mut Logon));
+
+    /// Changes a login or lock goes through, from a check to the administrator's form.
+    const LIVED: [Step; 20] = [
+        ("busy", |m| m.set_busy(true)),
+        ("ring turned", |m| m.spin = 7),
+        ("failed", |m| m.fail(crate::logon::text::incorrect())),
+        ("enter", |m| {
+            m.key(LogonKey::Enter);
+        }),
+        ("power focused", |m| m.focus = Part::Power),
+        ("power hot", |m| {
+            m.lit = Some((Part::Power, Interaction::Hot))
+        }),
+        ("power pressed", |m| {
+            m.lit = Some((Part::Power, Interaction::Pressed))
+        }),
+        ("unlit", |m| m.lit = None),
+        ("tab", |m| {
+            m.key(LogonKey::Tab { back: false });
+        }),
+        ("asked", |m| {
+            m.ask(crate::logon::Prompt {
+                text: "Token:".into(),
+                echo: true,
+            })
+        }),
+        ("answered", |m| {
+            m.key(LogonKey::Text("42"));
+        }),
+        ("busy again", |m| m.set_busy(true)),
+        ("idle", |m| m.set_busy(false)),
+        ("escape", |m| {
+            m.key(LogonKey::Escape);
+        }),
+        ("down", |m| {
+            m.key(LogonKey::Down);
+        }),
+        ("opened", |m| {
+            m.key(LogonKey::Enter);
+        }),
+        ("admin", |m| m.admin(crate::logon::PowerAction::PowerOff)),
+        ("admin busy", |m| m.set_busy(true)),
+        ("going down", |m| m.going_down()),
+        ("admin failed", |m| {
+            m.fail(crate::logon::text::power_failed())
+        }),
+    ];
+
+    /// Each interface's screens to start [`LIVED`] from: those of [`on_a_field`], the listed
+    /// users, and the typed screen over a picture, each with its badge.
+    fn lived_from() -> Vec<(String, Logon)> {
+        let mut screens = on_a_field();
+        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            screens.push((format!("{i:?} listed"), Logon::new(i, users(), true, None)));
+            let mut over = Logon::new(i, users(), false, Some("user0"));
+            over.over_picture = true;
+            screens.push((format!("{i:?} over a picture"), over));
+        }
+        for (_, m) in &mut screens {
+            m.layout = Some("EN".into());
+        }
+        screens
+    }
+
+    #[test]
+    fn any_change_repaints_where_either_screen_paints_and_leaves_the_screen_a_whole_draw_draws() {
+        for s in [1, 2] {
+            for (what, mut m) in lived_from() {
+                let screen = Bench::at(m.interface, s);
+                let mut l = screen.laid(&mut m);
+                let mut c = screen.whole(&m, &l);
+                for (step, change) in LIVED {
+                    let was = m.drawn();
+                    change(&mut m);
+                    let now = screen.laid(&mut m);
+                    let r = screen.within(&mut c, (&m, &now), (&was, &l));
+                    assert!(r.is_some(), "{what} at {s}: {step} repaints a part");
+                    l = now;
+                    let full = screen.whole(&m, &l);
+                    assert!(
+                        c.pixels == full.pixels,
+                        "{what} at {s}: after {step} the screen differs from a whole draw in {:?}",
+                        c.differing_rect(&full)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_failed_login_on_classic_repaints_part_of_its_dialog() {
+        for s in [1, 2] {
+            for (what, mut m) in lived_from() {
+                if m.interface != Interface::Classic {
+                    continue;
+                }
+                m.set_busy(true);
+                let screen = Bench::at(m.interface, s);
+                let was_l = screen.laid(&mut m);
+                let was = m.drawn();
+                m.fail(crate::logon::text::incorrect());
+                let l = screen.laid(&mut m);
+                let rects = logon_changed(&m, &l, &was, &was_l, &screen.theme).unwrap();
+                let dialog = l.dialog.unwrap();
+                let area: i32 = rects.iter().map(|r| r.width * r.height).sum();
+                assert!(
+                    rects.iter().all(|r| r.intersect(&dialog) == *r),
+                    "{what} at {s}: {rects:?} lie in {dialog:?}"
+                );
+                assert!(
+                    area < dialog.width * dialog.height / 2,
+                    "{what} at {s}: {area}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_change_begun_within_its_region_plays_as_one_begun_from_whole_draws() {
+        let moving: [Step; 5] = [
+            ("busy", |m| m.set_busy(true)),
+            ("failed", |m| m.fail(crate::logon::text::incorrect())),
+            ("enter", |m| {
+                m.key(LogonKey::Enter);
+            }),
+            ("escape", |m| {
+                m.key(LogonKey::Escape);
+            }),
+            ("opened", |m| {
+                m.key(LogonKey::Enter);
+            }),
         ];
-        let heading_grows =
-            [1, 2].map(|s| caps.map(|step| format!("Classic admin at {s}: {step}")));
-        assert_eq!(
-            relaid,
-            heading_grows.concat(),
-            "only Caps Lock beside Classic's wrapped heading moves the dialog"
-        );
+        let mut played = 0;
+        for s in [1, 2] {
+            for (what, mut m) in lived_from() {
+                m.moves = crate::logon::Moves::Full;
+                let screen = Bench::at(m.interface, s);
+                let mut l = screen.laid(&mut m);
+                let mut c = screen.whole(&m, &l);
+                for (step, change) in moving {
+                    let was = m.drawn();
+                    change(&mut m);
+                    let now = screen.laid(&mut m);
+                    let Some(motion) = m.take_motion() else {
+                        l = now;
+                        c = screen.whole(&m, &l);
+                        continue;
+                    };
+                    let rects = logon_region(&m, &now, &was, &l, &screen.theme).unwrap();
+                    let d = Drawn {
+                        m: &m,
+                        l: &now,
+                        theme: &screen.theme,
+                        text: &screen.text,
+                        s,
+                        over: None,
+                    };
+                    let over = Drawn {
+                        over: Some((&c, &rects)),
+                        ..d
+                    };
+                    let whole = Transition::begin_over(&motion, &d, Some(c.clone()));
+                    let within = Transition::begin_over(&motion, &over, Some(c.clone()));
+                    let at = format!("{what} at {s}: {step}");
+                    let (whole, within) = match (whole, within) {
+                        (Some(whole), Some(within)) => (whole, within),
+                        (None, None) => {
+                            l = now;
+                            c = screen.whole(&m, &l);
+                            continue;
+                        }
+                        _ => panic!("{at}: both play or neither"),
+                    };
+                    played += 1;
+                    assert_eq!(within.rect(), whole.rect(), "{at}: the same rect");
+                    for ms in [0, 40, 100, 160, 240, 400] {
+                        let (mut a, mut b) = (c.clone(), c.clone());
+                        whole.frame(&mut a, &m, ms);
+                        within.frame(&mut b, &m, ms);
+                        assert!(a.pixels == b.pixels, "{at}: the frame at {ms} ms");
+                    }
+                    within.settle(&mut c, &m);
+                    l = now;
+                    let full = screen.whole(&m, &l);
+                    assert!(
+                        c.pixels == full.pixels,
+                        "{at}: settled, the screen differs from a whole draw in {:?}",
+                        c.differing_rect(&full)
+                    );
+                }
+            }
+        }
+        assert!(played > 20, "{played} changes played");
     }
 }

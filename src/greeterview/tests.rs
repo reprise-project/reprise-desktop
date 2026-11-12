@@ -781,18 +781,106 @@ fn caps_lock_and_a_message_repaint_their_notes_alone_and_leave_the_screen_a_whol
     }
 }
 
+/// `change` on the screen of `h` with a whole redraw refused: only the screen's output is asked for
+/// a frame, and once what it began has played the screen is a whole redraw's.
+fn in_part(h: &mut Harness, what: &str, change: impl FnOnce(&mut Harness)) {
+    crate::backend::take_asks();
+    crate::logonview::DRAW_PANICS.set(true);
+    change(h);
+    crate::logonview::DRAW_PANICS.set(false);
+    let asked = crate::backend::take_scene_outputs();
+    assert!(
+        asked.iter().all(|o| o == "TEST-1"),
+        "{what}: only the screen's output is asked, not {asked:?}"
+    );
+    if view(h).play.is_some() {
+        settle(h);
+    }
+    assert!(
+        shown(h).pixels == at_rest(h).pixels,
+        "{what}: the screen is a whole redraw's"
+    );
+}
+
+#[test]
+fn a_failure_the_badge_and_classics_wrapped_heading_repaint_in_part() {
+    for interface in [
+        repriselogin::Interface::Classic,
+        repriselogin::Interface::Blue,
+        repriselogin::Interface::Glass,
+    ] {
+        for scale in [1, 2] {
+            let at = format!("{interface:?} at {scale}");
+            let (mut h, mut d) = shown_at(interface, 1280 * scale, 800 * scale, scale as f64);
+            h.output("TEST-2", 1024, 768);
+            on_password(&mut h, interface);
+            tap(&mut h, &[KEY_P, KEY_W, ENTER]);
+            let _ = d.heard();
+            d.says(&mut h, secret("Password:"));
+            assert_eq!(d.heard(), answered("pw"), "{at}");
+            if view(&mut h).play.is_some() {
+                settle(&mut h);
+            }
+            in_part(&mut h, &format!("{at}: failed"), |h| {
+                d.says(
+                    h,
+                    GreeterReply::Error {
+                        kind: ErrorKind::Auth,
+                        text: "Authentication failure".into(),
+                    },
+                );
+                assert_eq!(
+                    view(h).play.is_some(),
+                    interface != repriselogin::Interface::Classic,
+                    "the failure plays on Blue and Glass"
+                );
+            });
+            for (step, layout) in [("badge shown", "us,hu"), ("badge gone", "us")] {
+                in_part(&mut h, &format!("{at}: {step}"), |h| {
+                    h.state.config.keyboard.layout = layout.into();
+                    h.state.layouts_configured();
+                    assert_eq!(model(h).layout.is_some(), layout == "us,hu", "{step}");
+                });
+            }
+            view(&mut h).model.admin(logon::PowerAction::PowerOff);
+            redraw(&mut h.state);
+            if view(&mut h).play.is_some() {
+                settle(&mut h);
+            }
+            for step in ["caps on", "caps off"] {
+                in_part(
+                    &mut h,
+                    &format!("{at}: {step} on the administrator's form"),
+                    |h| tap(h, &[CAPSLOCK]),
+                );
+            }
+        }
+    }
+}
+
 /// Prints what a change costs each greeter at 1920x1080 and at 3840x2160 at scale 2, with a
 /// second output beside it: a key typed into the password field, Shift tapped (the input path a
-/// Caps Lock tap takes, drawing nothing), Caps Lock toggled, and a message set and cleared. Per
-/// change: the time, the device px it changes and the outputs it asks for a frame; and the time
-/// of a whole redraw. Run with `--ignored --nocapture`.
+/// Caps Lock tap takes, drawing nothing), Caps Lock toggled, a message set and cleared, the layout
+/// badge shown and taken away, Caps Lock toggled on the administrator's form, and a failed login
+/// with the screen's changes playing and with them off, each also through a whole redraw (the
+/// frames that play timed apart). Per change: the time, the device px it changes and the outputs
+/// it asks for a frame; and the time of a whole redraw. Run with `--ignored --nocapture`.
 #[test]
 #[ignore]
 fn typing_cost() {
-    fn cost(h: &mut Harness, mut change: impl FnMut(&mut Harness, u32)) -> String {
-        const N: u32 = 40;
+    const N: u32 = 40;
+    fn cost(h: &mut Harness, change: impl FnMut(&mut Harness, u32)) -> String {
+        staged(h, |_| {}, change)
+    }
+    /// [`cost`] of `change` after `prepare`, which is not timed.
+    fn staged(
+        h: &mut Harness,
+        mut prepare: impl FnMut(&mut Harness),
+        mut change: impl FnMut(&mut Harness, u32),
+    ) -> String {
         let (mut spent, mut changed, mut asked) = (std::time::Duration::ZERO, 0, 0);
         for i in 0..N {
+            prepare(h);
             let before = shown(h);
             crate::backend::take_asks();
             let t = std::time::Instant::now();
@@ -809,6 +897,44 @@ fn typing_cost() {
             asked as f64 / f64::from(N),
         )
     }
+    /// A failed login from a check in progress, the busy screen drawn untimed, then shown by
+    /// `show`; the frames of what then plays, one each 16 ms, are timed apart.
+    fn failed(h: &mut Harness, show: fn(&mut State, &logonview::Host)) -> String {
+        fn play_out(h: &mut Harness) -> std::time::Duration {
+            let t = std::time::Instant::now();
+            if view(h).play.is_some() {
+                let ms = play_ms(h);
+                for at in (0..=ms + 16).step_by(16) {
+                    next_frame(h, Some(at));
+                }
+            }
+            t.elapsed()
+        }
+        let mut played = std::time::Duration::ZERO;
+        let out = staged(
+            h,
+            |h| {
+                played += play_out(h);
+                view(h).model.set_busy(true);
+                view(h).model.take_motion();
+                redraw(&mut h.state);
+            },
+            |h, _| {
+                view(h).model.fail(logon::text::incorrect());
+                show(&mut h.state, &HOST);
+            },
+        );
+        played += play_out(h);
+        format!("{out}; frames after it {:?}", played / N)
+    }
+    let two = || {
+        ["EN", "HU"]
+            .map(|short| reprisefs::xkb::Described {
+                short: short.into(),
+                description: short.into(),
+            })
+            .to_vec()
+    };
     for interface in [
         repriselogin::Interface::Classic,
         repriselogin::Interface::Blue,
@@ -835,9 +961,25 @@ fn typing_cost() {
                 }
                 logonview::update(&mut h.state, &HOST);
             });
+            let badge = cost(&mut h, |h, i| {
+                h.state.key_input.layouts.labels = if i % 2 == 0 { two() } else { Vec::new() };
+                logonview::update(&mut h.state, &HOST);
+            });
+            let fail = failed(&mut h, logonview::update);
+            let fail_whole = failed(&mut h, logonview::redraw);
+            h.state.config.effects.logon_animation = false;
+            let fail_still = failed(&mut h, logonview::update);
+            let fail_still_whole = failed(&mut h, logonview::redraw);
+            view(&mut h).model.set_busy(false);
+            view(&mut h).model.admin(logon::PowerAction::PowerOff);
+            redraw(&mut h.state);
+            let admin_caps = cost(&mut h, |h, _| tap(h, &[CAPSLOCK]));
             eprintln!(
                 "{interface:?} {w}x{hh} at scale {scale}:\n  whole redraw {whole}\n  key {key}\n  shift {shift}\n  \
-                 caps lock {caps}\n  message {message}"
+                 caps lock {caps}\n  message {message}\n  badge on/off {badge}\n  failed login {fail}\n  \
+                 failed login drawn whole {fail_whole}\n  failed login, nothing playing {fail_still}\n  \
+                 failed login, nothing playing, drawn whole {fail_still_whole}\n  \
+                 caps lock on the administrator's form {admin_caps}"
             );
         }
     }
@@ -1103,7 +1245,7 @@ fn the_ring_turns_while_busy_and_asks_nothing_once_the_failure_settles() {
         model(&h).spin
     );
     assert!(
-        shown(&mut h) == at_rest(&mut h),
+        shown(&mut h).pixels == at_rest(&mut h).pixels,
         "the turned ring is the one drawn whole"
     );
     d.says(
