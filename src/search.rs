@@ -65,8 +65,17 @@ pub fn windows_first(best_window: Option<u32>, best_app: Option<u32>) -> bool {
 
 const SETTINGS_MIN_CHARS: usize = 2;
 const SETTINGS_PROGRAM: &str = "reprise-settings";
-pub const CALC_ICON: &str = "accessories-calculator";
+pub const CALC_ICONS: [&str; 2] = ["accessories-calculator", "applications-accessories"];
 pub const PAGE_ICON: &str = "preferences-system";
+
+/// The calculator row's icon at `px`: the first of [`CALC_ICONS`] that draws
+/// ([`crate::icon::unread_first`]).
+pub fn calc_icon(
+    icons: &mut crate::icontheme::IconCache,
+    px: i32,
+) -> Option<crate::raster::Canvas> {
+    crate::icon::unread_first(icons, CALC_ICONS, px).map(Arc::unwrap_or_clone)
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Setting {

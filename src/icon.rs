@@ -117,6 +117,23 @@ pub fn unread(icons: &mut IconCache, name: &str, px: i32) -> Option<Arc<Canvas>>
         .unwrap_or_else(|| stand_in(icons, name, px))
 }
 
+/// The first of `names` that draws at `px`, as [`unread`] shows it: a name still decoding shows
+/// its stand-in, and one that decodes at no size gives way to the next.
+pub fn unread_first<'a>(
+    icons: &mut IconCache,
+    names: impl IntoIterator<Item = &'a str>,
+    px: i32,
+) -> Option<Arc<Canvas>> {
+    for name in names {
+        match icons.get_unread(name, px) {
+            Some(Some(icon)) => return Some(icon),
+            Some(None) => {}
+            None => return stand_in(icons, name, px),
+        }
+    }
+    None
+}
+
 /// What `name` shows at `px` while its image is not ready: an icon file, which may sit on a mount
 /// that never answers, [`STAND_IN`]; a theme icon, due within frames, nothing.
 pub fn stand_in(icons: &mut IconCache, name: &str, px: i32) -> Option<Arc<Canvas>> {

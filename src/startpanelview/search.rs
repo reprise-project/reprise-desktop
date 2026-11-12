@@ -6,7 +6,7 @@ use reprisekit::startpanel::{ResultGroup, ResultRow};
 
 use crate::compositor::State;
 use crate::raster::Canvas;
-use crate::search::{CALC_ICON, SearchOwner, Setting, calc_row, file_row_icon, rank_settings};
+use crate::search::{SearchOwner, Setting, calc_icon, calc_row, file_row_icon, rank_settings};
 
 use super::RESULT_ICON;
 use super::lists::{app_icon, file_name, one_per_name, unread};
@@ -152,7 +152,7 @@ impl State {
         v.result_kinds = kinds;
         let mut icon_rows: Vec<Option<Canvas>> = Vec::new();
         if calc.is_some() {
-            icon_rows.push(unread(icons, CALC_ICON, px));
+            icon_rows.push(calc_icon(icons, px));
         }
         icon_rows.extend(
             v.result_apps

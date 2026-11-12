@@ -21,8 +21,8 @@ use crate::menuview::{MenuFrom, MenuKind};
 use crate::output::upload_scaled;
 use crate::raster::Rect;
 use crate::search::{
-    CALC_ICON, FileSearch, SearchOwner, Setting, WindowName, calc_row, file_icon_name, file_row,
-    file_row_icon, rank_apps, rank_settings, rank_windows, windows_first,
+    CALC_ICONS, FileSearch, SearchOwner, Setting, WindowName, calc_icon, calc_row, file_icon_name,
+    file_row, file_row_icon, rank_apps, rank_settings, rank_windows, windows_first,
 };
 use crate::window::WindowId;
 
@@ -378,7 +378,7 @@ impl State {
         let calc = calc_row(&query);
         v.model.set_calc(calc.as_ref().map(|(name, _)| Row {
             name: name.clone(),
-            icon: unread(icons, CALC_ICON, px),
+            icon: calc_icon(icons, px),
         }));
         v.answer = calc.map(|(_, answer)| answer);
         let matches = rank_apps(&query, app_index, launcher::MAX_ROWS);
@@ -461,7 +461,7 @@ impl State {
             .map(|p| file_row_icon(p, v.search.is_dir(p), mime, icons, px))
             .collect();
         let refill = launcher::Refill {
-            calc: (v.answer.as_ref()).and_then(|_| unread(icons, CALC_ICON, px)),
+            calc: (v.answer.as_ref()).and_then(|_| calc_icon(icons, px)),
             windows,
             apps,
             settings,
@@ -568,7 +568,7 @@ impl State {
         );
         v.backdrop.set(scene, glass, v.glass_tree, pane);
         let icon_name = match v.model.picked() {
-            Some(Pick::Calc) => Some(CALC_ICON.to_string()),
+            Some(Pick::Calc) => Some(CALC_ICONS[0].to_string()),
             Some(Pick::Setting(i)) => v.settings.get(i).and_then(|s| s.icon(app_index)),
             Some(Pick::Window(_)) => None,
             Some(Pick::App(i)) => v
@@ -768,23 +768,42 @@ mod tests {
         );
     }
 
+    /// The calculator row's icon.
+    fn calc_row_icon(h: &crate::harness::Harness) -> crate::raster::Canvas {
+        let m = &h.state.launcher.as_ref().expect("the launcher").model;
+        assert_eq!(m.pick(0), Some(Pick::Calc));
+        m.icons[0].clone().expect("the calculator's icon")
+    }
+
     #[test]
     fn a_cold_calculator_icon_lands_on_its_row() {
-        let root = crate::icon::svg_theme(&[CALC_ICON], &[]);
+        let root = crate::icon::svg_theme(&[CALC_ICONS[0]], &[]);
         let mut h = crate::icon::two_outputs("classic", &root);
         h.state.toggle_launcher();
         typed(&mut h, "2+3");
-        let calc = |h: &crate::harness::Harness| {
-            let m = &h.state.launcher.as_ref().expect("the launcher").model;
-            assert_eq!(m.pick(0), Some(Pick::Calc));
-            m.icons[0].clone().expect("the calculator's icon")
-        };
         assert!(
-            calc(&h).pixels.iter().all(|&p| p == 0),
+            calc_row_icon(&h).pixels.iter().all(|&p| p == 0),
             "the stand-in is blank"
         );
         crate::icon::land(&mut h);
-        assert!(crate::icon::red(&calc(&h)), "the row took the icon");
+        assert!(
+            crate::icon::red(&calc_row_icon(&h)),
+            "the row took the icon"
+        );
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_calculator_icon_that_never_decodes_gives_way_to_the_accessories_icon() {
+        let root = crate::icon::svg_theme(&["applications-accessories"], &[CALC_ICONS[0]]);
+        let mut h = crate::icon::two_outputs("classic", &root);
+        h.state.toggle_launcher();
+        typed(&mut h, "2+3");
+        crate::icon::land(&mut h);
+        assert!(
+            crate::icon::red(&calc_row_icon(&h)),
+            "applications-accessories shows once accessories-calculator fails"
+        );
         std::fs::remove_dir_all(&root).unwrap();
     }
 

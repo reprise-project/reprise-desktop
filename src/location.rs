@@ -231,21 +231,13 @@ fn asked(state: &mut State, ask: Ask) {
     }
 }
 
-/// The prompt's picture for `desktop_id`: the program's icon, else the question mark. One still
-/// decoding shows [`crate::icon::stand_in`]; one that decodes at no size gives way to the next.
+/// The prompt's picture for `desktop_id` ([`crate::icon::unread_first`]): the program's icon,
+/// else the question mark.
 fn prompt_icon(state: &mut State, desktop_id: &str) -> Option<crate::raster::Canvas> {
     let own = reprisefs::apps::entry_for_app_id(&state.app_index, desktop_id, |_| true)
         .and_then(|e| e.icon.clone());
-    for name in own.iter().map(String::as_str).chain(["dialog-question"]) {
-        match state.icons.get_unread(name, 32) {
-            Some(Some(icon)) => return Some(Arc::unwrap_or_clone(icon)),
-            Some(None) => {}
-            None => {
-                return crate::icon::stand_in(&mut state.icons, name, 32).map(Arc::unwrap_or_clone);
-            }
-        }
-    }
-    None
+    let names = own.iter().map(String::as_str).chain(["dialog-question"]);
+    crate::icon::unread_first(&mut state.icons, names, 32).map(Arc::unwrap_or_clone)
 }
 
 /// Icons landed while a prompt showed a stand-in: each open prompt looks its picture up again.
