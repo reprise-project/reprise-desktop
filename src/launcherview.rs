@@ -378,7 +378,7 @@ impl State {
         let calc = calc_row(&query);
         v.model.set_calc(calc.as_ref().map(|(name, _)| Row {
             name: name.clone(),
-            icon: icons.get(CALC_ICON, px),
+            icon: unread(icons, CALC_ICON, px),
         }));
         v.answer = calc.map(|(_, answer)| answer);
         let matches = rank_apps(&query, app_index, launcher::MAX_ROWS);
@@ -461,6 +461,7 @@ impl State {
             .map(|p| file_row_icon(p, v.search.is_dir(p), mime, icons, px))
             .collect();
         let refill = launcher::Refill {
+            calc: (v.answer.as_ref()).and_then(|_| unread(icons, CALC_ICON, px)),
             windows,
             apps,
             settings,
@@ -765,6 +766,26 @@ mod tests {
                 .iter()
                 .any(|i| i == launcher::WINDOWS_HEADING)
         );
+    }
+
+    #[test]
+    fn a_cold_calculator_icon_lands_on_its_row() {
+        let root = crate::icon::svg_theme(&[CALC_ICON], &[]);
+        let mut h = crate::icon::tests::two_outputs("classic", &root);
+        h.state.toggle_launcher();
+        typed(&mut h, "2+3");
+        let calc = |h: &crate::harness::Harness| {
+            let m = &h.state.launcher.as_ref().expect("the launcher").model;
+            assert_eq!(m.pick(0), Some(Pick::Calc));
+            m.icons[0].clone().expect("the calculator's icon")
+        };
+        assert!(
+            calc(&h).pixels.iter().all(|&p| p == 0),
+            "the stand-in is blank"
+        );
+        crate::icon::tests::land(&mut h);
+        assert!(crate::icon::tests::red(&calc(&h)), "the row took the icon");
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

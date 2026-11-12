@@ -244,6 +244,11 @@ impl History {
         }
     }
 
+    /// Each row's icon; a header shows its newest notification's.
+    pub fn icons(&self) -> &[Option<Rc<Canvas>>] {
+        &self.icons
+    }
+
     /// New entries, newest first. The selection stays on its header or notification
     /// while it is still there, the scroll inside the new rows, folded groups folded.
     /// When its whole group is gone, the selection moves to the next group's header

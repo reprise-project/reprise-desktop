@@ -64,6 +64,8 @@ pub struct FileRow {
 /// The icons [`Launcher::refill_icons`] gives the rows, each list in its rows' order.
 #[derive(Clone, Debug, Default)]
 pub struct Refill {
+    /// The calculator's row's, while it shows.
+    pub calc: Option<Canvas>,
     pub windows: Vec<Option<Canvas>>,
     pub apps: Vec<Option<Canvas>>,
     pub settings: Vec<Option<Canvas>>,
@@ -323,7 +325,8 @@ impl Launcher {
     /// Gives every row the icon the host found for it again (one that landed since), keeping the
     /// list and the highlight as they are. True when a row's icon changed.
     pub fn refill_icons(&mut self, icons: Refill) -> bool {
-        let changed = refill(self.windows.iter_mut().map(|r| &mut r.icon), icons.windows)
+        let changed = refill(self.calc.iter_mut().map(|r| &mut r.icon), vec![icons.calc])
+            | refill(self.windows.iter_mut().map(|r| &mut r.icon), icons.windows)
             | refill(self.apps.iter_mut().map(|r| &mut r.icon), icons.apps)
             | refill(
                 self.settings.iter_mut().map(|r| &mut r.icon),
@@ -335,6 +338,7 @@ impl Launcher {
         }
         for (k, line) in self.lines().into_iter().enumerate() {
             let icon = match line {
+                Line::Row(Pick::Calc) => self.calc.as_ref().and_then(|r| r.icon.clone()),
                 Line::Row(Pick::Window(i)) => self.windows[i].icon.clone(),
                 Line::Row(Pick::App(i)) => self.apps[i].icon.clone(),
                 Line::Row(Pick::Setting(i)) => self.settings[i].icon.clone(),
@@ -1140,6 +1144,7 @@ mod tests {
     fn refilled_icons_land_on_their_rows_and_keep_the_highlight() {
         let mut l = Launcher::new();
         typed(&mut l, "x");
+        l.set_calc(rows(&["= 1"]).pop());
         l.set_settings(rows(&["Display"]));
         l.set_rows(rows(&["Xa", "Xb"]));
         l.key(Key::Down);
@@ -1150,6 +1155,7 @@ mod tests {
             icon: None,
         }]);
         let refill = || Refill {
+            calc: Some(Canvas::new(2, 2)),
             apps: vec![None, Some(Canvas::new(16, 16))],
             settings: vec![Some(Canvas::new(8, 8))],
             files: vec![Some(Canvas::new(4, 4))],
@@ -1166,6 +1172,7 @@ mod tests {
         assert_eq!(widths[at("Xb")], Some(16));
         assert_eq!(widths[at("Display")], Some(8));
         assert_eq!(widths[at("x.txt")], Some(4));
+        assert_eq!(widths[at("= 1")], Some(2));
         assert_eq!(l.list.selected, selected);
         assert!(!l.refill_icons(refill()), "the same icons change nothing");
     }
