@@ -589,10 +589,10 @@ pub(super) fn change_icon_landed(
     px: i32,
     waiting: Vec<String>,
 ) -> Vec<String> {
-    let list = (d.form_mut())
-        .and_then(|f| f.body.pages_mut().first_mut())
-        .and_then(reprisekit::controls::filesheet::change_icon_list_mut);
-    let Some(list) = list else {
+    let Some(form) = (d.form_mut()).and_then(|f| f.body.pages_mut().first_mut()) else {
+        return Vec::new();
+    };
+    let Some(list) = reprisekit::controls::filesheet::change_icon_list_mut(form) else {
         return Vec::new();
     };
     let (mut still, mut gone) = (Vec::new(), Vec::new());
@@ -610,6 +610,6 @@ pub(super) fn change_icon_landed(
             None => still.push(name),
         }
     }
-    list.drop_names(&gone);
+    reprisekit::controls::filesheet::change_icon_drop(form, &gone);
     still
 }
