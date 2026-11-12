@@ -116,6 +116,10 @@ impl State {
 
     /// Bring every window in line with the current desktop: a snapped window moved off its group's desktop leaves the group and a group on every desktop moves to the one shown, a mapped window's tree is enabled when it is on it and nothing up its owner chain is minimized. A window leaving the screen loses any move, held task button or window menu, and the focused one loses focus (the caller hands it on); one arriving joins an open 3D switcher.
     pub fn desktops_changed(&mut self) {
+        self.hold_taskbars(Self::bring_in_line);
+    }
+
+    fn bring_in_line(&mut self) {
         self.wm.snap.desktop = self.desktops.current;
         let desktops: Vec<(WindowId, Option<usize>)> = (self.windows.iter())
             .map(|w| (w.id, self.desktop_of(w.id)))
@@ -181,10 +185,16 @@ impl State {
     }
 
     pub fn switch_desktop_as(&mut self, n: usize, animate: bool) {
-        if self.desktop_locked() || !self.show_desktop_as(n, animate) {
+        let shown = self.hold_taskbars(|s| {
+            let shown = !s.desktop_locked() && s.show_desktop_as(n, animate);
+            if shown {
+                s.focus_top();
+            }
+            shown
+        });
+        if !shown {
             return;
         }
-        self.focus_top();
         self.repoint(self.pointer_location(), InputTime::now());
     }
 
@@ -248,10 +258,12 @@ impl State {
         if !moved {
             return;
         }
-        self.desktops_changed();
-        if self.focused.is_none() {
-            self.focus_top();
-        }
+        self.hold_taskbars(|s| {
+            s.desktops_changed();
+            if s.focused.is_none() {
+                s.focus_top();
+            }
+        });
         self.repoint(self.pointer_location(), InputTime::now());
     }
 

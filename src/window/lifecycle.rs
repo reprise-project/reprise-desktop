@@ -249,11 +249,13 @@ impl State {
 
     pub fn map_window(&mut self, w: WindowId) {
         self.redraw_changed(|s| {
-            if s.win(w).is_some_and(|x| x.override_redirect) {
-                s.map_or_window(w);
-            } else {
-                s.map_managed(w);
-            }
+            s.hold_taskbars(|s| {
+                if s.win(w).is_some_and(|x| x.override_redirect) {
+                    s.map_or_window(w);
+                } else {
+                    s.map_managed(w);
+                }
+            })
         });
     }
 
@@ -619,7 +621,7 @@ impl State {
     }
 
     pub fn unmap_window(&mut self, w: WindowId) {
-        self.redraw_changed(|s| s.unmap(w));
+        self.redraw_changed(|s| s.hold_taskbars(|s| s.unmap(w)));
     }
 
     fn unmap(&mut self, w: WindowId) {
@@ -653,7 +655,7 @@ impl State {
     }
 
     pub fn destroy_window(&mut self, w: WindowId) {
-        self.redraw_changed(|s| s.destroy(w));
+        self.redraw_changed(|s| s.hold_taskbars(|s| s.destroy(w)));
     }
 
     fn destroy(&mut self, w: WindowId) {

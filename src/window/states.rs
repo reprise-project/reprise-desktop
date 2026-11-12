@@ -280,7 +280,7 @@ impl State {
     }
 
     pub fn set_minimized(&mut self, w: WindowId, on: bool) {
-        self.redraw_changed(|s| s.minimize(w, on));
+        self.redraw_changed(|s| s.hold_taskbars(|s| s.minimize(w, on)));
     }
 
     fn minimize(&mut self, w: WindowId, on: bool) {
