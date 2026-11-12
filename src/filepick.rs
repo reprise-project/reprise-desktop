@@ -76,6 +76,9 @@ pub struct FilePicker {
     recent_tile: bool,
     folders: reprisefs::folders::FolderTable,
     icons: Icons,
+    /// The icons the folder shown wears, swapped in as stand-ins land
+    /// ([`FilePicker::icons_landed`]).
+    listed: reprisekit::icontheme::ListingIcons,
     /// The Files of type filter the listing was built for; a change
     /// relists the folder.
     filter: usize,
@@ -273,6 +276,7 @@ impl FilePicker {
             recent_tile: recent,
             folders: reprisefs::folders::FolderTable::default(),
             icons,
+            listed: Default::default(),
             filter: 0,
             requests: Vec::new(),
             pending: Vec::new(),

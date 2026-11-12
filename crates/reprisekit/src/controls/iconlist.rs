@@ -107,6 +107,18 @@ impl IconList {
         }
     }
 
+    /// Takes the icons in `gone` off the list, the picked one kept and still picked.
+    pub fn drop_names(&mut self, gone: &[String]) {
+        let picked = self.picked().map(str::to_string);
+        let keep = |n: &String| !gone.contains(n) || picked.as_ref() == Some(n);
+        let (names, icons) = (self.names.drain(..).zip(self.icons.drain(..)))
+            .filter(|(n, _)| keep(n))
+            .unzip();
+        (self.names, self.icons) = (names, icons);
+        self.selected = picked.and_then(|p| self.names.iter().position(|n| *n == p));
+        self.left = self.left.min(self.columns().saturating_sub(1));
+    }
+
     pub fn follow(&mut self, lay: &Layout) {
         if let Some(i) = self.selected {
             let col = i / ROWS;
@@ -310,5 +322,22 @@ mod tests {
         assert_eq!(l.left, 2);
         assert!(l.pick("i7"));
         assert_eq!(l.picked(), Some("i7"));
+    }
+
+    #[test]
+    fn dropped_names_leave_the_list_and_the_pick_stays() {
+        let mut l = list(40);
+        l.left = 9;
+        assert!(l.pick("i7"));
+        let gone: Vec<String> = (0..32).map(|i| format!("i{i}")).collect();
+        l.drop_names(&gone);
+        let names: Vec<&str> = l.names.iter().map(String::as_str).collect();
+        assert_eq!(
+            names,
+            ["i7", "i32", "i33", "i34", "i35", "i36", "i37", "i38", "i39"]
+        );
+        assert_eq!(l.icons.len(), 9);
+        assert_eq!(l.picked(), Some("i7"));
+        assert_eq!(l.left, 2, "the view stays on the list");
     }
 }

@@ -85,6 +85,8 @@ pub struct DialogView {
     icons: Option<(IconKey, DialogIcons)>,
     /// Jobs decoding icon files the icons wait for; they are looked up again when one lands.
     decodes: crate::fsjobs::Reads<IconFiles>,
+    /// Theme names Change Icon's list wears a blank stand-in for until they land.
+    waiting: Vec<String>,
     /// Last full raster without its caret, and its scale: a blink repaints the field over a clone.
     still_canvas: Option<(Canvas, i32)>,
     /// Keyboard cues: a pointer-opened dialog starts without them ([`Cues::key`]), a key-opened one has them.

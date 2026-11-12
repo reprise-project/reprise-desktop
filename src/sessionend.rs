@@ -1109,7 +1109,7 @@ mod tests {
     fn a_cold_warning_icon_lands_on_the_open_prompt() {
         use reprisekit::controls::form::Control;
         let root = crate::icon::svg_theme(&["dialog-warning"], &[]);
-        let mut h = crate::icon::tests::two_outputs("classic", &root);
+        let mut h = crate::icon::two_outputs("classic", &root);
         h.state.ending = Some(Ending {
             goal: Goal::LogOff,
             cmd: None,
@@ -1135,9 +1135,9 @@ mod tests {
             blank.pixels.iter().all(|&p| p == 0),
             "the stand-in is blank"
         );
-        crate::icon::tests::land(&mut h);
+        crate::icon::land(&mut h);
         assert!(
-            picture(&h).is_some_and(|c| crate::icon::tests::red(&c)),
+            picture(&h).is_some_and(|c| crate::icon::red(&c)),
             "the prompt took the icon"
         );
         std::fs::remove_dir_all(&root).unwrap();

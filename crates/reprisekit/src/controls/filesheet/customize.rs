@@ -219,6 +219,13 @@ pub fn change_icon_picked(form: &Form) -> Option<String> {
     }
 }
 
+pub fn change_icon_list_mut(form: &mut Form) -> Option<&mut crate::controls::iconlist::IconList> {
+    match form.item_mut(CHANGE_ICON_LIST).map(|i| &mut i.control) {
+        Some(Control::IconList(l)) => Some(l),
+        _ => None,
+    }
+}
+
 pub fn change_icon_restore(form: &mut Form) {
     let cm = form.controls();
     let Some(it) = form.item_mut(CHANGE_ICON_LIST) else {

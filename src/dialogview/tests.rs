@@ -410,3 +410,130 @@ fn a_dialog_asks_for_frames_only_on_the_outputs_it_covers() {
     h.state.blink_dialog();
     assert_eq!(outputs(), vec!["TEST-2"], "a caret blink on TEST-2");
 }
+
+/// A Browse dialog listed before its icons decode: each entry wears a blank stand-in, and once
+/// the decodes land the plain folder wears the theme's folder and the folder whose own icon
+/// decodes at no size picks the folder too.
+#[test]
+fn a_file_dialog_entry_takes_its_cold_svg_icon_and_a_broken_one_picks_again() {
+    use crate::icon::{land_until, red, svg_theme, two_outputs};
+    let root = svg_theme(&["folder"], &["folder-music"]);
+    let mut h = two_outputs("classic", &root);
+    let dir = root.join("listed");
+    for sub in ["Plain", "Music"] {
+        std::fs::create_dir_all(dir.join(sub)).unwrap();
+    }
+    reprisefs::meta::set_folder_icon(&dir.join("Music"), Some("folder-music")).unwrap();
+    let u = reprisekit::theme::TextUnits::ONE;
+    let icons = crate::filepick::icons(&mut h.state.icons, 1, u);
+    assert!(icons.waiting, "the dialog's own folder is cold");
+    let mut picker = crate::filepick::FilePicker::run_command(&dir, icons, false);
+    for r in picker.take_requests() {
+        picker.reply(r.run(), &mut h.state.icons, 1);
+    }
+    h.state.open_dialog(Dialog::browse(picker));
+    let worn = |h: &crate::harness::Harness, name: &str| {
+        let p = h.state.dialogs.views.last()?.dialog.picker()?;
+        let e = p.dlg.entries().iter().find(|e| e.name == name)?;
+        Some([&e.icon, &e.icon32, &e.icon48].map(|c| c.as_deref().cloned()))
+    };
+    for name in ["Plain", "Music"] {
+        let blank = worn(&h, name).expect("listed").into_iter().flatten();
+        assert!(
+            blank
+                .map(|c| c.pixels.iter().all(|&p| p == 0))
+                .eq([true; 3]),
+            "{name} wears a blank stand-in"
+        );
+    }
+    crate::backend::take_asks();
+    let landed = |h: &crate::harness::Harness, name: &str| {
+        worn(h, name).is_some_and(|s| s.iter().all(|c| c.as_ref().is_some_and(red)))
+    };
+    land_until(&mut h, |h| landed(h, "Plain") && landed(h, "Music"));
+    let p = h
+        .state
+        .dialogs
+        .views
+        .last()
+        .unwrap()
+        .dialog
+        .picker()
+        .unwrap();
+    assert!(!p.waits_for_icons(), "no stand-in left");
+    let asked = crate::backend::take_asks();
+    assert!(
+        !asked.is_empty() && asked.iter().all(|(o, _)| o == "TEST-1"),
+        "only the dialog's output: {asked:?}"
+    );
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+/// Change Icon opens with blank stand-ins for cold SVGs and takes each icon as it lands; a
+/// name whose file decodes at no size leaves the list.
+#[test]
+fn change_icon_takes_its_cold_svgs_as_they_land_and_drops_a_broken_one() {
+    use crate::icon::{land_until, red, svg_theme, two_outputs};
+    let root = svg_theme(&["folder", "folder-music"], &["folder-videos"]);
+    let mut h = two_outputs("classic", &root);
+    h.state.open_change_icon("Songs", None, false);
+    let list = |h: &crate::harness::Harness| {
+        let d = &h.state.dialogs.views.last().expect("Change Icon").dialog;
+        let form = d.form().and_then(|f| f.body.pages().first().cloned())?;
+        match form
+            .item(reprisekit::controls::filesheet::CHANGE_ICON_LIST)?
+            .control
+            .clone()
+        {
+            reprisekit::controls::form::Control::IconList(l) => Some(*l),
+            _ => None,
+        }
+    };
+    let opened = list(&h).expect("the icon list");
+    assert_eq!(opened.names, ["folder", "folder-music", "folder-videos"]);
+    assert!(
+        (opened.icons.iter()).all(|c| c.as_ref().is_some_and(|c| c.pixels.iter().all(|&p| p == 0))),
+        "blank stand-ins"
+    );
+    assert_eq!(opened.picked(), Some("folder"));
+    crate::backend::take_asks();
+    land_until(&mut h, |h| list(h).is_some_and(|l| l.names.len() == 2));
+    let landed = list(&h).unwrap();
+    assert_eq!(landed.names, ["folder", "folder-music"]);
+    assert!(landed.icons.iter().all(|c| c.as_ref().is_some_and(red)));
+    assert_eq!(landed.picked(), Some("folder"));
+    assert!(h.state.dialogs.views.last().unwrap().waiting.is_empty());
+    let asked = crate::backend::take_asks();
+    assert!(
+        !asked.is_empty() && asked.iter().all(|(o, _)| o == "TEST-1"),
+        "only the dialog's output: {asked:?}"
+    );
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+/// A Properties sheet opened on a guessed type icon that turns out to decode at no size wears
+/// the icon its file gets now.
+#[test]
+fn a_properties_header_whose_guessed_icon_is_refused_wears_the_next_one() {
+    use crate::icon::{land_until, red, svg_theme, two_outputs};
+    let root = svg_theme(&["text-x-generic"], &["text-plain"]);
+    let mut h = two_outputs("classic", &root);
+    let file = root.join("notes.txt");
+    std::fs::write(&file, "x").unwrap();
+    let info = reprisefs::props::glance(&file, "notes.txt", &[]).unwrap();
+    assert!(
+        h.state.icons.has_unread("text-plain"),
+        "counted without decoding"
+    );
+    h.state.open_properties(&info, "text-plain", (10, 10));
+    let header = |h: &crate::harness::Harness| {
+        let v = h.state.dialogs.views.last()?;
+        let (_, icons) = v.icons.as_ref()?;
+        Some((v.dialog.icon.clone()?, icons.icon.clone()))
+    };
+    land_until(&mut h, |h| {
+        header(h)
+            .is_some_and(|(name, icon)| name == "text-x-generic" && icon.is_some_and(|c| red(&c)))
+    });
+    std::fs::remove_dir_all(&root).unwrap();
+}

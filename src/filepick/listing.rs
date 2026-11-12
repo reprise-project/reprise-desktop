@@ -144,12 +144,7 @@ impl FilePicker {
             || self.icons.theme != ThemeOf::of(cache)
             || self.list_px() != shellview::list_icon_px(u);
         if rescaled || self.icons.text != u {
-            self.icons = icons(cache, scale, u);
-            let tiles = self.tiles();
-            self.dlg.set_place_icons(tile_icons(&tiles, &self.icons));
-            let tb = |i: usize| self.icons.toolbar.get(i).cloned().flatten();
-            self.dlg.set_toolbar_icons(tb(0), tb(1), tb(2), tb(3));
-            self.dlg.set_crumb_icons(vec![self.icons.folder.clone()]);
+            self.wear(icons(cache, scale, u));
             if rescaled
                 && self.listing.is_none()
                 && let Some(id) = self.dlg.folder()
@@ -170,6 +165,39 @@ impl FilePicker {
             e.thumb = None;
         }
         true
+    }
+
+    /// The dialog's places, toolbar and Look in folder wear `icons`.
+    fn wear(&mut self, icons: Icons) {
+        self.icons = icons;
+        let tiles = self.tiles();
+        self.dlg.set_place_icons(tile_icons(&tiles, &self.icons));
+        let tb = |i: usize| self.icons.toolbar.get(i).cloned().flatten();
+        self.dlg.set_toolbar_icons(tb(0), tb(1), tb(2), tb(3));
+        self.dlg.set_crumb_icons(vec![self.icons.folder.clone()]);
+    }
+
+    /// Whether the dialog or an entry wears a stand-in for a theme icon still decoding.
+    pub fn waits_for_icons(&self) -> bool {
+        self.icons.waiting || self.listed.waits()
+    }
+
+    /// Icons landed in `cache`: the stand-ins worn take theirs, and the folder is listed again
+    /// when a name an entry wears decodes at no size, so the entry picks another. True when an
+    /// icon changed.
+    pub fn icons_landed(&mut self, cache: &mut IconCache) -> bool {
+        let mut changed = false;
+        if self.icons.waiting {
+            let fresh = icons(cache, self.icons.scale, self.icons.text);
+            changed = fresh != self.icons;
+            self.wear(fresh);
+        }
+        let (swaps, broken) = self.listed.landed(cache);
+        shellview::swap_icons(self.dlg.entries_mut(), &swaps);
+        if !broken.is_empty() {
+            self.refresh();
+        }
+        changed || !swaps.is_empty()
     }
 
     /// List and Details' icon size at the text size the dialog's icons were fetched at.
@@ -343,12 +371,12 @@ impl FilePicker {
                 it if it.exec && !it.is_dir => "application-x-executable".to_string(),
                 it => {
                     reprisefs::icons::item_icon_with(it, l.own_icon.as_deref(), &specials, &|n| {
-                        cache.has(n)
+                        cache.has_unread(n)
                     })
                 }
             })
             .collect();
-        let mut shared = ListingIcons::device(scale).with_list(list);
+        let mut shared = ListingIcons::device(scale).with_list(list).unread();
         let mut pictures = Vec::new();
         let entries = rows
             .into_iter()
@@ -382,6 +410,7 @@ impl FilePicker {
                 e
             })
             .collect();
+        self.listed = shared;
         (entries, pictures)
     }
 

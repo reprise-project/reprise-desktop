@@ -138,6 +138,7 @@ impl State {
             wheel: 0,
             icons: None,
             decodes: Default::default(),
+            waiting: Vec::new(),
             still_canvas: None,
             cues: Cues::opened(self.key_input.last_key_input),
             fade: None,

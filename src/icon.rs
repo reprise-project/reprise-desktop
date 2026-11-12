@@ -154,6 +154,7 @@ pub enum IconWaiter {
     NotifyCenter,
     Location,
     SessionEnd,
+    Drag,
 }
 
 /// Icon decodes off the loop: what is decoding, what landed since the turn's end, and who waits.
@@ -358,6 +359,9 @@ impl State {
             return;
         }
         self.desktop_names_refused(&refused);
+        if !refused.is_empty() {
+            self.sheets_names_refused(&refused);
+        }
         let keys: Vec<&str> = landed.iter().map(|(k, ..)| k.as_str()).collect();
         self.menu_icons_landed(&landed);
         self.window_icon_landed(&keys);
@@ -378,6 +382,7 @@ impl State {
                 IconWaiter::NotifyCenter => crate::notifycenter::refresh(self),
                 IconWaiter::Location => crate::location::icons_landed(self),
                 IconWaiter::SessionEnd => crate::sessionend::icons_landed(self),
+                IconWaiter::Drag => self.drag_icons_landed(),
             }
         }
     }
@@ -470,6 +475,46 @@ pub(crate) fn svg_theme(names: &[&str], broken: &[&str]) -> std::path::PathBuf {
     root
 }
 
+/// Two outputs, Start menu `style`, theme icons from `root`, and file jobs on threads.
+#[cfg(test)]
+pub(crate) fn two_outputs(style: &str, root: &std::path::Path) -> crate::harness::Harness {
+    use reprisekit::icontheme::IconTheme;
+    let toml = format!("startmenu_style = \"{style}\"\n");
+    let config = crate::config::Config::parse(&toml).expect("the config");
+    let mut h = crate::harness::Harness::with_config(config);
+    crate::fsjobs::setup(&mut h.state);
+    h.output("TEST-1", 1024, 768);
+    h.output("TEST-2", 1024, 768);
+    h.state.icons = IconCache::new(IconTheme::load("test", &[root.to_path_buf()]));
+    h
+}
+
+/// Turns the loop until no icon decodes.
+#[cfg(test)]
+pub(crate) fn land(h: &mut crate::harness::Harness) {
+    land_until(h, |h| h.state.icon_jobs.decoding.is_empty());
+}
+
+/// Turns the loop until `done`.
+#[cfg(test)]
+pub(crate) fn land_until(
+    h: &mut crate::harness::Harness,
+    done: impl Fn(&crate::harness::Harness) -> bool,
+) {
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    h.dispatch();
+    while !done(h) {
+        assert!(std::time::Instant::now() < end, "the icons never landed");
+        h.run_for(5);
+    }
+}
+
+/// Whether `c` is [`svg_theme`]'s red at its middle.
+#[cfg(test)]
+pub(crate) fn red(c: &Canvas) -> bool {
+    c.get(c.width as i32 / 2, c.height as i32 / 2) == 0xFFFF_0000
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -557,33 +602,6 @@ pub(crate) mod tests {
         assert!(crate::taskbarview::quick_icon(&mut icons, &item, 16).is_none());
         assert_eq!(icons.take_wanted(), [(file.to_string(), 16)]);
         assert!(quick_wears(std::slice::from_ref(&item), file));
-    }
-
-    /// Two outputs, Start menu `style`, theme icons from `root`, and file jobs on threads.
-    pub(crate) fn two_outputs(style: &str, root: &std::path::Path) -> crate::harness::Harness {
-        use reprisekit::icontheme::IconTheme;
-        let toml = format!("startmenu_style = \"{style}\"\n");
-        let config = crate::config::Config::parse(&toml).expect("the config");
-        let mut h = crate::harness::Harness::with_config(config);
-        crate::fsjobs::setup(&mut h.state);
-        h.output("TEST-1", 1024, 768);
-        h.output("TEST-2", 1024, 768);
-        h.state.icons = IconCache::new(IconTheme::load("test", &[root.to_path_buf()]));
-        h
-    }
-
-    /// Turns the loop until no icon decodes.
-    pub(crate) fn land(h: &mut crate::harness::Harness) {
-        let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        h.dispatch();
-        while !h.state.icon_jobs.decoding.is_empty() {
-            assert!(std::time::Instant::now() < end, "the icons never landed");
-            h.run_for(5);
-        }
-    }
-
-    pub(crate) fn red(c: &Canvas) -> bool {
-        c.get(c.width as i32 / 2, c.height as i32 / 2) == 0xFFFF_0000
     }
 
     fn run_icon(h: &crate::harness::Harness) -> Option<Canvas> {
