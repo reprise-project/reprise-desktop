@@ -155,8 +155,7 @@ fn leave(state: &mut State, now: Instant) {
     };
     log::debug!("bar on {} leaves", b.output.name());
     if !state.scene.outputs().contains(&b.output) {
-        state.scene.destroy(b.tree);
-        state.redraw_all();
+        state.destroy_redrawn(b.tree);
         return;
     }
     b.hot = None;
@@ -174,8 +173,7 @@ pub fn end(state: &mut State) {
         .partition(|b| outputs.contains(&b.output));
     state.snap_bar.leaving = kept;
     for b in gone {
-        state.scene.destroy(b.tree);
-        state.redraw_all();
+        state.destroy_redrawn(b.tree);
     }
     set_thumb(state, false);
     let Some(b) = state.snap_bar.shown.as_mut() else {
@@ -242,8 +240,7 @@ fn frame_leaving(state: &mut State, output: &Output) {
             continue;
         }
         if b.model.gone(now) {
-            state.scene.destroy(b.tree);
-            state.redraw_all();
+            state.destroy_redrawn(b.tree);
             continue;
         }
         place_bar(state, &mut b);
@@ -321,8 +318,7 @@ fn destroy(state: &mut State) {
     set_thumb(state, false);
     if let Some(b) = state.snap_bar.shown.take() {
         log::debug!("bar on {} removed", b.output.name());
-        state.scene.destroy(b.tree);
-        state.redraw_all();
+        state.destroy_redrawn(b.tree);
     }
 }
 
