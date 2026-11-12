@@ -1049,19 +1049,7 @@ fn a_small_blur_over_rows_a_multiple_of_256_px_costs_more() {
         resvg::usvg::Tree::from_str(&svg, &Default::default()).unwrap()
     };
     let (aliased, other) = (blurs(256), blurs(250));
-    // The least budget each draws within at 64 px, one pixel to a unit.
-    let cost = |tree: &resvg::usvg::Tree| {
-        let (mut lo, mut hi) = (0.0, 1e9);
-        while hi - lo > 1e4 {
-            let mid = (lo + hi) / 2.0;
-            match svg_over_budget(tree, true, 64, mid) {
-                None => hi = mid,
-                Some(_) => lo = mid,
-            }
-        }
-        hi
-    };
-    let ratio = cost(&aliased) / cost(&other);
+    let ratio = least_budget(&aliased, 64) / least_budget(&other, 64);
     assert!(
         ratio > 1.5,
         "a 256 px row costs 1.5 times a 250 px one or more, not {ratio}"
@@ -1110,6 +1098,196 @@ fn every_filter_primitive_is_priced_by_its_attributes() {
     assert!(
         (64..256).contains(&side),
         "drawn between 64 and 255 px, not {side}"
+    );
+}
+
+/// The least budget `tree` draws within at `px`, to a thousandth; 1e13 when no budget does.
+fn least_budget(tree: &resvg::usvg::Tree, px: u32) -> f64 {
+    let (mut lo, mut hi) = (0.0, 1e13);
+    while hi - lo > 1e3 + hi * 1e-3 {
+        let mid = (lo + hi) / 2.0;
+        match svg_over_budget(tree, true, px, mid) {
+            None => hi = mid,
+            Some(_) => lo = mid,
+        }
+    }
+    hi
+}
+
+/// A flood and three colour matrices over a region of 2e5 units a side, under `transform`.
+fn wide_filter_tree(transform: &str) -> resvg::usvg::Tree {
+    budget_tree(&format!(
+        r##"<filter id="f" filterUnits="userSpaceOnUse" x="-1e5" y="-1e5" width="2e5" height="2e5"><feFlood flood-color="#f00"/>{}</filter><g transform="{transform}"><g filter="url(#f)">{SHAPE}</g></g>"##,
+        r#"<feColorMatrix type="saturate" values=".5"/>"#.repeat(3)
+    ))
+}
+
+/// Work per pixel of [`wide_filter_tree`]'s layer: the layer, the filter, the flood and three
+/// colour matrices.
+const WIDE_FILTER_WORK: f64 = 18.0 + 25.0 + 2.0 + 3.0 * 35.0;
+
+/// resvg 0.49's `render_group` for a filtered group under `ts` in `bound`: the bound inside it,
+/// its layer's pixels and the transform inside it. None when resvg skips the group.
+fn resvg_filter_layer(
+    ts: resvg::tiny_skia::Transform,
+    region: resvg::tiny_skia::Rect,
+    bound: resvg::tiny_skia::IntRect,
+) -> Option<(resvg::tiny_skia::IntRect, f64, resvg::tiny_skia::Transform)> {
+    use resvg::tiny_skia::{IntRect, Transform};
+    let sx = ts.sx.hypot(ts.ky);
+    let sy = ts.kx.hypot(ts.sy);
+    let rest = Transform::from_row(ts.sx / sx, ts.ky / sx, ts.kx / sy, ts.sy / sy, 0.0, 0.0);
+    let inv = rest.invert()?;
+    let bound = bound.to_rect().transform(inv)?.round_out()?;
+    let ts = inv.pre_concat(ts);
+    let bbox = region.transform(ts)?;
+    let ibbox = IntRect::from_xywh(
+        bbox.x().floor() as i32,
+        bbox.y().floor() as i32,
+        bbox.width().ceil().max(1.0) as u32,
+        bbox.height().ceil().max(1.0) as u32,
+    )?;
+    let layer = IntRect::from_ltrb(
+        ibbox.left().max(bound.left()),
+        ibbox.top().max(bound.top()),
+        ibbox.right().min(bound.right()),
+        ibbox.bottom().min(bound.bottom()),
+    )?;
+    let dx = bbox.x() - (bbox.x() - layer.x() as f32);
+    let dy = bbox.y() - (bbox.y() - layer.y() as f32);
+    let shifted = Transform::from_translate(-dx, -dy).pre_concat(ts);
+    Some((bound, layer.width() as f64 * layer.height() as f64, shifted))
+}
+
+/// The wide region at 16 px: its canvas bound and region.
+fn wide_region() -> (resvg::tiny_skia::IntRect, resvg::tiny_skia::Rect) {
+    use resvg::tiny_skia::{IntRect, Rect};
+    let bound = IntRect::from_xywh(-32, -32, 80, 80).unwrap();
+    (bound, Rect::from_xywh(-1e5, -1e5, 2e5, 2e5).unwrap())
+}
+
+/// resvg stretches a skewed filtered group's layer bound by about tan(angle) each way: at 89.5
+/// degrees a 16 px icon asks for a layer 9000 px a side.
+#[test]
+fn a_steeply_skewed_filter_region_draws_smaller_or_is_refused() {
+    assert_eq!(
+        svg_side(&wide_filter_tree("skewX(0)"), true, 16, SVG_MAX_WORK),
+        Ok(16)
+    );
+    for angle in [88.0, 89.0, 89.5, 89.99, 89.9999] {
+        let tree = wide_filter_tree(&format!("skewX({angle})"));
+        assert!(
+            !matches!(svg_side(&tree, true, 16, SVG_MAX_WORK), Ok(16)),
+            "skewX({angle}) is not drawn at 16 px"
+        );
+    }
+    let svg = budget_svg(&format!(
+        r##"<filter id="f" filterUnits="userSpaceOnUse" x="-1e5" y="-1e5" width="2e5" height="2e5"><feFlood flood-color="#f00"/>{}</filter><g transform="skewX(89.5)"><g filter="url(#f)">{SHAPE}</g></g>"##,
+        r#"<feColorMatrix type="saturate" values=".5"/>"#.repeat(3)
+    ));
+    assert!(decode_bytes(&tmp("skewed.svg"), svg.as_bytes(), 16, true).is_none());
+}
+
+/// The price covers every pixel of the layer resvg draws, at every angle of a sweep, and never
+/// falls as a skew steepens, so no angle between two priced ones slips through.
+#[test]
+fn a_skewed_or_rotated_filter_region_is_priced_at_least_at_the_layer_resvg_draws() {
+    use resvg::tiny_skia::Transform;
+    let (bound, region) = wide_region();
+    let covers = |transform: &str, ts: Transform| {
+        let price = least_budget(&wide_filter_tree(transform), 16);
+        if let Some((_, pixels, _)) = resvg_filter_layer(ts, region, bound) {
+            assert!(
+                price >= pixels * WIDE_FILTER_WORK,
+                "{transform}: {price} covers {pixels} px"
+            );
+        }
+        price
+    };
+    for (kind, skew) in [
+        ("skewX", Transform::from_row(1.0, 0.0, 1.0, 1.0, 0.0, 0.0)),
+        ("skewY", Transform::from_row(1.0, 1.0, 0.0, 1.0, 0.0, 0.0)),
+    ] {
+        let mut last = 0.0;
+        for step in 0..900 {
+            let angle = step as f32 / 10.0;
+            let tan = angle.to_radians().tan();
+            let ts = Transform::from_row(1.0, skew.ky * tan, skew.kx * tan, 1.0, 0.0, 0.0);
+            let price = covers(&format!("{kind}({angle})"), ts);
+            assert!(
+                price >= last * 0.998,
+                "{kind}({angle}) costs {price}, at least the {last} of a shallower one"
+            );
+            last = price;
+        }
+    }
+    for angle in 0..360 {
+        let ts = Transform::from_rotate_at(angle as f32, 8.0, 8.0);
+        covers(&format!("rotate({angle} 8 8)"), ts);
+    }
+}
+
+/// A skewed filtered group inside another stretches the bound again.
+#[test]
+fn nested_skewed_filter_regions_are_priced_at_least_at_the_layers_resvg_draws() {
+    use resvg::tiny_skia::Transform;
+    let (bound, region) = wide_region();
+    for angle in [10.0f32, 30.0, 45.0, 60.0, 70.0, 75.0, 80.0] {
+        let tree = budget_tree(&format!(
+            r##"<filter id="f" filterUnits="userSpaceOnUse" x="-1e5" y="-1e5" width="2e5" height="2e5"><feFlood/></filter><g transform="skewX({angle})"><g filter="url(#f)"><g transform="skewY({angle})"><g filter="url(#f)">{SHAPE}</g></g></g></g>"##
+        ));
+        let tan = angle.to_radians().tan();
+        let outer = Transform::from_row(1.0, 0.0, tan, 1.0, 0.0, 0.0);
+        let (bound, first, inside) = resvg_filter_layer(outer, region, bound).unwrap();
+        let inner = inside.pre_concat(Transform::from_row(1.0, tan, 0.0, 1.0, 0.0, 0.0));
+        let (_, second, _) = resvg_filter_layer(inner, region, bound).unwrap();
+        let pixels = first + second;
+        let price = least_budget(&tree, 16);
+        assert!(
+            price >= pixels * (18.0 + 25.0 + 2.0),
+            "skewX then skewY({angle}): {price} covers {pixels} px"
+        );
+    }
+}
+
+/// resvg draws an SVG picture through a pixmap the size of the one it lands in and bounds the
+/// picture's layers by five times that: in a layer five times the canvas, 25 times the canvas.
+#[test]
+fn an_svg_picture_in_a_wide_layer_is_priced_with_the_layers_it_draws() {
+    let picture = budget_svg(&format!(
+        r##"<filter id="f" filterUnits="userSpaceOnUse" x="-1e5" y="-1e5" width="2e5" height="2e5"><feFlood/>{}</filter><g filter="url(#f)">{SHAPE}</g>"##,
+        r#"<feColorMatrix type="saturate" values=".5"/>"#.repeat(20)
+    ));
+    let href = data_url("image/svg+xml", picture.as_bytes());
+    let at_canvas = budget_tree(&format!(r#"<image width="16" height="16" href="{href}"/>"#));
+    assert_eq!(svg_side(&at_canvas, true, 16, SVG_MAX_WORK), Ok(16));
+    let in_layer = budget_tree(&format!(
+        r#"<g opacity=".5"><image x="-32" y="-32" width="80" height="80" href="{href}"/></g>"#
+    ));
+    let side = svg_side(&in_layer, true, 16, SVG_MAX_WORK).unwrap();
+    assert!(
+        (4..16).contains(&side),
+        "drawn between 4 and 15 px, not {side}"
+    );
+}
+
+/// A filter keeps each primitive's result: 200 floods over a region five times a 48 px canvas
+/// cost little work but about 44 MiB of pixmaps.
+#[test]
+fn an_svg_whose_pixmaps_pass_the_size_limit_draws_smaller() {
+    let floods = budget_tree(&format!(
+        r##"<filter id="f" filterUnits="userSpaceOnUse" x="-32" y="-32" width="80" height="80">{}</filter><g filter="url(#f)">{SHAPE}</g>"##,
+        r#"<feFlood flood-color="red"/>"#.repeat(200)
+    ));
+    assert_eq!(svg_side(&floods, true, 16, SVG_MAX_WORK), Ok(16));
+    assert_eq!(
+        svg_over_budget(&floods, true, 48, f64::INFINITY),
+        Some("pixmaps past the size limit")
+    );
+    let side = svg_side(&floods, true, 48, SVG_MAX_WORK).unwrap();
+    assert!(
+        (12..48).contains(&side),
+        "drawn between 12 and 47 px, not {side}"
     );
 }
 
