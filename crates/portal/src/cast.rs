@@ -9,6 +9,10 @@
 //! The consumer therefore reads frames the compositor wrote directly, no
 //! copy in between.
 //!
+//! Timing: a driving stream starts a graph cycle per frame handed on, so frames go out as the
+//! source changes and a still source starts none; asks keep to the negotiated maximum rate.
+//! A stream that follows another driver queues as before.
+//!
 //! Buffers: when the capture session names a dma-buf device, one
 //! `EnumFormat` per dma-buf format goes first with its modifiers as an
 //! unfixated choice (MANDATORY | DONT_FIXATE), the shm formats after.
@@ -46,6 +50,7 @@ use std::io::Cursor;
 use std::os::fd::AsRawFd;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::{Duration, Instant};
 use wayland_client::protocol::wl_shm;
 use wayland_protocols::ext::image_copy_capture::v1::client::ext_image_copy_capture_frame_v1::FailureReason;
 
@@ -69,6 +74,14 @@ const MAX_CURSOR_PX: u32 = 256;
 /// The most regions a frame's `SPA_META_VideoDamage` lists; more become
 /// their bounding box.
 const MAX_DAMAGE_RECTS: usize = 16;
+
+/// The first wait of a driving stream with no free buffer before an empty graph cycle, in which
+/// consumers hand released buffers back; it doubles per fruitless cycle up to the max.
+const STARVED_RETRY: Duration = Duration::from_millis(5);
+const STARVED_RETRY_MAX: Duration = Duration::from_millis(160);
+
+/// The frame rate offered as the maximum when no output reported its refresh rate.
+const FALLBACK_REFRESH_MHZ: u32 = 60_000;
 
 /// A running stream: its PipeWire node id and the handle to stop it.
 pub struct Cast {
@@ -184,6 +197,17 @@ struct Data {
     /// Frames answered so far, for the debug log of the first captures.
     calls: u64,
     damage: DamageState,
+    /// The source's refresh rate in mHz, offered as the maximum frame rate.
+    refresh: u32,
+    pace: Pace,
+    /// Wakes the loop for a paced ask or a cycle owed while starved.
+    timer: Timer,
+    /// When `timer` fires, if armed.
+    wake_at: Option<Instant>,
+    /// No buffer is free, none is out with the compositor and none is held.
+    starved: bool,
+    /// How long a starved driving stream waits for its next empty cycle.
+    retry: Duration,
 }
 
 /// A frame buffer of either kind.
@@ -291,6 +315,10 @@ fn run(
     let format = constraints
         .pick_format()
         .ok_or("the compositor offered no shm format")?;
+    let refresh = match wl.refresh(&target) {
+        0 => FALLBACK_REFRESH_MHZ,
+        r => r,
+    };
     if constraints.width == 0 || constraints.height == 0 {
         return Err("the capture source is empty".into());
     }
@@ -335,15 +363,31 @@ fn run(
         seq: 0,
         calls: 0,
         damage: DamageState::new(),
+        refresh,
+        pace: Pace::default(),
+        timer: Timer::new()?,
+        wake_at: None,
+        starved: false,
+        retry: STARVED_RETRY,
     };
     let data_gbm = data.gbm.is_some();
     let fd = Fd(data.wl.fd());
+    let timer_fd = Fd(data.timer.0.as_raw_fd());
     // The stream's callbacks and the Wayland fd's share the state; each
     // runs from the loop on its own, so a borrow never nests.
     let data = Rc::new(RefCell::new(data));
     let _listener = stream
         .add_local_listener_with_user_data(data.clone())
-        .state_changed(|stream, d, _old, new| on_state(stream, &mut d.borrow_mut(), new))
+        .state_changed(|stream, d, _old, new| {
+            let d = &mut *d.borrow_mut();
+            let streaming = matches!(new, StreamState::Streaming);
+            on_state(stream, d, new);
+            // A driving stream sees no process event until it triggers one: the first ask
+            // starts here.
+            if streaming {
+                on_process(stream, d);
+            }
+        })
         .param_changed(|stream, d, id, pod| on_param(stream, &mut d.borrow_mut(), id, pod))
         .add_buffer(|_stream, d, buf| {
             let d = &mut *d.borrow_mut();
@@ -355,21 +399,32 @@ fn run(
             }
         })
         .remove_buffer(|_stream, d, buf| on_remove_buffer(&mut d.borrow_mut(), buf))
-        .process(|stream, d| on_process(stream, &mut d.borrow_mut()))
+        .process(|stream, d| {
+            // A driving stream's process event comes from its own trigger_process, inside
+            // `on_process` with `d` borrowed; its frames go out without the event.
+            if !stream.is_driving() {
+                on_process(stream, &mut d.borrow_mut());
+            }
+        })
         .register()
         .map_err(|e| e.to_string())?;
     let replies = stream.clone();
+    let replies_data = data.clone();
     let _replies = main_loop.loop_().add_io(fd, IoFlags::IN, move |_| {
-        on_process(&replies, &mut data.borrow_mut());
+        on_process(&replies, &mut replies_data.borrow_mut());
+    });
+    let timed = stream.clone();
+    let _timer = main_loop.loop_().add_io(timer_fd, IoFlags::IN, move |_| {
+        on_timer(&timed, &mut data.borrow_mut());
     });
 
-    let params = format_params(&constraints, format, data_gbm, None);
+    let params = format_params(&constraints, format, data_gbm, None, refresh);
     let mut refs: Vec<&Pod> = params.iter().map(|p| &**p).collect();
     stream
         .connect(
             spa::utils::Direction::Output,
             None,
-            StreamFlags::ALLOC_BUFFERS,
+            StreamFlags::ALLOC_BUFFERS | StreamFlags::DRIVER,
             &mut refs,
         )
         .map_err(|e| e.to_string())?;
@@ -390,6 +445,94 @@ impl Data {
         if let Some(l) = self.main_loop.upgrade() {
             l.quit();
         }
+    }
+
+    /// Have the timer wake the loop at `at`, unless it already wakes sooner.
+    fn wake_by(&mut self, at: Instant) {
+        if self.wake_at.is_some_and(|w| w <= at) {
+            return;
+        }
+        self.timer.arm(at.saturating_duration_since(Instant::now()));
+        self.wake_at = Some(at);
+    }
+}
+
+/// When the next frame may be asked: asks for frames that go out are at
+/// least one `period` apart. A re-ask after an unchanged frame counts once
+/// its frame goes out.
+#[derive(Default)]
+struct Pace {
+    /// One frame at the consumer's maximum rate; `None` leaves asks unpaced.
+    period: Option<Duration>,
+    /// When the frame out with the compositor was asked.
+    asked: Option<Instant>,
+    /// When the last frame that went out was asked.
+    sent: Option<Instant>,
+}
+
+impl Pace {
+    /// The frame last asked went out.
+    fn went_out(&mut self) {
+        self.sent = self.asked;
+    }
+
+    /// The earliest the next ask may go; `None` when it may go now.
+    fn due(&self) -> Option<Instant> {
+        Some(self.sent? + self.period?)
+    }
+}
+
+/// One frame at `num/denom` frames a second; `None` for no limit.
+fn period(num: u32, denom: u32) -> Option<Duration> {
+    (num > 0).then(|| Duration::from_nanos(u64::from(denom) * 1_000_000_000 / u64::from(num)))
+}
+
+/// A one-shot `CLOCK_MONOTONIC` timerfd the cast loop watches.
+struct Timer(std::os::fd::OwnedFd);
+
+impl Timer {
+    fn new() -> Result<Timer, String> {
+        // SAFETY: a plain syscall; a non-negative result is a new fd nothing else owns.
+        let fd = unsafe {
+            libc::timerfd_create(
+                libc::CLOCK_MONOTONIC,
+                libc::TFD_NONBLOCK | libc::TFD_CLOEXEC,
+            )
+        };
+        if fd < 0 {
+            return Err(format!(
+                "timerfd_create: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        // SAFETY: as above.
+        Ok(Timer(unsafe {
+            <std::os::fd::OwnedFd as std::os::fd::FromRawFd>::from_raw_fd(fd)
+        }))
+    }
+
+    /// Fire once after `after`, at least 1 ns: a zero value disarms.
+    fn arm(&self, after: Duration) {
+        let after = after.max(Duration::from_nanos(1));
+        let spec = libc::itimerspec {
+            it_interval: libc::timespec {
+                tv_sec: 0,
+                tv_nsec: 0,
+            },
+            it_value: libc::timespec {
+                tv_sec: after.as_secs() as libc::time_t,
+                tv_nsec: after.subsec_nanos() as libc::c_long,
+            },
+        };
+        // SAFETY: `spec` is a valid itimerspec; the old value is not asked for.
+        unsafe { libc::timerfd_settime(self.0.as_raw_fd(), 0, &spec, std::ptr::null_mut()) };
+    }
+
+    /// Read the expiry count so the fd stops polling readable.
+    fn clear(&self) {
+        let mut n = 0u64;
+        // SAFETY: reads at most 8 bytes into `n`.
+        unsafe { libc::read(self.0.as_raw_fd(), (&raw mut n).cast(), 8) };
     }
 }
 
@@ -438,11 +581,15 @@ fn on_param(stream: &pipewire::stream::Stream, d: &mut Data, id: u32, pod: Optio
     }
     let size = info.size();
     d.damage.invalidate();
+    let rate = info.max_framerate();
+    d.pace.period = period(rate.num, rate.denom);
     log::info!(
-        "format negotiated: {:?} {}x{}",
+        "format negotiated: {:?} {}x{}, at most {}/{} frames/s",
         info.format(),
         size.width,
-        size.height
+        size.height,
+        rate.num,
+        rate.denom
     );
     d.format = match info.format() {
         spa::param::video::VideoFormat::BGRA => wl_shm::Format::Argb8888,
@@ -480,7 +627,13 @@ fn on_param(stream: &pipewire::stream::Stream, d: &mut Data, id: u32, pod: Optio
                     None
                 }
             };
-            let params = format_params(&d.constraints, d.format, d.gbm.is_some(), fixated);
+            let params = format_params(
+                &d.constraints,
+                d.format,
+                d.gbm.is_some(),
+                fixated,
+                d.refresh,
+            );
             let mut refs: Vec<&Pod> = params.iter().map(|p| &**p).collect();
             if let Err(e) = stream.update_params(&mut refs) {
                 log::warn!("update_params: {e}");
@@ -686,8 +839,9 @@ impl AsRawFd for Fd {
     }
 }
 
-/// Every graph cycle, and whenever the compositor sent events: hand the
-/// answered buffer on, then ask for a frame into the next free one.
+/// Every process event, compositor reply and timer wake: hand the answered
+/// buffer on, then ask for a frame into the next free one once the pace
+/// allows.
 fn on_process(stream: &pipewire::stream::Stream, d: &mut Data) {
     let mut queued = None;
     match wake(&mut d.wl, d.asked.is_some()) {
@@ -721,9 +875,16 @@ fn on_process(stream: &pipewire::stream::Stream, d: &mut Data) {
             queued = Some(buf);
         }
     }
+    let now = Instant::now();
+    if let Some(due) = d.pace.due().filter(|due| *due > now) {
+        d.starved = false;
+        d.wake_by(due);
+        d.wl.flush();
+        return;
+    }
     // SAFETY: the buffer is kept in `d.asked` until `hand_on` queues it
     // back, or queued back here.
-    let mut buf = unsafe { stream.dequeue_raw_buffer() };
+    let mut buf = unsafe { dequeue(stream, d.buffers.len()) };
     if !buf.is_null() && queued == Some(buf as usize) {
         // A second listing of the frame just queued, its stale io id recycled by a
         // renegotiation: dropping this listing's busy count leaves the queued one.
@@ -731,19 +892,80 @@ fn on_process(stream: &pipewire::stream::Stream, d: &mut Data) {
         // SAFETY: `buf` was dequeued just above, so its spa_buffer is live.
         unsafe { drop_busy((*buf).buffer) };
         // SAFETY: as above.
-        buf = unsafe { stream.dequeue_raw_buffer() };
+        buf = unsafe { dequeue(stream, d.buffers.len()) };
     }
     if !buf.is_null() {
         match d.buffers.iter().position(|(k, _)| *k == buf as usize) {
-            Some(i) => {
-                let asked = d.wl.ask(&d.session, d.buffers[i].1.capture_buffer());
-                d.asked = Some((buf as usize, asked));
-            }
+            Some(i) => ask(d, i, buf as usize),
             // SAFETY: `buf` was dequeued from this stream just above.
-            None => unsafe { stream.queue_raw_buffer(buf) },
+            None => unsafe { send(stream, buf) },
         }
     }
+    d.starved = buf.is_null() && d.asked.is_none() && d.held.is_none();
+    if !d.starved {
+        d.retry = STARVED_RETRY;
+    } else if stream.is_driving() {
+        d.wake_by(now + d.retry);
+    }
     d.wl.flush();
+}
+
+/// A free buffer, or null. A buffer a consumer still reads goes to the back
+/// of the free list with EBUSY, so up to `tries` dequeues pass over those.
+///
+/// # Safety
+/// As `dequeue_raw_buffer`: the caller queues back what it gets.
+unsafe fn dequeue(stream: &pipewire::stream::Stream, tries: usize) -> *mut pw_sys::pw_buffer {
+    for _ in 0..tries.max(1) {
+        // SAFETY: as the caller promises.
+        let buf = unsafe { stream.dequeue_raw_buffer() };
+        if !buf.is_null() || std::io::Error::last_os_error().raw_os_error() != Some(libc::EBUSY) {
+            return buf;
+        }
+    }
+    std::ptr::null_mut()
+}
+
+/// The timer fired: a paced ask is due, or a driving stream with no free
+/// buffer starts an empty cycle so the consumers hand released ones back.
+fn on_timer(stream: &pipewire::stream::Stream, d: &mut Data) {
+    d.timer.clear();
+    d.wake_at = None;
+    if d.starved {
+        d.retry = (d.retry * 2).min(STARVED_RETRY_MAX);
+    }
+    on_process(stream, d);
+    if d.starved {
+        trigger(stream);
+    }
+}
+
+/// Ask the compositor for a frame into `d.buffers[i]`, the PipeWire buffer at `buf`.
+fn ask(d: &mut Data, i: usize, buf: usize) {
+    let asked = d.wl.ask(&d.session, d.buffers[i].1.capture_buffer());
+    d.asked = Some((buf, asked));
+    d.pace.asked = Some(Instant::now());
+}
+
+/// Queue `buf` for the consumers; a driving stream starts the graph cycle
+/// that carries it.
+///
+/// # Safety
+/// `buf` was dequeued from `stream` and not queued since.
+unsafe fn send(stream: &pipewire::stream::Stream, buf: *mut pw_sys::pw_buffer) {
+    // SAFETY: as the caller promises.
+    unsafe { stream.queue_raw_buffer(buf) };
+    trigger(stream);
+}
+
+/// Start a graph cycle if `stream` drives its graph; a follower's buffers
+/// go out on the driver's cycles.
+fn trigger(stream: &pipewire::stream::Stream) {
+    if stream.is_driving()
+        && let Err(e) = stream.trigger_process()
+    {
+        log::debug!("trigger_process: {e}");
+    }
 }
 
 /// What a wake of the cast loop found on the compositor's side.
@@ -809,8 +1031,7 @@ fn hand_on(
                             return;
                         }
                         Unchanged::Ask => {
-                            let asked = d.wl.ask(&d.session, d.buffers[i].1.capture_buffer());
-                            d.asked = Some((buf as usize, asked));
+                            ask(d, i, buf as usize);
                             return;
                         }
                     }
@@ -820,6 +1041,7 @@ fn hand_on(
                     filled(&mut *(*(*sb).datas.add(p)).chunk, size);
                 }
                 d.seq += 1;
+                d.pace.went_out();
                 stamp_header(sb, d.seq, 0);
                 stamp_damage(sb, size, &damage.unwrap_or_default());
                 stamp_cursor(sb, d);
@@ -835,7 +1057,8 @@ fn hand_on(
                     d.constraints.width,
                     d.constraints.height
                 );
-                let params = format_params(&d.constraints, d.format, d.gbm.is_some(), None);
+                let params =
+                    format_params(&d.constraints, d.format, d.gbm.is_some(), None, d.refresh);
                 let mut refs: Vec<&Pod> = params.iter().map(|p| &**p).collect();
                 let _ = stream.update_params(&mut refs);
             }
@@ -848,7 +1071,7 @@ fn hand_on(
                 corrupted(sb);
             }
         }
-        stream.queue_raw_buffer(buf);
+        send(stream, buf);
     }
 }
 
@@ -1243,6 +1466,18 @@ impl std::ops::Deref for OwnedPod {
     }
 }
 
+/// A refresh rate in mHz as frames a second, reduced (60000 mHz is 60/1).
+fn rate_fraction(mhz: u32) -> Fraction {
+    let (mut a, mut b) = (mhz.max(1), 1000);
+    while b != 0 {
+        (a, b) = (b, a % b);
+    }
+    Fraction {
+        num: mhz.max(1) / a,
+        denom: 1000 / a,
+    }
+}
+
 fn spa_format(f: wl_shm::Format) -> Option<u32> {
     Some(match f {
         wl_shm::Format::Argb8888 => spa_sys::SPA_VIDEO_FORMAT_BGRA,
@@ -1279,13 +1514,15 @@ fn format_params(
     preferred: wl_shm::Format,
     dmabuf: bool,
     fixated: Option<(u32, u64)>,
+    refresh: u32,
 ) -> Vec<OwnedPod> {
+    let rate = rate_fraction(refresh);
     let invalid: u64 = gbm::Modifier::Invalid.into();
     let mut pods = Vec::new();
     if let Some((fourcc, m)) = fixated
         && let Some(f) = shm_format_of_fourcc(fourcc)
     {
-        pods.extend(format_pod(c, f, Some(Modifiers::Fixed(m))));
+        pods.extend(format_pod(c, f, Some(Modifiers::Fixed(m)), rate));
     }
     if dmabuf {
         for df in &c.dmabuf_formats {
@@ -1301,12 +1538,16 @@ fn format_params(
             if mods.is_empty() {
                 continue;
             }
-            pods.extend(format_pod(c, f, Some(Modifiers::Choice(&mods))));
+            pods.extend(format_pod(c, f, Some(Modifiers::Choice(&mods)), rate));
         }
     }
     let mut formats: Vec<wl_shm::Format> = vec![preferred];
     formats.extend(c.shm_formats.iter().copied().filter(|f| *f != preferred));
-    pods.extend(formats.into_iter().filter_map(|f| format_pod(c, f, None)));
+    pods.extend(
+        formats
+            .into_iter()
+            .filter_map(|f| format_pod(c, f, None, rate)),
+    );
     pods
 }
 
@@ -1316,6 +1557,7 @@ fn format_pod(
     c: &Constraints,
     f: wl_shm::Format,
     modifiers: Option<Modifiers>,
+    max_rate: Fraction,
 ) -> Option<OwnedPod> {
     let id = spa_format(f)?;
     let mut properties = vec![
@@ -1370,9 +1612,9 @@ fn format_pod(
             pod::Value::Choice(pod::ChoiceValue::Fraction(Choice(
                 ChoiceFlags::empty(),
                 ChoiceEnum::Range {
-                    default: Fraction { num: 60, denom: 1 },
+                    default: max_rate,
                     min: Fraction { num: 1, denom: 1 },
-                    max: Fraction { num: 60, denom: 1 },
+                    max: max_rate,
                 },
             ))),
         ),
@@ -1845,5 +2087,60 @@ mod tests {
         write_damage_meta(&mut out, &[rect(1, 2, 3, 4)]);
         let words: Vec<u32> = (0..out.len() / 4).map(|i| read_u32(&out, i * 4)).collect();
         assert_eq!(words, vec![1, 2, 3, 4, 0, 0, 0, 0, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn frames_that_go_out_are_asked_one_period_apart() {
+        let t = Instant::now();
+        let mut pace = Pace {
+            period: period(30, 1),
+            ..Pace::default()
+        };
+        assert_eq!(pace.due(), None, "the first ask goes at once");
+        pace.asked = Some(t);
+        pace.went_out();
+        assert_eq!(pace.due(), Some(t + Duration::from_nanos(33_333_333)));
+        pace.asked = Some(t + Duration::from_millis(50));
+        assert_eq!(
+            pace.due(),
+            Some(t + Duration::from_nanos(33_333_333)),
+            "a re-ask after an unchanged frame does not move the next ask"
+        );
+        pace.went_out();
+        assert_eq!(pace.due(), Some(t + Duration::from_nanos(83_333_333)));
+    }
+
+    #[test]
+    fn a_rate_of_zero_leaves_asks_unpaced() {
+        let mut pace = Pace {
+            period: period(0, 1),
+            ..Pace::default()
+        };
+        pace.asked = Some(Instant::now());
+        pace.went_out();
+        assert_eq!(pace.due(), None);
+    }
+
+    #[test]
+    fn the_offered_maximum_rate_is_the_refresh_rate_reduced() {
+        let f = |mhz| {
+            let r = rate_fraction(mhz);
+            (r.num, r.denom)
+        };
+        assert_eq!(f(60_000), (60, 1));
+        assert_eq!(f(59_940), (2997, 50));
+        assert_eq!(f(143_856), (17982, 125));
+    }
+
+    #[test]
+    fn the_timer_fires_once_after_it_is_armed() {
+        let timer = Timer::new().unwrap();
+        let fd = timer.0.as_raw_fd();
+        assert!(!readable(fd), "a new timer is disarmed");
+        timer.arm(Duration::ZERO);
+        std::thread::sleep(Duration::from_millis(5));
+        assert!(readable(fd), "a zero wait still fires");
+        timer.clear();
+        assert!(!readable(fd), "a read clears it, and it does not repeat");
     }
 }
