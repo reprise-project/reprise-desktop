@@ -331,6 +331,7 @@ fn page_dialogs(mut c: Canvas, theme: &Theme, text: &TextRenderer, mono: &TextRe
         view,
         &lay,
         Caret::Unfocused,
+        None,
     );
     if let Some(corner) = lay.corner() {
         draw_scroll_corner(&mut c, &Paint { s, ..theme.paint() }, corner, true);

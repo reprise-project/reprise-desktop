@@ -83,6 +83,7 @@ pub fn render(s: i32) -> Canvas {
                 View::default(),
                 &lay,
                 Caret::new(j == 0, true),
+                None,
             );
             let d = d.at_scale(1);
             c.blit_canvas((label_w + j as i32 * (NOTE.0 + 10)) * s, y * s, &d);

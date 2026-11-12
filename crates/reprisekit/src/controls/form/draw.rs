@@ -512,7 +512,7 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
                     None => *p,
                 };
                 let caret = Caret::new(focused && memo.enabled, form.caret);
-                multiedit::draw(c, text, &mp, &m, &memo.edit, view, &lay, caret);
+                multiedit::draw(c, text, &mp, &m, &memo.edit, view, &lay, caret, None);
             }
         };
         match clip {
