@@ -79,7 +79,6 @@ pub fn render(scale: i32) -> Canvas {
             theme: &theme,
             text: &text,
             s: scale,
-            over: None,
         };
         let t = Transition::begin(&motion, &d).expect("it plays");
         for k in 0..COLS as u32 {

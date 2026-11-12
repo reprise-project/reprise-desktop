@@ -415,15 +415,21 @@ impl Canvas {
     /// each canvas shows its own level whatever the order, cut to what a
     /// premultiplied pixel holds.
     pub fn mix_all(&mut self, others: &[(&Canvas, f32)], r: Rect) {
+        for (c, _) in others {
+            debug_assert_eq!(
+                (self.width, self.height, self.scale),
+                (c.width, c.height, c.scale)
+            );
+        }
+        self.mix_all_at(others, r, (0, 0));
+    }
+
+    /// [`Canvas::mix_all`] toward canvases holding part of this one: their top-left device pixel
+    /// lies at device `(ax, ay)` here, and they cover `r`. All have the same scale.
+    pub fn mix_all_at(&mut self, others: &[(&Canvas, f32)], r: Rect, (ax, ay): (i32, i32)) {
         let levels: Vec<(&Canvas, u32)> = others
             .iter()
-            .map(|&(c, level)| {
-                debug_assert_eq!(
-                    (self.width, self.height, self.scale),
-                    (c.width, c.height, c.scale)
-                );
-                (c, (level.clamp(0.0, 1.0) * 255.0).round() as u32)
-            })
+            .map(|&(c, level)| (c, (level.clamp(0.0, 1.0) * 255.0).round() as u32))
             .filter(|&(_, l)| l > 0)
             .collect();
         if levels.is_empty() {
@@ -432,13 +438,19 @@ impl Canvas {
         let r = r.intersect(&self.bounds());
         let s = self.scale;
         let dw = (self.width as i32 * s) as usize;
-        let (x0, x1) = ((r.x * s) as usize, ((r.x + r.width) * s) as usize);
+        let (x0, x1) = (r.x * s, (r.x + r.width) * s);
+        let n = (x1 - x0).max(0) as usize;
+        // Where `c`'s pixels for device row `y`, columns x0..x1, start.
+        let at = |c: &Canvas, y: i32| {
+            (y - ay) as usize * c.device_size().0 as usize + (x0 - ax) as usize
+        };
         // A pixel all of them share stays as it is; one or two canvases (a crossfade) go row by row.
-        for y in (r.y * s..(r.y + r.height) * s).map(|y| y as usize * dw) {
-            let row = y + x0..y + x1;
+        for y in r.y * s..(r.y + r.height) * s {
+            let row = y as usize * dw + x0 as usize..y as usize * dw + x1 as usize;
             if let [(b, lb)] = levels.as_slice() {
-                let ours = self.pixels[row.clone()].iter_mut();
-                for (a, &pb) in ours.zip(&b.pixels[row]) {
+                let i = at(b, y);
+                let ours = self.pixels[row].iter_mut();
+                for (a, &pb) in ours.zip(&b.pixels[i..i + n]) {
                     if pb != *a {
                         *a = mix2_px(*a, (pb, *lb), (0, 0));
                     }
@@ -446,8 +458,9 @@ impl Canvas {
                 continue;
             }
             if let &[(b, lb), (c, lc)] = levels.as_slice() {
-                let ours = self.pixels[row.clone()].iter_mut();
-                let theirs = b.pixels[row.clone()].iter().zip(&c.pixels[row]);
+                let (i, j) = (at(b, y), at(c, y));
+                let ours = self.pixels[row].iter_mut();
+                let theirs = b.pixels[i..i + n].iter().zip(&c.pixels[j..j + n]);
                 for (a, (&pb, &pc)) in ours.zip(theirs) {
                     if pb != *a || pc != *a {
                         *a = mix2_px(*a, (pb, lb), (pc, lc));
@@ -455,11 +468,12 @@ impl Canvas {
                 }
                 continue;
             }
-            for i in row {
+            let starts: Vec<usize> = levels.iter().map(|(c, _)| at(c, y)).collect();
+            for (k, i) in row.enumerate() {
                 let a = self.pixels[i];
-                if levels.iter().any(|(c, _)| c.pixels[i] != a) {
-                    let moves = levels.iter().map(|&(c, l)| (c.pixels[i], l));
-                    self.pixels[i] = mix_px(a, moves);
+                let px = |(c, l): (&(&Canvas, u32), &usize)| (c.0.pixels[l + k], c.1);
+                if levels.iter().zip(&starts).any(|o| px(o).0 != a) {
+                    self.pixels[i] = mix_px(a, levels.iter().zip(&starts).map(px));
                 }
             }
         }
@@ -467,11 +481,24 @@ impl Canvas {
 
     /// [`Canvas::mix`] toward `other`'s pixels of `r` moved by `(dx, dy)` (logical), cut to the
     /// bounds; pixels the moved slice doesn't reach stay. Both have the same size and scale.
-    pub fn mix_shifted(&mut self, other: &Canvas, r: Rect, (dx, dy): (i32, i32), level: f32) {
+    pub fn mix_shifted(&mut self, other: &Canvas, r: Rect, by: (i32, i32), level: f32) {
         debug_assert_eq!(
             (self.width, self.height, self.scale),
             (other.width, other.height, other.scale)
         );
+        self.mix_shifted_at(other, r, by, level, (0, 0));
+    }
+
+    /// [`Canvas::mix_shifted`] toward a canvas holding part of this one, its top-left device pixel
+    /// at device `(ax, ay)` here; it covers `r`. Both have the same scale.
+    pub fn mix_shifted_at(
+        &mut self,
+        other: &Canvas,
+        r: Rect,
+        (dx, dy): (i32, i32),
+        level: f32,
+        (ax, ay): (i32, i32),
+    ) {
         let l = (level.clamp(0.0, 1.0) * 255.0).round() as u32;
         let src = r.intersect(&self.bounds());
         let dst =
@@ -481,10 +508,11 @@ impl Canvas {
         }
         let s = self.scale;
         let dw = (self.width as i32 * s) as usize;
+        let ow = other.device_size().0 as usize;
         for y in dst.y * s..(dst.y + dst.height) * s {
             for x in dst.x * s..(dst.x + dst.width) * s {
                 let i = y as usize * dw + x as usize;
-                let j = (y - dy * s) as usize * dw + (x - dx * s) as usize;
+                let j = (y - dy * s - ay) as usize * ow + (x - dx * s - ax) as usize;
                 if other.pixels[j] != self.pixels[i] {
                     self.pixels[i] = mix2_px(self.pixels[i], (other.pixels[j], l), (0, 0));
                 }
