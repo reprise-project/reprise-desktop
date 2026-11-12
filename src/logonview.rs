@@ -464,6 +464,9 @@ pub fn seat_caps_lock(state: &State) -> bool {
 thread_local! {
     /// The next draw of a login screen panics, as a painter's bug would.
     pub static DRAW_PANICS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The rects canvases shown in part were compared over, the device px in them, and the
+    /// device px the scene damaged, summed.
+    pub static UPLOADS: std::cell::Cell<(u64, u64, u64)> = const { std::cell::Cell::new((0, 0, 0)) };
     /// The time [`now`] gives on this thread while a test holds the clock.
     static CLOCK: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) };
 }
@@ -613,7 +616,7 @@ fn draw_touched(state: &mut State, host: &Host) -> bool {
         motion,
         relaid: false,
     };
-    let (play, r) = match (motion, prev) {
+    let (play, mut drawn) = match (motion, prev) {
         (None, None) => {
             let drawn = (&theme, text.for_output(scale), scale);
             (
@@ -622,20 +625,21 @@ fn draw_touched(state: &mut State, host: &Host) -> bool {
             )
         }
         (Some(m), None) => {
-            let (t, r) = Transition::begin_within(&m, &d, &rects, &mut c);
-            (t.map(|t| fresh(t, m)), r)
+            let (t, drawn) = Transition::begin_within(&m, &d, &rects, &mut c);
+            (t.map(|t| fresh(t, m)), drawn)
         }
         (None, Some(mut p)) => {
             let drawn = p.t.refresh_within(&mut c, &d, &rects);
             let r = p.t.frame(&mut c, &v.model, p.at(now));
-            (Some(p), drawn.join(&r))
+            (Some(p), vec![drawn.join(&r)])
         }
         (Some(m), Some(p)) => {
-            let (t, r) = Transition::then_within(&p.t, p.at(now), &m, &d, &rects, &mut c);
-            (t.map(|t| fresh(t, m)), r)
+            let (t, drawn) = Transition::then_within(&p.t, p.at(now), &m, &d, &rects, &mut c);
+            (t.map(|t| fresh(t, m)), drawn)
         }
     };
-    let r = settled.join(&r);
+    drawn.push(settled);
+    drawn.retain(|r| !r.is_empty());
     if play.is_some() || !v.model.busy {
         v.ring = None;
     }
@@ -646,10 +650,10 @@ fn draw_touched(state: &mut State, host: &Host) -> bool {
     v.painted = Some((v.model.drawn(), theme, v.hidden));
     v.play = play;
     let plays = v.play.is_some();
-    if r.is_empty() {
+    if drawn.is_empty() {
         v.shown = Some(c);
     } else {
-        show_within(state, host, buffer, c, r);
+        show_within(state, host, buffer, c, &drawn);
     }
     if plays {
         crate::backend::schedule(state, &output);
@@ -757,25 +761,42 @@ pub fn frame(state: &mut State, host: &Host, output: &Output) {
         if at >= p.t.ms() {
             let r = p.t.settle(&mut c, &v.model);
             v.play = None;
-            show_within(state, host, buffer, c, r);
+            show_within(state, host, buffer, c, &[r]);
             return turn(state, host, output, buffer, now);
         }
         let r = p.t.frame(&mut c, &v.model, at);
-        show_within(state, host, buffer, c, r);
+        show_within(state, host, buffer, c, &[r]);
         crate::backend::schedule(state, output);
         return;
     }
     turn(state, host, output, buffer, now);
 }
 
-/// Show `c`, which differs from the canvas shown only inside `r`, and keep it as the one shown.
-fn show_within(state: &mut State, host: &Host, buffer: BufferId, c: Canvas, r: Rect) {
+/// Show `c`, which differs from the canvas shown only inside `rects`, and keep it as the one
+/// shown.
+fn show_within(state: &mut State, host: &Host, buffer: BufferId, c: Canvas, rects: &[Rect]) {
     let (w, h) = (c.width as i32, c.height as i32);
-    let within = Rectangle::new((r.x, r.y).into(), (r.width, r.height).into());
-    (state.scene).buffer_set_canvas_within(buffer, &c.pixels, w, h, within);
+    let within: Vec<_> = (rects.iter())
+        .map(|r| Rectangle::new((r.x, r.y).into(), (r.width, r.height).into()))
+        .collect();
+    let changed = (state.scene).buffer_set_canvas_in(buffer, &c.pixels, w, h, &within);
+    #[cfg(test)]
+    note_upload(&within, &changed);
+    let _ = changed;
     if let Some((v, _)) = (host.view)(state) {
         v.shown = Some(c);
     }
+}
+
+/// Adds a canvas shown in part to [`UPLOADS`]: the rects compared and the boxes damaged.
+#[cfg(test)]
+fn note_upload<C>(within: &[Rectangle<i32, C>], changed: &[Rectangle<i32, C>]) {
+    let area = |r: &[Rectangle<i32, C>]| -> u64 {
+        r.iter().map(|r| r.size.w as u64 * r.size.h as u64).sum()
+    };
+    let (rects, compared, damaged) = UPLOADS.get();
+    let n = within.len() as u64;
+    UPLOADS.set((rects + n, compared + area(within), damaged + area(changed)));
 }
 
 /// Turn the busy ring to its step for `now` and ask for the frame of the next one.
@@ -803,7 +824,7 @@ fn turn(state: &mut State, host: &Host, output: &Output, buffer: BufferId, now: 
     {
         m.spin = step;
         draw_spinner(&mut c, m, l, &theme, scaled, scale);
-        show_within(state, host, buffer, c, r);
+        show_within(state, host, buffer, c, &[r]);
     }
     crate::backend::schedule_step(state, output, since + next);
 }

@@ -1905,6 +1905,38 @@ fn a_canvas_set_within_a_box_compares_and_damages_only_there() {
 }
 
 #[test]
+fn a_canvas_set_within_two_boxes_damages_each_apart() {
+    let mut s = TestScene::new();
+    let root = s.root();
+    let b = s.buffer_create(root);
+    s.set_position(b, 10, 10);
+    let blank = vec![0; 20 * 10];
+    s.buffer_set_canvas(b, &blank, 20, 10);
+    let mut t = Tracker::new(100, 100, 1.0);
+    t.frame(&s);
+    let mut two = blank.clone();
+    two[20 + 1] = 1;
+    two[8 * 20 + 18] = 1;
+    two[5 * 20 + 10] = 1;
+    let boxes = [
+        Rectangle::new((0, 0).into(), (4, 4).into()),
+        Rectangle::new((16, 6).into(), (4, 4).into()),
+    ];
+    assert_eq!(
+        s.buffer_set_canvas_in(b, &two, 20, 10, &boxes),
+        [
+            Rectangle::new((1, 1).into(), (1, 1).into()),
+            Rectangle::new((18, 8).into(), (1, 1).into()),
+        ],
+        "the pixel between the boxes is not compared"
+    );
+    assert!(covers_exactly(
+        &t.frame(&s),
+        &[prect(11, 11, 1, 1), prect(28, 18, 1, 1)]
+    ));
+}
+
+#[test]
 fn a_new_texture_damages_whole_or_where_told() {
     let mut s = TestScene::new();
     let root = s.root();
