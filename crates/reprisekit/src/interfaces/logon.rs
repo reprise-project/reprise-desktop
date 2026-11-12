@@ -1,7 +1,7 @@
 //! The login screen in the interface in force.
 
 use crate::interface::Interface;
-use crate::logon::{COLUMN, Logon, LogonLayout, Part};
+use crate::logon::{COLUMN, Logon, LogonLayout, Part, Touched};
 use crate::raster::{Canvas, Rect};
 use crate::text::TextRenderer;
 use crate::theme::Theme;
@@ -33,21 +33,41 @@ pub fn draw_logon(
     }
 }
 
-/// [`draw_logon`] again inside the name and password fields alone, over a canvas it filled for a
-/// model that differs from `m` only in what they hold; the device rect repainted.
-pub fn redraw_logon_fields(
+/// Where `t` lies on `l`, design px within the output: the fields, the notes and the badge it
+/// touched.
+pub fn logon_touched(m: &Logon, l: &LogonLayout, theme: &Theme, t: Touched) -> Vec<Rect> {
+    let notes = match m.interface {
+        Interface::Classic => classic::logon::notes(theme, l),
+        Interface::Blue => blue::logon::notes(m, l, theme),
+        Interface::Glass => glass::logon::notes(m, l, theme),
+    };
+    let fields = [Part::Name, Part::Password].map(|p| l.rect(p).filter(|_| t.fields));
+    (fields.into_iter())
+        .chain([
+            notes.said.filter(|_| t.said),
+            notes.badge.filter(|_| t.badge),
+        ])
+        .flatten()
+        .collect()
+}
+
+/// [`draw_logon`] again inside `rects` (design px within the output) alone, over a canvas it
+/// filled for a model that differs from `m` only there; the device rect repainted.
+pub fn redraw_logon_within(
     c: &mut Canvas,
     m: &Logon,
     l: &LogonLayout,
-    theme: &Theme,
-    text: &TextRenderer,
-    s: i32,
+    (theme, text, s): (&Theme, &TextRenderer, i32),
+    rects: &[Rect],
 ) -> Rect {
     let o = l.output;
     let mut all = Rect::default();
-    for part in [Part::Name, Part::Password] {
-        let Some(r) = l.rect(part) else { continue };
+    for r in rects {
         let r = Rect::new(r.x - o.x, r.y - o.y, r.width, r.height).scaled(s);
+        let r = r.intersect(&c.bounds());
+        if r.is_empty() {
+            continue;
+        }
         c.with_clip(r, |c| {
             c.clear_rect(r);
             draw_logon(c, m, l, theme, text, s);
@@ -167,6 +187,47 @@ mod tests {
         LogonKey::Edit(k)
     }
 
+    /// What lays out and draws a screen over a 1280x800 output at scale `s`.
+    struct Bench {
+        s: i32,
+        theme: Theme,
+        text: TextRenderer,
+        output: Rect,
+    }
+
+    impl Bench {
+        fn at(i: Interface, s: i32) -> Bench {
+            let theme = crate::interfaces::theme_for(i).scaled(s);
+            let text = TextRenderer::load(&theme.fonts);
+            let output = Rect::new(0, 0, 1280, 800);
+            Bench {
+                s,
+                theme,
+                text,
+                output,
+            }
+        }
+
+        fn laid(&self, m: &mut Logon) -> LogonLayout {
+            m.column = logon_column(m, &self.theme, self.output);
+            logon_layout(m, &self.theme, &self.text, self.output)
+        }
+
+        fn whole(&self, m: &Logon, l: &LogonLayout) -> Canvas {
+            let s = self.s;
+            let mut c = Canvas::new((1280 * s) as u32, (800 * s) as u32);
+            draw_logon(&mut c, m, l, &self.theme, self.text.for_output(s), s);
+            c
+        }
+
+        /// `c`, drawn whole for `l`, brought up to `m` by repainting what `touched` names.
+        fn within(&self, c: &mut Canvas, m: &Logon, l: &LogonLayout, touched: Touched) -> Rect {
+            let rects = logon_touched(m, l, &self.theme, touched);
+            let s = self.s;
+            redraw_logon_within(c, m, l, (&self.theme, self.text.for_output(s), s), &rects)
+        }
+    }
+
     #[test]
     fn redrawing_the_fields_alone_leaves_the_screen_a_whole_draw_draws() {
         let keys = [
@@ -188,32 +249,21 @@ mod tests {
         ];
         for s in [1, 2] {
             for (what, mut m) in on_a_field() {
-                let theme = crate::interfaces::theme_for(m.interface).scaled(s);
-                let unscaled = TextRenderer::load(&theme.fonts);
-                let text = unscaled.for_output(s);
-                let output = Rect::new(0, 0, 1280, 800);
-                let laid = |m: &mut Logon| {
-                    m.column = logon_column(m, &theme, output);
-                    logon_layout(m, &theme, &unscaled, output)
-                };
-                let whole = |m: &Logon, l: &LogonLayout| {
-                    let mut c = Canvas::new((1280 * s) as u32, (800 * s) as u32);
-                    draw_logon(&mut c, m, l, &theme, text, s);
-                    c
-                };
-                let mut l = laid(&mut m);
-                let mut c = whole(&m, &l);
+                let screen = Bench::at(m.interface, s);
+                let mut l = screen.laid(&mut m);
+                let mut c = screen.whole(&m, &l);
                 for k in &keys {
-                    let was = m.outside_fields();
+                    let was = m.drawn();
                     m.key(k.clone());
-                    let now = laid(&mut m);
+                    let now = screen.laid(&mut m);
+                    let touched = m.touched_since(&was);
                     assert!(
-                        m.outside_fields() == was && now == l,
+                        touched.is_some_and(|t| !t.said && !t.badge) && now == l,
                         "{what} at {s}: {k:?} changes the fields alone"
                     );
                     l = now;
-                    let r = redraw_logon_fields(&mut c, &m, &l, &theme, text, s);
-                    let full = whole(&m, &l);
+                    let r = screen.within(&mut c, &m, &l, touched.unwrap());
+                    let full = screen.whole(&m, &l);
                     assert!(!r.is_empty(), "{what} at {s}: a field is repainted");
                     assert!(
                         c.pixels == full.pixels,
@@ -223,5 +273,83 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn redrawing_the_notes_alone_leaves_the_screen_a_whole_draw_draws() {
+        const LONG: &str = "The login service did not answer in time, so nothing was checked. \
+                            Try again in a moment, or ask whoever looks after this computer.";
+        type Step = (&'static str, fn(&mut Logon));
+        let steps: [Step; 12] = [
+            ("caps on", |m| m.caps_lock = true),
+            ("message", |m| m.info(crate::logon::text::incorrect())),
+            ("caps off", |m| m.caps_lock = false),
+            ("hint", |m| {
+                m.hint = Some("Place a finger on the reader".into())
+            }),
+            ("message cleared", |m| m.message = None),
+            ("caps on over the hint", |m| m.caps_lock = true),
+            ("badge", |m| m.layout = Some("HU".into())),
+            ("hint cleared", |m| m.hint = None),
+            ("long message", |m| m.info(LONG.into())),
+            ("caps off under it", |m| m.caps_lock = false),
+            ("message cleared again", |m| m.message = None),
+            ("badge back", |m| m.layout = Some("EN".into())),
+        ];
+        let mut screens = on_a_field();
+        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            screens.push((format!("{i:?} listed"), Logon::new(i, users(), true, None)));
+            let mut admin = Logon::new(i, users(), true, None);
+            admin.admin(crate::logon::PowerAction::PowerOff);
+            screens.push((format!("{i:?} admin"), admin));
+        }
+        let mut error = Logon::new(Interface::Glass, users(), true, Some("user0"));
+        error.fail(crate::logon::text::failed());
+        screens.push(("Glass error".into(), error));
+        let mut relaid = Vec::new();
+        for s in [1, 2] {
+            for (what, mut m) in screens.clone() {
+                m.layout = Some("EN".into());
+                let screen = Bench::at(m.interface, s);
+                let mut l = screen.laid(&mut m);
+                let mut c = screen.whole(&m, &l);
+                for (step, change) in steps {
+                    let was = m.drawn();
+                    change(&mut m);
+                    let now = screen.laid(&mut m);
+                    let touched = m.touched_since(&was);
+                    assert!(
+                        touched.is_some_and(|t| !t.fields),
+                        "{what} at {s}: {step} changes the notes alone"
+                    );
+                    if now != l {
+                        relaid.push(format!("{what} at {s}: {step}"));
+                        l = now;
+                        c = screen.whole(&m, &l);
+                        continue;
+                    }
+                    screen.within(&mut c, &m, &l, touched.unwrap());
+                    let full = screen.whole(&m, &l);
+                    assert!(
+                        c.pixels == full.pixels,
+                        "{what} at {s}: after {step} the screen differs from a whole draw in {:?}",
+                        c.differing_rect(&full)
+                    );
+                }
+            }
+        }
+        let caps = [
+            "caps on",
+            "caps off",
+            "caps on over the hint",
+            "caps off under it",
+        ];
+        let heading_grows =
+            [1, 2].map(|s| caps.map(|step| format!("Classic admin at {s}: {step}")));
+        assert_eq!(
+            relaid,
+            heading_grows.concat(),
+            "only Caps Lock beside Classic's wrapped heading moves the dialog"
+        );
     }
 }
