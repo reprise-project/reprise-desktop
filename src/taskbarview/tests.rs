@@ -335,6 +335,36 @@ mod per_bar {
     }
 }
 
+#[test]
+fn a_redraw_with_nothing_changed_keeps_the_bar_and_orb_pictures() {
+    for interface in ["classic", "blue", "glass"] {
+        let toml = format!("[appearance]\ninterface = \"{interface}\"\n");
+        let mut h =
+            crate::harness::Harness::with_config(crate::config::Config::parse(&toml).unwrap());
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        h.map_titled(&mut c, "editor", "one", (300, 200));
+        h.dispatch();
+        let kept = |h: &crate::harness::Harness| h.state.bars[0].kept_draws;
+        let before = kept(&h);
+        h.state.redraw_taskbars();
+        assert_eq!(kept(&h), before + 1, "{interface}: nothing changed");
+        crate::taskbar::TEST_CLOCK.set(crate::taskbar::TEST_CLOCK.get() + 60);
+        h.state.redraw_taskbars();
+        assert_eq!(kept(&h), before + 1, "{interface}: the clock turned");
+        h.state.notify.log.dnd = true;
+        h.state.redraw_taskbars();
+        assert_eq!(kept(&h), before + 1, "{interface}: the bell came");
+        let tray = |h: &crate::harness::Harness| {
+            let d = h.state.bars[0].drawn.as_ref().expect("drawn");
+            d.state.tray_icons.len()
+        };
+        assert_eq!(tray(&h), 1, "{interface}: the bell's cell");
+        h.state.redraw_taskbars();
+        assert_eq!(kept(&h), before + 2, "{interface}: the bell drawn the same");
+    }
+}
+
 /// The time of one bar redraw with nothing changed and of one drawn from scratch, per look and
 /// scale. Run with `--ignored --nocapture` under `--profile vm`.
 #[test]

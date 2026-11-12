@@ -1,7 +1,7 @@
 //! The Reprise mark: an R drawn as one ribbon. Each size is its own drawing on its own pixel grid
 //! (`logo/r16.png` and up), written by `scripts/logo/build.py`; edit the script, not the masks.
 
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 use crate::raster::{Canvas, Rect};
 use crate::theme::Color;
@@ -177,7 +177,25 @@ impl Ribbon {
     }
 }
 
+/// The ribbon's coverage at `px`, painted once per size and kept: the orb draws it on every bar
+/// redraw.
 pub fn path_coverage(px: usize) -> Vec<u8> {
+    static KEPT: Mutex<Vec<(usize, Vec<u8>)>> = Mutex::new(Vec::new());
+    let mut kept = crate::mutex::lock(&KEPT);
+    if let Some((_, m)) = kept.iter().find(|(n, _)| *n == px) {
+        return m.clone();
+    }
+    if kept.len() >= PATHS_KEPT {
+        kept.remove(0);
+    }
+    let m = paint_path(px);
+    kept.push((px, m.clone()));
+    m
+}
+
+const PATHS_KEPT: usize = 8;
+
+fn paint_path(px: usize) -> Vec<u8> {
     let r = RIBBONS
         .iter()
         .find(|r| r.size == px as f64)

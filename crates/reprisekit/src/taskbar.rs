@@ -198,6 +198,15 @@ pub struct TaskbarState {
 }
 
 impl TaskbarState {
+    /// Whether a bar drawn for `self` is the bar drawn for `other`: [`Self::same_but_start`] with
+    /// Start's fields equal too.
+    pub fn same(&self, other: &Self) -> bool {
+        self.start_pressed == other.start_pressed
+            && self.start_focus == other.start_focus
+            && self.start_hot == other.start_hot
+            && self.same_but_start(other)
+    }
+
     /// Whether `self` and `other` differ at most in Start's own fields (`start_pressed`,
     /// `start_focus`, `start_hot`), so a bar drawn for one needs only its Start part redrawn
     /// (`look::redraw_taskbar_start`) for the other. Icons count as equal only when shared.
