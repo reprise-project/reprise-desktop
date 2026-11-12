@@ -16,8 +16,13 @@ pub struct Transition {
     pub change: Change,
     plan: Plan,
     s: i32,
-    /// The chrome of the screen after.
-    base: Canvas,
+    /// The device rect of the screen's canvas that `under`, `was` and `now` hold; outside it the
+    /// screens before and after and the chrome are alike.
+    area: Rect,
+    /// What each frame starts from: the chrome of the screen after, or for a crossfade the screen
+    /// before.
+    under: Canvas,
+    /// The screen before, faded out over `under`; None for a crossfade or when nothing fades out.
     was: Option<Canvas>,
     now: Canvas,
     rect: Rect,
@@ -42,7 +47,6 @@ impl Flight {
 }
 
 /// What a transition draws with: the screen after, its layout, and how it is drawn.
-#[derive(Clone, Copy)]
 pub struct Drawn<'a> {
     pub m: &'a Logon,
     pub l: &'a LogonLayout,
@@ -50,9 +54,6 @@ pub struct Drawn<'a> {
     /// The unscaled renderer the layout measures with.
     pub text: &'a TextRenderer,
     pub s: i32,
-    /// The canvas the screen before showed, and where the screens before and after can differ
-    /// from it ([`super::logon_region`]): each screen is drawn over a copy of it, there alone.
-    pub over: Option<(&'a Canvas, &'a [Rect])>,
 }
 
 impl Drawn<'_> {
@@ -61,40 +62,46 @@ impl Drawn<'_> {
         ((o.width * s) as u32, (o.height * s) as u32)
     }
 
-    fn canvas(&self, m: &Logon, l: &LogonLayout, show: Show) -> Canvas {
-        let ((w, h), s) = (self.size(), self.s);
+    fn bounds(&self) -> Rect {
+        let (w, h) = self.size();
+        Rect::new(0, 0, w as i32, h as i32)
+    }
+
+    fn draw(&self, c: &mut Canvas, m: &Logon, l: &LogonLayout, show: Show) {
+        let (theme, s) = (self.theme, self.s);
         let text = self.text.for_output(s);
-        let draw = |c: &mut Canvas| match m.interface {
-            Interface::Classic => crate::classic::logon::draw(c, m, l, self.theme, text, s),
-            Interface::Blue => crate::blue::logon::draw_shown(c, m, l, self.theme, text, s, show),
-            Interface::Glass => glass::draw_shown(c, m, l, self.theme, text, s, show),
-        };
-        let Some((shown, within)) = self.over.filter(|(c, _)| (c.width, c.height) == (w, h)) else {
-            let mut c = Canvas::new(w, h);
-            draw(&mut c);
-            return c;
-        };
-        let mut c = shown.clone();
-        for &r in within {
-            let r = self.device(r).intersect(&c.bounds());
-            c.with_clip(r, |c| {
-                c.clear_rect(r);
-                draw(c);
-            });
+        match m.interface {
+            Interface::Classic => crate::classic::logon::draw(c, m, l, theme, text, s),
+            Interface::Blue => crate::blue::logon::draw_shown(c, m, l, theme, text, s, show),
+            Interface::Glass => glass::draw_shown(c, m, l, theme, text, s, show),
         }
+    }
+
+    fn canvas(&self, m: &Logon, l: &LogonLayout, show: Show) -> Canvas {
+        let (w, h) = self.size();
+        let mut c = Canvas::new(w, h);
+        self.draw(&mut c, m, l, show);
         c
     }
 
-    /// Design rect `r` within the output as device px on the screen's canvas.
-    fn device(&self, r: Rect) -> Rect {
-        let o = self.l.output;
-        Rect::new(r.x - o.x, r.y - o.y, r.width, r.height).scaled(self.s)
+    /// `m` drawn into `c`, the screen's canvas, inside device rects `within` alone.
+    fn draw_within(&self, c: &mut Canvas, m: &Logon, show: Show, within: &[Rect]) {
+        for &r in within {
+            c.with_clip(r, |c| {
+                c.clear_rect(r);
+                self.draw(c, m, self.l, show);
+            });
+        }
     }
 
-    /// Where two canvases drawn over [`Drawn::over`] can differ, device px; None when drawn whole.
-    fn within(&self) -> Option<Rect> {
-        let (_, rects) = self.over?;
-        (rects.iter().map(|&r| self.device(r))).reduce(|a, b| a.union(&b))
+    /// Design rects within the output as device rects on the screen's canvas, empty ones left out.
+    fn device(&self, rects: &[Rect]) -> Vec<Rect> {
+        let o = self.l.output;
+        (rects.iter())
+            .map(|r| Rect::new(r.x - o.x, r.y - o.y, r.width, r.height).scaled(self.s))
+            .map(|r| r.intersect(&self.bounds()))
+            .filter(|r| !r.is_empty())
+            .collect()
     }
 
     /// The screen a change began from, its ring at the current step, and its layout.
@@ -116,41 +123,81 @@ fn plan(change: Change, d: &Drawn) -> Option<Plan> {
     (plan.ms() > 0).then_some(plan)
 }
 
-/// `r` of `c` set to `from`'s pixels there; both are the screen's canvas.
-fn copy_in(c: &mut Canvas, from: &Canvas, r: Rect) {
-    debug_assert_eq!((c.width, c.height, c.scale()), (from.width, from.height, 1));
-    let (w, n) = (c.width as usize, r.width as usize);
-    for y in r.y..r.bottom() {
-        let i = y as usize * w + r.x as usize;
-        c.pixels[i..i + n].copy_from_slice(&from.pixels[i..i + n]);
+/// Whether `plan` fades the screen before into the screen after over one window, nothing flying:
+/// each frame then mixes the two screens alone, the chrome under both left out.
+fn crossfade(plan: &Plan) -> bool {
+    match (plan.out, plan.into.as_slice()) {
+        (Some(out), [one]) => {
+            one.window == out && one.columns.is_none() && one.rise == 0 && plan.carried.is_none()
+        }
+        _ => false,
     }
 }
 
-/// [`Canvas::differing_rect`] of two screen canvases, looking only inside device rect `r`.
-fn differing_within(a: &Canvas, b: &Canvas, r: Rect) -> Rect {
+/// `r` of `c` (device px) set to `from`'s pixels there, `from`'s top-left lying at `at` in `c`.
+fn paste(c: &mut Canvas, from: &Canvas, (ax, ay): (i32, i32), r: Rect) {
+    debug_assert_eq!((c.scale(), from.scale()), (1, 1));
+    let (w, fw, n) = (
+        c.width as usize,
+        from.width as usize,
+        r.width.max(0) as usize,
+    );
+    for y in r.y..r.bottom() {
+        let i = y as usize * w + r.x as usize;
+        let j = (y - ay) as usize * fw + (r.x - ax) as usize;
+        c.pixels[i..i + n].copy_from_slice(&from.pixels[j..j + n]);
+    }
+}
+
+/// The smallest rect holding every pixel where `a` and `b`, the same size, differ inside `r`.
+fn differing(a: &Canvas, b: &Canvas, r: Rect) -> Rect {
     let r = r.intersect(&a.bounds());
     let (w, n) = (a.width as usize, r.width.max(0) as usize);
-    let mut found = Rect::default();
+    let (mut x0, mut x1, mut y0, mut y1) = (r.right(), r.x - 1, r.bottom(), r.y - 1);
     for y in r.y..r.bottom() {
         let i = y as usize * w + r.x as usize;
-        let row = || a.pixels[i..i + n].iter().zip(&b.pixels[i..i + n]);
-        let Some(first) = row().position(|(p, q)| p != q) else {
+        let (p, q) = (&a.pixels[i..i + n], &b.pixels[i..i + n]);
+        if p == q {
             continue;
-        };
-        let last = row().rposition(|(p, q)| p != q).unwrap_or(first);
-        let x = r.x + first as i32;
-        found = join(found, Rect::new(x, y, last as i32 - first as i32 + 1, 1));
+        }
+        let pairs = || p.iter().zip(q);
+        // Only columns outside those found so far can widen the rect.
+        let first = pairs().take((x0 - r.x) as usize).position(|(p, q)| p != q);
+        let skip = (x1 - r.x + 1) as usize;
+        let last = pairs().skip(skip).rposition(|(p, q)| p != q);
+        x0 = first.map_or(x0, |k| r.x + k as i32);
+        x1 = last.map_or(x1, |k| r.x + (skip + k) as i32);
+        (y0, y1) = (y0.min(y), y);
     }
-    found
+    if y1 < y0 {
+        return Rect::default();
+    }
+    Rect::new(x0, y0, x1 - x0 + 1, y1 - y0 + 1)
 }
 
-/// The smallest rect holding both, either of which may be empty.
-fn join(a: Rect, b: Rect) -> Rect {
-    match (a.is_empty(), b.is_empty()) {
-        (true, _) => b,
-        (_, true) => a,
-        _ => a.union(&b),
+/// The smallest rect holding all of `rects`.
+fn hull(rects: &[Rect]) -> Rect {
+    rects.iter().fold(Rect::default(), |a, b| a.join(b))
+}
+
+/// `r` reaching `rise` further down, cut to `bounds`.
+fn risen(r: Rect, rise: i32, bounds: Rect) -> Rect {
+    Rect {
+        height: r.height + rise,
+        ..r
     }
+    .intersect(&bounds)
+}
+
+/// What a transition is built from: the canvases of `area`, the rect a frame must at least cover,
+/// and the flight.
+struct Parts {
+    area: Rect,
+    base: Option<Canvas>,
+    was: Option<Canvas>,
+    now: Canvas,
+    also: Rect,
+    flight: Option<Flight>,
 }
 
 impl Transition {
@@ -169,25 +216,179 @@ impl Transition {
             let to = glass::pose(d.m, d.l, d.theme, d.s, part)?;
             Some(Flight { part, from, to, ms })
         });
-        let size = |c: &Canvas| (c.width, c.height) == d.size();
-        let shown = shown.filter(|c| flight.is_none() && size(c));
-        // The screen before is drawn from its model only under a flight, which the region need not
-        // hold: then both screens are drawn whole.
-        let d = &Drawn {
-            over: d.over.filter(|_| flight.is_none()),
-            ..*d
-        };
+        let shown = shown.filter(|c| flight.is_none() && (c.width, c.height) == d.size());
         let show = flight.as_ref().map_or(Show::All, |f| Show::AllBut(f.part));
         let was = plan
             .out
             .map(|_| shown.unwrap_or_else(|| d.canvas(&was_m, &was_l, show)));
-        Transition::build(motion.change, plan, d, was, flight, Rect::default())
+        let base = (!crossfade(&plan)).then(|| d.canvas(d.m, d.l, Show::Chrome));
+        let now = d.canvas(d.m, d.l, show);
+        let parts = Parts {
+            area: d.bounds(),
+            base,
+            was,
+            now,
+            also: Rect::default(),
+            flight,
+        };
+        Transition::build(motion.change, plan, d.s, parts)
     }
 
-    /// `motion` begun `at` ms into `prev`: the screen before is `prev`'s frame then, and a frame
-    /// flying in both flies on from where it is.
-    pub fn then(prev: &Transition, at: u32, motion: &Motion, d: &Drawn) -> Option<Transition> {
-        let d = &Drawn { over: None, ..*d };
+    /// [`Transition::begin_over`] on `c`, the canvas the screen before shows, when the screens
+    /// before and after differ from it only inside `rects` ([`super::logon_region`], design px
+    /// within the output): each is drawn into `c` there alone, and `c` is left showing the
+    /// first frame, or the screen after when nothing plays. Returns the device rect of `c` that
+    /// changed.
+    pub fn begin_within(
+        motion: &Motion,
+        d: &Drawn,
+        rects: &[Rect],
+        c: &mut Canvas,
+    ) -> (Option<Transition>, Rect) {
+        let dev = d.device(rects);
+        let Some(plan) = plan(motion.change, d) else {
+            d.draw_within(c, d.m, Show::All, &dev);
+            return (None, hull(&dev));
+        };
+        debug_assert_eq!((c.width, c.height), d.size());
+        if plan.carried.is_some() {
+            // A frame flying off the screen before is drawn from its model, whole.
+            let t = Transition::begin(motion, d);
+            return Transition::first(t, c, d.m);
+        }
+        let t = Transition::build_within(motion.change, plan, d, &dev, c, Rect::default());
+        Transition::first(t, c, d.m)
+    }
+
+    /// `motion` begun `at` ms into `prev`: the screen before is `prev`'s frame then, composed over
+    /// `shown`, the canvas `prev`'s frames draw into, and a frame flying in both flies on from
+    /// where it is.
+    pub fn then(
+        prev: &Transition,
+        at: u32,
+        motion: &Motion,
+        d: &Drawn,
+        shown: Canvas,
+    ) -> Option<Transition> {
+        let (plan, flight) = Transition::carried(prev, at, motion, d)?;
+        let mut was = shown;
+        prev.compose(&mut was, d.m, at, flight.is_none());
+        let was = plan.out.map(|_| was);
+        let show = flight.as_ref().map_or(Show::All, |f| Show::AllBut(f.part));
+        let base = (!crossfade(&plan)).then(|| d.canvas(d.m, d.l, Show::Chrome));
+        let now = d.canvas(d.m, d.l, show);
+        let parts = Parts {
+            area: d.bounds(),
+            base,
+            was,
+            now,
+            also: prev.rect,
+            flight,
+        };
+        Transition::build(motion.change, plan, d.s, parts)
+    }
+
+    /// [`Transition::then`] on `c`, the canvas `prev`'s frames draw into, when the screen after
+    /// differs from `prev`'s only inside `rects` ([`super::logon_region`]): both are drawn into
+    /// `c` only there and where `prev` holds the screens. `c` is left showing the first frame, or
+    /// the screen after when nothing plays; returns the device rect of `c` that changed.
+    pub fn then_within(
+        prev: &Transition,
+        at: u32,
+        motion: &Motion,
+        d: &Drawn,
+        rects: &[Rect],
+        c: &mut Canvas,
+    ) -> (Option<Transition>, Rect) {
+        let mut dev = d.device(rects);
+        dev.push(prev.area);
+        let Some((plan, flight)) = Transition::carried(prev, at, motion, d) else {
+            d.draw_within(c, d.m, Show::All, &dev);
+            return (None, hull(&dev));
+        };
+        debug_assert_eq!((c.width, c.height), d.size());
+        if prev.flight.is_some() || flight.is_some() {
+            let t = Transition::then(prev, at, motion, d, c.clone());
+            return Transition::first(t, c, d.m);
+        }
+        prev.compose(c, d.m, at, true);
+        match Transition::build_within(motion.change, plan, d, &dev, c, prev.rect) {
+            Some(t) => Transition::first(Some(t), c, d.m),
+            None => (None, hull(&dev)),
+        }
+    }
+
+    /// A transition over `c`, which shows the screen before and differs from the screen after and
+    /// the chrome only inside device rects `dev`: `c` is held there, then the chrome and the screen
+    /// after are drawn into it there and held. `c` is left showing the screen after; the canvases
+    /// kept cover only the rect the frames draw into.
+    fn build_within(
+        change: Change,
+        plan: Plan,
+        d: &Drawn,
+        dev: &[Rect],
+        c: &mut Canvas,
+        also: Rect,
+    ) -> Option<Transition> {
+        let held = |c: &Canvas| -> Vec<Canvas> { dev.iter().map(|&r| c.copy_rect(r)).collect() };
+        let was = plan.out.map(|_| held(c));
+        let base = (!crossfade(&plan)).then(|| {
+            d.draw_within(c, d.m, Show::Chrome, dev);
+            held(c)
+        });
+        d.draw_within(c, d.m, Show::All, dev);
+        let now = held(c);
+        let under = base.as_ref().or(was.as_ref())?;
+        let mut rect = also;
+        for (i, r) in dev.iter().enumerate() {
+            let on = |x: Rect| match x.is_empty() {
+                true => x,
+                false => Rect::new(x.x + r.x, x.y + r.y, x.width, x.height),
+            };
+            let u = &under[i];
+            rect = rect.join(&on(differing(u, &now[i], u.bounds())));
+            if let Some(w) = was.as_ref().filter(|_| base.is_some()) {
+                rect = rect.join(&on(differing(u, &w[i], u.bounds())));
+            }
+        }
+        let rise = plan.into.iter().map(|s| s.rise).max().unwrap_or(0);
+        let area = risen(rect, rise, c.bounds());
+        // Outside `dev` the screens and the chrome are all what `c` shows.
+        let gather = |held: Vec<Canvas>| {
+            let mut g = c.copy_rect(area);
+            for (r, h) in dev.iter().zip(&held) {
+                let o = r.intersect(&area);
+                if !o.is_empty() {
+                    let within = Rect::new(o.x - area.x, o.y - area.y, o.width, o.height);
+                    paste(&mut g, h, (r.x - area.x, r.y - area.y), within);
+                }
+            }
+            g
+        };
+        let parts = Parts {
+            area,
+            base: base.map(gather),
+            was: was.map(gather),
+            now: c.copy_rect(area),
+            also,
+            flight: None,
+        };
+        Transition::build(change, plan, d.s, parts)
+    }
+
+    /// `t`'s first frame drawn into `c`, and the rect drawn.
+    fn first(t: Option<Transition>, c: &mut Canvas, m: &Logon) -> (Option<Transition>, Rect) {
+        let r = t.as_ref().map_or(Rect::default(), |t| t.frame(c, m, 0));
+        (t, r)
+    }
+
+    /// How `motion` plays begun `at` ms into `prev`, with the frame flying in both carried on.
+    fn carried(
+        prev: &Transition,
+        at: u32,
+        motion: &Motion,
+        d: &Drawn,
+    ) -> Option<(Plan, Option<Flight>)> {
         let mut plan = plan(motion.change, d)?;
         let carried = plan
             .carried
@@ -198,55 +399,73 @@ impl Transition {
             let to = glass::pose(d.m, d.l, d.theme, d.s, part)?;
             Some(Flight { part, from, to, ms })
         });
-        let mut was = prev.base.clone();
-        prev.compose(&mut was, d.m, at, flight.is_none());
-        let was = plan.out.map(|_| was);
-        Transition::build(motion.change, plan, d, was, flight, prev.rect)
+        Some((plan, flight))
     }
 
-    fn build(
-        change: Change,
-        plan: Plan,
-        d: &Drawn,
-        was: Option<Canvas>,
-        flight: Option<Flight>,
-        also: Rect,
-    ) -> Option<Transition> {
-        let base = d.canvas(d.m, d.l, Show::Chrome);
-        let show = flight.as_ref().map_or(Show::All, |f| Show::AllBut(f.part));
-        let now = d.canvas(d.m, d.l, show);
-        let differ = |a: &Canvas, b: &Canvas| match d.within() {
-            Some(r) => differing_within(a, b, r),
-            None => a.differing_rect(b),
+    fn build(change: Change, plan: Plan, s: i32, p: Parts) -> Option<Transition> {
+        let (under, was) = match p.base {
+            Some(base) => (base, p.was),
+            None => (p.was?, None),
         };
-        let mut rect = join(also, differ(&base, &now));
+        let a = p.area;
+        let differ = |b: &Canvas| {
+            let r = differing(&under, b, under.bounds());
+            if r.is_empty() {
+                r
+            } else {
+                Rect::new(r.x + a.x, r.y + a.y, r.width, r.height)
+            }
+        };
+        let mut rect = p.also.join(&differ(&p.now));
         if let Some(was) = &was {
-            rect = join(rect, differ(&base, was));
+            rect = rect.join(&differ(was));
         }
-        if let Some(f) = &flight {
-            rect = join(rect, join(f.from.reach(d.s), f.to.reach(d.s)));
+        if let Some(f) = &p.flight {
+            rect = rect.join(&f.from.reach(s)).join(&f.to.reach(s));
         }
         let rise = plan.into.iter().map(|s| s.rise).max().unwrap_or(0);
-        rect.height += rise;
-        let rect = rect.intersect(&base.bounds());
+        let rect = risen(rect, rise, a);
         if rect.is_empty() {
             return None;
         }
         Some(Transition {
             change,
             plan,
-            s: d.s,
-            base,
+            s,
+            area: a,
+            under,
             was,
-            now,
+            now: p.now,
             rect,
             rise,
-            flight,
+            flight: p.flight,
         })
     }
 
-    /// Draw the screen after again, as it changed while this plays (a key typed, a part lit).
-    pub fn refresh_now(&mut self, d: &Drawn) {
+    /// The canvases cover all of `c`, whose pixels outside [`Transition::rect`] are those of the
+    /// screen after.
+    fn widen(&mut self, c: &Canvas, to: Rect) {
+        let to = self.area.join(&to).intersect(&c.bounds());
+        if to == self.area {
+            return;
+        }
+        let a = self.area;
+        let at = (a.x - to.x, a.y - to.y);
+        let grow = |held: &Canvas| {
+            let mut g = c.copy_rect(to);
+            paste(&mut g, held, at, Rect::new(at.0, at.1, a.width, a.height));
+            g
+        };
+        self.under = grow(&self.under);
+        self.was = self.was.as_ref().map(grow);
+        self.now = grow(&self.now);
+        self.area = to;
+    }
+
+    /// Draw the screen after again, as it changed while this plays (a key typed, a part lit);
+    /// `shown` is the canvas the frames draw into.
+    pub fn refresh_now(&mut self, d: &Drawn, shown: &Canvas) {
+        self.widen(shown, shown.bounds());
         let show = (self.flight.as_ref()).map_or(Show::All, |f| Show::AllBut(f.part));
         self.now = d.canvas(d.m, d.l, show);
         if let Some(f) = &mut self.flight
@@ -254,11 +473,51 @@ impl Transition {
         {
             f.to = to;
         }
-        let mut changed = self.base.differing_rect(&self.now);
-        if !changed.is_empty() {
-            changed.height += self.rise;
+        let changed = differing(&self.under, &self.now, self.under.bounds());
+        self.grow_rect(changed);
+    }
+
+    /// [`Transition::refresh_now`] when the screen after changed only inside `rects` (design px
+    /// within the output): it is drawn there alone into `c`, the canvas the frames draw into.
+    /// Returns the device rect of `c` drawn; the frame for now still has to be drawn over it.
+    pub fn refresh_within(&mut self, c: &mut Canvas, d: &Drawn, rects: &[Rect]) -> Rect {
+        let dev = d.device(rects);
+        let within = hull(&dev);
+        if within.is_empty() {
+            return within;
         }
-        self.rect = join(self.rect, changed).intersect(&self.base.bounds());
+        self.widen(c, risen(within, self.rise, c.bounds()));
+        let show = (self.flight.as_ref()).map_or(Show::All, |f| Show::AllBut(f.part));
+        d.draw_within(c, d.m, show, &dev);
+        let a = self.area;
+        for &r in &dev {
+            let held = Rect::new(r.x - a.x, r.y - a.y, r.width, r.height);
+            paste(&mut self.now, c, (-a.x, -a.y), held);
+        }
+        if let Some(f) = &mut self.flight
+            && let Some(to) = glass::pose(d.m, d.l, d.theme, d.s, f.part)
+        {
+            f.to = to;
+        }
+        let held = Rect::new(within.x - a.x, within.y - a.y, within.width, within.height);
+        let changed = differing(&self.under, &self.now, held);
+        self.grow_rect(changed);
+        within
+    }
+
+    /// The rect takes in `changed`, a rect of the held canvases, and the rise under it.
+    fn grow_rect(&mut self, changed: Rect) {
+        if changed.is_empty() {
+            return;
+        }
+        let a = self.area;
+        let changed = Rect::new(
+            changed.x + a.x,
+            changed.y + a.y,
+            changed.width,
+            changed.height,
+        );
+        self.rect = self.rect.join(&risen(changed, self.rise, a));
     }
 
     /// How long it plays, ms.
@@ -283,8 +542,10 @@ impl Transition {
         self.rect
     }
 
-    /// The screen after at rest, the canvas a host shows under the frames.
+    /// The screen after at rest, the canvas a host shows under the frames; only for a transition
+    /// holding the whole screen (built whole, or after [`Transition::refresh_now`]).
     pub fn rest(&self, m: &Logon) -> Canvas {
+        debug_assert_eq!(self.area, self.now.bounds(), "built over the whole screen");
         let mut c = self.now.clone();
         if let Some(f) = &self.flight {
             glass::draw_posed(&mut c, m, f.part, &f.to, self.s);
@@ -295,7 +556,7 @@ impl Transition {
     /// The screen after at rest, drawn into [`Transition::rect`] of `c` (the canvas the frames
     /// drew into), its changes since `refresh_now` included. Returns the rect drawn.
     pub fn settle(&self, c: &mut Canvas, m: &Logon) -> Rect {
-        copy_in(c, &self.now, self.rect);
+        paste(c, &self.now, (self.area.x, self.area.y), self.rect);
         if let Some(f) = &self.flight {
             glass::draw_posed(c, m, f.part, &f.to, self.s);
         }
@@ -303,22 +564,21 @@ impl Transition {
     }
 
     fn compose(&self, c: &mut Canvas, m: &Logon, at: u32, carried: bool) {
-        let r = self.rect;
-        copy_in(c, &self.base, r);
-        let out = (self.was.as_ref().zip(self.plan.out))
-            .map(|(w, win)| (w, 1.0 - Ease::InOut.apply(win.at(at))));
+        let (r, a) = (self.rect, (self.area.x, self.area.y));
+        paste(c, &self.under, a, r);
         let level = |w: crate::logon::Window| Ease::InOut.apply(w.at(at));
+        let out = (self.was.as_ref().zip(self.plan.out)).map(|(w, win)| (w, 1.0 - level(win)));
         match self.plan.into.as_slice() {
             [one] if one.columns.is_none() && one.rise == 0 => {
                 let all: Vec<(&Canvas, f32)> = out
                     .into_iter()
                     .chain([(&self.now, level(one.window))])
                     .collect();
-                c.mix_all(&all, r);
+                c.mix_all_at(&all, r, a);
             }
             slices => {
                 if let Some((w, l)) = out {
-                    c.mix(w, r, l);
+                    c.mix_all_at(&[(w, l)], r, a);
                 }
                 for sl in slices {
                     let (x0, x1) = sl.columns.unwrap_or((r.x, r.right()));
@@ -326,7 +586,7 @@ impl Transition {
                     let src = Rect::new(x0, r.y, x1 - x0, r.height - sl.rise);
                     let up = 1.0 - Ease::OutCubic.apply(sl.window.at(at));
                     let dy = (sl.rise as f32 * up).round() as i32;
-                    c.mix_shifted(&self.now, src, (0, dy), level(sl.window));
+                    c.mix_shifted_at(&self.now, src, (0, dy), level(sl.window), a);
                 }
             }
         }

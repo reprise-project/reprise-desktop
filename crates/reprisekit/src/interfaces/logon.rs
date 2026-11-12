@@ -551,21 +551,51 @@ mod tests {
         }
     }
 
+    /// Changes that play from a screen at rest, from a check to a reopened screen.
+    const MOVING: [Step; 5] = [
+        ("busy", |m| m.set_busy(true)),
+        ("failed", |m| m.fail(crate::logon::text::incorrect())),
+        ("enter", |m| {
+            m.key(LogonKey::Enter);
+        }),
+        ("escape", |m| {
+            m.key(LogonKey::Escape);
+        }),
+        ("opened", |m| {
+            m.key(LogonKey::Enter);
+        }),
+    ];
+
+    impl Bench {
+        fn drawn<'a>(&'a self, m: &'a Logon, l: &'a LogonLayout) -> Drawn<'a> {
+            Drawn {
+                m,
+                l,
+                theme: &self.theme,
+                text: &self.text,
+                s: self.s,
+            }
+        }
+    }
+
+    /// `whole` and `within` give the same rect and the same frames over the canvases they play on.
+    fn same_frames(
+        at: &str,
+        (whole, a): (&Transition, &Canvas),
+        (within, b): (&Transition, &Canvas),
+        m: &Logon,
+    ) {
+        assert_eq!(within.rect(), whole.rect(), "{at}: the same rect");
+        for ms in [0, 40, 100, 160, 240, 400] {
+            let (mut a, mut b) = (a.clone(), b.clone());
+            whole.frame(&mut a, m, ms);
+            within.frame(&mut b, m, ms);
+            assert!(a.pixels == b.pixels, "{at}: the frame at {ms} ms");
+        }
+    }
+
     #[test]
     fn a_change_begun_within_its_region_plays_as_one_begun_from_whole_draws() {
-        let moving: [Step; 5] = [
-            ("busy", |m| m.set_busy(true)),
-            ("failed", |m| m.fail(crate::logon::text::incorrect())),
-            ("enter", |m| {
-                m.key(LogonKey::Enter);
-            }),
-            ("escape", |m| {
-                m.key(LogonKey::Escape);
-            }),
-            ("opened", |m| {
-                m.key(LogonKey::Enter);
-            }),
-        ];
         let mut played = 0;
         for s in [1, 2] {
             for (what, mut m) in lived_from() {
@@ -573,7 +603,7 @@ mod tests {
                 let screen = Bench::at(m.interface, s);
                 let mut l = screen.laid(&mut m);
                 let mut c = screen.whole(&m, &l);
-                for (step, change) in moving {
+                for (step, change) in MOVING {
                     let was = m.drawn();
                     change(&mut m);
                     let now = screen.laid(&mut m);
@@ -583,21 +613,20 @@ mod tests {
                         continue;
                     };
                     let rects = logon_region(&m, &now, &was, &l, &screen.theme).unwrap();
-                    let d = Drawn {
-                        m: &m,
-                        l: &now,
-                        theme: &screen.theme,
-                        text: &screen.text,
-                        s,
-                        over: None,
-                    };
-                    let over = Drawn {
-                        over: Some((&c, &rects)),
-                        ..d
-                    };
-                    let whole = Transition::begin_over(&motion, &d, Some(c.clone()));
-                    let within = Transition::begin_over(&motion, &over, Some(c.clone()));
+                    let d = screen.drawn(&m, &now);
                     let at = format!("{what} at {s}: {step}");
+                    let whole = Transition::begin_over(&motion, &d, Some(c.clone()));
+                    let mut b = c.clone();
+                    let (within, r) = Transition::begin_within(&motion, &d, &rects, &mut b);
+                    let first = match &whole {
+                        Some(t) => {
+                            let mut first = c.clone();
+                            assert_eq!(r, t.frame(&mut first, &m, 0), "{at}: the rect drawn");
+                            first
+                        }
+                        None => screen.whole(&m, &now),
+                    };
+                    assert!(first.pixels == b.pixels, "{at}: the first frame drawn");
                     let (whole, within) = match (whole, within) {
                         (Some(whole), Some(within)) => (whole, within),
                         (None, None) => {
@@ -608,15 +637,10 @@ mod tests {
                         _ => panic!("{at}: both play or neither"),
                     };
                     played += 1;
-                    assert_eq!(within.rect(), whole.rect(), "{at}: the same rect");
-                    for ms in [0, 40, 100, 160, 240, 400] {
-                        let (mut a, mut b) = (c.clone(), c.clone());
-                        whole.frame(&mut a, &m, ms);
-                        within.frame(&mut b, &m, ms);
-                        assert!(a.pixels == b.pixels, "{at}: the frame at {ms} ms");
-                    }
-                    within.settle(&mut c, &m);
+                    same_frames(&at, (&whole, &c), (&within, &b), &m);
+                    within.settle(&mut b, &m);
                     l = now;
+                    c = b;
                     let full = screen.whole(&m, &l);
                     assert!(
                         c.pixels == full.pixels,
@@ -627,5 +651,121 @@ mod tests {
             }
         }
         assert!(played > 20, "{played} changes played");
+    }
+
+    #[test]
+    fn a_change_landing_while_another_plays_carries_on_within_its_region_as_from_whole_draws() {
+        const LANDS_AT: u32 = 120;
+        const TYPED_AT: u32 = 60;
+        let (mut carried, mut refreshed) = (0, 0);
+        for s in [1, 2] {
+            for (what, mut m) in lived_from() {
+                m.moves = crate::logon::Moves::Full;
+                let screen = Bench::at(m.interface, s);
+                let mut l = screen.laid(&mut m);
+                // The canvases the frames draw into and what plays on them: drawn whole, and
+                // within the region.
+                let (mut a, mut b) = (screen.whole(&m, &l), screen.whole(&m, &l));
+                let mut playing: Option<(Transition, Transition)> = None;
+                for (step, change) in MOVING {
+                    let at = format!("{what} at {s}: {step}");
+                    if let Some((whole, within)) = &mut playing {
+                        let was = m.drawn();
+                        m.caps_lock = !m.caps_lock;
+                        let now = screen.laid(&mut m);
+                        let rects = logon_changed(&m, &now, &was, &l, &screen.theme).unwrap();
+                        let d = screen.drawn(&m, &now);
+                        whole.frame(&mut a, &m, TYPED_AT);
+                        whole.refresh_now(&d, &a);
+                        within.frame(&mut b, &m, TYPED_AT);
+                        within.refresh_within(&mut b, &d, &rects);
+                        within.frame(&mut b, &m, TYPED_AT);
+                        a = whole.rest(&m);
+                        whole.frame(&mut a, &m, TYPED_AT);
+                        let changed = a.differing_rect(&b);
+                        assert!(
+                            changed.is_empty(),
+                            "{at}: Caps Lock typed, the frames differ in {changed:?}"
+                        );
+                        same_frames(
+                            &format!("{at}, Caps Lock typed"),
+                            (whole, &a),
+                            (within, &b),
+                            &m,
+                        );
+                        l = now;
+                        refreshed += 1;
+                    }
+                    let was = m.drawn();
+                    change(&mut m);
+                    let now = screen.laid(&mut m);
+                    let Some(motion) = m.take_motion() else {
+                        if let Some((_, within)) = playing.take() {
+                            within.settle(&mut b, &m);
+                        }
+                        l = now;
+                        (a, b) = (screen.whole(&m, &l), screen.whole(&m, &l));
+                        continue;
+                    };
+                    let rects = logon_region(&m, &now, &was, &l, &screen.theme).unwrap();
+                    let d = screen.drawn(&m, &now);
+                    let (whole, within) = match playing.take() {
+                        Some((pw, pv)) => {
+                            pw.frame(&mut a, &m, LANDS_AT - 16);
+                            pv.frame(&mut b, &m, LANDS_AT - 16);
+                            let whole = Transition::then(&pw, LANDS_AT, &motion, &d, a.clone());
+                            let (within, _) =
+                                Transition::then_within(&pv, LANDS_AT, &motion, &d, &rects, &mut b);
+                            match &whole {
+                                Some(t) => {
+                                    t.frame(&mut a, &m, 0);
+                                }
+                                None => a = screen.whole(&m, &now),
+                            }
+                            carried += 1;
+                            (whole, within)
+                        }
+                        None => {
+                            let whole = Transition::begin_over(&motion, &d, Some(a.clone()));
+                            let (within, _) = Transition::begin_within(&motion, &d, &rects, &mut b);
+                            match &whole {
+                                Some(t) => {
+                                    t.frame(&mut a, &m, 0);
+                                }
+                                None => a = screen.whole(&m, &now),
+                            }
+                            (whole, within)
+                        }
+                    };
+                    l = now;
+                    let changed = a.differing_rect(&b);
+                    assert!(
+                        changed.is_empty(),
+                        "{at}: the first frames differ in {changed:?}"
+                    );
+                    playing = match (whole, within) {
+                        (Some(whole), Some(within)) => {
+                            same_frames(&at, (&whole, &a), (&within, &b), &m);
+                            Some((whole, within))
+                        }
+                        (None, None) => None,
+                        _ => panic!("{at}: both play or neither"),
+                    };
+                }
+                if let Some((_, within)) = playing {
+                    within.settle(&mut b, &m);
+                }
+                let full = screen.whole(&m, &l);
+                assert!(
+                    b.pixels == full.pixels,
+                    "{what} at {s}: settled, the screen differs from a whole draw in {:?}",
+                    b.differing_rect(&full)
+                );
+            }
+        }
+        assert!(
+            carried > 10 && refreshed > 10,
+            "{carried} carried on, {refreshed} refreshed"
+        );
     }
 }

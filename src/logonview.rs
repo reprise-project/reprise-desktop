@@ -56,14 +56,15 @@ pub struct LogonView {
     pub hidden: bool,
     /// The wheel's sub-notch remainder, in 120ths.
     wheel: i32,
-    /// The change playing on the screen.
+    /// The change playing on the screen. Its frames draw into `shown`, so it ends by settling
+    /// there or with a whole draw.
     pub play: Option<Play>,
     /// The canvas last shown on the screen's buffer, which frames draw into.
     pub shown: Option<Canvas>,
     /// When the busy ring would have been at step 0 had it turned since; None while it stands.
     pub ring: Option<Instant>,
-    /// What the canvas shown was last painted for: the model as [`Logon::drawn`], the theme at its
-    /// scale and whether the screen was hidden; None while a change plays.
+    /// What the canvas shown was last painted for, or what plays on it settles on: the model as
+    /// [`Logon::drawn`], the theme at its scale and whether the screen was hidden.
     painted: Option<(Logon, Theme, bool)>,
 }
 
@@ -540,7 +541,7 @@ fn draw(state: &mut State, host: &Host) -> bool {
     let l = logon_layout(&v.model, &theme, text, b);
     let canvas = play(v, &l, (&theme, text, scale), now());
     v.layout = Some(l);
-    v.painted = (v.play.is_none()).then(|| (v.model.drawn(), theme.clone(), v.hidden));
+    v.painted = Some((v.model.drawn(), theme.clone(), v.hidden));
     let shown = !v.hidden;
     crate::output::upload_scaled(&mut state.scene, buffer, &canvas, scale);
     state.scene.set_enabled(buffer, shown);
@@ -550,8 +551,8 @@ fn draw(state: &mut State, host: &Host) -> bool {
     true
 }
 
-/// Repaint what changed over the canvas shown, or begin the change noted there, when the kit can
-/// tell where it lies; false, drawing nothing, otherwise.
+/// Repaint what changed over the canvas shown, or begin the change noted there, carrying on from
+/// what plays, when the kit can tell where it lies; false, drawing nothing, otherwise.
 fn draw_touched(state: &mut State, host: &Host) -> bool {
     let Some((output, buffer, b, scale, theme)) = screen_at(state, host) else {
         return false;
@@ -560,57 +561,90 @@ fn draw_touched(state: &mut State, host: &Host) -> bool {
         return false;
     };
     v.model.column = logon_column(&v.model, &theme, b);
-    let (play, hidden) = (v.play.is_some(), v.hidden);
-    let Some(painted) = (v.painted.as_ref()).filter(|p| !play && p.1 == theme && p.2 == hidden)
-    else {
+    let hidden = v.hidden;
+    let Some(painted) = (v.painted.as_ref()).filter(|p| p.1 == theme && p.2 == hidden) else {
         return false;
     };
     if hidden || v.model.moves != Moves::Full {
         v.model.take_motion();
+    }
+    let size = ((b.width * scale) as u32, (b.height * scale) as u32);
+    let now = now();
+    // What plays carries on here unless a refit or a resize rebuilds it, or a frame that flew
+    // has yet to settle.
+    let playing = v.play.as_ref().map(|p| {
+        let done = p.at(now) >= p.t.ms() && p.t.carried_at(0).is_some();
+        !hidden && !p.relaid && p.size == size && !done
+    });
+    if playing == Some(false) {
+        return false;
     }
     let l = logon_layout(&v.model, &theme, text, b);
     let rects = v.layout.as_ref().and_then(|was| match v.model.motion {
         None => logon_changed(&v.model, &l, &painted.0, was, &theme),
         Some(_) => logon_region(&v.model, &l, &painted.0, was, &theme),
     });
-    let (Some(rects), Some(mut c)) = (rects, v.shown.take()) else {
+    let Some(rects) = rects else {
         return false;
     };
-    let size = (c.width, c.height);
-    let started = v.model.take_motion().and_then(|motion| {
-        let d = Drawn {
-            m: &v.model,
-            l: &l,
-            theme: &theme,
-            text,
-            s: scale,
-            over: Some((&c, &rects)),
-        };
-        let t = Transition::begin_over(&motion, &d, Some(c.clone()))?;
-        Some(Play {
-            t,
-            since: None,
-            size,
-            motion,
-            relaid: false,
-        })
-    });
-    let r = match &started {
-        Some(p) => p.t.frame(&mut c, &v.model, 0),
-        None => {
+    let Some(mut c) = v.shown.take() else {
+        return false;
+    };
+    let motion = v.model.take_motion();
+    let mut settled = Rect::default();
+    let prev = match v.play.take() {
+        Some(p) if p.at(now) >= p.t.ms() => {
+            settled = p.t.settle(&mut c, &v.model);
+            None
+        }
+        p => p,
+    };
+    let d = Drawn {
+        m: &v.model,
+        l: &l,
+        theme: &theme,
+        text,
+        s: scale,
+    };
+    let fresh = |t, motion| Play {
+        t,
+        since: None,
+        size,
+        motion,
+        relaid: false,
+    };
+    let (play, r) = match (motion, prev) {
+        (None, None) => {
             let drawn = (&theme, text.for_output(scale), scale);
-            redraw_logon_within(&mut c, &v.model, &l, drawn, &rects)
+            (
+                None,
+                redraw_logon_within(&mut c, &v.model, &l, drawn, &rects),
+            )
+        }
+        (Some(m), None) => {
+            let (t, r) = Transition::begin_within(&m, &d, &rects, &mut c);
+            (t.map(|t| fresh(t, m)), r)
+        }
+        (None, Some(mut p)) => {
+            let drawn = p.t.refresh_within(&mut c, &d, &rects);
+            let r = p.t.frame(&mut c, &v.model, p.at(now));
+            (Some(p), drawn.join(&r))
+        }
+        (Some(m), Some(p)) => {
+            let (t, r) = Transition::then_within(&p.t, p.at(now), &m, &d, &rects, &mut c);
+            (t.map(|t| fresh(t, m)), r)
         }
     };
-    if started.is_some() || !v.model.busy {
+    let r = settled.join(&r);
+    if play.is_some() || !v.model.busy {
         v.ring = None;
     }
     if !v.model.busy {
         v.model.spin = 0;
     }
     v.layout = Some(l);
-    v.painted = (started.is_none()).then(|| (v.model.drawn(), theme, v.hidden));
-    v.play = started;
+    v.painted = Some((v.model.drawn(), theme, v.hidden));
+    v.play = play;
     let plays = v.play.is_some();
     if r.is_empty() {
         v.shown = Some(c);
@@ -646,7 +680,6 @@ fn play(
             theme,
             text,
             s,
-            over: None,
         };
         let fresh = |t, motion| Play {
             t,
@@ -655,13 +688,19 @@ fn play(
             motion,
             relaid: false,
         };
+        // The frames of what plays drew into the canvas shown: a change carries on over it.
+        let shown = shown.filter(|c| (c.width, c.height) == size);
         v.play = match (motion, prev) {
             (Some(m), None) => Transition::begin_over(&m, &d, shown).map(|t| fresh(t, m)),
-            (Some(m), Some(p)) => Transition::then(&p.t, p.at(now), &m, &d).map(|t| fresh(t, m)),
-            (None, Some(mut p)) => {
-                p.t.refresh_now(&d);
-                Some(p)
+            (Some(m), Some(p)) => match shown {
+                Some(c) => Transition::then(&p.t, p.at(now), &m, &d, c),
+                None => Transition::begin(&m, &d),
             }
+            .map(|t| fresh(t, m)),
+            (None, Some(mut p)) => shown.map(|c| {
+                p.t.refresh_now(&d, &c);
+                p
+            }),
             (None, None) => relaid.and_then(|p| {
                 let t = Transition::begin(&p.motion, &d)?;
                 Some(Play {
@@ -719,7 +758,6 @@ pub fn frame(state: &mut State, host: &Host, output: &Output) {
             let r = p.t.settle(&mut c, &v.model);
             v.play = None;
             show_within(state, host, buffer, c, r);
-            settled(state, host, output);
             return turn(state, host, output, buffer, now);
         }
         let r = p.t.frame(&mut c, &v.model, at);
@@ -728,15 +766,6 @@ pub fn frame(state: &mut State, host: &Host, output: &Output) {
         return;
     }
     turn(state, host, output, buffer, now);
-}
-
-/// What played ended on `output`: the canvas shown is the screen at rest, as a whole paint leaves
-/// it.
-fn settled(state: &mut State, host: &Host, output: &Output) {
-    let theme = state.config.theme.scaled(state.draw_scale_at(Some(output)));
-    if let Some((v, _)) = (host.view)(state) {
-        v.painted = Some((v.model.drawn(), theme, v.hidden));
-    }
 }
 
 /// Show `c`, which differs from the canvas shown only inside `r`, and keep it as the one shown.

@@ -54,6 +54,15 @@ impl Rect {
         )
     }
 
+    /// [`Rect::union`] where either may be empty: the smallest rect holding both.
+    pub fn join(&self, o: &Rect) -> Rect {
+        match (self.is_empty(), o.is_empty()) {
+            (true, _) => *o,
+            (_, true) => *self,
+            _ => self.union(o),
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.width <= 0 || self.height <= 0
     }

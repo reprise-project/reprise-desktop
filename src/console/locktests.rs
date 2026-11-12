@@ -236,7 +236,7 @@ fn the_console_lock_notes_the_user_connected_remotely_while_lock_mode_lasts() {
         h.output("eDP-1", 1920, 1080);
         lockview::lock(&mut h.state);
         h.state.lock.console.as_mut().unwrap().view.play = None;
-        lockview::update(&mut h.state);
+        lockview::redraw(&mut h.state);
         let notes = [UserNote::Locked, UserNote::Remote, UserNote::Locked];
         let mut portal = h.connect_portal();
         let lock = portal.lock_screen();

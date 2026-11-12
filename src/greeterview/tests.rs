@@ -835,6 +835,25 @@ fn a_failure_the_badge_and_classics_wrapped_heading_repaint_in_part() {
                     "the failure plays on Blue and Glass"
                 );
             });
+            if interface != repriselogin::Interface::Classic {
+                view(&mut h).model.set_busy(true);
+                view(&mut h).model.take_motion();
+                redraw(&mut h.state);
+                view(&mut h).model.fail(logon::text::incorrect());
+                logonview::update(&mut h.state, &HOST);
+                next_frame(&mut h, Some(16));
+                let what = format!("{at}: typed into and failed again while the failure plays");
+                in_part(&mut h, &what, |h| {
+                    logonview::type_text(&mut h.state, &HOST, "x");
+                    tap(h, &[CAPSLOCK]);
+                    assert!(view(h).play.is_some(), "the failure plays on");
+                    next_frame(h, Some(48));
+                    view(h).model.fail(logon::text::incorrect());
+                    logonview::update(&mut h.state, &HOST);
+                    assert!(view(h).play.is_some(), "the second failure plays");
+                });
+                tap(&mut h, &[CAPSLOCK]);
+            }
             for (step, layout) in [("badge shown", "us,hu"), ("badge gone", "us")] {
                 in_part(&mut h, &format!("{at}: {step}"), |h| {
                     h.state.config.keyboard.layout = layout.into();
@@ -863,7 +882,7 @@ fn a_failure_the_badge_and_classics_wrapped_heading_repaint_in_part() {
 /// Caps Lock tap takes, drawing nothing), Caps Lock toggled, a message set and cleared, the layout
 /// badge shown and taken away, Caps Lock toggled on the administrator's form, and a failed login
 /// with the screen's changes playing and with them off, each also through a whole redraw (the
-/// frames that play timed apart). Per change: the time, the device px it changes and the outputs
+/// frames that play timed apart), and a key typed while the failure plays. Per change: the time, the device px it changes and the outputs
 /// it asks for a frame; and the time of a whole redraw. Run with `--ignored --nocapture`.
 #[test]
 #[ignore]
@@ -927,6 +946,28 @@ fn typing_cost() {
         played += play_out(h);
         format!("{out}; frames after it {:?}", played / N)
     }
+    /// A key typed 16 ms into a failure as it plays, the failure begun untimed.
+    fn typed_while_failing(h: &mut Harness) -> String {
+        let out = staged(
+            h,
+            |h| {
+                if view(h).play.is_some() {
+                    settle(h);
+                }
+                view(h).model.set_busy(true);
+                view(h).model.take_motion();
+                redraw(&mut h.state);
+                view(h).model.fail(logon::text::incorrect());
+                logonview::update(&mut h.state, &HOST);
+                next_frame(h, Some(16));
+            },
+            |h, _| logonview::type_text(&mut h.state, &HOST, "p"),
+        );
+        if view(h).play.is_some() {
+            settle(h);
+        }
+        out
+    }
     let two = || {
         ["EN", "HU"]
             .map(|short| reprisefs::xkb::Described {
@@ -967,6 +1008,7 @@ fn typing_cost() {
             });
             let fail = failed(&mut h, logonview::update);
             let fail_whole = failed(&mut h, logonview::redraw);
+            let fail_typed = typed_while_failing(&mut h);
             h.state.config.effects.logon_animation = false;
             let fail_still = failed(&mut h, logonview::update);
             let fail_still_whole = failed(&mut h, logonview::redraw);
@@ -977,7 +1019,7 @@ fn typing_cost() {
             eprintln!(
                 "{interface:?} {w}x{hh} at scale {scale}:\n  whole redraw {whole}\n  key {key}\n  shift {shift}\n  \
                  caps lock {caps}\n  message {message}\n  badge on/off {badge}\n  failed login {fail}\n  \
-                 failed login drawn whole {fail_whole}\n  failed login, nothing playing {fail_still}\n  \
+                 failed login drawn whole {fail_whole}\n  key typed while it plays {fail_typed}\n  failed login, nothing playing {fail_still}\n  \
                  failed login, nothing playing, drawn whole {fail_still_whole}\n  \
                  caps lock on the administrator's form {admin_caps}"
             );
