@@ -495,7 +495,7 @@ impl State {
     /// Place `bar`'s nodes and glass for its slide and hide state.
     fn lay_bar(&mut self, bar: &mut Bar) {
         let p = self.bar_drawn(&bar.output);
-        let rows = crate::barplace::on_output(&p, self.layout_box(Some(&bar.output)));
+        let rows = self.shown_rows(bar);
         let orb = crate::barplace::orb_opacity(self.bar_hide.drawn(&bar.output));
         let scale = bar.buffer_scale;
         let wanted = glass::wanted(&self.config);
@@ -536,6 +536,13 @@ impl State {
             .set(&mut self.scene, &self.glass, bar.glass_tree, pane);
     }
 
+    /// The rows of `bar` its output shows, bar-local logical px: fewer while it slides or
+    /// hides.
+    fn shown_rows(&self, bar: &Bar) -> Rect {
+        let p = self.bar_drawn(&bar.output);
+        crate::barplace::on_output(&p, self.layout_box(Some(&bar.output)))
+    }
+
     fn redraw_start(&mut self, bar: &mut Bar) {
         let Some(m) = &bar.start_mix else { return };
         let now = Instant::now();
@@ -572,8 +579,17 @@ impl State {
         scale: i32,
     ) -> Upload {
         let covered = self.under_fullscreen(bar);
+        let rows = self.shown_rows(bar);
         let scene = &mut self.scene;
-        let mut painted = upload_scaled(scene, bar.buffer, canvas, scale);
+        // `lay_bar` sizes the buffer to the rows it shows.
+        let (w, h) = (canvas.width as i32, canvas.height as i32);
+        let changed = scene.buffer_set_canvas(bar.buffer, &canvas.pixels, w, h);
+        // Pixels changed only in rows a hidden bar keeps off its output ask no frame: the slide
+        // that brings them on asks for its own.
+        let mut painted = changed.overlaps(smithay::utils::Rectangle::new(
+            (rows.x * scale, rows.y * scale).into(),
+            (rows.width * scale, rows.height * scale).into(),
+        ));
         bar.buffer_scale = scale;
         let l = &bar.layout;
         let over_menu = stands_over_menu(l, held, covered);

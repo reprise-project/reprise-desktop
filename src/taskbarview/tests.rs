@@ -219,3 +219,72 @@ mod under_a_lock {
         );
     }
 }
+
+mod per_bar {
+    use crate::backend::{take_asks, take_scene_outputs};
+    use crate::harness::{Harness, TestClient, Toplevel};
+
+    /// TEST-1 and TEST-2 side by side, with a window titled "one" on TEST-1.
+    fn two_outputs(config: &str) -> (Harness, TestClient, Toplevel) {
+        let config = format!("{config}\n[effects]\nwindow_animation = false\n");
+        let mut h = Harness::with_config(crate::config::Config::parse(&config).unwrap());
+        h.output("TEST-1", 1024, 768);
+        h.output("TEST-2", 1024, 768);
+        let mut c = h.connect();
+        let t = h.map_titled(&mut c, "editor", "one", (300, 200));
+        h.dispatch();
+        (h, c, t)
+    }
+
+    fn retitle(h: &mut Harness, c: &mut TestClient, t: Toplevel, title: &str) {
+        h.run_for(2 * crate::retitle::MIN_INTERVAL.as_millis() as u64 + 20);
+        take_asks();
+        c.side.shells[t.shell].toplevel.set_title(title.into());
+        c.side.shells[t.shell].surface.commit();
+        h.roundtrip(c);
+        h.dispatch();
+    }
+
+    fn titles(h: &Harness, output: &str) -> Vec<String> {
+        let bar = (h.state.bars.iter())
+            .find(|b| b.output.name() == output)
+            .expect("the output's bar");
+        let drawn = bar.drawn.as_ref().expect("the bar is drawn");
+        (drawn.state.tasks.iter())
+            .map(|t| t.title.clone())
+            .collect()
+    }
+
+    #[test]
+    fn a_button_change_asks_no_frame_of_an_auto_hidden_bar() {
+        let (mut h, mut c, t) = two_outputs("[taskbar]\nauto_hide = true");
+        h.pointer_to(700.0, 767.0);
+        h.run_for(6000);
+        // The bar's rows on its output, against its thickness.
+        let rows = |h: &Harness, o: &str| {
+            let out = (h.state.scene.outputs().iter())
+                .find(|x| x.name() == o)
+                .expect("the output");
+            let p = h.state.bar_drawn(out);
+            (768 - p.screen_side(), p.thickness)
+        };
+        let (on, thick) = rows(&h, "TEST-1");
+        assert_eq!(on, thick, "the pointer at its edge keeps TEST-1's bar out");
+        let (on, thick) = rows(&h, "TEST-2");
+        assert!(on < thick, "TEST-2's bar hid: {on} of {thick} rows show");
+        retitle(&mut h, &mut c, t, "two");
+        assert_eq!(titles(&h, "TEST-2"), ["two"], "the hidden bar redrew");
+        assert_eq!(take_scene_outputs(), ["TEST-1"]);
+        h.state.set_minimized(t.id, true);
+        assert_eq!(take_scene_outputs(), ["TEST-1"]);
+    }
+
+    #[test]
+    fn retitling_a_window_on_another_desktop_asks_no_frame() {
+        let (mut h, mut c, t) = two_outputs("[workspaces]\ncount = 2");
+        h.state.move_to_desktop(&[t.id], 1);
+        h.dispatch();
+        retitle(&mut h, &mut c, t, "two");
+        assert_eq!(take_asks(), []);
+    }
+}
