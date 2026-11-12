@@ -50,6 +50,8 @@ pub struct OutputInfo {
     pub y: i32,
     pub width: i32,
     pub height: i32,
+    /// The current mode's refresh rate in mHz; 0 when unknown.
+    pub refresh: i32,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -255,6 +257,17 @@ impl Wayland {
             .iter()
             .map(|(_, _, i)| i.clone())
             .collect()
+    }
+
+    /// The highest refresh rate in mHz `target` can show at: its output's, or for a window the
+    /// fastest output's, since the window may move. 0 when no output reported one.
+    pub fn refresh(&self, target: &Target) -> u32 {
+        let outputs = self.state.outputs.iter().map(|(_, _, i)| i);
+        let rate = match target {
+            Target::Output(name) => outputs.filter(|i| &i.name == name).map(|i| i.refresh).max(),
+            Target::Toplevel(_) => outputs.map(|i| i.refresh).max(),
+        };
+        rate.unwrap_or(0).max(0) as u32
     }
 
     pub fn toplevels(&self) -> Vec<ToplevelInfo> {
@@ -1105,15 +1118,18 @@ impl Dispatch<wl_output::WlOutput, ()> for State {
             wl_output::Event::Description { description } if info.description.is_empty() => {
                 info.description = description
             }
-            // Without xdg-output the mode is the best size we have.
             wl_output::Event::Mode {
                 width,
                 height,
+                refresh,
                 flags: WEnum::Value(f),
-                ..
-            } if xo.is_none() && f.contains(wl_output::Mode::Current) => {
-                info.width = width;
-                info.height = height;
+            } if f.contains(wl_output::Mode::Current) => {
+                info.refresh = refresh;
+                // Without xdg-output the mode is the best size we have.
+                if xo.is_none() {
+                    info.width = width;
+                    info.height = height;
+                }
             }
             _ => {}
         }

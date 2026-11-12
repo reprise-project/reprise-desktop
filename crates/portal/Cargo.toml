@@ -32,7 +32,7 @@ libc.workspace = true
 png.workspace = true
 image.workspace = true
 reprisebus = { path = "../reprisebus" }
-pipewire = { workspace = true, features = ["v0_3_33"] }
+pipewire = { workspace = true, features = ["v0_3_34"] }
 wayland-client.workspace = true
 wayland-scanner = "0.31"
 wayland-backend = "0.3"
