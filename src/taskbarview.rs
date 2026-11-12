@@ -50,6 +50,9 @@ pub struct BarShared {
     pub(crate) reveal_idle: Vec<(TreeId, smithay::reexports::calloop::RegistrationToken)>,
     pub(crate) tray_pointer: Option<TreeId>,
     pub keys: Option<crate::barkeys::BarKeys>,
+    /// Open `hold_taskbars` scopes, and whether a `redraw_taskbars` inside one is owed.
+    held: u32,
+    owed: bool,
 }
 
 impl BarShared {
@@ -68,6 +71,8 @@ impl BarShared {
             reveal_idle: Vec::new(),
             tray_pointer: None,
             keys: None,
+            held: 0,
+            owed: false,
         }
     }
 }
@@ -486,7 +491,23 @@ impl State {
         }
     }
 
+    /// Run `f` with `redraw_taskbars` held: calls inside it only mark the bars owed, and they
+    /// redraw once as the outermost scope ends. Code inside reads the bars as last drawn.
+    pub fn hold_taskbars<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
+        self.bar_shared.held += 1;
+        let r = f(self);
+        self.bar_shared.held -= 1;
+        if self.bar_shared.held == 0 && std::mem::take(&mut self.bar_shared.owed) {
+            self.redraw_taskbars();
+        }
+        r
+    }
+
     pub fn redraw_taskbars(&mut self) {
+        if self.bar_shared.held > 0 {
+            self.bar_shared.owed = true;
+            return;
+        }
         if self.bars.is_empty() {
             return;
         }
