@@ -7,9 +7,9 @@ use reprisekit::raster::Rect;
 use reprisekit::trackbar::{self, TrackBar};
 
 use crate::model::{
-    DESKTOPS_MAX, DIM_INACTIVE_MAX, HOT_CORNERS, PAGER_MARKS, PREVIEW_FPS_MAX, SNAP_DISTANCE_MAX,
-    SWITCH_ANIMATIONS, SWITCH_MS_MAX, SWITCHER_SIZES, SWITCHER_STYLES, Shortcut, TASKBAR_BUTTONS,
-    TASKBAR_POSITIONS, TITLE_DOUBLE_CLICKS, keys_for,
+    DESKTOPS_MAX, DIM_INACTIVE_MAX, HIDDEN_FRAME_RATE_MAX, HOT_CORNERS, PAGER_MARKS,
+    PREVIEW_FPS_MAX, SNAP_DISTANCE_MAX, SWITCH_ANIMATIONS, SWITCH_MS_MAX, SWITCHER_SIZES,
+    SWITCHER_STYLES, Shortcut, TASKBAR_BUTTONS, TASKBAR_POSITIONS, TITLE_DOUBLE_CLICKS, keys_for,
 };
 
 const CUSTOMIZE_W: i32 = 84;
@@ -18,7 +18,8 @@ const CUSTOMIZE_W: i32 = 84;
 /// `[window_snapping]`'s drag snapping and how near an edge it starts (greyed
 /// with drag snapping off), the snap layouts on the maximize button, the snap
 /// bar a drag shows (greyed too) and the layouts they offer; Tabs and Placement
-/// holds `[windows]`, shaking, the title bar double click and dimming included.
+/// holds `[windows]`, shaking, the title bar double click, dimming and the hidden frame rate
+/// included.
 pub fn window_behavior(a: Area) -> Form {
     let gw = a.gw();
     let mut items = vec![
@@ -62,7 +63,7 @@ pub fn window_behavior(a: Area) -> Form {
             gw,
             "Empty for the built-in six, e.g. 1|1 2|1 1:2|1:2",
         ),
-        group(a, "tabs_group", 228, 182, "Tabs and Placement"),
+        group(a, "tabs_group", 228, 210, "Tabs and Placement"),
         Item::check(
             "window_tabs",
             GX,
@@ -114,6 +115,22 @@ pub fn window_behavior(a: Area) -> Form {
         (0, DIM_INACTIVE_MAX as i32),
     ));
     items.push(Item::label_at("dim_inactive_units", GX + 290, 384, 20, "%"));
+    items.extend(spin(
+        "hidden_frame_rate_label",
+        "hidden_frame_rate",
+        GX,
+        412,
+        170,
+        "Frame &rate of hidden windows:",
+        (0, HIDDEN_FRAME_RATE_MAX as i32),
+    ));
+    items.push(Item::label_at(
+        "hidden_frame_rate_units",
+        GX + 230,
+        412,
+        gw - 230,
+        "(0: no limit)",
+    ));
     Form::new(items)
 }
 

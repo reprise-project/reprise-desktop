@@ -840,6 +840,7 @@ fn save_round_trips_every_field() {
         snap_layouts: "1|1 2-1:2".into(),
         snap_distance: 15,
         dim_inactive: 25,
+        hidden_frame_rate: 30,
         nl_enabled: true,
         nl_temperature: 3400,
         nl_schedule: "fixed".into(),

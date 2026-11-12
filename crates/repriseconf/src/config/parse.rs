@@ -3,10 +3,10 @@
 use super::file::{AutoFlag, FileAppearance, FileConfig};
 use super::{
     CURSOR_SIZE_MAX, Config, DIM_INACTIVE_MAX, EFFECTS_MS_MAX, EffectsConfig, FontSmoothing,
-    HotCorner, IdleOverrides, MAX_POSITION, MenuAnimation, OutputConfig, OutputMode,
-    PREVIEW_FPS_MAX, PointerConfig, PowerAction, SNAP_DISTANCE_MAX, SWITCH_MS_MAX, ShortcutOverlay,
-    StartMenuStyle, SwitchStyle, SwitcherConfig, TabletConfig, TaskbarButtons, TaskbarConfig,
-    TitleDoubleClick, Transform, WORKSPACES_MAX, quarter_scale, switcher_size,
+    HIDDEN_FRAME_RATE_MAX, HotCorner, IdleOverrides, MAX_POSITION, MenuAnimation, OutputConfig,
+    OutputMode, PREVIEW_FPS_MAX, PointerConfig, PowerAction, SNAP_DISTANCE_MAX, SWITCH_MS_MAX,
+    ShortcutOverlay, StartMenuStyle, SwitchStyle, SwitcherConfig, TabletConfig, TaskbarButtons,
+    TaskbarConfig, TitleDoubleClick, Transform, WORKSPACES_MAX, quarter_scale, switcher_size,
 };
 use reprisekit::interface::Interface;
 use reprisekit::theme::{Color, FontConfig};
@@ -1084,6 +1084,14 @@ impl Config {
                     .filter(|d| *d <= DIM_INACTIVE_MAX)
                     .ok_or_else(|| {
                         format!("[windows] dim_inactive must be between 0 and {DIM_INACTIVE_MAX}, got {d}")
+                    })?;
+            }
+            if let Some(r) = w.hidden_frame_rate {
+                cfg.hidden_frame_rate = u32::try_from(r)
+                    .ok()
+                    .filter(|r| *r <= HIDDEN_FRAME_RATE_MAX)
+                    .ok_or_else(|| {
+                        format!("[windows] hidden_frame_rate must be between 0 and {HIDDEN_FRAME_RATE_MAX}, got {r}")
                     })?;
             }
         }

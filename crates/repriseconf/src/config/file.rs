@@ -343,6 +343,7 @@ pub struct FileWindows {
     pub shake: Option<AutoFlag>,
     pub title_double_click: Option<String>,
     pub dim_inactive: Option<i64>,
+    pub hidden_frame_rate: Option<i64>,
 }
 
 /// A key that takes true, false or "auto" (the interface's default).

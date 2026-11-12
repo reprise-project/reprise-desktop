@@ -156,6 +156,12 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   windows, Alt+Tab and taskbar previews, the 3D switcher and window screenshots
   stay bright; a screenshot or screencast of the whole screen shows it as seen.
   The shade fades in 150 ms when `[effects] window_animation` is on.
+- **Hidden frame rate.** A program that waits on the screen for each frame (a
+  Vulkan or EGL game with vsync) keeps running at the refresh rate while no
+  screen shows its window: covered, minimized or on another desktop.
+  `[windows] hidden_frame_rate` caps it at that many frames a second (0 to 240,
+  0 by default for no cap; the Window Behavior page of Reprise Settings), which
+  saves the program's CPU and GPU.
 - **Window memory.** A program opens where its last window closed: same
   screen, same size, maximized if it was. A second window of it cascades
   from the first. A window that names itself with an xdg-toplevel-tag no
