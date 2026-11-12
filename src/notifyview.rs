@@ -65,6 +65,10 @@ const NOTIFY_TICK: Duration = Duration::from_millis(16);
 /// Logical px.
 const TINT_PX: i32 = 48;
 
+/// What a notification without an icon of its own shows, here and in the center: the first of
+/// these that draws.
+pub(crate) const INFO_ICONS: [&str; 2] = ["dialog-information", "help-about"];
+
 /// freedesktop `NotificationClosed` reason codes.
 pub const REASON_EXPIRED: u32 = 1;
 pub const REASON_DISMISSED: u32 = 2;
