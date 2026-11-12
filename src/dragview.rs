@@ -558,8 +558,32 @@ impl State {
         self.place_drag_image(pos);
     }
 
+    /// Icons the drag image showed a stand-in for landed: it draws again where it lies.
+    pub(crate) fn drag_icons_landed(&mut self) {
+        let Some(d) = self.drags.armed.as_mut() else {
+            return;
+        };
+        let (Some(image), grab, scale) = (d.image.take(), d.grab, d.image_scale) else {
+            return;
+        };
+        let at = self.scene.position(image);
+        self.scene.destroy(image);
+        self.draw_drag_image(grab, scale);
+        let placed = self.drags.armed.as_ref().and_then(|d| d.image).zip(at);
+        if let Some((image, at)) = placed {
+            self.scene.set_position(image, at.x, at.y);
+        }
+        self.redraw_content();
+    }
+
     /// Draw the image grabbed at `pos` at `scale` into a fresh buffer.
     fn draw_drag_image(&mut self, pos: Point<f64, Logical>, scale: i32) {
+        let waits = self.icons.waits();
+        self.draw_drag_image_at(pos, scale);
+        self.note_icon_waits(waits, crate::icon::IconWaiter::Drag);
+    }
+
+    fn draw_drag_image_at(&mut self, pos: Point<f64, Logical>, scale: i32) {
         let theme = self.config.theme.scaled(scale);
         let (x, y) = (pos.x as i32, pos.y as i32);
         let Some(d) = self.drags.armed.as_ref() else {
@@ -627,7 +651,7 @@ impl State {
             let icon = if icons && icon_name.starts_with('/') {
                 self.icons.file_put(icon_name, px).flatten()
             } else {
-                self.icons.get_shared(icon_name, px)
+                crate::icon::unread(&mut self.icons, icon_name, px)
             };
             // A desktop icon drags as it shows, selected; a menu program has no selection.
             let selected = icons.then_some(desktop::Selection {
@@ -1210,6 +1234,55 @@ mod tests {
         let hit = layout.hit(x, y);
         assert_eq!(hit, TaskbarHit::QuickMore);
         assert_eq!(quick_drop(&layout, hit, x, y), Some(layout.quick.len()));
+    }
+
+    /// A program dragged from the Start menu before its icon decodes shows a stand-in, and the
+    /// image draws again with the icon once it lands.
+    #[test]
+    fn a_drag_image_draws_again_when_its_cold_icon_lands() {
+        let root = crate::icon::svg_theme(&["test-app"], &[]);
+        let mut h = crate::icon::two_outputs("classic", &root);
+        let entry = AppEntry {
+            name: "Test".into(),
+            exec_line: "true".into(),
+            terminal: false,
+            id: "test.desktop".into(),
+            icon: Some("test-app".into()),
+            startup_wm_class: None,
+            categories: Vec::new(),
+            mime_types: Vec::new(),
+            shown: true,
+        };
+        let spot = reprisekit::startpanel::Spot::Program(0);
+        h.state
+            .start_panel_row_press(spot, entry, PathBuf::from("/srv/test.desktop"));
+        let pos = h.state.pointer_location();
+        let waits = h.state.icons.waits();
+        h.state.start_drag_image(pos);
+        assert!(h.state.icons.waits() > waits, "the image shows a stand-in");
+        let image =
+            |h: &crate::harness::Harness| h.state.drags.armed.as_ref().and_then(|d| d.image);
+        let cold = image(&h).expect("the drag image");
+        crate::icon::land(&mut h);
+        let landed = image(&h).expect("the drag image");
+        assert_ne!(landed, cold, "drawn again on landing");
+        let icon = h
+            .state
+            .icons
+            .get_unread("test-app", desktop::ICON_PX)
+            .flatten();
+        assert!(
+            icon.is_some_and(|c| crate::icon::red(&c)),
+            "the icon landed"
+        );
+        let waits = h.state.icons.waits();
+        h.state.drag_icons_landed();
+        assert_eq!(
+            h.state.icons.waits(),
+            waits,
+            "the icon drew without waiting"
+        );
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

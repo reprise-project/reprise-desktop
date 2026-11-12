@@ -2182,6 +2182,55 @@ fn a_listing_fetches_the_drawn_sizes_and_adds_a_new_views() {
     fs::remove_dir_all(&root).unwrap();
 }
 
+/// An unread listing wears a blank stand-in for a cold SVG, decodes nothing, and swaps in the icon
+/// once a job puts it; a name whose file decodes at no size comes back for the host to pick again.
+#[test]
+fn an_unread_listing_wears_a_stand_in_until_its_svg_lands() {
+    let root = fixture("test", INDEX, &[]);
+    put(&root, "test/scalable/apps/drawn.svg", RED_SVG.as_bytes());
+    put(&root, "test/scalable/apps/broken.svg", b"<svg");
+    let mut cache = IconCache::new(IconTheme::load("test", std::slice::from_ref(&root)));
+    let mut icons = ListingIcons::default().unread();
+    let held = icons.get(&mut cache, "drawn");
+    let broken = icons.get(&mut cache, "broken");
+    let blank = |s: &ListingSizes| {
+        (s.iter()).all(|c| c.as_ref().is_some_and(|c| c.pixels.iter().all(|&p| p == 0)))
+    };
+    assert!(blank(&held) && blank(&broken), "blank stand-ins");
+    assert_eq!(
+        held.clone().map(|c| c.map(|c| c.width)),
+        [Some(16), Some(32), Some(48)]
+    );
+    assert!(icons.waits());
+    assert!(cache.is_empty(), "nothing decoded");
+    assert_eq!(
+        icons.landed(&mut cache),
+        (Vec::new(), Vec::new()),
+        "nothing landed yet"
+    );
+
+    let theme = cache.theme();
+    let art: Vec<_> = (cache.take_wanted().into_iter())
+        .map(|(n, px)| (n.clone(), px, load_icon(&theme, &n, px, 1)))
+        .collect();
+    assert_eq!(art.len(), 6, "both names at three sizes");
+    cache.put_icons(&theme, art);
+    let (swaps, refused) = icons.landed(&mut cache);
+    assert_eq!(refused, ["broken"]);
+    assert_eq!(swaps.len(), 2);
+    let worn = |s: &ListingSizes| s[0].as_ref().map(std::rc::Rc::as_ptr);
+    let (_, new) = (swaps.iter())
+        .find(|(o, _)| worn(o) == worn(&held))
+        .expect("drawn's swap from the stand-in it wore");
+    assert!(
+        new.iter()
+            .all(|c| c.as_ref().is_some_and(|c| c.get(4, 4) == 0xFFFF_0000))
+    );
+    assert!(!icons.waits());
+    assert_eq!(icons.landed(&mut cache), (Vec::new(), Vec::new()));
+    fs::remove_dir_all(&root).unwrap();
+}
+
 #[test]
 fn a_shared_hit_is_the_cached_canvas_itself() {
     let root = fixture("test", INDEX, &["32x32/apps/app.png"]);

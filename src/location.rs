@@ -635,7 +635,7 @@ impl Prop {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::icon::tests::{land, red, two_outputs};
+    use crate::icon::{land, red, two_outputs};
 
     /// The open prompt's picture.
     fn picture(h: &crate::harness::Harness) -> Option<crate::raster::Canvas> {

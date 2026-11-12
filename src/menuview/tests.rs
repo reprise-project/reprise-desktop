@@ -115,10 +115,7 @@ fn a_row_waiting_on_an_icon_file_shows_its_cold_stand_in_once_that_lands() {
         "nothing has landed"
     );
     h.dispatch();
-    assert!(
-        crate::icon::tests::red(&icon(&h)),
-        "the row shows the stand-in"
-    );
+    assert!(crate::icon::red(&icon(&h)), "the row shows the stand-in");
     let waits = &h.state.menus[0].icons.waits;
     assert!(
         waits.iter().any(|(row, f, _)| *row == 0 && f == file),

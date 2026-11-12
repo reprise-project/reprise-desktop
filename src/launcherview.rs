@@ -771,7 +771,7 @@ mod tests {
     #[test]
     fn a_cold_calculator_icon_lands_on_its_row() {
         let root = crate::icon::svg_theme(&[CALC_ICON], &[]);
-        let mut h = crate::icon::tests::two_outputs("classic", &root);
+        let mut h = crate::icon::two_outputs("classic", &root);
         h.state.toggle_launcher();
         typed(&mut h, "2+3");
         let calc = |h: &crate::harness::Harness| {
@@ -783,8 +783,8 @@ mod tests {
             calc(&h).pixels.iter().all(|&p| p == 0),
             "the stand-in is blank"
         );
-        crate::icon::tests::land(&mut h);
-        assert!(crate::icon::tests::red(&calc(&h)), "the row took the icon");
+        crate::icon::land(&mut h);
+        assert!(crate::icon::red(&calc(&h)), "the row took the icon");
         std::fs::remove_dir_all(&root).unwrap();
     }
 

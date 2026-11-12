@@ -206,7 +206,7 @@ impl State {
         self.spawn_argv_activated(&apps::open_location_argv(path));
     }
 
-    fn file_icon_name(&self, path: &Path, is_dir: bool) -> String {
+    pub(crate) fn file_icon_name(&self, path: &Path, is_dir: bool) -> String {
         self.with_mime(|db| crate::search::file_icon_name(path, is_dir, db, &self.icons))
     }
 
