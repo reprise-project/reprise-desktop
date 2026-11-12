@@ -536,6 +536,47 @@ mod tests {
     }
 
     #[test]
+    fn an_alpha_only_fade_that_uncovers_a_waiting_fifo_surface_asks_its_output() {
+        use wayland_protocols::wp::alpha_modifier::v1::client::wp_alpha_modifier_v1::WpAlphaModifierV1;
+        let (mut h, output) = harness();
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "fifo", 200, 150);
+        let f = h.map_toplevel(&mut c, "player", 300, 200);
+        h.state.set_fullscreen(f.id, true);
+        h.roundtrip(&mut c);
+        h.draw_opaque(&mut c, f, 0xff00_0000);
+        let surface = c.side.shells[t.shell].surface.clone();
+        let server = server_side(&h, &c, &surface);
+        assert_eq!(
+            h.state.scene.surface_primary_output(&server),
+            None,
+            "covered"
+        );
+        let am: WpAlphaModifierV1 = c.bind("wp_alpha_modifier_v1", 1);
+        let fs = c.side.shells[f.shell].surface.clone();
+        let ams = am.get_surface(&fs, &c.qh(), ());
+        h.roundtrip(&mut c);
+        commit_behind_barrier(&mut h, &mut c, &surface);
+        assert_eq!(buffer_scale(&server), 1, "waits on the barrier");
+        crate::backend::take_asks();
+        ams.set_multiplier(u32::MAX / 2);
+        fs.commit();
+        h.roundtrip(&mut c);
+        assert_eq!(
+            h.state.scene.surface_primary_output(&server).as_ref(),
+            Some(&output),
+            "shown through the faded window"
+        );
+        tick(&mut h.state);
+        let asked = crate::backend::take_asks();
+        assert_eq!(buffer_scale(&server), 1, "the tick leaves it to its output");
+        assert!(
+            !asked.is_empty(),
+            "the output is asked for the frame that passes the barrier: {asked:?}"
+        );
+    }
+
+    #[test]
     fn a_commit_that_only_waits_passes_on_the_frame_after_the_one_before_it() {
         let (mut h, output) = harness();
         let mut c = h.connect();
