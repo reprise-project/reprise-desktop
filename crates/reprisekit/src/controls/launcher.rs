@@ -61,6 +61,15 @@ pub struct FileRow {
     pub icon: Option<Canvas>,
 }
 
+/// The icons [`Launcher::refill_icons`] gives the rows, each list in its rows' order.
+#[derive(Clone, Debug, Default)]
+pub struct Refill {
+    pub windows: Vec<Option<Canvas>>,
+    pub apps: Vec<Option<Canvas>>,
+    pub settings: Vec<Option<Canvas>>,
+    pub files: Vec<Option<Canvas>>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pick {
     Calc,
@@ -119,6 +128,21 @@ pub enum Event {
     /// Open the context menu of a program or file row, highlighted.
     Context(Pick),
     Close,
+}
+
+/// Puts `icons` in `slots`, in order. True when one changed.
+fn refill<'a>(
+    slots: impl Iterator<Item = &'a mut Option<Canvas>>,
+    icons: Vec<Option<Canvas>>,
+) -> bool {
+    let mut changed = false;
+    for (slot, icon) in slots.zip(icons) {
+        if *slot != icon {
+            *slot = icon;
+            changed = true;
+        }
+    }
+    changed
 }
 
 impl Default for Launcher {
@@ -296,25 +320,32 @@ impl Launcher {
         self.rebuild(None);
     }
 
-    /// Gives the app and settings rows, in order, the icons the host found for them again (an
-    /// icon file it decoded since), keeping the list as it is.
-    pub fn refill_icons(&mut self, apps: Vec<Option<Canvas>>, settings: Vec<Option<Canvas>>) {
-        for (r, icon) in self.apps.iter_mut().zip(apps) {
-            r.icon = icon;
-        }
-        for (r, icon) in self.settings.iter_mut().zip(settings) {
-            r.icon = icon;
+    /// Gives every row the icon the host found for it again (one that landed since), keeping the
+    /// list and the highlight as they are. True when a row's icon changed.
+    pub fn refill_icons(&mut self, icons: Refill) -> bool {
+        let changed = refill(self.windows.iter_mut().map(|r| &mut r.icon), icons.windows)
+            | refill(self.apps.iter_mut().map(|r| &mut r.icon), icons.apps)
+            | refill(
+                self.settings.iter_mut().map(|r| &mut r.icon),
+                icons.settings,
+            )
+            | refill(self.files.iter_mut().map(|f| &mut f.icon), icons.files);
+        if !changed {
+            return false;
         }
         for (k, line) in self.lines().into_iter().enumerate() {
             let icon = match line {
+                Line::Row(Pick::Window(i)) => self.windows[i].icon.clone(),
                 Line::Row(Pick::App(i)) => self.apps[i].icon.clone(),
                 Line::Row(Pick::Setting(i)) => self.settings[i].icon.clone(),
+                Line::Row(Pick::File(i)) => self.files[i].icon.clone(),
                 _ => continue,
             };
             if let Some(slot) = self.icons.get_mut(k) {
                 *slot = icon;
             }
         }
+        true
     }
 
     /// The host's file rows for the current query, best first. The highlight stays
@@ -1113,10 +1144,18 @@ mod tests {
         l.set_rows(rows(&["Xa", "Xb"]));
         l.key(Key::Down);
         let selected = l.list.selected;
-        l.refill_icons(
-            vec![None, Some(Canvas::new(16, 16))],
-            vec![Some(Canvas::new(8, 8))],
-        );
+        l.set_files(vec![FileRow {
+            name: "x.txt".into(),
+            folder: "~".into(),
+            icon: None,
+        }]);
+        let refill = || Refill {
+            apps: vec![None, Some(Canvas::new(16, 16))],
+            settings: vec![Some(Canvas::new(8, 8))],
+            files: vec![Some(Canvas::new(4, 4))],
+            ..Refill::default()
+        };
+        assert!(l.refill_icons(refill()));
         let widths: Vec<Option<u32>> = l
             .icons
             .iter()
@@ -1126,7 +1165,9 @@ mod tests {
         assert_eq!(widths[at("Xa")], None);
         assert_eq!(widths[at("Xb")], Some(16));
         assert_eq!(widths[at("Display")], Some(8));
+        assert_eq!(widths[at("x.txt")], Some(4));
         assert_eq!(l.list.selected, selected);
+        assert!(!l.refill_icons(refill()), "the same icons change nothing");
     }
 
     #[test]
