@@ -131,6 +131,7 @@ fn copy_numbered(src: &Path, dir: &Path, name: &OsStr, stop: &AtomicBool) -> io:
     let is_dir = src.is_dir();
     let mut last = None;
     for candidate in crate::names::numbered(name, crate::names::paren).take(1000) {
+        go_on(stop)?;
         let dest = dir.join(candidate);
         let made = if is_dir {
             copy_dir_until(src, &dest, stop)
@@ -357,11 +358,16 @@ fn make_part(dir: &Path, make: impl Fn(&Path) -> io::Result<()>) -> io::Result<P
 }
 
 /// The cancelled copy's error.
-fn cancelled() -> PutError {
-    PutError::Io(io::Error::new(
-        io::ErrorKind::Interrupted,
-        "The copy was cancelled.",
-    ))
+/// Checked right before a put changes anything: a job that gave up on a stuck look has said nothing
+/// changed, so the look returning late moves and makes nothing.
+fn go_on(stop: &AtomicBool) -> io::Result<()> {
+    match stop.load(Ordering::Relaxed) {
+        true => Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "The copy was cancelled.",
+        )),
+        false => Ok(()),
+    }
 }
 
 /// Whether putting `src` (whose own metadata is `from`) over `dest`
@@ -404,9 +410,6 @@ fn replace_into(
     stop: &AtomicBool,
 ) -> Result<Swap, PutError> {
     use std::os::unix::fs::MetadataExt;
-    if stop.load(Ordering::Relaxed) {
-        return Err(cancelled());
-    }
     let from = source_meta(src, moving)?;
     let to = std::fs::symlink_metadata(dest)?;
     if is_itself(src, &from, &to) {
@@ -418,6 +421,7 @@ fn replace_into(
     if moving {
         refuse_mount_point(src)?;
     }
+    go_on(stop)?;
     match (from.is_dir(), to.is_dir()) {
         (true, true) => {
             if moving {
@@ -577,9 +581,7 @@ fn merge_into(
     let mut kept = false;
     let entries = std::fs::read_dir(src)?.collect::<io::Result<Vec<_>>>()?;
     for entry in entries {
-        if stop.load(Ordering::Relaxed) {
-            return Err(cancelled());
-        }
+        go_on(stop)?;
         let (from, to) = (entry.path(), dest.join(entry.file_name()));
         let under = rel.join(entry.file_name());
         let meta = std::fs::symlink_metadata(&from)?;
@@ -835,6 +837,7 @@ pub(crate) fn put_in_until(
                 // Never `fs::rename` straight over the destination: that
                 // would delete whatever shares the name without a word. A
                 // taken name is numbered past instead.
+                go_on(stop)?;
                 (move_numbered(src, dir, &file_name)?, false)
             };
             let mut landed = Landing::new(landed);
@@ -884,6 +887,7 @@ pub(crate) fn put_in_until(
                     "a name with a control character cannot go in a shortcut",
                 )
             })?;
+            go_on(stop)?;
             let dest = unique_path(dir, format!("{name}.desktop"));
             crate::apps::write_launcher(&dest, &text)?;
             Ok(Landing::new((
