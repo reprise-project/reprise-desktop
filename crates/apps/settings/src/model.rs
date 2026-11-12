@@ -244,6 +244,8 @@ pub struct Settings {
     pub title_double_click: String,
     /// `[windows] dim_inactive`: percent, 0 off.
     pub dim_inactive: i64,
+    /// `[windows] hidden_frame_rate`: frames a second, 0 the refresh rate.
+    pub hidden_frame_rate: i64,
     /// `[session] restore`.
     pub session_restore: bool,
     /// `[session] end_processes`.
@@ -569,6 +571,7 @@ impl Settings {
                 &c.title_double_click,
             ),
             dim_inactive: c.dim_inactive.into(),
+            hidden_frame_rate: c.hidden_frame_rate.into(),
             session_restore: c.session.restore,
             session_end_processes: c.session.end_processes,
             restart_notice: c.restart_notice,

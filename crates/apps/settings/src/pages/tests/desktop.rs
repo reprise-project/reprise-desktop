@@ -817,6 +817,25 @@ fn search_values_go_in_and_come_back_out() {
 }
 
 #[test]
+fn the_hidden_frame_rate_row_pins_its_pixels_in_every_look() {
+    let row = Rect::new(20, 404, 358, 34);
+    let mut f = window_behavior(Area::MIN);
+    let unlimited = row_pins(&f, row);
+    if let Some(Control::UpDown(u)) = f.item_mut("hidden_frame_rate").map(|i| &mut i.control) {
+        u.set(30);
+    }
+    let capped = row_pins(&f, row);
+    assert_eq!(
+        [unlimited, capped],
+        [
+            [0xefbb89513c980f61, 0x1450e021f5145d89, 0x530a39ad8b385b30],
+            [0x98f9260bdd2b483a, 0x08c3c87d0287237a, 0x63689651eb9e351f],
+        ],
+        "0, 30; Classic, Blue, Glass"
+    );
+}
+
+#[test]
 fn the_window_behavior_page_geometry() {
     let s = built();
     let p = Page::WindowBehavior;
@@ -834,7 +853,7 @@ fn the_window_behavior_page_geometry() {
         Rect::new(242, 142, 30, 13)
     );
     assert_eq!(rect(&s, p, "snap_layouts"), Rect::new(120, 166, 246, 20));
-    assert_eq!(rect(&s, p, "tabs_group"), Rect::new(20, 228, 358, 182));
+    assert_eq!(rect(&s, p, "tabs_group"), Rect::new(20, 228, 358, 210));
     assert_eq!(rect(&s, p, "window_tabs"), Rect::new(32, 250, 13, 13));
     assert_eq!(rect(&s, p, "remember_windows"), Rect::new(32, 274, 13, 13));
     assert_eq!(rect(&s, p, FORGET_FRAMES), Rect::new(50, 296, 110, 23));
@@ -856,11 +875,20 @@ fn the_window_behavior_page_geometry() {
         rect(&s, p, "dim_inactive_units"),
         Rect::new(322, 384, 20, 13)
     );
+    assert_eq!(
+        rect(&s, p, "hidden_frame_rate_label"),
+        Rect::new(32, 412, 170, 13)
+    );
+    assert_eq!(rect(&s, p, "hidden_frame_rate").y, 408);
+    assert_eq!(
+        rect(&s, p, "hidden_frame_rate_units"),
+        Rect::new(262, 412, 104, 13)
+    );
     inside_page(&s, p);
 }
 
 #[test]
-fn the_window_behavior_page_reads_back_tabs_shaking_the_picker_the_bar_the_distance_and_the_layouts()
+fn the_window_behavior_page_reads_back_tabs_shaking_the_picker_the_bar_the_distance_the_layouts_and_the_hidden_rate()
  {
     let want = Settings {
         window_tabs: false,
@@ -872,6 +900,7 @@ fn the_window_behavior_page_reads_back_tabs_shaking_the_picker_the_bar_the_dista
         window_shake: true,
         title_double_click: "shade".into(),
         dim_inactive: 20,
+        hidden_frame_rate: 30,
         ..Settings::default()
     };
     let s = with(&want);

@@ -6,8 +6,8 @@
 //!
 //! A surface's primary output passes its fifo barriers and commit timers (`frame_done`,
 //! `before_frame`), asked at commit for the frame a timer shows in (`ask_frame`); a surface no
-//! output shows (hidden, or covered by opaque windows) has them passed at the refresh rate
-//! without asking a frame (`tick`).
+//! output shows (hidden, or covered by opaque windows) has them passed at the refresh rate, or
+//! at `[windows] hidden_frame_rate` when that is slower, without asking a frame (`tick`).
 //!
 //! A commit with a dmabuf waits for the buffer to be ready before it
 //! applies: on its explicit-sync acquire point when it set one, else on
@@ -76,7 +76,7 @@ pub struct SurfaceProtos {
     commit_timing: CommitTimingManagerState,
     /// Surfaces with a commit waiting on a fifo barrier or a commit timer.
     waiting: Vec<Waiting>,
-    /// The refresh-rate timer running while `waiting` holds a surface (`tick`).
+    /// The timer running while `waiting` holds a surface (`tick`, every `tick_interval`).
     tick: Option<RegistrationToken>,
 }
 
@@ -241,26 +241,38 @@ fn wait(state: &mut State, surface: &WlSurface, barrier: Option<Barrier>) {
             barriers: barrier.into_iter().collect(),
         }),
     }
-    if protos.tick.is_some() {
-        return;
+    if protos.tick.is_none() {
+        start_tick(state);
     }
-    let token = state
-        .handle
-        .insert_source(Timer::from_duration(refresh(state)), |_, _, state| {
-            if tick(state) {
-                TimeoutAction::ToDuration(refresh(state))
-            } else {
-                state.surface_protos.tick = None;
-                TimeoutAction::Drop
-            }
-        });
+}
+
+fn start_tick(state: &mut State) {
+    let token =
+        state
+            .handle
+            .insert_source(Timer::from_duration(tick_interval(state)), |_, _, state| {
+                if tick(state) {
+                    TimeoutAction::ToDuration(tick_interval(state))
+                } else {
+                    state.surface_protos.tick = None;
+                    TimeoutAction::Drop
+                }
+            });
     match token {
         Ok(t) => state.surface_protos.tick = Some(t),
         Err(e) => log::warn!("fifo timer: {}", e.error),
     }
 }
 
-/// Ask `output` for the frame that shows at `at` (monotonic). The refresh-rate tick runs out of
+/// `[windows] hidden_frame_rate` changed: a running tick restarts at the new interval.
+pub fn hidden_rate_changed(state: &mut State) {
+    if let Some(token) = state.surface_protos.tick.take() {
+        state.handle.remove(token);
+        start_tick(state);
+    }
+}
+
+/// Ask `output` for the frame that shows at `at` (monotonic). The tick runs out of
 /// phase with the output's flips: a frame it asked for could start just before the refresh it
 /// meant to follow and show the commit a refresh late.
 fn ask_frame(state: &mut State, output: &Output, at: Duration) {
@@ -275,6 +287,19 @@ fn refresh(state: &State) -> Duration {
         .map(|m| m.refresh)
         .max();
     crate::framepace::interval(fastest.unwrap_or(0))
+}
+
+/// How often `tick` runs: the refresh interval, or `[windows] hidden_frame_rate`'s when longer.
+fn tick_interval(state: &State) -> Duration {
+    capped(refresh(state), state.config.hidden_frame_rate)
+}
+
+/// `refresh`, no shorter than a frame at `hz` frames a second; 0 is no cap.
+fn capped(refresh: Duration, hz: u32) -> Duration {
+    match hz {
+        0 => refresh,
+        hz => refresh.max(Duration::from_secs(1) / hz),
+    }
 }
 
 /// The time `surface`'s earliest commit timer waits for (monotonic).
@@ -395,7 +420,7 @@ pub fn before_frame(state: &mut State, output: &Output, shows_at: Duration) {
     }
 }
 
-/// The refresh-rate timer's turn: whether it runs again.
+/// The tick timer's turn: whether it runs again.
 fn tick(state: &mut State) -> bool {
     let now = state.now();
     release(state, |_, primary| on_tick(primary.is_some(), now));
@@ -405,6 +430,7 @@ fn tick(state: &mut State) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Config;
     use crate::harness::{Harness, TestClient};
     use smithay::output::Mode;
     use wayland_client::{Proxy, protocol::wl_surface::WlSurface as ClientSurface};
@@ -641,5 +667,100 @@ mod tests {
         };
         assert_eq!(on_tick(false, now), all);
         assert_eq!(on_tick(true, now), Release::default());
+    }
+
+    #[test]
+    fn the_tick_runs_at_the_refresh_rate_or_the_hidden_frame_rate_when_that_is_slower() {
+        assert_eq!(capped(HZ60, 0), HZ60, "0 keeps the refresh rate");
+        assert_eq!(capped(HZ60, 30), Duration::from_nanos(33_333_333));
+        assert_eq!(capped(HZ60, 120), HZ60, "a cap above the refresh rate");
+    }
+
+    /// A harness whose one output refreshes 100 times a second, with `[windows]
+    /// hidden_frame_rate = rate`.
+    fn at_100hz(rate: u32) -> Harness {
+        let config = Config::parse(&format!("[windows]\nhidden_frame_rate = {rate}\n"));
+        let mut h = Harness::with_config(config.expect("the config"));
+        let output = h.output("A", 800, 600);
+        let mode = Mode {
+            size: (800, 600).into(),
+            refresh: 100_000,
+        };
+        output.change_current_state(Some(mode), None, None, None);
+        h
+    }
+
+    /// Turns of the loop until `server` shows buffer scale 2, for at most `limit`.
+    fn applies_within(h: &mut Harness, server: &WlSurface, limit: Duration) -> bool {
+        let end = std::time::Instant::now() + limit;
+        while buffer_scale(server) != 2 && std::time::Instant::now() < end {
+            (h.event_loop)
+                .dispatch(Some(Duration::from_millis(2)), &mut h.state)
+                .expect("dispatch");
+            h.state.turn_end();
+        }
+        buffer_scale(server) == 2
+    }
+
+    #[test]
+    fn a_hidden_fifo_surface_passes_its_barrier_at_the_hidden_frame_rate() {
+        let mut h = at_100hz(0);
+        assert_eq!(tick_interval(&h.state), Duration::from_millis(10));
+        let mut c = h.connect();
+        let surface = h.bare_client_surface(&mut c);
+        let server = server_side(&h, &c, &surface);
+        commit_behind_barrier(&mut h, &mut c, &surface);
+        assert!(
+            applies_within(&mut h, &server, Duration::from_millis(300)),
+            "the 10 ms tick passes the barrier"
+        );
+
+        let mut h = at_100hz(4);
+        assert_eq!(tick_interval(&h.state), Duration::from_millis(250));
+        let mut c = h.connect();
+        let surface = h.bare_client_surface(&mut c);
+        let server = server_side(&h, &c, &surface);
+        commit_behind_barrier(&mut h, &mut c, &surface);
+        assert!(
+            !applies_within(&mut h, &server, Duration::from_millis(100)),
+            "no tick before 250 ms"
+        );
+        assert!(
+            applies_within(&mut h, &server, Duration::from_secs(2)),
+            "the 250 ms tick passes the barrier"
+        );
+    }
+
+    #[test]
+    fn a_shown_fifo_surface_passes_its_barrier_on_its_outputs_frame_under_a_hidden_frame_rate() {
+        let mut h = at_100hz(1);
+        let output = h.state.scene.outputs()[0].clone();
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "fifo", 200, 150);
+        let surface = c.side.shells[t.shell].surface.clone();
+        let server = server_side(&h, &c, &surface);
+        commit_behind_barrier(&mut h, &mut c, &surface);
+        assert_eq!(buffer_scale(&server), 1, "the commit waits on the barrier");
+        frame_done(&mut h.state, &output);
+        assert_eq!(buffer_scale(&server), 2, "the output's frame passes it");
+    }
+
+    #[test]
+    fn a_reload_restarts_the_tick_at_the_new_hidden_frame_rate() {
+        let mut h = at_100hz(1);
+        let mut c = h.connect();
+        let surface = h.bare_client_surface(&mut c);
+        let server = server_side(&h, &c, &surface);
+        commit_behind_barrier(&mut h, &mut c, &surface);
+        assert_eq!(tick_interval(&h.state), Duration::from_secs(1));
+        crate::configwatch::reload(&mut h.state, Config::default());
+        assert_eq!(tick_interval(&h.state), Duration::from_millis(10));
+        assert!(
+            applies_within(&mut h, &server, Duration::from_millis(500)),
+            "the restarted tick passes the barrier well before the old 1 s one"
+        );
+        let capped = Config::parse("[windows]\nhidden_frame_rate = 30\n").unwrap();
+        crate::configwatch::reload(&mut h.state, capped);
+        assert_eq!(tick_interval(&h.state), Duration::from_nanos(33_333_333));
     }
 }

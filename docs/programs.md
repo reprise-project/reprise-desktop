@@ -344,8 +344,8 @@ matched control focused.
     desktop and their names.
   - **Window Behavior:** snapping, snap layouts and the snap bar, snap
     distance, custom layouts, window tabs, window memory and Forget
-    Positions, shake to minimize, a title bar's double-click and dimming the
-    windows without the focus.
+    Positions, shake to minimize, a title bar's double-click, dimming the
+    windows without the focus and the frame rate of hidden windows.
 - **Display & Sound**
   - **Display:** arrange monitors by dragging them, or pick one with the
     arrows and move it with Ctrl+arrows to the next edge that way, Identify,

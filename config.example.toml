@@ -566,6 +566,11 @@ suspend_after = 0            # run [power] standby
 #                            # this many percent darker, 0 to 40; 0 is off. Its client area only,
 #                            # not the frame; full-screen windows, previews and window screenshots
 #                            # stay undimmed. Fades in 150 ms with window_animation
+# hidden_frame_rate = 0      # 0 to 240: a program that waits on the screen for each frame
+#                            # (a Vulkan or EGL game with vsync) runs at most this many frames
+#                            # a second while no screen shows its window: covered, minimized
+#                            # or on another desktop. 0 keeps the refresh rate; 30 saves its
+#                            # CPU and GPU. Window Behavior page of Reprise Settings
 
 # [session]
 # restore = true             # the apps open at Log Off, Turn Off or Restart (or a crash) start
