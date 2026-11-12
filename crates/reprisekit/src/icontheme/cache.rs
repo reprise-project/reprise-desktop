@@ -260,6 +260,12 @@ impl IconCache {
         }
     }
 
+    /// `name` counts for [`IconCache::has`] and [`IconCache::has_unread`] as a name that decodes at
+    /// no size, until the theme changes: a host that saw it land broken picks the next name.
+    pub fn refuse(&mut self, name: &str) {
+        self.known.get_mut().insert(name.to_string(), false);
+    }
+
     /// The names [`IconCache::has_unread`] counted that turned out to decode at no size, since the
     /// last call: a host picks again where one of them was picked.
     pub fn take_refused(&mut self) -> Vec<String> {

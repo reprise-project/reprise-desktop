@@ -4,6 +4,8 @@
 //! `Event::Wake` drains the arrivals ([`Explorer::wake`]); `Event::Tick`,
 //! requested while a hover waits, shows the tip ([`Explorer::tip_tick`]).
 
+use crate::dialogs::Dialog;
+use crate::foldertree;
 use crate::place::Place;
 use crate::window;
 use crate::{Explorer, HoverOn, Tip};
@@ -120,9 +122,24 @@ impl Explorer {
         })
     }
 
+    /// Theme icons decoded off the loop landed in `ctx.icons`: the list, the Folders pane and the
+    /// picker's tree swap their stand-ins. Gives whether the window and the picker changed, and
+    /// whether a listed name decodes at no size, for a listing read again to pick the next.
+    fn land_icons(&mut self, ctx: &mut Ctx) -> (bool, bool, bool) {
+        let (listed, broken) = self.list_icons.landed(&mut ctx.icons, &mut self.sv.entries);
+        let tree = foldertree::land_icons(&mut self.tree, &mut self.tree_places, &mut ctx.icons);
+        let picker = match &mut self.dialog {
+            Some(Dialog::Browse(b)) => {
+                foldertree::land_icons(&mut b.bf.tree, &mut b.places, &mut ctx.icons)
+            }
+            _ => false,
+        };
+        (listed || tree, picker, broken)
+    }
+
     /// `Event::Wake`: a put, job, tip walk, late listing or search, drive scan, clash check or Folders node read finished, thumbnails arrived, or
-    /// the watch or UDisks2 saw a change (which re-lists), or the folder left (which follows it). A closing window quits here
-    /// once its work is done.
+    /// the watch or UDisks2 saw a change (which re-lists), the folder left (which follows it), or icons
+    /// landed. A closing window quits here once its work is done.
     pub fn wake(&mut self, ctx: &mut Ctx) -> Reply {
         let put = self.poll_put(ctx);
         let removed = self.poll_removal(ctx);
@@ -134,7 +151,8 @@ impl Explorer {
         let opened = self.take_opened(ctx);
         let tipped = self.poll_tip_walk(ctx);
         let clashed = self.take_clashes(ctx);
-        let browsed = self.take_browse(ctx);
+        let (landed, picked, broken) = self.land_icons(ctx);
+        let browsed = self.take_browse(ctx) | picked;
         if self.closing && !self.busy() {
             return opened.unwrap_or_default().and(Reply {
                 quit: true,
@@ -147,6 +165,7 @@ impl Explorer {
             self.refresh_chrome(ctx);
         }
         let mut dirty = repinned
+            | landed
             | tipped
             | self.take_fills(ctx)
             | self.take_link_status(ctx)
@@ -218,9 +237,10 @@ impl Explorer {
         dirty |= !holders.is_empty();
         let shown = self.place.path();
         let watched = self.watch.as_mut().is_some_and(|w| w.take_changed());
-        let relisted = shown
-            .as_ref()
-            .is_some_and(|p| due.contains(p) || holders.contains(p));
+        let relisted = broken
+            || shown
+                .as_ref()
+                .is_some_and(|p| due.contains(p) || holders.contains(p));
         if (watched || relisted) && !self.search.hold_change() {
             let r = self.refresh(ctx);
             return put.unwrap_or_default().and(r);
@@ -1103,6 +1123,85 @@ mod tests {
         crate::tests::wake_until(&mut ex, &mut ctx, |ex| {
             ex.sv.entries.first().is_some_and(|e| e.icon48.is_some())
         });
+    }
+
+    /// A folder of cold SVG icons lists before any decode: the list and the Folders pane wear
+    /// blank stand-ins, then their icons once they land. A folder whose own icon decodes at no
+    /// size wears the plain folder in both, the list read again for it.
+    #[test]
+    fn cold_svg_icons_land_on_the_list_and_tree_and_a_broken_own_icon_gives_way() {
+        const FOLDER: u32 = 0xff20_40c0;
+        const TEXT: u32 = 0xffc0_4020;
+        let art = tempfile::Builder::new()
+            .prefix("tree")
+            .tempdir()
+            .expect("a temp dir shown in the tree");
+        let (root, folder) = (art.path().join("icons"), art.path().join("folder"));
+        let places = root.join("svg/scalable/places");
+        std::fs::create_dir_all(&places).expect("mkdir");
+        let index = "[Icon Theme]\nName=svg\nDirectories=scalable/places\n\n[scalable/places]\nSize=48\nMinSize=8\nMaxSize=512\nType=Scalable\n";
+        std::fs::write(root.join("svg/index.theme"), index).expect("write");
+        for (name, argb) in [("folder", FOLDER), ("text-x-generic", TEXT)] {
+            let svg = format!(
+                "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"48\" height=\"48\"><rect width=\"48\" height=\"48\" fill=\"#{:06x}\"/></svg>",
+                argb & 0xff_ffff
+            );
+            std::fs::write(places.join(format!("{name}.svg")), svg).expect("write");
+        }
+        std::fs::write(places.join("folder-music.svg"), "<svg").expect("write");
+        std::fs::create_dir_all(folder.join("music")).expect("mkdir");
+        std::fs::write(folder.join("notes.txt"), "x").expect("write");
+        reprisefs::meta::set_folder_icon(&folder.join("music"), Some("folder-music"))
+            .expect("own icon");
+        let mut ctx = test_ctx();
+        ctx.icons = reprisekit::icontheme::IconCache::new(reprisekit::icontheme::IconTheme::load(
+            "svg",
+            &[root],
+        ));
+        let mut ex = crate::tests::test_explorer(Place::Folder(folder.clone()), &mut ctx);
+        let worn = |ex: &Explorer, name: &str| -> Vec<u32> {
+            let e = ex.sv.entries.iter().find(|e| e.name == name).expect(name);
+            [&e.icon, &e.icon32, &e.icon48]
+                .into_iter()
+                .flatten()
+                .map(|c| c.get(c.width as i32 / 2, c.height as i32 / 2))
+                .collect()
+        };
+        let music = Place::Folder(folder.join("music"));
+        let node = |ex: &Explorer| -> Option<u32> {
+            let path = ex.tree_path_of(&music).expect("music's node");
+            let icon = ex.tree.node(&path)?.icon.as_ref()?;
+            Some(icon.get(8, 8))
+        };
+        for name in ["music", "notes.txt"] {
+            let w = worn(&ex, name);
+            assert!(!w.is_empty() && w.iter().all(|&p| p == 0), "{name}: {w:x?}");
+        }
+        assert_eq!(
+            node(&ex),
+            Some(0),
+            "the tree's music wears a blank stand-in"
+        );
+
+        let landed = |ex: &Explorer| {
+            let w = worn(ex, "music");
+            !w.is_empty() && w.iter().all(|&p| p == FOLDER) && node(ex) == Some(FOLDER)
+        };
+        // The list read again for music asks for the plain folder, which lands a wake later.
+        for _ in 0..500 {
+            repriseapp::iconjobs::decode_now(&mut ctx.icons);
+            ex.wake(&mut ctx);
+            if landed(&ex) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(
+            landed(&ex),
+            "music wears the plain folder in the list and the tree"
+        );
+        let w = worn(&ex, "notes.txt");
+        assert!(!w.is_empty() && w.iter().all(|&p| p == TEXT), "{w:x?}");
     }
 
     #[test]

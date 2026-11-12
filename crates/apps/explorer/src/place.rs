@@ -9,7 +9,7 @@ use reprisekit::controls::shellview::Field;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Place {
     Folder(PathBuf),
     Desktop,

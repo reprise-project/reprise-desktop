@@ -889,6 +889,88 @@ fn a_listing_gives_entries_their_icons_at_every_size_and_tiles_lines() {
     assert_eq!(pic.detail[0], pic.kind);
 }
 
+/// A theme of SVGs drawing `names` in flat colours, plus `folder-music`, an SVG that never
+/// decodes.
+fn svg_icons(t: &Path, names: &[(&str, u32)]) -> IconCache {
+    let root = t.join("svgicons");
+    let dir = root.join("svg/scalable/places");
+    std::fs::create_dir_all(&dir).unwrap();
+    let index = "[Icon Theme]\nName=Svg\nDirectories=scalable/places\n\n[scalable/places]\nSize=48\nMinSize=8\nMaxSize=512\nType=Scalable\n";
+    std::fs::write(root.join("svg/index.theme"), index).unwrap();
+    for (name, argb) in names {
+        let rgb = argb & 0xff_ffff;
+        let svg = format!(
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"48\" height=\"48\"><rect width=\"48\" height=\"48\" fill=\"#{rgb:06x}\"/></svg>"
+        );
+        std::fs::write(dir.join(format!("{name}.svg")), svg).unwrap();
+    }
+    std::fs::write(dir.join("folder-music.svg"), "<svg").unwrap();
+    IconCache::new(reprisekit::icontheme::IconTheme::load("svg", &[root]))
+}
+
+/// A folder of cold SVG icons lists before any decode: its entries, the places and the toolbar
+/// wear blank stand-ins, then their icons once they land. A folder whose own icon decodes at no
+/// size is read again and wears the plain folder.
+#[test]
+fn cold_svg_icons_land_on_the_dialog_and_a_broken_own_icon_gives_way() {
+    let t = pictures_folder();
+    let dir = t.path().join("list");
+    std::fs::create_dir(dir.join("music")).unwrap();
+    reprisefs::meta::set_folder_icon(&dir.join("music"), Some("folder-music")).unwrap();
+    let mut icons = svg_icons(
+        t.path(),
+        &[
+            ("folder", FOLDER),
+            ("text-x-generic", TEXT),
+            ("image-x-generic", PICTURE),
+            ("computer", FOLDER),
+            ("go-up", FOLDER),
+        ],
+    );
+    let mut h = host_in(&dir);
+    h.icons.prime(&mut icons);
+    let mut dlg = open_dlg(&mut h);
+    h.ensure_listed(&mut dlg, &mut icons, &|_| true);
+    let sizes = |dlg: &FileDlg, name: &str| {
+        let e = entry(dlg, name);
+        [&e.icon, &e.icon32, &e.icon48].map(colour)
+    };
+    let each = |c| [Some((16, c)), Some((32, c)), Some((48, c))];
+    for name in ["sub", "music", "notes.txt"] {
+        assert_eq!(sizes(&dlg, name), each(0), "{name} wears a blank stand-in");
+    }
+    let up = |h: &Host| h.icons.toolbar[1].as_ref().map(|c| c.get(8, 8));
+    assert_eq!(up(&h), Some(0), "Up wears a blank stand-in");
+    assert!(!h.take_thumbs(&mut dlg, &mut icons), "nothing landed yet");
+
+    assert!(crate::iconjobs::decode_now(&mut icons));
+    for _ in 0..500 {
+        crate::iconjobs::decode_now(&mut icons);
+        h.take_thumbs(&mut dlg, &mut icons);
+        if sizes(&dlg, "music") == each(FOLDER) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert_eq!(sizes(&dlg, "sub"), each(FOLDER));
+    assert_eq!(sizes(&dlg, "notes.txt"), each(TEXT));
+    assert_eq!(sizes(&dlg, "music"), each(FOLDER), "the plain folder");
+    assert_eq!(up(&h), Some(FOLDER));
+    let want = open_dlg(&mut h);
+    assert_eq!(
+        dlg.places()
+            .iter()
+            .map(|p| p.icon.clone())
+            .collect::<Vec<_>>(),
+        want.places()
+            .iter()
+            .map(|p| p.icon.clone())
+            .collect::<Vec<_>>(),
+        "the places wear their landed icons"
+    );
+    assert!(!h.icons.waiting);
+}
+
 /// A new icon theme gives the listed entries its icons without listing the folder again,
 /// each named anew: a folder whose own icon the old theme lacked wears it now.
 #[test]
