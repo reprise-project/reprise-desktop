@@ -86,16 +86,14 @@ impl CompositorHandler for State {
         }
         let window = self.window_for_surface(&top);
         let mark = window.and_then(|w| self.window_mark(w));
+        // A synchronized subsurface's state applies with its parent's, whose own commit handles
+        // the window; any other subsurface's commit can change the window's size too.
+        let applied = !is_sync_subsurface(surface);
         // The frame and popups ask by the rects they change: they can show where the client
         // surface, and so `redraw_surface`'s ask, is covered.
         let window_kept = self.redraw_changed(|s| {
-            // A synchronized subsurface's state applies with its parent's, whose own commit
-            // handles the window; any other subsurface's commit can change the window's size too.
-            if !is_sync_subsurface(surface)
-                && let Some(w) = window
-            {
+            if applied && let Some(w) = window {
                 s.handle_commit(w);
-                crate::capture::window_committed(s, w);
             }
             let kept =
                 mark.is_some_and(|m| m.mapped) && mark == window.and_then(|w| s.window_mark(w));
@@ -111,9 +109,6 @@ impl CompositorHandler for State {
             }
             kept
         });
-        crate::layer::commit(self, surface);
-        crate::sessionlock::commit(self, surface);
-        self.ime_commit(surface);
         // Layer, lock and IME popup surfaces have no window mark, so they always redraw.
         let commit = crate::samepixels::Commit {
             pixels,
@@ -121,6 +116,12 @@ impl CompositorHandler for State {
             tree_kept,
             window_kept,
         };
+        if let Some(w) = window {
+            crate::capture::window_committed(self, w, !commit.shows_nothing_new(), applied);
+        }
+        crate::layer::commit(self, surface);
+        crate::sessionlock::commit(self, surface);
+        self.ime_commit(surface);
         if commit.shows_nothing_new() {
             crate::backend::answer_frames(self);
         } else {
