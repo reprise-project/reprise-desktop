@@ -151,6 +151,12 @@ pub(super) fn watch_wants(dir: &Path, files: bool, system_icons: &[String]) -> V
     want
 }
 
+/// Whether a drive bin folder's watch landing reads the bins again: a file trashed after the
+/// read that found the folder and before its watch started reports no event.
+pub(super) fn rereads_bins(landed: dirwatch::Landed) -> bool {
+    landed.grew
+}
+
 pub(super) const TRASH_MASK: WatchMask = WatchMask::CREATE
     .union(WatchMask::DELETE)
     .union(WatchMask::MOVED_FROM)
@@ -290,7 +296,8 @@ impl State {
     /// Takes the desktop's own watches a rescan added, with `want` the folders it wanted, then
     /// adds the drives' bin folders the last drive bin read found, each on a file job of its own:
     /// a drive that stopped answering since holds only its own. An event a watch reported before
-    /// it was taken rescans.
+    /// it was taken rescans, and a bin folder newly watched reads the bins again
+    /// ([`rereads_bins`]).
     fn desktop_watched(&mut self, mut want: Vec<Want>, added: Option<dirwatch::Added>) {
         let State {
             desktop: Some(view),
@@ -325,6 +332,9 @@ impl State {
             |s, landed| {
                 if landed.hit {
                     s.settle_rescan();
+                }
+                if rereads_bins(landed) {
+                    s.read_drive_bins();
                 }
             },
         );
