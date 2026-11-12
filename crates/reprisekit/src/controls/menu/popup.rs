@@ -203,6 +203,23 @@ impl PopupMenu {
         &self.levels
     }
 
+    /// The open levels' rows wear the icons `tree` gives them: the tree they opened from, its
+    /// icons swapped. The layout stays.
+    pub fn wear_icons(&mut self, tree: &MenuTree) {
+        for level in &mut self.levels {
+            let Some(from) = tree.at(&level.path) else {
+                continue;
+            };
+            for (item, new) in level.items.iter_mut().zip(from.items()) {
+                if let (MenuItem::Entry { icon, .. }, MenuItem::Entry { icon: worn, .. }) =
+                    (item, new)
+                {
+                    *icon = worn.clone();
+                }
+            }
+        }
+    }
+
     pub fn depth(&self) -> usize {
         self.levels.len()
     }

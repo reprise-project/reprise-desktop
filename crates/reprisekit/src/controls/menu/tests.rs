@@ -1368,6 +1368,40 @@ fn a_chain_opened_from_the_keyboard_underlines_without_the_hosts_cue() {
 }
 
 #[test]
+fn an_open_chain_wears_the_icons_its_tree_swapped_in_and_keeps_its_layout() {
+    let theme = wide_theme();
+    let text = TextRenderer::load(&FontConfig::default());
+    let cx = nested_ctx(&theme, &text);
+    let tree = |argb: u32| {
+        let mut icon = Canvas::new(16, 16);
+        icon.pixels.fill(argb);
+        let arrange = MenuTree::flat(vec![
+            MenuItem::item("&Name"),
+            MenuItem::item("Si&ze"),
+            MenuItem::item("T&ype").icon(Some(icon.clone())),
+        ]);
+        let mut t = MenuTree::new();
+        t.push(MenuItem::item("Status &Bar").icon(Some(icon)));
+        t.push_sub(MenuItem::item("Arrange &Icons by"), arrange);
+        t.push(MenuItem::Separator);
+        t.push(MenuItem::item("R&efresh"));
+        t
+    };
+    let mut p = opened_nested(&tree(0), &cx);
+    let layouts: Vec<_> = p.levels().iter().map(|l| l.layout.clone()).collect();
+    p.wear_icons(&tree(0xff20_40c0));
+    let worn = |level: usize, row: usize| match &p.levels()[level].items[row] {
+        MenuItem::Entry { icon, .. } => icon.as_ref().map(|c| c.get(8, 8)),
+        MenuItem::Separator => None,
+    };
+    assert_eq!(worn(0, 0), Some(0xff20_40c0), "the root's row");
+    assert_eq!(worn(1, 2), Some(0xff20_40c0), "the open submenu's row");
+    assert_eq!(worn(1, 0), None, "a row with no icon keeps none");
+    let kept: Vec<_> = p.levels().iter().map(|l| l.layout.clone()).collect();
+    assert_eq!(kept, layouts);
+}
+
+#[test]
 fn a_submenu_opens_on_right_and_closes_on_left() {
     let theme = wide_theme();
     let text = TextRenderer::load(&FontConfig::default());

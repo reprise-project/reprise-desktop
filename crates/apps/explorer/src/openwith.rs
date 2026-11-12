@@ -1,6 +1,8 @@
 use crate::Explorer;
 use crate::dialogs::{Dialog, ProgramBrowse};
+use crate::fileops::ROW_PX;
 use repriseapp::filedlg::{Host, Resolved, Step};
+use repriseapp::iconjobs::IconWaits;
 use repriseapp::openwith::{PROGRAMS_DIR, browse_fields, program_pick, programs_keep as keep};
 use repriseapp::{Ctx, Event, Reply};
 use reprisekit::controls::filedlg::Event as FileEvent;
@@ -10,11 +12,14 @@ use reprisekit::look::Paint;
 use reprisekit::raster::Canvas;
 use std::path::Path;
 
-pub fn chooser_row_icons(ow: &OpenWith, icons: &mut IconCache) -> Vec<Option<Canvas>> {
-    ow.list
-        .rows
-        .iter()
-        .map(|r| openwith::icon_name(r).and_then(|n| icons.get(n, 16)))
+/// The chooser's rows' icons, stand-ins noted in `waits` while one decodes off the loop.
+pub fn chooser_row_icons(
+    ow: &OpenWith,
+    icons: &mut IconCache,
+    waits: &mut IconWaits,
+) -> Vec<Option<Canvas>> {
+    (ow.list.rows.iter())
+        .map(|r| openwith::icon_name(r).and_then(|n| waits.first(icons, &[n], ROW_PX)))
         .collect()
 }
 
@@ -126,7 +131,7 @@ impl Explorer {
                         Some(p) => {
                             cp.browse = None;
                             cp.ow.add_program(p);
-                            cp.row_icons = chooser_row_icons(&cp.ow, &mut ctx.icons);
+                            cp.wear_icons(&mut ctx.icons);
                             Reply::redraw_all()
                         }
                         None => {

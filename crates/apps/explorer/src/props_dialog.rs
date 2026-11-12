@@ -117,6 +117,7 @@ pub struct Props {
     pub summary: Option<[String; 6]>,
     pub own_icon: Option<String>,
     pub icon_chosen: Option<Option<String>>,
+    pub(crate) picks: crate::props_host::Picks,
     pub(crate) checksums: crate::checksums::Checksums,
 }
 

@@ -203,7 +203,7 @@ impl Explorer {
             text: reprisefs::udisks::mount_text(&name),
             min_text_h: None,
             template: reprisekit::controls::dlgtemplate::Template::MessageBox,
-            icon: crate::chrome_icon(ctx, &["dialog-warning", "dialog-question"], 32),
+            icon: crate::icons::IconSlot::chrome(&mut ctx.icons, crate::dialogs::QUESTION_ICON, 32),
             paths: vec![path.clone()],
             erase: false,
             empty_bin: false,

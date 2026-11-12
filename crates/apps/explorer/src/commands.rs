@@ -6,6 +6,7 @@ use crate::{Explorer, Focus};
 use repriseapp::{Ctx, Reply};
 use reprisekit::controls::menu::{MenuItem, MenuTree};
 use reprisekit::controls::shellview::Mode;
+use reprisekit::raster::Canvas;
 use reprisekit::textedit::keysym::{self, F2, F5, MENU};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -139,6 +140,19 @@ impl Menu {
             }
         }
         t
+    }
+
+    /// Each row `icon` answers for by its command wears the icon it gives.
+    pub fn wear_icons(&mut self, icon: &mut dyn FnMut(&Command) -> Option<Option<Canvas>>) {
+        for ((item, cmd), sub) in self.items.iter_mut().zip(&self.cmds).zip(&mut self.subs) {
+            if let Some(sub) = sub {
+                sub.wear_icons(icon);
+            } else if let MenuItem::Entry { icon: worn, .. } = item
+                && let Some(new) = icon(cmd)
+            {
+                *worn = new;
+            }
+        }
     }
 
     /// What the row at `path` does; `Nothing` for a separator, a submenu
@@ -438,7 +452,11 @@ impl Explorer {
                     if !mode.ask {
                         return self.delete_now(&[path], mode.erase, ctx);
                     }
-                    let icon = crate::chrome_icon(ctx, &["user-trash-full"], 32);
+                    let icon = crate::icons::IconSlot::chrome(
+                        &mut ctx.icons,
+                        crate::dialogs::TRASH_ICON,
+                        32,
+                    );
                     self.confirm_box(
                         ConfirmKind::Folder,
                         &name,

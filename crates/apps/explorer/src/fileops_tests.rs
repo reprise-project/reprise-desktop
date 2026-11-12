@@ -12,6 +12,8 @@ use std::ffi::OsString;
 
 #[path = "fileops_tests/closing.rs"]
 mod closing;
+#[path = "fileops_tests/cold_icons.rs"]
+mod cold_icons;
 #[path = "fileops_tests/creating.rs"]
 mod creating;
 #[path = "fileops_tests/delete.rs"]

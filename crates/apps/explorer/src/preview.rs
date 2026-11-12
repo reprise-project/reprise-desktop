@@ -2,6 +2,7 @@
 //! listing thread, so a file on a dead mount holds that thread and never the window.
 
 use crate::Explorer;
+use crate::icons::IconSlot;
 use repriseapp::decode::Decoders;
 use repriseapp::listjob::Job;
 use repriseapp::{BTN_LEFT, Child, Ctx, Event, MAIN, PointerInput, Reply, WinId};
@@ -16,6 +17,7 @@ use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
 use std::io::Read;
 use std::path::Path;
+use std::rc::Rc;
 
 pub const PREVIEW: WinId = WinId::named("preview");
 
@@ -26,6 +28,8 @@ const SHARE: i32 = 70;
 
 pub(crate) struct Preview {
     pub qv: FilePreview,
+    /// The icon the card wears where the entry drew none at its size, worn once it lands.
+    icon: Option<IconSlot>,
     /// The file's read, until it lands.
     job: Option<Job<Loaded>>,
     mono: TextRenderer,
@@ -203,14 +207,13 @@ impl Explorer {
         };
         let route = filepreview::route(it.mime.as_deref());
         let folder = e.is_folder();
-        let icon = match e.icon48.clone() {
-            Some(i) => Some(i),
-            None => {
-                let name = self.icon_name_as(&it.path, folder, ctx);
-                ctx.icons
-                    .get(&name, filepreview::ICON_PX)
-                    .map(std::rc::Rc::new)
-            }
+        let slot = e.icon48.is_none().then(|| {
+            let pick = crate::icons::file_pick(&self.globs, &it.path, folder);
+            IconSlot::new(&mut ctx.icons, pick, filepreview::ICON_PX)
+        });
+        let icon = match &slot {
+            Some(slot) => slot.icon().map(Rc::new),
+            None => e.icon48.clone(),
         };
         let (w, h) = ctx.output_size.unwrap_or((1280, 800));
         let within = (w * SHARE / 100, h * SHARE / 100);
@@ -250,6 +253,7 @@ impl Explorer {
         };
         let mut p = Preview {
             qv: FilePreview::new(facts, icon),
+            icon: slot,
             job: if landed.is_some() { None } else { job },
             mono,
             metrics,
@@ -278,6 +282,21 @@ impl Explorer {
             redraw_wins: vec![PREVIEW],
             ..Reply::none()
         })
+    }
+
+    /// The card wears its icon once it landed: true when it did.
+    pub(crate) fn land_preview_icon(&mut self, ctx: &mut Ctx) -> bool {
+        let Some(p) = self.preview.as_mut() else {
+            return false;
+        };
+        let Some(slot) = p.icon.as_mut() else {
+            return false;
+        };
+        let landed = slot.land(&mut ctx.icons);
+        if landed {
+            p.qv.icon = slot.icon().map(Rc::new);
+        }
+        landed
     }
 
     pub(crate) fn preview_child(&self) -> Option<Child> {
