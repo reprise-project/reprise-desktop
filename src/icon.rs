@@ -526,6 +526,12 @@ pub(crate) fn land_until(
     }
 }
 
+/// Whether `who` is noted to draw again once icons land.
+#[cfg(test)]
+pub(crate) fn waits_on(h: &crate::harness::Harness, who: IconWaiter) -> bool {
+    h.state.icon_jobs.waiters.contains(&who)
+}
+
 /// Whether `c` is [`svg_theme`]'s red at its middle.
 #[cfg(test)]
 pub(crate) fn red(c: &Canvas) -> bool {

@@ -1850,3 +1850,40 @@ fn a_droplets_warm_up_that_alone_asks_a_cold_icon_warms_again_once_it_lands() {
     assert!(icon.is_some_and(|c| crate::icon::red(&c)));
     std::fs::remove_dir_all(&root).unwrap();
 }
+
+#[test]
+fn a_toast_open_across_an_icon_theme_change_shows_the_new_themes_icon() {
+    use reprisekit::icontheme::IconTheme;
+    for config in ["", GLASS_STILL] {
+        let red = crate::icon::svg_theme(&["dialog-information"], &[]);
+        let blue = crate::icon::svg_theme(&["dialog-information"], &[]);
+        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" fill="#00f"/></svg>"##;
+        std::fs::write(blue.join("test/scalable/apps/dialog-information.svg"), svg).unwrap();
+        let mut h = shown_with_icons(config, &red);
+        crate::icon::land(&mut h);
+        assert!(shown_icon(&mut h).0.is_some_and(|c| crate::icon::red(&c)));
+
+        crate::iconwatch::apply(
+            &mut h.state,
+            IconTheme::load("test", std::slice::from_ref(&blue)),
+        );
+        assert!(
+            crate::icon::waits_on(&h, crate::icon::IconWaiter::Notify),
+            "{config:?}: the balloon draws again, with a stand-in for the new theme's icon"
+        );
+        crate::backend::take_asks();
+        crate::icon::land(&mut h);
+        let asked = crate::backend::take_asks();
+        assert!(
+            asked.iter().any(|(o, _)| o == "TEST-1"),
+            "{config:?}: the landing draws the balloon again: {asked:?}"
+        );
+        let (icon, waited) = shown_icon(&mut h);
+        assert!(!waited, "{config:?}: the new theme's icon is in");
+        let icon = icon.expect("an icon");
+        let mid = icon.get(icon.width as i32 / 2, icon.height as i32 / 2);
+        assert_eq!(mid, 0xFF00_00FF, "{config:?}: the new theme's blue shows");
+        std::fs::remove_dir_all(&red).unwrap();
+        std::fs::remove_dir_all(&blue).unwrap();
+    }
+}
