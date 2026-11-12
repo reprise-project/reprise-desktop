@@ -223,8 +223,14 @@ impl IconCache {
     /// Icon file `path` at `px` as [`IconCache::put_file`] left it, without reading the file:
     /// None when it was never put at this size and scale (or was dropped since).
     pub fn file_put(&self, path: &str, px: i32) -> Option<Option<Arc<Canvas>>> {
+        self.held(path, px)
+    }
+
+    /// [`IconCache::file_put`] for a theme name too: what the cache holds for `name` at `px` and
+    /// its scale, without a lookup.
+    pub fn held(&self, name: &str, px: i32) -> Option<Option<Arc<Canvas>>> {
         self.cache
-            .get(&(cache_key(path, &[]), px, self.scale))
+            .get(&(cache_key(name, &[]), px, self.scale))
             .cloned()
     }
 
@@ -237,11 +243,22 @@ impl IconCache {
     /// Takes icons [`load_icon`] loaded from `theme` at this cache's scale, so `get` answers
     /// them without a lookup; dropped when the cache looks names up in another theme now.
     pub fn put_icons(&mut self, theme: &Arc<IconTheme>, icons: Vec<(String, i32, Option<Canvas>)>) {
+        self.put_icons_at(theme, icons, self.scale);
+    }
+
+    /// [`IconCache::put_icons`] for icons loaded at `scale`, which may no longer be the cache's
+    /// own: they answer at that scale, and the names wanted at this one are asked for again.
+    pub fn put_icons_at(
+        &mut self,
+        theme: &Arc<IconTheme>,
+        icons: Vec<(String, i32, Option<Canvas>)>,
+        scale: i32,
+    ) {
         if !Arc::ptr_eq(theme, &self.theme) {
             return;
         }
         for (name, px, canvas) in icons {
-            let key = (cache_key(&name, &[]), px, self.scale);
+            let key = (cache_key(&name, &[]), px, scale);
             if px == self.probe_px && self.guessed.get_mut().remove(&name) {
                 self.settle_guess(name.clone(), canvas.is_some());
             }

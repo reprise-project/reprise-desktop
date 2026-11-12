@@ -122,19 +122,27 @@ impl Explorer {
         })
     }
 
-    /// Theme icons decoded off the loop landed in `ctx.icons`: the list, the Folders pane and the
-    /// picker's tree swap their stand-ins. Gives whether the window and the picker changed, and
-    /// whether a listed name decodes at no size, for a listing read again to pick the next.
+    /// Theme icons decoded off the loop landed in `ctx.icons`: the list, the Folders pane, the
+    /// chrome and the picker's tree or Change Icon's list swap their stand-ins. Gives whether the
+    /// window and the dialog changed, and whether a listed name decodes at no size, for a listing
+    /// read again to pick the next.
     fn land_icons(&mut self, ctx: &mut Ctx) -> (bool, bool, bool) {
         let (listed, broken) = self.list_icons.landed(&mut ctx.icons, &mut self.sv.entries);
         let tree = foldertree::land_icons(&mut self.tree, &mut self.tree_places, &mut ctx.icons);
-        let picker = match &mut self.dialog {
+        let chrome = self.chrome_waits.landed(&mut ctx.icons);
+        if chrome {
+            self.rewear_chrome(ctx);
+        }
+        let dialog = match &mut self.dialog {
             Some(Dialog::Browse(b)) => {
                 foldertree::land_icons(&mut b.bf.tree, &mut b.places, &mut ctx.icons)
             }
+            Some(Dialog::ChangeIcon { form, waits, .. }) => {
+                crate::props_host::land_change_icons(form, waits, &mut ctx.icons)
+            }
             _ => false,
         };
-        (listed || tree, picker, broken)
+        (listed || tree || chrome, dialog, broken)
     }
 
     /// `Event::Wake`: a put, job, tip walk, late listing or search, drive scan, clash check or Folders node read finished, thumbnails arrived, or
@@ -207,6 +215,7 @@ impl Explorer {
             clashed,
             self.take_asking(ctx),
             self.take_drag_art(ctx),
+            self.take_due_sheet(ctx),
             self.take_preview(),
             self.take_checksums(),
         ]
@@ -1202,6 +1211,142 @@ mod tests {
         );
         let w = worn(&ex, "notes.txt");
         assert!(!w.is_empty() && w.iter().all(|&p| p == TEXT), "{w:x?}");
+    }
+
+    /// A theme in `root` of flat-colour SVGs `drawn`, and of `broken` SVGs that never decode.
+    fn svg_theme(
+        root: &Path,
+        drawn: &[(&str, u32)],
+        broken: &[&str],
+    ) -> reprisekit::icontheme::IconCache {
+        let dir = root.join("svg/scalable/places");
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let index = "[Icon Theme]\nName=svg\nDirectories=scalable/places\n\n[scalable/places]\nSize=48\nMinSize=8\nMaxSize=512\nType=Scalable\n";
+        std::fs::write(root.join("svg/index.theme"), index).expect("write");
+        for (name, argb) in drawn {
+            let svg = format!(
+                "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"48\" height=\"48\"><rect width=\"48\" height=\"48\" fill=\"#{:06x}\"/></svg>",
+                argb & 0xff_ffff
+            );
+            std::fs::write(dir.join(format!("{name}.svg")), svg).expect("write");
+        }
+        for name in broken {
+            std::fs::write(dir.join(format!("{name}.svg")), "<svg").expect("write");
+        }
+        let theme = reprisekit::icontheme::IconTheme::load("svg", &[root.to_path_buf()]);
+        reprisekit::icontheme::IconCache::new(theme)
+    }
+
+    /// The middle pixel of `icon`.
+    fn mid(icon: &Option<Canvas>) -> Option<u32> {
+        icon.as_ref()
+            .map(|c| c.get(c.width as i32 / 2, c.height as i32 / 2))
+    }
+
+    /// Decodes what `ctx.icons` wanted and wakes `ex`, until `done` holds.
+    fn land_until(ex: &mut Explorer, ctx: &mut Ctx, done: impl Fn(&Explorer) -> bool) {
+        for _ in 0..500 {
+            if done(ex) {
+                return;
+            }
+            repriseapp::iconjobs::decode_now(&mut ctx.icons);
+            ex.wake(ctx);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    /// A window on a theme of cold SVGs opens with blank stand-ins on its toolbar, address bar and
+    /// status bar, and wears its icons once they land. The go button's first name decodes at no
+    /// size and gives way to its second.
+    #[test]
+    fn cold_svg_chrome_icons_land_and_a_broken_name_gives_way() {
+        use reprisekit::controls::toolbar;
+        const BACK: u32 = 0xff20_40c0;
+        const NEXT: u32 = 0xff40_c020;
+        const COMPUTER: u32 = 0xffc0_4020;
+        const FOLDER: u32 = 0xff80_8020;
+        let (art, dir) = (tempfile::tempdir(), tempfile::tempdir());
+        let (art, dir) = (art.expect("a temp dir"), dir.expect("a temp dir"));
+        let mut ctx = test_ctx();
+        let drawn = [
+            ("go-previous", BACK),
+            ("go-next", NEXT),
+            ("computer", COMPUTER),
+            ("folder", FOLDER),
+        ];
+        ctx.icons = svg_theme(art.path(), &drawn, &["go-jump"]);
+        let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().into()), &mut ctx);
+        let worn = |ex: &Explorer| {
+            let back = match &ex.toolbar.items[0] {
+                toolbar::Item::DropButton { icon, .. } => mid(icon),
+                _ => None,
+            };
+            let zone = ex.status.panels.iter().find_map(|p| mid(&p.icon));
+            let address = (mid(&ex.address.combo.icon), mid(&ex.address.go_icon));
+            (back, address, zone)
+        };
+        assert_eq!(
+            worn(&ex),
+            (Some(0), (Some(0), Some(0)), Some(0)),
+            "blank stand-ins"
+        );
+        let want = (Some(BACK), (Some(FOLDER), Some(NEXT)), Some(COMPUTER));
+        land_until(&mut ex, &mut ctx, |ex| worn(ex) == want);
+        assert_eq!(worn(&ex), want);
+    }
+
+    /// A folder's sheet waits for its cold SVG icons and goes up once they land. Its own icon
+    /// decodes at no size and gives way to the standard folder on General and Customize; a
+    /// broken name leaves Change Icon's list once it lands.
+    #[test]
+    fn a_sheet_goes_up_once_its_cold_icons_land_and_a_broken_own_icon_gives_way() {
+        use reprisekit::controls::form::{self, Control};
+        use reprisekit::controls::{filesheet, propsheet};
+        const FOLDER: u32 = 0xff20_40c0;
+        let (art, dir) = (tempfile::tempdir(), tempfile::tempdir());
+        let (art, dir) = (art.expect("a temp dir"), dir.expect("a temp dir"));
+        let music = dir.path().join("music");
+        std::fs::create_dir(&music).expect("mkdir");
+        reprisefs::meta::set_folder_icon(&music, Some("folder-music")).expect("own icon");
+        let mut ctx = test_ctx();
+        let broken = ["folder-music", "folder-pictures"];
+        ctx.icons = svg_theme(art.path(), &[("folder", FOLDER)], &broken);
+        let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().into()), &mut ctx);
+        ex.open_properties(&music, "music", "music", &mut ctx);
+        crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.props_due.is_some());
+        assert!(ex.props.is_none(), "the sheet waits for its icons");
+
+        land_until(&mut ex, &mut ctx, |ex| ex.props.is_some());
+        let p = ex.props.as_ref().expect("the sheet went up");
+        let picture = |id: &str| {
+            (p.sheet.pages.iter()).find_map(|page| match page.item(id).map(|i| &i.control) {
+                Some(Control::Picture { canvas, .. }) => Some(mid(canvas)),
+                _ => None,
+            })
+        };
+        for id in ["icon", filesheet::CUSTOM_ICON, filesheet::CUSTOM_PREVIEW] {
+            assert_eq!(picture(id), Some(Some(FOLDER)), "{id}");
+        }
+
+        let customize = (p.sheet.pages.iter())
+            .position(|page| page.item(filesheet::CHANGE_ICON).is_some())
+            .expect("a Customize page");
+        let press = form::Event::Pressed(filesheet::CHANGE_ICON);
+        ex.props_outcome(propsheet::Event::Page(customize, press), &mut ctx);
+        let names = |ex: &Explorer| match &ex.dialog {
+            Some(Dialog::ChangeIcon { form, .. }) => {
+                match form.item(filesheet::CHANGE_ICON_LIST).map(|i| &i.control) {
+                    Some(Control::IconList(list)) => list.names.clone(),
+                    _ => Vec::new(),
+                }
+            }
+            _ => Vec::new(),
+        };
+        assert!(names(&ex).iter().any(|n| n == "folder-pictures"));
+        land_until(&mut ex, &mut ctx, |ex| {
+            !names(ex).iter().any(|n| n == "folder-pictures")
+        });
+        assert_eq!(names(&ex), ["folder-music", "folder"], "the pick stays");
     }
 
     #[test]

@@ -1567,6 +1567,33 @@ fn get_unread_leaves_an_svg_theme_icon_to_a_job_and_takes_what_it_puts() {
     fs::remove_dir_all(&root).unwrap();
 }
 
+/// An icon a job loaded at scale 1 lands after the cache moved to scale 2: it answers at scale 1
+/// only, and scale 2 wants the name again.
+#[test]
+fn an_icon_loaded_for_a_scale_the_cache_left_answers_at_that_scale() {
+    let root = fixture("test", INDEX, &[]);
+    put(&root, "test/scalable/apps/drawn.svg", RED_SVG.as_bytes());
+    let mut cache = IconCache::new(IconTheme::load("test", std::slice::from_ref(&root)));
+    assert_eq!(cache.get_unread("drawn", 32), None);
+    assert_eq!(cache.take_wanted(), [("drawn".to_string(), 32)]);
+    let theme = cache.theme();
+    let art = load_icon(&theme, "drawn", 32, 1);
+    cache.set_scale(2);
+    cache.put_icons_at(&theme, vec![("drawn".into(), 32, art.clone())], 1);
+    assert_eq!(
+        cache.get_unread("drawn", 32),
+        None,
+        "no scale-1 art at scale 2"
+    );
+    assert_eq!(cache.take_wanted(), [("drawn".to_string(), 32)]);
+    cache.set_scale(1);
+    assert_eq!(
+        cache.get_unread("drawn", 32).flatten().as_deref(),
+        art.as_ref()
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
 /// A PNG past a few hundred px of file goes to a job like an SVG; `get_shared` still decodes
 /// both where it is asked.
 #[test]

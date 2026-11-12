@@ -20,6 +20,55 @@ pub(crate) struct IconJobs {
 
 type Art = Vec<(String, i32, Option<Canvas>)>;
 
+/// The icons a surface wears blank stand-ins for while they decode off the loop. The surface
+/// fetches through [`IconWaits::get`] and, once [`IconWaits::landed`], wears them all again
+/// through a fresh `IconWaits`.
+#[derive(Debug, Default)]
+pub struct IconWaits(Vec<(String, i32)>);
+
+impl IconWaits {
+    /// `name` at `px` as [`IconCache::get_unread`] reads it: Err with a blank stand-in, `name`
+    /// noted, while it decodes.
+    pub fn get(
+        &mut self,
+        icons: &mut IconCache,
+        name: &str,
+        px: i32,
+    ) -> Result<Option<Canvas>, Canvas> {
+        match icons.get_unread(name, px) {
+            Some(icon) => Ok(icon.map(std::sync::Arc::unwrap_or_clone)),
+            None => {
+                if !self.0.iter().any(|(n, p)| n == name && *p == px) {
+                    self.0.push((name.to_string(), px));
+                }
+                let s = icons.scale();
+                Err(Canvas::new((px * s) as u32, (px * s) as u32).at_scale(s))
+            }
+        }
+    }
+
+    /// The first of `names` that decodes, or a blank stand-in while one ahead of it decodes.
+    pub fn first(&mut self, icons: &mut IconCache, names: &[&str], px: i32) -> Option<Canvas> {
+        for name in names {
+            match self.get(icons, name, px) {
+                Ok(None) => {}
+                Ok(icon) => return icon,
+                Err(blank) => return Some(blank),
+            }
+        }
+        None
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Whether a name waited on has landed in `icons`.
+    pub fn landed(&self, icons: &mut IconCache) -> bool {
+        (self.0.iter()).any(|(name, px)| icons.get_unread(name, *px).is_some())
+    }
+}
+
 /// `load` for each of `wanted`; a load that panics comes back as one that failed, so its name
 /// moves on instead of waiting for good.
 fn load_all(wanted: Vec<(String, i32)>, load: impl Fn(&str, i32) -> Option<Canvas>) -> Art {
@@ -71,7 +120,7 @@ impl Host {
                 .spawn(move || {
                     let art = load_all(job, |n, px| load_icon(&job_theme, n, px, scale));
                     let _ = tx.send(Box::new(move |host: &mut Host| {
-                        host.ctx.icons.put_icons(&job_theme, art);
+                        host.ctx.icons.put_icons_at(&job_theme, art, scale);
                         host.ctx.wake.wake();
                     }));
                 });
