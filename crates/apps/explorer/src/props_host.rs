@@ -198,6 +198,7 @@ impl Explorer {
             summary: None,
             own_icon: None,
             icon_chosen: None,
+            picks: Default::default(),
             checksums: Default::default(),
             sheet,
         }
@@ -280,6 +281,7 @@ impl Explorer {
                 None => info.own_icon.clone(),
             },
             icon_chosen: None,
+            picks: Default::default(),
             checksums: Default::default(),
             info,
             sheet,
@@ -370,6 +372,7 @@ impl Explorer {
             summary: None,
             own_icon: None,
             icon_chosen: None,
+            picks: Default::default(),
             checksums: Default::default(),
             set: Some(set),
             sheet,
@@ -437,24 +440,24 @@ impl Explorer {
 
     pub(crate) fn icon_chosen(&mut self, icon: Option<String>, ctx: &mut Ctx) -> Reply {
         if let Some(p) = self.props.as_mut() {
-            if p.info.launcher.is_some()
-                && let Some(name) = &icon
-                && let Some(k) = p
-                    .sheet
-                    .pages
-                    .iter()
-                    .position(|q| q.item(filesheet::SHORTCUT_IDS[0]).is_some())
-                && let Some(c) = ctx.icons.get(name, ICON_PX)
-            {
-                p.sheet.pages[k].set_picture("icon", iconview::with_shortcut_arrow(c));
-            }
             p.icon_chosen = Some(icon);
-            let shown = crate::icons::sheet_folder_icon(&p.shown_icon(), &|n| ctx.icons.has(n));
-            show_folder_icon(&mut p.sheet, &shown, |n, px| ctx.icons.get(n, px));
+            wear_picks(p, ctx);
             let on = p.dirty();
             p.sheet.set_apply_enabled(on);
         }
         Reply::redraw_all()
+    }
+
+    /// The sheet wears the icons its picks waited on once they landed: true when it did.
+    pub(crate) fn land_sheet_icons(&mut self, ctx: &mut Ctx) -> bool {
+        let Some(p) = self.props.as_mut() else {
+            return false;
+        };
+        let landed = p.picks.waits.landed(&mut ctx.icons);
+        if landed {
+            wear_picks(p, ctx);
+        }
+        landed
     }
 
     /// The sheet's child window, while it is up.
@@ -985,16 +988,59 @@ impl Explorer {
         self.choose_program_for(path, true, ctx)
     }
 
-    pub(crate) fn props_set_opens_with(&mut self, name: String, icon: Option<Canvas>) {
+    /// The sheet's opens-with line names the program Change... picked, and wears its icon.
+    pub(crate) fn props_set_opens_with(
+        &mut self,
+        name: String,
+        icon: Option<String>,
+        ctx: &mut Ctx,
+    ) {
         let Some(p) = self.props.as_mut() else {
             return;
         };
-        let page = p.general_mut();
-        page.set_text("v_opens", &name);
-        if let Some(it) = page.item_mut("opens_icon")
-            && let Control::Picture { canvas, .. } = &mut it.control
+        p.general_mut().set_text("v_opens", &name);
+        p.picks.opens_icon = Some(icon);
+        wear_picks(p, ctx);
+    }
+}
+
+/// What Change Icon's and Change...'s picks wear stand-ins for, till their icons land.
+#[derive(Default)]
+pub(crate) struct Picks {
+    /// The icon of the program Change... picked.
+    opens_icon: Option<Option<String>>,
+    waits: IconWaits,
+}
+
+/// The sheet wears the icons of its picks: Change Icon's on the Shortcut page or Customize's
+/// picture and preview, and Change...'s program beside its name. Stand-ins while they decode.
+fn wear_picks(p: &mut Props, ctx: &mut Ctx) {
+    let shown = p.shown_icon();
+    let waits = &mut p.picks.waits;
+    *waits = IconWaits::default();
+    let shortcut =
+        (p.sheet.pages.iter()).position(|q| q.item(filesheet::SHORTCUT_IDS[0]).is_some());
+    if p.info.launcher.is_some()
+        && let Some(Some(name)) = &p.icon_chosen
+        && let Some(k) = shortcut
+    {
+        match waits.get(&mut ctx.icons, name, ICON_PX) {
+            Ok(Some(c)) | Err(c) => {
+                p.sheet.pages[k].set_picture("icon", iconview::with_shortcut_arrow(c));
+            }
+            Ok(None) => {}
+        }
+    }
+    let customize = (p.sheet.pages.iter()).any(|q| q.item(filesheet::CUSTOM_ICON).is_some());
+    if p.icon_chosen.is_some() && customize {
+        wear_folder_icon(&mut p.sheet, &shown, waits, ctx);
+    }
+    if let Some(icon) = &p.picks.opens_icon {
+        let canvas = (icon.as_deref()).and_then(|n| waits.first(&mut ctx.icons, &[n], 16));
+        if let Some(it) = p.general_mut().item_mut("opens_icon")
+            && let Control::Picture { canvas: c, .. } = &mut it.control
         {
-            *canvas = icon;
+            *c = canvas;
         }
     }
 }
@@ -1132,29 +1178,14 @@ fn props_icon(
     waits: &mut IconWaits,
     ctx: &mut Ctx,
 ) -> Option<Canvas> {
-    let mut tried = Vec::new();
-    loop {
-        let has = |n: &str| ctx.icons.has_unread(n);
-        let name = match icon {
-            SheetIcon::Folder(own) => crate::icons::sheet_folder_icon(
-                own.as_deref().unwrap_or(filesheet::STANDARD_FOLDER_ICON),
-                &has,
-            ),
-            SheetIcon::Shortcut(name) => name.clone(),
-            SheetIcon::File(mime) => reprisefs::icons::pick_icon(mime.as_deref(), path, &has),
-        };
-        if tried.contains(&name) {
-            return None;
-        }
-        match waits.get(&mut ctx.icons, &name, ICON_PX) {
-            Ok(None) => {
-                ctx.icons.refuse(&name);
-                tried.push(name);
-            }
-            Ok(icon) => return icon,
-            Err(blank) => return Some(blank),
-        }
-    }
+    crate::icons::picked_icon(waits, &mut ctx.icons, ICON_PX, |has| match icon {
+        SheetIcon::Folder(own) => crate::icons::sheet_folder_icon(
+            own.as_deref().unwrap_or(filesheet::STANDARD_FOLDER_ICON),
+            has,
+        ),
+        SheetIcon::Shortcut(name) => name.clone(),
+        SheetIcon::File(mime) => reprisefs::icons::pick_icon(mime.as_deref(), path, has),
+    })
 }
 
 /// Customize's picture and preview wear `icon`, fetched by `get` at each size.

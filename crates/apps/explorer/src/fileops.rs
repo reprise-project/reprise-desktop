@@ -2,9 +2,11 @@
 //! a re-listing so view, status bar and Details box agree with disk.
 
 use crate::acting::{Action, Deadline};
-use crate::dialogs::{ChooseProgram, ConfirmKind, Dialog, ReplaceAsk};
+use crate::dialogs::{ChooseProgram, ConfirmKind, Dialog, ReplaceAsk, TRASH_ICON};
+use crate::icons::IconSlot;
 use crate::place::Place;
 use crate::{Explorer, Focus};
+use repriseapp::iconjobs::IconWaits;
 use repriseapp::openwith::ChooserInput;
 use repriseapp::{Ctx, FileClip, Reply};
 use reprisefs::apps::{self, Launch};
@@ -17,10 +19,13 @@ use reprisefs::ops::DropOp;
 use reprisefs::replace::{self, Answer, Asker, Clash, Step, Verdict};
 use reprisefs::sendto::{self, SendTo};
 use reprisefs::undo::Undoable;
-use reprisekit::controls::openwith::{self, Check, OpenWith, Program};
+use reprisekit::controls::openwith::{Check, OpenWith, Program};
 use reprisekit::controls::replacebox;
 use reprisekit::raster::Canvas;
 use std::path::{Path, PathBuf};
+
+/// The icon size of the Open With and Send To rows, in the menus and the chooser.
+pub(crate) const ROW_PX: i32 = 16;
 
 /// An item picked in the Recycle Bin: its entry under `files/` and the record it was listed with;
 /// Restore and Delete re-check the record ([`reprisefs::trash::check_listed`]).
@@ -462,29 +467,35 @@ impl Explorer {
             self.messages_waiting.push_back((title, text));
         }
         let side = |s: ReadSide, ex: &Self, ctx: &mut Ctx| {
-            let icon = ex.icon_name_as(&s.path, s.is_dir, ctx);
-            replacebox::Side {
+            let pick = crate::icons::file_pick(&ex.globs, &s.path, s.is_dir);
+            let icon = IconSlot::new(&mut ctx.icons, pick, 32);
+            let side = replacebox::Side {
                 size: s.size,
                 modified: s.modified,
-                icon: ctx.icons.get(&icon, 32),
+                icon: icon.icon(),
+            };
+            (Box::new(side), icon)
+        };
+        let (subject, sides) = match sides {
+            Some([existing, incoming]) => {
+                let (existing, a) = side(existing, self, ctx);
+                let (incoming, b) = side(incoming, self, ctx);
+                let subject = replacebox::Subject::File { existing, incoming };
+                (subject, Some([a, b]))
             }
+            None => (replacebox::Subject::Folder, None),
         };
-        let subject = match sides {
-            Some([existing, incoming]) => replacebox::Subject::File {
-                existing: Box::new(side(existing, self, ctx)),
-                incoming: Box::new(side(incoming, self, ctx)),
-            },
-            None => replacebox::Subject::Folder,
-        };
+        let folder = IconSlot::chrome(&mut ctx.icons, &["folder"], 32);
         let fields = replacebox::Fields {
             name: file_label(&ask.src),
             folder: ask.folder,
             subject,
-            icon: crate::chrome_icon(ctx, &["folder"], 32),
+            icon: folder.icon(),
             many: ask.many,
         };
         self.dialog = Some(Dialog::Replace(Box::new(ReplaceAsk {
             fields,
+            icons: (folder, sides),
             asker: ask.asker,
             pending: ask.pending,
             focus: None,
@@ -789,15 +800,10 @@ impl Explorer {
             .selection
             .single()
             .and_then(|i| self.sv.entries.get(i));
-        // A view that draws no 32 px icon has not fetched it.
-        let own_icon =
-            selected.and_then(
-                |e| match (&e.icon32, e.icon.as_ref().or(e.icon48.as_ref())) {
-                    (Some(c), _) => Some((**c).clone()),
-                    (None, Some(worn)) => self.list_icons.fetch(worn, 32, &mut ctx.icons),
-                    (None, None) => None,
-                },
-            );
+        let own_icon = selected
+            .and_then(|e| e.icon32.as_ref().or(e.icon.as_ref()).or(e.icon48.as_ref()))
+            .and_then(|worn| self.list_icons.name_of(worn))
+            .map(str::to_string);
         let bin = in_bin.then(|| self.selected_bin_items());
         let read = paths.clone();
         let work = move |_: &Gate| {
@@ -815,10 +821,9 @@ impl Explorer {
             }
             let no_bin = if in_bin { BinLack::None } else { mode.no_bin };
             let erase = in_bin || mode.erase;
-            let icon = match erase {
-                true => own_icon.or_else(|| crate::chrome_icon(ctx, &["user-trash-full"], 32)),
-                false => crate::chrome_icon(ctx, &["user-trash-full"], 32),
-            };
+            let own = own_icon.as_deref().filter(|_| erase);
+            let names: Vec<&str> = own.into_iter().chain(TRASH_ICON.iter().copied()).collect();
+            let icon = IconSlot::chrome(&mut ctx.icons, &names, 32);
             ex.confirm_box(kind, &name, paths, erase, no_bin, icon, false, bin)
         })
     }
@@ -830,7 +835,7 @@ impl Explorer {
         let only = (self.items.len() == 1).then(|| &self.items[0]);
         let kind = ConfirmKind::of(self.items.len(), only.is_some_and(|it| it.is_dir));
         let name = only.map(|it| it.name.clone()).unwrap_or_default();
-        let icon = crate::chrome_icon(ctx, &["user-trash-full"], 32);
+        let icon = IconSlot::chrome(&mut ctx.icons, TRASH_ICON, 32);
         self.confirm_box(
             kind,
             &name,
@@ -1023,12 +1028,18 @@ impl Explorer {
     }
 
     /// Send To rows for the selection as (label, enabled, 16 px icon), cached so the menu's row
-    /// index resolves to a destination.
-    pub fn build_send_to(&mut self, ctx: &mut Ctx) -> Vec<(String, bool, Option<Canvas>)> {
+    /// index resolves to a destination; stand-ins noted in `waits` while an icon decodes.
+    pub fn build_send_to(
+        &mut self,
+        waits: &mut IconWaits,
+        ctx: &mut Ctx,
+    ) -> Vec<(String, bool, Option<Canvas>)> {
         self.send_to = self.send_rows(ctx);
-        self.send_to
-            .iter()
-            .map(|r| (r.label.clone(), r.enabled, ctx.icons.get(r.icon, 16)))
+        (self.send_to.iter())
+            .map(|r| {
+                let icon = waits.first(&mut ctx.icons, &[r.icon], ROW_PX);
+                (r.label.clone(), r.enabled, icon)
+            })
             .collect()
     }
 
@@ -1091,7 +1102,13 @@ impl Explorer {
         self.message_box(&refused.name, refused.to_string(), ctx)
     }
 
-    pub fn build_open_with(&mut self, i: usize, ctx: &mut Ctx) -> Vec<(String, Option<Canvas>)> {
+    /// Open With rows for item `i`, stand-ins noted in `waits` while an icon decodes.
+    pub fn build_open_with(
+        &mut self,
+        i: usize,
+        waits: &mut IconWaits,
+        ctx: &mut Ctx,
+    ) -> Vec<(String, Option<Canvas>)> {
         self.open_with_path = self.items.get(i).map(|it| it.path.clone());
         self.open_with_apps = self
             .items
@@ -1107,10 +1124,27 @@ impl Explorer {
         apps.iter()
             .filter_map(|&a| self.app_index.get(a).cloned())
             .map(|app| {
-                let icon = app.icon.as_deref().and_then(|n| ctx.icons.get(n, 16));
+                let name = app.icon.as_deref();
+                let icon = name.and_then(|n| waits.first(&mut ctx.icons, &[n], ROW_PX));
                 (app.name.clone(), icon)
             })
             .collect()
+    }
+
+    /// The icon name of the Open With or Send To row that runs `cmd`.
+    pub(crate) fn row_icon(&self, cmd: &crate::commands::Command) -> Option<String> {
+        use crate::commands::Command;
+        match cmd {
+            Command::OpenWith(i) => {
+                let app = self
+                    .open_with_apps
+                    .get(*i)
+                    .and_then(|&a| self.app_index.get(a));
+                app.and_then(|a| a.icon.clone())
+            }
+            Command::SendTo(i) => self.send_to.get(*i).map(|r| r.icon.to_string()),
+            _ => None,
+        }
     }
 
     pub fn open_with(&mut self, i: usize, ctx: &mut Ctx) -> Reply {
@@ -1203,18 +1237,19 @@ impl Explorer {
                 enabled: false,
             };
         }
-        let row_icons = crate::openwith::chooser_row_icons(&ow, &mut ctx.icons);
-        let icon = ctx.icons.get(openwith::ICON, 32);
-        self.dialog = Some(Dialog::ChooseProgram(Box::new(ChooseProgram {
+        let mut cp = ChooseProgram {
             path,
             mime,
             ow,
             set_default,
-            icon,
-            row_icons,
+            icon: None,
+            row_icons: Vec::new(),
+            waits: IconWaits::default(),
             input: ChooserInput::opened(self.keyed),
             browse: None,
-        })));
+        };
+        cp.wear_icons(&mut ctx.icons);
+        self.dialog = Some(Dialog::ChooseProgram(Box::new(cp)));
         Reply::redraw_all()
     }
 
@@ -1243,8 +1278,7 @@ impl Explorer {
             log::warn!("explorer: cannot make {} the default: {e}", app.id);
         }
         if c.set_default {
-            let icon = app.icon.as_deref().and_then(|n| ctx.icons.get(n, 16));
-            self.props_set_opens_with(app.name.clone(), icon);
+            self.props_set_opens_with(app.name.clone(), app.icon.clone(), ctx);
             return Reply::redraw_all();
         }
         match reprisefs::apps::open_argv(&app, &repriseconf::terminal(), &c.path) {
@@ -1360,7 +1394,7 @@ impl Explorer {
         let mime = path
             .file_name()
             .and_then(|n| self.globs.mime_of_name(&n.to_string_lossy()));
-        let has = |n: &str| ctx.icons.has(n);
+        let has = |n: &str| ctx.icons.has_unread(n);
         reprisefs::icons::pick_icon(mime.as_deref(), path, &has)
     }
 }
@@ -1416,11 +1450,11 @@ impl ReadSide {
 mod tests;
 
 /// The 32 px picture a delete question about one file or folder shows.
-fn question_icon(ctx: &mut Ctx, is_dir: bool) -> Option<reprisekit::raster::Canvas> {
+fn question_icon(ctx: &mut Ctx, is_dir: bool) -> IconSlot {
     let names: &[&str] = if is_dir {
         &["folder"]
     } else {
         &["text-x-generic"]
     };
-    crate::chrome_icon(ctx, names, 32)
+    IconSlot::chrome(&mut ctx.icons, names, 32)
 }

@@ -8,7 +8,7 @@ use reprisekit::controls::taskpane::{Row, Section};
 #[derive(Clone, Debug, PartialEq)]
 pub struct PaneRow {
     pub text: String,
-    /// Theme names to try, best first; `chrome_icon` falls back to the
+    /// Theme names to try, best first; `chrome_icon_unread` falls back to the
     /// placeholder when the theme has none.
     pub icons: Vec<&'static str>,
     /// [`Command::Nothing`] on a greyed row: `taskpane::click` refuses it.

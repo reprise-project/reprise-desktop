@@ -31,12 +31,14 @@ use crate::commands::Command;
 use crate::settings::Settings;
 use accesskit::Role;
 use repriseapp::Ctx;
+use repriseapp::iconjobs::IconWaits;
 use reprisefs::launcher::Launcher;
 use reprisefs::listing::Item;
 use reprisekit::access::{self, ROOT, Tree, accesskit};
 use reprisekit::classic::widgets::FIELD_PAD;
 use reprisekit::controls::hosted::Chain;
 use reprisekit::controls::metrics::ControlMetrics;
+use reprisekit::icontheme::IconCache;
 use reprisekit::look::Paint;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::{
@@ -488,6 +490,8 @@ pub struct Popup {
     menu: crate::commands::Menu,
     tree: menu::MenuTree,
     chain: menu::PopupMenu,
+    /// The row icons it wears stand-ins for ([`Popup::land_icons`]).
+    waits: IconWaits,
     /// Requested origin.
     #[cfg(test)]
     at: (i32, i32),
@@ -503,14 +507,46 @@ impl Popup {
             menu,
             tree,
             chain,
+            waits: IconWaits::default(),
             #[cfg(test)]
             at,
         }
     }
 
+    /// The menu's rows wear stand-ins for the icons `waits` waits on.
+    pub fn waiting(self, waits: IconWaits) -> Popup {
+        Popup { waits, ..self }
+    }
+
+    /// Theme icons landed: the rows that waited wear theirs, `name` giving each row's icon name
+    /// by its command. True when they did.
+    pub fn land_icons(
+        &mut self,
+        icons: &mut IconCache,
+        name: impl Fn(&Command) -> Option<String>,
+    ) -> bool {
+        if !self.waits.landed(icons) {
+            return false;
+        }
+        let mut waits = IconWaits::default();
+        (self.menu).wear_icons(&mut |cmd| {
+            let name = name(cmd)?;
+            Some(waits.first(icons, &[&name], crate::fileops::ROW_PX))
+        });
+        self.waits = waits;
+        self.tree = self.menu.tree();
+        self.chain.wear_icons(&self.tree);
+        true
+    }
+
     #[cfg(test)]
     pub fn origin(&self) -> (i32, i32) {
         self.at
+    }
+
+    #[cfg(test)]
+    pub fn tree(&self) -> &menu::MenuTree {
+        &self.tree
     }
 
     pub fn command(&self, path: &[usize]) -> Command {

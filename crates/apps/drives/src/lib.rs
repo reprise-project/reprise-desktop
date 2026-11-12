@@ -427,6 +427,9 @@ impl DrivesApp {
                 _ => {}
             }
         }
+        if let Some(u) = self.unlock.as_mut() {
+            u.land_icon(ctx);
+        }
         self.open_unlock(ctx);
         Reply::redraw_all()
     }
