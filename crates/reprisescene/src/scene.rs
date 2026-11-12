@@ -906,8 +906,22 @@ impl<R: Renderer, D> Scene<R, D> {
         height: i32,
         within: Rectangle<i32, BufferCoords>,
     ) -> Rectangle<i32, BufferCoords> {
+        let changed = self.buffer_set_canvas_in(buffer, pixels, width, height, &[within]);
+        changed.first().copied().unwrap_or_default()
+    }
+
+    /// `buffer_set_canvas_within` for a canvas that differs from the one shown only inside the
+    /// rects of `within`: each is compared and damaged apart. Returns the boxes damaged.
+    pub fn buffer_set_canvas_in(
+        &mut self,
+        buffer: BufferId,
+        pixels: &[u32],
+        width: i32,
+        height: i32,
+        within: &[Rectangle<i32, BufferCoords>],
+    ) -> Vec<Rectangle<i32, BufferCoords>> {
         if self.buffer_ref(buffer).is_none() {
-            return Rectangle::default();
+            return Vec::new();
         }
         if width <= 0 || height <= 0 || pixels.len() != (width * height) as usize {
             debug_assert!(
@@ -915,7 +929,7 @@ impl<R: Renderer, D> Scene<R, D> {
                 "a {width}x{height} canvas with {} pixels",
                 pixels.len()
             );
-            return Rectangle::default();
+            return Vec::new();
         }
         let size = Size::<i32, BufferCoords>::from((width, height));
         let in_place = self.buffer_ref(buffer).is_some_and(|b| {
@@ -923,26 +937,25 @@ impl<R: Renderer, D> Scene<R, D> {
         });
         if !in_place {
             let Some(b) = self.buffer_mut(buffer) else {
-                return Rectangle::default();
+                return Vec::new();
             };
             let p = Prepared::new(pixels, width, height);
             b.pixels = Pixels::Canvas(p.0);
             b.buffer_size = size;
             b.shared = None;
-            return Rectangle::from_size(size);
+            return vec![Rectangle::from_size(size)];
         }
-        let mut changed = Rectangle::default();
+        let mut changed = Vec::new();
         if let Some(Content::Buffer(b)) = self.node_untracked(buffer.0).map(|n| &mut n.content)
             && let Pixels::Canvas(m) = &mut b.pixels
         {
-            let within = within
-                .intersection(Rectangle::from_size(size))
-                .unwrap_or_default();
             let mut ctx = m.render();
             let _ = ctx.draw(|mem| {
-                let damage = copy_changed(mem, pixels, width as usize, within);
-                changed = damage.first().copied().unwrap_or_default();
-                Ok::<_, ()>(damage)
+                let boxes = (within.iter())
+                    .filter_map(|r| r.intersection(Rectangle::from_size(size)))
+                    .filter_map(|r| copy_changed(mem, pixels, width as usize, r));
+                changed = boxes.collect();
+                Ok::<_, ()>(changed.clone())
             });
         }
         // The same pixels again are no edit; a change in place keeps the node's rect and what
@@ -950,7 +963,7 @@ impl<R: Renderer, D> Scene<R, D> {
         // through a sharer.
         if !changed.is_empty() {
             self.changes += 1;
-            if self.buffer_shows(buffer, changed) || self.any_shared() {
+            if changed.iter().any(|r| self.buffer_shows(buffer, *r)) || self.any_shared() {
                 self.saw(buffer.0);
             }
         }
@@ -1150,7 +1163,7 @@ fn copy_changed(
     pixels: &[u32],
     width: usize,
     within: Rectangle<i32, BufferCoords>,
-) -> Vec<Rectangle<i32, BufferCoords>> {
+) -> Option<Rectangle<i32, BufferCoords>> {
     let (left, right) = (
         within.loc.x as usize,
         (within.loc.x + within.size.w) as usize,
@@ -1177,11 +1190,10 @@ fn copy_changed(
         (x0, x1) = (x0.min(left + first), x1.max(left + last));
         (y0, y1) = (y0.min(y), y + 1);
     }
-    if y0 == usize::MAX {
-        return Vec::new();
-    }
-    vec![Rectangle::new(
-        (x0 as i32, y0 as i32).into(),
-        ((x1 - x0) as i32, (y1 - y0) as i32).into(),
-    )]
+    (y0 != usize::MAX).then(|| {
+        Rectangle::new(
+            (x0 as i32, y0 as i32).into(),
+            ((x1 - x0) as i32, (y1 - y0) as i32).into(),
+        )
+    })
 }

@@ -89,6 +89,7 @@ const CAPSLOCK: u32 = 58;
 const LEFTSHIFT: u32 = 42;
 const POWER: u32 = 116;
 const DOWN: u32 = 108;
+const ESC: u32 = 1;
 
 /// reprise-login's end of the greeter link.
 struct Daemon(std::os::unix::net::UnixStream);
@@ -854,6 +855,21 @@ fn a_failure_the_badge_and_classics_wrapped_heading_repaint_in_part() {
                 });
                 tap(&mut h, &[CAPSLOCK]);
             }
+            h.state.config.effects.logon_animation = false;
+            view(&mut h).model.set_busy(true);
+            redraw(&mut h.state);
+            in_part(&mut h, &format!("{at}: failed, nothing playing"), |h| {
+                logonview::UPLOADS.set((0, 0, 0));
+                view(h).model.fail(logon::text::incorrect());
+                logonview::update(&mut h.state, &HOST);
+                assert!(view(h).play.is_none(), "nothing plays");
+                let (rects, ..) = logonview::UPLOADS.get();
+                assert!(
+                    rects > 1,
+                    "the rects repainted are shown apart, not {rects}"
+                );
+            });
+            h.state.config.effects.logon_animation = true;
             for (step, layout) in [("badge shown", "us,hu"), ("badge gone", "us")] {
                 in_part(&mut h, &format!("{at}: {step}"), |h| {
                     h.state.config.keyboard.layout = layout.into();
@@ -877,17 +893,80 @@ fn a_failure_the_badge_and_classics_wrapped_heading_repaint_in_part() {
     }
 }
 
+#[test]
+fn glass_tiles_picked_and_left_with_keys_typed_through_repaint_in_part() {
+    let flies = |h: &mut Harness| {
+        view(h)
+            .play
+            .as_ref()
+            .is_some_and(|p| p.t.carried_at(0).is_some())
+    };
+    for scale in [1, 2] {
+        let at = format!("Glass at {scale}");
+        let interface = repriselogin::Interface::Glass;
+        let (mut h, _d) = shown_at(interface, 1280 * scale, 800 * scale, scale as f64);
+        h.output("TEST-2", 1024, 768);
+        on_password(&mut h, interface);
+        in_part(&mut h, &format!("{at}: back to the list"), |h| {
+            tap(h, &[ESC]);
+            assert!(flies(h), "the frame flies back");
+            next_frame(h, Some(40));
+            tap(h, &[CAPSLOCK]);
+        });
+        in_part(
+            &mut h,
+            &format!("{at}: a tile opened with keys typed"),
+            |h| {
+                tap(h, &[ENTER]);
+                assert!(flies(h), "the frame flies to its place");
+                next_frame(h, Some(40));
+                tap(h, &[KEY_P, KEY_W, CAPSLOCK]);
+                next_frame(h, Some(120));
+            },
+        );
+        in_part(
+            &mut h,
+            &format!("{at}: back mid-pick, opened mid-back"),
+            |h| {
+                tap(h, &[ESC]);
+                assert!(flies(h), "the frame flies back from where it is");
+                next_frame(h, Some(60));
+                tap(h, &[ENTER]);
+                assert!(flies(h), "the frame flies on");
+                next_frame(h, Some(30));
+                tap(h, &[KEY_W]);
+            },
+        );
+        assert!(
+            model(&h).password.text.ends_with('w'),
+            "{at}: the key typed mid-pick"
+        );
+    }
+}
+
 /// Prints what a change costs each greeter at 1920x1080 and at 3840x2160 at scale 2, with a
 /// second output beside it: a key typed into the password field, Shift tapped (the input path a
 /// Caps Lock tap takes, drawing nothing), Caps Lock toggled, a message set and cleared, the layout
 /// badge shown and taken away, Caps Lock toggled on the administrator's form, and a failed login
 /// with the screen's changes playing and with them off, each also through a whole redraw (the
-/// frames that play timed apart), and a key typed while the failure plays. Per change: the time, the device px it changes and the outputs
-/// it asks for a frame; and the time of a whole redraw. Run with `--ignored --nocapture`.
+/// frames that play timed apart), a key typed while the failure plays, and on Blue and Glass back
+/// to the list and a tile opened. Per change: the thread's CPU time, the device px it changes, the device px
+/// the scene compared and damaged for the screen shown in part, and the outputs it asks for a
+/// frame; and the time of a whole redraw. Run with `--ignored --nocapture`.
 #[test]
 #[ignore]
 fn typing_cost() {
     const N: u32 = 40;
+    /// The CPU time this thread has used, which a busy machine inflates less than the wall clock.
+    fn cpu() -> std::time::Duration {
+        let mut t = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        // SAFETY: `t` is a valid timespec for the call to fill.
+        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
+        std::time::Duration::new(t.tv_sec as u64, t.tv_nsec as u32)
+    }
     fn cost(h: &mut Harness, change: impl FnMut(&mut Harness, u32)) -> String {
         staged(h, |_| {}, change)
     }
@@ -898,37 +977,45 @@ fn typing_cost() {
         mut change: impl FnMut(&mut Harness, u32),
     ) -> String {
         let (mut spent, mut changed, mut asked) = (std::time::Duration::ZERO, 0, 0);
+        let (mut compared, mut damaged) = (0, 0);
         for i in 0..N {
             prepare(h);
             let before = shown(h);
             crate::backend::take_asks();
-            let t = std::time::Instant::now();
+            logonview::UPLOADS.set((0, 0, 0));
+            let t = cpu();
             change(h, i);
-            spent += t.elapsed();
+            spent += cpu() - t;
+            let (_, cmp, dmg) = logonview::UPLOADS.get();
+            (compared, damaged) = (compared + cmp, damaged + dmg);
             asked += crate::backend::take_scene_outputs().len();
             let r = before.differing_rect(&shown(h));
             changed += r.width as u64 * r.height as u64;
         }
+        let n = u64::from(N);
         format!(
-            "{:?}, {} device px, {:.1} outputs",
+            "{:?}, {} device px, uploaded in part: {} compared, {} damaged, {:.1} outputs",
             spent / N,
-            changed / u64::from(N),
+            changed / n,
+            compared / n,
+            damaged / n,
             asked as f64 / f64::from(N),
         )
+    }
+    /// The frames of what plays, one each 16 ms, timed.
+    fn play_out(h: &mut Harness) -> std::time::Duration {
+        let t = cpu();
+        if view(h).play.is_some() {
+            let ms = play_ms(h);
+            for at in (0..=ms + 16).step_by(16) {
+                next_frame(h, Some(at));
+            }
+        }
+        cpu() - t
     }
     /// A failed login from a check in progress, the busy screen drawn untimed, then shown by
     /// `show`; the frames of what then plays, one each 16 ms, are timed apart.
     fn failed(h: &mut Harness, show: fn(&mut State, &logonview::Host)) -> String {
-        fn play_out(h: &mut Harness) -> std::time::Duration {
-            let t = std::time::Instant::now();
-            if view(h).play.is_some() {
-                let ms = play_ms(h);
-                for at in (0..=ms + 16).step_by(16) {
-                    next_frame(h, Some(at));
-                }
-            }
-            t.elapsed()
-        }
         let mut played = std::time::Duration::ZERO;
         let out = staged(
             h,
@@ -945,6 +1032,32 @@ fn typing_cost() {
         );
         played += play_out(h);
         format!("{out}; frames after it {:?}", played / N)
+    }
+    /// Back to the list (Escape) from a tile, and a tile opened (Enter) from the list, each from a
+    /// screen at rest; the frames of what then plays timed apart.
+    fn flights(h: &mut Harness) -> [String; 2] {
+        [ESC, ENTER].map(|key| {
+            let mut played = std::time::Duration::ZERO;
+            let out = staged(
+                h,
+                |h| {
+                    played += play_out(h);
+                    loop {
+                        let to = match model(h).screen {
+                            logon::Screen::Message => ENTER,
+                            logon::Screen::Tiles if key == ESC => ENTER,
+                            logon::Screen::Tile(_) if key == ENTER => ESC,
+                            _ => break,
+                        };
+                        tap(h, &[to]);
+                        play_out(h);
+                    }
+                },
+                |h, _| tap(h, &[key]),
+            );
+            played += play_out(h);
+            format!("{out}; frames after it {:?}", played / N)
+        })
     }
     /// A key typed 16 ms into a failure as it plays, the failure begun untimed.
     fn typed_while_failing(h: &mut Harness) -> String {
@@ -1009,6 +1122,10 @@ fn typing_cost() {
             let fail = failed(&mut h, logonview::update);
             let fail_whole = failed(&mut h, logonview::redraw);
             let fail_typed = typed_while_failing(&mut h);
+            let [back, pick] = match interface {
+                repriselogin::Interface::Classic => Default::default(),
+                _ => flights(&mut h),
+            };
             h.state.config.effects.logon_animation = false;
             let fail_still = failed(&mut h, logonview::update);
             let fail_still_whole = failed(&mut h, logonview::redraw);
@@ -1021,6 +1138,7 @@ fn typing_cost() {
                  caps lock {caps}\n  message {message}\n  badge on/off {badge}\n  failed login {fail}\n  \
                  failed login drawn whole {fail_whole}\n  key typed while it plays {fail_typed}\n  failed login, nothing playing {fail_still}\n  \
                  failed login, nothing playing, drawn whole {fail_still_whole}\n  \
+                 back to the list {back}\n  tile opened {pick}\n  \
                  caps lock on the administrator's form {admin_caps}"
             );
         }
