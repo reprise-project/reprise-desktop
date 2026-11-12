@@ -131,6 +131,7 @@ fn a_preedit_draws_in_the_caret_line_and_the_spot_is_that_line() {
         View::default(),
         &lay,
         Caret::Hidden,
+        None,
     );
     let x0 = lay.inner.x + 1 + text.measure("a", false, m.font_px);
     let x1 = lay.inner.x + 1 + text.measure("axyz", false, m.font_px);
@@ -169,6 +170,7 @@ fn a_preedit_range_draws_as_a_caret_at_its_end_over_no_selection() {
             View::default(),
             &lay,
             Caret::Shown,
+            None,
         );
         c
     };
@@ -191,28 +193,23 @@ fn the_drop_point_draws_a_bar_at_its_position() {
     let t = e("top\nab");
     let lay = layout(&text, &m, &t, Rect::new(0, 0, 200, 60), 1);
     let paint = classic_paint(&theme.colors, 1);
-    let mut c = Canvas::new(200, 60);
-    draw(
-        &mut c,
-        &text,
-        &paint,
-        &m,
-        &t,
-        View::default(),
-        &lay,
-        Caret::Hidden,
-    );
-    let before = c.clone();
-    draw_drop_point(
-        &mut c,
-        &text,
-        &paint,
-        &m,
-        &t,
-        View::default(),
-        &lay,
-        p(1, 1),
-    );
+    let draw_with = |view, drop| {
+        let mut c = Canvas::new(200, 60);
+        draw(
+            &mut c,
+            &text,
+            &paint,
+            &m,
+            &t,
+            view,
+            &lay,
+            Caret::Hidden,
+            drop,
+        );
+        c
+    };
+    let before = draw_with(View::default(), None);
+    let c = draw_with(View::default(), Some(p(1, 1)));
     let x = lay.inner.x + 1 + text.measure("a", false, m.font_px);
     let y = lay.inner.y + 1 + m.line_h;
     let inverted = |y| 0xFF00_0000 | (!before.get(x, y) & 0x00FF_FFFF);
@@ -227,10 +224,8 @@ fn the_drop_point_draws_a_bar_at_its_position() {
         top: 1,
         ..View::default()
     };
-    let mut c = Canvas::new(200, 60);
-    draw(&mut c, &text, &paint, &m, &t, scrolled, &lay, Caret::Hidden);
-    let before = c.clone();
-    draw_drop_point(&mut c, &text, &paint, &m, &t, scrolled, &lay, p(0, 1));
+    let before = draw_with(scrolled, None);
+    let c = draw_with(scrolled, Some(p(0, 1)));
     assert!(c == before, "line 0 is above the box");
 }
 
@@ -532,6 +527,7 @@ fn view_follows_the_caret_and_clicks_land() {
         v,
         &lay,
         Caret::Shown,
+        None,
     );
     assert_eq!(c.get(0, 0), theme.colors.button_shadow.argb());
     assert_eq!(c.get(3, 3), theme.colors.window.argb());
@@ -645,6 +641,7 @@ fn a_scrolled_view_shifts_every_line_left() {
         View::default(),
         &wide,
         Caret::Unfocused,
+        None,
     );
     let v = View {
         left: 40,
@@ -660,6 +657,7 @@ fn a_scrolled_view_shifts_every_line_left() {
         v,
         &lay,
         Caret::Unfocused,
+        None,
     );
     let x0 = lay.inner.x + 1;
     for y in lay.inner.y + 1..lay.inner.y + 2 * m.line_h {
@@ -1008,6 +1006,7 @@ fn a_blue_text_boxs_lit_bar_part_draws_hot() {
         view,
         &lay,
         Caret::Unfocused,
+        None,
     );
     assert_eq!(
         c.get(sb.x + 8, sb.y + 2),
@@ -1059,6 +1058,7 @@ fn a_blink_only_frame_damages_just_the_caret_bar() {
             View::default(),
             &lay,
             caret,
+            None,
         );
         c
     };
@@ -1095,23 +1095,70 @@ fn the_caret_and_the_drop_point_invert_their_column_so_a_stem_under_them_shows_w
     t.place(p(0, 0), false);
     let lay = layout(&text, &m, &t, Rect::new(0, 0, 200, 60), 1);
     let paint = classic_paint(&theme.colors, 1);
-    let draw_with = |caret| {
+    let draw_with = |caret, drop| {
         let mut c = Canvas::new(200, 60);
-        draw(&mut c, &text, &paint, &m, &t, View::default(), &lay, caret);
+        draw(
+            &mut c,
+            &text,
+            &paint,
+            &m,
+            &t,
+            View::default(),
+            &lay,
+            caret,
+            drop,
+        );
         c
     };
-    let off = draw_with(Caret::Hidden);
+    let off = draw_with(Caret::Hidden, None);
     let pen = Rect::new(lay.inner.x + 1, lay.inner.y + 1, 1, m.line_h);
     let paper = theme.colors.window.argb();
-    let on = draw_with(Caret::Shown);
+    let on = draw_with(Caret::Shown, None);
     assert_eq!(
         crate::paint::inverted_bar(&off, &on, paper),
         (pen, true),
         "caret"
     );
-    let mut drop = off.clone();
-    let at = p(0, 0);
-    draw_drop_point(&mut drop, &text, &paint, &m, &t, View::default(), &lay, at);
+    let drop = draw_with(Caret::Hidden, Some(p(0, 0)));
     let bar = crate::paint::inverted_bar(&off, &drop, paper);
     assert_eq!(bar, (pen, true), "drop point");
+}
+
+#[test]
+fn a_drop_point_at_the_caret_hides_the_caret_so_its_bar_stays_inverted() {
+    crate::pins::fonts();
+    let text = TextRenderer::load(&FontConfig::default());
+    let theme = Theme::default();
+    let m = Metrics::default();
+    let mut t = e("AVA");
+    t.place(p(0, 1), false);
+    let lay = layout(&text, &m, &t, Rect::new(0, 0, 200, 60), 1);
+    let paint = classic_paint(&theme.colors, 1);
+    let draw_with = |caret, drop| {
+        let mut c = Canvas::new(200, 60);
+        draw(
+            &mut c,
+            &text,
+            &paint,
+            &m,
+            &t,
+            View::default(),
+            &lay,
+            caret,
+            drop,
+        );
+        c
+    };
+    let off = draw_with(Caret::Hidden, None);
+    let x = lay.inner.x + 1 + text.measure("A", false, m.font_px);
+    let pen = Rect::new(x, lay.inner.y + 1, 1, m.line_h);
+    let paper = theme.colors.window.argb();
+    for caret in [Caret::Shown, Caret::Hidden] {
+        let both = draw_with(caret, Some(p(0, 1)));
+        assert_eq!(
+            crate::paint::inverted_bar(&off, &both, paper).0,
+            pen,
+            "{caret:?}: only the drop bar inverts column 1"
+        );
+    }
 }

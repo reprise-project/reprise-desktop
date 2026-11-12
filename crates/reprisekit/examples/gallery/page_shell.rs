@@ -1049,6 +1049,7 @@ pub fn page_desk(
             view,
             &lay,
             Caret::Shown,
+            None,
         );
         c.set_preedit(None);
     }

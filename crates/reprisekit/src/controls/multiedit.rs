@@ -1489,9 +1489,9 @@ pub fn select_drag(
 }
 
 /// Draw the control: edge, box, lines from `view.top`, selection on `hilight`, the caret (a 1 px
-/// bar inverting what it covers) in the blink's shown half, and the scrollbars the layout calls
-/// for. On a blink-only frame the caret bar is the damage (an empty rect when it is scrolled out of
-/// view).
+/// bar inverting what it covers) in the blink's shown half or, while a drag would `drop` text, the
+/// same bar at that point instead, and the scrollbars the layout calls for. On a blink-only frame
+/// the caret bar is the damage (an empty rect when it is scrolled out of view).
 #[expect(clippy::too_many_arguments)]
 pub fn draw(
     c: &mut Canvas,
@@ -1502,8 +1502,14 @@ pub fn draw(
     view: View,
     lay: &Layout,
     caret: Caret,
+    drop: Option<Pos>,
 ) {
     let Paint { cs, s, .. } = *p;
+    // Both bars invert, so a caret under the drop point would cancel it.
+    let caret = match drop {
+        Some(_) => Caret::new(caret.focused(), false),
+        None => caret,
+    };
     // With a preedit nothing is drawn selected; text-input-v3 removes the real selection.
     let preedit = c.preedit().filter(|_| caret.focused()).cloned();
     if !m.flat {
@@ -1638,6 +1644,9 @@ pub fn draw(
             c.report_damage(caret_bar.unwrap_or_default());
         }
     }
+    if let Some(at) = drop {
+        draw_drop_point(c, text, s, m, edit, view, lay, at);
+    }
     if let Some(sb) = lay.vscroll {
         let (visible, total) = vextent(text, m, edit, lay);
         let lit = axis_lit(view.bars.lit(), Axis::Vertical);
@@ -1654,19 +1663,18 @@ pub fn draw(
 }
 
 /// Where a drag over the control would drop its text: a bar the caret's size at `at`, inverting
-/// what `draw` drew as the caret does.
+/// what is under it as the caret does.
 #[expect(clippy::too_many_arguments)]
-pub fn draw_drop_point(
+fn draw_drop_point(
     c: &mut Canvas,
     text: &TextRenderer,
-    p: &Paint,
+    s: i32,
     m: &Metrics,
     edit: &MultiEdit,
     view: View,
     lay: &Layout,
     at: Pos,
 ) {
-    let s = p.s;
     let at_row = edit.row_of(text, m, lay.wrap, at);
     let Some(row) = at_row.checked_sub(view.top).filter(|r| *r < lay.rows) else {
         return;
