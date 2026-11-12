@@ -191,12 +191,12 @@ impl State {
             });
         }
         let px = ICON_PX * scale;
-        let mut undecoded = false;
+        let (mut undecoded, mut waiting) = (false, false);
         if let Some((_, theme)) = view.drawn_theme.as_ref() {
             for r in &redraw {
                 // Icon files are decoded by the desktop's read, never here: one not decoded at
                 // this size (the scale changed, or the cache dropped it) shows no picture until
-                // a read decodes it.
+                // a read decodes it. A theme icon still decoding draws its cell again on landing.
                 let mut icon = if r.icon.starts_with('/') {
                     let put = self.icons.file_put(&r.icon, px);
                     if put.is_none() {
@@ -205,7 +205,12 @@ impl State {
                     }
                     put.flatten()
                 } else {
-                    self.icons.get_shared(&r.icon, px)
+                    let got = self.icons.get_unread(&r.icon, px);
+                    if got.is_none() {
+                        view.drawn[r.index] = None;
+                        waiting = true;
+                    }
+                    got.flatten()
                 };
                 if r.cut
                     && let Some(ic) = icon.as_mut()
@@ -245,6 +250,9 @@ impl State {
         self.desktop = Some(view);
         if reread {
             self.rescan_desktop();
+        }
+        if waiting {
+            self.wait_for_icons(crate::icon::IconWaiter::Desktop);
         }
         if let Some((spot, origin)) = spot {
             self.ime_field_drawn(crate::caret::Editor::Rename, spot, origin, scale);

@@ -582,7 +582,11 @@ impl State {
             .collect();
         let scales = new_draw_scales(&used, scales);
         let icons = &mut self.icons;
-        let mut icon = |n| crate::taskbarview::start_icon(&self.config, icons, n);
+        // The warm paints the orb with start-here in it: it decodes the icon rather than a stand-in.
+        let mut icon = |n| {
+            crate::taskbarview::start_icon_px(&self.config, n)
+                .and_then(|px| icons.get_shared(crate::taskbarview::START_ICON, px))
+        };
         let sides = reprisekit::frame::caption_button_sides(&self.config.theme.metrics);
         let warm: Vec<_> = scales
             .iter()

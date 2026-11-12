@@ -1483,3 +1483,40 @@ fn opening_a_program_or_a_runnable_type_asks_and_records_only_on_run() {
         other => panic!("{other:?}"),
     }
 }
+
+/// A file whose first icon name turns out to be a broken SVG once its decode lands wears the next
+/// name the theme has, and its cell draws with it.
+#[test]
+fn a_file_whose_icon_name_never_decodes_wears_the_next_name() {
+    use reprisekit::icontheme::{IconCache, IconTheme};
+    let root = crate::icon::svg_theme(
+        &["image-x-generic"],
+        &["image-png", "gnome-mime-image-png", "text-x-generic"],
+    );
+    let desk = root.join("Desktop");
+    std::fs::create_dir_all(&desk).unwrap();
+    std::fs::write(desk.join("photo.png"), "").unwrap();
+    let mut h = crate::harness::Harness::new();
+    crate::fsjobs::setup(&mut h.state);
+    h.output("TEST-1", 1024, 768);
+    h.state.icons = IconCache::new(IconTheme::load("test", std::slice::from_ref(&root)));
+    create(&mut h.state, desk, Default::default(), None);
+    h.state.rescan_desktop();
+    let worn = |h: &crate::harness::Harness| {
+        let view = h.state.desktop.as_ref()?;
+        let i = view.entries.iter().position(|e| e.name == "photo.png")?;
+        let drawn = view.drawn.get(i)?.as_ref().map(|k| k.icon.to_string());
+        Some((view.entries[i].icon.clone(), drawn))
+    };
+    let want = "image-x-generic".to_string();
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while worn(&h) != Some((want.clone(), Some(want.clone()))) {
+        assert!(
+            std::time::Instant::now() < end,
+            "the file wears and draws {want}: {:?}",
+            worn(&h)
+        );
+        h.run_for(5);
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}

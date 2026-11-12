@@ -42,15 +42,19 @@ pub fn window_icon(
     window_icon_waiting(icons, index, win, px).0
 }
 
-/// [`window_icon`], with the icon file it waits on when that file is not decoded at `px` yet.
+/// [`window_icon`], with the icon file or theme name it waits on when that is not ready at `px`.
 pub fn window_icon_waiting(
     icons: &mut IconCache,
     index: &[reprisefs::apps::AppEntry],
     win: &Window,
     px: i32,
 ) -> (Option<Arc<Canvas>>, Option<String>) {
-    if let Some(icon) = (win.icon_name.as_deref()).and_then(|n| named(icons, n, px)) {
-        return (Some(icon), None);
+    if let Some(name) = win.icon_name.as_deref() {
+        match named(icons, name, px) {
+            Some(Some(icon)) => return (Some(icon), None),
+            None => return (stand_in(icons, name, px), Some(name.to_string())),
+            Some(None) => {}
+        }
     }
     if let Some(icon) = win.own_icon(px) {
         return (Some(icon), None);
@@ -58,13 +62,13 @@ pub fn window_icon_waiting(
     crate::taskbarview::app_icon_waiting(icons, index, &win.app_id(), px)
 }
 
-/// Theme icon `name` at `px`, for a name a client set. A name with a path separator would be
-/// taken for a file path, so it never resolves.
-fn named(icons: &mut IconCache, name: &str, px: i32) -> Option<Arc<Canvas>> {
+/// Theme icon `name` at `px` as [`IconCache::get_unread`] answers it, for a name a client set. A
+/// name with a path separator would be taken for a file path, so it never resolves.
+fn named(icons: &mut IconCache, name: &str, px: i32) -> Option<Option<Arc<Canvas>>> {
     if name.contains('/') {
-        return None;
+        return Some(None);
     }
-    icons.get_shared(name, px)
+    icons.get_unread(name, px)
 }
 
 /// Read a wl_shm icon buffer's pixels at their native size. None for an
@@ -105,18 +109,28 @@ fn width_of(buffer: &WlBuffer) -> i32 {
 /// What an icon whose file is not decoded yet shows meanwhile.
 pub const STAND_IN: &str = "application-x-executable";
 
-/// Icon `name` at `px` for a surface on the loop. An icon file is never read here, since it can
-/// sit on a mount that never answers: one not decoded at `px` yet shows [`STAND_IN`] until
-/// [`State::decode_wanted_icons`] lands it, and the surface draws again from `icon_landed`.
+/// Icon `name` at `px` for a surface on the loop ([`IconCache::get_unread`]): one not ready yet
+/// shows [`stand_in`] until [`State::decode_wanted_icons`] lands it and the surface draws again.
 pub fn unread(icons: &mut IconCache, name: &str, px: i32) -> Option<Arc<Canvas>> {
     icons
         .get_unread(name, px)
-        .unwrap_or_else(|| icons.get_shared(STAND_IN, px))
+        .unwrap_or_else(|| stand_in(icons, name, px))
 }
 
-/// Whether app `app_id`'s icon, as [`crate::taskbarview::app_icon`] finds it, is icon file `file`.
-fn app_wears(index: &[reprisefs::apps::AppEntry], app_id: &str, file: &str) -> bool {
-    reprisefs::apps::icon_for_app_id(index, app_id) == Some(file)
+/// What `name` shows at `px` while its image is not ready: an icon file, which may sit on a mount
+/// that never answers, [`STAND_IN`]; a theme icon, due within frames, nothing.
+pub fn stand_in(icons: &mut IconCache, name: &str, px: i32) -> Option<Arc<Canvas>> {
+    let blank = || Some(Arc::new(Canvas::new(px.max(1) as u32, px.max(1) as u32)));
+    if !name.starts_with('/') {
+        return blank();
+    }
+    icons.get_unread(STAND_IN, px).unwrap_or_else(blank)
+}
+
+/// Whether app `app_id`'s icon, as [`crate::taskbarview::app_icon`] finds it, is `key` (an icon
+/// file or a theme name).
+fn app_wears(index: &[reprisefs::apps::AppEntry], app_id: &str, key: &str) -> bool {
+    app_id == key || reprisefs::apps::icon_for_app_id(index, app_id) == Some(key)
 }
 
 /// Whether a Quick Launch item or taskbar pin wears icon file `file`.
@@ -124,8 +138,32 @@ fn quick_wears(items: &[crate::quicklaunch::QuickItem], file: &str) -> bool {
     items.iter().any(|q| q.entry.icon.as_deref() == Some(file))
 }
 
-/// Icon files a job is decoding, each with the px asked for since its job started.
+/// Icon files and theme names a job is decoding, each with the px asked for since its job
+/// started.
 pub type Decoding = std::collections::HashMap<String, Vec<i32>>;
+
+/// A surface that drew a stand-in in an icon's place, to draw again once icons land.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum IconWaiter {
+    Bar(reprisescene::TreeId),
+    Desktop,
+    Switcher,
+    Dialog(u64),
+    Notify,
+    TrayFlyout,
+}
+
+/// Icon decodes off the loop: what is decoding, what landed since the turn's end, and who waits.
+#[derive(Default)]
+pub struct IconJobs {
+    pub decoding: Decoding,
+    /// (icon file or theme name, px, image) landed, for the turn's end to hand out at once.
+    landed: Vec<(String, i32, Option<Canvas>)>,
+    waiters: Vec<IconWaiter>,
+}
+
+/// Theme names one decode job takes: a cold menu's icons land in a few batches, each one redraw.
+const THEME_JOB: usize = 16;
 
 /// The jobs to start for `wanted` (path, px): one per file not decoding yet, with all its sizes.
 /// A file already decoding only notes the sizes, for a job of its own once the first lands: a
@@ -152,15 +190,41 @@ fn plan_decodes(decoding: &mut Decoding, wanted: Vec<(String, i32)>) -> Vec<(Str
 }
 
 impl State {
-    /// Decodes the icon files the loop asked [`IconCache::get_unread`] for off the loop (`plan_decodes`). Runs
-    /// after each dispatch of the loop.
+    /// Hands the icons landed since the last turn to the surfaces showing them, then decodes what
+    /// the loop asked [`IconCache::get_unread`] for off the loop (`plan_decodes`). Runs at each
+    /// turn's end.
     pub fn decode_wanted_icons(&mut self) {
-        let wanted = self.icons.take_wanted();
-        if wanted.is_empty() {
-            return;
+        // Without the jobs' channel a job lands inline, so its icons go out in the next round.
+        for _ in 0..3 {
+            self.land_icons();
+            let wanted = self.icons.take_wanted();
+            if wanted.is_empty() {
+                return;
+            }
+            let (files, names): (Vec<_>, Vec<_>) =
+                wanted.into_iter().partition(|(n, _)| n.starts_with('/'));
+            for (file, sizes) in plan_decodes(&mut self.icon_jobs.decoding, files) {
+                self.spawn_icon_decode(file, sizes);
+            }
+            let names = plan_decodes(&mut self.icon_jobs.decoding, names);
+            for batch in names.chunks(THEME_JOB) {
+                self.spawn_theme_decode(batch.to_vec());
+            }
         }
-        for (file, sizes) in plan_decodes(&mut self.icon_decodes, wanted) {
-            self.spawn_icon_decode(file, sizes);
+    }
+
+    /// Notes `who` to draw again once icons land if [`IconCache::get_unread`] answered None since
+    /// it read `waits` ([`IconCache::waits`]).
+    pub fn note_icon_waits(&mut self, waits: u64, who: IconWaiter) {
+        if self.icons.waits() != waits {
+            self.wait_for_icons(who);
+        }
+    }
+
+    /// Notes `who` to draw again once icons land.
+    pub fn wait_for_icons(&mut self, who: IconWaiter) {
+        if !self.icon_jobs.waiters.contains(&who) {
+            self.icon_jobs.waiters.push(who);
         }
     }
 
@@ -176,38 +240,110 @@ impl State {
     }
 
     fn icon_decoded(&mut self, file: String, art: Vec<(i32, Option<Canvas>)>, scale: i32) {
-        let asked = self.icon_decodes.remove(&file).unwrap_or_default();
+        let asked = self.icon_jobs.decoding.remove(&file).unwrap_or_default();
         let late: Vec<i32> = (asked.into_iter())
             .filter(|px| !art.iter().any(|(p, _)| p == px))
             .collect();
         let puts = art.iter().map(|(px, c)| (file.clone(), *px, c.clone()));
         self.icons.put_files_at(puts.collect(), scale);
-        self.icon_landed(&file, &art);
+        let landed = art.into_iter().map(|(px, c)| (file.clone(), px, c));
+        self.icon_jobs.landed.extend(landed);
         if !late.is_empty() {
-            self.icon_decodes.insert(file.clone(), late.clone());
+            self.icon_jobs.decoding.insert(file.clone(), late.clone());
             self.spawn_icon_decode(file, late);
         }
     }
 
-    /// Icon file `file` decoded at the sizes of `art`: every surface showing it draws again.
-    fn icon_landed(&mut self, file: &str, art: &[(i32, Option<Canvas>)]) {
-        for (px, c) in art {
-            self.menu_icon_landed(file, *px, c);
-        }
-        self.window_icon_landed(file);
-        if quick_wears(&self.quicklaunch, file) {
-            self.redraw_taskbars();
-        }
-        self.start_panel_icon_landed(file);
-        self.launcher_icon_landed(file);
-        crate::tray::customize_icon_landed(self, file);
+    /// Loads theme icons `names` at their sizes on a thread of its own: the theme's files are the
+    /// ones its lookups list, so no mount a file job waits on holds them up.
+    fn spawn_theme_decode(&mut self, names: Vec<(String, Vec<i32>)>) {
+        let (theme, scale) = (self.icons.theme(), self.icons.scale());
+        self.spawn_job(move || {
+            let art: Vec<(String, i32, Option<Canvas>)> = (names.into_iter())
+                .flat_map(|(name, sizes)| {
+                    let theme = &theme;
+                    sizes.into_iter().map(move |px| {
+                        let icon = reprisekit::icontheme::load_icon(theme, &name, px, scale);
+                        (name.clone(), px, icon)
+                    })
+                })
+                .collect();
+            Box::new(move |state: &mut State| state.theme_icons_decoded(&theme, art))
+        });
     }
 
-    /// Icon file `file` landed: the windows whose app wears it redraw their caption and task
-    /// button, and an open switcher, overview, snap picker or task preview draws again.
-    fn window_icon_landed(&mut self, file: &str) {
-        let wearing: Vec<WindowId> = (self.windows.iter())
-            .filter(|w| app_wears(&self.app_index, &w.app_id(), file))
+    fn theme_icons_decoded(
+        &mut self,
+        theme: &Arc<reprisekit::icontheme::IconTheme>,
+        art: Vec<(String, i32, Option<Canvas>)>,
+    ) {
+        // From a theme replaced since: every size asked goes again, in the new theme.
+        let stale = !Arc::ptr_eq(theme, &self.icons.theme());
+        let mut again: Vec<(String, Vec<i32>)> = Vec::new();
+        for (name, _, _) in &art {
+            let Some(asked) = self.icon_jobs.decoding.remove(name) else {
+                continue;
+            };
+            let late: Vec<i32> = (asked.into_iter())
+                .filter(|px| stale || !art.iter().any(|(n, p, _)| n == name && p == px))
+                .collect();
+            if !late.is_empty() {
+                again.push((name.clone(), late));
+            }
+        }
+        self.icons.put_icons(theme, art.clone());
+        if !stale {
+            self.icon_jobs.landed.extend(art);
+        }
+        for (name, sizes) in &again {
+            self.icon_jobs.decoding.insert(name.clone(), sizes.clone());
+        }
+        for batch in again.chunks(THEME_JOB) {
+            self.spawn_theme_decode(batch.to_vec());
+        }
+    }
+
+    /// The icons landed since the last turn: every surface showing one draws again, once.
+    fn land_icons(&mut self) {
+        let landed = std::mem::take(&mut self.icon_jobs.landed);
+        let refused = self.icons.take_refused();
+        if landed.is_empty() && refused.is_empty() {
+            return;
+        }
+        self.desktop_names_refused(&refused);
+        self.launcher_names_refused(&refused);
+        let keys: Vec<&str> = landed.iter().map(|(k, ..)| k.as_str()).collect();
+        self.menu_icons_landed(&landed);
+        self.window_icon_landed(&keys);
+        if keys.iter().any(|k| quick_wears(&self.quicklaunch, k)) {
+            self.redraw_taskbars();
+        }
+        self.start_panel_icons_landed(&keys, !refused.is_empty());
+        self.launcher_icon_landed(&keys);
+        crate::tray::customize_icon_landed(self, &keys);
+        for who in std::mem::take(&mut self.icon_jobs.waiters) {
+            match who {
+                IconWaiter::Bar(tree) => self.redraw_taskbar(tree),
+                IconWaiter::Desktop => self.relayout_desktop(),
+                IconWaiter::Switcher => self.redraw_switcher(),
+                IconWaiter::Dialog(id) => self.dialog_icons_landed(id),
+                IconWaiter::Notify => crate::notifyview::icons_landed(self),
+                IconWaiter::TrayFlyout => crate::trayflyout::icons_landed(self),
+            }
+        }
+    }
+
+    /// Icons `keys` landed: the windows wearing one redraw their caption and task button, and an
+    /// open switcher, overview, snap picker or task preview draws again.
+    fn window_icon_landed(&mut self, keys: &[&str]) {
+        let wears = |w: &Window| {
+            let named = w.icon_name.as_deref();
+            (keys.iter()).any(|k| named == Some(k) || app_wears(&self.app_index, &w.app_id(), k))
+        };
+        let wearing: Vec<WindowId> = self
+            .windows
+            .iter()
+            .filter(|w| wears(w))
             .map(|w| w.id)
             .collect();
         if wearing.is_empty() {
@@ -260,6 +396,31 @@ impl XdgToplevelIconHandler for State {
     }
 }
 
+/// An icon root whose theme "test" draws each of `names` from a red SVG and holds each of
+/// `broken` as an SVG that does not parse.
+#[cfg(test)]
+pub(crate) fn svg_theme(names: &[&str], broken: &[&str]) -> std::path::PathBuf {
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let root = crate::harness::scratch().join(format!("svg-theme-{}-{n}", std::process::id()));
+    let apps = root.join("test/scalable/apps");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&apps).unwrap();
+    std::fs::write(
+        root.join("test/index.theme"),
+        "[Icon Theme]\nName=Test\nDirectories=scalable/apps\n\n[scalable/apps]\nSize=48\nMinSize=8\nMaxSize=512\nType=Scalable\n",
+    )
+    .unwrap();
+    let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" fill="#f00"/></svg>"##;
+    for name in names {
+        std::fs::write(apps.join(format!("{name}.svg")), svg).unwrap();
+    }
+    for name in broken {
+        std::fs::write(apps.join(format!("{name}.svg")), "<svg").unwrap();
+    }
+    root
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -297,9 +458,9 @@ mod tests {
         let art = |n: &str| (n.to_string(), 16, Some(Canvas::new(16, 16)));
         icons.put_icons(&theme, vec![art("document-edit")]);
         icons.put_file("/srv/icons/viewer.png", 16, Some(Canvas::new(16, 16)));
-        assert!(named(&mut icons, "document-edit", 16).is_some());
-        assert!(named(&mut icons, "/srv/icons/viewer.png", 16).is_none());
-        assert!(named(&mut icons, "unknown-name", 16).is_none());
+        assert!(named(&mut icons, "document-edit", 16).flatten().is_some());
+        assert_eq!(named(&mut icons, "/srv/icons/viewer.png", 16), Some(None));
+        assert_eq!(named(&mut icons, "unknown-name", 16), Some(None));
     }
 
     #[test]
@@ -347,6 +508,148 @@ mod tests {
         assert!(crate::taskbarview::quick_icon(&mut icons, &item, 16).is_none());
         assert_eq!(icons.take_wanted(), [(file.to_string(), 16)]);
         assert!(quick_wears(std::slice::from_ref(&item), file));
+    }
+
+    /// Two outputs, Start menu `style`, theme icons from `root`, and file jobs on threads.
+    fn two_outputs(style: &str, root: &std::path::Path) -> crate::harness::Harness {
+        use reprisekit::icontheme::IconTheme;
+        let toml = format!("startmenu_style = \"{style}\"\n");
+        let config = crate::config::Config::parse(&toml).expect("the config");
+        let mut h = crate::harness::Harness::with_config(config);
+        crate::fsjobs::setup(&mut h.state);
+        h.output("TEST-1", 1024, 768);
+        h.output("TEST-2", 1024, 768);
+        h.state.icons = IconCache::new(IconTheme::load("test", &[root.to_path_buf()]));
+        h
+    }
+
+    /// Turns the loop until no icon decodes.
+    fn land(h: &mut crate::harness::Harness) {
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        h.dispatch();
+        while !h.state.icon_jobs.decoding.is_empty() {
+            assert!(std::time::Instant::now() < end, "the icons never landed");
+            h.run_for(5);
+        }
+    }
+
+    fn red(c: &Canvas) -> bool {
+        c.get(c.width as i32 / 2, c.height as i32 / 2) == 0xFFFF_0000
+    }
+
+    fn run_icon(h: &crate::harness::Harness) -> Option<Canvas> {
+        let m = &h.state.menus[0];
+        let row = (m.items.iter())
+            .position(|i| matches!(i, MenuItem::Entry { label, .. } if label.contains("Run")))
+            .expect("the Run row");
+        match &m.items[row] {
+            MenuItem::Entry { icon, .. } => icon.clone(),
+            _ => None,
+        }
+    }
+
+    use crate::startmenu::MenuItem;
+
+    #[test]
+    fn a_cold_svg_menu_icon_decodes_off_the_loop_and_lands_on_its_output_only() {
+        let root = super::svg_theme(&["system-run"], &[]);
+        let mut h = two_outputs("classic", &root);
+        let bar = h.state.bars[0].tree;
+        h.state.toggle_start(bar);
+        let blank = run_icon(&h).expect("a stand-in in the icon's place");
+        assert!(
+            blank.pixels.iter().all(|&p| p == 0),
+            "the stand-in is blank"
+        );
+        h.dispatch();
+        assert!(
+            h.state.icon_jobs.decoding.contains_key("system-run"),
+            "a job decodes it"
+        );
+        crate::backend::take_asks();
+        land(&mut h);
+        assert!(
+            run_icon(&h).is_some_and(|c| red(&c)),
+            "the row took the icon"
+        );
+        let asked = crate::backend::take_asks();
+        assert!(!asked.is_empty(), "the landing asks for a frame");
+        assert!(
+            asked.iter().all(|(o, _)| o == "TEST-1"),
+            "only the menu's output: {asked:?}"
+        );
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_cached_menu_icon_draws_when_the_menu_opens() {
+        let root = super::svg_theme(&["system-run"], &[]);
+        let mut h = two_outputs("classic", &root);
+        let bar = h.state.bars[0].tree;
+        h.state.toggle_start(bar);
+        land(&mut h);
+        h.state.toggle_start(bar);
+        h.dispatch();
+        let waits = h.state.icons.waits();
+        h.state.toggle_start(bar);
+        assert!(run_icon(&h).is_some_and(|c| red(&c)), "drawn on open");
+        assert_eq!(h.state.icons.waits(), waits, "nothing waited on");
+        assert!(h.state.icons.take_wanted().is_empty());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_cold_start_panel_place_takes_its_icon_when_it_lands() {
+        let root = super::svg_theme(&["user-home"], &[]);
+        let mut h = two_outputs("glass", &root);
+        let bar = h.state.bars[0].tree;
+        h.state.toggle_start(bar);
+        let home = |h: &crate::harness::Harness| {
+            let v = h.state.start_panel.as_ref().expect("the panel");
+            v.model.places[0].picture.clone()
+        };
+        assert!(home(&h).is_some_and(|c| c.pixels.iter().all(|&p| p == 0)));
+        crate::backend::take_asks();
+        land(&mut h);
+        assert!(home(&h).is_some_and(|c| red(&c)), "the place took the icon");
+        let asked = crate::backend::take_asks();
+        assert!(
+            !asked.is_empty() && asked.iter().all(|(o, _)| o == "TEST-1"),
+            "only the panel's output: {asked:?}"
+        );
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn the_tray_flyout_draws_again_when_its_stand_in_lands() {
+        let root = super::svg_theme(&[STAND_IN], &[]);
+        let mut h = two_outputs("classic", &root);
+        let _tray = crate::tray::headless(&mut h.state);
+        let item = crate::tray::TrayItem {
+            id: "probe".into(),
+            key: "probe".into(),
+            ..Default::default()
+        };
+        h.state.tray.as_mut().unwrap().hidden.push(item.clone());
+        let bar = h.state.bars[0].tree;
+        crate::trayflyout::chevron_press(&mut h.state, bar, crate::input::BTN_LEFT, None);
+        let draws = |h: &crate::harness::Harness| {
+            let tray = h.state.tray.as_ref().unwrap();
+            tray.flyout.as_ref().map(|v| v.draws)
+        };
+        let opened = draws(&h).expect("the flyout opened");
+        crate::backend::take_asks();
+        land(&mut h);
+        assert!(draws(&h) > Some(opened), "the flyout drew again");
+        let asked = crate::backend::take_asks();
+        assert!(
+            !asked.is_empty() && asked.iter().all(|(o, _)| o == "TEST-1"),
+            "only the flyout's output: {asked:?}"
+        );
+        let px = reprisekit::icon::ICON_SIZE;
+        let icon = crate::tray::item_icon(&mut h.state, &item, px);
+        assert!(icon.is_some_and(|c| red(&c)), "the stand-in landed");
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

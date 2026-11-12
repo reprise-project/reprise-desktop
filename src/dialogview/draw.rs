@@ -97,6 +97,7 @@ impl State {
     pub fn redraw_dialog(&mut self, index: usize) {
         let active = index + 1 == self.dialogs.views.len() && self.dialog_has_keyboard();
         let caret_on = self.caret.on && active;
+        let waits = self.icons.waits();
         let Some(v) = self.dialogs.views.get(index) else {
             return;
         };
@@ -249,6 +250,7 @@ impl State {
             Decode::Retry(wait) => self.relook_dialog_icons(id, wait),
             Decode::Wait => {}
         }
+        self.note_icon_waits(waits, crate::icon::IconWaiter::Dialog(id));
         self.redraw_nodes(was, &[tree.into()]);
         crate::access::touch(self);
     }
@@ -296,6 +298,14 @@ impl State {
         }
         v.icons = None;
         self.redraw_dialog(i);
+    }
+
+    /// Theme icons landed while dialog `id` showed a stand-in for one: it looks its icons up again.
+    pub(crate) fn dialog_icons_landed(&mut self, id: u64) {
+        if let Some(i) = self.dialog_index(id) {
+            self.dialogs.views[i].icons = None;
+            self.redraw_dialog(i);
+        }
     }
 
     /// Looks dialog `id`'s icons up again in `wait`, when a decode job still running will have

@@ -93,6 +93,7 @@ impl State {
         {
             bar.draws += 1;
         }
+        let waits = self.icons.waits();
         let before = BarLook::of(&self.scene, bar);
         let b = self.layout_box(Some(&bar.output));
         if b.width <= 0 {
@@ -253,7 +254,8 @@ impl State {
                     .dialog
                     .and_then(|id| dialogs.iter().find(|d| d.id == id))
                 {
-                    let icon = (d.icon.as_deref()).and_then(|n| icons.get_shared(n, task_px));
+                    let icon =
+                        (d.icon.as_deref()).and_then(|n| crate::icon::unread(icons, n, task_px));
                     return TaskEntry {
                         glow: glow_of(&icon),
                         icon,
@@ -480,6 +482,7 @@ impl State {
         bar.tray_reveal_drawn = bar.tray_reveal.x(now);
         self.scene.set_enabled(bar.tree, true);
         self.lay_bar(bar);
+        self.note_icon_waits(waits, crate::icon::IconWaiter::Bar(bar.tree));
         painted || BarLook::of(&self.scene, bar) != before
     }
 

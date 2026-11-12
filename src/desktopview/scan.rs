@@ -333,6 +333,24 @@ impl State {
         }
     }
 
+    /// Names `refused` turned out to decode at no size: the files wearing one wear the next name
+    /// the theme has, and their cells draw again.
+    pub(crate) fn desktop_names_refused(&mut self, refused: &[String]) {
+        let State {
+            desktop: Some(view),
+            icons,
+            ..
+        } = self
+        else {
+            return;
+        };
+        if !view.entries.iter().any(|e| refused.contains(&e.icon)) {
+            return;
+        }
+        desktop::wear_file_icons(&mut view.entries, &view.mime, &|n| icons.has_unread(n));
+        self.relayout_desktop();
+    }
+
     /// A desktop read is done: its icon files go into the icon cache, its plain files wear the
     /// theme's icons, and the icons on screen are replaced.
     fn desktop_scanned(
@@ -353,7 +371,7 @@ impl State {
         view.landed.clear();
         icons.put_files(art.into_iter().map(|(f, c)| (f, px, c)).collect());
         view.icons_read = (px, icons.file_drops());
-        desktop::wear_file_icons(&mut entries, &view.mime, &|n| icons.has(n));
+        desktop::wear_file_icons(&mut entries, &view.mime, &|n| icons.has_unread(n));
         let old = std::mem::replace(&mut view.entries, entries);
         let moved = remap(&old, &view.entries);
         let remap = |i: &usize| moved.get(*i).copied().flatten();

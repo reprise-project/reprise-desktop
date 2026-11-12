@@ -241,7 +241,7 @@ pub(crate) fn file_icon_name(
     let m = p
         .file_name()
         .and_then(|n| mime.mime_of_name(&n.to_string_lossy()));
-    reprisefs::icons::pick_icon(m.as_deref(), p, &|n| icons.has(n))
+    reprisefs::icons::pick_icon(m.as_deref(), p, &|n| icons.has_unread(n))
 }
 
 pub(crate) fn file_row(
@@ -260,7 +260,7 @@ pub(crate) fn file_row(
     FileRow {
         name,
         folder: p.parent().map(|d| tilde(d, home)).unwrap_or_default(),
-        icon: icons.get(&icon, px),
+        icon: crate::icon::unread(icons, &icon, px).map(std::sync::Arc::unwrap_or_clone),
     }
 }
 

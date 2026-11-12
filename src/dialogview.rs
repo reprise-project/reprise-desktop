@@ -294,7 +294,8 @@ struct DialogIcons {
 }
 
 /// Icon `name` at `px` from `cache`. An icon file is never read here: one not decoded at `px` yet
-/// goes on `undecoded` for a job and shows nothing meanwhile.
+/// goes on `undecoded` for a job and shows nothing meanwhile. A theme icon still decoding shows
+/// nothing until it lands ([`crate::icon::IconWaiter::Dialog`]).
 fn cached(
     cache: &mut reprisekit::icontheme::IconCache,
     name: &str,
@@ -302,7 +303,10 @@ fn cached(
     undecoded: &mut Vec<(String, i32)>,
 ) -> Option<Canvas> {
     if !name.starts_with('/') {
-        return cache.get(name, px);
+        return cache
+            .get_unread(name, px)
+            .flatten()
+            .map(std::sync::Arc::unwrap_or_clone);
     }
     let put = cache.file_put(name, px);
     if put.is_none() {
