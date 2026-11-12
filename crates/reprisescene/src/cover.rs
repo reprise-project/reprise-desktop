@@ -6,7 +6,10 @@ use smithay::{
     output::Output,
     reexports::wayland_server::protocol::wl_surface::WlSurface,
     utils::{Logical, Point, Rectangle},
-    wayland::compositor::{TraversalAction, with_surface_tree_downward},
+    wayland::{
+        alpha_modifier::AlphaModifierSurfaceCachedState,
+        compositor::{TraversalAction, with_surface_tree_downward},
+    },
 };
 
 use crate::{
@@ -145,7 +148,8 @@ fn opaque_parts<R: Renderer, D>(
     }
 }
 
-/// The opaque regions of `surface` and its mapped subsurfaces, the surface's origin at `pos`.
+/// The opaque regions of `surface` and its mapped subsurfaces, the surface's origin at `pos`. As
+/// in Smithay's surface element, a surface its alpha modifier fades below 1 has none of its own.
 fn surface_opaque(surface: &WlSurface, pos: Point<i32, Logical>) -> Vec<Rectangle<i32, Logical>> {
     let mut out = Vec::new();
     with_surface_tree_downward(
@@ -160,8 +164,14 @@ fn surface_opaque(surface: &WlSurface, pos: Point<i32, Logical>) -> Vec<Rectangl
                 return TraversalAction::SkipChildren;
             };
             let loc = *loc + view.offset;
-            let regions = data.opaque_regions().unwrap_or_default();
-            out.extend(regions.iter().map(|r| Rectangle::new(r.loc + loc, r.size)));
+            let faded = (states.cached_state.get::<AlphaModifierSurfaceCachedState>())
+                .current()
+                .multiplier_f32()
+                .is_some_and(|m| m < 1.0);
+            if !faded {
+                let regions = data.opaque_regions().unwrap_or_default();
+                out.extend(regions.iter().map(|r| Rectangle::new(r.loc + loc, r.size)));
+            }
             TraversalAction::DoChildren(loc)
         },
         |_, _, _| {},
