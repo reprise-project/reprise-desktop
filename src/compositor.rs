@@ -915,6 +915,9 @@ impl State {
             self.redraw_all();
             return r;
         }
+        if rects.is_empty() {
+            return r;
+        }
         let outputs: Vec<smithay::output::Output> = (self.scene.outputs().iter())
             .filter(|o| {
                 reprisescene::output_rect(o).is_some_and(|g| rects.iter().any(|r| g.overlaps(*r)))
@@ -1341,6 +1344,38 @@ mod tests {
         h.state.set_fullscreen(f.id, false);
         h.roundtrip(&mut c);
         assert!(asks(&mut h, &mut c, t), "the window left fullscreen");
+    }
+
+    #[test]
+    fn a_commit_under_a_fullscreen_window_faded_by_its_alpha_modifier_asks_a_frame() {
+        use crate::harness::{Harness, TestClient, Toplevel};
+        use wayland_protocols::wp::alpha_modifier::v1::client::wp_alpha_modifier_v1::WpAlphaModifierV1;
+        fn asks(h: &mut Harness, c: &mut TestClient, t: Toplevel) -> bool {
+            crate::backend::take_asks();
+            h.draw_self(c, t, 0xff40_4040);
+            !crate::backend::take_asks().is_empty()
+        }
+        let mut h = Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "printer", 200, 100);
+        let f = h.map_toplevel(&mut c, "player", 300, 200);
+        h.state.set_fullscreen(f.id, true);
+        h.roundtrip(&mut c);
+        h.draw_opaque(&mut c, f, 0xff00_0000);
+        assert!(
+            !asks(&mut h, &mut c, t),
+            "under an opaque fullscreen window"
+        );
+        let am: WpAlphaModifierV1 = c.bind("wp_alpha_modifier_v1", 1);
+        let fs = c.side.shells[f.shell].surface.clone();
+        am.get_surface(&fs, &c.qh(), ())
+            .set_multiplier(u32::MAX / 2);
+        h.draw_opaque(&mut c, f, 0xff00_0000);
+        assert!(
+            asks(&mut h, &mut c, t),
+            "the fullscreen window draws at half alpha"
+        );
     }
 
     #[test]

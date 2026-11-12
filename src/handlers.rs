@@ -86,26 +86,31 @@ impl CompositorHandler for State {
         }
         let window = self.window_for_surface(&top);
         let mark = window.and_then(|w| self.window_mark(w));
-        // A synchronized subsurface's state applies with its parent's, whose own commit handles
-        // the window; any other subsurface's commit can change the window's size too.
-        if !is_sync_subsurface(surface)
-            && let Some(w) = window
-        {
-            self.handle_commit(w);
-            crate::capture::window_committed(self, w);
-        }
-        let window_kept =
-            mark.is_some_and(|m| m.mapped) && mark == window.and_then(|w| self.window_mark(w));
-        self.popups.commit(surface);
-        if let Some(PopupKind::Xdg(popup)) = self.popups.find_popup(surface)
-            && !popup.is_initial_configure_sent()
-            && let Err(e) = popup.send_configure()
-        {
-            log::warn!("popup configure: {e}");
-        }
-        if let Some(w) = self.window_for_popup(surface) {
-            self.sync_popups(w);
-        }
+        // The frame and popups ask by the rects they change: they can show where the client
+        // surface, and so `redraw_surface`'s ask, is covered.
+        let window_kept = self.redraw_changed(|s| {
+            // A synchronized subsurface's state applies with its parent's, whose own commit
+            // handles the window; any other subsurface's commit can change the window's size too.
+            if !is_sync_subsurface(surface)
+                && let Some(w) = window
+            {
+                s.handle_commit(w);
+                crate::capture::window_committed(s, w);
+            }
+            let kept =
+                mark.is_some_and(|m| m.mapped) && mark == window.and_then(|w| s.window_mark(w));
+            s.popups.commit(surface);
+            if let Some(PopupKind::Xdg(popup)) = s.popups.find_popup(surface)
+                && !popup.is_initial_configure_sent()
+                && let Err(e) = popup.send_configure()
+            {
+                log::warn!("popup configure: {e}");
+            }
+            if let Some(w) = s.window_for_popup(surface) {
+                s.sync_popups(w);
+            }
+            kept
+        });
         crate::layer::commit(self, surface);
         crate::sessionlock::commit(self, surface);
         self.ime_commit(surface);

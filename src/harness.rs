@@ -29,6 +29,7 @@ use wayland_protocols::{
         ext_session_lock_surface_v1::{self, ExtSessionLockSurfaceV1},
         ext_session_lock_v1::ExtSessionLockV1,
     },
+    wp::alpha_modifier::v1::client::{wp_alpha_modifier_surface_v1, wp_alpha_modifier_v1},
     wp::commit_timing::v1::client::{wp_commit_timer_v1, wp_commit_timing_manager_v1},
     wp::fifo::v1::client::{wp_fifo_manager_v1, wp_fifo_v1},
     wp::presentation_time::client::{wp_presentation, wp_presentation_feedback},
@@ -1731,6 +1732,8 @@ impl wc::Dispatch<input_client::reprise_sandboxed_v1::RepriseSandboxedV1, ()> fo
 
 wc::delegate_noop!(ClientSide: ignore ZwlrForeignToplevelHandleV1);
 wc::delegate_noop!(ClientSide: ignore WlCompositor);
+wc::delegate_noop!(ClientSide: ignore wp_alpha_modifier_v1::WpAlphaModifierV1);
+wc::delegate_noop!(ClientSide: ignore wp_alpha_modifier_surface_v1::WpAlphaModifierSurfaceV1);
 wc::delegate_noop!(ClientSide: ignore wp_fifo_manager_v1::WpFifoManagerV1);
 wc::delegate_noop!(ClientSide: ignore wp_fifo_v1::WpFifoV1);
 wc::delegate_noop!(ClientSide: ignore wp_commit_timing_manager_v1::WpCommitTimingManagerV1);

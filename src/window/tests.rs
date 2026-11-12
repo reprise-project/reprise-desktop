@@ -16,6 +16,44 @@ fn a_batch_draws_each_frame_once_at_the_outer_end() {
 }
 
 #[test]
+fn a_covered_windows_own_resize_asks_for_its_frame_sticking_out() {
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    let mut c = h.connect();
+    let w = h.map_toplevel(&mut c, "behind", 300, 200);
+    let cov = h.map_toplevel(&mut c, "cover", 300, 200);
+    h.state.set_csd(cov.id, true);
+    h.roundtrip(&mut c);
+    h.state.move_to(w.id, 100, 100);
+    let (wx, wy) = h.state.win(w.id).unwrap().client_origin();
+    let g = h.state.win(cov.id).unwrap().geom.client;
+    h.state.move_to(cov.id, wx - g.x, wy - g.y);
+    h.draw_opaque(&mut c, cov, 0xff00_0000);
+    h.run_for(600);
+    let surf = h.state.win(w.id).unwrap().wl_surface().clone();
+    assert_eq!(h.state.scene.outputs_showing(&surf), Some(vec![]));
+    crate::backend::take_asks();
+    h.draw_self(&mut c, w, 0xff40_4040);
+    assert_eq!(
+        crate::backend::take_asks(),
+        vec![],
+        "the covered client draws in place"
+    );
+    let before = h.state.win(w.id).unwrap().frame_rect();
+    h.resize_self(&mut c, w, 200, 150);
+    assert_ne!(before, h.state.win(w.id).unwrap().frame_rect());
+    let mut asked: Vec<String> = (crate::backend::take_asks().into_iter())
+        .map(|(o, _)| o)
+        .collect();
+    asked.dedup();
+    assert_eq!(
+        asked,
+        ["TEST-1"],
+        "the frame sticks out from under the cover"
+    );
+}
+
+#[test]
 fn a_frame_never_starts_above_a_top_bars_foot() {
     use super::below_top_bar;
     use reprisekit::taskbar::Edge;
