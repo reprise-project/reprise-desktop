@@ -9,8 +9,8 @@ use crate::blue::Variant;
 use crate::blue::powerpanel::{self, Glaze, Hue, Mark, RIM, TileState, glaze, title_text};
 use crate::blue::scheme::Scheme;
 use crate::logon::{
-    Change, Logon, LogonLayout, Part, Plan, Screen, Show, Slice, UserNote, Window, message_lines,
-    text as strings,
+    Change, Logon, LogonLayout, Notes, Part, Plan, Screen, Show, Slice, UserNote, Window,
+    message_lines, text as strings,
 };
 use crate::paint::{Paint, draw_edit};
 use crate::pointer::Interaction;
@@ -696,9 +696,8 @@ fn draw_button(c: &mut Canvas, m: &Logon, part: Part, r: Rect, pen: &Pen) {
 fn draw_mark(c: &mut Canvas, m: &Logon, f: &Frame, k: Lines, pen: &Pen, whole: bool) {
     let s = pen.s;
     let right = f.split - SIDE_GAP;
-    let left = f.middle.x + SIDE_GAP;
-    let block = LOGO + BEGIN_GAP + k.line;
-    let top = f.middle.y + (f.middle.height - block) / 2;
+    let begin = begin_line(f, k);
+    let top = begin.y - LOGO - BEGIN_GAP;
     let spec = title_text();
     let t = pen.title.for_output(s);
     let size = spec.size_in(t) * MARK_SIZE.0 / MARK_SIZE.1;
@@ -712,8 +711,6 @@ fn draw_mark(c: &mut Canvas, m: &Logon, f: &Frame, k: Lines, pen: &Pen, whole: b
     if !whole || m.screen == Screen::Typed {
         return;
     }
-    let begin_y = top + LOGO + BEGIN_GAP;
-    let begin = Rect::new(left, begin_y, right - left, k.line);
     let words = if m.unlocking() {
         strings::unlock_begin()
     } else {
@@ -723,15 +720,58 @@ fn draw_mark(c: &mut Canvas, m: &Logon, f: &Frame, k: Lines, pen: &Pen, whole: b
     if m.screen == Screen::Tiles
         && let Some(msg) = &m.message
     {
-        let w = right - left;
-        let lines = pen.wrapped(msg, w, MESSAGE_LINES);
-        pen.lines(
-            c,
-            &lines,
-            (left, begin.bottom() + ROW_GAP, w),
-            k,
-            Align::Right,
-        );
+        let r = tiles_said(f, k);
+        let lines = pen.wrapped(msg, r.width, MESSAGE_LINES);
+        pen.lines(c, &lines, (r.x, r.y, r.width), k, Align::Right);
+    }
+}
+
+/// The "To begin" line under the logo and wordmark.
+fn begin_line(f: &Frame, k: Lines) -> Rect {
+    let (left, right) = (f.middle.x + SIDE_GAP, f.split - SIDE_GAP);
+    let block = LOGO + BEGIN_GAP + k.line;
+    let top = f.middle.y + (f.middle.height - block) / 2;
+    Rect::new(left, top + LOGO + BEGIN_GAP, right - left, k.line)
+}
+
+/// Where the tiles' message goes, under "To begin".
+fn tiles_said(f: &Frame, k: Lines) -> Rect {
+    let begin = begin_line(f, k);
+    let h = MESSAGE_LINES as i32 * k.line;
+    Rect::new(begin.x, begin.bottom() + ROW_GAP, begin.width, h)
+}
+
+/// The right end of the password `field`'s row: the open tile's, else the typed column's.
+fn row_right(m: &Logon, l: &LogonLayout, field: Rect) -> i32 {
+    match m.screen {
+        Screen::Tile(i) => l.rect(Part::Tile(i)).map_or(field.right(), |t| t.right()),
+        _ => field.x + TILE_W.min(l.output.right() - SIDE_GAP - field.x),
+    }
+}
+
+/// Where Caps Lock and the message go under the password `field`, and the lines they hold. The
+/// typed form's run on into the free space down to the bottom band.
+fn said_under(m: &Logon, l: &LogonLayout, field: Rect, k: Lines) -> (Rect, usize) {
+    let top = field.bottom() + ROW_GAP;
+    let room = match m.screen {
+        Screen::Typed => ((frame(l.output).bottom.y - top) / k.line).max(0) as usize,
+        _ => MESSAGE_LINES,
+    };
+    let w = row_right(m, l, field) - field.x;
+    (Rect::new(field.x, top, w, room as i32 * k.line), room)
+}
+
+/// The notes under the password field, or on the tiles under "To begin", and the badge on `l`.
+pub fn notes(m: &Logon, l: &LogonLayout, theme: &Theme) -> Notes {
+    let k = lines(theme.text);
+    let said = match (m.screen, l.rect(Part::Password)) {
+        (Screen::Tiles, _) => Some(tiles_said(&frame(l.output), k)),
+        (_, Some(field)) => Some(said_under(m, l, field, k).0),
+        (_, None) => None,
+    };
+    Notes {
+        said,
+        badge: l.rect(Part::Layout),
     }
 }
 
@@ -819,10 +859,7 @@ fn draw_password_row(
 ) {
     let s = pen.s;
     let px = pen.px;
-    let right = match m.screen {
-        Screen::Tile(i) => l.rect(Part::Tile(i)).map_or(field.right(), |t| t.right()),
-        _ => field.x + TILE_W.min(l.output.right() - SIDE_GAP - field.x),
-    };
+    let right = row_right(m, l, field);
     if m.screen == Screen::Typed {
         let label = m
             .prompt
@@ -844,21 +881,15 @@ fn draw_password_row(
         pen.text
             .draw(c, at, short, false, pen.ink, Align::Center, pen.px);
     }
-    let w = right - field.x;
-    let top = field.bottom() + ROW_GAP;
-    // The typed form's message runs on into the free space down to the bottom band.
-    let room = match m.screen {
-        Screen::Typed => ((frame(l.output).bottom.y - top) / k.line).max(0) as usize,
-        _ => MESSAGE_LINES,
-    };
+    let (r, room) = said_under(m, l, field, k);
     let mut lines = Vec::new();
     if m.caps_lock {
-        lines.extend(pen.wrapped(&strings::caps_lock(), w, 1));
+        lines.extend(pen.wrapped(&strings::caps_lock(), r.width, 1));
     }
     if let Some(msg) = m.said() {
-        lines.extend(pen.wrapped(&msg, w, room.saturating_sub(lines.len())));
+        lines.extend(pen.wrapped(&msg, r.width, room.saturating_sub(lines.len())));
     }
-    pen.lines(c, &lines, (field.x, top, w), k, Align::Left);
+    pen.lines(c, &lines, (r.x, r.y, r.width), k, Align::Left);
 }
 
 /// A white field showing `part`'s edit; a read-only one keeps the face colour.

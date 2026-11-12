@@ -6,8 +6,8 @@ use super::panel::{self, Fade, LightBox};
 use super::tint::{self, Surface};
 use crate::art::logo;
 use crate::logon::{
-    Change, Logon, LogonLayout, LogonUser, Part, Plan, Screen, Show, Slice, UserNote, Window,
-    message_lines, text as strings,
+    Change, Logon, LogonLayout, LogonUser, Notes, Part, Plan, Screen, Show, Slice, UserNote,
+    Window, message_lines, text as strings,
 };
 use crate::paint::{self, Paint};
 use crate::pointer::Interaction;
@@ -418,6 +418,20 @@ pub fn draw_shown(
         if show != Show::AllBut(f.part) {
             frame_at(c, m, &f, o, s);
         }
+    }
+}
+
+/// The notice row and the row a second line runs into, or the error screen's text, and the badge
+/// on `l`, each grown by the text's halo.
+pub fn notes(m: &Logon, l: &LogonLayout, theme: &Theme) -> Notes {
+    let g = geometry(m, theme, l.output, button_width(l));
+    let notice = (g.notice).map(|r| Rect {
+        height: 2 * r.height,
+        ..r
+    });
+    Notes {
+        said: notice.or(g.message).map(|r| r.inset(-HALO)),
+        badge: l.rect(Part::Layout).map(|r| r.inset(-HALO)),
     }
 }
 

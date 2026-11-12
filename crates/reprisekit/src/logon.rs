@@ -382,13 +382,16 @@ impl Logon {
         m
     }
 
-    /// `self` with its name and password fields empty, the password never copied: a host keeps
-    /// one to tell later whether a change touched the fields alone.
-    pub fn outside_fields(&self) -> Logon {
+    /// `self` as it draws, the password's text never copied: a secret one masked, an echoed answer
+    /// left empty. A host keeps one to tell later what a change touched ([`Logon::touched_since`]).
+    pub fn drawn(&self) -> Logon {
         Logon {
             users: self.users.clone(),
-            name: TextEdit::default(),
-            password: TextEdit::default(),
+            name: self.name.clone(),
+            password: match self.password.is_secret() {
+                true => self.password.masked(),
+                false => TextEdit::default(),
+            },
             prompt: self.prompt.clone(),
             message: self.message.clone(),
             hint: self.hint.clone(),
@@ -396,6 +399,27 @@ impl Logon {
             motion: self.motion.clone(),
             ..*self
         }
+    }
+
+    /// What changed since `was`, a [`Logon::drawn`]; None when anything but the fields, the notes
+    /// and the badge did. An echoed answer counts as touched, as `was` holds none.
+    pub fn touched_since(&self, was: &Logon) -> Option<Touched> {
+        let mut now = self.drawn();
+        let touched = Touched {
+            fields: now.name != was.name
+                || now.password != was.password
+                || !self.password.is_secret(),
+            said: (now.caps_lock, &now.message, &now.hint)
+                != (was.caps_lock, &was.message, &was.hint),
+            badge: now.layout != was.layout,
+        };
+        now.name = was.name.clone();
+        now.password = was.password.clone();
+        now.caps_lock = was.caps_lock;
+        now.message = was.message.clone();
+        now.hint = was.hint.clone();
+        now.layout = was.layout.clone();
+        (now == *was).then_some(touched)
     }
 
     pub fn unlocking(&self) -> bool {
@@ -910,6 +934,23 @@ impl LogonLayout {
     pub fn rect(&self, part: Part) -> Option<Rect> {
         self.parts.iter().find(|(p, _)| *p == part).map(|(_, r)| *r)
     }
+}
+
+/// The parts of the screen a change touched, from [`Logon::touched_since`]: the name and password
+/// fields, the notes (the Caps Lock notice with the message or hint) and the layout badge.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Touched {
+    pub fields: bool,
+    pub said: bool,
+    pub badge: bool,
+}
+
+/// Where an interface draws the notes and the badge, in design px within the output; each rect
+/// holds every pixel they can change on their layout.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Notes {
+    pub said: Option<Rect>,
+    pub badge: Option<Rect>,
 }
 
 /// What a painter draws: the whole screen, the chrome alone (what never moves: the power button,

@@ -343,7 +343,7 @@ fn on_finger(state: &mut State) -> PostAction {
             arm_finger_retry(state);
         }
     }
-    redraw(state);
+    update(state);
     if ended {
         PostAction::Remove
     } else {
@@ -478,7 +478,7 @@ pub fn seat_away(state: &mut State, away: bool) {
         l.finger_retry = None;
         l.view.model.hint = None;
     }
-    redraw(state);
+    update(state);
 }
 
 /// Lock the desktop: the remote side in lock mode, else the session.
@@ -1191,6 +1191,16 @@ pub fn redraw(state: &mut State) {
     }
 }
 
+/// [`redraw`] after a change to the models alone: see [`logonview::update`].
+pub fn update(state: &mut State) {
+    for side in [Side::Console, Side::Remote] {
+        if state.lock.on(side).is_some() {
+            prepare(state, side);
+            logonview::update(state, host(side));
+        }
+    }
+}
+
 /// The screen as a locker leaves it: nothing typed, no check or message, its user unchanged.
 pub fn reset(l: &mut Lock) {
     let m = &l.view.model;
@@ -1244,7 +1254,7 @@ pub fn picture_read(state: &mut State) {
 pub fn refused(state: &mut State, text: String) {
     if let Some(l) = state.lock.console.as_mut() {
         l.view.model.info(text);
-        redraw(state);
+        update(state);
     }
 }
 

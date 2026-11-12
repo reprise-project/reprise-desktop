@@ -5,8 +5,8 @@ use std::time::Instant;
 
 use reprisekit::interface::Interface;
 use reprisekit::interfaces::logon::{
-    Drawn, Transition, draw_logon, draw_spinner, logon_column, logon_layout, redraw_logon_fields,
-    spin_elapsed, spin_step, spinner_rect,
+    Drawn, Transition, draw_logon, draw_spinner, logon_column, logon_layout, logon_touched,
+    redraw_logon_within, spin_elapsed, spin_step, spinner_rect,
 };
 use reprisekit::logon::{self, Logon, LogonAction, LogonKey, LogonLayout, Motion, Moves, Part};
 use reprisekit::pointer::Interaction;
@@ -62,9 +62,9 @@ pub struct LogonView {
     pub shown: Option<Canvas>,
     /// When the busy ring would have been at step 0 had it turned since; None while it stands.
     pub ring: Option<Instant>,
-    /// The model outside its fields and the scale the canvas shown was last painted whole for;
-    /// None while a change plays and after, until the next whole paint.
-    painted: Option<(Logon, i32)>,
+    /// What the canvas shown was last painted for: the model as [`Logon::drawn`], the scale and
+    /// whether the screen was hidden; None while a change plays, until the next whole paint.
+    painted: Option<(Logon, i32, bool)>,
 }
 
 /// A change playing: its transition and when its first frame showed, drawn with no session
@@ -204,7 +204,7 @@ pub fn key(state: &mut State, host: &Host, typed: Option<Typed>) {
     };
     let Some(t) = typed else {
         if v.model.caps_lock != caps {
-            redraw(state, host);
+            update(state, host);
         }
         return;
     };
@@ -224,7 +224,7 @@ pub fn key(state: &mut State, host: &Host, typed: Option<Typed>) {
         Typed::Text(text) => m.key(LogonKey::Text(text.as_str())),
     };
     act(state, host, action);
-    redraw_typed(state, host);
+    update(state, host);
 }
 
 /// Text typed without a key (an input method, a remote keyboard), into the focused field.
@@ -237,7 +237,7 @@ pub fn type_text(state: &mut State, host: &Host, text: &str) {
     };
     let action = v.model.key(LogonKey::Text(text));
     act(state, host, action);
-    redraw_typed(state, host);
+    update(state, host);
 }
 
 /// A held Backspace repeats; no other key does, so no typed character is kept for a repeat.
@@ -247,7 +247,7 @@ pub fn repeat_backspace(state: &mut State, host: &Host) {
     };
     v.model
         .key(LogonKey::Edit(EditKey::Backspace { word: false }));
-    redraw_typed(state, host);
+    update(state, host);
 }
 
 /// A left press clicks the part under it.
@@ -497,10 +497,12 @@ pub fn redraw(state: &mut State, host: &Host) {
     }
 }
 
-/// [`redraw`] after a key: a change to the fields alone repaints just them and asks a frame only
-/// of the output whose pixels it changed.
-fn redraw_typed(state: &mut State, host: &Host) {
-    if !state.redraw_changed(|s| draw_fields(s, host)) {
+/// [`redraw`] after a change to the model alone, the keyboard's Caps Lock and layout included:
+/// when it touched only the fields, the notes or the badge, just they repaint and only the output
+/// whose pixels changed is asked for a frame. A change to the theme, the scale or the covers takes
+/// [`redraw`].
+pub fn update(state: &mut State, host: &Host) {
+    if !state.redraw_changed(|s| draw_touched(s, host)) {
         redraw(state, host);
     }
 }
@@ -539,7 +541,7 @@ fn draw(state: &mut State, host: &Host) -> bool {
     let l = logon_layout(&v.model, &theme, text, b);
     let canvas = play(v, &l, (&theme, text, scale), now());
     v.layout = Some(l);
-    v.painted = (v.play.is_none()).then(|| (v.model.outside_fields(), scale));
+    v.painted = (v.play.is_none()).then(|| (v.model.drawn(), scale, v.hidden));
     let shown = !v.hidden;
     crate::output::upload_scaled(&mut state.scene, buffer, &canvas, scale);
     state.scene.set_enabled(buffer, shown);
@@ -549,9 +551,9 @@ fn draw(state: &mut State, host: &Host) -> bool {
     true
 }
 
-/// Repaint the name and password fields alone over the canvas shown, when nothing but what they
-/// hold changed since it was painted whole; false, drawing nothing, otherwise.
-fn draw_fields(state: &mut State, host: &Host) -> bool {
+/// Repaint what changed over the canvas shown, when nothing but the fields, the notes or the badge
+/// did since it was painted; false, drawing nothing, otherwise.
+fn draw_touched(state: &mut State, host: &Host) -> bool {
     let Some((_, buffer, b, scale, theme)) = screen_at(state, host) else {
         return false;
     };
@@ -559,19 +561,26 @@ fn draw_fields(state: &mut State, host: &Host) -> bool {
         return false;
     };
     v.model.column = logon_column(&v.model, &theme, b);
-    let m = &v.model;
-    let same = |(was, at): &(Logon, i32)| *at == scale && m.outside_fields() == *was;
-    if v.play.is_some() || !v.painted.as_ref().is_some_and(same) {
+    let (play, hidden) = (v.play.is_some(), v.hidden);
+    let painted = (v.painted.as_ref()).filter(|p| !play && p.1 == scale && p.2 == hidden);
+    let Some(touched) = painted.and_then(|p| v.model.touched_since(&p.0)) else {
         return false;
-    }
-    let l = logon_layout(m, &theme, text, b);
+    };
+    let l = logon_layout(&v.model, &theme, text, b);
     if v.layout.as_ref() != Some(&l) {
         return false;
     }
     let Some(mut c) = v.shown.take() else {
         return false;
     };
-    let r = redraw_logon_fields(&mut c, &v.model, &l, &theme, text.for_output(scale), scale);
+    let rects = logon_touched(&v.model, &l, &theme, touched);
+    let drawn = (&theme, text.for_output(scale), scale);
+    let r = redraw_logon_within(&mut c, &v.model, &l, drawn, &rects);
+    v.painted = Some((v.model.drawn(), scale, v.hidden));
+    if r.is_empty() {
+        v.shown = Some(c);
+        return true;
+    }
     show_within(state, host, buffer, c, r);
     true
 }

@@ -5,7 +5,7 @@ use crate::art::logo;
 use crate::classic::indicator;
 use crate::classic::widgets::{self, BUTTON_GAP, BUTTON_H, BUTTON_W, LINE_H};
 use crate::icon::ICON_SIZE;
-use crate::logon::{Logon, LogonLayout, Part, message_lines, text as strings};
+use crate::logon::{Logon, LogonLayout, Notes, Part, message_lines, text as strings};
 use crate::paint::Paint;
 use crate::pointer::Interaction;
 use crate::raster::{Canvas, EdgeStyle, Rect};
@@ -155,6 +155,15 @@ fn laid_out(m: &Logon, theme: &Theme, output: Rect, rows: usize) -> LogonLayout 
         output,
         parts,
         dialog: Some(g.dialog),
+    }
+}
+
+/// The message rows, the badge at their end included, and the badge on `l`.
+pub fn notes(theme: &Theme, l: &LogonLayout) -> Notes {
+    let g = geometry(theme, l.output, laid_rows(theme, l));
+    Notes {
+        said: Some(g.message),
+        badge: l.rect(Part::Layout),
     }
 }
 

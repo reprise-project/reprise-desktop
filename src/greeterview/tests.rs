@@ -86,6 +86,7 @@ const KEY_4: u32 = 5;
 const KEY_2: u32 = 3;
 const BACKSPACE: u32 = 14;
 const CAPSLOCK: u32 = 58;
+const LEFTSHIFT: u32 = 42;
 const POWER: u32 = 116;
 const DOWN: u32 = 108;
 
@@ -725,13 +726,89 @@ fn a_key_in_the_password_field_repaints_it_alone_and_leaves_the_screen_a_whole_r
     }
 }
 
-/// Prints what a key typed into the password field costs each greeter at 1920x1080 and at
-/// 3840x2160 at scale 2, with a second output beside it: the time per key and per whole redraw,
-/// the device px a key changes and the outputs it asks for a frame. Run with `--ignored
-/// --nocapture`.
+#[test]
+fn caps_lock_and_a_message_repaint_their_notes_alone_and_leave_the_screen_a_whole_redraw_draws() {
+    type Step = (&'static str, fn(&mut Harness));
+    let steps: [Step; 6] = [
+        ("caps on", |h| tap(h, &[CAPSLOCK])),
+        ("message", |h| {
+            view(h).model.info(logon::text::incorrect());
+            update(&mut h.state);
+        }),
+        ("caps off", |h| tap(h, &[CAPSLOCK])),
+        ("message cleared", |h| {
+            view(h).model.message = None;
+            update(&mut h.state);
+        }),
+        ("hint", |h| {
+            view(h).model.hint = Some("Place a finger on the reader".into());
+            update(&mut h.state);
+        }),
+        ("hint cleared", |h| {
+            view(h).model.hint = None;
+            update(&mut h.state);
+        }),
+    ];
+    for interface in [
+        repriselogin::Interface::Classic,
+        repriselogin::Interface::Blue,
+        repriselogin::Interface::Glass,
+    ] {
+        for scale in [1, 2] {
+            let (mut h, _d) = shown_at(interface, 1280 * scale, 800 * scale, scale as f64);
+            h.output("TEST-2", 1024, 768);
+            on_password(&mut h, interface);
+            tap(&mut h, &[KEY_P]);
+            for (step, change) in steps {
+                let before = shown(&mut h);
+                crate::backend::take_asks();
+                crate::logonview::DRAW_PANICS.set(true);
+                change(&mut h);
+                crate::logonview::DRAW_PANICS.set(false);
+                // Glass shows Caps Lock in place of the message, so a message under it changes nothing.
+                let changed = shown(&mut h).pixels != before.pixels;
+                assert_eq!(
+                    crate::backend::take_scene_outputs(),
+                    if changed { &["TEST-1"][..] } else { &[] },
+                    "{interface:?} at {scale}: {step} asks only the screen's output, if it changed"
+                );
+                assert!(
+                    shown(&mut h).pixels == at_rest(&mut h).pixels,
+                    "{interface:?} at {scale}: the screen after {step} is a whole redraw's"
+                );
+            }
+        }
+    }
+}
+
+/// Prints what a change costs each greeter at 1920x1080 and at 3840x2160 at scale 2, with a
+/// second output beside it: a key typed into the password field, Shift tapped (the input path a
+/// Caps Lock tap takes, drawing nothing), Caps Lock toggled, and a message set and cleared. Per
+/// change: the time, the device px it changes and the outputs it asks for a frame; and the time
+/// of a whole redraw. Run with `--ignored --nocapture`.
 #[test]
 #[ignore]
 fn typing_cost() {
+    fn cost(h: &mut Harness, mut change: impl FnMut(&mut Harness, u32)) -> String {
+        const N: u32 = 40;
+        let (mut spent, mut changed, mut asked) = (std::time::Duration::ZERO, 0, 0);
+        for i in 0..N {
+            let before = shown(h);
+            crate::backend::take_asks();
+            let t = std::time::Instant::now();
+            change(h, i);
+            spent += t.elapsed();
+            asked += crate::backend::take_scene_outputs().len();
+            let r = before.differing_rect(&shown(h));
+            changed += r.width as u64 * r.height as u64;
+        }
+        format!(
+            "{:?}, {} device px, {:.1} outputs",
+            spent / N,
+            changed / u64::from(N),
+            asked as f64 / f64::from(N),
+        )
+    }
     for interface in [
         repriselogin::Interface::Classic,
         repriselogin::Interface::Blue,
@@ -742,32 +819,25 @@ fn typing_cost() {
             h.output("TEST-2", 1024, 768);
             on_password(&mut h, interface);
             tap(&mut h, &[KEY_P, KEY_W]);
-            const N: u32 = 40;
-            let t = std::time::Instant::now();
-            for _ in 0..N {
-                redraw(&mut h.state);
-            }
-            let whole = t.elapsed() / N;
-            let (mut spent, mut changed, mut asked) = (std::time::Duration::ZERO, 0, 0);
-            for i in 0..N {
-                let before = shown(&mut h);
-                crate::backend::take_asks();
-                let t = std::time::Instant::now();
+            let whole = cost(&mut h, |h, _| redraw(&mut h.state));
+            let key = cost(&mut h, |h, i| match i % 2 {
+                0 => logonview::type_text(&mut h.state, &HOST, "p"),
+                _ => logonview::repeat_backspace(&mut h.state, &HOST),
+            });
+            let shift = cost(&mut h, |h, _| tap(h, &[LEFTSHIFT]));
+            let caps = cost(&mut h, |h, _| tap(h, &[CAPSLOCK]));
+            let message = cost(&mut h, |h, i| {
                 match i % 2 {
-                    0 => logonview::type_text(&mut h.state, &HOST, "p"),
-                    _ => logonview::repeat_backspace(&mut h.state, &HOST),
+                    0 => view(h)
+                        .model
+                        .info("The login service did not answer.".into()),
+                    _ => view(h).model.message = None,
                 }
-                spent += t.elapsed();
-                asked += crate::backend::take_scene_outputs().len();
-                let r = before.differing_rect(&shown(&mut h));
-                changed += r.width as u64 * r.height as u64;
-            }
+                logonview::update(&mut h.state, &HOST);
+            });
             eprintln!(
-                "{interface:?} {w}x{hh} at scale {scale}: a key {:?}, a whole redraw {whole:?}; \
-                 a key changes {} device px and asks {:.1} outputs",
-                spent / N,
-                changed / u64::from(N),
-                asked as f64 / f64::from(N),
+                "{interface:?} {w}x{hh} at scale {scale}:\n  whole redraw {whole}\n  key {key}\n  shift {shift}\n  \
+                 caps lock {caps}\n  message {message}"
             );
         }
     }
