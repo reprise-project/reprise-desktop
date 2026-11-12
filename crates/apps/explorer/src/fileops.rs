@@ -285,7 +285,13 @@ impl Explorer {
             puts: puts
                 .into_iter()
                 .map(|(src, op)| {
-                    let is_dir = src.is_dir();
+                    // A moved link is renamed, never read through (its target may be a dead
+                    // mount), so any link counts as a folder and the tree refills either way.
+                    let is_dir = match op {
+                        DropOp::Move => std::fs::symlink_metadata(&src)
+                            .is_ok_and(|m| m.is_dir() || m.is_symlink()),
+                        _ => src.is_dir(),
+                    };
                     (src, op, is_dir)
                 })
                 .collect(),

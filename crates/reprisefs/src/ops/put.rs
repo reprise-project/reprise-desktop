@@ -823,7 +823,8 @@ pub(crate) fn put_in_until(
         .map(OsStr::to_owned)
         .unwrap_or_else(|| display_name.into());
     let same_dir = same_folder(src, dir);
-    if op != DropOp::Shortcut && inside(src, dir) {
+    let moving = op == DropOp::Move && !is_app;
+    if op != DropOp::Shortcut && inside(src, dir, moving) {
         return Err(PutError::Subfolder);
     }
     match op {

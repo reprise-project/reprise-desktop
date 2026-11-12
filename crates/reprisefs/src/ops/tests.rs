@@ -286,6 +286,34 @@ fn put_in_refuses_a_destination_inside_the_source() {
     );
 }
 
+/// A moved link is the link, so it may go into the folder it points at; a copy follows it, so
+/// copying it there is refused, as is moving a folder into itself through a link.
+#[test]
+fn a_link_to_a_folder_moves_into_its_target_but_does_not_copy_there() {
+    let t = tempfile::tempdir().unwrap();
+    let src = t.path().join("Reports");
+    let deep = src.join("2005");
+    fs::create_dir_all(&deep).unwrap();
+    let link = t.path().join("Link");
+    std::os::unix::fs::symlink(&src, &link).unwrap();
+    let sc = |_: &str| Some(String::new());
+
+    let err = put_in(&link, "Link", false, &deep, DropOp::Copy, &[], &sc).unwrap_err();
+    assert!(matches!(err, PutError::Subfolder), "{err}");
+    for dir in [link.clone(), link.join("2005")] {
+        let err = put_in(&src, "Reports", false, &dir, DropOp::Move, &[], &sc).unwrap_err();
+        assert!(matches!(err, PutError::Subfolder), "{dir:?}: {err}");
+    }
+    assert!(src.is_dir());
+
+    assert_eq!(
+        put_in(&link, "Link", false, &deep, DropOp::Move, &[], &sc).unwrap(),
+        "Link"
+    );
+    assert_eq!(fs::read_link(deep.join("Link")).unwrap(), src);
+    assert!(fs::symlink_metadata(&link).is_err());
+}
+
 /// A move into the folder that already holds the file is refused and
 /// makes no copy.
 #[test]
