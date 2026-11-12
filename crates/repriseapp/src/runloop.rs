@@ -293,6 +293,7 @@ pub fn run(app: Box<dyn App>) -> Result<(), RunError> {
         key_echo: None,
         look,
         icon_watch: None,
+        icon_jobs: Default::default(),
         blink_armed: false,
         shm_trouble: Default::default(),
         shm_retry: false,
@@ -394,6 +395,7 @@ pub fn run(app: Box<dyn App>) -> Result<(), RunError> {
         let step = rescued(
             &mut host,
             |host| {
+                host.decode_wanted_icons();
                 // Everything that dirties a slot is a source here, so nothing needs polling.
                 turn(&mut event_loop, host, &conn)?;
                 let ready: Vec<WinId> = host

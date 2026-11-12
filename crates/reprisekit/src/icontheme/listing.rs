@@ -169,7 +169,7 @@ impl ListingIcons {
 
     /// Fetches the names wearing a stand-in again, once their icons landed in `cache`: each
     /// changed name's old and new canvases, and the names that decode at no size, for the host
-    /// to pick again.
+    /// to pick again. `cache` refuses those ([`IconCache::refuse`]), so the pick moves on.
     pub fn landed(
         &mut self,
         cache: &mut IconCache,
@@ -182,6 +182,7 @@ impl ListingIcons {
                 continue;
             }
             if !self.waiting.contains(&name) && new.iter().all(Option::is_none) {
+                cache.refuse(&name);
                 broken.push(name.clone());
             }
             let held = self.by_name.get_mut(&name).expect("a held name");

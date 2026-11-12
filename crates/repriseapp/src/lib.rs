@@ -26,6 +26,7 @@ mod filebox;
 pub mod filedlg;
 mod hangup;
 pub mod heads;
+pub mod iconjobs;
 mod input;
 pub mod keys;
 pub mod listicons;
@@ -340,6 +341,7 @@ struct Host {
     look: Look,
     /// Ends the thread watching the icon theme's directories when replaced.
     icon_watch: Option<reprisefs::dirchange::Stop>,
+    icon_jobs: iconjobs::IconJobs,
     /// The caret blink timer is in the loop; it leaves while no window blinks ([`Host::arm_blink`]).
     blink_armed: bool,
     shm_trouble: draw::ShmTrouble,

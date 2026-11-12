@@ -85,6 +85,8 @@ pub struct Icons {
     scale: i32,
     theme: Option<Arc<IconTheme>>,
     text: TextUnits,
+    /// One wears a blank stand-in until its icon lands ([`Host::icons_landed`]).
+    waiting: bool,
 }
 
 /// The drawn Views icon `px` logical px across on a canvas at `scale`, as the cache's are.
@@ -99,9 +101,10 @@ impl Icons {
     }
 
     /// Fetches the icons not yet held, grown by `u` as the dialog's places bar and toolbar are;
-    /// all of them again when `icons` is at another scale or theme, or `u` is another size.
+    /// all of them again when `icons` is at another scale or theme, `u` is another size, or one
+    /// wore a stand-in. A cold SVG wears a blank one until it lands ([`crate::iconjobs`]).
     fn prime_at(&mut self, icons: &mut IconCache, u: TextUnits) {
-        if !self.fetched_from(icons, u) {
+        if !self.fetched_from(icons, u) || self.waiting {
             *self = Icons {
                 scale: icons.scale(),
                 theme: Some(icons.theme()),
@@ -109,9 +112,15 @@ impl Icons {
                 ..Icons::default()
             };
         }
-        let get = |icons: &mut IconCache, name: &str, px: i32| {
-            let icon = icons.get(name, px)?;
-            Some(icontheme::grown_icon(icon, px, u))
+        let mut waiting = false;
+        let mut get = |icons: &mut IconCache, name: &str, px: i32| match icons.get_unread(name, px)
+        {
+            Some(icon) => icon.map(|c| icontheme::grown_icon(Arc::unwrap_or_clone(c), px, u)),
+            None => {
+                waiting = true;
+                let s = icons.scale();
+                Some(Canvas::new((px * s) as u32, (px * s) as u32).at_scale(s))
+            }
         };
         let place_px = u.len(placesbar::ICON_PX);
         for (icon, place) in self.places.iter_mut().zip(dialog_places(&[])) {
@@ -132,6 +141,13 @@ impl Icons {
         if self.folder.is_none() {
             self.folder = get(icons, "folder", px);
         }
+        self.waiting = waiting;
+    }
+
+    fn worn(&self) -> (Vec<Option<Canvas>>, Option<Canvas>) {
+        let mut worn: Vec<_> = self.places.iter().chain(&self.toolbar).cloned().collect();
+        worn.push(self.pinned.clone());
+        (worn, self.folder.clone())
     }
 
     fn fetched_from(&self, icons: &IconCache, u: TextUnits) -> bool {
@@ -255,9 +271,9 @@ fn picks(
     }
 }
 
-/// Folder `id`'s `read` as the dialog lists it. Entries wear Explorer's icons at every size and
-/// its Tiles lines; a picture's thumbnail arrives later ([`take_thumbs`]). Every subfolder gets
-/// its own handle in `folders`.
+/// Folder `id`'s `read` as the dialog lists it. Entries wear Explorer's icons at every size (a
+/// cold SVG a blank stand-in until it lands) and its Tiles lines; a picture's thumbnail arrives
+/// later ([`take_thumbs`]). Every subfolder gets its own handle in `folders`.
 fn listing(folders: &mut FolderTable, id: FolderId, read: Read, icons: &mut IconCache) -> Listing {
     let Read {
         path,
@@ -271,10 +287,12 @@ fn listing(folders: &mut FolderTable, id: FolderId, read: Read, icons: &mut Icon
         .iter()
         .zip(&read_icons.own)
         .map(|(r, own)| {
-            reprisefs::icons::item_icon_with(&r.item, own.as_deref(), &specials, &|n| icons.has(n))
+            reprisefs::icons::item_icon_with(&r.item, own.as_deref(), &specials, &|n| {
+                icons.has_unread(n)
+            })
         })
         .collect();
-    let mut shared = ListingIcons::default().with_list(list);
+    let mut shared = ListingIcons::default().with_list(list).unread();
     let mut aliases: Vec<(String, OsString)> = Vec::new();
     let mut pictures = Vec::new();
     let entries = rows
@@ -865,7 +883,32 @@ impl Host {
             None => false,
         };
         let pinned = self.follow_pins(dlg);
-        self.take_listed(dlg, cache) || stepped || pinned
+        let landed = self.icons_landed(dlg, cache);
+        self.take_listed(dlg, cache) || stepped || pinned || landed
+    }
+
+    /// Theme icons that landed in `cache` ([`crate::iconjobs`]): the places, toolbar, Look in
+    /// folder and entries wearing a stand-in take theirs, and a listing whose name decodes at no
+    /// size is read again for the next name. True when one changed.
+    fn icons_landed(&mut self, dlg: &mut FileDlg, cache: &mut IconCache) -> bool {
+        let chrome = self.icons.waiting && {
+            let worn = self.icons.worn();
+            self.icons.prime_at(cache, dlg.text());
+            self.icons.worn() != worn
+        };
+        if chrome {
+            dlg.set_place_icons(self.icons.place_icons(&self.tiles()));
+            self.icons.set_toolbar(dlg);
+            dlg.set_crumb_icons(vec![self.icons.folder.clone()]);
+        }
+        let (listed, broken) = self.list_icons.landed(cache, dlg.entries_mut());
+        if broken
+            && self.restyling.is_none()
+            && let Some((_, path, start)) = &self.again
+        {
+            self.restyling = Some(start(path));
+        }
+        chrome || listed
     }
 
     /// [`Host::take_thumbs`]' listings, icons and thumbnails.
