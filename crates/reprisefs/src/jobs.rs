@@ -728,6 +728,38 @@ mod tests {
     }
 
     #[test]
+    fn a_put_that_gave_up_makes_nothing_once_its_stuck_call_returns() {
+        let t = tempfile::tempdir().unwrap();
+        std::fs::write(t.path().join("a.txt"), "a").unwrap();
+        let dest = t.path().join("dest");
+        std::fs::create_dir_all(&dest).unwrap();
+        let (release, gate) = channel();
+        let (wtx, woke) = channel();
+        let mut job = PutJob::start_until(
+            vec![stuck(t.path().join("a.txt"), gate)],
+            dest.clone(),
+            Vec::new(),
+            Arc::default(),
+            Duration::from_millis(300),
+            move || {
+                let _ = wtx.send(());
+            },
+        );
+        while !job.is_finished() {
+            woke.recv_timeout(Duration::from_secs(5)).expect("a wake");
+            job.poll();
+        }
+        release.send(()).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !job.settled() {
+            woke.recv_timeout(deadline - std::time::Instant::now())
+                .expect("a wake as the thread returns");
+        }
+        let landed: Vec<_> = std::fs::read_dir(&dest).unwrap().flatten().collect();
+        assert!(landed.is_empty(), "no shortcut lands: {landed:?}");
+    }
+
+    #[test]
     fn a_paused_put_is_not_taken_for_one_that_stopped_answering() {
         let t = tempfile::tempdir().unwrap();
         std::fs::write(t.path().join("a.txt"), "a").unwrap();
