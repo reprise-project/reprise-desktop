@@ -437,6 +437,53 @@ fn a_surface_is_shown_by_the_outputs_it_overlaps_and_those_it_was_last_drawn_on(
     assert_eq!(scene.outputs_showing(&other), None);
 }
 
+/// A watch over hiding a tree whose surface `gone` emptied after the right output drew it: the
+/// rects it reports, by the outputs they meet.
+fn watched_outputs_after(gone: impl FnOnce(&mut World, wl_surface::WlSurface)) -> Vec<String> {
+    let mut w = World::new();
+    let surface = w.surface();
+    let mut scene = Scene::<DummyRenderer>::new();
+    scene.add_output(&w.left);
+    scene.add_output(&w.right);
+    let t = scene.tree_create(scene.root());
+    let s = scene.surface_create(t, surface);
+    scene.set_position(s, 150, 10);
+    assert_eq!(w.rendered(&mut scene), ["enter R"]);
+    let client = w.client_surface.clone().unwrap();
+    gone(&mut w, client);
+    assert_eq!(scene.extents(s), None, "its client state is gone");
+    assert!(scene.watch());
+    scene.set_enabled(t, false);
+    let rects = scene.watched();
+    [&w.left, &w.right]
+        .into_iter()
+        .filter(|o| {
+            let r = reprisescene::output_rect(o).unwrap();
+            rects.iter().any(|x| x.overlaps(r))
+        })
+        .map(|o| o.name())
+        .collect()
+}
+
+#[test]
+fn a_watch_sees_a_surface_that_dropped_its_buffer_where_it_was_drawn() {
+    let seen = watched_outputs_after(|w, s| {
+        s.attach(None, 0, 0);
+        s.commit();
+        w.pump();
+    });
+    assert_eq!(seen, ["R"]);
+}
+
+#[test]
+fn a_watch_sees_a_destroyed_surface_where_it_was_drawn() {
+    let seen = watched_outputs_after(|w, s| {
+        s.destroy();
+        w.pump();
+    });
+    assert_eq!(seen, ["R"]);
+}
+
 #[test]
 fn a_surface_hidden_on_an_output_is_not_shown_by_it_and_takes_no_frames_from_it() {
     let mut w = World::new();

@@ -1600,6 +1600,62 @@ fn a_window_without_a_task_button_maps_hides_and_closes_asking_only_its_output()
     assert_eq!(take_scene_outputs(), ["TEST-2"], "it closes on TEST-2");
 }
 
+/// A client-framed window with no task button, mapped and drawn on TEST-2 of two outputs.
+fn framed_by_client_without_a_button() -> (
+    crate::harness::Harness,
+    crate::harness::TestClient,
+    crate::harness::Toplevel,
+) {
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    h.output("TEST-2", 1024, 768);
+    let mut c = h.connect();
+    let t = h.map_toplevel_after(&mut c, "app", 300, 200, |h, c, t| {
+        h.state.set_tag(t.id, super::HELP_DIALOG_TAG);
+        h.roundtrip(c);
+    });
+    h.state.set_csd(t.id, true);
+    h.roundtrip(&mut c);
+    h.state.move_to(t.id, 1200, 50);
+    h.run_for(600);
+    h.show_frames();
+    crate::backend::take_asks();
+    (h, c, t)
+}
+
+#[test]
+fn a_window_framed_by_its_client_without_a_button_unmapping_by_a_null_buffer_asks_its_output() {
+    let (mut h, mut c, t) = framed_by_client_without_a_button();
+    unmap_self(&mut h, &mut c, t);
+    assert!(!h.state.win(t.id).is_some_and(|w| w.mapped));
+    assert_eq!(crate::backend::take_scene_outputs(), ["TEST-2"]);
+}
+
+#[test]
+fn a_window_framed_by_its_client_without_a_button_whose_client_exits_asks_its_output() {
+    let (mut h, c, t) = framed_by_client_without_a_button();
+    drop(c);
+    h.run_for(50);
+    assert!(h.state.win(t.id).is_none());
+    assert_eq!(crate::backend::take_scene_outputs(), ["TEST-2"]);
+}
+
+#[test]
+fn a_window_whose_surface_goes_before_its_role_asks_its_output() {
+    let (mut h, mut c, t) = framed_by_client_without_a_button();
+    let s = &c.side.shells[t.shell];
+    s.surface.destroy();
+    h.roundtrip(&mut c);
+    assert!(h.state.win(t.id).is_some(), "the role outlives the surface");
+    crate::backend::take_asks();
+    let s = &c.side.shells[t.shell];
+    s.toplevel.destroy();
+    s.xdg.destroy();
+    h.roundtrip(&mut c);
+    assert!(h.state.win(t.id).is_none());
+    assert_eq!(crate::backend::take_scene_outputs(), ["TEST-2"]);
+}
+
 #[test]
 fn putting_a_window_on_top_asks_only_its_output() {
     use crate::backend::take_scene_outputs;

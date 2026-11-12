@@ -165,9 +165,10 @@ impl<R: Renderer, D> Scene<R, D> {
         true
     }
 
-    /// End the watch: the layout rects its edits changed, each edited node's rect before its
-    /// first edit and now. A sibling reorder counts as an edit of the nodes that moved, not of
-    /// their parent. Drawing inside a custom node or a client surface is not an edit.
+    /// End the watch: the layout rects its edits changed, each edited node's rects before its
+    /// first edit (`Scene::may_show`) and its rect now. A sibling reorder counts as an edit of
+    /// the nodes that moved, not of their parent. Drawing inside a custom node or a client
+    /// surface is not an edit.
     pub fn watched(&mut self) -> Vec<Rectangle<i32, Logical>> {
         let Some(w) = self.watch.take() else {
             return Vec::new();
@@ -186,7 +187,7 @@ impl<R: Renderer, D> Scene<R, D> {
         out
     }
 
-    /// `id` is about to be edited: under a watch, keep the rect it covers before its first edit.
+    /// `id` is about to be edited: under a watch, keep where it may show before its first edit.
     /// Under an ancestor edited earlier in the watch, that ancestor's rect before holds it; its
     /// rect now may lie where the ancestor moved it, never drawn there.
     fn saw(&mut self, id: NodeId) {
@@ -199,7 +200,11 @@ impl<R: Renderer, D> Scene<R, D> {
         let parent = |n: NodeId| self.node(n).and_then(|n| n.parent.map(|p| p.0));
         let covered =
             std::iter::successors(parent(id), |&a| parent(a)).any(|a| w.nodes.contains(&a));
-        let was = if covered { None } else { self.extents(id) };
+        let was = if covered {
+            Vec::new()
+        } else {
+            self.may_show(id)
+        };
         if let Some(w) = self.watch.as_mut() {
             w.nodes.insert(id);
             w.was.extend(was);
