@@ -392,11 +392,18 @@ mod tests {
         dir.join("session.sock")
     }
 
+    /// The longest a test waits for the link's side of a socket.
+    const CEILING: Duration = Duration::from_secs(10);
+
     fn heard(theirs: &mut UnixStream) -> SessionRequest {
-        theirs
-            .set_read_timeout(Some(Duration::from_secs(2)))
-            .unwrap();
+        theirs.set_read_timeout(Some(CEILING)).unwrap();
         read_msg(theirs).expect("a request")
+    }
+
+    /// The daemon's end of the link closes. A child another test forks holds a copy of every fd
+    /// until it execs, so a drop alone can leave the socket open past the next loop turn.
+    fn hang_up(theirs: UnixStream) {
+        theirs.shutdown(std::net::Shutdown::Both).unwrap();
     }
 
     fn hello(interface: Interface) -> SessionRequest {
@@ -448,9 +455,7 @@ mod tests {
         );
         assert!(!connected(&h.state));
         let (mut theirs, _) = listener.accept().unwrap();
-        theirs
-            .set_read_timeout(Some(Duration::from_secs(2)))
-            .unwrap();
+        theirs.set_read_timeout(Some(CEILING)).unwrap();
         assert_eq!(
             read_msg::<SessionRequest>(&mut theirs),
             Err(FrameError::Closed),
@@ -512,7 +517,7 @@ mod tests {
         h.output("TEST-1", 1024, 768);
         let (ours, mut theirs) = UnixStream::pair().unwrap();
         frame::write_msg(&mut theirs, &SessionReply::Refused).unwrap();
-        drop(theirs);
+        hang_up(theirs);
         install(&mut h.state, LoginLink::from_stream(ours));
         assert!(!connected(&h.state), "the Hello found the stream closed");
         assert_eq!(h.state.login_link.as_ref().unwrap().refusals, 1);
@@ -635,7 +640,7 @@ mod tests {
         assert!(!h.state.console_locked(), "a plain session stays open");
 
         let (mut h, theirs) = linked();
-        drop(theirs);
+        hang_up(theirs);
         h.dispatch();
         assert!(!connected(&h.state), "the daemon went");
         crate::backend::pause_session(&mut h.state);
@@ -681,7 +686,7 @@ mod tests {
     fn losing_the_link_asks_logind_whether_the_session_is_closing() {
         let (mut h, theirs) = linked();
         let calls = crate::power::capture_calls(&mut h.state);
-        drop(theirs);
+        hang_up(theirs);
         h.dispatch();
         assert!(!connected(&h.state));
         assert_eq!(
@@ -706,7 +711,7 @@ mod tests {
     fn a_refused_link_counts_toward_the_refusals_that_stop_its_calls() {
         let (mut h, mut theirs) = linked();
         write_msg(&mut theirs, &SessionReply::Refused).unwrap();
-        drop(theirs);
+        hang_up(theirs);
         h.dispatch();
         h.dispatch();
         assert!(!connected(&h.state));
@@ -741,15 +746,15 @@ mod tests {
         let (mut first, _) = listener.accept().unwrap();
         assert_eq!(heard(&mut first), hello(Interface::Classic));
         crate::backend::pause_session(&mut h.state);
-        drop((first, listener));
+        hang_up(first);
+        drop(listener);
         std::fs::remove_file(&path).unwrap();
         h.dispatch();
         assert!(!connected(&h.state), "the daemon went");
         crate::lockview::unlock(&mut h.state);
         assert!(!h.state.console_locked(), "unlocked while unlinked");
         let _listener = UnixListener::bind(&path).unwrap();
-        h.run_for(2500);
-        assert!(connected(&h.state));
+        h.until("the link calls again", connected);
         assert!(h.state.console_locked(), "relinked away from the seat");
 
         let (mut h, _portal, _lock) = crate::console::tests::in_lock_mode();
@@ -768,7 +773,7 @@ mod tests {
         let (mut h, theirs) = linked();
         crate::lockview::seat_away(&mut h.state, true);
         assert!(!h.state.console_locked(), "unlocked for a resume");
-        drop(theirs);
+        hang_up(theirs);
         h.dispatch();
         assert!(!connected(&h.state), "the daemon went");
         assert!(h.state.console_locked());
@@ -780,7 +785,7 @@ mod tests {
         let (ours, theirs) = UnixStream::pair().unwrap();
         install(&mut h.state, LoginLink::from_stream(ours));
         crate::lockview::seat_away(&mut h.state, true);
-        drop(theirs);
+        hang_up(theirs);
         h.dispatch();
         assert!(!connected(&h.state), "the daemon went");
         assert!(h.state.console_locked());
@@ -793,7 +798,7 @@ mod tests {
     #[test]
     fn a_link_lost_on_the_seat_locks_nothing() {
         let (mut h, theirs) = linked();
-        drop(theirs);
+        hang_up(theirs);
         h.dispatch();
         assert!(!connected(&h.state), "the daemon went");
         assert!(!h.state.console_locked());
@@ -803,7 +808,7 @@ mod tests {
     fn a_logind_unlock_off_the_seat_waits_for_the_link() {
         let (mut h, theirs) = linked();
         crate::backend::pause_session(&mut h.state);
-        drop(theirs);
+        hang_up(theirs);
         h.dispatch();
         assert!(!connected(&h.state), "the daemon went");
         crate::power::report(&mut h.state, crate::power::Report::Unlock);
@@ -828,16 +833,18 @@ mod tests {
         let (mut first, _) = listener.accept().unwrap();
         assert_eq!(heard(&mut first), hello(Interface::Classic));
 
-        drop((first, listener));
+        hang_up(first);
+        drop(listener);
         std::fs::remove_file(&path).unwrap();
+        let gone = std::time::Instant::now();
         h.dispatch();
         assert!(!connected(&h.state), "the link sees the daemon go");
 
         let listener = UnixListener::bind(&path).unwrap();
         h.run_for(1000);
         assert!(!connected(&h.state), "no call before 2 s");
-        h.run_for(1500);
-        assert!(connected(&h.state));
+        h.until("the link calls again", connected);
+        assert!(gone.elapsed() >= RETRY, "no call before 2 s");
         let (mut second, _) = listener.accept().unwrap();
         assert_eq!(heard(&mut second), hello(Interface::Classic));
         let mut rest = [0; 1];
