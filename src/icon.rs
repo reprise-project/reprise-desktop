@@ -162,6 +162,35 @@ pub struct IconJobs {
     waiters: Vec<IconWaiter>,
 }
 
+/// How a theme decode job loads one icon: [`reprisekit::icontheme::load_icon`]'s signature.
+type LoadIcon = fn(&reprisekit::icontheme::IconTheme, &str, i32, i32) -> Option<Canvas>;
+
+/// Theme icons `names` at each of their sizes from `theme`, each loaded by `load` ([`guarded`]).
+fn load_theme_icons(
+    theme: &reprisekit::icontheme::IconTheme,
+    names: Vec<(String, Vec<i32>)>,
+    scale: i32,
+    load: LoadIcon,
+) -> Vec<(String, i32, Option<Canvas>)> {
+    (names.into_iter())
+        .flat_map(|(name, sizes)| {
+            sizes.into_iter().map(move |px| {
+                let icon = guarded(&name, px, || load(theme, &name, px, scale));
+                (name.clone(), px, icon)
+            })
+        })
+        .collect()
+}
+
+/// `decode` run for icon `what` at `px`; a decode that panics comes back as one that failed, so
+/// the icon lands as broken and its lookup moves on instead of waiting on it for good.
+fn guarded(what: &str, px: i32, decode: impl FnOnce() -> Option<Canvas>) -> Option<Canvas> {
+    crate::crash::guarded(decode).unwrap_or_else(|_| {
+        log::error!("icons: decoding {what} at {px} px panicked");
+        None
+    })
+}
+
 /// Theme names one decode job takes: a cold menu's icons land in a few batches, each one redraw.
 const THEME_JOB: usize = 16;
 
@@ -230,13 +259,24 @@ impl State {
 
     fn spawn_icon_decode(&mut self, file: String, sizes: Vec<i32>) {
         let scale = self.icons.scale();
-        self.spawn_fs_job(move || {
+        let key = file.clone();
+        let spawned = self.spawn_fs_job(move || {
             let path = std::path::Path::new(&file);
             let art: Vec<(i32, Option<Canvas>)> = (sizes.into_iter())
-                .map(|px| (px, reprisekit::icontheme::decode_file(path, px, scale)))
+                .map(|px| {
+                    let icon = guarded(&file, px, || {
+                        reprisekit::icontheme::decode_file(path, px, scale)
+                    });
+                    (px, icon)
+                })
                 .collect();
             Box::new(move |state: &mut State| state.icon_decoded(file, art, scale))
         });
+        // The file may sit on a mount that never answers, so it is not read here: the next draw
+        // that wants it asks again.
+        if !spawned {
+            self.icon_jobs.decoding.remove(&key);
+        }
     }
 
     fn icon_decoded(&mut self, file: String, art: Vec<(i32, Option<Canvas>)>, scale: i32) {
@@ -255,21 +295,25 @@ impl State {
     }
 
     /// Loads theme icons `names` at their sizes on a thread of its own: the theme's files are the
-    /// ones its lookups list, so no mount a file job waits on holds them up.
+    /// ones its lookups list, so no mount a file job waits on holds them up. With no thread they
+    /// load here.
     fn spawn_theme_decode(&mut self, names: Vec<(String, Vec<i32>)>) {
+        self.spawn_theme_decode_with(names, reprisekit::icontheme::load_icon);
+    }
+
+    fn spawn_theme_decode_with(&mut self, names: Vec<(String, Vec<i32>)>, load: LoadIcon) {
         let (theme, scale) = (self.icons.theme(), self.icons.scale());
-        self.spawn_job(move || {
-            let art: Vec<(String, i32, Option<Canvas>)> = (names.into_iter())
-                .flat_map(|(name, sizes)| {
-                    let theme = &theme;
-                    sizes.into_iter().map(move |px| {
-                        let icon = reprisekit::icontheme::load_icon(theme, &name, px, scale);
-                        (name.clone(), px, icon)
-                    })
-                })
-                .collect();
-            Box::new(move |state: &mut State| state.theme_icons_decoded(&theme, art))
-        });
+        let job = {
+            let (theme, names) = (theme.clone(), names.clone());
+            move || -> crate::fsjobs::OnLoop {
+                let art = load_theme_icons(&theme, names, scale, load);
+                Box::new(move |state: &mut State| state.theme_icons_decoded(&theme, art))
+            }
+        };
+        if !self.spawn_job(job) {
+            let art = load_theme_icons(&theme, names, scale, load);
+            self.theme_icons_decoded(&theme, art);
+        }
     }
 
     fn theme_icons_decoded(
@@ -311,7 +355,6 @@ impl State {
             return;
         }
         self.desktop_names_refused(&refused);
-        self.launcher_names_refused(&refused);
         let keys: Vec<&str> = landed.iter().map(|(k, ..)| k.as_str()).collect();
         self.menu_icons_landed(&landed);
         self.window_icon_landed(&keys);
@@ -319,7 +362,7 @@ impl State {
             self.redraw_taskbars();
         }
         self.start_panel_icons_landed(&keys, !refused.is_empty());
-        self.launcher_icon_landed(&keys);
+        self.launcher_icons_landed();
         crate::tray::customize_icon_landed(self, &keys);
         for who in std::mem::take(&mut self.icon_jobs.waiters) {
             match who {
@@ -649,6 +692,101 @@ mod tests {
         let px = reprisekit::icon::ICON_SIZE;
         let icon = crate::tray::item_icon(&mut h.state, &item, px);
         assert!(icon.is_some_and(|c| red(&c)), "the stand-in landed");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_launcher_file_row_takes_its_icon_once_it_lands() {
+        let root = super::svg_theme(&["text-x-generic"], &[]);
+        let mut h = two_outputs("classic", &root);
+        h.state.toggle_launcher();
+        h.state
+            .show_launcher_files(vec![std::path::PathBuf::from("/srv/notes.zzq")]);
+        let row = |h: &crate::harness::Harness| {
+            let m = &h.state.launcher.as_ref().expect("the launcher").model;
+            let at = (m.list.items.iter()).position(|n| n == "notes.zzq");
+            at.and_then(|i| m.icons[i].clone())
+                .expect("the file row's icon")
+        };
+        assert!(
+            row(&h).pixels.iter().all(|&p| p == 0),
+            "the stand-in is blank"
+        );
+        crate::backend::take_asks();
+        land(&mut h);
+        assert!(red(&row(&h)), "the file row took the icon once it landed");
+        let asked = crate::backend::take_asks();
+        assert!(
+            !asked.is_empty() && asked.iter().all(|(o, _)| o == "TEST-1"),
+            "only the launcher's output: {asked:?}"
+        );
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// [`reprisekit::icontheme::load_icon`], but "system-run" panics.
+    fn load_panicking(
+        theme: &reprisekit::icontheme::IconTheme,
+        name: &str,
+        px: i32,
+        scale: i32,
+    ) -> Option<Canvas> {
+        assert_ne!(name, "system-run", "a forced panic");
+        reprisekit::icontheme::load_icon(theme, name, px, scale)
+    }
+
+    #[test]
+    fn a_theme_decode_that_panics_lands_its_name_as_broken_and_the_rest_of_its_batch() {
+        let root = super::svg_theme(&["system-run", "user-home"], &[]);
+        let mut h = two_outputs("classic", &root);
+        for name in ["system-run", "user-home"] {
+            assert_eq!(h.state.icons.get_unread(name, 16), None, "{name} is cold");
+        }
+        let wanted = h.state.icons.take_wanted();
+        let names = plan_decodes(&mut h.state.icon_jobs.decoding, wanted);
+        h.state.spawn_theme_decode_with(names, load_panicking);
+        land(&mut h);
+        assert_eq!(
+            h.state.icons.get_unread("system-run", 16),
+            Some(None),
+            "the name that panicked decodes at no size"
+        );
+        let home = h.state.icons.get_unread("user-home", 16).flatten();
+        assert!(home.is_some_and(|c| red(&c)), "its batch landed");
+        assert!(
+            h.state.icons.take_wanted().is_empty(),
+            "nothing waits on it"
+        );
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_theme_decode_with_no_thread_loads_on_the_loop_and_lands() {
+        let root = super::svg_theme(&["system-run"], &[]);
+        let mut h = two_outputs("classic", &root);
+        h.state.fsjobs.refuse_threads = true;
+        let bar = h.state.bars[0].tree;
+        h.state.toggle_start(bar);
+        assert!(run_icon(&h).is_some_and(|c| c.pixels.iter().all(|&p| p == 0)));
+        h.dispatch();
+        assert!(h.state.icon_jobs.decoding.is_empty(), "no job holds it");
+        assert!(
+            run_icon(&h).is_some_and(|c| red(&c)),
+            "the row took the icon"
+        );
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn an_icon_file_with_no_thread_is_asked_for_again() {
+        let root = super::svg_theme(&[], &[]);
+        let mut h = two_outputs("classic", &root);
+        h.state.fsjobs.refuse_threads = true;
+        let file = "/srv/icons/viewer.png";
+        assert_eq!(h.state.icons.get_unread(file, 16), None);
+        h.state.decode_wanted_icons();
+        assert!(h.state.icon_jobs.decoding.is_empty(), "no job holds it");
+        assert_eq!(h.state.icons.get_unread(file, 16), None);
+        assert_eq!(h.state.icons.take_wanted(), [(file.to_string(), 16)]);
         std::fs::remove_dir_all(&root).unwrap();
     }
 

@@ -6,7 +6,7 @@ use reprisekit::startpanel::{ResultGroup, ResultRow};
 
 use crate::compositor::State;
 use crate::raster::Canvas;
-use crate::search::{CALC_ICON, SearchOwner, Setting, calc_row, file_row, rank_settings};
+use crate::search::{CALC_ICON, SearchOwner, Setting, calc_row, file_row_icon, rank_settings};
 
 use super::RESULT_ICON;
 use super::lists::{app_icon, file_name, one_per_name, unread};
@@ -126,7 +126,6 @@ impl State {
             return;
         };
         let px = RESULT_ICON * scale;
-        let home = std::env::var_os("HOME").map(PathBuf::from);
         let State {
             start_panel,
             app_index,
@@ -166,10 +165,12 @@ impl State {
                 .map(|s| s.icon(app_index).and_then(|n| unread(icons, &n, px))),
         );
         with_mime(desktop.as_ref(), |mime| {
-            icon_rows.extend(v.search.files.iter().map(|p| {
-                let is_dir = v.search.is_dir(p);
-                file_row(p, is_dir, home.as_deref(), mime, icons, px).icon
-            }));
+            icon_rows.extend(
+                v.search
+                    .files
+                    .iter()
+                    .map(|p| file_row_icon(p, v.search.is_dir(p), mime, icons, px)),
+            );
         });
         let rows = groups.iter_mut().flat_map(|g| g.rows.iter_mut());
         for (row, icon) in rows.zip(icon_rows) {
