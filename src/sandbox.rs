@@ -286,20 +286,39 @@ pub fn visible(
 }
 
 /// `[clipboard] trusted_apps`, which the filters read on every bind.
+#[cfg(not(test))]
 static TRUSTED: RwLock<Vec<String>> = RwLock::new(Vec::new());
+
+// Tests run side by side, each loading configs of its own.
+#[cfg(test)]
+thread_local! {
+    static TRUSTED: RwLock<Vec<String>> = const { RwLock::new(Vec::new()) };
+}
+
+#[cfg(test)]
+fn with_trusted<R>(f: impl FnOnce(&RwLock<Vec<String>>) -> R) -> R {
+    TRUSTED.with(f)
+}
+
+#[cfg(not(test))]
+fn with_trusted<R>(f: impl FnOnce(&RwLock<Vec<String>>) -> R) -> R {
+    f(&TRUSTED)
+}
 
 /// Take `[clipboard] trusted_apps` from a (re)loaded config.
 pub fn set_trusted(apps: &[String]) {
-    if let Ok(mut t) = TRUSTED.write() {
-        apps.clone_into(&mut t);
-    }
+    with_trusted(|t| {
+        if let Ok(mut t) = t.write() {
+            apps.clone_into(&mut t);
+        }
+    });
 }
 
 pub fn client_may_see(client: &Client, name: &str) -> bool {
     let Some(data) = client.get_data::<ClientState>() else {
         return true;
     };
-    let trusted = TRUSTED.read().map(|t| t.clone()).unwrap_or_default();
+    let trusted = with_trusted(|t| t.read().map(|t| t.clone()).unwrap_or_default());
     visible(name, &data.sandbox, &trusted, || data.sandbox.is_portal())
 }
 
@@ -435,6 +454,7 @@ mod tests {
         let pid = unsafe { libc::fork() };
         assert!(pid >= 0, "fork");
         if pid == 0 {
+            crate::harness::close_inherited_fds(&[]);
             // SAFETY: as above; `addr` was built before the fork.
             unsafe {
                 if matches!(how, Child::NonDumpable) {

@@ -1706,13 +1706,9 @@ mod tests {
         assert_eq!(message(&h).as_deref(), Some(lock::UNAVAILABLE));
     }
 
-    /// Turn the loop until `done` holds (or 5 s pass).
+    /// Turn the loop until `done` holds ([`crate::harness::Harness::until`]).
     fn turn_until(h: &mut crate::harness::Harness, what: &str, done: impl Fn(&Lock) -> bool) {
-        let end = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while !h.state.lock.console.as_ref().is_some_and(&done) {
-            assert!(std::time::Instant::now() < end, "{what}");
-            h.run_for(5);
-        }
+        h.until(what, |s| s.lock.console.as_ref().is_some_and(&done));
     }
 
     #[test]
@@ -1885,7 +1881,7 @@ mod tests {
         let (_lock, _surface) = h.map_lock_surface(&mut c);
         assert!(h.state.console_locked());
         assert!(!finger(&h), "a locker's lock starts none");
-        drop(c);
+        c.hang_up();
         h.run_for(50);
         assert!(h.state.lock.console.as_ref().unwrap().screen_shown());
         assert!(
@@ -1911,11 +1907,9 @@ mod tests {
         };
         h.state.lock.console.as_mut().unwrap().finger_delay = Duration::from_millis(20);
         start_screen_finger(&mut h.state);
-        let end = Instant::now() + Duration::from_secs(5);
-        while STARTS.load(Ordering::SeqCst) < 3 {
-            assert!(Instant::now() < end, "the conversation starts again");
-            h.run_for(5);
-        }
+        h.until("the conversation starts again", |_| {
+            STARTS.load(Ordering::SeqCst) >= 3
+        });
         let l = h.state.lock.console.as_ref().unwrap();
         assert_eq!(l.message().as_deref(), Some("Failed to match fingerprint"));
         assert!(
@@ -2014,7 +2008,7 @@ mod tests {
     #[test]
     fn losing_the_login_link_leaves_the_session_locked() {
         let (mut h, theirs) = linked();
-        drop(theirs);
+        theirs.shutdown(std::net::Shutdown::Both).unwrap();
         h.run_for(50);
         assert!(h.state.console_locked());
         let l = h.state.lock.console.as_ref().unwrap();
@@ -2185,15 +2179,9 @@ mod tests {
         h.state
             .set_wallpaper(Some(std::path::Path::new("reprise:tarn/blue")));
         let o = h.state.scene.outputs()[0].clone();
-        for _ in 0..200 {
-            if !matches!(
-                h.state.lock_wallpaper(&o),
-                LockWall::None | LockWall::Composing
-            ) {
-                break;
-            }
-            h.run_for(10);
-        }
+        h.until("the lock wallpaper composes", |s| {
+            !matches!(s.lock_wallpaper(&o), LockWall::None | LockWall::Composing)
+        });
         let mut c = h.connect();
         let t = h.map_toplevel(&mut c, "printer", 200, 100);
         assert!(asks(&mut h, &mut c, t), "shown");

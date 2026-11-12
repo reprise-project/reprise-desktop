@@ -1773,7 +1773,7 @@ fn hung_icon_reads_hold_their_threads_and_later_decodes_give_up() {
 #[test]
 fn one_apps_flood_of_decodes_waits_behind_its_own_share_and_another_apps_runs() {
     use std::sync::atomic::Ordering::SeqCst;
-    let decoders = decoders(2, 64, 4, Duration::from_millis(500));
+    let decoders = decoders(2, 64, 4, CEILING);
     let ran = Arc::new(AtomicUsize::new(0));
     let flood = (0..40).map(|_| {
         let ran = ran.clone();
@@ -1838,7 +1838,7 @@ fn a_burst_of_notification_pictures_waits_for_the_decoders_and_each_arrives() {
     image::RgbaImage::from_pixel(48, 48, image::Rgba([0x20, 0x40, 0x80, 0xFF]))
         .save(&file)
         .unwrap();
-    let decoders = decoders(1, 64, 4, Duration::from_secs(5));
+    let decoders = decoders(1, 64, 4, CEILING);
     let (release, gate) = async_channel::bounded::<()>(1);
     let held = decoders.run("tray", move || {
         let _ = gate.recv_blocking();

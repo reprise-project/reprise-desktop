@@ -960,6 +960,7 @@ mod tests {
         // SAFETY: the child only makes libc calls and never returns into the test.
         let pid = unsafe { libc::fork() };
         if pid == 0 {
+            crate::harness::close_inherited_fds(&[]);
             // SAFETY: as above; the exit syscall ends only the calling thread, as pthread_exit
             // does without its unwinding.
             unsafe {
@@ -1001,6 +1002,7 @@ mod tests {
         // SAFETY: the child only makes libc calls and never returns into the test.
         let pid = unsafe { libc::fork() };
         if pid == 0 {
+            crate::harness::close_inherited_fds(&[ready[1]]);
             // SAFETY: as above; a live sigset on the stack.
             unsafe {
                 let mut set = std::mem::zeroed();
@@ -1097,6 +1099,7 @@ mod tests {
         // SAFETY: the child only makes libc calls and never returns into the test.
         let pid = unsafe { libc::fork() };
         if pid == 0 {
+            crate::harness::close_inherited_fds(&[go[0], ready_w]);
             // SAFETY: as above.
             unsafe {
                 let mut t = 0;
