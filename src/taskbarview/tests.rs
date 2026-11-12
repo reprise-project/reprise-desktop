@@ -139,7 +139,7 @@ mod under_a_lock {
     /// `t`'s client retitles it to `title`, once a title redraw held back has drawn and the
     /// wait after it is over.
     fn retitle(h: &mut Harness, c: &mut TestClient, t: Toplevel, title: &str) {
-        h.run_for(2 * crate::retitle::MIN_INTERVAL.as_millis() as u64 + 20);
+        h.until("the titles drawn", |s| s.title_draws_at_once(t.id));
         take_asks();
         c.side.shells[t.shell].toplevel.set_title(title.into());
         c.side.shells[t.shell].surface.commit();
@@ -237,7 +237,7 @@ mod per_bar {
     }
 
     fn retitle(h: &mut Harness, c: &mut TestClient, t: Toplevel, title: &str) {
-        h.run_for(2 * crate::retitle::MIN_INTERVAL.as_millis() as u64 + 20);
+        h.until("the titles drawn", |s| s.title_draws_at_once(t.id));
         take_asks();
         c.side.shells[t.shell].toplevel.set_title(title.into());
         c.side.shells[t.shell].surface.commit();

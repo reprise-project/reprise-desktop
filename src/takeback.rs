@@ -626,6 +626,7 @@ mod tests {
         let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
         let display = socket.to_str().unwrap();
         assert!(accepts(display));
+        crate::harness::hang_up(&listener);
         drop(listener);
         assert!(!accepts(display), "a socket file nobody listens on");
         std::fs::remove_file(&socket).unwrap();

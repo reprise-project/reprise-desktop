@@ -1675,7 +1675,7 @@ fn a_window_framed_by_its_client_without_a_button_unmapping_by_a_null_buffer_ask
 #[test]
 fn a_window_framed_by_its_client_without_a_button_whose_client_exits_asks_its_output() {
     let (mut h, c, t) = framed_by_client_without_a_button();
-    drop(c);
+    c.hang_up();
     h.run_for(50);
     assert!(h.state.win(t.id).is_none());
     assert_eq!(crate::backend::take_scene_outputs(), ["TEST-2"]);

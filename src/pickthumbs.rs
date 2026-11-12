@@ -598,6 +598,17 @@ mod tests {
         assert!(fetched(&mut f, "/pics/c.jpg"), "the next queue tries again");
     }
 
+    const CEILING: Duration = Duration::from_secs(10);
+
+    /// Polls `done` until it holds, at most [`CEILING`].
+    fn until(what: &str, mut done: impl FnMut() -> bool) {
+        let end = Instant::now() + CEILING;
+        while !done() {
+            assert!(Instant::now() < end, "{what} within {CEILING:?}");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
     /// A stat that blocks on a named pipe until a writer opens it, as a stat on a dead mount
     /// blocks.
     fn open_then_stat(p: &Path) -> io::Result<std::fs::Metadata> {
@@ -618,37 +629,42 @@ mod tests {
         let c = std::ffi::CString::new(hang.as_os_str().as_encoded_bytes()).unwrap();
         // SAFETY: `c` is a valid NUL-terminated path for the call's duration.
         assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        // A refusal names the stuck stats; a stat that timed out carries no message.
+        let refused = |e: &io::Error| e.get_ref().is_some();
         let stat = Stat::new(open_then_stat, WITHIN);
-        assert!(stat.of(&pic).is_ok());
+        let idle = || stat.running.load(std::sync::atomic::Ordering::Acquire) == 0;
+        until("a first stat", || stat.of(&pic).is_ok());
+        until("the first stats return", idle);
         for _ in 0..MAX_STUCK_STATS {
             let asked = Instant::now();
             let e = stat.of(&hang).unwrap_err();
             assert_eq!(e.kind(), io::ErrorKind::TimedOut);
-            assert!(
-                asked.elapsed() < WITHIN * 5,
-                "gave up after {:?}",
-                asked.elapsed()
-            );
+            assert!(!refused(&e), "the stat was started");
+            let took = asked.elapsed();
+            assert!(took >= WITHIN && took < CEILING, "gave up after {took:?}");
         }
-        let asked = Instant::now();
         let e = stat.of(&pic).unwrap_err();
         assert_eq!(
             e.kind(),
             io::ErrorKind::TimedOut,
             "refused while stats hang"
         );
-        assert!(asked.elapsed() < WITHIN, "refused at once");
+        assert!(refused(&e), "refused without starting a stat");
 
-        let end = Instant::now() + Duration::from_secs(5);
-        while stat.running.load(std::sync::atomic::Ordering::Acquire) > 0 {
-            assert!(Instant::now() < end, "the blocked stats return");
+        until("the blocked stats return", || {
             let _ = std::fs::OpenOptions::new()
                 .write(true)
                 .custom_flags(libc::O_NONBLOCK)
                 .open(&hang);
-            std::thread::sleep(Duration::from_millis(5));
-        }
-        assert!(stat.of(&pic).is_ok(), "stats run again");
+            idle()
+        });
+        until("stats run again", || match stat.of(&pic) {
+            Ok(_) => true,
+            Err(e) => {
+                assert!(!refused(&e), "stats run again: {e}");
+                false
+            }
+        });
         let _ = std::fs::remove_dir_all(&dir);
     }
 

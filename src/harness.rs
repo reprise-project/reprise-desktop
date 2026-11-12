@@ -102,6 +102,31 @@ pub fn scratch() -> std::path::PathBuf {
     dir()
 }
 
+/// For a child forked without an exec: closes every fd above stderr but `keep`, so the sockets
+/// and pipes other tests hold do not stay open in it. Async-signal-safe.
+pub fn close_inherited_fds(keep: &[i32]) {
+    let last = keep.iter().copied().max().unwrap_or(2);
+    for fd in 3..last {
+        if !keep.contains(&fd) {
+            // SAFETY: closing an fd number in this process; a free one gives EBADF.
+            unsafe { libc::close(fd) };
+        }
+    }
+    // SAFETY: a plain syscall over the fd range above every kept fd.
+    unsafe {
+        libc::syscall(
+            libc::SYS_close_range,
+            (last + 1) as libc::c_uint,
+            libc::c_uint::MAX,
+            0 as libc::c_uint,
+        )
+    };
+}
+
+/// How long [`Harness::until`] waits: a built-in wallpaper drawn on a thread or a few child
+/// processes can take tens of seconds on a loaded machine.
+pub const CEILING: Duration = Duration::from_secs(30);
+
 pub struct Harness {
     pub event_loop: EventLoop<'static, State>,
     pub state: State,
@@ -202,11 +227,11 @@ impl Harness {
         }
     }
 
-    /// Turns of the loop until `done` holds, at most 10 s.
+    /// Turns of the loop until `done` holds, at most [`CEILING`].
     pub fn until(&mut self, what: &str, done: impl Fn(&State) -> bool) {
-        let end = std::time::Instant::now() + Duration::from_secs(10);
+        let end = std::time::Instant::now() + CEILING;
         while !done(&self.state) {
-            assert!(std::time::Instant::now() < end, "{what} within 10 s");
+            assert!(std::time::Instant::now() < end, "{what} within {CEILING:?}");
             self.event_loop
                 .dispatch(Some(Duration::from_millis(5)), &mut self.state)
                 .expect("dispatch");
@@ -236,18 +261,8 @@ impl Harness {
     /// Turns the loop until `output` shows its wallpaper. A built-in draws on a thread and asks
     /// every output for a frame when it lands, which a test counting asks would see at any step.
     fn until_wallpaper_shown(&mut self, output: &Output) {
-        let end = std::time::Instant::now() + Duration::from_secs(30);
-        while !self.state.wallpaper_ready(output) {
-            assert!(
-                std::time::Instant::now() < end,
-                "{}'s wallpaper shows within 30 s",
-                output.name()
-            );
-            self.event_loop
-                .dispatch(Some(Duration::from_millis(5)), &mut self.state)
-                .expect("dispatch");
-            self.state.turn_end();
-        }
+        let what = format!("{}'s wallpaper shows", output.name());
+        self.until(&what, |s| s.wallpaper_ready(output));
     }
 
     /// [`Harness::output`] asking for its place at `at`, the turn left running, as each monitor
@@ -841,15 +856,18 @@ impl Harness {
     /// Close `peer`'s socket and turn the loop until the compositor has let it go.
     pub fn ei_close(&mut self, peer: EiPeer) {
         let id = peer.id;
+        hang_up(&peer.context);
         drop(peer);
-        for _ in 0..200 {
-            self.run_for(5);
-            if self.state.inputproto.eis.get(id).is_none() {
-                return;
-            }
-        }
-        panic!("the compositor kept a closed ei client");
+        self.until("the compositor lets the closed ei client go", |s| {
+            s.inputproto.eis.get(id).is_none()
+        });
     }
+}
+
+/// Shuts `socket` down for both directions. A child another test forks holds a copy of every fd
+/// until it execs, so a drop alone can leave the socket open past the next loop turn.
+pub fn hang_up(socket: &impl AsFd) {
+    rustix::net::shutdown(socket, rustix::net::Shutdown::Both).expect("shutdown");
 }
 
 /// A connected libei client from [`Harness::ei_keyboard`]; dropping it closes its socket.
@@ -885,6 +903,14 @@ pub struct TestClient {
 impl TestClient {
     pub fn qh(&self) -> QueueHandle<ClientSide> {
         self.queue.handle()
+    }
+
+    /// Closes the connection as a client that exits does; the compositor reads the hang-up on
+    /// its next turn ([`hang_up`]).
+    pub fn hang_up(self) {
+        let registry = self.side.registry.as_ref().expect("wl_registry");
+        let backend = wc::Proxy::backend(registry).upgrade().expect("connected");
+        hang_up(&backend.poll_fd());
     }
 
     /// Bind global `interface` at `version` for a protocol whose objects send no events.

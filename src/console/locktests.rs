@@ -90,14 +90,23 @@ fn assert_remote_locked(h: &Harness) {
 #[test]
 fn the_remote_idle_lock_covers_the_remote_screens_only() {
     let mut config = Config::default();
-    config.idle.lock_after = 1;
+    config.idle.lock_after = 0;
     config.idle.lock_fade = 0;
     config.idle.screen_off_after = 0;
     config.idle.suspend_after = 0;
     config.idle.blank_after = 0;
     let (mut h, _portal, _lock) = in_lock_mode_with(config);
+    // The countdown starts here: the setup may take longer than lock_after.
+    h.state.config.idle.lock_after = 1;
+    let active = Instant::now();
+    h.from(InputSource::Remote, crate::idle::notify_activity);
+    crate::idle::config_changed(&mut h.state);
     assert!(!h.state.desktop_locked());
-    h.run_for(1500);
+    h.until("the idle lock", |s| s.desktop_locked());
+    assert!(
+        active.elapsed() >= Duration::from_secs(1),
+        "locked after lock_after"
+    );
     assert_remote_locked(&h);
     let remote = &crate::virtualout::remote_outputs(&h.state)[0];
     let area = reprisescene::output_rect(remote).expect("in the layout");
@@ -324,11 +333,15 @@ fn remote_unlock_failures_back_off() {
     let (mut h, _portal, _lock) = in_lock_mode();
     hunter2(&mut h);
     h.from(InputSource::Remote, lockview::lock_desktop);
+    let mut fourth = (Instant::now(), Instant::now());
     for _ in 0..4 {
+        let sent = Instant::now();
         remote_submit(&mut h, "nope");
+        fourth = (sent, Instant::now());
         settle(&mut h);
         assert_eq!(message(&h, Side::Remote).as_deref(), Some(lock::INCORRECT));
     }
+    let fifth = Instant::now();
     remote_submit(&mut h, "hunter2");
     let remote = h
         .state
@@ -337,9 +350,18 @@ fn remote_unlock_failures_back_off() {
         .as_ref()
         .expect("the remote side stays locked");
     assert!(remote.pending.is_none(), "the fifth try is not checked");
-    assert_eq!(
-        message(&h, Side::Remote).as_deref(),
-        Some("Too many incorrect passwords. Wait 2 seconds and retry.")
+    // The fourth check failed within `fourth` and the fifth came after `fifth`: the 2 s wait
+    // left at the fifth lies between these, and shows in whole seconds rounded up.
+    let two = Duration::from_secs(2);
+    let (least, most) = (
+        two.saturating_sub(fourth.0.elapsed()),
+        two.saturating_sub(fifth - fourth.1),
+    );
+    let secs = |d: Duration| d.as_secs() + u64::from(d.subsec_nanos() > 0);
+    let shown = message(&h, Side::Remote).expect("a message");
+    assert!(
+        (secs(least)..=secs(most)).any(|s| shown == lock::backoff_text(Duration::from_secs(s))),
+        "{shown:?}, {least:?} to {most:?} left of the 2 s wait"
     );
     tap(&mut h, &[X, ENTER]);
     settle(&mut h);
