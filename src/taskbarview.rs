@@ -53,6 +53,9 @@ pub struct BarShared {
     /// Open `hold_taskbars` scopes, and whether a `redraw_taskbars` inside one is owed.
     held: u32,
     owed: bool,
+    /// The tray's own cells as last drawn, by cell and px: a redraw drawing one the same keeps it,
+    /// so the bar sees no change.
+    pub(crate) builtin_icons: Vec<(crate::tray::builtin::Builtin, i32, Arc<Canvas>)>,
 }
 
 impl BarShared {
@@ -73,6 +76,7 @@ impl BarShared {
             keys: None,
             held: 0,
             owed: false,
+            builtin_icons: Vec::new(),
         }
     }
 }
@@ -146,12 +150,13 @@ struct StartMix {
     changed: Rect,
 }
 
-/// A bar picture and what it was drawn from.
+/// A bar picture, its orb's own picture and what they were drawn from.
 pub(crate) struct DrawnBar {
     pub(crate) state: TaskbarState,
     pub(crate) layout: TaskbarLayout,
     pub(crate) scale: i32,
     pub(crate) canvas: Canvas,
+    pub(crate) orb: Option<Canvas>,
 }
 
 pub struct Bar {
@@ -203,6 +208,8 @@ pub struct Bar {
     pub draws: usize,
     #[cfg(test)]
     pub start_only_draws: usize,
+    #[cfg(test)]
+    pub kept_draws: usize,
 }
 
 fn empty_layout() -> TaskbarLayout {
@@ -434,6 +441,8 @@ impl State {
             draws: 0,
             #[cfg(test)]
             start_only_draws: 0,
+            #[cfg(test)]
+            kept_draws: 0,
         }
     }
 

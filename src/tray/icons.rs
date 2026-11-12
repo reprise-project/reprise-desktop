@@ -327,13 +327,31 @@ pub fn bar_icons(state: &mut State, px: i32, revealed: usize) -> Vec<Option<Arc<
         .unwrap_or_default();
     let (lead, trail): (Vec<_>, Vec<_>) =
         builtin::shown(state).into_iter().partition(|b| b.leads());
-    let own = |state: &mut State, b| builtin::icon(state, b, px).map(Arc::new);
+    let own =
+        |state: &mut State, b| builtin::icon(state, b, px).map(|c| kept_builtin(state, b, px, c));
     let mut icons: Vec<Option<Arc<Canvas>>> =
         open.iter().map(|it| item_icon(state, it, px)).collect();
     icons.extend(lead.into_iter().map(|b| own(state, b)));
     icons.extend(items.iter().map(|it| item_icon(state, it, px)));
     icons.extend(trail.into_iter().map(|b| own(state, b)));
     icons
+}
+
+/// `c`, drawn for cell `b` at `px`, as the picture last drawn for it when the pixels are the same.
+fn kept_builtin(state: &mut State, b: builtin::Builtin, px: i32, c: Canvas) -> Arc<Canvas> {
+    let kept = &mut state.bar_shared.builtin_icons;
+    match kept.iter_mut().find(|(k, n, _)| *k == b && *n == px) {
+        Some((_, _, was)) if **was == c => was.clone(),
+        Some((_, _, was)) => {
+            *was = Arc::new(c);
+            was.clone()
+        }
+        None => {
+            let c = Arc::new(c);
+            kept.push((b, px, c.clone()));
+            c
+        }
+    }
 }
 
 pub fn invalidate_icons(state: &mut State) {

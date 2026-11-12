@@ -447,7 +447,14 @@ impl State {
             true
         } else {
             bar.start_mix = None;
-            let canvas = match bar.drawn.take() {
+            let (canvas, orb, kept) = match bar.drawn.take() {
+                Some(d) if d.scale == scale && d.layout == layout && d.state.same(&state) => {
+                    #[cfg(test)]
+                    {
+                        bar.kept_draws += 1;
+                    }
+                    (d.canvas, d.orb, true)
+                }
                 Some(mut d)
                     if d.scale == scale && d.layout == layout && d.state.same_but_start(&state) =>
                 {
@@ -463,18 +470,21 @@ impl State {
                         &layout,
                         &state,
                     );
-                    d.canvas
+                    (d.canvas, draw_orb(&state), false)
                 }
-                _ => draw_bar(&state),
+                _ => {
+                    let (canvas, orb) = draw(&state);
+                    (canvas, orb, false)
+                }
             };
-            let orb = draw_orb(&state);
-            let up = self.upload_bar(bar, &canvas, orb, held, scale);
+            let up = self.upload_bar(bar, &canvas, orb.as_ref(), !kept, held, scale);
             bar.orb_up = up.orb_up;
             bar.drawn = Some(DrawnBar {
                 state,
                 layout,
                 scale,
                 canvas,
+                orb,
             });
             up.painted
         };
@@ -555,7 +565,9 @@ impl State {
             c
         });
         let (held, scale) = (m.held, m.scale);
-        bar.orb_up = self.upload_bar(bar, &canvas, orb, held, scale).orb_up;
+        bar.orb_up = self
+            .upload_bar(bar, &canvas, orb.as_ref(), true, held, scale)
+            .orb_up;
         self.place_bar(bar);
         if bar.start_glow.settled(now) {
             bar.start_mix = None;
@@ -570,11 +582,14 @@ impl State {
         .unwrap_or(false)
     }
 
+    /// Show `canvas` and `orb` on `bar`'s buffers; not `fresh` when they are the pictures it
+    /// showed last, which then upload nothing.
     fn upload_bar(
         &mut self,
         bar: &mut Bar,
         canvas: &Canvas,
-        orb: Option<Canvas>,
+        orb: Option<&Canvas>,
+        fresh: bool,
         held: bool,
         scale: i32,
     ) -> Upload {
@@ -583,13 +598,15 @@ impl State {
         let scene = &mut self.scene;
         // `lay_bar` sizes the buffer to the rows it shows.
         let (w, h) = (canvas.width as i32, canvas.height as i32);
-        let changed = scene.buffer_set_canvas(bar.buffer, &canvas.pixels, w, h);
         // Pixels changed only in rows a hidden bar keeps off its output ask no frame: the slide
         // that brings them on asks for its own.
-        let mut painted = changed.overlaps(smithay::utils::Rectangle::new(
-            (rows.x * scale, rows.y * scale).into(),
-            (rows.width * scale, rows.height * scale).into(),
-        ));
+        let mut painted = fresh && {
+            let changed = scene.buffer_set_canvas(bar.buffer, &canvas.pixels, w, h);
+            changed.overlaps(smithay::utils::Rectangle::new(
+                (rows.x * scale, rows.y * scale).into(),
+                (rows.width * scale, rows.height * scale).into(),
+            ))
+        };
         bar.buffer_scale = scale;
         let l = &bar.layout;
         let over_menu = stands_over_menu(l, held, covered);
@@ -600,7 +617,9 @@ impl State {
         let pictured = l.start_orb(held).is_some() && orb.is_some();
         match (l.start_orb(held), orb) {
             (Some(r), Some(c)) => {
-                painted |= upload_scaled(scene, bar.start_above, &c, scale);
+                if fresh {
+                    painted |= upload_scaled(scene, bar.start_above, c, scale);
+                }
                 scene.set_position(bar.start_above, r.x, r.y);
                 scene.set_enabled(bar.start_above, true);
                 // Only Start takes the pointer, so a click beside the disc or on its
