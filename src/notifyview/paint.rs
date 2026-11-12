@@ -66,7 +66,8 @@ pub(super) fn paint(state: &mut State) {
     state.note_icon_waits(waits, crate::icon::IconWaiter::Notify);
 }
 
-/// The theme icons a balloon showed a stand-in for landed: every balloon is drawn again.
+/// The theme icons a balloon showed a stand-in for landed, or the theme changed: every balloon is
+/// drawn again.
 pub(crate) fn icons_landed(state: &mut State) {
     for b in &mut state.notify.stack {
         b.painted = None;

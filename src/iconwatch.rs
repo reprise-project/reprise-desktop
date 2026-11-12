@@ -39,9 +39,30 @@ pub fn apply(state: &mut State, theme: IconTheme) {
     state.rescan_desktop();
     state.invalidate_desktop();
     state.invalidate_dialogs();
+    crate::tray::invalidate_icons(state);
     let name = state.config.icons.theme.clone();
     crate::tray::send(state, crate::tray::TrayCommand::IconTheme(name));
+    relook(state);
     watch(state);
+}
+
+/// Every open surface that drew a theme icon looks it up again and draws: a cold one shows its
+/// stand-in until it lands.
+fn relook(state: &mut State) {
+    state.redraw_taskbars();
+    state.relook_menu_icons();
+    for depth in 0..state.menus.len() {
+        state.redraw_menu(depth);
+    }
+    state.start_panel_icons_landed(&[], true);
+    state.launcher_icons_landed();
+    crate::trayflyout::icons_landed(state);
+    crate::notifycenter::refresh(state);
+    crate::notifyview::icons_landed(state);
+    let windows: Vec<_> = state.windows.iter().map(|w| w.id).collect();
+    for w in windows {
+        state.retitled(w, crate::retitle::Changes::ICON);
+    }
 }
 
 fn watch(state: &mut State) {
@@ -83,11 +104,5 @@ fn changed(state: &mut State, watched: &Weak<IconTheme>) {
     }
     log::info!("icon theme changed on disk, reloading");
     apply(state, current.reload());
-    crate::tray::invalidate_icons(state);
     crate::configwatch::redraw_for_scale(state);
-    state.redraw_taskbars();
-    state.relook_menu_icons();
-    for depth in 0..state.menus.len() {
-        state.redraw_menu(depth);
-    }
 }

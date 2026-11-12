@@ -80,8 +80,8 @@ impl State {
         }
     }
 
-    /// Looks every open menu row's icon up again, after the icon theme changed on disk. The
-    /// caller redraws the menus.
+    /// Looks every open menu row's icon up again, after the icon theme changed. The caller
+    /// redraws the menus.
     pub(crate) fn relook_menu_icons(&mut self) {
         for depth in 0..self.menus.len() {
             let from = std::mem::take(&mut self.menus[depth].icons.from);
