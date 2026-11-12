@@ -462,7 +462,7 @@ pub fn reload(state: &mut State, cfg: Config) {
         let loaded = reprisekit::icontheme::IconTheme::load(&state.config.icons.theme, &roots);
         crate::iconwatch::apply(state, loaded);
     }
-    if changes.fonts || changes.icons {
+    if changes.fonts {
         crate::tray::invalidate_icons(state);
     }
     // A rescan relayouts too; `retheme` below finds the cells drawn.
