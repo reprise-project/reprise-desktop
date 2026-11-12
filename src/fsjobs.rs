@@ -35,6 +35,9 @@ pub struct FsJobs {
     /// How long an action or a drop waits before it gives up; None for [`ACTION_DEADLINE`].
     /// Tests shorten it.
     pub deadline: Option<Duration>,
+    /// Every thread fails to spawn, as when the process is out of threads.
+    #[cfg(test)]
+    pub refuse_threads: bool,
 }
 
 /// Threads of one kind of job, at most [`MAX_THREADS`] at once.
@@ -328,6 +331,10 @@ impl State {
             work()(self);
             return true;
         };
+        #[cfg(test)]
+        if self.fsjobs.refuse_threads {
+            return false;
+        }
         self.spawn_pooled(files, "file jobs", tx, Box::new(work))
     }
 
@@ -399,6 +406,10 @@ impl State {
             work()(self);
             return true;
         };
+        #[cfg(test)]
+        if self.fsjobs.refuse_threads {
+            return false;
+        }
         self.fsjobs.spawn_now(tx, Box::new(work))
     }
 }

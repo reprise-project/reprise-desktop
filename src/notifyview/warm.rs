@@ -30,11 +30,13 @@ pub(super) fn warm_openings(state: &mut State) {
             return;
         };
         let shape = state.config.glass.notification.shape();
+        let waits = state.icons.waits();
         for i in 0..state.notify.stack.len() {
             let mut opening = std::mem::take(&mut state.notify.stack[i].opening);
             warm_one(state, i, &mut opening, edge, shape, now);
             state.notify.stack[i].opening = opening;
         }
+        state.note_icon_waits(waits, crate::icon::IconWaiter::Notify);
     });
 }
 

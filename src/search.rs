@@ -256,12 +256,23 @@ pub(crate) fn file_row(
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let icon = file_icon_name(p, is_dir, mime, icons);
     FileRow {
         name,
         folder: p.parent().map(|d| tilde(d, home)).unwrap_or_default(),
-        icon: crate::icon::unread(icons, &icon, px).map(std::sync::Arc::unwrap_or_clone),
+        icon: file_row_icon(p, is_dir, mime, icons, px),
     }
+}
+
+/// The type icon a file row shows for `p` at `px` ([`crate::icon::unread`]).
+pub(crate) fn file_row_icon(
+    p: &Path,
+    is_dir: bool,
+    mime: &reprisefs::apps::MimeDb,
+    icons: &mut crate::icontheme::IconCache,
+    px: i32,
+) -> Option<crate::raster::Canvas> {
+    let icon = file_icon_name(p, is_dir, mime, icons);
+    crate::icon::unread(icons, &icon, px).map(std::sync::Arc::unwrap_or_clone)
 }
 
 impl State {

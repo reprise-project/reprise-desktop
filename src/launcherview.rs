@@ -22,7 +22,7 @@ use crate::output::upload_scaled;
 use crate::raster::Rect;
 use crate::search::{
     CALC_ICON, FileSearch, SearchOwner, Setting, WindowName, calc_row, file_icon_name, file_row,
-    rank_apps, rank_settings, rank_windows, windows_first,
+    file_row_icon, rank_apps, rank_settings, rank_windows, windows_first,
 };
 use crate::window::WindowId;
 
@@ -418,47 +418,57 @@ impl State {
         v.model.set_rows(rows);
     }
 
-    /// Names `refused` turned out to decode at no size: the file rows pick their icons again.
-    pub(crate) fn launcher_names_refused(&mut self, refused: &[String]) {
-        let Some(paths) = (self.launcher.as_ref()).map(|v| v.search.files.clone()) else {
-            return;
-        };
-        if refused.is_empty() || paths.is_empty() {
-            return;
-        }
-        self.show_launcher_files(paths);
-        self.redraw_launcher();
-    }
-
-    /// Icons `keys` (icon files or theme names) landed: the app and settings rows wearing one
-    /// take it.
-    pub(crate) fn launcher_icon_landed(&mut self, keys: &[&str]) {
-        let scale = self.launcher_scale();
+    /// Icons landed or names turned out to decode at no size: every row looks its icon up again
+    /// (a file row picks its name again), and the panel draws again if one changed.
+    pub(crate) fn launcher_icons_landed(&mut self) {
+        let px = 16 * self.launcher_scale();
         let State {
             launcher,
             app_index,
             icons,
+            windows,
+            desktop,
             ..
         } = self;
         let Some(v) = launcher.as_mut() else {
             return;
         };
-        let app = |i: usize| app_index.get(i).and_then(|a| a.icon.clone());
-        let setting_icons: Vec<Option<String>> =
-            v.settings.iter().map(|s| s.icon(app_index)).collect();
-        let wears = |n: &Option<String>| n.as_deref().is_some_and(|n| keys.contains(&n));
-        if !v.matches.iter().any(|&i| wears(&app(i))) && !setting_icons.iter().any(wears) {
-            return;
-        }
-        let px = 16 * scale;
+        let windows = (v.windows.iter())
+            .map(|id| {
+                (windows.iter().find(|w| w.id == *id))
+                    .and_then(|w| crate::icon::window_icon(icons, app_index, w, px))
+                    .map(std::sync::Arc::unwrap_or_clone)
+            })
+            .collect();
         let apps = (v.matches.iter())
-            .map(|&i| app(i).and_then(|n| unread(icons, &n, px)))
+            .map(|&i| {
+                let name = app_index.get(i).and_then(|a| a.icon.as_deref());
+                name.and_then(|n| unread(icons, n, px))
+            })
             .collect();
-        let settings = (setting_icons.iter())
-            .map(|n| n.as_deref().and_then(|n| unread(icons, n, px)))
+        let settings = (v.settings.iter())
+            .map(|s| s.icon(app_index).and_then(|n| unread(icons, &n, px)))
             .collect();
-        v.model.refill_icons(apps, settings);
-        self.redraw_launcher();
+        let empty;
+        let mime = match desktop.as_ref() {
+            Some(d) => &d.mime,
+            None => {
+                empty = reprisefs::apps::MimeDb::empty();
+                &empty
+            }
+        };
+        let files = (v.search.files.iter())
+            .map(|p| file_row_icon(p, v.search.is_dir(p), mime, icons, px))
+            .collect();
+        let refill = launcher::Refill {
+            windows,
+            apps,
+            settings,
+            files,
+        };
+        if v.model.refill_icons(refill) {
+            self.redraw_launcher();
+        }
     }
 
     /// The text changed: stop the search in flight, narrow the file rows
