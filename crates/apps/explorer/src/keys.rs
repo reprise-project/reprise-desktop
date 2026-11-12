@@ -6,6 +6,7 @@
 //! focus. Nothing here changes the model directly: every branch ends in
 //! a [`Command`] and [`Explorer::run`].
 
+use crate::chrome::address_icon;
 use crate::commands::{Command, command_for_key_in};
 use crate::menus;
 use crate::window::Popup;
@@ -67,7 +68,7 @@ impl Explorer {
         {
             // The arrows filled the field with the rows they passed.
             if key == form::Key::Escape && !completing {
-                let icon = ctx.icons.get(self.place.icon_name(), 16);
+                let icon = address_icon(&mut self.chrome_waits, &mut ctx.icons, &self.place);
                 self.address.set_place(&self.place.address(), icon);
             }
             return self.address_event(ev, ctx);
@@ -101,7 +102,7 @@ impl Explorer {
             // Escape: the field goes back to where we actually are
             // and the focus drops into the view.
             if k.sym == keysym::ESCAPE {
-                let icon = ctx.icons.get(self.place.icon_name(), 16);
+                let icon = address_icon(&mut self.chrome_waits, &mut ctx.icons, &self.place);
                 self.address.set_place(&self.place.address(), icon);
                 self.focus = Focus::View;
                 return Reply::redraw();

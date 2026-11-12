@@ -3,44 +3,54 @@
 
 use std::path::Path;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::sync::mpsc::{Receiver, channel};
 
 use crate::Waker;
 use reprisefs::listing::Item;
 use reprisekit::controls::shellview::{self, Entry};
-use reprisekit::icontheme::{IconCache, LISTING_PX, ListingIcons, decode_file};
+use reprisekit::icontheme::{
+    IconCache, IconTheme, LISTING_PX, ListingIcons, decode_file, load_icon,
+};
 use reprisekit::raster::Canvas;
 
-/// Icon files decoded at a scale, each at its sizes in logical px.
+/// Icon files (and theme names) decoded at a scale, each at its sizes in logical px.
 type Art = Vec<(String, Vec<(i32, Option<Canvas>)>)>;
 
-/// Decodes `files` at each of `sizes` and `scale`.
-fn decode_art(files: Vec<String>, sizes: &[i32], scale: i32) -> Art {
+/// Decodes `files` at each of `sizes` and `scale`; a theme name among them loads from `theme`.
+fn decode_art(files: Vec<String>, sizes: &[i32], scale: i32, theme: Option<&IconTheme>) -> Art {
+    let load = |f: &str, px| match theme.filter(|_| !f.starts_with('/')) {
+        Some(theme) => load_icon(theme, f, px, scale),
+        None => decode_file(Path::new(f), px, scale),
+    };
     files
         .into_iter()
         .map(|f| {
-            let a = (sizes.iter())
-                .map(|&px| (px, decode_file(Path::new(&f), px, scale)))
-                .collect();
+            let a = sizes.iter().map(|&px| (px, load(&f, px))).collect();
             (f, a)
         })
         .collect()
 }
 
-/// Puts `art`, decoded at `scale`, into `cache` in one batch.
-fn put_art(cache: &mut IconCache, art: &Art, scale: i32) {
-    let puts = art
+/// Puts `art`, decoded at `scale`, into `cache` in one batch; its theme names loaded from `theme`.
+fn put_art(cache: &mut IconCache, art: &Art, scale: i32, theme: Option<&Arc<IconTheme>>) {
+    let (files, names): (Vec<_>, Vec<_>) = art
         .iter()
-        .flat_map(|(file, a)| a.iter().map(|(px, c)| (file.clone(), *px, c.clone())));
-    cache.put_files_at(puts.collect(), scale);
+        .flat_map(|(file, a)| a.iter().map(|(px, c)| (file.clone(), *px, c.clone())))
+        .partition(|(f, _, _)| f.starts_with('/'));
+    cache.put_files_at(files, scale);
+    if let Some(theme) = theme {
+        cache.put_icons_at(theme, names, scale);
+    }
 }
 
-/// Decodes `files` at `sizes` and `scale` on a thread that fires `wake` once the art is sent.
-/// None when no thread starts.
+/// Decodes `files` at `sizes` and `scale` (theme names from `theme`) on a thread that fires
+/// `wake` once the art is sent. None when no thread starts.
 fn spawn_decode(
     files: Vec<String>,
     sizes: Vec<i32>,
     scale: i32,
+    theme: Option<Arc<IconTheme>>,
     wake: &Waker,
 ) -> Option<Receiver<Art>> {
     let (tx, rx) = channel();
@@ -48,7 +58,7 @@ fn spawn_decode(
     let spawned = std::thread::Builder::new()
         .name("list icons".into())
         .spawn(move || {
-            let art = decode_art(files, &sizes, scale);
+            let art = decode_art(files, &sizes, scale, theme.as_deref());
             if tx.send(art).is_ok() {
                 wake.wake();
             }
@@ -96,13 +106,13 @@ impl ReadIcons {
             .collect();
         files.sort_unstable();
         files.dedup();
-        let art = decode_art(files, &sizes, scale);
+        let art = decode_art(files, &sizes, scale, None);
         ReadIcons { own, art, scale }
     }
 
     /// Hands `cache` the decoded icon files, so fetching the rows' icons reads none of them.
     pub fn put(&self, cache: &mut IconCache) {
-        put_art(cache, &self.art, self.scale);
+        put_art(cache, &self.art, self.scale, None);
     }
 }
 
@@ -114,10 +124,11 @@ pub struct ListIcons {
     icons: ListingIcons,
     scale: i32,
     files: Option<Receiver<Art>>,
-    /// Icon files [`ListIcons::fetch`] found missing at a scale, waiting for [`ListIcons::decode_misses`].
+    /// Icon files (and theme names) [`ListIcons::fetch`] found missing at a scale, waiting for
+    /// [`ListIcons::decode_misses`].
     misses: Vec<String>,
-    /// The scale and decoded art of the last [`ListIcons::decode_misses`].
-    decoding: Option<(i32, Receiver<Art>)>,
+    /// The scale, theme and decoded art of the last [`ListIcons::decode_misses`].
+    decoding: Option<(i32, Arc<IconTheme>, Receiver<Art>)>,
 }
 
 impl ListIcons {
@@ -135,11 +146,32 @@ impl ListIcons {
     /// know `worn` or the cache has no such file; a file never put at this scale is kept for
     /// [`ListIcons::decode_misses`].
     pub fn fetch(&mut self, worn: &Rc<Canvas>, px: i32, cache: &mut IconCache) -> Option<Canvas> {
+        self.fetch_with(worn, px, cache, true)
+    }
+
+    /// [`ListIcons::fetch`] for a drag image, drawn at a scale `cache` was set to for the while:
+    /// a theme icon not held at it is kept for [`ListIcons::decode_misses`] too, never loaded here.
+    pub fn fetch_held(
+        &mut self,
+        worn: &Rc<Canvas>,
+        px: i32,
+        cache: &mut IconCache,
+    ) -> Option<Canvas> {
+        self.fetch_with(worn, px, cache, false)
+    }
+
+    fn fetch_with(
+        &mut self,
+        worn: &Rc<Canvas>,
+        px: i32,
+        cache: &mut IconCache,
+        load: bool,
+    ) -> Option<Canvas> {
         let name = self.icons.name_of(worn)?;
-        if !name.starts_with('/') {
+        if load && !name.starts_with('/') {
             return cache.get(name, px);
         }
-        match cache.file_put(name, px) {
+        match cache.held(name, px) {
             Some(put) => put.map(std::sync::Arc::unwrap_or_clone),
             None => {
                 if !self.misses.iter().any(|m| m == name) {
@@ -150,9 +182,9 @@ impl ListIcons {
         }
     }
 
-    /// Decodes the icon files `fetch` missed at `scale` on a thread that fires `wake`
-    /// ([`ListIcons::take_misses`]), in place of a decode still running.
-    pub fn decode_misses(&mut self, scale: i32, wake: &Waker) {
+    /// Decodes the icon files and theme names (from `theme`) `fetch` missed at `scale` on a
+    /// thread that fires `wake` ([`ListIcons::take_misses`]), in place of a decode still running.
+    pub fn decode_misses(&mut self, scale: i32, theme: Arc<IconTheme>, wake: &Waker) {
         let files = std::mem::take(&mut self.misses);
         if files.is_empty() {
             return;
@@ -160,21 +192,20 @@ impl ListIcons {
         let mut sizes: Vec<i32> = LISTING_PX.into_iter().chain(self.icons.sizes()).collect();
         sizes.sort_unstable();
         sizes.dedup();
-        self.decoding = spawn_decode(files, sizes, scale, wake).map(|rx| (scale, rx));
+        self.decoding = spawn_decode(files, sizes, scale, Some(theme.clone()), wake)
+            .map(|rx| (scale, theme, rx));
     }
 
-    /// Hands `cache` the icon files [`ListIcons::decode_misses`] decoded, at the scale they were
-    /// decoded at: true when they arrived.
+    /// Hands `cache` what [`ListIcons::decode_misses`] decoded, at the scale it was decoded at:
+    /// true when it arrived.
     pub fn take_misses(&mut self, cache: &mut IconCache) -> bool {
-        let Some((scale, art)) = self
-            .decoding
-            .as_ref()
-            .and_then(|(s, rx)| rx.try_recv().ok().map(|a| (*s, a)))
-        else {
+        let Some(art) = (self.decoding.as_ref()).and_then(|(_, _, rx)| rx.try_recv().ok()) else {
             return false;
         };
-        self.decoding = None;
-        put_art(cache, &art, scale);
+        let Some((scale, theme, _)) = self.decoding.take() else {
+            return false;
+        };
+        put_art(cache, &art, scale, Some(&theme));
         true
     }
 
@@ -219,7 +250,7 @@ impl ListIcons {
         if files.is_empty() {
             return;
         }
-        self.files = spawn_decode(files, self.icons.sizes().to_vec(), scale, wake);
+        self.files = spawn_decode(files, self.icons.sizes().to_vec(), scale, None, wake);
     }
 
     /// Hands `entries` the icon files decoded for the last scale change, and `cache` keeps them
@@ -234,7 +265,7 @@ impl ListIcons {
             .into_iter()
             .filter(|(_, a)| a.iter().any(|(_, c)| c.is_some()))
             .collect();
-        put_art(cache, &art, self.scale);
+        put_art(cache, &art, self.scale, None);
         let sizes = self.icons.sizes();
         let swaps: Vec<_> = art
             .into_iter()

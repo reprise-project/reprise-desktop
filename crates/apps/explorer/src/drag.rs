@@ -291,8 +291,8 @@ impl Explorer {
     }
 
     /// The dragged entries' image drawn at `scale`, and the point of it the pointer holds. An
-    /// icon file not yet decoded at `scale` is the listing's resampled until its decode lands
-    /// (`wake` asks for the image again).
+    /// icon file or theme icon not yet decoded at `scale` is the listing's resampled until its
+    /// decode lands (`wake` asks for the image again).
     pub(crate) fn drag_image(&mut self, ctx: &mut Ctx, scale: i32) -> Option<(Canvas, (i32, i32))> {
         let d = self.drag.as_ref()?;
         let s = scale.max(1);
@@ -334,7 +334,7 @@ impl Explorer {
                         let worn = icon_of(e)?;
                         let icon = match worn.scale() == s {
                             true => None,
-                            false => self.list_icons.fetch(&worn, px, &mut ctx.icons),
+                            false => self.list_icons.fetch_held(&worn, px, &mut ctx.icons),
                         };
                         device_px(icon.unwrap_or_else(|| (*worn).clone()), s)
                     }
@@ -346,7 +346,7 @@ impl Explorer {
             })
             .collect();
         ctx.icons.set_scale(drawn);
-        self.list_icons.decode_misses(s, &ctx.wake);
+        (self.list_icons).decode_misses(s, ctx.icons.theme(), &ctx.wake);
         let mut theme = ctx.theme.scaled(s);
         if self.sv.mode != Mode::Icons {
             let rows: Vec<shellview::DragRow> = shown

@@ -8,12 +8,14 @@ use crate::props_dialog::{
     attr_form, attr_tree_picked, bin_facts, bin_page, folder_has_contents, general_page, rows,
     set_facts,
 };
+use repriseapp::iconjobs::IconWaits;
 use repriseapp::{Child, Ctx, Event, Reply};
 use reprisefs::deadline::Gate;
-use reprisefs::props::{AttrMoves, FileInfo};
+use reprisefs::props::{AttrMoves, FileInfo, SetInfo};
 use reprisekit::controls::form::{self, Control};
 use reprisekit::controls::propsheet::{self, PropSheet};
 use reprisekit::controls::{filesheet, iconview};
+use reprisekit::icontheme::IconCache;
 use reprisekit::look::Paint;
 use reprisekit::raster::Canvas;
 use std::path::{Path, PathBuf};
@@ -38,9 +40,10 @@ impl Explorer {
         }
         let place = self.place.clone();
         let (apps, globs) = (self.app_index.clone(), self.globs.clone());
+        let scale = ctx.icons.scale();
         let work = move |_: &Gate| {
             let (path, name, title) = place_sheet_of(&place)?;
-            Some((glance(&path, &name, &apps, &globs), name, title))
+            Some((glance(&path, &name, &apps, &globs, scale), name, title))
         };
         self.act(
             ctx,
@@ -72,7 +75,8 @@ impl Explorer {
         let (path, name, title) = (path.to_path_buf(), name.to_string(), title.to_string());
         let (apps, globs) = (self.app_index.clone(), self.globs.clone());
         let read = name.clone();
-        let work = move |_: &Gate| glance(&path, &read, &apps, &globs);
+        let scale = ctx.icons.scale();
+        let work = move |_: &Gate| glance(&path, &read, &apps, &globs, scale);
         self.act(
             ctx,
             Action::reads("Properties"),
@@ -89,10 +93,7 @@ impl Explorer {
         ctx: &mut Ctx,
     ) -> Reply {
         match glanced {
-            Ok(g) => {
-                self.props = Some(self.build_props(g, title.to_string(), ctx));
-                Reply::redraw_all()
-            }
+            Ok(g) => self.open_sheet(SheetRead::One(g, title.to_string()), ctx),
             Err(e) => {
                 let text = format!("Cannot show the properties of {name}: {e}");
                 self.message_box("Properties", text, ctx)
@@ -103,7 +104,8 @@ impl Explorer {
     fn open_bin_properties(&mut self, it: reprisefs::listing::Item, ctx: &mut Ctx) -> Reply {
         let (path, name) = (it.path.clone(), it.name.clone());
         let (apps, globs) = (self.app_index.clone(), self.globs.clone());
-        let work = move |_: &Gate| glance(&path, &name, &apps, &globs);
+        let scale = ctx.icons.scale();
+        let work = move |_: &Gate| glance(&path, &name, &apps, &globs, scale);
         self.act(
             ctx,
             Action::reads("Properties"),
@@ -118,19 +120,70 @@ impl Explorer {
         it: &reprisefs::listing::Item,
         ctx: &mut Ctx,
     ) -> Reply {
-        let Glanced { info, icon } = match glanced {
-            Ok(g) => g,
+        match glanced {
+            Ok(g) => self.open_sheet(SheetRead::Bin(g, it.clone()), ctx),
             Err(e) => {
                 let text = format!("Cannot show the properties of {}: {e}", it.name);
-                return self.message_box("Properties", text, ctx);
+                self.message_box("Properties", text, ctx)
+            }
+        }
+    }
+
+    /// Puts up the sheet `read` builds once every theme icon it wears is ready: till then it
+    /// waits in `props_due` for them to land off the loop ([`repriseapp::iconjobs`]).
+    fn open_sheet(&mut self, read: SheetRead, ctx: &mut Ctx) -> Reply {
+        if let SheetRead::One(g, _) | SheetRead::Bin(g, _) = &read {
+            ctx.icons.put_files_at(g.files.clone(), g.scale);
+        }
+        self.props_due = Some((read, IconWaits::default()));
+        self.build_due(ctx)
+    }
+
+    /// The waiting sheet goes up if its icons are ready, and its folder walks start.
+    fn build_due(&mut self, ctx: &mut Ctx) -> Reply {
+        let Some((read, _)) = self.props_due.take() else {
+            return Reply::none();
+        };
+        let mut waits = IconWaits::default();
+        let props = match &read {
+            SheetRead::One(g, title) => Some(self.build_props(g, title.clone(), &mut waits, ctx)),
+            SheetRead::Bin(g, it) => Some(self.build_bin_props(g, it, &mut waits, ctx)),
+            SheetRead::Set(items, caption) => {
+                self.build_set_props(items, caption.clone(), &mut waits, ctx)
             }
         };
-        self.walk_for_props(&info, ctx);
+        if !waits.is_empty() {
+            self.props_due = Some((read, waits));
+            return Reply::none();
+        }
+        self.props = props;
+        match (&read, self.props.as_ref().and_then(|p| p.set.clone())) {
+            (SheetRead::Set(..), Some(set)) => self.walk_set_for_props(set, ctx),
+            (SheetRead::One(g, _) | SheetRead::Bin(g, _), _) => self.walk_for_props(&g.info, ctx),
+            _ => {}
+        }
+        Reply::redraw_all()
+    }
+
+    /// A sheet waiting for its icons goes up once they landed.
+    pub(crate) fn take_due_sheet(&mut self, ctx: &mut Ctx) -> Option<Reply> {
+        let (_, waits) = self.props_due.as_ref()?;
+        waits.landed(&mut ctx.icons).then(|| self.build_due(ctx))
+    }
+
+    fn build_bin_props(
+        &self,
+        g: &Glanced,
+        it: &reprisefs::listing::Item,
+        waits: &mut IconWaits,
+        ctx: &mut Ctx,
+    ) -> Props {
+        let info = g.info.clone();
         let facts = bin_facts(&info, it.trashed.as_deref(), reprisefs::locale::is_12h());
-        let icon = props_icon(&icon, &info.path, ctx);
+        let icon = props_icon(&g.icon, &info.path, waits, ctx);
         let page = bin_page(&facts, &it.name, icon);
         let sheet = PropSheet::new(&["General"], vec![page], (SHEET_W, BIN_SHEET_H));
-        self.props = Some(Props {
+        Props {
             opened_read_only: filesheet::read_only(&sheet.pages[0]),
             opened_name: String::new(),
             caption: it.name.clone(),
@@ -147,8 +200,7 @@ impl Explorer {
             icon_chosen: None,
             checksums: Default::default(),
             sheet,
-        });
-        Reply::redraw_all()
+        }
     }
 
     fn walk_for_props(&mut self, info: &FileInfo, ctx: &mut Ctx) {
@@ -170,25 +222,28 @@ impl Explorer {
         }
     }
 
-    fn build_props(&mut self, glanced: Glanced, title: String, ctx: &mut Ctx) -> Props {
-        let Glanced { info, icon } = glanced;
-        self.walk_for_props(&info, ctx);
+    fn build_props(
+        &self,
+        glanced: &Glanced,
+        title: String,
+        waits: &mut IconWaits,
+        ctx: &mut Ctx,
+    ) -> Props {
+        let info = glanced.info.clone();
         let rows = rows(&info, reprisefs::locale::is_12h());
-        let icon = props_icon(&icon, &info.path, ctx);
+        let icon = props_icon(&glanced.icon, &info.path, waits, ctx);
         let icon = match info.is_shortcut {
             true => icon.map(iconview::with_shortcut_arrow),
             false => icon,
         };
-        let app = info
-            .opens_with_icon
-            .as_deref()
-            .and_then(|n| ctx.icons.get(n, 16));
+        let app =
+            (info.opens_with_icon.as_deref()).and_then(|n| waits.first(&mut ctx.icons, &[n], 16));
         // The Hidden box stands for the leading dot, so the field leaves it out.
         let shown = filesheet::shown_name(&info.file_name(), &info.hidden_ext, info.hidden);
         let (page, height) = general_page(&rows, &shown, icon.clone(), app);
         let over = crate::props_dialog::over(&info);
-        let mut sheet =
-            self.tabbed_sheet(page, height, over, ctx, |tab| match (tab, &info.launcher) {
+        let mut sheet = self.tabbed_sheet(page, height, over, waits, ctx, |tab| {
+            match (tab, &info.launcher) {
                 (filesheet::Tab::Shortcut, Some(l)) => {
                     filesheet::shortcut_page(&shortcut_facts(&info, l), icon.clone())
                 }
@@ -200,13 +255,16 @@ impl Explorer {
                     filesheet::web_page(&facts, icon.clone())
                 }
                 _ => filesheet::summary_page(info.summary.as_ref()),
-            });
+            }
+        });
         if info.is_dir {
-            let own = info
-                .own_icon
-                .clone()
-                .unwrap_or_else(|| filesheet::STANDARD_FOLDER_ICON.to_string());
-            Self::show_folder_icon(&mut sheet, &own, ctx);
+            let own = info.own_icon.as_deref();
+            wear_folder_icon(
+                &mut sheet,
+                own.unwrap_or(filesheet::STANDARD_FOLDER_ICON),
+                waits,
+                ctx,
+            );
         }
         Props {
             opened_read_only: filesheet::read_only(&sheet.pages[0]),
@@ -249,21 +307,14 @@ impl Explorer {
                 return Reply::none();
             };
             let caption = format!("{}, ...", first.name);
-            ex.props = ex.build_set_props(items, caption, ctx);
-            Reply::redraw_all()
+            ex.open_sheet(SheetRead::Set(items, caption), ctx)
         })
     }
 
-    fn build_set_props(
-        &mut self,
-        items: Vec<FileInfo>,
-        caption: String,
-        ctx: &mut Ctx,
-    ) -> Option<Props> {
-        let set = reprisefs::props::glance_set(&items);
-        let info = items.into_iter().next()?;
+    /// The combined sheet's walk of its folders' totals, while it is up.
+    fn walk_set_for_props(&mut self, set: SetInfo, ctx: &mut Ctx) {
         if set.walking {
-            let paths = set.paths.clone();
+            let paths = set.paths;
             self.spawn_job(ctx, move || {
                 let mut sum = reprisefs::props::FolderTotals::default();
                 for d in paths.iter().filter(|p| p.is_dir()) {
@@ -285,6 +336,17 @@ impl Explorer {
                 })
             });
         }
+    }
+
+    fn build_set_props(
+        &self,
+        items: &[FileInfo],
+        caption: String,
+        waits: &mut IconWaits,
+        ctx: &mut Ctx,
+    ) -> Option<Props> {
+        let set = reprisefs::props::glance_set(items);
+        let info = items.first()?.clone();
         let icon = Some(filesheet::set_picture(ctx.icons.scale()));
         let facts = set_facts(&set);
         let (page, height) = general_page(&filesheet::set_rows(&facts), "", icon, None);
@@ -293,9 +355,10 @@ impl Explorer {
             shortcut: set.has_shortcut,
             folder: set.has_dir,
         };
-        let mut sheet =
-            self.tabbed_sheet(page, height, over, ctx, |_| filesheet::summary_page(None));
-        Self::show_folder_icon(&mut sheet, filesheet::STANDARD_FOLDER_ICON, ctx);
+        let mut sheet = self.tabbed_sheet(page, height, over, waits, ctx, |_| {
+            filesheet::summary_page(None)
+        });
+        wear_folder_icon(&mut sheet, filesheet::STANDARD_FOLDER_ICON, waits, ctx);
         Some(Props {
             opened_read_only: facts.read_only,
             opened_name: String::new(),
@@ -318,30 +381,14 @@ impl Explorer {
         general: form::Form,
         height: i32,
         over: filesheet::Over,
+        waits: &mut IconWaits,
         ctx: &mut Ctx,
         own: impl FnMut(filesheet::Tab) -> form::Form,
     ) -> PropSheet {
         let tabs = filesheet::sheet_tabs(over);
         let mut sheet = filesheet::sheet(general, height, &tabs, own);
-        filesheet::fill_pictures(&mut sheet, |n| ctx.icons.get(n, ICON_PX));
+        filesheet::fill_pictures(&mut sheet, |n| waits.first(&mut ctx.icons, &[n], ICON_PX));
         sheet
-    }
-
-    fn show_folder_icon(sheet: &mut PropSheet, icon: &str, ctx: &mut Ctx) {
-        let icon = &crate::icons::sheet_folder_icon(icon, &|n| ctx.icons.has(n));
-        for (id, px) in [
-            (filesheet::CUSTOM_ICON, ICON_PX),
-            (filesheet::CUSTOM_PREVIEW, filesheet::PREVIEW_PX),
-        ] {
-            let canvas = ctx.icons.get(icon, px);
-            for page in &mut sheet.pages {
-                if let Some(it) = page.item_mut(id)
-                    && let Control::Picture { canvas: c, .. } = &mut it.control
-                {
-                    *c = canvas.clone();
-                }
-            }
-        }
     }
 
     fn change_icon(&mut self, ctx: &mut Ctx) -> Reply {
@@ -361,11 +408,11 @@ impl Explorer {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
         let mut names: Vec<String> = if launcher {
-            reprisefs::launcher::icon_names(&self.app_index, |n| ctx.icons.has(n))
+            reprisefs::launcher::icon_names(&self.app_index, |n| ctx.icons.has_unread(n))
         } else {
             FOLDER_ICON_NAMES
                 .iter()
-                .filter(|n| ctx.icons.has(n))
+                .filter(|n| ctx.icons.has_unread(n))
                 .map(|n| n.to_string())
                 .collect()
         };
@@ -375,13 +422,16 @@ impl Explorer {
                 names.insert(0, must);
             }
         }
-        let pictures = names.iter().map(|n| ctx.icons.get(n, ICON_PX)).collect();
+        let mut waits = IconWaits::default();
+        let pictures = (names.iter())
+            .map(|n| waits.first(&mut ctx.icons, &[n], ICON_PX))
+            .collect();
         let mut list = reprisekit::controls::iconlist::IconList::new(names, pictures, None);
         if let Some(c) = &current {
             list.pick(c);
         }
         let form = filesheet::change_icon_form(&ctx.icons.theme_name(), list, !launcher);
-        self.dialog = Some(crate::dialogs::Dialog::ChangeIcon { form, name });
+        self.dialog = Some(crate::dialogs::Dialog::ChangeIcon { form, name, waits });
         Reply::redraw_all()
     }
 
@@ -399,8 +449,8 @@ impl Explorer {
                 p.sheet.pages[k].set_picture("icon", iconview::with_shortcut_arrow(c));
             }
             p.icon_chosen = Some(icon);
-            let shown = p.shown_icon();
-            Self::show_folder_icon(&mut p.sheet, &shown, ctx);
+            let shown = crate::icons::sheet_folder_icon(&p.shown_icon(), &|n| ctx.icons.has(n));
+            show_folder_icon(&mut p.sheet, &shown, |n, px| ctx.icons.get(n, px));
             let on = p.dirty();
             p.sheet.set_apply_enabled(on);
         }
@@ -759,10 +809,7 @@ impl Explorer {
                     ctx,
                     Action::reads("Properties"),
                     work,
-                    move |ex, items, ctx| {
-                        ex.props = ex.build_set_props(items, caption, ctx);
-                        Reply::redraw_all()
-                    },
+                    move |ex, items, ctx| ex.open_sheet(SheetRead::Set(items, caption), ctx),
                 )
             }
             _ => {
@@ -915,18 +962,15 @@ impl Explorer {
             self.app_index.clone(),
             self.globs.clone(),
         );
-        let work = move |_: &Gate| glance(&path, &name, &apps, &globs);
+        let scale = ctx.icons.scale();
+        let work = move |_: &Gate| glance(&path, &name, &apps, &globs, scale);
         let sheet = self.act(
             ctx,
             Action::reads("Properties"),
             work,
-            move |ex, glanced, ctx| {
-                if let Ok(g) = glanced
-                    && ex.props.is_some()
-                {
-                    ex.props = Some(ex.build_props(g, caption, ctx));
-                }
-                Reply::redraw_all()
+            move |ex, glanced, ctx| match glanced {
+                Ok(g) if ex.props.is_some() => ex.open_sheet(SheetRead::One(g, caption), ctx),
+                _ => Reply::redraw_all(),
             },
         );
         Reply {
@@ -993,10 +1037,23 @@ fn place_sheet_of(place: &crate::place::Place) -> Option<(PathBuf, String, Strin
     }
 }
 
-/// A file's sheet facts and what its sheet icon is drawn from, read on a listing thread.
+/// A file's sheet facts and what its sheet icon is drawn from, read on a listing thread with the
+/// icon files the sheet wears, decoded at `scale`.
 pub(crate) struct Glanced {
     info: FileInfo,
     icon: SheetIcon,
+    files: Vec<(String, i32, Option<Canvas>)>,
+    scale: i32,
+}
+
+/// What a sheet is built from once read, kept till the theme icons it wears are ready.
+pub(crate) enum SheetRead {
+    /// A file's or folder's sheet, and its caption.
+    One(Glanced, String),
+    /// A Recycle Bin item's.
+    Bin(Glanced, reprisefs::listing::Item),
+    /// The combined sheet over several items, and its caption.
+    Set(Vec<FileInfo>, String),
 }
 
 enum SheetIcon {
@@ -1013,6 +1070,7 @@ fn glance(
     name: &str,
     apps: &[reprisefs::apps::AppEntry],
     globs: &reprisefs::apps::MimeDb,
+    scale: i32,
 ) -> std::io::Result<Glanced> {
     let info = reprisefs::props::glance_in(path, name, apps, globs)?;
     let icon = if info.path.is_dir() {
@@ -1025,7 +1083,31 @@ fn glance(
     } else {
         SheetIcon::File(reprisefs::apps::mime_of_in(globs, &info.path))
     };
-    Ok(Glanced { info, icon })
+    let own = match &icon {
+        SheetIcon::Folder(own) => own.as_deref(),
+        SheetIcon::Shortcut(name) => Some(name.as_str()),
+        SheetIcon::File(_) => None,
+    };
+    let mut wanted = vec![(own, ICON_PX), (info.opens_with_icon.as_deref(), 16)];
+    if info.is_dir {
+        let own = info.own_icon.as_deref();
+        wanted.extend([(own, ICON_PX), (own, filesheet::PREVIEW_PX)]);
+    }
+    let mut files: Vec<(String, i32, Option<Canvas>)> = Vec::new();
+    for (file, px) in wanted {
+        if let Some(f) = file.filter(|f| f.starts_with('/'))
+            && !files.iter().any(|(g, p, _)| g == f && *p == px)
+        {
+            let art = reprisekit::icontheme::decode_file(Path::new(f), px, scale);
+            files.push((f.to_string(), px, art));
+        }
+    }
+    Ok(Glanced {
+        info,
+        icon,
+        files,
+        scale,
+    })
 }
 
 /// Each of `chosen` (path and label) that answers, for the combined sheet.
@@ -1042,16 +1124,93 @@ fn glance_set_items(
     chosen.iter().filter_map(glance).collect()
 }
 
-fn props_icon(icon: &SheetIcon, path: &Path, ctx: &mut Ctx) -> Option<Canvas> {
-    let name = match icon {
-        SheetIcon::Folder(own) => crate::icons::sheet_folder_icon(
-            own.as_deref().unwrap_or(filesheet::STANDARD_FOLDER_ICON),
-            &|n| ctx.icons.has(n),
-        ),
-        SheetIcon::Shortcut(name) => name.clone(),
-        SheetIcon::File(mime) => {
-            reprisefs::icons::pick_icon(mime.as_deref(), path, &|n| ctx.icons.has(n))
+/// The sheet's picture of `icon` at `path`: the first name the theme has that decodes, a blank
+/// stand-in noted in `waits` while one decodes off the loop.
+fn props_icon(
+    icon: &SheetIcon,
+    path: &Path,
+    waits: &mut IconWaits,
+    ctx: &mut Ctx,
+) -> Option<Canvas> {
+    let mut tried = Vec::new();
+    loop {
+        let has = |n: &str| ctx.icons.has_unread(n);
+        let name = match icon {
+            SheetIcon::Folder(own) => crate::icons::sheet_folder_icon(
+                own.as_deref().unwrap_or(filesheet::STANDARD_FOLDER_ICON),
+                &has,
+            ),
+            SheetIcon::Shortcut(name) => name.clone(),
+            SheetIcon::File(mime) => reprisefs::icons::pick_icon(mime.as_deref(), path, &has),
+        };
+        if tried.contains(&name) {
+            return None;
         }
+        match waits.get(&mut ctx.icons, &name, ICON_PX) {
+            Ok(None) => {
+                ctx.icons.refuse(&name);
+                tried.push(name);
+            }
+            Ok(icon) => return icon,
+            Err(blank) => return Some(blank),
+        }
+    }
+}
+
+/// Customize's picture and preview wear `icon`, fetched by `get` at each size.
+fn show_folder_icon(
+    sheet: &mut PropSheet,
+    icon: &str,
+    mut get: impl FnMut(&str, i32) -> Option<Canvas>,
+) {
+    for (id, px) in [
+        (filesheet::CUSTOM_ICON, ICON_PX),
+        (filesheet::CUSTOM_PREVIEW, filesheet::PREVIEW_PX),
+    ] {
+        let canvas = get(icon, px);
+        for page in &mut sheet.pages {
+            if let Some(it) = page.item_mut(id)
+                && let Control::Picture { canvas: c, .. } = &mut it.control
+            {
+                *c = canvas.clone();
+            }
+        }
+    }
+}
+
+/// [`show_folder_icon`] with `icon`, or the standard folder where the theme lacks it or it lands
+/// broken; stand-ins noted in `waits` while it decodes.
+fn wear_folder_icon(sheet: &mut PropSheet, icon: &str, waits: &mut IconWaits, ctx: &mut Ctx) {
+    let mut icon = crate::icons::sheet_folder_icon(icon, &|n| ctx.icons.has_unread(n));
+    if waits.get(&mut ctx.icons, &icon, ICON_PX) == Ok(None) {
+        ctx.icons.refuse(&icon);
+        icon = filesheet::STANDARD_FOLDER_ICON.to_string();
+    }
+    show_folder_icon(sheet, &icon, |n, px| waits.first(&mut ctx.icons, &[n], px));
+}
+
+/// Change Icon's list wears the icons its stand-ins waited on once they landed, and a name that
+/// landed broken leaves the list: true when it changed.
+pub(crate) fn land_change_icons(
+    form: &mut form::Form,
+    waits: &mut IconWaits,
+    icons: &mut IconCache,
+) -> bool {
+    if !waits.landed(icons) {
+        return false;
+    }
+    *waits = IconWaits::default();
+    let Some(list) = filesheet::change_icon_list_mut(form) else {
+        return false;
     };
-    ctx.icons.get(&name, ICON_PX)
+    let mut gone = Vec::new();
+    for (name, icon) in list.names.iter().zip(&mut list.icons) {
+        match waits.get(icons, name, ICON_PX) {
+            Ok(None) if icon.is_some() => gone.push(name.clone()),
+            Ok(art) => *icon = art,
+            Err(blank) => *icon = Some(blank),
+        }
+    }
+    filesheet::change_icon_drop(form, &gone);
+    true
 }

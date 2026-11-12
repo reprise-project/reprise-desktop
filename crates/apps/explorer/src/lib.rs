@@ -214,6 +214,9 @@ pub struct Explorer {
     /// What the task sections were built for, so a selection change that keeps
     /// them only rewrites Details instead of refetching every row's icon.
     pane_key: Option<pane::PaneKey>,
+    /// The icons the toolbar, address bar, status bar and task pane wear stand-ins for
+    /// ([`Explorer::rewear_chrome`]).
+    chrome_waits: repriseapp::iconjobs::IconWaits,
     pub status: StatusBar,
     pub settings: Settings,
     /// `settings` changed since the last write. A resize delivers a burst of
@@ -243,6 +246,8 @@ pub struct Explorer {
     pub dialog: Option<Dialog>,
     /// The Properties sheet, in its own modeless window: it and a box can be up at once.
     pub props: Option<Props>,
+    /// A sheet read and waiting for its icons to land before it goes up.
+    props_due: Option<(props_host::SheetRead, repriseapp::iconjobs::IconWaits)>,
     /// Space's preview of the selected item, in its own modeless window.
     pub(crate) preview: Option<preview::Preview>,
     /// The main window's client size at its last draw: the preview's arrows lay the view out by it.
@@ -491,6 +496,7 @@ impl Explorer {
             pane_cmds: Vec::new(),
             pane_tips: Vec::new(),
             pane_key: None,
+            chrome_waits: Default::default(),
             status: StatusBar {
                 panels: Vec::new(),
                 grip: true,
@@ -511,6 +517,7 @@ impl Explorer {
             send: sendreads::SendReads::default(),
             dialog: None,
             props: None,
+            props_due: None,
             preview: None,
             main_size: ctx.size,
             error_icon: None,
@@ -1136,7 +1143,7 @@ impl Explorer {
         self.tabs.set_label(place.title());
         self.resort();
 
-        let icon = ctx.icons.get(place.icon_name(), 16);
+        let icon = chrome::address_icon(&mut self.chrome_waits, &mut ctx.icons, &place);
         self.address.set_place(&place.address(), icon);
         self.tree_follow_with(&place, tree, ctx);
         self.refresh_chrome(ctx);

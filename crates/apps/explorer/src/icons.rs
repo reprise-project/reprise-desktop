@@ -2,19 +2,33 @@
 //! comes from `reprisefs::icons::item_icon`.
 
 use repriseapp::Ctx;
+use repriseapp::iconjobs::IconWaits;
+use reprisekit::icontheme::IconCache;
 use reprisekit::raster::Canvas;
 
 /// A chrome icon: the first of `names` the theme carries, else the
 /// magenta placeholder. Only the window's own buttons and links go
 /// through this; a file's icon falls back down its MIME chain instead.
 pub fn chrome_icon(ctx: &mut Ctx, names: &[&str], px: i32) -> Option<Canvas> {
-    for n in names {
-        if let Some(c) = ctx.icons.get(n, px) {
-            return Some(c);
-        }
-    }
+    (names.iter())
+        .find_map(|n| ctx.icons.get(n, px))
+        .or_else(|| placeholder(names, px, ctx.icons.scale()))
+}
+
+/// [`chrome_icon`] for the window's chrome, whose loop decodes no SVG: a blank stand-in noted in
+/// `waits` while a name decodes off it.
+pub fn chrome_icon_unread(
+    waits: &mut IconWaits,
+    icons: &mut IconCache,
+    names: &[&str],
+    px: i32,
+) -> Option<Canvas> {
+    (waits.first(icons, names, px)).or_else(|| placeholder(names, px, icons.scale()))
+}
+
+fn placeholder(names: &[&str], px: i32, scale: i32) -> Option<Canvas> {
     log::debug!("icon theme has none of {names:?} at {px} px: placeholder");
-    let s = ctx.icons.scale().max(1);
+    let s = scale.max(1);
     let device = (px * s) as u32;
     Some(
         reprisekit::classic::widgets::placeholder(px, px)

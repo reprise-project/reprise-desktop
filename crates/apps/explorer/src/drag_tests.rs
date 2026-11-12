@@ -844,8 +844,9 @@ fn the_drag_image_stacks_every_dragged_icon() {
     }
 }
 
-/// Drawn again at another scale the image is that scale's, its icons fetched at it rather than
-/// the listing's stretched, and the pointer holds the same point of it.
+/// Drawn again at another scale the image is that scale's and the pointer holds the same point
+/// of it. Its theme icons wear the listing's resampled until they decode at that scale off the
+/// loop; the image is asked for again then.
 #[test]
 fn the_drag_image_draws_again_at_another_scale() {
     const SMALL: u32 = 0xffc0_2020;
@@ -873,6 +874,8 @@ fn the_drag_image_draws_again_at_another_scale() {
     let c = cell(&ex, &ctx, index_of(&ex, "Box"));
     let at = centre(&ex, &ctx, index_of(&ex, "Box"));
     press(&mut ex, &mut ctx, at, BTN_LEFT);
+    let started = motion(&mut ex, &mut ctx, (at.0 + THRESHOLD + 1, at.1));
+    assert!(started.start_drag.is_some(), "the drag started");
     let (one, grab) = ex.drag_image(&mut ctx, 1).expect("an image");
     let (two, grab2) = ex.drag_image(&mut ctx, 2).expect("an image at scale 2");
 
@@ -892,7 +895,23 @@ fn the_drag_image_draws_again_at_another_scale() {
     let (r, b) = rgb(&one, 1);
     assert!(r > b, "scale 1 wears the 32 px folder");
     let (r, b) = rgb(&two, 2);
+    assert!(
+        r > b,
+        "until it lands scale 2 wears the 32 px folder resampled"
+    );
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !ex.wake(&mut ctx).redraw_drag {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the decode asks for the image again"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let (two, _) = ex.drag_image(&mut ctx, 2).expect("an image at scale 2");
+    let (r, b) = rgb(&two, 2);
     assert!(b > r, "scale 2 wears the 64 px folder");
+    assert_eq!(ctx.icons.scale(), 1, "the window's cache keeps its scale");
 }
 
 /// A folder's own icon file is decoded at an output's scale once the drag reaches it: the

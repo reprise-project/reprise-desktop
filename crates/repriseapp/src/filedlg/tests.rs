@@ -971,6 +971,40 @@ fn cold_svg_icons_land_on_the_dialog_and_a_broken_own_icon_gives_way() {
     assert!(!h.icons.waiting);
 }
 
+/// The box over the dialog wears a blank stand-in while its cold SVG icon decodes, then the icon.
+/// An icon that decodes at no size leaves the box without one.
+#[test]
+fn a_box_icon_lands_off_the_loop_and_a_broken_one_leaves_none() {
+    let t = tempfile::tempdir().unwrap();
+    let mut icons = svg_icons(t.path(), &[("user-trash-full", TEXT)]);
+    let broken = t
+        .path()
+        .join("svgicons/svg/scalable/places/dialog-error.svg");
+    std::fs::write(broken, "<svg").unwrap();
+    let mut h = host_in(t.path());
+    let mid = |h: &Host| {
+        let icon = h.asking().and_then(|m| m.fields.icon.as_ref());
+        icon.map(|c| c.get(16, 16))
+    };
+    for (icon, want) in [("user-trash-full", Some(TEXT)), ("dialog-error", None)] {
+        h.ask = Some(Ask {
+            icon,
+            ..error_box("Title", "Text".into())
+        });
+        assert!(h.prime_box(&mut icons));
+        assert_eq!(mid(&h), Some(0), "{icon}: a blank stand-in");
+        assert!(!h.prime_box(&mut icons) && !h.box_landed(&mut icons));
+        assert!(crate::iconjobs::decode_now(&mut icons));
+        assert!(
+            h.box_landed(&mut icons),
+            "{icon}: the landing asks for the box"
+        );
+        assert!(h.prime_box(&mut icons));
+        assert_eq!(mid(&h), want, "{icon}");
+        assert!(!h.box_landed(&mut icons));
+    }
+}
+
 /// A new icon theme gives the listed entries its icons without listing the folder again,
 /// each named anew: a folder whose own icon the old theme lacked wears it now.
 #[test]

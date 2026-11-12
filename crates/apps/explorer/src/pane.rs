@@ -248,7 +248,12 @@ impl Explorer {
                 .rows
                 .iter()
                 .map(|r| Row {
-                    icon: crate::chrome_icon(ctx, &r.icons, 16),
+                    icon: crate::icons::chrome_icon_unread(
+                        &mut self.chrome_waits,
+                        &mut ctx.icons,
+                        &r.icons,
+                        16,
+                    ),
                     text: r.text.clone(),
                     enabled: r.enabled,
                 })
