@@ -25,7 +25,7 @@ use super::motion::{aim_open, arm_tick, follow_slot, pose_balloon};
 use super::pointer::{rehold, rehover};
 use super::stack::chip_count;
 use super::warm::warm_openings;
-use super::{AGE_TICK, Balloon, Bead, Chip, NotifyView, cap, overlay_tree, replying};
+use super::{AGE_TICK, Balloon, Bead, Chip, INFO_ICONS, NotifyView, cap, overlay_tree, replying};
 
 /// A sheet's app line time: "now", then minutes, then hours.
 pub(super) fn relative(d: Duration) -> String {
@@ -65,9 +65,6 @@ pub(super) fn paint(state: &mut State) {
     paint_stack(state);
     state.note_icon_waits(waits, crate::icon::IconWaiter::Notify);
 }
-
-/// What a balloon without an icon of its own shows.
-const INFO_ICON: &str = "dialog-information";
 
 /// The theme icons a balloon showed a stand-in for landed: every balloon is drawn again.
 pub(crate) fn icons_landed(state: &mut State) {
@@ -219,11 +216,23 @@ pub(super) fn sheet_icons(
     let app_px = lay.badge.map_or(slot, |r| r.width);
     let app = crate::tray::closest(b.item.app_icon(), app_px).or_else(|| {
         slot_needs_icon(lay, picture.is_some())
-            .then(|| crate::icon::unread(icons, INFO_ICON, slot))
+            .then(|| info_icon(icons, slot))
             .flatten()
-            .map(std::sync::Arc::unwrap_or_clone)
     });
     (app, picture)
+}
+
+/// The icon a balloon shows at `px`: its own, else the first of [`INFO_ICONS`] that draws.
+pub(super) fn balloon_icon(
+    icons: &mut crate::icontheme::IconCache,
+    b: &Balloon,
+    px: i32,
+) -> Option<Canvas> {
+    crate::tray::closest(b.item.icon(), px).or_else(|| info_icon(icons, px))
+}
+
+fn info_icon(icons: &mut crate::icontheme::IconCache, px: i32) -> Option<Canvas> {
+    crate::icon::unread_first(icons, INFO_ICONS, px).map(std::sync::Arc::unwrap_or_clone)
 }
 
 /// Draws balloon `i` as `drawn` at `at`, logical, a Droplet part way open `t` of the way between
@@ -266,11 +275,7 @@ fn paint_one(
     let (mut canvas, pane) = match &drawn {
         Drawn::Balloon(lay) => {
             let canvas = fresh.then(|| {
-                let icon_px = theme.icon_size();
-                let icon = crate::tray::closest(b.item.icon(), icon_px).or_else(|| {
-                    crate::icon::unread(&mut state.icons, INFO_ICON, icon_px)
-                        .map(std::sync::Arc::unwrap_or_clone)
-                });
+                let icon = balloon_icon(&mut state.icons, b, theme.icon_size());
                 let actions = b.item.button_icon_canvases(BUTTON_ICON * scale);
                 draw_notify_balloon(
                     &theme,

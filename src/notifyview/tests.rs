@@ -3,7 +3,7 @@ use super::layout::{droplet_ends, lay_out, lay_out_open, sheet_glass};
 use super::motion::{
     Band, aim_stack, band, follow_slot, keeps_ticking, open_target, restack, still,
 };
-use super::paint::{frame_outputs, relative, slot_needs_icon};
+use super::paint::{balloon_icon, frame_outputs, paint, relative, sheet_icons, slot_needs_icon};
 use super::pointer::{hold_at, icon_tip, point_at, press_target, rest_point};
 use super::reply::take_draft;
 use super::stack::{
@@ -1732,4 +1732,121 @@ fn the_minute_timer_runs_only_while_quiet_hours_are_set() {
     h.state.config.notifications.quiet_hours = None;
     config_changed(&mut h.state);
     assert!(h.state.notify.minute_timer.is_none());
+}
+
+/// One output with `config`, theme icons from `root`, icon decodes on threads, and a note with
+/// no icon of its own shown.
+fn shown_with_icons(config: &str, root: &std::path::Path) -> crate::harness::Harness {
+    use reprisekit::icontheme::{IconCache, IconTheme};
+    let config = crate::config::Config::parse(config).unwrap();
+    let mut h = crate::harness::Harness::with_config(config);
+    crate::fsjobs::setup(&mut h.state);
+    h.output("TEST-1", 1024, 768);
+    h.state.icons = IconCache::new(IconTheme::load("test", &[root.to_path_buf()]));
+    show(&mut h.state, note(1, "Mail"));
+    h
+}
+
+const GLASS_STILL: &str = "[appearance]\ninterface = \"glass\"\n[effects]\nreduce_motion = true\n";
+
+/// The icon the first balloon shows in its slot as drawn, and whether looking it up waited.
+fn shown_icon(h: &mut crate::harness::Harness) -> (Option<Canvas>, bool) {
+    let waits = h.state.icons.waits();
+    let b = &h.state.notify.stack[0];
+    let icon = match b.drawn.as_ref().expect("the balloon is drawn") {
+        Drawn::Sheet(lay) => sheet_icons(&mut h.state.icons, b, lay).0,
+        Drawn::Balloon(_) => {
+            let px = h.state.config.theme.scaled(b.scale).icon_size();
+            balloon_icon(&mut h.state.icons, b, px)
+        }
+    };
+    (icon, h.state.icons.waits() != waits)
+}
+
+#[test]
+fn a_cold_information_icon_lands_on_an_open_sheet() {
+    let root = crate::icon::svg_theme(&["dialog-information"], &[]);
+    let mut h = shown_with_icons(GLASS_STILL, &root);
+    assert!(matches!(
+        h.state.notify.stack[0].drawn,
+        Some(Drawn::Sheet(_))
+    ));
+    let (blank, waited) = shown_icon(&mut h);
+    assert!(waited, "the icon is cold");
+    assert!(blank.is_some_and(|c| c.pixels.iter().all(|&p| p == 0)));
+    crate::backend::take_asks();
+    crate::icon::land(&mut h);
+    let asked = crate::backend::take_asks();
+    assert!(
+        !asked.is_empty() && asked.iter().all(|(o, _)| o == "TEST-1"),
+        "the landing draws the sheet again: {asked:?}"
+    );
+    let (icon, waited) = shown_icon(&mut h);
+    assert!(!waited, "the sheet's icon is in");
+    assert!(icon.is_some_and(|c| crate::icon::red(&c)));
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn a_toast_whose_information_icon_never_decodes_shows_help_about() {
+    for config in ["", GLASS_STILL] {
+        let root = crate::icon::svg_theme(&["help-about"], &["dialog-information"]);
+        let mut h = shown_with_icons(config, &root);
+        crate::icon::land(&mut h);
+        let (icon, waited) = shown_icon(&mut h);
+        assert!(!waited, "{config:?}: nothing left to wait on");
+        assert!(
+            icon.is_some_and(|c| crate::icon::red(&c)),
+            "{config:?}: help-about shows"
+        );
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+}
+
+#[test]
+fn a_droplets_warm_up_that_alone_asks_a_cold_icon_warms_again_once_it_lands() {
+    use reprisekit::icontheme::IconTheme;
+    let config = format!("{GLASS_STILL}[glass]\nnotification_style = \"droplet\"\n");
+    let root = crate::icon::svg_theme(&["dialog-information"], &[]);
+    let mut h = shown_with_icons(&config, &root);
+    crate::icon::land(&mut h);
+    h.dispatch();
+    assert!(!shown_icon(&mut h).1, "the shut droplet has its icon");
+    // A theme read again drops its icons and leaves the drawn sheets as they are.
+    h.state
+        .icons
+        .set_theme(IconTheme::load("test", std::slice::from_ref(&root)));
+    let waits = h.state.icons.waits();
+    paint(&mut h.state);
+    assert_eq!(h.state.icons.waits(), waits, "the paint draws nothing new");
+    h.dispatch();
+    assert_ne!(h.state.icons.waits(), waits, "the warm-up asked the icon");
+    let asked = h.state.notify.stack[0].warm_gen;
+    crate::icon::land(&mut h);
+    h.dispatch();
+    assert!(
+        h.state.notify.stack[0].warm_gen > asked,
+        "the landing warms the opening again"
+    );
+    let b = &h.state.notify.stack[0];
+    let theme = h.state.config.theme.scaled(b.scale);
+    let ends = droplet_ends(
+        &theme,
+        h.state.text.for_output(b.scale),
+        &b.item,
+        false,
+        Edge::Bottom,
+        SheetShape::Droplet,
+        &relative(b.shown_at.elapsed()),
+    );
+    let [_, open] = ends.expect("droplet ends");
+    let waits = h.state.icons.waits();
+    let (icon, _) = sheet_icons(&mut h.state.icons, b, &open);
+    assert_eq!(
+        h.state.icons.waits(),
+        waits,
+        "the open droplet's icon is in"
+    );
+    assert!(icon.is_some_and(|c| crate::icon::red(&c)));
+    std::fs::remove_dir_all(&root).unwrap();
 }
