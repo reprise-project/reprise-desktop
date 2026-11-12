@@ -13,6 +13,7 @@ use reprisekit::textedit::TextEdit;
 use reprisekit::theme::Theme;
 use zeroize::Zeroizing;
 
+use crate::iconjobs::IconWaits;
 use crate::keys::form_input;
 use crate::{Ctx, Event};
 
@@ -51,6 +52,8 @@ pub struct Unlock {
     name: String,
     pub form: Form,
     busy: bool,
+    /// The drive icon, while it decodes off the loop ([`Unlock::land_icon`]).
+    waits: IconWaits,
 }
 
 pub fn message(name: &str) -> String {
@@ -63,10 +66,11 @@ fn wrapped(name: &str, text: &TextRenderer, forms: &Theme) -> Vec<String> {
     reprisekit::text::wrap(text, &message(name), width, forms.fonts.size_px)
 }
 
-/// The drive icon, grown with the text size as the box is.
-fn icon(ctx: &mut Ctx) -> Option<Canvas> {
+/// The drive icon, grown with the text size as the box is; a blank stand-in noted in `waits`
+/// while it decodes.
+fn icon(ctx: &mut Ctx, waits: &mut IconWaits) -> Option<Canvas> {
     let px = ctx.forms().text.len(ICON.width);
-    ctx.icons.get(ICON_NAME, px)
+    waits.first(&mut ctx.icons, &[ICON_NAME], px)
 }
 
 /// The status line for a failed unlock with UDisks2 `message`.
@@ -83,7 +87,31 @@ impl Unlock {
     /// The box for container `volume`, named `name` in its message.
     pub fn open(volume: String, name: &str, ctx: &mut Ctx) -> Unlock {
         let lines = wrapped(name, &ctx.text, &ctx.forms());
-        Unlock::new(volume, name, &lines, icon(ctx))
+        let mut waits = IconWaits::default();
+        let icon = icon(ctx, &mut waits);
+        let mut u = Unlock::new(volume, name, &lines, icon);
+        u.waits = waits;
+        u
+    }
+
+    /// The drive icon landed: the box wears it, or none where it decodes at no size. True when
+    /// it changed.
+    pub fn land_icon(&mut self, ctx: &mut Ctx) -> bool {
+        if !self.waits.landed(&mut ctx.icons) {
+            return false;
+        }
+        self.wear_icon(ctx);
+        true
+    }
+
+    fn wear_icon(&mut self, ctx: &mut Ctx) {
+        self.waits = IconWaits::default();
+        let worn = icon(ctx, &mut self.waits);
+        if let Some(it) = self.form.item_mut("icon")
+            && let Control::Picture { canvas, .. } = &mut it.control
+        {
+            *canvas = worn;
+        }
     }
 
     pub fn new(volume: String, name: &str, lines: &[String], icon: Option<Canvas>) -> Unlock {
@@ -136,6 +164,7 @@ impl Unlock {
             name: name.into(),
             form,
             busy: false,
+            waits: IconWaits::default(),
         }
     }
 
@@ -169,9 +198,7 @@ impl Unlock {
             Event::Resized => {
                 let lines = wrapped(&self.name, &ctx.text, &ctx.forms());
                 self.form.set_lines("message", &lines);
-                if let Some(icon) = icon(ctx) {
-                    self.form.set_picture("icon", icon);
-                }
+                self.wear_icon(ctx);
                 Outcome::Redraw
             }
             Event::Pasted(text) => {
@@ -285,7 +312,6 @@ mod tests {
 
     /// A context at `text_size` whose icon theme has the drive icon at 32 and 64 px.
     fn ctx_with_drive_icon(themes: &std::path::Path, text_size: u32) -> Ctx {
-        use reprisekit::icontheme::{IconCache, IconTheme};
         let theme = themes.join("flat");
         let mut index =
             "[Icon Theme]\nName=Flat\nDirectories=32x32/devices,64x64/devices\n".to_string();
@@ -299,11 +325,17 @@ mod tests {
             std::fs::write(theme.join(&dir).join(format!("{ICON_NAME}.png")), png).expect("png");
         }
         std::fs::write(theme.join("index.theme"), index).expect("index");
+        ctx_on(themes, "flat", text_size)
+    }
+
+    /// A context at `text_size` on icon theme `name` in `themes`.
+    fn ctx_on(themes: &std::path::Path, name: &str, text_size: u32) -> Ctx {
+        use reprisekit::icontheme::{IconCache, IconTheme};
         let fonts = Theme::default().fonts;
         Ctx {
             theme: Theme::default(),
             text: std::rc::Rc::new(TextRenderer::load(&fonts)),
-            icons: IconCache::new(IconTheme::load("flat", &[themes.to_path_buf()])),
+            icons: IconCache::new(IconTheme::load(name, &[themes.to_path_buf()])),
             caret_on: true,
             size: CLIENT,
             maximized: false,
@@ -343,6 +375,48 @@ mod tests {
             Some((64, 64)),
             "64 px when opened at 200%"
         );
+    }
+
+    /// A context whose icon theme's drive icon is the scalable `svg`.
+    fn ctx_with_svg_drive(themes: &std::path::Path, svg: &str) -> Ctx {
+        let dir = themes.join("svg/scalable/devices");
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let index = "[Icon Theme]\nName=svg\nDirectories=scalable/devices\n\n[scalable/devices]\nSize=48\nMinSize=8\nMaxSize=512\nType=Scalable\n";
+        std::fs::write(themes.join("svg/index.theme"), index).expect("index");
+        std::fs::write(dir.join(format!("{ICON_NAME}.svg")), svg).expect("svg");
+        ctx_on(themes, "svg", 100)
+    }
+
+    fn icon_mid(d: &Unlock) -> Option<u32> {
+        match d.form.item("icon").map(|i| &i.control) {
+            Some(Control::Picture {
+                canvas: Some(c), ..
+            }) => Some(c.get(c.width as i32 / 2, c.height as i32 / 2)),
+            _ => None,
+        }
+    }
+
+    /// A cold SVG drive icon wears a blank stand-in, then the icon once it lands off the loop; one
+    /// that decodes at no size leaves the box without an icon.
+    #[test]
+    fn a_cold_drive_icon_lands_and_a_broken_one_leaves_none() {
+        let themes = tempfile::tempdir().expect("tempdir");
+        let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"48\" height=\"48\"><rect width=\"48\" height=\"48\" fill=\"#2040c0\"/></svg>";
+        let mut ctx = ctx_with_svg_drive(themes.path(), svg);
+        let mut d = Unlock::open("sdc".into(), "VAULT", &mut ctx);
+        assert_eq!(icon_mid(&d), Some(0), "a blank stand-in");
+        assert!(!d.land_icon(&mut ctx), "nothing landed before a decode");
+        crate::iconjobs::decode_now(&mut ctx.icons);
+        assert!(d.land_icon(&mut ctx));
+        assert_eq!(icon_mid(&d), Some(0xff20_40c0));
+
+        let broken = tempfile::tempdir().expect("tempdir");
+        let mut ctx = ctx_with_svg_drive(broken.path(), "<svg");
+        let mut d = Unlock::open("sdc".into(), "VAULT", &mut ctx);
+        assert_eq!(icon_mid(&d), Some(0), "a blank stand-in");
+        crate::iconjobs::decode_now(&mut ctx.icons);
+        assert!(d.land_icon(&mut ctx));
+        assert_eq!(icon_mid(&d), None, "no icon");
     }
 
     #[test]

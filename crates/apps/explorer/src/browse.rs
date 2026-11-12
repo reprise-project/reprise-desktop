@@ -526,10 +526,7 @@ impl Explorer {
             Renamed::Kept => return true,
             Renamed::Refused(text) => {
                 log::warn!("explorer: naming {} failed: {text}", from.display());
-                if self.error_icon.is_none() {
-                    self.error_icon =
-                        crate::chrome_icon(ctx, &["dialog-error", "dialog-warning"], 32);
-                }
+                self.wear_error_icon(ctx);
                 b.refused = Some(Refused {
                     path,
                     name: old,
@@ -746,7 +743,7 @@ impl Explorer {
         let r = b.refused.as_ref()?;
         Some(msgbox::Fields {
             text: r.text.clone(),
-            icon: self.error_icon.clone(),
+            icon: self.error_icon(),
             buttons: vec!["OK".to_string()],
             default: 0,
             min_text_h: None,

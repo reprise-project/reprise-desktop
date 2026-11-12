@@ -4,7 +4,6 @@
 //! `Event::Wake` drains the arrivals ([`Explorer::wake`]); `Event::Tick`,
 //! requested while a hover waits, shows the tip ([`Explorer::tip_tick`]).
 
-use crate::dialogs::Dialog;
 use crate::foldertree;
 use crate::place::Place;
 use crate::window;
@@ -123,9 +122,9 @@ impl Explorer {
     }
 
     /// Theme icons decoded off the loop landed in `ctx.icons`: the list, the Folders pane, the
-    /// chrome and the picker's tree or Change Icon's list swap their stand-ins. Gives whether the
-    /// window and the dialog changed, and whether a listed name decodes at no size, for a listing
-    /// read again to pick the next.
+    /// chrome, the menu, the dialog, the sheet's picks and the preview swap their stand-ins. Gives
+    /// whether the window and the other windows changed, and whether a listed name decodes at no
+    /// size, for a listing read again to pick the next.
     fn land_icons(&mut self, ctx: &mut Ctx) -> (bool, bool, bool) {
         let (listed, broken) = self.list_icons.landed(&mut ctx.icons, &mut self.sv.entries);
         let tree = foldertree::land_icons(&mut self.tree, &mut self.tree_places, &mut ctx.icons);
@@ -133,16 +132,18 @@ impl Explorer {
         if chrome {
             self.rewear_chrome(ctx);
         }
-        let dialog = match &mut self.dialog {
-            Some(Dialog::Browse(b)) => {
-                foldertree::land_icons(&mut b.bf.tree, &mut b.places, &mut ctx.icons)
+        let menu = match self.popup.take() {
+            Some(mut p) => {
+                let landed = p.land_icons(&mut ctx.icons, |cmd| self.row_icon(cmd));
+                self.popup = Some(p);
+                landed
             }
-            Some(Dialog::ChangeIcon { form, waits, .. }) => {
-                crate::props_host::land_change_icons(form, waits, &mut ctx.icons)
-            }
-            _ => false,
+            None => false,
         };
-        (listed || tree || chrome, dialog, broken)
+        let dialog = self.dialog.as_mut().is_some_and(|d| d.land_icons(ctx));
+        let error = (self.error_icon.as_mut()).is_some_and(|s| s.land(&mut ctx.icons));
+        let others = dialog | error | self.land_sheet_icons(ctx) | self.land_preview_icon(ctx);
+        (listed || tree || chrome || menu, others, broken)
     }
 
     /// `Event::Wake`: a put, job, tip walk, late listing or search, drive scan, clash check or Folders node read finished, thumbnails arrived, or
@@ -593,8 +594,9 @@ fn read_head(path: &std::path::Path) -> Option<Vec<u8>> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+    use crate::dialogs::Dialog;
     use crate::place::Place;
     use crate::tests::test_ctx;
     use repriseapp::KeyInput;
@@ -1214,7 +1216,7 @@ mod tests {
     }
 
     /// A theme in `root` of flat-colour SVGs `drawn`, and of `broken` SVGs that never decode.
-    fn svg_theme(
+    pub(crate) fn svg_theme(
         root: &Path,
         drawn: &[(&str, u32)],
         broken: &[&str],
@@ -1238,13 +1240,13 @@ mod tests {
     }
 
     /// The middle pixel of `icon`.
-    fn mid(icon: &Option<Canvas>) -> Option<u32> {
+    pub(crate) fn mid(icon: &Option<Canvas>) -> Option<u32> {
         icon.as_ref()
             .map(|c| c.get(c.width as i32 / 2, c.height as i32 / 2))
     }
 
     /// Decodes what `ctx.icons` wanted and wakes `ex`, until `done` holds.
-    fn land_until(ex: &mut Explorer, ctx: &mut Ctx, done: impl Fn(&Explorer) -> bool) {
+    pub(crate) fn land_until(ex: &mut Explorer, ctx: &mut Ctx, done: impl Fn(&Explorer) -> bool) {
         for _ in 0..500 {
             if done(ex) {
                 return;

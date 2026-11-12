@@ -179,7 +179,7 @@ fn about_opens_the_shared_box_with_the_explorer_name() {
     assert_eq!(about.size, reprisekit::controls::aboutbox::CLIENT);
     assert!(about.fixed && about.modal);
 
-    let Some(Dialog::About(form)) = ex.dialog.as_ref() else {
+    let Some(Dialog::About(form, _)) = ex.dialog.as_ref() else {
         panic!("the About box is what is up");
     };
     let product = form.item("product").expect("the product row");

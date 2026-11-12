@@ -38,7 +38,6 @@ mod volumes;
 mod window;
 
 use dialogs::{DIALOG, Dialog, PROGRAM_BROWSE};
-use icons::chrome_icon;
 use menus::MenuState;
 use place::{Listed, Place, list, sort_order_grouped};
 use props_dialog::{PROPS, Props};
@@ -252,7 +251,8 @@ pub struct Explorer {
     pub(crate) preview: Option<preview::Preview>,
     /// The main window's client size at its last draw: the preview's arrows lay the view out by it.
     main_size: (i32, i32),
-    error_icon: Option<Canvas>,
+    /// The message boxes' icon, worn once it lands.
+    error_icon: Option<icons::IconSlot>,
     /// `children(&self)` has no `Ctx` to borrow a renderer from.
     dialog_text: Rc<TextRenderer>,
     /// The dialog font's px at 100%; the folder picker and the Open With chooser stay at it.

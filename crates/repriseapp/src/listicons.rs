@@ -124,7 +124,7 @@ pub struct ListIcons {
     icons: ListingIcons,
     scale: i32,
     files: Option<Receiver<Art>>,
-    /// Icon files (and theme names) [`ListIcons::fetch`] found missing at a scale, waiting for
+    /// Icon files (and theme names) [`ListIcons::fetch_held`] found missing at a scale, waiting for
     /// [`ListIcons::decode_misses`].
     misses: Vec<String>,
     /// The scale, theme and decoded art of the last [`ListIcons::decode_misses`].
@@ -141,36 +141,17 @@ impl ListIcons {
         };
     }
 
-    /// `worn`, an icon an entry wears at `px`, from `cache` at the cache's scale: a theme icon
-    /// fetched, an icon file only as the cache already holds it. None when the listing does not
-    /// know `worn` or the cache has no such file; a file never put at this scale is kept for
+    /// The theme name or icon file `worn`, an icon an entry wears, was fetched for.
+    pub fn name_of(&self, worn: &Rc<Canvas>) -> Option<&str> {
+        self.icons.name_of(worn)
+    }
+
+    /// `worn`, an icon an entry wears, at `px` for a drag image, drawn at a scale `cache` was set
+    /// to for the while: only as the cache holds it at that scale. None when the listing does not
+    /// know `worn` or the cache lacks it; a name never put at this scale is kept for
     /// [`ListIcons::decode_misses`].
-    pub fn fetch(&mut self, worn: &Rc<Canvas>, px: i32, cache: &mut IconCache) -> Option<Canvas> {
-        self.fetch_with(worn, px, cache, true)
-    }
-
-    /// [`ListIcons::fetch`] for a drag image, drawn at a scale `cache` was set to for the while:
-    /// a theme icon not held at it is kept for [`ListIcons::decode_misses`] too, never loaded here.
-    pub fn fetch_held(
-        &mut self,
-        worn: &Rc<Canvas>,
-        px: i32,
-        cache: &mut IconCache,
-    ) -> Option<Canvas> {
-        self.fetch_with(worn, px, cache, false)
-    }
-
-    fn fetch_with(
-        &mut self,
-        worn: &Rc<Canvas>,
-        px: i32,
-        cache: &mut IconCache,
-        load: bool,
-    ) -> Option<Canvas> {
+    pub fn fetch_held(&mut self, worn: &Rc<Canvas>, px: i32, cache: &IconCache) -> Option<Canvas> {
         let name = self.icons.name_of(worn)?;
-        if load && !name.starts_with('/') {
-            return cache.get(name, px);
-        }
         match cache.held(name, px) {
             Some(put) => put.map(std::sync::Arc::unwrap_or_clone),
             None => {
@@ -182,7 +163,7 @@ impl ListIcons {
         }
     }
 
-    /// Decodes the icon files and theme names (from `theme`) `fetch` missed at `scale` on a
+    /// Decodes the icon files and theme names (from `theme`) `fetch_held` missed at `scale` on a
     /// thread that fires `wake` ([`ListIcons::take_misses`]), in place of a decode still running.
     pub fn decode_misses(&mut self, scale: i32, theme: Arc<IconTheme>, wake: &Waker) {
         let files = std::mem::take(&mut self.misses);

@@ -19,7 +19,11 @@ fn open_with_runs_the_program_as_its_entry_on_the_entry_the_menu_was_built_for()
         .position(|it| it.name == "b.txt")
         .expect("b.txt is listed");
     ex.sv.selection.set = (0..ex.items.len()).collect();
-    assert_eq!(ex.build_open_with(b, &mut ctx).len(), 1);
+    assert_eq!(
+        ex.build_open_with(b, &mut Default::default(), &mut ctx)
+            .len(),
+        1
+    );
 
     let reply = ex.run(Command::OpenWith(0), &mut ctx);
     let argv = reply.spawn.first().expect("the program runs");

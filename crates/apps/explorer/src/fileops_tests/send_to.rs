@@ -88,7 +88,7 @@ fn send_drive(t: &Path) -> (reprisefs::sendto::Drives, PathBuf) {
 }
 
 fn send_row(ex: &mut Explorer, ctx: &mut Ctx) -> (usize, bool) {
-    let rows = ex.build_send_to(ctx);
+    let rows = ex.build_send_to(&mut Default::default(), ctx);
     let i = rows
         .iter()
         .position(|(l, ..)| l == "STICK")

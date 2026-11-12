@@ -2,6 +2,7 @@
 //!
 //! One child at a time: raising a second replaces the first. Two stack instead: the chooser's Browse... opens the program picker (`PROGRAM_BROWSE`) over it, and a refused name in the Move/Copy picker raises its error box (`browse::ERROR`). The error and confirm boxes keep only their text and focused button, so their [`Form`] is rebuilt per event; the chooser keeps an `openwith` control that takes its own events ([`crate::openwith`]).
 
+use crate::icons::{IconSlot, land_picture};
 use crate::place;
 use crate::props_dialog::{ADV_CANCEL, ADV_OK, ATTR_CANCEL, ATTR_OK, ATTR_SIZE, AttrConfirm};
 use crate::{BTN_LEFT, Explorer};
@@ -32,7 +33,7 @@ pub struct Confirm {
     pub text: String,
     pub min_text_h: Option<i32>,
     pub template: Template,
-    pub icon: Option<Canvas>,
+    pub icon: IconSlot,
     pub paths: Vec<PathBuf>,
     pub erase: bool,
     /// The Recycle Bin's Empty task raised it: Yes empties the trash
@@ -63,6 +64,11 @@ pub struct Confirm {
 
 /// The buttons of the box a failed item raises, in [`Explorer::ask_failed`]'s order.
 pub(crate) const FAILED_BUTTONS: [&str; 3] = ["&Skip", "&Retry", "Cancel"];
+
+/// The icon of the error boxes, and of the questions before running or mounting a file.
+pub(crate) const ERROR_ICON: &[&str] = &["dialog-error", "dialog-warning"];
+pub(crate) const QUESTION_ICON: &[&str] = &["dialog-warning", "dialog-question"];
+pub(crate) const TRASH_ICON: &[&str] = &["user-trash-full"];
 
 impl Confirm {
     pub(crate) fn buttons(&self) -> Vec<String> {
@@ -147,8 +153,19 @@ pub struct ChooseProgram {
     pub set_default: bool,
     pub icon: Option<Canvas>,
     pub row_icons: Vec<Option<Canvas>>,
+    /// The icons `icon` and `row_icons` wear stand-ins for ([`ChooseProgram::wear_icons`]).
+    pub waits: repriseapp::iconjobs::IconWaits,
     pub input: repriseapp::openwith::ChooserInput,
     pub browse: Option<ProgramBrowse>,
+}
+
+impl ChooseProgram {
+    /// The chooser's icon and its rows' icons, stand-ins while they decode off the loop.
+    pub fn wear_icons(&mut self, icons: &mut reprisekit::icontheme::IconCache) {
+        self.waits = Default::default();
+        self.row_icons = crate::openwith::chooser_row_icons(&self.ow, icons, &mut self.waits);
+        self.icon = self.waits.first(icons, &[openwith::ICON], 32);
+    }
 }
 
 /// The Open With chooser's Browse... picker: a file dialog whose Open
@@ -160,6 +177,8 @@ pub struct ProgramBrowse {
 
 pub struct ReplaceAsk {
     pub fields: replacebox::Fields,
+    /// The folder's icon and the two files' (of a file's prompt), worn into `fields` as they land.
+    pub icons: (IconSlot, Option<[IconSlot; 2]>),
     pub asker: reprisefs::replace::Asker,
     pub pending: crate::fileops::PendingPut,
     pub focus: Option<&'static str>,
@@ -183,6 +202,7 @@ pub enum Dialog {
         form: Form,
         subject: reprisekit::controls::filesheet::Subject,
         live: bool,
+        icon: IconSlot,
     },
     /// Change Icon, behind Customize's Change Icon...: OK hands the
     /// picked icon to the sheet; `name` is the folder's, for the title.
@@ -192,7 +212,7 @@ pub enum Dialog {
         /// The list's icons still decoding ([`crate::props_host::land_change_icons`]).
         waits: repriseapp::iconjobs::IconWaits,
     },
-    About(Form),
+    About(Form, IconSlot),
     Browse(crate::browse::Browse),
     /// Unlock Drive, over a locked drive opened from Computer.
     Unlock(Box<Unlock>),
@@ -218,12 +238,55 @@ impl Dialog {
                 "Change Icon".to_string()
             }
             Dialog::ChangeIcon { name, .. } => format!("Change Icon for {name} Folder"),
-            Dialog::About(_) => "About Explorer".to_string(),
+            Dialog::About(..) => "About Explorer".to_string(),
             Dialog::Browse(b) if b.mv => "Move Items".to_string(),
             Dialog::Browse(_) => "Copy Items".to_string(),
             Dialog::Unlock(_) => unlock::TITLE.to_string(),
             Dialog::BatchRename(_) => "Rename".to_string(),
         }
+    }
+
+    /// Theme icons decoded off the loop landed: the dialog wears those it waited on. True when
+    /// it changed.
+    pub(crate) fn land_icons(&mut self, ctx: &mut Ctx) -> bool {
+        let icons = &mut ctx.icons;
+        match self {
+            Dialog::Confirm(c) => c.icon.land(icons),
+            Dialog::Replace(r) => r.land_icons(icons),
+            Dialog::ChooseProgram(cp) => {
+                let landed = cp.waits.landed(icons);
+                if landed {
+                    cp.wear_icons(icons);
+                }
+                landed
+            }
+            Dialog::Advanced { form, icon, .. } | Dialog::About(form, icon) => {
+                land_picture(form, "icon", icon, icons)
+            }
+            Dialog::ChangeIcon { form, waits, .. } => {
+                crate::props_host::land_change_icons(form, waits, icons)
+            }
+            Dialog::Browse(b) => {
+                crate::foldertree::land_icons(&mut b.bf.tree, &mut b.places, icons)
+            }
+            Dialog::Unlock(u) => u.land_icon(ctx),
+            Dialog::Message { .. } | Dialog::AttrConfirm(_) | Dialog::BatchRename(_) => false,
+        }
+    }
+}
+
+impl ReplaceAsk {
+    fn land_icons(&mut self, icons: &mut reprisekit::icontheme::IconCache) -> bool {
+        let (folder, sides) = &mut self.icons;
+        let mut landed = folder.land(icons);
+        self.fields.icon = folder.icon();
+        if let (Some([a, b]), replacebox::Subject::File { existing, incoming }) =
+            (sides, &mut self.fields.subject)
+        {
+            landed |= a.land(icons) | b.land(icons);
+            (existing.icon, incoming.icon) = (a.icon(), b.icon());
+        }
+        landed
     }
 }
 
@@ -253,14 +316,23 @@ impl Explorer {
             self.messages_waiting.push_back((title.to_string(), text));
             return Reply::none();
         }
-        if self.error_icon.is_none() {
-            self.error_icon = crate::chrome_icon(ctx, &["dialog-error", "dialog-warning"], 32);
-        }
+        self.wear_error_icon(ctx);
         self.dialog = Some(Dialog::Message {
             title: title.to_string(),
             text,
         });
         Reply::redraw_all()
+    }
+
+    /// The message boxes' icon, fetched for the first box.
+    pub(crate) fn wear_error_icon(&mut self, ctx: &mut Ctx) {
+        if self.error_icon.is_none() {
+            self.error_icon = Some(IconSlot::chrome(&mut ctx.icons, ERROR_ICON, 32));
+        }
+    }
+
+    pub(crate) fn error_icon(&self) -> Option<Canvas> {
+        self.error_icon.as_ref().and_then(IconSlot::icon)
     }
 
     pub fn not_found(&mut self, typed: &str, ctx: &mut Ctx) -> Reply {
@@ -274,10 +346,10 @@ impl Explorer {
         robots: Option<[reprisekit::classic::widgets::CheckState; 2]>,
         ctx: &mut Ctx,
     ) -> Reply {
-        let icon = crate::chrome_icon(ctx, &["document-properties"], 32);
+        let icon = IconSlot::chrome(&mut ctx.icons, &["document-properties"], 32);
         let form = reprisekit::controls::filesheet::advanced_form(
             subject,
-            icon,
+            icon.icon(),
             robots,
             &self.dialog_text,
             self.forms.fonts.size_px,
@@ -288,19 +360,20 @@ impl Explorer {
             form,
             subject,
             live,
+            icon,
         });
         Reply::redraw_all()
     }
 
     pub fn about_box(&mut self, ctx: &mut Ctx) -> Reply {
-        let icon = crate::chrome_icon(ctx, &["system-file-manager"], 32);
-        let fields = repriseapp::about::fields("Explorer", icon);
+        let icon = IconSlot::chrome(&mut ctx.icons, &["system-file-manager"], 32);
+        let fields = repriseapp::about::fields("Explorer", icon.icon());
         let px = ctx.theme.fonts.size_px;
         let mut form = aboutbox::form(&fields, &ctx.text, px);
         let u = self.forms.text;
         let w = u.len(aboutbox::CLIENT.0);
         form.set_picture("banner", aboutbox::banner_wide(&ctx.text, px, w, u));
-        self.dialog = Some(Dialog::About(form));
+        self.dialog = Some(Dialog::About(form, icon));
         Reply::redraw_all()
     }
 
@@ -313,7 +386,7 @@ impl Explorer {
         paths: Vec<PathBuf>,
         erase: bool,
         no_bin: reprisefs::bincap::BinLack,
-        icon: Option<Canvas>,
+        icon: IconSlot,
         empty_bin: bool,
         bin: Option<Vec<crate::fileops::BinItem>>,
     ) -> Reply {
@@ -370,15 +443,12 @@ impl Explorer {
             self.failed_waiting.push_back((meter, title, text));
             return Reply::none();
         }
-        if self.error_icon.is_none() {
-            self.error_icon = crate::chrome_icon(ctx, &["dialog-error", "dialog-warning"], 32);
-        }
         self.dialog = Some(Dialog::Confirm(Confirm {
             title,
             text,
             min_text_h: None,
             template: Template::MessageBox,
-            icon: self.error_icon.clone(),
+            icon: IconSlot::chrome(&mut ctx.icons, ERROR_ICON, 32),
             paths: Vec::new(),
             erase: false,
             empty_bin: false,
@@ -436,7 +506,7 @@ impl Explorer {
             text: asked.text(&name),
             min_text_h: None,
             template: Template::MessageBox,
-            icon: crate::chrome_icon(ctx, &["dialog-warning", "dialog-question"], 32),
+            icon: IconSlot::chrome(&mut ctx.icons, QUESTION_ICON, 32),
             paths: vec![path.to_path_buf()],
             erase: false,
             empty_bin: false,
@@ -500,7 +570,7 @@ impl Explorer {
         match self.dialog.as_ref()? {
             Dialog::Message { title, text } => Some(msgbox::Fields {
                 text: text.clone(),
-                icon: self.error_icon.clone(),
+                icon: self.error_icon(),
                 buttons: vec!["OK".to_string()],
                 default: 0,
                 min_text_h: None,
@@ -513,7 +583,7 @@ impl Explorer {
             | Dialog::AttrConfirm(_)
             | Dialog::Advanced { .. }
             | Dialog::ChangeIcon { .. }
-            | Dialog::About(_)
+            | Dialog::About(..)
             | Dialog::Browse(_)
             | Dialog::Unlock(_)
             | Dialog::BatchRename(_) => None,
@@ -542,7 +612,7 @@ impl Explorer {
     /// The form of whichever text box is up, focus on the button the keys left it on.
     pub fn box_form(&self) -> Option<Form> {
         if let (Some(lay), Some(Dialog::Confirm(c))) = (self.confirm_layout(), &self.dialog) {
-            let mut f = dlgtemplate::form(&lay, c.icon.clone(), &c.buttons(), c.default_button());
+            let mut f = dlgtemplate::form(&lay, c.icon.icon(), &c.buttons(), c.default_button());
             if let Some(id) = c.focus {
                 f.focus_id(id);
             }
@@ -600,7 +670,7 @@ impl Explorer {
                     Dialog::ChangeIcon { .. } => {
                         u.size(reprisekit::controls::filesheet::CHANGE_ICON_SIZE)
                     }
-                    Dialog::About(_) => u.size(aboutbox::CLIENT),
+                    Dialog::About(..) => u.size(aboutbox::CLIENT),
                     Dialog::Browse(_) => browsefolder::client(&self.forms.controls()),
                     Dialog::ChooseProgram(_) => openwith::client(&self.forms.controls()),
                     Dialog::Unlock(_) => u.size(unlock::CLIENT),
@@ -701,7 +771,7 @@ impl Explorer {
             Some(Dialog::AttrConfirm(a)) => &a.form,
             Some(Dialog::Advanced { form, .. }) => form,
             Some(Dialog::ChangeIcon { form, .. }) => form,
-            Some(Dialog::About(f)) => f,
+            Some(Dialog::About(f, _)) => f,
             Some(Dialog::BatchRename(b)) => &b.form,
             Some(_) => match self.box_form().or_else(|| self.replace_form()) {
                 Some(f) => {
@@ -754,7 +824,7 @@ impl Explorer {
             Some(Dialog::AttrConfirm(a)) => &a.form,
             Some(Dialog::Advanced { form, .. }) => form,
             Some(Dialog::ChangeIcon { form, .. }) => form,
-            Some(Dialog::About(f)) => f,
+            Some(Dialog::About(f, _)) => f,
             Some(Dialog::BatchRename(b)) => &b.form,
             Some(_) => match self.box_form().or_else(|| self.replace_form()) {
                 Some(f) => {
@@ -794,7 +864,7 @@ impl Explorer {
             Some(Dialog::AttrConfirm(a)) => Some(&mut a.form),
             Some(Dialog::Advanced { form, .. }) => Some(form),
             Some(Dialog::ChangeIcon { form, .. }) => Some(form),
-            Some(Dialog::About(f)) => Some(f),
+            Some(Dialog::About(f, _)) => Some(f),
             Some(Dialog::BatchRename(b)) => Some(&mut b.form),
             _ => None,
         };
@@ -929,7 +999,7 @@ impl Explorer {
                 form::Event::Pressed(id) if id == msgbox::button_id(0) => Answer::Accept,
                 _ => Answer::Stay,
             },
-            Dialog::About(_) => match out {
+            Dialog::About(..) => match out {
                 form::Event::Cancel | form::Event::Default => Answer::Close,
                 form::Event::Pressed(id) if id == aboutbox::OK => Answer::Close,
                 _ => Answer::Stay,

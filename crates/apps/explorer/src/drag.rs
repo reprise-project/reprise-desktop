@@ -334,7 +334,7 @@ impl Explorer {
                         let worn = icon_of(e)?;
                         let icon = match worn.scale() == s {
                             true => None,
-                            false => self.list_icons.fetch_held(&worn, px, &mut ctx.icons),
+                            false => self.list_icons.fetch_held(&worn, px, &ctx.icons),
                         };
                         device_px(icon.unwrap_or_else(|| (*worn).clone()), s)
                     }
@@ -446,12 +446,13 @@ impl Explorer {
             (_, Some(Program::Script)) => ItemKind::Script(repriseconf::script_open()),
             _ => ItemKind::File,
         };
+        let mut waits = repriseapp::iconjobs::IconWaits::default();
         let open_with = if kind.is_file() {
-            self.build_open_with(i, ctx)
+            self.build_open_with(i, &mut waits, ctx)
         } else {
             Vec::new()
         };
-        let send_to = self.build_send_to(ctx);
+        let send_to = self.build_send_to(&mut waits, ctx);
         let eject = self.ejectable(i);
         let pinned = match (&self.menu_paste, self.sv.selection.len()) {
             (Some(PasteTo::Folder(dir)), 1) => {
@@ -467,7 +468,7 @@ impl Explorer {
             ..self.menu_state()
         };
         let menu = crate::menus::item_menu(&state, kind, eject, &open_with, &send_to);
-        self.popup = Some(Popup::new(at, menu, ctx, by_keyboard));
+        self.popup = Some(Popup::new(at, menu, ctx, by_keyboard).waiting(waits));
         Reply::redraw()
     }
 

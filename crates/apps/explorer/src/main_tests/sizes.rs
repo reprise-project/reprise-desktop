@@ -249,7 +249,7 @@ fn boxes_and_the_sheet_grow_with_the_text_size() {
     assert_eq!(sizes(&mut ex, &mut ctx), (u.size(about), u.size(sheet)));
 
     ex.run(commands::Command::About, &mut ctx);
-    let Some(Dialog::About(form)) = &ex.dialog else {
+    let Some(Dialog::About(form, _)) = &ex.dialog else {
         panic!("the About box is up");
     };
     let banner = match &form.item("banner").expect("the banner").control {

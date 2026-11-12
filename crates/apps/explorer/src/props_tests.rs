@@ -186,6 +186,7 @@ fn props(info: FileInfo) -> Props {
         summary: None,
         own_icon: None,
         icon_chosen: None,
+        picks: Default::default(),
         checksums: Default::default(),
         info,
         sheet,
