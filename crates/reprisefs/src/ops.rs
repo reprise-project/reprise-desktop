@@ -68,6 +68,8 @@ const MAX_DEPTH: usize = 256;
 /// `path` with `.` and `..` resolved: through the file system when it is
 /// there (which also resolves symlinks), lexically when it is not.
 fn resolved(path: &Path) -> PathBuf {
+    #[cfg(test)]
+    crate::testfs::dead::stall(path);
     if let Ok(real) = std::fs::canonicalize(path) {
         return real;
     }
@@ -93,10 +95,21 @@ pub fn lexical(path: &Path) -> PathBuf {
 
 /// Whether `dir` is `src` itself or somewhere under it. Copying a folder
 /// into its own tree would copy the copy, and so on until the name runs
-/// out of room, so [`put_in`] refuses it.
-pub fn inside(src: &Path, dir: &Path) -> bool {
-    let (src, dir) = (resolved(src), resolved(dir));
-    dir.starts_with(&src)
+/// out of room, so [`put_in`] refuses it. A move with `moving` takes a link
+/// as the link: only its folder is resolved, so its target is never looked at.
+pub fn inside(src: &Path, dir: &Path, moving: bool) -> bool {
+    let src = match (src.parent(), src.file_name()) {
+        (Some(parent), Some(name)) if moving => {
+            let parent = if parent.as_os_str().is_empty() {
+                Path::new(".")
+            } else {
+                parent
+            };
+            resolved(parent).join(name)
+        }
+        _ => resolved(src),
+    };
+    resolved(dir).starts_with(&src)
 }
 
 /// Whether this process may create entries in `dir`: write and search
