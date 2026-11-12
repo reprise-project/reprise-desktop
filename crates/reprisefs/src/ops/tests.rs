@@ -1089,6 +1089,32 @@ fn a_stopped_copy_fails_interrupted_and_removes_what_it_made() {
 }
 
 #[test]
+fn a_stopped_put_moves_copies_and_links_nothing() {
+    let t = tempfile::tempdir().unwrap();
+    let src = t.path().join("empty.txt");
+    fs::write(&src, "").unwrap();
+    let dest = t.path().join("dest");
+    fs::create_dir_all(&dest).unwrap();
+    let stop = AtomicBool::new(true);
+    for op in [DropOp::Move, DropOp::Copy, DropOp::Shortcut] {
+        let put = put_in_until(
+            &src,
+            "empty.txt",
+            false,
+            &dest,
+            op,
+            &[],
+            &|_| Some(String::new()),
+            None,
+            &stop,
+        );
+        assert!(put.is_err(), "{op:?} refuses once stopped");
+    }
+    assert!(src.exists(), "the source stays");
+    assert_eq!(fs::read_dir(&dest).unwrap().count(), 0, "nothing lands");
+}
+
+#[test]
 fn a_failed_copy_of_a_read_only_folder_leaves_nothing_behind() {
     use std::os::unix::fs::PermissionsExt;
     // SAFETY: geteuid takes no arguments and cannot fail.
