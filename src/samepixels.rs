@@ -22,6 +22,7 @@ use smithay::backend::renderer::utils::{SurfaceView, with_renderer_surface_state
 use smithay::reexports::wayland_server::protocol::{wl_shm, wl_surface::WlSurface};
 use smithay::reexports::wayland_server::{Resource, backend::ObjectId};
 use smithay::utils::{Logical, Point, Rectangle, Size};
+use smithay::wayland::alpha_modifier::AlphaModifierSurfaceCachedState;
 use smithay::wayland::compositor::{
     BufferAssignment, Damage, SubsurfaceCachedState, SurfaceAttributes, get_children, with_states,
 };
@@ -230,11 +231,13 @@ pub fn view(surface: &WlSurface) -> Option<View> {
     })
 }
 
-/// What `check` keeps per surface: its pixels and the place of its subsurfaces as of its last commit.
+/// What `check` keeps per surface: its pixels, alpha multiplier and the place of its subsurfaces as of its last commit.
 #[derive(Default)]
 struct Watch {
     kept: Kept,
     tree: Option<Tree>,
+    /// None at full opacity, whether or not the surface has an alpha modifier.
+    multiplier: Option<u32>,
 }
 
 /// Where a surface sits in its parent (if a subsurface) and where its subsurfaces sit in it, in stacking order.
@@ -254,7 +257,7 @@ fn location(surface: &WlSurface) -> Point<i32, Logical> {
 }
 
 /// Read `surface`'s just-applied state before the buffer handler takes its buffer: what its new buffer
-/// did to its pixels (kept), and whether its subsurfaces, or it in its parent, stayed put.
+/// and alpha multiplier did to its pixels (kept), and whether its subsurfaces, or it in its parent, stayed put.
 pub fn check(surface: &WlSurface) -> (Pixels, bool) {
     let tree = Tree {
         at: location(surface),
@@ -270,8 +273,16 @@ pub fn check(surface: &WlSurface) -> (Pixels, bool) {
         let mut watch = watch.borrow_mut();
         let mut attrs = states.cached_state.get::<SurfaceAttributes>();
         let plan = plan(attrs.current(), &watch.kept);
-        let pixels = plan.pixels();
+        let mut pixels = plan.pixels();
         watch.kept.apply(plan);
+        let multiplier = (states.cached_state.get::<AlphaModifierSurfaceCachedState>())
+            .current()
+            .multiplier()
+            .filter(|&m| m != u32::MAX);
+        if multiplier != watch.multiplier {
+            watch.multiplier = multiplier;
+            pixels = Pixels::Changed;
+        }
         let tree_kept = watch.tree.as_ref() == Some(&tree);
         watch.tree = Some(tree);
         (pixels, tree_kept)

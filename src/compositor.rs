@@ -1378,6 +1378,40 @@ mod tests {
     }
 
     #[test]
+    fn a_commit_that_only_changes_the_alpha_multiplier_asks_a_frame() {
+        use crate::harness::Harness;
+        use wayland_protocols::wp::alpha_modifier::v1::client::wp_alpha_modifier_v1::WpAlphaModifierV1;
+        let mut h = Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "printer", 200, 100);
+        let f = h.map_toplevel(&mut c, "player", 300, 200);
+        h.state.set_fullscreen(f.id, true);
+        h.roundtrip(&mut c);
+        h.draw_opaque(&mut c, f, 0xff00_0000);
+        let am: WpAlphaModifierV1 = c.bind("wp_alpha_modifier_v1", 1);
+        let fs = c.side.shells[f.shell].surface.clone();
+        let ams = am.get_surface(&fs, &c.qh(), ());
+        h.roundtrip(&mut c);
+        let ts = h.state.win(t.id).unwrap().wl_surface().clone();
+        assert_eq!(h.state.scene.outputs_showing(&ts), Some(vec![]), "covered");
+        crate::backend::take_asks();
+        ams.set_multiplier(u32::MAX / 2);
+        fs.commit();
+        h.roundtrip(&mut c);
+        let asked = crate::backend::take_asks();
+        assert_eq!(
+            h.state.scene.outputs_showing(&ts).map(|v| v.len()),
+            Some(1),
+            "the fade applied: the window under it shows now"
+        );
+        assert!(
+            !asked.is_empty(),
+            "a commit that only fades the fullscreen window to half alpha asks a frame: {asked:?}"
+        );
+    }
+
+    #[test]
     fn a_commit_on_a_surface_with_no_role_asks_for_no_frame() {
         let mut h = crate::harness::Harness::new();
         h.output("TEST-1", 1024, 768);
