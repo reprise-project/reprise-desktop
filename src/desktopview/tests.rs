@@ -5,7 +5,7 @@ use super::drives::{drive_tops, drive_trash_wants, read_drive_bin};
 use super::layout::landing_cell;
 use super::scan::{
     TRASH_MASK, home_trash_wants, icon_files, listed, migrate_launcher_keys, read_icons, remap,
-    watch_wants,
+    rereads_bins, watch_wants,
 };
 use super::select::{band_crop, band_strip, source_of};
 use super::*;
@@ -229,6 +229,46 @@ fn a_drive_bin_read_watches_the_bins_there_and_says_whether_one_holds_something(
     assert_eq!((dirs, full), (vec![card], false), "CARD has no bin");
     std::fs::remove_file(bin.join("files/a.txt")).unwrap();
     assert!(!read_drive_bin(&bins, &stick).1, "STICK's bin is empty");
+    let _ = std::fs::remove_dir_all(&t);
+}
+
+#[test]
+fn a_file_trashed_between_the_drive_bin_read_and_its_watch_reads_the_bins_again() {
+    let t = std::env::temp_dir().join(format!("reprise-drive-bin-gap-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&t);
+    let stick = t.join("STICK");
+    let bins = reprisefs::trash::Bins::new(t.join("home"), vec![stick.clone()]);
+    let bin = stick.join(format!(".Trash-{}", bins.uid));
+    std::fs::create_dir_all(bin.join("files")).unwrap();
+    let now = std::time::Instant::now();
+    let mut drives = DriveBins::default();
+    let id = drives.start(now).unwrap();
+    drives.land(id, vec![stick.clone()]);
+    let (wants, full) = read_drive_bin(&bins, &stick);
+    drives.land_drive(stick.clone(), id, wants.clone(), full);
+    assert!(!drives.full, "the read finds STICK's bin empty");
+
+    let mut w = DirWatch::new().unwrap();
+    let adds = w.plan(&wants);
+    let sent = w.send(adds.each());
+    std::fs::write(bin.join("files/a.txt"), "").unwrap();
+    let landed: Vec<_> = (sent.into_iter())
+        .map(|(dir, add)| w.land(&dir, add.run()))
+        .collect();
+    assert!(
+        landed.iter().all(|l| l.grew && !l.hit),
+        "no event reports a.txt, only its folders newly watched"
+    );
+    assert!(landed.into_iter().all(rereads_bins));
+
+    let id = drives.start(now).unwrap();
+    drives.land(id, vec![stick.clone()]);
+    let (wants, full) = read_drive_bin(&bins, &stick);
+    assert!(
+        drives.land_drive(stick, id, wants, full),
+        "the read again changes the bins"
+    );
+    assert!(drives.full, "a.txt is in STICK's bin");
     let _ = std::fs::remove_dir_all(&t);
 }
 
