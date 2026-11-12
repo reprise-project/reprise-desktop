@@ -826,11 +826,17 @@ pub fn bar_clock_text(date: bool) -> String {
     format!("{time}\n{}", local_text(now, c"%x"))
 }
 
-/// Seconds since the epoch that the bar's clock shows. Tests read a fixed instant on a minute's
-/// start, so no minute turns over mid-test and the clock timer waits a full minute.
+#[cfg(test)]
+thread_local! {
+    /// The instant tests read the clock at: a minute's start, so no minute turns over mid-test
+    /// and the clock timer waits a full minute. A test moves it to tick the clock.
+    pub static TEST_CLOCK: std::cell::Cell<i64> = const { std::cell::Cell::new(1_789_999_980) };
+}
+
+/// Seconds since the epoch that the bar's clock shows; [`TEST_CLOCK`] in tests.
 pub fn clock_now() -> i64 {
     #[cfg(test)]
-    return 1_789_999_980;
+    return TEST_CLOCK.get();
     #[cfg(not(test))]
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

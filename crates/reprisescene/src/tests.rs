@@ -772,6 +772,43 @@ fn outputs_of_lists_the_outputs_a_node_overlaps() {
 }
 
 #[test]
+fn outputs_drawing_leave_out_an_output_whose_opaque_cover_hides_the_tree() {
+    let mut s = TestScene::new();
+    let root = s.root();
+    let left = output("L", 0, 0, 1000, 800, 1.0);
+    let right = output("R", 1000, 0, 1000, 800, 1.0);
+    s.add_output(&left);
+    s.add_output(&right);
+    let bar = s.tree_create(root);
+    s.set_position(bar, 0, 770);
+    s.rect_create(bar, (1500, 30), HALF);
+    let cover = s.tree_create(root);
+    let backdrop = s.rect_create(cover, (1000, 800), RED);
+    let nodes = [bar.into()];
+    assert_eq!(
+        s.outputs_drawing(&nodes),
+        std::slice::from_ref(&right),
+        "L shows the cover"
+    );
+    s.set_opacity(cover, 0.5);
+    assert_eq!(
+        s.outputs_drawing(&nodes),
+        [left.clone(), right.clone()],
+        "a fading cover shows what is under it"
+    );
+    s.set_opacity(cover, 1.0);
+    s.rect_set_size(backdrop, (1000, 799));
+    assert_eq!(
+        s.outputs_drawing(&nodes),
+        [left.clone(), right.clone()],
+        "a row short"
+    );
+    s.rect_set_size(backdrop, (1000, 800));
+    s.rect_set_color(backdrop, HALF);
+    assert_eq!(s.outputs_drawing(&nodes), [left, right], "see-through");
+}
+
+#[test]
 fn a_move_changes_the_outputs_a_node_left_and_those_it_reached() {
     let mut s = TestScene::new();
     let root = s.root();

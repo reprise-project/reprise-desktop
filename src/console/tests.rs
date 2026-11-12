@@ -767,3 +767,19 @@ fn disconnect_with_no_server_on_the_bus_still_locks_the_console() {
         "the failed call opens no message"
     );
 }
+
+#[test]
+fn in_lock_mode_a_remote_window_retitled_asks_no_frame_of_the_locked_monitor() {
+    let (mut h, _portal, _lock) = in_lock_mode();
+    let mut c = h.connect();
+    let t = h.map_titled(&mut c, "test.app", "one", (400, 300));
+    h.state.move_to(t.id, 2100, 200);
+    h.run_for(2 * crate::retitle::MIN_INTERVAL.as_millis() as u64 + 20);
+    crate::backend::take_asks();
+    c.side.shells[t.shell].toplevel.set_title("two".into());
+    c.side.shells[t.shell].surface.commit();
+    h.roundtrip(&mut c);
+    h.dispatch();
+    let remote = crate::virtualout::remote_outputs(&h.state)[0].name();
+    assert_eq!(crate::backend::take_scene_outputs(), [remote]);
+}
