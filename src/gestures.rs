@@ -1,6 +1,6 @@
 //! The touchpad swipes the compositor keeps (`[gestures]`): with the configured finger count, a
-//! horizontal swipe slides the desktops with the fingers and a vertical one fades the window overview
-//! in (up) or out (down). Other finger counts, pinches and holds go on to the client under the pointer (`pointers`).
+//! horizontal swipe slides the desktops and a vertical one fades the window overview in (up) or out
+//! (down). The horizontal sense follows `[touchpad] natural_scroll`, like two-finger scrolling. Other finger counts, pinches and holds go on to the client under the pointer (`pointers`).
 //!
 //! A kept swipe locks to an axis once it has travelled [`LOCK`], then reports its progress along that
 //! axis: the travel over `[gestures] distance`, signed. On lift it commits past `commit_at` percent of
@@ -19,7 +19,8 @@ pub const FLICK_MS: u64 = 100;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Axis {
-    /// Progress is positive toward the next desktop: the fingers move left.
+    /// Progress is positive toward the next desktop: the fingers move right, or left under
+    /// natural scrolling.
     Horizontal,
     Vertical,
 }
@@ -28,6 +29,7 @@ pub enum Axis {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Tracker {
     tuning: GesturesConfig,
+    natural: bool,
     dx: f64,
     dy: f64,
     axis: Option<Axis>,
@@ -36,10 +38,20 @@ pub struct Tracker {
 }
 
 impl Tracker {
-    pub fn new(tuning: GesturesConfig) -> Self {
+    /// `natural` is the touchpad's `natural_scroll`: the desktops move with the fingers.
+    pub fn new(tuning: GesturesConfig, natural: bool) -> Self {
         Tracker {
             tuning,
+            natural,
             ..Tracker::default()
+        }
+    }
+
+    fn along(&self, axis: Axis, dx: f64, dy: f64) -> f64 {
+        match axis {
+            Axis::Horizontal if self.natural => -dx,
+            Axis::Horizontal => dx,
+            Axis::Vertical => -dy,
         }
     }
 
@@ -56,10 +68,7 @@ impl Tracker {
             self.locked_at = ms;
         }
         let axis = self.axis?;
-        let along = match axis {
-            Axis::Horizontal => -dx,
-            Axis::Vertical => -dy,
-        };
+        let along = self.along(axis, dx, dy);
         self.recent.push((ms, along));
         self.recent.retain(|&(t, _)| t + FLICK_MS >= ms && t <= ms);
         self.progress()
@@ -68,10 +77,7 @@ impl Tracker {
     /// The axis and the progress along it: the travel over `distance`, signed as [`Axis`] says, not clamped.
     pub fn progress(&self) -> Option<(Axis, f64)> {
         let axis = self.axis?;
-        let travel = match axis {
-            Axis::Horizontal => -self.dx,
-            Axis::Vertical => -self.dy,
-        };
+        let travel = self.along(axis, self.dx, self.dy);
         Some((axis, travel / f64::from(self.tuning.distance)))
     }
 
@@ -113,8 +119,12 @@ mod tests {
     const DISTANCE: f64 = 400.0;
     const COMMIT_AT: f64 = 0.3;
 
+    fn natural() -> Tracker {
+        Tracker::new(GesturesConfig::default(), true)
+    }
+
     fn swipe(steps: &[(f64, f64)]) -> Tracker {
-        let mut t = Tracker::default();
+        let mut t = natural();
         for (i, &(dx, dy)) in steps.iter().enumerate() {
             t.update(dx, dy, i as u64 * 10);
         }
@@ -129,7 +139,7 @@ mod tests {
 
     #[test]
     fn the_axis_waits_for_the_lock_travel_and_then_stays() {
-        let mut t = Tracker::default();
+        let mut t = natural();
         assert_eq!(t.update(-5.0, 3.0, 0), None);
         assert_eq!(
             t.update(-8.0, 0.0, 10),
@@ -139,7 +149,7 @@ mod tests {
             t.update(0.0, -300.0, 20),
             Some((Axis::Horizontal, 13.0 / DISTANCE))
         );
-        let mut t = Tracker::default();
+        let mut t = natural();
         assert_eq!(
             t.update(4.0, -20.0, 0),
             Some((Axis::Vertical, 20.0 / DISTANCE))
@@ -147,13 +157,33 @@ mod tests {
     }
 
     #[test]
-    fn progress_is_signed_toward_the_next_desktop_and_up() {
+    fn under_natural_scrolling_fingers_moving_left_head_for_the_next_desktop() {
         let t = swipe(&[(-200.0, 0.0)]);
         assert_eq!(t.progress(), Some((Axis::Horizontal, 0.5)));
         let t = swipe(&[(80.0, 0.0)]);
         assert_eq!(t.progress(), Some((Axis::Horizontal, -0.2)));
         let t = swipe(&[(0.0, 400.0)]);
         assert_eq!(t.progress(), Some((Axis::Vertical, -1.0)));
+    }
+
+    #[test]
+    fn without_natural_scrolling_fingers_moving_right_head_for_the_next_desktop() {
+        let mut t = Tracker::new(GesturesConfig::default(), false);
+        for (i, step) in [(8.0, 0.0); 10].into_iter().enumerate() {
+            t.update(step.0, step.1, i as u64 * 10);
+        }
+        assert_eq!(t.progress(), Some((Axis::Horizontal, 0.2)));
+        assert_eq!(t.release(100, false), Some((Axis::Horizontal, 0.2, true)));
+        let mut t = Tracker::new(GesturesConfig::default(), false);
+        t.update(-200.0, 0.0, 0);
+        assert_eq!(t.progress(), Some((Axis::Horizontal, -0.5)));
+        let mut t = Tracker::new(GesturesConfig::default(), false);
+        t.update(0.0, -400.0, 0);
+        assert_eq!(
+            t.progress(),
+            Some((Axis::Vertical, 1.0)),
+            "up opens the overview either way"
+        );
     }
 
     #[test]
@@ -188,7 +218,7 @@ mod tests {
 
     #[test]
     fn the_flick_counts_only_the_last_hundred_milliseconds() {
-        let mut t = Tracker::default();
+        let mut t = natural();
         t.update(-80.0, 0.0, 0);
         assert_eq!(t.release(200, false), Some((Axis::Horizontal, 0.2, false)));
         assert_eq!(t.release(50, false).map(|r| r.2), Some(true));
@@ -197,12 +227,15 @@ mod tests {
     #[test]
     fn the_tuning_sets_the_distance_the_commit_point_and_the_flick() {
         let tuned = |distance, commit_at, flick_speed| {
-            Tracker::new(GesturesConfig {
-                distance,
-                commit_at,
-                flick_speed,
-                ..GesturesConfig::default()
-            })
+            Tracker::new(
+                GesturesConfig {
+                    distance,
+                    commit_at,
+                    flick_speed,
+                    ..GesturesConfig::default()
+                },
+                true,
+            )
         };
         let mut t = tuned(800, 30, 300);
         t.update(-200.0, 0.0, 0);

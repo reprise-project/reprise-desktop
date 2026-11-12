@@ -411,7 +411,10 @@ impl State {
                 if g.enabled && free && event.fingers() == g.fingers {
                     self.overview_fade_settle();
                     self.pointers.swipe = Some(KeptSwipe {
-                        tracker: crate::gestures::Tracker::new(g),
+                        tracker: crate::gestures::Tracker::new(
+                            g,
+                            self.config.touchpad.pointer.natural_scroll,
+                        ),
                         overview_was_open: self.overview.view.is_some(),
                     });
                     return true;
@@ -643,6 +646,97 @@ mod tests {
     #[test]
     fn wheel_steps_keeps_the_remainder_on_an_empty_event() {
         assert_eq!(wheel_steps(0, 0.0, 40), (0, 40));
+    }
+
+    fn four_desktops(natural: bool) -> crate::config::Config {
+        let mut cfg = crate::config::Config {
+            base: repriseconf::config::Config {
+                workspaces: 4,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        cfg.touchpad.pointer.natural_scroll = natural;
+        cfg
+    }
+
+    fn rightward() -> [(f64, f64); 6] {
+        [(60.0, 0.0); 6]
+    }
+
+    fn leftward() -> [(f64, f64); 6] {
+        [(-60.0, 0.0); 6]
+    }
+
+    #[test]
+    fn a_desktop_swipe_goes_the_way_two_finger_scrolling_does() {
+        for (natural, next, prev) in [
+            (false, rightward(), leftward()),
+            (true, leftward(), rightward()),
+        ] {
+            let mut h = crate::harness::Harness::with_config(four_desktops(natural));
+            h.output("TEST-1", 1024, 768);
+            h.swipe(3, &prev);
+            assert_eq!(
+                h.state.desktops.current, 0,
+                "natural_scroll {natural}: no desktop before the first"
+            );
+            h.swipe(3, &next);
+            assert_eq!(
+                h.state.desktops.current, 1,
+                "natural_scroll {natural}: the next desktop"
+            );
+            h.swipe(3, &next);
+            assert_eq!(
+                h.state.desktops.current, 2,
+                "natural_scroll {natural}: the one after"
+            );
+            h.swipe(3, &prev);
+            assert_eq!(
+                h.state.desktops.current, 1,
+                "natural_scroll {natural}: back one"
+            );
+            h.swipe(3, &[(0.0, -60.0); 6]);
+            assert!(
+                h.state.overview.view.is_some(),
+                "natural_scroll {natural}: up opens the overview"
+            );
+        }
+    }
+
+    #[test]
+    fn a_swipe_under_the_open_overview_steps_the_same_way() {
+        for (natural, next) in [(false, rightward()), (true, leftward())] {
+            let mut h = crate::harness::Harness::with_config(four_desktops(natural));
+            h.output("TEST-1", 1024, 768);
+            let mut c = h.connect();
+            h.map_toplevel(&mut c, "test.app", 400, 300);
+            h.state.open_overview();
+            assert!(h.state.overview.view.is_some(), "the overview opens");
+            h.swipe(3, &next);
+            assert_eq!(
+                h.state.desktops.current, 1,
+                "natural_scroll {natural}: the next desktop"
+            );
+            assert!(
+                h.state.overview.view.is_some(),
+                "natural_scroll {natural}: the overview stays open"
+            );
+        }
+    }
+
+    #[test]
+    fn a_reloaded_natural_scroll_turns_the_next_swipe_around() {
+        let mut h = crate::harness::Harness::with_config(four_desktops(false));
+        h.output("TEST-1", 1024, 768);
+        h.swipe(3, &rightward());
+        assert_eq!(h.state.desktops.current, 1);
+        crate::configwatch::reload(&mut h.state, four_desktops(true));
+        h.swipe(3, &rightward());
+        assert_eq!(
+            h.state.desktops.current, 0,
+            "right now goes to the desktop before"
+        );
     }
 
     #[test]
