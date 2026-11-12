@@ -194,7 +194,8 @@ interface = "classic"        # classic | blue | glass; an unknown value falls ba
 [touchpad]                   # every libinput pointer that can tap
 # speed = 0.0
 # acceleration = true
-# natural_scroll = false     # true reverses scrolling: content follows the fingers
+# natural_scroll = false     # true reverses scrolling and the [gestures] desktop swipe:
+#                            # content and desktops follow the fingers
 # tap_to_click = true        # a one-finger tap clicks, a double tap double-clicks
 # two_finger_scroll = true   # both axes; false scrolls along the pad's edges
 # two_finger_tap_right_click = true  # false: two fingers middle, three right
@@ -203,7 +204,8 @@ interface = "classic"        # classic | blue | glass; an unknown value falls ba
 # [gestures]                 # touchpad swipes Reprise keeps; other finger counts, pinches
 #                            # and holds go to the program under the pointer
 # enabled = true
-# fingers = 3                # 3 or 4: left/right slide the desktops with the fingers,
+# fingers = 3                # 3 or 4: right goes to the next desktop and left to the one
+#                            # before (the other way round with [touchpad] natural_scroll),
 #                            # up fades the window overview in, down fades it out
 # distance = 400             # 100 to 2000: the travel for a whole desktop or the whole fade, in
 #                            # libinput's swipe units (about 3 to 4 cm of finger travel)

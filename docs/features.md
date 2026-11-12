@@ -707,7 +707,9 @@ the screen takes the interface of the last session used at this computer.
   rename box takes it at the drop caret; files go into these by name.
 - **Touchpad gestures.** Three fingers switch desktops and open the
   overview. Pinches and swipes with other finger counts go to the program,
-  so a browser can pinch-zoom and swipe back. A lifted swipe runs on to
+  so a browser can pinch-zoom and swipe back. Left and right follow the
+  touchpad's Reverse scrolling direction, as two-finger scrolling does. A
+  lifted swipe runs on to
   where it was heading, and the overview's grids slide with the desktops.
   `[gestures]` sets the travel, the point past which a swipe goes through
   and the speed of a flick.
