@@ -135,19 +135,8 @@ impl Notepad {
             self.view,
             &el,
             reprisekit::textedit::Caret::new(true, ctx.caret_on),
+            self.drop_point(ctx),
         );
-        if let Some(at) = self.drop_point(ctx) {
-            multiedit::draw_drop_point(
-                c,
-                &self.mono,
-                &paint,
-                &self.metrics,
-                &self.edit,
-                self.view,
-                &el,
-                at,
-            );
-        }
         if let Some(corner) = el.corner().filter(|_| !ctx.maximized && !self.status_bar) {
             draw_scroll_corner(c, &paint, corner, true);
         }

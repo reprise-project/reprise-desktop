@@ -343,7 +343,17 @@ pub fn draw(
         Body::Text(edit) => {
             let lay = multiedit::layout(mono, m, edit, r.inset(PAD), 1);
             let paint = Paint { s: 1, ..*p };
-            multiedit::draw(c, mono, &paint, m, edit, qv.view, &lay, Caret::Unfocused);
+            multiedit::draw(
+                c,
+                mono,
+                &paint,
+                m,
+                edit,
+                qv.view,
+                &lay,
+                Caret::Unfocused,
+                None,
+            );
         }
         Body::Card => {
             let lines = qv.facts.lines();

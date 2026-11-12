@@ -340,6 +340,7 @@ impl Notes {
             n.view,
             &el,
             reprisekit::textedit::Caret::new(n.focused, ctx.caret_on),
+            None,
         );
         if let Some(menu) = self.menu.as_ref().filter(|_| self.menu_win == win) {
             menu.draw(c, &ctx.theme, &ctx.text, ctx.theme.access_keys);
