@@ -42,6 +42,7 @@ impl Flight {
 }
 
 /// What a transition draws with: the screen after, its layout, and how it is drawn.
+#[derive(Clone, Copy)]
 pub struct Drawn<'a> {
     pub m: &'a Logon,
     pub l: &'a LogonLayout,
@@ -49,6 +50,9 @@ pub struct Drawn<'a> {
     /// The unscaled renderer the layout measures with.
     pub text: &'a TextRenderer,
     pub s: i32,
+    /// The canvas the screen before showed, and where the screens before and after can differ
+    /// from it ([`super::logon_region`]): each screen is drawn over a copy of it, there alone.
+    pub over: Option<(&'a Canvas, &'a [Rect])>,
 }
 
 impl Drawn<'_> {
@@ -59,16 +63,38 @@ impl Drawn<'_> {
 
     fn canvas(&self, m: &Logon, l: &LogonLayout, show: Show) -> Canvas {
         let ((w, h), s) = (self.size(), self.s);
-        let mut c = Canvas::new(w, h);
         let text = self.text.for_output(s);
-        match m.interface {
-            Interface::Classic => crate::classic::logon::draw(&mut c, m, l, self.theme, text, s),
-            Interface::Blue => {
-                crate::blue::logon::draw_shown(&mut c, m, l, self.theme, text, s, show)
-            }
-            Interface::Glass => glass::draw_shown(&mut c, m, l, self.theme, text, s, show),
+        let draw = |c: &mut Canvas| match m.interface {
+            Interface::Classic => crate::classic::logon::draw(c, m, l, self.theme, text, s),
+            Interface::Blue => crate::blue::logon::draw_shown(c, m, l, self.theme, text, s, show),
+            Interface::Glass => glass::draw_shown(c, m, l, self.theme, text, s, show),
+        };
+        let Some((shown, within)) = self.over.filter(|(c, _)| (c.width, c.height) == (w, h)) else {
+            let mut c = Canvas::new(w, h);
+            draw(&mut c);
+            return c;
+        };
+        let mut c = shown.clone();
+        for &r in within {
+            let r = self.device(r).intersect(&c.bounds());
+            c.with_clip(r, |c| {
+                c.clear_rect(r);
+                draw(c);
+            });
         }
         c
+    }
+
+    /// Design rect `r` within the output as device px on the screen's canvas.
+    fn device(&self, r: Rect) -> Rect {
+        let o = self.l.output;
+        Rect::new(r.x - o.x, r.y - o.y, r.width, r.height).scaled(self.s)
+    }
+
+    /// Where two canvases drawn over [`Drawn::over`] can differ, device px; None when drawn whole.
+    fn within(&self) -> Option<Rect> {
+        let (_, rects) = self.over?;
+        (rects.iter().map(|&r| self.device(r))).reduce(|a, b| a.union(&b))
     }
 
     /// The screen a change began from, its ring at the current step, and its layout.
@@ -100,6 +126,24 @@ fn copy_in(c: &mut Canvas, from: &Canvas, r: Rect) {
     }
 }
 
+/// [`Canvas::differing_rect`] of two screen canvases, looking only inside device rect `r`.
+fn differing_within(a: &Canvas, b: &Canvas, r: Rect) -> Rect {
+    let r = r.intersect(&a.bounds());
+    let (w, n) = (a.width as usize, r.width.max(0) as usize);
+    let mut found = Rect::default();
+    for y in r.y..r.bottom() {
+        let i = y as usize * w + r.x as usize;
+        let row = || a.pixels[i..i + n].iter().zip(&b.pixels[i..i + n]);
+        let Some(first) = row().position(|(p, q)| p != q) else {
+            continue;
+        };
+        let last = row().rposition(|(p, q)| p != q).unwrap_or(first);
+        let x = r.x + first as i32;
+        found = join(found, Rect::new(x, y, last as i32 - first as i32 + 1, 1));
+    }
+    found
+}
+
 /// The smallest rect holding both, either of which may be empty.
 fn join(a: Rect, b: Rect) -> Rect {
     match (a.is_empty(), b.is_empty()) {
@@ -127,6 +171,12 @@ impl Transition {
         });
         let size = |c: &Canvas| (c.width, c.height) == d.size();
         let shown = shown.filter(|c| flight.is_none() && size(c));
+        // The screen before is drawn from its model only under a flight, which the region need not
+        // hold: then both screens are drawn whole.
+        let d = &Drawn {
+            over: d.over.filter(|_| flight.is_none()),
+            ..*d
+        };
         let show = flight.as_ref().map_or(Show::All, |f| Show::AllBut(f.part));
         let was = plan
             .out
@@ -137,6 +187,7 @@ impl Transition {
     /// `motion` begun `at` ms into `prev`: the screen before is `prev`'s frame then, and a frame
     /// flying in both flies on from where it is.
     pub fn then(prev: &Transition, at: u32, motion: &Motion, d: &Drawn) -> Option<Transition> {
+        let d = &Drawn { over: None, ..*d };
         let mut plan = plan(motion.change, d)?;
         let carried = plan
             .carried
@@ -164,9 +215,13 @@ impl Transition {
         let base = d.canvas(d.m, d.l, Show::Chrome);
         let show = flight.as_ref().map_or(Show::All, |f| Show::AllBut(f.part));
         let now = d.canvas(d.m, d.l, show);
-        let mut rect = join(also, base.differing_rect(&now));
+        let differ = |a: &Canvas, b: &Canvas| match d.within() {
+            Some(r) => differing_within(a, b, r),
+            None => a.differing_rect(b),
+        };
+        let mut rect = join(also, differ(&base, &now));
         if let Some(was) = &was {
-            rect = join(rect, base.differing_rect(was));
+            rect = join(rect, differ(&base, was));
         }
         if let Some(f) = &flight {
             rect = join(rect, join(f.from.reach(d.s), f.to.reach(d.s)));

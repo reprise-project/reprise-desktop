@@ -77,8 +77,8 @@ impl State {
         self.key_input.layouts.labels = labels(&self.config.keyboard);
         self.key_input.layouts.current = self.active_layout();
         self.redraw_taskbars();
-        crate::lockview::redraw(self);
-        crate::greeterview::redraw(self);
+        crate::lockview::update(self);
+        crate::greeterview::update(self);
     }
 
     pub fn active_layout(&mut self) -> u32 {

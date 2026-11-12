@@ -158,13 +158,26 @@ fn laid_out(m: &Logon, theme: &Theme, output: Rect, rows: usize) -> LogonLayout 
     }
 }
 
-/// The message rows, the badge at their end included, and the badge on `l`.
+/// The message rows, the badge at their end included, for the notes; for the badge too while `l`
+/// has one, as the rows narrow for it.
 pub fn notes(theme: &Theme, l: &LogonLayout) -> Notes {
     let g = geometry(theme, l.output, laid_rows(theme, l));
     Notes {
         said: Some(g.message),
-        badge: l.rect(Part::Layout),
+        badge: l.rect(Part::Layout).map(|_| g.message),
     }
+}
+
+/// Where `draw` paints from the model on a dialog that stays where `l` puts it: the title, the
+/// rows with their labels, the message rows and the buttons.
+pub fn live(theme: &Theme, l: &LogonLayout) -> Vec<Rect> {
+    let g = geometry(theme, l.output, laid_rows(theme, l));
+    let row = |r: Rect| Rect::new(g.label_x, r.y, r.right() - g.label_x, r.height);
+    let parts = l.parts.iter().map(|&(_, r)| r);
+    [g.caption, row(g.name), row(g.password), g.message]
+        .into_iter()
+        .chain(parts)
+        .collect()
 }
 
 /// `c` covers `l.output` at scale `s`; `theme` is the output's (`Theme::scaled(s)`) and `text`
