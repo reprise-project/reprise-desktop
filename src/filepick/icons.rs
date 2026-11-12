@@ -44,6 +44,8 @@ pub struct Icons {
     pub scale: i32,
     pub text: TextUnits,
     pub theme: ThemeOf,
+    /// One of them is a blank stand-in for a theme icon still decoding.
+    pub waiting: bool,
 }
 
 /// The icon theme a dialog's icons came from: equal only to the same loaded theme.
@@ -72,15 +74,23 @@ impl std::fmt::Debug for ThemeOf {
 }
 
 /// The dialog's icons from the compositor's scale-1 `cache`, for a dialog drawn at `scale` with
-/// text grown by `u`.
+/// text grown by `u`. One still decoding is a blank stand-in ([`Icons::waiting`]).
 pub fn icons(cache: &mut IconCache, scale: i32, u: TextUnits) -> Icons {
     let scale = scale.max(1);
     let tool_px = u.len(16) * scale;
-    let mut get = |name: &str, px: i32| {
-        let icon = cache.get(name, px)?;
-        Some(icontheme::grown_icon(icon, px, u))
+    let theme = ThemeOf::of(cache);
+    let mut waiting = false;
+    let mut get = |name: &str, px: i32| match cache.get_unread(name, px) {
+        Some(icon) => {
+            let icon = Arc::unwrap_or_clone(icon?);
+            Some(icontheme::grown_icon(icon, px, u))
+        }
+        None => {
+            waiting = true;
+            Some(Canvas::new(px as u32, px as u32))
+        }
     };
-    Icons {
+    let icons = Icons {
         places: reprisefs::places::dialog_places(true)
             .iter()
             .map(|p| get(p.icon, u.len(placesbar::ICON_PX) * scale))
@@ -98,8 +108,10 @@ pub fn icons(cache: &mut IconCache, scale: i32, u: TextUnits) -> Icons {
         folder: get("folder", tool_px),
         scale,
         text: u,
-        theme: ThemeOf::of(cache),
-    }
+        theme,
+        waiting: false,
+    };
+    Icons { waiting, ..icons }
 }
 
 /// The icon files `rows` wear, each decoded once at every listing size times `scale`.

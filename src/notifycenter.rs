@@ -486,7 +486,7 @@ mod tests {
     #[test]
     fn a_cold_information_icon_lands_on_the_open_center() {
         let root = crate::icon::svg_theme(&["dialog-information"], &[]);
-        let mut h = crate::icon::tests::two_outputs("classic", &root);
+        let mut h = crate::icon::two_outputs("classic", &root);
         let out = h.state.first_output().expect("an output");
         crate::notifyview::show(&mut h.state, mail(1));
         toggle(&mut h.state, &out, Rect::new(1000, 740, 16, 28));
@@ -498,11 +498,8 @@ mod tests {
             header(&h).pixels.iter().all(|&p| p == 0),
             "the stand-in is blank"
         );
-        crate::icon::tests::land(&mut h);
-        assert!(
-            crate::icon::tests::red(&header(&h)),
-            "the center took the icon"
-        );
+        crate::icon::land(&mut h);
+        assert!(crate::icon::red(&header(&h)), "the center took the icon");
         std::fs::remove_dir_all(&root).unwrap();
     }
 

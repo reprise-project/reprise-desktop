@@ -80,7 +80,7 @@ impl State {
                         .any(|e| e.path == written.path || e.path == path)
                 });
                 let worn = on_desktop.zip(header).map(|(v, mut e)| {
-                    let has = |n: &str| self.icons.has(n);
+                    let has = |n: &str| self.icons.has_unread(n);
                     crate::desktop::wear_file_icons(std::slice::from_mut(&mut e), &v.mime, &has);
                     e.icon
                 });
@@ -314,11 +314,11 @@ impl State {
         let apps: &[reprisefs::apps::AppEntry] = &self.app_index;
         let icons = &mut self.icons;
         let mut names: Vec<String> = if launcher {
-            reprisefs::launcher::icon_names(apps, |n| icons.has(n))
+            reprisefs::launcher::icon_names(apps, |n| icons.has_unread(n))
         } else {
             FOLDER_ICON_NAMES
                 .iter()
-                .filter(|n| icons.has(n))
+                .filter(|n| icons.has_unread(n))
                 .map(|n| n.to_string())
                 .collect()
         };
@@ -329,9 +329,16 @@ impl State {
                 names.insert(0, must);
             }
         }
-        let pictures = names
-            .iter()
-            .map(|n| icons.get(n, dialog::ICON_PX * scale))
+        let px = dialog::ICON_PX * scale;
+        let mut waiting = Vec::new();
+        let pictures = (names.iter())
+            .map(|n| match icons.get_unread(n, px) {
+                Some(icon) => icon.map(std::sync::Arc::unwrap_or_clone),
+                None => {
+                    waiting.push(n.clone());
+                    Some(Canvas::new(px as u32, px as u32))
+                }
+            })
             .collect();
         let mut list = reprisekit::controls::iconlist::IconList::new(names, pictures, None);
         match current.as_deref() {
@@ -344,7 +351,40 @@ impl State {
             None => {}
         }
         let source = self.config.icons.theme.clone();
+        let before = self.dialogs.views.len();
         self.open_dialog_over(Dialog::change_icon(name, &source, list, launcher));
+        let opened = self.dialogs.views.len() > before && !waiting.is_empty();
+        if let Some(v) = self.dialogs.views.last_mut().filter(|_| opened) {
+            v.waiting = waiting;
+            let id = v.id;
+            self.wait_for_icons(crate::icon::IconWaiter::Dialog(id));
+        }
+    }
+
+    /// Properties sheets whose header wears one of `refused`, names that decode at no size, wear
+    /// the icon their file is given now: the desktop's when it lists the file, else its type's.
+    pub(crate) fn sheets_names_refused(&mut self, refused: &[String]) {
+        let worn: Vec<(u64, std::path::PathBuf, bool)> = (self.dialogs.views.iter())
+            .filter(|v| v.dialog.icon.as_ref().is_some_and(|n| refused.contains(n)))
+            .filter_map(|v| match &v.dialog.form()?.kind {
+                dialog::Kind::Properties(b) => Some((v.id, b.path.clone(), b.is_dir)),
+                _ => None,
+            })
+            .collect();
+        for (id, path, is_dir) in worn {
+            let on_desktop = (self.desktop.as_ref())
+                .and_then(|v| v.entries.iter().find(|e| e.path == path))
+                .map(|e| e.icon.clone())
+                .filter(|n| !refused.contains(n));
+            let icon = on_desktop.unwrap_or_else(|| self.file_icon_name(&path, is_dir));
+            let Some(i) = self.dialog_index(id) else {
+                continue;
+            };
+            let v = &mut self.dialogs.views[i];
+            v.dialog.icon = Some(icon);
+            v.icons = None;
+            self.redraw_dialog(i);
+        }
     }
 
     /// The rest of a set's OK or Apply after `write_set_properties`: the desktop follows renames, then
@@ -539,4 +579,37 @@ fn browsed_entry(
 
 fn has_entries(path: &std::path::Path) -> bool {
     std::fs::read_dir(path).is_ok_and(|mut d| d.next().is_some())
+}
+
+/// Change Icon's stand-ins for `waiting` take their icons from `cache` at `px`, and a name that
+/// decodes at no size leaves the list: the names still decoding.
+pub(super) fn change_icon_landed(
+    d: &mut Dialog,
+    cache: &mut reprisekit::icontheme::IconCache,
+    px: i32,
+    waiting: Vec<String>,
+) -> Vec<String> {
+    let list = (d.form_mut())
+        .and_then(|f| f.body.pages_mut().first_mut())
+        .and_then(reprisekit::controls::filesheet::change_icon_list_mut);
+    let Some(list) = list else {
+        return Vec::new();
+    };
+    let (mut still, mut gone) = (Vec::new(), Vec::new());
+    for name in waiting {
+        let Some(k) = list.names.iter().position(|n| *n == name) else {
+            continue;
+        };
+        match cache.get_unread(&name, px) {
+            Some(icon) => {
+                list.icons[k] = icon.map(std::sync::Arc::unwrap_or_clone);
+                if list.icons[k].is_none() {
+                    gone.push(name);
+                }
+            }
+            None => still.push(name),
+        }
+    }
+    list.drop_names(&gone);
+    still
 }

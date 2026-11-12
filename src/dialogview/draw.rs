@@ -237,6 +237,8 @@ impl State {
         v.backdrop.set(scene, glass, v.glass_tree, pane);
         let origin = (v.x, v.y);
         let id = v.id;
+        let stand_ins =
+            !v.waiting.is_empty() || v.dialog.picker().is_some_and(|p| p.waits_for_icons());
         let decode = next_decode(&mut v.decodes, undecoded, std::time::Instant::now());
         if active {
             let spot = canvas.take_spot();
@@ -251,6 +253,9 @@ impl State {
             Decode::Wait => {}
         }
         self.note_icon_waits(waits, crate::icon::IconWaiter::Dialog(id));
+        if stand_ins {
+            self.wait_for_icons(crate::icon::IconWaiter::Dialog(id));
+        }
         self.redraw_nodes(was, &[tree.into()]);
         crate::access::touch(self);
     }
@@ -300,12 +305,28 @@ impl State {
         self.redraw_dialog(i);
     }
 
-    /// Theme icons landed while dialog `id` showed a stand-in for one: it looks its icons up again.
+    /// Theme icons landed while dialog `id` showed a stand-in for one: it looks its icons up again,
+    /// and a file dialog's listing and Change Icon's list take theirs.
     pub(crate) fn dialog_icons_landed(&mut self, id: u64) {
-        if let Some(i) = self.dialog_index(id) {
-            self.dialogs.views[i].icons = None;
-            self.redraw_dialog(i);
+        let Some(i) = self.dialog_index(id) else {
+            return;
+        };
+        let px = dialog::ICON_PX
+            * self
+                .draw_scale_at(Some(&self.dialogs.views[i].output))
+                .max(1);
+        let State { dialogs, icons, .. } = self;
+        let v = &mut dialogs.views[i];
+        if let Some(p) = v.dialog.picker_mut() {
+            p.icons_landed(icons);
         }
+        if !v.waiting.is_empty() {
+            let waiting = std::mem::take(&mut v.waiting);
+            v.waiting = super::properties::change_icon_landed(&mut v.dialog, icons, px, waiting);
+        }
+        v.icons = None;
+        self.run_picker_requests();
+        self.redraw_dialog(i);
     }
 
     /// Looks dialog `id`'s icons up again in `wait`, when a decode job still running will have
