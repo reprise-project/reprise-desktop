@@ -21,7 +21,7 @@ use smithay::{
 };
 
 use reprisekit::interface::Interface;
-use reprisekit::logon::{Logon, LogonAction, LogonUser, Purpose};
+use reprisekit::logon::{Logon, LogonAction, LogonUser, Purpose, UserNote};
 use reprisescene::{BufferId, TreeId};
 use zeroize::Zeroizing;
 
@@ -1158,14 +1158,24 @@ fn caps_lock(state: &State, side: Side) -> bool {
     logonview::seat_caps_lock(state)
 }
 
-/// Bring `side`'s screen up to what it offers now (interface, Switch User, power), hidden while a
-/// locker holds the lock or starts to; the power menu closes with the power it offered. A new
-/// interface waits for a check in progress to end, as it rebuilds the screen.
+/// The line under the user's name on `side`'s screen: the console's reads Connected remotely
+/// while lock mode gives the desktop to a remote client.
+fn note(state: &State, side: Side) -> UserNote {
+    match side == Side::Console && crate::console::remote_side(state) {
+        true => UserNote::Remote,
+        false => UserNote::Locked,
+    }
+}
+
+/// Bring `side`'s screen up to what it offers now (interface, Switch User, power, note), hidden
+/// while a locker holds the lock or starts to; the power menu closes with the power it offered. A
+/// new interface waits for a check in progress to end, as it rebuilds the screen.
 fn prepare(state: &mut State, side: Side) {
     let switch_user = crate::loginlink::offered(state, side);
     let power = crate::lockpower::offered(state, side);
     let interface = state.config.interface;
     let over_picture = state.lock.back.shows();
+    let note = note(state, side);
     let Some(l) = state.lock.on_mut(side) else {
         return;
     };
@@ -1174,6 +1184,7 @@ fn prepare(state: &mut State, side: Side) {
         l.view.model = Logon::locked(interface, user, switch_user, power);
     }
     l.view.model.purpose = Purpose::Unlock { switch_user, power };
+    l.view.model.users[0].note = Some(note);
     l.view.model.over_picture = over_picture;
     l.view.hidden = !l.screen_shown();
     if side == Side::Console && (!power || l.view.hidden) {
