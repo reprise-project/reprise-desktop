@@ -734,26 +734,31 @@ impl RowIcons {
     }
 }
 
-/// Puts `art`, icon file `file` decoded at `px`, on the rows of `items` that `waits` holds for
-/// it. True when a row took it.
+/// Puts `art`, icon file or theme name `key` decoded at `px`, on the rows of `items` that `waits`
+/// holds for it. A row's own icon ends its wait on the stand-in shown meanwhile. True when a row
+/// took it.
 fn land_icon(
     items: &mut [MenuItem],
     waits: &mut Vec<(usize, String, i32)>,
-    file: &str,
+    key: &str,
     px: i32,
     art: &Option<Canvas>,
 ) -> bool {
-    let before = waits.len();
-    waits.retain(|(row, f, p)| {
-        if f != file || *p != px {
+    let mut took = Vec::new();
+    waits.retain(|(row, k, p)| {
+        if k != key || *p != px {
             return true;
         }
         if let Some(MenuItem::Entry { icon, .. }) = items.get_mut(*row) {
             icon.clone_from(art);
         }
+        took.push(*row);
         false
     });
-    waits.len() != before
+    if key != crate::icon::STAND_IN {
+        waits.retain(|(row, k, p)| !(took.contains(row) && k == crate::icon::STAND_IN && *p == px));
+    }
+    !took.is_empty()
 }
 
 /// What Show Desktop minimises and restores.

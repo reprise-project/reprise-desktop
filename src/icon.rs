@@ -151,6 +151,9 @@ pub enum IconWaiter {
     Dialog(u64),
     Notify,
     TrayFlyout,
+    NotifyCenter,
+    Location,
+    SessionEnd,
 }
 
 /// Icon decodes off the loop: what is decoding, what landed since the turn's end, and who waits.
@@ -372,6 +375,9 @@ impl State {
                 IconWaiter::Dialog(id) => self.dialog_icons_landed(id),
                 IconWaiter::Notify => crate::notifyview::icons_landed(self),
                 IconWaiter::TrayFlyout => crate::trayflyout::icons_landed(self),
+                IconWaiter::NotifyCenter => crate::notifycenter::refresh(self),
+                IconWaiter::Location => crate::location::icons_landed(self),
+                IconWaiter::SessionEnd => crate::sessionend::icons_landed(self),
             }
         }
     }
@@ -465,7 +471,7 @@ pub(crate) fn svg_theme(names: &[&str], broken: &[&str]) -> std::path::PathBuf {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     #[test]
@@ -554,7 +560,7 @@ mod tests {
     }
 
     /// Two outputs, Start menu `style`, theme icons from `root`, and file jobs on threads.
-    fn two_outputs(style: &str, root: &std::path::Path) -> crate::harness::Harness {
+    pub(crate) fn two_outputs(style: &str, root: &std::path::Path) -> crate::harness::Harness {
         use reprisekit::icontheme::IconTheme;
         let toml = format!("startmenu_style = \"{style}\"\n");
         let config = crate::config::Config::parse(&toml).expect("the config");
@@ -567,7 +573,7 @@ mod tests {
     }
 
     /// Turns the loop until no icon decodes.
-    fn land(h: &mut crate::harness::Harness) {
+    pub(crate) fn land(h: &mut crate::harness::Harness) {
         let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
         h.dispatch();
         while !h.state.icon_jobs.decoding.is_empty() {
@@ -576,7 +582,7 @@ mod tests {
         }
     }
 
-    fn red(c: &Canvas) -> bool {
+    pub(crate) fn red(c: &Canvas) -> bool {
         c.get(c.width as i32 / 2, c.height as i32 / 2) == 0xFFFF_0000
     }
 

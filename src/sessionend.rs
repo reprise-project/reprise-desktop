@@ -904,12 +904,38 @@ fn sync_prompt(state: &mut State) {
                 state.close_dialog_at(i);
             }
             log::info!("session end: prompting for {} rows", fields.rows.len());
-            fields.icon = state.icons.get("dialog-warning", 32);
+            let waits = state.icons.waits();
+            fields.icon = warning_icon(state);
+            let waited = state.icons.waits() != waits;
             let t = &state.config.theme;
             let d =
                 crate::dialog::Dialog::end_session(&fields, &state.text, t.fonts.size_px, t.text);
             state.open_dialog(d);
+            if waited {
+                state.wait_for_icons(crate::icon::IconWaiter::SessionEnd);
+            }
         }
+    }
+}
+
+/// The prompt's picture ([`crate::icon::unread`]).
+fn warning_icon(state: &mut State) -> Option<crate::raster::Canvas> {
+    crate::icon::unread(&mut state.icons, "dialog-warning", 32).map(Arc::unwrap_or_clone)
+}
+
+/// Icons landed while the prompt showed a stand-in for its picture: it looks it up again.
+pub(crate) fn icons_landed(state: &mut State) {
+    let Some(i) = prompt_index(state) else {
+        return;
+    };
+    let waits = state.icons.waits();
+    let icon = warning_icon(state);
+    state.note_icon_waits(waits, crate::icon::IconWaiter::SessionEnd);
+    let form = state.dialogs.views[i].dialog.form_mut();
+    if let (Some(f), Some(icon)) = (form, icon)
+        && f.set_icon(icon)
+    {
+        state.redraw_dialog(i);
     }
 }
 
@@ -1078,6 +1104,44 @@ fn blocks(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_cold_warning_icon_lands_on_the_open_prompt() {
+        use reprisekit::controls::form::Control;
+        let root = crate::icon::svg_theme(&["dialog-warning"], &[]);
+        let mut h = crate::icon::tests::two_outputs("classic", &root);
+        h.state.ending = Some(Ending {
+            goal: Goal::LogOff,
+            cmd: None,
+            // Unknown holders keep the end from finishing while the loop turns.
+            holders: None,
+            stop: None,
+            asked_portal: false,
+            timer: None,
+            reports: None,
+            mode: Mode::Prompted,
+        });
+        sync_prompt(&mut h.state);
+        let picture = |h: &crate::harness::Harness| {
+            let i = prompt_index(&h.state).expect("the prompt");
+            let page = h.state.dialogs.views[i].dialog.form()?.open_page()?;
+            match &page.item("icon")?.control {
+                Control::Picture { canvas, .. } => canvas.clone(),
+                _ => None,
+            }
+        };
+        let blank = picture(&h).expect("a stand-in in the picture's place");
+        assert!(
+            blank.pixels.iter().all(|&p| p == 0),
+            "the stand-in is blank"
+        );
+        crate::icon::tests::land(&mut h);
+        assert!(
+            picture(&h).is_some_and(|c| crate::icon::tests::red(&c)),
+            "the prompt took the icon"
+        );
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 
     fn win(id: u32, pid: Option<i32>, app: &str, title: &str, owner: Option<u32>) -> Shown<u32> {
         Shown {

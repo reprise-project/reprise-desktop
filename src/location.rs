@@ -217,16 +217,52 @@ fn asked(state: &mut State, ask: Ask) {
     }
     log::info!("location: asking about {desktop_id:?}");
     let program = app_name(state, &desktop_id);
-    let icon = reprisefs::apps::entry_for_app_id(&state.app_index, &desktop_id, |_| true)
-        .and_then(|e| e.icon.clone())
-        .and_then(|name| state.icons.get(&name, 32))
-        .or_else(|| state.icons.get("dialog-question", 32));
+    let waits = state.icons.waits();
+    let icon = prompt_icon(state, &desktop_id);
+    let waited = state.icons.waits() != waits;
     let fields = locationprompt::Fields { program, icon };
     let t = &state.config.theme;
     let (px, u) = (t.fonts.size_px, t.text);
     let d = crate::dialog::Dialog::location_prompt(&fields, desktop_id.clone(), &state.text, px, u);
     state.location.pending.push((desktop_id, vec![reply]));
     state.open_dialog(d);
+    if waited {
+        state.wait_for_icons(crate::icon::IconWaiter::Location);
+    }
+}
+
+/// The prompt's picture for `desktop_id`: the program's icon, else the question mark. One still
+/// decoding shows [`crate::icon::stand_in`]; one that decodes at no size gives way to the next.
+fn prompt_icon(state: &mut State, desktop_id: &str) -> Option<crate::raster::Canvas> {
+    let own = reprisefs::apps::entry_for_app_id(&state.app_index, desktop_id, |_| true)
+        .and_then(|e| e.icon.clone());
+    for name in own.iter().map(String::as_str).chain(["dialog-question"]) {
+        match state.icons.get_unread(name, 32) {
+            Some(Some(icon)) => return Some(Arc::unwrap_or_clone(icon)),
+            Some(None) => {}
+            None => {
+                return crate::icon::stand_in(&mut state.icons, name, 32).map(Arc::unwrap_or_clone);
+            }
+        }
+    }
+    None
+}
+
+/// Icons landed while a prompt showed a stand-in: each open prompt looks its picture up again.
+pub(crate) fn icons_landed(state: &mut State) {
+    let waits = state.icons.waits();
+    let looked: Vec<(usize, Option<crate::raster::Canvas>)> = (prompts(state).into_iter())
+        .map(|(i, id)| (i, prompt_icon(state, &id)))
+        .collect();
+    state.note_icon_waits(waits, crate::icon::IconWaiter::Location);
+    for (i, icon) in looked {
+        let form = state.dialogs.views[i].dialog.form_mut();
+        if let (Some(f), Some(icon)) = (form, icon)
+            && f.set_icon(icon)
+        {
+            state.redraw_dialog(i);
+        }
+    }
 }
 
 /// The open location prompts: their index among the dialogs and the
@@ -599,6 +635,68 @@ impl Prop {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::icon::tests::{land, red, two_outputs};
+
+    /// The open prompt's picture.
+    fn picture(h: &crate::harness::Harness) -> Option<crate::raster::Canvas> {
+        use reprisekit::controls::form::Control;
+        let (i, _) = prompts(&h.state).into_iter().next().expect("the prompt");
+        let page = h.state.dialogs.views[i].dialog.form()?.open_page()?;
+        match &page.item("icon")?.control {
+            Control::Picture { canvas, .. } => canvas.clone(),
+            _ => None,
+        }
+    }
+
+    fn ask_about(h: &mut crate::harness::Harness, icon: &str) -> async_channel::Receiver<bool> {
+        let id = "org.example.Maps";
+        h.state.app_index = vec![reprisefs::apps::AppEntry {
+            name: "Maps".into(),
+            exec_line: "maps".into(),
+            terminal: false,
+            id: id.into(),
+            icon: Some(icon.into()),
+            startup_wm_class: None,
+            categories: Vec::new(),
+            mime_types: Vec::new(),
+            shown: true,
+        }];
+        let (reply, rx) = async_channel::bounded(1);
+        let desktop_id = id.to_string();
+        asked(&mut h.state, Ask { desktop_id, reply });
+        rx
+    }
+
+    #[test]
+    fn a_cold_program_icon_lands_on_the_open_prompt() {
+        let root = crate::icon::svg_theme(&["maps-app"], &[]);
+        let mut h = two_outputs("classic", &root);
+        let _rx = ask_about(&mut h, "maps-app");
+        let blank = picture(&h).expect("a stand-in in the picture's place");
+        assert!(
+            blank.pixels.iter().all(|&p| p == 0),
+            "the stand-in is blank"
+        );
+        land(&mut h);
+        assert!(
+            picture(&h).is_some_and(|c| red(&c)),
+            "the prompt took the icon"
+        );
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_program_icon_that_never_decodes_gives_way_to_the_question_mark() {
+        let root = crate::icon::svg_theme(&["dialog-question"], &["maps-app"]);
+        let mut h = two_outputs("classic", &root);
+        let _rx = ask_about(&mut h, "maps-app");
+        land(&mut h);
+        assert!(
+            picture(&h).is_some_and(|c| red(&c)),
+            "the question mark shows once the program's icon fails"
+        );
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 
     #[test]
     fn an_unanswered_prompt_gives_up_and_a_closed_one_refuses() {
