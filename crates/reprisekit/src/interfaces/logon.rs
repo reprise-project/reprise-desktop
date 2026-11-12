@@ -124,16 +124,16 @@ fn logon_touched(m: &Logon, l: &LogonLayout, theme: &Theme, t: Touched) -> Vec<R
 }
 
 /// [`draw_logon`] again inside `rects` (design px within the output) alone, over a canvas it
-/// filled for a model that differs from `m` only there; the device rect repainted.
+/// filled for a model that differs from `m` only there; the device rects repainted.
 pub fn redraw_logon_within(
     c: &mut Canvas,
     m: &Logon,
     l: &LogonLayout,
     (theme, text, s): (&Theme, &TextRenderer, i32),
     rects: &[Rect],
-) -> Rect {
+) -> Vec<Rect> {
     let o = l.output;
-    let mut all = Rect::default();
+    let mut drawn = Vec::new();
     for r in rects {
         let r = Rect::new(r.x - o.x, r.y - o.y, r.width, r.height).scaled(s);
         let r = r.intersect(&c.bounds());
@@ -144,9 +144,9 @@ pub fn redraw_logon_within(
             c.clear_rect(r);
             draw_logon(c, m, l, theme, text, s);
         });
-        all = if all.is_empty() { r } else { all.union(&r) };
+        drawn.push(r);
     }
-    all
+    drawn
 }
 
 /// How many tiles the interface in force shows across `output`: the host's [`Logon::column`].
@@ -300,7 +300,7 @@ mod tests {
             c: &mut Canvas,
             (m, l): (&Logon, &LogonLayout),
             (was, was_l): (&Logon, &LogonLayout),
-        ) -> Option<Rect> {
+        ) -> Option<Vec<Rect>> {
             let rects = logon_changed(m, l, was, was_l, &self.theme)?;
             let s = self.s;
             let drawn = (&self.theme, self.text.for_output(s), s);
@@ -566,6 +566,21 @@ mod tests {
         }),
     ];
 
+    /// From a screen at rest, Glass's frame flies back to the tiles, and each next change lands
+    /// while the one before flies.
+    const FLIGHTS: [Step; 4] = [
+        ("at rest", |_| {}),
+        ("back", |m| {
+            m.key(LogonKey::Escape);
+        }),
+        ("opened mid-flight", |m| {
+            m.key(LogonKey::Enter);
+        }),
+        ("back mid-flight", |m| {
+            m.key(LogonKey::Escape);
+        }),
+    ];
+
     impl Bench {
         fn drawn<'a>(&'a self, m: &'a Logon, l: &'a LogonLayout) -> Drawn<'a> {
             Drawn {
@@ -596,7 +611,7 @@ mod tests {
 
     #[test]
     fn a_change_begun_within_its_region_plays_as_one_begun_from_whole_draws() {
-        let mut played = 0;
+        let (mut played, mut flown) = (0, 0);
         for s in [1, 2] {
             for (what, mut m) in lived_from() {
                 m.moves = crate::logon::Moves::Full;
@@ -621,7 +636,8 @@ mod tests {
                     let first = match &whole {
                         Some(t) => {
                             let mut first = c.clone();
-                            assert_eq!(r, t.frame(&mut first, &m, 0), "{at}: the rect drawn");
+                            let drawn = t.frame(&mut first, &m, 0);
+                            assert_eq!(r, [drawn], "{at}: the rect drawn");
                             first
                         }
                         None => screen.whole(&m, &now),
@@ -637,6 +653,13 @@ mod tests {
                         _ => panic!("{at}: both play or neither"),
                     };
                     played += 1;
+                    if within.carried_at(0).is_some() {
+                        flown += 1;
+                        assert!(
+                            within.held().intersect(&b.bounds()) != b.bounds(),
+                            "{at}: the flight holds less than the screen"
+                        );
+                    }
                     same_frames(&at, (&whole, &c), (&within, &b), &m);
                     within.settle(&mut b, &m);
                     l = now;
@@ -651,13 +674,14 @@ mod tests {
             }
         }
         assert!(played > 20, "{played} changes played");
+        assert!(flown >= 8, "{flown} frames flew");
     }
 
     #[test]
     fn a_change_landing_while_another_plays_carries_on_within_its_region_as_from_whole_draws() {
         const LANDS_AT: u32 = 120;
         const TYPED_AT: u32 = 60;
-        let (mut carried, mut refreshed) = (0, 0);
+        let (mut carried, mut refreshed, mut flown_on) = (0, 0, 0);
         for s in [1, 2] {
             for (what, mut m) in lived_from() {
                 m.moves = crate::logon::Moves::Full;
@@ -667,7 +691,7 @@ mod tests {
                 // within the region.
                 let (mut a, mut b) = (screen.whole(&m, &l), screen.whole(&m, &l));
                 let mut playing: Option<(Transition, Transition)> = None;
-                for (step, change) in MOVING {
+                for &(step, change) in MOVING.iter().chain(&FLIGHTS) {
                     let at = format!("{what} at {s}: {step}");
                     if let Some((whole, within)) = &mut playing {
                         let was = m.drawn();
@@ -723,6 +747,9 @@ mod tests {
                                 None => a = screen.whole(&m, &now),
                             }
                             carried += 1;
+                            if pv.carried_at(0).is_some() {
+                                flown_on += 1;
+                            }
                             (whole, within)
                         }
                         None => {
@@ -764,8 +791,8 @@ mod tests {
             }
         }
         assert!(
-            carried > 10 && refreshed > 10,
-            "{carried} carried on, {refreshed} refreshed"
+            carried > 10 && refreshed > 10 && flown_on >= 4,
+            "{carried} carried on, {refreshed} refreshed, {flown_on} landed on a flight"
         );
     }
 }
