@@ -116,3 +116,106 @@ fn redrawing_the_taskbars_asks_only_the_outputs_whose_bar_changed() {
         "only TEST-1, the pressed bar's output: {asked:?}"
     );
 }
+
+mod under_a_lock {
+    use crate::backend::{take_asks, take_scene_outputs};
+    use crate::harness::{Harness, TestClient, Toplevel};
+
+    /// TEST-1 with a window titled "one" on its bar.
+    fn desktop() -> (Harness, TestClient, Toplevel) {
+        let mut h = Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.state.lock.helpers = crate::lockview::Helpers {
+            password: |_, _| std::process::Command::new("false"),
+            finger: |_| None,
+            ..Default::default()
+        };
+        let mut c = h.connect();
+        let t = h.map_titled(&mut c, "editor", "one", (300, 200));
+        h.dispatch();
+        (h, c, t)
+    }
+
+    /// `t`'s client retitles it to `title`, once a title redraw held back has drawn and the
+    /// wait after it is over.
+    fn retitle(h: &mut Harness, c: &mut TestClient, t: Toplevel, title: &str) {
+        h.run_for(2 * crate::retitle::MIN_INTERVAL.as_millis() as u64 + 20);
+        take_asks();
+        c.side.shells[t.shell].toplevel.set_title(title.into());
+        c.side.shells[t.shell].surface.commit();
+        h.roundtrip(c);
+        h.dispatch();
+    }
+
+    fn drawn(h: &Harness) -> &crate::taskbarview::DrawnBar {
+        h.state.bars[0].drawn.as_ref().expect("the bar is drawn")
+    }
+
+    fn titles(h: &Harness) -> Vec<String> {
+        (drawn(h).state.tasks.iter())
+            .map(|t| t.title.clone())
+            .collect()
+    }
+
+    fn lock(h: &mut Harness) {
+        crate::lockview::lock(&mut h.state);
+        h.dispatch();
+        take_asks();
+    }
+
+    #[test]
+    fn a_retitle_under_the_lock_redraws_the_bar_and_asks_no_frame() {
+        let (mut h, mut c, t) = desktop();
+        retitle(&mut h, &mut c, t, "two");
+        assert_eq!(take_scene_outputs(), ["TEST-1"], "unlocked, the bar shows");
+        lock(&mut h);
+        retitle(&mut h, &mut c, t, "three");
+        assert_eq!(titles(&h), ["three"], "the bar redrew");
+        assert_eq!(take_asks(), [], "the cover hides the bar and the caption");
+    }
+
+    #[test]
+    fn a_clock_tick_under_the_lock_asks_no_frame() {
+        let (mut h, _c, _t) = desktop();
+        let tick = |h: &mut Harness| {
+            crate::taskbar::TEST_CLOCK.set(crate::taskbar::TEST_CLOCK.get() + 60);
+            let was = drawn(h).state.clock.clone();
+            h.state.redraw_taskbars();
+            assert_ne!(drawn(h).state.clock, was, "the clock turned");
+            take_scene_outputs()
+        };
+        assert_eq!(tick(&mut h), ["TEST-1"], "unlocked, the clock shows");
+        lock(&mut h);
+        assert_eq!(tick(&mut h), Vec::<String>::new());
+    }
+
+    #[test]
+    fn typing_on_the_lock_screen_asks_for_a_frame() {
+        let (mut h, _c, _t) = desktop();
+        lock(&mut h);
+        crate::lockview::type_text(&mut h.state, "a");
+        assert_eq!(take_scene_outputs(), ["TEST-1"]);
+    }
+
+    #[test]
+    fn an_unlock_asks_for_a_frame_and_shows_the_bar_redrawn_under_the_lock() {
+        let (mut fresh, mut fc, ft) = desktop();
+        retitle(&mut fresh, &mut fc, ft, "three");
+        let (mut h, mut c, t) = desktop();
+        lock(&mut h);
+        retitle(&mut h, &mut c, t, "three");
+        crate::lockview::unlock(&mut h.state);
+        assert_eq!(take_scene_outputs(), ["TEST-1"]);
+        let bar = h.state.bars[0].tree;
+        let o = h.state.scene.outputs()[0].clone();
+        assert_eq!(
+            h.state.outputs_of_nodes(&[bar.into()]),
+            [o],
+            "nothing covers the bar"
+        );
+        assert!(
+            drawn(&h).canvas.pixels == drawn(&fresh).canvas.pixels,
+            "the bar shows the title it took under the lock"
+        );
+    }
+}

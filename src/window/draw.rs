@@ -242,12 +242,12 @@ impl State {
         }
     }
 
-    /// Ask for frames on the outputs `w`'s tree is on, for an edit of its frame.
+    /// Ask for frames on the outputs showing `w`'s tree, for an edit of its frame.
     pub fn redraw_window(&mut self, w: WindowId) {
         let Some(tree) = self.win(w).map(|x| x.tree) else {
             return;
         };
-        let outputs = self.scene.outputs_of(tree);
+        let outputs = self.outputs_of_nodes(&[tree.into()]);
         crate::backend::schedule_on(self, &outputs, crate::backend::Ask::Scene);
     }
 

@@ -1,5 +1,4 @@
-//! Which client surfaces an output draws none of: those lying wholly under opaque leaves above
-//! them.
+//! Which leaves an output draws none of: those lying wholly under opaque leaves above them.
 
 use smithay::{
     backend::renderer::{Renderer, utils::RendererSurfaceStateUserData},
@@ -36,17 +35,55 @@ impl<R: Renderer, D> Scene<R, D> {
         )
     }
 
-    /// The surface nodes `output` draws none of, each under opaque leaves drawn above it at full
-    /// opacity and outside what every custom node the output draws reads
-    /// ([`CustomNode::reads_beneath`](crate::CustomNode::reads_beneath)). A custom node that
-    /// cannot say reads all of the output beneath it.
+    /// The surface nodes `output` draws none of ([`Scene::leaves_on`]).
     pub(crate) fn covered_on(&self, output: &Output) -> Vec<NodeId> {
-        let Some(view) = View::of(output) else {
-            return Vec::new();
-        };
+        (self.leaves_on(output).into_iter().flatten())
+            .filter(|l| l.surface && l.covered)
+            .map(|l| l.id)
+            .collect()
+    }
+
+    /// The outputs where part of `nodes` shows: those [`Scene::outputs_of`] lists, less those on
+    /// which every leaf under `nodes` is covered by the rule [`Scene::outputs_showing`] applies
+    /// to surfaces.
+    pub fn outputs_drawing(&self, nodes: &[NodeId]) -> Vec<Output> {
+        let mut out: Vec<Output> = Vec::new();
+        for &n in nodes {
+            for o in self.outputs_of(n) {
+                if !out.contains(&o) {
+                    out.push(o);
+                }
+            }
+        }
+        out.retain(|o| {
+            self.leaves_on(o).is_none_or(|leaves| {
+                (leaves.iter()).any(|l| !l.covered && nodes.iter().any(|&n| self.within(l.id, n)))
+            })
+        });
+        out
+    }
+
+    fn within(&self, mut id: NodeId, tree: NodeId) -> bool {
+        loop {
+            if id == tree {
+                return true;
+            }
+            match self.node(id).and_then(|n| n.parent) {
+                Some(p) => id = p.0,
+                None => return false,
+            }
+        }
+    }
+
+    /// The leaves `output` shows part of, each covered when it lies under opaque leaves drawn
+    /// above it at full opacity and outside what every custom node the output draws reads
+    /// ([`CustomNode::reads_beneath`](crate::CustomNode::reads_beneath)). A custom node that
+    /// cannot say reads all of the output beneath it. `None` for an output with no view.
+    fn leaves_on(&self, output: &Output) -> Option<Vec<Leaf>> {
+        let view = View::of(output)?;
         let inset = rounding_inset(view.scale.x);
         let mut opaque: Vec<Rectangle<i32, Logical>> = Vec::new();
-        let mut hidden: Vec<(NodeId, Rectangle<i32, Logical>, usize)> = Vec::new();
+        let mut shown: Vec<Shown> = Vec::new();
         let mut customs: Vec<Custom> = Vec::new();
         let mut order = 0;
         let pass = Pass {
@@ -63,18 +100,24 @@ impl<R: Renderer, D> Scene<R, D> {
             None,
             &mut |id, n, pos, alpha, _, clip| {
                 let cut = |r: Rectangle<i32, Logical>| clip.map_or(Some(r), |c| r.intersection(c));
-                let Some(shown) = (Self::leaf_rect(n, pos))
+                let Some(rect) = (Self::leaf_rect(n, pos))
                     .and_then(|r| r.intersection(view.area))
                     .and_then(cut)
                 else {
                     return;
                 };
                 order += 1;
-                let under = shown.subtract_rects(opaque.iter().copied()).is_empty();
-                match &n.content {
-                    Content::Surface(_) if under => hidden.push((id, shown, order)),
-                    Content::Custom(c) => customs.push(Custom {
-                        shown,
+                let under = rect.subtract_rects(opaque.iter().copied()).is_empty();
+                shown.push(Shown {
+                    id,
+                    surface: matches!(n.content, Content::Surface(_)),
+                    rect,
+                    under,
+                    order,
+                });
+                if let Content::Custom(c) = &n.content {
+                    customs.push(Custom {
+                        shown: rect,
                         hidden: under,
                         order,
                         reads: (c.reads_beneath(view.scale.x)).map(|rs| {
@@ -82,8 +125,7 @@ impl<R: Renderer, D> Scene<R, D> {
                                 .map(|r| Rectangle::new(r.loc + pos, r.size))
                                 .collect()
                         }),
-                    }),
-                    _ => {}
+                    });
                 }
                 if under || alpha < 1.0 {
                     return;
@@ -95,11 +137,34 @@ impl<R: Renderer, D> Scene<R, D> {
             },
         );
         let (reads, from) = reads(customs);
-        (hidden.into_iter())
-            .filter(|&(_, shown, at)| at < from && !reads.iter().any(|r| r.overlaps(shown)))
-            .map(|(id, _, _)| id)
-            .collect()
+        Some(
+            (shown.into_iter())
+                .map(|s| Leaf {
+                    id: s.id,
+                    surface: s.surface,
+                    covered: s.under && s.order < from && !reads.iter().any(|r| r.overlaps(s.rect)),
+                })
+                .collect(),
+        )
     }
+}
+
+/// A leaf in walk order (front first) and the part of it on the output.
+struct Shown {
+    id: NodeId,
+    surface: bool,
+    rect: Rectangle<i32, Logical>,
+    /// Wholly under opaque leaves above it.
+    under: bool,
+    order: usize,
+}
+
+/// A leaf an output shows part of ([`Scene::leaves_on`]).
+struct Leaf {
+    id: NodeId,
+    surface: bool,
+    /// Drawn by none of the output's pixels.
+    covered: bool,
 }
 
 /// A custom node the output shows part of, in walk order (front first).
