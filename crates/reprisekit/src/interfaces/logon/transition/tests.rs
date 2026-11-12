@@ -82,7 +82,6 @@ fn play(mut m: Logon, v: Variant, s: i32, act: impl FnOnce(&mut Logon)) -> Playe
         theme: &theme,
         text: &text,
         s,
-        over: None,
     };
     let t = Transition::begin(&motion, &d).expect("the change plays");
     Played {
@@ -128,7 +127,6 @@ impl Played {
             theme: &self.theme,
             text: &self.text,
             s: self.s,
-            over: None,
         };
         d.canvas(&self.m, d.l, Show::Chrome)
     }
@@ -258,7 +256,6 @@ fn check(name: &str, p: &Played) {
         theme: &p.theme,
         text: &p.text,
         s,
-        over: None,
     };
     let over = Transition::begin_over(&p.motion, &d, Some(p.before())).expect("it plays");
     let mut c = after.clone();
@@ -314,7 +311,6 @@ fn blue_busy_and_status_show_at_once() {
         theme: &theme,
         text: &text,
         s: 1,
-        over: None,
     };
     assert!(Transition::begin(&motion, &d).is_none());
 }
@@ -384,9 +380,8 @@ fn escape_mid_pick_flies_back_from_where_the_frame_is() {
         theme: &p.theme,
         text: &p.text,
         s: 1,
-        over: None,
     };
-    let back = Transition::then(&p.t, mid, &motion, &d).expect("the way back plays");
+    let back = Transition::then(&p.t, mid, &motion, &d, p.still(&p.m)).expect("the way back plays");
     assert_eq!(back.carried_at(0), p.t.carried_at(mid), "from where it is");
     let mut c = p.still(&m);
     back.frame(&mut c, &m, 0);
@@ -417,9 +412,8 @@ fn keys_typed_while_the_block_fades_in_show_at_the_end() {
         theme: &p.theme,
         text: &p.text,
         s: 1,
-        over: None,
     };
-    p.t.refresh_now(&d);
+    p.t.refresh_now(&d, &p.still(&p.m));
     assert_eq!(p.m.password.text, "abc");
     assert!(
         p.at(p.t.ms()).pixels == p.still(&p.m).pixels,
@@ -448,9 +442,8 @@ fn a_line_that_comes_up_under_an_entering_block_ends_in_place() {
             theme: &p.theme,
             text: &p.text,
             s,
-            over: None,
         };
-        p.t.refresh_now(&d);
+        p.t.refresh_now(&d, &p.still(&p.m));
         assert!(
             p.at(p.t.ms()).pixels == p.still(&p.m).pixels,
             "@{s}: the Caps Lock line ends under the box"
@@ -485,7 +478,6 @@ fn transition_frame_cost() {
                     theme: &theme,
                     text: &text,
                     s,
-                    over: None,
                 };
                 let Some(t) = Transition::begin(&motion, &d) else {
                     continue;
@@ -498,7 +490,7 @@ fn transition_frame_cost() {
                     .map(|i| {
                         let start = std::time::Instant::now();
                         let r = t.frame(&mut c, &m, t.ms() * i / FRAMES);
-                        copy_in(&mut shown, &c, r);
+                        paste(&mut shown, &c, (0, 0), r);
                         start.elapsed().as_secs_f64() * 1000.0
                     })
                     .collect();
@@ -559,7 +551,6 @@ fn click_and_settle_cost() {
                     theme: &theme,
                     text: &text,
                     s,
-                    over: None,
                 };
                 let (w, h) = ((FULL_HD.width * s) as u32, (FULL_HD.height * s) as u32);
                 let mut shown = Canvas::new(w, h);
@@ -594,7 +585,7 @@ fn click_and_settle_cost() {
                 t.frame(&mut c, &m, t.ms() / 2);
                 let settle_rect = time(&mut || {
                     let r = t.settle(&mut c, &m);
-                    copy_in(&mut shown, &c, r);
+                    paste(&mut shown, &c, (0, 0), r);
                 });
                 println!(
                     "{:?} {name} @{s}: click {click:.2} ms (painted whole {painted_click:.2} \
