@@ -333,6 +333,37 @@ fn a_watch_sees_what_a_destroy_or_a_hidden_tree_covered() {
 }
 
 #[test]
+fn a_watch_skips_a_canvas_edit_outside_the_source_box() {
+    let mut s = TestScene::new();
+    let root = s.root();
+    let b = s.buffer_create(root);
+    s.buffer_set_canvas(b, &[0; 8 * 4], 8, 4);
+    s.buffer_set_source_box(
+        b,
+        Some(Rectangle::new((0.0, 0.0).into(), (8.0, 1.0).into())),
+    );
+    s.buffer_set_dest_size(b, Some((8, 1).into()));
+    let mut below = [0; 8 * 4];
+    below[8 * 2] = 0xff00_0000;
+    assert!(s.watch());
+    s.buffer_set_canvas(b, &below, 8, 4);
+    assert_eq!(s.watched(), [], "row 2 lies outside the box");
+    let mut inside = below;
+    inside[3] = 0xff00_0000;
+    assert!(s.watch());
+    s.buffer_set_canvas(b, &inside, 8, 4);
+    assert_eq!(s.watched(), [rect(0, 0, 8, 1); 2], "before and after");
+    let sharer = s.buffer_create(root);
+    s.buffer_share(sharer, b);
+    assert!(s.watch());
+    s.buffer_set_canvas(b, &[0; 8 * 4], 8, 4);
+    assert!(
+        !s.watched().is_empty(),
+        "a buffer sharing the pixels may show the row"
+    );
+}
+
+#[test]
 fn a_watch_skips_where_a_moved_trees_child_never_showed() {
     let mut s = TestScene::new();
     let root = s.root();

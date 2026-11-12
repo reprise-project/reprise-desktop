@@ -877,12 +877,23 @@ impl<R: Renderer, D> Scene<R, D> {
             });
         }
         // The same pixels again are no edit; a change in place keeps the node's rect, so a watch
-        // may see it after the copy.
+        // may see it after the copy. Outside the source box it shows only through a sharer.
         if !changed.is_empty() {
             self.changes += 1;
-            self.saw(buffer.0);
+            if self.buffer_shows(buffer, changed) || self.any_shared() {
+                self.saw(buffer.0);
+            }
         }
         changed
+    }
+
+    /// Whether any of `rect` (buffer pixels) lies inside `buffer`'s source box.
+    fn buffer_shows(&self, buffer: BufferId, rect: Rectangle<i32, BufferCoords>) -> bool {
+        (self.buffer_ref(buffer)).is_none_or(|b| b.source.is_none_or(|s| s.overlaps(rect.to_f64())))
+    }
+
+    fn any_shared(&self) -> bool {
+        (self.live()).any(|(_, n)| matches!(&n.content, Content::Buffer(b) if b.shared.is_some()))
     }
 
     /// Show a canvas copied by [`Prepared::new`], damaged whole.
