@@ -280,11 +280,97 @@ mod per_bar {
     }
 
     #[test]
+    fn each_bar_draws_once_per_window_or_desktop_change() {
+        let (mut h, mut c, one) = two_outputs("[workspaces]\ncount = 2");
+        let two = h.map_titled(&mut c, "other", "two", (300, 200));
+        h.dispatch();
+        let draws = |h: &Harness| h.state.bars.iter().map(|b| b.draws).collect::<Vec<_>>();
+        let once = |h: &mut Harness, what: &str, f: &mut dyn FnMut(&mut Harness)| {
+            let was = draws(h);
+            f(h);
+            h.dispatch();
+            let now = draws(h);
+            let per: Vec<usize> = now.iter().zip(&was).map(|(n, w)| n - w).collect();
+            assert_eq!(per, [1, 1], "{what}: draws per bar");
+        };
+        assert_eq!(h.state.focused, Some(two.id));
+        once(&mut h, "minimize", &mut |h| {
+            h.state.set_minimized(two.id, true)
+        });
+        assert_eq!(h.state.focused, Some(one.id), "the focus moved on");
+        once(&mut h, "restore", &mut |h| {
+            h.state.set_minimized(two.id, false)
+        });
+        once(&mut h, "move to a desktop", &mut |h| {
+            h.state.move_to_desktop(&[two.id], 1)
+        });
+        assert_eq!(h.state.focused, Some(one.id), "the focus moved on");
+        once(&mut h, "switch desktop", &mut |h| h.state.switch_desktop(1));
+        assert_eq!(
+            h.state.focused,
+            Some(two.id),
+            "the desktop's window took focus"
+        );
+        once(&mut h, "switch back", &mut |h| h.state.switch_desktop(0));
+        let mut three = None;
+        once(&mut h, "map", &mut |h| {
+            three = Some(h.map_titled(&mut c, "third", "three", (300, 200)));
+        });
+        let three = three.expect("mapped");
+        assert_eq!(h.state.focused, Some(three.id));
+        once(&mut h, "close", &mut |h| {
+            c.destroy(three);
+            h.roundtrip(&mut c);
+        });
+        assert_eq!(h.state.focused, Some(one.id), "the focus moved on");
+    }
+
+    #[test]
     fn retitling_a_window_on_another_desktop_asks_no_frame() {
         let (mut h, mut c, t) = two_outputs("[workspaces]\ncount = 2");
         h.state.move_to_desktop(&[t.id], 1);
         h.dispatch();
         retitle(&mut h, &mut c, t, "two");
         assert_eq!(take_asks(), []);
+    }
+}
+
+/// The time of one bar redraw with nothing changed and of one drawn from scratch, per look and
+/// scale. Run with `--ignored --nocapture` under `--profile vm`.
+#[test]
+#[ignore]
+fn bar_redraw_cost() {
+    use crate::harness::Harness;
+    use smithay::output::Scale;
+    const N: u32 = 100;
+    for look in ["classic", "blue", "glass"] {
+        for (w, hh, scale) in [(1920, 1080, 1.0), (3840, 2160, 2.0)] {
+            let text = format!("[appearance]\ninterface = \"{look}\"\n");
+            let mut h = Harness::with_config(crate::config::Config::parse(&text).unwrap());
+            for name in ["TEST-1", "TEST-2"] {
+                let o = h.output(name, w, hh);
+                o.change_current_state(None, None, Some(Scale::Fractional(scale)), None);
+            }
+            h.state.update_layout();
+            let mut c = h.connect();
+            h.map_titled(&mut c, "editor", "one", (300, 200));
+            h.map_titled(&mut c, "other", "two", (300, 200));
+            h.run_for(300);
+            let bars = h.state.bars.len() as u32;
+            let t = std::time::Instant::now();
+            for _ in 0..N {
+                h.state.redraw_taskbars();
+            }
+            let same = t.elapsed() / (N * bars);
+            let t = std::time::Instant::now();
+            for _ in 0..N {
+                for b in &mut h.state.bars {
+                    b.drawn = None;
+                }
+                h.state.redraw_taskbars();
+            }
+            let full = t.elapsed() / (N * bars);
+            eprintln!("{look} x{scale}: unchanged bar redraw {same:?}, full bar draw {full:?}");
+        }
     }
 }
