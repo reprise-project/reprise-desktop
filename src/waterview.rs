@@ -725,6 +725,11 @@ impl CustomNode<GlesRenderer> for WaterNode {
         true
     }
 
+    /// The field refracts the pane's own copy of the wallpaper, not the scene.
+    fn reads_beneath(&self, _scale: f64) -> Option<Vec<Rectangle<i32, Logical>>> {
+        Some(Vec::new())
+    }
+
     fn elements(
         &self,
         _renderer: &mut GlesRenderer,

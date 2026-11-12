@@ -2114,6 +2114,45 @@ mod tests {
         h
     }
 
+    #[test]
+    fn a_window_under_a_glass_lock_with_water_asks_no_frames() {
+        use crate::harness::{Harness, TestClient, Toplevel};
+        fn asks(h: &mut Harness, c: &mut TestClient, t: Toplevel) -> bool {
+            crate::backend::take_asks();
+            h.draw_self(c, t, 0xff40_4040);
+            (crate::backend::take_asks().iter())
+                .any(|(_, a)| matches!(a, crate::backend::Ask::Commit(_)))
+        }
+        let config = "[appearance]\ninterface = \"glass\"\n[effects]\nreduce_motion = true\n[wallpaper]\nwater = \"rain\"\n";
+        let mut h = Harness::with_config(crate::config::Config::parse(config).unwrap());
+        h.output("TEST-1", 320, 200);
+        h.state
+            .set_wallpaper(Some(std::path::Path::new("reprise:tarn/blue")));
+        let o = h.state.scene.outputs()[0].clone();
+        for _ in 0..200 {
+            if !matches!(
+                h.state.lock_wallpaper(&o),
+                LockWall::None | LockWall::Composing
+            ) {
+                break;
+            }
+            h.run_for(10);
+        }
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "printer", 200, 100);
+        assert!(asks(&mut h, &mut c, t), "shown");
+        lock(&mut h.state);
+        let lock_pane = ("TEST-1".to_string(), Pane::Lock);
+        assert!(
+            h.state.water.pane_keys().contains(&lock_pane),
+            "the cover has water"
+        );
+        assert!(
+            !asks(&mut h, &mut c, t),
+            "under the water over the cover's opaque backdrop"
+        );
+    }
+
     /// The asks the frame about to render on TEST-1 makes.
     fn next_frame(h: &mut crate::harness::Harness) -> Vec<String> {
         let o = h.state.scene.outputs()[0].clone();

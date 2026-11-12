@@ -696,6 +696,69 @@ fn a_surface_under_opaque_leaves_is_covered_unless_glass_shown_or_read_reads_it(
     );
 }
 
+/// A custom node of `size` drawing only its own textures (water, cards, saver marks).
+struct Blending((i32, i32));
+
+impl reprisescene::CustomNode<DummyRenderer> for Blending {
+    fn size(&self) -> smithay::utils::Size<i32, smithay::utils::Logical> {
+        self.0.into()
+    }
+
+    fn reads_beneath(&self, _: f64) -> Option<Vec<Rectangle<i32, smithay::utils::Logical>>> {
+        Some(Vec::new())
+    }
+
+    fn elements(
+        &self,
+        _: &mut DummyRenderer,
+        _: Point<f64, smithay::utils::Physical>,
+        _: smithay::utils::Scale<f64>,
+        _: f32,
+    ) -> Vec<reprisescene::CustomElement<DummyRenderer>> {
+        Vec::new()
+    }
+}
+
+#[test]
+fn a_custom_node_reading_nothing_leaves_a_surface_under_an_opaque_rect_below_it_covered() {
+    let mut w = World::new();
+    let surface = w.surface();
+    let left = w.left.clone();
+    let mut scene = Scene::<DummyRenderer>::new();
+    scene.add_output(&left);
+    let root = scene.root();
+    let s = scene.surface_create(root, surface.clone());
+    scene.set_position(s, 10, 10);
+    let (covered, shown) = (Some(vec![]), Some(vec![left.clone()]));
+    let node = scene.custom_create(root, Box::new(Blending((100, 100))));
+    assert_eq!(
+        scene.outputs_showing(&surface),
+        shown,
+        "drawn over it with nothing opaque between"
+    );
+    let black = scene.rect_create(root, (100, 100), [0.0, 0.0, 0.0, 1.0]);
+    scene.place_below(black, node);
+    assert_eq!(
+        scene.outputs_showing(&surface),
+        covered,
+        "drawn over an opaque rect over it"
+    );
+    scene.rect_set_size(black, (49, 100));
+    assert_eq!(
+        scene.outputs_showing(&surface),
+        shown,
+        "the rect a pixel short"
+    );
+    scene.rect_set_size(black, (100, 100));
+    scene.destroy(node);
+    scene.custom_create(root, Box::new(Pane));
+    assert_eq!(
+        scene.outputs_showing(&surface),
+        shown,
+        "a node reading anywhere beneath, over the rect"
+    );
+}
+
 #[test]
 fn a_surface_covers_what_lies_under_its_opaque_region_or_its_buffer_without_alpha() {
     use wl_shm::Format::{Argb8888, Xrgb8888};
