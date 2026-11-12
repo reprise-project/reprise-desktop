@@ -85,4 +85,42 @@ pub(crate) mod testfs {
         rx.recv_timeout(std::time::Duration::from_secs(5))
             .expect("returns without blocking")
     }
+
+    /// A stand-in for a stopped network mount, which `ops::resolved` asks before it resolves a path.
+    pub mod dead {
+        use std::path::{Path, PathBuf};
+        use std::sync::{Condvar, Mutex};
+
+        static DEAD: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+        static ANSWERED: Condvar = Condvar::new();
+
+        pub fn stop(dir: &Path) {
+            DEAD.lock().unwrap().push(dir.to_path_buf());
+        }
+
+        pub fn resume(dir: &Path) {
+            DEAD.lock().unwrap().retain(|d| d != dir);
+            ANSWERED.notify_all();
+        }
+
+        /// Waits while resolving `path` reaches a stopped folder: `path` lies in one, or a link on
+        /// its way points into one.
+        pub fn stall(path: &Path) {
+            let mut dead = DEAD.lock().unwrap();
+            while reaches(path, &dead) {
+                dead = ANSWERED.wait(dead).unwrap();
+            }
+        }
+
+        fn reaches(path: &Path, dead: &[PathBuf]) -> bool {
+            !dead.is_empty()
+                && path.ancestors().any(|at| {
+                    let to = match std::fs::read_link(at) {
+                        Ok(t) => at.parent().map_or(t.clone(), |p| p.join(&t)),
+                        Err(_) => at.to_path_buf(),
+                    };
+                    dead.iter().any(|d| to.starts_with(d))
+                })
+        }
+    }
 }

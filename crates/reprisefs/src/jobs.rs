@@ -760,6 +760,42 @@ mod tests {
     }
 
     #[test]
+    fn a_link_into_a_stopped_mount_moves_without_asking_the_mount() {
+        use crate::testfs::dead;
+        let t = tempfile::tempdir().unwrap();
+        let mount = t.path().join("mount");
+        let (desktop, dest) = (t.path().join("Desktop"), t.path().join("Documents"));
+        for d in [&mount.join("sub"), &desktop, &dest] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        let link = desktop.join("Sub");
+        std::os::unix::fs::symlink(mount.join("sub"), &link).unwrap();
+        dead::stop(&mount);
+        let (wtx, woke) = channel();
+        let job = PutJob::start_until(
+            vec![item(link.clone(), DropOp::Move)],
+            dest.clone(),
+            Vec::new(),
+            Arc::default(),
+            Duration::from_millis(300),
+            move || {
+                let _ = wtx.send(());
+            },
+        );
+        let got = run(job, woke);
+        dead::resume(&mount);
+        assert!(
+            matches!(
+                got.as_slice(),
+                [PutEvent::Landed { .. }, PutEvent::Finished]
+            ),
+            "the link lands: {got:?}"
+        );
+        assert!(std::fs::symlink_metadata(dest.join("Sub")).is_ok_and(|m| m.is_symlink()));
+        assert!(std::fs::symlink_metadata(&link).is_err());
+    }
+
+    #[test]
     fn a_paused_put_is_not_taken_for_one_that_stopped_answering() {
         let t = tempfile::tempdir().unwrap();
         std::fs::write(t.path().join("a.txt"), "a").unwrap();
