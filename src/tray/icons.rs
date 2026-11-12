@@ -303,10 +303,13 @@ pub fn item_icon(state: &mut State, item: &TrayItem, px: i32) -> Option<Arc<Canv
     if let Some(c) = state.tray.as_ref().and_then(|t| t.icon_cache.get(&key)) {
         return c.clone();
     }
+    let waits = state.icons.waits();
     let found = item_canvas(item, px)
-        .or_else(|| state.icons.get("application-x-executable", px))
-        .map(Arc::new);
-    if let Some(t) = state.tray.as_mut() {
+        .map(Arc::new)
+        .or_else(|| crate::icon::unread(&mut state.icons, crate::icon::STAND_IN, px));
+    // A stand-in still decoding is asked for again when the bar draws once it lands.
+    let settled = state.icons.waits() == waits;
+    if let Some(t) = state.tray.as_mut().filter(|_| settled) {
         t.icon_cache.insert(key, found.clone());
     }
     found

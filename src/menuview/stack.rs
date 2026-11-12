@@ -24,8 +24,8 @@ use crate::{
 use super::*;
 
 impl State {
-    /// Icon `name` at `px` for menu row `row` ([`crate::icon::unread`]): an icon file not decoded
-    /// yet shows the stand-in and goes on `waits` for [`State::menu_icon_landed`].
+    /// Icon `name` at `px` for menu row `row` ([`crate::icon::unread`]): one not ready yet shows
+    /// [`crate::icon::stand_in`] and goes on `waits` for [`State::menu_icons_landed`].
     pub(super) fn menu_icon(
         &mut self,
         row: usize,
@@ -36,13 +36,13 @@ impl State {
         icons.from.push((row, RowIcon::Name(name.to_string()), px));
         let icon = self.icons.get_unread(name, px).unwrap_or_else(|| {
             icons.waits.push((row, name.to_string(), px));
-            self.icons.get_shared(crate::icon::STAND_IN, px)
+            crate::icon::stand_in(&mut self.icons, name, px)
         });
         icon.map(Arc::unwrap_or_clone)
     }
 
-    /// Window `w`'s icon at `px` for menu row `row`: one waiting on its app's icon file shows the
-    /// stand-in and goes on `waits` for [`State::menu_icon_landed`].
+    /// Window `w`'s icon at `px` for menu row `row`: one waiting on its icon file or theme name
+    /// shows the stand-in and goes on `waits` for [`State::menu_icons_landed`].
     pub(super) fn menu_window_icon(
         &mut self,
         row: usize,
@@ -96,11 +96,16 @@ impl State {
         }
     }
 
-    /// Icon file `file` decoded at `px`: the menu rows waiting on it take it.
-    pub(crate) fn menu_icon_landed(&mut self, file: &str, px: i32, art: &Option<Canvas>) {
+    /// Icons `landed` (icon file or theme name, px, image): the menu rows waiting on one take it,
+    /// and each menu that took one draws once.
+    pub(crate) fn menu_icons_landed(&mut self, landed: &[(String, i32, Option<Canvas>)]) {
         for depth in 0..self.menus.len() {
             let m = &mut self.menus[depth];
-            if land_icon(&mut m.items, &mut m.icons.waits, file, px, art) {
+            let mut took = false;
+            for (key, px, art) in landed {
+                took |= land_icon(&mut m.items, &mut m.icons.waits, key, *px, art);
+            }
+            if took {
                 self.redraw_menu(depth);
             }
         }

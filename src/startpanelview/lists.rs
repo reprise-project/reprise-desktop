@@ -102,6 +102,35 @@ pub(super) fn unread(
     crate::icon::unread(icons, name, px).map(std::sync::Arc::unwrap_or_clone)
 }
 
+/// Whether `icon` is a blank stand-in for an icon still decoding.
+fn blank(icon: &Option<Canvas>) -> bool {
+    icon.as_ref()
+        .is_some_and(|c| c.pixels.iter().all(|&p| p == 0))
+}
+
+/// Whether any icon `m` shows is a blank stand-in.
+fn shows_stand_in(m: &StartPanel) -> bool {
+    let tree = m.tree.iter().map(|r| match r {
+        TreeRow::Folder { icon, .. } | TreeRow::App { icon, .. } => icon,
+    });
+    let results = m.results.iter().flat_map(|g| &g.rows).map(|r| &r.icon);
+    (m.pinned.iter().chain(&m.frequent).map(|r| &r.icon))
+        .chain(m.places.iter().map(|r| &r.picture))
+        .chain(m.jump.iter().map(|r| &r.icon))
+        .chain(tree)
+        .chain(results)
+        .chain(std::iter::once(&m.user_picture))
+        .any(blank)
+}
+
+/// The logical px of a place row's picture: the Blue menu's are 24 px icons.
+fn place_px(shape: Shape) -> i32 {
+    match shape {
+        Shape::Glass => PICTURE,
+        Shape::Blue => reprisekit::blue::startpanel::PLACE_ICON_PX,
+    }
+}
+
 /// Gives each app row of `rows` (whose apps `map` holds) the icon `icon` finds for its app.
 pub(super) fn refill_tree(
     rows: &mut [TreeRow],
@@ -124,7 +153,7 @@ fn jump_rows(
         .iter()
         .map(|p| ResultRow {
             name: file_name(p),
-            icon: icons.get(reprisefs::icons::icon_for_file(p), px),
+            icon: unread(icons, reprisefs::icons::icon_for_file(p), px),
         })
         .collect()
 }
@@ -163,14 +192,11 @@ impl State {
     ) -> (Vec<PlaceRow>, Vec<MenuEntry>) {
         let dirs = self.recent.document_dirs();
         let recent = self.config.recent_files;
-        let (entries, px) = match shape {
-            Shape::Glass => (crate::startmenu::places(recent, &dirs), PICTURE),
-            Shape::Blue => (
-                crate::startmenu::blue_places(recent, &dirs),
-                reprisekit::blue::startpanel::PLACE_ICON_PX,
-            ),
+        let entries = match shape {
+            Shape::Glass => crate::startmenu::places(recent, &dirs),
+            Shape::Blue => crate::startmenu::blue_places(recent, &dirs),
         };
-        let px = px * scale;
+        let px = place_px(shape) * scale;
         let mut rows = Vec::new();
         let mut places = Vec::new();
         let mut rule = false;
@@ -181,7 +207,7 @@ impl State {
             };
             rows.push(PlaceRow {
                 label: crate::startmenu::expand_label(label, user),
-                picture: icon.as_deref().and_then(|n| self.icons.get(n, px)),
+                picture: icon.as_deref().and_then(|n| unread(&mut self.icons, n, px)),
                 rule_before: rule,
                 submenu: e.opens_submenu(),
             });
@@ -328,7 +354,7 @@ impl State {
         let kept = one_per_name(app_index);
         let (mut rows, map) = tree_rows(app_index, &reprisefs::apps::group(app_index), &kept);
         let px = TREE_ICON * scale;
-        let folder = icons.get("folder", px);
+        let folder = unread(icons, "folder", px);
         for row in &mut rows {
             if let TreeRow::Folder { icon, .. } = row {
                 *icon = folder.clone();
@@ -339,43 +365,70 @@ impl State {
         v.tree_apps = map;
     }
 
-    /// Icon file `file` landed: the program, tree and search rows wearing it take it.
-    pub(crate) fn start_panel_icon_landed(&mut self, file: &str) {
+    /// Icons `keys` (icon files or theme names) landed: if the open panel shows a blank stand-in
+    /// ([`crate::icon::stand_in`]), a file landed, or names `repick` turned out not to decode,
+    /// every icon it shows is looked up again (file rows pick their names again), and the panel
+    /// draws again if one changed.
+    pub(crate) fn start_panel_icons_landed(&mut self, keys: &[&str], repick: bool) {
         let Some(scale) = self.start_panel_scale() else {
             return;
         };
+        let file = repick || keys.iter().any(|k| k.starts_with('/'));
+        if !file && !(self.start_panel.as_ref()).is_some_and(|v| shows_stand_in(&v.model)) {
+            return;
+        }
         let State {
             start_panel,
             app_index,
             icons,
+            start_pictures,
             ..
         } = self;
         let Some(v) = start_panel.as_mut() else {
             return;
         };
-        let wears = |i: &usize| app_index.get(*i).and_then(|a| a.icon.as_deref()) == Some(file);
-        let programs = v.programs.iter().any(wears);
-        let tree = v.tree_apps.iter().flatten().any(wears);
-        let results = v.model.mode() == Mode::Search
-            && (v.result_apps.iter().any(wears)
-                || (v.result_settings.iter()).any(|s| s.icon(app_index).as_deref() == Some(file)));
-        if programs {
-            let px = PROGRAM_ICON * scale;
-            let rows = v.model.pinned.iter_mut().chain(&mut v.model.frequent);
-            for (row, &i) in rows.zip(&v.programs) {
-                row.icon = app_icon(icons, &app_index[i], px);
+        let before = v.model.clone();
+        let px = PROGRAM_ICON * scale;
+        let rows = v.model.pinned.iter_mut().chain(&mut v.model.frequent);
+        for (row, &i) in rows.zip(&v.programs) {
+            row.icon = app_icon(icons, &app_index[i], px);
+        }
+        let px = TREE_ICON * scale;
+        let folder = (v.model.tree.iter())
+            .any(|r| matches!(r, TreeRow::Folder { .. }))
+            .then(|| unread(icons, "folder", px))
+            .flatten();
+        for row in &mut v.model.tree {
+            if let TreeRow::Folder { icon, .. } = row {
+                icon.clone_from(&folder);
             }
         }
-        if tree {
-            let px = TREE_ICON * scale;
-            refill_tree(&mut v.model.tree, &v.tree_apps, |i| {
-                app_icon(icons, &app_index[i], px)
-            });
+        refill_tree(&mut v.model.tree, &v.tree_apps, |i| {
+            app_icon(icons, &app_index[i], px)
+        });
+        let px = place_px(v.model.shape) * scale;
+        for (row, e) in v.model.places.iter_mut().zip(&v.places) {
+            if let MenuEntry::Item { icon, .. } = e {
+                row.picture = icon.as_deref().and_then(|n| unread(icons, n, px));
+            }
         }
-        if results {
+        if let Mode::Jump(i) = v.model.mode()
+            && let Some(files) = v.jumps.get(i)
+        {
+            let px = RESULT_ICON * scale;
+            for (row, f) in v.model.jump.iter_mut().zip(files) {
+                row.icon = unread(icons, reprisefs::icons::icon_for_file(f), px);
+            }
+        }
+        let px = PICTURE * scale;
+        if start_pictures.shown(px).is_none() {
+            v.model.user_picture = unread(icons, "avatar-default", px);
+        }
+        let mut results = (v.model.results.iter()).flat_map(|g| &g.rows);
+        if v.model.mode() == Mode::Search && (file || results.any(|r| blank(&r.icon))) {
             self.start_panel_show_results();
         }
-        if programs || tree || results {
+        if self.start_panel.as_ref().is_some_and(|v| v.model != before) {
             self.redraw_start_panel();
         }
     }

@@ -165,15 +165,18 @@ pub fn apply_choices(state: &mut State, picked: Choices) {
     replace_all(state);
 }
 
-/// Icon file `file` landed: the remembered rows of an open Customize dialog that wear it take it.
-pub(crate) fn customize_icon_landed(state: &mut State, file: &str) {
+/// Icons `keys` (icon files or theme names) landed: the remembered rows of an open Customize
+/// dialog that wear one take it.
+pub(crate) fn customize_icon_landed(state: &mut State, keys: &[&str]) {
     let Some(tray) = state.tray.as_ref() else {
         return;
     };
     let mut refilled = Vec::new();
     for (i, v) in state.dialogs.views.iter_mut().enumerate() {
         if let Some(t) = v.dialog.tray_mut()
-            && refill_past(t, &tray.choices, &mut state.icons, file)
+            && (keys.iter()).fold(false, |r, k| {
+                refill_past(t, &tray.choices, &mut state.icons, k) | r
+            })
         {
             refilled.push(i);
         }
@@ -202,8 +205,8 @@ pub(super) fn refill_past(
     refilled
 }
 
-/// A remembered item's icon for the Customize list. A file is never read on the loop: one not
-/// decoded yet shows the stand-in until [`customize_icon_landed`] refills the row. It is
+/// A remembered item's icon for the Customize list, never read or drawn from an SVG on the loop:
+/// one not ready yet shows the stand-in until [`customize_icon_landed`] refills the row. It is
 /// fetched at 16 and 32 px and at the list's icon px `list` and twice that, for scale 2.
 pub(super) fn past_icon(icons: &mut IconCache, name: Option<&str>, list: i32) -> Vec<IconSource> {
     let name = name.unwrap_or(crate::icon::STAND_IN);

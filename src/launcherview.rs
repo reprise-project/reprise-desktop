@@ -418,8 +418,21 @@ impl State {
         v.model.set_rows(rows);
     }
 
-    /// Icon file `file` landed: the app and settings rows wearing it take it.
-    pub(crate) fn launcher_icon_landed(&mut self, file: &str) {
+    /// Names `refused` turned out to decode at no size: the file rows pick their icons again.
+    pub(crate) fn launcher_names_refused(&mut self, refused: &[String]) {
+        let Some(paths) = (self.launcher.as_ref()).map(|v| v.search.files.clone()) else {
+            return;
+        };
+        if refused.is_empty() || paths.is_empty() {
+            return;
+        }
+        self.show_launcher_files(paths);
+        self.redraw_launcher();
+    }
+
+    /// Icons `keys` (icon files or theme names) landed: the app and settings rows wearing one
+    /// take it.
+    pub(crate) fn launcher_icon_landed(&mut self, keys: &[&str]) {
         let scale = self.launcher_scale();
         let State {
             launcher,
@@ -433,7 +446,7 @@ impl State {
         let app = |i: usize| app_index.get(i).and_then(|a| a.icon.clone());
         let setting_icons: Vec<Option<String>> =
             v.settings.iter().map(|s| s.icon(app_index)).collect();
-        let wears = |n: &Option<String>| n.as_deref() == Some(file);
+        let wears = |n: &Option<String>| n.as_deref().is_some_and(|n| keys.contains(&n));
         if !v.matches.iter().any(|&i| wears(&app(i))) && !setting_icons.iter().any(wears) {
             return;
         }

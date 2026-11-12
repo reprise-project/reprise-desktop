@@ -330,9 +330,8 @@ pub struct State {
     pub start_panel_text: TextRenderer,
     pub quicklaunch: Vec<QuickItem>,
     pub menus: Vec<Menu>,
-    /// Icon files a job is decoding, with every px asked for since it started; see
-    /// [`crate::icon::Decoding`].
-    pub icon_decodes: crate::icon::Decoding,
+    /// Icons decoding off the loop, landed, and the surfaces waiting on them.
+    pub icon_jobs: crate::icon::IconJobs,
     /// What the hover timer will do when it fires, and the timer, while
     /// something is pending.
     pub menu_pending: Option<MenuPending>,
@@ -734,7 +733,7 @@ impl State {
             start_panel_text,
             quicklaunch,
             menus: Vec::new(),
-            icon_decodes: Default::default(),
+            icon_jobs: Default::default(),
             menu_pending: None,
             menu_timer: None,
             menu_fade_timer: None,

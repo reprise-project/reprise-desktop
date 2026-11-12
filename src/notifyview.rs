@@ -42,6 +42,7 @@ use crate::tray::{Notification, TrayCommand};
 use clock::{Clock, reply_idle_ms, restart};
 use layout::{Drawn, Painted, sheet_tint};
 use motion::{Motion, destroy, drop_leaving, leave};
+pub(crate) use paint::icons_landed;
 use paint::paint;
 use reply::start_reply;
 use stack::{Item, arrived, display_next, enqueue, fold, foldable, in_burst, slot_of, take_all};
