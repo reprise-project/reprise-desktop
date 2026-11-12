@@ -146,7 +146,8 @@ impl State {
 
     /// The user picture at `px` device pixels, else avatar-default.
     pub(super) fn start_user_picture(&mut self, px: i32) -> Option<Canvas> {
-        (self.start_pictures.shown(px)).or_else(|| self.icons.get("avatar-default", px))
+        (self.start_pictures.shown(px))
+            .or_else(|| super::lists::unread(&mut self.icons, "avatar-default", px))
     }
 
     /// Reads the user picture ahead at the Start sizes of each of draw `scales`.

@@ -716,7 +716,7 @@ pub(crate) enum RowIcon {
 pub(crate) struct RowIcons {
     /// (row, source, px) for every row with a looked-up icon.
     from: Vec<(usize, RowIcon, i32)>,
-    /// (row, icon file, px) for the rows showing a stand-in until a job decodes the file.
+    /// (row, icon file or theme name, px) for the rows showing a stand-in until a job decodes it.
     waits: Vec<(usize, String, i32)>,
 }
 

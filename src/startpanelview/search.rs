@@ -153,7 +153,7 @@ impl State {
         v.result_kinds = kinds;
         let mut icon_rows: Vec<Option<Canvas>> = Vec::new();
         if calc.is_some() {
-            icon_rows.push(icons.get(CALC_ICON, px));
+            icon_rows.push(unread(icons, CALC_ICON, px));
         }
         icon_rows.extend(
             v.result_apps

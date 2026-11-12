@@ -248,7 +248,7 @@ pub(crate) fn app_icon(
     app_icon_waiting(icons, index, app_id, px).0
 }
 
-/// [`app_icon`], with the icon file it waits on when that file is not decoded at `px` yet.
+/// [`app_icon`], with the icon file or theme name it waits on when that is not ready at `px`.
 pub(crate) fn app_icon_waiting(
     icons: &mut IconCache,
     index: &[reprisefs::apps::AppEntry],
@@ -261,7 +261,7 @@ pub(crate) fn app_icon_waiting(
     match icons.get_unread(name, px) {
         Some(icon) => (icon, None),
         None => (
-            icons.get_shared(crate::icon::STAND_IN, px),
+            crate::icon::stand_in(icons, name, px),
             Some(name.to_string()),
         ),
     }
@@ -280,7 +280,7 @@ pub(crate) fn app_icon_name<'a>(
     // The app id is a client-chosen string used as a theme icon name; one
     // with a path separator would be taken for a file path, so it only
     // ever goes through the `.desktop` match below.
-    if !app_id.contains('/') && icons.get_shared(app_id, px).is_some() {
+    if !app_id.contains('/') && icons.get_unread(app_id, px) != Some(None) {
         return Some(app_id);
     }
     reprisefs::apps::icon_for_app_id(index, app_id)
@@ -598,17 +598,21 @@ impl State {
 }
 
 /// The icon theme's start-here at the orb's size at draw scale `scale`, when `start_icon` asks for
-/// it; None for the Reprise mark.
+/// it; None for the Reprise mark. One still decoding draws blank until the bar draws again.
 pub fn start_icon(
     config: &crate::config::Config,
     icons: &mut IconCache,
     scale: i32,
 ) -> Option<Arc<Canvas>> {
+    start_icon_px(config, scale).and_then(|px| crate::icon::unread(icons, START_ICON, px))
+}
+
+pub const START_ICON: &str = "start-here";
+
+/// The device px [`start_icon`] fetches at, when it fetches.
+pub fn start_icon_px(config: &crate::config::Config, scale: i32) -> Option<i32> {
     let px = config.theme.taskbar_shape().start_icon * scale;
-    config
-        .start_icon
-        .then(|| icons.get_shared("start-here", px))
-        .flatten()
+    config.start_icon.then_some(px)
 }
 
 #[cfg(test)]

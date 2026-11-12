@@ -568,6 +568,7 @@ impl State {
     }
 
     pub fn redraw_switcher(&mut self) {
+        let waits = self.icons.waits();
         let tree = self.switcher.panel.as_ref().map(|sw| sw.tree);
         let was = tree.map_or_else(Vec::new, |t| self.scene.outputs_of(t));
         match self.switcher.panel.as_ref() {
@@ -582,6 +583,7 @@ impl State {
         let nodes: Vec<_> = tree.into_iter().map(Into::into).collect();
         self.redraw_nodes(was, &nodes);
         crate::access::touch(self);
+        self.note_icon_waits(waits, crate::icon::IconWaiter::Switcher);
     }
 
     fn redraw_switcher_icons(&mut self) {
@@ -849,8 +851,10 @@ impl State {
                 .iter()
                 .find(|v| v.id == id)
                 .and_then(|v| v.dialog.icon.clone())
-                .and_then(|name| self.icons.get(&name, px)),
-            Entry::Desktop => self.icons.get("user-desktop", px),
+                .and_then(|name| crate::icon::unread(&mut self.icons, &name, px))
+                .map(std::sync::Arc::unwrap_or_clone),
+            Entry::Desktop => crate::icon::unread(&mut self.icons, "user-desktop", px)
+                .map(std::sync::Arc::unwrap_or_clone),
         }
     }
 }

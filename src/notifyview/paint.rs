@@ -61,6 +61,23 @@ fn disarm_age(state: &mut State) {
 /// Lays out, places and draws every balloon and the chip, and arms the clocks and the app line
 /// tick for what is drawn; a stack of sheets at rest then re-checks the still pointer.
 pub(super) fn paint(state: &mut State) {
+    let waits = state.icons.waits();
+    paint_stack(state);
+    state.note_icon_waits(waits, crate::icon::IconWaiter::Notify);
+}
+
+/// What a balloon without an icon of its own shows.
+const INFO_ICON: &str = "dialog-information";
+
+/// The theme icons a balloon showed a stand-in for landed: every balloon is drawn again.
+pub(crate) fn icons_landed(state: &mut State) {
+    for b in &mut state.notify.stack {
+        b.painted = None;
+    }
+    paint(state);
+}
+
+fn paint_stack(state: &mut State) {
     hold_clocks(state);
     rearm(state);
     aim_open(state);
@@ -202,8 +219,9 @@ pub(super) fn sheet_icons(
     let app_px = lay.badge.map_or(slot, |r| r.width);
     let app = crate::tray::closest(b.item.app_icon(), app_px).or_else(|| {
         slot_needs_icon(lay, picture.is_some())
-            .then(|| icons.get("dialog-information", slot))
+            .then(|| crate::icon::unread(icons, INFO_ICON, slot))
             .flatten()
+            .map(std::sync::Arc::unwrap_or_clone)
     });
     (app, picture)
 }
@@ -249,8 +267,10 @@ fn paint_one(
         Drawn::Balloon(lay) => {
             let canvas = fresh.then(|| {
                 let icon_px = theme.icon_size();
-                let icon = crate::tray::closest(b.item.icon(), icon_px)
-                    .or_else(|| state.icons.get("dialog-information", icon_px));
+                let icon = crate::tray::closest(b.item.icon(), icon_px).or_else(|| {
+                    crate::icon::unread(&mut state.icons, INFO_ICON, icon_px)
+                        .map(std::sync::Arc::unwrap_or_clone)
+                });
                 let actions = b.item.button_icon_canvases(BUTTON_ICON * scale);
                 draw_notify_balloon(
                     &theme,

@@ -1314,6 +1314,137 @@ fn get_unread_never_reads_a_file_and_wants_each_once() {
     assert!(cache.take_wanted().is_empty());
 }
 
+const RED_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" fill="#f00"/></svg>"##;
+
+/// Writes `bytes` to `root`/`rel`, making its folder.
+fn put(root: &Path, rel: &str, bytes: &[u8]) {
+    let p = root.join(rel);
+    fs::create_dir_all(p.parent().unwrap()).unwrap();
+    fs::write(p, bytes).unwrap();
+}
+
+/// A theme icon drawn from an SVG is never decoded by `get_unread`: it answers None, is wanted
+/// once however often it is asked, and answers from the cache once `put_icons` brings it. A
+/// small PNG still loads in place.
+#[test]
+fn get_unread_leaves_an_svg_theme_icon_to_a_job_and_takes_what_it_puts() {
+    let root = fixture("test", INDEX, &["32x32/apps/small.png"]);
+    put(&root, "test/scalable/apps/drawn.svg", RED_SVG.as_bytes());
+    write_png(
+        &root.join("test/32x32/apps/small.png"),
+        1,
+        1,
+        &[0, 0, 255, 255],
+    );
+    let mut cache = IconCache::new(IconTheme::load("test", std::slice::from_ref(&root)));
+    let waits = cache.waits();
+    assert_eq!(cache.get_unread("drawn", 32), None);
+    assert_eq!(cache.get_unread("drawn", 32), None);
+    assert_eq!(cache.waits(), waits + 2, "each pending answer counts");
+    assert_eq!(cache.take_wanted(), [("drawn".to_string(), 32)]);
+    assert!(cache.is_empty(), "nothing decoded");
+    let small = cache.get_unread("small", 32).flatten();
+    assert_eq!(small.map(|c| c.get(16, 16)), Some(0xFF00_00FF));
+    assert_eq!(cache.waits(), waits + 2, "a ready answer does not count");
+    let theme = cache.theme();
+    let art = load_icon(&theme, "drawn", 32, cache.scale());
+    assert_eq!(art.as_ref().map(|c| c.get(16, 16)), Some(0xFFFF_0000));
+    cache.put_icons(&theme, vec![("drawn".into(), 32, art.clone())]);
+    assert_eq!(
+        cache.get_unread("drawn", 32).flatten().as_deref(),
+        art.as_ref()
+    );
+    assert!(cache.take_wanted().is_empty());
+    assert_eq!(
+        cache.get_unread("drawn", 16),
+        None,
+        "another size is its own job"
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+/// A PNG past a few hundred px of file goes to a job like an SVG; `get_shared` still decodes
+/// both where it is asked.
+#[test]
+fn get_unread_leaves_a_large_png_to_a_job_and_get_shared_still_decodes() {
+    let root = fixture("test", INDEX, &[]);
+    let big = root.join("test/32x32/apps/big.png");
+    fs::create_dir_all(big.parent().unwrap()).unwrap();
+    write_png(&big, 1, 1, &[0, 255, 0, 255]);
+    let mut bytes = fs::read(&big).unwrap();
+    bytes.resize(bytes.len() + (80 << 10), 0);
+    fs::write(&big, bytes).unwrap();
+    put(&root, "test/scalable/apps/drawn.svg", RED_SVG.as_bytes());
+    let mut cache = IconCache::new(IconTheme::load("test", std::slice::from_ref(&root)));
+    assert_eq!(cache.get_unread("big", 32), None);
+    assert!(cache.get_shared("big", 32).is_some());
+    assert!(cache.get_shared("drawn", 32).is_some());
+    fs::remove_dir_all(&root).unwrap();
+}
+
+/// `has_unread` counts a name whose file is an SVG without decoding it; `has` decodes and
+/// finds it broken.
+#[test]
+fn has_unread_counts_an_svg_without_decoding_it() {
+    let root = fixture("test", INDEX, &[]);
+    put(&root, "test/scalable/apps/broken.svg", b"<svg");
+    let theme = || IconTheme::load("test", std::slice::from_ref(&root));
+    assert!(IconCache::new(theme()).has_unread("broken"));
+    assert!(!IconCache::new(theme()).has("broken"));
+    assert!(!IconCache::new(theme()).has_unread("absent"));
+    fs::remove_dir_all(&root).unwrap();
+}
+
+/// A name `has_unread` counted without decoding is decoded at the probe size once the host takes
+/// the wanted names; one whose files decode at no size stops counting, and `take_refused` names
+/// it once.
+#[test]
+fn a_counted_name_whose_files_never_decode_stops_counting() {
+    let root = fixture("test", INDEX, &[]);
+    put(&root, "test/scalable/apps/broken.svg", b"<svg");
+    put(&root, "test/scalable/apps/drawn.svg", RED_SVG.as_bytes());
+    let mut cache = IconCache::new(IconTheme::load("test", std::slice::from_ref(&root)));
+    assert!(cache.has_unread("broken"));
+    assert!(cache.has_unread("drawn"));
+    let mut wanted = cache.take_wanted();
+    wanted.sort();
+    assert_eq!(
+        wanted,
+        [("broken".to_string(), 16), ("drawn".to_string(), 16)]
+    );
+    let theme = cache.theme();
+    let art = (wanted.into_iter())
+        .map(|(n, px)| {
+            let icon = load_icon(&theme, &n, px, cache.scale());
+            (n, px, icon)
+        })
+        .collect();
+    cache.put_icons(&theme, art);
+    assert!(!cache.has_unread("broken"));
+    assert!(cache.has_unread("drawn"));
+    assert_eq!(cache.take_refused(), ["broken".to_string()]);
+    assert!(cache.take_refused().is_empty());
+    assert!(cache.take_wanted().is_empty(), "each count is decoded once");
+    fs::remove_dir_all(&root).unwrap();
+}
+
+/// A new theme forgets the names it had sent off: asked again, they are wanted again.
+#[test]
+fn a_new_theme_wants_its_pending_names_again() {
+    let root = fixture("test", INDEX, &[]);
+    put(&root, "test/scalable/apps/drawn.svg", RED_SVG.as_bytes());
+    let theme = || IconTheme::load("test", std::slice::from_ref(&root));
+    let mut cache = IconCache::new(theme());
+    let old = cache.theme();
+    assert_eq!(cache.get_unread("drawn", 32), None);
+    assert_eq!(cache.take_wanted().len(), 1);
+    cache.set_theme(theme());
+    cache.put_icons(&old, vec![("drawn".into(), 32, Some(Canvas::new(32, 32)))]);
+    assert_eq!(cache.get_unread("drawn", 32), None);
+    assert_eq!(cache.take_wanted(), [("drawn".to_string(), 32)]);
+    fs::remove_dir_all(&root).unwrap();
+}
+
 /// `file_put` answers only what was put in, never reading the file: a size not put in is
 /// None though the file is there to decode.
 #[test]

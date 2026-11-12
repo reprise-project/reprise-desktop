@@ -81,10 +81,11 @@ fn an_open_start_menu_row_takes_an_icon_installed_while_it_is_open() {
     .unwrap();
     h.state.icons.reload();
     h.state.relook_menu_icons();
+    h.dispatch();
     assert_eq!(
         icon(&h),
         Some(0xFFFF_0000),
-        "the open row wears the new file"
+        "the open row wears the new file once it lands"
     );
 }
 

@@ -29,6 +29,8 @@ pub struct FlyoutView {
     ids: Vec<String>,
     wheel: Option<(usize, bool, i32)>,
     link_hot: bool,
+    #[cfg(test)]
+    pub draws: usize,
 }
 
 /// Where a flyout `size` big goes from the ^ `cell` (layout coordinates)
@@ -88,6 +90,8 @@ fn open(state: &mut State, output: Output) {
         ids: Vec::new(),
         wheel: None,
         link_hot: false,
+        #[cfg(test)]
+        draws: 0,
     };
     let Some(tray) = state.tray.as_mut() else {
         state.scene.destroy(tree);
@@ -182,7 +186,18 @@ pub fn access(state: &State) -> Option<reprisekit::access::Tree> {
     Some(tree)
 }
 
+/// Theme icons landed while the open flyout showed a stand-in: it draws again.
+pub(crate) fn icons_landed(state: &mut State) {
+    redraw(state);
+}
+
 fn redraw(state: &mut State) {
+    let waits = state.icons.waits();
+    paint(state);
+    state.note_icon_waits(waits, crate::icon::IconWaiter::TrayFlyout);
+}
+
+fn paint(state: &mut State) {
     let Some(output) = open_on(state) else { return };
     let scale = state.draw_scale_at(Some(&output)).max(1);
     let items: Vec<crate::tray::TrayItem> = state
@@ -206,6 +221,10 @@ fn redraw(state: &mut State) {
     let Some(v) = tray.flyout.as_mut() else {
         return;
     };
+    #[cfg(test)]
+    {
+        v.draws += 1;
+    }
     let canvas = trayflyout::draw(
         &theme,
         state.text.for_output(scale),

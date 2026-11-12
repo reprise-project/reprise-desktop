@@ -2,7 +2,7 @@ use super::IconTheme;
 use super::decode::decode;
 use crate::raster::Canvas;
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -39,8 +39,18 @@ pub struct IconCache {
     pub(super) file_cap: usize,
     /// Times the icon files were dropped at their cap; see [`IconCache::file_drops`].
     file_drops: u64,
-    /// Icon files [`IconCache::get_unread`] lacked, until [`IconCache::take_wanted`].
+    /// Icon files and theme names [`IconCache::get_unread`] lacked, until
+    /// [`IconCache::take_wanted`].
     wanted: Vec<(String, i32)>,
+    /// Theme names (and px) wanted until [`IconCache::put_icons`] brings them.
+    pending: HashSet<(String, i32)>,
+    /// Times [`IconCache::get_unread`] answered None; see [`IconCache::waits`].
+    waits: u64,
+    /// Names [`IconCache::has_unread`] counted without decoding, until a decode at the probe
+    /// size says whether they decode.
+    guessed: RefCell<HashSet<String>>,
+    /// Guessed names that turned out to decode at no size; see [`IconCache::take_refused`].
+    refused: Vec<String>,
 }
 
 /// Names come from peers, so every set is bounded: past its cap a set is dropped whole and
@@ -81,15 +91,21 @@ impl IconCache {
             file_cap: FILE_CAP,
             file_drops: 0,
             wanted: Vec::new(),
+            pending: HashSet::new(),
+            waits: 0,
+            guessed: RefCell::new(HashSet::new()),
+            refused: Vec::new(),
         }
     }
 
-    /// Looks names up in `theme` from now on. Icon files decoded, and those
-    /// [`IconCache::take_wanted`] has yet to hand out, are the same in every theme and stay.
+    /// Looks names up in `theme` from now on. Icon files decoded, and what
+    /// [`IconCache::take_wanted`] has yet to hand out, stay.
     pub fn set_theme(&mut self, theme: IconTheme) {
         self.theme = Arc::new(theme);
         self.known.get_mut().clear();
         self.probed.get_mut().clear();
+        self.pending.clear();
+        self.guessed.get_mut().clear();
         self.cache.retain(|k, _| k.0.starts_with('/'));
         self.counts = [0; 3];
         for (k, v) in &self.cache {
@@ -226,32 +242,93 @@ impl IconCache {
         }
         for (name, px, canvas) in icons {
             let key = (cache_key(&name, &[]), px, self.scale);
+            if px == self.probe_px && self.guessed.get_mut().remove(&name) {
+                self.settle_guess(name.clone(), canvas.is_some());
+            }
             if !self.cache.contains_key(&key) {
                 self.insert(key, canvas.map(Arc::new));
             }
+            self.pending.remove(&(name, px));
         }
     }
 
-    /// [`IconCache::get_shared`] that never reads an icon file, for a host whose loop must not
-    /// wait on a mount: a file not put at `px` yet is None and goes on [`IconCache::take_wanted`].
-    pub fn get_unread(&mut self, name: &str, px: i32) -> Option<Option<Arc<Canvas>>> {
-        if !name.starts_with('/') {
-            return Some(self.get_shared(name, px));
+    /// A guessed name's decode came back: one that failed no longer counts for `has`.
+    fn settle_guess(&mut self, name: String, decodes: bool) {
+        if !decodes {
+            self.known.get_mut().insert(name.clone(), false);
+            self.refused.push(name);
         }
+    }
+
+    /// The names [`IconCache::has_unread`] counted that turned out to decode at no size, since the
+    /// last call: a host picks again where one of them was picked.
+    pub fn take_refused(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.refused)
+    }
+
+    /// [`IconCache::get_shared`] for a host whose loop must neither wait on a mount nor draw an
+    /// SVG: None while `name` at `px` is not ready. An icon file not put yet, and a theme icon
+    /// whose file is an SVG or a large PNG, go on [`IconCache::take_wanted`]; other theme icons
+    /// load here as `get_shared` loads them.
+    pub fn get_unread(&mut self, name: &str, px: i32) -> Option<Option<Arc<Canvas>>> {
+        let got = if name.starts_with('/') {
+            self.file_unread(name, px)
+        } else {
+            self.lookup(name, px, &[], true)
+        };
+        if got.is_none() {
+            self.waits += 1;
+        }
+        got
+    }
+
+    fn file_unread(&mut self, name: &str, px: i32) -> Option<Option<Arc<Canvas>>> {
         if px <= 0 {
             return Some(None);
         }
         let put = self.file_put(name, px);
-        if put.is_none() && !self.wanted.iter().any(|(f, p)| f == name && *p == px) {
-            self.wanted.push((name.to_string(), px));
+        if put.is_none() {
+            self.want(name, px);
         }
         put
     }
 
-    /// The icon files (path, px) [`IconCache::get_unread`] lacked since the last call, each
-    /// once, for the host to [`decode_file`](super::decode_file) off its loop and
-    /// [`IconCache::put_file`].
+    fn want(&mut self, name: &str, px: i32) {
+        if !self.wanted.iter().any(|(f, p)| f == name && *p == px) {
+            self.wanted.push((name.to_string(), px));
+        }
+    }
+
+    /// How many times [`IconCache::get_unread`] has answered None: a host that reads it before
+    /// and after a draw learns whether the draw showed something in an icon's place.
+    pub fn waits(&self) -> u64 {
+        self.waits
+    }
+
+    /// The icon files and theme names (with px) [`IconCache::get_unread`] lacked since the last
+    /// call, each once: the host loads a file with [`decode_file`](super::decode_file) for
+    /// [`IconCache::put_file`] and a name with [`load_icon`] for [`IconCache::put_icons`], off
+    /// its loop.
     pub fn take_wanted(&mut self) -> Vec<(String, i32)> {
+        let px = self.probe_px;
+        let guessed: Vec<String> = self.guessed.get_mut().iter().cloned().collect();
+        for name in guessed {
+            let wanted = (name.clone(), px);
+            if self.pending.contains(&wanted) {
+                continue;
+            }
+            match self.cache.get(&(cache_key(&name, &[]), px, self.scale)) {
+                Some(art) => {
+                    let decodes = art.is_some();
+                    self.guessed.get_mut().remove(&name);
+                    self.settle_guess(name, decodes);
+                }
+                None => {
+                    self.want(&name, px);
+                    self.pending.insert(wanted);
+                }
+            }
+        }
         std::mem::take(&mut self.wanted)
     }
 
@@ -262,20 +339,38 @@ impl IconCache {
     /// Whether the theme chain has a file of `name` that decodes, at any size: a name whose
     /// files are all broken gives way to the next name a caller tries.
     pub fn has(&self, name: &str) -> bool {
+        self.has_with(name, false)
+    }
+
+    /// [`IconCache::has`] for a loop that draws no SVG: a name whose file is an SVG or a large
+    /// PNG counts as one that decodes, without decoding it.
+    pub fn has_unread(&self, name: &str) -> bool {
+        self.has_with(name, true)
+    }
+
+    fn has_with(&self, name: &str, defer: bool) -> bool {
         if let Some(&known) = self.known.borrow().get(name) {
             return known;
         }
         let px = self.probe_px;
-        let art = (self.theme).find_with_extra(name, px, 1, &[], |p| decode(&p, px as u32));
-        let found = art.is_some();
+        let found = (self.theme).find_with_extra(name, px, 1, &[], |p| take(&p, px, defer));
+        let (found, art) = match found {
+            Some(Found::Art(art)) => (true, Some(art)),
+            Some(Found::Costly) => (true, None),
+            None => (false, None),
+        };
         let mut known = self.known.borrow_mut();
         let mut probed = self.probed.borrow_mut();
         // Peer-driven names: bounded like the cache's misses, dropped whole at the cap.
         if known.len() >= HIT_CAP {
             known.clear();
             probed.clear();
+            self.guessed.borrow_mut().clear();
         }
         known.insert(name.to_string(), found);
+        if found && art.is_none() {
+            self.guessed.borrow_mut().insert(name.to_string());
+        }
         if let Some(art) = art {
             probed.insert(name.to_string(), (px, art));
         }
@@ -289,12 +384,28 @@ impl IconCache {
     }
 
     fn shared(&mut self, name: &str, px: i32, extra: &[PathBuf]) -> Option<Arc<Canvas>> {
+        self.lookup(name, px, extra, false).flatten()
+    }
+
+    /// `name` at `px` from the cache, else looked up and loaded; with `defer`, None for a theme
+    /// icon whose file [`costly`] judges, put on `wanted` instead of decoded.
+    fn lookup(
+        &mut self,
+        name: &str,
+        px: i32,
+        extra: &[PathBuf],
+        defer: bool,
+    ) -> Option<Option<Arc<Canvas>>> {
         if !loadable(name, px) {
-            return None;
+            return Some(None);
         }
         let key = (cache_key(name, extra), px, self.scale);
         if let Some(hit) = self.cache.get(&key) {
-            return hit.clone();
+            return Some(hit.clone());
+        }
+        let wanted = (name.to_string(), px);
+        if defer && self.pending.contains(&wanted) {
+            return None;
         }
         // `has` looked this name up the way `load_with_extra` would at its size.
         let probe = extra.is_empty() && !name.starts_with('/') && bare_name(name) == name;
@@ -307,14 +418,51 @@ impl IconCache {
             .then(|| probed.remove(name))
             .flatten()
             .map(|(_, art)| art);
-        let canvas = match probed {
-            Some(art) => Some(art.at_scale(self.scale)),
-            None => load_with_extra(&self.theme, name, px, self.scale, extra),
+        let found = match probed {
+            Some(art) => Some(Found::Art(art.at_scale(self.scale))),
+            None => load_with_extra(&self.theme, name, px, self.scale, extra, defer),
         };
-        let canvas = canvas.map(Arc::new);
+        let canvas = match found {
+            Some(Found::Costly) => {
+                self.want(name, px);
+                self.pending.insert(wanted);
+                return None;
+            }
+            Some(Found::Art(art)) => Some(Arc::new(art)),
+            None => None,
+        };
         self.insert(key, canvas.clone());
-        canvas
+        Some(canvas)
     }
+}
+
+/// What a theme lookup takes from a file: its image, or, for a loop that draws no SVG, word
+/// that the file is too costly to decode there.
+enum Found {
+    Art(Canvas),
+    Costly,
+}
+
+/// Bytes past which a PNG is [`costly`]: a few hundred px a side.
+const COSTLY_PNG_BYTES: u64 = 64 << 10;
+
+/// Whether decoding `path` would hold a loop for a frame or more: an SVG (or a file named so,
+/// whatever it holds), or a PNG past [`COSTLY_PNG_BYTES`].
+fn costly(path: &Path) -> bool {
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    if ext.eq_ignore_ascii_case("svg") {
+        return true;
+    }
+    ext.eq_ignore_ascii_case("png")
+        && std::fs::metadata(path).is_ok_and(|m| m.len() > COSTLY_PNG_BYTES)
+}
+
+/// `path` decoded at `dpx` for a theme lookup; a failed decode gives way to the next file.
+fn take(path: &Path, dpx: i32, defer: bool) -> Option<Found> {
+    if defer && costly(path) {
+        return Some(Found::Costly);
+    }
+    decode(path, dpx as u32).map(Found::Art)
 }
 
 /// `icon`, fetched for `want` logical px with text grown by `u`, grown as the text when the theme
@@ -331,8 +479,12 @@ pub fn grown_icon(icon: Canvas, want: i32, u: crate::theme::TextUnits) -> Canvas
 /// without a cache: for a job filling one through [`IconCache::put_icons`].
 pub fn load_icon(theme: &IconTheme, name: &str, px: i32, scale: i32) -> Option<Canvas> {
     loadable(name, px)
-        .then(|| load_with_extra(theme, name, px, scale.max(1), &[]))
+        .then(|| load_with_extra(theme, name, px, scale.max(1), &[], false))
         .flatten()
+        .and_then(|found| match found {
+            Found::Art(art) => Some(art),
+            Found::Costly => None,
+        })
 }
 
 fn loadable(name: &str, px: i32) -> bool {
@@ -359,19 +511,23 @@ fn load_with_extra(
     px: i32,
     scale: i32,
     extra: &[PathBuf],
-) -> Option<Canvas> {
+    defer: bool,
+) -> Option<Found> {
     let dpx = px * scale;
-    let canvas = if name.starts_with('/') {
-        decode(Path::new(name), dpx as u32)
+    let found = if name.starts_with('/') {
+        decode(Path::new(name), dpx as u32).map(Found::Art)
     } else {
         let bare = bare_name(name);
         // Theme lookup is in device pixels at scale 1: a 32 px request at 2x and a 32 px
         // icon at 1x want the same file. A file that fails to decode gives way to the next.
-        let found = theme.find_with_extra(bare, dpx, 1, extra, |p| decode(&p, dpx as u32));
+        let found = theme.find_with_extra(bare, dpx, 1, extra, |p| take(&p, dpx, defer));
         if found.is_none() {
             log::debug!("no icon named \"{bare}\" decodes at {dpx} px");
         }
         found
     };
-    canvas.map(|c| c.at_scale(scale))
+    match found? {
+        Found::Art(c) => Some(Found::Art(c.at_scale(scale))),
+        Found::Costly => Some(Found::Costly),
+    }
 }
