@@ -28,8 +28,8 @@ pub use checksums::{
 pub use customize::{
     CHANGE_ICON, CHANGE_ICON_CANCEL, CHANGE_ICON_LIST, CHANGE_ICON_OK, CHANGE_ICON_RESTORE,
     CHANGE_ICON_SIZE, CUSTOM_ICON, CUSTOM_PREVIEW, FOLDER_ICON_NAMES, PREVIEW_PX,
-    STANDARD_FOLDER_ICON, change_icon_form, change_icon_list_mut, change_icon_picked,
-    change_icon_restore, customize_page,
+    STANDARD_FOLDER_ICON, change_icon_drop, change_icon_form, change_icon_list_mut,
+    change_icon_picked, change_icon_restore, customize_page,
 };
 pub use general::{
     executable, general_page, hidden, hidden_state, read_only, rows, set_moves, set_picture,

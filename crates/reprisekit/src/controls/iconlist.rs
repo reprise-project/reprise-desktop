@@ -107,8 +107,8 @@ impl IconList {
         }
     }
 
-    /// Takes the icons in `gone` off the list, the picked one kept and still picked.
-    pub fn drop_names(&mut self, gone: &[String]) {
+    /// Takes the icons in `gone` off the list, the picked one kept, still picked and in view.
+    pub fn drop_names(&mut self, gone: &[String], lay: &Layout) {
         let picked = self.picked().map(str::to_string);
         let keep = |n: &String| !gone.contains(n) || picked.as_ref() == Some(n);
         let (names, icons) = (self.names.drain(..).zip(self.icons.drain(..)))
@@ -116,7 +116,8 @@ impl IconList {
             .unzip();
         (self.names, self.icons) = (names, icons);
         self.selected = picked.and_then(|p| self.names.iter().position(|n| *n == p));
-        self.left = self.left.min(self.columns().saturating_sub(1));
+        self.left = self.left.min(self.columns().saturating_sub(lay.cols));
+        self.follow(lay);
     }
 
     pub fn follow(&mut self, lay: &Layout) {
@@ -326,11 +327,12 @@ mod tests {
 
     #[test]
     fn dropped_names_leave_the_list_and_the_pick_stays() {
+        let lay = layout(Rect::new(0, 0, 267, 198), &ControlMetrics::CLASSIC);
         let mut l = list(40);
         l.left = 9;
         assert!(l.pick("i7"));
         let gone: Vec<String> = (0..32).map(|i| format!("i{i}")).collect();
-        l.drop_names(&gone);
+        l.drop_names(&gone, &lay);
         let names: Vec<&str> = l.names.iter().map(String::as_str).collect();
         assert_eq!(
             names,
@@ -338,6 +340,22 @@ mod tests {
         );
         assert_eq!(l.icons.len(), 9);
         assert_eq!(l.picked(), Some("i7"));
-        assert_eq!(l.left, 2, "the view stays on the list");
+        assert_eq!(l.left, 0, "the view stays on the list");
+    }
+
+    #[test]
+    fn dropped_names_leave_the_view_full_and_on_the_pick() {
+        let lay = layout(Rect::new(0, 0, 267, 198), &ControlMetrics::CLASSIC);
+        let mut l = list(80);
+        l.left = 13;
+        assert!(l.pick("i79"));
+        let gone: Vec<String> = (0..31).map(|i| format!("i{i}")).collect();
+        l.drop_names(&gone, &lay);
+        assert_eq!(l.columns(), 13);
+        assert_eq!(l.left, 6, "the last 7 columns fill the view");
+        assert!(
+            l.cell_rect(&lay, l.selected.unwrap()).is_some(),
+            "the pick is in view"
+        );
     }
 }
