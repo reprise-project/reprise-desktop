@@ -1159,6 +1159,32 @@ fn resvg_filter_layer(
     Some((bound, layer.width() as f64 * layer.height() as f64, shifted))
 }
 
+/// The resvg whose layer bounds `Cost::group` and [`resvg_filter_layer`] were last checked
+/// against.
+const RESVG_CHECKED: &str = "0.49.0";
+
+#[test]
+fn cargo_lock_holds_the_resvg_the_svg_price_was_checked_against() {
+    let lock =
+        fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../Cargo.lock")).unwrap();
+    let locked: Vec<&str> = lock
+        .split("name = \"resvg\"\nversion = \"")
+        .skip(1)
+        .filter_map(|rest| rest.split('"').next())
+        .collect();
+    assert_eq!(
+        locked,
+        [RESVG_CHECKED],
+        "Cargo.lock holds resvg {locked:?}; the SVG price transcribes resvg {RESVG_CHECKED}'s layer \
+         bound. Recheck the new resvg's src/render.rs `render_group` and `render_layer` (the layer \
+         bound under `inv_rest`, `fit_to_rect`, the +2 px pad) and src/lib.rs `max_filter_bbox` \
+         against crates/reprisekit/src/icontheme/decode.rs `layer_bound`, `unrotation`, \
+         `stretched` and `Cost::group`, and against `resvg_filter_layer` in {}; update them and \
+         the \"resvg 0.49\" notes there if they differ, then set RESVG_CHECKED there",
+        file!()
+    );
+}
+
 /// The wide region at 16 px: its canvas bound and region.
 fn wide_region() -> (resvg::tiny_skia::IntRect, resvg::tiny_skia::Rect) {
     use resvg::tiny_skia::{IntRect, Rect};
