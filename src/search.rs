@@ -177,7 +177,8 @@ pub enum SearchOwner {
 pub enum Source {
     /// Names under the home folder ([`reprisefs::search`]).
     Names,
-    /// Text and metadata in localsearch's index ([`reprisebus::localsearch`]), when installed.
+    /// Text and metadata in localsearch's index ([`reprisebus::localsearch`]), when installed and
+    /// `[launcher] contents` is on.
     Contents,
     /// A program's search provider ([`reprisebus::searchprovider`]).
     Provider(Arc<Provider>),
@@ -321,10 +322,10 @@ pub struct FileSearch {
 }
 
 impl FileSearch {
-    /// Files by name and by contents, then each of `providers`.
-    pub fn new(providers: Vec<Arc<Provider>>) -> Self {
-        let sources = [Source::Names, Source::Contents]
-            .into_iter()
+    /// Files by name, by contents when `contents` is on, then each of `providers`.
+    pub fn new(contents: bool, providers: Vec<Arc<Provider>>) -> Self {
+        let sources = std::iter::once(Source::Names)
+            .chain(contents.then_some(Source::Contents))
             .chain(providers.into_iter().map(Source::Provider));
         Self {
             sections: sources
@@ -398,6 +399,14 @@ impl FileSearch {
         }
         self.asking = None;
         self.generation
+    }
+
+    /// The sections a search for `query` asks, with their sources.
+    fn asked(&self, query: &str, files: bool) -> Vec<(usize, Source)> {
+        (self.sections.iter().enumerate())
+            .filter(|(_, s)| s.source.searches(query, files))
+            .map(|(i, s)| (i, s.source.clone()))
+            .collect()
     }
 
     fn accepts(&self, generation: u64) -> bool {
@@ -511,15 +520,19 @@ impl State {
         }
     }
 
-    /// A new search box's sections ([`FileSearch::new`]) with the providers turned on.
+    /// A new search box's sections ([`FileSearch::new`]) with the sources turned on.
     pub fn new_search(&self) -> FileSearch {
         let c = &self.config;
-        FileSearch::new(providers::enabled(
-            &self.search_providers,
-            &self.app_index,
-            &c.launcher_providers,
-            &c.launcher_providers_off,
-        ))
+        FileSearch::new(
+            c.launcher_contents,
+            providers::enabled(
+                &self.search_providers,
+                &self.app_index,
+                &c.launcher_providers,
+                &c.launcher_providers_off,
+                c.launcher_contents,
+            ),
+        )
     }
 
     pub fn file_search_mut(&mut self, o: SearchOwner) -> Option<&mut FileSearch> {
@@ -591,10 +604,7 @@ impl State {
         let cancel = Arc::new(AtomicBool::new(false));
         f.cancel = Some(cancel.clone());
         let generation = f.generation;
-        let sources: Vec<(usize, Source)> = (f.sections.iter().enumerate())
-            .filter(|(_, s)| s.source.searches(query, files))
-            .map(|(i, s)| (i, s.source.clone()))
-            .collect();
+        let sources = f.asked(query, files);
         let mut asked = Vec::new();
         for (section, source) in sources {
             let max = source.rows(max);
@@ -933,7 +943,7 @@ mod tests {
 
     #[test]
     fn a_stale_answer_is_dropped() {
-        let mut f = FileSearch::new(Vec::new());
+        let mut f = FileSearch::new(true, Vec::new());
         let g = f.bump();
         let now = f.bump();
         assert!(!f.accepts(g));
@@ -942,9 +952,9 @@ mod tests {
 
     #[test]
     fn an_answer_for_a_closed_search_box_fits_no_later_one() {
-        let mut first = FileSearch::new(Vec::new());
+        let mut first = FileSearch::new(true, Vec::new());
         let stale = first.bump();
-        let mut second = FileSearch::new(Vec::new());
+        let mut second = FileSearch::new(true, Vec::new());
         assert!(!second.accepts(stale));
         second.bump();
         assert!(!second.accepts(stale), "after the second's own bump too");
@@ -976,7 +986,7 @@ mod tests {
 
     #[test]
     fn a_file_found_by_name_is_left_out_of_the_contents_whichever_lands_first() {
-        let mut f = FileSearch::new(Vec::new());
+        let mut f = FileSearch::new(true, Vec::new());
         f.set(1, found(&["/h/a.txt", "/h/b.pdf"]));
         let shown = |f: &FileSearch| -> Vec<(Source, Vec<Found>)> {
             f.sections().map(|(s, p)| (s.clone(), p.to_vec())).collect()
@@ -1009,7 +1019,7 @@ mod tests {
     #[test]
     fn each_provider_gets_a_section_after_the_files_with_its_results() {
         let p = calc();
-        let mut f = FileSearch::new(vec![p.clone()]);
+        let mut f = FileSearch::new(true, vec![p.clone()]);
         let heads: Vec<&str> = f.sections().map(|(s, _)| s.heading()).collect();
         assert_eq!(heads, ["Files", "Contents", "Calculator"]);
         f.set(2, vec![result("a"), result("b")]);
@@ -1017,6 +1027,25 @@ mod tests {
         assert_eq!((provider, meta.id.as_str()), (&p, "b"));
         assert_eq!(f.path(2, 0), None, "a result is no file");
         assert_eq!(f.result(0, 0), None);
+    }
+
+    #[test]
+    fn content_search_off_has_no_contents_section_and_asks_only_names_and_programs() {
+        let off = FileSearch::new(false, vec![calc()]);
+        let heads: Vec<&str> = off.sections().map(|(s, _)| s.heading()).collect();
+        assert_eq!(heads, ["Files", "Calculator"]);
+        let asked: Vec<Source> = (off.asked("quarterly", true).into_iter())
+            .map(|(_, s)| s)
+            .collect();
+        assert_eq!(asked, [Source::Names, Source::Provider(calc())]);
+        let on = FileSearch::new(true, vec![calc()]);
+        let asked: Vec<Source> = (on.asked("quarterly", true).into_iter())
+            .map(|(_, s)| s)
+            .collect();
+        assert_eq!(
+            asked,
+            [Source::Names, Source::Contents, Source::Provider(calc())]
+        );
     }
 
     #[test]

@@ -747,6 +747,7 @@ fn save_round_trips_every_field() {
         debug_overlay: true,
         debug_overlay_in_captures: true,
         launcher_files: false,
+        launcher_contents: true,
         launcher_windows: false,
         launcher_providers: vec![
             "org.gnome.Nautilus.desktop".into(),

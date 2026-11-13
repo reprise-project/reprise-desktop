@@ -45,12 +45,14 @@ impl Provider {
 }
 
 /// The providers a search asks, in order ([`reprisefs::searchproviders::arrange`]): those on whose
-/// program has a shown entry in `apps`.
+/// program has a shown entry in `apps`, less those that start the file indexer unless `contents`
+/// is on.
 pub fn enabled(
     found: &[reprisefs::searchproviders::Provider],
     apps: &[AppEntry],
     order: &[String],
     off: &[String],
+    contents: bool,
 ) -> Vec<Arc<Provider>> {
     let entry = |p: &reprisefs::searchproviders::Provider| {
         apps.iter().find(|a| a.shown && a.id == p.desktop_id)
@@ -58,7 +60,9 @@ pub fn enabled(
     let name = |p: &reprisefs::searchproviders::Provider| entry(p).map(|a| a.name.clone());
     reprisefs::searchproviders::arrange(found, order, off, |p| name(p).unwrap_or_default())
         .into_iter()
-        .filter(|&(_, on)| on)
+        .filter(|&(p, on)| {
+            on && (contents || !reprisefs::searchproviders::starts_indexer(&p.desktop_id))
+        })
         .filter_map(|(p, _)| {
             let e = entry(p)?;
             Some(Arc::new(Provider {
@@ -264,7 +268,7 @@ mod tests {
         ];
         let order = ["files.desktop".to_string()];
         let off = ["chars.desktop".to_string()];
-        let got = enabled(&found, &apps, &order, &off);
+        let got = enabled(&found, &apps, &order, &off, true);
         let names: Vec<&str> = got.iter().map(|p| p.name.as_str()).collect();
         assert_eq!(
             names,
@@ -273,6 +277,28 @@ mod tests {
         );
         assert_eq!(got[1].addr.bus_name, "org.example.calc");
         assert_eq!(got[1].icon.as_deref(), Some("Calculator-icon"));
+    }
+
+    #[test]
+    fn a_provider_that_starts_the_indexer_is_asked_only_with_content_search_on() {
+        let nautilus = "org.gnome.Nautilus.desktop";
+        let found = [file(nautilus, false), file("calc.desktop", false)];
+        let apps = [
+            app(nautilus, "Files", true),
+            app("calc.desktop", "Calculator", true),
+        ];
+        let order = [nautilus.to_string()];
+        let names = |contents| -> Vec<String> {
+            (enabled(&found, &apps, &order, &[], contents).iter())
+                .map(|p| p.name.clone())
+                .collect()
+        };
+        assert_eq!(
+            names(false),
+            ["Calculator"],
+            "ticked and listed, still left out"
+        );
+        assert_eq!(names(true), ["Files", "Calculator"]);
     }
 
     #[test]

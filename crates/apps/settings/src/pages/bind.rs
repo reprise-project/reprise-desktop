@@ -4,7 +4,7 @@ use super::appearance::{ANIM_CONTROLS, HOVER_CONTROLS, MOTION_CONTROLS, NL_CONTR
 use super::desktop::{
     DESKTOP_CONTROLS, DESKTOP_MOTION_NOTE, DRAG_SNAP_CONTROLS, DURATION_CONTROLS, FLIP_NOTE,
     FPS_CONTROLS, GLOW_CONTROLS, MOTION_NOTE, OVERVIEW_NOTE, REVEAL_CONTROLS, SEARCH_NOTE,
-    SLIDE_MOTION_NOTE, SLIDE_MOTION_TEXT, flip_note, overview_note, search_note,
+    SLIDE_MOTION_NOTE, SLIDE_MOTION_TEXT, flip_note, follow_contents, overview_note, search_note,
 };
 use super::input::{
     BOUNCE_CONTROLS, MOUSE_KEYS_CONTROLS, SLOW_CONTROLS, STICKY_CONTROLS, TOUCHPAD_CONTROLS,
@@ -253,6 +253,7 @@ pub(super) fn binds() -> Vec<Bind> {
         Bind::Flag(DEBUG_OVERLAY, lens!(debug_overlay)),
         Bind::Flag(DEBUG_IN_CAPTURES, lens!(debug_overlay_in_captures)),
         Bind::Flag("launcher_files", lens!(launcher_files)),
+        Bind::Flag("launcher_contents", lens!(launcher_contents)),
         Bind::Flag("launcher_windows", lens!(launcher_windows)),
         Bind::Flag(THUMBS, lens!(thumbnail_cache)),
         Bind::Num(THUMBS_MB, lens!(thumbnail_max_mb)),
@@ -783,6 +784,7 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
     for id in ["notify_style_label", "glass_notification_style"] {
         np.set_enabled(id, s.interface == "glass");
     }
+    follow_contents(&mut sheet.pages[Page::Search.index()], s.launcher_files);
     let tb = &mut sheet.pages[Page::Taskbar.index()];
     for id in REVEAL_CONTROLS {
         tb.set_enabled(id, s.taskbar_auto_hide);

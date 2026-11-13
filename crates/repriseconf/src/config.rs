@@ -89,6 +89,8 @@ pub struct Config {
     pub debug: DebugConfig,
     pub shortcut_overlay: ShortcutOverlay,
     pub launcher_files: bool,
+    /// `[launcher] contents`: file search also asks localsearch for files by their contents.
+    pub launcher_contents: bool,
     /// `[launcher] windows`: the launcher finds open windows.
     pub launcher_windows: bool,
     /// `[launcher] providers`: programs' search providers by desktop id, in the order their
@@ -183,6 +185,7 @@ impl Default for Config {
             debug: DebugConfig::default(),
             shortcut_overlay: ShortcutOverlay::default(),
             launcher_files: true,
+            launcher_contents: false,
             launcher_windows: true,
             launcher_providers: Vec::new(),
             launcher_providers_off: Vec::new(),

@@ -399,26 +399,29 @@ pub(super) const REVEAL_CONTROLS: [&str; 3] = [
 ];
 
 pub const SEARCH_NOTE: &str = "launcher_search_note";
+pub const CONTENTS: &str = "launcher_contents";
 pub const CONTENTS_NOTE: &str = "launcher_contents_note";
 pub const FLIP_NOTE: &str = "flip_note";
 pub const OVERVIEW_NOTE: &str = "overview_note";
 /// The search note's most lines, and the characters a line holds.
 const SEARCH_LINES: usize = 3;
 const SEARCH_COLS: usize = 55;
+/// The characters a line of the indented content note holds.
+const CONTENTS_COLS: usize = 52;
 
 /// The Search page: the Search group's note naming the launcher's keys, its checks for files
-/// and folders and for open windows, and the note on content search, then the Program Results
-/// list ([`crate::providerpage`]), which takes the extra height. [`super::show_keys`] fills the
-/// first note, [`show_contents`] the second.
+/// and folders, open windows and contents with the content note under the last, then the Program
+/// Results list ([`crate::providerpage`]), which takes the extra height. [`super::show_keys`]
+/// fills the first note, [`show_contents`] the second.
 pub fn search(a: Area) -> Form {
-    let programs_y = 210;
+    let programs_y = 228;
     let list_y = programs_y + 22 + 2 * LINE_H + 4;
     let list_h = providerpage::ROWS as i32 * listbox::ROW_H + 4 + a.dh;
     let list_w = a.gw() - BUTTON_W - 6;
     let programs_end = list_y + list_h + 10;
     let bx = a.gright() - BUTTON_W;
     Form::new(vec![
-        group(a, "launcher_search_group", 44, 156, "Search"),
+        group(a, "launcher_search_group", 44, 174, "Search"),
         Item::new(
             SEARCH_NOTE,
             Rect::new(GX, 66, a.gw(), SEARCH_LINES as i32 * LINE_H),
@@ -431,9 +434,10 @@ pub fn search(a: Area) -> Form {
             "Also find &files and folders in my home folder",
         ),
         Item::check("launcher_windows", GX, 139, "Also find open &windows"),
+        Item::check(CONTENTS, GX, 161, "Find files by their &contents"),
         Item::new(
             CONTENTS_NOTE,
-            Rect::new(GX, 161, a.gw(), 2 * LINE_H),
+            Rect::new(GX + 18, 179, a.gw() - 18, 2 * LINE_H),
             Control::Lines(Vec::new()),
         ),
         group(
@@ -465,17 +469,19 @@ pub fn search(a: Area) -> Form {
     ])
 }
 
-/// The content search note: what finding files by their contents takes, greyed while localsearch
-/// is not installed; blank until `installed` is read.
+/// The content search note: what turning the check on starts, or greyed with the check while
+/// localsearch is not installed; blank until `installed` is read.
 pub fn show_contents(page: &mut Form, installed: Option<bool>) {
     let note = match installed {
         None => "",
-        Some(true) => "Files are also found by their contents through localsearch.",
-        Some(false) => "Install localsearch to also find files by their contents.",
+        Some(true) => {
+            "The first search starts localsearch, which then indexes your files in the background."
+        }
+        Some(false) => "Install localsearch to find files by their contents.",
     };
     let lines = match note.is_empty() {
         true => Vec::new(),
-        false => reprisekit::text::wrap_chars(note, SEARCH_COLS),
+        false => reprisekit::text::wrap_chars(note, CONTENTS_COLS),
     };
     if let Some(it) = page.item_mut(CONTENTS_NOTE) {
         it.control = match installed {
@@ -483,6 +489,18 @@ pub fn show_contents(page: &mut Form, installed: Option<bool>) {
             _ => Control::Lines(lines),
         };
     }
+    let files = page.checked("launcher_files") != Some(false);
+    follow_contents(page, files);
+}
+
+/// Greys the content search check while file search is off or the note says localsearch is
+/// missing.
+pub(super) fn follow_contents(page: &mut Form, files: bool) {
+    let missing = matches!(
+        page.item(CONTENTS_NOTE).map(|i| &i.control),
+        Some(Control::GreyedLines(_))
+    );
+    page.set_enabled(CONTENTS, files && !missing);
 }
 
 /// The Search note's lines: the keys bound to the launcher, what it finds, and that the Start

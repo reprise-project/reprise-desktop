@@ -745,6 +745,16 @@ fn the_launcher_searches_files_unless_turned_off() {
 }
 
 #[test]
+fn content_search_is_off_unless_turned_on() {
+    assert!(!Config::default().launcher_contents);
+    assert!(
+        Config::parse("[launcher]\ncontents = true\n")
+            .unwrap()
+            .launcher_contents
+    );
+}
+
+#[test]
 fn the_shortcut_overlay_is_on_after_a_second_and_its_delay_is_bounded() {
     let d = Config::default().shortcut_overlay;
     assert!(d.enabled);

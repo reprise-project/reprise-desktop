@@ -197,6 +197,8 @@ pub struct Settings {
     pub debug_overlay_in_captures: bool,
     /// `[launcher] search_files`.
     pub launcher_files: bool,
+    /// `[launcher] contents`.
+    pub launcher_contents: bool,
     /// `[launcher] windows`.
     pub launcher_windows: bool,
     /// `[launcher] providers`: the search providers by desktop id, in order.
@@ -560,6 +562,7 @@ impl Settings {
             debug_overlay: c.debug.overlay,
             debug_overlay_in_captures: c.debug.overlay_in_captures,
             launcher_files: c.launcher_files,
+            launcher_contents: c.launcher_contents,
             launcher_windows: c.launcher_windows,
             launcher_providers: c.launcher_providers.clone(),
             launcher_providers_off: c.launcher_providers_off.clone(),

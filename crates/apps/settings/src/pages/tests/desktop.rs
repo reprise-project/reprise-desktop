@@ -1,4 +1,4 @@
-use super::super::desktop::{CONTENTS_NOTE, GLOW_CONTROLS};
+use super::super::desktop::{CONTENTS, CONTENTS_NOTE, GLOW_CONTROLS};
 use super::*;
 
 #[test]
@@ -792,31 +792,32 @@ fn the_search_page_geometry() {
     let p = Page::Search;
     assert_eq!(
         rect(&s, p, "launcher_search_group"),
-        Rect::new(20, 44, 358, 156)
+        Rect::new(20, 44, 358, 174)
     );
     assert_eq!(rect(&s, p, SEARCH_NOTE), Rect::new(32, 66, 334, 39));
     assert_eq!(rect(&s, p, "launcher_files"), Rect::new(32, 117, 13, 13));
     assert_eq!(rect(&s, p, "launcher_windows"), Rect::new(32, 139, 13, 13));
-    assert_eq!(rect(&s, p, CONTENTS_NOTE), Rect::new(32, 161, 334, 26));
+    assert_eq!(rect(&s, p, CONTENTS), Rect::new(32, 161, 13, 13));
+    assert_eq!(rect(&s, p, CONTENTS_NOTE), Rect::new(50, 179, 316, 26));
     assert_eq!(
         rect(&s, p, "search_providers_group"),
-        Rect::new(20, 210, 358, 168)
+        Rect::new(20, 228, 358, 168)
     );
     assert_eq!(
         rect(&s, p, "search_providers_note"),
-        Rect::new(32, 232, 334, 26)
+        Rect::new(32, 250, 334, 26)
     );
     assert_eq!(
         rect(&s, p, crate::providerpage::LIST),
-        Rect::new(32, 262, 253, 106)
+        Rect::new(32, 280, 253, 106)
     );
     assert_eq!(
         rect(&s, p, crate::providerpage::UP),
-        Rect::new(291, 262, 75, 23)
+        Rect::new(291, 280, 75, 23)
     );
     assert_eq!(
         rect(&s, p, crate::providerpage::DOWN),
-        Rect::new(291, 289, 75, 23)
+        Rect::new(291, 307, 75, 23)
     );
     inside_page(&s, p);
 }
@@ -845,14 +846,17 @@ fn the_search_page_lines_fit() {
 
 #[test]
 fn search_values_go_in_and_come_back_out() {
+    assert!(!Settings::default().launcher_contents, "off by default");
     let want = Settings {
         launcher_files: false,
+        launcher_contents: true,
         launcher_windows: false,
         ..Settings::default()
     };
     let s = with(&want);
     let page = &s.pages[Page::Search.index()];
     assert_eq!(page.checked("launcher_files"), Some(false));
+    assert_eq!(page.checked(CONTENTS), Some(true));
     assert_eq!(page.checked("launcher_windows"), Some(false));
     let mut got = Settings::default();
     read_all(&s, &mut got);

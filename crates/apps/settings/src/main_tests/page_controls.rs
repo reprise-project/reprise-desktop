@@ -252,10 +252,10 @@ fn unchecking_run_as_asks_first_and_only_ok_unchecks_it() {
     assert!(a.dirty(), "Apply writes it");
 }
 
-/// The Search page's content note waits for its read, then says what content search takes,
-/// greyed while localsearch is missing.
+/// The Search page's content note waits for its read, then says what the contents check starts;
+/// the note and the check grey while localsearch is missing, the check while file search is off.
 #[test]
-fn the_content_search_note_greys_without_localsearch() {
+fn the_content_search_note_and_check_grey_without_localsearch() {
     let mut a = app("contents");
     let at = Page::Search.index();
     let note = |a: &SettingsApp| match &a.sheet.pages[at]
@@ -267,7 +267,15 @@ fn the_content_search_note_greys_without_localsearch() {
         form::Control::GreyedLines(l) => (l.join(" "), false),
         _ => panic!("lines"),
     };
+    let check = |a: &SettingsApp| match a.sheet.pages[at]
+        .item("launcher_contents")
+        .map(|i| &i.control)
+    {
+        Some(form::Control::Check { enabled, .. }) => *enabled,
+        _ => panic!("a check box"),
+    };
     assert_eq!(note(&a), (String::new(), true), "blank until read");
+    assert!(check(&a), "lit until read");
     let read = |a: &mut SettingsApp, installed| {
         let (tx, rx) = std::sync::mpsc::channel();
         tx.send(installed).unwrap();
@@ -278,19 +286,26 @@ fn the_content_search_note_greys_without_localsearch() {
     assert_eq!(
         note(&a),
         (
-            "Install localsearch to also find files by their contents.".to_string(),
+            "Install localsearch to find files by their contents.".to_string(),
             false
         )
     );
+    assert!(!check(&a), "greyed without localsearch");
     read(&mut a, true);
     assert_eq!(
         note(&a),
         (
-            "Files are also found by their contents through localsearch.".to_string(),
+            "The first search starts localsearch, which then indexes your files in the background."
+                .to_string(),
             true
         )
     );
+    assert!(check(&a));
     assert!(!a.contents_done(), "nothing more to read");
+    let mut off = a.want.clone();
+    off.launcher_files = false;
+    crate::pages::follow(&mut a.sheet, &off);
+    assert!(!check(&a), "greyed with file search off");
 }
 
 /// The Search page lists the installed providers once read; a tick and Move Down write
@@ -357,6 +372,57 @@ fn the_program_results_list_ticks_and_orders_the_providers() {
             && text.contains("providers_off = [\"c.desktop\"]"),
         "{text}"
     );
+}
+
+/// Files' provider starts the file indexer: its row greys with a note while the contents check
+/// is off and lights as soon as the check is ticked.
+#[test]
+fn the_files_provider_greys_until_content_search_is_on() {
+    use crate::providerpage::{HELD_NOTE, Installed, LIST};
+    let mut a = app("providers-held");
+    a.open_page(Page::Search, None);
+    let at = Page::Search.index();
+    let (tx, rx) = std::sync::mpsc::channel();
+    tx.send(vec![Installed {
+        provider: reprisefs::searchproviders::Provider {
+            desktop_id: "org.gnome.Nautilus.desktop".into(),
+            bus_name: "org.gnome.Nautilus".into(),
+            object_path: "/".into(),
+            default_disabled: false,
+        },
+        name: "Files".into(),
+        icon: None,
+    }])
+    .unwrap();
+    a.ensure_providers();
+    a.providers.job = Some(rx);
+    assert!(a.providers_done());
+    let row = |a: &SettingsApp| match &a.sheet.pages[at].item(LIST).unwrap().control {
+        form::Control::ListBox { list, .. } => (
+            list.checks.clone(),
+            list.greyed.clone(),
+            list.detail.clone(),
+        ),
+        _ => panic!("a list"),
+    };
+    assert_eq!(
+        row(&a),
+        (vec![true], vec![true], vec![HELD_NOTE.to_string()]),
+        "ticked, greyed and noted"
+    );
+    if let Some(form::Control::Check { checked, .. }) = a.sheet.pages[at]
+        .item_mut("launcher_contents")
+        .map(|i| &mut i.control)
+    {
+        *checked = true;
+    }
+    a.sheet_event(propsheet::Event::Page(
+        at,
+        form::Event::Changed("launcher_contents"),
+    ));
+    assert!(a.want.launcher_contents);
+    assert!(a.ensure_providers(), "the list follows the check");
+    assert_eq!(row(&a), (vec![true], vec![false], vec![String::new()]));
 }
 
 fn reader_read(a: &mut SettingsApp, reader: readerhost::Reader, failed: Option<String>) {

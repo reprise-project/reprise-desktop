@@ -1,6 +1,7 @@
 //! The Search page's Program Results list: the installed programs' search providers in the order
-//! their sections show, each ticked while the launcher asks it, with Move Up and Move Down. The
-//! providers are read off the loop the first time the page opens.
+//! their sections show, each ticked while the launcher asks it, with Move Up and Move Down; one
+//! that starts the file indexer greys while content search is off. The providers are read off the
+//! loop the first time the page opens.
 
 use crate::SettingsApp;
 use crate::model::Settings;
@@ -19,6 +20,8 @@ pub const UP: &str = "search_providers_up";
 pub const DOWN: &str = "search_providers_down";
 /// The list's rows at [`Area::MIN`](crate::pages::Area::MIN).
 pub const ROWS: usize = 6;
+/// The dimmed text after a row held back by content search being off.
+pub const HELD_NOTE: &str = "Needs Find files by their contents";
 
 /// A provider whose program has a shown desktop entry, with that entry's name and icon.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -34,6 +37,8 @@ pub struct Row {
     pub name: String,
     pub icon: Option<String>,
     pub on: bool,
+    /// Never asked while content search is off ([`searchproviders::starts_indexer`]).
+    pub held: bool,
 }
 
 /// The providers in `dirs` whose program has a shown entry in `app_dirs`. Blocks on the file
@@ -56,7 +61,8 @@ pub fn read_installed(dirs: &[PathBuf], app_dirs: &[PathBuf]) -> Vec<Installed> 
         .collect()
 }
 
-/// The rows as `s` orders and ticks them ([`searchproviders::arrange`]).
+/// The rows as `s` orders and ticks them ([`searchproviders::arrange`]), held while its content
+/// search is off.
 pub fn rows(installed: &[Installed], s: &Settings) -> Vec<Row> {
     let providers: Vec<Provider> = installed.iter().map(|i| i.provider.clone()).collect();
     let of = |p: &Provider| installed.iter().find(|i| i.provider == *p);
@@ -70,6 +76,7 @@ pub fn rows(installed: &[Installed], s: &Settings) -> Vec<Row> {
                 name: i.name.clone(),
                 icon: i.icon.clone(),
                 on,
+                held: !s.launcher_contents && searchproviders::starts_indexer(&p.desktop_id),
             })
         })
         .collect()
@@ -111,8 +118,9 @@ fn list_mut(form: &mut Form) -> Option<(&mut ListBox, &mut Vec<Option<Canvas>>)>
 }
 
 /// Show `rows` with row `pick` picked, a greyed Loading... while they are read (None), or a greyed
-/// note when no program offers results. True when the rows' names changed, which drops their
-/// icons. Move Up and Move Down follow the picked row.
+/// note when no program offers results; a held row greys with [`HELD_NOTE`] after its name. True
+/// when the rows' names changed, which drops their icons. Move Up and Move Down follow the picked
+/// row.
 pub fn fill(form: &mut Form, rows: Option<&[Row]>, pick: Option<usize>) -> bool {
     let Some((list, icons)) = list_mut(form) else {
         return false;
@@ -134,8 +142,14 @@ pub fn fill(form: &mut Form, rows: Option<&[Row]>, pick: Option<usize>) -> bool 
     list.checks = rows.iter().map(|r| r.on).collect();
     list.greyed = match rows.is_empty() {
         true => vec![true],
-        false => Vec::new(),
+        false => rows.iter().map(|r| r.held).collect(),
     };
+    list.detail = (rows.iter())
+        .map(|r| match r.held {
+            true => HELD_NOTE.to_string(),
+            false => String::new(),
+        })
+        .collect();
     form.set_enabled(UP, pick.is_some_and(|i| i > 0));
     form.set_enabled(DOWN, pick.is_some_and(|i| i + 1 < rows.len()));
     renamed
@@ -341,6 +355,46 @@ mod tests {
             "read back as written"
         );
         assert!(!write(&r, &mut s), "nothing moved");
+    }
+
+    /// The held note fits after the name on the list's row, past its check box and icon.
+    #[test]
+    fn a_held_row_fits_its_note() {
+        use reprisekit::text::TextRenderer;
+        use reprisekit::theme::{FontConfig, Theme};
+        reprisekit::pins::fonts();
+        let text = TextRenderer::load(&FontConfig::default());
+        let px = Theme::default().fonts.size_px;
+        let f = search(Area::MIN);
+        let w = f.item(LIST).unwrap().rect.width;
+        let used =
+            4 + 42 + text.measure("Files", false, px) + 8 + text.measure(HELD_NOTE, false, px);
+        assert!(used <= w - 4, "{used} > {}", w - 4);
+    }
+
+    #[test]
+    fn a_provider_that_starts_the_indexer_is_held_while_content_search_is_off() {
+        let files = installed("org.gnome.Nautilus.desktop", "Files", false);
+        let calc = installed("calc.desktop", "Calculator", false);
+        let held = |s: &Settings| -> Vec<(String, bool)> {
+            (rows(&[files.clone(), calc.clone()], s).into_iter())
+                .map(|r| (r.name, r.held))
+                .collect()
+        };
+        let pair = |n: &str, h| (n.to_string(), h);
+        let off = Settings::default();
+        assert_eq!(held(&off), [pair("Calculator", false), pair("Files", true)]);
+        let on = Settings {
+            launcher_contents: true,
+            ..Settings::default()
+        };
+        assert_eq!(held(&on), [pair("Calculator", false), pair("Files", false)]);
+        let mut f = search(Area::MIN);
+        fill(&mut f, Some(&rows(&[files, calc], &off)), None);
+        let lb = list(&f).unwrap();
+        assert_eq!(lb.greyed, [false, true]);
+        assert_eq!(lb.detail, ["", HELD_NOTE]);
+        assert_eq!(lb.checks, [true, true], "the tick stays as set");
     }
 
     #[test]

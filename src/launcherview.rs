@@ -1,5 +1,5 @@
 //! The application launcher on the scene: one `reprisekit::controls::launcher` panel centred on the output under the pointer, on the menu layer, fed every key press while open. On every change of the typed text it works out the calculator's answer (`search::calc_row`), ranks the Start menu's app index (`State::app_index`, by `search::rank_apps`) and finds settings pages (`search::rank_settings`). Enter on the answer copies it; a program starts as from the Start menu; a settings row opens the settings program on its page.
-//! From two typed characters it also finds files through `search::FileSearch`, by name in the home folder and by contents through localsearch, unless `[launcher] search_files` is off, and asks the programs' search providers turned on (`search::providers`); Enter opens a program's result in it, Ctrl+Enter the program's own search.
+//! From two typed characters it also finds files through `search::FileSearch`, by name in the home folder and, with `[launcher] contents` on, by contents through localsearch, unless `[launcher] search_files` is off, and asks the programs' search providers turned on (`search::providers`); Enter opens a program's result in it, Ctrl+Enter the program's own search.
 //! Unless `[launcher] windows` is off it finds open windows on every desktop by title or program name (`search::rank_windows`); Enter brings one up as its task button would.
 //! The panel's tree in `layers.menu` is tagged `SceneOwner::Launcher` and holds the glass tree (its `Backdrop` under a glass look), then the buffer, which takes the pointer on the panel only: its shadow lets the pointer through.
 //! A right press or the menu key on a program or file row opens its context menu (`open_launcher_context`); picking a row of it closes the panel.
@@ -795,6 +795,30 @@ mod tests {
                 .iter()
                 .any(|i| i == launcher::WINDOWS_HEADING)
         );
+    }
+
+    /// `[launcher] contents` decides whether a launcher has a Contents section, read as it opens.
+    #[test]
+    fn the_contents_section_follows_the_config_from_the_next_launcher_on() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let heads = |h: &crate::harness::Harness| -> Vec<String> {
+            let v = h.state.launcher.as_ref().expect("the launcher is open");
+            v.search
+                .sections()
+                .map(|(s, _)| s.heading().into())
+                .collect()
+        };
+        h.state.toggle_launcher();
+        typed(&mut h, "notes");
+        assert_eq!(heads(&h), ["Files"], "off by default");
+        h.state.toggle_launcher();
+        let mut on = h.state.config.clone();
+        on.base.launcher_contents = true;
+        crate::configwatch::reload(&mut h.state, on);
+        h.state.toggle_launcher();
+        typed(&mut h, "notes");
+        assert_eq!(heads(&h), ["Files", "Contents"]);
     }
 
     /// The calculator row's icon.
