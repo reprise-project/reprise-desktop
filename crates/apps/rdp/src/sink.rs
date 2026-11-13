@@ -3,13 +3,8 @@
 
 use pipewire::properties::properties;
 use pipewire::proxy::ProxyT;
-use pipewire::spa;
-use pipewire::spa::param::audio::{AudioFormat, AudioInfoRaw};
-use pipewire::spa::pod::Pod;
-use pipewire::spa::pod::serialize::PodSerializer;
-use pipewire::spa::sys as spa_sys;
-use pipewire::stream::{StreamFlags, StreamRc, StreamState};
 use repriseaudio::Snapshot;
+use reprisevideo::monitor;
 use std::cell::Cell;
 use std::fs;
 use std::io;
@@ -23,6 +18,8 @@ use std::time::{Duration, Instant};
 /// The sink's `node.name`, which the default-sink metadata names.
 const NAME: &str = "reprise-remote-client";
 const DESCRIPTION: &str = "Remote client";
+/// The capture streams' application name.
+const APP: &str = "Remote Desktop";
 /// How long one default switch may take before the sink goes on regardless.
 const GIVE_BACK: Duration = Duration::from_secs(2);
 /// How long a sink's thread may take to end: a switch back, plus the PipeWire teardown. A new
@@ -133,7 +130,9 @@ impl Sink {
             if ready.recv() != Ok(true) {
                 return;
             }
-            if let Err(e) = capture(rate, Box::new(samples), stopped) {
+            let samples = Box::new(samples);
+            let target = Some(NAME);
+            if let Err(e) = monitor::capture(target, APP, DESCRIPTION, rate, samples, stopped) {
                 log::warn!("sound: {e}");
             }
         })?;
@@ -405,48 +404,6 @@ fn keep_record(record: &Path, before: &str) {
     }
 }
 
-type Samples = Box<dyn FnMut(&[u8]) + Send>;
-
-/// Run `body` on a new PipeWire connection whose loop quits on a stop from `stopped` or a core
-/// error. `body` gets the loop, the core and whether a stop came.
-fn on_pipewire(
-    stopped: pipewire::channel::Receiver<()>,
-    body: impl FnOnce(
-        &pipewire::main_loop::MainLoopRc,
-        &pipewire::core::CoreRc,
-        &Cell<bool>,
-    ) -> Result<(), String>,
-) -> Result<(), String> {
-    let main_loop = pipewire::main_loop::MainLoopRc::new(None).map_err(|e| e.to_string())?;
-    let context = pipewire::context::ContextRc::new(&main_loop, None).map_err(|e| e.to_string())?;
-    let core = context.connect_rc(None).map_err(|e| e.to_string())?;
-    // Attached first, so a stop also ends a wait on a PipeWire that never answers.
-    let stopping = Rc::new(Cell::new(false));
-    let weak = main_loop.downgrade();
-    let _stop = stopped.attach(main_loop.loop_(), {
-        let stopping = stopping.clone();
-        move |()| {
-            stopping.set(true);
-            if let Some(l) = weak.upgrade() {
-                l.quit();
-            }
-        }
-    });
-    let weak = main_loop.downgrade();
-    let _errors = core
-        .add_listener_local()
-        .error(move |id, _, res, message| {
-            log::warn!("sound: PipeWire object {id}: {message} ({res})");
-            if id == pipewire::core::PW_ID_CORE
-                && let Some(l) = weak.upgrade()
-            {
-                l.quit();
-            }
-        })
-        .register();
-    body(&main_loop, &core, &stopping)
-}
-
 /// The shared sink's thread: make the sink the default, report it `ready`, and give the default
 /// back once stopped.
 fn run(stopped: pipewire::channel::Receiver<()>, ready: &Mutex<Ready>) -> Result<(), String> {
@@ -456,7 +413,7 @@ fn run(stopped: pipewire::channel::Receiver<()>, ready: &Mutex<Ready>) -> Result
         recover_at(r, repriseaudio::snapshot_now, set_default_wait);
     }
     let before = taken_over(&repriseaudio::snapshot_now());
-    on_pipewire(stopped, |main_loop, core, stopping| {
+    monitor::on_pipewire(stopped, |main_loop, core, stopping| {
         let node: pipewire::node::Node = core
             .create_object(
                 "adapter",
@@ -505,68 +462,6 @@ fn run(stopped: pipewire::channel::Receiver<()>, ready: &Mutex<Ready>) -> Result
     })
 }
 
-/// One viewer's thread: capture the shared sink's monitor at `rate` into `samples`.
-fn capture(
-    rate: u32,
-    samples: Samples,
-    stopped: pipewire::channel::Receiver<()>,
-) -> Result<(), String> {
-    pipewire::init();
-    on_pipewire(stopped, |main_loop, core, _| {
-        let mut props = properties! {
-            *pipewire::keys::MEDIA_TYPE => "Audio",
-            *pipewire::keys::MEDIA_CATEGORY => "Capture",
-            *pipewire::keys::APP_NAME => "Remote Desktop",
-            "stream.capture.sink" => "true",
-            "target.object" => NAME,
-            "node.dont-reconnect" => "true",
-        };
-        props.insert("node.latency", format!("{}/{rate}", rate / 50));
-        let stream =
-            StreamRc::new(core.clone(), "Remote client", props).map_err(|e| e.to_string())?;
-        let weak = main_loop.downgrade();
-        let _listener = stream
-            .add_local_listener_with_user_data(samples)
-            .state_changed(move |_, _, _, new| {
-                if let StreamState::Error(e) = new {
-                    log::warn!("sound: capture: {e}");
-                    if let Some(l) = weak.upgrade() {
-                        l.quit();
-                    }
-                }
-            })
-            .process(|stream, samples| {
-                let Some(mut buffer) = stream.dequeue_buffer() else {
-                    return;
-                };
-                let Some(data) = buffer.datas_mut().first_mut() else {
-                    return;
-                };
-                let chunk = data.chunk();
-                let (offset, size) = (chunk.offset() as usize, chunk.size() as usize);
-                if let Some(bytes) = data.data().and_then(|d| d.get(offset..offset + size)) {
-                    samples(bytes);
-                }
-            })
-            .register()
-            .map_err(|e| e.to_string())?;
-        let param = format_param(rate)?;
-        let pod = Pod::from_bytes(&param).ok_or("bad format pod")?;
-        stream
-            .connect(
-                spa::utils::Direction::Input,
-                None,
-                StreamFlags::AUTOCONNECT | StreamFlags::MAP_BUFFERS,
-                &mut [pod],
-            )
-            .map_err(|e| e.to_string())?;
-        log::info!("sound: capturing \"{DESCRIPTION}\"");
-        main_loop.run();
-        let _ = stream.disconnect();
-        Ok(())
-    })
-}
-
 fn roundtrip(
     main_loop: &pipewire::main_loop::MainLoopRc,
     core: &pipewire::core::CoreRc,
@@ -594,28 +489,6 @@ fn roundtrip(
     } else {
         Err("PipeWire went away".into())
     }
-}
-
-fn format_param(rate: u32) -> Result<Vec<u8>, String> {
-    let mut info = AudioInfoRaw::new();
-    info.set_format(AudioFormat::S16LE);
-    info.set_rate(rate);
-    info.set_channels(2);
-    let mut position = [0; spa_sys::SPA_AUDIO_MAX_CHANNELS as usize];
-    position[0] = spa_sys::SPA_AUDIO_CHANNEL_FL;
-    position[1] = spa_sys::SPA_AUDIO_CHANNEL_FR;
-    info.set_position(position);
-    let object = spa::pod::Object {
-        type_: spa::utils::SpaTypes::ObjectParamFormat.as_raw(),
-        id: spa::param::ParamType::EnumFormat.as_raw(),
-        properties: info.into(),
-    };
-    PodSerializer::serialize(
-        io::Cursor::new(Vec::new()),
-        &spa::pod::Value::Object(object),
-    )
-    .map(|(cursor, _)| cursor.into_inner())
-    .map_err(|e| format!("format pod: {e:?}"))
 }
 
 #[cfg(test)]

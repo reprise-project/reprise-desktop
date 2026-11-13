@@ -1,0 +1,30 @@
+[package]
+name = "reprisevideo"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+description = "The screen's PipeWire stream, a sink's monitor and H.264 encoders through FFmpeg, shared by reprise-rdp and reprise-record"
+
+[lints]
+workspace = true
+
+[dependencies]
+repriseconf = { path = "../repriseconf" }
+pipewire = { workspace = true, features = ["v0_3_33"] }
+tokio = { workspace = true, features = ["sync"] }
+libc.workspace = true
+log.workspace = true
+bytes = "1"
+ffmpeg = { package = "ffmpeg-the-third", version = "6", default-features = false, features = ["codec", "filter", "format", "software-scaling"] }
+gbm = { version = "0.18", default-features = false }
+khronos-egl = { version = "6", features = ["dynamic"] }
+glow = "0.18"
+drm = "0.15"
+wayland-client.workspace = true
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }
+
+[dev-dependencies]
+tempfile.workspace = true

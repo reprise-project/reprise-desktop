@@ -4618,11 +4618,8 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "bytes",
- "drm 0.15.0",
  "ffmpeg-the-third",
  "futures-util",
- "gbm",
- "glow",
  "image",
  "ironrdp-acceptor",
  "ironrdp-ainput",
@@ -4638,7 +4635,6 @@ dependencies = [
  "ironrdp-server",
  "ironrdp-svc",
  "ironrdp-tokio",
- "khronos-egl",
  "libc",
  "log",
  "pipewire",
@@ -4650,6 +4646,7 @@ dependencies = [
  "reprisefs",
  "repriselogin",
  "reprisetls",
+ "reprisevideo",
  "serde",
  "tempfile",
  "tokio",
@@ -5016,6 +5013,26 @@ dependencies = [
  "log",
  "reprisebus",
  "zbus 6.2.1",
+]
+
+[[package]]
+name = "reprisevideo"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "drm 0.15.0",
+ "ffmpeg-the-third",
+ "gbm",
+ "glow",
+ "khronos-egl",
+ "libc",
+ "log",
+ "pipewire",
+ "repriseconf",
+ "tempfile",
+ "tokio",
+ "wayland-client",
+ "wayland-protocols",
 ]
 
 [[package]]

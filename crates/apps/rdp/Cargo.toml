@@ -19,6 +19,7 @@ path = "src/main.rs"
 repriseconf = { path = "../../repriseconf" }
 reprisebus = { path = "../../reprisebus" }
 repriseaudio = { path = "../../repriseaudio" }
+reprisevideo = { path = "../../reprisevideo" }
 ironrdp-server.workspace = true
 ironrdp-displaycontrol.workspace = true
 ironrdp-pdu.workspace = true
@@ -42,10 +43,6 @@ async-trait = "0.1"
 log.workspace = true
 zeroize.workspace = true
 ffmpeg = { package = "ffmpeg-the-third", version = "6", default-features = false, features = ["codec", "filter", "format", "software-scaling"] }
-gbm = { version = "0.18", default-features = false }
-khronos-egl = { version = "6", features = ["dynamic"] }
-glow = "0.18"
-drm = "0.15"
 wayland-client.workspace = true
 wayland-protocols = { version = "0.32", features = ["client", "staging"] }
 reprisefs = { path = "../../reprisefs" }

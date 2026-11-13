@@ -25,7 +25,7 @@ mod portal;
 mod seat;
 mod sink;
 mod sound;
-mod stream;
+use reprisevideo::stream;
 mod viewers;
 mod wayland;
 mod wlclip;
@@ -515,7 +515,8 @@ fn spawn_probe(
 
 /// The H.264 backends that work and the stream modifiers each maps.
 fn picture() -> display::Picture {
-    let (device, working) = encode::probe::probe();
+    let conn = wayland::connect().ok();
+    let (device, working) = encode::probe::probe(conn.as_ref());
     for (backend, modifiers) in &working {
         log::info!(
             "encoder {} works on {}, modifiers {modifiers:#x?}",

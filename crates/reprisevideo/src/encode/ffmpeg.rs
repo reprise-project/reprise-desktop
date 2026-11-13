@@ -604,16 +604,12 @@ fn regions(size: (u32, u32), n: u32, damage: &[Rect]) -> Vec<Rect> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::encode::Switch;
     use crate::encode::avc444;
     use crate::encode::gl::Gl;
     use crate::encode::probe::RENDER_NODE;
     use crate::stream::XRGB8888;
     use ::ffmpeg::frame;
-    use std::sync::{Arc, Mutex};
-
-    /// DRM_FORMAT_NV12, a format the encoders don't take from the screen.
-    const NV12: u32 = u32::from_le_bytes(*b"NV12");
+    use std::sync::Arc;
 
     fn silence() {
         ::ffmpeg::util::log::set_level(::ffmpeg::util::log::Level::Quiet);
@@ -1008,74 +1004,6 @@ pub(crate) mod tests {
         );
     }
 
-    #[test]
-    fn an_encoder_that_fails_to_open_falls_back_on_the_first_frame() {
-        silence();
-        let vaapi = Backend::Vaapi { low_power: false };
-        let mut switch = Switch::new(Box::new(|backend, quality, frame_rate| {
-            Ffmpeg::new(backend, Path::new("/dev/null"), frame_rate, quality)
-                .map(|f| Box::new(f) as Box<dyn Encoder>)
-        }));
-        switch.select(vec![vaapi]);
-        let damage = Rect {
-            x: 1,
-            y: 0,
-            width: 1,
-            height: 1,
-        };
-        let first = switch.encode(&frame((4, 2), 0, vec![damage]), false, true);
-        assert!(switch.fell_back());
-        match first {
-            Ok(Encoded::Bitmap(updates)) => {
-                let sizes: Vec<_> = (updates.iter())
-                    .map(|u| (u.width.get(), u.height.get()))
-                    .collect();
-                assert_eq!(sizes, [(4, 2)], "the first frame goes whole as a bitmap");
-            }
-            _ => panic!("bitmaps"),
-        }
-    }
-
-    /// Records whether each bitmap frame was asked for as a keyframe.
-    struct Keyframes(Arc<Mutex<Vec<bool>>>);
-
-    impl Encoder for Keyframes {
-        fn encode(&mut self, _: &Frame, keyframe: bool) -> Result<Encoded, EncodeError> {
-            self.0.lock().unwrap().push(keyframe);
-            Ok(Encoded::Nothing)
-        }
-    }
-
-    #[test]
-    fn an_encoder_that_fails_on_its_first_frame_falls_back_once() {
-        crate::listen::tests::capture_log();
-        let keyframes = Arc::default();
-        let mut switch = Switch::new(Box::new(|_, _, _| Ok(Box::new(x264()))))
-            .with_bitmap(Box::new(Keyframes(Arc::clone(&keyframes))));
-        switch.select(vec![Backend::X264]);
-        let size = (4, 2);
-        let mut nv12 = frame(size, 0, vec![Rect::full(size)]);
-        if let FrameBuffer::Shm { fourcc, .. } = &mut nv12.buffer {
-            *fourcc = NV12;
-        }
-        for _ in 0..3 {
-            switch.encode(&nv12, false, true).unwrap();
-        }
-        assert!(switch.fell_back());
-        assert_eq!(
-            *keyframes.lock().unwrap(),
-            [true, false, false],
-            "one bitmap keyframe, then damage"
-        );
-        let line =
-            format!("H.264 failed, sending bitmaps from now on: format {NV12:#x} is not supported");
-        assert_eq!(
-            crate::listen::tests::times_logged(&line),
-            1,
-            "one journal line"
-        );
-    }
-
     /// A shared-memory XRGB8888 frame of `size` holding `pixel`'s colours, its whole picture
     /// damaged, and its 4:4:4 planes.
     fn picture(
@@ -1443,7 +1371,7 @@ pub(crate) mod tests {
     #[ignore = "needs VA-API H.264 on /dev/dri/renderD128; run with --ignored where it has one"]
     fn a_shared_memory_frame_leaves_avc444_on_for_the_next_dmabuf() {
         silence();
-        let backend = (crate::encode::probe::probe().1.into_iter())
+        let backend = (crate::encode::probe::probe(None).1.into_iter())
             .map(|(b, _)| b)
             .find(|b| matches!(b, Backend::Vaapi { .. }))
             .expect("VA-API H.264 on this machine");
@@ -1518,7 +1446,7 @@ pub(crate) mod tests {
 
     fn vaapi() -> Ffmpeg {
         silence();
-        let backend = (crate::encode::probe::probe().1.into_iter())
+        let backend = (crate::encode::probe::probe(None).1.into_iter())
             .map(|(b, _)| b)
             .find(|b| matches!(b, Backend::Vaapi { .. }))
             .expect("VA-API H.264 on this machine");
@@ -1880,7 +1808,7 @@ pub(crate) mod tests {
     #[test]
     #[ignore = "needs VA-API H.264 on /dev/dri/renderD128; run with --ignored where it has one"]
     fn a_merge_error_codes_both_views_on_one_encoder_from_then_on() {
-        crate::listen::tests::capture_log();
+        crate::testlog::capture_log();
         let gbm = render_node();
         let mut encoder = vaapi();
         let mut decoder = Decoder::new();
@@ -1921,17 +1849,13 @@ pub(crate) mod tests {
         assert_eq!(code(8, &mut encoder).2, 0, "a reopened encoder stays alone");
         let line = "VA-API H.264 cannot merge the AVC444 views, coding both on one encoder: \
                     H.264 merge out of order: a slice before the main view's SPS and PPS";
-        assert_eq!(
-            crate::listen::tests::times_logged(line),
-            1,
-            "one journal line"
-        );
+        assert_eq!(crate::testlog::times_logged(line), 1, "one journal line");
     }
 
     #[test]
     #[ignore = "needs VA-API H.264 on /dev/dri/renderD128; run with --ignored where it has one"]
     fn an_aux_encoder_that_fails_to_open_codes_both_views_on_one_encoder() {
-        crate::listen::tests::capture_log();
+        crate::testlog::capture_log();
         let gbm = render_node();
         let mut encoder = vaapi();
         let mut decoder = Decoder::new();
@@ -1969,11 +1893,7 @@ pub(crate) mod tests {
         assert!(encoder.merge.is_none());
         let line = "VA-API H.264 cannot merge the AVC444 views, coding both on one encoder: \
                     the aux encoder did not open";
-        assert_eq!(
-            crate::listen::tests::times_logged(line),
-            1,
-            "one journal line"
-        );
+        assert_eq!(crate::testlog::times_logged(line), 1, "one journal line");
     }
 
     #[test]
@@ -2370,7 +2290,7 @@ pub(crate) mod tests {
     #[ignore = "needs VA-API H.264 on /dev/dri/renderD128; run with --ignored where it has one"]
     fn vaapi_codes_a_half_size_target() {
         silence();
-        let backend = (crate::encode::probe::probe().1.into_iter())
+        let backend = (crate::encode::probe::probe(None).1.into_iter())
             .map(|(b, _)| b)
             .find(|b| matches!(b, Backend::Vaapi { .. }))
             .expect("VA-API H.264 on this machine");
@@ -2428,7 +2348,7 @@ pub(crate) mod tests {
 
     #[test]
     fn an_aux_view_that_fails_to_code_codes_both_views_on_one_encoder_in_v1() {
-        crate::listen::tests::capture_log();
+        crate::testlog::capture_log();
         let mut encoder = x264_avc444();
         let mut decoder = Decoder::new();
         tapped();
@@ -2476,16 +2396,12 @@ pub(crate) mod tests {
         assert!(encoder.merge.is_none());
         let line = "Software H.264 cannot merge the AVC444 views, coding both on one encoder: \
                     the aux encoder failed";
-        assert_eq!(
-            crate::listen::tests::times_logged(line),
-            1,
-            "one journal line"
-        );
+        assert_eq!(crate::testlog::times_logged(line), 1, "one journal line");
     }
 
     #[test]
     fn split_encoders_off_codes_both_views_on_one_encoder_in_v1() {
-        crate::listen::tests::capture_log();
+        crate::testlog::capture_log();
         let mut encoder = x264_avc444();
         encoder.set_split_encoders(false, 1);
         tapped();
@@ -2506,7 +2422,7 @@ pub(crate) mod tests {
         }
         let line = "AVC444 views: one Software H.264 encoder, avc444_split_encoders is off";
         assert_eq!(
-            crate::listen::tests::times_logged(line),
+            crate::testlog::times_logged(line),
             1,
             "one journal line for the encoder"
         );
