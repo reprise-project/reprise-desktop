@@ -1,5 +1,5 @@
-//! OK, Apply and Cancel: writing `config.toml`, the autostart files and the machine settings,
-//! and rereading them.
+//! OK, Apply and Cancel: writing `config.toml`, the autostart files, the proxy and the machine
+//! settings, and rereading them.
 
 use crate::backuphost::Then;
 use crate::registry::{self, Page};
@@ -86,6 +86,7 @@ impl SettingsApp {
             || self.display.model.dirty()
             || self.defaults.as_ref().is_some_and(|d| d.dirty())
             || self.login_dirty()
+            || self.proxy_dirty()
     }
 
     /// Remove works on user entries only; a system entry has no file of the user's.
@@ -262,6 +263,9 @@ impl SettingsApp {
         if !self.apply_login() {
             ok = false;
         }
+        if !self.apply_proxy() {
+            ok = false;
+        }
         self.sync_apply();
         ok
     }
@@ -360,6 +364,7 @@ impl SettingsApp {
         }
         self.refill_defaults();
         self.revert_login();
+        self.revert_proxy();
         self.fill_wallpapers();
         self.want_preview();
         self.show_monitor();

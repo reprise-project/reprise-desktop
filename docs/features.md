@@ -809,6 +809,9 @@ the screen takes the interface of the last session used at this computer.
 - **Airplane mode** turns Wi-Fi, mobile broadband and Bluetooth off from the
   network icon's menu, Settings > Network or the airplane-mode key, and
   turning it off brings back the radios that were on.
+- **Proxy.** A manual proxy (HTTP, HTTPS, FTP, SOCKS and hosts to skip) or a
+  PAC script's address in Settings > Network, set for every program started
+  afterwards through the standard `http_proxy` family of variables.
 - **Bluetooth.** Pairing, connections and device batteries, from the tray.
 - **Phone.** Through KDE Connect: battery and charging in the tray, Ring
   phone, and Send files from the tray or Send To.

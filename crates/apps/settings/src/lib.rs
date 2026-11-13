@@ -40,6 +40,7 @@ mod notifypage;
 mod outputwrite;
 mod pages;
 mod permissions;
+mod proxyhost;
 mod quickpage;
 mod readerhost;
 mod registry;
@@ -425,6 +426,8 @@ struct SettingsApp {
     reader_job: Option<Receiver<readerhost::Reading>>,
 
     airplane: airplanehost::Airplane,
+    /// The Network page's proxy rows: the file as read and what the rows hold.
+    proxy: proxyhost::Proxy,
 
     /// The Login Manager page's machine settings, read when it first opens with the accounts
     /// `login_source` gives; `login_job` holds a save through `login_run` under way.
@@ -693,6 +696,7 @@ impl SettingsApp {
             reader: readerhost::Reader::default(),
             reader_job: None,
             airplane: airplanehost::Airplane::default(),
+            proxy: proxyhost::Proxy::session(),
             login: None,
             login_files: loginhost::Files::default(),
             login_source: loginhost::machine_users,
@@ -785,6 +789,7 @@ impl SettingsApp {
         app.display
             .model
             .set_primary_saved(outputwrite::read_primary(&text));
+        pages::show_proxy(&mut app.sheet.pages[Page::Network.index()], &app.proxy.want);
         app.rescan();
         app.app_names = app_names(&app.want);
         app.fill_shortcuts();

@@ -26,6 +26,8 @@ mod page_controls;
 mod privacy;
 #[path = "main_tests/programs.rs"]
 mod programs;
+#[path = "main_tests/proxy_page.rs"]
+mod proxy_page;
 #[path = "main_tests/search.rs"]
 mod search;
 #[path = "main_tests/sizes.rs"]

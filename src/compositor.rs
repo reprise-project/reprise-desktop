@@ -328,6 +328,8 @@ pub struct State {
     pub config_file: toml::Table,
     /// Reads the Quick Launch folder again when it changes (`quickwatch`).
     pub quick_watch: crate::dirwatch::JobWatch,
+    /// Reads the session proxy file again when Settings writes it (`proxywatch`).
+    pub proxy_watch: crate::dirwatch::JobWatch,
     pub start_text: TextRenderer,
     pub start_panel_text: TextRenderer,
     pub quicklaunch: Vec<QuickItem>,
@@ -737,6 +739,7 @@ impl State {
             config_notice: None,
             config_file: toml::Table::new(),
             quick_watch: Default::default(),
+            proxy_watch: Default::default(),
             icon_watch: Default::default(),
             start_text,
             start_panel_text,

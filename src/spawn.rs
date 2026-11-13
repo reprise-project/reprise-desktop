@@ -159,6 +159,11 @@ pub struct SessionEnv {
     /// Started from a text login while another Reprise session of the user runs: that session
     /// keeps the user manager's variables and units, which this one neither publishes nor stops.
     pub defers_user_units: bool,
+    /// The session proxy file's variables ([`reprisefs::proxy`]), set in every child.
+    pub proxy: Vec<(String, String)>,
+    /// The proxy variables an earlier read of the file set and the last one did not: taken out
+    /// of every child, as Settings took them out of the user manager.
+    pub proxy_gone: Vec<String>,
 }
 
 /// How programs reach the X11 display: `DISPLAY` and the `XAUTHORITY` file with its cookie.
@@ -208,7 +213,27 @@ impl SessionEnv {
             refuses_programs: false,
             session_id: reprisefs::scope::launch_session(),
             defers_user_units: false,
+            proxy: reprisefs::proxy::read(&reprisefs::proxy::path()),
+            proxy_gone: Vec::new(),
         }
+    }
+
+    /// Take the proxy file's variables as read now. Returns whether they changed.
+    pub fn set_proxy(&mut self, vars: Vec<(String, String)>) -> bool {
+        if vars == self.proxy {
+            return false;
+        }
+        let set = |k: &str| vars.iter().any(|(n, _)| n == k);
+        let mut gone: Vec<String> = (self.proxy.iter().map(|(k, _)| k))
+            .chain(&self.proxy_gone)
+            .filter(|k| !set(k))
+            .cloned()
+            .collect();
+        gone.sort();
+        gone.dedup();
+        self.proxy = vars;
+        self.proxy_gone = gone;
+        true
     }
 
     /// Started from a text login, not nested: a login manager's session started later takes the
@@ -797,6 +822,12 @@ fn with_session_env(c: &mut std::process::Command, env: &SessionEnv, launch: Opt
     for (k, v) in env.pairs() {
         c.env(k, v);
     }
+    for k in &env.proxy_gone {
+        c.env_remove(k);
+    }
+    for (k, v) in &env.proxy {
+        c.env(k, v);
+    }
     if let Some(qt) = env.qt_platform_theme() {
         c.env("QT_QPA_PLATFORMTHEME", qt);
     }
@@ -1246,6 +1277,8 @@ mod tests {
             refuses_programs: false,
             session_id: None,
             defers_user_units: false,
+            proxy: Vec::new(),
+            proxy_gone: Vec::new(),
         }
     }
 
@@ -1859,6 +1892,39 @@ mod tests {
         // No X11 display: DISPLAY and its cookie are removed rather than inherited.
         assert_eq!(env_of(&c, "DISPLAY"), Some(None));
         assert_eq!(env_of(&c, "XAUTHORITY"), Some(None));
+    }
+
+    #[test]
+    fn a_child_gets_the_proxy_file_and_loses_what_it_stopped_setting() {
+        let vars = |v: &[(&str, &str)]| -> Vec<(String, String)> {
+            v.iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect()
+        };
+        let mut e = env(None);
+        let http = ("http_proxy", "http://a:1");
+        assert!(e.set_proxy(vars(&[http, ("no_proxy", "localhost")])));
+        assert!(!e.set_proxy(vars(&[http, ("no_proxy", "localhost")])));
+        let c = command("true", &e, None).unwrap();
+        assert_eq!(env_of(&c, "http_proxy"), Some(Some("http://a:1".into())));
+        assert_eq!(env_of(&c, "no_proxy"), Some(Some("localhost".into())));
+        assert_eq!(
+            env_of(&c, "HTTPS_PROXY"),
+            None,
+            "one never set is inherited"
+        );
+
+        assert!(e.set_proxy(vars(&[http])));
+        assert!(e.set_proxy(Vec::new()));
+        let c = command("true", &e, None).unwrap();
+        assert_eq!(e.proxy_gone, ["http_proxy", "no_proxy"]);
+        assert_eq!(env_of(&c, "http_proxy"), Some(None));
+        assert_eq!(env_of(&c, "no_proxy"), Some(None));
+
+        assert!(e.set_proxy(vars(&[("no_proxy", "x")])));
+        assert_eq!(e.proxy_gone, ["http_proxy"]);
+        let c = command("true", &e, None).unwrap();
+        assert_eq!(env_of(&c, "no_proxy"), Some(Some("x".into())));
     }
 
     #[test]

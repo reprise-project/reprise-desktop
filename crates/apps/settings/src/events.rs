@@ -66,6 +66,10 @@ impl SettingsApp {
                     self.airplane_toggled();
                     return Reply::redraw();
                 }
+                if pages::is_proxy(id) {
+                    self.proxy_changed();
+                    return Reply::redraw();
+                }
                 // Only the control just worked is read back: reading all would write clamped values for keys the control cannot show.
                 let from = self.want.interface.clone();
                 pages::read_one(&self.sheet, id, &mut self.want);
