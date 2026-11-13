@@ -207,10 +207,11 @@ pub struct StateDamage {
 }
 
 impl TaskbarState {
-    /// Which of `layout`'s cells a bar drawn for `self` redraws to show `other`. A task button's
-    /// change takes its neighbours, whose label edges meet it. Icons count as equal only when
-    /// shared.
-    pub fn damage(&self, other: &Self, layout: &TaskbarLayout) -> StateDamage {
+    /// Which cells a bar drawn for `self` on `from` redraws to show `other` on `to`. A task
+    /// button's change takes its neighbours, whose label edges meet it, and a task row laid out
+    /// again takes the buttons and » cell it moves. Any other layout change takes the whole bar
+    /// and Start. Icons count as equal only when shared.
+    pub fn damage(&self, other: &Self, from: &TaskbarLayout, to: &TaskbarLayout) -> StateDamage {
         fn icon(a: &Option<Arc<Canvas>>, b: &Option<Arc<Canvas>>) -> bool {
             match (a, b) {
                 (Some(a), Some(b)) => Arc::ptr_eq(a, b),
@@ -256,6 +257,14 @@ impl TaskbarState {
             || *start_hot != other.start_hot
             || !icon(start_icon, &other.start_icon)
             || *orb_glow != other.orb_glow;
+        let whole_bar = Some(Rect::new(0, 0, to.width, to.height));
+        if from.but_task_row() != to.but_task_row() {
+            return StateDamage {
+                start: true,
+                cells: whole_bar,
+            };
+        }
+        let layout = to;
         let whole = *focus != other.focus
             || *quick_drop != other.quick_drop
             || *pager_mark != other.pager_mark
@@ -263,11 +272,12 @@ impl TaskbarState {
             || *task_float != other.task_float
             || quick_icons.len() != other.quick_icons.len()
             || pager.len() != other.pager.len()
-            || tasks.len() != other.tasks.len()
             || tray_icons.len() != other.tray_icons.len();
         if whole {
-            let cells = Some(Rect::new(0, 0, layout.width, layout.height));
-            return StateDamage { start, cells };
+            return StateDamage {
+                start,
+                cells: whole_bar,
+            };
         }
         let mut cells: Option<Rect> = None;
         let mut add = |r: Option<&Rect>| {
@@ -304,11 +314,17 @@ impl TaskbarState {
         } else {
             [*task_hot, other.task_hot, *task_pressed, other.task_pressed]
         };
-        let changed = (0..tasks.len())
+        let changed = (0..tasks.len().max(other.tasks.len()))
             .filter(|&i| {
-                !same_task(&tasks[i], &other.tasks[i])
+                let same = match (tasks.get(i), other.tasks.get(i)) {
+                    (Some(a), Some(b)) => same_task(a, b),
+                    _ => false,
+                };
+                !same
                     || task_progress.get(i) != other.task_progress.get(i)
                     || task_badge.get(i) != other.task_badge.get(i)
+                    || from.tasks.get(i) != to.tasks.get(i)
+                    || from.stacks.get(i) != to.stacks.get(i)
             })
             .chain(moved(*task_hot, other.task_hot).into_iter().flatten())
             .chain(
@@ -319,8 +335,13 @@ impl TaskbarState {
             .chain(lit.into_iter().flatten());
         for i in changed {
             for k in i.saturating_sub(1)..=i + 1 {
-                add(layout.tasks.get(k));
+                add(from.tasks.get(k));
+                add(to.tasks.get(k));
             }
+        }
+        if from.more != to.more {
+            add(from.more.as_ref());
+            add(to.more.as_ref());
         }
         for i in (0..tray_icons.len()).filter(|&i| !icon(&tray_icons[i], &other.tray_icons[i])) {
             add(layout.tray.get(i));

@@ -730,6 +730,17 @@ impl TaskbarLayout {
         }
     }
 
+    /// This layout without what `lay_tasks` sets per button: two layouts equal here differ only
+    /// in their task buttons and » cell.
+    pub(crate) fn but_task_row(&self) -> TaskbarLayout {
+        TaskbarLayout {
+            tasks: Vec::new(),
+            stacks: Vec::new(),
+            more: None,
+            ..self.clone()
+        }
+    }
+
     /// Icon-only task button length and step to the next one.
     pub fn icon_step(&self, shape: &TaskbarShape) -> (i32, i32) {
         let (w, pitch) = shape
