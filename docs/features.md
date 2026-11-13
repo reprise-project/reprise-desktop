@@ -854,6 +854,13 @@ the screen takes the interface of the last session used at this computer.
 - **Thunderbolt and USB4.** A dock or eGPU that waits for authorization gets
   a balloon with Authorize Once, Always Authorize and Ignore, and Settings >
   Thunderbolt lists the devices boltd knows to authorize or forget them.
+- **Network shares.** Explorer's File > Connect to Server... (or an `smb://`,
+  `sftp://`, `ftp://`, `dav://` or `nfs://` address, or a `\\server\share`
+  path, typed into the address bar) mounts a share through gvfs. A server
+  that wants a password asks in Reprise's own box, and Remember keeps it in
+  your keyring. Mounted shares are listed in Computer under Network
+  Locations, where Disconnect unmounts one, and the Network place lists the
+  servers on your network and an SMB server's shares.
 - **Disk images.** Opening an `.iso` or `.img` asks Mount or Cancel, and
   Mount mounts it read-only like a drive instead of handing it to its type's
   program. Open With and Explorer's Open hand it to a program.

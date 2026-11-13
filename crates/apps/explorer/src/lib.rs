@@ -32,6 +32,7 @@ mod rename;
 mod search;
 mod sendreads;
 mod settings;
+mod shares;
 mod tabs;
 mod tree;
 mod volumes;
@@ -53,6 +54,7 @@ use repriseapp::{
 use reprisefs::folderwatch::Watch;
 use reprisefs::history::History;
 use reprisefs::listing::Item;
+use reprisefs::netshare::Address;
 use reprisefs::program::{Confirm, ScriptOpen};
 use reprisekit::controls::addressbar::{self, AddressBar};
 use reprisekit::controls::combo::{self, ListItem};
@@ -189,6 +191,14 @@ pub struct Explorer {
     pub(crate) volumes: reprisefs::udisks::Snapshot,
     /// [`reprisefs::udisks::follow`]'s snapshots, each with a wake.
     volume_changes: Option<std::sync::mpsc::Receiver<reprisefs::udisks::Snapshot>>,
+    /// The network shares gvfs has mounted, Computer's Network Locations.
+    pub(crate) shares: reprisefs::netshare::Snapshot,
+    /// [`reprisefs::netshare::follow`]'s snapshots, each with a wake.
+    share_changes: Option<std::sync::mpsc::Receiver<reprisefs::netshare::Snapshot>>,
+    /// A connection to a server under way ([`shares`]).
+    pub(crate) connection: Option<shares::Connection>,
+    /// The address last typed into Connect to Server, offered again.
+    pub(crate) last_server: String,
     /// Read once: they change on a package install, not between listings.
     pub(crate) globs: Arc<reprisefs::apps::MimeDb>,
     /// The home and document folders a listing gives their own icon, read once.
@@ -416,6 +426,7 @@ impl Explorer {
         let udisks = reprisefs::udisks::Udisks::system();
         let mut ex = Explorer::with_settings(start, settings, AppIndex::default(), udisks, ctx);
         ex.follow_volumes(ctx.wake.clone());
+        ex.follow_shares(ctx.wake.clone());
         ex
     }
 
@@ -468,6 +479,10 @@ impl Explorer {
             scanning: None,
             volumes: reprisefs::udisks::Snapshot::default(),
             volume_changes: None,
+            shares: Default::default(),
+            share_changes: None,
+            connection: None,
+            last_server: String::new(),
             udisks,
             globs: Arc::new(reprisefs::apps::mime_globs()),
             specials: reprisefs::places::special_folders(),
@@ -706,6 +721,8 @@ impl Explorer {
             compress: None,
             disk_image: false,
             pinned: None,
+            share: false,
+            can_connect: self.shares.gio,
         }
     }
 
@@ -814,7 +831,12 @@ impl Explorer {
         build: impl FnOnce(Place, &mut Ctx) -> Explorer,
         ctx: &mut Ctx,
     ) -> Explorer {
-        let Start { place, dir, select } = start;
+        let Start {
+            place,
+            dir,
+            select,
+            connect,
+        } = start;
         let check = dir.map(|d| Job::spawn(Some(&ctx.wake), move || is_dir(&d)));
         let mut ex = build(place.clone(), ctx);
         ex.selecting = select.map(|s| (place.clone(), s));
@@ -839,6 +861,9 @@ impl Explorer {
             }
         }
         ex.select_pending(ctx);
+        if let Some(uri) = connect {
+            let _ = ex.connect_to(&uri, ctx);
+        }
         ex
     }
 
@@ -964,19 +989,26 @@ impl Explorer {
     pub(crate) fn reader(&self, place: Place, ctx: &Ctx) -> impl FnOnce() -> Read + Send + 'static {
         let (globs, show_hidden) = (self.globs.clone(), self.settings.show_hidden);
         let (drives, volumes) = (self.drives.clone(), self.volumes.clone());
+        let shares = self.shares.shares.clone();
         let mounts = self.drive_mounts.clone();
         let to_fill = foldertree::to_fill(&self.tree, &self.tree_places, &place, &mounts);
         let scale = ctx.icons.scale();
         let list_px = shellview::list_icon_px(ctx.theme.text);
         let specials = self.specials.clone();
         move || {
-            let listed = list(&place, &globs, show_hidden, &drives, &volumes);
+            let devices = place::Devices {
+                drives: &drives,
+                volumes: &volumes,
+                shares: &shares,
+            };
+            let listed = list(&place, &globs, show_hidden, devices);
             let sizes = reprisekit::icontheme::listing_px(list_px);
             let icons = ReadIcons::read(&listed.items, sizes, scale);
             let inp = foldertree::Inputs {
                 show_hidden,
                 drives: &drives,
                 volumes: &volumes,
+                shares: &shares,
                 drive_mounts: &mounts,
             };
             let tree = to_fill
@@ -1241,7 +1273,7 @@ impl Explorer {
         self.scanning = None;
         let before = std::mem::take(&mut self.drive_mounts);
         self.drives = drives;
-        self.drive_mounts = place::drive_mounts(&self.drives);
+        self.drive_mounts = place::drive_mounts(&self.drives, &self.shares.shares);
         self.mounts_seen = mounts;
         self.sync_volumes();
         if self.drive_mounts != before {
@@ -1303,6 +1335,9 @@ impl Explorer {
         let Some(it) = self.items.get(i).cloned() else {
             return Reply::none();
         };
+        if let Some(uri) = self.selected_network() {
+            return self.open_network(&uri, ctx);
+        }
         if let Some(v) = self.selected_unmounted() {
             return self.mount_and_open(v, ctx);
         }
@@ -1829,15 +1864,30 @@ struct Start {
     place: Place,
     dir: Option<PathBuf>,
     select: Option<PathBuf>,
+    /// A server address to connect to once the window is up.
+    connect: Option<String>,
 }
 
-/// `reprise-explorer [PLACE]` or `--select PATH`. PLACE is a folder's path or
-/// "Computer" or "Recycle Bin"; a missing or unknown one is Home. `--select`
+/// `reprise-explorer [PLACE]` or `--select PATH`. PLACE is a folder's path,
+/// "Computer", "Recycle Bin" or "Network", or a server address, which opens
+/// Computer and connects to it; a missing or unknown one is Home. `--select`
 /// opens the folder an absolute PATH sits in with PATH selected and scrolled
 /// into view (Find Target's window).
 fn parse_args(args: impl IntoIterator<Item = std::ffi::OsString>) -> Start {
     let mut args = args.into_iter();
     let first = args.next();
+    if let Some(addr) = first
+        .as_ref()
+        .and_then(|a| a.to_str())
+        .and_then(Address::parse)
+    {
+        return Start {
+            place: Place::Computer,
+            dir: None,
+            select: None,
+            connect: Some(addr.uri()),
+        };
+    }
     let (place, dir, select) = if first.as_deref() == Some("--select".as_ref()) {
         let path = args.next().map(PathBuf::from).filter(|p| p.is_absolute());
         match path
@@ -1859,7 +1909,12 @@ fn parse_args(args: impl IntoIterator<Item = std::ffi::OsString>) -> Start {
         let (place, dir) = read.unwrap_or((Place::Home, None));
         (place, dir, None)
     };
-    Start { place, dir, select }
+    Start {
+        place,
+        dir,
+        select,
+        connect: None,
+    }
 }
 
 /// Runs the program; `args` are the command line after the program's name.

@@ -403,6 +403,10 @@ desktop and stays out of the way when it's missing.
 **Network**
 
 - NetworkManager, for the network icon and Network Connections
+- gvfs (with `gio` from GLib and gvfsd-fuse), for Connect to Server, the
+  shares under Computer's Network Locations and the Network place; its SMB
+  backend (gvfs-smb) for SMB shares. Without `gio`, Connect to Server
+  is greyed.
 - dnsmasq, which NetworkManager runs to share a connection from a hotspot
 - NetworkManager's VPN plugins (networkmanager-openvpn and the like), for
   importing and running those VPNs. WireGuard needs none.
@@ -420,7 +424,8 @@ desktop and stays out of the way when it's missing.
 - cups-pk-helper, so accounts outside CUPS's admin group can manage printers
   after the admin password prompt
 - avahi-daemon, so the Add Printer wizard lists network printers for accounts
-  outside CUPS's admin group without the admin password prompt
+  outside CUPS's admin group without the admin password prompt, and the
+  Network place lists the SMB and SFTP servers on the local network
 - PackageKit, Flatpak and fwupd, for system, Flatpak and firmware updates in
   Software Updates. PackageKit also installs downloaded packages and
   uninstalls programs from the Start menu (an Arch `.pkg.tar.zst` installs
@@ -440,7 +445,8 @@ desktop and stays out of the way when it's missing.
   administrator (group `wheel` or `sudo`) set the time zone without a
   password, for the automatic time zone; a build installed by hand copies
   it from `data/polkit-1/rules.d/` to `/usr/share/polkit-1/rules.d/`
-- gnome-keyring, for saved passwords and the Secret portal. The login
+- gnome-keyring, for saved passwords, the Secret portal and a network
+  share's remembered password. The login
   manager's PAM file (SDDM's or `reprise-login`) unlocks it at login, and the
   lock screen's password unlocks it when it was left locked. Under
   autologin PAM has no password, so no login keyring

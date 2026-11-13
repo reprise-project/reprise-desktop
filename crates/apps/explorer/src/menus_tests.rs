@@ -187,7 +187,8 @@ fn the_status_bar_row_checks_itself() {
 #[test]
 fn command_for_maps_the_menu_rows() {
     let s = MenuState::default();
-    assert_eq!(command_for(0, &[7], &s), Command::Close);
+    assert_eq!(command_for(0, &[7], &s), Command::ConnectToServer);
+    assert_eq!(command_for(0, &[9], &s), Command::Close);
     assert_eq!(command_for(2, &[1], &s), Command::ToggleStatusBar);
     assert_eq!(command_for(2, &[6], &s), Command::Mode(Mode::Icons));
     assert_eq!(command_for(2, &[14], &s), Command::Refresh);
@@ -218,6 +219,10 @@ fn the_bars_submenu_rows_dispatch() {
     );
     assert_eq!(command_for(2, &[13, 7], &s), Command::GoTo(Place::Home));
     assert_eq!(command_for(2, &[13, 8], &s), Command::GoTo(Place::Computer));
+    assert_eq!(
+        command_for(2, &[13, 9], &s),
+        Command::GoTo(Place::network())
+    );
 }
 
 #[test]

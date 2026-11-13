@@ -45,6 +45,7 @@ const SETTINGS: &[&str] = &["preferences-system"];
 const EMPTY_BIN: &[&str] = &["user-trash-full", "user-trash"];
 const RESTORE: &[&str] = &["edit-undo"];
 const FOLDER: &[&str] = &["folder"];
+const SERVER: &[&str] = &["network-server", "folder-remote"];
 
 fn row(text: &str, icons: &[&'static str], cmd: Command, enabled: bool) -> PaneRow {
     PaneRow {
@@ -74,6 +75,15 @@ pub fn tasks(place: &Place, sel: Sel, count: usize) -> PaneSection {
                 dead("Add or remove programs", PROGRAMS),
                 dead("Change a setting", SETTINGS),
             ],
+        ),
+        Place::Network(_) => (
+            "Network Tasks",
+            vec![row(
+                "Connect to a server",
+                SERVER,
+                Command::ConnectToServer,
+                true,
+            )],
         ),
         Place::RecycleBin if count == 0 => ("Recycle Bin Tasks", Vec::new()),
         Place::RecycleBin => (
@@ -159,7 +169,11 @@ pub fn other_places(place: &Place, parent: Option<Place>) -> PaneSection {
         ..row(&p.title(), &[p.icon_name()], Command::GoTo(p.clone()), true)
     };
     let rows = match place {
-        Place::Computer => vec![link(&Place::Documents), link(&Place::Home)],
+        Place::Computer => vec![
+            link(&Place::Documents),
+            link(&Place::Home),
+            link(&Place::network()),
+        ],
         _ => {
             let mut rows = Vec::new();
             let parent = parent.filter(|p| p != place);
@@ -407,7 +421,7 @@ mod tests {
     }
 
     #[test]
-    fn computer_gets_system_tasks_and_two_other_places() {
+    fn computer_gets_system_tasks_and_three_other_places() {
         let s = sections(&Place::Computer, Some(Place::Desktop), Sel::None, 4, &[]);
         assert_eq!(s[0].rows[0].cmd, Command::SystemInformation);
         assert_eq!(
@@ -425,7 +439,11 @@ mod tests {
             table(&s[1]),
             (
                 "Other Places".to_string(),
-                vec![("Documents".to_string(), true), (Place::Home.title(), true),]
+                vec![
+                    ("Documents".to_string(), true),
+                    (Place::Home.title(), true),
+                    ("Network".to_string(), true),
+                ]
             )
         );
         assert_eq!(s[1].rows[0].cmd, Command::GoTo(Place::Documents));

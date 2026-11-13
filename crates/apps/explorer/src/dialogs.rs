@@ -1,4 +1,4 @@
-//! Explorer's modal dialogs in one child window: the error box, the delete and replace confirmations, the Open With chooser, the Properties sheet's Advanced Attributes, Confirm Attribute Changes and Change Icon, the Move and Copy folder picker (`browse`), and Unlock Drive.
+//! Explorer's modal dialogs in one child window: the error box, the delete and replace confirmations, the Open With chooser, the Properties sheet's Advanced Attributes, Confirm Attribute Changes and Change Icon, the Move and Copy folder picker (`browse`), Unlock Drive, and Connect to Server with its password and question boxes.
 //!
 //! One child at a time: raising a second replaces the first. Two stack instead: the chooser's Browse... opens the program picker (`PROGRAM_BROWSE`) over it, and a refused name in the Move/Copy picker raises its error box (`browse::ERROR`). The error and confirm boxes keep only their text and focused button, so their [`Form`] is rebuilt per event; the chooser keeps an `openwith` control that takes its own events ([`crate::openwith`]).
 
@@ -218,6 +218,17 @@ pub enum Dialog {
     Unlock(Box<Unlock>),
     /// Rename with several items picked; the preview follows each change.
     BatchRename(Box<crate::rename::BatchRename>),
+    /// Connect to Server, typed into or showing a connection under way.
+    Connect(Box<crate::shares::ConnectBox>),
+    /// A server's password request.
+    Login(Box<crate::shares::LoginBox>),
+    /// A server's question, one button per choice.
+    Question {
+        title: String,
+        text: String,
+        choices: Vec<String>,
+        about: crate::shares::Asking,
+    },
 }
 
 impl Dialog {
@@ -243,6 +254,9 @@ impl Dialog {
             Dialog::Browse(_) => "Copy Items".to_string(),
             Dialog::Unlock(_) => unlock::TITLE.to_string(),
             Dialog::BatchRename(_) => "Rename".to_string(),
+            Dialog::Connect(_) => reprisekit::controls::netconnect::CONNECT_TITLE.to_string(),
+            Dialog::Login(b) => crate::shares::login_title(&b.host),
+            Dialog::Question { title, .. } => title.clone(),
         }
     }
 
@@ -270,7 +284,12 @@ impl Dialog {
                 crate::foldertree::land_icons(&mut b.bf.tree, &mut b.places, icons)
             }
             Dialog::Unlock(u) => u.land_icon(ctx),
-            Dialog::Message { .. } | Dialog::AttrConfirm(_) | Dialog::BatchRename(_) => false,
+            Dialog::Connect(b) => b.land_icon(ctx),
+            Dialog::Login(b) => b.land_icon(ctx),
+            Dialog::Message { .. }
+            | Dialog::AttrConfirm(_)
+            | Dialog::BatchRename(_)
+            | Dialog::Question { .. } => false,
         }
     }
 }
@@ -577,6 +596,20 @@ impl Explorer {
                 min_w: repriseapp::caption_fit(title),
                 max_w: repriseapp::dialog_max_w(),
             }),
+            Dialog::Question {
+                title,
+                text,
+                choices,
+                ..
+            } => Some(msgbox::Fields {
+                text: text.clone(),
+                icon: self.error_icon(),
+                buttons: choices.clone(),
+                default: 0,
+                min_text_h: None,
+                min_w: repriseapp::caption_fit(title),
+                max_w: repriseapp::dialog_max_w(),
+            }),
             Dialog::Confirm(_)
             | Dialog::ChooseProgram(_)
             | Dialog::Replace(_)
@@ -586,7 +619,9 @@ impl Explorer {
             | Dialog::About(..)
             | Dialog::Browse(_)
             | Dialog::Unlock(_)
-            | Dialog::BatchRename(_) => None,
+            | Dialog::BatchRename(_)
+            | Dialog::Connect(_)
+            | Dialog::Login(_) => None,
         }
     }
 
@@ -675,10 +710,18 @@ impl Explorer {
                     Dialog::ChooseProgram(_) => openwith::client(&self.forms.controls()),
                     Dialog::Unlock(_) => u.size(unlock::CLIENT),
                     Dialog::BatchRename(_) => u.size(reprisekit::controls::batchrename::CLIENT),
+                    Dialog::Connect(_) => u.size(reprisekit::controls::netconnect::CONNECT_CLIENT),
+                    Dialog::Login(b) => u.size(reprisekit::controls::netconnect::login_client(
+                        b.form
+                            .item(reprisekit::controls::netconnect::DOMAIN)
+                            .is_some(),
+                    )),
                     Dialog::Confirm(_) => {
                         u.size(self.confirm_layout().expect("a delete prompt is up").size)
                     }
-                    Dialog::Message { .. } => unreachable!("box_fields answers it"),
+                    Dialog::Message { .. } | Dialog::Question { .. } => {
+                        unreachable!("box_fields answers it")
+                    }
                 },
             };
             out.push(Child {
@@ -773,6 +816,8 @@ impl Explorer {
             Some(Dialog::ChangeIcon { form, .. }) => form,
             Some(Dialog::About(f, _)) => f,
             Some(Dialog::BatchRename(b)) => &b.form,
+            Some(Dialog::Connect(b)) => &b.form,
+            Some(Dialog::Login(b)) => &b.form,
             Some(_) => match self.box_form().or_else(|| self.replace_form()) {
                 Some(f) => {
                     built = f;
@@ -826,6 +871,8 @@ impl Explorer {
             Some(Dialog::ChangeIcon { form, .. }) => form,
             Some(Dialog::About(f, _)) => f,
             Some(Dialog::BatchRename(b)) => &b.form,
+            Some(Dialog::Connect(b)) => &b.form,
+            Some(Dialog::Login(b)) => &b.form,
             Some(_) => match self.box_form().or_else(|| self.replace_form()) {
                 Some(f) => {
                     built = f;
@@ -842,7 +889,13 @@ impl Explorer {
     /// The dialog's own event loop. Every box closes on its cancel
     /// button, on Escape and on the frame's close box.
     pub fn dialog_event(&mut self, ev: Event, ctx: &mut Ctx) -> Reply {
+        if matches!(self.dialog, Some(Dialog::Connect(_) | Dialog::Login(_))) {
+            return self.connect_event(ev, ctx);
+        }
         if matches!(ev, Event::CloseRequest) {
+            if matches!(self.dialog, Some(Dialog::Question { .. })) {
+                return self.question_answered(None, ctx);
+            }
             // The close box on a replace prompt is its Cancel.
             self.dialog = None;
             return self.show_waiting(ctx);
@@ -985,6 +1038,19 @@ impl Explorer {
                 None => Reply::redraw(),
             };
         }
+        if let Dialog::Question { choices, .. } = d {
+            let n = choices.len();
+            return match out {
+                form::Event::Cancel => self.question_answered(None, ctx),
+                form::Event::Default => self.question_answered(Some(0), ctx),
+                form::Event::Pressed(id) => {
+                    let i = (0..n).find(|&i| msgbox::button_id(i) == id);
+                    self.question_answered(i, ctx)
+                }
+                form::Event::None => Reply::none(),
+                _ => Reply::redraw(),
+            };
+        }
         let answer = match d {
             Dialog::Message { .. } => match out {
                 form::Event::Cancel | form::Event::Default => Answer::Close,
@@ -1037,7 +1103,12 @@ impl Explorer {
             Dialog::Browse(_) => Answer::Stay,
             // The chooser and Unlock Drive answer in `chooser_event` and
             // `unlock_event`; `dialog_event` never reaches here for them.
-            Dialog::ChooseProgram(_) | Dialog::Unlock(_) | Dialog::BatchRename(_) => Answer::Stay,
+            Dialog::ChooseProgram(_)
+            | Dialog::Unlock(_)
+            | Dialog::BatchRename(_)
+            | Dialog::Connect(_)
+            | Dialog::Login(_)
+            | Dialog::Question { .. } => Answer::Stay,
         };
         match answer {
             Answer::Stay if out == form::Event::None => Reply::none(),

@@ -26,6 +26,8 @@ pub enum Command {
     DiskUsage,
     Eject,
     MountImage,
+    /// File > Connect to Server...
+    ConnectToServer,
     Cut,
     Copy,
     /// Ctrl+Shift+C: the selected items' full paths as text ([`reprisefs::ops::path_lines`]).
@@ -286,7 +288,17 @@ impl Explorer {
                 spawn: vec![vec!["reprise-about".into()]],
                 ..Default::default()
             },
+            Command::Eject
+                if self
+                    .sv
+                    .selection
+                    .single()
+                    .is_some_and(|i| self.share_selected(i)) =>
+            {
+                self.disconnect_selected(ctx)
+            }
             Command::Eject => self.eject_selected(ctx),
+            Command::ConnectToServer => self.open_connect(ctx),
             Command::MountImage => self.mount_image(ctx),
             Command::AddressFocus => {
                 self.focus = Focus::Address;
@@ -319,11 +331,17 @@ impl Explorer {
                 None => Reply::none(),
             },
             Command::GoTo(p) => self.go(p, ctx),
+            Command::Navigate(text) if reprisefs::netshare::Address::parse(&text).is_some() => {
+                self.connect_to(&text, ctx)
+            }
             Command::Navigate(text) => self.navigate(&text, |d| d.is_dir(), ctx),
             Command::Refresh => self.refresh(ctx),
             Command::Open => self.open_in_program(ctx),
             Command::Run(open) => self.open_selected_as(open, ctx),
             Command::Explore => {
+                if let Some(uri) = self.selected_network() {
+                    return self.open_network(&uri, ctx);
+                }
                 if let Some(v) = self.selected_unmounted() {
                     return self.mount_and_open(v, ctx);
                 }

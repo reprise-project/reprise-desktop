@@ -52,6 +52,7 @@ pub struct Inputs<'a> {
     pub show_hidden: bool,
     pub drives: &'a [reprisefs::places::Drive],
     pub volumes: &'a reprisefs::udisks::Snapshot,
+    pub shares: &'a [reprisefs::netshare::Share],
     pub drive_mounts: &'a [PathBuf],
 }
 
@@ -62,6 +63,7 @@ pub struct World {
     pub show_hidden: bool,
     pub drives: Vec<reprisefs::places::Drive>,
     pub volumes: reprisefs::udisks::Snapshot,
+    pub shares: Vec<reprisefs::netshare::Share>,
     pub drive_mounts: Vec<PathBuf>,
     /// The folders the list gives their own icons ([`reprisefs::places::special_folders`]).
     pub specials: Vec<(PathBuf, &'static str)>,
@@ -73,18 +75,22 @@ impl World {
             show_hidden: self.show_hidden,
             drives: &self.drives,
             volumes: &self.volumes,
+            shares: &self.shares,
             drive_mounts: &self.drive_mounts,
         }
     }
 }
 
 /// The shell places under the Desktop, in the tree's order (the address drop's too), ahead of the Desktop folder's own subfolders.
-pub const DESKTOP_PLACES: [Place; 4] = [
-    Place::Documents,
-    Place::Home,
-    Place::Computer,
-    Place::RecycleBin,
-];
+pub fn desktop_places() -> [Place; 5] {
+    [
+        Place::Documents,
+        Place::Home,
+        Place::Computer,
+        Place::network(),
+        Place::RecycleBin,
+    ]
+}
 
 fn tree_node(
     places: &mut Places,
@@ -326,7 +332,7 @@ pub fn read_kids(
     let mut kids: Vec<(String, Place)> = Vec::new();
     match place {
         Place::Desktop => {
-            for p in DESKTOP_PLACES {
+            for p in desktop_places() {
                 kids.push((p.title(), p));
             }
             kids.extend(subfolders(place, inp));
@@ -336,11 +342,14 @@ pub fn read_kids(
                 &Place::Computer,
                 &reprisefs::apps::MimeDb::empty(),
                 inp.show_hidden,
-                inp.drives,
-                inp.volumes,
+                place::Devices {
+                    drives: inp.drives,
+                    volumes: inp.volumes,
+                    shares: inp.shares,
+                },
             )));
         }
-        Place::RecycleBin => {}
+        Place::RecycleBin | Place::Network(_) => {}
         _ => kids.extend(subfolders(place, inp)),
     }
     kids.into_iter()
@@ -356,6 +365,7 @@ pub fn read_kids(
 /// answers would hold up its siblings, and opening an empty one drops the +.
 fn opens(p: &Place, inp: &Inputs) -> bool {
     *p != Place::RecycleBin
+        && !matches!(p, Place::Network(_))
         && p.path().is_none_or(|dir| {
             inp.drive_mounts.contains(&dir)
                 || reprisefs::listing::is_mount_root(&dir)
@@ -466,8 +476,11 @@ fn subfolders(place: &Place, inp: &Inputs) -> Vec<(String, Place)> {
         place,
         &reprisefs::apps::MimeDb::empty(),
         inp.show_hidden,
-        inp.drives,
-        inp.volumes,
+        place::Devices {
+            drives: inp.drives,
+            volumes: inp.volumes,
+            shares: inp.shares,
+        },
     );
     place::tree_subfolders(&listed, inp.drive_mounts)
 }
@@ -617,6 +630,7 @@ mod tests {
             show_hidden: false,
             drives: &[],
             volumes: &volumes,
+            shares: &[],
             drive_mounts: &mounts,
         };
         assert!(opens(&Place::Folder(drive), &inp), "a drive is not read");
@@ -646,6 +660,7 @@ mod tests {
             show_hidden: true,
             drives: std::slice::from_ref(&root_drive),
             volumes: &volumes,
+            shares: &[],
             drive_mounts: &mounts,
         };
         let mut icons = IconCache::new(reprisekit::icontheme::IconTheme::load("test", &[]));
@@ -703,6 +718,7 @@ mod tests {
             show_hidden: true,
             drives: &[],
             volumes: &volumes,
+            shares: &[],
             drive_mounts: &[],
         };
         let mut icons = IconCache::new(reprisekit::icontheme::IconTheme::load("test", &[]));
@@ -753,6 +769,7 @@ mod tests {
                 show_hidden,
                 drives: &[],
                 volumes: &volumes,
+                shares: &[],
                 drive_mounts: &[],
             };
             let mut icons = IconCache::new(reprisekit::icontheme::IconTheme::load("test", &[]));
@@ -802,6 +819,7 @@ mod tests {
             show_hidden: true,
             drives: std::slice::from_ref(&root_drive),
             volumes: &volumes,
+            shares: &[],
             drive_mounts: &mounts,
         };
         let mut icons = IconCache::new(reprisekit::icontheme::IconTheme::load("test", &[]));
@@ -851,6 +869,7 @@ mod tests {
             show_hidden: true,
             drives: std::slice::from_ref(&root_drive),
             volumes: &volumes,
+            shares: &[],
             drive_mounts: &mounts,
         };
         let mut icons = IconCache::new(reprisekit::icontheme::IconTheme::load("test", &[]));

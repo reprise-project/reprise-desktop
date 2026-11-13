@@ -100,13 +100,17 @@ impl Explorer {
             0,
             Place::Desktop.icon_name(),
         )];
-        for p in crate::foldertree::DESKTOP_PLACES {
+        for p in crate::foldertree::desktop_places() {
             let computer = p == Place::Computer;
             let icon = p.icon_name();
             shell.push((p.title(), p, 1, icon));
             if computer {
                 for d in &self.drives {
                     shell.push((d.name(), Place::Folder(d.mount.clone()), 2, d.kind().icon()));
+                }
+                for sh in &self.shares.shares {
+                    let icon = reprisefs::places::DriveKind::Network.icon();
+                    shell.push((sh.name.clone(), Place::Folder(sh.path.clone()), 2, icon));
                 }
             }
         }
