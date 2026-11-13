@@ -29,6 +29,39 @@ pub fn answers(table: &str, id: &str) -> zbus::Result<Vec<(String, Vec<String>)>
     Ok(out)
 }
 
+/// An entry of a table: its id, each program it holds a permission for with the values, and
+/// the entry's data.
+pub struct Entry {
+    pub id: String,
+    pub apps: HashMap<String, Vec<String>>,
+    pub data: OwnedVariant,
+}
+
+/// Every entry of `table` in the store on `conn`; empty when the store has never written the
+/// table. An entry deleted between the listing and its lookup is left out.
+pub async fn entries(conn: &zbus::Connection, table: &str) -> zbus::Result<Vec<Entry>> {
+    let listed = conn
+        .call_method(Some(NAME), PATH, Some(INTERFACE), "List", &(table,))
+        .await;
+    let ids: Vec<String> = match listed {
+        Err(e) if crate::error::name(&e).is_some_and(|n| n == NOT_FOUND) => {
+            return Ok(Vec::new());
+        }
+        r => r?.body().deserialize()?,
+    };
+    let mut out = Vec::with_capacity(ids.len());
+    for id in ids {
+        let found = conn
+            .call_method(Some(NAME), PATH, Some(INTERFACE), "Lookup", &(table, &id))
+            .await;
+        let Ok(found) = found else { continue };
+        if let Ok((apps, data)) = found.body().deserialize() {
+            out.push(Entry { id, apps, data });
+        }
+    }
+    Ok(out)
+}
+
 /// Drop `app`'s answer under `table` and `id`: the portal asks it again next time.
 pub fn forget(table: &str, id: &str, app: &str) -> zbus::Result<()> {
     crate::wait(crate::session()?.call_method(
@@ -39,6 +72,21 @@ pub fn forget(table: &str, id: &str, app: &str) -> zbus::Result<()> {
         &(table, id, app),
     ))?;
     Ok(())
+}
+
+/// Drop `app` from restore token `id` of `table`, and the token with it when no other program
+/// holds it.
+pub fn forget_token(table: &str, id: &str, app: &str) -> zbus::Result<()> {
+    if answers(table, id)?.iter().any(|(a, _)| a != app) {
+        return forget(table, id, app);
+    }
+    let conn = crate::session()?;
+    let deleted =
+        crate::wait(conn.call_method(Some(NAME), PATH, Some(INTERFACE), "Delete", &(table, id)));
+    match deleted {
+        Err(e) if crate::error::name(&e).is_some_and(|n| n == NOT_FOUND) => Ok(()),
+        r => r.map(drop),
+    }
 }
 
 /// `app_id`'s permission in entry `id` of `table`; None when the store holds none.

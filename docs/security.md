@@ -1369,8 +1369,16 @@ To revoke: `flatpak permissions` lists the permission store and `flatpak
 permission-remove <table> <id>` removes an entry. The Keyboard page of
 Reprise Settings forgets a program's global shortcuts, and Settings >
 Privacy > App Permissions lists and forgets the answers in the `location`,
-`background`, `screenshot`, `wallpaper` and `input-capture` tables. There
-is no page for screen sharing and remote control grants yet.
+`background`, `screenshot`, `wallpaper` and `input-capture` tables, and the
+screen sharing and remote control grants ticked Remember on. Those sit in
+the `screencast` and `remote-desktop` tables, one entry per restore token,
+and the list shows one row per program whatever the number of its tokens.
+Forget removes the program from every token it holds in that table, and
+deletes a token no other program holds, so its next session asks again. Forget doesn't end a session that is running: the
+capture border shows a running share, the program ends it, and a restored
+remote control session's balloon has Stop and forget. A screen share still
+running when its grant is forgotten stores the grant again when it ends, so
+stop the share first.
 
 ## Programs and files
 
@@ -1679,9 +1687,6 @@ is no page for screen sharing and remote control grants yet.
   `[clipboard] trusted_apps` keeps its copies on the Wayland clipboard, and
   lets it read the clipboard in the background
   ([flatpak-clipboard.md](flatpak-clipboard.md#copy-buttons)).
-- **No permissions page.** Remembered screen sharing and remote control
-  grants are revoked with `flatpak permission-remove`, and a remote control
-  grant also with Stop and forget on the balloon its restored session shows.
 - **Background sessions get polkit's inactive grants** under
   reprise-login, and its active ones while their user is active elsewhere;
   see [Accepted risks](#accepted-risks).

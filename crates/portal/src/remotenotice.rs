@@ -168,32 +168,16 @@ fn face(app_id: &str) -> (String, String) {
 
 /// Delete every RemoteDesktop token in the store issued to `app_id`; how many went.
 async fn forget_grants(conn: &zbus::Connection, app_id: &str) -> zbus::Result<usize> {
-    let ids: Vec<String> = store(conn, "List", &(TABLE,)).await?.body().deserialize()?;
     let mut gone = 0;
-    for id in ids {
-        let Ok(found) = store(conn, "Lookup", &(TABLE, &id)).await else {
-            continue;
-        };
-        let Ok((_, data)) = found
-            .body()
-            .deserialize::<(HashMap<String, Vec<String>>, OwnedVariant)>()
-        else {
-            continue;
-        };
-        if remote_grant_for(&data, app_id) {
-            store(conn, "Delete", &(TABLE, &id)).await?;
+    for entry in reprisebus::permissions::entries(conn, TABLE).await? {
+        if remote_grant_for(&entry.data, app_id) {
+            let body = (TABLE, &entry.id);
+            conn.call_method(Some(STORE), STORE_PATH, Some(STORE), "Delete", &body)
+                .await?;
             gone += 1;
         }
     }
     Ok(gone)
-}
-
-async fn store<B>(conn: &zbus::Connection, method: &str, body: &B) -> zbus::Result<zbus::Message>
-where
-    B: serde::Serialize + zbus::zvariant::DynamicType,
-{
-    conn.call_method(Some(STORE), STORE_PATH, Some(STORE), method, body)
-        .await
 }
 
 /// Whether a store entry's data is one of our RemoteDesktop tokens issued to `app_id`.

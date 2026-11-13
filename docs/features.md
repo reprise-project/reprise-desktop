@@ -837,8 +837,9 @@ the screen takes the interface of the last session used at this computer.
 - **App permissions.** Settings > Privacy > App Permissions lists the
   answers programs were given and remembered: location (Reprise's own
   prompt and the Location portal), running in the background, screenshots,
-  changing the desktop background, and capturing the keyboard and mouse.
-  Forget drops one, so the program is asked again next time.
+  changing the desktop background, capturing the keyboard and mouse, and
+  screen sharing and remote control allowed with Remember. Forget drops
+  one, so the program is asked again next time.
 
 ## Sharing and remote access
 

@@ -5,7 +5,8 @@ use crate::{SettingsApp, pages, registry};
 use repriseapp::Reply;
 
 /// A permission the list shows, kept by its portal in the permission store table of
-/// [`table`](Self::table), under an id of the same name.
+/// [`table`](Self::table): under an id of the same name, or one id per restore token for the
+/// screen sharing and remote control grants.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Kind {
     Location,
@@ -13,15 +14,19 @@ pub(crate) enum Kind {
     Screenshot,
     Wallpaper,
     InputCapture,
+    ScreenCast,
+    RemoteDesktop,
 }
 
 impl Kind {
-    pub(crate) const ALL: [Kind; 5] = [
+    pub(crate) const ALL: [Kind; 7] = [
         Kind::Location,
         Kind::Background,
         Kind::Screenshot,
         Kind::Wallpaper,
         Kind::InputCapture,
+        Kind::ScreenCast,
+        Kind::RemoteDesktop,
     ];
 
     pub(crate) fn table(self) -> &'static str {
@@ -31,6 +36,8 @@ impl Kind {
             Kind::Screenshot => "screenshot",
             Kind::Wallpaper => "wallpaper",
             Kind::InputCapture => "input-capture",
+            Kind::ScreenCast => "screencast",
+            Kind::RemoteDesktop => "remote-desktop",
         }
     }
 
@@ -41,7 +48,13 @@ impl Kind {
             Kind::Screenshot => "Screenshots",
             Kind::Wallpaper => "Change desktop background",
             Kind::InputCapture => "Capture keyboard and mouse",
+            Kind::ScreenCast => "Share the screen",
+            Kind::RemoteDesktop => "Remote control",
         }
+    }
+
+    fn by_restore_token(self) -> bool {
+        matches!(self, Kind::ScreenCast | Kind::RemoteDesktop)
     }
 
     /// Whether an app's stored values allow it; `None` for an answer the portal still asks.
@@ -58,8 +71,46 @@ impl Kind {
     }
 }
 
-/// A table's stored values by app id, as the permission store holds them.
-type Stored = Vec<(String, Vec<String>)>;
+/// What a table holds for one program: its stored values and the ids they are under.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Held {
+    pub(crate) app: String,
+    pub(crate) values: Vec<String>,
+    pub(crate) ids: Vec<String>,
+}
+
+/// The values of a table kept under an id named after it, by app id.
+pub(crate) fn by_id(kind: Kind, apps: Vec<(String, Vec<String>)>) -> Vec<Held> {
+    let ids = vec![kind.table().to_string()];
+    (apps.into_iter())
+        .map(|(app, values)| Held {
+            app,
+            values,
+            ids: ids.clone(),
+        })
+        .collect()
+}
+
+/// A table of restore tokens, given as each token with its values by app id, folded into one
+/// program each holding all of its tokens. Sorted by app id, each program's tokens by id.
+pub(crate) fn by_token(
+    tokens: impl IntoIterator<Item = (String, impl IntoIterator<Item = (String, Vec<String>)>)>,
+) -> Vec<Held> {
+    let mut apps = std::collections::BTreeMap::<String, Held>::new();
+    for (id, held) in tokens {
+        for (app, values) in held {
+            let h = apps.entry(app.clone()).or_insert(Held {
+                app,
+                values,
+                ids: Vec::new(),
+            });
+            h.ids.push(id.clone());
+        }
+    }
+    let mut out: Vec<Held> = apps.into_values().collect();
+    out.iter_mut().for_each(|h| h.ids.sort());
+    out
+}
 
 /// A remembered answer: for location, from Reprise's own prompt (`location.toml`), or for a
 /// Flatpak program from its portal's permission store.
@@ -68,15 +119,15 @@ pub(crate) struct PermissionAnswer {
     pub(crate) app: String,
     pub(crate) kind: Kind,
     pub(crate) allow: bool,
-    pub(crate) portal: bool,
+    /// The permission store ids holding it in its kind's table; none for an answer Reprise's
+    /// own prompt keeps.
+    pub(crate) ids: Vec<String>,
 }
 
 impl PermissionAnswer {
-    /// The permission store entry Forget deletes, as table, id and app; `None` for an answer
-    /// Reprise's own prompt keeps.
-    pub(crate) fn store_entry(&self) -> Option<(&'static str, &'static str, &str)> {
-        let t = self.kind.table();
-        self.portal.then_some((t, t, self.app.as_str()))
+    /// The permission store entries Forget deletes the app from, as table, id and app.
+    pub(crate) fn store_entries(&self) -> impl Iterator<Item = (&'static str, &str, &str)> {
+        (self.ids.iter()).map(|id| (self.kind.table(), id.as_str(), self.app.as_str()))
     }
 }
 
@@ -84,21 +135,21 @@ impl PermissionAnswer {
 /// to ask left out.
 pub(crate) fn permission_answers(
     agent: std::collections::BTreeMap<String, bool>,
-    portal: Vec<(Kind, Stored)>,
+    portal: Vec<(Kind, Vec<Held>)>,
 ) -> Vec<PermissionAnswer> {
     let agent = agent.into_iter().map(|(app, allow)| PermissionAnswer {
         app,
         kind: Kind::Location,
         allow,
-        portal: false,
+        ids: Vec::new(),
     });
     let portal = portal.into_iter().flat_map(|(kind, apps)| {
-        apps.into_iter().filter_map(move |(app, values)| {
+        apps.into_iter().filter_map(move |h| {
             Some(PermissionAnswer {
-                allow: kind.allows(&values)?,
-                app,
+                allow: kind.allows(&h.values)?,
+                app: h.app,
                 kind,
-                portal: true,
+                ids: h.ids,
             })
         })
     });
@@ -107,14 +158,22 @@ pub(crate) fn permission_answers(
 
 /// Each table's stored values; the tables read before the store stopped answering, none when it
 /// does not answer at all. Tests leave the session bus alone.
-fn portal_answers() -> Vec<(Kind, Stored)> {
+fn portal_answers() -> Vec<(Kind, Vec<Held>)> {
     if cfg!(test) {
         return Vec::new();
     }
+    use reprisebus::permissions::{answers, entries};
     let mut out = Vec::new();
     for kind in Kind::ALL {
-        match reprisebus::permissions::answers(kind.table(), kind.table()) {
-            Ok(apps) => out.push((kind, apps)),
+        let t = kind.table();
+        let held = match kind.by_restore_token() {
+            true => reprisebus::session()
+                .and_then(|conn| reprisebus::wait(entries(&conn, t)))
+                .map(|e| by_token(e.into_iter().map(|e| (e.id, e.apps)))),
+            false => answers(t, t).map(|apps| by_id(kind, apps)),
+        };
+        match held {
+            Ok(held) => out.push((kind, held)),
             Err(e) => {
                 log::warn!("no app permissions from the permission store: {e}");
                 break;
@@ -124,16 +183,21 @@ fn portal_answers() -> Vec<(Kind, Stored)> {
     out
 }
 
-/// Delete `entry` (table, id, app) from the permission store. Tests record it in [`FORGOTTEN`]
-/// instead.
-fn delete_from_store((table, id, app): (&str, &str, &str)) -> Result<(), String> {
+/// Delete `entry` (table, id, app) from the permission store, for a restore token `token` with
+/// the token once no other program holds it. Tests record it in [`FORGOTTEN`] instead.
+fn delete_from_store((table, id, app): (&str, &str, &str), token: bool) -> Result<(), String> {
     #[cfg(test)]
     {
+        let _ = token;
         FORGOTTEN.with_borrow_mut(|f| f.push([table, id, app].map(String::from)));
         Ok(())
     }
     #[cfg(not(test))]
-    reprisebus::permissions::forget(table, id, app).map_err(|e| e.to_string())
+    match token {
+        true => reprisebus::permissions::forget_token(table, id, app),
+        false => reprisebus::permissions::forget(table, id, app),
+    }
+    .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
@@ -221,8 +285,9 @@ impl SettingsApp {
         self.sheet.pages[Page::Privacy.index()].set_enabled(pages::FORGET, on);
     }
 
-    /// Forget drops the picked answer at once, from the state file or the portal's permission
-    /// store, so the program is asked again; it waits for no Apply.
+    /// Forget drops the picked answer at once, from the state file or every entry of the
+    /// portal's permission store holding it, so the program is asked again; it waits for no
+    /// Apply.
     pub(crate) fn forget_permission(&mut self) -> Reply {
         let Some((i, a)) = (self.permissions.selection.focus)
             .filter(|_| self.reading_permissions.is_none())
@@ -230,10 +295,11 @@ impl SettingsApp {
         else {
             return Reply::none();
         };
-        let forgot = match a.store_entry() {
-            Some(entry) => delete_from_store(entry),
-            None => repriseconf::location::forget_in(&self.location_file, &a.app)
+        let forgot = match a.ids.is_empty() {
+            true => repriseconf::location::forget_in(&self.location_file, &a.app)
                 .map_err(|e| e.to_string()),
+            false => (a.store_entries())
+                .try_for_each(|e| delete_from_store(e, a.kind.by_restore_token())),
         };
         match forgot {
             Ok(()) => {

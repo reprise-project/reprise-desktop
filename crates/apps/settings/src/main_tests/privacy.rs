@@ -11,46 +11,46 @@ fn forget_enabled(app: &SettingsApp) -> bool {
     }
 }
 
-fn stored(apps: &[(&str, &[&str])]) -> Vec<(String, Vec<String>)> {
-    apps.iter()
-        .map(|(app, v)| (app.to_string(), v.iter().map(|s| s.to_string()).collect()))
-        .collect()
+fn strings(v: &[&str]) -> Vec<String> {
+    v.iter().map(|s| s.to_string()).collect()
+}
+
+fn stored(kind: Kind, apps: &[(&str, &[&str])]) -> (Kind, Vec<Held>) {
+    let apps = apps.iter().map(|(app, v)| (app.to_string(), strings(v)));
+    (kind, by_id(kind, apps.collect()))
 }
 
 #[test]
 fn permission_answers_list_the_prompts_then_each_tables_and_skip_the_ones_still_to_ask() {
     let agent = std::collections::BTreeMap::from([("org.example.Weather".to_string(), false)]);
     let portal = vec![
-        (
+        stored(
             Kind::Location,
-            stored(&[
+            &[
                 ("org.example.City", &["CITY", "1"]),
                 ("org.example.Empty", &[]),
                 ("org.gnome.Maps", &["EXACT", "1234"]),
                 ("org.gnome.Weather", &["NONE", "0"]),
-            ]),
+            ],
         ),
-        (
+        stored(
             Kind::Background,
-            stored(&[
+            &[
                 ("org.example.Asked", &["ask"]),
                 ("org.example.Sync", &["yes"]),
                 ("org.example.Idle", &["no"]),
-            ]),
+            ],
         ),
-        (Kind::Screenshot, stored(&[("org.example.Shot", &["yes"])])),
-        (
+        stored(Kind::Screenshot, &[("org.example.Shot", &["yes"])]),
+        stored(
             Kind::Wallpaper,
-            stored(&[("org.example.Paint", &["no"]), ("org.example.Blank", &[])]),
+            &[("org.example.Paint", &["no"]), ("org.example.Blank", &[])],
         ),
-        (
-            Kind::InputCapture,
-            stored(&[("org.example.Share", &["yes"])]),
-        ),
+        stored(Kind::InputCapture, &[("org.example.Share", &["yes"])]),
     ];
     let got: Vec<(String, Kind, bool, bool)> = permission_answers(agent, portal)
         .into_iter()
-        .map(|a| (a.app, a.kind, a.allow, a.portal))
+        .map(|a| (a.app, a.kind, a.allow, !a.ids.is_empty()))
         .collect();
     let want = [
         ("org.example.Weather", Kind::Location, false, false),
@@ -78,7 +78,45 @@ fn each_permission_is_kept_in_the_store_table_and_id_of_its_portal() {
             "background",
             "screenshot",
             "wallpaper",
-            "input-capture"
+            "input-capture",
+            "screencast",
+            "remote-desktop"
+        ]
+    );
+}
+
+#[test]
+fn a_token_table_lists_each_program_once_with_every_token_that_holds_it() {
+    let token = |id: &str, apps: &[&str]| {
+        let apps = apps.iter().map(|a| (a.to_string(), strings(&["yes"])));
+        (id.to_string(), apps.collect::<Vec<_>>())
+    };
+    let held = by_token([
+        token("t3", &["org.example.Cast"]),
+        token("t1", &["org.example.Cast", "org.example.Meet"]),
+        token("t2", &["org.example.Meet"]),
+        token("t4", &["org.example.Cast"]),
+    ]);
+    let got: Vec<(&str, Vec<&str>)> = (held.iter())
+        .map(|h| (h.app.as_str(), h.ids.iter().map(String::as_str).collect()))
+        .collect();
+    assert_eq!(
+        got,
+        [
+            ("org.example.Cast", vec!["t1", "t3", "t4"]),
+            ("org.example.Meet", vec!["t1", "t2"]),
+        ]
+    );
+    let rows: Vec<(String, Kind, bool)> =
+        permission_answers(Default::default(), vec![(Kind::ScreenCast, held)])
+            .into_iter()
+            .map(|a| (a.app, a.kind, a.allow))
+            .collect();
+    assert_eq!(
+        rows,
+        [
+            ("org.example.Cast".to_string(), Kind::ScreenCast, true),
+            ("org.example.Meet".to_string(), Kind::ScreenCast, true),
         ]
     );
 }
@@ -198,11 +236,11 @@ fn forget_deletes_the_picked_answer_from_its_table_in_the_store() {
     let mut app = app("forget-permission");
     app.open_page(Page::Privacy, None);
     app.permissions_due = false;
-    let answer = |app: &str, kind| crate::permissions::PermissionAnswer {
+    let answer = |app: &str, kind: Kind| crate::permissions::PermissionAnswer {
         app: app.into(),
         kind,
         allow: true,
-        portal: true,
+        ids: vec![kind.table().into()],
     };
     app.show_permissions(crate::permissions::PermissionList {
         answers: vec![
@@ -227,6 +265,51 @@ fn forget_deletes_the_picked_answer_from_its_table_in_the_store() {
         [["Shot", "Screenshots", "Allowed"].map(String::from)]
     );
     assert!(!forget_enabled(&app), "nothing is picked after a Forget");
+}
+
+#[test]
+fn forget_drops_the_program_from_every_token_of_its_table_and_leaves_the_others() {
+    let mut app = app("forget-tokens");
+    app.open_page(Page::Privacy, None);
+    app.permissions_due = false;
+    let answer = |app: &str, kind, ids: &[&str]| crate::permissions::PermissionAnswer {
+        app: app.into(),
+        kind,
+        allow: true,
+        ids: strings(ids),
+    };
+    app.show_permissions(crate::permissions::PermissionList {
+        answers: vec![
+            answer("org.example.Cast", Kind::ScreenCast, &["c1"]),
+            answer("org.example.Drive", Kind::RemoteDesktop, &["r1", "r3"]),
+            answer("org.example.Meet", Kind::RemoteDesktop, &["r2", "r3"]),
+        ],
+        rows: vec![
+            ("Cast".into(), Kind::ScreenCast.label(), true),
+            ("Drive".into(), Kind::RemoteDesktop.label(), true),
+            ("Meet".into(), Kind::RemoteDesktop.label(), true),
+        ],
+        icons: vec![None, None, None],
+    });
+    app.permissions.selection.set_only(Some(1));
+    app.sync_apply();
+    app.forget_permission();
+    assert_eq!(
+        crate::permissions::FORGOTTEN.take(),
+        [
+            ["remote-desktop", "r1", "org.example.Drive"],
+            ["remote-desktop", "r3", "org.example.Drive"],
+        ]
+        .map(|e| e.map(String::from))
+    );
+    assert_eq!(
+        cells(&app),
+        [
+            ["Cast", "Share the screen", "Allowed"],
+            ["Meet", "Remote control", "Allowed"],
+        ]
+        .map(|r| r.map(String::from))
+    );
 }
 
 #[test]

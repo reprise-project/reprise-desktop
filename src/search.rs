@@ -581,9 +581,17 @@ mod tests {
     #[test]
     fn the_page_is_found_by_rdp_and_remmina() {
         let rank = |q: &str| as_pages(rank_settings(q, &[], &[], 8));
-        for q in ["rdp", "remmina", "remote", "desktop sharing"] {
+        for q in ["rdp", "remmina", "desktop sharing"] {
             assert_eq!(rank(q), [Setting::Page(Page::RemoteDesktop)], "{q}");
         }
+        assert_eq!(
+            rank("remote"),
+            [
+                Setting::Page(Page::RemoteDesktop),
+                Setting::Page(Page::Privacy)
+            ],
+            "remote: the Remote Desktop page, then Privacy's remote control grants"
+        );
     }
 
     #[test]
