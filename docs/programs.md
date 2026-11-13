@@ -800,9 +800,10 @@ the machine at city accuracy and the zone of the nearest city in tzdata's
 starts, after a resume and when NetworkManager takes a new connection, at most
 once an hour. While it is on the zone list is greyed. It is greyed with a note
 when geoclue is missing, when location is off in Settings > Privacy, or when
-polkit wants a password to change the zone (systemd's default), since no one
-is there to type it: an administrator can allow
-`org.freedesktop.timedate1.set-timezone` with a polkit rule.
+polkit wants a password to change the zone, since no one is there to type it.
+The package's polkit rule lets a local, active administrator (group `wheel`
+or `sudo`) change it without one, so the note shows for other users, or
+where the rule isn't installed.
 
 ## Welcome
 

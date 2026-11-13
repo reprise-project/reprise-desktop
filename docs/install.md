@@ -191,8 +191,8 @@ A build installed by hand needs `/usr/bin/reprise-login` (the unit's
 `ExecStart`), the unit in `/usr/lib/systemd/system/`, the six
 `reprise-login*` PAM files from `data/pam.d/` in `/etc/pam.d/`
 (`reprise-login-check` also checks the administrator password for Shut Down
-and Restart on the login screen), the polkit action and rule from
-`data/polkit-1/` under `/usr/share/polkit-1/` (the rule keeps every session
+and Restart on the login screen), the polkit action and
+`50-reprise-login.rules` from `data/polkit-1/` under `/usr/share/polkit-1/` (the rule keeps every session
 that isn't on screen, Switch User's included, from switching the console),
 `/usr/lib/reprise/reprise-login-settings` (the path the polkit action names;
 Settings > Login Manager saves through it), and the files from
@@ -436,7 +436,10 @@ desktop and stays out of the way when it's missing.
   (pkexec) and Region & Language's Apply to the System (localed), for User Accounts' Ask for a new password at the next login
   (`pkexec chage`), and for the login manager's rule that keeps every session not
   on screen, Switch User's and background ones alike, from switching the
-  console
+  console. The package's `50-reprise-timezone.rules` lets a local, active
+  administrator (group `wheel` or `sudo`) set the time zone without a
+  password, for the automatic time zone; a build installed by hand copies
+  it from `data/polkit-1/rules.d/` to `/usr/share/polkit-1/rules.d/`
 - gnome-keyring, for saved passwords and the Secret portal. The login
   manager's PAM file (SDDM's or `reprise-login`) unlocks it at login, and the
   lock screen's password unlocks it when it was left locked. Under
