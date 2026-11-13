@@ -415,7 +415,10 @@ desktop and stays out of the way when it's missing.
 - avahi-daemon, so the Add Printer wizard lists network printers for accounts
   outside CUPS's admin group without the admin password prompt
 - PackageKit, Flatpak and fwupd, for system, Flatpak and firmware updates in
-  Software Updates
+  Software Updates. PackageKit also installs downloaded packages and
+  uninstalls programs from the Start menu (an Arch `.pkg.tar.zst` installs
+  through pkexec and pacman instead); Flatpak installs `.flatpakref` and
+  `.flatpak` files
 - AccountsService, for User Accounts, the user pictures on the login
   screen and the picture a program asks for through the Account portal
 

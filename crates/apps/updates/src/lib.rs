@@ -2,15 +2,17 @@
 //!
 //! One process for the session (autostarted with `--tray`, the window hidden); plain
 //! `reprise-updates` shows the window and checks at once. Closing the window hides it; an install
-//! carries on behind it.
+//! carries on behind it. `--install` and `--uninstall` run the install sheet (`installer`).
 
 #[cfg(test)]
 reprisebus::test_session!();
 
 mod flatpak;
 mod fwupd;
+mod installer;
 mod model;
 mod packagekit;
+mod pkgfile;
 mod restart;
 mod tray;
 mod window;
@@ -474,8 +476,16 @@ impl UpdatesApp {
     }
 }
 
-/// Runs the program; `args` are the command line after the program's name.
+/// Runs the program; `args` are the command line after the program's name. `--install FILE` and
+/// `--uninstall FILE` open the install sheet instead (`installer`); without a file (a session
+/// restoring the sheet) they do nothing.
 pub fn main(args: Vec<std::ffi::OsString>) {
+    if installer::asks_for_sheet(&args) {
+        if let Some(target) = installer::target(&args) {
+            installer::main(target);
+        }
+        return;
+    }
     repriseapp::applet_main(&args, UpdatesApp::new);
 }
 

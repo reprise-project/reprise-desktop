@@ -1,5 +1,7 @@
 //! The popups the panel opens: a row's menu, shutdown options, Recent Items.
 
+use std::ffi::OsStr;
+
 use reprisekit::startpanel::{Shape, Spot};
 use reprisekit::taskbar::Edge;
 
@@ -66,13 +68,9 @@ impl State {
         let Some((app, launched)) = self.start_spot_app(s) else {
             return;
         };
-        let Some(entry) = self.app_index.get(app) else {
+        let Some((items, rows)) = self.program_menu_of(app, launched) else {
             return;
         };
-        let pinned_start = self.launches.is_pinned(&entry.id);
-        let pinned_taskbar = self.quick_file_of(&entry.id).is_some();
-        let (items, rows) =
-            crate::startmenu::program_menu(app, pinned_start, pinned_taskbar, launched);
         let p = self.pointer_location();
         let at = if self.start_panel_hit(p.x, p.y) == Some(s) {
             (p.x as i32, p.y as i32)
@@ -251,6 +249,15 @@ impl State {
                 self.list_start_programs();
                 self.redraw_start_panel();
             }
+            StartRow::Uninstall(a) => {
+                let file = entry(self, a).and_then(|e| reprisefs::apps::find_file(&e.id));
+                self.close_start_panel();
+                if let Some(file) = file {
+                    let program = [OsStr::new("reprise-updates"), OsStr::new("--uninstall")];
+                    self.spawn_argv_activated(&[program[0], program[1], file.as_os_str()]);
+                }
+            }
+            StartRow::CannotUninstall(_) => {}
             StartRow::Properties(a) => {
                 let Some(e) = entry(self, a) else {
                     return;

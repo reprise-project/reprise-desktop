@@ -36,6 +36,26 @@ impl State {
         }
     }
 
+    /// Program `app`'s context menu ([`program_menu`]), from its pins and where its desktop file is.
+    pub(crate) fn program_menu_of(
+        &self,
+        app: usize,
+        in_frequent: bool,
+    ) -> Option<(Vec<MenuItem>, Vec<Option<StartRow>>)> {
+        let entry = self.app_index.get(app)?;
+        let pinned_start = self.launches.is_pinned(&entry.id);
+        let pinned_taskbar = self.quick_file_of(&entry.id).is_some();
+        let file = reprisefs::apps::find_file(&entry.id);
+        let uninstall = Uninstall::of(file.as_deref());
+        Some(program_menu(
+            app,
+            pinned_start,
+            pinned_taskbar,
+            in_frequent,
+            uninstall,
+        ))
+    }
+
     /// Close the Start menu in the configured style. `reload` calls it
     /// before the new config is swapped in, so it closes the old style's.
     pub fn close_start(&mut self) {
@@ -159,6 +179,9 @@ pub enum StartRow {
     PinStart(usize),
     UnpinStart(usize),
     Forget(usize),
+    Uninstall(usize),
+    /// A greyed Uninstall: its infotip says why.
+    CannotUninstall(&'static str),
     Properties(usize),
     SwitchUser,
     Disconnect,
@@ -169,15 +192,41 @@ pub enum StartRow {
     Hibernate,
 }
 
+/// Whether a program's menu offers Uninstall.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Uninstall {
+    Offered,
+    /// Shown greyed, with an infotip saying why.
+    Greyed(&'static str),
+    Absent,
+}
+
+const NO_PACKAGEKIT: &str = "Uninstalling a program from the system's packages needs PackageKit.";
+
+impl Uninstall {
+    /// What the menu of the program with desktop file `file` offers: a Flatpak app or a system
+    /// package is uninstalled (a package only through PackageKit); the user's own entry is not.
+    pub fn of(file: Option<&std::path::Path>) -> Uninstall {
+        use reprisefs::software::{Remover, packagekit_present, remover_of};
+        match file.map(remover_of) {
+            Some(Remover::Flatpak(_)) => Uninstall::Offered,
+            Some(Remover::Package) if packagekit_present() => Uninstall::Offered,
+            Some(Remover::Package) => Uninstall::Greyed(NO_PACKAGEKIT),
+            Some(Remover::None) | None => Uninstall::Absent,
+        }
+    }
+}
+
 /// The context menu of program `app`: Open (bold), Pin to or Unpin from
 /// the taskbar and the Start menu, Remove from this list for a frequent
-/// row (`in_frequent`), and Properties. Returns the rows and, parallel to
-/// them, what each does (None at a separator).
+/// row (`in_frequent`), Uninstall as `uninstall` has it, and Properties. Returns the rows and,
+/// parallel to them, what each does (None at a separator).
 pub fn program_menu(
     app: usize,
     pinned_start: bool,
     pinned_taskbar: bool,
     in_frequent: bool,
+    uninstall: Uninstall,
 ) -> (Vec<MenuItem>, Vec<Option<StartRow>>) {
     let mut v = vec![
         (
@@ -216,6 +265,17 @@ pub fn program_menu(
         ));
     }
     v.push((MenuItem::Separator, None));
+    match uninstall {
+        Uninstall::Offered => v.push((
+            MenuItem::item("U&ninstall..."),
+            Some(StartRow::Uninstall(app)),
+        )),
+        Uninstall::Greyed(why) => v.push((
+            MenuItem::item("U&ninstall...").enabled(false),
+            Some(StartRow::CannotUninstall(why)),
+        )),
+        Uninstall::Absent => {}
+    }
     v.push((
         MenuItem::item("P&roperties"),
         Some(StartRow::Properties(app)),
@@ -422,7 +482,7 @@ mod tests {
 
     #[test]
     fn the_program_menu_offers_what_applies() {
-        let (items, _) = program_menu(0, false, true, true);
+        let (items, _) = program_menu(0, false, true, true, Uninstall::Absent);
         assert_eq!(
             labels(&items),
             [
@@ -436,7 +496,7 @@ mod tests {
                 "P&roperties"
             ]
         );
-        let (_, rows2) = program_menu(0, true, false, false);
+        let (_, rows2) = program_menu(0, true, false, false, Uninstall::Absent);
         assert!(
             rows2
                 .iter()
@@ -448,6 +508,22 @@ mod tests {
                 .iter()
                 .flatten()
                 .any(|r| matches!(r, StartRow::Forget(_)))
+        );
+    }
+
+    #[test]
+    fn uninstall_sits_above_properties_and_greys_with_its_reason() {
+        let (items, rows) = program_menu(3, false, false, false, Uninstall::Offered);
+        let at = labels(&items).iter().position(|l| l == "U&ninstall...");
+        assert_eq!(at, Some(items.len() - 2), "{:?}", labels(&items));
+        assert_eq!(rows[items.len() - 2], Some(StartRow::Uninstall(3)));
+        assert!(items[items.len() - 2].selectable());
+
+        let (items, rows) = program_menu(3, false, false, false, Uninstall::Greyed("why"));
+        assert!(!items[items.len() - 2].selectable(), "greyed");
+        assert_eq!(
+            rows[items.len() - 2],
+            Some(StartRow::CannotUninstall("why"))
         );
     }
 

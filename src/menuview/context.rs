@@ -239,6 +239,18 @@ impl State {
         self.push_context_menu(at, items, kind, MenuFrom::Elsewhere);
     }
 
+    /// A right press on program `app` in a Start menu program list: the list's menus give way to
+    /// the program's menu at the pointer.
+    pub fn open_list_program_menu(&mut self, app: usize) {
+        let Some((items, rows)) = self.program_menu_of(app, false) else {
+            return;
+        };
+        self.close_menu();
+        let p = self.pointer_location();
+        let kind = MenuKind::StartPanel { rows };
+        self.push_context_menu((p.x as i32, p.y as i32), items, kind, MenuFrom::Elsewhere);
+    }
+
     pub fn open_quick_menu(&mut self, index: usize, at: (i32, i32)) {
         let Some(file) = self.quicklaunch.get(index).map(|q| q.file.clone()) else {
             return;

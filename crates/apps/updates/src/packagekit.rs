@@ -17,8 +17,12 @@ const PROPERTIES: &str = "org.freedesktop.DBus.Properties";
 
 /// `PK_FILTER_ENUM_NONE`'s bit: no filter.
 const FILTER_NONE: u64 = 1 << 1;
+/// `PK_FILTER_ENUM_INSTALLED`'s bit.
+const FILTER_INSTALLED: u64 = 1 << 2;
 /// `PK_TRANSACTION_FLAG_ENUM_ONLY_TRUSTED`'s bit: signed packages only.
 const ONLY_TRUSTED: u64 = 1 << 1;
+/// `PK_TRANSACTION_FLAG_ENUM_SIMULATE`'s bit: say what would change, change nothing.
+const SIMULATE: u64 = 1 << 2;
 
 const EXIT_SUCCESS: u32 = 1;
 const EXIT_CANCELLED: u32 = 3;
@@ -27,6 +31,7 @@ const EXIT_CANCELLED: u32 = 3;
 /// a refused password alike.
 const ERROR_NOT_AUTHORIZED: u32 = 48;
 
+const STATUS_REMOVE: u32 = 6;
 const STATUS_DOWNLOAD: u32 = 8;
 const STATUS_INSTALL: u32 = 9;
 const STATUS_UPDATE: u32 = 10;
@@ -45,16 +50,41 @@ pub enum Error {
 
 pub type Progress<'a> = &'a mut dyn FnMut(Option<f64>, Option<String>);
 
+/// What a transaction says about itself besides its progress.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Tx {
+    /// Its object path, which [`cancel`] takes.
+    Created(String),
+    /// Whether it can be cancelled now (`AllowCancel`).
+    Cancellable(bool),
+}
+
+pub type Watch<'a> = &'a mut dyn FnMut(Tx);
+
 #[derive(Debug, Default)]
 struct Said {
     packages: Vec<(u32, String, String)>,
     restart: Restart,
+    /// The `size` of each `Details`, in bytes.
+    sizes: Vec<u64>,
 }
 
 enum Request {
     Refresh,
     GetUpdates,
     Update(Vec<String>),
+    /// The installed package that owns this file.
+    SearchFile(String),
+    GetDetails(Vec<String>),
+    /// Remove these packages and any that need them.
+    Remove {
+        ids: Vec<String>,
+        simulate: bool,
+    },
+    InstallFiles {
+        files: Vec<String>,
+        simulate: bool,
+    },
 }
 
 /// The update kind `Package`'s `info` gives. Since PackageKit 1.2.6 the low 16 bits are the info and the high ones a severity; None for a row that is no installable update.
@@ -83,8 +113,23 @@ fn step(status: u32, package_id: &str) -> Option<String> {
     match status {
         STATUS_DOWNLOAD => Some(format!("Downloading {name}")),
         STATUS_INSTALL | STATUS_UPDATE => Some(format!("Installing {name}")),
+        STATUS_REMOVE => Some(format!("Removing {name}")),
         _ => None,
     }
+}
+
+/// Whether a transaction in `status` works on its packages: its percentage then measures that
+/// work, not the dependency resolve before it.
+fn stepping(status: u32) -> bool {
+    matches!(
+        status,
+        STATUS_REMOVE | STATUS_DOWNLOAD | STATUS_INSTALL | STATUS_UPDATE
+    )
+}
+
+/// `SearchFiles`' arguments: installed packages only, and a list of paths.
+fn search_files(file: &str) -> (u64, Vec<&str>) {
+    (FILTER_INSTALLED, vec![file])
 }
 
 fn hints(interactive: bool) -> Vec<String> {
@@ -119,12 +164,17 @@ async fn transaction(
     request: Request,
     interactive: bool,
     progress: Progress<'_>,
+    watch: Option<Watch<'_>>,
 ) -> Result<Said, Error> {
     let tid: OwnedObjectPath = conn
         .call_method(Some(NAME), PATH, Some(IFACE), "CreateTransaction", &())
         .await
         .and_then(|m| m.body().deserialize())
         .map_err(failed)?;
+    let mut watch = watch;
+    if let Some(w) = watch.as_mut() {
+        w(Tx::Created(tid.to_string()));
+    }
     // Subscribed before the request goes out, so no signal of it is lost.
     let rule = zbus::MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
@@ -178,6 +228,50 @@ async fn transaction(
             )
             .await
         }
+        Request::SearchFile(file) => {
+            conn.call_method(
+                Some(NAME),
+                tid.as_str(),
+                Some(TX_IFACE),
+                "SearchFiles",
+                &search_files(file),
+            )
+            .await
+        }
+        Request::GetDetails(ids) => {
+            conn.call_method(
+                Some(NAME),
+                tid.as_str(),
+                Some(TX_IFACE),
+                "GetDetails",
+                &(ids,),
+            )
+            .await
+        }
+        Request::Remove { ids, simulate } => {
+            let flags = if *simulate { SIMULATE } else { 0 };
+            conn.call_method(
+                Some(NAME),
+                tid.as_str(),
+                Some(TX_IFACE),
+                "RemovePackages",
+                &(flags, ids, true, false),
+            )
+            .await
+        }
+        // Not ONLY_TRUSTED: a downloaded package carries no repository signature, so polkit
+        // asks for an administrator's password for it.
+        Request::InstallFiles { files, simulate } => {
+            let flags = if *simulate { SIMULATE } else { 0 };
+            conn.call_method(
+                Some(NAME),
+                tid.as_str(),
+                Some(TX_IFACE),
+                "InstallFiles",
+                &(flags, files),
+            )
+            .await
+        }
     };
     sent.map_err(failed)?;
 
@@ -203,6 +297,12 @@ async fn transaction(
                     said.packages.push(row);
                 }
             }
+            (TX_IFACE, "Details") => {
+                if let Ok(d) = body.deserialize::<HashMap<String, OwnedVariant>>() {
+                    let size = d.get("size").and_then(|v| u64::try_from(v).ok());
+                    said.sizes.push(size.unwrap_or(0));
+                }
+            }
             (TX_IFACE, "ErrorCode") => {
                 if let Ok(code) = body.deserialize::<(u32, String)>() {
                     error = Some(code);
@@ -225,7 +325,7 @@ async fn transaction(
                 let (exit, _) = body.deserialize::<(u32, u32)>().unwrap_or((0, 0));
                 return match exit {
                     EXIT_SUCCESS => Ok(said),
-                    EXIT_CANCELLED => Err(Error::Failed("The update was cancelled.".into())),
+                    EXIT_CANCELLED => Err(Error::Failed(cancelled(&request).into())),
                     _ => Err(refusal(error, reprisebus::polkit::dismissed)),
                 };
             }
@@ -235,6 +335,11 @@ async fn transaction(
                 else {
                     continue;
                 };
+                if let Some(status) = changed.get("Status").and_then(|v| u32::try_from(v).ok())
+                    && stepping(status)
+                {
+                    stepped = true;
+                }
                 if let Some(pct) = changed
                     .get("Percentage")
                     .and_then(|v| u32::try_from(v).ok())
@@ -242,6 +347,13 @@ async fn transaction(
                     && pct < PERCENT_UNKNOWN
                 {
                     progress(Some(f64::from(pct) / 100.0), None);
+                }
+                if let Some(can) = changed
+                    .get("AllowCancel")
+                    .and_then(|v| bool::try_from(v).ok())
+                    && let Some(w) = watch.as_mut()
+                {
+                    w(Tx::Cancellable(can));
                 }
             }
             _ => {}
@@ -253,13 +365,13 @@ async fn transaction(
 /// The package updates there are. With `refresh`, the lists are downloaded first; a refresh that fails (no network) leaves the old lists, still worth reading.
 pub async fn updates(conn: &Connection, refresh: bool) -> Result<Vec<Update>, Error> {
     if refresh {
-        match transaction(conn, Request::Refresh, false, &mut |_, _| {}).await {
+        match transaction(conn, Request::Refresh, false, &mut |_, _| {}, None).await {
             Ok(_) | Err(Error::Dismissed) => {}
             Err(Error::Unavailable) => return Err(Error::Unavailable),
             Err(Error::Failed(e)) => log::info!("refreshing the package lists: {e}"),
         }
     }
-    let said = transaction(conn, Request::GetUpdates, false, &mut |_, _| {}).await?;
+    let said = transaction(conn, Request::GetUpdates, false, &mut |_, _| {}, None).await?;
     Ok(fold(said.packages))
 }
 
@@ -295,8 +407,116 @@ pub async fn install(
     ids: Vec<String>,
     progress: Progress<'_>,
 ) -> Result<Restart, Error> {
-    let said = transaction(conn, Request::Update(ids), true, progress).await?;
+    let said = transaction(conn, Request::Update(ids), true, progress, None).await?;
     Ok(said.restart)
+}
+
+/// What a cancelled `request` says.
+fn cancelled(request: &Request) -> &'static str {
+    match request {
+        Request::Remove { .. } => "The uninstall was cancelled.",
+        Request::InstallFiles { .. } => "The install was cancelled.",
+        _ => "The update was cancelled.",
+    }
+}
+
+/// The installed package that owns `file`, by package id; None when no package does.
+pub async fn owner(conn: &Connection, file: &str) -> Result<Option<String>, Error> {
+    let said = transaction(
+        conn,
+        Request::SearchFile(file.into()),
+        false,
+        &mut |_, _| {},
+        None,
+    )
+    .await?;
+    Ok(said.packages.into_iter().next().map(|(_, id, _)| id))
+}
+
+/// The installed size of package `id`, in bytes, when PackageKit says.
+pub async fn size(conn: &Connection, id: &str) -> Result<Option<u64>, Error> {
+    let said = transaction(
+        conn,
+        Request::GetDetails(vec![id.into()]),
+        false,
+        &mut |_, _| {},
+        None,
+    )
+    .await?;
+    Ok(said.sizes.into_iter().next().filter(|&s| s > 0))
+}
+
+/// The package ids a change would touch, besides `own` (the package itself): the rows a simulation
+/// lists as updating, installing, removing, obsoleting, reinstalling or downgrading.
+fn others(said: Said, own: impl Fn(&str) -> bool) -> Vec<String> {
+    said.packages
+        .into_iter()
+        .filter(|(info, _, _)| matches!(info & 0xffff, 11 | 12 | 13 | 15 | 19 | 20))
+        .map(|(_, id, _)| id)
+        .filter(|id| !own(id))
+        .collect()
+}
+
+/// Remove package `id` and any package that needs it. With `simulate` nothing changes, and the
+/// answer lists those other packages.
+pub async fn remove(
+    conn: &Connection,
+    id: &str,
+    simulate: bool,
+    progress: Progress<'_>,
+    watch: Watch<'_>,
+) -> Result<Vec<String>, Error> {
+    let request = Request::Remove {
+        ids: vec![id.into()],
+        simulate,
+    };
+    let said = transaction(conn, request, !simulate, progress, Some(watch)).await?;
+    let name = split_package_id(id).0;
+    Ok(others(said, |o| split_package_id(o).0 == name))
+}
+
+/// Install the package in `file` with what it needs. With `simulate` nothing changes, and the
+/// answer lists the packages that would come along, without the one named `name`.
+pub async fn install_file(
+    conn: &Connection,
+    file: &str,
+    name: &str,
+    simulate: bool,
+    progress: Progress<'_>,
+    watch: Watch<'_>,
+) -> Result<Vec<String>, Error> {
+    let request = Request::InstallFiles {
+        files: vec![file.into()],
+        simulate,
+    };
+    let said = transaction(conn, request, !simulate, progress, Some(watch)).await?;
+    Ok(others(said, |o| split_package_id(o).0 == name))
+}
+
+/// The content types the backend installs files of (`MimeTypes`).
+pub async fn file_types(conn: &Connection) -> Result<Vec<String>, Error> {
+    let reply = conn
+        .call_method(
+            Some(NAME),
+            PATH,
+            Some(PROPERTIES),
+            "Get",
+            &(IFACE, "MimeTypes"),
+        )
+        .await
+        .map_err(failed)?;
+    let v: OwnedVariant = reply
+        .body()
+        .deserialize()
+        .map_err(|e| Error::Failed(e.to_string()))?;
+    Vec::<String>::try_from(v).map_err(|e| Error::Failed(e.to_string()))
+}
+
+/// Ask transaction `tid` ([`Tx::Created`]) to stop; it then finishes as cancelled.
+pub async fn cancel(conn: &Connection, tid: &str) -> zbus::Result<()> {
+    conn.call_method(Some(NAME), tid, Some(TX_IFACE), "Cancel", &())
+        .await
+        .map(drop)
 }
 
 #[cfg(test)]
@@ -374,6 +594,43 @@ mod tests {
             Some("Installing firefox")
         );
         assert_eq!(step(2, "firefox;131;x86_64;extra"), None);
+    }
+
+    #[test]
+    fn search_files_sends_a_filter_and_a_list_of_paths() {
+        use zbus::zvariant::DynamicType;
+        assert_eq!(search_files("/x").signature().to_string(), "(tas)");
+    }
+
+    #[test]
+    fn a_simulation_lists_the_other_packages_it_touches() {
+        let said = Said {
+            packages: vec![
+                (13, "foot;1.28.0-2;x86_64;installed".into(), String::new()),
+                (
+                    13,
+                    "foot-terminfo;1.28.0-2;x86_64;installed".into(),
+                    String::new(),
+                ),
+                (1, "glibc;2.42-1;x86_64;installed".into(), String::new()),
+            ],
+            ..Said::default()
+        };
+        let own = |id: &str| split_package_id(id).0 == "foot";
+        assert_eq!(
+            others(said, own),
+            ["foot-terminfo;1.28.0-2;x86_64;installed"]
+        );
+    }
+
+    #[test]
+    fn removing_and_the_work_after_the_resolve_show_their_steps() {
+        assert_eq!(
+            step(STATUS_REMOVE, "foot;1.28.0-2;x86_64;installed").as_deref(),
+            Some("Removing foot")
+        );
+        assert!(stepping(STATUS_REMOVE) && stepping(STATUS_DOWNLOAD));
+        assert!(!stepping(13), "the dependency resolve");
     }
 
     #[test]

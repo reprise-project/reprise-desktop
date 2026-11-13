@@ -350,6 +350,10 @@ impl MenuKind {
         match self {
             MenuKind::Entries(entries) => entries.get(idx)?.tip().map(String::from),
             MenuKind::Documents { tips, .. } => tips.get(idx).cloned().flatten(),
+            MenuKind::StartPanel { rows } => match rows.get(idx) {
+                Some(Some(StartRow::CannotUninstall(why))) => Some(why.to_string()),
+                _ => None,
+            },
             _ => None,
         }
     }

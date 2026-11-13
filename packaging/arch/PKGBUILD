@@ -33,15 +33,15 @@ optdepends=('ttf-tahoma: Wine'\''s Tahoma, the UI font the layouts are tuned for
             'bluez: reprise-bluetooth, the Bluetooth tray icon and Bluetooth Devices'
             'kdeconnect: reprise-phone, the phone tray icon (battery, Ring phone, Send files), and phones in Send To'
             'udisks2: reprise-drives (drives mounted as they are plugged in, Safely Remove Hardware), and unmounted drives and Eject in Computer'
-            'packagekit: reprise-updates, the updates tray icon and Software Updates'
-            'flatpak: Flatpak application and runtime updates in Software Updates'
+            'packagekit: reprise-updates, the updates tray icon and Software Updates, and installing package files and uninstalling programs from the Start menu'
+            'flatpak: Flatpak application and runtime updates in Software Updates, and installing .flatpakref and .flatpak files'
             'fwupd: firmware updates in Software Updates (curl, which pacman needs too, downloads them)'
             'accountsservice: reprise-accounts (User Accounts), the user pictures on the login screen and the picture the Account portal shares'
             'cups: reprise-printers, Printers, print queues and the printing tray icon'
             'cups-filters: driverless IPP Everywhere and AirPrint printers, and the test page, in Printers'
             'cups-pk-helper: changing printers in Printers with an administrator password, for accounts outside the CUPS admin group'
             'avahi: network printers in the Add Printer wizard without an administrator password, for accounts outside the CUPS admin group'
-            'polkit: the password prompt behind pkexec, udisks and NetworkManager system actions (reprise-polkit)'
+            'polkit: the password prompt behind pkexec, udisks and NetworkManager system actions (reprise-polkit), and pkexec for installing .pkg.tar.zst files'
             'gnome-keyring: saved passwords for browsers and other programs, unlocked through PAM (pam_gnome_keyring) at login and by the lock screen password, and the Secret portal for sandboxed programs'
             'kwallet-pam: a KWallet named kdewallet with the login password opens at a reprise-login login (pam_kwallet5)'
             'fprintd: fingerprint unlock on the lock screen, adding fingers in User Accounts, and the admin password prompt when the polkit-1 PAM stack has pam_fprintd'
@@ -132,6 +132,8 @@ package() {
   install -Dm644 data/icons/hicolor/scalable/apps/reprise.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/reprise.svg"
   install -Dm644 data/reprise-portals.conf "$pkgdir/usr/share/xdg-desktop-portal/reprise-portals.conf"
   install -Dm644 data/reprise-mimeapps.list "$pkgdir/usr/share/applications/reprise-mimeapps.list"
+  install -Dm644 data/apps/reprise-install.desktop "$pkgdir/usr/share/applications/reprise-install.desktop"
+  install -Dm644 data/mime/reprise.xml "$pkgdir/usr/share/mime/packages/reprise.xml"
   install -Dm644 config.example.toml "$pkgdir/usr/share/doc/reprise/config.example.toml"
   for ftl in data/locale/*/*.ftl; do
     install -Dm644 "$ftl" "$pkgdir/usr/share/reprise/locale/${ftl#data/locale/}"
