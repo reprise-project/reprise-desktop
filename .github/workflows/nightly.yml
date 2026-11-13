@@ -99,8 +99,11 @@ jobs:
           retention-days: 1
   publish:
     needs: [build, deb]
-    # A dispatch from another branch builds it but never moves Nightly.
-    if: github.ref == 'refs/heads/main'
+    # Each package publishes when its own build passed, so a broken .deb never holds the Arch
+    # package back, or the other way round. A dispatch from another branch never moves Nightly.
+    if: >-
+      !cancelled() && github.ref == 'refs/heads/main'
+      && (needs.build.result == 'success' || needs.deb.result == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # A newer commit waits for a publish in progress; cancelling it mid-upload would leave the
@@ -112,33 +115,28 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      - if: needs.build.result == 'success'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: packages
           path: pkg
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      - if: needs.deb.result == 'success'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: deb
           path: .
-      # The tag moves to this commit and the asset keeps one name, so the download URL is stable.
+      # The tag and the notes follow the Arch package, and each asset keeps one name, so the
+      # download URLs are stable.
       - name: Publish the Nightly release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          pkg=$(ls pkg/reprise-[0-9]*.pkg.tar.zst)
-          debug_pkg=$(ls pkg/reprise-debug-[0-9]*.pkg.tar.zst)
           asset=reprise-nightly-x86_64.pkg.tar.zst
           debug_asset=reprise-debug-nightly-x86_64.pkg.tar.zst
-          cp "$pkg" "$asset"
-          cp "$debug_pkg" "$debug_asset"
-          git tag -f nightly "$GITHUB_SHA"
-          git push -f origin refs/tags/nightly
           deb_asset=reprise-nightly-ubuntu26.04-amd64.deb
           url="https://github.com/$GH_REPO/releases/download/nightly"
-          notes="$(basename "$pkg"), built from $GITHUB_SHA.
-
-          Arch Linux:
+          notes="Arch Linux:
 
               curl -LO $url/$asset
               sudo pacman -U ./$asset
@@ -147,9 +145,22 @@ jobs:
 
               curl -LO $url/$deb_asset
               sudo apt install ./$deb_asset"
+          assets=()
+          if [ -d pkg ]; then
+            pkg=$(ls pkg/reprise-[0-9]*.pkg.tar.zst)
+            cp "$pkg" "$asset"
+            cp "$(ls pkg/reprise-debug-[0-9]*.pkg.tar.zst)" "$debug_asset"
+            assets+=("$asset" "$debug_asset")
+            notes="$(basename "$pkg"), built from $GITHUB_SHA.
+
+          $notes"
+            git tag -f nightly "$GITHUB_SHA"
+            git push -f origin refs/tags/nightly
+          fi
+          if [ -f "$deb_asset" ]; then assets+=("$deb_asset"); fi
           if gh release view nightly >/dev/null 2>&1; then
-            gh release upload nightly "$asset" "$debug_asset" "$deb_asset" --clobber
-            gh release edit nightly --notes "$notes"
+            gh release upload nightly "${assets[@]}" --clobber
+            if [ -d pkg ]; then gh release edit nightly --notes "$notes"; fi
           else
-            gh release create nightly "$asset" "$debug_asset" "$deb_asset" --title Nightly --prerelease --notes "$notes"
+            gh release create nightly "${assets[@]}" --title Nightly --prerelease --notes "$notes"
           fi

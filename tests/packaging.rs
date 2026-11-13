@@ -1,7 +1,7 @@
 //! Both PKGBUILDs build reprise-apps, link every program crate to it (or build and install it on
 //! its own) and install every desktop entry, CI installs their dependencies, the .deb's postinst
-//! applies every sysusers and tmpfiles file, and the desktop entries file only programs with a
-//! settings window under Settings.
+//! applies every sysusers and tmpfiles file, its password stacks never reach a fingerprint reader,
+//! and the desktop entries file only programs with a settings window under Settings.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -337,4 +337,65 @@ fn ci_pins_one_archive_date() {
     for (path, date) in &dates {
         assert_eq!(date, first, "{path} pins ARCH_ARCHIVE to {first}");
     }
+}
+
+/// The `auth` modules `service` runs once its includes are followed through `dir`, and the
+/// included stacks `dir` doesn't hold.
+fn auth_stack(dir: &Path, service: &str) -> (Vec<String>, Vec<String>) {
+    let (mut modules, mut outside) = (Vec::new(), Vec::new());
+    let text = std::fs::read_to_string(dir.join(service)).unwrap();
+    for line in text.lines().filter(|l| !l.starts_with('#')) {
+        let words: Vec<&str> = line.split_whitespace().collect();
+        let Some((&kind, rest)) = words.split_first() else {
+            continue;
+        };
+        if kind.trim_start_matches('-') != "auth" {
+            continue;
+        }
+        if rest.first() == Some(&"include") {
+            if dir.join(rest[1]).exists() {
+                let (m, o) = auth_stack(dir, rest[1]);
+                modules.extend(m);
+                outside.extend(o);
+            } else {
+                outside.push(rest[1].to_owned());
+            }
+        } else if let Some(module) = rest.iter().find(|w| w.ends_with(".so")) {
+            modules.push((*module).to_owned());
+        }
+    }
+    (modules, outside)
+}
+
+#[test]
+fn the_deb_password_stacks_check_the_password_with_pam_unix_and_no_reader() {
+    let tree = std::env::temp_dir().join(format!("reprise-deb-pam-{}", std::process::id()));
+    let pam = tree.join("etc/pam.d");
+    std::fs::create_dir_all(&pam).unwrap();
+    for name in file_names("data/pam.d") {
+        std::fs::copy(root().join("data/pam.d").join(&name), pam.join(&name)).unwrap();
+    }
+    let status = std::process::Command::new(root().join("packaging/deb/pam.sh"))
+        .arg(&tree)
+        .status()
+        .expect("pam.sh runs");
+    assert!(status.success(), "pam.sh exits 0");
+    for service in ["reprise", "reprise-login", "reprise-login-check"] {
+        let (modules, outside) = auth_stack(&pam, service);
+        assert!(
+            modules.iter().any(|m| m == "pam_unix.so"),
+            "{service}: {modules:?}"
+        );
+        assert!(
+            !modules.iter().any(|m| m == "pam_fprintd.so"),
+            "{service}: {modules:?}"
+        );
+        assert!(
+            outside.is_empty(),
+            "{service} includes no auth stack outside the package: {outside:?}"
+        );
+    }
+    let (modules, _) = auth_stack(&pam, "reprise-fingerprint");
+    assert!(modules.iter().any(|m| m == "pam_fprintd.so"), "{modules:?}");
+    std::fs::remove_dir_all(&tree).unwrap();
 }

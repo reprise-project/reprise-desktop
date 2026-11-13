@@ -99,9 +99,15 @@ To build one from a checkout, on Ubuntu 26.04:
 The package lands in `~/.cache/reprise-deb/`. `build.sh` runs the local
 PKGBUILD's `build()` and `package()`, so both packages install the same
 files, with one change to the PAM files. Ubuntu has no `system-auth` or
-`system-login`. Each `include system-auth` line becomes the `common-*` stack
-of its type, such as `common-account`. Each `include system-login` line
-points at `reprise-system-login`, a login stack the package adds.
+`system-login`. Each `include system-login` line points at
+`reprise-system-login`, a login stack the package adds. Each `include
+system-auth` line becomes the `common-*` stack of its type, such as
+`common-account`, except `auth`: that one, and `reprise-system-login`'s own,
+include `reprise-password-auth`. Once the fingerprint profile is enabled in
+`pam-auth-update`, `common-auth` waits for a finger before it asks for the
+password. `reprise-password-auth` holds `common-auth`'s default modules,
+pam_unix and pam_cap; a site that authenticates through other modules (sss,
+krb5) adds them there.
 
 Ubuntu's `rustc` is older than the workspace's `rust-version`, hence
 `rustup`.

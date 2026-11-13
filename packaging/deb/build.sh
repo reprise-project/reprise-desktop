@@ -26,17 +26,7 @@ mkdir -p "$root/DEBIAN"
 (build)
 (package)
 
-# Ubuntu has common-auth and the like where Arch has system-auth, and no
-# system-login or system-local-login: those become reprise-system-login.
-install -Dm644 "$here/pam.d/reprise-system-login" "$root/etc/pam.d/reprise-system-login"
-sed -Ei '/^#/!{
-  s/^(-?)(auth|account|password|session)(\s+)include(\s+)system-auth\b/\1\2\3include\4common-\2/
-  s/include(\s+)system-(local-)?login\b/include\1reprise-system-login/
-}' "$root"/etc/pam.d/*
-if grep -nE '^[^#]*include\s+system-' "$root"/etc/pam.d/*; then
-  echo "build.sh: a PAM file still includes an Arch stack" >&2
-  exit 1
-fi
+"$here/pam.sh" "$root"
 
 mapfile -t elves < <(find "$root/usr" -type f -perm -u+x)
 # The release profile's line tables make each binary about four times its
@@ -59,7 +49,7 @@ Installed-Size: $(du -sk --exclude=DEBIAN "$root" | cut -f1)
 Section: x11
 Priority: optional
 Homepage: https://github.com/reprise-project/reprise-desktop
-Depends: $shlibs, systemd, libpam-systemd, libpam-modules, dbus (>= 1.15), pipewire (>= 1.4), xwayland, libegl1, libegl-mesa0, libgl1-mesa-dri, xkb-data
+Depends: $shlibs, systemd, libpam-systemd, libpam-modules, dbus (>= 1.15), dbus-user-session, pipewire (>= 1.4), xwayland, libegl1, libegl-mesa0, libgl1-mesa-dri, xkb-data
 Recommends: wireplumber, pipewire-pulse, xdg-desktop-portal, xdg-utils, shared-mime-info, fonts-dejavu-core
 Suggests: fonts-noto-cjk, xfonts-wqy, fonts-noto-color-emoji, bubblewrap, papers, ffmpegthumbnailer, gnome-font-viewer, libgsf-bin, libarchive-tools, upower, power-profiles-daemon, xdg-desktop-portal-wlr, xdg-desktop-portal-gtk, gnome-themes-extra, qt6ct, qt5ct, sound-theme-freedesktop, network-manager, dnsmasq-base, network-manager-openvpn, bluez, kdeconnect, udisks2, packagekit, flatpak, fwupd, accountsservice, cups, cups-filters, cups-pk-helper, avahi-daemon, polkitd, pkexec, gnome-keyring, libpam-gnome-keyring, libpam-kwallet5, fprintd, libpam-fprintd, ddcutil, at-spi2-core, libx11-data, hwdata, geoclue-2.0, tzdata, intel-media-va-driver
 Description: Wayland desktop with a classic retro look
@@ -67,6 +57,6 @@ Description: Wayland desktop with a classic retro look
  Explorer and a settings sheet.
 EOF
 (cd "$root" && find etc -type f | sed 's|^|/|') >"$root/DEBIAN/conffiles"
-install -m755 "$here/postinst" "$root/DEBIAN/postinst"
+install -m755 -t "$root/DEBIAN" "$here/postinst" "$here/postrm"
 
 dpkg-deb --root-owner-group --build "$root" "$out"
