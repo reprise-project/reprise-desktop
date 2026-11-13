@@ -537,6 +537,7 @@ fn primary(name: &str) -> crate::config::OutputConfig {
         transform: Default::default(),
         position: None,
         primary: true,
+        icc_profile: None,
     }
 }
 

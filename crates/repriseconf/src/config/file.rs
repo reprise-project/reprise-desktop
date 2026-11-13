@@ -171,6 +171,7 @@ pub struct FileOutput {
     pub window_snapping: Option<serde::de::IgnoredAny>,
     pub position: Option<[i64; 2]>,
     pub primary: Option<bool>,
+    pub icc_profile: Option<String>,
     /// Retired: the renderer is OpenGL ES and drives no HDR or ICC
     /// profile. Read only to name it in [`Config::warn_retired`].
     pub color_profile: Option<serde::de::IgnoredAny>,

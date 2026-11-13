@@ -222,6 +222,7 @@ fn output(o: &LoginOutput) -> crate::config::OutputConfig {
         transform: crate::config::Transform::parse(o.transform.name()).unwrap_or_default(),
         position: o.position,
         primary: o.primary,
+        icc_profile: None,
     }
 }
 
@@ -352,6 +353,7 @@ mod tests {
                     transform: crate::config::Transform::Rotate90,
                     position: Some((-1440, 0)),
                     primary: true,
+                    icc_profile: None,
                 },
                 crate::config::OutputConfig {
                     name: "eDP-1".into(),
@@ -361,6 +363,7 @@ mod tests {
                     transform: crate::config::Transform::Normal,
                     position: None,
                     primary: false,
+                    icc_profile: None,
                 },
             ]
         );

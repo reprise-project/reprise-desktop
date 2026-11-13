@@ -1,5 +1,6 @@
-//! The built-in night light: `[night_light]` warms the screen by night with a gamma ramp on every output. An
-//! output whose gamma another client holds is left to it; one with no gamma table is tinted by a last pass (`tint`).
+//! The built-in night light: `[night_light]` warms the screen by night with a gamma ramp on every output, on top of
+//! the calibration curves of the output's ICC profile (`[[outputs]] icc_profile`). An output whose gamma another
+//! client holds is left to it, calibration included; one with no gamma table is tinted by a last pass (`tint`).
 
 mod color;
 pub mod schedule;
@@ -37,6 +38,9 @@ struct OutputGamma {
     /// refused the ramp.
     told_tint: bool,
     told_refused: bool,
+    /// The `icc_profile` read for the output and its calibration curves.
+    profile: Option<std::path::PathBuf>,
+    curves: Option<reprisefs::icc::Vcgt>,
 }
 
 pub struct NightLight {
@@ -240,17 +244,26 @@ fn apply(state: &mut State, output: &Output) {
                 dirty: true,
                 told_tint: false,
                 told_refused: false,
+                profile: None,
+                curves: None,
             });
             nl.outputs.len() - 1
         }
     };
-    let o = &nl.outputs[i];
+    let wanted = state.config.icc_profile_for_output_name(&output.name());
+    let o = &mut nl.outputs[i];
+    if o.profile.as_deref() != wanted {
+        o.profile = wanted.map(Into::into);
+        o.curves = wanted.and_then(|p| curves_of(output, p));
+        o.told_tint = false;
+        o.dirty = true;
+    }
     if o.applied == kelvin && !o.dirty {
         return;
     }
     let took = match crate::backend::gamma_size(state, output) {
         Some(size) => {
-            let ramp = kelvin.map(|k| color::ramp(size, k));
+            let ramp = ramp_for(&state.night, output, size);
             let took = crate::backend::set_gamma(state, output, ramp.as_deref());
             let o = &mut state.night.outputs[i];
             if !took && !o.told_refused {
@@ -264,12 +277,20 @@ fn apply(state: &mut State, output: &Output) {
         }
         None => {
             let o = &mut state.night.outputs[i];
-            if kelvin.is_some() && !o.told_tint {
+            if (kelvin.is_some() || o.curves.is_some()) && !o.told_tint {
                 o.told_tint = true;
-                log::info!(
-                    "night light: {} has no gamma table; tinting its frames instead",
-                    output.name()
-                );
+                if o.curves.is_some() {
+                    log::warn!(
+                        "{} has no gamma table; its colour profile's calibration is left out",
+                        output.name()
+                    );
+                }
+                if kelvin.is_some() {
+                    log::info!(
+                        "night light: {} has no gamma table; tinting its frames instead",
+                        output.name()
+                    );
+                }
             }
             let gains = kelvin.map(|k| color::whitepoint(k).map(|g| g as f32));
             if tint::set(output, gains) {
@@ -282,6 +303,38 @@ fn apply(state: &mut State, output: &Output) {
         let o = &mut state.night.outputs[i];
         o.applied = kelvin;
         o.dirty = false;
+    }
+}
+
+/// What goes into `output`'s gamma table of `size` entries: its calibration curves under the warmth
+/// now; None for a straight table.
+fn ramp_for(nl: &NightLight, output: &Output, size: usize) -> Option<Vec<u16>> {
+    let curves = (nl.outputs.iter())
+        .find(|o| &o.output == output)
+        .and_then(|o| o.curves.as_ref());
+    color::ramp(size, nl.kelvin, curves)
+}
+
+/// The calibration curves of the profile at `path` for `output`; None, said in the log, when it has
+/// none or can't be read.
+fn curves_of(output: &Output, path: &std::path::Path) -> Option<reprisefs::icc::Vcgt> {
+    let name = output.name();
+    match reprisefs::icc::read(path) {
+        Ok(p) if p.vcgt.is_some() => {
+            log::info!("{name}: colour profile {}", path.display());
+            p.vcgt
+        }
+        Ok(_) => {
+            log::info!(
+                "{name}: colour profile {} has no calibration curves",
+                path.display()
+            );
+            None
+        }
+        Err(e) => {
+            log::warn!("{name}: colour profile {}: {e}", path.display());
+            None
+        }
     }
 }
 
@@ -631,6 +684,75 @@ mod tests {
         assert_eq!(h.state.night.paused_until, None, "turning it off ends it");
         pause(&mut h.state, Pause::Hour);
         assert_eq!(h.state.night.paused_until, None, "nothing pauses while off");
+    }
+
+    /// A v2 display profile whose `vcgt` table runs red 0 to 0.8, green 0 to 1, blue 0 to 0.5.
+    fn calibrated() -> Vec<u8> {
+        let mut vcgt = b"vcgt\0\0\0\0\0\0\0\0".to_vec();
+        for v in [3u16, 2, 2, 0, 52428, 0, 65535, 0, 32767] {
+            vcgt.extend_from_slice(&v.to_be_bytes());
+        }
+        let at = 128 + 4 + 12;
+        let mut b = vec![0; 128];
+        b[0..4].copy_from_slice(&((at + vcgt.len()) as u32).to_be_bytes());
+        b[8] = 2;
+        b[12..16].copy_from_slice(b"mntr");
+        b[36..40].copy_from_slice(b"acsp");
+        b.extend_from_slice(&1u32.to_be_bytes());
+        b.extend_from_slice(b"vcgt");
+        b.extend_from_slice(&(at as u32).to_be_bytes());
+        b.extend_from_slice(&(vcgt.len() as u32).to_be_bytes());
+        b.extend(vcgt);
+        b
+    }
+
+    #[test]
+    fn an_outputs_profile_sets_its_table_and_night_light_warms_on_top() {
+        let mut h = crate::harness::Harness::new();
+        let output = h.output("DP-1", 1920, 1080);
+        let path = crate::harness::scratch().join("calibrated.icc");
+        std::fs::write(&path, calibrated()).unwrap();
+        h.state.config.outputs.push(crate::config::OutputConfig {
+            name: output.name(),
+            scale: 1.0,
+            mode: None,
+            adaptive_sync: None,
+            transform: crate::config::Transform::Normal,
+            position: None,
+            primary: false,
+            icc_profile: Some(path),
+        });
+        update(&mut h.state);
+        h.state.night.kelvin = None;
+        assert_eq!(
+            ramp_for(&h.state.night, &output, 3),
+            Some(vec![0, 26214, 52428, 0, 32767, 65535, 0, 16383, 32767]),
+            "the calibration alone"
+        );
+        h.state.night.kelvin = Some(3400);
+        let warm = ramp_for(&h.state.night, &output, 3).unwrap();
+        assert_eq!(
+            warm,
+            color::ramp(
+                3,
+                Some(3400),
+                Some(&reprisefs::icc::parse(&calibrated()).unwrap().vcgt.unwrap())
+            )
+            .unwrap()
+        );
+        assert_eq!(warm[2], 52428, "red keeps its calibrated end");
+        assert!(
+            warm[8] < 20_000,
+            "blue is cut well below its calibrated 32767"
+        );
+        h.state.config.outputs.clear();
+        update(&mut h.state);
+        h.state.night.kelvin = None;
+        assert_eq!(
+            ramp_for(&h.state.night, &output, 3),
+            None,
+            "unset: a straight table"
+        );
     }
 
     #[test]

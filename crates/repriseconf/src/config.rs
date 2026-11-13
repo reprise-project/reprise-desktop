@@ -234,9 +234,12 @@ impl Config {
         if !self.retired.is_empty() {
             log::warn!(
                 "config: {} no longer has an effect; Reprise renders with OpenGL ES \
-                 and drives no HDR or colour profile",
+                 and drives no HDR",
                 self.retired.join(", ")
             );
+        }
+        if self.retired.iter().any(|k| k.ends_with(".color_profile")) {
+            log::warn!("config: an output's ICC profile is set with icc_profile, a path");
         }
     }
 
@@ -256,6 +259,10 @@ impl Config {
         self.output(name)
             .and_then(|o| o.adaptive_sync)
             .unwrap_or(self.adaptive_sync)
+    }
+
+    pub fn icc_profile_for_output_name(&self, name: &str) -> Option<&std::path::Path> {
+        self.output(name).and_then(|o| o.icc_profile.as_deref())
     }
 
     pub fn position_for_output_name(&self, name: &str) -> Option<(i32, i32)> {
