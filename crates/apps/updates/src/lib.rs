@@ -9,6 +9,7 @@ reprisebus::test_session!();
 
 mod flatpak;
 mod fwupd;
+mod guard;
 mod installer;
 mod model;
 mod packagekit;

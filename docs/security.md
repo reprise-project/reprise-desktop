@@ -1808,7 +1808,10 @@ stop the share first.
   and polkit decides whether it takes an administrator's password. A downloaded package carries
   no repository signature, so PackageKit treats it as untrusted, and its
   install scripts run as root once it installs: install only packages you
-  trust.
+  trust. The uninstall sheet refuses a removal that would take Reprise's own
+  packages or one the system marks essential; that guards against a slip,
+  not against an administrator, who can still remove them with the package
+  manager.
 
 ## Out of scope and known gaps
 

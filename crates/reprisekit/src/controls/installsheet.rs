@@ -46,6 +46,8 @@ pub enum Stage {
     Done,
     /// Stopped, and why.
     Failed(String),
+    /// It may not go ahead at all: only Close is offered, and the note says why.
+    Refused,
 }
 
 /// What the user picked.
@@ -94,11 +96,14 @@ impl Sheet {
             (Stage::Done, Verb::Uninstall) => format!("{n} was uninstalled."),
             (Stage::Failed(_), Verb::Install) => format!("{n} was not installed."),
             (Stage::Failed(_), Verb::Uninstall) => format!("{n} was not uninstalled."),
+            (Stage::Refused, Verb::Install) => format!("Reprise cannot install {n}."),
+            (Stage::Refused, Verb::Uninstall) => format!("Reprise cannot uninstall {n}."),
         }
     }
 
+    /// Whether Close is the only way left.
     fn ended(&self) -> bool {
-        matches!(self.stage, Stage::Done | Stage::Failed(_))
+        matches!(self.stage, Stage::Done | Stage::Failed(_) | Stage::Refused)
     }
 
     /// The button a form event stands for. Enter presses the default button: Cancel while asking,

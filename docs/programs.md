@@ -769,7 +769,12 @@ DESKTOP-FILE`). The sheet reads what it is first: the package's name,
 version, installed size and who built it, or the Flatpak app's id, version,
 size and remote. A package's change is tried as a dry run, so the sheet lists
 any other package that comes along or, for an uninstall, any package that
-needs this one and goes too. Nothing changes until you click Install or
+needs this one and goes too. An uninstall whose dry run would take one of
+Reprise's own packages or one the system marks essential (pacman's
+`HoldPkg`, `pacman glibc` when `/etc/pacman.conf` sets none, the `base`
+package with what it depends on and the `base` group; dpkg's `Essential:
+yes` and `Priority: required`) is refused: the sheet names the package and
+why, and offers only Close. Nothing changes until you click Install or
 Uninstall; Enter presses Cancel. Packages go through PackageKit, Flatpaks
 through `flatpak`, and polkit asks for an administrator's password where
 the system's rules want one. PackageKit's pacman backend takes no zstd

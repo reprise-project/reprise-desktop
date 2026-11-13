@@ -30,6 +30,9 @@ const EXIT_CANCELLED: u32 = 3;
 /// `PK_ERROR_ENUM_NOT_AUTHORIZED`: polkit said no, for a dismissed prompt and
 /// a refused password alike.
 const ERROR_NOT_AUTHORIZED: u32 = 48;
+/// `PK_ERROR_ENUM_CANNOT_REMOVE_SYSTEM_PACKAGE`: the backend holds the package (pacman's HoldPkg,
+/// apt's essential ones).
+const ERROR_SYSTEM_PACKAGE: u32 = 20;
 
 const STATUS_REMOVE: u32 = 6;
 const STATUS_DOWNLOAD: u32 = 8;
@@ -45,6 +48,8 @@ pub enum Error {
     Unavailable,
     /// The password prompt was dismissed: nothing to tell.
     Dismissed,
+    /// The backend will not remove a package the system holds; the text names it.
+    SystemPackage(String),
     Failed(String),
 }
 
@@ -368,7 +373,9 @@ pub async fn updates(conn: &Connection, refresh: bool) -> Result<Vec<Update>, Er
         match transaction(conn, Request::Refresh, false, &mut |_, _| {}, None).await {
             Ok(_) | Err(Error::Dismissed) => {}
             Err(Error::Unavailable) => return Err(Error::Unavailable),
-            Err(Error::Failed(e)) => log::info!("refreshing the package lists: {e}"),
+            Err(Error::Failed(e) | Error::SystemPackage(e)) => {
+                log::info!("refreshing the package lists: {e}")
+            }
         }
     }
     let said = transaction(conn, Request::GetUpdates, false, &mut |_, _| {}, None).await?;
@@ -397,6 +404,7 @@ fn fold(rows: Vec<(u32, String, String)>) -> Vec<Update> {
 fn refusal(error: Option<(u32, String)>, dismissed: impl FnOnce() -> bool) -> Error {
     match error {
         Some((ERROR_NOT_AUTHORIZED, _)) if dismissed() => Error::Dismissed,
+        Some((ERROR_SYSTEM_PACKAGE, details)) => Error::SystemPackage(details),
         Some((_, details)) => Error::Failed(details),
         None => Error::Failed("PackageKit did not finish the request.".into()),
     }
@@ -551,6 +559,15 @@ mod tests {
             panic!("only NotAuthorized asks whether the prompt was dismissed")
         });
         assert_eq!(other, Error::Failed("No network.".into()));
+    }
+
+    #[test]
+    fn a_held_system_package_is_its_own_error() {
+        let held = Some((20, "glibc: could not remove HoldPkg".into()));
+        assert_eq!(
+            refusal(held, || panic!("only NotAuthorized asks")),
+            Error::SystemPackage("glibc: could not remove HoldPkg".into())
+        );
     }
 
     #[test]

@@ -6,6 +6,8 @@ Classic done 1 08a682704564c947
 Classic done 2 88f6b9903be2714b
 Classic failed 1 4e42652dea39d417
 Classic failed 2 af10917cfd5c21f7
+Classic refused 1 7276e1c9d10ec69b
+Classic refused 2 040c33547b6b58db
 Blue asking 1 d2eace0a2cf50f64
 Blue asking 2 2c053d496d3a38a9
 Blue running 1 f152d9867b940123
@@ -14,6 +16,8 @@ Blue done 1 4a583bb7331a093f
 Blue done 2 73c6395d925e4e16
 Blue failed 1 c039666be20f359f
 Blue failed 2 87e8e9508ae428ac
+Blue refused 1 e43a045a00b00521
+Blue refused 2 2eeefb08ed535b7e
 Glass Light asking 1 efa0e2b30b289146
 Glass Light asking 2 14f23f897e3b0966
 Glass Light running 1 5b04f462adc592f2
@@ -22,6 +26,8 @@ Glass Light done 1 8f35e21db077e963
 Glass Light done 2 73cd25ab3312b081
 Glass Light failed 1 97bfb39485ee7ed3
 Glass Light failed 2 06d20e14d6d153ab
+Glass Light refused 1 1dfd40c73193f9b1
+Glass Light refused 2 33336957f8ededf1
 Glass Dark asking 1 6925c864ae6a2a8d
 Glass Dark asking 2 79448c133adaa4e1
 Glass Dark running 1 ab6753d03258abb4
@@ -30,3 +36,5 @@ Glass Dark done 1 36b102992978a7eb
 Glass Dark done 2 a8a4a21ee0672856
 Glass Dark failed 1 cf9f99f4a2048503
 Glass Dark failed 2 c4ab19ecc5ff983f
+Glass Dark refused 1 48d9c69b34c5c646
+Glass Dark refused 2 ab8b3e9053f5e07e
