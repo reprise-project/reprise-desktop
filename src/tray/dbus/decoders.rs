@@ -13,7 +13,7 @@ pub(super) struct Decoders {
     jobs: async_channel::Sender<Job>,
     /// Decodes queued or running, by app.
     held: Arc<Mutex<HashMap<String, usize>>>,
-    limits: Limits,
+    pub(super) limits: Limits,
 }
 
 #[derive(Clone, Copy)]
