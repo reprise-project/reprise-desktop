@@ -125,13 +125,6 @@ pub(crate) struct PermissionAnswer {
     pub(crate) ids: Vec<String>,
 }
 
-impl PermissionAnswer {
-    /// The permission store entries Forget deletes the app from, as table, id and app.
-    pub(crate) fn store_entries(&self) -> impl Iterator<Item = (&'static str, &str, &str)> {
-        (self.ids.iter()).map(|id| (self.kind.table(), id.as_str(), self.app.as_str()))
-    }
-}
-
 /// The list's answers: the location prompt's, then each table's from `portal`, the ones still
 /// to ask left out.
 pub(crate) fn permission_answers(
@@ -186,12 +179,32 @@ fn portal_answers() -> Vec<(Kind, Vec<Held>)> {
 
 /// Drop `a` from the state file, or from every permission store entry holding it. Blocking.
 fn forget(a: &PermissionAnswer, location_file: &std::path::Path) -> Result<(), String> {
-    match a.ids.is_empty() {
-        true => repriseconf::location::forget_in(location_file, &a.app).map_err(|e| e.to_string()),
-        false => {
-            (a.store_entries()).try_for_each(|e| delete_from_store(e, a.kind.by_restore_token()))
-        }
+    if a.ids.is_empty() {
+        return repriseconf::location::forget_in(location_file, &a.app).map_err(|e| e.to_string());
     }
+    let token = a.kind.by_restore_token();
+    let ids = match token {
+        true => tokens_holding(a)?,
+        false => a.ids.clone(),
+    };
+    let table = a.kind.table();
+    (ids.iter()).try_for_each(|id| delete_from_store((table, id, &a.app), token))
+}
+
+/// The restore tokens of `a`'s table holding its program now, as one stored after the list was
+/// read would otherwise be kept. Tests take the listed ones.
+fn tokens_holding(a: &PermissionAnswer) -> Result<Vec<String>, String> {
+    if cfg!(test) {
+        return Ok(a.ids.clone());
+    }
+    let table = a.kind.table();
+    let entries = reprisebus::session()
+        .and_then(|conn| reprisebus::wait(reprisebus::permissions::entries(&conn, table)))
+        .map_err(|e| e.to_string())?;
+    let held = by_token(entries.into_iter().map(|e| (e.id, e.apps)));
+    Ok((held.into_iter())
+        .find(|h| h.app == a.app)
+        .map_or_else(Vec::new, |h| h.ids))
 }
 
 /// Delete `entry` (table, id, app) from the permission store, for a restore token `token` with
