@@ -131,7 +131,8 @@ the next time it starts.
 
 ## Sticky Notes
 
-Small coloured notes, each a window of its own with no frame. The strip
+Small coloured notes, each a window of its own with no frame, ringed by a
+thin line a shade darker than its strip so overlapping notes stay apart. The strip
 along a note's top has + for a new note (Ctrl+N too) and x to delete it,
 which asks first when the note has text; drag the rest of the strip to move
 the note and its edges or corners to resize it. Alt+Space opens the window

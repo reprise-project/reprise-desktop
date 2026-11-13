@@ -1,5 +1,6 @@
 //! A frameless sticky note: a strip along the top holding New (+) and Delete (x), over a flat
-//! multi-line edit the host draws into [`Layout::text`] with [`scheme`]'s colours.
+//! multi-line edit the host draws into [`Layout::text`] with [`scheme`]'s colours, all inside a
+//! one-pixel edge.
 
 use crate::access::{self, Tree};
 use crate::frame::{self, Edges, Grip};
@@ -79,6 +80,11 @@ impl Colour {
             Colour::White => Color::rgb(0xE4, 0xE4, 0xE4),
         }
     }
+
+    /// The line around the note, so two overlapping notes of one colour stay apart.
+    pub fn edge(self) -> Color {
+        shade(self.strip(), EDGE_SHADE)
+    }
 }
 
 /// The text and the strip's glyphs.
@@ -86,6 +92,9 @@ pub const INK: Color = Color::rgb(0x2A, 0x26, 0x1E);
 /// How much a lit and a held strip button darken the strip, out of 1.
 const HOT_SHADE: f64 = 0.10;
 const HELD_SHADE: f64 = 0.20;
+const EDGE_SHADE: f64 = 0.25;
+/// The edge's width, design px.
+const EDGE: i32 = 1;
 
 pub const STRIP_H: i32 = 20;
 const BUTTON_W: i32 = 22;
@@ -155,8 +164,8 @@ pub fn layout(r: Rect) -> Layout {
         text: Rect::new(
             r.x + TEXT_PAD,
             below + TEXT_PAD,
-            (r.width - TEXT_PAD).max(0),
-            (r.bottom() - below - TEXT_PAD).max(0),
+            (r.width - TEXT_PAD - EDGE).max(0),
+            (r.bottom() - below - TEXT_PAD - EDGE).max(0),
         ),
     }
 }
@@ -205,8 +214,8 @@ fn shade(c: Color, k: f64) -> Color {
     Color::rgb(f(c.r), f(c.g), f(c.b))
 }
 
-/// The body in `r` and the strip with its buttons; the edit is the host's to draw over
-/// `lay.text`.
+/// The body in `r`, the strip with its buttons and the edge over both; the edit is the host's
+/// to draw over `lay.text`, which stays clear of the edge.
 pub fn draw(c: &mut Canvas, p: &Paint, r: Rect, colour: Colour, strip: Strip) {
     let lay = layout(r);
     c.fill_rect(r, colour.body());
@@ -231,6 +240,11 @@ pub fn draw(c: &mut Canvas, p: &Paint, r: Rect, colour: Colour, strip: Strip) {
         );
         c.blit_over(x, y, &img);
     }
+    let e = colour.edge();
+    c.fill_rect(Rect::new(r.x, r.y, r.width, EDGE), e);
+    c.fill_rect(Rect::new(r.x, r.bottom() - EDGE, r.width, EDGE), e);
+    c.fill_rect(Rect::new(r.x, r.y, EDGE, r.height), e);
+    c.fill_rect(Rect::new(r.right() - EDGE, r.y, EDGE, r.height), e);
 }
 
 /// The strip's two buttons under `parent`; the host adds the edit's node.
@@ -292,7 +306,7 @@ mod tests {
         assert_eq!(hit(&lay, 190, 10), Some(Part::Delete));
         assert_eq!(hit(&lay, 100, 10), None, "the strip between them");
         assert_eq!(hit(&lay, 8, 40), None, "the text");
-        assert_eq!(lay.text, Rect::new(4, 24, 196, 126));
+        assert_eq!(lay.text, Rect::new(4, 24, 195, 125));
     }
 
     #[test]
@@ -361,6 +375,45 @@ mod tests {
     }
 
     #[test]
+    fn an_edge_darker_than_the_strip_rings_the_note_at_scale_1_and_2() {
+        for colour in Colour::ALL {
+            assert_ne!(colour.edge(), colour.strip(), "{colour:?}");
+            for s in [1, 2] {
+                let c = drawn(colour, Strip::default(), s);
+                let (w, h) = (120 * s, 60 * s);
+                let edge = colour.edge().argb();
+                // Device pixel `d` in from each side, half way along it.
+                let sides = |d: i32| {
+                    [
+                        ("top", w / 2, d),
+                        ("bottom", w / 2, h - 1 - d),
+                        ("left", d, h / 2),
+                        ("right", w - 1 - d, h / 2),
+                    ]
+                };
+                for d in 0..s {
+                    for (side, x, y) in sides(d) {
+                        assert_eq!(device(&c, x, y), edge, "{colour:?}@{s} {side}, {d} in");
+                    }
+                }
+                for (side, x, y) in sides(s) {
+                    let want = if side == "top" {
+                        colour.strip()
+                    } else {
+                        colour.body()
+                    };
+                    assert_ne!(want.argb(), edge, "{colour:?} {side}");
+                    assert_eq!(
+                        device(&c, x, y),
+                        want.argb(),
+                        "{colour:?}@{s} inside the {side}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn a_lit_button_darkens_and_a_held_one_darkens_more() {
         let at = |s: Strip| device(&drawn(Colour::Yellow, s, 1), 2, 2);
         let plain = at(Strip::default());
@@ -409,10 +462,10 @@ mod tests {
         assert_eq!(
             got,
             [
-                0x0e85_495e_c086_8b50,
-                0x8dc4_10f8_514f_9113,
-                0xf377_44bb_7d8c_c821,
-                0x7822_5367_2346_8a91
+                0x0747_cc9c_aef9_bbb0,
+                0xa267_d7e3_f2b1_ffbd,
+                0x4161_6c26_3034_8831,
+                0xfbb6_889b_cfe7_6511
             ]
         );
     }
