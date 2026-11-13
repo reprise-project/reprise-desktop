@@ -956,7 +956,13 @@ impl State {
         }
     }
 
+    /// Place the candidate popup by the caret, asking for frames where it left and where it
+    /// shows.
     pub fn place_ime_popup(&mut self) {
+        self.redraw_changed(|s| s.place_ime_popup_now());
+    }
+
+    fn place_ime_popup_now(&mut self) {
         let Some(p) = self.ime.popup.as_ref() else {
             return;
         };
@@ -973,12 +979,8 @@ impl State {
                 .filter(|_| mapped)
                 .and_then(|(pp, parent)| self.caret(&parent.surface, pp.text_input_rectangle())),
         };
-        let was = self.scene.coords(node);
         let Some(caret) = caret else {
             self.scene.set_enabled(node, false);
-            if was.is_some_and(|(_, shown)| shown) {
-                self.redraw_all();
-            }
             return;
         };
         let size = bbox_from_surface_tree(&surface, (0, 0)).size;
@@ -1007,9 +1009,6 @@ impl State {
         self.scene.set_position(node, x, y);
         self.scene.raise_to_top(node);
         self.scene.set_enabled(node, true);
-        if was != Some(((x, y).into(), true)) {
-            self.redraw_all();
-        }
         let local = Rect::new(caret.x - x, caret.y - y, caret.width, caret.height);
         if let Some(p) = self.ime.popup.as_mut()
             && p.sent != Some(local)
@@ -1067,6 +1066,10 @@ impl State {
     }
 
     pub fn ime_adopt_popup(&mut self, role: ZwpInputPopupSurfaceV2, surface: WlSurface) {
+        self.redraw_changed(|s| s.ime_adopt_popup_now(role, surface));
+    }
+
+    fn ime_adopt_popup_now(&mut self, role: ZwpInputPopupSurfaceV2, surface: WlSurface) {
         match self.ime.popup.as_mut() {
             Some(p) if p.surface == surface => {
                 p.role = role;
@@ -1093,8 +1096,7 @@ impl State {
 
     fn ime_popup_gone(&mut self, surface: &WlSurface) {
         if let Some(p) = self.ime.popup.take_if(|p| &p.surface == surface) {
-            self.scene.destroy(p.node);
-            self.redraw_all();
+            self.redraw_changed(|s| s.scene.destroy(p.node));
         }
     }
 }
@@ -1638,6 +1640,49 @@ mod harness_tests {
             (origin.x + 40, origin.y + 48),
             "the popup's top-left is the caret's bottom-left"
         );
+    }
+
+    #[test]
+    fn the_candidate_popup_asks_for_frames_only_on_its_output() {
+        use crate::backend::take_asked_outputs;
+        let mut h = Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.output("TEST-2", 1024, 768);
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+        let mut m = input_method(&mut h, false);
+        let ti = c.text_input();
+        h.roundtrip(&mut c);
+        let text_input = &c.side.text_inputs[ti];
+        text_input.enable();
+        text_input.set_cursor_rectangle(40, 30, 0, 18);
+        text_input.commit();
+        h.roundtrip(&mut c);
+        h.roundtrip(&mut m);
+        take_asked_outputs();
+        let popup = m.input_popup(0, 120, 60);
+        h.roundtrip(&mut m);
+        let node = h
+            .state
+            .ime
+            .popup
+            .as_ref()
+            .expect("the candidate popup")
+            .node;
+        assert!(h.state.scene.enabled(node), "the popup shows");
+        assert_eq!(take_asked_outputs(), ["TEST-1"], "it opens on TEST-1");
+        let w = h.state.win(t.id).unwrap();
+        let (x, y) = (w.x, w.y);
+        h.state.move_to(t.id, x + 60, y + 40);
+        assert_eq!(
+            take_asked_outputs(),
+            ["TEST-1"],
+            "it follows the window on TEST-1"
+        );
+        popup.destroy();
+        h.roundtrip(&mut m);
+        assert!(h.state.ime.popup.is_none(), "the popup is gone");
+        assert_eq!(take_asked_outputs(), ["TEST-1"], "it goes from TEST-1");
     }
 
     #[test]

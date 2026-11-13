@@ -1002,8 +1002,8 @@ impl State {
         let at = pos.to_i32_round() + icon.offset;
         let node = icon.node;
         if self.scene.position(node) != Some(at) {
-            self.scene.set_position(node, at.x, at.y);
-            self.redraw_content();
+            let outputs = self.scene.move_on_outputs(node, at.x, at.y);
+            crate::backend::schedule_on(self, &outputs, crate::backend::Ask::Content);
         }
     }
 
@@ -1017,7 +1017,7 @@ impl State {
                 .is_some_and(|f| self.x11_window_of(f).is_some())
         {
             if self.cursors.drag.take().is_some() {
-                self.redraw_content();
+                self.redraw_cursor();
             }
             return;
         }
@@ -1139,14 +1139,15 @@ impl State {
         }
         if let Some(icon) = d.icon {
             remove_post_commit_hook(&icon.surface, &icon.hook);
-            self.scene.destroy(icon.node);
+            self.redraw_changed(|s| s.scene.destroy(icon.node));
         }
-        self.cursors.drag = None;
+        if self.cursors.drag.take().is_some() {
+            self.redraw_cursor();
+        }
         // The keys pressed during the drag reached no client (the Escape
         // that cancelled it among them); the key route keeps their
         // releases from it too (`KeyInput::taken`).
         let mods_changed = d.mods.held != d.mods_at_start;
-        self.redraw_all();
         self.handle
             .insert_idle(move |state| state.after_drag(mods_changed));
     }
@@ -1208,6 +1209,48 @@ mod tests {
         assert!(!kb.is_grabbed(), "no popup grab came back");
         assert_eq!(c.side.keyboard_focus, None);
         assert!(!h.state.dnd.holds_popup());
+    }
+
+    #[test]
+    fn a_drag_icon_asks_for_frames_only_on_the_outputs_it_crosses() {
+        use crate::backend::take_asked_outputs;
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.output("TEST-2", 1024, 768);
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+        let w = h.state.win(t.id).expect("the window");
+        let (client, x, y) = (w.geom.client, w.x, w.y);
+        let (px, py) = (
+            f64::from(x + client.x + client.width / 2),
+            f64::from(y + client.y + client.height / 2),
+        );
+        h.pointer_to(px, py);
+        h.button(crate::input::BTN_LEFT, true);
+        h.roundtrip(&mut c);
+        let pointer = h.state.seat.get_pointer().expect("pointer");
+        let start = crate::popupgrab::press_start(&pointer).expect("the press");
+        let ours = (start.focus.as_ref())
+            .and_then(|(f, _)| f.surface())
+            .expect("the press is on the window");
+        let icon = h.bare_surface_drawn(&mut c, 32, 32);
+        let source = DragSource::new(Origin::Local(ours.clone()));
+        (h.state).start_drag(source, Some(icon), start, SERIAL_COUNTER.next_serial());
+        take_asked_outputs();
+        h.pointer_to(px + 40.0, py + 20.0);
+        assert_eq!(take_asked_outputs(), ["TEST-1"], "a move on TEST-1");
+        h.pointer_to(1000.0, py);
+        assert_eq!(
+            take_asked_outputs(),
+            ["TEST-1", "TEST-2"],
+            "the icon across the edge shows on both"
+        );
+        h.pointer_to(px, py);
+        take_asked_outputs();
+        h.button(crate::input::BTN_LEFT, false);
+        h.roundtrip(&mut c);
+        assert!(!h.state.dnd.running(), "the drag ended");
+        assert_eq!(take_asked_outputs(), ["TEST-1"], "the drop on TEST-1");
     }
 
     #[test]

@@ -70,7 +70,6 @@ impl State {
             self.press_at = (pos.x, pos.y);
             self.keys_saw_button();
             self.switcher_press(button);
-            self.redraw_all();
             return;
         }
         if !locked && state == ButtonState::Pressed && self.overview.view.is_some() {
@@ -78,7 +77,6 @@ impl State {
             self.press_at = (pos.x, pos.y);
             self.keys_saw_button();
             self.overview_press(button);
-            self.redraw_all();
             return;
         }
         if state == ButtonState::Pressed {

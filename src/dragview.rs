@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use reprisefs::apps::AppEntry;
 use reprisekit::taskbar::{TaskbarHit, TaskbarLayout};
 use reprisescene::{BufferId, Input};
+use smithay::output::Output;
 use smithay::utils::{Logical, Point};
 
 use crate::{
@@ -495,8 +496,10 @@ impl State {
             d.image?;
             redraw_scale(d.image_scale, here).map(|scale| (d.grab, scale))
         });
+        let mut was = Vec::new();
         if let Some((grab, scale)) = redraw {
             if let Some(image) = self.drags.armed.as_mut().and_then(|d| d.image.take()) {
+                was = self.scene.outputs_of(image);
                 self.scene.destroy(image);
             }
             self.draw_drag_image(grab, scale);
@@ -507,13 +510,11 @@ impl State {
             .as_ref()
             .and_then(|d| Some((d.image?, d.offset)))
         else {
+            crate::backend::schedule_on(self, &was, crate::backend::Ask::Content);
             return;
         };
         let at = (pos.x as i32 - ox, pos.y as i32 - oy);
-        if self.scene.position(image) != Some(at.into()) {
-            self.scene.set_position(image, at.0, at.1);
-            self.redraw_content();
-        }
+        self.show_drag_image(image, at, was);
         if !self.ripples_on() {
             return;
         }
@@ -535,8 +536,7 @@ impl State {
     /// Take drag `d`'s image off the screen. A placed icon drag splashes where its image last lay, if on the desktop, and returns the water its icons.
     pub fn clear_drag_image(&mut self, d: &mut DragState) {
         if let Some(image) = d.image.take() {
-            self.scene.destroy(image);
-            self.redraw_all();
+            self.destroy_redrawn(image);
         }
         if let Some(at) = d.water_last.take() {
             self.water_icon_drop(at);
@@ -567,13 +567,32 @@ impl State {
             return;
         };
         let at = self.scene.position(image);
+        let was = self.scene.outputs_of(image);
         self.scene.destroy(image);
         self.draw_drag_image(grab, scale);
-        let placed = self.drags.armed.as_ref().and_then(|d| d.image).zip(at);
-        if let Some((image, at)) = placed {
-            self.scene.set_position(image, at.x, at.y);
+        match self.drags.armed.as_ref().and_then(|d| d.image).zip(at) {
+            Some((image, at)) => self.show_drag_image(image, (at.x, at.y), was),
+            None => crate::backend::schedule_on(self, &was, crate::backend::Ask::Content),
         }
-        self.redraw_content();
+    }
+
+    /// Show drag image `image` at `at`, asking for frames on `was` (where an image it replaces
+    /// showed), the outputs it leaves and those it reaches. A picture over glass changes nothing
+    /// the glass blurs.
+    fn show_drag_image(&mut self, image: BufferId, at: (i32, i32), mut was: Vec<Output>) {
+        if self.scene.enabled(image) && self.scene.position(image) == Some(at.into()) {
+            crate::backend::schedule_on(self, &was, crate::backend::Ask::Content);
+            return;
+        }
+        let before = self.scene.outputs_of(image);
+        self.scene.set_position(image, at.0, at.1);
+        self.scene.set_enabled(image, true);
+        for o in before.into_iter().chain(self.scene.outputs_of(image)) {
+            if !was.contains(&o) {
+                was.push(o);
+            }
+        }
+        crate::backend::schedule_on(self, &was, crate::backend::Ask::Content);
     }
 
     /// Draw the image grabbed at `pos` at `scale` into a fresh buffer.
@@ -676,6 +695,8 @@ impl State {
             desktop::desktop_drag_strength((px / scale, py / scale), offset, size, clipped)
         });
         let image = self.scene.buffer_create(self.layers.overlay);
+        // Off until `show_drag_image` places it, so its first ask is only where it lands.
+        self.scene.set_enabled(image, false);
         self.scene.set_input(image, Input::Passthrough);
         upload_scaled(&mut self.scene, image, &canvas, scale);
         if let Some(d) = self.drags.armed.as_mut() {
@@ -1282,6 +1303,44 @@ mod tests {
             waits,
             "the icon drew without waiting"
         );
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_drag_image_asks_for_frames_only_on_the_outputs_it_crosses() {
+        use crate::backend::take_asked_outputs;
+        let root = crate::icon::svg_theme(&["test-app"], &[]);
+        let mut h = crate::icon::two_outputs("classic", &root);
+        let entry = AppEntry {
+            name: "Test".into(),
+            exec_line: "true".into(),
+            terminal: false,
+            id: "test.desktop".into(),
+            icon: Some("test-app".into()),
+            startup_wm_class: None,
+            categories: Vec::new(),
+            mime_types: Vec::new(),
+            shown: true,
+        };
+        let spot = reprisekit::startpanel::Spot::Program(0);
+        h.state
+            .start_panel_row_press(spot, entry, PathBuf::from("/srv/test.desktop"));
+        take_asked_outputs();
+        h.state.start_drag_image((300.0, 300.0).into());
+        assert_eq!(take_asked_outputs(), ["TEST-1"], "it shows on TEST-1");
+        h.state.place_drag_image((400.0, 320.0).into());
+        assert_eq!(take_asked_outputs(), ["TEST-1"], "a move on TEST-1");
+        h.state.place_drag_image((1020.0, 320.0).into());
+        assert_eq!(
+            take_asked_outputs(),
+            ["TEST-1", "TEST-2"],
+            "the image across the edge shows on both"
+        );
+        h.state.place_drag_image((400.0, 320.0).into());
+        take_asked_outputs();
+        let mut d = h.state.drags.armed.take().expect("the drag");
+        h.state.clear_drag_image(&mut d);
+        assert_eq!(take_asked_outputs(), ["TEST-1"], "it goes from TEST-1");
         std::fs::remove_dir_all(&root).unwrap();
     }
 
