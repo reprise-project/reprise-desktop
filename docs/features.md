@@ -1002,6 +1002,11 @@ dialogs. [More in programs.md](programs.md#explorer).
   light or dark with the text size, and the keys worth knowing. Skippable,
   each pick also in Settings, and back from Start > Programs > Accessories;
   see [programs.md](programs.md#welcome).
+- **Import from GNOME or Plasma.** Wallpaper, dark style, keyboard layouts,
+  mouse and touchpad, text size, night light and favourite programs, read
+  from the other desktop and listed with old and new values; only the rows
+  you check are written. See
+  [programs.md](programs.md#import-from-another-desktop).
 - **Live.** Edits to `config.toml` apply when you save, from Reprise Settings
   or a text editor. A save that isn't valid TOML changes nothing and a notice
   names the line and column; see [configuration.md](configuration.md#a-broken-save).

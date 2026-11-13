@@ -492,6 +492,7 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
         Page::Backup => &[
             ("backup_export", "Export..."),
             ("backup_import", "Import..."),
+            ("backup_from_desktop", "From Another Desktop..."),
         ],
     }
 }

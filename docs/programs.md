@@ -512,7 +512,8 @@ matched control focused.
     behind. Import shows what it replaces, keeps the current files in
     `~/.config/reprise/reprise-settings-before-import.toml` (a file Import
     takes back), writes the new ones, and the desktop picks them up at once.
-    Display arrangements only apply to the same monitors.
+    Display arrangements only apply to the same monitors. From Another
+    Desktop... opens [Import from Another Desktop](#import-from-another-desktop).
 
 Restore Defaults, at the left of the OK, Cancel and Apply row, is on every
 page whose controls write `config.toml` keys. It lists the page's keys that
@@ -847,6 +848,43 @@ never sees it on an upgrade. The journal says which rule decided.
 
 Blue comes in light colours only, so Dark is greyed under it. Dark under
 Classic is the One Dark scheme, under Glass `[glass] mode = "dark"`.
+
+## Import from Another Desktop
+
+Brings settings over from GNOME or Plasma used in the same account. It reads
+GNOME's through `dconf dump /` (so only what you changed from GNOME's
+defaults) and Plasma's from its files in `~/.config` (`kdeglobals`,
+`kcminputrc`, `kxkbrc`, `kwinrc`, `kcmfonts` and the desktop's
+`plasma-org.kde.plasma.desktop-appletsrc`). It never writes either.
+
+The list shows each setting that would change, with its value now and the one
+it would take, each with a check box. Nothing is written until you click
+Import, and then only the checked rows: into `config.toml` the way Settings
+writes it, comments kept, and favourite or pinned programs into the Quick
+Launch folder after its own buttons. When both desktops left settings, a box
+picks which one to import from, the one used last first.
+
+| Found | Becomes |
+| --- | --- |
+| Wallpaper (the dark one under a dark style) | `[wallpaper] image` and `position`; JPEG, PNG and BMP only |
+| Dark style | Glass `mode = "dark"`, Classic's One Dark scheme; greyed under Blue |
+| Keyboard layouts, variants, model, options, layout per window | `[keyboard]` |
+| Key repeat rate and delay | `[keyboard] repeat_rate`, `repeat_delay` |
+| Mouse and touchpad speed, acceleration, natural scrolling | `[mouse]`, `[touchpad]` |
+| Tap to click, two-finger scrolling and tap, off while typing, click method, off with a mouse | `[touchpad]` |
+| Text scaling (GNOME), forced font DPI (Plasma) | `[accessibility] text_size`, the nearest step |
+| Night light on, warmth, schedule | `[night_light]` |
+| Pointer theme and size | `[cursor]` |
+| Double-click time, fixed number of workspaces, hot corner | `double_click_ms`, `[workspaces] count`, `hot_corner` |
+| Favourite apps (GNOME), task manager launchers (Plasma) | Quick Launch buttons, and `[taskbar] pinned` |
+
+What has no Reprise setting is listed greyed at the end with why: the 12 or
+24 hour clock (Reprise's follows the formats locale), input methods, the GTK
+and icon themes and fonts (Reprise's look sets them), left-handed buttons,
+key repeat turned off and title bar buttons. A program that isn't installed
+here, and a picture that is missing or in another format, are greyed too.
+Start > Programs > Accessories, the Backup page in Settings and Welcome's last
+page all open it. Reading GNOME's settings needs the `dconf` command.
 
 ## Smaller things
 

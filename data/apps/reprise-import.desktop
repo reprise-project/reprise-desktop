@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Import from Another Desktop
+Comment=Bring your wallpaper, keyboard, mouse, touchpad and other settings over from GNOME or Plasma.
+Exec=reprise-import
+Icon=reprise
+Categories=Utility;
+StartupWMClass=reprise.import
+Terminal=false

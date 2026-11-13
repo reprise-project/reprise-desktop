@@ -56,6 +56,7 @@ optdepends=('ttf-tahoma: Wine'\''s Tahoma, the UI font the layouts are tuned for
             'libx11: the Compose files behind dead keys and the Compose key in the lock screen password'
             'hwdata: graphics card names in About Reprise and Task Manager (pci.ids)'
             'geoclue: the location prompt and the location indicator (Reprise is the geoclue agent)'
+            'dconf: GNOME settings in Import from Another Desktop (dconf dump)'
             'intel-media-driver: hardware H.264 for Remote Desktop on Intel graphics'
             'libva-mesa-driver: hardware H.264 for Remote Desktop on AMD graphics'
             'nvidia-utils: hardware H.264 (NVENC) for Remote Desktop on NVIDIA graphics')
@@ -100,7 +101,7 @@ package() {
   install -Dm755 target/release/reprise "$pkgdir/usr/bin/reprise"
   # One binary holds every program; each name links to it.
   install -Dm755 target/release/reprise-apps "$pkgdir/usr/bin/reprise-apps"
-  for app in reprise-notepad reprise-explorer reprise-about reprise-sound reprise-volume reprise-settings reprise-power reprise-datetime reprise-accounts reprise-network reprise-bluetooth reprise-drives reprise-polkit reprise-updates reprise-printers reprise-terminal reprise-phone reprise-diskusage reprise-notes reprise-fonts reprise-imageviewer reprise-paint reprise-calc reprise-charmap reprise-taskmgr reprise-welcome; do
+  for app in reprise-notepad reprise-explorer reprise-about reprise-sound reprise-volume reprise-settings reprise-power reprise-datetime reprise-accounts reprise-network reprise-bluetooth reprise-drives reprise-polkit reprise-updates reprise-printers reprise-terminal reprise-phone reprise-diskusage reprise-notes reprise-fonts reprise-imageviewer reprise-paint reprise-calc reprise-charmap reprise-taskmgr reprise-welcome reprise-import; do
     ln -s reprise-apps "$pkgdir/usr/bin/$app"
     install -Dm644 "data/apps/$app.desktop" "$pkgdir/usr/share/applications/$app.desktop"
   done

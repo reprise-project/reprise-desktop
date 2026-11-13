@@ -17,13 +17,22 @@ use std::path::PathBuf;
 
 /// The last page's buttons and the desktop entries they start; a button shows only while its
 /// entry is installed and shown.
-const LINKS: [(Link, &str); 1] = [(
-    Link {
-        id: "settings",
-        label: "Open &Settings",
-    },
-    "reprise-settings.desktop",
-)];
+const LINKS: [(Link, &str); 2] = [
+    (
+        Link {
+            id: "settings",
+            label: "Open &Settings",
+        },
+        "reprise-settings.desktop",
+    ),
+    (
+        Link {
+            id: "import",
+            label: "&Import from Another Desktop",
+        },
+        "reprise-import.desktop",
+    ),
+];
 
 struct WelcomeApp {
     config: PathBuf,

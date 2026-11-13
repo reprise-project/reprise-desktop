@@ -27,6 +27,7 @@ mod displaypage;
 mod draw;
 mod events;
 mod filepick;
+pub mod import;
 mod keyboardhost;
 mod layoutdlg;
 mod linkhost;

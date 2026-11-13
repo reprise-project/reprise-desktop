@@ -1,0 +1,26 @@
+[package]
+name = "reprise-import"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+description = "Import from Another Desktop: GNOME's and Plasma's settings, picked one by one, written into Reprise's"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "reprise-import"
+path = "src/bin/reprise-import.rs"
+test = false
+
+[dependencies]
+repriseapp = { path = "../../repriseapp" }
+reprisekit = { path = "../../reprisekit" }
+reprisebus = { path = "../../reprisebus" }
+repriseconf = { path = "../../repriseconf" }
+reprisefs = { path = "../../reprisefs" }
+reprise-settings = { path = "../settings" }
+log.workspace = true
