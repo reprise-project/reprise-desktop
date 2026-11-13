@@ -291,6 +291,8 @@ fn tick(state: &mut State) {
     for p in gone {
         remove(state, p);
     }
+    // A copy shares its source's usable area: its panel stacks under the panels already there.
+    let mut stacks: Vec<((i32, i32), i32)> = Vec::new();
     for o in &outputs {
         let stats = crate::backend::take_stats(state, o)
             .filter(|_| last.is_some())
@@ -304,8 +306,19 @@ fn tick(state: &mut State) {
             title: title(o),
             rows: rows(&stats, secs, own, pixels, &totals),
         };
-        let usable = state.usable_area(Some(o));
-        let origin = panel_origin(usable, statspanel::W);
+        let corner = panel_origin(state.usable_area(Some(o)), statspanel::W);
+        let below = statspanel::height(want.rows.len()) + GAP;
+        let origin = match stacks.iter_mut().find(|(c, _)| *c == corner) {
+            Some((_, next)) => {
+                let at = (corner.0, *next);
+                *next += below;
+                at
+            }
+            None => {
+                stacks.push((corner, corner.1 + below));
+                corner
+            }
+        };
         match at {
             Some(i) => {
                 let p = &mut panels[i];
@@ -488,6 +501,35 @@ mod tests {
             assert_eq!(row.value, "-", "{} shows nothing", row.label);
         }
         assert_eq!(r[8].value, "-", "no /proc, no memory figure");
+    }
+
+    #[test]
+    fn a_copys_panel_sits_below_the_one_it_copies() {
+        let mut h = crate::harness::Harness::new();
+        let a = h.head("DP-1", 1920, 1080);
+        let b = h.head("DP-2", 1280, 1024);
+        let req = crate::output::HeadRequest {
+            enabled: true,
+            mode: None,
+            position: Some((0, 0)),
+            transform: smithay::utils::Transform::Normal,
+            scale: 1.0,
+            adaptive_sync: false,
+        };
+        for o in [&a, &b] {
+            assert!(h.state.apply_head(o, &req));
+            h.state.update_layout();
+            h.dispatch();
+        }
+        h.state.config.debug.overlay = true;
+        config_changed(&mut h.state);
+        let s = &h.state;
+        let panel = |o: &Output| s.debug.panels.iter().find(|p| &p.output == o).unwrap();
+        let at = |o: &Output| s.scene.position(panel(o).tree).unwrap();
+        let first = panel_origin(s.usable_area(Some(&a)), statspanel::W);
+        let below = first.1 + statspanel::height(panel(&a).shown.rows.len()) + GAP;
+        assert_eq!(at(&a), first.into());
+        assert_eq!(at(&b), (first.0, below).into(), "DP-2's panel under DP-1's");
     }
 
     #[test]

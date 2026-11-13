@@ -1,5 +1,7 @@
 //! Node extents, the node at a point, and which outputs a node is on.
 
+use std::cell::Cell;
+
 use smithay::{
     backend::renderer::Renderer,
     desktop::{
@@ -27,9 +29,13 @@ pub struct Hit {
     pub surface: Option<WlSurface>,
 }
 
-/// An output's box in layout coordinates: position and mode, transformed and divided by scale. `None` without a mode.
+/// An output's box in layout coordinates: position and mode, transformed and divided by scale, or
+/// the box it copies ([`set_copied`]). `None` without a mode.
 pub fn output_rect(output: &Output) -> Option<Rectangle<i32, Logical>> {
     let mode = output.current_mode()?;
+    if let Some(r) = copied(output) {
+        return Some(r);
+    }
     let size = output
         .current_transform()
         .transform_size(mode.size)
@@ -37,6 +43,25 @@ pub fn output_rect(output: &Output) -> Option<Rectangle<i32, Logical>> {
         .to_logical(output.current_scale().fractional_scale())
         .to_i32_round();
     Some(Rectangle::new(output.current_location(), size))
+}
+
+struct Copied(Cell<Option<Rectangle<i32, Logical>>>);
+
+fn copied_cell(output: &Output) -> &Copied {
+    output
+        .user_data()
+        .insert_if_missing(|| Copied(Cell::new(None)));
+    output.user_data().get::<Copied>().expect("inserted above")
+}
+
+/// The box `output` copies: another output's, which it shows in place of its own.
+pub fn copied(output: &Output) -> Option<Rectangle<i32, Logical>> {
+    copied_cell(output).0.get()
+}
+
+/// Make `output` copy the output whose box is `area` (its own box becomes `area`), or stop.
+pub fn set_copied(output: &Output, area: Option<Rectangle<i32, Logical>>) {
+    copied_cell(output).0.set(area);
 }
 
 impl<R: Renderer, D> Scene<R, D> {

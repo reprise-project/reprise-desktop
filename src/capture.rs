@@ -311,6 +311,7 @@ fn render_scene_into(
     tracked: Option<&mut SessionDamage>,
 ) -> Result<Drawn, String> {
     let pointer = state.pointer_location();
+    let fitted = state.fitted_source(output);
     let State {
         backend,
         scene,
@@ -321,14 +322,16 @@ fn render_scene_into(
         glass,
         interaction,
         captures,
+        copy_frames,
         ..
     } = state;
     let cursor = crate::saverview::cursor(saver, cursor);
     let b = backend.as_mut().ok_or("no backend")?;
     crate::gpufence::ready(&b.renderer)?;
     // A capture shows the backdrop as it is now: nothing to hold.
+    let drawn_from = fitted.as_ref().unwrap_or(output);
     glass.begin(
-        output,
+        drawn_from,
         config.glass,
         crate::glass::quality(interaction, &config.glass),
         crate::glass::Hold::No,
@@ -336,18 +339,22 @@ fn render_scene_into(
     let renderer = &mut b.renderer;
     let clear = clear_color(&config.theme.colors);
     let wanted = crate::glass::wanted(config);
-    glass.update_backdrop(renderer, scene, output, clear, wanted);
-    let elements = output_elements(
+    glass.update_backdrop(renderer, scene, drawn_from, clear, wanted);
+    let parts = Parts {
+        scene,
+        cursor,
+        cursors,
+        pointer,
+    };
+    let shown = (output, fitted.as_ref());
+    let (elements, clear) = scene_elements(
         renderer,
-        Parts {
-            scene,
-            cursor,
-            cursors,
-            pointer,
-        },
-        output,
+        copy_frames,
+        parts,
+        shown,
         origin,
         with_cursor,
+        clear,
     );
     let scale = output.current_scale().fractional_scale();
     let at = (size, scale, transform);
@@ -364,6 +371,31 @@ fn render_scene_into(
         drawn.damage = damage;
     }
     Ok(drawn)
+}
+
+/// What a capture of `output` draws from `origin`, and the colour around it: a copy of another
+/// size (`fitted`, the output it copies) shows that frame fitted on black, as its screen does.
+pub(crate) fn scene_elements(
+    renderer: &mut GlesRenderer,
+    frames: &mut crate::mirror::CopyFrames,
+    parts: Parts<'_>,
+    (output, fitted): (&Output, Option<&Output>),
+    origin: Point<i32, Physical>,
+    with_cursor: bool,
+    clear: Color32F,
+) -> (Vec<OutputElement>, Color32F) {
+    match fitted {
+        Some(source) => {
+            let shown = (source, output);
+            let elements =
+                crate::mirror::elements(renderer, frames, parts, shown, origin, with_cursor);
+            (elements, Color32F::BLACK)
+        }
+        None => {
+            let elements = output_elements(renderer, parts, output, origin, with_cursor);
+            (elements, clear)
+        }
+    }
 }
 
 /// A capture rendered into its buffer, waiting for the GPU to finish.

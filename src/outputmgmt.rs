@@ -289,7 +289,8 @@ pub fn resolve(
 }
 
 /// Run a resolved configuration head by head, stopping at the first failure
-/// (earlier heads stay applied), then lay out once.
+/// (earlier heads stay applied), then lay out once; one that went through is saved as the
+/// connected set's layout.
 fn apply(state: &mut State, reqs: Vec<(String, HeadRequest)>) -> bool {
     let mut ok = true;
     for (name, req) in reqs {
@@ -308,6 +309,9 @@ fn apply(state: &mut State, reqs: Vec<(String, HeadRequest)>) -> bool {
         }
     }
     state.update_layout();
+    if ok {
+        state.handle.insert_idle(|state| state.save_layout());
+    }
     ok
 }
 

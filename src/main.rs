@@ -196,6 +196,7 @@ mod magnifier;
 mod malloc;
 mod mapfocus;
 mod migrate;
+mod mirror;
 mod mutex;
 mod osdview;
 mod output;

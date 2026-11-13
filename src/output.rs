@@ -272,6 +272,7 @@ impl State {
         self.magnifier.retain(self.scene.outputs());
         self.glass.output_removed(output);
         laid_out(output).0.set(None);
+        reprisescene::set_copied(output, None);
         let bar = self
             .bars
             .iter()
@@ -718,6 +719,7 @@ impl State {
         for (o, at) in remote.iter().zip(place_block(origin, &asked)) {
             move_output(o, at);
         }
+        self.sync_copies();
         let after: Vec<(Output, Rect)> = outputs
             .iter()
             .map(|o| (o.clone(), self.layout_box(Some(o))))
@@ -863,12 +865,17 @@ impl State {
         )
     }
 
-    /// Output under a layout point, falling back to the first output.
+    /// Output under a layout point, one that copies none before its copies, falling back to the
+    /// first output.
     pub fn output_at(&self, lx: f64, ly: f64) -> Option<Output> {
         let outputs = self.scene.outputs();
-        outputs
-            .iter()
-            .find(|o| reprisescene::output_rect(o).is_some_and(|r| r.to_f64().contains((lx, ly))))
+        let under = |o: &&Output| {
+            reprisescene::output_rect(o).is_some_and(|r| r.to_f64().contains((lx, ly)))
+        };
+        (outputs.iter())
+            .filter(|o| reprisescene::copied(o).is_none())
+            .find(under)
+            .or_else(|| outputs.iter().find(under))
             .or_else(|| outputs.iter().find(|o| self.layout_box(Some(o)).width > 0))
             .cloned()
     }
@@ -879,11 +886,13 @@ impl State {
         self.usable_area_at(output, self.layout_box(output))
     }
 
-    /// [`State::usable_area`] for `output` laid out at `b`, its box before or after a relayout.
+    /// [`State::usable_area`] for `output` laid out at `b`, its box before or after a relayout. A
+    /// copy leaves what the output it copies leaves.
     pub fn usable_area_at(&self, output: Option<&Output>, b: Rect) -> Rect {
         if b.width <= 0 || self.host == crate::compositor::Host::Greeter {
             return b;
         }
+        let output = output.map(|o| self.copy_source(o).unwrap_or(o));
         output
             .and_then(|o| self.layers_shell.usable(o, b))
             .unwrap_or_else(|| {

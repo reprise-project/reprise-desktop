@@ -358,7 +358,7 @@ impl State {
         let outputs = if self.host == crate::compositor::Host::Greeter {
             Vec::new()
         } else {
-            self.scene.outputs().to_vec()
+            self.own_outputs()
         };
         let (kept, gone): (Vec<Bar>, Vec<Bar>) = std::mem::take(&mut self.bars)
             .into_iter()

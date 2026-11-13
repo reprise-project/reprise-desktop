@@ -399,6 +399,9 @@ pub struct State {
     pub inputproto: crate::inputproto::InputProto,
     pub window_anims: crate::windowanim::WindowAnims,
     pub magnifier: crate::magnifier::Magnifier,
+    /// Each output that copies another, with the one it copies (`mirror`).
+    pub copies: Vec<(smithay::output::Output, smithay::output::Output)>,
+    pub copy_frames: crate::mirror::CopyFrames,
     pub switch_anim: crate::switchanim::SwitchAnim,
     /// The StatusNotifierItem tray, or None when it could not be started
     /// (`tray::setup`).
@@ -781,6 +784,8 @@ impl State {
             inputproto: crate::inputproto::InputProto::new(&dh),
             window_anims: Default::default(),
             magnifier: Default::default(),
+            copies: Vec::new(),
+            copy_frames: Default::default(),
             switch_anim: Default::default(),
             tray: None,
             xwayland: crate::xwayland::Xwayland::new(&dh),

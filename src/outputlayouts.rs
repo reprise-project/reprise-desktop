@@ -222,7 +222,8 @@ impl State {
         self.saved_layouts.refused.retain(|c| c != connector);
     }
 
-    fn save_layout(&mut self) {
+    /// Save what the connected monitors run as their set's layout.
+    pub(crate) fn save_layout(&mut self) {
         let heads = crate::backend::heads(self);
         if !heads.iter().any(|h| h.enabled) {
             return;
