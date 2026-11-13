@@ -37,6 +37,7 @@ pub enum Report {
     Kbd { level: f64 },
     Player { name: String, verb: &'static str },
     Wifi { on: bool },
+    ScreenReader(crate::screenreader::Switched),
     Display(DisplayReport),
 }
 

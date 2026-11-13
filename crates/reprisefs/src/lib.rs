@@ -53,6 +53,7 @@ pub mod recent;
 pub mod removal;
 pub mod replace;
 pub mod scope;
+pub mod screenreader;
 pub mod search;
 pub mod sendto;
 pub mod sysinfo;

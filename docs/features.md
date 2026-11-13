@@ -745,6 +745,9 @@ the screen takes the interface of the last session used at this computer.
   close its tabs. A balloon is announced when it appears, a task button reads
   its unread count ("Mail, 3 unread") and the colour picker its colour as
   `#rrggbb`. They're tested with Orca.
+- **Screen reader on and off without looking.** Super+Alt+S starts Orca or
+  stops it from anywhere, dialogs included; a rising or falling sound and an
+  on-screen line say which, or that Orca isn't installed.
 - **Magnifier** from 1x to 8x (Super+= and Super+-) that follows the pointer,
   the caret and the keyboard focus.
 - **Colour filters:** grayscale, inverted, and corrections for three kinds of
@@ -863,8 +866,8 @@ the screen takes the interface of the last session used at this computer.
   always takes them back. Deskflow asks first; allowed with Remember, it
   isn't asked again until Settings > Privacy forgets it.
 - **VM viewers and remote desktops get your shortcuts,** Super and Alt+Tab
-  included, while they have focus; the lock, the magnifier, colour filters and
-  screenshots stay Reprise's. A balloon says so the first time a program takes
+  included, while they have focus; the lock, the magnifier, colour filters,
+  the screen reader switch and screenshots stay Reprise's. A balloon says so the first time a program takes
   them, and Super+Shift+Esc takes them back.
 - **Pointer lock and raw motion** for games, 3D tools and VM viewers.
 - **Send by Email** from a Flatpak opens the message, attachments included,

@@ -1,4 +1,4 @@
-//! The on-screen panel of the media keys and the lock keys: one `reprisekit::controls::osd` box at
+//! The on-screen panel of the media keys, the lock keys and the screen reader switch: one `reprisekit::controls::osd` box at
 //! the bottom centre of the desktop icons' output, showing a report or one
 //! line per display, replaced on every key and gone 1.5 s after the last. Its `layers.overlay` tree is tagged
 //! `SceneOwner::Osd`: the glass tree, then the buffer, which takes the pointer
@@ -113,6 +113,13 @@ fn describe(r: &Report, boost: bool) -> Option<(Osd, &'static str)> {
                 meter: None,
             },
             "network-wireless",
+        ),
+        Report::ScreenReader(switched) => (
+            Osd {
+                title: switched.title().into(),
+                meter: None,
+            },
+            "preferences-desktop-accessibility",
         ),
         Report::Display(_) => return None,
     })
@@ -394,6 +401,21 @@ mod tests {
         assert_eq!(icon, "network-wireless");
         let (osd, _) = describe(&Report::Wifi { on: false }, false).unwrap();
         assert_eq!(osd.title, "Wireless off");
+    }
+
+    #[test]
+    fn the_screen_reader_line_says_on_off_or_missing() {
+        use crate::screenreader::Switched;
+        for (switched, title) in [
+            (Switched::On, "Screen reader on"),
+            (Switched::Off, "Screen reader off"),
+            (Switched::Missing, "No screen reader installed"),
+        ] {
+            let (osd, icon) = describe(&Report::ScreenReader(switched), false).unwrap();
+            assert_eq!(osd.title, title);
+            assert_eq!(osd.meter, None);
+            assert_eq!(icon, "preferences-desktop-accessibility");
+        }
     }
 
     #[test]

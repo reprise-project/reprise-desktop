@@ -111,6 +111,7 @@ mod render;
 mod samepixels;
 mod sandbox;
 mod screencopy;
+mod screenreader;
 mod screenshot;
 mod session;
 mod sessionend;

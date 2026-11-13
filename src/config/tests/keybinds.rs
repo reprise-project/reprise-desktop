@@ -162,6 +162,7 @@ fn action_names_round_trip() {
         "zoom-out",
         "zoom-reset",
         "color-filter",
+        "screen-reader",
     ] {
         let a = Action::from_parts(name, None).unwrap();
         assert_eq!(a.name(), Some(name));
