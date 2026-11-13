@@ -1650,6 +1650,14 @@ stop the share first.
   new session, a Remote Desktop password change and the login screen's
   administrator form (Shut Down and Restart while someone is logged on)
   refuse the account by the account step.
+- **Fingerprints.** User Accounts adds and deletes fingers only for the
+  user running it: it claims fprintd's reader with an empty user name,
+  which fprintd reads as the caller's own, and asks no one about other
+  accounts' fingers. fprintd's polkit action
+  (`net.reactivated.fprint.device.enroll`) decides the rest; its stock
+  rule asks the active local user for their own password, which Reprise's
+  admin password prompt shows. While an add holds the reader, a
+  fingerprint can't answer that prompt, so it takes the password.
 - **Network secrets.** A Wi-Fi key, 802.1X password, VPN password or
   WireGuard key typed in Network Connections goes into its NetworkManager
   profile with flags 0, which NetworkManager stores in

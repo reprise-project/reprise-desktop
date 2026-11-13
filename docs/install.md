@@ -439,8 +439,9 @@ desktop and stays out of the way when it's missing.
   pam_kwallet5, and autostart runs `pam_kwallet_init`. The wallet must be
   named `kdewallet` and use the login password with classic (Blowfish)
   encryption. The lock screen does not open a wallet left closed.
-- fprintd, for a fingerprint at the lock screen (enroll with
-  `fprintd-enroll`) through the `reprise-fingerprint` PAM service, which
+- fprintd, for a fingerprint at the lock screen (add fingers on User
+  Accounts' Fingerprints tab, greyed without it) through the
+  `reprise-fingerprint` PAM service, which
   keeps an account pam_faillock locked locked. The admin prompt takes one
   when `/etc/pam.d/polkit-1` has `pam_fprintd`.
 - geoclue, for programs that ask for your location and for the automatic

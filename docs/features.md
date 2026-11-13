@@ -465,6 +465,8 @@ are.
 ## Lock, power and session
 
 - **Lock screen** with a password or a fingerprint, whichever comes first.
+  Fingers are added and deleted on your account's Fingerprints tab in User
+  Accounts.
   The password also unlocks your keyring if it was left locked. An expired
   password still unlocks; the next login that starts a new session asks for
   a new one. Prefer

@@ -3,6 +3,7 @@ reprisebus::test_session!();
 
 mod acct;
 mod adduser;
+mod fingers;
 mod passwd;
 mod picture;
 mod props;
@@ -22,9 +23,11 @@ use repriseapp::{
     App, BTN_LEFT, Child, Ctx, DropForm, Event, FileDrop, PointerInput, Reply, WinId,
 };
 use reprisekit::access::Tree;
+use reprisekit::controls::addfinger::{self, AddFinger};
 use reprisekit::controls::filedlg::{
     self, DlgMode, Event as FileEvent, Fields as FileFields, FileDlg,
 };
+use reprisekit::controls::fingerprints;
 use reprisekit::controls::msgbox::Fields;
 use reprisekit::controls::remotepassword;
 use reprisekit::controls::{form, propsheet};
@@ -44,6 +47,8 @@ const BROWSE: WinId = WinId::named("browse");
 const REMOVE: WinId = WinId::named("remove");
 const ERROR: WinId = WinId::named("error");
 const RD_PASSWORD: WinId = WinId::named("rd_password");
+const ADD_FINGER: WinId = WinId::named("add_finger");
+const CLEAR_FINGERS: WinId = WinId::named("clear_fingers");
 
 const TITLE: &str = "User Accounts";
 const BUSY: &str = "Another change is still being made. Try again once it is done.";
@@ -89,6 +94,10 @@ struct AccountsApp {
     rd_password: Option<RdPasswordDialog>,
     /// Open your Properties on Password once the accounts are read.
     open_yours: bool,
+    fingers: fingers::Fingers,
+    finger_sources: fingers::Sources,
+    add_finger: Option<AddFinger>,
+    clear_fingers: Option<MsgBox>,
 }
 
 impl AccountsApp {
@@ -112,6 +121,10 @@ impl AccountsApp {
             sources: remote::Sources::default(),
             rd_password: None,
             open_yours: false,
+            fingers: fingers::Fingers::default(),
+            finger_sources: fingers::Sources::default(),
+            add_finger: None,
+            clear_fingers: None,
         }
     }
 
@@ -193,6 +206,194 @@ impl AccountsApp {
         self.remote.opened += 1;
         self.rd_password = Some(RdPasswordDialog::new(action, self.remote.opened));
         Reply::redraw_all()
+    }
+
+    /// Read the reader and your fingers on it, unless a read is under way.
+    fn read_fingers(&mut self) {
+        if self.fingers.reading.is_some() {
+            return;
+        }
+        let read = self.finger_sources.read;
+        self.fingers.reading = Some(self.spawn(read));
+    }
+
+    /// Put the Fingerprints page for the open account on its tab.
+    fn show_fingers(&mut self) {
+        if let Some(p) = &mut self.props {
+            let facts = self.fingers.facts(p.user.you);
+            p.show_fingers(fingerprints::section(&facts));
+        }
+    }
+
+    /// A read, a delete or an add's step came back: show it, in the dialog that started an add
+    /// too. A finished delete or add reads your fingers again. True when anything changed.
+    fn fingers_done(&mut self) -> bool {
+        let mut changed = self.fingers.read_landed();
+        let mut reread = false;
+        if let Some(done) = self.fingers.delete_landed() {
+            changed = true;
+            reread = true;
+            if let Err(r) = done {
+                self.fail(fingers::refusal(r).text("delete the fingerprint"));
+            }
+        }
+        if let Some((from, steps, ended)) = self.fingers.add_landed() {
+            changed = true;
+            let dialog = self.add_finger.as_mut().filter(|d| d.generation == from);
+            if let Some(d) = dialog {
+                for step in steps {
+                    match step {
+                        fingers::Step::Started => d.started(),
+                        fingers::Step::Scanned(s) => d.scanned(s),
+                    }
+                }
+                if let Some(Err(r)) = ended {
+                    d.refused(fingers::refusal(r));
+                }
+            }
+            reread |= ended.is_some();
+        }
+        if reread {
+            // A read under way may predate the change.
+            self.fingers.reading = None;
+            self.read_fingers();
+            self.fingers.read_landed();
+        }
+        if changed {
+            self.show_fingers();
+        }
+        changed
+    }
+
+    fn fingers_action(&mut self, a: fingerprints::Action, ctx: &mut Ctx) -> Reply {
+        match a {
+            fingerprints::Action::Add => {
+                let added = self.props.as_ref().map(|p| p.fingers().to_vec());
+                let (scan, stages) = self.fingers.scan();
+                self.fingers.opened += 1;
+                let from = self.fingers.opened;
+                self.add_finger = Some(AddFinger::new(
+                    added.unwrap_or_default(),
+                    scan,
+                    stages,
+                    from,
+                ));
+            }
+            fingerprints::Action::Delete(f) => self.delete_fingers(Some(f)),
+            fingerprints::Action::DeleteAll => {
+                self.clear_fingers = Some(MsgBox::new(
+                    "Delete All Fingerprints",
+                    Fields {
+                        text: "Delete all your fingerprints? You unlock with your password until \
+                               you add one again."
+                            .into(),
+                        icon: ctx.icons.get("dialog-question", 32),
+                        buttons: vec!["&Delete All".into(), "Cancel".into()],
+                        default: 1,
+                        min_text_h: None,
+                        min_w: 0,
+                        max_w: repriseapp::dialog_max_w(),
+                    },
+                ));
+            }
+        }
+        Reply::redraw_all()
+    }
+
+    /// Delete `finger`, or every finger with `None`, off the loop.
+    fn delete_fingers(&mut self, finger: Option<fingerprints::Finger>) {
+        if self.fingers.deleting.is_some() || self.fingers.add.is_some() {
+            return;
+        }
+        let delete = self.finger_sources.delete;
+        self.fingers.deleting = Some(self.spawn(move || delete(finger.map(|f| f.key()))));
+        self.show_fingers();
+    }
+
+    fn clear_fingers_event(&mut self, ev: Event) -> Reply {
+        let text = self.text();
+        let Some(b) = &mut self.clear_fingers else {
+            return Reply::none();
+        };
+        match b.event(&ev, &text, &self.forms) {
+            oneshot::Outcome::None => Reply::none(),
+            oneshot::Outcome::Redraw => Reply::redraw(),
+            oneshot::Outcome::Closed(button) => {
+                self.clear_fingers = None;
+                if button == Some(0) {
+                    self.delete_fingers(None);
+                }
+                Reply::redraw_all()
+            }
+        }
+    }
+
+    fn add_finger_event(&mut self, ev: Event, ctx: &Ctx) -> Reply {
+        let out = {
+            let Some(d) = self.add_finger.as_mut() else {
+                return Reply::none();
+            };
+            match ev {
+                Event::CloseRequest => d.event(form::Event::Cancel),
+                ev => match form_input(&mut d.form, &ev, ctx) {
+                    Some(e) => d.event(e),
+                    None => return Reply::none(),
+                },
+            }
+        };
+        match out {
+            addfinger::Outcome::None => Reply::none(),
+            addfinger::Outcome::Redraw => Reply::redraw(),
+            addfinger::Outcome::Start(f) => {
+                self.start_add(f);
+                Reply::redraw_all()
+            }
+            addfinger::Outcome::Stop | addfinger::Outcome::Close => {
+                self.close_add_finger();
+                Reply::redraw_all()
+            }
+        }
+    }
+
+    /// Close the Add a Fingerprint dialog, stopping its add if one runs: the add's end still
+    /// lands and reads the fingers again.
+    fn close_add_finger(&mut self) {
+        self.add_finger = None;
+        if let Some(a) = &self.fingers.add {
+            a.stop.stop();
+        }
+    }
+
+    /// Add `finger` on a thread of its own, which tells each step and wakes the loop.
+    fn start_add(&mut self, finger: fingerprints::Finger) {
+        let Some(from) = self.add_finger.as_ref().map(|d| d.generation) else {
+            return;
+        };
+        if self.fingers.add.is_some() || self.fingers.deleting.is_some() {
+            if let Some(d) = &mut self.add_finger {
+                d.refused(addfinger::Refusal::InUse);
+            }
+            return;
+        }
+        let (tx, rx) = channel();
+        let (stop, stopped) = reprisebus::fprint::Stop::new();
+        let waker = self.waker.clone();
+        let wake = move || {
+            if let Some(w) = &waker {
+                w.wake();
+            }
+        };
+        std::thread::spawn(move || {
+            let step = tx.clone();
+            let ended = reprisebus::fprint::add(finger.key(), stopped, |a| {
+                let _ = step.send(fingers::Msg::Step(a));
+                wake();
+            });
+            let _ = tx.send(fingers::Msg::Ended(ended));
+            wake();
+        });
+        self.fingers.add = Some(fingers::Add { from, rx, stop });
+        self.show_fingers();
     }
 
     fn rd_password_event(&mut self, ev: Event, ctx: &Ctx) -> Reply {
@@ -319,7 +520,8 @@ impl AccountsApp {
 
     fn wake(&mut self) -> Reply {
         let remote = self.remote_done();
-        if self.accounts_done() || remote {
+        let fingers = self.fingers_done();
+        if self.accounts_done() || remote || fingers {
             Reply::redraw_all()
         } else {
             Reply::none()
@@ -358,6 +560,8 @@ impl AccountsApp {
                     self.props = None;
                     self.browse = None;
                     self.rd_password = None;
+                    self.close_add_finger();
+                    self.clear_fingers = None;
                 }
                 Some(u) => {
                     let p = self.props.as_mut().expect("checked above");
@@ -439,6 +643,10 @@ impl AccountsApp {
         self.props = Some(p);
         self.show_remote();
         self.read_remote(Duration::ZERO);
+        self.show_fingers();
+        if self.user(uid).is_some_and(|u| u.you) {
+            self.read_fingers();
+        }
     }
 
     fn ask_remove(&mut self, uid: u32, ctx: &mut Ctx) {
@@ -570,7 +778,7 @@ impl AccountsApp {
         reply
     }
 
-    fn props_event(&mut self, ev: Event, ctx: &Ctx) -> Reply {
+    fn props_event(&mut self, ev: Event, ctx: &mut Ctx) -> Reply {
         let Some(p) = self.props.as_mut() else {
             return Reply::none();
         };
@@ -627,10 +835,13 @@ impl AccountsApp {
                 Reply::redraw_all()
             }
             props::Outcome::RemotePassword(action) => self.open_rd_password(action),
+            props::Outcome::Fingers(a) => self.fingers_action(a, ctx),
             props::Outcome::Close => {
                 self.props = None;
                 self.browse = None;
                 self.rd_password = None;
+                self.close_add_finger();
+                self.clear_fingers = None;
                 Reply::redraw_all()
             }
         }
@@ -865,6 +1076,15 @@ impl App for AccountsApp {
                 modal: true,
             });
         }
+        if let Some(d) = &self.add_finger {
+            out.push(Child {
+                id: ADD_FINGER,
+                title: addfinger::TITLE.into(),
+                size: self.forms.text.size(d.client()),
+                fixed: true,
+                modal: true,
+            });
+        }
         if self.browse.is_some() {
             out.push(Child {
                 id: BROWSE,
@@ -877,6 +1097,9 @@ impl App for AccountsApp {
         if let Some(text) = &self.text {
             if let Some((_, b)) = &self.remove {
                 out.push(b.child(REMOVE, text, &self.forms));
+            }
+            if let Some(b) = &self.clear_fingers {
+                out.push(b.child(CLEAR_FINGERS, text, &self.forms));
             }
             if let Some(b) = &self.error {
                 out.push(b.child(ERROR, text, &self.forms));
@@ -935,6 +1158,17 @@ impl App for AccountsApp {
                 c.fill_rect(c.bounds(), cs.button_face);
                 if let Some(d) = &self.rd_password {
                     form::draw(c, &ctx.text, &paint, &d.form, true, px);
+                }
+            }
+            ADD_FINGER => {
+                c.fill_rect(c.bounds(), cs.button_face);
+                if let Some(d) = &self.add_finger {
+                    form::draw(c, &ctx.text, &paint, &d.form, true, px);
+                }
+            }
+            CLEAR_FINGERS => {
+                if let Some(b) = &self.clear_fingers {
+                    b.draw(c, &forms, &ctx.text);
                 }
             }
             BROWSE => {
@@ -998,6 +1232,16 @@ impl repriseapp::Extended for AccountsApp {
                     oneshot::access_form(&d.form, tree, &ctx.text, px);
                 }
             }
+            ADD_FINGER => {
+                if let Some(d) = &self.add_finger {
+                    oneshot::access_form(&d.form, tree, &ctx.text, px);
+                }
+            }
+            CLEAR_FINGERS => {
+                if let Some(b) = &self.clear_fingers {
+                    b.access(tree, &ctx.text, &forms);
+                }
+            }
             BROWSE => {
                 if let Some(d) = &self.browse {
                     let r = Rect::new(0, 0, d.client().0, d.client().1);
@@ -1023,6 +1267,7 @@ impl repriseapp::Extended for AccountsApp {
             PROPS => self.props.as_mut()?.sheet.open_mut(),
             ADD => &mut self.add.as_mut()?.form,
             RD_PASSWORD => &mut self.rd_password.as_mut()?.form,
+            ADD_FINGER => &mut self.add_finger.as_mut()?.form,
             _ => return None,
         };
         Some(DropForm { form, px: None })
@@ -1052,6 +1297,8 @@ impl AccountsApp {
             PROPS => self.props_event(ev, ctx),
             ADD => self.add_event(ev, ctx),
             RD_PASSWORD => self.rd_password_event(ev, ctx),
+            ADD_FINGER => self.add_finger_event(ev, ctx),
+            CLEAR_FINGERS => self.clear_fingers_event(ev),
             BROWSE => self.browse_event(ev, ctx),
             REMOVE => self.remove_event(ev),
             ERROR => self.error_event(ev),
@@ -1226,6 +1473,97 @@ mod tests {
         assert_eq!(
             error_text(&app).as_deref(),
             Some("Al Bo (al) is logged on. Delete the account once they have logged off.")
+        );
+    }
+
+    fn virtual_reader() -> reprisebus::fprint::Found {
+        reprisebus::fprint::Found::Reader(reprisebus::fprint::Reader {
+            name: "Virtual reader".into(),
+            swipe: false,
+            stages: 5,
+            fingers: vec!["right-index-finger".into()],
+        })
+    }
+
+    fn with_reader() -> AccountsApp {
+        let mut app = AccountsApp::new();
+        app.finger_sources = fingers::Sources {
+            read: virtual_reader,
+            delete: |_| Err(reprisebus::fprint::Refusal::NotAuthorized),
+        };
+        app.users.refresh(
+            vec![user(1000, "jo", true, true), user(1001, "al", false, false)],
+            vec![None, None],
+        );
+        app
+    }
+
+    #[test]
+    fn only_your_own_sheet_reads_the_reader() {
+        let mut app = with_reader();
+        app.open_props(1001);
+        assert!(app.fingers.reading.is_none());
+        app.props = None;
+        app.open_props(1000);
+        assert!(app.fingers_done());
+        assert_eq!(
+            app.props.unwrap().fingers(),
+            [fingerprints::Finger::RightIndex]
+        );
+    }
+
+    #[test]
+    fn a_refused_delete_says_why_and_reads_the_fingers_again() {
+        let mut app = with_reader();
+        app.open_props(1000);
+        app.fingers.found = None;
+        app.delete_fingers(Some(fingerprints::Finger::RightIndex));
+        assert!(app.fingers.facts(true).busy);
+        assert!(app.fingers_done());
+        assert_eq!(
+            error_text(&app).as_deref(),
+            Some("You weren't allowed to delete the fingerprint.")
+        );
+        assert_eq!(app.fingers.found, Some(virtual_reader()));
+        assert!(!app.fingers.facts(true).busy);
+    }
+
+    #[test]
+    fn an_adds_steps_reach_only_the_dialog_that_started_it() {
+        use reprisebus::fprint::Adding;
+        let mut app = with_reader();
+        app.open_props(1000);
+        app.fingers_done();
+        app.fingers_action(fingerprints::Action::Add, &mut test_ctx());
+        let d = app.add_finger.as_mut().unwrap();
+        assert_eq!(
+            d.picked(),
+            Some(fingerprints::Finger::LeftThumb),
+            "right index is added"
+        );
+        d.event(form::Event::Default);
+        let send = |app: &mut AccountsApp, from| {
+            let (tx, rx) = channel();
+            let (stop, _) = reprisebus::fprint::Stop::new();
+            tx.send(fingers::Msg::Step(Adding::Started)).unwrap();
+            tx.send(fingers::Msg::Ended(Ok(()))).unwrap();
+            app.fingers.add = Some(fingers::Add { from, rx, stop });
+            app.fingers_done();
+        };
+        send(&mut app, 0);
+        let d = app.add_finger.as_ref().unwrap();
+        assert!(
+            matches!(d.step, addfinger::Step::Waiting(_)),
+            "{:?}",
+            d.step
+        );
+        let from = d.generation;
+        send(&mut app, from);
+        let d = app.add_finger.as_ref().unwrap();
+        assert!(
+            matches!(d.step, addfinger::Step::Scanning { .. }),
+            "{:?}",
+            d.step
         );
     }
 }
