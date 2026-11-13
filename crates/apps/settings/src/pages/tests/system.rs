@@ -395,7 +395,10 @@ fn privacy_holds_app_permissions_history_and_the_sharing_border() {
         "recent files",
         "history",
         "screen sharing",
+        "share",
+        "remote control",
     ] {
+        assert!(Page::Privacy.find(k).is_some(), "{k}");
         assert!(Page::Privacy.keywords().contains(&k), "{k}");
         assert!(!Page::Advanced.keywords().contains(&k), "{k}");
     }

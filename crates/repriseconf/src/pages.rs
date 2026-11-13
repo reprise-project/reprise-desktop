@@ -402,6 +402,8 @@ impl Page {
                 "recent files",
                 "history",
                 "screen sharing",
+                "share",
+                "remote control",
             ],
             Page::LoginManager => &[
                 "login screen",
