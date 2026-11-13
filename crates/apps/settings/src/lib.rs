@@ -389,6 +389,8 @@ struct SettingsApp {
     /// failed Forget; `reading_permissions` holds the read under way.
     permissions_due: bool,
     reading_permissions: Option<Receiver<PermissionList>>,
+    /// The Forget under way: the answer it drops and the job's reply.
+    forgetting: Option<(PermissionAnswer, Receiver<Result<(), String>>)>,
 
     /// The Flatpak installations the Clipboard Access list reads, the first time the Privacy page
     /// shows; `clip_reading` holds the read under way.
@@ -699,6 +701,7 @@ impl SettingsApp {
             location_file: repriseconf::location::path(),
             permissions_due: true,
             reading_permissions: None,
+            forgetting: None,
             flatpak_installs: if cfg!(test) {
                 Vec::new()
             } else {

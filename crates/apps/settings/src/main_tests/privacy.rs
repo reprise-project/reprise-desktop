@@ -226,6 +226,7 @@ fn forget_drops_a_location_answer_from_the_file() {
         repriseconf::location::load_from(&file),
         std::collections::BTreeMap::from([("org.example.NoSuchWeather".to_string(), false)])
     );
+    assert!(app.forget_done());
     assert_eq!(app.permissions.rows.len(), 1);
     assert_eq!(
         app.permissions.rows[0].cells[0],
@@ -268,6 +269,19 @@ fn forget_deletes_the_picked_answer_from_its_table_in_the_store() {
         [["input-capture", "input-capture", "org.example.Share"].map(String::from)]
     );
     assert_eq!(
+        app.permissions.rows.len(),
+        2,
+        "the row stays until the job answers"
+    );
+    assert!(!forget_enabled(&app), "Forget greys while the job runs");
+    app.forget_permission();
+    assert!(
+        crate::permissions::FORGOTTEN.take().is_empty(),
+        "a second Forget waits for the first"
+    );
+    assert!(app.forget_done());
+    assert!(!app.forget_done(), "the reply is taken once");
+    assert_eq!(
         cells(&app),
         [["Shot", "Screenshots", "Allowed"].map(String::from)]
     );
@@ -301,6 +315,7 @@ fn forget_drops_the_program_from_every_token_of_its_table_and_leaves_the_others(
     app.permissions.selection.set_only(Some(1));
     app.sync_apply();
     app.forget_permission();
+    assert!(app.forget_done());
     assert_eq!(
         crate::permissions::FORGOTTEN.take(),
         [
