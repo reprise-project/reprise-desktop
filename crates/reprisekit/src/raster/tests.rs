@@ -687,6 +687,20 @@ fn resample_box_upscale_is_nearest() {
 }
 
 #[test]
+fn resample_box_uneven_upscale_repeats_each_pixel_over_the_columns_its_box_covers() {
+    let (a, b, c) = (0xFF11_2233, 0x8040_2010, 0x0000_0000);
+    let src = Canvas::from_pixels(3, 2, vec![a, b, c, c, b, a]);
+    let d = src.resample_box(7, 3);
+    #[rustfmt::skip]
+    let want = vec![
+        a, a, a, b, b, c, c,
+        a, a, a, b, b, c, c,
+        c, c, c, b, b, a, a,
+    ];
+    assert_eq!(d.pixels, want);
+}
+
+#[test]
 fn argb_be_is_big_endian_straight_alpha() {
     let c = Canvas::from_pixels(3, 1, vec![0xFF60_6060, 0, 0x8040_2000]);
     assert_eq!(

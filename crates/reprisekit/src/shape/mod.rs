@@ -19,7 +19,7 @@ mod glyph;
 mod grad;
 mod numerals;
 
-pub use cover::{ellipse, polygon, ringed, rounded, rounded4, stroke};
+pub use cover::{ellipse, polygon, ringed, ringed_each, rounded, rounded4, stroke};
 pub use glyph::{Glyph, glyph};
 pub use grad::{Stops, radial};
 pub use numerals::{NUMERAL_H, NUMERAL_W, numerals, numerals_width};
