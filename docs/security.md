@@ -115,6 +115,18 @@ leaves no restore token behind. In lock mode it gets the screens made for
 the client instead. As with `reprise_input_v1`, this is no boundary against
 code running as you.
 
+The screen recorder, `reprise-record`, also starts its ScreenCast sessions
+without the dialog, but only for a recording you asked for: the
+compositor's recording key, the region picker's Record mode or the tray.
+When it starts the recorder for one, the compositor sends the portal the
+recorder's pid over `reprise_input_v1`. The portal skips the dialog only for
+a Start from that process, running `reprise-record` from `/usr/bin` or
+`/usr/local/bin`, within 10 s of the grant, and only once. A recorder started
+any other way, from an autostart entry, the Run box, a launcher or a
+terminal, gets the dialog like any other app. Such a session gets every
+screen, with the pointer drawn in, and leaves no restore token behind; its
+captures light the red border, around the area while an area is recorded.
+
 ## X11 programs
 
 All X11 programs share one Xwayland server, which Reprise starts on the

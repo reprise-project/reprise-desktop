@@ -1,0 +1,32 @@
+[package]
+name = "reprise-record"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+description = "Screen recording: a screen or an area of it, and what plays if asked, into an MP4 file"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "reprise-record"
+path = "src/main.rs"
+
+[dependencies]
+reprisebus = { path = "../../reprisebus" }
+reprisevideo = { path = "../../reprisevideo" }
+repriseconf = { path = "../../repriseconf" }
+ffmpeg = { package = "ffmpeg-the-third", version = "6", default-features = false, features = ["codec", "format", "software-scaling"] }
+pipewire = { workspace = true, features = ["v0_3_33"] }
+zbus.workspace = true
+futures-util.workspace = true
+serde = { workspace = true, features = ["derive"] }
+wayland-client.workspace = true
+libc.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

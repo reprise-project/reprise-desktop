@@ -298,8 +298,10 @@ user's server.
   Tokio, rustls and rcgen, built in. rustls's aws-lc-rs compiles its C library
   with the C compiler. IronRDP turns on flate2's zlib backend, which every
   program shares, so zlib is a runtime requirement
-- `reprise-rdp` encodes H.264 through FFmpeg 8 or later (libavcodec,
-  libavfilter, libavutil, libswscale) with the `ffmpeg-the-third` crate, whose
+- `reprise-rdp` and the screen recorder `reprise-record` encode H.264
+  through FFmpeg 8 or later (libavcodec, libavfilter, libavutil, libswscale,
+  and libavformat for the recorder's MP4 files, with FFmpeg's own AAC
+  encoder for their sound) with the `ffmpeg-the-third` crate, whose
   bindings are generated from FFmpeg's headers at build time (clang). Its
   colour conversion sets the scaler's options on `SwsContext` directly, which
   FFmpeg 7 doesn't allow

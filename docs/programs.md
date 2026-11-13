@@ -891,6 +891,17 @@ Classic is the One Dark scheme, under Glass `[glass] mode = "dark"`.
   resize of the client's window updates it. See
   [remote-desktop.md](remote-desktop.md) for connecting and
   [security.md](security.md#remote-desktop) for logins.
+- **Screen recorder.** `reprise-record --file PATH --output NAME [--area
+  X,Y,WIDTH,HEIGHT] [--sound]` records output NAME, or an area of it in its
+  logical pixels, into PATH as an MP4 file (H.264, and AAC for `--sound`, what
+  plays through the default output device). The compositor starts it for a
+  recording and stops it with SIGINT; it has no window. It reads the screen
+  through the portal's ScreenCast, which asks nothing for a recording the
+  compositor started ([security.md](security.md#sandboxed-programs)), and
+  codes the whole screen on the first encoder that works in Remote Desktop's
+  automatic order (VA-API, NVENC, Vulkan, x264), an area on x264. Its log
+  lines reach the journal through the compositor, which reads its stderr; on
+  failure it removes PATH and its last line there is the reason.
 - **Remote logins.** Under `reprise-login` with remote logins on,
   `reprise-login-rdp` listens on the port instead, as the system service
   `reprise-login-rdp.service` and its own system user, and has no window.

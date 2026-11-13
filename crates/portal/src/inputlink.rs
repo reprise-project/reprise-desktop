@@ -8,7 +8,7 @@ use crate::inputproto::{
     reprise_color_pick_v1::{self, RepriseColorPickV1},
     reprise_eis_client_v1::RepriseEisClientV1,
     reprise_input_capture_v1::{self, RepriseInputCaptureV1},
-    reprise_input_v1::{Kind, RepriseInputV1},
+    reprise_input_v1::{self, Kind, RepriseInputV1},
     reprise_keys_v1::{KeyState, RepriseKeysV1},
     reprise_lock_screen_v1::{self, Reason, RepriseLockScreenV1},
     reprise_sandboxed_v1::{self, RepriseSandboxedV1},
@@ -130,6 +130,8 @@ struct Shared {
     zone_set: u32,
     /// The compositor's last `reprise_sandboxed_v1` list; None before a v5 compositor sent one.
     sandboxed: Option<BTreeSet<String>>,
+    /// The recorders the compositor started for the user (`recorder_granted`).
+    grants: crate::trusted::Grants,
 }
 
 #[derive(Clone)]
@@ -331,7 +333,7 @@ impl Link {
             registry_queue_init::<State>(&conn).map_err(|e| format!("registry: {e}"))?;
         let qh = queue.handle();
         let input: RepriseInputV1 = globals
-            .bind(&qh, 2..=10, ())
+            .bind(&qh, 2..=11, ())
             .map_err(|e| format!("reprise_input_v1: {e}"))?;
         let shortcuts = input.version() >= 3;
         let keys = input.version() >= 4;
@@ -344,6 +346,7 @@ impl Link {
             zones: Vec::new(),
             zone_set: 1,
             sandboxed: None,
+            grants: Default::default(),
         }));
         let sandboxed = (input.version() >= 5).then(|| input.watch_sandboxed(&qh, ()));
         if sandboxed.is_none() {
@@ -420,6 +423,12 @@ impl Link {
             return None;
         }
         self.shared.lock().unwrap().sandboxed.clone()
+    }
+
+    /// Use up the compositor's grant for recorder `pid`, if a fresh one is there.
+    pub fn take_recorder_grant(&self, pid: u32) -> bool {
+        let now = std::time::Instant::now();
+        self.shared.lock().unwrap().grants.take(pid, now)
     }
 
     /// Wakes after each list `sandboxed` takes; several lists may share one wake.
@@ -863,7 +872,21 @@ fn run(
     drop(conn);
 }
 
-delegate_noop!(State: ignore RepriseInputV1);
+impl Dispatch<RepriseInputV1, ()> for State {
+    fn event(
+        state: &mut Self,
+        _: &RepriseInputV1,
+        event: reprise_input_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let reprise_input_v1::Event::RecorderGranted { pid } = event;
+        log::info!("the compositor started recorder {pid} for the user");
+        let now = std::time::Instant::now();
+        state.shared.lock().unwrap().grants.grant(pid, now);
+    }
+}
 delegate_noop!(State: ignore RepriseEisClientV1);
 delegate_noop!(State: ignore RepriseKeysV1);
 delegate_noop!(State: ignore ZxdgOutputManagerV1);

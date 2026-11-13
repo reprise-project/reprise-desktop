@@ -2,6 +2,7 @@
 //! into `wl_shm` buffers or GBM dma-bufs through ext-image-copy-capture (plus a
 //! cursor session for the metadata cursor mode). One connection per thread.
 
+use crate::cast::Capturer;
 use crate::inputproto::reprise_input_v1::RepriseInputV1;
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
 use std::time::{Duration, Instant};
@@ -152,24 +153,38 @@ pub struct Wayland {
 
 impl Wayland {
     pub fn connect() -> Result<Wayland, String> {
-        Wayland::open(false)
+        Wayland::open(Capturer::App)
     }
 
     /// [`Wayland::connect`] for the remote desktop server's capture: the compositor leaves its
     /// red capture border off unless `[remote_desktop] capture_border` is set.
     pub fn connect_remote_capture() -> Result<Wayland, String> {
-        Wayland::open(true)
+        Wayland::open(Capturer::RemoteDesktop)
     }
 
-    fn open(remote: bool) -> Result<Wayland, String> {
+    /// [`Wayland::connect`] for the screen recorder's capture: while the compositor records an
+    /// area of an output, the red capture border outlines that area.
+    pub fn connect_recorder_capture() -> Result<Wayland, String> {
+        Wayland::open(Capturer::Recorder)
+    }
+
+    fn open(capturer: Capturer) -> Result<Wayland, String> {
         let conn = Connection::connect_to_env().map_err(|e| format!("wayland: {e}"))?;
         let (globals, queue) =
             registry_queue_init::<State>(&conn).map_err(|e| format!("registry: {e}"))?;
         let qh = queue.handle();
-        if remote {
-            match globals.bind::<RepriseInputV1, _, _>(&qh, 8..=8, ()) {
+        let version = match capturer {
+            Capturer::App => None,
+            Capturer::RemoteDesktop => Some(8),
+            Capturer::Recorder => Some(11),
+        };
+        if let Some(v) = version {
+            match globals.bind::<RepriseInputV1, _, _>(&qh, v..=v, ()) {
                 Ok(input) => {
-                    input.remote_capture();
+                    match capturer {
+                        Capturer::Recorder => input.recorder_capture(),
+                        _ => input.remote_capture(),
+                    }
                     input.destroy();
                 }
                 Err(e) => log::info!("reprise_input_v1: {e}; the capture border shows"),

@@ -90,7 +90,7 @@ build() {
   # cargo home (registry and git checkouts) to fixed prefixes.
   export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$srcdir=/usr/src/debug/$pkgbase --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo"
   # Named explicitly: the workspace has a root package, so a bare `cargo build --release` would skip the programs package() installs.
-  cargo build --release --locked -p reprise -p reprise-portal -p reprise-apps -p reprise-rdp -p reprise-login -p reprise-login-rdp
+  cargo build --release --locked -p reprise -p reprise-portal -p reprise-apps -p reprise-rdp -p reprise-record -p reprise-login -p reprise-login-rdp
 }
 
 package() {
@@ -106,6 +106,7 @@ package() {
     install -Dm644 "data/autostart/$app.desktop" "$pkgdir/etc/xdg/autostart/$app.desktop"
   done
   install -Dm755 target/release/reprise-rdp "$pkgdir/usr/bin/reprise-rdp"
+  install -Dm755 target/release/reprise-record "$pkgdir/usr/bin/reprise-record"
   install -Dm755 target/release/reprise-login "$pkgdir/usr/bin/reprise-login"
   install -Dm755 target/release/reprise-login-settings "$pkgdir/usr/lib/reprise/reprise-login-settings"
   install -Dm755 target/release/reprise-login-rdp "$pkgdir/usr/bin/reprise-login-rdp"

@@ -116,7 +116,7 @@ build() {
   export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$srcdir=/usr/src/debug/$pkgbase --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo"
   # Named explicitly: the workspace has a root package, so a bare build
   # would build only that.
-  cargo build --profile "$_profile" --locked -p reprise -p reprise-portal -p reprise-apps -p reprise-rdp -p reprise-login -p reprise-login-rdp
+  cargo build --profile "$_profile" --locked -p reprise -p reprise-portal -p reprise-apps -p reprise-rdp -p reprise-record -p reprise-login -p reprise-login-rdp
 }
 
 package() {
@@ -132,6 +132,7 @@ package() {
     install -Dm644 "data/autostart/$app.desktop" "$pkgdir/etc/xdg/autostart/$app.desktop"
   done
   install -Dm755 "$srcdir/target/$_profile/reprise-rdp" "$pkgdir/usr/bin/reprise-rdp"
+  install -Dm755 "$srcdir/target/$_profile/reprise-record" "$pkgdir/usr/bin/reprise-record"
   install -Dm755 "$srcdir/target/$_profile/reprise-login" "$pkgdir/usr/bin/reprise-login"
   install -Dm755 "$srcdir/target/$_profile/reprise-login-settings" "$pkgdir/usr/lib/reprise/reprise-login-settings"
   install -Dm755 "$srcdir/target/$_profile/reprise-login-rdp" "$pkgdir/usr/bin/reprise-login-rdp"

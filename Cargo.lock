@@ -4659,6 +4659,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "reprise-record"
+version = "0.1.0"
+dependencies = [
+ "ffmpeg-the-third",
+ "futures-util",
+ "libc",
+ "log",
+ "pipewire",
+ "reprisebus",
+ "repriseconf",
+ "reprisevideo",
+ "serde",
+ "tempfile",
+ "wayland-client",
+ "zbus 6.2.1",
+]
+
+[[package]]
 name = "reprise-settings"
 version = "0.1.0"
 dependencies = [
