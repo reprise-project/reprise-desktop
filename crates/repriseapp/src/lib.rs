@@ -28,6 +28,7 @@ mod hangup;
 pub mod heads;
 pub mod iconjobs;
 mod input;
+mod keyboard;
 pub mod keys;
 pub mod listicons;
 pub mod listjob;
@@ -323,6 +324,7 @@ struct Host {
     slots: Vec<Slot>,
     focus: Option<WinId>,
     keyboard: Option<wl_keyboard::WlKeyboard>,
+    xkb: keyboard::Xkb,
     /// The seat has a keyboard `bind_keyboard` has not bound yet.
     keyboard_due: bool,
     pointer: Option<wl_pointer::WlPointer>,
