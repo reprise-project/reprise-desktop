@@ -373,7 +373,8 @@ matched control focused.
   - **Display:** arrange monitors by dragging them, or pick one with the
     arrows and move it with Ctrl+arrows to the next edge that way, Identify,
     the primary screen, and each screen's resolution, refresh rate, orientation, scale
-    and adaptive sync. Forget saved layouts drops the layouts the desktop
+    and adaptive sync. With two monitors or more, Multiple displays extends,
+    duplicates or shows only one of them. Forget saved layouts drops the layouts the desktop
     remembers per set of monitors.
   - **Night Light:** warmth, and sunset to sunrise or a schedule.
   - **Sound:** Audio Devices... (Sounds and Audio Devices, for speakers and

@@ -720,7 +720,9 @@ the screen takes the interface of the last session used at this computer.
   Each further press moves to the next; letting go of Super, Enter or a
   click picks it, and Escape keeps what runs. Duplicate puts every monitor
   at the primary one's place and scale in the largest mode they all have,
-  or each in its own mode when they share none.
+  or each in its own mode when they share none. Reprise Settings offers the
+  same four as Multiple displays on the Display page, with its 15-second
+  confirmation.
 - **Fractional scaling** from 1 to 4 in quarter steps, per monitor. Programs
   that support it draw at the exact scale.
 - **Night light** from sunset to sunrise, worked out from your time zone, or

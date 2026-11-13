@@ -14,6 +14,7 @@ use crate::pages::Area;
 use crate::registry::Page;
 
 use repriseconf::hz_string;
+use repriseconf::projection::{self, Projection, Screen};
 
 /// How many rows the Scale combo has: 100% to 400% in quarter steps, the scales `[[outputs]] scale`
 /// takes.
@@ -64,6 +65,9 @@ pub struct Changes {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Display {
+    /// Every head the compositor lists, off ones too, in its order: the displays the "Multiple
+    /// displays" combo numbers.
+    connected: Vec<Head>,
     heads: Vec<Head>,
     monitor: usize,
     /// One per head: what the page has picked for it, kept while another output is shown.
@@ -71,6 +75,8 @@ pub struct Display {
     places: Vec<(i32, i32)>,
     primary_saved: Option<String>,
     primary: Option<String>,
+    /// The "Multiple displays" row picked, while it differs from what the displays show.
+    projection: Option<Projection>,
     /// Whether the compositor has saved layouts in `displays.toml`, which Forget drops.
     pub layouts_saved: bool,
 }
@@ -112,7 +118,10 @@ impl Display {
             .into_iter()
             .zip(std::mem::take(&mut self.picks))
             .collect();
+        self.connected = heads.clone();
         self.heads = heads.into_iter().filter(|h| h.enabled).collect();
+        let now = self.showing();
+        self.projection = self.projection.filter(|p| Some(*p) != now);
         self.places = if self.layout_of_heads() == old_layout && places.len() == self.heads.len() {
             places
         } else {
@@ -253,6 +262,7 @@ impl Display {
             .any(|(h, p)| *p != Pick::of(h))
             || self.moved()
             || self.primary != self.primary_saved
+            || self.projection.is_some()
     }
 
     /// Whether the output runs a mode outside its list. No mode change is offered then: a No or a
@@ -263,6 +273,7 @@ impl Display {
 
     /// The picks back to what the outputs run and the file says.
     pub fn reset(&mut self) {
+        self.projection = None;
         self.picks = self.heads.iter().map(Pick::of).collect();
         self.places = self.heads.iter().map(|h| h.position).collect();
         self.primary = self.primary_saved.clone();
@@ -311,9 +322,15 @@ impl Display {
                 }
             }
         }
+        if let Some(planned) = self.projection_set() {
+            set = planned;
+        }
         let back = set
             .iter()
-            .filter_map(|(n, _)| self.head_named(n).map(|o| (n.clone(), o.state())))
+            .filter_map(|(n, _)| {
+                let o = self.connected.iter().find(|h| h.name == *n)?;
+                Some((n.clone(), o.state()))
+            })
             .collect();
         let primary = self
             .primary
@@ -325,6 +342,92 @@ impl Display {
             back,
             primary,
         })
+    }
+
+    fn screens(&self) -> Vec<Screen> {
+        (self.connected.iter())
+            .map(|h| Screen {
+                name: h.name.clone(),
+                modes: (h.modes.iter())
+                    .map(|m| projection::Mode {
+                        width: m.width,
+                        height: m.height,
+                        refresh_mhz: m.refresh_mhz,
+                        preferred: m.preferred,
+                    })
+                    .collect(),
+                current: h.current.filter(|_| h.enabled),
+                enabled: h.enabled,
+                position: h.position,
+                scale: h.scale,
+                turned: matches!(
+                    h.transform,
+                    Transform::Rotate90
+                        | Transform::Rotate270
+                        | Transform::Flipped90
+                        | Transform::Flipped270
+                ),
+            })
+            .collect()
+    }
+
+    /// What the displays show now; None with fewer than two connected.
+    fn showing(&self) -> Option<Projection> {
+        (self.connected.len() >= 2).then(|| projection::current(&self.screens()))
+    }
+
+    /// The "Multiple displays" combo's rows and the picked one's; None with fewer than two
+    /// displays connected. A third display shown alone is a fifth row, so the combo tells the
+    /// truth.
+    fn projection_choices(&self) -> Option<(Vec<Projection>, usize)> {
+        let now = self.showing()?;
+        let mut rows = Projection::ALL.to_vec();
+        if now.index().is_none() {
+            rows.push(now);
+        }
+        let picked = self.projection.unwrap_or(now);
+        Some((
+            rows.clone(),
+            rows.iter().position(|p| *p == picked).unwrap_or(0),
+        ))
+    }
+
+    pub fn projection_rows(&self) -> Option<(Vec<String>, usize)> {
+        let (rows, sel) = self.projection_choices()?;
+        Some((rows.iter().map(|p| p.row()).collect(), sel))
+    }
+
+    /// Pick row `row` of the "Multiple displays" combo; picking what the displays show drops the
+    /// pick.
+    pub fn pick_projection(&mut self, row: usize) {
+        let Some(p) = self
+            .projection_choices()
+            .and_then(|(rows, _)| rows.get(row).copied())
+        else {
+            return;
+        };
+        self.projection = (self.showing() != Some(p)).then_some(p);
+    }
+
+    /// What Apply asks of every connected display for the picked "Multiple displays" row: on or
+    /// off, its mode, place and scale. It replaces the other picks but the primary and VRR.
+    fn projection_set(&self) -> Option<HeadSet> {
+        let p = self.projection?;
+        let plan = projection::plan(&self.screens(), self.primary.as_deref(), p)?;
+        Some(
+            (self.connected.iter().zip(plan))
+                .map(|(h, w)| {
+                    let cfg = HeadConfig {
+                        enabled: Some(w.enabled),
+                        mode: w.mode.and_then(|i| h.modes.get(i).copied()),
+                        position: Some(w.position),
+                        scale: Some(w.scale),
+                        ..HeadConfig::default()
+                    };
+                    (h.name.clone(), cfg)
+                })
+                .collect(),
+        )
     }
 
     /// Show output `i` with its own picks; every output's picks, the arrangement and the primary
@@ -511,6 +614,7 @@ pub const ORIENTATION: &str = "orientation";
 pub const SCALE: &str = "scale";
 pub const VRR: &str = "vrr";
 pub const FORGET: &str = "forget_layouts";
+pub const PROJECTION: &str = "multiple_displays";
 pub const TEXT_SIZE_NOTE: &str = "text_size_note";
 
 const X: i32 = crate::pages::X;
@@ -648,10 +752,23 @@ pub fn page(d: &Display, a: Area) -> Form {
         d.layouts_saved,
         false,
     ));
+    let mut note_y = 280 + dy;
+    if let Some((rows, sel)) = d.projection_rows() {
+        items.push(Item::label_at(
+            "multiple_label",
+            X,
+            280 + dy,
+            RX - X,
+            "&Multiple displays:",
+        ));
+        let at = (RX, 276 + dy, combo_w);
+        items.push(combo(PROJECTION, at, &rows, sel, true));
+        note_y += 30;
+    }
     items.push(Item::label_at(
         TEXT_SIZE_NOTE,
         X,
-        280 + dy,
+        note_y,
         a.w,
         &reprisekit::text::escape_mnemonic(&crate::pages::text_size_note()),
     ));
@@ -679,6 +796,9 @@ pub fn read(d: &mut Display, form: &Form, id: &str) -> bool {
             .map(|r| d.pick_orientation(r)),
         SCALE => form.combo_selected(SCALE).map(|r| d.pick_scale(r)),
         VRR => form.checked(VRR).map(|on| d.set_vrr(on)),
+        PROJECTION => form
+            .combo_selected(PROJECTION)
+            .map(|r| d.pick_projection(r)),
         _ => return false,
     };
     true
@@ -1145,7 +1265,7 @@ mod tests {
         keys.sort();
         assert_eq!(
             keys,
-            vec!['c', 'f', 'i', 'o', 'p', 'r', 'v'],
+            vec!['c', 'f', 'i', 'm', 'o', 'p', 'r', 'v'],
             "Screen resolution's S is its group's"
         );
     }
@@ -1320,5 +1440,90 @@ mod tests {
         );
         assert_eq!(d.changes(), None);
         assert!(!d.dirty());
+    }
+
+    #[test]
+    fn two_displays_offer_the_multiple_displays_row_and_one_does_not() {
+        assert_eq!(
+            Display::with_heads(vec![test_head("DP-1")]).projection_rows(),
+            None
+        );
+        let d = pair();
+        let (rows, sel) = d.projection_rows().unwrap();
+        assert_eq!(rows.len(), 4);
+        assert_eq!(
+            (rows[sel].as_str(), rows[3].as_str()),
+            ("Extend these displays", "Show only on 2")
+        );
+        let f = page(&d, Area::MIN);
+        assert!(f.item(PROJECTION).is_some());
+        assert!(
+            page(&Display::with_heads(vec![test_head("DP-1")]), Area::MIN)
+                .item(PROJECTION)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn duplicate_asks_every_display_to_the_primary_place_in_the_common_mode() {
+        let mut d = pair();
+        d.pick_projection(1);
+        assert!(d.dirty());
+        let ch = d.changes().unwrap();
+        let at: Vec<_> = (ch.set.iter())
+            .map(|(n, c)| {
+                (
+                    n.as_str(),
+                    c.enabled,
+                    c.position,
+                    c.mode.map(|m| m.refresh_mhz),
+                )
+            })
+            .collect();
+        assert_eq!(
+            at,
+            [
+                ("DP-1", Some(true), Some((0, 0)), Some(60_000)),
+                ("HDMI-A-1", Some(true), Some((0, 0)), Some(60_000)),
+            ]
+        );
+        assert_eq!(ch.back[1].1.position, Some((1920, 0)));
+        d.pick_projection(0);
+        assert!(!d.dirty(), "picking what shows drops the pick");
+    }
+
+    #[test]
+    fn only_2_turns_the_first_off_and_extend_brings_an_off_display_back() {
+        let mut d = pair();
+        d.pick_projection(3);
+        let ch = d.changes().unwrap();
+        assert_eq!(ch.set[0].1.enabled, Some(false));
+        assert_eq!(ch.set[1].1.enabled, Some(true));
+        let mut off = test_head("HDMI-A-1");
+        off.enabled = false;
+        off.current = None;
+        let mut d = Display::with_heads(vec![test_head("DP-1"), off]);
+        assert_eq!(d.names(), ["DP-1"]);
+        let (rows, sel) = d.projection_rows().unwrap();
+        assert_eq!(rows[sel], "Show only on 1");
+        d.pick_projection(0);
+        let ch = d.changes().unwrap();
+        assert_eq!(
+            (ch.set[1].1.enabled, ch.set[1].1.position),
+            (Some(true), Some((1920, 0)))
+        );
+        assert_eq!(ch.back[1].1.enabled, Some(false), "No turns it off again");
+    }
+
+    #[test]
+    fn a_third_display_shown_alone_is_a_fifth_row() {
+        let off = |n| {
+            let mut h = test_head(n);
+            h.enabled = false;
+            h
+        };
+        let d = Display::with_heads(vec![off("DP-1"), off("DP-2"), test_head("HDMI-A-1")]);
+        let (rows, sel) = d.projection_rows().unwrap();
+        assert_eq!((rows.len(), rows[sel].as_str()), (5, "Show only on 3"));
     }
 }
