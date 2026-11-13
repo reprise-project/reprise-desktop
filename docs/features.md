@@ -787,8 +787,8 @@ the screen takes the interface of the last session used at this computer.
 
 ## Hardware and network
 
-- **Sound.** A speaker icon with a volume for each program playing sound,
-  the default output and input, and the track that's playing with its
+- **Sound.** A speaker icon with a volume and an output for each program
+  playing sound, the default output and input, and the track that's playing with its
   buttons. Volume Control has balance, a Recording view and bass and treble
   where the card has them.
 - **Network.** Wi-Fi, wired and VPN through NetworkManager. WireGuard and

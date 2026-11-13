@@ -147,6 +147,9 @@ fn mix(
                 icon: icons.get(&a.key).and_then(|i| i.large.clone()),
                 pos: track_pos(a.volume),
                 mute: a.mute,
+                output: a
+                    .output()
+                    .and_then(|n| snap.sinks.iter().position(|d| d.name == n)),
             })
             .collect(),
     }
@@ -441,6 +444,17 @@ impl Sound {
                 }
                 Reply::redraw()
             }
+            E::AppOutput(key, i) => {
+                let serial = match i.map(|i| self.snapshot.sinks.get(i).and_then(|d| d.serial)) {
+                    Some(None) => return Reply::redraw(),
+                    Some(serial) => serial,
+                    None => None,
+                };
+                for id in self.nodes(&volumepopup::Channel::App(key)) {
+                    pipewire::set_target(id, serial);
+                }
+                Reply::redraw()
+            }
             E::Media(t) => {
                 if let (Some(w), Some((bus, _))) = (&self.players, &self.playing) {
                     w.send(bus, t);
@@ -616,6 +630,7 @@ fn write(snap: &pipewire::Snapshot, changes: &[sheet::Change]) -> bool {
         sheet::Change::Default(id) => pipewire::set_default(id),
         sheet::Change::Volume(id, v) => pipewire::set_volume(snap, id, v),
         sheet::Change::Mute(id, on) => pipewire::set_mute(id, on),
+        sheet::Change::Target(id, sink) => pipewire::set_target(id, sink),
     })
 }
 
@@ -818,6 +833,7 @@ mod tests {
         pipewire::Device {
             id,
             name: name.into(),
+            serial: Some(id.into()),
             label: name.to_uppercase(),
             volume: 0.5,
             mute: false,
@@ -839,6 +855,7 @@ mod tests {
                 .map(|&id| pipewire::Stream {
                     id,
                     channels: Default::default(),
+                    target: None,
                 })
                 .collect(),
             volume,
@@ -875,6 +892,15 @@ mod tests {
         );
         let keys: Vec<_> = m.apps.iter().map(|a| (a.key.as_str(), a.pos)).collect();
         assert_eq!(keys, [("firefox", 16), ("mpv", 10)]);
+    }
+
+    #[test]
+    fn a_program_carries_the_output_its_streams_are_moved_to() {
+        let mut s = snap();
+        s.apps[1].streams[0].target = Some("hdmi".into());
+        let m = mix(&s, &BTreeMap::new(), false);
+        let outputs: Vec<_> = m.apps.iter().map(|a| a.output).collect();
+        assert_eq!(outputs, [None, Some(0)]);
     }
 
     #[test]

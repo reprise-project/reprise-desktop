@@ -627,6 +627,7 @@ mod tests {
         Device {
             id,
             name: name.into(),
+            serial: Some(id.into()),
             label: name.into(),
             volume: 1.0,
             mute: false,

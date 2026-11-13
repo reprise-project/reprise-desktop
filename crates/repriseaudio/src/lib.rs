@@ -1,5 +1,5 @@
-//! The PipeWire side of the sound programs: a store fed by `pw-dump -m`, the `wpctl` and `pw-cli`
-//! calls that write back, and [`sounds`] for event sounds. Nothing here draws; [`Store::snapshot`]
+//! The PipeWire side of the sound programs: a store fed by `pw-dump -m`, the `wpctl`, `pw-cli` and
+//! `pw-metadata` calls that write back, and [`sounds`] for event sounds. Nothing here draws; [`Store::snapshot`]
 //! projects the stored objects into the shape the UI wants.
 
 mod channels;
@@ -32,6 +32,8 @@ pub struct Device {
     pub id: u32,
     /// `node.name`, which the default-device metadata matches on.
     pub name: String,
+    /// `object.serial`, which a stream's `target.object` names.
+    pub serial: Option<u64>,
     pub label: String,
     /// 0..1 linear, as `wpctl` shows it: the cube root of the loudest channel's raw volume.
     pub volume: f64,
@@ -57,6 +59,8 @@ pub struct Route {
 pub struct Stream {
     pub id: u32,
     pub channels: Channels,
+    /// The sink's `node.name` the stream is moved to; `None` follows the default.
+    pub target: Option<String>,
 }
 
 /// A sound card as Disable and Enable see it: whether its profile is `off`, which directions its profiles carry, and which profile Enable picks.
@@ -93,6 +97,11 @@ pub struct App {
 impl App {
     pub fn ids(&self) -> Vec<u32> {
         self.streams.iter().map(|s| s.id).collect()
+    }
+
+    /// The sink the program plays to, its first stream's target; `None` follows the default.
+    pub fn output(&self) -> Option<&str> {
+        self.streams.first()?.target.as_deref()
     }
 }
 
@@ -175,6 +184,7 @@ impl Store {
 
     pub fn snapshot(&self) -> Snapshot {
         let mut snap = Snapshot::default();
+        let mut targets = BTreeMap::new();
         for (&id, object) in &self.objects {
             match object.get("type").and_then(Value::as_str) {
                 Some(NODE) => {
@@ -203,9 +213,16 @@ impl Store {
                     snap.default_sink = default_name(object, "default.audio.sink");
                     snap.default_source = default_name(object, "default.audio.source");
                     snap.configured_sink = default_name(object, "default.configured.audio.sink");
+                    targets = stream_targets(object);
                 }
                 _ => {}
             }
+        }
+        for s in snap.apps.iter_mut().flat_map(|a| &mut a.streams) {
+            s.target = targets
+                .get(&s.id)
+                .and_then(|&serial| snap.sinks.iter().find(|d| d.serial == Some(serial)))
+                .map(|d| d.name.clone());
         }
         snap.apps.sort_by(|a, b| {
             (a.label.to_lowercase(), &a.key).cmp(&(b.label.to_lowercase(), &b.key))
@@ -229,6 +246,22 @@ impl Store {
             card_device,
         })
     }
+}
+
+/// Each stream's `target.object` in the default metadata: the serial of the node it is moved to.
+/// `-1` (no target) is left out.
+fn stream_targets(object: &Value) -> BTreeMap<u32, u64> {
+    let entries = object.get("metadata").and_then(Value::as_array);
+    entries
+        .into_iter()
+        .flatten()
+        .filter(|e| e["key"] == "target.object")
+        .filter_map(|e| Some((number(&e["subject"])?, serial(&e["value"])?)))
+        .collect()
+}
+
+fn serial(v: &Value) -> Option<u64> {
+    v.as_u64().or_else(|| v.as_str()?.parse().ok())
 }
 
 fn number(v: &Value) -> Option<u32> {
@@ -343,6 +376,7 @@ fn device(id: u32, object: &Value) -> Device {
     Device {
         id,
         name: name.to_string(),
+        serial: serial(&props["object.serial"]),
         label: label.to_string(),
         // A stream that has not negotiated its format reports no channels; its overall volume stands in.
         volume: if channels.levels.is_empty() {
@@ -405,6 +439,7 @@ fn add_stream(
             a.streams.push(Stream {
                 id,
                 channels: v.channels,
+                target: None,
             });
             for p in pids {
                 if !a.pids.contains(&p) {
@@ -437,6 +472,7 @@ fn add_stream(
                 streams: vec![Stream {
                     id,
                     channels: v.channels,
+                    target: None,
                 }],
                 mute: v.mute,
             });
@@ -695,6 +731,7 @@ fn pump(program: &str, tx: &Sender<Snapshot>, waker: &dyn Fn(), shared: &Pump) -
 
 const WPCTL: &str = "wpctl";
 const PW_CLI: &str = "pw-cli";
+const PW_METADATA: &str = "pw-metadata";
 
 /// Each setter queues its write for the [`Writer`] thread and returns whether its program is installed.
 pub fn set_default(id: u32) -> bool {
@@ -779,6 +816,20 @@ pub fn set_profile(card: u32, index: u32) -> bool {
     )
 }
 
+/// Move stream `stream` to the sink with serial `sink`, or back to the default with `None`.
+/// WirePlumber remembers the pick for the program's later streams.
+pub fn set_target(stream: u32, sink: Option<u64>) -> bool {
+    writer().send(Key::Target(stream), PW_METADATA, target_args(stream, sink))
+}
+
+fn target_args(stream: u32, sink: Option<u64>) -> Vec<String> {
+    let (id, key) = (stream.to_string(), "target.object".to_string());
+    match sink {
+        Some(serial) => vec![id, key, serial.to_string(), "Spa:Id".into()],
+        None => vec!["-d".into(), id, key],
+    }
+}
+
 pub fn set_mute(id: u32, on: bool) -> bool {
     set_mute_then(id, on, |_| {})
 }
@@ -800,6 +851,7 @@ enum Key {
     Volume(u32),
     Mute(u32),
     Profile(u32),
+    Target(u32),
 }
 
 type Done = Box<dyn FnOnce(bool) + Send>;
@@ -1671,6 +1723,60 @@ mod tests {
         )));
         let labels: Vec<String> = store.snapshot().apps.into_iter().map(|a| a.label).collect();
         assert_eq!(labels, ["Audacious", "zoom"]);
+    }
+
+    /// Serials arrive as numbers or strings; a `-1` target and one naming no sink follow the default.
+    #[test]
+    fn a_streams_target_object_names_its_sink() {
+        let mut store = loaded();
+        let props = r#""application.name": "Game""#;
+        store.apply(&json(&format!(
+            "[{}, {}, {}]",
+            stream(90, props, "[1.0]", false),
+            stream(91, r#""application.name": "Music""#, "[1.0]", false),
+            stream(92, r#""application.name": "Call""#, "[1.0]", false)
+        )));
+        let serial = store.snapshot().sinks[0]
+            .serial
+            .expect("the sink has a serial");
+        store.apply(&json(&format!(
+            r#"[{{
+                "id": 39,
+                "type": "PipeWire:Interface:Metadata",
+                "metadata": [
+                    {{ "subject": 90, "key": "target.object", "type": "Spa:Id", "value": {serial} }},
+                    {{ "subject": 91, "key": "target.object", "type": "Spa:Id", "value": "-1" }},
+                    {{ "subject": 92, "key": "target.object", "type": "Spa:Id", "value": "9999" }}
+                ]
+            }}]"#
+        )));
+        let snap = store.snapshot();
+        let output = |label: &str| {
+            let app = snap.apps.iter().find(|a| a.label == label).expect("app");
+            app.output().map(str::to_string)
+        };
+        assert_eq!(output("Game").as_deref(), Some("auto_null"));
+        assert_eq!(output("Music"), None);
+        assert_eq!(output("Call"), None);
+
+        store.apply(&json(
+            r#"[{ "id": 39, "type": "PipeWire:Interface:Metadata",
+                  "metadata": [ { "subject": 90, "key": "target.object", "value": null } ] }]"#,
+        ));
+        assert_eq!(
+            store.snapshot().apps[1].output(),
+            None,
+            "a removed target follows the default"
+        );
+    }
+
+    #[test]
+    fn a_target_is_set_by_serial_and_removed_for_the_default() {
+        assert_eq!(
+            target_args(90, Some(57)),
+            ["90", "target.object", "57", "Spa:Id"]
+        );
+        assert_eq!(target_args(90, None), ["-d", "90", "target.object"]);
     }
 
     #[test]

@@ -205,6 +205,7 @@ mod tests {
         Device {
             id,
             name: name.into(),
+            serial: Some(id.into()),
             label: format!("{name} label"),
             volume: channels.volume(),
             mute: false,
@@ -222,6 +223,7 @@ mod tests {
                 levels: levels.to_vec(),
                 shares: Vec::new(),
             },
+            target: None,
         };
         Snapshot {
             sinks: vec![

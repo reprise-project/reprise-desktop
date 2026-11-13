@@ -6,10 +6,10 @@ use accesskit::{NodeId, Role};
 
 use super::draw::level_text;
 use super::layout::Layout;
-use super::{Dir, Focus, MUTE, NOW_PLAYING, Transport, VOLUME, VolumePopup, combo_focus};
+use super::{Dir, Focus, MUTE, NOW_PLAYING, Pick, Transport, VOLUME, VolumePopup, combo_focus};
 
 impl VolumePopup {
-    /// The popup's `access` part: the Output and Input combos, a group per shown column (label, slider, Mute), and with a player a "Now Playing" group. Returns the focused node.
+    /// The popup's `access` part: the Output and Input combos, a group per shown column (label, slider, Mute, a program's Output combo), and with a player a "Now Playing" group. Returns the focused node.
     pub fn access(
         &self,
         lay: &Layout,
@@ -28,7 +28,7 @@ impl VolumePopup {
             if let Some(n) = tree.get_mut(Tree::id_of(win, name)) {
                 n.set_label(name);
             }
-            if self.focus == combo_focus(dir) {
+            if self.focus == combo_focus(Pick::Device(dir)) {
                 focus = f;
             }
         }
@@ -60,6 +60,15 @@ impl VolumePopup {
                 "mute",
                 access::toggle(Role::Button, cl.mute, MUTE, col.mute.into(), live),
             );
+            if let (Some(c), Some(ol)) = (&col.output, &cl.output) {
+                let f = combo::access(c, ol, text, px, tree, g, "output");
+                if let Some(n) = tree.get_mut(Tree::id_of(g, "output")) {
+                    n.set_label("Output");
+                }
+                if self.focus == Focus::Device(i) {
+                    focus = f;
+                }
+            }
             match self.focus {
                 Focus::Thumb(f) if f == i => focus = slider,
                 Focus::Mute(f) if f == i => focus = mute,

@@ -1,6 +1,6 @@
 //! The speaker's volume popup: a raised flyout ([`crate::flyout`]) over the tray with Output and Input device combos on top and, under a separator, master's column, an etched line and a column per program playing sound.
 //!
-//! Columns are 96 px wide: the 32 px icon, the name ("Volume" on master), the level in percent, a vertical trackbar (one position per 5 %, loudest on top, on to 150 % shaded past 100 with [`Mix::boost`]) and a 30x26 speaker button that mutes; a muted column greys its trackbar and level. Six programs fit side by side; past six a scrollbar under them scrolls them a column at a time while master stays. The device combos are 360 px wide. Lengths are at 100% text and grow with it; icons, glyphs, the thumb and the scrollbar keep their size.
+//! Columns are 96 px wide: the 32 px icon, the name ("Volume" on master), the level in percent, a vertical trackbar (one position per 5 %, loudest on top, on to 150 % shaded past 100 with [`Mix::boost`]) and a 30x26 speaker button that mutes; a muted column greys its trackbar and level. With two outputs or more a program's column ends in a combo picking its output ("Default", then each output), whose list opens above it. Six programs fit side by side; past six a scrollbar under them scrolls them a column at a time while master stays. The device combos are 360 px wide. Lengths are at 100% text and grow with it; icons, glyphs, the thumb and the scrollbar keep their size.
 //!
 //! While a media player is active a strip under a second separator shows the title over the artist and Previous, Play or Pause and Next buttons (32x28, greyed when the player cannot act). Text is set in the second dialog font (`DialogFont::ShellDlg`).
 //!
@@ -67,6 +67,9 @@ const NAME_PAD: i32 = 2;
 const BAR_GAP: i32 = 8;
 /// Rows an open device list shows before it scrolls.
 const LIST_ROWS: usize = 8;
+/// A program's output combo: under the speaker button, inset from the column's sides.
+const DEVICE_GAP: i32 = 8;
+const DEVICE_INSET: i32 = 4;
 /// The now-playing strip: its height, and its transport buttons.
 const STRIP_H: i32 = 34;
 const MEDIA_W: i32 = 32;
@@ -78,6 +81,8 @@ pub const MUTE: &str = "Mute";
 pub const OUTPUT: &str = "Output:";
 pub const INPUT: &str = "Input:";
 pub const NOW_PLAYING: &str = "Now Playing";
+/// A program's output combo's first row: the program follows the default output.
+pub const DEFAULT: &str = "Default";
 
 /// The track a media player has on, and what it can do.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -146,6 +151,8 @@ pub struct AppLevel {
     pub icon: Option<Canvas>,
     pub pos: usize,
     pub mute: bool,
+    /// The output the program plays to, an index into [`Mix::outputs`]; `None` follows the default.
+    pub output: Option<usize>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -187,6 +194,8 @@ pub enum Event {
     Mute(Channel, bool),
     /// A new default device: an index into `Mix::outputs` / `Mix::inputs`.
     Default(Dir, usize),
+    /// Program `.0` (its key) moves to output `.1`, an index into `Mix::outputs`; `None` follows the default.
+    AppOutput(String, Option<usize>),
     Media(Transport),
 }
 
@@ -198,6 +207,15 @@ pub struct Column {
     pub icon: Option<Canvas>,
     pub volume: TrackBar,
     pub mute: bool,
+    /// A program's output combo, with two outputs or more to pick from.
+    pub output: Option<Combo>,
+}
+
+/// A combo on the popup: a default device's, or the output of the program in column `.0`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pick {
+    Device(Dir),
+    App(usize),
 }
 
 /// A column's volume trackbar at `pos`.
@@ -219,18 +237,39 @@ impl Column {
             icon: level.icon.clone(),
             volume,
             mute: level.mute,
+            output: None,
         }
     }
 
-    fn app(a: &AppLevel, boost: bool) -> Column {
+    fn app(a: &AppLevel, mix: &Mix) -> Column {
         Column {
             key: Some(a.key.clone()),
             label: a.label.clone(),
             icon: a.icon.clone(),
-            volume: volume_bar(a.pos, boost),
+            volume: volume_bar(a.pos, mix.boost),
             mute: a.mute,
+            output: (mix.outputs.len() > 1)
+                .then(|| device_combo(&app_outputs(mix), Some(app_output(a)))),
         }
     }
+}
+
+/// A program's output combo's rows: [`DEFAULT`], then each output.
+fn app_outputs(mix: &Mix) -> Vec<String> {
+    std::iter::once(DEFAULT.to_string())
+        .chain(mix.outputs.iter().cloned())
+        .collect()
+}
+
+/// A program's row in its output combo.
+fn app_output(a: &AppLevel) -> usize {
+    a.output.map_or(0, |i| i + 1)
+}
+
+fn columns(mix: &Mix) -> Vec<Column> {
+    let mut columns = vec![Column::master(&mix.master, mix.boost)];
+    columns.extend(mix.apps.iter().map(|a| Column::app(a, mix)));
+    columns
 }
 
 /// What the keyboard is on. Column parts carry the column's index into
@@ -241,6 +280,8 @@ pub enum Focus {
     Input,
     Thumb(usize),
     Mute(usize),
+    /// A program's output combo.
+    Device(usize),
     Media(Transport),
 }
 
@@ -250,7 +291,7 @@ pub enum Focus {
 pub enum Part {
     Thumb(usize),
     Mute(usize),
-    Combo(Dir),
+    Combo(Pick),
     Bar(ScrollHit),
     Media(Transport),
 }
@@ -296,19 +337,18 @@ fn sync_combo(c: &mut Combo, items: &[String], picked: Option<usize>) -> bool {
     false
 }
 
-fn combo_focus(dir: Dir) -> Focus {
-    match dir {
-        Dir::Output => Focus::Output,
-        Dir::Input => Focus::Input,
+fn combo_focus(p: Pick) -> Focus {
+    match p {
+        Pick::Device(Dir::Output) => Focus::Output,
+        Pick::Device(Dir::Input) => Focus::Input,
+        Pick::App(i) => Focus::Device(i),
     }
 }
 
 impl VolumePopup {
     pub fn new(mix: &Mix) -> VolumePopup {
-        let mut columns = vec![Column::master(&mix.master, mix.boost)];
-        columns.extend(mix.apps.iter().map(|a| Column::app(a, mix.boost)));
         VolumePopup {
-            columns,
+            columns: columns(mix),
             output: device_combo(&mix.outputs, mix.output),
             input: device_combo(&mix.inputs, mix.input),
             first: 0,
@@ -331,8 +371,7 @@ impl VolumePopup {
 
     /// Take the devices and programs from the host. Programs are matched by key: one that stays keeps its focus, light and drag; one that left sends its focus to master and ends its drag. A held thumb keeps its own position since the device lags the drag's writes. Changed combos close their lists; `Redraw` when anything shown moved.
     pub fn sync(&mut self, lay: &Layout, mix: &Mix) -> Event {
-        let mut columns = vec![Column::master(&mix.master, mix.boost)];
-        columns.extend(mix.apps.iter().map(|a| Column::app(a, mix.boost)));
+        let mut columns = columns(mix);
         let moved: Vec<Option<usize>> = self
             .columns
             .iter()
@@ -347,10 +386,28 @@ impl VolumePopup {
         {
             columns[j].volume.set(self.columns[i].volume.pos);
         }
+        // A program's combo keeps its open list while its rows stay.
+        let rows = app_outputs(mix);
+        let mut rebuilt = vec![false; columns.len()];
+        for (i, old) in self.columns.iter_mut().enumerate() {
+            if let (Some(j), Some(mut c)) = (remap(i), old.output.take())
+                && let Some(a) = j.checked_sub(1).and_then(|a| mix.apps.get(a))
+                && columns[j].output.is_some()
+            {
+                rebuilt[j] = sync_combo(&mut c, &rows, Some(app_output(a)));
+                columns[j].output = Some(c);
+            }
+        }
+        let has_combo = |j: usize| columns.get(j).is_some_and(|c| c.output.is_some());
         let can = |t: Transport| mix.playing.as_ref().is_some_and(|np| np.can(t));
         self.focus = match self.focus {
             Focus::Thumb(i) => remap(i).map_or(Focus::Thumb(0), Focus::Thumb),
             Focus::Mute(i) => remap(i).map_or(Focus::Thumb(0), Focus::Mute),
+            Focus::Device(i) => match remap(i) {
+                Some(j) if has_combo(j) => Focus::Device(j),
+                Some(j) => Focus::Thumb(j),
+                None => Focus::Thumb(0),
+            },
             Focus::Media(t) if !can(t) => Focus::Thumb(0),
             f => f,
         };
@@ -360,8 +417,11 @@ impl VolumePopup {
         self.ptr = std::mem::take(&mut self.ptr).carry(|p| match p {
             Part::Thumb(i) => remap(i).map(Part::Thumb),
             Part::Mute(i) => remap(i).map(Part::Mute),
-            Part::Combo(Dir::Output) if output => None,
-            Part::Combo(Dir::Input) if input => None,
+            Part::Combo(Pick::Device(Dir::Output)) if output => None,
+            Part::Combo(Pick::Device(Dir::Input)) if input => None,
+            Part::Combo(Pick::App(i)) => remap(i)
+                .filter(|&j| has_combo(j) && !rebuilt[j])
+                .map(|j| Part::Combo(Pick::App(j))),
             Part::Bar(_) if !bar => None,
             Part::Media(t) if !can(t) => None,
             p => Some(p),

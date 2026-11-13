@@ -669,6 +669,7 @@ fn sample_mix(apps: usize) -> volumepopup::Mix {
                     icon: Some(icon),
                     pos,
                     mute,
+                    output: (name == "Video Call").then_some(1),
                 }
             })
             .collect(),
@@ -676,9 +677,9 @@ fn sample_mix(apps: usize) -> volumepopup::Mix {
     }
 }
 
-/// The speaker's volume popup in `theme` at scale `n`, 950x840: seven programs scrolled by one
-/// with a player's strip, then two programs running past 100 % with master at 120 % and the focus
-/// ring on a thumb, and the Output list open.
+/// The speaker's volume popup in `theme` at scale `n`, 950x880: seven programs scrolled by one
+/// with a player's strip (the call on Headphones), then two programs running past 100 % with
+/// master at 120 %, the focus ring on a thumb and mpv's output list open, and the Output list open.
 fn render_volume_popup(theme: &Theme, n: i32) -> Canvas {
     let text = TextRenderer::load(&FontConfig::default());
     // As a program draws: logical lengths on a canvas `n` device px each, the look's parts at `n`.
@@ -686,7 +687,7 @@ fn render_volume_popup(theme: &Theme, n: i32) -> Canvas {
         look: theme.look.at_scale(n),
         ..theme.clone()
     };
-    let mut c = Canvas::with_scale(950, 840, n);
+    let mut c = Canvas::with_scale(950, 880, n);
     c.fill_rect(c.bounds(), theme.colors.background);
     let edge = reprisekit::taskbar::Edge::Bottom;
     let mut seven = sample_mix(7);
@@ -701,7 +702,7 @@ fn render_volume_popup(theme: &Theme, n: i32) -> Canvas {
     });
     let mut vp = volumepopup::VolumePopup::new(&seven);
     vp.first = 1;
-    let lay = volumepopup::layout(&vp, theme, &text, (475, 455), edge, c.bounds());
+    let lay = volumepopup::layout(&vp, theme, &text, (475, 465), edge, c.bounds());
     volumepopup::draw(&mut c, theme, &text, &vp, &lay);
     let mut boosted = sample_mix(2);
     boosted.boost = true;
@@ -709,13 +710,16 @@ fn render_volume_popup(theme: &Theme, n: i32) -> Canvas {
     let mut vp = volumepopup::VolumePopup::new(&boosted);
     vp.focus = volumepopup::Focus::Thumb(1);
     vp.cues = true;
-    let lay = volumepopup::layout(&vp, theme, &text, (237, 830), edge, c.bounds());
+    if let Some(o) = &mut vp.columns[2].output {
+        o.toggle();
+    }
+    let lay = volumepopup::layout(&vp, theme, &text, (237, 870), edge, c.bounds());
     volumepopup::draw(&mut c, theme, &text, &vp, &lay);
     let mut m = sample_mix(2);
     m.outputs = (1..=10).map(|i| format!("Output {i}")).collect();
     let mut vp = volumepopup::VolumePopup::new(&m);
     vp.output.toggle();
-    let lay = volumepopup::layout(&vp, theme, &text, (712, 830), edge, c.bounds());
+    let lay = volumepopup::layout(&vp, theme, &text, (712, 870), edge, c.bounds());
     volumepopup::draw(&mut c, theme, &text, &vp, &lay);
     c
 }

@@ -9,10 +9,10 @@ use crate::theme::{TextUnits, Theme};
 use crate::trackbar;
 
 use super::{
-    BAR_GAP, COL_GAP, COL_H, COL_W, COMBO_GAP, COMBO_H, Column, DIVIDER_GAP, Dir, FIELD_W, ICON,
-    INPUT, LABEL_GAP, LABEL_W, LEVEL_Y, MARGIN, MAX_SHOWN, MEDIA_GAP, MEDIA_H, MEDIA_W, MUTE_H,
-    MUTE_W, MUTE_Y, NAME_Y, NowPlaying, OUTPUT, ROW_H, SEP_GAP, SEP_H, STRIP_H, THUMB_H,
-    THUMB_WIDER, TRACK_H, TRACK_Y, Transport, VolumePopup,
+    BAR_GAP, COL_GAP, COL_H, COL_W, COMBO_GAP, COMBO_H, Column, DEVICE_GAP, DEVICE_INSET,
+    DIVIDER_GAP, Dir, FIELD_W, ICON, INPUT, LABEL_GAP, LABEL_W, LEVEL_Y, MARGIN, MAX_SHOWN,
+    MEDIA_GAP, MEDIA_H, MEDIA_W, MUTE_H, MUTE_W, MUTE_Y, NAME_Y, NowPlaying, OUTPUT, Pick, ROW_H,
+    SEP_GAP, SEP_H, STRIP_H, THUMB_H, THUMB_WIDER, TRACK_H, TRACK_Y, Transport, VolumePopup,
 };
 
 #[derive(Clone, Debug)]
@@ -26,6 +26,8 @@ pub struct ColumnLayout {
     pub track: trackbar::Layout,
     /// The speaker button that mutes.
     pub mute: Rect,
+    /// A program's output combo, its list above it.
+    pub output: Option<combo::Layout>,
 }
 
 #[derive(Clone, Debug)]
@@ -64,7 +66,7 @@ impl StripLayout {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Hit {
-    Combo(Dir, combo::Hit),
+    Combo(Pick, combo::Hit),
     Track(usize, trackbar::Hit),
     Mute(usize),
     Column(usize),
@@ -74,13 +76,22 @@ pub enum Hit {
     Outside,
 }
 
-/// A column's parts with its top-left at (`x`, `y`), its lengths grown by `u`.
+/// A column's height: taller by the output combo's row when any column has one.
+fn column_h(vp: &VolumePopup, u: TextUnits) -> i32 {
+    let devices = vp.columns.iter().any(|c| c.output.is_some());
+    u.len(COL_H) + i32::from(devices) * (u.len(DEVICE_GAP) + u.len(COMBO_H))
+}
+
+/// A column's parts with its top-left at (`x`, `y`), its lengths grown by `u`. A program's output
+/// list opens above its combo, as wide as its widest row inside `inner`.
 pub(super) fn column_layout(
     col: &Column,
     cm: &ControlMetrics,
     u: TextUnits,
-    x: i32,
-    y: i32,
+    (x, y, h): (i32, i32, i32),
+    inner: Rect,
+    text: &TextRenderer,
+    px: u32,
 ) -> ColumnLayout {
     let l = |v| u.len(v);
     let w = l(COL_W);
@@ -93,8 +104,28 @@ pub(super) fn column_layout(
         thumb,
     );
     let (mw, mh) = (l(MUTE_W), l(MUTE_H));
+    let output = col.output.as_ref().map(|c| {
+        let inset = l(DEVICE_INSET);
+        let field = Rect::new(
+            x + inset,
+            y + l(MUTE_Y) + mh + l(DEVICE_GAP),
+            w - 2 * inset,
+            l(COMBO_H),
+        );
+        let mut cl = combo::layout_rows(c, field, cm, cm.list_row);
+        combo::widen_list(c, &mut cl, text, px, inner.right() + inner.width);
+        let list = &mut cl.list;
+        list.width = list.width.min(inner.width);
+        list.x = list.x.min(inner.right() - list.width);
+        list.y = field.y - list.height;
+        if let Some(sb) = &mut cl.scrollbar {
+            sb.x = list.right() - 1 - sb.width;
+            sb.y = list.y + 1;
+        }
+        cl
+    });
     ColumnLayout {
-        rect: Rect::new(x, y, w, l(COL_H)),
+        rect: Rect::new(x, y, w, h),
         icon: col
             .icon
             .as_ref()
@@ -103,6 +134,7 @@ pub(super) fn column_layout(
         level: Rect::new(x, y + l(LEVEL_Y), w, l(ROW_H)),
         track,
         mute: Rect::new(x + (w - mw) / 2, y + l(MUTE_Y), mw, mh),
+        output,
     }
 }
 
@@ -141,6 +173,7 @@ pub fn layout(
     let rows_w = label_w + l(LABEL_GAP) + l(FIELD_W);
     let w = 2 * margin + (col_w + divider_w + programs_w).max(rows_w);
     let bar_h = if scrolls { l(BAR_GAP) + cm.scroll } else { 0 };
+    let col_h = column_h(vp, u);
     let strip_h = if vp.playing.is_some() {
         l(SEP_GAP) + SEP_H + l(SEP_GAP) + l(STRIP_H)
     } else {
@@ -153,7 +186,7 @@ pub fn layout(
         + l(SEP_GAP)
         + SEP_H
         + l(SEP_GAP)
-        + l(COL_H)
+        + col_h
         + bar_h
         + strip_h
         + margin;
@@ -177,6 +210,7 @@ pub fn layout(
     let cy = sy + SEP_H + l(SEP_GAP);
     let cx = x + margin;
     let px0 = cx + col_w + divider_w;
+    let inner = Rect::new(x + margin, y + margin, w - 2 * margin, h - 2 * margin);
     let columns = vp
         .columns
         .iter()
@@ -187,11 +221,11 @@ pub fn layout(
                 Some(a) => (a >= vp.first && a < vp.first + MAX_SHOWN)
                     .then(|| px0 + (a - vp.first) as i32 * (col_w + gap)),
             };
-            at.map(|ax| column_layout(c, &cm, u, ax, cy))
+            at.map(|ax| column_layout(c, &cm, u, (ax, cy, col_h), inner, text, px))
         })
         .collect();
     let field = |fy: i32| Rect::new(fx, fy, l(FIELD_W), combo_h);
-    let foot = cy + l(COL_H) + bar_h;
+    let foot = cy + col_h + bar_h;
     Layout {
         panel: Rect::new(x, y, w, h),
         output_label: row(oy),
@@ -199,9 +233,9 @@ pub fn layout(
         input_label: row(iy),
         input: combo::layout_rows(&vp.input, field(iy), &cm, cm.list_row),
         separator: Rect::new(x + margin, sy, w - 2 * margin, SEP_H),
-        divider: (shown > 0).then(|| Rect::new(cx + col_w + l(DIVIDER_GAP), cy, SEP_H, l(COL_H))),
+        divider: (shown > 0).then(|| Rect::new(cx + col_w + l(DIVIDER_GAP), cy, SEP_H, col_h)),
         columns,
-        bar: scrolls.then(|| Rect::new(px0, cy + l(COL_H) + l(BAR_GAP), programs_w, cm.scroll)),
+        bar: scrolls.then(|| Rect::new(px0, cy + col_h + l(BAR_GAP), programs_w, cm.scroll)),
         bar_thumb_min: cm.thumb_min,
         strip: vp
             .playing
@@ -242,24 +276,19 @@ pub(super) fn bar_parts(vp: &VolumePopup, lay: &Layout, bar: Rect) -> ScrollPart
 }
 
 pub fn hit(vp: &VolumePopup, lay: &Layout, x: i32, y: i32) -> Hit {
-    let combos = [
-        (Dir::Output, &vp.output, &lay.output),
-        (Dir::Input, &vp.input, &lay.input),
-    ];
     // An open list lies over the columns and may run past the panel.
-    for (dir, c, cl) in combos {
-        if c.open.is_some()
-            && let Some(h) = combo::hit(c, cl, x, y)
-        {
-            return Hit::Combo(dir, h);
-        }
+    if let Some(p) = vp.open_list()
+        && let (Some(c), Some(cl)) = (vp.pick(p), lay.pick(p))
+        && let Some(h) = combo::hit(c, cl, x, y)
+    {
+        return Hit::Combo(p, h);
     }
     if !lay.panel.contains(x, y) {
         return Hit::Outside;
     }
-    for (dir, c, cl) in combos {
-        if let Some(h) = combo::hit(c, cl, x, y) {
-            return Hit::Combo(dir, h);
+    for dir in [Dir::Output, Dir::Input] {
+        if let Some(h) = combo::hit(vp.combo(dir), lay.combo(dir), x, y) {
+            return Hit::Combo(Pick::Device(dir), h);
         }
     }
     if let Some(bar) = lay.bar
@@ -283,6 +312,11 @@ pub fn hit(vp: &VolumePopup, lay: &Layout, x: i32, y: i32) -> Hit {
         if cl.mute.contains(x, y) {
             return Hit::Mute(i);
         }
+        if let (Some(c), Some(ol)) = (&vp.columns[i].output, &cl.output)
+            && let Some(h) = combo::hit(c, ol, x, y)
+        {
+            return Hit::Combo(Pick::App(i), h);
+        }
         if cl.rect.contains(x, y) {
             return Hit::Column(i);
         }
@@ -295,6 +329,14 @@ impl Layout {
         match dir {
             Dir::Output => &self.output,
             Dir::Input => &self.input,
+        }
+    }
+
+    /// Combo `p`'s layout; `None` for a program scrolled out of view or without one.
+    pub(super) fn pick(&self, p: Pick) -> Option<&combo::Layout> {
+        match p {
+            Pick::Device(dir) => Some(self.combo(dir)),
+            Pick::App(i) => self.columns.get(i)?.as_ref()?.output.as_ref(),
         }
     }
 }

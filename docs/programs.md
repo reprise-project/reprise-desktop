@@ -490,11 +490,15 @@ display change applies first, then asks whether to keep it, and reverts after
   slider for each program with its icon, its level in percent and a speaker
   button that mutes it, the default output and input, and the track that's
   playing with its buttons. Six programs fit side by side; more scroll while
-  master stays put. The wheel over a column turns it. Double-click for the
-  sheet.
+  master stays put. The wheel over a column turns it. With two outputs or
+  more, a combo under each program moves it to another output (headphones for
+  the call, speakers for the music) or back to Default, which follows the
+  default output. WirePlumber remembers the pick for the program's next
+  streams. Double-click for the sheet.
 - **Sounds and Audio Devices.** Set the default devices, disable one you
-  never use, and on the Applications tab give each program its own volume.
-  Each one has its icon, so you can find the program that started shouting.
+  never use, and on the Applications tab give each program its own volume
+  and output. Each one has its icon, so you can find the program that started
+  shouting.
 - **Volume Control.** A mixer with a balance, a volume and Mute for the
   speakers and for each program, a Recording view that picks the input, and
   Advanced Controls for bass, treble and whatever else the card offers.

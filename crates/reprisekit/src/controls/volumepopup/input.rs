@@ -5,7 +5,7 @@ use crate::pointer::{Interaction, Lit, WHEEL_ROWS};
 use crate::trackbar::{self, TrackBar};
 
 use super::layout::{Hit, Layout, bar_parts, hit};
-use super::{Dir, Event, Focus, MAX_SHOWN, Part, Transport, VolumePopup, combo_focus};
+use super::{Dir, Event, Focus, MAX_SHOWN, Part, Pick, Transport, VolumePopup, combo_focus};
 
 impl VolumePopup {
     /// The part at (`x`, `y`) on `lay` laid out by [`Self::current`].
@@ -15,7 +15,7 @@ impl VolumePopup {
         match hit(self, lay, x, y) {
             Hit::Track(i, trackbar::Hit::Thumb) if live(i) => Some(Part::Thumb(i)),
             Hit::Mute(i) if live(i) => Some(Part::Mute(i)),
-            Hit::Combo(dir, _) if self.combo(dir).enabled => Some(Part::Combo(dir)),
+            Hit::Combo(p, _) if self.pick(p).is_some_and(|c| c.enabled) => Some(Part::Combo(p)),
             Hit::Bar(h) => Some(Part::Bar(h)),
             Hit::Media(t) if self.can(t) => Some(Part::Media(t)),
             _ => None,
@@ -33,27 +33,59 @@ impl VolumePopup {
         }
     }
 
-    fn combo_mut(&mut self, dir: Dir) -> &mut Combo {
-        match dir {
-            Dir::Output => &mut self.output,
-            Dir::Input => &mut self.input,
+    /// Combo `p`; `None` for a program column without one.
+    pub(super) fn pick(&self, p: Pick) -> Option<&Combo> {
+        match p {
+            Pick::Device(dir) => Some(self.combo(dir)),
+            Pick::App(i) => self.columns.get(i)?.output.as_ref(),
         }
     }
 
-    pub(super) fn open_list(&self) -> Option<Dir> {
-        [Dir::Output, Dir::Input]
-            .into_iter()
-            .find(|&d| self.combo(d).open.is_some())
+    fn pick_mut(&mut self, p: Pick) -> Option<&mut Combo> {
+        match p {
+            Pick::Device(Dir::Output) => Some(&mut self.output),
+            Pick::Device(Dir::Input) => Some(&mut self.input),
+            Pick::App(i) => self.columns.get_mut(i)?.output.as_mut(),
+        }
     }
 
-    /// A press on combo `dir`'s open list: a row is picked (`Default` when it changed), an arrow or the track scrolls, the field or drop button closes it.
-    fn press_list(&mut self, dir: Dir, h: combo::Hit) -> Event {
-        let c = self.combo_mut(dir);
+    pub(super) fn open_list(&self) -> Option<Pick> {
+        let apps = (1..self.columns.len()).map(Pick::App);
+        [Pick::Device(Dir::Output), Pick::Device(Dir::Input)]
+            .into_iter()
+            .chain(apps)
+            .find(|&p| self.pick(p).is_some_and(|c| c.open.is_some()))
+    }
+
+    fn close_list(&mut self) {
+        if let Some(p) = self.open_list()
+            && let Some(c) = self.pick_mut(p)
+        {
+            c.open = None;
+        }
+    }
+
+    /// The event for row `i` picked on combo `p`: a new default device, or a program's output.
+    fn picked(&self, p: Pick, i: usize) -> Event {
+        match p {
+            Pick::Device(dir) => Event::Default(dir, i),
+            Pick::App(col) => match &self.columns[col].key {
+                Some(k) => Event::AppOutput(k.clone(), i.checked_sub(1)),
+                None => Event::None,
+            },
+        }
+    }
+
+    /// A press on combo `p`'s open list: a row is picked (an event when it changed), an arrow or the track scrolls, the field or drop button closes it.
+    fn press_list(&mut self, p: Pick, h: combo::Hit) -> Event {
+        let Some(c) = self.pick_mut(p) else {
+            return Event::None;
+        };
         let page = c.rows as i32;
         let rows = match h {
             combo::Hit::Row(i) => {
                 return if c.pick(i) {
-                    Event::Default(dir, i)
+                    self.picked(p, i)
                 } else {
                     Event::Redraw
                 };
@@ -75,16 +107,21 @@ impl VolumePopup {
         }
     }
 
-    /// A key on combo `dir`'s open list: arrows, Home / End and Page keys move the highlight, Enter takes it, Esc, Tab or the drop key close it.
-    fn list_key(&mut self, dir: Dir, key: form::Key) -> Event {
-        let c = self.combo_mut(dir);
+    /// A key on combo `p`'s open list: arrows, Home / End and Page keys move the highlight, Enter takes it, Esc, Tab or the drop key close it.
+    fn list_key(&mut self, p: Pick, key: form::Key) -> Event {
+        let Some(c) = self.pick_mut(p) else {
+            return Event::None;
+        };
         let page = c.rows as i32;
         let _ = match key {
             form::Key::Up | form::Key::Down => c.step(key == form::Key::Down),
             form::Key::Home | form::Key::End => c.jump(key == form::Key::End),
             form::Key::PageUp => c.scroll(-page),
             form::Key::PageDown => c.scroll(page),
-            form::Key::Enter if c.take() => return Event::Default(dir, c.selected),
+            form::Key::Enter if c.take() => {
+                let i = c.selected;
+                return self.picked(p, i);
+            }
             form::Key::Enter | form::Key::Escape | form::Key::Tab { .. } | form::Key::Drop => {
                 c.open = None;
                 false
@@ -95,8 +132,10 @@ impl VolumePopup {
     }
 
     /// A key on a focused combo with its list closed: arrows, Home / End and Page keys pick at once; F4 or Alt+Down opens the list.
-    fn combo_key(&mut self, dir: Dir, key: form::Key) -> Event {
-        let c = self.combo_mut(dir);
+    fn combo_key(&mut self, p: Pick, key: form::Key) -> Event {
+        let Some(c) = self.pick_mut(p) else {
+            return Event::None;
+        };
         let changed = match key {
             form::Key::Up | form::Key::Left => c.step(false),
             form::Key::Down | form::Key::Right => c.step(true),
@@ -112,7 +151,8 @@ impl VolumePopup {
             _ => false,
         };
         if changed {
-            Event::Default(dir, c.selected)
+            let i = c.selected;
+            self.picked(p, i)
         } else {
             Event::None
         }
@@ -171,7 +211,7 @@ impl VolumePopup {
         Event::Mute(ch, c.mute)
     }
 
-    /// The focus order: Output, Input, each column's thumb and Mute, then
+    /// The focus order: Output, Input, each column's thumb, Mute and output combo, then
     /// the transport buttons. A greyed combo, column or button is no stop.
     fn focus_order(&self) -> Vec<Focus> {
         let mut v = Vec::new();
@@ -183,6 +223,9 @@ impl VolumePopup {
         for (i, c) in self.columns.iter().enumerate() {
             if c.volume.enabled {
                 v.extend([Focus::Thumb(i), Focus::Mute(i)]);
+            }
+            if c.output.as_ref().is_some_and(|o| o.enabled) {
+                v.push(Focus::Device(i));
             }
         }
         v.extend(
@@ -207,7 +250,7 @@ impl VolumePopup {
             None => 0,
         };
         self.focus = order[next];
-        if let Focus::Thumb(i) | Focus::Mute(i) = self.focus {
+        if let Focus::Thumb(i) | Focus::Mute(i) | Focus::Device(i) = self.focus {
             self.reveal(i);
         }
     }
@@ -268,8 +311,10 @@ impl VolumePopup {
             Hit::Track(i, _) if live(i) => Focus::Thumb(i),
             Hit::Mute(i) if live(i) => Focus::Mute(i),
             Hit::Media(t) if self.can(t) => Focus::Media(t),
-            Hit::Combo(d, combo::Hit::Field | combo::Hit::Drop) if self.combo(d).enabled => {
-                combo_focus(d)
+            Hit::Combo(p, combo::Hit::Field | combo::Hit::Drop)
+                if self.pick(p).is_some_and(|c| c.enabled) =>
+            {
+                combo_focus(p)
             }
             _ => return Event::None,
         };
@@ -278,9 +323,7 @@ impl VolumePopup {
         if self.focus == f {
             return if cued { Event::Redraw } else { Event::None };
         }
-        if let Some(d) = self.open_list() {
-            self.combo_mut(d).open = None;
-        }
+        self.close_list();
         self.focus = f;
         Event::Redraw
     }
@@ -294,7 +337,7 @@ impl VolumePopup {
             {
                 return self.press_list(d, h);
             }
-            self.combo_mut(d).open = None;
+            self.close_list();
             // Nothing under it acts at the release either.
             self.ptr.clear();
             return Event::Redraw;
@@ -323,9 +366,13 @@ impl VolumePopup {
                 Event::Redraw
             }
             Hit::Bar(h) => self.press_bar(lay, h, x),
-            Hit::Combo(d, combo::Hit::Field | combo::Hit::Drop) if self.combo(d).enabled => {
-                self.focus = combo_focus(d);
-                self.combo_mut(d).toggle();
+            Hit::Combo(p, combo::Hit::Field | combo::Hit::Drop)
+                if self.pick(p).is_some_and(|c| c.enabled) =>
+            {
+                self.focus = combo_focus(p);
+                if let Some(c) = self.pick_mut(p) {
+                    c.toggle();
+                }
                 Event::Redraw
             }
             _ => self.lit(changed),
@@ -386,9 +433,9 @@ impl VolumePopup {
     /// The wheel turned `rows` rows ([`WHEEL_ROWS`] per notch, positive is down) at (`x`, `y`): over an open list it scrolls it, over the program scrollbar a column per notch, over a column that column (down is quieter), anywhere else master. A turn short of a notch counts as one. The focus stays.
     pub fn scroll(&mut self, lay: &Layout, x: i32, y: i32, rows: i32) -> Event {
         if let Some(d) = self.open_list()
-            && lay.combo(d).list.contains(x, y)
+            && lay.pick(d).is_some_and(|cl| cl.list.contains(x, y))
         {
-            return if self.combo_mut(d).scroll(rows) {
+            return if self.pick_mut(d).is_some_and(|c| c.scroll(rows)) {
                 Event::Redraw
             } else {
                 Event::None
@@ -396,7 +443,7 @@ impl VolumePopup {
         }
         let notches = rows.signum() * (rows.abs() / WHEEL_ROWS).max(1);
         let i = match hit(self, lay, x, y) {
-            Hit::Track(i, _) | Hit::Mute(i) | Hit::Column(i) => i,
+            Hit::Track(i, _) | Hit::Mute(i) | Hit::Column(i) | Hit::Combo(Pick::App(i), _) => i,
             Hit::Bar(_) => return self.scroll_bar(lay, notches),
             _ => 0,
         };
@@ -416,7 +463,7 @@ impl VolumePopup {
             return self.list_key(d, key);
         }
         let shown = self.first;
-        if let Focus::Thumb(i) | Focus::Mute(i) = self.focus
+        if let Focus::Thumb(i) | Focus::Mute(i) | Focus::Device(i) = self.focus
             && !matches!(key, form::Key::Tab { .. } | form::Key::Escape)
         {
             self.reveal(i);
@@ -431,8 +478,9 @@ impl VolumePopup {
             (form::Key::Space | form::Key::Enter, Focus::Media(t)) if self.can(t) => {
                 Event::Media(t)
             }
-            (k, Focus::Output) => self.combo_key(Dir::Output, k),
-            (k, Focus::Input) => self.combo_key(Dir::Input, k),
+            (k, Focus::Output) => self.combo_key(Pick::Device(Dir::Output), k),
+            (k, Focus::Input) => self.combo_key(Pick::Device(Dir::Input), k),
+            (k, Focus::Device(i)) => self.combo_key(Pick::App(i), k),
             (k, Focus::Thumb(i)) => match k {
                 form::Key::Up | form::Key::Right => self.slide(i, |t| t.step(1)),
                 form::Key::Down | form::Key::Left => self.slide(i, |t| t.step(-1)),
