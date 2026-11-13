@@ -42,7 +42,7 @@ use wayland_protocols::{
         },
         decoration::zv1::client::{
             zxdg_decoration_manager_v1::ZxdgDecorationManagerV1,
-            zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1,
+            zxdg_toplevel_decoration_v1::{self, ZxdgToplevelDecorationV1},
         },
         shell::client::{xdg_popup, xdg_positioner, xdg_surface, xdg_toplevel, xdg_wm_base},
     },
@@ -1470,6 +1470,8 @@ pub struct ClientSide {
     pub sandboxed: Vec<Option<String>>,
     /// Each `reprise_on_top_v1.changed` heard: whether its toplevel is on top.
     pub on_top: Vec<bool>,
+    /// Each `zxdg_toplevel_decoration_v1.configure` heard: the mode it named.
+    pub decoration_modes: Vec<wc::WEnum<zxdg_toplevel_decoration_v1::Mode>>,
     /// The `shells` the compositor asked to close, in order.
     pub closes: Vec<usize>,
     layer_shell: Option<ZwlrLayerShellV1>,
@@ -1853,7 +1855,21 @@ wc::delegate_noop!(ClientSide: ignore wp_commit_timer_v1::WpCommitTimerV1);
 wc::delegate_noop!(ClientSide: ignore wl_data_device_manager::WlDataDeviceManager);
 wc::delegate_noop!(ClientSide: ignore wp_presentation::WpPresentation);
 wc::delegate_noop!(ClientSide: ignore ZxdgDecorationManagerV1);
-wc::delegate_noop!(ClientSide: ignore ZxdgToplevelDecorationV1);
+
+impl wc::Dispatch<ZxdgToplevelDecorationV1, ()> for ClientSide {
+    fn event(
+        st: &mut Self,
+        _: &ZxdgToplevelDecorationV1,
+        ev: zxdg_toplevel_decoration_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let zxdg_toplevel_decoration_v1::Event::Configure { mode } = ev {
+            st.decoration_modes.push(mode);
+        }
+    }
+}
 
 /// How a `wp_presentation_feedback` ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
