@@ -1022,6 +1022,7 @@ mod tests {
             height: 480,
             maximized,
             text_size: 100,
+            client: false,
         }
     }
 

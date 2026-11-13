@@ -11,7 +11,7 @@ use std::os::fd::OwnedFd;
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
-use reprisekit::frame::Edges;
+use reprisekit::frame::{Chrome, Edges};
 use smithay::{
     reexports::{
         calloop::{
@@ -731,18 +731,22 @@ impl Premap {
                 && !self.modal
                 && !self.app.is_empty(),
             fixed: !self.limits.resizable(),
+            chrome: self.chrome(),
         }
     }
 
-    /// The client size `want` gives this window, as `configure_initial` sends it once mapped.
-    fn size(&self, m: &Metrics, want: &Want, screen: Rect, area: Rect) -> Option<(i32, i32)> {
-        let chrome = chrome_for(
+    fn chrome(&self) -> Chrome {
+        chrome_for(
             false,
             self.limits.resizable(),
             self.decorated,
             DialogTag::None,
-        );
-        first_configure_size(m, want, self.limits, screen, area, chrome)
+        )
+    }
+
+    /// The client size `want` gives this window, as `configure_initial` sends it once mapped.
+    fn size(&self, m: &Metrics, want: &Want, screen: Rect, area: Rect) -> Option<(i32, i32)> {
+        first_configure_size(m, want, self.limits, screen, area, self.chrome())
     }
 }
 

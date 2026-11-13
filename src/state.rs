@@ -556,6 +556,7 @@ mod tests {
                 height: 600,
                 maximized: true,
                 text_size: 100,
+                client: false,
             }),
         }];
         let snaps = vec![crate::sessionsnap::SavedSnap {

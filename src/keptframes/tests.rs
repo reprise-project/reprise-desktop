@@ -9,6 +9,7 @@ fn frame(x: i32) -> Remembered {
         height: 480,
         maximized: false,
         text_size: 100,
+        client: false,
     }
 }
 
@@ -218,6 +219,7 @@ fn keep(h: &mut Harness, output: &str, x: i32, y: i32) {
             height: 400,
             maximized: false,
             text_size: 100,
+            client: false,
         },
     );
 }
@@ -372,4 +374,84 @@ fn a_kept_apps_second_window_as_tall_as_the_work_area_opens_inside_it() {
     let r = frame_of(&h, t);
     assert_eq!((r.y, r.bottom()), (area.y, area.bottom()));
     assert!(r.x > first.x, "the second window still cascades: {r:?}");
+}
+
+fn switch_to(h: &mut Harness, i: reprisekit::interface::Interface) {
+    let text = format!("[appearance]\ninterface = \"{}\"\n", i.as_str());
+    crate::configwatch::reload(&mut h.state, crate::config::Config::parse(&text).unwrap());
+}
+
+/// The client size the compositor last asked of `t`.
+fn asked_client(h: &Harness, t: Toplevel) -> (i32, i32) {
+    let win = h.state.win(t.id).unwrap();
+    let size = win.xdg().and_then(|x| x.with_pending_state(|s| s.size));
+    size.map_or((0, 0), |s| (s.w, s.h))
+}
+
+#[test]
+fn a_size_kept_under_one_interface_opens_at_the_same_client_size_under_the_others() {
+    use reprisekit::interface::Interface::{self, Blue, Classic, Glass};
+    use smithay::output::Scale;
+    let all = [Classic, Blue, Glass];
+    let outer = |i: Interface| {
+        let m = reprisekit::interfaces::theme_for(i).metrics;
+        crate::placement::frame_added(&m, reprisekit::frame::Chrome::WINDOW)
+    };
+    assert_ne!(outer(Classic), outer(Glass), "the frames differ");
+    for scale in [1.0, 2.0] {
+        let mut h = Harness::new();
+        let o = h.output("TEST-1", 1920, 1080);
+        o.change_current_state(None, None, Some(Scale::Fractional(scale)), None);
+        h.state.update_layout();
+        let mut c = h.connect();
+        for from in all {
+            for to in all.into_iter().filter(|&i| i != from) {
+                switch_to(&mut h, from);
+                let t = h.map_toplevel(&mut c, APP, 300, 200);
+                h.resize_self(&mut c, t, 420, 310);
+                close(&mut h, &mut c, t);
+                switch_to(&mut h, to);
+                let t = h.map_toplevel(&mut c, APP, 300, 200);
+                assert_eq!(
+                    asked_client(&h, t),
+                    (420, 310),
+                    "kept under {from:?}, opened under {to:?} at scale {scale}"
+                );
+                close(&mut h, &mut c, t);
+            }
+        }
+    }
+}
+
+#[test]
+fn a_frame_size_from_an_older_file_opens_as_that_frame_once_and_is_kept_as_the_client_size() {
+    let mut h = one_screen();
+    switch_to(&mut h, reprisekit::interface::Interface::Glass);
+    let set = h.state.output_set();
+    let text = format!(
+        "[\"{set}\".\"{APP}\"]\noutput = \"TEST-1\"\nx = 100\ny = 80\nwidth = 500\nheight = 400\n"
+    );
+    h.state.wm.kept = KeptFrames::parse(h.state.wm.kept.path.clone(), &text);
+    assert!(!h.state.wm.kept.get(&set, APP).unwrap().client);
+    let mut c = h.connect();
+    let t = h.map_toplevel(&mut c, APP, 300, 200);
+    assert_eq!(asked(&h, t), (500, 400), "the old size is the frame's");
+    let client = asked_client(&h, t);
+    assert!(
+        client.0 < 500 && client.1 < 400,
+        "{client:?} inside the frame"
+    );
+    h.resize_self(&mut c, t, client.0, client.1);
+    close(&mut h, &mut c, t);
+    let kept = h.state.wm.kept.get(&set, APP).unwrap();
+    assert_eq!(
+        (kept.width, kept.height, kept.client),
+        (client.0, client.1, true)
+    );
+    let back = KeptFrames::parse(PathBuf::from("/nowhere"), &h.state.wm.kept.text());
+    assert_eq!(
+        back.get(&set, APP),
+        Some(kept),
+        "the file says the size is the client's"
+    );
 }

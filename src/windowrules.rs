@@ -191,6 +191,10 @@ pub struct Remembered {
     /// `[accessibility] text_size` when the frame was kept.
     #[serde(default = "full_size")]
     pub text_size: u32,
+    /// `width` and `height` are the client area's, the frame left out, so the window opens at
+    /// the same client size under any interface. Without it they are the outer frame's.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub client: bool,
 }
 
 fn full_size() -> u32 {
@@ -198,6 +202,32 @@ fn full_size() -> u32 {
 }
 
 impl Remembered {
+    /// This memory with the client size of a window whose frame adds `frame` to it.
+    pub fn without_frame(self, frame: (i32, i32)) -> Remembered {
+        if self.client {
+            return self;
+        }
+        Remembered {
+            width: (self.width - frame.0).max(1),
+            height: (self.height - frame.1).max(1),
+            client: true,
+            ..self
+        }
+    }
+
+    /// This memory with the outer size of a window whose frame adds `frame` to its client.
+    pub fn with_frame(&self, frame: (i32, i32)) -> Remembered {
+        if !self.client {
+            return self.clone();
+        }
+        Remembered {
+            width: self.width + frame.0,
+            height: self.height + frame.1,
+            client: false,
+            ..self.clone()
+        }
+    }
+
     /// Where the app's next window opens at `text_size`: a frame kept at another text size
     /// scales by the ratio of the two, so a window that grew or shrank with the text does so
     /// again, but no further than its program's own size ([`Rescaled`]). A maximized one
@@ -293,6 +323,7 @@ mod tests {
             height: 480,
             maximized: true,
             text_size: 100,
+            client: false,
         };
         assert_eq!(
             m.want(true, 100),
@@ -324,6 +355,7 @@ mod tests {
             height: 976,
             maximized: false,
             text_size: 200,
+            client: false,
         };
         let opened = |pct: u32, opening: (i32, i32)| {
             let want = m.want(true, pct);
@@ -365,6 +397,7 @@ mod tests {
         );
         let small = Remembered {
             text_size: 100,
+            client: false,
             ..m.clone()
         };
         let grown = |opening: (i32, i32)| {
@@ -401,6 +434,7 @@ mod tests {
             height: 480,
             maximized: true,
             text_size: 100,
+            client: false,
         }
         .want(true, 100);
         let rules = [
@@ -456,6 +490,7 @@ mod tests {
             height: 500,
             maximized: false,
             text_size: 150,
+            client: false,
         };
         let r = WindowRule::open_here("foot", "Dell|U2720Q|ABC".into(), &at, false, false);
         assert_eq!(
