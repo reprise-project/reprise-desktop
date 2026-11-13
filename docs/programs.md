@@ -956,9 +956,9 @@ page all open it. Reading GNOME's settings needs the `dconf` command.
   resize of the client's window updates it. See
   [remote-desktop.md](remote-desktop.md) for connecting and
   [security.md](security.md#remote-desktop) for logins.
-- **Screen recorder.** `reprise-record --file PATH --output NAME [--area
+- **Screen recorder.** `reprise-record --fd N --output NAME [--area
   X,Y,WIDTH,HEIGHT] [--sound]` records output NAME, or an area of it in its
-  logical pixels, into PATH as an MP4 file (H.264, and AAC for `--sound`, what
+  logical pixels, as an MP4 file into the regular file open on descriptor N (H.264, and AAC for `--sound`, what
   plays through the default output device). The compositor starts it for a
   recording and stops it with SIGINT; it has no window. It reads the screen
   through the portal's ScreenCast, which asks nothing for a recording the
@@ -966,7 +966,10 @@ page all open it. Reading GNOME's settings needs the `dconf` command.
   codes the whole screen on the first encoder that works in Remote Desktop's
   automatic order (VA-API, NVENC, Vulkan, x264), an area on x264. Its log
   lines reach the journal through the compositor, which reads its stderr; on
-  failure it removes PATH and its last line there is the reason.
+  failure its last line there is the reason. The compositor makes the file
+  under Videos/Screencasts and hands it over open, so the recorder never
+  opens a name in that folder; when the recorder fails the compositor
+  removes the file, unless the name now leads somewhere else.
 - **Remote logins.** Under `reprise-login` with remote logins on,
   `reprise-login-rdp` listens on the port instead, as the system service
   `reprise-login-rdp.service` and its own system user, and has no window.
