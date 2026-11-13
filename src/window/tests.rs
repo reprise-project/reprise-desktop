@@ -1778,3 +1778,38 @@ fn a_client_destroying_its_decoration_takes_its_own_frame_at_the_next_commit() {
         "the committed destroy hands the frame to the client"
     );
 }
+
+#[test]
+fn a_decoration_made_again_without_a_mode_hands_the_frame_back_to_reprise() {
+    use wayland_client::WEnum;
+    use wayland_protocols::xdg::decoration::zv1::client::{
+        zxdg_decoration_manager_v1::ZxdgDecorationManagerV1, zxdg_toplevel_decoration_v1::Mode,
+    };
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    let mut c = h.connect();
+    let manager: ZxdgDecorationManagerV1 = c.bind("zxdg_decoration_manager_v1", 2);
+    let mut decoration = None;
+    let t = h.map_toplevel_after(&mut c, "app", 300, 200, |h, c, t| {
+        let toplevel = &c.side.shells[t.shell].toplevel;
+        decoration = Some(manager.get_toplevel_decoration(toplevel, &c.qh(), ()));
+        h.roundtrip(c);
+    });
+    let csd = |h: &crate::harness::Harness| h.state.win(t.id).is_some_and(|w| w.csd);
+    decoration.take().unwrap().destroy();
+    c.side.shells[t.shell].surface.commit();
+    h.roundtrip(&mut c);
+    assert!(csd(&h), "the client draws its own frame after the destroy");
+    c.side.decoration_modes.clear();
+    let toplevel = &c.side.shells[t.shell].toplevel;
+    let _again = manager.get_toplevel_decoration(toplevel, &c.qh(), ());
+    h.roundtrip(&mut c);
+    assert_eq!(
+        c.side.decoration_modes,
+        [WEnum::Value(Mode::ServerSide)],
+        "the new decoration is configured server-side"
+    );
+    c.side.shells[t.shell].surface.commit();
+    h.roundtrip(&mut c);
+    assert!(!csd(&h), "the window wears Reprise's frame again");
+}
