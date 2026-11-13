@@ -161,7 +161,7 @@ fn open(state: &mut State, bar: TreeId) {
     model.time = ticks.then(time_line);
     let b = state.layout_box(Some(&output));
     let p = state.bar_placement(&output);
-    let (w, h) = calendar::popup_size(&state.config.theme.controls());
+    let (w, h) = calendar::popup_size(&state.config.theme.controls(), false);
     let clock = crate::raster::Rect::new(
         p.shown.x + clock.x,
         p.shown.y + clock.y,
@@ -245,7 +245,7 @@ pub fn clicked(state: &mut State, hit: PopupHit) {
     match hit {
         PopupHit::Prev => v.model.step_month(-1),
         PopupHit::Next => v.model.step_month(1),
-        PopupHit::Panel => return,
+        PopupHit::Day(_) | PopupHit::Event(_) | PopupHit::Panel => return,
     }
     redraw(state);
 }
@@ -255,6 +255,7 @@ pub fn hit(state: &State, lx: f64, ly: f64) -> PopupHit {
     match state.calendar.view.as_ref() {
         Some(v) => calendar::popup_hit(
             &state.config.theme.controls(),
+            &v.model,
             lx.floor() as i32 - v.at.0,
             ly.floor() as i32 - v.at.1,
         ),
@@ -288,7 +289,7 @@ fn redraw(state: &mut State) {
     if let Some(now) = v.model.now {
         calendar::draw_popup_clock(&theme, &mut shown, &base, now);
     }
-    let size = calendar::popup_size(&state.config.theme.controls());
+    let size = calendar::popup_size(&state.config.theme.controls(), false);
     let pane = glass::flyout_glass(&state.config, size);
     let Some(v) = state.calendar.view.as_mut() else {
         return;
@@ -350,7 +351,7 @@ fn popup_tree(
     text: &TextRenderer,
     px: u32,
 ) -> Tree {
-    let (w, h) = calendar::popup_size(cm);
+    let (w, h) = calendar::popup_size(cm, false);
     let rect = crate::raster::Rect::new(at.0, at.1, w, h);
     let mut tree = crate::access::root(Role::Window, "Calendar", rect);
     let focus = calendar::popup_access(model, cm, text, px, &mut tree, ROOT);
@@ -379,7 +380,7 @@ mod tests {
     fn the_calendar_opens_beside_a_side_bar_level_with_the_clocks_foot() {
         use reprisekit::taskbar::Edge;
         let screen = crate::raster::Rect::new(0, 0, 1920, 1080);
-        let size = calendar::popup_size(&ControlMetrics::CLASSIC);
+        let size = calendar::popup_size(&ControlMetrics::CLASSIC, false);
         let left = crate::barplace::place(screen, Edge::Left, 60);
         let clock = crate::raster::Rect::new(2, 1030, 54, 40);
         let anchor = calendar_anchor(&left, clock, size);

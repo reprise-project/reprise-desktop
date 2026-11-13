@@ -91,8 +91,9 @@ use glass::{render_glass, render_glass_dark, render_glass_scale2};
 use glass_shell::{render_glass_preview, render_glass_switcher};
 use page::render;
 use popups::{
-    render_glass_clock_popup, render_glass_launcher, render_glass_notify_sheets,
-    render_glass_popups, render_launchers, render_now_playing, write_volume_popups,
+    render_calendar_events, render_glass_clock_popup, render_glass_launcher,
+    render_glass_notify_sheets, render_glass_popups, render_launchers, render_now_playing,
+    write_volume_popups,
 };
 use sheets::{
     render_list_sheet_links, render_list_sheet_search, render_list_sheets, render_long_list_sheets,
@@ -132,6 +133,10 @@ fn main() {
             "reprisekit-gallery-orb-glow-glass.png",
         );
         write_volume_popups(true, n.max(1));
+        write_preview(
+            &render_calendar_events(n.max(1)),
+            &format!("reprisekit-gallery-calendar-events@{}.png", n.max(1)),
+        );
         write_preview(
             &gallery_keys::launcher_windows(n.max(1)),
             &format!("reprisekit-gallery-launcher-windows@{}.png", n.max(1)),
@@ -557,6 +562,10 @@ fn main() {
             "reprisekit-gallery-list-sheet-scrolled.png",
         );
         write_preview(&render_now_playing(), "reprisekit-gallery-now-playing.png");
+        write_preview(
+            &render_calendar_events(1),
+            "reprisekit-gallery-calendar-events.png",
+        );
         write_preview(
             &render_tray_customize(),
             "reprisekit-gallery-tray-customize.png",
