@@ -1657,6 +1657,13 @@ stop the share first.
   a secret to a secret agent (agent-owned or not saved) keeps them: Reprise
   never writes that secret, greys its field, and refuses to connect the
   profile with a note, since it runs no agent to answer NetworkManager.
+- **Automatic time zone.** With `[time_zone] automatic` on, the compositor
+  sets the system time zone from what geoclue reports, through timedated
+  with interactive authorization off, so polkit's rule for
+  `org.freedesktop.timedate1.set-timezone` decides and nothing prompts.
+  Reprise ships no rule: under systemd's default (an admin password) the
+  setting stays greyed until an administrator allows it. A zone only ever
+  comes from tzdata's table, never from the location source.
 - **Bluetooth pairing.** Reprise's pairing agent answers only bluetoothd. A
   pairing request Settings didn't start (a nearby device pairing from its
   side, or a program calling `Device1.Pair`) opens a box whose Enter

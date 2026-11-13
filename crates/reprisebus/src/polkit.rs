@@ -1,7 +1,8 @@
 //! reprise-polkit's record of dismissed password prompts, on the session bus under one [`name`]
 //! per logind session. A service behind polkit answers the same error for a dismissed prompt and
 //! a refused password; a program asks here which one it was.
-//! [`allowed_without_prompt`] asks polkit itself whether an action needs a password.
+//! [`allowed_without_prompt`] and [`allowed_without_password`] ask polkit itself whether an action
+//! needs a password.
 
 use std::collections::HashMap;
 
@@ -112,9 +113,25 @@ pub fn refusal(
 /// asks polkit with interaction allowed whatever the call's flags (fwupd does) prompts otherwise.
 /// False when polkit does not answer.
 pub async fn allowed_without_prompt(conn: &zbus::Connection, action: &str) -> bool {
-    let Some(name) = conn.unique_name() else {
-        return false;
-    };
+    check(conn, action).await.is_some_and(|(yes, _)| yes)
+}
+
+/// [`allowed_without_prompt`] for good: a password typed for an earlier call, which polkit keeps
+/// a few minutes (`auth_admin_keep`), does not count.
+pub async fn allowed_without_password(conn: &zbus::Connection, action: &str) -> bool {
+    check(conn, action)
+        .await
+        .is_some_and(|(yes, details)| lasting(yes, &details))
+}
+
+fn lasting(authorized: bool, details: &HashMap<String, String>) -> bool {
+    authorized && !details.contains_key("polkit.temporary_authorization_id")
+}
+
+/// polkit's `CheckAuthorization` for the owner of `conn`, without interaction: whether it is
+/// authorized and the details. None when polkit does not answer.
+async fn check(conn: &zbus::Connection, action: &str) -> Option<(bool, HashMap<String, String>)> {
+    let name = conn.unique_name()?;
     let subject = (
         "system-bus-name",
         HashMap::from([("name", Variant::from(name.as_str()))]),
@@ -134,10 +151,10 @@ pub async fn allowed_without_prompt(conn: &zbus::Connection, action: &str) -> bo
                 .deserialize::<(bool, bool, HashMap<String, String>)>()
         });
     match reply {
-        Ok((authorized, _, _)) => authorized,
+        Ok((authorized, _, details)) => Some((authorized, details)),
         Err(e) => {
             log::info!("polkit does not say whether {action} needs a password: {e}");
-            false
+            None
         }
     }
 }
@@ -148,6 +165,18 @@ mod tests {
 
     fn error(name: &str) -> zbus::Error {
         crate::error::reply(name, "Not authorized")
+    }
+
+    #[test]
+    fn a_kept_password_is_no_lasting_permission() {
+        let none = HashMap::new();
+        assert!(lasting(true, &none));
+        assert!(!lasting(false, &none));
+        let kept = HashMap::from([(
+            "polkit.temporary_authorization_id".to_string(),
+            "tmpauthz7".to_string(),
+        )]);
+        assert!(!lasting(true, &kept));
     }
 
     #[test]

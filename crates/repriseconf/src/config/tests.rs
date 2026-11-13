@@ -631,6 +631,16 @@ fn recent_files_default_on_and_privacy_turns_them_off() {
 }
 
 #[test]
+fn the_automatic_time_zone_is_off_unless_set() {
+    assert!(!Config::default().auto_time_zone);
+    assert!(
+        Config::parse("[time_zone]\nautomatic = true\n")
+            .unwrap()
+            .auto_time_zone
+    );
+}
+
+#[test]
 fn location_default_on_and_privacy_turns_it_off() {
     assert!(Config::default().location);
     assert!(

@@ -84,6 +84,8 @@ pub struct Config {
     pub remote_desktop: crate::remote::RemoteDesktop,
     /// `[updates] restart_notice`: Software Updates says when the running system needs a restart.
     pub restart_notice: bool,
+    /// `[time_zone] automatic`: the compositor sets the time zone from the location.
+    pub auto_time_zone: bool,
     pub debug: DebugConfig,
     pub shortcut_overlay: ShortcutOverlay,
     pub launcher_files: bool,
@@ -172,6 +174,7 @@ impl Default for Config {
             capture_border: true,
             remote_desktop: crate::remote::RemoteDesktop::default(),
             restart_notice: true,
+            auto_time_zone: false,
             debug: DebugConfig::default(),
             shortcut_overlay: ShortcutOverlay::default(),
             launcher_files: true,

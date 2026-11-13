@@ -717,6 +717,17 @@ Double-click the clock. A month grid, an analog clock, the time zone and
 network time. When the password prompt for Apply is cancelled or refused, the
 sheet goes back to the clock's settings as they are.
 
+"Set time zone automatically" on the Time Zone tab (`[time_zone] automatic`,
+off by default) lets Reprise set the zone from your location: geoclue finds
+the machine at city accuracy and the zone of the nearest city in tzdata's
+`zone.tab` is set. Reprise looks when you turn it on, when the session
+starts, after a resume and when NetworkManager takes a new connection, at most
+once an hour. While it is on the zone list is greyed. It is greyed with a note
+when geoclue is missing, when location is off in Settings > Privacy, or when
+polkit wants a password to change the zone (systemd's default), since no one
+is there to type it: an administrator can allow
+`org.freedesktop.timedate1.set-timezone` with a polkit rule.
+
 ## Smaller things
 
 - **Safely Remove Hardware.** Handles drives as you plug them in, whatever

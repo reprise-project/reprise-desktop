@@ -1,15 +1,19 @@
 //! systemd-timedated over the system bus. The setters pass `interactive` and block until polkit is answered, so the
-//! host runs [`apply`] off its event loop.
+//! host runs [`apply`] off its event loop. Reading also says whether the zone may follow the location: geoclue
+//! installed, `[privacy] location` on and polkit setting the zone with no password.
 
 use std::time::Duration;
 
-use crate::sheet::{Change, System};
+use crate::sheet::{Blocked, Change, System};
 
 const DEST: &str = "org.freedesktop.timedate1";
 const PATH: &str = "/org/freedesktop/timedate1";
 const IFACE: &str = "org.freedesktop.timedate1";
 
 const READ_TIMEOUT: Duration = Duration::from_secs(2);
+
+const SET_TIMEZONE: &str = "org.freedesktop.timedate1.set-timezone";
+const GEOCLUE: &str = "org.freedesktop.GeoClue2";
 
 async fn connect(timeout: Option<Duration>) -> zbus::Result<zbus::Connection> {
     let b = zbus::connection::Builder::system();
@@ -38,11 +42,30 @@ where
 }
 
 async fn read_system(conn: &zbus::Connection) -> zbus::Result<System> {
+    let (auto_zone, location) = repriseconf::auto_time_zone();
+    let geoclue = activatable(conn, GEOCLUE).await;
+    let allowed = reprisebus::polkit::allowed_without_password(conn, SET_TIMEZONE).await;
     Ok(System {
         zone: property(conn, "Timezone").await?,
         ntp: property(conn, "NTP").await?,
         can_ntp: property(conn, "CanNTP").await?,
+        auto_zone,
+        auto_blocked: Blocked::first(geoclue, location, allowed),
     })
+}
+
+/// The bus starts `name` on demand: its service is installed.
+async fn activatable(conn: &zbus::Connection, name: &str) -> bool {
+    conn.call_method(
+        Some("org.freedesktop.DBus"),
+        "/org/freedesktop/DBus",
+        Some("org.freedesktop.DBus"),
+        "ListActivatableNames",
+        &(),
+    )
+    .await
+    .and_then(|m| m.body().deserialize::<Vec<String>>())
+    .is_ok_and(|names| names.iter().any(|n| n == name))
 }
 
 /// timedated's settings and its list of zones. The list is empty when
@@ -66,12 +89,15 @@ pub fn read() -> zbus::Result<(System, Vec<String>)> {
     })
 }
 
-/// Carry `change` out, then read the settings back. Network time goes off
-/// before a time is set (timedated refuses one while it is on) and on
-/// after everything else; a time is local to the zone just set, so the
-/// process rereads the zone before converting it. Blocks until polkit is
-/// answered.
+/// Carry `change` out, then read the settings back. The automatic zone is
+/// written to the config first. Network time goes off before a time is
+/// set (timedated refuses one while it is on) and on after everything
+/// else; a time is local to the zone just set, so the process rereads the
+/// zone before converting it. Blocks until polkit is answered.
 pub fn apply(change: &Change) -> Result<System, Failure> {
+    if let Some(on) = change.auto_zone {
+        repriseconf::save_auto_time_zone(on).map_err(Failure::Text)?;
+    }
     zbus::block_on(async {
         let conn = connect(None).await.map_err(text)?;
         if change.ntp == Some(false) {
