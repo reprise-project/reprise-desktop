@@ -57,6 +57,7 @@ mod tablethost;
 mod tabletpage;
 mod wake;
 mod wallpapers;
+pub mod welcome;
 mod winstate;
 
 use crate::pages::Area;

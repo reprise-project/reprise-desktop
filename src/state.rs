@@ -62,9 +62,7 @@ pub fn path() -> PathBuf {
     #[cfg(test)]
     return crate::harness::scratch().join("state.toml");
     #[cfg(not(test))]
-    repriseconf::xdg_home("XDG_STATE_HOME", ".local/state")
-        .join("reprise")
-        .join("state.toml")
+    repriseconf::state_path()
 }
 
 /// Read the file. A key that does not parse falls back to its default and the file is copied to
@@ -238,20 +236,14 @@ pub fn drop_key(name: &'static str) {
 /// Take `name` out of the file at `path`; a file without it, or one that does not parse, is left
 /// alone.
 fn unpatch(path: &Path, name: &str) {
-    let Some(mut table) = std::fs::read_to_string(path)
-        .ok()
-        .and_then(|t| toml::from_str::<toml::Table>(&t).ok())
-    else {
-        return;
-    };
-    if table.remove(name).is_none() {
-        return;
-    }
-    let text = match toml::to_string(&table) {
-        Ok(t) => t,
-        Err(e) => return log::warn!("state: could not serialize: {e}"),
-    };
-    if let Err(e) = repriseconf::write_atomic(path, &text) {
+    let edited = repriseconf::edit(path, |text| {
+        let mut table = toml::from_str::<toml::Table>(text).map_err(|_| ())?;
+        if table.remove(name).is_none() {
+            return Ok(text.to_string());
+        }
+        toml::to_string(&table).map_err(|e| log::warn!("state: could not serialize: {e}"))
+    });
+    if let Err(e) = edited {
         log::warn!("state: could not write {}: {e}", path.display());
     }
 }
@@ -339,24 +331,15 @@ fn taskbar_keys(locked: bool, bands: Bands, quick_shown: bool) -> toml::Table {
     ])
 }
 
-/// Read `path` (nothing when missing), set `keys` and write it back atomically. A file that is not
-/// TOML is replaced, as the next load would read it as the defaults.
+/// Set `keys` in `path` under [`repriseconf::edit`]'s lock, which Welcome's flag takes too. A file
+/// that is not TOML is replaced, as the next load would read it as the defaults.
 fn patch(path: &Path, keys: toml::Table) {
-    let mut table: toml::Table = std::fs::read_to_string(path)
-        .ok()
-        .and_then(|t| toml::from_str(&t).ok())
-        .unwrap_or_default();
-    table.extend(keys);
-    let text = match toml::to_string(&table) {
-        Ok(t) => t,
-        Err(e) => return log::warn!("state: could not serialize: {e}"),
-    };
-    if let Some(dir) = path.parent()
-        && let Err(e) = std::fs::create_dir_all(dir)
-    {
-        log::warn!("state: could not create {}: {e}", dir.display());
-    }
-    if let Err(e) = repriseconf::write_atomic(path, &text) {
+    let edited = repriseconf::edit_or_reset(path, |text| {
+        let mut table: toml::Table = toml::from_str(text).unwrap_or_default();
+        table.extend(keys);
+        toml::to_string(&table).map_err(|e| log::warn!("state: could not serialize: {e}"))
+    });
+    if let Err(e) = edited {
         log::warn!("state: could not write {}: {e}", path.display());
     }
 }

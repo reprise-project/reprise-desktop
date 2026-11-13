@@ -1,0 +1,26 @@
+[package]
+name = "reprise-welcome"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+description = "Welcome: the interface, light or dark and the text size at a new user's first login"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "reprise-welcome"
+path = "src/bin/reprise-welcome.rs"
+test = false
+
+[dependencies]
+repriseapp = { path = "../../repriseapp" }
+reprisekit = { path = "../../reprisekit" }
+reprisebus = { path = "../../reprisebus" }
+repriseconf = { path = "../../repriseconf" }
+reprisefs = { path = "../../reprisefs" }
+reprise-settings = { path = "../settings" }
+log.workspace = true

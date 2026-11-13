@@ -39,6 +39,7 @@ members = [
     "crates/apps/calc",
     "crates/apps/charmap",
     "crates/apps/taskmgr",
+    "crates/apps/welcome",
     "crates/apps/rdp",
     "crates/apps/login",
     "crates/apps/login-rdp",

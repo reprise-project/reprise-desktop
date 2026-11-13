@@ -31,6 +31,7 @@ fn entry(program: &str) -> Option<fn(Vec<OsString>)> {
         "reprise-terminal" => reprise_terminal::main,
         "reprise-updates" => reprise_updates::main,
         "reprise-volume" => reprise_volume::main,
+        "reprise-welcome" => reprise_welcome::main,
         _ => return None,
     })
 }

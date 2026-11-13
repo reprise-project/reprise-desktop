@@ -4297,6 +4297,7 @@ dependencies = [
  "reprise-terminal",
  "reprise-updates",
  "reprise-volume",
+ "reprise-welcome",
  "reprisefs",
 ]
 
@@ -4763,6 +4764,19 @@ dependencies = [
  "serde",
  "tempfile",
  "toml",
+]
+
+[[package]]
+name = "reprise-welcome"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "reprise-settings",
+ "repriseapp",
+ "reprisebus",
+ "repriseconf",
+ "reprisefs",
+ "reprisekit",
 ]
 
 [[package]]

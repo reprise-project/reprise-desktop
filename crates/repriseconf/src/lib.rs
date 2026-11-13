@@ -64,6 +64,13 @@ pub fn config_path() -> PathBuf {
         .join("config.toml")
 }
 
+/// The compositor's state file, `$XDG_STATE_HOME/reprise/state.toml`.
+pub fn state_path() -> PathBuf {
+    xdg_home("XDG_STATE_HOME", ".local/state")
+        .join("reprise")
+        .join("state.toml")
+}
+
 /// `text` parsed, the last parse on this thread reused while the file reads the same: a program
 /// starting up asks for several keys, each reading the file anew.
 fn parsed(text: &str) -> Option<std::rc::Rc<DocumentMut>> {
@@ -786,6 +793,7 @@ pub mod location;
 pub mod pages;
 pub mod remote;
 pub mod search;
+pub mod welcome;
 
 pub mod system_icons {
     pub fn current(name: &str) -> Option<&str> {
