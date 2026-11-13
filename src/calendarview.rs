@@ -4,9 +4,13 @@
 //! the clock's along the bottom or top, its foot level with the clock's
 //! beside a side bar. A left
 //! click on the clock opens it; a second click there, Escape, or a press
-//! anywhere else closes it. Its arrows step the month; the days are
-//! read-only. A double click on the clock closes it and opens Date and
-//! Time Properties instead. Under a look that frames its flyouts as
+//! anywhere else closes it. Its arrows step the month. With
+//! evolution-data-server installed and `[taskbar] calendar_events` on, it
+//! lists a day's events under the month, today's until a click on a day
+//! picks another; read off the loop, a late answer dropped. A click on an
+//! event opens the calendar program. Otherwise the days are read-only. A
+//! double click on the clock closes it and opens Date and Time Properties
+//! instead. Under a look that frames its flyouts as
 //! windows the arrow under the pointer lights, and the border has the
 //! blurred backdrop under it. A look with an analog clock beside the month
 //! ticks it each second while the popup is open, and redraws the time line
@@ -21,7 +25,7 @@ use crate::output::upload_scaled;
 use crate::raster::{Canvas, Rect};
 use reprisekit::access::accesskit::Role;
 use reprisekit::access::{ROOT, Tree};
-use reprisekit::controls::calendar::{self, Calendar, PopupHit};
+use reprisekit::controls::calendar::{self, Agenda, Calendar, DayEvent, PopupHit};
 use reprisekit::metrics::ControlMetrics;
 use reprisekit::pointer::DoubleClick;
 use reprisekit::text::TextRenderer;
@@ -33,6 +37,10 @@ use smithay::utils::{Buffer as BufferCoords, Rectangle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const PROPERTIES: &str = "reprise-datetime";
+/// The most characters of an event's summary kept.
+const SUMMARY_MAX: usize = 256;
+/// The program a click on an event opens when no calendar type has a default.
+const GNOME_CALENDAR: &str = "org.gnome.Calendar.desktop";
 
 /// `State::calendar`: the open popup and the last clock click.
 #[derive(Default)]
@@ -40,10 +48,18 @@ pub struct CalendarState {
     view: Option<CalendarView>,
     /// Left presses on a bar's clock, paired into its double click.
     clicks: DoubleClick<TreeId>,
+    /// Whether evolution-data-server is installed, as last read; None before.
+    eds: Option<bool>,
+    /// Counts the reads of a day's events; an answer to an older one is dropped.
+    asked: u64,
 }
 
 struct CalendarView {
     model: Calendar,
+    /// The bar whose clock opened it, to stand against when it grows.
+    bar: TreeId,
+    /// What a click on an event opens, read with the first day's events.
+    program: Option<reprisefs::apps::AppEntry>,
     /// In `layers.menu`, tagged `SceneOwner::Calendar`: the glass tree,
     /// then the buffer.
     tree: TreeId,
@@ -51,7 +67,7 @@ struct CalendarView {
     glass_tree: TreeId,
     glass: Backdrop,
     buffer: BufferId,
-    /// The arrow under the pointer, or `Panel`.
+    /// The arrow or event row under the pointer, or `Panel`.
     hot: PopupHit,
     /// Top-left in layout coordinates.
     at: (i32, i32),
@@ -145,31 +161,40 @@ fn calendar_anchor(
     }
 }
 
-fn open(state: &mut State, bar: TreeId) {
-    close(state);
-    if state.desktop_locked() {
-        return;
-    }
-    let Some((output, clock)) = state.bar(bar).map(|b| (b.output.clone(), b.layout.clock)) else {
-        return;
-    };
-    let (y, m, d) = today();
-    let mut model = Calendar::new(y, m, None, reprisefs::locale::first_weekday());
-    model.today = Some((y, m, d));
-    let ticks = state.config.theme.controls().clock_face > 0;
-    model.now = ticks.then(now);
-    model.time = ticks.then(time_line);
+/// Where a popup `size` big stands off bar `bar`'s clock, in layout coordinates.
+fn place(state: &State, bar: TreeId, size: (i32, i32)) -> Option<(Output, (i32, i32))> {
+    let (output, clock) = state.bar(bar).map(|b| (b.output.clone(), b.layout.clock))?;
     let b = state.layout_box(Some(&output));
     let p = state.bar_placement(&output);
-    let (w, h) = calendar::popup_size(&state.config.theme.controls(), false);
     let clock = crate::raster::Rect::new(
         p.shown.x + clock.x,
         p.shown.y + clock.y,
         clock.width,
         clock.height,
     );
-    let anchor = calendar_anchor(&p, clock, (w, h));
-    let (x, top) = crate::barplace::bar_popup(&p, anchor, (w, h), b);
+    let anchor = calendar_anchor(&p, clock, size);
+    let at = crate::barplace::bar_popup(&p, anchor, size, b);
+    Some((output, at))
+}
+
+fn open(state: &mut State, bar: TreeId) {
+    close(state);
+    if state.desktop_locked() {
+        return;
+    }
+    let (y, m, d) = today();
+    let mut model = Calendar::new(y, m, None, reprisefs::locale::first_weekday());
+    model.today = Some((y, m, d));
+    let ticks = state.config.theme.controls().clock_face > 0;
+    model.now = ticks.then(now);
+    model.time = ticks.then(time_line);
+    let events = state.config.taskbar.calendar_events;
+    model.agenda =
+        (events && state.calendar.eds == Some(true)).then(|| Agenda::new((y, m, d), false));
+    let size = calendar::popup_size(&state.config.theme.controls(), model.agenda.is_some());
+    let Some((output, (x, top))) = place(state, bar, size) else {
+        return;
+    };
     let scene = &mut state.scene;
     let tree = scene.tree_create(state.layers.menu);
     crate::glass::leave_out(scene, tree);
@@ -181,6 +206,8 @@ fn open(state: &mut State, bar: TreeId) {
     scene.set_position(tree, x, top);
     state.calendar.view = Some(CalendarView {
         model,
+        bar,
+        program: None,
         tree,
         glass_tree,
         glass: Backdrop::new(&state.glass),
@@ -195,6 +222,129 @@ fn open(state: &mut State, bar: TreeId) {
         arm_tick(state);
     }
     redraw(state);
+    if events {
+        read_day(state, (y, m, d));
+    }
+}
+
+/// Checks off the loop whether evolution-data-server is installed, so the first popup opens at its
+/// size; starts nothing.
+pub fn setup(state: &mut State) {
+    if !state.config.taskbar.calendar_events {
+        return;
+    }
+    state.spawn_job(|| {
+        let installed =
+            reprisebus::session().is_ok_and(|c| reprisebus::wait(reprisebus::eds::installed(&c)));
+        Box::new(move |state: &mut State| {
+            state.calendar.eds.get_or_insert(installed);
+        })
+    });
+}
+
+/// Reads day `day`'s events off the loop for the open popup, and on the first read what a click on
+/// one opens.
+fn read_day(state: &mut State, day: (i32, u32, u32)) {
+    state.calendar.asked += 1;
+    let asked = state.calendar.asked;
+    let apps = (state.calendar.view.as_ref())
+        .is_some_and(|v| v.program.is_none())
+        .then(|| state.app_index.clone());
+    state.spawn_job(move || {
+        let read = read_events(day);
+        let program = apps.and_then(|a| calendar_program(&a).cloned());
+        Box::new(move |state: &mut State| landed(state, asked, day, read, program))
+    });
+}
+
+#[cfg(not(test))]
+fn read_events(day: (i32, u32, u32)) -> Result<Option<reprisebus::eds::Day>, String> {
+    let conn = reprisebus::session().map_err(|e| e.to_string())?;
+    reprisebus::wait(reprisebus::eds::day(&conn, day))
+}
+
+/// Tests read no session bus: evolution-data-server is absent.
+#[cfg(test)]
+fn read_events(_day: (i32, u32, u32)) -> Result<Option<reprisebus::eds::Day>, String> {
+    Ok(None)
+}
+
+/// The program a click on an event opens: the default for calendar files, else for webcal links,
+/// else GNOME Calendar.
+fn calendar_program(apps: &[reprisefs::apps::AppEntry]) -> Option<&reprisefs::apps::AppEntry> {
+    reprisefs::props::own_default_app("text/calendar", apps)
+        .or_else(|| reprisefs::props::default_app("x-scheme-handler/webcal", apps))
+        .map(|i| &apps[i])
+        .or_else(|| apps.iter().find(|a| a.id == GNOME_CALENDAR))
+}
+
+/// Read `asked` came back: the popup lists `read`'s events, or drops its list when
+/// evolution-data-server is not installed. A failed read leaves the rows blank.
+fn landed(
+    state: &mut State,
+    asked: u64,
+    day: (i32, u32, u32),
+    read: Result<Option<reprisebus::eds::Day>, String>,
+    program: Option<reprisefs::apps::AppEntry>,
+) {
+    if asked != state.calendar.asked {
+        return;
+    }
+    match &read {
+        Ok(found) => state.calendar.eds = Some(found.is_some()),
+        Err(e) => log::warn!("calendar events: {e}"),
+    }
+    let Some(v) = state.calendar.view.as_mut() else {
+        return;
+    };
+    if program.is_some() {
+        v.program = program;
+    }
+    let opens = v.program.is_some();
+    match read {
+        Ok(None) => v.model.agenda = None,
+        Ok(Some(d)) => {
+            let a = v
+                .model
+                .agenda
+                .get_or_insert_with(|| Agenda::new(day, opens));
+            a.opens = opens;
+            let bounds = (d.start, d.end);
+            a.set_events(
+                (d.events.iter())
+                    .map(|o| day_event(o, bounds, crate::taskbar::time_text))
+                    .collect(),
+            );
+        }
+        Err(_) => {}
+    }
+    redraw(state);
+}
+
+/// Occurrence `o` as a row of the day `from..to` (seconds): all day when it covers the day, else at
+/// its start, or until its end when it began the day before. `time` words a time of day.
+fn day_event(
+    o: &reprisebus::eds::Occurrence,
+    (from, to): (i64, i64),
+    time: impl Fn(i64) -> String,
+) -> DayEvent {
+    let all_day = o.all_day || (o.start <= from && o.end >= to);
+    let when = if all_day {
+        "All day".to_string()
+    } else if o.start >= from {
+        time(o.start)
+    } else {
+        format!("Until {}", time(o.end))
+    };
+    DayEvent {
+        all_day,
+        start: o.start.max(from),
+        when,
+        summary: match reprisefs::names::shown_line(&o.summary, SUMMARY_MAX).trim() {
+            "" => "Untitled event".into(),
+            s => s.to_string(),
+        },
+    }
 }
 
 fn arm_tick(state: &mut State) {
@@ -237,7 +387,8 @@ pub fn close(state: &mut State) {
     crate::autohideview::poke(state);
 }
 
-/// A press on the popup: the arrows step the month.
+/// A press on the popup: the arrows step the month, a day lists its events, an event opens the
+/// calendar program and closes the popup.
 pub fn clicked(state: &mut State, hit: PopupHit) {
     let Some(v) = state.calendar.view.as_mut() else {
         return;
@@ -245,7 +396,25 @@ pub fn clicked(state: &mut State, hit: PopupHit) {
     match hit {
         PopupHit::Prev => v.model.step_month(-1),
         PopupHit::Next => v.model.step_month(1),
-        PopupHit::Day(_) | PopupHit::Event(_) | PopupHit::Panel => return,
+        PopupHit::Day(d) => {
+            let day = (v.model.year, v.model.month, d);
+            let Some(a) = v.model.agenda.as_mut().filter(|a| a.day != day) else {
+                return;
+            };
+            a.day = day;
+            a.events = None;
+            redraw(state);
+            return read_day(state, day);
+        }
+        PopupHit::Event(_) => {
+            let program = v.program.clone();
+            close(state);
+            if let Some(app) = program {
+                state.launch_entry(&app);
+            }
+            return;
+        }
+        PopupHit::Panel => return,
     }
     redraw(state);
 }
@@ -264,18 +433,33 @@ pub fn hit(state: &State, lx: f64, ly: f64) -> PopupHit {
 }
 
 /// The pointer moved over the open popup onto `hit`, or off it (None):
-/// a look that lights the arrows redraws when the lit one changes.
+/// it redraws when the lit arrow or event row changes.
 pub fn hover(state: &mut State, hit: Option<PopupHit>) {
     let Some(v) = state.calendar.view.as_mut() else {
         return;
     };
-    let hot = hit.unwrap_or(PopupHit::Panel);
+    let hot = match hit {
+        Some(h @ (PopupHit::Prev | PopupHit::Next | PopupHit::Event(_))) => h,
+        _ => PopupHit::Panel,
+    };
     if std::mem::replace(&mut v.hot, hot) != hot {
         redraw(state);
     }
 }
 
 fn redraw(state: &mut State) {
+    let Some(v) = state.calendar.view.as_ref() else {
+        return;
+    };
+    let size = calendar::popup_size(&state.config.theme.controls(), v.model.agenda.is_some());
+    // The list comes or goes with the first read: the popup grows or shrinks against the bar.
+    if let Some((_, at)) = place(state, v.bar, size)
+        && at != v.at
+        && let Some(v) = state.calendar.view.as_mut()
+    {
+        v.at = at;
+        state.scene.set_position(v.tree, at.0, at.1);
+    }
     let Some(v) = state.calendar.view.as_ref() else {
         return;
     };
@@ -289,7 +473,6 @@ fn redraw(state: &mut State) {
     if let Some(now) = v.model.now {
         calendar::draw_popup_clock(&theme, &mut shown, &base, now);
     }
-    let size = calendar::popup_size(&state.config.theme.controls(), false);
     let pane = glass::flyout_glass(&state.config, size);
     let Some(v) = state.calendar.view.as_mut() else {
         return;
@@ -351,7 +534,7 @@ fn popup_tree(
     text: &TextRenderer,
     px: u32,
 ) -> Tree {
-    let (w, h) = calendar::popup_size(cm, false);
+    let (w, h) = calendar::popup_size(cm, model.agenda.is_some());
     let rect = crate::raster::Rect::new(at.0, at.1, w, h);
     let mut tree = crate::access::root(Role::Window, "Calendar", rect);
     let focus = calendar::popup_access(model, cm, text, px, &mut tree, ROOT);
@@ -397,6 +580,34 @@ mod tests {
             1910,
             "right-aligned to the clock, as before"
         );
+    }
+
+    #[test]
+    fn an_occurrence_reads_at_its_start_all_day_or_until_its_end() {
+        let day = (1000, 1000 + 86_400);
+        let o = |start: i64, end: i64, all_day: bool| reprisebus::eds::Occurrence {
+            summary: "Standup".into(),
+            all_day,
+            start,
+            end,
+        };
+        let time = |s: i64| format!("t{s}");
+        let row = |o| day_event(&o, day, time);
+        assert_eq!(row(o(4600, 5500, false)).when, "t4600");
+        let carried = row(o(-2000, 3000, false));
+        assert_eq!(
+            (carried.when.as_str(), carried.start),
+            ("Until t3000", 1000)
+        );
+        let all = row(o(-2000, 90_000, false));
+        assert_eq!((all.when.as_str(), all.all_day), ("All day", true));
+        assert_eq!(row(o(1000, 87_400, true)).when, "All day");
+        let mut blank = o(4600, 4600, false);
+        blank.summary = " \u{200b}".into();
+        assert_eq!(row(blank).summary, "Untitled event");
+        let mut spoof = o(4600, 4600, false);
+        spoof.summary = "Pay\u{202e}gpj.exe".into();
+        assert_eq!(row(spoof).summary, "Paygpj.exe", "no bidi controls");
     }
 
     #[test]

@@ -584,6 +584,7 @@ fn the_taskbar_page_geometry() {
         "taskbar_tray_overflow",
         "taskbar_network_meter",
         "taskbar_slide",
+        "taskbar_calendar_events",
     ]
     .into_iter()
     .enumerate()
@@ -599,23 +600,27 @@ fn the_taskbar_page_geometry() {
         rect(&s, p, "taskbar_slide_note"),
         Rect::new(282, 208, 96, 13)
     );
-    assert_eq!(rect(&s, p, "taskbar_note"), Rect::new(20, 228, 358, 39));
-    assert_eq!(rect(&s, p, "taskbar_auto_hide").y, 272);
+    assert_eq!(
+        rect(&s, p, "taskbar_events_note"),
+        Rect::new(180, 226, 198, 13)
+    );
+    assert_eq!(rect(&s, p, "taskbar_note"), Rect::new(20, 244, 358, 39));
+    assert_eq!(rect(&s, p, "taskbar_auto_hide").y, 288);
     for (i, id) in REVEAL_CONTROLS.into_iter().enumerate() {
         assert_eq!(
             rect(&s, p, id),
-            Rect::new(38, 290 + 18 * i as i32, 13, 13),
+            Rect::new(38, 306 + 18 * i as i32, 13, 13),
             "{id} sits under the auto-hide label"
         );
     }
-    assert_eq!(rect(&s, p, "preview_taskbar"), Rect::new(20, 344, 13, 13));
-    assert_eq!(rect(&s, p, "fps_label"), Rect::new(38, 364, 110, 13));
-    assert_eq!(rect(&s, p, "previews_fps"), Rect::new(152, 360, 50, 20));
-    assert_eq!(rect(&s, p, "fps_units"), Rect::new(208, 364, 170, 13));
-    assert_eq!(rect(&s, p, "start_icon"), Rect::new(20, 386, 13, 13));
-    assert_eq!(rect(&s, p, "orb_glow_label"), Rect::new(20, 410, 110, 13));
-    assert_eq!(rect(&s, p, "glass_orb_glow"), Rect::new(134, 404, 150, 26));
-    assert_eq!(rect(&s, p, "orb_glow_note"), Rect::new(20, 434, 358, 13));
+    assert_eq!(rect(&s, p, "preview_taskbar"), Rect::new(20, 360, 13, 13));
+    assert_eq!(rect(&s, p, "fps_label"), Rect::new(38, 380, 110, 13));
+    assert_eq!(rect(&s, p, "previews_fps"), Rect::new(152, 376, 50, 20));
+    assert_eq!(rect(&s, p, "fps_units"), Rect::new(208, 380, 170, 13));
+    assert_eq!(rect(&s, p, "start_icon"), Rect::new(20, 402, 13, 13));
+    assert_eq!(rect(&s, p, "orb_glow_label"), Rect::new(20, 426, 110, 13));
+    assert_eq!(rect(&s, p, "glass_orb_glow"), Rect::new(134, 420, 150, 26));
+    assert_eq!(rect(&s, p, "orb_glow_note"), Rect::new(292, 426, 86, 13));
     inside_page(&s, p);
 }
 
@@ -648,7 +653,7 @@ fn glass_only_taskbar_controls_grey_with_a_note_elsewhere() {
     }
     assert_eq!(
         lines(&classic, Page::Taskbar, "orb_glow_note"),
-        ["The glow shows under Glass only."]
+        ["(Glass only)"]
     );
     assert!(
         enabled_on(&classic, Page::Taskbar, "orb_glow_note"),
@@ -682,6 +687,7 @@ fn taskbar_values_go_in_and_come_back_out() {
         taskbar_tray_overflow: true,
         taskbar_badges: false,
         taskbar_network_meter: true,
+        taskbar_calendar_events: false,
         recent_files: false,
         start_icon: false,
         taskbar_auto_hide: true,
@@ -713,6 +719,7 @@ fn taskbar_values_go_in_and_come_back_out() {
     assert_eq!(tb.checked("taskbar_reveal_on_keys"), Some(true));
     assert_eq!(tb.checked("taskbar_badges"), Some(false));
     assert_eq!(tb.checked("taskbar_network_meter"), Some(true));
+    assert_eq!(tb.checked("taskbar_calendar_events"), Some(false));
     let mut got = Settings::default();
     read_all(&s, &mut got);
     assert_eq!(got, want);

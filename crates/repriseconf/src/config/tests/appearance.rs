@@ -315,6 +315,7 @@ fn taskbar_defaults_follow_the_interface() {
             attention_flash: 30,
             side_width: 0,
             network_meter: false,
+            calendar_events: true,
         }
     );
     assert_eq!(glass, TaskbarConfig::default_for(Interface::Glass));
@@ -327,6 +328,15 @@ fn the_network_meter_is_off_by_default_and_takes_its_key() {
     }
     let c = Config::parse("[taskbar]\nnetwork_meter = true\n").unwrap();
     assert!(c.taskbar.network_meter);
+}
+
+#[test]
+fn calendar_events_are_on_by_default_and_take_their_key() {
+    for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        assert!(TaskbarConfig::default_for(i).calendar_events, "{i:?}");
+    }
+    let c = Config::parse("[taskbar]\ncalendar_events = false\n").unwrap();
+    assert!(!c.taskbar.calendar_events);
 }
 
 #[test]

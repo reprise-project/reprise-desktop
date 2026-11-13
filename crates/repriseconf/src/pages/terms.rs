@@ -118,6 +118,7 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
                 "Show network speed beside the clock",
             ),
             ("taskbar_slide", "Slide taskbar buttons as they are dragged"),
+            ("taskbar_calendar_events", "Show calendar events"),
             ("taskbar_tray_customize", "Customize..."),
             ("taskbar_auto_hide", "Auto-hide the taskbar"),
             (

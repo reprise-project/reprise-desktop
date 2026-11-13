@@ -411,6 +411,7 @@ fn run(
     crash::on_start(&mut state, after_crash, locked, active);
     configwatch::setup(&mut state, config_stamp);
     appindex::setup(&mut state);
+    calendarview::setup(&mut state);
     iconwatch::setup(&mut state);
     quickwatch::setup(&mut state);
     proxywatch::setup(&mut state);

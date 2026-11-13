@@ -254,7 +254,7 @@ pub fn virtual_desktops(a: Area) -> Form {
 }
 
 /// The edge the bar sits on, its height and how windows become task buttons, then one check box
-/// per optional part of the taskbar, auto-hide with its three triggers indented under it, the live
+/// per optional part of the taskbar with the calendar events' note ([`show_events`]), auto-hide with its three triggers indented under it, the live
 /// window pictures and their rate, and the Start button's logo and glow.
 pub fn taskbar(a: Area) -> Form {
     let mut items = vec![
@@ -310,6 +310,19 @@ pub fn taskbar(a: Area) -> Form {
         a.w - 262,
         "",
     ));
+    items.push(Item::check(
+        EVENTS_CHECK,
+        X,
+        slide_y + 18,
+        "Show calendar e&vents",
+    ));
+    items.push(Item::label_at(
+        EVENTS_NOTE,
+        X + EVENTS_NOTE_X,
+        slide_y + 18,
+        a.w - EVENTS_NOTE_X,
+        "",
+    ));
     items.push(Item::button(
         TRAY_CUSTOMIZE,
         Rect::new(a.right() - CUSTOMIZE_W, 167, CUSTOMIZE_W, BUTTON_H),
@@ -319,7 +332,7 @@ pub fn taskbar(a: Area) -> Form {
     ));
     items.push(Item::new(
         "taskbar_note",
-        Rect::new(X, 228, a.w, 3 * LINE_H),
+        Rect::new(X, 244, a.w, 3 * LINE_H),
         Control::Lines(vec![
             "Left unchanged, these follow the interface: Glass combines".into(),
             "buttons and turns on the desktop button and Peek. Small".into(),
@@ -329,7 +342,7 @@ pub fn taskbar(a: Area) -> Form {
     items.push(Item::check(
         "taskbar_auto_hide",
         X,
-        272,
+        288,
         "Auto-&hide the taskbar",
     ));
     let reveals = [
@@ -338,19 +351,19 @@ pub fn taskbar(a: Area) -> Form {
         "Show when a window needs &attention",
     ];
     for (i, (id, text)) in REVEAL_CONTROLS.into_iter().zip(reveals).enumerate() {
-        items.push(Item::check(id, X, 290 + 18 * i as i32, text).under_check());
+        items.push(Item::check(id, X, 306 + 18 * i as i32, text).under_check());
     }
     items.push(Item::check(
         "preview_taskbar",
         X,
-        344,
+        360,
         "Show live window &pictures over taskbar buttons",
     ));
     let [fps_label, fps] = spin(
         "fps_label",
         "previews_fps",
         X,
-        364,
+        380,
         110,
         "Re&fresh rate:",
         (1, PREVIEW_FPS_MAX as i32),
@@ -359,34 +372,38 @@ pub fn taskbar(a: Area) -> Form {
     let fps_units = Item::label_at(
         "fps_units",
         X + 170,
-        364,
+        380,
         a.w - 188,
         "times a second, Alt+Tab too",
     );
     items.extend([fps_label, fps, fps_units].map(Item::under_check));
+    let glow_w = a.track(150);
     items.extend([
         Item::check(
             "start_icon",
             X,
-            386,
+            402,
             "Show the icon theme's &logo on the Start button",
         ),
-        Item::label_at("orb_glow_label", X, 410, 110, "Start butto&n glow:"),
+        Item::label_at("orb_glow_label", X, 426, 110, "Start butto&n glow:"),
         Item::new(
             "glass_orb_glow",
-            Rect::new(X + 114, 404, a.track(150), trackbar::HEIGHT),
+            Rect::new(X + 114, 420, glow_w, trackbar::HEIGHT),
             Control::TrackBar(TrackBar::new(100, 101).paged(10, 5)),
         ),
         Item::label_at(
             "orb_glow_note",
-            X,
-            434,
-            a.w,
-            "The glow shows under Glass only.",
+            X + GLOW_NOTE_X + glow_w,
+            426,
+            a.w - GLOW_NOTE_X - glow_w,
+            "(Glass only)",
         ),
     ]);
     Form::new(items)
 }
+
+/// The glow note's left edge, less the slider's width.
+const GLOW_NOTE_X: i32 = 122;
 
 /// The Start button glow's rows, greyed outside Glass.
 pub(super) const GLOW_CONTROLS: [&str; 2] = ["orb_glow_label", "glass_orb_glow"];
@@ -401,6 +418,10 @@ pub(super) const REVEAL_CONTROLS: [&str; 3] = [
 pub const SEARCH_NOTE: &str = "launcher_search_note";
 pub const CONTENTS: &str = "launcher_contents";
 pub const CONTENTS_NOTE: &str = "launcher_contents_note";
+pub const EVENTS_NOTE: &str = "taskbar_events_note";
+const EVENTS_CHECK: &str = "taskbar_calendar_events";
+/// The events note's left edge, right of its check box's label.
+const EVENTS_NOTE_X: i32 = 160;
 pub const FLIP_NOTE: &str = "flip_note";
 pub const OVERVIEW_NOTE: &str = "overview_note";
 /// The search note's most lines, and the characters a line holds.
@@ -501,6 +522,18 @@ pub(super) fn follow_contents(page: &mut Form, files: bool) {
         Some(Control::GreyedLines(_))
     );
     page.set_enabled(CONTENTS, files && !missing);
+}
+
+/// The calendar events' note right of its check box: what to install, greyed with the check box,
+/// while evolution-data-server is not installed; blank otherwise.
+pub fn show_events(page: &mut Form, installed: Option<bool>) {
+    let note = match installed {
+        Some(false) => "(install evolution-data-server)",
+        _ => "",
+    };
+    page.set_text(EVENTS_NOTE, note);
+    page.set_enabled(EVENTS_NOTE, installed != Some(false));
+    page.set_enabled(EVENTS_CHECK, installed != Some(false));
 }
 
 /// The Search note's lines: the keys bound to the launcher, what it finds, and that the Start

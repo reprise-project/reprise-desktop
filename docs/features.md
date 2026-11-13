@@ -59,6 +59,12 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
 - **Calendar.** Click the clock for the month, double-click it for Date and
   Time Properties. Under Glass an analog clock beside the month ticks each
   second while it's open, the time under it in hours and minutes.
+- **Calendar events.** With evolution-data-server installed, today's events
+  from your calendars (GNOME Calendar, Evolution, online accounts) list under
+  the month, all-day ones first, then by start time; past four rows the last
+  says how many more. Click a day for its events, and an event to open your
+  calendar program (the default for calendar files, else GNOME Calendar).
+  Settings > Taskbar turns the list off (`[taskbar] calendar_events`).
 - **From the keyboard.** Super+T lands on Start and Super+B on the
   notification area; your window greys while the bar has the keyboard. The
   arrows walk the buttons, Enter presses one, the Menu key opens its menu and

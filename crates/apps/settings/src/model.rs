@@ -160,6 +160,8 @@ pub struct Settings {
     pub taskbar_badges: bool,
     /// `[taskbar] network_meter`.
     pub taskbar_network_meter: bool,
+    /// `[taskbar] calendar_events`.
+    pub taskbar_calendar_events: bool,
     /// `[notifications] sound`.
     pub notification_sound: bool,
     /// `[notifications] no_balloons` and `no_sounds`: the programs, by key, whose balloons or
@@ -541,6 +543,7 @@ impl Settings {
             taskbar_tray_overflow: c.taskbar.tray_overflow,
             taskbar_badges: c.taskbar.badges,
             taskbar_network_meter: c.taskbar.network_meter,
+            taskbar_calendar_events: c.taskbar.calendar_events,
             notification_sound: c.notifications.sound,
             notify_no_balloons: c.notifications.no_balloons.clone(),
             notify_no_sounds: c.notifications.no_sounds.clone(),

@@ -1040,7 +1040,6 @@ pub fn default_in_lists(
     mime: &str,
     apps: &[AppEntry],
 ) -> Option<usize> {
-    let installed = |id: &str| apps.iter().position(|a| a.id == id);
     let mut seen: Vec<String> = Vec::new();
     for step in tree.lineage(mime) {
         let canonical = tree.canonical(&step);
@@ -1048,35 +1047,61 @@ pub fn default_in_lists(
             continue;
         }
         seen.push(canonical);
-        let names = tree.names(&step);
-        let listed = |group: &str| {
-            lists.iter().find_map(|text| {
-                names
-                    .iter()
-                    .flat_map(|m| ids_in_list(text, group, m))
-                    .find_map(|id| installed(&id))
-            })
-        };
-        let declared = || {
-            apps.iter()
-                .enumerate()
-                .filter(|(_, a)| {
-                    a.shown
-                        && a.mime_types
-                            .iter()
-                            .any(|m| names.contains(&m.to_ascii_lowercase()))
-                })
-                .min_by_key(|(_, a)| a.name.to_lowercase())
-                .map(|(i, _)| i)
-        };
-        let found = listed("Default Applications")
-            .or_else(|| listed("Added Associations"))
-            .or_else(declared);
+        let found = default_of_names(lists, &tree.names(&step), apps);
         if found.is_some() {
             return found;
         }
     }
     None
+}
+
+/// The program the lists name for one of `names` (a type and its aliases), else the first by name
+/// of the shown programs declaring one.
+fn default_of_names(lists: &[String], names: &[String], apps: &[AppEntry]) -> Option<usize> {
+    let installed = |id: &str| apps.iter().position(|a| a.id == id);
+    let listed = |group: &str| {
+        lists.iter().find_map(|text| {
+            names
+                .iter()
+                .flat_map(|m| ids_in_list(text, group, m))
+                .find_map(|id| installed(&id))
+        })
+    };
+    let declared = || {
+        apps.iter()
+            .enumerate()
+            .filter(|(_, a)| {
+                a.shown
+                    && a.mime_types
+                        .iter()
+                        .any(|m| names.contains(&m.to_ascii_lowercase()))
+            })
+            .min_by_key(|(_, a)| a.name.to_lowercase())
+            .map(|(i, _)| i)
+    };
+    listed("Default Applications")
+        .or_else(|| listed("Added Associations"))
+        .or_else(declared)
+}
+
+/// [`default_app`] for `mime` itself, never a parent type's: a type with no program of its own
+/// (say text/calendar) gets none rather than the text editor.
+pub fn own_default_app(mime: &str, apps: &[AppEntry]) -> Option<usize> {
+    let lists: Vec<String> = mimeapps_paths()
+        .iter()
+        .filter_map(|p| std::fs::read_to_string(p).ok())
+        .collect();
+    own_default_in_lists(&lists, &MimeTree::load(), mime, apps)
+}
+
+/// [`own_default_app`] over `lists`, as [`default_in_lists`] is to [`default_app`].
+pub fn own_default_in_lists(
+    lists: &[String],
+    tree: &MimeTree,
+    mime: &str,
+    apps: &[AppEntry],
+) -> Option<usize> {
+    default_of_names(lists, &tree.names(mime), apps)
 }
 
 /// File verbs a file of `mime` gets besides Open: Print for text, images and PDFs when `lp` is installed, Edit for text.

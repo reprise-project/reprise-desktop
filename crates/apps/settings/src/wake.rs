@@ -133,6 +133,7 @@ impl SettingsApp {
         changed |= self.airplane_done();
         changed |= self.region_done();
         changed |= self.contents_done();
+        changed |= self.events_done();
         changed |= self.thunderbolt_done();
         changed |= self.providers_done();
         changed |= self.login_users_done();

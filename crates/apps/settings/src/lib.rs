@@ -26,6 +26,7 @@ mod displayhost;
 mod displaypage;
 mod draw;
 mod events;
+mod eventshost;
 mod filepick;
 pub mod import;
 mod keyboardhost;
@@ -445,6 +446,7 @@ struct SettingsApp {
     region_set: Option<Receiver<regionhost::Set>>,
     contents: contentshost::Contents,
     providers: providerpage::Providers,
+    events: eventshost::Events,
 
     /// The Login Manager page's machine settings, read when it first opens with the accounts
     /// `login_source` gives; `login_job` holds a save through `login_run` under way.
@@ -719,6 +721,7 @@ impl SettingsApp {
             region_read: None,
             region_set: None,
             contents: contentshost::Contents::default(),
+            events: eventshost::Events::default(),
             thunderbolt: thunderbolthost::Thunderbolt::default(),
             providers: providerpage::Providers::default(),
             login: None,
@@ -1024,6 +1027,7 @@ impl App for SettingsApp {
         self.ensure_airplane();
         self.ensure_region();
         self.ensure_contents();
+        self.ensure_events();
         self.ensure_thunderbolt();
         self.ensure_login();
         if win == repriseapp::MAIN

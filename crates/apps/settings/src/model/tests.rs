@@ -728,6 +728,7 @@ fn save_round_trips_every_field() {
         taskbar_tray_overflow: true,
         taskbar_badges: false,
         taskbar_network_meter: true,
+        taskbar_calendar_events: false,
         notification_sound: false,
         notify_no_balloons: vec!["discord".into()],
         notify_no_sounds: vec!["org.mozilla.Thunderbird".into(), "mail".into()],
