@@ -47,6 +47,8 @@ pub enum Surface {
     KeySheet,
     /// The colour picker's loupe.
     ColorPick,
+    /// The region overlay's tips.
+    Region,
     /// The desktop widgets, while any stands.
     Widgets,
     /// A framed window's caption: its buttons, window menu and tabs. It never claims the
@@ -168,8 +170,9 @@ impl Access {
 pub struct Keyboard {
     /// The colour picker takes every key while open.
     pub color_pick: bool,
-    /// The lock, an input capture, the region overlay or a keyboard move
-    /// holds it: none of the trees.
+    /// So does the region overlay.
+    pub region: bool,
+    /// The lock, an input capture or a keyboard move holds it: none of the trees.
     pub elsewhere: bool,
     pub switcher: bool,
     pub overview: bool,
@@ -194,6 +197,8 @@ pub struct Keyboard {
 pub fn focus_of(k: &Keyboard) -> Option<Surface> {
     if k.color_pick {
         Some(Surface::ColorPick)
+    } else if k.region {
+        Some(Surface::Region)
     } else if k.elsewhere {
         None
     } else if k.switcher {
@@ -232,6 +237,7 @@ pub fn focus_of(k: &Keyboard) -> Option<Surface> {
 fn keyboard(state: &State) -> Keyboard {
     Keyboard {
         color_pick: state.panels.colorpick.is_some(),
+        region: state.panels.region.is_some(),
         elsewhere: state.desktop_locked()
             || state.inputproto.gated()
             || state.panels.takes_pointer()
@@ -316,6 +322,7 @@ fn surfaces(state: &State) -> Vec<Surface> {
         (crate::notifycenter::is_open(state), Surface::NotifyCenter),
         (crate::keysheetview::is_shown(state), Surface::KeySheet),
         (state.panels.colorpick.is_some(), Surface::ColorPick),
+        (state.panels.region.is_some(), Surface::Region),
         (true, Surface::Balloons),
         (state.widgets_shown(), Surface::Widgets),
     ];
@@ -382,6 +389,7 @@ fn tree(state: &State, surface: Surface) -> Option<Tree> {
         Surface::NotifyCenter => crate::notifycenter::access(state),
         Surface::KeySheet => crate::keysheetview::access(state),
         Surface::ColorPick => crate::colorpickview::access(state),
+        Surface::Region => crate::regionview::access(state),
         Surface::Balloons => Some(crate::notifyview::access(state)),
         Surface::Widgets => state.widgets_access(),
         Surface::Frame(w) => frame_tree(state, w),

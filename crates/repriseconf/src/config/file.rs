@@ -209,6 +209,7 @@ pub struct FileDisplay {
 #[serde(deny_unknown_fields)]
 pub struct FileScreenshot {
     pub save: Option<bool>,
+    pub record_sound: Option<bool>,
 }
 
 #[derive(Deserialize, Default)]

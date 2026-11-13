@@ -1887,3 +1887,41 @@ fn a_toast_open_across_an_icon_theme_change_shows_the_new_themes_icon() {
         std::fs::remove_dir_all(&blue).unwrap();
     }
 }
+
+#[test]
+fn an_own_notice_runs_the_action_its_button_names() {
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    let run = |argv: &str| OwnAction::Run(vec![argv.into()]);
+    let actions = vec![
+        (
+            "open".to_string(),
+            "Open".to_string(),
+            run("reprise-notepad"),
+        ),
+        (
+            "folder".to_string(),
+            "Show in Folder".to_string(),
+            run("reprise-explorer"),
+        ),
+    ];
+    notice_with_actions(&mut h.state, "Saved", "a.mp4", actions);
+    let shown = h.state.notify.stack[0].item.note().unwrap().actions.clone();
+    assert_eq!(
+        shown,
+        [
+            ("open".to_string(), "Open".to_string()),
+            ("folder".to_string(), "Show in Folder".to_string())
+        ]
+    );
+    crate::spawn::record();
+    invoke(&mut h.state, OWN_ID, "folder");
+    assert_eq!(crate::spawn::recorded(), ["reprise-explorer"]);
+    notice(&mut h.state, "Plain", "");
+    invoke(&mut h.state, OWN_ID, "folder");
+    assert_eq!(
+        crate::spawn::recorded(),
+        ["reprise-explorer"],
+        "a later notice drops the earlier one's actions"
+    );
+}

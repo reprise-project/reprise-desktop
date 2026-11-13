@@ -719,8 +719,13 @@ impl Config {
             }
             cfg.gpu = Some(path);
         }
-        if let Some(v) = file.screenshot.and_then(|s| s.save) {
-            cfg.screenshot.save = v;
+        if let Some(s) = file.screenshot {
+            if let Some(v) = s.save {
+                cfg.screenshot.save = v;
+            }
+            if let Some(v) = s.record_sound {
+                cfg.screenshot.record_sound = v;
+            }
         }
         if let Some(l) = file.lock {
             if let Some(v) = l.away_device {

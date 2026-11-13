@@ -286,8 +286,8 @@ pub fn backup(a: Area) -> Form {
     ])
 }
 
-/// The button that opens Sounds and Audio Devices, the sound theme picked from `sound_themes`, the bell and
-/// the volume's reach.
+/// The button that opens Sounds and Audio Devices, the sound theme picked from `sound_themes`, the bell,
+/// the volume's reach and sound in screen recordings.
 pub fn sound(a: Area, sound_themes: &[String]) -> Form {
     Form::new(vec![
         Item::new(
@@ -327,8 +327,17 @@ pub fn sound(a: Area, sound_themes: &[String]) -> Form {
             a.gw() - 18,
             "Sliders and the volume keys go on to 150%.",
         ),
+        group(a, "recording_group", 284, 48, "Screen Recordings"),
+        Item::check(
+            RECORD_SOUND,
+            GX,
+            306,
+            "&Record what plays in screen recordings",
+        ),
     ])
 }
+
+pub(super) const RECORD_SOUND: &str = "screenshot_record_sound";
 
 /// The notification sound and balloon style, Do Not Disturb's triggers, then each program's
 /// switches ([`notifypage`]). The program list takes the page's extra height.

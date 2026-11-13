@@ -832,7 +832,9 @@ impl State {
             Action::Screenshot => self.screenshot(false),
             Action::ScreenshotWindow => self.screenshot(true),
             Action::ScreenshotContent => self.screenshot_content(),
-            Action::ScreenshotRegion => self.open_region(),
+            Action::ScreenshotRegion => self.open_region(false),
+            Action::RecordScreen => self.toggle_screen_recording(),
+            Action::RecordRegion => self.open_region(true),
             Action::ColorPicker => self.open_color_pick(crate::colorpickview::Asker::Bind),
             Action::VolumeUp
             | Action::VolumeDown

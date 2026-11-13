@@ -751,7 +751,7 @@ pub fn page_desk(
         under.fill_rect(area, cs.background);
         under.fill_rect(Rect::new(40, 30, 300, 170), cs.button_face);
         under.fill_rect(Rect::new(40, 30, 300, 18), cs.active_title);
-        let mut m = regionselect::RegionSelect::new((0, 0));
+        let mut m = regionselect::RegionSelect::new((0, 0), false);
         m.press((80, 60));
         m.motion((280, 160));
         c.blit_canvas(

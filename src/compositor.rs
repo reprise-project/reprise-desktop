@@ -281,6 +281,8 @@ pub struct State {
     pub privacy: crate::privacy::Privacy,
     /// The red border around what is captured (`captureborder`).
     pub capture_border: crate::captureborder::CaptureBorder,
+    /// The screen recording running now (`screenrecord`).
+    pub recording: Option<crate::screenrecord::Recording>,
     /// The geoclue agent: its prompts and the location pin (`location`).
     pub location: crate::location::Location,
     /// `[time_zone] automatic`'s thread (`autozone`).
@@ -697,6 +699,7 @@ impl State {
                 Default::default()
             },
             capture_border: Default::default(),
+            recording: None,
             netspeed: Default::default(),
             location: if session {
                 crate::location::Location::start(&handle, config.location)

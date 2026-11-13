@@ -197,12 +197,17 @@ fn strips(
 /// wlr captures. A screenshot is neither; the border, the sharing
 /// indicator and the automatic Do Not Disturb all go by this.
 pub fn ongoing(state: &State) -> Vec<Captured<Output, WindowId>> {
-    shared(state, true)
+    shared(state, true, None)
 }
 
-/// [`ongoing`], the remote desktop server's captures only `with_remote`.
-fn shared(state: &State, with_remote: bool) -> Vec<Captured<Output, WindowId>> {
-    let mut targets = state.captures.targets(with_remote);
+/// [`ongoing`], the remote desktop server's captures only `with_remote`, the screen recorder's of
+/// output `recorded` none.
+fn shared(
+    state: &State,
+    with_remote: bool,
+    recorded: Option<&Output>,
+) -> Vec<Captured<Output, WindowId>> {
+    let mut targets = state.captures.targets(with_remote, recorded);
     let waiting = state.captures.wlr_waiting();
     let now = Instant::now();
     targets.extend(live_wlr(&state.capture_border.tracks, &waiting, now).map(
@@ -218,7 +223,14 @@ fn current_edges(state: &State) -> Vec<Edge> {
     if !state.config.capture_border {
         return Vec::new();
     }
-    let targets = shared(state, state.config.remote_desktop.capture_border);
+    // An area recording outlines its area, not the output the recorder captures.
+    let area = crate::screenrecord::border_target(state);
+    let recorded = match &area {
+        Some(Captured::Region(o, _)) => Some(o),
+        _ => None,
+    };
+    let mut targets = shared(state, state.config.remote_desktop.capture_border, recorded);
+    targets.extend(area);
     if targets.is_empty() {
         return Vec::new();
     }
@@ -539,6 +551,47 @@ mod tests {
             current_edges(&h.state),
             screen,
             "another capture is bordered"
+        );
+    }
+
+    #[test]
+    fn an_area_recording_outlines_its_area_and_not_the_recorded_output() {
+        let size = (64, 48);
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", size.0, size.1);
+        let output = h.state.scene.outputs()[0].clone();
+        let mut rec = h.connect_recorder_capture(size);
+        let mut s = rec.ext_session(&mut h);
+        rec.ext_frame(&mut h, &mut s);
+        rec.ext_frame(&mut h, &mut s);
+        let screen = Edge {
+            rect: rect(0, 0, size.0, size.1),
+            outside: false,
+        };
+        assert_eq!(
+            current_edges(&h.state),
+            [screen],
+            "a whole-screen recording"
+        );
+        h.state.recording = Some(crate::screenrecord::Recording::running(
+            crate::screenrecord::Target {
+                output,
+                area: Some(crate::raster::Rect::new(8, 4, 20, 10)),
+            },
+        ));
+        let area = Edge {
+            rect: rect(8, 4, 20, 10),
+            outside: true,
+        };
+        assert_eq!(current_edges(&h.state), [area]);
+        let mut other = h.connect_capture(size);
+        let mut t = other.ext_session(&mut h);
+        other.ext_frame(&mut h, &mut t);
+        other.ext_frame(&mut h, &mut t);
+        assert_eq!(
+            current_edges(&h.state),
+            [screen, area],
+            "another app's capture of the screen keeps its border"
         );
     }
 

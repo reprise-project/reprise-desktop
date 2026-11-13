@@ -38,11 +38,16 @@ impl Default for SnapConfig {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ScreenshotConfig {
     pub save: bool,
+    /// Screen recordings carry what plays on the default output.
+    pub record_sound: bool,
 }
 
 impl Default for ScreenshotConfig {
     fn default() -> Self {
-        ScreenshotConfig { save: true }
+        ScreenshotConfig {
+            save: true,
+            record_sound: false,
+        }
     }
 }
 

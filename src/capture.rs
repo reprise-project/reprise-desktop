@@ -137,13 +137,19 @@ impl Captures {
             || self.waiting.iter().any(|w| w.shows() == on)
     }
 
-    /// What the ongoing ext sessions show, those for the remote desktop server only `with_remote`.
-    pub fn targets(&self, with_remote: bool) -> Vec<Captured<Output, WindowId>> {
+    /// What the ongoing ext sessions show, those for the remote desktop server only `with_remote`,
+    /// and those of the screen recorder's output `recorded` (an area of which it records) none.
+    pub fn targets(
+        &self,
+        with_remote: bool,
+        recorded: Option<&Output>,
+    ) -> Vec<Captured<Output, WindowId>> {
         self.sessions
             .iter()
             .filter(|s| asked(s).ongoing())
             .filter(|s| with_remote || !for_remote_desktop(s))
             .filter_map(|s| match shown(&s.source())? {
+                Shown::Output(o) if for_recorder(s) && recorded == Some(&o) => None,
                 Shown::Output(o) => Some(Captured::Output(o)),
                 Shown::Window(w) => Some(Captured::Window(w)),
             })
@@ -926,6 +932,14 @@ fn for_remote_desktop(session: &SessionRef) -> bool {
     session.client().is_some_and(|c| {
         c.get_data::<crate::compositor::ClientState>()
             .is_some_and(|d| d.remote_capture.load(Ordering::Relaxed))
+    })
+}
+
+/// Whether `session`'s client marked itself the screen recorder's capture connection.
+fn for_recorder(session: &SessionRef) -> bool {
+    session.client().is_some_and(|c| {
+        c.get_data::<crate::compositor::ClientState>()
+            .is_some_and(|d| d.recorder_capture.load(Ordering::Relaxed))
     })
 }
 

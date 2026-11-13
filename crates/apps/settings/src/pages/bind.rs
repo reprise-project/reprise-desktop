@@ -139,6 +139,7 @@ pub(super) fn binds() -> Vec<Bind> {
         ),
         Bind::Named("hot_corner", lens!(hot_corner), HOT_CORNERS),
         Bind::Flag("screenshot_save", lens!(screenshot_save)),
+        Bind::Flag("screenshot_record_sound", lens!(screenshot_record_sound)),
         Bind::Flag("clipboard_history", lens!(clipboard_history)),
         Bind::Named("interface", lens!(interface), INTERFACES),
         Bind::Scheme(

@@ -65,6 +65,9 @@ pub struct InputProto {
     pub source: InputSource,
     /// Buttons whose press a consent prompt refused (`State::consent_refuses_button`).
     pub consent_held: Vec<u32>,
+    /// The portal's `reprise_input_v1` objects of version 11 or later, which hear
+    /// `recorder_granted`.
+    pub inputs: Vec<RepriseInputV1>,
 }
 
 /// Where the input being handled comes from. In lock mode the computer's own goes to the
@@ -94,6 +97,7 @@ impl InputProto {
             keys: Default::default(),
             source: InputSource::Other,
             consent_held: Vec::new(),
+            inputs: Vec::new(),
         }
     }
 
@@ -115,6 +119,19 @@ impl State {
     /// one in lock mode) is locked; only releases of what it holds still go.
     pub fn app_input_locked(&self) -> bool {
         self.desktop_locked() || crate::sessionlock::holds_input(self)
+    }
+
+    /// Tell the portal that recorder `pid` serves a recording the user asked for, so its
+    /// ScreenCast session starts without a dialog.
+    pub fn grant_recorder(&mut self, pid: u32) {
+        let inputs = &mut self.inputproto.inputs;
+        inputs.retain(|i| i.is_alive());
+        if inputs.is_empty() {
+            log::warn!("no portal heard the recorder's grant; it asks to share the screen");
+        }
+        for i in inputs.iter() {
+            i.recorder_granted(pid);
+        }
     }
 
     /// Run `f` with `source` as the input being handled, then put the last one back.
@@ -160,13 +177,18 @@ pub struct InputData;
 impl GlobalDispatch2<RepriseInputV1, State> for InputGlobal {
     fn bind(
         &self,
-        _state: &mut State,
+        state: &mut State,
         _dh: &DisplayHandle,
         _client: &Client,
         resource: New<RepriseInputV1>,
         data_init: &mut DataInit<'_, State>,
     ) {
-        data_init.init(resource, InputData);
+        let r = data_init.init(resource, InputData);
+        let inputs = &mut state.inputproto.inputs;
+        inputs.retain(|i| i.is_alive());
+        if r.version() >= 11 {
+            inputs.push(r);
+        }
     }
 
     fn can_view(&self, client: &Client) -> bool {

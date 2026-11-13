@@ -158,6 +158,8 @@ fn action_names_round_trip() {
         "screenshot-window",
         "screenshot-region",
         "screenshot-content",
+        "record-screen",
+        "record-region",
         "zoom-in",
         "zoom-out",
         "zoom-reset",

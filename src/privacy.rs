@@ -333,7 +333,7 @@ pub fn captures_changed(state: &mut State) {
 /// Moves `live_at` to `at` while an ext session is live or has just gone
 /// or a wlr frame waits, and to a wlr recording's newest frame.
 fn note_live(state: &mut State, at: Instant) {
-    let ext = !state.captures.targets(true).is_empty();
+    let ext = !state.captures.targets(true, None).is_empty();
     let waiting = !state.captures.wlr_waiting().is_empty();
     let recorded = crate::captureborder::last_recorded(state);
     let p = &mut state.privacy;
