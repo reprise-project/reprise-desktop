@@ -2,7 +2,8 @@
 //! `color_filter_intensity`) with a preview of what it does to six colours, and the magnifier's
 //! following (`[accessibility] magnifier_follow`) with the keys that zoom. The intensity greys unless a
 //! colour-blind correction is picked; the preview follows the pending choice, the zoom keys' note the
-//! pending `[[keybinds]]`. Below, the same Reduce motion check box as the Effects page's.
+//! pending `[[keybinds]]`. Below, the same Reduce motion check box as the Effects page's, and the
+//! screen reader's check boxes (`readerhost`), which act at once and write no config key.
 
 use reprisekit::classic::widgets::LINE_H;
 use reprisekit::colorfilter::{self, Filter};
@@ -40,6 +41,13 @@ const CELL: (i32, i32) = (16, 12);
 const TOP: i32 = 44;
 const MAG_TOP: i32 = TOP + 120;
 const MOTION_TOP: i32 = MAG_TOP + 103;
+const READER_TOP: i32 = MOTION_TOP + 72;
+
+/// The screen reader's check boxes: running now, and started at log on.
+pub const READER: &str = "screen_reader";
+pub const READER_LOGON: &str = "screen_reader_logon";
+const READER_KEYS: &str = "reader_keys";
+const READER_MISSING: &str = "reader_missing";
 
 /// The Effects page's `reduce_motion` check box, shown here too.
 pub const REDUCE_MOTION: &str = "vision_reduce_motion";
@@ -114,7 +122,38 @@ pub fn page(a: Area) -> Form {
             Rect::new(GX, MOTION_TOP + 38, gw, LINE_H),
             Control::Lines(vec!["GTK programs stop animating too.".into()]),
         ),
+        group(a, "reader_group", READER_TOP, 97, "Screen Reader"),
+        Item::check(READER, GX, READER_TOP + 20, "Use the &screen reader"),
+        Item::check(
+            READER_LOGON,
+            GX,
+            READER_TOP + 42,
+            "Start the screen reader when I log o&n",
+        ),
+        Item::new(
+            READER_KEYS,
+            Rect::new(GX, READER_TOP + 62, gw, LINE_H),
+            Control::Lines(Vec::new()),
+        ),
+        Item::new(
+            READER_MISSING,
+            Rect::new(GX, READER_TOP + 62 + LINE_H, gw, LINE_H),
+            Control::Lines(Vec::new()),
+        ),
     ])
+}
+
+/// The screen reader's check boxes: `running` and `at_logon`, greyed with a note unless `installed`.
+pub fn show_reader(page: &mut Form, installed: bool, running: bool, at_logon: bool) {
+    page.set_check(READER, running);
+    page.set_check(READER_LOGON, at_logon);
+    page.set_enabled(READER, installed);
+    page.set_enabled(READER_LOGON, installed);
+    let missing = match installed {
+        true => Vec::new(),
+        false => vec!["Install Orca to use the screen reader.".into()],
+    };
+    page.set_lines(READER_MISSING, &missing);
 }
 
 const MAG_NOTE: &str = "mag_note";
@@ -122,8 +161,17 @@ const MAG_NOTE: &str = "mag_note";
 const NOTE_LINES: usize = 3;
 const NOTE_COLS: usize = 58;
 
-pub fn show_zoom_keys(page: &mut Form, binds: &[Shortcut]) {
+/// Fill the notes that name keys: the zoom keys' and the screen reader's.
+pub fn show_keys(page: &mut Form, binds: &[Shortcut]) {
     page.set_lines(MAG_NOTE, &zoom_note(binds));
+    page.set_lines(READER_KEYS, &[reader_note(binds)]);
+}
+
+fn reader_note(binds: &[Shortcut]) -> String {
+    keys_for(binds, "screen-reader").map_or_else(
+        || "No key turns it on. The Keyboard page binds one.".into(),
+        |k| format!("{k} turns it on and off anywhere."),
+    )
 }
 
 /// The zoom note's lines: the keys bound to zoom-in, zoom-out and zoom-reset, then where to change
@@ -225,6 +273,21 @@ mod tests {
                 "Super+= zooms in, up to 8x, Super+- zooms out and Super+0",
                 "goes back to 1x. The Keyboard page changes these keys.",
             ]
+        );
+    }
+
+    #[test]
+    fn the_reader_note_names_its_keys() {
+        let binds: Vec<Shortcut> = (repriseconf::keybind::DEFAULTS.iter())
+            .map(|(k, a)| Shortcut::new(k, a, ""))
+            .collect();
+        assert_eq!(
+            reader_note(&binds),
+            "Super+Alt+S turns it on and off anywhere."
+        );
+        assert_eq!(
+            reader_note(&[]),
+            "No key turns it on. The Keyboard page binds one."
         );
     }
 

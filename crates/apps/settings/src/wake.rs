@@ -129,6 +129,7 @@ impl SettingsApp {
         }
         changed |= self.forget_done();
         changed |= self.remote_done();
+        changed |= self.reader_done();
         changed |= self.login_users_done();
         changed |= self.login_poll_done();
         let mut quit = false;

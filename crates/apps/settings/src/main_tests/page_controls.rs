@@ -250,3 +250,57 @@ fn unchecking_run_as_asks_first_and_only_ok_unchecks_it() {
     assert_eq!(a.list.checks, Some(vec![false]), "OK unchecks it");
     assert!(a.dirty(), "Apply writes it");
 }
+
+fn reader_read(a: &mut SettingsApp, reader: readerhost::Reader, failed: Option<String>) {
+    let (tx, rx) = std::sync::mpsc::channel();
+    tx.send(readerhost::Reading { reader, failed }).unwrap();
+    a.reader_job = Some(rx);
+    a.reader_done();
+}
+
+/// The screen reader's boxes show what was read, grey with a note while Orca is missing, and
+/// moving one writes nothing to config.toml.
+#[test]
+fn the_screen_reader_boxes_follow_the_reads_and_grey_without_orca() {
+    let mut a = app("reader");
+    let at = Page::MagnifierFilters.index();
+    let enabled = |a: &SettingsApp, id| match a.sheet.pages[at].item(id).map(|i| &i.control) {
+        Some(form::Control::Check { enabled, .. }) => *enabled,
+        _ => panic!("{id} is a check box"),
+    };
+    let missing = |a: &SettingsApp| match &a.sheet.pages[at].item("reader_missing").unwrap().control
+    {
+        form::Control::Lines(l) => l.clone(),
+        _ => panic!("lines"),
+    };
+
+    reader_read(&mut a, readerhost::Reader::default(), None);
+    assert!(!enabled(&a, magnifierpage::READER));
+    assert!(!enabled(&a, magnifierpage::READER_LOGON));
+    assert_eq!(missing(&a), ["Install Orca to use the screen reader."]);
+
+    let running = readerhost::Reader {
+        installed: true,
+        running: true,
+    };
+    reader_read(&mut a, running, None);
+    let page = &a.sheet.pages[at];
+    assert_eq!(page.checked(magnifierpage::READER), Some(true));
+    assert!(enabled(&a, magnifierpage::READER));
+    assert!(missing(&a).is_empty());
+
+    a.sheet.pages[at].set_check(magnifierpage::READER, false);
+    a.sheet_event(propsheet::Event::Page(
+        at,
+        form::Event::Changed(magnifierpage::READER),
+    ));
+    assert!(!a.reader.running, "shown off until the next read");
+    assert_eq!(a.want, a.loaded, "the switch is no change for Apply");
+
+    reader_read(
+        &mut a,
+        running,
+        Some("The screen reader could not be started.".into()),
+    );
+    assert!(a.error.is_some(), "a failed switch says why");
+}

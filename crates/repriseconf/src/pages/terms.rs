@@ -294,6 +294,11 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
                 "When zoomed in, follow the text cursor and focus",
             ),
             ("vision_reduce_motion", "Reduce motion everywhere"),
+            ("screen_reader", "Use the screen reader"),
+            (
+                "screen_reader_logon",
+                "Start the screen reader when I log on",
+            ),
         ],
         Page::Sound => &[
             ("audio_devices", "Audio Devices..."),

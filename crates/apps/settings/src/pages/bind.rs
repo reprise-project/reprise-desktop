@@ -802,14 +802,14 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
 }
 
 /// Fill every note and label that names a key from `binds`: the layout switch keys, the zoom keys,
-/// the launcher's, the 3D switcher's, the overview's and the clipboard history's.
+/// the screen reader's, the launcher's, the 3D switcher's, the overview's and the clipboard history's.
 pub fn show_keys(sheet: &mut PropSheet, binds: &[Shortcut]) {
     let switch = keys_for(binds, "next-layout").map_or_else(
         || "No key switches them.".to_string(),
         |k| format!("{k} switches them."),
     );
     sheet.pages[Page::Keyboard.index()].set_text(KB_SWITCH_NOTE, &escape_mnemonic(&switch));
-    crate::magnifierpage::show_zoom_keys(&mut sheet.pages[Page::MagnifierFilters.index()], binds);
+    crate::magnifierpage::show_keys(&mut sheet.pages[Page::MagnifierFilters.index()], binds);
     sheet.pages[Page::Search.index()].set_lines(SEARCH_NOTE, &search_note(binds));
     let sp = &mut sheet.pages[Page::Switcher.index()];
     sp.set_text(FLIP_NOTE, &escape_mnemonic(&flip_note(binds)));

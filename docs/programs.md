@@ -378,8 +378,10 @@ matched control focused.
 - **Accessibility**
   - **Text & Keys:** text size, StickyKeys, SlowKeys, MouseKeys and Use the
     keyboard shortcuts.
-  - **Magnifier & Filters:** colour filters and their intensity, and whether
-    the magnifier follows the text cursor and focus.
+  - **Magnifier & Filters:** colour filters and their intensity, whether
+    the magnifier follows the text cursor and focus, and the screen reader:
+    Use the screen reader starts or stops Orca at once, and Start the screen
+    reader when I log on shows or hides its autostart entry at once.
 - **Network**
   - **Connections...** (Network Connections)
   - **Remote Desktop:** Allow remote connections turns the server on or off

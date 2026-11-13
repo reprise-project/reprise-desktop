@@ -131,6 +131,13 @@ fn the_magnifier_filters_page_geometry() {
     assert_eq!(rect(&s, p, "mag_group"), Rect::new(20, 164, 358, 93));
     assert_eq!(rect(&s, p, "magnifier_follow"), Rect::new(32, 184, 13, 13));
     assert_eq!(rect(&s, p, "mag_note"), Rect::new(32, 206, 334, 39));
+    assert_eq!(rect(&s, p, "reader_group"), Rect::new(20, 339, 358, 97));
+    assert_eq!(rect(&s, p, "screen_reader"), Rect::new(32, 359, 13, 13));
+    assert_eq!(
+        rect(&s, p, "screen_reader_logon"),
+        Rect::new(32, 381, 13, 13)
+    );
+    assert_eq!(rect(&s, p, "reader_missing"), Rect::new(32, 414, 334, 13));
     inside_page(&s, p);
     reprisekit::pins::fonts();
     let text = TextRenderer::load(&FontConfig::default());

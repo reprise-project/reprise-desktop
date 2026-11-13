@@ -359,6 +359,9 @@ impl Page {
                 "colour blindness",
                 "color blindness",
                 "zoom",
+                "orca",
+                "speech",
+                "blind",
             ],
             Page::Sound => &[
                 "sounds",
