@@ -601,7 +601,8 @@ impl State {
     fn apply_overview(&mut self, e: Event) {
         match e {
             Event::None => {}
-            Event::Redraw => self.redraw_overview(),
+            // Only the selection or the hover moved: a grid drawn as it was asks for no frame.
+            Event::Redraw => self.redraw_changed(|s| s.draw_overview()),
             Event::Activate(i) => self.overview_activate(i),
             Event::Close => self.close_overview(),
         }
@@ -763,6 +764,13 @@ impl State {
 
     /// Draw the open overview again.
     pub(crate) fn redraw_overview(&mut self) {
+        if self.overview.view.is_some() {
+            self.draw_overview();
+            self.redraw_all();
+        }
+    }
+
+    fn draw_overview(&mut self) {
         let Some(v) = self.overview.view.as_ref() else {
             return;
         };
@@ -770,7 +778,6 @@ impl State {
         for g in 0..v.grids.len() {
             first += self.redraw_overview_grid(g, first);
         }
-        self.redraw_all();
         crate::access::touch(self);
     }
 
@@ -1000,6 +1007,26 @@ mod tests {
             mods,
             edit: None,
         }
+    }
+
+    #[test]
+    fn a_hover_asks_for_frames_only_on_the_output_of_the_grid_it_lights() {
+        use crate::backend::take_asked_outputs;
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.output("TEST-2", 1024, 768);
+        let mut c = h.connect();
+        h.map_toplevel(&mut c, "one", 300, 200);
+        h.map_toplevel(&mut c, "two", 300, 200);
+        h.state.open_overview();
+        let v = h.state.overview.view.as_ref().expect("the overview");
+        assert_eq!(v.layouts.len(), 2, "a grid per output");
+        assert_eq!(v.layouts[0].cells.len(), 2, "both windows on TEST-1's grid");
+        take_asked_outputs();
+        h.state.overview_hover(Some(1));
+        assert_eq!(take_asked_outputs(), ["TEST-1"], "a cell lights on TEST-1");
+        h.state.overview_hover(None);
+        assert_eq!(take_asked_outputs(), ["TEST-1"], "and goes dark");
     }
 
     #[test]

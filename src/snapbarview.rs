@@ -124,6 +124,23 @@ pub fn motion(state: &mut State, w: WindowId, x: f64, y: f64) -> Option<Rect> {
     zone
 }
 
+/// The layout point in the middle of the shown bar's first free zone.
+#[cfg(test)]
+pub fn zone_middle(state: &State) -> Option<(f64, f64)> {
+    let b = state.snap_bar.shown.as_ref()?;
+    let r = b.model.rect(Instant::now());
+    let (l, z) = *b.layout.order().first()?;
+    let t = b.layout.tiles[l][z];
+    let (x, y) = (r.x + t.x + t.width / 2, r.y + t.y + t.height / 2);
+    Some((f64::from(x), f64::from(y)))
+}
+
+/// Whether the shown bar holds the dragged window's live picture.
+#[cfg(test)]
+pub fn thumb_shown(state: &State) -> bool {
+    (state.snap_bar.shown.as_ref()).is_some_and(|b| b.thumb.is_some())
+}
+
 /// Where the bar over `out` keeps a release from dropping (`SnapBar::no_drop`), for `snap::target_at`.
 pub fn bar_rect(state: &State, out: &Output) -> Option<Rect> {
     let b = state.snap_bar.shown.as_ref().filter(|b| b.output == *out)?;
@@ -389,6 +406,10 @@ fn place_bar(state: &mut State, b: &mut Bar) {
 
 /// Over a zone the dragged window hides behind its live picture; off it the window shows again, unless it left the screen meanwhile.
 fn set_thumb(state: &mut State, on: bool) {
+    state.redraw_changed(|state| swap_thumb(state, on));
+}
+
+fn swap_thumb(state: &mut State, on: bool) {
     let Some(b) = state.snap_bar.shown.as_mut() else {
         return;
     };
@@ -424,15 +445,11 @@ fn set_thumb(state: &mut State, on: bool) {
                 state.scene.set_enabled(tree, shows);
             }
         }
-        (_, kept) => {
-            b.thumb = kept;
-            return;
-        }
+        (_, kept) => b.thumb = kept,
     }
-    state.redraw_all();
 }
 
-/// The caller schedules the bar's output; a thumbnail reaching past it redraws the others too.
+/// Asks for frames where the thumbnail left and where it lies now.
 fn move_thumb(state: &mut State, x: i32, y: i32) {
     let Some(b) = state.snap_bar.shown.as_ref() else {
         return;
@@ -441,11 +458,8 @@ fn move_thumb(state: &mut State, x: i32, y: i32) {
         return;
     };
     let r = Rect::new(x - THUMB_W / 2, y + THUMB_DY, THUMB_W, h);
-    let inside = state.layout_box(Some(&b.output)).intersect(&r) == r;
-    state.scene.set_position(tree, r.x, r.y);
-    if !inside {
-        state.redraw_all();
-    }
+    let outputs = state.scene.move_on_outputs(tree, r.x, r.y);
+    crate::backend::schedule_on(state, &outputs, crate::backend::Ask::Scene);
 }
 
 /// `r` as `WxH+X+Y` for the log.

@@ -302,15 +302,20 @@ impl WlrLayerShellHandler for State {
             return;
         };
         let l = self.layers_shell.surfaces.remove(i);
-        // It redraws no bar, so `popup_gone` steps the bars itself.
-        crate::autohideview::popup_gone(self, l.wl());
-        self.scene.destroy(l.tree);
-        if self.layers_shell.focused.as_ref() == Some(l.wl()) {
-            self.layers_shell.focused = None;
-            self.focus_next_layer_or_top();
+        self.redraw_changed(|s| {
+            // It redraws no bar, so `popup_gone` steps the bars itself.
+            crate::autohideview::popup_gone(s, l.wl());
+            s.scene.destroy(l.tree);
+            if s.layers_shell.focused.as_ref() == Some(l.wl()) {
+                s.layers_shell.focused = None;
+                s.focus_next_layer_or_top();
+            }
+            arrange(s, &l.output);
+        });
+        // A client that hung up dropped the surface's extents before this runs.
+        if l.mapped && self.scene.outputs().contains(&l.output) {
+            crate::backend::schedule_on(self, &[l.output], crate::backend::Ask::Scene);
         }
-        arrange(self, &l.output);
-        self.redraw_all();
     }
 }
 
@@ -343,11 +348,19 @@ impl State {
     }
 }
 
+/// A commit to `surface`: a layer surface or one of its popups takes it, asking for frames where
+/// its scene edits show (`State::redraw_changed`) and, as it maps or unmaps, on its output.
 pub fn commit(state: &mut State, surface: &WlSurface) {
     if let Some(root) = popup_root(state, surface) {
-        sync_popups(state, &root);
+        state.redraw_changed(|s| sync_popups(s, &root));
         return;
     }
+    if state.layer_of(surface).is_some() {
+        state.redraw_changed(|s| commit_layer(s, surface));
+    }
+}
+
+fn commit_layer(state: &mut State, surface: &WlSurface) {
     let Some(i) = state
         .layers_shell
         .surfaces
@@ -401,6 +414,9 @@ pub fn commit(state: &mut State, surface: &WlSurface) {
     }
     if !initial_sent || before != Some(now) || mapped != was_mapped {
         arrange(state, &output);
+    }
+    if mapped != was_mapped {
+        crate::backend::schedule_on(state, &[output], crate::backend::Ask::Scene);
     }
     if mapped && !was_mapped {
         // A surface mapping under a resting pointer takes it at once, or
@@ -460,16 +476,17 @@ pub fn sync_popups(state: &mut State, root: &WlSurface) {
 
 pub fn popup_destroyed(state: &mut State, root: &WlSurface) {
     if state.layer_of(root).is_some() {
-        sync_popups(state, root);
-        state.redraw_all();
+        state.redraw_changed(|s| sync_popups(s, root));
     }
 }
 
 pub fn arrange(state: &mut State, output: &Output) {
-    if configure(state, output) {
-        state.refit_maximized();
-        state.relayout_desktop();
-    }
+    state.redraw_changed(|s| {
+        if configure(s, output) {
+            s.refit_maximized();
+            s.relayout_desktop();
+        }
+    });
 }
 
 /// Configure every layer surface on `output` and record what is left of the
@@ -514,7 +531,7 @@ fn configure(state: &mut State, output: &Output) -> bool {
     }
     log::debug!("arrange {full:?} -> usable {usable:?}");
     let shell = &mut state.layers_shell;
-    let changed = match shell.usable.iter_mut().find(|(o, _, _)| o == output) {
+    match shell.usable.iter_mut().find(|(o, _, _)| o == output) {
         Some(entry) => {
             let changed = entry.2 != usable || entry.1 != full;
             *entry = (output.clone(), full, usable);
@@ -524,9 +541,7 @@ fn configure(state: &mut State, output: &Output) -> bool {
             shell.usable.push((output.clone(), full, usable));
             true
         }
-    };
-    state.redraw_all();
-    changed
+    }
 }
 
 pub fn outputs_changed(state: &mut State) {
@@ -551,6 +566,7 @@ pub fn outputs_changed(state: &mut State) {
     }
     state.refit_maximized();
     crate::lockview::refit(state);
+    state.redraw_all();
 }
 
 /// Whether a mapped layer surface currently owns the keyboard outright, in
@@ -736,5 +752,52 @@ mod tests {
         let want = h.state.win(t.id).map(|w| w.wl_surface().clone());
         let got = h.state.seat.get_keyboard().and_then(|k| k.current_focus());
         assert_eq!(got, want, "the window holds the keyboard");
+    }
+
+    /// Two outputs with the pointer on TEST-1, where a panel that names no output lands.
+    fn two_outputs() -> crate::harness::Harness {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.output("TEST-2", 1024, 768);
+        h.pointer_to(100.0, 100.0);
+        h
+    }
+
+    #[test]
+    fn a_flyout_asks_for_frames_only_on_its_output() {
+        use crate::backend::take_asked_outputs;
+        let mut h = two_outputs();
+        let mut c = h.connect();
+        take_asked_outputs();
+        h.map_flyout(&mut c);
+        assert_eq!(take_asked_outputs(), ["TEST-1"], "it maps on TEST-1");
+        c.hang_up();
+        h.dispatch();
+        assert!(
+            h.state.layers_shell.surfaces.is_empty(),
+            "the flyout is gone"
+        );
+        assert_eq!(take_asked_outputs(), ["TEST-1"], "it goes from TEST-1");
+    }
+
+    #[test]
+    fn a_panels_menu_asks_for_frames_only_on_its_output() {
+        use crate::backend::take_asked_outputs;
+        let mut h = two_outputs();
+        let mut c = h.connect();
+        take_asked_outputs();
+        let menu = h.map_layer_popup(&mut c, 120, 90);
+        let shown = h.state.layers_shell.surfaces.iter().map(|l| l.popups.len());
+        assert_eq!(shown.sum::<usize>(), 1, "the menu shows");
+        assert_eq!(
+            take_asked_outputs(),
+            ["TEST-1"],
+            "the panel and menu map on TEST-1"
+        );
+        c.hide_popup(&menu);
+        h.roundtrip(&mut c);
+        let shown = h.state.layers_shell.surfaces.iter().map(|l| l.popups.len());
+        assert_eq!(shown.sum::<usize>(), 0, "the menu is gone");
+        assert_eq!(take_asked_outputs(), ["TEST-1"], "it goes from TEST-1");
     }
 }
