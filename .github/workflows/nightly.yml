@@ -55,8 +55,50 @@ jobs:
             /home/builder/makepkg/pkg/reprise-debug-[0-9]*.pkg.tar.zst
           if-no-files-found: error
           retention-days: 1
+  deb:
+    concurrency:
+      group: nightly-deb-${{ github.ref }}
+      cancel-in-progress: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    container: ubuntu:26.04@sha256:065aa8626841f16057b78b027b464cd59c4fac36c204c72dcbf48d66f5fa8a96
+    env:
+      CARGO_INCREMENTAL: 0
+      DEBIAN_FRONTEND: noninteractive
+      REPRISE_DEB_DIR: /deb
+    steps:
+      # Downloads the tree for build-depends; the second checkout clones once git is in.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install dependencies
+        run: |
+          apt-get update -qq
+          xargs apt-get install -y -qq --no-install-recommends < packaging/deb/build-depends
+          rustup default stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # pkgver counts the commits.
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            /deb/target
+          key: nightly-deb-${{ hashFiles('Cargo.lock') }}
+          restore-keys: nightly-deb-
+      # The checkout belongs to the runner's user, not the container's root.
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: Build package
+        run: packaging/deb/build.sh /deb/reprise-nightly-ubuntu26.04-amd64.deb
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: deb
+          path: /deb/reprise-nightly-ubuntu26.04-amd64.deb
+          if-no-files-found: error
+          retention-days: 1
   publish:
-    needs: build
+    needs: [build, deb]
     # A dispatch from another branch builds it but never moves Nightly.
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -74,6 +116,10 @@ jobs:
         with:
           name: packages
           path: pkg
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: deb
+          path: .
       # The tag moves to this commit and the asset keeps one name, so the download URL is stable.
       - name: Publish the Nightly release
         env:
@@ -88,15 +134,22 @@ jobs:
           cp "$debug_pkg" "$debug_asset"
           git tag -f nightly "$GITHUB_SHA"
           git push -f origin refs/tags/nightly
-          url="https://github.com/$GH_REPO/releases/download/nightly/$asset"
+          deb_asset=reprise-nightly-ubuntu26.04-amd64.deb
+          url="https://github.com/$GH_REPO/releases/download/nightly"
           notes="$(basename "$pkg"), built from $GITHUB_SHA.
 
-              curl -LO $url
-              sudo pacman -U ./$asset"
+          Arch Linux:
+
+              curl -LO $url/$asset
+              sudo pacman -U ./$asset
+
+          Ubuntu 26.04:
+
+              curl -LO $url/$deb_asset
+              sudo apt install ./$deb_asset"
           if gh release view nightly >/dev/null 2>&1; then
-            gh release upload nightly "$asset" --clobber
-            gh release upload nightly "$debug_asset" --clobber
+            gh release upload nightly "$asset" "$debug_asset" "$deb_asset" --clobber
             gh release edit nightly --notes "$notes"
           else
-            gh release create nightly "$asset" "$debug_asset" --title Nightly --prerelease --notes "$notes"
+            gh release create nightly "$asset" "$debug_asset" "$deb_asset" --title Nightly --prerelease --notes "$notes"
           fi

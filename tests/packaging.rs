@@ -1,6 +1,7 @@
 //! Both PKGBUILDs build reprise-apps, link every program crate to it (or build and install it on
-//! its own) and install every desktop entry, CI installs their dependencies, and the desktop
-//! entries file only programs with a settings window under Settings.
+//! its own) and install every desktop entry, CI installs their dependencies, the .deb's postinst
+//! applies every sysusers and tmpfiles file, and the desktop entries file only programs with a
+//! settings window under Settings.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -274,6 +275,23 @@ fn the_login_unit_sysusers_and_tmpfiles_are_installed() {
             assert!(
                 text.lines().any(|l| l.trim() == install),
                 "{path} installs {from} to /{to}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_deb_postinst_applies_every_sysusers_and_tmpfiles_file() {
+    let postinst = std::fs::read_to_string(root().join("packaging/deb/postinst")).unwrap();
+    for (dir, command) in [
+        ("data/sysusers.d", "systemd-sysusers"),
+        ("data/tmpfiles.d", "systemd-tmpfiles --create"),
+    ] {
+        for name in file_names(dir) {
+            let line = format!("{command} {name}");
+            assert!(
+                postinst.lines().any(|l| l.trim() == line),
+                "packaging/deb/postinst runs {line}"
             );
         }
     }

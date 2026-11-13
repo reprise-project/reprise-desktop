@@ -1,0 +1,9 @@
+#!/bin/sh
+set -e
+if [ "$1" = configure ]; then
+  systemd-sysusers reprise-login.conf
+  systemd-tmpfiles --create reprise-login.conf
+  if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload
+  fi
+fi

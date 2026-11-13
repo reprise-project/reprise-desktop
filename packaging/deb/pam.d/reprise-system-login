@@ -1,0 +1,15 @@
+#%PAM-1.0
+# The login stack Reprise's login PAM files include on Ubuntu, in place of
+# Arch's system-login: the common-* stacks plus what a console login adds.
+auth      required  pam_shells.so
+auth      requisite pam_nologin.so
+auth      include   common-auth
+account   required  pam_nologin.so
+account   include   common-account
+password  include   common-password
+session   required  pam_loginuid.so
+session   optional  pam_keyinit.so force revoke
+session   include   common-session
+session   required  pam_limits.so
+session   required  pam_env.so readenv=1
+session   required  pam_env.so readenv=1 envfile=/etc/default/locale

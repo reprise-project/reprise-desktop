@@ -219,7 +219,7 @@ fn the_remote_group_and_front_user_are_declared() {
     let sysusers = data("sysusers.d/reprise-login.conf");
     let lines: Vec<&str> = sysusers.lines().map(str::trim).collect();
     for want in [
-        r#"u reprise-login-rdp - "Reprise Remote Desktop logins" /var/lib/reprise-login-rdp /usr/bin/nologin"#,
+        r#"u reprise-login-rdp - "Reprise Remote Desktop logins" /var/lib/reprise-login-rdp"#,
         "g reprise-remote -",
     ] {
         assert!(lines.contains(&want), "sysusers has `{want}`: {lines:?}");

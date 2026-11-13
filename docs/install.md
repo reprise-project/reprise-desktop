@@ -82,6 +82,50 @@ URL, so download it first and install the local file:
     curl -LO https://github.com/reprise-project/reprise-desktop/releases/download/nightly/reprise-nightly-x86_64.pkg.tar.zst
     sudo pacman -U ./reprise-nightly-x86_64.pkg.tar.zst
 
+### Ubuntu 26.04
+
+The Nightly release also carries a .deb for Ubuntu 26.04, built on 26.04
+against its own libraries. apt installs the unsigned file from a local path:
+
+    curl -LO https://github.com/reprise-project/reprise-desktop/releases/download/nightly/reprise-nightly-ubuntu26.04-amd64.deb
+    sudo apt install ./reprise-nightly-ubuntu26.04-amd64.deb
+
+To build one from a checkout, on Ubuntu 26.04:
+
+    xargs -a packaging/deb/build-depends sudo apt-get install -y --no-install-recommends
+    rustup default stable
+    packaging/deb/build.sh
+
+The package lands in `~/.cache/reprise-deb/`. `build.sh` runs the local
+PKGBUILD's `build()` and `package()`, so both packages install the same
+files, with one change to the PAM files. Ubuntu has no `system-auth` or
+`system-login`. Each `include system-auth` line becomes the `common-*` stack
+of its type, such as `common-account`. Each `include system-login` line
+points at `reprise-system-login`, a login stack the package adds.
+
+Ubuntu's `rustc` is older than the workspace's `rust-version`, hence
+`rustup`.
+
+What Reprise needs, and what each release ships:
+
+| | Reprise needs | Ubuntu 26.04 | Ubuntu 24.04 |
+|---|---|---|---|
+| libinput | 1.26, for tablet pad dials | 1.31 | 1.25 |
+| PipeWire | 1.4 | 1.6 | 1.0 |
+| FFmpeg | 8, for Remote Desktop's colour conversion | 8.0 | 6.1 |
+| dbus-daemon | 1.15, for peer credentials with a process fd | 1.16 | 1.14 |
+| Linux | 6.14 for remote logins, 6.16 for libei input | 7.0 | 6.8, or 7.0 with HWE |
+| Rust | 1.99 | 1.93, so rustup | 1.75, so rustup |
+
+Ubuntu 24.04 is older than Reprise needs in libinput, PipeWire, FFmpeg and
+D-Bus. A package for it would have to ship its own copy of all four, so
+there isn't one. The 26.04 package won't install there either. Built on
+26.04, it needs glibc 2.43 and libavcodec 62, and 24.04 has 2.39 and 60.
+
+Debian 13 comes closer. Its FFmpeg is 7.1, so everything builds except
+Remote Desktop. Its 6.12 kernel also rules out remote logins and libei
+input. It gets no package for now.
+
 ## Login manager
 
 The package also installs Reprise's own login manager, `reprise-login`,
@@ -248,9 +292,11 @@ user's server.
   Tokio, rustls and rcgen, built in. rustls's aws-lc-rs compiles its C library
   with the C compiler. IronRDP turns on flate2's zlib backend, which every
   program shares, so zlib is a runtime requirement
-- `reprise-rdp` encodes H.264 through FFmpeg 9 (libavcodec, libavfilter,
-  libavutil, libswscale) with the `ffmpeg-the-third` crate, whose bindings are
-  generated from FFmpeg's headers at build time (clang)
+- `reprise-rdp` encodes H.264 through FFmpeg 8 or later (libavcodec,
+  libavfilter, libavutil, libswscale) with the `ffmpeg-the-third` crate, whose
+  bindings are generated from FFmpeg's headers at build time (clang). Its
+  colour conversion sets the scaler's options on `SwsContext` directly, which
+  FFmpeg 7 doesn't allow
 - `reprise-rdp` draws the full-colour (AVC444) views, and NVENC's input, on
   the GPU with OpenGL ES through the `khronos-egl` and `glow` crates, built
   in; it loads libEGL at run time, from the Mesa and libglvnd listed below,
@@ -289,7 +335,7 @@ user's server.
 - libxkbcommon and xkeyboard-config, whose registry names the keyboard
   layouts in the tray and in Reprise Settings
 - freetype2, fontconfig, PAM, libxcrypt, dbus, PipeWire 1.4 or later, zlib
-  and FFmpeg 9 (with libx264, which Remote Desktop encodes on when the GPU
+  and FFmpeg 8 or later (with libx264, which Remote Desktop encodes on when the GPU
   cannot, and libopus, which it sends sound to the client in)
 - dbus-broker, or dbus-daemon 1.15 or later, whose peer credentials carry a
   process fd: Remote Desktop and the Inhibit portal check by it which process
