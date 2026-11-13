@@ -344,41 +344,65 @@ fn fnv(c: &Canvas) -> u64 {
     h
 }
 
+/// A focused yellow note long enough for a scroll bar, New lit.
+fn long_note(i: Interface, scale: i32) -> Canvas {
+    let mut ctx = ctx_with(reprisekit::interfaces::theme_for(i));
+    let mut n = Notes::new(None, false);
+    let win = n.add(Saved {
+        id: "1".into(),
+        text: "Call the plumber\nabout the sink\n\n1\n2\n3\n4\n5\n6\n7\n8".into(),
+        colour: Colour::Yellow,
+        size: None,
+    });
+    n.event(win, Event::Focus(true), &mut ctx);
+    n.event(
+        win,
+        Event::Pointer(PointerInput::Motion { x: 8, y: 8 }),
+        &mut ctx,
+    );
+    let mut c = Canvas::with_scale(NOTE_SIZE.0 as u32, NOTE_SIZE.1 as u32, scale);
+    ctx.at_scale(scale, |ctx| n.draw(win, &mut c, ctx));
+    c
+}
+
 #[test]
 fn a_note_pins_in_every_interface_at_scale_1_and_2() {
     reprisekit::pins::fonts();
     let mut got = Vec::new();
     for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
         for scale in [1, 2] {
-            let mut ctx = ctx_with(reprisekit::interfaces::theme_for(i));
-            let mut n = Notes::new(None, false);
-            let win = n.add(Saved {
-                id: "1".into(),
-                text: "Call the plumber\nabout the sink\n\n1\n2\n3\n4\n5\n6\n7\n8".into(),
-                colour: Colour::Yellow,
-                size: None,
-            });
-            n.event(win, Event::Focus(true), &mut ctx);
-            n.event(
-                win,
-                Event::Pointer(PointerInput::Motion { x: 8, y: 8 }),
-                &mut ctx,
-            );
-            let mut c = Canvas::with_scale(NOTE_SIZE.0 as u32, NOTE_SIZE.1 as u32, scale);
-            ctx.at_scale(scale, |ctx| n.draw(win, &mut c, ctx));
-            got.push((format!("{i:?}@{scale}"), fnv(&c)));
+            got.push((format!("{i:?}@{scale}"), fnv(&long_note(i, scale))));
         }
     }
     let want: [(&str, u64); 6] = [
-        ("Classic@1", 0x6529_c56c_3ac9_98d8),
-        ("Classic@2", 0xeec7_fbaf_8a12_90d3),
-        ("Blue@1", 0xc62b_c70d_a5dd_72fd),
-        ("Blue@2", 0x6660_a4b1_c6fb_1991),
-        ("Glass@1", 0x2f00_3064_3925_1969),
-        ("Glass@2", 0x1d5a_f944_6268_5865),
+        ("Classic@1", 0xccda_0154_182f_3492),
+        ("Classic@2", 0xfccb_5921_1e93_be03),
+        ("Blue@1", 0xbd68_a98f_731c_29b8),
+        ("Blue@2", 0x60e1_3c78_823c_6490),
+        ("Glass@1", 0x481d_0ce1_6217_9a21),
+        ("Glass@2", 0xeed3_136e_3f2a_cfd9),
     ];
     let want: Vec<(String, u64)> = want.iter().map(|(k, h)| (k.to_string(), *h)).collect();
     assert_eq!(got, want);
+}
+
+#[test]
+fn the_edit_and_its_scroll_bar_leave_the_edge_whole_in_every_interface() {
+    reprisekit::pins::fonts();
+    let edge = Colour::Yellow.edge().argb();
+    for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        for s in [1, 2] {
+            let c = long_note(i, s);
+            let (w, h) = (NOTE_SIZE.0 * s, NOTE_SIZE.1 * s);
+            let at = |x: i32, y: i32| c.pixels[(y * w + x) as usize];
+            let ring = (0..w)
+                .flat_map(|x| (0..s).flat_map(move |d| [(x, d), (x, h - 1 - d)]))
+                .chain((0..h).flat_map(|y| (0..s).flat_map(move |d| [(d, y), (w - 1 - d, y)])));
+            for (x, y) in ring {
+                assert_eq!(at(x, y), edge, "{i:?}@{s} ({x}, {y})");
+            }
+        }
+    }
 }
 
 fn edit_key(sym: u32, edit: EditKey) -> Event {
@@ -469,12 +493,12 @@ fn a_wrapped_note_pins_in_every_interface_at_scale_1_and_2() {
         }
     }
     let want: [(&str, u64); 6] = [
-        ("Classic@1", 0x9cd8_3236_e964_9fc5),
-        ("Classic@2", 0x9675_554e_2085_de61),
-        ("Blue@1", 0xa22d_5490_24e3_7314),
-        ("Blue@2", 0x397f_19b4_19c0_dcd4),
-        ("Glass@1", 0x2162_d30d_b930_ff7d),
-        ("Glass@2", 0xad4a_aff2_c985_76f3),
+        ("Classic@1", 0x24b3_1ea8_8ad3_3711),
+        ("Classic@2", 0xafa8_456c_8166_99d1),
+        ("Blue@1", 0x51e4_cf72_4acf_1900),
+        ("Blue@2", 0xdbdf_b338_fde5_5d40),
+        ("Glass@1", 0x6372_a2e6_b1af_83d8),
+        ("Glass@2", 0x7787_d2ba_4502_af3f),
     ];
     let want: Vec<(String, u64)> = want.iter().map(|(k, h)| (k.to_string(), *h)).collect();
     assert_eq!(got, want);
