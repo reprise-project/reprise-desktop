@@ -22,13 +22,13 @@ fn a_query_filters_the_list_and_enter_focuses_the_control_it_found() {
 }
 
 #[test]
-fn enter_on_a_found_control_takes_the_keyboard_from_the_location_list() {
+fn enter_on_a_found_control_takes_the_keyboard_from_the_permission_list() {
     let (mut a, mut ctx) = (app("search-from-list"), test_ctx());
     a.open_page(Page::Privacy, None);
-    a.locations_due = false;
-    pages::fill_locations(&mut a.locations, &[("Maps".into(), true)]);
+    a.permissions_due = false;
+    pages::fill_permissions(&mut a.permissions, &[("Maps".into(), "Location", true)]);
     press_side_row(&mut a, &mut ctx, 0, 1000);
-    assert!(a.locations_focus);
+    assert!(a.permissions_focus);
     find(&mut a, &mut ctx, "history");
     assert_eq!(
         a.search_hits[Page::Privacy.index()],

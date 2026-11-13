@@ -1,5 +1,5 @@
 use super::*;
-use crate::locations::location_answers;
+use crate::permissions::{Kind, permission_answers};
 use repriseapp::{BTN_LEFT, BTN_RIGHT, Extended, KeyInput, Mods, PointerInput};
 use repriseconf::pages::Hit;
 use reprisekit::classic::widgets::BarHit;
@@ -138,7 +138,7 @@ fn tab(a: &mut SettingsApp, ctx: &Ctx, back: bool) {
 fn holders(a: &SettingsApp) -> [bool; 4] {
     [
         a.sheet.search_focused,
-        a.list_focus || a.shortcuts_focus || a.types_focus || a.locations_focus,
+        a.list_focus || a.shortcuts_focus || a.types_focus || a.permissions_focus,
         a.sheet.tabs.focused,
         a.sheet.open().focus().is_some(),
     ]

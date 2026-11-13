@@ -1,6 +1,6 @@
-//! The Startup, Shortcuts and location-access lists.
+//! The Startup, Shortcuts and App Permissions lists.
 
-use super::{COLUMNS, LOCATION_COLUMNS, SHORTCUT_COLUMNS};
+use super::{COLUMNS, PERMISSION_COLUMNS, SHORTCUT_COLUMNS};
 use crate::model::Settings;
 use reprisefs::autostart::Entry;
 use reprisekit::controls::form;
@@ -102,14 +102,14 @@ pub fn fill_shortcuts(lv: &mut ListView, s: &Settings, name: &dyn Fn(&str) -> St
     keep_in_rows(lv);
 }
 
-pub fn new_location_list() -> ListView {
+pub fn new_permission_list() -> ListView {
     ListView {
-        columns: columns(&LOCATION_COLUMNS),
+        columns: columns(&PERMISSION_COLUMNS),
         ..ListView::default()
     }
 }
 
-pub fn fit_location_columns(
+pub fn fit_permission_columns(
     lv: &mut ListView,
     cm: &reprisekit::controls::metrics::ControlMetrics,
     rect: Rect,
@@ -117,13 +117,15 @@ pub fn fit_location_columns(
     lv.fill_beside_bar(0, rect, cm);
 }
 
-pub fn fill_locations(lv: &mut ListView, answers: &[(String, bool)]) {
+/// One row per answer: the program's name, the permission and whether it was allowed.
+pub fn fill_permissions(lv: &mut ListView, answers: &[(String, &str, bool)]) {
     lv.rows = answers
         .iter()
-        .map(|(name, allow)| Row {
+        .map(|(name, what, allow)| Row {
             icon: None,
             cells: vec![
                 name.clone(),
+                (*what).into(),
                 if *allow { "Allowed" } else { "Denied" }.into(),
             ],
         })
@@ -131,19 +133,19 @@ pub fn fill_locations(lv: &mut ListView, answers: &[(String, bool)]) {
     keep_in_rows(lv);
 }
 
-/// The location list while it is read: one row saying so, nothing picked.
-pub fn show_locations_loading(lv: &mut ListView) {
+/// The permission list while it is read: one row saying so, nothing picked.
+pub fn show_permissions_loading(lv: &mut ListView) {
     lv.rows = vec![Row {
         icon: None,
-        cells: vec!["Loading...".into(), String::new()],
+        cells: vec!["Loading...".into(), String::new(), String::new()],
     }];
     lv.selection.set_only(None);
     lv.top = 0;
 }
 
-/// Draw a side list (Startup, Shortcuts, the file types or the Privacy page's location answers)
+/// Draw a side list (Startup, Shortcuts, the file types or the Privacy page's App Permissions)
 /// over the page the sheet already drew; `rect` is its [`list`](super::list),
-/// [`shortcuts`](super::shortcuts) or [`locations`](super::locations) where the page sits now.
+/// [`shortcuts`](super::shortcuts) or [`permissions`](super::permissions) where the page sits now.
 pub fn draw_list(
     c: &mut Canvas,
     text: &TextRenderer,

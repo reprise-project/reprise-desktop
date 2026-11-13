@@ -4,7 +4,7 @@ use super::{
     ADD, AUDIO_DEVICES, Area, BACKUP_EXPORT, BACKUP_IMPORT, BACKUP_STATUS, DEBUG_IN_CAPTURES,
     DEBUG_OVERLAY, EDIT_FILE, FORGET, GX, PRIVACY_LOCATION, REMOVE, THUMBNAILERS, THUMBS,
     THUMBS_CLEAR, THUMBS_CLEARED, THUMBS_MB, THUMBS_SIZE, X, button, choice, combo, edit,
-    ends_track, field, group, list, locations, radio, spin, time,
+    ends_track, field, group, list, permissions, radio, spin, time,
 };
 use crate::model::{
     FRAME_RATES, GLASS_NOTIFY_STYLES, LOCK_GRACES, REMOTE_ENCODERS, REMOTE_QUALITIES, Shortcut,
@@ -175,24 +175,31 @@ pub(super) fn clipboard_label(binds: &[Shortcut]) -> String {
     }
 }
 
-/// The location check, its answers (a `ListView` the host draws at [`locations`]) and Forget,
-/// the Clipboard Access list, the histories and the shared-screen border. The lists share `dh`.
+/// The App Permissions group (the location check with Forget across from it, and the answers
+/// list the host draws at [`permissions`]), the Clipboard Access list, the histories and the
+/// shared-screen border. The lists share `dh`.
 pub fn privacy(a: Area) -> Form {
-    let location_end = locations(a).bottom() + 10;
-    let clip_y = location_end + 10;
+    let permissions_end = permissions(a).bottom() + 10;
+    let clip_y = permissions_end + 10;
     let list_y = clip_y + 22 + 2 * LINE_H + 4;
     let list_h = clipaccess::ROWS as i32 * listbox::ROW_H + 4 + a.dh - a.dh / 2;
     let clip_end = list_y + list_h + 10;
     let y = clip_end + 10;
     Form::new(vec![
-        group(a, "location_group", 44, location_end - 44, "Location"),
+        group(
+            a,
+            "permissions_group",
+            44,
+            permissions_end - 44,
+            "App Permissions",
+        ),
         Item::check(
             PRIVACY_LOCATION,
             GX,
             66,
             "Let programs ask for your &location",
         ),
-        button(FORGET, a.gright() - BUTTON_W, locations(a).y, "F&orget"),
+        button(FORGET, a.gright() - BUTTON_W, 61, "F&orget"),
         group(
             a,
             "clip_access_group",

@@ -410,8 +410,10 @@ matched control focused.
     a script's window stays open when it ends, asking before a script's
     first run, and the program for every file type, which Browse... can
     pick by its file when it has no desktop entry.
-  - **Privacy:** whether programs may ask for your location and the
-    remembered answers (Forget drops one), recent files, clipboard history
+  - **Privacy:** whether programs may ask for your location, the App
+    Permissions list of remembered answers (location, background,
+    screenshots, desktop background, keyboard and mouse capture; Forget
+    drops one), the Clipboard Access list, recent files, clipboard history
     and the red border around what is being shared.
   - **Date and Time...** and **User Accounts...**
   - **Login Manager:** for the whole computer, in `/etc/reprise/login.toml`.

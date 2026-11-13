@@ -137,15 +137,15 @@ impl SettingsApp {
         if self.clip_icons_due {
             self.set_clip_icons(&mut get);
         }
-        if self.location_icons_due {
-            for (row, name) in self.locations.rows.iter_mut().zip(&self.location_icons) {
+        if self.permission_icons_due {
+            for (row, name) in self.permissions.rows.iter_mut().zip(&self.permission_icons) {
                 row.icon = name
                     .as_deref()
                     .and_then(&mut get)
                     .or_else(|| get(openwith::PROGRAM_ICON))
                     .map(std::rc::Rc::new);
             }
-            self.location_icons_due = false;
+            self.permission_icons_due = false;
         }
         if let Some(c) = self.chooser.as_mut().filter(|c| c.icons_due) {
             c.row_icons =

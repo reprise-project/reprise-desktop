@@ -375,7 +375,7 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
         ],
         Page::Privacy => &[
             ("privacy_location", "Let programs ask for your location"),
-            ("location_forget", "Forget"),
+            ("permission_forget", "Forget"),
             ("clipboard_apps", "Clipboard Access"),
             (
                 "recent_files",

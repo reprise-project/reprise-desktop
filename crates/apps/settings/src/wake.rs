@@ -2,7 +2,7 @@
 
 use crate::registry::{self, Page};
 use crate::{
-    PAGE_ACTION, SettingsApp, backgroundpage, locations::Located, pages, take, wallpapers,
+    PAGE_ACTION, SettingsApp, backgroundpage, pages, permissions::PermissionList, take, wallpapers,
 };
 use reprisebus::instance;
 use std::sync::atomic::Ordering;
@@ -99,17 +99,17 @@ impl SettingsApp {
                 changed = true;
             }
         }
-        if let Some(rx) = &self.locating {
+        if let Some(rx) = &self.reading_permissions {
             let found = match take(rx) {
                 Ok(found) => found,
                 Err(()) => {
-                    log::warn!("the location list read ended without a result");
-                    Some(Located::default())
+                    log::warn!("the permission list read ended without a result");
+                    Some(PermissionList::default())
                 }
             };
             if let Some(found) = found {
-                self.locating = None;
-                self.show_locations(found);
+                self.reading_permissions = None;
+                self.show_permissions(found);
                 changed = true;
             }
         }

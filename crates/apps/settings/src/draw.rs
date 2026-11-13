@@ -18,10 +18,10 @@ impl SettingsApp {
         let a = self.area();
         let shortcuts = self.on_page(pages::shortcuts(a));
         let types = self.on_page(defaultspage::list(a));
-        let locations = self.on_page(pages::locations(a));
+        let permissions = self.on_page(pages::permissions(a));
         pages::fit_shortcut_columns(&mut self.shortcuts, cm, shortcuts);
         defaultspage::fit_columns(&mut self.types, cm, types);
-        pages::fit_location_columns(&mut self.locations, cm, locations);
+        pages::fit_permission_columns(&mut self.permissions, cm, permissions);
         // A Startup column the user dragged keeps its width until the list, its bar or the text
         // size changes.
         let list = self.on_page(pages::list(a));
@@ -171,8 +171,8 @@ impl SettingsApp {
                 pages::draw_list(c, &ctx.text, &forms, &self.types, r, form_px, 1);
             }
             if open == Page::Privacy.index() {
-                let r = self.on_page(pages::locations(self.area()));
-                pages::draw_list(c, &ctx.text, &forms, &self.locations, r, form_px, 1);
+                let r = self.on_page(pages::permissions(self.area()));
+                pages::draw_list(c, &ctx.text, &forms, &self.permissions, r, form_px, 1);
             }
         });
         if open == Page::DefaultPrograms.index() {

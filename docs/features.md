@@ -833,9 +833,12 @@ the screen takes the interface of the last session used at this computer.
 - **Location.** Reprise is the geoclue agent. It asks before a sandboxed
   program gets your location, remembers the answer if you like, and one
   switch turns location off for everyone. A prompt left unanswered for 24 s
-  closes and the program is refused. Settings > Privacy lists the
-  remembered answers, with the Flatpak programs' Location portal answers,
-  and Forget drops one.
+  closes and the program is refused.
+- **App permissions.** Settings > Privacy > App Permissions lists the
+  answers programs were given and remembered: location (Reprise's own
+  prompt and the Location portal), running in the background, screenshots,
+  changing the desktop background, and capturing the keyboard and mouse.
+  Forget drops one, so the program is asked again next time.
 
 ## Sharing and remote access
 
