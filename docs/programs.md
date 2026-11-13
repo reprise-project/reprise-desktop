@@ -338,6 +338,9 @@ matched control focused.
     Launch buttons and whether they show as pinned task buttons.
   - **Search:** whether the launcher and Start's search box also find your
     files and open windows; a note names the keys that open the launcher.
+    Program Results lists the installed programs that offer search results,
+    ticked while they're asked, with Move Up and Move Down for the order
+    their sections show in.
   - **Window Switcher:** Alt+Tab's icons or thumbnails, picture size, the
     live preview, the desktop as an entry, Peek, the 3D switcher (Glass) and
     the overview's hot corner; notes name the keys bound to the 3D switcher

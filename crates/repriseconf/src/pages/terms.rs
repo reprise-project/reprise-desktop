@@ -168,6 +168,9 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
                 "Also find files and folders in my home folder",
             ),
             ("launcher_windows", "Also find open windows"),
+            ("search_providers", "Program Results"),
+            ("search_providers_up", "Move Up"),
+            ("search_providers_down", "Move Down"),
         ],
         Page::Switcher => &[
             ("switcher_style", "Alt+Tab shows:"),

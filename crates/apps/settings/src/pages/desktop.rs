@@ -1,8 +1,10 @@
 //! Taskbar, Search, Window Switcher, Virtual Desktops and Window Behavior.
 
-use super::{Area, GX, TRAY_CUSTOMIZE, X, choice, edit, group, spin};
-use reprisekit::classic::widgets::{BUTTON_H, LINE_H};
+use super::{Area, GX, TRAY_CUSTOMIZE, X, button, choice, edit, group, spin};
+use crate::providerpage;
+use reprisekit::classic::widgets::{BUTTON_H, BUTTON_W, LINE_H};
 use reprisekit::controls::form::{Control, Form, Item};
+use reprisekit::controls::listbox::{self, ListBox};
 use reprisekit::raster::Rect;
 use reprisekit::trackbar::{self, TrackBar};
 
@@ -405,9 +407,16 @@ const SEARCH_LINES: usize = 3;
 const SEARCH_COLS: usize = 55;
 
 /// The Search page: the Search group's note naming the launcher's keys, its checks for files
-/// and folders and for open windows, and the note on content search. [`super::show_keys`] fills
-/// the first note, [`show_contents`] the second.
+/// and folders and for open windows, and the note on content search, then the Program Results
+/// list ([`crate::providerpage`]), which takes the extra height. [`super::show_keys`] fills the
+/// first note, [`show_contents`] the second.
 pub fn search(a: Area) -> Form {
+    let programs_y = 210;
+    let list_y = programs_y + 22 + 2 * LINE_H + 4;
+    let list_h = providerpage::ROWS as i32 * listbox::ROW_H + 4 + a.dh;
+    let list_w = a.gw() - BUTTON_W - 6;
+    let programs_end = list_y + list_h + 10;
+    let bx = a.gright() - BUTTON_W;
     Form::new(vec![
         group(a, "launcher_search_group", 44, 156, "Search"),
         Item::new(
@@ -427,6 +436,32 @@ pub fn search(a: Area) -> Form {
             Rect::new(GX, 161, a.gw(), 2 * LINE_H),
             Control::Lines(Vec::new()),
         ),
+        group(
+            a,
+            "search_providers_group",
+            programs_y,
+            programs_end - programs_y,
+            "Program Results",
+        ),
+        Item::new(
+            "search_providers_note",
+            Rect::new(GX, programs_y + 22, a.gw(), 2 * LINE_H),
+            Control::Lines(vec![
+                "A ticked program is sent what you type and lists its".into(),
+                "results under its name, in this order.".into(),
+            ]),
+        ),
+        Item::new(
+            providerpage::LIST,
+            Rect::new(GX, list_y, list_w, list_h),
+            Control::ListBox {
+                list: ListBox::new(Vec::new(), None),
+                icons: Vec::new(),
+            },
+        )
+        .named("Program Results"),
+        button(providerpage::UP, bx, list_y, "Move &Up"),
+        button(providerpage::DOWN, bx, list_y + BUTTON_H + 4, "Move &Down"),
     ])
 }
 

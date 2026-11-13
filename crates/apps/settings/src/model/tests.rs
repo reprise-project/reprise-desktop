@@ -747,6 +747,11 @@ fn save_round_trips_every_field() {
         debug_overlay_in_captures: true,
         launcher_files: false,
         launcher_windows: false,
+        launcher_providers: vec![
+            "org.gnome.Nautilus.desktop".into(),
+            "org.gnome.Calculator.desktop".into(),
+        ],
+        launcher_providers_off: vec!["org.gnome.Calculator.desktop".into()],
         thumbnail_cache: false,
         thumbnail_max_mb: 64,
         external_thumbnailers: false,

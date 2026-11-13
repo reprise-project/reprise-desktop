@@ -137,6 +137,7 @@ impl SettingsApp {
         if self.clip_icons_due {
             self.set_clip_icons(&mut get);
         }
+        self.set_provider_icons(&mut get);
         if self.permission_icons_due {
             for (row, name) in self.permissions.rows.iter_mut().zip(&self.permission_icons) {
                 row.icon = name
