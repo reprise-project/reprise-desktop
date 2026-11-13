@@ -1049,7 +1049,6 @@ fn buffer_params(dmabuf: bool) -> Vec<OwnedPod> {
     ]
 }
 
-#[cfg(test)]
 impl Offer {
     /// An offer no stream hears.
     pub fn detached() -> Offer {
@@ -1057,9 +1056,8 @@ impl Offer {
     }
 }
 
-#[cfg(test)]
 impl Frame {
-    /// A frame of `data` with no stream behind it.
+    /// A frame of `data` in XRGB8888 with no stream behind it.
     pub fn detached(data: Vec<u8>, size: (u32, u32), damage: Vec<Rect>) -> Frame {
         let buffer = FrameBuffer::Shm {
             data: data.into(),

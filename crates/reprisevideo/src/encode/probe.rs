@@ -159,10 +159,10 @@ pub fn working<T: Send + 'static>(
     answers.into_iter().flatten().flatten().collect()
 }
 
-/// The render node the screen's buffers come from, and the backends that code on it with the
-/// modifiers each maps.
-pub fn probe() -> (PathBuf, Vec<(Backend, Vec<u64>)>) {
-    let device = render_node(session_device(), |dev| {
+/// The render node the screen's buffers come from, as the compositor on `conn` names it, and the
+/// backends that code on it with the modifiers each maps.
+pub fn probe(conn: Option<&wl::Connection>) -> (PathBuf, Vec<(Backend, Vec<u64>)>) {
+    let device = render_node(conn.and_then(session_device), |dev| {
         DrmNode::from_dev_id(dev)
             .ok()?
             .dev_path_with_type(NodeType::Render)
@@ -271,9 +271,8 @@ fn render_node(
 
 /// The compositor's main dma-buf device (linux-dmabuf default feedback), which the portal
 /// allocates the screen's buffers on.
-fn session_device() -> Option<libc::dev_t> {
-    let conn = crate::wayland::connect().ok()?;
-    let (globals, mut queue) = registry_queue_init::<Feedback>(&conn).ok()?;
+fn session_device(conn: &wl::Connection) -> Option<libc::dev_t> {
+    let (globals, mut queue) = registry_queue_init::<Feedback>(conn).ok()?;
     let qh = queue.handle();
     let dmabuf: ZwpLinuxDmabufV1 = globals.bind(&qh, 4..=5, ()).ok()?;
     let feedback = dmabuf.get_default_feedback(&qh, ());

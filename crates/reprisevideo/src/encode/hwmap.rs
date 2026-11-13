@@ -2,8 +2,8 @@
 //! frames, as NV12 in the [`colour`] YUV; the software encoder's frames go through swscale.
 
 use super::EncodeError;
-use super::bitmap::DmabufRead;
 use super::colour::{self, FULL_RANGE};
+use super::dmabuf::DmabufRead;
 use super::split::CudaViews;
 use crate::stream::{ABGR8888, ARGB8888, Frame, FrameBuffer, Plane, XBGR8888, XRGB8888};
 use ffmpeg::ffi;

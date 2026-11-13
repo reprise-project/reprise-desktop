@@ -1,25 +1,17 @@
 //! Encoders turn stream frames into what the client is sent. They run on their own thread, so
-//! a frame on the GPU never holds up the connection.
+//! a frame on the GPU never holds up the connection. H.264 comes from `reprisevideo`; bitmaps are
+//! the RDP fallback.
 
-pub mod avc444;
 pub mod bitmap;
-pub mod choice;
-pub mod colour;
-pub mod cuda;
-pub mod ffmpeg;
-pub mod gl;
-pub mod h264merge;
-pub mod hwmap;
-pub mod probe;
-pub mod split;
 
-use crate::stream::{DRM_FORMAT_MOD_LINEAR, Frame, FrameBuffer, Rect};
+pub use reprisevideo::encode::{EncodeError, avc444, choice, ffmpeg, hwmap, probe, reads};
+
+use crate::stream::Frame;
 use bitmap::Bitmap;
-use hwmap::Gpu;
 use ironrdp_server::BitmapUpdate;
 use probe::Backend;
 use repriseconf::remote::Quality;
-use std::sync::OnceLock;
+use reprisevideo::encode as video;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 pub trait Encoder {
@@ -36,6 +28,24 @@ pub trait Encoder {
     fn set_target(&mut self, _target: Option<(u32, u32)>) {}
 }
 
+impl<T: video::Encoder> Encoder for T {
+    fn encode(&mut self, frame: &Frame, keyframe: bool) -> Result<Encoded, EncodeError> {
+        video::Encoder::encode(self, frame, keyframe).map(Encoded::from)
+    }
+
+    fn set_quality(&mut self, quality: Quality) {
+        video::Encoder::set_quality(self, quality);
+    }
+
+    fn set_avc444(&mut self, on: bool) {
+        video::Encoder::set_avc444(self, on);
+    }
+
+    fn set_target(&mut self, target: Option<(u32, u32)>) {
+        video::Encoder::set_target(self, target);
+    }
+}
+
 pub enum Encoded {
     /// Pictures for IronRDP's bitmap codecs (RemoteFX, planar or plain bitmaps, as the client
     /// supports them).
@@ -43,47 +53,35 @@ pub enum Encoded {
     /// One H.264 access unit in Annex-B, and the parts of the picture it changes.
     Avc420 {
         data: Vec<u8>,
-        regions: Vec<Rect>,
+        regions: Vec<crate::stream::Rect>,
     },
-    /// One picture's AVC444 views in Annex-B, and the parts of the picture they change. The
-    /// auxiliary view is left out where the main view's chroma is already the picture's.
+    /// One picture's AVC444 views in Annex-B, and the parts of the picture they change.
     Avc444 {
         main: Vec<u8>,
         aux: Option<Vec<u8>>,
-        regions: Vec<Rect>,
+        regions: Vec<crate::stream::Rect>,
         layout: avc444::AuxLayout,
     },
     Nothing,
 }
 
-#[derive(Clone, Debug)]
-pub struct EncodeError(pub String);
-
-impl std::fmt::Display for EncodeError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-/// The cores the CPU conversions of every screen share, at most 8.
-pub fn cpu_threads() -> usize {
-    static CORES: OnceLock<usize> = OnceLock::new();
-    *CORES.get_or_init(|| std::thread::available_parallelism().map_or(1, |n| n.get().min(8)))
-}
-
-/// The threads a `size` picture's CPU conversion or scaling is split across.
-pub fn cpu_threads_for(size: (u32, u32)) -> usize {
-    threads_for(cpu_threads(), size)
-}
-
-/// A thread's share of a picture: about 2 ms of conversion on one core. Smaller shares, or a
-/// split on two cores, cost more CPU in thread hand-offs than they save in time.
-const PIXELS_PER_THREAD: u64 = 1_000_000;
-
-fn threads_for(cores: usize, (w, h): (u32, u32)) -> usize {
-    match cores {
-        ..=2 => 1,
-        _ => (u64::from(w) * u64::from(h) / PIXELS_PER_THREAD).clamp(1, cores as u64) as usize,
+impl From<video::Encoded> for Encoded {
+    fn from(e: video::Encoded) -> Encoded {
+        match e {
+            video::Encoded::Avc420 { data, regions } => Encoded::Avc420 { data, regions },
+            video::Encoded::Avc444 {
+                main,
+                aux,
+                regions,
+                layout,
+            } => Encoded::Avc444 {
+                main,
+                aux,
+                regions,
+                layout,
+            },
+            video::Encoded::Nothing => Encoded::Nothing,
+        }
     }
 }
 
@@ -233,24 +231,6 @@ impl Switch {
     }
 }
 
-/// Whether `backend` (None: the bitmap encoder) can be handed `frame`: the CPU reads shared
-/// memory and LINEAR dma-bufs, a GPU dma-bufs only, VA-API LINEAR ones in [`split::PITCH_ALIGN`].
-pub fn reads(backend: Option<Backend>, frame: &Frame) -> bool {
-    match (&frame.buffer, backend.and_then(Backend::gpu)) {
-        (FrameBuffer::Shm { .. }, gpu) => gpu.is_none(),
-        (FrameBuffer::Dmabuf { modifier, .. }, None) => *modifier == DRM_FORMAT_MOD_LINEAR,
-        (
-            FrameBuffer::Dmabuf {
-                modifier, planes, ..
-            },
-            Some(Gpu::Vaapi),
-        ) if *modifier == DRM_FORMAT_MOD_LINEAR => {
-            (planes.iter()).all(|p| p.stride.is_multiple_of(split::PITCH_ALIGN))
-        }
-        (FrameBuffer::Dmabuf { .. }, Some(_)) => true,
-    }
-}
-
 pub struct Job {
     pub frame: Frame,
     pub keyframe: bool,
@@ -326,14 +306,33 @@ fn run(mut switch: Switch, jobs: std::sync::mpsc::Receiver<Job>, done: Unbounded
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::stream::{DRM_FORMAT_MOD_LINEAR, FrameBuffer, Rect};
+    use reprisevideo::encode::ffmpeg::Ffmpeg;
+    use std::path::Path;
+    use std::sync::{Arc, Mutex};
 
-    #[test]
-    fn conversions_split_only_large_pictures_on_more_than_two_cores() {
-        assert_eq!(threads_for(2, (3840, 2160)), 1, "two cores: one thread");
-        assert_eq!(threads_for(8, (1024, 768)), 1, "a small one: one thread");
-        assert_eq!(threads_for(8, (1920, 1080)), 2, "a million pixels a thread");
-        assert_eq!(threads_for(4, (3840, 2160)), 4, "at most the cores");
-        assert_eq!(threads_for(8, (0, 0)), 1);
+    /// DRM_FORMAT_NV12, a format the encoders don't take from the screen.
+    const NV12: u32 = u32::from_le_bytes(*b"NV12");
+
+    fn silence() {
+        ::ffmpeg::util::log::set_level(::ffmpeg::util::log::Level::Quiet);
+    }
+
+    fn x264() -> Ffmpeg {
+        silence();
+        Ffmpeg::new(
+            Backend::X264,
+            Path::new(probe::RENDER_NODE),
+            60,
+            Quality::Balanced,
+        )
+        .unwrap()
+    }
+
+    /// A grey `size` frame with `damage`.
+    fn frame(size: (u32, u32), damage: Vec<Rect>) -> Frame {
+        let data = vec![0x80; (size.0 * size.1 * 4) as usize];
+        Frame::detached(data, size, damage)
     }
 
     struct Broken;
@@ -548,44 +547,6 @@ mod tests {
     }
 
     #[test]
-    fn an_unscaled_target_adds_no_pass() {
-        use hwmap::Gpu;
-        let (source, half) = ((1920, 1080), (960, 540));
-        let options = |gpu: Gpu, target| {
-            let (name, options) = gpu.to_nv12(source, target).unwrap();
-            format!("{name}={}", options.to_str().unwrap())
-        };
-        assert_eq!(
-            options(Gpu::Vaapi, source),
-            "scale_vaapi=format=nv12:out_color_matrix=bt709:out_range=full:\
-             out_color_primaries=bt709:out_color_transfer=iec61966-2-1"
-        );
-        assert_eq!(
-            options(Gpu::Vulkan, source),
-            "libplacebo=format=nv12:colorspace=bt709:range=pc:dithering=none"
-        );
-        assert_eq!(
-            options(Gpu::Vaapi, half),
-            format!("{}:w=960:h=540", options(Gpu::Vaapi, source)),
-            "the conversion scales in the same filter"
-        );
-        assert_eq!(
-            options(Gpu::Vulkan, half),
-            format!("{}:w=960:h=540", options(Gpu::Vulkan, source))
-        );
-        for pass in 0..split::PASSES {
-            assert_eq!(
-                split::fragment(pass, false, avc444::AuxLayout::V1),
-                format!("#version 300 es\n#define PASS {pass}\n{}", split::FRAGMENT),
-                "pass {pass} reads the picture texel by texel"
-            );
-            assert!(
-                split::fragment(pass, true, avc444::AuxLayout::V1).contains("#define SCALED\n")
-            );
-        }
-    }
-
-    #[test]
     fn an_encoder_that_failed_to_start_falls_back_on_the_first_h264_frame() {
         let worker = Worker::spawn(|| {
             Switch::new(Box::new(|_, _, _| {
@@ -629,5 +590,72 @@ mod tests {
         let later = done.blocking_recv().unwrap();
         assert_eq!(later.using, None);
         assert_eq!(sizes(later.encoded), vec![(1, 1)]);
+    }
+    #[test]
+    fn an_encoder_that_fails_to_open_falls_back_on_the_first_frame() {
+        silence();
+        let vaapi = Backend::Vaapi { low_power: false };
+        let mut switch = Switch::new(Box::new(|backend, quality, frame_rate| {
+            Ffmpeg::new(backend, Path::new("/dev/null"), frame_rate, quality)
+                .map(|f| Box::new(f) as Box<dyn Encoder>)
+        }));
+        switch.select(vec![vaapi]);
+        let damage = Rect {
+            x: 1,
+            y: 0,
+            width: 1,
+            height: 1,
+        };
+        let first = switch.encode(&frame((4, 2), vec![damage]), false, true);
+        assert!(switch.fell_back());
+        match first {
+            Ok(Encoded::Bitmap(updates)) => {
+                let sizes: Vec<_> = (updates.iter())
+                    .map(|u| (u.width.get(), u.height.get()))
+                    .collect();
+                assert_eq!(sizes, [(4, 2)], "the first frame goes whole as a bitmap");
+            }
+            _ => panic!("bitmaps"),
+        }
+    }
+
+    /// Records whether each bitmap frame was asked for as a keyframe.
+    struct Keyframes(Arc<Mutex<Vec<bool>>>);
+
+    impl Encoder for Keyframes {
+        fn encode(&mut self, _: &Frame, keyframe: bool) -> Result<Encoded, EncodeError> {
+            self.0.lock().unwrap().push(keyframe);
+            Ok(Encoded::Nothing)
+        }
+    }
+
+    #[test]
+    fn an_encoder_that_fails_on_its_first_frame_falls_back_once() {
+        crate::listen::tests::capture_log();
+        let keyframes = Arc::default();
+        let mut switch = Switch::new(Box::new(|_, _, _| Ok(Box::new(x264()))))
+            .with_bitmap(Box::new(Keyframes(Arc::clone(&keyframes))));
+        switch.select(vec![Backend::X264]);
+        let size = (4, 2);
+        let mut nv12 = frame(size, vec![Rect::full(size)]);
+        if let FrameBuffer::Shm { fourcc, .. } = &mut nv12.buffer {
+            *fourcc = NV12;
+        }
+        for _ in 0..3 {
+            switch.encode(&nv12, false, true).unwrap();
+        }
+        assert!(switch.fell_back());
+        assert_eq!(
+            *keyframes.lock().unwrap(),
+            [true, false, false],
+            "one bitmap keyframe, then damage"
+        );
+        let line =
+            format!("H.264 failed, sending bitmaps from now on: format {NV12:#x} is not supported");
+        assert_eq!(
+            crate::listen::tests::times_logged(&line),
+            1,
+            "one journal line"
+        );
     }
 }
