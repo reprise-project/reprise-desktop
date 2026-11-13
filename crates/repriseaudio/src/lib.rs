@@ -729,9 +729,9 @@ fn pump(program: &str, tx: &Sender<Snapshot>, waker: &dyn Fn(), shared: &Pump) -
     run
 }
 
-const WPCTL: &str = "wpctl";
+pub const WPCTL: &str = "wpctl";
 const PW_CLI: &str = "pw-cli";
-const PW_METADATA: &str = "pw-metadata";
+pub const PW_METADATA: &str = "pw-metadata";
 
 /// Each setter queues its write for the [`Writer`] thread and returns whether its program is installed.
 pub fn set_default(id: u32) -> bool {

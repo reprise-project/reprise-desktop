@@ -334,19 +334,19 @@ impl Sound {
         }
     }
 
-    /// Write `changes` through `wpctl`. When it cannot run, the sheet
+    /// Write `changes` through PipeWire's tools. When one cannot run, the sheet
     /// gets the last snapshot back as its baseline and a box says so.
     fn apply(&mut self, changes: &[sheet::Change]) -> bool {
-        if write(&self.snapshot, changes) {
+        let Err(program) = write(&self.snapshot, changes) else {
             return true;
-        }
+        };
         if let Some(s) = &mut self.sheet {
             s.unapplied(&self.snapshot);
         }
         self.error = Some(MsgBox::new(
             "Sounds and Audio Devices",
             reprisekit::controls::msgbox::Fields {
-                text: "wpctl could not be run, so nothing was changed.".into(),
+                text: format!("{program} could not be run, so nothing was changed."),
                 icon: None,
                 buttons: vec!["OK".into()],
                 default: 0,
@@ -624,14 +624,29 @@ impl Sound {
     }
 }
 
-fn write(snap: &pipewire::Snapshot, changes: &[sheet::Change]) -> bool {
-    changes.iter().all(|change| match *change {
-        sheet::Change::Profile(card, index) => pipewire::set_profile(card, index),
-        sheet::Change::Default(id) => pipewire::set_default(id),
-        sheet::Change::Volume(id, v) => pipewire::set_volume(snap, id, v),
-        sheet::Change::Mute(id, on) => pipewire::set_mute(id, on),
-        sheet::Change::Target(id, sink) => pipewire::set_target(id, sink),
-    })
+/// Queue `changes` in order; Err with the program that could not run, at the first such.
+fn write(snap: &pipewire::Snapshot, changes: &[sheet::Change]) -> Result<(), &'static str> {
+    for change in changes {
+        let queued = match *change {
+            sheet::Change::Profile(card, index) => pipewire::set_profile(card, index),
+            sheet::Change::Default(id) => pipewire::set_default(id),
+            sheet::Change::Volume(id, v) => pipewire::set_volume(snap, id, v),
+            sheet::Change::Mute(id, on) => pipewire::set_mute(id, on),
+            sheet::Change::Target(id, sink) => pipewire::set_target(id, sink),
+        };
+        if !queued {
+            return Err(program(change));
+        }
+    }
+    Ok(())
+}
+
+/// The program that writes `change`.
+fn program(change: &sheet::Change) -> &'static str {
+    match change {
+        sheet::Change::Target(..) => pipewire::PW_METADATA,
+        _ => pipewire::WPCTL,
+    }
 }
 
 impl App for Sound {
@@ -828,6 +843,14 @@ pub fn main(args: Vec<std::ffi::OsString>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_failed_write_names_the_program_it_needed() {
+        assert_eq!(program(&sheet::Change::Target(7, Some(40))), "pw-metadata");
+        assert_eq!(program(&sheet::Change::Target(7, None)), "pw-metadata");
+        assert_eq!(program(&sheet::Change::Default(40)), "wpctl");
+        assert_eq!(program(&sheet::Change::Volume(40, 0.5)), "wpctl");
+    }
 
     fn device(id: u32, name: &str) -> pipewire::Device {
         pipewire::Device {
