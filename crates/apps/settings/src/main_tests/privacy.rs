@@ -46,7 +46,13 @@ fn permission_answers_list_the_prompts_then_each_tables_and_skip_the_ones_still_
             Kind::Wallpaper,
             &[("org.example.Paint", &["no"]), ("org.example.Blank", &[])],
         ),
-        stored(Kind::InputCapture, &[("org.example.Share", &["yes"])]),
+        stored(
+            Kind::InputCapture,
+            &[
+                ("org.example.Share", &["yes"]),
+                ("org.example.Pad", &["yes", "keyboard", "pointer"]),
+            ],
+        ),
     ];
     let got: Vec<(String, Kind, bool, bool)> = permission_answers(agent, portal)
         .into_iter()
@@ -63,6 +69,7 @@ fn permission_answers_list_the_prompts_then_each_tables_and_skip_the_ones_still_
         ("org.example.Shot", Kind::Screenshot, true, true),
         ("org.example.Paint", Kind::Wallpaper, false, true),
         ("org.example.Share", Kind::InputCapture, true, true),
+        ("org.example.Pad", Kind::InputCapture, true, true),
     ]
     .map(|(app, k, allow, portal)| (app.to_string(), k, allow, portal));
     assert_eq!(got, want);

@@ -8,7 +8,7 @@ use crate::inputproto::{
     reprise_color_pick_v1::{self, RepriseColorPickV1},
     reprise_eis_client_v1::RepriseEisClientV1,
     reprise_input_capture_v1::{self, RepriseInputCaptureV1},
-    reprise_input_v1::{Device, Kind, RepriseInputV1},
+    reprise_input_v1::{Kind, RepriseInputV1},
     reprise_keys_v1::{KeyState, RepriseKeysV1},
     reprise_lock_screen_v1::{self, Reason, RepriseLockScreenV1},
     reprise_sandboxed_v1::{self, RepriseSandboxedV1},
@@ -100,7 +100,7 @@ pub enum Owner {
 enum Cmd {
     ConnectSender(OwnedFd, u32, u32, Owner),
     CreateCapture(u32, async_channel::Sender<CaptureEvent>),
-    ConnectReceiver(u32, OwnedFd, u32),
+    ConnectReceiver(u32, OwnedFd, u32, u32),
     SetBarriers(u32, Vec<Barrier>),
     Enable(u32),
     Disable(u32),
@@ -169,9 +169,11 @@ pub struct CaptureHandle {
 }
 
 impl CaptureHandle {
-    pub fn connect_receiver(&self, fd: OwnedFd) -> EisHandle {
+    /// A receiver on `fd` offered only the `devices` (keyboard and pointer bits) the session holds.
+    pub fn connect_receiver(&self, fd: OwnedFd, devices: u32) -> EisHandle {
         let id = self.link.alloc();
-        self.link.send(Cmd::ConnectReceiver(self.id, fd, id));
+        self.link
+            .send(Cmd::ConnectReceiver(self.id, fd, id, devices));
         EisHandle {
             link: self.link.clone(),
             id,
@@ -630,14 +632,13 @@ impl State {
                 let c = self.input.create_capture(qh, id);
                 self.captures.insert(id, (c, tx));
             }
-            Cmd::ConnectReceiver(cap, fd, id) => {
+            Cmd::ConnectReceiver(cap, fd, id, devices) => {
                 if let Some((c, _)) = self.captures.get(&cap) {
-                    // A receiver takes whatever physical input crosses the barrier, so it is given every device.
                     let e = self.input.connect_eis(
                         fd.as_fd(),
                         Kind::Receiver,
                         Some(c),
-                        Device::Keyboard as u32 | Device::Pointer as u32,
+                        devices,
                         qh,
                         (),
                     );
@@ -1082,6 +1083,7 @@ impl Dispatch<RepriseShortcutsV1, u32> for State {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::inputproto::reprise_input_v1::Device;
     use std::time::{Duration, Instant};
 
     pub(crate) fn send(sock: &mut UnixStream, object: u32, opcode: u32, body: &[u8]) {
@@ -1430,6 +1432,35 @@ pub(crate) mod tests {
                 kind,
                 "v{version}, remote session {remote_session}"
             );
+        }
+    }
+
+    #[test]
+    fn a_receiver_is_offered_only_the_devices_its_session_holds() {
+        for devices in [
+            Device::Pointer as u32,
+            Device::Keyboard as u32 | Device::Pointer as u32,
+        ] {
+            let (ours, mut theirs) = UnixStream::pair().unwrap();
+            let compositor = std::thread::spawn(move || {
+                let input = fake_compositor(&mut theirs, 2, 10);
+                theirs
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                loop {
+                    let (object, opcode, body) = request(&mut theirs).unwrap();
+                    if (object, opcode) == (input, 0) {
+                        let word =
+                            |i: usize| u32::from_ne_bytes(body[i..i + 4].try_into().unwrap());
+                        break (word(4), word(12));
+                    }
+                }
+            });
+            let link = Link::start_on(Connection::from_socket(ours).unwrap(), false).unwrap();
+            let capture = link.create_capture().unwrap();
+            let (fd, _peer) = UnixStream::pair().unwrap();
+            let _eis = capture.connect_receiver(fd.into(), devices);
+            assert_eq!(compositor.join().unwrap(), (Kind::Receiver as u32, devices));
         }
     }
 

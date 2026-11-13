@@ -219,7 +219,7 @@ pub fn ask_with(kind: Kind, mut input: Input, cancel: &AtomicBool) -> Answer {
 }
 
 /// The permission store entry, table and id, keeping the apps whose Allow was remembered. Reprise
-/// Settings lists and forgets them, so the format (app id to `["yes"]`) is shared with it.
+/// Settings lists and forgets them, so the format (app id to `["yes", grant...]`) is shared with it.
 #[derive(Clone, Copy, Debug)]
 pub struct Store {
     pub table: &'static str,
@@ -238,16 +238,25 @@ enum Consent {
     },
 }
 
-/// The consent `app_id` needs, given `stored`, its store lookup. Remember is offered only where an
+/// The consent `app_id` needs for `grant`, given `stored`, its store lookup: a stored `yes` is
+/// remembered when the words after it hold all of `grant`. Remember is offered only where an
 /// answer can be kept: an empty app id has nothing to file it under, an unreachable store no place.
-fn consent(app_id: &str, stored: impl FnOnce() -> zbus::Result<Option<Vec<String>>>) -> Consent {
+fn consent(
+    app_id: &str,
+    grant: &[&str],
+    stored: impl FnOnce() -> zbus::Result<Option<Vec<String>>>,
+) -> Consent {
     if app_id.is_empty() {
         return Consent::Ask {
             offer_remember: false,
         };
     }
+    let covers = |p: &[String]| match p.split_first() {
+        Some((yes, held)) => yes == STORE_YES && grant.iter().all(|g| held.iter().any(|h| h == g)),
+        None => false,
+    };
     match stored() {
-        Ok(Some(p)) if p.first().is_some_and(|a| a == STORE_YES) => Consent::Remembered,
+        Ok(Some(p)) if covers(&p) => Consent::Remembered,
         Ok(_) => Consent::Ask {
             offer_remember: true,
         },
@@ -260,18 +269,19 @@ fn consent(app_id: &str, stored: impl FnOnce() -> zbus::Result<Option<Vec<String
     }
 }
 
-/// `ask_with`, unless `store` remembers `app_id`'s Allow; true when allowed. An Allow with
-/// Remember is kept in `store`, a Deny never. Blocking.
+/// `ask_with`, unless `store` remembers `app_id`'s Allow of `grant`; true when allowed. An Allow
+/// with Remember is kept in `store` as `yes` and `grant`, a Deny never. Blocking.
 pub fn ask_remembered(
     kind: Kind,
     store: Store,
     app_id: &str,
+    grant: &[&str],
     mut input: Input,
     cancel: &AtomicBool,
 ) -> bool {
     use reprisebus::permissions::{app_permission, set_app_permission};
     let lookup = || app_permission(store.table, store.id, app_id);
-    input.offer_remember = match consent(app_id, lookup) {
+    input.offer_remember = match consent(app_id, grant, lookup) {
         Consent::Remembered => {
             log::info!("{kind:?} for {app_id:?}: the permission store allows it");
             return true;
@@ -280,7 +290,10 @@ pub fn ask_remembered(
     };
     match ask_with(kind, input, cancel) {
         Answer::Allow { remember: true } => {
-            match set_app_permission(store.table, store.id, app_id, &[STORE_YES]) {
+            let kept: Vec<&str> = std::iter::once(STORE_YES)
+                .chain(grant.iter().copied())
+                .collect();
+            match set_app_permission(store.table, store.id, app_id, &kept) {
                 Ok(()) => log::info!("{kind:?}: remembered the Allow for {app_id:?}"),
                 Err(e) => log::warn!("{kind:?}: could not remember {app_id:?}: {e}"),
             }
@@ -790,9 +803,38 @@ mod tests {
     #[test]
     fn a_stored_yes_skips_the_prompt() {
         assert_eq!(
-            consent("org.deskflow.deskflow", store(&["yes"])),
+            consent("org.deskflow.deskflow", &[], store(&["yes"])),
             Consent::Remembered
         );
+    }
+
+    #[test]
+    fn a_stored_yes_skips_the_prompt_only_for_what_it_granted() {
+        let app = "org.deskflow.deskflow";
+        let ask = Consent::Ask {
+            offer_remember: true,
+        };
+        let both = ["keyboard", "pointer"];
+        assert_eq!(
+            consent(app, &["pointer"], store(&["yes", "pointer"])),
+            Consent::Remembered
+        );
+        assert_eq!(
+            consent(app, &["pointer"], store(&["yes", "keyboard", "pointer"])),
+            Consent::Remembered
+        );
+        assert_eq!(
+            consent(app, &both, store(&["yes", "pointer"])),
+            ask,
+            "a wider ask"
+        );
+        assert_eq!(consent(app, &["keyboard"], store(&["yes", "pointer"])), ask);
+        assert_eq!(
+            consent(app, &["pointer"], store(&["yes"])),
+            ask,
+            "a bare yes grants no device"
+        );
+        assert_eq!(consent(app, &["pointer"], store(&["no", "pointer"])), ask);
     }
 
     #[test]
@@ -800,17 +842,17 @@ mod tests {
         let ask = Consent::Ask {
             offer_remember: true,
         };
-        assert_eq!(consent("org.deskflow.deskflow", || Ok(None)), ask);
-        assert_eq!(consent("org.deskflow.deskflow", store(&["no"])), ask);
-        assert_eq!(consent("org.deskflow.deskflow", store(&["ask"])), ask);
-        assert_eq!(consent("org.deskflow.deskflow", store(&[])), ask);
+        assert_eq!(consent("org.deskflow.deskflow", &[], || Ok(None)), ask);
+        assert_eq!(consent("org.deskflow.deskflow", &[], store(&["no"])), ask);
+        assert_eq!(consent("org.deskflow.deskflow", &[], store(&["ask"])), ask);
+        assert_eq!(consent("org.deskflow.deskflow", &[], store(&[])), ask);
     }
 
     #[test]
     fn an_empty_app_id_asks_without_remember_and_without_a_lookup() {
         let lookup = || -> zbus::Result<Option<Vec<String>>> { panic!("looked up") };
         assert_eq!(
-            consent("", lookup),
+            consent("", &[], lookup),
             Consent::Ask {
                 offer_remember: false
             }
@@ -821,7 +863,7 @@ mod tests {
     fn an_unreachable_store_asks_without_remember() {
         let lookup = || Err(zbus::Error::Failure("no store".into()));
         assert_eq!(
-            consent("org.deskflow.deskflow", lookup),
+            consent("org.deskflow.deskflow", &[], lookup),
             Consent::Ask {
                 offer_remember: false
             }

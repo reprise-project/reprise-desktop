@@ -1312,8 +1312,12 @@ What a consent prompt remembers, and where:
   Remember, whatever the store holds.
 - **InputCapture:** asks each session. An app with an app id can tick
   Remember, and an Allow with it goes to the permission store (table and id
-  `input-capture`, the app id mapped to `yes`); the app's later sessions
-  start without a prompt or a balloon. A Deny is never kept, and an app with
+  `input-capture`, the app id mapped to `yes` and the devices granted,
+  `keyboard`, `pointer` or both); the app's later sessions asking for no more
+  than those start without a prompt or a balloon. A session asking for a
+  device the entry doesn't name, or an entry naming none, asks again. A
+  session's receiver is offered only the devices it was granted, so a
+  pointer-only session never gets keys. A Deny is never kept, and an app with
   no app id is asked every time. Settings > Privacy lists the remembered apps,
   and Forget drops one. The grant goes by app id alone, so an unsandboxed
   program that names itself after a remembered app gets it too.
