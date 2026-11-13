@@ -1672,6 +1672,14 @@ stop the share first.
   Reprise ships no rule: under systemd's default (an admin password) the
   setting stays greyed until an administrator allows it. A zone only ever
   comes from tzdata's table, never from the location source.
+- **Language and formats.** Settings > Region & Language writes only your
+  own `~/.config/locale.conf` and AccountsService's language for your own
+  account (`org.freedesktop.accounts.change-own-user-data`). Apply to the
+  System calls localed's `SetLocale` with interactive authorization, so
+  polkit's rule for `org.freedesktop.locale1.set-locale` (systemd's
+  default: an administrator's password) decides; Reprise ships no rule.
+  The compositor reads locale.conf at log on and passes on only `LANG`,
+  `LANGUAGE` and `LC_*` assignments from it.
 - **Bluetooth pairing.** Reprise's pairing agent answers only bluetoothd. A
   pairing request Settings didn't start (a nearby device pairing from its
   side, or a program calling `Device1.Pair`) opens a box whose Enter

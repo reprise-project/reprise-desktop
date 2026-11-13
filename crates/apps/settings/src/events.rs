@@ -6,7 +6,7 @@ use crate::{
     ADD_ITEM_WIN, ADD_WIN, ASK_WIN, CHOOSER_WIN, COLOR_WIN, ERROR_WIN, LAYOUT_WIN, RENAME_WIN,
     SAVER_WIN, SHORTCUT_WIN, SettingsApp, additem, appearancepage, backgroundpage, defaultspage,
     displayhost, displaypage, filepick::Pick, layoutdlg, magnifierpage, menupage, notifypage,
-    pages, quickpage, renamedlg, saverdlg, saverpage,
+    pages, quickpage, regionpage, renamedlg, saverdlg, saverpage,
 };
 use repriseapp::keys::{dialog_key, form_clipboard};
 use repriseapp::{BTN_LEFT, BTN_RIGHT, Ctx, Event, KeyInput, PointerInput, Reply, WinId};
@@ -35,6 +35,10 @@ impl SettingsApp {
                 }
                 if p == Page::LoginManager.index() {
                     self.login_changed(id);
+                    return Reply::redraw();
+                }
+                if p == Page::RegionLanguage.index() {
+                    self.region_changed();
                     return Reply::redraw();
                 }
                 if p == Page::Notifications.index()
@@ -132,6 +136,10 @@ impl SettingsApp {
                     };
                     self.open_add(pick);
                     Reply::redraw_all()
+                }
+                regionpage::SYSTEM => {
+                    self.region_to_system();
+                    Reply::redraw()
                 }
                 pages::LOGIN_BROWSE => {
                     self.open_add(Pick::LoginBackground);

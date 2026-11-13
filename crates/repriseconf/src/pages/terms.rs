@@ -428,6 +428,11 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
                 "Show a red border around what is being shared",
             ),
         ],
+        Page::RegionLanguage => &[
+            ("region_language", "Language:"),
+            ("region_formats", "Formats:"),
+            ("region_system", "Apply to the System..."),
+        ],
         Page::LoginManager => &[
             ("login_interface", "Interface:"),
             ("login_show_users", "Show users"),

@@ -87,6 +87,7 @@ impl SettingsApp {
             || self.defaults.as_ref().is_some_and(|d| d.dirty())
             || self.login_dirty()
             || self.proxy_dirty()
+            || self.region.as_ref().is_some_and(|r| r.dirty())
     }
 
     /// Remove works on user entries only; a system entry has no file of the user's.
@@ -266,6 +267,9 @@ impl SettingsApp {
         if !self.apply_proxy() {
             ok = false;
         }
+        if !self.apply_region() {
+            ok = false;
+        }
         self.sync_apply();
         ok
     }
@@ -365,6 +369,7 @@ impl SettingsApp {
         self.refill_defaults();
         self.revert_login();
         self.revert_proxy();
+        self.revert_region();
         self.fill_wallpapers();
         self.want_preview();
         self.show_monitor();

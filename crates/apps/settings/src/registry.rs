@@ -64,6 +64,7 @@ pub fn build(p: Page, src: &Sources, a: Area) -> Form {
         Page::Startup => pages::startup(a),
         Page::DefaultPrograms => crate::defaultspage::page(a),
         Page::Privacy => pages::privacy(a),
+        Page::RegionLanguage => crate::regionpage::page(a),
         Page::Network => pages::network(a),
         Page::RemoteDesktop => pages::remote_desktop(a, None, false, None),
         Page::LoginManager => pages::login_manager(a),
@@ -169,6 +170,7 @@ mod tests {
                 "Startup",
                 "Default Programs",
                 "Privacy",
+                "Region & Language",
                 "Login Manager",
                 "Advanced",
                 "Backup",
@@ -241,8 +243,8 @@ mod tests {
         assert_eq!(open(&s), Page::Appearance, "the first page opens");
     }
 
-    /// The list's inside is 456 px at the smallest sheet: 45 rows at 789 px, so it scrolls
-    /// until the sheet is 333 px taller. On a sheet 56 px shorter, a page opened from its end
+    /// The list's inside is 456 px at the smallest sheet: 46 rows at 806 px, so it scrolls
+    /// until the sheet is 350 px taller. On a sheet 56 px shorter, a page opened from its end
     /// (keys or `--page`) comes into view.
     #[test]
     fn the_list_scrolls_to_the_open_page() {
@@ -252,16 +254,16 @@ mod tests {
         let px = Theme::default().fonts.size_px;
         let mut sheet = built();
         let list = sheet.layout(&text, px).list.expect("a list sheet");
-        assert_eq!(list.rows.len(), 45, "seven headings, 31 pages, seven links");
-        assert_eq!((list.total, list.inner.height), (789, 456));
-        assert!(list.scrollbar.is_some(), "the rows overflow by 333 px");
-        sheet.size.1 += 333;
+        assert_eq!(list.rows.len(), 46, "seven headings, 32 pages, seven links");
+        assert_eq!((list.total, list.inner.height), (806, 456));
+        assert!(list.scrollbar.is_some(), "the rows overflow by 350 px");
+        sheet.size.1 += 350;
         let list = sheet.layout(&text, px).list.unwrap();
         assert!(list.scrollbar.is_none(), "every row shows");
 
-        sheet.size.1 -= 389;
+        sheet.size.1 -= 406;
         let list = sheet.layout(&text, px).list.unwrap();
-        assert_eq!((list.total, list.inner.height), (789, 400));
+        assert_eq!((list.total, list.inner.height), (806, 400));
         let bar = list.scrollbar.expect("the rows overflow");
         assert_eq!(bar.right(), list.inner.right() + bar.width);
         let last = *list.rows.last().unwrap();
@@ -727,7 +729,7 @@ mod tests {
     }
 
     /// Group titles that name nothing a user searches for.
-    const UNSEARCHED_TITLES: &[&str] = &["Preview", "Connected Computers"];
+    const UNSEARCHED_TITLES: &[&str] = &["Preview", "Connected Computers", "Sample"];
 
     #[test]
     fn the_area_follows_the_sheet_size() {

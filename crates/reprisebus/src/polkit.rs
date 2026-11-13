@@ -2,7 +2,7 @@
 //! per logind session. A service behind polkit answers the same error for a dismissed prompt and
 //! a refused password; a program asks here which one it was.
 //! [`allowed_without_prompt`] and [`allowed_without_password`] ask polkit itself whether an action
-//! needs a password.
+//! needs a password, [`may_ask`] whether a password would allow it.
 
 use std::collections::HashMap;
 
@@ -113,7 +113,15 @@ pub fn refusal(
 /// asks polkit with interaction allowed whatever the call's flags (fwupd does) prompts otherwise.
 /// False when polkit does not answer.
 pub async fn allowed_without_prompt(conn: &zbus::Connection, action: &str) -> bool {
-    check(conn, action).await.is_some_and(|(yes, _)| yes)
+    check(conn, action).await.is_some_and(|c| c.authorized)
+}
+
+/// Whether polkit lets the owner of `conn` do `action`, at once or after a password prompt. True
+/// when polkit does not answer, so the service itself says no.
+pub async fn may_ask(conn: &zbus::Connection, action: &str) -> bool {
+    check(conn, action)
+        .await
+        .is_none_or(|c| c.authorized || c.challenge)
 }
 
 /// [`allowed_without_prompt`] for good: a password typed for an earlier call, which polkit keeps
@@ -121,16 +129,24 @@ pub async fn allowed_without_prompt(conn: &zbus::Connection, action: &str) -> bo
 pub async fn allowed_without_password(conn: &zbus::Connection, action: &str) -> bool {
     check(conn, action)
         .await
-        .is_some_and(|(yes, details)| lasting(yes, &details))
+        .is_some_and(|c| lasting(c.authorized, &c.details))
 }
 
 fn lasting(authorized: bool, details: &HashMap<String, String>) -> bool {
     authorized && !details.contains_key("polkit.temporary_authorization_id")
 }
 
-/// polkit's `CheckAuthorization` for the owner of `conn`, without interaction: whether it is
-/// authorized and the details. None when polkit does not answer.
-async fn check(conn: &zbus::Connection, action: &str) -> Option<(bool, HashMap<String, String>)> {
+/// polkit's answer to `CheckAuthorization`.
+struct Checked {
+    authorized: bool,
+    /// A password prompt would authorize it.
+    challenge: bool,
+    details: HashMap<String, String>,
+}
+
+/// polkit's `CheckAuthorization` for the owner of `conn`, without interaction. None when polkit
+/// does not answer.
+async fn check(conn: &zbus::Connection, action: &str) -> Option<Checked> {
     let name = conn.unique_name()?;
     let subject = (
         "system-bus-name",
@@ -151,7 +167,11 @@ async fn check(conn: &zbus::Connection, action: &str) -> Option<(bool, HashMap<S
                 .deserialize::<(bool, bool, HashMap<String, String>)>()
         });
     match reply {
-        Ok((authorized, _, details)) => Some((authorized, details)),
+        Ok((authorized, challenge, details)) => Some(Checked {
+            authorized,
+            challenge,
+            details,
+        }),
         Err(e) => {
             log::info!("polkit does not say whether {action} needs a password: {e}");
             None

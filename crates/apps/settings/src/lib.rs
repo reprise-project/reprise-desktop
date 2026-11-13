@@ -1,6 +1,6 @@
 //! Reprise Settings: a property sheet over `config.toml` and the XDG autostart directories.
 //!
-//! Pages are listed in `registry::GROUPS`. `--page night-light` opens on one (`--focus mouse_keys` then focuses a control there), and a second start hands its page to the running sheet (`reprisebus::instance`). OK and Apply rewrite `config.toml` with `toml_edit` and the autostart files, and save the Login Manager page through `pkexec` (`loginhost`); a change written elsewhere while the sheet is open is reread (`configwatch`). The Startup list's Add... and Remove, Quick Launch changes, the Privacy page's Forget, the Advanced page's Clear and the Backup page's Export... and Import... (`backup`, also `--export`/`--import FILE`) act at once. The Display page goes through wlr-output-management (`repriseapp::heads`); only a Yes on the Monitor Settings question writes `[[outputs]]`.
+//! Pages are listed in `registry::GROUPS`. `--page night-light` opens on one (`--focus mouse_keys` then focuses a control there), and a second start hands its page to the running sheet (`reprisebus::instance`). OK and Apply rewrite `config.toml` with `toml_edit` and the autostart files, save the Login Manager page through `pkexec` (`loginhost`) and the Region & Language page to locale.conf (`regionhost`); a change written elsewhere while the sheet is open is reread (`configwatch`). The Startup list's Add... and Remove, Quick Launch changes, the Privacy page's Forget, the Advanced page's Clear and the Backup page's Export... and Import... (`backup`, also `--export`/`--import FILE`) act at once. The Display page goes through wlr-output-management (`repriseapp::heads`); only a Yes on the Monitor Settings question writes `[[outputs]]`.
 
 #[cfg(test)]
 reprisebus::test_session!();
@@ -43,6 +43,8 @@ mod permissions;
 mod proxyhost;
 mod quickpage;
 mod readerhost;
+mod regionhost;
+mod regionpage;
 mod registry;
 mod remotehost;
 mod renamedlg;
@@ -430,6 +432,13 @@ struct SettingsApp {
     /// The Network page's proxy rows: the file as read and what the rows hold.
     proxy: proxyhost::Proxy,
 
+    /// The Region & Language page's locales and choices, read when it first opens; the account's
+    /// locale.conf is `region_conf`.
+    region: Option<regionhost::Region>,
+    region_conf: PathBuf,
+    region_read: Option<Receiver<regionhost::Reading>>,
+    region_set: Option<Receiver<regionhost::Set>>,
+
     /// The Login Manager page's machine settings, read when it first opens with the accounts
     /// `login_source` gives; `login_job` holds a save through `login_run` under way.
     login: Option<loginhost::Login>,
@@ -698,6 +707,10 @@ impl SettingsApp {
             reader_job: None,
             airplane: airplanehost::Airplane::default(),
             proxy: proxyhost::Proxy::session(),
+            region: None,
+            region_conf: reprisefs::region::user_conf(),
+            region_read: None,
+            region_set: None,
             login: None,
             login_files: loginhost::Files::default(),
             login_source: loginhost::machine_users,
@@ -999,6 +1012,7 @@ impl App for SettingsApp {
         self.ensure_remote();
         self.ensure_reader();
         self.ensure_airplane();
+        self.ensure_region();
         self.ensure_login();
         if win == repriseapp::MAIN
             && !self.saver_ticking

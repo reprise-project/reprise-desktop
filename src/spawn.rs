@@ -144,6 +144,9 @@ pub struct SessionEnv {
     pub qt_generated: Option<&'static str>,
     pub renderer: &'static str,
     pub login: Vec<(&'static str, String)>,
+    /// `LANG` and the other locale variables ([`take_user_locale`] applied), so services the bus
+    /// starts follow the session's language. Empty when nested or without `LANG`.
+    pub locale: Vec<(&'static str, String)>,
     /// Nested in another session (`WAYLAND_DISPLAY` or `DISPLAY` set at startup): that
     /// session's values of the published variables, put back at the end. Empty otherwise.
     pub parent: Vec<(&'static str, String)>,
@@ -193,7 +196,14 @@ impl SessionEnv {
         icons: &str,
         cursor: (String, u32),
     ) -> SessionEnv {
+        let get = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
+        let parent = parent_session(get);
         SessionEnv {
+            locale: match parent.is_empty() {
+                true => session_locale(get),
+                false => Vec::new(),
+            },
+            parent,
             wayland_display,
             x11: None,
             desktop: std::env::var("XDG_CURRENT_DESKTOP")
@@ -214,8 +224,7 @@ impl SessionEnv {
                 .into_iter()
                 .filter_map(|k| Some((k, std::env::var(k).ok().filter(|v| !v.is_empty())?)))
                 .collect(),
-            parent: parent_session(|k| std::env::var(k).ok().filter(|v| !v.is_empty())),
-            logind_session: own_session(|k| std::env::var(k).ok().filter(|v| !v.is_empty())),
+            logind_session: own_session(get),
             refuses_programs: false,
             session_id: reprisefs::scope::launch_session(),
             defers_user_units: false,
@@ -305,6 +314,7 @@ impl SessionEnv {
             v.push(("XAUTHORITY", x.authority.clone()));
         }
         v.extend(self.login.iter().cloned());
+        v.extend(self.locale.iter().cloned());
         v
     }
 
@@ -350,6 +360,14 @@ fn export_argv(env: &SessionEnv) -> Vec<String> {
         "--systemd".into(),
     ];
     argv.extend(env.pairs().into_iter().map(|(k, v)| format!("{k}={v}")));
+    // The user manager keeps the variables it read from /etc/locale.conf through any
+    // `unset-environment`; an empty value is unset to setlocale, so it masks them.
+    if !env.locale.is_empty() {
+        let absent = reprisefs::region::VARS
+            .iter()
+            .filter(|k| !env.locale.iter().any(|(set, _)| set == *k));
+        argv.extend(absent.map(|k| format!("{k}=")));
+    }
     argv
 }
 
@@ -499,6 +517,39 @@ fn exported_names() -> Vec<&'static str> {
         ..SessionEnv::default()
     };
     every.pairs().into_iter().map(|(k, _)| k).collect()
+}
+
+/// The locale variables `get` has, when `LANG` is among them.
+fn session_locale(get: impl Fn(&str) -> Option<String>) -> Vec<(&'static str, String)> {
+    let set: Vec<(&'static str, String)> = reprisefs::region::VARS
+        .iter()
+        .filter_map(|&k| Some((k, get(k)?)))
+        .collect();
+    match set.iter().any(|(k, _)| *k == "LANG") {
+        true => set,
+        false => Vec::new(),
+    }
+}
+
+/// Put the user's locale.conf ([`reprisefs::region::user_conf`]) into this process's
+/// environment, which every program it starts inherits. Runs first thing in `main`, before any
+/// other thread exists. Returns the file's assignments, for the log.
+pub fn take_user_locale() -> Vec<(&'static str, Option<String>)> {
+    let Ok(text) = std::fs::read_to_string(reprisefs::region::user_conf()) else {
+        return Vec::new();
+    };
+    let env = reprisefs::region::session_env(&text);
+    for (k, v) in &env {
+        // SAFETY: called before any other thread exists, so nothing reads the environment
+        // while it changes.
+        unsafe {
+            match v {
+                Some(v) => std::env::set_var(k, v),
+                None => std::env::remove_var(k),
+            }
+        }
+    }
+    env
 }
 
 /// The published variables `get` has, when it describes a nested session (one with a display of
@@ -1278,6 +1329,7 @@ mod tests {
             qt_generated: None,
             renderer: "vulkan",
             login: vec![("XDG_SEAT", "seat0".into())],
+            locale: Vec::new(),
             parent: Vec::new(),
             logind_session: None,
             refuses_programs: false,
@@ -1419,6 +1471,60 @@ mod tests {
             ..env(None)
         };
         assert_eq!(begin_commands(&nested), vec![export_argv(&nested)]);
+    }
+
+    /// The session's locale reaches the user manager whole: what it sets is published, the
+    /// locale variables it lacks go out empty, so the manager's own `LC_TIME` does not linger.
+    #[test]
+    fn a_session_with_a_locale_publishes_it_and_empties_the_rest() {
+        let de = SessionEnv {
+            locale: vec![
+                ("LANG", "de_DE.UTF-8".into()),
+                ("LC_TIME", "C.UTF-8".into()),
+            ],
+            ..env(None)
+        };
+        let export = &begin_commands(&de)[0];
+        for set in [
+            "LANG=de_DE.UTF-8",
+            "LC_TIME=C.UTF-8",
+            "LC_NUMERIC=",
+            "LANGUAGE=",
+        ] {
+            assert!(export.contains(&set.to_string()), "{set}");
+        }
+        assert!(!export.contains(&"LANG=".to_string()));
+        assert!(
+            !export_argv(&env(None)).iter().any(|a| a == "LC_NUMERIC="),
+            "a session without LANG leaves the manager's locale"
+        );
+        let mut c = std::process::Command::new("true");
+        with_session_env(&mut c, &de, None);
+        assert_eq!(
+            env_of(&c, "LC_NUMERIC"),
+            None,
+            "nothing set empty for a child"
+        );
+        assert!(
+            !end_commands(&de, true, false)[0].contains(&"LANG".to_string()),
+            "the user manager keeps a locale after the session"
+        );
+
+        let get = |vars: &'static [(&'static str, &'static str)]| {
+            move |k: &str| {
+                vars.iter()
+                    .find(|(n, _)| *n == k)
+                    .map(|(_, v)| v.to_string())
+            }
+        };
+        assert_eq!(
+            session_locale(get(&[("LANG", "de_DE.UTF-8"), ("PATH", "/bin")])),
+            vec![("LANG", "de_DE.UTF-8".to_string())]
+        );
+        assert!(
+            session_locale(get(&[("LC_TIME", "C.UTF-8")])).is_empty(),
+            "no LANG publishes nothing"
+        );
     }
 
     /// A session of its own unsets every variable it can publish, set or

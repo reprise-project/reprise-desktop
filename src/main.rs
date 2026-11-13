@@ -280,6 +280,7 @@ struct Cli {
 }
 
 fn main() {
+    let locale = spawn::take_user_locale();
     malloc::pin_mmap_threshold();
     spawn::block_signals();
     // zbus logs every served call at info and Smithay its GL devices; RUST_LOG
@@ -287,6 +288,9 @@ fn main() {
     reprisebus::journal::builder("info,zbus=warn,smithay=warn", journal::init()).init();
     reprisebus::journal::log_panics();
     logbridge::install();
+    if !locale.is_empty() {
+        log::info!("locale from locale.conf: {locale:?}");
+    }
     let cli = Cli::parse();
     // Before the crash restart: a greeter that dies is reprise-login's to count.
     if cli.greeter {
