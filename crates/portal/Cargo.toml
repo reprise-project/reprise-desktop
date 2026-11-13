@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 repository.workspace = true
-description = "Reprise's xdg-desktop-portal backend: ScreenCast and Screenshot over ext-image-copy-capture and PipeWire, RemoteDesktop and InputCapture over libei, GlobalShortcuts kept in config.toml, the Access prompt, the file and app choosers, Notification and Inhibit passed on to the compositor, Email opened in the default mail program, and Account after a prompt"
+description = "Reprise's xdg-desktop-portal backend: ScreenCast and Screenshot over ext-image-copy-capture and PipeWire, RemoteDesktop and InputCapture over libei, GlobalShortcuts kept in config.toml, the Access prompt, the file and app choosers, Notification and Inhibit passed on to the compositor, Email opened in the default mail program, and Account and DynamicLauncher after a prompt"
 
 [lints]
 workspace = true

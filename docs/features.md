@@ -111,7 +111,12 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   installation it came from, a program from the system's packages leaves
   through PackageKit (greyed, with a tip saying why, without it). A sheet
   first says what goes (version, size, source, and any other package that
-  needs it) and waits for Uninstall.
+  needs it) and waits for Uninstall. A launcher or web app an app installed
+  through the portal is deleted the same way, and its app keeps its files.
+- **Web apps.** A browser's "Install as app" (GNOME Web, a Flatpak Chromium)
+  or a game store's new launcher asks first: a prompt shows the icon, the
+  name to edit and a web app's address. Install puts it in All Programs at
+  once.
 - **Run...** for when you know exactly what you want. A folder's path (`~/Documents`) opens it in Explorer.
 
 ## Windows
@@ -874,7 +879,7 @@ the screen takes the interface of the last session used at this computer.
   screenshot draws none. Settings > Privacy turns it off. The Remote Desktop
   server's screens get none unless Settings > Remote Desktop asks for it.
 - **Prompts.** Screen sharing, remote control, input capture, location,
-  camera access and your name and picture through the portal all ask first. Cancel or Deny is the default button, so a
+  camera access, your name and picture, and new launchers through the portal all ask first. Cancel or Deny is the default button, so a
   stray Enter never grants anything.
 - **Sandboxed programs get less.** Flatpaks can't see the desktop's
   privileged protocols, such as input injection or screen capture. Other

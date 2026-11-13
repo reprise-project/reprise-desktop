@@ -1340,6 +1340,19 @@ The Account portal shares your login, name and AccountsService picture only
 after its prompt, which shows all three, and asks every time: nothing is
 remembered. The reason under them is the app's own text.
 
+The DynamicLauncher portal adds a launcher to the Start menu only after its
+prompt, which shows the icon, the name and a web app's address. It asks every
+time. xdg-desktop-portal writes the desktop file and checks it: one group,
+an Exec line, and for a Flatpak an Exec that runs that same app (`flatpak
+run`), so a launcher starts nothing the app couldn't start itself. An install
+token, which skips the prompt, goes only to Reprise's own programs: an id
+starting `reprise-` or `org.reprise.` with a desktop entry and no Flatpak app
+of that id installed. A program outside a sandbox can write desktop files
+itself anyway; the Flatpak check keeps out a sandboxed app named like a
+Reprise program. xdg-desktop-portal itself gives one to a program outside a
+sandbox that has no app id, without asking the backend. Uninstall... deletes the launcher, its link and the icon the
+portal saved, and nothing else.
+
 The share picker also keeps the last screen or window each app picked
 (`$XDG_STATE_HOME/reprise-portal/lastpick.toml`), but only to preselect it:
 you still confirm.
