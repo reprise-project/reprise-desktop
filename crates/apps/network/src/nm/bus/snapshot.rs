@@ -214,6 +214,14 @@ pub(super) async fn build(
     for (device, name) in out.iter_mut().zip(names) {
         device.shell_name = name;
     }
+    let switches = reprisebus::rfkill::switches();
+    let radios = reprisebus::airplane::from_nm(
+        flag(&manager_props, reprisebus::airplane::WIFI_KEY),
+        flag(&manager_props, reprisebus::airplane::WWAN_KEY),
+        (manager_props.get(reprisebus::airplane::RADIO_FLAGS_KEY))
+            .and_then(|v| u32::try_from(v.clone()).ok()),
+        &switches,
+    );
     Snapshot {
         devices: out,
         vpns,
@@ -221,5 +229,6 @@ pub(super) async fn build(
         nm_running: true,
         connectivity: Connectivity::from_code(uint(&manager_props, "Connectivity")),
         check_uri: text(&manager_props, "ConnectivityCheckUri"),
+        airplane: reprisebus::airplane::state(radios, &switches),
     }
 }

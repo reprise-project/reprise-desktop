@@ -598,6 +598,11 @@ impl NetApp {
                     }
                 }
                 tray::TrayMsg::Vpn(i) => self.toggle_vpn(i),
+                tray::TrayMsg::Airplane => {
+                    if let Some(on) = self.snapshot.airplane {
+                        self.send(nm::Cmd::Airplane(!on));
+                    }
+                }
                 tray::TrayMsg::Hotspot => {
                     let radio = tray::wifi_device(&self.snapshot)
                         .map(|d| (d.path.clone(), d.hotspot.is_some()));

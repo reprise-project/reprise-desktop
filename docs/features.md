@@ -734,11 +734,11 @@ the screen takes the interface of the last session used at this computer.
 - **Global shortcuts for programs.** A voice chat's push-to-talk works while
   another window has focus. The program asks once, and you can change its
   keys on the Keyboard page.
-- **Media keys** for volume, mute, brightness, playback, Wi-Fi and the
-  touchpad, with an on-screen panel. They work on the lock screen too, except
-  Wi-Fi. The touchpad key turns the touchpad off or back on and the panel
-  says which. With
-  `[sounds] allow_boost` the volume keys go on to 150 %.
+- **Media keys** for volume, mute, brightness, playback, Wi-Fi, airplane mode
+  and the touchpad, with an on-screen panel. They work on the lock screen too,
+  except Wi-Fi and airplane mode. The touchpad key turns the touchpad off or
+  back on and the panel says which. With `[sounds] allow_boost` the volume
+  keys go on to 150 %.
 - **Caps Lock and Num Lock** show "On" or "Off" in the same panel when they
   change, each with its own switch (`[osd]`, Settings > Keyboard). The
   panel stays hidden on the lock screen.
@@ -798,6 +798,9 @@ the screen takes the interface of the last session used at this computer.
   network" balloon. The network icon's tooltip and the Status sheet show the
   current download and upload speed, and an optional meter beside the clock
   shows it all the time (`[taskbar] network_meter`).
+- **Airplane mode** turns Wi-Fi, mobile broadband and Bluetooth off from the
+  network icon's menu, Settings > Network or the airplane-mode key, and
+  turning it off brings back the radios that were on.
 - **Bluetooth.** Pairing, connections and device batteries, from the tray.
 - **Phone.** Through KDE Connect: battery and charging in the tray, Ring
   phone, and Send files from the tray or Send To.

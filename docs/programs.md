@@ -296,7 +296,7 @@ asks first. Programs see `TERM=xterm-256color` and `COLORTERM=truecolor`.
 
 ## Reprise Settings
 
-One window, 28 pages under seven headings (Login Manager only where
+One window, 30 pages under seven headings (Login Manager only where
 `reprise-login` is installed), with link rows to the separate
 settings programs. Only one runs at a time. A link row ends in "..." and
 starts its program in its own window, as Start does, and Settings stays on
@@ -386,6 +386,9 @@ matched control focused.
     reader when I log on shows or hides its autostart entry at once.
 - **Network**
   - **Connections...** (Network Connections)
+  - **Network:** Airplane mode turns Wi-Fi, mobile broadband and Bluetooth
+    off or back on at once, as the network icon's menu does. It's greyed on
+    a computer with no radio.
   - **Remote Desktop:** Allow remote connections turns the server on or off
     at once, enabling and starting its user unit or stopping and disabling
     it, and the lines under it say where it listens and which video encoder
@@ -518,6 +521,12 @@ password to a secret agent (another desktop's wallet, or "ask every time")
 can't be connected from here: Reprise runs no secret agent, so it says so
 instead of saving what you would type, and the VPN's Properties grey that
 field.
+
+The tray icon's Airplane Mode row turns Wi-Fi and mobile broadband off
+through NetworkManager and Bluetooth through rfkill, and its tooltip says so
+while it's on. Unticking it turns back on the radios that were on, kept in
+`~/.local/state/reprise/airplane-mode`. Turning any radio on by hand ends
+airplane mode. The row shows on a machine with a radio switch.
 
 An enterprise (802.1X) network, the kind campuses and offices run, asks for
 its login when you pick it: PEAP, TTLS or TLS, an anonymous identity, the

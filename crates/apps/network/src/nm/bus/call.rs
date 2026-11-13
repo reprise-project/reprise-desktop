@@ -20,6 +20,7 @@ pub(super) fn cmd_device(cmd: &Cmd) -> Option<&str> {
         | Cmd::SavePluginVpn { .. }
         | Cmd::DeleteVpn(_)
         | Cmd::Import { .. }
+        | Cmd::Airplane(_)
         | Cmd::Quit => None,
     }
 }

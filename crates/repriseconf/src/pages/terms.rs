@@ -364,6 +364,7 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
             ("dp_change", "Change..."),
             ("dp_restore", "Restore Default"),
         ],
+        Page::Network => &[("airplane", "Airplane mode")],
         Page::RemoteDesktop => &[
             ("allow", "Allow remote connections to this computer"),
             ("port", "Port:"),

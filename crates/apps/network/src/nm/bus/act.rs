@@ -365,6 +365,9 @@ pub(super) async fn act(conn: &Connection, cmd: &Cmd) -> Result<(), Failure> {
             .await
             .map_err(clean),
         Cmd::LoadVpn(_) => unreachable!("`command` answers LoadVpn itself"),
+        Cmd::Airplane(on) => reprisebus::airplane::set(conn, *on)
+            .await
+            .map_err(Failure::from),
         Cmd::Quit => unreachable!("`commands` turns Quit into Wake::Quit"),
     }
 }

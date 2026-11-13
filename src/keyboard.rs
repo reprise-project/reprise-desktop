@@ -840,7 +840,8 @@ impl State {
             | Action::Prev
             | Action::Stop
             | Action::Wifi
-            | Action::Touchpad(_) => self.run_media(a),
+            | Action::Touchpad(_)
+            | Action::Airplane => self.run_media(a),
         }
     }
 

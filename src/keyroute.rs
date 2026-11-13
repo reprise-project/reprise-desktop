@@ -271,12 +271,13 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
     }
     // The media keys are the machine's too, with the same precedence, but
     // a config bind on the bare key replaces the built-in action. The wifi
-    // key is the exception at the lock: nobody there may take the machine
-    // off the network. Some firmware sends the touchpad key with Ctrl+Super held.
+    // and airplane-mode keys are the exception at the lock: nobody there may
+    // take the machine off the network. Some firmware sends the touchpad key
+    // with Ctrl+Super held.
     if k.pressed
         && let Some(a) = k.syms.iter().find_map(|&s| media_action_for(s))
         && (k.mods == 0 || (k.mods == MOD_CTRL | MOD_LOGO && matches!(a, Action::Touchpad(_))))
-        && !(modes.locked && a == Action::Wifi)
+        && !(modes.locked && matches!(a, Action::Wifi | Action::Airplane))
     {
         let bound = k
             .lower
@@ -770,6 +771,7 @@ fn passes_dialog(a: &Action) -> bool {
             | Action::Stop
             | Action::Wifi
             | Action::Touchpad(_)
+            | Action::Airplane
     )
 }
 
@@ -1028,6 +1030,7 @@ pub fn media_action_for(sym: u32) -> Option<Action> {
         KEY_XF86TouchpadToggle => Action::Touchpad(None),
         KEY_XF86TouchpadOn => Action::Touchpad(Some(true)),
         KEY_XF86TouchpadOff => Action::Touchpad(Some(false)),
+        KEY_XF86RFKILL => Action::Airplane,
         _ => return None,
     })
 }

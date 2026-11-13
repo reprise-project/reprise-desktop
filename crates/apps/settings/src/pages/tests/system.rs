@@ -1697,3 +1697,58 @@ fn the_remote_desktop_page_under_the_login_manager_pins_its_pixels_in_every_look
         "Classic, Blue, Glass"
     );
 }
+
+#[test]
+fn the_network_page_geometry() {
+    let s = built();
+    let p = Page::Network;
+    assert_eq!(rect(&s, p, AIRPLANE), Rect::new(20, 44, 13, 13));
+    assert_eq!(rect(&s, p, "airplane_note").y, 64);
+    assert_eq!(rect(&s, p, "airplane_status").y, 80);
+    inside_page(&s, p);
+}
+
+fn status(page: &Form) -> &str {
+    match &page.item("airplane_status").unwrap().control {
+        Control::Label { text, .. } => text,
+        c => panic!("the status is a label, not {c:?}"),
+    }
+}
+
+#[test]
+fn airplane_mode_greys_until_read_and_without_a_radio() {
+    let mut page = network(Area::MIN);
+    assert!(
+        !enabled(&page, AIRPLANE),
+        "greyed until the radios are read"
+    );
+    show_airplane(&mut page, Some(true), false);
+    assert_eq!(page.checked(AIRPLANE), Some(true));
+    assert!(enabled(&page, AIRPLANE));
+    assert_eq!(status(&page), "");
+    show_airplane(&mut page, Some(false), true);
+    assert_eq!(page.checked(AIRPLANE), Some(false));
+    assert!(!enabled(&page, AIRPLANE), "greyed while a change runs");
+    show_airplane(&mut page, None, false);
+    assert!(!enabled(&page, AIRPLANE));
+    assert!(!enabled(&page, "airplane_note"));
+    assert_eq!(status(&page), "This computer has no radio to turn off.");
+}
+
+#[test]
+fn the_airplane_mode_rows_pin_their_pixels_in_every_look() {
+    let row = Rect::new(20, 40, 358, 56);
+    let mut page = network(Area::MIN);
+    show_airplane(&mut page, Some(true), false);
+    let on = row_pins(&page, row);
+    show_airplane(&mut page, None, false);
+    let none = row_pins(&page, row);
+    assert_eq!(
+        [on, none],
+        [
+            [0xd4ab66947128ebfe, 0x4f341a8af31bcccb, 0x0bacf51ccd78cc46],
+            [0xd28c5f7b6e621d82, 0xe1aa3b114dbba873, 0xfa38d4ecfdf80291],
+        ],
+        "on, no radio; Classic, Blue, Glass"
+    );
+}

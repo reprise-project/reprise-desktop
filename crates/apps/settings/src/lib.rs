@@ -6,6 +6,7 @@
 reprisebus::test_session!();
 
 mod additem;
+mod airplanehost;
 mod appearancepage;
 mod apply;
 mod autostart;
@@ -423,6 +424,8 @@ struct SettingsApp {
     reader: readerhost::Reader,
     reader_job: Option<Receiver<readerhost::Reading>>,
 
+    airplane: airplanehost::Airplane,
+
     /// The Login Manager page's machine settings, read when it first opens with the accounts
     /// `login_source` gives; `login_job` holds a save through `login_run` under way.
     login: Option<loginhost::Login>,
@@ -689,6 +692,7 @@ impl SettingsApp {
             remote_acting: false,
             reader: readerhost::Reader::default(),
             reader_job: None,
+            airplane: airplanehost::Airplane::default(),
             login: None,
             login_files: loginhost::Files::default(),
             login_source: loginhost::machine_users,
@@ -988,6 +992,7 @@ impl App for SettingsApp {
         self.ensure_permissions();
         self.ensure_remote();
         self.ensure_reader();
+        self.ensure_airplane();
         self.ensure_login();
         if win == repriseapp::MAIN
             && !self.saver_ticking

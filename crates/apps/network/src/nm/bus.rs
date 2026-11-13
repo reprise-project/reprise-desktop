@@ -210,6 +210,7 @@ async fn run(
     let mut saved_cache: Option<Vec<(String, HashMap<String, Props>)>> = None;
     let (wake_tx, wake_rx) = async_channel::unbounded::<Wake>();
     let _pump = pump(&conn, wake_tx.clone()).await;
+    follow_switches(wake_tx.clone());
     let _commands = commands(&conn, cmds, wake_tx);
     let mut rebuild = true;
     loop {
@@ -272,6 +273,21 @@ async fn run(
                 }
             }
         }
+    }
+}
+
+/// Rebuild on every rfkill change: Bluetooth's switch counts towards airplane mode and
+/// NetworkManager does not report it.
+fn follow_switches(wakes: async_channel::Sender<Wake>) {
+    let spawned = std::thread::Builder::new()
+        .name("reprise-network-rfkill".into())
+        .spawn(move || {
+            if let Err(e) = reprisebus::rfkill::follow(|| wakes.send_blocking(Wake::Bus).is_ok()) {
+                log::info!("radio switches are not followed: {e}");
+            }
+        });
+    if let Err(e) = spawned {
+        log::warn!("could not start the rfkill thread: {e}");
     }
 }
 

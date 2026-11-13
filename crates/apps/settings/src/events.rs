@@ -62,6 +62,10 @@ impl SettingsApp {
                     self.reader_logon_toggled();
                     return Reply::redraw();
                 }
+                if id == pages::AIRPLANE {
+                    self.airplane_toggled();
+                    return Reply::redraw();
+                }
                 // Only the control just worked is read back: reading all would write clamped values for keys the control cannot show.
                 let from = self.want.interface.clone();
                 pages::read_one(&self.sheet, id, &mut self.want);

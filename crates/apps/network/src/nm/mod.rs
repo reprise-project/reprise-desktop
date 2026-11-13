@@ -265,6 +265,8 @@ pub struct Snapshot {
     /// it has none. A browser sent there on a network with a sign-in page
     /// is redirected to that page.
     pub check_uri: String,
+    /// None on a machine with no radio switch.
+    pub airplane: Option<bool>,
 }
 
 /// The display names shown in the folder ("Local Area Connection",
@@ -625,6 +627,7 @@ pub enum Cmd {
         device: String,
         on: bool,
     },
+    Airplane(bool),
     Quit,
 }
 

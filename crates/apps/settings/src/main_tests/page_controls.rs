@@ -304,3 +304,52 @@ fn the_screen_reader_boxes_follow_the_reads_and_grey_without_orca() {
     );
     assert!(a.error.is_some(), "a failed switch says why");
 }
+
+fn airplane_read(a: &mut SettingsApp, state: Option<bool>, failed: Option<String>) {
+    let (tx, rx) = std::sync::mpsc::channel();
+    tx.send(crate::airplanehost::Reading { state, failed })
+        .unwrap();
+    a.airplane.job = Some(rx);
+    assert!(a.airplane_done());
+}
+
+fn lit(a: &SettingsApp) -> bool {
+    match &a.sheet.pages[Page::Network.index()]
+        .item(pages::AIRPLANE)
+        .unwrap()
+        .control
+    {
+        form::Control::Check { enabled, .. } => *enabled,
+        c => panic!("airplane mode is a check box, not {c:?}"),
+    }
+}
+
+#[test]
+fn the_airplane_check_box_acts_at_once_and_follows_the_radios() {
+    let mut a = app("airplane");
+    let p = Page::Network.index();
+    airplane_read(&mut a, Some(false), None);
+    assert_eq!(a.sheet.pages[p].checked(pages::AIRPLANE), Some(false));
+    assert!(lit(&a));
+
+    a.sheet.pages[p].set_check(pages::AIRPLANE, true);
+    a.sheet_event(propsheet::Event::Page(
+        p,
+        form::Event::Changed(pages::AIRPLANE),
+    ));
+    assert!(a.airplane.acting);
+    assert!(!lit(&a), "greyed while the radios turn");
+    airplane_read(&mut a, Some(true), None);
+    assert_eq!(a.sheet.pages[p].checked(pages::AIRPLANE), Some(true));
+    assert!(lit(&a));
+    assert_eq!(a.want, a.loaded, "the check box is no change for Apply");
+
+    a.airplane.acting = true;
+    airplane_read(
+        &mut a,
+        Some(true),
+        Some("Airplane mode could not be turned off.".into()),
+    );
+    assert!(a.error.is_some(), "a failed change says why");
+    assert_eq!(a.sheet.pages[p].checked(pages::AIRPLANE), Some(true));
+}

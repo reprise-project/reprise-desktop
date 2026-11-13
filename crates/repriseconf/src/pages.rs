@@ -33,6 +33,7 @@ pub enum Page {
     Tablet,
     TextKeys,
     MagnifierFilters,
+    Network,
     RemoteDesktop,
     Startup,
     DefaultPrograms,
@@ -124,6 +125,7 @@ pub const GROUPS: &[(&str, &[Entry])] = &[
         "Network",
         &[
             Entry::Program("reprise-network.desktop"),
+            Entry::Page(Page::Network),
             Entry::Page(Page::RemoteDesktop),
         ],
     ),
@@ -223,6 +225,7 @@ impl Page {
             Page::Startup => "Startup",
             Page::DefaultPrograms => "Default Programs",
             Page::Privacy => "Privacy",
+            Page::Network => "Network",
             Page::RemoteDesktop => "Remote Desktop",
             Page::LoginManager => "Login Manager",
             Page::Advanced => "Advanced",
@@ -411,6 +414,7 @@ impl Page {
                 "open with",
                 "file types",
             ],
+            Page::Network => &["airplane mode", "flight mode", "radios", "rfkill"],
             Page::RemoteDesktop => &["rdp", "remmina", "desktop sharing"],
             Page::Privacy => &[
                 "location",
