@@ -1299,12 +1299,17 @@ What a consent prompt remembers, and where:
   they are refused without one. An interactive screenshot opens the share
   picker every time, which has no Remember.
 - **Wallpaper:** an app with `yes` in the permission store (table and id
-  `wallpaper`) sets the picture without a prompt, and one with `no` is
+  `wallpaper`) sets a picture it reads itself without a prompt, and one with `no` is
   refused by xdg-desktop-portal. Without either, a call without
   `show-preview` first gets xdg-desktop-portal's Access prompt, which keeps
-  its answer there itself, so an Allow is not asked again by Reprise.
-  Otherwise Reprise's prompt shows the picture; an app with an app id can tick
+  its answer there itself, so Reprise doesn't ask again for a picture the app
+  reads itself. Otherwise Reprise's prompt shows the picture; an app with an app id can tick
   Remember, and an Allow with it is kept as `yes`. A Deny there is never kept.
+  A picture the app reads itself is one under `$XDG_RUNTIME_DIR/doc` (the
+  document portal) or in its `~/.var/app/<app id>`, checked on the path the
+  opened file resolves to. Any other picture, which the app may name without
+  being able to read it, gets Reprise's prompt with the picture and no
+  Remember, whatever the store holds.
 - **InputCapture:** asks each session. An app with an app id can tick
   Remember, and an Allow with it goes to the permission store (table and id
   `input-capture`, the app id mapped to `yes`); the app's later sessions
