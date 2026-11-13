@@ -1,0 +1,72 @@
+Classic 0.1 1 a33905c13c0f0ca5
+Classic 0.1 2 08923ff77eaa554d
+Classic 0.4 1 b72f254c465fa0dd
+Classic 0.4 2 4d28a4c0bd93f405
+Classic 0.8 1 30f8befe72aa959d
+Classic 0.8 2 b0e2c53fb49d0515
+Glass 0.1 1 866dd6ca2448b635
+Glass 0.1 2 33fad0cfc9ecafcd
+Glass 0.4 1 412c6da1486791c5
+Glass 0.4 2 160af78514eebe15
+Glass 0.8 1 58891184852393c5
+Glass 0.8 2 7c1222812f5bc04d
+Blue Blue 0.1 1 bee6e5430209ad05
+Blue Blue 0.1 2 926c88b22320d875
+Blue Blue 0.4 1 a5011843d2cc01ad
+Blue Blue 0.4 2 6db2b907b62b3b75
+Blue Blue 0.8 1 005333310efa21ad
+Blue Blue 0.8 2 89b493e048372cf5
+Blue Olive 0.1 1 5f993a6fcf0abf85
+Blue Olive 0.1 2 99da0e4493fe6415
+Blue Olive 0.4 1 c01dcd4011b3c205
+Blue Olive 0.4 2 6a6c21db5c2c636d
+Blue Olive 0.8 1 19fd9a3dddab99dd
+Blue Olive 0.8 2 eae001a89d4fa295
+Blue Silver 0.1 1 e235931190d0697d
+Blue Silver 0.1 2 bc4821fa28789c6d
+Blue Silver 0.4 1 17c59d7db77602fd
+Blue Silver 0.4 2 1b1396638945878d
+Blue Silver 0.8 1 a580f1f0d9cc53f5
+Blue Silver 0.8 2 5c157e0a7b885815
+Blue Slate 0.1 1 2f43c7cececfc575
+Blue Slate 0.1 2 ff1199240e14688d
+Blue Slate 0.4 1 69de5faa9b7abf05
+Blue Slate 0.4 2 1b07032fb5dad5cd
+Blue Slate 0.8 1 cf60ddf8792cf515
+Blue Slate 0.8 2 4ce71d3d8d4143c5
+Blue Sapphire 0.1 1 df8f5b2f32b1aff5
+Blue Sapphire 0.1 2 39c41017ac8f97a5
+Blue Sapphire 0.4 1 b705daaa6b96c10d
+Blue Sapphire 0.4 2 ce36450eac69947d
+Blue Sapphire 0.8 1 d181986f4cf41305
+Blue Sapphire 0.8 2 fff6790d5d2344bd
+Blue Obsidian 0.1 1 161ad8bfb6433dad
+Blue Obsidian 0.1 2 267c29a8d5c4fa3d
+Blue Obsidian 0.4 1 22a922321f382655
+Blue Obsidian 0.4 2 836a1b87bc53b1ed
+Blue Obsidian 0.8 1 e5f79bf3728232cd
+Blue Obsidian 0.8 2 2b7524cf2a1cf155
+Blue Ember 0.1 1 15d1407e1a387a45
+Blue Ember 0.1 2 57a6d1c266ffd555
+Blue Ember 0.4 1 ca96e25f97706525
+Blue Ember 0.4 2 49c4dca987f479a5
+Blue Ember 0.8 1 a7acd948ae5511c5
+Blue Ember 0.8 2 f4a22a8a45b72bc5
+Blue Cobalt 0.1 1 60c938b0dff4f8c5
+Blue Cobalt 0.1 2 b1ce114db238585d
+Blue Cobalt 0.4 1 d2f866cae1d2df4d
+Blue Cobalt 0.4 2 0ddb0b4fda0e816d
+Blue Cobalt 0.8 1 b83ad2123185aad5
+Blue Cobalt 0.8 2 4190e8a094c00df5
+Blue Carbon 0.1 1 a86437fbe642c40d
+Blue Carbon 0.1 2 226f30dfc549908d
+Blue Carbon 0.4 1 1f781f0cd8d4b2e5
+Blue Carbon 0.4 2 1cbe011ce575fcf5
+Blue Carbon 0.8 1 3e653961646c639d
+Blue Carbon 0.8 2 c4d316c33f406b65
+Blue Steel 0.1 1 e08678587932ab25
+Blue Steel 0.1 2 c0f8d2b70495bfa5
+Blue Steel 0.4 1 7eb31710d24e06f5
+Blue Steel 0.4 2 a006c2cd97a41295
+Blue Steel 0.8 1 22a9ff6097df9d15
+Blue Steel 0.8 2 5ad999f81f8b22b5
