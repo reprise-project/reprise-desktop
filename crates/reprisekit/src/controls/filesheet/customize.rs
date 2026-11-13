@@ -228,23 +228,19 @@ pub fn change_icon_list_mut(form: &mut Form) -> Option<&mut crate::controls::ico
 
 /// Takes the icons in `gone` off Change Icon's list, keeping the pick in view.
 pub fn change_icon_drop(form: &mut Form, gone: &[String]) {
-    let cm = form.controls();
-    let Some(it) = form.item_mut(CHANGE_ICON_LIST) else {
+    let Some(lay) = form.icon_list_layout(CHANGE_ICON_LIST) else {
         return;
     };
-    let lay = crate::controls::iconlist::layout(it.placed(&cm), &cm);
-    if let Control::IconList(l) = &mut it.control {
+    if let Some(l) = change_icon_list_mut(form) {
         l.drop_names(gone, &lay);
     }
 }
 
 pub fn change_icon_restore(form: &mut Form) {
-    let cm = form.controls();
-    let Some(it) = form.item_mut(CHANGE_ICON_LIST) else {
+    let Some(lay) = form.icon_list_layout(CHANGE_ICON_LIST) else {
         return;
     };
-    let lay = crate::controls::iconlist::layout(it.placed(&cm), &cm);
-    if let Control::IconList(l) = &mut it.control {
+    if let Some(l) = change_icon_list_mut(form) {
         l.pick(STANDARD_FOLDER_ICON);
         l.follow(&lay);
     }
