@@ -771,6 +771,24 @@ polkit wants a password to change the zone (systemd's default), since no one
 is there to type it: an administrator can allow
 `org.freedesktop.timedate1.set-timezone` with a polkit rule.
 
+## Welcome
+
+Shows at a new user's first login and steps through three pages: the
+interface (Classic, Blue or Glass, with a sample of each), light or dark and
+the text size, then the keys worth knowing with a button for Settings. Each
+pick applies as you make it, and each lives in Settings too (Appearance and
+Accessibility). Skip closes it. Start > Programs > Accessories > Welcome runs
+it again.
+
+A first login is one with neither `config.toml` nor anything in
+`$XDG_STATE_HOME/reprise/state.toml`: Reprise then sets `welcome_pending` in
+the state file and Welcome's autostart entry (`reprise-welcome
+--first-login`) shows it once and clears it. A user who already ran Reprise
+never sees it on an upgrade. The journal says which rule decided.
+
+Blue comes in light colours only, so Dark is greyed under it. Dark under
+Classic is the One Dark scheme, under Glass `[glass] mode = "dark"`.
+
 ## Smaller things
 
 - **Safely Remove Hardware.** Handles drives as you plug them in, whatever

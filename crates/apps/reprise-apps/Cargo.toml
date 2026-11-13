@@ -38,3 +38,4 @@ reprise-taskmgr = { path = "../taskmgr" }
 reprise-terminal = { path = "../terminal" }
 reprise-updates = { path = "../updates" }
 reprise-volume = { path = "../volume" }
+reprise-welcome = { path = "../welcome" }

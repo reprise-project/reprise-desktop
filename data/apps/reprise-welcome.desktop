@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Welcome
+Comment=Pick an interface, light or dark and the text size, and see the keys worth knowing.
+Exec=reprise-welcome
+Icon=reprise
+Categories=Utility;
+StartupWMClass=reprise.welcome
+Terminal=false

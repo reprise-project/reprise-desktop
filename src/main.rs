@@ -319,6 +319,9 @@ fn main() {
         .clone()
         .unwrap_or_else(config::Config::default_path);
     migrate::run(&config_path, &state::path());
+    if cli.after_crash.is_none() {
+        repriseconf::welcome::mark_first_login(&config_path, &state::path());
+    }
     let config_stamp = configwatch::stamp(&config_path);
     let (config, config_notice, config_file) = config::Config::load(cli.config.as_deref());
     config.warn_retired();

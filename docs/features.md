@@ -945,6 +945,10 @@ dialogs. [More in programs.md](programs.md#explorer).
 
 ## Configuration
 
+- **Welcome at first login.** A new user gets three pages: the interface,
+  light or dark with the text size, and the keys worth knowing. Skippable,
+  each pick also in Settings, and back from Start > Programs > Accessories;
+  see [programs.md](programs.md#welcome).
 - **Live.** Edits to `config.toml` apply when you save, from Reprise Settings
   or a text editor. A save that isn't valid TOML changes nothing and a notice
   names the line and column; see [configuration.md](configuration.md#a-broken-save).

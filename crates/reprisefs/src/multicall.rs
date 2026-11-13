@@ -8,7 +8,7 @@ use std::path::Path;
 
 pub const BINARY: &str = "reprise-apps";
 
-pub const PROGRAMS: [&str; 25] = [
+pub const PROGRAMS: [&str; 26] = [
     "reprise-about",
     "reprise-accounts",
     "reprise-bluetooth",
@@ -34,6 +34,7 @@ pub const PROGRAMS: [&str; 25] = [
     "reprise-terminal",
     "reprise-updates",
     "reprise-volume",
+    "reprise-welcome",
 ];
 
 fn program(name: &OsStr) -> Option<&'static str> {

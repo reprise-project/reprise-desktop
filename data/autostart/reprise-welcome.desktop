@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Welcome
+Exec=reprise-welcome --first-login
+OnlyShowIn=reprise;
+NoDisplay=true
