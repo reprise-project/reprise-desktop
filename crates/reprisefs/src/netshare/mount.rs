@@ -115,9 +115,10 @@ fn run(
     child: Arc<Mutex<Option<Child>>>,
 ) {
     let secrets = Secrets::open();
+    let stored = in_address(&addr).or_else(|| secrets.as_ref().and_then(|s| stored(s, &addr)));
     let mut talk = Talk {
         addr: &addr,
-        stored: secrets.as_ref().and_then(|s| stored(s, &addr)),
+        stored,
         typed: None,
         asked: 0,
         can_remember: secrets.is_some(),
@@ -155,7 +156,7 @@ fn run(
 
 struct Talk<'a> {
     addr: &'a Address,
-    /// The Secret Service's password for the server, until it is tried.
+    /// The address's password, else the Secret Service's for the server, until it is tried.
     stored: Option<Credentials>,
     /// What the person typed last.
     typed: Option<Credentials>,
@@ -299,6 +300,16 @@ fn write_line(stdin: &mut ChildStdin, text: &str) {
         .and_then(|()| stdin.flush());
 }
 
+/// The password typed into the address, answered like one typed into the box.
+fn in_address(addr: &Address) -> Option<Credentials> {
+    Some(Credentials {
+        user: addr.user.clone().unwrap_or_default(),
+        domain: String::new(),
+        password: addr.password.as_ref()?.0.clone(),
+        remember: false,
+    })
+}
+
 /// The password the Secret Service keeps for `addr`'s server.
 fn stored(secrets: &Secrets, addr: &Address) -> Option<Credentials> {
     let attrs = addr.secret_attributes();
@@ -327,4 +338,18 @@ fn remember(secrets: &Secrets, addr: &Address, c: &Credentials) -> Result<(), St
     };
     let attrs: HashMap<&str, &str> = attrs.iter().map(|(k, v)| (*k, v.as_str())).collect();
     secrets.store(&label, &attrs, &c.password)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_password_in_the_address_answers_the_first_prompt() {
+        let addr = Address::parse("smb://alice:pw@nas/share").unwrap();
+        let c = in_address(&addr).unwrap();
+        assert_eq!((c.user.as_str(), c.password.as_str()), ("alice", "pw"));
+        assert!(!c.remember);
+        assert!(in_address(&Address::parse("smb://alice@nas/share").unwrap()).is_none());
+    }
 }

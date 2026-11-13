@@ -13,6 +13,7 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use zbus::{OwnedObjectPath, OwnedVariant};
+use zeroize::Zeroizing;
 
 const DAEMON: &str = "org.gtk.vfs.Daemon";
 const TRACKER_PATH: &str = "/org/gtk/vfs/mounttracker";
@@ -25,11 +26,15 @@ const GIO_WAIT: Duration = Duration::from_secs(30);
 /// The schemes Connect to Server takes. `ssh` is read as `sftp`.
 pub const SCHEMES: &[&str] = &["smb", "sftp", "ftp", "ftps", "dav", "davs", "nfs", "afp"];
 
-/// A server address: `scheme://[user@]host[:port][/path]`, or `\\host\share\path` for SMB.
+/// A server address: `scheme://[user[:password]@]host[:port][/path]`, or `\\host\share\path`
+/// for SMB.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Address {
     pub scheme: String,
     pub user: Option<String>,
+    /// A password typed into the address: kept out of [`Address::uri`], gio's command line and
+    /// the log, and given to gio as the answer to its first password prompt.
+    pub password: Option<Password>,
     pub host: String,
     pub port: Option<u16>,
     /// Starts with `/`, or is empty.
@@ -54,10 +59,20 @@ impl Address {
             Some(i) => rest.split_at(i),
             None => (rest, ""),
         };
-        let (user, hostport) = match authority.rsplit_once('@') {
-            Some((u, h)) => (Some(u.to_string()).filter(|u| !u.is_empty()), h),
+        let (userinfo, hostport) = match authority.rsplit_once('@') {
+            Some((u, h)) => (Some(u), h),
             None => (None, authority),
         };
+        let (user, password) = match userinfo.map(|u| u.split_once(':').ok_or(u)) {
+            Some(Ok((u, pw))) => (u, Some(pw)),
+            Some(Err(u)) => (u, None),
+            None => ("", None),
+        };
+        let user = Some(user.to_string()).filter(|u| !u.is_empty());
+        let password = password.filter(|p| !p.is_empty()).map(|p| {
+            let bytes = Zeroizing::new(crate::trash::percent_decode(p));
+            Password(Zeroizing::new(String::from_utf8_lossy(&bytes).into_owned()))
+        });
         let (host, port) = if let Some(v6) = hostport.strip_prefix('[') {
             let (h, after) = v6.split_once(']')?;
             let port = match after.strip_prefix(':') {
@@ -78,6 +93,7 @@ impl Address {
         Some(Address {
             scheme,
             user,
+            password,
             host,
             port,
             path: path.to_string(),
@@ -129,6 +145,16 @@ impl Address {
             a.insert("user", user.clone());
         }
         a
+    }
+}
+
+/// A password, wiped when dropped and never printed by `Debug`.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Password(pub Zeroizing<String>);
+
+impl std::fmt::Debug for Password {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Password(..)")
     }
 }
 
@@ -401,6 +427,17 @@ mod tests {
         assert_eq!(a.uri(), "smb://alice@nas:1445/public/music");
         assert_eq!(a.share(), Some("public"));
         assert!(!a.is_server());
+    }
+
+    #[test]
+    fn a_password_in_the_address_stays_out_of_its_uri_and_debug_form() {
+        let a = at("smb://alice:Secr%40t@nas/share");
+        assert_eq!(a.user.as_deref(), Some("alice"));
+        assert_eq!(a.password.as_ref().map(|p| p.0.as_str()), Some("Secr@t"));
+        assert_eq!(a.uri(), "smb://alice@nas/share");
+        assert!(!format!("{a:?}").contains("Secr"));
+        assert_eq!(at("sftp://:pw@host").user, None);
+        assert_eq!(at("sftp://bob:@host").password, None);
     }
 
     #[test]

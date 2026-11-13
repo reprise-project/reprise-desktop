@@ -303,7 +303,10 @@ impl Explorer {
                     );
                     return Reply::redraw();
                 };
-                self.last_server = typed;
+                self.last_server = match addr.password {
+                    Some(_) => addr.uri(),
+                    None => typed,
+                };
                 let Some(Dialog::Connect(mut b)) = self.dialog.take() else {
                     return Reply::none();
                 };
