@@ -1236,6 +1236,62 @@ fn land_part_fails_without_touching_what_took_its_name_meanwhile() {
 }
 
 #[test]
+fn a_clash_inside_the_part_is_not_a_taken_part_name() {
+    let t = tempfile::tempdir().unwrap();
+    let calls = std::cell::Cell::new(0);
+    land_part(
+        &t.path().join("Photos"),
+        |part| {
+            calls.set(calls.get() + 1);
+            fs::create_dir(part)?;
+            fs::remove_dir(part)?;
+            Err(io::ErrorKind::AlreadyExists.into())
+        },
+        |_| Ok(()),
+    )
+    .unwrap_err();
+    assert_eq!(calls.get(), 1, "the tree is built once");
+    assert_eq!(fs::read_dir(t.path()).unwrap().count(), 0, "no part left");
+}
+
+#[test]
+fn a_folder_copy_onto_a_drive_that_reads_two_names_as_one_fails_after_one_build() {
+    let t = tempfile::tempdir().unwrap();
+    let src = t.path().join("Build");
+    fs::create_dir(&src).unwrap();
+    fs::write(src.join("Makefile"), "upper").unwrap();
+    fs::write(src.join("makefile"), "lower").unwrap();
+    let usb = t.path().join("usb");
+    fs::create_dir(&usb).unwrap();
+    let builds = std::rc::Rc::new(std::cell::Cell::new(0));
+    let seen = builds.clone();
+    // A case-folding drive: `makefile` finds the `Makefile` just copied.
+    super::copy::BEFORE_ENTRY.set(Some(Box::new(move |to: &Path| {
+        if to.file_name() == Some("makefile".as_ref()) {
+            seen.set(seen.get() + 1);
+            assert_eq!(seen.get(), 1, "the tree is built once");
+            fs::write(to, "upper").unwrap();
+        }
+    })));
+    let err = put_in(&src, "Build", false, &usb, DropOp::Copy, &[], &|_| None).unwrap_err();
+    super::copy::BEFORE_ENTRY.take();
+    assert_eq!(builds.get(), 1);
+    let PutError::Io(e) = err else {
+        panic!("an io error, got {err:?}");
+    };
+    assert_eq!(e.kind(), io::ErrorKind::InvalidFilename);
+    assert_eq!(
+        e.to_string(),
+        "makefile cannot be copied: its folder already holds a name this drive reads as the same."
+    );
+    assert_eq!(
+        fs::read_dir(&usb).unwrap().count(),
+        0,
+        "no copy and no part"
+    );
+}
+
+#[test]
 fn a_folder_copy_is_not_at_its_name_until_it_is_whole() {
     let t = tempfile::tempdir().unwrap();
     let src = t.path().join("Reports");
