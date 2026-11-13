@@ -817,6 +817,10 @@ action = "zoom-reset"
 keys = "Super+Ctrl+c"
 action = "color-filter"
 
+[[keybinds]]                 # start the screen reader (Orca), or stop it; a sound and an
+keys = "Super+Alt+s"         # on-screen line say which
+action = "screen-reader"
+
 [[keybinds]]                 # every window of this desktop side by side: arrows pick, Enter shows,
 keys = "Super+w"             # typing searches the launcher; [overview] hot_corner opens it too
 action = "overview"

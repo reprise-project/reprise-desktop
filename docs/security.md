@@ -1208,8 +1208,8 @@ them.
 These stay with Reprise under an inhibitor:
 
 - the power, sleep and media keys, and the VT switch keys
-- the binds that move no focus: lock, magnifier, colour filter, keyboard
-  layout, Do Not Disturb, night light, the screenshots, volume, brightness,
+- the binds that move no focus: lock, magnifier, colour filter, screen
+  reader, keyboard layout, Do Not Disturb, night light, the screenshots, volume, brightness,
   playback and Wi-Fi
 - open menus
 

@@ -812,6 +812,7 @@ impl State {
             }
             Action::Zoom(step) => self.zoom(*step),
             Action::ColorFilter => self.toggle_color_filter(),
+            Action::ScreenReader => self.toggle_screen_reader(),
             Action::Launcher => self.toggle_launcher(),
             Action::TaskManager => self.start_task_manager(),
             Action::Overview => self.toggle_overview(),

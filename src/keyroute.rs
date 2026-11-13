@@ -746,6 +746,7 @@ fn passes_dialog(a: &Action) -> bool {
         a,
         Action::Zoom(_)
             | Action::ColorFilter
+            | Action::ScreenReader
             | Action::Lock
             | Action::NextLayout
             | Action::DoNotDisturb
