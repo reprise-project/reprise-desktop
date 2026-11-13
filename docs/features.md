@@ -747,7 +747,10 @@ the screen takes the interface of the last session used at this computer.
   `#rrggbb`. They're tested with Orca.
 - **Screen reader on and off without looking.** Super+Alt+S starts Orca or
   stops it from anywhere, dialogs included; a rising or falling sound and an
-  on-screen line say which, or that Orca isn't installed.
+  on-screen line say which. Settings > Magnifier & Filters has the same switch
+  and starts the reader at log on (an autostart entry it hides, never
+  deletes, when unchecked). Without Orca installed the switches grey with a
+  note.
 - **Magnifier** from 1x to 8x (Super+= and Super+-) that follows the pointer,
   the caret and the keyboard focus.
 - **Colour filters:** grayscale, inverted, and corrections for three kinds of

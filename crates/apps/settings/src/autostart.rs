@@ -3,6 +3,7 @@
 
 use reprisefs::apps;
 use reprisefs::autostart::{self, Entry};
+use reprisefs::screenreader;
 use std::path::{Path, PathBuf};
 
 /// The id of the session's polkit agent, the only one it starts.
@@ -63,6 +64,70 @@ pub fn set_enabled(
     }
     std::fs::create_dir_all(dir)?;
     repriseconf::write_atomic(&path, &autostart::copy_text(&admitted))
+}
+
+/// The id of the entry the screen reader's log-on check box writes when the user has none of their own.
+pub const READER: &str = "reprise-screen-reader";
+
+fn starts_reader(e: &Entry) -> bool {
+    let argv = apps::exec_argv(&e.exec_line);
+    argv.first()
+        .and_then(|p| Path::new(p).file_name())
+        .is_some_and(|n| n == screenreader::PROGRAM)
+}
+
+/// Whether one of `entries` starts the screen reader on `desktops`.
+pub fn reader_at_logon(entries: &[Entry], desktops: &[String]) -> bool {
+    entries
+        .iter()
+        .any(|e| starts_reader(e) && e.runs_on(desktops))
+}
+
+/// Check or uncheck the screen reader at log on, deleting no file of the user's. Unchecking hides
+/// every entry that starts it here. Checking shows the user's own file for it again, else writes
+/// [`READER`] fenced to `desktops`; a system entry is never copied, since its copy would drop the
+/// condition that gates it on other desktops.
+pub fn set_reader_at_logon(
+    dir: &Path,
+    entries: &[Entry],
+    on: bool,
+    desktops: &[String],
+    config_dirs: &[PathBuf],
+) -> std::io::Result<()> {
+    if !on {
+        for e in entries
+            .iter()
+            .filter(|e| starts_reader(e) && e.runs_on(desktops))
+        {
+            set_enabled(dir, e, false, desktops, config_dirs)?;
+        }
+        return Ok(());
+    }
+    let own = entries.iter().find(|e| {
+        e.user && starts_reader(e) && autostart::system_entry(config_dirs, &e.id).is_none()
+    });
+    if let Some(e) = own {
+        return set_enabled(dir, e, true, desktops, config_dirs);
+    }
+    let e = Entry {
+        id: READER.into(),
+        name: "Screen Reader".into(),
+        exec: screenreader::PROGRAM.into(),
+        exec_line: screenreader::PROGRAM.into(),
+        hidden: false,
+        only_show_in: desktops.first().cloned().into_iter().collect(),
+        not_show_in: Vec::new(),
+        try_exec: Some(screenreader::PROGRAM.into()),
+        path: None,
+        terminal: false,
+        under_systemd: false,
+        user: true,
+    };
+    std::fs::create_dir_all(dir)?;
+    repriseconf::write_atomic(
+        &dir.join(format!("{READER}.desktop")),
+        &autostart::copy_text(&e),
+    )
 }
 
 /// Delete a user entry's file. A system entry has none and can only be unchecked, so that is an error, not a no-op.
@@ -409,5 +474,69 @@ mod tests {
 
         let system = entry("theirs", "[Desktop Entry]\nExec=theirs\n", false);
         assert!(remove(&dir, &system).is_err());
+    }
+
+    fn reader_entries(etc: &[PathBuf], root: &Path) -> Vec<Entry> {
+        autostart::scan(etc, root)
+    }
+
+    #[test]
+    fn the_reader_at_logon_is_reprises_own_file_hidden_and_shown_in_place() {
+        let root = tmp("reader");
+        let etc = vec![root.join("etc")];
+        let dir = root.join("autostart");
+        let here = vec!["reprise".to_string()];
+        put(
+            &etc[0].join("autostart"),
+            "orca-autostart.desktop",
+            "[Desktop Entry]\nName=Orca\nExec=orca\nAutostartCondition=GSettings x y\nOnlyShowIn=GNOME;MATE;\n",
+        );
+        assert!(!reader_at_logon(&reader_entries(&etc, &root), &here));
+
+        set_reader_at_logon(&dir, &reader_entries(&etc, &root), true, &here, &etc).expect("check");
+        let path = dir.join("reprise-screen-reader.desktop");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "[Desktop Entry]\nType=Application\nName=Screen Reader\nExec=orca\nHidden=false\nOnlyShowIn=reprise;\nTryExec=orca\n"
+        );
+        assert!(
+            !dir.join("orca-autostart.desktop").exists(),
+            "the system entry is not copied"
+        );
+        assert!(reader_at_logon(&reader_entries(&etc, &root), &here));
+
+        set_reader_at_logon(&dir, &reader_entries(&etc, &root), false, &here, &etc)
+            .expect("uncheck");
+        let text = std::fs::read_to_string(&path).expect("the file stays");
+        assert!(text.contains("Hidden=true"), "{text}");
+        assert!(!reader_at_logon(&reader_entries(&etc, &root), &here));
+
+        set_reader_at_logon(&dir, &reader_entries(&etc, &root), true, &here, &etc)
+            .expect("check again");
+        assert!(reader_at_logon(&reader_entries(&etc, &root), &here));
+        assert_eq!(
+            std::fs::read_dir(&dir).unwrap().count(),
+            1,
+            "no second file"
+        );
+    }
+
+    #[test]
+    fn the_users_own_reader_entry_is_shown_again_rather_than_replaced() {
+        let root = tmp("reader-own");
+        let dir = root.join("autostart");
+        let here = vec!["reprise".to_string()];
+        let mine =
+            "# mine\n[Desktop Entry]\nName=Talk\nExec=/usr/bin/orca --replace\nHidden=true\n";
+        put(&dir, "talk.desktop", mine);
+
+        set_reader_at_logon(&dir, &reader_entries(&[], &root), true, &here, &[]).expect("check");
+        let text = std::fs::read_to_string(dir.join("talk.desktop")).unwrap();
+        assert_eq!(text, mine.replace("Hidden=true", "Hidden=false"));
+        assert!(!dir.join("reprise-screen-reader.desktop").exists());
+
+        set_reader_at_logon(&dir, &reader_entries(&[], &root), false, &here, &[]).expect("uncheck");
+        let text = std::fs::read_to_string(dir.join("talk.desktop")).unwrap();
+        assert_eq!(text, mine);
     }
 }

@@ -40,6 +40,7 @@ mod outputwrite;
 mod pages;
 mod permissions;
 mod quickpage;
+mod readerhost;
 mod registry;
 mod remotehost;
 mod renamedlg;
@@ -418,6 +419,10 @@ struct SettingsApp {
     remote_job: Option<Receiver<remotehost::Reading>>,
     remote_acting: bool,
 
+    /// The screen reader as last read; `reader_job` holds the read or switch under way.
+    reader: readerhost::Reader,
+    reader_job: Option<Receiver<readerhost::Reading>>,
+
     /// The Login Manager page's machine settings, read when it first opens with the accounts
     /// `login_source` gives; `login_job` holds a save through `login_run` under way.
     login: Option<loginhost::Login>,
@@ -682,6 +687,8 @@ impl SettingsApp {
             remote: remotehost::Remote::default(),
             remote_job: None,
             remote_acting: false,
+            reader: readerhost::Reader::default(),
+            reader_job: None,
             login: None,
             login_files: loginhost::Files::default(),
             login_source: loginhost::machine_users,
@@ -980,6 +987,7 @@ impl App for SettingsApp {
         self.ensure_defaults();
         self.ensure_permissions();
         self.ensure_remote();
+        self.ensure_reader();
         self.ensure_login();
         if win == repriseapp::MAIN
             && !self.saver_ticking

@@ -5,8 +5,8 @@ use crate::registry::Page;
 use crate::{
     ADD_ITEM_WIN, ADD_WIN, ASK_WIN, CHOOSER_WIN, COLOR_WIN, ERROR_WIN, LAYOUT_WIN, RENAME_WIN,
     SAVER_WIN, SHORTCUT_WIN, SettingsApp, additem, appearancepage, backgroundpage, defaultspage,
-    displayhost, displaypage, filepick::Pick, layoutdlg, menupage, notifypage, pages, quickpage,
-    renamedlg, saverdlg, saverpage,
+    displayhost, displaypage, filepick::Pick, layoutdlg, magnifierpage, menupage, notifypage,
+    pages, quickpage, renamedlg, saverdlg, saverpage,
 };
 use repriseapp::keys::{dialog_key, form_clipboard};
 use repriseapp::{BTN_LEFT, BTN_RIGHT, Ctx, Event, KeyInput, PointerInput, Reply, WinId};
@@ -52,6 +52,14 @@ impl SettingsApp {
                 }
                 if id == pages::REMOTE_ALLOW {
                     self.remote_toggled();
+                    return Reply::redraw();
+                }
+                if id == magnifierpage::READER {
+                    self.reader_toggled();
+                    return Reply::redraw();
+                }
+                if id == magnifierpage::READER_LOGON {
+                    self.reader_logon_toggled();
                     return Reply::redraw();
                 }
                 // Only the control just worked is read back: reading all would write clamped values for keys the control cannot show.
