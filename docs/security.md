@@ -1457,6 +1457,16 @@ stop the share first.
   argument, never spliced into the query, and the answer is read off the
   compositor's loop: 1 MiB at most, within 3 s, only `file:///` URLs kept.
   A found file opens as one found by name does.
+- **Search providers.** The typed words go, from two characters on, to every
+  program whose `gnome-shell/search-providers/*.ini` is installed and not
+  turned off in Settings > Search, at the bus name and path the file gives;
+  the bus may start the program to answer. Each answer is decoded within the
+  session bus caps (4 MiB a reply; a result's strings cut at 4 KiB),
+  on a thread off the compositor's loop, and dropped after 3 s. Only a
+  result's id, name, description and icon name or file are read, and picking
+  one hands its id back to the same program; Reprise runs nothing a result
+  names. That program's next new window may take focus, as one Reprise
+  started would.
 - **Who a notification or tray icon is from.** The compositor reads which
   app a notification's sender or a tray icon's owner is from its process,
   through the pidfd the bus gives for it, by the rules the Wayland filter

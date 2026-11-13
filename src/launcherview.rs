@@ -1,11 +1,12 @@
 //! The application launcher on the scene: one `reprisekit::controls::launcher` panel centred on the output under the pointer, on the menu layer, fed every key press while open. On every change of the typed text it works out the calculator's answer (`search::calc_row`), ranks the Start menu's app index (`State::app_index`, by `search::rank_apps`) and finds settings pages (`search::rank_settings`). Enter on the answer copies it; a program starts as from the Start menu; a settings row opens the settings program on its page.
-//! From two typed characters it also finds files through `search::FileSearch`, by name in the home folder and by contents through localsearch, unless `[launcher] search_files` is off.
+//! From two typed characters it also finds files through `search::FileSearch`, by name in the home folder and by contents through localsearch, unless `[launcher] search_files` is off, and asks the programs' search providers turned on (`search::providers`); Enter opens a program's result in it, Ctrl+Enter the program's own search.
 //! Unless `[launcher] windows` is off it finds open windows on every desktop by title or program name (`search::rank_windows`); Enter brings one up as its task button would.
 //! The panel's tree in `layers.menu` is tagged `SceneOwner::Launcher` and holds the glass tree (its `Backdrop` under a glass look), then the buffer, which takes the pointer on the panel only: its shadow lets the pointer through.
 //! A right press or the menu key on a program or file row opens its context menu (`open_launcher_context`); picking a row of it closes the panel.
 //! `Action::Launcher` (Super+Space by default) opens it and its own bind closes it; `KeyRoute::Launcher` hands it every other press. Locking closes it.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use reprisekit::controls::launcher::{self, Event, Hit, Key, Launcher, Pick, Row, Section};
 use reprisekit::fuzzy;
@@ -20,9 +21,10 @@ use crate::keys;
 use crate::menuview::{MenuFrom, MenuKind};
 use crate::output::upload_scaled;
 use crate::raster::Rect;
+use crate::search::providers::Open;
 use crate::search::{
-    FileSearch, SearchOwner, Setting, WindowName, calc_icon, calc_row, file_icon_name, file_row,
-    file_row_icon, rank_apps, rank_settings, rank_windows, windows_first,
+    FileSearch, Provider, SearchOwner, Setting, WindowName, calc_icon, calc_row, file_icon_name,
+    rank_apps, rank_settings, rank_windows, windows_first,
 };
 use crate::window::WindowId;
 
@@ -98,7 +100,7 @@ impl State {
             windows: Vec::new(),
             answer: None,
             settings: Vec::new(),
-            search: FileSearch::new(),
+            search: self.new_search(),
             area,
             at: (area.x, area.y),
             tree,
@@ -236,7 +238,7 @@ impl State {
                 (items, MenuKind::StartPanel { rows })
             }
             Pick::Found(s, i) => {
-                let Some(path) = v.search.path(s, i).cloned() else {
+                let Some(path) = v.search.path(s, i).map(Path::to_path_buf) else {
                     return;
                 };
                 let facts = v.search.facts_of(&path);
@@ -272,6 +274,7 @@ impl State {
                 enum Launch {
                     App(reprisefs::apps::AppEntry),
                     File(crate::desktop::FileFacts),
+                    Result(Arc<Provider>, String),
                     Copy(String),
                     Setting(Setting),
                     Window(WindowId),
@@ -286,29 +289,35 @@ impl State {
                         .and_then(|&ai| apps.get(ai))
                         .cloned()
                         .map(Launch::App),
-                    Pick::Found(s, i) => v
-                        .search
-                        .path(s, i)
-                        .map(|p| Launch::File(v.search.facts_of(p))),
+                    Pick::Found(s, i) => match v.search.result(s, i) {
+                        Some((p, m)) => Some(Launch::Result(p.clone(), m.id.clone())),
+                        None => (v.search.path(s, i)).map(|p| Launch::File(v.search.facts_of(p))),
+                    },
                 };
+                let query = v.model.query().to_string();
                 self.close_launcher();
                 match launch {
                     Some(Launch::App(entry)) => self.launch_app(&entry),
                     Some(Launch::File(facts)) => self.open_found(&facts),
+                    Some(Launch::Result(p, id)) => self.open_provider(&p, Open::Result(id), &query),
                     Some(Launch::Copy(answer)) => self.clip_copy(&answer),
                     Some(Launch::Setting(s)) => self.open_setting(s),
                     Some(Launch::Window(w)) => self.bring_up(w),
                     None => {}
                 }
             }
-            Event::OpenFolder(s, i) => {
-                let path = self
-                    .launcher
-                    .as_ref()
-                    .and_then(|v| v.search.path(s, i).cloned());
+            Event::OpenContainer(s, i) => {
+                let Some(v) = self.launcher.as_ref() else {
+                    return;
+                };
+                let path = v.search.path(s, i).map(Path::to_path_buf);
+                let program = v.search.result(s, i).map(|(p, _)| p.clone());
+                let query = v.model.query().to_string();
                 self.close_launcher();
                 if let Some(path) = path {
                     self.open_file_location(&path);
+                } else if let Some(p) = program {
+                    self.open_provider(&p, Open::Search, &query);
                 }
             }
             Event::Context(pick) => self.open_launcher_context(pick),
@@ -456,9 +465,9 @@ impl State {
             }
         };
         let found = (v.search.sections())
-            .map(|(_, paths)| {
-                (paths.iter())
-                    .map(|p| file_row_icon(p, v.search.is_dir(p), mime, icons, px))
+            .map(|(source, rows)| {
+                (rows.iter())
+                    .map(|f| v.search.icon(source, f, mime, icons, px))
                     .collect()
             })
             .collect();
@@ -506,10 +515,10 @@ impl State {
             }
         };
         let found = (v.search.sections())
-            .map(|(source, paths)| Section {
+            .map(|(source, rows)| Section {
                 heading: source.heading().to_string(),
-                rows: (paths.iter())
-                    .map(|p| file_row(p, v.search.is_dir(p), home.as_deref(), mime, icons, px))
+                rows: (rows.iter())
+                    .map(|f| v.search.row(source, f, home.as_deref(), mime, icons, px))
                     .collect(),
             })
             .collect();
@@ -656,6 +665,9 @@ fn picked_icon(
             .and_then(|&ai| app_index.get(ai))
             .and_then(|a| a.icon.clone()),
         Some(Pick::Found(s, i)) => {
+            if let Some((p, m)) = v.search.result(s, i) {
+                return p.result_icon(m, icons, px);
+            }
             (v.search.path(s, i)).map(|p| file_icon_name(p, v.search.is_dir(p), mime, icons))
         }
         None => None,

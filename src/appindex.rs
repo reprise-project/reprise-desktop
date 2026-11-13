@@ -1,4 +1,4 @@
-//! Keeps `State::app_index` current: inotify watches on every XDG applications directory, debounced through a timer because a package install touches many files. A missing directory is covered by a watch on its nearest existing ancestor. The scan runs from the timer, never an input callback, and only when something changed; it and the watch syncs run on file jobs.
+//! Keeps `State::app_index` (and `search_providers`, which a program installs beside its entry) current: inotify watches on every XDG applications directory, debounced through a timer because a package install touches many files. A missing directory is covered by a watch on its nearest existing ancestor. The scan runs from the timer, never an input callback, and only when something changed; it and the watch syncs run on file jobs.
 
 use crate::compositor::State;
 use crate::dirwatch::{DirWatch, JobWatch, Want};
@@ -156,9 +156,12 @@ fn rescan(state: &mut State) {
     w.scanning = true;
     state.spawn_fs_job(|| {
         let apps = reprisefs::apps::scan(&reprisefs::apps::default_dirs());
+        let providers =
+            reprisefs::searchproviders::scan(&reprisefs::searchproviders::default_dirs());
         Box::new(move |state: &mut State| {
             log::info!("app index rescanned ({} entries)", apps.len());
             state.app_index = apps;
+            state.search_providers = providers;
             state.launcher_index_changed();
             state.start_panel_index_changed();
             state.redraw_taskbars();

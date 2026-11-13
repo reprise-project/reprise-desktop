@@ -91,6 +91,11 @@ pub struct Config {
     pub launcher_files: bool,
     /// `[launcher] windows`: the launcher finds open windows.
     pub launcher_windows: bool,
+    /// `[launcher] providers`: programs' search providers by desktop id, in the order their
+    /// sections show ([`reprisefs::searchproviders::arrange`]).
+    pub launcher_providers: Vec<String>,
+    /// `[launcher] providers_off`: the providers never asked.
+    pub launcher_providers_off: Vec<String>,
     pub night_light: NightLightConfig,
     pub workspaces: usize,
     /// `[workspaces] names`: entry n names desktop n; see [`desktop_name`].
@@ -179,6 +184,8 @@ impl Default for Config {
             shortcut_overlay: ShortcutOverlay::default(),
             launcher_files: true,
             launcher_windows: true,
+            launcher_providers: Vec::new(),
+            launcher_providers_off: Vec::new(),
             night_light: NightLightConfig::default(),
             workspaces: WORKSPACES_DEFAULT,
             workspace_names: Vec::new(),

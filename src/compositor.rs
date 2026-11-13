@@ -317,6 +317,8 @@ pub struct State {
     /// Reloads `icons` when a directory of its theme changes (`iconwatch`).
     pub icon_watch: crate::iconwatch::IconWatch,
     pub app_index: Vec<reprisefs::apps::AppEntry>,
+    /// Every program's search provider file, rescanned with `app_index`.
+    pub search_providers: Vec<reprisefs::searchproviders::Provider>,
     pub launches: crate::launches::Launches,
     /// Keeps `app_index` current as programs come and go (`appindex`).
     pub apps_watch: crate::appindex::AppIndexWatch,
@@ -581,10 +583,12 @@ impl State {
             Vec::new()
         };
         let icons = IconCache::new(IconTheme::load(&config.icons.theme, &roots));
-        let app_index = if session {
-            reprisefs::apps::scan(&reprisefs::apps::default_dirs())
+        let (app_index, search_providers) = if session {
+            let apps = reprisefs::apps::scan(&reprisefs::apps::default_dirs());
+            let dirs = reprisefs::searchproviders::default_dirs();
+            (apps, reprisefs::searchproviders::scan(&dirs))
         } else {
-            Vec::new()
+            (Vec::new(), Vec::new())
         };
         log::info!(
             "icon theme {} ({} entries indexed)",
@@ -730,6 +734,7 @@ impl State {
             fading_bars: Vec::new(),
             icons,
             app_index,
+            search_providers,
             launches: crate::launches::Launches {
                 pins: persisted.start_pins.clone(),
                 recent: persisted.launches.clone(),

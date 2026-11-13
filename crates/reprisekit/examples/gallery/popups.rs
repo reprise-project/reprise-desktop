@@ -865,9 +865,9 @@ fn launcher_sample() -> launcher::Launcher {
             icon: Some(small.clone()),
         },
     ]);
-    let row = |name: &str, folder: &str| launcher::FileRow {
+    let row = |name: &str, folder: &str| launcher::FoundRow {
         name: name.to_string(),
-        folder: folder.to_string(),
+        detail: folder.to_string(),
         icon: Some(small.clone()),
     };
     l.set_found(vec![
@@ -878,6 +878,10 @@ fn launcher_sample() -> launcher::Launcher {
         launcher::Section {
             heading: "Contents".to_string(),
             rows: vec![row("minutes.pdf", "~/Documents/Meetings")],
+        },
+        launcher::Section {
+            heading: "Characters".to_string(),
+            rows: vec![row("Musical Note", "U+266A")],
         },
     ]);
     l

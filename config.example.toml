@@ -472,6 +472,11 @@ suspend_after = 0            # run [power] standby
 #                            # by their contents when localsearch is installed
 # windows = true             # also lists open windows by title or program name; Enter
 #                            # brings one up. Above the programs when it matches as well
+# providers = []             # programs' search providers by desktop id, in the order their
+#                            # sections show; those not listed follow by name. One whose
+#                            # provider file says DefaultDisabled is asked only once listed
+# providers_off = []         # desktop ids of providers never asked, e.g.
+#                            # ["org.gnome.Nautilus.desktop"]
 
 # [night_light]              # warm the screen by night; a client that sets the gamma takes precedence
 # enabled = false
