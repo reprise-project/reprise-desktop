@@ -85,6 +85,7 @@ fn input(who: &str, window: &str, reason: &str, me: &Me) -> access::Input {
                 .as_ref()
                 .map(|p| p.to_string_lossy().into_owned()),
         }),
+        launcher: None,
     }
 }
 

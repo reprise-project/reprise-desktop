@@ -1,5 +1,5 @@
 //! reprise-portal: xdg-desktop-portal backend (ScreenCast, Screenshot, RemoteDesktop, InputCapture, GlobalShortcuts, Access,
-//! FileChooser, AppChooser, Notification, Inhibit, Background, Wallpaper, Email, Account) as `org.freedesktop.impl.portal.desktop.reprise`; dialogs run in a child process (`dialog`).
+//! FileChooser, AppChooser, Notification, Inhibit, Background, Wallpaper, Email, Account, DynamicLauncher) as `org.freedesktop.impl.portal.desktop.reprise`; dialogs run in a child process (`dialog`).
 //! It serves only while Reprise is the session's compositor (see `owner`).
 
 #[cfg(test)]
@@ -13,6 +13,7 @@ mod background;
 mod cast;
 mod choices;
 mod dialog;
+mod dynamiclauncher;
 mod email;
 mod filechooser;
 mod filepick;
@@ -1228,6 +1229,12 @@ async fn serve(
         .serve_at(
             PATH,
             account::Account {
+                frontend: frontend(),
+            },
+        )
+        .serve_at(
+            PATH,
+            dynamiclauncher::DynamicLauncher {
                 frontend: frontend(),
             },
         )

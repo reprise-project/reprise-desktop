@@ -744,7 +744,9 @@ the system's rules want one. PackageKit's pacman backend takes no zstd
 packages, so a `.pkg.tar.zst` installs through `pkexec pacman -U` (with
 pacman's dry run listing what comes along). A `.flatpakref` or bundle installs for every
 user. An uninstalled Flatpak keeps its settings and files in your home
-folder. Cancel stops a run where PackageKit or Flatpak can stop it, a
+folder. A launcher or web app an app installed through the portal shows the
+Flatpak that installed it, and Uninstall deletes just the launcher and its
+icon. Cancel stops a run where PackageKit or Flatpak can stop it, a
 dismissed password prompt returns to the question, and the task button
 shows the progress.
 

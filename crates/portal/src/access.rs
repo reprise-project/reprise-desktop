@@ -28,9 +28,12 @@ const MARGIN: i32 = 11;
 const SUBTITLE_LINES: usize = 4;
 const BODY_LINES: usize = 12;
 const FALLBACK_ICON: &str = "dialog-question";
-/// The account picture's side, and its gap to the name beside it.
+/// The account picture's and launcher icon's side, and its gap to the name beside it.
 const PICTURE_PX: i32 = 48;
 const PICTURE_GAP: i32 = 8;
+const EDIT_H: i32 = 21;
+/// From the launcher's Name label to its edit field.
+const LABEL_GAP: i32 = 3;
 
 pub struct Access {
     pub frontend: crate::Frontend,
@@ -80,6 +83,8 @@ pub struct Input {
     pub choices: Vec<Choice>,
     #[serde(default)]
     pub person: Option<Person>,
+    #[serde(default)]
+    pub launcher: Option<Launcher>,
 }
 
 /// An account the prompt shows under the subtitle: its picture file, when it has one, beside the
@@ -91,12 +96,26 @@ pub struct Person {
     pub picture: Option<String>,
 }
 
+/// A launcher the prompt installs, shown under the subtitle: its icon beside its name, in an edit
+/// field when the name may be changed. `icon` holds the icon file's bytes; the child decodes them
+/// and drops them when they don't decode.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+pub struct Launcher {
+    pub name: String,
+    pub editable: bool,
+    #[serde(default)]
+    pub icon: Vec<u8>,
+}
+
 /// What the prompt answers. A killed or failed child reads as the default:
 /// denied, no choices.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq, Default)]
 pub struct Output {
     pub granted: bool,
     pub choices: Vec<(String, String)>,
+    /// The launcher's name as the edit field held it on Allow.
+    #[serde(default)]
+    pub name: Option<String>,
 }
 
 /// The icon names to try, in order: the caller's without `-symbolic`
@@ -114,7 +133,7 @@ pub fn icon_names(icon: Option<&str>) -> Vec<String> {
     names
 }
 
-/// The prompt's form and 100% client size for text set at `px` that grows by `u`: subtitle, the account ([`Person`]), body and choices stacked from line 12, Allow and Deny 20 px under the lowest row and never above the permit prompt's row at 97. Subtitle and body are capped at `SUBTITLE_LINES` and `BODY_LINES`. Deny is the default button and has the focus, so Enter never grants by accident; a consent form ([`Form::set_consent`]). `cm` is the look the prompt runs in, whose combo lists are kept inside it.
+/// The prompt's form and 100% client size for text set at `px` that grows by `u`: subtitle, the account ([`Person`]) or launcher ([`Launcher`]), body and choices stacked from line 12, Allow and Deny 20 px under the lowest row and never above the permit prompt's row at 97. Subtitle and body are capped at `SUBTITLE_LINES` and `BODY_LINES`. Deny is the default button and has the focus, so Enter never grants by accident; a consent form ([`Form::set_consent`]). `cm` is the look the prompt runs in, whose combo lists are kept inside it.
 pub fn build_form(
     input: &Input,
     text: &TextRenderer,
@@ -154,6 +173,10 @@ pub fn build_form(
     if let Some(p) = &input.person {
         let y = next_y(bottom);
         bottom = Some(y + person_rows(p, y, col, &mut items));
+    }
+    if let Some(l) = &input.launcher {
+        let y = next_y(bottom);
+        bottom = Some(y + launcher_rows(l, y, col, &mut items));
     }
     lines("body", &input.body, BODY_LINES, &mut items, &mut bottom);
     if !input.choices.is_empty() {
@@ -217,6 +240,36 @@ fn person_rows(p: &Person, y: i32, col: i32, items: &mut Vec<Item>) -> i32 {
     h
 }
 
+/// `l`'s icon at `y` with the "Name:" label over its edit field beside it, or the name alone when
+/// it can't be changed; the height they take.
+fn launcher_rows(l: &Launcher, y: i32, col: i32, items: &mut Vec<Item>) -> i32 {
+    let rows_h = if l.editable {
+        LINE_H + LABEL_GAP + EDIT_H
+    } else {
+        LINE_H
+    };
+    let (dx, h) = if l.icon.is_empty() {
+        (0, rows_h)
+    } else {
+        let at = Rect::new(TEXT_X, y, PICTURE_PX, PICTURE_PX);
+        items.push(Item::picture("picture", at, None));
+        (PICTURE_PX + PICTURE_GAP, PICTURE_PX)
+    };
+    let top = y + (h - rows_h) / 2;
+    let name = dialog::one_line(&l.name);
+    if l.editable {
+        items.push(Item::label_at("name_label", TEXT_X, top, col, "&Name:").indent_px(dx));
+        let field = Rect::new(TEXT_X + dx, top + LINE_H + LABEL_GAP, col - dx, EDIT_H);
+        items.push(Item::edit(LAUNCHER_NAME, field, &name, true));
+    } else {
+        let line = reprisekit::text::escape_mnemonic(&name);
+        items.push(Item::label_at(LAUNCHER_NAME, TEXT_X, top, col, &line).indent_px(dx));
+    }
+    h
+}
+
+const LAUNCHER_NAME: &str = "launcher_name";
+
 fn capped(
     text: &TextRenderer,
     mut lines: Vec<String>,
@@ -261,6 +314,7 @@ impl Input {
                 .map(choices::parse_choices)
                 .unwrap_or_default(),
             person: None,
+            launcher: None,
         }
     }
 }
@@ -301,13 +355,19 @@ pub fn run_dialog() {
     let text = TextRenderer::load(&reprisekit::theme::Theme::default().fonts);
     let forms = dialog::start_forms();
     let cm = forms.look.controls();
-    let picture = input.person.as_mut().and_then(|p| {
+    let mut picture = input.person.as_mut().and_then(|p| {
         let c = p.picture.as_deref().and_then(account_picture);
         if c.is_none() {
             p.picture = None;
         }
         c
     });
+    if let Some(l) = input.launcher.as_mut() {
+        picture = launcher_icon(&l.icon);
+        if picture.is_none() {
+            l.icon.clear();
+        }
+    }
     let (mut form, size) = build_form(&input, &text, forms.fonts.size_px, forms.text, &cm);
     if let Some(c) = picture {
         form.set_picture("picture", c);
@@ -343,6 +403,22 @@ fn account_picture(path: &str) -> Option<Canvas> {
     Some(d.canvas.copy_rect(square).resample_box(px, px))
 }
 
+/// A launcher's icon file (PNG, JPEG or SVG), [`PICTURE_PX`] a side.
+fn launcher_icon(bytes: &[u8]) -> Option<Canvas> {
+    if bytes.is_empty() {
+        return None;
+    }
+    let px = PICTURE_PX as u32;
+    let max = 4 * px;
+    let raster = repriseapp::decode::Decoders::default_set().decode(bytes, (max, max));
+    match raster {
+        Some(d) => Some(d.canvas.resample_box(px, px)),
+        None => {
+            reprisekit::icontheme::decode_bytes(std::path::Path::new("launcher"), bytes, px, false)
+        }
+    }
+}
+
 /// The window: Allow records a grant and the choices; any other close
 /// records the choices alone.
 fn prompt(
@@ -353,6 +429,7 @@ fn prompt(
     out: Arc<Mutex<Output>>,
 ) -> Prompt {
     let (on_allow, on_deny) = (input.choices.clone(), input.choices.clone());
+    let edits_name = input.launcher.as_ref().is_some_and(|l| l.editable);
     let deny_out = out.clone();
     Prompt {
         title: dialog::one_line(&input.title),
@@ -365,6 +442,7 @@ fn prompt(
             *out.lock().unwrap() = Output {
                 granted: true,
                 choices: choices::choice_answers(&on_allow, form),
+                name: edits_name.then(|| form.edit_text(LAUNCHER_NAME).to_string()),
             };
             true
         }),
@@ -372,6 +450,7 @@ fn prompt(
             *deny_out.lock().unwrap() = Output {
                 granted: false,
                 choices: choices::choice_answers(&on_deny, form),
+                name: None,
             };
         }),
         parent: input.parent.clone(),
@@ -499,6 +578,7 @@ mod tests {
         let (code, r) = reply(&Output {
             granted: true,
             choices: vec![("remember".into(), "true".into())],
+            name: None,
         });
         assert_eq!(code, crate::RESPONSE_OK);
         assert_eq!(r["choices"].value_signature().to_string(), "a(ss)");
@@ -632,6 +712,126 @@ mod tests {
             "the name inked from x 110 on the row at y 49"
         );
         assert!(inked(TEXT_X + 56, 62), "the login inked on the row at y 62");
+    }
+
+    fn maps(editable: bool, icon: bool) -> Input {
+        Input {
+            subtitle: "Web wants to add a web app to the Start menu.".into(),
+            body: "It opens https://maps.example.org/.".into(),
+            launcher: Some(Launcher {
+                name: "Maps".into(),
+                editable,
+                icon: if icon {
+                    b"\x89PNG".to_vec()
+                } else {
+                    Vec::new()
+                },
+            }),
+            ..base()
+        }
+    }
+
+    #[test]
+    fn a_launcher_shows_its_icon_beside_the_name_field_over_the_address() {
+        use reprisekit::controls::form::Indent;
+        let (f, (_, h)) = form(&maps(true, true));
+        assert_eq!(
+            f.item("picture").unwrap().rect,
+            Rect::new(TEXT_X, 38, 48, 48)
+        );
+        let label = f.item("name_label").unwrap();
+        assert_eq!(label.rect.y, 43, "label and field centred on the icon");
+        assert_eq!(label.indent, Indent::Px(56), "8 px right of the icon");
+        let field = f.item(LAUNCHER_NAME).unwrap();
+        assert_eq!(
+            field.rect,
+            Rect::new(TEXT_X + 56, 59, CLIENT_W - MARGIN - TEXT_X - 56, 21),
+            "3 px under the label, to the right margin"
+        );
+        assert_eq!(f.edit_text(LAUNCHER_NAME), "Maps");
+        assert_eq!(f.item("body").unwrap().rect.y, 38 + 48 + LINE_H);
+        assert_eq!(h, f.item("allow").unwrap().rect.bottom() + MARGIN);
+        let over = crate::dialog::overflows(|theme, text| {
+            let (px, u) = (theme.fonts.size_px, theme.text);
+            build_form(&maps(true, true), text, px, u, &theme.controls()).0
+        });
+        assert!(over.is_empty(), "{}", over.join("\n"));
+    }
+
+    #[test]
+    fn a_fixed_name_without_an_icon_is_one_line() {
+        let (f, _) = form(&maps(false, false));
+        assert!(f.item("picture").is_none());
+        assert!(f.item("name_label").is_none());
+        let name = f.item(LAUNCHER_NAME).unwrap();
+        assert!(
+            matches!(name.control, Control::Label { .. }),
+            "not editable"
+        );
+        assert_eq!((name.rect.x, name.rect.y), (TEXT_X, 38));
+        assert_eq!(f.item("body").unwrap().rect.y, 38 + 2 * LINE_H);
+        let (f, _) = form(&maps(true, false));
+        assert_eq!(f.item(LAUNCHER_NAME).unwrap().rect.y, 38 + LINE_H + 3);
+    }
+
+    #[test]
+    fn the_launcher_icon_and_name_field_draw() {
+        use reprisekit::controls::form as kit;
+        use reprisekit::theme::Theme;
+        let theme = Theme::default();
+        let cs = &theme.colors;
+        let text = TextRenderer::load(&FontConfig::default());
+        let (mut f, (w, h)) = form(&maps(true, true));
+        let red = reprisekit::theme::Color::rgb(200, 0, 0);
+        let mut pic = Canvas::new(48, 48);
+        pic.fill_rect(pic.bounds(), red);
+        f.set_picture("picture", pic);
+        let mut c = Canvas::new(w as u32, h as u32);
+        c.fill_rect(c.bounds(), cs.button_face);
+        kit::draw(&mut c, &text, &theme.paint(), &f, true, 11);
+        assert_eq!(c.get(TEXT_X, 38), red.argb(), "the icon fills its square");
+        assert_eq!(c.get(TEXT_X + 47, 38 + 47), red.argb());
+        let field = f.item(LAUNCHER_NAME).unwrap().rect;
+        assert_eq!(
+            c.get(field.x, field.y),
+            cs.button_shadow.argb(),
+            "the field's sunken edge"
+        );
+        assert_eq!(
+            c.get(field.right() - 4, field.y + 10),
+            cs.window.argb(),
+            "the field's well is the window colour"
+        );
+    }
+
+    #[test]
+    fn a_launcher_icon_decodes_from_png_bytes_and_bad_bytes_drop() {
+        let mut png = Vec::new();
+        {
+            let mut e = png::Encoder::new(&mut png, 2, 2);
+            e.set_color(png::ColorType::Rgba);
+            e.set_depth(png::BitDepth::Eight);
+            let mut w = e.write_header().unwrap();
+            w.write_image_data(&[255; 16]).unwrap();
+        }
+        let c = launcher_icon(&png).unwrap();
+        assert_eq!((c.width, c.height), (48, 48));
+        assert!(launcher_icon(b"not an image").is_none());
+        assert!(launcher_icon(&[]).is_none());
+    }
+
+    #[test]
+    fn access_input_with_a_launcher_survives_the_pipe() {
+        let input = maps(true, true);
+        let back: Input = toml::from_str(&toml::to_string(&input).unwrap()).unwrap();
+        assert_eq!(back, input);
+        let out = Output {
+            granted: true,
+            choices: Vec::new(),
+            name: Some("My maps".into()),
+        };
+        let back: Output = toml::from_str(&toml::to_string(&out).unwrap()).unwrap();
+        assert_eq!(back, out);
     }
 
     #[test]

@@ -204,12 +204,13 @@ pub enum Uninstall {
 const NO_PACKAGEKIT: &str = "Uninstalling a program from the system's packages needs PackageKit.";
 
 impl Uninstall {
-    /// What the menu of the program with desktop file `file` offers: a Flatpak app or a system
-    /// package is uninstalled (a package only through PackageKit); the user's own entry is not.
+    /// What the menu of the program with desktop file `file` offers: a Flatpak app, a system
+    /// package (only through PackageKit) or a launcher an app installed is uninstalled; the user's
+    /// own entry is not.
     pub fn of(file: Option<&std::path::Path>) -> Uninstall {
         use reprisefs::software::{Remover, packagekit_present, remover_of};
         match file.map(remover_of) {
-            Some(Remover::Flatpak(_)) => Uninstall::Offered,
+            Some(Remover::Flatpak(_) | Remover::Launcher) => Uninstall::Offered,
             Some(Remover::Package) if packagekit_present() => Uninstall::Offered,
             Some(Remover::Package) => Uninstall::Greyed(NO_PACKAGEKIT),
             Some(Remover::None) | None => Uninstall::Absent,

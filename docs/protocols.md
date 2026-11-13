@@ -140,6 +140,13 @@ confinement holds, every motion goes through as it comes.
   picture with the app's reason; Share returns them (the picture as a
   `file://` URI), Cancel nothing. Without AccountsService the passwd entry
   gives the name and no picture is shared
+- **DynamicLauncher:** PrepareInstall shows the Access prompt with the
+  launcher's icon, its name in an edit field (a label when the app says it
+  can't change) and a web app's address; Install answers the name and the
+  icon as sent, and xdg-desktop-portal writes the desktop file under
+  `~/.local/share/xdg-desktop-portal/applications` with a link in
+  `~/.local/share/applications`. RequestInstallToken is allowed only for
+  Reprise's own programs
 
 The compositor serves **Settings** (the light or dark look, contrast, fonts
 and icons). `reprise-portals.conf` hands **Secret** to gnome-keyring,

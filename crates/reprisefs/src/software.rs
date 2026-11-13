@@ -1,5 +1,5 @@
-//! What uninstalls a program: the Flatpak installation that exports its desktop file, or the
-//! system's packages through PackageKit.
+//! What uninstalls a program: the Flatpak installation that exports its desktop file, the
+//! system's packages through PackageKit, or deleting a launcher an app installed.
 
 use std::path::{Path, PathBuf};
 
@@ -26,21 +26,39 @@ pub enum Remover {
     Flatpak(Installation),
     /// A desktop file in a system data directory, which an installed package may own.
     Package,
+    /// A launcher an app installed through the DynamicLauncher portal ([`remove_launcher`]).
+    Launcher,
     /// The user's own entry, or one from another Flatpak installation.
     None,
+}
+
+/// Where xdg-desktop-portal keeps the launchers and icons apps install, under the user's data
+/// directory. Each launcher is linked into the user's `applications` folder.
+const PORTAL_APPS: &str = "xdg-desktop-portal/applications";
+const PORTAL_ICONS: &str = "xdg-desktop-portal/icons";
+
+fn data_home() -> Option<PathBuf> {
+    crate::apps::user_applications_dir().and_then(|d| d.parent().map(Into::into))
 }
 
 /// What removes the program whose desktop file is `file`, from where the file is.
 pub fn remover_of(file: &Path) -> Remover {
     let installs = crate::flatpak::installations();
-    let data_home: Option<PathBuf> =
-        crate::apps::user_applications_dir().and_then(|d| d.parent().map(Into::into));
-    remover_in(file, &installs, data_home.as_deref())
+    let target = std::fs::read_link(file)
+        .ok()
+        .map(|t| lexical(&file.parent().unwrap_or(Path::new("/")).join(t)));
+    remover_in(file, target.as_deref(), &installs, data_home().as_deref())
 }
 
-/// [`remover_of`] with `installs` as [`crate::flatpak::installations`] lists them (the system
-/// installation, the user's, then any others) and the user's data directory.
-fn remover_in(file: &Path, installs: &[PathBuf], data_home: Option<&Path>) -> Remover {
+/// [`remover_of`] for `file` linking to `target`, with `installs` as
+/// [`crate::flatpak::installations`] lists them (the system installation, the user's, then any
+/// others) and the user's data directory.
+fn remover_in(
+    file: &Path,
+    target: Option<&Path>,
+    installs: &[PathBuf],
+    data_home: Option<&Path>,
+) -> Remover {
     let exports = |i: &PathBuf| i.join("exports");
     if let Some(i) = installs.iter().position(|i| file.starts_with(exports(i))) {
         return match i {
@@ -49,10 +67,66 @@ fn remover_in(file: &Path, installs: &[PathBuf], data_home: Option<&Path>) -> Re
             _ => Remover::None,
         };
     }
-    if data_home.is_some_and(|h| file.starts_with(h)) {
-        return Remover::None;
+    if let Some(h) = data_home {
+        let launchers = h.join(PORTAL_APPS);
+        if file.starts_with(&launchers) || target.is_some_and(|t| t.starts_with(&launchers)) {
+            return Remover::Launcher;
+        }
+        if file.starts_with(h) {
+            return Remover::None;
+        }
     }
     Remover::Package
+}
+
+/// `path` with its `.` and `..` resolved without reading the file system.
+fn lexical(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for c in path.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// Delete the portal-installed launcher whose desktop file is `file` (its link in the user's
+/// `applications` folder or the entry itself): the link, the entry and the icon the portal saved
+/// for it, as xdg-desktop-portal's own Uninstall does.
+pub fn remove_launcher(file: &Path) -> std::io::Result<()> {
+    let home = data_home().ok_or_else(|| std::io::Error::other("no home directory"))?;
+    remove_launcher_in(file, &home)
+}
+
+fn remove_launcher_in(file: &Path, data_home: &Path) -> std::io::Result<()> {
+    let id = file
+        .file_name()
+        .ok_or_else(|| std::io::Error::other("no file name"))?;
+    let entry = data_home.join(PORTAL_APPS).join(id);
+    let link = data_home.join("applications").join(id);
+    let gone = |r: std::io::Result<()>| match r {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        r => r,
+    };
+    if link.symlink_metadata().is_ok_and(|m| m.is_symlink()) {
+        gone(std::fs::remove_file(&link))?;
+    }
+    let icon = crate::apps::read_desktop_file(&entry)
+        .ok()
+        .and_then(|text| {
+            let kv = crate::apps::desktop_entry_kv(&text);
+            kv.get("Icon").map(|v| PathBuf::from(v.as_ref()))
+        });
+    gone(std::fs::remove_file(&entry))?;
+    match icon.map(|i| lexical(&i)) {
+        Some(i) if i.starts_with(data_home.join(PORTAL_ICONS)) => gone(std::fs::remove_file(i)),
+        _ => Ok(()),
+    }
 }
 
 /// The id of the Flatpak app that exports desktop file `file` with contents `text`: the
@@ -129,6 +203,7 @@ mod tests {
         let r = |p: &str| {
             remover_in(
                 Path::new(p),
+                None,
                 &installs(),
                 Some(Path::new("/home/u/.local/share")),
             )
@@ -151,7 +226,7 @@ mod tests {
     #[test]
     fn a_system_file_may_be_a_package_and_the_users_own_is_not() {
         let home = Some(Path::new("/home/u/.local/share"));
-        let r = |p: &str| remover_in(Path::new(p), &installs(), home);
+        let r = |p: &str| remover_in(Path::new(p), None, &installs(), home);
         assert_eq!(r("/usr/share/applications/foot.desktop"), Remover::Package);
         assert_eq!(
             r("/usr/local/share/applications/x.desktop"),
@@ -161,6 +236,60 @@ mod tests {
             r("/home/u/.local/share/applications/mine.desktop"),
             Remover::None
         );
+    }
+
+    #[test]
+    fn a_portal_launcher_is_its_link_or_entry() {
+        let home = Some(Path::new("/home/u/.local/share"));
+        let link = Path::new("/home/u/.local/share/applications/org.example.Web.app.desktop");
+        let target = lexical(Path::new(
+            "/home/u/.local/share/applications/../xdg-desktop-portal/applications/org.example.Web.app.desktop",
+        ));
+        let r = |f: &Path, t: Option<&Path>| remover_in(f, t, &installs(), home);
+        assert_eq!(r(link, Some(&target)), Remover::Launcher);
+        assert_eq!(r(&target, None), Remover::Launcher);
+        let elsewhere = Path::new("/home/u/notes/mine.desktop");
+        assert_eq!(
+            r(link, Some(elsewhere)),
+            Remover::None,
+            "a link of the user's own"
+        );
+    }
+
+    #[test]
+    fn removing_a_launcher_deletes_its_link_entry_and_saved_icon() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let id = "org.example.Web.app.desktop";
+        let apps = home.join("applications");
+        let entries = home.join(PORTAL_APPS);
+        let icons = home.join(PORTAL_ICONS).join("128x128");
+        for d in [&apps, &entries, &icons] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        let icon = icons.join("org.example.Web.app.png");
+        std::fs::write(&icon, b"png").unwrap();
+        let entry = entries.join(id);
+        let text = format!("[Desktop Entry]\nName=Web\nIcon={}\n", icon.display());
+        std::fs::write(&entry, text).unwrap();
+        let link = apps.join(id);
+        std::os::unix::fs::symlink(format!("../{PORTAL_APPS}/{id}"), &link).unwrap();
+        let theirs = home.join("theirs.png");
+        std::fs::write(&theirs, b"png").unwrap();
+
+        remove_launcher_in(&link, home).unwrap();
+        assert!(link.symlink_metadata().is_err(), "link removed");
+        assert!(!entry.exists(), "entry removed");
+        assert!(!icon.exists(), "saved icon removed");
+
+        std::fs::write(
+            &entry,
+            format!("[Desktop Entry]\nIcon={}\n", theirs.display()),
+        )
+        .unwrap();
+        remove_launcher_in(&entry, home).unwrap();
+        assert!(theirs.exists(), "an icon outside the portal's folder stays");
+        assert!(remove_launcher_in(&entry, home).is_ok(), "already gone");
     }
 
     #[test]

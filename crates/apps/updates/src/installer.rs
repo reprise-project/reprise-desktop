@@ -1,5 +1,6 @@
 //! `--install FILE` (a package, `.flatpakref` or `.flatpak`) and `--uninstall DESKTOP-FILE`: the
-//! install sheet asks first, then PackageKit or Flatpak does the work under polkit.
+//! install sheet asks first, then PackageKit or Flatpak does the work under polkit. A launcher an
+//! app installed is deleted here.
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -25,6 +26,8 @@ const NO_PACKAGEKIT: &str = "Reprise installs and uninstalls the system's packag
                              PackageKit, which is not installed.";
 const NO_FLATPAK: &str = "Installing a Flatpak needs Flatpak, which is not installed.";
 const UNKNOWN: &str = "Unknown";
+const LAUNCHER_NOTE: &str = "Only the launcher is removed. The program that installed it keeps \
+                             its own files.";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Target {
@@ -72,6 +75,8 @@ enum Plan {
     InstallFile { file: String, name: String },
     /// Install this Arch package with `pkexec pacman -U`.
     Pacman(PathBuf),
+    /// Delete the portal-installed launcher with this desktop file.
+    Launcher(PathBuf),
 }
 
 #[derive(Debug)]
@@ -212,6 +217,16 @@ fn read_program(file: &Path, conn: Option<&Connection>) -> (Found, Plan) {
                 Plan::Nothing
             }
         },
+        Remover::Launcher => {
+            found.facts = launcher_facts(&text, |id| {
+                let id = format!("{id}.desktop");
+                let text = reprisefs::apps::read_desktop_file(&reprisefs::apps::find_file(&id)?);
+                reprisefs::apps::parse_desktop_any(&text.ok()?, &id).map(|e| e.name)
+            });
+            found.note = LAUNCHER_NOTE.into();
+            found.ready = true;
+            Plan::Launcher(file.to_path_buf())
+        }
         Remover::None => {
             found.note = "This program did not come from a package or a Flatpak, so Reprise \
                           cannot uninstall it."
@@ -220,6 +235,23 @@ fn read_program(file: &Path, conn: Option<&Connection>) -> (Found, Plan) {
         }
     };
     (found, plan)
+}
+
+/// The sheet's rows for a launcher with desktop entry `text`: the Flatpak app that installed it,
+/// named by `name_of` where it can.
+fn launcher_facts(text: &str, name_of: impl Fn(&str) -> Option<String>) -> Vec<(String, String)> {
+    let kv = reprisefs::apps::desktop_entry_kv(text);
+    match kv
+        .get("X-Flatpak")
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty())
+    {
+        Some(id) => vec![fact(
+            "Installed by:",
+            name_of(id).unwrap_or_else(|| id.into()),
+        )],
+        None => Vec::new(),
+    }
 }
 
 async fn read_package(c: &Connection, file: &Path, found: &mut Found) -> Plan {
@@ -456,6 +488,8 @@ fn run(
                 pkgfile::PacmanError::Dismissed => Failure::Dismissed,
                 pkgfile::PacmanError::Failed(t) => Failure::Text(t),
             }),
+        (Plan::Launcher(file), _) => reprisefs::software::remove_launcher(file)
+            .map_err(|e| Failure::Text(format!("The launcher could not be removed: {e}."))),
         (Plan::Flatpak(args), _) => {
             let args: Vec<&str> = args.iter().map(String::as_str).collect();
             let what = match verb {
@@ -884,6 +918,19 @@ mod tests {
             ),
             "Installing it also installs or updates 8 packages: a, b, c, d, e, f and 2 more."
         );
+    }
+
+    #[test]
+    fn a_launcher_names_the_flatpak_that_installed_it() {
+        let named = |id: &str| (id == "org.gnome.Epiphany").then(|| "Web".to_string());
+        let text = "[Desktop Entry]\nName=Maps\nX-Flatpak=org.gnome.Epiphany\n";
+        assert_eq!(
+            launcher_facts(text, named),
+            vec![("Installed by:".to_string(), "Web".to_string())]
+        );
+        let other = "[Desktop Entry]\nName=Maps\nX-Flatpak=org.example.Store\n";
+        assert_eq!(launcher_facts(other, named)[0].1, "org.example.Store");
+        assert!(launcher_facts("[Desktop Entry]\nName=Maps\n", named).is_empty());
     }
 
     #[test]
