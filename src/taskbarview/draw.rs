@@ -452,9 +452,10 @@ impl State {
             true
         } else {
             bar.start_mix = None;
+            let size = (whole.width as u32, whole.height as u32);
             let (canvas, orb, damage) = match bar.drawn.take() {
-                Some(d) if d.scale == scale && d.layout == layout => {
-                    let change = d.state.damage(&state, &layout);
+                Some(d) if d.scale == scale && (d.canvas.width, d.canvas.height) == size => {
+                    let change = d.state.damage(&state, &d.layout, &layout);
                     let damage = reprisekit::look::taskbar_damage(&theme, text, &layout, change);
                     let mut canvas = d.canvas;
                     if let Some(r) = damage {
@@ -469,12 +470,8 @@ impl State {
                     };
                     (canvas, orb.map(|c| (c, change.start)), damage)
                 }
-                d => {
-                    let size = (whole.width as u32, whole.height as u32);
-                    let mut canvas = match d {
-                        Some(d) if (d.canvas.width, d.canvas.height) == size => d.canvas,
-                        _ => Canvas::new(size.0, size.1),
-                    };
+                _ => {
+                    let mut canvas = Canvas::new(size.0, size.1);
                     redraw(&mut canvas, &state, whole);
                     (canvas, draw_orb(&state).map(|c| (c, true)), Some(whole))
                 }

@@ -401,9 +401,76 @@ fn a_redraw_draws_again_only_the_cells_that_changed() {
     }
 }
 
-/// The time of one bar redraw per look and scale: with nothing changed, the pointer moving between
-/// task buttons, the clock turning, a tray cell redrawn, and a bar drawn from scratch (as a button
-/// added or closed draws it). Run with `--ignored --nocapture` under `--profile vm`;
+#[test]
+fn a_button_added_or_closed_redraws_from_its_left_neighbour_to_the_end_of_the_row() {
+    for interface in ["classic", "blue", "glass"] {
+        let toml = format!("[appearance]\ninterface = \"{interface}\"\n[workspaces]\ncount = 2\n");
+        let mut h =
+            crate::harness::Harness::with_config(crate::config::Config::parse(&toml).unwrap());
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        h.map_titled(&mut c, "editor", "one", (300, 200));
+        h.map_titled(&mut c, "other", "two", (300, 200));
+        let three = h.map_titled(&mut c, "third", "three", (300, 200));
+        h.state.move_to_desktop(&[three.id], 1);
+        h.dispatch();
+        h.state.redraw_taskbars();
+        let focused = h.state.focused;
+        let moved = |h: &mut crate::harness::Harness, to: usize| {
+            h.state.bars[0].drawn_parts.clear();
+            h.state.move_to_desktop(&[three.id], to);
+            h.dispatch();
+            h.state.redraw_taskbars();
+            assert_eq!(h.state.focused, focused, "{interface}: the focus stays");
+            let b = &h.state.bars[0];
+            let d = b.drawn.as_ref().expect("drawn");
+            let mut want = Canvas::new(d.canvas.width, d.canvas.height);
+            let theme = h.state.config.theme.scaled(d.scale);
+            reprisekit::look::draw_taskbar(
+                &mut want,
+                &theme,
+                h.state.text.for_output(d.scale),
+                h.state.start_text.for_output(d.scale),
+                &d.layout,
+                &d.state,
+            );
+            assert!(
+                d.canvas.pixels == want.pixels,
+                "{interface}: the bar as a full draw gives it"
+            );
+            let parts: Vec<Rect> = b.drawn_parts.iter().flatten().copied().collect();
+            let drawn = parts.iter().fold(None, |u: Option<Rect>, r| {
+                Some(u.map_or(*r, |u| u.union(r)))
+            });
+            (drawn.expect("a part drawn"), d.layout.clone())
+        };
+        let (added, l) = moved(&mut h, 0);
+        let last = l.tasks.len() - 1;
+        let (new, before) = (l.tasks[last], l.tasks[last - 1]);
+        assert!(
+            added.x >= before.x - 4 && added.x > l.tasks[0].x && added.right() >= new.right(),
+            "{interface}: a button added last redraws from its neighbour: {added:?} {l:?}"
+        );
+        assert!(
+            added.right() < l.clock.x,
+            "{interface}: the clock stays: {added:?}"
+        );
+        let (closed, after) = moved(&mut h, 1);
+        assert_eq!(after.tasks.len(), last, "{interface}: the button closed");
+        assert!(
+            closed.x >= before.x - 4 && closed.right() >= new.right(),
+            "{interface}: a button closed last redraws from its neighbour: {closed:?}"
+        );
+        assert!(
+            closed.right() < l.clock.x,
+            "{interface}: the clock stays: {closed:?}"
+        );
+    }
+}
+
+/// The time of one bar redraw per look and scale: with a button added or closed last on the row,
+/// nothing changed, the pointer moving between task buttons, the clock turning, a tray cell
+/// redrawn, and a bar drawn from scratch. Run with `--ignored --nocapture` under `--profile vm`;
 /// `BAR_COST=glass:2` keeps one look and scale, `N` times as many rounds.
 #[test]
 #[ignore]
@@ -420,7 +487,7 @@ fn bar_redraw_cost() {
             {
                 continue;
             }
-            let text = format!("[appearance]\ninterface = \"{look}\"\n");
+            let text = format!("[appearance]\ninterface = \"{look}\"\n[workspaces]\ncount = 2\n");
             let mut h = Harness::with_config(crate::config::Config::parse(&text).unwrap());
             for name in ["TEST-1", "TEST-2"] {
                 let o = h.output(name, w, hh);
@@ -430,17 +497,32 @@ fn bar_redraw_cost() {
             let mut c = h.connect();
             let one = h.map_titled(&mut c, "editor", "one", (300, 200));
             let two = h.map_titled(&mut c, "other", "two", (300, 200));
+            let three = h.map_titled(&mut c, "third", "three", (300, 200));
+            h.state.move_to_desktop(&[three.id], 1);
             h.state.notify.log.dnd = true;
             h.run_for(300);
             let bars = h.state.bars.len() as u32;
             let time = |h: &mut Harness, f: &mut dyn FnMut(&mut Harness, u32)| {
-                let t = std::time::Instant::now();
+                let mut t = std::time::Duration::ZERO;
                 for k in 0..n {
                     f(h, k);
+                    let at = std::time::Instant::now();
                     h.state.redraw_taskbars();
+                    t += at.elapsed();
                 }
-                t.elapsed() / (n * bars)
+                t / (n * bars)
             };
+            // The third window's button, last on the row, comes (`to` 0) or goes (1).
+            let toggle = |to: usize| {
+                move |h: &mut Harness, _| {
+                    let w = h.state.win_mut(three.id).expect("third window");
+                    w.desktop = 1 - to;
+                    h.state.redraw_taskbars();
+                    h.state.win_mut(three.id).expect("third window").desktop = to;
+                }
+            };
+            let add = time(&mut h, &mut toggle(0));
+            let close = time(&mut h, &mut toggle(1));
             let same = time(&mut h, &mut |_, _| {});
             let hover = time(&mut h, &mut |h, k| {
                 let id = if k % 2 == 0 { one.id } else { two.id };
@@ -465,7 +547,7 @@ fn bar_redraw_cost() {
             });
             eprintln!(
                 "{look} x{scale}: unchanged {same:?}, hover {hover:?}, clock {clock:?}, \
-                 tray {tray:?}, full {full:?}"
+                 tray {tray:?}, add {add:?}, close {close:?}, full {full:?}"
             );
         }
     }
