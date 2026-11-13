@@ -203,8 +203,16 @@ impl VirtualKeyboardHandler for State {
                 let (code, key_state) = (event.key_code(), event.state());
                 let (serial, time) = (SERIAL_COUNTER.next_serial(), Event::time(&event));
                 let echo = (device.clone(), code);
+                // An input method may swallow the release of a key it echoed:
+                // the next press of that key is an echo all the same.
                 let echoed = if key_state == KeyState::Pressed {
-                    keyboard.pressed_keys().contains(&code) && self.ime.vk.echoed.insert(echo)
+                    let held = keyboard.pressed_keys().contains(&code);
+                    if held {
+                        self.ime.vk.echoed.insert(echo);
+                    } else {
+                        self.ime.vk.echoed.remove(&echo);
+                    }
+                    held
                 } else {
                     self.ime.vk.echoed.remove(&echo)
                 };
@@ -249,9 +257,15 @@ impl VirtualKeyboardHandler for State {
                     .is_none()
                     .then(|| self.xkb_mask())
                     .flatten();
+                let mods_before = keyboard.modifier_state();
                 keyboard.with_xkb_state(self, |mut ctx| {
                     ctx.set_modifier_mask(mods_depressed, mods_latched, mods_locked, group)
                 });
+                // The seat's key changed the state on its way to the grab, so Smithay
+                // saw no change; the window still hears the mask (a swallowed Shift release).
+                if keyboard.modifier_state() == mods_before {
+                    keyboard.advertise_modifier_state(self);
+                }
                 if let Some((before, _)) = before {
                     let owned = self.ime.vk.mods.entry(device).or_default();
                     owned.claim(&before, mods_depressed, mods_latched, mods_locked);
@@ -814,7 +828,12 @@ impl State {
         self.ime_return_popup_grab();
         let handle = self.seat.input_method().clone();
         if !handle.keyboard_grabbed() {
-            self.ime.grab = None;
+            // The window heard modifiers only through the input method while it held the keyboard.
+            if self.ime.grab.take().is_some()
+                && let Some(kb) = self.seat.get_keyboard()
+            {
+                kb.advertise_modifier_state(self);
+            }
             self.ime.heard = HeardMods::default();
             return;
         }
@@ -1795,6 +1814,92 @@ mod harness_tests {
             "the window gets the echo once each way"
         );
         assert!(h.state.ime.vk.echoed.is_empty(), "the echo is settled");
+    }
+
+    const SHIFT_MASK: u32 = 1;
+
+    fn last_mods(c: &TestClient) -> Option<u32> {
+        c.side.key_log.iter().rev().find_map(|k| match k {
+            crate::harness::KeyHeard::Mods(m) => Some(*m),
+            _ => None,
+        })
+    }
+
+    /// The seat's Shift goes down and the input method echoes it with its mask, as fcitx5 does.
+    fn shift_down_echoed(h: &mut Harness, m: &mut TestClient, vk: usize) {
+        h.key(KEY_LEFTSHIFT, true);
+        m.vk_key(vk, KEY_LEFTSHIFT, true);
+        m.vk_modifiers(vk, SHIFT_MASK, 0, 0);
+        h.roundtrip(m);
+    }
+
+    #[test]
+    fn an_input_method_that_swallows_the_shift_release_leaves_the_window_without_shift() {
+        let (mut h, mut c, _) = focused_client();
+        let mut m = input_method(&mut h, true);
+        let vk = m.virtual_keyboard();
+        h.roundtrip(&mut m);
+        for round in 1..=2 {
+            shift_down_echoed(&mut h, &mut m, vk);
+            h.roundtrip(&mut c);
+            assert_eq!(last_mods(&c), Some(SHIFT_MASK), "round {round}: Shift down");
+            tap(&mut h, KEY_A);
+            h.key(KEY_LEFTSHIFT, false);
+            m.vk_modifiers(vk, 0, 0, 0);
+            h.roundtrip(&mut m);
+            h.roundtrip(&mut c);
+            assert_eq!(last_mods(&c), Some(0), "round {round}: Shift up");
+        }
+        let releases = (m.side.ims[0].grab_keys.iter())
+            .filter(|&&k| k == (KEY_LEFTSHIFT, false))
+            .count();
+        assert_eq!(releases, 2, "the grab hears both Shift releases");
+        let kb = h.state.seat.get_keyboard().unwrap();
+        assert!(!kb.modifier_state().shift, "the seat has no Shift");
+
+        m.side.vks[vk].destroy();
+        m.release_grab(0);
+        m.destroy_input_method(0);
+        h.roundtrip(&mut m);
+        tap(&mut h, KEY_B);
+        h.roundtrip(&mut c);
+        assert_eq!(
+            last_mods(&c),
+            Some(0),
+            "no Shift after the input method goes"
+        );
+    }
+
+    #[test]
+    fn an_input_method_gone_before_echoing_the_shift_release_leaves_the_window_without_shift() {
+        let (mut h, mut c, _) = focused_client();
+        let mut m = input_method(&mut h, true);
+        let vk = m.virtual_keyboard();
+        h.roundtrip(&mut m);
+        h.key(KEY_LEFTSHIFT, true);
+        h.key(KEY_A, true);
+        m.vk_key(vk, KEY_A, true);
+        h.roundtrip(&mut m);
+        h.key(KEY_A, false);
+        m.vk_key(vk, KEY_A, false);
+        h.roundtrip(&mut m);
+        h.roundtrip(&mut c);
+        assert_eq!(
+            last_mods(&c),
+            Some(SHIFT_MASK),
+            "Shift came with the echoed key"
+        );
+        h.key(KEY_LEFTSHIFT, false);
+        m.side.vks[vk].destroy();
+        m.release_grab(0);
+        m.destroy_input_method(0);
+        h.roundtrip(&mut m);
+        h.roundtrip(&mut c);
+        assert_eq!(
+            last_mods(&c),
+            Some(0),
+            "Shift up once the input method is gone"
+        );
     }
 
     #[test]
