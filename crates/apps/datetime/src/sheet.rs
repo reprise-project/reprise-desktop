@@ -290,6 +290,27 @@ impl Sheet {
         self.applied(system, now);
     }
 
+    /// timedated's zone became `zone` while the sheet is open, as when the compositor follows
+    /// the location: it is the new baseline, and the combo shows it unless the user picked
+    /// another zone.
+    pub fn zone_moved(&mut self, zone: &str) {
+        let picked = (!self.pending_auto() && self.pending_zone() != self.applied.zone)
+            .then(|| self.pending_zone());
+        self.applied.zone = zone.to_string();
+        if !self.zones.iter().any(|z| z == zone) {
+            self.zones.push(zone.to_string());
+            self.zones.sort();
+            let rows: Vec<String> = self.zones.iter().map(|z| z.replace('_', " ")).collect();
+            self.sheet.pages[TAB_ZONE].set_combo_rows("zone", &rows, 0, ZONE_DROP);
+        }
+        let shown = picked.as_deref().unwrap_or(zone);
+        if let Some(i) = self.zones.iter().position(|z| z == shown) {
+            self.sheet.pages[TAB_ZONE].set_combo("zone", i);
+        }
+        self.write_zone();
+        self.sheet.set_apply_enabled(self.dirty());
+    }
+
     /// Take control `id`'s new value.
     fn read(&mut self, id: &'static str) {
         let page = &mut self.sheet.pages[TAB_DATE];
@@ -461,6 +482,9 @@ fn panel_well(r: Rect) -> Control {
     }
 }
 
+/// Rows the zone combo's drop list shows at once.
+const ZONE_DROP: usize = 16;
+
 fn zone_page(zones: &[String], system: &System) -> Form {
     let labels: Vec<String> = zones.iter().map(|z| z.replace('_', " ")).collect();
     let rows: Vec<&str> = labels.iter().map(String::as_str).collect();
@@ -472,7 +496,7 @@ fn zone_page(zones: &[String], system: &System) -> Form {
         Item::new(
             "zone",
             Rect::new(18, 73, 362, reprisekit::controls::combo::COMBO_H),
-            Control::Combo(Combo::new(&rows, selected, 16)),
+            Control::Combo(Combo::new(&rows, selected, ZONE_DROP)),
         ),
         Item::new("panel", PANEL, panel_well(PANEL)),
         Item::aligned(
@@ -894,6 +918,69 @@ mod tests {
             true,
         );
         assert_eq!(s.pending_zone(), "Etc/GMT+5");
+        assert!(!s.dirty());
+    }
+
+    #[test]
+    fn a_zone_the_compositor_sets_shows_in_the_greyed_combo() {
+        let auto = System {
+            auto_zone: true,
+            ..system()
+        };
+        let mut s = Sheet::new(&auto, &zones(), now(), 0, true);
+        s.zone_moved("America/New_York");
+        assert_eq!(s.pending_zone(), "America/New_York");
+        assert_eq!(s.change(), Change::default(), "nothing to apply");
+        s.zone_moved("Asia/Tokyo");
+        assert_eq!(
+            s.pending_zone(),
+            "Asia/Tokyo",
+            "a zone the list lacked joins it"
+        );
+        assert_eq!(
+            s.zones,
+            ["America/New_York", "Asia/Tokyo", "Europe/Budapest", "UTC"]
+        );
+        assert_eq!(s.sheet.pages[TAB_ZONE].combo_selected("zone"), Some(1));
+        let city = |s: &Sheet| match &s.sheet.pages[TAB_ZONE].item("city").unwrap().control {
+            Control::Label { text, .. } => text.clone(),
+            _ => String::new(),
+        };
+        assert_eq!(city(&s), "Tokyo");
+        s.sheet.pages[TAB_ZONE].set_check("auto", false);
+        s.event(propsheet::Event::Page(
+            TAB_ZONE,
+            form::Event::Changed("auto"),
+        ));
+        assert_eq!(
+            s.pending_zone(),
+            "Asia/Tokyo",
+            "turned off, it keeps the moved zone"
+        );
+        assert_eq!(
+            s.change(),
+            Change {
+                auto_zone: Some(false),
+                ..Change::default()
+            },
+            "the moved zone is the baseline"
+        );
+    }
+
+    #[test]
+    fn a_zone_the_user_picked_stays_when_timedated_moves() {
+        let mut s = sheet();
+        s.sheet.pages[TAB_ZONE].set_combo("zone", 2);
+        s.zone_moved("America/New_York");
+        assert_eq!(s.pending_zone(), "UTC");
+        assert_eq!(s.change().zone.as_deref(), Some("UTC"));
+        let mut s = sheet();
+        s.zone_moved("America/New_York");
+        assert_eq!(
+            s.pending_zone(),
+            "America/New_York",
+            "an untouched combo follows"
+        );
         assert!(!s.dirty());
     }
 }

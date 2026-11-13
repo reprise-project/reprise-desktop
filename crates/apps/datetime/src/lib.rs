@@ -36,6 +36,8 @@ struct DateTimeApp {
     /// An Apply under way on the worker thread, and whether an OK started
     /// it (the sheet closes when it succeeds).
     applying: Option<(Receiver<Result<System, timedate::Failure>>, bool)>,
+    /// timedated's zone each time it changes.
+    zones_moved: Option<Receiver<String>>,
     waker: Option<repriseapp::Waker>,
     error: Option<MsgBox>,
     /// The renderer and forms theme the box is sized with: `children` has no
@@ -150,6 +152,17 @@ impl DateTimeApp {
                 }
             }
         }
+        if let Some(zone) = self
+            .zones_moved
+            .as_ref()
+            .and_then(|rx| rx.try_iter().last())
+            && zone != self.system.zone
+        {
+            self.system.zone = zone;
+            if let Some(s) = &mut self.sheet {
+                s.zone_moved(&self.system.zone);
+            }
+        }
         if let Some(s) = &mut self.sheet {
             s.tick(now());
         }
@@ -218,6 +231,9 @@ impl App for DateTimeApp {
             }
         }
         start_ticker(waker.clone());
+        let (tx, rx) = channel();
+        timedate::follow_zone(tx, waker.clone());
+        self.zones_moved = Some(rx);
         self.waker = Some(waker);
         repriseapp::Start::Continue
     }

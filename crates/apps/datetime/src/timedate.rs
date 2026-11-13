@@ -2,13 +2,20 @@
 //! host runs [`apply`] off its event loop. Reading also says whether the zone may follow the location: geoclue
 //! installed, `[privacy] location` on and polkit setting the zone with no password.
 
+use std::collections::HashMap;
+use std::sync::mpsc::Sender;
 use std::time::Duration;
+
+use futures_util::StreamExt;
 
 use crate::sheet::{Blocked, Change, System};
 
 const DEST: &str = "org.freedesktop.timedate1";
 const PATH: &str = "/org/freedesktop/timedate1";
 const IFACE: &str = "org.freedesktop.timedate1";
+
+const PROPERTIES: &str = "org.freedesktop.DBus.Properties";
+const TIMEZONE: &str = "Timezone";
 
 const READ_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -29,13 +36,7 @@ where
     T::Error: Into<zbus::Error>,
 {
     let reply = conn
-        .call_method(
-            Some(DEST),
-            PATH,
-            Some("org.freedesktop.DBus.Properties"),
-            "Get",
-            &(IFACE, name),
-        )
+        .call_method(Some(DEST), PATH, Some(PROPERTIES), "Get", &(IFACE, name))
         .await?;
     let v: zbus::OwnedVariant = reply.body().deserialize()?;
     T::try_from(v).map_err(Into::into)
@@ -46,7 +47,7 @@ async fn read_system(conn: &zbus::Connection) -> zbus::Result<System> {
     let geoclue = activatable(conn, GEOCLUE).await;
     let allowed = reprisebus::polkit::allowed_without_password(conn, SET_TIMEZONE).await;
     Ok(System {
-        zone: property(conn, "Timezone").await?,
+        zone: property(conn, TIMEZONE).await?,
         ntp: property(conn, "NTP").await?,
         can_ntp: property(conn, "CanNTP").await?,
         auto_zone,
@@ -87,6 +88,72 @@ pub fn read() -> zbus::Result<(System, Vec<String>)> {
         };
         Ok((system, zones))
     })
+}
+
+/// Send timedated's zone each time its `Timezone` changes, until `zones` is dropped, waking the
+/// host after each. The zone sent is read back from timedated, not taken from the signal.
+pub fn follow_zone(zones: Sender<String>, waker: repriseapp::Waker) {
+    let spawned = std::thread::Builder::new()
+        .name("reprise-datetime-zone".into())
+        .spawn(move || zbus::block_on(follow(zones, waker)));
+    if let Err(e) = spawned {
+        log::warn!("could not start the time zone thread: {e}");
+    }
+}
+
+async fn follow(zones: Sender<String>, waker: repriseapp::Waker) {
+    let conn = match connect(Some(READ_TIMEOUT)).await {
+        Ok(c) => c,
+        Err(e) => {
+            log::info!("the time zone is not followed: {e}");
+            return;
+        }
+    };
+    let rule = zbus::MatchRule::builder()
+        .msg_type(zbus::message::Type::Signal)
+        .path(PATH)
+        .interface(PROPERTIES)
+        .member("PropertiesChanged")
+        .add_arg(IFACE)
+        .build();
+    let rules = match rule {
+        Ok(r) => vec![r.into()],
+        Err(e) => {
+            log::warn!("no match rule for {PATH}: {e}");
+            return;
+        }
+    };
+    let mut signals = reprisebus::signals(&conn, DEST, rules).await;
+    // Read once after subscribing, so a change since the sheet's first read is not lost.
+    let mut changed = true;
+    loop {
+        if changed {
+            match property::<String>(&conn, TIMEZONE).await {
+                Ok(zone) => {
+                    if zones.send(zone).is_err() {
+                        return;
+                    }
+                    waker.wake();
+                }
+                Err(e) => log::info!("timedated did not say its zone: {e}"),
+            }
+        }
+        changed = match signals.next().await {
+            Some(reprisebus::Signal::Message(m)) => names_zone(&m),
+            Some(reprisebus::Signal::OwnerChanged) => false,
+            None => return,
+        };
+    }
+}
+
+/// Whether a `PropertiesChanged` changes or invalidates `Timezone`.
+fn names_zone(m: &zbus::Message) -> bool {
+    type Changed = (String, HashMap<String, zbus::OwnedVariant>, Vec<String>);
+    m.body()
+        .deserialize::<Changed>()
+        .is_ok_and(|(_, changed, invalidated)| {
+            changed.contains_key(TIMEZONE) || invalidated.iter().any(|p| p == TIMEZONE)
+        })
 }
 
 /// Carry `change` out, then read the settings back. The automatic zone is
