@@ -1,6 +1,6 @@
-//! StickyKeys and SlowKeys (`[accessibility]`): the filter every key passes before `keyroute`, so the aids reach clients and the compositor's binds alike.
+//! StickyKeys, SlowKeys and BounceKeys (`[accessibility]`): the filter every key passes before `keyroute`, so the aids reach clients and the compositor's binds alike.
 //!
-//! [`KeyFilter`] is the pure part. SlowKeys holds a press back until it has been down for the delay; a key let go sooner never happens. StickyKeys turns a lone tap of Shift, Ctrl, Alt or Super into a latch the next key picks up (a second tap locks it, with `sticky_lock`). The shortcuts: Shift pressed five times and right Shift held eight seconds offer either aid or turn it off; left Alt+left Shift+Num Lock is MouseKeys' shortcut (MouseKeys itself is `mousekeys`).
+//! [`KeyFilter`] is the pure part. BounceKeys drops a press of the key last let go when it comes within the delay, before anything else sees it. SlowKeys holds a press back until it has been down for the delay; a key let go sooner never happens. StickyKeys turns a lone tap of Shift, Ctrl, Alt or Super into a latch the next key picks up (a second tap locks it, with `sticky_lock`). The shortcuts: Shift pressed five times and right Shift held eight seconds offer either aid or turn it off; left Alt+left Shift+Num Lock is MouseKeys' shortcut (MouseKeys itself is `mousekeys`).
 //!
 //! The host puts the latched and locked modifiers into the seat keyboard's xkb *latched* mask, so binds and the focused client (`wl_keyboard.modifiers`) see them (`State::sync_aids`).
 
@@ -158,6 +158,10 @@ pub struct KeyFilter {
     /// A release of one of these is swallowed with it, SlowKeys on or not.
     pending: Vec<(u32, u64)>,
     delivering: Vec<u32>,
+    /// BounceKeys: the key last let go and when, and the presses it dropped, whose releases are
+    /// swallowed with them.
+    last_up: Option<(u32, u64)>,
+    bounced: Vec<u32>,
     /// StickyKeys: `MOD_*` bits held for the next key, and locked.
     latched: u32,
     locked: u32,
@@ -175,6 +179,9 @@ impl KeyFilter {
         self.cfg = cfg.clone();
         if !cfg.slow_keys {
             self.delivering.clear();
+        }
+        if !cfg.bounce_keys {
+            self.last_up = None;
         }
         if !cfg.sticky_keys {
             return self.clear_sticky();
@@ -206,6 +213,9 @@ impl KeyFilter {
             self.delivering.remove(i);
             self.sticky(k, &mut fx);
             return (Verdict::Pass, fx);
+        }
+        if self.bounce(k, now) {
+            return (Verdict::Swallow, fx);
         }
         if self.shortcuts(k, now, &mut fx) {
             return (Verdict::Swallow, fx);
@@ -273,6 +283,35 @@ impl KeyFilter {
 
     fn delay(&self) -> u64 {
         self.cfg.slow_keys_delay as u64
+    }
+
+    /// BounceKeys: whether `k` is a press of the key last let go, within the delay of its
+    /// release and with no other key pressed since, or the release of such a press.
+    fn bounce(&mut self, k: Key, now: u64) -> bool {
+        if !k.pressed {
+            let dropped = self.bounced.iter().position(|&c| c == k.code);
+            if let Some(i) = dropped {
+                self.bounced.remove(i);
+            }
+            if self.cfg.bounce_keys {
+                self.last_up = Some((k.code, now));
+            }
+            return dropped.is_some();
+        }
+        let delay = u64::from(self.cfg.bounce_keys_delay);
+        match self.last_up {
+            Some((code, at)) if code == k.code => {
+                let bounced = self.cfg.bounce_keys && now < at + delay;
+                if bounced && !self.bounced.contains(&k.code) {
+                    self.bounced.push(k.code);
+                }
+                bounced
+            }
+            _ => {
+                self.last_up = None;
+                false
+            }
+        }
     }
 
     /// The shortcuts watch the keys as they are pressed, before SlowKeys.
@@ -887,6 +926,84 @@ mod tests {
         f.configure(&AccessibilityConfig::default());
         assert_eq!(f.deadline(), None);
         assert_eq!(f.key(key(A, false), 100).0, Verdict::Swallow);
+        assert_eq!(f.key(key(A, true), 200).0, Verdict::Pass);
+    }
+
+    fn bounce(delay: u32) -> KeyFilter {
+        let mut f = KeyFilter::default();
+        f.configure(&AccessibilityConfig {
+            bounce_keys: true,
+            bounce_keys_delay: delay,
+            ..Default::default()
+        });
+        f
+    }
+
+    #[test]
+    fn bounce_keys_drops_the_same_key_again_within_the_delay_with_its_release() {
+        let mut f = bounce(500);
+        assert_eq!(f.key(key(A, true), 0).0, Verdict::Pass);
+        assert_eq!(f.key(key(A, false), 100).0, Verdict::Pass);
+        assert_eq!(f.key(key(A, true), 300).0, Verdict::Swallow, "a bounce");
+        assert_eq!(f.key(key(A, false), 350).0, Verdict::Swallow);
+        assert_eq!(
+            f.key(key(A, true), 700).0,
+            Verdict::Swallow,
+            "the dropped release restarts the delay"
+        );
+        f.key(key(A, false), 750);
+        assert_eq!(
+            f.key(key(A, true), 1250).0,
+            Verdict::Pass,
+            "the delay ran out"
+        );
+    }
+
+    #[test]
+    fn bounce_keys_lets_a_key_through_after_another_key() {
+        let mut f = bounce(500);
+        tap(&mut f, A, 0);
+        assert_eq!(f.key(key(B, true), 100).0, Verdict::Pass);
+        assert_eq!(
+            f.key(key(A, true), 120).0,
+            Verdict::Pass,
+            "b was pressed between"
+        );
+        f.key(key(A, false), 150);
+        f.key(key(B, false), 160);
+        assert_eq!(f.key(key(A, true), 200).0, Verdict::Pass, "b went up last");
+    }
+
+    #[test]
+    fn a_bounced_key_reaches_neither_sticky_keys_nor_the_shift_shortcut() {
+        let mut f = KeyFilter::default();
+        f.configure(&AccessibilityConfig {
+            sticky_keys: true,
+            bounce_keys: true,
+            bounce_keys_delay: 500,
+            ..Default::default()
+        });
+        tap(&mut f, CTRL, 0);
+        assert_eq!(f.latched(), MOD_CTRL);
+        tap(&mut f, CTRL, 200);
+        assert_eq!(
+            (f.latched(), f.locked()),
+            (MOD_CTRL, 0),
+            "the second tap bounced"
+        );
+        let notices: Vec<_> = (0..5)
+            .filter_map(|i| tap(&mut f, LSHIFT, 1000 + i * 100))
+            .collect();
+        assert!(notices.is_empty(), "four of the five bounced");
+    }
+
+    #[test]
+    fn turning_bounce_keys_off_lets_the_next_press_through_and_swallows_a_dropped_release() {
+        let mut f = bounce(500);
+        tap(&mut f, A, 0);
+        assert_eq!(f.key(key(A, true), 100).0, Verdict::Swallow);
+        f.configure(&AccessibilityConfig::default());
+        assert_eq!(f.key(key(A, false), 150).0, Verdict::Swallow);
         assert_eq!(f.key(key(A, true), 200).0, Verdict::Pass);
     }
 

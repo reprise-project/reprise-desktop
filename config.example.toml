@@ -530,6 +530,9 @@ suspend_after = 0            # run [power] standby
 # sticky_two_keys_off = true # a key pressed while a modifier is held turns StickyKeys off
 # slow_keys = false          # a key counts only once it has been held down for the delay
 # slow_keys_delay = 1.0      # seconds, 0.3 to 2.0
+# bounce_keys = false        # a key pressed again within the delay after it was let go is
+#                            # ignored, until another key is pressed
+# bounce_keys_delay = 0.5    # seconds, 0.1 to 2.0
 # shortcuts = true           # Shift five times toggles StickyKeys, right Shift held 8 s SlowKeys,
 #                            # left Alt+left Shift+Num Lock MouseKeys
 # mouse_keys = false         # the numeric keypad moves the pointer: 1-9 move, 5 clicks,
@@ -563,6 +566,10 @@ suspend_after = 0            # run [power] standby
 # color_filter_intensity = 100  # percent, how strongly a correction applies
 # magnifier_follow = "pointer+focus"  # "pointer": a zoomed view follows the pointer alone;
 #                            # "pointer+focus": also the text cursor and keyboard focus
+# locate_pointer = false     # a tap of Ctrl on its own rings the pointer
+# visual_bell = "none"       # a program's bell flashes "window" (the window that rang; the
+#                            # screen when it can't be seen) or "screen"; [sounds] bell
+#                            # says whether it sounds too
 
 # [windows]
 # remember = true            # an app's next window opens where its last one closed (size, place,

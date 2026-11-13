@@ -370,6 +370,33 @@ fn screenshot_save_defaults_on_and_is_configurable() {
 }
 
 #[test]
+fn bounce_keys_visual_bell_and_locate_pointer_parse_and_default_off() {
+    let d = Config::default().accessibility;
+    assert!(!d.bounce_keys && !d.locate_pointer);
+    assert_eq!(d.bounce_keys_delay, 500);
+    assert_eq!(d.visual_bell, VisualBell::None);
+    let c = Config::parse(
+        "[accessibility]\nbounce_keys = true\nbounce_keys_delay = 0.1\n\
+         visual_bell = \"screen\"\nlocate_pointer = true\n",
+    )
+    .unwrap()
+    .accessibility;
+    assert!(c.bounce_keys && c.locate_pointer);
+    assert_eq!(c.bounce_keys_delay, 100);
+    assert_eq!(c.visual_bell, VisualBell::Screen);
+    for bad in [
+        "bounce_keys_delay = 0.05",
+        "bounce_keys_delay = 2.5",
+        "visual_bell = \"flash\"",
+    ] {
+        assert!(
+            Config::parse(&format!("[accessibility]\n{bad}\n")).is_err(),
+            "{bad} is refused"
+        );
+    }
+}
+
+#[test]
 fn the_key_aids_are_off_with_their_shortcuts_on_by_default() {
     let d = Config::default().accessibility;
     assert!(!d.sticky_keys && !d.slow_keys);

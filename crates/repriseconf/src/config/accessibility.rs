@@ -55,6 +55,9 @@ pub struct AccessibilityConfig {
     pub slow_keys: bool,
     /// Milliseconds; the file gives seconds.
     pub slow_keys_delay: u32,
+    pub bounce_keys: bool,
+    /// Milliseconds; the file gives seconds.
+    pub bounce_keys_delay: u32,
     pub shortcuts: bool,
     pub mouse_keys: bool,
     pub mouse_keys_speed: u32,
@@ -62,6 +65,8 @@ pub struct AccessibilityConfig {
     pub mouse_keys_acceleration: u32,
     pub mouse_keys_num_lock: bool,
     pub text_size: u32,
+    pub visual_bell: VisualBell,
+    pub locate_pointer: bool,
 }
 
 impl Default for AccessibilityConfig {
@@ -75,12 +80,16 @@ impl Default for AccessibilityConfig {
             sticky_two_keys_off: true,
             slow_keys: false,
             slow_keys_delay: 1000,
+            bounce_keys: false,
+            bounce_keys_delay: 500,
             shortcuts: true,
             mouse_keys: false,
             mouse_keys_speed: 400,
             mouse_keys_acceleration: 1000,
             mouse_keys_num_lock: true,
             text_size: 100,
+            visual_bell: VisualBell::None,
+            locate_pointer: false,
         }
     }
 }
@@ -92,6 +101,8 @@ impl AccessibilityConfig {
 }
 
 pub const SLOW_KEYS_DELAY: std::ops::RangeInclusive<f64> = 0.3..=2.0;
+
+pub const BOUNCE_KEYS_DELAY: std::ops::RangeInclusive<f64> = 0.1..=2.0;
 
 pub const MOUSE_KEYS_SPEED: std::ops::RangeInclusive<u32> = 50..=2000;
 
@@ -136,5 +147,30 @@ impl Follow {
 
     pub fn focus(self) -> bool {
         self == Follow::PointerAndFocus
+    }
+}
+
+/// What flashes when a program rings the bell: `[accessibility] visual_bell`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum VisualBell {
+    #[default]
+    None,
+    Window,
+    Screen,
+}
+
+impl VisualBell {
+    pub const ALL: [VisualBell; 3] = [VisualBell::None, VisualBell::Window, VisualBell::Screen];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            VisualBell::None => "none",
+            VisualBell::Window => "window",
+            VisualBell::Screen => "screen",
+        }
+    }
+
+    pub fn parse(name: &str) -> Option<VisualBell> {
+        VisualBell::ALL.into_iter().find(|v| v.name() == name)
     }
 }

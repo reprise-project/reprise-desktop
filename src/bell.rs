@@ -1,5 +1,6 @@
 //! `xdg_system_bell_v1`: a ring plays the `[sounds] theme`'s bell unless `[sounds] bell` is off,
-//! and flags its window when unfocused.
+//! flags its window when unfocused, and flashes as `[accessibility] visual_bell` says
+//! (`bellflash`).
 
 use std::time::{Duration, Instant};
 
@@ -48,8 +49,8 @@ impl Bell {
 }
 
 impl State {
-    /// The window a ring for `surface` asks attention for: its toplevel when mapped and not focused.
-    fn bell_window(&self, surface: &WlSurface) -> Option<WindowId> {
+    /// The window a ring for `surface` comes from: its toplevel when mapped.
+    fn ringing_window(&self, surface: &WlSurface) -> Option<WindowId> {
         let mut root = surface.clone();
         while let Some(parent) = get_parent(&root) {
             root = parent;
@@ -57,16 +58,23 @@ impl State {
         let w = self
             .window_for_surface(&root)
             .or_else(|| self.window_for_popup(&root))?;
-        let mapped = self.win(w).is_some_and(|win| win.mapped);
-        (mapped && self.focused != Some(w)).then_some(w)
+        self.win(w).is_some_and(|win| win.mapped).then_some(w)
     }
 
-    /// A ring for `surface` at `now`: flags its window and says whether the bell sounds.
+    /// The window a ring for `surface` asks attention for: [`State::ringing_window`] unless focused.
+    fn bell_window(&self, surface: &WlSurface) -> Option<WindowId> {
+        self.ringing_window(surface)
+            .filter(|&w| self.focused != Some(w))
+    }
+
+    /// A ring for `surface` at `now`: flags its window, flashes, and says whether the bell sounds.
     fn ring_at(&mut self, surface: Option<WlSurface>, now: Instant) -> bool {
+        let ringing = surface.as_ref().and_then(|s| self.ringing_window(s));
         if let Some(w) = surface.and_then(|s| self.bell_window(&s)) {
             self.ask_attention(w);
             self.redraw_taskbars();
         }
+        self.flash_bell(ringing, now);
         self.config.sounds.bell && self.globals.system_bell.sounds(now)
     }
 }

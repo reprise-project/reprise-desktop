@@ -490,6 +490,7 @@ impl State {
             return;
         }
         self.settle_pointer();
+        self.key_input.ctrl_tap.spoil();
         if self.host == crate::compositor::Host::Greeter
             && self.dialogs.views.is_empty()
             && self.menus.is_empty()

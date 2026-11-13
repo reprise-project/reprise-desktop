@@ -54,8 +54,10 @@ pub struct KeyInput {
     pub last_key_input: bool,
     /// The modifier-only chords (`[[keybinds]]` on a modifier key).
     pub chord: ChordState,
-    /// StickyKeys and SlowKeys.
+    /// StickyKeys, SlowKeys and BounceKeys.
     pub aids: crate::keyfilter::KeyAids,
+    /// The lone Ctrl tap that rings the pointer.
+    pub ctrl_tap: crate::locatepointer::CtrlTap,
     /// MouseKeys: the keypad driving the pointer.
     pub mouse_keys: crate::mousekeys::MouseKeysHost,
     /// The keyboard layouts.
@@ -91,6 +93,7 @@ impl KeyInput {
             last_key_input: false,
             chord: ChordState::default(),
             aids: Default::default(),
+            ctrl_tap: Default::default(),
             mouse_keys: Default::default(),
             layouts: Default::default(),
             inhibit: crate::shortcutinhibit::Inhibit::new(dh),
@@ -171,6 +174,9 @@ impl State {
         k.place = keys::place_key_for(keycode).filter(|s| !k.lower.contains(s));
         if aided && !self.aids_key(keycode, &k) {
             return;
+        }
+        if aided {
+            self.locate_key(keycode, &k.syms, pressed);
         }
         if aided && !self.mousekeys_key(keycode, pressed, &mods_before) {
             self.aids_after_key();
@@ -656,12 +662,13 @@ impl State {
         self.inputproto.shortcuts.send(hit, active, time_msec);
     }
 
-    /// A pointer button went down and was delivered: the Super tap and a
+    /// A pointer button went down and was delivered: the Super tap, the Ctrl tap and a
     /// modifier chord held now fire no more, the press used up the
     /// StickyKeys latch, and the next dialog opens without focus
     /// rectangles.
     pub fn keys_saw_button(&mut self) {
         self.key_input.super_tap_armed = false;
+        self.key_input.ctrl_tap.spoil();
         self.super_hold_cancelled();
         self.key_input.last_key_input = false;
         self.key_input.chord.spoil();
