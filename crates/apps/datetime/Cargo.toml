@@ -23,5 +23,6 @@ reprisefs = { path = "../../reprisefs" }
 reprisebus = { path = "../../reprisebus" }
 repriseconf = { path = "../../repriseconf" }
 zbus.workspace = true
+futures-util.workspace = true
 serde.workspace = true
 log.workspace = true
