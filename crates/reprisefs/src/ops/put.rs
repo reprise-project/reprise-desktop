@@ -111,11 +111,17 @@ fn same_kind(src: &Path, dest: &Path, moving: bool) -> bool {
 /// Move `src` into `dir` under `name`, or the first free numbering of it
 /// when the name is taken. Each candidate is tried by the move itself, so
 /// a name taken meanwhile (by another job, or by a dangling link) is
-/// passed over rather than retried. Returns the name it took.
-fn move_numbered(src: &Path, dir: &Path, name: &OsStr) -> Result<OsString, PutError> {
+/// passed over rather than retried. Returns the name it took. A move to
+/// another drive is stopped by `stop` ([`crate::trash::move_to_free_until`]).
+fn move_numbered(
+    src: &Path,
+    dir: &Path,
+    name: &OsStr,
+    stop: &AtomicBool,
+) -> Result<OsString, PutError> {
     let mut last = None;
     for candidate in crate::names::numbered(name, crate::names::paren).take(1000) {
-        match crate::trash::move_to_free(src, &dir.join(&candidate)) {
+        match crate::trash::move_to_free_until(src, &dir.join(&candidate), stop) {
             Ok(()) => return Ok(candidate),
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => last = Some(e),
             Err(e) => return Err(e.into()),
@@ -236,7 +242,12 @@ fn swap_back(new: &Path, dest: &Path) -> io::Result<()> {
 /// A file system without `RENAME_EXCHANGE` checks `dest` just before a
 /// plain rename: a file landing in the moment between the two is the one
 /// window left.
-fn swap_in(new: &Path, dest: &Path, expect: (u64, u64)) -> Result<Swap, PutError> {
+fn swap_in(
+    new: &Path,
+    dest: &Path,
+    expect: (u64, u64),
+    stop: &AtomicBool,
+) -> Result<Swap, PutError> {
     let dir = dest.parent().unwrap_or(Path::new("."));
     let name = dest.file_name().unwrap_or_default();
     match rename2(new, dest, libc::RENAME_EXCHANGE) {
@@ -251,7 +262,7 @@ fn swap_in(new: &Path, dest: &Path, expect: (u64, u64)) -> Result<Swap, PutError
             Ok(Swap::Replaced)
         }
         Ok(()) => match swap_back(new, dest) {
-            Ok(()) => Ok(Swap::Numbered(move_numbered(new, dir, name)?)),
+            Ok(()) => Ok(Swap::Numbered(move_numbered(new, dir, name, stop)?)),
             Err(e) => {
                 // `new` now holds another job's file, and ours holds the
                 // name: keep both.
@@ -260,7 +271,7 @@ fn swap_in(new: &Path, dest: &Path, expect: (u64, u64)) -> Result<Swap, PutError
                      ({e}); moving it aside",
                     dest.display()
                 );
-                match move_numbered(new, dir, name) {
+                match move_numbered(new, dir, name, stop) {
                     Ok(aside) => Ok(Swap::Displaced(aside)),
                     Err(e) => {
                         log::warn!(
@@ -276,14 +287,14 @@ fn swap_in(new: &Path, dest: &Path, expect: (u64, u64)) -> Result<Swap, PutError
             }
         },
         Err(e) if e.kind() == io::ErrorKind::NotFound && std::fs::symlink_metadata(new).is_ok() => {
-            Ok(Swap::Numbered(move_numbered(new, dir, name)?))
+            Ok(Swap::Numbered(move_numbered(new, dir, name, stop)?))
         }
         Err(e) if unsupported(&e) => {
             if id_at(dest) == Some(expect) {
                 std::fs::rename(new, dest)?;
                 Ok(Swap::Replaced)
             } else {
-                Ok(Swap::Numbered(move_numbered(new, dir, name)?))
+                Ok(Swap::Numbered(move_numbered(new, dir, name, stop)?))
             }
         }
         Err(e) => Err(e.into()),
@@ -312,9 +323,20 @@ fn sync_tree(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Tests: set by the next flush, as a job's watch giving up on a flush that stalls sets it.
+    pub(crate) static STOP_IN_FLUSH: std::cell::Cell<Option<std::sync::Arc<AtomicBool>>> =
+        const { std::cell::Cell::new(None) };
+}
+
 /// Flush `path` and the folder entry that names it.
 /// Under a job it runs outside the job's watch: a slow disk takes as long as it takes.
 pub(crate) fn sync_landed(path: &Path) -> io::Result<()> {
+    #[cfg(test)]
+    if let Some(stop) = STOP_IN_FLUSH.take() {
+        stop.store(true, Ordering::Relaxed);
+    }
     crate::progress::flushing(|| {
         sync_tree(path)?;
         let dir = path.parent().unwrap_or(Path::new("."));
@@ -360,7 +382,7 @@ fn make_part(dir: &Path, make: impl Fn(&Path) -> io::Result<()>) -> io::Result<P
 /// The cancelled copy's error.
 /// Checked right before a put changes anything: a job that gave up on a stuck look has said nothing
 /// changed, so the look returning late moves and makes nothing.
-fn go_on(stop: &AtomicBool) -> io::Result<()> {
+pub(crate) fn go_on(stop: &AtomicBool) -> io::Result<()> {
     match stop.load(Ordering::Relaxed) {
         true => Err(io::Error::new(
             io::ErrorKind::Interrupted,
@@ -439,7 +461,7 @@ fn replace_into(
             if moving && from.dev() != to.dev() {
                 refuse_stuck_original(src)?;
             }
-            replace_file(src, dest, &from, moving, expect)
+            replace_file(src, dest, &from, moving, expect, stop)
         }
         _ => Err(PutError::Occupied),
     }
@@ -592,7 +614,7 @@ fn merge_into(
         match std::fs::symlink_metadata(&to) {
             Err(e) if e.kind() == io::ErrorKind::NotFound => {
                 if moving {
-                    crate::trash::move_to_free(&from, &to)?;
+                    crate::trash::move_to_free_until(&from, &to, stop)?;
                 } else if kind.is_dir() {
                     copy_dir_until(&from, &to, stop)?;
                 } else if kind.is_symlink() {
@@ -613,7 +635,7 @@ fn merge_into(
                     continue;
                 };
                 if let Swap::Numbered(name) | Swap::Displaced(name) =
-                    replace_file(&from, &to, &meta, moving, seen.id())?
+                    replace_file(&from, &to, &meta, moving, seen.id(), stop)?
                 {
                     log::info!(
                         "reprisefs: {} changed during the merge; {} is beside it",
@@ -647,19 +669,21 @@ fn merge_into(
 /// metadata. A file that is `dest` itself (another link to it, or a link
 /// pointing at it) is refused, since the replacement would remove it.
 /// A move to another drive flushes the copy to the disk before it
-/// removes the original.
+/// removes the original. `stop` set by the time the copy is written (and
+/// flushed) removes the copy and changes nothing.
 pub(super) fn replace_file(
     src: &Path,
     dest: &Path,
     from: &std::fs::Metadata,
     moving: bool,
     expect: (u64, u64),
+    stop: &AtomicBool,
 ) -> Result<Swap, PutError> {
     if is_itself(src, from, &std::fs::symlink_metadata(dest)?) {
         return Err(PutError::SameFile);
     }
     if moving {
-        match swap_in(src, dest, expect) {
+        match swap_in(src, dest, expect, stop) {
             Err(PutError::Io(e)) if e.raw_os_error() == Some(libc::EXDEV) => {}
             done => return done,
         }
@@ -671,12 +695,13 @@ pub(super) fn replace_file(
     } else {
         make_part(dir, |p| copy_new(src, p))?
     };
-    if moving && let Err(e) = sync_landed(&part) {
+    let landed = if moving { sync_landed(&part) } else { Ok(()) };
+    if let Err(e) = landed.and_then(|()| go_on(stop)) {
         let _ = std::fs::remove_file(&part);
         return Err(e.into());
     }
     // `swap_in` fails only before its swap, while `part` is still ours.
-    let swap = swap_in(&part, dest, expect).inspect_err(|_| {
+    let swap = swap_in(&part, dest, expect, stop).inspect_err(|_| {
         let _ = std::fs::remove_file(&part);
     })?;
     if moving {
@@ -839,7 +864,7 @@ pub(crate) fn put_in_until(
                 // would delete whatever shares the name without a word. A
                 // taken name is numbered past instead.
                 go_on(stop)?;
-                (move_numbered(src, dir, &file_name)?, false)
+                (move_numbered(src, dir, &file_name, stop)?, false)
             };
             let mut landed = Landing::new(landed);
             // The old folder's list lets go of the name; the new one

@@ -741,6 +741,7 @@ fn a_changed_target_is_swapped_back_and_numbered() {
             &from,
             moving,
             asked_about,
+            &AtomicBool::new(false),
         ) {
             Ok(Swap::Numbered(name)) => assert_eq!(name, want),
             Ok(_) => panic!("expected to land numbered beside another job's file"),
@@ -773,7 +774,14 @@ fn a_failed_swap_back_keeps_both_files() {
     fs::write(b.join("x.txt"), "another job's").unwrap();
     let from = fs::metadata(a.join("x.txt")).unwrap();
     FAIL_SWAP_BACK.with(|f| f.set(true));
-    let swap = replace_file(&a.join("x.txt"), &b.join("x.txt"), &from, false, (0, 0));
+    let swap = replace_file(
+        &a.join("x.txt"),
+        &b.join("x.txt"),
+        &from,
+        false,
+        (0, 0),
+        &AtomicBool::new(false),
+    );
     FAIL_SWAP_BACK.with(|f| f.set(false));
     match swap {
         Ok(Swap::Displaced(aside)) => {
@@ -810,6 +818,7 @@ fn the_target_asked_about_is_swapped_out() {
         &from,
         false,
         (m.dev(), m.ino()),
+        &AtomicBool::new(false),
     );
     assert!(matches!(swap, Ok(Swap::Replaced)));
     assert_eq!(fs::read_to_string(b.join("x.txt")).unwrap(), "new");
@@ -1140,6 +1149,54 @@ fn a_stopped_put_moves_copies_and_links_nothing() {
     }
     assert!(src.exists(), "the source stays");
     assert_eq!(fs::read_dir(&dest).unwrap().count(), 0, "nothing lands");
+}
+
+/// A move to another drive stopped while its copy flushes keeps the source and lands nothing,
+/// on a free name and over a file alike.
+#[test]
+fn a_move_to_another_drive_stopped_during_the_flush_keeps_the_source() {
+    use std::os::unix::fs::MetadataExt;
+    let shm = tempfile::tempdir_in("/dev/shm").unwrap();
+    let t = tempfile::tempdir().unwrap();
+    let dev = |p: &Path| fs::metadata(p).unwrap().dev();
+    if dev(shm.path()) == dev(t.path()) {
+        eprintln!("/dev/shm and the temp dir share a device: nothing to cross");
+        return;
+    }
+    let src = shm.path().join("x.txt");
+    fs::write(&src, "new").unwrap();
+    let (free, taken) = (t.path().join("free"), t.path().join("taken"));
+    fs::create_dir_all(&free).unwrap();
+    fs::create_dir_all(&taken).unwrap();
+    fs::write(taken.join("x.txt"), "old").unwrap();
+    for dir in [&free, &taken] {
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        super::put::STOP_IN_FLUSH.set(Some(stop.clone()));
+        let put = put_in_until(
+            &src,
+            "x.txt",
+            false,
+            dir,
+            DropOp::Move,
+            &[],
+            &|_| None,
+            yes(Seen::of(&dir.join("x.txt"))).as_ref(),
+            &stop,
+        );
+        assert!(
+            matches!(&put, Err(PutError::Io(e)) if e.kind() == io::ErrorKind::Interrupted),
+            "the move into {} is interrupted: {put:?}",
+            dir.display()
+        );
+    }
+    assert_eq!(fs::read_to_string(&src).unwrap(), "new");
+    assert_eq!(fs::read_dir(&free).unwrap().count(), 0, "nothing lands");
+    assert_eq!(
+        fs::read_dir(&taken).unwrap().count(),
+        1,
+        "no copy is left beside the file"
+    );
+    assert_eq!(fs::read_to_string(taken.join("x.txt")).unwrap(), "old");
 }
 
 #[test]

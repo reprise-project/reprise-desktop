@@ -7,11 +7,12 @@ use std::io::{self, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 
 use crate::bincap::{self, Fate, Policy, Rule};
 use crate::bindir::{self, BinDir};
 use crate::locale;
-use crate::ops::{copy_dir_all, refuse_holding_mount, refuse_mount_point};
+use crate::ops::{copy_dir_until, refuse_holding_mount, refuse_mount_point, remove_tree};
 use crate::places;
 use crate::progress::Meter;
 
@@ -80,7 +81,7 @@ pub fn trash_in(root: &Path, path: &Path) -> io::Result<Trashed> {
         let files = files_dir.join(&stem);
         let moved = claim
             .write_all(body.as_bytes())
-            .and_then(|()| move_free(&original, &files, false));
+            .and_then(|()| move_free(&original, &files, None));
         match moved {
             Ok(()) => break (files, info),
             Err(e) => {
@@ -868,10 +869,10 @@ fn create_dir(dir: &Path) -> io::Result<()> {
         .create(dir)
 }
 
-pub(crate) fn move_path(from: &Path, to: &Path) -> io::Result<()> {
+fn move_path(from: &Path, to: &Path, stop: &AtomicBool) -> io::Result<()> {
     match std::fs::rename(from, to) {
         Ok(()) => Ok(()),
-        Err(e) if e.raw_os_error() == Some(libc::EXDEV) => copy_then_remove(from, to),
+        Err(e) if e.raw_os_error() == Some(libc::EXDEV) => copy_then_remove(from, to, stop),
         Err(e) => Err(e),
     }
 }
@@ -881,21 +882,26 @@ pub(crate) fn move_path(from: &Path, to: &Path) -> io::Result<()> {
 /// points at and unlinking only the link. A mount point is refused before
 /// the copy, as [`move_to_free`] refuses it before the rename, and so is a
 /// folder holding one: the remove would empty that drive.
-fn copy_then_remove(from: &Path, to: &Path) -> io::Result<()> {
+/// `stop` set by the time the copy is flushed removes the copy and keeps `from`.
+fn copy_then_remove(from: &Path, to: &Path, stop: &AtomicBool) -> io::Result<()> {
     refuse_mount_point(from)?;
     let kind = std::fs::symlink_metadata(from)?.file_type();
-    if kind.is_symlink() {
-        std::os::unix::fs::symlink(std::fs::read_link(from)?, to)?;
-        crate::ops::sync_landed(to)?;
-        std::fs::remove_file(from)
-    } else if kind.is_dir() {
+    if kind.is_dir() {
         refuse_holding_mount(from)?;
-        copy_dir_all(from, to)?;
-        crate::ops::sync_landed(to)?;
-        crate::ops::erase_stepped(from)
+        copy_dir_until(from, to, stop)?;
+    } else if kind.is_symlink() {
+        std::os::unix::fs::symlink(std::fs::read_link(from)?, to)?;
     } else {
         crate::ops::copy_new(from, to)?;
-        crate::ops::sync_landed(to)?;
+    }
+    let landed = crate::ops::sync_landed(to).and_then(|()| crate::ops::go_on(stop));
+    if let Err(e) = landed {
+        let _ = remove_tree(to);
+        return Err(e);
+    }
+    if kind.is_dir() {
+        crate::ops::erase_stepped(from)
+    } else {
         std::fs::remove_file(from)
     }
 }
@@ -910,13 +916,19 @@ fn copy_then_remove(from: &Path, to: &Path) -> io::Result<()> {
 /// `from` that [is a mount point](crate::ops::is_mount_point) is refused
 /// with `ResourceBusy` before anything moves.
 pub fn move_to_free(from: &Path, to: &Path) -> io::Result<()> {
-    move_free(from, to, true)
+    move_to_free_until(from, to, &AtomicBool::new(false))
 }
 
-/// [`move_to_free`], copying across file systems only with `copy`;
-/// without it a move onto another file system fails with
+/// [`move_to_free`], whose copy to another file system is stopped by `stop` as
+/// [`copy_then_remove`] stops it.
+pub(crate) fn move_to_free_until(from: &Path, to: &Path, stop: &AtomicBool) -> io::Result<()> {
+    move_free(from, to, Some(stop))
+}
+
+/// [`move_to_free`], copying across file systems only with `copy`, stopped by
+/// its flag; without it a move onto another file system fails with
 /// `CrossesDevices`.
-fn move_free(from: &Path, to: &Path, copy: bool) -> io::Result<()> {
+fn move_free(from: &Path, to: &Path, copy: Option<&AtomicBool>) -> io::Result<()> {
     refuse_mount_point(from)?;
     if same_file_other_case(from, to) {
         return rename_case(from, to);
@@ -954,11 +966,13 @@ fn move_free(from: &Path, to: &Path, copy: bool) -> io::Result<()> {
     match e.raw_os_error() {
         Some(libc::EEXIST) => Err(taken()),
         Some(libc::EXDEV) if std::fs::symlink_metadata(to).is_ok() => Err(taken()),
-        Some(libc::EXDEV) if !copy => Err(io::Error::new(
-            io::ErrorKind::CrossesDevices,
-            "it is on another drive",
-        )),
-        Some(libc::EXDEV) => copy_then_remove(from, to),
+        Some(libc::EXDEV) => match copy {
+            Some(stop) => copy_then_remove(from, to, stop),
+            None => Err(io::Error::new(
+                io::ErrorKind::CrossesDevices,
+                "it is on another drive",
+            )),
+        },
         Some(libc::EINVAL) | Some(libc::ENOSYS) => {
             // No RENAME_NOREPLACE here. A file or a link is linked in
             // under the new name first, which refuses a taken name in the
@@ -978,10 +992,9 @@ fn move_free(from: &Path, to: &Path, copy: bool) -> io::Result<()> {
             if std::fs::symlink_metadata(to).is_ok() {
                 return Err(taken());
             }
-            if copy {
-                move_path(from, to)
-            } else {
-                std::fs::rename(from, to)
+            match copy {
+                Some(stop) => move_path(from, to, stop),
+                None => std::fs::rename(from, to),
             }
         }
         _ => Err(e),
@@ -1766,7 +1779,7 @@ mod tests {
         std::fs::create_dir(&to).unwrap();
         std::fs::write(to.join("theirs.txt"), "theirs").unwrap();
 
-        let e = copy_then_remove(&from, &to).unwrap_err();
+        let e = copy_then_remove(&from, &to, &AtomicBool::new(false)).unwrap_err();
 
         assert_eq!(e.kind(), io::ErrorKind::AlreadyExists);
         assert_eq!(
@@ -1796,9 +1809,9 @@ mod tests {
 
         if dev(shm.path()) == dev(t.path()) {
             eprintln!("/dev/shm and the temp dir share a device: calling copy_then_remove");
-            copy_then_remove(&from, &to).unwrap();
+            copy_then_remove(&from, &to, &AtomicBool::new(false)).unwrap();
         } else {
-            move_path(&from, &to).unwrap();
+            move_path(&from, &to, &AtomicBool::new(false)).unwrap();
         }
 
         assert!(!from.exists(), "the original is gone");
@@ -1814,7 +1827,7 @@ mod tests {
         let link = t.path().join("link");
         std::os::unix::fs::symlink(&target, &link).unwrap();
         let to = t.path().join("moved");
-        copy_then_remove(&link, &to).unwrap();
+        copy_then_remove(&link, &to, &AtomicBool::new(false)).unwrap();
         assert!(!link.exists() && std::fs::symlink_metadata(&link).is_err());
         assert!(
             std::fs::symlink_metadata(&to)
@@ -1829,15 +1842,46 @@ mod tests {
         );
         let f = t.path().join("f.txt");
         std::fs::write(&f, "hi").unwrap();
-        copy_then_remove(&f, &t.path().join("g.txt")).unwrap();
+        copy_then_remove(&f, &t.path().join("g.txt"), &AtomicBool::new(false)).unwrap();
         assert!(!f.exists());
         assert_eq!(
             std::fs::read_to_string(t.path().join("g.txt")).unwrap(),
             "hi"
         );
-        copy_then_remove(&target, &t.path().join("dir")).unwrap();
+        copy_then_remove(&target, &t.path().join("dir"), &AtomicBool::new(false)).unwrap();
         assert!(!target.exists());
         assert!(t.path().join("dir/keep.txt").exists());
+    }
+
+    #[test]
+    fn copy_then_remove_stopped_during_the_flush_keeps_the_original() {
+        let t = tempfile::tempdir().unwrap();
+        let (file, folder, link) = (t.path().join("a"), t.path().join("b"), t.path().join("c"));
+        std::fs::write(&file, "a").unwrap();
+        std::fs::create_dir(&folder).unwrap();
+        std::fs::write(folder.join("inner.txt"), "b").unwrap();
+        std::os::unix::fs::symlink(&file, &link).unwrap();
+        for from in [&file, &folder, &link] {
+            let stop = std::sync::Arc::new(AtomicBool::new(false));
+            crate::ops::STOP_IN_FLUSH.set(Some(stop.clone()));
+            let to = t.path().join("moved");
+            let e = copy_then_remove(from, &to, &stop).unwrap_err();
+            assert_eq!(e.kind(), io::ErrorKind::Interrupted);
+            assert!(
+                std::fs::symlink_metadata(from).is_ok(),
+                "{} stays",
+                from.display()
+            );
+            assert!(
+                std::fs::symlink_metadata(&to).is_err(),
+                "no copy of {} is left",
+                from.display()
+            );
+        }
+        assert_eq!(
+            std::fs::read_to_string(folder.join("inner.txt")).unwrap(),
+            "b"
+        );
     }
 
     fn capped() -> (tempfile::TempDir, Bins, PathBuf, u64) {

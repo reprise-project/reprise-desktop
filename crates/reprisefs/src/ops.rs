@@ -8,14 +8,17 @@ mod mounts;
 mod put;
 
 pub use copy::copy_dir_all;
-use copy::copy_dir_until;
-pub(crate) use copy::{copy_new, remove_tree};
+pub(crate) use copy::{copy_dir_until, copy_new, remove_tree};
 pub use erase::erase;
 pub(crate) use erase::{entries_at, erase_at, erase_counted, erase_stepped, unlink_at};
 pub use fileio::{copy_xattrs, create_temp_beside, read_regular, write_atomic};
 pub(crate) use fileio::{read_held, read_opened};
 pub use mounts::{is_mount_point, mount_root, refuse_holding_mount, refuse_mount_point};
-pub(crate) use put::{Landing, merge_clashes, put_in_until, rename2, sync_landed, unsupported};
+#[cfg(test)]
+pub(crate) use put::STOP_IN_FLUSH;
+pub(crate) use put::{
+    Landing, go_on, merge_clashes, put_in_until, rename2, sync_landed, unsupported,
+};
 pub use put::{PutError, put_in, put_in_with, same_device, same_folder};
 
 use std::ffi::{OsStr, OsString};
