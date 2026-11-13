@@ -299,6 +299,7 @@ pub struct FileShortcutOverlay {
 #[serde(deny_unknown_fields)]
 pub struct FileLauncher {
     pub search_files: Option<bool>,
+    pub contents: Option<bool>,
     pub windows: Option<bool>,
     pub providers: Option<Vec<String>>,
     pub providers_off: Option<Vec<String>>,

@@ -95,11 +95,13 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   `mbit` or `mbps` a megabit), pressure, energy and power; the amount can be
   a sum (`2*3 km in m`). File search
   uses plocate's database when it has one and `fd` when it doesn't, so
-  nothing crawls your disk in the background. With localsearch installed, a
-  Contents section under the names lists files whose text or metadata holds
-  the words typed ("quarterly tax" finds the PDF that says it); the Start
-  menu's search box shows it too. The first search starts localsearch, which
-  then indexes in the background. Right-click a row, or press
+  nothing crawls your disk in the background. Turn on "Find files by their
+  contents" in Settings > Search (`[launcher] contents`, off by default) and,
+  with localsearch installed, a Contents section under the names lists files
+  whose text or metadata holds the words typed ("quarterly tax" finds the PDF
+  that says it); the Start menu's search box shows it too. The first search
+  after turning it on starts localsearch, which then indexes in the
+  background; while it is off, Reprise never asks or starts localsearch. Right-click a row, or press
   the menu key, for the Start menu's program menu or a file's menu; Open
   file location (or Ctrl+Enter) shows the file selected in its folder.
   Open windows show up too, by title or program name, on any desktop:
@@ -112,6 +114,8 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   one in its program, Ctrl+Enter opens the program searching for the same
   words. Each program has a few seconds to answer, so a slow one never holds
   back the rest. Settings > Search turns each one off and orders them.
+  Files searches through localsearch, so it is asked only while "Find files
+  by their contents" is on.
 - **Uninstall.** A program's right-click menu in the Start menu, All
   Programs and the launcher has Uninstall...: a Flatpak leaves the
   installation it came from, a program from the system's packages leaves

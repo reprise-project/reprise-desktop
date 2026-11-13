@@ -1471,7 +1471,20 @@ stop the share first.
   32 MiB or less, opened without blocking, and decoded on the tray icons'
   two threads below, 4 at a time per sender; one that takes over 2 s,
   counting its wait for a thread, is left out.
-- **Content search.** The launcher asks localsearch's endpoint over the
+- **Content search.** Off by default (`[launcher] contents`): until it is
+  turned on, the launcher and the Start menu's search never call
+  localsearch, so the bus never starts the indexer for them. The Search
+  page in Settings only asks the bus whether the name has an owner or can
+  be started (`NameHasOwner`, `ListActivatableNames`), which starts
+  nothing. Turned on, the first search starts localsearch, which then
+  reads and indexes the files in the folders it is set to crawl and keeps
+  that index under `~/.cache/tracker3` whether or not Reprise searches it
+  again; turning the check off stops Reprise asking but leaves the indexer
+  and its index as they are. A search provider whose program searches
+  through localsearch itself, and so would start it (Files), is not asked
+  while the check is off, whatever its tick under Program Results; its
+  row there greys with a note. The launcher asks
+  localsearch's endpoint over the
   session bus. The typed words reach it as a bound
   argument, never spliced into the query, and the answer is read off the
   compositor's loop: 1 MiB at most, within 3 s, only `file:///` URLs kept.

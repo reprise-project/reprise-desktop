@@ -8,6 +8,15 @@ use std::path::{Path, PathBuf};
 const VERSION: &str = "2";
 const GROUP: &str = "[Shell Search Provider]";
 
+/// The desktop ids of programs whose provider searches through localsearch and so starts the
+/// file indexer when asked: none is asked while `[launcher] contents` is off.
+pub const STARTS_INDEXER: [&str; 1] = ["org.gnome.Nautilus.desktop"];
+
+/// Whether asking `desktop_id`'s provider starts the file indexer ([`STARTS_INDEXER`]).
+pub fn starts_indexer(desktop_id: &str) -> bool {
+    STARTS_INDEXER.contains(&desktop_id)
+}
+
 /// One provider file: whose program it is and where on the session bus it answers.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Provider {

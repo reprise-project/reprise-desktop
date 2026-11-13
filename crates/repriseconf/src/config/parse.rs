@@ -936,6 +936,9 @@ impl Config {
             if let Some(v) = l.search_files {
                 cfg.launcher_files = v;
             }
+            if let Some(v) = l.contents {
+                cfg.launcher_contents = v;
+            }
             if let Some(v) = l.windows {
                 cfg.launcher_windows = v;
             }

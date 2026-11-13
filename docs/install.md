@@ -509,7 +509,8 @@ desktop and stays out of the way when it's missing.
   Evolution
 - plocate with its database, or fd, for files in the launcher and Explorer's Search
 - localsearch, for files found by their contents in the launcher and the Start
-  menu's search (Settings > Search says when it is missing)
+  menu's search once Settings > Search turns it on (it says when localsearch is
+  missing)
 - Freedesktop thumbnailers, for thumbnails of files Reprise does not decode
   itself (`[thumbnail_cache] external_thumbnailers`): papers or evince for
   PDF, PostScript, DjVu and comic books, ffmpegthumbnailer for videos,
