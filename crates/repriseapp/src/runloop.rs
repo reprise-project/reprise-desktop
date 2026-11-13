@@ -263,6 +263,7 @@ pub fn run(app: Box<dyn App>) -> Result<(), RunError> {
         slots: Vec::new(),
         focus: None,
         keyboard: None,
+        xkb: Default::default(),
         keyboard_due: false,
         pointer: None,
         mods: Modifiers::default(),

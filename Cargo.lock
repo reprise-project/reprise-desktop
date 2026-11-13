@@ -4783,6 +4783,7 @@ dependencies = [
  "tempfile",
  "wayland-client",
  "wayland-scanner",
+ "xkbcommon 0.8.0",
  "zeroize",
 ]
 
