@@ -255,7 +255,7 @@ impl IconTheme {
             let mut inherits_all: Vec<String> = Vec::new();
             // Every subdirectory any root's index names: a theme's directories count in every
             // root, with or without an `index.theme` there.
-            let mut subdirs: Vec<(PathBuf, DirEntry)> = Vec::new();
+            let mut subdirs: Vec<DirEntry> = Vec::new();
             let mut seen: HashSet<PathBuf> = HashSet::new();
             // A root without the theme holds none of its directories: leaving it out keeps
             // lookups and size orders from walking them.
@@ -267,17 +267,21 @@ impl IconTheme {
             for base in &bases {
                 let (inherits, d) = parse_index(base);
                 for e in d {
-                    let rel = e.path.strip_prefix(base).unwrap_or(&e.path).to_path_buf();
-                    if seen.insert(rel.clone()) {
-                        subdirs.push((rel, e));
+                    if seen.insert(e.path.clone()) {
+                        subdirs.push(e);
                     }
                 }
                 inherits_all.extend(inherits);
             }
             for base in bases {
-                dirs.extend(subdirs.iter().map(|(rel, e)| DirEntry {
-                    path: base.join(rel),
-                    ..e.clone()
+                dirs.extend(subdirs.iter().map(|e| DirEntry {
+                    path: base.join(&e.path),
+                    size: e.size,
+                    scale: e.scale,
+                    kind: e.kind,
+                    min: e.min,
+                    max: e.max,
+                    threshold: e.threshold,
                 }));
                 dir_home.resize(dirs.len(), homes.len());
                 homes.push(Home {
@@ -337,16 +341,12 @@ impl IconTheme {
         let mut seen = HashSet::new();
         let mut out = Vec::new();
         let homes = self.homes.iter().map(|h| h.path.as_path());
-        let sizes = self.dirs.iter().zip(&self.dir_home).filter_map(|(d, &h)| {
-            let home = &self.homes[h].path;
-            d.path
-                .ancestors()
-                .take_while(|p| p.starts_with(home) && *p != home.as_path())
-                .find(|p| p.is_dir())
-        });
+        let sizes = (self.dirs.iter().zip(&self.dir_home))
+            .filter_map(|(d, &h)| closest_made(&d.path, &self.homes[h].path));
         let roots = self.roots.iter().map(PathBuf::as_path);
+        // By bytes: every path here is a root or joined onto one, so equal paths are equal bytes.
         for dir in roots.chain(homes).chain(sizes) {
-            if seen.insert(dir) {
+            if seen.insert(dir.as_os_str()) {
                 out.push(dir.to_path_buf());
             }
         }
@@ -459,6 +459,33 @@ impl IconTheme {
                     .collect()
             }
         }
+    }
+}
+
+/// `dir` or its closest ancestor that is a directory, strictly inside `home`.
+fn closest_made<'a>(dir: &'a Path, home: &Path) -> Option<&'a Path> {
+    use std::os::unix::ffi::OsStrExt;
+    let (d, h) = (dir.as_os_str().as_bytes(), home.as_os_str().as_bytes());
+    // `walk` joins plain names onto `home`: step up by cutting at each '/', no component parsing.
+    let rel = d.strip_prefix(h).and_then(|r| r.strip_prefix(b"/"));
+    let plain = rel.is_some_and(|r| {
+        !h.ends_with(b"/")
+            && r.split(|&b| b == b'/')
+                .all(|c| !matches!(c, b"" | b"." | b".."))
+    });
+    if !plain {
+        return dir
+            .ancestors()
+            .take_while(|p| p.starts_with(home) && *p != home)
+            .find(|p| p.is_dir());
+    }
+    let mut end = d.len();
+    loop {
+        let p = Path::new(std::ffi::OsStr::from_bytes(&d[..end]));
+        if p.is_dir() {
+            return Some(p);
+        }
+        end = h.len() + 1 + d[h.len() + 1..end].iter().rposition(|&b| b == b'/')?;
     }
 }
 
