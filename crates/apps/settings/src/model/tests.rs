@@ -991,6 +991,17 @@ fn shortcuts_default_to_the_compositors_list() {
 }
 
 #[test]
+fn every_compositor_action_bound_in_the_file_lets_apply_through() {
+    for (id, _, _) in repriseconf::keybind::ACTION_NAMES {
+        let s = load(&format!(
+            "[[keybinds]]\nkeys = \"Super+F9\"\naction = \"{id}\"\n"
+        ));
+        assert!(s.shortcuts.iter().any(|sc| sc.action == *id), "{id} loads");
+        assert_eq!(validate(&s, &s), Ok(()), "{id}");
+    }
+}
+
+#[test]
 fn a_keybinds_table_in_the_file_layers_over_the_defaults() {
     let text = "[[keybinds]]\nkeys = \"Super+t\"\naction = \"spawn\"\ncommand = \"foot\"\n\n\
                 [[keybinds]]\nkeys = \"Super+q\"\naction = \"none\"\n\n\
@@ -1566,9 +1577,6 @@ fn shortcut_rows_read_as_plain_names() {
     assert_eq!(action_text("spawn", Some("")), "Run a command");
     assert_eq!(action_text(repriseconf::keybind::NONE, None), "Nothing");
     assert_eq!(action_text("bogus", None), "bogus");
-    for a in ACTIONS.iter().filter(|a| **a != "spawn") {
-        assert!(repriseconf::keybind::describe(a).is_some(), "{a}");
-    }
 }
 
 #[test]

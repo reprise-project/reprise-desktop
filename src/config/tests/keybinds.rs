@@ -329,3 +329,24 @@ fn lock_action_and_default_bind() {
     let c = Config::parse("[[keybinds]]\nkeys = \"Super+F12\"\naction = \"lock\"\n").unwrap();
     assert_eq!(action_on(&c, "Super+F12"), Some(Action::Lock));
 }
+
+/// With `every_named_action_parses_and_names_itself`, `ACTION_NAMES` and `from_parts` agree, so
+/// Settings' action list (built from `ACTION_NAMES`) offers every action.
+#[test]
+fn every_action_from_parts_takes_is_in_action_names() {
+    let src = include_str!("../keybinds.rs");
+    let body = src.split("pub fn from_parts").nth(1).unwrap();
+    let body = body.split("other => return Err").next().unwrap();
+    let ids: Vec<&str> = (body.lines())
+        .filter_map(|l| l.trim().strip_prefix('"')?.split_once("\" =>"))
+        .map(|(id, _)| id)
+        .filter(|id| *id != "spawn")
+        .collect();
+    let named: Vec<&str> = (repriseconf::keybind::ACTION_NAMES.iter())
+        .map(|n| n.0)
+        .collect();
+    for id in &ids {
+        assert!(named.contains(id), "ACTION_NAMES lists {id}");
+    }
+    assert_eq!(ids.len(), named.len(), "one ACTION_NAMES row per action");
+}
