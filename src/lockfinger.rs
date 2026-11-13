@@ -12,7 +12,6 @@ use std::os::fd::{AsFd, AsRawFd, RawFd};
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 pub const SERVICE: &str = "reprise-fingerprint";
@@ -24,7 +23,26 @@ pub const RDP_SERVICE: &str = "reprise-rdp";
 pub const RELEASE_GRACE: Duration = Duration::from_millis(500);
 
 /// Ended conversations still running, unreaped so their pids stay theirs, and when each is killed.
-static ENDING: Mutex<Vec<(libc::pid_t, Instant)>> = Mutex::new(Vec::new());
+type Ending = Vec<(libc::pid_t, Instant)>;
+
+#[cfg(not(test))]
+static ENDING: std::sync::Mutex<Ending> = std::sync::Mutex::new(Vec::new());
+
+// Tests run side by side, each reaping and killing only the conversations it ended.
+#[cfg(test)]
+thread_local! {
+    static ENDING: std::cell::RefCell<Ending> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+#[cfg(not(test))]
+fn ending<R>(f: impl FnOnce(&mut Ending) -> R) -> R {
+    f(&mut crate::mutex::lock(&ENDING))
+}
+
+#[cfg(test)]
+fn ending<R>(f: impl FnOnce(&mut Ending) -> R) -> R {
+    ENDING.with_borrow_mut(f)
+}
 
 /// Without the service libpam would fall back to the `other` service.
 pub fn service_installed() -> bool {
@@ -228,7 +246,7 @@ impl Drop for Conversation {
         if let Ok(None) = self.child.try_wait() {
             // SAFETY: `pid` is our unreaped child, so it cannot be reused.
             unsafe { libc::kill(pid, libc::SIGINT) };
-            crate::mutex::lock(&ENDING).push((pid, Instant::now() + RELEASE_GRACE));
+            ending(|e| e.push((pid, Instant::now() + RELEASE_GRACE)));
         }
     }
 }
@@ -236,7 +254,10 @@ impl Drop for Conversation {
 /// Reap the ended conversations that are gone and kill those still running past their grace at `now`,
 /// leaving them to `spawn::reap_children`. Returns when the next one is due.
 pub fn reap_ended(now: Instant) -> Option<Instant> {
-    let mut ending = crate::mutex::lock(&ENDING);
+    ending(|e| reap(e, now))
+}
+
+fn reap(ending: &mut Ending, now: Instant) -> Option<Instant> {
     ending.retain(|&(pid, deadline)| {
         let mut status = 0;
         // SAFETY: `status` is a valid out-param; `pid` is our unreaped child.
@@ -703,10 +724,6 @@ pub(crate) mod tests {
         );
     }
 
-    /// Held by the tests that turn `reap_ended`, which kills every test's conversation past its
-    /// grace, not only its own.
-    pub(crate) static REAPING: Mutex<()> = Mutex::new(());
-
     /// Whether `pid` is gone or a zombie: no longer running.
     pub(crate) fn ended(pid: libc::pid_t) -> bool {
         match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
@@ -728,7 +745,6 @@ pub(crate) mod tests {
 
     #[test]
     fn dropping_interrupts_the_child_without_waiting_and_reap_ended_reaps_it() {
-        let _reaping = crate::mutex::lock(&REAPING);
         let dir = std::env::temp_dir().join(format!("reprise-finger-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let (mark, go) = (dir.join("released"), dir.join("go"));
@@ -756,7 +772,6 @@ pub(crate) mod tests {
 
     #[test]
     fn a_child_that_ignores_the_interrupt_is_killed_once_its_grace_is_over() {
-        let _reaping = crate::mutex::lock(&REAPING);
         let mut c = sh("trap '' INT; echo 'I ready'; exec sleep 60");
         let pid = c.pid();
         wait_until("the child says ready", || !c.read().0.is_empty());

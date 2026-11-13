@@ -1842,7 +1842,6 @@ mod tests {
 
     #[test]
     fn unlocking_does_not_wait_for_a_fingerprint_child_that_ignores_the_interrupt() {
-        let _reaping = crate::mutex::lock(&crate::lockfinger::tests::REAPING);
         let mut h = locked(|_, _| sh("exit 0"));
         h.state.lock.helpers.finger = |_| Some(sh("trap '' INT; echo 'I ready'; exec sleep 60"));
         let user = h.state.lock.console.as_ref().unwrap().user.clone();
