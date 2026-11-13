@@ -48,19 +48,24 @@ pub(crate) fn at_pick(size: (i32, i32), picked: (i32, i32), bounds: Option<(i32,
     size == bounded(picked, bounds)
 }
 
-/// The size a window of `size` takes when its bounds go from `was` to `now`: one at its
-/// program's pick under `was` stays at the pick, any other keeps its size; either held inside
-/// `now`.
+/// The size a window of `size` takes when its bounds go from `was` to `now`, side by side: a
+/// side at its program's pick under `was` stays at the pick, any other keeps its length; either
+/// held inside `now`.
 pub(crate) fn rebounded(
     size: (i32, i32),
     picked: (i32, i32),
     was: Option<(i32, i32)>,
     now: Option<(i32, i32)>,
 ) -> (i32, i32) {
-    match at_pick(size, picked, was) {
-        true => bounded(picked, now),
-        false => bounded(size, now),
-    }
+    let held = bounded(picked, was);
+    let side = |v: i32, pick: i32, held: i32| if v == held { pick } else { v };
+    bounded(
+        (
+            side(size.0, picked.0, held.0),
+            side(size.1, picked.1, held.1),
+        ),
+        now,
+    )
 }
 
 /// The main window's opening client size and its floor: a resizable window
@@ -92,6 +97,47 @@ pub(crate) fn configured_size(
         return (now, true);
     }
     ((asked.0.unwrap_or(now.0), asked.1.unwrap_or(now.1)), false)
+}
+
+/// What a window's configures leave it at: its size, the program's pick, the compositor's
+/// last bounds and asked size, and whether the size is the program's (`own`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Fit {
+    pub size: (i32, i32),
+    pub picked: (i32, i32),
+    pub bounds: Option<(i32, i32)>,
+    pub asked: (Option<i32>, Option<i32>),
+    pub own: bool,
+}
+
+impl Fit {
+    /// The fit after a configure asking `asked` with `bounds`. A size new bounds alone give
+    /// ([`rebounded`]) is the window's own, so configures that repeat the old ask leave it.
+    pub(crate) fn configured(
+        self,
+        asked: (Option<i32>, Option<i32>),
+        bounds: Option<(i32, i32)>,
+        resizing: bool,
+    ) -> Fit {
+        let (size, mut own) = configured_size(self.size, asked, self.asked, self.own, resizing);
+        let moved_bounds = bounds.is_some() && bounds != self.bounds;
+        let size = match moved_bounds && size == self.size {
+            true => {
+                let to = rebounded(size, self.picked, self.bounds, bounds);
+                own |= to != size;
+                to
+            }
+            false => size,
+        };
+        let bounds = bounds.or(self.bounds);
+        Fit {
+            size: held_size(size, asked, bounds),
+            bounds,
+            asked,
+            own,
+            ..self
+        }
+    }
 }
 
 /// The size a configure leaves a window at, held inside `bounds` on each side the window

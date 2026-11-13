@@ -5,8 +5,8 @@ use crate::draw::{buffer_damage, copy_pixels, next_buffer, surface_damage};
 use crate::reply::spawn_then;
 use crate::runloop::turn;
 use crate::sizing::{
-    MAX_SIDE, at_pick, configured_size, draw_scale, held_size, opening_size, rebounded, regrown,
-    sane_side,
+    Fit, MAX_SIDE, at_pick, configured_size, draw_scale, held_size, opening_size, rebounded,
+    regrown, sane_side,
 };
 use crate::windows::{
     Placement, flyout_wanted, main_wanted, output_containing, placement, reconcile,
@@ -732,6 +732,85 @@ fn a_window_at_its_pick_stays_at_it_under_other_bounds() {
 fn a_window_grown_past_new_bounds_is_held_inside_them() {
     let (pick, was, now) = ((760, 680), Some((1912, 1016)), Some((1912, 990)));
     assert_eq!(rebounded((1088, 1016), pick, was, now), (1088, 990));
+}
+
+#[test]
+fn a_side_at_its_pick_follows_new_bounds_while_the_other_keeps_its_length() {
+    let (pick, small, large) = ((552, 532), Some((944, 462)), Some((952, 486)));
+    assert_eq!(rebounded((568, 462), pick, small, large), (568, 486));
+    assert_eq!(rebounded((568, 486), pick, large, small), (568, 462));
+}
+
+// Settings' bounds at output scale 2 on a 1920x1080 screen. It picks 552x532 and the
+// compositor asks the 568 px width its remembered frame gives.
+const CLASSIC: (i32, i32) = (952, 486);
+const BLUE: (i32, i32) = (952, 476);
+const GLASS: (i32, i32) = (944, 462);
+
+/// A Settings window opened under the interface whose bounds are `bounds`: the compositor
+/// asks the remembered width and as much height as the bounds hold.
+fn settings_opened(bounds: (i32, i32)) -> Fit {
+    let pick = (552, 532);
+    let fit = Fit {
+        size: pick,
+        picked: pick,
+        bounds: None,
+        asked: (None, None),
+        own: false,
+    };
+    fit.configured((Some(568), Some(bounds.1)), Some(bounds), false)
+}
+
+/// After a switch the compositor sends the new bounds, asking a height inside them when the
+/// window no longer fits and repeating its last ask otherwise.
+fn switched(fit: Fit, bounds: (i32, i32)) -> Fit {
+    let last = fit.asked.1.expect("asked a height");
+    let asked = (
+        fit.asked.0,
+        Some(if fit.size.1 > bounds.1 {
+            bounds.1
+        } else {
+            last
+        }),
+    );
+    fit.configured(asked, Some(bounds), false)
+        .configured(asked, None, false)
+}
+
+#[test]
+fn an_interface_switch_leaves_a_window_held_by_its_bounds_at_the_size_a_fresh_open_gets() {
+    let looks = [("Classic", CLASSIC), ("Blue", BLUE), ("Glass", GLASS)];
+    for (from, was) in looks {
+        for (to, now) in looks {
+            let fit = switched(settings_opened(was), now);
+            assert_eq!(
+                fit.size,
+                settings_opened(now).size,
+                "{from} to {to} is {:?}",
+                settings_opened(now).size
+            );
+        }
+    }
+    let there_and_back = switched(switched(settings_opened(CLASSIC), GLASS), CLASSIC);
+    assert_eq!(there_and_back.size, (568, 486), "Glass back to Classic");
+}
+
+/// At 100% the 552x532 sheet fits under every interface and keeps its size.
+#[test]
+fn an_interface_switch_leaves_a_window_inside_its_bounds_at_its_size() {
+    let (classic, glass) = ((1912, 1016), (1904, 992));
+    let fit = Fit {
+        size: (552, 532),
+        picked: (552, 532),
+        bounds: None,
+        asked: (None, None),
+        own: false,
+    }
+    .configured((None, None), Some(classic), false);
+    assert_eq!(
+        fit.configured((None, None), Some(glass), false).size,
+        (552, 532)
+    );
 }
 
 /// A window that picks its own size stays inside the compositor's bounds: a Settings sheet
