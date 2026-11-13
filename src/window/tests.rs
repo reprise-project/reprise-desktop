@@ -1728,3 +1728,23 @@ fn a_window_taking_its_own_frame_asks_only_its_output() {
     h.state.set_csd(b.id, false);
     assert_eq!(take_scene_outputs(), ["TEST-2"], "b's frame comes back");
 }
+
+#[test]
+fn a_closed_menu_asks_for_frames_only_on_its_output() {
+    use crate::backend::take_asked_outputs;
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    h.output("TEST-2", 1024, 768);
+    let mut c = h.connect();
+    let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+    let menu = h.map_popup(&mut c, t, 100, 80);
+    assert_eq!(h.state.win(t.id).unwrap().popups.len(), 1, "the menu shows");
+    take_asked_outputs();
+    c.hide_popup(&menu);
+    h.roundtrip(&mut c);
+    assert!(
+        h.state.win(t.id).unwrap().popups.is_empty(),
+        "the menu is gone"
+    );
+    assert_eq!(take_asked_outputs(), ["TEST-1"], "it goes from TEST-1");
+}

@@ -728,6 +728,48 @@ impl Harness {
         surface
     }
 
+    /// A `w`x`h` xdg popup on a fresh top-layer panel in the output's top-left corner, both
+    /// mapped with their first buffers, as a panel's menu opens.
+    pub fn map_layer_popup(&mut self, c: &mut TestClient, w: i32, h: i32) -> Popup {
+        use zwlr_layer_surface_v1::Anchor;
+        let qh = c.qh();
+        let compositor = c.side.compositor.clone().expect("wl_compositor");
+        let panel = compositor.create_surface(&qh, ());
+        let layer = (c.side.layer_shell.as_ref())
+            .expect("zwlr_layer_shell_v1")
+            .get_layer_surface(
+                &panel,
+                None,
+                zwlr_layer_shell_v1::Layer::Top,
+                "test.panel".into(),
+                &qh,
+                panel.clone(),
+            );
+        layer.set_anchor(Anchor::Top | Anchor::Left);
+        layer.set_size(200, 30);
+        panel.commit();
+        self.roundtrip(c);
+        self.roundtrip(c);
+        let wm = c.side.wm_base.clone().expect("xdg_wm_base");
+        let surface = compositor.create_surface(&qh, ());
+        let xdg = wm.get_xdg_surface(&surface, &qh, ());
+        let positioner = wm.create_positioner(&qh, ());
+        positioner.set_size(w, h);
+        positioner.set_anchor_rect(0, 0, 1, 30);
+        let popup = xdg.get_popup(None, &positioner, &qh, ());
+        layer.get_popup(&popup);
+        positioner.destroy();
+        surface.commit();
+        self.roundtrip(c);
+        attach(c.side.shm.as_ref().expect("wl_shm"), &qh, &surface, w, h);
+        self.roundtrip(c);
+        Popup {
+            surface,
+            xdg,
+            popup,
+        }
+    }
+
     /// `c` takes the session lock without a lock surface yet.
     pub fn take_lock(&mut self, c: &mut TestClient) -> ExtSessionLockV1 {
         let qh = c.qh();

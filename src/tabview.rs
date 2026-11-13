@@ -323,6 +323,11 @@ impl State {
     /// hidden, or `lead` now is). The focus follows a focused window that
     /// went into hiding to the window shown in its place.
     pub(crate) fn retab(&mut self, members: &[WindowId], lead: Option<WindowId>) {
+        self.redraw_changed(|s| s.retab_now(members, lead));
+        self.redraw_taskbars();
+    }
+
+    fn retab_now(&mut self, members: &[WindowId], lead: Option<WindowId>) {
         for &m in members {
             let Some(win) = self.win(m) else {
                 continue;
@@ -374,8 +379,6 @@ impl State {
             let shown = self.tabs.groups.shown_of(self.home(f));
             self.focus_window(shown);
         }
-        self.redraw_taskbars();
-        self.redraw_all();
     }
 
     /// Hide `m`, a window its group no longer shows, as a minimize does:
@@ -964,10 +967,9 @@ impl State {
         d.armed = true;
         let d = *d;
         if let Some(tree) = self.win(d.dragged).map(|x| x.tree) {
-            self.scene.set_opacity(tree, HELD_OPACITY);
+            self.redraw_changed(|s| s.scene.set_opacity(tree, HELD_OPACITY));
         }
         self.redraw_caption(d.target);
-        self.redraw_all();
     }
 
     /// window is solid again.
@@ -980,10 +982,9 @@ impl State {
         };
         if d.armed {
             if let Some(tree) = self.win(d.dragged).map(|x| x.tree) {
-                self.scene.set_opacity(tree, 1.0);
+                self.redraw_changed(|s| s.scene.set_opacity(tree, 1.0));
             }
             self.redraw_caption(d.target);
-            self.redraw_all();
         }
     }
 
@@ -1228,6 +1229,51 @@ mod tests {
         assert_eq!(rule_target(open, "build"), Some(3));
         assert_eq!(rule_target(open, "mail"), None);
         assert_eq!(rule_target([(1, Some("shells"), true)], "shells"), None);
+    }
+
+    #[test]
+    fn an_armed_tab_drop_asks_for_frames_only_where_its_windows_show() {
+        use crate::backend::take_asked_outputs;
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.output("TEST-2", 1024, 768);
+        let mut c = h.connect();
+        let target = h.map_toplevel(&mut c, "target", 300, 200).id;
+        let dragged = h.map_toplevel(&mut c, "dragged", 300, 200).id;
+        h.state.tabs.drop = Some(Drop {
+            dragged,
+            target,
+            slot: 1,
+            since: Instant::now(),
+            armed: false,
+        });
+        take_asked_outputs();
+        h.state.arm_tab_drop();
+        assert_eq!(take_asked_outputs(), ["TEST-1"], "armed on TEST-1");
+        h.state.end_tab_drop();
+        assert_eq!(take_asked_outputs(), ["TEST-1"], "let go on TEST-1");
+    }
+
+    #[test]
+    fn a_tab_switch_asks_for_frames_only_where_its_group_shows() {
+        use crate::backend::take_asked_outputs;
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.output("TEST-2", 1024, 768);
+        let mut c = h.connect();
+        let a = h.map_toplevel(&mut c, "a", 300, 200).id;
+        let b = h.map_toplevel(&mut c, "b", 300, 200).id;
+        h.state.join_tabs(b, a, 1, true);
+        h.roundtrip(&mut c);
+        assert_eq!(h.state.tabs.groups.shown_of(a), b, "b shows in a's group");
+        take_asked_outputs();
+        // Every bar shows the task buttons; held, the asks are the windows' own.
+        let asked = h.state.hold_taskbars(|s| {
+            s.select_tab(a);
+            take_asked_outputs()
+        });
+        assert_eq!(h.state.tabs.groups.shown_of(a), a, "a shows");
+        assert_eq!(asked, ["TEST-1"]);
     }
 
     #[test]

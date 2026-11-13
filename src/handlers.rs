@@ -259,8 +259,7 @@ impl XdgShellHandler for State {
         };
         crate::popupgrab::popup_gone(self, &gone, &root);
         if let Some(w) = self.window_for_surface(&root) {
-            self.sync_popups(w);
-            self.redraw_all();
+            self.redraw_changed(|s| s.sync_popups(w));
         }
         crate::layer::popup_destroyed(self, &root);
     }

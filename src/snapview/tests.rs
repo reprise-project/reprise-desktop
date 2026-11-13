@@ -1085,3 +1085,47 @@ fn the_snap_bar_asks_for_frames_only_on_its_output() {
         "only TEST-1: {asked:?}"
     );
 }
+
+#[test]
+fn the_snap_bar_thumbnail_asks_for_frames_only_where_it_and_its_window_show() {
+    use crate::backend::take_asked_outputs;
+    use crate::harness::{Harness, LEFT};
+    let text = "[effects]\nreduce_motion = true\n";
+    let mut h = Harness::with_config(crate::config::Config::parse(text).unwrap());
+    h.output("TEST-1", 1024, 768);
+    h.output("TEST-2", 1024, 768);
+    let mut c = h.connect();
+    let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+    let r = h.state.win(t.id).expect("window").frame_rect();
+    let (x, y) = (f64::from(r.x + 60), f64::from(r.y + 10));
+    let mut to = |h: &mut Harness, x: f64, y: f64| {
+        h.pointer_to(x, y);
+        h.roundtrip(&mut c);
+        h.state.settle_moves();
+    };
+    h.pointer_to(x, y);
+    h.button(LEFT, true);
+    for (dx, y) in [(40.0, 40.0), (50.0, 30.0)] {
+        to(&mut h, x + dx, y);
+    }
+    let (zx, zy) = crate::snapbarview::zone_middle(&h.state).expect("a zone on the bar");
+    to(&mut h, zx, zy);
+    to(&mut h, zx, zy - 20.0);
+    assert!(!crate::snapbarview::thumb_shown(&h.state), "off the zones");
+    let (zx, zy) = crate::snapbarview::zone_middle(&h.state).expect("a zone on the bar");
+    take_asked_outputs();
+    to(&mut h, zx, zy);
+    assert!(
+        crate::snapbarview::thumb_shown(&h.state),
+        "the thumbnail shows"
+    );
+    assert_eq!(take_asked_outputs(), ["TEST-1"], "it shows on TEST-1");
+    to(&mut h, zx + 4.0, zy);
+    assert_eq!(take_asked_outputs(), ["TEST-1"], "it follows on TEST-1");
+    to(&mut h, zx, zy + 150.0);
+    assert!(
+        !crate::snapbarview::thumb_shown(&h.state),
+        "the window shows again"
+    );
+    assert_eq!(take_asked_outputs(), ["TEST-1"], "it goes from TEST-1");
+}

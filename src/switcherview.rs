@@ -896,6 +896,25 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_press_off_the_switcher_asks_for_frames_only_on_its_output() {
+        let text = "[switcher]\npeek = false\n";
+        let mut h = Harness::with_config(crate::config::Config::parse(text).unwrap());
+        h.output("TEST-1", 1024, 768);
+        h.output("TEST-2", 1024, 768);
+        let mut c = h.connect();
+        for app in ["one", "two", "three"] {
+            h.map_toplevel(&mut c, app, 300, 200);
+        }
+        h.pointer_to(20.0, 20.0);
+        h.state.open_switcher(crate::keys::MOD_ALT);
+        assert!(h.state.switcher.is_open());
+        crate::backend::take_asks();
+        h.button(crate::harness::LEFT, true);
+        assert!(!h.state.switcher.is_open(), "the press closes it");
+        assert_eq!(crate::backend::take_asked_outputs(), ["TEST-1"]);
+    }
+
     const ALT: u32 = 56;
     const SHIFT: u32 = 42;
     const GRAVE: u32 = 41;
