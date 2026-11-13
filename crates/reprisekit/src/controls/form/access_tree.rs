@@ -194,6 +194,14 @@ impl Form {
                     );
                     (id, Some(id))
                 }
+                Control::Progress { done, of } => {
+                    let mut n = access::node(Role::ProgressIndicator, r);
+                    n.set_numeric_value(f64::from(*done));
+                    n.set_min_numeric_value(0.0);
+                    n.set_max_numeric_value(f64::from(*of));
+                    let id = tree.push(up, key, n);
+                    (id, Some(id))
+                }
                 Control::TrackBar(t) => {
                     let lay = trackbar::layout(t, r.x, r.y, r.width);
                     let id = trackbar::access(t, &lay, tree, up, key);

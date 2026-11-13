@@ -2,6 +2,7 @@
 //! widgets through `look::widgets`.
 
 pub mod aboutbox;
+pub mod addfinger;
 pub mod addressbar;
 pub mod arrange;
 pub mod batchrename;
@@ -28,6 +29,7 @@ pub mod filedlg;
 pub mod filepreview;
 pub mod filesheet;
 pub mod finddlg;
+pub mod fingerprints;
 mod fit;
 pub mod flip;
 pub mod fontsample;

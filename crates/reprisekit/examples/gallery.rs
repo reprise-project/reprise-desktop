@@ -12,6 +12,8 @@
 mod gallery_checksums;
 #[path = "gallery_doctabs/mod.rs"]
 mod gallery_doctabs;
+#[path = "gallery_fingerprints/mod.rs"]
+mod gallery_fingerprints;
 #[path = "gallery_fonts/mod.rs"]
 mod gallery_fonts;
 #[path = "gallery_keys/mod.rs"]
@@ -161,6 +163,10 @@ fn main() {
         write_preview(
             &gallery_remote_password::render(n.max(1)),
             &format!("reprisekit-gallery-remote-password@{}.png", n.max(1)),
+        );
+        write_preview(
+            &gallery_fingerprints::render(n.max(1)),
+            &format!("reprisekit-gallery-fingerprints@{}.png", n.max(1)),
         );
         write_preview(
             &gallery_checksums::render(n.max(1)),
@@ -393,6 +399,10 @@ fn main() {
     write_preview(
         &gallery_remote_password::render(1),
         "reprisekit-gallery-remote-password@1.png",
+    );
+    write_preview(
+        &gallery_fingerprints::render(1),
+        "reprisekit-gallery-fingerprints@1.png",
     );
     write_preview(
         &gallery_checksums::render(1),

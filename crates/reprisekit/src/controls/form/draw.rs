@@ -17,8 +17,8 @@ use crate::controls::updown;
 use crate::look::Paint;
 use crate::look::widgets::{
     draw_button, draw_checkbox_state, draw_checkbox_state_disabled, draw_disabled_field,
-    draw_disabled_label, draw_edit_field, draw_edit_text, draw_group_box, draw_radio,
-    draw_radio_disabled, draw_trackbar, draw_well, group_label_ink,
+    draw_disabled_label, draw_edit_field, draw_edit_text, draw_group_box, draw_progress,
+    draw_radio, draw_radio_disabled, draw_trackbar, draw_well, group_label_ink,
 };
 use crate::pointer::Interaction;
 use crate::raster::{Canvas, EdgeStyle, Rect};
@@ -413,6 +413,14 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
                 if let Some(pic) = canvas {
                     c.blit_over(at.0, at.1, pic);
                 }
+            }
+            Control::Progress { done, of } => {
+                let f = if *of == 0 {
+                    0.0
+                } else {
+                    (f64::from(*done) / f64::from(*of)).min(1.0)
+                };
+                draw_progress(c, p, placed, f, true);
             }
             Control::Spectrum => {
                 draw_well(c, p, r, EdgeStyle::ThinSunken);
