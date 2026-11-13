@@ -46,6 +46,10 @@ pub struct MenuState {
     /// A lone folder under the item menu: whether it is pinned (Unpin from Places) or not (Pin
     /// to Places).
     pub pinned: Option<bool>,
+    /// The item menu is a network share's: its Eject row reads Disconnect.
+    pub share: bool,
+    /// gio is there to connect with: File's Connect to Server... is live.
+    pub can_connect: bool,
 }
 
 impl Default for MenuState {
@@ -68,6 +72,8 @@ impl Default for MenuState {
             compress: None,
             disk_image: false,
             pinned: None,
+            share: false,
+            can_connect: true,
         }
     }
 }
@@ -232,6 +238,7 @@ fn go_to_menu(state: &MenuState) -> Menu {
     m.row(row("&Documents", true), Command::GoTo(Place::Documents));
     m.row(row("Ho&me", true), Command::GoTo(Place::Home));
     m.row(row("&Computer", true), Command::GoTo(Place::Computer));
+    m.row(row("&Network", true), Command::GoTo(Place::network()));
     m
 }
 
@@ -305,6 +312,11 @@ fn bar_menus(state: &MenuState) -> Vec<(&'static str, Menu)> {
     file.row(
         row("P&roperties", sel || !state.read_only),
         Command::Properties,
+    );
+    file.sep();
+    file.row(
+        row("Connect to Ser&ver...", state.can_connect),
+        Command::ConnectToServer,
     );
     file.sep();
     file.row(row("&Close", true), Command::Close);
@@ -486,7 +498,8 @@ pub fn item_menu(
     );
     if eject {
         m.sep();
-        m.row(row("E&ject", true), Command::Eject);
+        let label = if state.share { "&Disconnect" } else { "E&ject" };
+        m.row(row(label, true), Command::Eject);
     }
     m.sep();
     m.row(row("Cu&t", writable), Command::Cut);

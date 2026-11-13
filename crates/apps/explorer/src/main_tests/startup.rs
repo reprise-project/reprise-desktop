@@ -10,6 +10,14 @@ fn the_command_line_takes_a_place() {
     assert_eq!(args(&["Computer".as_ref()]), Place::Computer);
     assert_eq!(args(&["Recycle Bin".as_ref()]), Place::RecycleBin);
     assert_eq!(args(&["My Computer".as_ref()]), Place::Home);
+    assert_eq!(args(&["network".as_ref()]), Place::network());
+    let start = parse_args(["SMB://nas/public".into()]);
+    assert_eq!(
+        start.place,
+        Place::Computer,
+        "a server address opens Computer"
+    );
+    assert_eq!(start.connect.as_deref(), Some("smb://nas/public"));
 }
 
 #[test]
@@ -28,7 +36,8 @@ fn select_opens_the_folder_on_the_entry() {
         Start {
             place: Place::Home,
             dir: None,
-            select: None
+            select: None,
+            connect: None,
         }
     );
 

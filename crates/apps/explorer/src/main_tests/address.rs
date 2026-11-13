@@ -73,6 +73,7 @@ fn a_blink_redraws_only_while_the_address_field_has_the_caret() {
             place: ex.place.clone(),
             dir: None,
             select: None,
+            connect: None,
         },
         inner: Some(ex),
         units: TextUnits::ONE,

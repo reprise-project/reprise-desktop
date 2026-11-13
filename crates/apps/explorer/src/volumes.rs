@@ -170,7 +170,7 @@ impl Explorer {
         let was = std::mem::take(&mut self.drive_mounts);
         self.drives.retain(|d| !d.device.starts_with("/dev/loop"));
         self.drives.extend(images);
-        self.drive_mounts = place::drive_mounts(&self.drives);
+        self.drive_mounts = place::drive_mounts(&self.drives, &self.shares.shares);
         self.drive_mounts != was
     }
 

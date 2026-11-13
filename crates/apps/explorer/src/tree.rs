@@ -132,6 +132,7 @@ impl Explorer {
             show_hidden: self.settings.show_hidden,
             drives: self.drives.clone(),
             volumes: self.volumes.clone(),
+            shares: self.shares.shares.clone(),
             drive_mounts: self.drive_mounts.clone(),
             specials: self.specials.clone(),
         }
@@ -146,6 +147,7 @@ impl Explorer {
             show_hidden: self.settings.show_hidden,
             drives: &self.drives,
             volumes: &self.volumes,
+            shares: &self.shares.shares,
             drive_mounts: &self.drive_mounts,
         };
         let art = foldertree::fill_with(
@@ -269,6 +271,7 @@ impl Explorer {
             show_hidden: self.settings.show_hidden,
             drives: &self.drives,
             volumes: &self.volumes,
+            shares: &self.shares.shares,
             drive_mounts: &self.drive_mounts,
         };
         let filled = foldertree::follow_with(

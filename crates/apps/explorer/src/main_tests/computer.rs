@@ -36,7 +36,7 @@ fn computer_lists_the_cached_drives() {
 }
 
 #[test]
-fn the_desktop_holds_documents_home_computer_and_the_bin() {
+fn the_desktop_holds_documents_home_computer_network_and_the_bin() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut ctx = test_ctx();
     let ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
@@ -46,26 +46,33 @@ fn the_desktop_holds_documents_home_computer_and_the_bin() {
         .map(|n| ex.tree_places[n.id as usize].clone())
         .collect();
     assert_eq!(
-        kids[..4],
+        kids[..5],
         [
             Place::Documents,
             Place::Home,
             Place::Computer,
+            Place::network(),
             Place::RecycleBin
         ]
     );
     assert!(
-        kids[4..].iter().all(|p| matches!(p, Place::Folder(_))),
+        kids[5..].iter().all(|p| matches!(p, Place::Folder(_))),
         "the rest are the Desktop folder's subfolders: {kids:?}"
     );
-    let labels: Vec<&str> = ex.tree.roots[0].children[..4]
+    let labels: Vec<&str> = ex.tree.roots[0].children[..5]
         .iter()
         .map(|n| n.label.as_str())
         .collect();
     let home = reprisefs::places::home_label();
     assert_eq!(
         labels,
-        ["Documents", home.as_str(), "Computer", "Recycle Bin"]
+        [
+            "Documents",
+            home.as_str(),
+            "Computer",
+            "Network",
+            "Recycle Bin"
+        ]
     );
 
     let drop: Vec<&Place> = ex
@@ -80,6 +87,7 @@ fn the_desktop_holds_documents_home_computer_and_the_bin() {
             &Place::Documents,
             &Place::Home,
             &Place::Computer,
+            &Place::network(),
             &Place::RecycleBin
         ]
     );

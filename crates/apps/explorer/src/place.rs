@@ -1,8 +1,10 @@
 //! `Place`: everywhere Explorer's address bar and tree can point. `Folder` is any
 //! real directory; the others are the shell's special places, of which `Computer`
-//! has no backing directory.
+//! and `Network` have no backing directory.
 
 use reprisefs::listing::Item;
+use reprisefs::netshare::browse::{self, ROOT};
+use reprisefs::netshare::{Address, Share};
 use reprisefs::places::{Drive, DriveKind, home_label};
 use reprisefs::udisks::{Disk, Snapshot, Volume};
 use reprisekit::controls::shellview::Field;
@@ -17,6 +19,9 @@ pub enum Place {
     Home,
     Computer,
     RecycleBin,
+    /// The servers on the network ([`reprisefs::netshare::browse::ROOT`]), or one SMB server's
+    /// shares, by address.
+    Network(String),
 }
 
 fn home() -> Option<PathBuf> {
@@ -46,6 +51,23 @@ pub struct Specials<'a> {
     pub documents: Option<&'a Path>,
     pub desktop: Option<&'a Path>,
     pub trash: Option<&'a Path>,
+}
+
+/// The mounted shares' names by folder, so a share's root is titled by its name rather than
+/// gvfs's folder name.
+static SHARE_NAMES: std::sync::RwLock<Vec<(PathBuf, String)>> = std::sync::RwLock::new(Vec::new());
+
+pub fn set_share_names(shares: &[Share]) {
+    let names = shares.iter().map(|s| (s.path.clone(), s.name.clone()));
+    match SHARE_NAMES.write() {
+        Ok(mut n) => *n = names.collect(),
+        Err(p) => *p.into_inner() = names.collect(),
+    }
+}
+
+fn share_name(p: &Path) -> Option<String> {
+    let names = SHARE_NAMES.read().unwrap_or_else(|p| p.into_inner());
+    names.iter().find(|(d, _)| d == p).map(|(_, n)| n.clone())
 }
 
 impl Place {
@@ -89,29 +111,38 @@ impl Place {
             Place::Documents => documents(),
             Place::Home => home(),
             Place::RecycleBin => reprisefs::places::trash_dir(),
-            Place::Computer => None,
+            Place::Computer | Place::Network(_) => None,
         }
     }
 
     pub fn title(&self) -> String {
         match self {
-            Place::Folder(p) => match p.file_name() {
-                Some(name) => name.to_string_lossy().into_owned(),
-                None => "/".to_string(),
+            Place::Folder(p) => match (share_name(p), p.file_name()) {
+                (Some(share), _) => share,
+                (None, Some(name)) => name.to_string_lossy().into_owned(),
+                (None, None) => "/".to_string(),
             },
             Place::Desktop => "Desktop".to_string(),
             Place::Documents => "Documents".to_string(),
             Place::Home => home_label(),
             Place::Computer => "Computer".to_string(),
             Place::RecycleBin => "Recycle Bin".to_string(),
+            Place::Network(uri) if uri == ROOT => "Network".to_string(),
+            Place::Network(uri) => Address::parse(uri).map_or_else(|| uri.clone(), |a| a.host),
         }
     }
 
     pub fn address(&self) -> String {
         match self {
             Place::Folder(p) => p.display().to_string(),
+            Place::Network(uri) if uri != ROOT => uri.clone(),
             _ => self.title(),
         }
+    }
+
+    /// The Network place itself.
+    pub fn network() -> Place {
+        Place::Network(ROOT.to_string())
     }
 
     pub fn icon_name(&self) -> &'static str {
@@ -122,6 +153,8 @@ impl Place {
             Place::Home => "user-home",
             Place::Computer => "computer",
             Place::RecycleBin => "user-trash",
+            Place::Network(uri) if uri == ROOT => "network-workgroup",
+            Place::Network(_) => "network-server",
         }
     }
 
@@ -132,7 +165,7 @@ impl Place {
             Place::Computer => Some(ShellPlace::Computer),
             Place::Home => Some(ShellPlace::Home),
             Place::RecycleBin => Some(ShellPlace::RecycleBin),
-            Place::Folder(_) | Place::Desktop => None,
+            Place::Folder(_) | Place::Desktop | Place::Network(_) => None,
         }
     }
 
@@ -145,9 +178,12 @@ impl Place {
                 Some(Place::Computer)
             }
             Place::Folder(p) => p.parent().map(Place::from_path),
-            Place::Documents | Place::Home | Place::Computer | Place::RecycleBin => {
-                Some(Place::Desktop)
-            }
+            Place::Network(uri) if uri != ROOT => Some(Place::network()),
+            Place::Documents
+            | Place::Home
+            | Place::Computer
+            | Place::RecycleBin
+            | Place::Network(_) => Some(Place::Desktop),
             Place::Desktop => None,
         }
     }
@@ -157,7 +193,10 @@ impl Place {
     }
 
     pub fn read_only(&self) -> bool {
-        matches!(self, Place::Computer | Place::RecycleBin)
+        matches!(
+            self,
+            Place::Computer | Place::RecycleBin | Place::Network(_)
+        )
     }
 
     /// Whether the Details pane calls this a "System Folder": every shell place,
@@ -166,7 +205,7 @@ impl Place {
         !matches!(self, Place::Folder(_))
     }
 
-    /// Typed address-bar text or a command-line place: "Computer" and "Recycle Bin"
+    /// Typed address-bar text or a command-line place: "Computer", "Recycle Bin" and "Network"
     /// (case-insensitive), the text the address bar shows for `here`, `~`/`~/...`, or
     /// an absolute existing directory.
     pub fn parse_address(s: &str, here: Option<&Place>) -> Option<Place> {
@@ -182,6 +221,7 @@ impl Place {
         for (name, place) in [
             ("computer", Place::Computer),
             ("recycle bin", Place::RecycleBin),
+            ("network", Place::network()),
         ] {
             if lower == name {
                 return Some((place, None));
@@ -239,10 +279,12 @@ pub struct Listed {
     pub drives: Vec<Drive>,
 }
 
-/// Mount points of the drives Computer lists. A subvolume on the root's device
-/// is not a drive.
-pub fn drive_mounts(drives: &[Drive]) -> Vec<PathBuf> {
-    drives.iter().map(|d| d.mount.clone()).collect()
+/// Mount points of the drives and network shares Computer lists. A subvolume on the root's
+/// device is not a drive.
+pub fn drive_mounts(drives: &[Drive], shares: &[Share]) -> Vec<PathBuf> {
+    (drives.iter().map(|d| d.mount.clone()))
+        .chain(shares.iter().map(|s| s.path.clone()))
+        .collect()
 }
 
 /// A tree node's child folders: `listed`'s directories minus any that is a
@@ -256,14 +298,24 @@ pub fn tree_subfolders(listed: &Listed, mounts: &[PathBuf]) -> Vec<(String, Plac
         .collect()
 }
 
-/// Computer's children in the Folders tree: the mounted drives. An unmounted volume has no folder
-/// yet, and Home hangs off the Desktop ([`Place::chain_in`]), so neither is a node here.
+/// Computer's children in the Folders tree: the mounted drives, then the network shares. An
+/// unmounted volume has no folder yet, and Home hangs off the Desktop ([`Place::chain_in`]), so
+/// neither is a node here.
 pub fn computer_tree_children(listed: &Listed) -> Vec<(String, Place)> {
-    listed
-        .drives
-        .iter()
+    let shares = (listed.items.iter())
+        .filter(|it| it.drive == Some(DriveKind::Network))
+        .map(|it| (it.name.clone(), Place::Folder(it.path.clone())));
+    (listed.drives.iter())
         .map(|d| (d.name(), Place::Folder(d.mount.clone())))
+        .chain(shares)
         .collect()
+}
+
+/// The mounted share behind Computer's row `it`.
+pub fn row_share<'a>(shares: &'a [Share], it: &Item) -> Option<&'a Share> {
+    (it.drive == Some(DriveKind::Network))
+        .then(|| shares.iter().find(|s| s.path == it.path))
+        .flatten()
 }
 
 /// The UDisks2 volume behind Computer's drive row `it`: mounted at its path, or
@@ -392,18 +444,37 @@ pub fn bin_watches() -> Vec<(PathBuf, Option<OsString>)> {
         .collect()
 }
 
+/// What Computer lists besides the folders: the drives, UDisks2's volumes and the mounted
+/// network shares.
+#[derive(Clone, Copy)]
+pub struct Devices<'a> {
+    pub drives: &'a [Drive],
+    pub volumes: &'a Snapshot,
+    pub shares: &'a [Share],
+}
+
 /// `place`'s contents: a real directory read (for `RecycleBin` each of
-/// [`bin_dirs`]) filtered by `hidden` unless `show_hidden`; `Computer` builds the
-/// three groups from `drives` and the unmounted ones in `volumes`.
+/// [`bin_dirs`]) filtered by `hidden` unless `show_hidden`; `Computer` builds its
+/// groups from `devices`; `Network` asks gvfs and Avahi ([`browse::list`]).
 pub fn list(
     place: &Place,
     globs: &reprisefs::apps::MimeDb,
     show_hidden: bool,
-    drives: &[Drive],
-    volumes: &Snapshot,
+    devices: Devices,
 ) -> Listed {
     match place {
-        Place::Computer => list_computer(drives, volumes),
+        Place::Computer => list_computer(devices),
+        Place::Network(uri) => {
+            let entries = browse::list(uri).unwrap_or_else(|e| {
+                log::info!("explorer: listing {uri}: {e}");
+                Vec::new()
+            });
+            Listed {
+                items: entries.iter().map(network_item).collect(),
+                groups: Vec::new(),
+                drives: Vec::new(),
+            }
+        }
         Place::RecycleBin => {
             let mut items: Vec<Item> = bin_dirs()
                 .iter()
@@ -485,18 +556,54 @@ fn volume_item(volumes: &Snapshot, v: &Volume) -> Item {
     }
 }
 
-fn list_computer(drives: &[Drive], volumes: &Snapshot) -> Listed {
-    build_computer(drives.to_vec(), volumes, home().map(|h| (h, home_label())))
+fn list_computer(d: Devices) -> Listed {
+    build_computer(
+        d.drives.to_vec(),
+        d.volumes,
+        d.shares,
+        home().map(|h| (h, home_label())),
+    )
+}
+
+/// A row standing for something with no folder of its own to read: a network share, or a server
+/// or share in the Network place, whose path is its address.
+fn remote_item(name: &str, path: PathBuf, kind: DriveKind) -> Item {
+    Item {
+        name: name.to_string(),
+        path,
+        is_dir: true,
+        is_link: false,
+        exec: false,
+        program: None,
+        hidden: false,
+        size: 0,
+        modified: None,
+        mime: None,
+        kind: kind.label().to_string(),
+        drive: Some(kind),
+        mount_root: true,
+        trashed: None,
+        shortcut: None,
+    }
+}
+
+fn network_item(e: &browse::Entry) -> Item {
+    let kind = match e.kind {
+        browse::Kind::Server => DriveKind::Server,
+        browse::Kind::Share => DriveKind::Network,
+    };
+    remote_item(&e.name, PathBuf::from(&e.uri), kind)
 }
 
 /// Computer: "Files Stored on This Computer" (the home folder `home`),
-/// "Hard Disk Drives" (non-removable, non-optical), then "Devices with Removable
+/// "Hard Disk Drives" (non-removable, non-optical), "Devices with Removable
 /// Storage" (removable or optical drives, then unmounted removable `volumes`),
-/// each omitted when empty. Split from `list_computer` so a test can drive it
-/// with fake drives.
+/// then "Network Locations" (the mounted `shares`), each omitted when empty.
+/// Split from `list_computer` so a test can drive it with fake drives.
 fn build_computer(
     drives: Vec<Drive>,
     volumes: &Snapshot,
+    shares: &[Share],
     home: Option<(PathBuf, String)>,
 ) -> Listed {
     let mut items = Vec::new();
@@ -541,6 +648,12 @@ fn build_computer(
         groups.push(("Devices with Removable Storage".to_string(), items.len()));
         items.extend(removable.into_iter().map(drive_item));
         items.extend(unmounted);
+    }
+    if !shares.is_empty() {
+        groups.push(("Network Locations".to_string(), items.len()));
+        items.extend(
+            (shares.iter()).map(|s| remote_item(&s.name, s.path.clone(), DriveKind::Network)),
+        );
     }
 
     Listed {
@@ -705,6 +818,7 @@ mod tests {
         let listed = build_computer(
             drives,
             &Snapshot::default(),
+            &[share()],
             Some((PathBuf::from("/home/u"), "u's Home".to_string())),
         );
         let kids = computer_tree_children(&listed);
@@ -719,8 +833,9 @@ mod tests {
                     "CD Drive (/run/media/u/DVD)".to_string(),
                     Place::Folder(PathBuf::from("/run/media/u/DVD"))
                 ),
+                ("public on nas".to_string(), Place::Folder(share().path)),
             ],
-            "the drives, named as the view names them, and not the Home the view lists"
+            "the drives, named as the view names them, then the shares, and not the Home the view lists"
         );
     }
 
@@ -809,6 +924,7 @@ mod tests {
         let listed = build_computer(
             drives,
             &Snapshot::default(),
+            &[share()],
             Some((PathBuf::from("/home/u"), "u's Home".to_string())),
         );
 
@@ -818,8 +934,18 @@ mod tests {
                 ("Files Stored on This Computer".to_string(), 0),
                 ("Hard Disk Drives".to_string(), 1),
                 ("Devices with Removable Storage".to_string(), 2),
+                ("Network Locations".to_string(), 3),
             ]
         );
+        let share_row = &listed.items[3];
+        assert_eq!(share_row.name, "public on nas");
+        assert_eq!(share_row.kind, "Network Drive");
+        assert!(
+            share_row.mount_root,
+            "a share is never read into: its server may not answer"
+        );
+        assert_eq!(row_share(&[share()], share_row), Some(&share()));
+        assert_eq!(row_share(&[share()], &listed.items[1]), None);
         assert_eq!(listed.items[0].name, "u's Home");
         assert_eq!(listed.items[1].name, "Local Disk (/)");
         assert_eq!(listed.items[1].kind, "Local Disk");
@@ -828,6 +954,14 @@ mod tests {
         assert_eq!(listed.items[0].drive, None);
         assert_eq!(listed.items[2].drive, Some(DriveKind::Optical));
         assert_eq!(listed.drives.len(), 2);
+    }
+
+    fn share() -> Share {
+        Share {
+            name: "public on nas".into(),
+            icon: "folder-remote".into(),
+            path: PathBuf::from("/run/user/1000/gvfs/smb-share:server=nas,share=public"),
+        }
     }
 
     /// A stick with an unmounted KINGSTON partition, an unmounted
@@ -871,7 +1005,7 @@ mod tests {
         let removable = |d: &str| d == "sdc1";
         let drives =
             reprisefs::places::drives_from(mounts, &removable, &|_| None, &|_| (1000, 500));
-        let listed = build_computer(drives, &udisks_snapshot(), None);
+        let listed = build_computer(drives, &udisks_snapshot(), &[], None);
 
         assert_eq!(
             listed.groups,
@@ -967,7 +1101,7 @@ mod tests {
             }),
             ..Volume::default()
         });
-        let listed = build_computer(snap.image_drives(), &snap, None);
+        let listed = build_computer(snap.image_drives(), &snap, &[], None);
         assert_eq!(
             listed.groups,
             [("Devices with Removable Storage".to_string(), 0)]
@@ -980,7 +1114,7 @@ mod tests {
 
     #[test]
     fn build_computer_omits_empty_groups() {
-        let listed = build_computer(Vec::new(), &Snapshot::default(), None);
+        let listed = build_computer(Vec::new(), &Snapshot::default(), &[], None);
         assert!(listed.groups.is_empty());
         assert!(listed.items.is_empty());
     }

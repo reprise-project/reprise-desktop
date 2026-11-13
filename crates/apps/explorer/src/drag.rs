@@ -453,7 +453,8 @@ impl Explorer {
             Vec::new()
         };
         let send_to = self.build_send_to(&mut waits, ctx);
-        let eject = self.ejectable(i);
+        let share = self.share_selected(i);
+        let eject = self.ejectable(i) || share;
         let pinned = match (&self.menu_paste, self.sv.selection.len()) {
             (Some(PasteTo::Folder(dir)), 1) => {
                 Some(reprisefs::pins::is_pinned(&self.pinned(), dir))
@@ -465,6 +466,7 @@ impl Explorer {
             compress: self.compress_label(),
             disk_image: self.selected_disk_image().is_some(),
             pinned,
+            share,
             ..self.menu_state()
         };
         let menu = crate::menus::item_menu(&state, kind, eject, &open_with, &send_to);

@@ -1626,6 +1626,21 @@ stop the share first.
   the system installed: a file whose real path is under `/usr` or `/opt`,
   where the file, its folders and the folders of the name it was opened by
   are all root's and writable by no one else.
+- **Network shares.** Connect to Server hands the address to `gio mount`
+  as one argument after `--`, and every answer to its prompts (user name,
+  domain, password, a host-key choice) on its standard input, so a password
+  never shows in a process list; a line break typed into a field is dropped
+  so it can't answer the next prompt. The password field is wiped when the
+  box closes and the copies Reprise holds are zeroed when dropped. Remember
+  stores the password in the Secret Service's default collection under the
+  network password schema (protocol, server, port, user, domain), and a
+  stored password is looked up only by the server's own attributes. The
+  Secret Service session is the spec's `plain` one: the password crosses
+  the session bus, which only your own processes reach, unencrypted.
+  Computer lists mounted shares from gvfs's mount tracker, asked only while
+  gvfs runs, and never reads inside a share; opening, listing and
+  unmounting run off the event loop, so a server that stops answering holds
+  only that thread.
 - **Disk images.** Opening an `.iso` or `.img` asks before it is mounted,
   since the kernel's file system driver then parses a file that may come
   from anywhere, and those drivers aren't hardened against hostile images.

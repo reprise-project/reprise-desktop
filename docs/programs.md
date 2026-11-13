@@ -32,11 +32,13 @@ The file manager, and the default for folders.
   dialog's places bar (see Pinned folders in features.md).
 - **Disk Usage** on a folder's or a drive's right-click menu opens
   [Disk Usage](#disk-usage) on it.
-- **Places:** Desktop, Documents, Home, Computer and the Recycle Bin.
+- **Places:** Desktop, Documents, Home, Computer, Network and the Recycle Bin.
   Computer lists your drives, unmounted and locked removable ones included:
   open one to mount it (a locked one asks for its passphrase first), Eject to
-  remove it safely. Network and FUSE mounts stay out of
-  that list, so a slow server can't stall it. A disk image (`.iso`, raw
+  remove it safely. Network and FUSE mounts from `/proc/mounts` stay out of
+  that list, so a slow server can't stall it; the shares gvfs mounted are
+  listed under Network Locations from gvfs's own list, without reading the
+  share, and Disconnect on one unmounts it. A disk image (`.iso`, raw
   `.img`) opens by mounting it read-only, Mount being its default row: the
   whole image's file system, or each partition's when it has none, then
   Explorer goes into the first. A double-click or Enter asks Mount / Cancel
@@ -44,6 +46,20 @@ The file manager, and the default for folders.
   Recent Items or Quick Launch asks the same and then opens its folder in
   Explorer. It stays in Computer until Eject unmounts
   it and detaches it; its menu's Open still hands it to its program.
+- **Connect to Server** (File menu, or the Network place's task pane) takes
+  an address: `smb://server/share`, `sftp://user@server/folder`, `ftp://`,
+  `ftps://`, `dav://`, `davs://`, `nfs://` or `afp://`, or a
+  `\\server\share` path. Typing one into the address bar does the same. It
+  mounts through gvfs (`gio mount`) and opens the share's folder. A server
+  that lets guests in is tried as a guest first; one that wants a password
+  raises Connect to *server* with the server's message, the user name, a
+  domain for SMB and the password, and Remember this password keeps it in
+  your keyring (greyed without one), so the next connection asks nothing. A
+  server whose identity is new (SFTP) asks before logging in. The share
+  then shows in Computer until you disconnect it.
+- **Network** lists the servers gvfs finds on the network and the SMB and
+  SFTP servers Avahi sees; open one to see an SMB server's shares, or to
+  connect to an SFTP server.
 - **File operations** run in the background, so a big copy doesn't freeze
   anything. A copy, move, delete, Restore or Empty Recycle Bin that takes
   longer than half a second shows its progress with Pause and Cancel, on the

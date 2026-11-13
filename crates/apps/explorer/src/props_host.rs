@@ -290,7 +290,10 @@ impl Explorer {
 
     fn open_set_properties(&mut self, ctx: &mut Ctx) -> Reply {
         use crate::place::Place;
-        if matches!(self.place, Place::Computer | Place::RecycleBin) {
+        if matches!(
+            self.place,
+            Place::Computer | Place::RecycleBin | Place::Network(_)
+        ) {
             return Reply::none();
         }
         let sel = &self.sv.selection;

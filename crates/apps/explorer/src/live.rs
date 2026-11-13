@@ -146,8 +146,8 @@ impl Explorer {
         (listed || tree || chrome || menu, others, broken)
     }
 
-    /// `Event::Wake`: a put, job, tip walk, late listing or search, drive scan, clash check or Folders node read finished, thumbnails arrived, or
-    /// the watch or UDisks2 saw a change (which re-lists), the folder left (which follows it), or icons
+    /// `Event::Wake`: a put, job, tip walk, late listing or search, drive scan, clash check or Folders node read finished, thumbnails arrived, a
+    /// connection to a server moved on, or the watch, UDisks2 or gvfs saw a change (which re-lists), the folder left (which follows it), or icons
     /// landed. A closing window quits here once its work is done.
     pub fn wake(&mut self, ctx: &mut Ctx) -> Reply {
         let put = self.poll_put(ctx);
@@ -155,6 +155,8 @@ impl Explorer {
         let extracted = self.poll_extract(ctx);
         self.show_progress_dialogs();
         let job = self.poll_jobs(ctx);
+        let shared = self.poll_shares(ctx);
+        let connected = self.poll_connection(ctx);
         let acted = self.take_acting(ctx);
         let sent = self.take_send_reads(ctx);
         let opened = self.take_opened(ctx);
@@ -202,6 +204,8 @@ impl Explorer {
         // whatever else answered in the same wake. A finished put already re-listed.
         let put = [
             job,
+            shared,
+            connected,
             acted,
             sent,
             removed,

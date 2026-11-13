@@ -175,6 +175,7 @@ impl Explorer {
             show_hidden: self.settings.show_hidden,
             drives: &self.drives,
             volumes: &self.volumes,
+            shares: &self.shares.shares,
             drive_mounts: &self.drive_mounts,
         };
         let mut tree = TreeView::new(Vec::new(), Style::Picker);
@@ -306,6 +307,7 @@ impl Explorer {
             show_hidden: self.settings.show_hidden,
             drives: &self.drives,
             volumes: &self.volumes,
+            shares: &self.shares.shares,
             drive_mounts: &self.drive_mounts,
         };
         let reply = match out {
@@ -436,6 +438,7 @@ impl Explorer {
             show_hidden: self.settings.show_hidden,
             drives: &self.drives,
             volumes: &self.volumes,
+            shares: &self.shares.shares,
             drive_mounts: &self.drive_mounts,
         };
         if let Some(p) = foldertree::path_of(&b.bf.tree, &b.places, under, inp.drive_mounts) {
@@ -540,6 +543,7 @@ impl Explorer {
             show_hidden: self.settings.show_hidden,
             drives: &self.drives,
             volumes: &self.volumes,
+            shares: &self.shares.shares,
             drive_mounts: &self.drive_mounts,
         };
         let holder = to.parent().map(Place::from_path);
@@ -623,6 +627,7 @@ impl Explorer {
                     show_hidden: self.settings.show_hidden,
                     drives: &self.drives,
                     volumes: &self.volumes,
+                    shares: &self.shares.shares,
                     drive_mounts: &self.drive_mounts,
                 };
                 foldertree::fill_with(
@@ -658,6 +663,7 @@ impl Explorer {
             show_hidden: self.settings.show_hidden,
             drives: &self.drives,
             volumes: &self.volumes,
+            shares: &self.shares.shares,
             drive_mounts: &self.drive_mounts,
         };
         let mut landed = left;
