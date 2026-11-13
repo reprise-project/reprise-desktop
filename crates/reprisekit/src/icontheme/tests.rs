@@ -466,6 +466,28 @@ fn a_host_svg_embedding_a_png_or_a_jpeg_draws_its_pixels() {
 }
 
 #[test]
+fn a_jpeg_icon_file_decodes_by_its_content_and_a_named_one_by_path() {
+    let p = tmp("launcher.jpeg");
+    fs::write(&p, base64(RED_JPEG)).unwrap();
+    assert!(is_icon_file(&p));
+    assert!(is_icon_file(Path::new("/a/b.JPG")));
+    let c = decode(&p, 16).unwrap();
+    assert_eq!((c.width, c.height), (16, 16));
+    let [a, r, g, b] = c.get(8, 8).to_be_bytes();
+    assert!(a == 0xFF && r > 0xF0 && g < 0x10 && b < 0x10, "opaque red");
+    let named_png = tmp("launcher-named.png");
+    fs::write(&named_png, base64(RED_JPEG)).unwrap();
+    assert!(
+        decode(&named_png, 16).is_some(),
+        "the content picks the decoder"
+    );
+    fs::write(&p, &base64(RED_JPEG)[..40]).unwrap();
+    assert_eq!(decode(&p, 16), None, "a cut JPEG");
+    fs::remove_file(&p).unwrap();
+    fs::remove_file(&named_png).unwrap();
+}
+
+#[test]
 fn an_svg_embedding_an_image_past_the_limits_is_refused() {
     let over = |svg: String| {
         let tree = resvg::usvg::Tree::from_data(svg.as_bytes(), &Default::default()).unwrap();
