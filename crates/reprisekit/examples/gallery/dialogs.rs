@@ -1,7 +1,9 @@
 use super::{blurred_stripes, cued};
 use reprisekit::classic::frame::{CaptionButton, Chrome, FrameGeometry, FrameState, Glow};
 use reprisekit::controls::form::{self};
-use reprisekit::controls::{aboutbox, endsession, filedlg, locationprompt, shellview};
+use reprisekit::controls::{
+    aboutbox, endsession, filedlg, installsheet, locationprompt, shellview,
+};
 use reprisekit::interface::Interface;
 use reprisekit::interfaces;
 use reprisekit::look;
@@ -116,6 +118,58 @@ pub fn render_end_session(with_blue: bool) -> Canvas {
 }
 
 /// The location prompt for a program called Maps, focus on Deny.
+/// The install sheet asking and then running, in each look.
+pub fn render_install_sheet(with_blue: bool) -> Canvas {
+    use installsheet::{Sheet, Stage, Verb};
+    let mut icon = Canvas::new(32, 32);
+    icon.fill_rect(Rect::new(4, 4, 24, 24), Color::rgb(52, 120, 200));
+    let sheet = |stage| Sheet {
+        verb: Verb::Uninstall,
+        name: "Foot".into(),
+        icon: Some(icon.clone()),
+        facts: vec![
+            ("Package:".into(), "foot".into()),
+            ("Version:".into(), "1.28.0-2".into()),
+            ("Size:".into(), "812 KB".into()),
+            ("Source:".into(), "Arch Linux packages".into()),
+        ],
+        note: "Uninstalling it also removes 1 package that needs it: foot-terminfo.".into(),
+        stage,
+    };
+    let stages = [
+        sheet(Stage::Asking { ready: true }),
+        sheet(Stage::Running {
+            fraction: Some(0.4),
+            doing: "Removing foot".into(),
+            cancellable: true,
+        }),
+    ];
+    let mut themes = vec![cued(Theme::default())];
+    if with_blue {
+        themes.push(cued(interfaces::theme_for(Interface::Blue)));
+        themes.push(cued(interfaces::theme_for(Interface::Glass)));
+    }
+    let (w, h) = installsheet::client(&stages[0]);
+    let mut c = Canvas::new(
+        (stages.len() as i32 * (w + 10) + 10) as u32,
+        (themes.len() as i32 * (h + 10) + 10) as u32,
+    );
+    c.fill_rect(c.bounds(), Color::rgb(58, 110, 165));
+    for (row, theme) in themes.iter().enumerate() {
+        let text = TextRenderer::load(&theme.fonts);
+        let px = theme.fonts.size_px;
+        for (col, s) in stages.iter().enumerate() {
+            let u = reprisekit::theme::TextUnits::ONE;
+            let f = installsheet::form(s, &text, px, u);
+            let mut sheet_c = Canvas::new(w as u32, h as u32);
+            installsheet::draw(&mut sheet_c, &text, &theme.paint(), s, &f, px);
+            let at = (10 + col as i32 * (w + 10), 10 + row as i32 * (h + 10));
+            c.blit_canvas(at.0, at.1, &sheet_c);
+        }
+    }
+    c
+}
+
 pub fn render_location_prompt(with_blue: bool) -> Canvas {
     let mut icon = Canvas::new(32, 32);
     icon.fill_rect(Rect::new(4, 4, 24, 24), Color::rgb(52, 160, 80));
