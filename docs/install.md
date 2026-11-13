@@ -311,7 +311,7 @@ user's server.
 
 ### To run
 
-- systemd (logind and pam_systemd, the user manager, timedated, and
+- systemd (logind and pam_systemd, the user manager, timedated, localed, and
   sysusers and tmpfiles for the login manager) and libseat (from seatd; it
   talks to logind)
 - For the login manager: the PAM files `reprise-login` (logins typed at the
@@ -420,12 +420,13 @@ desktop and stays out of the way when it's missing.
   through pkexec and pacman instead); Flatpak installs `.flatpakref` and
   `.flatpak` files
 - AccountsService, for User Accounts, the user pictures on the login
-  screen and the picture a program asks for through the Account portal
+  screen, the picture a program asks for through the Account portal and
+  the language Settings > Region & Language hands other login managers
 
 **Security**
 
 - polkit, for the admin password prompt, for saving Settings > Login Manager
-  (pkexec), for User Accounts' Ask for a new password at the next login
+  (pkexec) and Region & Language's Apply to the System (localed), for User Accounts' Ask for a new password at the next login
   (`pkexec chage`), and for the login manager's rule that keeps every session not
   on screen, Switch User's and background ones alike, from switching the
   console

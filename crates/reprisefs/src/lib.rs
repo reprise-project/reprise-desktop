@@ -51,6 +51,7 @@ pub mod props;
 pub mod proxy;
 pub mod quicklaunch;
 pub mod recent;
+pub mod region;
 pub mod removal;
 pub mod replace;
 pub mod scope;

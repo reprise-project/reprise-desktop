@@ -564,6 +564,14 @@ are.
   not started into it again.
 - **XDG autostart,** with a Startup page in Reprise Settings to turn entries
   on and off.
+- **Language and formats per account.** Settings > Region & Language picks
+  your language and the locale for dates, numbers, money, measures and
+  paper, saved to `~/.config/locale.conf`. At log on Reprise puts the file's
+  `LANG` and `LC_*` variables in its environment, drops the inherited ones
+  the file doesn't set, and publishes them to the systemd user manager and
+  D-Bus activation, so every program starts in that locale. Apply to the
+  System sets the login screen's and new accounts' locale through
+  systemd-localed ([programs.md](programs.md#reprise-settings)).
 - **Crash recovery.** When Reprise panics it starts again in place: the
   same binary, with the same arguments and environment, runs a new session
   on the same seat and opens a new display socket. Programs with windows

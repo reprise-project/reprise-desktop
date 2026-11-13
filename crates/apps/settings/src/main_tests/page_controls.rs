@@ -353,3 +353,96 @@ fn the_airplane_check_box_acts_at_once_and_follows_the_radios() {
     assert!(a.error.is_some(), "a failed change says why");
     assert_eq!(a.sheet.pages[p].checked(pages::AIRPLANE), Some(true));
 }
+
+fn region_ready(a: &mut SettingsApp, user: reprisefs::region::Choice, system_lang: &str) {
+    let locales = vec![
+        (
+            "de_DE.UTF-8".to_string(),
+            "Deutsch (Deutschland)".to_string(),
+        ),
+        ("en_US.UTF-8".into(), "English (United States)".into()),
+    ];
+    let (tx, rx) = std::sync::mpsc::channel();
+    tx.send(crate::regionhost::Reading {
+        locales,
+        user,
+        system: crate::regionpage::System::Read {
+            locale: vec![("LANG".into(), system_lang.into())],
+            may_set: true,
+        },
+    })
+    .unwrap();
+    a.region_read = Some(rx);
+    assert!(a.region_done());
+}
+
+fn region_set(a: &mut SettingsApp, set: crate::regionhost::Set) {
+    let (tx, rx) = std::sync::mpsc::channel();
+    tx.send(set).unwrap();
+    a.region_set = Some(rx);
+    assert!(a.region_done());
+}
+
+#[test]
+fn region_and_language_saves_locale_conf_on_apply_and_sets_the_system_at_once() {
+    use crate::regionpage::{LANGUAGE, SYSTEM};
+    let mut a = app("region");
+    a.region_conf = tmp("region-conf").join("locale.conf");
+    let p = Page::RegionLanguage.index();
+    let english = reprisefs::region::Choice {
+        language: "en_US.UTF-8".into(),
+        formats: None,
+    };
+    region_ready(&mut a, english.clone(), "en_US.UTF-8");
+    assert_eq!(a.sheet.pages[p].combo_selected(LANGUAGE), Some(1));
+    assert!(!a.dirty(), "a read is no change");
+    let lit = |a: &SettingsApp| match &a.sheet.pages[p].item(SYSTEM).unwrap().control {
+        form::Control::Button { enabled, .. } => *enabled,
+        c => panic!("Apply to the System is a button, not {c:?}"),
+    };
+    assert!(!lit(&a), "the system already has the page's choice");
+
+    a.sheet.pages[p].set_combo(LANGUAGE, 0);
+    a.sheet_event(propsheet::Event::Page(p, form::Event::Changed(LANGUAGE)));
+    assert!(a.dirty());
+    assert!(lit(&a));
+    a.revert();
+    assert_eq!(a.sheet.pages[p].combo_selected(LANGUAGE), Some(1));
+    assert!(!a.dirty());
+
+    a.sheet.pages[p].set_combo(LANGUAGE, 0);
+    a.sheet_event(propsheet::Event::Page(p, form::Event::Changed(LANGUAGE)));
+    assert!(a.apply());
+    assert_eq!(
+        std::fs::read_to_string(&a.region_conf).unwrap(),
+        "LANG=de_DE.UTF-8\n"
+    );
+    assert!(!a.dirty());
+
+    a.sheet_event(propsheet::Event::Page(p, form::Event::Pressed(SYSTEM)));
+    assert!(a.region.as_ref().unwrap().setting);
+    assert!(!lit(&a), "greyed while localed works");
+    region_set(&mut a, Err(None));
+    assert!(a.error.is_none(), "a dismissed prompt says nothing");
+    assert!(lit(&a));
+    a.sheet_event(propsheet::Event::Page(p, form::Event::Pressed(SYSTEM)));
+    region_set(&mut a, Ok(vec![("LANG".into(), "de_DE.UTF-8".into())]));
+    assert!(a.error.is_none());
+    assert!(!lit(&a), "the system now has it");
+    a.sheet_event(propsheet::Event::Page(p, form::Event::Pressed(SYSTEM)));
+    assert!(
+        !a.region.as_ref().unwrap().setting,
+        "nothing to set when the system has it"
+    );
+
+    a.region.as_mut().unwrap().system = crate::regionpage::System::Read {
+        locale: vec![("LANG".into(), "en_US.UTF-8".into())],
+        may_set: true,
+    };
+    a.sheet_event(propsheet::Event::Page(p, form::Event::Pressed(SYSTEM)));
+    region_set(
+        &mut a,
+        Err(Some("You are not allowed to make this change.".into())),
+    );
+    assert!(a.error.is_some(), "a refusal says why");
+}

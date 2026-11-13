@@ -296,7 +296,7 @@ asks first. Programs see `TERM=xterm-256color` and `COLORTERM=truecolor`.
 
 ## Reprise Settings
 
-One window, 31 pages under seven headings (Login Manager only where
+One window, 32 pages under seven headings (Login Manager only where
 `reprise-login` is installed), with link rows to the separate
 settings programs. Only one runs at a time. A link row ends in "..." and
 starts its program in its own window, as Start does, and Settings stays on
@@ -439,7 +439,20 @@ matched control focused.
     screenshots, desktop background, keyboard and mouse capture; Forget
     drops one), the Clipboard Access list, recent files, clipboard history
     and the red border around what is being shared.
-  - **Date and Time...** and **User Accounts...**
+  - **Date and Time...**
+  - **Region & Language:** your account's language and formats (dates and
+    times, numbers, money, measures and paper), with a sample of the
+    formats picked. The lists hold the installed UTF-8 locales by their own
+    names; Formats can follow the language. Apply writes `LANG` and the
+    `LC_*` format variables to `~/.config/locale.conf`, keeping its other
+    lines, and sets the language AccountsService keeps for other login
+    managers; the session takes the file at the next log on. Login Screen
+    and New Users shows the system's locale, and Apply to the System sets
+    the page's choice there through systemd-localed, which asks for an
+    administrator's password through polkit. Where polkit allows no
+    password to do it, the button is greyed with a note to ask an
+    administrator.
+  - **User Accounts...**
   - **Login Manager:** for the whole computer, in `/etc/reprise/login.toml`.
     Login Screen: the interface (or the last one used), Show users, a
     user to log on automatically, the Background (Default, a built-in

@@ -109,6 +109,8 @@ fn every_page_fits_its_text_under_every_interface() {
             .collect();
         let managed = remote_desktop(Area::MIN, None, false, Some(""));
         forms.push(("Remote Desktop, managed".into(), managed));
+        let region = crate::regionpage::filled(Area::MIN);
+        forms.push(("Region & Language, filled".into(), region));
         let still = with(&Settings {
             interface: i.as_str().into(),
             reduce_motion: true,
