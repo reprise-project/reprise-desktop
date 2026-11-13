@@ -373,11 +373,13 @@ pub(super) fn refuse_stuck_original(src: &Path) -> Result<(), PutError> {
 }
 
 /// Make the temporary file beside the one being replaced with `make`,
-/// under a short hidden name of its own (the file's name with more
+/// under a short hidden name naming this process (the file's name with more
 /// around it could run past the file system's limit), numbered past one
-/// already there, whether a file or a dangling link ([`at_free_name`]). Returns its path.
+/// already there, whether a file or a dangling link ([`at_free_name`]). Parts a program that is
+/// gone left in `dir` are removed first ([`super::parts::sweep`]). Returns its path.
 fn make_part(dir: &Path, make: impl Fn(&Path) -> io::Result<()>) -> io::Result<PathBuf> {
-    Ok(dir.join(at_free_name(dir, OsStr::new(".reprise.part"), make)?))
+    super::parts::sweep(dir);
+    Ok(dir.join(at_free_name(dir, &super::parts::own(), make)?))
 }
 
 /// Make `to` under a hidden part name beside it ([`make_part`] with `make`), run `ready` on the
