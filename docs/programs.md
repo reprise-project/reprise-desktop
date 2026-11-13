@@ -830,7 +830,8 @@ the machine at city accuracy and the zone of the nearest town of 15,000
 people or more is set, from a table of GeoNames towns that Reprise carries.
 Reprise looks when you turn it on, when the session
 starts, after a resume and when NetworkManager takes a new connection, at most
-once an hour. While it is on the zone list is greyed. It is greyed with a note
+once an hour, or five minutes after a look that found no location. A look
+still running when you turn it off sets nothing. While it is on the zone list is greyed. It is greyed with a note
 when geoclue is missing, when location is off in Settings > Privacy, or when
 polkit wants a password to change the zone, since no one is there to type it.
 The package's polkit rule lets a local, active administrator (group `wheel`
