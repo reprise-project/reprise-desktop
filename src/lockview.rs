@@ -575,6 +575,7 @@ pub fn seal(state: &mut State, raise: impl FnOnce(&mut State)) {
     state.close_overview();
     crate::taskpreview::hide(state);
     crate::snappickerview::hide(state);
+    crate::projectorview::hide(state);
     crate::trayflyout::close(state);
     crate::trayreveal::collapse_all(state);
     crate::notifycenter::close(state);

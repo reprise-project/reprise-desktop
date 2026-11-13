@@ -98,6 +98,8 @@ pub enum SceneOwner {
     /// The snap layout picker (`snappickerview`); hits resolve to its
     /// zones.
     SnapPicker,
+    /// The display switcher (`projectorview`); hits resolve to its tiles.
+    Projector,
     Notification,
     NotifyCenter,
     ClipView,
@@ -445,6 +447,7 @@ pub struct State {
     pub task_preview: crate::taskpreview::TaskPreviewView,
     pub mini_views: crate::miniview::MiniViews,
     pub snap_picker: crate::snappickerview::SnapPickerView,
+    pub projector: crate::projectorview::ProjectorView,
     pub snap_bar: crate::snapbarview::SnapBarView,
     /// Each bar's auto-hide (`autohideview`).
     pub bar_hide: crate::autohideview::BarHide,
@@ -821,6 +824,7 @@ impl State {
             task_preview: Default::default(),
             mini_views: Default::default(),
             snap_picker: Default::default(),
+            projector: Default::default(),
             snap_bar: Default::default(),
             bar_hide: Default::default(),
             attention_flash: Default::default(),

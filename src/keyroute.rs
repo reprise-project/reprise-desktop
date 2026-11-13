@@ -87,6 +87,8 @@ pub struct Modes {
     /// which gives it every press.
     pub snap_picker_open: bool,
     pub snap_picker_keys: bool,
+    /// The display switcher is open.
+    pub projector_open: bool,
     /// The Glass Start menu is open.
     pub start_panel_open: bool,
     /// The clipboard history popup is open.
@@ -163,6 +165,8 @@ pub enum KeyRoute {
     Overview,
     /// The snap layout picker takes the press (its first keysym).
     SnapPicker(u32),
+    /// The display switcher takes the press (its first keysym).
+    Projector(u32),
     /// The Glass Start menu takes the press.
     StartPanel,
     /// The clipboard history popup takes the press.
@@ -439,6 +443,14 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
     }
     if modes.snap_picker_open && k.pressed && k.has(KEY_Escape) {
         return with(KeyRoute::SnapPicker(KEY_Escape));
+    }
+    // The display switcher takes every press but its own bind, which moves it on.
+    if modes.projector_open && k.pressed {
+        return with(if own(Action::DisplaySwitcher) {
+            KeyRoute::Binds(vec![Action::DisplaySwitcher])
+        } else {
+            KeyRoute::Projector(k.syms.first().copied().unwrap_or(0))
+        });
     }
     if modes.start_panel_open && k.pressed {
         return with(if own(Action::StartMenu) {

@@ -101,6 +101,8 @@ mod pointers;
 mod popupgrab;
 mod popups;
 mod privacy;
+mod projection;
+mod projectorview;
 mod proxywatch;
 mod putview;
 mod quickwatch;

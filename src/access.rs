@@ -38,6 +38,7 @@ pub enum Surface {
     Displays,
     TrayFlyout,
     SnapPicker,
+    Projector,
     TaskPreview,
     MiniView(u64),
     /// Always there (see `notifyview::access`), so a balloon's alert is announced.
@@ -177,6 +178,7 @@ pub struct Keyboard {
     pub switcher: bool,
     pub overview: bool,
     pub snap_picker: bool,
+    pub projector: bool,
     pub menus: bool,
     pub launcher: bool,
     pub start_panel: bool,
@@ -207,6 +209,8 @@ pub fn focus_of(k: &Keyboard) -> Option<Surface> {
         Some(Surface::Overview)
     } else if k.snap_picker {
         Some(Surface::SnapPicker)
+    } else if k.projector {
+        Some(Surface::Projector)
     } else if k.menus {
         Some(Surface::Menus)
     } else if k.start_panel {
@@ -245,6 +249,7 @@ fn keyboard(state: &State) -> Keyboard {
         switcher: state.switcher.is_open(),
         overview: state.overview.view.is_some(),
         snap_picker: state.snap_picker.has_keys(),
+        projector: state.projector.is_open(),
         menus: !state.menus.is_empty(),
         launcher: state.launcher.is_some(),
         start_panel: state.start_panel.is_some(),
@@ -319,6 +324,7 @@ fn surfaces(state: &State) -> Vec<Surface> {
         ),
         (state.task_preview.is_shown(), Surface::TaskPreview),
         (state.snap_picker.is_shown(), Surface::SnapPicker),
+        (state.projector.is_open(), Surface::Projector),
         (crate::notifycenter::is_open(state), Surface::NotifyCenter),
         (crate::keysheetview::is_shown(state), Surface::KeySheet),
         (state.panels.colorpick.is_some(), Surface::ColorPick),
@@ -382,6 +388,7 @@ fn tree(state: &State, surface: Surface) -> Option<Tree> {
         Surface::TaskPreview => crate::taskpreview::access(state),
         Surface::MiniView(id) => crate::miniview::access(state, id),
         Surface::SnapPicker => crate::snappickerview::access(state),
+        Surface::Projector => crate::projectorview::access(state),
         Surface::ClipView => state.clipview_access(),
         Surface::EmojiView => state.emoji_access(),
         Surface::Calendar => crate::calendarview::access(state),

@@ -325,6 +325,7 @@ impl State {
             }
             Hit::MiniView { .. } => {}
             Hit::SnapPicker { zone } => crate::snappickerview::press(self, zone, button),
+            Hit::Projector { tile } => crate::projectorview::press(self, tile, button),
             Hit::Notification => {
                 if crate::notifyview::press(self, pos.x, pos.y, button) {
                     self.interaction = Interaction::NotifyPress;

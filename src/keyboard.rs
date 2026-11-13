@@ -437,6 +437,7 @@ impl State {
             }
             KeyRoute::TrayFlyoutClose => crate::trayflyout::close(self),
             KeyRoute::SnapPicker(sym) => crate::snappickerview::key(self, sym),
+            KeyRoute::Projector(sym) => crate::projectorview::key(self, sym),
             KeyRoute::Taskbar(sym) => self.bar_key(sym, k.mods & keys::MOD_SHIFT != 0),
             KeyRoute::NotifyCenter(sym) => crate::notifycenter::key(self, sym, k.mods),
             KeyRoute::Region(sym) if self.panels.colorpick.is_some() => self.color_pick_key(sym),
@@ -487,6 +488,7 @@ impl State {
         }
         self.aids_after_key();
         self.switcher_modifiers();
+        crate::projectorview::modifiers(self);
         crate::access::touch(self);
     }
 
@@ -623,6 +625,7 @@ impl State {
             snap_assist_open: self.snap_assist_open(),
             snap_picker_open: self.snap_picker.is_shown(),
             snap_picker_keys: self.snap_picker.has_keys(),
+            projector_open: self.projector.is_open(),
             start_panel_open: self.start_panel.is_some(),
             notify_center_open: crate::notifycenter::is_open(self),
             notify_reply_focused: crate::notifyview::reply_focused(self),
@@ -824,6 +827,7 @@ impl State {
             Action::TaskManager => self.start_task_manager(),
             Action::Overview => self.toggle_overview(),
             Action::SnapLayouts => crate::snappickerview::toggle(self),
+            Action::DisplaySwitcher => crate::projectorview::bind(self, bind_mods),
             Action::FocusTaskbar => self.focus_taskbar(false),
             Action::FocusTray => self.focus_taskbar(true),
             Action::ClipboardHistory => self.toggle_clipview(),

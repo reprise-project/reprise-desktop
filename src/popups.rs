@@ -8,6 +8,7 @@ pub enum Popup {
     TrayFlyout,
     TaskPreview,
     SnapPicker,
+    Projector,
     NotifyCenter,
     Calendar,
     Displays,
@@ -31,10 +32,11 @@ pub struct PressAt {
 
 impl Popup {
     /// Every popup, in the order a press closes them.
-    pub const ALL: [Popup; 13] = [
+    pub const ALL: [Popup; 14] = [
         Popup::TrayFlyout,
         Popup::TaskPreview,
         Popup::SnapPicker,
+        Popup::Projector,
         Popup::NotifyCenter,
         Popup::Calendar,
         Popup::Displays,
@@ -57,6 +59,7 @@ impl Popup {
             Popup::TrayFlyout => crate::trayflyout::open_on(state).is_some(),
             Popup::TaskPreview => state.task_preview.is_shown(),
             Popup::SnapPicker => state.snap_picker.is_shown(),
+            Popup::Projector => state.projector.is_open(),
             Popup::NotifyCenter => crate::notifycenter::is_open(state),
             Popup::Calendar => crate::calendarview::is_open(state),
             Popup::Displays => crate::displaysview::is_open(state),
@@ -82,6 +85,7 @@ impl Popup {
             Popup::TrayFlyout => matches!(hit, Hit::TrayFlyout { .. }),
             Popup::TaskPreview => matches!(hit, Hit::TaskPreview { .. }),
             Popup::SnapPicker => matches!(hit, Hit::SnapPicker { .. }),
+            Popup::Projector => matches!(hit, Hit::Projector { .. }),
             Popup::NotifyCenter => matches!(hit, Hit::NotifyCenter),
             Popup::Calendar => matches!(hit, Hit::Calendar { .. }),
             Popup::Displays => matches!(hit, Hit::Displays { .. }),
@@ -114,7 +118,11 @@ impl Popup {
         );
         let menu = matches!(hit, Hit::Menu { .. });
         match self {
-            Popup::TrayFlyout | Popup::TaskPreview | Popup::SnapPicker | Popup::Calendar => false,
+            Popup::TrayFlyout
+            | Popup::TaskPreview
+            | Popup::SnapPicker
+            | Popup::Projector
+            | Popup::Calendar => false,
             // The bell toggles it (`tray::click`).
             Popup::NotifyCenter => menu || tray,
             // `builtin::click` toggles it.
@@ -134,6 +142,7 @@ impl Popup {
             Popup::TrayFlyout => crate::trayflyout::close(state),
             Popup::TaskPreview => crate::taskpreview::hide(state),
             Popup::SnapPicker => crate::snappickerview::hide(state),
+            Popup::Projector => crate::projectorview::hide(state),
             Popup::NotifyCenter => crate::notifycenter::close(state),
             Popup::Calendar => crate::calendarview::close(state),
             Popup::Displays => crate::displaysview::close(state),
@@ -164,6 +173,7 @@ impl Popup {
             Popup::TrayFlyout => crate::trayflyout::hover(state, None),
             Popup::TaskPreview => crate::taskpreview::hide(state),
             Popup::SnapPicker => crate::snappickerview::leave(state),
+            Popup::Projector => crate::projectorview::hover(state, None),
             Popup::Calendar => crate::calendarview::hover(state, None),
             Popup::Displays => crate::displaysview::hover(state, None),
             Popup::Menu => state.clear_menu_hover(),
@@ -192,6 +202,7 @@ mod tests {
             SceneOwner::TrayFlyout => Some(Popup::TrayFlyout),
             SceneOwner::TaskPreview => Some(Popup::TaskPreview),
             SceneOwner::SnapPicker => Some(Popup::SnapPicker),
+            SceneOwner::Projector => Some(Popup::Projector),
             SceneOwner::NotifyCenter => Some(Popup::NotifyCenter),
             SceneOwner::ClipView => Some(Popup::ClipView),
             SceneOwner::EmojiView => Some(Popup::EmojiView),
@@ -224,6 +235,7 @@ mod tests {
             (SceneOwner::TrayFlyout, Some(Popup::TrayFlyout)),
             (SceneOwner::TaskPreview, Some(Popup::TaskPreview)),
             (SceneOwner::SnapPicker, Some(Popup::SnapPicker)),
+            (SceneOwner::Projector, Some(Popup::Projector)),
             (SceneOwner::NotifyCenter, Some(Popup::NotifyCenter)),
             (SceneOwner::ClipView, Some(Popup::ClipView)),
             (SceneOwner::EmojiView, Some(Popup::EmojiView)),
@@ -252,6 +264,7 @@ mod tests {
             Hit::TrayFlyout { cell: None },
             Hit::TaskPreview { cell: None },
             Hit::SnapPicker { zone: None },
+            Hit::Projector { tile: None },
             Hit::NotifyCenter,
             Hit::Calendar {
                 hit: reprisekit::controls::calendar::PopupHit::Panel,

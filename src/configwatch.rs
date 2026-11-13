@@ -569,6 +569,7 @@ fn close_bar_popups(state: &mut State) {
     crate::trayreveal::collapse_all(state);
     crate::taskpreview::hide(state);
     crate::snappickerview::hide(state);
+    crate::projectorview::hide(state);
     crate::notifycenter::close(state);
     crate::tooltip::hide(state);
 }
