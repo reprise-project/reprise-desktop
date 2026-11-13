@@ -173,8 +173,14 @@ pub struct X11Env {
     pub authority: String,
 }
 
-/// What the login manager and pam_systemd set that services outside our process tree still need.
-const FORWARDED: [&str; 3] = ["XDG_SESSION_DESKTOP", "XDG_SEAT", "XDG_SEAT_PATH"];
+/// What the login manager and pam_systemd set that services outside our process tree still need:
+/// units such as localsearch's start only under `XDG_SESSION_CLASS=user`.
+const FORWARDED: [&str; 4] = [
+    "XDG_SESSION_DESKTOP",
+    "XDG_SESSION_CLASS",
+    "XDG_SEAT",
+    "XDG_SEAT_PATH",
+];
 
 impl SessionEnv {
     /// Read at startup, before any worker thread exists.
@@ -1437,6 +1443,7 @@ mod tests {
             "DISPLAY",
             "XAUTHORITY",
             "XDG_SESSION_DESKTOP",
+            "XDG_SESSION_CLASS",
             "XDG_SEAT",
             "XDG_SEAT_PATH",
         ];
@@ -1689,6 +1696,7 @@ mod tests {
                 "DISPLAY",
                 "XAUTHORITY",
                 "XDG_SESSION_DESKTOP",
+                "XDG_SESSION_CLASS",
                 "XDG_SEAT_PATH"
             ]))
         );
