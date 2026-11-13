@@ -113,11 +113,24 @@ fn icon_rect(u: TextUnits, px: u32) -> Rect {
     Rect::new(ICON_XY.0, y, ICON, ICON)
 }
 
-/// The width of `n` buttons in a row, `BUTTON_GAP` apart. `client` and
+/// Room beside a button's label on either side.
+const BUTTON_PAD: i32 = 8;
+
+/// Each button's width at 100%: `BUTTON_W`, or wider for a label that needs it.
+fn button_ws(f: &Fields, text: &TextRenderer, px: u32, u: TextUnits) -> Vec<i32> {
+    (f.buttons.iter())
+        .map(|l| {
+            let ink = text.measure(&l.replace('&', ""), false, px);
+            BUTTON_W.max(u.design(ink) + 2 * BUTTON_PAD)
+        })
+        .collect()
+}
+
+/// The width of a row of buttons `ws` wide, `BUTTON_GAP` apart. `client` and
 /// `form` both need this to agree, or the box's computed size and its
 /// drawn layout drift apart.
-fn button_row_w(n: i32) -> i32 {
-    n * BUTTON_W + (n - 1).max(0) * BUTTON_GAP
+fn button_row_w(ws: &[i32]) -> i32 {
+    ws.iter().sum::<i32>() + (ws.len() as i32 - 1).max(0) * BUTTON_GAP
 }
 
 /// The client size this box needs at 100%, for text set at `px` that grows by `u`: wide enough
@@ -133,8 +146,7 @@ pub fn client(f: &Fields, text: &TextRenderer, px: u32, u: TextUnits) -> (i32, i
         .unwrap_or(0);
     let (tx, step) = text_x(f);
     let msg = u.design(u.len(tx) + step + widest) + MARGIN_X;
-    let n = f.buttons.len() as i32;
-    let row = MARGIN_X * 2 + button_row_w(n);
+    let row = MARGIN_X * 2 + button_row_w(&button_ws(f, text, px, u));
     (
         msg.max(row).max(MIN_W).max(u.design(f.min_w)),
         CLIENT_H + extra_h(f, lines.len()),
@@ -173,18 +185,17 @@ pub fn form(f: &Fields, text: &TextRenderer, px: u32, u: TextUnits) -> Form {
     // three sit together. A taller message pushes the row down by the
     // same lines it grew by.
     let button_y = BUTTON_Y + extra;
-    let n = f.buttons.len() as i32;
-    let row_w = button_row_w(n);
-    let mut x = (w - row_w) / 2;
-    for (i, label) in f.buttons.iter().enumerate() {
+    let ws = button_ws(f, text, px, u);
+    let mut x = (w - button_row_w(&ws)) / 2;
+    for (i, (label, bw)) in f.buttons.iter().zip(ws).enumerate() {
         items.push(Item::button(
             button_id(i),
-            Rect::new(x, button_y, BUTTON_W, BUTTON_H),
+            Rect::new(x, button_y, bw, BUTTON_H),
             label,
             true,
             i == f.default,
         ));
-        x += BUTTON_W + BUTTON_GAP;
+        x += bw + BUTTON_GAP;
     }
     // The default button has the focus, so Space presses the same button
     // Enter does.
@@ -282,6 +293,22 @@ mod tests {
         let ok = f.item(OK).expect("the OK button exists").rect;
         assert_eq!((ok.x, ok.y, ok.width, ok.height), EXPECTED_OK);
         assert_eq!(ok.width, crate::classic::widgets::BUTTON_W);
+    }
+
+    #[test]
+    fn a_label_wider_than_a_button_widens_its_button_and_the_row() {
+        let (text, px) = rend();
+        let f = Fields {
+            buttons: vec!["Log In Anyway, Then Remember".into(), "Cancel".into()],
+            ..notfound()
+        };
+        let form = form(&f, &text, px, TextUnits::ONE);
+        let long = form.item(button_id(0)).expect("the first button").rect;
+        let cancel = form.item(button_id(1)).expect("the second button").rect;
+        assert!(long.width > BUTTON_W, "{}", long.width);
+        assert_eq!(cancel.width, BUTTON_W);
+        assert_eq!(cancel.x, long.x + long.width + BUTTON_GAP);
+        assert!(client(&f, &text, px, TextUnits::ONE).0 >= long.width + BUTTON_W);
     }
 
     /// The box sizes to its text rather than to a fixed width, which is

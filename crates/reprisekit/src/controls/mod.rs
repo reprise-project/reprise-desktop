@@ -54,6 +54,7 @@ pub mod miniview;
 pub mod mixer;
 pub mod msgbox;
 pub mod multiedit;
+pub mod netconnect;
 pub mod notifyhistory;
 pub mod notifysheet;
 pub mod openwith;
