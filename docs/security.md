@@ -1503,6 +1503,14 @@ stop the share first.
   one hands its id back to the same program; Reprise runs nothing a result
   names. That program's next new window may take focus, as one Reprise
   started would.
+- **Calendar events.** The clock's calendar reads evolution-data-server's
+  source registry and opens each shown calendar read-only for one day's
+  objects, off the compositor's loop, each call waiting 5 s at most. A reply
+  is read only from a body of 4 MiB or less, the registry's at the UID and
+  key file of each source alone. The query holds the day's times and the
+  local zone's name, the name only when it is letters, digits and `/_+-`.
+  A summary shows 256 characters at most, without control, bidi or
+  zero-width characters.
 - **Who a notification or tray icon is from.** The compositor reads which
   app a notification's sender or a tray icon's owner is from its process,
   through the pidfd the bus gives for it, by the rules the Wayland filter

@@ -299,6 +299,7 @@ seconds (30 by default, 0 locks at once) locks the session. The Screen Saver
 | `small_icons` | a 30 px bar (Glass only) | `false` |
 | `tray_overflow` | quiet tray icons wait behind an arrow or a ^ | `true` |
 | `network_meter` | download and upload speed (`↓ 2.4 MB/s` over `↑ 120 KB/s`, in thousands of bytes) on two lines between the tray icons and the clock, read once a second while shown | `false` |
+| `calendar_events` | the clock's calendar lists the picked day's events (today's when it opens) from evolution-data-server's calendars, read-only; a click on one opens the default calendar program. Nothing shows without evolution-data-server | `true` |
 | `badges` | a program's unread count (LauncherEntry `count`) shows as a badge in its task buttons' top-right corner, `99+` above 99 | `true` |
 | `auto_hide` | the bar slides away when nothing needs it | `false` |
 | `reveal_on_edge` | the pointer resting on, clicking or dragging onto the 2 px line brings it back | `true` |

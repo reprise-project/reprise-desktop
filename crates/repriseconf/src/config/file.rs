@@ -643,6 +643,7 @@ pub struct FileTaskbar {
     pub tray_overflow: Option<bool>,
     pub badges: Option<bool>,
     pub network_meter: Option<bool>,
+    pub calendar_events: Option<bool>,
     pub auto_hide: Option<bool>,
     pub reveal_on_edge: Option<bool>,
     pub reveal_on_keys: Option<bool>,

@@ -36,7 +36,8 @@ pub use bind::{
     write_form, write_forms,
 };
 pub use desktop::{
-    FORGET_FRAMES, search, show_contents, switcher, taskbar, virtual_desktops, window_behavior,
+    FORGET_FRAMES, search, show_contents, show_events, switcher, taskbar, virtual_desktops,
+    window_behavior,
 };
 pub use input::{
     cursor, keyboard, mouse, pointer_and_alerts, preview_size, text_and_keys, touchpad,

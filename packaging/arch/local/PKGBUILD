@@ -61,6 +61,7 @@ optdepends=('ttf-tahoma: Wine'\''s Tahoma, the UI font the layouts are tuned for
             'at-spi2-core: screen readers (Orca) in Reprise and its programs'
             'orca: the screen reader Super+Alt+S and Settings start and stop'
             'localsearch: files found by their contents in the launcher and Start menu search'
+            'evolution-data-server: the day'\''s events under the clock'\''s calendar'
             'libx11: the Compose files behind dead keys and the Compose key in the lock screen password'
             'hwdata: graphics card names in About Reprise and Task Manager (pci.ids)'
             'geoclue: the location prompt and the location indicator (Reprise is the geoclue agent)'

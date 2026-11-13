@@ -212,6 +212,8 @@ pub struct TaskbarConfig {
     pub badges: bool,
     /// The tray shows download and upload speed beside the clock.
     pub network_meter: bool,
+    /// The clock's calendar lists the picked day's events from evolution-data-server.
+    pub calendar_events: bool,
     pub auto_hide: bool,
     pub reveal_on_edge: bool,
     pub reveal_on_keys: bool,
@@ -241,6 +243,7 @@ impl TaskbarConfig {
             tray_overflow: true,
             badges: true,
             network_meter: false,
+            calendar_events: true,
             auto_hide: false,
             reveal_on_edge: true,
             reveal_on_keys: true,

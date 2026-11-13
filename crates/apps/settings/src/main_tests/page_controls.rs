@@ -425,6 +425,35 @@ fn the_files_provider_greys_until_content_search_is_on() {
     assert_eq!(row(&a), (vec![true], vec![false], vec![String::new()]));
 }
 
+/// The Taskbar page's calendar events note says what to install, greyed with its check box,
+/// while evolution-data-server is missing, and is blank otherwise.
+#[test]
+fn the_calendar_events_row_greys_without_evolution_data_server() {
+    let mut a = app("events");
+    let at = Page::Taskbar.index();
+    let row = |a: &SettingsApp, id: &str| match &a.sheet.pages[at].item(id).unwrap().control {
+        form::Control::Label { text, enabled, .. } => (text.clone(), *enabled),
+        form::Control::Check { enabled, .. } => (String::new(), *enabled),
+        _ => panic!("a label or a check box"),
+    };
+    assert_eq!(row(&a, "taskbar_events_note"), (String::new(), true));
+    let read = |a: &mut SettingsApp, installed| {
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(installed).unwrap();
+        a.events.job = Some(rx);
+        assert!(a.events_done());
+    };
+    read(&mut a, false);
+    assert_eq!(
+        row(&a, "taskbar_events_note"),
+        ("(install evolution-data-server)".to_string(), false)
+    );
+    assert!(!row(&a, "taskbar_calendar_events").1, "the check box greys");
+    read(&mut a, true);
+    assert_eq!(row(&a, "taskbar_events_note"), (String::new(), true));
+    assert!(row(&a, "taskbar_calendar_events").1);
+}
+
 fn reader_read(a: &mut SettingsApp, reader: readerhost::Reader, failed: Option<String>) {
     let (tx, rx) = std::sync::mpsc::channel();
     tx.send(readerhost::Reading { reader, failed }).unwrap();

@@ -248,6 +248,25 @@ fn pick<'a>(lists: &[&str], tree: &MimeTree, mime: &str, apps: &'a [AppEntry]) -
     default_in_lists(&lists, tree, mime, apps).map(|i| apps[i].id.as_str())
 }
 
+#[test]
+fn a_type_s_own_default_never_falls_back_to_a_parent() {
+    let tree = MimeTree::parse([""], ["text/calendar text/plain\n"]);
+    let apps = vec![
+        app("notepad.desktop", &["text/plain"]),
+        app("calendar.desktop", &["text/calendar"]),
+    ];
+    let lists = ["[Default Applications]\ntext/plain=notepad.desktop\n".to_string()];
+    let own = |apps: &[AppEntry]| {
+        own_default_in_lists(&lists, &tree, "text/calendar", apps).map(|i| apps[i].id.clone())
+    };
+    assert_eq!(own(&apps).as_deref(), Some("calendar.desktop"));
+    assert_eq!(own(&apps[..1]), None, "not the text editor");
+    assert_eq!(
+        pick(&[&lists[0]], &tree, "text/calendar", &apps[..1]),
+        Some("notepad.desktop")
+    );
+}
+
 const DOCX: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
 #[test]

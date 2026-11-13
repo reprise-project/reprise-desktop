@@ -156,6 +156,10 @@ interface = "classic"        # classic | blue | glass; an unknown value falls ba
 #                            # shows in a badge on its task buttons, 99+ above 99
 # network_meter = false      # download and upload speed on two lines between
 #                            # the tray icons and the clock, once a second
+# calendar_events = true     # the clock's calendar lists the picked day's
+#                            # events (today's at first) from
+#                            # evolution-data-server; a click on one opens
+#                            # the default calendar program
 # auto_hide = false          # the bar slides off its edge when unused, leaving
 #                            # a 2 px line; windows take the rest of the screen
 # reveal_on_edge = true      # it comes back when the pointer rests on that
