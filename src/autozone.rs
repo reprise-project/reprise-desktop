@@ -2,6 +2,8 @@
 //! sets the zone of the nearest town (`tzcity`) through timedated; docs/programs.md has the pace.
 
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use futures_util::stream::{BoxStream, SelectAll, StreamExt};
@@ -14,6 +16,8 @@ use zbus::{OwnedObjectPath, OwnedVariant, Variant};
 use crate::compositor::State;
 
 const HOUR: u64 = 3600;
+/// How long a look that found no place holds off the next trigger.
+const RETRY: u64 = 300;
 /// How long geoclue gets to find the machine.
 const FIX_WITHIN: Duration = Duration::from_secs(60);
 
@@ -38,6 +42,21 @@ const PROPERTIES: &str = "org.freedesktop.DBus.Properties";
 #[derive(Default)]
 pub struct AutoZone {
     wake: Option<async_channel::Sender<Wake>>,
+    turns: Turns,
+}
+
+/// Counts the switch's turns on and off, so a look started before a turn sets nothing.
+#[derive(Clone, Default)]
+struct Turns(Arc<AtomicU64>);
+
+impl Turns {
+    fn now(&self) -> u64 {
+        self.0.load(Ordering::SeqCst)
+    }
+
+    fn still(&self, turn: u64) -> bool {
+        self.now() == turn
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -67,17 +86,26 @@ impl AutoZone {
         }
         let (wake, wakes) = async_channel::unbounded();
         let _ = wake.try_send(Wake::On(on));
+        let turns = Turns::default();
+        let theirs = turns.clone();
         let spawned = std::thread::Builder::new()
             .name("auto-timezone".into())
-            .spawn(move || zbus::block_on(run(wakes, tx)));
+            .spawn(move || zbus::block_on(run(wakes, tx, theirs)));
         if let Err(e) = spawned {
             log::warn!("time zone: no thread: {e}");
             return AutoZone::default();
         }
-        AutoZone { wake: Some(wake) }
+        AutoZone {
+            wake: Some(wake),
+            turns,
+        }
     }
 
     fn send(&self, w: Wake) {
+        // Ahead of the message: a look in flight reads the turn before its next one is queued.
+        if matches!(w, Wake::On(_)) {
+            self.turns.0.fetch_add(1, Ordering::SeqCst);
+        }
         if let Some(tx) = &self.wake {
             let _ = tx.try_send(w);
         }
@@ -101,7 +129,8 @@ pub fn resumed(state: &mut State) {
 #[derive(Debug, Default, PartialEq)]
 struct Pace {
     on: bool,
-    last: Option<u64>,
+    /// A trigger before this waits for it: an hour after a look, `RETRY` after a missed one.
+    rest_until: Option<u64>,
     due: Option<u64>,
 }
 
@@ -113,21 +142,24 @@ impl Pace {
                 self.due = on.then_some(now);
             }
             Wake::Resumed | Wake::Network if self.on => {
-                let at = self.last.map_or(now, |l| (l + HOUR).max(now));
+                let at = self.rest_until.map_or(now, |r| r.max(now));
                 self.due = Some(self.due.map_or(at, |d| d.min(at)));
             }
             Wake::Resumed | Wake::Network | Wake::Due => {}
         }
     }
 
-    /// True when a look is due at `now`; it counts as done.
+    /// True when a look is due at `now`; [`Pace::done`] follows it.
     fn take(&mut self, now: u64) -> bool {
         if self.due.is_none_or(|d| d > now) {
             return false;
         }
         self.due = None;
-        self.last = Some(now);
         true
+    }
+
+    fn done(&mut self, missed: bool, now: u64) {
+        self.rest_until = Some(now + if missed { RETRY } else { HOUR });
     }
 }
 
@@ -145,6 +177,7 @@ fn boot_secs() -> u64 {
 async fn run(
     wakes: async_channel::Receiver<Wake>,
     tx: smithay::reexports::calloop::channel::Sender<String>,
+    turns: Turns,
 ) {
     let conn = match zbus::Connection::system().await {
         Ok(c) => c,
@@ -169,12 +202,15 @@ async fn run(
     loop {
         let now = boot_secs();
         if pace.take(now) {
-            match look(&conn).await {
+            let turn = turns.now();
+            let looked = look(&conn, || turns.still(turn)).await;
+            pace.done(matches!(looked, Err(Miss::Retry(_))), boot_secs());
+            match looked {
                 Ok(Some(zone)) => {
                     let _ = tx.send(zone);
                 }
                 Ok(None) => {}
-                Err(e) => log::info!("time zone: {e}"),
+                Err(Miss::Retry(e) | Miss::Refused(e)) => log::info!("time zone: {e}"),
             }
             continue;
         }
@@ -232,17 +268,33 @@ fn connected(iface: &str, primary: &str) -> bool {
     iface == NM && primary != "/"
 }
 
-/// Find the machine and set the nearest zone; Some(zone) when it changed.
-async fn look(conn: &zbus::Connection) -> Result<Option<String>, String> {
+/// Why a look set no zone.
+#[derive(Debug)]
+enum Miss {
+    /// No place or no timedated: the next trigger may look again after `RETRY`.
+    Retry(String),
+    /// polkit or tzdata said no: it stays no for the hour.
+    Refused(String),
+}
+
+/// Find the machine and set the nearest zone while `still_on`; Some(zone) when it changed.
+async fn look(
+    conn: &zbus::Connection,
+    still_on: impl Fn() -> bool,
+) -> Result<Option<String>, Miss> {
     let at = locate(conn)
         .await
-        .map_err(|e| format!("geoclue gave no location: {e}"))?;
-    let zone = crate::tzcity::nearest(at).ok_or("tzdata lists no zones")?;
+        .map_err(|e| Miss::Retry(format!("geoclue gave no location: {e}")))?;
+    let zone = crate::tzcity::nearest(at).ok_or(Miss::Refused("tzdata lists no zones".into()))?;
     let current: String = timedated_zone(conn)
         .await
-        .map_err(|e| format!("timedated does not answer: {e}"))?;
+        .map_err(|e| Miss::Retry(format!("timedated does not answer: {e}")))?;
     if current == zone {
         log::info!("time zone: {zone} stays");
+        return Ok(None);
+    }
+    if !still_on() {
+        log::info!("time zone: turned off or on during the look; {zone} is not set");
         return Ok(None);
     }
     let set = conn
@@ -256,11 +308,11 @@ async fn look(conn: &zbus::Connection) -> Result<Option<String>, String> {
         .await;
     match set {
         Ok(_) => Ok(Some(zone)),
-        Err(e) if needs_password(&e) => Err(format!(
+        Err(e) if needs_password(&e) => Err(Miss::Refused(format!(
             "polkit does not let {current} change to {zone} without a password; an \
              administrator has to allow org.freedesktop.timedate1.set-timezone"
-        )),
-        Err(e) => Err(format!("timedated did not set {zone}: {e}")),
+        ))),
+        Err(e) => Err(Miss::Retry(format!("timedated did not set {zone}: {e}"))),
     }
 }
 
@@ -388,19 +440,58 @@ mod tests {
         assert!(!p.take(10), "off: a network change does nothing");
         p.wake(&Wake::On(true), 10);
         assert!(p.take(10));
+        p.done(false, 10);
         p.wake(&Wake::Resumed, 600);
         assert_eq!(p.due, Some(10 + HOUR), "the hour runs from the last look");
         assert!(!p.take(600));
         p.wake(&Wake::Network, 700);
         assert_eq!(p.due, Some(10 + HOUR), "one look covers both");
         assert!(p.take(10 + HOUR));
+        p.done(false, 10 + HOUR);
         p.wake(&Wake::Resumed, 20_000);
         assert!(p.take(20_000), "past the hour a resume looks at once");
+        p.done(false, 20_000);
         p.wake(&Wake::On(false), 20_001);
         p.wake(&Wake::Network, 30_000);
         assert!(!p.take(30_000));
         p.wake(&Wake::On(true), 30_001);
         assert!(p.take(30_001), "turning on again does not wait");
+    }
+
+    #[test]
+    fn a_look_that_found_no_place_lets_a_trigger_look_after_five_minutes() {
+        let mut p = Pace::default();
+        p.wake(&Wake::Resumed, 0);
+        p.wake(&Wake::On(true), 0);
+        assert!(p.take(0));
+        p.done(true, 60);
+        p.wake(&Wake::Network, 90);
+        assert_eq!(p.due, Some(60 + RETRY), "not the hour");
+        assert!(p.take(60 + RETRY));
+        p.done(false, 60 + RETRY);
+        p.wake(&Wake::Network, 60 + 2 * RETRY);
+        assert_eq!(
+            p.due,
+            Some(60 + RETRY + HOUR),
+            "a found place spends the hour"
+        );
+    }
+
+    #[test]
+    fn turning_the_switch_leaves_a_look_in_flight_behind() {
+        let zone = AutoZone::default();
+        let turn = zone.turns.now();
+        zone.send(Wake::Resumed);
+        zone.send(Wake::Network);
+        assert!(zone.turns.still(turn), "triggers are not turns");
+        zone.send(Wake::On(false));
+        assert!(!zone.turns.still(turn), "turned off: the look sets nothing");
+        let turn = zone.turns.now();
+        zone.send(Wake::On(true));
+        assert!(
+            !zone.turns.still(turn),
+            "turned on again: a fresh look follows"
+        );
     }
 
     #[test]
