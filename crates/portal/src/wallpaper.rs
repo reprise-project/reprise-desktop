@@ -25,6 +25,7 @@ impl Wallpaper {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[zbus(name = "SetWallpaperURI")]
     async fn set_wallpaper_uri(
         &self,
         #[zbus(header)] hdr: zbus::message::Header<'_>,
@@ -332,6 +333,17 @@ mod tests {
         assert!(own.exists(), "my-own-photo.jpg is kept");
         assert!(!first.exists(), "a.png is replaced by b.png");
         assert!(last.exists());
+    }
+
+    #[test]
+    fn the_method_is_named_set_wallpaper_uri_in_capitals() {
+        use zbus::object_server::Interface;
+        let mut xml = String::new();
+        let portal = Wallpaper {
+            frontend: crate::Frontend::default(),
+        };
+        portal.introspect_to_writer(&mut xml, 0);
+        assert!(xml.contains(r#"<method name="SetWallpaperURI">"#), "{xml}");
     }
 
     #[test]
