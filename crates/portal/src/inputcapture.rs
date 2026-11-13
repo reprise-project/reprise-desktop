@@ -17,7 +17,8 @@ pub const CAP_POINTER: u32 = 2;
 /// past its `inputcapture::MAX_BARRIERS`, so the two must stay equal (or this lower).
 pub const MAX_BARRIERS: usize = 64;
 
-/// Remembered Allows: the app id maps to `["yes"]` in table and id `input-capture`.
+/// Remembered Allows: the app id maps to `yes` and the devices granted (see [`grant`]) in table
+/// and id `input-capture`.
 const STORE: crate::permit::Store = crate::permit::Store {
     table: "input-capture",
     id: "input-capture",
@@ -32,11 +33,22 @@ fn permit(app_id: &str, caps: u32, parent: Option<String>, cancel: Arc<AtomicBoo
         ..Default::default()
     };
     let kind = Kind::InputCapture(Devices::from_mask(caps));
-    crate::permit::ask_remembered(kind, STORE, app_id, input, &cancel)
+    crate::permit::ask_remembered(kind, STORE, app_id, &grant(caps), input, &cancel)
+}
+
+/// The store's words for the devices in `caps`. A bare `yes` holds none, so it covers no session.
+fn grant(caps: u32) -> Vec<&'static str> {
+    [(CAP_KEYBOARD, "keyboard"), (CAP_POINTER, "pointer")]
+        .into_iter()
+        .filter(|(c, _)| caps & c != 0)
+        .map(|(_, word)| word)
+        .collect()
 }
 
 pub(crate) struct CaptureSession {
     capture: CaptureHandle,
+    /// The capabilities the session was granted: its receiver gets only these devices.
+    caps: u32,
     eis: Option<crate::inputlink::EisHandle>,
     _relay: zruntime::Task<(), zruntime::Shared>,
 }
@@ -190,6 +202,7 @@ impl InputCapture {
                 crate::sender(&hdr),
                 SessionKind::InputCapture(CaptureSession {
                     capture,
+                    caps,
                     eis: None,
                     _relay: task,
                 }),
@@ -379,7 +392,7 @@ impl InputCapture {
             return Err(zbus::fdo::Error::Failed("not a capture session".into()));
         };
         let (ours, theirs) = crate::inputlink::socketpair()?;
-        s.eis = Some(s.capture.connect_receiver(ours));
+        s.eis = Some(s.capture.connect_receiver(ours, s.caps));
         log::info!("InputCapture.ConnectToEIS for {app_id:?}");
         Ok(theirs.into())
     }
@@ -491,6 +504,13 @@ async fn relay(
 mod tests {
     use super::*;
     use crate::inputlink::{Barrier, Zone};
+
+    #[test]
+    fn a_remembered_allow_names_each_device_it_grants() {
+        assert_eq!(grant(CAP_POINTER), ["pointer"]);
+        assert_eq!(grant(CAP_KEYBOARD), ["keyboard"]);
+        assert_eq!(grant(CAP_KEYBOARD | CAP_POINTER), ["keyboard", "pointer"]);
+    }
 
     fn two_screens() -> Vec<Zone> {
         vec![

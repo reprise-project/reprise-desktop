@@ -85,7 +85,7 @@ impl Wallpaper {
             };
             let kind = crate::permit::Kind::Wallpaper;
             match remembered_applies(&real, &app_folders(&id)) {
-                true => crate::permit::ask_remembered(kind, STORE, &id, input, &cancel),
+                true => crate::permit::ask_remembered(kind, STORE, &id, &[], input, &cancel),
                 false => crate::permit::ask_with(kind, input, &cancel).allowed(),
             }
         })
