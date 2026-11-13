@@ -107,8 +107,10 @@ impl IconList {
         }
     }
 
-    /// Takes the icons in `gone` off the list, the picked one kept, still picked and in view.
+    /// Takes the icons in `gone` off the list, the picked one kept and still picked. A pick in
+    /// view stays in view; a view scrolled away from the pick stays where it is.
     pub fn drop_names(&mut self, gone: &[String], lay: &Layout) {
+        let shown = self.selected.is_some_and(|i| self.in_view(i, lay));
         let picked = self.picked().map(str::to_string);
         let keep = |n: &String| !gone.contains(n) || picked.as_ref() == Some(n);
         let (names, icons) = (self.names.drain(..).zip(self.icons.drain(..)))
@@ -117,7 +119,13 @@ impl IconList {
         (self.names, self.icons) = (names, icons);
         self.selected = picked.and_then(|p| self.names.iter().position(|n| *n == p));
         self.left = self.left.min(self.columns().saturating_sub(lay.cols));
-        self.follow(lay);
+        if shown {
+            self.follow(lay);
+        }
+    }
+
+    fn in_view(&self, k: usize, lay: &Layout) -> bool {
+        (self.left..self.left + lay.cols).contains(&(k / ROWS))
     }
 
     pub fn follow(&mut self, lay: &Layout) {
@@ -357,5 +365,18 @@ mod tests {
             l.cell_rect(&lay, l.selected.unwrap()).is_some(),
             "the pick is in view"
         );
+    }
+
+    #[test]
+    fn a_view_scrolled_off_the_pick_stays_put_as_names_land_or_drop() {
+        let lay = layout(Rect::new(0, 0, 267, 198), &ControlMetrics::CLASSIC);
+        let mut l = list(80);
+        l.left = 5;
+        l.drop_names(&[], &lay);
+        assert_eq!(l.left, 5, "a landing that drops nothing keeps the view");
+        let gone: Vec<String> = (70..80).map(|i| format!("i{i}")).collect();
+        l.drop_names(&gone, &lay);
+        assert_eq!(l.left, 5, "names dropped past the view keep it");
+        assert_eq!(l.picked(), Some("i0"));
     }
 }
