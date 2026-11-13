@@ -39,6 +39,13 @@ pub const CLICK_METHODS: &Choices = &[
     ("clickfinger", "Finger count"),
 ];
 
+/// What flashes on the bell. Mirrors `VisualBell::parse` in `repriseconf::config`.
+pub const VISUAL_BELLS: &Choices = &[
+    ("none", "Nothing"),
+    ("window", "The window"),
+    ("screen", "The whole screen"),
+];
+
 pub const SWITCHER_STYLES: &Choices = &[("icons", "Icons"), ("thumbnails", "Thumbnails")];
 
 pub const SWITCHER_SIZES: &Choices = &[

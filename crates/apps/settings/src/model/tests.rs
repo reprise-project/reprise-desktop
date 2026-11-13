@@ -857,6 +857,8 @@ fn save_round_trips_every_field() {
         sticky_two_keys_off: false,
         slow_keys: true,
         slow_keys_delay: 3,
+        bounce_keys: true,
+        bounce_keys_delay: 12,
         key_shortcuts: false,
         color_filter: "protanopia".into(),
         color_filter_intensity: 60,
@@ -866,6 +868,8 @@ fn save_round_trips_every_field() {
         mouse_keys_speed: 900,
         mouse_keys_acceleration: 25,
         text_size: 150,
+        visual_bell: "window".into(),
+        locate_pointer: true,
         shortcuts: (default_shortcuts().into_iter())
             .map(|b| match b.keys.as_str() {
                 "Super+t" => Shortcut::new("Super+t", "spawn", "foot"),

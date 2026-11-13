@@ -8,13 +8,14 @@ fn a_config_written_elsewhere_shows_on_the_open_sheet_and_apply_keeps_it() {
     a.want.slow_keys = true;
     std::fs::write(&path, "[accessibility]\nmouse_keys = true\n").unwrap();
     assert!(a.config_changed());
-    let ax = &a.sheet.pages[Page::TextKeys.index()];
-    assert_eq!(ax.checked("mouse_keys"), Some(true));
-    let speed = &ax.item("mouse_keys_speed").unwrap().control;
+    let pointer = &a.sheet.pages[Page::PointerAlerts.index()];
+    assert_eq!(pointer.checked("mouse_keys"), Some(true));
+    let speed = &pointer.item("mouse_keys_speed").unwrap().control;
     assert!(
         matches!(speed, form::Control::TrackBar(t) if t.enabled),
         "its controls ungrey"
     );
+    let ax = &a.sheet.pages[Page::TextKeys.index()];
     assert_eq!(ax.checked("slow_keys"), Some(true), "a pending check stays");
     assert!(!a.config_changed(), "a file read as before changes nothing");
     assert!(a.apply());

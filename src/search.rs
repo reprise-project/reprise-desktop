@@ -522,9 +522,9 @@ mod tests {
             [
                 Setting::Page(Page::Mouse),
                 Setting::Page(Page::Touchpad),
-                Setting::Page(Page::TextKeys)
+                Setting::Page(Page::PointerAlerts)
             ],
-            "the Mouse page by name, then Touchpad by its external mouse and Text & Keys by MouseKeys"
+            "the Mouse page by name, then Touchpad by its external mouse and Pointer & Alerts by MouseKeys"
         );
         assert_eq!(rank("touchpad"), [Setting::Page(Page::Touchpad)]);
         assert_eq!(

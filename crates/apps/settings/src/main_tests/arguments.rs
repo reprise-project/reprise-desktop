@@ -131,7 +131,10 @@ fn export_and_import_take_a_file_and_run_without_a_window() {
 #[test]
 fn the_focus_argument_names_a_control_on_the_page() {
     let args = |v: &[&str]| page_arg(v.iter().map(|s| s.to_string()));
-    let mouse_keys = Some((Entry::Page(Page::TextKeys), Some("mouse_keys".to_string())));
+    let mouse_keys = Some((
+        Entry::Page(Page::PointerAlerts),
+        Some("mouse_keys".to_string()),
+    ));
     assert_eq!(
         args(&["--page", "accessibility", "--focus", "mouse_keys"]),
         mouse_keys
@@ -142,8 +145,8 @@ fn the_focus_argument_names_a_control_on_the_page() {
     );
     assert_eq!(args(&["--focus", "mouse_keys"]), None, "no page, no focus");
     assert_eq!(
-        args(&["--page", "text-and-keys", "--focus", "mouse_keys"]),
-        Some((Entry::Page(Page::TextKeys), Some("mouse_keys".into())))
+        args(&["--page", "pointer-and-alerts", "--focus", "mouse_keys"]),
+        mouse_keys
     );
 }
 
@@ -151,8 +154,8 @@ fn the_focus_argument_names_a_control_on_the_page() {
 fn focus_on_a_moved_control_opens_its_new_page() {
     let args = |v: &[&str]| page_arg(v.iter().map(|s| s.to_string()));
     assert_eq!(
-        args(&["--page", "sound", "--focus", "mouse_keys"]),
-        Some((Entry::Page(Page::TextKeys), Some("mouse_keys".into())))
+        args(&["--page", "text-and-keys", "--focus", "mouse_keys"]),
+        Some((Entry::Page(Page::PointerAlerts), Some("mouse_keys".into())))
     );
     assert_eq!(
         args(&["--page", "advanced", "--focus", "clipboard_history"]),
@@ -190,13 +193,13 @@ fn a_request_with_a_control_opens_its_page_with_the_keyboard_on_it() {
         let page = a.sheet.open();
         page.focus().map(|i| page.items[i].id)
     };
-    assert!(a.request(&req("accessibility", "mouse_keys")));
+    assert!(a.request(&req("accessibility", "slow_keys")));
     assert_eq!(a.sheet.tabs.open, Page::TextKeys.index());
     assert!(
         !a.sheet.tabs.focused,
         "the page strip lets go of the keyboard"
     );
-    assert_eq!(focused(&a), Some("mouse_keys"));
+    assert_eq!(focused(&a), Some("slow_keys"));
     assert!(
         a.request(&req("accessibility", "sticky_keys")),
         "the open page still moves the focus"

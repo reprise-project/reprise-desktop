@@ -19,22 +19,43 @@ fn the_text_and_keys_page_geometry() {
         rect(&s, p, "slow_keys_delay"),
         Rect::new(78, 261, 238, trackbar::HEIGHT)
     );
-    assert_eq!(rect(&s, p, "mouse_keys_group"), Rect::new(20, 300, 358, 98));
-    assert_eq!(rect(&s, p, "mouse_keys"), Rect::new(32, 318, 13, 13));
+    assert_eq!(rect(&s, p, "bounce_group"), Rect::new(20, 300, 358, 94));
+    assert_eq!(rect(&s, p, "bounce_keys"), Rect::new(32, 318, 13, 13));
+    assert_eq!(
+        rect(&s, p, "bounce_delay_value"),
+        Rect::new(286, 340, 80, 13)
+    );
+    assert_eq!(
+        rect(&s, p, "bounce_keys_delay"),
+        Rect::new(78, 361, 238, trackbar::HEIGHT)
+    );
+    assert_eq!(rect(&s, p, "key_shortcuts"), Rect::new(20, 400, 13, 13));
+    assert_eq!(rect(&s, p, "shortcuts_note"), Rect::new(38, 418, 340, 26));
+    inside_page(&s, p);
+}
+
+#[test]
+fn the_pointer_and_alerts_page_geometry() {
+    let s = built();
+    let p = Page::PointerAlerts;
+    assert_eq!(rect(&s, p, "mouse_keys_group"), Rect::new(20, 44, 358, 98));
+    assert_eq!(rect(&s, p, "mouse_keys"), Rect::new(32, 62, 13, 13));
     assert_eq!(
         rect(&s, p, "mouse_keys_num_lock"),
-        Rect::new(199, 318, 13, 13)
+        Rect::new(199, 62, 13, 13)
     );
     assert_eq!(
         rect(&s, p, "mouse_keys_speed"),
-        Rect::new(148, 338, 184, trackbar::HEIGHT)
+        Rect::new(148, 82, 184, trackbar::HEIGHT)
     );
     assert_eq!(
         rect(&s, p, "mouse_keys_acceleration"),
-        Rect::new(148, 366, 184, trackbar::HEIGHT)
+        Rect::new(148, 110, 184, trackbar::HEIGHT)
     );
-    assert_eq!(rect(&s, p, "key_shortcuts"), Rect::new(20, 404, 13, 13));
-    assert_eq!(rect(&s, p, "shortcuts_note"), Rect::new(38, 422, 340, 26));
+    assert_eq!(rect(&s, p, "locate_group"), Rect::new(20, 148, 358, 62));
+    assert_eq!(rect(&s, p, "locate_pointer"), Rect::new(32, 166, 13, 13));
+    assert_eq!(rect(&s, p, "visual_group"), Rect::new(20, 216, 358, 82));
+    assert_eq!(rect(&s, p, "visual_bell"), Rect::new(146, 252, 150, 21));
     inside_page(&s, p);
 }
 
@@ -46,27 +67,27 @@ fn text_and_keys_values_go_in_and_come_back_out() {
         sticky_two_keys_off: true,
         slow_keys: false,
         slow_keys_delay: 15,
+        bounce_keys: true,
+        bounce_keys_delay: 3,
         key_shortcuts: false,
-        mouse_keys: false,
-        mouse_keys_num_lock: false,
-        mouse_keys_speed: 700,
-        mouse_keys_acceleration: 20,
         text_size: 175,
         ..Settings::default()
     };
     let s = with(&want);
     let page = &s.pages[Page::TextKeys.index()];
     assert_eq!(page.track_pos("slow_keys_delay"), Some(12));
-    assert_eq!(page.track_pos("mouse_keys_speed"), Some(6));
-    assert_eq!(page.track_pos("mouse_keys_acceleration"), Some(6));
+    assert_eq!(page.track_pos("bounce_keys_delay"), Some(2));
     assert_eq!(page.combo_selected("text_size"), Some(3));
-    assert_eq!(page.checked("mouse_keys_num_lock"), Some(false));
     assert_eq!(page.checked("sticky_lock"), Some(false));
     assert_eq!(page.checked("key_shortcuts"), Some(false));
-    match &page.item("slow_delay_value").unwrap().control {
-        Control::Label { text, .. } => assert_eq!(text, "1.5 seconds"),
-        _ => panic!("a label"),
-    }
+    assert_eq!(
+        lines(&s, Page::TextKeys, "slow_delay_value"),
+        ["1.5 seconds"]
+    );
+    assert_eq!(
+        lines(&s, Page::TextKeys, "bounce_delay_value"),
+        ["0.3 seconds"]
+    );
     let enabled = |id: &str| match &page.item(id).unwrap().control {
         Control::Check { enabled, .. } | Control::Label { enabled, .. } => *enabled,
         Control::TrackBar(t) => t.enabled,
@@ -74,6 +95,35 @@ fn text_and_keys_values_go_in_and_come_back_out() {
     };
     assert!(enabled("sticky_lock") && enabled("sticky_two_keys_off"));
     assert!(!enabled("slow_keys_delay") && !enabled("slow_delay_label"));
+    assert!(enabled("bounce_keys_delay") && enabled("bounce_delay_label"));
+    let mut got = Settings::default();
+    read_all(&s, &mut got);
+    assert_eq!(got, want);
+}
+
+#[test]
+fn pointer_and_alerts_values_go_in_and_come_back_out() {
+    let want = Settings {
+        mouse_keys: false,
+        mouse_keys_num_lock: false,
+        mouse_keys_speed: 700,
+        mouse_keys_acceleration: 20,
+        locate_pointer: true,
+        visual_bell: "screen".into(),
+        ..Settings::default()
+    };
+    let s = with(&want);
+    let page = &s.pages[Page::PointerAlerts.index()];
+    assert_eq!(page.track_pos("mouse_keys_speed"), Some(6));
+    assert_eq!(page.track_pos("mouse_keys_acceleration"), Some(6));
+    assert_eq!(page.checked("mouse_keys_num_lock"), Some(false));
+    assert_eq!(page.checked("locate_pointer"), Some(true));
+    assert_eq!(page.combo_selected("visual_bell"), Some(2));
+    let enabled = |id: &str| match &page.item(id).unwrap().control {
+        Control::Check { enabled, .. } => *enabled,
+        Control::TrackBar(t) => t.enabled,
+        _ => panic!("{id} greys"),
+    };
     assert!(!enabled("mouse_keys_speed") && !enabled("mouse_keys_num_lock"));
     let mut got = Settings::default();
     read_all(&s, &mut got);
@@ -127,7 +177,7 @@ fn scroll_speed_reads_a_percent_from_a_fifth_to_four_times() {
 #[test]
 fn mousekeys_trackbars_have_slow_and_fast_ends() {
     let s = built();
-    let p = Page::TextKeys;
+    let p = Page::PointerAlerts;
     for id in ["mk_speed_slow", "mk_accel_slow"] {
         assert_eq!(lines(&s, p, id), ["Slow"]);
     }

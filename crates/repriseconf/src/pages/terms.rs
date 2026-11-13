@@ -291,11 +291,20 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
             ),
             ("slow_keys", "Use SlowKeys"),
             ("slow_keys_delay", "SlowKeys delay"),
+            ("bounce_keys", "Use BounceKeys"),
+            ("bounce_keys_delay", "BounceKeys delay"),
+            ("key_shortcuts", "Use the keyboard shortcuts"),
+        ],
+        Page::PointerAlerts => &[
             ("mouse_keys", "Use MouseKeys"),
             ("mouse_keys_num_lock", "Only while Num Lock is on"),
             ("mouse_keys_speed", "MouseKeys speed"),
             ("mouse_keys_acceleration", "MouseKeys acceleration"),
-            ("key_shortcuts", "Use the keyboard shortcuts"),
+            (
+                "locate_pointer",
+                "Show where the pointer is when I tap Ctrl",
+            ),
+            ("visual_bell", "Flash on the bell:"),
         ],
         Page::MagnifierFilters => &[
             ("color_filter", "Color filter:"),

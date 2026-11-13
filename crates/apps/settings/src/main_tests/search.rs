@@ -137,7 +137,7 @@ fn a_page_handed_over_clears_a_query_that_hides_it() {
     assert_eq!(a.sheet.list_mut().unwrap().filter(), None);
 
     query(&mut a, "mouse");
-    assert!(a.request(&page_request("text-and-keys")));
+    assert!(a.request(&page_request("pointer-and-alerts")));
     assert_eq!(
         a.sheet.search.text(),
         "mouse",

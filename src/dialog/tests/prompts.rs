@@ -615,13 +615,7 @@ fn a_key_aid_prompt_asks_on_its_fixed_template() {
         assert_eq!(d.key(Key::Enter), Outcome::TurnOn(aid));
         assert_eq!(d.key(Key::Escape), Outcome::Close);
         assert_eq!(d.press(1), Outcome::Close);
-        assert_eq!(
-            d.press(2),
-            Outcome::Spawn(format!(
-                "reprise-settings --page text-and-keys --focus {}",
-                aid.key()
-            ))
-        );
+        assert_eq!(d.press(2), Outcome::Spawn(aid.settings_argv().join(" ")));
     }
 }
 

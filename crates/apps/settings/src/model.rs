@@ -369,6 +369,9 @@ pub struct Settings {
     pub slow_keys: bool,
     /// Tenths of a second, 3 to 20.
     pub slow_keys_delay: i64,
+    pub bounce_keys: bool,
+    /// Tenths of a second, 1 to 20.
+    pub bounce_keys_delay: i64,
     pub key_shortcuts: bool,
     pub mouse_keys: bool,
     pub mouse_keys_num_lock: bool,
@@ -378,6 +381,9 @@ pub struct Settings {
     pub mouse_keys_acceleration: i64,
     /// Percent, one of `TEXT_SIZES`.
     pub text_size: i64,
+    /// `[accessibility] visual_bell`: one of [`VISUAL_BELLS`]' values.
+    pub visual_bell: String,
+    pub locate_pointer: bool,
 
     /// `[accessibility] color_filter`: a `colorfilter::Filter` name.
     pub color_filter: String,
@@ -676,12 +682,16 @@ impl Settings {
             sticky_two_keys_off: a.sticky_two_keys_off,
             slow_keys: a.slow_keys,
             slow_keys_delay: (a.slow_keys_delay / 100).into(),
+            bounce_keys: a.bounce_keys,
+            bounce_keys_delay: (a.bounce_keys_delay / 100).into(),
             key_shortcuts: a.shortcuts,
             mouse_keys: a.mouse_keys,
             mouse_keys_num_lock: a.mouse_keys_num_lock,
             mouse_keys_speed: a.mouse_keys_speed.into(),
             mouse_keys_acceleration: (a.mouse_keys_acceleration / 100).into(),
             text_size: a.text_size.into(),
+            visual_bell: a.visual_bell.name().into(),
+            locate_pointer: a.locate_pointer,
 
             color_filter: a.color_filter.name().into(),
             color_filter_intensity: a.color_filter_intensity.into(),

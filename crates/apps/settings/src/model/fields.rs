@@ -291,6 +291,12 @@ pub(super) fn fields() -> Vec<Field> {
             lens!(slow_keys_delay),
             (3, 20),
         ),
+        Field::Flag(k("accessibility", "bounce_keys"), lens!(bounce_keys)),
+        Field::Tenths(
+            k("accessibility", "bounce_keys_delay"),
+            lens!(bounce_keys_delay),
+            (1, 20),
+        ),
         Field::Flag(k("accessibility", "shortcuts"), lens!(key_shortcuts)),
         Field::Text(k("accessibility", "color_filter"), lens!(color_filter)),
         Field::Int(
@@ -316,6 +322,8 @@ pub(super) fn fields() -> Vec<Field> {
             (0, 50),
         ),
         Field::Int(k("accessibility", "text_size"), lens!(text_size)),
+        Field::Text(k("accessibility", "visual_bell"), lens!(visual_bell)),
+        Field::Flag(k("accessibility", "locate_pointer"), lens!(locate_pointer)),
     ]
 }
 
