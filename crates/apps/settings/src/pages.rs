@@ -224,8 +224,9 @@ pub const AUDIO_DEVICES: &str = "audio_devices";
 
 /// Each page button that starts a program, with the program's desktop entry id and the
 /// arguments it adds.
-pub const PROGRAM_BUTTONS: [(&str, &str, &[&str]); 2] = [
+pub const PROGRAM_BUTTONS: [(&str, &str, &[&str]); 3] = [
     (AUDIO_DEVICES, "reprise-sound.desktop", &[]),
+    (BACKUP_FROM_DESKTOP, "reprise-import.desktop", &[]),
     (
         RD_PASSWORD_ACCOUNTS,
         "reprise-accounts.desktop",
@@ -245,6 +246,8 @@ pub fn program_for(id: &str) -> Option<(&'static str, &'static [&'static str])> 
 pub const BACKUP_EXPORT: &str = "backup_export";
 pub const BACKUP_IMPORT: &str = "backup_import";
 pub const BACKUP_STATUS: &str = "backup_status";
+/// The Backup page's button that opens Import from Another Desktop.
+pub const BACKUP_FROM_DESKTOP: &str = "backup_from_desktop";
 /// The Taskbar page's Customize... beside the tray overflow box; the compositor opens the tray's Customize dialog.
 pub const TRAY_CUSTOMIZE: &str = "taskbar_tray_customize";
 pub const ADD: &str = "add";

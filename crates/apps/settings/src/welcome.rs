@@ -13,7 +13,8 @@ use std::path::Path;
 /// The Classic scheme Dark picks.
 pub const DARK_SCHEME: &str = "One Dark";
 
-fn dark(s: &Settings) -> bool {
+/// Whether `s`'s look is dark.
+pub(crate) fn dark(s: &Settings) -> bool {
     match appearancepage::interface(s) {
         Interface::Classic => schemes::scheme(&s.color_scheme).is_some_and(|c| c.is_dark()),
         Interface::Blue => false,
@@ -46,16 +47,24 @@ fn with(text: &str, picks: &Picks) -> (Settings, Settings) {
         let from = std::mem::replace(&mut s.interface, i.as_str().into());
         model::switch_interface(&mut s, &from, text, &base);
     }
-    if dark_offered(i) && dark(&s) != picks.dark {
-        match i {
-            Interface::Classic if picks.dark => s.color_scheme = DARK_SCHEME.into(),
-            Interface::Classic => s.color_scheme.clear(),
-            Interface::Glass => s.glass_mode = if picks.dark { "dark" } else { "light" }.into(),
-            Interface::Blue => {}
-        }
-    }
+    set_dark(&mut s, picks.dark);
     s.text_size = picks.text_size.into();
     (base, s)
+}
+
+/// Make `s`'s look dark or light under its interface; a Glass "night" or "hours" mode stays
+/// while it already gives `dark`, and Blue has no dark.
+pub(crate) fn set_dark(s: &mut Settings, dark: bool) {
+    let i = appearancepage::interface(s);
+    if !dark_offered(i) || self::dark(s) == dark {
+        return;
+    }
+    match i {
+        Interface::Classic if dark => s.color_scheme = DARK_SCHEME.into(),
+        Interface::Classic => s.color_scheme.clear(),
+        Interface::Glass => s.glass_mode = if dark { "dark" } else { "light" }.into(),
+        Interface::Blue => {}
+    }
 }
 
 /// Desktop entry `id` as the sheet's link rows find it: `None` when it is not installed or not shown.

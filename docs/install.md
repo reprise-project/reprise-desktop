@@ -468,6 +468,8 @@ desktop and stays out of the way when it's missing.
   time zone. Reprise is its agent (the package's
   `/etc/geoclue/conf.d/90-reprise.conf` lets it); without an agent geoclue
   refuses everyone.
+- dconf (`dconf-cli` on Ubuntu), for reading GNOME's settings in Import from
+  Another Desktop; without it only Plasma's are found.
 
 - A VA-API driver with an H.264 encoder, for hardware H.264 in Remote
   Desktop: `intel-media-driver` on Intel graphics, `libva-mesa-driver` on

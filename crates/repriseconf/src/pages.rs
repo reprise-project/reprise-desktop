@@ -501,7 +501,16 @@ impl Page {
                 "shutdown",
                 "storage",
             ],
-            Page::Backup => &["export", "import", "back up", "transfer", "move settings"],
+            Page::Backup => &[
+                "export",
+                "import",
+                "back up",
+                "transfer",
+                "move settings",
+                "gnome",
+                "plasma",
+                "kde",
+            ],
         }
     }
 

@@ -4283,6 +4283,7 @@ dependencies = [
  "reprise-explorer",
  "reprise-fonts",
  "reprise-imageviewer",
+ "reprise-import",
  "reprise-network",
  "reprise-notepad",
  "reprise-notes",
@@ -4417,6 +4418,19 @@ dependencies = [
  "reprisekit",
  "tempfile",
  "toml_edit",
+]
+
+[[package]]
+name = "reprise-import"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "reprise-settings",
+ "repriseapp",
+ "reprisebus",
+ "repriseconf",
+ "reprisefs",
+ "reprisekit",
 ]
 
 [[package]]

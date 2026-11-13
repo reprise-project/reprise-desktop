@@ -33,7 +33,7 @@ const TEXT_SIZE: &str = "text_size";
 const TEXT_SIZE_W: i32 = 80;
 const TEXT_LABEL_W: i32 = 62;
 const KEYS: &str = "keys";
-const LINK_W: i32 = 120;
+const LINK_W: i32 = 170;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Page {
@@ -330,10 +330,16 @@ mod tests {
     }
 
     fn links() -> Vec<Link> {
-        vec![Link {
-            id: "settings",
-            label: "Open &Settings",
-        }]
+        vec![
+            Link {
+                id: "settings",
+                label: "Open &Settings",
+            },
+            Link {
+                id: "import",
+                label: "&Import from Another Desktop",
+            },
+        ]
     }
 
     fn welcome(theme: &Theme) -> (Welcome, TextRenderer) {

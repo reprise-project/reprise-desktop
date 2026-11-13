@@ -24,6 +24,7 @@ reprise-drives = { path = "../drives" }
 reprise-explorer = { path = "../explorer" }
 reprise-fonts = { path = "../fonts" }
 reprise-imageviewer = { path = "../imageviewer" }
+reprise-import = { path = "../import" }
 reprise-network = { path = "../network" }
 reprise-notepad = { path = "../notepad" }
 reprise-phone = { path = "../phone" }

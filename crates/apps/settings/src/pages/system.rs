@@ -1,10 +1,10 @@
 //! Sound, Notifications, Startup, Remote Desktop, Privacy, Advanced and Backup.
 
 use super::{
-    ADD, AUDIO_DEVICES, Area, BACKUP_EXPORT, BACKUP_IMPORT, BACKUP_STATUS, DEBUG_IN_CAPTURES,
-    DEBUG_OVERLAY, EDIT_FILE, FORGET, GX, PRIVACY_LOCATION, REMOVE, THUMBNAILERS, THUMBS,
-    THUMBS_CLEAR, THUMBS_CLEARED, THUMBS_MB, THUMBS_SIZE, X, button, choice, combo, edit,
-    ends_track, field, group, list, permissions, radio, spin, time,
+    ADD, AUDIO_DEVICES, Area, BACKUP_EXPORT, BACKUP_FROM_DESKTOP, BACKUP_IMPORT, BACKUP_STATUS,
+    DEBUG_IN_CAPTURES, DEBUG_OVERLAY, EDIT_FILE, FORGET, GX, PRIVACY_LOCATION, REMOVE,
+    THUMBNAILERS, THUMBS, THUMBS_CLEAR, THUMBS_CLEARED, THUMBS_MB, THUMBS_SIZE, X, button, choice,
+    combo, edit, ends_track, field, group, list, permissions, radio, spin, time,
 };
 use crate::model::{
     FRAME_RATES, GLASS_NOTIFY_STYLES, LOCK_GRACES, REMOTE_ENCODERS, REMOTE_QUALITIES, Shortcut,
@@ -249,6 +249,8 @@ pub fn backup(a: Area) -> Form {
     let list_h = LINE_H * entries.len() as i32;
     let note_y = 66 + list_h + 10;
     let buttons_y = note_y + 3 * LINE_H + 10;
+    let desktop_y = buttons_y + 34 + 2 * LINE_H + 10;
+    let desktop_x = a.right() - FROM_DESKTOP_W;
     Form::new(vec![
         Item::label_at(
             "backup_intro",
@@ -283,8 +285,23 @@ pub fn backup(a: Area) -> Form {
             Rect::new(X, buttons_y + 34, a.w, 2 * LINE_H),
             Control::Lines(Vec::new()),
         ),
+        Item::lines(
+            "backup_desktop_label",
+            Rect::new(X, desktop_y + 1, desktop_x - X - 6, 2 * LINE_H),
+            &["Coming from GNOME or Plasma?", "Bring its settings over."],
+        ),
+        Item::button_at(
+            BACKUP_FROM_DESKTOP,
+            desktop_x,
+            desktop_y,
+            FROM_DESKTOP_W,
+            "From Another &Desktop...",
+            true,
+        ),
     ])
 }
+
+const FROM_DESKTOP_W: i32 = 150;
 
 /// The button that opens Sounds and Audio Devices, the sound theme picked from `sound_themes`, the bell,
 /// the volume's reach and sound in screen recordings.
