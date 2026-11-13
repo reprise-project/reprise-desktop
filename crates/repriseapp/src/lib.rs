@@ -24,6 +24,7 @@ mod event;
 pub mod fielddrop;
 mod filebox;
 pub mod filedlg;
+mod grip;
 mod hangup;
 pub mod heads;
 pub mod iconjobs;
@@ -328,6 +329,7 @@ struct Host {
     /// The seat has a keyboard `bind_keyboard` has not bound yet.
     keyboard_due: bool,
     pointer: Option<wl_pointer::WlPointer>,
+    shape: grip::PointerShape,
     mods: Modifiers,
     pointer_pos: (i32, i32),
     pointer_in: Option<WinId>,

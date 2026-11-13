@@ -3,6 +3,7 @@
 use crate::{Ctx, DropForm, Event, FileDrop, Reader, ReaderForm, Reply, Waker};
 use reprisekit::access::Tree;
 use reprisekit::controls::hosted::Hosted;
+use reprisekit::frame::Grip;
 use reprisekit::raster::{Canvas, Rect};
 
 /// What every program implements: its main window's names and size, its child windows, and
@@ -80,12 +81,17 @@ pub trait Extended {
     }
     /// The caption `win` wears: a window's by default, a prompt's for a
     /// message box, a help dialog's for a sheet or chooser, a fixed dialog's
-    /// for a program that is one dialog. Read after every event; the host
-    /// sends it through xdg-toplevel-tag.
+    /// for a program that is one dialog, or none. Read after every event; the host
+    /// sends it through xdg-toplevel-tag and asks for the frame or none through xdg-decoration.
     fn caption(&self, _win: WinId) -> Caption {
         Caption::Window
     }
-    /// A name for window `win`, plain-captioned, that the compositor keeps its place and size
+    /// What a left press at `at` grabs in [`Caption::None`] window `win`, `size` logical px. The
+    /// host shows its pointer and starts the move or resize; that press never reaches `event`.
+    fn grip(&self, _win: WinId, _at: (i32, i32), _size: (i32, i32)) -> Option<Grip> {
+        None
+    }
+    /// A name for window `win`, plain-captioned or frameless, that the compositor keeps its place and size
     /// under instead of the app's: a sticky note's own. Sent as its xdg-toplevel-tag when the
     /// window is made.
     fn place_tag(&self, _win: WinId) -> Option<String> {
@@ -227,6 +233,9 @@ pub enum Caption {
     Prompt,
     Help,
     Fixed,
+    /// No frame at all: the window draws its own edges and names what moves and resizes it
+    /// through [`Extended::grip`].
+    None,
 }
 
 /// A window of the program: a named one ([`WinId::named`]), fixed for the program's life, or one

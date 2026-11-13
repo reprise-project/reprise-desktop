@@ -309,6 +309,28 @@ fn x_deletes_an_empty_note_at_once_and_asks_for_one_with_text() {
     );
 }
 
+#[test]
+fn a_note_has_no_frame_and_its_strip_and_edges_move_and_resize_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = test_ctx();
+    let mut n = started(dir.path());
+    let win = n.notes[0].win;
+    assert_eq!(n.caption(win), Caption::None);
+    let (w, h) = NOTE_SIZE;
+    assert_eq!(n.grip(win, (w / 2, 10), NOTE_SIZE), Some(Grip::Move));
+    assert_eq!(n.grip(win, (8, 8), NOTE_SIZE), None, "New");
+    assert_eq!(n.grip(win, (w / 2, h / 2), NOTE_SIZE), None, "the text");
+    let corner = Grip::Resize(reprisekit::frame::Edges::BOTTOM | reprisekit::frame::Edges::RIGHT);
+    assert_eq!(n.grip(win, (w - 1, h - 1), NOTE_SIZE), Some(corner));
+    n.open_menu(win, (20, 40), false, &ctx);
+    assert_eq!(
+        n.grip(win, (w / 2, 10), NOTE_SIZE),
+        None,
+        "the menu takes the press"
+    );
+    assert_eq!(n.grip(CONFIRM, (1, 1), NOTE_SIZE), None);
+}
+
 fn fnv(c: &Canvas) -> u64 {
     let mut h = 0xcbf2_9ce4_8422_2325u64;
     for v in [c.width, c.height]

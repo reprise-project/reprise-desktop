@@ -285,6 +285,9 @@ impl SeatHandler for Host {
         }
         if capability == Capability::Pointer && self.pointer.is_none() {
             self.pointer = self.seat_state.get_pointer(qh, &seat).ok();
+            if let Some(p) = &self.pointer {
+                self.shape.attach(p, qh);
+            }
         }
     }
 
@@ -310,6 +313,7 @@ impl SeatHandler for Host {
         if capability == Capability::Pointer
             && let Some(p) = self.pointer.take()
         {
+            self.shape.detach();
             p.release();
         }
     }
@@ -434,6 +438,10 @@ impl PointerHandler for Host {
     ) {
         for event in events {
             let local = (event.position.0 as i32, event.position.1 as i32);
+            if let PointerEventKind::Enter { serial } = event.kind {
+                self.shape.entered(serial);
+            }
+            let own = self.slot_of(&event.surface).is_some();
             let Some((id, (x, y))) = self
                 .slot_of(&event.surface)
                 .map(|id| (id, local))
@@ -490,6 +498,9 @@ impl PointerHandler for Host {
                     PointerInput::Scroll { x, y, rows }
                 }
             };
+            if own && self.grip_pointer(id, &input) {
+                continue;
+            }
             self.pointer(id, input);
         }
     }

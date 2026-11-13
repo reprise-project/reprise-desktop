@@ -9,7 +9,8 @@ use crate::sizing::{
     regrown, sane_side,
 };
 use crate::windows::{
-    Placement, flyout_wanted, main_wanted, output_containing, placement, reconcile,
+    Placement, decoration_mode, decorations, flyout_wanted, main_wanted, output_containing,
+    placement, reconcile,
 };
 use reprisefs::pipe::PasteBuf;
 use reprisekit::icontheme::{IconCache, IconTheme};
@@ -19,6 +20,7 @@ use reprisekit::theme::Theme;
 use smithay_client_toolkit::data_device_manager::ReadPipe;
 use smithay_client_toolkit::reexports::calloop::EventLoop;
 use smithay_client_toolkit::reexports::calloop_wayland_source::WaylandSource;
+use smithay_client_toolkit::shell::xdg::window::{DecorationMode, WindowDecorations};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Duration;
@@ -1048,4 +1050,19 @@ fn a_panicking_step_rescues_its_data_before_the_panic_goes_on() {
     }));
     assert!(out.is_err(), "the panic carries on past the rescue");
     assert_eq!(saved, ["typed", "rescued"]);
+}
+
+#[test]
+fn only_a_window_without_a_caption_asks_for_no_frame() {
+    for c in [
+        Caption::Window,
+        Caption::Prompt,
+        Caption::Help,
+        Caption::Fixed,
+    ] {
+        assert_eq!(decorations(c), WindowDecorations::RequestServer, "{c:?}");
+        assert_eq!(decoration_mode(c), DecorationMode::Server, "{c:?}");
+    }
+    assert_eq!(decorations(Caption::None), WindowDecorations::RequestClient);
+    assert_eq!(decoration_mode(Caption::None), DecorationMode::Client);
 }

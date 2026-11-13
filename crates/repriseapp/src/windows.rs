@@ -26,7 +26,7 @@ use smithay_client_toolkit::{
             Anchor, KeyboardInteractivity, Layer, LayerShellHandler, LayerSurface,
             LayerSurfaceConfigure,
         },
-        xdg::window::{Window, WindowConfigure, WindowDecorations, WindowHandler},
+        xdg::window::{DecorationMode, Window, WindowConfigure, WindowDecorations, WindowHandler},
     },
 };
 use std::ffi::OsString;
@@ -82,7 +82,9 @@ impl Host {
 
     fn send_tag(&mut self, window: &Window, id: WinId, caption: Caption) {
         let tag = match self.tag_of(id, caption) {
-            "" if caption == Caption::Window => self.app.place_tag(id).unwrap_or_default(),
+            "" if matches!(caption, Caption::Window | Caption::None) => {
+                self.app.place_tag(id).unwrap_or_default()
+            }
             tag => tag.to_string(),
         };
         if !tag.is_empty() {
@@ -95,7 +97,7 @@ impl Host {
     pub(crate) fn tag_of(&mut self, id: WinId, caption: Caption) -> &'static str {
         match caption {
             Caption::Window if self.app.drop_file_dialog(id).is_some() => "file-dialog",
-            Caption::Window => "",
+            Caption::Window | Caption::None => "",
             Caption::Prompt => "prompt",
             Caption::Help => "help-dialog",
             Caption::Fixed => "fixed-dialog",
@@ -185,9 +187,10 @@ impl Host {
         let ((w, h), min) = opening_size(&*self.app);
         let surface = self.compositor.create_surface(&self.qh);
         let scaling = self.scaling(&surface);
-        let window =
-            self.xdg_shell
-                .create_window(surface, WindowDecorations::RequestServer, &self.qh);
+        let caption = self.app.caption(MAIN);
+        let window = self
+            .xdg_shell
+            .create_window(surface, decorations(caption), &self.qh);
         let title = self.app.title();
         window.set_title(wire::text(&title));
         window.set_app_id(wire::text(&self.app.app_id()));
@@ -198,7 +201,6 @@ impl Host {
         if let Some(handle) = self.app.foreign_parent() {
             self.foreign = self.import_parent(&handle, &window);
         }
-        let caption = self.app.caption(MAIN);
         self.send_tag(&window, MAIN, caption);
         window.commit();
         let slot = self.new_slot(
@@ -368,9 +370,10 @@ impl Host {
             let size = sane_size(c.size);
             let surface = self.compositor.create_surface(&self.qh);
             let scaling = self.scaling(&surface);
-            let window =
-                self.xdg_shell
-                    .create_window(surface, WindowDecorations::RequestServer, &self.qh);
+            let caption = self.caption_of(c.id);
+            let window = self
+                .xdg_shell
+                .create_window(surface, decorations(caption), &self.qh);
             window.set_title(wire::text(&c.title));
             window.set_app_id(wire::text(&app_id));
             let min = match c.fixed {
@@ -385,7 +388,6 @@ impl Host {
             if wanted.is_none() {
                 self.join_tabs(&window, c.id);
             }
-            let caption = self.caption_of(c.id);
             self.send_tag(&window, c.id, caption);
             window.commit();
             let mut slot = self.new_slot(
@@ -427,6 +429,9 @@ impl Host {
                 if s.caption != caption
                     && let Some(w) = s.window.toplevel()
                 {
+                    if (s.caption == Caption::None) != (caption == Caption::None) {
+                        w.request_decoration_mode(Some(decoration_mode(caption)));
+                    }
                     s.caption = caption;
                     send_tag(self.tag_manager.as_ref(), w, tag);
                 }
@@ -601,7 +606,8 @@ impl Host {
         self.draw(id, qh);
     }
 
-    pub(crate) fn begin_resize(&mut self, win: WinId) {
+    /// Resize window `win` from `edge` with the held left press.
+    pub(crate) fn begin_resize(&mut self, win: WinId, edge: xdg_toplevel::ResizeEdge) {
         let Some(seat) = &self.seat else {
             return;
         };
@@ -611,11 +617,22 @@ impl Host {
             .find(|s| s.id == win)
             .and_then(|s| s.window.toplevel())
         {
-            w.resize(
-                seat,
-                self.press_serial,
-                xdg_toplevel::ResizeEdge::BottomRight,
-            );
+            w.resize(seat, self.press_serial, edge);
+        }
+    }
+
+    /// Move window `win` with the held left press.
+    pub(crate) fn begin_move(&mut self, win: WinId) {
+        let Some(seat) = &self.seat else {
+            return;
+        };
+        if let Some(w) = self
+            .slots
+            .iter()
+            .find(|s| s.id == win)
+            .and_then(|s| s.window.toplevel())
+        {
+            w.move_(seat, self.press_serial);
         }
     }
 }
@@ -724,6 +741,20 @@ impl ActivationHandler for Host {
                 spawn_handing(argv, &handoff);
             }
         }
+    }
+}
+
+pub(crate) fn decorations(caption: Caption) -> WindowDecorations {
+    match caption {
+        Caption::None => WindowDecorations::RequestClient,
+        _ => WindowDecorations::RequestServer,
+    }
+}
+
+pub(crate) fn decoration_mode(caption: Caption) -> DecorationMode {
+    match caption {
+        Caption::None => DecorationMode::Client,
+        _ => DecorationMode::Server,
     }
 }
 

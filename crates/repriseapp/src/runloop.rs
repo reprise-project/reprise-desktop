@@ -43,7 +43,7 @@ use smithay_client_toolkit::{
     },
     registry::{ProvidesRegistryState, RegistryState},
     registry_handlers,
-    seat::{SeatState, keyboard::Modifiers},
+    seat::{SeatState, keyboard::Modifiers, pointer::cursor_shape::CursorShapeManager},
     shell::{wlr_layer::LayerShell, xdg::XdgShell},
     shm::Shm,
 };
@@ -266,6 +266,7 @@ pub fn run(app: Box<dyn App>) -> Result<(), RunError> {
         xkb: Default::default(),
         keyboard_due: false,
         pointer: None,
+        shape: crate::grip::PointerShape::new(CursorShapeManager::bind(&globals, &qh).ok()),
         mods: Modifiers::default(),
         pointer_pos: (0, 0),
         pointer_in: None,

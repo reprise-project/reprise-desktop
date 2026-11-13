@@ -57,6 +57,51 @@ impl std::ops::BitOrAssign for Edges {
     }
 }
 
+/// The edges point `(x, y)` of a `w`x`h` box lies within `band` of; along an edge's band, a
+/// point within `corner` of a corner takes that corner. `NONE` inside the band or off the box.
+pub fn band_edges((w, h): (i32, i32), x: i32, y: i32, band: i32, corner: i32) -> Edges {
+    if x < 0 || y < 0 || x >= w || y >= h {
+        return Edges::NONE;
+    }
+    let mut e = Edges::NONE;
+    if y < band {
+        e |= Edges::TOP;
+    } else if y >= h - band {
+        e |= Edges::BOTTOM;
+    }
+    if x < band {
+        e |= Edges::LEFT;
+    } else if x >= w - band {
+        e |= Edges::RIGHT;
+    }
+    if e == Edges::NONE {
+        return e;
+    }
+    if e.intersects(Edges::LEFT | Edges::RIGHT) {
+        if y < corner {
+            e |= Edges::TOP;
+        } else if y >= h - corner {
+            e |= Edges::BOTTOM;
+        }
+    }
+    if e.intersects(Edges::TOP | Edges::BOTTOM) {
+        if x < corner {
+            e |= Edges::LEFT;
+        } else if x >= w - corner {
+            e |= Edges::RIGHT;
+        }
+    }
+    e
+}
+
+/// What a left press grabs on a window that draws its own frame: the window to move, or its
+/// size from these edges.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Grip {
+    Move,
+    Resize(Edges),
+}
+
 pub const ICON_AREA: i32 = 20;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -403,33 +448,8 @@ impl FrameGeometry {
             // The resize band must cover at least the frame itself, else frame pixels beyond the
             // border would classify as title.
             let rb = m.resize_border.max(self.frame);
-            let corner = m.caption_height;
-            let mut e = Edges::NONE;
-            if y < rb {
-                e |= Edges::TOP;
-            } else if y >= h - rb {
-                e |= Edges::BOTTOM;
-            }
-            if x < rb {
-                e |= Edges::LEFT;
-            } else if x >= w - rb {
-                e |= Edges::RIGHT;
-            }
+            let e = band_edges((w, h), x, y, rb, m.caption_height);
             if e != Edges::NONE {
-                if e.intersects(Edges::LEFT | Edges::RIGHT) {
-                    if y < corner {
-                        e |= Edges::TOP;
-                    } else if y >= h - corner {
-                        e |= Edges::BOTTOM;
-                    }
-                }
-                if e.intersects(Edges::TOP | Edges::BOTTOM) {
-                    if x < corner {
-                        e |= Edges::LEFT;
-                    } else if x >= w - corner {
-                        e |= Edges::RIGHT;
-                    }
-                }
                 return FrameHit::Resize(e);
             }
         }
@@ -1058,5 +1078,31 @@ mod tests {
             let r = g.button_rect(b);
             assert_eq!(bar.union(&r), bar, "{b:?} inside the title bar");
         }
+    }
+
+    #[test]
+    fn the_band_names_each_edge_and_takes_corners_along_the_edges() {
+        let at = |x, y| band_edges((100, 80), x, y, 5, 16);
+        assert_eq!(at(50, 2), Edges::TOP);
+        assert_eq!(at(50, 77), Edges::BOTTOM);
+        assert_eq!(at(1, 40), Edges::LEFT);
+        assert_eq!(at(98, 40), Edges::RIGHT);
+        assert_eq!(at(0, 0), Edges::TOP | Edges::LEFT);
+        assert_eq!(
+            at(10, 2),
+            Edges::TOP | Edges::LEFT,
+            "along the top, near the corner"
+        );
+        assert_eq!(
+            at(2, 10),
+            Edges::TOP | Edges::LEFT,
+            "along the left, near the corner"
+        );
+        assert_eq!(at(90, 1), Edges::TOP | Edges::RIGHT);
+        assert_eq!(at(1, 70), Edges::BOTTOM | Edges::LEFT);
+        assert_eq!(at(99, 79), Edges::BOTTOM | Edges::RIGHT);
+        assert_eq!(at(10, 10), Edges::NONE, "inside the band, near a corner");
+        assert_eq!(at(5, 40), Edges::NONE, "just inside the left band");
+        assert_eq!(at(100, 40), Edges::NONE, "off the box");
     }
 }
