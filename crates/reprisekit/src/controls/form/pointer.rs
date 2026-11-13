@@ -400,6 +400,7 @@ impl Form {
                 | Control::GroupTitle(_)
                 | Control::Separator
                 | Control::Rule
+                | Control::Progress { .. }
                 | Control::Blank => continue,
                 _ => {
                     if self.at(it).contains(x, y) {

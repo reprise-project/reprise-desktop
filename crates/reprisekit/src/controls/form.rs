@@ -155,6 +155,11 @@ pub enum Control {
     /// a tile and a drag moves it, as Ctrl+arrows do ([`Form::shove`]); the
     /// drop and the arrows report `Changed`.
     Arrange(Box<arrange::Arrange>),
+    /// A progress bar `done` of `of` full, empty while `of` is 0; it takes no focus or pointer.
+    Progress {
+        done: u32,
+        of: u32,
+    },
 }
 
 /// A form's multi-line edit ([`multiedit::MultiEdit`]) with an always-present vertical

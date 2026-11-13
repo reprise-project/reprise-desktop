@@ -169,6 +169,10 @@ impl Item {
         )
     }
 
+    pub fn progress(id: &'static str, rect: Rect, done: u32, of: u32) -> Item {
+        Item::new(id, rect, Control::Progress { done, of })
+    }
+
     pub fn rule(id: &'static str, rect: Rect) -> Item {
         Item::new(id, rect, Control::Rule)
     }

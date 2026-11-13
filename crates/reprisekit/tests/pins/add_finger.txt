@@ -1,0 +1,40 @@
+Classic pick 1 fa5a1041e74ecae2
+Classic pick 2 902295687ff0a5f3
+Classic waiting 1 9f6a052eb30f5eb3
+Classic waiting 2 819f769cbdd694fa
+Classic scanning 1 b5a9e257f079fba7
+Classic scanning 2 a28de0f32ba16e6e
+Classic added 1 6993f94feaf52d47
+Classic added 2 c8854ca44099d9f2
+Classic failed 1 c5ea7aa5fd0032ea
+Classic failed 2 30285fa972541c02
+Blue pick 1 f528dbc37f655756
+Blue pick 2 b2650a527e87147a
+Blue waiting 1 3d22e10841e1654a
+Blue waiting 2 7b08b8dd88f32345
+Blue scanning 1 bc1575e7c799f7f8
+Blue scanning 2 461e1f61b0042b9f
+Blue added 1 3938ad1d1d145623
+Blue added 2 69409d7a3334bd5d
+Blue failed 1 bbd0fff02757e851
+Blue failed 2 7603bcc4a5c417b8
+Glass Light pick 1 177560261e57a997
+Glass Light pick 2 a72d3b8a6e726efa
+Glass Light waiting 1 9f6416d6209a6337
+Glass Light waiting 2 c9e221b0704bfd64
+Glass Light scanning 1 22a5a54f67141c8e
+Glass Light scanning 2 298116fd408f6d3d
+Glass Light added 1 1805b5d9250737b2
+Glass Light added 2 7556c6086a02c6d6
+Glass Light failed 1 2ce3ade89dbe8f77
+Glass Light failed 2 d7e5850432425292
+Glass Dark pick 1 ae6de52e0c3c0f88
+Glass Dark pick 2 a1f15aa2edf201f7
+Glass Dark waiting 1 a0b2378d36d08431
+Glass Dark waiting 2 47a1ffdc2fd92bf2
+Glass Dark scanning 1 4a59a5ea141c1b48
+Glass Dark scanning 2 e679e8e1b193d2ff
+Glass Dark added 1 d1ca9e2c31129206
+Glass Dark added 2 118d187f9f8f87c2
+Glass Dark failed 1 04cb22128b584125
+Glass Dark failed 2 374eac9eaeef9c66

@@ -592,7 +592,8 @@ mod tests {
                 | C::HotKey(_)
                 | C::Memo(_)
                 | C::IconList(_)
-                | C::Arrange(_) => it.name.map(str::to_string).or(label),
+                | C::Arrange(_)
+                | C::Progress { .. } => it.name.map(str::to_string).or(label),
             };
             label = None;
             out.extend(named.map(|l| (it.id, l)));
