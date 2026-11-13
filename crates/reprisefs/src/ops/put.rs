@@ -325,8 +325,8 @@ fn sync_tree(path: &Path) -> io::Result<()> {
 
 #[cfg(test)]
 thread_local! {
-    /// Tests: set by the next flush, as a job's watch giving up on a flush that stalls sets it.
-    pub(crate) static STOP_IN_FLUSH: std::cell::Cell<Option<std::sync::Arc<AtomicBool>>> =
+    /// Tests: run by the next flush, such as a job's watch giving up on a flush that stalls.
+    pub(crate) static IN_FLUSH: std::cell::Cell<Option<Box<dyn FnOnce()>>> =
         const { std::cell::Cell::new(None) };
 }
 
@@ -334,8 +334,8 @@ thread_local! {
 /// Under a job it runs outside the job's watch: a slow disk takes as long as it takes.
 pub(crate) fn sync_landed(path: &Path) -> io::Result<()> {
     #[cfg(test)]
-    if let Some(stop) = STOP_IN_FLUSH.take() {
-        stop.store(true, Ordering::Relaxed);
+    if let Some(hook) = IN_FLUSH.take() {
+        hook();
     }
     crate::progress::flushing(|| {
         sync_tree(path)?;
@@ -377,6 +377,29 @@ fn make_part(dir: &Path, make: impl Fn(&Path) -> io::Result<()>) -> io::Result<P
         }
     }
     Err(last.expect("the loop ran"))
+}
+
+/// Make `to` under a hidden part name beside it ([`make_part`] with `make`), run `ready` on the
+/// part, then rename it to `to` unless that is taken by then (`AlreadyExists`, also checked before
+/// `make`). A failure removes the part and nothing else, so what another job put at `to`
+/// meanwhile stays.
+pub(crate) fn land_part(
+    to: &Path,
+    make: impl Fn(&Path) -> io::Result<()>,
+    ready: impl FnOnce(&Path) -> io::Result<()>,
+) -> io::Result<()> {
+    if std::fs::symlink_metadata(to).is_ok() {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!("{} already exists", to.display()),
+        ));
+    }
+    let part = make_part(to.parent().unwrap_or(Path::new(".")), make)?;
+    ready(&part)
+        .and_then(|()| crate::trash::rename_free(&part, to))
+        .inspect_err(|_| {
+            let _ = super::remove_tree(&part);
+        })
 }
 
 /// The cancelled copy's error.
