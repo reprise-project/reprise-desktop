@@ -752,7 +752,7 @@ fn let_go(state: &mut State, output: Output, tree: TreeId) {
     state.lock.leaving.push(Leaving {
         output,
         tree,
-        at: Instant::now(),
+        at: logonview::now(),
         since: None,
     });
 }
@@ -763,7 +763,7 @@ const STALLED: Duration = Duration::from_millis(UNLOCK_MS * 2);
 /// Take down the covers whose fade stalled: no frame since `STALLED` after they were let go, or
 /// none since their fade's end.
 fn let_go_stalled(state: &mut State) {
-    let now = Instant::now();
+    let now = logonview::now();
     for l in std::mem::take(&mut state.lock.leaving) {
         let stalled = match l.since {
             Some(since) => now.saturating_duration_since(since) >= Duration::from_millis(UNLOCK_MS),
@@ -2269,13 +2269,18 @@ mod tests {
     #[test]
     fn a_second_unlock_soon_after_the_first_fades_out_whole() {
         let mut h = locked_glass();
+        logonview::hold_clock();
         check(&mut h, "hunter2");
         next_frame(&mut h);
-        h.run_for(250);
+        let first = Instant::now();
+        logonview::pass(250);
         lock(&mut h.state);
         check(&mut h, "hunter2");
         next_frame(&mut h);
-        h.run_for(200);
+        h.until("the first unlock's timer is due", |_| {
+            first.elapsed() > STALLED
+        });
+        h.dispatch();
         assert_eq!(
             h.state.lock.leaving.len(),
             1,
