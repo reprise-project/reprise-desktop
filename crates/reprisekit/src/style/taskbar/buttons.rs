@@ -78,21 +78,21 @@ pub(super) fn draw_spot(
     let span = spot.span;
     let (w, h) = (((span.right - span.x) / s) as f32, (r.height / s) as f32);
     let cx = span.centre(spot.fit, s);
-    let light = spot.fit.in_colour(spot.glow);
+    let light = spot.fit.in_colour(spot.glow, w, h);
     let (n, per) = (frames.base.scale, frames.base.per_atlas(s));
     // Each atlas pixel's middle in design px: design-size frames give the scale-1 spot
     // magnified, frames painted at `s` a smooth one.
     let mid = |v: i32| (v.div_euclid(per) as f32 + 0.5) / n as f32;
+    let xs: Vec<f32> = (0..r.width).map(|x| mid(r.x + x - span.x) - cx).collect();
     for y in 0..r.height {
         let py = mid(y);
-        for x in 0..r.width {
+        for (x, &px) in (0..r.width).zip(&xs) {
             let g = (gain.get(x, y) & 0xFF) as f32 / 32.0;
             if g == 0.0 {
                 continue;
             }
-            let px = mid(r.x + x - span.x);
             let under = canvas.get(r.x + x, r.y + y);
-            let lit = light.light(under, g, px - cx, py, w, h);
+            let lit = light.light(under, g, px, py);
             canvas.put_raw(r.x + x, r.y + y, lit);
         }
     }
