@@ -39,79 +39,18 @@ pub enum Row {
     Denied(usize),
 }
 
-/// The compositor's action names, `spawn` first since it is the one with
-/// a command. Mirrors `Action::name` in `src/config/keybinds.rs`.
-pub const ACTIONS: [&str; 69] = [
-    "spawn",
-    "terminal",
-    "close",
-    "cycle",
-    "cycle-app",
-    "flip",
-    "exit",
-    "maximize",
-    "minimize",
-    "lock",
-    "startmenu",
-    "run",
-    "logoff",
-    "turnoff",
-    "windowmenu",
-    "showdesktop",
-    "toggleframe",
-    "alwaysontop",
-    "mini-view",
-    "launcher",
-    "task-manager",
-    "overview",
-    "focus-taskbar",
-    "focus-tray",
-    "clipboard-history",
-    "emoji-picker",
-    "next-layout",
-    "center",
-    "tab-next",
-    "tab-prev",
-    "do-not-disturb",
-    "night-light",
-    "snap-left",
-    "snap-right",
-    "snap-up",
-    "snap-down",
-    "snap-layouts",
-    "display-switcher",
-    "zoom-in",
-    "zoom-out",
-    "zoom-reset",
-    "color-filter",
-    "screen-reader",
-    "desktop-prev",
-    "desktop-next",
-    "desktop-carry-prev",
-    "desktop-carry-next",
-    "all-desktops",
-    "screenshot",
-    "screenshot-window",
-    "screenshot-region",
-    "screenshot-content",
-    "record-screen",
-    "record-region",
-    "color-picker",
-    "volume-up",
-    "volume-down",
-    "mute",
-    "mic-mute",
-    "brightness-up",
-    "brightness-down",
-    "kbd-brightness-up",
-    "kbd-brightness-down",
-    "play-pause",
-    "next",
-    "prev",
-    "stop",
-    "wifi",
-    "airplane-mode",
-];
+/// The compositor's action names: `spawn`, the one with a command, then every
+/// [`ACTION_NAMES`](repriseconf::keybind::ACTION_NAMES) id in its order.
+pub const ACTIONS: [&str; repriseconf::keybind::ACTION_NAMES.len() + 1] = {
+    let names = repriseconf::keybind::ACTION_NAMES;
+    let mut out = ["spawn"; repriseconf::keybind::ACTION_NAMES.len() + 1];
+    let mut i = 0;
+    while i < names.len() {
+        out[i + 1] = names[i].0;
+        i += 1;
+    }
+    out
+};
 
 /// The compositor's default binds (`repriseconf::keybind::DEFAULTS`), which
 /// a file's `[[keybinds]]` layer over.

@@ -71,7 +71,7 @@ impl ShortcutDialog {
     pub fn new(sc: Option<&Shortcut>, others: Vec<Shortcut>) -> ShortcutDialog {
         let (title, sc) = match sc {
             Some(sc) => ("Edit Shortcut", sc.clone()),
-            None => ("Add Shortcut", Shortcut::new("", ACTIONS[1], "")),
+            None => ("Add Shortcut", Shortcut::new("", "terminal", "")),
         };
         let selected = (choices().iter())
             .position(|a| *a == sc.action)
