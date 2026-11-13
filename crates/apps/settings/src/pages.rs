@@ -36,9 +36,9 @@ pub use bind::{
 pub use desktop::{FORGET_FRAMES, search, switcher, taskbar, virtual_desktops, window_behavior};
 pub use input::{cursor, keyboard, mouse_touchpad, preview_size, text_and_keys};
 pub use lists::{
-    draw_list, fill_list, fill_locations, fill_shortcuts, fit_list_columns, fit_location_columns,
-    fit_shortcut_columns, list_key, new_list, new_location_list, new_shortcut_list,
-    show_locations_loading,
+    draw_list, fill_list, fill_permissions, fill_shortcuts, fit_list_columns,
+    fit_permission_columns, fit_shortcut_columns, list_key, new_list, new_permission_list,
+    new_shortcut_list, show_permissions_loading,
 };
 pub use login::{
     LOGIN_BACKGROUND, LOGIN_BROWSE, LOGIN_RESET_DISPLAYS, LOGIN_USE_DISPLAYS, NOT_RUNNING,
@@ -230,18 +230,19 @@ pub fn list(a: Area) -> Rect {
 }
 pub const COLUMNS: [(&str, i32); 3] = [("Startup Item", 164), ("Command", 114), ("Location", 60)];
 
-/// The Privacy page's list of remembered location answers, under its check,
-/// with Forget beside it. It takes half the page's extra height; rows past its foot scroll,
-/// so Program takes what Answer and the scrollbar leave ([`fit_location_columns`]).
-pub fn locations(a: Area) -> Rect {
-    Rect::new(GX, 88, a.gw() - BUTTON_W - 8, 85 + a.dh / 2)
+/// The Privacy page's App Permissions list, under the location check and Forget. It takes half
+/// the page's extra height; rows past its foot scroll, so Program takes what the other
+/// columns and the scrollbar leave ([`fit_permission_columns`]).
+pub fn permissions(a: Area) -> Rect {
+    Rect::new(GX, 88, a.gw(), 85 + a.dh / 2)
 }
-pub const LOCATION_COLUMNS: [(&str, i32); 2] = [("Program", 161), ("Answer", 70)];
+pub const PERMISSION_COLUMNS: [(&str, i32); 3] =
+    [("Program", 106), ("Permission", 156), ("Answer", 52)];
 pub const PRIVACY_LOCATION: &str = "privacy_location";
 /// The Advanced page's debug overlay check and the one indented under it, greyed while the overlay is off.
 pub const DEBUG_OVERLAY: &str = "debug_overlay";
 pub const DEBUG_IN_CAPTURES: &str = "debug_overlay_in_captures";
-pub const FORGET: &str = "location_forget";
+pub const FORGET: &str = "permission_forget";
 pub const WATER: &str = "wallpaper_water";
 pub const WATER_STYLE: &str = "water_style";
 /// The Advanced page's thumbnail cache check, its size row (greyed while the cache is off),

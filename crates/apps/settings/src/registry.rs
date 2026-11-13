@@ -372,7 +372,7 @@ mod tests {
                 let list = match p {
                     Page::Startup => Some(pages::list(a)),
                     Page::Keyboard => Some(pages::shortcuts(a)),
-                    Page::Privacy => Some(pages::locations(a)),
+                    Page::Privacy => Some(pages::permissions(a)),
                     Page::DefaultPrograms => Some(crate::defaultspage::list(a)),
                     _ => None,
                 };

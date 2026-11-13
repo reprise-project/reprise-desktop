@@ -393,6 +393,10 @@ impl Page {
             Page::RemoteDesktop => &["rdp", "remmina", "desktop sharing"],
             Page::Privacy => &[
                 "location",
+                "app permissions",
+                "screenshots",
+                "capture",
+                "run in background",
                 "clipboard",
                 "flatpak",
                 "recent files",
@@ -673,6 +677,19 @@ mod tests {
         assert_eq!(Page::Keyboard.find("delay zzz"), None);
         assert_eq!(Page::Keyboard.find(""), None);
         assert_eq!(Page::Keyboard.find("  "), None);
+    }
+
+    #[test]
+    fn the_app_permissions_list_is_found_by_what_it_holds() {
+        for q in [
+            "permission",
+            "capture",
+            "screenshot",
+            "background",
+            "location",
+        ] {
+            assert!(Page::Privacy.find(q).is_some(), "{q}");
+        }
     }
 
     #[test]

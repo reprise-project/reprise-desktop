@@ -11,69 +11,144 @@ fn forget_enabled(app: &SettingsApp) -> bool {
     }
 }
 
+fn stored(apps: &[(&str, &[&str])]) -> Vec<(String, Vec<String>)> {
+    apps.iter()
+        .map(|(app, v)| (app.to_string(), v.iter().map(|s| s.to_string()).collect()))
+        .collect()
+}
+
 #[test]
-fn location_answers_list_the_prompts_then_the_portals() {
+fn permission_answers_list_the_prompts_then_each_tables_and_skip_the_ones_still_to_ask() {
     let agent = std::collections::BTreeMap::from([("org.example.Weather".to_string(), false)]);
-    let portal = vec![("org.gnome.Maps".to_string(), true)];
-    let got: Vec<(String, bool, bool)> = location_answers(agent, portal)
+    let portal = vec![
+        (
+            Kind::Location,
+            stored(&[
+                ("org.example.City", &["CITY", "1"]),
+                ("org.example.Empty", &[]),
+                ("org.gnome.Maps", &["EXACT", "1234"]),
+                ("org.gnome.Weather", &["NONE", "0"]),
+            ]),
+        ),
+        (
+            Kind::Background,
+            stored(&[
+                ("org.example.Asked", &["ask"]),
+                ("org.example.Sync", &["yes"]),
+                ("org.example.Idle", &["no"]),
+            ]),
+        ),
+        (Kind::Screenshot, stored(&[("org.example.Shot", &["yes"])])),
+        (
+            Kind::Wallpaper,
+            stored(&[("org.example.Paint", &["no"]), ("org.example.Blank", &[])]),
+        ),
+        (
+            Kind::InputCapture,
+            stored(&[("org.example.Share", &["yes"])]),
+        ),
+    ];
+    let got: Vec<(String, Kind, bool, bool)> = permission_answers(agent, portal)
         .into_iter()
-        .map(|a| (a.id, a.allow, a.portal))
+        .map(|a| (a.app, a.kind, a.allow, a.portal))
         .collect();
+    let want = [
+        ("org.example.Weather", Kind::Location, false, false),
+        ("org.example.City", Kind::Location, true, true),
+        ("org.example.Empty", Kind::Location, false, true),
+        ("org.gnome.Maps", Kind::Location, true, true),
+        ("org.gnome.Weather", Kind::Location, false, true),
+        ("org.example.Sync", Kind::Background, true, true),
+        ("org.example.Idle", Kind::Background, false, true),
+        ("org.example.Shot", Kind::Screenshot, true, true),
+        ("org.example.Paint", Kind::Wallpaper, false, true),
+        ("org.example.Share", Kind::InputCapture, true, true),
+    ]
+    .map(|(app, k, allow, portal)| (app.to_string(), k, allow, portal));
+    assert_eq!(got, want);
+}
+
+#[test]
+fn each_permission_is_kept_in_the_store_table_and_id_of_its_portal() {
+    let tables: Vec<&str> = Kind::ALL.iter().map(|k| k.table()).collect();
     assert_eq!(
-        got,
+        tables,
         [
-            ("org.example.Weather".to_string(), false, false),
-            ("org.gnome.Maps".to_string(), true, true),
+            "location",
+            "background",
+            "screenshot",
+            "wallpaper",
+            "input-capture"
         ]
     );
 }
 
-/// Show the Privacy page and wait for the location read it starts.
-fn read_locations_on_privacy(app: &mut SettingsApp) {
+#[test]
+fn a_row_names_its_program_by_desktop_entry_then_app_id() {
+    use crate::permissions::program_name;
+    assert_eq!(program_name("org.gnome.Maps", Some("Maps")), "Maps");
+    assert_eq!(program_name("org.example.Gone", None), "org.example.Gone");
+    assert_eq!(program_name("", None), "Unidentified programs");
+}
+
+/// Show the Privacy page and wait for the permission read it starts.
+fn read_permissions_on_privacy(app: &mut SettingsApp) {
     app.sheet.tabs.open = Page::Privacy.index();
-    app.ensure_locations();
+    app.ensure_permissions();
     let found = app
-        .locating
+        .reading_permissions
         .take()
         .expect("a read under way")
         .recv()
         .unwrap();
-    app.show_locations(found);
+    app.show_permissions(found);
+}
+
+fn cells(app: &SettingsApp) -> Vec<Vec<String>> {
+    app.permissions
+        .rows
+        .iter()
+        .map(|r| r.cells.clone())
+        .collect()
 }
 
 #[test]
-fn the_location_list_is_read_off_the_loop_once_the_privacy_page_shows() {
+fn the_permission_list_is_read_off_the_loop_once_the_privacy_page_shows() {
     let dir = tmp("location-lazy");
     let file = dir.join("location.toml");
     std::fs::write(&file, "[apps]\n\"org.example.NoSuchMaps\" = true\n").unwrap();
     let mut app = SettingsApp::open(dir.join("config.toml"), "us".into());
     app.location_file = file;
-    assert!(app.locations.rows.is_empty(), "opening reads no answers");
-    app.ensure_locations();
-    assert!(app.locating.is_none(), "no read while another page shows");
+    assert!(app.permissions.rows.is_empty(), "opening reads no answers");
+    app.ensure_permissions();
+    assert!(
+        app.reading_permissions.is_none(),
+        "no read while another page shows"
+    );
 
     app.sheet.tabs.open = Page::Privacy.index();
-    app.ensure_locations();
-    assert!(app.locating.is_some(), "the Privacy page starts the read");
-    let cells: Vec<Vec<String>> = app.locations.rows.iter().map(|r| r.cells.clone()).collect();
-    assert_eq!(cells, [vec!["Loading...".to_string(), String::new()]]);
-    app.locations.selection.set_only(Some(0));
+    app.ensure_permissions();
+    assert!(
+        app.reading_permissions.is_some(),
+        "the Privacy page starts the read"
+    );
+    assert_eq!(cells(&app), [["Loading...", "", ""].map(String::from)]);
+    app.permissions.selection.set_only(Some(0));
     app.sync_apply();
     assert!(!forget_enabled(&app), "Forget stays greyed while loading");
 
-    let found = app.locating.take().unwrap().recv().unwrap();
-    app.show_locations(found);
-    assert_eq!(app.locations.rows.len(), 1);
+    let found = app.reading_permissions.take().unwrap().recv().unwrap();
+    app.show_permissions(found);
     assert_eq!(
-        app.locations.rows[0].cells,
-        ["org.example.NoSuchMaps", "Allowed"]
+        cells(&app),
+        [["org.example.NoSuchMaps", "Location", "Allowed"].map(String::from)]
     );
     assert_eq!(
-        app.locations.selection.focus, None,
+        app.permissions.selection.focus, None,
         "the loading row's pick is dropped"
     );
-    app.ensure_locations();
-    assert!(app.locating.is_none(), "the list is read once");
+    app.ensure_permissions();
+    assert!(app.reading_permissions.is_none(), "the list is read once");
 }
 
 #[test]
@@ -87,29 +162,71 @@ fn forget_drops_a_location_answer_from_the_file() {
     .unwrap();
     let mut app = SettingsApp::open(dir.join("config.toml"), "us".into());
     app.location_file = file.clone();
-    read_locations_on_privacy(&mut app);
-    let cells: Vec<Vec<String>> = app.locations.rows.iter().map(|r| r.cells.clone()).collect();
+    read_permissions_on_privacy(&mut app);
     assert_eq!(
-        cells,
+        cells(&app),
         [
-            ["org.example.NoSuchMaps", "Allowed"],
-            ["org.example.NoSuchWeather", "Denied"],
+            ["org.example.NoSuchMaps", "Location", "Allowed"],
+            ["org.example.NoSuchWeather", "Location", "Denied"],
         ]
-        .map(|r| r.map(String::from).to_vec())
+        .map(|r| r.map(String::from))
     );
     assert!(!forget_enabled(&app), "Forget greys with no row picked");
 
-    app.locations.selection.set_only(Some(0));
+    app.permissions.selection.set_only(Some(0));
     app.sync_apply();
     assert!(forget_enabled(&app));
-    app.forget_location();
+    app.forget_permission();
     assert_eq!(
         repriseconf::location::load_from(&file),
         std::collections::BTreeMap::from([("org.example.NoSuchWeather".to_string(), false)])
     );
-    assert_eq!(app.locations.rows.len(), 1);
-    assert_eq!(app.locations.rows[0].cells[0], "org.example.NoSuchWeather");
+    assert_eq!(app.permissions.rows.len(), 1);
+    assert_eq!(
+        app.permissions.rows[0].cells[0],
+        "org.example.NoSuchWeather"
+    );
+    assert!(
+        crate::permissions::FORGOTTEN.take().is_empty(),
+        "the store is left alone"
+    );
     assert!(!app.dirty(), "Forget leaves nothing for Apply");
+}
+
+#[test]
+fn forget_deletes_the_picked_answer_from_its_table_in_the_store() {
+    let mut app = app("forget-permission");
+    app.open_page(Page::Privacy, None);
+    app.permissions_due = false;
+    let answer = |app: &str, kind| crate::permissions::PermissionAnswer {
+        app: app.into(),
+        kind,
+        allow: true,
+        portal: true,
+    };
+    app.show_permissions(crate::permissions::PermissionList {
+        answers: vec![
+            answer("org.example.Shot", Kind::Screenshot),
+            answer("org.example.Share", Kind::InputCapture),
+        ],
+        rows: vec![
+            ("Shot".into(), Kind::Screenshot.label(), true),
+            ("Share".into(), Kind::InputCapture.label(), true),
+        ],
+        icons: vec![None, None],
+    });
+    app.permissions.selection.set_only(Some(1));
+    app.sync_apply();
+    app.forget_permission();
+    assert_eq!(
+        crate::permissions::FORGOTTEN.take(),
+        [["input-capture", "input-capture", "org.example.Share"].map(String::from)]
+    );
+    assert_eq!(
+        cells(&app),
+        [["Shot", "Screenshots", "Allowed"].map(String::from)]
+    );
+    assert!(!forget_enabled(&app), "nothing is picked after a Forget");
 }
 
 #[test]

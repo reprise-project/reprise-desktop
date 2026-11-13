@@ -193,7 +193,7 @@ impl SettingsApp {
                 pages::REMOVE => self.remove_selected(),
                 defaultspage::CHANGE => self.open_chooser(),
                 defaultspage::RESTORE => self.restore_default(),
-                pages::FORGET => self.forget_location(),
+                pages::FORGET => self.forget_permission(),
                 pages::THUMBS_CLEAR if self.clearing.is_none() => {
                     // Off the loop: a full cache is thousands of files.
                     self.clearing = Some(self.spawn(repriseapp::thumbs::clear_cache));
@@ -300,7 +300,7 @@ impl SettingsApp {
                 {
                     return Reply::none();
                 }
-                // On the Startup and locations lists Enter stays the
+                // On the Startup and permissions lists Enter stays the
                 // sheet's OK.
                 if key == form::Key::Enter
                     && let Some(r) = self.list_activate()
@@ -396,7 +396,7 @@ impl SettingsApp {
             self.focus_types(false);
         }
         if self.sheet.tabs.open != Page::Privacy.index() {
-            self.focus_locations(false);
+            self.focus_permissions(false);
         }
         match ev {
             Event::Heads(heads) => self.heads_changed(heads),

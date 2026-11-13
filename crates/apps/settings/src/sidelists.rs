@@ -33,11 +33,11 @@ impl SettingsApp {
         );
     }
 
-    pub(crate) fn focus_locations(&mut self, on: bool) {
+    pub(crate) fn focus_permissions(&mut self, on: bool) {
         hand_focus(
             &mut self.sheet,
-            &mut self.locations,
-            &mut self.locations_focus,
+            &mut self.permissions,
+            &mut self.permissions_focus,
             on,
         );
     }
@@ -53,12 +53,16 @@ impl SettingsApp {
             self.on_page(pages::shortcuts(a)),
         );
         let types = self.on_page(defaultspage::list(a));
-        let locations = self.on_page(pages::locations(a));
+        let permissions = self.on_page(pages::permissions(a));
         match registry::open(&self.sheet) {
             Page::Startup => Some((&mut self.list, list, &mut self.list_focus)),
             Page::Keyboard => Some((&mut self.shortcuts, shortcuts, &mut self.shortcuts_focus)),
             Page::DefaultPrograms => Some((&mut self.types, types, &mut self.types_focus)),
-            Page::Privacy => Some((&mut self.locations, locations, &mut self.locations_focus)),
+            Page::Privacy => Some((
+                &mut self.permissions,
+                permissions,
+                &mut self.permissions_focus,
+            )),
             _ => None,
         }
     }
@@ -68,7 +72,7 @@ impl SettingsApp {
             Page::Startup => self.focus_list(on),
             Page::Keyboard => self.focus_shortcuts(on),
             Page::DefaultPrograms => self.focus_types(on),
-            Page::Privacy => self.focus_locations(on),
+            Page::Privacy => self.focus_permissions(on),
             _ => {}
         }
     }
@@ -77,7 +81,7 @@ impl SettingsApp {
         self.focus_list(false);
         self.focus_shortcuts(false);
         self.focus_types(false);
-        self.focus_locations(false);
+        self.focus_permissions(false);
     }
 
     /// Let go of the side lists once the search field, the page list or a page control holds the
@@ -136,7 +140,7 @@ impl SettingsApp {
             return self.mid_list_tab(after, back);
         }
         let held =
-            self.list_focus || self.shortcuts_focus || self.types_focus || self.locations_focus;
+            self.list_focus || self.shortcuts_focus || self.types_focus || self.permissions_focus;
         if held {
             self.focus_side_list(false);
             if back {
@@ -173,7 +177,7 @@ impl SettingsApp {
     /// between `after` and the control following it.
     fn mid_list_tab(&mut self, after: usize, back: bool) -> Reply {
         let held =
-            self.list_focus || self.shortcuts_focus || self.types_focus || self.locations_focus;
+            self.list_focus || self.shortcuts_focus || self.types_focus || self.permissions_focus;
         if held {
             self.focus_side_list(false);
             let page = self.sheet.open_mut();

@@ -28,7 +28,6 @@ mod filepick;
 mod keyboardhost;
 mod layoutdlg;
 mod linkhost;
-mod locations;
 mod loginhost;
 mod magnifierpage;
 mod menuhost;
@@ -39,6 +38,7 @@ mod notifyhost;
 mod notifypage;
 mod outputwrite;
 mod pages;
+mod permissions;
 mod quickpage;
 mod registry;
 mod remotehost;
@@ -59,7 +59,7 @@ mod winstate;
 use crate::pages::Area;
 use crate::registry::Page;
 use filepick::Pick;
-use locations::{Located, LocationAnswer};
+use permissions::{PermissionAnswer, PermissionList};
 use repriseapp::decode::Decoded;
 use repriseapp::filedlg::Host;
 use repriseapp::oneshot::MsgBox;
@@ -377,17 +377,18 @@ struct SettingsApp {
     types_focus: bool,
     chooser: Option<Chooser>,
 
-    locations: ListView,
-    locations_focus: bool,
-    location_answers: Vec<LocationAnswer>,
-    /// Each location row's icon name, looked up once `location_icons_due`.
-    location_icons: Vec<Option<String>>,
-    location_icons_due: bool,
+    permissions: ListView,
+    permissions_focus: bool,
+    permission_answers: Vec<PermissionAnswer>,
+    /// Each permission row's icon name, looked up once `permission_icons_due`.
+    permission_icons: Vec<Option<String>>,
+    permission_icons_due: bool,
+    /// Reprise's own location prompt's answers (`location.toml`).
     location_file: PathBuf,
-    /// The location list is read the first time the Privacy page shows, and again after a
-    /// failed Forget; `locating` holds the read under way.
-    locations_due: bool,
-    locating: Option<Receiver<Located>>,
+    /// The permission list is read the first time the Privacy page shows, and again after a
+    /// failed Forget; `reading_permissions` holds the read under way.
+    permissions_due: bool,
+    reading_permissions: Option<Receiver<PermissionList>>,
 
     /// The Flatpak installations the Clipboard Access list reads, the first time the Privacy page
     /// shows; `clip_reading` holds the read under way.
@@ -690,14 +691,14 @@ impl SettingsApp {
             types: defaultspage::new_list(),
             types_focus: false,
             chooser: None,
-            locations: pages::new_location_list(),
-            locations_focus: false,
-            location_answers: Vec::new(),
-            location_icons: Vec::new(),
-            location_icons_due: false,
+            permissions: pages::new_permission_list(),
+            permissions_focus: false,
+            permission_answers: Vec::new(),
+            permission_icons: Vec::new(),
+            permission_icons_due: false,
             location_file: repriseconf::location::path(),
-            locations_due: true,
-            locating: None,
+            permissions_due: true,
+            reading_permissions: None,
             flatpak_installs: if cfg!(test) {
                 Vec::new()
             } else {
@@ -974,7 +975,7 @@ impl App for SettingsApp {
             reply.redraw_all |= r.redraw_all;
         }
         self.ensure_defaults();
-        self.ensure_locations();
+        self.ensure_permissions();
         self.ensure_remote();
         self.ensure_login();
         if win == repriseapp::MAIN

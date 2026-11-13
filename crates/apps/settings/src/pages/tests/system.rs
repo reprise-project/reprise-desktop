@@ -369,7 +369,7 @@ fn advanced_groups_what_has_no_other_page() {
 }
 
 #[test]
-fn privacy_holds_location_history_and_the_sharing_border() {
+fn privacy_holds_app_permissions_history_and_the_sharing_border() {
     for id in [
         PRIVACY_LOCATION,
         FORGET,
@@ -401,10 +401,13 @@ fn privacy_holds_location_history_and_the_sharing_border() {
     }
     let s = built();
     let p = Page::Privacy;
-    assert_eq!(rect(&s, p, "location_group"), Rect::new(20, 44, 358, 139));
+    assert_eq!(
+        rect(&s, p, "permissions_group"),
+        Rect::new(20, 44, 358, 139)
+    );
     assert_eq!(rect(&s, p, PRIVACY_LOCATION), Rect::new(GX, 66, 13, 13));
-    assert_eq!(locations(Area::MIN), Rect::new(GX, 88, 251, 85));
-    assert_eq!(rect(&s, p, FORGET), Rect::new(291, 88, 75, 23));
+    assert_eq!(permissions(Area::MIN), Rect::new(GX, 88, 334, 85));
+    assert_eq!(rect(&s, p, FORGET), Rect::new(291, 61, 75, 23));
     assert_eq!(
         rect(&s, p, "clip_access_group"),
         Rect::new(20, 193, 358, 117)
@@ -421,7 +424,7 @@ fn privacy_holds_location_history_and_the_sharing_border() {
     let tall = Area { w: 358, dh: 41 };
     let clip = privacy(tall).item(crate::clipaccess::LIST).unwrap().rect;
     assert_eq!(
-        (locations(tall).height, clip.height),
+        (permissions(tall).height, clip.height),
         (85 + 20, 55 + 21),
         "the two lists share the extra height"
     );
@@ -429,7 +432,7 @@ fn privacy_holds_location_history_and_the_sharing_border() {
         privacy(tall).item("sharing_group").unwrap().rect.bottom(),
         448 + 41
     );
-    assert_eq!(LOCATION_COLUMNS[1].0, "Answer");
+    assert_eq!(PERMISSION_COLUMNS[2].0, "Answer");
     inside_page(&s, p);
 }
 
@@ -616,34 +619,49 @@ fn the_debug_overlay_checks() {
 }
 
 #[test]
-fn the_location_check_and_list() {
+fn the_location_check_and_the_permission_list() {
     let mut s = built();
     let mut got = Settings::default();
     assert!(got.location, "programs may ask by default");
     tick(&mut s, &mut got, Page::Privacy, PRIVACY_LOCATION, false);
     assert!(!got.location);
-    let mut lv = new_location_list();
-    fit_location_columns(
+    let mut lv = new_permission_list();
+    fit_permission_columns(
         &mut lv,
         &reprisekit::controls::metrics::ControlMetrics::CLASSIC,
-        locations(Area::MIN),
+        permissions(Area::MIN),
     );
     let widths: Vec<i32> = lv.columns.iter().map(|c| c.width).collect();
-    assert_eq!(widths, [161, 70]);
-    fill_locations(
+    assert_eq!(widths, [106, 156, 52]);
+    fill_permissions(
         &mut lv,
-        &[("Maps".into(), true), ("org.example.Weather".into(), false)],
+        &[
+            ("Maps".into(), "Location", true),
+            ("org.example.Weather".into(), "Run in background", false),
+        ],
     );
     let cells: Vec<&[String]> = lv.rows.iter().map(|r| r.cells.as_slice()).collect();
     assert_eq!(
         cells,
         [
-            ["Maps", "Allowed"].map(String::from).as_slice(),
-            ["org.example.Weather", "Denied"]
+            ["Maps", "Location", "Allowed"].map(String::from).as_slice(),
+            ["org.example.Weather", "Run in background", "Denied"]
                 .map(String::from)
                 .as_slice(),
         ]
     );
+}
+
+#[test]
+fn every_permission_name_fits_its_column() {
+    reprisekit::pins::fonts();
+    let text = TextRenderer::load(&FontConfig::default());
+    let px = Theme::default().fonts.size_px;
+    let width = PERMISSION_COLUMNS[1].1;
+    for k in crate::permissions::Kind::ALL {
+        let w = text.measure(k.label(), false, px);
+        assert!(w + 8 <= width, "{} is {w} px", k.label());
+    }
 }
 
 #[test]

@@ -1368,8 +1368,9 @@ secret they ask for keeps a stray key from answering them.
 To revoke: `flatpak permissions` lists the permission store and `flatpak
 permission-remove <table> <id>` removes an entry. The Keyboard page of
 Reprise Settings forgets a program's global shortcuts, and Settings >
-Privacy lists and forgets location answers. There is no page for screen
-sharing and remote control grants yet.
+Privacy > App Permissions lists and forgets the answers in the `location`,
+`background`, `screenshot`, `wallpaper` and `input-capture` tables. There
+is no page for screen sharing and remote control grants yet.
 
 ## Programs and files
 

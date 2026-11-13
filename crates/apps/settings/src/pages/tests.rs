@@ -652,15 +652,23 @@ fn render_the_pages() {
     .collect();
     fill_list(&mut lv, &entries, &[true, false, true]);
     lv.selection.set_only(Some(0));
-    let mut places = new_location_list();
-    fit_location_columns(
+    let mut places = new_permission_list();
+    fit_permission_columns(
         &mut places,
         &reprisekit::controls::metrics::ControlMetrics::CLASSIC,
-        locations(Area::MIN),
+        permissions(Area::MIN),
     );
-    fill_locations(
+    fill_permissions(
         &mut places,
-        &[("Maps".into(), true), ("org.example.Weather".into(), false)],
+        &[
+            ("Maps".into(), "Location", true),
+            (
+                "org.example.Talk".into(),
+                "Capture keyboard and mouse",
+                true,
+            ),
+            ("org.example.Weather".into(), "Run in background", false),
+        ],
     );
     let keyboard = crate::model::load(
         "[[global_shortcuts]]\napp = \"org.example.Talk\"\nid = \"talk\"\n\
@@ -723,7 +731,7 @@ fn render_the_pages() {
                 &text,
                 &theme,
                 &places,
-                sheet.on_page(locations(Area::MIN)),
+                sheet.on_page(permissions(Area::MIN)),
                 px,
                 1,
             );

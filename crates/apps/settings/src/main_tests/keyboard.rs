@@ -23,12 +23,12 @@ fn a_field_copies_its_selection_and_takes_a_paste() {
 }
 
 #[test]
-fn the_location_list_takes_its_tab_stop_after_its_check_on_the_privacy_page() {
+fn the_permission_list_takes_its_tab_stop_after_its_check_on_the_privacy_page() {
     let mut a = app("privacy-tab");
     let ctx = test_ctx();
     a.open_page(Page::Privacy, None);
     assert!(
-        !a.locations_focus,
+        !a.permissions_focus,
         "opening the page leaves the list unfocused"
     );
 
@@ -37,13 +37,13 @@ fn the_location_list_takes_its_tab_stop_after_its_check_on_the_privacy_page() {
     page.set_focus(Some(check));
     tab(&mut a, &ctx, false);
     assert!(
-        a.locations_focus && a.locations.focus_ring,
+        a.permissions_focus && a.permissions.focus_ring,
         "Tab from the check enters the list"
     );
     assert_eq!(a.sheet.open().focus(), None, "one dotted rectangle");
 
     tab(&mut a, &ctx, false);
-    assert!(!a.locations_focus);
+    assert!(!a.permissions_focus);
     let next = a
         .sheet
         .open()
@@ -52,9 +52,9 @@ fn the_location_list_takes_its_tab_stop_after_its_check_on_the_privacy_page() {
     assert!(next > check, "Tab leaves the list onward, got item {next}");
 
     tab(&mut a, &ctx, true);
-    assert!(a.locations_focus, "Shift+Tab comes back into the list");
+    assert!(a.permissions_focus, "Shift+Tab comes back into the list");
     tab(&mut a, &ctx, true);
-    assert!(!a.locations_focus);
+    assert!(!a.permissions_focus);
     assert_eq!(
         a.sheet.open().focus(),
         Some(check),
@@ -180,20 +180,20 @@ fn a_side_list_never_fires_the_pages_access_keys() {
     }
 }
 
-/// Privacy's location list sits mid-form, after its check: the field and the list hand the
+/// Privacy's permission list sits mid-form, after its check: the field and the list hand the
 /// keyboard over as on the other pages, but opening the page never gives it to the list.
 #[test]
-fn the_search_field_and_the_location_list_never_hold_the_keyboard_together() {
+fn the_search_field_and_the_permission_list_never_hold_the_keyboard_together() {
     let mut a = app("search-location-list");
     let mut ctx = test_ctx();
     a.open_page(Page::Privacy, None);
-    a.locations_due = false;
-    pages::fill_locations(&mut a.locations, &[("Maps".into(), true)]);
+    a.permissions_due = false;
+    pages::fill_permissions(&mut a.permissions, &[("Maps".into(), "Location", true)]);
 
     press_search_field(&mut a, &mut ctx);
     assert_eq!(holders(&a), FIELD, "a press in the field");
     press_side_row(&mut a, &mut ctx, 0, 1000);
-    assert_eq!(holders(&a), SIDE_LIST, "a press on the location list");
+    assert_eq!(holders(&a), SIDE_LIST, "a press on the permission list");
 
     press_search_field(&mut a, &mut ctx);
     assert_eq!(
