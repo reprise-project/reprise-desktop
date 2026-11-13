@@ -21,7 +21,7 @@ use crate::classic::widgets::{
     scrollbar_parts, scrollbar_pos_at,
 };
 use crate::controls::metrics::ControlMetrics;
-use crate::controls::scrollbar;
+use crate::controls::scrollbar::{self, ThumbDrag};
 use crate::look::Paint;
 use crate::look::widgets::header as header_widgets;
 use crate::look::widgets::item::{self, Mark};
@@ -215,6 +215,8 @@ pub struct ListView<R: Rows = Vec<Row>, C = Vec<Column>, S = Selection> {
     pub inactive: bool,
     /// The last left press on a row, for [`ListView::activated`].
     pub clicks: DoubleClick<usize>,
+    /// The vertical bar's thumb while [`ListView::pointer`] holds it.
+    pub thumb: ThumbDrag,
 }
 
 impl<R: Rows + Default> Default for ListView<R> {
@@ -239,6 +241,7 @@ impl<R: Rows + Default> Default for ListView<R> {
             hot: None,
             inactive: false,
             clicks: DoubleClick::default(),
+            thumb: ThumbDrag::default(),
         }
     }
 }
@@ -1216,6 +1219,9 @@ impl<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>> ListView<R, C, S> {
         focus
     }
 }
+
+mod input;
+pub use input::{Input, Took};
 
 #[cfg(test)]
 mod tests;
