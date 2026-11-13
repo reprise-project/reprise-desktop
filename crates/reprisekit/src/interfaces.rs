@@ -6,6 +6,7 @@ use crate::interface::Interface;
 use crate::look::{self, Look};
 use crate::overview;
 use crate::paint::{Backdrop, Paint};
+use crate::projector;
 use crate::raster::{Canvas, Rect};
 use crate::snaplayouts;
 use crate::startpanel::{self, StartPanel};
@@ -266,6 +267,26 @@ pub fn draw_snap_picker(
             c
         }
         _ => controls::snappicker::draw(theme, layout, icons, hot),
+    }
+}
+
+/// The display switcher, `layout` in device pixels at `theme.scale`, captions in `text`.
+pub fn draw_projector(
+    theme: &Theme,
+    layout: &projector::ProjectorLayout,
+    text: &TextRenderer,
+    p: &controls::projector::Projector,
+) -> Canvas {
+    let size = theme.fonts.size_px;
+    match theme.look.style() {
+        Some(s) if s.glass.is_some() => {
+            let mut c = Canvas::new(layout.width.max(1) as u32, layout.height.max(1) as u32);
+            let hilight = theme.colors.hilight;
+            let (lit, hot, on) = (p.lit, p.hot, p.enabled);
+            glass::projector::draw(&mut c, s, text, size, hilight, layout, lit, hot, on);
+            c
+        }
+        _ => controls::projector::draw(theme, text, layout, p),
     }
 }
 
