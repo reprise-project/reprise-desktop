@@ -353,7 +353,8 @@ user's server.
 - A UI font: Wine's Tahoma is recommended (`ttf-tahoma` on Arch, from the
   AUR); without it, Reprise falls back to DejaVu Sans. See [Fonts](#fonts).
 - An icon theme. A classic, early-2000s theme will look most at home; see
-  [assets.md](assets.md#icons).
+  [assets.md](assets.md#icons). Ubuntu's Adwaita has only symbolic icons, so
+  the .deb recommends `adwaita-icon-theme-legacy` for the full-colour ones.
 - A desktop folder on a file system with `user.` extended attributes, such
   as ext4, btrfs, xfs or tmpfs. A `.desktop` file runs from the desktop only
   when it's executable and carries Reprise's `user.reprise.trusted` marker,
