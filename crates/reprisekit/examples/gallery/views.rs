@@ -459,3 +459,30 @@ pub fn render_grid_drag(scale: i32) -> Canvas {
     }
     c
 }
+
+/// The pointer's rings at five steps of their animation, a row per interface, each step over a
+/// light and a dark tile.
+pub fn render_locate_rings(scale: i32) -> Canvas {
+    use reprisekit::locate::{SIZE, rings};
+    let themes = [
+        interfaces::theme_for(Interface::Classic),
+        interfaces::theme_for(Interface::Blue),
+        interfaces::theme_for(Interface::Glass),
+    ];
+    let steps = [0.0, 0.2, 0.4, 0.6, 0.8];
+    let tiles = [Color::rgb(0xF0, 0xF0, 0xF0), Color::rgb(0x20, 0x28, 0x30)];
+    let cell = SIZE * scale;
+    let cols = (steps.len() * tiles.len()) as i32;
+    let mut c = Canvas::new((cols * cell) as u32, (themes.len() as i32 * cell) as u32);
+    for (row, theme) in themes.iter().enumerate() {
+        for (i, &t) in steps.iter().enumerate() {
+            for (j, &tile) in tiles.iter().enumerate() {
+                let x = (i * tiles.len() + j) as i32 * cell;
+                let y = row as i32 * cell;
+                c.fill_rect(Rect::new(x, y, cell, cell), tile);
+                c.blit_over(x, y, &rings(t, theme.colors.hilight, scale));
+            }
+        }
+    }
+    c
+}

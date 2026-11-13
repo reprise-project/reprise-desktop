@@ -100,8 +100,8 @@ use taskbar::{
 };
 use text_size::render_text_size;
 use views::{
-    render_backgrounds, render_file_preview, render_grid_drag, render_image_view, render_savers,
-    render_show_desktop, render_termgrid,
+    render_backgrounds, render_file_preview, render_grid_drag, render_image_view,
+    render_locate_rings, render_savers, render_show_desktop, render_termgrid,
 };
 use windowing::{render_caption_tabs, render_overview, render_snap_layouts};
 
@@ -225,6 +225,10 @@ fn main() {
         write_preview(
             &render_grid_drag(n.max(1)),
             &format!("reprisekit-gallery-grid-drag@{}.png", n.max(1)),
+        );
+        write_preview(
+            &render_locate_rings(n.max(1)),
+            &format!("reprisekit-gallery-locate-pointer@{}.png", n.max(1)),
         );
         write_preview(
             &render_windowed_dialog(n.max(1)),
@@ -368,6 +372,10 @@ fn main() {
     write_preview(
         &render_task_attention(1),
         "reprisekit-gallery-task-attention.png",
+    );
+    write_preview(
+        &render_locate_rings(1),
+        "reprisekit-gallery-locate-pointer.png",
     );
     write_preview(
         &render_stats_panel(with_blue),

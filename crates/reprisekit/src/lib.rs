@@ -67,6 +67,7 @@ pub mod icontheme;
 pub mod imeclient;
 pub mod interface;
 pub mod interfaces;
+pub mod locate;
 pub mod logon;
 pub mod look;
 pub mod metrics;
