@@ -296,7 +296,7 @@ asks first. Programs see `TERM=xterm-256color` and `COLORTERM=truecolor`.
 
 ## Reprise Settings
 
-One window, 32 pages under seven headings (Login Manager only where
+One window, 33 pages under seven headings (Login Manager only where
 `reprise-login` is installed), with link rows to the separate
 settings programs. Only one runs at a time. A link row ends in "..." and
 starts its program in its own window, as Start does, and Settings stays on
@@ -376,6 +376,12 @@ matched control focused.
   - **Cursor:** cursor theme and size.
   - **Tablet:** what each pad button, pad key, ring, strip and dial does,
     and how far a ring or strip turns per step.
+  - **Thunderbolt:** the Thunderbolt and USB4 devices boltd knows, with
+    whether each is connected, waiting or always authorized. Authorize
+    lets the picked device in from now on (enrolling it), and Forget takes
+    it out of boltd's list, so it waits to be authorized the next time it
+    connects. Both act at once and may ask for an administrator password.
+    The page is greyed without bolt.
   - **Bluetooth...** and **Printers...**
 - **Accessibility**
   - **Text & Keys:** text size, StickyKeys, SlowKeys, BounceKeys and Use
@@ -837,6 +843,14 @@ Classic is the One Dark scheme, under Glass `[glass] mode = "dark"`.
   limit and falls back.
   Nothing happens on its own while the session is locked, and drives already
   plugged in when the session starts are left as they are.
+- **Thunderbolt devices.** The same program follows boltd while it runs. A
+  Thunderbolt or USB4 device that connects unauthorized (a dock, an eGPU)
+  gets an "Authorize" balloon naming it, with Authorize Once, Always
+  Authorize, which enrolls it so boltd lets it in from then on, and Ignore.
+  It is asked about once per connection, a device left waiting when the
+  session starts included; one boltd already authorizes is not asked
+  about. Enrolled devices are listed, authorized and forgotten on Settings >
+  Thunderbolt.
 - **Run As.** The admin password prompt. It takes a fingerprint too, when
   polkit is set up for one. Cancelling it in User Accounts, Network
   Connections, Printers, Software Updates, Date and Time, Explorer or Safely

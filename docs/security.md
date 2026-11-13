@@ -1693,6 +1693,20 @@ stop the share first.
   "Connect to this device automatically". A second request waits for the
   open box to close, so a click meant for one device's box can't land on
   another's.
+- **Thunderbolt devices.** A Thunderbolt or USB4 device can reach memory
+  once authorized. `reprise-drives` reads devices only from the current
+  owner of `org.freedesktop.bolt` and never starts boltd. A device that
+  connects unauthorized gets one balloon per connection, and nothing is
+  authorized until a button is pressed: Authorize Once calls
+  `Device.Authorize`, Always Authorize enrolls it with the `auto` policy (or
+  sets an enrolled device's policy to `auto`), Ignore does nothing. A
+  button pressed from the history acts only while that device still waits.
+  boltd checks polkit's `org.freedesktop.bolt.authorize`, `.enroll` and
+  `.manage` for each call, with interactive authorization on; bolt's own
+  rule lets an active local `wheel` session through without a password.
+  Settings > Thunderbolt's Authorize enrolls and Forget calls
+  `ForgetDevice` the same way. A device boltd already authorizes itself is
+  never asked about.
 - **Ending the session.** With `[session] end_processes = true` (the
   default), Log Off stops the `app-reprise-*` scopes and, after a display
   manager login, terminates the login session, so windowless programs Reprise

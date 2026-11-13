@@ -20,6 +20,7 @@ mod appearance;
 mod desktop;
 mod input;
 mod system;
+mod thunderbolt;
 
 fn read_all(sheet: &PropSheet, s: &mut Settings) {
     for b in binds() {

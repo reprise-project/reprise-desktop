@@ -25,6 +25,16 @@ pub fn message(e: &zbus::Error) -> Option<&str> {
     .filter(|m| !m.is_empty())
 }
 
+/// What to tell the user when a call that may open a password prompt fails with `e`; None when
+/// `dismissed` (usually [`crate::polkit::dismissed`]) says the prompt was dismissed. A refusal
+/// and a failure of the call itself read alike, so the prompt is asked about first.
+pub fn to_tell(e: zbus::Error, dismissed: impl FnOnce() -> bool) -> Option<String> {
+    if name(&e).is_some() && dismissed() {
+        return None;
+    }
+    Some(message(&e).map_or_else(|| e.to_string(), String::from))
+}
+
 /// The error a call fails with when the peer answers an error reply named `name` carrying
 /// `message`, as tests build one. Panics on an invalid error name.
 pub fn reply(name: &str, message: &str) -> zbus::Error {
@@ -66,5 +76,23 @@ mod tests {
             None
         );
         assert_eq!(name(&zbus::Error::InvalidReply), None);
+    }
+
+    #[test]
+    fn an_error_reply_asks_about_the_prompt_and_tells_its_message() {
+        let unknown = || {
+            reply(
+                "org.freedesktop.DBus.Error.UnknownMethod",
+                "No such method \u{201c}EnableChargeThreshold\u{201d}",
+            )
+        };
+        assert_eq!(to_tell(unknown(), || true), None);
+        assert_eq!(
+            to_tell(unknown(), || false).as_deref(),
+            Some("No such method \u{201c}EnableChargeThreshold\u{201d}")
+        );
+        let lost = zbus::Error::from(std::io::Error::from(std::io::ErrorKind::ConnectionReset));
+        let told = to_tell(lost, || panic!("only an error reply follows a prompt"));
+        assert!(told.is_some());
     }
 }

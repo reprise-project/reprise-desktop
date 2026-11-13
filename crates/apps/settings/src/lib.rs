@@ -58,6 +58,7 @@ mod sidelists;
 mod startmenu;
 mod tablethost;
 mod tabletpage;
+mod thunderbolthost;
 mod wake;
 mod wallpapers;
 pub mod welcome;
@@ -432,6 +433,7 @@ struct SettingsApp {
     airplane: airplanehost::Airplane,
     /// The Network page's proxy rows: the file as read and what the rows hold.
     proxy: proxyhost::Proxy,
+    thunderbolt: thunderbolthost::Thunderbolt,
 
     /// The Region & Language page's locales and choices, read when it first opens; the account's
     /// locale.conf is `region_conf`.
@@ -714,6 +716,7 @@ impl SettingsApp {
             region_read: None,
             region_set: None,
             contents: contentshost::Contents::default(),
+            thunderbolt: thunderbolthost::Thunderbolt::default(),
             login: None,
             login_files: loginhost::Files::default(),
             login_source: loginhost::machine_users,
@@ -1017,6 +1020,7 @@ impl App for SettingsApp {
         self.ensure_airplane();
         self.ensure_region();
         self.ensure_contents();
+        self.ensure_thunderbolt();
         self.ensure_login();
         if win == repriseapp::MAIN
             && !self.saver_ticking

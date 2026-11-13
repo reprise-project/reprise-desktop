@@ -277,6 +277,11 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
             ("tablet_ring_step", "Ring step:"),
             ("tablet_strip_step", "Strip step:"),
         ],
+        Page::Thunderbolt => &[
+            ("thunderbolt_devices", "Devices"),
+            ("thunderbolt_authorize", "Authorize"),
+            ("thunderbolt_forget", "Forget"),
+        ],
         Page::Cursor => &[("cursor_theme", "Scheme:"), ("cursor_size", "Size:")],
         Page::TextKeys => &[
             ("text_size", "Text size:"),

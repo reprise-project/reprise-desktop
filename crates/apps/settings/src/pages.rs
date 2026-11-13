@@ -28,6 +28,7 @@ mod lists;
 mod login;
 mod network;
 mod system;
+mod thunderbolt;
 
 pub use appearance::{effects, fonts_and_icons, night_light, text_size_note};
 pub use bind::{
@@ -58,6 +59,9 @@ pub use network::{
 pub use system::{
     RD_PASSWORD_ACCOUNTS, REMOTE_ALLOW, REMOTE_DISCONNECT, REMOTE_REGENERATE, advanced, backup,
     managed, notifications, privacy, remote_desktop, selected_client, show_remote, sound, startup,
+};
+pub use thunderbolt::{
+    TB_AUTHORIZE, TB_FORGET, TB_LIST, selected as selected_device, show_thunderbolt, thunderbolt,
 };
 
 /// The client every page is built for at [`Area::MIN`]; the sheet puts each page right of its list ([`PropSheet::on_page`]).
