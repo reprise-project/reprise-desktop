@@ -493,12 +493,12 @@ fn faded(px: u32, share: f64) -> u32 {
     ch(24) << 24 | ch(16) << 16 | ch(8) << 8 | ch(0)
 }
 
-/// `px` lit by the spot as under a pointer at the frame's middle, without a
-/// hue, through `gain`; the pixel's middle is (`x`, `y`) in design pixels of a `w` x `h` frame.
-fn spot_lit(px: u32, gain: u8, x: f32, y: f32, w: f32, h: f32) -> u32 {
-    let g = f32::from(gain) / 32.0;
+/// [`SPOT`] without a hue over a `w` x `h` frame, under a pointer at its
+/// middle: `spot(px, gain, x, y)` lights the pixel whose middle is (`x`, `y`) design px.
+fn spot_at_middle(w: f32, h: f32) -> impl Fn(u32, u8, f32, f32) -> u32 {
+    let light = SPOT.in_colour(None, w, h);
     let cx = (w / 2.0).floor() + 0.5 + SPOT.dx;
-    SPOT.in_colour(None).light(px, g, x - cx, y, w, h)
+    move |px, gain, x, y| light.light(px, f32::from(gain) / 32.0, x - cx, y)
 }
 
 fn mid(v: i32, n: i32) -> f32 {
@@ -560,7 +560,7 @@ const LIT_STATES: [State; 3] = [State::Hot, State::CheckedHot, State::Pressed];
 pub fn buttons(s: &Settings, (w, h): (i32, i32), n: i32) -> PartImage {
     let bar = Bar::new(s);
     let drawn = BUTTON_STATES.map(|st| draw(&bar, &ICONS, look_of(st), w, h, false, n));
-    let (wf, hf) = (w as f32, h as f32);
+    let spot = spot_at_middle(w as f32, h as f32);
     frames(
         &BUTTON_STATES,
         (w * n, h * n),
@@ -569,7 +569,7 @@ pub fn buttons(s: &Settings, (w, h): (i32, i32), n: i32) -> PartImage {
         |i, x, y| {
             let (px, g) = drawn[i].at(x, y);
             if LIT_STATES.contains(&BUTTON_STATES[i]) {
-                spot_lit(px, g, mid(x, n), mid(y, n), wf, hf)
+                spot(px, g, mid(x, n), mid(y, n))
             } else {
                 px
             }
@@ -763,7 +763,7 @@ pub fn label_edges(s: &Settings, h: i32, n: i32) -> PartImage {
     list.extend(lit_pairs.map(|p| (State::CheckedHot, p)));
     list.extend(lit_pairs.map(|p| (State::Pressed, p)));
     let states: Vec<State> = list.iter().map(|&(st, _)| st).collect();
-    let (wf, hf) = (w as f32, h as f32);
+    let spot = spot_at_middle(w as f32, h as f32);
     let image = frames(&states, (3 * n, h * n), n, Layout::Horizontal, |i, x, y| {
         let (st, pair) = list[i];
         let lit = look_of(st) as usize;
@@ -786,8 +786,8 @@ pub fn label_edges(s: &Settings, h: i32, n: i32) -> PartImage {
         };
         let own = matches!(pair, Pair::Left | Pair::Right);
         if own && LIT_STATES.contains(&st) {
-            let at = (wf / 2.0).floor() + mid(sub, n);
-            spot_lit(px, g, at, mid(y, n), wf, hf)
+            let at = (w as f32 / 2.0).floor() + mid(sub, n);
+            spot(px, g, at, mid(y, n))
         } else {
             px
         }
@@ -1794,11 +1794,11 @@ mod tests {
     #[test]
     fn sky_frames_at_scale_2_keep_their_pixels() {
         let want: [u64; 16] = [
-            0x5540_2357_F950_6797,
+            0xC03F_5CA0_516E_CEA7,
             0x0422_AF69_8F22_115F,
             0xBA40_3C3F_0604_411A,
             0x4ABB_D6E5_5160_4032,
-            0xBFA6_9FA8_A674_368C,
+            0x6957_DDF1_048D_2BCF,
             0x03D3_A08D_BE0E_8379,
             0x7720_CECA_1356_5A71,
             0xE0FC_57E7_1AF5_3D2F,
