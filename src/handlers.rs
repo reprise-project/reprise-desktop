@@ -475,8 +475,12 @@ impl XdgDialogHandler for State {
 }
 
 impl XdgDecorationHandler for State {
+    /// A decoration made again after a destroy hands the frame back to Reprise.
     fn new_decoration(&mut self, toplevel: ToplevelSurface) {
-        toplevel.with_pending_state(|s| s.decoration_mode = Some(DecorationMode::ServerSide));
+        server_side(&toplevel);
+        if let Some(w) = self.window_for_surface(toplevel.wl_surface()) {
+            self.set_csd(w, false);
+        }
     }
 
     fn request_mode(&mut self, toplevel: ToplevelSurface, mode: DecorationMode) {
