@@ -288,6 +288,9 @@ impl Page {
                 "variable refresh rate",
                 "adaptive sync",
                 "freesync",
+                "icc",
+                "colour profile",
+                "calibration",
             ],
             Page::NightLight => &[
                 "blue light",

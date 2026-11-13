@@ -731,6 +731,15 @@ the screen takes the interface of the last session used at this computer.
   confirmation.
 - **Fractional scaling** from 1 to 4 in quarter steps, per monitor. Programs
   that support it draw at the exact scale.
+- **Colour profiles.** The Display page's Color profile list picks an ICC
+  profile per monitor (`[[outputs]] icc_profile`) from `~/.local/share/icc`,
+  `/usr/share/color/icc`, `/var/lib/colord/icc` and, while colord runs, every
+  profile colord knows. Its calibration curves (the `vcgt` tag, table or
+  formula) go into the monitor's gamma table, and night light warms on top
+  of them. Programs are not colour managed: the profile's colour space is
+  not applied. A monitor whose driver has no gamma table (a virtual GPU)
+  leaves the calibration out and says so in the log. A gamma tool holding a
+  monitor's gamma replaces calibration and night light until it lets go.
 - **Night light** from sunset to sunrise, worked out from your time zone, or
   on a schedule. Each change fades over half an hour. A check box in the
   displays panel pauses it until tomorrow; the displays icon's right-click

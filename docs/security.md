@@ -1459,6 +1459,13 @@ stop the share first.
   pick one. A dropped web link is typed
   shell-quoted like a path, and an ssh `Host` from `~/.ssh/config` is
   passed after `--`, one starting with `-` left out of the menu.
+- **Colour profiles.** An ICC profile named by `[[outputs]] icc_profile`,
+  or found for the Display page's list, may come from anywhere. Only its
+  header, tag table, description and `vcgt` tag are read: a file over 64 MiB,
+  more than 256 tags, a tag past the file's end, a `vcgt` larger than three
+  channels of 65535 entries or a formula outside 0 to 1 is refused, and a
+  FIFO in a profile folder fails at once. colord is asked only for its
+  profiles' file names, and only while it runs.
 - **Bus data.** What a program sends the compositor and `reprise-sound`
   over the session bus (tray items and their menus, LauncherEntry updates,
   media players' properties) is read only from a body of 4 MiB or less,

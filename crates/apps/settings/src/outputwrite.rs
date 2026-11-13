@@ -1,6 +1,6 @@
 //! `[[outputs]]` entries of `config.toml` as Reprise Settings writes them; `toml_edit` leaves the rest of the file as it was. The keys are the ones `repriseconf::config::file::FileOutput` reads.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use repriseapp::heads::Transform;
 use repriseconf::hz_string;
@@ -16,6 +16,8 @@ pub struct OutputKeys {
     pub scale: Option<f64>,
     pub adaptive_sync: Option<bool>,
     pub position: Option<(i32, i32)>,
+    /// `Some(None)` removes the key.
+    pub icc_profile: Option<Option<PathBuf>>,
 }
 
 /// How far from 0 the compositor takes a place (`MAX_POSITION` in `src/outputmgmt.rs`).
@@ -82,6 +84,11 @@ fn check_keys(keys: &OutputKeys) -> Result<(), String> {
     {
         return Err(format!("position [{x}, {y}] is out of range"));
     }
+    if let Some(Some(p)) = &keys.icc_profile
+        && (!p.is_absolute() || p.to_str().is_none())
+    {
+        return Err(format!("{} is not an absolute UTF-8 path", p.display()));
+    }
     Ok(())
 }
 
@@ -144,6 +151,13 @@ pub fn set_output_in(doc: &mut DocumentMut, name: &str, keys: &OutputKeys) -> Re
     if let Some(v) = keys.adaptive_sync {
         table["adaptive_sync"] = value(v);
     }
+    match &keys.icc_profile {
+        Some(Some(p)) => table["icc_profile"] = value(p.to_str().expect("checked above")),
+        Some(None) => {
+            table.remove("icc_profile");
+        }
+        None => {}
+    }
     if let Some((x, y)) = keys.position {
         let mut at = Array::new();
         at.push(i64::from(x));
@@ -164,6 +178,25 @@ pub fn set_primary_in(doc: &mut DocumentMut, name: &str) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Each entry's `icc_profile`, a `~/` one under `home`; empty for a file that does not parse.
+pub fn read_profiles(text: &str, home: Option<&Path>) -> Vec<(String, PathBuf)> {
+    let Ok(doc) = text.parse::<DocumentMut>() else {
+        return Vec::new();
+    };
+    entries(&doc)
+        .into_iter()
+        .filter_map(|t| {
+            let name = t.get("name")?.as_str()?;
+            let p = t.get("icc_profile")?.as_str().filter(|p| !p.is_empty())?;
+            let path = match (p.strip_prefix("~/"), home) {
+                (Some(rest), Some(home)) => home.join(rest),
+                _ => PathBuf::from(p),
+            };
+            Some((name.to_string(), path))
+        })
+        .collect()
 }
 
 /// The output the file marks `primary`, the first when several are; None for a file that does not parse or marks none.
@@ -456,5 +489,39 @@ mod tests {
         );
         assert_eq!(read_primary("[[["), None);
         assert_eq!(read_primary(""), None);
+    }
+
+    #[test]
+    fn a_profile_is_written_read_back_and_removed() {
+        let set = |text: &str, p: Option<&str>| {
+            let keys = OutputKeys {
+                icc_profile: Some(p.map(PathBuf::from)),
+                ..keys()
+            };
+            set_output(text, "DP-1", &keys).unwrap()
+        };
+        let text = set(
+            "[[outputs]]\nname = \"DP-1\"\nscale = 2\n",
+            Some("/a b/x.icc"),
+        );
+        assert!(text.contains("icc_profile = \"/a b/x.icc\"\n"), "{text}");
+        assert!(text.contains("scale = 2\n"), "the rest stays: {text}");
+        assert_eq!(
+            read_profiles(&text, None),
+            [("DP-1".to_string(), PathBuf::from("/a b/x.icc"))]
+        );
+        let gone = set(&text, None);
+        assert!(!gone.contains("icc_profile"), "{gone}");
+        assert!(read_profiles(&gone, None).is_empty());
+        let keys = OutputKeys {
+            icc_profile: Some(Some(PathBuf::from("x.icc"))),
+            ..keys()
+        };
+        assert!(set_output("", "DP-1", &keys).is_err(), "a relative path");
+        let home = "[[outputs]]\nname = \"DP-1\"\nicc_profile = \"~/icc/x.icc\"\n";
+        assert_eq!(
+            read_profiles(home, Some(Path::new("/home/u"))),
+            [("DP-1".to_string(), PathBuf::from("/home/u/icc/x.icc"))]
+        );
     }
 }

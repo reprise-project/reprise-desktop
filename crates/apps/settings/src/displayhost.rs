@@ -37,6 +37,8 @@ pub struct DisplayHost {
     pub icon: Option<Canvas>,
     /// The accelerometer read off the loop, once the page first opens.
     pub sensor_job: Option<std::sync::mpsc::Receiver<bool>>,
+    /// The display profile listing, off the loop since colord may be asked.
+    pub profile_scan: Option<std::sync::mpsc::Receiver<Vec<reprisefs::icc::Listed>>>,
 }
 
 impl SettingsApp {
@@ -50,6 +52,31 @@ impl SettingsApp {
         self.sync_apply();
         r.redraw_all = true;
         r
+    }
+
+    /// List the display profiles on a thread; `profiles_done` takes them in.
+    pub(crate) fn scan_profiles(&mut self) {
+        self.display.profile_scan = Some(self.spawn(|| {
+            reprisefs::icc::list(
+                &reprisefs::icc::dirs(),
+                &reprisebus::colord::profile_files(),
+            )
+        }));
+    }
+
+    pub(crate) fn profiles_done(&mut self) -> bool {
+        let Some(rx) = &self.display.profile_scan else {
+            return false;
+        };
+        let found = match crate::take(rx) {
+            Ok(None) => return false,
+            Ok(Some(found)) => found,
+            Err(()) => Vec::new(),
+        };
+        self.display.profile_scan = None;
+        self.display.model.set_profiles(found);
+        displaypage::refresh(&mut self.sheet, &self.display.model, &self.want);
+        true
     }
 
     pub(crate) fn display_changed(&mut self) -> Reply {

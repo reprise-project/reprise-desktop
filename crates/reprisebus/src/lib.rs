@@ -26,6 +26,7 @@
 //! turns its user unit on or off. Synchronous callers [`wait`] on it.
 //! [`bluez`] lists BlueZ's paired devices and follows whether one is connected.
 //! [`bolt`] lists and follows boltd's Thunderbolt devices and authorizes, enrolls or forgets one.
+//! [`colord`] lists the display profile files colord knows.
 //! [`airplane`] turns every radio off and back on, Bluetooth through [`rfkill`].
 //! [`kdeconnect`] follows the phones KDE Connect reaches.
 //! [`locale`] reads and sets the system locale and sets a user's language in AccountsService.
@@ -51,6 +52,7 @@ pub mod bluez;
 pub mod bolt;
 pub mod bounded;
 pub mod charge;
+pub mod colord;
 pub mod desklock;
 pub mod eds;
 pub mod error;

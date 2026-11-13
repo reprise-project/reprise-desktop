@@ -1,5 +1,7 @@
 //! The Display page: the outputs the compositor lists (`repriseapp::heads`), where each is placed,
-//! the one the page shows, and what is picked for it against what it runs.
+//! the one the page shows, and what is picked for it against what it runs and the file says.
+
+use std::path::PathBuf;
 
 use repriseapp::heads::{AdaptiveSync, Head, HeadConfig, HeadMode, HeadSet, Transform};
 use reprisekit::controls::arrange::{self, Arrange, Tile};
@@ -19,6 +21,9 @@ use repriseconf::projection::{self, Projection, Screen};
 /// How many rows the Scale combo has: 100% to 400% in quarter steps, the scales `[[outputs]] scale`
 /// takes.
 pub const SCALE_ROWS: usize = 13;
+
+/// How many rows the Color profile combo's list shows before it scrolls.
+const PROFILE_ROWS: usize = 12;
 
 /// A mirrored transform in force shows as a fifth row, so the combo tells the truth; picking any
 /// row leaves it.
@@ -61,6 +66,8 @@ pub struct Changes {
     pub back: HeadSet,
     /// The output picked as the primary one, when that moved.
     pub primary: Option<String>,
+    /// Each output whose colour profile pick moved, with the new one (None: no profile).
+    pub profiles: Vec<(String, Option<PathBuf>)>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -81,6 +88,12 @@ pub struct Display {
     pub layouts_saved: bool,
     /// Whether iio-sensor-proxy reports an accelerometer; None until read.
     pub sensor: Option<bool>,
+    /// The display profiles found, the Color profile combo's rows after None.
+    profiles: Vec<reprisefs::icc::Listed>,
+    /// `[[outputs]] icc_profile` as the file has it, by output.
+    profiles_saved: Vec<(String, PathBuf)>,
+    /// Profile picks not yet written, by output.
+    profile_picks: Vec<(String, Option<PathBuf>)>,
 }
 
 /// A mode's size as the layout sees it under `transform` and `scale`: turned a quarter swaps the
@@ -164,6 +177,76 @@ impl Display {
     /// The picked primary was written.
     pub fn primary_saved(&mut self) {
         self.primary_saved = self.primary.clone();
+    }
+
+    pub fn set_profiles(&mut self, found: Vec<reprisefs::icc::Listed>) {
+        self.profiles = found;
+    }
+
+    /// The `[[outputs]] icc_profile` entries the file has.
+    pub fn set_profiles_saved(&mut self, saved: Vec<(String, PathBuf)>) {
+        self.profiles_saved = saved;
+    }
+
+    fn profile_saved(&self, name: &str) -> Option<&PathBuf> {
+        (self.profiles_saved.iter())
+            .find(|(n, _)| n == name)
+            .map(|(_, p)| p)
+    }
+
+    /// Output `name`'s profile as picked, else as the file has it.
+    pub fn profile_of(&self, name: &str) -> Option<&PathBuf> {
+        match self.profile_picks.iter().find(|(n, _)| n == name) {
+            Some((_, p)) => p.as_ref(),
+            None => self.profile_saved(name),
+        }
+    }
+
+    /// The picked profiles were written.
+    pub fn profiles_written(&mut self) {
+        for (name, p) in std::mem::take(&mut self.profile_picks) {
+            self.profiles_saved.retain(|(n, _)| *n != name);
+            if let Some(p) = p {
+                self.profiles_saved.push((name, p));
+            }
+        }
+    }
+
+    /// The Color profile combo's rows (None, then each profile found, then the shown output's own
+    /// when it is not among them) and the picked one's row.
+    pub fn profile_rows(&self) -> (Vec<String>, usize) {
+        let mut rows = vec!["None".to_string()];
+        rows.extend(self.profiles.iter().map(|l| l.name.clone()));
+        let Some(p) = self.head().and_then(|h| self.profile_of(&h.name)) else {
+            return (rows, 0);
+        };
+        match self.profiles.iter().position(|l| l.path == *p) {
+            Some(i) => (rows, i + 1),
+            None => {
+                let name = p.file_name().unwrap_or(p.as_os_str());
+                rows.push(name.to_string_lossy().into_owned());
+                let last = rows.len() - 1;
+                (rows, last)
+            }
+        }
+    }
+
+    /// Combo row `row` for the shown output: 0 is no profile, the row past the list keeps its own.
+    pub fn pick_profile(&mut self, row: usize) {
+        let Some(name) = self.head().map(|h| h.name.clone()) else {
+            return;
+        };
+        let p = match row {
+            0 => None,
+            r => match self.profiles.get(r - 1) {
+                Some(l) => Some(l.path.clone()),
+                None => return,
+            },
+        };
+        self.profile_picks.retain(|(n, _)| *n != name);
+        if self.profile_saved(&name) != p.as_ref() {
+            self.profile_picks.push((name, p));
+        }
     }
 
     /// The index of the primary output: the one picked while it is listed, else the first, as the
@@ -265,6 +348,7 @@ impl Display {
             || self.moved()
             || self.primary != self.primary_saved
             || self.projection.is_some()
+            || !self.profile_picks.is_empty()
     }
 
     /// Whether the output runs a mode outside its list. No mode change is offered then: a No or a
@@ -279,6 +363,7 @@ impl Display {
         self.picks = self.heads.iter().map(Pick::of).collect();
         self.places = self.heads.iter().map(|h| h.position).collect();
         self.primary = self.primary_saved.clone();
+        self.profile_picks.clear();
     }
 
     /// Output `name`'s VRR check back to what it runs.
@@ -338,11 +423,17 @@ impl Display {
             .primary
             .clone()
             .filter(|_| self.primary != self.primary_saved);
-        (!vrr.is_empty() || !set.is_empty() || primary.is_some()).then_some(Changes {
+        let profiles = (self.profile_picks.iter())
+            .filter(|(n, _)| self.head_named(n).is_some())
+            .cloned()
+            .collect::<Vec<_>>();
+        let any = !vrr.is_empty() || !set.is_empty() || primary.is_some() || !profiles.is_empty();
+        any.then_some(Changes {
             vrr,
             set,
             back,
             primary,
+            profiles,
         })
     }
 
@@ -619,6 +710,7 @@ pub const FORGET: &str = "forget_layouts";
 pub const PROJECTION: &str = "multiple_displays";
 pub const AUTO_ROTATE: &str = "auto_rotate";
 pub const SENSOR_NOTE: &str = "sensor_note";
+pub const PROFILE: &str = "icc_profile";
 pub const TEXT_SIZE_NOTE: &str = "text_size_note";
 
 const X: i32 = crate::pages::X;
@@ -763,19 +855,33 @@ pub fn page(d: &Display, a: Area) -> Form {
                 .enabled(d.sensor == Some(true)),
         );
     }
-    let mut note_y = 280 + dy;
+    let mut row_y = 276 + dy;
     if let Some((rows, sel)) = d.projection_rows() {
         items.push(Item::label_at(
             "multiple_label",
             X,
-            280 + dy,
+            row_y + 4,
             RX - X,
             "&Multiple displays:",
         ));
-        let at = (RX, 276 + dy, combo_w);
-        items.push(combo(PROJECTION, at, &rows, sel, true));
-        note_y += 30;
+        items.push(combo(PROJECTION, (RX, row_y, combo_w), &rows, sel, true));
+        row_y += 30;
     }
+    items.push(Item::label_at(
+        "profile_label",
+        X,
+        row_y + 4,
+        RX - X,
+        "Co&lor profile:",
+    ));
+    let (profiles, profile) = d.profile_rows();
+    let refs: Vec<&str> = profiles.iter().map(String::as_str).collect();
+    items.push(Item::new(
+        PROFILE,
+        Rect::new(RX, row_y, combo_w, COMBO_H),
+        Control::Combo(Combo::new(&refs, profile, refs.len().min(PROFILE_ROWS))),
+    ));
+    let note_y = row_y + 34;
     items.push(Item::label_at(
         TEXT_SIZE_NOTE,
         X,
@@ -819,6 +925,7 @@ pub fn read(d: &mut Display, form: &Form, id: &str) -> bool {
         PROJECTION => form
             .combo_selected(PROJECTION)
             .map(|r| d.pick_projection(r)),
+        PROFILE => form.combo_selected(PROFILE).map(|r| d.pick_profile(r)),
         _ => return false,
     };
     true
@@ -983,6 +1090,7 @@ mod tests {
                 )],
                 back: vec![("DP-1".into(), h.state())],
                 primary: None,
+                profiles: Vec::new(),
             })
         );
         d.reset();
@@ -1055,6 +1163,75 @@ mod tests {
         assert_eq!(head_label(2, &h), "2. DP-1");
         (h.make, h.model) = (String::new(), String::new());
         assert_eq!(head_label(1, &h), "1. DP-1");
+    }
+
+    fn listed(path: &str, name: &str) -> reprisefs::icc::Listed {
+        reprisefs::icc::Listed {
+            path: PathBuf::from(path),
+            name: name.into(),
+        }
+    }
+
+    #[test]
+    fn each_output_picks_its_own_profile_and_apply_asks_for_the_moved_ones() {
+        let mut d = pair();
+        d.set_profiles(vec![
+            listed("/p/a.icc", "Alpha"),
+            listed("/p/b.icc", "Bravo"),
+        ]);
+        d.set_profiles_saved(vec![("HDMI-A-1".into(), PathBuf::from("/elsewhere/c.icc"))]);
+        assert_eq!(
+            d.profile_rows(),
+            (vec!["None".into(), "Alpha".into(), "Bravo".into()], 0)
+        );
+        assert_eq!(d.changes(), None);
+        d.pick_monitor(1);
+        assert_eq!(
+            d.profile_rows(),
+            (
+                vec![
+                    "None".into(),
+                    "Alpha".into(),
+                    "Bravo".into(),
+                    "c.icc".into()
+                ],
+                3
+            ),
+            "a saved profile the list lacks shows as its file name"
+        );
+        d.pick_profile(3);
+        assert!(!d.dirty(), "keeping its own profile changes nothing");
+        d.pick_profile(0);
+        d.pick_monitor(0);
+        d.pick_profile(2);
+        assert!(d.dirty());
+        assert_eq!(d.profile_rows().1, 2);
+        let ch = d.changes().unwrap();
+        assert_eq!(
+            ch.profiles,
+            [
+                ("HDMI-A-1".to_string(), None),
+                ("DP-1".to_string(), Some(PathBuf::from("/p/b.icc")))
+            ]
+        );
+        assert!(ch.set.is_empty() && ch.vrr.is_empty());
+        d.profiles_written();
+        assert!(!d.dirty());
+        assert_eq!(d.profile_of("DP-1"), Some(&PathBuf::from("/p/b.icc")));
+        assert_eq!(d.profile_of("HDMI-A-1"), None);
+        d.pick_profile(1);
+        d.reset();
+        assert_eq!(d.profile_rows().1, 2, "reset drops the unwritten pick");
+    }
+
+    #[test]
+    fn the_profile_combo_reads_into_the_shown_output() {
+        let mut d = Display::with_heads(vec![test_head("DP-1")]);
+        d.set_profiles(vec![listed("/p/a.icc", "Alpha")]);
+        let mut f = page(&d, Area::MIN);
+        f.set_combo(PROFILE, 1);
+        assert!(read(&mut d, &f, PROFILE));
+        assert_eq!(d.profile_of("DP-1"), Some(&PathBuf::from("/p/a.icc")));
     }
 
     fn pair() -> Display {
@@ -1253,6 +1430,9 @@ mod tests {
         assert_eq!(at(&two, SCALE), Rect::new(203, 299, 175, 21));
         assert_eq!(at(&two, VRR), Rect::new(20, 332, 13, 13));
         assert_eq!(at(&two, FORGET), Rect::new(243, 352, 135, 23));
+        assert_eq!(at(&two, PROJECTION), Rect::new(203, 386, 175, 21));
+        assert_eq!(at(&two, "profile_label"), Rect::new(20, 420, 183, 13));
+        assert_eq!(at(&two, PROFILE), Rect::new(203, 416, 175, 21));
         for it in &two.items {
             let r = it.placed(&ControlMetrics::CLASSIC);
             assert!(
@@ -1286,7 +1466,7 @@ mod tests {
         keys.sort();
         assert_eq!(
             keys,
-            vec!['c', 'f', 'i', 'm', 'o', 'p', 'r', 'v'],
+            vec!['c', 'f', 'i', 'l', 'm', 'o', 'p', 'r', 'v'],
             "Screen resolution's S is its group's"
         );
     }
@@ -1360,7 +1540,7 @@ mod tests {
         let d = Display::with_heads(vec![test_head("DP-1")]);
         let f = page(&d, Area::MIN);
         let note = f.item(TEXT_SIZE_NOTE).unwrap();
-        assert_eq!(note.rect, Rect::new(20, 390, 358, 13));
+        assert_eq!(note.rect, Rect::new(20, 420, 358, 13));
         let Control::Label { text, .. } = &note.control else {
             panic!("a label: {:?}", note.control);
         };
@@ -1374,7 +1554,7 @@ mod tests {
     }
 
     #[test]
-    fn the_page_draws_its_trackbar_and_greyed_check_boxes_in_every_look() {
+    fn the_page_draws_its_trackbar_greyed_check_boxes_and_profile_combo_in_every_look() {
         use reprisekit::interface::Interface;
         let mut h = test_head("eDP-1");
         h.adaptive_sync = AdaptiveSync::Unsupported;
@@ -1393,7 +1573,7 @@ mod tests {
             c.fill_rect(c.bounds(), theme.colors.button_face);
             propsheet::draw(&mut c, &text, &p, &sheet, false, px);
             let lay = sheet.layout(&text, px);
-            for id in [MODE, VRR, AUTO_ROTATE] {
+            for id in [MODE, VRR, AUTO_ROTATE, PROFILE] {
                 let it = sheet.pages[0].item(id).unwrap();
                 let mut want = Canvas::new(w, h);
                 want.fill_rect(want.bounds(), theme.colors.button_face);
@@ -1432,7 +1612,7 @@ mod tests {
         d.sensor = Some(false);
         let f = page(&d, Area::MIN);
         assert!(!enabled(&f, AUTO_ROTATE));
-        assert_eq!(at(&f, SENSOR_NOTE), Rect::new(20, 438, 358, 13));
+        assert_eq!(at(&f, SENSOR_NOTE), Rect::new(20, 468, 358, 13));
         let keys: Vec<char> = (f.items.iter())
             .filter_map(|it| match &it.control {
                 Control::Check { label, .. } => reprisekit::text::access_key(label),

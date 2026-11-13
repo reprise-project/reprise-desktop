@@ -816,6 +816,10 @@ impl SettingsApp {
         app.display
             .model
             .set_primary_saved(outputwrite::read_primary(&text));
+        let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+        app.display
+            .model
+            .set_profiles_saved(outputwrite::read_profiles(&text, home.as_deref()));
         pages::show_proxy(&mut app.sheet.pages[Page::Network.index()], &app.proxy.want);
         app.rescan();
         app.app_names = app_names(&app.want);
@@ -1090,6 +1094,7 @@ impl App for SettingsApp {
             self.spawn(move || wallpapers::merge(wallpapers::scan(&wallpapers::dirs()), &had)),
         );
         self.want_preview();
+        self.scan_profiles();
         repriseapp::Start::Continue
     }
 }
