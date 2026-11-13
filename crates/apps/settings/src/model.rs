@@ -68,6 +68,7 @@ pub struct Settings {
     /// names them.
     pub hot_corner: String,
     pub screenshot_save: bool,
+    pub screenshot_record_sound: bool,
     pub clipboard_history: bool,
     /// `[clipboard] trusted_apps`: the Flatpak app ids given the clipboard in the background.
     pub clipboard_trusted: Vec<String>,
@@ -479,6 +480,7 @@ impl Settings {
             switcher_size: named(SWITCHER_SIZES, switcher_size, &c.switcher.size),
             hot_corner: c.hot_corner.name().into(),
             screenshot_save: c.screenshot.save,
+            screenshot_record_sound: c.screenshot.record_sound,
             clipboard_history: c.clipboard.history,
             clipboard_trusted: c.clipboard.trusted_apps.clone(),
 

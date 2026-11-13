@@ -160,8 +160,8 @@ pub struct NotifyView {
     recent: VecDeque<(String, Instant)>,
     /// Text typed into reply rows that collapsed idle, by notification id; Reply brings it back.
     drafts: Vec<(u32, ReplyField)>,
-    /// The `default` action of the compositor's own notice; any other notice clears it.
-    own_click: Option<Vec<OsString>>,
+    /// The actions of the compositor's own notice by key; any other notice clears them.
+    own_actions: Vec<(String, OwnAction)>,
     timer: Option<RegistrationToken>,
     age_timer: Option<RegistrationToken>,
     tick_timer: Option<RegistrationToken>,
@@ -437,32 +437,63 @@ pub(crate) const OWN_ID: u32 = u32::MAX;
 
 const OWN_APP: &str = "Reprise";
 
+/// What one of the compositor's own notices does when its action is invoked.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OwnAction {
+    Run(Vec<OsString>),
+    /// The file opens in its default program.
+    Open(std::path::PathBuf),
+}
+
 /// Show a notice from the compositor itself, up for the longest time a balloon stays.
 pub fn notice(state: &mut State, summary: &str, body: &str) {
-    state.notify.own_click = None;
-    show_own(state, summary, body, false, None);
+    notice_with_actions(state, summary, body, Vec::new());
 }
 
 /// `notice` with `image` beside its text.
 pub fn notice_with_image(state: &mut State, summary: &str, body: &str, image: Canvas) {
-    state.notify.own_click = None;
-    show_own(state, summary, body, false, Some(image));
+    state.notify.own_actions.clear();
+    show_own(state, summary, body, Vec::new(), Some(image));
 }
 
 /// `notice`, and a click on the balloon runs `argv`.
 pub fn notice_opening(state: &mut State, summary: &str, body: &str, argv: Vec<OsString>) {
-    state.notify.own_click = Some(argv);
-    show_own(state, summary, body, true, None);
+    let click = (
+        DEFAULT_ACTION.to_string(),
+        String::new(),
+        OwnAction::Run(argv),
+    );
+    notice_with_actions(state, summary, body, vec![click]);
 }
 
-fn show_own(state: &mut State, summary: &str, body: &str, opens: bool, image: Option<Canvas>) {
+/// `notice` with `actions` (key, button label, what it does); the `default` key's runs on a
+/// click on the balloon.
+pub fn notice_with_actions(
+    state: &mut State,
+    summary: &str,
+    body: &str,
+    actions: Vec<(String, String, OwnAction)>,
+) {
+    let (buttons, own) = actions
+        .into_iter()
+        .map(|(key, label, act)| ((key.clone(), label), (key, act)))
+        .unzip();
+    state.notify.own_actions = own;
+    show_own(state, summary, body, buttons, None);
+}
+
+fn show_own(
+    state: &mut State,
+    summary: &str,
+    body: &str,
+    actions: Vec<(String, String)>,
+    image: Option<Canvas>,
+) {
     let mut n = Notification::new(OWN_ID, summary.to_string(), body.to_string());
     n.app = OWN_APP.to_string();
     n.key = OWN_APP.to_string();
     n.expire_timeout = 0;
-    if opens {
-        n.actions = vec![(DEFAULT_ACTION.to_string(), String::new())];
-    }
+    n.actions = actions;
     n.image = image.into_iter().map(Into::into).collect();
     show(state, n);
 }
@@ -558,8 +589,14 @@ pub fn invoke(state: &mut State, id: u32, key: &str) {
     };
     let (resident, pid) = (n.resident, n.pid);
     if id == OWN_ID {
-        if let Some(argv) = state.notify.own_click.clone() {
-            state.spawn_argv_activated(&argv);
+        let own = state.notify.own_actions.iter().find(|(k, _)| k == key);
+        match own.map(|(_, a)| a.clone()) {
+            Some(OwnAction::Run(argv)) => state.spawn_argv_activated(&argv),
+            Some(OwnAction::Open(path)) => {
+                let how = reprisefs::program::Confirm::on_open(state.config.confirm_scripts);
+                state.open_document(&path, None, how, true)
+            }
+            None => {}
         }
     } else {
         if let Some(pid) = pid {

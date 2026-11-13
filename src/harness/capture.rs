@@ -63,19 +63,30 @@ pub struct ExtSession {
 impl Harness {
     /// A trusted client capturing the first output, which is `w`x`h`.
     pub fn connect_capture(&mut self, size: (i32, i32)) -> CaptureClient {
-        self.connect_capture_as(size, false)
+        self.connect_capture_as(size, None)
     }
 
     /// The portal's capture connection for the remote desktop server, marked through
     /// `reprise_input_v1.remote_capture`.
     pub fn connect_remote_capture(&mut self, size: (i32, i32)) -> CaptureClient {
-        self.connect_capture_as(size, true)
+        self.connect_capture_as(size, Some(RepriseInputV1::remote_capture))
     }
 
-    fn connect_capture_as(&mut self, (w, h): (i32, i32), remote: bool) -> CaptureClient {
+    /// The portal's capture connection for the screen recorder, marked through
+    /// `reprise_input_v1.recorder_capture`.
+    pub fn connect_recorder_capture(&mut self, size: (i32, i32)) -> CaptureClient {
+        self.connect_capture_as(size, Some(RepriseInputV1::recorder_capture))
+    }
+
+    /// A capture connection, marked as the portal's with `mark` when given.
+    fn connect_capture_as(
+        &mut self,
+        (w, h): (i32, i32),
+        mark: Option<fn(&RepriseInputV1)>,
+    ) -> CaptureClient {
         let (server, client) = UnixStream::pair().expect("socket pair");
         let mut data = ClientState::of_stream(&server, None);
-        if remote {
+        if mark.is_some() {
             data.sandbox.pid = Some(crate::sandbox::TEST_PORTAL_PID);
         }
         self.state
@@ -108,10 +119,10 @@ impl Harness {
         let _: ExtForeignToplevelListV1 = registry.bind(n, v, &qh, ());
         let (n, v) = global("ext_foreign_toplevel_image_capture_source_manager_v1", 1);
         let window_sources = registry.bind(n, v, &qh, ());
-        if remote {
-            let (n, v) = global("reprise_input_v1", 8);
+        if let Some(mark) = mark {
+            let (n, v) = global("reprise_input_v1", 11);
             let input: RepriseInputV1 = registry.bind(n, v, &qh, ());
-            input.remote_capture();
+            mark(&input);
             input.destroy();
         }
         let mut c = CaptureClient {

@@ -333,6 +333,10 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
             ("sound_theme", "Sound theme:"),
             ("bell", "Play a sound when a program rings the bell"),
             ("allow_boost", "Allow volume above 100%"),
+            (
+                "screenshot_record_sound",
+                "Record what plays in screen recordings",
+            ),
         ],
         Page::Notifications => &[
             ("notification_sound", "Play a sound for notifications"),

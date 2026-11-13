@@ -1,5 +1,5 @@
 //! The tray icons the compositor draws itself (StickyKeys, MouseKeys, layout name, notification
-//! bell, privacy indicators, the Displays sun), drawn from strokes, text or the PNGs in [`icons`] so they need no
+//! bell, privacy indicators, the screen recording's stop button, the Displays sun), drawn from strokes, text or the PNGs in [`icons`] so they need no
 //! icon theme.
 
 use crate::art::icons::{self, Icon};
@@ -48,6 +48,17 @@ pub fn draw_record(px: i32) -> Canvas {
             }
         }
     }
+    c
+}
+
+/// A screen recording in progress: the record dot with a white stop square in it, which a click
+/// presses.
+pub fn draw_recording(px: i32) -> Canvas {
+    let mut c = draw_record(px);
+    let px = c.width as i32;
+    let side = (px * 3 / 8).max(2);
+    let at = (px - side) / 2;
+    c.fill_rect(Rect::new(at, at, side, side), Color::rgb(255, 255, 255));
     c
 }
 
@@ -476,5 +487,45 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn the_recording_cell_is_the_record_dot_with_a_white_square_in_its_middle() {
+        for px in [16, 32] {
+            let (dot, rec) = (draw_record(px), draw_recording(px));
+            let white = Color::rgb(255, 255, 255).argb();
+            let mid = px / 2;
+            assert_eq!(rec.get(mid, mid), white, "{px}: the square");
+            assert_eq!(rec.get(0, 0), dot.get(0, 0), "{px}: the corner stays clear");
+            assert_eq!(
+                rec.get(mid, 2),
+                dot.get(mid, 2),
+                "{px}: the dot's rim stays"
+            );
+            let square = rec.pixels.iter().filter(|&&p| p == white).count();
+            let side = (px * 3 / 8) as usize;
+            assert_eq!(square, side * side, "{px}: a {side} px square");
+        }
+    }
+
+    #[test]
+    fn the_recording_cell_pins_its_pixels() {
+        let got: Vec<_> = [16, 24, 32]
+            .into_iter()
+            .map(|px| {
+                let c = draw_recording(px);
+                let mut h = 0xcbf2_9ce4_8422_2325u64;
+                for v in [c.width, c.height]
+                    .into_iter()
+                    .chain(c.pixels.iter().copied())
+                {
+                    for b in v.to_le_bytes() {
+                        h = (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3);
+                    }
+                }
+                (px.to_string(), h)
+            })
+            .collect();
+        crate::pins::check("indicator_recording", &got);
     }
 }

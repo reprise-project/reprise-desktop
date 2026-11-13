@@ -992,6 +992,24 @@ pub fn try_spawn_held<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
     start_forked(c, &what, Some(&name)).map(Some)
 }
 
+/// `argv` unscoped with the session's environment and its stderr piped back, for a helper the
+/// caller waits on itself (`Child::wait`) rather than [`reap_children`]. None when this session
+/// starts no programs.
+pub fn spawn_waited<S: AsRef<std::ffi::OsStr>>(
+    argv: &[S],
+    env: &SessionEnv,
+) -> std::io::Result<Option<std::process::Child>> {
+    let program = first(argv)?;
+    let name = log_name(None, &program.as_ref().to_string_lossy());
+    let Some(mut c) = command_argv(&name, program, &argv[1..], env, None) else {
+        return Ok(None);
+    };
+    detach(&mut c);
+    c.stdout(std::process::Stdio::null());
+    c.stderr(std::process::Stdio::piped());
+    c.spawn().map(Some)
+}
+
 fn first<S>(argv: &[S]) -> std::io::Result<&S> {
     argv.first()
         .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "empty command line"))

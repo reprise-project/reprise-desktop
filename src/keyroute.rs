@@ -756,6 +756,8 @@ fn passes_dialog(a: &Action) -> bool {
             | Action::ScreenshotWindow
             | Action::ScreenshotRegion
             | Action::ScreenshotContent
+            | Action::RecordScreen
+            | Action::RecordRegion
             | Action::ColorPicker
             | Action::VolumeUp
             | Action::VolumeDown
@@ -792,6 +794,7 @@ pub fn opens_surface(a: &Action) -> bool {
             | Action::CycleApp
             | Action::Flip
             | Action::ScreenshotRegion
+            | Action::RecordRegion
             | Action::ColorPicker
             | Action::FocusTaskbar
             | Action::FocusTray

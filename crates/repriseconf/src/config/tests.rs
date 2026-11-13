@@ -367,6 +367,9 @@ fn screenshot_save_defaults_on_and_is_configurable() {
     let c = Config::parse("[screenshot]\nsave = false\n").unwrap();
     assert!(!c.screenshot.save);
     assert!(Config::parse("[screenshot]\nfolder = \"x\"\n").is_err());
+    assert!(!Config::default().screenshot.record_sound);
+    let c = Config::parse("[screenshot]\nrecord_sound = true\n").unwrap();
+    assert!(c.screenshot.record_sound && c.screenshot.save);
 }
 
 #[test]

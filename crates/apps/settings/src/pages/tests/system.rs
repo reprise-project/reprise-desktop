@@ -1,5 +1,5 @@
 use super::*;
-use crate::pages::system::NOTIFICATION_SOUND;
+use crate::pages::system::{NOTIFICATION_SOUND, RECORD_SOUND};
 
 #[test]
 fn the_sound_page_geometry() {
@@ -17,6 +17,8 @@ fn the_sound_page_geometry() {
     assert_eq!(rect(&s, p, "volume_group"), Rect::new(20, 200, 358, 74));
     assert_eq!(rect(&s, p, "allow_boost"), Rect::new(GX, 222, 13, 13));
     assert_eq!(rect(&s, p, "allow_boost_note").y, 242);
+    assert_eq!(rect(&s, p, "recording_group"), Rect::new(20, 284, 358, 48));
+    assert_eq!(rect(&s, p, RECORD_SOUND), Rect::new(GX, 306, 13, 13));
     inside_page(&s, p);
 }
 
@@ -68,7 +70,12 @@ fn notifications_gather_on_their_own_page() {
     }
     assert_eq!(
         keys_on(&built(), Page::Sound),
-        ["sounds.theme", "sounds.bell", "sounds.allow_boost"]
+        [
+            "screenshot.record_sound",
+            "sounds.theme",
+            "sounds.bell",
+            "sounds.allow_boost"
+        ]
     );
     for k in ["balloons", "do not disturb", "dnd", "quiet hours", "popups"] {
         assert!(Page::Notifications.keywords().contains(&k), "{k}");

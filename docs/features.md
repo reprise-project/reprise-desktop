@@ -443,6 +443,15 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   Ctrl+Alt+PrtSc for its content without the frame, Shift+PrtSc for a region
   or a clicked window. Every shot goes to the clipboard and, if you like, to
   Pictures/Screenshots.
+- **Screen recordings.** Ctrl+Shift+Alt+R records the screen under the
+  pointer and, pressed again, stops. In the Shift+PrtSc picker V switches to
+  Record mode, where a dragged area, a clicked window's frame or a clicked
+  screen is recorded instead; the `record-region` bind opens the picker in
+  that mode. While it records, a stop button in the tray says how long it has
+  run and stops it on a click, and the capture border outlines the recorded
+  area. Recordings are MP4 (H.264) files in Videos/Screencasts, coded on the
+  graphics card when it can; a notice offers Open and Show in Folder.
+  Settings > Sound adds what plays on the speakers (off by default).
 - **Colour picker.** Super+Shift+C turns the pointer into a crosshair with a
   loupe beside it: the 9 x 9 pixels round the point, the centre one ringed,
   and its `#RRGGBB` under them. It follows the pointer across screens; the
@@ -887,7 +896,8 @@ the screen takes the interface of the last session used at this computer.
   screenshot shows no dot. A program's second screenshot within 3 s shows it
   for 3 s, so screenshots in a loop show it, but holds back no balloons.
 - **Capture border.** A red border on the screen around the screen, window
-  or area being recorded or shared. Recordings never show it, and a single
+  or area being recorded or shared, and around the area of Reprise's own
+  screen recording. Recordings never show it, and a single
   screenshot draws none. Settings > Privacy turns it off. The Remote Desktop
   server's screens get none unless Settings > Remote Desktop asks for it.
 - **Prompts.** Screen sharing, remote control, input capture, location,

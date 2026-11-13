@@ -290,7 +290,10 @@ pub fn render_taskbar_top() -> Canvas {
                 task("Untitled - Notepad", true, indicator::draw_record(16)),
                 task("Command Prompt", false, indicator::draw_microphone(16)),
             ],
-            tray_icons: vec![Some(indicator::draw_record(16).into())],
+            tray_icons: vec![
+                Some(indicator::draw_record(16).into()),
+                Some(indicator::draw_recording(16).into()),
+            ],
             meter: Some(["\u{2193} 2.4 MB/s".into(), "\u{2191} 120 KB/s".into()]),
             clock: clock.into(),
         };

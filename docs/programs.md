@@ -361,7 +361,7 @@ matched control focused.
   - **Night Light:** warmth, and sunset to sunrise or a schedule.
   - **Sound:** Audio Devices... (Sounds and Audio Devices, for speakers and
     microphones), the sound theme, whether a program's bell plays a sound,
-    and volume above 100 %.
+    volume above 100 % and whether screen recordings carry what plays.
   - **Notifications:** whether balloons play a sound, the balloon style
     (Glass), holding balloons during full screen, screen sharing and quiet
     hours, and the programs that sent notifications this session or are

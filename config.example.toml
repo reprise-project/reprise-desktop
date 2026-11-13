@@ -310,6 +310,7 @@ suspend_after = 0            # run [power] standby
 
 # [screenshot]               # every screenshot goes to the clipboard
 # save = true                # and to Pictures/Screenshots (or ~/Screenshots) as a PNG
+# record_sound = false       # screen recordings (Videos/Screencasts) also carry what plays
 
 # [previews]                 # live pictures of windows, redrawn while they change
 # taskbar = true             # pointing at a task button shows its windows; false keeps the text tip
@@ -814,6 +815,14 @@ action = "screenshot-region"
 [[keybinds]]                 # the focused window's content, without its frame
 keys = "Ctrl+Alt+Sys_Req"
 action = "screenshot-content"
+
+[[keybinds]]                 # start a recording of the screen under the pointer; again stops it
+keys = "Ctrl+Shift+Alt+r"
+action = "record-screen"
+
+#[[keybinds]]                # the region picker in Record mode (V switches it in the picker too)
+#keys = "Super+Shift+r"
+#action = "record-region"
 
 [[keybinds]]                 # pick a colour on screen: a loupe follows the pointer, a click
 keys = "Super+Shift+c"       # copies #rrggbb; arrows nudge, Enter picks, Esc or right-click cancels

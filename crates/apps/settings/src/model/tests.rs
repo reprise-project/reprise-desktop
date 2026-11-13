@@ -682,6 +682,7 @@ fn save_round_trips_every_field() {
         switcher_size: "medium".into(),
         hot_corner: "top-right".into(),
         screenshot_save: false,
+        screenshot_record_sound: true,
         clipboard_history: false,
         clipboard_trusted: vec!["org.example.Pass".into()],
         interface: "blue".into(),
@@ -959,7 +960,7 @@ fn validate_refuses_a_snap_layout_the_compositor_would() {
 #[test]
 fn shortcuts_default_to_the_compositors_list() {
     let s = load("");
-    assert_eq!(s.shortcuts.len(), 44);
+    assert_eq!(s.shortcuts.len(), 45);
     assert_eq!(
         s.shortcuts[0],
         Shortcut::new("Super+Return", "terminal", "")

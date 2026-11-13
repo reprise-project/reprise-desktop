@@ -162,6 +162,7 @@ pub fn render_glass_frames() -> Canvas {
                 ],
                 tray_icons: vec![
                     Some(indicator::draw_record(16).into()),
+                    Some(indicator::draw_recording(16).into()),
                     Some(indicator::draw_microphone(16).into()),
                 ],
                 meter: None,

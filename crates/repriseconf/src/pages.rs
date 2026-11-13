@@ -423,6 +423,7 @@ impl Page {
                 "speakers",
                 "microphone",
                 "headphones",
+                "screen recording",
             ],
             Page::Notifications => &[
                 "balloons",

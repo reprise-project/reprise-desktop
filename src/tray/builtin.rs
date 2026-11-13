@@ -1,4 +1,4 @@
-//! The tray cells the compositor draws itself: the StickyKeys, MouseKeys and keyboard layout indicators before the StatusNotifier items, and after them the displays cell, the notification bell and the privacy indicators nearest the clock. A new indicator is one more variant here.
+//! The tray cells the compositor draws itself: the StickyKeys, MouseKeys and keyboard layout indicators before the StatusNotifier items, and after them the displays cell, the notification bell, the screen recording's stop button and the privacy indicators nearest the clock. A new indicator is one more variant here.
 
 use crate::compositor::State;
 use crate::input::{BTN_LEFT, BTN_RIGHT};
@@ -17,6 +17,8 @@ pub enum Builtin {
     /// Every display's brightness and night light: the sun, warm while night light is warming.
     Displays,
     Notifications,
+    /// A screen recording runs: a click stops it.
+    Recording,
     Sharing,
     Microphone,
     Camera,
@@ -49,6 +51,7 @@ pub fn shown(state: &State) -> Vec<Builtin> {
             Builtin::Notifications,
             state.notify.log.bell_shown() || state.notify.quiet.automatic(),
         ),
+        (Builtin::Recording, state.recording.is_some()),
         (Builtin::Sharing, state.privacy.dot_shown()),
         (Builtin::Microphone, state.privacy.mic_shown()),
         (Builtin::Camera, state.privacy.camera_shown()),
@@ -92,6 +95,7 @@ pub fn icon(state: &mut State, b: Builtin, px: i32) -> Option<Canvas> {
             px,
             crate::nightlight::warming(&state.night),
         )),
+        Builtin::Recording => Some(indicator::draw_recording(px)),
         Builtin::Sharing => Some(indicator::draw_record(px)),
         Builtin::Microphone => Some(indicator::draw_microphone(px)),
         Builtin::Camera => Some(indicator::draw_camera(px)),
@@ -119,6 +123,9 @@ pub fn label(state: &State, b: Builtin) -> Option<String> {
             };
             let until = log.dnd_until.map(crate::taskbar::time_text);
             Some(bell_tip(log.unseen, quiet, until.as_deref()))
+        }
+        Builtin::Recording => {
+            (state.recording.as_ref()).map(|r| crate::screenrecord::tip(r.elapsed()))
         }
         Builtin::Sharing => Some(crate::privacy::sharing_tip(state)),
         Builtin::Microphone => Some(state.privacy.mic_tip()),
@@ -170,12 +177,14 @@ pub fn click(state: &mut State, output: &Output, b: Builtin, cell: Rect, button:
         Builtin::MouseKeys if button == BTN_LEFT => {
             state.spawn_argv_activated(&crate::keyfilter::Aid::MouseKeys.settings_argv())
         }
+        Builtin::Recording if button == BTN_LEFT => state.stop_recording(),
         // The other indicators only tell; a click on them does nothing.
         Builtin::StickyKeys
         | Builtin::MouseKeys
         | Builtin::Layout
         | Builtin::Displays
         | Builtin::Notifications
+        | Builtin::Recording
         | Builtin::Sharing
         | Builtin::Microphone
         | Builtin::Camera

@@ -1,9 +1,10 @@
 //! Shift+PrtSc's region select on the scene: `reprisekit`'s `regionselect`
 //! over every output, on top of the overlay layer. Its dim and border are
-//! solid scene rects, its size tip one buffer. While it is open it takes
-//! the pointer (`repoint`, `handle_button`, the wheel) and every key press
-//! (`keyroute`), and the pointer shows a crosshair. On release the overlay
-//! goes first, so the still `screenshot` renders is clean.
+//! solid scene rects, its size and mode tips a buffer each. While it is open
+//! it takes the pointer (`repoint`, `handle_button`, the wheel) and every key
+//! press (`keyroute`), and the pointer shows a crosshair. On release the
+//! overlay goes first, so the still `screenshot` renders is clean; in Record
+//! mode the pick starts a recording (`screenrecord`) instead.
 
 use reprisekit::controls::regionselect::{self, BORDER, DIM, Event, RegionSelect};
 use reprisescene::{BufferId, RectId, TreeId};
@@ -24,6 +25,7 @@ pub struct RegionView {
     /// Filled with `BORDER`, above the dim.
     border: [RectId; 4],
     readout: BufferId,
+    mode: BufferId,
 }
 
 /// `argb` (premultiplied) as the scene's float colour.
@@ -33,8 +35,9 @@ fn rgba(argb: u32) -> [f32; 4] {
 }
 
 impl State {
-    /// The bind: open the overlay. No-op while locked or already open.
-    pub fn open_region(&mut self) {
+    /// The bind: open the overlay, in Record mode for `record`. No-op while locked or already
+    /// open.
+    pub fn open_region(&mut self, record: bool) {
         if self.panels.region.is_some() || self.desktop_locked() {
             return;
         }
@@ -51,17 +54,20 @@ impl State {
         let dim = rects(DIM);
         let border = rects(BORDER);
         let readout = self.scene.buffer_create(tree);
+        let mode = self.scene.buffer_create(tree);
         let p = self.pointer_location();
         self.panels.region = Some(RegionView {
-            model: RegionSelect::new((p.x as i32, p.y as i32)),
+            model: RegionSelect::new((p.x as i32, p.y as i32), record),
             tree,
             dim,
             border,
             readout,
+            mode,
         });
         self.clear_pointer_focus();
         self.set_cursor("crosshair");
         self.redraw_region();
+        crate::access::touch(self);
     }
 
     pub fn close_region(&mut self) {
@@ -71,6 +77,7 @@ impl State {
         self.scene.destroy(v.tree);
         self.set_cursor("default");
         self.redraw_all();
+        crate::access::touch(self);
     }
 
     pub fn region_motion(&mut self, x: f64, y: f64) {
@@ -97,17 +104,30 @@ impl State {
         self.apply_region(e);
     }
 
-    /// A key press while open: Escape cancels, the rest do nothing.
+    /// A key press while open: Escape cancels, V switches between a screenshot and a recording,
+    /// the rest do nothing.
     pub fn region_key(&mut self, sym: u32) {
-        if sym == crate::keys::KEY_Escape
-            && let Some(v) = self.panels.region.as_mut()
-        {
-            let e = v.model.escape();
-            self.apply_region(e);
-        }
+        use crate::keys::{KEY_Escape, KEY_V, KEY_v};
+        let Some(v) = self.panels.region.as_mut() else {
+            return;
+        };
+        let e = if sym == KEY_Escape {
+            v.model.escape()
+        } else if sym == KEY_v || sym == KEY_V {
+            v.model.toggle_record()
+        } else {
+            return;
+        };
+        self.apply_region(e);
+        crate::access::touch(self);
     }
 
     fn apply_region(&mut self, e: Event) {
+        let record = self
+            .panels
+            .region
+            .as_ref()
+            .is_some_and(|v| v.model.records());
         match e {
             Event::None => return,
             Event::Redraw => return self.redraw_region(),
@@ -118,8 +138,10 @@ impl State {
             Event::Point(x, y) => Some(self.clicked_area(x, y)),
             _ => None,
         };
-        if let Some(r) = area {
-            self.screenshot_area(r);
+        match area {
+            Some(r) if record => self.record_area(r),
+            Some(r) => self.screenshot_area(r),
+            None => {}
         }
         self.repoint(self.pointer_location(), InputTime::now());
     }
@@ -174,8 +196,8 @@ impl State {
         };
         place(&v.dim, &lay.dim);
         place(&v.border, &lay.border);
-        let tip =
-            regionselect::draw_readout(&theme.scaled(scale), text.for_output(scale), &v.model);
+        let (theme, text) = (theme.scaled(scale), text.for_output(scale));
+        let tip = regionselect::draw_readout(&theme, text, &v.model);
         match (lay.readout, tip) {
             (Some(r), Some(canvas)) => {
                 upload_scaled(scene, v.readout, &canvas, scale);
@@ -183,8 +205,41 @@ impl State {
             }
             _ => scene.buffer_clear(v.readout),
         }
+        let mode = regionselect::draw_mode(&theme, text, &v.model);
+        upload_scaled(scene, v.mode, &mode, scale);
+        scene.set_position(v.mode, lay.mode.x, lay.mode.y);
         self.redraw_all();
     }
+}
+
+/// The overlay as a reader sees it: a window over the pointer's screen naming the mode, its tips as
+/// labels.
+pub fn access(state: &State) -> Option<reprisekit::access::Tree> {
+    use reprisekit::access::{ROOT, accesskit::Role};
+    let v = state.panels.region.as_ref()?;
+    let p = v.model.pointer();
+    let screen = state.layout_box(state.output_at(f64::from(p.0), f64::from(p.1)).as_ref());
+    let lay = regionselect::layout(
+        &v.model,
+        &state.text,
+        &state.config.theme,
+        state.layout_box(None),
+        screen,
+    );
+    let title = if v.model.records() {
+        "Record an area"
+    } else {
+        "Screenshot of an area"
+    };
+    let local = |r: Rect| Rect::new(r.x - screen.x, r.y - screen.y, r.width, r.height);
+    let lay = regionselect::Layout {
+        readout: lay.readout.map(local),
+        mode: local(lay.mode),
+        ..lay
+    };
+    let mut tree = crate::access::root(Role::Window, title, screen);
+    regionselect::access(&v.model, &lay, &mut tree, ROOT);
+    Some(tree)
 }
 
 #[cfg(test)]
