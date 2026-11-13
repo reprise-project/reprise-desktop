@@ -472,7 +472,12 @@ impl Window {
     }
 
     pub fn has_frame(&self) -> bool {
-        !self.csd && !self.fullscreen && !self.override_redirect && !self.frameless
+        self.framed_normally() && !self.fullscreen
+    }
+
+    /// Whether the compositor draws the window's frame when it is not full screen.
+    fn framed_normally(&self) -> bool {
+        !self.csd && !self.override_redirect && !self.frameless
     }
 
     pub fn wants_focus_on_click(&self) -> bool {
@@ -491,6 +496,14 @@ impl Window {
             self.has_frame(),
             self.dialog_tag,
         )
+    }
+
+    /// [`Window::chrome`] as it is out of full screen, around [`Window::normal_frame`].
+    pub fn normal_chrome(&self) -> Chrome {
+        Chrome {
+            decorated: self.framed_normally(),
+            ..self.chrome()
+        }
     }
 }
 

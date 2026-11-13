@@ -8,6 +8,9 @@ use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
 
 use smithay::utils::Rectangle;
 
+use crate::theme::Metrics;
+use reprisekit::classic::frame::{Chrome, FrameGeometry};
+
 use crate::compositor::State;
 use crate::window::{Kind, Window, WindowId, area_client, first_configure_size, x11_geometry};
 use crate::windowrules::{Remembered, Want, WindowRule, WindowState, has_open_here, put_open_here};
@@ -59,6 +62,13 @@ pub(crate) struct Subject {
     /// See [`Window::placeable`].
     pub placeable: bool,
     pub fixed: bool,
+    /// Its chrome out of full screen: what its frame adds to a kept client size.
+    pub chrome: Chrome,
+}
+
+/// What a frame of `chrome` adds to its client's width and height when not maximized.
+pub(crate) fn frame_added(m: &Metrics, chrome: Chrome) -> (i32, i32) {
+    FrameGeometry::layout(m, 0, 0, false, chrome).total
 }
 
 impl Window {
@@ -147,6 +157,7 @@ impl State {
             title: win.title(),
             placeable: win.placeable(),
             fixed: !win.is_resizable(),
+            chrome: win.normal_chrome(),
         };
         self.plan_for(&subject, Some(w))
     }
@@ -165,6 +176,7 @@ impl State {
             && !fixed
             && let Some(m) = self.wm.kept.get(&self.output_set(), &s.key)
         {
+            let m = &m.with_frame(frame_added(&self.config.theme.metrics, s.chrome));
             base = match self.kept_on_screen(m) {
                 Some(m) => m.want(first, self.config.accessibility.text_size),
                 None => Want {
@@ -414,6 +426,7 @@ impl State {
             height: normal.height,
             maximized: win.maximized,
             text_size: self.config.accessibility.text_size,
+            client: false,
         })
     }
 
@@ -490,7 +503,8 @@ impl State {
         if last_only && self.newest_kept(&app_id, Some(w)).is_some() {
             return;
         }
-        let Some(entry) = self.frame_of(w) else {
+        let frame = frame_added(&self.config.theme.metrics, win.normal_chrome());
+        let Some(entry) = self.frame_of(w).map(|f| f.without_frame(frame)) else {
             return;
         };
         let set = self.output_set();

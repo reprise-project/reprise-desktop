@@ -307,6 +307,7 @@ mod tests {
             height: 600,
             maximized,
             text_size: 100,
+            client: false,
         };
         let mine = |x: i32, maximized: bool| {
             WindowRule::open_here(
