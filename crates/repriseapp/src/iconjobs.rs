@@ -3,6 +3,8 @@
 //! take what landed.
 
 use crate::Host;
+use crate::listjob::{MAX_ALL_THREADS, MAX_THREADS, STUCK};
+use crate::pool::Pool;
 use reprisekit::icontheme::{IconCache, decode_file, load_icon};
 use reprisekit::raster::Canvas;
 use std::collections::HashSet;
@@ -11,8 +13,12 @@ use std::path::Path;
 /// Theme names one thread loads: a cold folder's icons land in a few batches.
 const THEME_JOB: usize = 16;
 
-/// Icon files (and px) a thread is decoding: one on a mount that never answers holds one thread
-/// however often it is asked for.
+/// Icon file decodes, bounded as folder listings are: a file on a mount that never answers
+/// holds its thread, and past the bounds later files wait for one to come back.
+static FILES: Pool = Pool::new("icon file", MAX_THREADS, MAX_ALL_THREADS, STUCK);
+
+/// Icon files (and px) decoding or waiting for a thread: one on a mount that never answers holds
+/// one thread however often it is asked for.
 #[derive(Default)]
 pub(crate) struct IconJobs {
     files: HashSet<(String, i32)>,
@@ -102,7 +108,7 @@ pub fn decode_now(icons: &mut IconCache) -> bool {
 }
 
 impl Host {
-    /// Starts threads for what [`IconCache::get_unread`] lacked since the last call. Runs before
+    /// Starts decoding what [`IconCache::get_unread`] lacked since the last call. Runs before
     /// each turn, so what a draw or event asked for decodes while the loop waits.
     pub(crate) fn decode_wanted_icons(&mut self) {
         let wanted = self.ctx.icons.take_wanted();
@@ -132,31 +138,22 @@ impl Host {
             }
         }
         for (file, px) in files {
-            let key = (file.clone(), px);
-            if !self.icon_jobs.files.insert(key.clone()) {
+            if !self.icon_jobs.files.insert((file.clone(), px)) {
                 continue;
             }
             let tx = self.portal_done.clone();
-            let spawned = std::thread::Builder::new()
-                .name("icon file".into())
-                .spawn(move || {
-                    let art = load_all(vec![(file, px)], |f, px| {
-                        decode_file(Path::new(f), px, scale)
-                    });
-                    let _ = tx.send(Box::new(move |host: &mut Host| {
-                        for (file, px, _) in &art {
-                            host.icon_jobs.files.remove(&(file.clone(), *px));
-                        }
-                        host.ctx.icons.put_files_at(art, scale);
-                        host.ctx.wake.wake();
-                    }));
+            FILES.run(Box::new(move || {
+                let art = load_all(vec![(file, px)], |f, px| {
+                    decode_file(Path::new(f), px, scale)
                 });
-            // Not read here: the file may sit on a mount that never answers. The next draw that
-            // wants it asks again.
-            if let Err(e) = spawned {
-                log::warn!("cannot spawn an icon thread ({e})");
-                self.icon_jobs.files.remove(&key);
-            }
+                let _ = tx.send(Box::new(move |host: &mut Host| {
+                    for (file, px, _) in &art {
+                        host.icon_jobs.files.remove(&(file.clone(), *px));
+                    }
+                    host.ctx.icons.put_files_at(art, scale);
+                    host.ctx.wake.wake();
+                }));
+            }));
         }
     }
 }
