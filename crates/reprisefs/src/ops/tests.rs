@@ -685,7 +685,7 @@ fn dangling_links_at_the_next_names_are_passed_over() {
     fs::create_dir_all(&b).unwrap();
     fs::write(a.join("x.txt"), "new").unwrap();
     fs::write(b.join("x.txt"), "old").unwrap();
-    std::os::unix::fs::symlink(t.path().join("nowhere"), b.join(".reprise.part")).unwrap();
+    std::os::unix::fs::symlink(t.path().join("nowhere"), b.join(super::parts::own())).unwrap();
     std::os::unix::fs::symlink(t.path().join("nowhere"), b.join("x (2).txt")).unwrap();
     let sc = |_: &str| None;
     let seen = Seen::of(&b.join("x.txt"));

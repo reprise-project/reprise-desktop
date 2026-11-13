@@ -5,6 +5,7 @@ mod copy;
 mod erase;
 mod fileio;
 mod mounts;
+mod parts;
 mod put;
 
 pub use copy::copy_dir_all;
