@@ -1127,6 +1127,17 @@ pub fn quality(interaction: &Interaction, settings: &Settings) -> Quality {
     reprisefx::blur::quality(dragging, settings.fast_drag)
 }
 
+/// The outputs whose glass a change of blur quality redraws: those at a scale where the coarse
+/// blur differs from the full one.
+pub fn requality_outputs(scene: &DeskScene, settings: &Settings) -> Vec<Output> {
+    let differs = |o: &&Output| {
+        let scale = o.current_scale().fractional_scale();
+        let texel = |q| reprisefx::blur::texel(settings.blur, settings.material, q, scale);
+        texel(Quality::Coarse) != texel(Quality::Full)
+    };
+    scene.outputs().iter().filter(differs).cloned().collect()
+}
+
 pub fn leave_out(scene: &mut DeskScene, node: impl Into<NodeId>) {
     scene.set_in_backdrop(node, false);
 }

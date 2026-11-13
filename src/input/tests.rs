@@ -542,31 +542,49 @@ fn a_focus_change_asks_the_outputs_of_the_shades_it_moves() {
     }
 }
 
-#[test]
-fn a_caption_press_under_fast_drag_glass_asks_every_output() {
+/// A caption press and release on TEST-1 under `fast_drag` glass, TEST-2 at `two_scale`: the
+/// outputs each asks a frame of.
+fn caption_drag_asks(two_scale: f64) -> (Vec<String>, Vec<String>) {
     let config = glass("");
     assert!(config.glass.fast_drag);
     let mut h = two_outputs(config);
+    let two = h.state.scene.outputs()[1].clone();
+    let scale = smithay::output::Scale::Fractional(two_scale);
+    two.change_current_state(None, None, Some(scale), None);
+    h.state.update_layout();
     let mut c = h.connect();
     let a = h.map_toplevel(&mut c, "a", 300, 200);
     h.state.move_to(a.id, 50, 50);
-    h.dispatch();
+    h.run_for(600);
     let r = h.state.win(a.id).expect("a").frame_rect();
-    let (x, y) = (f64::from(r.x + r.width / 2), f64::from(r.y + 10));
-    h.pointer_to(x, y);
+    h.pointer_to(f64::from(r.x + r.width / 2), f64::from(r.y + 10));
     crate::backend::take_asks();
     h.button(crate::harness::LEFT, true);
     assert!(
         matches!(h.state.interaction, Interaction::Move { .. }),
         "the caption press holds a move"
     );
-    assert_eq!(
-        asked_outputs(),
-        ["TEST-1", "TEST-2"],
-        "the blur quality changes on every output"
-    );
+    let press = asked_outputs();
     h.button(crate::harness::LEFT, false);
-    assert_eq!(asked_outputs(), ["TEST-1", "TEST-2"], "and changes back");
+    (press, asked_outputs())
+}
+
+#[test]
+fn a_caption_drag_under_fast_drag_glass_asks_an_output_at_scale_1_for_its_coarse_blur() {
+    let (press, release) = caption_drag_asks(1.0);
+    assert_eq!(
+        press,
+        ["TEST-1", "TEST-2"],
+        "TEST-2 at scale 1 blurs coarse"
+    );
+    assert_eq!(release, ["TEST-1", "TEST-2"], "and full again");
+}
+
+#[test]
+fn a_caption_drag_asks_no_frame_of_an_output_whose_full_blur_is_already_coarse() {
+    let (press, release) = caption_drag_asks(2.0);
+    assert_eq!(press, ["TEST-1"], "TEST-2 at scale 2 blurs alike");
+    assert_eq!(release, ["TEST-1"], "and on release");
 }
 
 #[test]

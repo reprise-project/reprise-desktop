@@ -895,9 +895,10 @@ impl State {
     }
 
     /// Run `f`, then ask for a new frame on the outputs whose pixels its scene edits changed
-    /// (`Scene::watched`), or on every output if it moved glass's blur quality in or out of a
-    /// drag's. What changes inside a custom node or a client surface, its owner asks for. Inside
-    /// another `redraw_changed`, the outer one asks.
+    /// (`Scene::watched`) and on those whose glass a move of the blur quality in or out of a drag's
+    /// redraws (`glass::requality_outputs`), or on every output if it turned glass on or off. What
+    /// changes inside a custom node or a client surface, its owner asks for. Inside another
+    /// `redraw_changed`, the outer one asks.
     pub fn redraw_changed<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
         let quality = |s: &Self| {
             crate::glass::wanted(&s.config)
@@ -909,10 +910,18 @@ impl State {
         if !outer {
             return r;
         }
-        let outputs = self.scene.watched();
-        if quality(self) != before {
+        let mut outputs = self.scene.watched();
+        let after = quality(self);
+        if after.is_some() != before.is_some() {
             self.redraw_all();
             return r;
+        }
+        if after != before {
+            for o in crate::glass::requality_outputs(&self.scene, &self.config.glass) {
+                if !outputs.contains(&o) {
+                    outputs.push(o);
+                }
+            }
         }
         if !outputs.is_empty() {
             crate::backend::schedule_on(self, &outputs, crate::backend::Ask::Scene);
