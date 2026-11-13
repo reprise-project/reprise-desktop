@@ -66,21 +66,21 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 inotify = { version = "0.11", default-features = false }
 # Our fork's `patches` branch: upstream master plus the server, acceptor and
 # input fixes listed in `git log upstream/master..patches` there.
-ironrdp-acceptor = { git = "https://github.com/reprise-project/IronRDP.git", rev = "995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24" }
-ironrdp-ainput = { git = "https://github.com/reprise-project/IronRDP.git", rev = "995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24" }
-ironrdp-async = { git = "https://github.com/reprise-project/IronRDP.git", rev = "995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24" }
-ironrdp-cliprdr = { git = "https://github.com/reprise-project/IronRDP.git", rev = "995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24" }
-ironrdp-connector = { git = "https://github.com/reprise-project/IronRDP.git", rev = "995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24" }
-ironrdp-core = { git = "https://github.com/reprise-project/IronRDP.git", rev = "995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24" }
-ironrdp-displaycontrol = { git = "https://github.com/reprise-project/IronRDP.git", rev = "995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24" }
-ironrdp-dvc = { git = "https://github.com/reprise-project/IronRDP.git", rev = "995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24" }
-ironrdp-egfx = { git = "https://github.com/reprise-project/IronRDP.git", rev = "995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24" }
-ironrdp-graphics = { git = "https://github.com/reprise-project/IronRDP.git", rev = "995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24" }
-ironrdp-pdu = { git = "https://github.com/reprise-project/IronRDP.git", rev = "995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24" }
-ironrdp-rdpsnd = { git = "https://github.com/reprise-project/IronRDP.git", rev = "995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24" }
-ironrdp-server = { git = "https://github.com/reprise-project/IronRDP.git", rev = "995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24", features = ["egfx"] }
-ironrdp-svc = { git = "https://github.com/reprise-project/IronRDP.git", rev = "995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24" }
-ironrdp-tokio = { git = "https://github.com/reprise-project/IronRDP.git", rev = "995b5d00207e85f3bd1b9ffaccdc4b1e6c1a6f24" }
+ironrdp-acceptor = { git = "https://github.com/reprise-project/IronRDP.git", rev = "fb3b0beec1aac965cd6c7a5a78614dba0c6260b0" }
+ironrdp-ainput = { git = "https://github.com/reprise-project/IronRDP.git", rev = "fb3b0beec1aac965cd6c7a5a78614dba0c6260b0" }
+ironrdp-async = { git = "https://github.com/reprise-project/IronRDP.git", rev = "fb3b0beec1aac965cd6c7a5a78614dba0c6260b0" }
+ironrdp-cliprdr = { git = "https://github.com/reprise-project/IronRDP.git", rev = "fb3b0beec1aac965cd6c7a5a78614dba0c6260b0" }
+ironrdp-connector = { git = "https://github.com/reprise-project/IronRDP.git", rev = "fb3b0beec1aac965cd6c7a5a78614dba0c6260b0" }
+ironrdp-core = { git = "https://github.com/reprise-project/IronRDP.git", rev = "fb3b0beec1aac965cd6c7a5a78614dba0c6260b0" }
+ironrdp-displaycontrol = { git = "https://github.com/reprise-project/IronRDP.git", rev = "fb3b0beec1aac965cd6c7a5a78614dba0c6260b0" }
+ironrdp-dvc = { git = "https://github.com/reprise-project/IronRDP.git", rev = "fb3b0beec1aac965cd6c7a5a78614dba0c6260b0" }
+ironrdp-egfx = { git = "https://github.com/reprise-project/IronRDP.git", rev = "fb3b0beec1aac965cd6c7a5a78614dba0c6260b0" }
+ironrdp-graphics = { git = "https://github.com/reprise-project/IronRDP.git", rev = "fb3b0beec1aac965cd6c7a5a78614dba0c6260b0" }
+ironrdp-pdu = { git = "https://github.com/reprise-project/IronRDP.git", rev = "fb3b0beec1aac965cd6c7a5a78614dba0c6260b0" }
+ironrdp-rdpsnd = { git = "https://github.com/reprise-project/IronRDP.git", rev = "fb3b0beec1aac965cd6c7a5a78614dba0c6260b0" }
+ironrdp-server = { git = "https://github.com/reprise-project/IronRDP.git", rev = "fb3b0beec1aac965cd6c7a5a78614dba0c6260b0", features = ["egfx"] }
+ironrdp-svc = { git = "https://github.com/reprise-project/IronRDP.git", rev = "fb3b0beec1aac965cd6c7a5a78614dba0c6260b0" }
+ironrdp-tokio = { git = "https://github.com/reprise-project/IronRDP.git", rev = "fb3b0beec1aac965cd6c7a5a78614dba0c6260b0" }
 libc = "0.2.191"
 log = "0.4"
 md4 = { version = "0.11", default-features = false }
@@ -90,16 +90,10 @@ rcgen = { version = "0.14", default-features = false, features = ["aws_lc_rs", "
 rustls = "0.23.46"
 serde = "1"
 serde_json = "1"
-# Pinned to a commit on our fork: upstream master (far ahead of the last
-# release) plus `DrmCompositor::reposition_cursor` for pointer-only frames, an
-# xdg_toplevel_icon_v1 fix that stops a request after its immutable error,
-# `DrmCompositor::reset_buffer_ages_keep_held`, which keeps the buffers a VT
-# return would reallocate, `GlesFrame::finish_unsynced` for offscreen
-# frames read only by the same context, `data_device_selection_alive` for
-# a client selection whose source was destroyed, and `SelectionSource::client`
-# naming the client that set a selection.
-smithay = { git = "https://github.com/reprise-project/smithay.git", rev = "08b0e945616ed83a46910f60c87ed91325287a85", default-features = false }
-smithay-drm-extras = { git = "https://github.com/reprise-project/smithay.git", rev = "08b0e945616ed83a46910f60c87ed91325287a85" }
+# Our fork's `patches` branch: upstream master (far ahead of the last release)
+# plus the fixes and APIs listed in `git log upstream/master..patches` there.
+smithay = { git = "https://github.com/reprise-project/smithay.git", rev = "80727bda3ff376398870cf46a29c5dd8d8e114f0", default-features = false }
+smithay-drm-extras = { git = "https://github.com/reprise-project/smithay.git", rev = "80727bda3ff376398870cf46a29c5dd8d8e114f0" }
 tempfile = "3"
 tokio = "1"
 tokio-rustls = "0.26.6"
