@@ -210,7 +210,7 @@ fn only_the_portal_may_bind_lock_screen() {
     let app: TestClient = h.connect();
     assert_eq!(app.global_version("reprise_input_v1"), None);
     let portal = h.connect_portal();
-    assert_eq!(portal.global_version("reprise_input_v1"), Some(10));
+    assert_eq!(portal.global_version("reprise_input_v1"), Some(11));
 }
 
 #[test]

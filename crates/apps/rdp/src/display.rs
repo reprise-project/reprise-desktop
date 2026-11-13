@@ -46,6 +46,8 @@ pub const UNSHARED: DesktopSize = DesktopSize {
 };
 /// The most monitors a client's Display Control layout may give, as many as its Client Monitor
 /// Data holds.
+/// What PipeWire's screen streams name the program.
+const APP: &str = "Remote Desktop";
 const MAX_MONITORS: u32 = 16;
 /// The largest pointer a client takes without the large pointer capability.
 const MAX_POINTER: usize = 96;
@@ -342,7 +344,7 @@ impl RdpServerDisplay for Display {
             let mut streams = Vec::new();
             for (screen, fd) in grant.screens.iter().zip(fds) {
                 let (stream, frames, sizes) =
-                    stream::spawn(fd, screen.node, &[DRM_FORMAT_MOD_LINEAR], gone.clone())
+                    stream::spawn(fd, screen.node, &[DRM_FORMAT_MOD_LINEAR], APP, gone.clone())
                         .map_err(|e| unshared("the screen stream did not start", e))?;
                 streams.push((stream, frames, sizes));
             }

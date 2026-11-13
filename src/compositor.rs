@@ -1137,6 +1137,9 @@ pub struct ClientState {
     /// Set by the portal's `reprise_input_v1.remote_capture`: this client's captures serve
     /// Reprise's remote desktop server.
     pub remote_capture: std::sync::atomic::AtomicBool,
+    /// Set by the portal's `reprise_input_v1.recorder_capture`: this client's captures serve
+    /// Reprise's screen recorder.
+    pub recorder_capture: std::sync::atomic::AtomicBool,
     /// The pid `State::client_pid` reports in place of the socket's, so a test's client can
     /// stand for another process.
     #[cfg(test)]
@@ -1152,6 +1155,7 @@ impl ClientState {
             sandbox: crate::sandbox::ClientSandbox::of_stream(stream, context),
             peer: crate::clientlog::ClientPeer::of_stream(stream),
             remote_capture: Default::default(),
+            recorder_capture: Default::default(),
             #[cfg(test)]
             pid: None,
         }

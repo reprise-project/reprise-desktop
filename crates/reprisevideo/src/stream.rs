@@ -189,12 +189,13 @@ impl Drop for Lease {
     }
 }
 
-/// Consume `node`'s stream on the PipeWire remote `fd`, offering dma-bufs with `modifiers` and
-/// memfds; the receivers close when it ends, after `gone` runs if its screen went.
+/// Consume `node`'s stream on the PipeWire remote `fd` for program `app`, offering dma-bufs with
+/// `modifiers` and memfds; the receivers close when it ends, after `gone` runs if its screen went.
 pub fn spawn(
     fd: OwnedFd,
     node: u32,
     modifiers: &[u64],
+    app: &'static str,
     gone: impl Fn() + Send + 'static,
 ) -> Result<
     (
@@ -210,14 +211,14 @@ pub fn spawn(
     let (control, control_rx) = pipewire::channel::channel();
     let back = control.clone();
     std::thread::Builder::new()
-        .name("reprise-rdp-stream".into())
+        .name("reprise-video-stream".into())
         .spawn(move || {
             let out = Out {
                 frames: frames_tx,
                 sizes: sizes_tx,
                 control: back,
             };
-            if let Err(e) = run(fd, node, modifiers, out, control_rx, gone) {
+            if let Err(e) = run(fd, node, modifiers, app, out, control_rx, gone) {
                 log::warn!("screen stream: {e}");
             }
         })
@@ -302,6 +303,7 @@ fn run(
     fd: OwnedFd,
     node: u32,
     modifiers: Vec<u64>,
+    app: &str,
     out: Out,
     control: pipewire::channel::Receiver<Control>,
     gone: impl Fn() + 'static,
@@ -327,12 +329,12 @@ fn run(
         .register();
     let stream = StreamRc::new(
         core,
-        "Remote Desktop",
+        app,
         pipewire::properties::properties! {
             *pipewire::keys::MEDIA_TYPE => "Video",
             *pipewire::keys::MEDIA_CATEGORY => "Capture",
             *pipewire::keys::MEDIA_ROLE => "Screen",
-            *pipewire::keys::APP_NAME => "Remote Desktop",
+            *pipewire::keys::APP_NAME => app,
         },
     )
     .map_err(|e| e.to_string())?;

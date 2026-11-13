@@ -4,7 +4,7 @@
     reprise private protocol: input injection and capture for reprise-portal.
   </copyright>
 
-  <interface name="reprise_input_v1" version="10">
+  <interface name="reprise_input_v1" version="11">
     <description summary="EIS sockets and pointer barriers for the portal">
       One global. connect_eis hands the compositor one end of a socketpair
       to run libei's EIS side on; create_capture makes an object that owns
@@ -14,7 +14,8 @@
       RemoteDesktop session. watch_sandboxed makes an object that lists
       the sandboxed apps with a window. pick_color opens the colour picker.
       remote_capture marks a capture connection as the remote desktop
-      server's. lock_screen starts lock mode for the remote desktop server.
+      server's, recorder_capture as the screen recorder's.
+      recorder_granted names a recorder the user started. lock_screen starts lock mode for the remote desktop server.
       connect_app_sender and create_app_keys name the app a sender or keys
       object serves.
     </description>
@@ -151,6 +152,27 @@
       <arg name="id" type="new_id" interface="reprise_keys_v1"/>
       <arg name="app_id" type="string"/>
     </request>
+
+    <request name="recorder_capture" since="11">
+      <description summary="this connection captures for the screen recorder">
+        The portal sends it on the connection that captures the screen
+        for the session it starts without a dialog for Reprise's screen
+        recorder, before it opens the capture session. While the
+        compositor records an area of an output, the red capture border
+        of this connection's captures of that output outlines the area.
+      </description>
+    </request>
+
+    <event name="recorder_granted" since="11">
+      <description summary="a recording the user asked for has started">
+        The compositor started the screen recorder as process pid for a
+        recording the user asked for with a key, the region picker or the
+        tray. The portal starts that process's next ScreenCast session
+        without a dialog, once, and only within a few seconds of this
+        event. Sent on every reprise_input_v1 of version 11 or later.
+      </description>
+      <arg name="pid" type="uint"/>
+    </event>
   </interface>
 
   <interface name="reprise_lock_screen_v1" version="1">

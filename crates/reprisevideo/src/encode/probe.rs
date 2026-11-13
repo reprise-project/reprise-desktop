@@ -128,7 +128,7 @@ pub fn working<T: Send + 'static>(
     for (index, group) in groups.iter().cloned().enumerate() {
         let (tx, works) = (tx.clone(), works.clone());
         let spawned = std::thread::Builder::new()
-            .name("reprise-rdp-probe".into())
+            .name("reprise-video-probe".into())
             .spawn(move || {
                 let found = (group.into_iter()).find_map(|b| works(b).map(|t| (b, t)));
                 let _ = tx.send((index, found));

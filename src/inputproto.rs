@@ -51,7 +51,7 @@ pub mod proto {
     wayland_scanner::generate_server_code!("protocols/reprise-input-v1.xml");
 }
 
-const VERSION: u32 = 10;
+const VERSION: u32 = 11;
 
 pub const DEVICE_KEYBOARD: u32 = 1;
 pub const DEVICE_POINTER: u32 = 2;
@@ -265,6 +265,11 @@ impl Dispatch2<RepriseInputV1, State> for InputData {
             Request::RemoteCapture => {
                 if let Some(d) = client.get_data::<crate::compositor::ClientState>() {
                     d.remote_capture.store(true, Ordering::Relaxed);
+                }
+            }
+            Request::RecorderCapture => {
+                if let Some(d) = client.get_data::<crate::compositor::ClientState>() {
+                    d.recorder_capture.store(true, Ordering::Relaxed);
                 }
             }
             Request::LockScreen { id } => {

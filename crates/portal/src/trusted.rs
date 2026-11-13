@@ -2,7 +2,8 @@
 //! desktop server: its enabled user unit (enabling it is the consent) or reprise-login's hand-over.
 
 use std::os::unix::ffi::OsStrExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 pub const APP_ID: &str = "org.reprise.RemoteDesktop";
 pub const UNIT: &str = "app-org.reprise.RemoteDesktop.service";
@@ -65,6 +66,53 @@ fn serves(caller: Option<u32>, unit: &UnitFacts) -> bool {
         INSTALLED.iter().any(|p| exe == p.as_bytes())
     });
     unit.active_state == "active" && installed
+}
+
+/// Where root installs the screen recorder.
+const RECORDER: [&str; 2] = ["/usr/bin/reprise-record", "/usr/local/bin/reprise-record"];
+
+/// How long the compositor's grant for a recorder waits for that recorder's ScreenCast Start.
+const GRANT_LIFE: Duration = Duration::from_secs(10);
+
+/// The recorders the compositor started for a recording the user asked for, by pid, each good for
+/// one ScreenCast Start within [`GRANT_LIFE`].
+#[derive(Debug, Default)]
+pub struct Grants(Vec<(u32, Instant)>);
+
+impl Grants {
+    pub fn grant(&mut self, pid: u32, now: Instant) {
+        self.0
+            .retain(|&(_, at)| now.duration_since(at) < GRANT_LIFE);
+        self.0.push((pid, now));
+    }
+
+    /// Use up a fresh grant for `pid`; false when there is none.
+    pub fn take(&mut self, pid: u32, now: Instant) -> bool {
+        self.0
+            .retain(|&(_, at)| now.duration_since(at) < GRANT_LIFE);
+        match self.0.iter().position(|&(p, _)| p == pid) {
+            Some(i) => {
+                self.0.remove(i);
+                true
+            }
+            None => false,
+        }
+    }
+}
+
+/// Whether process `caller` runs the installed screen recorder, whose ScreenCast Start skips the
+/// dialog when the compositor granted it.
+pub fn runs_recorder(caller: u32) -> bool {
+    let exe = std::fs::read_link(format!("/proc/{caller}/exe")).ok();
+    is_recorder(exe.as_deref())
+}
+
+fn is_recorder(exe: Option<&Path>) -> bool {
+    exe.is_some_and(|exe| {
+        let exe = exe.as_os_str().as_bytes();
+        let exe = exe.strip_suffix(b" (deleted)").unwrap_or(exe);
+        RECORDER.iter().any(|p| exe == p.as_bytes())
+    })
 }
 
 /// The unique bus name that made the session at `session_handle`, named by the frontend as
@@ -162,6 +210,28 @@ async fn proxy<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_the_installed_recorder_counts() {
+        assert!(is_recorder(Some(Path::new("/usr/bin/reprise-record"))));
+        let upgraded = Path::new("/usr/local/bin/reprise-record (deleted)");
+        assert!(is_recorder(Some(upgraded)));
+        assert!(!is_recorder(Some(Path::new("/home/user/reprise-record"))));
+        assert!(!is_recorder(None));
+    }
+
+    #[test]
+    fn a_recorder_grant_is_used_once_and_only_while_fresh() {
+        let t0 = Instant::now();
+        let mut g = Grants::default();
+        assert!(!g.take(7, t0), "no grant: the dialog asks");
+        g.grant(7, t0);
+        assert!(!g.take(8, t0), "another process");
+        assert!(g.take(7, t0 + Duration::from_secs(1)));
+        assert!(!g.take(7, t0 + Duration::from_secs(2)), "used up");
+        g.grant(7, t0);
+        assert!(!g.take(7, t0 + GRANT_LIFE), "expired");
+    }
 
     const SERVER: u32 = 4242;
 

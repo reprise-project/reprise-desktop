@@ -294,6 +294,8 @@ pub struct Converter {
     pub size: (u32, u32),
     pub target: (u32, u32),
     pub fourcc: u32,
+    /// The top-left of the part of each frame read, on the CPU; (0, 0) on a GPU.
+    origin: (u32, u32),
     route: Route,
 }
 
@@ -352,8 +354,21 @@ impl Converter {
             size,
             target,
             fourcc,
+            origin: (0, 0),
             route,
         })
+    }
+
+    /// Read each frame's `size` from `origin` on rather than from its top-left. Only the CPU
+    /// reads a part of a frame.
+    pub fn crop_at(&mut self, origin: (u32, u32)) -> Result<(), EncodeError> {
+        match self.route {
+            Route::Cpu { .. } => {
+                self.origin = origin;
+                Ok(())
+            }
+            _ => Err(EncodeError("only the CPU reads a part of a frame".into())),
+        }
     }
 
     /// The frames context the encoder's input comes from; None on the CPU.
@@ -392,8 +407,11 @@ impl Converter {
                 let writable = unsafe { ffi::av_frame_make_writable(out.as_mut_ptr()) };
                 check(writable, "frame buffer")?;
                 let mut scaled = Ok(());
-                read_rgb(frame, self.size, |pixels, stride| {
-                    scaled = sws.scale(pixels, stride, out);
+                let (x, y) = self.origin;
+                let read = (x + self.size.0, y + self.size.1);
+                read_rgb(frame, read, |pixels, stride| {
+                    let from = y as usize * stride as usize + x as usize * 4;
+                    scaled = sws.scale(&pixels[from..], stride, out);
                 })?;
                 scaled?;
                 let mut copy = frame::Video::empty();
@@ -454,7 +472,10 @@ impl Scaler {
         unsafe {
             let (s, c) = (src.as_mut_ptr(), self.0.as_ptr());
             ((*s).format, (*s).width, (*s).height) = ((*c).src_format, (*c).src_w, (*c).src_h);
-            if pixels.len() < stride as usize * (*s).height as usize {
+            let format = ffi::AVPixelFormat((*c).src_format);
+            let row = ffi::av_image_get_linesize(format, (*c).src_w, 0).max(0) as usize;
+            let last = stride as usize * ((*s).height as usize).saturating_sub(1);
+            if pixels.len() < last + row {
                 return Err(EncodeError("the frame is smaller than its size".into()));
             }
             (*s).data[0] = pixels.as_ptr().cast_mut();

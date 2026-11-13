@@ -55,6 +55,17 @@ use std::time::{Duration, Instant};
 use wayland_client::protocol::wl_shm;
 use wayland_protocols::ext::image_copy_capture::v1::client::ext_image_copy_capture_frame_v1::FailureReason;
 
+/// Whom a cast captures for, which its Wayland connection tells the compositor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Capturer {
+    /// An app the share dialog or a remembered pick granted the screen to.
+    App,
+    /// Reprise's remote desktop server.
+    RemoteDesktop,
+    /// Reprise's screen recorder.
+    Recorder,
+}
+
 /// What the capture thread reports back once PipeWire named its node:
 /// node id, object serial, width, height.
 type NodeReport = Result<(u32, u64, u32, u32), String>;
@@ -97,12 +108,12 @@ pub struct Cast {
 }
 
 impl Cast {
-    /// Start capturing `target`, for the remote desktop server when `remote`, on a node whose
-    /// `application.name` is `app` (unset when empty); returns once PipeWire assigned the node.
+    /// Start capturing `target` for `capturer`, on a node whose `application.name` is `app`
+    /// (unset when empty); returns once PipeWire assigned the node.
     pub fn start(
         target: Target,
         cursor: CursorMode,
-        remote: bool,
+        capturer: Capturer,
         app: String,
     ) -> Result<Cast, String> {
         let (tx, rx) = std::sync::mpsc::channel::<NodeReport>();
@@ -112,7 +123,7 @@ impl Cast {
             .name("reprise-portal-cast".into())
             .spawn(move || {
                 let _ended = ended_tx;
-                if let Err(e) = run(target, cursor, remote, &app, tx.clone(), stop_rx) {
+                if let Err(e) = run(target, cursor, capturer, &app, tx.clone(), stop_rx) {
                     log::warn!("cast thread: {e}");
                     let _ = tx.send(Err(e));
                 }
@@ -296,15 +307,15 @@ fn cursor_plane(
 fn run(
     target: Target,
     cursor: CursorMode,
-    remote: bool,
+    capturer: Capturer,
     app: &str,
     report: std::sync::mpsc::Sender<NodeReport>,
     stop_rx: pipewire::channel::Receiver<()>,
 ) -> Result<(), String> {
-    let mut wl = if remote {
-        Wayland::connect_remote_capture()?
-    } else {
-        Wayland::connect()?
+    let mut wl = match capturer {
+        Capturer::App => Wayland::connect()?,
+        Capturer::RemoteDesktop => Wayland::connect_remote_capture()?,
+        Capturer::Recorder => Wayland::connect_recorder_capture()?,
     };
     let mut session = wl.open_session(&target, cursor == CursorMode::Embedded)?;
     let constraints = wl.constraints();

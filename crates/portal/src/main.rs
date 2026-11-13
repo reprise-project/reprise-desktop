@@ -412,6 +412,30 @@ struct ScreenCast {
     sessions: Sessions,
     source_types: u32,
     frontend: Frontend,
+    link: Option<inputlink::Link>,
+}
+
+/// How long a Start from the installed recorder waits for the compositor's grant, which the
+/// compositor sends as it starts the recorder but which may arrive after the Start.
+const GRANT_WAIT: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// Whether a ScreenCast Start from process `pid` skips the dialog: it runs the installed screen
+/// recorder and the compositor granted it, for a recording the user asked for (`trusted::Grants`).
+async fn recorder_granted(pid: u32, link: Option<&inputlink::Link>) -> bool {
+    let Some(link) = link.filter(|_| trusted::runs_recorder(pid)) else {
+        return false;
+    };
+    let until = std::time::Instant::now() + GRANT_WAIT;
+    loop {
+        if link.take_recorder_grant(pid) {
+            return true;
+        }
+        if std::time::Instant::now() >= until {
+            log::info!("Start: recorder {pid} has no grant from the compositor; asking");
+            return false;
+        }
+        async_io::Timer::after(std::time::Duration::from_millis(50)).await;
+    }
 }
 
 #[zbus::interface(name = "org.freedesktop.impl.portal.ScreenCast")]
@@ -517,6 +541,14 @@ impl ScreenCast {
         self.frontend.check(&hdr).await?;
         let key = session_handle.to_string();
         let parent = dialog::parent_handle(&parent_window);
+        let caller = trusted::session_caller(conn, &key).await;
+        let pick = match caller {
+            Some(pid) if recorder_granted(pid, self.link.as_ref()).await => {
+                log::info!("Start: the screen recorder (pid {pid}) casts every screen");
+                Pick::Recorder
+            }
+            _ => Pick::Ask,
+        };
         match pick_and_cast(
             &self.sessions,
             &self.frontend,
@@ -526,7 +558,7 @@ impl ScreenCast {
             &key,
             &app_id,
             parent,
-            Pick::Ask,
+            pick,
         )
         .await
         {
@@ -568,6 +600,9 @@ pub(crate) enum Pick {
     /// [`Pick::All`] in lock mode: the outputs made for the client, in this order, cast as
     /// virtual screens.
     Remote(Vec<String>),
+    /// Reprise's screen recorder: every screen, with no dialog and not remembered, its capture
+    /// marked for the compositor (`Wayland::connect_recorder_capture`).
+    Recorder,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -598,7 +633,11 @@ pub(crate) async fn pick_and_cast(
         s.picking = Some(cancel.clone());
     }
     let app = app_id.to_string();
-    let remote = pick != Pick::Ask;
+    let capturer = match pick {
+        Pick::Ask => cast::Capturer::App,
+        Pick::All | Pick::Remote(_) => cast::Capturer::RemoteDesktop,
+        Pick::Recorder => cast::Capturer::Recorder,
+    };
     let chosen = blocking::unblock(move || {
         choose(types, restore, &app, persist_mode > 0, parent, cancel, pick)
     })
@@ -626,7 +665,7 @@ pub(crate) async fn pick_and_cast(
                 Cast::start(
                     t.clone(),
                     cursor_mode_for(cursor_mode, t),
-                    remote,
+                    capturer,
                     app.clone(),
                 )
             },
@@ -885,7 +924,8 @@ fn choose(
     })
 }
 
-/// [`every_screen`] for [`Pick::All`], the named outputs for [`Pick::Remote`]; for [`Pick::Ask`] a
+/// [`every_screen`] for [`Pick::All`], the named outputs for [`Pick::Remote`], every output for
+/// [`Pick::Recorder`]; for [`Pick::Ask`] a
 /// remembered target still there, else what `dialog` picks from the share dialog's rows. None
 /// when the dialog is cancelled.
 fn choose_from(
@@ -900,6 +940,7 @@ fn choose_from(
         Pick::Ask => None,
         Pick::All => Some(every_screen(outputs)),
         Pick::Remote(names) => Some(named_screens(names, outputs)?),
+        Pick::Recorder => Some(outputs.to_vec()),
     };
     if let Some(screens) = screens {
         if screens.is_empty() {
@@ -1144,6 +1185,7 @@ async fn serve(
                 sessions: sessions.clone(),
                 source_types,
                 frontend: frontend(),
+                link: link.clone(),
             },
         )
         .serve_at(
