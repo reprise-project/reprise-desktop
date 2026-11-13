@@ -117,6 +117,7 @@ package() {
   install -d "$pkgdir/usr/lib/systemd/user/sockets.target.wants"
   ln -s ../reprise-rdp-handover.socket "$pkgdir/usr/lib/systemd/user/sockets.target.wants/reprise-rdp-handover.socket"
   install -Dm644 data/polkit-1/rules.d/50-reprise-login.rules "$pkgdir/usr/share/polkit-1/rules.d/50-reprise-login.rules"
+  install -Dm644 data/polkit-1/rules.d/50-reprise-timezone.rules "$pkgdir/usr/share/polkit-1/rules.d/50-reprise-timezone.rules"
   install -Dm644 data/polkit-1/actions/org.reprise.login.policy "$pkgdir/usr/share/polkit-1/actions/org.reprise.login.policy"
   install -Dm644 data/systemd/reprise-login.service "$pkgdir/usr/lib/systemd/system/reprise-login.service"
   install -Dm644 data/sysusers.d/reprise-login.conf "$pkgdir/usr/lib/sysusers.d/reprise-login.conf"

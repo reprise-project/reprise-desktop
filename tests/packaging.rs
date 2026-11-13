@@ -1,7 +1,8 @@
 //! Both PKGBUILDs build reprise-apps, link every program crate to it (or build and install it on
-//! its own) and install every desktop entry, CI installs their dependencies, the .deb's postinst
-//! applies every sysusers and tmpfiles file, its password stacks never reach a fingerprint reader,
-//! and the desktop entries file only programs with a settings window under Settings.
+//! its own) and install every desktop entry and polkit file, CI installs their dependencies, the
+//! .deb's postinst applies every sysusers and tmpfiles file, its password stacks never reach a
+//! fingerprint reader, the time zone polkit rule allows one action only, and the desktop entries
+//! file only programs with a settings window under Settings.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -248,6 +249,64 @@ fn file_names(dir: &str) -> BTreeSet<String> {
         .unwrap_or_else(|e| panic!("{dir} lists: {e}"))
         .map(|e| e.unwrap().file_name().into_string().unwrap())
         .collect()
+}
+
+#[test]
+fn both_pkgbuilds_install_every_polkit_file() {
+    let mut files = Vec::new();
+    for dir in ["actions", "rules.d"] {
+        let names = file_names(&format!("data/polkit-1/{dir}"));
+        files.extend(names.iter().map(|n| format!("polkit-1/{dir}/{n}")));
+    }
+    assert!(
+        files.contains(&"polkit-1/rules.d/50-reprise-timezone.rules".to_owned()),
+        "{files:?}"
+    );
+    for path in PKGBUILDS {
+        let text = std::fs::read_to_string(root().join(path)).expect("PKGBUILD reads");
+        for file in &files {
+            let install = format!(r#"install -Dm644 data/{file} "$pkgdir/usr/share/{file}""#);
+            assert!(
+                text.lines().any(|l| l.trim() == install),
+                "{path} installs data/{file} to /usr/share/{file}"
+            );
+        }
+    }
+}
+
+/// Every double-quoted string in `js`.
+fn quoted(js: &str) -> BTreeSet<&str> {
+    js.split('"').skip(1).step_by(2).collect()
+}
+
+#[test]
+fn the_time_zone_rule_allows_only_set_timezone_to_local_active_admins() {
+    let rule =
+        std::fs::read_to_string(root().join("data/polkit-1/rules.d/50-reprise-timezone.rules"))
+            .unwrap();
+    let code: String = (rule.lines())
+        .filter(|l| !l.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_eq!(
+        quoted(&code),
+        ["org.freedesktop.timedate1.set-timezone", "sudo", "wheel"].into(),
+        "the rule names only the set-timezone action and the wheel and sudo groups"
+    );
+    assert_eq!(code.matches("action.id").count(), 1, "one action check");
+    assert_eq!(
+        code.matches("isInGroup(").count(),
+        2,
+        "group checks for wheel and sudo only"
+    );
+    assert!(
+        code.contains("subject.local && subject.active"),
+        "the subject must be local and active"
+    );
+    let results: BTreeSet<&str> = (code.split("polkit.Result.").skip(1))
+        .map(|r| r.split(|c: char| !c.is_ascii_alphabetic()).next().unwrap())
+        .collect();
+    assert_eq!(results, ["YES"].into(), "the rule only ever answers YES");
 }
 
 #[test]

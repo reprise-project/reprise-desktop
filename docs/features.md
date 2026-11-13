@@ -910,7 +910,8 @@ the screen takes the interface of the last session used at this computer.
   switch turns location off for everyone. A prompt left unanswered for 24 s
   closes and the program is refused.
 - **Automatic time zone.** Date and Time can set the time zone from your
-  location, on resume and on a network change at most hourly
+  location, on resume and on a network change at most hourly, with no
+  password for an administrator at the computer
   ([programs.md](programs.md#date-and-time-properties)).
 - **App permissions.** Settings > Privacy > App Permissions lists the
   answers programs were given and remembered: location (Reprise's own

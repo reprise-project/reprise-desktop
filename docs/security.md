@@ -1178,6 +1178,13 @@ again every 5 seconds) or it ends.
   power actions, with no password. Only the VT switch is refused by the
   rule above; rules can't read an action's defaults, so mapping every
   other action needs a list.
+- **Any program of a local administrator sets the time zone.** The time
+  zone rule applies to the whole computer, so `timedatectl set-timezone`
+  or any program an administrator in `wheel` or `sudo` runs in a local
+  active session changes the zone without a password, whether or not the
+  automatic time zone is on, and so does an administrator's background
+  session while they are active elsewhere. A wrong zone shifts the times
+  shown and the night light's hours; the clock itself is untouched.
 - **Anyone can pause remote logins.** 10 wrong passwords every 10 minutes
   from any addresses keep one kind of login paused. For NLA that costs a TLS
   handshake and an NTLM AUTHENTICATE's first 12 bytes each, since the count
@@ -1709,9 +1716,15 @@ stop the share first.
   sets the system time zone from what geoclue reports, through timedated
   with interactive authorization off, so polkit's rule for
   `org.freedesktop.timedate1.set-timezone` decides and nothing prompts.
-  Reprise ships no rule: under systemd's default (an admin password) the
-  setting stays greyed until an administrator allows it. A zone only ever
-  comes from tzdata's table, never from the location source.
+  The package's rule `/usr/share/polkit-1/rules.d/50-reprise-timezone.rules`
+  answers yes to that one action, without a password, for a subject that
+  is local (a session on a seat), active and in group `wheel` or `sudo`.
+  Such a user could set the zone with their password anyway, and the zone
+  only changes how times are shown: the clock, NTP and every other action
+  keep their policy, and remote and non-admin users still need an
+  administrator's password. Without the rule (a build installed by hand, a
+  site that deletes it) the setting stays greyed with a note. A zone only
+  ever comes from tzdata's table, never from the location source.
 - **Language and formats.** Settings > Region & Language writes only your
   own `~/.config/locale.conf` and AccountsService's language for your own
   account (`org.freedesktop.accounts.change-own-user-data`). Apply to the
