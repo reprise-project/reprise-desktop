@@ -26,7 +26,8 @@ use crate::look::Paint;
 use crate::look::widgets::header as header_widgets;
 use crate::look::widgets::item::{self, Mark};
 use crate::look::widgets::{
-    draw_checkbox, draw_edit_text, draw_field_frame, draw_hscrollbar, draw_progress, draw_scrollbar,
+    draw_checkbox, draw_checkbox_disabled, draw_edit_text, draw_field_frame, draw_hscrollbar,
+    draw_progress, draw_scrollbar,
 };
 use crate::pointer::{Click, DoubleClick, Lit, Pointer};
 use crate::raster::{Canvas, Rect};
@@ -139,6 +140,11 @@ pub trait Rows {
     fn bar(&self, row: usize, col: usize) -> Option<f64> {
         let _ = (row, col);
         None
+    }
+    /// Row `row` is shown but can't be picked: grey text, a greyed check box that doesn't toggle.
+    fn greyed(&self, row: usize) -> bool {
+        let _ = row;
+        false
     }
 }
 
@@ -653,8 +659,12 @@ impl<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>> ListView<R, C, S> {
         check_box(lay, self.slot_y(row, lay))
     }
 
-    /// Flip row `row`'s check state; `false` with no check column or `row` out of range.
+    /// Flip row `row`'s check state; `false` with no check column, a greyed row or `row` out of
+    /// range.
     pub fn toggle(&mut self, row: usize) -> bool {
+        if self.rows.greyed(row) {
+            return false;
+        }
         let Some(checks) = self.checks.as_mut() else {
             return false;
         };
@@ -901,7 +911,11 @@ fn draw_rows<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>>(
                 if let Some(checks) = &lv.checks {
                     let cr = check_box(lay, at).scaled(s);
                     let checked = checks.get(i).copied().unwrap_or(false);
-                    draw_checkbox(c, p, cr, checked, lv.held_check.of(i));
+                    if lv.rows.greyed(i) {
+                        draw_checkbox_disabled(c, p, cr, checked);
+                    } else {
+                        draw_checkbox(c, p, cr, checked, lv.held_check.of(i));
+                    }
                     let tx = cr.right() + CHECK_TEXT_GAP * s;
                     (tx, cx + cw - tx - 2 * s)
                 } else {
@@ -952,7 +966,11 @@ fn draw_rows<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>>(
                     draw_focus_ring(c, hl, s, ink);
                 }
             } else {
-                text.draw(c, tr, &shown, false, cs.button_text, align, px);
+                let ink = match lv.rows.greyed(i) {
+                    true => cs.gray_text,
+                    false => cs.button_text,
+                };
+                text.draw(c, tr, &shown, false, ink, align, px);
             }
         }
     }
@@ -1183,6 +1201,9 @@ impl<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>> ListView<R, C, S> {
             o.set_size_of_set(count);
             if let Some(on) = self.checks.as_ref().and_then(|c| c.get(i)) {
                 o.set_toggled((*on).into());
+            }
+            if self.rows.greyed(i) {
+                o.set_disabled();
             }
             let y = lay.body.y + self.slot_y(i, lay);
             let row = Rect::new(lay.body.x, y, lay.body.width, lay.row_h());

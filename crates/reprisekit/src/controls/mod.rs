@@ -41,6 +41,7 @@ pub mod hotkey;
 pub mod iconlist;
 pub mod iconview;
 pub mod imageview;
+pub mod importsheet;
 pub mod infotip;
 pub mod installsheet;
 pub mod keysheet;

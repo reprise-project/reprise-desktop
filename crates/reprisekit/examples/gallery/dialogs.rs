@@ -2,7 +2,7 @@ use super::{blurred_stripes, cued};
 use reprisekit::classic::frame::{CaptionButton, Chrome, FrameGeometry, FrameState, Glow};
 use reprisekit::controls::form::{self};
 use reprisekit::controls::{
-    aboutbox, endsession, filedlg, installsheet, locationprompt, shellview,
+    aboutbox, endsession, filedlg, importsheet, installsheet, locationprompt, shellview,
 };
 use reprisekit::interface::Interface;
 use reprisekit::interfaces;
@@ -163,6 +163,86 @@ pub fn render_install_sheet(with_blue: bool) -> Canvas {
             let f = installsheet::form(s, &text, px, u);
             let mut sheet_c = Canvas::new(w as u32, h as u32);
             installsheet::draw(&mut sheet_c, &text, &theme.paint(), s, &f, px);
+            let at = (10 + col as i32 * (w + 10), 10 + row as i32 * (h + 10));
+            c.blit_canvas(at.0, at.1, &sheet_c);
+        }
+    }
+    c
+}
+
+/// The import sheet over GNOME and Plasma settings, the second change unchecked, then done.
+pub fn render_import_sheet(with_blue: bool) -> Canvas {
+    use importsheet::{Line, Sheet, Source};
+    let line = |what: &str, now: &str, new: &str, greyed| Line {
+        what: what.into(),
+        now: now.into(),
+        new: new.into(),
+        greyed,
+    };
+    let sources = || {
+        vec![
+            Source {
+                name: "GNOME".into(),
+                lines: vec![
+                    line(
+                        "Wallpaper",
+                        "None",
+                        "/home/sam/Pictures/Fjord.jpg (Stretch)",
+                        false,
+                    ),
+                    line("Dark style", "Off", "On", false),
+                    line(
+                        "Keyboard layouts",
+                        "System default",
+                        "us, de (nodeadkeys)",
+                        false,
+                    ),
+                    line("Touchpad natural scrolling", "Off", "On", false),
+                    line("Text size", "100%", "125%", false),
+                    line("Quick Launch", "", "Firefox", false),
+                    line(
+                        "Clock",
+                        "the clock follows the formats locale",
+                        "12-hour",
+                        true,
+                    ),
+                    line(
+                        "Input method",
+                        "set up in the input method",
+                        "ibus: anthy",
+                        true,
+                    ),
+                ],
+            },
+            Source {
+                name: "Plasma".into(),
+                lines: vec![line("Tap to click", "On", "Off", false)],
+            },
+        ]
+    };
+    let mut themes = vec![cued(Theme::default())];
+    if with_blue {
+        themes.push(cued(interfaces::theme_for(Interface::Blue)));
+        themes.push(cued(interfaces::theme_for(Interface::Glass)));
+    }
+    let (w, h) = importsheet::CLIENT;
+    let mut c = Canvas::new(
+        (2 * (w + 10) + 10) as u32,
+        (themes.len() as i32 * (h + 10) + 10) as u32,
+    );
+    c.fill_rect(c.bounds(), Color::rgb(58, 110, 165));
+    for (row, theme) in themes.iter().enumerate() {
+        let text = TextRenderer::load(&theme.fonts);
+        let px = theme.fonts.size_px;
+        let mut asking = Sheet::new(sources(), &text, theme);
+        let space = form::Key::Space;
+        asking.list_key(&form::Key::Down, &text, theme);
+        asking.list_key(&space, &text, theme);
+        let mut done = Sheet::new(sources(), &text, theme);
+        done.done("Imported 6 GNOME settings.".into(), true, &text, theme);
+        for (col, s) in [asking, done].iter().enumerate() {
+            let mut sheet_c = Canvas::new(w as u32, h as u32);
+            importsheet::draw(&mut sheet_c, &text, &theme.paint(), s, px);
             let at = (10 + col as i32 * (w + 10), 10 + row as i32 * (h + 10));
             c.blit_canvas(at.0, at.1, &sheet_c);
         }
