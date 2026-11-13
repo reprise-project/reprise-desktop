@@ -1,7 +1,7 @@
 //! What the launcher and the Glass Start menu's search box share: the calculator
-//! row, fuzzy app ranking, settings rows and the debounced file search. Every
-//! text change cancels the search in flight and takes a new generation from one
-//! process-wide counter, so a late answer for older text, or for a closed box, is dropped.
+//! row, fuzzy app ranking, settings rows and the debounced file search, one section per
+//! [`Source`]. Every text change cancels the search in flight and takes a new generation from
+//! one process-wide counter, so a late answer for older text, or for a closed box, is dropped.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -167,18 +167,127 @@ pub enum SearchOwner {
     StartPanel,
 }
 
+/// Where a section of found files comes from, in the order the sections show.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Source {
+    /// Names under the home folder ([`reprisefs::search`]).
+    Names,
+    /// Text and metadata in localsearch's index ([`reprisebus::localsearch`]), when installed.
+    Contents,
+}
+
+impl Source {
+    pub const ALL: [Source; 2] = [Source::Names, Source::Contents];
+
+    pub fn heading(self) -> &'static str {
+        match self {
+            Source::Names => "Files",
+            Source::Contents => "Contents",
+        }
+    }
+
+    fn rows(self, max: usize) -> usize {
+        match self {
+            Source::Names => max,
+            Source::Contents => max.min(CONTENTS_ROWS),
+        }
+    }
+
+    /// The paths it finds for `query` under `home`, best first, at most `max`. Blocks: runs on a
+    /// file job.
+    fn find(self, query: &str, home: &Path, max: usize, cancel: &AtomicBool) -> Vec<PathBuf> {
+        match self {
+            Source::Names => {
+                let q = reprisefs::search::Query::launcher(query, home);
+                let paths = reprisefs::search::run(&q, cancel);
+                (reprisekit::fuzzy::rank_paths(query, &paths).into_iter())
+                    .take(max)
+                    .map(|i| paths[i].clone())
+                    .collect()
+            }
+            Source::Contents => contents(query, max),
+        }
+    }
+
+    /// The rows `found` for older text that stay up for `query` until its own answer lands: names
+    /// that still match it, every content row.
+    fn kept(self, query: &str, found: &[PathBuf]) -> Vec<PathBuf> {
+        match self {
+            Source::Names => (found.iter())
+                .filter(|p| {
+                    p.file_name().is_some_and(|n| {
+                        reprisekit::fuzzy::score(query, &n.to_string_lossy()).is_some()
+                    })
+                })
+                .cloned()
+                .collect(),
+            Source::Contents => found.to_vec(),
+        }
+    }
+}
+
+const CONTENTS_ROWS: usize = 5;
+/// How long a content search waits for the indexer's whole answer.
+const CONTENTS_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// The local files localsearch finds holding `query`'s words; none when it is not installed.
+fn contents(query: &str, max: usize) -> Vec<PathBuf> {
+    let found = reprisebus::session()
+        .map_err(|e| e.to_string())
+        .and_then(|conn| reprisebus::localsearch::search(&conn, query, max, CONTENTS_TIMEOUT));
+    match found {
+        Ok(urls) => urls.iter().filter_map(|u| file_path(u)).collect(),
+        Err(e) => {
+            log::debug!("content search: {e}");
+            Vec::new()
+        }
+    }
+}
+
+/// The local path a `file://` URL names.
+fn file_path(url: &str) -> Option<PathBuf> {
+    use std::os::unix::ffi::OsStringExt;
+    let rest = url.strip_prefix("file://")?;
+    let path = std::ffi::OsString::from_vec(reprisefs::trash::percent_decode(rest));
+    let path = PathBuf::from(path);
+    path.is_absolute().then_some(path)
+}
+
+/// One search box's found files: each [`Source`]'s last answer, and what each found path is.
 #[derive(Default)]
 pub struct FileSearch {
-    pub files: Vec<PathBuf>,
+    /// Each source's paths, by its place in [`Source::ALL`].
+    found: [Vec<PathBuf>; Source::ALL.len()],
+    /// What each section shows: its source's paths less those an earlier section shows.
+    shown: [Vec<PathBuf>; Source::ALL.len()],
     /// What each found path is, as the search's job read it: rows, menus and opening ask this
     /// rather than the file system, which may not answer for a found file.
-    pub facts: std::collections::HashMap<PathBuf, crate::desktop::FileFacts>,
+    facts: std::collections::HashMap<PathBuf, crate::desktop::FileFacts>,
     generation: u64,
     cancel: Option<Arc<AtomicBool>>,
     timer: Option<RegistrationToken>,
 }
 
 impl FileSearch {
+    pub fn new() -> Self {
+        Self {
+            generation: next_generation(),
+            ..Self::default()
+        }
+    }
+
+    /// Each section's source and the paths it shows, in order; a section may be empty.
+    pub fn sections(&self) -> impl Iterator<Item = (Source, &[PathBuf])> {
+        Source::ALL
+            .into_iter()
+            .zip(self.shown.iter().map(Vec::as_slice))
+    }
+
+    /// Row `row` of section `section`.
+    pub fn path(&self, section: usize, row: usize) -> Option<&PathBuf> {
+        self.shown.get(section)?.get(row)
+    }
+
     pub fn is_dir(&self, p: &Path) -> bool {
         self.facts.get(p).is_some_and(|f| f.is_dir)
     }
@@ -188,11 +297,19 @@ impl FileSearch {
         (self.facts.get(p).cloned()).unwrap_or_else(|| crate::desktop::FileFacts::plain(p))
     }
 
-    pub fn new() -> Self {
-        Self {
-            generation: next_generation(),
-            ..Self::default()
+    /// `source`'s answer: `paths`, best first.
+    pub(crate) fn set(&mut self, source: Source, paths: Vec<PathBuf>) {
+        self.found[source as usize] = paths;
+        let mut seen = std::collections::HashSet::new();
+        for (shown, found) in self.shown.iter_mut().zip(&self.found) {
+            *shown = (found.iter())
+                .filter(|p| seen.insert(p.as_path()))
+                .cloned()
+                .collect();
         }
+        let found = &self.found;
+        self.facts
+            .retain(|p, _| found.iter().any(|f| f.contains(p)));
     }
 
     fn bump(&mut self) -> u64 {
@@ -304,57 +421,54 @@ impl State {
         }
     }
 
-    pub fn file_query_changed(&mut self, o: SearchOwner, query: &str, max: usize) -> Vec<PathBuf> {
+    /// The text changed: stop the search in flight, keep each section's rows that still fit the
+    /// new text ([`Source::kept`]) and arm the timer for the next search. Under `MIN_CHARS`, or
+    /// with file search turned off, every section empties.
+    pub fn file_query_changed(&mut self, o: SearchOwner, query: &str, max: usize) {
         let searching = searches_files(query, self.config.launcher_files);
         let Some(f) = self.file_search_mut(o) else {
-            return Vec::new();
+            return;
         };
         f.bump();
-        let kept: Vec<PathBuf> = if searching {
-            f.files
-                .iter()
-                .filter(|p| {
-                    p.file_name().is_some_and(|n| {
-                        reprisekit::fuzzy::score(query, &n.to_string_lossy()).is_some()
-                    })
-                })
-                .cloned()
-                .collect()
-        } else {
-            Vec::new()
-        };
-        let old = f.timer.take();
-        if let Some(t) = old {
+        for source in Source::ALL {
+            let kept = match searching {
+                true => source.kept(query, &f.found[source as usize]),
+                false => Vec::new(),
+            };
+            f.set(source, kept);
+        }
+        if let Some(t) = f.timer.take() {
             self.handle.remove(t);
         }
-        if searching {
-            let query = query.to_string();
-            let token =
-                self.handle
-                    .insert_source(Timer::from_duration(DEBOUNCE), move |_, _, state| {
-                        if let Some(f) = state.file_search_mut(o) {
-                            f.timer = None;
-                        }
-                        state.file_search_fire(o, query.clone(), max);
-                        TimeoutAction::Drop
-                    });
-            match token {
-                Ok(t) => {
-                    if let Some(f) = self.file_search_mut(o) {
-                        f.timer = Some(t);
-                    }
-                }
-                Err(e) => log::warn!("file search: no timer: {}", e.error),
-            }
+        if !searching {
+            return;
         }
-        kept
+        let query = query.to_string();
+        let token =
+            self.handle
+                .insert_source(Timer::from_duration(DEBOUNCE), move |_, _, state| {
+                    if let Some(f) = state.file_search_mut(o) {
+                        f.timer = None;
+                    }
+                    state.file_search_fire(o, &query, max);
+                    TimeoutAction::Drop
+                });
+        match token {
+            Ok(t) => {
+                if let Some(f) = self.file_search_mut(o) {
+                    f.timer = Some(t);
+                }
+            }
+            Err(e) => log::warn!("file search: no timer: {}", e.error),
+        }
     }
 
-    fn file_search_fire(&mut self, o: SearchOwner, query: String, max: usize) {
+    /// Starts every source's search for `query` on a file job; each lands on its own.
+    fn file_search_fire(&mut self, o: SearchOwner, query: &str, max: usize) {
         let Some(home) = search_root() else {
             return;
         };
-        if !searches_files(&query, self.config.launcher_files) {
+        if !searches_files(query, self.config.launcher_files) {
             return;
         }
         let Some(f) = self.file_search_mut(o) else {
@@ -366,25 +480,29 @@ impl State {
         let cancel = Arc::new(AtomicBool::new(false));
         f.cancel = Some(cancel.clone());
         let generation = f.generation;
-        self.spawn_fs_job(move || {
-            let q = reprisefs::search::Query::launcher(&query, &home);
-            let paths = reprisefs::search::run(&q, &cancel);
-            let best: Vec<PathBuf> = reprisekit::fuzzy::rank_paths(&query, &paths)
-                .into_iter()
-                .take(max)
-                .map(|i| paths[i].clone())
-                .collect();
-            let facts = (best.iter())
-                .map(|p| (p.clone(), crate::desktop::file_facts(p)))
-                .collect();
-            Box::new(move |state: &mut State| state.files_found(o, generation, best, facts))
-        });
+        for source in Source::ALL {
+            let (query, home, cancel) = (query.to_string(), home.clone(), cancel.clone());
+            let max = source.rows(max);
+            self.spawn_fs_job(move || {
+                if cancel.load(Ordering::Relaxed) {
+                    return Box::new(|_| {});
+                }
+                let best = source.find(&query, &home, max, &cancel);
+                let facts = (best.iter())
+                    .map(|p| (p.clone(), crate::desktop::file_facts(p)))
+                    .collect();
+                Box::new(move |state: &mut State| {
+                    state.files_found(o, generation, source, best, facts)
+                })
+            });
+        }
     }
 
     fn files_found(
         &mut self,
         o: SearchOwner,
         generation: u64,
+        source: Source,
         paths: Vec<PathBuf>,
         facts: std::collections::HashMap<PathBuf, crate::desktop::FileFacts>,
     ) {
@@ -394,14 +512,14 @@ impl State {
         if !f.accepts(generation) {
             return;
         }
-        f.cancel = None;
-        f.facts = facts;
+        f.facts.extend(facts);
+        f.set(source, paths);
         match o {
             SearchOwner::Launcher => {
-                self.show_launcher_files(paths);
+                self.show_launcher_found();
                 self.redraw_launcher();
             }
-            SearchOwner::StartPanel => self.start_panel_files(paths),
+            SearchOwner::StartPanel => self.start_panel_found(),
         }
     }
 }
@@ -707,6 +825,66 @@ mod tests {
         assert!(!searches_files("a", true));
         assert!(searches_files("ab", true));
         assert!(!searches_files("ab", false));
+    }
+
+    fn paths(ps: &[&str]) -> Vec<PathBuf> {
+        ps.iter().map(PathBuf::from).collect()
+    }
+
+    #[test]
+    fn a_file_found_by_name_is_left_out_of_the_contents_whichever_lands_first() {
+        let mut f = FileSearch::new();
+        f.set(Source::Contents, paths(&["/h/a.txt", "/h/b.pdf"]));
+        let shown = |f: &FileSearch| -> Vec<(Source, Vec<PathBuf>)> {
+            f.sections().map(|(s, p)| (s, p.to_vec())).collect()
+        };
+        assert_eq!(
+            shown(&f),
+            [
+                (Source::Names, vec![]),
+                (Source::Contents, paths(&["/h/a.txt", "/h/b.pdf"]))
+            ]
+        );
+        f.set(Source::Names, paths(&["/h/b.pdf", "/h/c.md"]));
+        assert_eq!(
+            shown(&f),
+            [
+                (Source::Names, paths(&["/h/b.pdf", "/h/c.md"])),
+                (Source::Contents, paths(&["/h/a.txt"]))
+            ]
+        );
+        assert_eq!(f.path(1, 0), Some(&PathBuf::from("/h/a.txt")));
+        assert_eq!(f.path(1, 1), None);
+        f.set(Source::Names, Vec::new());
+        assert_eq!(
+            f.path(1, 1),
+            Some(&PathBuf::from("/h/b.pdf")),
+            "back once names drop it"
+        );
+    }
+
+    #[test]
+    fn new_text_keeps_the_names_that_still_match_and_every_content_row() {
+        let found = paths(&["/h/notes.txt", "/h/budget.ods"]);
+        assert_eq!(Source::Names.kept("note", &found), paths(&["/h/notes.txt"]));
+        assert_eq!(Source::Contents.kept("note", &found), found);
+    }
+
+    #[test]
+    fn the_contents_section_shows_at_most_five_rows() {
+        assert_eq!(Source::Names.rows(8), 8);
+        assert_eq!(Source::Contents.rows(8), 5);
+        assert_eq!(Source::Contents.rows(3), 3);
+    }
+
+    #[test]
+    fn a_found_url_names_a_local_path() {
+        assert_eq!(
+            file_path("file:///home/u/Q3%20report.pdf"),
+            Some(PathBuf::from("/home/u/Q3 report.pdf"))
+        );
+        assert_eq!(file_path("https://example.com/a"), None);
+        assert_eq!(file_path("file://host/a"), None);
     }
 
     #[test]

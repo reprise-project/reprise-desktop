@@ -1,5 +1,5 @@
 //! The application launcher on the scene: one `reprisekit::controls::launcher` panel centred on the output under the pointer, on the menu layer, fed every key press while open. On every change of the typed text it works out the calculator's answer (`search::calc_row`), ranks the Start menu's app index (`State::app_index`, by `search::rank_apps`) and finds settings pages (`search::rank_settings`). Enter on the answer copies it; a program starts as from the Start menu; a settings row opens the settings program on its page.
-//! From two typed characters it also searches the home folder for files through `search::FileSearch`, unless `[launcher] search_files` is off.
+//! From two typed characters it also finds files through `search::FileSearch`, by name in the home folder and by contents through localsearch, unless `[launcher] search_files` is off.
 //! Unless `[launcher] windows` is off it finds open windows on every desktop by title or program name (`search::rank_windows`); Enter brings one up as its task button would.
 //! The panel's tree in `layers.menu` is tagged `SceneOwner::Launcher` and holds the glass tree (its `Backdrop` under a glass look), then the buffer, which takes the pointer on the panel only: its shadow lets the pointer through.
 //! A right press or the menu key on a program or file row opens its context menu (`open_launcher_context`); picking a row of it closes the panel.
@@ -7,7 +7,7 @@
 
 use std::path::PathBuf;
 
-use reprisekit::controls::launcher::{self, Event, FileRow, Hit, Key, Launcher, Pick, Row};
+use reprisekit::controls::launcher::{self, Event, Hit, Key, Launcher, Pick, Row, Section};
 use reprisekit::fuzzy;
 use reprisekit::look::panel;
 use reprisescene::{BufferId, Input, TreeId};
@@ -34,7 +34,7 @@ pub struct LauncherView {
     /// The answer the calculator's row copies, while it is shown.
     answer: Option<String>,
     settings: Vec<Setting>,
-    /// The file search; its `files` are parallel to the model's file rows.
+    /// The file search; its sections are parallel to the model's found sections.
     pub search: FileSearch,
     area: Rect,
     at: (i32, i32),
@@ -235,8 +235,8 @@ impl State {
                 };
                 (items, MenuKind::StartPanel { rows })
             }
-            Pick::File(i) => {
-                let Some(path) = v.search.files.get(i).cloned() else {
+            Pick::Found(s, i) => {
+                let Some(path) = v.search.path(s, i).cloned() else {
                     return;
                 };
                 let facts = v.search.facts_of(&path);
@@ -286,10 +286,9 @@ impl State {
                         .and_then(|&ai| apps.get(ai))
                         .cloned()
                         .map(Launch::App),
-                    Pick::File(i) => v
+                    Pick::Found(s, i) => v
                         .search
-                        .files
-                        .get(i)
+                        .path(s, i)
                         .map(|p| Launch::File(v.search.facts_of(p))),
                 };
                 self.close_launcher();
@@ -302,11 +301,11 @@ impl State {
                     None => {}
                 }
             }
-            Event::OpenFolder(i) => {
+            Event::OpenFolder(s, i) => {
                 let path = self
                     .launcher
                     .as_ref()
-                    .and_then(|v| v.search.files.get(i).cloned());
+                    .and_then(|v| v.search.path(s, i).cloned());
                 self.close_launcher();
                 if let Some(path) = path {
                     self.open_file_location(&path);
@@ -456,34 +455,37 @@ impl State {
                 &empty
             }
         };
-        let files = (v.search.files.iter())
-            .map(|p| file_row_icon(p, v.search.is_dir(p), mime, icons, px))
+        let found = (v.search.sections())
+            .map(|(_, paths)| {
+                (paths.iter())
+                    .map(|p| file_row_icon(p, v.search.is_dir(p), mime, icons, px))
+                    .collect()
+            })
             .collect();
         let refill = launcher::Refill {
             calc: (v.answer.as_ref()).and_then(|_| calc_icon(icons, px)),
             windows,
             apps,
             settings,
-            files,
+            found,
         };
         if v.model.refill_icons(refill) || v.picked_waits {
             self.redraw_launcher();
         }
     }
 
-    /// The text changed: stop the search in flight, narrow the file rows
-    /// shown to the new text, and arm the timer for the next search. Under
-    /// `MIN_CHARS`, or with file search turned off, the file rows go.
+    /// The text changed: [`State::file_query_changed`], and show the found rows it keeps.
     fn launcher_query_changed(&mut self) {
         let Some(v) = self.launcher.as_ref() else {
             return;
         };
         let query = v.model.query().to_string();
-        let kept = self.file_query_changed(SearchOwner::Launcher, &query, launcher::MAX_FILES);
-        self.show_launcher_files(kept);
+        self.file_query_changed(SearchOwner::Launcher, &query, launcher::MAX_FILES);
+        self.show_launcher_found();
     }
 
-    pub(crate) fn show_launcher_files(&mut self, paths: Vec<PathBuf>) {
+    /// Hands the model the search's sections as they stand.
+    pub(crate) fn show_launcher_found(&mut self) {
         let px = 16 * self.launcher_scale();
         let home = std::env::var_os("HOME").map(PathBuf::from);
         let State {
@@ -503,12 +505,15 @@ impl State {
                 &empty
             }
         };
-        let rows: Vec<FileRow> = paths
-            .iter()
-            .map(|p| file_row(p, v.search.is_dir(p), home.as_deref(), mime, icons, px))
+        let found = (v.search.sections())
+            .map(|(source, paths)| Section {
+                heading: source.heading().to_string(),
+                rows: (paths.iter())
+                    .map(|p| file_row(p, v.search.is_dir(p), home.as_deref(), mime, icons, px))
+                    .collect(),
+            })
             .collect();
-        v.search.files = paths;
-        v.model.set_files(rows);
+        v.model.set_found(found);
     }
 
     pub fn redraw_launcher(&mut self) {
@@ -650,8 +655,8 @@ fn picked_icon(
         Some(Pick::App(i)) => (v.matches.get(i))
             .and_then(|&ai| app_index.get(ai))
             .and_then(|a| a.icon.clone()),
-        Some(Pick::File(i)) => {
-            (v.search.files.get(i)).map(|p| file_icon_name(p, v.search.is_dir(p), mime, icons))
+        Some(Pick::Found(s, i)) => {
+            (v.search.path(s, i)).map(|p| file_icon_name(p, v.search.is_dir(p), mime, icons))
         }
         None => None,
     };

@@ -167,7 +167,7 @@ fn a_starter_row_offers_no_remove_from_this_list() {
 
 #[test]
 fn only_programs_tree_apps_and_program_results_get_a_program_menu() {
-    let kinds = [ResultKind::Calc, ResultKind::Programs, ResultKind::Files];
+    let kinds = [ResultKind::Calc, ResultKind::Programs, ResultKind::Found(0)];
     let at = |s| spot_app(s, &[5], (0, 1), &[None, Some(9)], (&[4], &kinds));
     assert_eq!(at(Spot::Tree(1)), Some((9, false)));
     assert_eq!(at(Spot::Tree(0)), None, "a folder");
@@ -176,23 +176,32 @@ fn only_programs_tree_apps_and_program_results_get_a_program_menu() {
     assert_eq!(at(Spot::Result(2, 0)), None, "a file result");
     assert_eq!(at(Spot::Place(0)), None);
     assert_eq!(at(Spot::Program(1)), None, "past the rows");
-    let files = [ResultKind::Files];
+    let files = [ResultKind::Found(0)];
     let no_programs = spot_app(Spot::Result(0, 0), &[], (0, 0), &[], (&[], &files));
-    assert_eq!(no_programs, None, "group 0 is Files");
+    assert_eq!(no_programs, None, "group 0 is found files");
 }
 
 #[test]
-fn search_groups_the_answer_programs_settings_then_files_with_counts() {
+fn search_groups_the_answer_programs_settings_then_each_found_section_with_counts() {
+    let notes = [PathBuf::from("/home/u/notes.txt")];
+    let minutes = [PathBuf::from("/home/u/minutes.pdf")];
+    let found = [("Files", &[][..]), ("Contents", &minutes[..])];
     let (groups, kinds) = result_groups(
         Some("= 14"),
         &["Notepad".into()],
         &["Mouse".into(), "Pointers".into()],
-        &[PathBuf::from("/home/u/notes.txt")],
+        [("Files", &notes[..]), ("Contents", &minutes[..])].into_iter(),
     );
     let titles: Vec<&str> = groups.iter().map(|g| g.title.as_str()).collect();
     assert_eq!(
         titles,
-        ["Calculator", "Programs (1)", "Settings (2)", "Files (1)"]
+        [
+            "Calculator",
+            "Programs (1)",
+            "Settings (2)",
+            "Files (1)",
+            "Contents (1)"
+        ]
     );
     assert_eq!(
         kinds,
@@ -200,20 +209,32 @@ fn search_groups_the_answer_programs_settings_then_files_with_counts() {
             ResultKind::Calc,
             ResultKind::Programs,
             ResultKind::Settings,
-            ResultKind::Files
+            ResultKind::Found(0),
+            ResultKind::Found(1)
         ]
     );
     assert_eq!(groups[0].rows[0].name, "= 14");
     assert_eq!(groups[3].rows[0].name, "notes.txt");
-    let (groups, kinds) = result_groups(None, &[], &["Mouse".into()], &[]);
+    assert_eq!(groups[4].rows[0].name, "minutes.pdf");
+    let (groups, kinds) = result_groups(None, &[], &[], found.into_iter());
+    assert_eq!(
+        (groups.len(), kinds),
+        (1, vec![ResultKind::Found(1)]),
+        "an empty section shows no group and keeps the next one's number"
+    );
+    let (groups, kinds) = result_groups(None, &[], &["Mouse".into()], std::iter::empty());
     assert_eq!((groups.len(), kinds), (1, vec![ResultKind::Settings]));
-    assert!(result_groups(None, &[], &[], &[]).0.is_empty());
+    assert!(
+        result_groups(None, &[], &[], std::iter::empty())
+            .0
+            .is_empty()
+    );
 }
 
 #[test]
 fn a_group_shows_at_most_eight_rows_and_counts_them() {
     let names: Vec<String> = (0..12).map(|i| format!("App {i}")).collect();
-    let (groups, _) = result_groups(None, &names, &[], &[]);
+    let (groups, _) = result_groups(None, &names, &[], std::iter::empty());
     assert_eq!(groups[0].title, "Programs (8)");
     assert_eq!(groups[0].rows.len(), 8);
 }

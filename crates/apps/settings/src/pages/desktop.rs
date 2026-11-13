@@ -397,17 +397,19 @@ pub(super) const REVEAL_CONTROLS: [&str; 3] = [
 ];
 
 pub const SEARCH_NOTE: &str = "launcher_search_note";
+pub const CONTENTS_NOTE: &str = "launcher_contents_note";
 pub const FLIP_NOTE: &str = "flip_note";
 pub const OVERVIEW_NOTE: &str = "overview_note";
 /// The search note's most lines, and the characters a line holds.
 const SEARCH_LINES: usize = 3;
 const SEARCH_COLS: usize = 55;
 
-/// The Search page: the Search group's note naming the launcher's keys, and its checks for files
-/// and folders and for open windows. [`super::show_keys`] fills the note.
+/// The Search page: the Search group's note naming the launcher's keys, its checks for files
+/// and folders and for open windows, and the note on content search. [`super::show_keys`] fills
+/// the first note, [`show_contents`] the second.
 pub fn search(a: Area) -> Form {
     Form::new(vec![
-        group(a, "launcher_search_group", 44, 121, "Search"),
+        group(a, "launcher_search_group", 44, 156, "Search"),
         Item::new(
             SEARCH_NOTE,
             Rect::new(GX, 66, a.gw(), SEARCH_LINES as i32 * LINE_H),
@@ -420,7 +422,32 @@ pub fn search(a: Area) -> Form {
             "Also find &files and folders in my home folder",
         ),
         Item::check("launcher_windows", GX, 139, "Also find open &windows"),
+        Item::new(
+            CONTENTS_NOTE,
+            Rect::new(GX, 161, a.gw(), 2 * LINE_H),
+            Control::Lines(Vec::new()),
+        ),
     ])
+}
+
+/// The content search note: what finding files by their contents takes, greyed while localsearch
+/// is not installed; blank until `installed` is read.
+pub fn show_contents(page: &mut Form, installed: Option<bool>) {
+    let note = match installed {
+        None => "",
+        Some(true) => "Files are also found by their contents through localsearch.",
+        Some(false) => "Install localsearch to also find files by their contents.",
+    };
+    let lines = match note.is_empty() {
+        true => Vec::new(),
+        false => reprisekit::text::wrap_chars(note, SEARCH_COLS),
+    };
+    if let Some(it) = page.item_mut(CONTENTS_NOTE) {
+        it.control = match installed {
+            Some(false) => Control::GreyedLines(lines),
+            _ => Control::Lines(lines),
+        };
+    }
 }
 
 /// The Search note's lines: the keys bound to the launcher, what it finds, and that the Start

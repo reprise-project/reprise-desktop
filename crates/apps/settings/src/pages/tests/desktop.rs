@@ -1,4 +1,4 @@
-use super::super::desktop::GLOW_CONTROLS;
+use super::super::desktop::{CONTENTS_NOTE, GLOW_CONTROLS};
 use super::*;
 
 #[test]
@@ -792,11 +792,12 @@ fn the_search_page_geometry() {
     let p = Page::Search;
     assert_eq!(
         rect(&s, p, "launcher_search_group"),
-        Rect::new(20, 44, 358, 121)
+        Rect::new(20, 44, 358, 156)
     );
     assert_eq!(rect(&s, p, SEARCH_NOTE), Rect::new(32, 66, 334, 39));
     assert_eq!(rect(&s, p, "launcher_files"), Rect::new(32, 117, 13, 13));
     assert_eq!(rect(&s, p, "launcher_windows"), Rect::new(32, 139, 13, 13));
+    assert_eq!(rect(&s, p, CONTENTS_NOTE), Rect::new(32, 161, 334, 26));
     inside_page(&s, p);
 }
 

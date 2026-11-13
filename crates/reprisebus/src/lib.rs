@@ -28,6 +28,7 @@
 //! [`airplane`] turns every radio off and back on, Bluetooth through [`rfkill`].
 //! [`kdeconnect`] follows the phones KDE Connect reaches.
 //! [`locale`] reads and sets the system locale and sets a user's language in AccountsService.
+//! [`localsearch`] asks the file indexer which files hold some words.
 //! [`error`] reads the name and message of an error reply.
 //! [`desklock`] follows the compositor's desktop lock on `org.freedesktop.ScreenSaver`.
 //! [`peer`] tells which process and which app a session bus peer is, and whether it runs in a
@@ -53,6 +54,7 @@ pub mod journal;
 pub mod kdeconnect;
 pub mod launcher;
 pub mod locale;
+pub mod localsearch;
 pub mod login;
 pub mod logind;
 pub mod mutex;

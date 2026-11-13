@@ -312,7 +312,7 @@ impl Page {
                 "previews",
             ],
             Page::StartMenu => &["pinned", "quick launch", "banner"],
-            Page::Search => &["launcher", "run"],
+            Page::Search => &["launcher", "run", "localsearch", "contents"],
             Page::Switcher => &[
                 "alt tab",
                 "alt+tab",
