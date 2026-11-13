@@ -12,7 +12,7 @@ use std::sync::atomic::AtomicBool;
 use crate::bincap::{self, Fate, Policy, Rule};
 use crate::bindir::{self, BinDir};
 use crate::locale;
-use crate::ops::{copy_dir_until, refuse_holding_mount, refuse_mount_point, remove_tree};
+use crate::ops::{build_dir, refuse_holding_mount, refuse_mount_point};
 use crate::places;
 use crate::progress::Meter;
 
@@ -882,22 +882,35 @@ fn move_path(from: &Path, to: &Path, stop: &AtomicBool) -> io::Result<()> {
 /// points at and unlinking only the link. A mount point is refused before
 /// the copy, as [`move_to_free`] refuses it before the rename, and so is a
 /// folder holding one: the remove would empty that drive.
-/// `stop` set by the time the copy is flushed removes the copy and keeps `from`.
+/// The copy is built and flushed under a hidden part name, then renamed to `to`
+/// ([`crate::ops::land_part`]): `stop` set by then, or a failed flush, removes only
+/// the part and keeps `from`.
 fn copy_then_remove(from: &Path, to: &Path, stop: &AtomicBool) -> io::Result<()> {
     refuse_mount_point(from)?;
     let kind = std::fs::symlink_metadata(from)?.file_type();
     if kind.is_dir() {
         refuse_holding_mount(from)?;
-        copy_dir_until(from, to, stop)?;
-    } else if kind.is_symlink() {
-        std::os::unix::fs::symlink(std::fs::read_link(from)?, to)?;
-    } else {
-        crate::ops::copy_new(from, to)?;
     }
-    let landed = crate::ops::sync_landed(to).and_then(|()| crate::ops::go_on(stop));
-    if let Err(e) = landed {
-        let _ = remove_tree(to);
-        return Err(e);
+    let link = kind
+        .is_symlink()
+        .then(|| std::fs::read_link(from))
+        .transpose()?;
+    let make = |part: &Path| match &link {
+        Some(target) => std::os::unix::fs::symlink(target, part),
+        None if kind.is_dir() => build_dir(from, part, stop),
+        None => crate::ops::copy_new(from, part),
+    };
+    let ready = |part: &Path| crate::ops::sync_landed(part).and_then(|()| crate::ops::go_on(stop));
+    crate::ops::land_part(to, make, ready)?;
+    // The new name is on the disk before the original goes.
+    let dir = to.parent().unwrap_or(Path::new("."));
+    if let Err(e) = std::fs::File::open(dir).and_then(|d| d.sync_all()) {
+        log::warn!(
+            "reprisefs: moved {} to {}, but the original stays: {e}",
+            from.display(),
+            to.display()
+        );
+        return Ok(());
     }
     if kind.is_dir() {
         crate::ops::erase_stepped(from)
@@ -909,7 +922,7 @@ fn copy_then_remove(from: &Path, to: &Path, stop: &AtomicBool) -> io::Result<()>
 /// `renameat2(RENAME_NOREPLACE)` makes the refusal atomic; a file system
 /// without it (`EINVAL`) gets test-then-rename. `EXDEV` comes before the
 /// kernel looks at `to`, so a taken `to` is checked before the copy, and
-/// the copy itself fails on a name taken in between.
+/// the copy's final rename fails on a name taken in between.
 ///
 /// A `to` that is `from` under another case on a case-insensitive file
 /// system (FAT, exFAT) is a case-only rename, done through a free name. A
@@ -923,6 +936,11 @@ pub fn move_to_free(from: &Path, to: &Path) -> io::Result<()> {
 /// [`copy_then_remove`] stops it.
 pub(crate) fn move_to_free_until(from: &Path, to: &Path, stop: &AtomicBool) -> io::Result<()> {
     move_free(from, to, Some(stop))
+}
+
+/// [`move_to_free`] that refuses to cross file systems (`CrossesDevices`).
+pub(crate) fn rename_free(from: &Path, to: &Path) -> io::Result<()> {
+    move_free(from, to, None)
 }
 
 /// [`move_to_free`], copying across file systems only with `copy`, stopped by
@@ -1863,7 +1881,10 @@ mod tests {
         std::os::unix::fs::symlink(&file, &link).unwrap();
         for from in [&file, &folder, &link] {
             let stop = std::sync::Arc::new(AtomicBool::new(false));
-            crate::ops::STOP_IN_FLUSH.set(Some(stop.clone()));
+            let flag = stop.clone();
+            crate::ops::IN_FLUSH.set(Some(Box::new(move || {
+                flag.store(true, std::sync::atomic::Ordering::Relaxed)
+            })));
             let to = t.path().join("moved");
             let e = copy_then_remove(from, &to, &stop).unwrap_err();
             assert_eq!(e.kind(), io::ErrorKind::Interrupted);
@@ -1882,6 +1903,38 @@ mod tests {
             std::fs::read_to_string(folder.join("inner.txt")).unwrap(),
             "b"
         );
+    }
+
+    #[test]
+    fn a_move_stopped_during_the_flush_keeps_a_file_another_job_put_in_the_destination() {
+        let t = tempfile::tempdir().unwrap();
+        let from = t.path().join("Photos");
+        std::fs::create_dir(&from).unwrap();
+        std::fs::write(from.join("a.jpg"), "a").unwrap();
+        let notes = t.path().join("notes.txt");
+        std::fs::write(&notes, "theirs").unwrap();
+        let to = t.path().join("usb/Photos");
+        std::fs::create_dir(to.parent().unwrap()).unwrap();
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let (flag, at, notes_from) = (stop.clone(), to.clone(), notes.clone());
+        crate::ops::IN_FLUSH.set(Some(Box::new(move || {
+            let _ = std::fs::create_dir(&at);
+            std::fs::rename(&notes_from, at.join("notes.txt")).unwrap();
+            flag.store(true, std::sync::atomic::Ordering::Relaxed);
+        })));
+        let e = copy_then_remove(&from, &to, &stop).unwrap_err();
+        assert_eq!(e.kind(), io::ErrorKind::Interrupted);
+        assert_eq!(
+            std::fs::read_to_string(to.join("notes.txt")).unwrap(),
+            "theirs"
+        );
+        assert!(
+            !to.join("a.jpg").exists(),
+            "the stopped copy is not in Photos"
+        );
+        assert_eq!(std::fs::read_to_string(from.join("a.jpg")).unwrap(), "a");
+        let left: Vec<_> = std::fs::read_dir(to.parent().unwrap()).unwrap().collect();
+        assert_eq!(left.len(), 1, "only Photos is in usb, no part");
     }
 
     fn capped() -> (tempfile::TempDir, Bins, PathBuf, u64) {
