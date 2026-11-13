@@ -427,7 +427,10 @@ matched control focused.
     `socks5://`) and `no_proxy`, each also in capitals; Automatic sets
     `auto_proxy`, which Chromium-based browsers read. No proxy removes the
     file and unsets what it had set. A host typed with a scheme
-    (`https://proxy`) keeps it. Programs that take their proxy from
+    (`https://proxy`) keeps it, as does one with credentials
+    (`user:password@proxy`): the file is readable only by you, and the
+    variables reach the user manager over D-Bus, never on a command line.
+    Programs that take their proxy from
     GSettings (GNOME's resolver) don't follow it, since Reprise writes no
     dconf.
   - **Remote Desktop:** Allow remote connections turns the server on or off

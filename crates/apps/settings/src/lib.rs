@@ -1049,6 +1049,10 @@ impl App for SettingsApp {
             reply.quit = false;
             s.quit = true;
         }
+        if reply.quit && self.proxy.job.is_some() {
+            reply.quit = false;
+            self.proxy.quit = true;
+        }
         if reply.quit {
             self.save_window();
         }

@@ -12,7 +12,7 @@ pub use copy::copy_dir_all;
 pub(crate) use copy::{build_dir, copy_dir_until, copy_new, remove_tree};
 pub use erase::erase;
 pub(crate) use erase::{entries_at, erase_at, erase_counted, erase_stepped, unlink_at};
-pub use fileio::{copy_xattrs, create_temp_beside, read_regular, write_atomic};
+pub use fileio::{copy_xattrs, create_temp_beside, read_regular, write_atomic, write_private};
 pub(crate) use fileio::{read_held, read_opened};
 pub use mounts::{is_mount_point, mount_root, refuse_holding_mount, refuse_mount_point};
 #[cfg(test)]

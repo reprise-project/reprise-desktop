@@ -270,7 +270,8 @@ pub fn text(vars: &[(&str, String)]) -> String {
     out
 }
 
-/// Write `vars` to `path`, or remove the file when there are none.
+/// Write `vars` to `path`, readable by its owner only since a proxy URL may carry a password, or
+/// remove the file when there are none.
 pub fn write(path: &Path, vars: &[(&str, String)]) -> io::Result<()> {
     if vars.is_empty() {
         return match std::fs::remove_file(path) {
@@ -278,29 +279,43 @@ pub fn write(path: &Path, vars: &[(&str, String)]) -> io::Result<()> {
             r => r,
         };
     }
-    crate::ops::write_atomic(path, text(vars).as_bytes())
+    crate::ops::write_private(path, text(vars).as_bytes())
 }
 
-/// The `systemctl --user` argument lists that take the user manager from `old` (the file as it
-/// was) to `new`: set what `new` sets, unset what only `old` set.
-pub fn manager_args(old: &[(String, String)], new: &[(&str, String)]) -> Vec<Vec<String>> {
-    let mut out = Vec::new();
-    if !new.is_empty() {
-        let mut set = vec!["set-environment".to_string()];
-        set.extend(new.iter().map(|(k, v)| format!("{k}={v}")));
-        out.push(set);
+/// What the user manager's environment changes by: `KEY=VALUE` assignments set and names unset.
+/// No `Debug`, so its values never reach a log by accident.
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct Change {
+    pub set: Vec<String>,
+    pub unset: Vec<String>,
+}
+
+impl Change {
+    pub fn is_empty(&self) -> bool {
+        self.set.is_empty() && self.unset.is_empty()
     }
-    let gone: Vec<String> = NAMES
-        .into_iter()
-        .filter(|n| old.iter().any(|(k, _)| k == n) && !new.iter().any(|(k, _)| k == n))
-        .map(String::from)
-        .collect();
-    if !gone.is_empty() {
-        let mut unset = vec!["unset-environment".to_string()];
-        unset.extend(gone);
-        out.push(unset);
+
+    /// The names it sets and unsets, without their values.
+    pub fn names(&self) -> Vec<&str> {
+        let set = self
+            .set
+            .iter()
+            .map(|a| a.split_once('=').map_or(a.as_str(), |(k, _)| k));
+        set.chain(self.unset.iter().map(String::as_str)).collect()
     }
-    out
+}
+
+/// The change that takes the user manager from `old` (the file as it was) to `new`: set what
+/// `new` sets, unset what only `old` set.
+pub fn change(old: &[(String, String)], new: &[(&str, String)]) -> Change {
+    Change {
+        set: new.iter().map(|(k, v)| format!("{k}={v}")).collect(),
+        unset: NAMES
+            .into_iter()
+            .filter(|n| old.iter().any(|(k, _)| k == n) && !new.iter().any(|(k, _)| k == n))
+            .map(String::from)
+            .collect(),
+    }
 }
 
 #[cfg(test)]
@@ -439,38 +454,44 @@ mod tests {
         let new = manual([("a", "1"), ("", ""), ("", ""), ("", "")], "")
             .vars()
             .unwrap();
+        let c = change(&old, &new);
+        assert_eq!(c.set, ["http_proxy=http://a:1", "HTTP_PROXY=http://a:1"]);
         assert_eq!(
-            manager_args(&old, &new),
-            vec![
-                vec![
-                    "set-environment".to_string(),
-                    "http_proxy=http://a:1".into(),
-                    "HTTP_PROXY=http://a:1".into(),
-                ],
-                [
-                    "unset-environment",
-                    "https_proxy",
-                    "HTTPS_PROXY",
-                    "no_proxy",
-                    "NO_PROXY"
-                ]
-                .map(String::from)
-                .to_vec(),
-            ]
+            c.unset,
+            ["https_proxy", "HTTPS_PROXY", "no_proxy", "NO_PROXY"]
         );
+        let none = change(&old, &[]);
+        assert!(none.set.is_empty());
         assert_eq!(
-            manager_args(&old, &[])[0][..2],
-            ["unset-environment", "http_proxy"].map(String::from),
+            none.unset[..2],
+            ["http_proxy", "HTTP_PROXY"],
             "No proxy unsets every variable the file had"
         );
-        assert!(manager_args(&[], &[]).is_empty());
+        assert!(change(&[], &[]).is_empty());
+    }
+
+    #[test]
+    fn a_change_names_its_variables_without_their_values() {
+        let old = vec![("ftp_proxy".to_string(), "http://u:pw@f:1".to_string())];
+        let c = change(&old, &[("http_proxy", "http://u:pw@p:1".into())]);
+        assert_eq!(c.names(), ["http_proxy", "ftp_proxy"]);
     }
 
     #[test]
     fn write_removes_the_file_for_no_proxy_and_parse_skips_strangers() {
+        use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("environment.d").join(FILE);
         write(&path, &[("http_proxy", "http://a:1".into())]).unwrap();
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&path), 0o600, "only its owner reads it");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        write(&path, &[("http_proxy", "http://a:1".into())]).unwrap();
+        assert_eq!(
+            mode(&path),
+            0o600,
+            "a file once readable by others is not kept so"
+        );
         assert_eq!(
             read(&path),
             vec![("http_proxy".into(), "http://a:1".into())]
