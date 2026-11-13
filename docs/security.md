@@ -1295,7 +1295,13 @@ What a consent prompt remembers, and where:
 - **Screenshot:** the prompt has no Remember. xdg-desktop-portal keeps its
   own `screenshot` permission, and once that says yes a non-interactive
   screenshot is taken without a prompt.
-- **InputCapture:** asks every session, remembers nothing.
+- **InputCapture:** asks each session. An app with an app id can tick
+  Remember, and an Allow with it goes to the permission store (table and id
+  `input-capture`, the app id mapped to `yes`); the app's later sessions
+  start without a prompt or a balloon. A Deny is never kept, and an app with
+  no app id is asked every time. Settings > Privacy lists the remembered apps,
+  and Forget drops one. The grant goes by app id alone, so an unsandboxed
+  program that names itself after a remembered app gets it too.
 - **GlobalShortcuts:** an app with `[[global_shortcuts]]` entries in
   `config.toml` is allowed; a Deny adds it to `[portal] shortcuts_denied`
   and it isn't asked again.

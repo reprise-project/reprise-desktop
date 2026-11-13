@@ -1,6 +1,6 @@
 //! `org.freedesktop.impl.portal.InputCapture` version 1. Barriers are checked against the zones here
-//! (the frontend wants failed ids back at once). Sessions start at once, so CreateSession asks the
-//! user through the permit prompt first.
+//! (the frontend wants failed ids back at once). Sessions start at once, so CreateSession asks first
+//! through the permit prompt, unless the permission store remembers the app's Allow.
 
 use crate::inputlink::{Barrier, CaptureEvent, CaptureHandle, Link, Zone, live};
 use crate::{RESPONSE_OK, RESPONSE_OTHER, SessionData, SessionKind, Sessions};
@@ -16,6 +16,67 @@ pub const CAP_POINTER: u32 = 2;
 /// The barriers one capture holds. The compositor ends the whole `reprise_input_v1` with `too_many`
 /// past its `inputcapture::MAX_BARRIERS`, so the two must stay equal (or this lower).
 pub const MAX_BARRIERS: usize = 64;
+
+/// The permission store table holding remembered Allows, and the one entry in it. Reprise Settings
+/// lists and forgets them, so the format (app id to `["yes"]`) is shared with it.
+const STORE_TABLE: &str = "input-capture";
+const STORE_YES: &str = "yes";
+
+/// How CreateSession gets the user's consent.
+#[derive(Debug, PartialEq, Eq)]
+enum Consent {
+    /// An Allow remembered in the store: no prompt.
+    Remembered,
+    Ask {
+        offer_remember: bool,
+    },
+}
+
+/// The consent `app_id` needs, given `stored`, its store lookup. Remember is offered only where an
+/// answer can be kept: an empty app id has nothing to file it under, an unreachable store no place.
+fn consent(app_id: &str, stored: impl FnOnce() -> zbus::Result<Option<Vec<String>>>) -> Consent {
+    if app_id.is_empty() {
+        return Consent::Ask {
+            offer_remember: false,
+        };
+    }
+    match stored() {
+        Ok(Some(p)) if p.first().is_some_and(|a| a == STORE_YES) => Consent::Remembered,
+        Ok(_) => Consent::Ask {
+            offer_remember: true,
+        },
+        Err(e) => {
+            log::warn!("InputCapture: no permission store for {app_id:?}: {e}");
+            Consent::Ask {
+                offer_remember: false,
+            }
+        }
+    }
+}
+
+/// Ask for `app_id`'s consent, or find it remembered, and keep an Allow with Remember. Blocking.
+fn permit(app_id: &str, caps: u32, parent: Option<String>, cancel: Arc<AtomicBool>) -> bool {
+    use reprisebus::permissions::{app_permission, set_app_permission};
+    let lookup = || app_permission(STORE_TABLE, STORE_TABLE, app_id);
+    let offer_remember = match consent(app_id, lookup) {
+        Consent::Remembered => {
+            log::info!("InputCapture.CreateSession for {app_id:?}: allowed before with Remember");
+            return true;
+        }
+        Consent::Ask { offer_remember } => offer_remember,
+    };
+    let kind = crate::permit::Kind::InputCapture(crate::permit::Devices::from_mask(caps));
+    match crate::permit::ask(kind, app_id, Vec::new(), offer_remember, parent, cancel) {
+        crate::permit::Answer::Allow { remember: true } => {
+            match set_app_permission(STORE_TABLE, STORE_TABLE, app_id, &[STORE_YES]) {
+                Ok(()) => log::info!("InputCapture: remembered the Allow for {app_id:?}"),
+                Err(e) => log::warn!("InputCapture: could not remember {app_id:?}: {e}"),
+            }
+            true
+        }
+        a => a.allowed(),
+    }
+}
 
 pub(crate) struct CaptureSession {
     capture: CaptureHandle,
@@ -147,11 +208,7 @@ impl InputCapture {
         crate::export_request(server, &handle, cancel.clone(), &self.frontend).await?;
         let id = app_id.clone();
         let parent = crate::dialog::parent_handle(&parent_window);
-        let ok = blocking::unblock(move || {
-            let kind = crate::permit::Kind::InputCapture(crate::permit::Devices::from_mask(caps));
-            crate::permit::ask(kind, &id, Vec::new(), false, parent, cancel).allowed()
-        })
-        .await;
+        let ok = blocking::unblock(move || permit(&id, caps, parent, cancel)).await;
         let _ = server.remove::<crate::Request, _>(handle.clone()).await;
         if !ok {
             log::info!("InputCapture.CreateSession for {app_id:?} denied");
@@ -542,5 +599,50 @@ mod tests {
     #[test]
     fn nothing_is_valid_without_zones() {
         assert_eq!(validate(&[b(1, 0, 0, 10, 0)], &[]), vec![1]);
+    }
+
+    fn store(perms: &[&str]) -> impl FnOnce() -> zbus::Result<Option<Vec<String>>> {
+        let perms = perms.iter().map(|p| p.to_string()).collect();
+        move || Ok(Some(perms))
+    }
+
+    #[test]
+    fn a_stored_yes_skips_the_prompt() {
+        assert_eq!(
+            consent("org.deskflow.deskflow", store(&["yes"])),
+            Consent::Remembered
+        );
+    }
+
+    #[test]
+    fn no_stored_yes_asks_with_remember() {
+        let ask = Consent::Ask {
+            offer_remember: true,
+        };
+        assert_eq!(consent("org.deskflow.deskflow", || Ok(None)), ask);
+        assert_eq!(consent("org.deskflow.deskflow", store(&["no"])), ask);
+        assert_eq!(consent("org.deskflow.deskflow", store(&[])), ask);
+    }
+
+    #[test]
+    fn an_empty_app_id_asks_without_remember_and_without_a_lookup() {
+        let lookup = || -> zbus::Result<Option<Vec<String>>> { panic!("looked up") };
+        assert_eq!(
+            consent("", lookup),
+            Consent::Ask {
+                offer_remember: false
+            }
+        );
+    }
+
+    #[test]
+    fn an_unreachable_store_asks_without_remember() {
+        let lookup = || Err(zbus::Error::Failure("no store".into()));
+        assert_eq!(
+            consent("org.deskflow.deskflow", lookup),
+            Consent::Ask {
+                offer_remember: false
+            }
+        );
     }
 }

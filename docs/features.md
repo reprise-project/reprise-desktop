@@ -849,7 +849,8 @@ the screen takes the interface of the last session used at this computer.
   app's sessions and forgets the choice, so the next start asks again. Reprise's own
   server for RDP clients is [Remote Desktop](remote-desktop.md).
 - **One keyboard and mouse across computers** with Deskflow. Super+Shift+Esc
-  always takes them back.
+  always takes them back. Deskflow asks first; allowed with Remember, it
+  isn't asked again until Settings > Privacy forgets it.
 - **VM viewers and remote desktops get your shortcuts,** Super and Alt+Tab
   included, while they have focus; the lock, the magnifier, colour filters and
   screenshots stay Reprise's. A balloon says so the first time a program takes
