@@ -110,6 +110,14 @@ Background page lists pictures from `/usr/share/backgrounds`,
 bmp, jpg, png or dib file.
 Reprise ships no picture files and plays no event sounds.
 
+## Data
+
+`src/tzcity/cities.txt`, the towns the automatic time zone looks up, is
+built by `scripts/tzcities.py` from [GeoNames](https://www.geonames.org)'
+`cities15000` list, under the
+[Creative Commons Attribution 4.0](https://creativecommons.org/licenses/by/4.0/)
+license.
+
 ## Contributing assets
 
 A new asset needs a license that can be distributed with GPL-3.0 code, and a

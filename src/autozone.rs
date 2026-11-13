@@ -1,7 +1,5 @@
-//! Automatic time zone (`[time_zone] automatic`): a thread asks geoclue where the machine is, at
-//! city accuracy, and sets the zone of the nearest tzdata city (`tzcity`) through timedated with
-//! no password prompt, so polkit decides. It looks when turned on, at startup, on resume and when
-//! NetworkManager's primary connection changes, at most once an hour.
+//! Automatic time zone (`[time_zone] automatic`): a thread asks geoclue where the machine is and
+//! sets the zone of the nearest town (`tzcity`) through timedated; docs/programs.md has the pace.
 
 use std::collections::HashMap;
 use std::time::Duration;

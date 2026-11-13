@@ -1,6 +1,5 @@
-//! Time zones and their principal cities in tzdata's `zone1970.tab` and `zone.tab` (which also
-//! lists the zones that are links today): where the machine is as far as the zone says, and the
-//! zone nearest a place.
+//! Where a time zone's principal city lies (tzdata's `zone1970.tab` and `zone.tab`), and which
+//! zone a place is in, from the towns in `tzcity/cities.txt` (`scripts/tzcities.py`).
 
 use std::path::Path;
 
@@ -29,21 +28,40 @@ fn lookup(table: &str, zone: &str) -> Option<(f64, f64)> {
     entries(table).find(|(z, _)| *z == zone).map(|(_, at)| at)
 }
 
-/// The zone whose principal city lies nearest to `at` (degrees north and east). `zone.tab` comes
-/// first: it names a zone per country (`Europe/Stockholm`) where `zone1970.tab` gives a merged one
-/// (`Europe/Berlin`).
+/// Each zone and its towns of 15,000 people or more, thinned away from the zone's edges, as
+/// `zone lat,lon lat,lon ...` in hundredths of a degree.
+const TOWNS: &str = include_str!("tzcity/cities.txt");
+
+/// The zone of the town nearest to `at` (degrees north and east). Should the installed tzdata
+/// lack that zone, the zone whose principal city in `zone.tab` lies nearest.
 pub fn nearest(at: (f64, f64)) -> Option<String> {
-    ["zone.tab", "zone1970.tab"].iter().find_map(|f| {
-        let text = std::fs::read_to_string(Path::new(ZONEINFO).join(f)).ok()?;
-        nearest_in(&text, at)
+    let installed = |z: &String| Path::new(ZONEINFO).join(z).is_file();
+    nearest_in(towns(TOWNS), at).filter(installed).or_else(|| {
+        let text = std::fs::read_to_string(Path::new(ZONEINFO).join("zone.tab")).ok()?;
+        nearest_in(entries(&text), at)
     })
 }
 
-fn nearest_in(table: &str, at: (f64, f64)) -> Option<String> {
-    entries(table)
-        .map(|(zone, city)| (zone, distance(city, at)))
+fn nearest_in<'a>(
+    places: impl Iterator<Item = (&'a str, (f64, f64))>,
+    at: (f64, f64),
+) -> Option<String> {
+    places
+        .map(|(zone, place)| (zone, distance(place, at)))
         .min_by(|a, b| a.1.total_cmp(&b.1))
         .map(|(zone, _)| zone.to_string())
+}
+
+fn towns(table: &str) -> impl Iterator<Item = (&str, (f64, f64))> {
+    table.lines().flat_map(|l| {
+        let mut cols = l.split(' ');
+        let zone = cols.next().unwrap_or_default();
+        cols.filter_map(move |c| {
+            let (lat, lon) = c.split_once(',')?;
+            let hundredths = |s: &str| s.parse::<i32>().ok().map(|v| f64::from(v) / 100.0);
+            Some((zone, (hundredths(lat)?, hundredths(lon)?)))
+        })
+    })
 }
 
 /// Each row's zone and its city's coordinates.
@@ -135,23 +153,53 @@ AU\t-3352+15113\tAustralia/Sydney\tNew South Wales (most areas)
     }
 
     #[test]
-    fn the_nearest_city_names_the_zone() {
+    fn the_nearest_principal_city_names_the_zone() {
+        let nearest = |at| nearest_in(entries(TABLE), at);
         assert_eq!(
-            nearest_in(TABLE, (48.2, 16.37)).as_deref(),
+            nearest((48.2, 16.37)).as_deref(),
             Some("Europe/Budapest"),
             "Vienna is nearest Budapest"
         );
         assert_eq!(
-            nearest_in(TABLE, (42.36, -71.06)).as_deref(),
+            nearest((42.36, -71.06)).as_deref(),
             Some("America/New_York"),
             "Boston"
         );
         assert_eq!(
-            nearest_in(TABLE, (-37.81, 144.96)).as_deref(),
+            nearest((-37.81, 144.96)).as_deref(),
             Some("Australia/Sydney"),
             "Melbourne"
         );
-        assert_eq!(nearest_in("# nothing\n", (0.0, 0.0)), None);
+        assert_eq!(nearest_in(entries("# nothing\n"), (0.0, 0.0)), None);
+    }
+
+    #[test]
+    fn a_town_near_a_border_gets_its_own_countrys_zone() {
+        let places = [
+            ("Lviv", (49.84, 24.03), "Europe/Kyiv"),
+            ("Vigo", (42.23, -8.72), "Europe/Madrid"),
+            ("Strasbourg", (48.58, 7.75), "Europe/Paris"),
+            ("Kehl", (48.57, 7.82), "Europe/Berlin"),
+            ("Geneva", (46.20, 6.15), "Europe/Zurich"),
+            ("Annemasse", (46.19, 6.24), "Europe/Paris"),
+            ("El Paso", (31.76, -106.49), "America/Denver"),
+            ("Ciudad Juarez", (31.72, -106.46), "America/Ciudad_Juarez"),
+            ("Windsor", (42.30, -83.02), "America/Toronto"),
+            ("Detroit", (42.33, -83.05), "America/Detroit"),
+            ("Budapest", (47.50, 19.04), "Europe/Budapest"),
+            ("New York", (40.71, -74.01), "America/New_York"),
+            ("Sydney", (-33.87, 151.21), "Australia/Sydney"),
+            ("Tokyo", (35.69, 139.69), "Asia/Tokyo"),
+            ("Mumbai", (19.08, 72.88), "Asia/Kolkata"),
+            ("Sao Paulo", (-23.55, -46.63), "America/Sao_Paulo"),
+        ];
+        for (town, at, zone) in places {
+            assert_eq!(
+                nearest_in(towns(TOWNS), at).as_deref(),
+                Some(zone),
+                "{town}"
+            );
+        }
     }
 
     #[test]
