@@ -675,6 +675,14 @@ account's Password tab also creates, changes and removes your Remote Desktop
 password ([remote-desktop.md](remote-desktop.md#remote-logins));
 `reprise-accounts --remote-password` opens it there.
 
+Your account's Fingerprints tab lists the fingers you've added on the
+fingerprint reader. Add... picks a finger on a left and a right hand (the ones
+already added are greyed) and asks for scans until its bar is full, saying
+when a scan didn't read; Delete removes the finger picked and Delete All every
+one, after asking. fprintd asks for your password first, through the admin
+password prompt. Without fprintd or a reader the tab greys and says which is
+missing. Another account's tab only says each user adds their own.
+
 ## Software Updates
 
 Checks for system, Flatpak and firmware updates after login and every six

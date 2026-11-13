@@ -1,14 +1,16 @@
-//! An account's Properties: a sheet with three tabs (General, Picture, Password). On your
-//! own account Password asks for the current password first. Apply and OK hand the host a
-//! list of [`Op`]s for what changed; the sheet is a pure model and the host loads pictures,
+//! An account's Properties: a sheet with four tabs (General, Picture, Password, Fingerprints).
+//! On your own account Password asks for the current password first. Apply and OK hand the host
+//! a list of [`Op`]s for what changed; the sheet is a pure model and the host loads pictures,
 //! opens the file dialog and runs the calls. Password ends with the Remote Desktop password
-//! section the host hands [`Props::show_remote`].
+//! section the host hands [`Props::show_remote`], and Fingerprints shows what the host hands
+//! [`Props::show_fingers`].
 
 use std::cell::Cell;
 use std::path::PathBuf;
 
 use reprisekit::art::userpic::{self, ALL};
 use reprisekit::classic::widgets::LINE_H;
+use reprisekit::controls::fingerprints::{self, Finger};
 use reprisekit::controls::form::{self, Control, Form, Item};
 use reprisekit::controls::iconlist::{self, IconList};
 use reprisekit::controls::propsheet::{self, PropSheet};
@@ -22,10 +24,11 @@ use crate::acct::{ONLY_ADMIN, Op, PasswordMode, User};
 use crate::picture::Source;
 
 pub const CLIENT: (i32, i32) = (398, 410);
-pub const TABS: [&str; 3] = ["General", "Picture", "Password"];
+pub const TABS: [&str; 4] = ["General", "Picture", "Password", "Fingerprints"];
 pub const TAB_GENERAL: usize = 0;
 pub const TAB_PICTURE: usize = 1;
 pub const TAB_PASSWORD: usize = 2;
+pub const TAB_FINGERS: usize = 3;
 
 const NAME: &str = "name";
 const STANDARD: &str = "standard";
@@ -69,6 +72,8 @@ pub enum Outcome {
     Browse,
     /// The Remote Desktop password section asked for `Action`'s dialog.
     RemotePassword(Action),
+    /// The Fingerprints page asked for an add or a delete.
+    Fingers(fingerprints::Action),
     Close,
 }
 
@@ -84,6 +89,7 @@ pub struct Props {
     units: TextUnits,
     /// The Remote Desktop password section on Password; `None` hides it.
     remote: Option<Section>,
+    fingers: fingerprints::Section,
     /// A change is under way: Apply and OK grey until it lands.
     busy: bool,
 }
@@ -205,6 +211,10 @@ fn password_page(user: &User, remote: Option<&Section>) -> Form {
     Form::new(items)
 }
 
+fn fingers_page(s: &fingerprints::Section) -> Form {
+    Form::new(fingerprints::items(s, X, 40, CLIENT.0 - 2 * X).0)
+}
+
 fn login_password(user: &User) -> Vec<Item> {
     if user.you {
         return vec![
@@ -262,10 +272,16 @@ impl Props {
     /// grown by `u`; `last_admin` greys Standard on the only administrator.
     pub fn new(user: User, face: Option<Canvas>, last_admin: bool, u: TextUnits) -> Props {
         let small = face.as_ref().map(|c| face_of(c, u));
+        let fingers = fingerprints::section(&fingerprints::Facts {
+            reader: fingerprints::Reader::Looking,
+            yours: user.you,
+            busy: false,
+        });
         let pages = vec![
             general_page(&user, small, last_admin),
             picture_page(face, u),
             password_page(&user, None),
+            fingers_page(&fingers),
         ];
         let mut p = Props {
             sheet: PropSheet::new(&TABS, pages, CLIENT),
@@ -274,6 +290,7 @@ impl Props {
             picture: None,
             units: u,
             remote: None,
+            fingers,
             busy: false,
         };
         p.sync();
@@ -463,6 +480,14 @@ impl Props {
             propsheet::Event::Page(_, ref ev) if remotepassword::action(ev).is_some() => {
                 remotepassword::action(ev).map_or(Outcome::None, Outcome::RemotePassword)
             }
+            propsheet::Event::Page(TAB_FINGERS, ref ev) => {
+                let page = &mut self.sheet.pages[TAB_FINGERS];
+                if let Some(a) = fingerprints::action(ev, page, &self.fingers) {
+                    return Outcome::Fingers(a);
+                }
+                fingerprints::follow(page, &self.fingers);
+                Outcome::Redraw
+            }
             propsheet::Event::Page(_, form::Event::Changed(STOCK)) => {
                 let picked =
                     self.sheet.pages[TAB_PICTURE]
@@ -570,6 +595,42 @@ impl Props {
         true
     }
 
+    /// Show `s` on the Fingerprints page, keeping the row picked and the focus. True when it
+    /// changed.
+    pub fn show_fingers(&mut self, s: fingerprints::Section) -> bool {
+        if self.fingers == s {
+            return false;
+        }
+        let old = &self.sheet.pages[TAB_FINGERS];
+        let picked = match old.item(fingerprints::LIST).map(|i| &i.control) {
+            Some(Control::ListBox { list, .. }) => {
+                list.selected.and_then(|i| self.fingers.fingers.get(i))
+            }
+            _ => None,
+        };
+        let row = picked.and_then(|f| s.fingers.iter().position(|g| g == f));
+        let focus = old.focus().and_then(|i| old.items.get(i)).map(|i| i.id);
+        let mut page = fingers_page(&s);
+        if let Some(Control::ListBox { list, .. }) =
+            page.item_mut(fingerprints::LIST).map(|i| &mut i.control)
+        {
+            list.selected = row;
+        }
+        if let Some(id) = focus.filter(|id| page.can_focus(id)) {
+            page.focus_id(id);
+        }
+        fingerprints::follow(&mut page, &s);
+        page.carry_pointer(old);
+        self.sheet.set_page(TAB_FINGERS, page);
+        self.fingers = s;
+        true
+    }
+
+    /// The fingers the Fingerprints page lists.
+    pub fn fingers(&self) -> &[Finger] {
+        &self.fingers.fingers
+    }
+
     pub fn paste(&mut self, t: String) -> Outcome {
         let ev = self.sheet.open_mut().paste(t);
         let page = self.sheet.tabs.open;
@@ -647,8 +708,21 @@ mod tests {
         })
     }
 
+    /// The Fingerprints page at its tallest: every finger listed, with a note.
+    fn tallest_fingers(u: &User) -> fingerprints::Section {
+        fingerprints::section(&fingerprints::Facts {
+            reader: fingerprints::Reader::Found {
+                name: "Synaptics Sensors Prometheus MIS Touch Fingerprint Reader".into(),
+                fingers: Finger::ALL.to_vec(),
+            },
+            yours: u.you,
+            busy: false,
+        })
+    }
+
     /// Every page fits its text under every interface and text size, for your account and
-    /// for another one, with the Remote Desktop password section at its tallest.
+    /// for another one, with the Remote Desktop password section and Fingerprints at their
+    /// tallest.
     #[test]
     fn every_page_fits_its_text() {
         let over = reprisekit::interfaces::form_overflows(|_, _, _| {
@@ -656,8 +730,10 @@ mod tests {
                 .into_iter()
                 .flat_map(|(whose, u)| {
                     let remote = tallest_remote(&u);
+                    let fingers = tallest_fingers(&u);
                     let mut p = Props::new(u, None, false, TextUnits::ONE);
                     p.show_remote(remote);
+                    p.show_fingers(fingers);
                     let s = p.sheet.clone();
                     let tabs = s
                         .tabs
@@ -671,8 +747,7 @@ mod tests {
         assert!(over.is_empty(), "{}", over.join("\n"));
     }
 
-    /// Writes target/accounts-props-preview.png (the three tabs, yours and
-    /// another account's Password) for a visual check.
+    /// Writes target/accounts-props-preview.png (your account's four tabs) for a visual check.
     #[test]
     #[ignore]
     fn render_sheet() {
@@ -686,7 +761,7 @@ mod tests {
         let (w, h) = CLIENT;
         let mut out = Canvas::new(4 * w as u32, h as u32);
         let face = Some(userpic::draw(userpic::Picture::Tree, PREVIEW_PX));
-        for (i, (you, tab)) in [(true, 0), (true, 1), (true, 2), (false, 2)]
+        for (i, (you, tab)) in [(true, 0), (true, 1), (true, 2), (true, 3)]
             .iter()
             .enumerate()
         {
@@ -815,6 +890,95 @@ mod tests {
             Outcome::RemotePassword(Action::Remove)
         );
         assert!(!p.dirty(), "the section is no edit to apply");
+    }
+
+    #[test]
+    fn the_fingerprints_page_ends_above_the_sheets_buttons() {
+        let u = user(true, false);
+        let fingers = tallest_fingers(&u);
+        let mut p = Props::new(u, None, false, TextUnits::ONE);
+        assert!(p.show_fingers(fingers.clone()));
+        assert!(
+            !p.show_fingers(fingers),
+            "the same page again changes nothing"
+        );
+        let page = &p.sheet.pages[TAB_FINGERS];
+        let ok = page.item(propsheet::OK).unwrap().rect;
+        let bottom = page.items.iter().filter(|i| i.rect.y < ok.y);
+        let bottom = bottom.map(|i| i.rect.bottom()).max().unwrap();
+        assert!(bottom + 10 <= ok.y, "{bottom} against {ok:?}");
+    }
+
+    fn two_fingers() -> fingerprints::Section {
+        fingerprints::section(&fingerprints::Facts {
+            reader: fingerprints::Reader::Found {
+                name: "Virtual reader".into(),
+                fingers: vec![Finger::LeftThumb, Finger::RightIndex],
+            },
+            yours: true,
+            busy: false,
+        })
+    }
+
+    fn pick_row(p: &mut Props, row: usize) {
+        p.sheet.tabs.open = TAB_FINGERS;
+        let page = p.sheet.open_mut();
+        page.focus_id(fingerprints::LIST);
+        let mut ev = page.key(form::Key::Home);
+        for _ in 0..row {
+            ev = page.key(form::Key::Down);
+        }
+        p.event(propsheet::Event::Page(TAB_FINGERS, ev), no_file);
+    }
+
+    #[test]
+    fn a_press_on_the_fingerprints_page_asks_for_its_action() {
+        let mut p = Props::new(user(true, false), None, false, TextUnits::ONE);
+        p.show_fingers(two_fingers());
+        let press = |p: &mut Props, id| {
+            let ev = propsheet::Event::Page(TAB_FINGERS, form::Event::Pressed(id));
+            p.event(ev, no_file)
+        };
+        assert_eq!(
+            press(&mut p, fingerprints::ADD),
+            Outcome::Fingers(fingerprints::Action::Add)
+        );
+        assert_eq!(
+            press(&mut p, fingerprints::DELETE),
+            Outcome::Redraw,
+            "no row picked"
+        );
+        pick_row(&mut p, 1);
+        assert_eq!(
+            press(&mut p, fingerprints::DELETE),
+            Outcome::Fingers(fingerprints::Action::Delete(Finger::RightIndex))
+        );
+        assert!(!p.dirty(), "the page is no edit to apply");
+    }
+
+    #[test]
+    fn a_new_list_keeps_the_picked_finger() {
+        let mut p = Props::new(user(true, false), None, false, TextUnits::ONE);
+        p.show_fingers(two_fingers());
+        pick_row(&mut p, 1);
+        let three = fingerprints::section(&fingerprints::Facts {
+            reader: fingerprints::Reader::Found {
+                name: "Virtual reader".into(),
+                fingers: vec![Finger::LeftThumb, Finger::LeftIndex, Finger::RightIndex],
+            },
+            yours: true,
+            busy: false,
+        });
+        assert!(p.show_fingers(three));
+        let page = &p.sheet.pages[TAB_FINGERS];
+        assert!(matches!(
+            page.item(fingerprints::LIST).map(|i| &i.control),
+            Some(Control::ListBox { list, .. }) if list.selected == Some(2)
+        ));
+        assert!(matches!(
+            page.item(fingerprints::DELETE).map(|i| &i.control),
+            Some(Control::Button { enabled: true, .. })
+        ));
     }
 
     #[test]
