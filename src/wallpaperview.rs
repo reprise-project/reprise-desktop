@@ -723,7 +723,7 @@ impl State {
     /// each output size not yet drawn, and pictures of sizes no output shows are
     /// dropped.
     pub fn refit_wallpaper(&mut self) {
-        let outputs: Vec<Output> = self.scene.outputs().to_vec();
+        let outputs: Vec<Output> = self.own_outputs();
         let bg = self.config.theme.colors.background;
         let position = self.config.wallpaper.position;
         // Taken out for the loop so the image is borrowed, not cloned,

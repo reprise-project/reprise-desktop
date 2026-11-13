@@ -844,7 +844,7 @@ impl State {
             self.redraw_all();
             return;
         }
-        let outputs: Vec<Output> = self.scene.outputs().to_vec();
+        let outputs: Vec<Output> = self.own_outputs();
         let keys: Vec<Key> = outputs
             .iter()
             .filter(|o| self.layout_box(Some(o)).width > 0)
@@ -1368,7 +1368,7 @@ impl State {
         if !self.ripples_on() {
             return;
         }
-        let outputs: Vec<Output> = self.scene.outputs().to_vec();
+        let outputs: Vec<Output> = self.own_outputs();
         for out in outputs {
             let b = self.layout_box(Some(&out));
             let touch = b.intersect(&area);

@@ -30,7 +30,7 @@ pub use node::{
     BufferId, CustomElement, CustomId, CustomNode, Input, NodeId, NodeType, RectId, SurfaceId,
     TreeId,
 };
-pub use query::{Hit, output_rect};
+pub use query::{Hit, copied, output_rect, set_copied};
 pub use render::{BufferElement, SceneElement, View};
 pub use scene::{Prepared, Scene};
 pub use surface::SurfacePass;

@@ -103,6 +103,9 @@ pub(super) fn render(state: &mut State, head: Head) {
     }
     release_timed(state, head, &output);
     let started = std::time::Instant::now();
+    if let Some(source) = state.fitted_source(&output) {
+        return render_copy(state, head, &output, &source, started);
+    }
     let mut asked_at = None;
     if let Some(s) = surface_mut(state, head) {
         s.needs_redraw = false;
@@ -291,6 +294,99 @@ pub(super) fn render(state: &mut State, head: Head) {
         .is_none_or(|s| s.needs_redraw);
     if !flipping && !asked {
         state.glass.output_stopped(&output);
+    }
+    watch(state);
+}
+
+/// A frame for `output`, which copies `source` at another size (`mirror::elements`): no cursor
+/// plane, no glass of its own and no presentation feedback, its bands black.
+fn render_copy(
+    state: &mut State,
+    head: Head,
+    output: &Output,
+    source: &Output,
+    started: std::time::Instant,
+) {
+    if let Some(s) = surface_mut(state, head) {
+        s.needs_redraw = false;
+        s.pointer_only = false;
+        s.asked_at = None;
+    }
+    let (pointer, own) = crate::console::pointer::drawn_on(state, source, state.pointer_location());
+    let (fade, _) = crate::sessionfade::element(state, output);
+    let State {
+        backend,
+        scene,
+        cursor,
+        saver,
+        cursors,
+        config,
+        glass,
+        interaction,
+        copy_frames,
+        ..
+    } = state;
+    let cursor = crate::saverview::cursor(saver, own_cursor(own, cursor));
+    let Some(b) = backend.as_mut() else {
+        return;
+    };
+    let clear = crate::render::clear_color(&config.theme.colors);
+    let wanted = crate::glass::wanted(config);
+    glass.begin(
+        source,
+        config.glass,
+        crate::glass::quality(interaction, &config.glass),
+        glass_hold(None, Under::Anywhere, false),
+    );
+    glass.update_screen_backdrop(&mut b.renderer, scene, source, clear, wanted);
+    let parts = Parts {
+        scene,
+        cursor,
+        cursors,
+        pointer,
+    };
+    let shown = (source, output);
+    let mut elements = crate::mirror::elements(
+        &mut b.renderer,
+        copy_frames,
+        parts,
+        shown,
+        (0, 0).into(),
+        true,
+    );
+    if let Some(fade) = fade {
+        elements.insert(0, OutputElement::Border(fade));
+    }
+    let Some(s) = b.surfaces.get_mut(&head) else {
+        return;
+    };
+    s.scene_seen = scene.changes();
+    let shared = Arc::clone(&s.compositor);
+    let mut compositor = lock(&shared);
+    let black = smithay::backend::renderer::Color32F::BLACK;
+    let rendered = compositor.render_frame(&mut b.renderer, &elements, black, FrameFlags::DEFAULT);
+    let modeset = compositor.surface().commit_pending();
+    let (drawn, empty) = match rendered {
+        Ok(r) => (!r.is_empty, r.is_empty),
+        Err(e) => {
+            log::warn!("{}: render: {e:?}", output.name());
+            (false, false)
+        }
+    };
+    drop(compositor);
+    drop(elements);
+    let flight = InFlight {
+        started,
+        held: None,
+        feedback: None,
+        pointer: false,
+    };
+    let flipping = drawn && send_flip(s, modeset, flight);
+    if !flipping {
+        finish(state, head, output, false, empty, None, started);
+    }
+    if flipping && modeset {
+        crate::sessionfade::modeset(state, output);
     }
     watch(state);
 }
