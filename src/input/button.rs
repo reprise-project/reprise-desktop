@@ -30,6 +30,7 @@ impl State {
     /// start a move, size or caption button press; the last release ends it.
     /// In lock mode the computer's own goes to the console's lock (`console::pointer`).
     pub(crate) fn handle_button(&mut self, button: u32, state: ButtonState, time: InputTime) {
+        self.key_input.ctrl_tap.spoil();
         if crate::console::physical(self) {
             crate::console::pointer::button(self, button, state == ButtonState::Pressed);
             return;

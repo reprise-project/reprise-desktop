@@ -49,6 +49,12 @@ pub struct TouchState {
     frame_due: bool,
 }
 
+impl TouchState {
+    pub fn any_down(&self) -> bool {
+        !self.points.is_empty()
+    }
+}
+
 /// Where one finger's events go, fixed when it goes down.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Route {

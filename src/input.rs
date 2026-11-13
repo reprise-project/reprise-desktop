@@ -400,6 +400,19 @@ impl State {
         if crate::idle::is_activity(&event) {
             crate::idle::notify_activity(self);
         }
+        // Buttons spoil it in `handle_button`, which other sources reach too.
+        if matches!(
+            event,
+            InputEvent::TouchDown { .. }
+                | InputEvent::TouchUp { .. }
+                | InputEvent::TabletToolTip { .. }
+                | InputEvent::TabletToolButton { .. }
+                | InputEvent::GestureSwipeBegin { .. }
+                | InputEvent::GesturePinchBegin { .. }
+                | InputEvent::GestureHoldBegin { .. }
+        ) {
+            self.key_input.ctrl_tap.spoil();
+        }
         match event {
             InputEvent::Keyboard { event } => self.key::<B>(event),
             InputEvent::PointerMotion { event } if crate::console::physical(self) => {

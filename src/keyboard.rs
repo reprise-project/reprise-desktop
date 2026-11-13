@@ -665,13 +665,12 @@ impl State {
         self.inputproto.shortcuts.send(hit, active, time_msec);
     }
 
-    /// A pointer button went down and was delivered: the Super tap, the Ctrl tap and a
+    /// A pointer button went down and was delivered: the Super tap and a
     /// modifier chord held now fire no more, the press used up the
     /// StickyKeys latch, and the next dialog opens without focus
     /// rectangles.
     pub fn keys_saw_button(&mut self) {
         self.key_input.super_tap_armed = false;
-        self.key_input.ctrl_tap.spoil();
         self.super_hold_cancelled();
         self.key_input.last_key_input = false;
         self.key_input.chord.spoil();
