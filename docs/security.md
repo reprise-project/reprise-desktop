@@ -1720,6 +1720,22 @@ stop the share first.
   Settings > Thunderbolt's Authorize enrolls and Forget calls
   `ForgetDevice` the same way. A device boltd already authorizes itself is
   never asked about.
+- **Receiving files over Bluetooth.** obexd lets any device in range push a
+  file (BlueZ doesn't ask for Object Push), so Reprise's OBEX agent is the
+  gate. It answers only the owner of `org.bluez.obex`, refuses a device BlueZ
+  doesn't list as paired with the adapter it came in on, and asks before
+  every file. obexd writes only inside its own folder (`~/.cache/obexd`), so
+  an accepted file goes there under a hidden name and moves into Downloads
+  once obexd reports it complete. The offered name loses path separators,
+  control characters and leading dots, and the move never replaces
+  anything: a taken name (a symlink included) is numbered. A transfer that
+  ends early has its partial file removed. Every refusal, and an offer left
+  unanswered for 50 seconds, replies `Rejected`: obexd takes a file into its
+  own folder after any other error or after 60 seconds without an answer.
+  With "Receive files" off the agent isn't registered and obexd refuses
+  every push. Registering starts obexd, which also serves File Transfer to
+  trusted devices inside that folder; Reprise leaves that as obexd sets it
+  up.
 - **Ending the session.** With `[session] end_processes = true` (the
   default), Log Off stops the `app-reprise-*` scopes and, after a display
   manager login, terminates the login session, so windowless programs Reprise

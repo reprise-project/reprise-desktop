@@ -390,29 +390,54 @@ fn bt_battery_warning_in(text: &str) -> u8 {
 /// Write `[bluetooth] battery_warning = percent` into the config file, the default as no key (and
 /// no table once it is empty).
 pub fn save_bt_battery_warning(percent: u8) -> Result<(), String> {
-    let written = edit(&config_path(), |text| {
-        with_bt_battery_warning(text, percent)
-    });
-    match written {
+    save_bt_key(
+        "battery_warning",
+        (percent != BT_BATTERY_WARNING).then(|| Value::from(i64::from(percent))),
+    )
+}
+
+/// `[bluetooth] receive_files`, read now: whether a paired device may offer files over
+/// Bluetooth (true unless `false`).
+pub fn bt_receive_files() -> bool {
+    let text = std::fs::read_to_string(config_path()).unwrap_or_default();
+    bt_receive_files_in(&text)
+}
+
+fn bt_receive_files_in(text: &str) -> bool {
+    parsed(text)
+        .and_then(|doc| get(&doc, &key("bluetooth", "receive_files")).and_then(Item::as_bool))
+        .unwrap_or(true)
+}
+
+/// Write `[bluetooth] receive_files = on` into the config file, on as no key (and no table once
+/// it is empty).
+pub fn save_bt_receive_files(on: bool) -> Result<(), String> {
+    save_bt_key("receive_files", (!on).then(|| Value::from(false)))
+}
+
+fn save_bt_key(name: &'static str, value: Option<Value>) -> Result<(), String> {
+    match edit(&config_path(), |text| with_bt_key(text, name, value)) {
         Ok(r) => r.map(|_| ()),
         Err(e) => Err(e.to_string()),
     }
 }
 
-fn with_bt_battery_warning(text: &str, percent: u8) -> Result<String, String> {
+/// `text` with `[bluetooth] name` set to `value`, or removed for None along with a table left empty.
+fn with_bt_key(text: &str, name: &'static str, value: Option<Value>) -> Result<String, String> {
     let mut doc: DocumentMut = text.parse().map_err(|e| format!("{e}"))?;
-    let k = key("bluetooth", "battery_warning");
-    if percent == BT_BATTERY_WARNING {
-        remove(&mut doc, &k);
-        if doc
-            .get(k.table)
-            .and_then(Item::as_table_like)
-            .is_some_and(|t| t.is_empty())
-        {
-            doc.remove(k.table);
+    let k = key("bluetooth", name);
+    match value {
+        Some(v) => set(&mut doc, &k, v).map_err(|e| e.to_string())?,
+        None => {
+            remove(&mut doc, &k);
+            if doc
+                .get(k.table)
+                .and_then(Item::as_table_like)
+                .is_some_and(|t| t.is_empty())
+            {
+                doc.remove(k.table);
+            }
         }
-    } else {
-        set(&mut doc, &k, Value::from(i64::from(percent))).map_err(|e| e.to_string())?;
     }
     Ok(doc.to_string())
 }
@@ -1041,12 +1066,30 @@ mod tests {
 
     #[test]
     fn saving_the_bt_battery_warning_drops_the_default() {
-        let set = with_bt_battery_warning("# mine\n", 25).unwrap();
+        let warn = |text: &str, pct: u8| {
+            with_bt_key(
+                text,
+                "battery_warning",
+                (pct != BT_BATTERY_WARNING).then(|| Value::from(i64::from(pct))),
+            )
+        };
+        let set = warn("# mine\n", 25).unwrap();
         assert_eq!(bt_battery_warning_in(&set), 25);
         assert!(set.contains("# mine\n"), "the rest of the file stays");
-        let back = with_bt_battery_warning(&set, 15).unwrap();
+        let back = warn(&set, 15).unwrap();
         assert!(!back.contains("bluetooth"), "{back}");
-        assert!(with_bt_battery_warning("[bluetooth\n", 25).is_err());
+        assert!(warn("[bluetooth\n", 25).is_err());
+    }
+
+    #[test]
+    fn bt_receive_files_is_on_unless_turned_off() {
+        assert!(bt_receive_files_in(""));
+        assert!(!bt_receive_files_in("[bluetooth]\nreceive_files = false\n"));
+        assert!(bt_receive_files_in("[bluetooth]\nreceive_files = \"no\"\n"));
+        let off = with_bt_key("", "receive_files", Some(Value::from(false))).unwrap();
+        assert!(!bt_receive_files_in(&off));
+        let back = with_bt_key(&off, "receive_files", None).unwrap();
+        assert!(!back.contains("bluetooth"), "on is no key: {back}");
     }
 
     #[test]

@@ -16,6 +16,8 @@ pub enum TrayMsg {
     TogglePower,
     /// A connected device's row, by its index into [`connected`]: opens its Properties.
     Device(usize),
+    /// Button `i` of the received-file balloon `tag`.
+    Balloon(u32, usize),
     Exit,
 }
 
@@ -31,6 +33,7 @@ pub fn connected(s: &Snapshot) -> Vec<&Device> {
 pub fn translate(msg: Msg, s: &Snapshot) -> Option<TrayMsg> {
     match msg {
         Msg::Activate(..) => Some(TrayMsg::Show),
+        Msg::BalloonButton(tag, i) => Some(TrayMsg::Balloon(tag, i)),
         msg => menu(s).translate(msg),
     }
 }

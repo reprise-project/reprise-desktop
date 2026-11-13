@@ -59,7 +59,7 @@ while an editor saves it doesn't.
 | `[recycle_bin]` | what Delete does, each drive's bin size, `older_than_days` to empty old items (Recycle Bin Properties) |
 | `[thumbnail_cache]` | whether thumbnails are kept, the cap, and whether installed thumbnailers make them for PDFs, videos and fonts |
 | `[storage]` | the low disk space warning |
-| `[bluetooth]` | `battery_warning`: the percent a connected device's battery warns at, 15 by default, 0 off (Bluetooth Devices > Options) |
+| `[bluetooth]` | `battery_warning`: the percent a connected device's battery warns at, 15 by default, 0 off; `receive_files`: whether paired devices may offer files, on by default (Bluetooth Devices > Options) |
 | `[remote_desktop]` | the Remote Desktop server's port, picture quality, frame rate, video encoder, sound, lock on leave, capture border and what this computer's screen shows while connected ([below](#remote-desktop)) |
 | `[debug]` | the debug overlay |
 | `[osd]` | `caps_lock`, `num_lock`: whether the key's on or off shows on screen when it changes, both on by default (Settings > Keyboard) |
