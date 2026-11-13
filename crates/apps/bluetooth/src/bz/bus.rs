@@ -114,13 +114,15 @@ async fn run(poster: Poster, cmds: async_channel::Receiver<Cmd>, done: Sender<()
     let obex = super::obex::start(&conn, poster.clone()).await;
     let (wake_tx, wake_rx) = async_channel::unbounded::<Wake>();
     let _pump = pump(&conn, wake_tx.clone()).await;
+    follow_switches(wake_tx.clone());
     let _commands = commands(&conn, cmds, wake_tx, poster.clone(), obex);
     loop {
-        let snapshot = if owns_bluez(&conn).await {
+        let mut snapshot = if owns_bluez(&conn).await {
             read(&conn).await
         } else {
             Snapshot::default()
         };
+        snapshot.airplane = reprisebus::airplane::read(&conn).await;
         poster.post(BzMsg::Snapshot(snapshot));
         let Ok(first) = wake_rx.recv().await else {
             let _ = done.send(());
@@ -137,6 +139,20 @@ async fn run(poster: Poster, cmds: async_channel::Receiver<Cmd>, done: Sender<()
         if wakes.contains(&Wake::Restarted) && owns_bluez(&conn).await {
             register_agent(&conn).await;
         }
+    }
+}
+
+/// Read again on every rfkill change, which airplane mode and a radio switched elsewhere make.
+fn follow_switches(wakes: async_channel::Sender<Wake>) {
+    let spawned = std::thread::Builder::new()
+        .name("reprise-bluetooth-rfkill".into())
+        .spawn(move || {
+            if let Err(e) = reprisebus::rfkill::follow(|| wakes.send_blocking(Wake::Bus).is_ok()) {
+                log::info!("radio switches are not followed: {e}");
+            }
+        });
+    if let Err(e) = spawned {
+        log::warn!("could not start the rfkill thread: {e}");
     }
 }
 
@@ -205,6 +221,15 @@ fn commands(
                 Cmd::Receive(on) => {
                     if let Some(o) = &obex {
                         o.receive(on).await;
+                    }
+                }
+                Cmd::Airplane(on) => {
+                    if let Err(body) = reprisebus::airplane::set(&bus, on).await {
+                        log::warn!("{cmd:?} failed: {body}");
+                        poster.post(BzMsg::Failed {
+                            title: failure_title(&cmd).into(),
+                            body,
+                        });
                     }
                 }
                 Cmd::Connect(device) => {
@@ -305,7 +330,7 @@ async fn command(conn: &Connection, cmd: &Cmd) -> zbus::Result<()> {
             .await
             .map(|_| ())
         }
-        Cmd::Pair(_) | Cmd::Connect(_) | Cmd::Receive(_) | Cmd::Quit => Ok(()),
+        Cmd::Pair(_) | Cmd::Connect(_) | Cmd::Receive(_) | Cmd::Airplane(_) | Cmd::Quit => Ok(()),
     }
 }
 

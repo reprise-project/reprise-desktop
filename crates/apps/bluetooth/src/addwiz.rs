@@ -636,6 +636,7 @@ mod tests {
                 dev("/a/anon", None, false, Some(-30)),
                 dev("/a/old", Some("Old"), false, None),
             ],
+            airplane: None,
         }
     }
 

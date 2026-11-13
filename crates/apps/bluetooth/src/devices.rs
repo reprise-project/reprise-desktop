@@ -532,6 +532,7 @@ mod tests {
                 ..Adapter::default()
             }),
             devices,
+            airplane: None,
         }
     }
 

@@ -63,6 +63,7 @@ mod tests {
                 battery,
                 ..Device::default()
             }],
+            airplane: None,
         }
     }
 

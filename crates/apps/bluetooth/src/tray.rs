@@ -18,6 +18,7 @@ pub enum TrayMsg {
     Device(usize),
     /// Button `i` of the received-file balloon `tag`.
     Balloon(u32, usize),
+    Airplane,
     Exit,
 }
 
@@ -39,7 +40,8 @@ pub fn translate(msg: Msg, s: &Snapshot) -> Option<TrayMsg> {
 }
 
 /// The connected devices with their battery while the radio is on; Show and Exit always; Add
-/// while the radio is on; the power row while there is a radio to turn.
+/// while the radio is on; the power row while there is a radio to turn; Airplane Mode while
+/// the machine has a radio switch.
 pub fn menu(s: &Snapshot) -> Rows<TrayMsg> {
     let mut rows = Rows::default();
     if s.adapter.as_ref().is_some_and(|a| a.powered) {
@@ -63,6 +65,11 @@ pub fn menu(s: &Snapshot) -> Rows<TrayMsg> {
         };
         rows.separator()
             .add(TrayMsg::TogglePower, |id| Node::row(id, word));
+    }
+    if let Some(on) = s.airplane {
+        rows.add(TrayMsg::Airplane, |id| {
+            Node::toggle(id, "Airplane Mode", on)
+        });
     }
     rows.separator()
         .add(TrayMsg::Exit, |id| Node::row(id, "Exit"));
@@ -141,6 +148,7 @@ mod tests {
                     ..Device::default()
                 })
                 .collect(),
+            airplane: None,
         }
     }
 
@@ -220,6 +228,30 @@ mod tests {
             labels(&Snapshot::default()),
             ["Show Bluetooth Devices", "", "Exit"]
         );
+    }
+
+    #[test]
+    fn airplane_mode_is_a_check_row_under_the_power_row_on_a_machine_with_a_radio_switch() {
+        let mut s = snap(false, 0);
+        s.airplane = Some(true);
+        let nodes = menu_nodes(&s);
+        let labels: Vec<&str> = nodes.iter().map(|n| n.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            [
+                "Show Bluetooth Devices",
+                "",
+                "Turn Bluetooth On",
+                "Airplane Mode",
+                "",
+                "Exit"
+            ]
+        );
+        assert_eq!(nodes[3].toggle, Some(true));
+        s.airplane = Some(false);
+        assert_eq!(menu_nodes(&s)[3].toggle, Some(false));
+        let click = translate(Rows::clicked(&TrayMsg::Airplane), &s);
+        assert_eq!(click, Some(TrayMsg::Airplane));
     }
 
     #[test]
