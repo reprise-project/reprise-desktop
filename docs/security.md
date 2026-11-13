@@ -126,6 +126,10 @@ any other way, from an autostart entry, the Run box, a launcher or a
 terminal, gets the dialog like any other app. Such a session gets every
 screen, with the pointer drawn in, and leaves no restore token behind; its
 captures light the red border, around the area while an area is recorded.
+The compositor makes the recording's file and hands it to the recorder
+open; the recorder never opens a name under Videos, so a program that can
+write there cannot point the recording at another file by swapping the
+name.
 
 ## X11 programs
 

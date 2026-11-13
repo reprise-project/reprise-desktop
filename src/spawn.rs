@@ -993,11 +993,12 @@ pub fn try_spawn_held<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
 }
 
 /// `argv` unscoped with the session's environment and its stderr piped back, for a helper the
-/// caller waits on itself (`Child::wait`) rather than [`reap_children`]. None when this session
-/// starts no programs.
+/// caller waits on itself (`Child::wait`) rather than [`reap_children`], `inherit` left open in
+/// it under the same number. None when this session starts no programs.
 pub fn spawn_waited<S: AsRef<std::ffi::OsStr>>(
     argv: &[S],
     env: &SessionEnv,
+    inherit: Option<std::os::fd::BorrowedFd>,
 ) -> std::io::Result<Option<std::process::Child>> {
     let program = first(argv)?;
     let name = log_name(None, &program.as_ref().to_string_lossy());
@@ -1005,6 +1006,16 @@ pub fn spawn_waited<S: AsRef<std::ffi::OsStr>>(
         return Ok(None);
     };
     detach(&mut c);
+    if let Some(fd) = inherit.map(|f| std::os::fd::AsRawFd::as_raw_fd(&f)) {
+        // SAFETY: runs between fork and exec; fcntl is async-signal-safe and clears close-on-exec
+        // on the child's copy of `fd` only.
+        unsafe {
+            c.pre_exec(move || match libc::fcntl(fd, libc::F_SETFD, 0) {
+                0 => Ok(()),
+                _ => Err(std::io::Error::last_os_error()),
+            });
+        }
+    }
     c.stdout(std::process::Stdio::null());
     c.stderr(std::process::Stdio::piped());
     c.spawn().map(Some)

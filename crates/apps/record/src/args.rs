@@ -1,12 +1,12 @@
 //! The command line the compositor starts a recording with.
 
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::os::fd::RawFd;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Args {
-    /// The empty file the movie goes into.
-    pub file: PathBuf,
+    /// The inherited descriptor of the empty file the movie goes into.
+    pub fd: RawFd,
     /// The output's connector name.
     pub output: String,
     /// The part of the output recorded, in its logical pixels; None for all of it.
@@ -24,19 +24,25 @@ pub struct Area {
 }
 
 pub const USAGE: &str =
-    "usage: reprise-record --file PATH --output NAME [--area X,Y,WIDTH,HEIGHT] [--sound]";
+    "usage: reprise-record --fd N --output NAME [--area X,Y,WIDTH,HEIGHT] [--sound]";
 
 impl Args {
     pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
         let mut args = args.into_iter();
-        let (mut file, mut output, mut area, mut sound) = (None, None, None, false);
+        let (mut fd, mut output, mut area, mut sound) = (None, None, None, false);
         while let Some(arg) = args.next() {
             let mut value = |name: &str| {
                 args.next()
                     .ok_or_else(|| format!("{name} needs a value; {USAGE}"))
             };
             match arg.to_str() {
-                Some("--file") => file = Some(PathBuf::from(value("--file")?)),
+                Some("--fd") => {
+                    let n = value("--fd")?;
+                    let n = (n.to_str().and_then(|n| n.parse().ok()))
+                        .filter(|n: &RawFd| *n > 2)
+                        .ok_or_else(|| format!("--fd takes a descriptor above 2, not {n:?}"))?;
+                    fd = Some(n);
+                }
                 Some("--output") => {
                     let name = value("--output")?;
                     output = Some(name.into_string().map_err(|_| "--output is not UTF-8")?);
@@ -50,7 +56,7 @@ impl Args {
             }
         }
         Ok(Args {
-            file: file.ok_or_else(|| format!("--file is missing; {USAGE}"))?,
+            fd: fd.ok_or_else(|| format!("--fd is missing; {USAGE}"))?,
             output: output.ok_or_else(|| format!("--output is missing; {USAGE}"))?,
             area,
             sound,
@@ -85,9 +91,9 @@ mod tests {
     #[test]
     fn an_area_and_sound_are_optional() {
         assert_eq!(
-            parse(&["--file", "/tmp/a.mp4", "--output", "DP-1"]),
+            parse(&["--fd", "3", "--output", "DP-1"]),
             Ok(Args {
-                file: "/tmp/a.mp4".into(),
+                fd: 3,
                 output: "DP-1".into(),
                 area: None,
                 sound: false,
@@ -99,8 +105,8 @@ mod tests {
             "--sound",
             "--area",
             "10,-4,320,200",
-            "--file",
-            "a.mp4",
+            "--fd",
+            "7",
         ])
         .unwrap();
         assert!(args.sound);
@@ -120,15 +126,19 @@ mod tests {
         assert!(
             parse(&["--output", "DP-1"])
                 .unwrap_err()
-                .starts_with("--file is missing")
+                .starts_with("--fd is missing")
         );
+        for fd in ["1", "-3", "a.mp4"] {
+            let e = parse(&["--fd", fd, "--output", "o"]).unwrap_err();
+            assert!(e.starts_with("--fd takes"), "{fd}: {e}");
+        }
         assert!(
-            parse(&["--file", "a.mp4"])
+            parse(&["--fd", "3"])
                 .unwrap_err()
                 .starts_with("--output is missing")
         );
         for area in ["1,2,3", "1,2,0,4", "a,b,c,d"] {
-            let e = parse(&["--file", "a", "--output", "o", "--area", area]).unwrap_err();
+            let e = parse(&["--fd", "3", "--output", "o", "--area", area]).unwrap_err();
             assert!(e.starts_with("--area takes"), "{area}: {e}");
         }
         assert!(

@@ -3,6 +3,8 @@
 
 use std::ffi::OsString;
 use std::io::BufRead;
+use std::os::fd::{AsFd, AsRawFd, RawFd};
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -49,10 +51,37 @@ impl Recording {
     }
 }
 
+/// A recording's file as made: its path, and its device and inode, so a name swapped in the
+/// folder since is never taken for it.
+#[derive(Debug)]
+struct Made {
+    path: PathBuf,
+    id: (u64, u64),
+}
+
+impl Made {
+    fn of(file: &std::fs::File, path: PathBuf) -> std::io::Result<Made> {
+        let m = file.metadata()?;
+        Ok(Made {
+            path,
+            id: (m.dev(), m.ino()),
+        })
+    }
+
+    /// Unlink the name when it is still the file made; blocking.
+    fn remove(&self) {
+        let same =
+            std::fs::symlink_metadata(&self.path).is_ok_and(|m| (m.dev(), m.ino()) == self.id);
+        if same {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+}
+
 /// How a recorder run ended: its file and exit, or why it never started.
 enum Ended {
     Exited {
-        path: PathBuf,
+        made: Made,
         ok: bool,
         status: Option<i32>,
         last_line: String,
@@ -130,40 +159,42 @@ impl State {
         }
     }
 
-    fn recording_file_made(&mut self, made: Result<PathBuf, String>) {
-        let path = match made {
-            Ok(p) => p,
+    fn recording_file_made(&mut self, made: Result<(std::fs::File, Made), String>) {
+        let (file, made) = match made {
+            Ok(m) => m,
             Err(e) => return self.recording_ended(Ended::NotStarted(e)),
         };
         let Some(r) = self.recording.as_ref() else {
-            return remove_later(self, path);
+            return remove_later(self, made);
         };
         if r.stopping {
             self.recording = None;
             self.recording_changed();
-            return remove_later(self, path);
+            return remove_later(self, made);
         }
         let argv = recorder_argv(
-            &path,
+            file.as_raw_fd(),
             &r.target.output.name(),
             r.target.area,
             self.config.screenshot.record_sound,
         );
-        let child = match crate::spawn::spawn_waited(&argv, &self.env) {
+        let spawned = crate::spawn::spawn_waited(&argv, &self.env, Some(file.as_fd()));
+        drop(file);
+        let child = match spawned {
             Ok(Some(c)) => c,
             Ok(None) => {
-                remove_later(self, path);
+                remove_later(self, made);
                 return self.recording_ended(Ended::NotStarted(String::new()));
             }
             Err(e) => {
-                remove_later(self, path);
+                remove_later(self, made);
                 let why = format!("{PROGRAM} did not start: {e}.");
                 return self.recording_ended(Ended::NotStarted(why));
             }
         };
         log::info!(
             "screen recording into {} (pid {})",
-            path.display(),
+            made.path.display(),
             child.id()
         );
         self.grant_recorder(child.id());
@@ -173,7 +204,7 @@ impl State {
         }
         self.recording_changed();
         self.spawn_job(move || {
-            let ended = wait(child, path);
+            let ended = wait(child, made);
             Box::new(move |state: &mut State| state.recording_ended(ended))
         });
     }
@@ -182,10 +213,14 @@ impl State {
         self.recording = None;
         self.recording_changed();
         match ended {
-            Ended::Exited { path, ok: true, .. } => saved_notice(self, &path),
+            Ended::Exited { made, ok: true, .. } => saved_notice(self, &made.path),
             Ended::Exited {
-                status, last_line, ..
+                made,
+                status,
+                last_line,
+                ..
             } => {
+                remove_later(self, made);
                 let why = match (last_line.is_empty(), status) {
                     (false, _) => last_line,
                     (true, Some(code)) => format!("The recorder stopped with status {code}."),
@@ -247,11 +282,12 @@ pub fn pick_output(area: Rect, outputs: &[Rect]) -> Option<(usize, Rect)> {
     ))
 }
 
-pub fn recorder_argv(path: &Path, output: &str, area: Option<Rect>, sound: bool) -> Vec<OsString> {
+/// The recorder's command line; it writes only into descriptor `fd`, which it inherits.
+pub fn recorder_argv(fd: RawFd, output: &str, area: Option<Rect>, sound: bool) -> Vec<OsString> {
     let mut argv: Vec<OsString> = vec![
         PROGRAM.into(),
-        "--file".into(),
-        path.into(),
+        "--fd".into(),
+        fd.to_string().into(),
         "--output".into(),
         output.into(),
     ];
@@ -266,8 +302,8 @@ pub fn recorder_argv(path: &Path, output: &str, area: Option<Rect>, sound: bool)
 }
 
 /// Forward the recorder's stderr to the log until it exits, keeping its last line: its reason
-/// when it fails, which also removed the file. Blocking.
-fn wait(mut child: std::process::Child, path: PathBuf) -> Ended {
+/// when it fails. Blocking.
+fn wait(mut child: std::process::Child, made: Made) -> Ended {
     let mut last_line = String::new();
     if let Some(err) = child.stderr.take() {
         for line in std::io::BufReader::new(err).lines().map_while(Result::ok) {
@@ -280,7 +316,7 @@ fn wait(mut child: std::process::Child, path: PathBuf) -> Ended {
     }
     match child.wait() {
         Ok(s) => Ended::Exited {
-            path,
+            made,
             ok: s.success(),
             status: s.code(),
             last_line,
@@ -289,10 +325,10 @@ fn wait(mut child: std::process::Child, path: PathBuf) -> Ended {
     }
 }
 
-/// Remove an unused recording file on a file job.
-fn remove_later(state: &mut State, path: PathBuf) {
+/// Remove an unused or failed recording's file on a file job.
+fn remove_later(state: &mut State, made: Made) {
     state.spawn_fs_job(move || {
-        let _ = std::fs::remove_file(&path);
+        made.remove();
         Box::new(|_: &mut State| {})
     });
 }
@@ -315,16 +351,17 @@ fn saved_notice(state: &mut State, path: &Path) {
 }
 
 /// Make a new empty file named for `secs` in the Screencasts folder, made if missing, for the
-/// recorder to write. Blocking.
-fn make_file(secs: i64) -> Result<PathBuf, String> {
+/// recorder to write through the open file. Blocking.
+fn make_file(secs: i64) -> Result<(std::fs::File, Made), String> {
     let videos = reprisefs::places::user_dir("VIDEOS", "Videos").filter(|p| p.is_dir());
     let home = std::env::var_os("HOME").map(PathBuf::from);
     let dir = folder(videos, home).ok_or("There is no home folder to save it in.")?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("Cannot make {}: {e}", dir.display()))?;
     let name = file_name(&reprisefs::locale::localtime(secs));
-    let (_, path) = reprisefs::ops::create_new_numbered(&dir, &name)
-        .map_err(|e| format!("Cannot write in {}: {e}", dir.display()))?;
-    Ok(path)
+    let cannot = |e: std::io::Error| format!("Cannot write in {}: {e}", dir.display());
+    let (file, path) = reprisefs::ops::create_new_numbered(&dir, &name).map_err(cannot)?;
+    let made = Made::of(&file, path).map_err(cannot)?;
+    Ok((file, made))
 }
 
 /// `Screencasts` in the Videos folder when there is one, else in home.
@@ -382,24 +419,46 @@ mod tests {
     }
 
     #[test]
-    fn the_recorder_hears_the_file_the_output_the_area_and_the_sound() {
-        let path = Path::new("/v/Screencast.mp4");
+    fn the_recorder_hears_the_descriptor_the_output_the_area_and_the_sound() {
         let words = |a: Vec<OsString>| -> Vec<String> {
             a.iter().map(|s| s.to_string_lossy().into_owned()).collect()
         };
         assert_eq!(
-            words(recorder_argv(path, "DP-1", None, false)),
-            [PROGRAM, "--file", "/v/Screencast.mp4", "--output", "DP-1"]
+            words(recorder_argv(7, "DP-1", None, false)),
+            [PROGRAM, "--fd", "7", "--output", "DP-1"]
         );
         assert_eq!(
             words(recorder_argv(
-                path,
+                7,
                 "DP-1",
                 Some(Rect::new(10, 20, 300, 200)),
                 true
             ))[5..],
             ["--area", "10,20,300,200", "--sound"]
         );
+    }
+
+    #[test]
+    fn a_failed_recording_removes_its_own_file_but_not_a_name_swapped_in() {
+        let dir = std::env::temp_dir().join(format!("reprise-record-made-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (name, victim) = (dir.join("a.mp4"), dir.join("victim"));
+        std::fs::write(&victim, "keep").unwrap();
+        let (file, made) = reprisefs::ops::create_new_numbered(&dir, "a.mp4").unwrap();
+        let made = Made::of(&file, made).unwrap();
+        std::fs::remove_file(&name).unwrap();
+        std::os::unix::fs::symlink(&victim, &name).unwrap();
+        made.remove();
+        assert!(
+            name.symlink_metadata().unwrap().is_symlink(),
+            "the planted link stays"
+        );
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "keep");
+        std::fs::remove_file(&name).unwrap();
+        let (file, made) = reprisefs::ops::create_new_numbered(&dir, "a.mp4").unwrap();
+        Made::of(&file, made).unwrap().remove();
+        assert!(!name.exists(), "its own file goes");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

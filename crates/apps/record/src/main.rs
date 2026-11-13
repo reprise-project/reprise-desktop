@@ -1,6 +1,6 @@
 //! reprise-record: records a screen, or an area of it, and with `--sound` what plays, into an MP4
-//! file the compositor made, until SIGINT or SIGTERM or until the screen goes. On failure it
-//! removes the file, and its last line on stderr is the reason.
+//! file the compositor made and handed it open, until SIGINT or SIGTERM or until the screen goes.
+//! On failure its last line on stderr is the reason.
 
 mod args;
 mod movie;
@@ -15,6 +15,7 @@ use reprisevideo::encode::choice;
 use reprisevideo::encode::probe::{self, Backend};
 use reprisevideo::stream::{self, DRM_FORMAT_MOD_LINEAR, Frame, FrameBuffer};
 use sound::Sound;
+use std::os::fd::RawFd;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::mpsc;
@@ -39,7 +40,6 @@ fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             log::warn!("recording failed: {e}");
-            let _ = std::fs::remove_file(&args.file);
             eprintln!("{e}");
             ExitCode::FAILURE
         }
@@ -56,6 +56,7 @@ enum Event {
 }
 
 fn record(args: &Args, stop: libc::sigset_t) -> Result<(), String> {
+    let into = movie_url(args.fd)?;
     ffmpeg::init().map_err(|e| format!("FFmpeg: {e}"))?;
     ffmpeg::util::log::set_level(ffmpeg::util::log::Level::Error);
     let (tx, events) = mpsc::channel();
@@ -69,12 +70,7 @@ fn record(args: &Args, stop: libc::sigset_t) -> Result<(), String> {
         .ok_or_else(|| format!("The screen {} is not shared.", args.output))?;
     let (device, order) = picked.join().map_err(|_| "Finding an encoder failed.")?;
     let (first, modifiers) = order.first().ok_or("No H.264 encoder works here.")?;
-    log::info!(
-        "recording {} with {} into {}",
-        args.output,
-        first.label(),
-        args.file.display()
-    );
+    log::info!("recording {} with {}", args.output, first.label());
     let fd = cast.pipewire()?;
     let (_stream, mut frames, _sizes) = stream::spawn(fd, screen.node, modifiers, APP, || {})?;
     let video_tx = tx.clone();
@@ -94,14 +90,7 @@ fn record(args: &Args, stop: libc::sigset_t) -> Result<(), String> {
         false => None,
     };
     let backends = order.iter().map(|(b, _)| *b).collect();
-    let mut file = File::new(
-        &args.file,
-        &device,
-        backends,
-        args.area,
-        screen.size,
-        args.sound,
-    );
+    let mut file = File::new(&into, &device, backends, args.area, screen.size, args.sound);
     let ended = file.run(&events);
     let finished = file.finish();
     drop(cast);
@@ -114,6 +103,23 @@ fn record(args: &Args, stop: libc::sigset_t) -> Result<(), String> {
         }
         (true, Ok(())) => Ok(()),
     }
+}
+
+/// The path FFmpeg opens to write the movie into `fd`, an inherited regular file. Through
+/// /proc the open reaches the descriptor's own file, so a name swapped in the folder meanwhile
+/// is never followed; the faststart pass reopens it the same way to read it back.
+fn movie_url(fd: RawFd) -> Result<PathBuf, String> {
+    // SAFETY: all-zero is a valid stat, and fstat only fills it; a closed `fd` fails.
+    let (done, st) = unsafe {
+        let mut st: libc::stat = std::mem::zeroed();
+        (libc::fstat(fd, &mut st), st)
+    };
+    if done != 0 || st.st_mode & libc::S_IFMT != libc::S_IFREG {
+        return Err(format!(
+            "Descriptor {fd} is not a file to write the recording into."
+        ));
+    }
+    Ok(PathBuf::from(format!("/proc/self/fd/{fd}")))
 }
 
 /// The render node, and the backends to try in Remote Desktop's automatic order with the stream
@@ -329,7 +335,7 @@ impl<'a> File<'a> {
             return Ok(());
         }
         let movie = self.movie.as_ref().expect("opened before the header");
-        let failed = |e: ffmpeg::Error| format!("Cannot write {}: {e}", self.path.display());
+        let failed = |e: ffmpeg::Error| format!("Cannot write the recording: {e}");
         let mut output = ffmpeg::format::output_as(self.path, "mp4").map_err(failed)?;
         let mut video = output.add_stream(movie.encoder().codec()).map_err(failed)?;
         video.set_parameters(ffmpeg::codec::Parameters::from(movie.encoder()));
@@ -368,7 +374,7 @@ impl<'a> File<'a> {
             p.set_stream(stream);
             p.rescale_ts(from, to);
             p.write_interleaved(output)
-                .map_err(|e| format!("Cannot write {}: {e}", self.path.display()))?;
+                .map_err(|e| format!("Cannot write the recording: {e}"))?;
         }
         Ok(())
     }
@@ -392,8 +398,7 @@ impl<'a> File<'a> {
         }
         drained = drained.and(self.write(audio, AUDIO));
         if let Some(output) = self.output.as_mut() {
-            (output.write_trailer())
-                .map_err(|e| format!("Cannot finish {}: {e}", self.path.display()))?;
+            (output.write_trailer()).map_err(|e| format!("Cannot finish the recording: {e}"))?;
         }
         drained
     }
@@ -451,11 +456,21 @@ mod tests {
     use std::time::Duration;
 
     #[test]
-    fn a_finished_file_plays_for_as_long_as_it_recorded() {
+    fn the_handed_file_plays_for_as_long_as_it_recorded_and_a_name_swapped_in_is_not_followed() {
+        use std::os::fd::AsRawFd;
         ffmpeg::init().unwrap();
         ffmpeg::util::log::set_level(ffmpeg::util::log::Level::Quiet);
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("a.mp4");
+        let (name, kept, victim) = (
+            dir.path().join("a.mp4"),
+            dir.path().join("b.mp4"),
+            dir.path().join("victim"),
+        );
+        std::fs::write(&victim, "keep").unwrap();
+        let handed = std::fs::File::create_new(&name).unwrap();
+        std::fs::rename(&name, &kept).unwrap();
+        std::os::unix::fs::symlink(&victim, &name).unwrap();
+        let path = movie_url(handed.as_raw_fd()).unwrap();
         let node = PathBuf::from(probe::RENDER_NODE);
         let area = Some(Area {
             x: 8,
@@ -471,7 +486,8 @@ mod tests {
                 .unwrap();
         }
         file.finish().unwrap();
-        let input = ffmpeg::format::input(&path).unwrap();
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "keep");
+        let input = ffmpeg::format::input(&kept).unwrap();
         let video = input.streams().best(ffmpeg::media::Type::Video).unwrap();
         let params = video.parameters();
         // SAFETY: plain fields of the stream's parameters.
@@ -480,6 +496,14 @@ mod tests {
         assert_eq!(input.streams().count(), 1, "no sound asked for");
         let seconds = input.duration() as f64 / f64::from(ffmpeg::ffi::AV_TIME_BASE);
         assert!((0.8..1.5).contains(&seconds), "{seconds} s");
+    }
+
+    #[test]
+    fn a_descriptor_that_is_not_a_regular_file_is_refused() {
+        let (r, _w) = std::io::pipe().unwrap();
+        use std::os::fd::AsRawFd;
+        assert!(movie_url(r.as_raw_fd()).is_err());
+        assert!(movie_url(9999).is_err());
     }
 
     #[test]
