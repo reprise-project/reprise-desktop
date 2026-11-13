@@ -58,6 +58,7 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
             ("scale", "Scale:"),
             ("vrr", "Enable variable refresh rate"),
             ("forget_layouts", "Forget saved layouts"),
+            ("multiple_displays", "Multiple displays:"),
         ],
         Page::NightLight => &[
             ("nl_enabled", "Warm the screen's colors at night"),

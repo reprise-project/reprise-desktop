@@ -123,10 +123,11 @@ impl Head {
         self.current.and_then(|i| self.modes.get(i)).copied()
     }
 
-    /// What it runs as a configuration that puts it back: its mode,
-    /// transform, scale and place.
+    /// What it runs as a configuration that puts it back: on or off, its
+    /// mode, transform, scale and place.
     pub fn state(&self) -> HeadConfig {
         HeadConfig {
+            enabled: Some(self.enabled),
             mode: self.current_mode(),
             transform: Some(self.transform),
             scale: Some(self.scale),
@@ -139,6 +140,8 @@ impl Head {
 /// What to set on a head; a None keeps what it runs.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct HeadConfig {
+    /// Some(false) turns the head off and the rest is ignored; Some(true) turns an off head on.
+    pub enabled: Option<bool>,
     pub mode: Option<HeadMode>,
     pub transform: Option<Transform>,
     pub scale: Option<f64>,
@@ -523,11 +526,14 @@ impl Model {
     /// The configuration `job` needs; None when one of its heads or modes
     /// is gone.
     fn build(&mut self, job: &Job, serial: u32) -> Option<Configure> {
-        let sets: Vec<(ObjId, ConfigHead)> = match job {
+        let sets: Vec<(ObjId, Option<ConfigHead>)> = match job {
             Job::Apply { heads, .. } => heads
                 .iter()
                 .map(|(name, cfg)| {
                     let (id, d) = self.heads.iter().find(|(_, d)| d.head.name == *name)?;
+                    if cfg.enabled == Some(false) {
+                        return Some((*id, None));
+                    }
                     let mode = match cfg.mode {
                         None => None,
                         Some(want) => Some(
@@ -543,7 +549,7 @@ impl Model {
                         adaptive_sync: cfg.adaptive_sync,
                         position: cfg.position,
                     };
-                    Some((*id, set))
+                    Some((*id, Some(set)))
                 })
                 .collect::<Option<_>>()?,
             Job::Probe { head, .. } => {
@@ -554,7 +560,7 @@ impl Model {
                     adaptive_sync: Some(true),
                     ..ConfigHead::default()
                 };
-                vec![(*head, set)]
+                vec![(*head, Some(set))]
             }
         };
         self.next_id = self.next_id.wrapping_add(1);
@@ -563,7 +569,7 @@ impl Model {
             .iter()
             .map(|(id, d)| {
                 let part = if let Some((_, set)) = sets.iter().find(|(t, _)| t == id) {
-                    Some(*set)
+                    *set
                 } else if d.head.enabled {
                     Some(ConfigHead::default())
                 } else {
@@ -839,6 +845,50 @@ mod tests {
                     (30, None),
                 ],
             })]
+        );
+    }
+
+    #[test]
+    fn a_configuration_turns_one_head_off_and_another_on() {
+        let mut m = Model::new(3);
+        feed(&mut m, dp1());
+        feed(&mut m, two_more());
+        m.event(In::Done(7));
+        let out = m.configure_all(
+            1,
+            vec![
+                (
+                    "DP-1".into(),
+                    HeadConfig {
+                        enabled: Some(false),
+                        position: Some((5, 5)),
+                        ..HeadConfig::default()
+                    },
+                ),
+                (
+                    "DP-2".into(),
+                    HeadConfig {
+                        enabled: Some(true),
+                        position: Some((0, 0)),
+                        ..HeadConfig::default()
+                    },
+                ),
+            ],
+        );
+        let [Out::Configure(c)] = out.as_slice() else {
+            panic!("{out:?}")
+        };
+        let on = ConfigHead {
+            position: Some((0, 0)),
+            ..ConfigHead::default()
+        };
+        assert_eq!(
+            c.heads,
+            vec![
+                (10, None),
+                (20, Some(ConfigHead::default())),
+                (30, Some(on))
+            ]
         );
     }
 

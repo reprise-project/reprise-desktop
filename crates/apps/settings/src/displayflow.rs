@@ -177,7 +177,12 @@ impl Flow {
         };
         let mut out = Vec::new();
         if keep {
-            for (name, asked) in q.asked {
+            // A display turned off keeps its `[[outputs]]` keys for when it comes back.
+            for (name, asked) in q
+                .asked
+                .into_iter()
+                .filter(|(_, a)| a.enabled != Some(false))
+            {
                 let back = q
                     .back
                     .iter()
@@ -574,5 +579,27 @@ mod tests {
         d.set_heads(vec![test_head("HDMI-A-1")]);
         assert_eq!(flow.applied(revert, false, &mut d, &mut req), vec![]);
         assert!(!flow.busy());
+    }
+
+    #[test]
+    fn yes_after_only_one_display_writes_nothing_for_the_one_turned_off() {
+        let mut b = test_head("HDMI-A-1");
+        b.position = (1920, 0);
+        let mut d = Display::with_heads(vec![test_head("DP-1"), b]);
+        d.pick_projection(2);
+        let mut req = HeadRequests::default();
+        let mut flow = Flow::default();
+        flow.apply(&mut d, &mut req, false);
+        let (serial, set) = req.take().remove(0);
+        assert_eq!(set[1].1.enabled, Some(false));
+        flow.applied(serial, true, &mut d, &mut req);
+        let out = flow.answer(true, &mut req);
+        let saved: Vec<&str> = (out.iter())
+            .filter_map(|e| match e {
+                Effect::Save(n, _) => Some(n.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(saved, ["DP-1"]);
     }
 }
