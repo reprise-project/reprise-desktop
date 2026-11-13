@@ -6,7 +6,9 @@ use super::desktop::{
     FPS_CONTROLS, GLOW_CONTROLS, MOTION_NOTE, OVERVIEW_NOTE, REVEAL_CONTROLS, SEARCH_NOTE,
     SLIDE_MOTION_NOTE, SLIDE_MOTION_TEXT, flip_note, overview_note, search_note,
 };
-use super::input::{MOUSE_KEYS_CONTROLS, SLOW_CONTROLS, STICKY_CONTROLS, TOUCHPAD_CONTROLS};
+use super::input::{
+    BOUNCE_CONTROLS, MOUSE_KEYS_CONTROLS, SLOW_CONTROLS, STICKY_CONTROLS, TOUCHPAD_CONTROLS,
+};
 use super::system::{
     ALLOW_BOOST, BELL, CLIPBOARD_HISTORY, LOCKER_NOTE, NOTIFICATION_SOUND, QUALITY_VALUE,
     REMOTE_BORDER, REMOTE_ENCODER, REMOTE_FRAME_RATE, REMOTE_LOCK_GRACE, REMOTE_LOCK_ON_LEAVE,
@@ -15,10 +17,10 @@ use super::system::{
     follow_lock, follow_screen,
 };
 use super::{
-    CURSOR_FIXED_ROWS, DEBUG_IN_CAPTURES, DEBUG_OVERLAY, DELAY_MAX, DELAY_MIN, DOUBLE_CLICK,
-    GTK_FIXED_ROWS, KB_ADD, KB_LAYOUTS, KB_REMOVE, KB_SWITCH_NOTE, KB_UP, KELVIN_MAX, KELVIN_MIN,
-    KELVIN_STEP, MK_ACCEL, MK_SPEED, PRIVACY_LOCATION, SCROLL_SPEED, SPEED_STEPS, Steps,
-    THUMBNAILERS, THUMBS, THUMBS_MB, THUMBS_SIZE, TRAY_CUSTOMIZE, WATER, WATER_STYLE,
+    BOUNCE_DELAY, CURSOR_FIXED_ROWS, DEBUG_IN_CAPTURES, DEBUG_OVERLAY, DELAY_MAX, DELAY_MIN,
+    DOUBLE_CLICK, GTK_FIXED_ROWS, KB_ADD, KB_LAYOUTS, KB_REMOVE, KB_SWITCH_NOTE, KB_UP, KELVIN_MAX,
+    KELVIN_MIN, KELVIN_STEP, MK_ACCEL, MK_SPEED, PRIVACY_LOCATION, SCROLL_SPEED, SPEED_STEPS,
+    Steps, THUMBNAILERS, THUMBS, THUMBS_MB, THUMBS_SIZE, TRAY_CUSTOMIZE, WATER, WATER_STYLE,
 };
 use crate::notifypage::{AUTO_DND, QUIET, QUIET_DEFAULT, QUIET_TIMES};
 use crate::registry::Page;
@@ -37,7 +39,7 @@ use crate::model::{
     HOT_CORNERS, INTERFACES, LOCK_GRACES, MENU_ANIMATIONS, PAGER_MARKS, POSITIONS,
     QT_PLATFORM_THEMES, REMOTE_ENCODERS, REMOTE_QUALITIES, STARTMENU_STYLES, SWITCH_ANIMATIONS,
     SWITCHER_SIZES, SWITCHER_STYLES, Settings, Shortcut, TASKBAR_BUTTONS, TASKBAR_POSITIONS,
-    TEXT_SIZES, TITLE_DOUBLE_CLICKS, WATER_STYLES, keys_for, remote_quality_row,
+    TEXT_SIZES, TITLE_DOUBLE_CLICKS, VISUAL_BELLS, WATER_STYLES, keys_for, remote_quality_row,
 };
 
 pub(super) enum Bind {
@@ -363,6 +365,8 @@ pub(super) fn binds() -> Vec<Bind> {
         Bind::Flag("sticky_two_keys_off", lens!(sticky_two_keys_off)),
         Bind::Flag("slow_keys", lens!(slow_keys)),
         Bind::Delay("slow_keys_delay", lens!(slow_keys_delay)),
+        Bind::Flag("bounce_keys", lens!(bounce_keys)),
+        Bind::Steps("bounce_keys_delay", lens!(bounce_keys_delay), BOUNCE_DELAY),
         Bind::Flag("key_shortcuts", lens!(key_shortcuts)),
         Bind::Named(
             "color_filter",
@@ -385,6 +389,8 @@ pub(super) fn binds() -> Vec<Bind> {
             MK_ACCEL,
         ),
         Bind::NamedNum("text_size", lens!(text_size), TEXT_SIZES),
+        Bind::Named("visual_bell", lens!(visual_bell), VISUAL_BELLS),
+        Bind::Flag("locate_pointer", lens!(locate_pointer)),
     ]
 }
 
@@ -740,14 +746,16 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
     for id in SLOW_CONTROLS {
         ax.set_enabled(id, s.slow_keys);
     }
-    for id in MOUSE_KEYS_CONTROLS {
-        ax.set_enabled(id, s.mouse_keys);
+    for id in BOUNCE_CONTROLS {
+        ax.set_enabled(id, s.bounce_keys);
     }
-    let tenths = s.slow_keys_delay;
-    ax.set_text(
-        "slow_delay_value",
-        &format!("{}.{} seconds", tenths / 10, tenths % 10),
-    );
+    let seconds = |tenths: i64| format!("{}.{} seconds", tenths / 10, tenths % 10);
+    ax.set_text("slow_delay_value", &seconds(s.slow_keys_delay));
+    ax.set_text("bounce_delay_value", &seconds(s.bounce_keys_delay));
+    let pointer = &mut sheet.pages[Page::PointerAlerts.index()];
+    for id in MOUSE_KEYS_CONTROLS {
+        pointer.set_enabled(id, s.mouse_keys);
+    }
     let vision = &mut sheet.pages[Page::MagnifierFilters.index()];
     crate::magnifierpage::follow(vision, s);
     vision.set_check(crate::magnifierpage::REDUCE_MOTION, s.reduce_motion);

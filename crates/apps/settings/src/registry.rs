@@ -57,6 +57,7 @@ pub fn build(p: Page, src: &Sources, a: Area) -> Form {
         Page::Tablet => crate::tabletpage::page(a, &[], 0, &[]),
         Page::Cursor => pages::cursor(a, src.cursor_themes),
         Page::TextKeys => pages::text_and_keys(a),
+        Page::PointerAlerts => pages::pointer_and_alerts(a),
         Page::MagnifierFilters => crate::magnifierpage::page(a),
         Page::Sound => pages::sound(a, src.sound_themes),
         Page::Notifications => pages::notifications(a),
@@ -161,6 +162,7 @@ mod tests {
                 "Cursor",
                 "Tablet",
                 "Text & Keys",
+                "Pointer & Alerts",
                 "Magnifier & Filters",
                 "Network",
                 "Remote Desktop",
@@ -239,8 +241,8 @@ mod tests {
         assert_eq!(open(&s), Page::Appearance, "the first page opens");
     }
 
-    /// The list's inside is 456 px at the smallest sheet: 44 rows at 772 px, so it scrolls
-    /// until the sheet is 316 px taller. On a sheet 56 px shorter, a page opened from its end
+    /// The list's inside is 456 px at the smallest sheet: 45 rows at 789 px, so it scrolls
+    /// until the sheet is 333 px taller. On a sheet 56 px shorter, a page opened from its end
     /// (keys or `--page`) comes into view.
     #[test]
     fn the_list_scrolls_to_the_open_page() {
@@ -250,16 +252,16 @@ mod tests {
         let px = Theme::default().fonts.size_px;
         let mut sheet = built();
         let list = sheet.layout(&text, px).list.expect("a list sheet");
-        assert_eq!(list.rows.len(), 44, "seven headings, 30 pages, seven links");
-        assert_eq!((list.total, list.inner.height), (772, 456));
-        assert!(list.scrollbar.is_some(), "the rows overflow by 316 px");
-        sheet.size.1 += 316;
+        assert_eq!(list.rows.len(), 45, "seven headings, 31 pages, seven links");
+        assert_eq!((list.total, list.inner.height), (789, 456));
+        assert!(list.scrollbar.is_some(), "the rows overflow by 333 px");
+        sheet.size.1 += 333;
         let list = sheet.layout(&text, px).list.unwrap();
         assert!(list.scrollbar.is_none(), "every row shows");
 
-        sheet.size.1 -= 372;
+        sheet.size.1 -= 389;
         let list = sheet.layout(&text, px).list.unwrap();
-        assert_eq!((list.total, list.inner.height), (772, 400));
+        assert_eq!((list.total, list.inner.height), (789, 400));
         let bar = list.scrollbar.expect("the rows overflow");
         assert_eq!(bar.right(), list.inner.right() + bar.width);
         let last = *list.rows.last().unwrap();
@@ -613,9 +615,10 @@ mod tests {
             (Page::Mouse, "mouse_scroll_speed", "Scroll speed"),
             (Page::Touchpad, "touchpad_scroll_speed", "Scroll speed"),
             (Page::TextKeys, "slow_keys_delay", "SlowKeys delay"),
-            (Page::TextKeys, "mouse_keys_speed", "MouseKeys speed"),
+            (Page::TextKeys, "bounce_keys_delay", "BounceKeys delay"),
+            (Page::PointerAlerts, "mouse_keys_speed", "MouseKeys speed"),
             (
-                Page::TextKeys,
+                Page::PointerAlerts,
                 "mouse_keys_acceleration",
                 "MouseKeys acceleration",
             ),

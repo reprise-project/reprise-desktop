@@ -1,11 +1,12 @@
-//! Keyboard, Mouse, Touchpad, Cursor and Text & Keys.
+//! Keyboard, Mouse, Touchpad, Cursor, Text & Keys and Pointer & Alerts.
 
 use super::{
-    Area, CURSOR_DEFAULT_ROW, CURSOR_PREVIEW, DELAY_STEPS, DOUBLE_CLICK, GX, KB_ADD, KB_LAYOUTS,
-    KB_REMOVE, KB_SWITCH_NOTE, KB_UP, MK_ACCEL, MK_SPEED, SC_ADD, SC_EDIT, SC_REMOVE, SCROLL_SPEED,
-    SPEED_STEPS, X, button, choice, combo, edit, ends_track, group, shortcuts, spin, updown,
+    Area, BOUNCE_DELAY, CURSOR_DEFAULT_ROW, CURSOR_PREVIEW, DELAY_STEPS, DOUBLE_CLICK, GX, KB_ADD,
+    KB_LAYOUTS, KB_REMOVE, KB_SWITCH_NOTE, KB_UP, MK_ACCEL, MK_SPEED, SC_ADD, SC_EDIT, SC_REMOVE,
+    SCROLL_SPEED, SPEED_STEPS, X, button, choice, combo, edit, ends_track, group, shortcuts, spin,
+    updown,
 };
-use crate::model::{CLICK_METHODS, CURSOR_SIZES, TEXT_SIZES};
+use crate::model::{CLICK_METHODS, CURSOR_SIZES, TEXT_SIZES, VISUAL_BELLS};
 use reprisekit::classic::widgets::{BUTTON_GAP, BUTTON_H, BUTTON_W, LINE_H};
 use reprisekit::controls::form::{Control, Form, Item};
 use reprisekit::controls::listbox::ListBox;
@@ -378,7 +379,7 @@ pub fn preview_size(a: Area) -> (u32, u32) {
     (r.width as u32 - 4, r.height as u32 - 4)
 }
 
-/// The StickyKeys controls that grey with its check box, the SlowKeys ones and the MouseKeys ones.
+/// The StickyKeys controls that grey with its check box, the SlowKeys, BounceKeys and MouseKeys ones.
 pub(super) const STICKY_CONTROLS: [&str; 2] = ["sticky_lock", "sticky_two_keys_off"];
 
 pub(super) const MOUSE_KEYS_CONTROLS: [&str; 9] = [
@@ -401,8 +402,16 @@ pub(super) const SLOW_CONTROLS: [&str; 5] = [
     "slow_long",
 ];
 
-/// The Text & Keys page: the text size on top, then StickyKeys, SlowKeys
-/// and MouseKeys, each in its group, and the shortcuts that turn them on and off.
+pub(super) const BOUNCE_CONTROLS: [&str; 5] = [
+    "bounce_delay_label",
+    "bounce_delay_value",
+    "bounce_short",
+    "bounce_keys_delay",
+    "bounce_long",
+];
+
+/// The Text & Keys page: the text size on top, then StickyKeys, SlowKeys and BounceKeys, each in
+/// its group, and the shortcuts that turn the aids on and off.
 pub fn text_and_keys(a: Area) -> Form {
     let gw = a.gw();
     let note = |id, y, text: &str| Item::label_at(id, GX, y, gw, text);
@@ -430,22 +439,15 @@ pub fn text_and_keys(a: Area) -> Form {
         153,
         "Turn StickyKeys off when two keys are pressed at &once",
     ));
-    items.push(group(a, "slow_group", 179, 115, "SlowKeys"));
-    items.push(note(
-        "slow_note",
-        197,
-        "A key counts only once it has been held down for the delay.",
-    ));
-    items.push(Item::check("slow_keys", GX, 218, "U&se SlowKeys"));
-    items.push(Item::label_at(
-        "slow_delay_label",
-        GX,
-        240,
-        200,
-        "&Keys must be held down for:",
-    ));
-    items.extend(ends_track(
+    items.extend(delay_group(
         a,
+        179,
+        ["slow_group", "slow_keys", "slow_delay_label"],
+        ["SlowKeys", "U&se SlowKeys", "&Keys must be held down for:"],
+        Some((
+            "slow_note",
+            "A key counts only once it has been held down for the delay.",
+        )),
         [
             "slow_short",
             "slow_keys_delay",
@@ -453,26 +455,104 @@ pub fn text_and_keys(a: Area) -> Form {
             "slow_delay_value",
         ],
         "SlowKeys delay",
-        267,
+        TrackBar::new(0, DELAY_STEPS),
+    ));
+    items.extend(delay_group(
+        a,
+        300,
+        ["bounce_group", "bounce_keys", "bounce_delay_label"],
+        [
+            "BounceKeys",
+            "Use &BounceKeys",
+            "&Ignore a key pressed again within:",
+        ],
+        None,
+        [
+            "bounce_short",
+            "bounce_keys_delay",
+            "bounce_long",
+            "bounce_delay_value",
+        ],
+        "BounceKeys delay",
+        TrackBar::new(0, BOUNCE_DELAY.count),
+    ));
+    items.push(Item::check(
+        "key_shortcuts",
+        X,
+        400,
+        "Use the keyboard s&hortcuts",
+    ));
+    items.push(
+        Item::new(
+            "shortcuts_note",
+            Rect::new(X, 418, a.w - 18, 2 * LINE_H),
+            Control::Lines(vec![
+                "Shift 5 times toggles StickyKeys, right Shift held 8 seconds".into(),
+                "SlowKeys, and left Alt+left Shift+Num Lock MouseKeys.".into(),
+            ]),
+        )
+        .under_check(),
+    );
+    Form::new(items)
+}
+
+/// A group at `y` for a key aid with a delay: its note (id and text) if any, its check box, the
+/// delay's label and a Shorter-Longer trackbar `name` to a reader; 94 px tall, 115 with a note.
+/// `ids` and `texts` are the group, check box and label; `track` are the trackbar row's ids as
+/// [`ends_track`] takes them.
+#[allow(clippy::too_many_arguments)]
+fn delay_group(
+    a: Area,
+    y: i32,
+    ids: [&'static str; 3],
+    texts: [&str; 3],
+    note: Option<(&'static str, &str)>,
+    track: [&'static str; 4],
+    name: &'static str,
+    bar: TrackBar,
+) -> Vec<Item> {
+    let [group_id, check_id, label_id] = ids;
+    let [title, check, label] = texts;
+    let dy = if note.is_some() { 21 } else { 0 };
+    let mut items = vec![group(a, group_id, y, 94 + dy, title)];
+    if let Some((id, text)) = note {
+        items.push(Item::label_at(id, GX, y + 18, a.gw(), text));
+    }
+    items.push(Item::check(check_id, GX, y + 18 + dy, check));
+    items.push(Item::label_at(label_id, GX, y + 40 + dy, 200, label));
+    items.extend(ends_track(
+        a,
+        track,
+        name,
+        y + 67 + dy,
         27,
         ("Shorter", "Longer"),
         GX,
-        TrackBar::new(0, DELAY_STEPS),
+        bar,
     ));
+    items
+}
+
+/// The Pointer & Alerts page: MouseKeys, the Ctrl tap that shows where the pointer is, and what
+/// flashes when a program rings the bell.
+pub fn pointer_and_alerts(a: Area) -> Form {
+    let gw = a.gw();
     // The keypad moves the pointer: the switch and Num Lock's share a row, and the
     // speed and acceleration each take a row, Slow and Fast around the trackbar.
     let half = gw / 2;
-    items.push(group(a, "mouse_keys_group", 300, 98, "MouseKeys"));
-    items.push(Item::check("mouse_keys", GX, 318, "Use &MouseKeys"));
-    items.push(Item::check(
-        "mouse_keys_num_lock",
-        GX + half,
-        318,
-        "Only while &Num Lock is on",
-    ));
+    let mut items = vec![
+        group(a, "mouse_keys_group", 44, 98, "MouseKeys"),
+        Item::check("mouse_keys", GX, 62, "Use &MouseKeys"),
+        Item::check(
+            "mouse_keys_num_lock",
+            GX + half,
+            62,
+            "Only while &Num Lock is on",
+        ),
+    ];
     items.extend(mouse_keys_track(
         a,
-        344,
+        88,
         [
             "mk_speed_label",
             "mk_speed_slow",
@@ -485,7 +565,7 @@ pub fn text_and_keys(a: Area) -> Form {
     ));
     items.extend(mouse_keys_track(
         a,
-        372,
+        116,
         [
             "mk_accel_label",
             "mk_accel_slow",
@@ -496,23 +576,39 @@ pub fn text_and_keys(a: Area) -> Form {
         "MouseKeys acceleration",
         MK_ACCEL.count,
     ));
-    items.push(Item::check(
-        "key_shortcuts",
-        X,
-        404,
-        "Use the keyboard s&hortcuts",
-    ));
-    items.push(
-        Item::new(
-            "shortcuts_note",
-            Rect::new(X, 422, a.w - 18, 2 * LINE_H),
-            Control::Lines(vec![
-                "Shift 5 times toggles StickyKeys, right Shift held 8 seconds".into(),
-                "SlowKeys, and left Alt+left Shift+Num Lock MouseKeys.".into(),
-            ]),
-        )
-        .under_check(),
-    );
+    items.extend([
+        group(a, "locate_group", 148, 62, "Pointer Location"),
+        Item::check(
+            "locate_pointer",
+            GX,
+            166,
+            "Show where the pointer is when I tap &Ctrl",
+        ),
+        Item::label_at(
+            "locate_note",
+            GX,
+            186,
+            gw,
+            "Rings grow round the pointer, wherever it is.",
+        ),
+        group(a, "visual_group", 216, 82, "Visual Alerts"),
+        Item::label_at(
+            "visual_note",
+            GX,
+            234,
+            gw,
+            "For when the bell can't be heard.",
+        ),
+        Item::label_at("visual_bell_label", GX, 256, 110, "&Flash on the bell:"),
+        choice("visual_bell", GX + 114, 252, 150, VISUAL_BELLS),
+        Item::label_at(
+            "visual_sound_note",
+            GX,
+            278,
+            gw,
+            "The Sound page sets whether the bell sounds too.",
+        ),
+    ]);
     Form::new(items)
 }
 

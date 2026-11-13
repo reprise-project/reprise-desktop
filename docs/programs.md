@@ -296,7 +296,7 @@ asks first. Programs see `TERM=xterm-256color` and `COLORTERM=truecolor`.
 
 ## Reprise Settings
 
-One window, 30 pages under seven headings (Login Manager only where
+One window, 31 pages under seven headings (Login Manager only where
 `reprise-login` is installed), with link rows to the separate
 settings programs. Only one runs at a time. A link row ends in "..." and
 starts its program in its own window, as Start does, and Settings stays on
@@ -378,8 +378,10 @@ matched control focused.
     and how far a ring or strip turns per step.
   - **Bluetooth...** and **Printers...**
 - **Accessibility**
-  - **Text & Keys:** text size, StickyKeys, SlowKeys, MouseKeys and Use the
-    keyboard shortcuts.
+  - **Text & Keys:** text size, StickyKeys, SlowKeys, BounceKeys and Use
+    the keyboard shortcuts.
+  - **Pointer & Alerts:** MouseKeys, showing where the pointer is on a tap
+    of Ctrl, and what flashes when a program rings the bell.
   - **Magnifier & Filters:** colour filters and their intensity, whether
     the magnifier follows the text cursor and focus, and the screen reader:
     Use the screen reader starts or stops Orca at once, and Start the screen

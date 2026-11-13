@@ -56,13 +56,11 @@ impl Aid {
 
     /// The argv that opens Settings with this aid's check box focused.
     pub fn settings_argv(self) -> [&'static str; 5] {
-        [
-            "reprise-settings",
-            "--page",
-            "text-and-keys",
-            "--focus",
-            self.key(),
-        ]
+        let page = match self {
+            Aid::MouseKeys => "pointer-and-alerts",
+            Aid::StickyKeys | Aid::SlowKeys => "text-and-keys",
+        };
+        ["reprise-settings", "--page", page, "--focus", self.key()]
     }
 
     fn shortcut_keys(self) -> &'static str {
@@ -1299,6 +1297,9 @@ mod tests {
             ]
         );
         assert_eq!(Aid::StickyKeys.settings_argv()[4], "sticky_keys");
-        assert_eq!(Aid::MouseKeys.settings_argv()[4], "mouse_keys");
+        assert_eq!(
+            Aid::MouseKeys.settings_argv()[2..],
+            ["pointer-and-alerts", "--focus", "mouse_keys"]
+        );
     }
 }

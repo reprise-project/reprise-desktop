@@ -740,10 +740,7 @@ impl Dialog {
                     enabled: settings,
                     ..button(
                         "&Settings...",
-                        DialogAction::Spawn(format!(
-                            "reprise-settings --page text-and-keys --focus {}",
-                            aid.key()
-                        )),
+                        DialogAction::Spawn(aid.settings_argv().join(" ")),
                         false,
                     )
                 },

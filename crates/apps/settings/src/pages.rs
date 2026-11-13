@@ -35,7 +35,9 @@ pub use bind::{
     write_form, write_forms,
 };
 pub use desktop::{FORGET_FRAMES, search, switcher, taskbar, virtual_desktops, window_behavior};
-pub use input::{cursor, keyboard, mouse, preview_size, text_and_keys, touchpad};
+pub use input::{
+    cursor, keyboard, mouse, pointer_and_alerts, preview_size, text_and_keys, touchpad,
+};
 pub use lists::{
     draw_list, fill_list, fill_permissions, fill_shortcuts, fit_list_columns,
     fit_permission_columns, fit_shortcut_columns, list_key, new_list, new_permission_list,
@@ -83,6 +85,13 @@ const KELVIN_STEPS: usize = ((KELVIN_MAX - KELVIN_MIN) / KELVIN_STEP) as usize +
 const DELAY_MIN: i64 = 3;
 const DELAY_MAX: i64 = 20;
 const DELAY_STEPS: usize = (DELAY_MAX - DELAY_MIN) as usize + 1;
+
+/// The BounceKeys delay trackbar: 0.1 to 2.0 s in tenths, shortest on the left.
+const BOUNCE_DELAY: Steps = Steps {
+    first: 1,
+    step: 1,
+    count: 20,
+};
 
 /// The MouseKeys top speed trackbar: 100 to 2000 pixels a second in steps of 100, slowest on the left.
 const MK_SPEED: Steps = Steps {
