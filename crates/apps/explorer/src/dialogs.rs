@@ -600,12 +600,12 @@ impl Explorer {
                 title,
                 text,
                 choices,
-                ..
+                about,
             } => Some(msgbox::Fields {
                 text: text.clone(),
                 icon: self.error_icon(),
                 buttons: choices.clone(),
-                default: 0,
+                default: about.default_choice(choices.len()),
                 min_text_h: None,
                 min_w: repriseapp::caption_fit(title),
                 max_w: repriseapp::dialog_max_w(),
@@ -1038,11 +1038,12 @@ impl Explorer {
                 None => Reply::redraw(),
             };
         }
-        if let Dialog::Question { choices, .. } = d {
+        if let Dialog::Question { choices, about, .. } = d {
             let n = choices.len();
+            let default = about.default_choice(n);
             return match out {
                 form::Event::Cancel => self.question_answered(None, ctx),
-                form::Event::Default => self.question_answered(Some(0), ctx),
+                form::Event::Default => self.question_answered(Some(default), ctx),
                 form::Event::Pressed(id) => {
                     let i = (0..n).find(|&i| msgbox::button_id(i) == id);
                     self.question_answered(i, ctx)

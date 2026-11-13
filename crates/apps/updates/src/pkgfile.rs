@@ -117,7 +117,7 @@ pub fn read(path: &Path, kind: Kind) -> Result<Facts, String> {
     let p = path.as_os_str();
     let os = OsStr::new;
     let facts = match kind {
-        Kind::Pacman => parse_pacman(&output("pacman", &[os("-Qip"), p])?),
+        Kind::Pacman => parse_pacman(&output("pacman", &[os("-Qip"), os("--"), p])?),
         Kind::Deb => {
             let fields = ["Package", "Version", "Installed-Size", "Maintainer"];
             let mut args = vec![os("--field"), p];
@@ -137,7 +137,13 @@ pub fn pacman_targets(path: &Path) -> Result<Vec<String>, String> {
     let os = OsStr::new;
     let out = output(
         "pacman",
-        &[os("-Up"), os("--print-format"), os("%n"), path.as_os_str()],
+        &[
+            os("-Up"),
+            os("--print-format"),
+            os("%n"),
+            os("--"),
+            path.as_os_str(),
+        ],
     )?;
     Ok(out
         .lines()

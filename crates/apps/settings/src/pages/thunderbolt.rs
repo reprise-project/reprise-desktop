@@ -90,22 +90,26 @@ pub fn can_authorize(d: &Device) -> bool {
     !d.auto || d.waiting()
 }
 
-/// Show what boltd knows (None: it can't be reached), keeping the picked device picked, the
-/// buttons greyed while `busy` carries out a change.
-pub fn show_thunderbolt(page: &mut Form, found: Option<&Found>, busy: bool) {
+/// Show what boltd knows (None: it can't be reached), keeping the picked device picked by its
+/// uid, the buttons greyed while `busy` carries out a change. `shown` is what the list showed
+/// before, when that was not `found`.
+pub fn show_thunderbolt(page: &mut Form, found: Option<&Found>, shown: Option<&Found>, busy: bool) {
     let devices = found.map_or(&[][..], |f| &f.devices[..]);
+    let shown = shown.map_or(devices, |f| &f.devices[..]);
     let status = match found {
         None => NO_BOLT,
         Some(f) if f.domains == 0 && devices.is_empty() => NO_PORT,
         Some(_) if devices.is_empty() => NO_DEVICE,
         Some(_) => "",
     };
-    let picked = picked(page, devices);
+    let picked = selected(page, shown).map(|d| d.uid.clone());
     if let Some(Control::ListBox { list, .. }) = page.item_mut(TB_LIST).map(|i| &mut i.control) {
         let items: Vec<String> = devices.iter().map(Device::label).collect();
+        let at = picked.and_then(|uid| devices.iter().position(|d| d.uid == uid));
         if list.items != items {
-            let at = picked.and_then(|uid| devices.iter().position(|d| d.uid == uid));
             *list = ListBox::new(items, at);
+        } else {
+            list.selected = at;
         }
         list.detail = devices.iter().map(detail).collect();
         list.greyed = Vec::new();
@@ -114,19 +118,6 @@ pub fn show_thunderbolt(page: &mut Form, found: Option<&Found>, busy: bool) {
     page.set_enabled(TB_AUTHORIZE, !busy && d.is_some_and(can_authorize));
     page.set_enabled(TB_FORGET, !busy && d.is_some_and(|d| d.stored));
     page.set_text(TB_STATUS, status);
-}
-
-/// The uid of the device the list has picked, while it still shows `devices`' labels.
-fn picked(page: &Form, devices: &[Device]) -> Option<String> {
-    let Some(Control::ListBox { list, .. }) = page.item(TB_LIST).map(|i| &i.control) else {
-        return None;
-    };
-    let i = list.selected?;
-    let label = list.items.get(i)?;
-    devices
-        .iter()
-        .find(|d| d.label() == *label)
-        .map(|d| d.uid.clone())
 }
 
 /// The device picked in the list, if the list shows `devices`.

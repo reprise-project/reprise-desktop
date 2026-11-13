@@ -146,6 +146,17 @@ pub enum Asking {
     Disconnect(netshare::Share),
 }
 
+impl Asking {
+    /// The button Enter presses among `n`: for a server's question the last, which gvfs makes
+    /// its Cancel, so Enter never accepts an unknown host key.
+    pub fn default_choice(&self, n: usize) -> usize {
+        match self {
+            Asking::Connection => n.saturating_sub(1),
+            Asking::Disconnect(_) => 0,
+        }
+    }
+}
+
 /// The box title for a password asked by `host`.
 pub fn login_title(host: &str) -> String {
     format!("Connect to {host}")
@@ -640,6 +651,7 @@ mod tests {
         };
         assert_eq!(title, "Connect to box");
         assert_eq!(choices, &["Log In Anyway", "Cancel Login"]);
+        assert_eq!(Asking::Connection.default_choice(choices.len()), 1);
         ex.question_answered(Some(0), &mut ctx);
         assert!(matches!(ex.dialog, Some(Dialog::Connect(_))));
         ex.question_answered(None, &mut ctx);

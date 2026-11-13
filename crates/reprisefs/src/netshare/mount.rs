@@ -214,16 +214,18 @@ impl Talk<'_> {
                     if message.is_some() || current.is_none() {
                         current = self.credentials(field, default, message, post, rx);
                     }
-                    current.as_ref().map(|c| match field {
-                        Field::User => c.user.clone(),
-                        Field::Domain => c.domain.clone(),
-                        Field::Password => c.password.to_string(),
+                    current.as_ref().map(|c| {
+                        Zeroizing::new(match field {
+                            Field::User => c.user.clone(),
+                            Field::Domain => c.domain.clone(),
+                            Field::Password => c.password.to_string(),
+                        })
                     })
                 }
                 Prompt::Choice { message, choices } => {
                     post(Step::Question(Question { message, choices }));
                     match rx.recv() {
-                        Ok(Answer::Choice(i)) => Some((i + 1).to_string()),
+                        Ok(Answer::Choice(i)) => Some(Zeroizing::new((i + 1).to_string())),
                         _ => None,
                     }
                 }
