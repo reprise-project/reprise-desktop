@@ -17,6 +17,7 @@ use reprisekit::controls::msgbox;
 use reprisekit::controls::multiedit::{self, Metrics, MultiEdit, View};
 use reprisekit::controls::scrollbar::ThumbDrag;
 use reprisekit::controls::stickynote::{self, Colour, Strip};
+use reprisekit::frame::Grip;
 use reprisekit::look::Paint;
 use reprisekit::pointer::DoubleClick;
 use reprisekit::raster::{Canvas, Rect};
@@ -489,8 +490,15 @@ impl Extended for Notes {
     fn caption(&self, win: WinId) -> Caption {
         match win {
             CONFIRM => Caption::Prompt,
-            _ => Caption::Window,
+            _ => Caption::None,
         }
+    }
+
+    fn grip(&self, win: WinId, (x, y): (i32, i32), (w, h): (i32, i32)) -> Option<Grip> {
+        if self.note(win).is_none() || self.menu_on(win) {
+            return None;
+        }
+        stickynote::grip(&stickynote::layout(Rect::new(0, 0, w, h)), x, y)
     }
 
     fn place_tag(&self, win: WinId) -> Option<String> {

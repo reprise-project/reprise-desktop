@@ -1,7 +1,8 @@
-//! A sticky note's body: a strip along the top holding New (+) and Delete (x), over a flat
+//! A frameless sticky note: a strip along the top holding New (+) and Delete (x), over a flat
 //! multi-line edit the host draws into [`Layout::text`] with [`scheme`]'s colours.
 
 use crate::access::{self, Tree};
+use crate::frame::{self, Edges, Grip};
 use crate::paint::Paint;
 use crate::raster::{Canvas, Rect};
 use crate::shape::{self, Glyph};
@@ -92,6 +93,9 @@ const BUTTON_W: i32 = 22;
 const GLYPH: i32 = 8;
 /// The room between the body's left and top edges and the text.
 const TEXT_PAD: i32 = 4;
+/// The resize band along the note's edges, and how far each corner reaches along them.
+const BAND: i32 = 5;
+const CORNER: i32 = 16;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Part {
@@ -132,6 +136,7 @@ impl Strip {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Layout {
+    pub body: Rect,
     pub strip: Rect,
     pub new: Rect,
     pub delete: Rect,
@@ -143,6 +148,7 @@ pub fn layout(r: Rect) -> Layout {
     let strip = Rect::new(r.x, r.y, r.width, STRIP_H.min(r.height));
     let below = r.y + strip.height;
     Layout {
+        body: r,
         strip,
         new: Rect::new(r.x, r.y, BUTTON_W, strip.height),
         delete: Rect::new(r.right() - BUTTON_W, r.y, BUTTON_W, strip.height),
@@ -155,7 +161,26 @@ pub fn layout(r: Rect) -> Layout {
     }
 }
 
+/// The strip button at `(x, y)`; none in the resize band.
 pub fn hit(lay: &Layout, x: i32, y: i32) -> Option<Part> {
+    match grip(lay, x, y) {
+        Some(_) => None,
+        None => button(lay, x, y),
+    }
+}
+
+/// What a left press at `(x, y)` grabs: the band along the edges resizes the note, the strip
+/// outside its buttons moves it.
+pub fn grip(lay: &Layout, x: i32, y: i32) -> Option<Grip> {
+    let b = lay.body;
+    let e = frame::band_edges((b.width, b.height), x - b.x, y - b.y, BAND, CORNER);
+    if e != Edges::NONE {
+        return Some(Grip::Resize(e));
+    }
+    (lay.strip.contains(x, y) && button(lay, x, y).is_none()).then_some(Grip::Move)
+}
+
+fn button(lay: &Layout, x: i32, y: i32) -> Option<Part> {
     if lay.new.contains(x, y) {
         Some(Part::New)
     } else if lay.delete.contains(x, y) {
@@ -263,11 +288,47 @@ mod tests {
     #[test]
     fn the_strip_holds_new_at_the_left_and_delete_at_the_right() {
         let lay = layout(Rect::new(0, 0, 200, 150));
-        assert_eq!(hit(&lay, 5, 10), Some(Part::New));
-        assert_eq!(hit(&lay, 195, 10), Some(Part::Delete));
+        assert_eq!(hit(&lay, 8, 10), Some(Part::New));
+        assert_eq!(hit(&lay, 190, 10), Some(Part::Delete));
         assert_eq!(hit(&lay, 100, 10), None, "the strip between them");
-        assert_eq!(hit(&lay, 5, 40), None, "the text");
+        assert_eq!(hit(&lay, 8, 40), None, "the text");
         assert_eq!(lay.text, Rect::new(4, 24, 196, 126));
+    }
+
+    #[test]
+    fn the_strip_moves_the_note_and_the_band_along_its_edges_resizes_it() {
+        let lay = layout(Rect::new(0, 0, 200, 150));
+        let at = |x, y| grip(&lay, x, y);
+        assert_eq!(
+            at(100, 10),
+            Some(Grip::Move),
+            "the strip between the buttons"
+        );
+        assert_eq!(at(8, 10), None, "New");
+        assert_eq!(at(190, 10), None, "Delete");
+        assert_eq!(at(100, 80), None, "the text");
+        assert_eq!(at(100, 2), Some(Grip::Resize(Edges::TOP)), "over the strip");
+        assert_eq!(at(100, 148), Some(Grip::Resize(Edges::BOTTOM)));
+        assert_eq!(at(1, 80), Some(Grip::Resize(Edges::LEFT)));
+        assert_eq!(
+            at(198, 80),
+            Some(Grip::Resize(Edges::RIGHT)),
+            "over the text"
+        );
+        for (x, y, e) in [
+            (2, 2, Edges::TOP | Edges::LEFT),
+            (197, 2, Edges::TOP | Edges::RIGHT),
+            (2, 147, Edges::BOTTOM | Edges::LEFT),
+            (197, 147, Edges::BOTTOM | Edges::RIGHT),
+        ] {
+            assert_eq!(at(x, y), Some(Grip::Resize(e)), "({x}, {y})");
+            assert_eq!(hit(&lay, x, y), None, "({x}, {y}) is no button");
+        }
+        assert_eq!(
+            at(2, 10),
+            Some(Grip::Resize(Edges::TOP | Edges::LEFT)),
+            "over New"
+        );
     }
 
     #[test]

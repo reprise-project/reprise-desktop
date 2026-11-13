@@ -7,6 +7,7 @@ use crate::{DropForm, Event, Host, MAIN, Reply, WinId, editmenu, fielddrop, file
 use reprisekit::controls::menu::MenuCtx;
 use reprisekit::raster::Rect;
 use smithay_client_toolkit::reexports::calloop::timer::{TimeoutAction, Timer};
+use smithay_client_toolkit::reexports::protocols::xdg::shell::client::xdg_toplevel;
 use std::time::Duration;
 
 pub const TICK_MS: u64 = 50;
@@ -291,7 +292,7 @@ impl Host {
             self.draw_drag_icon(scale);
         }
         if reply.resize {
-            self.begin_resize(win);
+            self.begin_resize(win, xdg_toplevel::ResizeEdge::BottomRight);
         }
         let fixed = self.app.fixed();
         let mut resized = false;

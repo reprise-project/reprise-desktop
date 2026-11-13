@@ -131,9 +131,11 @@ the next time it starts.
 
 ## Sticky Notes
 
-Small coloured notes, each a window of its own. The strip along a note's
-top has + for a new note (Ctrl+N too) and x to delete it, which asks first
-when the note has text. Right-click the text (or Shift+F10) for Undo, Redo,
+Small coloured notes, each a window of its own with no frame. The strip
+along a note's top has + for a new note (Ctrl+N too) and x to delete it,
+which asks first when the note has text; drag the rest of the strip to move
+the note and its edges or corners to resize it. Alt+Space opens the window
+menu. Right-click the text (or Shift+F10) for Undo, Redo,
 Cut, Copy, Paste, Delete and Select All, the six colours (yellow, green,
 pink, purple, blue, white), New Note and Delete Note. Lines wrap at the
 note's edge and rewrap when it is resized.
@@ -142,7 +144,8 @@ Every change is saved a moment after you stop typing, to
 `$XDG_DATA_HOME/reprise/notes/` (`~/.local/share/reprise/notes/` by
 default): `<id>.txt` holds a note's text as typed and `<id>.note` its
 colour and size. Each note opens where it was left. Closing a note's window
-closes all of them and keeps them; they come back at the next login, from
+(Alt+F4, or Close on its taskbar button or window menu) closes all of them
+and keeps them; they come back at the next login, from
 the `reprise-notes --restore` autostart entry, which you can turn off on
 the Startup page of Reprise Settings. Starting Sticky Notes while it runs
 opens a new note.
