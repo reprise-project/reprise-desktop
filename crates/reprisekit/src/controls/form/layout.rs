@@ -251,6 +251,12 @@ impl Form {
     pub fn rect(&self, id: &str) -> Option<Rect> {
         self.item(id).map(|it| self.at(it))
     }
+
+    /// The layout icon list `id` was last drawn with.
+    pub(crate) fn icon_list_layout(&self, id: &str) -> Option<iconlist::Layout> {
+        let it = self.item(id)?;
+        Some(icon_list_layout(it.grows, self.at(it), &self.controls()))
+    }
 }
 
 /// Where `it` draws and takes the pointer, on the surface: its 100% `rect` grown by `u` and moved
