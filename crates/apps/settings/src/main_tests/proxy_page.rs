@@ -4,15 +4,22 @@ use reprisefs::proxy;
 use std::cell::RefCell;
 
 thread_local! {
-    static PUBLISHED: RefCell<Vec<Vec<String>>> = const { RefCell::new(Vec::new()) };
+    static PUBLISHED: RefCell<Vec<proxy::Change>> = const { RefCell::new(Vec::new()) };
 }
 
-fn record(args: &[Vec<String>]) -> Result<(), String> {
-    PUBLISHED.with_borrow_mut(|p| p.extend(args.iter().cloned()));
+fn record(c: &proxy::Change) -> Result<(), String> {
+    PUBLISHED.with_borrow_mut(|p| p.push(c.clone()));
     Ok(())
 }
 
-fn published() -> Vec<Vec<String>> {
+fn refuse(c: &proxy::Change) -> Result<(), String> {
+    record(c)?;
+    Err("Invalid environment assignments".into())
+}
+
+/// What reached the manager since the last look; ends the call under way as the loop would.
+fn published(a: &mut SettingsApp) -> Vec<proxy::Change> {
+    a.proxy_done();
     PUBLISHED.with_borrow_mut(std::mem::take)
 }
 
@@ -67,25 +74,20 @@ fn apply_writes_the_file_and_the_manager_and_no_proxy_takes_both_back() {
          http_proxy=http://proxy.lan:3128\nHTTP_PROXY=http://proxy.lan:3128\n\
          no_proxy=localhost,127.0.0.1,::1\nNO_PROXY=localhost,127.0.0.1,::1\n"
     );
-    assert_eq!(
-        published()[0][..2],
-        ["set-environment", "http_proxy=http://proxy.lan:3128"]
-    );
+    let sent = published(&mut a);
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].set[0], "http_proxy=http://proxy.lan:3128");
+    assert!(sent[0].unset.is_empty());
 
     pick(&mut a, pages::PROXY_NONE);
     assert!(a.apply());
     assert!(!file.exists(), "No proxy removes the file");
+    let sent = published(&mut a);
+    assert_eq!(sent.len(), 1);
+    assert!(sent[0].set.is_empty());
     assert_eq!(
-        published(),
-        [[
-            "unset-environment",
-            "http_proxy",
-            "HTTP_PROXY",
-            "no_proxy",
-            "NO_PROXY"
-        ]
-        .map(String::from)
-        .to_vec()]
+        sent[0].unset,
+        ["http_proxy", "HTTP_PROXY", "no_proxy", "NO_PROXY"]
     );
 }
 
@@ -100,7 +102,45 @@ fn a_wrong_field_fails_apply_and_writes_nothing() {
     assert!(a.error.is_some());
     assert!(a.dirty(), "the sheet keeps the change");
     assert!(!file.exists());
-    assert!(published().is_empty());
+    assert!(published(&mut a).is_empty());
+}
+
+#[test]
+fn an_apply_while_the_manager_call_runs_is_sent_after_it() {
+    let dir = tmp("proxy-again");
+    let file = dir.join(proxy::FILE);
+    let mut a = app("proxy-again-app");
+    a.take_proxy(Proxy::open(file, record));
+    pick(&mut a, pages::PROXY_MANUAL);
+    type_in(&mut a, pages::PROXY_HOSTS[0], "one.lan");
+    set_port(&mut a, 0, 3128);
+    assert!(a.apply());
+    type_in(&mut a, pages::PROXY_HOSTS[0], "two.lan");
+    assert!(a.apply());
+    let first = PUBLISHED.with_borrow_mut(std::mem::take);
+    assert_eq!(first.len(), 1, "the second waits for the first call");
+    assert_eq!(a.proxy_done(), None, "the second call is under way");
+    let second = published(&mut a);
+    assert_eq!(second.len(), 1);
+    assert_eq!(second[0].set[0], "http_proxy=http://two.lan:3128");
+}
+
+#[test]
+fn a_refused_change_says_so_and_logs_only_the_variable_names() {
+    let dir = tmp("proxy-refused");
+    let file = dir.join(proxy::FILE);
+    let mut a = app("proxy-refused-app");
+    a.take_proxy(Proxy::open(file.clone(), refuse));
+    pick(&mut a, pages::PROXY_MANUAL);
+    type_in(&mut a, pages::PROXY_HOSTS[0], "alice:s3cret@proxy.lan");
+    set_port(&mut a, 0, 3128);
+    assert!(a.apply());
+    let sent = published(&mut a);
+    assert!(a.error.is_some(), "the session could not take it");
+    let line = crate::proxyhost::refused(&sent[0], "Invalid environment assignments");
+    assert!(line.contains("http_proxy HTTP_PROXY"), "{line}");
+    assert!(!line.contains("s3cret"), "{line}");
+    assert!(std::fs::read_to_string(&file).unwrap().contains("s3cret"));
 }
 
 #[test]

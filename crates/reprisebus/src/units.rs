@@ -1,5 +1,6 @@
-//! The `ExecStart` binaries of every unit Reprise's session target pulls in: the programs an
-//! autostart entry marked `X-systemd-skip` may be left to.
+//! The systemd user manager: the `ExecStart` binaries of every unit Reprise's session target
+//! pulls in (the programs an autostart entry marked `X-systemd-skip` may be left to), and its
+//! environment.
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -51,6 +52,20 @@ pub fn programs_from(
         todo.extend(u.pulls.into_iter().filter(|p| !seen.contains(p)));
     }
     programs
+}
+
+/// Unset the names `unset` and set the `KEY=VALUE` assignments `set` in the systemd user
+/// manager's environment, in one call, so its values never show on a command line. Blocking.
+pub fn set_user_environment(unset: &[String], set: &[String]) -> zbus::Result<()> {
+    let conn = crate::session()?;
+    crate::wait(conn.call_method(
+        Some("org.freedesktop.systemd1"),
+        "/org/freedesktop/systemd1",
+        Some("org.freedesktop.systemd1.Manager"),
+        "UnsetAndSetEnvironment",
+        &(unset, set),
+    ))?;
+    Ok(())
 }
 
 /// [`programs_from`] the session's roots over the user manager's bus API, each program

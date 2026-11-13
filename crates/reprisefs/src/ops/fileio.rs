@@ -106,7 +106,18 @@ pub fn create_temp_beside(
 /// and is synced before the rename so a crash cannot leave it empty. The
 /// directory is synced after it, so the rename itself survives a crash.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    replace(path, bytes, false)
+}
+
+/// [`write_atomic`] for a file only its owner may read: the new file is 0600 whatever the old
+/// one's mode was.
+pub fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    replace(path, bytes, true)
+}
+
+fn replace(path: &Path, bytes: &[u8], private: bool) -> io::Result<()> {
     use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
     let path = std::fs::canonicalize(path).or_else(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
             Ok(path.to_path_buf())
@@ -119,7 +130,10 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
         _ => Path::new("."),
     };
     std::fs::create_dir_all(dir)?;
-    let mode = std::fs::metadata(&path).ok().map(|m| m.permissions());
+    let mode = match private {
+        true => Some(std::fs::Permissions::from_mode(0o600)),
+        false => std::fs::metadata(&path).ok().map(|m| m.permissions()),
+    };
     let (mut f, tmp) = create_temp_beside(&path, mode)?;
     let written = (|| {
         f.write_all(bytes)?;

@@ -142,9 +142,17 @@ impl SettingsApp {
         if let Some(close) = self.login_done() {
             changed = true;
             quit = close;
-            if close {
-                self.save_window();
-            }
+        }
+        if let Some(close) = self.proxy_done() {
+            changed = true;
+            quit |= close && self.login_job.is_none();
+        }
+        if quit && self.proxy.job.is_some() {
+            quit = false;
+            self.proxy.quit = true;
+        }
+        if quit {
+            self.save_window();
         }
         let cleared = match &self.clearing {
             Some(rx) => match take(rx) {
