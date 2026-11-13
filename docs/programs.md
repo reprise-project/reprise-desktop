@@ -602,6 +602,18 @@ icon says so once; it warns again after the battery charges 5 points past
 that. `REPRISE_BLUEZ_BUS=session` reads BlueZ off the session bus, for a
 stand-in service in a test.
 
+With "Receive files from paired devices" ticked on the Options tab
+(`[bluetooth] receive_files`, on by default), Bluetooth Devices is BlueZ's
+OBEX agent, so a paired device can send files with Object Push ("Share >
+Bluetooth" on a phone). Each file opens a Bluetooth File Transfer box naming
+the device, the file and its size, with Accept and Decline; it starts on
+Decline, and one left unanswered for 50 seconds is declined. An accepted file
+goes to Downloads under its own name, numbered "photo (2).jpg" when the name
+is taken, and a balloon says when it has arrived, with Open and Show in
+folder; one that stops early says "File not received". A device that isn't
+paired is refused without a box. The check box is greyed with a note when
+obexd (`bluez-obex`) isn't installed.
+
 ## Power Options
 
 Power profile, monitor and standby timeouts on mains and on battery, low and

@@ -380,6 +380,8 @@ desktop and stays out of the way when it's missing.
 - power-profiles-daemon, for the power profile in Power Options and the
   battery menu, and the power saver on low battery
 - BlueZ, for the Bluetooth icon, Bluetooth Devices and `[lock] away_device`
+- BlueZ's OBEX service (`bluez-obex` on Arch, `bluez-obexd` on Ubuntu), for
+  receiving files a paired device sends over Bluetooth
 - KDE Connect (`kdeconnect`), for the phone icon (battery, Ring phone, Send
   files) and phones in Send To
 - UDisks2, for mounting drives as they're plugged in, Safely Remove

@@ -1,7 +1,8 @@
 //! Bluetooth Devices: the Reprise Bluetooth icon and its windows.
 //!
 //! One process: a tray icon following BlueZ, the Devices sheet, the Add
-//! wizard, device Properties, and the Pairing Request box. `--tray` (passed by
+//! wizard, device Properties, the Pairing Request box, and the prompt for a
+//! file a paired device sends. `--tray` (passed by
 //! the autostart entry) starts with the sheet hidden. While the tray icon is
 //! up, closing the sheet hides it and only Exit in the tray menu quits.
 //!
@@ -20,9 +21,12 @@ mod icons;
 mod pairdlg;
 mod passkey;
 mod props;
+mod receive;
 mod tray;
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::ffi::OsString;
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::mpsc::Receiver;
 
@@ -44,6 +48,7 @@ const PROPS: WinId = WinId::named("props");
 const PAIR: WinId = WinId::named("pair");
 const REMOVE: WinId = WinId::named("remove");
 const ERROR: WinId = WinId::named("error");
+const OFFER: WinId = WinId::named("offer");
 
 struct BtApp {
     tray: Option<reprisetray::TrayHandle>,
@@ -60,6 +65,12 @@ struct BtApp {
     pair_queue: VecDeque<bz::AgentRequest>,
     remove: Option<(String, MsgBox)>,
     error: Option<MsgBox>,
+    /// The file offer on screen, and the ones that came while it was.
+    offer: Option<(bz::Offer, MsgBox)>,
+    offer_queue: VecDeque<bz::Offer>,
+    /// Received files by their balloon's tag, for its Open and Show in folder.
+    received: HashMap<u32, PathBuf>,
+    next_tag: u32,
     icons: icons::Icons,
     /// Devices with an unfinished Connect not yet shown connected; no second Connect goes out.
     connecting: HashSet<String>,
@@ -85,13 +96,20 @@ impl BtApp {
             bz: None,
             snapshot: bz::Snapshot::default(),
             tray_state: None,
-            devices: devices::Devices::new(repriseconf::bt_battery_warning()),
+            devices: devices::Devices::new(
+                repriseconf::bt_battery_warning(),
+                repriseconf::bt_receive_files(),
+            ),
             wizard: None,
             props: None,
             pair: None,
             pair_queue: VecDeque::new(),
             remove: None,
             error: None,
+            offer: None,
+            offer_queue: VecDeque::new(),
+            received: HashMap::new(),
+            next_tag: 0,
             icons: icons::Icons::new(),
             connecting: HashSet::new(),
             disconnected: HashSet::new(),
@@ -302,7 +320,7 @@ impl BtApp {
     }
 
     /// Drains the bus thread's and tray's channels. Quits only on the tray's Exit.
-    fn wake(&mut self) -> Reply {
+    fn wake(&mut self, ctx: &mut Ctx) -> Reply {
         let mut latest = None;
         while let Some(msg) = self.bz_rx.as_ref().and_then(|rx| rx.try_recv().ok()) {
             match msg {
@@ -332,6 +350,21 @@ impl BtApp {
                     self.agent(req)
                 }
                 bz::BzMsg::AgentCancel => self.agent_cancel(),
+                bz::BzMsg::Obex(present) => {
+                    self.devices.set_obex(present);
+                    if present && repriseconf::bt_receive_files() {
+                        self.send(bz::Cmd::Receive(true));
+                    }
+                }
+                bz::BzMsg::Offer(o) => self.offer_in(o, ctx),
+                bz::BzMsg::OfferGone(transfer) => self.offer_gone(&transfer, ctx),
+                bz::BzMsg::Received { path, sender } => self.file_received(path, sender),
+                bz::BzMsg::NotReceived { name, sender } => {
+                    let (summary, body) = receive::not_received(&name, &sender);
+                    if let Some(t) = &self.tray {
+                        t.notify(&summary, &body);
+                    }
+                }
             }
         }
         if let Some(s) = latest {
@@ -361,6 +394,16 @@ impl BtApp {
                     {
                         self.open_props(&path);
                         shown = Some(PROPS);
+                    }
+                }
+                tray::TrayMsg::Balloon(tag, i) => {
+                    if let Some(path) = self.received.get(&tag) {
+                        let argv = if i == receive::OPEN {
+                            reprisefs::apps::open_argv_for(path)
+                        } else {
+                            reprisefs::apps::open_location_argv(path)
+                        };
+                        self.spawn_with_token(&argv);
                     }
                 }
                 tray::TrayMsg::TogglePower => {
@@ -436,6 +479,12 @@ impl BtApp {
             && let Err(e) = repriseconf::save_bt_battery_warning(o.battery_warning)
         {
             log::warn!("could not save the battery warning: {e}");
+        }
+        if o.receive != repriseconf::bt_receive_files() {
+            if let Err(e) = repriseconf::save_bt_receive_files(o.receive) {
+                log::warn!("could not save Receive files: {e}");
+            }
+            self.send(bz::Cmd::Receive(o.receive));
         }
         let Some(a) = &self.snapshot.adapter else {
             return;
@@ -875,6 +924,104 @@ impl BtApp {
         }
     }
 
+    /// A file offer opens the prompt, or waits for the open one to close.
+    fn offer_in(&mut self, o: bz::Offer, ctx: &mut Ctx) {
+        if self.offer.is_some() {
+            self.offer_queue.push_back(o);
+        } else {
+            self.open_offer(o, ctx);
+        }
+    }
+
+    /// The prompt starts on Decline, as a request the user did not start does.
+    fn open_offer(&mut self, o: bz::Offer, ctx: &mut Ctx) {
+        let b = MsgBox::new(
+            receive::TITLE,
+            Fields {
+                text: receive::prompt(&o),
+                icon: ctx.icons.get("dialog-question", 32),
+                buttons: receive::BUTTONS.map(String::from).to_vec(),
+                default: 1,
+                min_text_h: None,
+                min_w: 0,
+                max_w: repriseapp::dialog_max_w(),
+            },
+        );
+        self.offer = Some((o, b));
+    }
+
+    /// The next queued offer once the prompt has closed; one obexd gave up on is skipped.
+    fn next_offer(&mut self, ctx: &mut Ctx) {
+        while self.offer.is_none() {
+            let Some(o) = self.offer_queue.pop_front() else {
+                return;
+            };
+            if o.done.as_ref().is_none_or(|d| d.is_closed()) {
+                continue;
+            }
+            self.open_offer(o, ctx);
+        }
+    }
+
+    /// obexd gave up on `transfer`'s offer, or it was answered: its prompt closes, declining.
+    fn offer_gone(&mut self, transfer: &str, ctx: &mut Ctx) {
+        self.offer_queue.retain(|o| o.transfer != transfer);
+        if self
+            .offer
+            .as_ref()
+            .is_some_and(|(o, _)| o.transfer == transfer)
+        {
+            self.offer = None;
+            self.next_offer(ctx);
+        }
+    }
+
+    fn offer_event(&mut self, ev: Event, ctx: &mut Ctx) -> Reply {
+        let (text, forms) = self.text_forms();
+        let Some((o, b)) = &mut self.offer else {
+            return Reply::none();
+        };
+        match b.event(&ev, &text, &forms) {
+            oneshot::Outcome::None => Reply::none(),
+            oneshot::Outcome::Redraw => Reply::redraw(),
+            oneshot::Outcome::Closed(button) => {
+                o.answer(button == Some(receive::ACCEPT));
+                self.offer = None;
+                self.next_offer(ctx);
+                Reply::redraw_all()
+            }
+        }
+    }
+
+    /// The balloon for a file saved at `path`, whose buttons open it or its folder.
+    fn file_received(&mut self, path: PathBuf, sender: String) {
+        let (summary, body) = receive::received(&path, &sender);
+        let tag = self.next_tag;
+        self.next_tag = self.next_tag.wrapping_add(1);
+        self.received.insert(tag, path);
+        if let Some(t) = &self.tray {
+            t.notify_buttons(&summary, &body, tag, &receive::BALLOON_BUTTONS);
+        }
+    }
+
+    /// Starts `argv` with the tray's activation token, so its window comes up.
+    fn spawn_with_token(&self, argv: &[OsString]) {
+        let Some((program, args)) = argv.split_first() else {
+            return;
+        };
+        let mut cmd = std::process::Command::new(program);
+        cmd.args(args);
+        if let Some(t) = self.tray.as_ref().and_then(|t| t.take_activation_token()) {
+            cmd.env("XDG_ACTIVATION_TOKEN", t);
+        }
+        match cmd.spawn() {
+            Ok(mut child) => {
+                std::thread::spawn(move || child.wait());
+            }
+            Err(e) => log::warn!("could not start {program:?}: {e}"),
+        }
+    }
+
     fn error_event(&mut self, ev: Event) -> Reply {
         let (text, forms) = self.text_forms();
         let Some(b) = &mut self.error else {
@@ -942,6 +1089,9 @@ impl App for BtApp {
             if let Some(b) = &self.error {
                 out.push(b.child(ERROR, text, &self.forms));
             }
+            if let Some((_, b)) = &self.offer {
+                out.push(b.child(OFFER, text, &self.forms));
+            }
         }
         out
     }
@@ -967,7 +1117,7 @@ impl App for BtApp {
         self.text = Some(ctx.text.clone());
         self.forms = ctx.forms();
         if matches!(ev, Event::Wake) {
-            return self.wake();
+            return self.wake(ctx);
         }
         let clip = form_clipboard(self.focused_edit(win), &ev);
         let mut reply = match win {
@@ -976,6 +1126,7 @@ impl App for BtApp {
             PAIR => self.pair_event(ev, ctx),
             REMOVE => self.remove_event(ev),
             ERROR => self.error_event(ev),
+            OFFER => self.offer_event(ev, ctx),
             _ => self.main_event(ev, ctx),
         }
         .with_clipboard(clip);
@@ -1038,6 +1189,11 @@ impl App for BtApp {
             }
             ERROR => {
                 if let Some(b) = &self.error {
+                    b.draw(c, &forms, &ctx.text);
+                }
+            }
+            OFFER => {
+                if let Some((_, b)) = &self.offer {
                     b.draw(c, &forms, &ctx.text);
                 }
             }
@@ -1734,6 +1890,77 @@ mod tests {
         (handoff, tx)
     }
 
+    fn offer(transfer: &str) -> (bz::Offer, async_channel::Receiver<bool>) {
+        let (done, wait) = async_channel::bounded(1);
+        let o = bz::Offer {
+            transfer: transfer.into(),
+            sender: "Pixel (AA:BB:CC:DD:EE:01)".into(),
+            name: "holiday.jpg".into(),
+            size: Some(1000),
+            done: Some(done),
+        };
+        (o, wait)
+    }
+
+    fn key(sym: u32, alt: bool) -> Event {
+        Event::Key(KeyInput {
+            sym,
+            utf8: None,
+            mods: repriseapp::Mods {
+                alt,
+                ..Default::default()
+            },
+            edit: alt.then(|| EditKey::Insert(char::from_u32(sym).unwrap_or('?').to_string())),
+        })
+    }
+
+    #[test]
+    fn the_offer_prompt_starts_on_decline_and_accept_answers_yes() {
+        let mut ctx = test_ctx();
+        let mut a = app();
+        let (o, wait) = offer("/t/0");
+        a.offer_in(o, &mut ctx);
+        assert!(a.children().iter().any(|c| c.id == OFFER));
+        a.offer_event(key(keysym::RETURN, false), &mut ctx);
+        assert_eq!(wait.try_recv(), Ok(false), "Enter declines");
+        assert!(a.offer.is_none());
+        let (o, wait) = offer("/t/1");
+        a.offer_in(o, &mut ctx);
+        a.offer_event(key(u32::from('a'), true), &mut ctx);
+        assert_eq!(wait.try_recv(), Ok(true), "Alt+A accepts");
+    }
+
+    #[test]
+    fn a_second_offer_waits_and_a_given_up_one_closes() {
+        let mut ctx = test_ctx();
+        let mut a = app();
+        let (first, _w1) = offer("/t/0");
+        let (second, w2) = offer("/t/1");
+        a.offer_in(first, &mut ctx);
+        a.offer_in(second, &mut ctx);
+        assert_eq!(a.offer_queue.len(), 1);
+        a.offer_gone("/t/0", &mut ctx);
+        assert_eq!(
+            a.offer.as_ref().map(|(o, _)| o.transfer.as_str()),
+            Some("/t/1")
+        );
+        a.offer_gone("/t/1", &mut ctx);
+        assert!(a.offer.is_none());
+        assert!(w2.try_recv().is_err(), "closed unanswered declines");
+    }
+
+    #[test]
+    fn a_received_file_keeps_its_path_for_the_balloon_buttons() {
+        let mut a = app();
+        holding_tray(&mut a);
+        a.file_received(PathBuf::from("/nowhere/a.jpg"), "Pixel".into());
+        assert_eq!(a.received.get(&0), Some(&PathBuf::from("/nowhere/a.jpg")));
+        assert_eq!(
+            tray::translate(reprisetray::Msg::BalloonButton(0, 1), &a.snapshot),
+            Some(tray::TrayMsg::Balloon(0, 1))
+        );
+    }
+
     #[test]
     fn add_from_the_tray_hands_its_token_to_the_wizard() {
         let mut a = app();
@@ -1741,7 +1968,7 @@ mod tests {
         let (handoff, tx) = holding_tray(&mut a);
         tx.send(reprisetray::Rows::clicked(&tray::TrayMsg::Add))
             .unwrap();
-        assert_eq!(a.wake().activate, Some((WIZARD, handoff)));
+        assert_eq!(a.wake(&mut test_ctx()).activate, Some((WIZARD, handoff)));
     }
 
     #[test]
@@ -1751,7 +1978,7 @@ mod tests {
         let (_, tx) = holding_tray(&mut a);
         tx.send(reprisetray::Rows::clicked(&tray::TrayMsg::TogglePower))
             .unwrap();
-        assert_eq!(a.wake().activate, None);
+        assert_eq!(a.wake(&mut test_ctx()).activate, None);
         assert_eq!(a.tray.as_ref().unwrap().take_handoff(), None);
     }
 }

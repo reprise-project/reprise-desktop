@@ -111,9 +111,10 @@ async fn run(poster: Poster, cmds: async_channel::Receiver<Cmd>, done: Sender<()
     if owns_bluez(&conn).await {
         register_agent(&conn).await;
     }
+    let obex = super::obex::start(&conn, poster.clone()).await;
     let (wake_tx, wake_rx) = async_channel::unbounded::<Wake>();
     let _pump = pump(&conn, wake_tx.clone()).await;
-    let _commands = commands(&conn, cmds, wake_tx, poster.clone());
+    let _commands = commands(&conn, cmds, wake_tx, poster.clone(), obex);
     loop {
         let snapshot = if owns_bluez(&conn).await {
             read(&conn).await
@@ -187,6 +188,7 @@ fn commands(
     cmds: async_channel::Receiver<Cmd>,
     wakes: async_channel::Sender<Wake>,
     poster: Poster,
+    obex: Option<super::obex::Obex>,
 ) -> zruntime::Task<(), zruntime::Shared> {
     let bus = conn.clone();
     zruntime::spawn(async move {
@@ -199,6 +201,11 @@ fn commands(
                 Cmd::Pair(device) => {
                     let (b, p) = (bus.clone(), poster.clone());
                     zruntime::spawn(async move { pair(&b, &device, &p).await }).detach();
+                }
+                Cmd::Receive(on) => {
+                    if let Some(o) = &obex {
+                        o.receive(on).await;
+                    }
                 }
                 Cmd::Connect(device) => {
                     let (b, p) = (bus.clone(), poster.clone());
@@ -298,7 +305,7 @@ async fn command(conn: &Connection, cmd: &Cmd) -> zbus::Result<()> {
             .await
             .map(|_| ())
         }
-        Cmd::Pair(_) | Cmd::Connect(_) | Cmd::Quit => Ok(()),
+        Cmd::Pair(_) | Cmd::Connect(_) | Cmd::Receive(_) | Cmd::Quit => Ok(()),
     }
 }
 

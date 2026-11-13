@@ -1,7 +1,8 @@
 //! Bluetooth Devices, the program's main window: a sheet with two tabs.
 //! Devices lists paired devices by group; Options turns the radio on and off,
-//! makes this computer discoverable and sets the low battery warning. Nothing here reads the bus: the host
-//! feeds it snapshots and acts on the [`Outcome`]s it hands back.
+//! makes this computer discoverable, sets the low battery warning and lets paired devices send
+//! files. Nothing here reads the bus: the host feeds it snapshots and acts on the [`Outcome`]s it
+//! hands back.
 
 use repriseapp::Ctx;
 use repriseapp::oneshot;
@@ -32,6 +33,16 @@ pub const PROPS: &str = "props";
 const POWER: &str = "power";
 const DISCOVERABLE: &str = "discoverable";
 const BATTERY: &str = "battery_warning";
+const RECEIVE: &str = "receive_files";
+const RECEIVE_NOTE: &str = "receive_note";
+const RECEIVE_NOTE_ON: [&str; 2] = [
+    "You are asked before each file, and accepted files",
+    "are saved in your Downloads folder.",
+];
+const RECEIVE_NOTE_MISSING: [&str; 2] = [
+    "Receiving files needs BlueZ's OBEX service (obexd),",
+    "which is not installed.",
+];
 
 /// The page runs (6, 28) to (392, 388); buttons sit 8 px above its bottom.
 const BTN_Y: i32 = 388 - 8 - BUTTON_H;
@@ -44,6 +55,8 @@ pub struct Options {
     pub discoverable: bool,
     /// `[bluetooth] battery_warning`, in percent; 0 is off.
     pub battery_warning: u8,
+    /// `[bluetooth] receive_files`.
+    pub receive: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -68,6 +81,8 @@ pub struct Devices {
     applied: Options,
     pending: Options,
     adapter: bool,
+    /// obexd is installed, so files can be received.
+    obex: bool,
 }
 
 pub fn entries(rows: &[Device]) -> Vec<Entry> {
@@ -153,14 +168,18 @@ fn options_page() -> Form {
             340,
             "For connected devices. 0 turns the warning off.",
         ),
+        Item::group("files_group", Rect::new(14, 256, 370, 70), "File transfer"),
+        Item::check(RECEIVE, 26, 278, "&Receive files from paired devices"),
+        Item::lines_at(RECEIVE_NOTE, 44, 298, 330, &RECEIVE_NOTE_ON),
     ])
 }
 
 impl Devices {
-    /// `battery_warning` is the key's value now.
-    pub fn new(battery_warning: u8) -> Devices {
+    /// `battery_warning` and `receive` are the keys' values now.
+    pub fn new(battery_warning: u8, receive: bool) -> Devices {
         let options = Options {
             battery_warning,
+            receive,
             ..Options::default()
         };
         let mut d = Devices {
@@ -171,9 +190,22 @@ impl Devices {
             applied: options,
             pending: options,
             adapter: false,
+            obex: false,
         };
         d.write();
         d
+    }
+
+    /// Whether obexd is installed; without it the Receive files box is greyed with a note.
+    pub fn set_obex(&mut self, present: bool) {
+        self.obex = present;
+        let note = if present {
+            RECEIVE_NOTE_ON
+        } else {
+            RECEIVE_NOTE_MISSING
+        };
+        self.sheet.pages[TAB_OPTIONS].set_lines(RECEIVE_NOTE, &note.map(String::from));
+        self.write();
     }
 
     /// The device list on the Devices page as last drawn: it grows and scrolls with the page.
@@ -213,6 +245,7 @@ impl Devices {
             powered: s.adapter.as_ref().is_some_and(|a| a.powered),
             discoverable: s.adapter.as_ref().is_some_and(|a| a.discoverable),
             battery_warning: self.applied.battery_warning,
+            receive: self.applied.receive,
         };
         let dirty = self.pending != self.applied;
         self.applied = now;
@@ -253,6 +286,8 @@ impl Devices {
         if let Some(Control::UpDown(u)) = page.item_mut(BATTERY).map(|i| &mut i.control) {
             u.set(self.pending.battery_warning.into());
         }
+        page.set_check(RECEIVE, self.pending.receive && self.obex);
+        page.set_enabled(RECEIVE, self.obex);
         self.sheet.set_apply_enabled(dirty);
     }
 
@@ -262,12 +297,15 @@ impl Devices {
                 Outcome::None
             }
             propsheet::Event::Redraw => Outcome::Redraw,
-            propsheet::Event::Page(_, form::Event::Changed(id @ (POWER | DISCOVERABLE))) => {
+            propsheet::Event::Page(
+                _,
+                form::Event::Changed(id @ (POWER | DISCOVERABLE | RECEIVE)),
+            ) => {
                 let on = self.sheet.pages[TAB_OPTIONS].checked(id).unwrap_or(false);
-                if id == POWER {
-                    self.pending.powered = on;
-                } else {
-                    self.pending.discoverable = on;
+                match id {
+                    POWER => self.pending.powered = on,
+                    DISCOVERABLE => self.pending.discoverable = on,
+                    _ => self.pending.receive = on,
                 }
                 self.write();
                 Outcome::Redraw
@@ -524,9 +562,14 @@ mod tests {
     #[test]
     fn the_pages_fit_their_text() {
         let over = reprisekit::interfaces::form_overflows(|_, _, _| {
-            let mut d = Devices::new(15);
-            d.refresh(&four());
-            d.sheet.tabs.labels.into_iter().zip(d.sheet.pages).collect()
+            let mut out = Vec::new();
+            for obex in [true, false] {
+                let mut d = Devices::new(15, true);
+                d.set_obex(obex);
+                d.refresh(&four());
+                out.extend(d.sheet.tabs.labels.into_iter().zip(d.sheet.pages));
+            }
+            out
         });
         assert!(over.is_empty(), "{}", over.join("\n"));
     }
@@ -546,7 +589,7 @@ mod tests {
 
     #[test]
     fn paired_devices_are_listed_under_group_headers() {
-        let mut d = Devices::new(15);
+        let mut d = Devices::new(15, true);
         d.refresh(&four());
         assert_eq!(
             d.list.entries,
@@ -570,7 +613,7 @@ mod tests {
 
     #[test]
     fn buttons_follow_the_selection() {
-        let mut d = Devices::new(15);
+        let mut d = Devices::new(15, true);
         d.refresh(&four());
         assert!(enabled(&d, ADD));
         assert!(!enabled(&d, REMOVE) && !enabled(&d, CONNECT) && !enabled(&d, PROPS));
@@ -584,7 +627,7 @@ mod tests {
 
     #[test]
     fn alt_p_is_properties_and_alt_r_is_remove() {
-        let mut d = Devices::new(15);
+        let mut d = Devices::new(15, true);
         d.refresh(&four());
         let (x, y) = entry_point(&d, 1);
         d.list_press(at(x, y, 0), &ControlMetrics::CLASSIC);
@@ -601,7 +644,7 @@ mod tests {
 
     #[test]
     fn a_vanished_device_drops_its_selection() {
-        let mut d = Devices::new(15);
+        let mut d = Devices::new(15, true);
         d.refresh(&four());
         let (x, y) = entry_point(&d, 3);
         d.list_press(at(x, y, 0), &ControlMetrics::CLASSIC);
@@ -615,7 +658,7 @@ mod tests {
 
     #[test]
     fn the_selection_follows_its_device_across_a_refresh() {
-        let mut d = Devices::new(15);
+        let mut d = Devices::new(15, true);
         d.refresh(&four());
         let (x, y) = entry_point(&d, 6);
         d.list_press(at(x, y, 0), &ControlMetrics::CLASSIC);
@@ -627,7 +670,7 @@ mod tests {
 
     #[test]
     fn radio_off_blanks_the_page() {
-        let mut d = Devices::new(15);
+        let mut d = Devices::new(15, true);
         d.refresh(&snap(false, four().devices));
         assert!(!enabled(&d, ADD));
         let (x, y) = (LIST.x + 40, LIST.y + 40);
@@ -642,7 +685,7 @@ mod tests {
 
     #[test]
     fn double_click_toggles_and_enter_opens_properties() {
-        let mut d = Devices::new(15);
+        let mut d = Devices::new(15, true);
         d.refresh(&four());
         let (x, y) = entry_point(&d, 1);
         d.list_press(at(x, y, 0), &ControlMetrics::CLASSIC);
@@ -659,7 +702,7 @@ mod tests {
 
     #[test]
     fn a_hidden_selection_answers_nothing_once_the_radio_goes_off() {
-        let mut d = Devices::new(15);
+        let mut d = Devices::new(15, true);
         d.refresh(&four());
         let (x, y) = entry_point(&d, 1);
         d.list_press(at(x, y, 0), &ControlMetrics::CLASSIC);
@@ -674,7 +717,8 @@ mod tests {
             Outcome::Apply(Options {
                 powered: false,
                 discoverable: false,
-                battery_warning: 15
+                battery_warning: 15,
+                receive: true,
             })
         );
         d.sheet.tabs.open = TAB_DEVICES;
@@ -688,7 +732,7 @@ mod tests {
 
     #[test]
     fn options_apply_carries_the_battery_warning_and_a_refresh_keeps_it() {
-        let mut d = Devices::new(15);
+        let mut d = Devices::new(15, true);
         d.refresh(&four());
         d.sheet.tabs.open = TAB_OPTIONS;
         let set = |d: &mut Devices, v: i32| {
@@ -709,6 +753,7 @@ mod tests {
             powered: true,
             discoverable: false,
             battery_warning: 0,
+            receive: true,
         };
         assert_eq!(d.event(propsheet::Event::Apply), Outcome::Apply(want));
         d.refresh(&four());
@@ -716,8 +761,49 @@ mod tests {
     }
 
     #[test]
+    fn receive_files_applies_and_greys_without_obexd() {
+        let mut d = Devices::new(15, true);
+        d.refresh(&four());
+        let page = |d: &Devices| d.sheet.pages[TAB_OPTIONS].clone();
+        let live = |d: &Devices| {
+            matches!(
+                page(d).item(RECEIVE).map(|i| &i.control),
+                Some(Control::Check { enabled: true, .. })
+            )
+        };
+        assert_eq!(page(&d).checked(RECEIVE), Some(false), "unknown until told");
+        assert!(!live(&d));
+        d.set_obex(true);
+        assert_eq!(page(&d).checked(RECEIVE), Some(true));
+        assert!(live(&d));
+        d.sheet.pages[TAB_OPTIONS].set_check(RECEIVE, false);
+        d.event(propsheet::Event::Page(
+            TAB_OPTIONS,
+            form::Event::Changed(RECEIVE),
+        ));
+        assert_eq!(
+            d.event(propsheet::Event::Apply),
+            Outcome::Apply(Options {
+                powered: true,
+                discoverable: false,
+                battery_warning: 15,
+                receive: false,
+            })
+        );
+        d.set_obex(false);
+        assert!(!live(&d));
+        assert!(
+            matches!(
+                &page(&d).item(RECEIVE_NOTE).unwrap().control,
+                Control::Lines(l) if l[0].contains("obexd")
+            ),
+            "the note says what is missing"
+        );
+    }
+
+    #[test]
     fn options_apply_carries_the_pending_radio_state() {
-        let mut d = Devices::new(15);
+        let mut d = Devices::new(15, true);
         d.refresh(&four());
         d.sheet.tabs.open = TAB_OPTIONS;
         d.sheet.pages[TAB_OPTIONS].set_check("discoverable", true);
@@ -733,7 +819,8 @@ mod tests {
             Outcome::Apply(Options {
                 powered: true,
                 discoverable: true,
-                battery_warning: 15
+                battery_warning: 15,
+                receive: true,
             })
         );
         assert_eq!(
@@ -745,7 +832,7 @@ mod tests {
 
     #[test]
     fn a_snapshot_does_not_overwrite_an_unapplied_change() {
-        let mut d = Devices::new(15);
+        let mut d = Devices::new(15, true);
         d.refresh(&four());
         d.sheet.pages[TAB_OPTIONS].set_check("power", false);
         d.event(propsheet::Event::Page(

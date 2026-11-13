@@ -39,6 +39,7 @@ optdepends=('ttf-tahoma: Wine'\''s Tahoma, the UI font the layouts are tuned for
             'dnsmasq: sharing the connection from a hotspot in Network Connections'
             'networkmanager-openvpn: OpenVPN connections, and importing .ovpn files in Network Connections'
             'bluez: reprise-bluetooth, the Bluetooth tray icon and Bluetooth Devices'
+            'bluez-obex: receiving files a paired device sends over Bluetooth, in reprise-bluetooth'
             'kdeconnect: reprise-phone, the phone tray icon (battery, Ring phone, Send files), and phones in Send To'
             'udisks2: reprise-drives (drives mounted as they are plugged in, Safely Remove Hardware), and unmounted drives and Eject in Computer'
             'bolt: the balloon asking to authorize a new Thunderbolt or USB4 device, and Settings > Thunderbolt'

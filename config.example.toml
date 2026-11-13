@@ -401,10 +401,13 @@ suspend_after = 0            # run [power] standby
 #                            # a point past that and falls back; 0 turns it off. Read
 #                            # every two minutes
 
-# [bluetooth]                # Bluetooth Devices > Options also sets this
+# [bluetooth]                # Bluetooth Devices > Options also sets these
 # battery_warning = 15       # 0 to 50: a balloon warns once when a connected device's
 #                            # battery drops to this percent, again after it charges
 #                            # past this plus 5; 0 turns it off. Read with each reading
+# receive_files = true       # a paired device may send files: each one asks Accept or
+#                            # Decline and goes to Downloads. Needs obexd (bluez-obex).
+#                            # Read at start and when Options is applied
 
 # [remote_desktop]           # the Remote Desktop server; Settings > Remote Desktop
 #                            # also sets these and turns it on

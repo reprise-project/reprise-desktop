@@ -4311,6 +4311,7 @@ dependencies = [
  "repriseapp",
  "reprisebus",
  "repriseconf",
+ "reprisefs",
  "reprisekit",
  "reprisetray",
  "zbus 6.2.1",

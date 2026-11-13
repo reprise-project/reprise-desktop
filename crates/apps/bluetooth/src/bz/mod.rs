@@ -3,6 +3,7 @@
 
 mod agent;
 mod bus;
+mod obex;
 
 pub use bus::{BzHandle, watch};
 
@@ -268,6 +269,23 @@ pub fn fold(objects: &Objects) -> Snapshot {
     }
 }
 
+/// The device at `address` under the adapter at `adapter` (both Bluetooth addresses, as obexd
+/// names a session's two ends); None when no adapter has that address.
+pub fn device_at(objects: &Objects, adapter: &str, address: &str) -> Option<Device> {
+    let same =
+        |p: &Props, want: &str| text(p, "Address").is_some_and(|a| a.eq_ignore_ascii_case(want));
+    let under = objects.iter().find_map(|(p, ifaces)| {
+        ifaces
+            .get(ADAPTER_IFACE)
+            .filter(|a| same(a, adapter))
+            .map(|_| format!("{}/", p.as_str()))
+    })?;
+    objects.iter().find_map(|(p, ifaces)| {
+        let d = ifaces.get(DEVICE_IFACE)?;
+        (p.as_str().starts_with(&under) && same(d, address)).then(|| device_of(p.as_str(), d, None))
+    })
+}
+
 pub fn by_group<'a>(devs: impl IntoIterator<Item = &'a Device>) -> Vec<Device> {
     let mut out: Vec<Device> = devs.into_iter().cloned().collect();
     out.sort_by(|a, b| {
@@ -332,6 +350,8 @@ pub enum Cmd {
         adapter: String,
         device: String,
     },
+    /// Take files from paired devices (register the OBEX agent), or stop.
+    Receive(bool),
     Quit,
 }
 
@@ -361,6 +381,42 @@ pub enum BzMsg {
     },
     Agent(AgentRequest),
     AgentCancel,
+    /// Whether obexd is installed, so files can be received at all.
+    Obex(bool),
+    Offer(Offer),
+    /// The offer for this transfer was answered without the user or given up on.
+    OfferGone(String),
+    /// An accepted file arrived complete at `path`.
+    Received {
+        path: std::path::PathBuf,
+        sender: String,
+    },
+    /// An accepted file stopped before it was complete; `name` is the offered one.
+    NotReceived {
+        name: String,
+        sender: String,
+    },
+}
+
+/// A file a paired device offers, waiting on Accept or Decline. Dropping it unanswered declines.
+#[derive(Debug)]
+pub struct Offer {
+    /// obexd's transfer object path.
+    pub transfer: String,
+    /// The device's alias, with its address when they differ.
+    pub sender: String,
+    /// The name the device gave the file.
+    pub name: String,
+    pub size: Option<u64>,
+    pub done: Option<async_channel::Sender<bool>>,
+}
+
+impl Offer {
+    pub fn answer(&mut self, accept: bool) {
+        if let Some(done) = self.done.take() {
+            let _ = done.try_send(accept);
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -409,7 +465,9 @@ pub fn failure_title(cmd: &Cmd) -> &'static str {
         Cmd::Disconnect(_) => "Could not disconnect",
         Cmd::Remove { .. } => "Could not remove the device",
         Cmd::SetTrusted { .. } | Cmd::SetAlias { .. } => "Could not change the device",
-        Cmd::StopDiscovery(_) | Cmd::Pair(_) | Cmd::CancelPair(_) | Cmd::Quit => "Bluetooth",
+        Cmd::StopDiscovery(_) | Cmd::Pair(_) | Cmd::CancelPair(_) | Cmd::Receive(_) | Cmd::Quit => {
+            "Bluetooth"
+        }
     }
 }
 
@@ -494,6 +552,43 @@ mod tests {
         let mut o = Objects::new();
         o.insert(path("/org/bluez"), HashMap::new());
         assert_eq!(fold(&o).adapter, None);
+    }
+
+    #[test]
+    fn device_at_finds_the_device_under_the_named_adapter() {
+        let with_address = |mut ifaces: HashMap<String, Props>, address: &str| {
+            ifaces
+                .get_mut(ADAPTER_IFACE)
+                .unwrap()
+                .insert("Address".into(), s(address));
+            ifaces
+        };
+        let mut o = Objects::new();
+        o.insert(
+            path("/org/bluez/hci0"),
+            with_address(adapter(true, "on"), "00:AA:01:00:00:00"),
+        );
+        o.insert(
+            path("/org/bluez/hci1"),
+            with_address(adapter(true, "on"), "00:AA:01:01:00:00"),
+        );
+        o.insert(
+            path("/org/bluez/hci1/dev_AA_BB_CC_DD_EE_01"),
+            device(Some("Phone"), "Phone", "phone", true),
+        );
+        let found = device_at(&o, "00:aa:01:01:00:00", "aa:bb:cc:dd:ee:01").expect("on hci1");
+        assert_eq!(found.alias, "Phone");
+        assert!(found.paired);
+        assert_eq!(
+            device_at(&o, "00:AA:01:00:00:00", "AA:BB:CC:DD:EE:01"),
+            None,
+            "hci0 has not seen it"
+        );
+        assert_eq!(
+            device_at(&o, "00:AA:01:09:00:00", "AA:BB:CC:DD:EE:01"),
+            None,
+            "no such adapter"
+        );
     }
 
     #[test]

@@ -21,6 +21,7 @@ repriseapp = { path = "../../repriseapp" }
 reprisekit = { path = "../../reprisekit" }
 reprisetray = { path = "../../reprisetray" }
 reprisebus = { path = "../../reprisebus" }
+reprisefs = { path = "../../reprisefs" }
 repriseconf = { path = "../../repriseconf" }
 async-channel.workspace = true
 zbus.workspace = true
