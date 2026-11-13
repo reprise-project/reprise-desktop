@@ -1655,7 +1655,10 @@ stop the share first.
   as one argument after `--`, and every answer to its prompts (user name,
   domain, password, a host-key choice) on its standard input, so a password
   never shows in a process list; a line break typed into a field is dropped
-  so it can't answer the next prompt. The password field is wiped when the
+  so it can't answer the next prompt. A password typed into the address
+  (`smb://user:password@server/share`) is taken out of it before the address
+  reaches gio, the address bar, the Connect box or the log, and answers
+  gio's first password prompt. The password field is wiped when the
   box closes and the copies Reprise holds are zeroed when dropped. Remember
   stores the password in the Secret Service's default collection under the
   network password schema (protocol, server, port, user, domain), and a
