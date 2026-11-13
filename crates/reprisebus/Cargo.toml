@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 repository.workspace = true
-description = "Checks that a system bus call or signal came from the current owner of a well-known name, reports keys to the AT-SPI registry, waits for its bus and follows its restarts, follows the compositor's look and its desktop lock, hands dragged files through the document portal, and starts the logger with journal priorities"
+description = "Checks that a system bus call or signal came from the current owner of a well-known name, reports keys to the AT-SPI registry, waits for its bus and follows its restarts, follows the compositor's look and its desktop lock, hands dragged files through the document portal, starts the logger with journal priorities, and reads a day's events from evolution-data-server"
 
 [lints]
 workspace = true
@@ -16,6 +16,7 @@ zbus.workspace = true
 zruntime.workspace = true
 futures-lite.workspace = true
 futures-util.workspace = true
+jiff.workspace = true
 log.workspace = true
 env_logger.workspace = true
 libc.workspace = true

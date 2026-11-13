@@ -69,6 +69,7 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 inotify = { version = "0.11", default-features = false }
 # Our fork's `patches` branch: upstream master plus the server, acceptor and
 # input fixes listed in `git log upstream/master..patches` there.
+jiff = { version = "0.2", default-features = false, features = ["std", "tz-system", "tzdb-zoneinfo"] }
 ironrdp-acceptor = { git = "https://github.com/reprise-project/IronRDP.git", rev = "fb3b0beec1aac965cd6c7a5a78614dba0c6260b0" }
 ironrdp-ainput = { git = "https://github.com/reprise-project/IronRDP.git", rev = "fb3b0beec1aac965cd6c7a5a78614dba0c6260b0" }
 ironrdp-async = { git = "https://github.com/reprise-project/IronRDP.git", rev = "fb3b0beec1aac965cd6c7a5a78614dba0c6260b0" }

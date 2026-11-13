@@ -2849,6 +2849,7 @@ dependencies = [
  "portable-atomic",
  "portable-atomic-util",
  "serde_core",
+ "windows-link",
 ]
 
 [[package]]
@@ -4856,6 +4857,7 @@ dependencies = [
  "env_logger",
  "futures-lite",
  "futures-util",
+ "jiff",
  "libc",
  "log",
  "serde",
