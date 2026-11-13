@@ -93,6 +93,7 @@ pub mod traycustomize;
 pub mod treeview;
 pub mod updown;
 pub mod volumepopup;
+pub mod welcome;
 pub mod wizard;
 
 /// The look's control sizes live in the root [`crate::metrics`]; hosts
