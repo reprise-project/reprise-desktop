@@ -13,6 +13,8 @@ pub struct Settings {
     pub battery_low: i64,
     pub battery_critical: i64,
     pub critical_action: String,
+    /// Hold the power saver profile from the low alarm's level until the battery charges or climbs above it.
+    pub low_battery_saver: bool,
     pub lid_close: String,
     pub power_button: String,
     pub sleep_button: String,
@@ -30,6 +32,7 @@ impl Default for Settings {
             battery_low: c.power.battery_low.into(),
             battery_critical: c.power.battery_critical.into(),
             critical_action: c.power.critical_action.name().into(),
+            low_battery_saver: c.power.low_battery_saver,
             lid_close: c.power.lid_close.name().into(),
             power_button: c.power.power_button.name().into(),
             sleep_button: c.power.sleep_button.name().into(),
@@ -130,6 +133,7 @@ fn fields() -> Vec<Field> {
         Field::Int(k("power", "battery_low"), lens!(battery_low)),
         Field::Int(k("power", "battery_critical"), lens!(battery_critical)),
         Field::Text(k("power", "critical_action"), lens!(critical_action)),
+        Field::Flag(k("power", "low_battery_saver"), lens!(low_battery_saver)),
         Field::Text(k("power", "lid_close"), lens!(lid_close)),
         Field::Text(k("power", "power_button"), lens!(power_button)),
         Field::Text(k("power", "sleep_button"), lens!(sleep_button)),
@@ -243,7 +247,8 @@ mod tests {
         let s = load(
             "[idle]\nscreen_off_after = 60\nsuspend_after = 120\n\
              [idle.battery]\nscreen_off_after = 30\n\
-             [power]\nbattery_low = 20\ncritical_action = \"standby\"\nalways_show_icon = true\n",
+             [power]\nbattery_low = 20\ncritical_action = \"standby\"\nalways_show_icon = true\n\
+             low_battery_saver = false\n",
         );
         assert_eq!(s.screen_off_after, 60);
         assert_eq!(s.suspend_after, 120);
@@ -254,6 +259,7 @@ mod tests {
         assert_eq!(s.battery_low, 20);
         assert_eq!(s.critical_action, "standby");
         assert!(s.always_show_icon);
+        assert!(!s.low_battery_saver);
     }
 
     #[test]

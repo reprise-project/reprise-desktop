@@ -171,6 +171,7 @@ impl Sheet {
             self.profile = None;
         }
         self.write_profiles();
+        self.write_saver();
         self.sheet.set_apply_enabled(self.dirty());
     }
 
@@ -339,6 +340,11 @@ impl Sheet {
                     }
                 }
             }
+            LOW_SAVER => {
+                if let Some(on) = checked(id) {
+                    p.low_battery_saver = on;
+                }
+            }
             "crit_check" => {
                 if let Some(on) = checked(id) {
                     p.battery_critical = if on { self.critical_level } else { 0 };
@@ -436,6 +442,7 @@ impl Sheet {
             );
         }
         self.write_profiles();
+        self.write_saver();
         self.write_meter();
         self.sheet.set_apply_enabled(dirty);
     }
@@ -458,6 +465,20 @@ impl Sheet {
         let selected = self.profiles.available.iter().position(|p| p == shown);
         page.set_combo("profile", selected.unwrap_or(0));
         page.set_enabled("profile", !labels.is_empty());
+    }
+
+    /// The power saver check follows the file; without the daemon it greys and the note says what to install.
+    fn write_saver(&mut self) {
+        let offered = self.profiles.available.iter().any(|p| p == profiles::SAVER);
+        let note = if self.profiles.available.is_empty() {
+            "Install power-profiles-daemon to switch to power saver."
+        } else {
+            ""
+        };
+        let page = &mut self.sheet.pages[TAB_ALARMS];
+        page.set_check(LOW_SAVER, self.pending.low_battery_saver);
+        page.set_enabled(LOW_SAVER, offered && self.pending.battery_low > 0);
+        page.set_text("saver_note", note);
     }
 
     fn write_meter(&mut self) {
@@ -636,10 +657,13 @@ fn schemes_page(icon: Option<Canvas>) -> Form {
     Form::new(items)
 }
 
+/// The Alarms tab's power saver check box: greyed while the low alarm is off or the daemon offers no power saver profile.
+pub const LOW_SAVER: &str = "low_saver";
+
 fn alarms_page() -> Form {
     let actions: Vec<&str> = CRITICAL_ACTIONS.iter().map(|(_, l)| *l).collect();
     Form::new(vec![
-        group("low_g", 48, 96, "Low battery alarm"),
+        group("low_g", 48, 108, "Low battery alarm"),
         Item::check(
             "low_check",
             GX,
@@ -652,21 +676,28 @@ fn alarms_page() -> Form {
             Control::TrackBar(TrackBar::new(2, ALARM_STEPS)),
         ),
         Item::label_at("low_pct", GX + 252, 96, 50, "10%"),
-        group("crit_g", 156, 130, "Critical battery alarm"),
+        Item::check(
+            LOW_SAVER,
+            GX,
+            124,
+            "&Switch to the power saver profile at this level",
+        ),
+        group("crit_g", 168, 130, "Critical battery alarm"),
         Item::check(
             "crit_check",
             GX,
-            176,
+            188,
             "Activate &critical battery alarm when power level reaches:",
         ),
         Item::new(
             "crit_track",
-            Rect::new(GX, 198, 240, trackbar::HEIGHT),
+            Rect::new(GX, 210, 240, trackbar::HEIGHT),
             Control::TrackBar(TrackBar::new(1, ALARM_STEPS)),
         ),
-        Item::label_at("crit_pct", GX + 252, 204, 50, "3%"),
-        Item::label_at("crit_action_label", GX, 246, 60, "&Action:"),
-        combo("crit_action", GX + 60, 242, 160, &actions),
+        Item::label_at("crit_pct", GX + 252, 216, 50, "3%"),
+        Item::label_at("crit_action_label", GX, 258, 60, "&Action:"),
+        combo("crit_action", GX + 60, 254, 160, &actions),
+        Item::label_at("saver_note", X, 310, W, ""),
     ])
 }
 
@@ -856,6 +887,7 @@ mod tests {
                 "performance".into(),
             ],
             active: active.into(),
+            ..Profiles::default()
         }
     }
 
@@ -1017,6 +1049,54 @@ mod tests {
         set_track(&mut s.sheet.pages[TAB_ALARMS], "low_track", 25, true);
         changed(&mut s, "low_track");
         assert_eq!(s.pending.battery_low, 25);
+    }
+
+    /// The power saver check as (checked, enabled) and the note under the alarms.
+    fn saver_row(s: &Sheet) -> (bool, bool, String) {
+        let p = &s.sheet.pages[TAB_ALARMS];
+        let enabled = match &p.item(LOW_SAVER).unwrap().control {
+            Control::Check { enabled, .. } => *enabled,
+            c => panic!("a check box, not {c:?}"),
+        };
+        let note = match &p.item("saver_note").unwrap().control {
+            Control::Label { text, .. } => text.clone(),
+            c => panic!("a label, not {c:?}"),
+        };
+        (p.checked(LOW_SAVER).unwrap(), enabled, note)
+    }
+
+    #[test]
+    fn the_saver_check_greys_without_the_daemon_or_the_low_alarm() {
+        let mut s = sheet();
+        assert_eq!(
+            saver_row(&s),
+            (
+                true,
+                false,
+                "Install power-profiles-daemon to switch to power saver.".into()
+            )
+        );
+        s.refresh_profiles(&profiles("balanced"));
+        assert_eq!(saver_row(&s), (true, true, String::new()));
+        s.open_tab(TAB_ALARMS);
+        s.sheet.pages[TAB_ALARMS].set_check("low_check", false);
+        changed(&mut s, "low_check");
+        assert!(!saver_row(&s).1, "no low alarm, no level to switch at");
+        s.sheet.pages[TAB_ALARMS].set_check("low_check", true);
+        changed(&mut s, "low_check");
+        s.sheet.pages[TAB_ALARMS].set_check(LOW_SAVER, false);
+        changed(&mut s, LOW_SAVER);
+        assert!(!s.pending.low_battery_saver);
+        assert!(matches!(
+            s.event(propsheet::Event::Apply),
+            Outcome::Apply(
+                Settings {
+                    low_battery_saver: false,
+                    ..
+                },
+                None
+            )
+        ));
     }
 
     #[test]

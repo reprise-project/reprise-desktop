@@ -144,6 +144,7 @@ pub struct FilePower {
     pub battery_low: Option<i64>,
     pub battery_critical: Option<i64>,
     pub critical_action: Option<String>,
+    pub low_battery_saver: Option<bool>,
     pub always_show_icon: Option<bool>,
     pub lock_on_sleep: Option<bool>,
     pub locker: Option<String>,

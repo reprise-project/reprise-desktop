@@ -19,10 +19,15 @@ const DAEMONS: [(&str, &str); 2] = [
 ];
 const PROPERTIES: &str = "org.freedesktop.DBus.Properties";
 
+/// The profile the low battery saver holds.
+pub const SAVER: &str = "power-saver";
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Profiles {
     pub available: Vec<String>,
     pub active: String,
+    /// The daemon's unique bus name; a new one is a restarted daemon, which holds nothing.
+    pub owner: String,
 }
 
 pub fn label(profile: &str) -> String {
@@ -36,7 +41,7 @@ pub fn label(profile: &str) -> String {
 
 /// The daemon's properties folded into `Profiles`: `Profiles` is an
 /// `aa{sv}`, one dictionary per profile with its name under `Profile`.
-fn fold(props: &HashMap<String, OwnedVariant>) -> Profiles {
+fn fold(props: &HashMap<String, OwnedVariant>, owner: &str) -> Profiles {
     let available = props
         .get("Profiles")
         .and_then(|v| Vec::<HashMap<String, OwnedVariant>>::try_from(v.clone()).ok())
@@ -48,7 +53,11 @@ fn fold(props: &HashMap<String, OwnedVariant>) -> Profiles {
         .get("ActiveProfile")
         .and_then(|v| String::try_from(v.clone()).ok())
         .unwrap_or_default();
-    Profiles { available, active }
+    Profiles {
+        available,
+        active,
+        owner: owner.into(),
+    }
 }
 
 type Changed = (String, HashMap<String, OwnedVariant>, Vec<String>);
@@ -124,7 +133,10 @@ async fn run(feed: &mut Feed<Profiles>) -> Run {
     if let Some(all) = all_props(&props, name).await {
         store = all;
     }
-    if !feed.send(fold(&store)) {
+    let owner = reprisebus::name_owner(&conn, name)
+        .await
+        .unwrap_or_default();
+    if !feed.send(fold(&store, &owner)) {
         return Run::Closed;
     }
     while let Some(signal) = signals.next().await {
@@ -142,7 +154,7 @@ async fn run(feed: &mut Feed<Profiles>) -> Run {
                 break;
             }
         }
-        if !feed.send(fold(&store)) {
+        if !feed.send(fold(&store, &owner)) {
             return Run::Closed;
         }
     }
@@ -176,8 +188,11 @@ impl Setter {
                         .await
                     {
                         log::warn!("power-profiles-daemon refused {profile}: {e}");
+                        let owner = reprisebus::name_owner(&conn, name)
+                            .await
+                            .unwrap_or_default();
                         if let Some(all) = all_props(&props, name).await
-                            && tx.send(fold(&all)).is_ok()
+                            && tx.send(fold(&all, &owner)).is_ok()
                         {
                             waker.wake();
                         }
@@ -186,6 +201,75 @@ impl Setter {
             });
         if let Err(e) = spawned {
             log::warn!("could not start the profile thread: {e}");
+        }
+    }
+}
+
+/// Takes and lets go of a hold on the power saver profile. The daemon switches back when the last hold
+/// goes, and drops every hold when the user picks a profile or the holder leaves the bus.
+pub struct Hold {
+    tx: Sender<bool>,
+}
+
+impl Hold {
+    pub fn start() -> Hold {
+        let (tx, rx) = std::sync::mpsc::channel::<bool>();
+        let spawned = std::thread::Builder::new()
+            .name("reprise-power-hold".into())
+            .spawn(move || {
+                // The proxy keeps the connection, and with it the hold, alive.
+                let mut held: Option<(Proxy<'static>, u32)> = None;
+                for on in rx {
+                    held = zbus::block_on(async {
+                        match (on, held.take()) {
+                            (true, None) => take_hold().await,
+                            (false, Some((daemon, cookie))) => {
+                                if let Err(e) =
+                                    daemon.call_method("ReleaseProfile", &(cookie,)).await
+                                {
+                                    log::debug!("hold {cookie} was already gone: {e}");
+                                }
+                                None
+                            }
+                            (_, kept) => kept,
+                        }
+                    });
+                }
+            });
+        if let Err(e) = spawned {
+            log::warn!("could not start the profile hold thread: {e}");
+        }
+        Hold { tx }
+    }
+
+    pub fn set(&self, on: bool) {
+        let _ = self.tx.send(on);
+    }
+}
+
+async fn take_hold() -> Option<(Proxy<'static>, u32)> {
+    let conn = Connection::system().await.ok()?;
+    let (name, path, _, _) = find(&conn).await?;
+    let daemon: Proxy<'static> = zbus::proxy::Builder::new(&conn)
+        .destination(name)
+        .path(path)
+        .interface(name)
+        .cache_properties(zbus::proxy::CacheProperties::No)
+        .build()
+        .await
+        .ok()?;
+    let cookie = daemon
+        .call_method("HoldProfile", &(SAVER, "Low battery", "reprise.power"))
+        .await
+        .and_then(|m| m.body().deserialize::<u32>());
+    match cookie {
+        Ok(cookie) => {
+            log::info!("holding {SAVER} for the low battery");
+            Some((daemon, cookie))
+        }
+        Err(e) => {
+            log::warn!("power-profiles-daemon refused to hold {SAVER}: {e}");
+            None
         }
     }
 }
@@ -230,21 +314,21 @@ mod tests {
 
     #[test]
     fn fold_lists_the_profiles_in_the_daemons_order() {
-        let p = fold(&props(
-            &["power-saver", "balanced", "performance"],
-            "balanced",
-        ));
+        let p = fold(
+            &props(&["power-saver", "balanced", "performance"], "balanced"),
+            "",
+        );
         assert_eq!(p.available, ["power-saver", "balanced", "performance"]);
         assert_eq!(p.active, "balanced");
     }
 
     #[test]
     fn fold_lists_only_what_the_daemon_offers() {
-        let p = fold(&props(&["power-saver", "balanced"], "power-saver"));
+        let p = fold(&props(&["power-saver", "balanced"], "power-saver"), "");
         assert_eq!(p.available, ["power-saver", "balanced"]);
         assert_eq!(p.active, "power-saver");
         assert_eq!(
-            fold(&HashMap::new()),
+            fold(&HashMap::new(), ""),
             Profiles::default(),
             "no daemon, no profiles"
         );

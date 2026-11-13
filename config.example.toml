@@ -254,6 +254,7 @@ sleep_button = "standby"
 lock_on_sleep = true         # lock before the machine sleeps, whoever asked (logind's PrepareForSleep); Settings' Screen Saver & Lock page sets it
 # locker = "swaylock"        # an ext-session-lock-v1 locker to draw the lock screen; the built-in screen is the fallback
 battery_low = 10             # percent; reprise-power shows a balloon
+low_battery_saver = true     # from battery_low until plugged in, hold power-profiles-daemon's power saver profile; picking a profile meanwhile wins
 battery_critical = 3         # percent; a balloon, then critical_action
 critical_action = "hibernate"   # nothing | standby | hibernate | turnoff; a sleep logind cannot do shuts down
 always_show_icon = false     # reprise-power's tray icon on a machine without a battery too

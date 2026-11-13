@@ -3,7 +3,8 @@
 //! One process: a tray icon that follows UPower's display device, the low and critical battery alarms,
 //! and the Power Options Properties sheet behind it, which edits `config.toml`'s `[idle]`,
 //! `[idle.battery]` and `[power]` keys, and the battery charge limit, which acts at once. The sheet and
-//! the tray menu also switch power-profiles-daemon's profile, when the daemon is there. `--tray` starts
+//! the tray menu also switch power-profiles-daemon's profile, when the daemon is there, and the low battery
+//! saver holds its power saver profile while the charge is low. `--tray` starts
 //! with the sheet hidden (the autostart entry); plain `reprise-power` shows it. Closing the sheet hides
 //! it; only Exit in the tray menu quits. The compositor does the acting: the timeouts, lid and buttons
 //! are its, read from the same file.
@@ -50,6 +51,8 @@ struct PowerApp {
     commands: settings::Commands,
     path: PathBuf,
     alarms: alarms::Alarms,
+    saver: alarms::Saver,
+    hold: Option<profiles::Hold>,
     tray_state: Option<reprisetray::Shown>,
     sheet: Option<sheet::Sheet>,
     /// The sheet was built before an event gave us a `&mut Ctx` to read the icon from, so it draws a placeholder and wants rebuilding.
@@ -118,17 +121,31 @@ impl PowerApp {
     /// Feed the alarms; a balloon goes out at once, and the critical action comes back as the command
     /// for the caller's `Reply::spawn`. A critical sleep logind cannot do shuts down instead. A shutdown
     /// goes to the compositor, which closes the programs first; the command runs here only when it does not answer.
-    fn check_alarms(&mut self) -> Option<String> {
+    /// `saving` says the saver switched to power saver on this snapshot; the low balloon says so too, or a balloon of its own does.
+    fn check_alarms(&mut self, saving: bool) -> Option<String> {
         let low = self.settings.battery_low.max(0) as u32;
         let critical = self.settings.battery_critical.max(0) as u32;
         match self.alarms.feed(&self.power, low, critical) {
-            None => None,
+            None => {
+                if saving && let Some(t) = &self.tray {
+                    t.notify(
+                        "Power saver on",
+                        "The battery is low, so the power saver profile is on until the computer is plugged in.",
+                    );
+                }
+                None
+            }
             Some(alarms::Alarm::Low(pct)) => {
                 log::info!("low battery: {pct}%");
+                let saver = if saving {
+                    " The power saver profile is on until then."
+                } else {
+                    ""
+                };
                 if let Some(t) = &self.tray {
                     t.notify(
                         "Low battery",
-                        &format!("{pct}% of battery power remains. Plug the computer in."),
+                        &format!("{pct}% of battery power remains. Plug the computer in.{saver}"),
                     );
                 }
                 None
@@ -158,6 +175,33 @@ impl PowerApp {
                 self.commands.for_action(action)
             }
         }
+    }
+
+    /// Take or let go of the power saver hold for the battery and profiles now known. True when taking it
+    /// moves the profile, so a balloon says so.
+    fn check_saver(&mut self) -> bool {
+        let low = self.settings.battery_low.max(0) as u32;
+        let on = self.settings.low_battery_saver
+            && self.profiles.available.iter().any(|p| p == profiles::SAVER);
+        let Some(hold) = self.saver.feed(&self.power, low, on) else {
+            return false;
+        };
+        if let Some(h) = &self.hold {
+            h.set(hold);
+        }
+        hold && self.profiles.active != profiles::SAVER
+    }
+
+    /// A restarted daemon dropped the saver's hold: let go of the dead one so the next check takes a new
+    /// hold. A hold the user's pick had ended (the profile moved off power saver) stays ended.
+    fn daemon_restarted(&mut self) {
+        if self.saver == alarms::Saver::default() || self.profiles.active != profiles::SAVER {
+            return;
+        }
+        if let Some(h) = &self.hold {
+            h.set(false);
+        }
+        self.saver = alarms::Saver::default();
     }
 
     fn build(&mut self, icon: Option<Option<Canvas>>) {
@@ -216,6 +260,7 @@ impl PowerApp {
         if let Some(text) = written {
             self.take_settings(&text);
             self.push_state();
+            self.check_saver();
         } else {
             if let Some(s) = &mut self.sheet {
                 s.unapplied(&self.settings);
@@ -346,7 +391,11 @@ impl PowerApp {
             .profile_snapshots
             .as_ref()
             .and_then(|rx| rx.try_iter().last());
+        let profiles_moved = fresh_profiles.is_some();
         if let Some(p) = fresh_profiles {
+            if p.owner != self.profiles.owner {
+                self.daemon_restarted();
+            }
             self.profiles = p;
             if let Some(s) = &mut self.sheet {
                 s.refresh_profiles(&self.profiles);
@@ -359,16 +408,20 @@ impl PowerApp {
                 fresh = Some(p);
             }
         }
+        let fresh_power = fresh.is_some();
         let mut spawn = None;
         if let Some(p) = fresh {
             self.power = p;
             if let Some(s) = &mut self.sheet {
                 s.refresh_power(&self.power);
             }
+        }
+        if fresh_power || profiles_moved {
             // The alarms and the icon go by the file as it is now, other writers' edits included.
             self.reload_settings();
             self.push_state();
-            spawn = self.check_alarms();
+            let saving = self.check_saver();
+            spawn = self.check_alarms(saving);
         }
         let msgs: Vec<tray::TrayMsg> = self
             .msgs
@@ -467,6 +520,7 @@ impl App for PowerApp {
         let (profile_snapshots, setter) = profiles::watch(waker.clone());
         self.profile_snapshots = Some(profile_snapshots);
         self.setter = Some(setter);
+        self.hold = Some(profiles::Hold::start());
         self.snapshots = Some(upower::watch(waker.clone()));
         self.waker = Some(waker);
         repriseapp::Start::Continue
@@ -607,6 +661,76 @@ mod tests {
         std::fs::remove_file(&path).unwrap();
         assert_eq!(app.settings.battery_low, 50);
         assert_ne!(app.alarms, alarms::Alarms::default(), "the low alarm fired");
+    }
+
+    #[test]
+    fn the_saver_holds_once_the_daemon_offers_power_saver() {
+        let low = Power {
+            on_battery: true,
+            battery: Some(Battery {
+                state: State::Discharging,
+                percent: 8,
+                ..Battery::default()
+            }),
+            limit: None,
+        };
+        let offered = |active: &str| profiles::Profiles {
+            available: vec!["power-saver".into(), "balanced".into()],
+            active: active.into(),
+            ..profiles::Profiles::default()
+        };
+        let mut app = PowerApp {
+            power: low.clone(),
+            ..PowerApp::default()
+        };
+        assert!(!app.check_saver(), "no daemon yet");
+        app.profiles = offered("balanced");
+        assert!(app.check_saver());
+        assert!(!app.check_saver(), "once per crossing");
+        let mut app = PowerApp {
+            power: low.clone(),
+            profiles: offered("power-saver"),
+            ..PowerApp::default()
+        };
+        assert!(!app.check_saver(), "already on power saver");
+        assert_ne!(app.saver, alarms::Saver::default(), "but held");
+        let mut app = PowerApp {
+            power: low,
+            profiles: offered("balanced"),
+            ..PowerApp::default()
+        };
+        app.settings.low_battery_saver = false;
+        assert!(!app.check_saver());
+        assert_eq!(app.saver, alarms::Saver::default());
+    }
+
+    #[test]
+    fn a_restarted_daemon_is_held_again_unless_the_user_picked_meanwhile() {
+        for (active, again) in [("power-saver", true), ("balanced", false)] {
+            let mut app = PowerApp {
+                power: Power {
+                    on_battery: true,
+                    battery: Some(Battery {
+                        state: State::Discharging,
+                        percent: 8,
+                        ..Battery::default()
+                    }),
+                    limit: None,
+                },
+                profiles: profiles::Profiles {
+                    available: vec!["power-saver".into(), "balanced".into()],
+                    active: "balanced".into(),
+                    owner: ":1.5".into(),
+                },
+                ..PowerApp::default()
+            };
+            assert!(app.check_saver());
+            app.profiles.active = active.into();
+            app.daemon_restarted();
+            assert_eq!(app.saver == alarms::Saver::default(), again, "{active}");
+            app.profiles.active = "balanced".into();
+            assert_eq!(app.check_saver(), again, "{active}");
+        }
     }
 
     /// A wake that shows no window leaves a second instance's handoff for the wake whose raise does.

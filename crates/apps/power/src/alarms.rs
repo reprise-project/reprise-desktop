@@ -1,4 +1,5 @@
 //! The battery alarms as an edge detector: `Low` once when the charge falls to the low threshold while discharging, `Critical` once at the critical one; each re-arms when the battery charges or climbs `REARM_MARGIN` points above its line.
+//! [`Saver`] spans the same low stretch: on from the low line until the alarm would re-arm.
 
 use crate::upower::{Power, State};
 
@@ -60,6 +61,36 @@ impl Alarms {
             self.low_armed = true;
         }
         None
+    }
+}
+
+/// Whether the low battery power saver should hold: the edges of the low alarm's stretch.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Saver {
+    held: bool,
+}
+
+impl Saver {
+    /// Feed a snapshot; `on` is false while the saver is off or has no profile to hold. `Some` says to
+    /// take (`true`) or let go of (`false`) the hold, once per crossing.
+    pub fn feed(&mut self, p: &Power, low: u32, on: bool) -> Option<bool> {
+        let want = match &p.battery {
+            Some(b) if on && low > 0 && b.state == State::Discharging => {
+                let pct = u32::from(b.percent);
+                if pct <= low {
+                    true
+                } else if pct >= low + REARM_MARGIN {
+                    false
+                } else {
+                    self.held
+                }
+            }
+            _ => false,
+        };
+        (want != self.held).then(|| {
+            self.held = want;
+            want
+        })
     }
 }
 
@@ -157,5 +188,38 @@ mod tests {
             a.feed(&at(10, State::Discharging), 10, 0),
             Some(Alarm::Low(10))
         );
+    }
+
+    #[test]
+    fn the_saver_holds_from_the_low_line_until_charging() {
+        let mut s = Saver::default();
+        assert_eq!(s.feed(&at(30, State::Discharging), 10, true), None);
+        assert_eq!(s.feed(&at(10, State::Discharging), 10, true), Some(true));
+        assert_eq!(s.feed(&at(9, State::Discharging), 10, true), None);
+        assert_eq!(s.feed(&at(9, State::Charging), 10, true), Some(false));
+        assert_eq!(
+            s.feed(&at(9, State::Discharging), 10, true),
+            Some(true),
+            "unplugged again"
+        );
+    }
+
+    #[test]
+    fn the_saver_lets_go_two_points_above_the_line() {
+        let mut s = Saver::default();
+        assert_eq!(s.feed(&at(10, State::Discharging), 10, true), Some(true));
+        assert_eq!(s.feed(&at(11, State::Discharging), 10, true), None);
+        assert_eq!(s.feed(&at(12, State::Discharging), 10, true), Some(false));
+        assert_eq!(s.feed(&at(11, State::Discharging), 10, true), None);
+    }
+
+    #[test]
+    fn a_saver_turned_off_or_without_an_alarm_lets_go() {
+        let mut s = Saver::default();
+        assert_eq!(s.feed(&at(5, State::Discharging), 10, false), None);
+        assert_eq!(s.feed(&at(5, State::Discharging), 0, true), None);
+        assert_eq!(s.feed(&at(5, State::Discharging), 10, true), Some(true));
+        assert_eq!(s.feed(&at(5, State::Discharging), 10, false), Some(false));
+        assert_eq!(s.feed(&Power::default(), 10, true), None, "no battery");
     }
 }
