@@ -2,6 +2,8 @@
 //! (`x`, `y`) and the shape, in device pixels, and counts an 8x8 grid of points in the pixel where an
 //! edge crosses it (a pixel wholly inside or outside answers at once).
 
+use std::ops::Range;
+
 use super::{Px, centre};
 
 const GRID: i32 = 8;
@@ -196,10 +198,29 @@ pub fn ringed(
     d: i32,
     paint: impl Fn(f64, f64, usize) -> Px,
 ) -> Vec<Px> {
+    let mut out = Vec::with_capacity((w * h * d * d).max(0) as usize);
+    ringed_each(w, h, r, n, d, |_| 0..0, paint, |_, _, px| out.push(px));
+    out
+}
+
+/// [`ringed`] handing each device pixel (`x`, `y`) to `put(x, y, px)` row by row, but for the
+/// columns `skip(y)` leaves out of row `y`.
+#[allow(clippy::too_many_arguments)]
+pub fn ringed_each(
+    w: i32,
+    h: i32,
+    r: f64,
+    n: usize,
+    d: i32,
+    skip: impl Fn(i32) -> Range<i32>,
+    paint: impl Fn(f64, f64, usize) -> Px,
+    mut put: impl FnMut(i32, i32, Px),
+) {
     let k = f64::from(d);
-    let mut out = Vec::with_capacity((w * h * d * d) as usize);
     for y in 0..h * d {
-        for x in 0..w * d {
+        let skip = skip(y);
+        let end = skip.end.max(skip.start).max(0);
+        for x in (0..skip.start.min(w * d)).chain(end..w * d) {
             let cov = |i: usize| {
                 let i = i as f64;
                 rounded(
@@ -224,10 +245,9 @@ pub fn ringed(
                 }
                 outer = inner;
             }
-            out.push(acc);
+            put(x, y, acc);
         }
     }
-    out
 }
 
 #[cfg(test)]
@@ -350,5 +370,21 @@ mod tests {
         );
         assert_eq!(out[5 * 10 + 5], (255.0, [255.0; 3]), "the fill inside");
         assert_eq!(out[5 * 10], (255.0, [0.0; 3]), "the ring on the edge");
+    }
+
+    #[test]
+    fn ringed_each_hands_on_the_pixels_outside_each_rows_skip_as_ringed_works_them_out() {
+        let paint = |x: f64, y: f64, i: usize| (255.0, [x * 10.0, y * 10.0, i as f64]);
+        let all = ringed(9, 7, 3.0, 2, 2, paint);
+        let skip = |y: i32| y..2 * y;
+        let mut got = Vec::new();
+        ringed_each(9, 7, 3.0, 2, 2, skip, paint, |x, y, px| {
+            got.push((x, y, px))
+        });
+        let want: Vec<_> = (all.iter().enumerate())
+            .map(|(i, &px)| (i as i32 % 18, i as i32 / 18, px))
+            .filter(|&(x, y, _)| !skip(y).contains(&x))
+            .collect();
+        assert_eq!(got, want);
     }
 }

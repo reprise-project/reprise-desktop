@@ -20,6 +20,7 @@ use crate::style::{Part as StylePart, State};
 use crate::text::{TextRenderer, split_mnemonic};
 use crate::textedit::{Caret, edit_first_visible};
 use crate::theme::{Color, Theme};
+use std::ops::Range;
 
 /// Design px. Text rows, fields, buttons and tile cells grow with the text size; pictures, the
 /// arrow and the power button keep theirs.
@@ -620,29 +621,67 @@ pub fn draw_posed(c: &mut Canvas, m: &Logon, part: Part, pose: &Pose, s: i32) {
     if pose.look.glow > 0.0 {
         glow(c, r, pose.radius, pose.look.glow, s);
     }
-    glass_box_look(c, r, pose.radius, &pose.look, s);
     let inner = r.inset(pose.pad.round() as i32);
     let (w, h) = (inner.width, inner.height);
     if w <= 0 || h <= 0 {
+        glass_box_look(c, r, pose.radius, &pose.look, s);
         return;
     }
     let k = f64::from(s);
     let pic = picture.map(|p| p.resample_box(w as u32, h as u32));
-    for y in 0..h {
+    let colour = |x: i32, y: i32| match &pic {
+        Some(p) => shape::unpack(p.get(x, y)),
+        None => person(
+            (centre(x, s) + 0.5) / f64::from(w / s),
+            (centre(y, s) + 0.5) / f64::from(h / s),
+        ),
+    };
+    let cover = |x: i32, y: i32| {
+        rounded(
+            f64::from(x),
+            f64::from(y),
+            f64::from(w),
+            f64::from(h),
+            PICTURE_R * k,
+        )
+    };
+    // An opaque picture pixel over a whole pixel replaces what lies under it, so the box is not
+    // worked out there. The whole pixels of a row of the rounded picture run unbroken.
+    let opaque = (pic.as_ref()).is_none_or(|p| p.pixels.iter().all(|&v| v >> 24 == 0xFF));
+    let whole: Vec<Range<i32>> = (0..h)
+        .map(|y| {
+            let from = (0..w).find(|&x| opaque && cover(x, y) == 1.0);
+            from.map_or(0..0, |x0| {
+                x0..(x0..w).rfind(|&x| cover(x, y) == 1.0).unwrap_or(x0) + 1
+            })
+        })
+        .collect();
+    let hidden = |y: i32| {
+        let row = usize::try_from(r.y + y - inner.y)
+            .ok()
+            .and_then(|i| whole.get(i));
+        let shift = inner.x - r.x;
+        row.map_or(0..0, |x| x.start + shift..x.end + shift)
+    };
+    glass_box_under(c, r, pose.radius, &pose.look, s, hidden);
+    for (y, row) in (0..h).zip(&whole) {
+        let cy = inner.y + y;
         for x in 0..w {
-            let (fx, fy) = (f64::from(x), f64::from(y));
-            let cov = rounded(fx, fy, f64::from(w), f64::from(h), PICTURE_R * k);
-            if cov <= 0.0 {
+            let cx = inner.x + x;
+            if row.contains(&x) {
+                let v = match &pic {
+                    Some(p) => p.get(x, y),
+                    None => shape::pack(colour(x, y)),
+                };
+                if c.bounds().contains(cx, cy) {
+                    c.put_raw(cx, cy, v);
+                }
                 continue;
             }
-            let p = match &pic {
-                Some(p) => shape::unpack(p.get(x, y)),
-                None => person(
-                    (centre(x, s) + 0.5) / f64::from(w / s),
-                    (centre(y, s) + 0.5) / f64::from(h / s),
-                ),
-            };
-            put_over(c, inner.x + x, inner.y + y, shape::scale(p, cov));
+            let cov = cover(x, y);
+            if cov > 0.0 {
+                put_over(c, cx, cy, shape::scale(colour(x, y), cov));
+            }
         }
     }
 }
@@ -980,6 +1019,19 @@ fn glass_box(c: &mut Canvas, r: Rect, radius: f64, face: Face, s: i32) {
 }
 
 fn glass_box_look(c: &mut Canvas, r: Rect, radius: f64, look: &Look, s: i32) {
+    glass_box_under(c, r, radius, look, s, |_| 0..0);
+}
+
+/// [`glass_box_look`] leaving out the columns `hidden(y)` of the box's row `y` (device px from its
+/// left), which opaque pixels cover afterwards.
+fn glass_box_under(
+    c: &mut Canvas,
+    r: Rect,
+    radius: f64,
+    look: &Look,
+    s: i32,
+    hidden: impl Fn(i32) -> Range<i32>,
+) {
     if !c.reaches(r) {
         return;
     }
@@ -994,7 +1046,7 @@ fn glass_box_look(c: &mut Canvas, r: Rect, radius: f64, look: &Look, s: i32) {
     let hh = f64::from(h);
     // The fill changes only from row to row, and `ringed` paints row by row.
     let row = std::cell::Cell::new((f64::NAN, CLEAR));
-    let px = ringed(w, h, radius, 2, s, |_, y, ring| match ring {
+    let paint = |_, y, ring| match ring {
         0 => outline,
         1 => line,
         _ if row.get().0 == y => row.get().1,
@@ -1004,8 +1056,9 @@ fn glass_box_look(c: &mut Canvas, r: Rect, radius: f64, look: &Look, s: i32) {
             row.set((y, fill));
             fill
         }
-    });
-    lay(c, r.x, r.y, w * s, &px);
+    };
+    let put = |x, y, px| put_over(c, r.x + x, r.y + y, px);
+    shape::ringed_each(w, h, radius, 2, s, hidden, paint, put);
 }
 
 fn arrow(c: &mut Canvas, r: Rect, face: Face, s: i32) {

@@ -33,6 +33,16 @@ impl Canvas {
             return out;
         }
         let (sw, sh) = (sw as usize, sh as usize);
+        if w as usize >= sw && h as usize >= sh {
+            // Each box holds one source pixel.
+            for y in 0..h as usize {
+                let sy = (y * sh / h as usize) as u32;
+                for x in 0..w as usize {
+                    out.pixels[y * w as usize + x] = px((x * sw / w as usize) as u32, sy);
+                }
+            }
+            return out;
+        }
         for y in 0..h as usize {
             let y0 = y * sh / h as usize;
             let y1 = ((y + 1) * sh / h as usize).max(y0 + 1);

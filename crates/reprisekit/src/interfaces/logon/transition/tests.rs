@@ -451,19 +451,35 @@ fn a_line_that_comes_up_under_an_entering_block_ends_in_place() {
     }
 }
 
-/// Prints the median and worst cost of a frame and the copy of its rect, per change, 1920x1080 at
-/// scales 1 and 2. Run with `--ignored --nocapture`; the budget is 8 ms.
+/// The CPU time this thread has used, which a busy machine inflates less than the wall clock.
+fn cpu_ms() -> f64 {
+    let mut t = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: `t` is a valid timespec for the call to fill.
+    unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
+    t.tv_sec as f64 * 1000.0 + t.tv_nsec as f64 / 1e6
+}
+
+/// Prints the median and worst CPU cost of a frame and the copy of its rect, and of the flying
+/// frame alone, per change, 1920x1080 at scales 1 and 2. Run with `--ignored --nocapture`; the
+/// budget is 8 ms. `FRAME_COST=pick:2` keeps one change and scale and plays it ten times.
 #[test]
 #[ignore]
 fn transition_frame_cost() {
     const FULL_HD: Rect = Rect::new(0, 0, 1920, 1080);
-    const FRAMES: u32 = 60;
+    let only = std::env::var("FRAME_COST").ok();
+    let frames: u32 = if only.is_some() { 600 } else { 60 };
     for (changes, v) in [
         (glass_changes(), Variant::Blue),
         (blue_changes(), Variant::Blue),
     ] {
         for (name, m0, act) in changes {
             for s in [1, 2] {
+                if only.as_ref().is_some_and(|o| *o != format!("{name}:{s}")) {
+                    continue;
+                }
                 let mut m = m0.clone();
                 act(&mut m);
                 let Some(motion) = m.take_motion() else {
@@ -486,21 +502,30 @@ fn transition_frame_cost() {
                 let mut c = Canvas::new(w, h);
                 draw_logon(&mut c, &m, &l, &theme, text.for_output(s), s);
                 let mut shown = c.clone();
-                let mut ms: Vec<f64> = (0..FRAMES)
+                let (mut ms, mut flying): (Vec<f64>, Vec<f64>) = (0..frames)
                     .map(|i| {
-                        let start = std::time::Instant::now();
-                        let r = t.frame(&mut c, &m, t.ms() * i / FRAMES);
+                        let at = t.ms() * (i % 60) / 60;
+                        let start = cpu_ms();
+                        let r = t.frame(&mut c, &m, at);
                         paste(&mut shown, &c, (0, 0), r);
-                        start.elapsed().as_secs_f64() * 1000.0
+                        let spent = cpu_ms() - start;
+                        let start = cpu_ms();
+                        if let Some(f) = &t.flight {
+                            glass::draw_posed(&mut c, &m, f.part, &f.at(at), s);
+                        }
+                        (spent, cpu_ms() - start)
                     })
-                    .collect();
+                    .unzip();
                 ms.sort_by(f64::total_cmp);
+                flying.sort_by(f64::total_cmp);
                 let r = t.rect();
                 println!(
-                    "{:?} {name} @{s}: median {:.2} ms, worst {:.2} ms, rect {}x{}",
+                    "{:?} {name} @{s}: median {:.2} ms, worst {:.2} ms, flying frame median {:.2} \
+                     ms, rect {}x{}",
                     m.interface,
                     ms[ms.len() / 2],
                     ms[ms.len() - 1],
+                    flying[flying.len() / 2],
                     r.width,
                     r.height
                 );

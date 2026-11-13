@@ -634,3 +634,104 @@ fn the_chrome_is_the_same_on_every_screen_and_holds_no_block() {
         "the power button is chrome"
     );
 }
+
+/// `part`'s picture frame at `pose` laid in turn: its glow, the whole glass box, then every picture
+/// pixel over them.
+fn draw_posed_layered(c: &mut Canvas, m: &Logon, part: Part, pose: &Pose, s: i32) {
+    if !c.reaches(pose.reach(s)) {
+        return;
+    }
+    let picture = user_of(m, part).and_then(|u| u.picture.as_ref());
+    let r = pose.rect;
+    if pose.look.glow > 0.0 {
+        glow(c, r, pose.radius, pose.look.glow, s);
+    }
+    glass_box_look(c, r, pose.radius, &pose.look, s);
+    let inner = r.inset(pose.pad.round() as i32);
+    let (w, h) = (inner.width, inner.height);
+    if w <= 0 || h <= 0 {
+        return;
+    }
+    let k = f64::from(s);
+    let pic = picture.map(|p| p.resample_box(w as u32, h as u32));
+    for y in 0..h {
+        for x in 0..w {
+            let (fx, fy) = (f64::from(x), f64::from(y));
+            let cov = rounded(fx, fy, f64::from(w), f64::from(h), PICTURE_R * k);
+            if cov <= 0.0 {
+                continue;
+            }
+            let p = match &pic {
+                Some(p) => shape::unpack(p.get(x, y)),
+                None => person(
+                    (centre(x, s) + 0.5) / f64::from(w / s),
+                    (centre(y, s) + 0.5) / f64::from(h / s),
+                ),
+            };
+            put_over(c, inner.x + x, inner.y + y, shape::scale(p, cov));
+        }
+    }
+}
+
+#[test]
+fn a_flying_frame_draws_as_its_glow_box_and_picture_laid_in_turn() {
+    let mut tiles = tile();
+    tiles.click(Part::SwitchUser);
+    let mut see_through = tiles.clone();
+    let mut pic = userpic::draw(userpic::ALL[1], 128);
+    for p in pic.pixels.iter_mut().step_by(5) {
+        *p = shape::pack(shape::scale(shape::unpack(*p), 0.5));
+    }
+    see_through.users[0].picture = Some(pic);
+    let cases = [
+        ("picture", tiles.clone(), Part::Tile(0)),
+        ("person", tiles, Part::OtherUser),
+        ("see-through picture", see_through, Part::Tile(0)),
+    ];
+    for (name, from_m, part) in cases {
+        let mut to_m = from_m.clone();
+        to_m.click(part);
+        for s in [1, 2] {
+            let theme = crate::interfaces::theme_for(Interface::Glass).scaled(s);
+            let text = TextRenderer::load(&theme.fonts);
+            let pose_on = |m: &Logon| {
+                let l = layout(m, &theme, &text, OUTPUT);
+                pose(m, &l, &theme, s, part).expect("the frame is on the screen")
+            };
+            let (from, to) = (pose_on(&from_m), pose_on(&to_m));
+            assert!(
+                part != Part::Tile(0) || from.look.glow > 0.0,
+                "{name}: the focused tile flies out of its glow"
+            );
+            let under = drawn(&to_m, s).0;
+            for i in 0..=PICK_MS / 16 {
+                let u = crate::anim::Ease::OutCubic.apply(i as f32 * 16.0 / PICK_MS as f32);
+                let at = Pose::between(&from, &to, f64::from(u.min(1.0)));
+                let r = at.rect;
+                let off = Pose {
+                    rect: Rect::new(-r.width / 2, r.y, r.width, r.height),
+                    ..at
+                };
+                let half = Rect::new(0, 0, r.x + r.width / 2, under.height as i32);
+                for (how, pose, clip) in [
+                    ("whole", at, None),
+                    ("clipped", at, Some(half)),
+                    ("past the edge", off, None),
+                ] {
+                    let draw_in = |f: fn(&mut Canvas, &Logon, Part, &Pose, i32)| {
+                        let mut c = under.clone();
+                        match clip {
+                            Some(r) => c.with_clip(r, |c| f(c, &to_m, part, &pose, s)),
+                            None => f(&mut c, &to_m, part, &pose, s),
+                        }
+                        c
+                    };
+                    assert!(
+                        draw_in(draw_posed).pixels == draw_in(draw_posed_layered).pixels,
+                        "{name} @{s}, frame {i}, {how}: the same pixels as laid in turn"
+                    );
+                }
+            }
+        }
+    }
+}
