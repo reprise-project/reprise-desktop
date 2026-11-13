@@ -39,6 +39,7 @@ pub mod meta;
 pub mod mimetree;
 pub mod multicall;
 pub mod names;
+pub mod netshare;
 pub mod netspeed;
 pub mod ops;
 pub mod pictures;

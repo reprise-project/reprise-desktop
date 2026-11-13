@@ -453,6 +453,10 @@ pub enum DriveKind {
     Local,
     Removable,
     Optical,
+    /// A share on another machine.
+    Network,
+    /// A server listing its shares.
+    Server,
 }
 
 impl DriveKind {
@@ -461,6 +465,8 @@ impl DriveKind {
             DriveKind::Local => "Local Disk",
             DriveKind::Removable => "Removable Disk",
             DriveKind::Optical => "CD Drive",
+            DriveKind::Network => "Network Drive",
+            DriveKind::Server => "Server",
         }
     }
 
@@ -469,6 +475,8 @@ impl DriveKind {
             DriveKind::Local => "drive-harddisk",
             DriveKind::Removable => "drive-removable-media",
             DriveKind::Optical => "media-optical",
+            DriveKind::Network => "folder-remote",
+            DriveKind::Server => "network-server",
         }
     }
 }

@@ -39,6 +39,7 @@
 //! [`login`] asks the system manager whether reprise-login runs.
 //! [`logind`] reads logind's session of a process and its user's display session.
 //! [`testsession`] gives a test binary a session of its own.
+//! [`secrets`] looks up and stores passwords in the Secret Service.
 //! [`bounded`] decodes what another peer sends within size caps, never as a `Variant` tree.
 
 pub mod a11y;
@@ -68,6 +69,7 @@ pub mod polkit;
 pub mod remote;
 pub mod rfkill;
 pub mod searchprovider;
+pub mod secrets;
 pub mod testsession;
 pub mod tray;
 pub mod units;
