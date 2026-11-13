@@ -190,6 +190,8 @@ interface = "classic"        # classic | blue | glass; an unknown value falls ba
 # speed = 0.0                # -1.0 (slowest) to 1.0 (fastest)
 # acceleration = true        # false is libinput's flat profile: raw motion
 # natural_scroll = false     # true reverses the wheel: content follows it
+# scroll_speed = 1.0         # 0.1 to 10: what each scroll is multiplied by
+# middle_emulation = false   # left and right pressed together are a middle click
 
 [touchpad]                   # every libinput pointer that can tap
 # speed = 0.0
@@ -200,6 +202,13 @@ interface = "classic"        # classic | blue | glass; an unknown value falls ba
 # two_finger_scroll = true   # both axes; false scrolls along the pad's edges
 # two_finger_tap_right_click = true  # false: two fingers middle, three right
 # disable_while_typing = true  # ignore the pad (and a clickpad's click) right after a key
+# scroll_speed = 1.0         # 0.1 to 10, apart from the mouse's
+# middle_emulation = false   # on a pad with buttons: left and right together are middle
+# click_method = "default"   # what pressing a clickpad clicks: "areas" (the bottom strip
+#                            # is left, middle and right), "clickfinger" (one, two or three
+#                            # fingers click left, right or middle), "default" (the pad's own)
+# enabled = true             # false turns the pad off; the touchpad key flips this
+# disable_with_mouse = false # the pad is off while a mouse is plugged in
 
 # [gestures]                 # touchpad swipes Reprise keeps; other finger counts, pinches
 #                            # and holds go to the program under the pointer
@@ -868,8 +877,8 @@ action = "tab-prev"
 # built-in action and makes it an ordinary bind, so it no longer works
 # while the screen is locked; the actions
 # volume-up, volume-down, mute, mic-mute, brightness-up, brightness-down,
-# kbd-brightness-up, kbd-brightness-down, play-pause, next, prev, stop and
-# wifi bind to any key.
+# kbd-brightness-up, kbd-brightness-down, play-pause, next, prev, stop,
+# wifi, touchpad (on or off), touchpad-on and touchpad-off bind to any key.
 #[[keybinds]]
 #keys = "Super+F10"
 #action = "mute"

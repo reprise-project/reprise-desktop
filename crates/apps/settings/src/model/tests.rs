@@ -830,6 +830,12 @@ fn save_round_trips_every_field() {
         touchpad_speed: 10,
         touchpad_accel: false,
         touchpad_natural: true,
+        mouse_scroll_speed: 25,
+        mouse_middle: true,
+        touchpad_scroll_speed: 5,
+        touchpad_enabled: false,
+        disable_with_mouse: true,
+        click_method: "clickfinger".into(),
         tap_to_click: false,
         two_finger_scroll: false,
         two_finger_tap_right_click: false,
@@ -1390,6 +1396,29 @@ fn session_and_power_flags_write_their_own_tables() {
     assert!(out.contains("hibernate = \"zzz\"\n"), "{out}");
     assert!(out.contains("lock_on_sleep = false\n"), "{out}");
     assert_eq!(load(&out), s);
+}
+
+#[test]
+fn every_click_method_choice_parses() {
+    for (v, _) in CLICK_METHODS {
+        assert!(repriseconf::config::ClickMethod::parse(v).is_some(), "{v}");
+    }
+    assert_eq!(
+        CLICK_METHODS.len(),
+        repriseconf::config::ClickMethod::ALL.len()
+    );
+}
+
+#[test]
+fn scroll_speed_is_tenths_and_leaves_the_file_at_the_default() {
+    let s = load("[mouse]\nscroll_speed = 2.5\n[touchpad]\nscroll_speed = 0.5\n");
+    assert_eq!((s.mouse_scroll_speed, s.touchpad_scroll_speed), (25, 5));
+    let mut s = load("");
+    s.touchpad_scroll_speed = 15;
+    let out = saved("", &s);
+    assert_eq!(out, "[touchpad]\nscroll_speed = 1.5\n");
+    s.touchpad_scroll_speed = 10;
+    assert!(!saved(&out, &s).contains("scroll_speed"));
 }
 
 #[test]

@@ -6,7 +6,7 @@
 
 use smithay::{
     backend::input::{
-        Event, GestureBeginEvent, GestureEndEvent, GesturePinchUpdateEvent,
+        AxisSource, Event, GestureBeginEvent, GestureEndEvent, GesturePinchUpdateEvent,
         GestureSwipeUpdateEvent, InputBackend, InputEvent,
     },
     input::pointer::{
@@ -16,7 +16,10 @@ use smithay::{
     },
     reexports::{
         calloop::RegistrationToken,
-        input::{AccelProfile, Device, DeviceCapability, ScrollMethod, TapButtonMap},
+        input::{
+            AccelProfile, ClickMethod, Device, DeviceCapability, ScrollMethod, SendEventsMode,
+            TapButtonMap,
+        },
         wayland_server::{DisplayHandle, protocol::wl_surface::WlSurface},
     },
     utils::{Logical, Point, SERIAL_COUNTER},
@@ -29,7 +32,7 @@ use smithay::{
 
 use crate::{
     compositor::State,
-    config::{Config, PointerConfig},
+    config::{self, Config, PointerConfig},
 };
 
 pub struct Pointers {
@@ -110,7 +113,7 @@ impl Pointers {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Caps {
     pub tap_fingers: u32,
     pub accel: bool,
@@ -118,6 +121,10 @@ pub struct Caps {
     pub scroll_methods: Vec<ScrollMethod>,
     pub natural: bool,
     pub dwt: bool,
+    pub middle: bool,
+    pub send_events: SendEventsMode,
+    pub click_methods: Vec<ClickMethod>,
+    pub click_default: Option<ClickMethod>,
 }
 
 impl Caps {
@@ -133,6 +140,10 @@ impl Caps {
             scroll_methods: d.config_scroll_methods(),
             natural: d.config_scroll_has_natural_scroll(),
             dwt: d.config_dwt_is_available(),
+            middle: d.config_middle_emulation_is_available(),
+            send_events: d.config_send_events_modes(),
+            click_methods: d.config_click_methods(),
+            click_default: d.config_click_default_method(),
         }
     }
 }
@@ -146,6 +157,9 @@ pub struct Plan {
     pub tap_map: Option<TapButtonMap>,
     pub scroll: Option<ScrollMethod>,
     pub dwt: Option<bool>,
+    pub middle: Option<bool>,
+    pub send_events: Option<SendEventsMode>,
+    pub click: Option<ClickMethod>,
 }
 
 pub fn plan(cfg: &Config, caps: &Caps) -> Plan {
@@ -169,8 +183,30 @@ pub fn plan(cfg: &Config, caps: &Caps) -> Plan {
     if caps.natural {
         plan.natural = Some(pointer.natural_scroll);
     }
+    if caps.middle {
+        plan.middle = Some(pointer.middle_emulation);
+    }
     if caps.is_touchpad() {
         let tp = &cfg.touchpad;
+        let want = if !tp.enabled {
+            SendEventsMode::DISABLED
+        } else if tp.disable_with_mouse {
+            SendEventsMode::DISABLED_ON_EXTERNAL_MOUSE
+        } else {
+            SendEventsMode::ENABLED
+        };
+        // ENABLED is no bit, so every device takes it.
+        plan.send_events = if caps.send_events.contains(want) {
+            Some(want)
+        } else {
+            tp.enabled.then_some(SendEventsMode::ENABLED)
+        };
+        let click = match tp.click_method {
+            config::ClickMethod::Default => caps.click_default,
+            config::ClickMethod::Areas => Some(ClickMethod::ButtonAreas),
+            config::ClickMethod::Clickfinger => Some(ClickMethod::Clickfinger),
+        };
+        plan.click = click.filter(|m| caps.click_methods.contains(m));
         plan.tap = Some(tp.tap_to_click);
         if caps.tap_fingers >= 2 {
             plan.tap_map = Some(if tp.two_finger_tap_right_click {
@@ -218,6 +254,15 @@ fn apply(cfg: &Config, d: &mut Device) {
     if let Some(v) = plan.dwt {
         let _ = d.config_dwt_set_enabled(v);
     }
+    if let Some(v) = plan.middle {
+        let _ = d.config_middle_emulation_set_enabled(v);
+    }
+    if let Some(v) = plan.click {
+        let _ = d.config_click_set_method(v);
+    }
+    if let Some(v) = plan.send_events {
+        let _ = d.config_send_events_set_mode(v);
+    }
     log::info!(
         "{} {}: {plan:?}",
         if caps.is_touchpad() {
@@ -227,6 +272,15 @@ fn apply(cfg: &Config, d: &mut Device) {
         },
         d.name()
     );
+}
+
+/// What a scroll from `source` is multiplied by: a finger's is the touchpad's `scroll_speed`, a
+/// wheel's or a button scroll's the mouse's.
+pub fn scroll_speed(cfg: &Config, source: AxisSource) -> f64 {
+    match source {
+        AxisSource::Finger => cfg.touchpad.pointer.scroll_speed,
+        _ => cfg.mouse.scroll_speed,
+    }
 }
 
 /// Whole wheel notches an axis event carries for a StatusNotifierItem, plus the
@@ -250,6 +304,20 @@ pub fn wheel_steps(discrete: i32, continuous: f64, residual: i32) -> (i32, i32) 
 }
 
 impl State {
+    /// Turn the touchpad on or off (`None` flips it): live at once, in config.toml when it
+    /// changed, and in the on-screen panel.
+    pub fn set_touchpad(&mut self, on: Option<bool>) {
+        let was = self.config.touchpad.enabled;
+        let on = on.unwrap_or(!was);
+        if on != was {
+            self.config.touchpad.enabled = on;
+            self.pointers.apply_all(&self.config);
+            let key = repriseconf::key("touchpad", "enabled");
+            crate::configwrite::save_flag(&self.config_path, key, on);
+        }
+        self.show_osd(&crate::media::Report::Touchpad { on });
+    }
+
     pub fn gesture<B: InputBackend>(&mut self, event: InputEvent<B>) {
         // The login screen takes none, and the overview and desktops behind it must not.
         if self.host == crate::compositor::Host::Greeter {
@@ -518,6 +586,10 @@ mod tests {
             scroll_methods: vec![ScrollMethod::TwoFinger, ScrollMethod::Edge],
             natural: true,
             dwt: true,
+            middle: false,
+            send_events: SendEventsMode::DISABLED | SendEventsMode::DISABLED_ON_EXTERNAL_MOUSE,
+            click_methods: vec![ClickMethod::ButtonAreas, ClickMethod::Clickfinger],
+            click_default: Some(ClickMethod::ButtonAreas),
         }
     }
 
@@ -529,6 +601,10 @@ mod tests {
             scroll_methods: Vec::new(),
             natural: true,
             dwt: false,
+            middle: true,
+            send_events: SendEventsMode::DISABLED,
+            click_methods: Vec::new(),
+            click_default: None,
         }
     }
 
@@ -545,6 +621,9 @@ mod tests {
                 tap_map: Some(TapButtonMap::LeftRightMiddle),
                 scroll: Some(ScrollMethod::TwoFinger),
                 dwt: Some(true),
+                middle: None,
+                send_events: Some(SendEventsMode::ENABLED),
+                click: Some(ClickMethod::ButtonAreas),
             }
         );
         assert_eq!(
@@ -553,6 +632,7 @@ mod tests {
                 speed: Some(0.0),
                 profile: Some(AccelProfile::Adaptive),
                 natural: Some(false),
+                middle: Some(false),
                 ..Plan::default()
             }
         );
@@ -603,6 +683,10 @@ mod tests {
             scroll_methods: vec![ScrollMethod::TwoFinger],
             natural: false,
             dwt: false,
+            middle: false,
+            send_events: SendEventsMode::empty(),
+            click_methods: Vec::new(),
+            click_default: None,
         };
         let t = plan(&cfg, &caps);
         assert_eq!(t.tap_map, None, "one finger has no map");
@@ -616,9 +700,97 @@ mod tests {
         let caps = Caps {
             accel: false,
             natural: false,
+            middle: false,
             ..mouse()
         };
         assert_eq!(plan(&cfg, &caps), Plan::default());
+        cfg.touchpad.enabled = false;
+        cfg.touchpad.click_method = config::ClickMethod::Clickfinger;
+        let pad = Caps {
+            tap_fingers: 1,
+            send_events: SendEventsMode::empty(),
+            ..caps
+        };
+        let t = plan(&cfg, &pad);
+        assert_eq!(
+            t.send_events, None,
+            "a pad libinput cannot turn off stays on"
+        );
+        assert_eq!(t.click, None, "a pad without clickfinger keeps its click");
+    }
+
+    #[test]
+    fn a_touchpad_turned_off_or_off_beside_a_mouse_picks_its_send_events_mode() {
+        let mut cfg = Config::default();
+        cfg.touchpad.disable_with_mouse = true;
+        assert_eq!(
+            plan(&cfg, &touchpad()).send_events,
+            Some(SendEventsMode::DISABLED_ON_EXTERNAL_MOUSE)
+        );
+        cfg.touchpad.enabled = false;
+        assert_eq!(
+            plan(&cfg, &touchpad()).send_events,
+            Some(SendEventsMode::DISABLED),
+            "off wins over off beside a mouse"
+        );
+        assert_eq!(plan(&cfg, &mouse()).send_events, None, "a mouse stays on");
+        cfg.touchpad.enabled = true;
+        let only_off = Caps {
+            send_events: SendEventsMode::DISABLED,
+            ..touchpad()
+        };
+        assert_eq!(
+            plan(&cfg, &only_off).send_events,
+            Some(SendEventsMode::ENABLED),
+            "a pad that cannot tell a mouse is plugged in stays on"
+        );
+    }
+
+    #[test]
+    fn the_click_method_is_set_or_goes_back_to_the_pads_default() {
+        let mut cfg = Config::default();
+        cfg.touchpad.click_method = config::ClickMethod::Clickfinger;
+        assert_eq!(
+            plan(&cfg, &touchpad()).click,
+            Some(ClickMethod::Clickfinger)
+        );
+        cfg.touchpad.click_method = config::ClickMethod::Areas;
+        let apple = Caps {
+            click_default: Some(ClickMethod::Clickfinger),
+            ..touchpad()
+        };
+        assert_eq!(plan(&cfg, &apple).click, Some(ClickMethod::ButtonAreas));
+        cfg.touchpad.click_method = config::ClickMethod::Default;
+        assert_eq!(plan(&cfg, &apple).click, Some(ClickMethod::Clickfinger));
+    }
+
+    #[test]
+    fn middle_emulation_follows_each_section() {
+        let mut cfg = Config::default();
+        cfg.mouse.middle_emulation = true;
+        let pad = Caps {
+            middle: true,
+            ..touchpad()
+        };
+        assert_eq!(plan(&cfg, &mouse()).middle, Some(true));
+        assert_eq!(plan(&cfg, &pad).middle, Some(false));
+        cfg.touchpad.pointer.middle_emulation = true;
+        assert_eq!(plan(&cfg, &pad).middle, Some(true));
+    }
+
+    #[test]
+    fn scroll_speed_is_the_touchpads_for_fingers_and_the_mouses_for_the_rest() {
+        let mut cfg = Config::default();
+        cfg.mouse.scroll_speed = 2.0;
+        cfg.touchpad.pointer.scroll_speed = 0.5;
+        assert_eq!(scroll_speed(&cfg, AxisSource::Finger), 0.5);
+        for source in [
+            AxisSource::Wheel,
+            AxisSource::WheelTilt,
+            AxisSource::Continuous,
+        ] {
+            assert_eq!(scroll_speed(&cfg, source), 2.0, "{source:?}");
+        }
     }
 
     #[test]
@@ -737,6 +909,23 @@ mod tests {
             h.state.desktops.current, 0,
             "right now goes to the desktop before"
         );
+    }
+
+    #[test]
+    fn the_touchpad_key_flips_the_pad_and_on_or_off_set_it() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.state.set_touchpad(None);
+        assert!(!h.state.config.touchpad.enabled, "the toggle turns it off");
+        h.state.set_touchpad(Some(false));
+        assert!(!h.state.config.touchpad.enabled, "off stays off");
+        h.state.set_touchpad(None);
+        assert!(
+            h.state.config.touchpad.enabled,
+            "the toggle turns it back on"
+        );
+        h.state.set_touchpad(Some(true));
+        assert!(h.state.config.touchpad.enabled);
     }
 
     #[test]

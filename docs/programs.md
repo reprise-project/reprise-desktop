@@ -367,10 +367,12 @@ matched control focused.
   - **Keyboard:** layouts, a layout per window, the model and options,
     repeat, every shortcut, programs' global shortcuts included, whether
     Caps Lock and Num Lock show on screen, and the sheet holding Super shows.
-  - **Mouse & Touchpad:** pointer speed, Enhance pointer precision,
-    double-click speed, scrolling, and the touchpad's speed, Enhance pointer
-    precision, tapping, two-finger tap as a right click, scrolling and
-    disable-while-typing.
+  - **Mouse:** pointer speed, Enhance pointer precision, double-click
+    speed, middle click with both buttons, scroll speed and direction.
+  - **Touchpad:** on or off, off while a mouse is plugged in, speed,
+    Enhance pointer precision, disable-while-typing, tapping, two-finger tap
+    as a right click, the click method, two-finger scrolling, scroll speed
+    and direction.
   - **Cursor:** cursor theme and size.
   - **Tablet:** what each pad button, pad key, ring, strip and dial does,
     and how far a ring or strip turns per step.

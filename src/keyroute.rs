@@ -272,16 +272,16 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
     // The media keys are the machine's too, with the same precedence, but
     // a config bind on the bare key replaces the built-in action. The wifi
     // key is the exception at the lock: nobody there may take the machine
-    // off the network.
+    // off the network. Some firmware sends the touchpad key with Ctrl+Super held.
     if k.pressed
-        && k.mods == 0
         && let Some(a) = k.syms.iter().find_map(|&s| media_action_for(s))
+        && (k.mods == 0 || (k.mods == MOD_CTRL | MOD_LOGO && matches!(a, Action::Touchpad(_))))
         && !(modes.locked && a == Action::Wifi)
     {
         let bound = k
             .lower
             .iter()
-            .any(|&l| binds.iter().any(|b| b.mods == 0 && b.keysym == l));
+            .any(|&l| binds.iter().any(|b| b.mods == k.mods && b.keysym == l));
         if !bound {
             return plain(KeyRoute::Media(a));
         }
@@ -769,6 +769,7 @@ fn passes_dialog(a: &Action) -> bool {
             | Action::Prev
             | Action::Stop
             | Action::Wifi
+            | Action::Touchpad(_)
     )
 }
 
@@ -984,8 +985,8 @@ fn vt_switch(modes: &Modes, k: &KeyPress) -> Option<u32> {
 const KEY_XF86WWAN: u32 = 0x1008_ffb4;
 pub(crate) const KEY_XF86RFKILL: u32 = 0x1008_ffb5;
 
-/// Whether a key with `syms` is the machine's own: power, sleep, a VT or a radio toggle, which no
-/// app's input may press.
+/// Whether a key with `syms` is the machine's own: power, sleep, a VT, a radio or the touchpad
+/// toggle, which no app's input may press.
 #[expect(non_upper_case_globals)] // xkb keysym names in patterns
 pub fn machine_key(syms: &[u32]) -> bool {
     syms.iter().any(|&s| {
@@ -1000,6 +1001,9 @@ pub fn machine_key(syms: &[u32]) -> bool {
                 | KEY_XF86UWB
                 | KEY_XF86WWAN
                 | KEY_XF86RFKILL
+                | KEY_XF86TouchpadToggle
+                | KEY_XF86TouchpadOn
+                | KEY_XF86TouchpadOff
         ) || (KEY_XF86Switch_VT_1..=KEY_XF86Switch_VT_12).contains(&s)
     })
 }
@@ -1021,6 +1025,9 @@ pub fn media_action_for(sym: u32) -> Option<Action> {
         KEY_XF86AudioPrev => Action::Prev,
         KEY_XF86AudioStop => Action::Stop,
         KEY_XF86WLAN => Action::Wifi,
+        KEY_XF86TouchpadToggle => Action::Touchpad(None),
+        KEY_XF86TouchpadOn => Action::Touchpad(Some(true)),
+        KEY_XF86TouchpadOff => Action::Touchpad(Some(false)),
         _ => return None,
     })
 }

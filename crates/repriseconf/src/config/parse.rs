@@ -2,34 +2,47 @@
 
 use super::file::{AutoFlag, FileAppearance, FileConfig};
 use super::{
-    CURSOR_SIZE_MAX, Config, DIM_INACTIVE_MAX, EFFECTS_MS_MAX, EffectsConfig, FontSmoothing,
-    HIDDEN_FRAME_RATE_MAX, HotCorner, IdleOverrides, MAX_POSITION, MenuAnimation, OutputConfig,
-    OutputMode, PREVIEW_FPS_MAX, PointerConfig, PowerAction, SNAP_DISTANCE_MAX, SWITCH_MS_MAX,
-    ShortcutOverlay, StartMenuStyle, SwitchStyle, SwitcherConfig, TabletConfig, TaskbarButtons,
-    TaskbarConfig, TitleDoubleClick, Transform, WORKSPACES_MAX, quarter_scale, switcher_size,
+    CURSOR_SIZE_MAX, ClickMethod, Config, DIM_INACTIVE_MAX, EFFECTS_MS_MAX, EffectsConfig,
+    FontSmoothing, HIDDEN_FRAME_RATE_MAX, HotCorner, IdleOverrides, MAX_POSITION, MenuAnimation,
+    OutputConfig, OutputMode, PREVIEW_FPS_MAX, PointerConfig, PowerAction, SNAP_DISTANCE_MAX,
+    SWITCH_MS_MAX, ShortcutOverlay, StartMenuStyle, SwitchStyle, SwitcherConfig, TabletConfig,
+    TaskbarButtons, TaskbarConfig, TitleDoubleClick, Transform, WORKSPACES_MAX, quarter_scale,
+    switcher_size,
 };
 use reprisekit::interface::Interface;
 use reprisekit::theme::{Color, FontConfig};
 use std::path::{Path, PathBuf};
 
-fn apply_pointer(
-    cfg: &mut PointerConfig,
-    section: &str,
+/// The keys `[mouse]` and `[touchpad]` share.
+struct PointerKeys {
     speed: Option<f64>,
     acceleration: Option<bool>,
     natural_scroll: Option<bool>,
-) -> Result<(), String> {
-    if let Some(v) = speed {
+    scroll_speed: Option<f64>,
+    middle_emulation: Option<bool>,
+}
+
+fn apply_pointer(cfg: &mut PointerConfig, section: &str, k: PointerKeys) -> Result<(), String> {
+    if let Some(v) = k.speed {
         if !(-1.0..=1.0).contains(&v) {
             return Err(format!("{section}.speed must be between -1 and 1"));
         }
         cfg.speed = v;
     }
-    if let Some(v) = acceleration {
+    if let Some(v) = k.acceleration {
         cfg.acceleration = v;
     }
-    if let Some(v) = natural_scroll {
+    if let Some(v) = k.natural_scroll {
         cfg.natural_scroll = v;
+    }
+    if let Some(v) = k.scroll_speed {
+        if !PointerConfig::SCROLL_SPEED.contains(&v) {
+            return Err(format!("{section}.scroll_speed must be between 0.1 and 10"));
+        }
+        cfg.scroll_speed = v;
+    }
+    if let Some(v) = k.middle_emulation {
+        cfg.middle_emulation = v;
     }
     Ok(())
 }
@@ -1209,19 +1222,40 @@ impl Config {
             apply_pointer(
                 &mut cfg.mouse,
                 "mouse",
-                m.speed,
-                m.acceleration,
-                m.natural_scroll,
+                PointerKeys {
+                    speed: m.speed,
+                    acceleration: m.acceleration,
+                    natural_scroll: m.natural_scroll,
+                    scroll_speed: m.scroll_speed,
+                    middle_emulation: m.middle_emulation,
+                },
             )?;
         }
         if let Some(t) = file.touchpad {
             apply_pointer(
                 &mut cfg.touchpad.pointer,
                 "touchpad",
-                t.speed,
-                t.acceleration,
-                t.natural_scroll,
+                PointerKeys {
+                    speed: t.speed,
+                    acceleration: t.acceleration,
+                    natural_scroll: t.natural_scroll,
+                    scroll_speed: t.scroll_speed,
+                    middle_emulation: t.middle_emulation,
+                },
             )?;
+            if let Some(v) = t.enabled {
+                cfg.touchpad.enabled = v;
+            }
+            if let Some(v) = t.disable_with_mouse {
+                cfg.touchpad.disable_with_mouse = v;
+            }
+            if let Some(v) = t.click_method {
+                cfg.touchpad.click_method = ClickMethod::parse(&v).ok_or_else(|| {
+                    format!(
+                        "[touchpad] click_method = {v:?} is not \"default\", \"areas\" or \"clickfinger\""
+                    )
+                })?;
+            }
             if let Some(v) = t.tap_to_click {
                 cfg.touchpad.tap_to_click = v;
             }

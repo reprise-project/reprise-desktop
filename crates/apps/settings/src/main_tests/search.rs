@@ -128,10 +128,10 @@ fn a_page_handed_over_clears_a_query_that_hides_it() {
         !a.sheet
             .list_mut()
             .unwrap()
-            .shows(pagelist::Pick::Page(Page::MouseTouchpad.index()))
+            .shows(pagelist::Pick::Page(Page::Mouse.index()))
     );
     assert!(a.request(&page_request("mouse-and-touchpad")));
-    assert_eq!(registry::open(&a.sheet), Page::MouseTouchpad);
+    assert_eq!(registry::open(&a.sheet), Page::Mouse);
     assert_eq!(a.sheet.search.text(), "");
     assert!(a.search_hits.is_empty());
     assert_eq!(a.sheet.list_mut().unwrap().filter(), None);

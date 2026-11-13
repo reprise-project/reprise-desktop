@@ -135,6 +135,9 @@ const MACHINE_KEYS: &[&str] = &[
     "XF86AudioPrev",
     "XF86AudioStop",
     "XF86WLAN",
+    "XF86TouchpadToggle",
+    "XF86TouchpadOn",
+    "XF86TouchpadOff",
 ];
 
 fn split(keys: &str) -> Option<(Vec<&'static str>, &str)> {
@@ -329,6 +332,9 @@ pub const ACTION_NAMES: &[(&str, &str, &str)] = &[
     ("prev", MEDIA, "Previous track"),
     ("stop", MEDIA, "Stop"),
     ("wifi", MEDIA, "Wireless on or off"),
+    ("touchpad", MEDIA, "Touchpad on or off"),
+    ("touchpad-on", MEDIA, "Touchpad on"),
+    ("touchpad-off", MEDIA, "Touchpad off"),
     ("zoom-in", ACCESSIBILITY, "Zoom in"),
     ("zoom-out", ACCESSIBILITY, "Zoom out"),
     ("zoom-reset", ACCESSIBILITY, "Zoom back"),

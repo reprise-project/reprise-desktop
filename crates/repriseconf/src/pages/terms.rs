@@ -242,23 +242,34 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
             ("osd_caps_lock", "Show Caps Lock"),
             ("osd_num_lock", "Show Num Lock"),
         ],
-        Page::MouseTouchpad => &[
+        Page::Mouse => &[
             ("double_click_ms", "Double-click speed"),
             ("mouse_speed", "Pointer speed"),
             ("mouse_accel", "Enhance pointer precision"),
+            ("mouse_middle", "Press both buttons for a middle click"),
+            ("mouse_scroll_speed", "Scroll speed"),
             ("mouse_natural", "Reverse scrolling direction"),
+        ],
+        Page::Touchpad => &[
+            ("touchpad_enabled", "Use the touchpad"),
+            (
+                "disable_with_mouse",
+                "Turn it off while a mouse is plugged in",
+            ),
             ("touchpad_speed", "Touchpad speed"),
             ("touchpad_accel", "Enhance pointer precision"),
+            ("disable_while_typing", "Disable while typing"),
             ("tap_to_click", "Tap to click"),
-            (
-                "two_finger_scroll",
-                "Scroll with two fingers (edge scrolling when off)",
-            ),
             (
                 "two_finger_tap_right_click",
                 "Two-finger tap is a right click (middle when off)",
             ),
-            ("disable_while_typing", "Disable while typing"),
+            ("click_method", "Click method:"),
+            (
+                "two_finger_scroll",
+                "Scroll with two fingers (edge scrolling when off)",
+            ),
+            ("touchpad_scroll_speed", "Scroll speed"),
             ("touchpad_natural", "Reverse scrolling direction"),
         ],
         Page::Tablet => &[

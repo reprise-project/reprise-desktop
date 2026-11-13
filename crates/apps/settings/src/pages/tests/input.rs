@@ -83,7 +83,7 @@ fn text_and_keys_values_go_in_and_come_back_out() {
 #[test]
 fn double_click_speed_reads_slow_to_fast() {
     let mut s = built();
-    let p = Page::MouseTouchpad;
+    let p = Page::Mouse;
     assert_eq!(lines(&s, p, "double_click_slow"), ["Slow"]);
     assert_eq!(lines(&s, p, "double_click_fast"), ["Fast"]);
     assert_eq!(lines(&s, p, "double_click_value"), ["500 ms"]);
@@ -97,6 +97,31 @@ fn double_click_speed_reads_slow_to_fast() {
     s.pages[p.index()].set_track("double_click_ms", 0);
     read_one(&s, "double_click_ms", &mut got);
     assert_eq!(got.double_click_ms, 900);
+}
+
+#[test]
+fn scroll_speed_reads_a_percent_from_a_fifth_to_four_times() {
+    let mut s = built();
+    for (p, id, value) in [
+        (Page::Mouse, "mouse_scroll_speed", "mouse_scroll_value"),
+        (
+            Page::Touchpad,
+            "touchpad_scroll_speed",
+            "touchpad_scroll_value",
+        ),
+    ] {
+        assert_eq!(lines(&s, p, value), ["100%"], "{id}");
+        assert_eq!(s.pages[p.index()].track_pos(id), Some(4), "{id}");
+        let mut got = Settings::default();
+        s.pages[p.index()].set_track(id, 0);
+        read_one(&s, id, &mut got);
+        follow(&mut s, &got);
+        assert_eq!(lines(&s, p, value), ["20%"], "{id}");
+        s.pages[p.index()].set_track(id, 19);
+        read_one(&s, id, &mut got);
+        follow(&mut s, &got);
+        assert_eq!(lines(&s, p, value), ["400%"], "{id}");
+    }
 }
 
 #[test]
@@ -484,84 +509,83 @@ fn program_rows_follow_the_binds() {
     assert_eq!(l.rows[n + 1].cells, ["", "n: not allowed"]);
 }
 
-/// The Motion group, twice: a "Select a pointer speed:" label, Slow and Fast
-/// around the trackbar, and "Enhance pointer precision" under it (label 8 px
-/// under the title, trackbar row 15 px under that, check 28 px under the
-/// trackbar's top), and each group's "Reverse scrolling direction" check 22 px
-/// under the last row.
 #[test]
-fn the_mouse_touchpad_page_geometry() {
+fn the_mouse_page_geometry() {
     let s = built();
+    let p = Page::Mouse;
+    assert_eq!(rect(&s, p, "mouse_group"), Rect::new(20, 44, 358, 178));
     assert_eq!(
-        rect(&s, Page::MouseTouchpad, "mouse_group"),
-        Rect::new(20, 44, 358, 178)
-    );
-    assert_eq!(
-        rect(&s, Page::MouseTouchpad, "double_click_ms"),
+        rect(&s, p, "double_click_ms"),
         Rect::new(78, 89, 238, trackbar::HEIGHT)
     );
     assert_eq!(
-        rect(&s, Page::MouseTouchpad, "double_click_value"),
+        rect(&s, p, "double_click_value"),
         Rect::new(286, 68, 80, 13)
     );
     assert_eq!(
-        rect(&s, Page::MouseTouchpad, "mouse_speed_label"),
+        rect(&s, p, "mouse_speed_label"),
         Rect::new(32, 120, 334, 13)
     );
+    assert_eq!(rect(&s, p, "mouse_slow"), Rect::new(32, 141, 26, 13));
     assert_eq!(
-        rect(&s, Page::MouseTouchpad, "mouse_slow"),
-        Rect::new(32, 141, 26, 13)
-    );
-    assert_eq!(
-        rect(&s, Page::MouseTouchpad, "mouse_speed"),
+        rect(&s, p, "mouse_speed"),
         Rect::new(60, 135, 160, trackbar::HEIGHT)
     );
+    assert_eq!(rect(&s, p, "mouse_fast"), Rect::new(224, 141, 26, 13));
+    assert_eq!(rect(&s, p, "mouse_accel"), Rect::new(32, 169, 13, 13));
+    assert_eq!(rect(&s, p, "mouse_middle"), Rect::new(32, 191, 13, 13));
+    assert_eq!(rect(&s, p, "wheel_group"), Rect::new(20, 232, 358, 106));
     assert_eq!(
-        rect(&s, Page::MouseTouchpad, "mouse_fast"),
-        Rect::new(224, 141, 26, 13)
+        rect(&s, p, "mouse_scroll_label"),
+        Rect::new(32, 256, 200, 13)
     );
     assert_eq!(
-        rect(&s, Page::MouseTouchpad, "mouse_accel"),
-        Rect::new(32, 169, 13, 13)
+        rect(&s, p, "mouse_scroll_speed"),
+        Rect::new(78, 277, 238, trackbar::HEIGHT)
     );
     assert_eq!(
-        rect(&s, Page::MouseTouchpad, "mouse_natural"),
-        Rect::new(32, 191, 13, 13)
+        rect(&s, p, "mouse_scroll_value"),
+        Rect::new(286, 256, 80, 13)
     );
+    assert_eq!(rect(&s, p, "mouse_natural"), Rect::new(32, 308, 13, 13));
+    inside_page(&s, p);
+}
 
+/// The page ends where the Keyboard page does, so it fits at 200% text.
+#[test]
+fn the_touchpad_page_geometry() {
+    let s = built();
+    let p = Page::Touchpad;
+    assert_eq!(rect(&s, p, "touchpad_group"), Rect::new(20, 44, 358, 166));
+    assert_eq!(rect(&s, p, "touchpad_enabled"), Rect::new(32, 66, 13, 13));
+    assert_eq!(rect(&s, p, "disable_with_mouse"), Rect::new(32, 88, 13, 13));
     assert_eq!(
-        rect(&s, Page::MouseTouchpad, "touchpad_group"),
-        Rect::new(20, 232, 358, 218)
+        rect(&s, p, "touchpad_speed"),
+        Rect::new(60, 129, 160, trackbar::HEIGHT)
     );
+    assert_eq!(rect(&s, p, "touchpad_accel"), Rect::new(32, 163, 13, 13));
     assert_eq!(
-        rect(&s, Page::MouseTouchpad, "touchpad_speed"),
-        Rect::new(60, 271, 160, trackbar::HEIGHT)
+        rect(&s, p, "disable_while_typing"),
+        Rect::new(32, 185, 13, 13)
     );
+    assert_eq!(rect(&s, p, "clicking_group"), Rect::new(20, 216, 358, 99));
+    assert_eq!(rect(&s, p, "tap_to_click"), Rect::new(32, 238, 13, 13));
     assert_eq!(
-        rect(&s, Page::MouseTouchpad, "touchpad_accel"),
-        Rect::new(32, 305, 13, 13)
+        rect(&s, p, "two_finger_tap_right_click"),
+        Rect::new(32, 260, 13, 13)
     );
+    assert_eq!(rect(&s, p, "click_method"), Rect::new(126, 282, 150, 21));
     assert_eq!(
-        rect(&s, Page::MouseTouchpad, "tap_to_click"),
-        Rect::new(32, 331, 13, 13)
+        rect(&s, p, "touchpad_scroll_group"),
+        Rect::new(20, 321, 358, 123)
     );
+    assert_eq!(rect(&s, p, "two_finger_scroll"), Rect::new(32, 343, 13, 13));
     assert_eq!(
-        rect(&s, Page::MouseTouchpad, "two_finger_scroll"),
-        Rect::new(32, 353, 13, 13)
+        rect(&s, p, "touchpad_scroll_speed"),
+        Rect::new(78, 388, 238, trackbar::HEIGHT)
     );
-    assert_eq!(
-        rect(&s, Page::MouseTouchpad, "two_finger_tap_right_click"),
-        Rect::new(32, 375, 13, 13)
-    );
-    assert_eq!(
-        rect(&s, Page::MouseTouchpad, "disable_while_typing"),
-        Rect::new(32, 397, 13, 13)
-    );
-    assert_eq!(
-        rect(&s, Page::MouseTouchpad, "touchpad_natural"),
-        Rect::new(32, 419, 13, 13)
-    );
-    inside_page(&s, Page::MouseTouchpad);
+    assert_eq!(rect(&s, p, "touchpad_natural"), Rect::new(32, 419, 13, 13));
+    inside_page(&s, p);
 }
 
 #[test]
@@ -572,16 +596,12 @@ fn the_speed_trackbars_run_from_minus_one_to_one_in_tenths() {
         ..Settings::default()
     };
     let s = with(&want);
-    let pos = |id: &str| match &s.pages[Page::MouseTouchpad.index()]
-        .item(id)
-        .unwrap()
-        .control
-    {
+    let pos = |id: &str, p: Page| match &s.pages[p.index()].item(id).unwrap().control {
         Control::TrackBar(t) => (t.pos, t.count),
         _ => panic!("{id} is a trackbar"),
     };
-    assert_eq!(pos("mouse_speed"), (0, 21));
-    assert_eq!(pos("touchpad_speed"), (13, 21));
+    assert_eq!(pos("mouse_speed", Page::Mouse), (0, 21));
+    assert_eq!(pos("touchpad_speed", Page::Touchpad), (13, 21));
     let mut got = Settings::default();
     read_all(&s, &mut got);
     assert_eq!(got, want);
@@ -590,14 +610,7 @@ fn the_speed_trackbars_run_from_minus_one_to_one_in_tenths() {
 #[test]
 fn two_finger_tap_follows_tap_to_click() {
     let mut s = with(&Settings::default());
-    let enabled = |s: &PropSheet| match &s.pages[Page::MouseTouchpad.index()]
-        .item("two_finger_tap_right_click")
-        .unwrap()
-        .control
-    {
-        Control::Check { enabled, .. } => *enabled,
-        _ => panic!("a check"),
-    };
+    let enabled = |s: &PropSheet| enabled_on(s, Page::Touchpad, "two_finger_tap_right_click");
     assert!(enabled(&s));
     let off = Settings {
         tap_to_click: false,
@@ -605,6 +618,38 @@ fn two_finger_tap_follows_tap_to_click() {
     };
     write(&mut s, &off, &reg(), "us");
     assert!(!enabled(&s));
+}
+
+#[test]
+fn a_touchpad_turned_off_greys_the_rest_of_its_page() {
+    let mut s = with(&Settings::default());
+    let lit = |s: &PropSheet, id| enabled_on(s, Page::Touchpad, id);
+    assert!(
+        crate::pages::input::TOUCHPAD_CONTROLS
+            .iter()
+            .all(|id| lit(&s, id))
+    );
+    let off = Settings {
+        touchpad_enabled: false,
+        ..Settings::default()
+    };
+    write(&mut s, &off, &reg(), "us");
+    for id in crate::pages::input::TOUCHPAD_CONTROLS {
+        assert!(!lit(&s, id), "{id} greys");
+    }
+    assert!(lit(&s, "touchpad_enabled"), "the switch stays live");
+}
+
+#[test]
+fn the_click_method_combo_reads_back_its_value() {
+    let want = Settings {
+        click_method: "clickfinger".into(),
+        ..Settings::default()
+    };
+    let s = with(&want);
+    let mut got = Settings::default();
+    read_all(&s, &mut got);
+    assert_eq!(got.click_method, "clickfinger");
 }
 
 #[test]

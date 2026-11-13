@@ -107,7 +107,7 @@ skips it, for any app id, when the process that asked is the main process of
 the active `reprise-rdp-handover.service` running `reprise-rdp` from one of
 those paths. Either way the session is the server's: its input lights no
 dot, types into the lock screen, and is not kept from the power, sleep, VT
-switch and radio keys. A sandboxed app's requests
+switch, radio and touchpad keys. A sandboxed app's requests
 reach the portal through its bus proxy, so they never pass. Such a session
 gets the keyboard, the pointer and every screen whose top left lies at a
 non-negative position in the layout, or every screen when none does, and
@@ -223,8 +223,8 @@ the remote side: an app's input reaches the remote side's windows while that
 side is unlocked and never the computer's own lock. The keys and buttons it
 holds are released as the lock comes up, so none stays down at the lock
 screen.
-Locked or not, it never presses the power, sleep, VT switch or radio keys
-(Wi-Fi, Bluetooth, the airplane-mode key). Reprise's own remote desktop
+Locked or not, it never presses the power, sleep, VT switch, radio
+(Wi-Fi, Bluetooth, the airplane-mode key) or touchpad keys. Reprise's own remote desktop
 server is not an app here: its viewer types the password into the lock
 screen, in lock mode and at the computer's own lock, through libei or its
 keys object.
@@ -1210,7 +1210,7 @@ These stay with Reprise under an inhibitor:
 - the power, sleep and media keys, and the VT switch keys
 - the binds that move no focus: lock, magnifier, colour filter, screen
   reader, keyboard layout, Do Not Disturb, night light, the screenshots, volume, brightness,
-  playback and Wi-Fi
+  playback, Wi-Fi and the touchpad
 - open menus
 
 Super+Shift+Escape gives the binds back until that window next gains the

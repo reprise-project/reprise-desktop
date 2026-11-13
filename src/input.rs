@@ -434,16 +434,18 @@ impl State {
             InputEvent::PointerAxis { .. } if crate::console::physical(self) => {}
             InputEvent::PointerAxis { event } => {
                 let source = event.source();
+                let speed = crate::pointers::scroll_speed(&self.config, source);
                 let mut frame = AxisFrame::new(Event::time(&event)).source(source);
                 for axis in [Axis::Horizontal, Axis::Vertical] {
-                    let v120 = event.amount_v120(axis);
+                    let v120 = event.amount_v120(axis).map(|v| v * speed);
                     let amount = event
                         .amount(axis)
+                        .map(|a| a * speed)
                         .unwrap_or_else(|| v120.unwrap_or(0.0) * 15.0 / 120.0);
                     if amount != 0.0 {
                         frame = frame.value(axis, amount);
                         if let Some(v120) = v120 {
-                            frame = frame.v120(axis, v120 as i32);
+                            frame = frame.v120(axis, v120.round() as i32);
                         }
                     } else if source == AxisSource::Finger {
                         frame = frame.stop(axis);

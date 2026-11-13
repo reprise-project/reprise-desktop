@@ -6,7 +6,7 @@ use super::desktop::{
     FPS_CONTROLS, GLOW_CONTROLS, MOTION_NOTE, OVERVIEW_NOTE, REVEAL_CONTROLS, SEARCH_NOTE,
     SLIDE_MOTION_NOTE, SLIDE_MOTION_TEXT, flip_note, overview_note, search_note,
 };
-use super::input::{MOUSE_KEYS_CONTROLS, SLOW_CONTROLS, STICKY_CONTROLS};
+use super::input::{MOUSE_KEYS_CONTROLS, SLOW_CONTROLS, STICKY_CONTROLS, TOUCHPAD_CONTROLS};
 use super::system::{
     ALLOW_BOOST, BELL, CLIPBOARD_HISTORY, LOCKER_NOTE, NOTIFICATION_SOUND, QUALITY_VALUE,
     REMOTE_BORDER, REMOTE_ENCODER, REMOTE_FRAME_RATE, REMOTE_LOCK_GRACE, REMOTE_LOCK_ON_LEAVE,
@@ -17,8 +17,8 @@ use super::system::{
 use super::{
     CURSOR_FIXED_ROWS, DEBUG_IN_CAPTURES, DEBUG_OVERLAY, DELAY_MAX, DELAY_MIN, DOUBLE_CLICK,
     GTK_FIXED_ROWS, KB_ADD, KB_LAYOUTS, KB_REMOVE, KB_SWITCH_NOTE, KB_UP, KELVIN_MAX, KELVIN_MIN,
-    KELVIN_STEP, MK_ACCEL, MK_SPEED, PRIVACY_LOCATION, SPEED_STEPS, Steps, THUMBNAILERS, THUMBS,
-    THUMBS_MB, THUMBS_SIZE, TRAY_CUSTOMIZE, WATER, WATER_STYLE,
+    KELVIN_STEP, MK_ACCEL, MK_SPEED, PRIVACY_LOCATION, SCROLL_SPEED, SPEED_STEPS, Steps,
+    THUMBNAILERS, THUMBS, THUMBS_MB, THUMBS_SIZE, TRAY_CUSTOMIZE, WATER, WATER_STYLE,
 };
 use crate::notifypage::{AUTO_DND, QUIET, QUIET_DEFAULT, QUIET_TIMES};
 use crate::registry::Page;
@@ -33,11 +33,11 @@ use reprisekit::textedit::TextEdit;
 use reprisekit::theme::Color;
 
 use crate::model::{
-    CURSOR_SIZES, Choices, DESKTOPS_DEFAULT, FONT_SMOOTHINGS, FRAME_RATES, HOT_CORNERS, INTERFACES,
-    LOCK_GRACES, MENU_ANIMATIONS, PAGER_MARKS, POSITIONS, QT_PLATFORM_THEMES, REMOTE_ENCODERS,
-    REMOTE_QUALITIES, STARTMENU_STYLES, SWITCH_ANIMATIONS, SWITCHER_SIZES, SWITCHER_STYLES,
-    Settings, Shortcut, TASKBAR_BUTTONS, TASKBAR_POSITIONS, TEXT_SIZES, TITLE_DOUBLE_CLICKS,
-    WATER_STYLES, keys_for, remote_quality_row,
+    CLICK_METHODS, CURSOR_SIZES, Choices, DESKTOPS_DEFAULT, FONT_SMOOTHINGS, FRAME_RATES,
+    HOT_CORNERS, INTERFACES, LOCK_GRACES, MENU_ANIMATIONS, PAGER_MARKS, POSITIONS,
+    QT_PLATFORM_THEMES, REMOTE_ENCODERS, REMOTE_QUALITIES, STARTMENU_STYLES, SWITCH_ANIMATIONS,
+    SWITCHER_SIZES, SWITCHER_STYLES, Settings, Shortcut, TASKBAR_BUTTONS, TASKBAR_POSITIONS,
+    TEXT_SIZES, TITLE_DOUBLE_CLICKS, WATER_STYLES, keys_for, remote_quality_row,
 };
 
 pub(super) enum Bind {
@@ -323,9 +323,23 @@ pub(super) fn binds() -> Vec<Bind> {
         Bind::Track("mouse_speed", lens!(mouse_speed)),
         Bind::Flag("mouse_accel", lens!(mouse_accel)),
         Bind::Flag("mouse_natural", lens!(mouse_natural)),
+        Bind::Flag("mouse_middle", lens!(mouse_middle)),
+        Bind::Steps(
+            "mouse_scroll_speed",
+            lens!(mouse_scroll_speed),
+            SCROLL_SPEED,
+        ),
         Bind::Track("touchpad_speed", lens!(touchpad_speed)),
         Bind::Flag("touchpad_accel", lens!(touchpad_accel)),
         Bind::Flag("touchpad_natural", lens!(touchpad_natural)),
+        Bind::Steps(
+            "touchpad_scroll_speed",
+            lens!(touchpad_scroll_speed),
+            SCROLL_SPEED,
+        ),
+        Bind::Flag("touchpad_enabled", lens!(touchpad_enabled)),
+        Bind::Flag("disable_with_mouse", lens!(disable_with_mouse)),
+        Bind::Named("click_method", lens!(click_method), CLICK_METHODS),
         Bind::Flag("tap_to_click", lens!(tap_to_click)),
         Bind::Flag("two_finger_scroll", lens!(two_finger_scroll)),
         Bind::Flag(
@@ -379,6 +393,11 @@ fn hhmm(s: &str) -> (u32, u32) {
         .and_then(|(h, m)| Some((h.trim().parse().ok()?, m.trim().parse().ok()?)))
         .filter(|&(h, m)| h < 24 && m < 60)
         .unwrap_or((0, 0))
+}
+
+/// A speed in tenths as the percent beside its trackbar.
+fn percent(tenths: i64) -> String {
+    format!("{}%", tenths * 10)
 }
 
 fn kelvin_pos(k: i64) -> usize {
@@ -694,14 +713,6 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
         dp.set_enabled(id, many && moving && s.desktop_animation != "none");
     }
     dp.set_text(DESKTOP_MOTION_NOTE, if moving { "" } else { MOTION_NOTE });
-    for page in &mut sheet.pages {
-        if let Some(Control::Check { enabled, .. }) = page
-            .item_mut("two_finger_tap_right_click")
-            .map(|i| &mut i.control)
-        {
-            *enabled = s.tap_to_click;
-        }
-    }
     let nl = &mut sheet.pages[Page::NightLight.index()];
     for id in NL_CONTROLS {
         nl.set_enabled(id, s.nl_enabled);
@@ -710,8 +721,18 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
         nl.set_enabled(id, s.nl_enabled && s.nl_schedule == "fixed");
     }
     nl.set_text("nl_temp_value", &format!("{} K", s.nl_temperature));
-    sheet.pages[Page::MouseTouchpad.index()]
-        .set_text("double_click_value", &format!("{} ms", s.double_click_ms));
+    let mouse = &mut sheet.pages[Page::Mouse.index()];
+    mouse.set_text("double_click_value", &format!("{} ms", s.double_click_ms));
+    mouse.set_text("mouse_scroll_value", &percent(s.mouse_scroll_speed));
+    let pad = &mut sheet.pages[Page::Touchpad.index()];
+    for id in TOUCHPAD_CONTROLS {
+        pad.set_enabled(id, s.touchpad_enabled);
+    }
+    pad.set_enabled(
+        "two_finger_tap_right_click",
+        s.touchpad_enabled && s.tap_to_click,
+    );
+    pad.set_text("touchpad_scroll_value", &percent(s.touchpad_scroll_speed));
     let ax = &mut sheet.pages[Page::TextKeys.index()];
     for id in STICKY_CONTROLS {
         ax.set_enabled(id, s.sticky_keys);

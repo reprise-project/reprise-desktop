@@ -1,11 +1,11 @@
-//! Keyboard, Mouse & Touchpad, Cursor and Text & Keys.
+//! Keyboard, Mouse, Touchpad, Cursor and Text & Keys.
 
 use super::{
     Area, CURSOR_DEFAULT_ROW, CURSOR_PREVIEW, DELAY_STEPS, DOUBLE_CLICK, GX, KB_ADD, KB_LAYOUTS,
-    KB_REMOVE, KB_SWITCH_NOTE, KB_UP, MK_ACCEL, MK_SPEED, SC_ADD, SC_EDIT, SC_REMOVE, SPEED_STEPS,
-    X, button, combo, edit, ends_track, group, shortcuts, spin, updown,
+    KB_REMOVE, KB_SWITCH_NOTE, KB_UP, MK_ACCEL, MK_SPEED, SC_ADD, SC_EDIT, SC_REMOVE, SCROLL_SPEED,
+    SPEED_STEPS, X, button, choice, combo, edit, ends_track, group, shortcuts, spin, updown,
 };
-use crate::model::{CURSOR_SIZES, TEXT_SIZES};
+use crate::model::{CLICK_METHODS, CURSOR_SIZES, TEXT_SIZES};
 use reprisekit::classic::widgets::{BUTTON_GAP, BUTTON_H, BUTTON_W, LINE_H};
 use reprisekit::controls::form::{Control, Form, Item};
 use reprisekit::controls::listbox::ListBox;
@@ -140,21 +140,15 @@ pub fn keyboard(a: Area) -> Form {
     Form::new(items)
 }
 
-/// The Motion group of the Pointer Options: the speed label, Slow and Fast
-/// around a trackbar, and "Enhance pointer precision" under it. `y` is the
-/// label's row; the items span 62 px. `ids` are the label, Slow, the trackbar,
-/// Fast and the check, and the trackbar is `name` to a reader; the page has two of these, so
-/// only the mouse's carries the access keys.
-fn motion(a: Area, y: i32, ids: [&'static str; 5], name: &'static str, keys: bool) -> [Item; 5] {
+/// A pointer speed: a "Select a pointer speed:" label, Slow and Fast around a
+/// trackbar, and "Enhance pointer precision" under it. `y` is the label's row;
+/// the items span 62 px. `ids` are the label, Slow, the trackbar, Fast and the
+/// check, and the trackbar is `name` to a reader.
+fn motion(a: Area, y: i32, ids: [&'static str; 5], name: &'static str) -> [Item; 5] {
     let [label_id, slow_id, track_id, fast_id, check_id] = ids;
-    let (speed, enhance) = if keys {
-        ("Select a &pointer speed:", "&Enhance pointer precision")
-    } else {
-        ("Select a pointer speed:", "Enhance pointer precision")
-    };
     let track = Rect::new(GX + 28, y + 15, a.track(160), trackbar::HEIGHT);
     [
-        Item::label_at(label_id, GX, y, a.gw(), speed),
+        Item::label_at(label_id, GX, y, a.gw(), "Select a &pointer speed:"),
         Item::label_at(slow_id, GX, y + 21, 26, "Slow"),
         Item::new(
             track_id,
@@ -163,11 +157,29 @@ fn motion(a: Area, y: i32, ids: [&'static str; 5], name: &'static str, keys: boo
         )
         .named(name),
         Item::label_at(fast_id, track.right() + 4, y + 21, 26, "Fast"),
-        Item::check(check_id, GX, y + 49, enhance),
+        Item::check(check_id, GX, y + 49, "&Enhance pointer precision"),
     ]
 }
 
-pub fn mouse_touchpad(a: Area) -> Form {
+/// A scroll speed: its label at `y`, Slow and Fast around a trackbar under it, the percent at the
+/// label's right. `ids` are the label, Slow, the trackbar, Fast and the percent.
+fn scroll_speed(a: Area, y: i32, ids: [&'static str; 5]) -> Vec<Item> {
+    let [label_id, slow_id, track_id, fast_id, value_id] = ids;
+    let mut items = vec![Item::label_at(label_id, GX, y, 200, "Scro&ll speed:")];
+    items.extend(ends_track(
+        a,
+        [slow_id, track_id, fast_id, value_id],
+        "Scroll speed",
+        y + 27,
+        27,
+        ("Slow", "Fast"),
+        GX,
+        TrackBar::new(0, SCROLL_SPEED.count),
+    ));
+    items
+}
+
+pub fn mouse(a: Area) -> Form {
     let mut items = vec![group(a, "mouse_group", 44, 178, "Mouse")];
     items.push(Item::label_at(
         "double_click_label",
@@ -202,19 +214,70 @@ pub fn mouse_touchpad(a: Area) -> Form {
             "mouse_accel",
         ],
         "Pointer speed",
-        true,
+    ));
+    items.push(Item::check(
+        "mouse_middle",
+        GX,
+        191,
+        "Press both buttons for a &middle click",
+    ));
+    items.push(group(a, "wheel_group", 232, 106, "Wheel"));
+    items.extend(scroll_speed(
+        a,
+        256,
+        [
+            "mouse_scroll_label",
+            "mouse_scroll_slow",
+            "mouse_scroll_speed",
+            "mouse_scroll_fast",
+            "mouse_scroll_value",
+        ],
     ));
     items.push(Item::check(
         "mouse_natural",
         GX,
-        191,
+        308,
         "Re&verse scrolling direction",
     ));
+    Form::new(items)
+}
 
-    items.push(group(a, "touchpad_group", 232, 218, "Touchpad"));
+/// The Touchpad page's controls that grey while "Use the touchpad" is unticked.
+pub(super) const TOUCHPAD_CONTROLS: [&str; 18] = [
+    "disable_with_mouse",
+    "touchpad_speed_label",
+    "touchpad_slow",
+    "touchpad_speed",
+    "touchpad_fast",
+    "touchpad_accel",
+    "disable_while_typing",
+    "tap_to_click",
+    "two_finger_tap_right_click",
+    "click_method_label",
+    "click_method",
+    "two_finger_scroll",
+    "touchpad_scroll_label",
+    "touchpad_scroll_slow",
+    "touchpad_scroll_speed",
+    "touchpad_scroll_fast",
+    "touchpad_scroll_value",
+    "touchpad_natural",
+];
+
+pub fn touchpad(a: Area) -> Form {
+    let mut items = vec![
+        group(a, "touchpad_group", 44, 166, "Touchpad"),
+        Item::check("touchpad_enabled", GX, 66, "&Use the touchpad"),
+        Item::check(
+            "disable_with_mouse",
+            GX,
+            88,
+            "Turn it off while a &mouse is plugged in",
+        ),
+    ];
     items.extend(motion(
         a,
-        256,
+        114,
         [
             "touchpad_speed_label",
             "touchpad_slow",
@@ -223,26 +286,48 @@ pub fn mouse_touchpad(a: Area) -> Form {
             "touchpad_accel",
         ],
         "Touchpad speed",
-        false,
-    ));
-    items.push(Item::check("tap_to_click", GX, 331, "&Tap to click"));
-    items.push(Item::check(
-        "two_finger_scroll",
-        GX,
-        353,
-        "Scroll with two &fingers (edge scrolling when off)",
-    ));
-    items.push(Item::check(
-        "two_finger_tap_right_click",
-        GX,
-        375,
-        "Two-finger tap is a &right click (middle when off)",
     ));
     items.push(Item::check(
         "disable_while_typing",
         GX,
-        397,
+        185,
         "&Disable while typing",
+    ));
+
+    items.push(group(a, "clicking_group", 216, 99, "Clicking"));
+    items.push(Item::check("tap_to_click", GX, 238, "&Tap to click"));
+    items.push(Item::check(
+        "two_finger_tap_right_click",
+        GX,
+        260,
+        "Two-finger tap is a &right click (middle when off)",
+    ));
+    items.push(Item::label_at(
+        "click_method_label",
+        GX,
+        286,
+        90,
+        "Click met&hod:",
+    ));
+    items.push(choice("click_method", GX + 94, 282, 150, CLICK_METHODS));
+
+    items.push(group(a, "touchpad_scroll_group", 321, 123, "Scrolling"));
+    items.push(Item::check(
+        "two_finger_scroll",
+        GX,
+        343,
+        "Scroll with two &fingers (edge scrolling when off)",
+    ));
+    items.extend(scroll_speed(
+        a,
+        367,
+        [
+            "touchpad_scroll_label",
+            "touchpad_scroll_slow",
+            "touchpad_scroll_speed",
+            "touchpad_scroll_fast",
+            "touchpad_scroll_value",
+        ],
     ));
     items.push(Item::check(
         "touchpad_natural",
