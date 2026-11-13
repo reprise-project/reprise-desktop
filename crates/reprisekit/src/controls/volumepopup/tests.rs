@@ -22,6 +22,7 @@ fn app(key: &str, pos: usize) -> AppLevel {
         icon: None,
         pos,
         mute: false,
+        output: None,
     }
 }
 
@@ -140,7 +141,7 @@ fn from_a_top_bar_the_panel_hangs_under_the_anchor() {
 
 #[test]
 fn programs_stand_102_px_apart_past_an_etched_line_after_master() {
-    let vp = VolumePopup::new(&mix(&[app("firefox", 16), app("mpv", 8)]));
+    let vp = VolumePopup::new(&one_output(&[app("firefox", 16), app("mpv", 8)]));
     let l = lay(&vp);
     assert_eq!(l.panel, Rect::new(738, 711, 444, 341), "the combos' width");
     assert_eq!(col(&l, 0).rect.x, 750);
@@ -153,7 +154,7 @@ fn programs_stand_102_px_apart_past_an_etched_line_after_master() {
 #[test]
 fn master_and_six_programs_fit_740_px() {
     let apps: Vec<_> = (0..6).map(|i| app(&format!("p{i}"), 10)).collect();
-    let vp = VolumePopup::new(&mix(&apps));
+    let vp = VolumePopup::new(&one_output(&apps));
     let l = lay(&vp);
     assert_eq!(l.panel, Rect::new(590, 711, 740, 341));
     assert_eq!(col(&l, 6).rect.right(), l.panel.right() - 12);
@@ -164,7 +165,7 @@ fn master_and_six_programs_fit_740_px() {
 fn a_column_stacks_icon_name_level_trackbar_and_speaker() {
     let mut a = app("firefox", 16);
     a.icon = Some(Canvas::new(32, 32));
-    let vp = VolumePopup::new(&mix(&[a]));
+    let vp = VolumePopup::new(&one_output(&[a]));
     let l = lay(&vp);
     let c = col(&l, 1);
     let x = c.rect.x;
@@ -201,7 +202,7 @@ fn the_thumb_stays_on_the_channel_at_either_end() {
 #[test]
 fn past_six_programs_a_scrollbar_runs_under_them() {
     let apps: Vec<_> = (0..7).map(|i| app(&format!("p{i}"), 10)).collect();
-    let vp = VolumePopup::new(&mix(&apps));
+    let vp = VolumePopup::new(&one_output(&apps));
     let l = lay(&vp);
     assert_eq!(l.panel, Rect::new(590, 687, 740, 365));
     assert_eq!(l.bar, Some(Rect::new(712, 769 + 247 + 8, 606, 16)));
@@ -323,7 +324,7 @@ fn hits_find_the_column_parts_and_the_combos() {
     let (x, y) = mid(l.output.drop);
     assert_eq!(
         hit(&vp, &l, x, y),
-        Hit::Combo(Dir::Output, combo::Hit::Drop)
+        Hit::Combo(Pick::Device(Dir::Output), combo::Hit::Drop)
     );
     assert_eq!(hit(&vp, &l, 10, 10), Hit::Outside);
 }
@@ -339,7 +340,7 @@ fn an_open_list_lies_over_the_columns() {
     assert!(y > col(&l, 0).rect.y, "the list reaches the columns");
     assert_eq!(
         hit(&vp, &l, x, y),
-        Hit::Combo(Dir::Output, combo::Hit::Row(5))
+        Hit::Combo(Pick::Device(Dir::Output), combo::Hit::Row(5))
     );
 }
 
@@ -772,7 +773,7 @@ fn tab_walks_the_combos_then_each_column() {
     let mut vp = VolumePopup::new(&mix(&[app("mpv", 8)]));
     let l = lay(&vp);
     vp.focus = Focus::Output;
-    let order: Vec<Focus> = (0..6)
+    let order: Vec<Focus> = (0..7)
         .map(|_| {
             vp.key(&l, form::Key::Tab { back: false });
             vp.focus
@@ -786,11 +787,12 @@ fn tab_walks_the_combos_then_each_column() {
             Focus::Mute(0),
             Focus::Thumb(1),
             Focus::Mute(1),
+            Focus::Device(1),
             Focus::Output
         ]
     );
     vp.key(&l, form::Key::Tab { back: true });
-    assert_eq!(vp.focus, Focus::Mute(1), "Shift+Tab walks back");
+    assert_eq!(vp.focus, Focus::Device(1), "Shift+Tab walks back");
 }
 
 #[test]
@@ -823,7 +825,7 @@ fn keys_act_on_the_focused_program() {
 #[test]
 fn focusing_a_hidden_program_scrolls_it_into_view() {
     let apps: Vec<_> = (0..8).map(|i| app(&format!("p{i}"), 10)).collect();
-    let mut vp = VolumePopup::new(&mix(&apps));
+    let mut vp = VolumePopup::new(&one_output(&apps));
     let l = lay(&vp);
     vp.focus = Focus::Mute(6);
     vp.key(&l, form::Key::Tab { back: false });
@@ -1095,11 +1097,12 @@ fn sync_ends_a_press_on_a_rebuilt_combo_or_a_bar_that_went() {
     );
     vp.sync(&l, &mix(&apps[..6]));
     assert_eq!(vp.ptr.lit(), None, "six programs: the bar went");
-    vp.ptr.press(Some(Part::Combo(Dir::Output)), false);
+    vp.ptr
+        .press(Some(Part::Combo(Pick::Device(Dir::Output))), false);
     vp.sync(&l, &mix(&apps[..5]));
     assert_eq!(
         vp.ptr.held(),
-        Some(Part::Combo(Dir::Output)),
+        Some(Part::Combo(Pick::Device(Dir::Output))),
         "the same devices keep the press"
     );
     let mut m = mix(&apps[..5]);
@@ -1967,7 +1970,7 @@ fn at_200_percent_the_parts_grow_and_icons_glyphs_and_thumbs_keep_their_size() {
     let theme = Theme::default().with_form_text(200);
     let mut a = app("mpv", 8);
     a.icon = Some(Canvas::new(32, 32));
-    let vp = VolumePopup::new(&mix(&[a]));
+    let vp = VolumePopup::new(&one_output(&[a]));
     let l = lay_with(&vp, &theme, (960, 1052));
     let one = lay(&vp);
     let (c, c1) = (col(&l, 1), col(&one, 1));
@@ -1989,7 +1992,7 @@ fn fnv(c: &Canvas) -> u64 {
     })
 }
 
-/// Two programs, the second muted, the focus ring on the first's thumb, at scale 1 and 2.
+/// Two programs with their output combos, the second muted, the focus ring on the first's thumb, at scale 1 and 2.
 #[test]
 fn the_popup_is_pinned_in_each_look_at_scale_1_and_2() {
     crate::pins::fonts();
@@ -2017,12 +2020,12 @@ fn the_popup_is_pinned_in_each_look_at_scale_1_and_2() {
     assert_eq!(
         got,
         [
-            (Interface::Classic, 1, 3894922826410907653),
-            (Interface::Classic, 2, 1200130322201881305),
-            (Interface::Blue, 1, 12055996091189837898),
-            (Interface::Blue, 2, 7254310312881324019),
-            (Interface::Glass, 1, 14204876082109196823),
-            (Interface::Glass, 2, 18269360693100279155),
+            (Interface::Classic, 1, 5723125988886638769),
+            (Interface::Classic, 2, 11051606548576703245),
+            (Interface::Blue, 1, 1867733804450208193),
+            (Interface::Blue, 2, 12887909334021644371),
+            (Interface::Glass, 1, 8167948971888887894),
+            (Interface::Glass, 2, 9061755294240695991),
         ]
     );
 }
@@ -2045,4 +2048,125 @@ fn beside_a_side_bar_the_panel_stands_off_its_edge_level_with_the_icon() {
         Rect::new(1860 - 444, 1080 - 341, 444, 341),
         "its right edge on the bar's, kept above the output's foot"
     );
+}
+
+fn one_output(apps: &[AppLevel]) -> Mix {
+    Mix {
+        outputs: vec!["Speakers".into()],
+        ..mix(apps)
+    }
+}
+
+#[test]
+fn with_two_outputs_a_program_column_ends_in_its_output_combo() {
+    let mut on_headphones = app("mpv", 8);
+    on_headphones.output = Some(1);
+    let vp = VolumePopup::new(&mix(&[app("firefox", 16), on_headphones]));
+    let l = lay(&vp);
+    assert!(vp.columns[0].output.is_none(), "master has none");
+    let rows = |i: usize| {
+        let c = vp.columns[i].output.as_ref().expect("a combo");
+        let texts: Vec<&str> = c.items.iter().map(|i| i.text.as_str()).collect();
+        (texts, c.selected)
+    };
+    assert_eq!(rows(1), (vec![DEFAULT, "Speakers", "Headphones"], 0));
+    assert_eq!(rows(2).1, 2, "mpv plays to Headphones");
+    let cl = col(&l, 1);
+    let field = cl.output.as_ref().expect("laid out").field;
+    assert_eq!(
+        field,
+        Rect::new(cl.rect.x + 4, cl.mute.bottom() + 8, COL_W - 8, COMBO_H)
+    );
+    assert_eq!(cl.rect.bottom(), field.bottom(), "the column ends with it");
+
+    let single = VolumePopup::new(&one_output(&[app("firefox", 16)]));
+    assert!(single.columns[1].output.is_none(), "one output, no combo");
+    let ls = lay(&single);
+    assert_eq!(
+        l.panel.height - ls.panel.height,
+        8 + COMBO_H,
+        "the combo's row adds its height"
+    );
+}
+
+#[test]
+fn a_program_output_list_opens_above_its_combo_inside_the_panel() {
+    let mut m = mix(&[app("firefox", 16), app("mpv", 8)]);
+    m.outputs = vec![
+        "Speakers".into(),
+        "Built-in Audio Analog Stereo Headphones".into(),
+    ];
+    let mut vp = VolumePopup::new(&m);
+    let l = lay(&vp);
+    let (x, y) = mid(col(&l, 2).output.as_ref().unwrap().drop);
+    assert_eq!(vp.press(&l, x, y), Event::Redraw);
+    vp.release();
+    assert_eq!(vp.focus, Focus::Device(2));
+    let l = lay(&vp);
+    let ol = col(&l, 2).output.as_ref().unwrap();
+    assert_eq!(ol.list.bottom(), ol.field.y);
+    assert!(ol.list.width > ol.field.width, "widened to its rows");
+    assert!(ol.list.x >= l.panel.x && ol.list.right() <= l.panel.right());
+    let row = ol.list.y + 1 + 2 * ol.row_h + 2;
+    assert_eq!(
+        vp.press(&l, ol.list.x + 10, row),
+        Event::AppOutput("mpv".into(), Some(1))
+    );
+    assert!(vp.columns[2].output.as_ref().unwrap().open.is_none());
+}
+
+#[test]
+fn keys_on_a_program_output_pick_at_once_and_default_follows_the_default() {
+    let mut a = app("mpv", 8);
+    a.output = Some(0);
+    let mut vp = VolumePopup::new(&mix(&[a]));
+    let l = lay(&vp);
+    vp.focus = Focus::Device(1);
+    assert_eq!(
+        vp.key(&l, form::Key::Down),
+        Event::AppOutput("mpv".into(), Some(1))
+    );
+    assert_eq!(
+        vp.key(&l, form::Key::Home),
+        Event::AppOutput("mpv".into(), None)
+    );
+    vp.key(&l, form::Key::Drop);
+    assert_eq!(vp.open_list(), Some(Pick::App(1)));
+    vp.key(&l, form::Key::Down);
+    assert_eq!(
+        vp.key(&l, form::Key::Enter),
+        Event::AppOutput("mpv".into(), Some(0))
+    );
+}
+
+#[test]
+fn sync_keeps_a_program_output_list_open_until_its_rows_change() {
+    let mut vp = VolumePopup::new(&mix(&[app("firefox", 16), app("mpv", 8)]));
+    let l = lay(&vp);
+    vp.focus = Focus::Device(2);
+    vp.key(&l, form::Key::Drop);
+    // firefox leaves: mpv moves to column 1 with its list still open.
+    vp.sync(&l, &mix(&[app("mpv", 8)]));
+    assert_eq!(vp.focus, Focus::Device(1));
+    assert_eq!(vp.open_list(), Some(Pick::App(1)));
+    let mut more = mix(&[app("mpv", 8)]);
+    more.outputs.push("HDMI".into());
+    vp.sync(&l, &more);
+    assert_eq!(vp.open_list(), None, "new rows close it");
+    vp.sync(&l, &one_output(&[app("mpv", 8)]));
+    assert_eq!(vp.focus, Focus::Thumb(1), "the combo went");
+}
+
+#[test]
+fn access_names_a_programs_output_combo() {
+    let mut vp = VolumePopup::new(&mix(&[app("mpv", 8)]));
+    let l = lay(&vp);
+    vp.focus = Focus::Device(1);
+    let (tree, focus) = accessed(&vp, &l);
+    let g = tree.find(Role::Group, "mpv").expect("mpv's group");
+    let combo = Tree::id_of(g, "output");
+    assert_eq!(focus, combo);
+    let n = tree.get(combo).expect("the combo node");
+    assert_eq!(n.role(), Role::ComboBox);
+    assert_eq!(n.label(), Some("Output"));
 }

@@ -13,7 +13,7 @@ use crate::theme::Theme;
 
 use super::layout::{ColumnLayout, Layout, StripLayout};
 use super::{
-    Column, Dir, Focus, INPUT, MAX_SHOWN, NAME_PAD, NowPlaying, OUTPUT, Part, SPEAKER, STEPS,
+    Column, Dir, Focus, INPUT, MAX_SHOWN, NAME_PAD, NowPlaying, OUTPUT, Part, Pick, SPEAKER, STEPS,
     Transport, VolumePopup, combo_focus,
 };
 
@@ -50,22 +50,7 @@ pub fn draw(c: &mut Canvas, theme: &Theme, text: &TextRenderer, vp: &VolumePopup
         } else {
             draw_disabled_label(c, text, p, r, label, Align::Right, px, None);
         }
-        let lit = vp.ptr.of(Part::Combo(dir));
-        combo::draw(
-            c,
-            text,
-            p,
-            combo,
-            lay.combo(dir),
-            vp.focus == combo_focus(dir),
-            vp.cues,
-            Caret::default(),
-            ComboLit {
-                frame: lit,
-                drop: lit,
-            },
-            px,
-        );
+        draw_combo(c, text, p, vp, Pick::Device(dir), lay.combo(dir), px);
     }
     let sep = lay.separator;
     c.etched_divider_t(sep.x, sep.right() - 1, sep.y, cs, 1);
@@ -88,8 +73,9 @@ pub fn draw(c: &mut Canvas, theme: &Theme, text: &TextRenderer, vp: &VolumePopup
     if let (Some(np), Some(st)) = (&vp.playing, &lay.strip) {
         draw_strip(c, text, p, vp, np, st, px);
     }
-    if let Some(d) = vp.open_list() {
-        let (combo, cl) = (vp.combo(d), lay.combo(d));
+    if let Some(d) = vp.open_list()
+        && let (Some(combo), Some(cl)) = (vp.pick(d), lay.pick(d))
+    {
         combo::draw_list_rows(
             c,
             text,
@@ -105,6 +91,34 @@ pub fn draw(c: &mut Canvas, theme: &Theme, text: &TextRenderer, vp: &VolumePopup
             cl.row_h,
         );
     }
+}
+
+fn draw_combo(
+    c: &mut Canvas,
+    text: &TextRenderer,
+    p: &Paint,
+    vp: &VolumePopup,
+    pick: Pick,
+    cl: &combo::Layout,
+    px: u32,
+) {
+    let Some(combo) = vp.pick(pick) else { return };
+    let lit = vp.ptr.of(Part::Combo(pick));
+    combo::draw(
+        c,
+        text,
+        p,
+        combo,
+        cl,
+        vp.focus == combo_focus(pick),
+        vp.cues,
+        Caret::default(),
+        ComboLit {
+            frame: lit,
+            drop: lit,
+        },
+        px,
+    );
 }
 
 /// A column's level in percent.
@@ -186,6 +200,9 @@ pub(super) fn draw_column(
     );
     if vp.cues && live && vp.focus == Focus::Thumb(i) {
         draw_focus_ring(c, p, cl.track.bounds, cs.button_text);
+    }
+    if let Some(ol) = &cl.output {
+        draw_combo(c, text, p, vp, Pick::App(i), ol, px);
     }
 }
 

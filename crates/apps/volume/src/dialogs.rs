@@ -261,6 +261,7 @@ mod tests {
         Device {
             id,
             name: name.into(),
+            serial: Some(id.into()),
             label: name.to_uppercase(),
             volume: 0.5,
             mute: false,

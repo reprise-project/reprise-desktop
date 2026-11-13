@@ -892,6 +892,7 @@ mod tests {
         repriseaudio::Device {
             id,
             name: name.into(),
+            serial: Some(id.into()),
             label: name.into(),
             volume: 0.5,
             mute: false,

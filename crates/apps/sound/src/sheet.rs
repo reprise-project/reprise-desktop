@@ -85,11 +85,19 @@ const APP_VOLUME_LABEL: &str = "app_volume_label";
 const APP_TRACK: &str = "app_track";
 const APP_PERCENT: &str = "app_percent";
 const APP_MUTE: &str = "app_mute";
+const APP_OUTPUT_LABEL: &str = "app_output_label";
+const APP_OUTPUT: &str = "app_output";
+/// Rows the output combo's open list shows before it scrolls.
+const APP_OUTPUT_ROWS: usize = 8;
 const APP_EMPTY: &str = "No programs are playing sound";
-const APP_ROWS: usize = 16;
+const APP_ROWS: usize = 14;
+/// The output combo's first row: the program follows the default output.
+const APP_DEFAULT: &str = "Default";
 /// The volume row's top: the same 12 px above the group's bottom edge
 /// as on the Audio page.
 const APP_TRACK_Y: i32 = SOURCE_Y + 128;
+/// The output row sits over the volume row.
+const APP_OUTPUT_Y: i32 = APP_TRACK_Y - 37;
 
 /// The theme's speaker and microphone, at 32 px for the group boxes and
 /// 16 px for the list rows. A missing one becomes the magenta placeholder
@@ -119,6 +127,8 @@ pub struct Pending {
     /// since the last Apply. One that has stopped playing is dropped.
     pub app_volume: BTreeMap<String, f64>,
     pub app_mute: BTreeMap<String, bool>,
+    /// Programs' outputs by `node.name`, `None` for the default; only ones picked since the last Apply.
+    pub app_output: BTreeMap<String, Option<String>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -127,6 +137,8 @@ pub enum Change {
     Default(u32),
     Volume(u32, f64),
     Mute(u32, bool),
+    /// Move a stream to the output with this serial, or back to the default.
+    Target(u32, Option<u64>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -215,6 +227,7 @@ impl Sheet {
             let playing = |key: &String| applied.apps.iter().any(|a| a.key == *key);
             self.pending.app_volume.retain(|k, _| playing(k));
             self.pending.app_mute.retain(|k, _| playing(k));
+            self.pending.app_output.retain(|k, _| playing(k));
         } else {
             self.applied = snap.clone();
             self.pending = Pending::from_snapshot(snap);
@@ -512,6 +525,18 @@ impl Sheet {
                     out.push(Change::Mute(id, mute));
                 }
             }
+            let output = self.app_output(app);
+            if output == app.output() {
+                continue;
+            }
+            let serial = match output {
+                None => None,
+                Some(n) => match self.applied.sinks.iter().find(|d| d.name == n) {
+                    Some(d) if d.serial.is_some() => d.serial,
+                    _ => continue,
+                },
+            };
+            out.extend(app.ids().into_iter().map(|id| Change::Target(id, serial)));
         }
         out
     }
@@ -522,6 +547,14 @@ impl Sheet {
             p.app_volume.get(&app.key).copied().unwrap_or(app.volume),
             p.app_mute.get(&app.key).copied().unwrap_or(app.mute),
         )
+    }
+
+    /// The output `app` plays to with the pending pick, by `node.name`; `None` follows the default.
+    fn app_output<'a>(&'a self, app: &'a App) -> Option<&'a str> {
+        match self.pending.app_output.get(&app.key) {
+            Some(o) => o.as_deref(),
+            None => app.output(),
+        }
     }
 
     pub fn set_app_icons(&mut self, icons: BTreeMap<String, AppIcon>) {
@@ -580,9 +613,15 @@ impl Sheet {
             if let Some(m) = p.app_mute.get(&app.key) {
                 app.mute = *m;
             }
+            if let Some(o) = p.app_output.get(&app.key) {
+                for s in &mut app.streams {
+                    s.target.clone_from(o);
+                }
+            }
         }
         self.pending.app_volume.clear();
         self.pending.app_mute.clear();
+        self.pending.app_output.clear();
         self.displaced = [None, None];
         self.write();
     }
@@ -610,6 +649,10 @@ impl Sheet {
             if was.mute != app.mute {
                 self.pending.app_mute.insert(app.key.clone(), app.mute);
             }
+            if was.output() != app.output() {
+                let o = app.output().map(str::to_string);
+                self.pending.app_output.insert(app.key.clone(), o);
+            }
         }
         self.applied = snap.clone();
         self.pending.sink = repoint(&snap.sinks, sink.as_deref());
@@ -632,6 +675,12 @@ impl Sheet {
             _ if id == APP_MUTE => {
                 if let (Some(c), Some(k)) = (apps.checked(id), key) {
                     self.pending.app_mute.insert(k, c);
+                }
+            }
+            _ if id == APP_OUTPUT => {
+                if let (Some(i), Some(k)) = (apps.combo_selected(id), key) {
+                    let o = i.checked_sub(1).and_then(|i| self.applied.sinks.get(i));
+                    self.pending.app_output.insert(k, o.map(|d| d.name.clone()));
                 }
             }
             _ if id == SINK.track => {
@@ -775,8 +824,8 @@ impl Sheet {
 
 impl Sheet {
     /// Rewrite the Applications page: the program list (keeping its
-    /// selection on the same program), the chosen one's icon, and its
-    /// trackbar, percentage and Mute.
+    /// selection on the same program), the chosen one's icon, its output,
+    /// and its trackbar, percentage and Mute.
     fn write_apps(&mut self) {
         let old = self.selected_app().map(|a| a.key.clone());
         let apps = &self.applied.apps;
@@ -803,6 +852,13 @@ impl Sheet {
             .and_then(|i| i.large.clone());
         let on = chosen.is_some();
         let keys = apps.iter().map(|a| a.key.clone()).collect();
+        let outputs: Vec<String> = std::iter::once(APP_DEFAULT.to_string())
+            .chain(self.applied.sinks.iter().map(|d| d.label.clone()))
+            .collect();
+        let output = chosen
+            .and_then(|a| self.app_output(a))
+            .and_then(|n| self.applied.sinks.iter().position(|d| d.name == n))
+            .map_or(0, |i| i + 1);
 
         let page = &mut self.sheet.pages[APPS];
         if let Some(item) = page.item_mut(APP_LIST) {
@@ -839,6 +895,17 @@ impl Sheet {
                 frame: 0,
             };
         }
+        let same = match page.item(APP_OUTPUT).map(|i| &i.control) {
+            Some(Control::Combo(c)) => c.items.iter().map(|i| &i.text).eq(outputs.iter()),
+            _ => false,
+        };
+        if same {
+            page.set_combo(APP_OUTPUT, output);
+        } else {
+            page.set_combo_rows(APP_OUTPUT, &outputs, output, APP_OUTPUT_ROWS);
+        }
+        page.set_enabled(APP_OUTPUT, on);
+        page.set_enabled(APP_OUTPUT_LABEL, on);
         page.set_enabled(APP_TRACK, on);
         page.set_track(APP_TRACK, pos_of(volume));
         page.set_text(
@@ -888,6 +955,15 @@ fn app_items() -> Vec<Item> {
                 list: ListBox::new(Vec::new(), None),
                 icons: Vec::new(),
             },
+        ),
+        Item::label_at(APP_OUTPUT_LABEL, 71, APP_OUTPUT_Y + 4, 44, "&Output:"),
+        Item::combo(
+            APP_OUTPUT,
+            120,
+            APP_OUTPUT_Y,
+            211,
+            &[APP_DEFAULT],
+            APP_OUTPUT_ROWS,
         ),
         Item::label_at(APP_VOLUME_LABEL, 71, APP_TRACK_Y + 4, 44, "&Volume:"),
         Item::new(
@@ -1054,6 +1130,7 @@ impl Pending {
             cards: BTreeMap::new(),
             app_volume: BTreeMap::new(),
             app_mute: BTreeMap::new(),
+            app_output: BTreeMap::new(),
         }
     }
 }
@@ -1073,6 +1150,7 @@ mod tests {
         Device {
             id,
             name: name.into(),
+            serial: Some(id.into()),
             label: label.into(),
             volume,
             mute,
@@ -1508,6 +1586,7 @@ mod tests {
                 .map(|&id| crate::pipewire::Stream {
                     id,
                     channels: Default::default(),
+                    target: None,
                 })
                 .collect(),
             volume,
@@ -1522,6 +1601,58 @@ mod tests {
             app("mpv", "mpv", &[92], 0.5, true),
         ];
         snap
+    }
+
+    fn combo(s: &Sheet, id: &str) -> (Vec<String>, usize, bool) {
+        match &s.sheet.open().item(id).expect("combo exists").control {
+            Control::Combo(c) => (
+                c.items.iter().map(|i| i.text.clone()).collect(),
+                c.selected,
+                c.enabled,
+            ),
+            other => panic!("{id} is {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_program_output_moves_every_stream_on_apply_and_default_moves_it_back() {
+        let mut s = sheet(&playing());
+        select_app(&mut s, 0);
+        let rows: Vec<String> = ["Default", "Dummy Output", "Speaker"]
+            .map(String::from)
+            .into();
+        assert_eq!(combo(&s, APP_OUTPUT), (rows.clone(), 0, true));
+        select(&mut s, APP_OUTPUT, 2);
+        assert!(s.dirty());
+        assert_eq!(
+            s.event(propsheet::Event::Apply),
+            Outcome::Apply(vec![
+                Change::Target(90, Some(52)),
+                Change::Target(91, Some(52))
+            ])
+        );
+        assert!(!s.dirty());
+        assert_eq!(combo(&s, APP_OUTPUT), (rows, 2, true), "the pick stands");
+        select(&mut s, APP_OUTPUT, 0);
+        assert_eq!(
+            s.event(propsheet::Event::Apply),
+            Outcome::Apply(vec![Change::Target(90, None), Change::Target(91, None)])
+        );
+    }
+
+    #[test]
+    fn the_output_combo_shows_the_selected_programs_output_and_greys_without_one() {
+        let mut snap = playing();
+        snap.apps[1].streams[0].target = Some("speaker".into());
+        let mut s = sheet(&snap);
+        select_app(&mut s, 1);
+        assert_eq!(combo(&s, APP_OUTPUT).1, 2);
+        select_app(&mut s, 0);
+        assert_eq!(combo(&s, APP_OUTPUT).1, 0, "Firefox follows the default");
+
+        let mut s = sheet(&fixture());
+        s.open(APPS);
+        assert!(!combo(&s, APP_OUTPUT).2);
     }
 
     fn select_app(s: &mut Sheet, row: usize) {
@@ -1660,7 +1791,9 @@ mod tests {
         let rect = |id: &str| page.item(id).expect("item exists").rect;
         assert_eq!(rect(APP_GROUP), Rect::new(21, 47, 320, 344));
         assert_eq!(rect(APP_ICON), rect_of(&s, SINK.icon));
-        assert_eq!(rect(APP_LIST), Rect::new(70, 65, 261, 276));
+        assert_eq!(rect(APP_LIST), Rect::new(70, 65, 261, 242));
+        assert_eq!(rect(APP_OUTPUT_LABEL), Rect::new(71, 320, 44, 13));
+        assert_eq!(rect(APP_OUTPUT), Rect::new(120, 316, 211, 21));
         assert_eq!(rect(APP_TRACK), Rect::new(120, 353, 130, trackbar::HEIGHT));
         assert_eq!(rect(APP_MUTE), Rect::new(290, 361, 13, 13));
     }
