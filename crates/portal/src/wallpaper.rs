@@ -1,6 +1,6 @@
 //! `org.freedesktop.impl.portal.Wallpaper`: an app's picture as the
 //! desktop background, after the Wallpaper permit prompt or an Allow the
-//! permission store remembers. The picture is copied under
+//! permission store remembers for a picture the app reads itself. The picture is copied under
 //! `$XDG_DATA_HOME/reprise/wallpapers`, so a document portal path that goes
 //! away with the app does not take the background with it.
 
@@ -15,7 +15,8 @@ const IMAGE: repriseconf::Key = repriseconf::key("wallpaper", "image");
 const SLIDESHOW: repriseconf::Key = repriseconf::key("wallpaper", "slideshow");
 
 /// xdg-desktop-portal's own entry. It denies a `no` itself, and an answer to its own prompt (a call
-/// without `show-preview`) is written here before the call arrives, so a `yes` is never asked twice.
+/// without `show-preview`) is written here before the call arrives, so a `yes` may never have seen
+/// a picture: see [`remembered_applies`].
 const STORE: crate::permit::Store = crate::permit::Store {
     table: "wallpaper",
     id: "wallpaper",
@@ -60,7 +61,7 @@ impl Wallpaper {
         };
         let show_preview = matches!(options.get("show-preview"), Some(zbus::Variant::Bool(true)));
         let src = path.clone();
-        let Some(bytes) = blocking::unblock(move || read_picture(&src)).await else {
+        let Some((bytes, real)) = blocking::unblock(move || read_picture(&src)).await else {
             log::info!(
                 "SetWallpaperURI for {app_id:?}: {} is no picture",
                 path.display()
@@ -82,13 +83,11 @@ impl Wallpaper {
                 preview,
                 ..Default::default()
             };
-            crate::permit::ask_remembered(
-                crate::permit::Kind::Wallpaper,
-                STORE,
-                &id,
-                input,
-                &cancel,
-            )
+            let kind = crate::permit::Kind::Wallpaper;
+            match remembered_applies(&real, &app_folders(&id)) {
+                true => crate::permit::ask_remembered(kind, STORE, &id, input, &cancel),
+                false => crate::permit::ask_with(kind, input, &cancel).allowed(),
+            }
         })
         .await;
         let _ = server.remove::<crate::Request, _>(handle.clone()).await;
@@ -140,6 +139,39 @@ fn shows_preview(app_id: &str, asked: bool) -> bool {
     asked || !app_id.is_empty()
 }
 
+/// Whether a remembered Allow covers the picture at `real`, the path its file resolved to: only
+/// for a file in `folders`, which the app reads itself. An Allow given without the picture shown
+/// would otherwise let the app put any picture the user owns on the desktop unseen.
+fn remembered_applies(real: &Path, folders: &[PathBuf]) -> bool {
+    folders.iter().any(|f| real.starts_with(f))
+}
+
+/// The folders a sandboxed `app_id` reads itself, resolved: the document portal's and its own
+/// data folder. None for an empty app id.
+fn app_folders(app_id: &str) -> Vec<PathBuf> {
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from);
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    app_folders_in(app_id, runtime.as_deref(), home.as_deref())
+}
+
+fn app_folders_in(app_id: &str, runtime: Option<&Path>, home: Option<&Path>) -> Vec<PathBuf> {
+    use std::path::Component;
+    let mut parts = Path::new(app_id).components();
+    if !matches!(
+        (parts.next(), parts.next()),
+        (Some(Component::Normal(_)), None)
+    ) {
+        return Vec::new();
+    }
+    let doc = runtime.map(|r| r.join("doc"));
+    let own = home.map(|h| h.join(".var/app").join(app_id));
+    [doc, own]
+        .into_iter()
+        .flatten()
+        .filter_map(|f| std::fs::canonicalize(f).ok())
+        .collect()
+}
+
 fn file_name(path: &Path) -> String {
     path.file_name()
         .map(|n| crate::dialog::one_line(&n.to_string_lossy()))
@@ -148,8 +180,9 @@ fn file_name(path: &Path) -> String {
 }
 
 /// The bytes of the regular file at `path` when its header names a picture the desktop shows,
-/// no side past [`reprisekit::wallpaper::MAX_SIDE`].
-fn read_picture(path: &Path) -> Option<Vec<u8>> {
+/// no side past [`reprisekit::wallpaper::MAX_SIDE`], and the path the opened file resolved to.
+fn read_picture(path: &Path) -> Option<(Vec<u8>, PathBuf)> {
+    use std::os::fd::AsRawFd;
     use std::os::unix::fs::OpenOptionsExt;
     let f = std::fs::OpenOptions::new()
         .read(true)
@@ -159,6 +192,7 @@ fn read_picture(path: &Path) -> Option<Vec<u8>> {
     if !f.metadata().ok()?.file_type().is_file() {
         return None;
     }
+    let real = std::fs::read_link(format!("/proc/self/fd/{}", f.as_raw_fd())).ok()?;
     let bytes = repriseapp::decode::read_capped_from(f).ok()?;
     let (w, h) = image::ImageReader::new(std::io::Cursor::new(&bytes))
         .with_guessed_format()
@@ -166,7 +200,7 @@ fn read_picture(path: &Path) -> Option<Vec<u8>> {
         .into_dimensions()
         .ok()?;
     let max = reprisekit::wallpaper::MAX_SIDE;
-    (w <= max && h <= max).then_some(bytes)
+    (w <= max && h <= max).then_some((bytes, real))
 }
 
 /// Write `bytes` as `name` in `dir`, point `[wallpaper]` in `config` at the copy and delete the
@@ -275,7 +309,10 @@ mod tests {
             w.write_image_data(&[1, 2, 3]).unwrap();
         }
         std::fs::write(&png, &bytes).unwrap();
-        assert_eq!(read_picture(&png), Some(bytes.clone()));
+        assert_eq!(
+            read_picture(&png),
+            Some((bytes.clone(), std::fs::canonicalize(&png).unwrap()))
+        );
         let text = dir.path().join("note.png");
         std::fs::write(&text, "not a picture").unwrap();
         assert_eq!(read_picture(&text), None);
@@ -357,6 +394,52 @@ mod tests {
         };
         portal.introspect_to_writer(&mut xml, 0);
         assert!(xml.contains(r#"<method name="SetWallpaperURI">"#), "{xml}");
+    }
+
+    #[test]
+    fn a_remembered_allow_covers_only_a_picture_the_app_reads_itself() {
+        let dir = tempfile::tempdir().unwrap();
+        let dir = std::fs::canonicalize(dir.path()).unwrap();
+        let (run, home) = (dir.join("run"), dir.join("home"));
+        let doc = run.join("doc/3f2a91c0");
+        let own = home.join(".var/app/org.example.Photos");
+        let pictures = home.join("Pictures");
+        for (folder, name) in [
+            (&doc, "sunrise.png"),
+            (&own, "cache.png"),
+            (&pictures, "id.png"),
+        ] {
+            std::fs::create_dir_all(folder).unwrap();
+            std::fs::write(folder.join(name), png(1, 1)).unwrap();
+        }
+        std::os::unix::fs::symlink(pictures.join("id.png"), own.join("link.png")).unwrap();
+        let folders = app_folders_in("org.example.Photos", Some(&run), Some(&home));
+        let applies = |p: PathBuf| remembered_applies(&read_picture(&p).unwrap().1, &folders);
+        assert!(
+            applies(doc.join("sunrise.png")),
+            "a document portal file is silent"
+        );
+        assert!(
+            applies(own.join("cache.png")),
+            "a file in its own folder is silent"
+        );
+        assert!(!applies(pictures.join("id.png")), "a file outside asks");
+        assert!(
+            !applies(own.join("link.png")),
+            "a link out of its folder asks"
+        );
+        assert!(
+            !applies(own.join("../../../Pictures/id.png")),
+            "a path out asks"
+        );
+        let other = app_folders_in("org.example.Other", Some(&run), Some(&home));
+        assert!(!remembered_applies(&own.join("cache.png"), &other));
+        for id in ["", "..", ".", "a/b", "/home"] {
+            assert!(
+                app_folders_in(id, Some(&run), Some(&home)).is_empty(),
+                "{id:?}"
+            );
+        }
     }
 
     #[test]
