@@ -41,7 +41,7 @@ pub enum Row {
 
 /// The compositor's action names, `spawn` first since it is the one with
 /// a command. Mirrors `Action::name` in `src/config/keybinds.rs`.
-pub const ACTIONS: [&str; 65] = [
+pub const ACTIONS: [&str; 66] = [
     "spawn",
     "terminal",
     "close",
@@ -107,6 +107,7 @@ pub const ACTIONS: [&str; 65] = [
     "prev",
     "stop",
     "wifi",
+    "airplane-mode",
 ];
 
 /// The compositor's default binds (`repriseconf::keybind::DEFAULTS`), which

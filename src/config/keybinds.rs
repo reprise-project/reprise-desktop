@@ -71,6 +71,7 @@ pub enum Action {
     Wifi,
     /// Turn the touchpad on (true) or off (false), or flip it (None).
     Touchpad(Option<bool>),
+    Airplane,
 }
 
 impl Action {
@@ -146,6 +147,7 @@ impl Action {
             Action::Touchpad(None) => "touchpad",
             Action::Touchpad(Some(true)) => "touchpad-on",
             Action::Touchpad(Some(false)) => "touchpad-off",
+            Action::Airplane => "airplane-mode",
         })
     }
 
@@ -230,6 +232,7 @@ impl Action {
             "touchpad" => Action::Touchpad(None),
             "touchpad-on" => Action::Touchpad(Some(true)),
             "touchpad-off" => Action::Touchpad(Some(false)),
+            "airplane-mode" => Action::Airplane,
             other => return Err(format!("unknown action {other:?}")),
         })
     }

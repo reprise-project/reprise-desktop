@@ -25,6 +25,7 @@
 //! with the session, and [`remote`], which reads the Remote Desktop server and
 //! turns its user unit on or off. Synchronous callers [`wait`] on it.
 //! [`bluez`] lists BlueZ's paired devices and follows whether one is connected.
+//! [`airplane`] turns every radio off and back on, Bluetooth through [`rfkill`].
 //! [`kdeconnect`] follows the phones KDE Connect reaches.
 //! [`error`] reads the name and message of an error reply.
 //! [`desklock`] follows the compositor's desktop lock on `org.freedesktop.ScreenSaver`.
@@ -37,6 +38,7 @@
 //! [`bounded`] decodes what another peer sends within size caps, never as a `Variant` tree.
 
 pub mod a11y;
+pub mod airplane;
 pub mod appearance;
 pub mod bluez;
 pub mod bounded;
@@ -57,6 +59,7 @@ pub mod peer;
 pub mod permissions;
 pub mod polkit;
 pub mod remote;
+pub mod rfkill;
 pub mod testsession;
 pub mod tray;
 pub mod units;

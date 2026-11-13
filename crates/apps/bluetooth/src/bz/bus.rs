@@ -251,7 +251,10 @@ async fn pair(conn: &Connection, device: &str, poster: &Poster) {
 async fn command(conn: &Connection, cmd: &Cmd) -> zbus::Result<()> {
     match cmd {
         Cmd::SetPowered { adapter, on } => {
-            if *on && let Err(e) = rfkill::unblock() {
+            if *on
+                && let Err(e) =
+                    reprisebus::rfkill::set_blocked(reprisebus::rfkill::Kind::Bluetooth, false)
+            {
                 log::info!("could not unblock Bluetooth through rfkill: {e}");
             }
             set(conn, adapter, ADAPTER_IFACE, "Powered", Variant::from(*on)).await

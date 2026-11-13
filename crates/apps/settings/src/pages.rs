@@ -26,6 +26,7 @@ mod desktop;
 mod input;
 mod lists;
 mod login;
+mod network;
 mod system;
 
 pub use appearance::{effects, fonts_and_icons, night_light, text_size_note};
@@ -45,6 +46,7 @@ pub use login::{
     Picture as LoginPicture, follow_login, login_manager, read_login, read_login_background,
     show_login,
 };
+pub use network::{AIRPLANE, network, show_airplane};
 pub use system::{
     RD_PASSWORD_ACCOUNTS, REMOTE_ALLOW, REMOTE_DISCONNECT, REMOTE_REGENERATE, advanced, backup,
     managed, notifications, privacy, remote_desktop, selected_client, show_remote, sound, startup,

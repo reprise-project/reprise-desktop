@@ -878,7 +878,8 @@ action = "tab-prev"
 # while the screen is locked; the actions
 # volume-up, volume-down, mute, mic-mute, brightness-up, brightness-down,
 # kbd-brightness-up, kbd-brightness-down, play-pause, next, prev, stop,
-# wifi, touchpad (on or off), touchpad-on and touchpad-off bind to any key.
+# wifi, touchpad (on or off), touchpad-on, touchpad-off and airplane-mode
+# bind to any key.
 #[[keybinds]]
 #keys = "Super+F10"
 #action = "mute"

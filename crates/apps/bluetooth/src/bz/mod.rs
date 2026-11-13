@@ -3,7 +3,6 @@
 
 mod agent;
 mod bus;
-mod rfkill;
 
 pub use bus::{BzHandle, watch};
 

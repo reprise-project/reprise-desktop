@@ -650,15 +650,20 @@ fn media_keys_route_before_everything_and_only_on_press() {
 }
 
 #[test]
-fn the_wifi_key_goes_to_the_lock_while_locked() {
+fn the_wifi_and_airplane_mode_keys_go_to_the_lock_while_locked() {
     let locked = Modes {
         locked: true,
         ..Modes::default()
     };
     assert_eq!(r(&locked, &press(KEY_XF86WLAN, 0)), KeyRoute::Lock);
+    assert_eq!(r(&locked, &press(KEY_XF86RFKILL, 0)), KeyRoute::Lock);
     assert_eq!(
         r(&Modes::default(), &press(KEY_XF86WLAN, 0)),
         KeyRoute::Media(Action::Wifi)
+    );
+    assert_eq!(
+        r(&Modes::default(), &press(KEY_XF86RFKILL, 0)),
+        KeyRoute::Media(Action::Airplane)
     );
 }
 

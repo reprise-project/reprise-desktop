@@ -22,6 +22,7 @@ pub enum TrayMsg {
     Status,
     Repair,
     Wireless,
+    Airplane,
     Folder,
     Exit,
 }
@@ -36,7 +37,7 @@ pub fn translate(msg: Msg, shape: &MenuShape) -> Option<TrayMsg> {
 }
 
 /// What the rows depend on: the first row's wording, whether there is anything
-/// to disable or any radio to list, the hotspot, and the saved VPNs.
+/// to disable or any radio to list, the hotspot, the saved VPNs and airplane mode.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MenuShape {
     /// "Disable" or "Enable". The compositor's menu host strips `_`, not `&`, so
@@ -46,6 +47,8 @@ pub struct MenuShape {
     pub has_device: bool,
     pub hotspot_on: bool,
     pub vpns: Vec<(String, bool)>,
+    /// None hides the row: the machine has no radio switch.
+    pub airplane: Option<bool>,
 }
 
 impl Default for MenuShape {
@@ -56,12 +59,13 @@ impl Default for MenuShape {
             has_device: false,
             hotspot_on: false,
             vpns: vec![],
+            airplane: None,
         }
     }
 }
 
 /// The tray menu: Disable, Status, Repair, the wireless list and hotspot, the
-/// saved VPNs as check rows, the folder and Exit. Rows and their separators go
+/// saved VPNs as check rows, Airplane Mode, the folder and Exit. Rows and their separators go
 /// together, so two separators never meet.
 pub fn menu(shape: &MenuShape) -> Rows<TrayMsg> {
     let mut rows = Rows::default();
@@ -88,6 +92,12 @@ pub fn menu(shape: &MenuShape) -> Rows<TrayMsg> {
         }
         rows.separator();
     }
+    if let Some(on) = shape.airplane {
+        rows.add(TrayMsg::Airplane, |id| {
+            Node::toggle(id, "Airplane Mode", on)
+        })
+        .separator();
+    }
     rows.add(TrayMsg::Folder, row("Open Network Connections"))
         .separator()
         .add(TrayMsg::Exit, row("Exit"));
@@ -111,6 +121,7 @@ pub fn menu_shape(s: &nm::Snapshot) -> MenuShape {
         has_device: primary.is_some(),
         hotspot_on: wifi_device(s).is_some_and(|d| d.hotspot.is_some()),
         vpns: s.vpns.iter().map(|v| (v.name.clone(), v.active)).collect(),
+        airplane: s.airplane,
     }
 }
 
@@ -172,10 +183,13 @@ pub fn speed_text(mbit: u32) -> String {
     }
 }
 
-/// The tooltip lines: the primary device's, then a line on connectivity while
-/// it is limited.
+/// The tooltip lines: the primary device's, then a line on airplane mode or on
+/// connectivity while it is limited.
 pub fn tooltip(s: &nm::Snapshot) -> String {
     let link = link_tip(s);
+    if s.airplane == Some(true) {
+        return format!("{link}\nAirplane mode is on");
+    }
     if !limited(s) {
         return link;
     }
@@ -729,6 +743,47 @@ mod tests {
             tooltip(&s),
             "Wireless Network Connection\nHotspot: Desk (1 device)"
         );
+    }
+
+    #[test]
+    fn airplane_mode_is_a_check_row_above_the_folder_on_a_machine_with_a_radio() {
+        let row = |row, label: &str| (Some(row), label.to_string(), false);
+        let sep = || (None, String::new(), true);
+        let shape = MenuShape {
+            airplane: Some(true),
+            ..MenuShape::default()
+        };
+        assert_eq!(
+            rows(shape.clone()),
+            vec![
+                row(TrayMsg::Airplane, "Airplane Mode"),
+                sep(),
+                row(TrayMsg::Folder, "Open Network Connections"),
+                sep(),
+                row(TrayMsg::Exit, "Exit"),
+            ]
+        );
+        assert_eq!(menu_nodes(&shape)[0].toggle, Some(true));
+        let off = MenuShape {
+            airplane: Some(false),
+            ..MenuShape::default()
+        };
+        assert_eq!(menu_nodes(&off)[0].toggle, Some(false));
+        assert_eq!(
+            translate(Rows::clicked(&TrayMsg::Airplane), &shape),
+            Some(TrayMsg::Airplane)
+        );
+
+        let mut s = snap(vec![wifi(nm::State::Disconnected, None, 0)]);
+        assert_eq!(menu_shape(&s).airplane, None, "no radio switch, no row");
+        s.airplane = Some(true);
+        assert_eq!(menu_shape(&s).airplane, Some(true));
+        assert_eq!(
+            tooltip(&s),
+            "Wireless Network Connection\nNot connected\nAirplane mode is on"
+        );
+        s.airplane = Some(false);
+        assert_eq!(tooltip(&s), "Wireless Network Connection\nNot connected");
     }
 
     #[test]

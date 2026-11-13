@@ -1,4 +1,4 @@
-//! Media key backends: volume and mute through `wpctl`, backlights through logind's `SetBrightness`, external monitors over DDC/CI through `ddcutil`, transport through MPRIS, the wireless radio through NetworkManager. One worker thread runs the jobs and reports over a calloop channel so the event loop never blocks; display jobs run on a lane thread per backlight or DDC bus, so a monitor that stops answering holds up only itself.
+//! Media key backends: volume and mute through `wpctl`, backlights through logind's `SetBrightness`, external monitors over DDC/CI through `ddcutil`, transport through MPRIS, the wireless radio through NetworkManager, airplane mode through `reprisebus::airplane`. One worker thread runs the jobs and reports over a calloop channel so the event loop never blocks; display jobs run on a lane thread per backlight or DDC bus, so a monitor that stops answering holds up only itself.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -27,6 +27,7 @@ pub enum Job {
     Kbd(i32),
     Player(&'static str),
     Wifi,
+    Airplane,
     Display(DisplayJob),
 }
 
@@ -39,6 +40,7 @@ pub enum Report {
     Wifi { on: bool },
     ScreenReader(crate::screenreader::Switched),
     Touchpad { on: bool },
+    Airplane { on: bool },
     Display(DisplayReport),
 }
 
@@ -667,6 +669,13 @@ async fn perform(buses: &mut Buses, job: Job) -> Option<Report> {
             }
             r
         }
+        Job::Airplane => match reprisebus::airplane::toggle(buses.system().await?).await {
+            Ok(on) => Some(Report::Airplane { on }),
+            Err(e) => {
+                log::warn!("media: airplane mode: {e}");
+                None
+            }
+        },
         // `worker` hands these to their lanes.
         Job::Display(_) => None,
     }
@@ -829,6 +838,8 @@ fn run_lane(
 #[derive(Debug, Default)]
 pub struct MediaState {
     jobs: Option<Sender<Job>>,
+    /// Held open so the kernel leaves the airplane-mode key to [`Job::Airplane`].
+    rfkill_key: Option<std::fs::File>,
     repeat: Option<RegistrationToken>,
     repeating: Option<(u32, Action)>,
 }
@@ -886,6 +897,9 @@ impl State {
             return;
         }
         self.key_input.media.jobs = Some(jtx);
+        self.key_input.media.rfkill_key = reprisebus::rfkill::take_key()
+            .inspect_err(|e| log::info!("media: the kernel keeps the airplane-mode key ({e})"))
+            .ok();
         crate::displays::reread(self);
     }
 
@@ -965,6 +979,7 @@ impl State {
                 self.set_touchpad(*on);
                 return;
             }
+            Action::Airplane => Job::Airplane,
             _ => return,
         };
         self.send_job(job);
@@ -1036,7 +1051,19 @@ mod tests {
         assert!(!repeats(&Action::Mute));
         assert!(!repeats(&Action::PlayPause));
         assert!(!repeats(&Action::Wifi));
+        assert!(!repeats(&Action::Airplane));
         assert!(!repeats(&Action::Lock));
+    }
+
+    #[test]
+    fn the_airplane_mode_key_toggles_airplane_mode() {
+        const RFKILL: u32 = 247;
+        let mut h = crate::harness::Harness::with_config(crate::config::Config::default());
+        h.output("TEST-1", 1024, 768);
+        let jobs = h.state.key_input.media.capture();
+        h.key(RFKILL, true);
+        h.key(RFKILL, false);
+        assert_eq!(jobs.try_iter().collect::<Vec<_>>(), [Job::Airplane]);
     }
 
     #[test]

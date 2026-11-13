@@ -128,6 +128,22 @@ fn describe(r: &Report, boost: bool) -> Option<(Osd, &'static str)> {
             },
             "input-touchpad",
         ),
+        Report::Airplane { on } => (
+            Osd {
+                title: if *on {
+                    "Airplane mode on"
+                } else {
+                    "Airplane mode off"
+                }
+                .into(),
+                meter: None,
+            },
+            if *on {
+                "airplane-mode-symbolic"
+            } else {
+                "network-wireless"
+            },
+        ),
         Report::Display(_) => return None,
     })
 }
@@ -433,6 +449,17 @@ mod tests {
         assert_eq!(icon, "input-touchpad");
         let (osd, _) = describe(&Report::Touchpad { on: false }, false).unwrap();
         assert_eq!(osd.title, "Touchpad off");
+    }
+
+    #[test]
+    fn airplane_mode_reads_on_or_off_without_a_meter() {
+        let (osd, icon) = describe(&Report::Airplane { on: true }, false).unwrap();
+        assert_eq!(osd.title, "Airplane mode on");
+        assert_eq!(osd.meter, None);
+        assert_eq!(icon, "airplane-mode-symbolic");
+        let (osd, icon) = describe(&Report::Airplane { on: false }, false).unwrap();
+        assert_eq!(osd.title, "Airplane mode off");
+        assert_eq!(icon, "network-wireless");
     }
 
     #[test]
