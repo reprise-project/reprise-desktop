@@ -260,15 +260,27 @@ pub fn install(
     if refs.is_empty() {
         return Ok(());
     }
+    let mut args = vec!["update", flag(install), "-y"];
+    args.extend(refs.iter().map(String::as_str));
+    follow(&args, step, &mut |_| {})
+}
+
+/// Run `flatpak ARGS`, a transaction answered yes to every question, calling `step` as in
+/// [`install`] and `started` with its process id.
+pub fn follow(
+    args: &[&str],
+    step: &mut dyn FnMut(&str, f64),
+    started: &mut dyn FnMut(u32),
+) -> Result<(), String> {
     let mut child = Command::new(FLATPAK)
-        .args(["update", flag(install), "-y"])
-        .args(refs)
+        .args(args)
         .env("LC_ALL", "C")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("Flatpak could not be started: {e}."))?;
+    started(child.id());
     // stderr is read on a thread of its own, so a chatty one never
     // fills its pipe while stdout is followed here.
     let err = child.stderr.take().map(|mut e| {
@@ -293,6 +305,42 @@ pub fn install(
     } else {
         Err(complaint(&stderr))
     }
+}
+
+/// An installed app as `flatpak info` describes it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Info {
+    /// `app/ID/ARCH/BRANCH`.
+    pub reference: String,
+    pub version: String,
+    /// The remote it came from.
+    pub origin: String,
+    /// "34.2 MB", as Flatpak writes it.
+    pub size: String,
+}
+
+/// `flatpak info`'s `Key: value` lines.
+fn parse_info(out: &str) -> Info {
+    let mut info = Info::default();
+    for line in out.lines() {
+        let Some((k, v)) = line.split_once(':') else {
+            continue;
+        };
+        let v = v.trim().to_string();
+        match k.trim() {
+            "Ref" => info.reference = v,
+            "Version" => info.version = v,
+            "Origin" => info.origin = v,
+            "Installed Size" | "Installed" => info.size = v,
+            _ => {}
+        }
+    }
+    info
+}
+
+/// What `install` holds of app `id`.
+pub fn info(install: Install, id: &str) -> Result<Info, String> {
+    run(&["info", flag(install), id]).map(|out| parse_info(&out))
 }
 
 /// The system and user installations, where Flatpak looks for them.
@@ -624,5 +672,25 @@ mod tests {
             "Unable to load summary from remote flathub."
         );
         assert_eq!(complaint(""), "Flatpak failed.");
+    }
+
+    #[test]
+    fn info_reads_the_version_origin_and_size() {
+        let out = "Space Cadet Pinball - Game engine for Space Cadet Pinball\n\n\
+            \x20         ID: com.github.k4zmu2a.spacecadetpinball\n\
+            \x20        Ref: app/com.github.k4zmu2a.spacecadetpinball/x86_64/stable\n\
+            \x20    Version: 2.1.0\n\
+            \x20     Origin: flathub\n\
+            Installed Size: 34.2 MB\n\
+            \x20    Subject: Merge pull request #42 (8734c8ac3a5a)\n";
+        assert_eq!(
+            parse_info(out),
+            Info {
+                reference: "app/com.github.k4zmu2a.spacecadetpinball/x86_64/stable".into(),
+                version: "2.1.0".into(),
+                origin: "flathub".into(),
+                size: "34.2 MB".into(),
+            }
+        );
     }
 }

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Package files shared-mime-info has no type for, so a double-click offers to install them. -->
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-alpm-package">
+    <comment>Arch Linux package</comment>
+    <sub-class-of type="application/x-zstd-compressed-tar"/>
+    <generic-icon name="package-x-generic"/>
+    <glob pattern="*.pkg.tar.zst"/>
+  </mime-type>
+</mime-info>

@@ -102,6 +102,12 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   Enter brings one back, restoring it if minimized. When a window matches
   as well as a program, it comes first, so "fire" Enter goes back to the
   browser you have open. `[launcher] windows = false` turns that off.
+- **Uninstall.** A program's right-click menu in the Start menu, All
+  Programs and the launcher has Uninstall...: a Flatpak leaves the
+  installation it came from, a program from the system's packages leaves
+  through PackageKit (greyed, with a tip saying why, without it). A sheet
+  first says what goes (version, size, source, and any other package that
+  needs it) and waits for Uninstall.
 - **Run...** for when you know exactly what you want. A folder's path (`~/Documents`) opens it in Explorer.
 
 ## Windows
@@ -833,6 +839,10 @@ the screen takes the interface of the last session used at this computer.
   update removes the running kernel's modules (until a restart, a USB device
   plugged in may not work), it says to restart, with a Restart Now that asks
   programs to close as Start's Restart does.
+- **Install from a file.** Double-click a downloaded `.flatpakref`,
+  `.flatpak`, `.pkg.tar.zst` or `.deb`: a sheet shows its name, version, size
+  and source, and what else comes along, and installs it only when you click
+  Install. The task button shows the progress.
 - **No driver discs.** Audio runs through PipeWire, networking through
   NetworkManager, Bluetooth through BlueZ and power through UPower and
   systemd-logind.

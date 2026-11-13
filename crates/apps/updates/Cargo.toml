@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 repository.workspace = true
-description = "Software Updates: system updates through PackageKit, Flatpak updates and firmware through fwupd, and the tray icon that says when there are some"
+description = "Software Updates: system updates through PackageKit, Flatpak updates and firmware through fwupd, the tray icon that says when there are some, and the sheet that installs package files and uninstalls programs"
 
 [lints]
 workspace = true
@@ -21,6 +21,7 @@ repriseapp = { path = "../../repriseapp" }
 reprisekit = { path = "../../reprisekit" }
 reprisetray = { path = "../../reprisetray" }
 reprisebus = { path = "../../reprisebus" }
+reprisefs = { path = "../../reprisefs" }
 repriseconf = { path = "../../repriseconf" }
 zbus.workspace = true
 futures-util.workspace = true

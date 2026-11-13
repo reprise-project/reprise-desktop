@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Install Software
+Comment=Install a downloaded package or Flatpak.
+Exec=reprise-updates --install %f
+Icon=system-software-install
+MimeType=application/vnd.flatpak.ref;application/vnd.flatpak;application/x-alpm-package;application/vnd.debian.binary-package;
+NoDisplay=true
+StartupWMClass=reprise.install
+Terminal=false

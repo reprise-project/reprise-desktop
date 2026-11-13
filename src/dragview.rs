@@ -391,6 +391,16 @@ impl State {
             self.open_quick_menu(index, (p.x as i32, p.y as i32));
             return;
         }
+        if button == BTN_RIGHT
+            && let Some(row) = row
+            && let Some(MenuKind::Programs(apps)) = self.menus.get(depth).map(|m| &m.kind)
+            && let Some(app) = apps
+                .get(row)
+                .and_then(|a| self.app_index.iter().position(|e| e.id == a.id))
+        {
+            self.open_list_program_menu(app);
+            return;
+        }
         let Some(row) = row.filter(|_| button == BTN_LEFT) else {
             return;
         };

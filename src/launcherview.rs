@@ -230,13 +230,9 @@ impl State {
                 let Some(&app) = v.matches.get(i) else {
                     return;
                 };
-                let Some(entry) = self.app_index.get(app) else {
+                let Some((items, rows)) = self.program_menu_of(app, false) else {
                     return;
                 };
-                let pinned_start = self.launches.is_pinned(&entry.id);
-                let pinned_taskbar = self.quick_file_of(&entry.id).is_some();
-                let (items, rows) =
-                    crate::startmenu::program_menu(app, pinned_start, pinned_taskbar, false);
                 (items, MenuKind::StartPanel { rows })
             }
             Pick::File(i) => {

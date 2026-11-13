@@ -1692,6 +1692,17 @@ stop the share first.
   exits and its display is gone, and takes back only the bus names nobody
   holds by then; beside a live desktop that is not Reprise it takes nothing
   ([The session](protocols.md#the-session)).
+- **Installing and uninstalling.** Any program of yours can open the install
+  sheet on any file (`reprise-updates --install FILE`), as a double-click
+  does, so the sheet never acts on its own: it shows what the file is and goes
+  ahead only on a click on Install (or Uninstall) or Alt with its access
+  key, gated as the [consent prompts](#consent-prompts) are. Reprise runs
+  nothing as root: PackageKit, Flatpak or `pkexec pacman -U` (for a
+  `.pkg.tar.zst`, which PackageKit's pacman backend refuses) does the work
+  and polkit decides whether it takes an administrator's password. A downloaded package carries
+  no repository signature, so PackageKit treats it as untrusted, and its
+  install scripts run as root once it installs: install only packages you
+  trust.
 
 ## Out of scope and known gaps
 
