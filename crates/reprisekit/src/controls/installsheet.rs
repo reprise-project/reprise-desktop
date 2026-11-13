@@ -1,11 +1,10 @@
 //! The install and uninstall sheet: what a program or package is, a button that installs or
 //! uninstalls it, then its progress and how it ended.
 
-use crate::access::{self, ROOT, Tree, accesskit::NodeId, accesskit::Role};
+use crate::access::{ROOT, Tree, accesskit::NodeId};
 use crate::classic::widgets::{BUTTON_GAP, BUTTON_H, BUTTON_W, LINE_H};
 use crate::controls::form::{self, Event, Form, Item};
 use crate::look::Paint;
-use crate::look::widgets::draw_progress;
 use crate::raster::{Canvas, Rect};
 use crate::text::{TextRenderer, escape_mnemonic};
 use crate::theme::TextUnits;
@@ -16,6 +15,9 @@ pub const CLOSE: &str = "close";
 const HEAD: &str = "head";
 const NOTE: &str = "note";
 const DOING: &str = "doing";
+const BAR: &str = "bar";
+/// The bar's steps: a fraction of the run in thousandths.
+const BAR_OF: u32 = 1000;
 const FACT_IDS: [(&str, &str); 4] = [
     ("fact0", "value0"),
     ("fact1", "value1"),
@@ -119,14 +121,6 @@ impl Sheet {
             _ => None,
         }
     }
-
-    /// The share of the bar to fill, while running.
-    fn bar(&self) -> Option<f64> {
-        match &self.stage {
-            Stage::Running { fraction, .. } => Some(fraction.unwrap_or(0.0).clamp(0.0, 1.0)),
-            _ => None,
-        }
-    }
 }
 
 const W: i32 = 400;
@@ -201,7 +195,9 @@ pub fn form(s: &Sheet, text: &TextRenderer, px: u32, u: TextUnits) -> Form {
     }
     let y = note_y(s);
     match &s.stage {
-        Stage::Running { doing, .. } => {
+        Stage::Running {
+            doing, fraction, ..
+        } => {
             let doing = text.ellipsize(doing, u.len(COL_W), false, px);
             items.push(Item::label_at(
                 DOING,
@@ -209,6 +205,13 @@ pub fn form(s: &Sheet, text: &TextRenderer, px: u32, u: TextUnits) -> Form {
                 y,
                 COL_W,
                 &escape_mnemonic(&doing),
+            ));
+            let done = fraction.unwrap_or(0.0).clamp(0.0, 1.0) * f64::from(BAR_OF);
+            items.push(Item::progress(
+                BAR,
+                bar_rect(s),
+                done.round() as u32,
+                BAR_OF,
             ));
         }
         stage => {
@@ -247,40 +250,15 @@ pub fn form(s: &Sheet, text: &TextRenderer, px: u32, u: TextUnits) -> Form {
     f
 }
 
-/// Paint `s` with its `form` on `c`, whose top-left is the client's: the bar shows while it runs.
-pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, s: &Sheet, f: &Form, px: u32) {
+/// Paint the sheet's `form` on `c`, whose top-left is the client's.
+pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, f: &Form, px: u32) {
     c.fill_rect(c.bounds(), p.cs.button_face);
     form::draw(c, text, p, f, true, px);
-    if let Some(fraction) = s.bar() {
-        draw_progress(c, p, p.text.rect(bar_rect(s)), fraction, true);
-    }
 }
 
-/// `s`'s screen reader nodes under the root: the form's, and the bar while it runs. Returns the
-/// focused node.
-pub fn access(
-    s: &Sheet,
-    f: &Form,
-    tree: &mut Tree,
-    text: &TextRenderer,
-    px: u32,
-    u: TextUnits,
-) -> Option<NodeId> {
-    let focus = f.access(tree, ROOT, text, px);
-    if let Some(fraction) = s.bar() {
-        let r = u.rect(bar_rect(s));
-        let mut bar = access::range(
-            Role::ProgressIndicator,
-            r,
-            fraction * 100.0,
-            0.0,
-            100.0,
-            true,
-        );
-        bar.set_label(s.headline());
-        tree.push(ROOT, "progress", bar);
-    }
-    focus
+/// The sheet's screen reader nodes under the root; returns the focused node.
+pub fn access(f: &Form, tree: &mut Tree, text: &TextRenderer, px: u32) -> Option<NodeId> {
+    f.access(tree, ROOT, text, px)
 }
 
 #[cfg(test)]

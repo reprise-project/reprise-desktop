@@ -1,4 +1,5 @@
 use super::*;
+use crate::access::accesskit::Role;
 use crate::controls::form::Control;
 use crate::interface::Interface;
 use crate::interfaces;
@@ -155,13 +156,14 @@ fn a_running_sheet_reads_its_progress_out() {
     let s = sheet(running(true));
     let f = form(&s, &text, px, TextUnits::ONE);
     let mut tree = Tree::window("", client(&s));
-    let focus = access(&s, &f, &mut tree, &text, px, TextUnits::ONE);
+    let focus = access(&f, &mut tree, &text, px);
     assert!(focus.is_some());
-    let bar = tree
+    let bars: Vec<_> = tree
         .nodes()
-        .find(|(_, n)| n.role() == Role::ProgressIndicator)
-        .map(|(_, n)| n.numeric_value());
-    assert_eq!(bar, Some(Some(40.0)));
+        .filter(|(_, n)| n.role() == Role::ProgressIndicator)
+        .map(|(_, n)| (n.numeric_value(), n.max_numeric_value()))
+        .collect();
+    assert_eq!(bars, [(Some(400.0), Some(1000.0))], "one bar, 40% along");
 }
 
 fn fnv(c: &Canvas) -> u64 {
@@ -223,7 +225,7 @@ fn the_sheet_pins_its_pixels_in_every_stage_and_look() {
                 let f = form(&s, &text, px, TextUnits::ONE);
                 let (w, h) = client(&s);
                 let mut c = Canvas::new((w * scale) as u32, (h * scale) as u32);
-                draw(&mut c, &text, &theme.paint(), &s, &f, px);
+                draw(&mut c, &text, &theme.paint(), &f, px);
                 got.push((format!("{look} {name} {scale}"), fnv(&c)));
             }
         }
@@ -240,7 +242,7 @@ fn the_bar_fills_its_share_and_shows_only_while_running() {
         let f = form(&s, &text, px, TextUnits::ONE);
         let (w, h) = client(&s);
         let mut c = Canvas::new(w as u32, h as u32);
-        draw(&mut c, &text, &theme.paint(), &s, &f, px);
+        draw(&mut c, &text, &theme.paint(), &f, px);
         (c, bar_rect(&s))
     };
     let (c, bar) = drawn(running(true));
