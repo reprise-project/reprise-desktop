@@ -872,6 +872,10 @@ action = "overview"
 keys = "Super+z"             # arrows pick a zone, Enter snaps the window there
 action = "snap-layouts"
 
+[[keybinds]]                 # the display switcher: Extend, Duplicate, Only 1, Only 2; each press
+keys = "Super+p"             # moves to the next, letting go of Super or Enter picks it
+action = "display-switcher"
+
 [[keybinds]]                 # the keyboard to the taskbar, on Start: arrows walk it, Enter
 keys = "Super+t"             # clicks, the Menu key or Shift+F10 opens a menu, Esc goes back
 action = "focus-taskbar"

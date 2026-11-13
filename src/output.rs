@@ -648,6 +648,7 @@ impl State {
         crate::displays::outputs_changed(self);
         crate::taskpreview::output_gone(self);
         crate::snappickerview::output_gone(self);
+        crate::projectorview::output_gone(self);
         crate::tooltip::output_gone(self);
         self.relayout_desktop();
         // An output's scale can change under a window (wlr-randr --scale).

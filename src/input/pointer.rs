@@ -214,6 +214,10 @@ impl State {
                 let zone = crate::snappickerview::hit(self, pos.x, pos.y);
                 return Hit::SnapPicker { zone };
             }
+            Some(SceneOwner::Projector) => {
+                let tile = crate::projectorview::hit(self, pos.x, pos.y);
+                return Hit::Projector { tile };
+            }
             Some(SceneOwner::Notification) => return Hit::Notification,
             Some(SceneOwner::NotifyCenter) => return Hit::NotifyCenter,
             Some(SceneOwner::ClipView) => {
@@ -628,6 +632,11 @@ impl State {
                 self.pointer_motion(None, pos, time);
                 self.set_cursor("default");
                 crate::snappickerview::hover_panel(self, zone);
+            }
+            Hit::Projector { tile } => {
+                self.pointer_motion(None, pos, time);
+                self.set_cursor("default");
+                crate::projectorview::hover(self, tile);
             }
             Hit::Taskbar { bar, hit } => {
                 self.pointer_motion(None, pos, time);

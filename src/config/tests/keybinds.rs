@@ -139,6 +139,7 @@ fn action_names_round_trip() {
         "task-manager",
         "overview",
         "snap-layouts",
+        "display-switcher",
         "focus-taskbar",
         "focus-tray",
         "clipboard-history",

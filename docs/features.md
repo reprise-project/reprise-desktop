@@ -704,8 +704,8 @@ the screen takes the interface of the last session used at this computer.
   the layout saved for the monitors now connected; a set without one starts
   from `[[outputs]]` and lines new monitors up to the right. A layout is
   saved whenever a change to `[[outputs]]` takes effect, whether confirmed in
-  Reprise Settings or typed into `config.toml`, and whenever an
-  output tool (wlr-randr, kanshi) changes the monitors. Monitors are told apart by
+  Reprise Settings or typed into `config.toml`, and whenever the display
+  switcher or an output tool (wlr-randr, kanshi) changes the monitors. Monitors are told apart by
   the make, model and serial number in their EDID, or by their connector
   without one. The layouts live in `$XDG_STATE_HOME/reprise/displays.toml`;
   Forget saved layouts on the Display page drops them.
@@ -715,7 +715,12 @@ the screen takes the interface of the last session used at this computer.
   wins over every saved layout: Reprise forgets them at its next start.
 - **Duplicate.** Monitors placed at one top-left show the same desktop:
   the primary one's, with one taskbar. A monitor of another size shows it
-  fitted, with black bands.
+  fitted, with black bands. Super+P opens the display switcher, four tiles:
+  Extend, Duplicate, Only 1 and Only 2, numbered as on the Display page.
+  Each further press moves to the next; letting go of Super, Enter or a
+  click picks it, and Escape keeps what runs. Duplicate puts every monitor
+  at the primary one's place and scale in the largest mode they all have,
+  or each in its own mode when they share none.
 - **Fractional scaling** from 1 to 4 in quarter steps, per monitor. Programs
   that support it draw at the exact scale.
 - **Night light** from sunset to sunrise, worked out from your time zone, or

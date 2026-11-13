@@ -96,6 +96,10 @@ pub enum Hit {
     SnapPicker {
         zone: Option<reprisekit::controls::snappicker::Zone>,
     },
+    /// The display switcher and the tile the point lands on.
+    Projector {
+        tile: Option<usize>,
+    },
     /// A notification balloon; `notifyview::press` finds its part.
     Notification,
     /// The notification history popup; see `notifycenter::press`.
