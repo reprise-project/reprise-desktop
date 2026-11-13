@@ -53,7 +53,8 @@ pub fn default_dirs() -> Vec<PathBuf> {
 }
 
 /// Every provider in `dirs`, one per program: a program's file in an earlier directory hides one
-/// in a later. Within a directory files are read in name order. Blocks on the file system.
+/// in a later. Within a directory files are read in name order. A file counts only where it
+/// [`speaks_for`] its program. Blocks on the file system.
 pub fn scan(dirs: &[PathBuf]) -> Vec<Provider> {
     let mut out: Vec<Provider> = Vec::new();
     for dir in dirs {
@@ -61,12 +62,36 @@ pub fn scan(dirs: &[PathBuf]) -> Vec<Provider> {
             let Some(p) = std::fs::read_to_string(&path).ok().and_then(|t| parse(&t)) else {
                 continue;
             };
+            if !speaks_for(&path, &p.desktop_id) {
+                log::debug!("{}: {} is not its program's", path.display(), p.desktop_id);
+                continue;
+            }
             if !out.iter().any(|o| o.desktop_id == p.desktop_id) {
                 out.push(p);
             }
         }
     }
     out
+}
+
+/// Whether provider file `ini`, in `<share>/gnome-shell/search-providers`, may name
+/// `desktop_id`: the entry is in `<share>/applications`, and in a Flatpak export, where every
+/// app's entries meet, the file's name starts with the entry's app id as Flatpak's own export
+/// names do.
+fn speaks_for(ini: &Path, desktop_id: &str) -> bool {
+    let Some(share) = ini.parent().and_then(Path::parent).and_then(Path::parent) else {
+        return false;
+    };
+    if desktop_id.contains('/') || !share.join("applications").join(desktop_id).is_file() {
+        return false;
+    }
+    if !share.ends_with("flatpak/exports/share") {
+        return true;
+    }
+    let app = desktop_id.strip_suffix(".desktop").unwrap_or(desktop_id);
+    let stem = ini.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+    stem.strip_prefix(app)
+        .is_some_and(|rest| !rest.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_'))
 }
 
 fn ini_files(dir: &Path) -> Vec<PathBuf> {
@@ -147,33 +172,78 @@ mod tests {
         assert_eq!(parse(&CALC.replace("[Shell", "[Other")), None);
     }
 
+    /// `<root>/<share>/gnome-shell/search-providers`, with a desktop entry for each of `apps`.
+    fn share(root: &Path, share: &str, apps: &[&str]) -> PathBuf {
+        let share = root.join(share);
+        std::fs::create_dir_all(share.join("applications")).unwrap();
+        for a in apps {
+            std::fs::write(share.join("applications").join(a), "[Desktop Entry]\n").unwrap();
+        }
+        let dir = share.join("gnome-shell/search-providers");
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn found(dirs: &[PathBuf]) -> Vec<(String, String)> {
+        (scan(dirs).into_iter())
+            .map(|p| (p.desktop_id, p.object_path))
+            .collect()
+    }
+
     #[test]
     fn an_earlier_directory_hides_a_later_ones_file_for_the_same_program() {
         let root = std::env::temp_dir().join(format!("reprise-providers-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        let (user, system) = (root.join("user"), root.join("system"));
-        for d in [&user, &system] {
-            std::fs::create_dir_all(d).unwrap();
-        }
+        let calc = "org.gnome.Calculator.desktop";
+        let chars = "org.gnome.Characters.desktop";
+        let user = share(&root, "user", &[calc]);
+        let system = share(&root, "system", &[calc, chars]);
         let mine = CALC.replace("/org/gnome/Calculator/SearchProvider", "/mine");
         std::fs::write(user.join("calc.ini"), mine).unwrap();
         std::fs::write(system.join("calc.ini"), CALC).unwrap();
         let other = CALC.replace("Calculator.desktop", "Characters.desktop");
         std::fs::write(system.join("chars.ini"), other).unwrap();
         std::fs::write(system.join("notes.txt"), CALC).unwrap();
-        let found = scan(&[user, system, root.join("missing")]);
-        let got: Vec<(&str, &str)> = (found.iter())
-            .map(|p| (p.desktop_id.as_str(), p.object_path.as_str()))
-            .collect();
+        let path = "/org/gnome/Calculator/SearchProvider".to_string();
         assert_eq!(
-            got,
-            [
-                ("org.gnome.Calculator.desktop", "/mine"),
-                (
-                    "org.gnome.Characters.desktop",
-                    "/org/gnome/Calculator/SearchProvider"
-                )
-            ]
+            found(&[user, system, root.join("missing")]),
+            [(calc.into(), "/mine".into()), (chars.into(), path)]
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_file_naming_a_program_its_folder_lacks_neither_counts_nor_hides_it() {
+        let root = std::env::temp_dir().join(format!("reprise-shadow-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let calc = "org.gnome.Calculator.desktop";
+        let export = share(
+            &root,
+            "flatpak/exports/share",
+            &[calc, "com.example.Evil.desktop"],
+        );
+        let user = share(&root, "user", &[]);
+        let system = share(&root, "system", &[calc]);
+        let evil = CALC.replace("/org/gnome/Calculator/SearchProvider", "/evil");
+        std::fs::write(export.join("com.example.Evil.ini"), &evil).unwrap();
+        std::fs::write(export.join("org.gnome.CalculatorX.ini"), &evil).unwrap();
+        std::fs::write(user.join("calc.ini"), &evil).unwrap();
+        let sneaky = evil.replace(
+            calc,
+            "../../../system/applications/org.gnome.Calculator.desktop",
+        );
+        std::fs::write(user.join("sneaky.ini"), sneaky).unwrap();
+        std::fs::write(system.join("calc.ini"), CALC).unwrap();
+        let dirs = [export.clone(), user, system];
+        let path = "/org/gnome/Calculator/SearchProvider".to_string();
+        assert_eq!(found(&dirs), [(calc.into(), path)]);
+
+        let own = CALC.replace("/org/gnome/Calculator/SearchProvider", "/own");
+        std::fs::write(export.join("org.gnome.Calculator-search-provider.ini"), own).unwrap();
+        assert_eq!(
+            found(&dirs),
+            [(calc.into(), "/own".into())],
+            "the app's own export comes first"
         );
         let _ = std::fs::remove_dir_all(&root);
     }

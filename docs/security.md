@@ -1496,7 +1496,11 @@ stop the share first.
 - **Search providers.** The typed words go, from two characters on, to every
   program whose `gnome-shell/search-providers/*.ini` is installed and not
   turned off in Settings > Search, at the bus name and path the file gives;
-  the bus may start the program to answer. Each answer is decoded within the
+  the bus may start the program to answer. A file counts only when the
+  program it names (`DesktopId`) has its desktop entry in the same data
+  folder, and in a Flatpak export folder only when the file's name starts
+  with that program's id, so one app's file can't speak for, or hide,
+  another program's. Each answer is decoded within the
   session bus caps (4 MiB a reply; a result's strings cut at 4 KiB),
   on a thread off the compositor's loop, and dropped after 3 s. Only a
   result's id, name, description and icon name or file are read, and picking
