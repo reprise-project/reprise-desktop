@@ -157,26 +157,27 @@ impl Default for RemoteDesktop {
 /// `[remote_desktop]`, read now. A missing, unreadable or non-TOML file gives the defaults; the
 /// keys that fell back are logged in one warning.
 pub fn remote_desktop() -> RemoteDesktop {
-    read_file(&crate::config_path()).unwrap_or_else(|e| {
+    read_file(&crate::config_path(), None).unwrap_or_else(|e| {
         log::warn!("{e}; remote desktop uses its defaults");
         RemoteDesktop::default()
     })
 }
 
 /// `[remote_desktop]` read again after the file changed. A file that cannot be read or is not
-/// TOML keeps `previous`; a missing one gives the defaults.
+/// TOML keeps `previous`, and so does each invalid key; a missing file or key gives the default.
 pub fn reread_remote_desktop(previous: RemoteDesktop) -> RemoteDesktop {
     reread(&crate::config_path(), previous)
 }
 
 fn reread(path: &std::path::Path, previous: RemoteDesktop) -> RemoteDesktop {
-    read_file(path).unwrap_or_else(|e| {
+    read_file(path, Some(previous)).unwrap_or_else(|e| {
         log::warn!("{e}; remote desktop keeps its settings");
         previous
     })
 }
 
-fn read_file(path: &std::path::Path) -> Result<RemoteDesktop, String> {
+/// The file's `[remote_desktop]`; an invalid key takes its value in `kept`, else its default.
+fn read_file(path: &std::path::Path, kept: Option<RemoteDesktop>) -> Result<RemoteDesktop, String> {
     let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
@@ -184,16 +185,21 @@ fn read_file(path: &std::path::Path) -> Result<RemoteDesktop, String> {
     };
     let table =
         toml::from_str::<toml::Table>(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+    let invalid = kept.unwrap_or_default();
     let (rd, bad) = match table.get("remote_desktop") {
         None => (RemoteDesktop::default(), Vec::new()),
-        Some(toml::Value::Table(t)) => read(t),
-        Some(_) => (RemoteDesktop::default(), vec!["remote_desktop"]),
+        Some(toml::Value::Table(t)) => read(t, invalid),
+        Some(_) => (invalid, vec!["remote_desktop"]),
     };
     if !bad.is_empty() {
         log::warn!(
-            "{}: [remote_desktop] {} invalid, using the default",
+            "{}: [remote_desktop] {} invalid, {}",
             path.display(),
-            bad.join(", ")
+            bad.join(", "),
+            match kept {
+                Some(_) => "keeping the previous value",
+                None => "using the default",
+            }
         );
     }
     Ok(rd)
@@ -201,86 +207,115 @@ fn read_file(path: &std::path::Path) -> Result<RemoteDesktop, String> {
 
 /// The `[remote_desktop]` table's settings, each invalid key at its default.
 pub fn from_table(t: &toml::Table) -> RemoteDesktop {
-    read(t).0
+    read(t, RemoteDesktop::default()).0
 }
 
-fn read(t: &toml::Table) -> (RemoteDesktop, Vec<&'static str>) {
+/// `t`'s settings: a missing key at its default, an invalid one at its value in `k`.
+fn read(t: &toml::Table, k: RemoteDesktop) -> (RemoteDesktop, Vec<&'static str>) {
     let d = RemoteDesktop::default();
     let mut bad = Vec::new();
     let rd = RemoteDesktop {
-        port: key(t, "port", &mut bad, d.port, |v| {
+        port: key(t, "port", &mut bad, d.port, k.port, |v| {
             v.as_integer()
                 .and_then(|p| u16::try_from(p).ok())
                 .filter(|&p| p != 0)
         }),
-        quality: key(t, "quality", &mut bad, d.quality, |v| {
+        quality: key(t, "quality", &mut bad, d.quality, k.quality, |v| {
             v.clone().try_into().ok()
         }),
-        frame_rate: key(t, "frame_rate", &mut bad, d.frame_rate, |v| {
+        frame_rate: key(t, "frame_rate", &mut bad, d.frame_rate, k.frame_rate, |v| {
             v.as_integer()
                 .filter(|r| matches!(r, 30 | 60 | 120 | 144))
                 .map(|r| r as u32)
         }),
-        encoder: key(t, "encoder", &mut bad, d.encoder, |v| {
+        encoder: key(t, "encoder", &mut bad, d.encoder, k.encoder, |v| {
             v.clone().try_into().ok()
         }),
-        sound: key(t, "sound", &mut bad, d.sound, toml::Value::as_bool),
-        max_viewers: key(t, "max_viewers", &mut bad, d.max_viewers, |v| {
-            v.as_integer()
-                .filter(|n| (1..=16).contains(n))
-                .map(|n| n as usize)
-        }),
+        sound: key(t, "sound", &mut bad, d.sound, k.sound, toml::Value::as_bool),
+        max_viewers: key(
+            t,
+            "max_viewers",
+            &mut bad,
+            d.max_viewers,
+            k.max_viewers,
+            |v| {
+                v.as_integer()
+                    .filter(|n| (1..=16).contains(n))
+                    .map(|n| n as usize)
+            },
+        ),
         lock_on_leave: key(
             t,
             "lock_on_leave",
             &mut bad,
             d.lock_on_leave,
+            k.lock_on_leave,
             toml::Value::as_bool,
         ),
-        lock_grace_s: key(t, "lock_grace_s", &mut bad, d.lock_grace_s, |v| {
-            v.as_integer()
-                .filter(|s| (0..=60).contains(s))
-                .map(|s| s as u32)
-        }),
+        lock_grace_s: key(
+            t,
+            "lock_grace_s",
+            &mut bad,
+            d.lock_grace_s,
+            k.lock_grace_s,
+            |v| {
+                v.as_integer()
+                    .filter(|s| (0..=60).contains(s))
+                    .map(|s| s as u32)
+            },
+        ),
         capture_border: key(
             t,
             "capture_border",
             &mut bad,
             d.capture_border,
+            k.capture_border,
             toml::Value::as_bool,
         ),
-        laptop_screen: key(t, "laptop_screen", &mut bad, d.laptop_screen, |v| {
-            v.clone().try_into().ok()
-        }),
-        second_client: key(t, "second_client", &mut bad, d.second_client, |v| {
-            v.clone().try_into().ok()
-        }),
+        laptop_screen: key(
+            t,
+            "laptop_screen",
+            &mut bad,
+            d.laptop_screen,
+            k.laptop_screen,
+            |v| v.clone().try_into().ok(),
+        ),
+        second_client: key(
+            t,
+            "second_client",
+            &mut bad,
+            d.second_client,
+            k.second_client,
+            |v| v.clone().try_into().ok(),
+        ),
         avc444_split_encoders: key(
             t,
             "avc444_split_encoders",
             &mut bad,
             d.avc444_split_encoders,
+            k.avc444_split_encoders,
             toml::Value::as_bool,
         ),
     };
     (rd, bad)
 }
 
-/// `t[name]` through `parse`; `default` when it is missing, and also when `parse` rejects it,
+/// `t[name]` through `parse`; `missing` when it is absent, `invalid` when `parse` rejects it,
 /// noting `name` in `bad`.
 fn key<T>(
     t: &toml::Table,
     name: &'static str,
     bad: &mut Vec<&'static str>,
-    default: T,
+    missing: T,
+    invalid: T,
     parse: impl FnOnce(&toml::Value) -> Option<T>,
 ) -> T {
     let Some(v) = t.get(name) else {
-        return default;
+        return missing;
     };
     parse(v).unwrap_or_else(|| {
         bad.push(name);
-        default
+        invalid
     })
 }
 
@@ -361,8 +396,55 @@ mod tests {
     fn a_reread_of_a_file_that_is_not_toml_keeps_the_previous_settings() {
         let dir = scratch("not-toml");
         let path = dir.join("config.toml");
+        let previous = RemoteDesktop {
+            max_viewers: 2,
+            sound: false,
+            ..on_port(4000)
+        };
         std::fs::write(&path, "[remote_desktop]\nport = \n").unwrap();
-        assert_eq!(reread(&path, on_port(4000)), on_port(4000));
+        assert_eq!(reread(&path, previous), previous);
+        std::fs::write(&path, "[remote_desktop\nport = 4001\n").unwrap();
+        assert_eq!(reread(&path, previous), previous, "a broken header");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_reread_keeps_the_previous_value_of_an_invalid_key() {
+        let dir = scratch("invalid-key");
+        let path = dir.join("config.toml");
+        let previous = RemoteDesktop {
+            max_viewers: 2,
+            frame_rate: 30,
+            ..on_port(4000)
+        };
+        std::fs::write(
+            &path,
+            "[remote_desktop]\nport = 70000\nmax_viewers = 3\nframe_rate = \"fast\"\n",
+        )
+        .unwrap();
+        let rd = reread(&path, previous);
+        assert_eq!(
+            (rd.port, rd.max_viewers, rd.frame_rate, rd.sound),
+            (4000, 3, 30, true),
+            "invalid port and frame_rate keep 4000 and 30, max_viewers reads 3, sound defaults"
+        );
+        std::fs::write(&path, "remote_desktop = 5\n").unwrap();
+        assert_eq!(
+            reread(&path, previous),
+            previous,
+            "a section that is not a table"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_first_read_of_a_missing_file_or_an_invalid_key_gives_the_defaults() {
+        let dir = scratch("first-read");
+        let path = dir.join("config.toml");
+        assert_eq!(read_file(&path, None), Ok(RemoteDesktop::default()));
+        std::fs::write(&path, "[remote_desktop]\nport = 70000\nmax_viewers = 3\n").unwrap();
+        let rd = read_file(&path, None).unwrap();
+        assert_eq!((rd.port, rd.max_viewers), (3389, 3));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -393,7 +475,7 @@ quality = \"sharp\"",
     fn port_0_and_a_sound_that_is_not_true_or_false_are_invalid() {
         let t: toml::Table =
             toml::from_str("port = 0\nsound = \"off\"\nquality = \"ultra\"").unwrap();
-        let (rd, bad) = read(&t);
+        let (rd, bad) = read(&t, RemoteDesktop::default());
         assert_eq!(
             (rd.port, rd.sound, rd.quality),
             (3389, true, Quality::Balanced)
@@ -409,7 +491,7 @@ quality = \"sharp\"",
             ("0", true, true),
         ] {
             let t: toml::Table = toml::from_str(&format!("lock_on_leave = {text}")).unwrap();
-            let (rd, bad) = read(&t);
+            let (rd, bad) = read(&t, RemoteDesktop::default());
             assert_eq!(rd.lock_on_leave, want, "lock_on_leave = {text}");
             assert_eq!(
                 bad.contains(&"lock_on_leave"),
@@ -429,7 +511,7 @@ quality = \"sharp\"",
             ("\"10\"", 5, true),
         ] {
             let t: toml::Table = toml::from_str(&format!("lock_grace_s = {text}")).unwrap();
-            let (rd, bad) = read(&t);
+            let (rd, bad) = read(&t, RemoteDesktop::default());
             assert_eq!(rd.lock_grace_s, want, "lock_grace_s = {text}");
             assert_eq!(
                 bad.contains(&"lock_grace_s"),
@@ -447,7 +529,7 @@ quality = \"sharp\"",
             ("\"on\"", false, true),
         ] {
             let t: toml::Table = toml::from_str(&format!("capture_border = {text}")).unwrap();
-            let (rd, bad) = read(&t);
+            let (rd, bad) = read(&t, RemoteDesktop::default());
             assert_eq!(rd.capture_border, want, "capture_border = {text}");
             assert_eq!(
                 bad.contains(&"capture_border"),
@@ -466,7 +548,7 @@ quality = \"sharp\"",
         ] {
             let t: toml::Table =
                 toml::from_str(&format!("avc444_split_encoders = {text}")).unwrap();
-            let (rd, bad) = read(&t);
+            let (rd, bad) = read(&t, RemoteDesktop::default());
             assert_eq!(
                 rd.avc444_split_encoders, want,
                 "avc444_split_encoders = {text}"
@@ -491,7 +573,7 @@ quality = \"sharp\"",
             ("\"x\"", LaptopScreen::Lock, true),
         ] {
             let t: toml::Table = toml::from_str(&format!("laptop_screen = {text}")).unwrap();
-            let (rd, bad) = read(&t);
+            let (rd, bad) = read(&t, RemoteDesktop::default());
             assert_eq!(rd.laptop_screen, want, "laptop_screen = {text}");
             assert_eq!(
                 bad.contains(&"laptop_screen"),
@@ -520,7 +602,7 @@ quality = \"sharp\"",
             "a missing key"
         );
         let t: toml::Table = toml::from_str("second_client = \"swap\"").unwrap();
-        let (rd, bad) = read(&t);
+        let (rd, bad) = read(&t, RemoteDesktop::default());
         assert_eq!(rd.second_client, SecondClient::Join);
         assert_eq!(bad, ["second_client"]);
         for c in [SecondClient::Join, SecondClient::Replace] {
@@ -559,7 +641,7 @@ quality = \"sharp\"",
             ("\"2\"", 4),
         ] {
             let t: toml::Table = toml::from_str(&format!("max_viewers = {text}")).unwrap();
-            let (rd, bad) = read(&t);
+            let (rd, bad) = read(&t, RemoteDesktop::default());
             assert_eq!(rd.max_viewers, want, "max_viewers = {text}");
             let invalid: &[&str] = if want == 4 { &["max_viewers"] } else { &[] };
             assert_eq!(bad, invalid, "max_viewers = {text}");
@@ -577,7 +659,7 @@ quality = \"sharp\"",
     #[test]
     fn an_unknown_encoder_falls_back_to_auto() {
         let t: toml::Table = toml::from_str("encoder = \"quicksync\"").unwrap();
-        let (rd, bad) = read(&t);
+        let (rd, bad) = read(&t, RemoteDesktop::default());
         assert_eq!(rd.encoder, EncoderChoice::Auto);
         assert_eq!(bad, ["encoder"], "named in the one warning");
         for e in EncoderChoice::ALL {
