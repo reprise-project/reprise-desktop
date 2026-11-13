@@ -163,7 +163,7 @@ impl State {
             answer: None,
             result_settings: Vec::new(),
             result_kinds: Vec::new(),
-            search: FileSearch::new(),
+            search: self.new_search(),
             wheel: 0,
             places,
             pressed: None,

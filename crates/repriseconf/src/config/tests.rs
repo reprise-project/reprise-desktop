@@ -767,6 +767,18 @@ fn the_launcher_finds_open_windows_unless_turned_off() {
 }
 
 #[test]
+fn the_launcher_reads_the_search_providers_order_and_those_turned_off() {
+    let c = Config::default();
+    assert!(c.launcher_providers.is_empty() && c.launcher_providers_off.is_empty());
+    let c = Config::parse(
+        "[launcher]\nproviders = [\"b.desktop\", \"a.desktop\"]\nproviders_off = [\"a.desktop\"]\n",
+    )
+    .unwrap();
+    assert_eq!(c.launcher_providers, ["b.desktop", "a.desktop"]);
+    assert_eq!(c.launcher_providers_off, ["a.desktop"]);
+}
+
+#[test]
 fn script_terminal_defaults_to_stay_and_reads_close() {
     use reprisefs::program::ScriptEnd;
     assert_eq!(Config::default().script_terminal, ScriptEnd::Stay);

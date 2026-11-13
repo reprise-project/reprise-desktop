@@ -7,7 +7,8 @@
 //! rows (then headed "Programs") when the host ranks them first, else under them.
 //! Then a greyed "Settings" heading with an etched rule
 //! over the settings rows, and each section of found rows the host fills (files by name,
-//! by contents) under its own heading the same way, the folder dimmed after each name.
+//! by contents, a program's results) under its own heading the same way, the detail dimmed
+//! after each name.
 //! Arrows step over headings.
 //! The panel grows with the text size; the icons and bevels keep their size.
 //!
@@ -52,12 +53,12 @@ pub struct Row {
     pub icon: Option<Canvas>,
 }
 
-/// A file row: its name, the folder as the host words it (`~/Documents`), and its
-/// 16 px type icon.
+/// A found row: its name, the dimmed detail after it (a file's folder as the host words it,
+/// `~/Documents`, or a program result's description), and its 16 px icon.
 #[derive(Clone, Debug, PartialEq)]
-pub struct FileRow {
+pub struct FoundRow {
     pub name: String,
-    pub folder: String,
+    pub detail: String,
     pub icon: Option<Canvas>,
 }
 
@@ -65,7 +66,7 @@ pub struct FileRow {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Section {
     pub heading: String,
-    pub rows: Vec<FileRow>,
+    pub rows: Vec<FoundRow>,
 }
 
 /// The icons [`Launcher::refill_icons`] gives the rows, each list in its rows' order.
@@ -143,8 +144,8 @@ pub enum Event {
     /// in that order (and `set_found` when found rows come in).
     QueryChanged,
     Launch(Pick),
-    /// Ctrl+Enter on found row `.1` of section `.0`: its folder.
-    OpenFolder(usize, usize),
+    /// Ctrl+Enter on found row `.1` of section `.0`: a file's folder, a result's program.
+    OpenContainer(usize, usize),
     /// Open the context menu of a program or file row, highlighted.
     Context(Pick),
     Close,
@@ -301,7 +302,7 @@ impl Launcher {
         let lines = self.lines();
         let (mut items, mut icons, mut greyed, mut detail) = (vec![], vec![], vec![], vec![]);
         for line in &lines {
-            let (name, icon, folder) = match *line {
+            let (name, icon, dim) = match *line {
                 Line::Heading(g) => (self.title(g).to_string(), None, String::new()),
                 Line::Row(Pick::Calc) => {
                     let r = self.calc.as_ref().expect("a calc line has its row");
@@ -321,13 +322,13 @@ impl Launcher {
                 }
                 Line::Row(Pick::Found(s, i)) => {
                     let f = &self.found[s].rows[i];
-                    (f.name.clone(), f.icon.clone(), f.folder.clone())
+                    (f.name.clone(), f.icon.clone(), f.detail.clone())
                 }
             };
             items.push(name);
             icons.push(icon);
             greyed.push(matches!(line, Line::Heading(_)));
-            detail.push(folder);
+            detail.push(dim);
         }
         let first = lines.iter().position(|l| matches!(l, Line::Row(_)));
         let selected = keep.filter(|&i| self.pick(i).is_some()).or(first);
@@ -397,7 +398,7 @@ impl Launcher {
         let row = |f: &[Section], s: usize, i: usize| {
             f.get(s)
                 .and_then(|x| x.rows.get(i))
-                .map(|r| (r.name.clone(), r.folder.clone()))
+                .map(|r| (r.name.clone(), r.detail.clone()))
         };
         let old = match picked {
             Some(Pick::Found(s, i)) => row(&self.found, s, i),
@@ -442,7 +443,7 @@ impl Launcher {
             }
             Key::Enter => self.picked().map_or(Event::Close, Event::Launch),
             Key::CtrlEnter => match self.picked() {
-                Some(Pick::Found(s, i)) => Event::OpenFolder(s, i),
+                Some(Pick::Found(s, i)) => Event::OpenContainer(s, i),
                 Some(p) => Event::Launch(p),
                 None => Event::Close,
             },
@@ -1148,9 +1149,9 @@ mod tests {
         l.set_rows(rows(&["Notepad", "Notion"]));
         set_files(
             &mut l,
-            vec![FileRow {
+            vec![FoundRow {
                 name: "notes.txt".into(),
-                folder: "~".into(),
+                detail: "~".into(),
                 icon: None,
             }],
         );
@@ -1205,9 +1206,9 @@ mod tests {
         let selected = l.list.selected;
         set_files(
             &mut l,
-            vec![FileRow {
+            vec![FoundRow {
                 name: "x.txt".into(),
-                folder: "~".into(),
+                detail: "~".into(),
                 icon: None,
             }],
         );
@@ -1547,18 +1548,18 @@ mod tests {
 
     const FILES: &str = "Files";
 
-    fn set_files(l: &mut Launcher, rows: Vec<FileRow>) {
+    fn set_files(l: &mut Launcher, rows: Vec<FoundRow>) {
         l.set_found(vec![Section {
             heading: FILES.into(),
             rows,
         }]);
     }
 
-    fn files(rows: &[(&str, &str)]) -> Vec<FileRow> {
+    fn files(rows: &[(&str, &str)]) -> Vec<FoundRow> {
         rows.iter()
-            .map(|(n, f)| FileRow {
+            .map(|(n, f)| FoundRow {
                 name: n.to_string(),
-                folder: f.to_string(),
+                detail: f.to_string(),
                 icon: None,
             })
             .collect()
@@ -1588,7 +1589,7 @@ mod tests {
             "Down steps over the heading"
         );
         assert_eq!(l.key(Key::Enter), Event::Launch(Pick::Found(0, 0)));
-        assert_eq!(l.key(Key::CtrlEnter), Event::OpenFolder(0, 0));
+        assert_eq!(l.key(Key::CtrlEnter), Event::OpenContainer(0, 0));
         l.key(Key::Up);
         assert_eq!(l.picked(), Some(Pick::App(0)), "Up steps back over it");
         assert_eq!(l.key(Key::CtrlEnter), Event::Launch(Pick::App(0)));
@@ -1635,7 +1636,7 @@ mod tests {
         l.key(Key::Down);
         assert_eq!(l.picked(), Some(Pick::Found(1, 0)), "over both headings");
         assert_eq!(l.key(Key::Enter), Event::Launch(Pick::Found(1, 0)));
-        assert_eq!(l.key(Key::CtrlEnter), Event::OpenFolder(1, 0));
+        assert_eq!(l.key(Key::CtrlEnter), Event::OpenContainer(1, 0));
         assert_eq!(l.key(Key::Menu), Event::Context(Pick::Found(1, 0)));
         let empty_names = |l: &mut Launcher| {
             l.set_found(vec![
@@ -1714,6 +1715,40 @@ mod tests {
             }
         }
         crate::pins::check("controls/launcher_sections", &got);
+    }
+
+    /// A program's section: its results' descriptions dim after their names, as a file's folder.
+    #[test]
+    fn a_programs_section_pins_in_each_interface_at_scale_1_and_2() {
+        use crate::interface::Interface;
+        crate::pins::fonts();
+        let text = TextRenderer::load(&FontConfig::default());
+        let mut l = with_two_sections();
+        let mut found = l.found.clone();
+        found.push(Section {
+            heading: "Calculator".into(),
+            rows: files(&[("14", "2 + 3 * 4")]),
+        });
+        l.set_found(found);
+        assert_eq!(l.list.items[6..], ["Calculator", "14"]);
+        assert_eq!(l.list.detail[7], "2 + 3 * 4");
+        for _ in 0..5 {
+            l.key(Key::Down);
+        }
+        assert_eq!(l.picked(), Some(Pick::Found(2, 0)));
+        assert_eq!(l.key(Key::CtrlEnter), Event::OpenContainer(2, 0));
+        let mut got = Vec::new();
+        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            for scale in [1, 2] {
+                let theme = Theme {
+                    scale,
+                    ..crate::interfaces::theme_for(i)
+                };
+                let c = draw(&theme, &text, &l, None, false, None);
+                got.push((format!("{i:?} {scale}"), fnv(&c)));
+            }
+        }
+        crate::pins::check("controls/launcher_program_section", &got);
     }
 
     fn fnv(c: &Canvas) -> u64 {

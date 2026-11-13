@@ -164,9 +164,9 @@ pub fn page_shell(mut c: Canvas, theme: &Theme, text: &TextRenderer, with_blue: 
         }]);
         l.set_found(vec![launcher::Section {
             heading: "Files".to_string(),
-            rows: vec![launcher::FileRow {
+            rows: vec![launcher::FoundRow {
                 name: "notes.txt".to_string(),
-                folder: "~/Documents".to_string(),
+                detail: "~/Documents".to_string(),
                 icon: None,
             }],
         }]);

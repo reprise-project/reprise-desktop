@@ -106,6 +106,12 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   Enter brings one back, restoring it if minimized. When a window matches
   as well as a program, it comes first, so "fire" Enter goes back to the
   browser you have open. `[launcher] windows = false` turns that off.
+  Programs that answer GNOME's search provider interface (Files,
+  Calculator, Characters, Clocks and others) add a section each,
+  under the program's name, with up to three of their results; Enter opens
+  one in its program, Ctrl+Enter opens the program searching for the same
+  words. Each program has a few seconds to answer, so a slow one never holds
+  back the rest. Settings > Search turns each one off and orders them.
 - **Uninstall.** A program's right-click menu in the Start menu, All
   Programs and the launcher has Uninstall...: a Flatpak leaves the
   installation it came from, a program from the system's packages leaves

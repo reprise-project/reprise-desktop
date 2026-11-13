@@ -30,6 +30,7 @@
 //! [`kdeconnect`] follows the phones KDE Connect reaches.
 //! [`locale`] reads and sets the system locale and sets a user's language in AccountsService.
 //! [`localsearch`] asks the file indexer which files hold some words.
+//! [`searchprovider`] asks a program's search provider for results and opens one.
 //! [`error`] reads the name and message of an error reply.
 //! [`desklock`] follows the compositor's desktop lock on `org.freedesktop.ScreenSaver`.
 //! [`peer`] tells which process and which app a session bus peer is, and whether it runs in a
@@ -66,6 +67,7 @@ pub mod permissions;
 pub mod polkit;
 pub mod remote;
 pub mod rfkill;
+pub mod searchprovider;
 pub mod testsession;
 pub mod tray;
 pub mod units;

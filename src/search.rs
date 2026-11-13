@@ -1,20 +1,25 @@
 //! What the launcher and the Glass Start menu's search box share: the calculator
-//! row, fuzzy app ranking, settings rows and the debounced file search, one section per
-//! [`Source`]. Every text change cancels the search in flight and takes a new generation from
-//! one process-wide counter, so a late answer for older text, or for a closed box, is dropped.
+//! row, fuzzy app ranking, settings rows and the debounced search for files and programs'
+//! results, one section per [`Source`]. Every text change cancels the search in flight and
+//! takes a new generation from one process-wide counter, so a late answer for older text, or
+//! for a closed box, is dropped.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
+use reprisebus::searchprovider::Meta;
 use repriseconf::pages::{Hit, PROGRAMS, Page};
 use reprisefs::apps::AppEntry;
-use reprisekit::controls::launcher::FileRow;
+use reprisekit::controls::launcher::FoundRow;
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay::reexports::calloop::{LoopHandle, RegistrationToken};
 
 use crate::compositor::State;
+
+pub mod providers;
+pub use providers::Provider;
 
 const DEBOUNCE: Duration = Duration::from_millis(150);
 const MIN_CHARS: usize = 2;
@@ -167,35 +172,42 @@ pub enum SearchOwner {
     StartPanel,
 }
 
-/// Where a section of found files comes from, in the order the sections show.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Where a section of found rows comes from, in the order the sections show.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Source {
     /// Names under the home folder ([`reprisefs::search`]).
     Names,
     /// Text and metadata in localsearch's index ([`reprisebus::localsearch`]), when installed.
     Contents,
+    /// A program's search provider ([`reprisebus::searchprovider`]).
+    Provider(Arc<Provider>),
 }
 
 impl Source {
-    pub const ALL: [Source; 2] = [Source::Names, Source::Contents];
-
-    pub fn heading(self) -> &'static str {
+    pub fn heading(&self) -> &str {
         match self {
             Source::Names => "Files",
             Source::Contents => "Contents",
+            Source::Provider(p) => &p.name,
         }
     }
 
-    fn rows(self, max: usize) -> usize {
+    fn rows(&self, max: usize) -> usize {
         match self {
             Source::Names => max,
             Source::Contents => max.min(CONTENTS_ROWS),
+            Source::Provider(_) => max.min(PROVIDER_ROWS),
         }
+    }
+
+    /// Whether it searches for `query`: from [`MIN_CHARS`], files only while `files` is on.
+    fn searches(&self, query: &str, files: bool) -> bool {
+        query.chars().count() >= MIN_CHARS && (files || matches!(self, Source::Provider(_)))
     }
 
     /// The paths it finds for `query` under `home`, best first, at most `max`. Blocks: runs on a
     /// file job.
-    fn find(self, query: &str, home: &Path, max: usize, cancel: &AtomicBool) -> Vec<PathBuf> {
+    fn find(&self, query: &str, home: &Path, max: usize, cancel: &AtomicBool) -> Vec<PathBuf> {
         match self {
             Source::Names => {
                 let q = reprisefs::search::Query::launcher(query, home);
@@ -206,27 +218,29 @@ impl Source {
                     .collect()
             }
             Source::Contents => contents(query, max),
+            Source::Provider(_) => Vec::new(),
         }
     }
 
     /// The rows `found` for older text that stay up for `query` until its own answer lands: names
-    /// that still match it, every content row.
-    fn kept(self, query: &str, found: &[PathBuf]) -> Vec<PathBuf> {
+    /// that still match it, every content row and program result.
+    fn kept(&self, query: &str, found: &[Found]) -> Vec<Found> {
         match self {
             Source::Names => (found.iter())
-                .filter(|p| {
-                    p.file_name().is_some_and(|n| {
+                .filter(|f| {
+                    f.path().and_then(Path::file_name).is_some_and(|n| {
                         reprisekit::fuzzy::score(query, &n.to_string_lossy()).is_some()
                     })
                 })
                 .cloned()
                 .collect(),
-            Source::Contents => found.to_vec(),
+            Source::Contents | Source::Provider(_) => found.to_vec(),
         }
     }
 }
 
 const CONTENTS_ROWS: usize = 5;
+const PROVIDER_ROWS: usize = 3;
 /// How long a content search waits for the indexer's whole answer.
 const CONTENTS_TIMEOUT: Duration = Duration::from_secs(3);
 
@@ -253,39 +267,100 @@ fn file_path(url: &str) -> Option<PathBuf> {
     path.is_absolute().then_some(path)
 }
 
-/// One search box's found files: each [`Source`]'s last answer, and what each found path is.
+/// A found row: a file, or a result a program's search provider found.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Found {
+    Path(PathBuf),
+    Result(Meta),
+}
+
+impl Found {
+    pub fn path(&self) -> Option<&Path> {
+        match self {
+            Found::Path(p) => Some(p),
+            Found::Result(_) => None,
+        }
+    }
+
+    /// What its row is called: the file's name, the result's.
+    pub fn name(&self) -> String {
+        match self {
+            Found::Path(p) => (p.file_name())
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            Found::Result(m) => m.name.clone(),
+        }
+    }
+}
+
+fn paths(found: Vec<PathBuf>) -> Vec<Found> {
+    found.into_iter().map(Found::Path).collect()
+}
+
+/// A section: its source, the source's last answer, and what the section shows of it: the paths
+/// an earlier section shows left out.
+#[derive(Debug)]
+struct Section {
+    source: Source,
+    found: Vec<Found>,
+    shown: Vec<Found>,
+}
+
+/// One search box's found rows: each [`Source`]'s section, and what each found path is.
 #[derive(Default)]
 pub struct FileSearch {
-    /// Each source's paths, by its place in [`Source::ALL`].
-    found: [Vec<PathBuf>; Source::ALL.len()],
-    /// What each section shows: its source's paths less those an earlier section shows.
-    shown: [Vec<PathBuf>; Source::ALL.len()],
+    sections: Vec<Section>,
     /// What each found path is, as the search's job read it: rows, menus and opening ask this
     /// rather than the file system, which may not answer for a found file.
     facts: std::collections::HashMap<PathBuf, crate::desktop::FileFacts>,
     generation: u64,
     cancel: Option<Arc<AtomicBool>>,
+    /// Dropped to stop the providers' search in flight ([`providers::ask`]).
+    asking: Option<async_channel::Sender<()>>,
     timer: Option<RegistrationToken>,
 }
 
 impl FileSearch {
-    pub fn new() -> Self {
+    /// Files by name and by contents, then each of `providers`.
+    pub fn new(providers: Vec<Arc<Provider>>) -> Self {
+        let sources = [Source::Names, Source::Contents]
+            .into_iter()
+            .chain(providers.into_iter().map(Source::Provider));
         Self {
+            sections: sources
+                .map(|source| Section {
+                    source,
+                    found: Vec::new(),
+                    shown: Vec::new(),
+                })
+                .collect(),
             generation: next_generation(),
             ..Self::default()
         }
     }
 
-    /// Each section's source and the paths it shows, in order; a section may be empty.
-    pub fn sections(&self) -> impl Iterator<Item = (Source, &[PathBuf])> {
-        Source::ALL
-            .into_iter()
-            .zip(self.shown.iter().map(Vec::as_slice))
+    /// Each section's source and the rows it shows, in order; a section may be empty.
+    pub fn sections(&self) -> impl Iterator<Item = (&Source, &[Found])> {
+        (self.sections.iter()).map(|s| (&s.source, s.shown.as_slice()))
     }
 
     /// Row `row` of section `section`.
-    pub fn path(&self, section: usize, row: usize) -> Option<&PathBuf> {
-        self.shown.get(section)?.get(row)
+    pub fn found(&self, section: usize, row: usize) -> Option<&Found> {
+        self.sections.get(section)?.shown.get(row)
+    }
+
+    /// Row `row` of section `section`, when it is a file.
+    pub fn path(&self, section: usize, row: usize) -> Option<&Path> {
+        self.found(section, row)?.path()
+    }
+
+    /// Row `row` of section `section`, when it is a program's result, with its provider.
+    pub fn result(&self, section: usize, row: usize) -> Option<(&Arc<Provider>, &Meta)> {
+        let s = self.sections.get(section)?;
+        match (&s.source, s.shown.get(row)?) {
+            (Source::Provider(p), Found::Result(m)) => Some((p, m)),
+            _ => None,
+        }
     }
 
     pub fn is_dir(&self, p: &Path) -> bool {
@@ -297,19 +372,23 @@ impl FileSearch {
         (self.facts.get(p).cloned()).unwrap_or_else(|| crate::desktop::FileFacts::plain(p))
     }
 
-    /// `source`'s answer: `paths`, best first.
-    pub(crate) fn set(&mut self, source: Source, paths: Vec<PathBuf>) {
-        self.found[source as usize] = paths;
+    /// Section `section`'s answer: `found`, best first.
+    pub(crate) fn set(&mut self, section: usize, found: Vec<Found>) {
+        let Some(s) = self.sections.get_mut(section) else {
+            return;
+        };
+        s.found = found;
         let mut seen = std::collections::HashSet::new();
-        for (shown, found) in self.shown.iter_mut().zip(&self.found) {
-            *shown = (found.iter())
-                .filter(|p| seen.insert(p.as_path()))
+        for s in &mut self.sections {
+            s.shown = (s.found.iter())
+                .filter(|f| f.path().is_none_or(|p| seen.insert(p.to_path_buf())))
                 .cloned()
                 .collect();
         }
-        let found = &self.found;
-        self.facts
-            .retain(|p, _| found.iter().any(|f| f.contains(p)));
+        let sections = &self.sections;
+        self.facts.retain(|p, _| {
+            (sections.iter()).any(|s| s.found.iter().any(|f| f.path() == Some(p.as_path())))
+        });
     }
 
     fn bump(&mut self) -> u64 {
@@ -317,6 +396,7 @@ impl FileSearch {
         if let Some(c) = self.cancel.take() {
             c.store(true, Ordering::Relaxed);
         }
+        self.asking = None;
         self.generation
     }
 
@@ -328,6 +408,7 @@ impl FileSearch {
         if let Some(c) = &self.cancel {
             c.store(true, Ordering::Relaxed);
         }
+        self.asking = None;
         if let Some(t) = self.timer.take() {
             handle.remove(t);
         }
@@ -341,10 +422,6 @@ fn search_root() -> Option<PathBuf> {
     return Some(crate::harness::scratch());
     #[cfg(not(test))]
     std::env::var_os("HOME").map(PathBuf::from)
-}
-
-fn searches_files(query: &str, enabled: bool) -> bool {
-    enabled && query.chars().count() >= MIN_CHARS
 }
 
 pub(crate) fn tilde(dir: &Path, home: Option<&Path>) -> String {
@@ -370,25 +447,6 @@ pub(crate) fn file_icon_name(
     reprisefs::icons::pick_icon(m.as_deref(), p, &|n| icons.has_unread(n))
 }
 
-pub(crate) fn file_row(
-    p: &Path,
-    is_dir: bool,
-    home: Option<&Path>,
-    mime: &reprisefs::apps::MimeDb,
-    icons: &mut crate::icontheme::IconCache,
-    px: i32,
-) -> FileRow {
-    let name = p
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    FileRow {
-        name,
-        folder: p.parent().map(|d| tilde(d, home)).unwrap_or_default(),
-        icon: file_row_icon(p, is_dir, mime, icons, px),
-    }
-}
-
 /// The type icon a file row shows for `p` at `px` ([`crate::icon::unread`]).
 pub(crate) fn file_row_icon(
     p: &Path,
@@ -399,6 +457,45 @@ pub(crate) fn file_row_icon(
 ) -> Option<crate::raster::Canvas> {
     let icon = file_icon_name(p, is_dir, mime, icons);
     crate::icon::unread(icons, &icon, px).map(std::sync::Arc::unwrap_or_clone)
+}
+
+impl FileSearch {
+    /// Row `f` of `source`'s section as the launcher shows it, its icon at `px`.
+    pub(crate) fn row(
+        &self,
+        source: &Source,
+        f: &Found,
+        home: Option<&Path>,
+        mime: &reprisefs::apps::MimeDb,
+        icons: &mut crate::icontheme::IconCache,
+        px: i32,
+    ) -> FoundRow {
+        let detail = match f {
+            Found::Path(p) => p.parent().map(|d| tilde(d, home)).unwrap_or_default(),
+            Found::Result(m) => m.description.clone(),
+        };
+        FoundRow {
+            name: f.name(),
+            detail,
+            icon: self.icon(source, f, mime, icons, px),
+        }
+    }
+
+    /// Row `f`'s icon at `px`: a file's type, a result's own or its program's.
+    pub(crate) fn icon(
+        &self,
+        source: &Source,
+        f: &Found,
+        mime: &reprisefs::apps::MimeDb,
+        icons: &mut crate::icontheme::IconCache,
+        px: i32,
+    ) -> Option<crate::raster::Canvas> {
+        match (f, source) {
+            (Found::Path(p), _) => file_row_icon(p, self.is_dir(p), mime, icons, px),
+            (Found::Result(m), Source::Provider(p)) => p.result_icon(m, icons, px),
+            (Found::Result(_), _) => None,
+        }
+    }
 }
 
 impl State {
@@ -414,6 +511,17 @@ impl State {
         }
     }
 
+    /// A new search box's sections ([`FileSearch::new`]) with the providers turned on.
+    pub fn new_search(&self) -> FileSearch {
+        let c = &self.config;
+        FileSearch::new(providers::enabled(
+            &self.search_providers,
+            &self.app_index,
+            &c.launcher_providers,
+            &c.launcher_providers_off,
+        ))
+    }
+
     pub fn file_search_mut(&mut self, o: SearchOwner) -> Option<&mut FileSearch> {
         match o {
             SearchOwner::Launcher => self.launcher.as_mut().map(|v| &mut v.search),
@@ -422,20 +530,23 @@ impl State {
     }
 
     /// The text changed: stop the search in flight, keep each section's rows that still fit the
-    /// new text ([`Source::kept`]) and arm the timer for the next search. Under `MIN_CHARS`, or
-    /// with file search turned off, every section empties.
+    /// new text ([`Source::kept`]) and arm the timer for the next search. A section that does not
+    /// search for the text ([`Source::searches`]) empties.
     pub fn file_query_changed(&mut self, o: SearchOwner, query: &str, max: usize) {
-        let searching = searches_files(query, self.config.launcher_files);
+        let files = self.config.launcher_files;
         let Some(f) = self.file_search_mut(o) else {
             return;
         };
         f.bump();
-        for source in Source::ALL {
-            let kept = match searching {
-                true => source.kept(query, &f.found[source as usize]),
+        let mut searching = false;
+        for i in 0..f.sections.len() {
+            let s = &f.sections[i];
+            let kept = match s.source.searches(query, files) {
+                true => s.source.kept(query, &s.found),
                 false => Vec::new(),
             };
-            f.set(source, kept);
+            searching |= s.source.searches(query, files);
+            f.set(i, kept);
         }
         if let Some(t) = f.timer.take() {
             self.handle.remove(t);
@@ -463,14 +574,14 @@ impl State {
         }
     }
 
-    /// Starts every source's search for `query` on a file job; each lands on its own.
+    /// Starts every section's search for `query`: files on file jobs, the providers together on a
+    /// thread of their own ([`providers::ask`]); each section lands on its own.
     fn file_search_fire(&mut self, o: SearchOwner, query: &str, max: usize) {
         let Some(home) = search_root() else {
             return;
         };
-        if !searches_files(query, self.config.launcher_files) {
-            return;
-        }
+        let files = self.config.launcher_files;
+        let sender = self.fsjobs.sender();
         let Some(f) = self.file_search_mut(o) else {
             return;
         };
@@ -480,9 +591,18 @@ impl State {
         let cancel = Arc::new(AtomicBool::new(false));
         f.cancel = Some(cancel.clone());
         let generation = f.generation;
-        for source in Source::ALL {
-            let (query, home, cancel) = (query.to_string(), home.clone(), cancel.clone());
+        let sources: Vec<(usize, Source)> = (f.sections.iter().enumerate())
+            .filter(|(_, s)| s.source.searches(query, files))
+            .map(|(i, s)| (i, s.source.clone()))
+            .collect();
+        let mut asked = Vec::new();
+        for (section, source) in sources {
             let max = source.rows(max);
+            if let Source::Provider(p) = source {
+                asked.push((section, p, max));
+                continue;
+            }
+            let (query, home, cancel) = (query.to_string(), home.clone(), cancel.clone());
             self.spawn_fs_job(move || {
                 if cancel.load(Ordering::Relaxed) {
                     return Box::new(|_| {});
@@ -492,9 +612,19 @@ impl State {
                     .map(|p| (p.clone(), crate::desktop::file_facts(p)))
                     .collect();
                 Box::new(move |state: &mut State| {
-                    state.files_found(o, generation, source, best, facts)
+                    state.files_found(o, generation, section, paths(best), facts)
                 })
             });
+        }
+        if let (false, Some(sender)) = (asked.is_empty(), sender) {
+            let asking = providers::ask(asked, query, sender, move |section, found| {
+                Box::new(move |state: &mut State| {
+                    state.files_found(o, generation, section, found, Default::default())
+                })
+            });
+            if let Some(f) = self.file_search_mut(o) {
+                f.asking = asking;
+            }
         }
     }
 
@@ -502,8 +632,8 @@ impl State {
         &mut self,
         o: SearchOwner,
         generation: u64,
-        source: Source,
-        paths: Vec<PathBuf>,
+        section: usize,
+        found: Vec<Found>,
         facts: std::collections::HashMap<PathBuf, crate::desktop::FileFacts>,
     ) {
         let Some(f) = self.file_search_mut(o) else {
@@ -513,7 +643,7 @@ impl State {
             return;
         }
         f.facts.extend(facts);
-        f.set(source, paths);
+        f.set(section, found);
         match o {
             SearchOwner::Launcher => {
                 self.show_launcher_found();
@@ -803,7 +933,7 @@ mod tests {
 
     #[test]
     fn a_stale_answer_is_dropped() {
-        let mut f = FileSearch::new();
+        let mut f = FileSearch::new(Vec::new());
         let g = f.bump();
         let now = f.bump();
         assert!(!f.accepts(g));
@@ -812,69 +942,108 @@ mod tests {
 
     #[test]
     fn an_answer_for_a_closed_search_box_fits_no_later_one() {
-        let mut first = FileSearch::new();
+        let mut first = FileSearch::new(Vec::new());
         let stale = first.bump();
-        let mut second = FileSearch::new();
+        let mut second = FileSearch::new(Vec::new());
         assert!(!second.accepts(stale));
         second.bump();
         assert!(!second.accepts(stale), "after the second's own bump too");
     }
 
-    #[test]
-    fn files_are_searched_from_two_characters_unless_turned_off() {
-        assert!(!searches_files("a", true));
-        assert!(searches_files("ab", true));
-        assert!(!searches_files("ab", false));
+    fn found(ps: &[&str]) -> Vec<Found> {
+        ps.iter().map(|p| Found::Path(p.into())).collect()
     }
 
-    fn paths(ps: &[&str]) -> Vec<PathBuf> {
-        ps.iter().map(PathBuf::from).collect()
+    fn calc() -> Arc<Provider> {
+        Arc::new(Provider {
+            addr: reprisebus::searchprovider::Address {
+                bus_name: "org.example.Calc".into(),
+                path: "/".into(),
+            },
+            name: "Calculator".into(),
+            icon: None,
+        })
+    }
+
+    fn result(id: &str) -> Found {
+        Found::Result(Meta {
+            id: id.into(),
+            name: format!("{id} = 5"),
+            description: String::new(),
+            gicon: None,
+        })
     }
 
     #[test]
     fn a_file_found_by_name_is_left_out_of_the_contents_whichever_lands_first() {
-        let mut f = FileSearch::new();
-        f.set(Source::Contents, paths(&["/h/a.txt", "/h/b.pdf"]));
-        let shown = |f: &FileSearch| -> Vec<(Source, Vec<PathBuf>)> {
-            f.sections().map(|(s, p)| (s, p.to_vec())).collect()
+        let mut f = FileSearch::new(Vec::new());
+        f.set(1, found(&["/h/a.txt", "/h/b.pdf"]));
+        let shown = |f: &FileSearch| -> Vec<(Source, Vec<Found>)> {
+            f.sections().map(|(s, p)| (s.clone(), p.to_vec())).collect()
         };
         assert_eq!(
             shown(&f),
             [
                 (Source::Names, vec![]),
-                (Source::Contents, paths(&["/h/a.txt", "/h/b.pdf"]))
+                (Source::Contents, found(&["/h/a.txt", "/h/b.pdf"]))
             ]
         );
-        f.set(Source::Names, paths(&["/h/b.pdf", "/h/c.md"]));
+        f.set(0, found(&["/h/b.pdf", "/h/c.md"]));
         assert_eq!(
             shown(&f),
             [
-                (Source::Names, paths(&["/h/b.pdf", "/h/c.md"])),
-                (Source::Contents, paths(&["/h/a.txt"]))
+                (Source::Names, found(&["/h/b.pdf", "/h/c.md"])),
+                (Source::Contents, found(&["/h/a.txt"]))
             ]
         );
-        assert_eq!(f.path(1, 0), Some(&PathBuf::from("/h/a.txt")));
+        assert_eq!(f.path(1, 0), Some(Path::new("/h/a.txt")));
         assert_eq!(f.path(1, 1), None);
-        f.set(Source::Names, Vec::new());
+        f.set(0, Vec::new());
         assert_eq!(
             f.path(1, 1),
-            Some(&PathBuf::from("/h/b.pdf")),
+            Some(Path::new("/h/b.pdf")),
             "back once names drop it"
         );
     }
 
     #[test]
-    fn new_text_keeps_the_names_that_still_match_and_every_content_row() {
-        let found = paths(&["/h/notes.txt", "/h/budget.ods"]);
-        assert_eq!(Source::Names.kept("note", &found), paths(&["/h/notes.txt"]));
-        assert_eq!(Source::Contents.kept("note", &found), found);
+    fn each_provider_gets_a_section_after_the_files_with_its_results() {
+        let p = calc();
+        let mut f = FileSearch::new(vec![p.clone()]);
+        let heads: Vec<&str> = f.sections().map(|(s, _)| s.heading()).collect();
+        assert_eq!(heads, ["Files", "Contents", "Calculator"]);
+        f.set(2, vec![result("a"), result("b")]);
+        let (provider, meta) = f.result(2, 1).expect("a program's result");
+        assert_eq!((provider, meta.id.as_str()), (&p, "b"));
+        assert_eq!(f.path(2, 0), None, "a result is no file");
+        assert_eq!(f.result(0, 0), None);
     }
 
     #[test]
-    fn the_contents_section_shows_at_most_five_rows() {
+    fn new_text_keeps_the_names_that_still_match_and_every_content_and_program_row() {
+        let rows = found(&["/h/notes.txt", "/h/budget.ods"]);
+        assert_eq!(Source::Names.kept("note", &rows), found(&["/h/notes.txt"]));
+        assert_eq!(Source::Contents.kept("note", &rows), rows);
+        let results = vec![result("a")];
+        assert_eq!(Source::Provider(calc()).kept("x", &results), results);
+    }
+
+    #[test]
+    fn contents_show_at_most_five_rows_and_a_program_three() {
         assert_eq!(Source::Names.rows(8), 8);
         assert_eq!(Source::Contents.rows(8), 5);
         assert_eq!(Source::Contents.rows(3), 3);
+        assert_eq!(Source::Provider(calc()).rows(8), 3);
+    }
+
+    #[test]
+    fn programs_are_asked_from_two_characters_even_with_file_search_off() {
+        let p = Source::Provider(calc());
+        assert!(!p.searches("a", true));
+        assert!(p.searches("ab", false));
+        assert!(!Source::Names.searches("a", true));
+        assert!(Source::Names.searches("ab", true));
+        assert!(!Source::Contents.searches("ab", false));
     }
 
     #[test]

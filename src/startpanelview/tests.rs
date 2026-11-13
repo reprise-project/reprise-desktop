@@ -11,6 +11,7 @@ use crate::barplace::BarPlacement;
 use crate::dialogview::DialogKey;
 use crate::keys;
 use crate::raster::Canvas;
+use crate::search::Found;
 
 use super::draw::{Drawn, RasterKey, Rasters, panel_origin, panel_pane, panel_room, takes_pointer};
 use super::input::{key_of, spot_app};
@@ -183,14 +184,25 @@ fn only_programs_tree_apps_and_program_results_get_a_program_menu() {
 
 #[test]
 fn search_groups_the_answer_programs_settings_then_each_found_section_with_counts() {
-    let notes = [PathBuf::from("/home/u/notes.txt")];
-    let minutes = [PathBuf::from("/home/u/minutes.pdf")];
+    let notes = [Found::Path("/home/u/notes.txt".into())];
+    let minutes = [Found::Path("/home/u/minutes.pdf".into())];
+    let sum = [Found::Result(reprisebus::searchprovider::Meta {
+        id: "1".into(),
+        name: "14".into(),
+        description: "2 + 3 * 4".into(),
+        gicon: None,
+    })];
     let found = [("Files", &[][..]), ("Contents", &minutes[..])];
     let (groups, kinds) = result_groups(
         Some("= 14"),
         &["Notepad".into()],
         &["Mouse".into(), "Pointers".into()],
-        [("Files", &notes[..]), ("Contents", &minutes[..])].into_iter(),
+        [
+            ("Files", &notes[..]),
+            ("Contents", &minutes[..]),
+            ("Calculator", &sum[..]),
+        ]
+        .into_iter(),
     );
     let titles: Vec<&str> = groups.iter().map(|g| g.title.as_str()).collect();
     assert_eq!(
@@ -200,7 +212,8 @@ fn search_groups_the_answer_programs_settings_then_each_found_section_with_count
             "Programs (1)",
             "Settings (2)",
             "Files (1)",
-            "Contents (1)"
+            "Contents (1)",
+            "Calculator (1)"
         ]
     );
     assert_eq!(
@@ -210,10 +223,15 @@ fn search_groups_the_answer_programs_settings_then_each_found_section_with_count
             ResultKind::Programs,
             ResultKind::Settings,
             ResultKind::Found(0),
-            ResultKind::Found(1)
+            ResultKind::Found(1),
+            ResultKind::Found(2)
         ]
     );
     assert_eq!(groups[0].rows[0].name, "= 14");
+    assert_eq!(
+        groups[5].rows[0].name, "14",
+        "a program's result by its name"
+    );
     assert_eq!(groups[3].rows[0].name, "notes.txt");
     assert_eq!(groups[4].rows[0].name, "minutes.pdf");
     let (groups, kinds) = result_groups(None, &[], &[], found.into_iter());

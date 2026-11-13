@@ -1,15 +1,13 @@
-use std::path::PathBuf;
-
 use repriseconf::search::word_starts;
 use reprisefs::apps::AppEntry;
 use reprisekit::startpanel::{ResultGroup, ResultRow};
 
 use crate::compositor::State;
 use crate::raster::Canvas;
-use crate::search::{SearchOwner, Setting, calc_icon, calc_row, file_row_icon, rank_settings};
+use crate::search::{Found, SearchOwner, Setting, calc_icon, calc_row, rank_settings};
 
 use super::RESULT_ICON;
-use super::lists::{app_icon, file_name, one_per_name, unread};
+use super::lists::{app_icon, one_per_name, unread};
 
 const SEARCH_ROWS: usize = 8;
 const SEARCH_SETTINGS: usize = 4;
@@ -52,7 +50,7 @@ pub(super) fn result_groups<'a>(
     calc: Option<&str>,
     apps: &[String],
     settings: &[String],
-    found: impl Iterator<Item = (&'a str, &'a [PathBuf])>,
+    found: impl Iterator<Item = (&'a str, &'a [Found])>,
 ) -> (Vec<ResultGroup>, Vec<ResultKind>) {
     let mut groups = Vec::new();
     let mut kinds = Vec::new();
@@ -84,12 +82,12 @@ pub(super) fn result_groups<'a>(
         format!("Settings ({})", settings.len()),
         settings.to_vec(),
     );
-    for (s, (heading, paths)) in found.enumerate() {
-        let paths = &paths[..paths.len().min(SEARCH_ROWS)];
+    for (s, (heading, rows)) in found.enumerate() {
+        let rows = &rows[..rows.len().min(SEARCH_ROWS)];
         group(
             ResultKind::Found(s),
-            format!("{heading} ({})", paths.len()),
-            paths.iter().map(|p| file_name(p)).collect(),
+            format!("{heading} ({})", rows.len()),
+            rows.iter().map(Found::name).collect(),
         );
     }
     (groups, kinds)
@@ -148,7 +146,7 @@ impl State {
             .map(|s| s.name(app_index))
             .collect();
         let calc = v.answer.as_ref().map(|(row, _)| row.clone());
-        let found = (v.search.sections()).map(|(source, paths)| (source.heading(), paths));
+        let found = (v.search.sections()).map(|(source, rows)| (source.heading(), rows));
         let (mut groups, kinds) = result_groups(calc.as_deref(), &names, &settings, found);
         v.result_kinds = kinds;
         let mut icon_rows: Vec<Option<Canvas>> = Vec::new();
@@ -166,9 +164,13 @@ impl State {
                 .map(|s| s.icon(app_index).and_then(|n| unread(icons, &n, px))),
         );
         with_mime(desktop.as_ref(), |mime| {
-            let found = v.search.sections().flat_map(|(_, paths)| paths);
-            let shown = found.map(|p| file_row_icon(p, v.search.is_dir(p), mime, icons, px));
-            icon_rows.extend(shown);
+            for (source, rows) in v.search.sections() {
+                let rows = &rows[..rows.len().min(SEARCH_ROWS)];
+                icon_rows.extend(
+                    rows.iter()
+                        .map(|f| v.search.icon(source, f, mime, icons, px)),
+                );
+            }
         });
         let rows = groups.iter_mut().flat_map(|g| g.rows.iter_mut());
         for (row, icon) in rows.zip(icon_rows) {
@@ -186,6 +188,7 @@ impl State {
             App(Box<AppEntry>),
             Setting(Setting),
             File(crate::desktop::FileFacts),
+            Result(std::sync::Arc<crate::search::Provider>, String),
         }
         let run = match v.result_kinds.get(g) {
             Some(ResultKind::Calc) => v.answer.clone().map(|(_, a)| Run::Copy(a)),
@@ -195,17 +198,22 @@ impl State {
                 .and_then(|&a| self.app_index.get(a))
                 .map(|e| Run::App(Box::new(e.clone()))),
             Some(ResultKind::Settings) => v.result_settings.get(r).copied().map(Run::Setting),
-            Some(&ResultKind::Found(s)) => {
-                v.search.path(s, r).map(|p| Run::File(v.search.facts_of(p)))
-            }
+            Some(&ResultKind::Found(s)) => match v.search.result(s, r) {
+                Some((p, m)) => Some(Run::Result(p.clone(), m.id.clone())),
+                None => (v.search.path(s, r)).map(|p| Run::File(v.search.facts_of(p))),
+            },
             None => None,
         };
+        let query = v.model.query().to_string();
         self.close_start_panel();
         match run {
             Some(Run::Copy(answer)) => self.clip_copy(&answer),
             Some(Run::App(entry)) => self.launch_app(&entry),
             Some(Run::Setting(s)) => self.open_setting(s),
             Some(Run::File(facts)) => self.open_found(&facts),
+            Some(Run::Result(p, id)) => {
+                self.open_provider(&p, crate::search::providers::Open::Result(id), &query)
+            }
             None => {}
         }
     }

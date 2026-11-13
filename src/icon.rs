@@ -748,8 +748,8 @@ pub(crate) mod tests {
         let mut h = two_outputs("classic", &root);
         h.state.toggle_launcher();
         let search = &mut h.state.launcher.as_mut().expect("the launcher").search;
-        let found = vec![std::path::PathBuf::from("/srv/notes.zzq")];
-        search.set(crate::search::Source::Names, found);
+        let found = vec![crate::search::Found::Path("/srv/notes.zzq".into())];
+        search.set(0, found);
         h.state.show_launcher_found();
         let row = |h: &crate::harness::Harness| {
             let m = &h.state.launcher.as_ref().expect("the launcher").model;

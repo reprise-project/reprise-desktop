@@ -934,6 +934,12 @@ impl Config {
             if let Some(v) = l.windows {
                 cfg.launcher_windows = v;
             }
+            if let Some(v) = l.providers {
+                cfg.launcher_providers = v;
+            }
+            if let Some(v) = l.providers_off {
+                cfg.launcher_providers_off = v;
+            }
         }
         if let Some(n) = file.night_light {
             n.apply(&mut cfg.night_light)?;

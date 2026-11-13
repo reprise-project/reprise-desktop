@@ -57,6 +57,7 @@ pub mod replace;
 pub mod scope;
 pub mod screenreader;
 pub mod search;
+pub mod searchproviders;
 pub mod sendto;
 pub mod software;
 pub mod sysinfo;
