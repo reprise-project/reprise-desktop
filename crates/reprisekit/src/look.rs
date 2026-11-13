@@ -225,7 +225,7 @@ pub fn redraw_taskbar_within(
 /// lays art past its cell.
 const DAMAGE_PAD: i32 = 4;
 
-/// The rect of a bar drawn on `layout` that [`TaskbarState::damage`]'s `d` reaches, across the
+/// The rect of a bar redrawn on `layout` that [`TaskbarState::damage`]'s `d` reaches, across the
 /// bar's whole thickness; None when nothing changed.
 pub fn taskbar_damage(
     theme: &Theme,
@@ -813,7 +813,7 @@ mod tests {
     #[test]
     fn redrawing_the_damage_gives_the_bar_a_full_draw_gives() {
         use crate::taskbar::{Attention, BarSpan, ClockText, Edge, TaskEntry, TaskProgress};
-        use crate::taskbar::{TaskbarCounts, TaskbarHit};
+        use crate::taskbar::{TaskRow, TaskbarCounts, TaskbarHit};
         use std::sync::Arc;
         let text = TextRenderer::load(&FontConfig::default());
         let counts = TaskbarCounts {
@@ -827,20 +827,19 @@ mod tests {
         let mut tray = Canvas::new(16, 16);
         tray.fill_rect(Rect::new(2, 2, 12, 12), Color::rgb(200, 40, 40));
         let tray = Arc::new(tray);
+        let task = |t: &str| TaskEntry {
+            title: t.into(),
+            active: t == "Files",
+            attention: Attention::None,
+            icon: None,
+            glow: None,
+        };
         let base = || {
             let mut st = empty_taskbar_state();
             st.quick_icons = vec![None, None];
             st.pager = vec![Default::default(); 2];
             st.pager[0].current = true;
-            st.tasks = ["Terminal", "Files", "Notes"]
-                .map(|t| TaskEntry {
-                    title: t.into(),
-                    active: t == "Files",
-                    attention: Attention::None,
-                    icon: None,
-                    glow: None,
-                })
-                .into();
+            st.tasks = ["Terminal", "Files", "Notes"].map(task).into();
             st.tray_icons = vec![None, Some(tray.clone())];
             st
         };
@@ -901,6 +900,37 @@ mod tests {
                 (st.task_hot, st.task_hot_x) = (Some(0), Some(12));
             }),
         ];
+        let many: Vec<&str> = vec!["Notes"; 30];
+        let relaid: Vec<(&str, Vec<&str>, Vec<u8>)> = vec![
+            (
+                "added first",
+                vec!["New", "Terminal", "Files", "Notes"],
+                vec![1; 4],
+            ),
+            (
+                "added in the middle",
+                vec!["Terminal", "New", "Files", "Notes"],
+                vec![1; 4],
+            ),
+            (
+                "added last",
+                vec!["Terminal", "Files", "Notes", "New"],
+                vec![1; 4],
+            ),
+            ("closed first", vec!["Files", "Notes"], vec![1; 2]),
+            (
+                "closed in the middle",
+                vec!["Terminal", "Notes"],
+                vec![1; 2],
+            ),
+            ("closed last", vec!["Terminal", "Files"], vec![1; 2]),
+            (
+                "group grown",
+                vec!["Terminal", "Files (2)", "Notes"],
+                vec![1, 2, 1],
+            ),
+            ("more than fit", many, vec![1; 30]),
+        ];
         for interface in [Interface::Classic, Interface::Blue, Interface::Glass] {
             let theme0 = theme_for(interface);
             let start_text = match theme0.look.style() {
@@ -928,46 +958,75 @@ mod tests {
                     clock,
                     Default::default(),
                 );
+                let relay = |stacks: &[u8]| {
+                    let mut l = l.clone();
+                    l.lay_tasks(&theme0.metrics, &shape, stacks, TaskRow::Shared);
+                    l
+                };
+                assert_eq!(
+                    relay(&[1; 30]).more.is_some(),
+                    edge.is_side(),
+                    "{interface:?} {edge:?}: a column out of room ends in a » cell"
+                );
                 for s in [1, 2] {
                     let theme = theme0.scaled(s);
                     let layout = l.scaled(s);
                     let whole = Rect::new(0, 0, layout.width, layout.height);
-                    let draw = |st: &TaskbarState| {
-                        let mut c = Canvas::new(layout.width as u32, layout.height as u32);
-                        draw_taskbar(&mut c, &theme, &text, &start_text, &layout, st);
+                    let draw = |st: &TaskbarState, l: &TaskbarLayout| {
+                        let mut c = Canvas::new(l.width as u32, l.height as u32);
+                        draw_taskbar(&mut c, &theme, &text, &start_text, l, st);
                         c
                     };
-                    let redraw = |c: &mut Canvas, st: &TaskbarState, r: Rect| {
-                        redraw_taskbar_within(c, &theme, &text, &start_text, &layout, st, r);
+                    let redraw = |c: &mut Canvas, st: &TaskbarState, l: &TaskbarLayout, r: Rect| {
+                        redraw_taskbar_within(c, &theme, &text, &start_text, l, st, r);
                     };
-                    let damage = |a: &TaskbarState, b: &TaskbarState| {
-                        taskbar_damage(&theme, &text, &layout, a.damage(b, &layout))
-                    };
+                    let damage =
+                        |a: (&TaskbarState, &TaskbarLayout), b: (&TaskbarState, &TaskbarLayout)| {
+                            taskbar_damage(&theme, &text, b.1, a.0.damage(b.0, a.1, b.1))
+                        };
                     let what = format!("{interface:?} {edge:?} scale {s}");
                     let from = base();
-                    let at_base = draw(&from);
+                    let at_base = draw(&from, &layout);
                     let mut fresh = Canvas::new(layout.width as u32, layout.height as u32);
-                    redraw(&mut fresh, &from, whole);
+                    redraw(&mut fresh, &from, &layout, whole);
                     assert!(fresh.pixels == at_base.pixels, "{what}: a whole redraw");
-                    assert_eq!(damage(&from, &base()), None, "{what}: the same state");
-                    for (name, f) in &change {
+                    assert_eq!(
+                        damage((&from, &layout), (&base(), &layout)),
+                        None,
+                        "{what}: the same state"
+                    );
+                    let changed = change.iter().map(|(name, f)| {
                         let mut to = base();
                         f(&mut to);
-                        let want = draw(&to);
+                        (name.to_string(), to, layout.clone())
+                    });
+                    let relaid = relaid.iter().map(|(name, titles, stacks)| {
+                        let mut to = base();
+                        to.tasks = titles.iter().map(|t| task(t)).collect();
+                        (name.to_string(), to, relay(stacks).scaled(s))
+                    });
+                    for (name, to, to_layout) in changed.chain(relaid) {
+                        let want = draw(&to, &to_layout);
                         let mut over = at_base.clone();
-                        redraw(&mut over, &to, whole);
+                        redraw(&mut over, &to, &to_layout, whole);
                         assert!(
                             over.pixels == want.pixels,
                             "{what}: {name} over another bar"
                         );
                         for (a, b, pic, goal, way) in [
-                            (&from, &to, &at_base, &want, "there"),
-                            (&to, &from, &want, &at_base, "back"),
+                            (
+                                (&from, &layout),
+                                (&to, &to_layout),
+                                &at_base,
+                                &want,
+                                "there",
+                            ),
+                            ((&to, &to_layout), (&from, &layout), &want, &at_base, "back"),
                         ] {
                             let r = damage(a, b)
                                 .unwrap_or_else(|| panic!("{what}: {name} {way}: no damage"));
                             let mut c = pic.clone();
-                            redraw(&mut c, b, r);
+                            redraw(&mut c, b.0, b.1, r);
                             assert!(c.pixels == goal.pixels, "{what}: {name} {way} in {r:?}");
                         }
                     }
@@ -978,7 +1037,8 @@ mod tests {
 
     #[test]
     fn a_change_damages_only_its_cells_and_their_neighbours() {
-        use crate::taskbar::{BarSpan, ClockText, Edge, TaskEntry, TaskbarCounts, TaskbarHit};
+        use crate::taskbar::TaskbarHit;
+        use crate::taskbar::{BarSpan, ClockText, Edge, TaskEntry, TaskRow, TaskbarCounts};
         use std::sync::Arc;
         let counts = TaskbarCounts {
             tasks: 4,
@@ -987,18 +1047,31 @@ mod tests {
         };
         let span = BarSpan {
             edge: Edge::Bottom,
-            length: 1000,
+            length: 1400,
             thickness: 30,
         };
-        let l = TaskbarLayout::compute_on(
-            &Default::default(),
-            &TaskbarShape::CLASSIC,
-            span,
-            true,
-            counts,
-            ClockText { time: 40, date: 60 },
-            Default::default(),
-        );
+        let lay = |span: BarSpan, counts: TaskbarCounts| {
+            TaskbarLayout::compute_on(
+                &Default::default(),
+                &TaskbarShape::CLASSIC,
+                span,
+                true,
+                counts,
+                ClockText { time: 40, date: 60 },
+                Default::default(),
+            )
+        };
+        let l = lay(span, counts);
+        let relay = |stacks: &[u8]| {
+            let mut r = l.clone();
+            r.lay_tasks(
+                &Default::default(),
+                &TaskbarShape::CLASSIC,
+                stacks,
+                TaskRow::Shared,
+            );
+            r
+        };
         let base = || {
             let mut st = empty_taskbar_state();
             st.tasks = (0..4)
@@ -1016,7 +1089,7 @@ mod tests {
         let damage = |f: &dyn Fn(&mut TaskbarState)| {
             let mut st = base();
             f(&mut st);
-            base().damage(&st, &l)
+            base().damage(&st, &l, &l)
         };
         let cells = |a: usize, b: usize| Some(l.tasks[a].union(&l.tasks[b]));
         assert_eq!(damage(&|_| {}), StateDamage::default(), "nothing changed");
@@ -1037,9 +1110,16 @@ mod tests {
         let (mut a, mut b) = (base(), base());
         a.start_icon = icon.clone();
         b.start_icon = Some(Arc::new(Canvas::new(1, 1)));
-        assert!(a.damage(&b, &l).start, "another icon, even an equal one");
+        assert!(
+            a.damage(&b, &l, &l).start,
+            "another icon, even an equal one"
+        );
         b.start_icon = icon;
-        assert_eq!(a.damage(&b, &l), StateDamage::default(), "the same icon");
+        assert_eq!(
+            a.damage(&b, &l, &l),
+            StateDamage::default(),
+            "the same icon"
+        );
         let focus = damage(&|st| st.focus = Some(TaskbarHit::Clock));
         let whole = Rect::new(0, 0, l.width, l.height);
         assert_eq!(
@@ -1047,6 +1127,63 @@ mod tests {
             Some(whole),
             "the keyboard's ring redraws the bar"
         );
+
+        let relaid = |titles: &[usize], stacks: &[u8]| {
+            let mut st = base();
+            st.tasks = titles
+                .iter()
+                .map(|&i| base().tasks.swap_remove(i))
+                .collect();
+            let to = relay(stacks);
+            (base().damage(&st, &l, &to), to)
+        };
+        let (added, five) = relaid(&[0, 1, 2, 3, 3], &[1; 5]);
+        assert_eq!(five.tasks[..4], l.tasks[..], "four buttons stay put");
+        assert_eq!(
+            added,
+            StateDamage {
+                start: false,
+                cells: Some(l.tasks[3].union(&five.tasks[4])),
+            },
+            "a button added last and its neighbour"
+        );
+        let (closed, _) = relaid(&[1, 2, 3], &[1; 3]);
+        assert_eq!(
+            closed.cells,
+            cells(0, 3),
+            "a button closed first moves every button past it"
+        );
+        let (closed, _) = relaid(&[0, 1, 2], &[1; 3]);
+        assert_eq!(
+            closed.cells,
+            cells(2, 3),
+            "a button closed last and its neighbour"
+        );
+        let (grown, _) = relaid(&[0, 1, 2, 3], &[1, 2, 1, 1]);
+        assert_eq!(grown.cells, cells(0, 2), "a group grown and its neighbours");
+        let shrunk = relaid(&[0; 12], &[1; 12]).0.cells.expect("damage");
+        assert!(
+            shrunk.x <= l.tasks[0].x && shrunk.right() < l.tray[0].x,
+            "buttons shrunk to fit redraw the task row alone: {shrunk:?}"
+        );
+        let wider = BarSpan {
+            length: 1500,
+            ..span
+        };
+        let quick = TaskbarCounts { quick: 1, ..counts };
+        for (other, why) in [
+            (lay(wider, counts), "a longer bar"),
+            (lay(span, quick), "a Quick Launch button added"),
+        ] {
+            assert_eq!(
+                base().damage(&base(), &l, &other),
+                StateDamage {
+                    start: true,
+                    cells: Some(Rect::new(0, 0, other.width, other.height)),
+                },
+                "{why} redraws the bar and Start"
+            );
+        }
     }
 
     #[test]
