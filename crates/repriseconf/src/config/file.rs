@@ -1,8 +1,9 @@
 //! The `config.toml` schema as serde reads it, before validation.
 
 use super::{
-    AccessibilityConfig, Follow, MOUSE_KEYS_ACCELERATION, MOUSE_KEYS_SPEED, NIGHT_KELVIN,
-    NightLightConfig, NightSchedule, SLOW_KEYS_DELAY, TEXT_SIZE, TEXT_SIZE_STEP, parse_hhmm,
+    AccessibilityConfig, BOUNCE_KEYS_DELAY, Follow, MOUSE_KEYS_ACCELERATION, MOUSE_KEYS_SPEED,
+    NIGHT_KELVIN, NightLightConfig, NightSchedule, SLOW_KEYS_DELAY, TEXT_SIZE, TEXT_SIZE_STEP,
+    VisualBell, parse_hhmm,
 };
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -460,6 +461,8 @@ pub struct FileAccessibility {
     pub sticky_two_keys_off: Option<bool>,
     pub slow_keys: Option<bool>,
     pub slow_keys_delay: Option<f64>,
+    pub bounce_keys: Option<bool>,
+    pub bounce_keys_delay: Option<f64>,
     pub shortcuts: Option<bool>,
     pub color_filter: Option<String>,
     pub color_filter_intensity: Option<i64>,
@@ -469,6 +472,8 @@ pub struct FileAccessibility {
     pub mouse_keys_acceleration: Option<f64>,
     pub mouse_keys_num_lock: Option<bool>,
     pub text_size: Option<u32>,
+    pub visual_bell: Option<String>,
+    pub locate_pointer: Option<bool>,
 }
 
 impl FileAccessibility {
@@ -503,9 +508,11 @@ impl FileAccessibility {
             (self.sticky_lock, &mut cfg.sticky_lock),
             (self.sticky_two_keys_off, &mut cfg.sticky_two_keys_off),
             (self.slow_keys, &mut cfg.slow_keys),
+            (self.bounce_keys, &mut cfg.bounce_keys),
             (self.shortcuts, &mut cfg.shortcuts),
             (self.mouse_keys, &mut cfg.mouse_keys),
             (self.mouse_keys_num_lock, &mut cfg.mouse_keys_num_lock),
+            (self.locate_pointer, &mut cfg.locate_pointer),
         ] {
             if let Some(v) = v {
                 *slot = v;
@@ -520,6 +527,22 @@ impl FileAccessibility {
                 ));
             }
             cfg.slow_keys_delay = (d * 1000.0).round() as u32;
+        }
+        if let Some(d) = self.bounce_keys_delay {
+            let (lo, hi) = (*BOUNCE_KEYS_DELAY.start(), *BOUNCE_KEYS_DELAY.end());
+            if !(lo - 1e-9..=hi + 1e-9).contains(&d) {
+                return Err(format!(
+                    "accessibility.bounce_keys_delay must be between {lo} and {hi} seconds, got {d}"
+                ));
+            }
+            cfg.bounce_keys_delay = (d * 1000.0).round() as u32;
+        }
+        if let Some(name) = &self.visual_bell {
+            cfg.visual_bell = VisualBell::parse(name).ok_or_else(|| {
+                format!(
+                    "accessibility.visual_bell must be \"none\", \"window\" or \"screen\", got {name:?}"
+                )
+            })?;
         }
         if let Some(v) = self.mouse_keys_speed {
             if !MOUSE_KEYS_SPEED.contains(&v) {

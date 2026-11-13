@@ -303,6 +303,8 @@ pub(crate) fn advance(state: &mut State, output: &Output) {
     state.flip_frame(output);
     state.water_frame(output);
     crate::dim::frame(state);
+    crate::bellflash::frame(state);
+    crate::locatepointer::frame(state);
     crate::autohideview::frame(state, output);
     crate::snapbarview::frame(state, output);
     crate::greeterview::frame(state, output);

@@ -49,7 +49,7 @@ while an editor saves it doesn't.
 | `[shortcut_overlay]` | the shortcut sheet holding Super shows, and how long Super is held first |
 | `[[tablets]]` | which output a drawing tablet covers, and whether it keeps its shape |
 | `[[tablet_pads]]` | what pad buttons, rings and strips do |
-| `[accessibility]` | text size, StickyKeys, SlowKeys, MouseKeys, magnifier, colour filters |
+| `[accessibility]` | text size, StickyKeys, SlowKeys, BounceKeys, MouseKeys, finding the pointer, visual alerts, magnifier, colour filters |
 | `[night_light]` | schedule and warmth |
 | `[launcher]`, `[clipboard]`, `[screenshot]`, `[previews]` | the launcher's file and window search, clipboard history (in memory only, password managers' copies left out; see [security.md](security.md#the-clipboard-history)), where screenshots go, live previews |
 | `[notifications]` | balloon sounds, quiet hours, Do Not Disturb during full screen and screen sharing, programs whose balloons or sounds are off |

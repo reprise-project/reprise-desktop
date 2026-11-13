@@ -771,6 +771,14 @@ the screen takes the interface of the last session used at this computer.
   end. GTK programs, told through the settings portal, stop animating too.
 - **StickyKeys and SlowKeys,** offered when you press Shift five times or
   hold the right Shift for eight seconds.
+- **BounceKeys** ignores a key pressed again soon after you let it go, for
+  hands that tremble (`[accessibility] bounce_keys`, 0.1 to 2 seconds).
+- **Find the pointer:** a tap of Ctrl on its own sends rings out from the
+  pointer (`[accessibility] locate_pointer`); under Reduce motion they hold
+  still.
+- **Visual alerts:** when a program rings the bell, the window that rang
+  flashes, or the whole screen (`[accessibility] visual_bell`). A window you
+  can't see flashes the screen. Flashes come at most three a second.
 - **MouseKeys:** the keypad moves the pointer, clicks and drags; hold Ctrl
   to go faster or Shift to creep a pixel at a time. Left Alt+Left Shift+Num
   Lock turns it on and off.
