@@ -40,6 +40,10 @@ use wayland_protocols::{
         activation::v1::client::{
             xdg_activation_token_v1::XdgActivationTokenV1, xdg_activation_v1::XdgActivationV1,
         },
+        decoration::zv1::client::{
+            zxdg_decoration_manager_v1::ZxdgDecorationManagerV1,
+            zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1,
+        },
         shell::client::{xdg_popup, xdg_positioner, xdg_surface, xdg_toplevel, xdg_wm_base},
     },
 };
@@ -1848,6 +1852,8 @@ wc::delegate_noop!(ClientSide: ignore wp_commit_timing_manager_v1::WpCommitTimin
 wc::delegate_noop!(ClientSide: ignore wp_commit_timer_v1::WpCommitTimerV1);
 wc::delegate_noop!(ClientSide: ignore wl_data_device_manager::WlDataDeviceManager);
 wc::delegate_noop!(ClientSide: ignore wp_presentation::WpPresentation);
+wc::delegate_noop!(ClientSide: ignore ZxdgDecorationManagerV1);
+wc::delegate_noop!(ClientSide: ignore ZxdgToplevelDecorationV1);
 
 /// How a `wp_presentation_feedback` ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
