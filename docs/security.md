@@ -1328,6 +1328,14 @@ What a consent prompt remembers, and where:
   permission store.
 - **Location:** Reprise's geoclue agent keeps its own answers.
 
+The Email portal asks nothing: the message opens unsent in your mail
+program, and you send it. Its attachments are only the files the app handed
+xdg-desktop-portal as open files, which the frontend turns into paths; an
+app can't name a path of its own. Each address must be a plain
+`local@domain` and the subject one line, so neither reads as a header, a
+`mailto:` query or a command-line option to the mail program; a call with
+anything else is refused.
+
 The share picker also keeps the last screen or window each app picked
 (`$XDG_STATE_HOME/reprise-portal/lastpick.toml`), but only to preselect it:
 you still confirm.

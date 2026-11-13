@@ -867,6 +867,9 @@ the screen takes the interface of the last session used at this computer.
   screenshots stay Reprise's. A balloon says so the first time a program takes
   them, and Super+Shift+Esc takes them back.
 - **Pointer lock and raw motion** for games, 3D tools and VM viewers.
+- **Send by Email** from a Flatpak opens the message, attachments included,
+  in the mail program Settings > Default Programs names. With none set, a
+  balloon says to pick one.
 
 ## Remote Desktop
 

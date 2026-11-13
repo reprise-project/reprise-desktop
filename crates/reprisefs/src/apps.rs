@@ -1149,6 +1149,22 @@ pub fn open_argv(
     Ok(wrap(entry, terminal, argv))
 }
 
+/// [`open_argv`] with `args` (a URI that names no file, or the program's own options) in the first
+/// file code, two or more standing as arguments of their own.
+pub fn open_args_argv(
+    entry: &AppEntry,
+    terminal: &str,
+    args: Vec<OsString>,
+) -> Result<Vec<OsString>, ExecRefused> {
+    refuse_quoted_codes(entry)?;
+    let mut args = Some(args);
+    let argv = split_exec(&entry.exec_line, |code| match code {
+        'f' | 'F' | 'u' | 'U' => args.take().unwrap_or_default(),
+        _ => entry_field(entry, code),
+    });
+    Ok(wrap(entry, terminal, argv))
+}
+
 /// The argument vector that starts `entry` with no file; refused as [`open_argv`] refuses.
 pub fn launch_argv(entry: &AppEntry, terminal: &str) -> Result<Vec<OsString>, ExecRefused> {
     refuse_quoted_codes(entry)?;
