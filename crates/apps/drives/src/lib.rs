@@ -1,15 +1,17 @@
 //! reprise-drives: removable drives for the session. Does what `[drives]
 //! on_insert` says with plugged-in drives (asks in a balloon, mounts through
 //! UDisks2, opens a window, raises the passphrase box for locked ones) and
-//! lists them in the Safely Remove Hardware tray menu, and warns when the disk of
-//! `$HOME` or `/` runs low on space (`space`). No main window; the process is
-//! autostarted for the session.
+//! lists them in the Safely Remove Hardware tray menu, warns when the disk of
+//! `$HOME` or `/` runs low on space (`space`), and asks in a balloon before a
+//! Thunderbolt device is authorized (`thunderbolt`). No main window; the process
+//! is autostarted for the session.
 
 #[cfg(test)]
 reprisebus::test_session!();
 
 mod model;
 mod space;
+mod thunderbolt;
 mod tray;
 mod watch;
 
@@ -89,6 +91,15 @@ struct DrivesApp {
     warned: space::Warned,
     /// Low disk space balloons by tag, kept for the history's buttons.
     space_asks: HashMap<u32, space::Reading>,
+    bolt: Option<(
+        Receiver<thunderbolt::Msg>,
+        repriseapp::Poster<thunderbolt::Msg>,
+    )>,
+    /// What boltd knows now, which a pressed button checks its device against.
+    bolt_devices: Vec<reprisebus::bolt::Device>,
+    bolt_asked: thunderbolt::Asked,
+    /// Thunderbolt balloons by tag, kept for the history's buttons.
+    bolt_asks: HashMap<u32, reprisebus::bolt::Device>,
 }
 
 impl DrivesApp {
@@ -237,6 +248,45 @@ impl DrivesApp {
                 });
             }
             _ => {}
+        }
+    }
+
+    fn bolt_found(&mut self, found: Option<reprisebus::bolt::Found>) {
+        self.bolt_devices = found.map(|f| f.devices).unwrap_or_default();
+        for d in self.bolt_asked.feed(&self.bolt_devices) {
+            log::info!(
+                "Thunderbolt device {} ({}) waits for authorization",
+                d.uid,
+                d.label()
+            );
+            let (summary, body) = thunderbolt::balloon(&d);
+            let tag = self.tag();
+            self.bolt_asks.insert(tag, d);
+            if let Some(t) = &self.tray {
+                t.notify_buttons(&summary, &body, tag, &thunderbolt::BUTTONS);
+            }
+        }
+    }
+
+    /// Button `i` of Thunderbolt balloon `tag`. A button pressed from the history acts only while
+    /// the device still waits.
+    fn bolt_answered(&mut self, tag: u32, i: usize) {
+        let Some(asked) = self.bolt_asks.remove(&tag) else {
+            return;
+        };
+        let Some(change) = thunderbolt::change_for(i) else {
+            return;
+        };
+        let Some(d) = self
+            .bolt_devices
+            .iter()
+            .find(|d| d.uid == asked.uid && d.waiting())
+        else {
+            log::info!("Thunderbolt device {} no longer waits", asked.uid);
+            return;
+        };
+        if let Some((_, poster)) = &self.bolt {
+            thunderbolt::carry_out(poster, d.clone(), change);
         }
     }
 
@@ -396,6 +446,16 @@ impl DrivesApp {
         while let Some(round) = self.space.as_ref().and_then(|rx| rx.try_recv().ok()) {
             self.space_read(&round);
         }
+        while let Some(m) = self.bolt.as_ref().and_then(|(rx, _)| rx.try_recv().ok()) {
+            match m {
+                thunderbolt::Msg::Found(f) => self.bolt_found(f),
+                thunderbolt::Msg::Done { label, result } => match result {
+                    Ok(()) => log::info!("Thunderbolt device {label} authorized"),
+                    Err(None) => {}
+                    Err(Some(why)) => self.notify(thunderbolt::failed_balloon(&label, &why)),
+                },
+            }
+        }
         while let Some(raw) = self.msgs.as_ref().and_then(|rx| rx.try_recv().ok()) {
             match tray::translate(raw, &self.entries) {
                 Some(tray::TrayMsg::Open(x, y)) if !self.entries.is_empty() => {
@@ -422,6 +482,9 @@ impl DrivesApp {
                 Some(tray::TrayMsg::Balloon(tag)) => self.open_folder(tag),
                 Some(tray::TrayMsg::Button(tag, i)) if self.space_asks.contains_key(&tag) => {
                     self.space_answered(tag, i)
+                }
+                Some(tray::TrayMsg::Button(tag, i)) if self.bolt_asks.contains_key(&tag) => {
+                    self.bolt_answered(tag, i)
                 }
                 Some(tray::TrayMsg::Button(tag, i)) => self.ask_answered(tag, i),
                 _ => {}
@@ -576,6 +639,7 @@ impl App for DrivesApp {
         let (poster, rx) = repriseapp::Poster::channel(waker.clone());
         space::watch(poster);
         self.space = Some(rx);
+        self.bolt = Some(thunderbolt::watch(waker.clone()));
         let (rx, calls) = watch::watch(waker);
         self.bus = Some(rx);
         self.calls = Some(calls);

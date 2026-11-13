@@ -74,6 +74,9 @@ impl SettingsApp {
                     self.proxy_changed();
                     return Reply::redraw();
                 }
+                if id == pages::TB_LIST {
+                    return self.thunderbolt_picked();
+                }
                 // Only the control just worked is read back: reading all would write clamped values for keys the control cannot show.
                 let from = self.want.interface.clone();
                 pages::read_one(&self.sheet, id, &mut self.want);
@@ -218,6 +221,7 @@ impl SettingsApp {
                 defaultspage::CHANGE => self.open_chooser(),
                 defaultspage::RESTORE => self.restore_default(),
                 pages::FORGET => self.forget_permission(),
+                pages::TB_AUTHORIZE | pages::TB_FORGET => self.thunderbolt_pressed(id),
                 pages::THUMBS_CLEAR if self.clearing.is_none() => {
                     // Off the loop: a full cache is thousands of files.
                     self.clearing = Some(self.spawn(repriseapp::thumbs::clear_cache));

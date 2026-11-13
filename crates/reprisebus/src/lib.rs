@@ -25,6 +25,7 @@
 //! with the session, and [`remote`], which reads the Remote Desktop server and
 //! turns its user unit on or off. Synchronous callers [`wait`] on it.
 //! [`bluez`] lists BlueZ's paired devices and follows whether one is connected.
+//! [`bolt`] lists and follows boltd's Thunderbolt devices and authorizes, enrolls or forgets one.
 //! [`airplane`] turns every radio off and back on, Bluetooth through [`rfkill`].
 //! [`kdeconnect`] follows the phones KDE Connect reaches.
 //! [`locale`] reads and sets the system locale and sets a user's language in AccountsService.
@@ -43,6 +44,7 @@ pub mod a11y;
 pub mod airplane;
 pub mod appearance;
 pub mod bluez;
+pub mod bolt;
 pub mod bounded;
 pub mod charge;
 pub mod desklock;

@@ -1,4 +1,5 @@
 use super::*;
+use reprisebus::bolt::{Device, Found, Status};
 
 #[test]
 fn the_script_open_combo_shows_and_writes_script_open() {
@@ -486,4 +487,76 @@ fn region_and_language_saves_locale_conf_on_apply_and_sets_the_system_at_once() 
         Err(Some("You are not allowed to make this change.".into())),
     );
     assert!(a.error.is_some(), "a refusal says why");
+}
+
+fn thunderbolt_read(a: &mut SettingsApp, found: Option<Found>, failed: Option<String>) {
+    let (tx, rx) = std::sync::mpsc::channel();
+    tx.send(crate::thunderbolthost::Reading { found, failed })
+        .unwrap();
+    a.thunderbolt.job = Some(rx);
+    assert!(a.thunderbolt_done());
+}
+
+fn tb_lit(a: &SettingsApp, id: &str) -> bool {
+    match &a.sheet.pages[Page::Thunderbolt.index()]
+        .item(id)
+        .unwrap()
+        .control
+    {
+        form::Control::Button { enabled, .. } => *enabled,
+        c => panic!("{id} is a button, not {c:?}"),
+    }
+}
+
+#[test]
+fn authorize_acts_at_once_on_the_picked_device_and_says_why_it_failed() {
+    let mut a = app("thunderbolt");
+    let p = Page::Thunderbolt.index();
+    let dock = Device {
+        path: "/org/freedesktop/bolt/devices/dock".into(),
+        uid: "dock".into(),
+        name: "Dock".into(),
+        vendor: "Acme".into(),
+        status: Status::Connected,
+        stored: false,
+        auto: false,
+    };
+    let found = Found {
+        domains: 1,
+        devices: vec![dock],
+    };
+    thunderbolt_read(&mut a, Some(found.clone()), None);
+    let _ = a.thunderbolt_pressed(pages::TB_AUTHORIZE);
+    assert!(!a.thunderbolt.acting, "nothing picked, nothing done");
+
+    if let Some(form::Control::ListBox { list, .. }) = a.sheet.pages[p]
+        .item_mut(pages::TB_LIST)
+        .map(|i| &mut i.control)
+    {
+        list.select(0, 12);
+    }
+    a.sheet_event(propsheet::Event::Page(
+        p,
+        form::Event::Changed(pages::TB_LIST),
+    ));
+    assert!(tb_lit(&a, pages::TB_AUTHORIZE));
+    assert!(!tb_lit(&a, pages::TB_FORGET), "not enrolled");
+
+    a.sheet_event(propsheet::Event::Page(
+        p,
+        form::Event::Pressed(pages::TB_AUTHORIZE),
+    ));
+    assert!(a.thunderbolt.acting);
+    assert!(
+        !tb_lit(&a, pages::TB_AUTHORIZE),
+        "greyed while boltd answers"
+    );
+    thunderbolt_read(
+        &mut a,
+        Some(found),
+        Some("Acme Dock could not be authorized.".into()),
+    );
+    assert!(a.error.is_some(), "a failed change says why");
+    assert!(tb_lit(&a, pages::TB_AUTHORIZE));
+    assert_eq!(a.want, a.loaded, "the buttons are no change for Apply");
 }

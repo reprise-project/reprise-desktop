@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 repository.workspace = true
-description = "Removable drives: automount through UDisks2, the Safely Remove Hardware icon and the passphrase box"
+description = "Removable drives: automount through UDisks2, the Safely Remove Hardware icon and the passphrase box, and the balloon authorizing a Thunderbolt device through boltd"
 
 [lints]
 workspace = true

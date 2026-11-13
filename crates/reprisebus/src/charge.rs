@@ -130,16 +130,7 @@ pub fn set(device: &str, on: bool) -> Result<(), Option<String>> {
         Err(e) => e,
     };
     log::warn!("charge limit {}: {e}", if on { "on" } else { "off" });
-    Err(to_tell(e, crate::polkit::dismissed))
-}
-
-/// What to tell the user for `e`; None when `dismissed` says the password prompt was. UPower
-/// answers GeneralError for a refusal and a failed write alike.
-fn to_tell(e: zbus::Error, dismissed: impl FnOnce() -> bool) -> Option<String> {
-    if crate::error::name(&e).is_some() && dismissed() {
-        return None;
-    }
-    Some(crate::error::message(&e).map_or_else(|| e.to_string(), String::from))
+    Err(crate::error::to_tell(e, crate::polkit::dismissed))
 }
 
 #[cfg(test)]
@@ -175,24 +166,6 @@ mod tests {
     }
 
     const BAT0: &str = "/org/freedesktop/UPower/devices/battery_BAT0";
-
-    #[test]
-    fn an_error_reply_asks_about_the_prompt_and_tells_its_message() {
-        let unknown = || {
-            crate::error::reply(
-                "org.freedesktop.DBus.Error.UnknownMethod",
-                "No such method \u{201c}EnableChargeThreshold\u{201d}",
-            )
-        };
-        assert_eq!(to_tell(unknown(), || true), None);
-        assert_eq!(
-            to_tell(unknown(), || false).as_deref(),
-            Some("No such method \u{201c}EnableChargeThreshold\u{201d}")
-        );
-        let lost = zbus::Error::from(std::io::Error::from(std::io::ErrorKind::ConnectionReset));
-        let told = to_tell(lost, || panic!("only an error reply follows a prompt"));
-        assert!(told.is_some());
-    }
 
     #[test]
     fn a_supported_battery_reports_its_end_threshold() {

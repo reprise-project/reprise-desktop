@@ -41,6 +41,7 @@ optdepends=('ttf-tahoma: Wine'\''s Tahoma, the UI font the layouts are tuned for
             'bluez: reprise-bluetooth, the Bluetooth tray icon and Bluetooth Devices'
             'kdeconnect: reprise-phone, the phone tray icon (battery, Ring phone, Send files), and phones in Send To'
             'udisks2: reprise-drives (drives mounted as they are plugged in, Safely Remove Hardware), and unmounted drives and Eject in Computer'
+            'bolt: the balloon asking to authorize a new Thunderbolt or USB4 device, and Settings > Thunderbolt'
             'packagekit: reprise-updates, the updates tray icon and Software Updates, and installing package files and uninstalling programs from the Start menu'
             'flatpak: Flatpak application and runtime updates in Software Updates, and installing .flatpakref and .flatpak files'
             'fwupd: firmware updates in Software Updates (curl, which pacman needs too, downloads them)'
