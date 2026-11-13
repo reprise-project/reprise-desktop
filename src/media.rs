@@ -41,6 +41,7 @@ pub enum Report {
     ScreenReader(crate::screenreader::Switched),
     Touchpad { on: bool },
     Airplane { on: bool },
+    RotationLock { locked: bool },
     Display(DisplayReport),
 }
 
@@ -980,6 +981,10 @@ impl State {
                 return;
             }
             Action::Airplane => Job::Airplane,
+            Action::RotationLock => {
+                crate::autorotate::toggle_lock(self);
+                return;
+            }
             _ => return,
         };
         self.send_job(job);
@@ -1052,6 +1057,7 @@ mod tests {
         assert!(!repeats(&Action::PlayPause));
         assert!(!repeats(&Action::Wifi));
         assert!(!repeats(&Action::Airplane));
+        assert!(!repeats(&Action::RotationLock));
         assert!(!repeats(&Action::Lock));
     }
 

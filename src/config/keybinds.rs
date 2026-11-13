@@ -75,6 +75,8 @@ pub enum Action {
     /// Turn the touchpad on (true) or off (false), or flip it (None).
     Touchpad(Option<bool>),
     Airplane,
+    /// Turn `[display] auto_rotate` off (locked) or back on.
+    RotationLock,
 }
 
 impl Action {
@@ -154,6 +156,7 @@ impl Action {
             Action::Touchpad(Some(true)) => "touchpad-on",
             Action::Touchpad(Some(false)) => "touchpad-off",
             Action::Airplane => "airplane-mode",
+            Action::RotationLock => "rotation-lock",
         })
     }
 
@@ -242,6 +245,7 @@ impl Action {
             "touchpad-on" => Action::Touchpad(Some(true)),
             "touchpad-off" => Action::Touchpad(Some(false)),
             "airplane-mode" => Action::Airplane,
+            "rotation-lock" => Action::RotationLock,
             other => return Err(format!("unknown action {other:?}")),
         })
     }

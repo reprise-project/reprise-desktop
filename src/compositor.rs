@@ -289,6 +289,8 @@ pub struct State {
     pub location: crate::location::Location,
     /// `[time_zone] automatic`'s thread (`autozone`).
     pub auto_zone: crate::autozone::AutoZone,
+    /// `[display] auto_rotate`'s thread and the orientation it last reported (`autorotate`).
+    pub auto_rotate: crate::autorotate::AutoRotate,
     pub netspeed: crate::netspeed::NetSpeed,
     /// Programs' progress for their task buttons (`launcherentry`).
     pub launcher_entries: crate::launcherentry::Entries,
@@ -714,6 +716,11 @@ impl State {
             },
             auto_zone: if session {
                 crate::autozone::AutoZone::start(&handle, crate::autozone::wanted(&config))
+            } else {
+                Default::default()
+            },
+            auto_rotate: if session {
+                crate::autorotate::AutoRotate::start(&handle, config.auto_rotate)
             } else {
                 Default::default()
             },

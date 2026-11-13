@@ -704,6 +704,21 @@ fn the_touchpad_keys_work_bare_and_with_the_firmwares_ctrl_super() {
 }
 
 #[test]
+fn the_rotation_lock_key_is_the_machines_and_works_at_the_lock() {
+    let locked = Modes {
+        locked: true,
+        ..Modes::default()
+    };
+    for m in [Modes::default(), locked] {
+        assert_eq!(
+            r(&m, &press(KEY_XF86ROTATION_LOCK_TOGGLE, 0)),
+            KeyRoute::Media(Action::RotationLock)
+        );
+    }
+    assert!(machine_key(&[KEY_XF86ROTATION_LOCK_TOGGLE]));
+}
+
+#[test]
 fn a_config_bind_on_a_media_key_wins_over_the_default() {
     let binds = vec![Keybind {
         mods: 0,

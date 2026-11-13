@@ -118,6 +118,7 @@ pub(super) fn binds() -> Vec<Bind> {
         Bind::Flag("preview_taskbar", lens!(preview_taskbar)),
         Bind::Flag("osd_caps_lock", lens!(osd_caps_lock)),
         Bind::Flag("osd_num_lock", lens!(osd_num_lock)),
+        Bind::Flag(crate::displaypage::AUTO_ROTATE, lens!(auto_rotate)),
         Bind::Num("previews_fps", lens!(previews_fps)),
         Bind::Named("switcher_style", lens!(switcher_style), SWITCHER_STYLES),
         Bind::Named("switcher_size", lens!(switcher_size), SWITCHER_SIZES),

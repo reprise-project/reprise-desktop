@@ -28,6 +28,7 @@ fn read_all(sheet: &PropSheet, s: &mut Settings) {
     }
 }
 
+/// The sheet for `s`, its Display page showing a built-in panel.
 fn with(s: &Settings) -> PropSheet {
     registry::sheet(
         s,
@@ -39,7 +40,7 @@ fn with(s: &Settings) -> PropSheet {
             sound_themes: &sound_themes(),
             layouts: &reg(),
             system_layout: "us",
-            heads: &[],
+            heads: &[crate::displaypage::test_head("eDP-1")],
         },
     )
 }
@@ -534,6 +535,7 @@ fn values_go_in_and_come_back_out() {
         preview_taskbar: false,
         osd_caps_lock: false,
         osd_num_lock: false,
+        auto_rotate: false,
         previews_fps: 24,
         switcher_style: "thumbnails".into(),
         screenshot_save: false,
@@ -692,7 +694,7 @@ fn render_the_pages() {
         shown,
         crate::displaypage::test_head("HDMI-A-1"),
     ]);
-    crate::displaypage::refresh(&mut sheet, &display);
+    crate::displaypage::refresh(&mut sheet, &display, &two);
     show_clearing(
         &mut sheet.pages[Page::Advanced.index()],
         Clearing::Done(Cleared {
@@ -841,7 +843,8 @@ fn restore_defaults_takes_a_pages_keys_from_its_controls() {
     for key in ["screensaver.name", "idle.lock_after"] {
         assert!(saver.contains(&key.to_string()), "{key} in {saver:?}");
     }
-    for p in [Page::Display, Page::Tablet, Page::Backup] {
+    assert_eq!(keys_on(&s, Page::Display), ["display.auto_rotate"]);
+    for p in [Page::Tablet, Page::Backup] {
         assert_eq!(
             keys_on(&s, p),
             Vec::<String>::new(),

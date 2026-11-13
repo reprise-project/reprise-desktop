@@ -890,9 +890,7 @@ pub fn run_action(state: &mut State, a: PowerAction, origin: Origin) {
 }
 
 pub fn is_internal_output(name: &str) -> bool {
-    ["eDP-", "LVDS-", "DSI-"]
-        .iter()
-        .any(|p| name.starts_with(p))
+    repriseconf::displays::is_built_in(name)
 }
 
 /// Always with the lid open; with it closed only when nothing else would show the desktop.

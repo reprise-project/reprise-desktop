@@ -144,6 +144,22 @@ fn describe(r: &Report, boost: bool) -> Option<(Osd, &'static str)> {
                 "network-wireless"
             },
         ),
+        Report::RotationLock { locked } => (
+            Osd {
+                title: if *locked {
+                    "Rotation lock on"
+                } else {
+                    "Rotation lock off"
+                }
+                .into(),
+                meter: None,
+            },
+            if *locked {
+                "rotation-locked-symbolic"
+            } else {
+                "rotation-allowed-symbolic"
+            },
+        ),
         Report::Display(_) => return None,
     })
 }
@@ -460,6 +476,16 @@ mod tests {
         let (osd, icon) = describe(&Report::Airplane { on: false }, false).unwrap();
         assert_eq!(osd.title, "Airplane mode off");
         assert_eq!(icon, "network-wireless");
+    }
+
+    #[test]
+    fn the_rotation_lock_panel_says_whether_the_screen_is_held() {
+        let (osd, icon) = describe(&Report::RotationLock { locked: true }, false).unwrap();
+        assert_eq!((osd.title.as_str(), osd.meter), ("Rotation lock on", None));
+        assert_eq!(icon, "rotation-locked-symbolic");
+        let (osd, icon) = describe(&Report::RotationLock { locked: false }, false).unwrap();
+        assert_eq!(osd.title, "Rotation lock off");
+        assert_eq!(icon, "rotation-allowed-symbolic");
     }
 
     #[test]

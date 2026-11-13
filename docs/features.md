@@ -742,6 +742,12 @@ the screen takes the interface of the last session used at this computer.
   switch; right-click for night light's menu. The brightness keys change every
   display, and the on-screen display shows a line per display. The keyboard
   backlight has keys of its own.
+- **Auto-rotation** on convertibles and tablets. While iio-sensor-proxy
+  reports an accelerometer, the built-in screen turns with the machine
+  (eDP, LVDS and DSI connectors; monitors never turn), and touch, pen and
+  pointer follow. Lying flat keeps the last turn. The rotation lock key, the
+  `rotation-lock` action or Rotate automatically on the Display page stops it
+  with the screen as it is (`[display] auto_rotate`).
 - **Explicit sync** for the drivers that need it, NVIDIA's among them.
 
 ## Input
@@ -797,10 +803,11 @@ the screen takes the interface of the last session used at this computer.
 - **Global shortcuts for programs.** A voice chat's push-to-talk works while
   another window has focus. The program asks once, and you can change its
   keys on the Keyboard page.
-- **Media keys** for volume, mute, brightness, playback, Wi-Fi, airplane mode
-  and the touchpad, with an on-screen panel. They work on the lock screen too,
-  except Wi-Fi and airplane mode. The touchpad key turns the touchpad off or
-  back on and the panel says which. With `[sounds] allow_boost` the volume
+- **Media keys** for volume, mute, brightness, playback, Wi-Fi, airplane mode,
+  the touchpad and the rotation lock, with an on-screen panel. They work on the
+  lock screen too, except Wi-Fi and airplane mode. The touchpad key turns the
+  touchpad off or back on and the rotation lock key auto-rotation, and the
+  panel says which. With `[sounds] allow_boost` the volume
   keys go on to 150 %.
 - **Caps Lock and Num Lock** show "On" or "Off" in the same panel when they
   change, each with its own switch (`[osd]`, Settings > Keyboard). The

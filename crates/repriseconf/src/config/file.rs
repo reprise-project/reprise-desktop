@@ -203,6 +203,7 @@ pub struct FileSnapping {
 pub struct FileDisplay {
     pub gpu: Option<String>,
     pub all_gpus: Option<bool>,
+    pub auto_rotate: Option<bool>,
 }
 
 #[derive(Deserialize, Default)]

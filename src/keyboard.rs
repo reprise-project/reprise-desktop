@@ -854,7 +854,8 @@ impl State {
             | Action::Stop
             | Action::Wifi
             | Action::Touchpad(_)
-            | Action::Airplane => self.run_media(a),
+            | Action::Airplane
+            | Action::RotationLock => self.run_media(a),
         }
     }
 

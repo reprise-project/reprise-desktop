@@ -362,7 +362,7 @@ impl SettingsApp {
         let checks = self.applied_checks.clone();
         pages::fill_list(&mut self.list, &self.entries, &checks);
         self.display.model.reset();
-        displaypage::refresh(&mut self.sheet, &self.display.model);
+        displaypage::refresh(&mut self.sheet, &self.display.model, &self.want);
         if let Some(d) = &mut self.defaults {
             d.revert();
         }

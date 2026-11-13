@@ -134,6 +134,7 @@ impl SettingsApp {
         changed |= self.region_done();
         changed |= self.contents_done();
         changed |= self.events_done();
+        changed |= self.sensor_done();
         changed |= self.thunderbolt_done();
         changed |= self.providers_done();
         changed |= self.login_users_done();

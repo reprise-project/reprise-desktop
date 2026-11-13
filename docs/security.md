@@ -240,7 +240,7 @@ side is unlocked and never the computer's own lock. The keys and buttons it
 holds are released as the lock comes up, so none stays down at the lock
 screen.
 Locked or not, it never presses the power, sleep, VT switch, radio
-(Wi-Fi, Bluetooth, the airplane-mode key) or touchpad keys. Reprise's own remote desktop
+(Wi-Fi, Bluetooth, the airplane-mode key), touchpad or rotation lock keys. Reprise's own remote desktop
 server is not an app here: its viewer types the password into the lock
 screen, in lock mode and at the computer's own lock, through libei or its
 keys object.

@@ -5,6 +5,7 @@ mod activation;
 mod appindex;
 mod attention;
 mod autohideview;
+mod autorotate;
 mod autostart;
 mod autozone;
 mod awaylock;

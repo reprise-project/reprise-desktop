@@ -12,6 +12,7 @@
 
 use std::cell::Cell;
 
+use reprisekit::controls::arrange;
 use reprisekit::style::Part;
 use reprisescene::{BufferId, TreeId};
 use smithay::{
@@ -102,6 +103,21 @@ pub fn carried<K: PartialEq>(
 /// `from` along with `to` (`carry_windows`).
 pub fn inherit_box(to: &Output, from: &Output) {
     laid_out(to).0.set(laid_out(from).0.get());
+}
+
+/// Each output's box as an arrangement tile, in `outputs`' order.
+fn tiles(outputs: &[Output]) -> Vec<arrange::Tile> {
+    (outputs.iter().zip(1..))
+        .map(|(o, number)| {
+            let r = reprisescene::output_rect(o).unwrap_or_default();
+            arrange::Tile {
+                number,
+                name: o.name(),
+                pos: (r.loc.x, r.loc.y),
+                size: (r.size.w, r.size.h),
+            }
+        })
+        .collect()
 }
 
 /// Put `output` at layout `pos` for good, or back to automatic placement with None.
@@ -255,6 +271,7 @@ impl State {
         if replaced.is_some() {
             crate::notifyview::output_removed(self);
         }
+        crate::autorotate::outputs_changed(self);
     }
 
     pub fn output_removed(&mut self, output: &Output) {
@@ -433,12 +450,7 @@ impl State {
             return true;
         }
         let scale = Scale::Fractional(f64::from(quarter_scale(req.scale as f32)));
-        if output.current_transform() != req.transform
-            || output.current_scale().fractional_scale() != scale.fractional_scale()
-        {
-            output.change_current_state(None, Some(req.transform), Some(scale), None);
-            crate::capture::constraints_changed(self, output);
-        }
+        self.set_transform_scale(output, req.transform, scale);
         let at = req.position.or_else(|| self.back_place(output));
         set_placement(output, at.map(Point::from));
         if driven {
@@ -475,6 +487,46 @@ impl State {
         log::info!("output {name}: back in the layout");
         self.output_added(output);
         true
+    }
+
+    fn set_transform_scale(&mut self, output: &Output, t: Transform, scale: Scale) {
+        if output.current_transform() != t
+            || output.current_scale().fractional_scale() != scale.fractional_scale()
+        {
+            output.change_current_state(None, Some(t), Some(scale), None);
+            crate::capture::constraints_changed(self, output);
+        }
+    }
+
+    /// Turn the built-in panels in the layout to `t` and lay out. When outputs placed by hand
+    /// touched before and the turn parts or overlaps them, they settle around the first panel.
+    pub fn turn_panels(&mut self, t: Transform) {
+        let shown: Vec<Output> = (self.scene.outputs().iter())
+            .filter(|o| !crate::backend::is_virtual(o) && reprisescene::output_rect(o).is_some())
+            .cloned()
+            .collect();
+        let turning: Vec<usize> = (0..shown.len())
+            .filter(|&i| crate::power::is_internal_output(&shown[i].name()))
+            .filter(|&i| shown[i].current_transform() != t)
+            .collect();
+        let Some(&first) = turning.first() else {
+            return;
+        };
+        let was_whole = arrange::whole(&tiles(&shown));
+        for &i in &turning {
+            log::info!("output {}: turned to {t:?}", shown[i].name());
+            let scale = shown[i].current_scale();
+            self.set_transform_scale(&shown[i], t, scale);
+        }
+        let mut after = tiles(&shown);
+        let placed = shown.iter().any(|o| placement(o).0.get().is_some());
+        if placed && was_whole && !arrange::whole(&after) {
+            arrange::settle(&mut after, first);
+            for (o, tile) in shown.iter().zip(&after) {
+                set_placement(o, Some(Point::from(tile.pos)));
+            }
+        }
+        self.update_layout();
     }
 
     /// Commit, on each driven output, the config keys that differ from

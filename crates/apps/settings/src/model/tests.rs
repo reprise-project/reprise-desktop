@@ -677,6 +677,7 @@ fn save_round_trips_every_field() {
         preview_taskbar: false,
         osd_caps_lock: false,
         osd_num_lock: false,
+        auto_rotate: false,
         previews_fps: 30,
         switcher_style: "thumbnails".into(),
         switcher_size: "medium".into(),
