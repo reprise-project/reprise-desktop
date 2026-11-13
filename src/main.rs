@@ -100,6 +100,7 @@ mod pointers;
 mod popupgrab;
 mod popups;
 mod privacy;
+mod proxywatch;
 mod putview;
 mod quickwatch;
 mod readback;
@@ -399,6 +400,7 @@ fn run(
     appindex::setup(&mut state);
     iconwatch::setup(&mut state);
     quickwatch::setup(&mut state);
+    proxywatch::setup(&mut state);
     recentwatch::setup(&mut state);
     xwayland::start(&mut state);
     event_loop.handle().insert_source(

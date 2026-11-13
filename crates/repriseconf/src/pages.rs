@@ -414,7 +414,16 @@ impl Page {
                 "open with",
                 "file types",
             ],
-            Page::Network => &["airplane mode", "flight mode", "radios", "rfkill"],
+            Page::Network => &[
+                "airplane mode",
+                "flight mode",
+                "radios",
+                "rfkill",
+                "proxy server",
+                "pac",
+                "wpad",
+                "no_proxy",
+            ],
             Page::RemoteDesktop => &["rdp", "remmina", "desktop sharing"],
             Page::Privacy => &[
                 "location",

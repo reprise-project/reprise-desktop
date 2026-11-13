@@ -46,7 +46,11 @@ pub use login::{
     Picture as LoginPicture, follow_login, login_manager, read_login, read_login_background,
     show_login,
 };
-pub use network::{AIRPLANE, network, show_airplane};
+pub use network::{AIRPLANE, is_proxy, network, read_proxy, show_airplane, show_proxy};
+#[cfg(test)]
+pub use network::{
+    PROXY_AUTO, PROXY_HOSTS, PROXY_IGNORE, PROXY_MANUAL, PROXY_NONE, PROXY_PAC, PROXY_PORTS,
+};
 pub use system::{
     RD_PASSWORD_ACCOUNTS, REMOTE_ALLOW, REMOTE_DISCONNECT, REMOTE_REGENERATE, advanced, backup,
     managed, notifications, privacy, remote_desktop, selected_client, show_remote, sound, startup,

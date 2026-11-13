@@ -388,7 +388,19 @@ matched control focused.
   - **Connections...** (Network Connections)
   - **Network:** Airplane mode turns Wi-Fi, mobile broadband and Bluetooth
     off or back on at once, as the network icon's menu does. It's greyed on
-    a computer with no radio.
+    a computer with no radio. Proxy picks No proxy, Manual configuration
+    (an HTTP, HTTPS, FTP and SOCKS server, each a host and a port, and the
+    hosts reached directly) or Automatic configuration (a PAC script's URL).
+    Apply writes `~/.config/environment.d/60-reprise-proxy.conf` and sets
+    the same variables in the systemd user manager, so programs started
+    afterwards use them; running ones need a restart. Manual sets
+    `http_proxy`, `https_proxy`, `ftp_proxy`, `all_proxy` (SOCKS, as
+    `socks5://`) and `no_proxy`, each also in capitals; Automatic sets
+    `auto_proxy`, which Chromium-based browsers read. No proxy removes the
+    file and unsets what it had set. A host typed with a scheme
+    (`https://proxy`) keeps it. Programs that take their proxy from
+    GSettings (GNOME's resolver) don't follow it, since Reprise writes no
+    dconf.
   - **Remote Desktop:** Allow remote connections turns the server on or off
     at once, enabling and starting its user unit or stopping and disabling
     it, and the lines under it say where it listens and which video encoder

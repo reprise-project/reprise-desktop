@@ -1705,7 +1705,83 @@ fn the_network_page_geometry() {
     assert_eq!(rect(&s, p, AIRPLANE), Rect::new(20, 44, 13, 13));
     assert_eq!(rect(&s, p, "airplane_note").y, 64);
     assert_eq!(rect(&s, p, "airplane_status").y, 80);
+    assert_eq!(rect(&s, p, "proxy"), Rect::new(20, 108, 358, 282));
+    assert_eq!(rect(&s, p, PROXY_NONE), Rect::new(GX, 130, 12, 12));
+    assert_eq!(rect(&s, p, PROXY_MANUAL), Rect::new(GX, 152, 12, 12));
+    assert_eq!(rect(&s, p, "proxy_http_label"), Rect::new(50, 180, 64, 13));
+    assert_eq!(rect(&s, p, PROXY_HOSTS[0]), Rect::new(118, 176, 156, 20));
+    assert_eq!(rect(&s, p, PROXY_PORTS[0]), Rect::new(316, 176, 50, 20));
+    assert_eq!(rect(&s, p, PROXY_HOSTS[3]).y, 254);
+    assert_eq!(rect(&s, p, PROXY_IGNORE), Rect::new(50, 300, 316, 20));
+    assert_eq!(rect(&s, p, PROXY_AUTO), Rect::new(GX, 332, 12, 12));
+    assert_eq!(rect(&s, p, PROXY_PAC), Rect::new(118, 358, 248, 20));
+    assert_eq!(rect(&s, p, "proxy_note").y, 400);
     inside_page(&s, p);
+}
+
+fn manual_proxy() -> reprisefs::proxy::Proxy {
+    use reprisefs::proxy::{Mode, Proxy, Server};
+    Proxy {
+        mode: Mode::Manual,
+        servers: [
+            Server {
+                host: "proxy.lan".into(),
+                port: "3128".into(),
+            },
+            Server::default(),
+            Server::default(),
+            Server {
+                host: "socks.lan".into(),
+                port: "1080".into(),
+            },
+        ],
+        ..Proxy::default()
+    }
+}
+
+#[test]
+fn the_proxy_rows_show_and_read_back_and_grey_the_modes_not_picked() {
+    let mut page = network(Area::MIN);
+    assert_eq!(page.checked(PROXY_NONE), Some(true));
+    assert!(!enabled(&page, PROXY_HOSTS[0]));
+    assert!(!enabled(&page, PROXY_PAC));
+    let p = manual_proxy();
+    show_proxy(&mut page, &p);
+    assert!(enabled(&page, PROXY_HOSTS[0]));
+    assert!(enabled(&page, PROXY_IGNORE));
+    assert!(!enabled(&page, PROXY_PAC));
+    assert_eq!(read_proxy(&mut page), p);
+    page.set_check(PROXY_MANUAL, false);
+    page.set_check(PROXY_AUTO, true);
+    let auto = read_proxy(&mut page);
+    assert_eq!(auto.mode, reprisefs::proxy::Mode::Auto);
+    assert!(enabled(&page, PROXY_PAC), "picking a radio lights its rows");
+    assert!(!enabled(&page, PROXY_PORTS[0]));
+}
+
+#[test]
+fn the_proxy_rows_pin_their_pixels_in_every_look() {
+    let rows = Rect::new(20, 104, 358, 330);
+    let mut page = network(Area::MIN);
+    show_proxy(&mut page, &manual_proxy());
+    let manual = row_pins(&page, rows);
+    show_proxy(
+        &mut page,
+        &reprisefs::proxy::Proxy {
+            mode: reprisefs::proxy::Mode::Auto,
+            pac: "http://wpad.lan/wpad.dat".into(),
+            ..reprisefs::proxy::Proxy::default()
+        },
+    );
+    let auto = row_pins(&page, rows);
+    assert_eq!(
+        [manual, auto],
+        [
+            [0xe2bb947917f93155, 0x1beecf35c07dbd15, 0xef12460279098d42],
+            [0x429630567565d43e, 0x2ade9b99155cc5c3, 0xe1790665d56e9938],
+        ],
+        "manual, automatic; Classic, Blue, Glass"
+    );
 }
 
 fn status(page: &Form) -> &str {

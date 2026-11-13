@@ -474,7 +474,7 @@ fn every_spin_shows_its_unit() {
                 .iter()
                 .filter(|it| matches!(it.control, Control::UpDown(_)))
             {
-                if COUNTS.contains(&u.id) {
+                if COUNTS.contains(&u.id) || super::network::PROXY_PORTS.contains(&u.id) {
                     continue;
                 }
                 seen += 1;
