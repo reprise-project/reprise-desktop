@@ -538,16 +538,16 @@ impl State {
     pub fn redraw_taskbar(&mut self, tree: TreeId) {
         let was = self.bar_outputs(tree);
         let tasks = TaskWindows::gather(self);
-        self.with_bar(tree, |s, bar| {
-            s.redraw_taskbar_with(bar, &tasks);
-        });
+        let changed = self
+            .with_bar(tree, |s, bar| s.redraw_taskbar_with(bar, &tasks))
+            .unwrap_or(false);
         let output = self.bar(tree).map(|b| b.output.clone());
         crate::trayflyout::bar_redrawn(self, output.as_ref());
-        let nodes: Vec<NodeId> = self
-            .bar(tree)
-            .map(|b| vec![b.tree.into(), b.orb_tree.into()])
-            .unwrap_or_default();
-        self.redraw_nodes(was, &nodes);
+        let nodes: Option<[NodeId; 2]> =
+            (self.bar(tree).filter(|_| changed)).map(|b| [b.tree.into(), b.orb_tree.into()]);
+        if let Some(nodes) = nodes {
+            self.redraw_nodes(was, &nodes);
+        }
         crate::access::touch(self);
         crate::autohideview::poke(self);
     }
