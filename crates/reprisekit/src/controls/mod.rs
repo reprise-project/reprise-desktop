@@ -66,6 +66,7 @@ pub mod palette;
 pub mod pathcomplete;
 pub mod perfgraph;
 pub mod placesbar;
+pub mod projector;
 pub mod propsheet;
 pub mod rebar;
 pub mod regionselect;

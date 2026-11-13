@@ -28,6 +28,7 @@ mod panel;
 mod perfgraph;
 mod popups;
 pub mod preview;
+pub mod projector;
 mod scrollbar;
 mod selbox;
 pub mod shadow;

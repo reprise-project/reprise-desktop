@@ -80,6 +80,8 @@ pub mod perfart;
 pub mod pins;
 pub mod pointer;
 pub mod powerpanel;
+pub mod projection;
+pub mod projector;
 pub mod raster;
 pub mod saver;
 pub mod schemes;

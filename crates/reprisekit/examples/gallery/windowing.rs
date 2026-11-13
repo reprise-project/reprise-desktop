@@ -8,11 +8,13 @@ use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
 use reprisekit::theme::{Color, FontConfig, Theme};
 
-/// The snap layouts panel in Classic, Blue and Glass over a 1920x1050 work area, then snap assist in the right half of a half-screen desktop. Glass's panels lie on mid-grey so the translucent sheet shows.
+/// The snap layouts panel in Classic, Blue and Glass over a 1920x1050 work area, the display switcher (Extend lit, Only 1 hot, Only 2 greyed), then snap assist in the right half of a half-screen desktop. Glass's panels lie on mid-grey so the translucent sheet shows.
 pub fn render_snap_layouts() -> Canvas {
+    use reprisekit::controls::projector::{Projector, ProjectorLayout};
     use reprisekit::overview::{self, OverviewLayout};
+    use reprisekit::projection::Projection;
     use reprisekit::snaplayouts::{CellSpec, PickerLayout, Shape};
-    let (w, h) = (920, 580);
+    let (w, h) = (920, 696);
     let mut c = Canvas::new(3 * w as u32, h as u32);
     let text = TextRenderer::load(&FontConfig::default());
     let cols = |cuts: &[i32]| -> Vec<Rect> {
@@ -61,15 +63,24 @@ pub fn render_snap_layouts() -> Canvas {
         let grid = PickerLayout::compute(Shape::Grid, (1920, 1050), &cells);
         let row = PickerLayout::compute(Shape::Row, (1920, 1050), &bar_cells);
         let row_top = 12 + grid.height + 12;
+        let switcher = ProjectorLayout::compute();
+        let switcher_top = row_top + row.height + 12;
         if i == Interface::Glass {
-            let band = Rect::new(x0, 0, w, row_top + row.height + 12);
+            let band = Rect::new(x0, 0, w, switcher_top + switcher.height + 12);
             c.fill_rect(band, Color::rgb(0x80, 0x80, 0x80));
         }
         let panel = interfaces::draw_snap_picker(&theme, &grid, &[((0, 0), &app)], Some((0, 1)));
         c.blit_over(x0 + (w - grid.width) / 2, 12, &panel);
         let bar = interfaces::draw_snap_picker(&theme, &row, &[((0, 0), &app)], Some((3, 1)));
         c.blit_over(x0 + (w - row.width) / 2, row_top, &bar);
-        let top = row_top + row.height + 16;
+        let p = Projector {
+            hot: Some(2),
+            enabled: [true, true, true, false],
+            ..Projector::new(Projection::Extend, 2)
+        };
+        let sw = interfaces::draw_projector(&theme, &switcher, &text, &p);
+        c.blit_over(x0 + (w - switcher.width) / 2, switcher_top, &sw);
+        let top = switcher_top + switcher.height + 16;
         let desk = Rect::new(x0, top, w, h - top);
         let left = Rect::new(desk.x, desk.y, w / 2, desk.height);
         c.fill_rect(left, theme.colors.window);
