@@ -218,6 +218,78 @@ pub fn ask_with(kind: Kind, mut input: Input, cancel: &AtomicBool) -> Answer {
     Answer::parse(&out)
 }
 
+/// The permission store entry, table and id, keeping the apps whose Allow was remembered. Reprise
+/// Settings lists and forgets them, so the format (app id to `["yes"]`) is shared with it.
+#[derive(Clone, Copy, Debug)]
+pub struct Store {
+    pub table: &'static str,
+    pub id: &'static str,
+}
+
+const STORE_YES: &str = "yes";
+
+/// How a prompt backed by a [`Store`] gets the user's consent.
+#[derive(Debug, PartialEq, Eq)]
+enum Consent {
+    /// An Allow remembered in the store: no prompt.
+    Remembered,
+    Ask {
+        offer_remember: bool,
+    },
+}
+
+/// The consent `app_id` needs, given `stored`, its store lookup. Remember is offered only where an
+/// answer can be kept: an empty app id has nothing to file it under, an unreachable store no place.
+fn consent(app_id: &str, stored: impl FnOnce() -> zbus::Result<Option<Vec<String>>>) -> Consent {
+    if app_id.is_empty() {
+        return Consent::Ask {
+            offer_remember: false,
+        };
+    }
+    match stored() {
+        Ok(Some(p)) if p.first().is_some_and(|a| a == STORE_YES) => Consent::Remembered,
+        Ok(_) => Consent::Ask {
+            offer_remember: true,
+        },
+        Err(e) => {
+            log::warn!("no permission store for {app_id:?}: {e}");
+            Consent::Ask {
+                offer_remember: false,
+            }
+        }
+    }
+}
+
+/// `ask_with`, unless `store` remembers `app_id`'s Allow; true when allowed. An Allow with
+/// Remember is kept in `store`, a Deny never. Blocking.
+pub fn ask_remembered(
+    kind: Kind,
+    store: Store,
+    app_id: &str,
+    mut input: Input,
+    cancel: &AtomicBool,
+) -> bool {
+    use reprisebus::permissions::{app_permission, set_app_permission};
+    let lookup = || app_permission(store.table, store.id, app_id);
+    input.offer_remember = match consent(app_id, lookup) {
+        Consent::Remembered => {
+            log::info!("{kind:?} for {app_id:?}: the permission store allows it");
+            return true;
+        }
+        Consent::Ask { offer_remember } => offer_remember,
+    };
+    match ask_with(kind, input, cancel) {
+        Answer::Allow { remember: true } => {
+            match set_app_permission(store.table, store.id, app_id, &[STORE_YES]) {
+                Ok(()) => log::info!("{kind:?}: remembered the Allow for {app_id:?}"),
+                Err(e) => log::warn!("{kind:?}: could not remember {app_id:?}: {e}"),
+            }
+            true
+        }
+        a => a.allowed(),
+    }
+}
+
 /// What the parent tells the prompt, as TOML on stdin.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq, Default)]
 pub struct Input {
@@ -708,5 +780,51 @@ mod tests {
         c.fill_rect(c.bounds(), theme.colors.button_face);
         form::draw(&mut c, &text, &theme.paint(), &f, true, theme.fonts.size_px);
         reprisekit::raster::write_preview(&c, "permit-shortcuts.png");
+    }
+
+    fn store(perms: &[&str]) -> impl FnOnce() -> zbus::Result<Option<Vec<String>>> {
+        let perms = perms.iter().map(|p| p.to_string()).collect();
+        move || Ok(Some(perms))
+    }
+
+    #[test]
+    fn a_stored_yes_skips_the_prompt() {
+        assert_eq!(
+            consent("org.deskflow.deskflow", store(&["yes"])),
+            Consent::Remembered
+        );
+    }
+
+    #[test]
+    fn no_stored_yes_asks_with_remember() {
+        let ask = Consent::Ask {
+            offer_remember: true,
+        };
+        assert_eq!(consent("org.deskflow.deskflow", || Ok(None)), ask);
+        assert_eq!(consent("org.deskflow.deskflow", store(&["no"])), ask);
+        assert_eq!(consent("org.deskflow.deskflow", store(&["ask"])), ask);
+        assert_eq!(consent("org.deskflow.deskflow", store(&[])), ask);
+    }
+
+    #[test]
+    fn an_empty_app_id_asks_without_remember_and_without_a_lookup() {
+        let lookup = || -> zbus::Result<Option<Vec<String>>> { panic!("looked up") };
+        assert_eq!(
+            consent("", lookup),
+            Consent::Ask {
+                offer_remember: false
+            }
+        );
+    }
+
+    #[test]
+    fn an_unreachable_store_asks_without_remember() {
+        let lookup = || Err(zbus::Error::Failure("no store".into()));
+        assert_eq!(
+            consent("org.deskflow.deskflow", lookup),
+            Consent::Ask {
+                offer_remember: false
+            }
+        );
     }
 }

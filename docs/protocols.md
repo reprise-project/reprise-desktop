@@ -126,7 +126,8 @@ confinement holds, every motion goes through as it comes.
 - **Background:** which apps run without a window and the prompt asking
   whether one may. xdg-desktop-portal writes the autostart entries Flatpak
   apps ask for itself
-- **Wallpaper:** after a prompt showing the picture, a copy of it in
+- **Wallpaper:** after a prompt showing the picture (skipped for an app
+  allowed before, see [security](security.md)), a copy of it in
   `~/.local/share/reprise/wallpapers` becomes `[wallpaper] image`; `set-on`
   both does the same, as the Glass lock screen shows the desktop's picture.
   The lock screen alone is refused, since it has no picture of its own

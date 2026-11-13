@@ -1292,9 +1292,19 @@ What a consent prompt remembers, and where:
   named the same way, by the app the portal names on the cast's PipeWire
   node, which only the portal can set; a consumer's own name is used only
   when the node carries none.
-- **Screenshot:** the prompt has no Remember. xdg-desktop-portal keeps its
-  own `screenshot` permission, and once that says yes a non-interactive
-  screenshot is taken without a prompt.
+- **Screenshot:** xdg-desktop-portal asks before an app's first
+  non-interactive screenshot, through the Access prompt, and keeps the
+  answer, yes or no, in its permission store (table and id `screenshot`).
+  After a yes the app's screenshots are taken without a prompt; after a no
+  they are refused without one. An interactive screenshot opens the share
+  picker every time, which has no Remember.
+- **Wallpaper:** an app with `yes` in the permission store (table and id
+  `wallpaper`) sets the picture without a prompt, and one with `no` is
+  refused by xdg-desktop-portal. Without either, a call without
+  `show-preview` first gets xdg-desktop-portal's Access prompt, which keeps
+  its answer there itself, so an Allow is not asked again by Reprise.
+  Otherwise Reprise's prompt shows the picture; an app with an app id can tick
+  Remember, and an Allow with it is kept as `yes`. A Deny there is never kept.
 - **InputCapture:** asks each session. An app with an app id can tick
   Remember, and an Allow with it goes to the permission store (table and id
   `input-capture`, the app id mapped to `yes`); the app's later sessions

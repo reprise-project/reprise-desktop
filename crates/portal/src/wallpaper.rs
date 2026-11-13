@@ -1,7 +1,8 @@
 //! `org.freedesktop.impl.portal.Wallpaper`: an app's picture as the
-//! desktop background, after the Wallpaper permit prompt. The picture is
-//! copied under `$XDG_DATA_HOME/reprise/wallpapers`, so a document portal
-//! path that goes away with the app does not take the background with it.
+//! desktop background, after the Wallpaper permit prompt or an Allow the
+//! permission store remembers. The picture is copied under
+//! `$XDG_DATA_HOME/reprise/wallpapers`, so a document portal path that goes
+//! away with the app does not take the background with it.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -12,6 +13,13 @@ use zbus::ObjectPath;
 
 const IMAGE: repriseconf::Key = repriseconf::key("wallpaper", "image");
 const SLIDESHOW: repriseconf::Key = repriseconf::key("wallpaper", "slideshow");
+
+/// xdg-desktop-portal's own entry. It denies a `no` itself, and an answer to its own prompt (a call
+/// without `show-preview`) is written here before the call arrives, so a `yes` is never asked twice.
+const STORE: crate::permit::Store = crate::permit::Store {
+    table: "wallpaper",
+    id: "wallpaper",
+};
 
 pub struct Wallpaper {
     pub frontend: crate::Frontend,
@@ -61,21 +69,26 @@ impl Wallpaper {
         };
         let cancel = Arc::new(AtomicBool::new(false));
         crate::export_request(server, &handle, cancel.clone(), &self.frontend).await?;
-        let input = crate::permit::Input {
-            parent: crate::dialog::parent_handle(&parent_window),
-            app: String::new(),
-            offer_remember: false,
-            items: vec![file_name(&path)],
-            preview: shows_preview(&app_id, show_preview)
-                .then(|| path.to_string_lossy().into_owned()),
-        };
+        let parent = crate::dialog::parent_handle(&parent_window);
+        let items = vec![file_name(&path)];
+        let preview =
+            shows_preview(&app_id, show_preview).then(|| path.to_string_lossy().into_owned());
         let id = app_id.clone();
         let allowed = blocking::unblock(move || {
             let input = crate::permit::Input {
+                parent,
                 app: crate::remotedesktop::display_name(&id),
-                ..input
+                items,
+                preview,
+                ..Default::default()
             };
-            crate::permit::ask_with(crate::permit::Kind::Wallpaper, input, &cancel).allowed()
+            crate::permit::ask_remembered(
+                crate::permit::Kind::Wallpaper,
+                STORE,
+                &id,
+                input,
+                &cancel,
+            )
         })
         .await;
         let _ = server.remove::<crate::Request, _>(handle.clone()).await;
