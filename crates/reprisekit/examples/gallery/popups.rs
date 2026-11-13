@@ -579,6 +579,61 @@ pub fn render_glass_popup_parts(theme: &Theme) -> Canvas {
 }
 
 /// The volume popup's now-playing strip in each look: playing with an artist, Pause focused (top); paused with a long title, Previous greyed and Next held (bottom).
+/// The clock popup with a day's events in each look at `scale`: five events, the first row lit,
+/// the 20th picked with no events, and a Glass list still being read.
+pub fn render_calendar_events(scale: i32) -> Canvas {
+    use reprisekit::controls::calendar::{self, Agenda, DayEvent, PopupHit};
+    let event = |all_day, start, when: &str, summary: &str| DayEvent {
+        all_day,
+        start,
+        when: when.into(),
+        summary: summary.into(),
+    };
+    let events = vec![
+        event(true, 0, "All day", "Team offsite planning"),
+        event(false, 9, "9:30", "Standup"),
+        event(false, 13, "13:00", "Lunch with Anna"),
+        event(false, 16, "16:00", "Call with the New York office"),
+        event(
+            false,
+            17,
+            "17:00",
+            "A very long event summary that cannot fit on one row",
+        ),
+    ];
+    let looks = [Interface::Classic, Interface::Blue, Interface::Glass];
+    let (cw, ch) = (380 * scale, 340 * scale);
+    let mut c = blurred_stripes(3 * cw, 3 * ch);
+    for (col, look) in looks.into_iter().enumerate() {
+        let theme = interfaces::theme_for(look).scaled(scale);
+        let text = TextRenderer::load(&FontConfig::default());
+        let mut cal = calendar::Calendar::new(2026, 11, None, 0);
+        cal.today = Some((2026, 11, 13));
+        if look == Interface::Glass {
+            cal.now = Some((10, 9, 30));
+            cal.time = Some("10:09".into());
+        }
+        let mut today = Agenda::new((2026, 11, 13), true);
+        today.set_events(events.clone());
+        let mut picked = Agenda::new((2026, 11, 20), true);
+        picked.set_events(Vec::new());
+        let reading = Agenda::new((2026, 11, 13), true);
+        for (row, (agenda, hot)) in [
+            (today, PopupHit::Event(0)),
+            (picked, PopupHit::Panel),
+            (reading, PopupHit::Panel),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            cal.agenda = Some(agenda);
+            let panel = calendar::draw_popup(&theme, &text, &cal, hot);
+            c.blit_over(col as i32 * cw + 20, row as i32 * ch + 20, &panel);
+        }
+    }
+    c
+}
+
 pub fn render_now_playing() -> Canvas {
     use volumepopup::{NowPlaying, Transport};
     let (w, h) = (480, 430);

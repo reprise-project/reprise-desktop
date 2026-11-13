@@ -1,4 +1,4 @@
-//! The month grid: a framed white box with a band of weekday letters over six rows of day numbers, the picked day on the highlight and today outlined. The Date and Time sheet shows it bare between its month combo and year spinner; the taskbar clock's popup shows it under a title row whose two arrow buttons step the month.
+//! The month grid: a framed white box with a band of weekday letters over six rows of day numbers, the picked day on the highlight and today outlined. The Date and Time sheet shows it bare between its month combo and year spinner; the taskbar clock's popup shows it under a title row whose two arrow buttons step the month, and over the picked day's events when the host has a calendar to read ([`agenda`]).
 //!
 //! The frame is the look's ([`draw_calendar_frame`]). A look with a today box ([`draw_calendar_today`]) puts today's number in it in the look's link ink instead of the outline; one with bare month arrows ([`draw_calendar_arrow`]) draws them in place of buttons.
 //!
@@ -17,6 +17,9 @@ use crate::raster::{Canvas, Rect};
 use crate::text::{Align, TextRenderer};
 use crate::theme::{TextUnits, Theme};
 use accesskit::{NodeId, Role};
+
+pub mod agenda;
+pub use agenda::{AGENDA_ROWS, Agenda, DayEvent};
 
 pub const W: i32 = 162;
 pub const H: i32 = 130;
@@ -73,6 +76,8 @@ pub struct Calendar {
     pub now: Option<(u32, u32, u32)>,
     /// The popup's time line under the clock, worded by the host in the locale's format.
     pub time: Option<String>,
+    /// The popup's events under the month; none hides the list.
+    pub agenda: Option<Agenda>,
     /// The column the week starts in: 0 Sunday .. 6 Saturday.
     pub first_weekday: u32,
     pub enabled: bool,
@@ -87,6 +92,7 @@ impl Calendar {
             today: None,
             now: None,
             time: None,
+            agenda: None,
             first_weekday: first_weekday % 7,
             enabled: true,
         };
@@ -337,19 +343,24 @@ fn clock_side(cm: &ControlMetrics) -> i32 {
 }
 
 /// The popup panel's size in a look with controls `cm`: 174x162 inside
-/// Classic's 2 px edge, 12 px more each way inside an 8 px border, and in a
+/// Classic's 2 px edge, 12 px more each way inside an 8 px border, in a
 /// look with an analog clock wider by the clock and its gap and taller by the
-/// time line. Everything but the border grows with `cm.text`.
-pub fn popup_size(cm: &ControlMetrics) -> (i32, i32) {
+/// time line, and with an `agenda` taller by its heading and rows. Everything
+/// but the border grows with `cm.text`.
+pub fn popup_size(cm: &ControlMetrics, agenda: bool) -> (i32, i32) {
     let e = cm.flyout_border;
     let (w, h) = size(cm);
     let (clock, time) = match clock_side(cm) {
         0 => (0, 0),
         side => (cm.text.len(CLOCK_GAP) + side, cm.text.len(TIME_H) + PAD),
     };
+    let list = match agenda {
+        true => PAD + agenda::height(cm),
+        false => 0,
+    };
     (
         w + clock + 2 * (e + PAD),
-        cm.text.len(TITLE_H) + h + time + 2 * (e + PAD) + PAD,
+        cm.text.len(TITLE_H) + h + time + list + 2 * (e + PAD) + PAD,
     )
 }
 
@@ -363,9 +374,11 @@ pub struct PopupLayout {
     pub clock: Option<Rect>,
     /// The time line's row under the grid, as wide as the clock and centred under it.
     pub time: Option<Rect>,
+    /// The event list across the panel under everything else, when the popup has one.
+    pub agenda: Option<agenda::Layout>,
 }
 
-pub fn popup_layout(cm: &ControlMetrics) -> PopupLayout {
+pub fn popup_layout(cm: &ControlMetrics, with_agenda: bool) -> PopupLayout {
     let x = cm.flyout_border + PAD;
     let y = x;
     let (w, h) = size(cm);
@@ -380,13 +393,17 @@ pub fn popup_layout(cm: &ControlMetrics) -> PopupLayout {
             side,
         )
     });
+    let time = clock.map(|r| Rect::new(r.x, grid.bottom() + PAD, r.width, cm.text.len(TIME_H)));
+    let top = time.map_or(grid.bottom(), |t| t.bottom()) + PAD;
+    let width = popup_size(cm, false).0 - 2 * x;
     PopupLayout {
         prev: Rect::new(x, y, ARROW_W, title_h),
         next: Rect::new(x + w - ARROW_W, y, ARROW_W, title_h),
         title: Rect::new(x + ARROW_W, y, w - 2 * ARROW_W, title_h),
         grid: layout(grid, cm),
         clock,
-        time: clock.map(|r| Rect::new(r.x, grid.bottom() + PAD, r.width, cm.text.len(TIME_H))),
+        time,
+        agenda: with_agenda.then(|| agenda::layout(Rect::new(x, top, width, 0), cm)),
     }
 }
 
@@ -394,26 +411,39 @@ pub fn popup_layout(cm: &ControlMetrics) -> PopupLayout {
 pub enum PopupHit {
     Prev,
     Next,
+    /// A day of the month shown, which picks it for the event list; only with an agenda.
+    Day(u32),
+    /// Row `n` of the event list, an event or its "more" row; only when a click opens them.
+    Event(usize),
     Panel,
 }
 
-pub fn popup_hit(cm: &ControlMetrics, x: i32, y: i32) -> PopupHit {
-    let lay = popup_layout(cm);
+/// What point (`x`, `y`) of the popup showing `cal` lands on.
+pub fn popup_hit(cm: &ControlMetrics, cal: &Calendar, x: i32, y: i32) -> PopupHit {
+    let lay = popup_layout(cm, cal.agenda.is_some());
     if lay.prev.contains(x, y) {
-        PopupHit::Prev
-    } else if lay.next.contains(x, y) {
-        PopupHit::Next
-    } else {
-        PopupHit::Panel
+        return PopupHit::Prev;
     }
+    if lay.next.contains(x, y) {
+        return PopupHit::Next;
+    }
+    let (Some(a), Some(list)) = (&cal.agenda, &lay.agenda) else {
+        return PopupHit::Panel;
+    };
+    if let Some(Hit::Day(d)) = hit(cal, &lay.grid, x, y) {
+        return PopupHit::Day(d);
+    }
+    agenda::hit(a, list, x, y).map_or(PopupHit::Panel, PopupHit::Event)
 }
 
 /// The popup panel at `theme`'s scale: the flyout's panel
 /// ([`crate::flyout`]) round the title row, the grid and, in a look with one,
-/// the analog clock at `cal.now` over the time line `cal.time`, with its
-/// shadow round it when the look has one. Nothing is picked; today is outlined.
-/// The arrow `hot` names is drawn lit where the look lights it. Under a
-/// look that frames its flyouts as windows the title is regular weight.
+/// the analog clock at `cal.now` over the time line `cal.time`, then the event
+/// list of `cal.agenda`, with its shadow round it when the look has one. Today
+/// is outlined; a listed day other than today is picked. The arrow or event
+/// row `hot` names is drawn lit where the look lights it. Under a look that
+/// frames its flyouts as windows the title and the list's heading are regular
+/// weight.
 pub fn draw_popup(theme: &Theme, text: &TextRenderer, cal: &Calendar, hot: PopupHit) -> Canvas {
     let mut c = draw_popup_base(theme, text, cal, hot);
     if let Some(now) = cal.now {
@@ -428,7 +458,7 @@ pub fn draw_popup(theme: &Theme, text: &TextRenderer, cal: &Calendar, hot: Popup
 pub fn popup_clock(theme: &Theme) -> Option<Rect> {
     let s = theme.scale.max(1);
     let m = flyout::margin(theme).scaled(s);
-    let r = popup_layout(&theme.controls()).clock?.scaled(s);
+    let r = popup_layout(&theme.controls(), false).clock?.scaled(s);
     Some(Rect::new(r.x + m.left, r.y + m.top, r.width, r.height))
 }
 
@@ -454,8 +484,8 @@ pub fn draw_popup_base(
     let s = p.s;
     let px = theme.fonts.size_px;
     let cm = theme.controls();
-    let lay = popup_layout(&cm);
-    let (w, h) = popup_size(&cm);
+    let lay = popup_layout(&cm, cal.agenda.is_some());
+    let (w, h) = popup_size(&cm, cal.agenda.is_some());
     let mut c = Canvas::new((w * s) as u32, (h * s) as u32);
     let all = c.bounds();
     flyout::draw_panel(
@@ -488,7 +518,11 @@ pub fn draw_popup_base(
         Align::Center,
         px,
     );
-    draw(&mut c, text, p, cal, &lay.grid, false, px);
+    draw(&mut c, text, p, &picked(cal), &lay.grid, false, px);
+    if let (Some(a), Some(list)) = (&cal.agenda, &lay.agenda) {
+        let bold = flyout::look(theme).is_none();
+        agenda::draw(&mut c, text, p, a, cal.today, list, hot, bold, px);
+    }
     if let (Some(r), Some(time)) = (lay.time, &cal.time) {
         let size = cm.text.px(TIME_PX) * s as u32;
         text.draw(
@@ -502,6 +536,19 @@ pub fn draw_popup_base(
         );
     }
     flyout::shadowed(theme, c)
+}
+
+/// `cal` as the popup's grid shows it: the agenda's day picked when it is in the month shown and is
+/// not today, which stays outlined.
+fn picked(cal: &Calendar) -> Calendar {
+    let mut shown = cal.clone();
+    shown.day = match &cal.agenda {
+        Some(a) if (a.day.0, a.day.1) == (cal.year, cal.month) && Some(a.day) != cal.today => {
+            Some(a.day.2)
+        }
+        _ => None,
+    };
+    shown
 }
 
 /// The month grid's `access` part: a read-only date input whose text is
@@ -529,9 +576,9 @@ pub fn access(
 }
 
 /// The popup's `access` part, in popup coordinates: the two month
-/// buttons, which a reader can click, the analog clock where the look has one, and the grid, which
-/// reads as today's date while today is in the month shown. Returns the
-/// grid's node, which has the focus.
+/// buttons, which a reader can click, the analog clock where the look has one, the grid, which
+/// reads as the listed day's date (else today's) while it is in the month shown, and the event
+/// list. Returns the grid's node, which has the focus.
 pub fn popup_access(
     cal: &Calendar,
     cm: &ControlMetrics,
@@ -540,7 +587,7 @@ pub fn popup_access(
     tree: &mut Tree,
     parent: NodeId,
 ) -> NodeId {
-    let lay = popup_layout(cm);
+    let lay = popup_layout(cm, cal.agenda.is_some());
     for (key, r, name) in [
         ("prev", lay.prev, "Previous month"),
         ("next", lay.next, "Next month"),
@@ -556,11 +603,16 @@ pub fn popup_access(
         tree.push(parent, "time", access::named(Role::Label, r, time));
     }
     let mut shown = cal.clone();
-    shown.day = match cal.today {
+    let day = cal.agenda.as_ref().map(|a| a.day).or(cal.today);
+    shown.day = match day {
         Some((y, m, d)) if y == cal.year && m == cal.month => Some(d),
         _ => None,
     };
-    access(&shown, &lay.grid, text, px, tree, parent, "grid")
+    let grid = access(&shown, &lay.grid, text, px, tree, parent, "grid");
+    if let (Some(a), Some(list)) = (&cal.agenda, &lay.agenda) {
+        agenda::access(a, cal.today, list, tree, parent);
+    }
+    grid
 }
 
 #[cfg(test)]
@@ -568,6 +620,10 @@ mod tests {
     use super::*;
     use crate::look::classic_paint;
     use crate::theme::FontConfig;
+
+    fn bare() -> Calendar {
+        Calendar::new(2026, 9, None, 0)
+    }
 
     /// Blue's calendar box keeps the 2 px sunken edge in Blue's colours,
     /// in use and greyed: #ACA899 then #716F64 along the top and left,
@@ -682,7 +738,7 @@ mod tests {
         let text = TextRenderer::load(&FontConfig::default());
         let value = |cal: &Calendar| {
             let cm = ControlMetrics::CLASSIC;
-            let mut t = Tree::window("", popup_size(&cm));
+            let mut t = Tree::window("", popup_size(&cm, false));
             let grid = popup_access(cal, &cm, &text, 11, &mut t, access::ROOT);
             let run = t.get(grid).unwrap().children()[0];
             t.get(run).unwrap().value().map(str::to_owned)
@@ -698,7 +754,7 @@ mod tests {
     fn a_reader_can_click_the_month_buttons() {
         let text = TextRenderer::load(&FontConfig::default());
         let cm = ControlMetrics::CLASSIC;
-        let mut t = Tree::window("", popup_size(&cm));
+        let mut t = Tree::window("", popup_size(&cm, false));
         popup_access(
             &Calendar::new(2026, 9, None, 0),
             &cm,
@@ -868,12 +924,12 @@ mod tests {
     fn a_grown_popup_grows_its_grid_and_title_row() {
         let u = crate::theme::TextUnits::new(22, 11);
         let cm = ControlMetrics::CLASSIC.grown(u);
-        let lay = popup_layout(&cm);
-        assert_eq!(popup_size(&cm), (2 * W + 12, 2 * 16 + 2 * H + 16));
+        let lay = popup_layout(&cm, false);
+        assert_eq!(popup_size(&cm, false), (2 * W + 12, 2 * 16 + 2 * H + 16));
         assert_eq!(lay.prev, Rect::new(6, 6, 16, 32));
         assert_eq!(lay.grid.frame, Rect::new(6, 42, 2 * W, 2 * H));
         assert_eq!(
-            popup_hit(&cm, lay.next.x + 2, lay.next.y + 30),
+            popup_hit(&cm, &bare(), lay.next.x + 2, lay.next.y + 30),
             PopupHit::Next
         );
     }
@@ -881,26 +937,26 @@ mod tests {
     #[test]
     fn the_popup_steps_by_its_arrows() {
         let cm = ControlMetrics::CLASSIC;
-        let lay = popup_layout(&cm);
-        assert_eq!(popup_size(&cm), (174, 162));
+        let lay = popup_layout(&cm, false);
+        assert_eq!(popup_size(&cm, false), (174, 162));
         assert_eq!(
-            popup_hit(&cm, lay.prev.x + 2, lay.prev.y + 2),
+            popup_hit(&cm, &bare(), lay.prev.x + 2, lay.prev.y + 2),
             PopupHit::Prev
         );
         assert_eq!(
-            popup_hit(&cm, lay.next.x + 2, lay.next.y + 2),
+            popup_hit(&cm, &bare(), lay.next.x + 2, lay.next.y + 2),
             PopupHit::Next
         );
-        assert_eq!(popup_hit(&cm, 80, 100), PopupHit::Panel);
+        assert_eq!(popup_hit(&cm, &bare(), 80, 100), PopupHit::Panel);
         // Inside an 8 px border everything moves 6 px in and the panel
         // grows by 12 each way.
         let glass = ControlMetrics {
             flyout_border: 8,
             ..cm
         };
-        assert_eq!(popup_size(&glass), (186, 174));
-        assert_eq!(popup_layout(&glass).prev, Rect::new(12, 12, 16, 16));
-        assert_eq!(popup_hit(&glass, 13, 13), PopupHit::Prev);
+        assert_eq!(popup_size(&glass, false), (186, 174));
+        assert_eq!(popup_layout(&glass, false).prev, Rect::new(12, 12, 16, 16));
+        assert_eq!(popup_hit(&glass, &bare(), 13, 13), PopupHit::Prev);
         assert_eq!(Calendar::new(2026, 9, None, 0).title(), "September 2026");
     }
 
@@ -911,14 +967,14 @@ mod tests {
         use crate::interface::Interface;
         let glass = crate::interfaces::theme_for(Interface::Glass);
         let cm = glass.controls();
-        assert_eq!(popup_size(&cm), (327, 174 + 28));
-        let lay = popup_layout(&cm);
+        assert_eq!(popup_size(&cm, false), (327, 174 + 28));
+        let lay = popup_layout(&cm, false);
         assert_eq!(lay.clock, Some(Rect::new(186, 32, 129, 129)));
         assert_eq!(lay.time, Some(Rect::new(186, 166, 129, 24)));
         assert_eq!(lay.grid.frame.y, 32);
-        assert_eq!(popup_layout(&ControlMetrics::CLASSIC).clock, None);
-        assert_eq!(popup_layout(&ControlMetrics::CLASSIC).time, None);
-        assert_eq!(popup_size(&ControlMetrics::CLASSIC), (174, 162));
+        assert_eq!(popup_layout(&ControlMetrics::CLASSIC, false).clock, None);
+        assert_eq!(popup_layout(&ControlMetrics::CLASSIC, false).time, None);
+        assert_eq!(popup_size(&ControlMetrics::CLASSIC, false), (174, 162));
         let text = TextRenderer::load(&FontConfig::default());
         let mut cal = Calendar::new(2026, 10, None, 0);
         let m = crate::flyout::margin(&glass);
@@ -953,7 +1009,7 @@ mod tests {
         let glass = crate::interfaces::theme_for(Interface::Glass);
         let text = TextRenderer::load(&FontConfig::default());
         let m = crate::flyout::margin(&glass);
-        let r = popup_layout(&glass.controls()).time.unwrap();
+        let r = popup_layout(&glass.controls(), false).time.unwrap();
         let row = Rect::new(r.x + m.left, r.y + m.top, r.width, r.height);
         let mut cal = Calendar::new(2026, 10, None, 0);
         let bare = draw_popup(&glass, &text, &cal, PopupHit::Panel);
@@ -999,7 +1055,7 @@ mod tests {
         use crate::interface::Interface;
         let glass = crate::interfaces::theme_for(Interface::Glass).with_text_size(200);
         let cm = glass.controls();
-        let lay = popup_layout(&cm);
+        let lay = popup_layout(&cm, false);
         let grid = lay.grid.frame;
         assert_eq!((grid.width, grid.height), (2 * W, 2 * H));
         let clock = lay.clock.unwrap();
@@ -1009,7 +1065,7 @@ mod tests {
             Some(Rect::new(clock.x, grid.bottom() + 4, 259, 48))
         );
         assert_eq!(
-            popup_size(&cm),
+            popup_size(&cm, false),
             (2 * W + 24 + 259 + 24, 2 * 16 + 2 * H + 48 + 4 + 28)
         );
         let text = TextRenderer::load(&FontConfig::default());
@@ -1018,7 +1074,7 @@ mod tests {
         cal.time = Some("10:09".into());
         let c = draw_popup(&glass, &text, &cal, PopupHit::Panel);
         let m = crate::flyout::margin(&glass);
-        let (w, h) = popup_size(&cm);
+        let (w, h) = popup_size(&cm, false);
         assert_eq!(
             (c.width as i32, c.height as i32),
             (w + m.left + m.right, h + m.top + m.bottom)
