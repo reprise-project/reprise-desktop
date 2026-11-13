@@ -38,6 +38,7 @@ mod ontop;
 pub mod openwith;
 mod outputmgmt;
 pub mod pathjob;
+mod pool;
 mod primary;
 mod reply;
 mod runloop;
