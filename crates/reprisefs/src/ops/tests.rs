@@ -1171,7 +1171,10 @@ fn a_move_to_another_drive_stopped_during_the_flush_keeps_the_source() {
     fs::write(taken.join("x.txt"), "old").unwrap();
     for dir in [&free, &taken] {
         let stop = std::sync::Arc::new(AtomicBool::new(false));
-        super::put::STOP_IN_FLUSH.set(Some(stop.clone()));
+        let flag = stop.clone();
+        super::put::IN_FLUSH.set(Some(Box::new(move || {
+            flag.store(true, std::sync::atomic::Ordering::Relaxed)
+        })));
         let put = put_in_until(
             &src,
             "x.txt",
@@ -1197,6 +1200,104 @@ fn a_move_to_another_drive_stopped_during_the_flush_keeps_the_source() {
         "no copy is left beside the file"
     );
     assert_eq!(fs::read_to_string(taken.join("x.txt")).unwrap(), "old");
+}
+
+#[test]
+fn land_part_fails_without_touching_what_took_its_name_meanwhile() {
+    let t = tempfile::tempdir().unwrap();
+    let to = t.path().join("Photos");
+    for fail in [true, false] {
+        let e = land_part(
+            &to,
+            |part| {
+                fs::create_dir(part)?;
+                fs::write(part.join("a.jpg"), "ours")?;
+                fs::create_dir(&to).unwrap();
+                fs::write(to.join("notes.txt"), "theirs").unwrap();
+                Ok(())
+            },
+            |_| match fail {
+                true => Err(io::Error::new(io::ErrorKind::Interrupted, "stopped")),
+                false => Ok(()),
+            },
+        )
+        .unwrap_err();
+        let kind = [io::ErrorKind::AlreadyExists, io::ErrorKind::Interrupted][fail as usize];
+        assert_eq!(e.kind(), kind);
+        assert_eq!(fs::read_to_string(to.join("notes.txt")).unwrap(), "theirs");
+        assert_eq!(
+            fs::read_dir(&to).unwrap().count(),
+            1,
+            "nothing of ours in Photos"
+        );
+        assert_eq!(fs::read_dir(t.path()).unwrap().count(), 1, "no part left");
+        fs::remove_dir_all(&to).unwrap();
+    }
+}
+
+#[test]
+fn a_folder_copy_is_not_at_its_name_until_it_is_whole() {
+    let t = tempfile::tempdir().unwrap();
+    let src = t.path().join("Reports");
+    fs::create_dir(&src).unwrap();
+    fs::write(src.join("a.txt"), "1").unwrap();
+    let dest = t.path().join("Copy");
+    let stop = AtomicBool::new(false);
+    land_part(
+        &dest,
+        |part| super::copy::build_dir(&src, part, &stop),
+        |part| {
+            assert!(!dest.exists(), "Copy is not there while it is built");
+            assert_eq!(fs::read_to_string(part.join("a.txt")).unwrap(), "1");
+            Ok(())
+        },
+    )
+    .unwrap();
+    assert_eq!(fs::read_to_string(dest.join("a.txt")).unwrap(), "1");
+    assert_eq!(fs::read_dir(t.path()).unwrap().count(), 2, "no part left");
+}
+
+/// A move to another drive whose name is taken while its copy flushes lands numbered.
+#[test]
+fn a_move_to_another_drive_whose_name_is_taken_during_the_flush_lands_numbered() {
+    use std::os::unix::fs::MetadataExt;
+    let shm = tempfile::tempdir_in("/dev/shm").unwrap();
+    let t = tempfile::tempdir().unwrap();
+    let dev = |p: &Path| fs::metadata(p).unwrap().dev();
+    if dev(shm.path()) == dev(t.path()) {
+        eprintln!("/dev/shm and the temp dir share a device: nothing to cross");
+        return;
+    }
+    let src = shm.path().join("Photos");
+    fs::create_dir(&src).unwrap();
+    fs::write(src.join("a.jpg"), "a").unwrap();
+    let theirs = t.path().join("Photos");
+    let at = theirs.clone();
+    super::put::IN_FLUSH.set(Some(Box::new(move || fs::create_dir(&at).unwrap())));
+    let Landing { name, .. } = put_in_until(
+        &src,
+        "Photos",
+        false,
+        t.path(),
+        DropOp::Move,
+        &[],
+        &|_| None,
+        None,
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert_eq!(name, "Photos (2)");
+    assert_eq!(
+        fs::read_dir(&theirs).unwrap().count(),
+        0,
+        "theirs stays empty"
+    );
+    assert_eq!(
+        fs::read_to_string(t.path().join("Photos (2)/a.jpg")).unwrap(),
+        "a"
+    );
+    assert!(!src.exists());
+    assert_eq!(fs::read_dir(t.path()).unwrap().count(), 2, "no part left");
 }
 
 #[test]

@@ -7,16 +7,22 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// (`AlreadyExists`, left untouched). A symlink is copied as a symlink, as
 /// `cp -a` does: following one would lose the shortcut and let a link pointing
 /// back up the tree recurse. Entries are listed before `dest` exists, so a `dest`
-/// inside `src` is never walked. A copy that fails part way removes what it made
-/// of `dest`. Entries that are neither files, folders nor links (a FIFO, a
-/// socket) are skipped: `fs::copy` would block opening them.
+/// inside `src` is never walked. The tree is built under a hidden part name beside
+/// `dest` and renamed to it once whole ([`super::land_part`]): a copy that fails
+/// part way removes only the part. Entries that are neither files, folders nor
+/// links (a FIFO, a socket) are skipped: `fs::copy` would block opening them.
 pub fn copy_dir_all(src: &Path, dest: &Path) -> io::Result<()> {
     copy_dir_until(src, dest, &AtomicBool::new(false))
 }
 
 /// [`copy_dir_all`], checking `stop` before each entry. Once it is set
-/// the copy fails with `Interrupted` and removes what it made of `dest`.
+/// the copy fails with `Interrupted` and removes its part.
 pub(crate) fn copy_dir_until(src: &Path, dest: &Path, stop: &AtomicBool) -> io::Result<()> {
+    super::land_part(dest, |part| build_dir(src, part, stop), |_| Ok(()))
+}
+
+/// [`copy_dir_until`] built straight at `dest`, which a failure removes whole.
+pub(crate) fn build_dir(src: &Path, dest: &Path, stop: &AtomicBool) -> io::Result<()> {
     let entries = read_then_create(src, dest)?;
     // `dest` is ours from here on, so a failure may remove it. Folders keep the mode they were
     // made with until the whole tree has landed, so a read-only one never blocks the cleanup.
