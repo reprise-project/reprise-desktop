@@ -269,6 +269,45 @@ fn a_grown_icon_list_widens_and_keeps_its_bar_at_its_foot() {
     assert_eq!(lay.cols, 4, "the width shows more columns");
 }
 
+#[test]
+fn change_icon_drop_keeps_a_shown_pick_in_view_at_grown_text() {
+    use crate::controls::filesheet::{
+        CHANGE_ICON_LIST, change_icon_drop, change_icon_form, change_icon_list_mut,
+    };
+    let text = TextRenderer::load(&FontConfig::default());
+    let names: Vec<String> = (0..120).map(|i| format!("i{i}")).collect();
+    let list = iconlist::IconList::new(names, vec![None; 120], Some(4 * 17));
+    let mut f = change_icon_form("x", list, false);
+    let theme = Theme::default();
+    let u = TextUnits::new(22, 11);
+    let p = Paint {
+        text: u,
+        ..classic_paint(&theme.colors, 1)
+    };
+    draw(&mut Canvas::new(900, 900), &text, &p, &f, false, 22);
+    let grown = f.rect(CHANGE_ICON_LIST).unwrap();
+    let lay = icon_list_layout(false, grown, &ControlMetrics::CLASSIC.grown(u));
+    assert_eq!(lay.cols, 14, "the grown list shows 14 columns");
+    change_icon_list_mut(&mut f).unwrap().left = 5;
+    let l = change_icon_list_mut(&mut f).unwrap().clone();
+    assert!(
+        l.cell_rect(&lay, l.selected.unwrap()).is_some(),
+        "shown before the drop"
+    );
+    let gone: Vec<String> = (0..60).map(|i| format!("i{i}")).collect();
+    change_icon_drop(&mut f, &gone);
+    let l = change_icon_list_mut(&mut f).unwrap().clone();
+    assert!(
+        l.cell_rect(&lay, l.selected.unwrap()).is_some(),
+        "still shown after the drop"
+    );
+    assert_eq!(
+        l.left + lay.cols,
+        l.columns(),
+        "no blank columns past the last icon"
+    );
+}
+
 /// A form drawn at an origin keeps that offset as it is and grows only its own layout from
 /// there.
 #[test]
