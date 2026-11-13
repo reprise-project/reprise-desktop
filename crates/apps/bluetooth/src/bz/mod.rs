@@ -25,6 +25,8 @@ pub struct Snapshot {
     /// radio.
     pub adapter: Option<Adapter>,
     pub devices: Vec<Device>,
+    /// Whether airplane mode is on; None on a machine with no radio switch.
+    pub airplane: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -266,6 +268,7 @@ pub fn fold(objects: &Objects) -> Snapshot {
     Snapshot {
         adapter: Some(adapter),
         devices,
+        airplane: None,
     }
 }
 
@@ -352,6 +355,8 @@ pub enum Cmd {
     },
     /// Take files from paired devices (register the OBEX agent), or stop.
     Receive(bool),
+    /// Turn airplane mode on or off.
+    Airplane(bool),
     Quit,
 }
 
@@ -465,6 +470,8 @@ pub fn failure_title(cmd: &Cmd) -> &'static str {
         Cmd::Disconnect(_) => "Could not disconnect",
         Cmd::Remove { .. } => "Could not remove the device",
         Cmd::SetTrusted { .. } | Cmd::SetAlias { .. } => "Could not change the device",
+        Cmd::Airplane(true) => "Could not turn airplane mode on",
+        Cmd::Airplane(false) => "Could not turn airplane mode off",
         Cmd::StopDiscovery(_) | Cmd::Pair(_) | Cmd::CancelPair(_) | Cmd::Receive(_) | Cmd::Quit => {
             "Bluetooth"
         }

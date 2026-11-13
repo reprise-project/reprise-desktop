@@ -406,6 +406,11 @@ impl BtApp {
                         self.spawn_with_token(&argv);
                     }
                 }
+                tray::TrayMsg::Airplane => {
+                    if let Some(on) = self.snapshot.airplane {
+                        self.send(bz::Cmd::Airplane(!on));
+                    }
+                }
                 tray::TrayMsg::TogglePower => {
                     if let Some(a) = &self.snapshot.adapter {
                         self.send(bz::Cmd::SetPowered {
@@ -1298,6 +1303,7 @@ mod tests {
                 ..Adapter::default()
             }),
             devices: vec![cans(false)],
+            airplane: None,
         }
     }
 
