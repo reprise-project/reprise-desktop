@@ -54,6 +54,9 @@ impl SettingsApp {
                 if p == Page::Privacy.index() && id == crate::clipaccess::LIST {
                     return self.clip_changed();
                 }
+                if p == Page::Search.index() && id == crate::providerpage::LIST {
+                    return self.providers_changed();
+                }
                 if id == pages::REMOTE_ALLOW {
                     self.remote_toggled();
                     return Reply::redraw();
@@ -243,6 +246,8 @@ impl SettingsApp {
                 }
                 pages::KB_REMOVE => self.remove_layout(),
                 pages::KB_UP => self.move_layout_up(),
+                crate::providerpage::UP => self.move_provider(true),
+                crate::providerpage::DOWN => self.move_provider(false),
                 menupage::ADD | quickpage::ADD => {
                     let apps = reprisefs::apps::scan(&reprisefs::apps::default_dirs());
                     self.add_item = Some(additem::AddItemDialog::new(apps, &self.want.terminal));

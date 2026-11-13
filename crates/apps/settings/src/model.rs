@@ -198,6 +198,10 @@ pub struct Settings {
     pub launcher_files: bool,
     /// `[launcher] windows`.
     pub launcher_windows: bool,
+    /// `[launcher] providers`: the search providers by desktop id, in order.
+    pub launcher_providers: Vec<String>,
+    /// `[launcher] providers_off`.
+    pub launcher_providers_off: Vec<String>,
     /// `[thumbnail_cache] enabled` and `max_mb`, the cap in MiB
     /// ([`repriseconf::ThumbnailCache::MAX_MB`]; the up-down clamps a value outside it).
     pub thumbnail_cache: bool,
@@ -555,6 +559,8 @@ impl Settings {
             debug_overlay_in_captures: c.debug.overlay_in_captures,
             launcher_files: c.launcher_files,
             launcher_windows: c.launcher_windows,
+            launcher_providers: c.launcher_providers.clone(),
+            launcher_providers_off: c.launcher_providers_off.clone(),
             thumbnail_cache: repriseconf::ThumbnailCache::DEFAULT.enabled,
             thumbnail_max_mb: repriseconf::ThumbnailCache::DEFAULT.max_mb as i64,
             external_thumbnailers: repriseconf::ThumbnailCache::DEFAULT.external_thumbnailers,

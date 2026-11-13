@@ -530,6 +530,7 @@ mod tests {
             (Page::Startup, SIDE_LIST),
             (Page::Keyboard, SIDE_LIST),
             (Page::DefaultPrograms, SIDE_LIST),
+            (Page::Search, crate::providerpage::LIST),
         ] {
             let (was, now) = grower(p, id);
             assert_eq!(now, was + large.dh, "{}: {id}", p.label());

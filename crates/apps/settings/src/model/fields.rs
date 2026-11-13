@@ -135,6 +135,11 @@ pub(super) fn fields() -> Vec<Field> {
         ),
         Field::Flag(k("launcher", "search_files"), lens!(launcher_files)),
         Field::Flag(k("launcher", "windows"), lens!(launcher_windows)),
+        Field::Strings(k("launcher", "providers"), lens!(launcher_providers)),
+        Field::Strings(
+            k("launcher", "providers_off"),
+            lens!(launcher_providers_off),
+        ),
         Field::Flag(k("thumbnail_cache", "enabled"), lens!(thumbnail_cache)),
         Field::Int(k("thumbnail_cache", "max_mb"), lens!(thumbnail_max_mb)),
         Field::Flag(

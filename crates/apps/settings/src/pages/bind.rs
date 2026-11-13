@@ -489,7 +489,7 @@ type Nudge = fn(&mut Settings);
 
 /// The controls that write their keys outside [`binds`]: lists, pickers and the dialogs a page
 /// opens, each with what it moves.
-fn unbound() -> [(&'static str, Nudge); 9] {
+fn unbound() -> [(&'static str, Nudge); 10] {
     [
         (KB_LAYOUTS, |s| {
             s.kb_layout.push('\u{1}');
@@ -525,6 +525,10 @@ fn unbound() -> [(&'static str, Nudge); 9] {
         }),
         (crate::clipaccess::LIST, |s| {
             s.clipboard_trusted.push("\u{1}".into())
+        }),
+        (crate::providerpage::LIST, |s| {
+            s.launcher_providers.push("\u{1}".into());
+            s.launcher_providers_off.push("\u{1}".into());
         }),
     ]
 }

@@ -293,6 +293,72 @@ fn the_content_search_note_greys_without_localsearch() {
     assert!(!a.contents_done(), "nothing more to read");
 }
 
+/// The Search page lists the installed providers once read; a tick and Move Down write
+/// `[launcher] providers` and `providers_off` on Apply.
+#[test]
+fn the_program_results_list_ticks_and_orders_the_providers() {
+    use crate::providerpage::{DOWN, Installed, LIST, UP};
+    let mut a = app("providers");
+    a.open_page(Page::Search, None);
+    let at = Page::Search.index();
+    let list = |a: &SettingsApp| match &a.sheet.pages[at].item(LIST).unwrap().control {
+        form::Control::ListBox { list, .. } => (list.items.clone(), list.checks.clone()),
+        _ => panic!("a list"),
+    };
+    a.ensure_providers();
+    assert_eq!(list(&a).0, ["Loading..."]);
+    let installed = |id: &str, name: &str| Installed {
+        provider: reprisefs::searchproviders::Provider {
+            desktop_id: id.into(),
+            bus_name: format!("org.example.{name}"),
+            object_path: "/".into(),
+            default_disabled: false,
+        },
+        name: name.into(),
+        icon: None,
+    };
+    let (tx, rx) = std::sync::mpsc::channel();
+    tx.send(vec![
+        installed("f.desktop", "Files"),
+        installed("c.desktop", "Calculator"),
+    ])
+    .unwrap();
+    a.providers.job = Some(rx);
+    assert!(a.providers_done());
+    assert_eq!(
+        list(&a),
+        (vec!["Calculator".into(), "Files".into()], vec![true, true])
+    );
+    assert!(!a.dirty(), "listing writes nothing");
+
+    if let Some(form::Control::ListBox { list, .. }) =
+        a.sheet.pages[at].item_mut(LIST).map(|i| &mut i.control)
+    {
+        list.selected = Some(0);
+    }
+    a.sheet_event(propsheet::Event::Page(at, form::Event::Changed(LIST)));
+    assert!(!a.dirty(), "picking a row writes nothing");
+    a.sheet_event(propsheet::Event::Page(at, form::Event::Pressed(DOWN)));
+    assert_eq!(list(&a).0, ["Files", "Calculator"]);
+    if let Some(form::Control::ListBox { list, .. }) =
+        a.sheet.pages[at].item_mut(LIST).map(|i| &mut i.control)
+    {
+        assert_eq!(list.selected, Some(1), "the moved row stays picked");
+        list.toggle(1);
+    }
+    a.sheet_event(propsheet::Event::Page(at, form::Event::Changed(LIST)));
+    assert_eq!(list(&a).1, [true, false]);
+    let up = &a.sheet.pages[at].item(UP).unwrap().control;
+    assert!(matches!(up, form::Control::Button { enabled: true, .. }));
+    assert!(a.apply());
+    let text = std::fs::read_to_string(&a.path).unwrap();
+    assert!(
+        text.contains("providers = [\"f.desktop\", \"c.desktop\"]")
+            && text.contains("providers_off = [\"c.desktop\"]"),
+        "{text}"
+    );
+}
+
 fn reader_read(a: &mut SettingsApp, reader: readerhost::Reader, failed: Option<String>) {
     let (tx, rx) = std::sync::mpsc::channel();
     tx.send(readerhost::Reading { reader, failed }).unwrap();

@@ -798,7 +798,49 @@ fn the_search_page_geometry() {
     assert_eq!(rect(&s, p, "launcher_files"), Rect::new(32, 117, 13, 13));
     assert_eq!(rect(&s, p, "launcher_windows"), Rect::new(32, 139, 13, 13));
     assert_eq!(rect(&s, p, CONTENTS_NOTE), Rect::new(32, 161, 334, 26));
+    assert_eq!(
+        rect(&s, p, "search_providers_group"),
+        Rect::new(20, 210, 358, 168)
+    );
+    assert_eq!(
+        rect(&s, p, "search_providers_note"),
+        Rect::new(32, 232, 334, 26)
+    );
+    assert_eq!(
+        rect(&s, p, crate::providerpage::LIST),
+        Rect::new(32, 262, 253, 106)
+    );
+    assert_eq!(
+        rect(&s, p, crate::providerpage::UP),
+        Rect::new(291, 262, 75, 23)
+    );
+    assert_eq!(
+        rect(&s, p, crate::providerpage::DOWN),
+        Rect::new(291, 289, 75, 23)
+    );
     inside_page(&s, p);
+}
+
+/// Every line of the Search page fits its rect in the dialog font, the list's empty note too.
+#[test]
+fn the_search_page_lines_fit() {
+    reprisekit::pins::fonts();
+    let text = TextRenderer::load(&FontConfig::default());
+    let px = Theme::default().fonts.size_px;
+    let mut page = search(Area::MIN);
+    crate::providerpage::fill(&mut page, Some(&[]), None);
+    let list_w = page.item(crate::providerpage::LIST).unwrap().rect.width;
+    for it in &page.items {
+        let (lines, width) = match &it.control {
+            Control::Lines(l) => (l.clone(), it.rect.width),
+            Control::Label { text, .. } => (vec![text.clone()], it.rect.width),
+            Control::ListBox { list, .. } => (list.items.clone(), list_w - 8),
+            _ => continue,
+        };
+        for line in lines {
+            assert!(text.measure(&line, false, px) <= width, "{}: {line}", it.id);
+        }
+    }
 }
 
 #[test]
