@@ -46,6 +46,32 @@ pub fn forget_location(app_id: &str) -> zbus::Result<()> {
     Ok(())
 }
 
+/// `app_id`'s permission in entry `id` of `table`; None when the store holds none.
+pub fn app_permission(table: &str, id: &str, app_id: &str) -> zbus::Result<Option<Vec<String>>> {
+    let conn = crate::session()?;
+    let reply =
+        crate::wait(conn.call_method(Some(NAME), PATH, Some(INTERFACE), "Lookup", &(table, id)));
+    let reply = match reply {
+        Err(e) if crate::error::name(&e).is_some_and(|n| n == NOT_FOUND) => return Ok(None),
+        r => r?,
+    };
+    let (mut perms, _): (HashMap<String, Vec<String>>, OwnedVariant) =
+        reply.body().deserialize()?;
+    Ok(perms.remove(app_id))
+}
+
+/// Store `perms` as `app_id`'s permission in entry `id` of `table`, creating both if missing.
+pub fn set_app_permission(table: &str, id: &str, app_id: &str, perms: &[&str]) -> zbus::Result<()> {
+    crate::wait(crate::session()?.call_method(
+        Some(NAME),
+        PATH,
+        Some(INTERFACE),
+        "SetPermission",
+        &(table, true, id, app_id, perms),
+    ))?;
+    Ok(())
+}
+
 /// Each app's permission is `[accuracy, last use]`; any accuracy but `NONE`
 /// allows. Sorted by app id.
 fn answers(perms: HashMap<String, Vec<String>>) -> Vec<(String, bool)> {
