@@ -835,8 +835,8 @@ the screen takes the interface of the last session used at this computer.
   or area being recorded or shared. Recordings never show it, and a single
   screenshot draws none. Settings > Privacy turns it off. The Remote Desktop
   server's screens get none unless Settings > Remote Desktop asks for it.
-- **Prompts.** Screen sharing, remote control, input capture, location and
-  camera access through the portal all ask first. Cancel or Deny is the default button, so a
+- **Prompts.** Screen sharing, remote control, input capture, location,
+  camera access and your name and picture through the portal all ask first. Cancel or Deny is the default button, so a
   stray Enter never grants anything.
 - **Sandboxed programs get less.** Flatpaks can't see the desktop's
   privileged protocols, such as input injection or screen capture. Other

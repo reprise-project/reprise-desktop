@@ -323,6 +323,11 @@ pub fn read_hardware_model() -> Option<String> {
 /// The full name of `uid` through NSS, so homed, sssd or LDAP users missing from
 /// /etc/passwd resolve too. None for an unknown uid.
 pub fn full_name(uid: u32) -> Option<String> {
+    account(uid).map(|(_, name)| name)
+}
+
+/// The login and [`full_name`] of `uid`.
+pub fn account(uid: u32) -> Option<(String, String)> {
     use std::ffi::CStr;
     let mut buf = vec![0u8; 1024];
     loop {
@@ -357,7 +362,9 @@ pub fn full_name(uid: u32) -> Option<String> {
             // NUL-terminated string in `buf`, still in scope.
             unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned()
         };
-        return display_name(&text(pwd.pw_name), &text(pwd.pw_gecos));
+        let login = text(pwd.pw_name);
+        let name = display_name(&login, &text(pwd.pw_gecos))?;
+        return Some((login, name));
     }
 }
 

@@ -28,6 +28,9 @@ const MARGIN: i32 = 11;
 const SUBTITLE_LINES: usize = 4;
 const BODY_LINES: usize = 12;
 const FALLBACK_ICON: &str = "dialog-question";
+/// The account picture's side, and its gap to the name beside it.
+const PICTURE_PX: i32 = 48;
+const PICTURE_GAP: i32 = 8;
 
 pub struct Access {
     pub frontend: crate::Frontend,
@@ -75,6 +78,17 @@ pub struct Input {
     pub grant_label: Option<String>,
     pub deny_label: Option<String>,
     pub choices: Vec<Choice>,
+    #[serde(default)]
+    pub person: Option<Person>,
+}
+
+/// An account the prompt shows under the subtitle: its picture file, when it has one, beside the
+/// name and the login.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+pub struct Person {
+    pub name: String,
+    pub login: String,
+    pub picture: Option<String>,
 }
 
 /// What the prompt answers. A killed or failed child reads as the default:
@@ -100,7 +114,7 @@ pub fn icon_names(icon: Option<&str>) -> Vec<String> {
     names
 }
 
-/// The prompt's form and 100% client size for text set at `px` that grows by `u`: subtitle, body and choices stacked from line 12, Allow and Deny 20 px under the lowest row and never above the permit prompt's row at 97. Subtitle and body are capped at `SUBTITLE_LINES` and `BODY_LINES`. Deny is the default button and has the focus, so Enter never grants by accident; a consent form ([`Form::set_consent`]). `cm` is the look the prompt runs in, whose combo lists are kept inside it.
+/// The prompt's form and 100% client size for text set at `px` that grows by `u`: subtitle, the account ([`Person`]), body and choices stacked from line 12, Allow and Deny 20 px under the lowest row and never above the permit prompt's row at 97. Subtitle and body are capped at `SUBTITLE_LINES` and `BODY_LINES`. Deny is the default button and has the focus, so Enter never grants by accident; a consent form ([`Form::set_consent`]). `cm` is the look the prompt runs in, whose combo lists are kept inside it.
 pub fn build_form(
     input: &Input,
     text: &TextRenderer,
@@ -113,10 +127,7 @@ pub fn build_form(
     let mut items: Vec<Item> = Vec::new();
     let mut bottom: Option<i32> = None;
     let next_y = |bottom: Option<i32>| bottom.map_or(FIRST_Y, |b| b + LINE_H);
-    for (id, s, max) in [
-        ("subtitle", &input.subtitle, SUBTITLE_LINES),
-        ("body", &input.body, BODY_LINES),
-    ] {
+    let lines = |id, s: &str, max, items: &mut Vec<Item>, bottom: &mut Option<i32>| {
         let lines = capped(
             text,
             reprisekit::text::wrap(text, s, wrap_w, px),
@@ -125,14 +136,26 @@ pub fn build_form(
             px,
         );
         if lines.is_empty() {
-            continue;
+            return;
         }
-        let y = next_y(bottom);
+        let y = next_y(*bottom);
         let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
         let h = LINE_H * refs.len() as i32;
         items.push(Item::lines(id, Rect::new(TEXT_X, y, col, h), &refs));
-        bottom = Some(y + h);
+        *bottom = Some(y + h);
+    };
+    lines(
+        "subtitle",
+        &input.subtitle,
+        SUBTITLE_LINES,
+        &mut items,
+        &mut bottom,
+    );
+    if let Some(p) = &input.person {
+        let y = next_y(bottom);
+        bottom = Some(y + person_rows(p, y, col, &mut items));
     }
+    lines("body", &input.body, BODY_LINES, &mut items, &mut bottom);
     if !input.choices.is_empty() {
         let (rows, end) = choices::choice_rows(
             &input.choices,
@@ -167,6 +190,31 @@ pub fn build_form(
     form.focus_id("deny");
     form.set_consent();
     (form, size)
+}
+
+/// `p`'s picture at `y` with its name and login beside it, the login left out when it is the name;
+/// the height they take.
+fn person_rows(p: &Person, y: i32, col: i32, items: &mut Vec<Item>) -> i32 {
+    let shown: Vec<(&'static str, &str)> = [("name", p.name.as_str()), ("login", &p.login)]
+        .into_iter()
+        .filter(|(id, s)| *id == "name" || *s != p.name)
+        .collect();
+    let lines_h = shown.len() as i32 * LINE_H;
+    let (dx, h) = match p.picture {
+        Some(_) => (PICTURE_PX + PICTURE_GAP, PICTURE_PX),
+        None => (0, lines_h),
+    };
+    if p.picture.is_some() {
+        let at = Rect::new(TEXT_X, y, PICTURE_PX, PICTURE_PX);
+        items.push(Item::picture("picture", at, None));
+    }
+    let top = y + (h - lines_h) / 2;
+    for (i, (id, s)) in shown.into_iter().enumerate() {
+        let line = reprisekit::text::escape_mnemonic(&dialog::one_line(s));
+        let row = Item::label_at(id, TEXT_X, top + i as i32 * LINE_H, col, &line);
+        items.push(row.indent_px(dx));
+    }
+    h
 }
 
 fn capped(
@@ -212,12 +260,13 @@ impl Input {
                 .get("choices")
                 .map(choices::parse_choices)
                 .unwrap_or_default(),
+            person: None,
         }
     }
 }
 
 /// Show the prompt and wait for it; a cancel kills it. Blocks.
-fn ask(input: &Input, cancel: Arc<AtomicBool>) -> Output {
+pub(crate) fn ask(input: &Input, cancel: Arc<AtomicBool>) -> Output {
     dialog::run_toml(&["--access"], input, &cancel)
         .and_then(|out| {
             toml::from_str(&out)
@@ -246,13 +295,23 @@ fn reply(out: &Output) -> (u32, HashMap<String, OwnedVariant>) {
 }
 
 pub fn run_dialog() {
-    let Some(input) = dialog::read_input::<Input>() else {
+    let Some(mut input) = dialog::read_input::<Input>() else {
         return;
     };
     let text = TextRenderer::load(&reprisekit::theme::Theme::default().fonts);
     let forms = dialog::start_forms();
     let cm = forms.look.controls();
-    let (form, size) = build_form(&input, &text, forms.fonts.size_px, forms.text, &cm);
+    let picture = input.person.as_mut().and_then(|p| {
+        let c = p.picture.as_deref().and_then(account_picture);
+        if c.is_none() {
+            p.picture = None;
+        }
+        c
+    });
+    let (mut form, size) = build_form(&input, &text, forms.fonts.size_px, forms.text, &cm);
+    if let Some(c) = picture {
+        form.set_picture("picture", c);
+    }
     let mut icons = dialog::icons();
     let icon = icon_names(input.icon.as_deref())
         .iter()
@@ -265,6 +324,23 @@ pub fn run_dialog() {
         Ok(s) => print!("{s}"),
         Err(e) => log::warn!("access answer: {e}"),
     }
+}
+
+/// The picture file at `path` cut to its centred square, [`PICTURE_PX`] a side.
+fn account_picture(path: &str) -> Option<Canvas> {
+    let max = (4 * PICTURE_PX) as u32;
+    let d = repriseapp::decode::Decoders::default_set()
+        .decode_file(std::path::Path::new(path), (max, max))?;
+    let (w, h) = (d.canvas.width, d.canvas.height);
+    let side = w.min(h);
+    let square = Rect::new(
+        ((w - side) / 2) as i32,
+        ((h - side) / 2) as i32,
+        side as i32,
+        side as i32,
+    );
+    let px = PICTURE_PX as u32;
+    Some(d.canvas.copy_rect(square).resample_box(px, px))
 }
 
 /// The window: Allow records a grant and the choices; any other close
@@ -459,6 +535,110 @@ mod tests {
             "the open list ends at {} inside the {h} px client",
             list.bottom()
         );
+    }
+
+    fn jane(picture: bool) -> Input {
+        Input {
+            subtitle: "Recipes wants your name and picture.".into(),
+            body: "Allows your name to be included with recipes you share.".into(),
+            person: Some(Person {
+                name: "Jane Doe".into(),
+                login: "jane".into(),
+                picture: picture.then(|| "/var/lib/AccountsService/icons/jane".into()),
+            }),
+            ..base()
+        }
+    }
+
+    #[test]
+    fn an_account_shows_its_picture_beside_the_name_and_login_over_the_reason() {
+        use reprisekit::controls::form::Indent;
+        let (f, (_, h)) = form(&jane(true));
+        let picture = f.item("picture").unwrap();
+        assert_eq!(
+            picture.rect,
+            Rect::new(TEXT_X, 38, 48, 48),
+            "a line under the subtitle"
+        );
+        let (name, login) = (f.item("name").unwrap(), f.item("login").unwrap());
+        assert_eq!(
+            (name.rect.y, login.rect.y),
+            (49, 62),
+            "centred on the picture"
+        );
+        assert_eq!(name.indent, Indent::Px(56), "8 px right of the picture");
+        assert_eq!(f.item("body").unwrap().rect.y, 38 + 48 + LINE_H);
+        assert!(f.item("allow").unwrap().rect.y > 38 + 48 + LINE_H);
+        assert_eq!(h, f.item("allow").unwrap().rect.bottom() + MARGIN);
+        let over = crate::dialog::overflows(|theme, text| {
+            let (px, u) = (theme.fonts.size_px, theme.text);
+            build_form(&jane(true), text, px, u, &theme.controls()).0
+        });
+        assert!(over.is_empty(), "{}", over.join("\n"));
+    }
+
+    #[test]
+    fn an_account_without_a_picture_or_real_name_shows_only_its_lines() {
+        let (f, _) = form(&jane(false));
+        assert!(f.item("picture").is_none());
+        let name = f.item("name").unwrap();
+        assert_eq!((name.rect.x, name.rect.y), (TEXT_X, 38));
+        assert_eq!(name.indent, reprisekit::controls::form::Indent::Px(0));
+        assert_eq!(f.item("body").unwrap().rect.y, 38 + 3 * LINE_H);
+        let mut same = jane(false);
+        same.person.as_mut().unwrap().name = "jane".into();
+        let (f, _) = form(&same);
+        assert!(f.item("login").is_none(), "the login is the name");
+        assert_eq!(
+            f.item("body").unwrap().rect.y,
+            38 + 2 * LINE_H,
+            "one line, then a gap"
+        );
+        let line = |f: &Form| match &f.item("name").unwrap().control {
+            Control::Label { text, .. } => text.clone(),
+            _ => panic!("the name is a label"),
+        };
+        same.person.as_mut().unwrap().name = "Tom & Jerry\nTwo".into();
+        assert_eq!(
+            line(&form(&same).0),
+            "Tom && Jerry Two",
+            "one line, no access key"
+        );
+    }
+
+    #[test]
+    fn the_account_picture_draws_left_of_the_inked_name() {
+        use reprisekit::controls::form as kit;
+        use reprisekit::theme::Theme;
+        let theme = Theme::default();
+        let text = TextRenderer::load(&FontConfig::default());
+        let (mut f, (w, h)) = form(&jane(true));
+        let red = reprisekit::theme::Color::rgb(200, 0, 0);
+        let mut pic = Canvas::new(48, 48);
+        pic.fill_rect(pic.bounds(), red);
+        f.set_picture("picture", pic);
+        let mut c = Canvas::new(w as u32, h as u32);
+        c.fill_rect(c.bounds(), theme.colors.button_face);
+        kit::draw(&mut c, &text, &theme.paint(), &f, true, 11);
+        for (x, y) in [(TEXT_X, 38), (TEXT_X + 47, 38 + 47)] {
+            assert_eq!(c.get(x, y), red.argb(), "the picture fills ({x}, {y})");
+        }
+        assert_ne!(c.get(TEXT_X + 48, 38), red.argb(), "48 px wide");
+        let ink = theme.colors.button_text.argb();
+        let inked =
+            |x0: i32, y0: i32| (y0..y0 + LINE_H).any(|y| (x0..x0 + 40).any(|x| c.get(x, y) == ink));
+        assert!(
+            inked(TEXT_X + 56, 49),
+            "the name inked from x 110 on the row at y 49"
+        );
+        assert!(inked(TEXT_X + 56, 62), "the login inked on the row at y 62");
+    }
+
+    #[test]
+    fn access_input_with_an_account_survives_the_pipe() {
+        let input = jane(true);
+        let back: Input = toml::from_str(&toml::to_string(&input).unwrap()).unwrap();
+        assert_eq!(back, input);
     }
 
     #[test]

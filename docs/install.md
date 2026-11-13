@@ -415,8 +415,8 @@ desktop and stays out of the way when it's missing.
   outside CUPS's admin group without the admin password prompt
 - PackageKit, Flatpak and fwupd, for system, Flatpak and firmware updates in
   Software Updates
-- AccountsService, for User Accounts and the user pictures on the login
-  screen
+- AccountsService, for User Accounts, the user pictures on the login
+  screen and the picture a program asks for through the Account portal
 
 **Security**
 

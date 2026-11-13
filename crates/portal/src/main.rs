@@ -1,11 +1,12 @@
 //! reprise-portal: xdg-desktop-portal backend (ScreenCast, Screenshot, RemoteDesktop, InputCapture, GlobalShortcuts, Access,
-//! FileChooser, AppChooser, Notification, Inhibit, Background, Wallpaper, Email) as `org.freedesktop.impl.portal.desktop.reprise`; dialogs run in a child process (`dialog`).
+//! FileChooser, AppChooser, Notification, Inhibit, Background, Wallpaper, Email, Account) as `org.freedesktop.impl.portal.desktop.reprise`; dialogs run in a child process (`dialog`).
 //! It serves only while Reprise is the session's compositor (see `owner`).
 
 #[cfg(test)]
 reprisebus::test_session!();
 
 mod access;
+mod account;
 mod appchoose;
 mod appchooser;
 mod background;
@@ -1221,6 +1222,12 @@ async fn serve(
         .serve_at(
             PATH,
             email::Email {
+                frontend: frontend(),
+            },
+        )
+        .serve_at(
+            PATH,
+            account::Account {
                 frontend: frontend(),
             },
         )

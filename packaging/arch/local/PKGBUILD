@@ -44,7 +44,7 @@ optdepends=('ttf-tahoma: Wine'\''s Tahoma, the UI font the layouts are tuned for
             'packagekit: reprise-updates, the updates tray icon and Software Updates'
             'flatpak: Flatpak application and runtime updates in Software Updates'
             'fwupd: firmware updates in Software Updates (curl, which pacman needs too, downloads them)'
-            'accountsservice: reprise-accounts (User Accounts) and the user pictures on the login screen'
+            'accountsservice: reprise-accounts (User Accounts), the user pictures on the login screen and the picture the Account portal shares'
             'cups: reprise-printers, Printers, print queues and the printing tray icon'
             'cups-filters: driverless IPP Everywhere and AirPrint printers, and the test page, in Printers'
             'cups-pk-helper: changing printers in Printers with an administrator password, for accounts outside the CUPS admin group'
