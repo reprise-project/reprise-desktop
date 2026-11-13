@@ -13,7 +13,7 @@ use crate::model::{
 use crate::{clipaccess, notifypage};
 use reprisebus::remote::{Client, Status};
 use repriseconf::ThumbnailCache;
-use reprisekit::classic::widgets::{BUTTON_GAP, BUTTON_W, LINE_H};
+use reprisekit::classic::widgets::{BUTTON_GAP, BUTTON_H, BUTTON_W, LINE_H};
 use reprisekit::controls::form::{Control, Form, Item};
 use reprisekit::controls::listbox::{self, ListBox};
 use reprisekit::raster::Rect;
@@ -243,13 +243,15 @@ pub fn privacy(a: Area) -> Form {
 }
 
 /// What Export and Import carry, one line per [`ENTRIES`](crate::backup::ENTRIES) row, what they
-/// leave out, the two buttons and the line saying what the last one did.
+/// leave out, the two buttons, the row opening an import from another desktop, and the line
+/// saying what the last Export or Import did.
 pub fn backup(a: Area) -> Form {
     let entries = crate::backup::ENTRIES;
     let list_h = LINE_H * entries.len() as i32;
     let note_y = 66 + list_h + 10;
     let buttons_y = note_y + 3 * LINE_H + 10;
-    let desktop_y = buttons_y + 34 + 2 * LINE_H + 10;
+    let desktop_y = buttons_y + BUTTON_H + 14;
+    let status_y = desktop_y + 2 * LINE_H + 14;
     let desktop_x = a.right() - FROM_DESKTOP_W;
     Form::new(vec![
         Item::label_at(
@@ -282,7 +284,7 @@ pub fn backup(a: Area) -> Form {
         ),
         Item::new(
             BACKUP_STATUS,
-            Rect::new(X, buttons_y + 34, a.w, 2 * LINE_H),
+            Rect::new(X, status_y, a.w, 2 * LINE_H),
             Control::Lines(Vec::new()),
         ),
         Item::lines(
