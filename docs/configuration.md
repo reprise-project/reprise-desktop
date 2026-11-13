@@ -35,7 +35,7 @@ while an editor saves it doesn't.
 | `[glass]` | Glass's colour, material, mode and its schedule, blur and notification_style |
 | `[wallpaper]` | picture, slideshow, water |
 | `[screensaver]`, `[idle]` | savers and the idle steps |
-| `[power]` | Turn Off commands, lid and buttons, battery alarms, external locker |
+| `[power]` | Turn Off commands, lid and buttons, battery alarms, the low battery power saver, external locker |
 | `[lock]` | `away_device`, `away_after_s`: lock when a paired Bluetooth device goes away ([features.md](features.md#lock-power-and-session)) |
 | `[taskbar]` | position, button modes, pinned programs, auto-hide |
 | `[effects]` | animations and fades |

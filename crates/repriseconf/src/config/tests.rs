@@ -77,7 +77,7 @@ fn power_keys_parse() {
     let c = Config::parse(
         "[power]\nhibernate = \"h\"\nlid_close = \"screen_off\"\npower_button = \"nothing\"\n\
          sleep_button = \"hibernate\"\nbattery_low = 20\nbattery_critical = 5\n\
-         critical_action = \"turnoff\"\nalways_show_icon = true\n",
+         critical_action = \"turnoff\"\nalways_show_icon = true\nlow_battery_saver = false\n",
     )
     .unwrap();
     assert_eq!(c.power.hibernate, "h");
@@ -88,6 +88,7 @@ fn power_keys_parse() {
     assert_eq!(c.power.battery_critical, 5);
     assert_eq!(c.power.critical_action, PowerAction::TurnOff);
     assert!(c.power.always_show_icon);
+    assert!(!c.power.low_battery_saver);
     assert!(Config::parse("[power]\nlid_close = \"bogus\"\n").is_err());
     assert!(Config::parse("[power]\ncritical_action = \"ask\"\n").is_err());
     assert!(Config::parse("[power]\nbattery_low = 101\n").is_err());
@@ -95,6 +96,7 @@ fn power_keys_parse() {
     assert_eq!(d.power_button, PowerAction::Ask);
     assert_eq!(d.lid_close, PowerAction::Standby);
     assert!(d.lock_on_sleep);
+    assert!(d.low_battery_saver);
     let c = Config::parse("[power]\nlock_on_sleep = false\n").unwrap();
     assert!(!c.power.lock_on_sleep);
     assert_eq!(d.locker, "");

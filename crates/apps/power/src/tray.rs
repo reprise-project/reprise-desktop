@@ -204,6 +204,7 @@ mod tests {
         let p = Profiles {
             available: vec!["power-saver".into(), "balanced".into()],
             active: "balanced".into(),
+            ..Profiles::default()
         };
         let nodes = menu_nodes(&p);
         let labels: Vec<&str> = nodes.iter().map(|n| n.label.as_str()).collect();

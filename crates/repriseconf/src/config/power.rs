@@ -53,6 +53,8 @@ pub struct PowerConfig {
     pub battery_low: u32,
     pub battery_critical: u32,
     pub critical_action: PowerAction,
+    /// reprise-power holds the power saver profile while the battery is at or under `battery_low`.
+    pub low_battery_saver: bool,
     pub always_show_icon: bool,
     pub lock_on_sleep: bool,
     /// Command for an ext-session-lock-v1 locker; empty keeps the built-in dialog (`sessionlock`).
@@ -72,6 +74,7 @@ impl Default for PowerConfig {
             battery_low: 10,
             battery_critical: 3,
             critical_action: PowerAction::Hibernate,
+            low_battery_saver: true,
             always_show_icon: false,
             lock_on_sleep: true,
             locker: String::new(),

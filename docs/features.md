@@ -507,6 +507,13 @@ are.
 - **Laptop things.** Lid, power and sleep button actions, low and critical
   battery alarms, power profiles, and clamshell mode: close the lid with a
   monitor plugged in and the laptop screen steps aside.
+- **Power saver on low battery.** When the battery falls to the low alarm's
+  level, Reprise switches to the power saver profile, says so in the low
+  battery balloon, and switches back once the computer is plugged in or the
+  charge climbs above that level again. Picking a profile meanwhile wins until
+  the next time the battery runs low. "Switch to the power saver profile at
+  this level" on Power Options' Alarms tab, or `[power] low_battery_saver`,
+  turns it off; it needs power-profiles-daemon.
 - **Battery charge limit.** On a laptop whose battery driver supports one,
   Power Options' Power Meter tab has "Limit charging to protect the battery",
   which turns UPower's charge limit on or off at once. The thresholds are

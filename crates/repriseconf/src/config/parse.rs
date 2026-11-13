@@ -1305,6 +1305,9 @@ impl Config {
             if let Some(v) = percent("battery_critical", p.battery_critical)? {
                 cfg.power.battery_critical = v;
             }
+            if let Some(v) = p.low_battery_saver {
+                cfg.power.low_battery_saver = v;
+            }
             if let Some(v) = p.always_show_icon {
                 cfg.power.always_show_icon = v;
             }

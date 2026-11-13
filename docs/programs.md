@@ -555,7 +555,7 @@ stand-in service in a test.
 ## Power Options
 
 Power profile, monitor and standby timeouts on mains and on battery, low and
-critical battery alarms, a Power Meter for each battery, the battery charge
+critical battery alarms, the power saver the low alarm switches to, a Power Meter for each battery, the battery charge
 limit's check, and what the lid, power button and sleep button do. The
 battery icon's menu switches profile.
 While the battery charge limit holds a plugged-in battery, the icon's tooltip

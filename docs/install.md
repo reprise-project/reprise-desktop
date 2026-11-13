@@ -377,7 +377,7 @@ desktop and stays out of the way when it's missing.
 - UPower, for the battery icon, power alarms and battery idle timeouts, and
   from 1.90 the battery charge limit
 - power-profiles-daemon, for the power profile in Power Options and the
-  battery menu
+  battery menu, and the power saver on low battery
 - BlueZ, for the Bluetooth icon, Bluetooth Devices and `[lock] away_device`
 - KDE Connect (`kdeconnect`), for the phone icon (battery, Ring phone, Send
   files) and phones in Send To
