@@ -496,6 +496,14 @@ impl XdgDecorationHandler for State {
             self.set_csd(w, false);
         }
     }
+
+    /// The protocol has a client that destroys its decoration object draw its own frame from
+    /// that commit on.
+    fn decoration_destroyed(&mut self, toplevel: ToplevelSurface) {
+        if let Some(w) = self.window_for_surface(toplevel.wl_surface()) {
+            self.set_csd(w, true);
+        }
+    }
 }
 
 /// A client asked through KDE server-decoration to draw its own frame; read by `new_toplevel` when
