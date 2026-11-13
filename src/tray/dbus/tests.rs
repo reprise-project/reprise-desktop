@@ -12,7 +12,7 @@ use crate::tray::{
 };
 use repriseaudio::sounds::Sound;
 use reprisebus::peer::AppIdentity;
-use reprisekit::controls::tooltip::TIP_CHARS;
+use reprisekit::controls::tooltip::{TIP_CHARS, TIP_LINES};
 use reprisekit::icon::IconSource;
 use std::collections::HashMap;
 use std::os::fd::FromRawFd;
@@ -173,6 +173,20 @@ fn item_texts_drop_bidi_and_control_characters() {
     let tip: ToolTip = ("", vec![], "Tip\u{202e}\u{0}", "");
     let (title, tooltip) = item_texts(Some("Ti\u{200b}tle\n".into()), Some(tip));
     assert_eq!((title.as_str(), tooltip.as_str()), ("Title", "Tip"));
+}
+
+#[test]
+fn a_tooltip_keeps_its_lines_and_puts_the_description_below() {
+    let tip: ToolTip = ("", vec![], "Local Area Connection\nStatus: Connected", "");
+    let (_, tooltip) = item_texts(None, Some(tip));
+    assert_eq!(tooltip, "Local Area Connection\nStatus: Connected");
+    let tip: ToolTip = ("", vec![], "Player", "<b>Song</b><br/>Artist &amp; band\n");
+    let (_, tooltip) = item_texts(None, Some(tip));
+    assert_eq!(tooltip, "Player\nSong\nArtist & band");
+    let many = "x\n".repeat(TIP_LINES + 5);
+    let tip: ToolTip = ("", vec![], "Title", &many);
+    let (_, tooltip) = item_texts(None, Some(tip));
+    assert_eq!(tooltip.lines().count(), TIP_LINES);
 }
 
 #[test]

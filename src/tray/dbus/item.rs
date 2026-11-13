@@ -6,7 +6,7 @@ use reprisebus::bounded;
 use reprisebus::peer::{AppIdentity, Files, Identities};
 use reprisefs::confined::Confined;
 use reprisefs::names::shown_line;
-use reprisekit::controls::tooltip::TIP_CHARS;
+use reprisekit::controls::tooltip::{TIP_CHARS, TIP_LINES};
 use reprisekit::icon::IconSource;
 use std::path::PathBuf;
 use std::sync::{Arc, LazyLock};
@@ -103,10 +103,26 @@ fn pixmaps_of(body: &Option<Body>) -> Option<Pixmaps<'_>> {
 pub(super) fn item_texts(title: Option<String>, tip: Option<ToolTip>) -> (String, String) {
     let title = shown_line(&title.unwrap_or_default(), TIP_CHARS);
     let tooltip = tip
-        .map(|t| shown_line(t.2, TIP_CHARS))
+        .map(|t| tip_text(t.2, t.3))
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| title.clone());
     (title, tooltip)
+}
+
+/// A `ToolTip`'s title lines, then its description (which may hold markup) as lines below,
+/// at most [`TIP_LINES`] of [`TIP_CHARS`] chars.
+fn tip_text(title: &str, description: &str) -> String {
+    let body = crate::tray::notify::plain_text(description);
+    let lines: Vec<String> = (title.split('\n'))
+        .chain(
+            body.trim_end()
+                .split('\n')
+                .filter(|_| !body.trim().is_empty()),
+        )
+        .take(TIP_LINES)
+        .map(|l| shown_line(l, TIP_CHARS))
+        .collect();
+    lines.join("\n").trim_end().to_string()
 }
 
 /// The item at `bus` `path`, and whether its named icons were decoded: when not, it has none.
