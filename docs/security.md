@@ -1336,6 +1336,10 @@ app can't name a path of its own. Each address must be a plain
 `mailto:` query or a command-line option to the mail program; a call with
 anything else is refused.
 
+The Account portal shares your login, name and AccountsService picture only
+after its prompt, which shows all three, and asks every time: nothing is
+remembered. The reason under them is the app's own text.
+
 The share picker also keeps the last screen or window each app picked
 (`$XDG_STATE_HOME/reprise-portal/lastpick.toml`), but only to preselect it:
 you still confirm.

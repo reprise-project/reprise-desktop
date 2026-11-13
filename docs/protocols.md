@@ -136,6 +136,10 @@ confinement holds, every motion goes through as it comes.
   `attach=`, any other through `xdg-email` (or the `mailto:` alone without
   xdg-utils). With no mail program, or one that fails to start, the call
   fails and a balloon says why
+- **Account:** the Access prompt shows your name, login and AccountsService
+  picture with the app's reason; Share returns them (the picture as a
+  `file://` URI), Cancel nothing. Without AccountsService the passwd entry
+  gives the name and no picture is shared
 
 The compositor serves **Settings** (the light or dark look, contrast, fonts
 and icons). `reprise-portals.conf` hands **Secret** to gnome-keyring,
