@@ -17,6 +17,7 @@ mod backuphost;
 mod clipaccess;
 mod colorhost;
 mod configwatch;
+mod contentshost;
 mod cursors;
 mod defaultshost;
 mod defaultspage;
@@ -438,6 +439,7 @@ struct SettingsApp {
     region_conf: PathBuf,
     region_read: Option<Receiver<regionhost::Reading>>,
     region_set: Option<Receiver<regionhost::Set>>,
+    contents: contentshost::Contents,
 
     /// The Login Manager page's machine settings, read when it first opens with the accounts
     /// `login_source` gives; `login_job` holds a save through `login_run` under way.
@@ -711,6 +713,7 @@ impl SettingsApp {
             region_conf: reprisefs::region::user_conf(),
             region_read: None,
             region_set: None,
+            contents: contentshost::Contents::default(),
             login: None,
             login_files: loginhost::Files::default(),
             login_source: loginhost::machine_users,
@@ -1013,6 +1016,7 @@ impl App for SettingsApp {
         self.ensure_reader();
         self.ensure_airplane();
         self.ensure_region();
+        self.ensure_contents();
         self.ensure_login();
         if win == repriseapp::MAIN
             && !self.saver_ticking

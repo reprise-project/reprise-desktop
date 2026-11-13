@@ -1439,6 +1439,11 @@ stop the share first.
   32 MiB or less, opened without blocking, and decoded on the tray icons'
   two threads below, 4 at a time per sender; one that takes over 2 s,
   counting its wait for a thread, is left out.
+- **Content search.** The launcher asks localsearch's endpoint over the
+  session bus. The typed words reach it as a bound
+  argument, never spliced into the query, and the answer is read off the
+  compositor's loop: 1 MiB at most, within 3 s, only `file:///` URLs kept.
+  A found file opens as one found by name does.
 - **Who a notification or tray icon is from.** The compositor reads which
   app a notification's sender or a tray icon's owner is from its process,
   through the pidfd the bus gives for it, by the rules the Wayland filter

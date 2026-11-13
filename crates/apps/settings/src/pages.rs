@@ -34,7 +34,9 @@ pub use bind::{
     fill_layouts, follow, keys_of, layout_selection, read_one, show_keys, system_layout, write,
     write_form, write_forms,
 };
-pub use desktop::{FORGET_FRAMES, search, switcher, taskbar, virtual_desktops, window_behavior};
+pub use desktop::{
+    FORGET_FRAMES, search, show_contents, switcher, taskbar, virtual_desktops, window_behavior,
+};
 pub use input::{
     cursor, keyboard, mouse, pointer_and_alerts, preview_size, text_and_keys, touchpad,
 };

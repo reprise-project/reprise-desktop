@@ -747,8 +747,10 @@ pub(crate) mod tests {
         let root = super::svg_theme(&["text-x-generic"], &[]);
         let mut h = two_outputs("classic", &root);
         h.state.toggle_launcher();
-        h.state
-            .show_launcher_files(vec![std::path::PathBuf::from("/srv/notes.zzq")]);
+        let search = &mut h.state.launcher.as_mut().expect("the launcher").search;
+        let found = vec![std::path::PathBuf::from("/srv/notes.zzq")];
+        search.set(crate::search::Source::Names, found);
+        h.state.show_launcher_found();
         let row = |h: &crate::harness::Harness| {
             let m = &h.state.launcher.as_ref().expect("the launcher").model;
             let at = (m.list.items.iter()).position(|n| n == "notes.zzq");

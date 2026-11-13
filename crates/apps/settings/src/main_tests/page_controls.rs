@@ -251,6 +251,47 @@ fn unchecking_run_as_asks_first_and_only_ok_unchecks_it() {
     assert!(a.dirty(), "Apply writes it");
 }
 
+/// The Search page's content note waits for its read, then says what content search takes,
+/// greyed while localsearch is missing.
+#[test]
+fn the_content_search_note_greys_without_localsearch() {
+    let mut a = app("contents");
+    let at = Page::Search.index();
+    let note = |a: &SettingsApp| match &a.sheet.pages[at]
+        .item("launcher_contents_note")
+        .unwrap()
+        .control
+    {
+        form::Control::Lines(l) => (l.join(" "), true),
+        form::Control::GreyedLines(l) => (l.join(" "), false),
+        _ => panic!("lines"),
+    };
+    assert_eq!(note(&a), (String::new(), true), "blank until read");
+    let read = |a: &mut SettingsApp, installed| {
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(installed).unwrap();
+        a.contents.job = Some(rx);
+        assert!(a.contents_done());
+    };
+    read(&mut a, false);
+    assert_eq!(
+        note(&a),
+        (
+            "Install localsearch to also find files by their contents.".to_string(),
+            false
+        )
+    );
+    read(&mut a, true);
+    assert_eq!(
+        note(&a),
+        (
+            "Files are also found by their contents through localsearch.".to_string(),
+            true
+        )
+    );
+    assert!(!a.contents_done(), "nothing more to read");
+}
+
 fn reader_read(a: &mut SettingsApp, reader: readerhost::Reader, failed: Option<String>) {
     let (tx, rx) = std::sync::mpsc::channel();
     tx.send(readerhost::Reading { reader, failed }).unwrap();

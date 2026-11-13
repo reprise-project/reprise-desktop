@@ -162,10 +162,13 @@ pub fn page_shell(mut c: Canvas, theme: &Theme, text: &TextRenderer, with_blue: 
             name: "Notepad".to_string(),
             icon: None,
         }]);
-        l.set_files(vec![launcher::FileRow {
-            name: "notes.txt".to_string(),
-            folder: "~/Documents".to_string(),
-            icon: None,
+        l.set_found(vec![launcher::Section {
+            heading: "Files".to_string(),
+            rows: vec![launcher::FileRow {
+                name: "notes.txt".to_string(),
+                folder: "~/Documents".to_string(),
+                icon: None,
+            }],
         }]);
         let panel = launcher::draw(theme, text, &l, None, true, None);
         c.blit_canvas(20, 3305, &panel);

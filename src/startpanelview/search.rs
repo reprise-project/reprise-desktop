@@ -42,14 +42,17 @@ pub(super) enum ResultKind {
     Calc,
     Programs,
     Settings,
-    Files,
+    /// Found section `.0` of the search ([`crate::search::FileSearch::sections`]).
+    Found(usize),
 }
 
-pub(super) fn result_groups(
+/// The search's groups and what each holds: the answer, programs, settings, then each found
+/// section under its heading, every group but the answer counted.
+pub(super) fn result_groups<'a>(
     calc: Option<&str>,
     apps: &[String],
     settings: &[String],
-    files: &[PathBuf],
+    found: impl Iterator<Item = (&'a str, &'a [PathBuf])>,
 ) -> (Vec<ResultGroup>, Vec<ResultKind>) {
     let mut groups = Vec::new();
     let mut kinds = Vec::new();
@@ -81,12 +84,14 @@ pub(super) fn result_groups(
         format!("Settings ({})", settings.len()),
         settings.to_vec(),
     );
-    let files = &files[..files.len().min(SEARCH_ROWS)];
-    group(
-        ResultKind::Files,
-        format!("Files ({})", files.len()),
-        files.iter().map(|p| file_name(p)).collect(),
-    );
+    for (s, (heading, paths)) in found.enumerate() {
+        let paths = &paths[..paths.len().min(SEARCH_ROWS)];
+        group(
+            ResultKind::Found(s),
+            format!("{heading} ({})", paths.len()),
+            paths.iter().map(|p| file_name(p)).collect(),
+        );
+    }
     (groups, kinds)
 }
 
@@ -96,7 +101,7 @@ impl State {
             return;
         };
         let query = v.model.query().to_string();
-        let kept = self.file_query_changed(SearchOwner::StartPanel, &query, SEARCH_ROWS);
+        self.file_query_changed(SearchOwner::StartPanel, &query, SEARCH_ROWS);
         let State {
             start_panel,
             app_index,
@@ -107,15 +112,11 @@ impl State {
             v.result_apps = panel_matches(&query, app_index, &listed, SEARCH_ROWS);
             v.result_settings = rank_settings(&query, app_index, &v.result_apps, SEARCH_SETTINGS);
             v.answer = calc_row(&query);
-            v.search.files = kept;
         }
         self.start_panel_show_results();
     }
 
-    pub(crate) fn start_panel_files(&mut self, paths: Vec<PathBuf>) {
-        if let Some(v) = self.start_panel.as_mut() {
-            v.search.files = paths;
-        }
+    pub(crate) fn start_panel_found(&mut self) {
         self.start_panel_show_results();
         self.redraw_start_panel();
     }
@@ -147,8 +148,8 @@ impl State {
             .map(|s| s.name(app_index))
             .collect();
         let calc = v.answer.as_ref().map(|(row, _)| row.clone());
-        let (mut groups, kinds) =
-            result_groups(calc.as_deref(), &names, &settings, &v.search.files);
+        let found = (v.search.sections()).map(|(source, paths)| (source.heading(), paths));
+        let (mut groups, kinds) = result_groups(calc.as_deref(), &names, &settings, found);
         v.result_kinds = kinds;
         let mut icon_rows: Vec<Option<Canvas>> = Vec::new();
         if calc.is_some() {
@@ -165,12 +166,9 @@ impl State {
                 .map(|s| s.icon(app_index).and_then(|n| unread(icons, &n, px))),
         );
         with_mime(desktop.as_ref(), |mime| {
-            icon_rows.extend(
-                v.search
-                    .files
-                    .iter()
-                    .map(|p| file_row_icon(p, v.search.is_dir(p), mime, icons, px)),
-            );
+            let found = v.search.sections().flat_map(|(_, paths)| paths);
+            let shown = found.map(|p| file_row_icon(p, v.search.is_dir(p), mime, icons, px));
+            icon_rows.extend(shown);
         });
         let rows = groups.iter_mut().flat_map(|g| g.rows.iter_mut());
         for (row, icon) in rows.zip(icon_rows) {
@@ -197,11 +195,9 @@ impl State {
                 .and_then(|&a| self.app_index.get(a))
                 .map(|e| Run::App(Box::new(e.clone()))),
             Some(ResultKind::Settings) => v.result_settings.get(r).copied().map(Run::Setting),
-            Some(ResultKind::Files) => v
-                .search
-                .files
-                .get(r)
-                .map(|p| Run::File(v.search.facts_of(p))),
+            Some(&ResultKind::Found(s)) => {
+                v.search.path(s, r).map(|p| Run::File(v.search.facts_of(p)))
+            }
             None => None,
         };
         self.close_start_panel();

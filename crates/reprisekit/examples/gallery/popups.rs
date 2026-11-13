@@ -840,7 +840,8 @@ pub fn render_glass_popups() -> Canvas {
     c
 }
 
-/// The launcher with an answer, programs, a setting and a file, the answer lit.
+/// The launcher with an answer, programs, a setting, a file found by name and one by its
+/// contents, the answer lit.
 fn launcher_sample() -> launcher::Launcher {
     let mut small = Canvas::new(16, 16);
     small.fill_rect(Rect::new(1, 1, 14, 14), Color::rgb(40, 120, 220));
@@ -864,11 +865,21 @@ fn launcher_sample() -> launcher::Launcher {
             icon: Some(small.clone()),
         },
     ]);
-    l.set_files(vec![launcher::FileRow {
-        name: "notes.txt".to_string(),
-        folder: "~/Documents".to_string(),
-        icon: Some(small),
-    }]);
+    let row = |name: &str, folder: &str| launcher::FileRow {
+        name: name.to_string(),
+        folder: folder.to_string(),
+        icon: Some(small.clone()),
+    };
+    l.set_found(vec![
+        launcher::Section {
+            heading: "Files".to_string(),
+            rows: vec![row("notes.txt", "~/Documents")],
+        },
+        launcher::Section {
+            heading: "Contents".to_string(),
+            rows: vec![row("minutes.pdf", "~/Documents/Meetings")],
+        },
+    ]);
     l
 }
 

@@ -6,19 +6,20 @@
 //! answer ("= 14"). Open windows hang under a "Windows" heading, above the app
 //! rows (then headed "Programs") when the host ranks them first, else under them.
 //! Then a greyed "Settings" heading with an etched rule
-//! over the settings rows, and once the host has found files, a "Files" heading
-//! the same way with the folder dimmed after each name. Arrows step over headings.
+//! over the settings rows, and each section of found rows the host fills (files by name,
+//! by contents) under its own heading the same way, the folder dimmed after each name.
+//! Arrows step over headings.
 //! The panel grows with the text size; the icons and bevels keep their size.
 //!
 //! Under a look with glass the panel is a piece of glass and the field and rows
 //! are the Start menu's search mode's ([`crate::startpanel::search`]): its search
 //! field with the italic cue and magnifier (the clear glyph once there is text),
 //! under it a light pane of 21 px rows, a 16 px icon and the name, the
-//! highlighted one in the lit result's box. Settings and files hang under
-//! "Settings (n)" and "Files (n)" group headers with rules.
+//! highlighted one in the lit result's box. Settings and each found section hang under
+//! group headers with a count and a rule ("Settings (n)").
 //!
 //! Pure: the host works out the rows and hands them back through `set_calc`,
-//! `set_windows`, `set_settings`, `set_rows` and `set_files`.
+//! `set_windows`, `set_settings`, `set_rows` and `set_found`.
 
 use crate::access::accesskit;
 use crate::classic::widgets::{ROW_H as FIELD_H, edit_first_visible};
@@ -42,7 +43,6 @@ pub const MAX_WINDOWS: usize = 5;
 pub const WINDOWS_HEADING: &str = "Windows";
 pub const PROGRAMS_HEADING: &str = "Programs";
 pub const SETTINGS_HEADING: &str = "Settings";
-pub const FILES_HEADING: &str = "Files";
 /// What a reader calls the field.
 pub const SEARCH: &str = "Search";
 
@@ -61,6 +61,13 @@ pub struct FileRow {
     pub icon: Option<Canvas>,
 }
 
+/// A heading and the found rows under it, at most [`MAX_FILES`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct Section {
+    pub heading: String,
+    pub rows: Vec<FileRow>,
+}
+
 /// The icons [`Launcher::refill_icons`] gives the rows, each list in its rows' order.
 #[derive(Clone, Debug, Default)]
 pub struct Refill {
@@ -69,7 +76,8 @@ pub struct Refill {
     pub windows: Vec<Option<Canvas>>,
     pub apps: Vec<Option<Canvas>>,
     pub settings: Vec<Option<Canvas>>,
-    pub files: Vec<Option<Canvas>>,
+    /// Each found section's, in [`Launcher::set_found`]'s order.
+    pub found: Vec<Vec<Option<Canvas>>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -78,13 +86,22 @@ pub enum Pick {
     Window(usize),
     App(usize),
     Setting(usize),
-    File(usize),
+    /// Row `.1` of found section `.0`.
+    Found(usize, usize),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Group {
+    Windows,
+    Programs,
+    Settings,
+    Found(usize),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Line {
     Row(Pick),
-    Heading(&'static str),
+    Heading(Group),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -92,7 +109,7 @@ pub struct Launcher {
     /// Private because `inline`'s tail indexes into its text: every write goes through `key`
     /// or `paste`.
     edit: TextEdit,
-    /// The calculator's row, the app names, then the settings and files each under
+    /// The calculator's row, the app names, then the settings and each found section under
     /// its heading ([`Launcher::lines`]); the selection is never on a heading.
     pub list: ListBox,
     pub icons: Vec<Option<Canvas>>,
@@ -102,7 +119,7 @@ pub struct Launcher {
     windows_first: bool,
     apps: Vec<Row>,
     settings: Vec<Row>,
-    files: Vec<FileRow>,
+    found: Vec<Section>,
     /// The top match's tail shown in `edit`.
     inline: Inline,
 }
@@ -123,10 +140,11 @@ pub enum Key {
 pub enum Event {
     None,
     /// `query()` changed: call `set_calc`, `set_windows`, `set_settings` and `set_rows`,
-    /// in that order (and `set_files` when the files come in).
+    /// in that order (and `set_found` when found rows come in).
     QueryChanged,
     Launch(Pick),
-    OpenFolder(usize),
+    /// Ctrl+Enter on found row `.1` of section `.0`: its folder.
+    OpenFolder(usize, usize),
     /// Open the context menu of a program or file row, highlighted.
     Context(Pick),
     Close,
@@ -164,7 +182,7 @@ impl Launcher {
             windows_first: false,
             apps: Vec::new(),
             settings: Vec::new(),
-            files: Vec::new(),
+            found: Vec::new(),
             inline: Inline::default(),
         }
     }
@@ -188,7 +206,7 @@ impl Launcher {
         }
         let windows = |v: &mut Vec<Line>| {
             if !self.windows.is_empty() {
-                v.push(Line::Heading(WINDOWS_HEADING));
+                v.push(Line::Heading(Group::Windows));
                 v.extend((0..self.windows.len()).map(|i| Line::Row(Pick::Window(i))));
             }
         };
@@ -196,7 +214,7 @@ impl Launcher {
         if lead {
             windows(&mut v);
             if !self.apps.is_empty() {
-                v.push(Line::Heading(PROGRAMS_HEADING));
+                v.push(Line::Heading(Group::Programs));
             }
         }
         v.extend((0..self.apps.len()).map(|i| Line::Row(Pick::App(i))));
@@ -204,29 +222,47 @@ impl Launcher {
             windows(&mut v);
         }
         if !self.settings.is_empty() {
-            v.push(Line::Heading(SETTINGS_HEADING));
+            v.push(Line::Heading(Group::Settings));
             v.extend((0..self.settings.len()).map(|i| Line::Row(Pick::Setting(i))));
         }
-        if !self.files.is_empty() {
-            v.push(Line::Heading(FILES_HEADING));
-            v.extend((0..self.files.len()).map(|i| Line::Row(Pick::File(i))));
+        for (s, section) in self.found.iter().enumerate() {
+            if !section.rows.is_empty() {
+                v.push(Line::Heading(Group::Found(s)));
+                v.extend((0..section.rows.len()).map(|i| Line::Row(Pick::Found(s, i))));
+            }
         }
         v
     }
 
-    fn heading(&self, i: usize) -> Option<&'static str> {
+    fn heading(&self, i: usize) -> Option<&str> {
         match self.lines().get(i) {
-            Some(Line::Heading(h)) => Some(h),
+            Some(Line::Heading(g)) => Some(self.title(*g)),
             _ => None,
         }
     }
 
-    fn heading_rows(&self, h: &str) -> usize {
-        match h {
-            WINDOWS_HEADING => self.windows.len(),
-            PROGRAMS_HEADING => self.apps.len(),
-            SETTINGS_HEADING => self.settings.len(),
-            _ => self.files.len(),
+    fn title(&self, g: Group) -> &str {
+        match g {
+            Group::Windows => WINDOWS_HEADING,
+            Group::Programs => PROGRAMS_HEADING,
+            Group::Settings => SETTINGS_HEADING,
+            Group::Found(s) => &self.found[s].heading,
+        }
+    }
+
+    fn group_rows(&self, g: Group) -> usize {
+        match g {
+            Group::Windows => self.windows.len(),
+            Group::Programs => self.apps.len(),
+            Group::Settings => self.settings.len(),
+            Group::Found(s) => self.found[s].rows.len(),
+        }
+    }
+
+    fn group_of(&self, i: usize) -> Option<Group> {
+        match self.lines().get(i) {
+            Some(Line::Heading(g)) => Some(*g),
+            _ => None,
         }
     }
 
@@ -266,7 +302,7 @@ impl Launcher {
         let (mut items, mut icons, mut greyed, mut detail) = (vec![], vec![], vec![], vec![]);
         for line in &lines {
             let (name, icon, folder) = match *line {
-                Line::Heading(h) => (h.to_string(), None, String::new()),
+                Line::Heading(g) => (self.title(g).to_string(), None, String::new()),
                 Line::Row(Pick::Calc) => {
                     let r = self.calc.as_ref().expect("a calc line has its row");
                     (r.name.clone(), r.icon.clone(), String::new())
@@ -283,8 +319,8 @@ impl Launcher {
                     let r = &self.settings[i];
                     (r.name.clone(), r.icon.clone(), String::new())
                 }
-                Line::Row(Pick::File(i)) => {
-                    let f = &self.files[i];
+                Line::Row(Pick::Found(s, i)) => {
+                    let f = &self.found[s].rows[i];
                     (f.name.clone(), f.icon.clone(), f.folder.clone())
                 }
             };
@@ -332,7 +368,9 @@ impl Launcher {
                 self.settings.iter_mut().map(|r| &mut r.icon),
                 icons.settings,
             )
-            | refill(self.files.iter_mut().map(|f| &mut f.icon), icons.files);
+            | (self.found.iter_mut().zip(icons.found)).fold(false, |c, (s, icons)| {
+                c | refill(s.rows.iter_mut().map(|f| &mut f.icon), icons)
+            });
         if !changed {
             return false;
         }
@@ -342,7 +380,7 @@ impl Launcher {
                 Line::Row(Pick::Window(i)) => self.windows[i].icon.clone(),
                 Line::Row(Pick::App(i)) => self.apps[i].icon.clone(),
                 Line::Row(Pick::Setting(i)) => self.settings[i].icon.clone(),
-                Line::Row(Pick::File(i)) => self.files[i].icon.clone(),
+                Line::Row(Pick::Found(s, i)) => self.found[s].rows[i].icon.clone(),
                 _ => continue,
             };
             if let Some(slot) = self.icons.get_mut(k) {
@@ -352,18 +390,33 @@ impl Launcher {
         true
     }
 
-    /// The host's file rows for the current query, best first. The highlight stays
-    /// on a row above the files.
-    pub fn set_files(&mut self, files: Vec<FileRow>) {
-        let files_at = self
-            .lines()
-            .iter()
-            .position(|l| *l == Line::Heading(FILES_HEADING));
-        let keep = self
-            .list
-            .selected
-            .filter(|&i| files_at.is_none_or(|f| i < f));
-        self.files = files.into_iter().take(MAX_FILES).collect();
+    /// The host's found sections for the current query, in order, each best first; an empty one
+    /// shows no heading. The highlight stays on its row unless that row changed.
+    pub fn set_found(&mut self, found: Vec<Section>) {
+        let picked = self.picked();
+        let row = |f: &[Section], s: usize, i: usize| {
+            f.get(s)
+                .and_then(|x| x.rows.get(i))
+                .map(|r| (r.name.clone(), r.folder.clone()))
+        };
+        let old = match picked {
+            Some(Pick::Found(s, i)) => row(&self.found, s, i),
+            _ => None,
+        };
+        self.found = found
+            .into_iter()
+            .map(|s| Section {
+                rows: s.rows.into_iter().take(MAX_FILES).collect(),
+                ..s
+            })
+            .collect();
+        let same = match picked {
+            Some(Pick::Found(s, i)) => old.is_some() && row(&self.found, s, i) == old,
+            _ => true,
+        };
+        let keep = picked
+            .filter(|_| same)
+            .and_then(|p| self.lines().iter().position(|l| *l == Line::Row(p)));
         self.rebuild(keep);
     }
 
@@ -389,7 +442,7 @@ impl Launcher {
             }
             Key::Enter => self.picked().map_or(Event::Close, Event::Launch),
             Key::CtrlEnter => match self.picked() {
-                Some(Pick::File(i)) => Event::OpenFolder(i),
+                Some(Pick::Found(s, i)) => Event::OpenFolder(s, i),
                 Some(p) => Event::Launch(p),
                 None => Event::Close,
             },
@@ -419,7 +472,7 @@ impl Launcher {
 
     fn context_of(p: Pick) -> Event {
         match p {
-            Pick::App(_) | Pick::File(_) => Event::Context(p),
+            Pick::App(_) | Pick::Found(..) => Event::Context(p),
             Pick::Calc | Pick::Window(_) | Pick::Setting(_) => Event::None,
         }
     }
@@ -450,8 +503,8 @@ impl Launcher {
         }
     }
 
-    /// The host's answer to `QueryChanged`: the ranked app rows for `query()`. File
-    /// rows stay until `set_files`. Completes the field from the first app row when
+    /// The host's answer to `QueryChanged`: the ranked app rows for `query()`. Found
+    /// rows stay until `set_found`. Completes the field from the first app row when
     /// it starts with the query (case-insensitively), keeping the query's casing;
     /// never under the calculator's row.
     pub fn set_rows(&mut self, rows: Vec<Row>) {
@@ -489,7 +542,7 @@ const PAD: i32 = 8;
 /// right edge.
 const RULE_GAP: i32 = 6;
 /// Under a look with glass: from the pane's edge to the rows' boxes, and
-/// from a row's box to the Files header, which starts over the icons.
+/// from a row's box to a group header, which starts over the icons.
 const PANE_PAD: i32 = 4;
 const HEADER_IN: i32 = search::at::RESULT_ICON.0;
 
@@ -502,7 +555,7 @@ pub struct Layout {
     /// The list box frame, under a look with glass the light pane; None
     /// with no rows (the panel is the head alone).
     pub list: Option<Rect>,
-    /// Under a look with glass, each list row's rect: an app or file row,
+    /// Under a look with glass, each list row's rect: an app or found row,
     /// for the heading its group header from the capitals' top. Empty
     /// otherwise, where the list box lays its rows out.
     pub rows: Vec<Rect>,
@@ -691,8 +744,8 @@ fn glass_body(
     let size = g.px(search::TEXT_PX);
     for (i, r) in lay.rows.iter().enumerate() {
         let r = r.scaled(s);
-        if let Some(h) = l.heading(i) {
-            let title = format!("{h} ({})", l.heading_rows(h));
+        if let Some(group) = l.group_of(i) {
+            let title = format!("{} ({})", l.title(group), l.group_rows(group));
             search::header(c, style, &face, r, pane, &title, g);
             continue;
         }
@@ -848,7 +901,7 @@ mod tests {
         let mut l = Launcher::new();
         typed(&mut l, "no");
         l.set_rows(rows(&["Notepad", "Notion"]));
-        l.set_files(files(&[("notes.txt", "~/Documents")]));
+        set_files(&mut l, files(&[("notes.txt", "~/Documents")]));
         l.key(Key::Down);
         let lay = layout(&l, &theme);
         let c = draw(&theme, &text, &l, None, false, None);
@@ -918,7 +971,7 @@ mod tests {
         let (x, y) = mid(head);
         assert_eq!(hit(&l, x, y, &theme), Hit::Panel);
         let (x, y) = mid(lay.rows[3]);
-        assert_eq!(hit(&l, x, y, &theme), Hit::Row(Pick::File(0)));
+        assert_eq!(hit(&l, x, y, &theme), Hit::Row(Pick::Found(0, 0)));
 
         // The reader's rows sit where they are drawn.
         let mut t = crate::access::Tree::window("", (W, 300));
@@ -940,7 +993,7 @@ mod tests {
         let mut l = Launcher::new();
         typed(&mut l, "no");
         l.set_rows(rows(&["Notepad", "Notion"]));
-        l.set_files(files(&[("notes.txt", "~/Documents")]));
+        set_files(&mut l, files(&[("notes.txt", "~/Documents")]));
         let n = l.list.items.len() as i32;
         let heading = (0..l.list.items.len())
             .find(|&i| l.heading(i).is_some())
@@ -1016,7 +1069,7 @@ mod tests {
         let mut l = Launcher::new();
         typed(&mut l, "no");
         l.set_rows(rows(&["Notepad", "Notion"]));
-        l.set_files(files(&[("notes.txt", "~/Documents")]));
+        set_files(&mut l, files(&[("notes.txt", "~/Documents")]));
         l.key(Key::Down);
         let small = layout(&l, &glass);
         let lay = layout(&l, &big);
@@ -1093,11 +1146,14 @@ mod tests {
         assert_eq!(t.get(focus).unwrap().label(), Some(SEARCH));
         typed(&mut l, "n");
         l.set_rows(rows(&["Notepad", "Notion"]));
-        l.set_files(vec![FileRow {
-            name: "notes.txt".into(),
-            folder: "~".into(),
-            icon: None,
-        }]);
+        set_files(
+            &mut l,
+            vec![FileRow {
+                name: "notes.txt".into(),
+                folder: "~".into(),
+                icon: None,
+            }],
+        );
         let mut t = crate::access::Tree::window("", (W, 300));
         let focus = access(
             &l,
@@ -1108,9 +1164,7 @@ mod tests {
             &Theme::default(),
         );
         assert_eq!(t.get(focus).unwrap().label(), Some("Notepad"));
-        let heading = t
-            .find(accesskit::Role::ListBoxOption, FILES_HEADING)
-            .unwrap();
+        let heading = t.find(accesskit::Role::ListBoxOption, FILES).unwrap();
         assert!(
             t.get(heading).unwrap().is_disabled(),
             "the heading is greyed"
@@ -1149,16 +1203,19 @@ mod tests {
         l.set_rows(rows(&["Xa", "Xb"]));
         l.key(Key::Down);
         let selected = l.list.selected;
-        l.set_files(vec![FileRow {
-            name: "x.txt".into(),
-            folder: "~".into(),
-            icon: None,
-        }]);
+        set_files(
+            &mut l,
+            vec![FileRow {
+                name: "x.txt".into(),
+                folder: "~".into(),
+                icon: None,
+            }],
+        );
         let refill = || Refill {
             calc: Some(Canvas::new(2, 2)),
             apps: vec![None, Some(Canvas::new(16, 16))],
             settings: vec![Some(Canvas::new(8, 8))],
-            files: vec![Some(Canvas::new(4, 4))],
+            found: vec![vec![Some(Canvas::new(4, 4))]],
             ..Refill::default()
         };
         assert!(l.refill_icons(refill()));
@@ -1478,11 +1535,23 @@ mod tests {
         let mut l = Launcher::new();
         typed(&mut l, "no");
         l.set_rows(rows(&["Notepad", "Notion", "Gnome Terminal"]));
-        l.set_files(files(&[("notes.txt", "~/Documents"), ("nothing.md", "~")]));
+        set_files(
+            &mut l,
+            files(&[("notes.txt", "~/Documents"), ("nothing.md", "~")]),
+        );
         crate::raster::write_preview(
             &draw(&theme, &text, &l, None, true, None),
             "launcher-preview.png",
         );
+    }
+
+    const FILES: &str = "Files";
+
+    fn set_files(l: &mut Launcher, rows: Vec<FileRow>) {
+        l.set_found(vec![Section {
+            heading: FILES.into(),
+            rows,
+        }]);
     }
 
     fn files(rows: &[(&str, &str)]) -> Vec<FileRow> {
@@ -1500,11 +1569,11 @@ mod tests {
         let mut l = Launcher::new();
         typed(&mut l, "no");
         l.set_rows(rows(&["Notepad"]));
-        l.set_files(files(&[("notes.txt", "~/Documents"), ("nothing.md", "~")]));
-        assert_eq!(
-            l.list.items,
-            ["Notepad", FILES_HEADING, "notes.txt", "nothing.md"]
+        set_files(
+            &mut l,
+            files(&[("notes.txt", "~/Documents"), ("nothing.md", "~")]),
         );
+        assert_eq!(l.list.items, ["Notepad", FILES, "notes.txt", "nothing.md"]);
         assert_eq!(l.list.greyed, [false, true, false, false]);
         assert_eq!(l.list.detail[2], "~/Documents");
         assert_eq!(
@@ -1515,15 +1584,147 @@ mod tests {
         l.key(Key::Down);
         assert_eq!(
             l.picked(),
-            Some(Pick::File(0)),
+            Some(Pick::Found(0, 0)),
             "Down steps over the heading"
         );
-        assert_eq!(l.key(Key::Enter), Event::Launch(Pick::File(0)));
-        assert_eq!(l.key(Key::CtrlEnter), Event::OpenFolder(0));
+        assert_eq!(l.key(Key::Enter), Event::Launch(Pick::Found(0, 0)));
+        assert_eq!(l.key(Key::CtrlEnter), Event::OpenFolder(0, 0));
         l.key(Key::Up);
         assert_eq!(l.picked(), Some(Pick::App(0)), "Up steps back over it");
         assert_eq!(l.key(Key::CtrlEnter), Event::Launch(Pick::App(0)));
         assert_eq!(l.pick(1), None, "the heading is no row");
+    }
+
+    const CONTENTS: &str = "Contents";
+
+    /// "no" typed: one program, a file found by name and two by their contents.
+    fn with_two_sections() -> Launcher {
+        let mut l = Launcher::new();
+        typed(&mut l, "no");
+        l.set_rows(rows(&["Notepad"]));
+        l.set_found(vec![
+            Section {
+                heading: FILES.into(),
+                rows: files(&[("notes.txt", "~/Documents")]),
+            },
+            Section {
+                heading: CONTENTS.into(),
+                rows: files(&[("minutes.pdf", "~/Documents"), ("plan.odt", "~")]),
+            },
+        ]);
+        l
+    }
+
+    #[test]
+    fn each_found_section_hangs_under_its_heading_and_its_rows_pick_by_section() {
+        let mut l = with_two_sections();
+        assert_eq!(
+            l.list.items,
+            [
+                "Notepad",
+                FILES,
+                "notes.txt",
+                CONTENTS,
+                "minutes.pdf",
+                "plan.odt"
+            ]
+        );
+        assert_eq!(l.list.greyed, [false, true, false, true, false, false]);
+        assert_eq!(l.list.detail[4], "~/Documents");
+        l.key(Key::Down);
+        l.key(Key::Down);
+        assert_eq!(l.picked(), Some(Pick::Found(1, 0)), "over both headings");
+        assert_eq!(l.key(Key::Enter), Event::Launch(Pick::Found(1, 0)));
+        assert_eq!(l.key(Key::CtrlEnter), Event::OpenFolder(1, 0));
+        assert_eq!(l.key(Key::Menu), Event::Context(Pick::Found(1, 0)));
+        let empty_names = |l: &mut Launcher| {
+            l.set_found(vec![
+                Section {
+                    heading: FILES.into(),
+                    rows: Vec::new(),
+                },
+                Section {
+                    heading: CONTENTS.into(),
+                    rows: files(&[("minutes.pdf", "~/Documents")]),
+                },
+            ])
+        };
+        empty_names(&mut l);
+        assert_eq!(
+            l.list.items,
+            ["Notepad", CONTENTS, "minutes.pdf"],
+            "an empty section shows no heading"
+        );
+        assert_eq!(
+            l.pick(2),
+            Some(Pick::Found(1, 0)),
+            "the next keeps its number"
+        );
+    }
+
+    #[test]
+    fn a_section_landing_keeps_the_highlight_unless_its_own_row_changed() {
+        let mut l = with_two_sections();
+        l.key(Key::Down);
+        assert_eq!(l.picked(), Some(Pick::Found(0, 0)));
+        let mut contents = with_two_sections().found;
+        contents[1].rows.truncate(1);
+        l.set_found(contents.clone());
+        assert_eq!(
+            l.picked(),
+            Some(Pick::Found(0, 0)),
+            "the contents changed, the file row stays lit"
+        );
+        contents[0].rows = files(&[("nothing.md", "~")]);
+        l.set_found(contents);
+        assert_eq!(
+            l.picked(),
+            Some(Pick::App(0)),
+            "its row changed: back to the top"
+        );
+    }
+
+    #[test]
+    fn two_found_sections_pin_in_each_interface_at_scale_1_and_2() {
+        use crate::interface::Interface;
+        crate::pins::fonts();
+        let text = TextRenderer::load(&FontConfig::default());
+        let mut l = with_two_sections();
+        l.key(Key::Down);
+        l.key(Key::Down);
+        let mut got = Vec::new();
+        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            for scale in [1, 2] {
+                let theme = Theme {
+                    scale,
+                    ..crate::interfaces::theme_for(i)
+                };
+                let c = draw(&theme, &text, &l, None, false, None);
+                let lay = layout(&l, &theme);
+                let m = panel::margin(&theme);
+                assert_eq!(
+                    (c.width as i32, c.height as i32),
+                    (
+                        (lay.width + m.left + m.right) * scale,
+                        (lay.height + m.top + m.bottom) * scale
+                    ),
+                    "{i:?} @{scale}"
+                );
+                got.push((format!("{i:?} {scale}"), fnv(&c)));
+            }
+        }
+        crate::pins::check("controls/launcher_sections", &got);
+    }
+
+    fn fnv(c: &Canvas) -> u64 {
+        (0..c.height as i32)
+            .flat_map(|y| (0..c.width as i32).map(move |x| (x, y)))
+            .map(|(x, y)| c.get(x, y))
+            .fold(0xcbf2_9ce4_8422_2325, |h, w| {
+                w.to_le_bytes()
+                    .iter()
+                    .fold(h, |h, &b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3))
+            })
     }
 
     #[test]
@@ -1531,15 +1732,15 @@ mod tests {
         let mut l = Launcher::new();
         typed(&mut l, "zq");
         l.set_rows(Vec::new());
-        l.set_files(files(&[("zq.txt", "~")]));
-        assert_eq!(l.picked(), Some(Pick::File(0)));
+        set_files(&mut l, files(&[("zq.txt", "~")]));
+        assert_eq!(l.picked(), Some(Pick::Found(0, 0)));
         l.key(Key::Up);
         assert_eq!(
             l.picked(),
-            Some(Pick::File(0)),
+            Some(Pick::Found(0, 0)),
             "nothing above but the heading"
         );
-        l.set_files(Vec::new());
+        set_files(&mut l, Vec::new());
         assert!(l.list.items.is_empty(), "no files, no heading");
         assert_eq!(l.key(Key::Enter), Event::Close);
     }
@@ -1552,7 +1753,7 @@ mod tests {
         let mut l = Launcher::new();
         typed(&mut l, "no");
         l.set_rows(rows(&["Notepad"]));
-        l.set_files(files(&[("notes.txt", "~/Documents")]));
+        set_files(&mut l, files(&[("notes.txt", "~/Documents")]));
         let lay = layout(&l, &theme);
         let list = lay.list.unwrap();
         assert_eq!(list.height, 3 * crate::controls::listbox::ROW_H + 4);
@@ -1560,7 +1761,7 @@ mod tests {
         // Row 1 is the heading: list inner y + 17, its middle at + 8.
         let inner_y = list.y + 2;
         let rule_y = inner_y + crate::controls::listbox::ROW_H + 7;
-        let label_w = text.measure(FILES_HEADING, false, theme.fonts.size_px);
+        let label_w = text.measure(FILES, false, theme.fonts.size_px);
         let x0 = list.x + 2 + crate::controls::listbox::TEXT_X + label_w + 6;
         assert_eq!(
             c.get(x0, rule_y),
@@ -1597,7 +1798,7 @@ mod tests {
                 heading.y + 3 + crate::controls::listbox::ROW_H,
                 &Theme::default()
             ),
-            Hit::Row(Pick::File(0))
+            Hit::Row(Pick::Found(0, 0))
         );
     }
 
@@ -1608,7 +1809,7 @@ mod tests {
         l.set_calc(rows(&["= 14"]).pop());
         l.set_settings(rows(&["Mouse"]));
         l.set_rows(rows(&["2048"]));
-        l.set_files(files(&[("2+3*4.txt", "~")]));
+        set_files(&mut l, files(&[("2+3*4.txt", "~")]));
         l
     }
 
@@ -1622,7 +1823,7 @@ mod tests {
                 "2048",
                 SETTINGS_HEADING,
                 "Mouse",
-                FILES_HEADING,
+                FILES,
                 "2+3*4.txt"
             ]
         );
@@ -1635,10 +1836,10 @@ mod tests {
         l.key(Key::Down);
         assert_eq!(l.picked(), Some(Pick::Setting(0)), "over the heading");
         assert_eq!(l.key(Key::Enter), Event::Launch(Pick::Setting(0)));
-        l.set_files(files(&[("2+3*4.md", "~")]));
+        set_files(&mut l, files(&[("2+3*4.md", "~")]));
         assert_eq!(l.picked(), Some(Pick::Setting(0)), "new files keep it");
         l.key(Key::Down);
-        assert_eq!(l.picked(), Some(Pick::File(0)));
+        assert_eq!(l.picked(), Some(Pick::Found(0, 0)));
         l.key(Key::Up);
         l.key(Key::Up);
         l.key(Key::Up);
@@ -1711,7 +1912,7 @@ mod tests {
         let mut l = with_every_kind();
         assert!(l.highlight(Pick::Setting(0)));
         assert_eq!(l.picked(), Some(Pick::Setting(0)));
-        assert!(!l.highlight(Pick::File(3)), "no such row");
+        assert!(!l.highlight(Pick::Found(0, 3)), "no such row");
         assert_eq!(l.picked(), Some(Pick::Setting(0)));
     }
 
@@ -1721,11 +1922,18 @@ mod tests {
         assert_eq!(l.key(Key::Menu), Event::None, "the answer has no menu");
         l.key(Key::Down);
         assert_eq!(l.key(Key::Menu), Event::Context(Pick::App(0)));
-        assert_eq!(l.right_press(Pick::File(0)), Event::Context(Pick::File(0)));
-        assert_eq!(l.picked(), Some(Pick::File(0)), "the pressed row is lit");
+        assert_eq!(
+            l.right_press(Pick::Found(0, 0)),
+            Event::Context(Pick::Found(0, 0))
+        );
+        assert_eq!(
+            l.picked(),
+            Some(Pick::Found(0, 0)),
+            "the pressed row is lit"
+        );
         assert_eq!(l.right_press(Pick::Setting(0)), Event::None);
         assert_eq!(l.picked(), Some(Pick::Setting(0)));
-        assert_eq!(l.right_press(Pick::File(3)), Event::None, "no such row");
+        assert_eq!(l.right_press(Pick::Found(0, 3)), Event::None, "no such row");
         assert_eq!(l.picked(), Some(Pick::Setting(0)));
         assert_eq!(Launcher::new().key(Key::Menu), Event::None, "no rows");
     }
@@ -1799,7 +2007,7 @@ mod tests {
         assert_eq!(hit_row(0), Hit::Row(Pick::Calc));
         assert_eq!(hit_row(2), Hit::Panel, "the heading");
         assert_eq!(hit_row(3), Hit::Row(Pick::Setting(0)));
-        assert_eq!(hit_row(5), Hit::Row(Pick::File(0)));
+        assert_eq!(hit_row(5), Hit::Row(Pick::Found(0, 0)));
     }
 
     #[test]
@@ -1860,7 +2068,7 @@ mod tests {
         let mut t = crate::access::Tree::window("", (W, 300));
         let focus = access(&l, &text, 11, &mut t, crate::access::ROOT, &theme);
         assert_eq!(t.get(focus).unwrap().label(), Some("= 14"));
-        for h in [SETTINGS_HEADING, FILES_HEADING] {
+        for h in [SETTINGS_HEADING, FILES] {
             let n = t.find(accesskit::Role::ListBoxOption, h).unwrap();
             assert!(t.get(n).unwrap().is_disabled(), "{h} is greyed");
         }
