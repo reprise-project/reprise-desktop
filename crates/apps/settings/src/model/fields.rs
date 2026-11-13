@@ -41,6 +41,7 @@ pub(super) fn fields() -> Vec<Field> {
         Field::Flag(k("previews", "taskbar"), lens!(preview_taskbar)),
         Field::Flag(k("osd", "caps_lock"), lens!(osd_caps_lock)),
         Field::Flag(k("osd", "num_lock"), lens!(osd_num_lock)),
+        Field::Flag(k("display", "auto_rotate"), lens!(auto_rotate)),
         Field::Int(k("previews", "fps"), lens!(previews_fps)),
         Field::Text(k("switcher", "style"), lens!(switcher_style)),
         Field::Text(k("switcher", "size"), lens!(switcher_size)),

@@ -57,6 +57,8 @@ pub struct Settings {
     /// `[osd] caps_lock` and `num_lock`: the key's on-screen panel when it changes.
     pub osd_caps_lock: bool,
     pub osd_num_lock: bool,
+    /// `[display] auto_rotate`: the built-in screen turns with the machine.
+    pub auto_rotate: bool,
     /// `[previews] fps`: how often a live picture is redrawn, 1 to
     /// [`PREVIEW_FPS_MAX`].
     pub previews_fps: i64,
@@ -479,6 +481,7 @@ impl Settings {
             preview_taskbar: c.previews.taskbar,
             osd_caps_lock: c.osd.caps_lock,
             osd_num_lock: c.osd.num_lock,
+            auto_rotate: c.auto_rotate,
             previews_fps: c.previews.fps.into(),
             switcher_style: named(SWITCHER_STYLES, |v| v.parse().ok(), &c.switcher.style),
             switcher_size: named(SWITCHER_SIZES, switcher_size, &c.switcher.size),

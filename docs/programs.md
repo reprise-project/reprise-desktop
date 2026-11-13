@@ -375,7 +375,8 @@ matched control focused.
     the primary screen, and each screen's resolution, refresh rate, orientation, scale
     and adaptive sync. With two monitors or more, Multiple displays extends,
     duplicates or shows only one of them. Forget saved layouts drops the layouts the desktop
-    remembers per set of monitors.
+    remembers per set of monitors. A built-in screen has Rotate automatically,
+    greyed with a note when iio-sensor-proxy reports no accelerometer.
   - **Night Light:** warmth, and sunset to sunrise or a schedule.
   - **Sound:** Audio Devices... (Sounds and Audio Devices, for speakers and
     microphones), the sound theme, whether a program's bell plays a sound,

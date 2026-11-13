@@ -66,7 +66,7 @@ while an editor saves it doesn't.
 | `[[keybinds]]` | shortcuts, layered over the defaults; `action = "none"` unbinds a chord |
 | `[[startmenu]]`, `startmenu_style` | the Classic Start menu's rows, and which Start menu you get |
 | `[[outputs]]` | per-monitor mode, scale, rotation and position; a layout saved for the connected set of monitors wins over them ([features.md](features.md#displays)) |
-| `[display]` | `gpu`: which GPU draws and drives the monitors; `all_gpus`: also open the other GPUs. Both read when Reprise starts |
+| `[display]` | `gpu`: which GPU draws and drives the monitors; `all_gpus`: also open the other GPUs. Both read when Reprise starts. `auto_rotate`: the built-in screen turns with the machine |
 | `desktop_widgets` | widgets on the desktop: `clock`, `calendar`, `meter`; none by default ([features.md](features.md#desktop)) |
 | `terminal`, `script_open`, `script_terminal`, `confirm_scripts` | the terminal, how opening a script runs it, and whether opening a script, a binary or a file its program runs asks first |
 | `task_manager` | what the taskbar menu's Task Manager row and Ctrl+Shift+Escape start; Reprise's Task Manager by default |

@@ -711,6 +711,9 @@ impl Config {
         if let Some(all) = display.all_gpus {
             cfg.all_gpus = all;
         }
+        if let Some(on) = display.auto_rotate {
+            cfg.auto_rotate = on;
+        }
         if let Some(gpu) = display.gpu {
             let path = std::path::PathBuf::from(&gpu);
             if !path.is_absolute() {

@@ -1028,6 +1028,7 @@ impl App for SettingsApp {
         self.ensure_region();
         self.ensure_contents();
         self.ensure_events();
+        self.ensure_sensor();
         self.ensure_thunderbolt();
         self.ensure_login();
         if win == repriseapp::MAIN

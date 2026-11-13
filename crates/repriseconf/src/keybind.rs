@@ -141,6 +141,7 @@ const MACHINE_KEYS: &[&str] = &[
     "XF86TouchpadOn",
     "XF86TouchpadOff",
     "XF86RFKill",
+    "XF86RotationLockToggle",
 ];
 
 fn split(keys: &str) -> Option<(Vec<&'static str>, &str)> {
@@ -341,6 +342,7 @@ pub const ACTION_NAMES: &[(&str, &str, &str)] = &[
     ("touchpad-on", MEDIA, "Touchpad on"),
     ("touchpad-off", MEDIA, "Touchpad off"),
     ("airplane-mode", MEDIA, "Airplane mode on or off"),
+    ("rotation-lock", MEDIA, "Rotation lock on or off"),
     ("zoom-in", ACCESSIBILITY, "Zoom in"),
     ("zoom-out", ACCESSIBILITY, "Zoom out"),
     ("zoom-reset", ACCESSIBILITY, "Zoom back"),

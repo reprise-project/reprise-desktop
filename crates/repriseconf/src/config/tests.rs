@@ -276,6 +276,16 @@ fn display_all_gpus_is_off_unless_set() {
 }
 
 #[test]
+fn auto_rotate_is_on_unless_turned_off() {
+    assert!(Config::default().auto_rotate);
+    assert!(
+        !Config::parse("[display]\nauto_rotate = false\n")
+            .unwrap()
+            .auto_rotate
+    );
+}
+
+#[test]
 fn notification_sounds_default_on() {
     assert!(Config::default().notifications.sound);
     let c = Config::parse("[notifications]\nsound = false\n").unwrap();

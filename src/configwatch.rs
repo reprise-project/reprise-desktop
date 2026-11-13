@@ -419,6 +419,9 @@ pub fn reload(state: &mut State, cfg: Config) {
     if crate::autozone::wanted(&old) != crate::autozone::wanted(&state.config) {
         crate::autozone::config_changed(state);
     }
+    if old.auto_rotate != state.config.auto_rotate {
+        crate::autorotate::config_changed(state);
+    }
     if old.capture_border != state.config.capture_border
         || old.remote_desktop.capture_border != state.config.remote_desktop.capture_border
     {

@@ -65,6 +65,9 @@ pub struct Config {
     /// `[display] all_gpus`: open every GPU of the seat, not only the one that draws; read once
     /// at startup.
     pub all_gpus: bool,
+    /// `[display] auto_rotate`: the built-in screen turns with the machine while an accelerometer
+    /// reports which way up it is held; off is the rotation lock.
+    pub auto_rotate: bool,
     pub outputs: Vec<OutputConfig>,
     pub adaptive_sync: bool,
     pub window_snapping: SnapConfig,
@@ -163,6 +166,7 @@ impl Default for Config {
             screensaver: ScreensaverConfig::default(),
             gpu: None,
             all_gpus: false,
+            auto_rotate: true,
             outputs: Vec::new(),
             adaptive_sync: false,
             window_snapping: SnapConfig::default(),

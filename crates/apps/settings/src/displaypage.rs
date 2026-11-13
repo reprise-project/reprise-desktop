@@ -79,6 +79,8 @@ pub struct Display {
     projection: Option<Projection>,
     /// Whether the compositor has saved layouts in `displays.toml`, which Forget drops.
     pub layouts_saved: bool,
+    /// Whether iio-sensor-proxy reports an accelerometer; None until read.
+    pub sensor: Option<bool>,
 }
 
 /// A mode's size as the layout sees it under `transform` and `scale`: turned a quarter swaps the
@@ -615,6 +617,8 @@ pub const SCALE: &str = "scale";
 pub const VRR: &str = "vrr";
 pub const FORGET: &str = "forget_layouts";
 pub const PROJECTION: &str = "multiple_displays";
+pub const AUTO_ROTATE: &str = "auto_rotate";
+pub const SENSOR_NOTE: &str = "sensor_note";
 pub const TEXT_SIZE_NOTE: &str = "text_size_note";
 
 const X: i32 = crate::pages::X;
@@ -747,11 +751,18 @@ pub fn page(d: &Display, a: Area) -> Form {
     );
     items.push(Item::button(
         FORGET,
-        Rect::new(a.right() - 125, 242 + dy, 125, 23),
+        Rect::new(a.right() - 135, 242 + dy, 135, 23),
         "&Forget saved layouts",
         d.layouts_saved,
         false,
     ));
+    let built_in = repriseconf::displays::is_built_in(&head.name);
+    if built_in {
+        items.push(
+            Item::check(AUTO_ROTATE, X, 247 + dy, "Rotate &automatically")
+                .enabled(d.sensor == Some(true)),
+        );
+    }
     let mut note_y = 280 + dy;
     if let Some((rows, sel)) = d.projection_rows() {
         items.push(Item::label_at(
@@ -772,6 +783,15 @@ pub fn page(d: &Display, a: Area) -> Form {
         a.w,
         &reprisekit::text::escape_mnemonic(&crate::pages::text_size_note()),
     ));
+    if built_in && d.sensor == Some(false) {
+        items.push(Item::label_at(
+            SENSOR_NOTE,
+            X,
+            note_y + 18,
+            a.w,
+            "Rotating needs iio-sensor-proxy and an accelerometer.",
+        ));
+    }
     Form::new(items)
 }
 
@@ -816,9 +836,10 @@ fn rebuild(sheet: &mut PropSheet, i: usize, d: &Display) {
     }
 }
 
-/// The sheet's Display page rebuilt from `d`.
-pub fn refresh(sheet: &mut PropSheet, d: &Display) {
+/// The sheet's Display page rebuilt from `d`, its bound check box from `s`.
+pub fn refresh(sheet: &mut PropSheet, d: &Display, s: &crate::model::Settings) {
     rebuild(sheet, Page::Display.index(), d);
+    crate::pages::write_form(&mut sheet.pages[Page::Display.index()], s);
 }
 
 #[cfg(test)]
@@ -1231,7 +1252,7 @@ mod tests {
         assert_eq!(at(&two, ORIENTATION), Rect::new(20, 299, 173, 21));
         assert_eq!(at(&two, SCALE), Rect::new(203, 299, 175, 21));
         assert_eq!(at(&two, VRR), Rect::new(20, 332, 13, 13));
-        assert_eq!(at(&two, FORGET), Rect::new(253, 352, 125, 23));
+        assert_eq!(at(&two, FORGET), Rect::new(243, 352, 135, 23));
         for it in &two.items {
             let r = it.placed(&ControlMetrics::CLASSIC);
             assert!(
@@ -1353,11 +1374,12 @@ mod tests {
     }
 
     #[test]
-    fn the_page_draws_its_trackbar_and_greyed_vrr_box_in_every_look() {
+    fn the_page_draws_its_trackbar_and_greyed_check_boxes_in_every_look() {
         use reprisekit::interface::Interface;
-        let mut h = test_head("DP-1");
+        let mut h = test_head("eDP-1");
         h.adaptive_sync = AdaptiveSync::Unsupported;
-        let d = Display::with_heads(vec![h]);
+        let mut d = Display::with_heads(vec![h]);
+        d.sensor = Some(false);
         let groups: &[(&str, &[pagelist::Item])] =
             &[("Display & Sound", &[pagelist::Item::Page("Display")])];
         for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
@@ -1371,7 +1393,7 @@ mod tests {
             c.fill_rect(c.bounds(), theme.colors.button_face);
             propsheet::draw(&mut c, &text, &p, &sheet, false, px);
             let lay = sheet.layout(&text, px);
-            for id in [MODE, VRR] {
+            for id in [MODE, VRR, AUTO_ROTATE] {
                 let it = sheet.pages[0].item(id).unwrap();
                 let mut want = Canvas::new(w, h);
                 want.fill_rect(want.bounds(), theme.colors.button_face);
@@ -1387,6 +1409,44 @@ mod tests {
                 }
             }
         }
+    }
+
+    fn enabled(f: &Form, id: &str) -> bool {
+        matches!(
+            f.item(id).map(|it| &it.control),
+            Some(Control::Check { enabled: true, .. })
+        )
+    }
+
+    #[test]
+    fn a_built_in_panel_offers_rotate_automatically_while_an_accelerometer_is_reported() {
+        let mut d = Display::with_heads(vec![test_head("eDP-1"), test_head("DP-1")]);
+        let f = page(&d, Area::MIN);
+        assert_eq!(at(&f, AUTO_ROTATE), Rect::new(20, 357, 13, 13));
+        assert!(!enabled(&f, AUTO_ROTATE), "greyed until the sensor is read");
+        assert!(f.item(SENSOR_NOTE).is_none());
+        d.sensor = Some(true);
+        let f = page(&d, Area::MIN);
+        assert!(enabled(&f, AUTO_ROTATE));
+        assert!(f.item(SENSOR_NOTE).is_none());
+        d.sensor = Some(false);
+        let f = page(&d, Area::MIN);
+        assert!(!enabled(&f, AUTO_ROTATE));
+        assert_eq!(at(&f, SENSOR_NOTE), Rect::new(20, 438, 358, 13));
+        let keys: Vec<char> = (f.items.iter())
+            .filter_map(|it| match &it.control {
+                Control::Check { label, .. } => reprisekit::text::access_key(label),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(keys.iter().filter(|k| **k == 'a').count(), 1);
+        d.pick_monitor(1);
+        let f = page(&d, Area::MIN);
+        assert!(
+            f.item(AUTO_ROTATE).is_none(),
+            "an external monitor does not turn"
+        );
+        assert!(f.item(SENSOR_NOTE).is_none());
     }
 
     #[test]

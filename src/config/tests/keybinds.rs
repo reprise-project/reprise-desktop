@@ -287,6 +287,7 @@ fn media_actions_round_trip_through_their_names() {
         Action::Touchpad(Some(true)),
         Action::Touchpad(Some(false)),
         Action::Airplane,
+        Action::RotationLock,
     ] {
         assert_eq!(Action::from_parts(a.name().unwrap(), None), Ok(a));
     }

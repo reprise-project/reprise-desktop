@@ -11,7 +11,8 @@ use reprisekit::raster::Canvas;
 use crate::displayflow::{Effect, Flow};
 use crate::displaypage::{self, Display};
 use crate::monitordlg::{self, Outcome};
-use crate::{SettingsApp, outputwrite};
+use crate::registry::{self, Page};
+use crate::{SettingsApp, outputwrite, take};
 
 pub const MONITOR_WIN: WinId = WinId::named("monitor");
 
@@ -34,6 +35,8 @@ pub struct DisplayHost {
     /// `App::event`, which has the `Ctx`.
     pub pending: Option<Press>,
     pub icon: Option<Canvas>,
+    /// The accelerometer read off the loop, once the page first opens.
+    pub sensor_job: Option<std::sync::mpsc::Receiver<bool>>,
 }
 
 impl SettingsApp {
@@ -41,7 +44,7 @@ impl SettingsApp {
         self.display.connected = heads.clone();
         self.display.model.set_heads(heads);
         self.display.model.layouts_saved = self.display.layouts.exists();
-        displaypage::refresh(&mut self.sheet, &self.display.model);
+        displaypage::refresh(&mut self.sheet, &self.display.model, &self.want);
         let effects = self.display.flow.heads_changed(&self.display.model);
         let mut r = self.display_effects(effects);
         self.sync_apply();
@@ -50,10 +53,49 @@ impl SettingsApp {
     }
 
     pub(crate) fn display_changed(&mut self) -> Reply {
-        displaypage::refresh(&mut self.sheet, &self.display.model);
+        displaypage::refresh(&mut self.sheet, &self.display.model, &self.want);
         self.sync_apply();
         Reply::redraw()
     }
+
+    pub(crate) fn ensure_sensor(&mut self) {
+        let d = &self.display;
+        if registry::open(&self.sheet) == Page::Display
+            && d.model.sensor.is_none()
+            && d.sensor_job.is_none()
+        {
+            self.start_sensor();
+        }
+    }
+
+    /// The accelerometer read finished: grey or offer Rotate automatically. True when the page
+    /// changed.
+    pub(crate) fn sensor_done(&mut self) -> bool {
+        let Some(rx) = &self.display.sensor_job else {
+            return false;
+        };
+        let found = match take(rx) {
+            Ok(None) => return false,
+            Ok(Some(f)) => f,
+            Err(()) => false,
+        };
+        self.display.sensor_job = None;
+        self.display.model.sensor = Some(found);
+        displaypage::refresh(&mut self.sheet, &self.display.model, &self.want);
+        true
+    }
+
+    #[cfg(not(test))]
+    fn start_sensor(&mut self) {
+        self.display.sensor_job = Some(self.spawn(|| {
+            reprisebus::system()
+                .is_ok_and(|c| reprisebus::wait(reprisebus::sensorproxy::has_accelerometer(&c)))
+        }));
+    }
+
+    /// Tests feed `sensor_job` themselves, so nothing reaches the system bus.
+    #[cfg(test)]
+    fn start_sensor(&mut self) {}
 
     /// Identify: the compositor numbers the screens as the well does.
     /// Off the loop, since the call waits on the compositor.
@@ -101,7 +143,7 @@ impl SettingsApp {
         if let (Some(q), Some(icon)) = (self.display.flow.question.as_mut(), &self.display.icon) {
             q.dialog.form.set_picture(monitordlg::ICON, icon.clone());
         }
-        displaypage::refresh(&mut self.sheet, &self.display.model);
+        displaypage::refresh(&mut self.sheet, &self.display.model, &self.want);
         self.sync_apply();
         let mut r = self.display_effects(effects);
         r.redraw_all = true;
@@ -189,7 +231,7 @@ impl SettingsApp {
         }
         if saved && !self.display.model.layouts_saved {
             self.display.model.layouts_saved = true;
-            displaypage::refresh(&mut self.sheet, &self.display.model);
+            displaypage::refresh(&mut self.sheet, &self.display.model, &self.want);
             r.redraw = true;
         }
         r

@@ -349,10 +349,11 @@ mod tests {
             interface: "glass".into(),
             ..Settings::default()
         };
-        let display = crate::displaypage::Display::with_heads(vec![
-            crate::displaypage::test_head("DP-1"),
+        let mut display = crate::displaypage::Display::with_heads(vec![
+            crate::displaypage::test_head("eDP-1"),
             crate::displaypage::test_head("HDMI-A-1"),
         ]);
+        display.sensor = Some(false);
         let pad = reprisebus::tray::Pad {
             name: "Pad".into(),
             buttons: 13,

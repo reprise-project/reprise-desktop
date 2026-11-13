@@ -13,6 +13,13 @@ pub fn path() -> PathBuf {
         .join("displays.toml")
 }
 
+/// Whether `connector` drives a laptop's or tablet's own panel.
+pub fn is_built_in(connector: &str) -> bool {
+    ["eDP-", "LVDS-", "DSI-"]
+        .iter()
+        .any(|p| connector.starts_with(p))
+}
+
 /// One connected monitor as its EDID and connector name it.
 #[derive(Clone, Copy, Debug)]
 pub struct Monitor<'a> {

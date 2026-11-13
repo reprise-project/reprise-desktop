@@ -298,9 +298,10 @@ suspend_after = 0            # run [power] standby
 # screen_off_after = 300     # a missing key keeps the [idle] value
 # suspend_after = 1200
 
-# [display]                  # read when Reprise starts
-# gpu = "/dev/dri/card1"     # the GPU that draws and whose connectors light up; the seat's primary GPU when left out. On a laptop whose HDMI port hangs off the discrete GPU, name that one: the screens on the other GPU then stay dark. A /dev/dri/by-path/ link keeps its name across boots, a cardN may not
-# all_gpus = false           # true: also open the other GPUs and track their monitors. Only the GPU above draws, so monitors on the others stay dark (and go dark at login); an open discrete GPU cannot power down, which costs battery
+# [display]
+# auto_rotate = true         # the built-in screen (eDP, LVDS, DSI) turns with the machine while iio-sensor-proxy reports an accelerometer; false is the rotation lock, which the XF86RotationLockToggle key and Rotate automatically on the Display page also set
+# gpu = "/dev/dri/card1"     # read when Reprise starts: the GPU that draws and whose connectors light up; the seat's primary GPU when left out. On a laptop whose HDMI port hangs off the discrete GPU, name that one: the screens on the other GPU then stay dark. A /dev/dri/by-path/ link keeps its name across boots, a cardN may not
+# all_gpus = false           # read when Reprise starts: true also opens the other GPUs and tracks their monitors. Only the GPU above draws, so monitors on the others stay dark (and go dark at login); an open discrete GPU cannot power down, which costs battery
 
 # [[outputs]]                # per-output settings, matched by connector name; the Display page of Reprise Settings writes mode, transform, scale, position and adaptive_sync here after you keep the change
 #                            # each change is also saved as the layout of the monitors connected then, which wins over these when that set connects again (docs/features.md, Displays)
@@ -920,8 +921,8 @@ action = "tab-prev"
 # while the screen is locked; the actions
 # volume-up, volume-down, mute, mic-mute, brightness-up, brightness-down,
 # kbd-brightness-up, kbd-brightness-down, play-pause, next, prev, stop,
-# wifi, touchpad (on or off), touchpad-on, touchpad-off and airplane-mode
-# bind to any key.
+# wifi, touchpad (on or off), touchpad-on, touchpad-off, airplane-mode and
+# rotation-lock bind to any key.
 #[[keybinds]]
 #keys = "Super+F10"
 #action = "mute"

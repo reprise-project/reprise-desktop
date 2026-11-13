@@ -786,6 +786,7 @@ fn passes_dialog(a: &Action) -> bool {
             | Action::Wifi
             | Action::Touchpad(_)
             | Action::Airplane
+            | Action::RotationLock
     )
 }
 
@@ -1001,9 +1002,10 @@ fn vt_switch(modes: &Modes, k: &KeyPress) -> Option<u32> {
 /// Not in xkbcommon 0.9's keysym table.
 const KEY_XF86WWAN: u32 = 0x1008_ffb4;
 pub(crate) const KEY_XF86RFKILL: u32 = 0x1008_ffb5;
+pub(crate) const KEY_XF86ROTATION_LOCK_TOGGLE: u32 = 0x1008_ffb7;
 
-/// Whether a key with `syms` is the machine's own: power, sleep, a VT, a radio or the touchpad
-/// toggle, which no app's input may press.
+/// Whether a key with `syms` is the machine's own: power, sleep, a VT, a radio, the touchpad
+/// toggle or the rotation lock, which no app's input may press.
 #[expect(non_upper_case_globals)] // xkb keysym names in patterns
 pub fn machine_key(syms: &[u32]) -> bool {
     syms.iter().any(|&s| {
@@ -1021,6 +1023,7 @@ pub fn machine_key(syms: &[u32]) -> bool {
                 | KEY_XF86TouchpadToggle
                 | KEY_XF86TouchpadOn
                 | KEY_XF86TouchpadOff
+                | KEY_XF86ROTATION_LOCK_TOGGLE
         ) || (KEY_XF86Switch_VT_1..=KEY_XF86Switch_VT_12).contains(&s)
     })
 }
@@ -1046,6 +1049,7 @@ pub fn media_action_for(sym: u32) -> Option<Action> {
         KEY_XF86TouchpadOn => Action::Touchpad(Some(true)),
         KEY_XF86TouchpadOff => Action::Touchpad(Some(false)),
         KEY_XF86RFKILL => Action::Airplane,
+        KEY_XF86ROTATION_LOCK_TOGGLE => Action::RotationLock,
         _ => return None,
     })
 }

@@ -162,6 +162,7 @@ impl State {
             }
         }
         self.update_layout();
+        crate::autorotate::outputs_changed(self);
         true
     }
 
