@@ -390,7 +390,8 @@ desktop and stays out of the way when it's missing.
 - hwdata, whose `pci.ids` names the graphics card in About Reprise and Task
   Manager
 - tzdata, whose `zone1970.tab` places your time zone's city, for the night
-  light's sunset and sunrise without a set location
+  light's sunset and sunrise without a set location, and whose `zone.tab`
+  picks the zone nearest your location for the automatic time zone
 
 **Network**
 
@@ -442,9 +443,10 @@ desktop and stays out of the way when it's missing.
   `fprintd-enroll`) through the `reprise-fingerprint` PAM service, which
   keeps an account pam_faillock locked locked. The admin prompt takes one
   when `/etc/pam.d/polkit-1` has `pam_fprintd`.
-- geoclue, for programs that ask for your location. Reprise is its agent
-  (the package's `/etc/geoclue/conf.d/90-reprise.conf` lets it); without an
-  agent geoclue refuses everyone.
+- geoclue, for programs that ask for your location and for the automatic
+  time zone. Reprise is its agent (the package's
+  `/etc/geoclue/conf.d/90-reprise.conf` lets it); without an agent geoclue
+  refuses everyone.
 
 - A VA-API driver with an H.264 encoder, for hardware H.264 in Remote
   Desktop: `intel-media-driver` on Intel graphics, `libva-mesa-driver` on

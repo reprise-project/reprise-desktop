@@ -898,6 +898,9 @@ impl Config {
         if let Some(v) = file.updates.and_then(|u| u.restart_notice) {
             cfg.restart_notice = v;
         }
+        if let Some(v) = file.time_zone.and_then(|t| t.automatic) {
+            cfg.auto_time_zone = v;
+        }
         if let Some(d) = file.debug {
             if let Some(v) = d.overlay {
                 cfg.debug.overlay = v;

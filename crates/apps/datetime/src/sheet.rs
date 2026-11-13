@@ -2,15 +2,17 @@
 //!
 //! One `PropSheet` with two tabs. Date & Time holds the month combo, the
 //! year spinner, the month grid, the analog clock, the time field and the
-//! network time check box; Time Zone holds the zone combo over a panel
-//! naming the zone. Nothing here reads the clock or a bus: the host feeds
-//! it the time every second and what timedated reports, and carries out
-//! the [`Change`] it hands back.
+//! network time check box; Time Zone holds the automatic zone check box,
+//! the zone combo and a panel naming the zone. Nothing here reads the clock
+//! or a bus: the host feeds it the time every second and what timedated
+//! reports, and carries out the [`Change`] it hands back.
 //!
 //! The date and the time follow the clock until the user edits either;
 //! from then on they hold what was set until an Apply or OK carries it
 //! out. While network time is on (checked, applied or not) the date and
-//! time controls are greyed, since the time server owns the clock.
+//! time controls are greyed, since the time server owns the clock; while
+//! the automatic zone is checked the zone combo is, since the location
+//! owns the zone.
 
 use reprisekit::art::clockface::Face;
 use reprisekit::controls::calendar::{self, Calendar, MONTHS};
@@ -33,7 +35,7 @@ pub const TAB_ZONE: usize = 1;
 const YEARS: (i32, i32) = (1970, 2099);
 
 /// The zone panel's inside, the size of the picture it holds.
-const PANEL: Rect = Rect::new(19, 64, 360, 188);
+const PANEL: Rect = Rect::new(19, 100, 360, 150);
 
 /// The system clock's settings as timedated reports them.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -44,6 +46,44 @@ pub struct System {
     pub ntp: bool,
     /// A time server client is installed, so `ntp` can be turned on.
     pub can_ntp: bool,
+    /// `[time_zone] automatic`: the compositor sets the zone from the location.
+    pub auto_zone: bool,
+    /// Why the zone cannot follow the location; None when it can.
+    pub auto_blocked: Option<Blocked>,
+}
+
+/// What keeps the zone from following the location.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Blocked {
+    /// geoclue is not installed.
+    NoGeoclue,
+    /// `[privacy] location` is off.
+    LocationOff,
+    /// polkit wants a password to set the zone, which no one types in the background.
+    NotAllowed,
+}
+
+impl Blocked {
+    /// The first of the reasons that holds.
+    pub fn first(geoclue: bool, location: bool, allowed: bool) -> Option<Blocked> {
+        if !geoclue {
+            Some(Blocked::NoGeoclue)
+        } else if !location {
+            Some(Blocked::LocationOff)
+        } else if !allowed {
+            Some(Blocked::NotAllowed)
+        } else {
+            None
+        }
+    }
+
+    pub fn note(self) -> &'static str {
+        match self {
+            Blocked::NoGeoclue => "Install geoclue, the location service, first.",
+            Blocked::LocationOff => "Turn on Location in Settings > Privacy first.",
+            Blocked::NotAllowed => "Ask an administrator to allow time zone changes.",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -65,6 +105,7 @@ pub struct Change {
     pub ntp: Option<bool>,
     /// A date and time in the new zone (or the current one).
     pub time: Option<Local>,
+    pub auto_zone: Option<bool>,
 }
 
 /// What the host does after an event.
@@ -113,7 +154,7 @@ impl Sheet {
         }
         let pages = vec![
             date_page(now, first_weekday, twelve, system),
-            zone_page(&zones, &system.zone),
+            zone_page(&zones, system),
         ];
         let mut s = Sheet {
             sheet: PropSheet::new(&TABS, pages, CLIENT),
@@ -124,6 +165,7 @@ impl Sheet {
         s.tick(now);
         s.write_zone();
         s.write_ntp();
+        s.write_auto();
         s
     }
 
@@ -176,14 +218,20 @@ impl Sheet {
         self.sheet.pages[TAB_DATE].checked("ntp").unwrap_or(false)
     }
 
+    fn pending_auto(&self) -> bool {
+        self.sheet.pages[TAB_ZONE].checked("auto").unwrap_or(false)
+    }
+
     /// What Apply would carry out now.
     pub fn change(&self) -> Change {
         let zone = self.pending_zone();
         let ntp = self.pending_ntp();
+        let auto = self.pending_auto();
         Change {
-            zone: (zone != self.applied.zone).then_some(zone),
+            zone: (!auto && zone != self.applied.zone).then_some(zone),
             ntp: (ntp != self.applied.ntp).then_some(ntp),
             time: (self.edited && !ntp).then(|| self.shown()),
+            auto_zone: (auto != self.applied.auto_zone).then_some(auto),
         }
     }
 
@@ -218,6 +266,7 @@ impl Sheet {
         self.applied = system.clone();
         self.edited = false;
         self.write_ntp();
+        self.write_auto();
         self.tick(now);
         self.sheet.set_apply_enabled(self.dirty());
     }
@@ -233,6 +282,7 @@ impl Sheet {
     /// back, the date and time follow the clock again and Apply greys.
     pub fn refused(&mut self, system: &System, now: Local) {
         self.sheet.pages[TAB_DATE].set_check("ntp", system.ntp);
+        self.sheet.pages[TAB_ZONE].set_check("auto", system.auto_zone);
         if let Some(i) = self.zones.iter().position(|z| *z == system.zone) {
             self.sheet.pages[TAB_ZONE].set_combo("zone", i);
         }
@@ -267,6 +317,7 @@ impl Sheet {
             }
             "ntp" => self.write_ntp(),
             "zone" => self.write_zone(),
+            "auto" => self.write_auto(),
             _ => {}
         }
         let dirty = self.dirty();
@@ -320,6 +371,27 @@ impl Sheet {
             } else {
                 page.set_focus(None);
             }
+        }
+    }
+
+    /// The automatic zone check box takes what is free to change: a blocked one greys unless it
+    /// is on, so it can still be turned off. Checked, it greys the zone combo, which goes back to
+    /// the applied zone.
+    fn write_auto(&mut self) {
+        let blocked = self.applied.auto_blocked;
+        let page = &mut self.sheet.pages[TAB_ZONE];
+        let auto = page.checked("auto").unwrap_or(false);
+        page.set_enabled("auto", blocked.is_none() || self.applied.auto_zone || auto);
+        page.set_text("auto_note", blocked.map_or("", Blocked::note));
+        page.set_enabled("zone", !auto);
+        if auto {
+            if let Some(i) = self.zones.iter().position(|z| *z == self.applied.zone) {
+                page.set_combo("zone", i);
+            }
+            if page.focus().is_some_and(|i| page.items[i].id == "zone") {
+                page.focus_id("auto");
+            }
+            self.write_zone();
         }
     }
 
@@ -389,15 +461,17 @@ fn panel_well(r: Rect) -> Control {
     }
 }
 
-fn zone_page(zones: &[String], current: &str) -> Form {
+fn zone_page(zones: &[String], system: &System) -> Form {
     let labels: Vec<String> = zones.iter().map(|z| z.replace('_', " ")).collect();
     let rows: Vec<&str> = labels.iter().map(String::as_str).collect();
-    let selected = zones.iter().position(|z| z == current).unwrap_or(0);
+    let selected = zones.iter().position(|z| *z == system.zone).unwrap_or(0);
     let mid = PANEL.y + PANEL.height / 2;
     Form::new(vec![
+        Item::check("auto", 18, 37, "Set time &zone automatically").checked(system.auto_zone),
+        Item::label_at("auto_note", 18, 54, 344, "").under_check(),
         Item::new(
             "zone",
-            Rect::new(18, 37, 362, reprisekit::controls::combo::COMBO_H),
+            Rect::new(18, 73, 362, reprisekit::controls::combo::COMBO_H),
             Control::Combo(Combo::new(&rows, selected, 16)),
         ),
         Item::new("panel", PANEL, panel_well(PANEL)),
@@ -446,6 +520,7 @@ mod tests {
             zone: "Europe/Budapest".into(),
             ntp: false,
             can_ntp: true,
+            ..System::default()
         }
     }
 
@@ -479,8 +554,20 @@ mod tests {
     #[test]
     fn the_pages_fit_their_text() {
         let over = reprisekit::interfaces::form_overflows(|_, _, _| {
-            let s = sheet().sheet;
-            s.tabs.labels.into_iter().zip(s.pages).collect()
+            let mut pages: Vec<(String, Form)> = Vec::new();
+            for blocked in [
+                Blocked::NoGeoclue,
+                Blocked::LocationOff,
+                Blocked::NotAllowed,
+            ] {
+                let system = System {
+                    auto_blocked: Some(blocked),
+                    ..system()
+                };
+                let s = Sheet::new(&system, &zones(), now(), 0, true).sheet;
+                pages.extend(s.tabs.labels.into_iter().zip(s.pages));
+            }
+            pages
         });
         assert!(over.is_empty(), "{}", over.join("\n"));
     }
@@ -497,7 +584,11 @@ mod tests {
             ..Theme::default()
         };
         let text = TextRenderer::load(&FontConfig::default());
-        let mut s = sheet();
+        let blocked = System {
+            auto_blocked: Some(Blocked::NotAllowed),
+            ..system()
+        };
+        let mut s = Sheet::new(&blocked, &zones(), now(), 0, true);
         let (w, h) = CLIENT;
         let mut out = Canvas::new(2 * w as u32, h as u32);
         for tab in [TAB_DATE, TAB_ZONE] {
@@ -662,6 +753,7 @@ mod tests {
                 ntp: Some(false),
                 zone: Some(_),
                 time: Some(_),
+                auto_zone: None,
             })
         ));
 
@@ -696,10 +788,97 @@ mod tests {
         assert_eq!(page.rect("panel"), Some(u.rect(PANEL)));
         assert!(matches!(
             &page.item("panel").unwrap().control,
-            Control::Picture { canvas: Some(c), .. } if (c.width, c.height) == (553, 286)
+            Control::Picture { canvas: Some(c), .. } if (c.width, c.height) == (553, 227)
         ));
         s.fit(TextUnits::ONE);
         assert_eq!(s.sheet.pages[TAB_ZONE].item("panel").unwrap().rect, PANEL);
+    }
+
+    #[test]
+    fn the_automatic_zone_greys_the_combo_and_is_applied() {
+        let mut s = sheet();
+        s.sheet.pages[TAB_ZONE].set_combo("zone", 2);
+        s.event(propsheet::Event::Page(
+            TAB_ZONE,
+            form::Event::Changed("zone"),
+        ));
+        s.sheet.pages[TAB_ZONE].set_check("auto", true);
+        s.event(propsheet::Event::Page(
+            TAB_ZONE,
+            form::Event::Changed("auto"),
+        ));
+        let page = &s.sheet.pages[TAB_ZONE];
+        assert!(matches!(&page.item("zone").unwrap().control, Control::Combo(c) if !c.enabled));
+        assert_eq!(
+            s.pending_zone(),
+            "Europe/Budapest",
+            "back to the applied zone"
+        );
+        assert_eq!(
+            s.event(propsheet::Event::Apply),
+            Outcome::Apply(Change {
+                auto_zone: Some(true),
+                ..Change::default()
+            })
+        );
+        let auto = System {
+            auto_zone: true,
+            ..system()
+        };
+        s.applied(&auto, now());
+        assert!(!s.dirty());
+        s.sheet.pages[TAB_ZONE].set_check("auto", false);
+        s.event(propsheet::Event::Page(
+            TAB_ZONE,
+            form::Event::Changed("auto"),
+        ));
+        assert!(matches!(
+            &s.sheet.pages[TAB_ZONE].item("zone").unwrap().control,
+            Control::Combo(c) if c.enabled
+        ));
+        assert_eq!(s.change().auto_zone, Some(false));
+    }
+
+    #[test]
+    fn a_blocked_automatic_zone_greys_with_a_note_unless_it_is_on() {
+        let note = |s: &Sheet| match &s.sheet.pages[TAB_ZONE].item("auto_note").unwrap().control {
+            Control::Label { text, .. } => text.clone(),
+            _ => String::new(),
+        };
+        let enabled = |s: &Sheet| {
+            matches!(
+                &s.sheet.pages[TAB_ZONE].item("auto").unwrap().control,
+                Control::Check { enabled: true, .. }
+            )
+        };
+        let s = sheet();
+        assert!(enabled(&s));
+        assert_eq!(note(&s), "");
+        let blocked = System {
+            auto_blocked: Some(Blocked::NotAllowed),
+            ..system()
+        };
+        let s = Sheet::new(&blocked, &zones(), now(), 0, true);
+        assert!(!enabled(&s));
+        assert_eq!(note(&s), "Ask an administrator to allow time zone changes.");
+        let on = System {
+            auto_zone: true,
+            ..blocked
+        };
+        let s = Sheet::new(&on, &zones(), now(), 0, true);
+        assert!(
+            enabled(&s),
+            "an automatic zone that is on can be turned off"
+        );
+        assert_eq!(
+            Blocked::first(false, false, false),
+            Some(Blocked::NoGeoclue)
+        );
+        assert_eq!(
+            Blocked::first(true, false, false),
+            Some(Blocked::LocationOff)
+        );
+        assert_eq!(Blocked::first(true, true, true), None);
     }
 
     #[test]

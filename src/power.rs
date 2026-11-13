@@ -570,6 +570,7 @@ pub(crate) fn report(state: &mut State, r: Report) {
             crate::idle::resumed(state);
             crate::nightlight::update(state);
             crate::displays::reread(state);
+            crate::autozone::resumed(state);
         }
         Report::Lock => {
             log::info!("power: logind asks for the lock");

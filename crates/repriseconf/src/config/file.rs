@@ -275,6 +275,12 @@ pub struct FileUpdates {
 
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
+pub struct FileTimeZone {
+    pub automatic: Option<bool>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct FileDebug {
     pub overlay: Option<bool>,
     pub overlay_in_captures: Option<bool>,
@@ -716,6 +722,7 @@ pub struct FileConfig {
     pub sounds: Option<FileSounds>,
     pub privacy: Option<FilePrivacy>,
     pub updates: Option<FileUpdates>,
+    pub time_zone: Option<FileTimeZone>,
     pub debug: Option<FileDebug>,
     pub launcher: Option<FileLauncher>,
     pub shortcut_overlay: Option<FileShortcutOverlay>,

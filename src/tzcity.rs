@@ -1,5 +1,6 @@
-//! Where the machine is, as far as the time zone says: the zone's principal city in tzdata's
-//! `zone1970.tab` (then `zone.tab`, which also lists the zones that are links today).
+//! Time zones and their principal cities in tzdata's `zone1970.tab` and `zone.tab` (which also
+//! lists the zones that are links today): where the machine is as far as the zone says, and the
+//! zone nearest a place.
 
 use std::path::Path;
 
@@ -25,12 +26,49 @@ pub fn coordinates(zone: &str) -> Option<(f64, f64)> {
 }
 
 fn lookup(table: &str, zone: &str) -> Option<(f64, f64)> {
+    entries(table).find(|(z, _)| *z == zone).map(|(_, at)| at)
+}
+
+/// The zone whose principal city lies nearest to `at` (degrees north and east). `zone.tab` comes
+/// first: it names a zone per country (`Europe/Stockholm`) where `zone1970.tab` gives a merged one
+/// (`Europe/Berlin`).
+pub fn nearest(at: (f64, f64)) -> Option<String> {
+    ["zone.tab", "zone1970.tab"].iter().find_map(|f| {
+        let text = std::fs::read_to_string(Path::new(ZONEINFO).join(f)).ok()?;
+        nearest_in(&text, at)
+    })
+}
+
+fn nearest_in(table: &str, at: (f64, f64)) -> Option<String> {
+    entries(table)
+        .map(|(zone, city)| (zone, distance(city, at)))
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(zone, _)| zone.to_string())
+}
+
+/// Each row's zone and its city's coordinates.
+fn entries(table: &str) -> impl Iterator<Item = (&str, (f64, f64))> {
     table
         .lines()
         .filter(|l| !l.starts_with('#'))
-        .map(|l| l.split('\t').collect::<Vec<_>>())
-        .find(|cols| cols.get(2) == Some(&zone))
-        .and_then(|cols| iso6709(cols[1]))
+        .filter_map(|l| {
+            let mut cols = l.split('\t').skip(1);
+            let at = iso6709(cols.next()?)?;
+            Some((cols.next()?, at))
+        })
+}
+
+/// The angle between two places seen from the earth's centre, in radians (haversine).
+fn distance(a: (f64, f64), b: (f64, f64)) -> f64 {
+    let (la1, lo1, la2, lo2) = (
+        a.0.to_radians(),
+        a.1.to_radians(),
+        b.0.to_radians(),
+        b.1.to_radians(),
+    );
+    let h = ((la2 - la1) / 2.0).sin().powi(2)
+        + la1.cos() * la2.cos() * ((lo2 - lo1) / 2.0).sin().powi(2);
+    2.0 * h.sqrt().min(1.0).asin()
 }
 
 /// `+4730+01905` or `+404251-0740023`: sign, degrees, minutes and optional seconds, latitude then
@@ -94,6 +132,34 @@ AU\t-3352+15113\tAustralia/Sydney\tNew South Wales (most areas)
         );
         assert_eq!(lookup(TABLE, "Europe/Nowhere"), None);
         assert_eq!(lookup(TABLE, "Europe"), None);
+    }
+
+    #[test]
+    fn the_nearest_city_names_the_zone() {
+        assert_eq!(
+            nearest_in(TABLE, (48.2, 16.37)).as_deref(),
+            Some("Europe/Budapest"),
+            "Vienna is nearest Budapest"
+        );
+        assert_eq!(
+            nearest_in(TABLE, (42.36, -71.06)).as_deref(),
+            Some("America/New_York"),
+            "Boston"
+        );
+        assert_eq!(
+            nearest_in(TABLE, (-37.81, 144.96)).as_deref(),
+            Some("Australia/Sydney"),
+            "Melbourne"
+        );
+        assert_eq!(nearest_in("# nothing\n", (0.0, 0.0)), None);
+    }
+
+    #[test]
+    fn the_distance_wraps_at_the_date_line() {
+        let fiji = (-18.13, 178.42);
+        let samoa = (-13.83, -171.76);
+        let perth = (-31.95, 115.86);
+        assert!(distance(fiji, samoa) < distance(fiji, perth));
     }
 
     #[test]

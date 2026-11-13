@@ -5,7 +5,6 @@ mod color;
 pub mod schedule;
 mod sun;
 pub mod tint;
-mod zone;
 
 use smithay::{
     output::Output,
@@ -125,9 +124,9 @@ impl Zone {
         if location.is_some() {
             return location;
         }
-        let zone = zone::system_zone();
+        let zone = crate::tzcity::system_zone();
         if zone != self.name {
-            self.place = zone.as_deref().and_then(zone::coordinates);
+            self.place = zone.as_deref().and_then(crate::tzcity::coordinates);
             match (&zone, self.place) {
                 (Some(z), Some((lat, lon))) => {
                     log::info!("sunset and sunrise for {z} ({lat:.2}, {lon:.2})")

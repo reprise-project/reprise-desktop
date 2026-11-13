@@ -410,6 +410,52 @@ fn with_bt_battery_warning(text: &str, percent: u8) -> Result<String, String> {
     Ok(doc.to_string())
 }
 
+/// `[time_zone] automatic` and `[privacy] location`, read now: whether the zone follows the
+/// location (off unless set), and whether the location may be read at all (on unless `false`).
+pub fn auto_time_zone() -> (bool, bool) {
+    let text = std::fs::read_to_string(config_path()).unwrap_or_default();
+    auto_time_zone_in(&text)
+}
+
+fn auto_time_zone_in(text: &str) -> (bool, bool) {
+    let flag = |k: Key, default: bool| {
+        parsed(text)
+            .and_then(|doc| get(&doc, &k).and_then(Item::as_bool))
+            .unwrap_or(default)
+    };
+    (
+        flag(key("time_zone", "automatic"), false),
+        flag(key("privacy", "location"), true),
+    )
+}
+
+/// Write `[time_zone] automatic = on` into the config file, off as no key (and no table once it
+/// is empty).
+pub fn save_auto_time_zone(on: bool) -> Result<(), String> {
+    match edit(&config_path(), |text| with_auto_time_zone(text, on)) {
+        Ok(r) => r.map(|_| ()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+fn with_auto_time_zone(text: &str, on: bool) -> Result<String, String> {
+    let mut doc: DocumentMut = text.parse().map_err(|e| format!("{e}"))?;
+    let k = key("time_zone", "automatic");
+    if on {
+        set(&mut doc, &k, Value::from(true)).map_err(|e| e.to_string())?;
+    } else {
+        remove(&mut doc, &k);
+        if doc
+            .get(k.table)
+            .and_then(Item::as_table_like)
+            .is_some_and(|t| t.is_empty())
+        {
+            doc.remove(k.table);
+        }
+    }
+    Ok(doc.to_string())
+}
+
 pub type ConfigWatch = reprisefs::folderwatch::Watch;
 
 /// A watch on the config file: `wake` runs on its thread after each write or rename onto it, and
@@ -993,6 +1039,20 @@ mod tests {
         let back = with_bt_battery_warning(&set, 15).unwrap();
         assert!(!back.contains("bluetooth"), "{back}");
         assert!(with_bt_battery_warning("[bluetooth\n", 25).is_err());
+    }
+
+    #[test]
+    fn the_automatic_time_zone_is_off_and_the_location_on_unless_set() {
+        assert_eq!(auto_time_zone_in(""), (false, true));
+        assert_eq!(
+            auto_time_zone_in("[time_zone]\nautomatic = true\n[privacy]\nlocation = false\n"),
+            (true, false)
+        );
+        let set = with_auto_time_zone("# mine\n", true).unwrap();
+        assert_eq!(auto_time_zone_in(&set), (true, true));
+        assert!(set.contains("# mine\n"), "the rest of the file stays");
+        let back = with_auto_time_zone(&set, false).unwrap();
+        assert!(!back.contains("time_zone"), "{back}");
     }
 
     #[test]

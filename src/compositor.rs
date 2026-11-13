@@ -283,6 +283,8 @@ pub struct State {
     pub capture_border: crate::captureborder::CaptureBorder,
     /// The geoclue agent: its prompts and the location pin (`location`).
     pub location: crate::location::Location,
+    /// `[time_zone] automatic`'s thread (`autozone`).
+    pub auto_zone: crate::autozone::AutoZone,
     pub netspeed: crate::netspeed::NetSpeed,
     /// Programs' progress for their task buttons (`launcherentry`).
     pub launcher_entries: crate::launcherentry::Entries,
@@ -690,6 +692,11 @@ impl State {
             netspeed: Default::default(),
             location: if session {
                 crate::location::Location::start(&handle, config.location)
+            } else {
+                Default::default()
+            },
+            auto_zone: if session {
+                crate::autozone::AutoZone::start(&handle, crate::autozone::wanted(&config))
             } else {
                 Default::default()
             },

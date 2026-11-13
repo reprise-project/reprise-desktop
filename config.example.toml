@@ -382,6 +382,12 @@ suspend_after = 0            # run [power] standby
 # capture_border = true      # a red border on the screen around each output, window
 #                            # or area being recorded or shared; never in the capture
 
+# [time_zone]
+# automatic = false          # true sets the time zone from the location (geoclue) at
+#                            # most hourly: at login, on resume and on a new network.
+#                            # Needs [privacy] location and polkit allowing
+#                            # org.freedesktop.timedate1.set-timezone without a password
+
 # [drives]                   # Settings > Default Programs also sets this
 # on_insert = "ask"          # what a plugged-in drive does: "ask" shows a balloon with
 #                            # Mount and Open and Mount buttons; "mount" mounts it;
