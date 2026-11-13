@@ -17,6 +17,8 @@ repriseapp-pins = { path = "../repriseapp-pins" }
 reprisefs = { path = "../reprisefs" }
 repriseconf = { path = "../repriseconf" }
 smithay-client-toolkit = "0.21"
+# The version smithay-client-toolkit links.
+xkbcommon = "0.8"
 wayland-client.workspace = true
 wayland-scanner = "0.31"
 log.workspace = true

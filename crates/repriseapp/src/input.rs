@@ -113,7 +113,7 @@ impl Host {
         });
     }
 
-    fn key(&mut self, mut event: KeyEvent) {
+    pub(crate) fn key(&mut self, mut event: KeyEvent) {
         self.echo_key(&event, true);
         let input = self.key_input(&event);
         event.utf8.zeroize();
@@ -142,9 +142,8 @@ impl Host {
         self.send(win, Event::Pointer(input));
     }
 
-    /// Binds the keyboard `new_capability` left due, once a window has shown its first frame:
-    /// the keymap and compose table cost a few milliseconds, and the compositor sends `enter`
-    /// to a keyboard bound while one of the client's windows has focus.
+    /// Binds the keyboard `new_capability` left due, once a window has shown its first frame;
+    /// the compositor sends `enter` to a keyboard bound while one of the client's windows has focus.
     pub(crate) fn bind_keyboard(&mut self, conn: &Connection, qh: &QueueHandle<Self>) {
         if !self.keyboard_due || !self.slots.iter().any(|s| s.mapped) {
             return;
@@ -154,17 +153,7 @@ impl Host {
         };
         self.keyboard_due = false;
         let _ = conn.flush();
-        let keyboard = self
-            .seat_state
-            .get_keyboard_with_repeat(
-                qh,
-                &seat,
-                None,
-                self.loop_handle.clone(),
-                Box::new(|host: &mut Host, _, event| host.key(event)),
-            )
-            .expect("keyboard");
-        self.keyboard = Some(keyboard);
+        self.keyboard = Some(seat.get_keyboard(qh, crate::keyboard::KeyboardData));
     }
 
     /// Window `id` lost the keyboard.
@@ -313,6 +302,7 @@ impl SeatHandler for Host {
             && let Some(k) = self.keyboard.take()
         {
             k.release();
+            self.xkb = Default::default();
             if let Some(t) = self.text_input.take() {
                 t.destroy();
             }
