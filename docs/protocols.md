@@ -131,6 +131,11 @@ confinement holds, every motion goes through as it comes.
   `~/.local/share/reprise/wallpapers` becomes `[wallpaper] image`; `set-on`
   both does the same, as the Glass lock screen shows the desktop's picture.
   The lock screen alone is refused, since it has no picture of its own
+- **Email:** the message opens unsent in the mail program Default Programs
+  names: Thunderbird through `-compose`, Evolution through a `mailto:` with
+  `attach=`, any other through `xdg-email` (or the `mailto:` alone without
+  xdg-utils). With no mail program, or one that fails to start, the call
+  fails and a balloon says why
 
 The compositor serves **Settings** (the light or dark look, contrast, fonts
 and icons). `reprise-portals.conf` hands **Secret** to gnome-keyring,

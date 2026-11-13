@@ -119,7 +119,7 @@ fn sets_the_desktop(s: &str) -> bool {
 
 /// The local path of a `file://` URI. The frontend turns a file descriptor into the host path
 /// it names, so a sandboxed app can name any file the user can read.
-fn file_path(uri: &str) -> Option<PathBuf> {
+pub(crate) fn file_path(uri: &str) -> Option<PathBuf> {
     use std::os::unix::ffi::OsStringExt;
     let rest = uri.strip_prefix("file://")?;
     let rest = rest.strip_prefix("localhost").unwrap_or(rest);

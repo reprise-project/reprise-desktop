@@ -480,7 +480,9 @@ desktop and stays out of the way when it's missing.
 - A colour emoji font such as Noto Color Emoji, for the emoji picker
 - shared-mime-info, for file types and icons
 - xdg-utils and libarchive, for opening files, zipping and extracting
-  archives in Explorer and opening a network's sign-in page
+  archives in Explorer, opening a network's sign-in page, and attachments
+  from a program's Send by Email in mail programs other than Thunderbird and
+  Evolution
 - plocate with its database, or fd, for files in the launcher and Explorer's Search
 - Freedesktop thumbnailers, for thumbnails of files Reprise does not decode
   itself (`[thumbnail_cache] external_thumbnailers`): papers or evince for

@@ -426,6 +426,45 @@ fn open_argv_fills_the_file_slot_with_the_path_bytes() {
 }
 
 #[test]
+fn open_args_argv_puts_the_arguments_in_the_first_file_slot() {
+    let entry = |exec: &str| {
+        let text = format!("[Desktop Entry]\nType=Application\nName=x\nExec={exec}\n");
+        parse_desktop(&text, "x.desktop").unwrap()
+    };
+    let open = |exec, args: &[&str]| -> Vec<String> {
+        let args = args.iter().map(OsString::from).collect();
+        open_args_argv(&entry(exec), "", args)
+            .unwrap()
+            .into_iter()
+            .map(|a| a.into_string().unwrap())
+            .collect()
+    };
+    assert_eq!(
+        open("mail %u", &["-compose", "to=a"]),
+        ["mail", "-compose", "to=a"]
+    );
+    assert_eq!(
+        open("mail --open=%U %u", &["mailto:a@b"]),
+        ["mail", "--open=mailto:a@b"],
+        "one value stays inside its argument, and one file slot"
+    );
+    assert_eq!(
+        open("flatpak run org.x.Mail @@u %u @@", &["-compose", "to=a"]),
+        [
+            "flatpak",
+            "run",
+            "org.x.Mail",
+            "@@u",
+            "-compose",
+            "to=a",
+            "@@"
+        ]
+    );
+    assert_eq!(open("mail", &["-compose"]), ["mail"], "no file slot");
+    assert!(open_args_argv(&entry("mail \"%u\""), "", Vec::new()).is_err());
+}
+
+#[test]
 fn parses_icon_and_startup_wm_class() {
     let e = parse_desktop(FIREFOX, "firefox.desktop").unwrap();
     assert_eq!(e.icon.as_deref(), Some("firefox"));
