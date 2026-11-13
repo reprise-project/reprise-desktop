@@ -22,6 +22,8 @@ mod gallery_keys;
 mod gallery_logon;
 #[path = "gallery_miniview/mod.rs"]
 mod gallery_miniview;
+#[path = "gallery_netconnect/mod.rs"]
+mod gallery_netconnect;
 #[path = "gallery_notes/mod.rs"]
 mod gallery_notes;
 #[path = "gallery_p3/mod.rs"]
@@ -161,6 +163,10 @@ fn main() {
         write_preview(
             &gallery_rename::render(n.max(1)),
             &format!("reprisekit-gallery-rename@{}.png", n.max(1)),
+        );
+        write_preview(
+            &gallery_netconnect::render(n.max(1)),
+            &format!("reprisekit-gallery-netconnect@{}.png", n.max(1)),
         );
         write_preview(
             &gallery_welcome::render(n.max(1)),
@@ -405,6 +411,10 @@ fn main() {
     write_preview(
         &gallery_rename::render(1),
         "reprisekit-gallery-rename@1.png",
+    );
+    write_preview(
+        &gallery_netconnect::render(1),
+        "reprisekit-gallery-netconnect@1.png",
     );
     write_preview(
         &gallery_welcome::render(1),
