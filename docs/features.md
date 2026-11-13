@@ -117,7 +117,9 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   installation it came from, a program from the system's packages leaves
   through PackageKit (greyed, with a tip saying why, without it). A sheet
   first says what goes (version, size, source, and any other package that
-  needs it) and waits for Uninstall. A launcher or web app an app installed
+  needs it) and waits for Uninstall. A removal that would take a package the
+  system needs or Reprise itself is refused, with only Close and a note
+  naming the package. A launcher or web app an app installed
   through the portal is deleted the same way, and its app keeps its files.
 - **Web apps.** A browser's "Install as app" (GNOME Web, a Flatpak Chromium)
   or a game store's new launcher asks first: a prompt shows the icon, the

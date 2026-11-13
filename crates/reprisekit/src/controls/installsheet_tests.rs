@@ -30,6 +30,9 @@ fn sheet(stage: Stage) -> Sheet {
     }
 }
 
+const REFUSAL: &str = "Uninstalling it would remove glibc, pacman (needed by the system) and \
+                       reprise (part of Reprise).";
+
 fn running(cancellable: bool) -> Stage {
     Stage::Running {
         fraction: Some(0.4),
@@ -76,6 +79,7 @@ fn the_sheet_lays_out_on_its_grid_and_keeps_its_size_through_the_stages() {
         running(true),
         Stage::Done,
         Stage::Failed("x".into()),
+        Stage::Refused,
     ] {
         assert_eq!(client(&sheet(stage.clone())), (w, h), "{stage:?}");
     }
@@ -109,6 +113,13 @@ fn each_stage_says_where_it_stands_and_offers_its_buttons() {
     assert_eq!(lines(&failed, HEAD), ["Foot was not uninstalled."]);
     assert_eq!(lines(&failed, NOTE), ["Failed to obtain authentication."]);
     assert_eq!(buttons(&failed), [(CLOSE, true)]);
+    let mut refused = sheet(Stage::Refused);
+    refused.note = REFUSAL.into();
+    let refused = form(&refused, &text, px, TextUnits::ONE);
+    assert_eq!(lines(&refused, HEAD), ["Reprise cannot uninstall Foot."]);
+    assert_eq!(lines(&refused, NOTE).join(" "), REFUSAL);
+    assert_eq!(buttons(&refused), [(CLOSE, true)]);
+    assert_eq!(refused.focus().map(|i| refused.items[i].id), Some(CLOSE));
     let mut install = sheet(Stage::Done);
     install.verb = Verb::Install;
     let done = form(&install, &text, px, TextUnits::ONE);
@@ -196,11 +207,15 @@ fn the_sheet_pins_its_pixels_in_every_stage_and_look() {
             "failed",
             Stage::Failed("Failed to obtain authentication.".into()),
         ),
+        ("refused", Stage::Refused),
     ];
     let mut got = Vec::new();
     for (look, base) in looks() {
         for (name, stage) in &stages {
-            let s = sheet(stage.clone());
+            let mut s = sheet(stage.clone());
+            if *stage == Stage::Refused {
+                s.note = REFUSAL.into();
+            }
             for scale in [1, 2] {
                 let theme = base.scaled(scale);
                 let text = TextRenderer::load(&theme.fonts);

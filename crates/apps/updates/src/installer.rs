@@ -18,7 +18,7 @@ use reprisekit::theme::TextUnits;
 use zbus::Connection;
 
 use crate::model::{Install, split_package_id};
-use crate::{flatpak, packagekit, pkgfile};
+use crate::{flatpak, guard, packagekit, pkgfile};
 
 /// The desktop entry that opens package files, whose task button shows the progress.
 const DESKTOP_ID: &str = "reprise-install";
@@ -60,6 +60,8 @@ pub struct Found {
     pub facts: Vec<(String, String)>,
     pub note: String,
     pub ready: bool,
+    /// It may never go ahead: the note says why.
+    pub refused: bool,
 }
 
 /// What Install or Uninstall runs.
@@ -153,7 +155,7 @@ fn pk_text(e: packagekit::Error) -> String {
     match e {
         packagekit::Error::Unavailable => NO_PACKAGEKIT.into(),
         packagekit::Error::Dismissed => "The password prompt was dismissed.".into(),
-        packagekit::Error::Failed(e) => e,
+        packagekit::Error::Failed(e) | packagekit::Error::SystemPackage(e) => e,
     }
 }
 
@@ -276,9 +278,23 @@ async fn read_package(c: &Connection, file: &Path, found: &mut Found) -> Plan {
     ];
     match packagekit::remove(c, &id, true, &mut |_, _| {}, &mut |_| {}).await {
         Ok(others) => {
+            let set: Vec<&str> = std::iter::once(name)
+                .chain(others.iter().map(|o| split_package_id(o).0))
+                .collect();
+            let blocks = guard::blocks(&set, &guard::essential(&set));
+            if !blocks.is_empty() {
+                found.note = guard::refusal(&blocks);
+                found.refused = true;
+                return Plan::Nothing;
+            }
             found.note = also(&others, Verb::Uninstall);
             found.ready = true;
             Plan::Remove(id)
+        }
+        Err(packagekit::Error::SystemPackage(details)) => {
+            found.note = guard::held(&details);
+            found.refused = true;
+            Plan::Nothing
         }
         Err(e) => {
             found.note = pk_text(e);
@@ -666,7 +682,11 @@ impl Installer {
                 self.sheet.note = f.note;
                 self.icon = f.icon;
                 self.icon_loaded = false;
-                self.set_stage(Stage::Asking { ready: f.ready });
+                self.set_stage(if f.refused {
+                    Stage::Refused
+                } else {
+                    Stage::Asking { ready: f.ready }
+                });
             }
             Msg::Progress { fraction, doing } => {
                 let cancellable = match &self.sheet.stage {
@@ -973,5 +993,27 @@ mod tests {
         app.worker_msg(Msg::Ended(Ok(())));
         assert_eq!(app.sheet.stage, Stage::Done);
         assert!(app.choose(Choice::Close).quit);
+    }
+
+    #[test]
+    fn a_refused_uninstall_offers_only_close() {
+        let mut app = Installer::new(Target::Uninstall(
+            "/usr/share/applications/x.desktop".into(),
+        ));
+        let (go, go_rx) = channel();
+        app.go = Some(go);
+        app.worker_msg(Msg::Found(Found {
+            name: "X".into(),
+            note: "Uninstalling it would remove glibc (needed by the system).".into(),
+            refused: true,
+            ..Found::default()
+        }));
+        assert_eq!(app.sheet.stage, Stage::Refused);
+        assert!(!app.choose(Choice::Go).redraw);
+        assert!(go_rx.try_recv().is_err(), "the worker never runs");
+        let close = app
+            .sheet
+            .choice(&reprisekit::controls::form::Event::Default);
+        assert_eq!(close, Some(Choice::Close));
     }
 }

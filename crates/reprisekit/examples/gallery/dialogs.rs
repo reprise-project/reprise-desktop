@@ -143,6 +143,10 @@ pub fn render_install_sheet(with_blue: bool) -> Canvas {
             doing: "Removing foot".into(),
             cancellable: true,
         }),
+        Sheet {
+            note: "Uninstalling it would remove glibc (needed by the system).".into(),
+            ..sheet(Stage::Refused)
+        },
     ];
     let mut themes = vec![cued(Theme::default())];
     if with_blue {

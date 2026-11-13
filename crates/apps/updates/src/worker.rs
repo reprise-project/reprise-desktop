@@ -201,7 +201,9 @@ async fn check(conn: Option<&Connection>, refresh: bool, manual: bool, read: &mu
             Err(packagekit::Error::Unavailable) => {
                 log::info!("PackageKit is not installed; no package updates");
             }
-            Err(packagekit::Error::Failed(e)) => found.push((Group::Packages, Err(e))),
+            Err(packagekit::Error::Failed(e) | packagekit::Error::SystemPackage(e)) => {
+                found.push((Group::Packages, Err(e)))
+            }
             Err(packagekit::Error::Dismissed) => {}
         }
     }
@@ -307,7 +309,9 @@ async fn install(
                         Err(Failure::Text("PackageKit is not installed.".into()))
                     }
                     Err(packagekit::Error::Dismissed) => Err(Failure::Dismissed),
-                    Err(packagekit::Error::Failed(e)) => Err(Failure::Text(e)),
+                    Err(packagekit::Error::Failed(e) | packagekit::Error::SystemPackage(e)) => {
+                        Err(Failure::Text(e))
+                    }
                 }
             }
             (Stage::Firmware(u), Some(c)) => {
