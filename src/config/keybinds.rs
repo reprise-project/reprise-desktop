@@ -69,6 +69,8 @@ pub enum Action {
     Prev,
     Stop,
     Wifi,
+    /// Turn the touchpad on (true) or off (false), or flip it (None).
+    Touchpad(Option<bool>),
 }
 
 impl Action {
@@ -141,6 +143,9 @@ impl Action {
             Action::Prev => "prev",
             Action::Stop => "stop",
             Action::Wifi => "wifi",
+            Action::Touchpad(None) => "touchpad",
+            Action::Touchpad(Some(true)) => "touchpad-on",
+            Action::Touchpad(Some(false)) => "touchpad-off",
         })
     }
 
@@ -222,6 +227,9 @@ impl Action {
             "prev" => Action::Prev,
             "stop" => Action::Stop,
             "wifi" => Action::Wifi,
+            "touchpad" => Action::Touchpad(None),
+            "touchpad-on" => Action::Touchpad(Some(true)),
+            "touchpad-off" => Action::Touchpad(Some(false)),
             other => return Err(format!("unknown action {other:?}")),
         })
     }

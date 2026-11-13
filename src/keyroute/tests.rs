@@ -663,6 +663,42 @@ fn the_wifi_key_goes_to_the_lock_while_locked() {
 }
 
 #[test]
+fn the_touchpad_keys_work_bare_and_with_the_firmwares_ctrl_super() {
+    let m = Modes::default();
+    assert_eq!(
+        r(&m, &press(KEY_XF86TouchpadToggle, 0)),
+        KeyRoute::Media(Action::Touchpad(None))
+    );
+    assert_eq!(
+        r(&m, &press(KEY_XF86TouchpadToggle, MOD_CTRL | MOD_LOGO)),
+        KeyRoute::Media(Action::Touchpad(None))
+    );
+    assert_eq!(
+        r(&m, &press(KEY_XF86TouchpadOn, 0)),
+        KeyRoute::Media(Action::Touchpad(Some(true)))
+    );
+    assert_eq!(
+        r(&m, &press(KEY_XF86TouchpadOff, 0)),
+        KeyRoute::Media(Action::Touchpad(Some(false)))
+    );
+    let locked = Modes {
+        locked: true,
+        ..Modes::default()
+    };
+    assert_eq!(
+        r(&locked, &press(KEY_XF86TouchpadToggle, 0)),
+        KeyRoute::Media(Action::Touchpad(None)),
+        "the touchpad key works at the lock"
+    );
+    assert_eq!(
+        r(&m, &press(KEY_XF86AudioMute, MOD_CTRL | MOD_LOGO)),
+        KeyRoute::Client,
+        "only the touchpad key takes Ctrl+Super"
+    );
+    assert!(machine_key(&[KEY_XF86TouchpadToggle]));
+}
+
+#[test]
 fn a_config_bind_on_a_media_key_wins_over_the_default() {
     let binds = vec![Keybind {
         mods: 0,

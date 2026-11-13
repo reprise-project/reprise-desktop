@@ -27,7 +27,8 @@ pub enum Page {
     Sound,
     Notifications,
     Keyboard,
-    MouseTouchpad,
+    Mouse,
+    Touchpad,
     Cursor,
     Tablet,
     TextKeys,
@@ -104,7 +105,8 @@ pub const GROUPS: &[(&str, &[Entry])] = &[
         "Devices",
         &[
             Entry::Page(Page::Keyboard),
-            Entry::Page(Page::MouseTouchpad),
+            Entry::Page(Page::Mouse),
+            Entry::Page(Page::Touchpad),
             Entry::Page(Page::Cursor),
             Entry::Page(Page::Tablet),
             Entry::Program("reprise-bluetooth.desktop"),
@@ -148,7 +150,7 @@ const ALIASES: &[(&str, Page)] = &[
     ("launcher", Page::Search),
     ("desktops", Page::VirtualDesktops),
     ("windows", Page::WindowBehavior),
-    ("mouse", Page::MouseTouchpad),
+    ("mouse-and-touchpad", Page::Mouse),
     ("pointers", Page::Cursor),
     ("accessibility", Page::TextKeys),
     ("vision", Page::MagnifierFilters),
@@ -210,7 +212,8 @@ impl Page {
             Page::VirtualDesktops => "Virtual Desktops",
             Page::WindowBehavior => "Window Behavior",
             Page::Keyboard => "Keyboard",
-            Page::MouseTouchpad => "Mouse & Touchpad",
+            Page::Mouse => "Mouse",
+            Page::Touchpad => "Touchpad",
             Page::Tablet => "Tablet",
             Page::Cursor => "Cursor",
             Page::TextKeys => "Text & Keys",
@@ -331,13 +334,28 @@ impl Page {
                 "language",
                 "on-screen display",
             ],
-            Page::MouseTouchpad => &[
-                "trackpad",
+            Page::Mouse => &[
                 "pointer speed",
                 "natural scrolling",
                 "scrolling",
+                "scroll speed",
+                "wheel",
                 "double-click",
                 "acceleration",
+                "middle click",
+            ],
+            Page::Touchpad => &[
+                "trackpad",
+                "clickpad",
+                "pointer speed",
+                "natural scrolling",
+                "scrolling",
+                "scroll speed",
+                "tapping",
+                "clicking",
+                "acceleration",
+                "middle click",
+                "external mouse",
             ],
             Page::Tablet => &["pen", "drawing tablet", "pad", "express keys", "wacom"],
             Page::Cursor => &["pointers", "cursor theme", "large cursor"],
@@ -713,7 +731,7 @@ mod tests {
         );
         assert_eq!(Page::Switcher.find("flip"), Some(Hit::Keyword(None)));
         assert_eq!(
-            Page::MouseTouchpad.find("mouse speed"),
+            Page::Mouse.find("mouse speed"),
             Some(Hit::Keyword(None)),
             "three speeds: none is the one"
         );

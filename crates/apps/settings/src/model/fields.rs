@@ -239,9 +239,26 @@ pub(super) fn fields() -> Vec<Field> {
         Field::Tenths(k("mouse", "speed"), lens!(mouse_speed), (-10, 10)),
         Field::Flag(k("mouse", "acceleration"), lens!(mouse_accel)),
         Field::Flag(k("mouse", "natural_scroll"), lens!(mouse_natural)),
+        Field::Tenths(
+            k("mouse", "scroll_speed"),
+            lens!(mouse_scroll_speed),
+            (1, 100),
+        ),
+        Field::Flag(k("mouse", "middle_emulation"), lens!(mouse_middle)),
         Field::Tenths(k("touchpad", "speed"), lens!(touchpad_speed), (-10, 10)),
         Field::Flag(k("touchpad", "acceleration"), lens!(touchpad_accel)),
         Field::Flag(k("touchpad", "natural_scroll"), lens!(touchpad_natural)),
+        Field::Tenths(
+            k("touchpad", "scroll_speed"),
+            lens!(touchpad_scroll_speed),
+            (1, 100),
+        ),
+        Field::Flag(k("touchpad", "enabled"), lens!(touchpad_enabled)),
+        Field::Flag(
+            k("touchpad", "disable_with_mouse"),
+            lens!(disable_with_mouse),
+        ),
+        Field::Text(k("touchpad", "click_method"), lens!(click_method)),
         Field::Flag(k("touchpad", "tap_to_click"), lens!(tap_to_click)),
         Field::Flag(k("touchpad", "two_finger_scroll"), lens!(two_finger_scroll)),
         Field::Flag(

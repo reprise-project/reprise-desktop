@@ -38,6 +38,7 @@ pub enum Report {
     Player { name: String, verb: &'static str },
     Wifi { on: bool },
     ScreenReader(crate::screenreader::Switched),
+    Touchpad { on: bool },
     Display(DisplayReport),
 }
 
@@ -960,6 +961,10 @@ impl State {
             Action::Prev => Job::Player("Previous"),
             Action::Stop => Job::Player("Stop"),
             Action::Wifi => Job::Wifi,
+            Action::Touchpad(on) => {
+                self.set_touchpad(*on);
+                return;
+            }
             _ => return,
         };
         self.send_job(job);

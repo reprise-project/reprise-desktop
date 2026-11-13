@@ -87,7 +87,7 @@ mod tests {
             Page::all().filter(|p| f.pages[p.index()]).collect()
         };
         assert!(shown("default browser").contains(&Page::DefaultPrograms));
-        assert!(shown("mouse speed").contains(&Page::MouseTouchpad));
+        assert!(shown("mouse speed").contains(&Page::Mouse));
         assert_eq!(shown("browser wallpaper"), [], "the words sit on two pages");
         assert_eq!(
             find("do not disturb").unwrap().1[Page::Notifications.index()],

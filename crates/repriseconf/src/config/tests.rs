@@ -839,6 +839,8 @@ fn pointer_sections_parse_and_default() {
             speed: 0.0,
             acceleration: true,
             natural_scroll: false,
+            scroll_speed: 1.0,
+            middle_emulation: false,
         }
     );
     assert_eq!(
@@ -848,7 +850,12 @@ fn pointer_sections_parse_and_default() {
                 speed: 0.0,
                 acceleration: true,
                 natural_scroll: false,
+                scroll_speed: 1.0,
+                middle_emulation: false,
             },
+            enabled: true,
+            disable_with_mouse: false,
+            click_method: ClickMethod::Default,
             tap_to_click: true,
             two_finger_scroll: true,
             two_finger_tap_right_click: true,
@@ -883,6 +890,28 @@ fn pointer_sections_parse_and_default() {
 fn pointer_speed_rejects_out_of_range() {
     assert!(Config::parse("[mouse]\nspeed = 1.5\n").is_err());
     assert!(Config::parse("[touchpad]\nspeed = -2\n").is_err());
+}
+
+#[test]
+fn touchpad_switches_and_scrolling_parse_per_section() {
+    let c = Config::parse(
+        "[mouse]\nscroll_speed = 2.5\nmiddle_emulation = true\n\
+         [touchpad]\nscroll_speed = 0.5\nenabled = false\ndisable_with_mouse = true\n\
+         click_method = \"clickfinger\"\n",
+    )
+    .unwrap();
+    assert_eq!(c.mouse.scroll_speed, 2.5);
+    assert!(c.mouse.middle_emulation);
+    assert_eq!(c.touchpad.pointer.scroll_speed, 0.5);
+    assert!(!c.touchpad.pointer.middle_emulation);
+    assert!(!c.touchpad.enabled);
+    assert!(c.touchpad.disable_with_mouse);
+    assert_eq!(c.touchpad.click_method, ClickMethod::Clickfinger);
+    let areas = Config::parse("[touchpad]\nclick_method = \"areas\"\n").unwrap();
+    assert_eq!(areas.touchpad.click_method, ClickMethod::Areas);
+    assert!(Config::parse("[touchpad]\nclick_method = \"corners\"\n").is_err());
+    assert!(Config::parse("[mouse]\nscroll_speed = 0\n").is_err());
+    assert!(Config::parse("[touchpad]\nscroll_speed = 11\n").is_err());
 }
 
 #[test]

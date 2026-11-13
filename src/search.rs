@@ -520,12 +520,13 @@ mod tests {
         assert_eq!(
             rank("mouse"),
             [
-                Setting::Page(Page::MouseTouchpad),
+                Setting::Page(Page::Mouse),
+                Setting::Page(Page::Touchpad),
                 Setting::Page(Page::TextKeys)
             ],
-            "the Mouse & Touchpad page by name, then Text & Keys by MouseKeys"
+            "the Mouse page by name, then Touchpad by its external mouse and Text & Keys by MouseKeys"
         );
-        assert_eq!(rank("touchpad"), [Setting::Page(Page::MouseTouchpad)]);
+        assert_eq!(rank("touchpad"), [Setting::Page(Page::Touchpad)]);
         assert_eq!(
             rank("cursor"),
             [
@@ -639,7 +640,7 @@ mod tests {
         }
         assert_eq!(
             first("mouse speed"),
-            Some(Setting::Page(Page::MouseTouchpad)),
+            Some(Setting::Page(Page::Mouse)),
             "three speeds: the page opens unfocused"
         );
     }

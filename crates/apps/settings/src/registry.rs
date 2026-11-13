@@ -52,7 +52,8 @@ pub fn build(p: Page, src: &Sources, a: Area) -> Form {
         Page::VirtualDesktops => pages::virtual_desktops(a),
         Page::WindowBehavior => pages::window_behavior(a),
         Page::Keyboard => pages::keyboard(a),
-        Page::MouseTouchpad => pages::mouse_touchpad(a),
+        Page::Mouse => pages::mouse(a),
+        Page::Touchpad => pages::touchpad(a),
         Page::Tablet => crate::tabletpage::page(a, &[], 0, &[]),
         Page::Cursor => pages::cursor(a, src.cursor_themes),
         Page::TextKeys => pages::text_and_keys(a),
@@ -154,7 +155,8 @@ mod tests {
                 "Sound",
                 "Notifications",
                 "Keyboard",
-                "Mouse & Touchpad",
+                "Mouse",
+                "Touchpad",
                 "Cursor",
                 "Tablet",
                 "Text & Keys",
@@ -191,7 +193,7 @@ mod tests {
     fn a_page_is_named_by_its_slug_or_its_old_name() {
         use repriseconf::pages::Entry;
         assert_eq!(Page::ScreenSaverLock.slug(), "screen-saver-and-lock");
-        assert_eq!(Page::MouseTouchpad.slug(), "mouse-and-touchpad");
+        assert_eq!(Page::Touchpad.slug(), "touchpad");
         assert_eq!(Page::TextKeys.slug(), "text-and-keys");
         assert_eq!(Page::MagnifierFilters.slug(), "magnifier-and-filters");
         for p in Page::all() {
@@ -202,7 +204,7 @@ mod tests {
             ("launcher", Page::Search),
             ("desktops", Page::VirtualDesktops),
             ("windows", Page::WindowBehavior),
-            ("mouse", Page::MouseTouchpad),
+            ("mouse-and-touchpad", Page::Mouse),
             ("pointers", Page::Cursor),
             ("accessibility", Page::TextKeys),
             ("vision", Page::MagnifierFilters),
@@ -235,8 +237,8 @@ mod tests {
         assert_eq!(open(&s), Page::Appearance, "the first page opens");
     }
 
-    /// The list's inside is 456 px at the smallest sheet: 42 rows at 738 px, so it scrolls
-    /// until the sheet is 282 px taller. On a sheet 56 px shorter, a page opened from its end
+    /// The list's inside is 456 px at the smallest sheet: 43 rows at 755 px, so it scrolls
+    /// until the sheet is 299 px taller. On a sheet 56 px shorter, a page opened from its end
     /// (keys or `--page`) comes into view.
     #[test]
     fn the_list_scrolls_to_the_open_page() {
@@ -246,16 +248,16 @@ mod tests {
         let px = Theme::default().fonts.size_px;
         let mut sheet = built();
         let list = sheet.layout(&text, px).list.expect("a list sheet");
-        assert_eq!(list.rows.len(), 42, "seven headings, 28 pages, seven links");
-        assert_eq!((list.total, list.inner.height), (738, 456));
-        assert!(list.scrollbar.is_some(), "the rows overflow by 282 px");
-        sheet.size.1 += 282;
+        assert_eq!(list.rows.len(), 43, "seven headings, 29 pages, seven links");
+        assert_eq!((list.total, list.inner.height), (755, 456));
+        assert!(list.scrollbar.is_some(), "the rows overflow by 299 px");
+        sheet.size.1 += 299;
         let list = sheet.layout(&text, px).list.unwrap();
         assert!(list.scrollbar.is_none(), "every row shows");
 
-        sheet.size.1 -= 338;
+        sheet.size.1 -= 355;
         let list = sheet.layout(&text, px).list.unwrap();
-        assert_eq!((list.total, list.inner.height), (738, 400));
+        assert_eq!((list.total, list.inner.height), (755, 400));
         let bar = list.scrollbar.expect("the rows overflow");
         assert_eq!(bar.right(), list.inner.right() + bar.width);
         let last = *list.rows.last().unwrap();
@@ -602,9 +604,11 @@ mod tests {
         for (p, id, name) in [
             (Page::Display, crate::displaypage::MODE, "Screen resolution"),
             (Page::NightLight, "nl_temperature", "Color temperature"),
-            (Page::MouseTouchpad, "mouse_speed", "Pointer speed"),
-            (Page::MouseTouchpad, "touchpad_speed", "Touchpad speed"),
-            (Page::MouseTouchpad, "double_click_ms", "Double-click speed"),
+            (Page::Mouse, "mouse_speed", "Pointer speed"),
+            (Page::Touchpad, "touchpad_speed", "Touchpad speed"),
+            (Page::Mouse, "double_click_ms", "Double-click speed"),
+            (Page::Mouse, "mouse_scroll_speed", "Scroll speed"),
+            (Page::Touchpad, "touchpad_scroll_speed", "Scroll speed"),
             (Page::TextKeys, "slow_keys_delay", "SlowKeys delay"),
             (Page::TextKeys, "mouse_keys_speed", "MouseKeys speed"),
             (

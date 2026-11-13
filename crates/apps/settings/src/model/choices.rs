@@ -32,6 +32,13 @@ pub const TASKBAR_POSITIONS: &Choices = &[
     ("right", "Right"),
 ];
 
+/// What pressing a clickpad clicks. Mirrors `ClickMethod::parse` in `repriseconf::config`.
+pub const CLICK_METHODS: &Choices = &[
+    ("default", "The pad's own"),
+    ("areas", "Bottom areas"),
+    ("clickfinger", "Finger count"),
+];
+
 pub const SWITCHER_STYLES: &Choices = &[("icons", "Icons"), ("thumbnails", "Thumbnails")];
 
 pub const SWITCHER_SIZES: &Choices = &[

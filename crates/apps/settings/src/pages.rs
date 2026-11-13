@@ -34,7 +34,7 @@ pub use bind::{
     write_form, write_forms,
 };
 pub use desktop::{FORGET_FRAMES, search, switcher, taskbar, virtual_desktops, window_behavior};
-pub use input::{cursor, keyboard, mouse_touchpad, preview_size, text_and_keys};
+pub use input::{cursor, keyboard, mouse, preview_size, text_and_keys, touchpad};
 pub use lists::{
     draw_list, fill_list, fill_permissions, fill_shortcuts, fit_list_columns,
     fit_permission_columns, fit_shortcut_columns, list_key, new_list, new_permission_list,
@@ -118,6 +118,13 @@ impl Steps {
 }
 
 const SPEED_STEPS: usize = 21;
+
+/// The scroll speed trackbars: 0.2 to 4.0 in steps of 0.2 (tenths in `Settings`), slowest on the left.
+const SCROLL_SPEED: Steps = Steps {
+    first: 2,
+    step: 2,
+    count: 20,
+};
 
 pub(crate) const X: i32 = 20;
 pub(crate) const GX: i32 = X + 12;

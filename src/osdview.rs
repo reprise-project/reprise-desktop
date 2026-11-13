@@ -121,6 +121,13 @@ fn describe(r: &Report, boost: bool) -> Option<(Osd, &'static str)> {
             },
             "preferences-desktop-accessibility",
         ),
+        Report::Touchpad { on } => (
+            Osd {
+                title: if *on { "Touchpad on" } else { "Touchpad off" }.into(),
+                meter: None,
+            },
+            "input-touchpad",
+        ),
         Report::Display(_) => return None,
     })
 }
@@ -416,6 +423,16 @@ mod tests {
             assert_eq!(osd.meter, None);
             assert_eq!(icon, "preferences-desktop-accessibility");
         }
+    }
+
+    #[test]
+    fn the_touchpad_reads_on_or_off_without_a_meter() {
+        let (osd, icon) = describe(&Report::Touchpad { on: true }, false).unwrap();
+        assert_eq!(osd.title, "Touchpad on");
+        assert_eq!(osd.meter, None);
+        assert_eq!(icon, "input-touchpad");
+        let (osd, _) = describe(&Report::Touchpad { on: false }, false).unwrap();
+        assert_eq!(osd.title, "Touchpad off");
     }
 
     #[test]
