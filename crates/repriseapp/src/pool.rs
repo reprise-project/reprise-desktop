@@ -73,8 +73,14 @@ impl Pool {
 
     /// Runs `task` on a thread of the pool, or queues it until one has room.
     pub(crate) fn run(&'static self, task: Task) {
+        self.lock().waiting.push_back(task);
+        self.kick();
+    }
+
+    /// Starts waiting tasks while there is room, as `run` does: retries one a failed spawn left
+    /// queued.
+    pub(crate) fn kick(&'static self) {
         let mut st = self.lock();
-        st.waiting.push_back(task);
         self.start_waiting(&mut st);
         self.hold(&mut st);
     }
@@ -93,9 +99,7 @@ impl Pool {
         }
         if st.threads() < self.most && !st.ticking {
             st.ticking = true;
-            let spawned = std::thread::Builder::new()
-                .name(format!("{} timer", self.name))
-                .spawn(move || self.tick());
+            let spawned = spawn(format!("{} timer", self.name), move || self.tick());
             if let Err(e) = spawned {
                 st.ticking = false;
                 log::warn!("cannot spawn the {} timer ({e})", self.name);
@@ -104,7 +108,8 @@ impl Pool {
     }
 
     /// Starts waiting tasks on new threads while there is room. A task whose thread fails to
-    /// spawn goes back to the head of the queue for the next thread that comes back or `run`.
+    /// spawn goes back to the head of the queue for the next thread that comes back, `run` or
+    /// `kick`.
     fn start_waiting(&'static self, st: &mut PoolState) {
         let now = Instant::now();
         while !st.waiting.is_empty() && self.room(st, now) {
@@ -121,13 +126,11 @@ impl Pool {
             st.started[slot] = Some(now);
             let task = std::sync::Arc::new(Mutex::new(Some(task)));
             let mine = task.clone();
-            let spawned = std::thread::Builder::new()
-                .name(self.name.into())
-                .spawn(move || {
-                    if let Some(task) = lock(&mine).take() {
-                        self.work(slot, task);
-                    }
-                });
+            let spawned = spawn(self.name.into(), move || {
+                if let Some(task) = lock(&mine).take() {
+                    self.work(slot, task);
+                }
+            });
             if let Err(e) = spawned {
                 st.started[slot] = None;
                 log::warn!("cannot spawn a {} thread ({e})", self.name);
@@ -199,6 +202,20 @@ impl Pool {
             }
         }
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Fails every pool spawn on this thread, as a process at its thread limit does.
+    pub(crate) static FAIL_SPAWNS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+fn spawn(name: String, f: impl FnOnce() + Send + 'static) -> std::io::Result<()> {
+    #[cfg(test)]
+    if FAIL_SPAWNS.get() {
+        return Err(std::io::ErrorKind::WouldBlock.into());
+    }
+    std::thread::Builder::new().name(name).spawn(f).map(drop)
 }
 
 #[cfg(test)]

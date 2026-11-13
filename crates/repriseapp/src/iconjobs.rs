@@ -4,7 +4,7 @@
 
 use crate::Host;
 use crate::listjob::{MAX_ALL_THREADS, MAX_THREADS, STUCK};
-use crate::pool::Pool;
+use crate::pool::{Pool, Task};
 use reprisekit::icontheme::{IconCache, decode_file, load_icon};
 use reprisekit::raster::Canvas;
 use std::collections::HashSet;
@@ -138,22 +138,63 @@ impl Host {
             }
         }
         for (file, px) in files {
-            if !self.icon_jobs.files.insert((file.clone(), px)) {
-                continue;
-            }
             let tx = self.portal_done.clone();
-            FILES.run(Box::new(move || {
-                let art = load_all(vec![(file, px)], |f, px| {
-                    decode_file(Path::new(f), px, scale)
-                });
-                let _ = tx.send(Box::new(move |host: &mut Host| {
-                    for (file, px, _) in &art {
-                        host.icon_jobs.files.remove(&(file.clone(), *px));
-                    }
-                    host.ctx.icons.put_files_at(art, scale);
-                    host.ctx.wake.wake();
-                }));
-            }));
+            self.icon_jobs.ask(&FILES, (file.clone(), px), move || {
+                Box::new(move || {
+                    let art = load_all(vec![(file, px)], |f, px| {
+                        decode_file(Path::new(f), px, scale)
+                    });
+                    let _ = tx.send(Box::new(move |host: &mut Host| {
+                        for (file, px, _) in &art {
+                            host.icon_jobs.files.remove(&(file.clone(), *px));
+                        }
+                        host.ctx.icons.put_files_at(art, scale);
+                        host.ctx.wake.wake();
+                    }));
+                })
+            });
         }
+    }
+}
+
+impl IconJobs {
+    /// Runs `job` on `pool` unless `key` is decoding or waiting already. A key in hand kicks the
+    /// pool instead, so a decode whose thread failed to spawn starts once threads free up.
+    fn ask(&mut self, pool: &'static Pool, key: (String, i32), job: impl FnOnce() -> Task) {
+        if self.files.insert(key) {
+            pool.run(job());
+        } else {
+            pool.kick();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc::channel;
+    use std::time::Duration;
+
+    #[test]
+    fn a_file_whose_thread_failed_to_spawn_decodes_when_asked_again() {
+        let pool = Box::leak(Box::new(Pool::new("test", 2, 4, Duration::from_secs(600))));
+        let mut jobs = IconJobs::default();
+        let key = ("/icons/app.png".to_string(), 32);
+        let (done, decoded) = channel();
+        crate::pool::FAIL_SPAWNS.set(true);
+        jobs.ask(pool, key.clone(), || {
+            Box::new(move || done.send(()).unwrap())
+        });
+        crate::pool::FAIL_SPAWNS.set(false);
+        assert!(
+            decoded.recv_timeout(Duration::from_millis(50)).is_err(),
+            "no thread, no decode"
+        );
+        jobs.ask(pool, key, || {
+            unreachable!("a key in hand queues no second decode")
+        });
+        decoded
+            .recv_timeout(Duration::from_secs(60))
+            .expect("asking again starts the waiting decode");
     }
 }
