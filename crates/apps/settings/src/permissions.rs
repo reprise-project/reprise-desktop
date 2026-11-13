@@ -1,8 +1,9 @@
 //! The Privacy page's App Permissions list: the answers programs were given, and its Forget.
 
 use crate::registry::Page;
-use crate::{SettingsApp, pages, registry};
+use crate::{SettingsApp, pages, registry, take};
 use repriseapp::Reply;
+use std::sync::mpsc::Receiver;
 
 /// A permission the list shows, kept by its portal in the permission store table of
 /// [`table`](Self::table): under an id of the same name, or one id per restore token for the
@@ -183,6 +184,16 @@ fn portal_answers() -> Vec<(Kind, Vec<Held>)> {
     out
 }
 
+/// Drop `a` from the state file, or from every permission store entry holding it. Blocking.
+fn forget(a: &PermissionAnswer, location_file: &std::path::Path) -> Result<(), String> {
+    match a.ids.is_empty() {
+        true => repriseconf::location::forget_in(location_file, &a.app).map_err(|e| e.to_string()),
+        false => {
+            (a.store_entries()).try_for_each(|e| delete_from_store(e, a.kind.by_restore_token()))
+        }
+    }
+}
+
 /// Delete `entry` (table, id, app) from the permission store, for a restore token `token` with
 /// the token once no other program holds it. Tests record it in [`FORGOTTEN`] instead.
 fn delete_from_store((table, id, app): (&str, &str, &str), token: bool) -> Result<(), String> {
@@ -281,33 +292,72 @@ impl SettingsApp {
     }
 
     pub(crate) fn sync_forget(&mut self) {
-        let on = self.reading_permissions.is_none() && self.permissions.selection.focus.is_some();
+        let on = self.reading_permissions.is_none()
+            && self.forgetting.is_none()
+            && self.permissions.selection.focus.is_some();
         self.sheet.pages[Page::Privacy.index()].set_enabled(pages::FORGET, on);
     }
 
-    /// Forget drops the picked answer at once, from the state file or every entry of the
-    /// portal's permission store holding it, so the program is asked again; it waits for no
-    /// Apply.
+    /// Forget drops the picked answer from the state file or every entry of the portal's
+    /// permission store holding it, so the program is asked again; it waits for no Apply. The
+    /// store can take seconds, so the job runs off the loop and the row goes when it is done.
     pub(crate) fn forget_permission(&mut self) -> Reply {
-        let Some((i, a)) = (self.permissions.selection.focus)
-            .filter(|_| self.reading_permissions.is_none())
-            .and_then(|i| Some((i, self.permission_answers.get(i)?)))
+        let Some(a) = (self.permissions.selection.focus)
+            .filter(|_| self.reading_permissions.is_none() && self.forgetting.is_none())
+            .and_then(|i| self.permission_answers.get(i))
+            .cloned()
         else {
             return Reply::none();
         };
-        let forgot = match a.ids.is_empty() {
-            true => repriseconf::location::forget_in(&self.location_file, &a.app)
-                .map_err(|e| e.to_string()),
-            false => (a.store_entries())
-                .try_for_each(|e| delete_from_store(e, a.kind.by_restore_token())),
+        let (job, file) = (a.clone(), self.location_file.clone());
+        let rx = self.start_forget(move || forget(&job, &file));
+        self.forgetting = Some((a, rx));
+        self.sync_apply();
+        Reply::redraw()
+    }
+
+    #[cfg(not(test))]
+    fn start_forget(
+        &self,
+        job: impl FnOnce() -> Result<(), String> + Send + 'static,
+    ) -> Receiver<Result<(), String>> {
+        self.spawn(job)
+    }
+
+    /// Tests run the job on their own thread, where [`FORGOTTEN`] records it, and take the reply
+    /// with [`SettingsApp::forget_done`].
+    #[cfg(test)]
+    fn start_forget(
+        &self,
+        job: impl FnOnce() -> Result<(), String> + Send + 'static,
+    ) -> Receiver<Result<(), String>> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let _ = tx.send(job());
+        rx
+    }
+
+    /// The Forget under way finished: drop its row, or say it failed and read the list again.
+    /// True when the page changed.
+    pub(crate) fn forget_done(&mut self) -> bool {
+        let Some((_, rx)) = &self.forgetting else {
+            return false;
+        };
+        let forgot = match take(rx) {
+            Ok(None) => return false,
+            Ok(Some(r)) => r,
+            Err(()) => Err("the job ended without a result".into()),
+        };
+        let Some((a, _)) = self.forgetting.take() else {
+            return false;
         };
         match forgot {
             Ok(()) => {
-                self.permission_answers.remove(i);
-                self.permission_icons.remove(i);
-                self.permissions.rows.remove(i);
-                self.permissions.selection.set_only(None);
-                self.sync_forget();
+                if let Some(i) = self.permission_answers.iter().position(|x| *x == a) {
+                    self.permission_answers.remove(i);
+                    self.permission_icons.remove(i);
+                    self.permissions.rows.remove(i);
+                    self.permissions.selection.set_only(None);
+                }
             }
             Err(e) => {
                 log::warn!("forget the {} answer for {}: {e}", a.kind.table(), a.app);
@@ -317,6 +367,6 @@ impl SettingsApp {
             }
         }
         self.sync_apply();
-        Reply::redraw()
+        true
     }
 }
