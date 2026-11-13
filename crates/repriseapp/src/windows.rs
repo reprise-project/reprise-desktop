@@ -2,10 +2,7 @@
 
 use crate::reply::spawn_handing;
 use crate::runloop::NoEvents;
-use crate::sizing::{
-    at_pick, bounded, configured_size, held_size, opening_size, rebounded, regrown, sane_side,
-    sane_size,
-};
+use crate::sizing::{Fit, at_pick, bounded, opening_size, regrown, sane_side, sane_size};
 use crate::wire;
 use crate::{
     Caption, Child, Event, Flyout, Host, MAIN, MIN_SIZE, Scaling, Shell, Slot, WinId, access,
@@ -651,18 +648,19 @@ impl WindowHandler for Host {
             .filter(|&(w, h)| w > 0 && h > 0)
             .map(|(w, h)| sane_size((w as i32, h as i32)));
         let s = self.slot_mut(id).expect("slot");
-        let (size, own) = configured_size(s.size, asked, s.asked, s.own, configure.is_resizing());
         let moved_bounds = bounds.is_some() && bounds != s.bounds;
-        let size = match moved_bounds && size == s.size {
-            true => rebounded(size, s.picked, s.bounds, bounds),
-            false => size,
-        };
-        if bounds.is_some() {
-            s.bounds = bounds;
+        let fit = Fit {
+            size: s.size,
+            picked: s.picked,
+            bounds: s.bounds,
+            asked: s.asked,
+            own: s.own,
         }
-        let size = held_size(size, asked, s.bounds);
-        s.asked = asked;
-        s.own = own;
+        .configured(asked, bounds, configure.is_resizing());
+        let size = fit.size;
+        s.bounds = fit.bounds;
+        s.asked = fit.asked;
+        s.own = fit.own;
         if s.mapped {
             s.activated = configure.is_activated();
         }
