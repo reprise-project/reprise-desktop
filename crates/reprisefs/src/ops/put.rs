@@ -108,10 +108,36 @@ fn same_kind(src: &Path, dest: &Path, moving: bool) -> bool {
     }
 }
 
+/// Run `put` at `dir/name`, then at "name (2)" and on, and return the name it took. A name is
+/// passed over only when `put` fails with `AlreadyExists` and something (a dangling link too) is at
+/// that name: an `AlreadyExists` with the name free came from inside what `put` built, and would
+/// come again under every name.
+fn at_free_name(
+    dir: &Path,
+    name: &OsStr,
+    mut put: impl FnMut(&Path) -> io::Result<()>,
+) -> io::Result<OsString> {
+    let mut last = None;
+    for candidate in crate::names::numbered(name, crate::names::paren).take(1000) {
+        let path = dir.join(&candidate);
+        match put(&path) {
+            Ok(()) => return Ok(candidate),
+            Err(e)
+                if e.kind() == io::ErrorKind::AlreadyExists
+                    && std::fs::symlink_metadata(&path).is_ok() =>
+            {
+                last = Some(e)
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Err(last.expect("the loop ran"))
+}
+
 /// Move `src` into `dir` under `name`, or the first free numbering of it
 /// when the name is taken. Each candidate is tried by the move itself, so
 /// a name taken meanwhile (by another job, or by a dangling link) is
-/// passed over rather than retried. Returns the name it took. A move to
+/// passed over rather than retried ([`at_free_name`]). Returns the name it took. A move to
 /// another drive is stopped by `stop` ([`crate::trash::move_to_free_until`]).
 fn move_numbered(
     src: &Path,
@@ -119,15 +145,9 @@ fn move_numbered(
     name: &OsStr,
     stop: &AtomicBool,
 ) -> Result<OsString, PutError> {
-    let mut last = None;
-    for candidate in crate::names::numbered(name, crate::names::paren).take(1000) {
-        match crate::trash::move_to_free_until(src, &dir.join(&candidate), stop) {
-            Ok(()) => return Ok(candidate),
-            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => last = Some(e),
-            Err(e) => return Err(e.into()),
-        }
-    }
-    Err(PutError::Io(last.expect("the loop ran")))
+    Ok(at_free_name(dir, name, |to| {
+        crate::trash::move_to_free_until(src, to, stop)
+    })?)
 }
 
 /// Copy `src` (a file, or a folder with everything in it) into `dir`
@@ -135,22 +155,14 @@ fn move_numbered(
 /// by the copy itself as [`move_numbered`] tries it. Returns the path.
 fn copy_numbered(src: &Path, dir: &Path, name: &OsStr, stop: &AtomicBool) -> io::Result<PathBuf> {
     let is_dir = src.is_dir();
-    let mut last = None;
-    for candidate in crate::names::numbered(name, crate::names::paren).take(1000) {
+    let name = at_free_name(dir, name, |dest| {
         go_on(stop)?;
-        let dest = dir.join(candidate);
-        let made = if is_dir {
-            copy_dir_until(src, &dest, stop)
-        } else {
-            copy_new(src, &dest)
-        };
-        match made {
-            Ok(()) => return Ok(dest),
-            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => last = Some(e),
-            Err(e) => return Err(e),
+        match is_dir {
+            true => copy_dir_until(src, dest, stop),
+            false => copy_new(src, dest),
         }
-    }
-    Err(last.expect("the loop ran"))
+    })?;
+    Ok(dir.join(name))
 }
 
 /// `renameat2(a, b, flags)`.
@@ -363,20 +375,9 @@ pub(super) fn refuse_stuck_original(src: &Path) -> Result<(), PutError> {
 /// Make the temporary file beside the one being replaced with `make`,
 /// under a short hidden name of its own (the file's name with more
 /// around it could run past the file system's limit), numbered past one
-/// already there, whether a file or a dangling link. Returns its path.
+/// already there, whether a file or a dangling link ([`at_free_name`]). Returns its path.
 fn make_part(dir: &Path, make: impl Fn(&Path) -> io::Result<()>) -> io::Result<PathBuf> {
-    let mut last = None;
-    for candidate in
-        crate::names::numbered(OsStr::new(".reprise.part"), crate::names::paren).take(1000)
-    {
-        let part = dir.join(candidate);
-        match make(&part) {
-            Ok(()) => return Ok(part),
-            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => last = Some(e),
-            Err(e) => return Err(e),
-        }
-    }
-    Err(last.expect("the loop ran"))
+    Ok(dir.join(at_free_name(dir, OsStr::new(".reprise.part"), make)?))
 }
 
 /// Make `to` under a hidden part name beside it ([`make_part`] with `make`), run `ready` on the

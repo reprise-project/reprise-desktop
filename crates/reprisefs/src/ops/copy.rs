@@ -87,11 +87,17 @@ fn copy_entries(
         }
         crate::progress::step();
         let to = dest.join(entry.file_name());
+        #[cfg(test)]
+        if let Some(mut hook) = BEFORE_ENTRY.take() {
+            hook(&to);
+            BEFORE_ENTRY.set(Some(hook));
+        }
         let from = entry.path();
+        let clash = |e: io::Error| twin_name(e, &to);
         // `symlink_metadata`, not `is_dir`: the latter follows the link.
         let kind = std::fs::symlink_metadata(&from)?.file_type();
         if kind.is_symlink() {
-            std::os::unix::fs::symlink(std::fs::read_link(&from)?, &to)?;
+            std::os::unix::fs::symlink(std::fs::read_link(&from)?, &to).map_err(clash)?;
         } else if kind.is_dir() {
             if depth + 1 >= MAX_DEPTH {
                 return Err(io::Error::new(
@@ -99,13 +105,40 @@ fn copy_entries(
                     format!("The folder is more than {MAX_DEPTH} levels deep."),
                 ));
             }
-            copy_entries(read_then_create(&from, &to)?, &to, depth + 1, stop, folders)?;
+            let entries = read_then_create(&from, &to).map_err(clash)?;
+            copy_entries(entries, &to, depth + 1, stop, folders)?;
             folders.push((from, to));
         } else if kind.is_file() {
-            copy_new(&from, &to)?;
+            copy_new(&from, &to).map_err(clash)?;
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+type EntryHook = Box<dyn FnMut(&Path)>;
+
+#[cfg(test)]
+thread_local! {
+    /// Tests: run with each path a folder copy is about to make inside its tree.
+    pub(crate) static BEFORE_ENTRY: std::cell::Cell<Option<EntryHook>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// An `AlreadyExists` at `to`, inside a folder the copy made: two names the drive reads as one
+/// (`Makefile` and `makefile` on FAT or exFAT). Its own kind, so no caller takes it for a taken
+/// destination name and numbers past it.
+fn twin_name(e: io::Error, to: &Path) -> io::Error {
+    if e.kind() != io::ErrorKind::AlreadyExists {
+        return e;
+    }
+    io::Error::new(
+        io::ErrorKind::InvalidFilename,
+        format!(
+            "{} cannot be copied: its folder already holds a name this drive reads as the same.",
+            to.file_name().unwrap_or_default().to_string_lossy()
+        ),
+    )
 }
 
 /// `fs::copy`, except that an existing `to` is an `AlreadyExists` error
