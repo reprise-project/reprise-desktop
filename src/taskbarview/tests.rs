@@ -117,6 +117,33 @@ fn redrawing_the_taskbars_asks_only_the_outputs_whose_bar_changed() {
     );
 }
 
+#[test]
+fn redrawing_one_taskbar_asks_its_output_only_when_it_changed() {
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    h.output("TEST-2", 1024, 768);
+    let tree = (h.state.bars.iter())
+        .find(|b| b.output.name() == "TEST-1")
+        .expect("TEST-1's bar")
+        .tree;
+    h.state.redraw_taskbar(tree);
+    crate::backend::take_asks();
+    h.state.redraw_taskbar(tree);
+    assert_eq!(
+        crate::backend::take_asks(),
+        vec![],
+        "the bar drew the same, so no output is asked"
+    );
+    h.state.bar_mut(tree).expect("TEST-1's bar").start_pressed = true;
+    h.state.redraw_taskbar(tree);
+    let asked = crate::backend::take_asks();
+    assert!(!asked.is_empty(), "the pressed Start asks for a frame");
+    assert!(
+        asked.iter().all(|(o, _)| o == "TEST-1"),
+        "only TEST-1, the pressed bar's output: {asked:?}"
+    );
+}
+
 mod under_a_lock {
     use crate::backend::{take_asks, take_scene_outputs};
     use crate::harness::{Harness, TestClient, Toplevel};
