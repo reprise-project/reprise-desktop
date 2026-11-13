@@ -45,6 +45,15 @@ impl Form {
         }
     }
 
+    /// Take over `old`'s pointer and a consent form's wait when the host builds the prompt's next
+    /// stage: the controls and the focus stay as this form has them.
+    pub fn carry_gate(&mut self, old: &Form) {
+        self.carry_pointer(old);
+        if old.consent.is_some() {
+            self.consent = old.consent.clone();
+        }
+    }
+
     /// Move each control to the rect of `template`'s item with the same id, moved by `offset`;
     /// a control without one stays. Lets a resized window rebuild the page and keep what the controls hold.
     pub fn take_layout(&mut self, template: &Form, offset: (i32, i32)) {

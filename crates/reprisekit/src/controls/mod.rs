@@ -42,6 +42,7 @@ pub mod iconlist;
 pub mod iconview;
 pub mod imageview;
 pub mod infotip;
+pub mod installsheet;
 pub mod keysheet;
 pub mod launcher;
 pub mod listbox;
