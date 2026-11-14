@@ -212,6 +212,12 @@ pub struct FileDisplay {
 pub struct FileScreenshot {
     pub save: Option<bool>,
     pub record_sound: Option<bool>,
+    pub format: Option<String>,
+    pub png_compression: Option<String>,
+    pub jpg_quality: Option<i64>,
+    pub jxl_lossless: Option<bool>,
+    pub jxl_quality: Option<i64>,
+    pub jxl_effort: Option<i64>,
 }
 
 #[derive(Deserialize, Default)]

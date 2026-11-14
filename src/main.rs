@@ -129,6 +129,7 @@ mod shake;
 mod shakeview;
 mod shmtex;
 mod shortcutinhibit;
+mod shotfile;
 mod snapshot;
 mod streamwindow;
 mod surfaceproto;

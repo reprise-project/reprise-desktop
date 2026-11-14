@@ -119,12 +119,13 @@ What Reprise needs, and what each release ships:
 | libinput | 1.26, for tablet pad dials | 1.31 | 1.25 |
 | PipeWire | 1.4 | 1.6 | 1.0 |
 | FFmpeg | 8, for Remote Desktop's colour conversion | 8.0 | 6.1 |
+| libjxl | 0.11.1, for JPEG XL screenshots and pictures | 0.11.1 | 0.7 |
 | dbus-daemon | 1.15, for peer credentials with a process fd | 1.16 | 1.14 |
 | Linux | 6.14 for remote logins, 6.16 for libei input | 7.0 | 6.8, or 7.0 with HWE |
 | Rust | 1.99 | 1.93, so rustup | 1.75, so rustup |
 
-Ubuntu 24.04 is older than Reprise needs in libinput, PipeWire, FFmpeg and
-D-Bus. A package for it would have to ship its own copy of all four, so
+Ubuntu 24.04 is older than Reprise needs in libinput, PipeWire, FFmpeg, libjxl and
+D-Bus. A package for it would have to ship its own copy of all five, so
 there isn't one. The 26.04 package won't install there either. Built on
 26.04, it needs glibc 2.43 and libavcodec 62, and 24.04 has 2.39 and 60.
 
@@ -310,6 +311,9 @@ user's server.
   in; it loads libEGL at run time, from the Mesa and libglvnd listed below,
   and on NVIDIA libcuda from `nvidia-utils` to copy the drawn pictures into
   CUDA
+- JPEG XL screenshots are written, and `.jxl` pictures opened, through libjxl
+  0.11.1 or later (libjxl and libjxl_threads) with the `jpegxl-rs` and
+  `jpegxl-sys` crates
 
 ### To run
 
@@ -345,6 +349,8 @@ user's server.
 - freetype2, fontconfig, PAM, libxcrypt, dbus, PipeWire 1.4 or later, zlib
   and FFmpeg 8 or later (with libx264, which Remote Desktop encodes on when the GPU
   cannot, and libopus, which it sends sound to the client in)
+- libjxl, for JPEG XL screenshots and for opening `.jxl` pictures in the
+  image viewer, Explorer's previews and thumbnails and the file dialogs
 - dbus-broker, or dbus-daemon 1.15 or later, whose peer credentials carry a
   process fd: Remote Desktop and the Inhibit portal check by it which process
   owns a name. On an older bus Settings reads Remote Desktop as off, its

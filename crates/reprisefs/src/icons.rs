@@ -7,7 +7,7 @@ pub fn icon_for_file(path: &Path) -> &'static str {
         .map(|e| e.to_string_lossy().to_lowercase())
         .unwrap_or_default();
     match ext.as_str() {
-        "png" | "jpg" | "jpeg" | "gif" | "bmp" | "svg" | "webp" | "tif" | "tiff" => {
+        "png" | "jpg" | "jpeg" | "gif" | "bmp" | "svg" | "webp" | "tif" | "tiff" | "jxl" => {
             "image-x-generic"
         }
         "mp3" | "flac" | "ogg" | "wav" | "m4a" | "opus" => "audio-x-generic",
@@ -151,6 +151,7 @@ mod tests {
     #[test]
     fn icon_for_file_goes_by_extension() {
         assert_eq!(icon_for_file(Path::new("/a/b.PNG")), "image-x-generic");
+        assert_eq!(icon_for_file(Path::new("/a/b.jxl")), "image-x-generic");
         assert_eq!(icon_for_file(Path::new("/a/b")), "text-x-generic");
     }
 

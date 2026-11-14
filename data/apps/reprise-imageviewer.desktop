@@ -5,6 +5,6 @@ Comment=Shows pictures one at a time, zoomed, turned, full screen or as a slide 
 Exec=reprise-imageviewer %f
 Icon=image-x-generic
 Categories=Graphics;Viewer;2DGraphics;RasterGraphics;
-MimeType=image/png;image/apng;image/jpeg;image/gif;image/bmp;image/x-bmp;image/webp;image/tiff;image/x-icon;image/qoi;image/x-portable-bitmap;image/x-portable-graymap;image/x-portable-pixmap;image/x-portable-anymap;image/vnd.radiance;image/x-exr;
+MimeType=image/png;image/apng;image/jpeg;image/gif;image/bmp;image/x-bmp;image/webp;image/tiff;image/x-icon;image/qoi;image/x-portable-bitmap;image/x-portable-graymap;image/x-portable-pixmap;image/x-portable-anymap;image/vnd.radiance;image/x-exr;image/jxl;
 StartupWMClass=reprise.imageviewer
 Terminal=false

@@ -1,5 +1,6 @@
 //! Print Screen. Every screenshot goes to the clipboard as a PNG and,
-//! with `[screenshot] save` on, to `Screenshots` under Pictures. PrtSc
+//! with `[screenshot] save` on, to `Screenshots` under Pictures in
+//! `[screenshot] format` (`shotfile`). PrtSc
 //! takes the whole layout, Alt+PrtSc the focused window's frame as drawn,
 //! Shift+PrtSc a rectangle dragged out on `regionview`'s overlay (or the
 //! window a click lands on), Ctrl+Alt+PrtSc the focused window's client
@@ -16,6 +17,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use repriseconf::config::ScreenshotConfig;
 use reprisescene::View;
 use smithay::utils::Rectangle;
 
@@ -158,25 +160,44 @@ impl State {
     }
 
     /// Encode `picture` off the loop and offer the PNG as the clipboard; with `[screenshot] save`
-    /// on, then write it to a new file on a file job.
+    /// on, then encode it in `[screenshot] format` on a job of its own and write it to a new file
+    /// on a file job.
     fn deliver(&mut self, picture: impl FnOnce() -> Canvas + Send + 'static) {
-        let save = self.config.screenshot.save;
+        let shot = self.config.screenshot.clone();
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs() as i64);
         self.spawn_job(move || -> crate::fsjobs::OnLoop {
-            let png: Arc<[u8]> = Arc::from(crate::raster::to_png(&picture()));
+            let still = picture();
+            let png: Arc<[u8]> = Arc::from(crate::raster::to_png(&still));
             Box::new(move |state| {
                 state.clip_offer(&["image/png"], Arc::clone(&png));
-                if save {
-                    state.spawn_fs_job(move || {
-                        let saved = write_file(&png, now);
-                        Box::new(move |state| saved_notice(state, saved))
-                    });
+                if !shot.save {
+                    return;
                 }
+                if crate::shotfile::reuses_clipboard(&shot) {
+                    save(state, png, now, &shot);
+                    return;
+                }
+                state.spawn_job(move || -> crate::fsjobs::OnLoop {
+                    let file = crate::shotfile::encode(&still, &shot);
+                    Box::new(move |state| match file {
+                        Ok(bytes) => save(state, bytes.into(), now, &shot),
+                        Err(e) => saved_notice(state, Err(format!("Cannot encode it: {e}"))),
+                    })
+                });
             })
         });
     }
+}
+
+/// Write the encoded file on a file job and tell how it went.
+fn save(state: &mut State, bytes: Arc<[u8]>, secs: i64, shot: &ScreenshotConfig) {
+    let ext = shot.format.extension();
+    state.spawn_fs_job(move || {
+        let saved = write_file(&bytes, secs, ext);
+        Box::new(move |state| saved_notice(state, saved))
+    });
 }
 
 /// Tells how the screenshot's save went.
@@ -204,18 +225,18 @@ fn saved_notice(state: &mut State, saved: Result<PathBuf, String>) {
     }
 }
 
-/// Write `png` to a new file named for `secs` in the Screenshots folder,
+/// Write `bytes` to a new file named for `secs` with extension `ext` in the Screenshots folder,
 /// which is made if missing. Blocking.
-fn write_file(png: &[u8], secs: i64) -> Result<PathBuf, String> {
+fn write_file(bytes: &[u8], secs: i64, ext: &str) -> Result<PathBuf, String> {
     use std::io::Write;
     let pictures = reprisefs::places::user_dir("PICTURES", "Pictures").filter(|p| p.is_dir());
     let home = std::env::var_os("HOME").map(PathBuf::from);
     let dir = folder(pictures, home).ok_or("There is no home folder to save it in.")?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("Cannot make {}: {e}", dir.display()))?;
-    let name = file_name(&reprisefs::locale::localtime(secs));
+    let name = file_name(&reprisefs::locale::localtime(secs), ext);
     let (mut file, path) = reprisefs::ops::create_new_numbered(&dir, &name)
         .map_err(|e| format!("Cannot write in {}: {e}", dir.display()))?;
-    if let Err(e) = file.write_all(png).and_then(|()| file.sync_all()) {
+    if let Err(e) = file.write_all(bytes).and_then(|()| file.sync_all()) {
         let _ = std::fs::remove_file(&path);
         return Err(format!("Cannot write {}: {e}", path.display()));
     }
@@ -227,9 +248,9 @@ fn folder(pictures: Option<PathBuf>, home: Option<PathBuf>) -> Option<PathBuf> {
     pictures.or(home).map(|d| d.join("Screenshots"))
 }
 
-fn file_name(tm: &libc::tm) -> String {
+fn file_name(tm: &libc::tm, ext: &str) -> String {
     format!(
-        "Screenshot {:04}-{:02}-{:02} {:02}-{:02}-{:02}.png",
+        "Screenshot {:04}-{:02}-{:02} {:02}-{:02}-{:02}.{ext}",
         tm.tm_year + 1900,
         tm.tm_mon + 1,
         tm.tm_mday,
@@ -336,8 +357,7 @@ mod tests {
         );
     }
 
-    #[test]
-    fn the_file_is_named_for_the_local_date_and_time() {
+    fn tm() -> libc::tm {
         // SAFETY: `libc::tm` is plain data; all zeroes is a valid value.
         let mut tm: libc::tm = unsafe { std::mem::zeroed() };
         tm.tm_year = 126;
@@ -346,7 +366,23 @@ mod tests {
         tm.tm_hour = 7;
         tm.tm_min = 3;
         tm.tm_sec = 9;
-        assert_eq!(file_name(&tm), "Screenshot 2026-09-05 07-03-09.png");
+        tm
+    }
+
+    #[test]
+    fn the_file_is_named_for_the_local_date_and_time() {
+        assert_eq!(
+            file_name(&tm(), "png"),
+            "Screenshot 2026-09-05 07-03-09.png"
+        );
+    }
+
+    #[test]
+    fn the_file_name_takes_the_formats_extension() {
+        assert_eq!(
+            file_name(&tm(), "jxl"),
+            "Screenshot 2026-09-05 07-03-09.jxl"
+        );
     }
 
     #[test]

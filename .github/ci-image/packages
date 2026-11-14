@@ -11,6 +11,7 @@ libdisplay-info
 libdrm
 libglvnd
 libinput
+libjxl
 libxcrypt
 libxkbcommon
 mesa

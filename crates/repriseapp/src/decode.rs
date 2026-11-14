@@ -1,13 +1,15 @@
 //! Pluggable image decoders: turn file bytes into a [`Canvas`] fitted to a caller-supplied maximum size, plus the source's own dimensions. [`ImageDecoder`] is `Send + Sync` because Explorer's thumbnail worker decodes from a thread.
 //!
 //! [`Decoders::default_set`] registers [`ImageCrateDecoder`] (the `image`
-//! crate's formats, listed on it); a caller with a format `image` doesn't
-//! cover can [`Decoders::register`] another before or after it.
+//! crate's formats, listed on it) and [`JxlDecoder`]; a caller with a format
+//! neither covers can [`Decoders::register`] another before or after them.
 
 use std::path::Path;
 
 use reprisekit::icon::premultiply;
 use reprisekit::raster::Canvas;
+
+mod jxl;
 
 /// A decoded image: `canvas` already fitted to the caller's `max` (never
 /// upscaled, box-filtered down), `width`/`height` the source's own
@@ -33,6 +35,7 @@ impl Decoders {
     pub fn default_set() -> Decoders {
         let mut d = Decoders { list: Vec::new() };
         d.register(Box::new(ImageCrateDecoder));
+        d.register(Box::new(JxlDecoder));
         d
     }
 
@@ -126,10 +129,34 @@ impl ImageDecoder for ImageCrateDecoder {
     }
 }
 
-/// The file extensions [`ImageCrateDecoder`] reads, lower case.
-pub const EXTS: [&str; 19] = [
+/// JPEG XL's first frame through libjxl, refused when it states more than
+/// [`MAX_DECODED_BYTES`] of pixels or libjxl would hold more than [`JXL_ALLOC_LIMIT`].
+pub struct JxlDecoder;
+
+/// What libjxl may hold at once while decoding one picture.
+pub const JXL_ALLOC_LIMIT: usize = 4 * MAX_DECODED_BYTES as usize;
+
+impl ImageDecoder for JxlDecoder {
+    fn probe(&self, bytes: &[u8]) -> bool {
+        bytes.starts_with(&[0xff, 0x0a]) || bytes.starts_with(reprisefs::imagesize::JXL_CONTAINER)
+    }
+
+    fn decode(&self, bytes: &[u8], max: (u32, u32)) -> Option<Decoded> {
+        let p = jxl::first_frame(bytes, MAX_DECODED_BYTES, JXL_ALLOC_LIMIT).ok()?;
+        let img = image::RgbaImage::from_raw(p.width, p.height, p.px)?;
+        let (fw, fh) = reprisekit::raster::fit_size(p.width, p.height, max);
+        Some(Decoded {
+            canvas: fit_buffer(&img, fw, fh),
+            width: p.width,
+            height: p.height,
+        })
+    }
+}
+
+/// The file extensions [`Decoders::default_set`] reads, lower case.
+pub const EXTS: [&str; 20] = [
     "png", "apng", "jpg", "jpeg", "jfif", "gif", "bmp", "webp", "tif", "tiff", "ico", "qoi", "pbm",
-    "pgm", "ppm", "pnm", "pam", "hdr", "exr",
+    "pgm", "ppm", "pnm", "pam", "hdr", "exr", "jxl",
 ];
 
 /// Whether `path`'s extension is one of [`EXTS`], in any case.
@@ -311,12 +338,79 @@ mod tests {
         assert_eq!(decoded.canvas.get(0, 0), premultiply(argb));
     }
 
+    fn rgba_gradient(w: u32, h: u32) -> image::RgbaImage {
+        image::RgbaImage::from_fn(w, h, |x, y| {
+            image::Rgba([x as u8 * 6, y as u8 * 8, 90, 255])
+        })
+    }
+
+    fn jxl_of(img: image::RgbaImage) -> Vec<u8> {
+        jxl::tests::encode(img.width(), img.height(), &[img.as_raw()], false)
+    }
+
+    /// A codestream whose SizeHeader claims 20000x20000 (the 18-bit height form, ratio 1:1),
+    /// then default image metadata.
+    fn jxl_header_claiming_20000_square() -> Vec<u8> {
+        vec![0xff, 0x0a, 0xfc, 0x70, 0x22, 0x01]
+    }
+
+    #[test]
+    fn decodes_a_jxl_through_the_default_set() {
+        let bytes = jxl_of(rgba_gradient(40, 30));
+        let d = Decoders::default_set().decode(&bytes, (20, 20)).unwrap();
+        assert_eq!((d.width, d.height, d.canvas.width), (40, 30, 20));
+        let full = JxlDecoder.decode(&bytes, (96, 96)).unwrap();
+        assert_eq!(
+            full.canvas.get(39, 29),
+            0xff00_0000 | (234 << 16) | (232 << 8) | 90
+        );
+        assert!(is_image(Path::new("/home/u/Pictures/Screenshot.JXL")));
+    }
+
+    #[test]
+    fn a_jxl_past_the_byte_budget_or_cut_short_decodes_to_nothing() {
+        let big = jxl_header_claiming_20000_square();
+        assert_eq!(
+            reprisefs::imagesize::dimensions(&big),
+            Some((20_000, 20_000))
+        );
+        assert!(JxlDecoder.probe(&big));
+        assert!(JxlDecoder.decode(&big, (96, 96)).is_none());
+        let whole = jxl_of(rgba_gradient(40, 30));
+        assert!(
+            JxlDecoder
+                .decode(&whole[..whole.len() / 2], (96, 96))
+                .is_none()
+        );
+        assert!(!JxlDecoder.probe(&encode_png(1, 1, &[0, 0, 0, 255])));
+    }
+
+    /// Premultiplied samples come out of libjxl unpremultiplied and are multiplied once.
+    #[test]
+    fn a_premultiplied_jxl_is_multiplied_by_alpha_once() {
+        let bytes = jxl::tests::encode(1, 1, &[&[100, 50, 24, 128]], true);
+        let d = JxlDecoder.decode(&bytes, (96, 96)).unwrap();
+        let [a, r, g, b] = d.canvas.get(0, 0).to_be_bytes();
+        assert_eq!(a, 128);
+        for (got, want) in [(r, 100), (g, 50), (b, 24)] {
+            assert!(got.abs_diff(want) <= 1, "{got} vs {want}");
+        }
+    }
+
     #[test]
     fn every_listed_extension_is_a_format_the_decoder_reads() {
         for e in EXTS {
+            if e == "jxl" {
+                continue;
+            }
             let f = image::ImageFormat::from_extension(e).unwrap_or_else(|| panic!("{e}"));
             assert!(f.reading_enabled(), "{e}");
         }
+        assert_eq!(
+            image::ImageFormat::from_extension("jxl"),
+            None,
+            "JxlDecoder reads it"
+        );
         assert!(is_image(Path::new("/home/u/Pictures/Beach.JPG")));
         assert!(!is_image(Path::new("/home/u/notes.txt")));
     }

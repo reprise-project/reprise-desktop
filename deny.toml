@@ -23,6 +23,7 @@ allow = [
     "Unlicense",
     "MPL-2.0",
     "WTFPL",
+    "GPL-3.0-or-later",
 ]
 
 unused-allowed-license = "allow"

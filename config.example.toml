@@ -315,7 +315,13 @@ suspend_after = 0            # run [power] standby
 # icc_profile = "~/.local/share/icc/studio.icc"  # an ICC profile whose calibration curves (vcgt) go into this output's gamma table, night light on top; the Display page's Color profile list sets it
 
 # [screenshot]               # every screenshot goes to the clipboard
-# save = true                # and to Pictures/Screenshots (or ~/Screenshots) as a PNG
+# save = true                # and to Pictures/Screenshots (or ~/Screenshots) as a file in the format below
+# format = "png"             # the file's format: png, jpg or jxl (JPEG XL); the clipboard always takes a PNG
+# png_compression = "default"  # fast, default or best: smaller files for a slower save; every level keeps every pixel
+# jpg_quality = 90           # 1 to 100
+# jxl_lossless = true        # keeps every pixel; false saves at jxl_quality
+# jxl_quality = 90           # 1 to 100, for a lossy JPEG XL; 100 saves at 99 (jxl_lossless keeps every pixel)
+# jxl_effort = 7             # 1 (fastest) to 9 (smallest file); 8 and 9 take many seconds a shot, and shots save one at a time
 # record_sound = false       # screen recordings (Videos/Screencasts) also carry what plays
 
 # [previews]                 # live pictures of windows, redrawn while they change
