@@ -265,9 +265,9 @@ struct Making {
 /// a 144 or 240 Hz screen.
 const CONSTANT_SCREEN_HZ: u32 = 60;
 
-/// `settings` for a screen refreshing at `refresh_hz` (60 when unknown): the rate hint is the
-/// frame rate cap or the refresh, and Constant bitrate codes every slot at that rate, at most
-/// [`CONSTANT_SCREEN_HZ`] when no cap is set.
+/// `settings` for a screen refreshing at `refresh_hz` (60 when unknown): the rate hint and the
+/// pacer's grid are the frame rate cap or the refresh, and Constant bitrate codes every slot of
+/// it, at most [`CONSTANT_SCREEN_HZ`] when no cap is set.
 fn making(settings: &Recording, refresh_hz: Option<u32>, sound: Option<Sound>) -> Making {
     let screen_hz = refresh_hz.unwrap_or(60);
     let rate_hint = match (settings.frame_rate, settings.rate) {
@@ -275,19 +275,12 @@ fn making(settings: &Recording, refresh_hz: Option<u32>, sound: Option<Sound>) -
         (0, _) => screen_hz,
         (cap, _) => cap,
     };
-    let (rate, pacer) = match (settings.rate, settings.frame_rate) {
-        (RateMode::Constant, _) => (
-            RateControl::Constant(settings.bitrate),
-            Pacer::new(Some(rate_hint), true),
-        ),
-        (mode, cap) => {
-            let rate = match mode {
-                RateMode::Average => RateControl::Average(settings.bitrate),
-                _ => RateControl::Quality(settings.quality),
-            };
-            (rate, Pacer::new((cap > 0).then_some(cap), false))
-        }
+    let rate = match settings.rate {
+        RateMode::Constant => RateControl::Constant(settings.bitrate),
+        RateMode::Average => RateControl::Average(settings.bitrate),
+        RateMode::Quality => RateControl::Quality(settings.quality),
     };
+    let pacer = Pacer::new(rate_hint, settings.rate == RateMode::Constant);
     let coding = Coding {
         codec: settings.codec,
         rate,
@@ -995,7 +988,12 @@ mod tests {
         };
         let aac = Sound::open(AudioCodec::Aac, 160, true, 5).unwrap();
         let m = making(&at(RateMode::Quality, 0), Some(144), Some(aac));
-        assert_eq!((m.coding.rate_hint, m.pacer.wake(true)), (144, None));
+        assert_eq!(m.coding.rate_hint, 144);
+        assert_eq!(
+            m.pacer,
+            Pacer::new(144, false),
+            "the refresh paces the screen rate"
+        );
         assert_eq!(m.coding.rate, RateControl::Quality(55));
         assert!(m.sound.is_some());
         let m = making(&at(RateMode::Average, 30), None, None);
@@ -1003,7 +1001,7 @@ mod tests {
             (m.coding.rate, m.coding.rate_hint),
             (RateControl::Average(8000), 30)
         );
-        assert_eq!(m.pacer, Pacer::new(Some(30), false));
+        assert_eq!(m.pacer, Pacer::new(30, false));
         assert!(m.sound.is_none());
         let m = making(&at(RateMode::Constant, 0), None, None);
         assert_eq!(
@@ -1012,16 +1010,16 @@ mod tests {
         );
         assert_eq!(
             m.pacer,
-            Pacer::new(Some(60), true),
+            Pacer::new(60, true),
             "at the screen's rate when none is set"
         );
         let m = making(&at(RateMode::Constant, 0), Some(144), None);
         assert_eq!(m.coding.rate_hint, 60, "a 144 Hz screen");
-        assert_eq!(m.pacer, Pacer::new(Some(60), true));
+        assert_eq!(m.pacer, Pacer::new(60, true));
         let m = making(&at(RateMode::Constant, 0), Some(50), None);
         assert_eq!(m.coding.rate_hint, 50);
         let m = making(&at(RateMode::Constant, 144), Some(144), None);
-        assert_eq!(m.pacer, Pacer::new(Some(144), true), "a cap set");
+        assert_eq!(m.pacer, Pacer::new(144, true), "a cap set");
     }
 
     #[test]
@@ -1271,6 +1269,29 @@ mod tests {
     }
 
     #[test]
+    fn the_screen_rate_codes_at_most_one_picture_a_refresh() {
+        ffmpeg::init().unwrap();
+        ffmpeg::util::log::set_level(ffmpeg::util::log::Level::Quiet);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.mp4");
+        let node = PathBuf::from(probe::RENDER_NODE);
+        let mut file = File::new(&path, &node, software(), None, (64, 64), h264());
+        let t0 = Instant::now();
+        let at = |ms| t0 + Duration::from_millis(ms);
+        for (v, ms) in [(0x10, 0), (0x20, 20), (0x30, 22)] {
+            file.frame(grey(v), at(ms)).unwrap();
+        }
+        file.tick(at(33)).unwrap();
+        file.frame(grey(0x40), at(40)).unwrap();
+        file.finish().unwrap();
+        assert_eq!(
+            video_ms(&path),
+            [0, 17, 33, 50, 67],
+            "one picture in each 60 Hz slot, a change inside a coded slot at the next"
+        );
+    }
+
+    #[test]
     fn a_flac_recording_ends_with_the_streaminfo_of_all_its_sound() {
         ffmpeg::init().unwrap();
         ffmpeg::util::log::set_level(ffmpeg::util::log::Level::Quiet);
@@ -1339,7 +1360,7 @@ mod tests {
         file.run(&events).unwrap();
         file.finish().unwrap();
         let ms = video_ms(&path);
-        assert_eq!((ms.len(), &ms[..2]), (3, &[0, 160][..]), "{ms:?}");
+        assert_eq!((ms.len(), &ms[..2]), (3, &[0, 150][..]), "{ms:?}");
         let mut input = ffmpeg::format::input(&path).unwrap();
         let sound: i64 = (input.packets())
             .map(|p| p.unwrap())
@@ -1367,7 +1388,7 @@ mod tests {
         let boxes = boxes(&path);
         assert_eq!(boxes[0], "ftyp");
         assert!(before(&boxes, "mdat", "moov"), "{boxes:?}");
-        assert_eq!(video_ms(&path), [0, 400, 800, 801]);
+        assert_eq!(video_ms(&path), [0, 400, 800, 817]);
     }
 
     #[test]
@@ -1443,7 +1464,7 @@ mod tests {
             .collect();
         assert_eq!(
             ms,
-            [0, 400, 800, 801],
+            [0, 400, 800, 817],
             "one stream from the first readable frame at time 0, held to the end"
         );
         assert!(packets[0].is_key());
