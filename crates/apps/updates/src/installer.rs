@@ -3,7 +3,7 @@
 //! app installed is deleted here.
 
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::sync::{Arc, Mutex};
 
 use repriseapp::keys::form_input;
@@ -674,6 +674,30 @@ impl Installer {
         self.form.get_or_insert_with(|| Form::new(Vec::new()))
     }
 
+    /// Take what the worker posted. A worker gone before it ended the job (it panicked) ends it
+    /// as failed, so Close works again.
+    fn drain(&mut self) {
+        while let Some(rx) = &self.worker {
+            match rx.try_recv() {
+                Ok(m) => self.worker_msg(m),
+                Err(TryRecvError::Empty) => return,
+                Err(TryRecvError::Disconnected) => {
+                    self.worker = None;
+                    if matches!(
+                        self.sheet.stage,
+                        Stage::Reading | Stage::Asking { .. } | Stage::Running { .. }
+                    ) {
+                        let why = match self.sheet.verb {
+                            Verb::Install => "The install stopped unexpectedly.",
+                            Verb::Uninstall => "The uninstall stopped unexpectedly.",
+                        };
+                        self.worker_msg(Msg::Ended(Err(Failure::Text(why.into()))));
+                    }
+                }
+            }
+        }
+    }
+
     fn worker_msg(&mut self, m: Msg) {
         match m {
             Msg::Found(f) => {
@@ -769,9 +793,7 @@ impl Installer {
     fn dispatch(&mut self, ev: Event, ctx: &mut Ctx) -> Reply {
         self.load_icon(ctx);
         if matches!(ev, Event::Wake) {
-            while let Some(m) = self.worker.as_ref().and_then(|rx| rx.try_recv().ok()) {
-                self.worker_msg(m);
-            }
+            self.drain();
             self.load_icon(ctx);
             return Reply::redraw();
         }
@@ -1002,6 +1024,40 @@ mod tests {
         app.worker_msg(Msg::Ended(Ok(())));
         assert_eq!(app.sheet.stage, Stage::Done);
         assert!(app.choose(Choice::Close).quit);
+    }
+
+    #[test]
+    fn a_worker_gone_mid_run_fails_the_sheet_and_close_quits() {
+        let mut app = Installer::new(Target::Install("/d/foot.pkg.tar.zst".into()));
+        let (tx, rx) = channel();
+        app.worker = Some(rx);
+        tx.send(Msg::Found(Found {
+            ready: true,
+            ..Found::default()
+        }))
+        .unwrap();
+        app.drain();
+        app.choose(Choice::Go);
+        assert!(!app.choose(Choice::Cancel).quit, "Cancel is greyed mid-run");
+        drop(tx);
+        app.drain();
+        assert_eq!(
+            app.sheet.stage,
+            Stage::Failed("The install stopped unexpectedly.".into())
+        );
+        assert!(app.choose(Choice::Cancel).quit, "Close ends the program");
+
+        let mut app = Installer::new(Target::Install("/d/foot.pkg.tar.zst".into()));
+        let (tx, rx) = channel();
+        app.worker = Some(rx);
+        tx.send(Msg::Ended(Ok(()))).unwrap();
+        drop(tx);
+        app.drain();
+        assert_eq!(
+            app.sheet.stage,
+            Stage::Done,
+            "a worker done and gone is no failure"
+        );
     }
 
     #[test]
