@@ -6,6 +6,7 @@
 #[cfg(test)]
 reprisebus::test_session!();
 
+pub mod allocbudget;
 pub mod apps;
 pub mod autostart;
 pub mod batchrename;

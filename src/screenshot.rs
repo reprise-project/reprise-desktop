@@ -16,13 +16,15 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
-use repriseconf::config::ScreenshotConfig;
+use repriseconf::config::ShotFormat;
 use reprisescene::View;
 use smithay::utils::Rectangle;
 
 use crate::compositor::State;
 use crate::raster::{Canvas, Rect};
+use crate::shotfile::{Failed, Plan};
 use crate::window::WindowId;
 
 pub struct Shot {
@@ -160,8 +162,8 @@ impl State {
     }
 
     /// Encode `picture` off the loop and offer the PNG as the clipboard; with `[screenshot] save`
-    /// on, then encode it in `[screenshot] format` on a job of its own and write it to a new file
-    /// on a file job.
+    /// on, then encode it in `[screenshot] format` on a job of its own (`shotfile::plan`) and
+    /// write it to a new file on a file job.
     fn deliver(&mut self, picture: impl FnOnce() -> Canvas + Send + 'static) {
         let shot = self.config.screenshot.clone();
         let now = std::time::SystemTime::now()
@@ -175,15 +177,42 @@ impl State {
                 if !shot.save {
                     return;
                 }
-                if crate::shotfile::reuses_clipboard(&shot) {
-                    save(state, png, now, &shot);
-                    return;
+                let ext = shot.format.extension();
+                let wants_png = shot.format == ShotFormat::Png;
+                match crate::shotfile::plan(&shot, state.shots.encodes.count()) {
+                    Plan::Clipboard => return save(state, png, now, ext, None),
+                    Plan::Busy => {
+                        let note = (!wants_png).then_some(BUSY);
+                        return save(state, png, now, "png", note);
+                    }
+                    Plan::Encode => {}
                 }
+                let encoding = state.shots.encodes.hold();
                 state.spawn_job(move || -> crate::fsjobs::OnLoop {
                     let file = crate::shotfile::encode(&still, &shot);
+                    drop((still, encoding));
                     Box::new(move |state| match file {
-                        Ok(bytes) => save(state, bytes.into(), now, &shot),
-                        Err(e) => saved_notice(state, Err(format!("Cannot encode it: {e}"))),
+                        Ok(bytes) => save(state, bytes.into(), now, ext, None),
+                        Err(e) => {
+                            let as_png = "so it was saved as PNG.";
+                            let note = match e {
+                                Failed::Memory(budget) => format!(
+                                    "Encoding it needed more than {} MB, {as_png}",
+                                    budget / 1_000_000
+                                ),
+                                Failed::Late(limit) => format!(
+                                    "Encoding it took longer than {} minutes, {as_png}",
+                                    limit.as_secs() / 60
+                                ),
+                                Failed::Outdated => format!(
+                                    "The JPEG XL encoder could not start, {as_png} Log out and \
+                                     back in after an update."
+                                ),
+                                Failed::Codec(e) => format!("Cannot encode it: {e}, {as_png}"),
+                            };
+                            let note = (!wants_png).then_some(note.as_str());
+                            save(state, png, now, "png", note)
+                        }
                     })
                 });
             })
@@ -191,26 +220,61 @@ impl State {
     }
 }
 
-/// Write the encoded file on a file job and tell how it went.
-fn save(state: &mut State, bytes: Arc<[u8]>, secs: i64, shot: &ScreenshotConfig) {
-    let ext = shot.format.extension();
+/// Why a screenshot past `shotfile::MAX_ENCODES` is a PNG.
+const BUSY: &str = "Earlier screenshots were still being encoded, so this one was saved as PNG.";
+
+/// Work under way, counted while its [`Held`] lives.
+#[derive(Clone, Default)]
+pub struct InFlight(Arc<AtomicUsize>);
+
+impl InFlight {
+    pub fn count(&self) -> usize {
+        self.0.load(Ordering::Acquire)
+    }
+
+    pub fn hold(&self) -> Held {
+        self.0.fetch_add(1, Ordering::AcqRel);
+        Held(Arc::clone(&self.0))
+    }
+}
+
+/// One count of an [`InFlight`], given back when dropped, wherever the work ends or is lost.
+pub struct Held(Arc<AtomicUsize>);
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+/// The screenshots under way.
+#[derive(Default)]
+pub struct Shots {
+    /// File encodes running or waiting for the one running.
+    encodes: InFlight,
+}
+
+/// Write the encoded file on a file job and tell how it went, with `note` saying why it is a PNG.
+fn save(state: &mut State, bytes: Arc<[u8]>, secs: i64, ext: &'static str, note: Option<&str>) {
+    let note = note.map(str::to_owned);
     state.spawn_fs_job(move || {
         let saved = write_file(&bytes, secs, ext);
-        Box::new(move |state| saved_notice(state, saved))
+        Box::new(move |state| saved_notice(state, saved, note.as_deref()))
     });
 }
 
 /// Tells how the screenshot's save went.
-fn saved_notice(state: &mut State, saved: Result<PathBuf, String>) {
+fn saved_notice(state: &mut State, saved: Result<PathBuf, String>, note: Option<&str>) {
     match saved {
         Ok(path) => {
             log::info!("screenshot saved to {}", path.display());
             let name = path.file_name().unwrap_or_default().to_string_lossy();
             let dir = path.parent().unwrap_or(std::path::Path::new("/"));
+            let note = note.map_or(String::new(), |n| format!("{n}\n"));
             crate::notifyview::notice_opening(
                 state,
                 "Screenshot saved",
-                &format!("{name}\nClick here to open the Screenshots folder."),
+                &format!("{name}\n{note}Click here to open the Screenshots folder."),
                 vec!["reprise-explorer".into(), dir.as_os_str().to_owned()],
             );
         }
