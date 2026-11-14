@@ -170,7 +170,8 @@ opens a new note.
 ## Image Viewer
 
 Opens a picture in any format Explorer's thumbnails read (PNG, JPEG, GIF, BMP,
-WebP, TIFF, ICO, QOI, PNM, HDR and OpenEXR) and is the default for pictures.
+WebP, TIFF, ICO, QOI, PNM, HDR, OpenEXR and JPEG XL) and is the default for
+pictures.
 It opens fitted to the window, never past 100%. The decode runs in the
 background, and a large picture is shown from a copy scaled to the window.
 
@@ -187,7 +188,8 @@ background, and a large picture is shown from a copy scaled to the window.
 - **Full Screen and Slide Show:** F11 or a double-click shows the picture on
   black over the whole screen; F5 starts a slide show there, a picture every
   3 seconds. Escape comes back.
-- **Moving pictures:** animated GIF, PNG and WebP play.
+- **Moving pictures:** animated GIF, PNG and WebP play; an animated JPEG XL
+  shows its first frame.
 - **Delete** sends the picture to the Recycle Bin, asking first as Explorer
   does (Shift+Delete deletes it for good), and the next picture shows.
 - **Set as Desktop Background** (File menu) makes the picture the desktop's

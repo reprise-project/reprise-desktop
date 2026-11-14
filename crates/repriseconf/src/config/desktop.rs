@@ -35,11 +35,87 @@ impl Default for SnapConfig {
     }
 }
 
+/// `[screenshot] format`: the saved file's format. The clipboard always takes PNG.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ShotFormat {
+    #[default]
+    Png,
+    Jpg,
+    Jxl,
+}
+
+impl ShotFormat {
+    pub const ALL: [ShotFormat; 3] = [ShotFormat::Png, ShotFormat::Jpg, ShotFormat::Jxl];
+
+    /// Also the format's name in `[screenshot] format`.
+    pub fn extension(self) -> &'static str {
+        match self {
+            ShotFormat::Png => "png",
+            ShotFormat::Jpg => "jpg",
+            ShotFormat::Jxl => "jxl",
+        }
+    }
+}
+
+impl FromStr for ShotFormat {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, String> {
+        (ShotFormat::ALL.into_iter())
+            .find(|f| f.extension() == s)
+            .ok_or_else(|| format!("screenshot.format {s:?} is not \"png\", \"jpg\" or \"jxl\""))
+    }
+}
+
+/// `[screenshot] png_compression`: how hard a saved PNG is squeezed; every level is lossless.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PngCompression {
+    Fast,
+    #[default]
+    Default,
+    Best,
+}
+
+impl PngCompression {
+    pub const ALL: [PngCompression; 3] = [
+        PngCompression::Fast,
+        PngCompression::Default,
+        PngCompression::Best,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            PngCompression::Fast => "fast",
+            PngCompression::Default => "default",
+            PngCompression::Best => "best",
+        }
+    }
+}
+
+impl FromStr for PngCompression {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, String> {
+        (PngCompression::ALL.into_iter())
+            .find(|c| c.name() == s)
+            .ok_or_else(|| {
+                format!("screenshot.png_compression {s:?} is not \"fast\", \"default\" or \"best\"")
+            })
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ScreenshotConfig {
     pub save: bool,
     /// Screen recordings carry what plays on the default output.
     pub record_sound: bool,
+    pub format: ShotFormat,
+    pub png_compression: PngCompression,
+    /// 1..=100.
+    pub jpg_quality: u8,
+    pub jxl_lossless: bool,
+    /// 1..=100, used when `jxl_lossless` is off; 100 saves at 99.
+    pub jxl_quality: u8,
+    /// 1 (fastest) ..= 9 (smallest file).
+    pub jxl_effort: u8,
 }
 
 impl Default for ScreenshotConfig {
@@ -47,6 +123,12 @@ impl Default for ScreenshotConfig {
         ScreenshotConfig {
             save: true,
             record_sound: false,
+            format: ShotFormat::Png,
+            png_compression: PngCompression::Default,
+            jpg_quality: 90,
+            jxl_lossless: true,
+            jxl_quality: 90,
+            jxl_effort: 7,
         }
     }
 }

@@ -383,6 +383,47 @@ fn screenshot_save_defaults_on_and_is_configurable() {
 }
 
 #[test]
+fn the_screenshot_file_format_defaults_to_png_at_default_compression() {
+    let s = Config::default().screenshot;
+    assert_eq!(
+        (s.format, s.png_compression, s.jpg_quality),
+        (ShotFormat::Png, PngCompression::Default, 90)
+    );
+    assert_eq!((s.jxl_lossless, s.jxl_quality, s.jxl_effort), (true, 90, 7));
+    let c = Config::parse("[screenshot]\nformat = \"jxl\"\njxl_lossless = false\njxl_effort = 3\n")
+        .unwrap()
+        .screenshot;
+    assert_eq!(
+        (c.format, c.jxl_lossless, c.jxl_effort),
+        (ShotFormat::Jxl, false, 3)
+    );
+    let c = Config::parse(
+        "[screenshot]\nformat = \"jpg\"\npng_compression = \"best\"\njpg_quality = 75\njxl_quality = 1\n",
+    )
+    .unwrap()
+    .screenshot;
+    assert_eq!(
+        (c.format, c.png_compression, c.jpg_quality, c.jxl_quality),
+        (ShotFormat::Jpg, PngCompression::Best, 75, 1)
+    );
+    assert_eq!(
+        ShotFormat::ALL.map(ShotFormat::extension),
+        ["png", "jpg", "jxl"]
+    );
+    for bad in [
+        "format = \"webp\"",
+        "jpg_quality = 0",
+        "jxl_quality = 101",
+        "jxl_effort = 10",
+        "png_compression = \"max\"",
+    ] {
+        let key = bad.split(' ').next().unwrap();
+        let err = Config::parse(&format!("[screenshot]\n{bad}\n")).unwrap_err();
+        assert!(err.contains(key), "{bad}: {err}");
+    }
+}
+
+#[test]
 fn bounce_keys_visual_bell_and_locate_pointer_parse_and_default_off() {
     let d = Config::default().accessibility;
     assert!(!d.bounce_keys && !d.locate_pointer);

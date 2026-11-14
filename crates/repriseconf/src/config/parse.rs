@@ -730,6 +730,31 @@ impl Config {
             if let Some(v) = s.record_sound {
                 cfg.screenshot.record_sound = v;
             }
+            let shot = &mut cfg.screenshot;
+            if let Some(f) = s.format {
+                shot.format = f.parse()?;
+            }
+            if let Some(c) = s.png_compression {
+                shot.png_compression = c.parse()?;
+            }
+            if let Some(v) = s.jxl_lossless {
+                shot.jxl_lossless = v;
+            }
+            let num = |key: &str, v: i64, (lo, hi): (u8, u8)| {
+                u8::try_from(v)
+                    .ok()
+                    .filter(|v| (lo..=hi).contains(v))
+                    .ok_or_else(|| format!("screenshot.{key} must be {lo} to {hi}, got {v}"))
+            };
+            if let Some(v) = s.jpg_quality {
+                shot.jpg_quality = num("jpg_quality", v, (1, 100))?;
+            }
+            if let Some(v) = s.jxl_quality {
+                shot.jxl_quality = num("jxl_quality", v, (1, 100))?;
+            }
+            if let Some(v) = s.jxl_effort {
+                shot.jxl_effort = num("jxl_effort", v, (1, 9))?;
+            }
         }
         if let Some(l) = file.lock {
             if let Some(v) = l.away_device {

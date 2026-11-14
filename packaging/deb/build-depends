@@ -20,6 +20,7 @@ libfreetype-dev
 libgbm-dev
 libgles-dev
 libinput-dev
+libjxl-dev
 libpam0g-dev
 libpipewire-0.3-dev
 libseat-dev

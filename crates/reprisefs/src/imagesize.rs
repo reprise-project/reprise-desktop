@@ -1,5 +1,5 @@
 //! An image's width and height from a file's first bytes, without decoding it:
-//! PNG, JPEG, GIF, BMP and WebP.
+//! PNG, JPEG, GIF, BMP, WebP and JPEG XL.
 
 /// How much of a file [`dimensions`] may need. Every format but JPEG states
 /// its size in the first 30 bytes; a JPEG's frame header follows APPn segments
@@ -19,6 +19,10 @@ pub fn dimensions(head: &[u8]) -> Option<(u32, u32)> {
         bmp(head)
     } else if head.starts_with(b"RIFF") && head.get(8..12) == Some(b"WEBP") {
         webp(head)
+    } else if head.starts_with(&[0xff, 0x0a]) {
+        jxl_codestream(&head[2..])
+    } else if head.starts_with(JXL_CONTAINER) {
+        jxl_container(head)
     } else {
         None
     }?;
@@ -117,6 +121,81 @@ fn webp(head: &[u8]) -> Option<(u32, u32)> {
     }
 }
 
+/// The signature box a JPEG XL container starts with.
+pub const JXL_CONTAINER: &[u8] = b"\0\0\0\x0cJXL \r\n\x87\n";
+
+/// The codestream's SizeHeader, right after its `FF 0A`: a bit stream read least significant
+/// bit first.
+fn jxl_codestream(code: &[u8]) -> Option<(u32, u32)> {
+    let mut at = 0usize;
+    let mut bits = |n: u32| -> Option<u32> {
+        let mut v = 0u32;
+        for i in 0..n {
+            let byte = *code.get(at / 8)?;
+            v |= u32::from(byte >> (at % 8) & 1) << i;
+            at += 1;
+        }
+        Some(v)
+    };
+    let small = bits(1)? == 1;
+    let side = |bits: &mut dyn FnMut(u32) -> Option<u32>| -> Option<u32> {
+        if small {
+            return Some((bits(5)? + 1) * 8);
+        }
+        let n = [9, 13, 18, 30][bits(2)? as usize];
+        Some(bits(n)? + 1)
+    };
+    let h = side(&mut bits)?;
+    let w = match bits(3)? {
+        0 => side(&mut bits)?,
+        r => {
+            let (num, den) =
+                [(1, 1), (12, 10), (4, 3), (3, 2), (16, 9), (5, 4), (2, 1)][r as usize - 1];
+            u32::try_from(u64::from(h) * num / den).ok()?
+        }
+    };
+    Some((w, h))
+}
+
+/// The codestream's first bytes from the boxes after the signature: a whole `jxlc`, or the
+/// `jxlp` parts (each after its 4-byte index) joined in order, as a part may end mid-header.
+fn jxl_container(head: &[u8]) -> Option<(u32, u32)> {
+    /// Past the longest SizeHeader (68 bits) after its `FF 0A`.
+    const ENOUGH: usize = 16;
+    let mut code = Vec::new();
+    let mut at = JXL_CONTAINER.len();
+    while code.len() < ENOUGH && at < head.len() {
+        let size = u32_be(head, at)?;
+        let kind = head.get(at + 4..at + 8)?;
+        let (body, end) = match size {
+            0 => (at + 8, head.len()),
+            1 => (
+                at + 16,
+                at.checked_add(usize::try_from(u64::from_be_bytes(bytes(head, at + 8)?)).ok()?)?,
+            ),
+            n if n < 8 => return None,
+            n => (at + 8, at.checked_add(n as usize)?),
+        };
+        let part = head.get(body.min(head.len())..end.min(head.len()))?;
+        match kind {
+            b"jxlc" => {
+                code.extend_from_slice(part);
+                break;
+            }
+            b"jxlp" => {
+                let index = u32_be(head, body)?;
+                code.extend_from_slice(part.get(4..)?);
+                if index & 0x8000_0000 != 0 {
+                    break;
+                }
+            }
+            _ => {}
+        }
+        at = end;
+    }
+    code.strip_prefix(&[0xff, 0x0a]).and_then(jxl_codestream)
+}
+
 fn bytes<const N: usize>(head: &[u8], at: usize) -> Option<[u8; N]> {
     head.get(at..at.checked_add(N)?)?.try_into().ok()
 }
@@ -187,6 +266,101 @@ mod tests {
         v.extend((data.len() as u32).to_le_bytes());
         v.extend(data);
         v
+    }
+
+    /// A codestream signature and its SizeHeader, bits least significant first: the small form
+    /// (sides in eighths up to 256) when both sides allow it, else the 9-, 13-, 18- or 30-bit form
+    /// with an explicit width (`ratio` 0) or a width from `ratio`.
+    fn jxl_head(w: u32, h: u32, ratio: u32) -> Vec<u8> {
+        let mut bits: Vec<bool> = Vec::new();
+        let mut put = |v: u32, n: u32| bits.extend((0..n).map(|i| v >> i & 1 == 1));
+        let small =
+            w.is_multiple_of(8) && h.is_multiple_of(8) && w <= 256 && h <= 256 && ratio == 0;
+        let side = |put: &mut dyn FnMut(u32, u32), v: u32| {
+            let (sel, n) = [(0, 9), (1, 13), (2, 18), (3, 30)]
+                .into_iter()
+                .find(|&(_, n)| v - 1 < 1 << n)
+                .unwrap();
+            put(sel, 2);
+            put(v - 1, n);
+        };
+        put(small as u32, 1);
+        if small {
+            put(h / 8 - 1, 5);
+        } else {
+            side(&mut put, h);
+        }
+        put(ratio, 3);
+        if ratio == 0 {
+            if small {
+                put(w / 8 - 1, 5);
+            } else {
+                side(&mut put, w);
+            }
+        }
+        let mut v = vec![0xff, 0x0a];
+        v.extend(bits.chunks(8).map(|c| {
+            c.iter()
+                .enumerate()
+                .fold(0u8, |b, (i, &on)| b | u8::from(on) << i)
+        }));
+        v
+    }
+
+    fn jxl_box(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
+        let mut v = ((body.len() + 8) as u32).to_be_bytes().to_vec();
+        v.extend(kind);
+        v.extend(body);
+        v
+    }
+
+    #[test]
+    fn a_jxl_codestream_and_container_state_their_size() {
+        assert_eq!(dimensions(&jxl_head(64, 48, 0)), Some((64, 48)));
+        assert_eq!(dimensions(&jxl_head(256, 8, 0)), Some((256, 8)));
+        assert_eq!(dimensions(&jxl_head(1921, 1081, 0)), Some((1921, 1081)));
+        assert_eq!(
+            dimensions(&jxl_head(20_000, 300_000, 0)),
+            Some((20_000, 300_000))
+        );
+        assert_eq!(
+            dimensions(&jxl_head(0, 1080, 5)),
+            Some((1920, 1080)),
+            "16:9"
+        );
+        assert_eq!(
+            dimensions(&jxl_head(0, 1000, 2)),
+            Some((1200, 1000)),
+            "12:10"
+        );
+        let mut file = jxl_box(b"JXL ", &[0x0d, 0x0a, 0x87, 0x0a]);
+        file.extend(jxl_box(b"ftyp", b"jxl \0\0\0\0jxl "));
+        file.extend(jxl_box(b"jxll", &[5]));
+        file.extend(jxl_box(b"jxlc", &jxl_head(800, 600, 0)));
+        assert_eq!(dimensions(&file), Some((800, 600)));
+        let mut parts = file[..file.len() - jxl_head(800, 600, 0).len() - 8].to_vec();
+        let mut first = 0u32.to_be_bytes().to_vec();
+        first.extend(jxl_head(640, 480, 0));
+        parts.extend(jxl_box(b"jxlp", &first));
+        assert_eq!(dimensions(&parts), Some((640, 480)));
+        let split = jxl_head(20_000, 20_000, 0);
+        let mut joined = file[..file.len() - jxl_head(800, 600, 0).len() - 8].to_vec();
+        for (index, part) in [
+            (0u32, &split[..2]),
+            (1, &split[2..5]),
+            (0x8000_0002, &split[5..]),
+        ] {
+            let mut body = index.to_be_bytes().to_vec();
+            body.extend(part);
+            joined.extend(jxl_box(b"jxlp", &body));
+            joined.extend(jxl_box(b"Exif", &[0; 6]));
+        }
+        assert_eq!(
+            dimensions(&joined),
+            Some((20_000, 20_000)),
+            "jxlp parts join across the header"
+        );
+        assert_eq!(dimensions(&[0xff, 0x0a, 0x00]), None, "cut short");
     }
 
     #[test]

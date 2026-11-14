@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     container:
-      image: ghcr.io/reprise-project/reprise-ci:2026-10-25-1560797fed65
+      image: ghcr.io/reprise-project/reprise-ci:2026-10-25-fbe583e412c1
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -37,7 +37,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     container:
-      image: ghcr.io/reprise-project/reprise-ci:2026-10-25-1560797fed65
+      image: ghcr.io/reprise-project/reprise-ci:2026-10-25-fbe583e412c1
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}

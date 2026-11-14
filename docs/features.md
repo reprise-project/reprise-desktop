@@ -455,8 +455,9 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   popup of its own, like the program's other menus.
 - **Screenshots.** PrtSc for the screen, Alt+PrtSc for the window,
   Ctrl+Alt+PrtSc for its content without the frame, Shift+PrtSc for a region
-  or a clicked window. Every shot goes to the clipboard and, if you like, to
-  Pictures/Screenshots.
+  or a clicked window. Every shot goes to the clipboard as a PNG and, if you
+  like, to Pictures/Screenshots as a PNG, JPG or JPEG XL file
+  (`[screenshot] format`).
 - **Screen recordings.** Ctrl+Shift+Alt+R records the screen under the
   pointer and, pressed again, stops. In the Shift+PrtSc picker V switches to
   Record mode, where a dragged area, a clicked window's frame or a clicked
