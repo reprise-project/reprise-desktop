@@ -401,3 +401,27 @@ fn a_rewrapped_note_in_a_view_pushes_what_lies_under_it() {
     );
     assert_eq!(plain.rect("below").unwrap().y, 20 + 2 * LINE_H);
 }
+
+/// A combo whose value is wider than its field widens to the form's right edge; an eliding one
+/// keeps its field and cuts the value instead.
+#[test]
+fn an_eliding_combo_keeps_its_width_for_a_long_value() {
+    let theme = Theme::default();
+    let text = TextRenderer::stub(11, |_| 8);
+    let form = |elide: bool| {
+        let mut c = crate::controls::combo::Combo::new(&["A rather long profile name"], 0, 1);
+        c.elide = elide;
+        Form::new(vec![
+            Item::new("c", Rect::new(10, 10, 100, 21), Control::Combo(c)),
+            Item::label_at("note", 10, 40, 300, "A note"),
+        ])
+    };
+    let mut canvas = Canvas::new(320, 60);
+    let wide = form(false);
+    draw(&mut canvas, &text, &theme.paint(), &wide, false, 11);
+    assert!(wide.rect("c").unwrap().width > 100);
+    let cut = form(true);
+    draw(&mut canvas, &text, &theme.paint(), &cut, false, 11);
+    assert_eq!(cut.rect("c"), Some(Rect::new(10, 10, 100, 21)));
+    assert!(cut.overflows(&text, 11).is_empty());
+}

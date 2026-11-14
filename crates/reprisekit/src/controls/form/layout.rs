@@ -127,6 +127,7 @@ impl Form {
                     } => fit::Kind::Text {
                         need: measure(text),
                     },
+                    Control::Combo(c) if c.elide => fit::Kind::Stretch { need: 0 },
                     Control::Combo(c) => {
                         let inset = r.width - combo::layout(c, r, &cm).text.width;
                         let widest = c.items.iter().map(|i| measure(&i.text)).max();

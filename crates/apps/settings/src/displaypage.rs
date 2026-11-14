@@ -158,9 +158,8 @@ impl Display {
     fn layout_of_heads(&self) -> Vec<Tile> {
         self.heads
             .iter()
-            .enumerate()
-            .map(|(i, h)| Tile {
-                number: i as u32 + 1,
+            .map(|h| Tile {
+                number: self.number(&h.name),
                 name: h.name.clone(),
                 pos: h.position,
                 size: logical_size(h.current_mode(), h.transform, h.scale),
@@ -280,7 +279,7 @@ impl Display {
                     None => logical_size(h.current_mode(), h.transform, h.scale),
                 };
                 Tile {
-                    number: i as u32 + 1,
+                    number: self.number(&h.name),
                     name: h.name.clone(),
                     pos: self.places.get(i).copied().unwrap_or(h.position),
                     size,
@@ -318,8 +317,22 @@ impl Display {
         &self.heads
     }
 
+    #[cfg(test)]
     pub fn names(&self) -> Vec<String> {
         self.heads.iter().map(|h| h.name.clone()).collect()
+    }
+
+    /// Every connected display's name, off ones too: Identify numbers them by their place here.
+    pub fn connected_names(&self) -> Vec<String> {
+        self.connected.iter().map(|h| h.name.clone()).collect()
+    }
+
+    /// Output `name`'s number: its place among the connected displays, as the "Multiple displays"
+    /// rows and the display switcher count, so it stays while another display is off.
+    pub fn number(&self, name: &str) -> u32 {
+        (self.connected.iter())
+            .position(|h| h.name == name)
+            .map_or(0, |i| i as u32 + 1)
     }
 
     pub fn monitor(&self) -> usize {
@@ -780,7 +793,7 @@ pub fn page(d: &Display, a: Area) -> Form {
         X,
         190 + a.dh,
         a.w,
-        &head_label(d.monitor() + 1, head),
+        &head_label(d.number(&head.name) as usize, head),
     ));
     items.push(Item::group(
         "res_group",
@@ -879,10 +892,12 @@ pub fn page(d: &Display, a: Area) -> Form {
     ));
     let (profiles, profile) = d.profile_rows();
     let refs: Vec<&str> = profiles.iter().map(String::as_str).collect();
+    let mut profiles = Combo::new(&refs, profile, refs.len().min(PROFILE_ROWS));
+    profiles.elide = true;
     items.push(Item::new(
         PROFILE,
         Rect::new(RX, row_y, combo_w, COMBO_H),
-        Control::Combo(Combo::new(&refs, profile, refs.len().min(PROFILE_ROWS))),
+        Control::Combo(profiles),
     ));
     let note_y = row_y + 34;
     items.push(Item::label_at(
@@ -1594,6 +1609,30 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_long_profile_name_keeps_the_combo_in_the_column() {
+        use reprisekit::interface::Interface;
+        let mut d = Display::with_heads(vec![test_head("DP-1")]);
+        let long = "Dell U2720Q #1 2026-11-13 21:04:33 D65 2.2 F-S XYZLUT+MTX";
+        d.set_profiles(vec![listed("/p/dell.icc", long)]);
+        d.pick_profile(1);
+        let groups: &[(&str, &[pagelist::Item])] =
+            &[("Display & Sound", &[pagelist::Item::Page("Display")])];
+        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            let theme = reprisekit::interfaces::theme_for(i);
+            let text = TextRenderer::load(&theme.fonts);
+            let (p, px) = (theme.paint(), theme.fonts.size_px);
+            let sheet =
+                PropSheet::with_list(groups, vec![page(&d, Area::MIN)], crate::pages::CLIENT);
+            let mut c = Canvas::new(sheet.size.0 as u32, sheet.size.1 as u32);
+            propsheet::draw(&mut c, &text, &p, &sheet, false, px);
+            let f = &sheet.pages[0];
+            let combo = f.rect(PROFILE).unwrap();
+            let column = f.rect(SCALE).unwrap();
+            assert_eq!(combo.right(), column.right(), "{i:?}");
+        }
+    }
+
     fn enabled(f: &Form, id: &str) -> bool {
         matches!(
             f.item(id).map(|it| &it.control),
@@ -1756,6 +1795,37 @@ mod tests {
             (Some(true), Some((1920, 0)))
         );
         assert_eq!(ch.back[1].1.enabled, Some(false), "No turns it off again");
+    }
+
+    #[test]
+    fn a_display_keeps_its_number_while_another_is_off() {
+        let mut off = test_head("DP-1");
+        off.enabled = false;
+        off.current = None;
+        let d = Display::with_heads(vec![off, test_head("HDMI-A-1")]);
+        let numbers: Vec<u32> = d.tiles().iter().map(|t| t.number).collect();
+        assert_eq!(numbers, [2]);
+        let (rows, sel) = d.projection_rows().unwrap();
+        assert_eq!(rows[sel], "Show only on 2");
+        let f = page(&d, Area::MIN);
+        let Some(Control::Label { text, .. }) = f.item(HEAD).map(|it| &it.control) else {
+            panic!("the head's label");
+        };
+        assert_eq!(text, "2. Dell Inc. DELL U2412M on HDMI-A-1");
+        assert_eq!(
+            d.connected_names(),
+            ["DP-1", "HDMI-A-1"],
+            "Identify's count"
+        );
+    }
+
+    #[test]
+    fn duplicated_displays_are_one_copy_group_in_the_well() {
+        let mut b = test_head("HDMI-A-1");
+        b.position = (0, 0);
+        let d = Display::with_heads(vec![test_head("DP-1"), b]);
+        let well = Arrange::new(d.tiles(), d.monitor());
+        assert_eq!(well.copies(), [vec![0, 1]]);
     }
 
     #[test]

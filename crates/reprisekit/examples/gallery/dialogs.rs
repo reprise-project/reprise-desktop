@@ -11,7 +11,8 @@ use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
 use reprisekit::theme::{Color, FontConfig, Theme};
 
-/// Three outputs in the monitor well plus Identify's badge, Classic then Blue and Glass.
+/// Three outputs in the monitor well, then greyed with output 3 copying 1, plus Identify's
+/// badge; Classic then Blue and Glass.
 pub fn render_monitors(with_blue: bool) -> Canvas {
     use reprisekit::controls::arrange::{self, Arrange, BADGE, Tile};
     let tile = |number, pos, size| Tile {
@@ -56,6 +57,7 @@ pub fn render_monitors(with_blue: bool) -> Canvas {
             px,
         );
         a.enabled = false;
+        a.tiles[2].pos = (0, 0);
         let greyed = Rect::new(10, 20 + wh, ww, wh);
         arrange::draw(
             &mut face,
