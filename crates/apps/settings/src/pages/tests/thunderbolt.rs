@@ -74,27 +74,27 @@ fn the_page_greys_until_read_and_says_why_it_is_empty() {
     assert_eq!(list(&f).greyed, [true]);
     assert!(!enabled(&f, TB_AUTHORIZE) && !enabled(&f, TB_FORGET));
 
-    show_thunderbolt(&mut f, None, false);
+    show_thunderbolt(&mut f, None, None, false);
     assert!(list(&f).items.is_empty());
     assert_eq!(status(&f), NO_BOLT);
     assert!(!enabled(&f, TB_AUTHORIZE) && !enabled(&f, TB_FORGET));
 
-    show_thunderbolt(&mut f, Some(&Found::default()), false);
+    show_thunderbolt(&mut f, Some(&Found::default()), None, false);
     assert_eq!(status(&f), NO_PORT);
     let empty = Found {
         domains: 1,
         devices: Vec::new(),
     };
-    show_thunderbolt(&mut f, Some(&empty), false);
+    show_thunderbolt(&mut f, Some(&empty), None, false);
     assert_eq!(status(&f), NO_DEVICE);
-    show_thunderbolt(&mut f, Some(&found()), false);
+    show_thunderbolt(&mut f, Some(&found()), None, false);
     assert_eq!(status(&f), "");
 }
 
 #[test]
 fn each_row_says_how_its_device_stands() {
     let mut f = thunderbolt(Area::MIN);
-    show_thunderbolt(&mut f, Some(&found()), false);
+    show_thunderbolt(&mut f, Some(&found()), None, false);
     let lb = list(&f);
     assert_eq!(lb.items, ["Acme Dock", "Acme Graphics Box", "Acme Drive"]);
     assert_eq!(
@@ -114,26 +114,26 @@ fn each_row_says_how_its_device_stands() {
 fn the_buttons_follow_the_picked_device() {
     let mut f = thunderbolt(Area::MIN);
     let found = found();
-    show_thunderbolt(&mut f, Some(&found), false);
+    show_thunderbolt(&mut f, Some(&found), None, false);
     assert!(!enabled(&f, TB_AUTHORIZE), "nothing picked");
 
     pick(&mut f, 0);
-    show_thunderbolt(&mut f, Some(&found), false);
+    show_thunderbolt(&mut f, Some(&found), None, false);
     assert!(enabled(&f, TB_AUTHORIZE), "a waiting device");
     assert!(!enabled(&f, TB_FORGET), "not enrolled");
 
     pick(&mut f, 1);
-    show_thunderbolt(&mut f, Some(&found), false);
+    show_thunderbolt(&mut f, Some(&found), None, false);
     assert!(!enabled(&f, TB_AUTHORIZE), "boltd authorizes it already");
     assert!(enabled(&f, TB_FORGET));
 
     pick(&mut f, 2);
-    show_thunderbolt(&mut f, Some(&found), false);
+    show_thunderbolt(&mut f, Some(&found), None, false);
     assert!(enabled(&f, TB_AUTHORIZE), "enrolled to be asked each time");
     assert!(enabled(&f, TB_FORGET));
     assert_eq!(selected_device(&f, &found.devices), Some(&found.devices[2]));
 
-    show_thunderbolt(&mut f, Some(&found), true);
+    show_thunderbolt(&mut f, Some(&found), None, true);
     assert!(
         !enabled(&f, TB_AUTHORIZE) && !enabled(&f, TB_FORGET),
         "busy"
@@ -144,11 +144,11 @@ fn the_buttons_follow_the_picked_device() {
 fn the_picked_device_stays_picked_as_the_list_changes() {
     let mut f = thunderbolt(Area::MIN);
     let before = found();
-    show_thunderbolt(&mut f, Some(&before), false);
+    show_thunderbolt(&mut f, Some(&before), None, false);
     pick(&mut f, 2);
     let mut after = before.clone();
     after.devices.remove(0);
-    show_thunderbolt(&mut f, Some(&after), false);
+    show_thunderbolt(&mut f, Some(&after), Some(&before), false);
     assert_eq!(list(&f).selected, Some(1));
     assert_eq!(selected_device(&f, &after.devices).unwrap().uid, "drive");
     assert_eq!(
@@ -162,11 +162,11 @@ fn the_picked_device_stays_picked_as_the_list_changes() {
 fn the_thunderbolt_page_pins_its_pixels_in_every_look() {
     let page = Rect::new(20, 40, 358, 300);
     let mut f = thunderbolt(Area::MIN);
-    show_thunderbolt(&mut f, Some(&found()), false);
+    show_thunderbolt(&mut f, Some(&found()), None, false);
     pick(&mut f, 0);
-    show_thunderbolt(&mut f, Some(&found()), false);
+    show_thunderbolt(&mut f, Some(&found()), None, false);
     let listed = row_pins(&f, page);
-    show_thunderbolt(&mut f, None, false);
+    show_thunderbolt(&mut f, None, None, false);
     let none = row_pins(&f, page);
     assert_eq!(
         [listed, none],
@@ -176,4 +176,26 @@ fn the_thunderbolt_page_pins_its_pixels_in_every_look() {
         ],
         "listed, no bolt; Classic, Blue, Glass"
     );
+}
+
+#[test]
+fn a_device_with_another_ones_label_does_not_take_its_pick() {
+    let mut f = thunderbolt(Area::MIN);
+    let dock = |uid| dev(uid, "Dock", Status::Connected, false, false);
+    let before = Found {
+        domains: 1,
+        devices: vec![dock("first"), dock("second")],
+    };
+    show_thunderbolt(&mut f, Some(&before), None, false);
+    pick(&mut f, 0);
+    let after = Found {
+        devices: vec![dock("second"), dock("first")],
+        ..before.clone()
+    };
+    show_thunderbolt(&mut f, Some(&after), Some(&before), false);
+    assert_eq!(selected_device(&f, &after.devices).unwrap().uid, "first");
+    let mut gone = after.clone();
+    gone.devices.remove(1);
+    show_thunderbolt(&mut f, Some(&gone), Some(&after), false);
+    assert_eq!(list(&f).selected, None, "the pick goes with its device");
 }

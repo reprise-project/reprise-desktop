@@ -21,18 +21,20 @@ const NAME_MAX: usize = 200;
 /// Longest offered name the prompt and balloons show in full, in characters.
 const SHOWN_MAX: usize = 60;
 
-/// `offered` as one file name: separators and control characters become `_`, leading dots go,
-/// and a name over [`NAME_MAX`] bytes keeps a short extension.
+/// `offered` as one file name: separators, control and format characters (bidi marks) become
+/// `_`, leading dots and spaces go, and a name over [`NAME_MAX`] bytes keeps a short extension.
 pub fn safe_name(offered: &str) -> String {
     let clean: String = offered
         .chars()
         .map(|c| match c {
             '/' | '\\' => '_',
-            c if c.is_control() => '_',
+            c if c.is_control() || names::invisible(c) => '_',
             c => c,
         })
         .collect();
-    let clean = clean.trim_start_matches('.').trim();
+    let clean = clean
+        .trim_start_matches(|c: char| c == '.' || c.is_whitespace())
+        .trim_end();
     if clean.is_empty() {
         return "file".into();
     }
@@ -136,8 +138,11 @@ mod tests {
         assert_eq!(safe_name("/etc/passwd"), "_etc_passwd");
         assert_eq!(safe_name("..\\win.ini"), "_win.ini");
         assert_eq!(safe_name(".hidden"), "hidden");
+        assert_eq!(safe_name(" .bashrc"), "bashrc");
+        assert_eq!(safe_name(". .profile"), "profile");
+        assert_eq!(safe_name("invoice\u{202e}fdp.sh"), "invoice_fdp.sh");
         assert_eq!(safe_name("a\nb\0c"), "a_b_c");
-        for empty in ["", ".", "..", "...", "   "] {
+        for empty in ["", ".", "..", "...", "   ", " ..", ". ."] {
             assert_eq!(safe_name(empty), "file", "{empty:?}");
         }
     }

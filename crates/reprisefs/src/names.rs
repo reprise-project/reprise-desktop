@@ -116,7 +116,7 @@ pub fn shown_line(text: &str, max: usize) -> String {
 }
 
 /// Whether `c` is a format character (Unicode's Cf) or a line or paragraph separator.
-fn invisible(c: char) -> bool {
+pub fn invisible(c: char) -> bool {
     matches!(
         c,
         '\u{00ad}'

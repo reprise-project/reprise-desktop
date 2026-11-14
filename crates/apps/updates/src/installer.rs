@@ -43,11 +43,13 @@ pub fn asks_for_sheet(args: &[std::ffi::OsString]) -> bool {
         .is_some_and(|a| a == "--install" || a == "--uninstall")
 }
 
-/// The target `args` name, if they ask for the sheet with one file.
+/// The target `args` name, if they ask for the sheet with one file. A relative path is made
+/// absolute, so no tool it reaches can read it as an option.
 pub fn target(args: &[std::ffi::OsString]) -> Option<Target> {
+    let path = |p| std::path::absolute(PathBuf::from(p)).ok();
     match args {
-        [flag, path] if flag == "--install" => Some(Target::Install(path.into())),
-        [flag, path] if flag == "--uninstall" => Some(Target::Uninstall(path.into())),
+        [flag, p] if flag == "--install" => Some(Target::Install(path(p)?)),
+        [flag, p] if flag == "--uninstall" => Some(Target::Uninstall(path(p)?)),
         _ => None,
     }
 }
@@ -908,6 +910,13 @@ mod tests {
             Some(Target::Uninstall(
                 "/usr/share/applications/foot.desktop".into()
             ))
+        );
+        let Some(Target::Install(dashed)) = target(&args(&["--install", "-x.deb"])) else {
+            panic!("a relative path is a target");
+        };
+        assert!(
+            dashed.is_absolute() && dashed.ends_with("-x.deb"),
+            "{dashed:?}"
         );
         assert_eq!(target(&args(&["--tray"])), None);
         assert!(!asks_for_sheet(&args(&["--tray"])));

@@ -92,8 +92,16 @@ async fn check_caller(conn: &Connection, hdr: &Header<'_>) -> Result<(), Error> 
     Err(Error::Rejected(format!("only {NAME} may call the agent")))
 }
 
-/// How the prompt and balloons name a device: its alias, with the address when they differ.
+/// How the prompt and balloons name a device: its alias on one line, with the address when they
+/// differ. The alias is the device's own name, so line breaks and bidi marks become spaces.
 fn sender_label(alias: &str, address: &str) -> String {
+    let alias: String = (alias.chars())
+        .map(|c| match c.is_control() || reprisefs::names::invisible(c) {
+            true => ' ',
+            false => c,
+        })
+        .collect();
+    let alias = alias.trim();
     if alias.is_empty() || alias == address {
         address.to_string()
     } else {
@@ -726,6 +734,17 @@ mod tests {
             .status_changed(iface.signal_emitter())
             .await
             .unwrap();
+    }
+
+    #[test]
+    fn a_device_name_stays_on_one_line_in_the_prompt() {
+        let a = "AA:BB:CC:DD:EE:FF";
+        assert_eq!(
+            sender_label("Phone\n\nFile: \u{202e}evil", a),
+            format!("Phone  File:  evil ({a})")
+        );
+        assert_eq!(sender_label("\n\t", a), a);
+        assert_eq!(sender_label("Phone", a), format!("Phone ({a})"));
     }
 
     #[test]

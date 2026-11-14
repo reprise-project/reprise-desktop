@@ -52,15 +52,16 @@ impl SettingsApp {
         }
     }
 
-    fn show_thunderbolt(&mut self) {
+    /// `shown`: what the list showed, when `thunderbolt.found` just replaced it.
+    fn show_thunderbolt(&mut self, shown: Option<&Found>) {
         let page = &mut self.sheet.pages[Page::Thunderbolt.index()];
         let busy = self.thunderbolt.acting;
-        pages::show_thunderbolt(page, self.thunderbolt.found.as_ref(), busy);
+        pages::show_thunderbolt(page, self.thunderbolt.found.as_ref(), shown, busy);
     }
 
     /// The list picked another device: the buttons follow it.
     pub(crate) fn thunderbolt_picked(&mut self) -> Reply {
-        self.show_thunderbolt();
+        self.show_thunderbolt(None);
         Reply::redraw()
     }
 
@@ -83,7 +84,7 @@ impl SettingsApp {
             return Reply::none();
         }
         self.thunderbolt.acting = true;
-        self.show_thunderbolt();
+        self.show_thunderbolt(None);
         self.start_thunderbolt(move || carry_out(d, change));
         Reply::redraw()
     }
@@ -108,9 +109,9 @@ impl SettingsApp {
             self.fail(why);
         }
         let changed = acted || done.found != self.thunderbolt.found;
-        self.thunderbolt.found = done.found;
+        let shown = std::mem::replace(&mut self.thunderbolt.found, done.found);
         if changed {
-            self.show_thunderbolt();
+            self.show_thunderbolt(shown.as_ref());
         }
         if registry::open(&self.sheet) == Page::Thunderbolt {
             self.start_thunderbolt(|| {
