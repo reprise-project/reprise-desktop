@@ -1872,8 +1872,8 @@ stop the share first.
   installs the copy, so a file someone swaps after it opened is not what
   installs. A downloaded package carries no repository signature, so
   PackageKit treats it as untrusted, the packager it names reads
-  "(unverified)" unless pacman will check a `.sig` (`LocalFileSigLevel` other
-  than `Never`, read through `pacman-conf`; Reprise checks no signature itself),
+  "(unverified)" unless pacman will check a `.sig` (`LocalFileSigLevel`, or
+  `SigLevel` while that is unset, other than `Never`, read through `pacman-conf`; Reprise checks no signature itself),
   and its install scripts
   run as root once it installs: install only packages you trust. A
   `.flatpakref` adds its repository, and the one its `RuntimeRepo` names, as
