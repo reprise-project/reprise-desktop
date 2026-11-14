@@ -72,7 +72,12 @@ pub fn incoming_name(transfer: &str) -> String {
 /// The file gets the mode a new file in `dir` would (0666 less the umask) before it moves.
 pub fn land(from: &Path, dir: &Path, offered: &str) -> io::Result<PathBuf> {
     std::fs::create_dir_all(dir)?;
-    as_new_file(from)?;
+    if let Err(e) = as_new_file(from) {
+        if e.kind() == io::ErrorKind::NotFound || e.kind() == io::ErrorKind::InvalidInput {
+            return Err(e);
+        }
+        log::warn!("{}: the mode was not changed: {e}", from.display());
+    }
     let name = safe_name(offered);
     for candidate in names::numbered(OsStr::new(&name), names::paren).take(1000) {
         let to = dir.join(candidate);

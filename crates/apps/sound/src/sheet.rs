@@ -657,7 +657,9 @@ impl Sheet {
             if was.mute != app.mute {
                 self.pending.app_mute.insert(app.key.clone(), app.mute);
             }
-            if was.output() != app.output() {
+            let moved = (app.streams.iter())
+                .any(|s| (was.streams.iter()).any(|w| w.id == s.id && w.target != s.target));
+            if moved {
                 let o = app.output().map(str::to_string);
                 self.pending.app_output.insert(app.key.clone(), o);
             }
@@ -1678,6 +1680,13 @@ mod tests {
             "the stream not on Speaker yet"
         );
         assert_eq!(combo(&s, APP_OUTPUT).0.len(), 3, "together now");
+
+        s.unapplied(&snap);
+        assert!(s.dirty(), "a failed write leaves the pick pending");
+        assert_eq!(
+            s.event(propsheet::Event::Apply),
+            Outcome::Apply(vec![Change::Target(91, Some(52))])
+        );
     }
 
     #[test]

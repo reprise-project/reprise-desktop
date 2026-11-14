@@ -85,7 +85,8 @@ fn speaks_for(ini: &Path, desktop_id: &str) -> bool {
     if desktop_id.contains('/') || !entry.is_file() {
         return false;
     }
-    if !share.ends_with("flatpak/exports/share") {
+    let installation = share.parent().and_then(Path::parent);
+    if !share.ends_with("exports/share") || !installation.is_some_and(|i| i.join("app").is_dir()) {
         return true;
     }
     deployed_by(share, ini).is_some_and(|app| deployed_by(share, &entry) == Some(app))
@@ -278,6 +279,25 @@ mod tests {
             found(&dirs),
             [(calc.into(), path)],
             "another app's export and a file Flatpak did not deploy are refused"
+        );
+        let custom = root.join("flatpak-sd");
+        deploy(
+            &custom,
+            "org.gnome.Calculator.Evil",
+            &[(
+                "gnome-shell/search-providers/org.gnome.Calculator.Evil.ini",
+                &evil,
+            )],
+        );
+        deploy(
+            &custom,
+            "org.gnome.Calculator",
+            &[(&format!("applications/{calc}"), entry)],
+        );
+        let custom_export = custom.join("exports/share/gnome-shell/search-providers");
+        assert!(
+            found(&[custom_export]).is_empty(),
+            "an installation of another name is checked as an export too"
         );
 
         let own = CALC.replace("/org/gnome/Calculator/SearchProvider", "/own");

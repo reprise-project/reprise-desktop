@@ -76,13 +76,13 @@ pub fn chosen_transform(output: &Output) -> Transform {
     }
 }
 
-/// The transform `output` runs when `asked` is set on it: a panel's chosen transform or its turn
-/// keeps the turn, any other forgets it.
+/// The transform `output` runs when `asked` is set on it: a panel's turn, which output management
+/// publishes, keeps the turn; any other forgets it.
 fn asked_transform(output: &Output, asked: Transform) -> Transform {
     let now = output.current_transform();
-    if let Some((base, turn)) = turned(output).0.get()
+    if let Some((_, turn)) = turned(output).0.get()
         && now == turn
-        && (asked == base || asked == turn)
+        && asked == turn
     {
         return now;
     }
