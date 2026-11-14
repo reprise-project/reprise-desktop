@@ -594,15 +594,16 @@ fn run(
     }
 }
 
-/// After a cancelled Flatpak job: Ok when its app came or went anyway, else Err(()) once the
-/// runtimes that came before the cancel are uninstalled again.
+/// After a cancelled Flatpak job, once the installation holds still: Ok when its app came or
+/// went anyway, else Err(()) once the runtimes that came for it alone are uninstalled again.
 fn settle_cancel(
     at: Install,
     before: &flatpak::Refs,
     verb: Verb,
     report: &mut dyn FnMut(Option<f64>, Option<String>),
 ) -> Result<(), ()> {
-    let Some(after) = flatpak::refs(at) else {
+    report(None, Some("Waiting for Flatpak to stop".into()));
+    let Some(after) = flatpak::settled_refs(at) else {
         return Err(());
     };
     match flatpak::settle(before, &after, verb == Verb::Install) {
