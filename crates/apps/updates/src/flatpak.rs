@@ -372,24 +372,124 @@ fn follow_command(
 pub struct Refs {
     pub apps: Vec<String>,
     pub runtimes: Vec<String>,
+    /// The runtimes the apps run on, as `runtime/ID/ARCH/BRANCH`.
+    pub used: Vec<String>,
+}
+
+/// `flatpak list --app --columns=ref,runtime` and `flatpak list --runtime --columns=ref`.
+fn parse_refs(apps: &str, runtimes: &str) -> Refs {
+    let rows = |out: &str| -> Vec<Vec<String>> {
+        out.lines()
+            .map(|l| {
+                l.split('\t')
+                    .map(|f| f.trim().to_string())
+                    .collect::<Vec<_>>()
+            })
+            .filter(|f| f.first().is_some_and(|r| !r.is_empty()))
+            .collect()
+    };
+    let mut refs = Refs::default();
+    for row in rows(apps) {
+        refs.apps.push(format!("app/{}", row[0]));
+        if let Some(rt) = row.get(1).filter(|r| !r.is_empty()) {
+            refs.used.push(format!("runtime/{rt}"));
+        }
+    }
+    refs.runtimes = rows(runtimes)
+        .into_iter()
+        .map(|row| format!("runtime/{}", row[0]))
+        .collect();
+    refs
 }
 
 /// What `install` holds now; None when Flatpak cannot list it.
 pub fn refs(install: Install) -> Option<Refs> {
-    let list = |kind: &str, prefix: &str| -> Option<Vec<String>> {
-        let out = run(&["list", flag(install), kind, "--columns=ref"]).ok()?;
-        Some(
-            out.lines()
-                .map(str::trim)
-                .filter(|l| !l.is_empty())
-                .map(|r| format!("{prefix}/{r}"))
-                .collect(),
-        )
+    let apps = run(&["list", flag(install), "--app", "--columns=ref,runtime"]).ok()?;
+    let runtimes = run(&["list", flag(install), "--runtime", "--columns=ref"]).ok()?;
+    Some(parse_refs(&apps, &runtimes))
+}
+
+/// How long a cancelled job's installation holds still before it is read as final, and the most
+/// that is waited.
+const QUIET: Duration = Duration::from_secs(2);
+const SETTLE_CAP: Duration = Duration::from_secs(30);
+
+/// What `install` holds once it stops changing: flatpak-system-helper finishes a Deploy under
+/// way after a cancelled client is gone. A user install deploys in the client itself.
+pub fn settled_refs(install: Install) -> Option<Refs> {
+    let root = (install == Install::System)
+        .then(|| installations().into_iter().next())
+        .flatten();
+    let look = || {
+        let deploying = root.as_deref().map(deploys_under_way).unwrap_or_default();
+        (refs(install), deploying)
     };
-    Some(Refs {
-        apps: list("--app", "app")?,
-        runtimes: list("--runtime", "runtime")?,
-    })
+    let (refs, _) = until_still(
+        look,
+        |(_, deploying)| deploying.is_empty(),
+        Instant::now,
+        std::thread::sleep,
+    );
+    refs
+}
+
+/// Call `look` every half second until it returns the same for [`QUIET`] and `idle` holds, or
+/// [`SETTLE_CAP`] passes: the last look.
+fn until_still<T: PartialEq>(
+    mut look: impl FnMut() -> T,
+    idle: impl Fn(&T) -> bool,
+    now: impl Fn() -> Instant,
+    mut sleep: impl FnMut(Duration),
+) -> T {
+    let start = now();
+    let mut last = look();
+    let mut since = start;
+    loop {
+        if now().duration_since(start) >= SETTLE_CAP {
+            return last;
+        }
+        sleep(Duration::from_millis(500));
+        let next = look();
+        if next != last {
+            since = now();
+            last = next;
+        } else if idle(&last) && now().duration_since(since) >= QUIET {
+            return last;
+        }
+    }
+}
+
+/// The checkouts under way in installation `root`: recent `.CHECKSUM-XXXXXX` folders beside a
+/// ref's deployments, renamed to `CHECKSUM` once whole.
+fn deploys_under_way(root: &std::path::Path) -> Vec<PathBuf> {
+    let recent = |p: &std::path::Path| {
+        std::fs::metadata(p)
+            .and_then(|m| m.modified())
+            .is_ok_and(|t| t.elapsed().is_ok_and(|e| e < 2 * SETTLE_CAP))
+    };
+    let mut found = Vec::new();
+    for kind in ["app", "runtime"] {
+        let bases = subdirs(&root.join(kind))
+            .flat_map(|id| subdirs(&id))
+            .flat_map(|arch| subdirs(&arch));
+        for base in bases {
+            found.extend(subdirs(&base).filter(|d| {
+                d.file_name()
+                    .is_some_and(|n| n.to_string_lossy().starts_with('.'))
+                    && recent(d)
+            }));
+        }
+    }
+    found
+}
+
+fn subdirs(dir: &std::path::Path) -> impl Iterator<Item = PathBuf> + use<> {
+    std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+        .map(|e| e.path())
 }
 
 /// How a cancelled install or uninstall ended, from what was installed before and after it.
@@ -401,23 +501,37 @@ pub enum Settled {
     Undo(Vec<String>),
 }
 
+/// A runtime goes again only when it came during the job, no app in `after` runs on it, and it
+/// extends (`ID.Locale`, `ID.GL.default`) no ref that stays.
 pub fn settle(before: &Refs, after: &Refs, installing: bool) -> Settled {
     let new = |a: &[String], b: &[String]| -> Vec<String> {
         a.iter().filter(|r| !b.contains(r)).cloned().collect()
     };
-    let (moved, runtimes) = if installing {
-        (
-            new(&after.apps, &before.apps),
-            new(&after.runtimes, &before.runtimes),
-        )
+    let moved = if installing {
+        new(&after.apps, &before.apps)
     } else {
-        (new(&before.apps, &after.apps), Vec::new())
+        new(&before.apps, &after.apps)
     };
-    if moved.is_empty() {
-        Settled::Undo(runtimes)
-    } else {
-        Settled::Done
+    if !moved.is_empty() {
+        return Settled::Done;
     }
+    if !installing {
+        return Settled::Undo(Vec::new());
+    }
+    let id = |r: &str| r.split('/').nth(1).unwrap_or_default().to_string();
+    let loose: Vec<String> = new(&after.runtimes, &before.runtimes)
+        .into_iter()
+        .filter(|r| !after.used.contains(r))
+        .collect();
+    let staying: Vec<String> = (after.apps.iter().chain(&after.runtimes))
+        .filter(|r| !loose.contains(r))
+        .map(|r| id(r))
+        .collect();
+    let extends = |r: &str| {
+        let own = id(r);
+        staying.iter().any(|s| own.starts_with(&format!("{s}.")))
+    };
+    Settled::Undo(loose.iter().filter(|r| !extends(r)).cloned().collect())
 }
 
 /// Make this process the reaper of what a stopped `flatpak` leaves running: the `revokefs-fuse`
@@ -797,29 +911,145 @@ mod tests {
         assert_eq!(Follow::default().download(), None, "no table, no size");
     }
 
+    fn refs_of(apps: &[&str], runtimes: &[&str], used: &[&str]) -> Refs {
+        let v = |l: &[&str]| l.iter().map(|r| r.to_string()).collect();
+        Refs {
+            apps: v(apps),
+            runtimes: v(runtimes),
+            used: v(used),
+        }
+    }
+
     #[test]
     fn a_cancelled_job_is_done_only_when_its_app_came_or_went() {
-        let refs = |apps: &[&str], runtimes: &[&str]| Refs {
-            apps: apps.iter().map(|r| r.to_string()).collect(),
-            runtimes: runtimes.iter().map(|r| r.to_string()).collect(),
-        };
-        let before = refs(&["app/a/x86_64/stable"], &["runtime/p/x86_64/1"]);
-        let half = refs(
+        let before = refs_of(&["app/a/x86_64/stable"], &["runtime/p/x86_64/1"], &[]);
+        let half = refs_of(
             &["app/a/x86_64/stable"],
             &["runtime/p/x86_64/1", "runtime/q.Locale/x86_64/2"],
+            &[],
         );
         assert_eq!(
             settle(&before, &half, true),
             Settled::Undo(vec!["runtime/q.Locale/x86_64/2".into()])
         );
-        let whole = refs(
+        let whole = refs_of(
             &["app/a/x86_64/stable", "app/k/x86_64/stable"],
             &["runtime/p/x86_64/1", "runtime/q/x86_64/2"],
+            &["runtime/q/x86_64/2"],
         );
         assert_eq!(settle(&before, &whole, true), Settled::Done);
         assert_eq!(settle(&before, &before, false), Settled::Undo(Vec::new()));
-        let gone = refs(&[], &["runtime/p/x86_64/1"]);
+        let gone = refs_of(&[], &["runtime/p/x86_64/1"], &[]);
         assert_eq!(settle(&before, &gone, false), Settled::Done);
+    }
+
+    #[test]
+    fn a_cancel_undoes_only_runtimes_nothing_installed_runs_on_or_extends() {
+        let before = refs_of(
+            &[
+                "app/org.example.Old/x86_64/stable",
+                "app/org.example.Other/x86_64/stable",
+            ],
+            &[
+                "runtime/org.freedesktop.Platform/x86_64/25.08",
+                "runtime/org.gnome.Platform/x86_64/48",
+            ],
+            &[
+                "runtime/org.freedesktop.Platform/x86_64/25.08",
+                "runtime/org.gnome.Platform/x86_64/48",
+            ],
+        );
+        let after = refs_of(
+            &[
+                "app/org.example.Old/x86_64/stable",
+                "app/org.example.Other/x86_64/stable",
+            ],
+            &[
+                "runtime/org.freedesktop.Platform/x86_64/25.08",
+                "runtime/org.freedesktop.Platform.GL.default/x86_64/25.08",
+                "runtime/org.gnome.Platform/x86_64/48",
+                "runtime/org.gnome.Platform/x86_64/49",
+                "runtime/org.gnome.Platform.Locale/x86_64/49",
+                "runtime/org.kde.Platform/x86_64/6.10",
+                "runtime/org.kde.Platform.Locale/x86_64/6.10",
+                "runtime/org.example.New.Locale/x86_64/stable",
+            ],
+            &[
+                "runtime/org.freedesktop.Platform/x86_64/25.08",
+                "runtime/org.gnome.Platform/x86_64/49",
+            ],
+        );
+        assert_eq!(
+            settle(&before, &after, true),
+            Settled::Undo(vec![
+                "runtime/org.kde.Platform/x86_64/6.10".into(),
+                "runtime/org.kde.Platform.Locale/x86_64/6.10".into(),
+                "runtime/org.example.New.Locale/x86_64/stable".into(),
+            ]),
+            "the GNOME runtime an app updated alongside now runs on, its Locale and the GL \
+             extension of a runtime already there stay"
+        );
+    }
+
+    #[test]
+    fn installed_refs_and_the_runtimes_apps_run_on_read_from_flatpak_list() {
+        let apps = "org.example.Editor/x86_64/stable\torg.gnome.Platform/x86_64/49\n\
+                    org.example.Bare/x86_64/master\t\n";
+        let runtimes = "org.gnome.Platform/x86_64/49\n\
+                        org.freedesktop.Platform.GL.default/x86_64/25.08\n\n";
+        assert_eq!(
+            parse_refs(apps, runtimes),
+            refs_of(
+                &[
+                    "app/org.example.Editor/x86_64/stable",
+                    "app/org.example.Bare/x86_64/master"
+                ],
+                &[
+                    "runtime/org.gnome.Platform/x86_64/49",
+                    "runtime/org.freedesktop.Platform.GL.default/x86_64/25.08"
+                ],
+                &["runtime/org.gnome.Platform/x86_64/49"],
+            )
+        );
+    }
+
+    /// `until_still` on a clock that moves only when it sleeps, over `looks` (the last repeats)
+    /// with `busy` looks counting as not idle: what it returned and when.
+    fn still(looks: &[u32], busy: &[u32]) -> (u32, Duration) {
+        let t0 = Instant::now();
+        let clock = std::cell::Cell::new(t0);
+        let mut i = 0;
+        let got = until_still(
+            || {
+                let v = looks[i.min(looks.len() - 1)];
+                i += 1;
+                v
+            },
+            |v| !busy.contains(v),
+            || clock.get(),
+            |d| clock.set(clock.get() + d),
+        );
+        (got, clock.get() - t0)
+    }
+
+    #[test]
+    fn a_cancelled_job_is_read_once_the_installation_holds_still() {
+        assert_eq!(
+            still(&[1, 1, 2], &[]),
+            (2, Duration::from_millis(3000)),
+            "an app the helper deploys after the client is gone is waited for"
+        );
+        assert_eq!(still(&[1], &[]), (1, QUIET));
+        assert_eq!(
+            still(&[1, 1, 1, 1, 1, 1, 2], &[1]),
+            (2, Duration::from_millis(5000)),
+            "a deploy under way is waited out even while the refs hold still"
+        );
+        assert_eq!(
+            still(&[1], &[1]),
+            (1, SETTLE_CAP),
+            "a deploy that never ends is given up on"
+        );
     }
 
     #[test]
