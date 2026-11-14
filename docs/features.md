@@ -119,8 +119,8 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   Programs that answer GNOME's search provider interface (Files,
   Calculator, Characters, Clocks and others) add a section each,
   under the program's name, with up to three of their results; Enter opens
-  one in its program, Ctrl+Enter opens the program searching for the same
-  words. Each program has a few seconds to answer, so a slow one never holds
+  one in its program (a Characters result copies its character),
+  Ctrl+Enter opens the program searching for the same words. Each program has a few seconds to answer, so a slow one never holds
   back the rest. Settings > Search turns each one off and orders them.
   Files searches through localsearch, so it is asked only while "Find files
   by their contents" is on.

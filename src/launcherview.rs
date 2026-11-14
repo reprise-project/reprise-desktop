@@ -285,7 +285,7 @@ impl State {
                 enum Launch {
                     App(reprisefs::apps::AppEntry),
                     File(crate::desktop::FileFacts),
-                    Result(Arc<Provider>, String),
+                    Result(Arc<Provider>, reprisebus::searchprovider::Meta),
                     Copy(String),
                     Setting(Setting),
                     Window(WindowId),
@@ -301,7 +301,7 @@ impl State {
                         .cloned()
                         .map(Launch::App),
                     Pick::Found(s, i) => match v.search.result(s, i) {
-                        Some((p, m)) => Some(Launch::Result(p.clone(), m.id.clone())),
+                        Some((p, m)) => Some(Launch::Result(p.clone(), m.clone())),
                         None => (v.search.path(s, i)).map(|p| Launch::File(v.search.facts_of(p))),
                     },
                 };
@@ -310,7 +310,7 @@ impl State {
                 match launch {
                     Some(Launch::App(entry)) => self.launch_app(&entry),
                     Some(Launch::File(facts)) => self.open_found(&facts),
-                    Some(Launch::Result(p, id)) => self.open_provider(&p, Open::Result(id), &query),
+                    Some(Launch::Result(p, m)) => self.open_provider(&p, Open::Result(m), &query),
                     Some(Launch::Copy(answer)) => self.clip_copy(&answer),
                     Some(Launch::Setting(s)) => self.open_setting(s),
                     Some(Launch::Window(w)) => self.bring_up(w),

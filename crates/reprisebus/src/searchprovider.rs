@@ -1,6 +1,6 @@
 //! A program's search results through `org.gnome.Shell.SearchProvider2`: the ids it finds for some
-//! words, each result's name, description and icon, and opening a result or the program's own
-//! search. Replies are decoded within [`crate::bounded`]'s caps.
+//! words, each result's name, description, icon and clipboard text, and opening a result or the
+//! program's own search. Replies are decoded within [`crate::bounded`]'s caps.
 
 use crate::bounded::{self, Dict};
 use zbus::Connection;
@@ -24,6 +24,8 @@ pub struct Meta {
     /// The icon as a GIcon's string form (`edit-copy`, `. GThemedIcon a b`, a path or `file://`
     /// URL); None for the program's own icon.
     pub gicon: Option<String>,
+    /// The text picking the result copies (`clipboardText`); the program itself copies nothing.
+    pub clipboard_text: Option<String>,
 }
 
 /// The words a provider is asked for: `query` split at white space.
@@ -111,6 +113,9 @@ fn in_order(ids: &[String], metas: &[Dict]) -> Vec<Meta> {
             name,
             description: description.unwrap_or_default(),
             gicon: (m.get("gicon").and_then(|v| v.str())).map(str::to_string),
+            clipboard_text: (m.get("clipboardText").and_then(|v| v.str()))
+                .filter(|t| !t.is_empty())
+                .map(str::to_string),
         });
     }
     out
@@ -171,6 +176,7 @@ mod tests {
                     if id == "a" {
                         m.insert("description".into(), Value::from("= 5"));
                         m.insert("gicon".into(), Value::from("accessories-calculator"));
+                        m.insert("clipboardText".into(), Value::from("5"));
                     }
                     m
                 })
@@ -233,12 +239,14 @@ mod tests {
                     name: "Result a".into(),
                     description: "= 5".into(),
                     gicon: Some("accessories-calculator".into()),
+                    clipboard_text: Some("5".into()),
                 },
                 Meta {
                     id: "b".into(),
                     name: "Result b".into(),
                     description: String::new(),
                     gicon: None,
+                    clipboard_text: None,
                 },
             ],
             "metas back in the ids' order, one line each; an id with no meta left out"

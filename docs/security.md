@@ -1514,10 +1514,12 @@ stop the share first.
   another program's. Each answer is decoded within the
   session bus caps (4 MiB a reply; a result's strings cut at 4 KiB),
   on a thread off the compositor's loop, and dropped after 3 s. Only a
-  result's id, name, description and icon name or file are read, and picking
-  one hands its id back to the same program; Reprise runs nothing a result
-  names. That program's next new window may take focus, as one Reprise
-  started would.
+  result's id, name, description, icon name or file and clipboard text are
+  read, and picking one hands its id back to the same program; Reprise runs
+  nothing a result names. A result's clipboard text (Characters sends the
+  character) goes on the clipboard when you pick that result, never before,
+  so a provider can't fill the clipboard by answering a search. That
+  program's next new window may take focus, as one Reprise started would.
 - **Calendar events.** The clock's calendar reads evolution-data-server's
   source registry and opens each shown calendar read-only for one day's
   objects, off the compositor's loop, each call waiting 5 s at most. A reply

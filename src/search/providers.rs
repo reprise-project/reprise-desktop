@@ -169,8 +169,7 @@ async fn answer(
 
 /// What a picked program row opens.
 pub enum Open {
-    /// The result with this id.
-    Result(String),
+    Result(Meta),
     /// The program's own search.
     Search,
 }
@@ -179,6 +178,7 @@ impl State {
     /// Opens `what` of provider `p` for `query`, off the loop. The provider's process may give
     /// its next new window focus ([`crate::mapfocus::grant`]): the user just picked it.
     pub fn open_provider(&mut self, p: &Provider, what: Open, query: &str) {
+        self.picked_provider(&what);
         let (addr, terms) = (p.addr.clone(), bus::terms(query));
         let started = std::thread::Builder::new()
             .name("search-provider-open".into())
@@ -189,7 +189,7 @@ impl State {
                 reprisebus::wait(async {
                     let granted = grant(&conn, &addr).await;
                     let opened = match &what {
-                        Open::Result(id) => bus::activate(&conn, &addr, id, &terms, 0).await,
+                        Open::Result(m) => bus::activate(&conn, &addr, &m.id, &terms, 0).await,
                         Open::Search => bus::launch_search(&conn, &addr, &terms, 0).await,
                     };
                     if let Err(e) = opened {
@@ -201,6 +201,16 @@ impl State {
             });
         if let Err(e) = started {
             log::warn!("search provider: no thread: {e}");
+        }
+    }
+
+    /// The loop's part of [`State::open_provider`]: a result with clipboard text puts it on the
+    /// clipboard, which its program leaves to the search that shows it.
+    fn picked_provider(&mut self, what: &Open) {
+        if let Open::Result(m) = what
+            && let Some(text) = &m.clipboard_text
+        {
+            self.clip_copy(text);
         }
     }
 }
@@ -299,6 +309,42 @@ mod tests {
             "ticked and listed, still left out"
         );
         assert_eq!(names(true), ["Files", "Calculator"]);
+    }
+
+    fn meta(clipboard_text: Option<&str>) -> Meta {
+        Meta {
+            id: "U+00E9".into(),
+            name: "LATIN SMALL LETTER E WITH ACUTE".into(),
+            description: String::new(),
+            gicon: None,
+            clipboard_text: clipboard_text.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn picking_a_result_with_clipboard_text_copies_it() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        c.data_device();
+        h.map_toplevel(&mut c, "test.notes", 300, 200);
+        h.state.picked_provider(&Open::Result(meta(Some("\u{e9}"))));
+        h.roundtrip(&mut c);
+        assert_eq!(
+            h.paste(&mut c, "text/plain;charset=utf-8"),
+            "\u{e9}".as_bytes()
+        );
+
+        c.copy(&["text/x-mine"], b"mine");
+        h.roundtrip(&mut c);
+        h.state.picked_provider(&Open::Result(meta(None)));
+        h.state.picked_provider(&Open::Search);
+        h.roundtrip(&mut c);
+        assert_eq!(
+            c.selection_mimes(),
+            ["text/x-mine"],
+            "a result without clipboard text, or the program's own search, leaves the clipboard"
+        );
     }
 
     #[test]
