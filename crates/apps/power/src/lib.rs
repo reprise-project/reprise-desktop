@@ -20,6 +20,8 @@ mod sheet;
 mod tray;
 mod upower;
 
+use std::time::{Duration, Instant};
+
 use repriseapp::keys::sheet_input;
 use repriseapp::oneshot::{self, MsgBox};
 use repriseapp::{App, Child, Ctx, Event, Reply, WinId};
@@ -53,9 +55,8 @@ struct PowerApp {
     alarms: alarms::Alarms,
     saver: alarms::Saver,
     hold: Option<profiles::Hold>,
-    /// The balloon waiting for the hold's answer: the low alarm's percentage, or None for the
-    /// saver's own.
-    waiting: Option<Option<u8>>,
+    /// The balloon waiting for the hold's answer.
+    waiting: Option<Waiting>,
     tray_state: Option<reprisetray::Shown>,
     sheet: Option<sheet::Sheet>,
     /// The sheet was built before an event gave us a `&mut Ctx` to read the icon from, so it draws a placeholder and wants rebuilding.
@@ -92,6 +93,16 @@ fn toggle(device: &str, on: bool) -> Charged {
 const ERROR_WIN: WinId = WinId::named("error");
 
 /// The low battery balloon; `saving` adds that power saver is on.
+/// How long a balloon waits for the power saver hold's answer; past it the low balloon goes out
+/// without power saver.
+const HOLD_WAIT: Duration = Duration::from_secs(3);
+
+struct Waiting {
+    /// The low alarm's percentage, or None for the saver's own balloon.
+    low: Option<u8>,
+    until: Instant,
+}
+
 fn low_balloon(pct: u8, saving: bool) -> (&'static str, String) {
     let saver = if saving {
         " The power saver profile is on until then."
@@ -145,14 +156,14 @@ impl PowerApp {
         match self.alarms.feed(&self.power, low, critical) {
             None => {
                 if saving {
-                    self.waiting = Some(None);
+                    self.wait_for_hold(None);
                 }
                 None
             }
             Some(alarms::Alarm::Low(pct)) => {
                 log::info!("low battery: {pct}%");
                 if saving {
-                    self.waiting = Some(Some(pct));
+                    self.wait_for_hold(Some(pct));
                 } else {
                     self.notify(low_balloon(pct, false));
                 }
@@ -214,7 +225,7 @@ impl PowerApp {
         if !held {
             self.saver = alarms::Saver::default();
         }
-        match self.waiting.take()? {
+        match self.waiting.take()?.low {
             Some(pct) => Some(low_balloon(pct, held)),
             None => held.then(|| {
                 (
@@ -224,6 +235,33 @@ impl PowerApp {
                 )
             }),
         }
+    }
+
+    /// Hold a balloon for the hold's answer, waking the app when [`HOLD_WAIT`] ends.
+    fn wait_for_hold(&mut self, low: Option<u8>) {
+        self.waiting = Some(Waiting {
+            low,
+            until: Instant::now() + HOLD_WAIT,
+        });
+        if let Some(w) = self.waker.clone() {
+            let spawned = std::thread::Builder::new()
+                .name("reprise-power-wait".into())
+                .spawn(move || {
+                    std::thread::sleep(HOLD_WAIT);
+                    w.wake();
+                });
+            if let Err(e) = spawned {
+                log::warn!("could not start the hold wait: {e}");
+            }
+        }
+    }
+
+    /// The hold did not answer by `now`: the low balloon goes out without power saver, and the
+    /// late answer shows nothing.
+    fn hold_overdue(&mut self, now: Instant) -> Option<(&'static str, String)> {
+        let low = self.waiting.as_ref().filter(|w| now >= w.until)?.low;
+        self.waiting = None;
+        low.map(|pct| low_balloon(pct, false))
     }
 
     fn notify(&self, (title, body): (&str, String)) {
@@ -436,6 +474,9 @@ impl PowerApp {
             if let Some(balloon) = self.hold_answered(held) {
                 self.notify(balloon);
             }
+        }
+        if let Some(balloon) = self.hold_overdue(Instant::now()) {
+            self.notify(balloon);
         }
         let fresh_profiles = self
             .profile_snapshots
@@ -755,6 +796,42 @@ mod tests {
     }
 
     #[test]
+    fn a_hold_that_does_not_answer_lets_the_low_balloon_out_without_power_saver() {
+        let mut app = PowerApp {
+            power: Power {
+                on_battery: true,
+                battery: Some(Battery {
+                    state: State::Discharging,
+                    percent: 8,
+                    ..Battery::default()
+                }),
+                limit: None,
+            },
+            profiles: profiles::Profiles {
+                available: vec!["power-saver".into(), "balanced".into()],
+                active: "balanced".into(),
+                ..profiles::Profiles::default()
+            },
+            ..PowerApp::default()
+        };
+        app.settings.battery_low = 10;
+        let saving = app.check_saver();
+        assert_eq!(app.check_alarms(saving), None);
+        let asked = Instant::now();
+        assert_eq!(
+            app.hold_overdue(asked),
+            None,
+            "the balloon waits for the answer"
+        );
+        assert_eq!(
+            app.hold_overdue(asked + HOLD_WAIT),
+            Some(low_balloon(8, false))
+        );
+        assert_eq!(app.hold_answered(true), None, "a late hold shows nothing");
+        assert_ne!(app.saver, alarms::Saver::default(), "and keeps power saver");
+    }
+
+    #[test]
     fn a_refused_hold_is_asked_again_and_its_balloon_leaves_power_saver_out() {
         let mut app = PowerApp {
             power: Power {
@@ -777,7 +854,11 @@ mod tests {
         let saving = app.check_saver();
         assert!(saving);
         assert_eq!(app.check_alarms(saving), None);
-        assert_eq!(app.waiting, Some(Some(8)), "the low balloon waits");
+        assert_eq!(
+            app.waiting.as_ref().map(|w| w.low),
+            Some(Some(8)),
+            "the low balloon waits"
+        );
         assert_eq!(
             app.hold_answered(false),
             Some(low_balloon(8, false)),
