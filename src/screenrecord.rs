@@ -3,7 +3,7 @@
 
 use std::ffi::OsString;
 use std::io::BufRead;
-use std::os::fd::{AsFd, AsRawFd, RawFd};
+use std::os::fd::{AsFd, AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -28,6 +28,9 @@ pub struct Recording {
     started: Instant,
     /// The recorder, once its file is made and it runs.
     pid: Option<u32>,
+    /// The recorder's pidfd, which Stop signals: its `wait` job may reap it before the loop
+    /// hears, and a reaped pid can name another process.
+    pidfd: Option<OwnedFd>,
     /// A stop asked for before the recorder ran.
     stopping: bool,
 }
@@ -46,6 +49,7 @@ impl Recording {
             target,
             started: Instant::now(),
             pid: Some(i32::MAX as u32),
+            pidfd: None,
             stopping: false,
         }
     }
@@ -132,6 +136,7 @@ impl State {
             target,
             started: Instant::now(),
             pid: None,
+            pidfd: None,
             stopping: false,
         });
         let now = std::time::SystemTime::now()
@@ -153,9 +158,10 @@ impl State {
             return;
         };
         r.stopping = true;
-        if let Some(pid) = r.pid {
-            // SAFETY: plain kill(2); the recorder is our unreaped child, so its pid is still its.
-            unsafe { libc::kill(pid as libc::pid_t, libc::SIGINT) };
+        if let Some(fd) = &r.pidfd
+            && let Err(e) = interrupt(fd)
+        {
+            log::debug!("stopping {PROGRAM}: {e}");
         }
     }
 
@@ -198,8 +204,12 @@ impl State {
             child.id()
         );
         self.grant_recorder(child.id());
+        let pidfd = pidfd_open(child.id())
+            .inspect_err(|e| log::warn!("no pidfd for {PROGRAM}: {e}"))
+            .ok();
         if let Some(r) = self.recording.as_mut() {
             r.pid = Some(child.id());
+            r.pidfd = pidfd;
             r.started = Instant::now();
         }
         self.recording_changed();
@@ -301,6 +311,36 @@ pub fn recorder_argv(fd: RawFd, output: &str, area: Option<Rect>, sound: bool) -
     argv
 }
 
+/// `pidfd_open(pid)`, for our unreaped child `pid`.
+fn pidfd_open(pid: u32) -> std::io::Result<OwnedFd> {
+    let pid = libc::pid_t::try_from(pid).map_err(|_| std::io::ErrorKind::InvalidInput)?;
+    // SAFETY: pidfd_open takes a pid and flags, no pointers.
+    let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: the kernel returned a new descriptor that nothing else owns.
+    Ok(unsafe { OwnedFd::from_raw_fd(fd as RawFd) })
+}
+
+/// SIGINT to the process `pidfd` holds; `ESRCH` once it was reaped.
+fn interrupt(pidfd: &OwnedFd) -> std::io::Result<()> {
+    // SAFETY: a null siginfo is allowed and sends the signal as kill(2) would.
+    let r = unsafe {
+        libc::syscall(
+            libc::SYS_pidfd_send_signal,
+            pidfd.as_raw_fd(),
+            libc::SIGINT,
+            std::ptr::null::<libc::siginfo_t>(),
+            0,
+        )
+    };
+    match r {
+        0 => Ok(()),
+        _ => Err(std::io::Error::last_os_error()),
+    }
+}
+
 /// Forward the recorder's stderr to the log until it exits, keeping its last line: its reason
 /// when it fails. Blocking.
 fn wait(mut child: std::process::Child, made: Made) -> Ended {
@@ -384,6 +424,26 @@ fn file_name(tm: &libc::tm) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_stop_interrupts_the_recorder_and_after_it_was_reaped_signals_nothing() {
+        use std::os::unix::process::ExitStatusExt;
+        let mut live = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        interrupt(&pidfd_open(live.id()).unwrap()).unwrap();
+        assert_eq!(live.wait().unwrap().signal(), Some(libc::SIGINT));
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        let fd = pidfd_open(child.id()).unwrap();
+        child.kill().unwrap();
+        child.wait().unwrap();
+        let e = interrupt(&fd).unwrap_err();
+        assert_eq!(e.raw_os_error(), Some(libc::ESRCH));
+    }
 
     #[test]
     fn a_recording_is_named_for_its_start_in_screencasts_under_videos() {

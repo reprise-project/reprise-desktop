@@ -129,7 +129,9 @@ captures light the red border, around the area while an area is recorded.
 The compositor makes the recording's file and hands it to the recorder
 open; the recorder never opens a name under Videos, so a program that can
 write there cannot point the recording at another file by swapping the
-name.
+name. The recorder waits for its portal answers from the portal's own bus
+name, and Stop signals it through a pidfd, which never reaches another
+process that got its pid.
 
 ## X11 programs
 
