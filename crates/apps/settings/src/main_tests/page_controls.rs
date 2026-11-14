@@ -500,12 +500,30 @@ fn the_screen_reader_boxes_follow_the_reads_and_grey_without_orca() {
     assert!(!a.reader.running, "shown off until the next read");
     assert_eq!(a.want, a.loaded, "the switch is no change for Apply");
 
+    a.sheet.pages[at].set_check(magnifierpage::READER, true);
+    a.sheet_event(propsheet::Event::Page(
+        at,
+        form::Event::Changed(magnifierpage::READER),
+    ));
+    assert_eq!(
+        a.sheet.pages[at].checked(magnifierpage::READER),
+        Some(false),
+        "a click while the switch runs is undone"
+    );
+
     reader_read(
         &mut a,
         running,
         Some("The screen reader could not be started.".into()),
     );
     assert!(a.error.is_some(), "a failed switch says why");
+    assert_eq!(a.sheet.pages[at].checked(magnifierpage::READER), Some(true));
+    a.sheet.pages[at].set_check(magnifierpage::READER, false);
+    a.sheet_event(propsheet::Event::Page(
+        at,
+        form::Event::Changed(magnifierpage::READER),
+    ));
+    assert!(!a.reader.running, "the next click switches again");
 }
 
 fn airplane_read(a: &mut SettingsApp, state: Option<bool>, failed: Option<String>) {

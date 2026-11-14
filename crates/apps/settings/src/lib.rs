@@ -432,6 +432,7 @@ struct SettingsApp {
     /// The screen reader as last read; `reader_job` holds the read or switch under way.
     reader: readerhost::Reader,
     reader_job: Option<Receiver<readerhost::Reading>>,
+    reader_switching: bool,
 
     airplane: airplanehost::Airplane,
     /// The Network page's proxy rows: the file as read and what the rows hold.
@@ -714,6 +715,7 @@ impl SettingsApp {
             remote_acting: false,
             reader: readerhost::Reader::default(),
             reader_job: None,
+            reader_switching: false,
             airplane: airplanehost::Airplane::default(),
             proxy: proxyhost::Proxy::session(),
             region: None,
