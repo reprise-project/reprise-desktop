@@ -2284,24 +2284,30 @@ mod tests {
 
     #[test]
     fn a_detached_spawn_starts_with_no_blocked_or_ignored_interrupt() {
-        // SAFETY: the mask is this thread's own and restored; SIGINT's disposition is restored
-        // before the test returns, and no test relies on it.
-        let (old_mask, old_int) = unsafe {
+        // An ignored SIGINT is the whole process's, and every child another test spawns
+        // meanwhile would inherit it: run alone.
+        const ALONE: &str = "REPRISE_SPAWN_SIGNAL_TEST_ALONE";
+        if std::env::var_os(ALONE).is_none() {
+            let name = "spawn::tests::a_detached_spawn_starts_with_no_blocked_or_ignored_interrupt";
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", name, "--quiet"])
+                .env(ALONE, "1")
+                .status()
+                .unwrap();
+            assert!(status.success(), "the test passes in a process of its own");
+            return;
+        }
+        // SAFETY: the mask is this thread's own; this process runs no other test.
+        unsafe {
             let mut set: libc::sigset_t = std::mem::zeroed();
-            let mut old: libc::sigset_t = std::mem::zeroed();
             libc::sigemptyset(&mut set);
             libc::sigaddset(&mut set, libc::SIGTERM);
-            libc::pthread_sigmask(libc::SIG_BLOCK, &set, &mut old);
-            (old, libc::signal(libc::SIGINT, libc::SIG_IGN))
-        };
+            libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
+            libc::signal(libc::SIGINT, libc::SIG_IGN);
+        }
         let mut c = std::process::Command::new("sh");
         c.args(["-c", "grep -E '^Sig(Blk|Ign)' /proc/self/status"]);
         let out = detached_output(&c);
-        // SAFETY: restores what the block above saved.
-        unsafe {
-            libc::signal(libc::SIGINT, old_int);
-            libc::pthread_sigmask(libc::SIG_SETMASK, &old_mask, std::ptr::null_mut());
-        }
         let mask = |key: &str| {
             let line = out.lines().find(|l| l.starts_with(key)).unwrap();
             u64::from_str_radix(line[key.len()..].trim(), 16).unwrap()
