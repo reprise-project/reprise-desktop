@@ -396,6 +396,38 @@ mod tests {
     }
 
     #[test]
+    fn a_sandboxed_window_takes_a_programs_raise_only_under_its_own_flatpak_id() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.state.app_index = vec![app("org.example.Chars.desktop", "Characters", true)];
+        let mut host = h.connect();
+        let notes = h.map_toplevel(&mut host, "test.notes", 300, 200);
+        let mut poser = h.connect_in_flatpak("org.other.App");
+        let posing = h.map_toplevel(&mut poser, "org.example.Chars", 300, 200);
+        let mut real = h.connect_in_flatpak("org.example.Chars");
+        let chars_window = h.map_toplevel(&mut real, "org.example.Chars", 300, 200);
+        let raise = |h: &mut crate::harness::Harness,
+                     c: &mut crate::harness::TestClient,
+                     t: crate::harness::Toplevel| {
+            h.state.focus_window(notes.id);
+            let (token, _) = h.state.activation.create_external_token(None);
+            c.activate(token, t);
+            h.roundtrip(c);
+            h.state.focused == Some(t.id)
+        };
+
+        h.state.picked_provider(&chars(), &Open::Search);
+        assert!(
+            !raise(&mut h, &mut poser, posing),
+            "a Flatpak of another id is flagged only"
+        );
+        assert!(
+            raise(&mut h, &mut real, chars_window),
+            "the grant survives the refused claim and raises the program's own Flatpak"
+        );
+    }
+
+    #[test]
     fn a_gicon_string_names_theme_icons_or_a_file() {
         assert_eq!(gicon_names("text-x-generic"), ["text-x-generic"]);
         assert_eq!(
