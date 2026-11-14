@@ -514,10 +514,9 @@ mod tests {
 
     #[test]
     fn an_update_over_the_body_cap_is_dropped_unread() {
-        let junk = vec![0u8; 4 << 20];
         let props = HashMap::from([
             ("count", zbus::Variant::from(3i64)),
-            ("junk", zbus::Variant::from(&junk[..])),
+            ("junk", zbus::Variant::from("x".repeat(bounded::MAX_BODY))),
         ]);
         let msg = zbus::Message::signal("/", IFACE, "Update")
             .sender(":1.5")
