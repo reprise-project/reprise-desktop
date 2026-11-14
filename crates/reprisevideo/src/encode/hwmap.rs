@@ -431,9 +431,7 @@ impl Converter {
             }
             Route::Cuda(views) => views.main(frame),
             Route::Cpu { sws, out } => {
-                // SAFETY: `out` is a frame this converter owns.
-                let writable = unsafe { ffi::av_frame_make_writable(out.as_mut_ptr()) };
-                check(writable, "frame buffer")?;
+                fresh_buffer(out)?;
                 let mut scaled = Ok(());
                 let (x, y) = self.origin;
                 let read = (x + self.size.0, y + self.size.1);
@@ -452,6 +450,24 @@ impl Converter {
             }
         }
     }
+}
+
+/// Gives `out` a buffer of its own when a picture handed out still holds its last one; the
+/// scaler overwrites all of it, so the old picture is not copied over.
+fn fresh_buffer(out: &mut frame::Video) -> Result<(), EncodeError> {
+    // SAFETY: `out` is a frame this converter owns; its format and size are put back before the
+    // new buffer is allocated.
+    unsafe {
+        let f = out.as_mut_ptr();
+        if ffi::av_frame_is_writable(f) != 0 {
+            return Ok(());
+        }
+        let (format, width, height) = ((*f).format, (*f).width, (*f).height);
+        ffi::av_frame_unref(f);
+        ((*f).format, (*f).width, (*f).height) = (format, width, height);
+        check(ffi::av_frame_get_buffer(f, 0), "frame buffer")?;
+    }
+    Ok(())
 }
 
 /// A bilinear swscale context, slicing each picture across its threads.
@@ -828,6 +844,19 @@ mod tests {
             .flat_map(|r| &f.data(i)[r * f.stride(i)..][..bytes])
             .copied()
             .collect()
+    }
+
+    #[test]
+    fn a_picture_handed_out_keeps_its_pixels_and_the_next_gets_its_own_buffer() {
+        let size = (64, 48);
+        let grey = |v: u8| Frame::detached(vec![v; 64 * 48 * 4], size, Vec::new());
+        let mut converter = Converter::new(None, XRGB8888, size, size, 30).unwrap();
+        let first = converter.convert(&grey(0x20)).unwrap();
+        let luma = first.data(0)[0];
+        let second = converter.convert(&grey(0xe0)).unwrap();
+        assert_ne!(first.data(0).as_ptr(), second.data(0).as_ptr());
+        assert_eq!(first.data(0)[0], luma, "the held picture is unchanged");
+        assert!(second.data(0)[0] > luma);
     }
 
     #[test]
