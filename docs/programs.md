@@ -811,8 +811,8 @@ and wants every package file signed, so an Arch package installs through
 filled from pacman's own: downloads, then pacman's checks, then each package
 installed. The sheet reads and installs a private copy of the file. A
 packager reads "(unverified)" unless a `.sig` lies beside a pacman package
-and pacman's `LocalFileSigLevel` checks it; then it reads "(signature checked
-when it installs)".
+and pacman's `LocalFileSigLevel` (or `SigLevel` while that is unset) checks
+it; then it reads "(signature checked when it installs)".
 A `.flatpakref` or bundle installs for every user, and a `.flatpakref`'s
 repository (and the runtime's, named in the note when it differs) stays
 added. A `.flatpakref`'s size fills in with the most it downloads once

@@ -247,10 +247,24 @@ pub fn read(path: &Path, kind: Kind) -> Result<Facts, String> {
     Ok(facts)
 }
 
-/// Whether `pacman -U` checks a package file's `.sig`: false under `LocalFileSigLevel = Never`
-/// (`pacman-conf` prints the resolved level), or when `pacman-conf` cannot say.
+/// Whether `pacman -U` checks a package file's `.sig`: false under `LocalFileSigLevel = Never`,
+/// or `SigLevel = Never` with that unset, or when `pacman-conf` cannot say.
 pub fn local_sigs_checked() -> bool {
-    output("pacman-conf", &[OsStr::new("LocalFileSigLevel")]).is_ok_and(|o| sigs_checked(&o))
+    let level = |key| output("pacman-conf", &[OsStr::new(key)]).ok();
+    local_level(level("LocalFileSigLevel"), || level("SigLevel")).is_some_and(|l| sigs_checked(&l))
+}
+
+/// The level `pacman -U` checks a file by: `local`, else `sig` when `LocalFileSigLevel` is unset,
+/// which `pacman-conf` prints as nothing (pacman then uses `SigLevel`, itself defaulting to
+/// `Required`).
+pub(crate) fn local_level(
+    local: Option<String>,
+    sig: impl FnOnce() -> Option<String>,
+) -> Option<String> {
+    match local {
+        Some(l) if l.trim().is_empty() => sig(),
+        l => l,
+    }
 }
 
 /// `pacman-conf LocalFileSigLevel`'s output names a level that checks package signatures.
@@ -796,5 +810,19 @@ mod tests {
                 packager: "Santiago Vila <sanvila@debian.org>".into(),
             }
         );
+    }
+
+    #[test]
+    fn an_unset_local_file_level_takes_the_sig_level() {
+        let some = |l: &str| Some(l.to_string());
+        let required = || some("PackageRequired\nPackageTrustedOnly\n");
+        assert_eq!(local_level(some(""), required), required());
+        assert_eq!(
+            local_level(some("\n"), || some("PackageNever\n")),
+            some("PackageNever\n")
+        );
+        let optional = some("PackageOptional\n");
+        assert_eq!(local_level(optional.clone(), required), optional);
+        assert_eq!(local_level(None, required), None, "pacman-conf failed");
     }
 }
