@@ -104,9 +104,14 @@ pub fn follow(mut changed: impl FnMut() -> bool) -> std::io::Result<()> {
 }
 
 /// Keep the kernel from turning the radios itself on the airplane-mode key while the returned
-/// file stays open, so the desktop's own toggle is the only one.
+/// file stays open, so the desktop's own toggle is the only one. The file is non-blocking and
+/// queues an event per switch change for as long as it is open: [`drain`] it when it is readable.
 pub fn take_key() -> std::io::Result<File> {
-    let device = File::open(DEVICE)?;
+    use std::os::unix::fs::OpenOptionsExt;
+    let device = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(DEVICE)?;
     // SAFETY: the fd is open for the call, and NOINPUT takes no argument.
     let r = unsafe { libc::ioctl(std::os::fd::AsRawFd::as_raw_fd(&device), IOC_NOINPUT) };
     if r < 0 {
@@ -115,9 +120,47 @@ pub fn take_key() -> std::io::Result<File> {
     Ok(device)
 }
 
+/// Read every event queued on a non-blocking `device`, so the kernel's list for it stays empty.
+pub fn drain(mut device: impl Read) -> std::io::Result<()> {
+    let mut event = [0u8; 32];
+    loop {
+        match device.read(&mut event) {
+            Ok(0) => return Ok(()),
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => return Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn drain_reads_until_the_queue_is_empty() {
+        let (mut r, mut w) = std::io::pipe().unwrap();
+        let fd = std::os::fd::AsRawFd::as_raw_fd(&r);
+        // SAFETY: `fd` is open for the call.
+        let set = unsafe { libc::fcntl(fd, libc::F_SETFL, libc::O_NONBLOCK) };
+        assert_eq!(set, 0);
+        w.write_all(&[1; 8 * 5]).unwrap();
+        drain(&mut r).unwrap();
+        let mut rest = [0u8; 8];
+        let left = r.read(&mut rest).map_err(|e| e.kind());
+        assert_eq!(left, Err(std::io::ErrorKind::WouldBlock), "nothing left");
+    }
+
+    #[test]
+    fn the_taken_key_is_non_blocking() {
+        let Ok(device) = take_key() else {
+            return;
+        };
+        // SAFETY: the fd is open for the call.
+        let flags = unsafe { libc::fcntl(std::os::fd::AsRawFd::as_raw_fd(&device), libc::F_GETFL) };
+        assert_ne!(flags & libc::O_NONBLOCK, 0);
+    }
 
     #[test]
     fn change_all_names_the_type_and_the_block() {
