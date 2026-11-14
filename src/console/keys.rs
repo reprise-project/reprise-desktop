@@ -45,8 +45,8 @@ pub fn end(state: &mut State) {
     let_go(state);
 }
 
-/// The seat lets go of every key, StickyKeys' modifiers and the mouse keys, so a client it
-/// focuses later hears none held.
+/// The seat lets go of every key, StickyKeys' modifiers, the Ctrl tap and the mouse keys, so a
+/// client it focuses later hears none held.
 fn let_go(state: &mut State) {
     let Some(keyboard) = state.seat.get_keyboard() else {
         return;
@@ -65,6 +65,7 @@ fn let_go(state: &mut State) {
     state.stop_field_repeat();
     state.stop_media_repeat();
     state.aids_release_sticky();
+    state.key_input.ctrl_tap = Default::default();
     state.mousekeys_forget();
     state.eis_modifiers_changed();
 }

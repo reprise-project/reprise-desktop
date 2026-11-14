@@ -53,18 +53,27 @@ pub struct Rings {
     drawn: Option<(u32, i32)>,
 }
 
+#[cfg(test)]
+impl Rings {
+    pub fn showing(&self) -> bool {
+        self.node.is_some()
+    }
+}
+
 impl State {
     /// A key the typing aids let through (`syms` its keysyms): ring the pointer on a lone Ctrl tap.
     pub fn locate_key(&mut self, code: u32, syms: &[u32], pressed: bool) {
         let ctrl = syms
             .iter()
             .any(|&s| s == KEY_Control_L || s == KEY_Control_R);
-        // A Ctrl tap under a held button or finger is a drag's copy or move switch.
+        // A Ctrl tap under a held button or finger is a drag's copy or move switch; under
+        // StickyKeys it is a latch.
         let held =
             self.buttons_down > 0 || !self.seat_buttons.is_empty() || self.devices.touch.any_down();
         if self.key_input.ctrl_tap.key(code, ctrl, pressed)
             && !held
             && self.config.accessibility.locate_pointer
+            && !self.key_input.aids.filter.config().sticky_keys
             && !self.console_holds_input()
         {
             start(self, Instant::now());
@@ -210,6 +219,17 @@ mod tests {
             "Ctrl+click the overlay took"
         );
         assert!(rang(&mut h).is_some(), "a lone tap after it rings");
+    }
+
+    #[test]
+    fn a_ctrl_tap_under_sticky_keys_latches_without_rings() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.state.config.accessibility.locate_pointer = true;
+        h.state.config.accessibility.sticky_keys = true;
+        h.state.aids_configured();
+        assert_eq!(rang(&mut h), None);
+        assert_ne!(h.state.xkb_mask().unwrap().0.latched, 0, "Ctrl latched");
     }
 
     #[test]
