@@ -843,3 +843,70 @@ fn authorize_acts_at_once_on_the_picked_device_and_says_why_it_failed() {
     assert!(tb_lit(&a, pages::TB_AUTHORIZE));
     assert_eq!(a.want, a.loaded, "the buttons are no change for Apply");
 }
+
+fn capture_status(a: &SettingsApp) -> String {
+    match &a.sheet.pages[Page::ScreenCapture.index()]
+        .item(capturepage::STATUS)
+        .unwrap()
+        .control
+    {
+        form::Control::Label { text, .. } => text.clone(),
+        c => panic!("the status is a label, not {c:?}"),
+    }
+}
+
+fn codec_rows_greyed(a: &SettingsApp) -> Vec<bool> {
+    match &a.sheet.pages[Page::ScreenCapture.index()]
+        .item(capturepage::CODEC)
+        .unwrap()
+        .control
+    {
+        form::Control::Combo(c) => c.items.iter().map(|i| i.greyed).collect(),
+        c => panic!("the codec is a combo, not {c:?}"),
+    }
+}
+
+#[test]
+fn the_capture_status_reads_checking_then_the_codec_missing() {
+    use repriseconf::recording::{AudioCodec, Codec, Probed};
+    let path = tmp("capture").join("config.toml");
+    std::fs::write(&path, "[recording]\ncodec = \"av1\"\n").unwrap();
+    let mut a = SettingsApp::open(path, "us".into());
+    a.ensure_capture();
+    assert_eq!(capture_status(&a), "", "no probe before the page opens");
+    a.sheet.tabs.open = Page::ScreenCapture.index();
+    a.ensure_capture();
+    assert_eq!(capture_status(&a), "Checking encoders...");
+    assert_eq!(codec_rows_greyed(&a), [false; 3], "nothing known yet");
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    let h264 = Probed {
+        video: vec![(Codec::H264, repriseconf::remote::EncoderChoice::Software)],
+        audio: vec![AudioCodec::Aac],
+    };
+    tx.send(capturepage::ProbeState::Done(h264.clone()))
+        .unwrap();
+    a.capture_job = Some(rx);
+    assert!(a.capture_done());
+    assert_eq!(capture_status(&a), "No AV1 encoder works here.");
+    assert_eq!(codec_rows_greyed(&a), [false, true, true]);
+
+    a.want.screenshot_format = "jxl".into();
+    pages::follow(&mut a.sheet, &a.want);
+    assert_eq!(
+        codec_rows_greyed(&a),
+        [false; 3],
+        "the page was built again"
+    );
+    a.ensure_capture();
+    assert_eq!(
+        codec_rows_greyed(&a),
+        [false, true, true],
+        "and greyed again after the event"
+    );
+    assert_eq!(
+        a.capture_probe,
+        capturepage::ProbeState::Done(h264),
+        "one probe a run"
+    );
+}

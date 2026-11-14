@@ -1,5 +1,5 @@
 use super::*;
-use crate::pages::system::{NOTIFICATION_SOUND, RECORD_SOUND};
+use crate::pages::system::NOTIFICATION_SOUND;
 use reprisebus::airplane;
 
 #[test]
@@ -18,8 +18,6 @@ fn the_sound_page_geometry() {
     assert_eq!(rect(&s, p, "volume_group"), Rect::new(20, 200, 358, 74));
     assert_eq!(rect(&s, p, "allow_boost"), Rect::new(GX, 222, 13, 13));
     assert_eq!(rect(&s, p, "allow_boost_note").y, 242);
-    assert_eq!(rect(&s, p, "recording_group"), Rect::new(20, 284, 358, 48));
-    assert_eq!(rect(&s, p, RECORD_SOUND), Rect::new(GX, 306, 13, 13));
     inside_page(&s, p);
 }
 
@@ -71,12 +69,7 @@ fn notifications_gather_on_their_own_page() {
     }
     assert_eq!(
         keys_on(&built(), Page::Sound),
-        [
-            "screenshot.record_sound",
-            "sounds.theme",
-            "sounds.bell",
-            "sounds.allow_boost"
-        ]
+        ["sounds.theme", "sounds.bell", "sounds.allow_boost"]
     );
     for k in ["balloons", "do not disturb", "dnd", "quiet hours", "popups"] {
         assert!(Page::Notifications.keywords().contains(&k), "{k}");
@@ -310,7 +303,6 @@ fn advanced_groups_what_has_no_other_page() {
             "power.poweroff",
             "power.reboot",
             "power.standby",
-            "screenshot.save",
             "storage.low_space_percent",
             "thumbnail_cache.enabled",
             "thumbnail_cache.external_thumbnailers",
@@ -320,13 +312,12 @@ fn advanced_groups_what_has_no_other_page() {
     );
     let p = Page::Advanced;
     assert_eq!(rect(&s, p, "task_manager"), Rect::new(20, 60, 358, 20));
-    assert_eq!(rect(&s, p, "screenshot_save"), Rect::new(20, 90, 13, 13));
-    assert_eq!(rect(&s, p, "restart_notice"), Rect::new(20, 108, 13, 13));
-    assert_eq!(rect(&s, p, "turnoff_group"), Rect::new(20, 130, 358, 74));
-    assert_eq!(rect(&s, p, "standby"), Rect::new(94, 148, 101, 20));
-    assert_eq!(rect(&s, p, "poweroff"), Rect::new(265, 148, 101, 20));
-    assert_eq!(rect(&s, p, "reboot"), Rect::new(94, 174, 101, 20));
-    assert_eq!(rect(&s, p, "hibernate"), Rect::new(265, 174, 101, 20));
+    assert_eq!(rect(&s, p, "restart_notice"), Rect::new(20, 90, 13, 13));
+    assert_eq!(rect(&s, p, "turnoff_group"), Rect::new(20, 112, 358, 74));
+    assert_eq!(rect(&s, p, "standby"), Rect::new(94, 130, 101, 20));
+    assert_eq!(rect(&s, p, "poweroff"), Rect::new(265, 130, 101, 20));
+    assert_eq!(rect(&s, p, "reboot"), Rect::new(94, 156, 101, 20));
+    assert_eq!(rect(&s, p, "hibernate"), Rect::new(265, 156, 101, 20));
     let d = Settings::default();
     use reprisekit::interface::Interface;
     for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
@@ -354,25 +345,25 @@ fn advanced_groups_what_has_no_other_page() {
             );
         }
     }
-    assert_eq!(rect(&s, p, "storage_group"), Rect::new(20, 212, 358, 66));
+    assert_eq!(rect(&s, p, "storage_group"), Rect::new(20, 194, 358, 66));
     assert_eq!(
         rect(&s, p, "low_space_percent"),
-        Rect::new(150, 230, 50, 20)
+        Rect::new(150, 212, 50, 20)
     );
-    assert_eq!(rect(&s, p, "low_space_note").y, 254);
-    assert_eq!(rect(&s, p, "thumbs_group"), Rect::new(20, 286, 358, 92));
-    assert_eq!(rect(&s, p, THUMBS), Rect::new(GX, 308, 13, 13));
-    assert_eq!(rect(&s, p, THUMBS_CLEARED).y, 308);
-    assert_eq!(rect(&s, p, THUMBS_CLEAR), Rect::new(291, 326, 75, 23));
+    assert_eq!(rect(&s, p, "low_space_note").y, 236);
+    assert_eq!(rect(&s, p, "thumbs_group"), Rect::new(20, 268, 358, 92));
+    assert_eq!(rect(&s, p, THUMBS), Rect::new(GX, 290, 13, 13));
+    assert_eq!(rect(&s, p, THUMBS_CLEARED).y, 290);
+    assert_eq!(rect(&s, p, THUMBS_CLEAR), Rect::new(291, 308, 75, 23));
     let mb = rect(&s, p, THUMBS_MB);
-    assert_eq!(mb.y, 328);
+    assert_eq!(mb.y, 310);
     let units = rect(&s, p, THUMBS_SIZE[2]);
-    assert_eq!((units.x, units.y), (mb.right() + 4, 332));
-    assert_eq!(rect(&s, p, THUMBNAILERS), Rect::new(GX, 356, 13, 13));
-    assert_eq!(rect(&s, p, DEBUG_OVERLAY), Rect::new(20, 386, 13, 13));
-    assert_eq!(rect(&s, p, DEBUG_IN_CAPTURES), Rect::new(38, 404, 13, 13));
-    assert_eq!(rect(&s, p, "note"), Rect::new(20, 422, 275, 26));
-    assert_eq!(rect(&s, p, EDIT_FILE), Rect::new(303, 422, 75, 23));
+    assert_eq!((units.x, units.y), (mb.right() + 4, 314));
+    assert_eq!(rect(&s, p, THUMBNAILERS), Rect::new(GX, 338, 13, 13));
+    assert_eq!(rect(&s, p, DEBUG_OVERLAY), Rect::new(20, 368, 13, 13));
+    assert_eq!(rect(&s, p, DEBUG_IN_CAPTURES), Rect::new(38, 386, 13, 13));
+    assert_eq!(rect(&s, p, "note"), Rect::new(20, 404, 275, 26));
+    assert_eq!(rect(&s, p, EDIT_FILE), Rect::new(303, 404, 75, 23));
     inside_page(&s, p);
 }
 

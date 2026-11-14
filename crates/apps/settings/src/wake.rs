@@ -129,6 +129,7 @@ impl SettingsApp {
         }
         changed |= self.forget_done();
         changed |= self.remote_done();
+        changed |= self.capture_done();
         changed |= self.reader_done();
         changed |= self.airplane_done();
         changed |= self.region_done();
@@ -204,6 +205,8 @@ impl SettingsApp {
             self.show_monitor();
             changed = true;
         }
+        // A reload or an opened page may have rebuilt the Screen Capture page.
+        self.show_capture();
         let mut reply = if changed {
             Reply::redraw()
         } else {

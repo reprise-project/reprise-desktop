@@ -469,7 +469,9 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   constant bitrate, with a frame rate cap and keyframe interval
   (`[recording]`, [configuration.md](configuration.md#recording)). They are
   coded on the graphics card when it can; a notice offers Open and Show in
-  Folder. Settings > Sound adds what plays on the speakers (off by default).
+  Folder. Settings > Screen Capture sets the screenshot file's format and
+  the recording's codecs and rates, greying the encoders and codecs that
+  don't work here, and adds what plays on the speakers (off by default).
 - **Colour picker.** Super+Shift+C turns the pointer into a crosshair with a
   loupe beside it: the 9 x 9 pixels round the point, the centre one ringed,
   and its `#RRGGBB` under them. It follows the pointer across screens; the

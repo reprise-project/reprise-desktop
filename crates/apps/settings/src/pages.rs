@@ -389,6 +389,22 @@ pub(crate) fn choice(id: &'static str, x: i32, y: i32, w: i32, choices: &Choices
     Item::combo(id, x, y, w, &labels, choices.len())
 }
 
+/// Grey each row of combo `id`, built from `choices`, whose value is in neither `offered` nor
+/// `always`.
+pub(crate) fn grey_choices(
+    page: &mut Form,
+    id: &str,
+    choices: &Choices,
+    offered: &[&str],
+    always: &[&str],
+) {
+    if let Some(Control::Combo(c)) = page.item_mut(id).map(|i| &mut i.control) {
+        for (item, (value, _)) in c.items.iter_mut().zip(choices) {
+            item.greyed = !offered.contains(value) && !always.contains(value);
+        }
+    }
+}
+
 pub(crate) fn group(a: Area, id: &'static str, y: i32, h: i32, title: &str) -> Item {
     Item::group(id, Rect::new(X, y, a.w, h), title)
 }

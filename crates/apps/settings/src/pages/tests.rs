@@ -17,6 +17,7 @@ use reprisekit::theme::Color;
 use reprisekit::theme::{FontConfig, Theme};
 
 mod appearance;
+mod capture;
 mod desktop;
 mod input;
 mod system;
@@ -83,7 +84,8 @@ fn no_two_controls_on_a_page_share_an_access_key() {
 /// under some interface: none lost in a move or rebuild, none built twice.
 #[test]
 fn every_bind_names_a_control_on_exactly_one_page() {
-    let sheets = ["classic", "blue", "glass"].map(under);
+    let mut sheets = ["classic", "blue", "glass"].map(under).to_vec();
+    sheets.extend(capture_sheets());
     for b in binds() {
         let mut shown = false;
         for s in &sheets {
@@ -121,6 +123,10 @@ fn every_page_fits_its_text_under_every_interface() {
         for p in [Page::Taskbar, Page::VirtualDesktops] {
             let label = format!("{}, reduce motion", p.label());
             forms.push((label, still.pages[p.index()].clone()));
+        }
+        for (k, c) in capture_sheets().iter().enumerate() {
+            let label = format!("Screen Capture, other rows {k}");
+            forms.push((label, c.pages[Page::ScreenCapture.index()].clone()));
         }
         forms
     };
@@ -223,16 +229,22 @@ fn every_dialog_fits_its_text_under_every_interface() {
 
 /// A hash of `row` of `form` drawn in each of Classic, Blue and Glass, with the test fonts.
 fn row_pins(form: &form::Form, row: Rect) -> [u64; 3] {
+    row_pins_at(form, row, 1)
+}
+
+/// [`row_pins`] at output scale `scale`.
+fn row_pins_at(form: &form::Form, row: Rect, scale: i32) -> [u64; 3] {
     use reprisekit::interface::Interface;
     reprisekit::pins::fonts();
     let mut got = [0; 3];
+    let row = row.scaled(scale);
     for (k, i) in [Interface::Classic, Interface::Blue, Interface::Glass]
         .into_iter()
         .enumerate()
     {
         let theme = Theme {
             access_keys: true,
-            ..reprisekit::interfaces::theme_for(i)
+            ..reprisekit::interfaces::theme_for(i).scaled(scale)
         };
         let text = TextRenderer::load(&theme.fonts);
         let mut c = Canvas::new(row.right() as u32, row.bottom() as u32);
@@ -254,6 +266,22 @@ fn row_pins(form: &form::Form, row: Rect) -> [u64; 3] {
             });
     }
     got
+}
+
+/// Sheets whose Screen Capture page shows the JPG, JPEG XL, bitrate and FLAC rows.
+fn capture_sheets() -> [PropSheet; 2] {
+    [
+        with(&Settings {
+            screenshot_format: "jpg".into(),
+            recording_rate: "average".into(),
+            recording_audio_codec: "flac".into(),
+            ..Settings::default()
+        }),
+        with(&Settings {
+            screenshot_format: "jxl".into(),
+            ..Settings::default()
+        }),
+    ]
 }
 
 fn under(interface: &str) -> PropSheet {
@@ -460,8 +488,10 @@ fn lines(s: &PropSheet, page: Page, id: &str) -> Vec<String> {
 #[test]
 fn every_spin_shows_its_unit() {
     use reprisekit::interface::Interface;
-    const COUNTS: [&str; 4] = [
+    const COUNTS: [&str; 6] = [
         "desktops",
+        crate::capturepage::JXL_EFFORT,
+        crate::capturepage::FLAC_COMPRESSION,
         super::system::REMOTE_PORT,
         super::login::LOGIN_PORT,
         super::login::LOGIN_SESSIONS,
@@ -471,8 +501,11 @@ fn every_spin_shows_its_unit() {
         let s = under(i.as_str());
         let mut missing = Vec::new();
         let mut seen = 0;
-        for p in Page::all() {
-            let f = &s.pages[p.index()];
+        let capture = capture_sheets().map(|c| c.pages[Page::ScreenCapture.index()].clone());
+        let forms = Page::all()
+            .map(|p| (p, &s.pages[p.index()]))
+            .chain(capture.iter().map(|f| (Page::ScreenCapture, f)));
+        for (p, f) in forms {
             for u in f
                 .items
                 .iter()
@@ -826,12 +859,7 @@ fn restore_defaults_takes_a_pages_keys_from_its_controls() {
     let s = built();
     assert_eq!(
         keys_on(&s, Page::Sound),
-        [
-            "screenshot.record_sound",
-            "sounds.theme",
-            "sounds.bell",
-            "sounds.allow_boost"
-        ]
+        ["sounds.theme", "sounds.bell", "sounds.allow_boost"]
     );
     assert_eq!(keys_on(&s, Page::Cursor), ["cursor.theme", "cursor.size"]);
     assert!(keys_on(&s, Page::Keyboard).contains(&"keyboard.layout".to_string()));

@@ -318,7 +318,7 @@ asks first. Programs see `TERM=xterm-256color` and `COLORTERM=truecolor`.
 
 ## Reprise Settings
 
-One window, 33 pages under seven headings (Login Manager only where
+One window, 34 pages under seven headings (Login Manager only where
 `reprise-login` is installed), with link rows to the separate
 settings programs. Only one runs at a time. A link row ends in "..." and
 starts its program in its own window, as Start does, and Settings stays on
@@ -386,8 +386,14 @@ matched control focused.
     greyed with a note when iio-sensor-proxy reports no accelerometer.
   - **Night Light:** warmth, and sunset to sunrise or a schedule.
   - **Sound:** Audio Devices... (Sounds and Audio Devices, for speakers and
-    microphones), the sound theme, whether a program's bell plays a sound,
-    volume above 100 % and whether screen recordings carry what plays.
+    microphones), the sound theme, whether a program's bell plays a sound
+    and volume above 100 %.
+  - **Screen Capture:** whether screenshots are saved and in PNG, JPG or
+    JPEG XL with that format's compression; the recording's video codec,
+    encoder, rate control (a quality, or a bitrate), frame rate and keyframe
+    interval; and whether it carries what plays, in AAC, Opus or FLAC. A line
+    says "Checking encoders..." while `reprise-record --probe` runs, and the
+    codecs and encoders it did not list are greyed.
   - **Notifications:** whether balloons play a sound, the balloon style
     (Glass), holding balloons during full screen, screen sharing and quiet
     hours, and the programs that sent notifications this session or are
@@ -510,7 +516,7 @@ matched control focused.
     the settings. Cancel or closing the window while that prompt is up
     withdraws the save.
   - **Software Updates...**
-  - **Advanced:** the task manager, screenshots, the update restart notice,
+  - **Advanced:** the task manager, the update restart notice,
     the Turn Off commands, the low disk space warning, the thumbnail cache
     (Clear removes only the thumbnails Reprise kept and says how much went),
     thumbnails from the installed thumbnailers, the debug overlay, and an
@@ -1017,7 +1023,8 @@ page all open it. Reading GNOME's settings needs the `dconf` command.
   --probe` prints what codes here and exits: a line `video CODEC ENCODER` for
   each encoder choice that codes a test frame in each codec (`video h265
   vaapi`), then `audio CODEC` for each audio codec the MP4 muxer takes
-  (`audio opus`). Its log
+  (`audio opus`). Settings runs it the first time its Screen Capture page
+  opens, kills it after 30 s, and greys what it did not list. Its log
   lines reach the journal through the compositor, which reads its stderr; on
   failure its last line there is the reason. The compositor makes the file
   under Videos/Screencasts and hands it over open, so the recorder never

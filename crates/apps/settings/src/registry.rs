@@ -60,6 +60,7 @@ pub fn build(p: Page, src: &Sources, a: Area) -> Form {
         Page::PointerAlerts => pages::pointer_and_alerts(a),
         Page::MagnifierFilters => crate::magnifierpage::page(a),
         Page::Sound => pages::sound(a, src.sound_themes),
+        Page::ScreenCapture => crate::capturepage::page(&Settings::default(), a),
         Page::Notifications => pages::notifications(a),
         Page::Startup => pages::startup(a),
         Page::DefaultPrograms => crate::defaultspage::page(a),
@@ -157,6 +158,7 @@ mod tests {
                 "Display",
                 "Night Light",
                 "Sound",
+                "Screen Capture",
                 "Notifications",
                 "Keyboard",
                 "Mouse",
@@ -245,8 +247,8 @@ mod tests {
         assert_eq!(open(&s), Page::Appearance, "the first page opens");
     }
 
-    /// The list's inside is 456 px at the smallest sheet: 47 rows at 823 px, so it scrolls
-    /// until the sheet is 367 px taller. On a sheet 56 px shorter, a page opened from its end
+    /// The list's inside is 456 px at the smallest sheet: 48 rows at 840 px, so it scrolls
+    /// until the sheet is 384 px taller. On a sheet 56 px shorter, a page opened from its end
     /// (keys or `--page`) comes into view.
     #[test]
     fn the_list_scrolls_to_the_open_page() {
@@ -256,16 +258,16 @@ mod tests {
         let px = Theme::default().fonts.size_px;
         let mut sheet = built();
         let list = sheet.layout(&text, px).list.expect("a list sheet");
-        assert_eq!(list.rows.len(), 47, "seven headings, 33 pages, seven links");
-        assert_eq!((list.total, list.inner.height), (823, 456));
-        assert!(list.scrollbar.is_some(), "the rows overflow by 367 px");
-        sheet.size.1 += 367;
+        assert_eq!(list.rows.len(), 48, "seven headings, 34 pages, seven links");
+        assert_eq!((list.total, list.inner.height), (840, 456));
+        assert!(list.scrollbar.is_some(), "the rows overflow by 384 px");
+        sheet.size.1 += 384;
         let list = sheet.layout(&text, px).list.unwrap();
         assert!(list.scrollbar.is_none(), "every row shows");
 
-        sheet.size.1 -= 423;
+        sheet.size.1 -= 440;
         let list = sheet.layout(&text, px).list.unwrap();
-        assert_eq!((list.total, list.inner.height), (823, 400));
+        assert_eq!((list.total, list.inner.height), (840, 400));
         let bar = list.scrollbar.expect("the rows overflow");
         assert_eq!(bar.right(), list.inner.right() + bar.width);
         let last = *list.rows.last().unwrap();
@@ -390,7 +392,25 @@ mod tests {
                 f.items.extend(list.map(side));
                 (p, f)
             })
+            .chain(capture_variants(a))
             .collect()
+    }
+
+    /// The Screen Capture page with each row the format, rate mode and audio codec swap in.
+    fn capture_variants(a: Area) -> impl Iterator<Item = (Page, Form)> {
+        let jpg = Settings {
+            screenshot_format: "jpg".into(),
+            recording_rate: "average".into(),
+            recording_audio_codec: "flac".into(),
+            ..Settings::default()
+        };
+        let jxl = Settings {
+            screenshot_format: "jxl".into(),
+            ..Settings::default()
+        };
+        [jpg, jxl]
+            .into_iter()
+            .map(move |s| (Page::ScreenCapture, crate::capturepage::page(&s, a)))
     }
 
     /// Item `it`'s placed rect, widened for a check box's or radio's label.
@@ -631,10 +651,31 @@ mod tests {
             (Page::RemoteDesktop, "quality", "Picture quality"),
             (Page::Appearance, "glass_dark_to", "Dark until"),
             (Page::StartMenu, crate::menupage::TREE, "Start menu"),
+            (
+                Page::ScreenCapture,
+                crate::capturepage::QUALITY,
+                "Recording quality",
+            ),
         ] {
             let (_, f) = &pages[p.index()];
             let named = control_labels(f).into_iter().find(|(i, _)| *i == id);
             assert_eq!(named, Some((id, name.to_string())), "{}", p.label());
+        }
+        let variants: Vec<(Page, Form)> = capture_variants(Area::MIN).collect();
+        for (f, id, name) in [
+            (
+                &variants[0].1,
+                crate::capturepage::JPG_QUALITY,
+                "JPG quality",
+            ),
+            (
+                &variants[1].1,
+                crate::capturepage::JXL_QUALITY,
+                "JPEG XL quality",
+            ),
+        ] {
+            let named = control_labels(f).into_iter().find(|(i, _)| *i == id);
+            assert_eq!(named, Some((id, name.to_string())));
         }
     }
 
