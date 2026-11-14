@@ -124,9 +124,7 @@ pub fn label(state: &State, b: Builtin) -> Option<String> {
             let until = log.dnd_until.map(crate::taskbar::time_text);
             Some(bell_tip(log.unseen, quiet, until.as_deref()))
         }
-        Builtin::Recording => {
-            (state.recording.as_ref()).map(|r| crate::screenrecord::tip(r.elapsed()))
-        }
+        Builtin::Recording => (state.recording.as_ref()).map(crate::screenrecord::tip),
         Builtin::Sharing => Some(crate::privacy::sharing_tip(state)),
         Builtin::Microphone => Some(state.privacy.mic_tip()),
         Builtin::Camera => Some(crate::privacy::camera_tip(state)),

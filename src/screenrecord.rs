@@ -6,6 +6,8 @@ use std::io::BufRead;
 use std::os::fd::{AsFd, AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use smithay::output::Output;
@@ -16,8 +18,13 @@ use crate::notifyview::OwnAction;
 use crate::raster::Rect;
 
 const PROGRAM: &str = "reprise-record";
-/// How long a recorder has to finish its file after Stop before it is killed.
+/// How long a stopped recorder may go without using the CPU, reading or writing its storage
+/// before it is killed. One that works on or waits on its storage is waited for, up to
+/// [`finish_cap`].
 const STOP_GRACE: Duration = Duration::from_secs(5);
+const SAVED: &str = "Screen recording saved";
+const NOT_FINISHED: &str = "Screen recording not finished";
+const MAY_NOT_PLAY: &str = "It was stopped while it closed the file and may not play.";
 
 /// What a recording records: an output, or an area of it in output-local logical pixels.
 #[derive(Clone, Debug, PartialEq)]
@@ -34,8 +41,14 @@ pub struct Recording {
     /// The recorder's pidfd, which Stop signals: its `wait` job may reap it before the loop
     /// hears, and a reaped pid can name another process.
     pidfd: Option<OwnedFd>,
-    /// A stop asked for before the recorder ran.
+    /// A stop was asked for: the recorder finishes its file, or was not running yet.
     stopping: bool,
+    /// The stopped recorder's [`work`] at the last look.
+    work: Option<Work>,
+    /// When a stopped recorder is killed however it works, see [`finish_cap`].
+    finish_by: Option<Instant>,
+    /// Set as the recorder is killed finishing its file, which is then kept.
+    killed: Arc<AtomicBool>,
 }
 
 impl Recording {
@@ -54,6 +67,17 @@ impl Recording {
             pid: Some(i32::MAX as u32),
             pidfd: None,
             stopping: false,
+            work: None,
+            finish_by: None,
+            killed: Arc::default(),
+        }
+    }
+
+    /// A recording whose recorder, with a pid no process has, finishes its file.
+    pub fn stopped(target: Target) -> Recording {
+        Recording {
+            stopping: true,
+            ..Recording::running(target)
         }
     }
 }
@@ -92,6 +116,8 @@ enum Ended {
         ok: bool,
         status: Option<i32>,
         last_line: String,
+        /// Killed while it finished the file.
+        killed: bool,
     },
     NotStarted(String),
 }
@@ -141,6 +167,9 @@ impl State {
             pid: None,
             pidfd: None,
             stopping: false,
+            work: None,
+            finish_by: None,
+            killed: Arc::default(),
         });
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -156,37 +185,70 @@ impl State {
     }
 
     /// Stop the recording: the recorder finishes its file and exits, or is killed and forgotten
-    /// after [`STOP_GRACE`].
+    /// once it does nothing for [`STOP_GRACE`]. A stop while it finishes kills it now.
     pub fn stop_recording(&mut self) {
         let Some(r) = self.recording.as_mut() else {
             return;
         };
-        let first = !std::mem::replace(&mut r.stopping, true);
+        if r.stopping {
+            if let Some(pid) = r.pid {
+                log::info!("{PROGRAM} (pid {pid}) stopped while finishing; killing it");
+                self.kill_recorder();
+            }
+            return;
+        }
+        r.stopping = true;
         if let Some(fd) = &r.pidfd
             && let Err(e) = signal(fd, libc::SIGINT)
         {
             log::debug!("stopping {PROGRAM}: {e}");
         }
-        let Some(pid) = r.pid.filter(|_| first) else {
+        let Some(pid) = r.pid else {
             return;
         };
+        r.work = work(pid);
+        let written = r.work.map_or(0, |w| w.written);
+        r.finish_by = Some(Instant::now() + finish_cap(written));
         let timer = Timer::from_duration(STOP_GRACE);
-        let armed = self.handle.insert_source(timer, move |_, _, state| {
-            state.stop_overdue(pid);
-            TimeoutAction::Drop
-        });
+        let armed =
+            self.handle
+                .insert_source(timer, move |_, _, state| match state.stop_overdue(pid) {
+                    true => TimeoutAction::ToDuration(STOP_GRACE),
+                    false => TimeoutAction::Drop,
+                });
         if let Err(e) = armed {
             log::warn!("stopping {PROGRAM}: no timer: {}", e.error);
         }
+        self.recording_changed();
     }
 
-    /// The recorder `pid` was asked to stop [`STOP_GRACE`] ago: kill it when it still runs, and
-    /// let a new recording start.
-    fn stop_overdue(&mut self, pid: u32) {
-        let Some(r) = self.recording.take_if(|r| r.pid == Some(pid)) else {
+    /// The recorder `pid` was asked to stop and [`STOP_GRACE`] passed: true while it is waited
+    /// for, else it is killed when it still runs and a new recording may start.
+    fn stop_overdue(&mut self, pid: u32) -> bool {
+        let Some(r) = (self.recording.as_mut()).filter(|r| r.stopping && r.pid == Some(pid)) else {
+            return false;
+        };
+        let now = work(pid);
+        let late = r.finish_by.is_some_and(|t| Instant::now() >= t);
+        if !late && still_finishing(r.work, now) {
+            log::info!("{PROGRAM} (pid {pid}) is still finishing the recording");
+            r.work = now;
+            return true;
+        }
+        match late {
+            true => log::warn!("{PROGRAM} (pid {pid}) took too long to finish; killing it"),
+            false => log::warn!("{PROGRAM} (pid {pid}) did not stop; killing it"),
+        }
+        self.kill_recorder();
+        false
+    }
+
+    /// Kill the stopped recorder and forget it, so a new recording may start; its file is kept.
+    fn kill_recorder(&mut self) {
+        let Some(r) = self.recording.take() else {
             return;
         };
-        log::warn!("{PROGRAM} (pid {pid}) did not stop; killing it");
+        r.killed.store(true, Ordering::SeqCst);
         if let Some(fd) = &r.pidfd
             && let Err(e) = signal(fd, libc::SIGKILL)
         {
@@ -237,15 +299,17 @@ impl State {
         let pidfd = pidfd_open(child.id())
             .inspect_err(|e| log::warn!("no pidfd for {PROGRAM}: {e}"))
             .ok();
+        let killed = Arc::new(AtomicBool::new(false));
         if let Some(r) = self.recording.as_mut() {
             r.pid = Some(child.id());
             r.pidfd = pidfd;
             r.started = Instant::now();
+            r.killed = killed.clone();
         }
         self.recording_changed();
         let pid = child.id();
         self.spawn_job(move || {
-            let ended = wait(child, made);
+            let ended = wait(child, made, &killed);
             Box::new(move |state: &mut State| state.recording_ended(Some(pid), ended))
         });
     }
@@ -258,7 +322,16 @@ impl State {
             self.recording_changed();
         }
         match ended {
-            Ended::Exited { made, ok: true, .. } => saved_notice(self, &made.path),
+            Ended::Exited { made, ok: true, .. } => saved_notice(self, SAVED, &made.path, None),
+            Ended::Exited {
+                made,
+                status: None,
+                killed: true,
+                ..
+            } => {
+                log::warn!("screen recording killed while finishing; its file is kept");
+                saved_notice(self, NOT_FINISHED, &made.path, Some(MAY_NOT_PLAY));
+            }
             Ended::Exited {
                 made,
                 status,
@@ -294,7 +367,7 @@ impl State {
 pub fn border_target(
     state: &State,
 ) -> Option<crate::captureborder::Captured<Output, crate::window::WindowId>> {
-    let r = state.recording.as_ref().filter(|r| r.pid.is_some())?;
+    let r = (state.recording.as_ref()).filter(|r| r.pid.is_some() && !r.stopping)?;
     let a = r.target.area?;
     let area = smithay::utils::Rectangle::new((a.x, a.y).into(), (a.width, a.height).into());
     Some(crate::captureborder::Captured::Region(
@@ -303,8 +376,20 @@ pub fn border_target(
     ))
 }
 
+/// Whether a stopped recorder is finishing its file.
+pub fn finishing(state: &State) -> bool {
+    (state.recording.as_ref()).is_some_and(|r| r.stopping && r.pid.is_some())
+}
+
 /// The tray cell's tooltip, also its name for a screen reader.
-pub fn tip(elapsed: Duration) -> String {
+pub fn tip(r: &Recording) -> String {
+    match r.stopping {
+        true => "Finishing the recording...\nClick to stop it now; the file may not play.".into(),
+        false => running_tip(r.elapsed()),
+    }
+}
+
+fn running_tip(elapsed: Duration) -> String {
     let s = elapsed.as_secs();
     let time = match s / 3600 {
         0 => format!("{}:{:02}", s / 60, s % 60),
@@ -358,6 +443,57 @@ fn pidfd_open(pid: u32) -> std::io::Result<OwnedFd> {
     Ok(unsafe { OwnedFd::from_raw_fd(fd as RawFd) })
 }
 
+/// What `/proc` shows of a recorder at a look.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Work {
+    /// CPU time in ticks.
+    cpu: u64,
+    /// Bytes read from storage.
+    read: u64,
+    /// Bytes written towards storage.
+    written: u64,
+    /// In uninterruptible sleep (state D), as on a network folder whose server is gone.
+    blocked: bool,
+}
+
+/// Process `pid`'s [`Work`]; None once it is gone. Without `/proc/PID/io` (another user's
+/// process) the bytes read 0.
+fn work(pid: u32) -> Option<Work> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    // State, utime and stime, fields 3, 14 and 15, after the name in parentheses, which may hold
+    // spaces.
+    let fields: Vec<&str> = stat.rsplit_once(')')?.1.split_whitespace().collect();
+    let tick = |i: usize| fields.get(i)?.parse::<u64>().ok();
+    let io = std::fs::read_to_string(format!("/proc/{pid}/io")).unwrap_or_default();
+    let bytes = |key: &str| {
+        (io.lines())
+            .find_map(|l| l.strip_prefix(key)?.trim().parse::<u64>().ok())
+            .unwrap_or(0)
+    };
+    Some(Work {
+        cpu: tick(11)? + tick(12)?,
+        read: bytes("read_bytes:"),
+        written: bytes("write_bytes:"),
+        blocked: fields.first() == Some(&"D"),
+    })
+}
+
+/// Whether a stopped recorder seen as `now` (None: gone), and as `before` a look earlier, is
+/// finishing its file: it used the CPU or its storage since, or waits on its storage.
+fn still_finishing(before: Option<Work>, now: Option<Work>) -> bool {
+    let Some(now) = now else {
+        return false;
+    };
+    let moved = |b: Work| (b.cpu, b.read, b.written) != (now.cpu, now.read, now.written);
+    now.blocked || before.is_none_or(moved)
+}
+
+/// The longest a recorder that has written `written` bytes is waited for after a stop: 2 min,
+/// and 1 min more for each GiB.
+fn finish_cap(written: u64) -> Duration {
+    Duration::from_secs(120 + 60 * (written >> 30))
+}
+
 /// Signal `sig` to the process `pidfd` holds; `ESRCH` once it was reaped.
 fn signal(pidfd: &OwnedFd, sig: libc::c_int) -> std::io::Result<()> {
     // SAFETY: a null siginfo is allowed and sends the signal as kill(2) would.
@@ -378,7 +514,7 @@ fn signal(pidfd: &OwnedFd, sig: libc::c_int) -> std::io::Result<()> {
 
 /// Forward the recorder's stderr to the log until it exits, keeping its last line: its reason
 /// when it fails. Blocking.
-fn wait(mut child: std::process::Child, made: Made) -> Ended {
+fn wait(mut child: std::process::Child, made: Made, killed: &AtomicBool) -> Ended {
     let mut last_line = String::new();
     if let Some(err) = child.stderr.take() {
         for line in std::io::BufReader::new(err).lines().map_while(Result::ok) {
@@ -395,6 +531,7 @@ fn wait(mut child: std::process::Child, made: Made) -> Ended {
             ok: s.success(),
             status: s.code(),
             last_line,
+            killed: killed.load(Ordering::SeqCst),
         },
         Err(e) => Ended::NotStarted(format!("Waiting for {PROGRAM} failed: {e}.")),
     }
@@ -408,9 +545,14 @@ fn remove_later(state: &mut State, made: Made) {
     });
 }
 
-fn saved_notice(state: &mut State, path: &Path) {
+/// The notice for a recording kept at `path`, under `summary`, with a `note` below its name.
+fn saved_notice(state: &mut State, summary: &str, path: &Path, note: Option<&str>) {
     log::info!("screen recording saved to {}", path.display());
     let name = path.file_name().unwrap_or_default().to_string_lossy();
+    let body = match note {
+        Some(note) => format!("{name}\n{note}"),
+        None => name.into_owned(),
+    };
     let open = OwnAction::Open(path.to_path_buf());
     let folder = OwnAction::Run(reprisefs::apps::open_location_argv(path));
     let actions = vec![
@@ -422,7 +564,7 @@ fn saved_notice(state: &mut State, path: &Path) {
         ("open".to_string(), "Open".to_string(), open),
         ("folder".to_string(), "Show in Folder".to_string(), folder),
     ];
-    crate::notifyview::notice_with_actions(state, "Screen recording saved", &name, actions);
+    crate::notifyview::notice_with_actions(state, summary, &body, actions);
 }
 
 /// Make a new empty file named for `secs` in the Screencasts folder, made if missing, for the
@@ -480,6 +622,22 @@ mod tests {
         assert_eq!(e.raw_os_error(), Some(libc::ESRCH));
     }
 
+    /// Waits until process `pid` ignores SIGINT.
+    fn ignoring_int(pid: u32) {
+        let ignores = || {
+            let status = std::fs::read_to_string(format!("/proc/{pid}/status")).unwrap();
+            let mask = status
+                .lines()
+                .find_map(|l| l.strip_prefix("SigIgn:"))
+                .unwrap();
+            u64::from_str_radix(mask.trim(), 16).unwrap() & (1 << (libc::SIGINT - 1)) != 0
+        };
+        let until = Instant::now() + Duration::from_secs(5);
+        while !ignores() && Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
     #[test]
     fn a_recorder_deaf_to_stop_is_killed_and_forgotten_after_the_grace() {
         use std::os::unix::process::ExitStatusExt;
@@ -493,24 +651,133 @@ mod tests {
         let mut r = Recording::running(Target { output, area: None });
         r.pid = Some(pid);
         r.pidfd = Some(pidfd_open(pid).unwrap());
+        let killed = r.killed.clone();
         h.state.recording = Some(r);
-        let ignores_int = || {
-            let status = std::fs::read_to_string(format!("/proc/{pid}/status")).unwrap();
-            let mask = status
-                .lines()
-                .find_map(|l| l.strip_prefix("SigIgn:"))
-                .unwrap();
-            u64::from_str_radix(mask.trim(), 16).unwrap() & (1 << (libc::SIGINT - 1)) != 0
-        };
-        let until = Instant::now() + Duration::from_secs(5);
-        while !ignores_int() && Instant::now() < until {
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        ignoring_int(pid);
+        // Past starting `sleep`, so the shell uses no CPU from here on.
+        std::thread::sleep(Duration::from_millis(100));
         h.state.stop_recording();
         assert!(h.state.recording.is_some(), "it has time to finish");
         h.state.stop_overdue(pid);
         assert!(h.state.recording.is_none(), "forgotten");
+        assert!(killed.load(Ordering::SeqCst), "its file is kept");
         assert_eq!(deaf.wait().unwrap().signal(), Some(libc::SIGKILL));
+    }
+
+    /// A recorder spinning on the CPU and deaf to SIGINT, as recording `h`'s first output.
+    fn busy_recorder(h: &mut crate::harness::Harness) -> std::process::Child {
+        let output = h.output("TEST-1", 1024, 768);
+        let busy = std::process::Command::new("sh")
+            .args(["-c", "trap '' INT; while :; do :; done"])
+            .spawn()
+            .unwrap();
+        let pid = busy.id();
+        ignoring_int(pid);
+        let mut r = Recording::running(Target { output, area: None });
+        r.pid = Some(pid);
+        r.pidfd = Some(pidfd_open(pid).unwrap());
+        h.state.recording = Some(r);
+        busy
+    }
+
+    #[test]
+    fn a_stopped_recorder_still_working_is_waited_for_until_its_cap() {
+        use std::os::unix::process::ExitStatusExt;
+        let mut h = crate::harness::Harness::new();
+        let mut busy = busy_recorder(&mut h);
+        let pid = busy.id();
+        h.state.stop_recording();
+        let r = h.state.recording.as_ref().unwrap();
+        let cap = r.finish_by.unwrap() - Instant::now();
+        assert!(cap > Duration::from_secs(119), "{cap:?}");
+        let before = work(pid);
+        let until = Instant::now() + Duration::from_secs(5);
+        while work(pid) == before && Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(h.state.stop_overdue(pid), "it used the CPU since the stop");
+        assert!(h.state.recording.is_some());
+        h.state.recording.as_mut().unwrap().finish_by = Some(Instant::now());
+        assert!(!h.state.stop_overdue(pid), "past its cap");
+        assert!(h.state.recording.is_none());
+        assert_eq!(busy.wait().unwrap().signal(), Some(libc::SIGKILL));
+    }
+
+    #[test]
+    fn a_second_stop_kills_a_finishing_recorder_and_keeps_its_file() {
+        use std::os::unix::process::ExitStatusExt;
+        let mut h = crate::harness::Harness::new();
+        let mut busy = busy_recorder(&mut h);
+        let killed = h.state.recording.as_ref().unwrap().killed.clone();
+        h.state.stop_recording();
+        assert!(finishing(&h.state));
+        h.state.stop_recording();
+        assert!(h.state.recording.is_none(), "forgotten");
+        assert!(killed.load(Ordering::SeqCst));
+        assert_eq!(busy.wait().unwrap().signal(), Some(libc::SIGKILL));
+    }
+
+    #[test]
+    fn a_recorder_blocked_on_its_storage_is_waited_for_and_an_idle_one_is_not() {
+        let idle = Work {
+            cpu: 7,
+            read: 0,
+            written: 1 << 20,
+            blocked: false,
+        };
+        let blocked = Work {
+            blocked: true,
+            ..idle
+        };
+        let writing = Work {
+            written: 2 << 20,
+            ..idle
+        };
+        assert!(!still_finishing(Some(idle), Some(idle)));
+        assert!(still_finishing(Some(idle), Some(blocked)), "state D");
+        assert!(still_finishing(Some(idle), Some(writing)));
+        assert!(!still_finishing(Some(idle), None), "gone");
+        assert_eq!(finish_cap(0), Duration::from_secs(120));
+        assert_eq!(finish_cap(3 << 30), Duration::from_secs(300), "1 min a GiB");
+    }
+
+    #[test]
+    fn a_recorder_killed_while_finishing_keeps_its_file_and_says_so() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let dir = std::env::temp_dir().join(format!("reprise-record-cut-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("Screencast.mp4");
+        let file = std::fs::File::create(&path).unwrap();
+        let ended = Ended::Exited {
+            made: Made::of(&file, path.clone()).unwrap(),
+            ok: false,
+            status: None,
+            last_line: String::new(),
+            killed: true,
+        };
+        h.state.recording_ended(None, ended);
+        assert!(path.exists(), "kept");
+        let n = &h.state.notify.log.get(crate::notifyview::OWN_ID).unwrap().n;
+        assert_eq!(n.summary, "Screen recording not finished");
+        assert_eq!(
+            n.body,
+            "Screencast.mp4\nIt was stopped while it closed the file and may not play."
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_border_leaves_an_area_whose_recording_is_finishing() {
+        let mut h = crate::harness::Harness::new();
+        let output = h.output("TEST-1", 1024, 768);
+        h.state.recording = Some(Recording::running(Target {
+            output,
+            area: Some(Rect::new(10, 10, 200, 100)),
+        }));
+        assert!(border_target(&h.state).is_some());
+        h.state.recording.as_mut().unwrap().stopping = true;
+        assert!(border_target(&h.state).is_none());
     }
 
     #[test]
@@ -590,11 +857,20 @@ mod tests {
     }
 
     #[test]
-    fn the_tip_reads_the_elapsed_time() {
+    fn the_tip_reads_the_elapsed_time_and_finishing_once_stopped() {
         assert_eq!(
-            tip(Duration::from_secs(42)),
+            running_tip(Duration::from_secs(42)),
             "Recording the screen, 0:42\nClick to stop recording."
         );
-        assert!(tip(Duration::from_secs(3725)).starts_with("Recording the screen, 1:02:05\n"));
+        let long = running_tip(Duration::from_secs(3725));
+        assert!(long.starts_with("Recording the screen, 1:02:05\n"));
+        let mut h = crate::harness::Harness::new();
+        let output = h.output("TEST-1", 1024, 768);
+        let mut r = Recording::running(Target { output, area: None });
+        r.stopping = true;
+        assert_eq!(
+            tip(&r),
+            "Finishing the recording...\nClick to stop it now; the file may not play."
+        );
     }
 }

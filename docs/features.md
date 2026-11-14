@@ -463,7 +463,9 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   Record mode, where a dragged area, a clicked window's frame or a clicked
   screen is recorded instead; the `record-region` bind opens the picker in
   that mode. While it records, a stop button in the tray says how long it has
-  run and stops it on a click, and the capture border outlines the recorded
+  run and stops it on a click (then "Finishing the recording..." until the
+  file is closed; a click then stops it at once, keeping a file that may not
+  play), and the capture border outlines the recorded
   area. Recordings are MP4 files in Videos/Screencasts, in H.264, H.265 or
   AV1 with AAC, Opus or FLAC sound, at a constant quality, an average or a
   constant bitrate, with a frame rate cap and keyframe interval
