@@ -1008,7 +1008,14 @@ page all open it. Reading GNOME's settings needs the `dconf` command.
   the codecs, rate control, frame rate and keyframe interval from
   `[recording]` as it starts ([configuration.md](configuration.md#recording)).
   The compositor starts it for a recording and stops it with SIGINT; it has
-  no window. It reads the screen through the portal's ScreenCast, which asks
+  no window. After a stop the compositor waits while the recorder finishes
+  the file and kills it once it has used no CPU and read or written nothing
+  to its storage for 5 s without waiting on it (a network folder whose server
+  is away), after 2 min and 1 min more for each GiB written, or at a second
+  stop. A recorder killed so keeps its file, which may not play. Log Off,
+  Turn Off and Restart wait for it. A file under 256 MiB gets its index moved to the front as
+  it closes, so it starts playing before it is all read; a larger one keeps
+  it at the end, which spares rewriting the whole file. It reads the screen through the portal's ScreenCast, which asks
   nothing for a recording the compositor started
   ([security.md](security.md#sandboxed-programs)), and codes the whole
   screen on the first encoder of the codec that works, the one `encoder`

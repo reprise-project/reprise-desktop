@@ -156,7 +156,7 @@ fn record(args: &Args, stop: libc::sigset_t) -> Result<(), String> {
             let _ = video_tx.send(Event::Ended);
         })
         .map_err(|e| e.to_string())?;
-    let _sound = match args.sound {
+    let hearing = match args.sound {
         true => Some(capture_sound(tx)?),
         false => None,
     };
@@ -172,8 +172,9 @@ fn record(args: &Args, stop: libc::sigset_t) -> Result<(), String> {
         file.forced = forced;
     }
     let ended = file.run(&events);
+    // From here on the recorder only finishes the file: the compositor waits while it works.
+    drop((hearing, stream, cast));
     let finished = file.finish();
-    drop(cast);
     match (file.started(), ended.and(finished)) {
         (false, _) => Err("No picture of the screen came.".into()),
         (true, Err(e)) if !file.started_writing() => Err(e),
@@ -357,6 +358,8 @@ struct File<'a> {
     output: Option<ffmpeg::format::context::Output>,
     /// When the first frame came: the movie's time 0.
     start: Option<Instant>,
+    /// Files this size and up keep their index at the end, see [`FASTSTART_BELOW`].
+    faststart_below: u64,
 }
 
 /// A part of a frame: its size and top-left, in frame pixels.
@@ -366,6 +369,9 @@ const VIDEO: usize = 0;
 const AUDIO: usize = 1;
 /// The MP4 sample entry of H.265 with its parameter sets in the header.
 const HVC1: u32 = u32::from_le_bytes(*b"hvc1");
+/// The size under which the file's index moves to its front as it closes, so it starts playing
+/// before it is all read. The move rewrites the whole file in place.
+const FASTSTART_BELOW: u64 = 256 << 20;
 
 impl<'a> File<'a> {
     fn new(
@@ -392,6 +398,7 @@ impl<'a> File<'a> {
             movie: None,
             output: None,
             start: None,
+            faststart_below: FASTSTART_BELOW,
         }
     }
 
@@ -655,6 +662,7 @@ impl<'a> File<'a> {
             audio.set_time_base((1, sound::RATE as i32));
         }
         let mut options = ffmpeg::Dictionary::new();
+        // Set from the header on, so the muxer marks where the index goes; `finish` may unset it.
         options.set("movflags", "+faststart");
         output.write_header_with(options).map_err(failed)?;
         self.output = Some(output);
@@ -708,9 +716,31 @@ impl<'a> File<'a> {
         }
         drained = drained.and(self.write(audio, AUDIO));
         if let Some(output) = self.output.as_mut() {
-            (output.write_trailer()).map_err(|e| format!("Cannot finish the recording: {e}"))?;
+            let failed = |e: ffmpeg::Error| format!("Cannot finish the recording: {e}");
+            let written = std::fs::metadata(self.path).map_or(u64::MAX, |m| m.len());
+            if written >= self.faststart_below {
+                index_at_end(output).map_err(failed)?;
+            }
+            output.write_trailer().map_err(failed)?;
         }
         drained
+    }
+}
+
+/// Leave `output`'s index after its pictures, where the muxer writes it without moving them.
+fn index_at_end(output: &mut ffmpeg::format::context::Output) -> Result<(), ffmpeg::Error> {
+    // SAFETY: the open MP4 muxer's own options, of which `movflags` is one.
+    let set = unsafe {
+        ffmpeg::ffi::av_opt_set(
+            (*output.as_mut_ptr()).priv_data,
+            c"movflags".as_ptr(),
+            c"-faststart".as_ptr(),
+            0,
+        )
+    };
+    match set {
+        0.. => Ok(()),
+        e => Err(ffmpeg::Error::from(e)),
     }
 }
 
@@ -846,6 +876,29 @@ mod tests {
             .filter(|(s, _)| s.index() == VIDEO)
             .map(|(_, p)| p.pts().unwrap() * 1000 * i64::from(tb.0) / i64::from(tb.1))
             .collect()
+    }
+
+    /// The types of the file's top-level MP4 boxes in order.
+    fn boxes(path: &Path) -> Vec<String> {
+        let bytes = std::fs::read(path).unwrap();
+        let mut at = 0;
+        let mut found = Vec::new();
+        while at + 8 <= bytes.len() {
+            let size = u32::from_be_bytes(bytes[at..at + 4].try_into().unwrap()) as usize;
+            let size = match size {
+                0 => bytes.len() - at,
+                1 => u64::from_be_bytes(bytes[at + 8..at + 16].try_into().unwrap()) as usize,
+                n => n,
+            };
+            found.push(String::from_utf8_lossy(&bytes[at + 4..at + 8]).into_owned());
+            at += size.max(8);
+        }
+        found
+    }
+
+    fn before(boxes: &[String], a: &str, b: &str) -> bool {
+        let at = |t: &str| boxes.iter().position(|x| x == t).unwrap();
+        at(a) < at(b)
     }
 
     #[test]
@@ -1088,6 +1141,33 @@ mod tests {
         assert_eq!(input.streams().count(), 1, "no sound asked for");
         let seconds = input.duration() as f64 / f64::from(ffmpeg::ffi::AV_TIME_BASE);
         assert!((0.8..1.5).contains(&seconds), "{seconds} s");
+        let boxes = boxes(&kept);
+        assert_eq!(boxes[0], "ftyp");
+        assert!(
+            before(&boxes, "moov", "mdat"),
+            "a small file's index first: {boxes:?}"
+        );
+    }
+
+    #[test]
+    fn a_large_file_keeps_its_index_at_the_end_and_plays() {
+        ffmpeg::init().unwrap();
+        ffmpeg::util::log::set_level(ffmpeg::util::log::Level::Quiet);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.mp4");
+        let node = PathBuf::from(probe::RENDER_NODE);
+        let mut file = File::new(&path, &node, software(), None, (64, 64), h264());
+        file.faststart_below = 0;
+        let t0 = Instant::now();
+        for (i, v) in [0x20u8, 0x80, 0xe0].into_iter().enumerate() {
+            file.frame(grey(v), t0 + Duration::from_millis(400 * i as u64))
+                .unwrap();
+        }
+        file.finish().unwrap();
+        let boxes = boxes(&path);
+        assert_eq!(boxes[0], "ftyp");
+        assert!(before(&boxes, "mdat", "moov"), "{boxes:?}");
+        assert_eq!(video_ms(&path), [0, 400, 800, 801]);
     }
 
     #[test]

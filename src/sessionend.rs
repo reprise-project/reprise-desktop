@@ -209,7 +209,8 @@ pub fn tick(state: &mut State) {
     };
     let programs = programs(state);
     let holders = e.holders.as_ref().map(|h| holding(h, e.goal));
-    if programs.is_empty() && holders.as_ref().is_some_and(Vec::is_empty) {
+    let recording = crate::screenrecord::finishing(state);
+    if programs.is_empty() && !recording && holders.as_ref().is_some_and(Vec::is_empty) {
         log::info!("session end: every program closed");
         finish(state, false);
         return;
@@ -889,6 +890,12 @@ fn sync_prompt(state: &mut State) {
         rows: rows(&programs, &holders, name_of),
         icon: None,
     };
+    if crate::screenrecord::finishing(state) {
+        fields.rows.push(Row {
+            name: "Screen recording".into(),
+            reason: "Finishing the screen recording".into(),
+        });
+    }
     match prompt_index(state) {
         Some(i) if state.dialogs.views[i].dialog.title == fields.title() => {
             let changed = state.dialogs.views[i]
@@ -1246,6 +1253,36 @@ mod tests {
                 ("packagekit", "Installing updates"),
             ]
         );
+    }
+
+    #[test]
+    fn a_finishing_screen_recording_holds_the_end_and_is_listed() {
+        use crate::screenrecord::{Recording, Target};
+        let mut h = crate::harness::Harness::new();
+        let output = h.output("TEST-1", 1024, 768);
+        h.state.recording = Some(Recording::stopped(Target { output, area: None }));
+        h.state.ending = Some(Ending {
+            goal: Goal::LogOff,
+            cmd: None,
+            holders: Some(Vec::new()),
+            stop: None,
+            asked_portal: false,
+            timer: None,
+            reports: None,
+            mode: Mode::Prompted,
+        });
+        tick(&mut h.state);
+        assert!(h.state.ending.is_some(), "held");
+        let i = prompt_index(&h.state).expect("the prompt");
+        let form = h.state.dialogs.views[i].dialog.end_session_form().unwrap();
+        let row = Row {
+            name: "Screen recording".into(),
+            reason: "Finishing the screen recording".into(),
+        };
+        assert!(!endsession::set_rows(form, &[row]), "its one row");
+        h.state.recording = None;
+        tick(&mut h.state);
+        assert!(h.state.ending.is_none(), "it ends once the file is closed");
     }
 
     #[test]
