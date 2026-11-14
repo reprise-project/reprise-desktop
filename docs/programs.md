@@ -788,18 +788,20 @@ package with what it depends on and the `base` group; dpkg's `Essential:
 yes` and `Priority: required`) is refused: the sheet names the package and
 why, and offers only Close. Nothing changes until you click Install or
 Uninstall; Enter presses Cancel. Packages go through PackageKit, Flatpaks
-through `flatpak`, and polkit asks for an administrator's password where
-the system's rules want one. PackageKit's pacman backend takes no zstd
-packages, so a `.pkg.tar.zst` installs through `pkexec pacman -U` (with
-pacman's dry run listing what comes along). The sheet reads and installs a private copy of
-the file. A packager reads "(unverified)" unless a `.sig` lies beside a pacman package. A
-`.flatpakref` or bundle installs for every user, and a `.flatpakref`'s repository (and the
-runtime's, named in the note when it differs) stays added. An uninstalled Flatpak keeps its settings and files in your home
-folder. A launcher or web app an app installed through the portal shows the
-Flatpak that installed it, and Uninstall deletes just the launcher and its
-icon. Cancel stops a run where PackageKit or Flatpak can stop it, a
-dismissed password prompt returns to the question, and the task button
-shows the progress.
+through `flatpak`, and polkit asks for an administrator's password where the
+system's rules want one. PackageKit's pacman backend takes no zstd packages,
+so a `.pkg.tar.zst` installs through `pkexec pacman -U` (with pacman's dry
+run listing what comes along), its bar filled from pacman's own: downloads,
+then pacman's checks, then each package installed. The sheet reads and
+installs a private copy of the file. A packager reads "(unverified)" unless
+a `.sig` lies beside a pacman package. A `.flatpakref` or bundle installs
+for every user, and a `.flatpakref`'s repository (and the runtime's, named
+in the note when it differs) stays added. An uninstalled Flatpak keeps its
+settings and files in your home folder. A launcher or web app an app
+installed through the portal shows the Flatpak that installed it, and
+Uninstall deletes just the launcher and its icon. Cancel stops a run where
+PackageKit or Flatpak can stop it, a dismissed password prompt returns to
+the question, and the task button shows the progress.
 
 ## Disk Usage
 

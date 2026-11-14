@@ -1,0 +1,27 @@
+]3008;start=1;type=session\[?25lloading packages...
+resolving dependencies...
+looking for conflicting packages...
+
+Package (1)        New Version  Net Change
+
+reprise-g5-sample  1.0-1         76.29 MiB
+
+Total Installed Size:  76.29 MiB
+
+:: Proceed with installation? [Y/n] 
+(0/1) checking keys in keyring                     [----------------------]   0%(1/1) checking keys in keyring                     [######################] 100%
+(0/1) checking package integrity                   [----------------------]   0%(1/1) checking package integrity                   [######################] 100%
+(0/1) loading package files                        [----------------------]   0%(1/1) loading package files                        [######################] 100%
+(0/1) checking for file conflicts                  [----------------------]   0%(1/1) checking for file conflicts                  [######################] 100%
+:: Running pre-transaction hooks...
+(1/2) Performing snapper pre snapshots for the following configurations...
+==> root: 597
+(2/2) Waiting for limine-snapper-sync to finish...
+:: Processing package changes...
+(1/1) installing reprise-g5-sample                 [----------------------]   0%(1/1) installing reprise-g5-sample                 [----------------------]   0%(1/1) installing reprise-g5-sample                 [----------------------]   0%(1/1) installing reprise-g5-sample                 [----------------------]   0%(1/1) installing reprise-g5-sample                 [----------------------]   0%(1/1) installing reprise-g5-sample                 [----------------------]   0%(1/1) installing reprise-g5-sample                 [----------------------]   0%(1/1) installing reprise-g5-sample                 [----------------------]   0%(1/1) installing reprise-g5-sample                 [######################] 100%
+:: Running post-transaction hooks...
+(1/3) Arming ConditionNeedsUpdate...
+(2/3) Refreshing PackageKit...
+(3/3) Performing snapper post snapshots for the following configurations...
+==> root: 598
+[?25h]3008;end=1\

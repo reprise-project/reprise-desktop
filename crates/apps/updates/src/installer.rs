@@ -528,7 +528,7 @@ fn run(
     };
     let done = match (plan, conn) {
         (Plan::Nothing, _) => Err(Failure::Text("There is nothing to do.".into())),
-        (Plan::Pacman(path), _) => pkgfile::pacman_install(path, &mut |s| report(None, Some(s)))
+        (Plan::Pacman(path), _) => pkgfile::pacman_install(path, &mut |f, s| report(Some(f), s))
             .map_err(|e| match e {
                 pkgfile::PacmanError::Dismissed => Failure::Dismissed,
                 pkgfile::PacmanError::Failed(t) => Failure::Text(t),
