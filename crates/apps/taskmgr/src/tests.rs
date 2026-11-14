@@ -940,3 +940,61 @@ fn shift_f10_opens_the_graph_menu_and_f10_still_opens_the_menu_bar() {
     t.event(MAIN, key(keysym::MENU), &mut ctx);
     assert!(t.popup.is_none(), "only on the Performance page");
 }
+
+#[test]
+fn a_thumb_held_across_a_page_switch_lets_go_at_the_release() {
+    use reprisekit::classic::widgets::scrollbar_parts;
+    let mut ctx = ctx();
+    let mut t = mgr();
+    let mut s = snapshot();
+    s.procs
+        .extend((100..160).map(|pid| proc(pid, "worker", UID, 0.0, 1_024)));
+    t.take(s, &mut ctx);
+    t.event(MAIN, Event::Resized, &mut ctx);
+    open(&mut t, &mut ctx, Page::Processes);
+    let r = pages::layout(&t, &ctx).list.unwrap();
+    let lay = t.procs.layout(r, &ctx);
+    let sb = lay.scrollbar.expect("the processes overflow the list");
+    let p = scrollbar_parts(
+        sb,
+        1,
+        0,
+        lay.rows,
+        t.procs.view.slots(),
+        false,
+        lay.thumb_min,
+    );
+    let thumb = p.thumb.expect("a thumb");
+    let (x, y) = (thumb.x + 2, thumb.y + 3);
+    let ctrl_tab = |shift| {
+        Event::Key(KeyInput {
+            sym: keysym::TAB,
+            utf8: None,
+            mods: Mods {
+                ctrl: true,
+                shift,
+                alt: false,
+            },
+            edit: None,
+        })
+    };
+    let press = PointerInput::Press {
+        x,
+        y,
+        button: BTN_LEFT,
+        time: 0,
+        mods: Mods::default(),
+    };
+    t.event(MAIN, Event::Pointer(press), &mut ctx);
+    t.event(MAIN, ctrl_tab(false), &mut ctx);
+    assert_ne!(t.page(), Page::Processes);
+    click_release(&mut t, &mut ctx, (x, y));
+    t.event(MAIN, ctrl_tab(true), &mut ctx);
+    assert_eq!(t.page(), Page::Processes);
+    let motion = PointerInput::Motion { x, y: sb.bottom() };
+    t.event(MAIN, Event::Pointer(motion), &mut ctx);
+    assert_eq!(
+        t.procs.view.top, 0,
+        "a motion with no button down drags nothing"
+    );
+}

@@ -297,7 +297,18 @@ impl SettingsApp {
     }
 
     pub(crate) fn list_release(&mut self, x: i32, y: i32, cm: &ControlMetrics) -> Option<Reply> {
-        self.list_pointer(listview::Input::Release(x, y), cm)
+        let r = self.list_pointer(listview::Input::Release(x, y), cm);
+        // A page switched from mid-press leaves its list holding the thumb or a box.
+        for list in [
+            &mut self.list,
+            &mut self.shortcuts,
+            &mut self.types,
+            &mut self.permissions,
+        ] {
+            list.thumb.release();
+            list.held_check.clear();
+        }
+        r
     }
 
     /// The wheel over the side list where it shows.

@@ -315,3 +315,42 @@ fn the_shortcut_list_thumb_drags_to_the_end_and_the_track_pages_back() {
     );
     assert_eq!(top(&mut a), end - lay.rows - 1, "the wheel scrolls a row");
 }
+
+#[test]
+fn a_thumb_held_across_a_page_switch_lets_go_at_the_release() {
+    let mut a = app("side-list-thumb-switch");
+    let mut ctx = test_ctx();
+    ctx.size = (1000, 640);
+    a.open_page(Page::Keyboard, None);
+    send(&mut a, &mut ctx, PointerInput::Motion { x: 0, y: 0 });
+    let cm = ctx.forms().controls();
+    let (list, rect, _) = a.side_list().expect("the shortcut list");
+    let lay = listview::layout(list, rect, &cm);
+    let sb = lay.scrollbar.expect("the shortcuts overflow the list");
+    let p = scrollbar_parts(sb, 1, 0, lay.rows, list.slots(), false, lay.thumb_min);
+    let thumb = p.thumb.expect("a thumb");
+    let (x, y) = (thumb.x + 2, thumb.y + 3);
+    let (button, mods) = (BTN_LEFT, Mods::default());
+    send(
+        &mut a,
+        &mut ctx,
+        PointerInput::Press {
+            x,
+            y,
+            button,
+            time: 0,
+            mods,
+        },
+    );
+    ctrl_key(&mut a, &ctx, keysym::TAB, false);
+    assert_ne!(registry::open(&a.sheet), Page::Keyboard);
+    send(
+        &mut a,
+        &mut ctx,
+        PointerInput::Release { x, y, button, mods },
+    );
+
+    a.open_page(Page::Keyboard, None);
+    send(&mut a, &mut ctx, PointerInput::Motion { x, y: sb.bottom() });
+    assert_eq!(top(&mut a), 0, "a motion with no button down drags nothing");
+}
