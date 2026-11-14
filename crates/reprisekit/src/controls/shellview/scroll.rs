@@ -127,13 +127,10 @@ pub fn hscroll(sv: &mut ShellView, by: i32, lay: &Layout) -> bool {
     }
 }
 
-/// How far one arrow press scrolls Details sideways, in every look.
-const DETAILS_NUDGE: i32 = 16;
-
 pub fn hstep(sv: &mut ShellView, dir: i32, lay: &Layout) -> bool {
     let step = match sv.mode {
         Mode::List => list_cell(lay.controls.text).w,
-        _ => DETAILS_NUDGE,
+        _ => listview::NUDGE,
     };
     hscroll(sv, dir.signum() * step, lay)
 }
