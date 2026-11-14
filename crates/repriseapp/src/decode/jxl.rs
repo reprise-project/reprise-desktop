@@ -1,15 +1,22 @@
-//! A JPEG XL's first frame through libjxl, refused past a pixel budget or an allocation budget.
+//! A JPEG XL's first frame through libjxl, refused past a pixel budget, an allocation budget or
+//! a deadline.
 
 use std::alloc::Layout;
+use std::cell::Cell;
 use std::ffi::{c_int, c_void};
 use std::mem::MaybeUninit;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 
 use jpegxl_sys::common::memory_manager::JxlMemoryManager;
 use jpegxl_sys::common::types::{JxlBool, JxlDataType, JxlEndianness, JxlPixelFormat};
 use jpegxl_sys::decode as sys;
 use jpegxl_sys::decode::JxlDecoderStatus as Status;
 use jpegxl_sys::metadata::codestream_header::JxlBasicInfo;
+use jpegxl_sys::threads::parallel_runner::{
+    JXL_PARALLEL_RET_RUNNER_ERROR, JXL_PARALLEL_RET_SUCCESS, JxlParallelRetCode,
+    JxlParallelRunFunction, JxlParallelRunInit,
+};
 
 /// Why a JPEG XL gave no picture.
 #[derive(Debug, PartialEq, Eq)]
@@ -18,6 +25,8 @@ pub enum Refused {
     Size,
     /// libjxl asked for more than the allocation budget.
     Memory,
+    /// The decode ran past its time limit.
+    Time,
     /// Not a JPEG XL libjxl reads, or cut short.
     Broken,
 }
@@ -30,8 +39,18 @@ pub struct Rgba {
 }
 
 /// The first frame of `bytes` (an animation's first, composed), refused when the image states
-/// more than `pixel_bytes` of RGBA or libjxl holds more than `alloc_limit` at once.
-pub fn first_frame(bytes: &[u8], pixel_bytes: u64, alloc_limit: usize) -> Result<Rgba, Refused> {
+/// more than `pixel_bytes` of RGBA, libjxl holds more than `alloc_limit` at once, or the decode
+/// takes longer than `time_limit`.
+pub fn first_frame(
+    bytes: &[u8],
+    pixel_bytes: u64,
+    alloc_limit: usize,
+    time_limit: Duration,
+) -> Result<Rgba, Refused> {
+    let clock = Clock {
+        deadline: Instant::now() + time_limit,
+        late: Cell::new(false),
+    };
     let budget = Budget {
         used: AtomicUsize::new(0),
         limit: alloc_limit,
@@ -48,6 +67,8 @@ pub fn first_frame(bytes: &[u8], pixel_bytes: u64, alloc_limit: usize) -> Result
     let broken = || {
         Err(if budget.refused.load(Ordering::Relaxed) {
             Refused::Memory
+        } else if clock.late.get() {
+            Refused::Time
         } else {
             Refused::Broken
         })
@@ -63,9 +84,12 @@ pub fn first_frame(bytes: &[u8], pixel_bytes: u64, alloc_limit: usize) -> Result
     };
     let events = Status::BasicInfo as c_int | Status::FullImage as c_int;
     let mut size = None;
-    // SAFETY: `dec` is a live decoder; `bytes` outlives it and stays unchanged while it reads.
+    // SAFETY: `dec` is a live decoder; `bytes` and `clock` outlive it, `bytes` unchanged while
+    // it reads.
     unsafe {
-        if sys::JxlDecoderSubscribeEvents(dec.0, events) != Status::Success
+        if sys::JxlDecoderSetParallelRunner(dec.0, run, (&raw const clock).cast_mut().cast())
+            != Status::Success
+            || sys::JxlDecoderSubscribeEvents(dec.0, events) != Status::Success
             || sys::JxlDecoderSetUnpremultiplyAlpha(dec.0, JxlBool::True) != Status::Success
             || sys::JxlDecoderSetInput(dec.0, bytes.as_ptr(), bytes.len()) != Status::Success
         {
@@ -139,6 +163,42 @@ impl Drop for Decoder {
     }
 }
 
+/// When [`run`] stops starting libjxl's jobs; `late` is set once it has.
+struct Clock {
+    deadline: Instant,
+    late: Cell<bool>,
+}
+
+/// libjxl's runner: each job inline on the calling thread, none started past the deadline. libjxl
+/// decodes every group of every frame through it, so a file of many layers stops there too.
+unsafe extern "C-unwind" fn run(
+    opaque: *mut c_void,
+    jxl: *mut c_void,
+    init: JxlParallelRunInit,
+    func: JxlParallelRunFunction,
+    start: u32,
+    end: u32,
+) -> JxlParallelRetCode {
+    // SAFETY: `opaque` is the `Clock` `first_frame` keeps alive past the decoder.
+    let clock = unsafe { &*opaque.cast::<Clock>() };
+    // SAFETY: libjxl hands `init` and `func` the `jxl` it passed, on the one thread declared.
+    let ret = unsafe { init(jxl, 1) };
+    if ret != JXL_PARALLEL_RET_SUCCESS {
+        return ret;
+    }
+    let deadline = clock.deadline;
+    for value in start..end {
+        // Nothing may unwind into libjxl; a clock that fails counts as late.
+        if std::panic::catch_unwind(|| Instant::now() >= deadline).unwrap_or(true) {
+            clock.late.set(true);
+            return JXL_PARALLEL_RET_RUNNER_ERROR;
+        }
+        // SAFETY: as for `init`; thread id 0 is below the one thread.
+        unsafe { func(jxl, value, 0) };
+    }
+    JXL_PARALLEL_RET_SUCCESS
+}
+
 /// What libjxl holds through [`alloc`]; a request past `limit` gets null and sets `refused`.
 struct Budget {
     used: AtomicUsize,
@@ -203,13 +263,26 @@ pub(super) mod tests {
     use jpegxl_sys::encoder::encode::JxlEncoderStatus as EncStatus;
     use jpegxl_sys::metadata::codestream_header::JxlFrameHeader;
 
-    /// A lossless JPEG XL of `frames` (`w`x`h` RGBA each), an animation when there are more
-    /// than one; `premultiplied` stores the samples as already multiplied by alpha.
+    /// A lossless JPEG XL of `frames` (`w`x`h` RGBA each), an animation of 1-tick frames when
+    /// there are more than one; `premultiplied` stores the samples as already multiplied by alpha.
     pub(in crate::decode) fn encode(
         w: u32,
         h: u32,
         frames: &[&[u8]],
         premultiplied: bool,
+    ) -> Vec<u8> {
+        let timed: Vec<_> = frames.iter().map(|f| (*f, 1)).collect();
+        encode_with(w, h, &timed, premultiplied, &[])
+    }
+
+    /// [`encode`] with each frame's duration in ticks (0 for a layer composed into the next) and
+    /// encoder `options`.
+    pub(in crate::decode) fn encode_with(
+        w: u32,
+        h: u32,
+        frames: &[(&[u8], u32)],
+        premultiplied: bool,
+        options: &[(enc::JxlEncoderFrameSettingId, i64)],
     ) -> Vec<u8> {
         let ok = |s: EncStatus| assert_eq!(s, EncStatus::Success);
         let format = JxlPixelFormat {
@@ -245,12 +318,15 @@ pub(super) mod tests {
             ok(enc::JxlEncoderSetColorEncoding(e, srgb.as_ptr()));
             let settings = enc::JxlEncoderFrameSettingsCreate(e, std::ptr::null());
             ok(enc::JxlEncoderSetFrameLossless(settings, JxlBool::True));
-            for frame in frames {
+            for &(id, value) in options {
+                ok(enc::JxlEncoderFrameSettingsSetOption(settings, id, value));
+            }
+            for &(frame, duration) in frames {
                 if frames.len() > 1 {
                     let mut head = MaybeUninit::<JxlFrameHeader>::uninit();
                     enc::JxlEncoderInitFrameHeader(head.as_mut_ptr());
                     let mut head = head.assume_init();
-                    head.duration = 1;
+                    head.duration = duration;
                     ok(enc::JxlEncoderSetFrameHeader(settings, &head));
                 }
                 ok(enc::JxlEncoderAddImageFrame(
@@ -282,6 +358,29 @@ pub(super) mod tests {
 
     /// The JPEG XL test pictures' allocation budget, far past what any of them needs.
     const PLENTY: usize = 64 << 20;
+    /// Their time limit, far past what any of them takes.
+    const NO_HURRY: Duration = Duration::from_secs(60);
+
+    /// A `w`x`h` codestream of `layers` zero-duration grey layers over the whole canvas, then one
+    /// shown frame: a few bytes a layer, each composed over every pixel.
+    fn layered(w: u32, h: u32, layers: usize) -> Vec<u8> {
+        use enc::JxlEncoderFrameSettingId::{Effort, ModularGroupSize};
+        let grey = [90, 90, 90, 255].repeat((w * h) as usize);
+        let small = [(Effort, 2), (ModularGroupSize, 3)];
+        let one = encode_with(w, h, &[(&grey, 0), (&grey, 1)], false, &small);
+        let two = encode_with(w, h, &[(&grey, 0), (&grey, 0), (&grey, 1)], false, &small);
+        assert!(one.starts_with(&[0xff, 0x0a]), "a bare codestream");
+        let layer = two.len() - one.len();
+        let at = (0..=one.len())
+            .find(|&i| two[..i] == one[..i] && two[i + layer..] == one[i..])
+            .unwrap();
+        let mut out = one[..at].to_vec();
+        for _ in 0..layers - 1 {
+            out.extend(&two[at..at + layer]);
+        }
+        out.extend(&one[at..]);
+        out
+    }
 
     #[test]
     fn a_split_container_states_its_real_size_to_the_pixel_budget() {
@@ -294,10 +393,10 @@ pub(super) mod tests {
             file.extend(part);
         }
         assert_eq!(reprisefs::imagesize::dimensions(&file), Some((64, 64)));
-        let whole = first_frame(&file, 64 * 64 * 4, PLENTY).unwrap();
+        let whole = first_frame(&file, 64 * 64 * 4, PLENTY, NO_HURRY).unwrap();
         assert_eq!((whole.width, whole.height), (64, 64));
         assert_eq!(
-            first_frame(&file, 64 * 64 * 4 - 1, PLENTY).err(),
+            first_frame(&file, 64 * 64 * 4 - 1, PLENTY, NO_HURRY).err(),
             Some(Refused::Size),
             "refused once libjxl states the size, before any pixel buffer"
         );
@@ -310,9 +409,12 @@ pub(super) mod tests {
             .collect();
         let bytes = encode(256, 256, &[&noise], false);
         let pixels = 256 * 256 * 4;
-        assert_eq!(first_frame(&bytes, pixels, PLENTY).unwrap().px, noise);
         assert_eq!(
-            first_frame(&bytes, pixels, 4 * pixels as usize).err(),
+            first_frame(&bytes, pixels, PLENTY, NO_HURRY).unwrap().px,
+            noise
+        );
+        assert_eq!(
+            first_frame(&bytes, pixels, 4 * pixels as usize, NO_HURRY).err(),
             Some(Refused::Memory),
             "the header passes, the decode needs more"
         );
@@ -325,12 +427,37 @@ pub(super) mod tests {
             .map(|i| (i.wrapping_mul(2_654_435_761) >> 11) as u8 | 1)
             .collect();
         let bytes = encode(64, 64, &[&red, &noise], false);
-        assert_eq!(first_frame(&bytes, 1 << 20, PLENTY).unwrap().px, red);
+        assert_eq!(
+            first_frame(&bytes, 1 << 20, PLENTY, NO_HURRY).unwrap().px,
+            red
+        );
         let cut = &bytes[..bytes.len() / 2];
         assert_eq!(
-            first_frame(cut, 1 << 20, PLENTY).unwrap().px,
+            first_frame(cut, 1 << 20, PLENTY, NO_HURRY).unwrap().px,
             red,
             "the second frame is never read"
+        );
+    }
+
+    #[test]
+    fn a_file_of_many_full_canvas_layers_is_refused_at_its_deadline() {
+        let (px, alloc) = (1024 * 1024 * 4, crate::decode::JXL_ALLOC_LIMIT);
+        let few = layered(1024, 1024, 3);
+        assert_eq!(
+            first_frame(&few, px, alloc, NO_HURRY).unwrap().px[..4],
+            [90, 90, 90, 255]
+        );
+        let many = layered(1024, 1024, 20_000);
+        let limit = Duration::from_millis(300);
+        let start = Instant::now();
+        assert_eq!(
+            first_frame(&many, px, alloc, limit).err(),
+            Some(Refused::Time)
+        );
+        let took = start.elapsed();
+        assert!(
+            took < limit + Duration::from_secs(1),
+            "stops within a layer of the deadline, took {took:?}"
         );
     }
 }

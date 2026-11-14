@@ -130,11 +130,16 @@ impl ImageDecoder for ImageCrateDecoder {
 }
 
 /// JPEG XL's first frame through libjxl, refused when it states more than
-/// [`MAX_DECODED_BYTES`] of pixels or libjxl would hold more than [`JXL_ALLOC_LIMIT`].
+/// [`MAX_DECODED_BYTES`] of pixels, libjxl would hold more than [`JXL_ALLOC_LIMIT`], or the
+/// decode runs past [`JXL_TIME_LIMIT`].
 pub struct JxlDecoder;
 
 /// What libjxl may hold at once while decoding one picture.
 pub const JXL_ALLOC_LIMIT: usize = 4 * MAX_DECODED_BYTES as usize;
+
+/// How long one JPEG XL may decode: twice a slow core's time for a lossless picture at the pixel
+/// budget (effort 9), where a few bytes a layer can keep libjxl composing layers for hours.
+pub const JXL_TIME_LIMIT: std::time::Duration = std::time::Duration::from_secs(60);
 
 impl ImageDecoder for JxlDecoder {
     fn probe(&self, bytes: &[u8]) -> bool {
@@ -142,7 +147,7 @@ impl ImageDecoder for JxlDecoder {
     }
 
     fn decode(&self, bytes: &[u8], max: (u32, u32)) -> Option<Decoded> {
-        let p = jxl::first_frame(bytes, MAX_DECODED_BYTES, JXL_ALLOC_LIMIT).ok()?;
+        let p = jxl::first_frame(bytes, MAX_DECODED_BYTES, JXL_ALLOC_LIMIT, JXL_TIME_LIMIT).ok()?;
         let img = image::RgbaImage::from_raw(p.width, p.height, p.px)?;
         let (fw, fh) = reprisekit::raster::fit_size(p.width, p.height, max);
         Some(Decoded {
@@ -383,6 +388,21 @@ mod tests {
                 .is_none()
         );
         assert!(!JxlDecoder.probe(&encode_png(1, 1, &[0, 0, 0, 255])));
+    }
+
+    #[test]
+    fn a_large_jxl_decodes_within_the_time_limit() {
+        let (w, h) = (4000, 3000);
+        let px: Vec<u8> = (0..w * h * 4u32)
+            .map(|i| (i / 4 % w / 16 + (i.wrapping_mul(2_654_435_761) >> 29)) as u8)
+            .collect();
+        let effort = [(
+            jpegxl_sys::encoder::encode::JxlEncoderFrameSettingId::Effort,
+            2,
+        )];
+        let bytes = jxl::tests::encode_with(w, h, &[(&px, 1)], false, &effort);
+        let d = JxlDecoder.decode(&bytes, (96, 96)).unwrap();
+        assert_eq!((d.width, d.height), (w, h));
     }
 
     /// Premultiplied samples come out of libjxl unpremultiplied and are multiplied once.

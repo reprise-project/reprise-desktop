@@ -1722,7 +1722,9 @@ stop the share first.
   bubblewrap, or where it can't start (no user namespaces, no systemd user
   manager, a file it can't bind), no thumbnailer runs and no file is marked
   failed; the built-in picture decoders (Rust, in Explorer or its
-  `--thumbnailer` helper) still do. A font's sample in the
+  `--thumbnailer` helper) still do. JPEG XL goes through libjxl there,
+  refused past 96 MiB of pixels, 384 MiB held by libjxl or 60 seconds of
+  decoding, whichever comes first. A font's sample in the
   Space preview is drawn the same way, by `reprise-explorer --font-sample`
   in the jail, so FreeType never parses a font file inside Explorer.
 - **App scopes.** A program started from a desktop entry runs in a systemd
