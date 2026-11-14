@@ -883,9 +883,9 @@ the screen takes the interface of the last session used at this computer.
   PAC script's address in Settings > Network, set for every program started
   afterwards through the standard `http_proxy` family of variables.
 - **Bluetooth.** Pairing, connections and device batteries, from the tray.
-  A paired phone or computer can send files: each one asks Accept or Decline
-  with the sender, name and size, goes to Downloads, and a balloon offers
-  Open and Show in folder.
+  With Receive files ticked on the Options tab, a paired phone or computer
+  can send files: each one asks Accept or Decline with the sender, name and
+  size, goes to Downloads, and a balloon offers Open and Show in folder.
 - **Phone.** Through KDE Connect: battery and charging in the tray, Ring
   phone, and Send files from the tray or Send To.
 - **Drives** mount when you plug them in, ask for a passphrase if they're

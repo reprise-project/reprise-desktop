@@ -629,7 +629,7 @@ that. `REPRISE_BLUEZ_BUS=session` reads BlueZ off the session bus, for a
 stand-in service in a test.
 
 With "Receive files from paired devices" ticked on the Options tab
-(`[bluetooth] receive_files`, on by default), Bluetooth Devices is BlueZ's
+(`[bluetooth] receive_files`, off by default), Bluetooth Devices is BlueZ's
 OBEX agent, so a paired device can send files with Object Push ("Share >
 Bluetooth" on a phone). Each file opens a Bluetooth File Transfer box naming
 the device, the file and its size, with Accept and Decline; it starts on

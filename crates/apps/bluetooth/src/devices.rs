@@ -762,6 +762,29 @@ mod tests {
     }
 
     #[test]
+    fn receive_files_starts_unticked_when_off_and_ticking_applies_it() {
+        let mut d = Devices::new(15, false);
+        d.refresh(&four());
+        d.set_obex(true);
+        let page = &mut d.sheet.pages[TAB_OPTIONS];
+        assert_eq!(page.checked(RECEIVE), Some(false));
+        page.set_check(RECEIVE, true);
+        d.event(propsheet::Event::Page(
+            TAB_OPTIONS,
+            form::Event::Changed(RECEIVE),
+        ));
+        assert_eq!(
+            d.event(propsheet::Event::Apply),
+            Outcome::Apply(Options {
+                powered: true,
+                discoverable: false,
+                battery_warning: 15,
+                receive: true,
+            })
+        );
+    }
+
+    #[test]
     fn receive_files_applies_and_greys_without_obexd() {
         let mut d = Devices::new(15, true);
         d.refresh(&four());
