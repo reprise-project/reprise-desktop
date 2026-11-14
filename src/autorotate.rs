@@ -77,9 +77,20 @@ pub fn outputs_changed(state: &mut State) {
     }
 }
 
+/// Locking keeps the panels as they are turned, saved as their chosen transforms.
 pub fn config_changed(state: &mut State) {
     if let Some(tx) = &state.auto_rotate.wake {
         let _ = tx.try_send(state.config.auto_rotate);
+    }
+    if !state.config.auto_rotate {
+        let outputs = state.scene.outputs().to_vec();
+        let mut forgot = false;
+        for o in &outputs {
+            forgot |= crate::output::forget_turn(o);
+        }
+        if forgot {
+            state.save_layout();
+        }
     }
 }
 

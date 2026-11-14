@@ -758,9 +758,11 @@ the screen takes the interface of the last session used at this computer.
 - **Auto-rotation** on convertibles and tablets. While iio-sensor-proxy
   reports an accelerometer, the built-in screen turns with the machine
   (eDP, LVDS and DSI connectors; monitors never turn), and touch, pen and
-  pointer follow. Lying flat keeps the last turn. The rotation lock key, the
-  `rotation-lock` action or Rotate automatically on the Display page stops it
-  with the screen as it is (`[display] auto_rotate`).
+  pointer follow. Lying flat keeps the last turn. A saved layout keeps the
+  screen's own orientation, not the turn, so the next login starts upright.
+  The rotation lock key, the `rotation-lock` action or Rotate automatically
+  on the Display page stops it with the screen as it is, and that
+  orientation is saved (`[display] auto_rotate`).
 - **Explicit sync** for the drivers that need it, NVIDIA's among them.
 
 ## Input
