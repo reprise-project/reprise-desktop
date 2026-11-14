@@ -1113,11 +1113,6 @@ impl TaskMgr {
         }
     }
 
-    pub(crate) fn perf_release(&mut self, ctx: &Ctx) -> bool {
-        let list = self.perf.list.release();
-        self.perf.sensors.release(ctx) || list
-    }
-
     pub(crate) fn perf_leave(&mut self, ctx: &Ctx) -> bool {
         let list = self.perf.list.leave();
         self.perf.sensors.leave(ctx) || list
