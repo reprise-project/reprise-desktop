@@ -7,7 +7,8 @@
 //! anywhere else closes it. Its arrows step the month. With
 //! evolution-data-server installed and `[taskbar] calendar_events` on, it
 //! lists a day's events under the month, today's until a click on a day
-//! picks another; read off the loop, a late answer dropped. A click on an
+//! picks another; read off the loop, a late answer dropped, and read again
+//! every [`REFRESH`] while the popup stays open. A click on an
 //! event opens the calendar program. Otherwise the days are read-only. A
 //! double click on the clock closes it and opens Date and Time Properties
 //! instead. Under a look that frames its flyouts as
@@ -41,6 +42,8 @@ const PROPERTIES: &str = "reprise-datetime";
 const SUMMARY_MAX: usize = 256;
 /// The program a click on an event opens when no calendar type has a default.
 const GNOME_CALENDAR: &str = "org.gnome.Calendar.desktop";
+/// How often the open popup reads its day's events again.
+const REFRESH: Duration = Duration::from_secs(60);
 
 /// `State::calendar`: the open popup and the last clock click.
 #[derive(Default)]
@@ -52,6 +55,8 @@ pub struct CalendarState {
     eds: Option<bool>,
     /// Counts the reads of a day's events; an answer to an older one is dropped.
     asked: u64,
+    /// The last read whose answer came back: one is still out while it trails `asked`.
+    answered: u64,
 }
 
 struct CalendarView {
@@ -75,6 +80,8 @@ struct CalendarView {
     output: Output,
     /// Moves the analog clock on each second; none in a look without one.
     tick: Option<RegistrationToken>,
+    /// Reads the day's events again every [`REFRESH`]; none without the list.
+    refresh: Option<RegistrationToken>,
     /// What the buffer shows, and the popup without the clock beneath it, at `scale`: a tick
     /// redraws only the clock's square from them.
     drawn: Option<Drawn>,
@@ -216,6 +223,7 @@ fn open(state: &mut State, bar: TreeId) {
         at: (x, top),
         output,
         tick: None,
+        refresh: None,
         drawn: None,
     });
     if ticks {
@@ -224,7 +232,38 @@ fn open(state: &mut State, bar: TreeId) {
     redraw(state);
     if events {
         read_day(state, (y, m, d));
+        arm_refresh(state);
     }
+}
+
+fn arm_refresh(state: &mut State) {
+    let token = state
+        .handle
+        .insert_source(Timer::from_duration(REFRESH), |_, _, state| refresh(state));
+    match token {
+        Ok(t) => {
+            if let Some(v) = state.calendar.view.as_mut() {
+                v.refresh = Some(t);
+            }
+        }
+        Err(e) => log::warn!("calendar events: no timer: {}", e.error),
+    }
+}
+
+/// The refresh timer's turn: the open popup's day is read again unless a read is still out. A
+/// popup without a list, or none, stops it.
+fn refresh(state: &mut State) -> TimeoutAction {
+    let Some(v) = state.calendar.view.as_mut() else {
+        return TimeoutAction::Drop;
+    };
+    let Some(day) = v.model.agenda.as_ref().map(|a| a.day) else {
+        v.refresh = None;
+        return TimeoutAction::Drop;
+    };
+    if state.calendar.answered == state.calendar.asked {
+        read_day(state, day);
+    }
+    TimeoutAction::ToDuration(REFRESH)
 }
 
 /// Checks off the loop whether evolution-data-server is installed, so the first popup opens at its
@@ -263,10 +302,14 @@ fn read_events(day: (i32, u32, u32)) -> Result<Option<reprisebus::eds::Day>, Str
     reprisebus::wait(reprisebus::eds::day(&conn, day))
 }
 
-/// Tests read no session bus: evolution-data-server is absent.
+/// Tests read no session bus: every day is empty.
 #[cfg(test)]
 fn read_events(_day: (i32, u32, u32)) -> Result<Option<reprisebus::eds::Day>, String> {
-    Ok(None)
+    Ok(Some(reprisebus::eds::Day {
+        start: 0,
+        end: 0,
+        events: Vec::new(),
+    }))
 }
 
 /// The program a click on an event opens: the default for calendar files, else for webcal links,
@@ -290,6 +333,7 @@ fn landed(
     if asked != state.calendar.asked {
         return;
     }
+    state.calendar.answered = asked;
     match &read {
         Ok(found) => state.calendar.eds = Some(found.is_some()),
         Err(e) => log::warn!("calendar events: {e}"),
@@ -379,7 +423,7 @@ pub fn close(state: &mut State) {
     let Some(v) = state.calendar.view.take() else {
         return;
     };
-    if let Some(t) = v.tick {
+    for t in [v.tick, v.refresh].into_iter().flatten() {
         state.handle.remove(t);
     }
     state.destroy_redrawn(v.tree);
@@ -608,6 +652,34 @@ mod tests {
         let mut spoof = o(4600, 4600, false);
         spoof.summary = "Pay\u{202e}gpj.exe".into();
         assert_eq!(row(spoof).summary, "Paygpj.exe", "no bidi controls");
+    }
+
+    /// The harness has no job threads: each read lands as it is asked.
+    #[test]
+    fn the_open_popup_reads_its_day_again_and_a_closed_one_reads_nothing() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.state.calendar.eds = Some(true);
+        let bar = h.state.bars[0].tree;
+        open(&mut h.state, bar);
+        assert_eq!(h.state.calendar.answered, 1, "the first read");
+        let rows = |s: &State| {
+            let v = s.calendar.view.as_ref()?;
+            v.model.agenda.as_ref()?.events.clone()
+        };
+        assert_eq!(rows(&h.state), Some(Vec::new()));
+        assert!(matches!(
+            refresh(&mut h.state),
+            TimeoutAction::ToDuration(REFRESH)
+        ));
+        assert_eq!(h.state.calendar.answered, 2, "read again");
+        h.state.calendar.asked += 1;
+        refresh(&mut h.state);
+        assert_eq!(h.state.calendar.asked, 3, "none while a read is out");
+        h.state.calendar.answered = 3;
+        close(&mut h.state);
+        assert!(matches!(refresh(&mut h.state), TimeoutAction::Drop));
+        assert_eq!(h.state.calendar.asked, 3, "none while closed");
     }
 
     #[test]
