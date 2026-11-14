@@ -111,8 +111,18 @@ struct Stopper {
     tid: Option<String>,
     pidfd: Option<flatpak::Pidfd>,
     cancelled: bool,
-    /// The private copy's folder, removed by `emergency` when the process ends unwound.
+    /// The private copy's folder, removed by `emergency` when the process ends unwound. It
+    /// outlives every run, so `Stopper::new_run` leaves it.
     copy: Option<PathBuf>,
+}
+
+impl Stopper {
+    /// Forget the last run's job, keeping the private copy's folder.
+    fn new_run(&mut self) {
+        self.tid = None;
+        self.pidfd = None;
+        self.cancelled = false;
+    }
 }
 
 type Poster = repriseapp::Poster<Msg>;
@@ -501,7 +511,7 @@ fn run(
     poster: &Poster,
     stop: &Mutex<Stopper>,
 ) -> Result<(), Failure> {
-    *lock(stop) = Stopper::default();
+    lock(stop).new_run();
     let mut doing = "Preparing".to_string();
     let mut report = |fraction: Option<f64>, line: Option<String>| {
         if let Some(l) = line {
@@ -1252,6 +1262,21 @@ mod tests {
         }));
         bundle.worker_msg(Msg::Download(30_400_000));
         assert_eq!(bundle.sheet.facts[0].1, "12.0 MB", "a known size is kept");
+    }
+
+    #[test]
+    fn the_private_copy_is_removed_by_emergency_after_a_run() {
+        use repriseapp::Extended;
+        let dir = std::env::temp_dir().join(format!("reprise-install-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("foot.pkg.tar.zst"), b"x").unwrap();
+        let mut app = Installer::new(Target::Install("/d/foot.pkg.tar.zst".into()));
+        lock(&app.stop).copy = Some(dir.clone());
+        let (poster, _rx) = Poster::channel(repriseapp::Waker::noop());
+        let ran = run(&Plan::Nothing, Verb::Install, None, &poster, &app.stop);
+        assert!(ran.is_err());
+        app.emergency();
+        assert!(!dir.exists(), "emergency removes the copy a run kept");
     }
 
     #[test]
