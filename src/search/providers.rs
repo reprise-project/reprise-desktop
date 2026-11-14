@@ -26,6 +26,8 @@ pub struct Provider {
     pub name: String,
     /// Its program's icon, for a result that names none.
     pub icon: Option<String>,
+    /// Its program's desktop id.
+    pub app: String,
 }
 
 impl Provider {
@@ -72,6 +74,7 @@ pub fn enabled(
                 },
                 name: e.name.clone(),
                 icon: e.icon.clone(),
+                app: e.id.clone(),
             }))
         })
         .collect()
@@ -176,9 +179,10 @@ pub enum Open {
 
 impl State {
     /// Opens `what` of provider `p` for `query`, off the loop. The provider's process may give
-    /// its next new window focus ([`crate::mapfocus::grant`]): the user just picked it.
+    /// its next new window focus ([`crate::mapfocus::grant`]) and its program may raise a window
+    /// it has ([`crate::activation::Raises`]): the user just picked it.
     pub fn open_provider(&mut self, p: &Provider, what: Open, query: &str) {
-        self.picked_provider(&what);
+        self.picked_provider(p, &what);
         let (addr, terms) = (p.addr.clone(), bus::terms(query));
         let started = std::thread::Builder::new()
             .name("search-provider-open".into())
@@ -206,7 +210,8 @@ impl State {
 
     /// The loop's part of [`State::open_provider`]: a result with clipboard text puts it on the
     /// clipboard, which its program leaves to the search that shows it.
-    fn picked_provider(&mut self, what: &Open) {
+    fn picked_provider(&mut self, p: &Provider, what: &Open) {
+        self.raises.grant(&p.app, std::time::Instant::now());
         if let Open::Result(m) = what
             && let Some(text) = &m.clipboard_text
         {
@@ -321,6 +326,18 @@ mod tests {
         }
     }
 
+    fn chars() -> Provider {
+        Provider {
+            addr: Address {
+                bus_name: "org.example.Chars".into(),
+                path: "/".into(),
+            },
+            name: "Characters".into(),
+            icon: None,
+            app: "org.example.Chars.desktop".into(),
+        }
+    }
+
     #[test]
     fn picking_a_result_with_clipboard_text_copies_it() {
         let mut h = crate::harness::Harness::new();
@@ -328,7 +345,8 @@ mod tests {
         let mut c = h.connect();
         c.data_device();
         h.map_toplevel(&mut c, "test.notes", 300, 200);
-        h.state.picked_provider(&Open::Result(meta(Some("\u{e9}"))));
+        h.state
+            .picked_provider(&chars(), &Open::Result(meta(Some("\u{e9}"))));
         h.roundtrip(&mut c);
         assert_eq!(
             h.paste(&mut c, "text/plain;charset=utf-8"),
@@ -337,14 +355,44 @@ mod tests {
 
         c.copy(&["text/x-mine"], b"mine");
         h.roundtrip(&mut c);
-        h.state.picked_provider(&Open::Result(meta(None)));
-        h.state.picked_provider(&Open::Search);
+        h.state.picked_provider(&chars(), &Open::Result(meta(None)));
+        h.state.picked_provider(&chars(), &Open::Search);
         h.roundtrip(&mut c);
         assert_eq!(
             c.selection_mimes(),
             ["text/x-mine"],
             "a result without clipboard text, or the program's own search, leaves the clipboard"
         );
+    }
+
+    #[test]
+    fn picking_a_result_lets_its_program_raise_the_window_it_has_once() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.state.app_index = vec![app("org.example.Chars.desktop", "Characters", true)];
+        let mut c = h.connect();
+        let chars_window = h.map_toplevel(&mut c, "org.example.Chars", 300, 200);
+        let other = h.map_toplevel(&mut c, "test.other", 300, 200);
+        let notes = h.map_toplevel(&mut c, "test.notes", 300, 200);
+        let mut raise = |h: &mut crate::harness::Harness, t: crate::harness::Toplevel| {
+            h.state.focus_window(notes.id);
+            let (token, _) = h.state.activation.create_external_token(None);
+            c.activate(token, t);
+            h.roundtrip(&mut c);
+            h.state.focused == Some(t.id)
+        };
+        assert!(!raise(&mut h, chars_window), "nothing picked: flagged only");
+
+        h.state.picked_provider(&chars(), &Open::Search);
+        assert!(
+            !raise(&mut h, other),
+            "another program's window gains nothing"
+        );
+        assert!(raise(&mut h, chars_window), "raised after the pick");
+        assert!(!raise(&mut h, chars_window), "the pick is used up");
+
+        h.state.picked_provider(&chars(), &Open::Result(meta(None)));
+        assert!(raise(&mut h, chars_window), "a result raises it too");
     }
 
     #[test]
