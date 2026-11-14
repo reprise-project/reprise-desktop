@@ -74,10 +74,31 @@ pub enum Outcome {
     Close,
 }
 
+/// The keys the last page names, as the user's binds have them; `None` drops the paragraph.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReadyKeys {
+    pub launcher: Option<String>,
+    pub clipboard: Option<String>,
+    /// Holding Super shows the shortcut sheet.
+    pub overlay: bool,
+}
+
+impl Default for ReadyKeys {
+    fn default() -> ReadyKeys {
+        ReadyKeys {
+            launcher: Some("Super+Space".into()),
+            clipboard: Some("Super+V".into()),
+            overlay: true,
+        }
+    }
+}
+
 pub struct Welcome {
     pub page: Page,
     pub wizard: Wizard,
     pub picks: Picks,
+    /// Read when the last page is laid out.
+    pub keys: ReadyKeys,
     sample: Theme,
     links: Vec<Link>,
 }
@@ -103,6 +124,7 @@ impl Welcome {
                 false,
             ),
             picks,
+            keys: ReadyKeys::default(),
             sample,
             links,
         };
@@ -203,14 +225,21 @@ impl Welcome {
     fn ready_items(&self, text: &TextRenderer, forms: &Theme) -> Vec<Item> {
         let body = EXTERIOR_BODY;
         let px = forms.fonts.size_px;
+        let k = &self.keys;
         let paragraphs = [
-            "Press Super for the Start menu, or hold it a second to see every shortcut.",
-            "Super+Space opens the launcher: type a few letters of a program and press Enter.",
-            "Super+V brings back what you copied.",
-            "Everything you picked here, and much more, is in Settings.",
+            Some(if k.overlay {
+                "Press Super for the Start menu, or hold it a second to see every shortcut.".into()
+            } else {
+                "Press Super for the Start menu.".into()
+            }),
+            (k.launcher.as_ref()).map(|c| {
+                format!("{c} opens the launcher: type a few letters of a program and press Enter.")
+            }),
+            (k.clipboard.as_ref()).map(|c| format!("{c} brings back what you copied.")),
+            Some("Everything you picked here, and much more, is in Settings.".into()),
         ];
         let mut lines = Vec::new();
-        for p in paragraphs {
+        for p in paragraphs.iter().flatten() {
             if !lines.is_empty() {
                 lines.push(String::new());
             }
@@ -361,6 +390,25 @@ mod tests {
         assert_eq!(w.event(next, &text, &theme), Outcome::Close, "Finish");
         w.event(form::Event::Pressed(wizard::BACK), &text, &theme);
         assert_eq!(w.page, Page::Look);
+    }
+
+    #[test]
+    fn the_last_page_names_the_bound_keys_and_drops_an_unbound_one() {
+        let theme = Theme::default();
+        let (mut w, text) = welcome(&theme);
+        w.keys = ReadyKeys {
+            launcher: Some("Ctrl+Alt+L".into()),
+            clipboard: None,
+            overlay: false,
+        };
+        w.go(Page::Ready, &text, &theme);
+        let Some(Control::Lines(lines)) = w.wizard.form.item(KEYS).map(|i| &i.control) else {
+            panic!("the keys paragraphs");
+        };
+        let all = lines.join(" ");
+        assert!(all.starts_with("Press Super for the Start menu. "), "{all}");
+        assert!(all.contains("Ctrl+Alt+L opens the launcher"), "{all}");
+        assert!(!all.contains("copied"), "{all}");
     }
 
     #[test]

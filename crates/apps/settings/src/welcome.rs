@@ -4,7 +4,7 @@
 use crate::appearancepage;
 use crate::model::{self, Settings};
 use reprisefs::apps::AppEntry;
-use reprisekit::controls::welcome::{Picks, TEXT_SIZES, dark_offered};
+use reprisekit::controls::welcome::{Picks, ReadyKeys, TEXT_SIZES, dark_offered};
 use reprisekit::interface::Interface;
 use reprisekit::schemes;
 use reprisekit::theme::Theme;
@@ -77,10 +77,37 @@ pub fn sample(text: &str, picks: &Picks) -> Theme {
     appearancepage::theme(&with(text, picks).1)
 }
 
-/// Write `picks` into the config file at `path` as Apply would, touching only the keys they move.
-pub fn write(path: &Path, picks: &Picks) -> Result<(), String> {
+/// The keys Welcome's last page names, as `text`'s binds have them.
+pub fn ready_keys(text: &str) -> ReadyKeys {
+    let s = model::load(text);
+    let clipboard = model::keys_for(&s.shortcuts, "clipboard-history");
+    ReadyKeys {
+        launcher: model::keys_for(&s.shortcuts, "launcher"),
+        clipboard: clipboard.filter(|_| s.clipboard_history),
+        overlay: s.shortcut_overlay,
+    }
+}
+
+/// `to`'s picks that differ from `from`, laid over the picks `text` holds now.
+fn moved(text: &str, from: &Picks, to: &Picks) -> Picks {
+    let mut p = read(text);
+    if from.interface != to.interface {
+        p.interface = to.interface;
+    }
+    if from.dark != to.dark {
+        p.dark = to.dark;
+    }
+    if from.text_size != to.text_size {
+        p.text_size = to.text_size;
+    }
+    p
+}
+
+/// Write the picks that moved from `from` to `to` into the config file at `path` as Apply would,
+/// leaving the rest as the file has them now (another Welcome or Settings may have written it).
+pub fn write(path: &Path, from: &Picks, to: &Picks) -> Result<(), String> {
     let written = repriseconf::edit(path, |text| {
-        let (base, want) = with(text, picks);
+        let (base, want) = with(text, &moved(text, from, to));
         model::save(text, &want, &base)
     });
     match written {
@@ -104,6 +131,30 @@ mod tests {
     fn written(text: &str, p: Picks) -> String {
         let (base, want) = with(text, &p);
         model::save(text, &want, &base).unwrap()
+    }
+
+    #[test]
+    fn the_ready_keys_follow_the_binds() {
+        assert_eq!(ready_keys(""), ReadyKeys::default());
+        let text = "[clipboard]\nhistory = false\n\n[shortcut_overlay]\nenabled = false\n\n\
+                    [[keybinds]]\nkeys = \"Super+space\"\naction = \"none\"\n\n\
+                    [[keybinds]]\nkeys = \"Ctrl+Alt+l\"\naction = \"launcher\"\n";
+        assert_eq!(
+            ready_keys(text),
+            ReadyKeys {
+                launcher: Some("Ctrl+Alt+L".into()),
+                clipboard: None,
+                overlay: false,
+            }
+        );
+    }
+
+    #[test]
+    fn a_write_moves_only_the_picks_that_moved() {
+        let file = "[appearance]\ninterface = \"glass\"\n";
+        let seen = picks(Interface::Classic, false, 100);
+        let p = moved(file, &seen, &picks(Interface::Classic, false, 150));
+        assert_eq!(p, picks(Interface::Glass, false, 150), "Glass stays");
     }
 
     #[test]
