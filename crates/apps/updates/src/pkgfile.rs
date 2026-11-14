@@ -3,6 +3,7 @@
 
 use std::ffi::OsStr;
 use std::io;
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -242,33 +243,234 @@ pub enum PacmanError {
 /// pkexec's exit status when its prompt was dismissed.
 const PKEXEC_DISMISSED: i32 = 126;
 
-/// A step pacman reports, "installing htop..." as "Installing htop".
-fn pacman_step(line: &str) -> Option<String> {
-    let line = line.trim();
-    if line.starts_with("::") {
-        return None;
+/// `line` without terminal escapes (colours, cursor moves, titles) or other control characters.
+fn plain(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\x1b' => match chars.next() {
+                // CSI: parameters, then one final byte in @..~.
+                Some('[') => {
+                    for c in chars.by_ref() {
+                        if ('@'..='~').contains(&c) {
+                            break;
+                        }
+                    }
+                }
+                // OSC: up to BEL or ESC \.
+                Some(']') => {
+                    while let Some(c) = chars.next() {
+                        if c == '\x07' || (c == '\x1b' && chars.next_if_eq(&'\\').is_some()) {
+                            break;
+                        }
+                    }
+                }
+                _ => {}
+            },
+            c if c.is_control() => {}
+            c => out.push(c),
+        }
     }
-    let step = line.strip_suffix("...")?;
-    let mut s = step.to_string();
+    out
+}
+
+/// "checking package integrity" as "Checking package integrity".
+fn sentence(text: &str) -> String {
+    let mut s = text.trim().to_string();
     if let Some(first) = s.get(..1) {
         s.replace_range(..1, &first.to_uppercase());
     }
-    Some(s)
+    s
 }
 
-/// Install `path` with `pkexec pacman -U`, as root once polkit allows it, calling `step` with each
-/// step pacman reports.
-pub fn pacman_install(path: &Path, step: &mut dyn FnMut(String)) -> Result<(), PacmanError> {
-    use std::io::{BufRead, BufReader, Read};
-    let mut child = Command::new("pkexec")
-        .args(["pacman", "-U", "--noconfirm", "--"])
-        .arg(path)
-        .env("LC_ALL", "C")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| PacmanError::Failed(format!("pkexec could not be started: {e}.")))?;
+/// `(2/3) rest` as 2, 3 and `rest`.
+fn counted(line: &str) -> Option<(usize, usize, &str)> {
+    let (count, rest) = line.strip_prefix('(')?.split_once(") ")?;
+    let (k, n) = count.split_once('/')?;
+    Some((k.trim().parse().ok()?, n.trim().parse().ok()?, rest))
+}
+
+/// The bar's shares: downloads (when there are any), then pacman's checks, then installing.
+const DOWNLOAD_SHARE: f64 = 0.4;
+const CHECK_SHARE: f64 = 0.2;
+/// pacman's checks before it installs, in order.
+const CHECKS: [&str; 5] = [
+    "checking keys in keyring",
+    "checking package integrity",
+    "loading package files",
+    "checking for file conflicts",
+    "checking available disk space",
+];
+
+/// Follows `pacman -U` on a terminal: download bars (` foo-1-1-x86_64  9.5 KiB ... [---]  89%`,
+/// `Total (1/2) ... 40%`), check bars, then `(2/3) installing foo [---]  45%` and the hooks'
+/// `(1/3) Arming ConditionNeedsUpdate...`. Without a terminal only the `...` steps come.
+#[derive(Default)]
+struct PacmanFollow {
+    /// Packages are downloaded first.
+    downloads: bool,
+    /// A `Total` line drives the download share, so single files no longer do.
+    totals: bool,
+    /// The bar's fraction; it never goes back.
+    done: f64,
+    /// What was last reported: the bar in thousandths and the step.
+    shown: (Option<u32>, Option<String>),
+}
+
+impl PacmanFollow {
+    /// Follow the lines in `pending` that a CR or LF ended, leaving the rest there.
+    fn feed(&mut self, pending: &mut Vec<u8>, step: &mut dyn FnMut(f64, Option<String>)) {
+        while let Some(end) = pending.iter().position(|&b| b == b'\r' || b == b'\n') {
+            let line: Vec<u8> = pending.drain(..=end).collect();
+            if let Some((f, s)) = self.line(&String::from_utf8_lossy(&line)) {
+                step(f, s);
+            }
+        }
+    }
+
+    /// The bar's fraction, and the step to show when it changed, when either moved with `line`.
+    fn line(&mut self, line: &str) -> Option<(f64, Option<String>)> {
+        let line = plain(line);
+        let line = line.trim();
+        if line.starts_with("Total Download Size:") {
+            self.downloads = true;
+            return None;
+        }
+        let doing = match bar(line) {
+            Some((label, percent)) => self.bar_step(label, percent),
+            None if line.starts_with("::") => return None,
+            None => {
+                let step = line.strip_suffix("...")?;
+                Some(sentence(counted(step).map_or(step, |(_, _, rest)| rest)))
+            }
+        };
+        let doing = doing.filter(|d| self.shown.1.as_ref() != Some(d));
+        let permille = Some((self.done * 1000.0).round() as u32);
+        if doing.is_none() && self.shown.0 == permille {
+            return None;
+        }
+        self.shown.0 = permille;
+        if doing.is_some() {
+            self.shown.1.clone_from(&doing);
+        }
+        Some((self.done, doing))
+    }
+
+    /// Move the bar for a bar line labelled `label` at `percent`; the step it names, if any.
+    fn bar_step(&mut self, label: &str, percent: u32) -> Option<String> {
+        let here = f64::from(percent.min(100)) / 100.0;
+        let downloads = if self.downloads { DOWNLOAD_SHARE } else { 0.0 };
+        let mut advance = |to: f64| self.done = self.done.max(to.clamp(0.0, 1.0));
+        if let Some((k, n, what)) = counted(label) {
+            let installs = [
+                "installing",
+                "upgrading",
+                "reinstalling",
+                "downgrading",
+                "removing",
+            ];
+            if let Some(i) = CHECKS.iter().position(|c| what.starts_with(c)) {
+                let share = (i as f64 + here) / CHECKS.len() as f64;
+                advance(downloads + CHECK_SHARE * share);
+            } else if installs.iter().any(|w| what.starts_with(w)) && k > 0 && k <= n {
+                let base = downloads + CHECK_SHARE;
+                advance(base + (1.0 - base) * ((k - 1) as f64 + here) / n as f64);
+            }
+            return Some(sentence(what));
+        }
+        if !label.split_whitespace().any(|w| w.ends_with("/s")) {
+            return None;
+        }
+        self.downloads = true;
+        if label.starts_with("Total ") {
+            self.totals = true;
+            self.done = self.done.max(DOWNLOAD_SHARE * here);
+            return None;
+        }
+        if !self.totals {
+            self.done = self.done.max(DOWNLOAD_SHARE * here);
+        }
+        let file = label.split_whitespace().next()?;
+        Some(format!("Downloading {file}"))
+    }
+}
+
+/// A progress bar line, `label [bar]  45%`, as its label and percentage.
+fn bar(line: &str) -> Option<(&str, u32)> {
+    let rest = line.strip_suffix('%')?;
+    let percent = rest.rsplit(char::is_whitespace).next()?.parse().ok()?;
+    let (label, _) = rest.rsplit_once('[')?;
+    Some((label.trim(), percent))
+}
+
+/// A pseudo-terminal pair (master, slave), close-on-exec and `cols` wide, so pacman draws its bars
+/// and leaves its names whole.
+fn open_pty(cols: u16) -> io::Result<(OwnedFd, OwnedFd)> {
+    let (mut m, mut s) = (-1, -1);
+    let size = libc::winsize {
+        ws_row: 24,
+        ws_col: cols,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+    // SAFETY: openpty writes two descriptors into the two locals; the name and termios pointers
+    // may be null and the window size outlives the call.
+    let rc = unsafe {
+        libc::openpty(
+            &mut m,
+            &mut s,
+            std::ptr::null_mut(),
+            std::ptr::null(),
+            &size,
+        )
+    };
+    if rc < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: both descriptors were just opened and are owned here.
+    let fds = unsafe { (OwnedFd::from_raw_fd(m), OwnedFd::from_raw_fd(s)) };
+    for fd in [&fds.0, &fds.1] {
+        // SAFETY: fcntl takes a descriptor owned above and plain flags.
+        unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC) };
+    }
+    Ok(fds)
+}
+
+/// Install `path` with `pkexec pacman -U`, as root once polkit allows it, calling `step` with the
+/// bar's fraction and each step pacman reports. pacman writes to a pseudo-terminal so it draws its
+/// progress bars, or to a pipe, with steps only, where none opens.
+pub fn pacman_install(
+    path: &Path,
+    step: &mut dyn FnMut(f64, Option<String>),
+) -> Result<(), PacmanError> {
+    use std::io::Read;
+    let pty = open_pty(200)
+        .inspect_err(|e| log::warn!("no terminal for pacman: {e}"))
+        .ok();
+    let (mut child, master) = {
+        let mut cmd = Command::new("pkexec");
+        cmd.args(["pacman", "-U", "--noconfirm", "--color", "never", "--"])
+            .arg(path)
+            .env("LC_ALL", "C")
+            .stdin(Stdio::null())
+            .stderr(Stdio::piped());
+        let master = match pty {
+            Some((master, slave)) => {
+                cmd.stdout(Stdio::from(slave));
+                Some(master)
+            }
+            None => {
+                cmd.stdout(Stdio::piped());
+                None
+            }
+        };
+        // cmd drops its copy of the slave here, so reading the master ends when pacman exits.
+        let child = cmd
+            .spawn()
+            .map_err(|e| PacmanError::Failed(format!("pkexec could not be started: {e}.")))?;
+        (child, master)
+    };
     // stderr drains on its own thread, so a chatty one never fills its pipe.
     let err = child.stderr.take().map(|mut e| {
         std::thread::spawn(move || {
@@ -277,11 +479,24 @@ pub fn pacman_install(path: &Path, step: &mut dyn FnMut(String)) -> Result<(), P
             s
         })
     });
-    if let Some(out) = child.stdout.take() {
-        for line in BufReader::new(out).lines().map_while(Result::ok) {
-            if let Some(s) = pacman_step(&line) {
-                step(s);
-            }
+    let out: Option<Box<dyn Read>> = match master {
+        Some(m) => Some(Box::new(std::fs::File::from(m))),
+        None => child.stdout.take().map(|o| Box::new(o) as Box<dyn Read>),
+    };
+    if let Some(mut out) = out {
+        let mut follow = PacmanFollow::default();
+        let mut buf = [0u8; 4096];
+        let mut pending = Vec::new();
+        loop {
+            let n = match out.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => n,
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                // A pty master reads EIO once the last slave closes.
+                Err(_) => break,
+            };
+            pending.extend_from_slice(&buf[..n]);
+            follow.feed(&mut pending, step);
         }
     }
     let status = child
@@ -367,18 +582,118 @@ mod tests {
         let _ = std::fs::remove_dir_all(&to);
     }
 
+    /// What following `out` reports: the bar's fraction and each new step.
+    fn followed(out: &[u8]) -> Vec<(f64, Option<String>)> {
+        let mut seen = Vec::new();
+        let mut pending = out.to_vec();
+        PacmanFollow::default().feed(&mut pending, &mut |f, s| seen.push((f, s)));
+        seen
+    }
+
+    fn steps(seen: &[(f64, Option<String>)]) -> Vec<&str> {
+        seen.iter().filter_map(|(_, s)| s.as_deref()).collect()
+    }
+
+    /// The bar's fraction when `step` was first shown.
+    fn at(seen: &[(f64, Option<String>)], step: &str) -> f64 {
+        let i = seen.iter().position(|(_, s)| s.as_deref() == Some(step));
+        seen[i.unwrap_or_else(|| panic!("{step} is shown"))].0
+    }
+
+    fn rises(seen: &[(f64, Option<String>)]) -> bool {
+        seen.windows(2).all(|w| w[0].0 <= w[1].0)
+    }
+
     #[test]
     fn pacman_steps_read_as_sentences() {
-        assert_eq!(
-            pacman_step("installing htop...").as_deref(),
-            Some("Installing htop")
+        let seen = followed(
+            b"installing htop...\nchecking package integrity...\n\
+              :: Processing package changes...\nPackages (1) htop-3.5.3-1\n\
+              (1/3) Arming ConditionNeedsUpdate...\n",
         );
         assert_eq!(
-            pacman_step("checking package integrity...").as_deref(),
-            Some("Checking package integrity")
+            steps(&seen),
+            [
+                "Installing htop",
+                "Checking package integrity",
+                "Arming ConditionNeedsUpdate"
+            ]
         );
-        assert_eq!(pacman_step(":: Processing package changes..."), None);
-        assert_eq!(pacman_step("Packages (1) htop-3.5.3-1"), None);
+    }
+
+    #[test]
+    fn a_local_package_fills_the_bar_through_the_checks_and_the_install() {
+        let seen = followed(include_bytes!("../tests/fixtures/pacman-local.txt"));
+        let shown = steps(&seen);
+        assert_eq!(
+            shown[..3],
+            [
+                "Loading packages",
+                "Resolving dependencies",
+                "Looking for conflicting packages"
+            ]
+        );
+        assert!(shown.contains(&"Checking package integrity"), "{shown:?}");
+        assert!(
+            !shown.iter().any(|s| s.starts_with("Downloading")),
+            "{shown:?}"
+        );
+        assert!(rises(&seen), "the bar never goes back: {seen:?}");
+        assert_eq!(at(&seen, "Checking keys in keyring"), 0.0);
+        let installing = at(&seen, "Installing reprise-g5-sample");
+        assert!(
+            (installing - 0.2).abs() < 1e-9,
+            "the install starts after the checks: {installing}"
+        );
+        assert_eq!(seen.last().map(|l| l.0), Some(1.0));
+        assert_eq!(
+            shown.last(),
+            Some(&"Performing snapper post snapshots for the following configurations")
+        );
+    }
+
+    #[test]
+    fn a_package_with_a_download_fills_the_first_share_downloading() {
+        let seen = followed(include_bytes!(
+            "../tests/fixtures/pacman-download-candy.txt"
+        ));
+        let shown = steps(&seen);
+        assert!(rises(&seen), "{seen:?}");
+        assert!((at(&seen, "Downloading sl-5.05-6-x86_64") - 0.4 * 0.89).abs() < 1e-9);
+        assert!(
+            (at(&seen, "Checking keys in keyring") - 0.4).abs() < 1e-9,
+            "{seen:?}"
+        );
+        assert!(at(&seen, "Installing sl") >= 0.6, "{seen:?}");
+        assert!(
+            (at(&seen, "Installing reprise-g5-sample") - 0.8).abs() < 1e-9,
+            "the second of two installs starts half way through the last share: {seen:?}"
+        );
+        assert_eq!(seen.last().map(|l| l.0), Some(1.0));
+        assert!(
+            shown
+                .iter()
+                .all(|s| !s.contains('\u{1b}') && !s.contains('[')),
+            "{shown:?}"
+        );
+    }
+
+    #[test]
+    fn lines_that_do_not_parse_move_nothing() {
+        let seen = followed(
+            b"(x/y) installing a [##] 50%\n(3/2) installing b [#] 50%\n[\n%\n] 7%\n\
+              \x1b[1;33m\x1b]0;t\x07\n==> root: 12\n:: Proceed with installation? [Y/n] \n",
+        );
+        assert!(seen.iter().all(|(f, _)| *f == 0.0), "{seen:?}");
+        assert_eq!(steps(&seen), ["Installing b"]);
+    }
+
+    #[test]
+    fn escapes_are_dropped() {
+        assert_eq!(
+            plain("\x1b[1F a \x1b[1;33mC\x1b[m]\x1b]3008;x=1\x1b\\ 9%\0"),
+            " a C] 9%"
+        );
     }
 
     #[test]

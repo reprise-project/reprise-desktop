@@ -1,0 +1,32 @@
+]3008;start=1;type=session\[?25lloading packages...
+resolving dependencies...
+looking for conflicting packages...
+
+Package (2)        New Version  Net Change  Download Size
+
+extra/sl           5.05-6         0.03 MiB       0.01 MiB
+reprise-g5-sample  1.0-1         76.29 MiB               
+
+Total Download Size:    0.01 MiB
+Total Installed Size:  76.32 MiB
+
+:: Proceed with installation? [Y/n] 
+:: Retrieving packages...
+ sl-5.05-6-x86_64
+[1F sl-5.05-6-x86_64        9.5 KiB  0.00   B/s --:-- [-------------------[1;33mc[m[0;37m [m[0;37m [m]  89% sl-5.05-6-x86_64       10.6 KiB  60.9 KiB/s 00:00 [----------------------] 100%[1E(0/2) checking keys in keyring                     [[1;33mC[m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m]   0%(1/2) checking keys in keyring                     [-----------[1;33mC[m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m]  50%(2/2) checking keys in keyring                     [----------------------] 100%
+(0/2) checking package integrity                   [[1;33mC[m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m]   0%(1/2) checking package integrity                   [----------------------] 100%
+(0/2) loading package files                        [[1;33mC[m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m]   0%(1/2) loading package files                        [----------------------] 100%
+(0/2) checking for file conflicts                  [[1;33mC[m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m]   0%(1/2) checking for file conflicts                  [-----------[1;33mC[m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m]  50%(2/2) checking for file conflicts                  [----------------------] 100%
+:: Running pre-transaction hooks...
+(1/2) Performing snapper pre snapshots for the following configurations...
+==> root: 593
+(2/2) Waiting for limine-snapper-sync to finish...
+:: Processing package changes...
+(1/2) installing sl                                [[1;33mC[m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m]   0%(1/2) installing sl                                [----------------------] 100%
+(2/2) installing reprise-g5-sample                 [[1;33mC[m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m]   0%(2/2) installing reprise-g5-sample                 [[1;33mC[m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m]   0%(2/2) installing reprise-g5-sample                 [[1;33mC[m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m]   0%(2/2) installing reprise-g5-sample                 [[1;33mC[m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m]   0%(2/2) installing reprise-g5-sample                 [[1;33mC[m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m]   0%(2/2) installing reprise-g5-sample                 [[1;33mC[m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m]   0%(2/2) installing reprise-g5-sample                 [[1;33mC[m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m]   0%(2/2) installing reprise-g5-sample                 [[1;33mC[m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m]   0%(2/2) installing reprise-g5-sample                 [----------------------] 100%
+:: Running post-transaction hooks...
+(1/3) Arming ConditionNeedsUpdate...
+(2/3) Refreshing PackageKit...
+(3/3) Performing snapper post snapshots for the following configurations...
+==> root: 594
+[?25h]3008;end=1\
