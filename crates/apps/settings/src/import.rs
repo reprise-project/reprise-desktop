@@ -83,6 +83,8 @@ pub enum Setting {
 }
 
 const NO_SETTING: &str = "no setting";
+/// `[metrics] double_click_ms`'s largest value.
+const DOUBLE_CLICK_MAX: i64 = 10_000;
 const CLOCK: &str = "the clock follows the formats locale";
 const LOOK: &str = "Reprise's look sets it";
 const IME: &str = "set up in the input method";
@@ -198,8 +200,8 @@ impl Setting {
             KbModel(m) => s.kb_model = m.clone(),
             KbOptions(o) => s.kb_options = o.clone(),
             LayoutPerWindow(b) => s.layout_per_window = *b,
-            RepeatRate(r) => s.repeat_rate = *r,
-            RepeatDelay(d) => s.repeat_delay = *d,
+            RepeatRate(r) => s.repeat_rate = (*r).clamp(0, i32::MAX.into()),
+            RepeatDelay(d) => s.repeat_delay = (*d).clamp(0, i32::MAX.into()),
             Speed(Device::Mouse, v) => s.mouse_speed = *v,
             Speed(Device::Touchpad, v) => s.touchpad_speed = *v,
             Accel(Device::Mouse, b) => s.mouse_accel = *b,
@@ -223,8 +225,10 @@ impl Setting {
                 s.nl_to = to.clone();
             }
             CursorTheme(t) => s.cursor_theme = t.clone(),
-            CursorSize(n) => s.cursor_size = *n,
-            DoubleClick(ms) => s.double_click_ms = *ms,
+            CursorSize(n) => {
+                s.cursor_size = (*n).clamp(0, repriseconf::config::CURSOR_SIZE_MAX.into());
+            }
+            DoubleClick(ms) => s.double_click_ms = (*ms).clamp(0, DOUBLE_CLICK_MAX),
             Desktops(n) => s.desktops = (*n).clamp(1, model::DESKTOPS_MAX),
             HotCorner(b) => s.hot_corner = if *b { "top-left" } else { "none" }.into(),
             Pinned(b) => s.taskbar_pinned = *b,
@@ -476,7 +480,8 @@ pub fn plan(name: &'static str, found: &[Setting], config: &str, sys: &dyn Syste
 }
 
 /// Write `picked` (rows of a [`Plan`]): config settings into the file at `config` through Settings'
-/// model, as Apply would, programs into the Quick Launch folder `quick` after its own.
+/// model, as Apply would, programs into the Quick Launch folder `quick` after its own. Every
+/// program's entry is read first, so one that can't be read writes nothing at all.
 pub fn write(config: &Path, quick: Option<&Path>, picked: &[&Write]) -> Result<(), String> {
     let settings: Vec<&Setting> = (picked.iter())
         .filter_map(|w| match w {
@@ -484,6 +489,21 @@ pub fn write(config: &Path, quick: Option<&Path>, picked: &[&Write]) -> Result<(
             Write::QuickLaunch(..) => None,
         })
         .collect();
+    let apps: Vec<(&AppEntry, String)> = (picked.iter())
+        .filter_map(|w| match w {
+            Write::QuickLaunch(a, file) => Some((a, file)),
+            Write::Config(_) => None,
+        })
+        .map(|(a, file)| {
+            let text = reprisefs::apps::read_desktop_file(file)
+                .map_err(|e| format!("{}: {e}", file.display()))?;
+            Ok((a, text))
+        })
+        .collect::<Result<_, String>>()?;
+    let dir = match apps.is_empty() {
+        true => None,
+        false => Some(quick.ok_or("there is no Quick Launch folder")?),
+    };
     if !settings.is_empty() {
         let written = repriseconf::edit(config, |text| {
             let base = model::load(text);
@@ -495,21 +515,13 @@ pub fn write(config: &Path, quick: Option<&Path>, picked: &[&Write]) -> Result<(
         });
         written.map_err(|e| e.to_string())??;
     }
-    let apps: Vec<(&AppEntry, &PathBuf)> = (picked.iter())
-        .filter_map(|w| match w {
-            Write::QuickLaunch(a, file) => Some((a, file)),
-            Write::Config(_) => None,
-        })
-        .collect();
-    if apps.is_empty() {
+    let Some(dir) = dir else {
         return Ok(());
-    }
-    let dir = quick.ok_or("there is no Quick Launch folder")?;
+    };
     let mut order: Vec<String> = quickpage::load(dir).into_iter().map(|l| l.file).collect();
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     // The program's own entry, under its own name, so the taskbar matches its windows.
-    for (a, file) in apps {
-        let text = reprisefs::apps::read_desktop_file(file).map_err(|e| e.to_string())?;
+    for (a, text) in apps {
         let name = ql::unique_name(dir, &a.id);
         std::fs::write(dir.join(&name), text).map_err(|e| e.to_string())?;
         order.push(name);

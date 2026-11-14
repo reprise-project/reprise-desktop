@@ -508,3 +508,51 @@ fn a_built_in_wallpaper_reads_without_a_position() {
         )
     );
 }
+
+#[test]
+fn numbers_past_reprises_ranges_are_written_at_the_nearest_end() {
+    let found = [
+        Setting::CursorSize(300),
+        Setting::DoubleClick(20_000),
+        Setting::RepeatDelay(-1),
+        Setting::RepeatRate(-5),
+    ];
+    let p = plan("Plasma", &found, "", &fake());
+    assert_eq!(cells(row(&p, "Pointer size")).1, "256 px");
+    let dir = scratch("clamp");
+    let config = dir.join("config.toml");
+    let refs: Vec<&Write> = p.writes.iter().collect();
+    write(&config, None, &refs).unwrap();
+    let text = std::fs::read_to_string(&config).unwrap();
+    let c = repriseconf::config::Config::parse(&text).unwrap_or_else(|e| panic!("{e}: {text}"));
+    assert_eq!((c.cursor.size, c.keyboard.repeat_delay), (256, 0));
+    assert_eq!(c.keyboard.repeat_rate, 0);
+    assert!(text.contains("double_click_ms = 10000"), "{text}");
+}
+
+#[test]
+fn a_program_that_cannot_be_read_writes_nothing() {
+    let dir = scratch("missing");
+    let config = dir.join("config.toml");
+    std::fs::write(&config, "# mine\n").unwrap();
+    let quick = dir.join("quicklaunch");
+    let picked = [
+        Write::Config(Setting::Dark(true)),
+        Write::QuickLaunch(entry("gone.desktop", "Gone"), dir.join("gone.desktop")),
+    ];
+    let refs: Vec<&Write> = picked.iter().collect();
+    assert!(write(&config, Some(&quick), &refs).is_err());
+    assert_eq!(std::fs::read_to_string(&config).unwrap(), "# mine\n");
+    assert!(!quick.exists());
+}
+
+#[test]
+fn a_plasma_file_that_is_a_fifo_reads_as_none() {
+    let dir = scratch("fifo");
+    let made = std::process::Command::new("mkfifo")
+        .arg(dir.join("kdeglobals"))
+        .status()
+        .unwrap();
+    assert!(made.success());
+    assert!(plasma::settings(&dir, "/home/sam").is_empty());
+}
