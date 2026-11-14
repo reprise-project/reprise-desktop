@@ -99,9 +99,42 @@ pub fn reads(backend: Option<Backend>, frame: &Frame) -> bool {
     }
 }
 
+/// [`reads`], and for a dma-buf its modifier one of the `modifiers` `backend` maps: a stream may
+/// still deliver buffers of an older offer.
+pub fn reads_offered(backend: Option<Backend>, modifiers: &[u64], frame: &Frame) -> bool {
+    reads(backend, frame)
+        && match &frame.buffer {
+            FrameBuffer::Dmabuf { modifier, .. } => modifiers.contains(modifier),
+            FrameBuffer::Shm { .. } => true,
+        }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_dma_buf_of_a_modifier_no_longer_offered_is_not_read() {
+        const Y_TILED: u64 = 0x0100_0000_0000_0002;
+        let mut tiled = Frame::detached(Vec::new(), (4, 2), Vec::new());
+        tiled.buffer = FrameBuffer::Dmabuf {
+            objects: vec![std::sync::Arc::new(
+                std::fs::File::open("/dev/null").unwrap().into(),
+            )],
+            fourcc: crate::stream::XRGB8888,
+            modifier: Y_TILED,
+            planes: Vec::new(),
+        };
+        let vulkan = Some(Backend::Vulkan);
+        assert!(reads_offered(
+            vulkan,
+            &[DRM_FORMAT_MOD_LINEAR, Y_TILED],
+            &tiled
+        ));
+        assert!(!reads_offered(vulkan, &[DRM_FORMAT_MOD_LINEAR], &tiled));
+        let shm = Frame::detached(vec![0; 4 * 2 * 4], (4, 2), Vec::new());
+        assert!(reads_offered(Some(Backend::X264), &[], &shm));
+    }
 
     #[test]
     fn conversions_split_only_large_pictures_on_more_than_two_cores() {
