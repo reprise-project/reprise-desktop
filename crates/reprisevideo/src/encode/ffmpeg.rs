@@ -609,6 +609,7 @@ pub(crate) mod tests {
     use crate::encode::gl::Gl;
     use crate::encode::probe::RENDER_NODE;
     use crate::stream::XRGB8888;
+    use crate::testgpu::{Need, lacks};
     use ::ffmpeg::frame;
     use std::sync::Arc;
 
@@ -1382,6 +1383,9 @@ pub(crate) mod tests {
     #[test]
     #[ignore = "needs VA-API H.264 on /dev/dri/renderD128; run with --ignored where it has one"]
     fn a_shared_memory_frame_leaves_avc444_on_for_the_next_dmabuf() {
+        if lacks(Need::VaapiH264) {
+            return;
+        }
         silence();
         let backend =
             (crate::encode::probe::probe(None, &[Codec::H264], crate::encode::probe::live_test)
@@ -1721,12 +1725,18 @@ pub(crate) mod tests {
     #[test]
     #[ignore = "needs VA-API H.264 on /dev/dri/renderD128; run with --ignored where it has one"]
     fn merged_avc444_views_decode_to_each_view_encoders_own_pictures() {
+        if lacks(Need::VaapiH264) {
+            return;
+        }
         assert_merged_views_decode_to_their_own_pictures(&mut vaapi());
     }
 
     #[test]
     #[ignore = "needs an NVIDIA GPU with NVENC"]
     fn merged_nvenc_avc444_views_decode_to_each_view_encoders_own_pictures() {
+        if lacks(Need::Nvenc) {
+            return;
+        }
         let mut encoder = nvenc();
         encoder.set_avc444(true);
         assert_merged_views_decode_to_their_own_pictures(&mut encoder);
@@ -1736,6 +1746,9 @@ pub(crate) mod tests {
     #[test]
     #[ignore = "needs an NVIDIA GPU with NVENC"]
     fn merged_nvenc_avc444_views_turn_into_idrs_together() {
+        if lacks(Need::Nvenc) {
+            return;
+        }
         let mut encoder = nvenc();
         encoder.set_avc444(true);
         assert_views_turn_into_idrs_together(&mut encoder);
@@ -1796,6 +1809,9 @@ pub(crate) mod tests {
     #[test]
     #[ignore = "needs VA-API H.264 on /dev/dri/renderD128; run with --ignored where it has one"]
     fn merged_avc444_views_turn_into_idrs_together() {
+        if lacks(Need::VaapiH264) {
+            return;
+        }
         assert_views_turn_into_idrs_together(&mut vaapi());
     }
 
@@ -1843,6 +1859,9 @@ pub(crate) mod tests {
     #[test]
     #[ignore = "needs VA-API H.264 on /dev/dri/renderD128; run with --ignored where it has one"]
     fn a_merge_error_codes_both_views_on_one_encoder_from_then_on() {
+        if lacks(Need::VaapiH264) {
+            return;
+        }
         crate::testlog::capture_log();
         let gbm = render_node();
         let mut encoder = vaapi();
@@ -1890,6 +1909,9 @@ pub(crate) mod tests {
     #[test]
     #[ignore = "needs VA-API H.264 on /dev/dri/renderD128; run with --ignored where it has one"]
     fn an_aux_encoder_that_fails_to_open_codes_both_views_on_one_encoder() {
+        if lacks(Need::VaapiH264) {
+            return;
+        }
         crate::testlog::capture_log();
         let gbm = render_node();
         let mut encoder = vaapi();
@@ -1934,6 +1956,9 @@ pub(crate) mod tests {
     #[test]
     #[ignore = "needs VA-API H.264 on /dev/dri/renderD128; run with --ignored where it has one"]
     fn merged_v2_views_decode_through_one_decoder_to_the_picture() {
+        if lacks(Need::VaapiH264) {
+            return;
+        }
         let gbm = render_node();
         let desktop = Desktop::new();
         let size = Desktop::size(0);
@@ -2219,6 +2244,9 @@ pub(crate) mod tests {
     #[test]
     #[ignore = "needs an NVIDIA GPU with NVENC"]
     fn nvenc_codes_the_colour_pattern_in_full_range_bt709() {
+        if lacks(Need::Nvenc) {
+            return;
+        }
         let gl = gl();
         let (frame, _bo) = colour_frame(&gl, false, &colour_rects()).unwrap();
         let mut encoder = nvenc();
@@ -2248,6 +2276,9 @@ pub(crate) mod tests {
     #[test]
     #[ignore = "needs an NVIDIA GPU with NVENC"]
     fn nvenc_codes_avc444_views() {
+        if lacks(Need::Nvenc) {
+            return;
+        }
         let gl = gl();
         let (frame, _bo) = colour_frame(&gl, false, &colour_rects()).unwrap();
         let mut encoder = nvenc();
@@ -2324,6 +2355,9 @@ pub(crate) mod tests {
     #[test]
     #[ignore = "needs VA-API H.264 on /dev/dri/renderD128; run with --ignored where it has one"]
     fn vaapi_codes_a_half_size_target() {
+        if lacks(Need::VaapiH264) {
+            return;
+        }
         silence();
         let backend =
             (crate::encode::probe::probe(None, &[Codec::H264], crate::encode::probe::live_test)
@@ -2340,6 +2374,9 @@ pub(crate) mod tests {
     #[test]
     #[ignore = "needs an NVIDIA GPU with NVENC"]
     fn nvenc_codes_a_half_size_target() {
+        if lacks(Need::Nvenc) {
+            return;
+        }
         codes_a_half_size_target(nvenc());
     }
 
@@ -2537,6 +2574,9 @@ pub(crate) mod tests {
     #[test]
     #[ignore = "needs an NVIDIA GPU with NVENC"]
     fn nvenc_codes_1080p_faster_than_60_fps() {
+        if lacks(Need::Nvenc) {
+            return;
+        }
         let gl = gl();
         let inverted: Vec<_> = (colour_rects().into_iter())
             .map(|(r, c)| (r, c.map(|v| 255 - v)))

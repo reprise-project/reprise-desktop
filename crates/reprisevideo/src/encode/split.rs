@@ -783,6 +783,7 @@ pub(crate) mod tests {
     use crate::encode::avc444::Planes444;
     use crate::encode::probe::RENDER_NODE;
     use crate::stream::XRGB8888;
+    use crate::testgpu::{Need, lacks};
     use std::fs::File;
 
     /// A LINEAR XRGB8888 dma-buf of `size` holding `pixel`'s colours, as a stream frame; its
@@ -1000,6 +1001,9 @@ pub(crate) mod tests {
     #[test]
     #[ignore = "needs OpenGL ES on /dev/dri/renderD128; run with --ignored where it has one"]
     fn gpu_split_equals_cpu_split() {
+        if lacks(Need::Gl) {
+            return;
+        }
         let size = (100, 50);
         let gbm = gbm::Device::new(
             File::options()
@@ -1062,6 +1066,9 @@ pub(crate) mod tests {
     #[test]
     #[ignore = "needs OpenGL ES on /dev/dri/renderD128; run with --ignored where it has one"]
     fn a_part_read_from_an_odd_origin_equals_the_cpu_split_of_that_part() {
+        if lacks(Need::Gl) {
+            return;
+        }
         let (frame_size, origin, size) = ((100, 50), (13, 7), (64, 32));
         let node = Path::new(RENDER_NODE);
         let gbm = gbm::Device::new(File::options().read(true).write(true).open(node).unwrap());
@@ -1098,6 +1105,9 @@ pub(crate) mod tests {
     #[test]
     #[ignore = "needs OpenGL ES on /dev/dri/renderD128; run with --ignored where it has one"]
     fn gl_split_codes_a_half_size_target() {
+        if lacks(Need::Gl) {
+            return;
+        }
         use crate::encode::ffmpeg::tests::{colour_pixel, patch_error, shown_444};
         let (source, half) = ((1920, 1080), (960, 540));
         let node = Path::new(RENDER_NODE);

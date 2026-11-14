@@ -119,8 +119,9 @@ render() {
         REPRISE_SCHEME=all REPRISE_GALLERY_LOOK=classic \
             cargo run -q -p reprisekit --example gallery >"$glog" 2>&1 ||
             { echo "gallery render failed in $tree"; tail -n 60 "$glog"; exit 1; }
-        # These tests claim names on the live session bus or need an NVENC GPU.
-        cargo test -q --workspace -- --ignored --skip _on_a_session_bus --skip nvenc_ \
+        # These tests claim names on the live session bus or need a GPU encoder, and draw no
+        # PNG; a BASE older than the encoders' own GPU checks fails them on a host without one.
+        cargo test -q --workspace -- --ignored --skip _on_a_session_bus --skip encode:: \
             >"$tlog" 2>&1 ||
             { echo "preview tests failed in $tree"; tail -n 60 "$tlog"; exit 1; }
         find target -maxdepth 1 -name '*.png' -newer "$stamp" -exec cp -t "$out" {} +
