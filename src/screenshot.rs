@@ -14,12 +14,16 @@
 //! selection (`State::clip_offer`) once encoded, and a balloon says where
 //! the file went once written.
 
+use std::cell::Cell;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 
 use repriseconf::config::ShotFormat;
 use reprisescene::View;
+use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay::utils::Rectangle;
 
 use crate::compositor::State;
@@ -169,21 +173,22 @@ impl State {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs() as i64);
+        let saving = shot.save.then(|| self.shots.saves.hold());
         self.spawn_job(move || -> crate::fsjobs::OnLoop {
             let still = picture();
             let png: Arc<[u8]> = Arc::from(crate::raster::to_png(&still));
             Box::new(move |state| {
                 state.clip_offer(&["image/png"], Arc::clone(&png));
-                if !shot.save {
+                let Some(saving) = saving else {
                     return;
-                }
+                };
                 let ext = shot.format.extension();
                 let wants_png = shot.format == ShotFormat::Png;
                 match crate::shotfile::plan(&shot, state.shots.encodes.count()) {
-                    Plan::Clipboard => return save(state, png, now, ext, None),
+                    Plan::Clipboard => return save(state, png, now, ext, None, saving),
                     Plan::Busy => {
                         let note = (!wants_png).then_some(BUSY);
-                        return save(state, png, now, "png", note);
+                        return save(state, png, now, "png", note, saving);
                     }
                     Plan::Encode => {}
                 }
@@ -192,7 +197,7 @@ impl State {
                     let file = crate::shotfile::encode(&still, &shot);
                     drop((still, encoding));
                     Box::new(move |state| match file {
-                        Ok(bytes) => save(state, bytes.into(), now, ext, None),
+                        Ok(bytes) => save(state, bytes.into(), now, ext, None, saving),
                         Err(e) => {
                             let as_png = "so it was saved as PNG.";
                             let note = match e {
@@ -211,7 +216,7 @@ impl State {
                                 Failed::Codec(e) => format!("Cannot encode it: {e}, {as_png}"),
                             };
                             let note = (!wants_png).then_some(note.as_str());
-                            save(state, png, now, "png", note)
+                            save(state, png, now, "png", note, saving)
                         }
                     })
                 });
@@ -250,16 +255,72 @@ impl Drop for Held {
 /// The screenshots under way.
 #[derive(Default)]
 pub struct Shots {
+    /// Screenshots whose file is not written yet.
+    pub saves: InFlight,
     /// File encodes running or waiting for the one running.
     encodes: InFlight,
 }
 
+const SAVING: &str = "Saving screenshots...";
+
+/// How often [`when_saved`] looks.
+const SAVED_POLL: Duration = Duration::from_millis(100);
+
+/// Runs `then` once every screenshot file under way is written, or `wait` from now at most, with
+/// a notice up meanwhile.
+pub fn when_saved(state: &mut State, wait: Duration, then: Box<dyn FnOnce(&mut State)>) {
+    let saves = state.shots.saves.clone();
+    if saves.count() == 0 {
+        return then(state);
+    }
+    log::info!(
+        "screenshot: waiting for {} file(s) to be saved",
+        saves.count()
+    );
+    crate::notifyview::notice(state, SAVING, "The session ends once they are saved.");
+    let deadline = Instant::now() + wait;
+    let then = Rc::new(Cell::new(Some(then)));
+    let fire = Rc::clone(&then);
+    let armed =
+        (state.handle).insert_source(Timer::from_duration(SAVED_POLL), move |_, _, state| {
+            if saves.count() > 0 && Instant::now() < deadline {
+                return TimeoutAction::ToDuration(SAVED_POLL);
+            }
+            if saves.count() > 0 {
+                log::warn!(
+                    "screenshot: {} file(s) not saved in {wait:?}",
+                    saves.count()
+                );
+            }
+            if let Some(then) = fire.take() {
+                then(state);
+            }
+            TimeoutAction::Drop
+        });
+    if let Err(e) = armed {
+        log::warn!("screenshot: no timer to wait for the files: {}", e.error);
+        if let Some(then) = then.take() {
+            then(state);
+        }
+    }
+}
+
 /// Write the encoded file on a file job and tell how it went, with `note` saying why it is a PNG.
-fn save(state: &mut State, bytes: Arc<[u8]>, secs: i64, ext: &'static str, note: Option<&str>) {
+fn save(
+    state: &mut State,
+    bytes: Arc<[u8]>,
+    secs: i64,
+    ext: &'static str,
+    note: Option<&str>,
+    saving: Held,
+) {
     let note = note.map(str::to_owned);
     state.spawn_fs_job(move || {
         let saved = write_file(&bytes, secs, ext);
-        Box::new(move |state| saved_notice(state, saved, note.as_deref()))
+        Box::new(move |state| {
+            saved_notice(state, saved, note.as_deref());
+            drop(saving);
+        })
     });
 }
 
@@ -293,18 +354,71 @@ fn saved_notice(state: &mut State, saved: Result<PathBuf, String>, note: Option<
 /// which is made if missing. Blocking.
 fn write_file(bytes: &[u8], secs: i64, ext: &str) -> Result<PathBuf, String> {
     use std::io::Write;
-    let pictures = reprisefs::places::user_dir("PICTURES", "Pictures").filter(|p| p.is_dir());
-    let home = std::env::var_os("HOME").map(PathBuf::from);
-    let dir = folder(pictures, home).ok_or("There is no home folder to save it in.")?;
+    let dir = shots_folder().ok_or("There is no home folder to save it in.")?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("Cannot make {}: {e}", dir.display()))?;
     let name = file_name(&reprisefs::locale::localtime(secs), ext);
-    let (mut file, path) = reprisefs::ops::create_new_numbered(&dir, &name)
+    write_into(&dir.join(name), |f| f.write_all(bytes))
+}
+
+/// A new file at the first free numbering of `path`, written by `write` to a hidden temp file
+/// beside it, synced and renamed into place, so no half-written file ever has the name.
+fn write_into(
+    path: &std::path::Path,
+    write: impl FnOnce(&mut std::fs::File) -> std::io::Result<()>,
+) -> Result<PathBuf, String> {
+    let dir = path.parent().unwrap_or(std::path::Path::new("."));
+    let (mut file, tmp) = reprisefs::ops::create_temp_beside(path, None)
         .map_err(|e| format!("Cannot write in {}: {e}", dir.display()))?;
-    if let Err(e) = file.write_all(bytes).and_then(|()| file.sync_all()) {
-        let _ = std::fs::remove_file(&path);
-        return Err(format!("Cannot write {}: {e}", path.display()));
-    }
-    Ok(path)
+    let landed = write(&mut file)
+        .and_then(|()| file.sync_all())
+        .and_then(|()| reprisefs::ops::rename_numbered(&tmp, path));
+    landed.map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("Cannot write {}: {e}", path.display())
+    })
+}
+
+fn shots_folder() -> Option<PathBuf> {
+    let pictures = reprisefs::places::user_dir("PICTURES", "Pictures").filter(|p| p.is_dir());
+    folder(pictures, std::env::var_os("HOME").map(PathBuf::from))
+}
+
+/// Remove the temp files a session that ended mid-write left in the Screenshots folder, off the
+/// loop. One written in the last minute may be another session's under way, so it stays.
+pub fn sweep_temps(state: &mut State) {
+    state.spawn_fs_job(|| {
+        if let Some(dir) = shots_folder() {
+            let old = std::time::SystemTime::now() - Duration::from_secs(60);
+            for path in stale_temps(&dir, old) {
+                match std::fs::remove_file(&path) {
+                    Ok(()) => log::info!("screenshot: removed {}", path.display()),
+                    Err(e) => log::warn!("screenshot: {}: {e}", path.display()),
+                }
+            }
+        }
+        Box::new(|_| {})
+    });
+}
+
+/// The screenshot temp files (`write_into`'s) in `dir` last written before `old`.
+fn stale_temps(dir: &std::path::Path, old: std::time::SystemTime) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter(|e| {
+            let name = e.file_name();
+            let name = name.to_string_lossy();
+            name.starts_with(".Screenshot ") && name.ends_with(".tmp")
+        })
+        .filter(|e| {
+            e.metadata()
+                .and_then(|m| m.modified())
+                .is_ok_and(|t| t < old)
+        })
+        .map(|e| e.path())
+        .collect()
 }
 
 /// `Screenshots` in the Pictures folder when there is one, else in home.
@@ -447,6 +561,68 @@ mod tests {
             file_name(&tm(), "jxl"),
             "Screenshot 2026-09-05 07-03-09.jxl"
         );
+    }
+
+    fn names_in(dir: &std::path::Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn a_write_that_fails_leaves_nothing_and_one_that_lands_takes_a_free_number() {
+        use std::io::Write;
+        let dir = crate::harness::scratch().join("shot-write");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("Shot.jxl");
+        let failed = write_into(&path, |f| {
+            f.write_all(b"half")?;
+            Err(std::io::Error::other("disk gone"))
+        });
+        assert!(failed.unwrap_err().ends_with("disk gone"));
+        assert!(names_in(&dir).is_empty(), "no file under any name");
+        for _ in 0..2 {
+            write_into(&path, |f| f.write_all(b"whole")).unwrap();
+        }
+        assert_eq!(names_in(&dir), ["Shot (2).jxl", "Shot.jxl"]);
+        assert_eq!(std::fs::read(&path).unwrap(), b"whole");
+    }
+
+    #[test]
+    fn a_temp_left_by_an_ended_session_goes_and_one_under_way_stays() {
+        let dir = crate::harness::scratch().join("shot-temps");
+        std::fs::create_dir_all(&dir).unwrap();
+        for name in [
+            ".Screenshot 2026-09-05 07-03-09.jxl.00ff00ff00ff00ff.tmp",
+            "Screenshot 2026-09-05 07-03-09.jxl",
+            ".other.tmp",
+        ] {
+            std::fs::write(dir.join(name), b"x").unwrap();
+        }
+        let later = std::time::SystemTime::now() + Duration::from_secs(1);
+        assert_eq!(
+            stale_temps(&dir, later),
+            [dir.join(".Screenshot 2026-09-05 07-03-09.jxl.00ff00ff00ff00ff.tmp")]
+        );
+        let earlier = std::time::SystemTime::now() - Duration::from_secs(60);
+        assert!(stale_temps(&dir, earlier).is_empty(), "written just now");
+    }
+
+    #[test]
+    fn a_wait_for_screenshot_files_ends_at_its_deadline() {
+        let mut h = crate::harness::Harness::new();
+        let _saving = h.state.shots.saves.hold();
+        let ran = Rc::new(Cell::new(false));
+        let set = Rc::clone(&ran);
+        let wait = Duration::from_millis(300);
+        when_saved(&mut h.state, wait, Box::new(move |_| set.set(true)));
+        h.run_for(150);
+        assert!(!ran.get(), "the file is under way");
+        h.run_for(400);
+        assert!(ran.get(), "past the deadline");
     }
 
     #[test]

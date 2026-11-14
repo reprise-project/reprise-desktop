@@ -23,6 +23,8 @@ const POLL: Duration = Duration::from_millis(500);
 const CALL_TIMEOUT: Duration = Duration::from_secs(2);
 /// The longest a session end waits for the remote desktop server to tell its clients.
 const TELL_CLIENTS: Duration = Duration::from_secs(1);
+/// The longest a session end waits for screenshot files under way to be written.
+const SAVE_SHOTS: Duration = Duration::from_secs(15);
 
 const PORTAL: &str = "org.freedesktop.impl.portal.desktop.reprise";
 const PORTAL_PATH: &str = "/org/freedesktop/portal/desktop";
@@ -292,23 +294,20 @@ fn resets_portal(
     e.cmd.is_some() || (e.asked_portal && !asks_portal(env, e.goal, another_runs))
 }
 
-/// Fade the screen out, then end: stop the compositor for Log Off, else run `cmd`. Remote clients
-/// hear the session logged off; the end waits for the server's answer, [`TELL_CLIENTS`] at most.
+/// Wait for screenshot files under way, [`SAVE_SHOTS`] at most, fade the screen out, then end: stop
+/// the compositor for Log Off, else run `cmd`. Remote clients hear the session logged off; the end
+/// waits for the server's answer, [`TELL_CLIENTS`] at most.
 fn go_on(state: &mut State, goal: Goal, cmd: Option<String>, override_inhibitors: bool) {
     crate::crash::ending();
     let powers_off = goal != Goal::LogOff;
     let end: OnLoop = Box::new(move |state| act(state, goal, cmd, override_inhibitors));
     // A deferring session's Turn Off also ends the other session's clients.
     let server_ours = state.standby.rdp_on() || (powers_off && state.env.defers_user_units);
-    if !crate::console::remote_side(state) && !server_ours {
-        crate::sessionfade::out(state, end);
+    let tells = crate::console::remote_side(state) || server_ours;
+    let wait = fade_out(state, !tells, SAVE_SHOTS, end);
+    if !tells {
         return;
     }
-    let wait = Arc::new(Mutex::new(Wait {
-        faded: false,
-        told: false,
-        end: Some(end),
-    }));
     let told = Arc::clone(&wait);
     let why = match powers_off {
         true => crate::console::ClientsEnd::PoweredOff,
@@ -329,10 +328,28 @@ fn go_on(state: &mut State, goal: Goal, cmd: Option<String>, override_inhibitors
         log::warn!("session end: no timer for the clients: {}", e.error);
         arrive(&wait, state, |w| w.told = true);
     }
-    crate::sessionfade::out(
+}
+
+/// Wait for screenshot files under way (`saves` at most) with the desktop up, then fade out; `end`
+/// runs once the screen is black and the clients are `told`.
+fn fade_out(state: &mut State, told: bool, saves: Duration, end: OnLoop) -> Arc<Mutex<Wait>> {
+    let wait = Arc::new(Mutex::new(Wait {
+        faded: false,
+        told,
+        end: Some(end),
+    }));
+    let faded = Arc::clone(&wait);
+    crate::screenshot::when_saved(
         state,
-        Box::new(move |state| arrive(&wait, state, |w| w.faded = true)),
+        saves,
+        Box::new(move |state| {
+            crate::sessionfade::out(
+                state,
+                Box::new(move |state| arrive(&faded, state, |w| w.faded = true)),
+            );
+        }),
     );
+    wait
 }
 
 /// A session end waiting for its fade and for the remote clients to hear of it.
@@ -342,7 +359,7 @@ struct Wait {
     end: Option<OnLoop>,
 }
 
-/// Mark what arrived, then end once both have.
+/// Mark what arrived, then end once everything has.
 fn arrive(wait: &Mutex<Wait>, state: &mut State, mark: impl FnOnce(&mut Wait)) {
     let end = {
         let mut w = wait.lock().unwrap_or_else(|e| e.into_inner());
@@ -358,10 +375,16 @@ fn arrive(wait: &Mutex<Wait>, state: &mut State, mark: impl FnOnce(&mut Wait)) {
     }
 }
 
-/// End the session now, whatever is open (a SIGTERM, a GPU gone): fade out, then stop the loop.
+/// End the session now, whatever is open (a SIGTERM, a GPU gone): once screenshot files under way
+/// are written, fade out, then stop the loop.
 pub fn quit(state: &mut State) {
     crate::crash::ending();
-    crate::sessionfade::out(state, Box::new(|state| state.signal.stop()));
+    fade_out(
+        state,
+        true,
+        SAVE_SHOTS,
+        Box::new(|state| state.signal.stop()),
+    );
 }
 
 fn act(state: &mut State, goal: Goal, cmd: Option<String>, override_inhibitors: bool) {
@@ -1442,6 +1465,38 @@ mod tests {
                 "the timer's late answer ends nothing"
             );
         }
+    }
+
+    #[test]
+    fn the_end_saves_screenshots_with_the_desktop_up_and_fades_after() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.state.config.effects.session_fade = true;
+        h.state.config.effects.session_fade_out_ms = 400;
+        let saving = h.state.shots.saves.hold();
+        let ends = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&ends);
+        let end: OnLoop = Box::new(move |_| {
+            counted.fetch_add(1, Ordering::Relaxed);
+        });
+        fade_out(&mut h.state, true, SAVE_SHOTS, end);
+        h.run_for(300);
+        assert!(
+            !h.state.session_fade.fading_out(),
+            "no fade while the file is under way"
+        );
+        let notice = h.state.notify.log.get(crate::notifyview::OWN_ID);
+        assert_eq!(
+            notice.map(|e| e.n.summary.as_str()),
+            Some("Saving screenshots...")
+        );
+        drop(saving);
+        h.run_for(200);
+        assert!(h.state.session_fade.fading_out(), "the file landed");
+        assert_eq!(ends.load(Ordering::Relaxed), 0, "the fade is under way");
+        h.run_for(400);
+        assert_eq!(ends.load(Ordering::Relaxed), 1, "faded out");
     }
 
     #[test]

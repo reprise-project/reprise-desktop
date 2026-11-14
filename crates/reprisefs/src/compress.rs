@@ -2,7 +2,6 @@
 //! renamed once whole, so a cancelled or failed run leaves no half zip.
 
 use crate::extract::{self, ArchiveEvent, ArchiveJob, Failure};
-use crate::names;
 use crate::ops;
 use crate::progress::{Meter, Phase, Totals};
 use std::ffi::{OsStr, OsString};
@@ -144,7 +143,7 @@ fn zip(c: &Compress, m: &Meter, path: Option<&OsStr>) -> Result<PathBuf, Failure
     if !ok {
         return Err(undo(Failure::Tool(extract::said(&last, "bsdtar stopped."))));
     }
-    land(&tmp, &c.zip).map_err(|e| undo(io_err(e)))
+    ops::rename_numbered(&tmp, &c.zip).map_err(|e| undo(io_err(e)))
 }
 
 /// The entries bsdtar writes for `path`: it, and everything under it when a folder. Links are not
@@ -163,32 +162,6 @@ fn count(path: &Path, m: &Meter) -> Option<u64> {
         }
     }
     Some(n)
-}
-
-/// Renames `tmp` to the first free of `zip`, `zip (2)`..., never over a file that took the name
-/// while the zip was written.
-fn land(tmp: &Path, zip: &Path) -> io::Result<PathBuf> {
-    let dir = zip.parent().unwrap_or(Path::new("."));
-    let name = zip.file_name().unwrap_or_default();
-    for candidate in names::numbered(name, names::paren).take(1000) {
-        let to = dir.join(candidate);
-        match ops::rename2(tmp, &to, libc::RENAME_NOREPLACE) {
-            Ok(()) => return Ok(to),
-            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
-            Err(e) if ops::unsupported(&e) => {
-                if to.symlink_metadata().is_ok() {
-                    continue;
-                }
-                std::fs::rename(tmp, &to)?;
-                return Ok(to);
-            }
-            Err(e) => return Err(e),
-        }
-    }
-    Err(io::Error::new(
-        io::ErrorKind::AlreadyExists,
-        "every numbered name is taken",
-    ))
 }
 
 #[cfg(test)]

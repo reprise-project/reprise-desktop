@@ -165,6 +165,59 @@ pub fn create_new_numbered(dir: &Path, name: &str) -> io::Result<(std::fs::File,
     Err(last.expect("the loop ran"))
 }
 
+/// Rename `from` to the first free name of [`unique_path`]'s numbering of `to`, never over a file
+/// that took a name meanwhile.
+pub fn rename_numbered(from: &Path, to: &Path) -> io::Result<PathBuf> {
+    let dir = to.parent().unwrap_or(Path::new("."));
+    let name = to.file_name().unwrap_or_default();
+    for candidate in crate::names::numbered(name, crate::names::paren).take(1000) {
+        let to = dir.join(candidate);
+        match rename2(from, &to, libc::RENAME_NOREPLACE) {
+            Ok(()) => return Ok(to),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(e) if unsupported(&e) => match link_over(from, &to) {
+                Ok(()) => return Ok(to),
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+                // Neither RENAME_NOREPLACE nor hard links: the check and the rename can race.
+                Err(e) if no_links(&e) => {
+                    if to.symlink_metadata().is_ok() {
+                        continue;
+                    }
+                    std::fs::rename(from, &to)?;
+                    return Ok(to);
+                }
+                Err(e) => return Err(e),
+            },
+            Err(e) => return Err(e),
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "every numbered name is taken",
+    ))
+}
+
+/// `from` linked to `to`, which link(2) refuses with EEXIST when taken, then `from` unlinked.
+fn link_over(from: &Path, to: &Path) -> io::Result<()> {
+    std::fs::hard_link(from, to)?;
+    if let Err(e) = std::fs::remove_file(from) {
+        log::warn!(
+            "file ops: {} stays beside {}: {e}",
+            from.display(),
+            to.display()
+        );
+    }
+    Ok(())
+}
+
+/// Whether link(2) failed because the file system has no hard links.
+fn no_links(e: &io::Error) -> bool {
+    matches!(
+        e.raw_os_error(),
+        Some(libc::EPERM | libc::EOPNOTSUPP | libc::ENOSYS)
+    )
+}
+
 /// The folder of `paths`, items of one folder, and their names as bsdtar takes them after
 /// `-C folder --`: bsdtar reads `-C dir` and `@archive` among the names even past `--`, so a
 /// name starting with `-` or `@` goes in as `./name`.
