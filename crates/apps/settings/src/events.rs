@@ -504,7 +504,10 @@ impl SettingsApp {
             Event::Pointer(PointerInput::Motion { x, y }) => {
                 let lit = self.list_hover(x, y, ctx);
                 if let Some(r) = self.list_motion(x, y, &ctx.forms().controls()) {
-                    return r;
+                    return Reply {
+                        redraw: r.redraw || lit,
+                        ..r
+                    };
                 }
                 let hit = self.sheet.hit(x, y, &ctx.text, px);
                 let ev = self.sheet.motion(x, y, hit);
