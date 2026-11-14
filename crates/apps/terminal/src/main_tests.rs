@@ -1720,3 +1720,22 @@ fn a_drop_types_its_paths_as_a_bracketed_paste_and_raises_the_window() {
     assert_eq!(reply.raise, Some(MAIN));
     assert_eq!(reply.answer_drop, Some(Some(repriseapp::DragAction::Copy)));
 }
+
+#[test]
+fn bel_rings_the_window_s_bell_once_per_gap() {
+    let mut ctx = test_ctx();
+    let mut t = terminal(&["sleep", "5"]);
+    let bel = |t: &Terminal, bytes: &[u8]| {
+        let mut parser: alacritty_terminal::vte::ansi::Processor = Default::default();
+        t.w.tabs.list[0].with_term(|term| parser.advance(term, bytes))
+    };
+    bel(&t, b"a\x07b\x07\x07");
+    assert_eq!(t.event(MAIN, Event::Wake, &mut ctx).bell, Some(MAIN));
+    assert_eq!(t.event(MAIN, Event::Wake, &mut ctx).bell, None, "rung once");
+    bel(&t, b"\x07");
+    assert_eq!(
+        t.event(MAIN, Event::Wake, &mut ctx).bell,
+        None,
+        "a bell inside the gap stays quiet"
+    );
+}

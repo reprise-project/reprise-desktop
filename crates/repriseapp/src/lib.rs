@@ -71,6 +71,7 @@ use smithay_client_toolkit::reexports::protocols::wp::{
 use smithay_client_toolkit::reexports::protocols::xdg::{
     dialog::v1::client::xdg_wm_dialog_v1,
     foreign::{zv1::client::zxdg_importer_v1, zv2::client::zxdg_importer_v2},
+    system_bell::v1::client::xdg_system_bell_v1,
     toplevel_tag::v1::client::xdg_toplevel_tag_manager_v1,
 };
 use smithay_client_toolkit::{
@@ -299,6 +300,7 @@ struct Host {
     importer_v2: Option<zxdg_importer_v2::ZxdgImporterV2>,
     importer_v1: Option<zxdg_importer_v1::ZxdgImporterV1>,
     tag_manager: Option<xdg_toplevel_tag_manager_v1::XdgToplevelTagManagerV1>,
+    system_bell: Option<xdg_system_bell_v1::XdgSystemBellV1>,
     effects: Option<ext_background_effect_manager_v1::ExtBackgroundEffectManagerV1>,
     tab_groups: Option<reprise_tabs_v1::RepriseTabsV1>,
     on_top_manager: Option<ontop::reprise_on_top_v1::RepriseOnTopV1>,

@@ -124,6 +124,9 @@ pub struct Reply {
     pub raise: Option<WinId>,
     /// Ask the compositor to show the main window full screen (`true`) or as before (`false`).
     pub fullscreen: Option<bool>,
+    /// Ring the system bell for this program's window (`xdg_system_bell_v1`); nothing when the
+    /// compositor has no bell. The caller limits how often.
+    pub bell: Option<WinId>,
 }
 
 impl Reply {
@@ -206,6 +209,7 @@ impl Reply {
             mut redraw_wins,
             raise,
             fullscreen,
+            bell,
         } = then;
         let (spawn, spawn_app) = if spawn.is_empty() {
             (self.spawn, self.spawn_app)
@@ -251,6 +255,7 @@ impl Reply {
             },
             raise: self.raise.or(raise),
             fullscreen: self.fullscreen.or(fullscreen),
+            bell: self.bell.or(bell),
         }
     }
 }

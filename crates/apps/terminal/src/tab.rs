@@ -6,6 +6,7 @@ use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use alacritty_terminal::event::{Event as TermEvent, EventListener, Notify, OnResize, WindowSize};
 use alacritty_terminal::event_loop::{EventLoop, Msg, Notifier};
@@ -31,6 +32,7 @@ struct Inbox {
     title: Option<Option<String>>,
     replies: Vec<Answer>,
     copied: Copied,
+    bell: bool,
     status: Option<i32>,
     exited: bool,
     /// Something came since the last pump: output on the screen or one of the above.
@@ -42,6 +44,14 @@ enum Answer {
     Text(String),
     Colour(usize, Arc<dyn Fn(Rgb) -> String + Send + Sync>),
     Size(Arc<dyn Fn(WindowSize) -> String + Send + Sync>),
+}
+
+/// What a pump hands the window: whether the program rang the bell (BEL) since the last one, and
+/// what it stored on the clipboards.
+#[derive(Default)]
+pub struct Pumped {
+    pub bell: bool,
+    pub copied: Copied,
 }
 
 /// Text the program stored with OSC 52 since the last pump; its loads are not answered.
@@ -75,6 +85,7 @@ impl EventListener for Proxy {
                 TermEvent::ClipboardStore(ClipboardType::Selection, text) => {
                     inbox.copied.primary = Some(text)
                 }
+                TermEvent::Bell => inbox.bell = true,
                 TermEvent::ChildExit(status) => inbox.status = status.code(),
                 TermEvent::Exit => inbox.exited = true,
                 TermEvent::Wakeup => {}
@@ -84,6 +95,19 @@ impl EventListener for Proxy {
         }
         self.waker.wake();
     }
+}
+
+/// Bells closer together than this after a rung one stay quiet, so a program printing BEL in a
+/// loop rings five times a second at most.
+pub const BELL_GAP: Duration = Duration::from_millis(200);
+
+/// Whether a bell at `now` rings, `last` holding the last one that did; records it if so.
+pub fn rings(last: &mut Option<Instant>, now: Instant) -> bool {
+    if last.is_some_and(|t| now.saturating_duration_since(t) < BELL_GAP) {
+        return false;
+    }
+    *last = Some(now);
+    true
 }
 
 /// The most text one OSC 52 store puts on a clipboard, in bytes; a larger store is dropped.
@@ -293,10 +317,10 @@ impl Tab {
     }
 
     /// Carry out what the PTY thread queued: title changes, the program's queries (answered in
-    /// `scheme`'s colours), and its exit. Returns what it stored on the clipboards, or None when
-    /// the PTY thread had nothing since the last pump, so the screen is as last drawn.
-    pub fn pump(&mut self, scheme: &Scheme) -> Option<Copied> {
-        let (title, replies, copied, status, exited) = {
+    /// `scheme`'s colours), and its exit. Returns its bell and clipboard stores, or None when the
+    /// PTY thread had nothing since the last pump, so the screen is as last drawn.
+    pub fn pump(&mut self, scheme: &Scheme) -> Option<Pumped> {
+        let (title, replies, pumped, status, exited) = {
             let mut inbox = self.inbox.lock().unwrap();
             if !std::mem::take(&mut inbox.news) {
                 return None;
@@ -304,7 +328,10 @@ impl Tab {
             (
                 inbox.title.take(),
                 std::mem::take(&mut inbox.replies),
-                std::mem::take(&mut inbox.copied),
+                Pumped {
+                    bell: std::mem::take(&mut inbox.bell),
+                    copied: std::mem::take(&mut inbox.copied),
+                },
                 inbox.status,
                 inbox.exited,
             )
@@ -323,7 +350,7 @@ impl Tab {
         if exited {
             self.exit = Some(status.unwrap_or(0));
         }
-        Some(copied)
+        Some(pumped)
     }
 
     fn colour(&self, i: usize, scheme: &Scheme) -> Rgb {
@@ -445,6 +472,18 @@ mod tests {
         assert_eq!(
             shown_title("a\u{202e}b\u{200b}c\u{2066}d\u{feff}e\u{61c}"),
             "abcde"
+        );
+    }
+
+    #[test]
+    fn a_bell_inside_the_gap_of_a_rung_one_stays_quiet() {
+        let (mut last, t) = (None, Instant::now());
+        assert!(rings(&mut last, t), "the first bell rings");
+        assert!(!rings(&mut last, t + BELL_GAP / 2), "inside the gap");
+        assert!(rings(&mut last, t + BELL_GAP), "the gap has passed");
+        assert!(
+            !rings(&mut last, t + BELL_GAP + BELL_GAP / 2),
+            "the gap runs from the last bell that rang"
         );
     }
 
