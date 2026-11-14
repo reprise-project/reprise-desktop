@@ -12,6 +12,7 @@ use reprisekit::controls::fingerprints::{Facts, Finger, Reader};
 pub struct Sources {
     pub read: fn() -> Found,
     pub delete: fn(Option<&str>) -> Result<(), fprint::Refusal>,
+    pub add: fn(&str, fprint::StopSignal, &mut dyn FnMut(Adding)) -> Ended,
 }
 
 impl Default for Sources {
@@ -21,11 +22,13 @@ impl Default for Sources {
             Sources {
                 read: || Found::NoService,
                 delete: |_| Err(fprint::Refusal::Failed),
+                add: |_, _, _| Err(fprint::Refusal::Failed),
             }
         } else {
             Sources {
                 read: fprint::read,
                 delete: fprint::delete,
+                add: |finger, stop, tell| fprint::add(finger, stop, tell),
             }
         }
     }
@@ -54,6 +57,9 @@ pub struct Fingers {
     pub reading: Option<Receiver<Found>>,
     pub deleting: Option<Receiver<Ended>>,
     pub add: Option<Add>,
+    /// A start the dialog of generation `.0` asked for while an earlier add was still letting
+    /// the reader go; it starts once that add has ended.
+    pub queued: Option<(u64, Finger)>,
     /// The generation the next Add a Fingerprint dialog opens with.
     pub opened: u64,
 }
