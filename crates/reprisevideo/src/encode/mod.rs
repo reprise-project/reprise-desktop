@@ -1,4 +1,4 @@
-//! H.264 encoders for stream frames, through FFmpeg on the backend the probe finds. Callers run
+//! Video encoders for stream frames, through FFmpeg on the backend the probe finds. Callers run
 //! them on a thread of their own, so a frame on the GPU never holds up anything else.
 
 pub mod avc444;
@@ -10,12 +10,15 @@ pub mod ffmpeg;
 pub mod gl;
 pub mod h264merge;
 pub mod hwmap;
+pub mod plain;
 pub mod probe;
+pub mod rate;
 pub mod split;
 
 use crate::stream::{DRM_FORMAT_MOD_LINEAR, Frame, FrameBuffer, Rect};
 use hwmap::Gpu;
 use probe::Backend;
+pub use repriseconf::recording::Codec;
 use repriseconf::remote::Quality;
 use std::sync::OnceLock;
 
@@ -133,7 +136,7 @@ mod tests {
         ));
         assert!(!reads_offered(vulkan, &[DRM_FORMAT_MOD_LINEAR], &tiled));
         let shm = Frame::detached(vec![0; 4 * 2 * 4], (4, 2), Vec::new());
-        assert!(reads_offered(Some(Backend::X264), &[], &shm));
+        assert!(reads_offered(Some(Backend::Software), &[], &shm));
     }
 
     #[test]

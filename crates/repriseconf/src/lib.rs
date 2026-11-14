@@ -817,6 +817,7 @@ pub mod keybind;
 pub mod location;
 pub mod pages;
 pub mod projection;
+pub mod recording;
 pub mod remote;
 pub mod search;
 pub mod welcome;

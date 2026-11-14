@@ -2,6 +2,7 @@
 //! codec context, for the container's header, fed stream frames at their wall-clock times.
 
 use ffmpeg::{Dictionary, Packet, ffi, frame};
+use reprisevideo::encode::Codec;
 use reprisevideo::encode::EncodeError;
 use reprisevideo::encode::hwmap::{self, Converter, Devices};
 use reprisevideo::encode::probe::Backend;
@@ -46,7 +47,7 @@ impl Movie {
         };
         let coded = hwmap::even(size);
         let mut converter = Converter::cropped(devices.as_ref(), fourcc, origin, coded, RATE_HINT)?;
-        let name = backend.codec();
+        let name = backend.encoder(Codec::H264);
         let codec = ffmpeg::encoder::find_by_name(name)
             .ok_or_else(|| EncodeError(format!("FFmpeg has no {name}")))?;
         let mut ctx = ffmpeg::codec::Context::new_with_codec(codec)
@@ -127,7 +128,7 @@ impl Movie {
         {
             self.send(picture, end, out)?;
         }
-        let err = |e| EncodeError(format!("{}: {e}", self.backend.codec()));
+        let err = |e| EncodeError(format!("{}: {e}", self.backend.encoder(Codec::H264)));
         self.encoder.send_eof().map_err(err)?;
         self.receive(out)
     }
@@ -139,7 +140,7 @@ impl Movie {
         out: &mut Vec<Packet>,
     ) -> Result<(), EncodeError> {
         picture.set_pts(Some(pts));
-        let codec = self.backend.codec();
+        let codec = self.backend.encoder(Codec::H264);
         (self.encoder.send_frame(&picture)).map_err(|e| EncodeError(format!("{codec}: {e}")))?;
         self.last = Some((picture, pts));
         self.receive(out)
@@ -154,7 +155,12 @@ impl Movie {
                     errno: libc::EAGAIN,
                 })
                 | Err(ffmpeg::Error::Eof) => return Ok(()),
-                Err(e) => return Err(EncodeError(format!("{}: {e}", self.backend.codec()))),
+                Err(e) => {
+                    return Err(EncodeError(format!(
+                        "{}: {e}",
+                        self.backend.encoder(Codec::H264)
+                    )));
+                }
             }
         }
     }
@@ -172,7 +178,7 @@ fn options(backend: Backend) -> Dictionary {
         ],
         Backend::Nvenc => &[("rc", "constqp"), ("qp", QP), ("preset", "p4")],
         Backend::Vulkan => &[("rc_mode", "cqp"), ("qp", QP)],
-        Backend::X264 => &[("preset", "veryfast"), ("crf", CRF)],
+        Backend::Software => &[("preset", "veryfast"), ("crf", CRF)],
     };
     for (k, v) in pairs {
         o.set(k, v);
@@ -194,7 +200,7 @@ mod tests {
     fn x264(size: (u32, u32), origin: (u32, u32)) -> Movie {
         ffmpeg::util::log::set_level(ffmpeg::util::log::Level::Quiet);
         let node = Path::new(reprisevideo::encode::probe::RENDER_NODE);
-        Movie::open(Backend::X264, node, XRGB8888, (64, 48), size, origin).unwrap()
+        Movie::open(Backend::Software, node, XRGB8888, (64, 48), size, origin).unwrap()
     }
 
     #[test]

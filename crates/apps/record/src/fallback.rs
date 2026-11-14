@@ -1,6 +1,7 @@
 //! The encoder a recording opens: the backends in turn, with the stream asked for the next one's
 //! buffers while its frames are ones that backend cannot read.
 
+use reprisevideo::encode::Codec;
 use reprisevideo::encode::probe::Backend;
 use std::time::{Duration, Instant};
 
@@ -66,7 +67,7 @@ impl Backends {
             if held >= 2 * HOLD {
                 log::warn!(
                     "the screen's stream sent no buffers {} reads",
-                    backend.label()
+                    backend.label(Codec::H264)
                 );
                 self.asked = None;
                 self.left.remove(0);
@@ -93,7 +94,7 @@ mod tests {
     fn order() -> Backends {
         Backends::new(vec![
             (VAAPI, vec![DRM_FORMAT_MOD_LINEAR, Y_TILED]),
-            (Backend::X264, vec![DRM_FORMAT_MOD_LINEAR]),
+            (Backend::Software, vec![DRM_FORMAT_MOD_LINEAR]),
         ])
     }
 
@@ -121,7 +122,7 @@ mod tests {
         assert_eq!(backends.next(t0, tiled), Step::Open(VAAPI));
         assert_eq!(
             backends.next(t0, tiled),
-            ask(Backend::X264, false),
+            ask(Backend::Software, false),
             "VA-API failed: the stream is asked for x264's LINEAR buffers"
         );
         let in_flight = t0 + Duration::from_millis(30);
@@ -132,7 +133,7 @@ mod tests {
         );
         assert_eq!(
             backends.next(t0 + Duration::from_millis(60), linear),
-            Step::Open(Backend::X264)
+            Step::Open(Backend::Software)
         );
         assert_eq!(backends.next(t0, linear), Step::Exhausted);
     }
@@ -145,7 +146,7 @@ mod tests {
         backends.next(t0, tiled);
         let at = |ms| t0 + Duration::from_millis(ms);
         assert_eq!(backends.next(at(999), tiled), Step::Wait(None));
-        assert_eq!(backends.next(at(1000), tiled), ask(Backend::X264, true));
+        assert_eq!(backends.next(at(1000), tiled), ask(Backend::Software, true));
         assert_eq!(
             backends.next(at(1500), tiled),
             Step::Wait(None),
@@ -163,14 +164,14 @@ mod tests {
         const VULKAN_ONLY: u64 = 0x0300_0000_0000_0001;
         let mut backends = Backends::new(vec![
             (Backend::Vulkan, vec![VULKAN_ONLY]),
-            (Backend::X264, vec![DRM_FORMAT_MOD_LINEAR]),
+            (Backend::Software, vec![DRM_FORMAT_MOD_LINEAR]),
         ]);
         let t0 = Instant::now();
         let tiled_only = |_: Backend, _: &[u64]| false;
         assert!(matches!(backends.next(t0, tiled_only), Step::Wait(Some(_))));
         assert_eq!(
             backends.next(t0 + 2 * HOLD, tiled_only),
-            ask(Backend::X264, false),
+            ask(Backend::Software, false),
             "Vulkan is skipped and x264's buffers are asked for at once"
         );
     }

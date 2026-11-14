@@ -1,11 +1,14 @@
-//! What encodes H.264, found once at start: the FFmpeg backends that open and code a test frame
-//! on the session's render node, and the stream modifiers each one's GPU maps correctly.
+//! What encodes each codec asked for, found once at start: the FFmpeg backends that open and code
+//! a test frame on the session's render node, and the stream modifiers each one's GPU maps
+//! correctly.
 
 use super::colour;
 use super::ffmpeg::Ffmpeg;
 use super::gl::{self, Gl};
 use super::hwmap::{self, Converter, Devices, Gpu};
-use super::{Encoded, Encoder};
+use super::plain::{Plain, Setup};
+use super::rate::{DEFAULT_QUALITY, RateControl};
+use super::{Codec, EncodeError, Encoded, Encoder};
 use crate::stream::{
     ABGR8888, ARGB8888, DRM_FORMAT_MOD_LINEAR, Frame, FrameBuffer, Plane, XBGR8888, XRGB8888,
 };
@@ -16,6 +19,8 @@ use repriseconf::remote::{EncoderChoice, Quality};
 use std::fs::File;
 use std::os::fd::{AsFd, BorrowedFd};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::RecvTimeoutError;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use wayland_client as wl;
@@ -39,7 +44,8 @@ const FORMATS: [u32; 4] = [XRGB8888, ARGB8888, XBGR8888, ABGR8888];
 pub const TEST_SIDE: u32 = 256;
 const TEST_RATE: u32 = 60;
 
-/// An FFmpeg H.264 encoder and how frames reach it.
+/// An FFmpeg encoder family and how frames reach it; [`Backend::encoder`] names the encoder per
+/// codec.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Backend {
     /// Low power is Intel's fixed-function encoder, which leaves the shader cores to the
@@ -49,7 +55,7 @@ pub enum Backend {
     },
     Nvenc,
     Vulkan,
-    X264,
+    Software,
 }
 
 impl Backend {
@@ -59,24 +65,43 @@ impl Backend {
         Backend::Vaapi { low_power: false },
         Backend::Nvenc,
         Backend::Vulkan,
-        Backend::X264,
+        Backend::Software,
     ];
 
-    pub fn label(self) -> &'static str {
-        match self {
-            Backend::Vaapi { .. } => "VA-API H.264",
-            Backend::Nvenc => "NVENC H.264",
-            Backend::Vulkan => "Vulkan H.264",
-            Backend::X264 => "Software H.264",
+    pub fn label(self, codec: Codec) -> &'static str {
+        use Codec::*;
+        match (self, codec) {
+            (Backend::Vaapi { .. }, H264) => "VA-API H.264",
+            (Backend::Vaapi { .. }, H265) => "VA-API H.265",
+            (Backend::Vaapi { .. }, Av1) => "VA-API AV1",
+            (Backend::Nvenc, H264) => "NVENC H.264",
+            (Backend::Nvenc, H265) => "NVENC H.265",
+            (Backend::Nvenc, Av1) => "NVENC AV1",
+            (Backend::Vulkan, H264) => "Vulkan H.264",
+            (Backend::Vulkan, H265) => "Vulkan H.265",
+            (Backend::Vulkan, Av1) => "Vulkan AV1",
+            (Backend::Software, H264) => "Software H.264",
+            (Backend::Software, H265) => "Software H.265",
+            (Backend::Software, Av1) => "Software AV1",
         }
     }
 
-    pub fn codec(self) -> &'static str {
-        match self {
-            Backend::Vaapi { .. } => "h264_vaapi",
-            Backend::Nvenc => "h264_nvenc",
-            Backend::Vulkan => "h264_vulkan",
-            Backend::X264 => "libx264",
+    /// The FFmpeg encoder's name.
+    pub fn encoder(self, codec: Codec) -> &'static str {
+        use Codec::*;
+        match (self, codec) {
+            (Backend::Vaapi { .. }, H264) => "h264_vaapi",
+            (Backend::Vaapi { .. }, H265) => "hevc_vaapi",
+            (Backend::Vaapi { .. }, Av1) => "av1_vaapi",
+            (Backend::Nvenc, H264) => "h264_nvenc",
+            (Backend::Nvenc, H265) => "hevc_nvenc",
+            (Backend::Nvenc, Av1) => "av1_nvenc",
+            (Backend::Vulkan, H264) => "h264_vulkan",
+            (Backend::Vulkan, H265) => "hevc_vulkan",
+            (Backend::Vulkan, Av1) => "av1_vulkan",
+            (Backend::Software, H264) => "libx264",
+            (Backend::Software, H265) => "libx265",
+            (Backend::Software, Av1) => "libsvtav1",
         }
     }
 
@@ -86,13 +111,16 @@ impl Backend {
             Backend::Vaapi { .. } => Some(Gpu::Vaapi),
             Backend::Nvenc => Some(Gpu::Cuda),
             Backend::Vulkan => Some(Gpu::Vulkan),
-            Backend::X264 => None,
+            Backend::Software => None,
         }
     }
 
     /// Whether it codes AVC444: the views are drawn for VA-API, CUDA and on the CPU.
     pub fn codes_avc444(self) -> bool {
-        matches!(self, Backend::Vaapi { .. } | Backend::Nvenc | Backend::X264)
+        matches!(
+            self,
+            Backend::Vaapi { .. } | Backend::Nvenc | Backend::Software
+        )
     }
 
     /// The `[remote_desktop] encoder` value that names it.
@@ -101,21 +129,30 @@ impl Backend {
             Backend::Vaapi { .. } => EncoderChoice::Vaapi,
             Backend::Nvenc => EncoderChoice::Nvenc,
             Backend::Vulkan => EncoderChoice::Vulkan,
-            Backend::X264 => EncoderChoice::Software,
+            Backend::Software => EncoderChoice::Software,
         }
     }
 }
 
-/// How long a backend may take to code its test frame and check its modifiers before it is
-/// left out.
+/// How long a backend may take to code its test frame in one codec and check its modifiers
+/// before it is left out.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// The working backends in [`Backend::ALL`]'s order with what `works` found, each choice tried on
-/// its own thread and left out without an answer in `timeout`; low-power VA-API skips full.
+/// A group's find for one codec: None until it answers, then the backend that works, if any.
+type Answer<T> = Option<Option<(Backend, T)>>;
+
+/// The working backends for each of `codecs`, codec by codec in their order and then in
+/// [`Backend::ALL`]'s, with what `works` found. Each choice tries the codecs in turn on its own
+/// thread and is left out of the codec it has not answered within `timeout` and of those after
+/// it; low-power VA-API skips full.
 pub fn working<T: Send + 'static>(
-    works: impl Fn(Backend) -> Option<T> + Send + Sync + 'static,
+    codecs: &[Codec],
+    works: impl Fn(Codec, Backend) -> Option<T> + Send + Sync + 'static,
     timeout: Duration,
-) -> Vec<(Backend, T)> {
+) -> Vec<(Codec, Backend, T)> {
+    let Some(&first) = codecs.first() else {
+        return Vec::new();
+    };
     let works = Arc::new(works);
     let mut groups: Vec<Vec<Backend>> = Vec::new();
     for backend in Backend::ALL {
@@ -125,43 +162,87 @@ pub fn working<T: Send + 'static>(
         }
     }
     let (tx, rx) = std::sync::mpsc::channel();
+    // The instant each group's answer for its next codec is due by; None once it is done or
+    // left out.
+    let mut due: Vec<Option<Instant>> = Vec::new();
+    // Set once a group is left out or the probe returns, so a late thread tries no more codecs.
+    let stop: Vec<Arc<AtomicBool>> = groups.iter().map(|_| Arc::default()).collect();
     for (index, group) in groups.iter().cloned().enumerate() {
-        let (tx, works) = (tx.clone(), works.clone());
+        let (tx, works, codecs) = (tx.clone(), works.clone(), codecs.to_vec());
+        let stopped = stop[index].clone();
         let spawned = std::thread::Builder::new()
             .name("reprise-video-probe".into())
             .spawn(move || {
-                let found = (group.into_iter()).find_map(|b| works(b).map(|t| (b, t)));
-                let _ = tx.send((index, found));
+                for (at, codec) in codecs.into_iter().enumerate() {
+                    if stopped.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    let found = (group.iter()).find_map(|&b| works(codec, b).map(|t| (b, t)));
+                    if tx.send((index, at, found)).is_err() {
+                        return;
+                    }
+                }
             });
+        due.push(spawned.is_ok().then(|| Instant::now() + timeout));
         if let Err(e) = spawned {
-            log::warn!("{}: no probe thread: {e}", groups[index][0].label());
+            log::warn!("{}: no probe thread: {e}", groups[index][0].label(first));
         }
     }
     drop(tx);
-    let deadline = Instant::now() + timeout;
-    let mut answers: Vec<Option<Option<(Backend, T)>>> = groups.iter().map(|_| None).collect();
-    while answers.iter().any(Option::is_none) {
-        let left = deadline.saturating_duration_since(Instant::now());
-        match rx.recv_timeout(left) {
-            Ok((index, found)) => answers[index] = Some(found),
-            Err(_) => break,
+    let mut answers: Vec<Vec<Answer<T>>> = (groups.iter())
+        .map(|_| codecs.iter().map(|_| None).collect())
+        .collect();
+    while let Some(next) = due.iter().flatten().min().copied() {
+        match rx.recv_timeout(next.saturating_duration_since(Instant::now())) {
+            Ok((index, at, found)) if due[index].is_some() => {
+                answers[index][at] = Some(found);
+                due[index] = (at + 1 < codecs.len()).then(|| Instant::now() + timeout);
+            }
+            Ok(_) => {}
+            Err(RecvTimeoutError::Timeout) => {
+                let now = Instant::now();
+                for (index, due) in due.iter_mut().enumerate() {
+                    if due.is_some_and(|d| d <= now) {
+                        *due = None;
+                        stop[index].store(true, Ordering::Relaxed);
+                        let at = answers[index].iter().position(Option::is_none);
+                        log::warn!(
+                            "{} did not finish its test in {} s and is left out",
+                            groups[index][0].label(codecs[at.unwrap_or_default()]),
+                            timeout.as_secs_f32()
+                        );
+                    }
+                }
+            }
+            Err(RecvTimeoutError::Disconnected) => break,
         }
     }
-    for (group, answer) in groups.iter().zip(&answers) {
-        if answer.is_none() {
-            log::warn!(
-                "{} did not finish its test in {} s and is left out",
-                group[0].label(),
-                timeout.as_secs_f32()
-            );
+    for stop in &stop {
+        stop.store(true, Ordering::Relaxed);
+    }
+    let mut found = Vec::new();
+    for (at, &codec) in codecs.iter().enumerate() {
+        for answer in &mut answers {
+            if let Some(Some((backend, t))) = answer[at].take() {
+                found.push((codec, backend, t));
+            }
         }
     }
-    answers.into_iter().flatten().flatten().collect()
+    found
 }
 
+/// How a caller proves `backend` codes `codec` on a render node: [`live_test`] for Remote
+/// Desktop, [`file_test`] for recordings.
+pub type Test = fn(Codec, Backend, &Path) -> Result<(), EncodeError>;
+
 /// The render node the screen's buffers come from, as the compositor on `conn` names it, and the
-/// backends that code on it with the modifiers each maps.
-pub fn probe(conn: Option<&wl::Connection>) -> (PathBuf, Vec<(Backend, Vec<u64>)>) {
+/// backends that pass `test` for each of `codecs` on it with the modifiers each maps, as
+/// [`working`] lists them.
+pub fn probe(
+    conn: Option<&wl::Connection>,
+    codecs: &[Codec],
+    test: Test,
+) -> (PathBuf, Vec<(Codec, Backend, Vec<u64>)>) {
     let device = render_node(conn.and_then(session_device), |dev| {
         DrmNode::from_dev_id(dev)
             .ok()?
@@ -170,10 +251,11 @@ pub fn probe(conn: Option<&wl::Connection>) -> (PathBuf, Vec<(Backend, Vec<u64>)
     let on = device.clone();
     let found = quietly(|| {
         working(
-            move |backend| match test_frame(backend, &on) {
+            codecs,
+            move |codec, backend| match test(codec, backend, &on) {
                 Ok(()) => Some(modifiers(backend, &on)),
                 Err(e) => {
-                    log::debug!("{}: {e}", backend.label());
+                    log::debug!("{}: {e}", backend.label(codec));
                     None
                 }
             },
@@ -233,29 +315,68 @@ impl Hush {
     }
 }
 
-/// Open `backend` on `device` and code one keyframe.
-fn test_frame(backend: Backend, device: &Path) -> Result<(), super::EncodeError> {
+/// Remote Desktop's test: its own H.264 encoder, with its low-latency options, codes the test
+/// frame as an IDR and hands it out before the next frame comes in.
+pub fn live_test(codec: Codec, backend: Backend, device: &Path) -> Result<(), EncodeError> {
+    if codec != Codec::H264 {
+        return Err(EncodeError(format!(
+            "Remote Desktop codes H.264, not {}",
+            codec.label()
+        )));
+    }
     let mut encoder = Ffmpeg::new(backend, device, TEST_RATE, Quality::Balanced)?;
-    let frame = match backend.gpu() {
+    match encoder.encode(&test_picture(backend, device)?, true)? {
+        Encoded::Avc420 { data, .. } if !data.is_empty() => Ok(()),
+        _ => Err(EncodeError("the test frame coded to nothing".into())),
+    }
+}
+
+/// A recording's test: `backend`'s encoder of `codec`, opened as for a file, codes the test
+/// frame as a keyframe by the time it is drained.
+pub fn file_test(codec: Codec, backend: Backend, device: &Path) -> Result<(), EncodeError> {
+    let devices = match backend.gpu() {
+        Some(gpu) => Some(Devices::open(gpu, device)?),
+        None => None,
+    };
+    let side = (TEST_SIDE, TEST_SIDE);
+    let mut converter = Converter::new(devices.as_ref(), XRGB8888, side, side, TEST_RATE)?;
+    let setup = Setup {
+        codec,
+        rate: RateControl::Quality(DEFAULT_QUALITY),
+        frame_rate: TEST_RATE,
+        gop: TEST_RATE,
+        time_base: (1, TEST_RATE as i32),
+    };
+    let frames = converter.frames();
+    let mut encoder = Plain::open(backend, &setup, side, converter.pixel(), frames)?;
+    let frame = test_picture(backend, device)?;
+    let mut out = Vec::new();
+    encoder.send(&mut converter.convert(&frame)?, 0, &mut out)?;
+    encoder.finish(&mut out)?;
+    match out.first() {
+        Some(p) if p.is_key() && p.size() > 0 => Ok(()),
+        _ => Err(EncodeError("the test frame coded to nothing".into())),
+    }
+}
+
+/// The test frame `backend` takes: a dma-buf painted on `device` for a GPU, else shared memory.
+fn test_picture(backend: Backend, device: &Path) -> Result<Frame, EncodeError> {
+    match backend.gpu() {
         Some(_) => {
             let gbm = gbm_device(device)?;
             let mut painter = Painter::new(device);
             // NVIDIA renders into no LINEAR buffer.
             test_buffer(&gbm, &mut painter, XRGB8888, Some(DRM_FORMAT_MOD_LINEAR))
-                .or_else(|_| test_buffer(&gbm, &mut painter, XRGB8888, None))?
+                .or_else(|_| test_buffer(&gbm, &mut painter, XRGB8888, None))
         }
-        None => Frame::unleased(
+        None => Ok(Frame::unleased(
             FrameBuffer::Shm {
                 data: pattern(XRGB8888, TEST_SIDE * 4).into(),
                 fourcc: XRGB8888,
                 stride: TEST_SIDE * 4,
             },
             (TEST_SIDE, TEST_SIDE),
-        ),
-    };
-    match encoder.encode(&frame, true)? {
-        Encoded::Avc420 { data, .. } if !data.is_empty() => Ok(()),
-        _ => Err(super::EncodeError("the test frame coded to nothing".into())),
+        )),
     }
 }
 
@@ -383,8 +504,8 @@ fn mappable(candidates: &[u64], mut maps: impl FnMut(u32, u64) -> bool) -> Vec<u
     found
 }
 
-fn gbm_device(device: &Path) -> Result<gbm::Device<File>, super::EncodeError> {
-    let err = |e: std::io::Error| super::EncodeError(format!("{}: {e}", device.display()));
+fn gbm_device(device: &Path) -> Result<gbm::Device<File>, EncodeError> {
+    let err = |e: std::io::Error| EncodeError(format!("{}: {e}", device.display()));
     let file = File::options()
         .read(true)
         .write(true)
@@ -400,8 +521,8 @@ fn test_buffer(
     painter: &mut Painter,
     format: u32,
     modifier: Option<u64>,
-) -> Result<Frame, super::EncodeError> {
-    let err = |e: &dyn std::fmt::Display| super::EncodeError(e.to_string());
+) -> Result<Frame, EncodeError> {
+    let err = |e: &dyn std::fmt::Display| EncodeError(e.to_string());
     let gbm_format = gbm::Format::try_from(format).map_err(|e| err(&e))?;
     let flags = gbm::BufferObjectFlags::RENDERING;
     let mut bo = match modifier {
@@ -463,7 +584,7 @@ impl<'a> Painter<'a> {
         Painter { node, gl: None }
     }
 
-    fn paint(&mut self, frame: &Frame) -> Result<(), super::EncodeError> {
+    fn paint(&mut self, frame: &Frame) -> Result<(), EncodeError> {
         let FrameBuffer::Dmabuf {
             objects,
             fourcc,
@@ -471,7 +592,7 @@ impl<'a> Painter<'a> {
             planes,
         } = &frame.buffer
         else {
-            return Err(super::EncodeError("only a dma-buf is painted".into()));
+            return Err(EncodeError("only a dma-buf is painted".into()));
         };
         let (gl, program) = match &mut self.gl {
             Some(made) => made,
@@ -512,9 +633,9 @@ impl<'a> Painter<'a> {
                 match (status, g.get_error()) {
                     (glow::FRAMEBUFFER_COMPLETE, glow::NO_ERROR) => Ok(()),
                     (glow::FRAMEBUFFER_COMPLETE, e) => {
-                        Err(super::EncodeError(format!("painting: GL error {e:#x}")))
+                        Err(EncodeError(format!("painting: GL error {e:#x}")))
                     }
-                    (s, _) => Err(super::EncodeError(format!("painting: framebuffer {s:#x}"))),
+                    (s, _) => Err(EncodeError(format!("painting: framebuffer {s:#x}"))),
                 }
             });
             g.delete_texture(texture);
@@ -550,7 +671,7 @@ fn pattern_luma(x: u32, y: u32) -> f64 {
 
 /// The luma at (`x`, `y`) of a converted picture: NV12, or RGB for an encoder that converts
 /// itself.
-fn luma_at(picture: &ffmpeg::frame::Video, x: u32, y: u32) -> Result<f64, super::EncodeError> {
+fn luma_at(picture: &ffmpeg::frame::Video, x: u32, y: u32) -> Result<f64, EncodeError> {
     use ffmpeg::format::Pixel;
     let (plane, stride) = (picture.data(0), picture.stride(0));
     let at = y as usize * stride;
@@ -562,9 +683,7 @@ fn luma_at(picture: &ffmpeg::frame::Video, x: u32, y: u32) -> Result<f64, super:
         Pixel::NV12 | Pixel::YUV420P => Ok(f64::from(plane[at + x as usize])),
         Pixel::BGRZ | Pixel::BGRA => Ok(rgb(2, 1, 0)),
         Pixel::RGBZ | Pixel::RGBA => Ok(rgb(0, 1, 2)),
-        other => Err(super::EncodeError(format!(
-            "{other:?} pictures are not checked"
-        ))),
+        other => Err(EncodeError(format!("{other:?} pictures are not checked"))),
     }
 }
 
@@ -576,7 +695,7 @@ fn converts(
     painter: &mut Painter,
     format: u32,
     modifier: u64,
-) -> Result<(), super::EncodeError> {
+) -> Result<(), EncodeError> {
     let frame = test_buffer(gbm, painter, format, Some(modifier))?;
     let side = (TEST_SIDE, TEST_SIDE);
     let mut converter = Converter::new(Some(devices), format, side, side, TEST_RATE)?;
@@ -585,7 +704,7 @@ fn converts(
         for x in (8..TEST_SIDE).step_by(16) {
             let got = luma_at(&converted, x, y)?;
             if (got - pattern_luma(x, y)).abs() > 4.0 {
-                return Err(super::EncodeError(format!(
+                return Err(EncodeError(format!(
                     "modifier {modifier:#x}: luma {got} at ({x}, {y})"
                 )));
             }
@@ -685,8 +804,12 @@ mod tests {
 
     /// The backends `works` takes, probed with a timeout no test reaches.
     fn found(works: impl Fn(Backend) -> bool + Send + Sync + 'static) -> Vec<Backend> {
-        let found = working(move |b| works(b).then_some(()), Duration::from_secs(60));
-        found.into_iter().map(|(b, ())| b).collect()
+        let found = working(
+            &[Codec::H264],
+            move |_, b| works(b).then_some(()),
+            Duration::from_secs(60),
+        );
+        found.into_iter().map(|(_, b, ())| b).collect()
     }
 
     #[test]
@@ -711,17 +834,38 @@ mod tests {
                 );
                 true
             }),
-            [lp, Backend::Nvenc, Backend::Vulkan, Backend::X264],
+            [lp, Backend::Nvenc, Backend::Vulkan, Backend::Software],
         );
         assert_eq!(
             found(move |b| b != lp),
-            [full, Backend::Nvenc, Backend::Vulkan, Backend::X264],
+            [full, Backend::Nvenc, Backend::Vulkan, Backend::Software],
             "the full entrypoint where there is no low-power one"
         );
         assert_eq!(
-            found(|b| matches!(b, Backend::Vulkan | Backend::X264)),
-            [Backend::Vulkan, Backend::X264]
+            found(|b| matches!(b, Backend::Vulkan | Backend::Software)),
+            [Backend::Vulkan, Backend::Software]
         );
+    }
+
+    #[test]
+    fn each_backend_names_its_ffmpeg_encoder_per_codec() {
+        let lp = Backend::Vaapi { low_power: true };
+        let names = |b: Backend| Codec::ALL.map(|c| b.encoder(c));
+        assert_eq!(names(lp), ["h264_vaapi", "hevc_vaapi", "av1_vaapi"]);
+        assert_eq!(
+            names(Backend::Nvenc),
+            ["h264_nvenc", "hevc_nvenc", "av1_nvenc"]
+        );
+        assert_eq!(
+            names(Backend::Vulkan),
+            ["h264_vulkan", "hevc_vulkan", "av1_vulkan"]
+        );
+        assert_eq!(
+            names(Backend::Software),
+            ["libx264", "libx265", "libsvtav1"]
+        );
+        assert_eq!(Backend::Software.label(Codec::Av1), "Software AV1");
+        assert_eq!(Backend::Nvenc.label(Codec::H264), "NVENC H.264");
     }
 
     #[test]
@@ -730,11 +874,12 @@ mod tests {
         let gate = std::sync::Mutex::new(gate);
         let started = Instant::now();
         let found = working(
-            move |b| {
+            &[Codec::H264],
+            move |c, b| {
                 if b == Backend::Nvenc {
                     let _ = gate.lock().unwrap().recv();
                 }
-                Some(b.label())
+                Some(b.label(c))
             },
             Duration::from_millis(200),
         );
@@ -745,11 +890,60 @@ mod tests {
         assert_eq!(
             found,
             [
-                (Backend::Vaapi { low_power: true }, "VA-API H.264"),
-                (Backend::Vulkan, "Vulkan H.264"),
-                (Backend::X264, "Software H.264")
+                (
+                    Codec::H264,
+                    Backend::Vaapi { low_power: true },
+                    "VA-API H.264"
+                ),
+                (Codec::H264, Backend::Vulkan, "Vulkan H.264"),
+                (Codec::H264, Backend::Software, "Software H.264")
             ]
         );
+    }
+
+    #[test]
+    fn each_codec_is_tried_in_turn_and_reported_codec_first() {
+        let found = working(
+            &[Codec::H264, Codec::Av1],
+            |c, b| (b == Backend::Software || c == Codec::H264).then_some(()),
+            Duration::from_secs(60),
+        );
+        let got: Vec<_> = found.into_iter().map(|(c, b, ())| (c, b)).collect();
+        assert_eq!(
+            got[..4],
+            [
+                (Codec::H264, Backend::Vaapi { low_power: true }),
+                (Codec::H264, Backend::Nvenc),
+                (Codec::H264, Backend::Vulkan),
+                (Codec::H264, Backend::Software),
+            ]
+        );
+        assert_eq!(got[4..], [(Codec::Av1, Backend::Software)]);
+    }
+
+    #[test]
+    fn a_group_that_hangs_on_one_codec_keeps_what_it_found_before() {
+        let (_open, gate) = std::sync::mpsc::channel::<()>();
+        let gate = std::sync::Mutex::new(gate);
+        let started = Instant::now();
+        let found = working(
+            &[Codec::H264, Codec::H265],
+            move |c, b| {
+                if (c, b) == (Codec::H265, Backend::Nvenc) {
+                    let _ = gate.lock().unwrap().recv();
+                }
+                Some(())
+            },
+            Duration::from_millis(200),
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "the probe does not wait for it"
+        );
+        let got: Vec<_> = found.into_iter().map(|(c, b, ())| (c, b)).collect();
+        assert!(got.contains(&(Codec::H264, Backend::Nvenc)), "{got:?}");
+        assert!(!got.contains(&(Codec::H265, Backend::Nvenc)), "{got:?}");
+        assert!(got.contains(&(Codec::H265, Backend::Vulkan)), "{got:?}");
     }
 
     #[test]
@@ -773,8 +967,79 @@ mod tests {
 
     #[test]
     fn a_backend_that_fails_its_test_frame_is_skipped() {
-        let found = quietly(|| found(|b| test_frame(b, Path::new("/dev/null")).is_ok()));
-        assert_eq!(found, [Backend::X264], "the CPU codes it");
+        let found =
+            quietly(|| found(|b| live_test(Codec::H264, b, Path::new("/dev/null")).is_ok()));
+        assert_eq!(found, [Backend::Software], "the CPU codes it");
+    }
+
+    #[test]
+    fn remote_desktops_test_refuses_an_encoder_that_holds_the_frame_back() {
+        let null = Path::new("/dev/null");
+        quietly(|| live_test(Codec::H264, Backend::Software, null)).expect("x264 codes it at once");
+        let held = quietly(|| {
+            crate::encode::ffmpeg::tests::holding(|| {
+                live_test(Codec::H264, Backend::Software, null)
+            })
+        });
+        let e = held.expect_err("a frame out only once flushed fails the test");
+        assert!(e.to_string().contains("held the frame back"), "{e}");
+    }
+
+    #[test]
+    fn a_group_left_out_tries_no_further_codec() {
+        let timeout = Duration::from_millis(500);
+        let tried = Arc::new(Mutex::new(Vec::new()));
+        let log = tried.clone();
+        working(
+            &Codec::ALL,
+            move |c, b| {
+                log.lock().unwrap().push((c, b));
+                match (c, b) {
+                    // Answers past its deadline while the probe still waits for Vulkan.
+                    (Codec::H264, Backend::Nvenc) => std::thread::sleep(timeout * 3 / 2),
+                    (_, Backend::Vulkan) => std::thread::sleep(timeout * 7 / 10),
+                    _ => {}
+                }
+                Some(())
+            },
+            timeout,
+        );
+        let nvenc: Vec<_> = (tried.lock().unwrap().iter())
+            .filter(|(_, b)| *b == Backend::Nvenc)
+            .map(|&(c, _)| c)
+            .collect();
+        assert_eq!(nvenc, [Codec::H264]);
+    }
+
+    #[test]
+    fn a_hang_on_the_first_codec_costs_one_timeout() {
+        let (_open, gate) = std::sync::mpsc::channel::<()>();
+        let gate = std::sync::Mutex::new(gate);
+        let timeout = Duration::from_millis(400);
+        let started = Instant::now();
+        let found = working(
+            &Codec::ALL,
+            move |c, b| {
+                if (c, b) == (Codec::H264, Backend::Nvenc) {
+                    let _ = gate.lock().unwrap().recv();
+                }
+                Some(())
+            },
+            timeout,
+        );
+        assert!(
+            started.elapsed() < timeout * 2,
+            "the probe waits {timeout:?} for the hung codec, not that for each codec"
+        );
+        assert_eq!(found.len(), 3 * 3, "the other groups in every codec");
+    }
+
+    #[test]
+    fn the_software_backend_codes_a_test_frame_in_every_codec() {
+        for codec in Codec::ALL {
+            quietly(|| file_test(codec, Backend::Software, Path::new("/dev/null")))
+                .unwrap_or_else(|e| panic!("{}: {e}", codec.label()));
+        }
     }
 
     #[test]
@@ -791,7 +1056,7 @@ mod tests {
             "LINEAR first; a modifier one format cannot map in is left out"
         );
         assert_eq!(
-            modifiers(Backend::X264, Path::new(RENDER_NODE)),
+            modifiers(Backend::Software, Path::new(RENDER_NODE)),
             vec![DRM_FORMAT_MOD_LINEAR],
             "the CPU reads LINEAR only"
         );
@@ -907,7 +1172,8 @@ mod tests {
     fn nvenc_passes_the_probe_with_the_drivers_tiled_modifiers() {
         let node = Path::new(RENDER_NODE);
         let started = Instant::now();
-        quietly(|| test_frame(Backend::Nvenc, node)).expect("NVENC codes the test frame");
+        quietly(|| live_test(Codec::H264, Backend::Nvenc, node))
+            .expect("NVENC codes the test frame");
         let found = modifiers(Backend::Nvenc, node);
         let took = started.elapsed();
         eprintln!("NVENC's probe took {took:?} and found {found:#x?}");

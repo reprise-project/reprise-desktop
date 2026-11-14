@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 repository.workspace = true
-description = "The screen's PipeWire stream, a sink's monitor and H.264 encoders through FFmpeg, shared by reprise-rdp and reprise-record"
+description = "The screen's PipeWire stream, a sink's monitor and video encoders through FFmpeg, shared by reprise-rdp and reprise-record"
 
 [lints]
 workspace = true

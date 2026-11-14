@@ -5,7 +5,7 @@
 pub mod bitmap;
 
 pub use reprisevideo::encode::{
-    EncodeError, avc444, choice, ffmpeg, hwmap, probe, reads, reads_offered,
+    Codec, EncodeError, avc444, choice, ffmpeg, hwmap, probe, reads, reads_offered,
 };
 
 use crate::stream::Frame;
@@ -178,8 +178,8 @@ impl Switch {
             match next {
                 Some(next) => log::warn!(
                     "{} failed, using {} instead: {error}",
-                    backend.label(),
-                    next.label()
+                    backend.label(Codec::H264),
+                    next.label(Codec::H264)
                 ),
                 None => log::warn!("H.264 failed, sending bitmaps from now on: {error}"),
             }
@@ -323,7 +323,7 @@ mod tests {
     fn x264() -> Ffmpeg {
         silence();
         Ffmpeg::new(
-            Backend::X264,
+            Backend::Software,
             Path::new(probe::RENDER_NODE),
             60,
             Quality::Balanced,
@@ -358,7 +358,7 @@ mod tests {
     #[test]
     fn a_va_error_falls_back_to_bitmap() {
         let mut switch = Switch::new(Box::new(|_, _, _| Ok(Box::new(Broken))));
-        switch.select(vec![Backend::X264]);
+        switch.select(vec![Backend::Software]);
         let damage = Rect {
             x: 1,
             y: 0,
@@ -404,7 +404,7 @@ mod tests {
             Backend::Nvenc => Err(EncodeError("no CUDA".into())),
             _ => Ok(Box::new(Recorder(backend, log.clone()))),
         }));
-        switch.select(vec![Backend::Nvenc, Backend::X264]);
+        switch.select(vec![Backend::Nvenc, Backend::Software]);
         let frame = Frame::detached(vec![0; 4 * 2 * 4], (4, 2), vec![Rect::full((4, 2))]);
         assert!(matches!(
             switch.encode(&frame, false, true),
@@ -413,10 +413,10 @@ mod tests {
         switch.encode(&frame, false, true).unwrap();
         assert_eq!(
             *coded.lock().unwrap(),
-            [(Backend::X264, true), (Backend::X264, false)],
+            [(Backend::Software, true), (Backend::Software, false)],
             "the frame NVENC could not take is x264's first, a keyframe"
         );
-        assert_eq!(switch.using(), Some(Backend::X264));
+        assert_eq!(switch.using(), Some(Backend::Software));
         assert_eq!(
             crate::listen::tests::times_logged(
                 "NVENC H.264 failed, using Software H.264 instead: no CUDA"
@@ -449,18 +449,18 @@ mod tests {
             VAAPI => Ok(Box::new(Broken)),
             _ => Ok(Box::new(Recorder(backend, log.clone()))),
         }));
-        switch.select(vec![VAAPI, Backend::X264]);
+        switch.select(vec![VAAPI, Backend::Software]);
         assert!(switch.encode(&dmabuf(Y_TILED), false, true).is_err());
         assert_eq!(
             switch.using(),
-            Some(Backend::X264),
+            Some(Backend::Software),
             "x264 codes the next frame"
         );
         assert!(coded.lock().unwrap().is_empty(), "x264 got no tiled buffer");
         switch
             .encode(&dmabuf(DRM_FORMAT_MOD_LINEAR), true, true)
             .unwrap();
-        assert_eq!(*coded.lock().unwrap(), [(Backend::X264, true)]);
+        assert_eq!(*coded.lock().unwrap(), [(Backend::Software, true)]);
 
         switch.select(vec![VAAPI]);
         assert!(
@@ -473,11 +473,11 @@ mod tests {
     #[test]
     fn a_shared_memory_frame_is_for_the_cpu_only() {
         let shm = Frame::detached(vec![0; 4 * 2 * 4], (4, 2), Vec::new());
-        assert!(reads(Some(Backend::X264), &shm));
+        assert!(reads(Some(Backend::Software), &shm));
         assert!(reads(None, &shm));
         assert!(!reads(Some(VAAPI), &shm));
         assert!(reads(Some(VAAPI), &dmabuf(Y_TILED)));
-        assert!(!reads(Some(Backend::X264), &dmabuf(Y_TILED)));
+        assert!(!reads(Some(Backend::Software), &dmabuf(Y_TILED)));
         assert!(reads(None, &dmabuf(DRM_FORMAT_MOD_LINEAR)));
     }
 
@@ -500,7 +500,7 @@ mod tests {
                 "VA-API is not handed LINEAR rows of {stride} bytes"
             );
             assert!(
-                reads(Some(Backend::X264), &linear(stride)),
+                reads(Some(Backend::Software), &linear(stride)),
                 "x264 reads them"
             );
             assert!(
@@ -535,7 +535,7 @@ mod tests {
         let targets = Targets::default();
         let given = targets.clone();
         let mut switch = Switch::new(Box::new(move |_, _, _| Ok(Box::new(Sized(given.clone())))));
-        switch.select(vec![Backend::X264]);
+        switch.select(vec![Backend::Software]);
         switch.set_target(Some((960, 540)));
         let frame = Frame::detached(vec![0; 4 * 2 * 4], (4, 2), vec![Rect::full((4, 2))]);
         switch.encode(&frame, false, true).unwrap();
@@ -574,7 +574,7 @@ mod tests {
                 avc444: false,
                 target: None,
                 epoch,
-                order: (epoch == 1).then(|| vec![Backend::X264]),
+                order: (epoch == 1).then(|| vec![Backend::Software]),
                 choice: 1,
             };
             let _ = worker.jobs.send(job);
@@ -582,7 +582,7 @@ mod tests {
         let bitmaps_only = done.blocking_recv().unwrap();
         assert_eq!(
             bitmaps_only.using,
-            Some(Backend::X264),
+            Some(Backend::Software),
             "a bitmap job leaves H.264 untried"
         );
         assert_eq!(sizes(bitmaps_only.encoded), vec![(1, 1)]);
@@ -637,7 +637,7 @@ mod tests {
         let keyframes = Arc::default();
         let mut switch = Switch::new(Box::new(|_, _, _| Ok(Box::new(x264()))))
             .with_bitmap(Box::new(Keyframes(Arc::clone(&keyframes))));
-        switch.select(vec![Backend::X264]);
+        switch.select(vec![Backend::Software]);
         let size = (4, 2);
         let mut nv12 = frame(size, vec![Rect::full(size)]);
         if let FrameBuffer::Shm { fourcc, .. } = &mut nv12.buffer {

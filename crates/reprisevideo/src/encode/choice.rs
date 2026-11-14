@@ -1,5 +1,6 @@
 //! Which backend codes H.264 for `[remote_desktop] encoder`, and how the status names it.
 
+use super::Codec;
 use super::probe::Backend;
 use repriseconf::remote::EncoderChoice;
 
@@ -27,8 +28,14 @@ pub fn label(choice: EncoderChoice, using: Option<Backend>) -> String {
     match using {
         None if choice == EncoderChoice::None => NONE_LABEL.into(),
         None => BITMAP_LABEL.into(),
-        Some(b) if choice == EncoderChoice::Auto || b.choice() == choice => b.label().into(),
-        Some(b) => format!("{} ({} unavailable)", b.label(), short_name(choice)),
+        Some(b) if choice == EncoderChoice::Auto || b.choice() == choice => {
+            b.label(Codec::H264).into()
+        }
+        Some(b) => format!(
+            "{} ({} unavailable)",
+            b.label(Codec::H264),
+            short_name(choice)
+        ),
     }
 }
 
@@ -51,7 +58,7 @@ fn short_name(choice: EncoderChoice) -> &'static str {
         EncoderChoice::Vaapi => "VA-API",
         EncoderChoice::Nvenc => "NVENC",
         EncoderChoice::Vulkan => "Vulkan",
-        EncoderChoice::Software => "x264",
+        EncoderChoice::Software => Codec::H264.software_name(),
         EncoderChoice::Auto | EncoderChoice::None => "",
     }
 }
@@ -64,10 +71,10 @@ mod tests {
 
     #[test]
     fn a_chosen_encoder_that_is_unavailable_falls_back_to_auto() {
-        let working = [VAAPI, Backend::X264];
+        let working = [VAAPI, Backend::Software];
         assert_eq!(
             order(EncoderChoice::Nvenc, &working),
-            [VAAPI, Backend::X264]
+            [VAAPI, Backend::Software]
         );
         assert_eq!(
             label(EncoderChoice::Nvenc, Some(VAAPI)),
@@ -75,11 +82,11 @@ mod tests {
         );
         assert_eq!(
             order(EncoderChoice::Software, &working),
-            [Backend::X264, VAAPI],
+            [Backend::Software, VAAPI],
             "the chosen one first, then auto's order"
         );
         assert_eq!(
-            label(EncoderChoice::Software, Some(Backend::X264)),
+            label(EncoderChoice::Software, Some(Backend::Software)),
             "Software H.264"
         );
         assert_eq!(
@@ -88,13 +95,13 @@ mod tests {
         );
         assert_eq!(
             order(EncoderChoice::Auto, &working),
-            [VAAPI, Backend::X264],
+            [VAAPI, Backend::Software],
             "a VA-API failure goes on to x264, not straight to bitmaps"
         );
         assert_eq!(label(EncoderChoice::Auto, Some(VAAPI)), "VA-API H.264");
         assert_eq!(
             order(EncoderChoice::Vaapi, &working),
-            [VAAPI, Backend::X264]
+            [VAAPI, Backend::Software]
         );
         assert_eq!(order(EncoderChoice::Vulkan, &[]), [], "nothing works");
         assert_eq!(label(EncoderChoice::Vulkan, None), BITMAP_LABEL);
@@ -102,7 +109,7 @@ mod tests {
 
     #[test]
     fn none_means_bitmaps_only() {
-        assert_eq!(order(EncoderChoice::None, &[VAAPI, Backend::X264]), []);
+        assert_eq!(order(EncoderChoice::None, &[VAAPI, Backend::Software]), []);
         assert_eq!(label(EncoderChoice::None, None), "RemoteFX");
     }
 
@@ -110,7 +117,7 @@ mod tests {
     fn the_bus_lists_what_works_and_none() {
         let low_power = Backend::Vaapi { low_power: true };
         assert_eq!(
-            names(&[low_power, Backend::X264]),
+            names(&[low_power, Backend::Software]),
             ["vaapi", "software", "none"]
         );
         assert_eq!(names(&[]), ["none"]);

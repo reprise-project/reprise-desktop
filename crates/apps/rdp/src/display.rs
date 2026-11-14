@@ -11,7 +11,7 @@ use crate::control::Status;
 use crate::encode::choice;
 use crate::encode::ffmpeg::Ffmpeg;
 use crate::encode::probe::Backend;
-use crate::encode::{Done, Encoded, Encoder, Job, Switch, Worker};
+use crate::encode::{Codec, Done, Encoded, Encoder, Job, Switch, Worker};
 use crate::gfx::{Gfx, Prepared, Video};
 use crate::input::{self, Feed, SharedMoves};
 use crate::layout::{Desk, Kind, Pairing, ScreenRect};
@@ -946,7 +946,7 @@ impl Live {
         let (since, asks) = *self.unreadable.get_or_insert((now, 0));
         let held = now.saturating_duration_since(since);
         let reader = match (h264, self.using) {
-            (true, Some(b)) => b.label(),
+            (true, Some(b)) => b.label(Codec::H264),
             _ => "The bitmap encoder",
         };
         if held >= 2 * HOLD && h264 {
@@ -983,12 +983,12 @@ impl Live {
         match next {
             Some(b) => log::warn!(
                 "{} still cannot read {buffer}, using {} instead",
-                stuck.label(),
-                b.label()
+                stuck.label(Codec::H264),
+                b.label(Codec::H264)
             ),
             None => log::warn!(
                 "{} still cannot read {buffer}, sending bitmaps",
-                stuck.label()
+                stuck.label(Codec::H264)
             ),
         }
         self.order = Some(rest);
