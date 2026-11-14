@@ -106,7 +106,7 @@ fn the_band_in_the_list_is_drawn_as_pinned() {
 }
 
 #[test]
-fn a_cancelled_pointer_ends_the_band_and_motion_grows_nothing() {
+fn a_cancelled_pointer_ends_the_band_keeping_its_selection_and_motion_grows_nothing() {
     let mut d = multi(DlgMode::Open, true);
     d.click(R, entry_hit(1), Mods::default());
     let (lay, corner) = list(&d);
@@ -116,12 +116,17 @@ fn a_cancelled_pointer_ends_the_band_and_motion_grows_nothing() {
     assert_eq!(picked(&d), ["a.txt", "c.txt"]);
     d.cancel_pointer();
     assert!(d.shell.marquee.is_none(), "the band goes");
-    assert_eq!(picked(&d), ["a.txt"], "the press's selection comes back");
+    assert_eq!(picked(&d), ["a.txt", "c.txt"], "the band's selection stays");
+    assert_eq!(d.file_name(), "\"c.txt\" \"a.txt\"");
     let first = lay.cells[0];
     assert!(matches!(
         drag_to(&mut d, (first.x + 2, first.y + 2)),
         Event::None
     ));
-    assert_eq!(picked(&d), ["a.txt"], "plain motion selects nothing");
+    assert_eq!(
+        picked(&d),
+        ["a.txt", "c.txt"],
+        "plain motion selects nothing"
+    );
     assert!(matches!(d.release(), Event::None), "nothing is held");
 }
