@@ -189,7 +189,9 @@ impl State {
             lineage: &lineage,
             session,
             launched: launch.is_some(),
-            prompt: self.prompt_pid(w).is_some_and(mapfocus::is_prompt),
+            prompt: self.prompt_pid(w).is_some_and(|pid| {
+                mapfocus::is_prompt_window(pid, &self.win(w).map(|x| x.title()).unwrap_or_default())
+            }),
         };
         let window = self
             .focused

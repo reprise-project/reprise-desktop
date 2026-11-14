@@ -1081,6 +1081,7 @@ impl App for BtApp {
         if self.pair.is_some() {
             out.push(Child {
                 id: PAIR,
+                // The compositor focuses the box by this title (`mapfocus::DEVICE_PROMPTS`).
                 title: "Bluetooth Pairing Request".into(),
                 size: u.size(pairdlg::CLIENT),
                 fixed: true,
