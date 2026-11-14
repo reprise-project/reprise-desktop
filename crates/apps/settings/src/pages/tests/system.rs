@@ -801,11 +801,11 @@ fn the_backup_page_geometry() {
     assert_eq!(rect(&s, p, "backup_left_out"), Rect::new(20, 167, 358, 39));
     assert_eq!(rect(&s, p, BACKUP_EXPORT), Rect::new(20, 216, 75, 23));
     assert_eq!(rect(&s, p, BACKUP_IMPORT), Rect::new(101, 216, 75, 23));
-    assert_eq!(rect(&s, p, BACKUP_STATUS), Rect::new(20, 250, 358, 26));
     assert_eq!(
         rect(&s, p, BACKUP_FROM_DESKTOP),
-        Rect::new(228, 286, 150, 23)
+        Rect::new(228, 253, 150, 23)
     );
+    assert_eq!(rect(&s, p, BACKUP_STATUS), Rect::new(20, 293, 358, 26));
     inside_page(&s, p);
 }
 
