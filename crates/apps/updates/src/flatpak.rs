@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::io::{self, BufRead, BufReader};
-use std::os::fd::AsRawFd;
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -24,7 +24,7 @@ pub fn present() -> bool {
         .is_ok_and(|s| s.success())
 }
 
-fn flag(i: Install) -> &'static str {
+pub fn flag(i: Install) -> &'static str {
     match i {
         Install::System => "--system",
         Install::User => "--user",
@@ -272,24 +272,57 @@ pub fn install(
 }
 
 /// Run `flatpak ARGS`, a transaction answered yes to every question, calling `step` as in
-/// [`install`] and `sized` with the most it downloads, in bytes, once its first operation
-/// starts. `running` gets its process id once started and None before it is reaped, so a signal
-/// sent while the id is held never reaches a reused pid.
+/// [`install`], `started` with a [`Pidfd`] for the process and `sized` with the most it
+/// downloads, in bytes, once its first operation starts.
 pub fn follow(
     args: &[&str],
     step: &mut dyn FnMut(&str, f64),
-    running: &mut dyn FnMut(Option<u32>),
+    started: &mut dyn FnMut(Pidfd),
     sized: &mut dyn FnMut(u64),
 ) -> Result<(), String> {
     let mut cmd = Command::new(FLATPAK);
     cmd.args(args).env("LC_ALL", "C");
-    follow_command(cmd, step, running, sized)
+    follow_command(cmd, step, started, sized)
+}
+
+/// A handle on a child process, opened before it is reaped, so a signal sent through it after
+/// the child is gone fails instead of reaching a reused pid.
+#[derive(Debug)]
+pub struct Pidfd(OwnedFd);
+
+impl Pidfd {
+    fn open(pid: u32) -> Option<Self> {
+        // SAFETY: pidfd_open takes a pid and flags, no pointers.
+        let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid as libc::pid_t, 0) };
+        // SAFETY: a non-negative return is a new descriptor owned here.
+        (fd >= 0).then(|| Self(unsafe { OwnedFd::from_raw_fd(fd as RawFd) }))
+    }
+
+    /// Send SIGINT; ESRCH once the process is reaped.
+    pub fn interrupt(&self) -> io::Result<()> {
+        // SAFETY: pidfd_send_signal takes a pidfd owned here, a signal, a null info pointer (it
+        // then acts like kill) and no flags.
+        let sent = unsafe {
+            libc::syscall(
+                libc::SYS_pidfd_send_signal,
+                self.0.as_raw_fd(),
+                libc::SIGINT,
+                std::ptr::null::<libc::siginfo_t>(),
+                0,
+            )
+        };
+        if sent == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    }
 }
 
 fn follow_command(
     mut cmd: Command,
     step: &mut dyn FnMut(&str, f64),
-    running: &mut dyn FnMut(Option<u32>),
+    started: &mut dyn FnMut(Pidfd),
     sized: &mut dyn FnMut(u64),
 ) -> Result<(), String> {
     let mut child = cmd
@@ -298,7 +331,9 @@ fn follow_command(
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("Flatpak could not be started: {e}."))?;
-    running(Some(child.id()));
+    if let Some(fd) = Pidfd::open(child.id()) {
+        started(fd);
+    }
     // stderr is read on a thread of its own, so a chatty one never
     // fills its pipe while stdout is followed here.
     let err = child.stderr.take().map(|mut e| {
@@ -323,7 +358,6 @@ fn follow_command(
             }
         }
     }
-    running(None);
     let status = child.wait().map_err(|e| e.to_string())?;
     let stderr = err.and_then(|t| t.join().ok()).unwrap_or_default();
     if status.success() {
@@ -331,6 +365,134 @@ fn follow_command(
     } else {
         Err(complaint(&stderr))
     }
+}
+
+/// The apps and runtimes `install` holds, as full refs (`app/ID/ARCH/BRANCH`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Refs {
+    pub apps: Vec<String>,
+    pub runtimes: Vec<String>,
+}
+
+/// What `install` holds now; None when Flatpak cannot list it.
+pub fn refs(install: Install) -> Option<Refs> {
+    let list = |kind: &str, prefix: &str| -> Option<Vec<String>> {
+        let out = run(&["list", flag(install), kind, "--columns=ref"]).ok()?;
+        Some(
+            out.lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .map(|r| format!("{prefix}/{r}"))
+                .collect(),
+        )
+    };
+    Some(Refs {
+        apps: list("--app", "app")?,
+        runtimes: list("--runtime", "runtime")?,
+    })
+}
+
+/// How a cancelled install or uninstall ended, from what was installed before and after it.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Settled {
+    /// An app came or went before the cancel reached Flatpak: the job is done.
+    Done,
+    /// Nothing changed for the app; these runtimes came along before the cancel and go again.
+    Undo(Vec<String>),
+}
+
+pub fn settle(before: &Refs, after: &Refs, installing: bool) -> Settled {
+    let new = |a: &[String], b: &[String]| -> Vec<String> {
+        a.iter().filter(|r| !b.contains(r)).cloned().collect()
+    };
+    let (moved, runtimes) = if installing {
+        (
+            new(&after.apps, &before.apps),
+            new(&after.runtimes, &before.runtimes),
+        )
+    } else {
+        (new(&before.apps, &after.apps), Vec::new())
+    };
+    if moved.is_empty() {
+        Settled::Undo(runtimes)
+    } else {
+        Settled::Done
+    }
+}
+
+/// Make this process the reaper of what a stopped `flatpak` leaves running: the `revokefs-fuse`
+/// that serves a system install's download outlives a killed client, and its mount with it.
+pub fn adopt_orphans() {
+    // SAFETY: prctl's PR_SET_CHILD_SUBREAPER takes plain integers.
+    unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) };
+}
+
+/// The `revokefs-fuse` processes this process adopted ([`adopt_orphans`]) end, unmounting their
+/// download folders, which are then removed.
+pub fn sweep_orphans() {
+    let me = std::process::id();
+    let Ok(dir) = std::fs::read_dir("/proc") else {
+        return;
+    };
+    for pid in dir
+        .flatten()
+        .filter_map(|e| e.file_name().to_str()?.parse::<i32>().ok())
+    {
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default();
+        if stat_parent(&stat) != Some(("revokefs-fuse", me)) {
+            continue;
+        }
+        let cmdline = std::fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default();
+        end_child(pid);
+        if let Some(mount) = mount_of(&cmdline) {
+            let _ = std::fs::remove_dir(&mount);
+            if let Some(cache) = mount.parent().filter(|p| {
+                p.file_name()
+                    .is_some_and(|n| n.to_string_lossy().starts_with("flatpak-cache-"))
+            }) {
+                let _ = std::fs::remove_dir(cache);
+            }
+        }
+    }
+}
+
+/// SIGTERM child `pid` (FUSE then unmounts and exits) and reap it, SIGKILL after two seconds.
+fn end_child(pid: i32) {
+    // SAFETY: kill and waitpid take plain integers and a null status pointer; `pid` is this
+    // process's own child, unreaped until here, so it names no other process.
+    unsafe {
+        libc::kill(pid, libc::SIGTERM);
+        let end = Instant::now() + Duration::from_secs(2);
+        while libc::waitpid(pid, std::ptr::null_mut(), libc::WNOHANG) == 0 {
+            if Instant::now() >= end {
+                libc::kill(pid, libc::SIGKILL);
+                libc::waitpid(pid, std::ptr::null_mut(), 0);
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+}
+
+/// `/proc/PID/stat`'s command name and parent pid.
+fn stat_parent(stat: &str) -> Option<(&str, u32)> {
+    let (open, close) = (stat.find('(')?, stat.rfind(')')?);
+    let comm = stat.get(open + 1..close)?;
+    let ppid = stat
+        .get(close + 1..)?
+        .split_whitespace()
+        .nth(1)?
+        .parse()
+        .ok()?;
+    Some((comm, ppid))
+}
+
+/// The mount folder, the last argument, of a `revokefs-fuse` command line.
+fn mount_of(cmdline: &[u8]) -> Option<PathBuf> {
+    use std::os::unix::ffi::OsStrExt;
+    let last = cmdline.split(|&b| b == 0).rfind(|a| !a.is_empty())?;
+    let path = PathBuf::from(std::ffi::OsStr::from_bytes(last));
+    path.is_absolute().then_some(path)
 }
 
 /// An installed app as `flatpak info` describes it.
@@ -533,28 +695,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_pid_is_let_go_before_the_process_is_reaped() {
+    fn a_signal_after_the_process_is_reaped_reaches_no_process() {
         let mut cmd = Command::new("sh");
         cmd.args(["-c", "exit 0"]);
-        let mut seen = Vec::new();
-        let ran = follow_command(
-            cmd,
-            &mut |_, _| {},
-            &mut |pid| {
-                let unreaped = seen
-                    .last()
-                    .copied()
-                    .flatten()
-                    .is_some_and(|p: u32| std::path::Path::new(&format!("/proc/{p}")).exists());
-                seen.push(pid);
-                if pid.is_none() {
-                    assert!(unreaped, "the process is still ours to signal");
-                }
-            },
-            &mut |_| {},
-        );
+        let mut fd = None;
+        let ran = follow_command(cmd, &mut |_, _| {}, &mut |f| fd = Some(f), &mut |_| {});
         assert_eq!(ran, Ok(()));
-        assert!(matches!(seen[..], [Some(_), None]), "{seen:?}");
+        let fd = fd.expect("a pidfd for the started process");
+        let sent = fd.interrupt().map_err(|e| e.raw_os_error());
+        assert_eq!(
+            sent,
+            Err(Some(libc::ESRCH)),
+            "the reaped process is not signalled"
+        );
     }
 
     const LIST: &str = "org.example.Editor/x86_64/stable\tEditor\t2.1.0\n\
@@ -642,6 +795,49 @@ mod tests {
         let last = lines.filter_map(|l| f.line(l).map(|(_, x)| x)).last();
         assert_eq!(last, Some(1.0));
         assert_eq!(Follow::default().download(), None, "no table, no size");
+    }
+
+    #[test]
+    fn a_cancelled_job_is_done_only_when_its_app_came_or_went() {
+        let refs = |apps: &[&str], runtimes: &[&str]| Refs {
+            apps: apps.iter().map(|r| r.to_string()).collect(),
+            runtimes: runtimes.iter().map(|r| r.to_string()).collect(),
+        };
+        let before = refs(&["app/a/x86_64/stable"], &["runtime/p/x86_64/1"]);
+        let half = refs(
+            &["app/a/x86_64/stable"],
+            &["runtime/p/x86_64/1", "runtime/q.Locale/x86_64/2"],
+        );
+        assert_eq!(
+            settle(&before, &half, true),
+            Settled::Undo(vec!["runtime/q.Locale/x86_64/2".into()])
+        );
+        let whole = refs(
+            &["app/a/x86_64/stable", "app/k/x86_64/stable"],
+            &["runtime/p/x86_64/1", "runtime/q/x86_64/2"],
+        );
+        assert_eq!(settle(&before, &whole, true), Settled::Done);
+        assert_eq!(settle(&before, &before, false), Settled::Undo(Vec::new()));
+        let gone = refs(&[], &["runtime/p/x86_64/1"]);
+        assert_eq!(settle(&before, &gone, false), Settled::Done);
+    }
+
+    #[test]
+    fn an_adopted_revokefs_is_known_by_its_stat_and_mount() {
+        let stat = "187681 (revokefs-fuse) S 4242 187681 187681 0 -1 4194624 107 0 0 0";
+        assert_eq!(stat_parent(stat), Some(("revokefs-fuse", 4242)));
+        assert_eq!(stat_parent("12 (a) b) R 7 12"), Some(("a) b", 7)));
+        assert_eq!(stat_parent("garbage"), None);
+        let cmdline = b"/usr/lib/revokefs-fuse\0-o\0uid=1000\0--socket=3\0\
+                        /var/lib/flatpak/repo/tmp/flatpak-cache-GSCPY3\0\
+                        /var/tmp/flatpak-cache-JDYOY3/org.kde.Platform-7LEPY3\0";
+        assert_eq!(
+            mount_of(cmdline),
+            Some(PathBuf::from(
+                "/var/tmp/flatpak-cache-JDYOY3/org.kde.Platform-7LEPY3"
+            ))
+        );
+        assert_eq!(mount_of(b"x\0relative\0"), None);
     }
 
     #[test]

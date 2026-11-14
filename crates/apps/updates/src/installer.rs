@@ -73,8 +73,8 @@ pub struct Found {
 enum Plan {
     #[default]
     Nothing,
-    /// `flatpak` with these arguments.
-    Flatpak(Vec<String>),
+    /// `flatpak` with these arguments, on the installation `at`.
+    Flatpak { at: Installation, args: Vec<String> },
     /// Remove this package id and what needs it.
     Remove(String),
     /// Install the package in `file`, named `name`.
@@ -105,11 +105,11 @@ pub enum Failure {
     Text(String),
 }
 
-/// What stops a running job: a PackageKit transaction's path or a `flatpak` process.
+/// What stops a running job: a PackageKit transaction's path or a `flatpak` process's pidfd.
 #[derive(Debug, Default)]
 struct Stopper {
     tid: Option<String>,
-    pid: Option<u32>,
+    pidfd: Option<flatpak::Pidfd>,
     cancelled: bool,
 }
 
@@ -210,7 +210,8 @@ fn read_program(file: &Path, conn: Option<&Connection>) -> (Found, Plan) {
                     } else {
                         info.reference
                     };
-                    Plan::Flatpak(vec!["uninstall".into(), at.flag().into(), "-y".into(), r])
+                    let args = vec!["uninstall".into(), at.flag().into(), "-y".into(), r];
+                    Plan::Flatpak { at, args }
                 }
                 Err(e) => {
                     found.note = e;
@@ -364,7 +365,10 @@ fn read_file(path: &Path, signed: bool, conn: Option<&Connection>) -> (Found, Pl
     let arg = path.to_string_lossy().into_owned();
     let flatpak_args = |how: &str| {
         let args = ["install", "--system", "-y", how, &arg];
-        Plan::Flatpak(args.map(String::from).to_vec())
+        Plan::Flatpak {
+            at: Installation::System,
+            args: args.map(String::from).to_vec(),
+        }
     };
     let plan = match pkgfile::kind_of(path) {
         None => {
@@ -525,27 +529,36 @@ fn run(
             }),
         (Plan::Launcher(file), _) => reprisefs::software::remove_launcher(file)
             .map_err(|e| Failure::Text(format!("The launcher could not be removed: {e}."))),
-        (Plan::Flatpak(args), _) => {
+        (Plan::Flatpak { at, args }, _) => {
+            let at = install_of(*at);
             let args: Vec<&str> = args.iter().map(String::as_str).collect();
             let what = match verb {
                 Verb::Install => "Installing",
                 Verb::Uninstall => "Uninstalling",
             };
+            let before = flatpak::refs(at);
+            flatpak::adopt_orphans();
             let ran = flatpak::follow(
                 &args,
                 &mut |id, f| {
                     let line = (!id.is_empty()).then(|| format!("{what} {id}"));
                     report(Some(f), line);
                 },
-                &mut |pid| {
-                    lock(stop).pid = pid;
-                    if pid.is_some() {
-                        poster.post(Msg::Cancellable(true));
-                    }
+                &mut |fd| {
+                    lock(stop).pidfd = Some(fd);
+                    poster.post(Msg::Cancellable(true));
                 },
                 &mut |bytes| poster.post(Msg::Download(bytes)),
             );
-            ran.map_err(Failure::Text)
+            lock(stop).pidfd = None;
+            flatpak::sweep_orphans();
+            match (ran, before) {
+                (Err(e), Some(before)) if lock(stop).cancelled => {
+                    poster.post(Msg::Cancellable(false));
+                    settle_cancel(at, &before, verb, &mut report).map_err(|()| Failure::Text(e))
+                }
+                (ran, _) => ran.map_err(Failure::Text),
+            }
         }
         (_, None) => Err(Failure::Text("There is no system bus.".into())),
         (Plan::Remove(id), Some(c)) => pk(zbus::block_on(packagekit::remove(
@@ -566,6 +579,42 @@ fn run(
             Verb::Uninstall => "The uninstall was cancelled.".into(),
         })),
         done => done,
+    }
+}
+
+/// After a cancelled Flatpak job: Ok when its app came or went anyway, else Err(()) once the
+/// runtimes that came before the cancel are uninstalled again.
+fn settle_cancel(
+    at: Install,
+    before: &flatpak::Refs,
+    verb: Verb,
+    report: &mut dyn FnMut(Option<f64>, Option<String>),
+) -> Result<(), ()> {
+    let Some(after) = flatpak::refs(at) else {
+        return Err(());
+    };
+    match flatpak::settle(before, &after, verb == Verb::Install) {
+        flatpak::Settled::Done => Ok(()),
+        flatpak::Settled::Undo(refs) if refs.is_empty() => Err(()),
+        flatpak::Settled::Undo(refs) => {
+            report(
+                None,
+                Some("Removing what it installed before the cancel".into()),
+            );
+            let mut args = vec!["uninstall", flatpak::flag(at), "-y"];
+            args.extend(refs.iter().map(String::as_str));
+            let undone = flatpak::follow(
+                &args,
+                &mut |_, f| report(Some(f), None),
+                &mut |_| {},
+                &mut |_| {},
+            );
+            flatpak::sweep_orphans();
+            if let Err(e) = undone {
+                log::warn!("removing {refs:?} after a cancel: {e}");
+            }
+            Err(())
+        }
     }
 }
 
@@ -620,10 +669,10 @@ fn work(target: Target, go: Receiver<()>, poster: Poster, stop: Arc<Mutex<Stoppe
 fn cancel(stop: &Arc<Mutex<Stopper>>) {
     let mut s = lock(stop);
     s.cancelled = true;
-    if let Some(pid) = s.pid {
-        // SAFETY: kill takes no pointers. The pid is our own child's: `flatpak::follow` lets go
-        // of it under this lock before reaping it.
-        unsafe { libc::kill(pid as libc::pid_t, libc::SIGINT) };
+    if let Some(fd) = &s.pidfd {
+        if let Err(e) = fd.interrupt() {
+            log::warn!("cancelling flatpak: {e}");
+        }
     } else if let Some(tid) = s.tid.clone() {
         std::thread::spawn(move || {
             let asked = zbus::block_on(async {
