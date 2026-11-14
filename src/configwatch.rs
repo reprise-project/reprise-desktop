@@ -860,6 +860,7 @@ mod tests {
             transform: Default::default(),
             position: None,
             primary: false,
+            icc_profile: None,
         });
         assert_eq!(redraw(&old, &scaled), Redraw::Layout, "a scale change");
         let mut primary = scaled.clone();
@@ -1168,6 +1169,7 @@ mod tests {
             transform: Default::default(),
             position: None,
             primary: false,
+            icc_profile: None,
         });
         let c = diff(&old, &new);
         assert!(c.outputs);

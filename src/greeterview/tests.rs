@@ -1224,6 +1224,7 @@ fn the_screen_goes_on_the_greetings_primary_output_while_it_is_connected() {
         transform: crate::config::Transform::Normal,
         position: None,
         primary: true,
+        icc_profile: None,
     };
     for (named, on) in [("TEST-2", "TEST-2"), ("HDMI-A-9", "TEST-1")] {
         let (mut h, _d) = login_with(repriselogin::Interface::Classic, Vec::new(), |c| {

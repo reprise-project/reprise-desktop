@@ -190,3 +190,21 @@ fn output_mode_parses_and_picks() {
     ];
     assert_eq!(any.pick(&pref), Some(1));
 }
+
+#[test]
+fn an_outputs_icc_profile_is_an_absolute_path_and_empty_is_none() {
+    let c = Config::parse(
+        "[[outputs]]\nname = \"DP-1\"\nicc_profile = \"/usr/share/color/icc/studio.icc\"\n\n[[outputs]]\nname = \"DP-2\"\nicc_profile = \"\"\n",
+    )
+    .unwrap();
+    assert_eq!(
+        c.icc_profile_for_output_name("DP-1"),
+        Some(std::path::Path::new("/usr/share/color/icc/studio.icc"))
+    );
+    assert_eq!(c.icc_profile_for_output_name("DP-2"), None);
+    assert_eq!(c.icc_profile_for_output_name("HDMI-A-1"), None);
+    assert!(
+        Config::parse("[[outputs]]\nname = \"DP-1\"\nicc_profile = \"studio.icc\"\n").is_err(),
+        "a relative path is refused"
+    );
+}

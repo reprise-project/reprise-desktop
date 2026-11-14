@@ -1195,6 +1195,13 @@ impl Config {
                             }
                         })
                         .transpose()?;
+                    let icc_profile = match o.icc_profile.as_deref() {
+                        None | Some("") => None,
+                        Some(s) => Some(
+                            home_path(s, std::env::var_os("HOME").as_deref())
+                                .map_err(|e| format!("outputs.{}.icc_profile {e}", o.name))?,
+                        ),
+                    };
                     Ok(OutputConfig {
                         name: o.name,
                         scale,
@@ -1203,6 +1210,7 @@ impl Config {
                         transform,
                         position,
                         primary: o.primary.unwrap_or(false),
+                        icc_profile,
                     })
                 })
                 .collect::<Result<Vec<_>, String>>()?;

@@ -1,8 +1,10 @@
 //! The white point of a colour temperature and the gamma ramp that shifts the
-//! screen to it. The curve: illuminant D from 4000 K up, the Planckian locus
+//! screen to it, on top of a profile's calibration curves. The curve: illuminant D from 4000 K up, the Planckian locus
 //! below 2500 K, a cosine blend between, and 6500 K exactly white.
 
 use std::f64::consts::PI;
+
+use reprisefs::icc::Vcgt;
 
 pub const NEUTRAL: u32 = 6500;
 
@@ -65,21 +67,26 @@ pub fn whitepoint(kelvin: u32) -> [f64; 3] {
     rgb.map(|v| v / max)
 }
 
-/// A gamma table of `size` entries per channel (red, green, blue), scaling each channel linearly by its gain.
-pub fn ramp(size: usize, kelvin: u32) -> Vec<u16> {
-    let wp = whitepoint(kelvin);
+/// A gamma table of `size` entries per channel (red, green, blue): each channel's calibration curve
+/// (`curves`, else a straight line) scaled by `kelvin`'s gain. None when neither changes anything.
+pub fn ramp(size: usize, kelvin: Option<u32>, curves: Option<&Vcgt>) -> Option<Vec<u16>> {
+    if kelvin.is_none() && curves.is_none() {
+        return None;
+    }
+    let wp = whitepoint(kelvin.unwrap_or(NEUTRAL));
     let mut out = Vec::with_capacity(size * 3);
-    for gain in wp {
+    for (c, gain) in wp.into_iter().enumerate() {
         for i in 0..size {
-            let v = if size > 1 {
+            let x = if size > 1 {
                 i as f64 / (size - 1) as f64
             } else {
                 1.0
             };
+            let v = curves.map_or(x, |k| k.value(c, x));
             out.push((u16::MAX as f64 * v * gain) as u16);
         }
     }
-    out
+    Some(out)
 }
 
 #[cfg(test)]
@@ -93,7 +100,7 @@ mod tests {
     #[test]
     fn six_thousand_five_hundred_kelvin_is_white() {
         assert_eq!(whitepoint(6500), [1.0, 1.0, 1.0]);
-        let r = ramp(256, 6500);
+        let r = ramp(256, Some(6500), None).unwrap();
         assert_eq!(r.len(), 768);
         assert_eq!((r[0], r[255], r[511], r[767]), (0, 65535, 65535, 65535));
     }
@@ -116,11 +123,46 @@ mod tests {
 
     #[test]
     fn a_ramp_scales_each_channel_by_its_gain() {
-        let r = ramp(4, 4000);
+        let r = ramp(4, Some(4000), None).unwrap();
         let wp = whitepoint(4000);
         assert_eq!(&r[0..4], &[0, 21845, 43690, 65535]);
         assert_eq!(r[7], (65535.0 * wp[1]) as u16);
         assert_eq!(r[11], (65535.0 * wp[2]) as u16);
         assert_eq!(r[8], 0);
+    }
+
+    fn curves() -> Vcgt {
+        Vcgt::Table {
+            entries: 2,
+            data: vec![0.0, 0.8, 0.1, 1.0, 0.0, 0.5],
+        }
+    }
+
+    #[test]
+    fn no_warmth_and_no_profile_leave_the_table_alone() {
+        assert_eq!(ramp(256, None, None), None);
+    }
+
+    #[test]
+    fn a_profile_alone_puts_its_curves_in_the_table() {
+        let r = ramp(3, None, Some(&curves())).unwrap();
+        assert_eq!(&r[0..3], &[0, 26214, 52428], "red 0 to 0.8");
+        assert_eq!(&r[3..6], &[6553, 36044, 65535], "green 0.1 to 1");
+        assert_eq!(&r[6..9], &[0, 16383, 32767], "blue 0 to 0.5");
+    }
+
+    /// Night light scales the calibrated value, so a warm night keeps the profile's curve shape.
+    #[test]
+    fn night_light_scales_each_calibrated_channel_by_its_gain() {
+        let k = 3400;
+        let wp = whitepoint(k);
+        let r = ramp(3, Some(k), Some(&curves())).unwrap();
+        let c = curves();
+        for ch in 0..3 {
+            for i in 0..3 {
+                let want = (65535.0 * c.value(ch, i as f64 / 2.0) * wp[ch]) as u16;
+                assert_eq!(r[ch * 3 + i], want, "channel {ch} entry {i}");
+            }
+        }
     }
 }

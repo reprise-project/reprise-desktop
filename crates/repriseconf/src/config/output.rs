@@ -9,6 +9,8 @@ pub struct OutputConfig {
     pub transform: Transform,
     pub position: Option<(i32, i32)>,
     pub primary: bool,
+    /// An ICC profile whose `vcgt` calibration goes into the output's gamma table.
+    pub icc_profile: Option<std::path::PathBuf>,
 }
 
 /// An output transform by its wlr-randr name (`transform = "90"`); the

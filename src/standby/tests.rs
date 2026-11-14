@@ -40,6 +40,7 @@ fn the_standby_runs_as_the_last_monitor_else_the_configured_primary_else_1080p()
         transform: Default::default(),
         position: Some((100, 0)),
         primary,
+        icc_profile: None,
     };
     let outputs = [
         out("DP-1", false, "2560x1440"),

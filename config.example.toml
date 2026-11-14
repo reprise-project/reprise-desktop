@@ -312,6 +312,7 @@ suspend_after = 0            # run [power] standby
 # mode = "2560x1440@59.95"   # WIDTHxHEIGHT[@HZ]; the preferred mode when left out or not offered
 # transform = "90"           # normal, 90, 180, 270, flipped, flipped-90, flipped-180, flipped-270
 # adaptive_sync = true       # overrides the top-level adaptive_sync for this output
+# icc_profile = "~/.local/share/icc/studio.icc"  # an ICC profile whose calibration curves (vcgt) go into this output's gamma table, night light on top; the Display page's Color profile list sets it
 
 # [screenshot]               # every screenshot goes to the clipboard
 # save = true                # and to Pictures/Screenshots (or ~/Screenshots) as a PNG

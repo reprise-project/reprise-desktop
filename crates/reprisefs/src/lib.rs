@@ -29,6 +29,7 @@ pub mod folderwatch;
 pub mod gvfsmeta;
 pub mod hidden;
 pub mod history;
+pub mod icc;
 pub mod icons;
 pub mod imagesize;
 pub mod jobs;

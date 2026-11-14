@@ -436,6 +436,7 @@ mod tests {
             transform: Default::default(),
             position: None,
             primary: false,
+            icc_profile: None,
         });
         assert!(!h.state.apply_output_config(&old), "the mode is refused");
         h.dispatch();

@@ -2093,6 +2093,7 @@ mod tests {
             transform: Default::default(),
             position: None,
             primary: true,
+            icc_profile: None,
         }];
         lock(&mut h.state);
         let l = h.state.lock.console.as_ref().unwrap();

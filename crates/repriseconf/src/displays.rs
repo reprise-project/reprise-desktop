@@ -444,6 +444,7 @@ transform = "normal"
             transform: Transform::Normal,
             position: None,
             primary: false,
+            icc_profile: None,
         };
         let f = outputs_fingerprint(std::slice::from_ref(&base));
         assert_eq!(f, outputs_fingerprint(std::slice::from_ref(&base.clone())));
