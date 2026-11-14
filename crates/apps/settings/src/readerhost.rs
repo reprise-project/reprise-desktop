@@ -72,6 +72,7 @@ impl SettingsApp {
             },
         };
         self.reader_job = None;
+        self.reader_switching = false;
         if let Some(why) = &done.failed {
             self.fail(why);
         }
@@ -91,11 +92,16 @@ impl SettingsApp {
     }
 
     /// Use the screen reader moved. A poll under way is dropped, since it may have read the
-    /// state from before.
+    /// state from before; a click while a switch runs is undone, since that switch's read is due.
     pub(crate) fn reader_toggled(&mut self) {
+        if self.reader_switching {
+            self.show_reader();
+            return;
+        }
         let page = &self.sheet.pages[Page::MagnifierFilters.index()];
         let on = page.checked(magnifierpage::READER) == Some(true);
         self.reader.running = on;
+        self.reader_switching = true;
         self.start_reader(move || switch(on));
     }
 

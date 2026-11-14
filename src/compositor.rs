@@ -450,6 +450,8 @@ pub struct State {
     pub identify: crate::identifyview::IdentifyView,
     pub bell_flash: crate::bellflash::BellFlash,
     pub locate_rings: crate::locatepointer::Rings,
+    /// A screen reader switch is under way; the action waits for it.
+    pub screen_reader_busy: bool,
     pub live_previews: crate::livepreview::LivePreviews,
     pub task_preview: crate::taskpreview::TaskPreviewView,
     pub mini_views: crate::miniview::MiniViews,
@@ -836,6 +838,7 @@ impl State {
             identify: Default::default(),
             bell_flash: Default::default(),
             locate_rings: Default::default(),
+            screen_reader_busy: false,
             live_previews: Default::default(),
             task_preview: Default::default(),
             mini_views: Default::default(),

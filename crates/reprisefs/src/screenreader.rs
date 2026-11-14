@@ -3,6 +3,7 @@
 
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 pub const PROGRAM: &str = "orca";
 
@@ -48,6 +49,27 @@ fn live_reader(stat: &str) -> bool {
     &stat[open + 1..close] == PROGRAM && !matches!(state, Some("Z" | "X") | None)
 }
 
+/// Wait until a reader runs (`on`) or none does, as a start or a [`stop`] takes a moment to
+/// show in `/proc`; false when `within` passes first.
+pub fn wait_for(on: bool, within: Duration) -> bool {
+    // SAFETY: getuid has no failure mode.
+    let uid = unsafe { libc::getuid() };
+    wait_in(Path::new("/proc"), uid, on, within)
+}
+
+fn wait_in(proc: &Path, uid: u32, on: bool, within: Duration) -> bool {
+    let end = Instant::now() + within;
+    loop {
+        if running_in(proc, uid).is_empty() != on {
+            return true;
+        }
+        if Instant::now() >= end {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
 /// Ask each of `pids` to quit; the reader says it is off as it goes.
 pub fn stop(pids: &[i32]) {
     for &pid in pids {
@@ -86,5 +108,16 @@ mod tests {
         let me = unsafe { libc::getuid() };
         assert_eq!(running_in(root.path(), me), [7, 40]);
         assert_eq!(running_in(root.path(), me + 1), Vec::<i32>::new());
+    }
+
+    #[test]
+    fn waiting_ends_once_the_readers_are_as_asked_or_the_time_is_up() {
+        let root = proc_with(&[("40", "40 (orca) S 1 40 40 0 -1")]);
+        // SAFETY: getuid has no failure mode.
+        let me = unsafe { libc::getuid() };
+        let long = Duration::from_secs(5);
+        assert!(wait_in(root.path(), me, true, long));
+        assert!(wait_in(root.path(), me + 1, false, long));
+        assert!(!wait_in(root.path(), me, false, Duration::from_millis(60)));
     }
 }

@@ -836,8 +836,9 @@ the screen takes the interface of the last session used at this computer.
   its unread count ("Mail, 3 unread") and the colour picker its colour as
   `#rrggbb`. They're tested with Orca.
 - **Screen reader on and off without looking.** Super+Alt+S starts Orca or
-  stops it from anywhere, dialogs included; a rising or falling sound and an
-  on-screen line say which. Settings > Magnifier & Filters has the same switch
+  stops it from anywhere, dialogs included, but not at the lock screen, which
+  has nothing for it to read; a rising or falling sound and an on-screen line
+  say which. Settings > Magnifier & Filters has the same switch
   and starts the reader at log on (an autostart entry it hides, never
   deletes, when unchecked). Without Orca installed the switches grey with a
   note.
