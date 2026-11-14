@@ -1576,6 +1576,51 @@ fn a_notification_click_hands_its_program_a_token_that_raises_its_window() {
 }
 
 #[test]
+fn a_notification_click_lets_its_program_raise_its_window_without_the_token() {
+    use crate::tray::TrayEvent;
+    use std::os::fd::AsRawFd;
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    h.state.app_index = vec![reprisefs::apps::AppEntry {
+        name: "Mail".into(),
+        exec_line: String::new(),
+        terminal: false,
+        id: "org.example.Mail.desktop".into(),
+        icon: None,
+        startup_wm_class: None,
+        categories: Vec::new(),
+        mime_types: Vec::new(),
+        shown: true,
+    }];
+    let (tx, wake, _heard) = crate::tray::headless(&mut h.state);
+    let mut c = h.connect();
+    let mail = h.map_toplevel(&mut c, "org.example.Mail", 300, 200);
+    let other = h.map_toplevel(&mut c, "other", 300, 200);
+    let mut n = note(7, "org.example.Mail");
+    n.actions = vec![("default".into(), "Open".into())];
+    tx.send(TrayEvent::Notify(n)).expect("send");
+    // SAFETY: `wake` is an open eventfd and the buffer a live 8-byte local.
+    let wrote = unsafe { libc::write(wake.as_raw_fd(), (&1u64 as *const u64).cast(), 8) };
+    assert_eq!(wrote, 8);
+    h.dispatch();
+    invoke(&mut h.state, 7, "default");
+
+    let (own_token, _) = h.state.activation.create_external_token(None);
+    c.activate(own_token, mail);
+    h.roundtrip(&mut c);
+    assert_eq!(
+        h.state.focused,
+        Some(mail.id),
+        "a token the program minted itself raises the window"
+    );
+    h.state.focus_window(other.id);
+    let (own_token, _) = h.state.activation.create_external_token(None);
+    c.activate(own_token, mail);
+    h.roundtrip(&mut c);
+    assert_eq!(h.state.focused, Some(other.id), "once");
+}
+
+#[test]
 fn a_notification_click_lets_its_senders_next_window_take_focus() {
     use crate::tray::TrayEvent;
     use std::os::fd::AsRawFd;

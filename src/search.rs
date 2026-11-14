@@ -1026,6 +1026,7 @@ mod tests {
             },
             name: "Calculator".into(),
             icon: None,
+            app: "org.example.Calc.desktop".into(),
         })
     }
 

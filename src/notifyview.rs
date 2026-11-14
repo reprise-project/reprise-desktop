@@ -570,8 +570,9 @@ fn drop_balloon(state: &mut State, id: u32) -> bool {
 
 /// Run action `key` of notification `id`, from its balloon, its "..." menu or the history:
 /// `ActivationToken` fires with a trusted token the program can raise its window with, then
-/// `ActionInvoked`; the sender's next window may take focus, and the notification closes unless it
-/// is resident.
+/// `ActionInvoked`; the sender's next window may take focus, its program
+/// ([`Notification::key`]) may raise a window it has without the token
+/// ([`crate::activation::Raises`]), and the notification closes unless it is resident.
 pub fn invoke(state: &mut State, id: u32, key: &str) {
     if key == INLINE_REPLY {
         start_reply(state, id);
@@ -588,6 +589,10 @@ pub fn invoke(state: &mut State, id: u32, key: &str) {
         return;
     };
     let (resident, pid) = (n.resident, n.pid);
+    let ids = crate::tray::notify::desktop_ids(&n.key);
+    let app = (state.app_index.iter())
+        .find(|e| ids.contains(&e.id))
+        .map(|e| e.id.clone());
     if id == OWN_ID {
         let own = state.notify.own_actions.iter().find(|(k, _)| k == key);
         match own.map(|(_, a)| a.clone()) {
@@ -601,6 +606,9 @@ pub fn invoke(state: &mut State, id: u32, key: &str) {
     } else {
         if let Some(pid) = pid {
             crate::mapfocus::grant(pid);
+        }
+        if let Some(app) = app {
+            state.raises.grant(&app, std::time::Instant::now());
         }
         let key = key.to_string();
         let token = Some(state.new_activation_token());

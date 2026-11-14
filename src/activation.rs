@@ -1,5 +1,5 @@
 //! xdg-activation-v1. A trusted token focuses the window; any other only flags
-//! the taskbar button. Trust is stamped at mint.
+//! the taskbar button. Trust is stamped at mint, or granted by [`Raises`].
 
 use std::time::{Duration, Instant};
 
@@ -50,6 +50,31 @@ fn drop_target_trusted<C: PartialEq>(
     dropped_on.is_some_and(|(c, at)| {
         Some(c) == token_client && now.saturating_duration_since(*at) < DROP_GRACE
     })
+}
+
+/// Programs Reprise just asked to act, by desktop id, for those the token never reaches: a search
+/// provider call carries none, and some programs drop a notification action's. The next
+/// activation a window of one asks for within [`TOKEN_LIFETIME`] is trusted, once.
+#[derive(Default)]
+pub struct Raises(Vec<(String, Instant)>);
+
+impl Raises {
+    pub fn grant(&mut self, app: &str, now: Instant) {
+        self.0
+            .retain(|(a, at)| a != app && now.saturating_duration_since(*at) < TOKEN_LIFETIME);
+        self.0.push((app.to_string(), now));
+    }
+
+    /// Uses up the live grant for desktop id `app`; false when there is none.
+    fn take(&mut self, app: Option<&str>, now: Instant) -> bool {
+        self.0
+            .retain(|(_, at)| now.saturating_duration_since(*at) < TOKEN_LIFETIME);
+        let Some(i) = app.and_then(|app| self.0.iter().position(|(a, _)| a == app)) else {
+            return false;
+        };
+        self.0.remove(i);
+        true
+    }
 }
 
 impl XdgActivationHandler for State {
@@ -104,8 +129,8 @@ impl XdgActivationHandler for State {
         data: XdgActivationTokenData,
         surface: WlSurface,
     ) {
-        let trusted =
-            data.timestamp.elapsed() < TOKEN_LIFETIME && data.user_data.get::<Trusted>().is_some();
+        let live = data.timestamp.elapsed() < TOKEN_LIFETIME;
+        let minted_trusted = live && data.user_data.get::<Trusted>().is_some();
         self.activation.remove_token(&token);
         let mut root = surface;
         while let Some(parent) = get_parent(&root) {
@@ -114,6 +139,11 @@ impl XdgActivationHandler for State {
         let Some(w) = self.window_for_surface(&root) else {
             return;
         };
+        let app = (self.win(w)).and_then(|win| {
+            reprisefs::apps::entry_for_app_id(&self.app_index, &win.app_id(), |_| true)
+                .map(|e| e.id.clone())
+        });
+        let trusted = minted_trusted || live && self.raises.take(app.as_deref(), Instant::now());
         let Some(win) = self.win_mut(w) else {
             return;
         };
@@ -380,6 +410,26 @@ mod tests {
             "the moment has passed"
         );
         assert!(!drop_target_trusted::<i32>(None, Some(&1), at));
+    }
+
+    #[test]
+    fn a_raise_grant_lasts_a_tokens_lifetime() {
+        let at = Instant::now();
+        let mut r = Raises::default();
+        r.grant("calc.desktop", at);
+        assert!(!r.take(Some("chars.desktop"), at), "another program");
+        assert!(!r.take(None, at), "a window of no known program");
+        assert!(
+            !r.take(Some("calc.desktop"), at + TOKEN_LIFETIME),
+            "expired"
+        );
+        r.grant("calc.desktop", at);
+        r.grant("calc.desktop", at);
+        assert!(r.take(Some("calc.desktop"), at + Duration::from_secs(1)));
+        assert!(
+            !r.take(Some("calc.desktop"), at + Duration::from_secs(1)),
+            "a second pick of the same program renews its grant, it doesn't add one"
+        );
     }
 
     #[test]
