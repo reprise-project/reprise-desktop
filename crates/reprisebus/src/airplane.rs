@@ -1,7 +1,9 @@
 //! Airplane mode: Wi-Fi and mobile broadband through NetworkManager, Bluetooth through rfkill.
 //! The radios that were on wait in `$XDG_STATE_HOME/reprise/airplane-mode` until it is turned off.
 
+use std::fs::{File, TryLockError};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use zbus::proxy::CacheProperties;
 use zbus::{Connection, Proxy};
 
@@ -103,7 +105,7 @@ impl Mode {
 }
 
 /// Airplane mode from NetworkManager's `WirelessEnabled`, `WwanEnabled` and `RadioFlags` and the
-/// rfkill switches; None on a machine with no radio switch.
+/// rfkill switches; None on a machine with no radio switch, or none of a radio there is.
 pub fn mode(
     wifi: bool,
     wwan: bool,
@@ -130,17 +132,21 @@ struct Now {
 }
 
 impl Now {
-    /// Without NetworkManager, Wi-Fi and mobile broadband are left alone.
+    /// Without NetworkManager on the bus, Wi-Fi and mobile broadband are left alone.
     async fn read(conn: &Connection) -> Now {
         let switches = rfkill::switches();
-        match nm(conn).await {
-            Ok(p) => Now {
+        let nm = match crate::name_owner(conn, NM).await {
+            Some(_) => nm(conn).await.ok(),
+            None => None,
+        };
+        match nm {
+            Some(p) => Now {
                 wifi: p.get_property(WIFI_KEY).await.unwrap_or(false),
                 wwan: p.get_property(WWAN_KEY).await.unwrap_or(false),
                 radio_flags: p.get_property(RADIO_FLAGS_KEY).await.ok(),
                 switches,
             },
-            Err(_) => Now {
+            None => Now {
                 wifi: false,
                 wwan: false,
                 radio_flags: Some(0),
@@ -215,7 +221,7 @@ impl Now {
 
     /// On while every radio is soft-blocked, whatever holds it off in hardware.
     fn mode(&self) -> Option<Mode> {
-        if self.switches.is_empty() {
+        if self.switches.is_empty() || !KINDS.into_iter().any(|k| self.has(k)) {
             None
         } else if self.killed() {
             Some(Mode::Killed)
@@ -230,29 +236,47 @@ impl Now {
 /// Airplane mode now; None on a machine with no radio switch. While it is off, a kept radio
 /// that is on again was brought back by hand and is no longer kept.
 pub async fn read(conn: &Connection) -> Option<Mode> {
-    let now = Now::read(conn).await;
+    observe(&memory_path(), Now::read(conn)).await
+}
+
+/// The mode `now` reads, forgetting the kept radios it has on unless a turn holds the lock: a
+/// reading taken mid-turn has some radios turned and some not yet.
+async fn observe(memory: &Path, now: impl Future<Output = Now>) -> Option<Mode> {
+    let lock = Lock::try_take(memory);
+    let now = now.await;
     let mode = now.mode();
-    if mode == Some(Mode::Off) {
-        brought_back(&memory_path(), now.soft());
+    if lock.is_some() && mode == Some(Mode::Off) {
+        brought_back(memory, now.soft());
     }
     mode
 }
 
-/// Turn airplane mode on or off; Err with what failed. Nothing changes under a hardware kill.
+/// Turn airplane mode on or off; Err with what failed. Nothing changes under a hardware kill, nor
+/// when it already is on or off.
 pub async fn set(conn: &Connection, on: bool) -> Result<(), String> {
-    let now = Now::read(conn).await;
-    settle(&now, on, &memory_path(), |c| exec(conn, c)).await
+    settle(&memory_path(), Now::read(conn), asked(on), |c| {
+        exec(conn, c)
+    })
+    .await?;
+    Ok(())
+}
+
+/// The turn [`set`] takes from `now`: none under a hardware kill or when airplane mode already is
+/// `on`, so a turn off queued behind another finds the radios back and turns none on.
+fn asked(on: bool) -> impl FnOnce(&Now) -> Option<bool> {
+    move |now| (!now.killed() && now.soft().any_on() == on).then_some(on)
 }
 
 /// Toggle airplane mode; the mode it is in afterwards.
 pub async fn toggle(conn: &Connection) -> Result<Mode, String> {
-    let now = Now::read(conn).await;
-    if now.killed() {
-        return Ok(Mode::Killed);
-    }
-    let on = !now.soft().any_on();
-    settle(&now, !on, &memory_path(), |c| exec(conn, c)).await?;
-    Ok(if on { Mode::Off } else { Mode::On })
+    let pick = |now: &Now| (!now.killed()).then(|| now.soft().any_on());
+    Ok(
+        match settle(&memory_path(), Now::read(conn), pick, |c| exec(conn, c)).await? {
+            Some(true) => Mode::On,
+            Some(false) => Mode::Off,
+            None => Mode::Killed,
+        },
+    )
 }
 
 /// The changes turning airplane mode on or off makes from `now`, keeping or recalling the radios
@@ -283,21 +307,27 @@ fn radio(now: &Now, kind: Kind, on: bool) -> Vec<Change> {
     }
 }
 
-/// Turn airplane mode on or off from `now` through `exec`; Err with what failed. A radio that
-/// failed to come back on stays kept.
+/// Under the kept radios' lock, read `now` and take the turn `pick` asks of it (on, off, or none)
+/// through `exec`; the turn taken, or Err with what failed. A radio stays kept until it came back
+/// on, so a turn cut short forgets none.
 async fn settle<F>(
-    now: &Now,
-    on: bool,
     memory: &Path,
+    now: impl Future<Output = Now>,
+    pick: impl FnOnce(&Now) -> Option<bool>,
     exec: impl FnMut(Change) -> F,
-) -> Result<(), String>
+) -> Result<Option<bool>, String>
 where
     F: Future<Output = Result<(), String>>,
 {
-    let failed = run(turn(now, on, memory), exec).await;
+    let _lock = Lock::take(memory, LOCK_WAIT).await?;
+    let now = now.await;
+    let Some(on) = pick(&now) else {
+        return Ok(None);
+    };
+    let failed = run(turn(&now, on, memory), exec).await;
     if !on {
         let has = |k| failed.iter().any(|(f, _)| *f == k);
-        keep(
+        store(
             memory,
             Radios {
                 wifi: has(Kind::Wlan),
@@ -306,15 +336,26 @@ where
             },
         );
     }
-    failures(failed)
+    failures(failed).map(|()| Some(on))
 }
 
-/// Turn Wi-Fi off while it is on and on while it is off; whether it is on afterwards.
-pub async fn toggle_wifi(conn: &Connection) -> Result<bool, String> {
+/// What the Wi-Fi key turned.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WifiTurn {
+    pub on: bool,
+    /// A hardware switch holds Wi-Fi off: only its soft block turned.
+    pub held: bool,
+}
+
+/// Turn Wi-Fi off while it is on and on while it is off.
+pub async fn toggle_wifi(conn: &Connection) -> Result<WifiTurn, String> {
     let now = Now::read(conn).await;
     let on = !now.wifi_on();
     failures(run(radio(&now, Kind::Wlan, on), |c| exec(conn, c)).await)?;
-    Ok(on)
+    Ok(WifiTurn {
+        on,
+        held: now.held(Kind::Wlan),
+    })
 }
 
 /// A radio kind switched on or off through NetworkManager or the rfkill soft block.
@@ -434,12 +475,95 @@ fn memory_path() -> PathBuf {
     state.join("reprise/airplane-mode")
 }
 
-fn remember(path: &Path, radios: Radios) {
+/// An exclusive `flock` on the `.lock` file beside the kept radios, held until it drops. A turn
+/// holds it from reading the radios to keeping those that failed to come back.
+struct Lock {
+    _file: File,
+}
+
+/// How often a turn tries a lock another turn holds; callers share their executor, so it never
+/// blocks in `flock`.
+const LOCK_RETRY: Duration = Duration::from_millis(20);
+/// How long a turn waits for another program's turn before it gives up.
+const LOCK_WAIT: Duration = Duration::from_secs(30);
+/// What a turn reports when another one held the lock past [`LOCK_WAIT`].
+pub const BUSY: &str = "Another airplane mode change is still running.";
+
+impl Lock {
+    fn open(memory: &Path) -> std::io::Result<File> {
+        (File::options()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false))
+        .open(memory.with_extension("lock"))
+    }
+
+    /// The lock when no turn holds it; None while one does, or with no state directory yet.
+    fn try_take(memory: &Path) -> Option<Lock> {
+        let file = Lock::open(memory).ok()?;
+        file.try_lock().ok()?;
+        Some(Lock { _file: file })
+    }
+
+    /// The lock once no other turn holds it; None, logged, when it cannot be had, and the turn
+    /// goes ahead without it; Err([`BUSY`]) when another turn holds it past `wait`.
+    async fn take(memory: &Path, wait: Duration) -> Result<Option<Lock>, String> {
+        let until = std::time::Instant::now() + wait;
+        let opened = memory
+            .parent()
+            .map_or(Ok(()), std::fs::create_dir_all)
+            .and_then(|()| Lock::open(memory));
+        let file = match opened {
+            Ok(f) => f,
+            Err(e) => {
+                log::warn!("airplane mode: no lock beside {memory:?}: {e}");
+                return Ok(None);
+            }
+        };
+        loop {
+            match file.try_lock() {
+                Ok(()) => return Ok(Some(Lock { _file: file })),
+                Err(TryLockError::WouldBlock) if std::time::Instant::now() >= until => {
+                    return Err(BUSY.into());
+                }
+                Err(TryLockError::WouldBlock) => {
+                    async_io::Timer::after(LOCK_RETRY).await;
+                }
+                Err(TryLockError::Error(e)) => {
+                    log::warn!("airplane mode: could not lock {memory:?}: {e}");
+                    return Ok(None);
+                }
+            }
+        }
+    }
+}
+
+fn kept(path: &Path) -> Option<Radios> {
+    std::fs::read_to_string(path)
+        .ok()
+        .map(|t| Radios::parse(&t))
+}
+
+/// Keep exactly `radios`, written whole through a rename so a reader never sees a part.
+fn store(path: &Path, radios: Radios) {
     let write = || {
+        if !radios.any_on() {
+            return match std::fs::remove_file(path) {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+                _ => Ok(()),
+            };
+        }
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        std::fs::write(path, radios.names())
+        let new = path.with_extension("new");
+        let mut file = File::create(&new)?;
+        std::io::Write::write_all(&mut file, radios.names().as_bytes())?;
+        // Synced before the rename, so a power loss leaves the old list or the new one, never
+        // an empty file that `recall` would read as every radio.
+        file.sync_all()?;
+        std::fs::rename(&new, path)
     };
     if let Err(e) = write() {
         log::warn!("airplane mode: could not keep the radios in {path:?}: {e}");
@@ -449,36 +573,30 @@ fn remember(path: &Path, radios: Radios) {
 /// Airplane mode goes on with `now` on: keep them for turning off, beside those an earlier turn
 /// on kept that no turn off has brought back yet.
 fn keep(path: &Path, now: Radios) {
-    let kept = std::fs::read_to_string(path).map(|t| Radios::parse(&t));
-    let keep = now.with(kept.unwrap_or_default());
-    if keep.any_on() {
-        remember(path, keep);
-    }
+    store(path, now.with(kept(path).unwrap_or_default()));
 }
 
 /// Forget the kept radios that `now` has on.
 fn brought_back(path: &Path, now: Radios) {
-    let Ok(kept) = std::fs::read_to_string(path).map(|t| Radios::parse(&t)) else {
+    let Some(kept) = kept(path) else {
         return;
     };
     let left = kept.without(now);
-    if !left.any_on() {
-        let _ = std::fs::remove_file(path);
-    } else if left != kept {
-        remember(path, left);
+    if left != kept {
+        store(path, left);
     }
 }
 
-/// The radios to turn back on, forgotten as they are read; every radio when none was kept.
+/// The radios to turn back on; every radio when none was kept.
 fn recall(path: &Path) -> Radios {
-    let kept = std::fs::read_to_string(path).map(|t| Radios::parse(&t));
-    let _ = std::fs::remove_file(path);
-    kept.ok().filter(|r| r.any_on()).unwrap_or(Radios::ALL)
+    kept(path).filter(|r| r.any_on()).unwrap_or(Radios::ALL)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
+    use std::future::{Ready, ready};
 
     const WLAN_WWAN: u32 = WLAN_AVAILABLE | WWAN_AVAILABLE;
 
@@ -761,7 +879,12 @@ mod tests {
         };
         let mut m = held();
         let now = m.now();
-        let r = zbus::block_on(settle(&now, true, &path, without_wifi_rfkill(&mut m)));
+        let r = zbus::block_on(settle(
+            &path,
+            ready(now),
+            asked(true),
+            without_wifi_rfkill(&mut m),
+        ));
         assert_eq!(r, Err("Wi-Fi: No such file or directory".into()));
         assert!(m.user_wifi, "NetworkManager's switch stays on");
         assert_eq!(m.now().mode(), Some(Mode::Off), "Wi-Fi is still on");
@@ -773,9 +896,14 @@ mod tests {
             m.apply(&[c]);
             std::future::ready(Ok(()))
         };
-        zbus::block_on(settle(&now, true, &path, all)).unwrap();
+        zbus::block_on(settle(&path, ready(now), asked(true), all)).unwrap();
         let now = m.now();
-        let r = zbus::block_on(settle(&now, false, &path, without_wifi_rfkill(&mut m)));
+        let r = zbus::block_on(settle(
+            &path,
+            ready(now),
+            asked(false),
+            without_wifi_rfkill(&mut m),
+        ));
         assert!(r.is_err());
         assert!(!m.user_wifi, "NetworkManager's switch stays off");
         assert!(m.now().soft().bluetooth);
@@ -842,7 +970,7 @@ mod tests {
             wifi: true,
             ..Radios::default()
         };
-        remember(&path, wifi);
+        store(&path, wifi);
         assert_eq!(turn(&now, false, &path), []);
         assert_eq!(turn(&now, true, &path), []);
         assert_eq!(recall(&path), wifi, "the kept radios stay kept");
@@ -885,8 +1013,9 @@ mod tests {
         };
         keep(&path, bt_by_hand);
         assert_eq!(recall(&path), wifi_and_bt);
-        keep(&path, Radios::default());
-        assert!(!path.exists(), "nothing on, nothing kept");
+        let fresh = dir.path().join("fresh/airplane-mode");
+        keep(&fresh, Radios::default());
+        assert!(!fresh.exists(), "nothing on, nothing kept");
     }
 
     #[test]
@@ -918,19 +1047,212 @@ mod tests {
         assert_eq!(recall(&path), wifi.with(bt), "Wi-Fi never came back");
     }
 
+    /// Wi-Fi, a modem and Bluetooth, all on.
+    fn three_radios() -> Machine {
+        let mut m = machine(vec![
+            switch(Kind::Wlan, false, false),
+            switch(Kind::Wwan, false, false),
+            switch(Kind::Bluetooth, false, false),
+        ]);
+        m.radio_flags = WLAN_WWAN;
+        m.user_wwan = true;
+        m
+    }
+
+    fn applied(m: &RefCell<Machine>) -> impl FnMut(Change) -> Ready<Result<(), String>> + '_ {
+        |c| {
+            m.borrow_mut().apply(&[c]);
+            ready(Ok(()))
+        }
+    }
+
+    const WIFI: Radios = Radios {
+        wifi: true,
+        wwan: false,
+        bluetooth: false,
+    };
+
     #[test]
     fn the_kept_radios_come_back_once_then_every_radio() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("reprise/airplane-mode");
-        let kept = Radios {
+        let m = RefCell::new(three_radios());
+        m.borrow_mut().apply(&[
+            Change::Nm(Kind::Wlan, false),
+            Change::Nm(Kind::Wwan, false),
+            Change::Rfkill(Kind::Bluetooth, false),
+        ]);
+        let kept_radios = Radios {
             wifi: true,
             wwan: false,
             bluetooth: true,
         };
-        remember(&path, kept);
+        store(&path, kept_radios);
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "wifi\nbluetooth\n");
-        assert_eq!(recall(&path), kept);
+        let off = settle(&path, ready(m.borrow().now()), asked(false), applied(&m));
+        assert_eq!(zbus::block_on(off), Ok(Some(false)));
+        assert_eq!(m.borrow().now().soft(), kept_radios);
         assert!(!path.exists(), "read once");
         assert_eq!(recall(&path), Radios::ALL);
+    }
+
+    #[test]
+    fn a_reading_taken_mid_turn_forgets_no_kept_radio() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("reprise/airplane-mode");
+        let mut m = three_radios();
+        let mut seen = Vec::new();
+        let exec = |c| {
+            m.apply(&[c]);
+            seen.push(futures_lite::future::block_on(observe(
+                &path,
+                ready(m.now()),
+            )));
+            ready(Ok(()))
+        };
+        let on = settle(&path, ready(three_radios().now()), asked(true), exec);
+        assert_eq!(zbus::block_on(on), Ok(Some(true)));
+        assert_eq!(seen[0], Some(Mode::Off), "Wi-Fi is off, the rest still on");
+        assert_eq!(kept(&path), Some(Radios::ALL), "every radio the turn kept");
+    }
+
+    #[test]
+    fn a_turn_behind_a_lock_held_past_the_wait_gives_up_busy() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("reprise/airplane-mode");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let held = Lock::try_take(&path).expect("free at first");
+        let wait = Lock::take(&path, Duration::from_millis(60));
+        assert_eq!(zbus::block_on(wait).err().as_deref(), Some(BUSY));
+        drop(held);
+        let free = Lock::take(&path, Duration::from_millis(60));
+        assert!(
+            matches!(zbus::block_on(free), Ok(Some(_))),
+            "taken once let go"
+        );
+    }
+
+    #[test]
+    fn a_turn_off_cut_short_keeps_the_radios_not_yet_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("reprise/airplane-mode");
+        let m = RefCell::new(three_radios());
+        let on = settle(&path, ready(m.borrow().now()), asked(true), applied(&m));
+        zbus::block_on(on).unwrap();
+        {
+            let mut calls = 0;
+            let exec = |c| {
+                calls += 1;
+                let first = calls == 1;
+                if first {
+                    m.borrow_mut().apply(&[c]);
+                }
+                async move {
+                    if !first {
+                        std::future::pending::<()>().await;
+                    }
+                    Ok(())
+                }
+            };
+            let off = std::pin::pin!(settle(&path, ready(m.borrow().now()), asked(false), exec));
+            let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+            assert!(
+                Future::poll(off, &mut cx).is_pending(),
+                "the modem's turn never ends"
+            );
+        }
+        assert_eq!(
+            kept(&path),
+            Some(Radios::ALL),
+            "the dropped turn forgets none"
+        );
+        assert!(
+            Lock::try_take(&path).is_some(),
+            "dropping the turn frees the lock"
+        );
+        let mode = zbus::block_on(observe(&path, ready(m.borrow().now())));
+        assert_eq!(mode, Some(Mode::Off));
+        assert_eq!(
+            kept(&path),
+            Some(Radios::ALL.without(WIFI)),
+            "Wi-Fi came back"
+        );
+    }
+
+    #[test]
+    fn two_turn_offs_at_once_turn_on_only_the_kept_radios() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("reprise/airplane-mode");
+        let mut wifi_only = three_radios();
+        wifi_only.user_wwan = false;
+        wifi_only.soft_block(Kind::Bluetooth, true);
+        let m = RefCell::new(wifi_only);
+        let on = settle(&path, ready(m.borrow().now()), asked(true), applied(&m));
+        zbus::block_on(on).unwrap();
+        let (m, path) = (&m, &path);
+        let turn_off = move || {
+            let exec = move |c| async move {
+                futures_lite::future::yield_now().await;
+                m.borrow_mut().apply(&[c]);
+                Ok(())
+            };
+            settle(path, async move { m.borrow().now() }, asked(false), exec)
+        };
+        let both = zbus::block_on(futures_lite::future::zip(turn_off(), turn_off()));
+        assert_eq!(
+            both,
+            (Ok(Some(false)), Ok(None)),
+            "the second finds Wi-Fi on"
+        );
+        assert_eq!(
+            m.borrow().now().soft(),
+            WIFI,
+            "the modem and Bluetooth stay off"
+        );
+    }
+
+    #[test]
+    fn the_kept_radios_are_replaced_whole() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("reprise/airplane-mode");
+        let bt = Radios {
+            bluetooth: true,
+            ..Radios::default()
+        };
+        store(&path, WIFI.with(bt));
+        let mut before = File::open(&path).unwrap();
+        store(&path, WIFI);
+        let mut old = String::new();
+        std::io::Read::read_to_string(&mut before, &mut old).unwrap();
+        assert_eq!(
+            old, "wifi\nbluetooth\n",
+            "a reader holding the old list reads it whole"
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "wifi\n");
+        assert!(!path.with_extension("new").exists());
+
+        std::fs::write(&path, "").unwrap();
+        brought_back(&path, WIFI);
+        assert!(path.exists(), "a list naming no radio is left alone");
+    }
+
+    #[test]
+    fn without_networkmanager_wifi_and_mobile_broadband_count_as_absent() {
+        let wlan = switch(Kind::Wlan, false, false);
+        assert_eq!(mode(false, false, Some(0), vec![wlan]), None);
+        let bt = switch(Kind::Bluetooth, false, false);
+        assert_eq!(mode(false, false, Some(0), vec![wlan, bt]), Some(Mode::Off));
+        let now = Now {
+            wifi: false,
+            wwan: false,
+            radio_flags: Some(0),
+            switches: vec![wlan, bt],
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("reprise/airplane-mode");
+        assert_eq!(
+            turn(&now, true, &path),
+            [Change::Rfkill(Kind::Bluetooth, false)]
+        );
     }
 }

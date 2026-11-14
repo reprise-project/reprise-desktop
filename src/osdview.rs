@@ -108,9 +108,14 @@ fn describe(r: &Report, boost: bool) -> Option<(Osd, &'static str)> {
                 "multimedia-player",
             )
         }
-        Report::Wifi { on } => (
+        Report::Wifi(turn) => (
             Osd {
-                title: if *on { "Wireless on" } else { "Wireless off" }.into(),
+                title: match (turn.on, turn.held) {
+                    (true, false) => "Wireless on",
+                    (true, true) => "Wireless held off by a hardware switch",
+                    (false, _) => "Wireless off",
+                }
+                .into(),
                 meter: None,
             },
             "network-wireless",
@@ -344,6 +349,7 @@ impl State {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use reprisebus::airplane::WifiTurn;
 
     #[test]
     fn a_muted_sink_greys_the_meter_and_says_so() {
@@ -434,13 +440,19 @@ mod tests {
     }
 
     #[test]
-    fn the_radio_reads_on_or_off_without_a_meter() {
-        let (osd, icon) = describe(&Report::Wifi { on: true }, false).unwrap();
+    fn the_radio_reads_on_off_or_held_by_hardware_without_a_meter() {
+        let wifi = |on, held| describe(&Report::Wifi(WifiTurn { on, held }), false).unwrap();
+        let (osd, icon) = wifi(true, false);
         assert_eq!(osd.title, "Wireless on");
         assert_eq!(osd.meter, None);
         assert_eq!(icon, "network-wireless");
-        let (osd, _) = describe(&Report::Wifi { on: false }, false).unwrap();
-        assert_eq!(osd.title, "Wireless off");
+        assert_eq!(wifi(false, false).0.title, "Wireless off");
+        assert_eq!(
+            wifi(true, true).0.title,
+            "Wireless held off by a hardware switch",
+            "only the soft block turned"
+        );
+        assert_eq!(wifi(false, true).0.title, "Wireless off");
     }
 
     #[test]

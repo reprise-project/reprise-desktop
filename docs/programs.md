@@ -606,7 +606,8 @@ while it's on. Unticking it turns back on the radios that were on, kept in
 `~/.local/state/reprise/airplane-mode`. Turning any radio on by hand ends
 airplane mode. While a hardware switch holds Wi-Fi off, NetworkManager's own
 switch (`nmcli radio wifi on`) leaves the soft block alone, so there only the
-Wi-Fi key turns it on. The row shows on a machine with a radio switch, greyed with
+Wi-Fi key turns it on, and its panel reads "Wireless held off by a hardware
+switch". The row shows on a machine with a radio switch, greyed with
 "Turned off by a hardware switch" under it and in the tooltip while a
 hardware switch holds every radio off.
 
