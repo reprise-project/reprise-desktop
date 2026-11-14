@@ -85,21 +85,54 @@ pub(crate) fn png_rgba(buf: &[u8], color_type: png::ColorType) -> Option<Cow<'_,
 }
 
 fn decode_png(path: &Path, bytes: &[u8], px: u32) -> Option<Canvas> {
-    let c = match png_to_canvas(bytes, MAX_ICON_DIMENSION) {
-        Ok(c) => c,
+    match png_to_canvas(bytes, MAX_ICON_DIMENSION) {
+        Ok(c) => Some(fit_raster(c, px)),
         Err(e) => {
             log::warn!("icon {}: {e}", path.display());
-            return None;
+            None
         }
-    };
+    }
+}
+
+fn decode_jpeg(path: &Path, bytes: &[u8], px: u32) -> Option<Canvas> {
+    match jpeg_to_canvas(bytes, MAX_ICON_DIMENSION) {
+        Ok(c) => Some(fit_raster(c, px)),
+        Err(e) => {
+            log::warn!("icon {}: {e}", path.display());
+            None
+        }
+    }
+}
+
+/// Decode a JPEG into an opaque canvas, refusing a side past `max_side` before sizing the buffer.
+fn jpeg_to_canvas(bytes: &[u8], max_side: u32) -> Result<Canvas, String> {
+    use zune_jpeg::zune_core::{colorspace::ColorSpace, options::DecoderOptions};
+    let options = DecoderOptions::default()
+        .set_max_width(max_side as usize)
+        .set_max_height(max_side as usize)
+        .jpeg_set_out_colorspace(ColorSpace::RGBA);
+    let mut decoder =
+        zune_jpeg::JpegDecoder::new_with_options(std::io::Cursor::new(bytes), options);
+    let rgba = decoder.decode().map_err(|e| format!("jpeg: {e:?}"))?;
+    let (w, h) = decoder.dimensions().ok_or("jpeg without a size")?;
+    let (w, h) = (
+        u32::try_from(w).map_err(|e| e.to_string())?,
+        u32::try_from(h).map_err(|e| e.to_string())?,
+    );
+    canvas_from_rgba(w, h, &rgba).ok_or_else(|| "jpeg data shorter than its header".into())
+}
+
+/// A decoded raster icon at `px` square: as is at that size, cropped to its ink when bigger,
+/// stretched when smaller.
+fn fit_raster(c: Canvas, px: u32) -> Canvas {
     let (w, h) = (c.width, c.height);
-    Some(if (w, h) == (px, px) {
+    if (w, h) == (px, px) {
         c
     } else if w > px || h > px {
         shrink_to_ink(&c, px)
     } else {
         c.resample_box(px, px)
-    })
+    }
 }
 
 /// Alpha below which a pixel is not ink: a faint halo must not defeat the crop.
@@ -1149,7 +1182,7 @@ fn decode_svg(path: &Path, bytes: &[u8], px: u32, images: bool) -> Option<Canvas
     Some(c)
 }
 
-/// Decode a PNG or SVG and resample to `px` square. XPM is not decoded. Sizes past
+/// Decode a PNG, JPEG or SVG and resample to `px` square. XPM is not decoded. Sizes past
 /// `MAX_ICON_DIMENSION` are refused.
 pub fn decode(path: &Path, px: u32) -> Option<Canvas> {
     if px == 0 || px > MAX_ICON_DIMENSION {
@@ -1171,10 +1204,14 @@ pub fn decode(path: &Path, px: u32) -> Option<Canvas> {
     decode_read(path, &bytes, px, true)
 }
 
-/// Whether `path` names a file [`decode`] reads: a `.png` or `.svg`.
+/// Whether `path` names a file [`decode`] reads: a `.png`, `.svg`, `.jpg` or `.jpeg`.
 pub fn is_icon_file(path: &Path) -> bool {
     let ext = path.extension().and_then(|e| e.to_str());
-    ext.is_some_and(|e| e.eq_ignore_ascii_case("png") || e.eq_ignore_ascii_case("svg"))
+    ext.is_some_and(|e| {
+        ["png", "svg", "jpg", "jpeg"]
+            .iter()
+            .any(|x| e.eq_ignore_ascii_case(x))
+    })
 }
 
 /// [`decode`] for the bytes of an icon file a peer named, read elsewhere within
@@ -1190,6 +1227,8 @@ fn decode_read(path: &Path, bytes: &[u8], px: u32, images: bool) -> Option<Canva
     // The content picks the decoder: themes ship PNGs named `.svg`.
     if bytes.starts_with(PNG_SIGNATURE) {
         decode_png(path, bytes, px)
+    } else if bytes.starts_with(JPEG_SIGNATURE) {
+        decode_jpeg(path, bytes, px)
     } else {
         decode_svg(path, bytes, px, images)
     }
@@ -1204,6 +1243,7 @@ pub fn decode_file(path: &Path, px: i32, scale: i32) -> Option<Canvas> {
 }
 
 const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
+const JPEG_SIGNATURE: &[u8] = b"\xff\xd8\xff";
 
 /// The most of an icon file read.
 pub const MAX_ICON_BYTES: u64 = 8 << 20;
