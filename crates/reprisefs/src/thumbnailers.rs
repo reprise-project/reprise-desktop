@@ -400,8 +400,7 @@ impl Runner {
         }
     }
 
-    /// Run `argv` in `dir` at idle priority in a process group of its own, which is killed when
-    /// it ends or at the deadline.
+    /// Run `argv` in `dir` at idle priority through [`crate::subprocess::run`].
     fn wait(&self, argv: &[OsString], dir: &Path) -> Result<std::process::ExitStatus, String> {
         let (program, args) = argv.split_first().ok_or("no Exec")?;
         let mut cmd = Command::new(program);
@@ -409,8 +408,7 @@ impl Runner {
             .current_dir(dir)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .process_group(0);
+            .stderr(Stdio::null());
         // SAFETY: runs between fork and exec; setpriority and ioprio_set are plain system calls,
         // async-signal-safe, and nothing allocates.
         unsafe {
@@ -420,27 +418,13 @@ impl Runner {
                 Ok(())
             });
         }
-        let mut child = cmd.spawn().map_err(|e| e.to_string())?;
-        let group = child.id() as libc::pid_t;
-        let end = Instant::now() + self.deadline;
-        let status = loop {
-            match child.try_wait() {
-                Ok(Some(status)) => break status,
-                Ok(None) if Instant::now() < end => std::thread::sleep(POLL),
-                waited => {
-                    kill_group(group);
-                    // A child stuck on a dead mount may outlive SIGKILL for a while.
-                    std::thread::spawn(move || child.wait());
-                    return Err(match waited {
-                        Err(e) => e.to_string(),
-                        _ => format!("no thumbnail within {:?}", self.deadline),
-                    });
-                }
+        match crate::subprocess::run(&mut cmd, self.deadline) {
+            Ok(ran) => Ok(ran.status),
+            Err(crate::subprocess::Error::Timeout) => {
+                Err(format!("no thumbnail within {:?}", self.deadline))
             }
-        };
-        // Whatever it left running in its group goes with it.
-        kill_group(group);
-        Ok(status)
+            Err(e) => Err(e.to_string()),
+        }
     }
 
     /// One of the [`SLOTS`] lock files, held until the file is dropped; None when all stay taken
@@ -481,13 +465,6 @@ const IOPRIO_IDLE: libc::c_int = 3 << 13;
 
 fn fail(what: &str, e: impl std::fmt::Display) -> RunError {
     RunError::Failed(format!("{what}: {e}"))
-}
-
-fn kill_group(group: libc::pid_t) {
-    // SAFETY: a plain system call; the group may already be gone.
-    unsafe {
-        libc::kill(-group, libc::SIGKILL);
-    }
 }
 
 /// A private folder for one run, removed with what the thumbnailer left in it.

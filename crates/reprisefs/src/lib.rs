@@ -62,6 +62,7 @@ pub mod search;
 pub mod searchproviders;
 pub mod sendto;
 pub mod software;
+pub mod subprocess;
 pub mod sysinfo;
 pub mod thumbnailers;
 pub mod thumbnails;
