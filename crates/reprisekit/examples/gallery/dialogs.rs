@@ -166,7 +166,7 @@ pub fn render_install_sheet(with_blue: bool) -> Canvas {
             let u = reprisekit::theme::TextUnits::ONE;
             let f = installsheet::form(s, &text, px, u);
             let mut sheet_c = Canvas::new(w as u32, h as u32);
-            installsheet::draw(&mut sheet_c, &text, &theme.paint(), s, &f, px);
+            installsheet::draw(&mut sheet_c, &text, &theme.paint(), &f, px);
             let at = (10 + col as i32 * (w + 10), 10 + row as i32 * (h + 10));
             c.blit_canvas(at.0, at.1, &sheet_c);
         }

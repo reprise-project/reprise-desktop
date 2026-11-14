@@ -873,7 +873,7 @@ impl App for Installer {
         };
         self.form(ctx);
         if let Some(f) = &self.form {
-            installsheet::draw(c, &ctx.text, &paint, &self.sheet, f, px);
+            installsheet::draw(c, &ctx.text, &paint, f, px);
         }
     }
 }
@@ -893,10 +893,10 @@ impl repriseapp::Extended for Installer {
 
     fn access(&mut self, _win: WinId, tree: &mut Tree, ctx: &Ctx) {
         let forms = ctx.forms();
-        let (px, u) = (forms.fonts.size_px, forms.text);
+        let px = forms.fonts.size_px;
         self.form(ctx);
         if let Some(f) = &self.form
-            && let Some(focus) = installsheet::access(&self.sheet, f, tree, &ctx.text, px, u)
+            && let Some(focus) = installsheet::access(f, tree, &ctx.text, px)
         {
             tree.set_focus(focus);
         }
