@@ -10,9 +10,10 @@ use pipewire::stream::{StreamFlags, StreamRc, StreamState};
 use std::cell::Cell;
 use std::io;
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
-/// Takes each chunk of captured samples.
-pub type Samples = Box<dyn FnMut(&[u8]) + Send>;
+/// Takes each chunk of captured samples, and the graph cycle that captured it.
+pub type Samples = Box<dyn FnMut(&[u8], Instant) + Send>;
 
 /// Run `body` on a new PipeWire connection whose loop quits on a stop from `stopped` or a core
 /// error. `body` gets the loop, the core and whether a stop came.
@@ -55,7 +56,8 @@ pub fn on_pipewire(
 }
 
 /// Capture the monitor of sink `target` (the default sink, followed as it changes, for None) into
-/// `samples`: S16LE stereo at `rate`, in the chunks PipeWire hands over. Runs until a stop from
+/// `samples`: S16LE stereo at `rate`, in the chunks PipeWire hands over, each with the time of the
+/// cycle that queued it, so chunks the thread takes late in a burst keep their own times. Runs until a stop from
 /// `stopped`, a core error or, with a `target`, the sink going; the stream is called `name` for
 /// program `app`.
 pub fn capture(
@@ -92,17 +94,24 @@ pub fn capture(
                 }
             })
             .process(|stream, samples| {
-                let Some(mut buffer) = stream.dequeue_buffer() else {
+                // SAFETY: the stream's own buffer, queued back below; `Buffer` hides its `time`.
+                let raw = unsafe { stream.dequeue_raw_buffer() };
+                // SAFETY: null, or a dequeued buffer the stream keeps until it is queued back.
+                let Some(buffer) = (unsafe { raw.as_mut() }) else {
                     return;
                 };
-                let Some(data) = buffer.datas_mut().first_mut() else {
-                    return;
-                };
-                let chunk = data.chunk();
-                let (offset, size) = (chunk.offset() as usize, chunk.size() as usize);
-                if let Some(bytes) = data.data().and_then(|d| d.get(offset..offset + size)) {
-                    samples(bytes);
+                // SAFETY: `pw_stream_get_nsec` reads the stream's clock, the one `time` is on.
+                let now = unsafe { pipewire::sys::pw_stream_get_nsec(stream.as_raw_ptr()) };
+                let at = cycle_instant(buffer.time, now, Instant::now());
+                if let Some(data) = first_data(buffer) {
+                    let chunk = data.chunk();
+                    let (offset, size) = (chunk.offset() as usize, chunk.size() as usize);
+                    if let Some(bytes) = data.data().and_then(|d| d.get(offset..offset + size)) {
+                        samples(bytes, at);
+                    }
                 }
+                // SAFETY: dequeued from this stream above.
+                unsafe { stream.queue_raw_buffer(raw) };
             })
             .register()
             .map_err(|e| e.to_string())?;
@@ -121,6 +130,29 @@ pub fn capture(
         let _ = stream.disconnect();
         Ok(())
     })
+}
+
+/// The first data block of a dequeued `buffer`.
+fn first_data(buffer: &mut pipewire::sys::pw_buffer) -> Option<&mut spa::buffer::Data> {
+    // SAFETY: a dequeued buffer's spa_buffer holds `n_datas` blocks at `datas`, and `Data` is a
+    // transparent `spa_data`.
+    unsafe {
+        let b = buffer.buffer.as_mut()?;
+        if b.n_datas == 0 {
+            return None;
+        }
+        (b.datas as *mut spa::buffer::Data).as_mut()
+    }
+}
+
+/// The instant of the stream clock's `ns` when that clock reads `now_ns` at `now`; `now` when
+/// PipeWire left `ns` unset.
+fn cycle_instant(ns: u64, now_ns: u64, now: Instant) -> Instant {
+    let ago = Duration::from_nanos(now_ns.saturating_sub(ns));
+    match ns {
+        0 => now,
+        _ => now.checked_sub(ago).unwrap_or(now),
+    }
 }
 
 fn format_param(rate: u32) -> Result<Vec<u8>, String> {
@@ -143,4 +175,17 @@ fn format_param(rate: u32) -> Result<Vec<u8>, String> {
     )
     .map(|(cursor, _)| cursor.into_inner())
     .map_err(|e| format!("format pod: {e:?}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_chunk_keeps_the_time_of_the_cycle_that_queued_it() {
+        let now = Instant::now() + Duration::from_secs(10);
+        let at = cycle_instant(5_000_000_000, 5_120_000_000, now);
+        assert_eq!(now - at, Duration::from_millis(120));
+        assert_eq!(cycle_instant(0, 5_120_000_000, now), now, "unset");
+    }
 }
