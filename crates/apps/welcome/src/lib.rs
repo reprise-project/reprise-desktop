@@ -63,7 +63,9 @@ impl WelcomeApp {
         let w = self.welcome.get_or_insert_with(|| {
             let sample = settings::sample(&read(&self.config), &self.picks);
             let links = self.entries.iter().map(|(l, _)| *l).collect();
-            Welcome::new(self.picks, sample, links, &ctx.text, &forms)
+            let mut w = Welcome::new(self.picks, sample, links, &ctx.text, &forms);
+            w.keys = settings::ready_keys(&read(&self.config));
+            w
         });
         w.follow(&ctx.text, &forms);
         w
@@ -102,8 +104,8 @@ impl WelcomeApp {
     /// Write the pages' picks into the config file and show the sample of what it now says.
     fn picked(&mut self, ctx: &Ctx) {
         let picks = self.welcome(ctx).picks;
-        self.picks = picks;
-        if let Err(e) = settings::write(&self.config, &picks) {
+        let from = std::mem::replace(&mut self.picks, picks);
+        if let Err(e) = settings::write(&self.config, &from, &picks) {
             log::warn!("{}: {e}", self.config.display());
         }
         let sample = settings::sample(&read(&self.config), &picks);
@@ -259,6 +261,23 @@ mod tests {
         assert!(text.starts_with("# mine\nterminal = \"foot\"\n"), "{text}");
         assert!(text.contains("interface = \"glass\""), "{text}");
         assert_eq!(app.picks.interface, Interface::Glass);
+    }
+
+    #[test]
+    fn two_welcomes_on_one_file_keep_each_others_picks() {
+        let config = scratch("two").join("config.toml");
+        let (mut a, mut b) = (
+            WelcomeApp::new(config.clone(), Vec::new()),
+            WelcomeApp::new(config.clone(), Vec::new()),
+        );
+        let ctx = test_ctx(100);
+        a.welcome(&ctx).picks.interface = Interface::Glass;
+        a.picked(&ctx);
+        b.welcome(&ctx).picks.text_size = 150;
+        b.picked(&ctx);
+        let text = read(&config);
+        assert!(text.contains("interface = \"glass\""), "{text}");
+        assert!(text.contains("text_size = 150"), "{text}");
     }
 
     #[test]

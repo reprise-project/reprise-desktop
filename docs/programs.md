@@ -853,6 +853,9 @@ the state file and Welcome's autostart entry (`reprise-welcome
 --first-login`) shows it once and clears it. A user who already ran Reprise
 never sees it on an upgrade. The journal says which rule decided.
 
+The last page names the launcher and clipboard history keys as your
+`[[keybinds]]` have them, and leaves out one that nothing binds.
+
 Blue comes in light colours only, so Dark is greyed under it. Dark under
 Classic is the One Dark scheme, under Glass `[glass] mode = "dark"`.
 
