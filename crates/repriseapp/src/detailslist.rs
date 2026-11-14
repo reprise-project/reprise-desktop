@@ -3,7 +3,7 @@
 //! window keeps only what its rows mean.
 
 use crate::{BTN_LEFT, Ctx};
-use reprisekit::classic::widgets::{Axis, BarHit, ScrollHit};
+use reprisekit::classic::widgets::{Axis, ScrollHit};
 use reprisekit::controls::listview::{self, Column, ListView, Row, Rows};
 use reprisekit::look::Paint;
 use reprisekit::pointer::Click;
@@ -13,7 +13,6 @@ use reprisekit::textedit::keysym;
 
 pub struct List<R: Rows = Vec<Row>> {
     pub view: ListView<R>,
-    thumb: Option<i32>,
     /// A divider drag: the column, the pointer's x at the press and the column's width then.
     resizing: Option<(usize, i32, i32)>,
 }
@@ -38,7 +37,6 @@ impl<R: Rows + Default> List<R> {
                 frame: false,
                 ..Default::default()
             },
-            thumb: None,
             resizing: None,
         }
     }
@@ -116,27 +114,10 @@ impl<R: Rows + Default> List<R> {
                 self.resizing = Some((i, x, width));
                 moved(false)
             }
-            listview::Hit::VBar(BarHit::Back) => moved(self.view.scroll(-1, &lay)),
-            listview::Hit::VBar(BarHit::Forward) => moved(self.view.scroll(1, &lay)),
-            listview::Hit::VBar(BarHit::PageBack) => {
-                moved(self.view.scroll(-(lay.rows as i64), &lay))
+            _ => {
+                let press = listview::Input::Press(x, y);
+                moved(self.view.pointer(press, &lay, r, false).is_some())
             }
-            listview::Hit::VBar(BarHit::PageForward) => {
-                moved(self.view.scroll(lay.rows as i64, &lay))
-            }
-            listview::Hit::VBar(BarHit::Thumb(grab)) => {
-                self.thumb = Some(grab);
-                moved(false)
-            }
-            listview::Hit::HBar(BarHit::Back) => moved(self.view.hscroll(-40, &lay)),
-            listview::Hit::HBar(BarHit::Forward) => moved(self.view.hscroll(40, &lay)),
-            listview::Hit::HBar(BarHit::PageBack) => {
-                moved(self.view.hscroll(-lay.body.width, &lay))
-            }
-            listview::Hit::HBar(BarHit::PageForward) => {
-                moved(self.view.hscroll(lay.body.width, &lay))
-            }
-            _ => moved(false),
         }
     }
 
@@ -152,18 +133,16 @@ impl<R: Rows + Default> List<R> {
         let over = self.bar_at(x, y, r, ctx);
         let column = self.column_at(x, y, r, ctx);
         let lit = (self.view.bars.motion(over) | self.view.header.motion(column)) && ctx.styled();
-        let Some(grab) = self.thumb else {
+        if !self.view.thumb.holding() {
             return lit;
-        };
+        }
         let lay = self.layout(r, ctx);
-        let top = self.view.top_at(&lay, y, grab);
-        let moved = top != self.view.top;
-        self.view.top = top;
-        moved || lit
+        let drag = listview::Input::Motion(x, y);
+        self.view.pointer(drag, &lay, r, false) == Some(listview::Took::Moved) || lit
     }
 
     pub fn release(&mut self, ctx: &Ctx) -> bool {
-        self.thumb = None;
+        self.view.thumb.release();
         self.resizing = None;
         let column = self.view.header.holding();
         self.view.header.release();
@@ -223,5 +202,76 @@ impl<R: Rows + Default> List<R> {
             self.view.bars.lit(),
             ctx.theme.fonts.size_px,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::BTN_RIGHT;
+    use reprisekit::classic::widgets::scrollbar_parts;
+    use reprisekit::theme::Theme;
+
+    fn ctx() -> Ctx {
+        Ctx {
+            theme: Theme::default(),
+            text: std::rc::Rc::new(reprisekit::text::TextRenderer::load(
+                &reprisekit::theme::FontConfig::default(),
+            )),
+            icons: reprisekit::icontheme::IconCache::new(reprisekit::icontheme::IconTheme::load(
+                "test",
+                &[],
+            )),
+            caret_on: true,
+            size: (300, 200),
+            maximized: false,
+            origin: (0, 0),
+            wake: crate::Waker::noop(),
+            heads: Default::default(),
+            want_tick: Default::default(),
+            output_size: None,
+            at_pick: false,
+            text_size: 100,
+        }
+    }
+
+    #[test]
+    fn the_thumb_drags_the_rows_until_the_release_and_the_track_pages() {
+        let ctx = ctx();
+        let r = Rect::new(0, 0, 200, 100);
+        let mut l: List = List::new(vec![Column::new("Name", 120)]);
+        l.view.rows = (0..40)
+            .map(|i| Row {
+                icon: None,
+                cells: vec![format!("row {i}")],
+            })
+            .collect();
+        let lay = l.layout(r, &ctx);
+        let sb = lay.scrollbar.expect("a vertical bar");
+        let p = scrollbar_parts(sb, 1, 0, lay.rows, l.view.slots(), false, lay.thumb_min);
+        let thumb = p.thumb.expect("a thumb");
+        let (x, y) = (thumb.x + 2, thumb.y + 3);
+        let at = |x, y, time| ctx.theme.metrics.click(x, y, time);
+
+        assert_eq!(l.press(at(x, y, 0), BTN_LEFT, r, &ctx), Press::Redraw);
+        assert!(
+            l.motion(x + 40, sb.bottom(), r, &ctx),
+            "off the bar's side it still steers"
+        );
+        let end = l.view.top;
+        assert_eq!(end, 40 - lay.rows);
+        l.release(&ctx);
+        assert!(!l.motion(x, sb.y, r, &ctx), "the release lets go");
+        assert_eq!(l.view.top, end);
+
+        let back = sb.y + ctx.theme.controls().scroll + 2;
+        l.press(at(x, back, 1000), BTN_LEFT, r, &ctx);
+        assert_eq!(l.view.top, end - lay.rows, "the track pages back");
+        assert_eq!(
+            l.press(at(x, back, 2000), BTN_RIGHT, r, &ctx),
+            Press::None,
+            "only the left button works the bar"
+        );
+        assert_eq!(l.view.top, end - lay.rows);
     }
 }

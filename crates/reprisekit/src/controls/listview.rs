@@ -1221,7 +1221,7 @@ impl<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>> ListView<R, C, S> {
 }
 
 mod input;
-pub use input::{Input, Took};
+pub use input::{Input, NUDGE, Took};
 
 #[cfg(test)]
 mod tests;
