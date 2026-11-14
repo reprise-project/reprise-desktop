@@ -12,6 +12,7 @@ fn line(key: &str, volume: usize, balance: Option<usize>, check: Check) -> Line 
         checked: false,
         live: true,
         boost: false,
+        output: None,
     }
 }
 
@@ -222,7 +223,8 @@ fn a_column_scrolled_out_publishes_beyond_the_view_and_a_reveal_scrolls_it_in() 
     assert!(out.rect.x >= l.view.right(), "right of the view");
     assert!(l.beyond[0].is_none() && l.beyond[1].is_none());
     let mut tree = Tree::window("Volume Control", (250, 260));
-    m.access(&l, &mut tree, access::ROOT);
+    let text = TextRenderer::load(&Theme::default().fonts);
+    m.access(&l, &text, 11, &mut tree, access::ROOT);
     let slider = tree
         .nodes()
         .filter(|(_, n)| n.role() == Role::Slider && n.bounds().is_some())
@@ -493,7 +495,11 @@ fn an_empty_mixer_takes_every_key_and_the_pointer() {
     assert_eq!(m.release(), Event::None);
     assert_eq!(m.scroll(&l, x, y, WHEEL_ROWS), Event::None);
     let mut tree = Tree::window("Volume Control", (l.body.width, l.body.height));
-    assert_eq!(m.access(&l, &mut tree, access::ROOT), access::ROOT);
+    let text = TextRenderer::load(&Theme::default().fonts);
+    assert_eq!(
+        m.access(&l, &text, 11, &mut tree, access::ROOT),
+        access::ROOT
+    );
     let mut full = Mixer::new(&lines(), true);
     full.focus = Focus::Advanced;
     full.sync(&l, &[]);
@@ -747,7 +753,8 @@ fn speakers_face_out_from_the_balance_ends_and_fade_with_it() {
 /// output device and three programs in Classic, the device's volume
 /// at 22 and the rest at the top; the same with Advanced Controls on
 /// and the second balance focused; the recording lines with one
-/// greyed; then the playback lines in Blue and in Glass.
+/// greyed; then the playback lines in Blue and in Glass; then the
+/// programs with their output combos in each look, the first's list open.
 #[test]
 #[ignore]
 fn render_mixer() {
@@ -780,6 +787,21 @@ fn render_mixer() {
         (theme_for(Interface::Blue), Mixer::new(&lines(), true)),
         (theme_for(Interface::Glass), Mixer::new(&lines(), true)),
     ];
+    let routed = |theme: Theme| {
+        let mut m = Mixer::new(&routed_lines(), true);
+        let l = drawn(&theme, &m).1;
+        let field = col(&l, 1).output.as_ref().unwrap().field;
+        m.press(&l, field.x + 4, field.y + 4);
+        (theme, m)
+    };
+    let cases: Vec<(Theme, Mixer)> = cases
+        .into_iter()
+        .chain([
+            routed(Theme::default()),
+            routed(theme_for(Interface::Blue)),
+            routed(theme_for(Interface::Glass)),
+        ])
+        .collect();
     let w = cases
         .iter()
         .map(|(_, m)| m.size(TextUnits::ONE).0)
@@ -796,4 +818,183 @@ fn render_mixer() {
         y += mh;
     }
     crate::raster::write_preview(&c, "mixer-preview.png");
+}
+
+fn routed(picked: Option<usize>) -> Option<Route> {
+    Some(Route {
+        outputs: vec!["Speakers".into(), "Headphones".into()],
+        picked,
+    })
+}
+
+/// The output device and two programs with their output combos, mpv on the headphones.
+fn routed_lines() -> Vec<Line> {
+    let mut v = lines();
+    v[1].output = routed(None);
+    v[2].output = routed(Some(1));
+    v
+}
+
+#[test]
+fn with_two_outputs_a_program_column_ends_in_its_output_combo() {
+    let m = Mixer::new(&routed_lines(), false);
+    assert_eq!(m.size(TextUnits::ONE), (345, 225 + 25), "the combos' row");
+    assert_eq!(
+        Mixer::new(&routed_lines(), true).size(TextUnits::ONE),
+        (345, 225 + 25 + 27),
+        "the Advanced button under it"
+    );
+    assert!(m.columns[0].output.is_none(), "the device has none");
+    let rows = |i: usize| {
+        let c = m.columns[i].output.as_ref().expect("a combo");
+        let texts: Vec<&str> = c.items.iter().map(|i| i.text.as_str()).collect();
+        (texts, c.selected)
+    };
+    assert_eq!(rows(1), (vec![DEFAULT, "Speakers", "Headphones"], 0));
+    assert_eq!(rows(2).1, 2, "mpv plays to Headphones");
+    let l = lay(&m);
+    let c = col(&l, 1);
+    let field = c.output.as_ref().expect("laid out").field;
+    assert_eq!(field, Rect::new(144, c.check_label.bottom() + 8, 92, 21));
+    assert_eq!(l.body.bottom() - field.bottom(), 5);
+    let advanced = lay(&Mixer::new(&routed_lines(), true)).advanced;
+    assert_eq!(advanced.map(|r| r.y), Some(c.check_label.bottom() + 8 + 25));
+
+    let mut one = lines();
+    one[1].output = Some(Route {
+        outputs: vec!["Speakers".into()],
+        picked: None,
+    });
+    let m = Mixer::new(&one, false);
+    assert!(m.columns[1].output.is_none(), "one output, nothing to pick");
+    assert_eq!(m.size(TextUnits::ONE).1, 225);
+}
+
+#[test]
+fn an_output_list_opens_above_its_combo_and_a_row_moves_the_program() {
+    let mut m = Mixer::new(&routed_lines(), false);
+    let l = lay(&m);
+    let field = col(&l, 1).output.as_ref().unwrap().field;
+    assert_eq!(m.press(&l, field.x + 10, field.y + 10), Event::Redraw);
+    assert_eq!(m.focus, Focus::Output(1));
+    assert_eq!(m.release(), Event::None);
+    let l = lay(&m);
+    let ol = col(&l, 1).output.as_ref().unwrap();
+    assert_eq!(ol.list.bottom(), field.y, "the list stands on the field");
+    assert_eq!(l.body.intersect(&ol.list), ol.list, "inside the body");
+    let row = |i: i32| (ol.list.x + 5, ol.list.y + 1 + i * ol.row_h + ol.row_h / 2);
+    let (x, y) = row(2);
+    assert_eq!(hit(&m, &l, x, y), Hit::Output(1, combo::Hit::Row(2)));
+    assert_eq!(m.press(&l, x, y), Event::Output("firefox".into(), Some(1)));
+    assert_eq!(
+        m.columns[1].output.as_ref().unwrap().open,
+        None,
+        "picked, closed"
+    );
+
+    // Off the list a press only closes it.
+    m.press(&l, field.x + 10, field.y + 10);
+    let (x, y) = mid(col(&l, 2).check);
+    assert_eq!(m.press(&l, x, y), Event::Redraw);
+    assert_eq!(m.release(), Event::None, "the box under it does not flip");
+    assert!(!m.columns[2].checked);
+}
+
+#[test]
+fn keys_pick_on_a_focused_output_combo_and_tab_stops_on_it() {
+    let mut m = Mixer::new(&routed_lines(), false);
+    let l = lay(&m);
+    m.focus = Focus::Check(1);
+    m.key(&l, form::Key::Tab { back: false });
+    assert_eq!(m.focus, Focus::Output(1), "after the check box");
+    assert_eq!(
+        m.key(&l, form::Key::Down),
+        Event::Output("firefox".into(), Some(0))
+    );
+    assert_eq!(m.key(&l, form::Key::Drop), Event::Redraw, "the list opens");
+    assert_eq!(m.key(&l, form::Key::Up), Event::Redraw);
+    assert_eq!(
+        m.key(&l, form::Key::Enter),
+        Event::Output("firefox".into(), None),
+        "Default"
+    );
+    m.focus = Focus::Output(2);
+    m.key(&l, form::Key::Drop);
+    assert_eq!(m.key(&l, form::Key::Escape), Event::Redraw);
+    assert_eq!(m.columns[2].output.as_ref().unwrap().open, None);
+}
+
+#[test]
+fn sync_keeps_an_open_output_list_while_its_rows_stay() {
+    let mut m = Mixer::new(&routed_lines(), false);
+    let l = lay(&m);
+    m.focus = Focus::Output(2);
+    m.key(&l, form::Key::Drop);
+    let mut moved = routed_lines();
+    moved[2].output = routed(None);
+    m.sync(&l, &moved);
+    let c = m.columns[2].output.as_ref().unwrap();
+    assert!(c.open.is_some(), "the list stays open");
+    assert_eq!(c.selected, 0, "the pick follows the host");
+    let mut more = routed_lines();
+    more[2].output = Some(Route {
+        outputs: vec!["Speakers".into(), "Headphones".into(), "HDMI".into()],
+        picked: Some(2),
+    });
+    m.sync(&l, &more);
+    assert_eq!(
+        m.columns[2].output.as_ref().unwrap().open,
+        None,
+        "new rows close it"
+    );
+    assert_eq!(m.focus, Focus::Output(2));
+    m.sync(&l, &lines());
+    assert_eq!(m.focus, Focus::Volume(2), "no combo left to focus");
+}
+
+#[test]
+fn a_reader_finds_each_output_combo_in_its_column() {
+    let mut m = Mixer::new(&routed_lines(), false);
+    m.focus = Focus::Output(1);
+    let l = lay(&m);
+    let mut tree = Tree::window("Volume Control", (l.body.width, l.body.height));
+    let text = TextRenderer::load(&Theme::default().fonts);
+    let focus = m.access(&l, &text, 11, &mut tree, access::ROOT);
+    let combos: Vec<_> = tree
+        .nodes()
+        .filter(|(_, n)| n.role() == Role::ComboBox)
+        .map(|(id, n)| (id, n.label().map(str::to_string)))
+        .collect();
+    assert_eq!(combos.len(), 2);
+    assert!(combos.iter().all(|(_, l)| l.as_deref() == Some("Output")));
+    assert_eq!(focus, combos[0].0);
+}
+
+fn fnv(c: &Canvas) -> u64 {
+    c.pixels.iter().fold(0xcbf2_9ce4_8422_2325, |h, &p| {
+        (h ^ u64::from(p)).wrapping_mul(0x0100_0000_01b3)
+    })
+}
+
+/// The routed lines with the second combo focused, then with the first's list open on its
+/// last row, in each look at 100% and 200% text.
+#[test]
+fn the_output_combos_are_pinned_in_each_look() {
+    crate::pins::fonts();
+    let mut got = Vec::new();
+    for look in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        for pct in [100, 200] {
+            let theme = theme_for(look).with_text_size(pct);
+            let mut m = Mixer::new(&routed_lines(), false);
+            m.focus = Focus::Output(2);
+            m.cues = true;
+            got.push((format!("{look:?}-{pct}-focused"), fnv(&drawn(&theme, &m).0)));
+            let l = drawn(&theme, &m).1;
+            let field = col(&l, 1).output.as_ref().unwrap().field;
+            m.press(&l, field.x + 4, field.y + 4);
+            m.key(&l, form::Key::End);
+            got.push((format!("{look:?}-{pct}-open"), fnv(&drawn(&theme, &m).0)));
+        }
+    }
+    crate::pins::check("controls/mixer_outputs", &got);
 }

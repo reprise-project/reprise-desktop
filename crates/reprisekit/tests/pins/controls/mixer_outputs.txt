@@ -1,0 +1,12 @@
+Classic-100-focused 2c42a424bdd145b9
+Classic-100-open 411988c977f0553d
+Classic-200-focused 58704aa471fa5fcc
+Classic-200-open 4463752a21f51dac
+Blue-100-focused cd974983151c1109
+Blue-100-open 5f717af6bcfbd062
+Blue-200-focused bd51c83693d48d51
+Blue-200-open 925b9786471fb509
+Glass-100-focused c222a10e199708db
+Glass-100-open ec5fada6a18f7a84
+Glass-200-focused ca82584b24993a40
+Glass-200-open 452bec796345e29f

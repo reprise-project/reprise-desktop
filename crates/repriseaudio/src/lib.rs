@@ -282,6 +282,27 @@ impl Snapshot {
             .find(|s| s.id == id)
             .map(|s| (&s.channels, None))
     }
+
+    /// The sink `app` plays to, an index into `sinks`; `None` follows the default.
+    pub fn output_of(&self, app: &App) -> Option<usize> {
+        let name = app.output()?;
+        self.sinks.iter().position(|d| d.name == name)
+    }
+
+    /// Move each stream of the program keyed `app` to `sinks[sink]`, or back to the default with
+    /// `None`. A sink without a serial cannot be named, so nothing moves.
+    pub fn set_output(&self, app: &str, sink: Option<usize>) {
+        let serial = match sink.map(|i| self.sinks.get(i).and_then(|d| d.serial)) {
+            Some(None) => return,
+            Some(serial) => serial,
+            None => None,
+        };
+        for a in self.apps.iter().filter(|a| a.key == app) {
+            for id in a.ids() {
+                set_target(id, serial);
+            }
+        }
+    }
 }
 
 /// Merge `src` over `dst`, recursing into objects so a change carrying only `info.params` leaves
@@ -1756,6 +1777,8 @@ mod tests {
             app.output().map(str::to_string)
         };
         assert_eq!(output("Game").as_deref(), Some("auto_null"));
+        let game = snap.apps.iter().find(|a| a.label == "Game").expect("app");
+        assert_eq!(snap.output_of(game), Some(0), "the first sink");
         assert_eq!(output("Music"), None);
         assert_eq!(output("Call"), None);
 

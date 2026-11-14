@@ -247,6 +247,7 @@ fn text_size_panes(theme: &Theme, text: &TextRenderer) -> Canvas {
         checked: false,
         live: true,
         boost: false,
+        output: None,
     };
     let m = mixer::Mixer::new(
         &[

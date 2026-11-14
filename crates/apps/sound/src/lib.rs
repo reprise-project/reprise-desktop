@@ -147,9 +147,7 @@ fn mix(
                 icon: icons.get(&a.key).and_then(|i| i.large.clone()),
                 pos: track_pos(a.volume),
                 mute: a.mute,
-                output: a
-                    .output()
-                    .and_then(|n| snap.sinks.iter().position(|d| d.name == n)),
+                output: snap.output_of(a),
             })
             .collect(),
     }
@@ -445,14 +443,7 @@ impl Sound {
                 Reply::redraw()
             }
             E::AppOutput(key, i) => {
-                let serial = match i.map(|i| self.snapshot.sinks.get(i).and_then(|d| d.serial)) {
-                    Some(None) => return Reply::redraw(),
-                    Some(serial) => serial,
-                    None => None,
-                };
-                for id in self.nodes(&volumepopup::Channel::App(key)) {
-                    pipewire::set_target(id, serial);
-                }
+                self.snapshot.set_output(&key, i);
                 Reply::redraw()
             }
             E::Media(t) => {

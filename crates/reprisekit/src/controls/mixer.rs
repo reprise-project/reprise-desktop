@@ -5,9 +5,12 @@
 //! The body is 225 px tall under an etched line. The output device's column
 //! (with Mute all) is 135 px wide, every other 105. Each column stacks the
 //! title, Balance trackbar between two speakers, vertical Volume trackbar and
-//! a check box; the metrics are the consts below. With Advanced Controls on,
-//! the first column gets an Advanced button and the body grows. Columns that
-//! do not fit scroll a column at a time on a scrollbar along the bottom.
+//! a check box; the metrics are the consts below. A program's line with two
+//! outputs or more to pick from ends in an output combo ("Default", then each
+//! output) whose list opens above it, and the body grows by its row. With
+//! Advanced Controls on, the first column gets an Advanced button under that
+//! row and the body grows again. Columns that do not fit scroll a column at a
+//! time on a scrollbar along the bottom.
 //!
 //! A line with no left and right to balance (a mono node) has its
 //! Balance slider greyed at the centre; a line with no device behind it
@@ -20,6 +23,7 @@ use crate::access::{self, Tree, accesskit};
 use crate::classic::widgets::{
     ScrollHit, ScrollParts, scrollbar_hit, scrollbar_parts, scrollbar_pos_at,
 };
+use crate::controls::combo::{self, Combo, ComboLit};
 use crate::controls::form;
 use crate::look::Paint;
 use crate::look::widgets::{
@@ -30,6 +34,7 @@ use crate::pointer::{Interaction, Lit, Pointer, WHEEL_ROWS};
 use crate::raster::{Canvas, Rect};
 use crate::style::Part as StylePart;
 use crate::text::{Align, DialogFont, TextRenderer};
+use crate::textedit::Caret;
 use crate::theme::{TextUnits, Theme};
 use crate::trackbar::{self, TrackBar};
 use accesskit::{NodeId, Role};
@@ -91,6 +96,12 @@ const ADVANCED_GAP: i32 = 8;
 const ADVANCED_W: i32 = 83;
 const ADVANCED_H: i32 = 23;
 const ADVANCED_ROW: i32 = 27;
+/// An output combo: its field's height and inset from the column's sides, the rows its open
+/// list shows, and what its row adds to the body (it sits `ADVANCED_GAP` under the check row).
+const OUTPUT_H: i32 = 21;
+const OUTPUT_INSET: i32 = 4;
+const OUTPUT_ROWS: usize = 8;
+const OUTPUT_ROW: i32 = ADVANCED_GAP + OUTPUT_H + 5 - BOTTOM;
 /// A focus ring sits this far outside the label it marks, and takes
 /// this many rows more under it.
 const RING_PAD: i32 = 1;
@@ -99,6 +110,8 @@ const RING_BELOW: i32 = 1;
 pub const BALANCE: &str = "Balance:";
 pub const VOLUME: &str = "Volume:";
 pub const ADVANCED: &str = "Advanced";
+/// An output combo's first row: the program follows the default output.
+pub const DEFAULT: &str = "Default";
 
 /// What a column's check box stands for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -138,6 +151,31 @@ pub struct Line {
     pub live: bool,
     /// The volume may go past 100 %.
     pub boost: bool,
+    /// A program's output pick; a combo shows with two outputs or more.
+    pub output: Option<Route>,
+}
+
+/// The outputs a program's line picks from, and the one it plays to.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Route {
+    pub outputs: Vec<String>,
+    /// An index into `outputs`; `None` follows the default output.
+    pub picked: Option<usize>,
+}
+
+impl Route {
+    /// The combo's rows, [`DEFAULT`] first, and its pick among them.
+    fn rows(&self) -> (Vec<String>, Option<usize>) {
+        let rows = std::iter::once(DEFAULT.to_string())
+            .chain(self.outputs.iter().cloned())
+            .collect();
+        (rows, Some(self.picked.map_or(0, |i| i + 1)))
+    }
+
+    fn combo(&self) -> Option<Combo> {
+        let (rows, picked) = self.rows();
+        (self.outputs.len() > 1).then(|| Combo::names(&rows, picked, OUTPUT_ROWS))
+    }
 }
 
 /// One column's state.
@@ -150,6 +188,9 @@ pub struct Column {
     pub check: Check,
     pub checked: bool,
     pub live: bool,
+    pub route: Option<Route>,
+    /// The output combo `route` shows.
+    pub output: Option<Combo>,
 }
 
 impl Column {
@@ -170,6 +211,8 @@ impl Column {
             check: l.check,
             checked: l.checked,
             live: l.live,
+            route: l.output.clone(),
+            output: l.output.as_ref().and_then(Route::combo),
         }
     }
 }
@@ -180,6 +223,7 @@ pub enum Focus {
     Balance(usize),
     Volume(usize),
     Check(usize),
+    Output(usize),
     Advanced,
 }
 
@@ -189,6 +233,7 @@ pub enum Part {
     Balance(usize),
     Volume(usize),
     Check(usize),
+    Output(usize),
     Advanced,
     Bar(ScrollHit),
 }
@@ -205,6 +250,9 @@ pub enum Event {
     Check(String, bool),
     /// The Advanced button was pressed.
     Advanced,
+    /// Line `.0` moves to this output, an index into its [`Route::outputs`]; `None` follows the
+    /// default.
+    Output(String, Option<usize>),
 }
 
 pub struct Mixer {
@@ -245,6 +293,8 @@ pub struct ColumnLayout {
     pub volume: trackbar::Layout,
     pub check: Rect,
     pub check_label: Rect,
+    /// The output combo, its list above it.
+    pub output: Option<combo::Layout>,
     /// The etched line in its slot; `None` on the first column shown.
     pub separator: Option<Rect>,
 }
@@ -276,6 +326,7 @@ pub enum Hit {
     Volume(usize, trackbar::Hit),
     /// A column's check box or its label.
     Check(usize),
+    Output(usize, combo::Hit),
     Advanced,
     /// A column, on nothing that acts.
     Column(usize),
@@ -313,6 +364,9 @@ struct Dims {
     advanced_w: i32,
     advanced_h: i32,
     advanced_row: i32,
+    output_h: i32,
+    output_inset: i32,
+    output_row: i32,
 }
 
 impl Dims {
@@ -344,12 +398,16 @@ impl Dims {
             advanced_w: l(ADVANCED_W),
             advanced_h: l(ADVANCED_H),
             advanced_row: l(ADVANCED_ROW),
+            output_h: l(OUTPUT_H),
+            output_inset: l(OUTPUT_INSET),
+            output_row: l(OUTPUT_ROW),
         }
     }
 
-    /// Under the columns: the Advanced button's row when it shows.
-    fn below(&self, advanced: bool) -> i32 {
-        if advanced { self.advanced_row } else { 0 }
+    /// Under the check rows: the output combos' row when a column has one, then the Advanced
+    /// button's when it shows.
+    fn below(&self, advanced: bool, outputs: bool) -> i32 {
+        i32::from(outputs) * self.output_row + i32::from(advanced) * self.advanced_row
     }
 
     /// A column's width, with its slot.
@@ -379,14 +437,21 @@ pub fn min_width(u: TextUnits) -> i32 {
     Dims::new(u).min_w
 }
 
-/// The body height at text units `u`, with the Advanced button's row or without.
-pub fn height(advanced: bool, u: TextUnits) -> i32 {
+/// The body height at text units `u`, with the Advanced button's row and the output combos' or
+/// without.
+pub fn height(advanced: bool, outputs: bool, u: TextUnits) -> i32 {
     let d = Dims::new(u);
-    d.body_h + d.below(advanced)
+    d.body_h + d.below(advanced, outputs)
+}
+
+/// Whether a column shows an output combo, which adds its row to the body.
+fn has_outputs(m: &Mixer) -> bool {
+    m.columns.iter().any(|c| c.output.is_some())
 }
 
 /// Column `col`'s parts, its controls from `x` in a body from `y`, the
-/// volume channel `track_h` tall and the column `h` tall.
+/// volume channel `track_h` tall and the column `h` tall. An output list
+/// opens above its combo inside `body`.
 #[expect(clippy::too_many_arguments)]
 fn column_layout(
     col: &Column,
@@ -398,6 +463,7 @@ fn column_layout(
     y: i32,
     track_h: i32,
     h: i32,
+    body: Rect,
 ) -> ColumnLayout {
     let device = is_device(col);
     let (w, mid) = if device {
@@ -414,6 +480,17 @@ fn column_layout(
     let speaker_y = y + d.balance_y + SPEAKER_Y;
     let thumb = cm.vtrack_thumb;
     let row = |top: i32, w: i32| Rect::new(x + d.pad, y + top, w, d.row_h);
+    let output = col.output.as_ref().map(|c| {
+        let field = Rect::new(
+            x + d.output_inset,
+            check_y + d.row_h + d.advanced_gap,
+            w - 2 * d.output_inset,
+            d.output_h,
+        );
+        let mut cl = combo::layout_rows(c, field, cm, cm.list_row);
+        combo::list_above(c, &mut cl, body, text, px);
+        cl
+    });
     ColumnLayout {
         rect: Rect::new(x, y, w, h),
         title: row(d.title_y, label_w),
@@ -449,6 +526,7 @@ fn column_layout(
             cm.check,
         ),
         check_label: Rect::new(x + d.pad + cm.check_label, check_y, check_w, d.row_h),
+        output,
         separator: None,
     }
 }
@@ -493,7 +571,8 @@ pub fn layout(m: &Mixer, theme: &Theme, text: &TextRenderer, body: Rect) -> Layo
     let shown = fitting(m, &d, first, body.width).min(m.columns.len().saturating_sub(first));
     let bar_h = if scrolls { cm.scroll } else { 0 };
     let h = body.height - bar_h;
-    let track_h = (h - (d.body_h - d.track_h) - d.below(m.advanced)).max(d.min_track_h);
+    let outputs = has_outputs(m);
+    let track_h = (h - (d.body_h - d.track_h) - d.below(m.advanced, outputs)).max(d.min_track_h);
     let mut x = body.x - m.columns[..first].iter().map(|c| d.extent(c)).sum::<i32>();
     let mut prev_device = None;
     let mut columns = Vec::with_capacity(m.columns.len());
@@ -504,7 +583,7 @@ pub fn layout(m: &Mixer, theme: &Theme, text: &TextRenderer, body: Rect) -> Layo
         x += d.extent(c);
         let device = is_device(c);
         let controls = if device { left } else { left + SLOT };
-        let mut cl = column_layout(c, text, px, &cm, &d, controls, body.y, track_h, h);
+        let mut cl = column_layout(c, text, px, &cm, &d, controls, body.y, track_h, h, body);
         if i < first || i >= first + shown {
             columns.push(None);
             beyond.push(Some(cl));
@@ -534,7 +613,7 @@ pub fn layout(m: &Mixer, theme: &Theme, text: &TextRenderer, body: Rect) -> Layo
     let advanced = match columns.first() {
         Some(Some(cl)) if m.advanced => Some(Rect::new(
             cl.check.x,
-            cl.check_label.bottom() + d.advanced_gap,
+            cl.check_label.bottom() + d.advanced_gap + i32::from(outputs) * d.output_row,
             d.advanced_w,
             d.advanced_h,
         )),
@@ -566,6 +645,13 @@ fn bar_parts(m: &Mixer, lay: &Layout, bar: Rect) -> ScrollParts {
 }
 
 pub fn hit(m: &Mixer, lay: &Layout, x: i32, y: i32) -> Hit {
+    // An open list lies over the columns.
+    if let Some(i) = m.open_list()
+        && let (Some(c), Some(cl)) = (m.output(i), lay.output(i))
+        && let Some(h) = combo::hit(c, cl, x, y)
+    {
+        return Hit::Output(i, h);
+    }
     if !lay.body.contains(x, y) {
         return Hit::Outside;
     }
@@ -595,6 +681,11 @@ pub fn hit(m: &Mixer, lay: &Layout, x: i32, y: i32) -> Hit {
         if row.contains(x, y) {
             return Hit::Check(i);
         }
+        if let (Some(c), Some(ol)) = (m.output(i), &cl.output)
+            && let Some(h) = combo::hit(c, ol, x, y)
+        {
+            return Hit::Output(i, h);
+        }
         if Rect::new(cl.rect.x, lay.body.y, cl.rect.width, lay.body.height).contains(x, y) {
             return Hit::Column(i);
         }
@@ -604,7 +695,8 @@ pub fn hit(m: &Mixer, lay: &Layout, x: i32, y: i32) -> Hit {
 
 /// The body: the face, the line along its top, each shown column with
 /// its separator, the title lines, the Advanced button and the
-/// scrollbar. The focus ring shows once a key was pressed.
+/// scrollbar, then an open output list over them. The focus ring shows
+/// once a key was pressed.
 pub fn draw(c: &mut Canvas, theme: &Theme, text: &TextRenderer, m: &Mixer, lay: &Layout) {
     m.styled.set(theme.look.lights_pointer());
     let text = text.dialog(DialogFont::ShellDlg);
@@ -647,6 +739,31 @@ pub fn draw(c: &mut Canvas, theme: &Theme, text: &TextRenderer, m: &Mixer, lay: 
             _ => None,
         };
         draw_hscrollbar(c, p, bar, m.first, lay.shown, m.columns.len(), lit);
+    }
+    if let Some(i) = m.open_list()
+        && let (Some(combo), Some(cl)) = (m.output(i), lay.output(i))
+    {
+        combo::draw_list_rows(
+            c,
+            text,
+            p,
+            &combo.items,
+            combo.open,
+            combo.top,
+            combo.rows,
+            cl.list,
+            cl.scrollbar,
+            None,
+            px,
+            cl.row_h,
+        );
+    }
+}
+
+impl Layout {
+    /// Column `i`'s output combo, when it is shown and has one.
+    fn output(&self, i: usize) -> Option<&combo::Layout> {
+        self.columns.get(i)?.as_ref()?.output.as_ref()
     }
 }
 
@@ -777,6 +894,24 @@ fn draw_column(
         Some(StylePart::CheckBox),
         px,
     );
+    if let (Some(combo), Some(ol)) = (&col.output, &cl.output) {
+        let lit = m.ptr.of(Part::Output(i));
+        combo::draw(
+            c,
+            text,
+            p,
+            combo,
+            ol,
+            m.focus == Focus::Output(i),
+            m.cues,
+            Caret::default(),
+            ComboLit {
+                frame: lit,
+                drop: lit,
+            },
+            px,
+        );
+    }
     if m.cues && live {
         let ring = match m.focus {
             Focus::Balance(f) if f == i => Some(balance_ring(&cl.balance)),
@@ -810,7 +945,41 @@ impl Mixer {
     pub fn size(&self, u: TextUnits) -> (i32, i32) {
         let device = self.columns.first().is_some_and(is_device);
         let others = self.columns.len() - usize::from(device);
-        (width(device, others, u), height(self.advanced, u))
+        (
+            width(device, others, u),
+            height(self.advanced, has_outputs(self), u),
+        )
+    }
+
+    /// Column `i`'s output combo, when it has one.
+    fn output(&self, i: usize) -> Option<&Combo> {
+        self.columns.get(i)?.output.as_ref()
+    }
+
+    fn output_mut(&mut self, i: usize) -> Option<&mut Combo> {
+        self.columns.get_mut(i)?.output.as_mut()
+    }
+
+    /// The column whose output list is open.
+    fn open_list(&self) -> Option<usize> {
+        (0..self.columns.len()).find(|&i| self.output(i).is_some_and(|c| c.open.is_some()))
+    }
+
+    fn close_list(&mut self) {
+        if let Some(c) = self.open_list().and_then(|i| self.output_mut(i)) {
+            c.open = None;
+        }
+    }
+
+    /// What column `i`'s output combo act asks: a redraw, or for a pick the move.
+    fn act(&self, i: usize, a: combo::Act) -> Event {
+        match a {
+            combo::Act::None => Event::None,
+            combo::Act::Redraw => Event::Redraw,
+            combo::Act::Picked(row) => {
+                Event::Output(self.columns[i].key.clone(), row.checked_sub(1))
+            }
+        }
     }
 
     /// Take the lines from the host. Columns are matched by key: one that
@@ -840,10 +1009,28 @@ impl Mixer {
             }
             _ => {}
         }
+        // An output combo keeps its open list while its rows stay.
+        let mut rebuilt = vec![false; columns.len()];
+        for (i, old) in self.columns.iter_mut().enumerate() {
+            if let (Some(j), Some(mut c)) = (remap(i), old.output.take())
+                && columns[j].output.is_some()
+                && let Some(route) = &columns[j].route
+            {
+                let (rows, picked) = route.rows();
+                rebuilt[j] = c.sync_names(&rows, picked, OUTPUT_ROWS);
+                columns[j].output = Some(c);
+            }
+        }
+        let has_output = |j: usize| columns.get(j).is_some_and(|c| c.output.is_some());
         self.focus = match self.focus {
             Focus::Balance(i) => remap(i).map_or(Focus::Volume(0), Focus::Balance),
             Focus::Volume(i) => remap(i).map_or(Focus::Volume(0), Focus::Volume),
             Focus::Check(i) => remap(i).map_or(Focus::Volume(0), Focus::Check),
+            Focus::Output(i) => match remap(i) {
+                Some(j) if has_output(j) => Focus::Output(j),
+                Some(j) => Focus::Volume(j),
+                None => Focus::Volume(0),
+            },
             Focus::Advanced if !columns.first().is_some_and(|c| c.live) => Focus::Volume(0),
             Focus::Advanced => Focus::Advanced,
         };
@@ -851,6 +1038,9 @@ impl Mixer {
             Part::Balance(i) => remap(i).map(Part::Balance),
             Part::Volume(i) => remap(i).map(Part::Volume),
             Part::Check(i) => remap(i).map(Part::Check),
+            Part::Output(i) => remap(i)
+                .filter(|&j| has_output(j) && !rebuilt[j])
+                .map(Part::Output),
             p => Some(p),
         });
         self.columns = columns;
@@ -914,6 +1104,7 @@ impl Mixer {
             }
             Hit::Volume(i, trackbar::Hit::Thumb) if col(i)?.live => Some(Part::Volume(i)),
             Hit::Check(i) if col(i)?.live => Some(Part::Check(i)),
+            Hit::Output(i, _) if self.output(i)?.enabled => Some(Part::Output(i)),
             Hit::Advanced if col(0)?.live => Some(Part::Advanced),
             Hit::Bar(h) => Some(Part::Bar(h)),
             _ => None,
@@ -998,8 +1189,8 @@ impl Mixer {
     }
 
     /// The focus order: each live column's balance (when it has one),
-    /// volume and check box, the Advanced button after the first
-    /// column's.
+    /// volume, check box and output combo (when it has one), the Advanced
+    /// button after the first column's.
     fn focus_order(&self) -> Vec<Focus> {
         let mut v = Vec::new();
         for (i, c) in self.columns.iter().enumerate() {
@@ -1008,6 +1199,9 @@ impl Mixer {
                     v.push(Focus::Balance(i));
                 }
                 v.extend([Focus::Volume(i), Focus::Check(i)]);
+                if c.output.as_ref().is_some_and(|o| o.enabled) {
+                    v.push(Focus::Output(i));
+                }
                 if i == 0 && self.advanced {
                     v.push(Focus::Advanced);
                 }
@@ -1035,7 +1229,7 @@ impl Mixer {
     /// The column the focus is in.
     fn focus_column(&self) -> usize {
         match self.focus {
-            Focus::Balance(i) | Focus::Volume(i) | Focus::Check(i) => i,
+            Focus::Balance(i) | Focus::Volume(i) | Focus::Check(i) | Focus::Output(i) => i,
             Focus::Advanced => 0,
         }
     }
@@ -1065,6 +1259,8 @@ impl Mixer {
             return Event::None;
         }
         self.first = first as usize;
+        // A list scrolled out of view would go on taking the keys unseen.
+        self.close_list();
         self.rehit(lay);
         Event::Redraw
     }
@@ -1099,12 +1295,14 @@ impl Mixer {
             Hit::Balance(i, _) => Focus::Balance(i),
             Hit::Volume(i, _) => Focus::Volume(i),
             Hit::Check(i) => Focus::Check(i),
+            Hit::Output(i, combo::Hit::Field | combo::Hit::Drop) => Focus::Output(i),
             Hit::Advanced => Focus::Advanced,
             _ => return Event::None,
         };
         if self.focus == f || !self.focus_order().contains(&f) {
             return Event::None;
         }
+        self.close_list();
         self.focus = f;
         Event::Redraw
     }
@@ -1127,10 +1325,25 @@ impl Mixer {
     /// The left button went down at (`x`, `y`). A thumb is held, and the
     /// channel either side of it steps it one position that way; the
     /// focus moves to the part pressed. A check box or the Advanced
-    /// button acts at the release.
+    /// button acts at the release; an output combo opens its list. With a
+    /// list open, a press on it acts there and any other press closes it.
     pub fn press(&mut self, lay: &Layout, x: i32, y: i32) -> Event {
         let lay = &self.current(lay);
         self.point = Some((x, y));
+        if let Some(i) = self.open_list() {
+            if let Hit::Output(j, h) = hit(self, lay, x, y)
+                && j == i
+            {
+                let a = self
+                    .output_mut(i)
+                    .map_or(combo::Act::None, |c| c.press_list(h));
+                return self.act(i, a);
+            }
+            self.close_list();
+            // Nothing under it acts at the release either.
+            self.ptr.clear();
+            return Event::Redraw;
+        }
         let part = self.part_at(lay, x, y);
         let sticky = matches!(
             part,
@@ -1160,6 +1373,13 @@ impl Mixer {
             }
             Hit::Advanced if part.is_some() => {
                 self.focus = Focus::Advanced;
+                Event::Redraw
+            }
+            Hit::Output(i, combo::Hit::Field | combo::Hit::Drop) if part.is_some() => {
+                self.focus = Focus::Output(i);
+                if let Some(c) = self.output_mut(i) {
+                    c.toggle();
+                }
                 Event::Redraw
             }
             Hit::Bar(h) => self.press_bar(lay, h, x),
@@ -1227,13 +1447,25 @@ impl Mixer {
         self.lit(changed)
     }
 
-    /// The wheel turned `rows` rows at (`x`, `y`): over the scrollbar it
-    /// scrolls a column per notch; over a column it steps that column's
-    /// volume a position per notch (down is quieter).
+    /// The wheel turned `rows` rows at (`x`, `y`): over an open list it
+    /// scrolls it, over the scrollbar a column per notch; over a column it
+    /// steps that column's volume a position per notch (down is quieter).
     pub fn scroll(&mut self, lay: &Layout, x: i32, y: i32, rows: i32) -> Event {
+        if let Some(i) = self.open_list()
+            && lay.output(i).is_some_and(|cl| cl.list.contains(x, y))
+        {
+            return match self.output_mut(i).is_some_and(|c| c.scroll(rows)) {
+                true => Event::Redraw,
+                false => Event::None,
+            };
+        }
         let notches = rows.signum() * (rows.abs() / WHEEL_ROWS).max(1);
         let i = match hit(self, lay, x, y) {
-            Hit::Balance(i, _) | Hit::Volume(i, _) | Hit::Check(i) | Hit::Column(i) => i,
+            Hit::Balance(i, _)
+            | Hit::Volume(i, _)
+            | Hit::Check(i)
+            | Hit::Output(i, _)
+            | Hit::Column(i) => i,
             Hit::Bar(_) => return self.scroll_bar(lay, notches),
             _ => return Event::None,
         };
@@ -1249,12 +1481,20 @@ impl Mixer {
     /// Right, Page Up and Home make it louder, Down / Left, Page Down and
     /// End quieter; on a balance trackbar Left / Up, Page Up and Home move
     /// it left, the others right. Space flips the focused check box and
-    /// presses the focused Advanced button, as Enter does on it. A key on
-    /// a column scrolled out of view scrolls it back first.
+    /// presses the focused Advanced button, as Enter does on it. On an
+    /// output combo the arrows pick and F4 or Alt+Down opens the list; with a
+    /// list open every key goes to it. A key on a column scrolled out of view
+    /// scrolls it back first.
     pub fn key(&mut self, lay: &Layout, key: form::Key) -> Event {
         use form::Key as K;
         let first = !self.cues;
         self.cues = true;
+        if let Some(i) = self.open_list() {
+            let a = self
+                .output_mut(i)
+                .map_or(combo::Act::None, |c| c.list_key(key));
+            return self.act(i, a);
+        }
         let scrolled = self.first;
         if !matches!(key, K::Tab { .. }) {
             self.reveal_focus(lay.shown);
@@ -1266,6 +1506,12 @@ impl Mixer {
             }
             (K::Space, Focus::Check(i)) => self.flip(i),
             (K::Space | K::Enter, Focus::Advanced) if self.advanced_live() => Event::Advanced,
+            (k, Focus::Output(i)) => {
+                let a = self
+                    .output_mut(i)
+                    .map_or(combo::Act::None, |c| c.closed_key(k));
+                self.act(i, a)
+            }
             (k, Focus::Volume(i)) => match k {
                 K::Up | K::Right => self.slide_volume(i, |t| t.step(1)),
                 K::Down | K::Left => self.slide_volume(i, |t| t.step(-1)),
@@ -1296,9 +1542,17 @@ impl Mixer {
 
     /// The mixer's `access` part: a scroll view over the columns holding a group per column
     /// named by its title (one scrolled out lies beyond the view), each with the Balance and
-    /// Volume sliders, their labels and the check box; then the Advanced button. Returns the
-    /// focused node, or `parent` when there are no columns.
-    pub fn access(&self, lay: &Layout, tree: &mut Tree, parent: NodeId) -> NodeId {
+    /// Volume sliders, their labels, the check box and the output combo; then the Advanced
+    /// button. Returns the focused node, or `parent` when there are no columns.
+    pub fn access(
+        &self,
+        lay: &Layout,
+        text: &TextRenderer,
+        px: u32,
+        tree: &mut Tree,
+        parent: NodeId,
+    ) -> NodeId {
+        let text = text.dialog(DialogFont::ShellDlg);
         let mut focus = parent;
         let placed = lay.columns.iter().zip(&lay.beyond);
         let view = (!self.columns.is_empty())
@@ -1338,6 +1592,15 @@ impl Mixer {
                     col.live,
                 ),
             );
+            if let (Some(c), Some(ol)) = (&col.output, &cl.output) {
+                let f = combo::access(c, ol, text, px, tree, g, "output");
+                if let Some(n) = tree.get_mut(Tree::id_of(g, "output")) {
+                    n.set_label("Output");
+                }
+                if self.focus == Focus::Output(i) {
+                    focus = f;
+                }
+            }
             match self.focus {
                 Focus::Balance(f) if f == i => focus = balance,
                 Focus::Volume(f) if f == i => focus = volume,

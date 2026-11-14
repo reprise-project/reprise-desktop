@@ -876,8 +876,8 @@ the screen takes the interface of the last session used at this computer.
 
 - **Sound.** A speaker icon with a volume and an output for each program
   playing sound, the default output and input, and the track that's playing with its
-  buttons. Volume Control has balance, a Recording view and bass and treble
-  where the card has them.
+  buttons. Volume Control has balance, an output for each program, a
+  Recording view and bass and treble where the card has them.
 - **Network.** Wi-Fi, wired and VPN through NetworkManager. WireGuard and
   OpenVPN have their own editors (gateway, sign-in, certificates and keys,
   passwords), other VPNs import through NetworkManager's plugins, and Create
