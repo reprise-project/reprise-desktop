@@ -1,11 +1,9 @@
 //! A JPEG XL's first frame through libjxl, refused past a pixel budget, an allocation budget or
 //! a deadline.
 
-use std::alloc::Layout;
 use std::cell::Cell;
 use std::ffi::{c_int, c_void};
 use std::mem::MaybeUninit;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use jpegxl_sys::color::color_encoding::JxlColorEncoding;
@@ -19,6 +17,7 @@ use jpegxl_sys::threads::parallel_runner::{
     JXL_PARALLEL_RET_RUNNER_ERROR, JXL_PARALLEL_RET_SUCCESS, JxlParallelRetCode,
     JxlParallelRunFunction, JxlParallelRunInit,
 };
+use reprisefs::allocbudget::{self, Budget};
 
 /// Why a JPEG XL gave no picture.
 #[derive(Debug, PartialEq, Eq)]
@@ -53,21 +52,17 @@ pub fn first_frame(
         deadline: Instant::now() + time_limit,
         late: Cell::new(false),
     };
-    let budget = Budget {
-        used: AtomicUsize::new(0),
-        limit: alloc_limit,
-        refused: AtomicBool::new(false),
-    };
+    let budget = Budget::new(alloc_limit);
     let manager = JxlMemoryManager {
         opaque: (&raw const budget).cast_mut().cast(),
-        alloc: Some(alloc),
-        free: Some(free),
+        alloc: Some(allocbudget::alloc),
+        free: Some(allocbudget::free),
     };
     let mut px = Vec::new();
     // SAFETY: libjxl copies `manager`; `budget` outlives `dec`, declared after it.
     let dec = Decoder(unsafe { sys::JxlDecoderCreate(&manager) });
     let broken = || {
-        Err(if budget.refused.load(Ordering::Relaxed) {
+        Err(if budget.refused() {
             Refused::Memory
         } else if clock.late.get() {
             Refused::Time
@@ -218,62 +213,6 @@ unsafe extern "C-unwind" fn run(
         unsafe { func(jxl, value, 0) };
     }
     JXL_PARALLEL_RET_SUCCESS
-}
-
-/// What libjxl holds through [`alloc`]; a request past `limit` gets null and sets `refused`.
-struct Budget {
-    used: AtomicUsize,
-    limit: usize,
-    refused: AtomicBool,
-}
-
-/// Each block starts with its total size, in a header that keeps malloc's 16-byte alignment.
-const HEADER: usize = 16;
-
-/// libjxl's allocator. It never panics: libjxl calls it across FFI and treats null as failure.
-unsafe extern "C-unwind" fn alloc(opaque: *mut c_void, size: usize) -> *mut c_void {
-    // SAFETY: `opaque` is the `Budget` `first_frame` keeps alive past the decoder.
-    let budget = unsafe { &*opaque.cast::<Budget>() };
-    let Some(total) = size.checked_add(HEADER) else {
-        return std::ptr::null_mut();
-    };
-    let Ok(layout) = Layout::from_size_align(total, HEADER) else {
-        return std::ptr::null_mut();
-    };
-    let room = budget
-        .used
-        .try_update(Ordering::Relaxed, Ordering::Relaxed, |u| {
-            u.checked_add(total).filter(|&n| n <= budget.limit)
-        });
-    if room.is_err() {
-        budget.refused.store(true, Ordering::Relaxed);
-        return std::ptr::null_mut();
-    }
-    // SAFETY: `layout` is non-zero sized.
-    let block = unsafe { std::alloc::alloc(layout) };
-    if block.is_null() {
-        budget.used.fetch_sub(total, Ordering::Relaxed);
-        return std::ptr::null_mut();
-    }
-    // SAFETY: `block` holds `total >= HEADER` bytes, aligned for usize.
-    unsafe {
-        block.cast::<usize>().write(total);
-        block.add(HEADER).cast()
-    }
-}
-
-unsafe extern "C-unwind" fn free(opaque: *mut c_void, address: *mut c_void) {
-    if address.is_null() {
-        return;
-    }
-    // SAFETY: `address` came from `alloc` with this `opaque`, so its header precedes it.
-    unsafe {
-        let budget = &*opaque.cast::<Budget>();
-        let block = address.cast::<u8>().sub(HEADER);
-        let total = block.cast::<usize>().read();
-        std::alloc::dealloc(block, Layout::from_size_align_unchecked(total, HEADER));
-        budget.used.fetch_sub(total, Ordering::Relaxed);
-    }
 }
 
 #[cfg(test)]

@@ -457,7 +457,11 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   Ctrl+Alt+PrtSc for its content without the frame, Shift+PrtSc for a region
   or a clicked window. Every shot goes to the clipboard as a PNG and, if you
   like, to Pictures/Screenshots as a PNG, JPG or JPEG XL file
-  (`[screenshot] format`).
+  (`[screenshot] format`). Files encode one at a time at a low priority, a
+  JPEG XL in a process of its own. A shot taken while two are still encoding
+  is saved as its PNG, as is one the JPEG XL encoder would need more than
+  half the free memory for, takes over ten minutes on or fails on, and its
+  notice says why.
 - **Screen recordings.** Ctrl+Shift+Alt+R records the screen under the
   pointer and, pressed again, stops. In the Shift+PrtSc picker V switches to
   Record mode, where a dragged area, a clicked window's frame or a clicked

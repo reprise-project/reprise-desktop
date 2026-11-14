@@ -393,6 +393,7 @@ pub struct State {
     pub dialogs: crate::dialogview::Dialogs,
     pub caret: crate::caret::Caret,
     pub fsjobs: crate::fsjobs::FsJobs,
+    pub shots: crate::screenshot::Shots,
     /// Output changes waiting for their scales' art (`output::ScaleWarm`).
     pub scale_warm: Option<crate::output::ScaleWarm>,
     /// The recent files and document folders the menus list (`recentdocs`).
@@ -799,6 +800,7 @@ impl State {
             dialogs: Default::default(),
             caret: Default::default(),
             fsjobs: Default::default(),
+            shots: Default::default(),
             scale_warm: None,
             recent: Default::default(),
             pickthumbs: Default::default(),
