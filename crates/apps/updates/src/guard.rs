@@ -1,5 +1,6 @@
 //! The packages an uninstall may not take: Reprise's own, and those the system marks essential
-//! (pacman's HoldPkg and the `base` package with its members, dpkg's essential and required ones).
+//! (pacman's HoldPkg and the `base` package with its members, dpkg's essential, protected and
+//! required ones).
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -83,8 +84,8 @@ pub fn held(details: &str) -> String {
     }
 }
 
-/// HoldPkg's names in pacman.conf `text`: every HoldPkg line under `[options]`, `#` starting a
-/// comment, or pacman's shipped default when there is none.
+/// HoldPkg's names and patterns in pacman.conf `text`: every HoldPkg line under `[options]`, `#`
+/// starting a comment, or pacman's shipped default when there is none.
 pub fn hold_pkg(text: &str) -> Vec<String> {
     let mut section = "";
     let mut names = Vec::new();
@@ -141,15 +142,77 @@ fn desc(text: &str) -> Desc {
     d
 }
 
-/// What pacman marks essential, from pacman.conf `conf` and the local db's `desc` files: HoldPkg,
-/// the `base` package, what it depends on, and the members of the `base` group.
+/// Whether `name` matches HoldPkg entry `pattern` as pacman's fnmatch does: `*`, `?`, and
+/// `[...]` sets with ranges and `!` or `^` negating, `\\` escaping the next character.
+fn glob(pattern: &[u8], name: &[u8]) -> bool {
+    match pattern.split_first() {
+        None => name.is_empty(),
+        Some((b'*', rest)) => (0..=name.len()).any(|i| glob(rest, &name[i..])),
+        Some((&p, rest)) => {
+            let Some((&c, name_rest)) = name.split_first() else {
+                return false;
+            };
+            let rest = match p {
+                b'?' => rest,
+                b'[' => match set(rest, c) {
+                    Some((true, after)) => after,
+                    Some((false, _)) => return false,
+                    None if c == b'[' => rest,
+                    None => return false,
+                },
+                b'\\' => match rest.split_first() {
+                    Some((&e, after)) if e == c => after,
+                    None if c == b'\\' => rest,
+                    _ => return false,
+                },
+                _ if p == c => rest,
+                _ => return false,
+            };
+            glob(rest, name_rest)
+        }
+    }
+}
+
+/// Whether `c` is in the set `pattern` starts (past its `[`), and the pattern after its `]`;
+/// `None` for a `[` that closes no set, which then stands for itself.
+fn set(pattern: &[u8], c: u8) -> Option<(bool, &[u8])> {
+    let (negated, mut p) = match pattern.first() {
+        Some(b'!' | b'^') => (true, &pattern[1..]),
+        _ => (false, pattern),
+    };
+    let mut found = false;
+    let mut first = true;
+    loop {
+        let (&lo, rest) = p.split_first()?;
+        if lo == b']' && !first {
+            return Some((found != negated, rest));
+        }
+        first = false;
+        p = rest;
+        if let [b'-', hi, rest @ ..] = p
+            && *hi != b']'
+        {
+            found |= (lo..=*hi).contains(&c);
+            p = rest;
+        } else {
+            found |= lo == c;
+        }
+    }
+}
+
+/// What pacman marks essential, from pacman.conf `conf` and the local db's `desc` files: HoldPkg's
+/// names and the installed packages its patterns match, the `base` package, what it depends on,
+/// and the members of the `base` group.
 fn pacman_essential(conf: &str, descs: impl IntoIterator<Item = String>) -> BTreeSet<String> {
-    let mut out: BTreeSet<String> = hold_pkg(conf).into_iter().collect();
+    let hold = hold_pkg(conf);
+    let mut out: BTreeSet<String> = hold.iter().cloned().collect();
     out.insert(BASE.into());
     for d in descs.into_iter().map(|t| desc(&t)) {
         if d.name == BASE {
             out.extend(d.depends);
-        } else if d.groups.iter().any(|g| g == BASE) {
+        } else if d.groups.iter().any(|g| g == BASE)
+            || hold.iter().any(|p| glob(p.as_bytes(), d.name.as_bytes()))
+        {
             out.insert(d.name);
         }
     }
@@ -157,15 +220,18 @@ fn pacman_essential(conf: &str, descs: impl IntoIterator<Item = String>) -> BTre
 }
 
 /// The dpkg format [`dpkg_essential`] reads.
-const DPKG_FORMAT: &str = "${Package}\t${Essential}\t${Priority}\n";
+const DPKG_FORMAT: &str = "${Package}\t${Essential}\t${Priority}\t${Protected}\n";
 
-/// The packages `dpkg-query -W -f DPKG_FORMAT` lists as `Essential: yes` or `Priority: required`.
+/// The packages `dpkg-query -W -f DPKG_FORMAT` lists as `Essential: yes`, `Protected: yes` or
+/// `Priority: required`. A dpkg older than `Protected` leaves that field empty.
 fn dpkg_essential(out: &str) -> BTreeSet<String> {
     out.lines()
         .filter_map(|l| {
             let mut f = l.split('\t');
             let (name, essential, priority) = (f.next()?, f.next()?, f.next()?);
-            (essential == "yes" || priority == "required").then(|| name.to_string())
+            let protected = f.next().unwrap_or("");
+            (essential == "yes" || protected == "yes" || priority == "required")
+                .then(|| name.to_string())
         })
         .collect()
 }
@@ -332,6 +398,64 @@ Include = /etc/pacman.d/mirrorlist
         assert_eq!(
             dpkg_essential(out),
             names(&["bash", "coreutils", "dpkg", "libc6", "mawk"])
+        );
+    }
+
+    #[test]
+    fn dpkg_marks_protected_packages() {
+        let out = "linux-image-generic\t\toptional\tyes\nhtop\t\toptional\t\n\
+                   grub-efi-amd64-signed\tno\toptional\tyes\nvim\t\toptional\tno\n";
+        assert_eq!(
+            dpkg_essential(out),
+            names(&["grub-efi-amd64-signed", "linux-image-generic"])
+        );
+    }
+
+    #[test]
+    fn hold_pkg_patterns_match_as_fnmatch_does() {
+        let yes = [
+            ("linux*", "linux"),
+            ("linux*", "linux-lts"),
+            ("*-firmware", "linux-firmware"),
+            ("lib?", "libc"),
+            ("nvidia-[0-9]*", "nvidia-550xx"),
+            ("python[23]", "python3"),
+            ("x[!a-c]", "xd"),
+            ("x[^a-c]", "xd"),
+            ("[]a]", "]"),
+            ("a[-z]", "a-"),
+            ("a[", "a["),
+            ("\\*", "*"),
+            ("glibc", "glibc"),
+        ];
+        for (p, n) in yes {
+            assert!(glob(p.as_bytes(), n.as_bytes()), "{p} matches {n}");
+        }
+        let no = [
+            ("linux*", "util-linux"),
+            ("lib?", "lib"),
+            ("lib?", "libcc"),
+            ("nvidia-[0-9]*", "nvidia-utils"),
+            ("x[!a-c]", "xb"),
+            ("\\*", "x"),
+            ("glibc", "glibc-locales"),
+            ("a[", "ab"),
+        ];
+        for (p, n) in no {
+            assert!(!glob(p.as_bytes(), n.as_bytes()), "{p} does not match {n}");
+        }
+    }
+
+    #[test]
+    fn pacman_marks_installed_packages_a_hold_pkg_pattern_matches() {
+        let desc = |n: &str| format!("%NAME%\n{n}\n\n%VERSION%\n1-1\n");
+        let got = pacman_essential(
+            "[options]\nHoldPkg = pacman linux*\n",
+            ["linux", "linux-lts", "util-linux", "htop"].map(desc),
+        );
+        assert_eq!(
+            got,
+            names(&["base", "linux", "linux*", "linux-lts", "pacman"])
         );
     }
 }
