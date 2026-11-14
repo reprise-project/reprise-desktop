@@ -45,8 +45,7 @@ impl State {
         let entry = self.app_index.get(app)?;
         let pinned_start = self.launches.is_pinned(&entry.id);
         let pinned_taskbar = self.quick_file_of(&entry.id).is_some();
-        let file = reprisefs::apps::find_file(&entry.id);
-        let uninstall = Uninstall::of(file.as_deref());
+        let uninstall = (self.app_uninstall.get(&entry.id).copied()).unwrap_or(Uninstall::Absent);
         Some(program_menu(
             app,
             pinned_start,
@@ -204,18 +203,35 @@ pub enum Uninstall {
 const NO_PACKAGEKIT: &str = "Uninstalling a program from the system's packages needs PackageKit.";
 
 impl Uninstall {
-    /// What the menu of the program with desktop file `file` offers: a Flatpak app, a system
-    /// package (only through PackageKit) or a launcher an app installed is uninstalled; the user's
-    /// own entry is not.
-    pub fn of(file: Option<&std::path::Path>) -> Uninstall {
-        use reprisefs::software::{Remover, packagekit_present, remover_of};
-        match file.map(remover_of) {
+    /// What the menu of a program `remover` removes offers (None: no desktop file): a Flatpak
+    /// app, a system package (only with `packagekit`) or a launcher an app installed is
+    /// uninstalled; the user's own entry is not.
+    pub fn of(remover: Option<reprisefs::software::Remover>, packagekit: bool) -> Uninstall {
+        use reprisefs::software::Remover;
+        match remover {
             Some(Remover::Flatpak(_) | Remover::Launcher) => Uninstall::Offered,
-            Some(Remover::Package) if packagekit_present() => Uninstall::Offered,
+            Some(Remover::Package) if packagekit => Uninstall::Offered,
             Some(Remover::Package) => Uninstall::Greyed(NO_PACKAGEKIT),
             Some(Remover::None) | None => Uninstall::Absent,
         }
     }
+}
+
+/// What each of `apps`' menus offers for Uninstall, by id, from where its desktop file is.
+/// Reads the file system: runs with the app index's scan, never from a click.
+pub fn uninstall_offers(
+    apps: &[reprisefs::apps::AppEntry],
+) -> std::collections::HashMap<String, Uninstall> {
+    use reprisefs::software::{packagekit_present, remover_among};
+    let installs = reprisefs::flatpak::installations();
+    let packagekit = packagekit_present();
+    (apps.iter())
+        .map(|a| {
+            let file = reprisefs::apps::find_file(&a.id);
+            let remover = file.map(|f| remover_among(&f, &installs));
+            (a.id.clone(), Uninstall::of(remover, packagekit))
+        })
+        .collect()
 }
 
 /// The context menu of program `app`: Open (bold), Pin to or Unpin from
@@ -479,6 +495,31 @@ mod tests {
                 MenuItem::Separator => String::new(),
             })
             .collect()
+    }
+
+    #[test]
+    fn uninstall_follows_what_removes_the_program() {
+        use reprisefs::software::{Installation, Remover};
+        let flatpak = Some(Remover::Flatpak(Installation::User));
+        assert_eq!(Uninstall::of(flatpak, false), Uninstall::Offered);
+        assert_eq!(
+            Uninstall::of(Some(Remover::Launcher), false),
+            Uninstall::Offered
+        );
+        assert_eq!(
+            Uninstall::of(Some(Remover::Package), true),
+            Uninstall::Offered
+        );
+        assert_eq!(
+            Uninstall::of(Some(Remover::Package), false),
+            Uninstall::Greyed(NO_PACKAGEKIT)
+        );
+        assert_eq!(Uninstall::of(Some(Remover::None), true), Uninstall::Absent);
+        assert_eq!(
+            Uninstall::of(None, true),
+            Uninstall::Absent,
+            "no desktop file"
+        );
     }
 
     #[test]

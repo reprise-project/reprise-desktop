@@ -258,6 +258,11 @@ impl State {
         self.push_context_menu(at, items, kind, MenuFrom::Elsewhere);
     }
 
+    /// Row `row` of found section `section`, as Enter on it would.
+    pub(crate) fn launcher_open_found(&mut self, section: usize, row: usize) {
+        self.apply_launcher(Event::Launch(Pick::Found(section, row)));
+    }
+
     fn apply_launcher(&mut self, event: Event) {
         match event {
             Event::None => self.redraw_launcher(),
@@ -267,9 +272,15 @@ impl State {
                 self.redraw_launcher();
             }
             Event::Launch(pick) => {
-                let Some(v) = self.launcher.as_ref() else {
+                let Some(v) = self.launcher.as_mut() else {
                     return;
                 };
+                if let Pick::Found(s, i) = pick
+                    && !v.search.open_now(s, i)
+                {
+                    return;
+                }
+                let v = &*v;
                 let apps = &self.app_index;
                 enum Launch {
                     App(reprisefs::apps::AppEntry),

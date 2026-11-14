@@ -328,6 +328,8 @@ pub struct State {
     /// Reloads `icons` when a directory of its theme changes (`iconwatch`).
     pub icon_watch: crate::iconwatch::IconWatch,
     pub app_index: Vec<reprisefs::apps::AppEntry>,
+    /// What each program's menu offers for Uninstall, by id, read with `app_index`.
+    pub app_uninstall: std::collections::HashMap<String, crate::startmenu::Uninstall>,
     /// Every program's search provider file, rescanned with `app_index`.
     pub search_providers: Vec<reprisefs::searchproviders::Provider>,
     pub launches: crate::launches::Launches,
@@ -607,6 +609,7 @@ impl State {
         } else {
             (Vec::new(), Vec::new())
         };
+        let app_uninstall = crate::startmenu::uninstall_offers(&app_index);
         log::info!(
             "icon theme {} ({} entries indexed)",
             config.icons.theme,
@@ -761,6 +764,7 @@ impl State {
             fading_bars: Vec::new(),
             icons,
             app_index,
+            app_uninstall,
             search_providers,
             launches: crate::launches::Launches {
                 pins: persisted.start_pins.clone(),
