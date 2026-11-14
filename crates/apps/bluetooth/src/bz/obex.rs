@@ -426,31 +426,49 @@ impl Obex {
     }
 }
 
-/// Moves a complete transfer into Downloads and posts it; a failed one's partial file goes.
+/// Moves a complete transfer into Downloads and posts it, on a thread of its own: across file
+/// systems the move copies the whole file, and the agent keeps answering meanwhile. A failed
+/// transfer's partial file goes.
 fn finish(a: Accepted, complete: bool, poster: &Poster) {
     if complete {
-        let landed = match crate::receive::downloads() {
-            Some(dir) => crate::receive::land(&a.incoming, &dir, &a.name),
-            None => Err(std::io::Error::other("no home folder")),
-        };
-        match landed {
-            Ok(path) => {
-                log::info!("received {}", path.display());
-                poster.post(BzMsg::Received {
-                    path,
-                    sender: a.sender,
-                });
-                return;
-            }
-            Err(e) => log::warn!("cannot move {} into Downloads: {e}", a.incoming.display()),
+        let poster = poster.clone();
+        let spawned = std::thread::Builder::new()
+            .name("obex-land".into())
+            .spawn(move || land(a, &poster));
+        if let Err(e) = spawned {
+            log::warn!("cannot start moving a received file: {e}");
         }
-    } else {
-        log::warn!(
-            "{:?} from {} stopped before it was complete",
-            a.name,
-            a.sender
-        );
+        return;
     }
+    log::warn!(
+        "{:?} from {} stopped before it was complete",
+        a.name,
+        a.sender
+    );
+    not_received(a, poster);
+}
+
+fn land(a: Accepted, poster: &Poster) {
+    let landed = match crate::receive::downloads() {
+        Some(dir) => crate::receive::land(&a.incoming, &dir, &a.name),
+        None => Err(std::io::Error::other("no home folder")),
+    };
+    match landed {
+        Ok(path) => {
+            log::info!("received {}", path.display());
+            poster.post(BzMsg::Received {
+                path,
+                sender: a.sender,
+            });
+        }
+        Err(e) => {
+            log::warn!("cannot move {} into Downloads: {e}", a.incoming.display());
+            not_received(a, poster);
+        }
+    }
+}
+
+fn not_received(a: Accepted, poster: &Poster) {
     let _ = std::fs::remove_file(&a.incoming);
     poster.post(BzMsg::NotReceived {
         name: a.name,

@@ -11,6 +11,7 @@ pub const NAME: &str = "org.freedesktop.bolt";
 const PATH: &str = "/org/freedesktop/bolt";
 const MANAGER: &str = "org.freedesktop.bolt1.Manager";
 const DEVICE: &str = "org.freedesktop.bolt1.Device";
+const DOMAIN: &str = "org.freedesktop.bolt1.Domain";
 const PROPERTIES: &str = "org.freedesktop.DBus.Properties";
 
 /// The policy an enrolled device gets: boltd authorizes it on its own whenever it connects.
@@ -78,7 +79,9 @@ impl Device {
 
 type Props = HashMap<String, OwnedVariant>;
 
-fn device(path: &str, props: &Props) -> Option<Device> {
+/// A device in `props`. Under the `iommu` policy boltd authorizes it itself only while the IOMMU
+/// is on, which `iommu` says.
+fn device(path: &str, props: &Props, iommu: bool) -> Option<Device> {
     let text = |k: &str| {
         props
             .get(k)
@@ -100,11 +103,16 @@ fn device(path: &str, props: &Props) -> Option<Device> {
         vendor: text("Vendor"),
         status: Status::parse(&text("Status")),
         stored,
-        auto: stored && matches!(text("Policy").as_str(), AUTO | "iommu"),
+        auto: stored
+            && match text("Policy").as_str() {
+                AUTO => true,
+                "iommu" => iommu,
+                _ => false,
+            },
     })
 }
 
-async fn props(conn: &Connection, path: &str) -> zbus::Result<Props> {
+async fn props(conn: &Connection, path: &str, iface: &str) -> zbus::Result<Props> {
     let p = zbus::proxy::Builder::<Proxy>::new(conn)
         .destination(NAME)
         .path(path)
@@ -112,7 +120,19 @@ async fn props(conn: &Connection, path: &str) -> zbus::Result<Props> {
         .cache_properties(CacheProperties::No)
         .build()
         .await?;
-    p.call("GetAll", &(DEVICE,)).await
+    p.call("GetAll", &(iface,)).await
+}
+
+/// Whether every domain reports its IOMMU on; false for one that can't be read.
+async fn iommu_on(conn: &Connection, domains: &[OwnedObjectPath]) -> bool {
+    for d in domains {
+        let on = (props(conn, d.as_str(), DOMAIN).await.ok())
+            .and_then(|p| p.get("IOMMU").and_then(|v| bool::try_from(v.clone()).ok()));
+        if on != Some(true) {
+            return false;
+        }
+    }
+    !domains.is_empty()
 }
 
 async fn manager(conn: &Connection) -> zbus::Result<Proxy<'static>> {
@@ -138,10 +158,11 @@ pub async fn found(conn: &Connection) -> zbus::Result<Found> {
     let m = manager(conn).await?;
     let domains: Vec<OwnedObjectPath> = m.call("ListDomains", &()).await?;
     let paths: Vec<OwnedObjectPath> = m.call("ListDevices", &()).await?;
+    let iommu = iommu_on(conn, &domains).await;
     let mut devices = Vec::new();
     for path in paths {
-        match props(conn, path.as_str()).await {
-            Ok(p) => devices.extend(device(path.as_str(), &p)),
+        match props(conn, path.as_str(), DEVICE).await {
+            Ok(p) => devices.extend(device(path.as_str(), &p, iommu)),
             Err(e) => log::info!("bolt: {}: {e}", path.as_str()),
         }
     }
@@ -526,7 +547,7 @@ mod tests {
     }
 
     #[test]
-    fn a_stored_device_is_auto_only_under_the_auto_or_iommu_policy() {
+    fn a_stored_device_is_auto_under_the_auto_policy_or_the_iommu_one_with_the_iommu_on() {
         let props = |stored: bool, policy: &str| -> Props {
             [
                 ("Stored", Variant::from(stored)),
@@ -537,11 +558,16 @@ mod tests {
             .map(|(k, v)| (k.to_string(), v.try_to_owned().unwrap()))
             .collect()
         };
-        let auto = |stored, policy| device(DOCK, &props(stored, policy)).unwrap().auto;
-        assert!(auto(true, "auto"));
-        assert!(auto(true, "iommu"));
-        assert!(!auto(true, "manual"));
-        assert!(!auto(false, "auto"), "not enrolled");
+        let auto =
+            |stored, policy, iommu| device(DOCK, &props(stored, policy), iommu).unwrap().auto;
+        assert!(auto(true, "auto", false));
+        assert!(auto(true, "iommu", true));
+        assert!(
+            !auto(true, "iommu", false),
+            "boltd leaves it waiting with the IOMMU off"
+        );
+        assert!(!auto(true, "manual", true));
+        assert!(!auto(false, "auto", true), "not enrolled");
     }
 
     #[test]
@@ -562,6 +588,42 @@ mod tests {
                 devices: vec![dock(Status::Connected)],
             }
         );
+    }
+
+    struct FakeDomain(bool);
+
+    #[zbus::interface(name = "org.freedesktop.bolt1.Domain")]
+    impl FakeDomain {
+        #[zbus(property, name = "IOMMU")]
+        fn iommu(&self) -> bool {
+            self.0
+        }
+    }
+
+    #[test]
+    fn an_iommu_device_is_auto_only_while_the_domains_report_the_iommu_on() {
+        let Some(bus) = bus() else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
+        let calls = Calls::default();
+        let autos = zbus::block_on(async {
+            let bolt = fake_bolt(&bus.1, &calls).await;
+            let server = bolt.object_server();
+            let dock = server.interface::<_, FakeDevice>(DOCK).await.unwrap();
+            dock.get_mut().await.stored = true;
+            dock.get_mut().await.policy = "iommu".into();
+            let me = connect(&bus.1).await;
+            let auto = async || found(&me).await.unwrap().devices[0].auto;
+            let unread = auto().await;
+            let domain = "/org/freedesktop/bolt/domains/d0";
+            server.at(domain, FakeDomain(false)).await.unwrap();
+            let off = auto().await;
+            server.remove::<FakeDomain, _>(domain).await.unwrap();
+            server.at(domain, FakeDomain(true)).await.unwrap();
+            (unread, off, auto().await)
+        });
+        assert_eq!(autos, (false, false, true));
     }
 
     #[test]
