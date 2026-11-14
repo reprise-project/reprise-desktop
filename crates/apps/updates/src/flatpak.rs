@@ -266,21 +266,30 @@ pub fn install(
 }
 
 /// Run `flatpak ARGS`, a transaction answered yes to every question, calling `step` as in
-/// [`install`] and `started` with its process id.
+/// [`install`]. `running` gets its process id once started and None before it is reaped, so a
+/// signal sent while the id is held never reaches a reused pid.
 pub fn follow(
     args: &[&str],
     step: &mut dyn FnMut(&str, f64),
-    started: &mut dyn FnMut(u32),
+    running: &mut dyn FnMut(Option<u32>),
 ) -> Result<(), String> {
-    let mut child = Command::new(FLATPAK)
-        .args(args)
-        .env("LC_ALL", "C")
+    let mut cmd = Command::new(FLATPAK);
+    cmd.args(args).env("LC_ALL", "C");
+    follow_command(cmd, step, running)
+}
+
+fn follow_command(
+    mut cmd: Command,
+    step: &mut dyn FnMut(&str, f64),
+    running: &mut dyn FnMut(Option<u32>),
+) -> Result<(), String> {
+    let mut child = cmd
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("Flatpak could not be started: {e}."))?;
-    started(child.id());
+    running(Some(child.id()));
     // stderr is read on a thread of its own, so a chatty one never
     // fills its pipe while stdout is followed here.
     let err = child.stderr.take().map(|mut e| {
@@ -298,6 +307,7 @@ pub fn follow(
             }
         }
     }
+    running(None);
     let status = child.wait().map_err(|e| e.to_string())?;
     let stderr = err.and_then(|t| t.join().ok()).unwrap_or_default();
     if status.success() {
@@ -505,6 +515,26 @@ fn burst_end(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_pid_is_let_go_before_the_process_is_reaped() {
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "exit 0"]);
+        let mut seen = Vec::new();
+        let ran = follow_command(cmd, &mut |_, _| {}, &mut |pid| {
+            let unreaped = seen
+                .last()
+                .copied()
+                .flatten()
+                .is_some_and(|p: u32| std::path::Path::new(&format!("/proc/{p}")).exists());
+            seen.push(pid);
+            if pid.is_none() {
+                assert!(unreaped, "the process is still ours to signal");
+            }
+        });
+        assert_eq!(ran, Ok(()));
+        assert!(matches!(seen[..], [Some(_), None]), "{seen:?}");
+    }
 
     const LIST: &str = "org.example.Editor/x86_64/stable\tEditor\t2.1.0\n\
         org.freedesktop.Platform.GL.default/x86_64/26.08-extra\tMesa (Extra)\t26.1.8\n\

@@ -103,6 +103,12 @@ impl App {
     pub fn output(&self) -> Option<&str> {
         self.streams.first()?.target.as_deref()
     }
+
+    /// Whether every stream plays to [`App::output`]; false when they play to different sinks.
+    pub fn settled(&self) -> bool {
+        let first = self.output();
+        self.streams.iter().all(|s| s.target.as_deref() == first)
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -1791,6 +1797,29 @@ mod tests {
             None,
             "a removed target follows the default"
         );
+    }
+
+    #[test]
+    fn streams_on_different_sinks_are_not_settled() {
+        let stream = |id, target: Option<&str>| Stream {
+            id,
+            channels: Default::default(),
+            target: target.map(String::from),
+        };
+        let app = |streams| App {
+            key: "game".into(),
+            label: "Game".into(),
+            icon_hints: Vec::new(),
+            binary: None,
+            pids: Vec::new(),
+            streams,
+            volume: 1.0,
+            mute: false,
+        };
+        let one = app(vec![stream(90, Some("a")), stream(91, Some("a"))]);
+        assert!(one.settled());
+        let apart = app(vec![stream(90, Some("a")), stream(91, None)]);
+        assert!(!apart.settled());
     }
 
     #[test]

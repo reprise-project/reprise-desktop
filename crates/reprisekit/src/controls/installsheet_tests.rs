@@ -202,8 +202,11 @@ fn looks() -> Vec<(String, Theme)> {
 fn the_sheet_pins_its_pixels_in_every_stage_and_look() {
     crate::pins::fonts();
     let stages = [
+        ("reading", Stage::Reading),
         ("asking", Stage::Asking { ready: true }),
+        ("unready", Stage::Asking { ready: false }),
         ("running", running(true)),
+        ("uncancellable", running(false)),
         ("done", Stage::Done),
         (
             "failed",
@@ -215,8 +218,14 @@ fn the_sheet_pins_its_pixels_in_every_stage_and_look() {
     for (look, base) in looks() {
         for (name, stage) in &stages {
             let mut s = sheet(stage.clone());
-            if *stage == Stage::Refused {
-                s.note = REFUSAL.into();
+            match stage {
+                Stage::Refused => s.note = REFUSAL.into(),
+                Stage::Asking { ready: false } => {
+                    s.note = "Uninstalling a program from the system's packages needs \
+                              PackageKit."
+                        .into();
+                }
+                _ => {}
             }
             for scale in [1, 2] {
                 let theme = base.scaled(scale);
