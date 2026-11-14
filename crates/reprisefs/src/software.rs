@@ -43,11 +43,15 @@ fn data_home() -> Option<PathBuf> {
 
 /// What removes the program whose desktop file is `file`, from where the file is.
 pub fn remover_of(file: &Path) -> Remover {
-    let installs = crate::flatpak::installations();
+    remover_among(file, &crate::flatpak::installations())
+}
+
+/// [`remover_of`] with [`crate::flatpak::installations`] read once by the caller, for many files.
+pub fn remover_among(file: &Path, installs: &[PathBuf]) -> Remover {
     let target = std::fs::read_link(file)
         .ok()
         .map(|t| lexical(&file.parent().unwrap_or(Path::new("/")).join(t)));
-    remover_in(file, target.as_deref(), &installs, data_home().as_deref())
+    remover_in(file, target.as_deref(), installs, data_home().as_deref())
 }
 
 /// [`remover_of`] for `file` linking to `target`, with `installs` as

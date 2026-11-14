@@ -305,6 +305,8 @@ struct Section {
     source: Source,
     found: Vec<Found>,
     shown: Vec<Found>,
+    /// The rows answer the text in the box, rather than being kept from older text.
+    fresh: bool,
 }
 
 /// One search box's found rows: each [`Source`]'s section, and what each found path is.
@@ -318,6 +320,9 @@ pub struct FileSearch {
     cancel: Option<Arc<AtomicBool>>,
     /// Dropped to stop the providers' search in flight ([`providers::ask`]).
     asking: Option<async_channel::Sender<()>>,
+    /// A program result picked while its section showed rows kept from older text, as (section,
+    /// row): it opens from that section's answer for the text now in the box.
+    waiting: Option<(usize, usize)>,
     timer: Option<RegistrationToken>,
 }
 
@@ -333,6 +338,7 @@ impl FileSearch {
                     source,
                     found: Vec::new(),
                     shown: Vec::new(),
+                    fresh: false,
                 })
                 .collect(),
             generation: next_generation(),
@@ -392,7 +398,42 @@ impl FileSearch {
         });
     }
 
+    /// Whether row `row` of section `section` opens now. A program's result kept from older text
+    /// does not: its id is for other terms, so the pick waits for the answer to the text in the
+    /// box ([`FileSearch::landed`]).
+    pub fn open_now(&mut self, section: usize, row: usize) -> bool {
+        let Some(s) = self.sections.get(section) else {
+            return true;
+        };
+        let stale = matches!(s.source, Source::Provider(_)) && !s.fresh;
+        if stale && s.shown.get(row).is_some() {
+            self.waiting = Some((section, row));
+            return false;
+        }
+        true
+    }
+
+    /// Section `section`'s rows kept from older text ([`Source::kept`]).
+    fn keep(&mut self, section: usize, kept: Vec<Found>) {
+        self.set(section, kept);
+        if let Some(s) = self.sections.get_mut(section) {
+            s.fresh = false;
+        }
+    }
+
+    /// Section `section`'s answer for the text in the box, and the row of a pick that waited for
+    /// it, which opens now.
+    pub(crate) fn landed(&mut self, section: usize, found: Vec<Found>) -> Option<usize> {
+        self.set(section, found);
+        if let Some(s) = self.sections.get_mut(section) {
+            s.fresh = true;
+        }
+        let (_, row) = self.waiting.take_if(|w| w.0 == section)?;
+        self.found(section, row).is_some().then_some(row)
+    }
+
     fn bump(&mut self) -> u64 {
+        self.waiting = None;
         self.generation = next_generation();
         if let Some(c) = self.cancel.take() {
             c.store(true, Ordering::Relaxed);
@@ -508,6 +549,14 @@ impl FileSearch {
 }
 
 impl State {
+    /// A program result picked from rows kept from older text opens now its answer is in.
+    fn open_waited(&mut self, o: SearchOwner, section: usize, row: usize) {
+        match o {
+            SearchOwner::Launcher => self.launcher_open_found(section, row),
+            SearchOwner::StartPanel => self.start_panel_open_found(section, row),
+        }
+    }
+
     pub fn open_setting(&mut self, s: Setting) {
         match s {
             Setting::Page(p) => self.spawn_argv_activated(&page_argv(p, None)),
@@ -559,7 +608,7 @@ impl State {
                 false => Vec::new(),
             };
             searching |= s.source.searches(query, files);
-            f.set(i, kept);
+            f.keep(i, kept);
         }
         if let Some(t) = f.timer.take() {
             self.handle.remove(t);
@@ -653,13 +702,16 @@ impl State {
             return;
         }
         f.facts.extend(facts);
-        f.set(section, found);
+        let waited = f.landed(section, found);
         match o {
             SearchOwner::Launcher => {
                 self.show_launcher_found();
                 self.redraw_launcher();
             }
             SearchOwner::StartPanel => self.start_panel_found(),
+        }
+        if let Some(row) = waited {
+            self.open_waited(o, section, row);
         }
     }
 }
@@ -1055,6 +1107,34 @@ mod tests {
         assert_eq!(Source::Contents.kept("note", &rows), rows);
         let results = vec![result("a")];
         assert_eq!(Source::Provider(calc()).kept("x", &results), results);
+    }
+
+    #[test]
+    fn a_program_result_picked_from_rows_kept_from_older_text_opens_from_the_new_answer() {
+        let mut f = FileSearch::new(false, vec![calc()]);
+        assert_eq!(f.landed(1, vec![result("2+3")]), None);
+        assert!(f.open_now(1, 0), "the rows answer the text");
+        f.keep(1, vec![result("2+3")]);
+        assert!(f.open_now(0, 0), "a file is no program result");
+        assert!(!f.open_now(1, 0), "kept from older text");
+        assert_eq!(f.landed(1, vec![result("2+4")]), Some(0));
+        assert_eq!(f.result(1, 0).unwrap().1.id, "2+4");
+
+        f.keep(1, vec![result("2+4")]);
+        assert!(!f.open_now(1, 0));
+        f.bump();
+        assert_eq!(
+            f.landed(1, vec![result("2+45")]),
+            None,
+            "newer text drops the pick"
+        );
+        f.keep(1, vec![result("2+45")]);
+        assert!(!f.open_now(1, 0));
+        assert_eq!(
+            f.landed(1, Vec::new()),
+            None,
+            "no row to open in the answer"
+        );
     }
 
     #[test]

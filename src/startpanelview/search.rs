@@ -179,10 +179,27 @@ impl State {
         v.model.set_results(groups);
     }
 
-    pub(super) fn start_panel_run_result(&mut self, g: usize, r: usize) {
+    /// Row `row` of found section `section`, as Enter on it would.
+    pub(crate) fn start_panel_open_found(&mut self, section: usize, row: usize) {
         let Some(v) = self.start_panel.as_ref() else {
             return;
         };
+        let found = ResultKind::Found(section);
+        if let Some(g) = v.result_kinds.iter().position(|k| *k == found) {
+            self.start_panel_run_result(g, row);
+        }
+    }
+
+    pub(super) fn start_panel_run_result(&mut self, g: usize, r: usize) {
+        let Some(v) = self.start_panel.as_mut() else {
+            return;
+        };
+        if let Some(&ResultKind::Found(s)) = v.result_kinds.get(g)
+            && !v.search.open_now(s, r)
+        {
+            return;
+        }
+        let v = &*v;
         enum Run {
             Copy(String),
             App(Box<AppEntry>),
