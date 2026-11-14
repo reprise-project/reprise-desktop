@@ -1102,7 +1102,7 @@ fn every_reported_press_reports_its_release() {
 }
 
 #[test]
-fn a_covered_window_reports_the_held_button_released_and_ends_the_sweep() {
+fn a_covered_window_reports_the_held_button_released_and_offers_the_ended_sweep() {
     let mut ctx = test_ctx();
     let mut t = terminal(&["sh", "-c", "printf '\\033[?1002h\\033[?1006h'; sleep 5"]);
     t.follow_scale(MAIN, 1, &mut ctx);
@@ -1115,7 +1115,7 @@ fn a_covered_window_reports_the_held_button_released_and_ends_the_sweep() {
     });
     let motion = |t: &mut Terminal, ctx: &mut Ctx, col| {
         let (x, y) = cell_point(t, ctx, col, 0, false);
-        pointer(t, ctx, PointerInput::Motion { x, y });
+        pointer(t, ctx, PointerInput::Motion { x, y })
     };
     let (x, y) = cell_point(&mut t, &ctx, 0, 0, false);
     t.w.tabs.current().unwrap().written.borrow_mut().clear();
@@ -1137,12 +1137,15 @@ fn a_covered_window_reports_the_held_button_released_and_ends_the_sweep() {
     motion(&mut t, &mut ctx, 3);
     let swept = t.w.tabs.current().unwrap().selection();
     repriseapp::cover(&mut t, MAIN, &ctx);
-    motion(&mut t, &mut ctx, 6);
+    let reply = motion(&mut t, &mut ctx, 6);
     assert_eq!(t.w.tabs.current().unwrap().selection(), swept);
+    assert_eq!(reply.copy_primary, swept, "the next reply offers the sweep");
     assert!(
         swept.is_some_and(|s| !s.is_empty()),
         "the sweep selected text"
     );
+    let reply = motion(&mut t, &mut ctx, 5);
+    assert_eq!(reply.copy_primary, None, "the sweep is offered once");
 }
 
 #[test]
