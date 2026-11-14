@@ -548,11 +548,12 @@ fn run(
                     report(Some(f), line);
                 },
                 &mut |pid| {
-                    lock(stop).pid = Some(pid);
-                    poster.post(Msg::Cancellable(true));
+                    lock(stop).pid = pid;
+                    if pid.is_some() {
+                        poster.post(Msg::Cancellable(true));
+                    }
                 },
             );
-            lock(stop).pid = None;
             ran.map_err(Failure::Text)
         }
         (_, None) => Err(Failure::Text("There is no system bus.".into())),
@@ -629,7 +630,8 @@ fn cancel(stop: &Arc<Mutex<Stopper>>) {
     let mut s = lock(stop);
     s.cancelled = true;
     if let Some(pid) = s.pid {
-        // SAFETY: kill takes no pointers; the pid is our own child's, reaped only after it exits.
+        // SAFETY: kill takes no pointers. The pid is our own child's: `flatpak::follow` lets go
+        // of it under this lock before reaping it.
         unsafe { libc::kill(pid as libc::pid_t, libc::SIGINT) };
     } else if let Some(tid) = s.tid.clone() {
         std::thread::spawn(move || {

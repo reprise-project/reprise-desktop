@@ -205,6 +205,31 @@ fn fnv(c: &Canvas) -> u64 {
 }
 
 #[test]
+fn the_pinned_states_are_the_ones_named() {
+    let (text, theme) = env();
+    let mut unchecked = Sheet::new(vec![plasma()], &text, &theme);
+    key(&mut unchecked, Key::Space, &text, &theme);
+    assert_eq!(button(&unchecked, IMPORT), Some((false, false)));
+    assert_eq!(
+        button(&unchecked, CANCEL),
+        Some((true, true)),
+        "Cancel is the default"
+    );
+    let long = Source {
+        name: "GNOME".into(),
+        lines: (1..=14)
+            .map(|i| line(&format!("Setting {i}"), "Off", "On"))
+            .collect(),
+    };
+    let mut scrolled = Sheet::new(vec![long], &text, &theme);
+    key(&mut scrolled, Key::End, &text, &theme);
+    assert!(scrolled.list.top > 0, "the last row scrolled into view");
+    let mut on_form = Sheet::new(vec![gnome()], &text, &theme);
+    key(&mut on_form, Key::Tab { back: false }, &text, &theme);
+    assert!(on_form.list.inactive && on_form.form.focus().is_some());
+}
+
+#[test]
 fn the_sheet_pins_its_pixels_in_every_look() {
     crate::pins::fonts();
     let mut got = Vec::new();
@@ -223,7 +248,27 @@ fn the_sheet_pins_its_pixels_in_every_look() {
             let mut done = Sheet::new(vec![plasma()], &text, &theme);
             done.done("Imported 1 Plasma setting.".into(), true, &text, &theme);
             let none = Sheet::new(Vec::new(), &text, &theme);
-            for (name, s) in [("asking", asking), ("done", done), ("none", none)] {
+            let mut unchecked = Sheet::new(vec![plasma()], &text, &theme);
+            key(&mut unchecked, Key::Space, &text, &theme);
+            let long = Source {
+                name: "GNOME".into(),
+                lines: (1..=14)
+                    .map(|i| line(&format!("Setting {i}"), "Off", "On"))
+                    .collect(),
+            };
+            let mut scrolled = Sheet::new(vec![long], &text, &theme);
+            key(&mut scrolled, Key::End, &text, &theme);
+            let mut on_form = Sheet::new(vec![gnome()], &text, &theme);
+            key(&mut on_form, Key::Tab { back: false }, &text, &theme);
+            let states = [
+                ("asking", asking),
+                ("done", done),
+                ("none", none),
+                ("unchecked", unchecked),
+                ("scrolled", scrolled),
+                ("form focus", on_form),
+            ];
+            for (name, s) in states {
                 let (w, h) = Sheet::size(TextUnits::ONE);
                 let mut c = Canvas::new((w * scale) as u32, (h * scale) as u32);
                 draw(&mut c, &text, &theme.paint(), &s, px);
