@@ -542,9 +542,12 @@ impl FileDlg {
     }
 
     /// Let go of the pointer outright, for a host whose window will not see the release: a
-    /// marquee gives back the selection its press found, and no button, title or place stays held.
+    /// marquee keeps the selection it reached, as a release does, and no button, title or place
+    /// stays held.
     pub fn cancel_pointer(&mut self) {
-        self.cancel_marquee();
+        if let Some(m) = self.marquee.take() {
+            m.release(&mut self.shell);
+        }
         self.toolbar.pressed = None;
         self.shell.header.clear();
         self.places.pressed = None;
