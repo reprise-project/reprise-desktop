@@ -4,6 +4,9 @@
 use super::{Device, Launcher, Setting, other};
 use std::path::{Path, PathBuf};
 
+/// The largest Plasma config file read; a real one is a few KiB.
+const MAX_FILE: u64 = 1 << 20;
+
 /// A group's path (`[A][B]` as `["A", "B"]`) and its entries.
 type Group = (Vec<String>, Vec<(String, String)>);
 
@@ -68,10 +71,10 @@ impl KConfig {
         KConfig { groups }
     }
 
+    /// The file at `path`; a FIFO, a device or one over [`MAX_FILE`] reads as none.
     fn read(path: &Path, home: &str) -> Option<KConfig> {
-        std::fs::read_to_string(path)
-            .ok()
-            .map(|t| KConfig::parse(&t, home))
+        let bytes = reprisefs::ops::read_regular(path, MAX_FILE).ok()?;
+        Some(KConfig::parse(&String::from_utf8_lossy(&bytes), home))
     }
 
     /// Key `key` of group `group`; the last one written wins.

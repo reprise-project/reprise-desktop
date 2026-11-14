@@ -191,14 +191,17 @@ impl repriseapp::Extended for WelcomeApp {
 /// Welcome runs once.
 fn first_login() -> bool {
     let state = repriseconf::state_path();
-    if !repriseconf::welcome::pending(&state) {
-        log::info!("not a first login, nothing to show");
-        return false;
+    match repriseconf::welcome::take(&state) {
+        Ok(true) => true,
+        Ok(false) => {
+            log::info!("not a first login, nothing to show");
+            false
+        }
+        Err(e) => {
+            log::warn!("{}: {e}", state.display());
+            false
+        }
     }
-    if let Err(e) = repriseconf::welcome::set(&state, false) {
-        log::warn!("{}: {e}", state.display());
-    }
-    true
 }
 
 /// Runs the program; `args` are the command line after the program's name.

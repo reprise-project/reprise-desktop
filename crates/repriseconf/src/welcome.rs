@@ -43,6 +43,23 @@ pub fn pending(state: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// Whether Welcome has to show at this login, clearing the flag in the same locked edit: of two
+/// starts at once only one gets true, and a flag that cannot be cleared shows nothing.
+pub fn take(state: &Path) -> Result<bool, String> {
+    let taken = crate::edit_or_reset(state, |text| {
+        let mut doc = text.parse::<DocumentMut>().unwrap_or_default();
+        if doc.get(KEY).and_then(Item::as_bool) != Some(true) {
+            return Err(());
+        }
+        doc[KEY] = value(false);
+        Ok(doc.to_string())
+    });
+    match taken {
+        Ok(r) => Ok(r.is_ok()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 /// Write the flag into `state`, leaving every other key as it is.
 pub fn set(state: &Path, on: bool) -> Result<(), String> {
     let written = crate::edit_or_reset(state, |text| {
@@ -81,6 +98,23 @@ mod tests {
             !mark_first_login(&config, &state),
             "the cleared flag is an entry, so the next login is not a first one"
         );
+    }
+
+    #[test]
+    fn take_is_true_once_then_false() {
+        let d = dir("take");
+        let state = d.join("state.toml");
+        assert_eq!(take(&state), Ok(false));
+        assert!(
+            !state.exists(),
+            "nothing is written when the flag is not set"
+        );
+        std::fs::write(&state, "run_history = [\"foot\"]\nwelcome_pending = true\n").unwrap();
+        assert_eq!(take(&state), Ok(true));
+        assert_eq!(take(&state), Ok(false));
+        let text = std::fs::read_to_string(&state).unwrap();
+        assert!(text.contains("run_history = [\"foot\"]"), "{text}");
+        assert!(!pending(&state));
     }
 
     #[test]
