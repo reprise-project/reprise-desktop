@@ -10,8 +10,9 @@ use reprisebus::bolt::{self, Change, Device, Found};
 pub enum Msg {
     /// What boltd knows now; None while it is not on the bus.
     Found(Option<Found>),
-    /// A button's change finished: the device's label and what to tell when it failed.
+    /// A button's change finished: the device's uid and label, and what to tell when it failed.
     Done {
+        uid: String,
         label: String,
         result: Result<(), Option<String>>,
     },
@@ -42,6 +43,7 @@ pub fn carry_out(poster: &Poster, d: Device, change: Change) {
         .spawn(move || {
             let result = bolt::carry_out(&d, change);
             p.post(Msg::Done {
+                uid: d.uid.clone(),
                 label: d.label(),
                 result,
             });

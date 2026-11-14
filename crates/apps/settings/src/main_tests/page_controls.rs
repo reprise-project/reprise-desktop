@@ -670,6 +670,27 @@ fn tb_lit(a: &SettingsApp, id: &str) -> bool {
 }
 
 #[test]
+fn each_change_boltd_signals_shows_the_newest() {
+    let mut a = app("thunderbolt");
+    let (tx, rx) = std::sync::mpsc::channel();
+    a.thunderbolt.follow = Some(rx);
+    assert!(!a.thunderbolt_done(), "nothing signalled yet");
+    let found = |domains| Found {
+        domains,
+        devices: Vec::new(),
+    };
+    tx.send(None).unwrap();
+    tx.send(Some(found(1))).unwrap();
+    assert!(a.thunderbolt_done());
+    assert_eq!(a.thunderbolt.found, Some(found(1)));
+    tx.send(Some(found(1))).unwrap();
+    assert!(!a.thunderbolt_done(), "the same list again changes nothing");
+    drop(tx);
+    a.thunderbolt_done();
+    assert!(a.thunderbolt.follow.is_none());
+}
+
+#[test]
 fn authorize_acts_at_once_on_the_picked_device_and_says_why_it_failed() {
     let mut a = app("thunderbolt");
     let p = Page::Thunderbolt.index();
