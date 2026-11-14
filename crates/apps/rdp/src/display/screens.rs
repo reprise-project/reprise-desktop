@@ -122,7 +122,7 @@ mod tests {
         Frames, SMALL, Sizes, VAAPI, bitmap_size, code, frame, links, picture, ready_gfx,
     };
     use crate::display::*;
-    use crate::stream::Rect;
+    use crate::stream::{FrameBuffer, Rect};
     use futures_util::FutureExt;
     use tokio::sync::mpsc::unbounded_channel;
 

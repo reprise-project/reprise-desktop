@@ -17,9 +17,7 @@ use crate::input::{self, Feed, SharedMoves};
 use crate::layout::{Desk, Kind, Pairing, ScreenRect};
 use crate::listen::{Ending, Shown};
 use crate::portal::{self, Grant};
-use crate::stream::{
-    self, CursorImage, DRM_FORMAT_MOD_LINEAR, Frame, FrameBuffer, Offer, SizeChange,
-};
+use crate::stream::{self, CursorImage, DRM_FORMAT_MOD_LINEAR, Frame, Offer, SizeChange};
 use ironrdp_displaycontrol::pdu::DisplayControlMonitorLayout;
 use ironrdp_pdu::pointer::PointerPositionAttribute;
 use ironrdp_pdu::rdp::server_error_info::ProtocolIndependentCode;
@@ -914,7 +912,7 @@ impl Live {
             (Some(path), Some(b)) if h264 => (Some(b), path.picture.modifiers(b)),
             _ => (None, &[DRM_FORMAT_MOD_LINEAR][..]),
         };
-        if !reads(&frame, reader, readable) {
+        if !crate::encode::reads_offered(reader, readable, &frame) {
             self.hold(frame, now, h264);
             return;
         }
@@ -942,15 +940,7 @@ impl Live {
     /// Keep `frame`, which the encoder cannot read, for the stream's next one: renegotiate every
     /// [`HOLD`], and after two the next encoder in the order takes over (bitmaps after the last).
     fn hold(&mut self, frame: Frame, now: Instant, h264: bool) {
-        let buffer = match &frame.buffer {
-            FrameBuffer::Dmabuf {
-                modifier: DRM_FORMAT_MOD_LINEAR,
-                planes,
-                ..
-            } if !planes.is_empty() => format!("LINEAR, pitch {}", planes[0].stride),
-            FrameBuffer::Dmabuf { modifier, .. } => format!("modifier {modifier:#x}"),
-            FrameBuffer::Shm { .. } => "shared memory".to_string(),
-        };
+        let buffer = frame.buffer.describe();
         self.pending = Some(frame);
         self.next_at = now + self.interval;
         let (since, asks) = *self.unreadable.get_or_insert((now, 0));
@@ -1162,16 +1152,6 @@ fn show_encoder(status: &watch::Sender<Status>, label: &str) {
         s.encoder = label.into();
         changed
     });
-}
-
-/// Whether `backend` (None: the bitmap encoder), mapping `modifiers`, reads `frame`'s buffer;
-/// the stream may still deliver buffers of an older offer.
-fn reads(frame: &Frame, backend: Option<Backend>, modifiers: &[u64]) -> bool {
-    crate::encode::reads(backend, frame)
-        && match &frame.buffer {
-            FrameBuffer::Dmabuf { modifier, .. } => modifiers.contains(modifier),
-            FrameBuffer::Shm { .. } => true,
-        }
 }
 
 /// Bitmap `u` moved by `at` and cut to `desktop`; None when none of it is on the desktop.

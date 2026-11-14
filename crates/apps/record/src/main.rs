@@ -3,11 +3,13 @@
 //! On failure its last line on stderr is the reason.
 
 mod args;
+mod fallback;
 mod movie;
 mod portal;
 mod sound;
 
 use args::{Area, Args};
+use fallback::{Ask, Backends, Step};
 use ffmpeg::Packet;
 use movie::Movie;
 use repriseconf::remote::EncoderChoice;
@@ -69,10 +71,12 @@ fn record(args: &Args, stop: libc::sigset_t) -> Result<(), String> {
     let screen = (cast.screen(&args.output).cloned())
         .ok_or_else(|| format!("The screen {} is not shared.", args.output))?;
     let (device, order) = picked.join().map_err(|_| "Finding an encoder failed.")?;
+    #[cfg(feature = "fallback-test")]
+    let (order, forced) = forced::order(order);
     let (first, modifiers) = order.first().ok_or("No H.264 encoder works here.")?;
     log::info!("recording {}, {} first", args.output, first.label());
     let fd = cast.pipewire()?;
-    let (_stream, mut frames, _sizes) = stream::spawn(fd, screen.node, modifiers, APP, || {})?;
+    let (stream, mut frames, _sizes) = stream::spawn(fd, screen.node, modifiers, APP, || {})?;
     let video_tx = tx.clone();
     std::thread::Builder::new()
         .name("reprise-record-frames".into())
@@ -89,8 +93,17 @@ fn record(args: &Args, stop: libc::sigset_t) -> Result<(), String> {
         true => Some(capture_sound(tx)?),
         false => None,
     };
-    let backends = order.iter().map(|(b, _)| *b).collect();
-    let mut file = File::new(&into, &device, backends, args.area, screen.size, args.sound);
+    let offer = stream.offer();
+    let ask = move |a: &Ask| match a.again {
+        false => offer.modifiers(&a.modifiers),
+        true => offer.again(&a.modifiers),
+    };
+    let mut file = File::new(&into, &device, order, args.area, screen.size, args.sound);
+    file.ask = Box::new(ask);
+    #[cfg(feature = "fallback-test")]
+    {
+        file.forced = forced;
+    }
     let ended = file.run(&events);
     let finished = file.finish();
     drop(cast);
@@ -181,8 +194,11 @@ fn capture_sound(tx: mpsc::Sender<Event>) -> Result<pipewire::channel::Sender<()
 struct File<'a> {
     path: &'a Path,
     device: &'a Path,
-    /// The backends not yet tried, in order.
-    backends: Vec<Backend>,
+    backends: Backends,
+    /// Asks the screen's stream for other buffers.
+    ask: Box<dyn FnMut(&Ask)>,
+    #[cfg(any(test, feature = "fallback-test"))]
+    forced: Option<Forced>,
     area: Option<Area>,
     /// The screen's logical size, which the area is in.
     logical: (i32, i32),
@@ -206,7 +222,7 @@ impl<'a> File<'a> {
     fn new(
         path: &'a Path,
         device: &'a Path,
-        backends: Vec<Backend>,
+        backends: Vec<(Backend, Vec<u64>)>,
         area: Option<Area>,
         logical: (i32, i32),
         wants_sound: bool,
@@ -214,7 +230,10 @@ impl<'a> File<'a> {
         File {
             path,
             device,
-            backends,
+            backends: Backends::new(backends),
+            ask: Box::new(|_| {}),
+            #[cfg(any(test, feature = "fallback-test"))]
+            forced: None,
             area,
             logical,
             sound: None,
@@ -267,17 +286,24 @@ impl<'a> File<'a> {
     }
 
     fn frame(&mut self, frame: &Frame, at: Instant) -> Result<(), String> {
-        let start = *self.start.get_or_insert(at);
         let (size, origin) = self.cut(frame.size)?;
         if self.movie.as_ref().is_some_and(|m| !m.takes(frame, size)) {
             return Err("The screen changed size or format.".into());
         }
+        let start = *self.start.get_or_insert(at);
         // Each frame is a whole picture, so the same ms twice keeps the newer.
         let pts = (at.duration_since(start).as_millis() as i64).max(self.last_pts + 1);
         let mut packets = Vec::new();
         loop {
             if self.movie.is_none() {
-                self.movie = Some(self.open_movie(frame, size, origin)?);
+                match self.open_movie(frame, size, origin, at)? {
+                    Some(movie) => self.movie = Some(movie),
+                    // Nothing is written yet, so the first frame coded is the movie's time 0.
+                    None => {
+                        self.start = None;
+                        return Ok(());
+                    }
+                }
             }
             let movie = self.movie.as_mut().expect("opened above");
             match movie.code(frame, pts, &mut packets) {
@@ -294,23 +320,47 @@ impl<'a> File<'a> {
         self.write(packets, VIDEO)
     }
 
-    /// The next backend in turn that opens for `frame`.
+    /// The next backend in turn that reads `frame` and opens for it. None drops `frame` while the
+    /// stream is asked for buffers the next backend reads.
     fn open_movie(
         &mut self,
         frame: &Frame,
         size: (u32, u32),
         origin: (u32, u32),
-    ) -> Result<Movie, String> {
+        at: Instant,
+    ) -> Result<Option<Movie>, String> {
         let fourcc = match &frame.buffer {
             FrameBuffer::Dmabuf { fourcc, .. } | FrameBuffer::Shm { fourcc, .. } => *fourcc,
         };
-        while !self.backends.is_empty() {
-            let backend = self.backends.remove(0);
-            if !reprisevideo::encode::reads(Some(backend), frame) {
-                log::info!("{} cannot read the screen's buffers", backend.label());
-                continue;
-            }
-            match Movie::open(backend, self.device, fourcc, frame.size, size, origin) {
+        loop {
+            #[cfg(any(test, feature = "fallback-test"))]
+            let forced = self.forced.as_ref();
+            #[cfg(not(any(test, feature = "fallback-test")))]
+            let forced = None;
+            let reads = |b, m: &[u64]| readable(forced, b, m, frame, at);
+            let backend = match self.backends.next(at, reads) {
+                Step::Open(backend) => backend,
+                Step::Wait(ask) => {
+                    if let Some(ask) = ask {
+                        if !ask.again {
+                            log::warn!(
+                                "{} cannot read the screen's buffers ({}); asking the stream \
+                                 for buffers it maps",
+                                ask.backend.label(),
+                                frame.buffer.describe()
+                            );
+                        }
+                        #[cfg(any(test, feature = "fallback-test"))]
+                        if let Some(f) = &mut self.forced {
+                            f.asked.get_or_insert_with(Instant::now);
+                        }
+                        (self.ask)(&ask);
+                    }
+                    return Ok(None);
+                }
+                Step::Exhausted => return Err("No H.264 encoder could code the screen.".into()),
+            };
+            match self.open(backend, fourcc, frame.size, size, origin) {
                 Ok(m) => {
                     let cut = match (self.area, m.cut_on_gpu()) {
                         (None, _) => "",
@@ -321,12 +371,28 @@ impl<'a> File<'a> {
                         "coding {size:?} from {origin:?} with {}{cut}",
                         backend.label()
                     );
-                    return Ok(m);
+                    return Ok(Some(m));
                 }
                 Err(e) => log::warn!("{}: {e}", backend.label()),
             }
         }
-        Err("No H.264 encoder could code the screen.".into())
+    }
+
+    fn open(
+        &self,
+        backend: Backend,
+        fourcc: u32,
+        frame: (u32, u32),
+        size: (u32, u32),
+        origin: (u32, u32),
+    ) -> Result<Movie, reprisevideo::encode::EncodeError> {
+        #[cfg(any(test, feature = "fallback-test"))]
+        if self.forced.is_some() && backend.gpu().is_some() {
+            return Err(reprisevideo::encode::EncodeError(
+                "failing to open on purpose".into(),
+            ));
+        }
+        Movie::open(backend, self.device, fourcc, frame, size, origin)
     }
 
     /// The part of a `frame_size` frame recorded: its size and top-left in frame pixels.
@@ -442,6 +508,66 @@ fn area_pixels(area: Area, logical: (i32, i32), frame: (u32, u32)) -> Option<Cut
     (w > 0 && h > 0).then_some(((w, h), (x0 as u32, y0 as u32)))
 }
 
+/// Whether `backend`, mapping `modifiers`, reads `frame`, which came at `at`.
+fn readable(
+    forced: Option<&Forced>,
+    backend: Backend,
+    modifiers: &[u64],
+    frame: &Frame,
+    at: Instant,
+) -> bool {
+    #[cfg(any(test, feature = "fallback-test"))]
+    if let Some(f) = forced
+        && f.buffers
+        && f.asked.is_none_or(|asked| at <= asked)
+    {
+        return backend.gpu().is_some();
+    }
+    #[cfg(not(any(test, feature = "fallback-test")))]
+    let _ = (forced, at);
+    reprisevideo::encode::reads_offered(Some(backend), modifiers, frame)
+}
+
+/// A hardware encoder failing, for a check where none works: each fails to open, and with
+/// `buffers` the frames that came before the stream was asked for others count as buffers only
+/// a GPU reads.
+#[cfg(any(test, feature = "fallback-test"))]
+#[derive(Default)]
+struct Forced {
+    buffers: bool,
+    asked: Option<Instant>,
+}
+
+#[cfg(not(any(test, feature = "fallback-test")))]
+enum Forced {}
+
+/// `REPRISE_RECORD_FAIL_HARDWARE=1` in a build with the `fallback-test` feature: every hardware
+/// encoder fails to open, a Vulkan stand-in first when the probe found none.
+#[cfg(feature = "fallback-test")]
+mod forced {
+    use super::{Backend, DRM_FORMAT_MOD_LINEAR, Forced};
+
+    /// A tiled modifier the stand-in offers besides LINEAR.
+    const Y_TILED: u64 = 0x0100_0000_0000_0002;
+
+    pub fn order(
+        mut order: Vec<(Backend, Vec<u64>)>,
+    ) -> (Vec<(Backend, Vec<u64>)>, Option<Forced>) {
+        if std::env::var_os("REPRISE_RECORD_FAIL_HARDWARE").is_none_or(|v| v != "1") {
+            return (order, None);
+        }
+        log::warn!("every hardware encoder fails to open (REPRISE_RECORD_FAIL_HARDWARE)");
+        if order.iter().all(|(b, _)| b.gpu().is_none()) {
+            order.insert(0, (Backend::Vulkan, vec![DRM_FORMAT_MOD_LINEAR, Y_TILED]));
+        }
+        let forced = Forced {
+            buffers: true,
+            asked: None,
+        };
+        (order, Some(forced))
+    }
+}
+
 /// Block SIGINT and SIGTERM in this thread and every thread it starts from now on.
 fn block_stop_signals() -> libc::sigset_t {
     // SAFETY: a set built and installed on this thread; the out-params are valid.
@@ -500,7 +626,8 @@ mod tests {
             width: 32,
             height: 24,
         });
-        let mut file = File::new(&path, &node, vec![Backend::X264], area, (64, 48), false);
+        let x264 = vec![(Backend::X264, vec![DRM_FORMAT_MOD_LINEAR])];
+        let mut file = File::new(&path, &node, x264, area, (64, 48), false);
         let t0 = Instant::now();
         for (i, grey) in [0x20u8, 0x80, 0xe0].into_iter().enumerate() {
             let frame = Frame::detached(vec![grey; 64 * 48 * 4], (64, 48), Vec::new());
@@ -518,6 +645,85 @@ mod tests {
         assert_eq!(input.streams().count(), 1, "no sound asked for");
         let seconds = input.duration() as f64 / f64::from(ffmpeg::ffi::AV_TIME_BASE);
         assert!((0.8..1.5).contains(&seconds), "{seconds} s");
+    }
+
+    #[test]
+    fn a_hardware_encoder_failing_to_open_drops_only_the_tiled_frames_in_flight() {
+        use reprisevideo::stream::{Plane, XRGB8888};
+        use std::cell::RefCell;
+        use std::rc::Rc;
+        use std::sync::Arc;
+        const Y_TILED: u64 = 0x0100_0000_0000_0002;
+        ffmpeg::init().unwrap();
+        ffmpeg::util::log::set_level(ffmpeg::util::log::Level::Quiet);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.mp4");
+        let node = PathBuf::from(probe::RENDER_NODE);
+        let order = vec![
+            (
+                Backend::Vaapi { low_power: false },
+                vec![DRM_FORMAT_MOD_LINEAR, Y_TILED],
+            ),
+            (Backend::X264, vec![DRM_FORMAT_MOD_LINEAR]),
+        ];
+        let area = Some(Area {
+            x: 8,
+            y: 4,
+            width: 32,
+            height: 24,
+        });
+        let mut file = File::new(&path, &node, order, area, (64, 48), false);
+        let asks = Rc::new(RefCell::new(Vec::new()));
+        file.ask = Box::new({
+            let asks = asks.clone();
+            move |a: &Ask| {
+                asks.borrow_mut()
+                    .push((a.backend, a.modifiers.clone(), a.again))
+            }
+        });
+        file.forced = Some(Forced::default());
+        let tiled = || {
+            let fd = std::fs::File::open("/dev/null").unwrap();
+            let buffer = FrameBuffer::Dmabuf {
+                objects: vec![Arc::new(fd.into())],
+                fourcc: XRGB8888,
+                modifier: Y_TILED,
+                planes: vec![Plane {
+                    object: 0,
+                    offset: 0,
+                    stride: 256,
+                }],
+            };
+            Frame::unleased(buffer, (64, 48))
+        };
+        let t0 = Instant::now();
+        let at = |ms| t0 + Duration::from_millis(ms);
+        file.frame(&tiled(), at(0)).unwrap();
+        file.frame(&tiled(), at(16)).unwrap();
+        assert!(!file.started(), "both tiled frames dropped");
+        for (i, grey) in [0x20u8, 0x80, 0xe0].into_iter().enumerate() {
+            let frame = Frame::detached(vec![grey; 64 * 48 * 4], (64, 48), Vec::new());
+            file.frame(&frame, at(100 + 400 * i as u64)).unwrap();
+        }
+        file.finish().unwrap();
+        assert_eq!(
+            *asks.borrow(),
+            [(Backend::X264, vec![DRM_FORMAT_MOD_LINEAR], false)],
+            "the stream is asked once for x264's LINEAR buffers"
+        );
+        let mut input = ffmpeg::format::input(&path).unwrap();
+        assert_eq!(input.streams().count(), 1);
+        let tb = input.stream(VIDEO).unwrap().time_base();
+        let packets: Vec<_> = (input.packets()).map(|p| p.unwrap().1).collect();
+        let ms: Vec<_> = (packets.iter())
+            .map(|p| p.pts().unwrap() * 1000 * i64::from(tb.0) / i64::from(tb.1))
+            .collect();
+        assert_eq!(
+            ms,
+            [0, 400, 800, 801],
+            "one stream from the first readable frame at time 0, held to the end"
+        );
+        assert!(packets[0].is_key());
     }
 
     #[test]

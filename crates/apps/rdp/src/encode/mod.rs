@@ -4,7 +4,9 @@
 
 pub mod bitmap;
 
-pub use reprisevideo::encode::{EncodeError, avc444, choice, ffmpeg, hwmap, probe, reads};
+pub use reprisevideo::encode::{
+    EncodeError, avc444, choice, ffmpeg, hwmap, probe, reads, reads_offered,
+};
 
 use crate::stream::Frame;
 use bitmap::Bitmap;

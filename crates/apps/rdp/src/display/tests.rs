@@ -1,7 +1,7 @@
 //! Tests of the client's picture, one screen at a time.
 
 use super::*;
-use crate::stream::Rect;
+use crate::stream::{FrameBuffer, Rect};
 use repriseconf::remote::{LaptopScreen, SecondClient};
 
 #[test]

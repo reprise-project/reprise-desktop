@@ -15,6 +15,11 @@ workspace = true
 name = "reprise-record"
 path = "src/main.rs"
 
+[features]
+# REPRISE_RECORD_FAIL_HARDWARE=1 fails every hardware encoder, to check the x264 fallback on a
+# machine without one. Never in packages.
+fallback-test = []
+
 [dependencies]
 reprisebus = { path = "../../reprisebus" }
 reprisevideo = { path = "../../reprisevideo" }

@@ -992,7 +992,10 @@ page all open it. Reading GNOME's settings needs the `dconf` command.
   automatic order (VA-API, NVENC, Vulkan, x264). A hardware encoder gets an
   area cut out on its GPU; an area under 256 pixels a side codes on x264,
   cut out on the CPU, and the journal names the encoder and where the area
-  was cut. Its log
+  was cut. When a hardware encoder fails to open or to code the first
+  frame, the recorder asks the stream for buffers the next encoder reads
+  (LINEAR or shared memory for x264), drops the frames already on their
+  way and codes on that one; the movie starts at the first frame coded. Its log
   lines reach the journal through the compositor, which reads its stderr; on
   failure its last line there is the reason. The compositor makes the file
   under Videos/Screencasts and hands it over open, so the recorder never

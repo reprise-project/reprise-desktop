@@ -98,6 +98,21 @@ pub enum FrameBuffer {
     },
 }
 
+impl FrameBuffer {
+    /// The buffer's kind for a log line: its modifier, with a LINEAR one's pitch.
+    pub fn describe(&self) -> String {
+        match self {
+            FrameBuffer::Dmabuf {
+                modifier: DRM_FORMAT_MOD_LINEAR,
+                planes,
+                ..
+            } if !planes.is_empty() => format!("LINEAR, pitch {}", planes[0].stride),
+            FrameBuffer::Dmabuf { modifier, .. } => format!("modifier {modifier:#x}"),
+            FrameBuffer::Shm { .. } => "shared memory".to_string(),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Plane {
     /// The plane's index in its frame's `objects`.
