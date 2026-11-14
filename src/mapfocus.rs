@@ -1,4 +1,4 @@
-//! Whether a toplevel takes the keyboard when it first maps: when it presents a trusted activation token, belongs to or is owned by the focused window's program, Reprise just started or clicked its program, is one of Reprise's own prompts, or nothing has focus. Any other window maps behind the focused one, so a background program cannot pop up mid-typing and read the keys.
+//! Whether a toplevel takes the keyboard when it first maps: when it presents a trusted activation token, belongs to or is owned by the focused window's program, Reprise just started or clicked its program, is one of Reprise's own prompts (a Bluetooth device's included), or nothing has focus. Any other window maps behind the focused one, so a background program cannot pop up mid-typing and read the keys.
 
 use crate::mutex::lock;
 use std::sync::Mutex;
@@ -71,8 +71,7 @@ pub struct Arrival<'a> {
     /// in its own session.
     pub session: Option<i32>,
     pub launched: bool,
-    /// It belongs to Reprise's portal or polkit agent: a prompt some other
-    /// program asked for.
+    /// A prompt another program or device asked for ([`is_prompt_window`]).
     pub prompt: bool,
 }
 
@@ -238,14 +237,41 @@ pub fn is_prompt(pid: i32) -> bool {
     if pid == TEST_PROMPT_PID {
         return true;
     }
-    PROMPTS
-        .iter()
-        .any(|p| crate::inputproto::runs_installed(pid, p))
+    PROMPTS.iter().any(|p| runs_installed(pid, p))
 }
 
 /// In tests, the pid [`is_prompt`] takes for an installed prompt program.
 #[cfg(test)]
 pub const TEST_PROMPT_PID: i32 = i32::MAX - 1;
+
+/// Windows another device asked for, by installed program and title: reprise-bluetooth's
+/// Pairing Request box and file offer prompt (`receive::TITLE`). Its other windows stack like
+/// any other program's.
+const DEVICE_PROMPTS: &[(&str, &str)] = &[
+    ("reprise-bluetooth", "Bluetooth Pairing Request"),
+    ("reprise-bluetooth", "Bluetooth File Transfer"),
+];
+
+/// Whether a window of process `pid` titled `title` takes focus as a prompt: any window of a
+/// [`PROMPTS`] program, or one of the [`DEVICE_PROMPTS`].
+pub fn is_prompt_window(pid: i32, title: &str) -> bool {
+    is_prompt(pid)
+        || DEVICE_PROMPTS
+            .iter()
+            .any(|&(program, t)| t == title && runs_installed(pid, program))
+}
+
+fn runs_installed(pid: i32, program: &str) -> bool {
+    #[cfg(test)]
+    if pid == TEST_BLUETOOTH_PID {
+        return program == "reprise-bluetooth";
+    }
+    crate::inputproto::runs_installed(pid, program)
+}
+
+/// In tests, the pid [`is_prompt_window`] takes for the installed reprise-bluetooth.
+#[cfg(test)]
+pub const TEST_BLUETOOTH_PID: i32 = i32::MAX - 2;
 
 /// The app id the portal's permission prompts and share picker draw under.
 pub const CONSENT_APP_ID: &str = "reprise.portal";
@@ -576,6 +602,40 @@ mod tests {
             "expected expiry"
         );
         assert!(v.is_empty(), "the expired launch is dropped");
+    }
+
+    #[test]
+    fn a_bluetooth_device_s_prompt_takes_focus_and_its_other_windows_do_not() {
+        let mut h = crate::harness::Harness::new();
+        h.output("o", 800, 600);
+        let mut c = h.connect();
+        let editor = h.map_toplevel(&mut c, "editor", 400, 300);
+        h.state.focus_window(editor.id);
+        let mut bt = h.connect_as(TEST_BLUETOOTH_PID);
+        h.map_titled(
+            &mut bt,
+            "reprise.bluetooth",
+            "Bluetooth Devices",
+            (300, 200),
+        );
+        assert_eq!(
+            h.state.focused,
+            Some(editor.id),
+            "the devices window maps behind"
+        );
+        for title in ["Bluetooth File Transfer", "Bluetooth Pairing Request"] {
+            h.state.focus_window(editor.id);
+            let prompt = h.map_titled(&mut bt, "reprise.bluetooth", title, (300, 150));
+            assert_eq!(h.state.focused, Some(prompt.id), "{title} takes focus");
+        }
+        let mut other = h.connect_as(i32::MAX - 3);
+        h.state.focus_window(editor.id);
+        h.map_titled(&mut other, "fake", "Bluetooth File Transfer", (300, 150));
+        assert_eq!(
+            h.state.focused,
+            Some(editor.id),
+            "another program's lookalike maps behind"
+        );
     }
 
     #[test]

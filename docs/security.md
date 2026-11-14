@@ -1258,7 +1258,9 @@ A new window takes the keyboard when it maps if any of these holds:
   it started)
 - the focused window owns it, as a portal's print dialog is made the child
   of its caller
-- it is a prompt of `reprise-portal`, `reprise-polkit` or `reprise-drives`
+- it is a prompt of `reprise-portal`, `reprise-polkit` or `reprise-drives`,
+  or `reprise-bluetooth`'s Bluetooth Pairing Request or Bluetooth File
+  Transfer box (picked by title; its other windows don't qualify)
 - it was started from a terminal multiplexer pane whose client runs in the
   focused terminal
 - no window has focus
