@@ -1038,10 +1038,16 @@ page all open it. Reading GNOME's settings needs the `dconf` command.
   opens, in a process group of its own: the probe dies with Settings, the
   group is killed once the probe ends or after 30 s, and Settings greys what
   it did not list. Its log lines reach the journal through the compositor,
-  which reads its stderr; on failure its last line there is the reason. The
-  compositor makes the file under Videos/Screencasts and hands it over open,
-  so the recorder never opens a name in that folder; when the recorder fails
-  the compositor removes the file, unless the name now leads somewhere else.
+  which reads its stderr; on failure its last line there is the reason. A
+  recording that stops by itself once its file is started (the screen changed
+  size or format, the encoder or a write failed, or frames the encoder cannot
+  read lasted 2 s; a single such frame is dropped) closes the file and exits
+  with status 3, its reason on that last line, and the compositor keeps the
+  file and says "Stopped early:" and the reason in its notice. A file that
+  cannot be closed fails, since it would not play. The compositor makes the
+  file under Videos/Screencasts and hands it over open, so the recorder never
+  opens a name in that folder; when the recorder fails the compositor
+  removes the file, unless the name now leads somewhere else.
 - **Remote logins.** Under `reprise-login` with remote logins on,
   `reprise-login-rdp` listens on the port instead, as the system service
   `reprise-login-rdp.service` and its own system user, and has no window.

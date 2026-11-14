@@ -24,6 +24,22 @@ pub struct Coding {
     pub keyframe_s: u32,
 }
 
+/// Why [`Movie::code`] coded nothing.
+#[derive(Debug)]
+pub enum CodeError {
+    /// This frame could not be read or converted; the encoder takes the next.
+    Unreadable(EncodeError),
+    Encoder(EncodeError),
+}
+
+impl std::fmt::Display for CodeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CodeError::Unreadable(e) | CodeError::Encoder(e) => e.fmt(f),
+        }
+    }
+}
+
 pub struct Movie {
     backend: Backend,
     codec: Codec,
@@ -112,9 +128,10 @@ impl Movie {
         frame: &Frame,
         pts: i64,
         out: &mut Vec<Packet>,
-    ) -> Result<(), EncodeError> {
-        let mut picture = self.converter.convert(frame)?;
-        self.send(&mut picture, pts, out)?;
+    ) -> Result<(), CodeError> {
+        let mut picture = (self.converter.convert(frame)).map_err(CodeError::Unreadable)?;
+        self.send(&mut picture, pts, out)
+            .map_err(CodeError::Encoder)?;
         self.last = Some((picture, pts));
         Ok(())
     }

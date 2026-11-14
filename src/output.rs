@@ -764,6 +764,7 @@ impl State {
         crate::calendarview::output_gone(self);
         crate::displaysview::output_gone(self);
         crate::displays::outputs_changed(self);
+        crate::screenrecord::outputs_changed(self);
         crate::taskpreview::output_gone(self);
         crate::snappickerview::output_gone(self);
         crate::projectorview::output_gone(self);

@@ -25,6 +25,9 @@ const STOP_GRACE: Duration = Duration::from_secs(5);
 const SAVED: &str = "Screen recording saved";
 const NOT_FINISHED: &str = "Screen recording not finished";
 const MAY_NOT_PLAY: &str = "It was stopped while it closed the file and may not play.";
+/// The recorder's exit status for a recording that stopped by itself and kept its file; its last
+/// stderr line says why.
+const ENDED_EARLY: i32 = 3;
 
 /// What a recording records: an output, or an area of it in output-local logical pixels.
 #[derive(Clone, Debug, PartialEq)]
@@ -35,6 +38,8 @@ pub struct Target {
 
 pub struct Recording {
     pub target: Target,
+    /// The output's scale and transform as the recording started.
+    shape: Shape,
     started: Instant,
     /// The recorder, once its file is made and it runs.
     pid: Option<u32>,
@@ -62,6 +67,7 @@ impl Recording {
     /// A recording whose recorder runs, with a pid no process has.
     pub fn running(target: Target) -> Recording {
         Recording {
+            shape: shape(&target.output),
             target,
             started: Instant::now(),
             pid: Some(i32::MAX as u32),
@@ -80,6 +86,15 @@ impl Recording {
             ..Recording::running(target)
         }
     }
+}
+
+type Shape = (f64, smithay::utils::Transform);
+
+fn shape(output: &Output) -> Shape {
+    (
+        output.current_scale().fractional_scale(),
+        output.current_transform(),
+    )
 }
 
 /// A recording's file as made: its path, and its device and inode, so a name swapped in the
@@ -162,6 +177,7 @@ impl State {
             return;
         }
         self.recording = Some(Recording {
+            shape: shape(&target.output),
             target,
             started: Instant::now(),
             pid: None,
@@ -334,6 +350,16 @@ impl State {
             }
             Ended::Exited {
                 made,
+                status: Some(ENDED_EARLY),
+                last_line,
+                ..
+            } => {
+                log::warn!("screen recording ended early: {last_line}");
+                let note = format!("Stopped early: {last_line}");
+                saved_notice(self, SAVED, &made.path, Some(&note));
+            }
+            Ended::Exited {
+                made,
                 status,
                 last_line,
                 ..
@@ -360,6 +386,18 @@ impl State {
         self.redraw_taskbars();
         crate::captureborder::refresh(self);
         crate::access::touch(self);
+    }
+}
+
+/// An area recording stops once its output's scale or transform changes: the recorder cuts the
+/// area out of each frame at the pixels it took at the start.
+pub fn outputs_changed(state: &mut State) {
+    let moved = (state.recording.as_ref()).is_some_and(|r| {
+        !r.stopping && r.target.area.is_some() && shape(&r.target.output) != r.shape
+    });
+    if moved {
+        log::info!("the recorded area's screen changed scale or turned; stopping the recording");
+        state.stop_recording();
     }
 }
 
@@ -778,6 +816,62 @@ mod tests {
         assert!(border_target(&h.state).is_some());
         h.state.recording.as_mut().unwrap().stopping = true;
         assert!(border_target(&h.state).is_none());
+    }
+
+    #[test]
+    fn a_recording_that_ended_early_keeps_its_file_and_says_why() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let dir = std::env::temp_dir().join(format!("reprise-record-early-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("Screencast.mp4");
+        let file = std::fs::File::create(&path).unwrap();
+        let made = Made::of(&file, path.clone()).unwrap();
+        let ended = Ended::Exited {
+            made,
+            ok: false,
+            status: Some(ENDED_EARLY),
+            last_line: "The screen changed size or format.".into(),
+            killed: false,
+        };
+        h.state.recording_ended(None, ended);
+        assert!(path.exists(), "kept");
+        let n = &h.state.notify.log.get(crate::notifyview::OWN_ID).unwrap().n;
+        assert_eq!(n.summary, "Screen recording saved");
+        assert_eq!(
+            n.body,
+            "Screencast.mp4\nStopped early: The screen changed size or format."
+        );
+        assert!(n.actions.iter().any(|(key, _)| key == "folder"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn an_area_recording_stops_when_its_screen_changes_scale() {
+        use smithay::output::Scale;
+        let mut h = crate::harness::Harness::new();
+        let output = h.output("TEST-1", 1024, 768);
+        let whole = Target {
+            output: output.clone(),
+            area: None,
+        };
+        h.state.recording = Some(Recording::running(whole.clone()));
+        output.change_current_state(None, None, Some(Scale::Fractional(2.0)), None);
+        h.state.update_layout();
+        assert!(
+            !h.state.recording.as_ref().unwrap().stopping,
+            "a whole screen goes on"
+        );
+        h.state.recording = Some(Recording::running(Target {
+            area: Some(Rect::new(10, 10, 200, 100)),
+            ..whole
+        }));
+        output.change_current_state(None, None, Some(Scale::Fractional(1.5)), None);
+        h.state.update_layout();
+        assert!(h.state.recording.as_ref().unwrap().stopping);
+        output.change_current_state(None, None, Some(Scale::Fractional(1.0)), None);
+        h.state.update_layout();
+        assert!(h.state.recording.is_some(), "a finishing one is left alone");
     }
 
     #[test]
