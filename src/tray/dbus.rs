@@ -120,6 +120,17 @@ impl Shell {
         emit(&self.events, self.eventfd, TrayEvent::Identify(outputs));
     }
 
+    /// Answers once the layout holding the new primary is on disk.
+    async fn set_primary(&self, output: String) -> bool {
+        let (reply, answer) = async_channel::bounded(1);
+        emit(
+            &self.events,
+            self.eventfd,
+            TrayEvent::SetPrimary { output, reply },
+        );
+        answer.recv().await.unwrap_or(false)
+    }
+
     async fn preview_screen_saver(&self, name: String) -> zbus::fdo::Result<()> {
         let kind = reprisekit::saver::Kind::parse(&name)
             .ok_or_else(|| zbus::fdo::Error::InvalidArgs(format!("no screen saver {name:?}")))?;

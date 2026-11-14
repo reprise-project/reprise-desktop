@@ -39,10 +39,17 @@ pub struct DisplayHost {
     pub sensor_job: Option<std::sync::mpsc::Receiver<bool>>,
     /// The display profile listing, off the loop since colord may be asked.
     pub profile_scan: Option<std::sync::mpsc::Receiver<Vec<reprisefs::icc::Listed>>>,
+    /// The last primary `send_primary` was asked for.
+    #[cfg(test)]
+    pub sent_primary: Option<String>,
 }
 
 impl SettingsApp {
     pub(crate) fn heads_changed(&mut self, heads: Vec<Head>) -> Reply {
+        let read = |p: &std::path::Path| std::fs::read_to_string(p).unwrap_or_default();
+        let (layouts, config) = (read(&self.display.layouts), read(&self.path));
+        let primary = outputwrite::session_primary(&heads, &layouts, &config);
+        self.display.model.set_primary_saved(primary);
         self.display.connected = heads.clone();
         self.display.model.set_heads(heads);
         self.display.model.layouts_saved = self.display.layouts.exists();
@@ -223,6 +230,29 @@ impl SettingsApp {
         }
     }
 
+    /// Have the compositor make `name` the primary output, saved in the connected monitors'
+    /// layout. Err is the error box's text.
+    #[cfg(not(test))]
+    fn send_primary(&mut self, name: &str) -> Result<(), &'static str> {
+        match reprisebus::tray::set_primary(name) {
+            Ok(true) => Ok(()),
+            Ok(false) => {
+                Err("That display is no longer shown, so it was not made the primary one.")
+            }
+            Err(e) => {
+                log::warn!("SetPrimary {name}: {e}");
+                Err("The desktop did not answer; the primary display was not changed.")
+            }
+        }
+    }
+
+    /// Tests never reach the session's compositor.
+    #[cfg(test)]
+    fn send_primary(&mut self, name: &str) -> Result<(), &'static str> {
+        self.display.sent_primary = Some(name.to_string());
+        Ok(())
+    }
+
     /// Carry out what the flow decided. A `Quit` after an error box went
     /// up (a `Fail`, or a `Save` that could not be written) is dropped,
     /// so the box stays on screen over the open sheet.
@@ -242,7 +272,7 @@ impl SettingsApp {
                     }
                 }
                 Effect::SavePrimary(name) => {
-                    if let Err(why) = outputwrite::save_primary(&self.path, &name) {
+                    if let Err(why) = self.send_primary(&name) {
                         self.fail(why);
                         failed = true;
                     } else {

@@ -813,9 +813,6 @@ impl SettingsApp {
             text_size: 100,
             pending_focus: None,
         };
-        app.display
-            .model
-            .set_primary_saved(outputwrite::read_primary(&text));
         let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
         app.display
             .model

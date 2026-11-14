@@ -2,7 +2,8 @@
 
 use std::path::{Path, PathBuf};
 
-use repriseapp::heads::Transform;
+use repriseapp::heads::{Head, Transform};
+use repriseconf::displays::{Layouts, Monitor, monitor_ids, outputs_fingerprint};
 use repriseconf::hz_string;
 use toml_edit::{Array, ArrayOfTables, DocumentMut, Item, Table, TableLike, Value, value};
 
@@ -167,19 +168,6 @@ pub fn set_output_in(doc: &mut DocumentMut, name: &str, keys: &OutputKeys) -> Re
     Ok(())
 }
 
-/// `doc` with `primary = true` on the entry called `name` (added when missing) and on no other. Err when `outputs` is not a list of tables; `doc` is unchanged on Err.
-pub fn set_primary_in(doc: &mut DocumentMut, name: &str) -> Result<(), String> {
-    set_output_in(doc, name, &OutputKeys::default())?;
-    for t in outputs_mut(doc).iter_mut() {
-        if t.get("name").and_then(Item::as_str) == Some(name) {
-            t["primary"] = value(true);
-        } else {
-            t.remove("primary");
-        }
-    }
-    Ok(())
-}
-
 /// Each entry's `icc_profile`, a `~/` one under `home`; empty for a file that does not parse.
 pub fn read_profiles(text: &str, home: Option<&Path>) -> Vec<(String, PathBuf)> {
     let Ok(doc) = text.parse::<DocumentMut>() else {
@@ -208,26 +196,28 @@ pub fn read_primary(text: &str) -> Option<String> {
         .and_then(|t| t.get("name")?.as_str().map(str::to_string))
 }
 
-/// [`set_primary_in`] on the file at `path`, under `repriseconf::edit`'s lock. Err is the error box's text.
-pub fn save_primary(path: &Path, name: &str) -> Result<(), &'static str> {
-    let edited = repriseconf::edit(path, |text| {
-        let mut doc: DocumentMut = text.parse().map_err(|e| format!("{e}"))?;
-        set_primary_in(&mut doc, name)?;
-        Ok::<_, String>(doc.to_string())
-    });
-    match edited {
-        Ok(Ok(_)) => Ok(()),
-        Ok(Err(e)) => {
-            log::warn!(
-                "{} does not parse, refusing to rewrite it: {e}",
-                path.display()
-            );
-            Err("config.toml does not parse; the display setting was not saved.")
-        }
-        Err(e) => {
-            log::warn!("write {}: {e}", path.display());
-            Err("config.toml could not be written.")
-        }
+/// The output the session takes as primary: the one the saved layout in `layouts` marks for the
+/// `connected` monitors under `config`'s `[[outputs]]`, else the one `config` marks.
+pub fn session_primary(connected: &[Head], layouts: &str, config: &str) -> Option<String> {
+    let monitors: Vec<Monitor<'_>> = (connected.iter())
+        .map(|h| Monitor {
+            connector: &h.name,
+            make: &h.make,
+            model: &h.model,
+            serial: &h.serial,
+        })
+        .collect();
+    let ids = monitor_ids(&monitors);
+    let outputs = (repriseconf::config::Config::parse_lenient(config))
+        .map(|(c, _)| c.outputs)
+        .unwrap_or_default();
+    let saved = Layouts::parse(layouts);
+    let marked = (saved.find(&ids, &outputs_fingerprint(&outputs)))
+        .and_then(|l| l.monitors.iter().find(|(_, m)| m.primary))
+        .and_then(|(id, _)| ids.iter().position(|i| i == id));
+    match marked {
+        Some(i) => Some(connected[i].name.clone()),
+        None => read_primary(config),
     }
 }
 
@@ -468,25 +458,9 @@ mod tests {
     }
 
     #[test]
-    fn the_primary_mark_sits_on_one_entry() {
-        let text =
-            "[[outputs]]\nname = \"DP-1\"\nprimary = true\n\n[[outputs]]\nname = \"HDMI-A-1\"\n";
-        assert_eq!(read_primary(text).as_deref(), Some("DP-1"));
-        let mut doc: DocumentMut = text.parse().unwrap();
-        set_primary_in(&mut doc, "HDMI-A-1").unwrap();
-        let out = doc.to_string();
-        assert_eq!(
-            out,
-            "[[outputs]]\nname = \"DP-1\"\n\n[[outputs]]\nname = \"HDMI-A-1\"\nprimary = true\n"
-        );
-        assert_eq!(read_primary(&out).as_deref(), Some("HDMI-A-1"));
-        let mut doc: DocumentMut = out.parse().unwrap();
-        set_primary_in(&mut doc, "DP-2").unwrap();
-        assert_eq!(
-            read_primary(&doc.to_string()).as_deref(),
-            Some("DP-2"),
-            "added"
-        );
+    fn the_first_entry_marked_primary_is_read() {
+        let text = "[[outputs]]\nname = \"DP-1\"\n\n[[outputs]]\nname = \"HDMI-A-1\"\nprimary = true\n\n[[outputs]]\nname = \"DP-2\"\nprimary = true\n";
+        assert_eq!(read_primary(text).as_deref(), Some("HDMI-A-1"));
         assert_eq!(read_primary("[[["), None);
         assert_eq!(read_primary(""), None);
     }

@@ -88,8 +88,8 @@ fn yes_after_ok_writes_the_output_and_quits() {
 }
 
 /// Two outputs side by side; the second dragged under the first and
-/// made the primary one. Apply writes the primary at once and asks
-/// for both places in one request; Yes writes both.
+/// made the primary one. Apply sends the primary to the desktop at once
+/// and asks for both places in one request; Yes writes both.
 #[test]
 fn a_kept_arrangement_writes_every_place_and_the_primary() {
     let mut app = app("arrangement");
@@ -106,8 +106,7 @@ fn a_kept_arrangement_writes_every_place_and_the_primary() {
     app.display.model.set_arrangement(&well);
     app.display.model.make_primary();
     app.start_display(displayhost::Press::Apply, &mut ctx.heads);
-    let text = std::fs::read_to_string(&app.path).expect("the primary is written at once");
-    assert!(text.contains("primary = true"), "{text}");
+    assert_eq!(app.display.sent_primary.as_deref(), Some("HDMI-A-1"));
     let asked = ctx.heads.take();
     assert_eq!(asked.len(), 1, "one request");
     let places: Vec<_> = asked[0]
@@ -131,8 +130,9 @@ fn a_kept_arrangement_writes_every_place_and_the_primary() {
     app.display_effects(effects);
     let text = std::fs::read_to_string(&app.path).unwrap();
     assert_eq!(
-        outputwrite::read_primary(&text).as_deref(),
-        Some("HDMI-A-1")
+        outputwrite::read_primary(&text),
+        None,
+        "the primary lives in the saved layout"
     );
     assert!(
         text.contains("position = [0, 0]") && text.contains("position = [0, 1080]"),
@@ -171,4 +171,60 @@ fn a_refused_vrr_on_ok_says_so_and_keeps_the_sheet() {
         "the error box is up"
     );
     assert!(!app.display.model.pick().unwrap().vrr, "the box unticks");
+}
+
+/// After Only 2 the display switcher saved HDMI-A-1 as the pair's primary while config.toml
+/// marks DP-1: the page ticks HDMI-A-1, and its Extend puts HDMI-A-1 on the left.
+#[test]
+fn the_page_takes_the_primary_from_the_saved_layout_over_config() {
+    use repriseconf::displays::{Layout, Layouts, Monitor, MonitorLayout, monitor_ids};
+    let mut app = app("primary-from-layout");
+    let mut ctx = test_ctx();
+    let config = "[[outputs]]\nname = \"DP-1\"\nprimary = true\n";
+    std::fs::write(&app.path, config).unwrap();
+    let mut off = displaypage::test_head("DP-1");
+    off.enabled = false;
+    off.current = None;
+    let heads = vec![off, displaypage::test_head("HDMI-A-1")];
+    let monitors: Vec<Monitor> = (heads.iter())
+        .map(|h| Monitor {
+            connector: &h.name,
+            make: &h.make,
+            model: &h.model,
+            serial: &h.serial,
+        })
+        .collect();
+    let ids = monitor_ids(&monitors);
+    let saved = |enabled, primary| MonitorLayout {
+        enabled,
+        mode: None,
+        position: (0, 0),
+        scale: 1.0,
+        transform: repriseconf::config::Transform::Normal,
+        primary,
+    };
+    let (parsed, _) = repriseconf::config::Config::parse_lenient(config).unwrap();
+    let seen = repriseconf::displays::outputs_fingerprint(&parsed.outputs);
+    let mut layouts = Layouts::parse("");
+    let pair = vec![
+        (ids[0].clone(), saved(false, false)),
+        (ids[1].clone(), saved(true, true)),
+    ];
+    layouts.put(Layout::new(pair), &seen, &seen);
+    app.display.layouts = app.path.with_file_name("displays.toml");
+    std::fs::write(&app.display.layouts, layouts.render()).unwrap();
+    app.event(MAIN, Event::Heads(heads), &mut ctx);
+    let d = &mut app.display.model;
+    assert_eq!(d.heads()[d.primary_index()].name, "HDMI-A-1");
+    d.pick_projection(0);
+    let places: Vec<_> = (d.changes().unwrap().set.iter())
+        .map(|(n, c)| (n.clone(), c.position))
+        .collect();
+    assert_eq!(
+        places,
+        [
+            ("DP-1".to_string(), Some((1920, 0))),
+            ("HDMI-A-1".to_string(), Some((0, 0)))
+        ]
+    );
 }

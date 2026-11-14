@@ -105,6 +105,16 @@ pub fn identify(outputs: &[String]) -> zbus::Result<()> {
     Ok(())
 }
 
+/// Make output `output` the primary one, saved in the connected monitors' layout. False when
+/// no shown output has that name. Answers once the layout is on disk; blocks for at most
+/// [`crate::METHOD_TIMEOUT`].
+pub fn set_primary(output: &str) -> zbus::Result<bool> {
+    let conn = crate::session()?;
+    let reply =
+        crate::wait(conn.call_method(Some(NAME), PATH, Some(INTERFACE), "SetPrimary", &(output,)))?;
+    reply.body().deserialize()
+}
+
 /// Ask the compositor to forget where every program's windows were closed, on every set of screens. Blocks for at most [`crate::METHOD_TIMEOUT`].
 pub fn forget_window_frames() -> zbus::Result<()> {
     let conn = crate::session()?;

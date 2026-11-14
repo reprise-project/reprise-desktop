@@ -708,7 +708,9 @@ the screen takes the interface of the last session used at this computer.
   Windows move with the monitor they are on.
 - **A layout per set of monitors.** Each set of connected monitors keeps
   its own layout: which are on, their modes, places, scales and rotations,
-  and the primary one. Docking, undocking or plugging in a monitor puts back
+  and the primary one, which the Display page and the display switcher both
+  read and set there (`[[outputs]] primary` only picks it for a set with no
+  saved layout). Docking, undocking or plugging in a monitor puts back
   the layout saved for the monitors now connected; a set without one starts
   from `[[outputs]]` and lines new monitors up to the right. A layout is
   saved whenever a change to `[[outputs]]` takes effect, whether confirmed in
