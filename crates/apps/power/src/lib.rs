@@ -53,6 +53,9 @@ struct PowerApp {
     alarms: alarms::Alarms,
     saver: alarms::Saver,
     hold: Option<profiles::Hold>,
+    /// The balloon waiting for the hold's answer: the low alarm's percentage, or None for the
+    /// saver's own.
+    waiting: Option<Option<u8>>,
     tray_state: Option<reprisetray::Shown>,
     sheet: Option<sheet::Sheet>,
     /// The sheet was built before an event gave us a `&mut Ctx` to read the icon from, so it draws a placeholder and wants rebuilding.
@@ -88,6 +91,19 @@ fn toggle(device: &str, on: bool) -> Charged {
 
 const ERROR_WIN: WinId = WinId::named("error");
 
+/// The low battery balloon; `saving` adds that power saver is on.
+fn low_balloon(pct: u8, saving: bool) -> (&'static str, String) {
+    let saver = if saving {
+        " The power saver profile is on until then."
+    } else {
+        ""
+    };
+    (
+        "Low battery",
+        format!("{pct}% of battery power remains. Plug the computer in.{saver}"),
+    )
+}
+
 /// The icon for a snapshot under these alarm thresholds, for the tray and the Power Meter alike; an alarm at 0 is off, never "low".
 pub fn icon_for(p: &Power, s: &Settings) -> powericon::Source {
     match &p.battery {
@@ -121,32 +137,24 @@ impl PowerApp {
     /// Feed the alarms; a balloon goes out at once, and the critical action comes back as the command
     /// for the caller's `Reply::spawn`. A critical sleep logind cannot do shuts down instead. A shutdown
     /// goes to the compositor, which closes the programs first; the command runs here only when it does not answer.
-    /// `saving` says the saver switched to power saver on this snapshot; the low balloon says so too, or a balloon of its own does.
+    /// `saving` says this snapshot asked for the power saver hold; the low balloon, or a balloon of
+    /// its own, then waits for the answer ([`PowerApp::hold_answered`]).
     fn check_alarms(&mut self, saving: bool) -> Option<String> {
         let low = self.settings.battery_low.max(0) as u32;
         let critical = self.settings.battery_critical.max(0) as u32;
         match self.alarms.feed(&self.power, low, critical) {
             None => {
-                if saving && let Some(t) = &self.tray {
-                    t.notify(
-                        "Power saver on",
-                        "The battery is low, so the power saver profile is on until the computer is plugged in.",
-                    );
+                if saving {
+                    self.waiting = Some(None);
                 }
                 None
             }
             Some(alarms::Alarm::Low(pct)) => {
                 log::info!("low battery: {pct}%");
-                let saver = if saving {
-                    " The power saver profile is on until then."
+                if saving {
+                    self.waiting = Some(Some(pct));
                 } else {
-                    ""
-                };
-                if let Some(t) = &self.tray {
-                    t.notify(
-                        "Low battery",
-                        &format!("{pct}% of battery power remains. Plug the computer in.{saver}"),
-                    );
+                    self.notify(low_balloon(pct, false));
                 }
                 None
             }
@@ -178,7 +186,7 @@ impl PowerApp {
     }
 
     /// Take or let go of the power saver hold for the battery and profiles now known. True when taking it
-    /// moves the profile, so a balloon says so.
+    /// would move the profile, so a balloon says so once the hold answers.
     fn check_saver(&mut self) -> bool {
         let low = self.settings.battery_low.max(0) as u32;
         let on = self.settings.low_battery_saver
@@ -186,10 +194,42 @@ impl PowerApp {
         let Some(hold) = self.saver.feed(&self.power, low, on) else {
             return false;
         };
-        if let Some(h) = &self.hold {
-            h.set(hold);
+        if !hold {
+            self.waiting = None;
+        }
+        if let Some(h) = &self.hold
+            && !h.set(hold)
+            && hold
+        {
+            log::warn!("no profile hold thread; power saver stays off");
+            self.saver = alarms::Saver::default();
+            return false;
         }
         hold && self.profiles.active != profiles::SAVER
+    }
+
+    /// The hold thread answered a take. A refused hold is asked for again on the next snapshot; the
+    /// balloon that waited goes out, naming power saver only when the hold took.
+    fn hold_answered(&mut self, held: bool) -> Option<(&'static str, String)> {
+        if !held {
+            self.saver = alarms::Saver::default();
+        }
+        match self.waiting.take()? {
+            Some(pct) => Some(low_balloon(pct, held)),
+            None => held.then(|| {
+                (
+                    "Power saver on",
+                    "The battery is low, so the power saver profile is on until the computer is plugged in."
+                        .to_string(),
+                )
+            }),
+        }
+    }
+
+    fn notify(&self, (title, body): (&str, String)) {
+        if let Some(t) = &self.tray {
+            t.notify(title, &body);
+        }
     }
 
     /// A restarted daemon dropped the saver's hold: let go of the dead one so the next check takes a new
@@ -387,6 +427,16 @@ impl PowerApp {
     /// Drain the UPower, profile, charge limit and tray channels. Quits only on the tray's Exit.
     fn wake(&mut self) -> Reply {
         self.charged();
+        for held in self
+            .hold
+            .as_ref()
+            .map(profiles::Hold::answers)
+            .unwrap_or_default()
+        {
+            if let Some(balloon) = self.hold_answered(held) {
+                self.notify(balloon);
+            }
+        }
         let fresh_profiles = self
             .profile_snapshots
             .as_ref()
@@ -520,7 +570,7 @@ impl App for PowerApp {
         let (profile_snapshots, setter) = profiles::watch(waker.clone());
         self.profile_snapshots = Some(profile_snapshots);
         self.setter = Some(setter);
-        self.hold = Some(profiles::Hold::start());
+        self.hold = Some(profiles::Hold::start(waker.clone()));
         self.snapshots = Some(upower::watch(waker.clone()));
         self.waker = Some(waker);
         repriseapp::Start::Continue
@@ -702,6 +752,47 @@ mod tests {
         app.settings.low_battery_saver = false;
         assert!(!app.check_saver());
         assert_eq!(app.saver, alarms::Saver::default());
+    }
+
+    #[test]
+    fn a_refused_hold_is_asked_again_and_its_balloon_leaves_power_saver_out() {
+        let mut app = PowerApp {
+            power: Power {
+                on_battery: true,
+                battery: Some(Battery {
+                    state: State::Discharging,
+                    percent: 8,
+                    ..Battery::default()
+                }),
+                limit: None,
+            },
+            profiles: profiles::Profiles {
+                available: vec!["power-saver".into(), "balanced".into()],
+                active: "balanced".into(),
+                ..profiles::Profiles::default()
+            },
+            ..PowerApp::default()
+        };
+        app.settings.battery_low = 10;
+        let saving = app.check_saver();
+        assert!(saving);
+        assert_eq!(app.check_alarms(saving), None);
+        assert_eq!(app.waiting, Some(Some(8)), "the low balloon waits");
+        assert_eq!(
+            app.hold_answered(false),
+            Some(low_balloon(8, false)),
+            "the low balloon, without power saver"
+        );
+        assert_eq!(app.saver, alarms::Saver::default(), "unheld");
+        let saving = app.check_saver();
+        assert!(saving, "the next snapshot asks again");
+        assert_eq!(app.check_alarms(saving), None);
+        assert_eq!(app.hold_answered(false), None, "no saver balloon");
+        assert!(app.check_saver());
+        app.check_alarms(true);
+        let (title, _) = app.hold_answered(true).expect("a balloon");
+        assert_eq!(title, "Power saver on");
+        assert_ne!(app.saver, alarms::Saver::default(), "held");
     }
 
     #[test]
