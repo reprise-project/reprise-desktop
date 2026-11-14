@@ -306,6 +306,27 @@ fn resize_and_flip_change_the_whole_picture() {
 }
 
 #[test]
+fn a_covered_window_ends_a_stroke_where_it_is_and_commits_it() {
+    let mut ctx = test_ctx();
+    let mut p = Paint::new(None);
+    pick(&mut p, &mut ctx, Tool::Pencil);
+    let l = p.lay(&ctx);
+    let (a, b, c) = (at(&p, &l, 1, 3), at(&p, &l, 6, 3), at(&p, &l, 12, 3));
+    p.event(MAIN, press(a.0, a.1, BTN_LEFT), &mut ctx);
+    p.event(MAIN, motion(b.0, b.1), &mut ctx);
+    repriseapp::cover(&mut p, MAIN, &ctx);
+    p.event(MAIN, motion(c.0, c.1), &mut ctx);
+    assert_eq!(p.doc.img.get(6, 3), Some(BLACK), "the stroke reaches x 6");
+    assert_eq!(p.doc.img.get(7, 3), Some(WHITE), "and stops there");
+    p.event(MAIN, key(0x7a, true), &mut ctx);
+    assert_eq!(
+        p.doc.img.get(3, 3),
+        Some(WHITE),
+        "Ctrl+Z takes the stroke back"
+    );
+}
+
+#[test]
 fn a_saved_picture_reads_back_and_clears_the_changes() {
     let dir = tempfile::tempdir().unwrap();
     let mut ctx = test_ctx();
