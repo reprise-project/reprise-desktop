@@ -2,13 +2,12 @@
 //! it takes) and greyed rows for what has no setting. The list sits beside the form.
 
 use crate::access::{ROOT, Tree, accesskit::NodeId};
-use crate::classic::widgets::{BUTTON_GAP, BUTTON_H, BUTTON_W, BarHit};
+use crate::classic::widgets::{BUTTON_GAP, BUTTON_H, BUTTON_W};
 use crate::controls::form::{self, Form, Item};
 use crate::controls::listview::{self, Column, Group, ListView, Rows};
 use crate::controls::metrics::ControlMetrics;
 use crate::look::Paint;
 use crate::raster::{Canvas, Rect};
-use crate::selection::Mods;
 use crate::text::{TextRenderer, escape_mnemonic, wrap};
 use crate::theme::{TextUnits, Theme};
 use std::borrow::Cow;
@@ -89,15 +88,6 @@ pub enum Outcome {
     /// Write [`Sheet::checked`] of [`Sheet::source`], then [`Sheet::done`].
     Import,
     Close,
-}
-
-/// A key or pointer event as the list reads it; what it doesn't take goes to the form.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ListInput {
-    Press(i32, i32),
-    Motion(i32, i32),
-    Release(i32, i32),
-    Scroll(i32, i32, i32),
 }
 
 pub struct Sheet {
@@ -335,16 +325,10 @@ impl Sheet {
         }
     }
 
-    /// The list's checks or selection moved: Import and the line under the list follow.
-    fn moved(&mut self, text: &TextRenderer, forms: &Theme) -> Outcome {
-        self.lay_out(text, forms);
-        Outcome::Redraw
-    }
-
     /// A pointer event, if the list takes it: none while the source box's list is open over it.
     pub fn list_pointer(
         &mut self,
-        ev: ListInput,
+        ev: listview::Input,
         text: &TextRenderer,
         forms: &Theme,
     ) -> Option<Outcome> {
@@ -354,49 +338,11 @@ impl Sheet {
         let cm = forms.controls();
         let list = self.list_rect(&cm);
         let lay = listview::layout(&self.list, list, &cm);
-        match ev {
-            ListInput::Press(x, y) if list.contains(x, y) => {
-                self.focus_list(true);
-                let hit = self.list.hit(&lay, x, y);
-                if !self.ended() {
-                    self.list.press_check(hit);
-                }
-                match hit {
-                    listview::Hit::Check(i) | listview::Hit::Row(i) => {
-                        self.list.select(Some(i), &lay)
-                    }
-                    listview::Hit::VBar(BarHit::Back) => _ = self.list.scroll(-1, &lay),
-                    listview::Hit::VBar(BarHit::Forward) => _ = self.list.scroll(1, &lay),
-                    listview::Hit::VBar(BarHit::PageBack) => {
-                        _ = self.list.scroll(-(lay.rows as i64), &lay)
-                    }
-                    listview::Hit::VBar(BarHit::PageForward) => {
-                        _ = self.list.scroll(lay.rows as i64, &lay)
-                    }
-                    _ => {}
-                }
-                Some(self.moved(text, forms))
-            }
-            ListInput::Motion(x, y) if self.list.held_check.holding() => {
-                let hit = self.list.hit(&lay, x, y);
-                Some(match self.list.motion_check(hit) {
-                    true => Outcome::Redraw,
-                    false => Outcome::None,
-                })
-            }
-            ListInput::Release(x, y) if self.list.held_check.holding() => {
-                let hit = self.list.hit(&lay, x, y);
-                self.list.release_check(hit);
-                Some(self.moved(text, forms))
-            }
-            ListInput::Scroll(x, y, rows) if list.contains(x, y) => {
-                Some(match self.list.scroll(rows as i64, &lay) {
-                    true => Outcome::Redraw,
-                    false => Outcome::None,
-                })
-            }
-            _ => None,
+        let took = self.list.pointer(ev, &lay, list, !self.ended())?;
+        if matches!(ev, listview::Input::Press(..)) {
+            self.focus_list(true);
         }
+        Some(self.took(took, text, forms))
     }
 
     /// A key, if the list takes it: Tab moves between the list and the form, and in the list the
@@ -419,31 +365,21 @@ impl Sheet {
         if !self.list_focus {
             return None;
         }
-        let flat = match key {
-            form::Key::Edit(e) => form::flat_key(e)?,
-            other => other.clone(),
-        };
         let cm = forms.controls();
         let lay = listview::layout(&self.list, self.list_rect(&cm), &cm);
-        let n = self.list.rows.len() as i64;
-        let mods = Mods::default();
-        let moved = match flat {
-            form::Key::Up => self.list.step(-1, &lay, mods),
-            form::Key::Down => self.list.step(1, &lay, mods),
-            form::Key::Home => self.list.step(-n, &lay, mods),
-            form::Key::End => self.list.step(n, &lay, mods),
-            form::Key::PageUp => self.list.step(-(lay.rows as i64), &lay, mods),
-            form::Key::PageDown => self.list.step(lay.rows as i64, &lay, mods),
-            form::Key::Space if !self.ended() => {
-                let i = self.list.selection.focus?;
-                self.list.toggle(i)
+        let took = self.list.key(key, &lay, !self.ended())?;
+        Some(self.took(took, text, forms))
+    }
+
+    /// The list's checks or selection moved: Import and the line under the list follow.
+    fn took(&mut self, took: listview::Took, text: &TextRenderer, forms: &Theme) -> Outcome {
+        match took {
+            listview::Took::Same => Outcome::None,
+            listview::Took::Moved | listview::Took::Toggled(_) => {
+                self.lay_out(text, forms);
+                Outcome::Redraw
             }
-            _ => return None,
-        };
-        Some(match moved {
-            true => self.moved(text, forms),
-            false => Outcome::None,
-        })
+        }
     }
 
     /// The screen reader nodes: the form's and the list's. Returns the focused node.

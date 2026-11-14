@@ -8,14 +8,13 @@
 use std::collections::BTreeSet;
 
 use reprisekit::access::{ROOT, Tree};
-use reprisekit::classic::widgets::{BUTTON_GAP, BUTTON_H, BUTTON_W, BarHit, LINE_H};
+use reprisekit::classic::widgets::{BUTTON_GAP, BUTTON_H, BUTTON_W, LINE_H};
 use reprisekit::controls::form::{self, Control, Form, Item};
 use reprisekit::controls::listview::{self, Column, Group, ListView, Row};
 use reprisekit::controls::metrics::ControlMetrics;
 use reprisekit::look::Paint;
 use reprisekit::look::widgets::draw_progress;
 use reprisekit::raster::{Canvas, Rect};
-use reprisekit::selection::Mods;
 use reprisekit::text::TextRenderer;
 use reprisekit::theme::Theme;
 
@@ -47,15 +46,6 @@ pub enum Outcome {
     Install,
     Restart,
     Close,
-}
-
-/// A key or pointer event as the list reads it; what it doesn't take goes to the form.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ListInput {
-    Press(i32, i32),
-    Motion(i32, i32),
-    Release(i32, i32),
-    Scroll(i32, i32, i32),
 }
 
 pub struct Window {
@@ -246,58 +236,14 @@ impl Window {
     }
 
     /// A pointer event, if the list takes it.
-    pub fn list_pointer(&mut self, ev: ListInput, cm: &ControlMetrics) -> Option<Outcome> {
+    pub fn list_pointer(&mut self, ev: listview::Input, cm: &ControlMetrics) -> Option<Outcome> {
         let list = self.list_rect();
         let lay = listview::layout(&self.list, list, cm);
-        match ev {
-            ListInput::Press(x, y) if list.contains(x, y) => {
-                self.focus_list(true);
-                let hit = self.list.hit(&lay, x, y);
-                self.list.press_check(hit);
-                match hit {
-                    listview::Hit::Check(i) | listview::Hit::Row(i) => {
-                        self.list.select(Some(i), &lay)
-                    }
-                    listview::Hit::VBar(BarHit::Back) => {
-                        self.list.scroll(-1, &lay);
-                    }
-                    listview::Hit::VBar(BarHit::Forward) => {
-                        self.list.scroll(1, &lay);
-                    }
-                    listview::Hit::VBar(BarHit::PageBack) => {
-                        self.list.scroll(-(lay.rows as i64), &lay);
-                    }
-                    listview::Hit::VBar(BarHit::PageForward) => {
-                        self.list.scroll(lay.rows as i64, &lay);
-                    }
-                    _ => {}
-                }
-                Some(Outcome::Redraw)
-            }
-            ListInput::Motion(x, y) if self.list.held_check.holding() => {
-                let hit = self.list.hit(&lay, x, y);
-                Some(if self.list.motion_check(hit) {
-                    Outcome::Redraw
-                } else {
-                    Outcome::None
-                })
-            }
-            ListInput::Release(x, y) if self.list.held_check.holding() => {
-                let hit = self.list.hit(&lay, x, y);
-                if let Some(i) = self.list.release_check(hit) {
-                    self.flipped(i);
-                }
-                Some(Outcome::Redraw)
-            }
-            ListInput::Scroll(x, y, rows) if list.contains(x, y) => {
-                Some(if self.list.scroll(rows as i64, &lay) {
-                    Outcome::Redraw
-                } else {
-                    Outcome::None
-                })
-            }
-            _ => None,
+        let took = self.list.pointer(ev, &lay, list, true)?;
+        if matches!(ev, listview::Input::Press(..)) {
+            self.focus_list(true);
         }
+        Some(self.took(took))
     }
 
     /// A key, if the list takes it.
@@ -314,35 +260,20 @@ impl Window {
         if !self.list_focus {
             return None;
         }
-        let flat = match key {
-            form::Key::Edit(e) => form::flat_key(e)?,
-            other => other.clone(),
-        };
         let lay = listview::layout(&self.list, self.list_rect(), cm);
-        let n = self.list.rows.len() as i64;
-        let mods = Mods::default();
-        let moved = match flat {
-            form::Key::Up => self.list.step(-1, &lay, mods),
-            form::Key::Down => self.list.step(1, &lay, mods),
-            form::Key::Home => self.list.step(-n, &lay, mods),
-            form::Key::End => self.list.step(n, &lay, mods),
-            form::Key::PageUp => self.list.step(-(lay.rows as i64), &lay, mods),
-            form::Key::PageDown => self.list.step(lay.rows as i64, &lay, mods),
-            form::Key::Space => {
-                let i = self.list.selection.focus?;
-                let t = self.list.toggle(i);
-                if t {
-                    self.flipped(i);
-                }
-                t
+        let took = self.list.key(key, &lay, true)?;
+        Some(self.took(took))
+    }
+
+    fn took(&mut self, took: listview::Took) -> Outcome {
+        match took {
+            listview::Took::Same => Outcome::None,
+            listview::Took::Moved => Outcome::Redraw,
+            listview::Took::Toggled(i) => {
+                self.flipped(i);
+                Outcome::Redraw
             }
-            _ => return None,
-        };
-        Some(if moved {
-            Outcome::Redraw
-        } else {
-            Outcome::None
-        })
+        }
     }
 
     pub fn event(&mut self, ev: form::Event) -> Outcome {
@@ -433,6 +364,7 @@ impl Window {
 mod tests {
     use super::*;
     use crate::model::{Install, Kind, Origin};
+    use reprisekit::controls::listview::Input as ListInput;
     use reprisekit::theme::FontConfig;
 
     fn update(name: &str) -> Update {

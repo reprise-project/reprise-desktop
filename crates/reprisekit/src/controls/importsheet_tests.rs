@@ -123,7 +123,7 @@ fn an_open_source_box_takes_the_pointer_over_the_list() {
     let (text, theme) = env();
     let mut s = Sheet::new(vec![gnome(), plasma()], &text, &theme);
     let inside = (LIST.x + 40, LIST.y + 60);
-    let press = ListInput::Press(inside.0, inside.1);
+    let press = listview::Input::Press(inside.0, inside.1);
     s.form.focus_id(SOURCE);
     s.form.key(Key::Drop);
     assert!(s.form.popup_open());

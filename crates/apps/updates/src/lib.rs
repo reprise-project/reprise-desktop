@@ -317,7 +317,7 @@ impl UpdatesApp {
     }
 
     fn list_input(&mut self, ev: &Event, ctx: &Ctx) -> Option<window::Outcome> {
-        use window::ListInput;
+        use reprisekit::controls::listview::Input as ListInput;
         let cm = ctx.theme.controls();
         let input = match *ev {
             Event::Key(ref k) => return self.window.list_key(&dialog_key(k)?, &cm),
