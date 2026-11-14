@@ -6,14 +6,22 @@ reprisebus::test_session!();
 
 use reprise_settings::welcome as settings;
 use repriseapp::keys::form_input;
-use repriseapp::{App, Caption, Ctx, Event, Reply, WinId};
+use repriseapp::oneshot::{self, MsgBox};
+use repriseapp::{App, Caption, Child, Ctx, Event, Reply, WinId};
 use reprisefs::apps::AppEntry;
 use reprisekit::access::Tree;
+use reprisekit::controls::msgbox;
 use reprisekit::controls::welcome::{self, Link, Outcome, Picks, Welcome};
 use reprisekit::look::Paint;
 use reprisekit::raster::Canvas;
+use reprisekit::text::TextRenderer;
+use reprisekit::theme::Theme;
 use std::ffi::OsString;
 use std::path::PathBuf;
+use std::rc::Rc;
+
+const TITLE: &str = "Welcome to Reprise";
+const ERROR_WIN: WinId = WinId::named("error");
 
 /// The last page's buttons and the desktop entries they start; a button shows only while its
 /// entry is installed and shown.
@@ -36,10 +44,15 @@ const LINKS: [(Link, &str); 2] = [
 
 struct WelcomeApp {
     config: PathBuf,
+    /// The picks the config file has; the pages' own run ahead of them until a write lands.
     picks: Picks,
     entries: Vec<(Link, AppEntry)>,
     /// Built at the first event, with the window's text renderer.
     welcome: Option<Welcome>,
+    /// The box telling why a pick was not written.
+    error: Option<MsgBox>,
+    /// The renderer and forms theme the box is sized with: `children` has no `Ctx`.
+    dialog: Option<(Rc<TextRenderer>, Theme)>,
 }
 
 fn read(path: &std::path::Path) -> String {
@@ -54,6 +67,8 @@ impl WelcomeApp {
             picks,
             entries,
             welcome: None,
+            error: None,
+            dialog: None,
         }
     }
 
@@ -101,15 +116,51 @@ impl WelcomeApp {
         }
     }
 
-    /// Write the pages' picks into the config file and show the sample of what it now says.
+    /// Write the pages' picks into the config file and show the sample of what it now says. A
+    /// failed write says why, and the next pick writes what it missed.
     fn picked(&mut self, ctx: &Ctx) {
         let picks = self.welcome(ctx).picks;
-        let from = std::mem::replace(&mut self.picks, picks);
-        if let Err(e) = settings::write(&self.config, &from, &picks) {
-            log::warn!("{}: {e}", self.config.display());
+        match settings::write(&self.config, &self.picks, &picks) {
+            Ok(()) => self.picks = picks,
+            Err(e) => {
+                log::warn!("{}: {e}", self.config.display());
+                self.failed(format!(
+                    "Your choice could not be written to {}.\n\n{e}",
+                    self.config.display()
+                ));
+            }
         }
         let sample = settings::sample(&read(&self.config), &picks);
         self.welcome(ctx).set_sample(sample);
+    }
+
+    fn failed(&mut self, text: String) {
+        self.error = Some(MsgBox::new(
+            TITLE,
+            msgbox::Fields {
+                text,
+                icon: None,
+                buttons: vec!["OK".into()],
+                default: 0,
+                min_text_h: None,
+                min_w: 0,
+                max_w: repriseapp::dialog_max_w(),
+            },
+        ));
+    }
+
+    fn error_event(&mut self, ev: Event) -> Reply {
+        let (Some(b), Some((text, forms))) = (&mut self.error, &self.dialog) else {
+            return Reply::none();
+        };
+        match b.event(&ev, text, forms) {
+            oneshot::Outcome::Closed(_) => {
+                self.error = None;
+                Reply::redraw_all()
+            }
+            oneshot::Outcome::Redraw => Reply::redraw(),
+            oneshot::Outcome::None => Reply::none(),
+        }
     }
 
     fn open(&self, id: &str) -> Reply {
@@ -132,7 +183,7 @@ impl WelcomeApp {
 
 impl App for WelcomeApp {
     fn title(&self) -> String {
-        "Welcome to Reprise".into()
+        TITLE.into()
     }
 
     fn app_id(&self) -> String {
@@ -143,7 +194,18 @@ impl App for WelcomeApp {
         repriseapp::start_forms().text.size(welcome::CLIENT)
     }
 
-    fn event(&mut self, _win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
+    fn children(&self) -> Vec<Child> {
+        match (&self.error, &self.dialog) {
+            (Some(b), Some((text, forms))) => vec![b.child(ERROR_WIN, text, forms)],
+            _ => Vec::new(),
+        }
+    }
+
+    fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
+        self.dialog = Some((ctx.text.clone(), ctx.forms()));
+        if win == ERROR_WIN {
+            return self.error_event(ev);
+        }
         let mut reply = self.dispatch(ev, ctx);
         let size = ctx.forms().text.size(welcome::CLIENT);
         if ctx.size != size {
@@ -153,8 +215,14 @@ impl App for WelcomeApp {
         reply
     }
 
-    fn draw(&mut self, _win: WinId, c: &mut Canvas, ctx: &Ctx) {
+    fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
         let forms = ctx.forms();
+        if win == ERROR_WIN {
+            if let Some(b) = &self.error {
+                b.draw(c, &forms, &ctx.text);
+            }
+            return;
+        }
         let p = Paint {
             s: 1,
             ..forms.paint()
@@ -173,17 +241,25 @@ impl repriseapp::Extended for WelcomeApp {
         Caption::Fixed
     }
 
-    fn reader_form(&mut self, _win: WinId) -> Option<repriseapp::ReaderForm<'_>> {
+    fn reader_form(&mut self, win: WinId) -> Option<repriseapp::ReaderForm<'_>> {
+        let w = self.welcome.as_mut().filter(|_| win != ERROR_WIN)?;
         let form = repriseapp::DropForm {
-            form: &mut self.welcome.as_mut()?.wizard.form,
+            form: &mut w.wizard.form,
             px: None,
         };
         Some(repriseapp::ReaderForm::Form(form))
     }
 
-    fn access(&mut self, _win: WinId, tree: &mut Tree, ctx: &Ctx) {
-        let px = ctx.forms().fonts.size_px;
-        self.welcome(ctx).access(tree, &ctx.text, px);
+    fn access(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
+        let forms = ctx.forms();
+        if win == ERROR_WIN {
+            if let Some(b) = &self.error {
+                b.access(tree, &ctx.text, &forms);
+            }
+            return;
+        }
+        self.welcome(ctx)
+            .access(tree, &ctx.text, forms.fonts.size_px);
     }
 }
 
@@ -263,6 +339,29 @@ mod tests {
         let text = read(&config);
         assert!(text.starts_with("# mine\nterminal = \"foot\"\n"), "{text}");
         assert!(text.contains("interface = \"glass\""), "{text}");
+        assert_eq!(app.picks.interface, Interface::Glass);
+    }
+
+    #[test]
+    fn a_failed_write_says_why_and_the_next_pick_writes_what_it_missed() {
+        let dir = scratch("failed");
+        let blocker = dir.join("reprise");
+        std::fs::write(&blocker, "").unwrap();
+        let config = blocker.join("config.toml");
+        let mut app = WelcomeApp::new(config.clone(), Vec::new());
+        let ctx = test_ctx(100);
+        app.welcome(&ctx).picks.interface = Interface::Glass;
+        app.picked(&ctx);
+        assert!(app.error.is_some(), "the box says why");
+        assert_eq!(app.picks.interface, Interface::Classic, "the file's picks");
+        app.error = None;
+        std::fs::remove_file(&blocker).unwrap();
+        app.welcome(&ctx).picks.text_size = 150;
+        app.picked(&ctx);
+        assert!(app.error.is_none());
+        let text = read(&config);
+        assert!(text.contains("interface = \"glass\""), "{text}");
+        assert!(text.contains("text_size = 150"), "{text}");
         assert_eq!(app.picks.interface, Interface::Glass);
     }
 
