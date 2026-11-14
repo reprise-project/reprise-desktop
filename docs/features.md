@@ -461,7 +461,8 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   JPEG XL in a process of its own. A shot taken while two are still encoding
   is saved as its PNG, as is one the JPEG XL encoder would need more than
   half the free memory for, takes over ten minutes on or fails on, and its
-  notice says why.
+  notice says why. Logging off or turning off shows a notice and waits up to
+  15 s for shots still being saved before the screen fades.
 - **Screen recordings.** Ctrl+Shift+Alt+R records the screen under the
   pointer and, pressed again, stops. In the Shift+PrtSc picker V switches to
   Record mode, where a dragged area, a clicked window's frame or a clicked

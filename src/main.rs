@@ -418,6 +418,7 @@ fn run(
     );
     let active = (state.backend.as_ref()).is_some_and(|b| b.session.is_active());
     crash::on_start(&mut state, after_crash, locked, active);
+    screenshot::sweep_temps(&mut state);
     configwatch::setup(&mut state, config_stamp);
     appindex::setup(&mut state);
     calendarview::setup(&mut state);

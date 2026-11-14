@@ -55,6 +55,24 @@ fn create_new_numbered_skips_a_planted_symlink_and_a_taken_name() {
     assert_eq!(fs::read_to_string(&path).unwrap(), "new");
 }
 
+#[test]
+fn a_link_landing_refuses_a_taken_name_and_moves_onto_a_free_one() {
+    let t = tempfile::tempdir().unwrap();
+    let (tmp, taken, free) = (
+        t.path().join(".Shot.tmp"),
+        t.path().join("Shot.png"),
+        t.path().join("Shot (2).png"),
+    );
+    fs::write(&tmp, "new").unwrap();
+    fs::write(&taken, "older").unwrap();
+    let refused = link_over(&tmp, &taken).unwrap_err();
+    assert_eq!(refused.kind(), io::ErrorKind::AlreadyExists);
+    assert_eq!(fs::read_to_string(&taken).unwrap(), "older");
+    link_over(&tmp, &free).unwrap();
+    assert_eq!(fs::read_to_string(&free).unwrap(), "new");
+    assert!(!tmp.exists(), "the temp name is gone");
+}
+
 /// A dot followed by a space does not start an extension, on disk as
 /// in a listing: "Mr. Smith" numbers as a whole.
 #[test]
