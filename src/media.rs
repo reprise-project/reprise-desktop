@@ -1,4 +1,4 @@
-//! Media key backends: volume and mute through `wpctl`, backlights through logind's `SetBrightness`, external monitors over DDC/CI through `ddcutil`, transport through MPRIS, the wireless radio through NetworkManager, airplane mode through `reprisebus::airplane`. One worker thread runs the jobs and reports over a calloop channel so the event loop never blocks; display jobs run on a lane thread per backlight or DDC bus, so a monitor that stops answering holds up only itself.
+//! Media key backends: volume and mute through `wpctl`, backlights through logind's `SetBrightness`, external monitors over DDC/CI through `ddcutil`, transport through MPRIS, the wireless radio through NetworkManager, airplane mode through `reprisebus::airplane`. One worker thread runs the jobs and reports over a calloop channel so the event loop never blocks; display jobs run on a lane thread per backlight or DDC bus, so a monitor that stops answering holds up only itself, and the two radio keys on one radio lane.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -38,7 +38,7 @@ pub enum Report {
     Mic { muted: bool },
     Kbd { level: f64 },
     Player { name: String, verb: &'static str },
-    Wifi { on: bool },
+    Wifi(reprisebus::airplane::WifiTurn),
     ScreenReader(crate::screenreader::Switched),
     Touchpad { on: bool },
     Airplane(reprisebus::airplane::Mode),
@@ -664,23 +664,23 @@ async fn perform(buses: &mut Buses, job: Job) -> Option<Report> {
             }
             r
         }
-        Job::Wifi => {
-            let r = wifi(buses.system().await?).await;
-            if r.is_none() {
-                buses.system = None;
-            }
-            r
-        }
-        Job::Airplane => match reprisebus::airplane::toggle(buses.system().await?).await {
-            Ok(mode) => Some(Report::Airplane(mode)),
-            Err(e) => {
-                log::warn!("media: airplane mode: {e}");
-                None
-            }
-        },
         // `worker` hands these to their lanes.
-        Job::Display(_) => None,
+        Job::Wifi | Job::Airplane | Job::Display(_) => None,
     }
+}
+
+/// A radio job on the radio lane: the Wi-Fi key and the airplane-mode key.
+async fn perform_radio(conn: &Connection, job: &Job) -> Option<Report> {
+    let r = match job {
+        Job::Wifi => reprisebus::airplane::toggle_wifi(conn)
+            .await
+            .map(Report::Wifi),
+        Job::Airplane => reprisebus::airplane::toggle(conn)
+            .await
+            .map(Report::Airplane),
+        _ => return None,
+    };
+    r.inspect_err(|e| log::warn!("media: {job:?}: {e}")).ok()
 }
 
 async fn player(conn: &Connection, method: &'static str) -> Option<Report> {
@@ -697,16 +697,6 @@ async fn player(conn: &Connection, method: &'static str) -> Option<Report> {
     Some(Report::Player { name, verb: method })
 }
 
-async fn wifi(conn: &Connection) -> Option<Report> {
-    match reprisebus::airplane::toggle_wifi(conn).await {
-        Ok(on) => Some(Report::Wifi { on }),
-        Err(e) => {
-            log::warn!("media: {e}");
-            None
-        }
-    }
-}
-
 /// How long a job gets before the worker gives up: a wedged bus call or a `wpctl` that never exits would stall every later press.
 const JOB_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -716,18 +706,24 @@ fn guarded<T>(
     timeout: Duration,
     fut: impl Future<Output = T>,
 ) -> Option<T> {
-    let done = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        zbus::block_on(futures_lite::future::or(async { Some(fut.await) }, async {
+    let done = caught(
+        job,
+        futures_lite::future::or(async { Some(fut.await) }, async {
             async_io::Timer::after(timeout).await;
             None
-        }))
-    }));
+        }),
+    )?;
+    if done.is_none() {
+        log::warn!("media: {job:?} timed out after {timeout:?}");
+    }
+    done
+}
+
+/// Run `fut` on this thread to its end, catching a panic so the thread carries on; None, logged against `job`, when it panicked.
+fn caught<T>(job: &dyn std::fmt::Debug, fut: impl Future<Output = T>) -> Option<T> {
+    let done = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| zbus::block_on(fut)));
     match done {
-        Ok(Some(v)) => Some(v),
-        Ok(None) => {
-            log::warn!("media: {job:?} timed out after {timeout:?}");
-            None
-        }
+        Ok(v) => Some(v),
         Err(p) => {
             let msg = p
                 .downcast_ref::<&str>()
@@ -750,12 +746,17 @@ fn no_buses() -> Buses {
 fn worker(jobs: Receiver<Job>, reports: channel::Sender<Report>, sysfs: Sysfs) {
     let mut buses = no_buses();
     let mut lanes: HashMap<Panel, Sender<DisplayJob>> = HashMap::new();
+    let mut radios: Option<Sender<Job>> = None;
     while let Ok(first) = jobs.recv() {
         let mut burst = vec![first];
         burst.extend(jobs.try_iter());
         for job in coalesce(burst) {
             if let Job::Display(j) = job {
                 to_lane(&mut lanes, &sysfs, &reports, j);
+                continue;
+            }
+            if let Job::Wifi | Job::Airplane = job {
+                to_radio_lane(&mut radios, &reports, job);
                 continue;
             }
             match guarded(&job, JOB_TIMEOUT, perform(&mut buses, job.clone())) {
@@ -766,6 +767,50 @@ fn worker(jobs: Receiver<Job>, reports: channel::Sender<Report>, sysfs: Sysfs) {
                 // A wedged socket is the usual cause; reconnect next time.
                 None => buses = no_buses(),
             }
+        }
+    }
+}
+
+/// How long the radio lane waits on one bus call: libdbus's default reply timeout.
+const RADIO_CALL_TIMEOUT: Duration = Duration::from_secs(25);
+
+/// Queue a radio job on the radio lane, starting it on first use.
+fn to_radio_lane(lane: &mut Option<Sender<Job>>, reports: &channel::Sender<Report>, job: Job) {
+    if lane.is_none() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let reports = reports.clone();
+        let spawned = std::thread::Builder::new()
+            .name("media-radio".into())
+            .spawn(move || run_radio_lane(rx, |r| drop(reports.send(r))));
+        if spawned.is_err() {
+            log::warn!("media: no radio lane thread; {job:?} dropped");
+            return;
+        }
+        *lane = Some(tx);
+    }
+    if let Some(Err(e)) = lane.as_ref().map(|tx| tx.send(job)) {
+        *lane = None;
+        log::warn!("media: the radio lane stopped; {:?} dropped", e.0);
+    }
+}
+
+/// The radio lane's loop. A job runs to its end, never cut short by a timeout: dropping a turn between a radio's soft block and NetworkManager's switch would leave them disagreeing. A call nothing answers fails after RADIO_CALL_TIMEOUT, and a turn another program holds past reprisebus's lock wait fails with its BUSY text; either holds up only later radio keys.
+fn run_radio_lane(jobs: Receiver<Job>, report: impl Fn(Report)) {
+    let mut system: Option<Connection> = None;
+    while let Ok(job) = jobs.recv() {
+        let done = caught(&job, async {
+            if system.is_none() {
+                system = zbus::connection::Builder::system()
+                    .method_timeout(RADIO_CALL_TIMEOUT)
+                    .build()
+                    .await
+                    .ok();
+            }
+            perform_radio(system.as_ref()?, &job).await
+        });
+        match done {
+            Some(Some(r)) => report(r),
+            _ => system = None,
         }
     }
 }
