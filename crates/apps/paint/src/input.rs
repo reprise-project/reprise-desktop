@@ -265,6 +265,28 @@ impl Paint {
         }
     }
 
+    /// Ends the toolbox button's press and a held scrollbar part; true when a bar let go.
+    fn release_bars(&mut self) -> bool {
+        self.tool_pressed = None;
+        self.hscroll.release() | self.vscroll.release()
+    }
+
+    /// Ends the drag on the picture at `at`, committed as its button's release commits it.
+    fn release_held(&mut self, at: (i32, i32), m: Mods) -> Effect {
+        self.held = None;
+        self.doc.release(self.tool, at, m)
+    }
+
+    /// A modal child covers the window, which will not see the release: the drag on the picture
+    /// ends where the pointer last took it, and the bars let go.
+    pub(crate) fn let_go(&mut self) {
+        self.release_bars();
+        if let Some((_, at)) = self.held {
+            let m = self.mods(repriseapp::Mods::default());
+            self.release_held(at, m);
+        }
+    }
+
     pub(crate) fn pointer(&mut self, p: PointerInput, ctx: &Ctx) -> Reply {
         if matches!(p, PointerInput::Press { .. }) {
             self.alt_arm.interrupt();
@@ -365,7 +387,7 @@ impl Paint {
                 } else {
                     Ink::Secondary
                 };
-                self.held = Some(button);
+                self.held = Some((button, at));
                 let fx = self.doc.press(self.tool, at, ink, self.mods(mods), double);
                 let reply = self.effect(fx, ctx);
                 Reply {
@@ -376,14 +398,12 @@ impl Paint {
             PointerInput::Release {
                 x, y, button, mods, ..
             } => {
-                self.tool_pressed = None;
-                let bars = self.hscroll.release() | self.vscroll.release();
-                if self.held != Some(button) {
+                let bars = self.release_bars();
+                if self.held.map(|(b, _)| b) != Some(button) {
                     return if bars { Reply::redraw() } else { Reply::none() };
                 }
-                self.held = None;
                 let at = self.to_picture(&l, x, y);
-                let fx = self.doc.release(self.tool, at, self.mods(mods));
+                let fx = self.release_held(at, self.mods(mods));
                 self.effect(fx, ctx)
             }
             PointerInput::Motion { x, y } => {
@@ -428,7 +448,8 @@ impl Paint {
                 let at = self.to_picture(&l, x, y);
                 let on = (l.view.contains(x, y) || self.held.is_some()).then_some(at);
                 let moved = std::mem::replace(&mut self.hover, on) != on;
-                let drew = if self.held.is_some() {
+                let drew = if let Some((_, last)) = &mut self.held {
+                    *last = at;
                     let m = self.mods(repriseapp::Mods::default());
                     self.doc.motion(self.tool, at, m) != Effect::None
                 } else {

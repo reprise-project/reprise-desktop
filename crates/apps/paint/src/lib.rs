@@ -86,8 +86,8 @@ struct Paint {
     hscroll: PageScroll,
     vscroll: PageScroll,
     bar: Bar,
-    /// The button held down on the picture.
-    held: Option<u32>,
+    /// The button held down on the picture and the picture pixel it last reached.
+    held: Option<(u32, (i32, i32))>,
     /// The pointer over the picture, in picture pixels.
     hover: Option<(i32, i32)>,
     clicks: DoubleClick<()>,
@@ -376,6 +376,13 @@ impl App for Paint {
 }
 
 impl Extended for Paint {
+    fn cancel_pointer(&mut self, win: WinId) {
+        match win {
+            MAIN => self.let_go(),
+            _ => repriseapp::reader_cancel_pointer(self, win),
+        }
+    }
+
     fn draw_failed(&mut self, error: &str) -> Reply {
         self.error(tr!("draw-failed", error = error));
         Reply::redraw_all()
