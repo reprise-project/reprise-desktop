@@ -231,6 +231,7 @@ fn open(state: &mut State, bar: TreeId) {
     }
     redraw(state);
     if events {
+        pick_program(state);
         read_day(state, (y, m, d));
         arm_refresh(state);
     }
@@ -281,18 +282,32 @@ pub fn setup(state: &mut State) {
     });
 }
 
-/// Reads day `day`'s events off the loop for the open popup, and on the first read what a click on
-/// one opens.
+/// Picks what a click on an event of the popup just opened starts, on a file job since it reads
+/// the mime-apps lists.
+fn pick_program(state: &mut State) {
+    let apps = state.app_index.clone();
+    state.spawn_fs_job(move || {
+        let program = calendar_program(&apps).cloned();
+        Box::new(move |state: &mut State| {
+            let Some(v) = state.calendar.view.as_mut() else {
+                return;
+            };
+            v.program = program;
+            if let Some(a) = v.model.agenda.as_mut() {
+                a.opens = v.program.is_some();
+            }
+            redraw(state);
+        })
+    });
+}
+
+/// Reads day `day`'s events off the loop for the open popup.
 fn read_day(state: &mut State, day: (i32, u32, u32)) {
     state.calendar.asked += 1;
     let asked = state.calendar.asked;
-    let apps = (state.calendar.view.as_ref())
-        .is_some_and(|v| v.program.is_none())
-        .then(|| state.app_index.clone());
     state.spawn_job(move || {
         let read = read_events(day);
-        let program = apps.and_then(|a| calendar_program(&a).cloned());
-        Box::new(move |state: &mut State| landed(state, asked, day, read, program))
+        Box::new(move |state: &mut State| landed(state, asked, day, read))
     });
 }
 
@@ -328,7 +343,6 @@ fn landed(
     asked: u64,
     day: (i32, u32, u32),
     read: Result<Option<reprisebus::eds::Day>, String>,
-    program: Option<reprisefs::apps::AppEntry>,
 ) {
     if asked != state.calendar.asked {
         return;
@@ -341,9 +355,6 @@ fn landed(
     let Some(v) = state.calendar.view.as_mut() else {
         return;
     };
-    if program.is_some() {
-        v.program = program;
-    }
     let opens = v.program.is_some();
     match read {
         Ok(None) => v.model.agenda = None,
@@ -680,6 +691,52 @@ mod tests {
         close(&mut h.state);
         assert!(matches!(refresh(&mut h.state), TimeoutAction::Drop));
         assert_eq!(h.state.calendar.asked, 3, "none while closed");
+    }
+
+    #[test]
+    fn the_program_an_event_opens_is_picked_as_the_popup_opens_and_not_by_each_read() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.state.calendar.eds = Some(true);
+        let bar = h.state.bars[0].tree;
+        let program = |s: &State| {
+            s.calendar
+                .view
+                .as_ref()?
+                .program
+                .as_ref()
+                .map(|a| a.id.clone())
+        };
+        open(&mut h.state, bar);
+        assert_eq!(program(&h.state), None, "nothing installed");
+        h.state.app_index = vec![reprisefs::apps::AppEntry {
+            name: "Calendar".into(),
+            exec_line: "gnome-calendar".into(),
+            terminal: false,
+            id: GNOME_CALENDAR.into(),
+            icon: None,
+            startup_wm_class: None,
+            categories: Vec::new(),
+            mime_types: Vec::new(),
+            shown: true,
+        }];
+        refresh(&mut h.state);
+        assert_eq!(h.state.calendar.answered, 2);
+        assert_eq!(program(&h.state), None, "a read picks nothing");
+        open(&mut h.state, bar);
+        assert_eq!(program(&h.state).as_deref(), Some(GNOME_CALENDAR));
+        let opens = h
+            .state
+            .calendar
+            .view
+            .as_ref()
+            .unwrap()
+            .model
+            .agenda
+            .as_ref()
+            .unwrap()
+            .opens;
+        assert!(opens, "its events open the program");
     }
 
     #[test]
