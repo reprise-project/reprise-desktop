@@ -232,6 +232,34 @@ fn primary_check(app: &SettingsApp) -> (bool, bool) {
     }
 }
 
+/// Drops the Orientation list on the open Display page.
+fn drop_orientation(app: &mut SettingsApp) {
+    let page = &mut app.sheet.pages[Page::Display.index()];
+    match page
+        .item_mut(displaypage::ORIENTATION)
+        .map(|i| &mut i.control)
+    {
+        Some(form::Control::Combo(c)) => assert!(c.toggle()),
+        _ => panic!("orientation is a combo box"),
+    }
+    assert!(app.sheet.open().popup_open());
+}
+
+#[test]
+fn an_error_box_closes_the_open_combo_list_under_it() {
+    let mut app = app("error-closes-list");
+    let mut ctx = test_ctx();
+    app.sheet.tabs.open = Page::Display.index();
+    app.event(
+        MAIN,
+        Event::Heads(vec![displaypage::test_head("DP-1")]),
+        &mut ctx,
+    );
+    drop_orientation(&mut app);
+    app.fail("refused");
+    assert!(!app.sheet.open().popup_open());
+}
+
 #[test]
 fn a_refused_primary_puts_the_check_back_on_the_running_display() {
     let mut app = app("primary-refused");
