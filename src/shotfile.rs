@@ -197,7 +197,7 @@ fn jxl_encode(
     s: &ScreenshotConfig,
     budget: usize,
 ) -> Result<Vec<u8>, Failed> {
-    jxl(rgb, w, h, s, budget)
+    jxl(rgb, w, h, s, budget, encode_threads())
 }
 
 /// What the encoder child reads from stdin ahead of the RGB pixels, little-endian.
@@ -383,7 +383,7 @@ fn serve(input: &mut impl std::io::Read, output: &mut impl std::io::Write) -> st
     let mut rgb = vec![0; len];
     input.read_exact(&mut rgb)?;
     let budget = usize::try_from(r.budget).unwrap_or(usize::MAX);
-    match jxl(&rgb, r.w, r.h, &r.config(), budget) {
+    match jxl(&rgb, r.w, r.h, &r.config(), budget, encode_threads()) {
         Ok(file) => {
             output.write_all(&[REPLY_FILE])?;
             output.write_all(&file)?;
@@ -425,9 +425,22 @@ impl MemoryManager for Capped {
     }
 }
 
-fn jxl(rgb: &[u8], w: u32, h: u32, s: &ScreenshotConfig, budget: usize) -> Result<Vec<u8>, Failed> {
+/// libjxl's worker threads for an encode: half the cores. Its working memory grows with each.
+fn encode_threads() -> usize {
+    let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+    (cores / 2).max(1)
+}
+
+fn jxl(
+    rgb: &[u8],
+    w: u32,
+    h: u32,
+    s: &ScreenshotConfig,
+    budget: usize,
+    threads: usize,
+) -> Result<Vec<u8>, Failed> {
     let capped = Capped(Budget::new(budget));
-    jxl_through(rgb, w, h, s, &capped, || capped.0.refused()).map_err(|e| {
+    jxl_through(rgb, w, h, s, threads, &capped, || capped.0.refused()).map_err(|e| {
         match capped.0.refused() {
             true => Failed::Memory(budget),
             false => Failed::Codec(e.to_string()),
@@ -441,11 +454,11 @@ fn jxl_through(
     w: u32,
     h: u32,
     s: &ScreenshotConfig,
+    threads: usize,
     memory: &dyn MemoryManager,
     refused: impl Fn() -> bool,
 ) -> Result<Vec<u8>, jpegxl_rs::EncodeError> {
-    let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
-    let runner = jpegxl_rs::ThreadsRunner::new(Some(memory), Some((cores / 2).max(1)))
+    let runner = jpegxl_rs::ThreadsRunner::new(Some(memory), Some(threads))
         .ok_or(jpegxl_rs::EncodeError::CannotCreateEncoder)?;
     let speed = EFFORT[usize::from(s.jxl_effort.clamp(1, 9)) - 1];
     let builder = jpegxl_rs::encoder_builder()
@@ -769,6 +782,8 @@ mod tests {
     }
 
     const SWEEP: (u32, u32) = (272, 40);
+    /// The sweeps' encoder threads, fixed: the memory an encode needs grows with them.
+    const SWEEP_THREADS: usize = 2;
 
     #[test]
     fn a_jxl_encode_at_effort_3_refused_any_one_allocation_fails_without_aborting() {
@@ -786,12 +801,13 @@ mod tests {
         let rgb = rgb_of(&test_canvas(w, h));
         for s in sweep_shots(efforts) {
             let all = FailAt::new(usize::MAX);
-            jxl_through(&rgb, w, h, &s, &all, || all.refused()).unwrap();
+            jxl_through(&rgb, w, h, &s, SWEEP_THREADS, &all, || all.refused()).unwrap();
             let count = all.seen.load(Ordering::Relaxed);
             for nth in 0..count {
                 let one = FailAt::new(nth);
                 // libjxl goes on without some allocations; what it then gives must still decode.
-                if let Ok(file) = jxl_through(&rgb, w, h, &s, &one, || one.refused()) {
+                if let Ok(file) = jxl_through(&rgb, w, h, &s, SWEEP_THREADS, &one, || one.refused())
+                {
                     let dec = jpegxl_rs::decoder_builder().build().unwrap();
                     let (meta, _) = dec.decode_with::<u8>(&file).unwrap_or_else(|e| {
                         panic!("allocation {nth} of {count} refused: {e}, {s:?}")
@@ -810,7 +826,7 @@ mod tests {
             let mut refused = 0;
             // The sweep stops at the first budget that suffices: larger ones repeat whole encodes.
             for budget in (0..64 << 20).step_by(16 << 10) {
-                match jxl(&rgb, w, h, &s, budget) {
+                match jxl(&rgb, w, h, &s, budget, SWEEP_THREADS) {
                     Ok(_) => break,
                     Err(Failed::Memory(b)) => {
                         assert_eq!(b, budget);
@@ -821,7 +837,10 @@ mod tests {
             }
             assert!(refused > 20, "{refused} budgets short: {s:?}");
             for budget in [64 << 20, 1 << 30] {
-                assert!(jxl(&rgb, w, h, &s, budget).is_ok(), "{budget}: {s:?}");
+                assert!(
+                    jxl(&rgb, w, h, &s, budget, SWEEP_THREADS).is_ok(),
+                    "{budget}: {s:?}"
+                );
             }
         }
     }
