@@ -1812,7 +1812,9 @@ stop the share first.
   rule lets an active local `wheel` session through without a password.
   Settings > Thunderbolt's Authorize enrolls and Forget calls
   `ForgetDevice` the same way. A device boltd already authorizes itself is
-  never asked about.
+  never asked about; one enrolled under the `iommu` policy counts as that
+  only while every domain reports its IOMMU on, since boltd leaves it
+  waiting otherwise.
 - **Receiving files over Bluetooth.** obexd lets any device in range push a
   file (BlueZ doesn't ask for Object Push), so Reprise's OBEX agent is the
   gate. It answers only the owner of `org.bluez.obex`, refuses a device BlueZ
