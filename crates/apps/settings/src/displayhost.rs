@@ -71,10 +71,16 @@ pub struct DisplayHost {
 }
 
 impl SettingsApp {
-    pub(crate) fn heads_changed(&mut self, heads: Vec<Head>) -> Reply {
+    /// The primary the session runs with `heads` connected, read from the saved layouts and
+    /// config.
+    fn session_primary(&self, heads: &[Head]) -> Option<String> {
         let read = |p: &std::path::Path| std::fs::read_to_string(p).unwrap_or_default();
         let (layouts, config) = (read(&self.display.layouts), read(&self.path));
-        let primary = outputwrite::session_primary(&heads, &layouts, &config);
+        outputwrite::session_primary(heads, &layouts, &config)
+    }
+
+    pub(crate) fn heads_changed(&mut self, heads: Vec<Head>) -> Reply {
+        let primary = self.session_primary(&heads);
         self.display.model.set_primary_saved(primary);
         self.display.connected = heads.clone();
         self.display.model.set_heads(heads);
@@ -280,7 +286,8 @@ impl SettingsApp {
         self.display.primary_job = Some(rx);
     }
 
-    /// The SetPrimary call ended: an error box for a failure, else the layouts read as saved.
+    /// The SetPrimary call ended: an error box for a failure, with the primary back to the one
+    /// the session runs, else the layouts read as saved.
     /// Some(close) once done, close when OK waited for it.
     pub(crate) fn primary_done(&mut self) -> Option<bool> {
         let done = match take(self.display.primary_job.as_ref()?) {
@@ -297,6 +304,9 @@ impl SettingsApp {
                 quit
             }
             Err(why) => {
+                let running = self.session_primary(&self.display.connected);
+                self.display.model.set_primary_saved(running);
+                displaypage::refresh(&mut self.sheet, &self.display.model, &self.want);
                 self.fail(why);
                 false
             }

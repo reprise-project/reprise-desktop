@@ -221,6 +221,54 @@ fn ok_waits_for_the_primary_call_and_a_failed_one_keeps_the_sheet_with_a_box() {
     assert!(apply_lit(&app), "Apply lights once the call ended");
 }
 
+/// The shown display's primary check as (checked, enabled).
+fn primary_check(app: &SettingsApp) -> (bool, bool) {
+    let page = &app.sheet.pages[Page::Display.index()];
+    match page.item(displaypage::PRIMARY).map(|i| &i.control) {
+        Some(form::Control::Check {
+            checked, enabled, ..
+        }) => (*checked, *enabled),
+        _ => panic!("the primary control is a check box"),
+    }
+}
+
+#[test]
+fn a_refused_primary_puts_the_check_back_on_the_running_display() {
+    let mut app = app("primary-refused");
+    let mut ctx = test_ctx();
+    let heads = vec![
+        displaypage::test_head("DP-1"),
+        displaypage::test_head("HDMI-A-1"),
+    ];
+    app.event(MAIN, Event::Heads(heads), &mut ctx);
+    app.display.model.pick_monitor(1);
+    app.display.model.make_primary();
+    app.start_display(displayhost::Press::Apply, &mut ctx.heads);
+    assert_eq!(app.display.sent_primary.as_deref(), Some("HDMI-A-1"));
+    app.display_changed();
+    assert_eq!(
+        primary_check(&app),
+        (true, false),
+        "HDMI-A-1 ticked while it runs"
+    );
+
+    let answer = app.display.primary_answer.take().unwrap();
+    answer.send(Err("refused")).unwrap();
+    assert_eq!(app.primary_done(), Some(false));
+    assert!(app.error.is_some(), "the error box is up");
+    assert_eq!(
+        app.display.model.primary_index(),
+        0,
+        "DP-1 is the primary again"
+    );
+    assert_eq!(
+        primary_check(&app),
+        (false, true),
+        "HDMI-A-1 can be made primary again"
+    );
+    assert!(!app.dirty(), "nothing is left to apply");
+}
+
 #[test]
 fn a_refused_vrr_on_ok_says_so_and_keeps_the_sheet() {
     let mut app = app("vrr-refused");
