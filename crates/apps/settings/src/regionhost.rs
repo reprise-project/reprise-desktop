@@ -18,6 +18,8 @@ pub(crate) struct Region {
     pub(crate) system: System,
     /// An Apply to the System waits for localed.
     pub(crate) setting: bool,
+    /// localed read again: the page opened while the last read had no answer.
+    pub(crate) reread: Option<std::sync::mpsc::Receiver<System>>,
 }
 
 impl Region {
@@ -57,23 +59,21 @@ pub(crate) fn user_choice(conf: &Path, env: impl Fn(&str) -> Option<String>) -> 
 }
 
 /// `installed` with each locale's name, the account's and the system's locales added where
-/// missing.
+/// missing and named as not installed, which is why their samples are blank.
 pub(crate) fn with_names(installed: Vec<String>, also: &[&str]) -> Vec<(String, String)> {
-    let mut codes = installed;
+    let mut named: Vec<(String, String)> = (installed.into_iter())
+        .map(|c| {
+            let name = region::name(&c);
+            (c, name)
+        })
+        .collect();
     for c in also {
-        if !codes.iter().any(|have| have == c) {
-            codes.push(c.to_string());
+        if !named.iter().any(|(have, _)| have == c) {
+            let name = format!("{} - not installed", region::name(c));
+            named.push((c.to_string(), name));
         }
     }
-    regionpage::named(
-        codes
-            .into_iter()
-            .map(|c| {
-                let name = region::name(&c);
-                (c, name)
-            })
-            .collect(),
-    )
+    regionpage::named(named)
 }
 
 fn read(conf: PathBuf) -> Reading {
@@ -158,14 +158,22 @@ fn now() -> i64 {
 }
 
 impl SettingsApp {
-    /// Read the page's locales off the loop the first time it opens.
+    /// Read the page's locales off the loop the first time it opens, and localed again at a
+    /// later opening while it has not answered.
     pub(crate) fn ensure_region(&mut self) {
-        if registry::open(&self.sheet) == Page::RegionLanguage
-            && self.region.is_none()
-            && self.region_read.is_none()
-        {
+        let open = registry::open(&self.sheet) == Page::RegionLanguage;
+        let was = std::mem::replace(&mut self.region_open, open);
+        let opened = open && !was;
+        if !open || self.region_read.is_some() {
+            return;
+        }
+        let Some(r) = &self.region else {
             let conf = self.region_conf.clone();
             self.start_region_read(move || read(conf));
+            return;
+        };
+        if opened && r.system == System::Unread && r.reread.is_none() {
+            self.start_region_reread();
         }
     }
 
@@ -193,8 +201,23 @@ impl SettingsApp {
                     want: r.user,
                     system: r.system,
                     setting: false,
+                    reread: None,
                 });
                 self.show_region(true);
+                changed = true;
+            }
+        }
+        if let Some(r) = &mut self.region
+            && let Some(rx) = &r.reread
+        {
+            let read = match take(rx) {
+                Ok(read) => read,
+                Err(()) => Some(System::Unread),
+            };
+            if let Some(system) = read {
+                r.reread = None;
+                r.system = system;
+                self.show_region(false);
                 changed = true;
             }
         }
@@ -304,6 +327,14 @@ impl SettingsApp {
     }
 
     #[cfg(not(test))]
+    fn start_region_reread(&mut self) {
+        let rx = self.spawn(read_system);
+        if let Some(r) = &mut self.region {
+            r.reread = Some(rx);
+        }
+    }
+
+    #[cfg(not(test))]
     fn start_set_language(&mut self, job: impl FnOnce() + Send + 'static) {
         std::thread::spawn(job);
     }
@@ -314,6 +345,14 @@ impl SettingsApp {
 
     #[cfg(test)]
     fn start_region_set(&mut self, _: impl FnOnce() -> Set + Send + 'static) {}
+
+    /// A read that gets no answer, so a test sees it start and feeds its own.
+    #[cfg(test)]
+    fn start_region_reread(&mut self) {
+        if let Some(r) = &mut self.region {
+            r.reread = Some(std::sync::mpsc::channel().1);
+        }
+    }
 
     #[cfg(test)]
     fn start_set_language(&mut self, _: impl FnOnce() + Send + 'static) {}
@@ -389,6 +428,8 @@ mod tests {
         );
         let codes: Vec<&str> = l.iter().map(|(c, _)| c.as_str()).collect();
         assert_eq!(codes.len(), 2);
-        assert!(codes.contains(&"xx_NOPE.UTF-8"));
+        let name = |code: &str| l.iter().find(|(c, _)| c == code).unwrap().1.clone();
+        assert!(name("xx_NOPE.UTF-8").ends_with(" - not installed"));
+        assert!(!name("en_US.UTF-8").contains("not installed"));
     }
 }

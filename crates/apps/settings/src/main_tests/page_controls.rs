@@ -579,6 +579,45 @@ fn region_ready(a: &mut SettingsApp, user: reprisefs::region::Choice, system_lan
     assert!(a.region_done());
 }
 
+#[test]
+fn localed_unread_is_read_again_when_the_page_opens_again() {
+    use crate::regionpage::System;
+    let mut a = app("region-reread");
+    a.sheet.tabs.open = Page::RegionLanguage.index();
+    let (tx, rx) = std::sync::mpsc::channel();
+    tx.send(crate::regionhost::Reading {
+        locales: Vec::new(),
+        user: reprisefs::region::Choice {
+            language: "en_US.UTF-8".into(),
+            formats: None,
+        },
+        system: System::Unread,
+    })
+    .unwrap();
+    a.region_read = Some(rx);
+    a.ensure_region();
+    assert!(a.region_done());
+    a.ensure_region();
+    assert!(
+        a.region.as_ref().unwrap().reread.is_none(),
+        "not while it stays open"
+    );
+    a.sheet.tabs.open = Page::Thunderbolt.index();
+    a.ensure_region();
+    a.sheet.tabs.open = Page::RegionLanguage.index();
+    a.ensure_region();
+    assert!(a.region.as_ref().unwrap().reread.is_some(), "opened again");
+    let (tx, rx) = std::sync::mpsc::channel();
+    let read = System::Read {
+        locale: vec![("LANG".into(), "de_DE.UTF-8".into())],
+        may_set: true,
+    };
+    tx.send(read.clone()).unwrap();
+    a.region.as_mut().unwrap().reread = Some(rx);
+    assert!(a.region_done());
+    assert_eq!(a.region.as_ref().unwrap().system, read);
+}
+
 fn region_set(a: &mut SettingsApp, set: crate::regionhost::Set) {
     let (tx, rx) = std::sync::mpsc::channel();
     tx.send(set).unwrap();

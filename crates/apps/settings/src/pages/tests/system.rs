@@ -1839,3 +1839,39 @@ fn the_airplane_mode_rows_pin_their_pixels_in_every_look() {
         "on, no radio; Classic, Blue, Glass"
     );
 }
+
+#[test]
+fn the_region_pages_system_group_pins_its_pixels_in_every_look() {
+    use crate::regionpage::{System, page, show_system};
+    let locales = vec![
+        (
+            "de_DE.UTF-8".to_string(),
+            "Deutsch (Deutschland)".to_string(),
+        ),
+        ("en_US.UTF-8".into(), "English (United States)".into()),
+    ];
+    let want = reprisefs::region::Choice {
+        language: "de_DE.UTF-8".into(),
+        formats: None,
+    };
+    let read = |may_set| System::Read {
+        locale: vec![("LANG".into(), "en_US.UTF-8".into())],
+        may_set,
+    };
+    let mut f = page(Area::MIN);
+    let group = f.item("region_system_group").unwrap().rect;
+    let mut pins = Vec::new();
+    for system in [read(true), read(false), System::Unread] {
+        show_system(&mut f, &system, &locales, Some(&want), false);
+        pins.push(row_pins(&f, group));
+    }
+    assert_eq!(
+        pins,
+        [
+            [0xf684f71ab758c5bd, 0xa1c037a0759ebb84, 0x68ce43e3923b23e7],
+            [0x9674ae7b096b1e26, 0xe41dd6cc2f9e1126, 0x6e50971d9246f597],
+            [0xb2c85ad8c04f9c08, 0xcbafb2be0259fc92, 0x7d344ba12e7a3f4f],
+        ],
+        "lit, ask an administrator, no localed; Classic, Blue, Glass"
+    );
+}

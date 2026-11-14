@@ -996,3 +996,36 @@ fn the_switcher_preview_greys_with_thumbnails() {
     follow(&mut s, &want);
     assert!(enabled(&s), "icons bring the preview check box back");
 }
+
+#[test]
+fn the_program_results_list_pins_its_pixels_in_every_look() {
+    use crate::providerpage::{LIST, Row, fill};
+    let row = |name: &str, on, held| Row {
+        id: name.to_lowercase(),
+        name: name.into(),
+        icon: None,
+        on,
+        held,
+    };
+    let rows = [
+        row("Calculator", true, false),
+        row("Characters", false, false),
+        row("Files", true, true),
+    ];
+    let mut page = search(Area::MIN);
+    let list = page.item(LIST).unwrap().rect;
+    let mut pins = Vec::new();
+    for shown in [Some(&rows[..]), None, Some(&[][..])] {
+        fill(&mut page, shown, Some(0));
+        pins.push(row_pins(&page, list));
+    }
+    assert_eq!(
+        pins,
+        [
+            [0x95bd99d0525b3831, 0xae079bdf85da213c, 0xa1a00756fea47020],
+            [0x3ec3d1078e252aea, 0xc006d1f7f9afaf06, 0xefdca6950c706302],
+            [0xcf77c5ad52f5f3c5, 0x0b2b2fa2afc57407, 0xc743eb99a46edda1],
+        ],
+        "ticked, unticked and held rows, Loading..., no program; Classic, Blue, Glass"
+    );
+}
