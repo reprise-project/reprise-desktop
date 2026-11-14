@@ -168,6 +168,8 @@ struct Terminal {
     state_path: PathBuf,
     /// The client size of the window as the user last sized it.
     window: Option<(i32, i32)>,
+    /// When the bell last rang ([`tab::rings`]).
+    last_bell: Option<std::time::Instant>,
 }
 
 /// The arguments after `-e`, the program to run instead of the login shell.
@@ -277,6 +279,7 @@ impl Terminal {
             loaded: None,
             window: State::load(&state_path).window,
             state_path,
+            last_bell: None,
         }
     }
 
@@ -684,7 +687,7 @@ impl Terminal {
 
     /// Carry out what each window's tabs queued; a window whose last tab closed closes. Only the
     /// windows whose shown tab, strip or chrome changed draw again. A program's clipboard store
-    /// counts only from the open tab of a focused window.
+    /// counts only from the open tab of a focused window; a bell from any tab rings its window.
     fn wake(&mut self, ctx: &Ctx) -> Reply {
         let scheme = self.scheme(&ctx.theme);
         let mut reply = Reply::none();
@@ -695,10 +698,14 @@ impl Terminal {
             let (open, focused) = (self.w.tabs.strip.open, self.w.focused);
             let mut shown = false;
             for (i, t) in self.w.tabs.list.iter_mut().enumerate() {
-                let Some(copied) = t.pump(&scheme) else {
+                let Some(pumped) = t.pump(&scheme) else {
                     continue;
                 };
                 shown |= i == open;
+                if pumped.bell && tab::rings(&mut self.last_bell, std::time::Instant::now()) {
+                    reply.bell = Some(id);
+                }
+                let copied = pumped.copied;
                 if i == open && focused {
                     reply.copy = copied.clipboard.or(reply.copy);
                     reply.copy_primary = copied.primary.or(reply.copy_primary);

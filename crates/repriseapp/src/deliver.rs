@@ -345,6 +345,11 @@ impl Host {
         if let Some(id) = reply.raise {
             self.raise(id);
         }
+        if let (Some(id), Some(bell)) = (reply.bell, &self.system_bell)
+            && let Some(s) = self.slots.iter().find(|s| s.id == id)
+        {
+            bell.ring(Some(s.window.wl_surface()));
+        }
         if let Some(on) = reply.fullscreen
             && let Some(w) = self.slot_mut(MAIN).and_then(|s| s.window.toplevel())
         {

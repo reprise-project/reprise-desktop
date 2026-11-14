@@ -293,6 +293,9 @@ asks first. Programs see `TERM=xterm-256color` and `COLORTERM=truecolor`.
 - **Clipboard from programs:** a program can copy to the clipboard and the
   primary selection with OSC 52 (up to 1 MiB) while its tab is the open one
   in a focused window; it can't read them back.
+- **Bell:** a program's BEL rings the desktop's bell for its window, as
+  `[sounds] bell` and `[accessibility] visual_bell` say, at most five times a
+  second.
 - **Drop:** files dropped on the window type their paths into the open tab,
   quoted for the shell where needed, and web links their address, quoted
   the same way, each followed by a space; dropped text types as it came. A drop goes in as a
