@@ -170,6 +170,8 @@ struct Terminal {
     window: Option<(i32, i32)>,
     /// When the bell last rang ([`tab::rings`]).
     last_bell: Option<std::time::Instant>,
+    /// The text of a sweep a cover ended, offered as the primary selection with the next reply.
+    primary: Option<String>,
 }
 
 /// The arguments after `-e`, the program to run instead of the login shell.
@@ -280,6 +282,7 @@ impl Terminal {
             window: State::load(&state_path).window,
             state_path,
             last_bell: None,
+            primary: None,
         }
     }
 
@@ -1052,7 +1055,8 @@ impl App for Terminal {
 
     fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
         let reloaded = matches!(ev, Event::Focus(true)) && self.reload();
-        let reply = self.route(win, ev, ctx);
+        let mut reply = self.route(win, ev, ctx);
+        reply.copy_primary = reply.copy_primary.or(self.primary.take());
         match reloaded {
             true => reply.and(Reply::redraw_all()),
             false => reply,

@@ -343,13 +343,17 @@ impl Terminal {
     }
 
     /// A modal child covers the window, which will not see the release: each button reported to
-    /// the program is reported released on the last cell, and a sweep or chrome press ends.
+    /// the program is reported released on the last cell, a sweep ends and offers its text as the
+    /// primary selection with the next reply, and a chrome press ends.
     pub(crate) fn let_go(&mut self) {
         if self.w.tabs.current().map(Tab::pid) == Some(self.w.mouse.tab) {
             let cell = self.w.mouse.reported;
             let held: Vec<u32> = self.w.mouse.reports.iter().map(|&(b, _)| b).collect();
             for button in held {
                 self.release_button(button, cell);
+            }
+            if self.w.mouse.selecting {
+                self.primary = self.release_button(BTN_LEFT, cell).copy_primary;
             }
         }
         self.w.mouse.end();
