@@ -118,7 +118,8 @@ pub fn head_request(
 
 impl State {
     /// When the connected set changed and has a saved layout, run it on every monitor and lay
-    /// out. False otherwise: the caller places a new monitor from `[[outputs]]`.
+    /// out; a mode the busy display refuses is tried again once it is idle. False otherwise: the
+    /// caller places a new monitor from `[[outputs]]`.
     pub fn monitors_changed(&mut self) -> bool {
         let heads = crate::backend::heads(self);
         let ids = ids_of(&heads);
@@ -148,8 +149,13 @@ impl State {
             };
             let vrr = self.config.adaptive_sync_for_output_name(&name);
             let req = head_request(m, &head.modes, head.current, head.enabled, vrr);
-            if !self.apply_head(&head.output, &req) {
-                log::warn!("output {name}: the saved layout was refused");
+            if self.apply_head(&head.output, &req) {
+                continue;
+            }
+            match req.mode.filter(|_| head.enabled && req.enabled) {
+                // A head lit just before this runs its first modeset still: busy until it lands.
+                Some(i) => crate::backend::retry_mode(self, &head.output, i),
+                None => log::warn!("output {name}: the saved layout was refused"),
             }
         }
         for head in &heads {
@@ -532,6 +538,39 @@ mod tests {
             "turned on in 1280x800"
         );
         assert!(!h.state.mode_refused("DP-9"));
+    }
+
+    #[test]
+    fn a_saved_mode_the_busy_display_refuses_is_set_once_it_is_idle() {
+        let mut h = crate::harness::Harness::new();
+        let a = h.head("DP-1", 1920, 1080);
+        a.add_mode(smithay::output::Mode {
+            size: (2560, 1440).into(),
+            refresh: 60_000,
+        });
+        let b = h.head("DP-2", 1920, 1080);
+        let ids = ids_of(&crate::backend::heads(&h.state));
+        let start = displays::outputs_fingerprint(&[]);
+        let mut layouts = Layouts::parse("");
+        let flat = |m, x| MonitorLayout {
+            scale: 1.0,
+            transform: T::Normal,
+            ..saved(m, x)
+        };
+        let monitors = vec![
+            (ids[0].clone(), flat("2560x1440@60", 0)),
+            (ids[1].clone(), flat("1920x1080@60", 2560)),
+        ];
+        layouts.put(Layout::new(monitors), &start, &start);
+        std::fs::write(&h.state.saved_layouts.path, layouts.render()).unwrap();
+        h.state.test_modes = crate::backend::fake::Modes::Busy;
+        h.state.saved_layouts.set.clear();
+        assert!(h.state.monitors_changed(), "the saved layout is taken");
+        let width = |o: &Output| reprisescene::output_rect(o).map(|r| r.size.w);
+        assert_eq!(width(&a), Some(1920), "refused while busy");
+        crate::backend::fake::idle(&mut h.state);
+        assert_eq!(width(&a), Some(2560));
+        assert_eq!(b.current_location().x, 2560, "no gap between the two");
     }
 
     #[test]

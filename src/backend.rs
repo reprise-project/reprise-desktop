@@ -11,7 +11,7 @@
 mod commit;
 mod devices;
 #[cfg(test)]
-mod fake;
+pub mod fake;
 mod gamma;
 mod inputfds;
 mod links;
@@ -80,7 +80,8 @@ pub use gamma::{gamma_size, set_gamma};
 use links::LINK_GOOD;
 pub(crate) use outputs::retire_global;
 pub use outputs::{
-    HeadState, disable, enable, heads, output_power, set_mode, set_output_power, set_vrr,
+    HeadState, disable, enable, heads, output_power, retry_mode, set_mode, set_output_power,
+    set_vrr,
 };
 use outputs::{Probe, asks_scan, connector_disconnected, scan_connectors};
 pub(crate) use render::{advance, send_frame_callbacks};
@@ -211,8 +212,8 @@ struct Surface {
     stats: crate::debugview::FrameStats,
     damage_seen: Option<CommitCounter>,
     hw: Hw,
-    /// The mode the connector's new list wants, refused while the display was busy
-    /// (`Step::Mode`).
+    /// A mode `set_mode` refused while the display was busy, tried again by `Step::Mode`
+    /// (`retry_mode`).
     pending_mode: Option<steps::PendingMode<smithay::reexports::drm::control::Mode>>,
 }
 
