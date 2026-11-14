@@ -1845,10 +1845,16 @@ stop the share first.
   key, gated as the [consent prompts](#consent-prompts) are. Reprise runs
   nothing as root: PackageKit, Flatpak or `pkexec pacman -U` (for a
   `.pkg.tar.zst`, which PackageKit's pacman backend refuses) does the work
-  and polkit decides whether it takes an administrator's password. A downloaded package carries
-  no repository signature, so PackageKit treats it as untrusted, and its
-  install scripts run as root once it installs: install only packages you
-  trust. The uninstall sheet refuses a removal that would take Reprise's own
+  and polkit decides whether it takes an administrator's password. The sheet
+  first copies the file (and a `.sig` beside it) into a new folder in
+  `$XDG_RUNTIME_DIR` only you can open, reads its facts from the copy and
+  installs the copy, so a file someone swaps after it opened is not what
+  installs. A downloaded package carries no repository signature, so
+  PackageKit treats it as untrusted, the packager it names reads
+  "(unverified)" unless pacman will check a `.sig`, and its install scripts
+  run as root once it installs: install only packages you trust. A
+  `.flatpakref` adds its repository, and the one its `RuntimeRepo` names, as
+  system remotes that stay; the sheet names the second one. The uninstall sheet refuses a removal that would take Reprise's own
   packages or one the system marks essential; that guards against a slip,
   not against an administrator, who can still remove them with the package
   manager.

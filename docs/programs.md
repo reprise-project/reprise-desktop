@@ -786,8 +786,10 @@ Uninstall; Enter presses Cancel. Packages go through PackageKit, Flatpaks
 through `flatpak`, and polkit asks for an administrator's password where
 the system's rules want one. PackageKit's pacman backend takes no zstd
 packages, so a `.pkg.tar.zst` installs through `pkexec pacman -U` (with
-pacman's dry run listing what comes along). A `.flatpakref` or bundle installs for every
-user. An uninstalled Flatpak keeps its settings and files in your home
+pacman's dry run listing what comes along). The sheet reads and installs a private copy of
+the file. A packager reads "(unverified)" unless a `.sig` lies beside a pacman package. A
+`.flatpakref` or bundle installs for every user, and a `.flatpakref`'s repository (and the
+runtime's, named in the note when it differs) stays added. An uninstalled Flatpak keeps its settings and files in your home
 folder. A launcher or web app an app installed through the portal shows the
 Flatpak that installed it, and Uninstall deletes just the launcher and its
 icon. Cancel stops a run where PackageKit or Flatpak can stop it, a

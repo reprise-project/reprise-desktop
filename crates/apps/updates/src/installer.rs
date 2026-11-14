@@ -311,8 +311,43 @@ fn host(url: &str) -> &str {
     rest.split('/').next().unwrap_or(rest)
 }
 
-/// Package file `path`: what it is and what installs it.
-fn read_file(path: &Path, conn: Option<&Connection>) -> (Found, Plan) {
+/// A `.flatpakref`'s facts. `flatpak install --from` adds its repository, and the one `RuntimeRepo`
+/// names, as system remotes that stay, so the note says where the runtime comes from.
+fn ref_found(r: reprisefs::software::FlatpakRef, found: &mut Found) {
+    let source = host(&r.url).to_string();
+    let runtime = host(&r.runtime_repo);
+    found.name = r.title;
+    found.icon = Some(r.id.clone());
+    found.facts = vec![
+        fact("App ID:", r.id),
+        fact("Branch:", r.branch),
+        fact("Size:", "Known once the download starts"),
+        fact("Source:", format!("{source} (Flatpak)")),
+    ];
+    found.note = if runtime.is_empty() || runtime == source {
+        "It is installed for every user of this computer, with the runtime it needs from the \
+         same source, which stays added for later installs and updates."
+            .into()
+    } else {
+        format!(
+            "It is installed for every user of this computer, with the runtime it needs from \
+             {runtime}. Both sources stay added for later installs and updates."
+        )
+    };
+    found.ready = true;
+}
+
+/// Who built a package. Only pacman checks a signature, and only one in a `.sig` beside the file.
+fn packager(name: String, signed: bool) -> String {
+    match (name.is_empty(), signed) {
+        (true, _) => String::new(),
+        (false, true) => name,
+        (false, false) => format!("(unverified) {name}"),
+    }
+}
+
+/// Package file `path`, the sheet's private copy: what it is and what installs it.
+fn read_file(path: &Path, signed: bool, conn: Option<&Connection>) -> (Found, Plan) {
     let file_name = path
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -340,18 +375,7 @@ fn read_file(path: &Path, conn: Option<&Connection>) -> (Found, Plan) {
             let text = std::fs::read_to_string(path).unwrap_or_default();
             match reprisefs::software::flatpak_ref(&text) {
                 Some(r) => {
-                    found.name = r.title;
-                    found.icon = Some(r.id.clone());
-                    found.facts = vec![
-                        fact("App ID:", r.id),
-                        fact("Branch:", r.branch),
-                        fact("Size:", "Known once the download starts"),
-                        fact("Source:", format!("{} (Flatpak)", host(&r.url))),
-                    ];
-                    found.note = "It is installed for every user of this computer, with the \
-                                  runtime it needs from the same source."
-                        .into();
-                    found.ready = true;
+                    ref_found(r, &mut found);
                     flatpak_args("--from")
                 }
                 None => {
@@ -385,7 +409,10 @@ fn read_file(path: &Path, conn: Option<&Connection>) -> (Found, Plan) {
                         fact("Package:", facts.name.clone()),
                         fact("Version:", facts.version),
                         fact("Size:", size_text(facts.size)),
-                        fact("Source:", facts.packager),
+                        fact(
+                            "Packager:",
+                            packager(facts.packager, signed && kind == pkgfile::Kind::Pacman),
+                        ),
                     ];
                     let takes = |c| zbus::block_on(packagekit_takes(c, path));
                     match conn {
@@ -550,19 +577,41 @@ fn run(
     }
 }
 
+/// Where a package file's private copy goes: `$XDG_RUNTIME_DIR`, else the temp folder.
+fn runtime_dir() -> PathBuf {
+    std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .unwrap_or_else(std::env::temp_dir)
+}
+
 /// Read `target`, post what it is, then run it each time `go` says so, until it ends other than
 /// by a dismissed password prompt.
 fn work(target: Target, go: Receiver<()>, poster: Poster, stop: Arc<Mutex<Stopper>>) {
     let conn = zbus::block_on(Connection::system()).ok();
-    let (found, plan, verb) = match &target {
+    // `_copy` lives until the job ends: the plan installs it.
+    let (found, plan, verb, _copy) = match &target {
         Target::Uninstall(file) => {
             let (f, p) = read_program(file, conn.as_ref());
-            (f, p, Verb::Uninstall)
+            (f, p, Verb::Uninstall, None)
         }
-        Target::Install(file) => {
-            let (f, p) = read_file(file, conn.as_ref());
-            (f, p, Verb::Install)
-        }
+        Target::Install(file) => match pkgfile::private_copy(file, &runtime_dir()) {
+            Ok(c) => {
+                let (f, p) = read_file(&c.file, c.signed, conn.as_ref());
+                (f, p, Verb::Install, Some(c))
+            }
+            Err(e) => {
+                let found = Found {
+                    name: file
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default(),
+                    note: format!("Reprise could not read the file: {e}."),
+                    ..Found::default()
+                };
+                (found, Plan::Nothing, Verb::Install, None)
+            }
+        },
     };
     poster.post(Msg::Found(found));
     while go.recv().is_ok() {
@@ -603,6 +652,8 @@ struct Installer {
     stale: bool,
     worker: Option<Receiver<Msg>>,
     go: Option<Sender<()>>,
+    /// The worker, joined when the program ends so the file's private copy is deleted.
+    thread: Option<std::thread::JoinHandle<()>>,
     stop: Arc<Mutex<Stopper>>,
     icon: Option<String>,
     icon_loaded: bool,
@@ -643,6 +694,7 @@ impl Installer {
             stale: true,
             worker: None,
             go: None,
+            thread: None,
             stop: Arc::default(),
             icon: None,
             icon_loaded: false,
@@ -844,8 +896,9 @@ impl App for Installer {
         let spawned = std::thread::Builder::new()
             .name("reprise-install".into())
             .spawn(move || work(target, go_rx, poster, stop));
-        if let Err(e) = spawned {
-            log::warn!("could not start the install thread: {e}");
+        match spawned {
+            Ok(h) => self.thread = Some(h),
+            Err(e) => log::warn!("could not start the install thread: {e}"),
         }
         self.worker = Some(rx);
         self.go = Some(go);
@@ -899,6 +952,16 @@ impl repriseapp::Extended for Installer {
             && let Some(focus) = installsheet::access(f, tree, &ctx.text, px)
         {
             tree.set_focus(focus);
+        }
+    }
+}
+
+impl Drop for Installer {
+    fn drop(&mut self) {
+        // Without `go` the worker's wait ends, and it drops the copy as it returns.
+        self.go = None;
+        if let Some(h) = self.thread.take() {
+            let _ = h.join();
         }
     }
 }
@@ -982,6 +1045,47 @@ mod tests {
         let other = "[Desktop Entry]\nName=Maps\nX-Flatpak=org.example.Store\n";
         assert_eq!(launcher_facts(other, named)[0].1, "org.example.Store");
         assert!(launcher_facts("[Desktop Entry]\nName=Maps\n", named).is_empty());
+    }
+
+    #[test]
+    fn a_flatpakref_says_where_its_runtime_comes_from_and_that_the_sources_stay() {
+        let at = |runtime: &str| {
+            let text = format!(
+                "[Flatpak Ref]\nName=org.example.Pinball\nUrl=https://dl.example.org/repo/\n\
+                 RuntimeRepo={runtime}\n"
+            );
+            let mut found = Found::default();
+            ref_found(reprisefs::software::flatpak_ref(&text).unwrap(), &mut found);
+            found
+        };
+        let other = at("https://dl.flathub.org/repo/flathub.flatpakrepo");
+        assert_eq!(
+            other.note,
+            "It is installed for every user of this computer, with the runtime it needs from \
+             dl.flathub.org. Both sources stay added for later installs and updates."
+        );
+        assert_eq!(other.facts[3].1, "dl.example.org (Flatpak)");
+        assert!(other.ready);
+        for same in ["", "https://dl.example.org/repo/example.flatpakrepo"] {
+            assert_eq!(
+                at(same).note,
+                "It is installed for every user of this computer, with the runtime it needs from \
+                 the same source, which stays added for later installs and updates."
+            );
+        }
+    }
+
+    #[test]
+    fn an_unsigned_packager_reads_as_unverified() {
+        assert_eq!(
+            packager("Arch Linux <a@b>".into(), false),
+            "(unverified) Arch Linux <a@b>"
+        );
+        assert_eq!(
+            packager("Arch Linux <a@b>".into(), true),
+            "Arch Linux <a@b>"
+        );
+        assert_eq!(fact("Packager:", packager(String::new(), false)).1, UNKNOWN);
     }
 
     #[test]
