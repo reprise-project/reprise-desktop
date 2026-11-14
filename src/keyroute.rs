@@ -277,17 +277,22 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
     // a config bind on the bare key replaces the built-in action. The wifi
     // and airplane-mode keys are the exception at the lock: nobody there may
     // take the machine off the network. Some firmware sends the touchpad key
-    // with Ctrl+Super held.
+    // with Ctrl+Super held; unless that chord is bound, it routes as the bare key.
     if k.pressed
         && let Some(a) = k.syms.iter().find_map(|&s| media_action_for(s))
         && (k.mods == 0 || (k.mods == MOD_CTRL | MOD_LOGO && matches!(a, Action::Touchpad(_))))
         && !(modes.locked && matches!(a, Action::Wifi | Action::Airplane))
     {
-        let bound = k
-            .lower
-            .iter()
-            .any(|&l| binds.iter().any(|b| b.mods == k.mods && b.keysym == l));
-        if !bound {
+        let bound =
+            |mods| (k.lower.iter()).any(|&l| binds.iter().any(|b| b.mods == mods && b.keysym == l));
+        if k.mods != 0 && !bound(k.mods) && bound(0) {
+            let bare = KeyPress {
+                mods: 0,
+                ..k.clone()
+            };
+            return route(modes, &bare, binds, globals);
+        }
+        if !bound(k.mods) {
             return plain(KeyRoute::Media(a));
         }
     }

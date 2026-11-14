@@ -739,6 +739,39 @@ fn a_config_bind_on_a_media_key_wins_over_the_default() {
 }
 
 #[test]
+fn a_bare_touchpad_bind_takes_the_key_the_firmware_sends_with_ctrl_super() {
+    let binds = vec![Keybind {
+        mods: 0,
+        keysym: KEY_XF86TouchpadToggle,
+        action: Action::Lock,
+    }];
+    let m = Modes::default();
+    let chord = press(KEY_XF86TouchpadToggle, MOD_CTRL | MOD_LOGO);
+    assert_eq!(
+        route(&m, &chord, &binds, &[]).route,
+        KeyRoute::Binds(vec![Action::Lock])
+    );
+    let locked = Modes {
+        locked: true,
+        ..Modes::default()
+    };
+    assert_eq!(route(&locked, &chord, &binds, &[]).route, KeyRoute::Lock);
+    let both = vec![
+        binds[0].clone(),
+        Keybind {
+            mods: MOD_CTRL | MOD_LOGO,
+            keysym: KEY_XF86TouchpadToggle,
+            action: Action::Run,
+        },
+    ];
+    assert_eq!(
+        route(&m, &chord, &both, &[]).route,
+        KeyRoute::Binds(vec![Action::Run]),
+        "a bind on the chord itself wins"
+    );
+}
+
+#[test]
 fn an_open_start_panel_takes_every_press_but_a_menu_over_it_comes_first() {
     let m = Modes {
         start_panel_open: true,
