@@ -24,7 +24,7 @@ const OK_X: i32 = CANCEL_X - BUTTON_GAP - BUTTON_W;
 
 pub const OK: &str = "ok";
 pub const CANCEL: &str = "cancel";
-const LAYOUT: &str = "layout";
+pub(crate) const LAYOUT: &str = "layout";
 const VARIANT: &str = "variant";
 
 const FIRST: &str = "us";

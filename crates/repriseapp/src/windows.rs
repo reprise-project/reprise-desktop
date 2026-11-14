@@ -319,6 +319,14 @@ impl Host {
     }
 
     pub(crate) fn sync_children(&mut self) {
+        let before = self.gates();
+        self.sync_child_windows();
+        for win in crate::deliver::newly_covered(&before, &self.gates()) {
+            self.cover(win);
+        }
+    }
+
+    fn sync_child_windows(&mut self) {
         // `MAIN` is the host's: a `Child` claiming that id is dropped
         // here, so it can never retitle the main window or make it modal.
         let want: Vec<Child> = self

@@ -176,6 +176,31 @@ pub trait Extended {
     fn drop_file_dialog(&mut self, _win: WinId) -> Option<FileDrop<'_>> {
         None
     }
+    /// A modal child mapped over window `win`, which will see no pointer event until it closes,
+    /// the release included: whatever `win` holds lets go. Its popups closed just before
+    /// ([`cover`]). Defaults to [`reader_cancel_pointer`].
+    fn cancel_pointer(&mut self, win: WinId) {
+        reader_cancel_pointer(self, win);
+    }
+}
+
+/// [`Extended::reader_form`]'s form or sheet lets go of the pointer; what
+/// [`Extended::cancel_pointer`] does unless a program answers it.
+pub fn reader_cancel_pointer<A: Extended + ?Sized>(app: &mut A, win: WinId) {
+    match app.reader_form(win) {
+        Some(ReaderForm::Form(d)) => d.form.cancel_pointer(),
+        Some(ReaderForm::Sheet(s)) => s.cancel_pointer(),
+        None => {}
+    }
+}
+
+/// What the host does to window `win` as a modal child maps over it: its open popup closes, then
+/// [`Extended::cancel_pointer`].
+pub fn cover<A: Extended + ?Sized>(app: &mut A, win: WinId, ctx: &Ctx) {
+    if let Some(mut h) = app.popup(win, ctx) {
+        h.dismiss();
+    }
+    app.cancel_pointer(win);
 }
 
 /// The open popup of [`Extended::reader_form`]'s form or sheet, else the open list or Views menu of

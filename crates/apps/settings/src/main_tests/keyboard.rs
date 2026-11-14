@@ -1,5 +1,6 @@
 use super::*;
 use reprisekit::classic::widgets::scrollbar_parts;
+use reprisekit::trackbar;
 
 #[test]
 fn a_field_copies_its_selection_and_takes_a_paste() {
@@ -265,6 +266,79 @@ fn left_drag(a: &mut SettingsApp, ctx: &mut Ctx, (x, y): (i32, i32), to: Option<
 
 fn top(a: &mut SettingsApp) -> usize {
     a.side_list().expect("a side list").0.top
+}
+
+#[test]
+fn an_error_box_mid_drag_lets_go_of_the_side_list_thumb() {
+    let mut a = app("box-drops-list-thumb");
+    let mut ctx = test_ctx();
+    ctx.size = (1000, 640);
+    a.open_page(Page::Keyboard, None);
+    send(&mut a, &mut ctx, PointerInput::Motion { x: 0, y: 0 });
+    let cm = ctx.forms().controls();
+    let (list, rect, _) = a.side_list().expect("the shortcut list");
+    let lay = listview::layout(list, rect, &cm);
+    let sb = lay.scrollbar.expect("the shortcuts overflow the list");
+    let p = scrollbar_parts(sb, 1, 0, lay.rows, list.slots(), false, lay.thumb_min);
+    let thumb = p.thumb.expect("a thumb");
+    let (x, y) = (thumb.x + 2, thumb.y + 3);
+    let press = PointerInput::Press {
+        x,
+        y,
+        button: BTN_LEFT,
+        time: 0,
+        mods: Mods::default(),
+    };
+    send(&mut a, &mut ctx, press);
+    fail_under_box(&mut a, &ctx, "refused");
+    close_box(&mut a, &mut ctx);
+    send(
+        &mut a,
+        &mut ctx,
+        PointerInput::Motion {
+            x: x + 40,
+            y: sb.bottom(),
+        },
+    );
+    assert_eq!(top(&mut a), 0, "the list stays at its top");
+    assert!(!a.dirty());
+}
+
+#[test]
+fn an_error_box_mid_drag_lets_go_of_a_page_trackbar() {
+    let mut a = app("box-drops-trackbar");
+    let mut ctx = test_ctx();
+    ctx.size = (1920, 1080);
+    a.open_page(Page::Mouse, None);
+    send(&mut a, &mut ctx, PointerInput::Motion { x: 0, y: 0 });
+    let r = a
+        .sheet
+        .open()
+        .rect("mouse_speed")
+        .expect("the speed trackbar");
+    let Some(form::Control::TrackBar(t)) = a.sheet.open().item("mouse_speed").map(|i| &i.control)
+    else {
+        panic!("the speed is a trackbar");
+    };
+    let (pos, thumb) = (t.pos, trackbar::layout(t, r.x, r.y, r.width).thumb);
+    let (x, y) = (thumb.x + thumb.width / 2, thumb.y + thumb.height / 2);
+    let press = PointerInput::Press {
+        x,
+        y,
+        button: BTN_LEFT,
+        time: 0,
+        mods: Mods::default(),
+    };
+    send(&mut a, &mut ctx, press);
+    fail_under_box(&mut a, &ctx, "refused");
+    close_box(&mut a, &mut ctx);
+    send(&mut a, &mut ctx, PointerInput::Motion { x: r.right(), y });
+    let now = match a.sheet.open().item("mouse_speed").map(|i| &i.control) {
+        Some(form::Control::TrackBar(t)) => t.pos,
+        _ => panic!("the speed is a trackbar"),
+    };
+    assert_eq!(now, pos, "the thumb stays where the press found it");
+    assert!(!a.dirty(), "Apply stays grey");
 }
 
 #[test]

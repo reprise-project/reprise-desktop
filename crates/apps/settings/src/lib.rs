@@ -1175,6 +1175,24 @@ impl repriseapp::Extended for SettingsApp {
         })
     }
 
+    /// The side lists let go too, and the Add Layout dialog's form.
+    fn cancel_pointer(&mut self, win: WinId) {
+        match win {
+            repriseapp::MAIN => {
+                for list in self.side_lists() {
+                    list.cancel_pointer();
+                }
+            }
+            LAYOUT_WIN => {
+                if let Some(d) = self.add_layout.as_mut() {
+                    d.form.cancel_pointer();
+                }
+            }
+            _ => {}
+        }
+        repriseapp::reader_cancel_pointer(self, win);
+    }
+
     fn access(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
         self.describe(win, tree, ctx);
     }

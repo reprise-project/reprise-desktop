@@ -256,8 +256,24 @@ fn an_error_box_closes_the_open_combo_list_under_it() {
         &mut ctx,
     );
     drop_orientation(&mut app);
-    app.fail("refused");
+    fail_under_box(&mut app, &ctx, "refused");
     assert!(!app.sheet.open().popup_open());
+}
+
+#[test]
+fn an_error_box_closes_the_combo_list_open_on_the_add_layout_dialog() {
+    let mut app = app("error-closes-dialog-list");
+    let ctx = test_ctx();
+    let mut d = layoutdlg::LayoutDialog::new(&app.xkb);
+    match d.form.item_mut(layoutdlg::LAYOUT).map(|i| &mut i.control) {
+        Some(form::Control::Combo(c)) => assert!(c.toggle()),
+        _ => panic!("the layout is a combo box"),
+    }
+    assert!(d.form.popup_open());
+    app.add_layout = Some(d);
+    fail_under_box(&mut app, &ctx, "refused");
+    let d = app.add_layout.as_ref().expect("the dialog stays up");
+    assert!(!d.form.popup_open());
 }
 
 #[test]

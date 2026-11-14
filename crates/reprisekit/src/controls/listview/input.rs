@@ -94,6 +94,15 @@ impl<R: Rows> ListView<R> {
         }
     }
 
+    /// Let go of the pointer outright, for a host whose window will not see the release: the held
+    /// box, the grabbed thumb, the held header column and bar part.
+    pub fn cancel_pointer(&mut self) {
+        self.held_check.clear();
+        self.thumb = ThumbDrag::default();
+        self.header.clear();
+        self.bars.clear();
+    }
+
     /// A key on the focused list laid out as `lay`, if it takes it: the arrows, Home / End and the
     /// Page keys move the selection, and Space flips the focused row's check when `checks` may.
     pub fn key(&mut self, key: &form::Key, lay: &Layout, checks: bool) -> Option<Took> {
@@ -184,6 +193,36 @@ mod tests {
             lv.pointer(Input::Motion(x, sb.bottom()), &lay, R, true),
             None,
             "a page press holds no thumb"
+        );
+    }
+
+    #[test]
+    fn a_cancelled_pointer_lets_go_of_the_thumb_and_the_held_box() {
+        let mut lv = checked(40);
+        let lay = layout(&lv, R, &ControlMetrics::CLASSIC);
+        let sb = lay.scrollbar.expect("a vertical bar");
+        let p = scrollbar_parts(sb, 1, lv.top, lay.rows, lv.slots(), false, lay.thumb_min);
+        let thumb = p.thumb.expect("a thumb");
+        lv.pointer(Input::Press(thumb.x + 2, thumb.y + 3), &lay, R, true);
+        lv.cancel_pointer();
+        assert_eq!(
+            lv.pointer(Input::Motion(thumb.x + 2, sb.bottom()), &lay, R, true),
+            None
+        );
+        assert_eq!(lv.top, 0, "the rows stay put");
+
+        let b = lv.check_rect(&lay, 1);
+        lv.pointer(Input::Press(b.x + 2, b.y + 2), &lay, R, true);
+        lv.cancel_pointer();
+        assert!(!lv.held_check.holding());
+        assert_eq!(
+            lv.pointer(Input::Release(b.x + 2, b.y + 2), &lay, R, true),
+            None
+        );
+        assert_eq!(
+            lv.checks.as_ref().map(|c| c[1]),
+            Some(true),
+            "the box keeps its tick"
         );
     }
 

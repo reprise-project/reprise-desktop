@@ -1,6 +1,8 @@
 use super::*;
 use crate::clipboard::{TEXT_MIME, pasted_text, read_capped, text_mime};
-use crate::deliver::{blink_target, input_blocked, modal_over, redraws, root_of, top_modal};
+use crate::deliver::{
+    blink_target, input_blocked, modal_over, newly_covered, redraws, root_of, top_modal,
+};
 use crate::draw::{buffer_damage, copy_pixels, next_buffer, surface_damage};
 use crate::reply::spawn_then;
 use crate::runloop::turn;
@@ -583,6 +585,23 @@ fn a_modal_child_gates_only_the_windows_it_sits_over() {
         modal_over(WinId::named("confirm"), slots.into_iter(), parent),
         Some(WinId::named("confirm"))
     );
+}
+
+#[test]
+fn a_modal_child_covers_the_windows_it_newly_gates() {
+    const LAYOUT: WinId = WinId::named("layout");
+    const ERROR: WinId = WinId::named("error");
+    let free = [(MAIN, None), (LAYOUT, None)];
+    let boxed = [(MAIN, Some(ERROR)), (LAYOUT, Some(ERROR)), (ERROR, None)];
+    assert_eq!(newly_covered(&free, &boxed), vec![MAIN, LAYOUT]);
+    let dialog = [(MAIN, Some(LAYOUT)), (LAYOUT, None)];
+    assert_eq!(
+        newly_covered(&dialog, &boxed),
+        vec![LAYOUT],
+        "the main window was gated already"
+    );
+    assert!(newly_covered(&boxed, &dialog).is_empty(), "the box closed");
+    assert!(newly_covered(&boxed, &boxed).is_empty());
 }
 
 #[test]

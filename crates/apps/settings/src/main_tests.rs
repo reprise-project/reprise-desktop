@@ -67,6 +67,33 @@ pub(super) fn test_ctx() -> Ctx {
 
 const MAIN: WinId = repriseapp::MAIN;
 
+/// `fail(reason)` as the host carries it out: the error box maps modal over the windows no modal
+/// child gated, which close their popups and let go of the pointer. Every window here sits over
+/// the main one, so the newest modal child gates all the others.
+fn fail_under_box(a: &mut SettingsApp, ctx: &Ctx, reason: &str) {
+    let kids = a.children();
+    let free: Vec<WinId> = match kids.iter().rev().find(|c| c.modal) {
+        Some(m) => vec![m.id],
+        None => std::iter::once(MAIN)
+            .chain(kids.iter().map(|c| c.id))
+            .collect(),
+    };
+    a.fail(reason);
+    assert!(
+        a.children().iter().any(|c| c.id == ERROR_WIN && c.modal),
+        "the error box is modal"
+    );
+    for win in free {
+        repriseapp::cover(a, win, ctx);
+    }
+}
+
+/// Closes the error box from its frame.
+fn close_box(a: &mut SettingsApp, ctx: &mut Ctx) {
+    a.event(ERROR_WIN, Event::CloseRequest, ctx);
+    assert!(a.error.is_none(), "the error box closed");
+}
+
 fn page_request(name: &str) -> instance::Request {
     instance::Request {
         action: Some((PAGE_ACTION.into(), vec![name.into()])),
