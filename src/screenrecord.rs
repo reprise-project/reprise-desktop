@@ -9,12 +9,15 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use smithay::output::Output;
+use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 
 use crate::compositor::State;
 use crate::notifyview::OwnAction;
 use crate::raster::Rect;
 
 const PROGRAM: &str = "reprise-record";
+/// How long a recorder has to finish its file after Stop before it is killed.
+const STOP_GRACE: Duration = Duration::from_secs(5);
 
 /// What a recording records: an output, or an area of it in output-local logical pixels.
 #[derive(Clone, Debug, PartialEq)]
@@ -152,23 +155,50 @@ impl State {
         self.recording_changed();
     }
 
-    /// Stop the recording: the recorder finishes its file and exits.
+    /// Stop the recording: the recorder finishes its file and exits, or is killed and forgotten
+    /// after [`STOP_GRACE`].
     pub fn stop_recording(&mut self) {
         let Some(r) = self.recording.as_mut() else {
             return;
         };
-        r.stopping = true;
+        let first = !std::mem::replace(&mut r.stopping, true);
         if let Some(fd) = &r.pidfd
-            && let Err(e) = interrupt(fd)
+            && let Err(e) = signal(fd, libc::SIGINT)
         {
             log::debug!("stopping {PROGRAM}: {e}");
         }
+        let Some(pid) = r.pid.filter(|_| first) else {
+            return;
+        };
+        let timer = Timer::from_duration(STOP_GRACE);
+        let armed = self.handle.insert_source(timer, move |_, _, state| {
+            state.stop_overdue(pid);
+            TimeoutAction::Drop
+        });
+        if let Err(e) = armed {
+            log::warn!("stopping {PROGRAM}: no timer: {}", e.error);
+        }
+    }
+
+    /// The recorder `pid` was asked to stop [`STOP_GRACE`] ago: kill it when it still runs, and
+    /// let a new recording start.
+    fn stop_overdue(&mut self, pid: u32) {
+        let Some(r) = self.recording.take_if(|r| r.pid == Some(pid)) else {
+            return;
+        };
+        log::warn!("{PROGRAM} (pid {pid}) did not stop; killing it");
+        if let Some(fd) = &r.pidfd
+            && let Err(e) = signal(fd, libc::SIGKILL)
+        {
+            log::debug!("killing {PROGRAM}: {e}");
+        }
+        self.recording_changed();
     }
 
     fn recording_file_made(&mut self, made: Result<(std::fs::File, Made), String>) {
         let (file, made) = match made {
             Ok(m) => m,
-            Err(e) => return self.recording_ended(Ended::NotStarted(e)),
+            Err(e) => return self.recording_ended(None, Ended::NotStarted(e)),
         };
         let Some(r) = self.recording.as_ref() else {
             return remove_later(self, made);
@@ -190,12 +220,12 @@ impl State {
             Ok(Some(c)) => c,
             Ok(None) => {
                 remove_later(self, made);
-                return self.recording_ended(Ended::NotStarted(String::new()));
+                return self.recording_ended(None, Ended::NotStarted(String::new()));
             }
             Err(e) => {
                 remove_later(self, made);
                 let why = format!("{PROGRAM} did not start: {e}.");
-                return self.recording_ended(Ended::NotStarted(why));
+                return self.recording_ended(None, Ended::NotStarted(why));
             }
         };
         log::info!(
@@ -213,15 +243,20 @@ impl State {
             r.started = Instant::now();
         }
         self.recording_changed();
+        let pid = child.id();
         self.spawn_job(move || {
             let ended = wait(child, made);
-            Box::new(move |state: &mut State| state.recording_ended(ended))
+            Box::new(move |state: &mut State| state.recording_ended(Some(pid), ended))
         });
     }
 
-    fn recording_ended(&mut self, ended: Ended) {
-        self.recording = None;
-        self.recording_changed();
+    /// The recorder `pid` (None: none ran) ended; a recording started since `stop_overdue`
+    /// forgot it runs on.
+    fn recording_ended(&mut self, pid: Option<u32>, ended: Ended) {
+        if self.recording.as_ref().is_some_and(|r| r.pid == pid) {
+            self.recording = None;
+            self.recording_changed();
+        }
         match ended {
             Ended::Exited { made, ok: true, .. } => saved_notice(self, &made.path),
             Ended::Exited {
@@ -323,14 +358,14 @@ fn pidfd_open(pid: u32) -> std::io::Result<OwnedFd> {
     Ok(unsafe { OwnedFd::from_raw_fd(fd as RawFd) })
 }
 
-/// SIGINT to the process `pidfd` holds; `ESRCH` once it was reaped.
-fn interrupt(pidfd: &OwnedFd) -> std::io::Result<()> {
+/// Signal `sig` to the process `pidfd` holds; `ESRCH` once it was reaped.
+fn signal(pidfd: &OwnedFd, sig: libc::c_int) -> std::io::Result<()> {
     // SAFETY: a null siginfo is allowed and sends the signal as kill(2) would.
     let r = unsafe {
         libc::syscall(
             libc::SYS_pidfd_send_signal,
             pidfd.as_raw_fd(),
-            libc::SIGINT,
+            sig,
             std::ptr::null::<libc::siginfo_t>(),
             0,
         )
@@ -432,7 +467,7 @@ mod tests {
             .arg("30")
             .spawn()
             .unwrap();
-        interrupt(&pidfd_open(live.id()).unwrap()).unwrap();
+        signal(&pidfd_open(live.id()).unwrap(), libc::SIGINT).unwrap();
         assert_eq!(live.wait().unwrap().signal(), Some(libc::SIGINT));
         let mut child = std::process::Command::new("sleep")
             .arg("30")
@@ -441,8 +476,41 @@ mod tests {
         let fd = pidfd_open(child.id()).unwrap();
         child.kill().unwrap();
         child.wait().unwrap();
-        let e = interrupt(&fd).unwrap_err();
+        let e = signal(&fd, libc::SIGINT).unwrap_err();
         assert_eq!(e.raw_os_error(), Some(libc::ESRCH));
+    }
+
+    #[test]
+    fn a_recorder_deaf_to_stop_is_killed_and_forgotten_after_the_grace() {
+        use std::os::unix::process::ExitStatusExt;
+        let mut h = crate::harness::Harness::new();
+        let output = h.output("TEST-1", 1024, 768);
+        let mut deaf = std::process::Command::new("sh")
+            .args(["-c", "trap '' INT; sleep 30"])
+            .spawn()
+            .unwrap();
+        let pid = deaf.id();
+        let mut r = Recording::running(Target { output, area: None });
+        r.pid = Some(pid);
+        r.pidfd = Some(pidfd_open(pid).unwrap());
+        h.state.recording = Some(r);
+        let ignores_int = || {
+            let status = std::fs::read_to_string(format!("/proc/{pid}/status")).unwrap();
+            let mask = status
+                .lines()
+                .find_map(|l| l.strip_prefix("SigIgn:"))
+                .unwrap();
+            u64::from_str_radix(mask.trim(), 16).unwrap() & (1 << (libc::SIGINT - 1)) != 0
+        };
+        let until = Instant::now() + Duration::from_secs(5);
+        while !ignores_int() && Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        h.state.stop_recording();
+        assert!(h.state.recording.is_some(), "it has time to finish");
+        h.state.stop_overdue(pid);
+        assert!(h.state.recording.is_none(), "forgotten");
+        assert_eq!(deaf.wait().unwrap().signal(), Some(libc::SIGKILL));
     }
 
     #[test]

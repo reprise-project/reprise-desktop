@@ -198,6 +198,12 @@ fn utf8_locales(listing: &str) -> Vec<String> {
     v
 }
 
+/// Whether the C library loads locale `code`: an installed one, or C.UTF-8 and POSIX, which it
+/// carries itself.
+pub fn loads(code: &str) -> bool {
+    Loaded::new(libc::LC_ALL_MASK, code).is_some()
+}
+
 /// A loaded locale object for the `_l` functions.
 struct Loaded(libc::locale_t);
 

@@ -140,6 +140,57 @@ fn a_kept_arrangement_writes_every_place_and_the_primary() {
     );
 }
 
+/// Whether Apply is lit on the Display page.
+fn apply_lit(app: &SettingsApp) -> bool {
+    let page = &app.sheet.pages[Page::Display.index()];
+    match page.item(propsheet::APPLY).map(|i| &i.control) {
+        Some(form::Control::Button { enabled, .. }) => *enabled,
+        _ => panic!("Apply is a button"),
+    }
+}
+
+#[test]
+fn ok_waits_for_the_primary_call_and_a_failed_one_keeps_the_sheet_with_a_box() {
+    let mut app = app("primary-pending");
+    let mut ctx = test_ctx();
+    let heads = vec![
+        displaypage::test_head("DP-1"),
+        displaypage::test_head("HDMI-A-1"),
+    ];
+    app.event(MAIN, Event::Heads(heads), &mut ctx);
+    let mut well = reprisekit::controls::arrange::Arrange::new(app.display.model.tiles(), 1);
+    well.tiles[1].pos = (0, 1080);
+    app.display.model.set_arrangement(&well);
+    app.display.model.make_primary();
+    let r = app.start_display(displayhost::Press::Ok, &mut ctx.heads);
+    assert!(!r.quit);
+    assert_eq!(app.display.sent_primary.as_deref(), Some("HDMI-A-1"));
+    let asked = ctx.heads.take();
+    let r = app.event(
+        MAIN,
+        Event::HeadsApplied {
+            serial: asked[0].0,
+            ok: true,
+        },
+        &mut ctx,
+    );
+    assert!(!r.quit);
+    let effects = app.display.flow.answer(true, &mut ctx.heads);
+    let r = app.display_effects(effects);
+    assert!(!r.quit, "OK waits for the primary call");
+    assert!(app.display.quit_after_primary);
+    assert_eq!(app.primary_done(), None, "still running");
+    app.sync_apply();
+    assert!(!apply_lit(&app), "Apply greyed while it runs");
+
+    let answer = app.display.primary_answer.take().unwrap();
+    answer.send(Err("refused")).unwrap();
+    assert_eq!(app.primary_done(), Some(false), "the sheet stays");
+    let text = app.error.as_ref().map(|b| b.fields.text.clone());
+    assert_eq!(text.as_deref(), Some("refused"));
+    assert!(app.display.primary_job.is_none());
+}
+
 #[test]
 fn a_refused_vrr_on_ok_says_so_and_keeps_the_sheet() {
     let mut app = app("vrr-refused");

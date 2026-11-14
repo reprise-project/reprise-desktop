@@ -30,7 +30,7 @@ impl State {
     /// start a move, size or caption button press; the last release ends it.
     /// In lock mode the computer's own goes to the console's lock (`console::pointer`).
     pub(crate) fn handle_button(&mut self, button: u32, state: ButtonState, time: InputTime) {
-        self.key_input.ctrl_tap.spoil();
+        (self.key_input.ctrl_tap).button(button, state == ButtonState::Pressed);
         if crate::console::physical(self) {
             crate::console::pointer::button(self, button, state == ButtonState::Pressed);
             return;
@@ -143,6 +143,7 @@ impl State {
         }
         self.buttons_down = 0;
         self.seat_buttons.clear();
+        self.key_input.ctrl_tap.buttons_released();
     }
 
     /// Whether `pos` is on an X11 program's surface, where Xwayland gets the press itself.

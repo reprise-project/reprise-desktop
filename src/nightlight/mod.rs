@@ -7,6 +7,8 @@ pub mod schedule;
 mod sun;
 pub mod tint;
 
+use std::path::{Path, PathBuf};
+
 use smithay::{
     output::Output,
     reexports::calloop::timer::{TimeoutAction, Timer},
@@ -39,9 +41,18 @@ struct OutputGamma {
     told_tint: bool,
     told_refused: bool,
     /// The `icc_profile` read for the output and its calibration curves.
-    profile: Option<std::path::PathBuf>,
+    profile: Option<PathBuf>,
     curves: Option<reprisefs::icc::Vcgt>,
+    /// The profile file's modification time and size when `curves` were read.
+    stamp: Option<Stamp>,
+    /// A read of `profile` is on a file job; the ramp waits for it.
+    reading: bool,
+    /// Stat `profile` again on the next apply and read it when it changed.
+    recheck: bool,
 }
+
+/// A file's modification time (seconds, nanoseconds) and size.
+type Stamp = (i64, i64, u64);
 
 pub struct NightLight {
     cfg: NightLightConfig,
@@ -246,19 +257,39 @@ fn apply(state: &mut State, output: &Output) {
                 told_refused: false,
                 profile: None,
                 curves: None,
+                stamp: None,
+                reading: false,
+                recheck: false,
             });
             nl.outputs.len() - 1
         }
     };
-    let wanted = state.config.icc_profile_for_output_name(&output.name());
+    let wanted = (state.config.icc_profile_for_output_name(&output.name())).map(PathBuf::from);
     let o = &mut nl.outputs[i];
-    if o.profile.as_deref() != wanted {
-        o.profile = wanted.map(Into::into);
-        o.curves = wanted.and_then(|p| curves_of(output, p));
+    let moved = o.profile != wanted;
+    if moved {
+        o.profile = wanted.clone();
+        (o.curves, o.stamp, o.reading) = (None, None, false);
         o.told_tint = false;
         o.dirty = true;
     }
-    if o.applied == kelvin && !o.dirty {
+    if let Some(path) = wanted.filter(|_| moved || std::mem::take(&mut o.recheck)) {
+        o.reading = true;
+        let known = o.stamp;
+        let (name, out) = (output.name(), output.clone());
+        let queued = state.spawn_fs_job(move || {
+            let read = read_profile(&name, &path, known);
+            Box::new(move |state: &mut State| profile_read(state, &out, &path, read))
+        });
+        if queued {
+            return;
+        }
+        if let Some(o) = state.night.outputs.iter_mut().find(|o| &o.output == output) {
+            o.reading = false;
+        }
+    }
+    let o = &mut state.night.outputs[i];
+    if o.reading || o.applied == kelvin && !o.dirty {
         return;
     }
     let took = match crate::backend::gamma_size(state, output) {
@@ -315,10 +346,45 @@ fn ramp_for(nl: &NightLight, output: &Output, size: usize) -> Option<Vec<u16>> {
     color::ramp(size, nl.kelvin, curves)
 }
 
-/// The calibration curves of the profile at `path` for `output`; None, said in the log, when it has
-/// none or can't be read.
-fn curves_of(output: &Output, path: &std::path::Path) -> Option<reprisefs::icc::Vcgt> {
-    let name = output.name();
+/// A profile read off the loop: None when its file is as `known` says, else its stamp and curves.
+type Read = Option<(Option<Stamp>, Option<reprisefs::icc::Vcgt>)>;
+
+/// Read the profile at `path` for output `name` unless its stamp is still `known`. Blocking.
+fn read_profile(name: &str, path: &Path, known: Option<Stamp>) -> Read {
+    use std::os::unix::fs::MetadataExt;
+    let stamp = (std::fs::metadata(path).ok()).map(|m| (m.mtime(), m.mtime_nsec(), m.size()));
+    if stamp.is_some() && stamp == known {
+        return None;
+    }
+    Some((stamp, curves_of(name, path)))
+}
+
+/// A read of `output`'s profile at `path` landed: take its curves unless the profile moved since.
+fn profile_read(state: &mut State, output: &Output, path: &Path, read: Read) {
+    let nl = &mut state.night;
+    let Some(o) = (nl.outputs.iter_mut()).find(|o| &o.output == output) else {
+        return;
+    };
+    if o.profile.as_deref() != Some(path) || !o.reading {
+        return;
+    }
+    o.reading = false;
+    if let Some((stamp, curves)) = read {
+        (o.stamp, o.curves, o.dirty) = (stamp, curves, true);
+    }
+    apply(state, output);
+}
+
+/// Stat every output's profile again on its next apply; a rewritten file is read anew.
+pub fn recheck_profiles(state: &mut State) {
+    for o in &mut state.night.outputs {
+        o.recheck = true;
+    }
+}
+
+/// The calibration curves of the profile at `path` for output `name`; None, said in the log, when
+/// it has none or can't be read.
+fn curves_of(name: &str, path: &Path) -> Option<reprisefs::icc::Vcgt> {
     match reprisefs::icc::read(path) {
         Ok(p) if p.vcgt.is_some() => {
             log::info!("{name}: colour profile {}", path.display());
@@ -355,6 +421,7 @@ pub fn gamma_failed(state: &mut State, output: &Output) {
 pub fn output_on(state: &mut State, output: &Output) {
     if let Some(o) = state.night.outputs.iter_mut().find(|o| &o.output == output) {
         o.dirty = true;
+        o.recheck = true;
     }
     apply(state, output);
 }
@@ -745,6 +812,24 @@ mod tests {
             warm[8] < 20_000,
             "blue is cut well below its calibrated 32767"
         );
+        let mut flat = calibrated();
+        let end = flat.len() - 2;
+        flat[end..].copy_from_slice(&65535u16.to_be_bytes());
+        let path = h.state.config.outputs[0].icc_profile.clone().unwrap();
+        let was = std::fs::metadata(&path).unwrap().modified().unwrap();
+        std::fs::write(&path, &flat).unwrap();
+        let file = std::fs::File::options().write(true).open(&path).unwrap();
+        file.set_modified(was + std::time::Duration::from_secs(1))
+            .unwrap();
+        recheck_profiles(&mut h.state);
+        update(&mut h.state);
+        h.state.night.kelvin = None;
+        assert_eq!(
+            ramp_for(&h.state.night, &output, 3).map(|r| r[8]),
+            Some(65535),
+            "the profile rewritten in place is read again"
+        );
+
         h.state.config.outputs.clear();
         update(&mut h.state);
         h.state.night.kelvin = None;

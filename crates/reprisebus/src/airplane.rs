@@ -48,6 +48,14 @@ impl Radios {
         }
     }
 
+    fn without(self, other: Radios) -> Radios {
+        Radios {
+            wifi: self.wifi && !other.wifi,
+            wwan: self.wwan && !other.wwan,
+            bluetooth: self.bluetooth && !other.bluetooth,
+        }
+    }
+
     fn with(self, other: Radios) -> Radios {
         Radios {
             wifi: self.wifi || other.wifi,
@@ -113,9 +121,16 @@ pub async fn radios(conn: &Connection) -> Radios {
     )
 }
 
-/// Whether airplane mode is on now; None on a machine with no radio switch.
+/// Whether airplane mode is on now; None on a machine with no radio switch. While it is off, a
+/// kept radio that is on again was brought back by hand and is no longer kept.
 pub async fn read(conn: &Connection) -> Option<bool> {
-    state(radios(conn).await, &rfkill::switches())
+    let switches = rfkill::switches();
+    let now = radios(conn).await;
+    let on = state(now, &switches);
+    if on == Some(false) {
+        brought_back(&memory_path(), now);
+    }
+    on
 }
 
 /// Turn airplane mode on or off; Err with what failed.
@@ -234,6 +249,19 @@ fn keep(path: &Path, now: Radios) {
     let keep = now.with(kept.unwrap_or_default());
     if keep.any_on() {
         remember(path, keep);
+    }
+}
+
+/// Forget the kept radios that `now` has on.
+fn brought_back(path: &Path, now: Radios) {
+    let Ok(kept) = std::fs::read_to_string(path).map(|t| Radios::parse(&t)) else {
+        return;
+    };
+    let left = kept.without(now);
+    if !left.any_on() {
+        let _ = std::fs::remove_file(path);
+    } else if left != kept {
+        remember(path, left);
     }
 }
 
@@ -366,6 +394,35 @@ mod tests {
         assert_eq!(recall(&path), wifi_and_bt);
         keep(&path, Radios::default());
         assert!(!path.exists(), "nothing on, nothing kept");
+    }
+
+    #[test]
+    fn a_kept_radio_brought_back_by_hand_is_not_turned_on_by_a_later_turn_off() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("reprise/airplane-mode");
+        let wifi = Radios {
+            wifi: true,
+            ..Radios::default()
+        };
+        let bt = Radios {
+            bluetooth: true,
+            ..Radios::default()
+        };
+        keep(&path, wifi.with(bt));
+        brought_back(&path, wifi);
+        brought_back(&path, wifi.with(bt));
+        assert!(!path.exists(), "every kept radio came back by hand");
+        keep(&path, wifi);
+        assert_eq!(
+            recall(&path),
+            wifi,
+            "Bluetooth, turned off since, stays off"
+        );
+
+        keep(&path, wifi.with(bt));
+        brought_back(&path, bt);
+        keep(&path, bt);
+        assert_eq!(recall(&path), wifi.with(bt), "Wi-Fi never came back");
     }
 
     #[test]
