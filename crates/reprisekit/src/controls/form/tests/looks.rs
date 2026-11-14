@@ -431,3 +431,43 @@ fn a_greyed_focused_button_shows_no_ring_until_it_lights_again() {
         );
     }
 }
+
+/// A well and the label on it take the window colours, a dark window here, where a plain label
+/// stays in the face's text colour.
+#[test]
+fn a_well_on_the_window_colour_inks_its_label_in_the_window_text() {
+    let mut theme = Theme::default();
+    theme.colors.window = Color::rgb(0x20, 0x20, 0x20);
+    theme.colors.window_text = Color::rgb(0xEF, 0xEE, 0xEF);
+    let cs = &theme.colors;
+    let text = TextRenderer::load(&theme.fonts);
+    let well = Rect::new(10, 10, 120, 40);
+    let well_item = Control::Picture {
+        canvas: None,
+        frame: 2,
+    };
+    let form = Form::new(vec![
+        Item::new("well", well, well_item).on_window(),
+        Item::aligned("on", Rect::new(10, 20, 120, 13), "Budapest", Align::Center).on_window(),
+        Item::aligned("off", Rect::new(10, 60, 120, 13), "Budapest", Align::Center),
+    ]);
+    let mut c = Canvas::new(140, 80);
+    c.fill_rect(c.bounds(), cs.button_face);
+    draw(
+        &mut c,
+        &text,
+        &theme.paint(),
+        &form,
+        false,
+        theme.fonts.size_px,
+    );
+    assert_eq!(c.get(13, 13), cs.window.argb(), "the well's inside");
+    let inked = |r: Rect, ink: Color| {
+        (r.x..r.right())
+            .flat_map(|x| (r.y..r.bottom()).map(move |y| (x, y)))
+            .filter(|&(x, y)| c.get(x, y) == ink.argb())
+            .count()
+    };
+    assert!(inked(Rect::new(10, 20, 120, 13), cs.window_text) > 20);
+    assert!(inked(Rect::new(10, 60, 120, 13), cs.button_text) > 20);
+}

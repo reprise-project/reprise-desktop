@@ -165,17 +165,11 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
                     .right();
                 let label = &*ellipsized(form, i, text, label, r.right().min(shown) - r.x, px);
                 if *enabled {
-                    draw_label(
-                        c,
-                        text,
-                        r,
-                        &p.label(label),
-                        false,
-                        cs.button_text,
-                        *align,
-                        px,
-                        s,
-                    );
+                    let ink = match it.on_window {
+                        true => cs.window_text,
+                        false => cs.button_text,
+                    };
+                    draw_label(c, text, r, &p.label(label), false, ink, *align, px, s);
                 } else {
                     draw_disabled_label(c, text, p, r, label, *align, px, None);
                 }
@@ -409,6 +403,9 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
                     2 => draw_well(c, p, r, EdgeStyle::ButtonSunken),
                     1 => draw_well(c, p, r, EdgeStyle::ThinSunken),
                     _ => {}
+                }
+                if it.on_window {
+                    c.fill_rect(r.inset(frame * s), cs.window);
                 }
                 if let Some(pic) = canvas {
                     c.blit_over(at.0, at.1, pic);
