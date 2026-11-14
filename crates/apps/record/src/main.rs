@@ -441,8 +441,8 @@ impl<'a> File<'a> {
     }
 
     /// Code what comes until a stop, the stream's end or an error, waking for the pacer's slots
-    /// between. A backlog of frames is skipped to the newest, so a slow encoder drops pictures
-    /// rather than falling behind.
+    /// between. A backlog of frames is skipped to the newest, the sound among them coded in turn,
+    /// so a slow encoder drops pictures rather than falling behind.
     fn run(&mut self, events: &mpsc::Receiver<Event>) -> Result<(), String> {
         let mut held = None;
         loop {
@@ -468,6 +468,7 @@ impl<'a> File<'a> {
                     while let Ok(next) = events.try_recv() {
                         match next {
                             Event::Frame(f, t) => (frame, at) = (f, t),
+                            Event::Sound(pcm, t) => self.sound(&pcm, t)?,
                             other => {
                                 held = Some(other);
                                 break;
@@ -1256,6 +1257,48 @@ mod tests {
         assert!(ended.contains("cannot be read by the CPU"), "{ended}");
         file.finish().unwrap();
         assert_eq!(video_ms(&path)[..2], [0, 200], "the readable frames go on");
+    }
+
+    #[test]
+    fn a_backlog_of_frames_codes_only_the_newest_and_all_the_sound_between() {
+        ffmpeg::init().unwrap();
+        ffmpeg::util::log::set_level(ffmpeg::util::log::Level::Quiet);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.mp4");
+        let node = PathBuf::from(probe::RENDER_NODE);
+        let flac = Recording {
+            audio_codec: AudioCodec::Flac,
+            ..Recording::default()
+        };
+        let sound = Sound::open(AudioCodec::Flac, 160, true, 5).unwrap();
+        let making = making(&flac, Some(60), Some(sound));
+        let mut file = File::new(&path, &node, software(), None, (64, 64), making);
+        let t0 = Instant::now();
+        let at = |ms| t0 + Duration::from_millis(ms);
+        file.frame(grey(0x10), at(0)).unwrap();
+        let chunk = || vec![0x11; 960 * 4];
+        let (tx, events) = mpsc::channel();
+        for event in [
+            Event::Frame(grey(0x20), at(100)),
+            Event::Sound(chunk(), at(120)),
+            Event::Frame(grey(0x40), at(140)),
+            Event::Sound(chunk(), at(140)),
+            Event::Frame(grey(0x60), at(160)),
+            Event::Stop,
+        ] {
+            assert!(tx.send(event).is_ok());
+        }
+        file.run(&events).unwrap();
+        file.finish().unwrap();
+        let ms = video_ms(&path);
+        assert_eq!((ms.len(), &ms[..2]), (3, &[0, 160][..]), "{ms:?}");
+        let mut input = ffmpeg::format::input(&path).unwrap();
+        let sound: i64 = (input.packets())
+            .map(|p| p.unwrap())
+            .filter(|(s, _)| s.index() == AUDIO)
+            .map(|(_, p)| p.duration())
+            .sum();
+        assert_eq!(sound, 2 * 960, "both chunks");
     }
 
     #[test]
