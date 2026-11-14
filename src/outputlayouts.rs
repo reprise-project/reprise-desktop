@@ -199,8 +199,11 @@ impl State {
     /// As `outputs_reloaded`, but the mode `[[outputs]]` pins for `connectors` was refused. The
     /// connected set's layout is dropped instead of saved, so the next start tries the pin; the
     /// other sets' layouts move to the new `[[outputs]]` as a save would move them.
-    pub fn outputs_refused(&mut self, connectors: Vec<String>) {
+    pub fn outputs_refused(&mut self, connectors: Vec<String>, moved_primary: bool) {
         self.saved_layouts.active = None;
+        if moved_primary {
+            self.saved_layouts.primary = None;
+        }
         self.saved_layouts.refused = connectors;
         let mut set = ids_of(&crate::backend::heads(self));
         set.sort();

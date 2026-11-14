@@ -655,10 +655,11 @@ impl State {
                 geometry_changed = true;
             }
         }
+        let moved_primary = old.primary_output_name() != self.config.primary_output_name();
         if !refused.is_empty() {
-            self.outputs_refused(refused);
+            self.outputs_refused(refused, moved_primary);
         } else {
-            self.outputs_reloaded(old.primary_output_name() != self.config.primary_output_name());
+            self.outputs_reloaded(moved_primary);
         }
         geometry_changed
     }
