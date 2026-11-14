@@ -4,7 +4,7 @@ use super::{
     ADD, AUDIO_DEVICES, Area, BACKUP_EXPORT, BACKUP_FROM_DESKTOP, BACKUP_IMPORT, BACKUP_STATUS,
     DEBUG_IN_CAPTURES, DEBUG_OVERLAY, EDIT_FILE, FORGET, GX, PRIVACY_LOCATION, REMOVE,
     THUMBNAILERS, THUMBS, THUMBS_CLEAR, THUMBS_CLEARED, THUMBS_MB, THUMBS_SIZE, X, button, choice,
-    combo, edit, ends_track, field, group, list, permissions, radio, spin, time,
+    combo, edit, ends_track, field, grey_choices, group, list, permissions, radio, spin, time,
 };
 use crate::model::{
     FRAME_RATES, GLASS_NOTIFY_STYLES, LOCK_GRACES, REMOTE_ENCODERS, REMOTE_QUALITIES, Shortcut,
@@ -34,15 +34,9 @@ pub fn advanced(a: Area) -> Form {
         "Task &manager (empty runs Task Manager):",
     ));
     items.push(Item::check(
-        "screenshot_save",
-        X,
-        90,
-        "Save each screenshot as a file in &Pictures/Screenshots",
-    ));
-    items.push(Item::check(
         "restart_notice",
         X,
-        108,
+        90,
         "Tell me when an &update needs a restart",
     ));
 
@@ -54,30 +48,30 @@ pub fn advanced(a: Area) -> Form {
         ]
     };
     let right = GX + half + 8;
-    items.push(group(a, "turnoff_group", 130, 74, "Turn Off Computer"));
-    items.extend(command("standby_label", "standby", GX, 152, "Stand &by:"));
+    items.push(group(a, "turnoff_group", 112, 74, "Turn Off Computer"));
+    items.extend(command("standby_label", "standby", GX, 134, "Stand &by:"));
     items.extend(command(
         "poweroff_label",
         "poweroff",
         right,
-        152,
+        134,
         "Tur&n off:",
     ));
-    items.extend(command("reboot_label", "reboot", GX, 178, "Rest&art:"));
+    items.extend(command("reboot_label", "reboot", GX, 160, "Rest&art:"));
     items.extend(command(
         "hibernate_label",
         "hibernate",
         right,
-        178,
+        160,
         "&Hibernate:",
     ));
 
-    items.push(group(a, "storage_group", 212, 66, "Low Disk Space"));
+    items.push(group(a, "storage_group", 194, 66, "Low Disk Space"));
     items.extend(spin(
         "low_space_label",
         "low_space_percent",
         GX,
-        234,
+        216,
         114,
         "Warn bel&ow:",
         (0, repriseconf::LOW_SPACE_MAX.into()),
@@ -85,61 +79,61 @@ pub fn advanced(a: Area) -> Form {
     items.push(Item::label_at(
         "low_space_units",
         GX + 174,
-        234,
+        216,
         gw - 174,
         "% free",
     ));
     items.push(Item::label_at(
         "low_space_note",
         GX,
-        254,
+        236,
         gw,
         "For the disks of your home folder and /. 0 turns it off.",
     ));
 
-    items.push(group(a, "thumbs_group", 286, 92, "Thumbnails"));
-    items.push(Item::check(THUMBS, GX, 308, "Keep &thumbnails of pictures"));
+    items.push(group(a, "thumbs_group", 268, 92, "Thumbnails"));
+    items.push(Item::check(THUMBS, GX, 290, "Keep &thumbnails of pictures"));
     let cleared_x = GX + 184;
     items.push(Item::value_at(
         THUMBS_CLEARED,
         cleared_x,
-        308,
+        290,
         a.gright() - cleared_x,
         "",
     ));
-    items.push(button(THUMBS_CLEAR, a.gright() - BUTTON_W, 326, "Clea&r"));
+    items.push(button(THUMBS_CLEAR, a.gright() - BUTTON_W, 308, "Clea&r"));
     let mb = ThumbnailCache::MAX_MB;
     items.extend(
         spin(
             THUMBS_SIZE[0],
             THUMBS_MB,
             GX,
-            332,
+            314,
             40,
             "Si&ze:",
             (*mb.start() as i32, *mb.end() as i32),
         )
         .map(Item::under_check),
     );
-    items.push(Item::label_at(THUMBS_SIZE[2], GX + 98, 332, 20, "MB").under_check());
+    items.push(Item::label_at(THUMBS_SIZE[2], GX + 98, 314, 20, "MB").under_check());
     items.push(Item::check(
         THUMBNAILERS,
         GX,
-        356,
+        338,
         "Ma&ke thumbnails of documents and videos",
     ));
 
     items.push(Item::check(
         DEBUG_OVERLAY,
         X,
-        386,
+        368,
         "Show a &debug overlay (frame rate, render times)",
     ));
     items.push(
         Item::check(
             DEBUG_IN_CAPTURES,
             X,
-            404,
+            386,
             "Show it in screenshots and screen &sharing",
         )
         .under_check(),
@@ -147,7 +141,7 @@ pub fn advanced(a: Area) -> Form {
 
     items.push(Item::new(
         "note",
-        Rect::new(X, 422, a.w - BUTTON_W - 8, 2 * LINE_H),
+        Rect::new(X, 404, a.w - BUTTON_W - 8, 2 * LINE_H),
         Control::Lines(vec![
             "Keys no page sets are edited in".into(),
             "config.toml itself.".into(),
@@ -156,7 +150,7 @@ pub fn advanced(a: Area) -> Form {
     items.push(button(
         EDIT_FILE,
         a.right() - BUTTON_W,
-        422,
+        404,
         "&Edit File...",
     ));
     Form::new(items)
@@ -305,8 +299,8 @@ pub fn backup(a: Area) -> Form {
 
 const FROM_DESKTOP_W: i32 = 150;
 
-/// The button that opens Sounds and Audio Devices, the sound theme picked from `sound_themes`, the bell,
-/// the volume's reach and sound in screen recordings.
+/// The button that opens Sounds and Audio Devices, the sound theme picked from `sound_themes`, the bell
+/// and the volume's reach.
 pub fn sound(a: Area, sound_themes: &[String]) -> Form {
     Form::new(vec![
         Item::new(
@@ -346,17 +340,8 @@ pub fn sound(a: Area, sound_themes: &[String]) -> Form {
             a.gw() - 18,
             "Sliders and the volume keys go on to 150%.",
         ),
-        group(a, "recording_group", 284, 48, "Screen Recordings"),
-        Item::check(
-            RECORD_SOUND,
-            GX,
-            306,
-            "&Record what plays in screen recordings",
-        ),
     ])
 }
-
-pub(super) const RECORD_SOUND: &str = "screenshot_record_sound";
 
 /// The notification sound and balloon style, Do Not Disturb's triggers, then each program's
 /// switches ([`notifypage`]). The program list takes the page's extra height.
@@ -778,12 +763,10 @@ pub fn show_remote(
     let shown = status.filter(|_| on);
     let encoder = shown.map_or(String::new(), |s| format!("Video: {}", s.encoder));
     page.set_text(ENCODER, &encoder);
-    let offered = shown.map_or(&[][..], |s| s.encoders.as_slice());
-    if let Some(Control::Combo(c)) = page.item_mut(REMOTE_ENCODER).map(|i| &mut i.control) {
-        for (item, (value, _)) in c.items.iter_mut().zip(REMOTE_ENCODERS) {
-            item.greyed = *value != "auto" && !offered.iter().any(|o| o == value);
-        }
-    }
+    let offered: Vec<&str> = shown.map_or(Vec::new(), |s| {
+        s.encoders.iter().map(String::as_str).collect()
+    });
+    grey_choices(page, REMOTE_ENCODER, REMOTE_ENCODERS, &offered, &["auto"]);
     let fingerprint = machine.unwrap_or(shown.map_or("", |s| s.fingerprint.as_str()));
     page.show_edit_text(REMOTE_FINGERPRINT, fingerprint);
     let clients = shown.map_or(&[][..], |s| s.clients.as_slice());

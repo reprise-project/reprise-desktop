@@ -22,6 +22,7 @@ use super::{
     KELVIN_MIN, KELVIN_STEP, MK_ACCEL, MK_SPEED, PRIVACY_LOCATION, SCROLL_SPEED, SPEED_STEPS,
     Steps, THUMBNAILERS, THUMBS, THUMBS_MB, THUMBS_SIZE, TRAY_CUSTOMIZE, WATER, WATER_STYLE,
 };
+use crate::capturepage as cap;
 use crate::notifypage::{AUTO_DND, QUIET, QUIET_DEFAULT, QUIET_TIMES};
 use crate::registry::Page;
 use repriseconf::{Key, Lens, lens};
@@ -35,11 +36,13 @@ use reprisekit::textedit::TextEdit;
 use reprisekit::theme::Color;
 
 use crate::model::{
-    CLICK_METHODS, CURSOR_SIZES, Choices, DESKTOPS_DEFAULT, FONT_SMOOTHINGS, FRAME_RATES,
-    HOT_CORNERS, INTERFACES, LOCK_GRACES, MENU_ANIMATIONS, PAGER_MARKS, POSITIONS,
-    QT_PLATFORM_THEMES, REMOTE_ENCODERS, REMOTE_QUALITIES, STARTMENU_STYLES, SWITCH_ANIMATIONS,
+    AUDIO_CODECS, CLICK_METHODS, CURSOR_SIZES, Choices, DESKTOPS_DEFAULT, ENCODERS,
+    FONT_SMOOTHINGS, FRAME_RATES, HOT_CORNERS, INTERFACES, LOCK_GRACES, MENU_ANIMATIONS,
+    PAGER_MARKS, PNG_COMPRESSIONS, POSITIONS, QT_PLATFORM_THEMES, RATE_MODES, RECORD_FRAME_RATES,
+    REMOTE_ENCODERS, REMOTE_QUALITIES, SHOT_FORMATS, STARTMENU_STYLES, SWITCH_ANIMATIONS,
     SWITCHER_SIZES, SWITCHER_STYLES, Settings, Shortcut, TASKBAR_BUTTONS, TASKBAR_POSITIONS,
-    TEXT_SIZES, TITLE_DOUBLE_CLICKS, VISUAL_BELLS, WATER_STYLES, keys_for, remote_quality_row,
+    TEXT_SIZES, TITLE_DOUBLE_CLICKS, VIDEO_CODECS, VISUAL_BELLS, WATER_STYLES, keys_for,
+    remote_quality_row,
 };
 
 pub(super) enum Bind {
@@ -139,8 +142,33 @@ pub(super) fn binds() -> Vec<Bind> {
             crate::model::SCRIPT_ENDS,
         ),
         Bind::Named("hot_corner", lens!(hot_corner), HOT_CORNERS),
-        Bind::Flag("screenshot_save", lens!(screenshot_save)),
-        Bind::Flag("screenshot_record_sound", lens!(screenshot_record_sound)),
+        Bind::Flag(cap::SAVE, lens!(screenshot_save)),
+        Bind::Named(cap::FORMAT, lens!(screenshot_format), SHOT_FORMATS),
+        Bind::Named(
+            cap::PNG_COMPRESSION,
+            lens!(screenshot_png_compression),
+            PNG_COMPRESSIONS,
+        ),
+        Bind::Level(cap::JPG_QUALITY, lens!(screenshot_jpg_quality), 1),
+        Bind::Flag(cap::JXL_LOSSLESS, lens!(screenshot_jxl_lossless)),
+        Bind::Level(cap::JXL_QUALITY, lens!(screenshot_jxl_quality), 1),
+        Bind::Num(cap::JXL_EFFORT, lens!(screenshot_jxl_effort)),
+        Bind::Named(cap::CODEC, lens!(recording_codec), VIDEO_CODECS),
+        Bind::Named(cap::ENCODER, lens!(recording_encoder), ENCODERS),
+        Bind::Named(cap::RATE, lens!(recording_rate), RATE_MODES),
+        Bind::Level(cap::QUALITY, lens!(recording_quality), 1),
+        Bind::Num(cap::BITRATE, lens!(recording_bitrate)),
+        Bind::NamedNum(
+            cap::FRAME_RATE,
+            lens!(recording_frame_rate),
+            RECORD_FRAME_RATES,
+        ),
+        Bind::Num(cap::KEYFRAME, lens!(recording_keyframe_interval)),
+        Bind::Flag(cap::RECORD_SOUND, lens!(screenshot_record_sound)),
+        Bind::Named(cap::AUDIO_CODEC, lens!(recording_audio_codec), AUDIO_CODECS),
+        Bind::Num(cap::AUDIO_BITRATE, lens!(recording_audio_bitrate)),
+        Bind::Flag(cap::AUDIO_VBR, lens!(recording_audio_vbr)),
+        Bind::Num(cap::FLAC_COMPRESSION, lens!(recording_flac_compression)),
         Bind::Flag("clipboard_history", lens!(clipboard_history)),
         Bind::Named("interface", lens!(interface), INTERFACES),
         Bind::Scheme(
@@ -493,8 +521,21 @@ type Nudge = fn(&mut Settings);
 
 /// The controls that write their keys outside [`binds`]: lists, pickers and the dialogs a page
 /// opens, each with what it moves.
-fn unbound() -> [(&'static str, Nudge); 10] {
+fn unbound() -> [(&'static str, Nudge); 11] {
     [
+        // The rows the format, rate mode and audio codec swap: Restore Defaults takes every one.
+        (cap::STATUS, |s| {
+            s.screenshot_png_compression.push('\u{1}');
+            s.screenshot_jpg_quality += 1;
+            s.screenshot_jxl_lossless = !Settings::default().screenshot_jxl_lossless;
+            s.screenshot_jxl_quality += 1;
+            s.screenshot_jxl_effort += 1;
+            s.recording_quality += 1;
+            s.recording_bitrate += 1;
+            s.recording_audio_bitrate += 1;
+            s.recording_audio_vbr = !Settings::default().recording_audio_vbr;
+            s.recording_flac_compression += 1;
+        }),
         (KB_LAYOUTS, |s| {
             s.kb_layout.push('\u{1}');
             s.kb_variant.push('\u{1}');
@@ -700,6 +741,7 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
     crate::appearancepage::follow(sheet, s);
     crate::backgroundpage::follow(&mut sheet.pages[Page::Background.index()], s);
     crate::saverpage::follow(&mut sheet.pages[Page::ScreenSaverLock.index()], s);
+    cap::follow(sheet, s);
     let thumbnails = s.switcher_style == "thumbnails";
     let live = s.preview_taskbar || thumbnails || s.switcher_preview;
     let many = s.desktops > 1;

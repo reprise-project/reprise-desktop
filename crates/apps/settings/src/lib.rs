@@ -14,6 +14,8 @@ mod backgroundhost;
 mod backgroundpage;
 mod backup;
 mod backuphost;
+mod capturehost;
+mod capturepage;
 mod clipaccess;
 mod colorhost;
 mod configwatch;
@@ -429,6 +431,11 @@ struct SettingsApp {
     remote_job: Option<Receiver<remotehost::Reading>>,
     remote_acting: bool,
 
+    /// What `reprise-record --probe` found, asked once a run as Screen Capture first opens;
+    /// `capture_job` holds the probe under way.
+    capture_probe: capturepage::ProbeState,
+    capture_job: Option<Receiver<capturepage::ProbeState>>,
+
     /// The screen reader as last read; `reader_job` holds the read or switch under way.
     reader: readerhost::Reader,
     reader_job: Option<Receiver<readerhost::Reading>>,
@@ -598,6 +605,7 @@ impl SettingsApp {
             // too, so the template has the controls the page has.
             let template = match p {
                 Page::Appearance => appearancepage::page(&self.want, a),
+                Page::ScreenCapture => capturepage::page(&self.want, a),
                 Page::Display => displaypage::page(&self.display.model, a),
                 Page::Tablet => {
                     tabletpage::page(a, &self.pads, self.pad_picked, &self.want.tablet_pads)
@@ -715,6 +723,8 @@ impl SettingsApp {
             remote: remotehost::Remote::default(),
             remote_job: None,
             remote_acting: false,
+            capture_probe: capturepage::ProbeState::Unknown,
+            capture_job: None,
             reader: readerhost::Reader::default(),
             reader_job: None,
             reader_switching: false,
@@ -1029,6 +1039,7 @@ impl App for SettingsApp {
         self.ensure_defaults();
         self.ensure_permissions();
         self.ensure_remote();
+        self.ensure_capture();
         self.ensure_reader();
         self.ensure_airplane();
         self.ensure_region();

@@ -1,3 +1,5 @@
+use repriseconf::recording::Codec;
+
 /// A combo's items: the value the config takes, then the text the combo
 /// shows for it.
 pub type Choices = [(&'static str, &'static str)];
@@ -184,6 +186,53 @@ pub const REMOTE_ENCODERS: &Choices = &[
     ("vulkan", "Hardware, Vulkan"),
     ("software", "Software (x264)"),
     ("none", "None (RemoteFX)"),
+];
+
+/// The screen recording encoders: Remote Desktop's, less its RemoteFX row.
+pub const ENCODERS: &Choices = REMOTE_ENCODERS.split_at(5).0;
+
+/// The [`ENCODERS`] row for the CPU encoder of `[recording] codec` = `codec`.
+pub fn software_row(codec: &str) -> String {
+    let codec = (Codec::ALL.into_iter())
+        .find(|c| c.name() == codec)
+        .unwrap_or(Codec::H264);
+    format!("Software ({})", codec.software_name())
+}
+
+/// `[screenshot] format`. Mirrors `ShotFormat::extension` in `repriseconf::config`.
+pub const SHOT_FORMATS: &Choices = &[("png", "PNG"), ("jpg", "JPG"), ("jxl", "JPEG XL")];
+
+/// `[screenshot] png_compression`. Mirrors `PngCompression::name` in `repriseconf::config`.
+pub const PNG_COMPRESSIONS: &Choices = &[
+    ("fast", "Fast"),
+    ("default", "Default"),
+    ("best", "Smallest"),
+];
+
+/// `[recording] codec`. Mirrors `recording::Codec::name`.
+pub const VIDEO_CODECS: &Choices = &[("h264", "H.264"), ("h265", "H.265 (HEVC)"), ("av1", "AV1")];
+
+/// `[recording] rate`. Mirrors `recording::RateMode::name`.
+pub const RATE_MODES: &Choices = &[
+    ("quality", "Constant quality"),
+    ("average", "Average bitrate"),
+    ("constant", "Constant bitrate"),
+];
+
+/// `[recording] frame_rate`'s rows; 0 is the screen's refresh rate.
+pub const RECORD_FRAME_RATES: &[(i64, &str)] = &[
+    (0, "Screen rate"),
+    (60, "60 frames per second"),
+    (30, "30 frames per second"),
+    (24, "24 frames per second"),
+    (15, "15 frames per second"),
+];
+
+/// `[recording] audio_codec`. Mirrors `recording::AudioCodec::name`.
+pub const AUDIO_CODECS: &Choices = &[
+    ("aac", "AAC"),
+    ("opus", "Opus"),
+    ("flac", "FLAC (lossless)"),
 ];
 
 pub const FRAME_RATES: &[(i64, &str)] = &[

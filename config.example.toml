@@ -314,7 +314,7 @@ suspend_after = 0            # run [power] standby
 # adaptive_sync = true       # overrides the top-level adaptive_sync for this output
 # icc_profile = "~/.local/share/icc/studio.icc"  # an ICC profile whose calibration curves (vcgt) go into this output's gamma table, night light on top; the Display page's Color profile list sets it
 
-# [screenshot]               # every screenshot goes to the clipboard
+# [screenshot]               # every screenshot goes to the clipboard; Settings > Screen Capture sets these
 # save = true                # and to Pictures/Screenshots (or ~/Screenshots) as a file in the format below
 # format = "png"             # the file's format: png, jpg or jxl (JPEG XL); the clipboard always takes a PNG
 # png_compression = "default"  # fast, default or best: smaller files for a slower save; every level keeps every pixel
@@ -324,7 +324,7 @@ suspend_after = 0            # run [power] standby
 # jxl_effort = 7             # 1 (fastest) to 9 (smallest file); 8 and 9 take many seconds a shot, and shots save one at a time
 # record_sound = false       # screen recordings (Videos/Screencasts) also carry what plays
 
-# [recording]                # how screen recordings are coded, read as each one starts
+# [recording]                # how screen recordings are coded, read as each one starts (Settings > Screen Capture)
 # codec = "h264"             # "h264", "h265" or "av1"; with no encoder for it here, recording fails
 # encoder = "auto"           # "auto", "vaapi", "nvenc", "vulkan" or "software"
 # rate = "quality"           # "quality", "average" (bitrate) or "constant" (bitrate, a frame each slot)

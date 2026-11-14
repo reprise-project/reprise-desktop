@@ -684,6 +684,23 @@ fn save_round_trips_every_field() {
         hot_corner: "top-right".into(),
         screenshot_save: false,
         screenshot_record_sound: true,
+        screenshot_format: "jxl".into(),
+        screenshot_png_compression: "best".into(),
+        screenshot_jpg_quality: 75,
+        screenshot_jxl_lossless: false,
+        screenshot_jxl_quality: 80,
+        screenshot_jxl_effort: 3,
+        recording_codec: "av1".into(),
+        recording_encoder: "vaapi".into(),
+        recording_rate: "constant".into(),
+        recording_quality: 70,
+        recording_bitrate: 3000,
+        recording_frame_rate: 30,
+        recording_keyframe_interval: 2,
+        recording_audio_codec: "opus".into(),
+        recording_audio_bitrate: 96,
+        recording_audio_vbr: false,
+        recording_flac_compression: 8,
         clipboard_history: false,
         clipboard_trusted: vec!["org.example.Pass".into()],
         interface: "blue".into(),
@@ -1656,4 +1673,34 @@ fn the_file_adaptive_sync_is_kept_and_no_page_writes_it() {
     )
     .unwrap();
     assert!(out.contains("adaptive_sync = true"), "{out}");
+}
+
+#[test]
+fn the_capture_settings_read_and_write_their_keys() {
+    let text = "[recording]\ncodec = \"av1\"\nrate = \"constant\"\nbitrate = 3000\naudio_codec = \"flac\"\n[screenshot]\nformat = \"jxl\"\njxl_effort = 3\n";
+    let s = load(text);
+    assert_eq!(
+        (s.recording_codec.as_str(), s.recording_rate.as_str()),
+        ("av1", "constant")
+    );
+    assert_eq!(
+        (s.recording_bitrate, s.recording_audio_codec.as_str()),
+        (3000, "flac")
+    );
+    assert_eq!(
+        (s.screenshot_format.as_str(), s.screenshot_jxl_effort),
+        ("jxl", 3)
+    );
+    let d = Settings::default();
+    assert_eq!(
+        (
+            d.recording_quality,
+            d.recording_keyframe_interval,
+            d.screenshot_jpg_quality
+        ),
+        (55, 4, 90),
+        "the defaults are reprise-record's and the compositor's"
+    );
+    let saved = save("", &s, &d).unwrap();
+    assert_eq!(load(&saved), s, "{saved}");
 }

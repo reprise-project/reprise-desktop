@@ -71,6 +71,26 @@ pub struct Settings {
     pub hot_corner: String,
     pub screenshot_save: bool,
     pub screenshot_record_sound: bool,
+    /// `[screenshot] format`, `png_compression` (as [`SHOT_FORMATS`] and [`PNG_COMPRESSIONS`]
+    /// name them), `jpg_quality`, `jxl_lossless`, `jxl_quality` and `jxl_effort`.
+    pub screenshot_format: String,
+    pub screenshot_png_compression: String,
+    pub screenshot_jpg_quality: i64,
+    pub screenshot_jxl_lossless: bool,
+    pub screenshot_jxl_quality: i64,
+    pub screenshot_jxl_effort: i64,
+    /// `[recording]`'s keys, each named after its key.
+    pub recording_codec: String,
+    pub recording_encoder: String,
+    pub recording_rate: String,
+    pub recording_quality: i64,
+    pub recording_bitrate: i64,
+    pub recording_frame_rate: i64,
+    pub recording_keyframe_interval: i64,
+    pub recording_audio_codec: String,
+    pub recording_audio_bitrate: i64,
+    pub recording_audio_vbr: bool,
+    pub recording_flac_compression: i64,
     pub clipboard_history: bool,
     /// `[clipboard] trusted_apps`: the Flatpak app ids given the clipboard in the background.
     pub clipboard_trusted: Vec<String>,
@@ -450,6 +470,8 @@ impl Settings {
         let a = &c.accessibility;
         let fx = &c.effects;
         let remote = repriseconf::remote::RemoteDesktop::default();
+        let shot = &c.screenshot;
+        let rec = repriseconf::recording::Recording::default();
         let hhmm = |min: u32| format!("{:02}:{:02}", min / 60, min % 60);
         Settings {
             terminal: c.terminal.clone(),
@@ -488,6 +510,23 @@ impl Settings {
             hot_corner: c.hot_corner.name().into(),
             screenshot_save: c.screenshot.save,
             screenshot_record_sound: c.screenshot.record_sound,
+            screenshot_format: shot.format.extension().into(),
+            screenshot_png_compression: shot.png_compression.name().into(),
+            screenshot_jpg_quality: shot.jpg_quality.into(),
+            screenshot_jxl_lossless: shot.jxl_lossless,
+            screenshot_jxl_quality: shot.jxl_quality.into(),
+            screenshot_jxl_effort: shot.jxl_effort.into(),
+            recording_codec: rec.codec.name().into(),
+            recording_encoder: rec.encoder.name().into(),
+            recording_rate: rec.rate.name().into(),
+            recording_quality: rec.quality.into(),
+            recording_bitrate: rec.bitrate.into(),
+            recording_frame_rate: rec.frame_rate.into(),
+            recording_keyframe_interval: rec.keyframe_interval.into(),
+            recording_audio_codec: rec.audio_codec.name().into(),
+            recording_audio_bitrate: rec.audio_bitrate.into(),
+            recording_audio_vbr: rec.audio_vbr,
+            recording_flac_compression: rec.flac_compression.into(),
             clipboard_history: c.clipboard.history,
             clipboard_trusted: c.clipboard.trusted_apps.clone(),
 

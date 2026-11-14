@@ -25,6 +25,7 @@ pub enum Page {
     Display,
     NightLight,
     Sound,
+    ScreenCapture,
     Notifications,
     Keyboard,
     Mouse,
@@ -102,6 +103,7 @@ pub const GROUPS: &[(&str, &[Entry])] = &[
             Entry::Page(Page::Display),
             Entry::Page(Page::NightLight),
             Entry::Page(Page::Sound),
+            Entry::Page(Page::ScreenCapture),
             Entry::Page(Page::Notifications),
         ],
     ),
@@ -229,6 +231,7 @@ impl Page {
             Page::PointerAlerts => "Pointer & Alerts",
             Page::MagnifierFilters => "Magnifier & Filters",
             Page::Sound => "Sound",
+            Page::ScreenCapture => "Screen Capture",
             Page::Notifications => "Notifications",
             Page::Startup => "Startup",
             Page::DefaultPrograms => "Default Programs",
@@ -426,7 +429,28 @@ impl Page {
                 "speakers",
                 "microphone",
                 "headphones",
+            ],
+            Page::ScreenCapture => &[
+                "screenshots",
+                "screenshot format",
                 "screen recording",
+                "screencast",
+                "audio",
+                "video",
+                "codec",
+                "hevc",
+                "h.265",
+                "av1",
+                "bitrate",
+                "frame rate",
+                "keyframe",
+                "opus",
+                "flac",
+                "aac",
+                "jpeg xl",
+                "jxl",
+                "jpg",
+                "png",
             ],
             Page::Notifications => &[
                 "balloons",
@@ -494,7 +518,6 @@ impl Page {
                 "display manager",
             ],
             Page::Advanced => &[
-                "screenshots",
                 "task manager",
                 "thumbnails",
                 "cache",
@@ -810,6 +833,18 @@ mod tests {
         );
         assert_eq!(Hit::Control("repeat_delay").focus(), Some("repeat_delay"));
         assert_eq!(Hit::Label.focus(), None);
+    }
+
+    #[test]
+    fn screen_capture_is_found_by_its_formats_and_codecs() {
+        for q in ["jxl", "hevc", "screen recording", "screenshots", "opus"] {
+            assert!(
+                matches!(Page::ScreenCapture.find(q), Some(Hit::Keyword(_))),
+                "{q}"
+            );
+        }
+        assert_eq!(Page::named("screen-capture"), Some(Page::ScreenCapture));
+        assert_eq!(Page::Sound.find("screen recording"), None);
     }
 
     #[test]

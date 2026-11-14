@@ -184,7 +184,9 @@ whatever the codecs.
 | `flac_compression` | 0 (fastest) to 12 (smallest), for FLAC; the sound is the same at every level | `5` |
 
 `reprise-record --probe` prints what codes here
-([programs.md](programs.md)).
+([programs.md](programs.md)). Settings > Screen Capture sets every key of
+`[recording]` and `[screenshot]`'s `save`, `record_sound`, `format` and the
+format's compression.
 
 ## Remote Desktop
 
