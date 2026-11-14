@@ -37,19 +37,35 @@ pub fn watch(waker: repriseapp::Waker) -> (Receiver<Msg>, Poster) {
 
 /// Carries out `change` on `d` off the loop; polkit may ask for a password meanwhile.
 pub fn carry_out(poster: &Poster, d: Device, change: Change) {
+    start(poster, d, change, |job| {
+        std::thread::Builder::new()
+            .name("reprise-drives-authorize".into())
+            .spawn(job)
+            .map(drop)
+    });
+}
+
+/// [`carry_out`] with `spawn` starting the thread; when it can't, `Done` comes at once with why.
+fn start(
+    poster: &Poster,
+    d: Device,
+    change: Change,
+    spawn: impl FnOnce(Box<dyn FnOnce() + Send>) -> std::io::Result<()>,
+) {
+    let (uid, label) = (d.uid.clone(), d.label());
     let p = poster.clone();
-    let started = std::thread::Builder::new()
-        .name("reprise-drives-authorize".into())
-        .spawn(move || {
-            let result = bolt::carry_out(&d, change);
-            p.post(Msg::Done {
-                uid: d.uid.clone(),
-                label: d.label(),
-                result,
-            });
+    let started = spawn(Box::new(move || {
+        let result = bolt::carry_out(&d, change);
+        p.post(Msg::Done {
+            uid: d.uid.clone(),
+            label: d.label(),
+            result,
         });
+    }));
     if let Err(e) = started {
         log::warn!("could not authorize a Thunderbolt device: {e}");
+        let result = Err(Some(format!("Reprise could not start the change: {e}")));
+        poster.post(Msg::Done { uid, label, result });
     }
 }
 
@@ -163,6 +179,30 @@ mod tests {
         assert_eq!(change_for(0), Some(Change::Authorize));
         assert_eq!(change_for(1), Some(Change::Always));
         assert_eq!(change_for(2), None);
+    }
+
+    #[test]
+    fn a_change_whose_thread_cannot_start_ends_at_once_with_why() {
+        let (poster, rx) = Poster::channel(repriseapp::Waker::noop());
+        let refuse = |_| Err(std::io::Error::other("no threads left"));
+        start(
+            &poster,
+            dev("dock", Status::Connected),
+            Change::Authorize,
+            refuse,
+        );
+        match rx.try_recv() {
+            Ok(Msg::Done { uid, label, result }) => {
+                assert_eq!((uid.as_str(), label.as_str()), ("dock", "Acme Dock"));
+                assert_eq!(
+                    result,
+                    Err(Some(
+                        "Reprise could not start the change: no threads left".into()
+                    ))
+                );
+            }
+            _ => panic!("a Done for the dock"),
+        }
     }
 
     #[test]

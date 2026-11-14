@@ -1,5 +1,5 @@
-//! The Thunderbolt page's devices: boltd's signals followed off the loop from the page's first
-//! opening, and Authorize and Forget carried out at once.
+//! The Thunderbolt page's devices: boltd's signals followed off the loop from the page's opening,
+//! and Authorize and Forget carried out at once.
 
 use crate::registry::{self, Page};
 use crate::{SettingsApp, pages, take};
@@ -22,6 +22,10 @@ pub(crate) struct Thunderbolt {
     /// What boltd knows after each change it signals, for the rest of the run.
     pub(crate) follow: Option<Receiver<Option<Found>>>,
     pub(crate) acting: bool,
+    /// The page is open; a follow that ended starts again only when it opens again.
+    pub(crate) open: bool,
+    #[cfg(test)]
+    pub(crate) follows: usize,
 }
 
 fn carry_out(d: bolt::Device, change: Change) -> Reading {
@@ -62,9 +66,11 @@ fn follow(tx: std::sync::mpsc::Sender<Option<Found>>, wake: impl Fn()) {
 }
 
 impl SettingsApp {
-    /// Follow boltd off the loop once the page opens.
+    /// Follow boltd off the loop as the page opens, unless a follow still runs.
     pub(crate) fn ensure_thunderbolt(&mut self) {
-        if registry::open(&self.sheet) == Page::Thunderbolt && self.thunderbolt.follow.is_none() {
+        let open = registry::open(&self.sheet) == Page::Thunderbolt;
+        let was = std::mem::replace(&mut self.thunderbolt.open, open);
+        if open && !was && self.thunderbolt.follow.is_none() {
             self.start_follow();
         }
     }
@@ -177,5 +183,7 @@ impl SettingsApp {
     fn start_thunderbolt(&mut self, _: impl FnOnce() -> Reading + Send + 'static) {}
 
     #[cfg(test)]
-    fn start_follow(&mut self) {}
+    fn start_follow(&mut self) {
+        self.thunderbolt.follows += 1;
+    }
 }

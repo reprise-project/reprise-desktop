@@ -748,6 +748,28 @@ fn each_change_boltd_signals_shows_the_newest() {
 }
 
 #[test]
+fn a_follow_that_ended_starts_again_only_when_the_page_opens_again() {
+    let mut a = app("thunderbolt");
+    a.sheet.tabs.open = Page::Thunderbolt.index();
+    a.ensure_thunderbolt();
+    assert_eq!(a.thunderbolt.follows, 1);
+    let (tx, rx) = std::sync::mpsc::channel();
+    a.thunderbolt.follow = Some(rx);
+    tx.send(None).unwrap();
+    drop(tx);
+    a.thunderbolt_done();
+    assert!(a.thunderbolt.follow.is_none(), "no system bus");
+    a.ensure_thunderbolt();
+    a.ensure_thunderbolt();
+    assert_eq!(a.thunderbolt.follows, 1, "not on each event while open");
+    a.sheet.tabs.open = Page::Display.index();
+    a.ensure_thunderbolt();
+    a.sheet.tabs.open = Page::Thunderbolt.index();
+    a.ensure_thunderbolt();
+    assert_eq!(a.thunderbolt.follows, 2, "opened again");
+}
+
+#[test]
 fn authorize_acts_at_once_on_the_picked_device_and_says_why_it_failed() {
     let mut a = app("thunderbolt");
     let p = Page::Thunderbolt.index();
