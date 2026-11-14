@@ -470,8 +470,10 @@ impl Folder {
                     Outcome::Redraw
                 }
                 _ if button == BTN_LEFT => {
+                    let at = (self.list.top, self.list.left_in(&lay));
                     let press = listview::Input::Press(x, y);
-                    redraw(self.list.pointer(press, &lay, list_r, false).is_some())
+                    self.list.pointer(press, &lay, list_r, false);
+                    redraw((self.list.top, self.list.left_in(&lay)) != at)
                 }
                 _ => Outcome::None,
             };
@@ -1354,6 +1356,11 @@ mod tests {
         assert_eq!(f.wheel(-3, &ctx), Outcome::Redraw);
         assert_eq!(f.list.top, 0);
         assert_eq!(f.wheel(-1, &ctx), Outcome::None, "already at the top");
+        assert_eq!(
+            f.press(one(sb.x + 2, sb.y + 3), BTN_LEFT, &s, &ctx),
+            Outcome::None,
+            "the up arrow at the top scrolls nothing"
+        );
         assert_eq!(
             f.press(one(sb.x + 2, sb.bottom() - 3), BTN_LEFT, &s, &ctx),
             Outcome::Redraw
