@@ -655,4 +655,134 @@ mod tests {
         assert!(hints(true).contains(&"interactive=true".to_string()));
         assert!(hints(false).contains(&"background=true".to_string()));
     }
+
+    mod bus {
+        use std::collections::HashMap;
+        use std::io::{BufRead, BufReader};
+        use std::process::{Child, Command, Stdio};
+
+        use zbus::{OwnedObjectPath, Variant};
+
+        use super::super::{
+            EXIT_CANCELLED, Error, NAME, PATH, PROPERTIES, STATUS_DOWNLOAD, TX_IFACE, Tx, cancel,
+            install_file,
+        };
+
+        struct Bus(Child, String);
+
+        impl Drop for Bus {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+
+        fn bus() -> Option<Bus> {
+            let mut child = Command::new("dbus-daemon")
+                .args(["--session", "--nofork", "--print-address"])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+                .ok()?;
+            let mut line = String::new();
+            BufReader::new(child.stdout.take()?)
+                .read_line(&mut line)
+                .ok()?;
+            Some(Bus(child, line.trim().to_string()))
+        }
+
+        async fn connect(address: &str) -> zbus::Connection {
+            zbus::connection::Builder::address(address)
+                .build()
+                .await
+                .expect("connect")
+        }
+
+        const TID: &str = "/1";
+
+        struct Daemon;
+
+        #[zbus::interface(name = "org.freedesktop.PackageKit")]
+        impl Daemon {
+            fn create_transaction(&self) -> OwnedObjectPath {
+                OwnedObjectPath::try_from(TID).unwrap()
+            }
+        }
+
+        /// A transaction that starts downloading, may be cancelled, and then finishes as
+        /// cancelled.
+        struct Transaction;
+
+        #[zbus::interface(name = "org.freedesktop.PackageKit.Transaction")]
+        impl Transaction {
+            fn set_hints(&self, _hints: Vec<String>) {}
+
+            async fn install_files(
+                &self,
+                #[zbus(connection)] conn: &zbus::Connection,
+                _flags: u64,
+                _files: Vec<String>,
+            ) {
+                let changed = HashMap::from([
+                    ("Status", Variant::from(STATUS_DOWNLOAD)),
+                    ("Percentage", Variant::from(10u32)),
+                    ("AllowCancel", Variant::from(true)),
+                ]);
+                let body = (TX_IFACE, changed, Vec::<String>::new());
+                conn.emit_signal(None::<&str>, TID, PROPERTIES, "PropertiesChanged", &body)
+                    .await
+                    .unwrap();
+            }
+
+            async fn cancel(&self, #[zbus(connection)] conn: &zbus::Connection) {
+                let body = (EXIT_CANCELLED, 0u32);
+                conn.emit_signal(None::<&str>, TID, TX_IFACE, "Finished", &body)
+                    .await
+                    .unwrap();
+            }
+        }
+
+        #[test]
+        fn cancel_mid_download_ends_the_install_as_cancelled() {
+            let Some(bus) = bus() else {
+                eprintln!("no dbus-daemon; skipped");
+                return;
+            };
+            zbus::block_on(async {
+                let services = connect(&bus.1).await;
+                services.object_server().at(PATH, Daemon).await.unwrap();
+                services.object_server().at(TID, Transaction).await.unwrap();
+                services.request_name(NAME).await.unwrap();
+                let conn = connect(&bus.1).await;
+                let mut tid = None;
+                let mut asked = None;
+                let mut shown = Vec::new();
+                let ended = install_file(
+                    &conn,
+                    "/d/x-1-1-any.pkg.tar.xz",
+                    "x",
+                    false,
+                    &mut |f, _| shown.push(f),
+                    &mut |tx| match tx {
+                        Tx::Created(t) => tid = Some(t),
+                        Tx::Cancellable(true) => {
+                            let (t, address) = (tid.clone().unwrap(), bus.1.clone());
+                            asked = Some(std::thread::spawn(move || {
+                                zbus::block_on(async { cancel(&connect(&address).await, &t).await })
+                            }));
+                        }
+                        Tx::Cancellable(false) => {}
+                    },
+                )
+                .await;
+                let asked = asked.expect("Cancel was offered").join().unwrap();
+                assert!(asked.is_ok(), "{asked:?}");
+                assert_eq!(shown, [Some(0.1)], "the download's progress showed");
+                assert_eq!(
+                    ended,
+                    Err(Error::Failed("The install was cancelled.".into()))
+                );
+            });
+        }
+    }
 }
