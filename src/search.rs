@@ -218,7 +218,7 @@ impl Source {
                     .map(|i| paths[i].clone())
                     .collect()
             }
-            Source::Contents => contents(query, max),
+            Source::Contents => contents(query, max, cancel),
             Source::Provider(_) => Vec::new(),
         }
     }
@@ -246,10 +246,12 @@ const PROVIDER_ROWS: usize = 3;
 const CONTENTS_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// The local files localsearch finds holding `query`'s words; none when it is not installed.
-fn contents(query: &str, max: usize) -> Vec<PathBuf> {
+fn contents(query: &str, max: usize, cancel: &AtomicBool) -> Vec<PathBuf> {
     let found = reprisebus::session()
         .map_err(|e| e.to_string())
-        .and_then(|conn| reprisebus::localsearch::search(&conn, query, max, CONTENTS_TIMEOUT));
+        .and_then(|conn| {
+            reprisebus::localsearch::search(&conn, query, max, CONTENTS_TIMEOUT, cancel)
+        });
     match found {
         Ok(urls) => urls.iter().filter_map(|u| file_path(u)).collect(),
         Err(e) => {
