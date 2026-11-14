@@ -144,11 +144,17 @@ impl<R: Rows + Default> List<R> {
     }
 
     pub fn release(&mut self, ctx: &Ctx) -> bool {
+        self.let_go() && ctx.styled()
+    }
+
+    /// The release without its pointer, for a window that will not see it: the thumb, a divider
+    /// drag, the held column title and bar part let go where they are. True when a lit part did.
+    pub fn let_go(&mut self) -> bool {
         self.view.thumb.release();
         self.resizing = None;
         let column = self.view.header.holding();
         self.view.header.release();
-        (self.view.bars.release_bar() || column) && ctx.styled()
+        self.view.bars.release_bar() || column
     }
 
     pub fn leave(&mut self, ctx: &Ctx) -> bool {

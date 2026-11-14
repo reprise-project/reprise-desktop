@@ -941,19 +941,19 @@ fn shift_f10_opens_the_graph_menu_and_f10_still_opens_the_menu_bar() {
     assert!(t.popup.is_none(), "only on the Performance page");
 }
 
-#[test]
-fn a_thumb_held_across_a_page_switch_lets_go_at_the_release() {
+/// Task Manager on the Processes page with more rows than fit, the point on its thumb and the
+/// scrollbar's rect.
+fn overflowing_processes(ctx: &mut Ctx) -> (TaskMgr, (i32, i32), reprisekit::raster::Rect) {
     use reprisekit::classic::widgets::scrollbar_parts;
-    let mut ctx = ctx();
     let mut t = mgr();
     let mut s = snapshot();
     s.procs
         .extend((100..160).map(|pid| proc(pid, "worker", UID, 0.0, 1_024)));
-    t.take(s, &mut ctx);
-    t.event(MAIN, Event::Resized, &mut ctx);
-    open(&mut t, &mut ctx, Page::Processes);
-    let r = pages::layout(&t, &ctx).list.unwrap();
-    let lay = t.procs.layout(r, &ctx);
+    t.take(s, ctx);
+    t.event(MAIN, Event::Resized, ctx);
+    open(&mut t, ctx, Page::Processes);
+    let r = pages::layout(&t, ctx).list.unwrap();
+    let lay = t.procs.layout(r, ctx);
     let sb = lay.scrollbar.expect("the processes overflow the list");
     let p = scrollbar_parts(
         sb,
@@ -965,7 +965,45 @@ fn a_thumb_held_across_a_page_switch_lets_go_at_the_release() {
         lay.thumb_min,
     );
     let thumb = p.thumb.expect("a thumb");
-    let (x, y) = (thumb.x + 2, thumb.y + 3);
+    (t, (thumb.x + 2, thumb.y + 3), sb)
+}
+
+fn press_at(t: &mut TaskMgr, ctx: &mut Ctx, (x, y): (i32, i32)) {
+    let press = PointerInput::Press {
+        x,
+        y,
+        button: BTN_LEFT,
+        time: 0,
+        mods: Mods::default(),
+    };
+    t.event(MAIN, Event::Pointer(press), ctx);
+}
+
+#[test]
+fn a_covered_window_lets_go_of_a_held_thumb_and_divider() {
+    let mut ctx = ctx();
+    let (mut t, (x, y), sb) = overflowing_processes(&mut ctx);
+    press_at(&mut t, &mut ctx, (x, y));
+    repriseapp::cover(&mut t, MAIN, &ctx);
+    let motion = PointerInput::Motion { x, y: sb.bottom() };
+    t.event(MAIN, Event::Pointer(motion), &mut ctx);
+    assert_eq!(t.procs.view.top, 0, "the list stays at its top");
+    let r = pages::layout(&t, &ctx).list.unwrap();
+    let l = t.procs.layout(r, &ctx);
+    let (edge, y) = (edges(&t, &l)[1], l.header.y + 4);
+    press_at(&mut t, &mut ctx, (edge, y));
+    let motion = |x| Event::Pointer(PointerInput::Motion { x, y });
+    t.event(MAIN, motion(edge + 30), &mut ctx);
+    repriseapp::cover(&mut t, MAIN, &ctx);
+    t.event(MAIN, motion(edge + 60), &mut ctx);
+    assert_eq!(t.procs.view.columns[1].width, 78, "PID stays 78 wide");
+    assert_eq!(t.widths.get(&ProcColumn::Pid), Some(&78), "78 is kept");
+}
+
+#[test]
+fn a_thumb_held_across_a_page_switch_lets_go_at_the_release() {
+    let mut ctx = ctx();
+    let (mut t, (x, y), sb) = overflowing_processes(&mut ctx);
     let ctrl_tab = |shift| {
         Event::Key(KeyInput {
             sym: keysym::TAB,

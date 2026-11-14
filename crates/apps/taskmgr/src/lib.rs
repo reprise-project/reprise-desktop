@@ -478,6 +478,15 @@ impl TaskMgr {
         self.persist();
     }
 
+    /// Every list lets go, as a page switched from mid-press leaves its list holding the thumb, and
+    /// the Processes widths are kept. True when a part lit under `styled` let go.
+    fn let_go_lists(&mut self, styled: bool) -> bool {
+        let lit = self.apps.let_go() | self.procs.let_go() | self.perf.sensors.let_go();
+        let tiles = self.perf.list.release();
+        self.note_widths();
+        (lit && styled) || tiles
+    }
+
     /// Fits each list's last column to what the others leave of `ctx`'s list area.
     fn fit_lists(&mut self, ctx: &Ctx) {
         let r = pages::layout(self, ctx).list_area;
@@ -1063,10 +1072,7 @@ impl TaskMgr {
             }
             Event::Pointer(PointerInput::Motion { x, y }) => self.motion(x, y, ctx),
             Event::Pointer(PointerInput::Release { .. }) => {
-                // Both lists, as a page switched from mid-press leaves its list holding the thumb.
-                let list =
-                    self.apps.release(ctx) | self.procs.release(ctx) | self.perf_release(ctx);
-                self.note_widths();
+                let list = self.let_go_lists(ctx.styled());
                 let ev = self.form.release();
                 let r = self.form_event(ev, ctx);
                 Reply {
@@ -1279,6 +1285,13 @@ impl repriseapp::Extended for TaskMgr {
 
     fn on_top(&self) -> Option<bool> {
         Some(self.on_top)
+    }
+
+    fn cancel_pointer(&mut self, win: WinId) {
+        if win == repriseapp::MAIN {
+            self.let_go_lists(false);
+            self.form.cancel_pointer();
+        }
     }
 
     fn popup(&mut self, win: WinId, _ctx: &Ctx) -> Option<Box<dyn Hosted + '_>> {
