@@ -20,6 +20,8 @@ const QP: &str = "24";
 
 pub struct Movie {
     backend: Backend,
+    /// The size of the frames read.
+    frame: (u32, u32),
     converter: Converter,
     encoder: ffmpeg::encoder::video::Encoder,
     /// The last picture sent, which [`Movie::finish`] holds up to the end.
@@ -27,12 +29,14 @@ pub struct Movie {
 }
 
 impl Movie {
-    /// An encoder of `backend` on render node `device` for frames of `fourcc` read at `size`
-    /// from `origin`, coded at `size` with odd sides made even.
+    /// An encoder of `backend` on render node `device` for `frame`-sized frames of `fourcc`,
+    /// read at `size` from `origin` and coded at `size` with odd sides made even. A hardware
+    /// encoder gets the part cut out on its GPU.
     pub fn open(
         backend: Backend,
         device: &Path,
         fourcc: u32,
+        frame: (u32, u32),
         size: (u32, u32),
         origin: (u32, u32),
     ) -> Result<Movie, EncodeError> {
@@ -41,10 +45,7 @@ impl Movie {
             None => None,
         };
         let coded = hwmap::even(size);
-        let mut converter = Converter::new(devices.as_ref(), fourcc, coded, coded, RATE_HINT)?;
-        if origin != (0, 0) {
-            converter.crop_at(origin)?;
-        }
+        let mut converter = Converter::cropped(devices.as_ref(), fourcc, origin, coded, RATE_HINT)?;
         let name = backend.codec();
         let codec = ffmpeg::encoder::find_by_name(name)
             .ok_or_else(|| EncodeError(format!("FFmpeg has no {name}")))?;
@@ -78,6 +79,7 @@ impl Movie {
             .map_err(|e| EncodeError(format!("{name}: {e}")))?;
         Ok(Movie {
             backend,
+            frame,
             converter,
             encoder,
             last: None,
@@ -88,16 +90,23 @@ impl Movie {
         self.backend
     }
 
+    /// Whether the part recorded is cut out on the GPU rather than the CPU.
+    pub fn cut_on_gpu(&self) -> bool {
+        self.converter.on_gpu()
+    }
+
     pub fn encoder(&self) -> &ffmpeg::encoder::video::Encoder {
         &self.encoder
     }
 
-    /// Whether frames like `frame` go on into this encoder: the same size and format.
+    /// Whether frames like `frame`, read at `size`, go on into this encoder: the same sizes and
+    /// format.
     pub fn takes(&self, frame: &Frame, size: (u32, u32)) -> bool {
         let fourcc = match &frame.buffer {
             FrameBuffer::Dmabuf { fourcc, .. } | FrameBuffer::Shm { fourcc, .. } => *fourcc,
         };
-        fourcc == self.converter.fourcc && hwmap::even(size) == self.converter.size
+        (fourcc, frame.size) == (self.converter.fourcc, self.frame)
+            && hwmap::even(size) == self.converter.size
     }
 
     /// `frame` as the picture shown from `pts` ms on; the packets ready go to `out`.
@@ -185,7 +194,7 @@ mod tests {
     fn x264(size: (u32, u32), origin: (u32, u32)) -> Movie {
         ffmpeg::util::log::set_level(ffmpeg::util::log::Level::Quiet);
         let node = Path::new(reprisevideo::encode::probe::RENDER_NODE);
-        Movie::open(Backend::X264, node, XRGB8888, size, origin).unwrap()
+        Movie::open(Backend::X264, node, XRGB8888, (64, 48), size, origin).unwrap()
     }
 
     #[test]
@@ -212,7 +221,12 @@ mod tests {
         let movie = x264((33, 21), (8, 4));
         let size = (movie.encoder().width(), movie.encoder().height());
         assert_eq!(size, (32, 20));
+        assert!(!movie.cut_on_gpu());
         assert!(movie.takes(&frame((64, 48), (0, 0, 0)), (33, 21)));
         assert!(!movie.takes(&frame((64, 48), (0, 0, 0)), (40, 21)));
+        assert!(
+            !movie.takes(&frame((80, 48), (0, 0, 0)), (33, 21)),
+            "a frame of another size"
+        );
     }
 }

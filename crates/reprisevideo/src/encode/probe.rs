@@ -36,7 +36,7 @@ const FORMATS: [u32; 4] = [XRGB8888, ARGB8888, XBGR8888, ABGR8888];
 
 /// The side of the frames a backend and a modifier are tried with, above the smallest picture
 /// hardware encoders take (128 on AMD).
-const TEST_SIDE: u32 = 256;
+pub const TEST_SIDE: u32 = 256;
 const TEST_RATE: u32 = 60;
 
 /// An FFmpeg H.264 encoder and how frames reach it.
@@ -857,6 +857,49 @@ mod tests {
             blob.extend(modifier.to_ne_bytes());
         }
         assert_eq!(in_formats(&blob, &FORMATS), vec![8, 9]);
+    }
+
+    /// `gpu` cuts a part at an odd origin out of a [`pattern`] frame: each luma is the
+    /// pattern's at the same place in the frame.
+    fn cuts_out_a_part(gpu: Gpu) {
+        let node = Path::new(RENDER_NODE);
+        let devices = Devices::open(gpu, node).expect("the GPU's device");
+        let gbm = gbm_device(node).unwrap();
+        let frame = test_buffer(&gbm, &mut Painter::new(node), XRGB8888, None).unwrap();
+        let (origin, size) = ((37, 51), (128, 96));
+        let mut converter =
+            Converter::cropped(Some(&devices), XRGB8888, origin, size, TEST_RATE).unwrap();
+        assert!(converter.on_gpu());
+        let cut = hwmap::download(&converter.convert(&frame).unwrap()).unwrap();
+        assert_eq!((cut.width(), cut.height()), size);
+        for y in (4..size.1).step_by(8) {
+            for x in (4..size.0).step_by(8) {
+                let got = luma_at(&cut, x, y).unwrap();
+                let want = pattern_luma(x + origin.0, y + origin.1);
+                assert!(
+                    (got - want).abs() <= 3.0,
+                    "luma {got} at ({x}, {y}), {want} in the frame"
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "needs VA-API on /dev/dri/renderD128; run with --ignored where it has one"]
+    fn vaapi_cuts_a_part_out_of_the_frame() {
+        cuts_out_a_part(Gpu::Vaapi);
+    }
+
+    #[test]
+    #[ignore = "needs an NVIDIA GPU with NVENC"]
+    fn cuda_cuts_a_part_out_of_the_frame() {
+        cuts_out_a_part(Gpu::Cuda);
+    }
+
+    #[test]
+    #[ignore = "needs Vulkan with libplacebo on /dev/dri/renderD128"]
+    fn vulkan_cuts_a_part_out_of_the_frame() {
+        cuts_out_a_part(Gpu::Vulkan);
     }
 
     #[test]

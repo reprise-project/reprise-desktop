@@ -116,10 +116,11 @@ mod tests {
     fn an_unscaled_target_adds_no_pass() {
         use hwmap::Gpu;
         let (source, half) = ((1920, 1080), (960, 540));
-        let options = |gpu: Gpu, target| {
-            let (name, options) = gpu.to_nv12(source, target).unwrap();
+        let cut = |gpu: Gpu, origin, source, target| {
+            let (name, options) = gpu.to_nv12(origin, source, target).unwrap();
             format!("{name}={}", options.to_str().unwrap())
         };
+        let options = |gpu: Gpu, target| cut(gpu, (0, 0), source, target);
         assert_eq!(
             options(Gpu::Vaapi, source),
             "scale_vaapi=format=nv12:out_color_matrix=bt709:out_range=full:\
@@ -137,6 +138,19 @@ mod tests {
         assert_eq!(
             options(Gpu::Vulkan, half),
             format!("{}:w=960:h=540", options(Gpu::Vulkan, source))
+        );
+        assert_eq!(
+            cut(Gpu::Vaapi, (101, 51), (1061, 591), (960, 540)),
+            options(Gpu::Vaapi, half),
+            "VA-API reads the part from each frame's crop"
+        );
+        assert_eq!(
+            cut(Gpu::Vulkan, (101, 51), (1061, 591), (960, 540)),
+            format!(
+                "{}:crop_x=101:crop_y=51:crop_w=960:crop_h=540",
+                options(Gpu::Vulkan, half)
+            ),
+            "libplacebo is told the part, at its odd origin"
         );
         for pass in 0..split::PASSES {
             assert_eq!(
