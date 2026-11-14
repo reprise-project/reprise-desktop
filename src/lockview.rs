@@ -551,6 +551,8 @@ pub fn engage(state: &mut State) {
     crate::state::save_screen_locked(true);
     crate::idle::end_dim(state);
     let_go_now(state);
+    // A modifier StickyKeys latched would eat the password's first letter.
+    state.aids_reset();
     seal(state, |s| raise(s, Side::Console));
     refit_side(state, Side::Console);
     // The covers are opaque from their first frame; only the screen on them comes in.
