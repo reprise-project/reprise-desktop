@@ -50,6 +50,38 @@ impl Explorer {
         false
     }
 
+    /// The release's end of every hold but an item drag's, each where the pointer left it; the
+    /// Explorer bar's splitter and a column resize keep their widths.
+    fn let_go(&mut self) {
+        self.tree.bars.release_bar();
+        self.sv.bars.release_bar();
+        self.sv.header.release();
+        if std::mem::take(&mut self.dragging) {
+            self.settings.bar_width = self.explorer_bar.width;
+            self.settings_dirty = true;
+        }
+        // The Recycle Bin's columns are not the ones the settings
+        // keep.
+        if self.resizing.take().is_some() && self.folder_columns() {
+            self.settings.columns = self.sv.columns.iter().map(|c| c.width).collect();
+            self.settings_dirty = true;
+        }
+        self.thumb.release();
+        self.tree_thumb.release();
+        self.marquee_from = None;
+        self.rename_drag = false;
+        self.sv.marquee = None;
+        self.toolbar.pressed = None;
+    }
+
+    /// A modal child covers the window, which will not see the release: an armed item drag ends
+    /// with no drop, and every other hold lets go where it is.
+    pub(crate) fn cancel_pointer(&mut self) {
+        self.cancel_item_drag();
+        self.tab_strip_let_go();
+        self.let_go();
+    }
+
     pub fn pointer_inner(&mut self, p: PointerInput, ctx: &mut Ctx) -> Reply {
         // A button takes the keyboard away from a half-finished Alt: its release will
         // not mean the menu bar.
@@ -96,30 +128,10 @@ impl Explorer {
                 if let Some(reply) = self.tab_strip_release(x, y, ctx) {
                     return reply;
                 }
-                self.tree.bars.release_bar();
-                self.sv.bars.release_bar();
-                self.sv.header.release();
                 // A drag owns the release: it drops, or acts on what the press meant.
-                if self.drag.is_some() {
-                    return self.drag_release(x, y, ctx);
-                }
-                if std::mem::take(&mut self.dragging) {
-                    self.settings.bar_width = self.explorer_bar.width;
-                    self.settings_dirty = true;
-                }
-                // The Recycle Bin's columns are not the ones the settings
-                // keep.
-                if self.resizing.take().is_some() && self.folder_columns() {
-                    self.settings.columns = self.sv.columns.iter().map(|c| c.width).collect();
-                    self.settings_dirty = true;
-                }
-                self.thumb.release();
-                self.tree_thumb.release();
-                self.marquee_from = None;
-                self.rename_drag = false;
-                self.sv.marquee = None;
-                self.toolbar.pressed = None;
-                Reply::redraw()
+                let dropped = self.drag.is_some().then(|| self.drag_release(x, y, ctx));
+                self.let_go();
+                dropped.unwrap_or_else(Reply::redraw)
             }
             PointerInput::Motion { x, y } => self.motion(x, y, ctx),
             PointerInput::Scroll { x, y, rows } => self.scroll(x, y, rows, ctx),

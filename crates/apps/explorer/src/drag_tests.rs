@@ -188,6 +188,18 @@ fn only_an_unstarted_drag_ends_when_the_pointer_leaves() {
     assert!(ex.drag.is_none());
 }
 
+#[test]
+fn a_covered_window_ends_an_armed_drag_with_no_drop() {
+    let mut ctx = test_ctx();
+    let (_dir, mut ex) = explorer(&mut ctx);
+    let at = centre(&ex, &ctx, index_of(&ex, "a.txt"));
+    press(&mut ex, &mut ctx, at, BTN_LEFT);
+    ex.cancel_pointer();
+    let r = motion(&mut ex, &mut ctx, (at.0 + 40, at.1));
+    assert!(r.start_drag.is_none(), "no drag starts");
+    assert!(ex.drag.is_none());
+}
+
 /// Over the window, only a folder not being dragged lights up; a file is no
 /// target, and the background takes the drag for the folder shown.
 #[test]
