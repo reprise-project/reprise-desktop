@@ -8,6 +8,7 @@
 use std::time::Duration;
 
 use crate::config::OsdConfig;
+use reprisebus::airplane::{self, Mode};
 use reprisekit::controls::osd::{self, LockKey, Meter, Osd};
 use reprisekit::look::panel;
 use reprisescene::{BufferId, Input, TreeId};
@@ -128,17 +129,17 @@ fn describe(r: &Report, boost: bool) -> Option<(Osd, &'static str)> {
             },
             "input-touchpad",
         ),
-        Report::Airplane { on } => (
+        Report::Airplane(mode) => (
             Osd {
-                title: if *on {
-                    "Airplane mode on"
-                } else {
-                    "Airplane mode off"
+                title: match mode {
+                    Mode::Off => "Airplane mode off",
+                    Mode::On => "Airplane mode on",
+                    Mode::Killed => airplane::KILLED,
                 }
                 .into(),
                 meter: None,
             },
-            if *on {
+            if mode.on() {
                 "airplane-mode-symbolic"
             } else {
                 "network-wireless"
@@ -468,14 +469,17 @@ mod tests {
     }
 
     #[test]
-    fn airplane_mode_reads_on_or_off_without_a_meter() {
-        let (osd, icon) = describe(&Report::Airplane { on: true }, false).unwrap();
+    fn airplane_mode_reads_on_off_or_held_by_hardware_without_a_meter() {
+        let (osd, icon) = describe(&Report::Airplane(Mode::On), false).unwrap();
         assert_eq!(osd.title, "Airplane mode on");
         assert_eq!(osd.meter, None);
         assert_eq!(icon, "airplane-mode-symbolic");
-        let (osd, icon) = describe(&Report::Airplane { on: false }, false).unwrap();
+        let (osd, icon) = describe(&Report::Airplane(Mode::Off), false).unwrap();
         assert_eq!(osd.title, "Airplane mode off");
         assert_eq!(icon, "network-wireless");
+        let (osd, icon) = describe(&Report::Airplane(Mode::Killed), false).unwrap();
+        assert_eq!(osd.title, "Turned off by a hardware switch");
+        assert_eq!(icon, "airplane-mode-symbolic");
     }
 
     #[test]

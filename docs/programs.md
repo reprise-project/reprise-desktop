@@ -423,7 +423,8 @@ matched control focused.
   - **Connections...** (Network Connections)
   - **Network:** Airplane mode turns Wi-Fi, mobile broadband and Bluetooth
     off or back on at once, as the network icon's menu does. It's greyed on
-    a computer with no radio. Proxy picks No proxy, Manual configuration
+    a computer with no radio, and while a hardware switch holds every radio
+    off. Proxy picks No proxy, Manual configuration
     (an HTTP, HTTPS, FTP and SOCKS server, each a host and a port, and the
     hosts reached directly) or Automatic configuration (a PAC script's URL).
     Apply writes `~/.config/environment.d/60-reprise-proxy.conf` and sets
@@ -595,7 +596,11 @@ The tray icon's Airplane Mode row turns Wi-Fi and mobile broadband off
 through NetworkManager and Bluetooth through rfkill, and its tooltip says so
 while it's on. Unticking it turns back on the radios that were on, kept in
 `~/.local/state/reprise/airplane-mode`. Turning any radio on by hand ends
-airplane mode. The row shows on a machine with a radio switch.
+airplane mode. While a hardware switch holds Wi-Fi off, NetworkManager's own
+switch (`nmcli radio wifi on`) leaves the soft block alone, so there only the
+Wi-Fi key turns it on. The row shows on a machine with a radio switch, greyed with
+"Turned off by a hardware switch" under it and in the tooltip while a
+hardware switch holds every radio off.
 
 An enterprise (802.1X) network, the kind campuses and offices run, asks for
 its login when you pick it: PEAP, TTLS or TLS, an anonymous identity, the

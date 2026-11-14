@@ -3,7 +3,7 @@
 
 use crate::registry::{self, Page};
 use crate::{SettingsApp, pages, take};
-use reprisebus::airplane;
+use reprisebus::airplane::{self, Mode};
 use std::time::Duration;
 
 const POLL: Duration = Duration::from_secs(2);
@@ -11,18 +11,18 @@ const POLL: Duration = Duration::from_secs(2);
 /// A read or a change off the loop: airplane mode afterwards (None: no radio switch), and what
 /// to tell when the change failed.
 pub(crate) struct Reading {
-    pub(crate) state: Option<bool>,
+    pub(crate) state: Option<Mode>,
     pub(crate) failed: Option<String>,
 }
 
 #[derive(Default)]
 pub(crate) struct Airplane {
-    pub(crate) state: Option<bool>,
+    pub(crate) state: Option<Mode>,
     pub(crate) job: Option<std::sync::mpsc::Receiver<Reading>>,
     pub(crate) acting: bool,
 }
 
-fn read() -> Option<bool> {
+fn read() -> Option<Mode> {
     let conn = reprisebus::system().ok()?;
     reprisebus::wait(airplane::read(&conn))
 }
@@ -51,14 +51,22 @@ impl SettingsApp {
         }
     }
 
+    /// A click turns airplane mode the other way; none goes out while a change runs or under a
+    /// hardware kill.
     pub(crate) fn airplane_toggled(&mut self) {
         let page = &mut self.sheet.pages[Page::Network.index()];
-        let on = page.checked(pages::AIRPLANE) == Some(true);
-        if self.airplane.acting {
-            pages::show_airplane(page, self.airplane.state, true);
+        let acting = self.airplane.acting;
+        let Some(on) = self
+            .airplane
+            .state
+            .and_then(Mode::flipped)
+            .filter(|_| !acting)
+        else {
+            pages::show_airplane(page, self.airplane.state, acting);
             return;
-        }
-        pages::show_airplane(page, Some(on), true);
+        };
+        let shown = if on { Mode::On } else { Mode::Off };
+        pages::show_airplane(page, Some(shown), true);
         self.airplane.acting = true;
         self.start_airplane(move || set(on));
     }

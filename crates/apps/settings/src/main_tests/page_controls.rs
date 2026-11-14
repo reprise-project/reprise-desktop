@@ -1,4 +1,5 @@
 use super::*;
+use reprisebus::airplane::Mode;
 use reprisebus::bolt::{Device, Found, Status};
 
 #[test]
@@ -526,7 +527,7 @@ fn the_screen_reader_boxes_follow_the_reads_and_grey_without_orca() {
     assert!(!a.reader.running, "the next click switches again");
 }
 
-fn airplane_read(a: &mut SettingsApp, state: Option<bool>, failed: Option<String>) {
+fn airplane_read(a: &mut SettingsApp, state: Option<Mode>, failed: Option<String>) {
     let (tx, rx) = std::sync::mpsc::channel();
     tx.send(crate::airplanehost::Reading { state, failed })
         .unwrap();
@@ -549,7 +550,7 @@ fn lit(a: &SettingsApp) -> bool {
 fn the_airplane_check_box_acts_at_once_and_follows_the_radios() {
     let mut a = app("airplane");
     let p = Page::Network.index();
-    airplane_read(&mut a, Some(false), None);
+    airplane_read(&mut a, Some(Mode::Off), None);
     assert_eq!(a.sheet.pages[p].checked(pages::AIRPLANE), Some(false));
     assert!(lit(&a));
 
@@ -560,7 +561,7 @@ fn the_airplane_check_box_acts_at_once_and_follows_the_radios() {
     ));
     assert!(a.airplane.acting);
     assert!(!lit(&a), "greyed while the radios turn");
-    airplane_read(&mut a, Some(true), None);
+    airplane_read(&mut a, Some(Mode::On), None);
     assert_eq!(a.sheet.pages[p].checked(pages::AIRPLANE), Some(true));
     assert!(lit(&a));
     assert_eq!(a.want, a.loaded, "the check box is no change for Apply");
@@ -568,11 +569,32 @@ fn the_airplane_check_box_acts_at_once_and_follows_the_radios() {
     a.airplane.acting = true;
     airplane_read(
         &mut a,
-        Some(true),
+        Some(Mode::On),
         Some("Airplane mode could not be turned off.".into()),
     );
     assert!(a.error.is_some(), "a failed change says why");
     assert_eq!(a.sheet.pages[p].checked(pages::AIRPLANE), Some(true));
+}
+
+#[test]
+fn under_a_hardware_kill_the_airplane_check_box_greys_and_a_click_sends_nothing() {
+    let mut a = app("airplane");
+    let p = Page::Network.index();
+    airplane_read(&mut a, Some(Mode::Killed), None);
+    assert_eq!(a.sheet.pages[p].checked(pages::AIRPLANE), Some(true));
+    assert!(
+        !lit(&a),
+        "greyed while a hardware switch holds the radios off"
+    );
+
+    a.sheet.pages[p].set_check(pages::AIRPLANE, false);
+    a.sheet_event(propsheet::Event::Page(
+        p,
+        form::Event::Changed(pages::AIRPLANE),
+    ));
+    assert!(!a.airplane.acting, "no change goes out");
+    assert_eq!(a.sheet.pages[p].checked(pages::AIRPLANE), Some(true));
+    assert!(!lit(&a));
 }
 
 fn region_ready(a: &mut SettingsApp, user: reprisefs::region::Choice, system_lang: &str) {

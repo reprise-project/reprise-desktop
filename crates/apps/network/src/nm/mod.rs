@@ -266,7 +266,7 @@ pub struct Snapshot {
     /// is redirected to that page.
     pub check_uri: String,
     /// None on a machine with no radio switch.
-    pub airplane: Option<bool>,
+    pub airplane: Option<reprisebus::airplane::Mode>,
 }
 
 /// The display names shown in the folder ("Local Area Connection",

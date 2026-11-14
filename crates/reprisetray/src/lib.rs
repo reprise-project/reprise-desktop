@@ -19,6 +19,7 @@ use zbus::object_server::SignalEmitter;
 use zbus::{Connection, Proxy};
 use zbus::{ObjectPath, OwnedVariant, Variant};
 
+use reprisebus::airplane::{self, Mode};
 use reprisebus::instance::Handoff;
 
 pub const ITEM_PATH: &str = "/StatusNotifierItem";
@@ -167,6 +168,20 @@ impl<T: Hash + PartialEq + Clone> Rows<T> {
         let id = self.free(Self::id(&row));
         self.rows.push((id, row));
         self.nodes.push(node(id));
+        self
+    }
+
+    /// The Airplane Mode check row for `mode` as `row`. Under a hardware kill it greys, with
+    /// `note`'s greyed row under it saying so.
+    pub fn airplane(&mut self, row: T, note: T, mode: Mode) -> &mut Self {
+        let killed = mode == Mode::Killed;
+        self.add(row, |id| Node {
+            enabled: !killed,
+            ..Node::toggle(id, "Airplane Mode", mode.on())
+        });
+        if killed {
+            self.add(note, |id| Node::inert(id, airplane::KILLED));
+        }
         self
     }
 
