@@ -168,9 +168,12 @@ impl Display {
             .collect()
     }
 
-    /// The `[[outputs]] primary` the file has.
+    /// The primary the session runs (`outputwrite::session_primary`); a pick not yet applied
+    /// stays.
     pub fn set_primary_saved(&mut self, name: Option<String>) {
-        self.primary = name.clone();
+        if self.primary == self.primary_saved {
+            self.primary = name.clone();
+        }
         self.primary_saved = name;
     }
 

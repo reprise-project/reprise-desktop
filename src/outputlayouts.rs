@@ -16,6 +16,9 @@ pub struct SavedLayouts {
     /// The saved layout in force, by connector; None while `[[outputs]]` and automatic placement
     /// decide.
     active: Option<Vec<(String, MonitorLayout)>>,
+    /// The connected set's primary connector as its layout saves it; None while `[[outputs]]`
+    /// decides. A reload of `[[outputs]]` keeps it unless the reload moved `primary`.
+    primary: Option<String>,
     /// The `[[outputs]]` fingerprint the file carries when no one else changed it: the config's
     /// at start, then each save's or refusal's.
     seen: Option<String>,
@@ -31,6 +34,7 @@ impl Default for SavedLayouts {
         SavedLayouts {
             set: Vec::new(),
             active: None,
+            primary: None,
             seen: None,
             refused: Vec::new(),
             path: file(),
@@ -45,11 +49,7 @@ impl SavedLayouts {
     }
 
     pub fn primary(&self) -> Option<&str> {
-        let active = self.active.as_ref()?;
-        active
-            .iter()
-            .find(|(_, m)| m.primary)
-            .map(|(c, _)| c.as_str())
+        self.primary.as_deref()
     }
 }
 
@@ -137,6 +137,9 @@ impl State {
         let connectors: Vec<String> = heads.iter().map(|h| h.output.name()).collect();
         let active = (layouts.find(&ids, &seen)).map(|l| by_connector(&connectors, &ids, l));
         self.saved_layouts.active = active.clone();
+        self.saved_layouts.primary = (active.iter().flatten())
+            .find(|(_, m)| m.primary)
+            .map(|(c, _)| c.clone());
         let Some(active) = active else {
             log::info!("monitors {connectors:?}: no saved layout");
             return false;
@@ -182,9 +185,13 @@ impl State {
     }
 
     /// `[[outputs]]` changed and was applied: it decides until the arrangement it leaves is saved
-    /// for the connected monitors, once the reload has laid out.
-    pub fn outputs_reloaded(&mut self) {
+    /// for the connected monitors, once the reload has laid out. The saved primary stays unless
+    /// the reload `moved_primary`.
+    pub fn outputs_reloaded(&mut self, moved_primary: bool) {
         self.saved_layouts.active = None;
+        if moved_primary {
+            self.saved_layouts.primary = None;
+        }
         self.saved_layouts.refused.clear();
         self.handle.insert_idle(|state| state.save_layout());
     }
@@ -229,14 +236,34 @@ impl State {
         self.saved_layouts.refused.retain(|c| c != connector);
     }
 
+    /// Make shown output `name` the primary one and save it in the connected set's layout:
+    /// Settings' "Use as the primary display". False when no output shown has that name.
+    pub fn set_primary(&mut self, name: &str) -> bool {
+        let shown = (self.scene.outputs().iter())
+            .filter(|o| !crate::virtualout::is_remote(o))
+            .find(|o| o.name() == name)
+            .cloned();
+        let Some(output) = shown else {
+            return false;
+        };
+        log::info!("output {name}: the primary one");
+        self.save_layout_with(Some(output));
+        self.update_layout();
+        true
+    }
+
     /// Save what the connected monitors run as their set's layout.
     pub(crate) fn save_layout(&mut self) {
+        let primary = self.console_primary();
+        self.save_layout_with(primary);
+    }
+
+    fn save_layout_with(&mut self, primary: Option<Output>) {
         let heads = crate::backend::heads(self);
         if !heads.iter().any(|h| h.enabled) {
             return;
         }
         let ids = ids_of(&heads);
-        let primary = self.console_primary();
         let shown: Vec<_> = (self.scene.outputs().iter())
             .filter(|o| !crate::virtualout::is_remote(o))
             .filter_map(reprisescene::output_rect)
@@ -281,6 +308,9 @@ impl State {
             .collect();
         let layout = Layout::new(monitors);
         let connectors: Vec<String> = heads.iter().map(|h| h.output.name()).collect();
+        self.saved_layouts.primary = (heads.iter())
+            .find(|h| h.enabled && primary.as_ref() == Some(&h.output))
+            .map(|h| h.output.name());
         let expected = (self.saved_layouts.seen.take())
             .unwrap_or_else(|| displays::outputs_fingerprint(&self.config.outputs));
         let now = displays::outputs_fingerprint(&self.config.outputs);

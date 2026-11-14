@@ -618,7 +618,7 @@ impl State {
         if !refused.is_empty() {
             self.outputs_refused(refused);
         } else {
-            self.outputs_reloaded();
+            self.outputs_reloaded(old.primary_output_name() != self.config.primary_output_name());
         }
         geometry_changed
     }

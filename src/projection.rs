@@ -180,6 +180,50 @@ mod tests {
     }
 
     #[test]
+    fn settings_primary_is_the_one_the_switcher_extends_from() {
+        let (mut h, a, b) = pair((1920, 1080));
+        project(&mut h, Projection::Duplicate);
+        assert!(h.state.set_primary("DP-2"));
+        h.dispatch();
+        crate::state::flush();
+        assert_eq!(h.state.saved_primary(), Some("DP-2"));
+        project(&mut h, Projection::Extend);
+        assert_eq!(b.current_location().x, 0);
+        assert_eq!(a.current_location().x, 1920);
+        assert!(!h.state.set_primary("HDMI-A-9"), "not shown");
+    }
+
+    #[test]
+    fn a_reload_of_outputs_keeps_the_saved_primary_unless_it_moves_primary() {
+        let (mut h, _, _) = pair((1920, 1080));
+        assert!(h.state.set_primary("DP-2"));
+        let reload = |h: &mut Harness, primary: bool| {
+            let old = h.state.config.clone();
+            h.state.config.outputs = vec![crate::config::OutputConfig {
+                name: "DP-1".into(),
+                scale: 1.0,
+                mode: None,
+                adaptive_sync: None,
+                transform: Default::default(),
+                position: (!primary).then_some((0, 1080)),
+                primary,
+                icc_profile: None,
+            }];
+            h.state.apply_output_config(&old);
+            h.dispatch();
+            crate::state::flush();
+        };
+        reload(&mut h, false);
+        assert_eq!(h.state.saved_primary(), Some("DP-2"), "a place edit");
+        reload(&mut h, true);
+        assert_eq!(
+            h.state.saved_primary(),
+            Some("DP-1"),
+            "primary = true moved"
+        );
+    }
+
+    #[test]
     fn one_display_has_nothing_to_extend_or_copy() {
         let mut h = Harness::new();
         let a = h.head("DP-1", 1920, 1080);

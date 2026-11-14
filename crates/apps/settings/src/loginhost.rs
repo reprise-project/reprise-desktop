@@ -4,7 +4,6 @@
 use crate::registry::{self, Page};
 use crate::{SettingsApp, pages, take};
 use repriseapp::heads::Head;
-use repriseconf::displays::{Layouts, Monitor, monitor_ids, outputs_fingerprint};
 use repriselogin::front::FINGERPRINT;
 use repriselogin::machine::{
     Background, LoginMode, LoginOutput, MACHINE_CONFIG, MAX_OUTPUTS, MAX_PICTURE, MachineConfig,
@@ -311,31 +310,6 @@ pub(crate) fn login_outputs(heads: &[Head], primary: Option<&str>) -> Vec<LoginO
         .collect()
 }
 
-/// The output the session takes as primary: the one the saved layout in `layouts` marks for the
-/// `connected` monitors under `config`'s `[[outputs]]`, else the one `config` marks.
-pub(crate) fn session_primary(connected: &[Head], layouts: &str, config: &str) -> Option<String> {
-    let monitors: Vec<Monitor<'_>> = (connected.iter())
-        .map(|h| Monitor {
-            connector: &h.name,
-            make: &h.make,
-            model: &h.model,
-            serial: &h.serial,
-        })
-        .collect();
-    let ids = monitor_ids(&monitors);
-    let outputs = (repriseconf::config::Config::parse_lenient(config))
-        .map(|(c, _)| c.outputs)
-        .unwrap_or_default();
-    let saved = Layouts::parse(layouts);
-    let marked = (saved.find(&ids, &outputs_fingerprint(&outputs)))
-        .and_then(|l| l.monitors.iter().find(|(_, m)| m.primary))
-        .and_then(|(id, _)| ids.iter().position(|i| i == id));
-    match marked {
-        Some(i) => Some(connected[i].name.clone()),
-        None => crate::outputwrite::read_primary(config),
-    }
-}
-
 /// The Remote Desktop front's fingerprint; `None` while it is not running.
 pub(crate) fn machine_fingerprint() -> Option<String> {
     fingerprint(Path::new(FINGERPRINT))
@@ -483,7 +457,8 @@ impl SettingsApp {
     pub(crate) fn login_use_displays(&mut self) {
         let read = |p: &Path| std::fs::read_to_string(p).unwrap_or_default();
         let (layouts, config) = (read(&self.display.layouts), read(&self.path));
-        let primary = session_primary(&self.display.connected, &layouts, &config);
+        let primary =
+            crate::outputwrite::session_primary(&self.display.connected, &layouts, &config);
         let outputs = login_outputs(self.display.model.heads(), primary.as_deref());
         if outputs.is_empty() {
             return self.fail("No screens are listed, so there are no display settings to use.");

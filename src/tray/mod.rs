@@ -128,6 +128,12 @@ pub enum TrayEvent {
     /// `org.reprise.Tray.EmptyRecycleBin`: the low disk space warning's button.
     EmptyRecycleBin,
     Identify(Vec<String>),
+    /// `org.reprise.Tray.SetPrimary`: Settings' "Use as the primary display", answered on
+    /// `reply` once saved.
+    SetPrimary {
+        output: String,
+        reply: async_channel::Sender<bool>,
+    },
     PreviewScreenSaver(reprisekit::saver::Kind),
     /// `org.reprise.Tray.ForgetWindowFrames`: Settings' Forget Positions.
     ForgetWindowFrames,
@@ -738,6 +744,13 @@ fn handle_event(state: &mut State, ev: TrayEvent) -> bool {
         }
         TrayEvent::Identify(names) => {
             crate::identifyview::show(state, &names);
+            false
+        }
+        TrayEvent::SetPrimary { output, reply } => {
+            let ok = state.set_primary(&output);
+            crate::state::run_in_order(move || {
+                let _ = reply.try_send(ok);
+            });
             false
         }
         TrayEvent::PreviewScreenSaver(kind) => {

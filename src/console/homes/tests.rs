@@ -413,7 +413,7 @@ fn the_saved_display_layout_never_records_a_remote_screen() {
     let mut h = Harness::new();
     h.head("eDP-1", 1920, 1080);
     let _s = begin(&mut h, &[(0, 0, 2560, 1440, 100)]);
-    h.state.outputs_reloaded();
+    h.state.outputs_reloaded(false);
     h.dispatch();
     crate::state::flush();
     assert_eq!(h.state.saved_primary(), Some("eDP-1"));
