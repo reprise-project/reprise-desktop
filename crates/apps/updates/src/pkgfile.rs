@@ -46,10 +46,46 @@ pub struct Copy {
     pub signed: bool,
 }
 
+impl Copy {
+    /// The folder holding the copy.
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+}
+
 impl Drop for Copy {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.dir);
     }
+}
+
+/// The room a copy leaves free on `$XDG_RUNTIME_DIR`, a tmpfs in RAM that every session service
+/// writes to.
+const RUNTIME_MARGIN: u64 = 64 << 20;
+
+/// Where a private copy of a `size`-byte file goes: `runtime` when it fits with
+/// [`RUNTIME_MARGIN`] to spare by `free`, else `disk`.
+pub fn copy_parent(
+    runtime: &Path,
+    disk: &Path,
+    size: u64,
+    free: impl Fn(&Path) -> Option<u64>,
+) -> PathBuf {
+    let fits = free(runtime).is_some_and(|f| size.saturating_add(RUNTIME_MARGIN) <= f);
+    if fits { runtime } else { disk }.to_path_buf()
+}
+
+/// The bytes an unprivileged writer may still use on `dir`'s file system.
+pub fn free_bytes(dir: &Path) -> Option<u64> {
+    let c = std::ffi::CString::new(dir.as_os_str().as_encoded_bytes()).ok()?;
+    let mut st = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+    // SAFETY: `c` is NUL-terminated and `st` is written by statvfs before it is read.
+    if unsafe { libc::statvfs(c.as_ptr(), st.as_mut_ptr()) } != 0 {
+        return None;
+    }
+    // SAFETY: statvfs returned 0, so it filled `st`.
+    let st = unsafe { st.assume_init() };
+    Some(st.f_bavail.saturating_mul(st.f_frsize))
 }
 
 /// Copy the regular file `path`, and its `.sig` if there is one, into a new 0700 folder in
@@ -580,6 +616,22 @@ mod tests {
         );
         let _ = std::fs::remove_dir_all(&from);
         let _ = std::fs::remove_dir_all(&to);
+    }
+
+    #[test]
+    fn a_copy_that_would_crowd_the_runtime_dir_goes_to_the_disk() {
+        let (runtime, disk) = (Path::new("/run/user/1000"), Path::new("/var/tmp"));
+        let room = |free: u64| move |_: &Path| Some(free);
+        let gib = 1 << 30;
+        assert_eq!(copy_parent(runtime, disk, 10 << 20, room(gib)), runtime);
+        assert_eq!(copy_parent(runtime, disk, gib, room(gib)), disk);
+        assert_eq!(
+            copy_parent(runtime, disk, gib - (32 << 20), room(gib)),
+            disk,
+            "the margin stays free"
+        );
+        assert_eq!(copy_parent(runtime, disk, 1, |_| None), disk, "no statvfs");
+        assert!(free_bytes(&std::env::temp_dir()).is_some());
     }
 
     /// What following `out` reports: the bar's fraction and each new step.
