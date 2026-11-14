@@ -1,6 +1,6 @@
-//! A second X11 connection beside Smithay's window manager, on its own thread so a round trip never holds up the event loop. It moves the X input focus, reads `_NET_WM_ICON`, and counts X11 programs (X-Resource), saying so once none has been connected for [`IDLE_GRACE`], which stops the server. Xwayland's `-terminate` never fires, since this connection and the window manager's keep it up.
+//! A second X11 connection beside Smithay's window manager, on its own thread so a round trip never holds up the event loop. It moves the X input focus, reads `_NET_WM_ICON`, hears X11 programs' bells (XKB `BellNotify`, on a second thread), and counts X11 programs (X-Resource), saying so once none has been connected for [`IDLE_GRACE`], which stops the server. Xwayland's `-terminate` never fires, since this connection and the window manager's keep it up.
 
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 use reprisekit::icon::{IconSource, MAX_CLIENT_ICON, closer_to_target, premultiply};
@@ -10,7 +10,9 @@ use x11rb::{
     CURRENT_TIME, NONE,
     connection::{Connection, RequestConnection},
     protocol::{
+        Event,
         res::{self, ConnectionExt as _},
+        xkb::{self, ConnectionExt as _},
         xproto::{
             AtomEnum, ClientMessageEvent, ConnectionExt, CreateWindowAux, EventMask, GrabMode,
             GrabStatus, InputFocus, PropMode, WindowClass,
@@ -45,11 +47,18 @@ pub enum Back {
     Idle,
     DragActions(Vec<DndAction>),
     Grabbed(u32),
+    /// An X11 program rang the bell from the window at the top of this X window's tree (a child
+    /// of the root), or from none (a core `Bell`).
+    Bell(Option<u32>),
 }
 
 pub const IDLE_GRACE: Duration = Duration::from_secs(10);
 
 const COUNT_EVERY: Duration = Duration::from_secs(2);
+
+/// Bells closer together than this after a passed-on one are dropped, so a program ringing in a
+/// loop wakes the compositor five times a second at most.
+const BELL_GAP: Duration = Duration::from_millis(200);
 
 pub struct Helper {
     tx: mpsc::Sender<Req>,
@@ -92,8 +101,15 @@ fn run(
     rx: &mpsc::Receiver<Req>,
     back: &Sender<Back>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let conn = connect(display, cookie)?;
+    let conn = Arc::new(connect(display, cookie)?);
     let root = conn.setup().roots[0].root;
+    listen_for_bells(&conn);
+    {
+        let (conn, back) = (conn.clone(), back.clone());
+        std::thread::Builder::new()
+            .name("x11-events".into())
+            .spawn(move || read_events(&conn, root, &back))?;
+    }
     let atom = |name: &[u8]| -> Result<u32, Box<dyn std::error::Error>> {
         Ok(conn.intern_atom(false, name)?.reply()?.atom)
     };
@@ -289,9 +305,84 @@ fn run(
                 }
             }
         }
-        // Errors for requests nobody waits on (a focus on a window that just unmapped) queue up as events: drop them.
-        while conn.poll_for_event()?.is_some() {}
     }
+}
+
+/// Ask XKB for a `BellNotify` on every bell; without XKB, X11 bells go unheard.
+fn listen_for_bells(conn: &RustConnection) {
+    let selected = (|| -> Result<bool, Box<dyn std::error::Error>> {
+        if conn
+            .extension_information(xkb::X11_EXTENSION_NAME)?
+            .is_none()
+            || !conn.xkb_use_extension(1, 0)?.reply()?.supported
+        {
+            return Ok(false);
+        }
+        conn.xkb_select_events(
+            xkb::ID::USE_CORE_KBD.into(),
+            xkb::EventType::from(0u16),
+            xkb::EventType::BELL_NOTIFY,
+            xkb::MapPart::from(0u16),
+            xkb::MapPart::from(0u16),
+            &xkb::SelectEventsAux::new(),
+        )?
+        .check()?;
+        Ok(true)
+    })();
+    match selected {
+        Ok(true) => {}
+        Ok(false) => log::warn!("Xwayland has no XKB; X11 programs' bells go unheard"),
+        Err(e) => log::warn!("X11 bells: {e}"),
+    }
+}
+
+/// The connection's events until it closes: each bell goes back as [`Back::Bell`], at most one
+/// per [`BELL_GAP`]. Errors for requests nobody waits on (a focus on a window that just unmapped)
+/// arrive here too and are dropped.
+fn read_events(conn: &RustConnection, root: u32, back: &Sender<Back>) {
+    let mut last = None;
+    loop {
+        let event = match conn.wait_for_event() {
+            Ok(event) => event,
+            Err(e) => {
+                log::debug!("X11 events: {e}");
+                return;
+            }
+        };
+        let Event::XkbBellNotify(bell) = event else {
+            continue;
+        };
+        if !rings(&mut last, Instant::now()) {
+            continue;
+        }
+        let window = (bell.window != NONE).then(|| top_of(conn, root, bell.window));
+        if back.send(Back::Bell(window)).is_err() {
+            return;
+        }
+    }
+}
+
+/// Whether a bell at `now` is passed on, `last` holding the last one that was; records it if so.
+fn rings(last: &mut Option<Instant>, now: Instant) -> bool {
+    if last.is_some_and(|t| now.saturating_duration_since(t) < BELL_GAP) {
+        return false;
+    }
+    *last = Some(now);
+    true
+}
+
+/// The child of `root` that holds `window`: the window manager's frame around a toplevel, or
+/// `window` itself when it is gone or already at the top.
+fn top_of(conn: &RustConnection, root: u32, window: u32) -> u32 {
+    let mut w = window;
+    // The bound stops at a tree deeper than any program builds.
+    for _ in 0..16 {
+        match conn.query_tree(w).ok().and_then(|c| c.reply().ok()) {
+            Some(tree) if tree.parent != root && tree.parent != NONE => w = tree.parent,
+            _ => break,
+        }
+    }
+    w
 }
 
 /// The X11 programs among the server's clients, as X-Resource lists them: all but the server (base 0), this connection (`own`) and the window manager's, which owns `wm_window`.
@@ -357,6 +448,18 @@ mod tests {
         let mut v = vec![w, h];
         v.extend(std::iter::repeat_n(argb, (w * h) as usize));
         v
+    }
+
+    #[test]
+    fn a_bell_inside_the_gap_of_a_passed_on_one_is_dropped() {
+        let (mut last, t) = (None, Instant::now());
+        assert!(rings(&mut last, t), "the first bell is passed on");
+        assert!(!rings(&mut last, t + BELL_GAP / 2), "inside the gap");
+        assert!(rings(&mut last, t + BELL_GAP), "the gap has passed");
+        assert!(
+            !rings(&mut last, t + BELL_GAP + BELL_GAP / 2),
+            "the gap runs from the last bell passed on"
+        );
     }
 
     #[test]
