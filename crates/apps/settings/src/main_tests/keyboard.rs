@@ -1,4 +1,5 @@
 use super::*;
+use reprisekit::classic::widgets::scrollbar_parts;
 
 #[test]
 fn a_field_copies_its_selection_and_takes_a_paste() {
@@ -236,4 +237,81 @@ fn a_control_a_reader_focuses_takes_the_keyboard_from_the_side_list() {
     assert!(a.reader(MAIN, repriseapp::Reader::Focus(at), &ctx));
     assert_eq!(holders(&a), PAGE);
     assert_eq!(focused_id(&a), Some(pages::SC_ADD));
+}
+
+fn send(a: &mut SettingsApp, ctx: &mut Ctx, ev: PointerInput) {
+    a.event(MAIN, Event::Pointer(ev), ctx);
+}
+
+/// A left press at (`x`, `y`), then a motion and the release at `to`, or where it pressed.
+fn left_drag(a: &mut SettingsApp, ctx: &mut Ctx, (x, y): (i32, i32), to: Option<(i32, i32)>) {
+    let (button, mods) = (BTN_LEFT, Mods::default());
+    let time = 0;
+    send(
+        a,
+        ctx,
+        PointerInput::Press {
+            x,
+            y,
+            button,
+            time,
+            mods,
+        },
+    );
+    let (x, y) = to.unwrap_or((x, y));
+    send(a, ctx, PointerInput::Motion { x, y });
+    send(a, ctx, PointerInput::Release { x, y, button, mods });
+}
+
+fn top(a: &mut SettingsApp) -> usize {
+    a.side_list().expect("a side list").0.top
+}
+
+#[test]
+fn the_shortcut_list_thumb_drags_to_the_end_and_the_track_pages_back() {
+    let mut a = app("side-list-thumb");
+    let mut ctx = test_ctx();
+    ctx.size = (1000, 640);
+    a.open_page(Page::Keyboard, None);
+    send(&mut a, &mut ctx, PointerInput::Motion { x: 0, y: 0 });
+    let cm = ctx.forms().controls();
+    let (list, rect, _) = a.side_list().expect("the shortcut list");
+    let lay = listview::layout(list, rect, &cm);
+    let sb = lay.scrollbar.expect("the shortcuts overflow the list");
+    let p = scrollbar_parts(sb, 1, 0, lay.rows, list.slots(), false, lay.thumb_min);
+    let thumb = p.thumb.expect("a thumb");
+    let (x, y) = (thumb.x + 2, thumb.y + 3);
+
+    left_drag(&mut a, &mut ctx, (x, y), Some((x + 40, sb.bottom())));
+    let end = top(&mut a);
+    assert!(
+        end > lay.rows,
+        "the drag off the bar's side reaches the end"
+    );
+    send(&mut a, &mut ctx, PointerInput::Motion { x, y: sb.y });
+    assert_eq!(top(&mut a), end, "the release lets go of the thumb");
+    let (bx, by) = (lay.body.x + 8, lay.body.y + 8);
+    send(
+        &mut a,
+        &mut ctx,
+        PointerInput::Scroll {
+            x: bx,
+            y: by,
+            rows: 3,
+        },
+    );
+    assert_eq!(top(&mut a), end, "nothing lies past the end");
+
+    left_drag(&mut a, &mut ctx, (x, sb.y + cm.scroll + 2), None);
+    assert_eq!(top(&mut a), end - lay.rows, "the track pages back");
+    send(
+        &mut a,
+        &mut ctx,
+        PointerInput::Scroll {
+            x: bx,
+            y: by,
+            rows: -1,
+        },
+    );
+    assert_eq!(top(&mut a), end - lay.rows - 1, "the wheel scrolls a row");
 }
