@@ -397,7 +397,7 @@ pub fn save_bt_battery_warning(percent: u8) -> Result<(), String> {
 }
 
 /// `[bluetooth] receive_files`, read now: whether a paired device may offer files over
-/// Bluetooth (true unless `false`).
+/// Bluetooth (false unless `true`).
 pub fn bt_receive_files() -> bool {
     let text = std::fs::read_to_string(config_path()).unwrap_or_default();
     bt_receive_files_in(&text)
@@ -406,13 +406,13 @@ pub fn bt_receive_files() -> bool {
 fn bt_receive_files_in(text: &str) -> bool {
     parsed(text)
         .and_then(|doc| get(&doc, &key("bluetooth", "receive_files")).and_then(Item::as_bool))
-        .unwrap_or(true)
+        .unwrap_or(false)
 }
 
-/// Write `[bluetooth] receive_files = on` into the config file, on as no key (and no table once
+/// Write `[bluetooth] receive_files = on` into the config file, off as no key (and no table once
 /// it is empty).
 pub fn save_bt_receive_files(on: bool) -> Result<(), String> {
-    save_bt_key("receive_files", (!on).then(|| Value::from(false)))
+    save_bt_key("receive_files", on.then(|| Value::from(true)))
 }
 
 fn save_bt_key(name: &'static str, value: Option<Value>) -> Result<(), String> {
@@ -1083,14 +1083,18 @@ mod tests {
     }
 
     #[test]
-    fn bt_receive_files_is_on_unless_turned_off() {
-        assert!(bt_receive_files_in(""));
+    fn bt_receive_files_is_off_unless_turned_on() {
+        assert!(!bt_receive_files_in(""));
+        assert!(bt_receive_files_in("[bluetooth]\nreceive_files = true\n"));
         assert!(!bt_receive_files_in("[bluetooth]\nreceive_files = false\n"));
-        assert!(bt_receive_files_in("[bluetooth]\nreceive_files = \"no\"\n"));
-        let off = with_bt_key("", "receive_files", Some(Value::from(false))).unwrap();
-        assert!(!bt_receive_files_in(&off));
-        let back = with_bt_key(&off, "receive_files", None).unwrap();
-        assert!(!back.contains("bluetooth"), "on is no key: {back}");
+        assert!(!bt_receive_files_in(
+            "[bluetooth]\nreceive_files = \"yes\"\n"
+        ));
+        let on = with_bt_key("", "receive_files", Some(Value::from(true))).unwrap();
+        assert!(bt_receive_files_in(&on));
+        let back = with_bt_key(&on, "receive_files", None).unwrap();
+        assert!(!bt_receive_files_in(&back));
+        assert!(!back.contains("bluetooth"), "off is no key: {back}");
     }
 
     #[test]

@@ -1821,10 +1821,11 @@ stop the share first.
   ends early has its partial file removed. Every refusal, and an offer left
   unanswered for 50 seconds, replies `Rejected`: obexd takes a file into its
   own folder after any other error or after 60 seconds without an answer.
-  With "Receive files" off the agent isn't registered and obexd refuses
-  every push. Registering starts obexd, which also serves File Transfer to
-  trusted devices inside that folder; Reprise leaves that as obexd sets it
-  up.
+  Receiving is opt-in: "Receive files" is off until ticked on the Options
+  tab, and while it is off the agent isn't registered, Reprise never starts
+  obexd, and a running obexd refuses every push. Registering starts obexd,
+  which also serves File Transfer to trusted devices inside that folder;
+  Reprise leaves that as obexd sets it up.
 - **Ending the session.** With `[session] end_processes = true` (the
   default), Log Off stops the `app-reprise-*` scopes and, after a display
   manager login, terminates the login session, so windowless programs Reprise

@@ -848,4 +848,37 @@ mod tests {
         assert!(rejected(off), "receiving turned off");
         assert!(next(&posted, SHORT, |m| matches!(m, BzMsg::Offer(_))).is_none());
     }
+
+    #[test]
+    fn an_agent_not_receiving_never_registers_even_when_obexd_restarts() {
+        let Some(bus) = bus() else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
+        let (poster, _rx) = Poster::channel(repriseapp::Waker::noop());
+        let (first, second, obex, _conns) = zbus::block_on(async {
+            let (bluez, obexd, first) = fakes(&bus.1, "idle.txt", PAIRED).await;
+            let conn = connect(&bus.1).await;
+            let obex = serve(conn.clone(), conn.clone(), poster)
+                .await
+                .expect("served");
+            obexd.release_name(NAME).await.unwrap();
+            let again = connect(&bus.1).await;
+            let (tx, second) = mpsc::channel();
+            let server = again.object_server();
+            server.at(MANAGER_PATH, FakeManager(tx)).await.unwrap();
+            again.request_name(NAME).await.unwrap();
+            (first, second, obex, (bluez, obexd, again))
+        });
+        assert!(
+            first.recv_timeout(SHORT).is_err(),
+            "not registered at start"
+        );
+        assert!(
+            second.recv_timeout(SHORT).is_err(),
+            "not registered on restart"
+        );
+        zbus::block_on(obex.receive(true));
+        assert_eq!(second.recv_timeout(LONG).as_deref(), Ok(PATH));
+    }
 }
