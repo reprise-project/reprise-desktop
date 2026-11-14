@@ -29,6 +29,8 @@ pub struct Item {
     pub name: Option<&'static str>,
     /// A framed picture or an icon list that grows with the text ([`Item::grows`]).
     pub grows: bool,
+    /// Drawn on the window colour, not the face ([`Item::on_window`]).
+    pub on_window: bool,
 }
 
 /// How an item's rect is anchored. `UnderCheck`: under a check box's label, starting
@@ -55,6 +57,7 @@ impl Item {
             indent: Indent::None,
             name: None,
             grows: false,
+            on_window: false,
         }
     }
 
@@ -71,6 +74,15 @@ impl Item {
     pub fn grows(self) -> Item {
         Item {
             grows: true,
+            ..self
+        }
+    }
+
+    /// A framed picture filled with the window colour under its bitmap, or a label in the window
+    /// text colour standing on one.
+    pub fn on_window(self) -> Item {
+        Item {
+            on_window: true,
             ..self
         }
     }

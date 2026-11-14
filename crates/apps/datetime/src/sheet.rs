@@ -21,9 +21,9 @@ use reprisekit::controls::form::{self, Control, Form, Item};
 use reprisekit::controls::propsheet::{self, PropSheet};
 use reprisekit::controls::timefield::TimeField;
 use reprisekit::controls::updown::UpDown;
-use reprisekit::raster::{Canvas, Rect};
+use reprisekit::raster::Rect;
 use reprisekit::text::Align;
-use reprisekit::theme::{Color, TextUnits};
+use reprisekit::theme::TextUnits;
 
 /// The sheet's client size: 404x341 outside, less the frame.
 pub const CLIENT: (i32, i32) = (398, 317);
@@ -34,7 +34,7 @@ pub const TAB_ZONE: usize = 1;
 
 const YEARS: (i32, i32) = (1970, 2099);
 
-/// The zone panel's inside, the size of the picture it holds.
+/// The zone panel, its frame included.
 const PANEL: Rect = Rect::new(19, 100, 360, 150);
 
 /// The system clock's settings as timedated reports them.
@@ -357,7 +357,6 @@ impl Sheet {
                 y: PANEL.y,
                 ..grown
             };
-            item.control = panel_well(grown);
         }
     }
 
@@ -472,14 +471,13 @@ fn date_page(now: Local, first_weekday: u32, twelve: bool, system: &System) -> F
     Form::new(items)
 }
 
-/// The zone panel: a white well with a 2 px frame filling `r`.
-fn panel_well(r: Rect) -> Control {
-    let mut white = Canvas::new((r.width - 4) as u32, (r.height - 4) as u32);
-    white.fill_rect(white.bounds(), Color::rgb(255, 255, 255));
-    Control::Picture {
-        canvas: Some(white),
+/// The zone panel: a well with a 2 px frame, filled with the window colour.
+fn panel_well() -> Item {
+    let well = Control::Picture {
+        canvas: None,
         frame: 2,
-    }
+    };
+    Item::new("panel", PANEL, well).on_window()
 }
 
 /// Rows the zone combo's drop list shows at once.
@@ -498,19 +496,21 @@ fn zone_page(zones: &[String], system: &System) -> Form {
             Rect::new(18, 73, 362, reprisekit::controls::combo::COMBO_H),
             Control::Combo(Combo::new(&rows, selected, ZONE_DROP)),
         ),
-        Item::new("panel", PANEL, panel_well(PANEL)),
+        panel_well(),
         Item::aligned(
             "city",
             Rect::new(PANEL.x, mid - 14, PANEL.width, 13),
             "",
             Align::Center,
-        ),
+        )
+        .on_window(),
         Item::aligned(
             "region",
             Rect::new(PANEL.x, mid + 1, PANEL.width, 13),
             "",
             Align::Center,
-        ),
+        )
+        .on_window(),
         // Every zone's rules carry their daylight saving changes, and the
         // clock always follows them: there is nothing to turn off.
         Item::check(
@@ -527,6 +527,7 @@ fn zone_page(zones: &[String], system: &System) -> Form {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use reprisekit::raster::Canvas;
 
     fn now() -> Local {
         Local {
@@ -623,6 +624,75 @@ mod tests {
             out.blit_canvas(tab as i32 * w, 0, &c);
         }
         reprisekit::raster::write_preview(&out, "datetime-preview.png");
+    }
+
+    /// The zone tab in Classic (its default scheme and High Contrast Black), Blue, and Glass
+    /// light and dark: the panel is filled with the window colour and the city drawn in the
+    /// window text colour on it.
+    #[test]
+    fn the_zone_panel_takes_the_window_colours_in_every_look() {
+        use reprisekit::glass::{Mode, Settings};
+        use reprisekit::interface::Interface;
+        use reprisekit::interfaces::{theme_for, theme_with};
+        use reprisekit::text::TextRenderer;
+        use reprisekit::theme::Theme;
+        reprisekit::pins::fonts();
+        let glass = |mode| {
+            let g = Settings {
+                mode,
+                ..Settings::default()
+            };
+            theme_with(Interface::Glass, reprisekit::blue::Variant::Blue, &g)
+        };
+        let contrast = Theme {
+            colors: reprisekit::schemes::scheme("High Contrast Black").expect("the scheme"),
+            ..Theme::default()
+        };
+        let looks = [
+            ("classic", theme_for(Interface::Classic)),
+            ("classic-contrast", contrast),
+            ("blue", theme_for(Interface::Blue)),
+            ("glass", glass(Mode::Light)),
+            ("glass-dark", glass(Mode::Dark)),
+        ];
+        let mut got = Vec::new();
+        for (name, theme) in looks {
+            let text = TextRenderer::load(&theme.fonts);
+            let mut s = sheet();
+            s.sheet.tabs.open = TAB_ZONE;
+            let (w, h) = CLIENT;
+            let mut c = Canvas::new(w as u32, h as u32);
+            c.fill_rect(c.bounds(), theme.colors.button_face);
+            propsheet::draw(&mut c, &text, &theme.paint(), &s.sheet, false, 11);
+            let page = &s.sheet.pages[TAB_ZONE];
+            let panel = page.rect("panel").expect("the panel");
+            let cs = &theme.colors;
+            assert_eq!(
+                c.get(panel.x + 3, panel.y + 3),
+                cs.window.argb(),
+                "{name}: the panel is filled with the window colour"
+            );
+            let city = page.rect("city").expect("the city");
+            let inked = (city.x..city.right())
+                .flat_map(|x| (city.y..city.bottom()).map(move |y| (x, y)))
+                .filter(|&(x, y)| c.get(x, y) == cs.window_text.argb())
+                .count();
+            assert!(
+                inked > 20,
+                "{name}: the city is drawn in the window text colour"
+            );
+            got.push((name.to_string(), fnv(&c)));
+        }
+        reprisekit::pins::check_file(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/pins/zone_panel.txt"),
+            &got,
+        );
+    }
+
+    fn fnv(c: &Canvas) -> u64 {
+        c.pixels.iter().fold(0xcbf2_9ce4_8422_2325, |h, &p| {
+            (h ^ u64::from(p)).wrapping_mul(0x0100_0000_01b3)
+        })
     }
 
     #[test]
@@ -810,10 +880,6 @@ mod tests {
             ..reprisekit::theme::Theme::default().paint()
         });
         assert_eq!(page.rect("panel"), Some(u.rect(PANEL)));
-        assert!(matches!(
-            &page.item("panel").unwrap().control,
-            Control::Picture { canvas: Some(c), .. } if (c.width, c.height) == (553, 227)
-        ));
         s.fit(TextUnits::ONE);
         assert_eq!(s.sheet.pages[TAB_ZONE].item("panel").unwrap().rect, PANEL);
     }
