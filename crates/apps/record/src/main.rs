@@ -62,7 +62,7 @@ fn record(args: &Args, stop: libc::sigset_t) -> Result<(), String> {
     let (tx, events) = mpsc::channel();
     signals(stop, tx.clone());
     let picked = std::thread::spawn({
-        let area = args.area.is_some();
+        let area = args.area;
         move || encoders(area)
     });
     let cast = portal::Cast::start().map_err(|e| format!("The screen could not be shared: {e}"))?;
@@ -70,7 +70,7 @@ fn record(args: &Args, stop: libc::sigset_t) -> Result<(), String> {
         .ok_or_else(|| format!("The screen {} is not shared.", args.output))?;
     let (device, order) = picked.join().map_err(|_| "Finding an encoder failed.")?;
     let (first, modifiers) = order.first().ok_or("No H.264 encoder works here.")?;
-    log::info!("recording {} with {}", args.output, first.label());
+    log::info!("recording {}, {} first", args.output, first.label());
     let fd = cast.pipewire()?;
     let (_stream, mut frames, _sizes) = stream::spawn(fd, screen.node, modifiers, APP, || {})?;
     let video_tx = tx.clone();
@@ -123,10 +123,14 @@ fn movie_url(fd: RawFd) -> Result<PathBuf, String> {
 }
 
 /// The render node, and the backends to try in Remote Desktop's automatic order with the stream
-/// modifiers each maps. An area is cut out on the CPU, so it codes on x264 from shared memory or
-/// linear buffers.
-fn encoders(area: bool) -> (PathBuf, Vec<(Backend, Vec<u64>)>) {
-    if area {
+/// modifiers each maps. A hardware encoder gets an area cut out on its GPU; one too small for
+/// it codes on x264 from shared memory or linear buffers.
+fn encoders(area: Option<Area>) -> (PathBuf, Vec<(Backend, Vec<u64>)>) {
+    if !hardware_takes(area) {
+        log::info!(
+            "the area is under {} pixels a side, so x264 codes it",
+            probe::TEST_SIDE
+        );
         let node = PathBuf::from(probe::RENDER_NODE);
         return (node, vec![(Backend::X264, vec![DRM_FORMAT_MOD_LINEAR])]);
     }
@@ -138,6 +142,13 @@ fn encoders(area: bool) -> (PathBuf, Vec<(Backend, Vec<u64>)>) {
         .filter_map(|b| working.iter().find(|(w, _)| *w == b).cloned())
         .collect();
     (device, with_modifiers)
+}
+
+/// Whether a hardware encoder may code `area` (None: the whole screen): the probe proved each at
+/// [`probe::TEST_SIDE`] a side, and some refuse pictures much smaller.
+fn hardware_takes(area: Option<Area>) -> bool {
+    let side = probe::TEST_SIDE as i32;
+    area.is_none_or(|a| a.width >= side && a.height >= side)
 }
 
 /// The default sink's monitor on a thread of its own, into `tx`; it ends with the returned sender.
@@ -299,8 +310,19 @@ impl<'a> File<'a> {
                 log::info!("{} cannot read the screen's buffers", backend.label());
                 continue;
             }
-            match Movie::open(backend, self.device, fourcc, size, origin) {
-                Ok(m) => return Ok(m),
+            match Movie::open(backend, self.device, fourcc, frame.size, size, origin) {
+                Ok(m) => {
+                    let cut = match (self.area, m.cut_on_gpu()) {
+                        (None, _) => "",
+                        (Some(_), true) => ", the area cut out on the GPU",
+                        (Some(_), false) => ", the area cut out on the CPU",
+                    };
+                    log::info!(
+                        "coding {size:?} from {origin:?} with {}{cut}",
+                        backend.label()
+                    );
+                    return Ok(m);
+                }
                 Err(e) => log::warn!("{}: {e}", backend.label()),
             }
         }
@@ -499,6 +521,23 @@ mod tests {
     }
 
     #[test]
+    fn an_area_goes_to_the_hardware_encoders_from_the_probes_test_side_up() {
+        let area = |width, height| {
+            Some(Area {
+                x: 3,
+                y: 5,
+                width,
+                height,
+            })
+        };
+        assert!(hardware_takes(None), "the whole screen");
+        assert!(hardware_takes(area(256, 256)));
+        assert!(hardware_takes(area(1001, 701)), "odd sides");
+        assert!(!hardware_takes(area(255, 900)), "too narrow: x264");
+        assert!(!hardware_takes(area(900, 255)), "too short: x264");
+    }
+
+    #[test]
     fn a_descriptor_that_is_not_a_regular_file_is_refused() {
         let (r, _w) = std::io::pipe().unwrap();
         use std::os::fd::AsRawFd;
@@ -528,6 +567,11 @@ mod tests {
             area_pixels(area(-20, 1000, 100, 200), (1920, 1080), (1920, 1080)),
             Some(((80, 80), (0, 1000))),
             "cut at the screen's edges"
+        );
+        assert_eq!(
+            area_pixels(area(101, 51, 301, 201), (1920, 1080), (1920, 1080)),
+            Some(((300, 200), (101, 51))),
+            "an odd origin is kept, so the picture does not move"
         );
         assert_eq!(
             area_pixels(area(2000, 0, 100, 100), (1920, 1080), (1920, 1080)),

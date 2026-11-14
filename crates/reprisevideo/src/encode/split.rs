@@ -71,7 +71,7 @@ impl Views {
         let view = avc444::view_size(target);
         let route = match devices {
             Some(d) if d.gpu == Gpu::Vaapi => {
-                let split = GpuSplit::new(node, size, target, Target::Dmabufs, layout)?;
+                let split = GpuSplit::new(node, (0, 0), size, target, Target::Dmabufs, layout)?;
                 let split = Box::new(split);
                 let mapped = hwmap::frames(
                     &d.device,
@@ -105,6 +105,7 @@ impl Views {
             Some(d) if d.gpu == Gpu::Cuda => Route::Cuda(CudaViews::new(
                 node,
                 &d.device,
+                (0, 0),
                 size,
                 target,
                 view,
@@ -212,19 +213,20 @@ pub struct CudaViews {
 }
 
 impl CudaViews {
-    /// Views of `size` pictures scaled to `target` on render node `node`, copied out at `coded`
-    /// (at most the views' size) into CUDA device `cuda`'s frames: both with an `aux` layout,
-    /// else the main.
+    /// Views of the `size` part of each frame from `origin` on, scaled to `target`, on render
+    /// node `node`, copied out at `coded` (at most the views' size) into CUDA device `cuda`'s
+    /// frames: both with an `aux` layout, else the main.
     pub fn new(
         node: &Path,
         cuda: &Ref,
+        origin: (u32, u32),
         size: (u32, u32),
         target: (u32, u32),
         coded: (u32, u32),
         aux: Option<AuxLayout>,
     ) -> Result<CudaViews, EncodeError> {
         let layout = aux.unwrap_or(AuxLayout::V1);
-        let split = GpuSplit::new(node, size, target, Target::Textures, layout)?;
+        let split = GpuSplit::new(node, origin, size, target, Target::Textures, layout)?;
         let split = Box::new(split);
         let planes: Vec<glow::Texture> = (split.views.iter())
             .take(if aux.is_some() { 2 } else { 1 })
@@ -396,7 +398,8 @@ struct GpuSplit {
     flags: Option<Texture>,
     /// Each pass's framebuffer and size.
     framebuffers: Vec<(glow::Framebuffer, (u32, u32))>,
-    /// The frames' size.
+    /// Where the part of each frame read starts, and its size.
+    origin: (u32, u32),
     source: (u32, u32),
     /// The picture's size in the views.
     size: (u32, u32),
@@ -405,13 +408,21 @@ struct GpuSplit {
 }
 
 impl GpuSplit {
+    /// The `source` part of each frame from `origin` on, scaled to `size`; only a frame read
+    /// from its top-left is scaled.
     fn new(
         node: &Path,
+        origin: (u32, u32),
         source: (u32, u32),
         size: (u32, u32),
         target: Target,
         layout: AuxLayout,
     ) -> Result<GpuSplit, EncodeError> {
+        if origin != (0, 0) && source != size {
+            return Err(EncodeError(
+                "a part of a frame is read unscaled only".into(),
+            ));
+        }
         let mut split = GpuSplit {
             programs: Vec::new(),
             read_rects: Vec::new(),
@@ -420,6 +431,7 @@ impl GpuSplit {
             blocks: None,
             flags: None,
             framebuffers: Vec::new(),
+            origin,
             source,
             size,
             gl: Rc::new(Gl::new(node)?),
@@ -429,7 +441,7 @@ impl GpuSplit {
         // SAFETY: GL calls on the current context; drop deletes what was made if one fails.
         unsafe {
             for pass in 0..PASSES {
-                let p = program(gl, pass, size, source != size, layout)?;
+                let p = program(gl, pass, origin, size, source != size, layout)?;
                 split.programs.push(p);
                 split
                     .read_rects
@@ -496,13 +508,13 @@ impl GpuSplit {
         else {
             return Err(EncodeError("a shared-memory frame cannot be mapped".into()));
         };
-        if frame.size.0 < self.source.0 || frame.size.1 < self.source.1 {
+        let (x, y) = self.origin;
+        let corner = (x + self.source.0, y + self.source.1);
+        if frame.size.0 < corner.0 || frame.size.1 < corner.1 {
             return Err(EncodeError("the frame changed size".into()));
         }
         self.gl.current()?;
-        let image = self
-            .gl
-            .import(objects, *fourcc, *modifier, planes, self.source)?;
+        let image = (self.gl).import(objects, *fourcc, *modifier, planes, corner)?;
         let scaled = self.source != self.size;
         let gl = &self.gl.gl;
         let blocks = self.blocks.as_ref().expect("made with the views");
@@ -602,10 +614,11 @@ pub(super) fn fragment(pass: usize, scaled: bool, layout: AuxLayout) -> String {
     format!("#version 300 es\n{scaled}{v2}#define PASS {pass}\n{FRAGMENT}")
 }
 
-/// Pass `pass` of split.frag for pictures of `size`, its uniforms set.
+/// Pass `pass` of split.frag for pictures of `size` read from `origin`, its uniforms set.
 unsafe fn program(
     gl: &glow::Context,
     pass: usize,
+    origin: (u32, u32),
     size: (u32, u32),
     scaled: bool,
     layout: AuxLayout,
@@ -617,6 +630,7 @@ unsafe fn program(
             gl::program(gl, &fragment).map_err(|e| EncodeError(format!("pass {pass}: {}", e.0)))?;
         let at = |name| gl.get_uniform_location(program, name);
         gl.uniform_2_i32(at("size").as_ref(), size.0 as i32, size.1 as i32);
+        gl.uniform_2_i32(at("origin").as_ref(), origin.0 as i32, origin.1 as i32);
         let view = avc444::view_size(size).0 as i32;
         gl.uniform_1_i32(at("view_width").as_ref(), view);
         let fixed = |[r, g, b]: [i32; 3]| (r as f32, g as f32, b as f32);
@@ -844,6 +858,33 @@ pub(crate) mod tests {
         }
     }
 
+    /// View `i` of a split drawn into textures, read back through a framebuffer.
+    fn read_texture(split: &GpuSplit, i: usize, (w, h): (u32, u32)) -> avc444::Nv12 {
+        split.gl.current().unwrap();
+        let gl = &split.gl.gl;
+        let plane = |t: &Texture, rows: u32| {
+            let mut bytes = vec![0u8; (w * rows) as usize];
+            // SAFETY: GL calls on the split's current context; the framebuffer is deleted here.
+            unsafe {
+                let fb = framebuffer(gl, &[t]).unwrap();
+                gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fb));
+                let (texels, rows) = ((w / 4) as i32, rows as i32);
+                let into = glow::PixelPackData::Slice(Some(&mut bytes));
+                gl.read_pixels(0, 0, texels, rows, glow::RGBA, glow::UNSIGNED_BYTE, into);
+                gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+                gl.delete_framebuffer(fb);
+            }
+            bytes
+        };
+        let view = &split.views[i];
+        avc444::Nv12 {
+            y: plane(&view.luma, h),
+            uv: plane(&view.chroma, h / 2),
+            width: w,
+            height: h,
+        }
+    }
+
     #[test]
     fn view_rows_start_on_256_byte_boundaries_at_odd_widths() {
         for width in [2662, 2672, 1366, 1921] {
@@ -1000,7 +1041,8 @@ pub(crate) mod tests {
         let planes = Planes444::from_rgb(&data, stride, size, XRGB8888);
         for layout in [AuxLayout::V1, AuxLayout::V2] {
             let node = Path::new(RENDER_NODE);
-            let mut split = GpuSplit::new(node, size, size, Target::Dmabufs, layout).unwrap();
+            let mut split =
+                GpuSplit::new(node, (0, 0), size, size, Target::Dmabufs, layout).unwrap();
             let flat = split.draw(&frame, read).unwrap();
             let (main, aux) = reference(&planes, read, layout);
             let view = avc444::view_size(size);
@@ -1019,6 +1061,42 @@ pub(crate) mod tests {
 
     #[test]
     #[ignore = "needs OpenGL ES on /dev/dri/renderD128; run with --ignored where it has one"]
+    fn a_part_read_from_an_odd_origin_equals_the_cpu_split_of_that_part() {
+        let (frame_size, origin, size) = ((100, 50), (13, 7), (64, 32));
+        let node = Path::new(RENDER_NODE);
+        let gbm = gbm::Device::new(File::options().read(true).write(true).open(node).unwrap());
+        let mut seed = 0x2545_F491_4F6C_DD1D_u64;
+        let random: Vec<[u8; 3]> = (0..100 * 50)
+            .map(|_| {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                let n = seed.to_le_bytes();
+                [n[0], n[1], n[2]]
+            })
+            .collect();
+        let pixel = |x: u32, y: u32| random[(y * 100 + x) as usize];
+        let (frame, data, _bo) = dmabuf_frame(&gbm.unwrap(), frame_size, pixel);
+        let stride = data.len() / 50;
+        let from = origin.1 as usize * stride + origin.0 as usize * 4;
+        let planes = Planes444::from_rgb(&data[from..], stride, size, XRGB8888);
+        for layout in [AuxLayout::V1, AuxLayout::V2] {
+            let mut split =
+                GpuSplit::new(node, origin, size, size, Target::Textures, layout).unwrap();
+            split.draw(&frame, Rect::full(size)).unwrap();
+            let (main, aux) = reference(&planes, Rect::full(size), layout);
+            let view = avc444::view_size(size);
+            assert_eq!(read_texture(&split, 0, view), main, "{layout:?} main");
+            assert_eq!(read_texture(&split, 1, view), aux, "{layout:?} aux");
+        }
+        assert!(
+            GpuSplit::new(node, origin, size, (32, 16), Target::Dmabufs, AuxLayout::V1).is_err(),
+            "a part is read unscaled only"
+        );
+    }
+
+    #[test]
+    #[ignore = "needs OpenGL ES on /dev/dri/renderD128; run with --ignored where it has one"]
     fn gl_split_codes_a_half_size_target() {
         use crate::encode::ffmpeg::tests::{colour_pixel, patch_error, shown_444};
         let (source, half) = ((1920, 1080), (960, 540));
@@ -1026,7 +1104,8 @@ pub(crate) mod tests {
         let gbm = gbm::Device::new(File::options().read(true).write(true).open(node).unwrap());
         let (frame, _, _bo) = dmabuf_frame(&gbm.unwrap(), source, colour_pixel());
         for layout in [AuxLayout::V1, AuxLayout::V2] {
-            let mut split = GpuSplit::new(node, source, half, Target::Dmabufs, layout).unwrap();
+            let mut split =
+                GpuSplit::new(node, (0, 0), source, half, Target::Dmabufs, layout).unwrap();
             split.draw(&frame, Rect::full(half)).unwrap();
             let view = avc444::view_size(half);
             assert_eq!(view, (960, 544));

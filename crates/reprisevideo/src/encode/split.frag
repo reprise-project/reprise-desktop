@@ -6,6 +6,8 @@ precision highp int;
 uniform highp sampler2D src;
 // The picture's size; the views past it repeat its last column and row.
 uniform ivec2 size;
+// Where an unscaled picture starts in the frame.
+uniform ivec2 origin;
 // colour.rs's matrix rows in 16.16 fixed point, and the luma of black.
 uniform vec3 ky;
 uniform vec3 ku;
@@ -26,7 +28,7 @@ vec3 rgb(ivec2 at) {
     vec2 centre = (vec2(clamp(at, ivec2(0), size - 1)) + 0.5) / vec2(size);
     return floor(texture(src, centre).rgb * 255.0 + 0.5);
 #else
-    return floor(texelFetch(src, clamp(at, ivec2(0), size - 1), 0).rgb * 255.0 + 0.5);
+    return floor(texelFetch(src, origin + clamp(at, ivec2(0), size - 1), 0).rgb * 255.0 + 0.5);
 #endif
 }
 

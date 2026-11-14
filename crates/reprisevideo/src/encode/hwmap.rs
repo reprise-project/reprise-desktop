@@ -78,8 +78,11 @@ impl Gpu {
 
     /// The filter and options turning mapped RGB of `source` into BT.709 NV12 of `target`; naming
     /// the primaries and transfer on both sides keeps drivers from converting them or using BT.601.
+    /// A `source` read from an `origin` other than its top-left is read up to its bottom right:
+    /// libplacebo is told the part, VA-API reads it from each frame's crop.
     pub(super) fn to_nv12(
         self,
+        origin: (u32, u32),
         source: (u32, u32),
         target: (u32, u32),
     ) -> Result<(&'static str, CString), EncodeError> {
@@ -103,6 +106,11 @@ impl Gpu {
         };
         if target != source {
             options += &format!(":w={}:h={}", target.0, target.1);
+        }
+        if self == Gpu::Vulkan && origin != (0, 0) {
+            let (x, y) = origin;
+            let (w, h) = (source.0 - x, source.1 - y);
+            options += &format!(":crop_x={x}:crop_y={y}:crop_w={w}:crop_h={h}");
         }
         Ok((name, CString::new(options).expect("no NUL in the options")))
     }
@@ -291,10 +299,11 @@ pub(super) fn drm_frame(
 /// Turns stream frames of one size and format into what the encoder takes, scaled to a target
 /// size.
 pub struct Converter {
+    /// The size of the part of each frame read.
     pub size: (u32, u32),
     pub target: (u32, u32),
     pub fourcc: u32,
-    /// The top-left of the part of each frame read, on the CPU; (0, 0) on a GPU.
+    /// The top-left of the part of each frame read.
     origin: (u32, u32),
     route: Route,
 }
@@ -326,16 +335,42 @@ impl Converter {
         target: (u32, u32),
         frame_rate: u32,
     ) -> Result<Converter, EncodeError> {
+        Converter::part(devices, fourcc, (0, 0), size, target, frame_rate)
+    }
+
+    /// A converter coding the `size` part (even) of each frame from `origin` on, unscaled. On a
+    /// GPU the part is cut out there: VA-API's and Vulkan's filters read it, CUDA's views draw it.
+    pub fn cropped(
+        devices: Option<&Devices>,
+        fourcc: u32,
+        origin: (u32, u32),
+        size: (u32, u32),
+        frame_rate: u32,
+    ) -> Result<Converter, EncodeError> {
+        Converter::part(devices, fourcc, origin, size, size, frame_rate)
+    }
+
+    fn part(
+        devices: Option<&Devices>,
+        fourcc: u32,
+        origin: (u32, u32),
+        size: (u32, u32),
+        target: (u32, u32),
+        frame_rate: u32,
+    ) -> Result<Converter, EncodeError> {
         let sw = sw_pixel(fourcc)?;
+        // A GPU maps each frame up to the part's bottom right.
+        let read = (origin.0 + size.0, origin.1 + size.1);
         let route = match devices {
             Some(d) if d.gpu == Gpu::Cuda => Route::Cuda(CudaViews::new(
-                &d.node, &d.device, size, target, target, None,
+                &d.node, &d.device, origin, size, target, target, None,
             )?),
             Some(d) => {
-                let mapped = frames(&d.device, d.gpu.pixel(), sw, size, 0)?;
+                let mapped = frames(&d.device, d.gpu.pixel(), sw, read, 0)?;
+                let sizes = (origin, read, target);
                 Route::Filter {
                     gpu: d.gpu,
-                    graph: graph(&d.device, &mapped, d.gpu, (size, target), frame_rate)?,
+                    graph: graph(&d.device, &mapped, d.gpu, sizes, frame_rate)?,
                     mapped,
                 }
             }
@@ -354,21 +389,14 @@ impl Converter {
             size,
             target,
             fourcc,
-            origin: (0, 0),
+            origin,
             route,
         })
     }
 
-    /// Read each frame's `size` from `origin` on rather than from its top-left. Only the CPU
-    /// reads a part of a frame.
-    pub fn crop_at(&mut self, origin: (u32, u32)) -> Result<(), EncodeError> {
-        match self.route {
-            Route::Cpu { .. } => {
-                self.origin = origin;
-                Ok(())
-            }
-            _ => Err(EncodeError("only the CPU reads a part of a frame".into())),
-        }
+    /// Whether the part of each frame read is cut out on a GPU rather than the CPU.
+    pub fn on_gpu(&self) -> bool {
+        !matches!(self.route, Route::Cpu { .. })
     }
 
     /// The frames context the encoder's input comes from; None on the CPU.
@@ -398,7 +426,7 @@ impl Converter {
     pub fn convert(&mut self, frame: &Frame) -> Result<frame::Video, EncodeError> {
         match &mut self.route {
             Route::Filter { gpu, mapped, graph } => {
-                let input = mapped_frame(frame, self.size, mapped, *gpu)?;
+                let input = mapped_frame(frame, self.origin, self.size, mapped, *gpu)?;
                 filter(graph, &input)
             }
             Route::Cuda(views) => views.main(frame),
@@ -555,9 +583,11 @@ impl Rescale {
     }
 }
 
-/// A dma-buf `frame` mapped into a `gpu` frame of `mapped`, tagged as full-range sRGB.
+/// A dma-buf `frame` mapped into a `gpu` frame of `mapped` up to the bottom right of its `size`
+/// part from `origin`, cropped to that part and tagged as full-range sRGB.
 fn mapped_frame(
     frame: &Frame,
+    origin: (u32, u32),
     size: (u32, u32),
     mapped: &Ref,
     gpu: Gpu,
@@ -571,12 +601,17 @@ fn mapped_frame(
     else {
         return Err(EncodeError("a shared-memory frame cannot be mapped".into()));
     };
-    let drm = drm_frame(objects, *fourcc, *modifier, planes, size)?;
+    let read = (origin.0 + size.0, origin.1 + size.1);
+    if frame.size.0 < read.0 || frame.size.1 < read.1 {
+        return Err(EncodeError("the frame changed size".into()));
+    }
+    let drm = drm_frame(objects, *fourcc, *modifier, planes, read)?;
     let mut input = map(&drm, mapped, gpu)?;
     let (space, range) = INPUT_COLOUR;
     // SAFETY: plain fields of a frame this function owns.
     unsafe {
         let f = input.as_mut_ptr();
+        ((*f).crop_left, (*f).crop_top) = (origin.0 as usize, origin.1 as usize);
         (*f).colorspace = space;
         (*f).color_range = range;
         (*f).color_primaries = ffi::AVColorPrimaries::BT709;
@@ -651,17 +686,17 @@ pub(super) fn map(drm: &frame::Video, mapped: &Ref, gpu: Gpu) -> Result<frame::V
 const INPUT_COLOUR: (ffi::AVColorSpace, ffi::AVColorRange) =
     (ffi::AVColorSpace::RGB, ffi::AVColorRange::JPEG);
 
-/// A graph from frames of `mapped` of the source size through the GPU's NV12 conversion to the
-/// target size on `device`.
+/// A graph from frames of `mapped` of the source size, read from an origin, through the GPU's
+/// NV12 conversion to the target size on `device`.
 fn graph(
     device: &Ref,
     mapped: &Ref,
     gpu: Gpu,
-    ((w, h), target): ((u32, u32), (u32, u32)),
+    (origin, (w, h), target): ((u32, u32), (u32, u32), (u32, u32)),
     frame_rate: u32,
 ) -> Result<ffmpeg::filter::Graph, EncodeError> {
     let mut graph = ffmpeg::filter::Graph::new();
-    let (convert, options) = gpu.to_nv12((w, h), target)?;
+    let (convert, options) = gpu.to_nv12(origin, (w, h), target)?;
     let find = |name| {
         ffmpeg::filter::find(name).ok_or_else(|| EncodeError(format!("FFmpeg has no {name}")))
     };
