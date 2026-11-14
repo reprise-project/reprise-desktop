@@ -113,15 +113,7 @@ pub(super) fn column_layout(
             l(COMBO_H),
         );
         let mut cl = combo::layout_rows(c, field, cm, cm.list_row);
-        combo::widen_list(c, &mut cl, text, px, inner.right() + inner.width);
-        let list = &mut cl.list;
-        list.width = list.width.min(inner.width);
-        list.x = list.x.min(inner.right() - list.width);
-        list.y = field.y - list.height;
-        if let Some(sb) = &mut cl.scrollbar {
-            sb.x = list.right() - 1 - sb.width;
-            sb.y = list.y + 1;
-        }
+        combo::list_above(c, &mut cl, inner, text, px);
         cl
     });
     ColumnLayout {

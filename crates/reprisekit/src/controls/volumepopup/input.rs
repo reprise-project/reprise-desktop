@@ -76,86 +76,34 @@ impl VolumePopup {
         }
     }
 
-    /// A press on combo `p`'s open list: a row is picked (an event when it changed), an arrow or the track scrolls, the field or drop button closes it.
+    /// What combo `p`'s act asks: a redraw, or for a pick its event.
+    fn act(&self, p: Pick, a: combo::Act) -> Event {
+        match a {
+            combo::Act::None => Event::None,
+            combo::Act::Redraw => Event::Redraw,
+            combo::Act::Picked(i) => self.picked(p, i),
+        }
+    }
+
     fn press_list(&mut self, p: Pick, h: combo::Hit) -> Event {
-        let Some(c) = self.pick_mut(p) else {
-            return Event::None;
-        };
-        let page = c.rows as i32;
-        let rows = match h {
-            combo::Hit::Row(i) => {
-                return if c.pick(i) {
-                    self.picked(p, i)
-                } else {
-                    Event::Redraw
-                };
-            }
-            combo::Hit::Field | combo::Hit::Drop => {
-                c.open = None;
-                return Event::Redraw;
-            }
-            combo::Hit::Thumb(_) => return Event::None,
-            combo::Hit::ScrollUp => -1,
-            combo::Hit::ScrollDown => 1,
-            combo::Hit::PageUp => -page,
-            combo::Hit::PageDown => page,
-        };
-        if c.scroll(rows) {
-            Event::Redraw
-        } else {
-            Event::None
-        }
+        let a = self
+            .pick_mut(p)
+            .map_or(combo::Act::None, |c| c.press_list(h));
+        self.act(p, a)
     }
 
-    /// A key on combo `p`'s open list: arrows, Home / End and Page keys move the highlight, Enter takes it, Esc, Tab or the drop key close it.
     fn list_key(&mut self, p: Pick, key: form::Key) -> Event {
-        let Some(c) = self.pick_mut(p) else {
-            return Event::None;
-        };
-        let page = c.rows as i32;
-        let _ = match key {
-            form::Key::Up | form::Key::Down => c.step(key == form::Key::Down),
-            form::Key::Home | form::Key::End => c.jump(key == form::Key::End),
-            form::Key::PageUp => c.scroll(-page),
-            form::Key::PageDown => c.scroll(page),
-            form::Key::Enter if c.take() => {
-                let i = c.selected;
-                return self.picked(p, i);
-            }
-            form::Key::Enter | form::Key::Escape | form::Key::Tab { .. } | form::Key::Drop => {
-                c.open = None;
-                false
-            }
-            _ => return Event::None,
-        };
-        Event::Redraw
+        let a = self
+            .pick_mut(p)
+            .map_or(combo::Act::None, |c| c.list_key(key));
+        self.act(p, a)
     }
 
-    /// A key on a focused combo with its list closed: arrows, Home / End and Page keys pick at once; F4 or Alt+Down opens the list.
     fn combo_key(&mut self, p: Pick, key: form::Key) -> Event {
-        let Some(c) = self.pick_mut(p) else {
-            return Event::None;
-        };
-        let changed = match key {
-            form::Key::Up | form::Key::Left => c.step(false),
-            form::Key::Down | form::Key::Right => c.step(true),
-            form::Key::Home | form::Key::PageUp => c.jump(false),
-            form::Key::End | form::Key::PageDown => c.jump(true),
-            form::Key::Drop => {
-                return if c.toggle() {
-                    Event::Redraw
-                } else {
-                    Event::None
-                };
-            }
-            _ => false,
-        };
-        if changed {
-            let i = c.selected;
-            self.picked(p, i)
-        } else {
-            Event::None
-        }
+        let a = self
+            .pick_mut(p)
+            .map_or(combo::Act::None, |c| c.closed_key(key));
+        self.act(p, a)
     }
 
     pub(super) fn rehit(&mut self, lay: &Layout) -> Event {

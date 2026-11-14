@@ -249,7 +249,7 @@ impl Column {
             volume: volume_bar(a.pos, mix.boost),
             mute: a.mute,
             output: (mix.outputs.len() > 1)
-                .then(|| device_combo(&app_outputs(mix), Some(app_output(a)))),
+                .then(|| Combo::names(&app_outputs(mix), Some(app_output(a)), LIST_ROWS)),
         }
     }
 }
@@ -317,26 +317,6 @@ pub struct VolumePopup {
     styled: Cell<bool>,
 }
 
-fn device_combo(items: &[String], picked: Option<usize>) -> Combo {
-    let names: Vec<&str> = items.iter().map(String::as_str).collect();
-    let mut c = Combo::new(&names, picked.unwrap_or(0), items.len().min(LIST_ROWS));
-    c.enabled = !items.is_empty();
-    c
-}
-
-/// Take a device list: the pick follows the default; a combo whose items
-/// changed is built again, its list closed. Returns whether it was.
-fn sync_combo(c: &mut Combo, items: &[String], picked: Option<usize>) -> bool {
-    let same = c.items.len() == items.len() && c.items.iter().zip(items).all(|(a, b)| a.text == *b);
-    if !same {
-        *c = device_combo(items, picked);
-        return true;
-    }
-    c.selected = picked.unwrap_or(0);
-    c.enabled = !items.is_empty();
-    false
-}
-
 fn combo_focus(p: Pick) -> Focus {
     match p {
         Pick::Device(Dir::Output) => Focus::Output,
@@ -349,8 +329,8 @@ impl VolumePopup {
     pub fn new(mix: &Mix) -> VolumePopup {
         VolumePopup {
             columns: columns(mix),
-            output: device_combo(&mix.outputs, mix.output),
-            input: device_combo(&mix.inputs, mix.input),
+            output: Combo::names(&mix.outputs, mix.output, LIST_ROWS),
+            input: Combo::names(&mix.inputs, mix.input, LIST_ROWS),
             first: 0,
             focus: Focus::Thumb(0),
             cues: false,
@@ -394,7 +374,7 @@ impl VolumePopup {
                 && let Some(a) = j.checked_sub(1).and_then(|a| mix.apps.get(a))
                 && columns[j].output.is_some()
             {
-                rebuilt[j] = sync_combo(&mut c, &rows, Some(app_output(a)));
+                rebuilt[j] = c.sync_names(&rows, Some(app_output(a)), LIST_ROWS);
                 columns[j].output = Some(c);
             }
         }
@@ -411,8 +391,8 @@ impl VolumePopup {
             Focus::Media(t) if !can(t) => Focus::Thumb(0),
             f => f,
         };
-        let output = sync_combo(&mut self.output, &mix.outputs, mix.output);
-        let input = sync_combo(&mut self.input, &mix.inputs, mix.input);
+        let output = self.output.sync_names(&mix.outputs, mix.output, LIST_ROWS);
+        let input = self.input.sync_names(&mix.inputs, mix.input, LIST_ROWS);
         let bar = columns.len() - 1 > MAX_SHOWN;
         self.ptr = std::mem::take(&mut self.ptr).carry(|p| match p {
             Part::Thumb(i) => remap(i).map(Part::Thumb),

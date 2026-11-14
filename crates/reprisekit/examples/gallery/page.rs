@@ -1042,8 +1042,16 @@ fn page_explorer(mut c: Canvas, theme: &Theme, text: &TextRenderer) -> Canvas {
             checked,
             live: true,
             boost: false,
+            output: None,
         };
-        // The playback view with volumes past 100 %: Firefox at 120 %.
+        // The playback view with volumes past 100 %: Firefox at 120 %, each program with its
+        // output combo, mpv on the headphones.
+        let routed = |picked| {
+            Some(mixer::Route {
+                outputs: vec!["Speakers".into(), "Headphones".into()],
+                picked,
+            })
+        };
         let boosted = |l: mixer::Line| mixer::Line { boost: true, ..l };
         let playback = [
             boosted(line(
@@ -1053,8 +1061,14 @@ fn page_explorer(mut c: Canvas, theme: &Theme, text: &TextRenderer) -> Canvas {
                 mixer::Check::MuteAll,
                 false,
             )),
-            boosted(line("Firefox", 72, Some(6), mixer::Check::Mute, false)),
-            boosted(line("mpv", 24, None, mixer::Check::Mute, true)),
+            mixer::Line {
+                output: routed(None),
+                ..boosted(line("Firefox", 72, Some(6), mixer::Check::Mute, false))
+            },
+            mixer::Line {
+                output: routed(Some(1)),
+                ..boosted(line("mpv", 24, None, mixer::Check::Mute, true))
+            },
         ];
         let mut speaker = Canvas::new(16, 16);
         speaker.fill_rect(Rect::new(4, 4, 6, 8), Color::rgb(64, 64, 64));
@@ -1067,6 +1081,7 @@ fn page_explorer(mut c: Canvas, theme: &Theme, text: &TextRenderer) -> Canvas {
         let body = Rect::new(600, 7150, w, h);
         let lay = mixer::layout(&m, theme, text, body);
         mixer::draw(&mut c, theme, text, &m, &lay);
+        let below = body.bottom() + 20;
         let mut recording = [
             line("Microphone", 36, Some(10), mixer::Check::Select, false),
             line("Line In", 18, Some(14), mixer::Check::Select, true),
@@ -1076,7 +1091,7 @@ fn page_explorer(mut c: Canvas, theme: &Theme, text: &TextRenderer) -> Canvas {
         let mut m = mixer::Mixer::new(&recording, false);
         m.speaker = Some(speaker);
         let (w, h) = m.size(theme.text);
-        let body = Rect::new(600, 7422, w, h);
+        let body = Rect::new(600, below, w, h);
         let lay = mixer::layout(&m, theme, text, body);
         mixer::draw(&mut c, theme, text, &m, &lay);
     }

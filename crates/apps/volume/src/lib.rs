@@ -1,7 +1,8 @@
 //! Volume Control: the mixer window. A menu bar over one column per line
 //! (the output device and each program playing sound, or each recording
-//! device) with balance, volume and Mute or Select, and a status bar naming
-//! the device. Options opens Properties and turns Advanced Controls on, which
+//! device) with balance, volume and Mute or Select (and a program's output
+//! combo with two outputs or more), and a status bar naming the device.
+//! Options opens Properties and turns Advanced Controls on, which
 //! puts an Advanced button under the first column.
 //!
 //! The window takes the size its columns want ([`fit`]). `--record` opens
@@ -317,6 +318,12 @@ impl Volume {
             E::Advanced => {
                 self.advanced = Some(dialogs::advanced(self.app_icon.clone()));
                 Reply::redraw_all()
+            }
+            E::Output(key, sink) => {
+                if let Some(app) = key.strip_prefix("app:") {
+                    self.snapshot.set_output(app, sink);
+                }
+                Reply::redraw()
             }
         }
     }
@@ -822,7 +829,13 @@ impl repriseapp::Extended for Volume {
             }
             _ => {
                 let menus = self.bar.access(&self.bar_layout(ctx), tree, ROOT);
-                let focus = self.mixer.access(&self.mixer_layout(ctx), tree, ROOT);
+                let focus = self.mixer.access(
+                    &self.mixer_layout(ctx),
+                    &ctx.text,
+                    ctx.theme.fonts.size_px,
+                    tree,
+                    ROOT,
+                );
                 let (sb, r) = self.status(ctx);
                 statusbar::access(&sb, r, ctx.theme.text, tree, ROOT);
                 tree.set_focus(menus.unwrap_or(focus));

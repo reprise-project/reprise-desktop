@@ -63,6 +63,7 @@ mod tests {
             checked: false,
             live: true,
             boost: false,
+            output: None,
         }
     }
 

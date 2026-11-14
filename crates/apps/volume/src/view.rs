@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 
 use repriseaudio::{Channels, Device, Scale, Snapshot};
-use reprisekit::controls::mixer::{self, Check, Line};
+use reprisekit::controls::mixer::{self, Check, Line, Route};
 
 pub const MASTER: &str = "master";
 pub const MASTER_TITLE: &str = "Volume Control";
@@ -96,7 +96,9 @@ pub fn all_lines(snap: &Snapshot, o: &Options) -> Vec<Line> {
                 checked: out.is_some_and(|d| d.mute),
                 live: out.is_some(),
                 boost: o.boost,
+                output: None,
             }];
+            let outputs: Vec<String> = snap.sinks.iter().map(|d| d.label.clone()).collect();
             v.extend(snap.apps.iter().map(|a| {
                 // The column stands for the program's loudest stream.
                 let loudest = a
@@ -112,6 +114,10 @@ pub fn all_lines(snap: &Snapshot, o: &Options) -> Vec<Line> {
                     checked: a.mute,
                     live: true,
                     boost: o.boost,
+                    output: Some(Route {
+                        outputs: outputs.clone(),
+                        picked: snap.output_of(a),
+                    }),
                 }
             }));
             v
@@ -129,6 +135,7 @@ pub fn all_lines(snap: &Snapshot, o: &Options) -> Vec<Line> {
                     checked: Some(d.name.as_str()) == picked,
                     live: true,
                     boost: false,
+                    output: None,
                 })
                 .collect()
         }
@@ -262,6 +269,22 @@ mod tests {
         assert_eq!(ls[1].balance, Some(5), "the loudest stream's balance");
         assert!(ls[1].checked, "muted");
         assert_eq!(status(&snap(), &o), "speakers label");
+    }
+
+    #[test]
+    fn a_program_line_lists_the_outputs_and_the_one_it_plays_to() {
+        let mut s = snap();
+        let o = Options::new(View::Playback);
+        let ls = lines(&s, &o, &Recent::default());
+        assert_eq!(ls[0].output, None, "the device picks none");
+        let route = ls[1].output.clone().expect("a program's route");
+        assert_eq!(route.outputs, ["hdmi label", "speakers label"]);
+        assert_eq!(route.picked, None, "it follows the default");
+        s.apps[0].streams[0].target = Some("hdmi".into());
+        let ls = lines(&s, &o, &Recent::default());
+        assert_eq!(ls[1].output.as_ref().and_then(|r| r.picked), Some(0));
+        let rec = lines(&s, &Options::new(View::Recording), &Recent::default());
+        assert!(rec.iter().all(|l| l.output.is_none()));
     }
 
     #[test]

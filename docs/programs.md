@@ -561,7 +561,8 @@ display change applies first, then asks whether to keep it, and reverts after
 - **Volume Control.** A mixer with a balance, a volume and Mute for the
   speakers and for each program, a Recording view that picks the input, and
   Advanced Controls for bass, treble and whatever else the card offers.
-  Turning the volume up or down keeps the balance you set.
+  Turning the volume up or down keeps the balance you set. With two outputs
+  or more, each program's column ends in the same output combo as the popup.
 - **Louder than 100 %.** With `[sounds] allow_boost = true` (Settings >
   Sound, "Allow volume above 100%") the popup's and Volume Control's
   playback sliders, the tray wheel and the volume keys go on to 150 %, the
