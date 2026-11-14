@@ -1,7 +1,7 @@
 //! reprise-record: records a screen, or an area of it, and with `--sound` what plays, into an MP4
 //! file the compositor made and handed it open, until SIGINT or SIGTERM or until the screen goes.
-//! On failure its last line on stderr is the reason. Its settings are `[recording]`; with
-//! `--probe` it prints what codes here and exits.
+//! On failure, or exiting [`ENDED_EARLY`], its last line on stderr is the reason. Its settings are
+//! `[recording]`; with `--probe` it prints what codes here and exits.
 
 mod args;
 mod fallback;
@@ -14,7 +14,7 @@ mod sound;
 use args::{Area, Args, Command};
 use fallback::{Ask, Backends, Step};
 use ffmpeg::Packet;
-use movie::{Coding, Movie};
+use movie::{CodeError, Coding, Movie};
 use pace::{Pace, Pacer};
 use repriseconf::recording::{AudioCodec, Probed, RateMode, Recording};
 use repriseconf::remote::EncoderChoice;
@@ -50,7 +50,12 @@ fn main() -> ExitCode {
     // Blocked before any thread starts, so only `signals` takes them.
     let stop = block_stop_signals();
     match record(&args, stop) {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(Outcome::Saved) => ExitCode::SUCCESS,
+        Ok(Outcome::EndedEarly(e)) => {
+            log::warn!("the recording ended early: {e}");
+            eprintln!("{e}");
+            ExitCode::from(ENDED_EARLY)
+        }
         Err(e) => {
             log::warn!("recording failed: {e}");
             eprintln!("{e}");
@@ -106,7 +111,18 @@ enum Event {
     Ended,
 }
 
-fn record(args: &Args, stop: libc::sigset_t) -> Result<(), String> {
+/// The exit status of a recording that stopped by itself after its file was started; the file is
+/// closed and plays up to there.
+const ENDED_EARLY: u8 = 3;
+
+#[derive(Debug, PartialEq)]
+enum Outcome {
+    Saved,
+    /// Why the recording stopped by itself.
+    EndedEarly(String),
+}
+
+fn record(args: &Args, stop: libc::sigset_t) -> Result<Outcome, String> {
     let into = movie_url(args.fd)?;
     ffmpeg::init().map_err(|e| format!("FFmpeg: {e}"))?;
     ffmpeg::util::log::set_level(ffmpeg::util::log::Level::Error);
@@ -174,15 +190,24 @@ fn record(args: &Args, stop: libc::sigset_t) -> Result<(), String> {
     let ended = file.run(&events);
     // From here on the recorder only finishes the file: the compositor waits while it works.
     drop((hearing, stream, cast));
-    let finished = file.finish();
-    match (file.started(), ended.and(finished)) {
-        (false, _) => Err("No picture of the screen came.".into()),
-        (true, Err(e)) if !file.started_writing() => Err(e),
-        (true, Err(e)) => {
-            log::warn!("the recording ended early: {e}");
-            Ok(())
-        }
-        (true, Ok(())) => Ok(()),
+    let closed = file.finish();
+    outcome(file.started(), file.started_writing(), ended, closed)
+}
+
+/// What a recording comes to: `ended` is how coding ended, `closed` how the file closed; a file
+/// started but not closed does not play.
+fn outcome(
+    started: bool,
+    writing: bool,
+    ended: Result<(), String>,
+    closed: Result<(), String>,
+) -> Result<Outcome, String> {
+    let none = || "No picture of the screen came.".to_string();
+    match (started, writing, ended, closed) {
+        (false, ..) | (true, false, Ok(()), _) => Err(none()),
+        (true, false, Err(e), _) | (true, true, _, Err(e)) => Err(e),
+        (true, true, Err(e), Ok(())) => Ok(Outcome::EndedEarly(e)),
+        (true, true, Ok(()), Ok(())) => Ok(Outcome::Saved),
     }
 }
 
@@ -360,6 +385,8 @@ struct File<'a> {
     start: Option<Instant>,
     /// Files this size and up keep their index at the end, see [`FASTSTART_BELOW`].
     faststart_below: u64,
+    /// When the frames the encoder cannot read began, once the file is started.
+    unreadable: Option<Instant>,
 }
 
 /// A part of a frame: its size and top-left, in frame pixels.
@@ -372,6 +399,8 @@ const HVC1: u32 = u32::from_le_bytes(*b"hvc1");
 /// The size under which the file's index moves to its front as it closes, so it starts playing
 /// before it is all read. The move rewrites the whole file in place.
 const FASTSTART_BELOW: u64 = 256 << 20;
+/// How long frames the encoder cannot read are dropped before the recording ends.
+const UNREADABLE_FOR: Duration = Duration::from_secs(2);
 
 impl<'a> File<'a> {
     fn new(
@@ -399,6 +428,7 @@ impl<'a> File<'a> {
             output: None,
             start: None,
             faststart_below: FASTSTART_BELOW,
+            unreadable: None,
         }
     }
 
@@ -531,9 +561,20 @@ impl<'a> File<'a> {
                     log::warn!("{}: {e}", movie.backend().label(movie.codec()));
                     self.movie = None;
                 }
+                Err(CodeError::Unreadable(e)) => {
+                    let since = *self.unreadable.get_or_insert(at);
+                    if since == at {
+                        log::warn!("dropping frames the encoder cannot read: {e}");
+                    }
+                    return match at.duration_since(since) < UNREADABLE_FOR {
+                        true => Ok(()),
+                        false => Err(e.to_string()),
+                    };
+                }
                 Err(e) => return Err(e.to_string()),
             }
         }
+        self.unreadable = None;
         self.write_header()?;
         self.write(packets, VIDEO)
     }
@@ -692,7 +733,7 @@ impl<'a> File<'a> {
 
     /// Code what is due and a frame still held at its slot, hold the last picture to the
     /// pacer's end, drain the encoders and close the file. The file is closed even when draining
-    /// fails, so what was written plays.
+    /// fails, so what was written plays; the error is closing's.
     fn finish(&mut self) -> Result<(), String> {
         let Some(start) = self.start else {
             return Ok(());
@@ -723,7 +764,10 @@ impl<'a> File<'a> {
             }
             output.write_trailer().map_err(failed)?;
         }
-        drained
+        if let Err(e) = drained {
+            log::warn!("finishing the recording: {e}");
+        }
+        Ok(())
     }
 }
 
@@ -1147,6 +1191,71 @@ mod tests {
             before(&boxes, "moov", "mdat"),
             "a small file's index first: {boxes:?}"
         );
+    }
+
+    #[test]
+    fn a_recording_is_saved_ends_early_or_fails_by_what_was_written_and_closed() {
+        let e = |m: &str| Err(m.to_string());
+        let fails = |m: &str| Err::<Outcome, _>(m.to_string());
+        let changed = "The screen changed size or format.";
+        let full = "Cannot finish the recording: No space left on device";
+        let none = "No picture of the screen came.";
+        assert_eq!(outcome(true, true, Ok(()), Ok(())), Ok(Outcome::Saved));
+        assert_eq!(
+            outcome(true, true, e(changed), Ok(())),
+            Ok(Outcome::EndedEarly(changed.into()))
+        );
+        assert_eq!(
+            outcome(true, true, Ok(()), e(full)),
+            fails(full),
+            "no index"
+        );
+        assert_eq!(outcome(true, true, e(changed), e(full)), fails(full));
+        let refused = "No AV1 encoder could code the screen.";
+        assert_eq!(outcome(true, false, e(refused), Ok(())), fails(refused));
+        assert_eq!(outcome(true, false, Ok(()), Ok(())), fails(none));
+        assert_eq!(
+            outcome(false, false, e("every source ended"), Ok(())),
+            fails(none)
+        );
+    }
+
+    #[test]
+    fn a_frame_the_encoder_cannot_read_is_dropped_until_they_last_two_seconds() {
+        use reprisevideo::stream::{Plane, XRGB8888};
+        use std::sync::Arc;
+        const Y_TILED: u64 = 0x0100_0000_0000_0002;
+        ffmpeg::init().unwrap();
+        ffmpeg::util::log::set_level(ffmpeg::util::log::Level::Quiet);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.mp4");
+        let node = PathBuf::from(probe::RENDER_NODE);
+        let mut file = File::new(&path, &node, software(), None, (64, 64), h264());
+        let tiled = || {
+            let fd = std::fs::File::open("/dev/null").unwrap();
+            let buffer = FrameBuffer::Dmabuf {
+                objects: vec![Arc::new(fd.into())],
+                fourcc: XRGB8888,
+                modifier: Y_TILED,
+                planes: vec![Plane {
+                    object: 0,
+                    offset: 0,
+                    stride: 256,
+                }],
+            };
+            Frame::unleased(buffer, (64, 64))
+        };
+        let t0 = Instant::now();
+        let at = |ms| t0 + Duration::from_millis(ms);
+        file.frame(grey(0x20), at(0)).unwrap();
+        file.frame(tiled(), at(100)).unwrap();
+        file.frame(grey(0x80), at(200)).unwrap();
+        file.frame(tiled(), at(300)).unwrap();
+        file.frame(tiled(), at(1300)).unwrap();
+        let ended = file.frame(tiled(), at(2300)).unwrap_err();
+        assert!(ended.contains("cannot be read by the CPU"), "{ended}");
+        file.finish().unwrap();
+        assert_eq!(video_ms(&path)[..2], [0, 200], "the readable frames go on");
     }
 
     #[test]
