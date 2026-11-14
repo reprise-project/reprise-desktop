@@ -311,6 +311,13 @@ struct Section {
     fresh: bool,
 }
 
+/// A pick on a program's row kept from older text ([`FileSearch::open_now`]).
+struct Waiting {
+    section: usize,
+    row: usize,
+    name: String,
+}
+
 /// One search box's found rows: each [`Source`]'s section, and what each found path is.
 #[derive(Default)]
 pub struct FileSearch {
@@ -322,9 +329,9 @@ pub struct FileSearch {
     cancel: Option<Arc<AtomicBool>>,
     /// Dropped to stop the providers' search in flight ([`providers::ask`]).
     asking: Option<async_channel::Sender<()>>,
-    /// A program result picked while its section showed rows kept from older text, as (section,
-    /// row): it opens from that section's answer for the text now in the box.
-    waiting: Option<(usize, usize)>,
+    /// A program result picked while its section showed rows kept from older text: it opens from
+    /// that section's answer for the text now in the box when the same row still has its name.
+    waiting: Option<Waiting>,
     timer: Option<RegistrationToken>,
 }
 
@@ -408,8 +415,9 @@ impl FileSearch {
             return true;
         };
         let stale = matches!(s.source, Source::Provider(_)) && !s.fresh;
-        if stale && s.shown.get(row).is_some() {
-            self.waiting = Some((section, row));
+        if let (true, Some(Found::Result(m))) = (stale, s.shown.get(row)) {
+            let name = m.name.clone();
+            self.waiting = Some(Waiting { section, row, name });
             return false;
         }
         true
@@ -424,14 +432,15 @@ impl FileSearch {
     }
 
     /// Section `section`'s answer for the text in the box, and the row of a pick that waited for
-    /// it, which opens now.
+    /// it, which opens now when it still holds the result picked.
     pub(crate) fn landed(&mut self, section: usize, found: Vec<Found>) -> Option<usize> {
         self.set(section, found);
         if let Some(s) = self.sections.get_mut(section) {
             s.fresh = true;
         }
-        let (_, row) = self.waiting.take_if(|w| w.0 == section)?;
-        self.found(section, row).is_some().then_some(row)
+        let w = self.waiting.take_if(|w| w.section == section)?;
+        let same = matches!(self.found(section, w.row), Some(Found::Result(m)) if m.name == w.name);
+        same.then_some(w.row)
     }
 
     fn bump(&mut self) -> u64 {
@@ -1031,9 +1040,13 @@ mod tests {
     }
 
     fn result(id: &str) -> Found {
+        named(id, &format!("{id} = 5"))
+    }
+
+    fn named(id: &str, name: &str) -> Found {
         Found::Result(Meta {
             id: id.into(),
-            name: format!("{id} = 5"),
+            name: name.into(),
             description: String::new(),
             gicon: None,
             clipboard_text: None,
@@ -1121,8 +1134,20 @@ mod tests {
         f.keep(1, vec![result("2+3")]);
         assert!(f.open_now(0, 0), "a file is no program result");
         assert!(!f.open_now(1, 0), "kept from older text");
-        assert_eq!(f.landed(1, vec![result("2+4")]), Some(0));
-        assert_eq!(f.result(1, 0).unwrap().1.id, "2+4");
+        assert_eq!(
+            f.landed(1, vec![named("2+34", "2+3 = 5")]),
+            Some(0),
+            "the row still holds the result picked"
+        );
+        assert_eq!(f.result(1, 0).unwrap().1.id, "2+34");
+
+        f.keep(1, vec![named("a", "budget.ods"), named("b", "notes.txt")]);
+        assert!(!f.open_now(1, 0));
+        assert_eq!(
+            f.landed(1, vec![named("c", "notes.txt"), named("d", "budget.ods")]),
+            None,
+            "row 0 of the answer is another result than the one picked"
+        );
 
         f.keep(1, vec![result("2+4")]);
         assert!(!f.open_now(1, 0));
