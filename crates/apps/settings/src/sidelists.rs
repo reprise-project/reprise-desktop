@@ -3,9 +3,8 @@
 use crate::registry::Page;
 use crate::{SettingsApp, defaultspage, pages, registry};
 use repriseapp::{Ctx, Reply};
-use reprisekit::classic::widgets::BarHit;
 use reprisekit::controls::form;
-use reprisekit::controls::listview::{self, ListView};
+use reprisekit::controls::listview::{self, ListView, Took};
 use reprisekit::controls::metrics::ControlMetrics;
 use reprisekit::controls::propsheet::PropSheet;
 use reprisekit::raster::Rect;
@@ -101,30 +100,19 @@ impl SettingsApp {
             return Reply::none();
         };
         let lay = listview::layout(list, rect, cm);
-        // Both lists are single-select: no Ctrl or Shift reaches them.
-        let mods = reprisekit::selection::Mods::default();
-        let mut toggled = None;
-        let moved = match key {
-            form::Key::Up => list.step(-1, &lay, mods),
-            form::Key::Down => list.step(1, &lay, mods),
-            form::Key::Home => list.step(-(list.rows.len() as i64), &lay, mods),
-            form::Key::End => list.step(list.rows.len() as i64, &lay, mods),
-            form::Key::PageUp => list.step(-(lay.rows as i64), &lay, mods),
-            form::Key::PageDown => list.step(lay.rows as i64, &lay, mods),
-            form::Key::Space => {
-                let Some(i) = list.selection.focus else {
-                    return Reply::none();
-                };
-                toggled = list.toggle(i).then_some(i);
-                toggled.is_some()
-            }
-            _ => false,
-        };
-        if !moved {
-            return Reply::none();
+        match list.key(key, &lay, true) {
+            Some(took) => self.list_took(took),
+            None => Reply::none(),
         }
-        if let Some(i) = toggled {
-            self.startup_toggled(i);
+    }
+
+    /// What a press or key on the side list did: a flipped Startup check and a moved
+    /// selection reach the page's buttons.
+    fn list_took(&mut self, took: Took) -> Reply {
+        match took {
+            Took::Same => return Reply::none(),
+            Took::Toggled(i) => self.startup_toggled(i),
+            Took::Moved => {}
         }
         self.sync_apply();
         Reply::redraw()
@@ -235,44 +223,30 @@ impl SettingsApp {
         let lay = listview::layout(list, rect, cm);
         let hit = list.hit(&lay, x, y);
         let activated = list.activated(hit, ctx.theme.metrics.click(x, y, time));
-        // A box pressed is held; it toggles on the release over it
-        // (`list_release`). A header column held draws pressed.
-        list.press_check(hit);
+        // A header column held draws pressed.
         list.header.press(hit.column(), false);
-        match hit {
-            listview::Hit::Check(i) => list.select(Some(i), &lay),
-            listview::Hit::Row(i) => {
-                list.select(Some(i), &lay);
-                if activated.is_some() {
-                    self.sync_apply();
-                    return self.list_activate().unwrap_or_else(Reply::redraw);
-                }
-            }
-            listview::Hit::VBar(BarHit::Back) => {
-                list.scroll(-1, &lay);
-            }
-            listview::Hit::VBar(BarHit::Forward) => {
-                list.scroll(1, &lay);
-            }
-            _ => return Reply::redraw(),
+        let took = list.pointer(listview::Input::Press(x, y), &lay, rect, true);
+        let r = took.map_or_else(Reply::redraw, |t| self.list_took(t));
+        match activated {
+            Some(_) => self.list_activate().unwrap_or(r),
+            None => r,
         }
-        self.sync_apply();
-        Reply::redraw()
     }
 
-    fn held_check_hit(
-        &mut self,
-        x: i32,
-        y: i32,
-        cm: &ControlMetrics,
-    ) -> Option<(&mut ListView, listview::Hit)> {
+    /// A motion, release or wheel turn the side list takes: a held box or thumb follows the
+    /// pointer until the release, and the wheel over the list scrolls it.
+    fn list_pointer(&mut self, ev: listview::Input, cm: &ControlMetrics) -> Option<Reply> {
         let (list, rect, _) = self.side_list()?;
-        if !list.held_check.holding() {
-            return None;
-        }
         let lay = listview::layout(list, rect, cm);
-        let hit = list.hit(&lay, x, y);
-        Some((list, hit))
+        Some(match list.pointer(ev, &lay, rect, true)? {
+            Took::Toggled(i) => {
+                self.startup_toggled(i);
+                self.sync_apply();
+                Reply::redraw()
+            }
+            Took::Moved => Reply::redraw(),
+            Took::Same => Reply::none(),
+        })
     }
 
     /// Whether (`x`, `y`) is on the side list where it shows: in its rect and off the page's
@@ -319,20 +293,20 @@ impl SettingsApp {
     }
 
     pub(crate) fn list_motion(&mut self, x: i32, y: i32, cm: &ControlMetrics) -> Option<Reply> {
-        let (list, hit) = self.held_check_hit(x, y, cm)?;
-        Some(if list.motion_check(hit) {
-            Reply::redraw()
-        } else {
-            Reply::none()
-        })
+        self.list_pointer(listview::Input::Motion(x, y), cm)
     }
 
     pub(crate) fn list_release(&mut self, x: i32, y: i32, cm: &ControlMetrics) -> Option<Reply> {
-        let (list, hit) = self.held_check_hit(x, y, cm)?;
-        if let Some(i) = list.release_check(hit) {
-            self.startup_toggled(i);
-            self.sync_apply();
+        self.list_pointer(listview::Input::Release(x, y), cm)
+    }
+
+    /// The wheel over the side list where it shows.
+    pub(crate) fn list_wheel(&mut self, x: i32, y: i32, rows: i32, ctx: &Ctx) -> Reply {
+        if !self.over_side_list(x, y, ctx) {
+            return Reply::none();
         }
-        Some(Reply::redraw())
+        let ev = listview::Input::Scroll(x, y, rows);
+        self.list_pointer(ev, &ctx.forms().controls())
+            .unwrap_or_else(Reply::none)
     }
 }

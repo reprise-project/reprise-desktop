@@ -11,7 +11,6 @@ use crate::{
 use repriseapp::keys::{dialog_key, form_clipboard};
 use repriseapp::{BTN_LEFT, BTN_RIGHT, Ctx, Event, KeyInput, PointerInput, Reply, WinId};
 use reprisekit::controls::form;
-use reprisekit::controls::listview;
 use reprisekit::controls::metrics::ControlMetrics;
 use reprisekit::controls::propsheet;
 use reprisekit::textedit::EditKey;
@@ -530,18 +529,7 @@ impl SettingsApp {
                 if ev != propsheet::Event::None {
                     return self.sheet_event(ev);
                 }
-                if !self.over_side_list(x, y, ctx) {
-                    return Reply::none();
-                }
-                let Some((list, rect, _)) = self.side_list() else {
-                    return Reply::none();
-                };
-                let lay = listview::layout(list, rect, &ctx.forms().controls());
-                if list.scroll(rows as i64, &lay) {
-                    Reply::redraw()
-                } else {
-                    Reply::none()
-                }
+                self.list_wheel(x, y, rows, ctx)
             }
             Event::Pointer(PointerInput::Release {
                 x,
