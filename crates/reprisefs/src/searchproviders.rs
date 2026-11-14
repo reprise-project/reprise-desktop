@@ -76,22 +76,30 @@ pub fn scan(dirs: &[PathBuf]) -> Vec<Provider> {
 
 /// Whether provider file `ini`, in `<share>/gnome-shell/search-providers`, may name
 /// `desktop_id`: the entry is in `<share>/applications`, and in a Flatpak export, where every
-/// app's entries meet, the file's name starts with the entry's app id as Flatpak's own export
-/// names do.
+/// app's entries meet, the file and the entry both resolve into one app's deployment.
 fn speaks_for(ini: &Path, desktop_id: &str) -> bool {
     let Some(share) = ini.parent().and_then(Path::parent).and_then(Path::parent) else {
         return false;
     };
-    if desktop_id.contains('/') || !share.join("applications").join(desktop_id).is_file() {
+    let entry = share.join("applications").join(desktop_id);
+    if desktop_id.contains('/') || !entry.is_file() {
         return false;
     }
     if !share.ends_with("flatpak/exports/share") {
         return true;
     }
-    let app = desktop_id.strip_suffix(".desktop").unwrap_or(desktop_id);
-    let stem = ini.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-    stem.strip_prefix(app)
-        .is_some_and(|rest| !rest.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_'))
+    deployed_by(share, ini).is_some_and(|app| deployed_by(share, &entry) == Some(app))
+}
+
+/// The app id of the deployment `<installation>/app/<APPID>/` that `file`, in the installation's
+/// export `share`, resolves into.
+fn deployed_by(share: &Path, file: &Path) -> Option<String> {
+    let apps = share.parent()?.parent()?.join("app").canonicalize().ok()?;
+    let real = file.canonicalize().ok()?;
+    let rest = real.strip_prefix(&apps).ok()?;
+    let mut parts = rest.components();
+    let app = parts.next()?.as_os_str().to_str()?.to_string();
+    parts.next().map(|_| app)
 }
 
 fn ini_files(dir: &Path) -> Vec<PathBuf> {
@@ -212,21 +220,51 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// `files` (path under `share`, text) deployed by Flatpak app `app` in installation `inst`,
+    /// each linked into `inst/exports/share` as Flatpak links them.
+    fn deploy(inst: &Path, app: &str, files: &[(&str, &str)]) {
+        let deployed = inst.join("app").join(app);
+        std::fs::create_dir_all(deployed.join("x86_64/stable/abc123/export/share")).unwrap();
+        std::os::unix::fs::symlink("x86_64/stable", deployed.join("current")).unwrap();
+        std::os::unix::fs::symlink("abc123", deployed.join("x86_64/stable/active")).unwrap();
+        for (rel, text) in files {
+            let real = deployed.join("current/active/export/share").join(rel);
+            std::fs::create_dir_all(real.parent().unwrap()).unwrap();
+            std::fs::write(&real, text).unwrap();
+            let link = inst.join("exports/share").join(rel);
+            std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+            std::os::unix::fs::symlink(&real, link).unwrap();
+        }
+    }
+
     #[test]
     fn a_file_naming_a_program_its_folder_lacks_neither_counts_nor_hides_it() {
         let root = std::env::temp_dir().join(format!("reprise-shadow-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let calc = "org.gnome.Calculator.desktop";
-        let export = share(
-            &root,
-            "flatpak/exports/share",
-            &[calc, "com.example.Evil.desktop"],
+        let entry = "[Desktop Entry]\n";
+        let inst = root.join("flatpak");
+        let evil = CALC.replace("/org/gnome/Calculator/SearchProvider", "/evil");
+        deploy(
+            &inst,
+            "org.gnome.Calculator.Evil",
+            &[
+                ("applications/org.gnome.Calculator.Evil.desktop", entry),
+                (
+                    "gnome-shell/search-providers/org.gnome.Calculator.Evil.ini",
+                    &evil,
+                ),
+            ],
         );
+        deploy(
+            &inst,
+            "org.gnome.Calculator",
+            &[(&format!("applications/{calc}"), entry)],
+        );
+        let export = inst.join("exports/share/gnome-shell/search-providers");
+        std::fs::write(export.join("org.gnome.Calculator-plain.ini"), &evil).unwrap();
         let user = share(&root, "user", &[]);
         let system = share(&root, "system", &[calc]);
-        let evil = CALC.replace("/org/gnome/Calculator/SearchProvider", "/evil");
-        std::fs::write(export.join("com.example.Evil.ini"), &evil).unwrap();
-        std::fs::write(export.join("org.gnome.CalculatorX.ini"), &evil).unwrap();
         std::fs::write(user.join("calc.ini"), &evil).unwrap();
         let sneaky = evil.replace(
             calc,
@@ -236,10 +274,19 @@ mod tests {
         std::fs::write(system.join("calc.ini"), CALC).unwrap();
         let dirs = [export.clone(), user, system];
         let path = "/org/gnome/Calculator/SearchProvider".to_string();
-        assert_eq!(found(&dirs), [(calc.into(), path)]);
+        assert_eq!(
+            found(&dirs),
+            [(calc.into(), path)],
+            "another app's export and a file Flatpak did not deploy are refused"
+        );
 
         let own = CALC.replace("/org/gnome/Calculator/SearchProvider", "/own");
-        std::fs::write(export.join("org.gnome.Calculator-search-provider.ini"), own).unwrap();
+        let ini = "gnome-shell/search-providers/org.gnome.Calculator.search-provider.ini";
+        let deployed = inst.join("app/org.gnome.Calculator/current/active/export/share");
+        std::fs::create_dir_all(deployed.join(ini).parent().unwrap()).unwrap();
+        std::fs::write(deployed.join(ini), own).unwrap();
+        std::os::unix::fs::symlink(deployed.join(ini), inst.join("exports/share").join(ini))
+            .unwrap();
         assert_eq!(
             found(&dirs),
             [(calc.into(), "/own".into())],
