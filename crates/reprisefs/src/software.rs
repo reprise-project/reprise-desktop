@@ -151,6 +151,8 @@ pub struct FlatpakRef {
     pub branch: String,
     /// The repository's address.
     pub url: String,
+    /// `RuntimeRepo`: the `.flatpakrepo` the runtime comes from, empty when it names none.
+    pub runtime_repo: String,
 }
 
 /// The `[Flatpak Ref]` group of `text`; None without a `Name`.
@@ -166,6 +168,7 @@ pub fn flatpak_ref(text: &str) -> Option<FlatpakRef> {
         title: title.unwrap_or_else(|| id.clone()),
         branch: get("Branch"),
         url: get("Url"),
+        runtime_repo: get("RuntimeRepo"),
         id,
     })
 }
@@ -295,7 +298,8 @@ mod tests {
     #[test]
     fn a_flatpakref_names_its_app_branch_and_repository() {
         let text = "[Flatpak Ref]\nName=org.example.Pinball\nBranch=stable\n\
-                    Title=Pinball\nUrl=https://dl.example.org/repo/\nIsRuntime=false\n";
+                    Title=Pinball\nUrl=https://dl.example.org/repo/\nIsRuntime=false\n\
+                    RuntimeRepo=https://dl.flathub.org/repo/flathub.flatpakrepo\n";
         assert_eq!(
             flatpak_ref(text),
             Some(FlatpakRef {
@@ -303,10 +307,12 @@ mod tests {
                 title: "Pinball".into(),
                 branch: "stable".into(),
                 url: "https://dl.example.org/repo/".into(),
+                runtime_repo: "https://dl.flathub.org/repo/flathub.flatpakrepo".into(),
             })
         );
         let bare = flatpak_ref("[Flatpak Ref]\nName=org.example.Bare\n").unwrap();
         assert_eq!(bare.title, "org.example.Bare");
+        assert_eq!(bare.runtime_repo, "");
         assert_eq!(flatpak_ref("[Flatpak Ref]\nTitle=Nameless\n"), None);
     }
 

@@ -2,7 +2,8 @@
 //! `dpkg-deb --field`), and an Arch package installed through `pkexec pacman -U`.
 
 use std::ffi::OsStr;
-use std::path::Path;
+use std::io;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -30,6 +31,83 @@ pub fn kind_of(path: &Path) -> Option<Kind> {
     } else {
         return None;
     })
+}
+
+/// A package file copied into a fresh folder only this user can open, which is deleted when the
+/// copy drops. The sheet reads and installs the copy, so a file swapped after it opened changes
+/// nothing.
+#[derive(Debug)]
+pub struct Copy {
+    dir: PathBuf,
+    /// The copy, under the file's own name.
+    pub file: PathBuf,
+    /// A detached `NAME.sig` lay beside the file and was copied with it.
+    pub signed: bool,
+}
+
+impl Drop for Copy {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+/// Copy the regular file `path`, and its `.sig` if there is one, into a new 0700 folder in
+/// `parent`.
+pub fn private_copy(path: &Path, parent: &Path) -> io::Result<Copy> {
+    let name = path
+        .file_name()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "no file name"))?;
+    let dir = fresh_dir(parent)?;
+    let mut copy = Copy {
+        file: dir.join(name),
+        dir,
+        signed: false,
+    };
+    copy_regular(path, &copy.file)?;
+    let sig = |p: &Path| {
+        let mut s = p.as_os_str().to_owned();
+        s.push(".sig");
+        PathBuf::from(s)
+    };
+    copy.signed = copy_regular(&sig(path), &sig(&copy.file)).is_ok();
+    Ok(copy)
+}
+
+fn fresh_dir(parent: &Path) -> io::Result<PathBuf> {
+    use std::hash::{BuildHasher, Hasher};
+    use std::os::unix::fs::DirBuilderExt;
+    let mut tries = 0;
+    loop {
+        let tag = std::hash::RandomState::new().build_hasher().finish();
+        let dir = parent.join(format!("reprise-install-{tag:016x}"));
+        match std::fs::DirBuilder::new().mode(0o700).create(&dir) {
+            Ok(()) => return Ok(dir),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists && tries < 16 => tries += 1,
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+/// Copy `from` into the new file `to`; a FIFO or device is refused before it is read.
+fn copy_regular(from: &Path, to: &Path) -> io::Result<()> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut src = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY)
+        .open(from)?;
+    if !src.metadata()?.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "not a regular file",
+        ));
+    }
+    let mut dst = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(to)?;
+    io::copy(&mut src, &mut dst)?;
+    Ok(())
 }
 
 /// A package file's name, version, installed size in bytes and who built it.
@@ -237,6 +315,56 @@ mod tests {
         assert_eq!(k("/d/org.example.App.flatpakref"), Some(Kind::FlatpakRef));
         assert_eq!(k("/d/org.example.App.flatpak"), Some(Kind::FlatpakBundle));
         assert_eq!(k("/d/backup.tar.zst"), None);
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("reprise-pkgfile-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn the_private_copy_keeps_what_the_file_held_when_it_opened() {
+        use std::os::unix::fs::PermissionsExt;
+        let from = scratch("copy-from");
+        let to = scratch("copy-to");
+        let pkg = from.join("foot-1.28.0-2-x86_64.pkg.tar.zst");
+        std::fs::write(&pkg, "first").unwrap();
+        let copy = private_copy(&pkg, &to).unwrap();
+        std::fs::write(&pkg, "swapped").unwrap();
+        assert_eq!(copy.file.file_name(), pkg.file_name());
+        assert_eq!(std::fs::read_to_string(&copy.file).unwrap(), "first");
+        assert!(!copy.signed);
+        let dir = copy.file.parent().unwrap().to_path_buf();
+        assert_eq!(dir.parent(), Some(to.as_path()));
+        let mode = std::fs::metadata(&dir).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o700, "{mode:o}");
+        drop(copy);
+        assert!(!dir.exists(), "the copy's folder goes with it");
+
+        std::fs::write(from.join("foot-1.28.0-2-x86_64.pkg.tar.zst.sig"), "sig").unwrap();
+        let signed = private_copy(&pkg, &to).unwrap();
+        assert!(signed.signed);
+        let sig = signed
+            .file
+            .with_file_name("foot-1.28.0-2-x86_64.pkg.tar.zst.sig");
+        assert_eq!(std::fs::read_to_string(sig).unwrap(), "sig");
+        drop(signed);
+
+        let fifo = from.join("pipe.deb");
+        let c = std::ffi::CString::new(fifo.as_os_str().as_encoded_bytes()).unwrap();
+        // SAFETY: mkfifo reads the NUL-terminated path only during the call.
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        let refused = private_copy(&fifo, &to).unwrap_err();
+        assert_eq!(refused.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(
+            std::fs::read_dir(&to).unwrap().count(),
+            0,
+            "no folder left behind"
+        );
+        let _ = std::fs::remove_dir_all(&from);
+        let _ = std::fs::remove_dir_all(&to);
     }
 
     #[test]
