@@ -463,11 +463,10 @@ fn a_menu_reply_over_the_body_cap_is_refused() {
         layout_served(vec![small(1)]).map(|rows| rows.len()),
         Some(1)
     );
-    let icon = vec![0u8; 4 << 20];
-    let props = HashMap::from([
-        ("label", Variant::from("Open")),
-        ("icon-data", Variant::from(icon)),
-    ]);
+    let props = HashMap::from([(
+        "label",
+        Variant::from("x".repeat(reprisebus::bounded::MAX_BODY)),
+    )]);
     let big = Variant::from((2i32, props, Vec::<Variant>::new()));
     assert_eq!(layout_served(vec![small(1), big]), None);
 }

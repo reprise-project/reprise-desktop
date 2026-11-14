@@ -334,8 +334,10 @@ mod tests {
 
     #[test]
     fn a_body_over_the_cap_is_refused_before_it_is_read() {
-        let bytes = vec![0u8; MAX_BODY];
-        let body = ("x", HashMap::from([("junk", Variant::from(&bytes[..]))]));
+        let body = (
+            "x",
+            HashMap::from([("junk", Variant::from("x".repeat(MAX_BODY)))]),
+        );
         let refused = decode::<(String, Dict)>(&signal(&body));
         assert!(
             matches!(refused, Err(Refused::TooLarge(n)) if n > MAX_BODY),
@@ -500,7 +502,7 @@ mod tests {
         assert_eq!(s.unwrap(), "Playing");
         let wrong: Result<String, _> = read_property(Variant::from(vec![7u8; 16]));
         assert!(matches!(wrong, Err(Refused::Bus(_))), "{wrong:?}");
-        let large: Result<String, _> = read_property(Variant::from(vec![7u8; MAX_BODY]));
+        let large: Result<String, _> = read_property(Variant::from("x".repeat(MAX_BODY)));
         assert!(matches!(large, Err(Refused::TooLarge(_))), "{large:?}");
     }
 }
