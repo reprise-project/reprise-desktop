@@ -1704,3 +1704,34 @@ fn the_capture_settings_read_and_write_their_keys() {
     let saved = save("", &s, &d).unwrap();
     assert_eq!(load(&saved), s, "{saved}");
 }
+
+#[test]
+fn the_capture_tables_list_each_value_in_the_configs_order() {
+    use repriseconf::config::{PngCompression, ShotFormat};
+    use repriseconf::recording::{AudioCodec, Codec, RateMode};
+    use repriseconf::remote::EncoderChoice;
+    let values = |c: &Choices| c.iter().map(|r| r.0).collect::<Vec<_>>();
+    assert_eq!(values(VIDEO_CODECS), Codec::ALL.map(Codec::name));
+    assert_eq!(values(AUDIO_CODECS), AudioCodec::ALL.map(AudioCodec::name));
+    assert_eq!(values(RATE_MODES), RateMode::ALL.map(RateMode::name));
+    assert_eq!(
+        values(SHOT_FORMATS),
+        ShotFormat::ALL.map(ShotFormat::extension)
+    );
+    assert_eq!(
+        values(PNG_COMPRESSIONS),
+        PngCompression::ALL.map(PngCompression::name)
+    );
+    assert_eq!(
+        values(ENCODERS),
+        EncoderChoice::ALL[..5]
+            .iter()
+            .map(|e| e.name())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        ENCODERS.last().map(|r| r.0),
+        Some("software"),
+        "the last row is the one the codec's CPU encoder names"
+    );
+}

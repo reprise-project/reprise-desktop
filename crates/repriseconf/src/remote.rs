@@ -1,6 +1,7 @@
 //! `[remote_desktop]`: reprise-rdp's settings, each key described in docs/configuration.md.
 //! Each key that is missing or out of range keeps its default alone.
 
+use crate::recording::Codec;
 use serde::Deserialize;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
@@ -65,6 +66,49 @@ impl EncoderChoice {
             EncoderChoice::Vulkan => "vulkan",
             EncoderChoice::Software => "software",
             EncoderChoice::None => "none",
+        }
+    }
+
+    /// The choice [`EncoderChoice::name`] gives `name`.
+    pub fn from_name(name: &str) -> Option<EncoderChoice> {
+        EncoderChoice::ALL.into_iter().find(|e| e.name() == name)
+    }
+
+    /// The encoder coding `codec`, as a status names it; None for `auto` and `none`.
+    pub fn label(self, codec: Codec) -> Option<&'static str> {
+        use Codec::*;
+        Some(match (self, codec) {
+            (EncoderChoice::Vaapi, H264) => "VA-API H.264",
+            (EncoderChoice::Vaapi, H265) => "VA-API H.265",
+            (EncoderChoice::Vaapi, Av1) => "VA-API AV1",
+            (EncoderChoice::Nvenc, H264) => "NVENC H.264",
+            (EncoderChoice::Nvenc, H265) => "NVENC H.265",
+            (EncoderChoice::Nvenc, Av1) => "NVENC AV1",
+            (EncoderChoice::Vulkan, H264) => "Vulkan H.264",
+            (EncoderChoice::Vulkan, H265) => "Vulkan H.265",
+            (EncoderChoice::Vulkan, Av1) => "Vulkan AV1",
+            (EncoderChoice::Software, H264) => "Software H.264",
+            (EncoderChoice::Software, H265) => "Software H.265",
+            (EncoderChoice::Software, Av1) => "Software AV1",
+            (EncoderChoice::Auto | EncoderChoice::None, _) => return None,
+        })
+    }
+
+    /// The status while `using` codes `codec` for this choice, naming the chosen encoder it
+    /// stands in for: "VA-API AV1 (NVENC unavailable)".
+    pub fn status(self, using: EncoderChoice, codec: Codec) -> String {
+        let label = using.label(codec).unwrap_or_default();
+        let chosen = match self {
+            EncoderChoice::Vaapi => "VA-API",
+            EncoderChoice::Nvenc => "NVENC",
+            EncoderChoice::Vulkan => "Vulkan",
+            EncoderChoice::Software => codec.software_name(),
+            EncoderChoice::Auto | EncoderChoice::None => return label.into(),
+        };
+        if self == using {
+            label.into()
+        } else {
+            format!("{label} ({chosen} unavailable)")
         }
     }
 }
@@ -322,6 +366,25 @@ fn key<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_stand_in_encoder_names_the_one_chosen_for_the_codec() {
+        use EncoderChoice::*;
+        assert_eq!(
+            Nvenc.status(Vaapi, Codec::Av1),
+            "VA-API AV1 (NVENC unavailable)"
+        );
+        assert_eq!(
+            Software.status(Vaapi, Codec::Av1),
+            "VA-API AV1 (SVT-AV1 unavailable)"
+        );
+        assert_eq!(Auto.status(Software, Codec::H265), "Software H.265");
+        assert_eq!(Vulkan.status(Vulkan, Codec::H264), "Vulkan H.264");
+        assert!(Auto.label(Codec::Av1).is_none());
+        for e in EncoderChoice::ALL {
+            assert_eq!(EncoderChoice::from_name(e.name()), Some(e));
+        }
+    }
 
     #[test]
     fn an_empty_section_gives_the_defaults() {

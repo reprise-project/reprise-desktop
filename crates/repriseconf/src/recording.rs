@@ -25,6 +25,11 @@ impl Codec {
         }
     }
 
+    /// The codec [`Codec::name`] gives `name`.
+    pub fn from_name(name: &str) -> Option<Codec> {
+        Codec::ALL.into_iter().find(|c| c.name() == name)
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             Codec::H264 => "H.264",
@@ -87,6 +92,11 @@ impl AudioCodec {
             AudioCodec::Opus => "opus",
             AudioCodec::Flac => "flac",
         }
+    }
+
+    /// The codec [`AudioCodec::name`] gives `name`.
+    pub fn from_name(name: &str) -> Option<AudioCodec> {
+        AudioCodec::ALL.into_iter().find(|a| a.name() == name)
     }
 
     pub fn label(self) -> &'static str {
@@ -259,18 +269,13 @@ impl Probed {
         for line in text.lines() {
             match line.split_whitespace().collect::<Vec<_>>()[..] {
                 ["video", codec, encoder] => {
-                    let codec = Codec::ALL.into_iter().find(|c| c.name() == codec);
-                    let encoder = (EncoderChoice::ALL.into_iter())
-                        .find(|e| e.name() == encoder && *e != EncoderChoice::None);
-                    if let (Some(c), Some(e)) = (codec, encoder) {
+                    let encoder =
+                        EncoderChoice::from_name(encoder).filter(|&e| e != EncoderChoice::None);
+                    if let (Some(c), Some(e)) = (Codec::from_name(codec), encoder) {
                         probed.video.push((c, e));
                     }
                 }
-                ["audio", codec] => {
-                    if let Some(a) = AudioCodec::ALL.into_iter().find(|a| a.name() == codec) {
-                        probed.audio.push(a);
-                    }
-                }
+                ["audio", codec] => probed.audio.extend(AudioCodec::from_name(codec)),
                 _ => {}
             }
         }
@@ -357,6 +362,7 @@ mod tests {
         for c in Codec::ALL {
             let t: toml::Table = toml::from_str(&format!("codec = \"{}\"", c.name())).unwrap();
             assert_eq!(from_table(&t).codec, c);
+            assert_eq!(Codec::from_name(c.name()), Some(c));
         }
         for m in RateMode::ALL {
             let t: toml::Table = toml::from_str(&format!("rate = \"{}\"", m.name())).unwrap();
@@ -366,6 +372,7 @@ mod tests {
             let t: toml::Table =
                 toml::from_str(&format!("audio_codec = \"{}\"", a.name())).unwrap();
             assert_eq!(from_table(&t).audio_codec, a);
+            assert_eq!(AudioCodec::from_name(a.name()), Some(a));
         }
     }
 

@@ -268,8 +268,41 @@ fn row_pins_at(form: &form::Form, row: Rect, scale: i32) -> [u64; 3] {
     got
 }
 
-/// Sheets whose Screen Capture page shows the JPG, JPEG XL, bitrate and FLAC rows.
-fn capture_sheets() -> [PropSheet; 2] {
+/// JPG, Constant bitrate, AV1 through its CPU encoder and FLAC, with what plays recorded.
+fn capture_other() -> Settings {
+    Settings {
+        screenshot_format: "jpg".into(),
+        recording_rate: "constant".into(),
+        recording_codec: "av1".into(),
+        recording_encoder: "software".into(),
+        recording_audio_codec: "flac".into(),
+        screenshot_record_sound: true,
+        ..Settings::default()
+    }
+}
+
+/// The sheet for `s` with its Screen Capture page shown after `probe`.
+fn capture_probed(s: &Settings, probe: &crate::capturepage::ProbeState) -> PropSheet {
+    let mut sheet = with(s);
+    crate::capturepage::show_probe(&mut sheet.pages[Page::ScreenCapture.index()], s, probe);
+    sheet
+}
+
+/// Sheets whose Screen Capture page shows the JPG, JPEG XL, bitrate, Constant and FLAC rows, a
+/// codec-named Software row, the failed probe's status and the longest stand-in status.
+fn capture_sheets() -> [PropSheet; 4] {
+    use crate::capturepage::ProbeState;
+    use repriseconf::recording::{AudioCodec, Codec, Probed};
+    use repriseconf::remote::EncoderChoice;
+    let stand_in = Settings {
+        recording_codec: "h265".into(),
+        recording_encoder: "vulkan".into(),
+        ..Settings::default()
+    };
+    let software = Probed {
+        video: vec![(Codec::H265, EncoderChoice::Software)],
+        audio: vec![AudioCodec::Aac],
+    };
     [
         with(&Settings {
             screenshot_format: "jpg".into(),
@@ -281,6 +314,8 @@ fn capture_sheets() -> [PropSheet; 2] {
             screenshot_format: "jxl".into(),
             ..Settings::default()
         }),
+        capture_probed(&capture_other(), &ProbeState::Failed),
+        capture_probed(&stand_in, &ProbeState::Done(software)),
     ]
 }
 

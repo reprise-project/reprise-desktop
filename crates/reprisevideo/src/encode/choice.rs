@@ -28,14 +28,7 @@ pub fn label(choice: EncoderChoice, using: Option<Backend>) -> String {
     match using {
         None if choice == EncoderChoice::None => NONE_LABEL.into(),
         None => BITMAP_LABEL.into(),
-        Some(b) if choice == EncoderChoice::Auto || b.choice() == choice => {
-            b.label(Codec::H264).into()
-        }
-        Some(b) => format!(
-            "{} ({} unavailable)",
-            b.label(Codec::H264),
-            short_name(choice)
-        ),
+        Some(b) => choice.status(b.choice(), Codec::H264),
     }
 }
 
@@ -51,16 +44,6 @@ pub fn names(working: &[Backend]) -> Vec<String> {
         .filter(|&c| working.iter().any(|b| b.choice() == c) || c == EncoderChoice::None)
         .map(|c| c.name().to_string())
         .collect()
-}
-
-fn short_name(choice: EncoderChoice) -> &'static str {
-    match choice {
-        EncoderChoice::Vaapi => "VA-API",
-        EncoderChoice::Nvenc => "NVENC",
-        EncoderChoice::Vulkan => "Vulkan",
-        EncoderChoice::Software => Codec::H264.software_name(),
-        EncoderChoice::Auto | EncoderChoice::None => "",
-    }
 }
 
 #[cfg(test)]

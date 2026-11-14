@@ -12,7 +12,8 @@ use crate::model::{
 };
 use crate::pages::{Area, GX, X, choice, grey_choices, group, spin};
 use crate::registry::Page;
-use repriseconf::recording::{Codec, Probed};
+use repriseconf::recording::{AudioCodec, Codec, Probed};
+use repriseconf::remote::EncoderChoice;
 
 pub const SAVE: &str = "screenshot_save";
 pub const FORMAT: &str = "screenshot_format";
@@ -23,7 +24,8 @@ pub const JXL_QUALITY: &str = "screenshot_jxl_quality";
 pub const JXL_EFFORT: &str = "screenshot_jxl_effort";
 pub const CODEC: &str = "recording_codec";
 pub const ENCODER: &str = "recording_encoder";
-/// What the probe found for the codec shown: under way, failed, or no encoder for it.
+/// What the probe found: under way, failed, no encoder for the codec, an audio codec that can't
+/// be recorded, or the encoder that stands in for the one picked.
 pub const STATUS: &str = "capture_status";
 pub const RATE: &str = "recording_rate";
 pub const QUALITY: &str = "recording_quality";
@@ -105,6 +107,11 @@ fn row(
     ]
 }
 
+/// A [`row`] or [`spin`] whose control a reader calls `name`, its label shown in another group too.
+fn naming([label, control]: [Item; 2], name: &'static str) -> [Item; 2] {
+    [label, control.named(name)]
+}
+
 /// A spin's unit, right of the up-down [`spin`] puts on row `y`.
 fn units(id: &'static str, y: i32, text: &str) -> Item {
     Item::label_at(
@@ -145,14 +152,17 @@ pub fn page(s: &Settings, a: Area) -> Form {
             items.push(Item::check(JXL_LOSSLESS, GX, 114, "&Lossless"));
             items.extend(bar(a, JXL_QUALITY, JXL_LEVEL[2], "JPEG XL quality", 114));
         }
-        _ => items.extend(row(
-            a,
-            "png_compression_label",
-            PNG_COMPRESSION,
-            114,
-            110,
-            "Co&mpression:",
-            PNG_COMPRESSIONS,
+        _ => items.extend(naming(
+            row(
+                a,
+                "png_compression_label",
+                PNG_COMPRESSION,
+                114,
+                110,
+                "Co&mpression:",
+                PNG_COMPRESSIONS,
+            ),
+            "PNG compression",
         )),
     }
 
@@ -238,34 +248,43 @@ pub fn page(s: &Settings, a: Area) -> Form {
             "Record &what plays in screen recordings",
         ),
     ]);
-    items.extend(row(
-        a,
-        "audio_codec_label",
-        AUDIO_CODEC,
-        390,
-        130,
-        "C&odec:",
-        AUDIO_CODECS,
+    items.extend(naming(
+        row(
+            a,
+            "audio_codec_label",
+            AUDIO_CODEC,
+            390,
+            130,
+            "C&odec:",
+            AUDIO_CODECS,
+        ),
+        "Audio codec",
     ));
     if s.recording_audio_codec == "flac" {
-        items.extend(spin(
-            "flac_compression_label",
-            FLAC_COMPRESSION,
-            GX,
-            414,
-            LABEL_W,
-            "Compre&ssion:",
-            (0, 12),
+        items.extend(naming(
+            spin(
+                "flac_compression_label",
+                FLAC_COMPRESSION,
+                GX,
+                414,
+                LABEL_W,
+                "Compre&ssion:",
+                (0, 12),
+            ),
+            "FLAC compression",
         ));
     } else {
-        items.extend(spin(
-            "audio_bitrate_label",
-            AUDIO_BITRATE,
-            GX,
-            414,
-            LABEL_W,
-            "B&itrate:",
-            (32, 512),
+        items.extend(naming(
+            spin(
+                "audio_bitrate_label",
+                AUDIO_BITRATE,
+                GX,
+                414,
+                LABEL_W,
+                "B&itrate:",
+                (32, 512),
+            ),
+            "Audio bitrate",
         ));
         items.push(units("audio_bitrate_units", 414, "kbit/s"));
         items.push(Item::check(AUDIO_VBR, RIGHT_X, 414, "&Variable bitrate"));
@@ -352,9 +371,7 @@ pub enum ProbeState {
 
 /// The codec `s` names; one the recorder does not know reads as its default, H.264.
 fn codec(s: &Settings) -> Codec {
-    (Codec::ALL.into_iter())
-        .find(|c| c.name() == s.recording_codec)
-        .unwrap_or(Codec::H264)
+    Codec::from_name(&s.recording_codec).unwrap_or(Codec::H264)
 }
 
 /// Grey the Codec rows no encoder codes, the Encoder rows (Automatic aside) that do not code the
@@ -393,14 +410,30 @@ pub fn show_probe(page: &mut Form, s: &Settings, probe: &ProbeState) {
     page.set_text(STATUS, &status(s, probe));
 }
 
+/// What stops a recording first, then the encoder standing in for the one picked, as the
+/// recorder picks it: the first that works for the codec, in the probe's order.
 fn status(s: &Settings, probe: &ProbeState) -> String {
-    match probe {
-        ProbeState::Unknown => String::new(),
-        ProbeState::Checking => "Checking encoders...".into(),
-        ProbeState::Failed => "Encoders could not be checked.".into(),
-        ProbeState::Done(p) if !p.video.iter().any(|(c, _)| *c == codec(s)) => {
-            format!("No {} encoder works here.", codec(s).label())
+    let p = match probe {
+        ProbeState::Unknown => return String::new(),
+        ProbeState::Checking => return "Checking encoders...".into(),
+        ProbeState::Failed => return "Encoders could not be checked.".into(),
+        ProbeState::Done(p) => p,
+    };
+    let codec = codec(s);
+    let working: Vec<EncoderChoice> = (p.video.iter())
+        .filter(|(c, _)| *c == codec)
+        .map(|(_, e)| *e)
+        .collect();
+    let audio = AudioCodec::from_name(&s.recording_audio_codec).unwrap_or(AudioCodec::Aac);
+    let chosen = EncoderChoice::from_name(&s.recording_encoder).unwrap_or(EncoderChoice::Auto);
+    match working.first() {
+        None => format!("No {} encoder works here.", codec.label()),
+        Some(_) if s.screenshot_record_sound && !p.audio.contains(&audio) => {
+            format!("{} can't be recorded here.", audio.label())
         }
-        ProbeState::Done(_) => String::new(),
+        Some(&using) if chosen != EncoderChoice::Auto && !working.contains(&chosen) => {
+            chosen.status(using, codec)
+        }
+        Some(_) => String::new(),
     }
 }

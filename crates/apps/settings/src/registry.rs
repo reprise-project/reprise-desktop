@@ -656,6 +656,21 @@ mod tests {
                 crate::capturepage::QUALITY,
                 "Recording quality",
             ),
+            (
+                Page::ScreenCapture,
+                crate::capturepage::PNG_COMPRESSION,
+                "PNG compression",
+            ),
+            (
+                Page::ScreenCapture,
+                crate::capturepage::AUDIO_CODEC,
+                "Audio codec",
+            ),
+            (
+                Page::ScreenCapture,
+                crate::capturepage::AUDIO_BITRATE,
+                "Audio bitrate",
+            ),
         ] {
             let (_, f) = &pages[p.index()];
             let named = control_labels(f).into_iter().find(|(i, _)| *i == id);
@@ -672,6 +687,11 @@ mod tests {
                 &variants[1].1,
                 crate::capturepage::JXL_QUALITY,
                 "JPEG XL quality",
+            ),
+            (
+                &variants[0].1,
+                crate::capturepage::FLAC_COMPRESSION,
+                "FLAC compression",
             ),
         ] {
             let named = control_labels(f).into_iter().find(|(i, _)| *i == id);

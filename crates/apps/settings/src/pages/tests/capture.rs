@@ -21,6 +21,13 @@ fn probed() -> Probed {
     }
 }
 
+fn status_line(page: &Form) -> String {
+    match &page.item(cap::STATUS).unwrap().control {
+        Control::Label { text, .. } => text.clone(),
+        c => panic!("the status is a label, not {c:?}"),
+    }
+}
+
 fn capture(s: &PropSheet) -> &Form {
     &s.pages[Page::ScreenCapture.index()]
 }
@@ -184,10 +191,6 @@ fn the_status_line_follows_the_probe() {
         ..Settings::default()
     };
     let page = &mut sheet.pages[Page::ScreenCapture.index()];
-    let line = |page: &Form| match &page.item(cap::STATUS).unwrap().control {
-        Control::Label { text, .. } => text.clone(),
-        _ => unreachable!(),
-    };
     for (state, s, want) in [
         (ProbeState::Unknown, &av1, ""),
         (ProbeState::Checking, &av1, "Checking encoders..."),
@@ -200,13 +203,58 @@ fn the_status_line_follows_the_probe() {
         (ProbeState::Done(probed()), &Settings::default(), ""),
     ] {
         cap::show_probe(page, s, &state);
-        assert_eq!(line(page), want, "{state:?}");
+        assert_eq!(status_line(page), want, "{state:?}");
     }
     cap::show_probe(page, &av1, &ProbeState::Failed);
     assert!(
         greyed(page, cap::ENCODER).iter().all(|g| !g),
         "a failed probe greys nothing"
     );
+}
+
+#[test]
+fn the_status_line_names_sound_that_cannot_be_recorded_and_a_stand_in_encoder() {
+    let mut sheet = built();
+    let page = &mut sheet.pages[Page::ScreenCapture.index()];
+    for (codec, encoder, audio, sound, want) in [
+        ("h264", "auto", "flac", true, "FLAC can't be recorded here."),
+        ("h264", "auto", "flac", false, ""),
+        ("av1", "auto", "flac", true, "No AV1 encoder works here."),
+        (
+            "h265",
+            "nvenc",
+            "flac",
+            true,
+            "FLAC can't be recorded here.",
+        ),
+        (
+            "h265",
+            "nvenc",
+            "aac",
+            true,
+            "Software H.265 (NVENC unavailable)",
+        ),
+        (
+            "h264",
+            "vulkan",
+            "aac",
+            false,
+            "VA-API H.264 (Vulkan unavailable)",
+        ),
+        ("h264", "vaapi", "opus", true, ""),
+        ("h265", "software", "aac", false, ""),
+    ] {
+        let s = Settings {
+            recording_codec: codec.into(),
+            recording_encoder: encoder.into(),
+            recording_audio_codec: audio.into(),
+            screenshot_record_sound: sound,
+            ..Settings::default()
+        };
+        cap::show_probe(page, &s, &ProbeState::Done(probed()));
+        let case = (codec, encoder, audio, sound);
+        assert_eq!(status_line(page), want, "{case:?}");
+    }
 }
 
 #[test]
@@ -228,6 +276,12 @@ fn the_screen_capture_page_pins_its_pixels_in_every_look() {
         &s,
         &ProbeState::Done(probed()),
     );
+    let failed = capture_probed(&capture_other(), &ProbeState::Failed);
+    let lossless = Settings {
+        screenshot_format: "jxl".into(),
+        ..Settings::default()
+    };
+    let checking = capture_probed(&lossless, &ProbeState::Checking);
     let pins = |sheet: &PropSheet| {
         let (dx, dy) = sheet.page_offset();
         let row = Rect::new(row.x + dx, row.y + dy, row.width, row.height);
@@ -235,7 +289,7 @@ fn the_screen_capture_page_pins_its_pixels_in_every_look() {
         [row_pins_at(f, row, 1), row_pins_at(f, row, 2)]
     };
     assert_eq!(
-        [pins(&default), pins(&set)],
+        [pins(&default), pins(&set), pins(&failed), pins(&checking)],
         [
             [
                 [0xbcceb65e937e79cb, 0xc4d7fd21c3526ee2, 0x2bfb45746bfff3d4],
@@ -245,7 +299,17 @@ fn the_screen_capture_page_pins_its_pixels_in_every_look() {
                 [0x26a3338f6f2dc6d1, 0x545683389527b572, 0x7c5fba35f06e5d2a],
                 [0x7e39fc154fa82437, 0xf57b9f293edc5978, 0x1cd90d595a1f9937],
             ],
+            [
+                [0xb610fe24c7073bab, 0xb8dc8f7d7a9541d9, 0x4a647225f143a3f3],
+                [0x714ca0a102617ea4, 0x66a348cccfe7df27, 0xc7e67611058f19ba],
+            ],
+            [
+                [0x83dcc28a240d7dc2, 0x78c4c4188be4be36, 0x2456e5135eb0b25b],
+                [0x38c419eaa6b8e9b0, 0xbfa93f5f3e3680a5, 0x9bdf595bccf92900],
+            ],
         ],
-        "defaults, then JPEG XL lossy, Average, H.265 and Opus after a probe; scale 1, 2; Classic, Blue, Glass"
+        "defaults; JPEG XL lossy, Average, H.265 and Opus after a probe; JPG, Constant, AV1 in \
+         software and FLAC after a failed probe; JPEG XL lossless while checking; scale 1, 2; \
+         Classic, Blue, Glass"
     );
 }
