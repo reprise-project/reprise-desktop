@@ -68,8 +68,10 @@ pub fn incoming_name(transfer: &str) -> String {
 
 /// Moves the received file `from` into `dir` (made if missing) as `offered` cleaned, numbered
 /// `name (2)`... when taken. The move never replaces anything at a name, a symlink included.
+/// The file gets the mode a new file in `dir` would (0666 less the umask) before it moves.
 pub fn land(from: &Path, dir: &Path, offered: &str) -> io::Result<PathBuf> {
     std::fs::create_dir_all(dir)?;
+    as_new_file(from)?;
     let name = safe_name(offered);
     for candidate in names::numbered(OsStr::new(&name), names::paren).take(1000) {
         let to = dir.join(candidate);
@@ -80,6 +82,37 @@ pub fn land(from: &Path, dir: &Path, offered: &str) -> io::Result<PathBuf> {
         }
     }
     Err(io::ErrorKind::AlreadyExists.into())
+}
+
+/// Gives regular file `path` (never a link's target) the mode 0666 under the umask, in place of
+/// obexd's 0600.
+fn as_new_file(path: &Path) -> io::Result<()> {
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    let f = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)?;
+    if !f.metadata()?.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "not a regular file",
+        ));
+    }
+    f.set_permissions(std::fs::Permissions::from_mode(0o666 & !umask()))
+}
+
+/// The process's umask, read from /proc so no thread sees it changed; 077 when unreadable.
+fn umask() -> u32 {
+    std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|s| umask_in(&s))
+        .unwrap_or(0o077)
+}
+
+/// The `Umask:` line of /proc/<pid>/status text.
+fn umask_in(status: &str) -> Option<u32> {
+    let v = status.lines().find_map(|l| l.strip_prefix("Umask:"))?;
+    u32::from_str_radix(v.trim(), 8).ok()
 }
 
 fn shown(name: &str) -> String {
@@ -179,6 +212,29 @@ mod tests {
         assert!(!outside.exists(), "the dangling link was not followed");
         assert_eq!(got("../up.txt"), down.join("_up.txt"));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_landed_file_has_a_new_file_s_mode_not_obexd_s() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("reprise-bt-mode-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let from = dir.join(".reprise-session0-transfer0");
+        std::fs::write(&from, "x").unwrap();
+        std::fs::set_permissions(&from, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let to = land(&from, &dir.join("Downloads"), "a.txt").unwrap();
+        let mode = std::fs::metadata(&to).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o666 & !umask(), "0666 under the umask");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_umask_is_read_from_proc_status() {
+        assert_eq!(umask_in("Name:\tx\nUmask:\t0022\nState:\tR\n"), Some(0o022));
+        assert_eq!(umask_in("Umask:\t0077\n"), Some(0o077));
+        assert_eq!(umask_in("Name:\tx\n"), None);
+        assert!(umask_in(&std::fs::read_to_string("/proc/self/status").unwrap()).is_some());
     }
 
     #[test]
