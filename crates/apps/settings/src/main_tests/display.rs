@@ -207,6 +207,8 @@ fn ok_waits_for_the_primary_call_and_a_failed_one_keeps_the_sheet_with_a_box() {
     assert!(!r.quit, "OK waits for the primary call");
     assert!(app.display.quit_after_primary);
     assert_eq!(app.primary_done(), None, "still running");
+    app.display.model.pick_orientation(1);
+    assert!(app.dirty());
     app.sync_apply();
     assert!(!apply_lit(&app), "Apply greyed while it runs");
 
@@ -216,6 +218,7 @@ fn ok_waits_for_the_primary_call_and_a_failed_one_keeps_the_sheet_with_a_box() {
     let text = app.error.as_ref().map(|b| b.fields.text.clone());
     assert_eq!(text.as_deref(), Some("refused"));
     assert!(app.display.primary_job.is_none());
+    assert!(apply_lit(&app), "Apply lights once the call ended");
 }
 
 #[test]
