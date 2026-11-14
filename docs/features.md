@@ -464,9 +464,12 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   screen is recorded instead; the `record-region` bind opens the picker in
   that mode. While it records, a stop button in the tray says how long it has
   run and stops it on a click, and the capture border outlines the recorded
-  area. Recordings are MP4 (H.264) files in Videos/Screencasts, coded on the
-  graphics card when it can; a notice offers Open and Show in Folder.
-  Settings > Sound adds what plays on the speakers (off by default).
+  area. Recordings are MP4 files in Videos/Screencasts, in H.264, H.265 or
+  AV1 with AAC, Opus or FLAC sound, at a constant quality, an average or a
+  constant bitrate, with a frame rate cap and keyframe interval
+  (`[recording]`, [configuration.md](configuration.md#recording)). They are
+  coded on the graphics card when it can; a notice offers Open and Show in
+  Folder. Settings > Sound adds what plays on the speakers (off by default).
 - **Colour picker.** Super+Shift+C turns the pointer into a crosshair with a
   loupe beside it: the 9 x 9 pixels round the point, the centre one ringed,
   and its `#RRGGBB` under them. It follows the pointer across screens; the

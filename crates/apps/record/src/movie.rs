@@ -1,31 +1,40 @@
-//! H.264 for the file: one backend's encoder at a constant quality with its parameter sets in the
-//! codec context, for the container's header, fed stream frames at their wall-clock times.
+//! The video for the file: one backend's encoder of the codec set, its parameter sets in the
+//! codec context for the container's header, fed stream frames at their wall-clock times.
 
-use ffmpeg::{Dictionary, Packet, ffi, frame};
-use reprisevideo::encode::Codec;
-use reprisevideo::encode::EncodeError;
+use ffmpeg::{Packet, frame};
 use reprisevideo::encode::hwmap::{self, Converter, Devices};
+use reprisevideo::encode::plain::{Plain, Setup};
 use reprisevideo::encode::probe::Backend;
+use reprisevideo::encode::rate::RateControl;
+use reprisevideo::encode::{Codec, EncodeError};
 use reprisevideo::stream::{Frame, FrameBuffer};
 use std::path::Path;
 
 /// The encoders' time base: milliseconds, so a still screen adds no pictures.
 pub const TIME_BASE: (i32, i32) = (1, 1000);
-/// The frame rate the encoders plan their rate control for.
-const RATE_HINT: u32 = 60;
-/// Pictures from one IDR to the next.
-const GOP: u32 = 250;
-/// x264's constant rate factor and the hardware encoders' constant QP.
-const CRF: &str = "23";
-const QP: &str = "24";
+
+/// How the pictures are coded.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Coding {
+    pub codec: Codec,
+    pub rate: RateControl,
+    /// The frame rate the rate control plans for.
+    pub rate_hint: u32,
+    /// Seconds after a keyframe from which the next picture is one.
+    pub keyframe_s: u32,
+}
 
 pub struct Movie {
     backend: Backend,
+    codec: Codec,
     /// The size of the frames read.
     frame: (u32, u32),
     converter: Converter,
-    encoder: ffmpeg::encoder::video::Encoder,
-    /// The last picture sent, which [`Movie::finish`] holds up to the end.
+    encoder: Plain,
+    keyframe_ms: i64,
+    /// The pts of the last keyframe coded or forced.
+    last_key: Option<i64>,
+    /// The last picture sent, which [`Movie::repeat`] and [`Movie::finish`] send again.
     last: Option<(frame::Video, i64)>,
 }
 
@@ -35,6 +44,7 @@ impl Movie {
     /// encoder gets the part cut out on its GPU.
     pub fn open(
         backend: Backend,
+        coding: &Coding,
         device: &Path,
         fourcc: u32,
         frame: (u32, u32),
@@ -46,43 +56,25 @@ impl Movie {
             None => None,
         };
         let coded = hwmap::even(size);
-        let mut converter = Converter::cropped(devices.as_ref(), fourcc, origin, coded, RATE_HINT)?;
-        let name = backend.encoder(Codec::H264);
-        let codec = ffmpeg::encoder::find_by_name(name)
-            .ok_or_else(|| EncodeError(format!("FFmpeg has no {name}")))?;
-        let mut ctx = ffmpeg::codec::Context::new_with_codec(codec)
-            .encoder()
-            .video()
-            .map_err(|e| EncodeError(format!("{name}: {e}")))?;
-        ctx.set_width(coded.0);
-        ctx.set_height(coded.1);
-        ctx.set_format(converter.pixel());
-        ctx.set_time_base(TIME_BASE);
-        ctx.set_frame_rate(Some((RATE_HINT as i32, 1)));
-        ctx.set_gop(GOP);
-        ctx.set_max_b_frames(0);
-        ctx.set_colorspace(ffmpeg::color::Space::BT709);
-        ctx.set_color_range(reprisevideo::encode::colour::RANGE);
-        ctx.set_flags(ffmpeg::codec::Flags::GLOBAL_HEADER);
+        let rate_hint = coding.rate_hint.max(1);
+        let mut converter = Converter::cropped(devices.as_ref(), fourcc, origin, coded, rate_hint)?;
+        let setup = Setup {
+            codec: coding.codec,
+            rate: coding.rate,
+            frame_rate: rate_hint,
+            gop: rate_hint * coding.keyframe_s.max(1),
+            time_base: TIME_BASE,
+        };
         let frames = converter.frames();
-        // SAFETY: fields of a context not yet opened; it takes its own frames reference.
-        unsafe {
-            let c = ctx.as_mut_ptr();
-            (*c).color_primaries = ffi::AVColorPrimaries::BT709;
-            (*c).color_trc = ffi::AVColorTransferCharacteristic::BT709;
-            (*c).thread_count = 0;
-            if let Some(frames) = frames {
-                (*c).hw_frames_ctx = ffi::av_buffer_ref(frames);
-            }
-        }
-        let encoder = ctx
-            .open_with(options(backend))
-            .map_err(|e| EncodeError(format!("{name}: {e}")))?;
+        let encoder = Plain::open(backend, &setup, coded, converter.pixel(), frames)?;
         Ok(Movie {
             backend,
+            codec: coding.codec,
             frame,
             converter,
             encoder,
+            keyframe_ms: i64::from(coding.keyframe_s.max(1)) * 1000,
+            last_key: None,
             last: None,
         })
     }
@@ -91,13 +83,17 @@ impl Movie {
         self.backend
     }
 
+    pub fn codec(&self) -> Codec {
+        self.codec
+    }
+
     /// Whether the part recorded is cut out on the GPU rather than the CPU.
     pub fn cut_on_gpu(&self) -> bool {
         self.converter.on_gpu()
     }
 
     pub fn encoder(&self) -> &ffmpeg::encoder::video::Encoder {
-        &self.encoder
+        self.encoder.encoder()
     }
 
     /// Whether frames like `frame`, read at `size`, go on into this encoder: the same sizes and
@@ -117,73 +113,57 @@ impl Movie {
         pts: i64,
         out: &mut Vec<Packet>,
     ) -> Result<(), EncodeError> {
-        let picture = self.converter.convert(frame)?;
-        self.send(picture, pts, out)
+        let mut picture = self.converter.convert(frame)?;
+        self.send(&mut picture, pts, out)?;
+        self.last = Some((picture, pts));
+        Ok(())
+    }
+
+    /// The last picture again, shown from `pts` ms on; nothing before the first.
+    pub fn repeat(&mut self, pts: i64, out: &mut Vec<Packet>) -> Result<(), EncodeError> {
+        if let Some((mut picture, _)) = self.last.take() {
+            let sent = self.send(&mut picture, pts, out);
+            self.last = Some((picture, pts));
+            sent?;
+        }
+        Ok(())
+    }
+
+    /// `picture` from `pts` on, a keyframe once the interval has passed since the last: the GOP
+    /// counts pictures, and a capped or changing-only movie has fewer than its rate hint.
+    fn send(
+        &mut self,
+        picture: &mut frame::Video,
+        pts: i64,
+        out: &mut Vec<Packet>,
+    ) -> Result<(), EncodeError> {
+        let key = self.last_key.is_none_or(|k| pts - k >= self.keyframe_ms);
+        picture.set_kind(match key {
+            true => ffmpeg::picture::Type::I,
+            false => ffmpeg::picture::Type::None,
+        });
+        let from = out.len();
+        self.encoder.send(picture, pts, out)?;
+        let coded = out[from..]
+            .iter()
+            .filter(|p| p.is_key())
+            .filter_map(|p| p.pts());
+        self.last_key = self.last_key.max(coded.max());
+        if key {
+            self.last_key = Some(pts);
+        }
+        Ok(())
     }
 
     /// Hold the last picture up to `end` ms, then drain the encoder into `out`.
     pub fn finish(&mut self, end: i64, out: &mut Vec<Packet>) -> Result<(), EncodeError> {
-        if let Some((picture, pts)) = self.last.take()
+        if let Some((mut picture, pts)) = self.last.take()
             && end > pts
         {
-            self.send(picture, end, out)?;
+            self.send(&mut picture, end, out)?;
         }
-        let err = |e| EncodeError(format!("{}: {e}", self.backend.encoder(Codec::H264)));
-        self.encoder.send_eof().map_err(err)?;
-        self.receive(out)
+        self.encoder.finish(out)
     }
-
-    fn send(
-        &mut self,
-        mut picture: frame::Video,
-        pts: i64,
-        out: &mut Vec<Packet>,
-    ) -> Result<(), EncodeError> {
-        picture.set_pts(Some(pts));
-        let codec = self.backend.encoder(Codec::H264);
-        (self.encoder.send_frame(&picture)).map_err(|e| EncodeError(format!("{codec}: {e}")))?;
-        self.last = Some((picture, pts));
-        self.receive(out)
-    }
-
-    fn receive(&mut self, out: &mut Vec<Packet>) -> Result<(), EncodeError> {
-        loop {
-            let mut packet = Packet::empty();
-            match self.encoder.receive_packet(&mut packet) {
-                Ok(()) => out.push(packet),
-                Err(ffmpeg::Error::Other {
-                    errno: libc::EAGAIN,
-                })
-                | Err(ffmpeg::Error::Eof) => return Ok(()),
-                Err(e) => {
-                    return Err(EncodeError(format!(
-                        "{}: {e}",
-                        self.backend.encoder(Codec::H264)
-                    )));
-                }
-            }
-        }
-    }
-}
-
-/// Each backend's options for a file: x264 at a constant rate factor, the hardware encoders at a
-/// constant QP.
-fn options(backend: Backend) -> Dictionary {
-    let mut o = Dictionary::new();
-    let pairs: &[(&str, &str)] = match backend {
-        Backend::Vaapi { low_power } => &[
-            ("rc_mode", "CQP"),
-            ("qp", QP),
-            ("low_power", if low_power { "1" } else { "0" }),
-        ],
-        Backend::Nvenc => &[("rc", "constqp"), ("qp", QP), ("preset", "p4")],
-        Backend::Vulkan => &[("rc_mode", "cqp"), ("qp", QP)],
-        Backend::Software => &[("preset", "veryfast"), ("crf", CRF)],
-    };
-    for (k, v) in pairs {
-        o.set(k, v);
-    }
-    o
 }
 
 #[cfg(test)]
@@ -197,10 +177,38 @@ mod tests {
         Frame::detached(data, size, Vec::new())
     }
 
-    fn x264(size: (u32, u32), origin: (u32, u32)) -> Movie {
+    fn coding(codec: Codec, rate: RateControl) -> Coding {
+        Coding {
+            codec,
+            rate,
+            rate_hint: 60,
+            keyframe_s: 4,
+        }
+    }
+
+    fn open_with(coding: Coding, size: (u32, u32), origin: (u32, u32)) -> Movie {
         ffmpeg::util::log::set_level(ffmpeg::util::log::Level::Quiet);
         let node = Path::new(reprisevideo::encode::probe::RENDER_NODE);
-        Movie::open(Backend::Software, node, XRGB8888, (64, 48), size, origin).unwrap()
+        let frame = (size.0.max(64), size.1.max(48));
+        Movie::open(
+            Backend::Software,
+            &coding,
+            node,
+            XRGB8888,
+            frame,
+            size,
+            origin,
+        )
+        .unwrap()
+    }
+
+    fn x264(size: (u32, u32), origin: (u32, u32)) -> Movie {
+        let quality = RateControl::Quality(reprisevideo::encode::rate::DEFAULT_QUALITY);
+        open_with(coding(Codec::H264, quality), size, origin)
+    }
+
+    fn software(codec: Codec, rate: RateControl, size: (u32, u32)) -> Movie {
+        open_with(coding(codec, rate), size, (0, 0))
     }
 
     #[test]
@@ -234,5 +242,85 @@ mod tests {
             !movie.takes(&frame((80, 48), (0, 0, 0)), (33, 21)),
             "a frame of another size"
         );
+    }
+
+    #[test]
+    fn every_codec_codes_pictures_on_the_cpu() {
+        for codec in Codec::ALL {
+            let mut movie = software(codec, RateControl::Quality(55), (64, 64));
+            let mut out = Vec::new();
+            movie
+                .code(&frame((64, 64), (200, 40, 40)), 0, &mut out)
+                .unwrap();
+            movie.finish(500, &mut out).unwrap();
+            let pts: Vec<_> = out.iter().map(|p| p.pts()).collect();
+            assert_eq!(pts, [Some(0), Some(500)], "{}", codec.label());
+            assert!(out[0].is_key(), "{}", codec.label());
+            assert_eq!(movie.codec(), codec);
+        }
+    }
+
+    #[test]
+    fn a_repeat_codes_the_last_picture_again_at_its_own_time() {
+        let mut movie = software(Codec::H264, RateControl::Constant(2000), (64, 64));
+        let mut out = Vec::new();
+        movie.repeat(10, &mut out).unwrap();
+        assert!(out.is_empty(), "nothing to repeat yet");
+        movie
+            .code(&frame((64, 64), (40, 200, 40)), 0, &mut out)
+            .unwrap();
+        movie.repeat(33, &mut out).unwrap();
+        movie.finish(66, &mut out).unwrap();
+        let pts: Vec<_> = out.iter().map(|p| p.pts()).collect();
+        assert_eq!(pts, [Some(0), Some(33), Some(66)]);
+    }
+
+    #[test]
+    fn the_gop_is_the_keyframe_interval_at_the_rate_hint() {
+        let coding = Coding {
+            codec: Codec::H264,
+            rate: RateControl::Quality(55),
+            rate_hint: 30,
+            keyframe_s: 4,
+        };
+        let movie = open_with(coding, (64, 48), (0, 0));
+        // SAFETY: a field of the open encoder's context.
+        assert_eq!(unsafe { (*movie.encoder().as_ptr()).gop_size }, 120);
+    }
+
+    #[test]
+    fn sparse_changes_get_a_keyframe_once_the_interval_has_passed() {
+        let rates = [
+            RateControl::Quality(55),
+            RateControl::Average(2000),
+            RateControl::Constant(2000),
+        ];
+        for (codec, rate) in Codec::ALL.into_iter().flat_map(|c| rates.map(|r| (c, r))) {
+            let coding = Coding {
+                codec,
+                rate,
+                rate_hint: 30,
+                keyframe_s: 1,
+            };
+            let mut movie = open_with(coding, (64, 64), (0, 0));
+            let mut out = Vec::new();
+            for (i, ms) in (0..=2400).step_by(400).enumerate() {
+                let v = 100 + 3 * i as u8;
+                movie
+                    .code(&frame((64, 64), (v, v, v)), ms, &mut out)
+                    .unwrap();
+            }
+            movie.finish(2400, &mut out).unwrap();
+            let keys: Vec<_> = (out.iter())
+                .filter(|p| p.is_key())
+                .map(|p| p.pts())
+                .collect();
+            assert_eq!(
+                keys,
+                [Some(0), Some(1200), Some(2400)],
+                "{} {rate:?}: seven pictures, far under the GOP of 30",
+                codec.label()
+            );
+        }
     }
 }

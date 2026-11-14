@@ -23,11 +23,27 @@ pub struct Area {
     pub height: i32,
 }
 
-pub const USAGE: &str =
-    "usage: reprise-record --fd N --output NAME [--area X,Y,WIDTH,HEIGHT] [--sound]";
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Command {
+    Record(Args),
+    /// Print the encoders and audio codecs that work here.
+    Probe,
+}
+
+pub const USAGE: &str = "usage: reprise-record --fd N --output NAME [--area X,Y,WIDTH,HEIGHT] \
+                         [--sound]\n       reprise-record --probe";
+
+pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Command, String> {
+    let args: Vec<OsString> = args.into_iter().collect();
+    match args.iter().position(|a| a == "--probe") {
+        Some(_) if args.len() == 1 => Ok(Command::Probe),
+        Some(_) => Err(format!("--probe takes nothing beside it; {USAGE}")),
+        None => Args::parse(args).map(Command::Record),
+    }
+}
 
 impl Args {
-    pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
+    fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
         let mut args = args.into_iter();
         let (mut fd, mut output, mut area, mut sound) = (None, None, None, false);
         while let Some(arg) = args.next() {
@@ -86,6 +102,24 @@ mod tests {
 
     fn parse(args: &[&str]) -> Result<Args, String> {
         Args::parse(args.iter().map(OsString::from))
+    }
+
+    fn command(args: &[&str]) -> Result<Command, String> {
+        super::parse(args.iter().map(OsString::from))
+    }
+
+    #[test]
+    fn probe_stands_alone() {
+        assert_eq!(command(&["--probe"]), Ok(Command::Probe));
+        assert!(
+            command(&["--probe", "--fd", "3"])
+                .unwrap_err()
+                .starts_with("--probe takes nothing")
+        );
+        assert!(matches!(
+            command(&["--fd", "3", "--output", "DP-1"]),
+            Ok(Command::Record(_))
+        ));
     }
 
     #[test]

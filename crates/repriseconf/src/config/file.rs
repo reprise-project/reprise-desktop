@@ -709,6 +709,10 @@ pub struct FileConfig {
     /// `[remote_desktop]`, through `crate::remote::from_table`, which takes any key it can't
     /// read at its default; reprise-rdp warns of those.
     pub remote_desktop: Option<toml::Value>,
+    /// `[recording]` is read by reprise-record through `crate::recording::recording`; accepted
+    /// here so the file parses.
+    #[allow(dead_code)]
+    pub recording: Option<serde::de::IgnoredAny>,
     /// `[recycle_bin]` is read by `reprisefs::bincap::Policy`; accepted here so the file parses.
     #[allow(dead_code)]
     pub recycle_bin: Option<serde::de::IgnoredAny>,

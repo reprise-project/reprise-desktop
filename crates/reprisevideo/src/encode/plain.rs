@@ -14,7 +14,7 @@ pub struct Setup {
     pub rate: RateControl,
     /// The frame rate the rate control plans for.
     pub frame_rate: u32,
-    /// Pictures from one keyframe to the next.
+    /// The most pictures from one keyframe to the next.
     pub gop: u32,
     pub time_base: (i32, i32),
 }
@@ -51,7 +51,8 @@ impl Plain {
         ctx.set_max_b_frames(0);
         ctx.set_colorspace(::ffmpeg::color::Space::BT709);
         ctx.set_color_range(colour::RANGE);
-        ctx.set_flags(::ffmpeg::codec::Flags::GLOBAL_HEADER);
+        // SVT-AV1's open GOP codes forward keyframes, which the container cannot seek to.
+        ctx.set_flags(::ffmpeg::codec::Flags::GLOBAL_HEADER | ::ffmpeg::codec::Flags::CLOSED_GOP);
         let rate = rate::rate(backend, setup.codec, setup.rate);
         rate::apply(&rate, &mut ctx);
         // SAFETY: fields of a context not yet opened; it takes its own frames reference.
@@ -67,6 +68,9 @@ impl Plain {
         let mut options = Dictionary::new();
         for (k, v) in &rate.options {
             options.set(k, v);
+        }
+        if forces_idr_by_option(backend, setup.codec) {
+            options.set("forced-idr", "1");
         }
         let encoder = ctx.open_with(options).map_err(err)?;
         Ok(Plain { name, encoder })
@@ -110,5 +114,15 @@ impl Plain {
 
     fn error(&self, e: ::ffmpeg::Error) -> EncodeError {
         EncodeError(format!("{}: {e}", self.name))
+    }
+}
+
+/// Whether a picture sent as I is coded as an IDR only with `forced-idr` set; the others make
+/// one of it on their own.
+fn forces_idr_by_option(backend: Backend, codec: Codec) -> bool {
+    match backend {
+        Backend::Software => codec != Codec::Av1,
+        Backend::Nvenc => true,
+        Backend::Vaapi { .. } | Backend::Vulkan => false,
     }
 }
