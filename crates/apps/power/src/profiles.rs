@@ -209,11 +209,14 @@ impl Setter {
 /// goes, and drops every hold when the user picks a profile or the holder leaves the bus.
 pub struct Hold {
     tx: Sender<bool>,
+    /// One per take, after `waker` wakes the app: whether the daemon holds power saver.
+    answers: Receiver<bool>,
 }
 
 impl Hold {
-    pub fn start() -> Hold {
+    pub fn start(waker: repriseapp::Waker) -> Hold {
         let (tx, rx) = std::sync::mpsc::channel::<bool>();
+        let (answer, answers) = std::sync::mpsc::channel::<bool>();
         let spawned = std::thread::Builder::new()
             .name("reprise-power-hold".into())
             .spawn(move || {
@@ -234,16 +237,26 @@ impl Hold {
                             (_, kept) => kept,
                         }
                     });
+                    if on {
+                        let _ = answer.send(held.is_some());
+                        waker.wake();
+                    }
                 }
             });
         if let Err(e) = spawned {
             log::warn!("could not start the profile hold thread: {e}");
         }
-        Hold { tx }
+        Hold { tx, answers }
     }
 
-    pub fn set(&self, on: bool) {
-        let _ = self.tx.send(on);
+    /// Take (`on`) or let go of the hold; false when the thread is gone, so no answer comes.
+    pub fn set(&self, on: bool) -> bool {
+        self.tx.send(on).is_ok()
+    }
+
+    /// The takes answered since the last call.
+    pub fn answers(&self) -> Vec<bool> {
+        self.answers.try_iter().collect()
     }
 }
 
