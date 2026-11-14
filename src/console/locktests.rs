@@ -21,6 +21,7 @@ pub(super) const ENTER: u32 = 28;
 const L: u32 = 38;
 const APOSTROPHE: u32 = 40;
 const X: u32 = 45;
+const CTRL: u32 = 29;
 const SUPER: u32 = 125;
 /// "hunter2" as evdev codes.
 pub(super) const HUNTER2: [u32; 7] = [35, 22, 49, 20, 18, 19, 3];
@@ -384,6 +385,30 @@ fn the_console_password_ends_lock_mode_and_the_remote_lock_with_it() {
     assert!(!super::remote_side(&h.state), "lock mode ends");
     assert!(h.state.lock.remote.is_none(), "the remote lock goes");
     assert!(!h.state.desktop_locked());
+}
+
+/// A key down when lock mode began and let go there leaves the Ctrl tap alone once it ends.
+#[test]
+fn a_key_let_go_in_lock_mode_leaves_the_ctrl_tap_ringing_after() {
+    let mut config = Config::default();
+    config.accessibility.locate_pointer = true;
+    let mut h = Harness::with_config(config);
+    h.output("eDP-1", 1920, 1080);
+    h.key(X, true);
+    let mut portal = h.connect_portal();
+    let lock = portal.lock_screen();
+    lock.set_layout(&[(0, 0, 1280, 720, 100)]);
+    h.roundtrip(&mut portal);
+    assert!(super::remote_side(&h.state));
+    h.key(X, false);
+    hunter2(&mut h);
+    tap(&mut h, &HUNTER2);
+    tap(&mut h, &[ENTER]);
+    settle(&mut h);
+    assert!(!super::remote_side(&h.state), "lock mode ends");
+    assert!(!h.state.console_locked(), "the console unlocks");
+    tap(&mut h, &[CTRL]);
+    assert!(h.state.locate_rings.showing(), "a lone Ctrl tap rings");
 }
 
 /// The file both sides' checks wait for before they answer.
