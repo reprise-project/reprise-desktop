@@ -205,7 +205,10 @@ impl State {
             App(Box<AppEntry>),
             Setting(Setting),
             File(crate::desktop::FileFacts),
-            Result(std::sync::Arc<crate::search::Provider>, String),
+            Result(
+                std::sync::Arc<crate::search::Provider>,
+                reprisebus::searchprovider::Meta,
+            ),
         }
         let run = match v.result_kinds.get(g) {
             Some(ResultKind::Calc) => v.answer.clone().map(|(_, a)| Run::Copy(a)),
@@ -216,7 +219,7 @@ impl State {
                 .map(|e| Run::App(Box::new(e.clone()))),
             Some(ResultKind::Settings) => v.result_settings.get(r).copied().map(Run::Setting),
             Some(&ResultKind::Found(s)) => match v.search.result(s, r) {
-                Some((p, m)) => Some(Run::Result(p.clone(), m.id.clone())),
+                Some((p, m)) => Some(Run::Result(p.clone(), m.clone())),
                 None => (v.search.path(s, r)).map(|p| Run::File(v.search.facts_of(p))),
             },
             None => None,
@@ -228,8 +231,8 @@ impl State {
             Some(Run::App(entry)) => self.launch_app(&entry),
             Some(Run::Setting(s)) => self.open_setting(s),
             Some(Run::File(facts)) => self.open_found(&facts),
-            Some(Run::Result(p, id)) => {
-                self.open_provider(&p, crate::search::providers::Open::Result(id), &query)
+            Some(Run::Result(p, m)) => {
+                self.open_provider(&p, crate::search::providers::Open::Result(m), &query)
             }
             None => {}
         }

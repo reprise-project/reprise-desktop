@@ -1035,6 +1035,7 @@ mod tests {
             name: format!("{id} = 5"),
             description: String::new(),
             gicon: None,
+            clipboard_text: None,
         })
     }
 

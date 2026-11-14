@@ -191,6 +191,7 @@ fn search_groups_the_answer_programs_settings_then_each_found_section_with_count
         name: "14".into(),
         description: "2 + 3 * 4".into(),
         gicon: None,
+        clipboard_text: None,
     })];
     let found = [("Files", &[][..]), ("Contents", &minutes[..])];
     let (groups, kinds) = result_groups(
