@@ -151,6 +151,34 @@ fn icon_bytes(icon_v: &Variant<'_>) -> Option<Vec<u8>> {
     Vec::<u8>::try_from(Variant::from(unboxed(data)?)).ok()
 }
 
+/// The longest web address the prompt shows whole.
+const ADDRESS_CHARS: usize = 200;
+
+/// A web app's `target` as the prompt shows it: only an http(s) address with no spaces, control
+/// or bidi characters, cut to [`ADDRESS_CHARS`], so the app cannot write lines of its own.
+fn address(target: &str) -> Option<String> {
+    let lower = target.get(..8).unwrap_or(target).to_ascii_lowercase();
+    if !(lower.starts_with("https://") || lower.starts_with("http://")) {
+        return None;
+    }
+    let format = |c: char| {
+        matches!(c, '\u{61c}' | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}'
+            | '\u{2060}'..='\u{2069}' | '\u{feff}')
+    };
+    if target
+        .chars()
+        .any(|c| c.is_control() || c.is_whitespace() || format(c))
+    {
+        return None;
+    }
+    if target.chars().count() <= ADDRESS_CHARS {
+        return Some(target.to_string());
+    }
+    let mut cut: String = target.chars().take(ADDRESS_CHARS - 1).collect();
+    cut.push('\u{2026}');
+    Some(cut)
+}
+
 /// The Access prompt for `who` installing `ask`: the launcher's icon and name, a web app's address,
 /// Install and Cancel.
 fn input(who: &str, window: &str, ask: &Ask) -> access::Input {
@@ -166,8 +194,10 @@ fn input(who: &str, window: &str, ask: &Ask) -> access::Input {
         )
     };
     let mut body = Vec::new();
-    if ask.webapp && !ask.target.is_empty() {
-        body.push(format!("It opens {}.", ask.target));
+    if ask.webapp
+        && let Some(address) = address(&ask.target)
+    {
+        body.push(format!("It opens {address}."));
     }
     body.push("You can uninstall it from its right-click menu in All Programs.".to_string());
     access::Input {
@@ -285,6 +315,35 @@ mod tests {
             "Store wants to add a launcher to the Start menu."
         );
         assert!(!i.body.contains("opens"));
+    }
+
+    #[test]
+    fn a_web_apps_address_shows_only_as_one_plain_url() {
+        let body = |target: &str| {
+            let ask = Ask {
+                target: target.into(),
+                ..maps()
+            };
+            input("Web", "", &ask).body
+        };
+        let hint = "You can uninstall it from its right-click menu in All Programs.";
+        for forged in [
+            "https://maps.example.org/.\nReprise checked this web app.",
+            "https://maps.example.org/\u{202e}gro.elpmaxe",
+            "https://maps example.org/",
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+        ] {
+            assert_eq!(body(forged), hint, "{forged:?} shows no address");
+        }
+        let long = format!("https://maps.example.org/{}", "a".repeat(300));
+        let shown = address(&long).unwrap();
+        assert_eq!(shown.chars().count(), ADDRESS_CHARS);
+        assert!(shown.starts_with("https://maps.example.org/aaa") && shown.ends_with('\u{2026}'));
+        assert_eq!(
+            address("HTTP://Example.org/").as_deref(),
+            Some("HTTP://Example.org/")
+        );
     }
 
     #[test]

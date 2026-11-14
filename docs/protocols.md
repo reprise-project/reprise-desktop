@@ -134,7 +134,8 @@ confinement holds, every motion goes through as it comes.
 - **Email:** the message opens unsent in the mail program Default Programs
   names: Thunderbird through `-compose`, Evolution through a `mailto:` with
   `attach=`, any other through `xdg-email` (or the `mailto:` alone without
-  xdg-utils). With no mail program, or one that fails to start, the call
+  xdg-utils; a terminal mail program then runs under the configured
+  `terminal`). With no mail program, or one that fails to start, the call
   fails and a balloon says why
 - **Account:** the Access prompt shows your name, login and AccountsService
   picture with the app's reason; Share returns them (the picture as a

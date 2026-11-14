@@ -213,20 +213,12 @@ impl Failure {
 fn compose(mail: &Mail, token: Option<&str>) -> Result<String, Failure> {
     let apps = reprisefs::apps::scan(&reprisefs::apps::default_dirs());
     let entry = reprisefs::props::default_app_entry(MAILTO, &apps).ok_or(Failure::NoProgram)?;
-    let as_uri = || reprisefs::apps::open_args_argv(entry, "", vec![mailto(mail).into()]);
-    let argv = match client_of(entry) {
-        Client::Thunderbird => {
-            let args = vec!["-compose".into(), compose_fields(mail).into()];
-            reprisefs::apps::open_args_argv(entry, "", args)
-        }
-        Client::Evolution => as_uri(),
-        Client::Other => Ok(xdg_email_argv(mail)),
-    }
-    .map_err(Failure::Refused)?;
+    let (argv, as_uri) =
+        compose_argv(entry, mail, &repriseconf::terminal()).map_err(Failure::Refused)?;
     let started = match start(&argv, &entry.id, token) {
         // Without xdg-utils the program gets the mailto: URI itself.
         Err(e) if e.kind() == std::io::ErrorKind::NotFound && argv[0] == "xdg-email" => {
-            start(&as_uri().map_err(Failure::Refused)?, &entry.id, token)
+            start(&as_uri, &entry.id, token)
         }
         r => r,
     };
@@ -235,6 +227,25 @@ fn compose(mail: &Mail, token: Option<&str>) -> Result<String, Failure> {
         error,
     })?;
     Ok(entry.name.clone())
+}
+
+/// The command line that opens `mail` in `entry`, and `entry` given the mailto: URI itself. A
+/// program that runs in a terminal runs under `terminal`.
+fn compose_argv(
+    entry: &AppEntry,
+    mail: &Mail,
+    terminal: &str,
+) -> Result<(Vec<OsString>, Vec<OsString>), ExecRefused> {
+    let as_uri = reprisefs::apps::open_args_argv(entry, terminal, vec![mailto(mail).into()])?;
+    let argv = match client_of(entry) {
+        Client::Thunderbird => {
+            let args = vec!["-compose".into(), compose_fields(mail).into()];
+            reprisefs::apps::open_args_argv(entry, terminal, args)?
+        }
+        Client::Evolution => as_uri.clone(),
+        Client::Other => xdg_email_argv(mail),
+    };
+    Ok((argv, as_uri))
 }
 
 fn start(argv: &[OsString], app: &str, token: Option<&str>) -> std::io::Result<()> {
@@ -498,6 +509,18 @@ mod tests {
             client_of(&entry("org.gnome.Geary.desktop", "geary %U")),
             Client::Other
         );
+    }
+
+    #[test]
+    fn a_mail_program_in_a_terminal_gets_the_uri_under_the_terminal() {
+        let text = "[Desktop Entry]\nType=Application\nName=NeoMutt\nExec=neomutt %u\n\
+                    Terminal=true\n";
+        let entry = reprisefs::apps::parse_desktop(text, "neomutt.desktop").unwrap();
+        let (argv, as_uri) = compose_argv(&entry, &report(), "foot").unwrap();
+        assert_eq!(argv[0], "xdg-email");
+        let uri: Vec<&str> = as_uri.iter().map(|a| a.to_str().unwrap()).collect();
+        assert_eq!(uri[..3], ["foot", "-e", "neomutt"]);
+        assert!(uri[3].starts_with("mailto:"), "{uri:?}");
     }
 
     #[test]
