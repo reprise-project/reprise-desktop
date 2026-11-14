@@ -1366,8 +1366,10 @@ after its prompt, which shows all three, and asks every time: nothing is
 remembered. The reason under them is the app's own text.
 
 The DynamicLauncher portal adds a launcher to the Start menu only after its
-prompt, which shows the icon, the name and a web app's address. It asks every
-time. xdg-desktop-portal writes the desktop file and checks it: one group,
+prompt, which shows the icon, the name and a web app's address. The address
+shows only as one http or https URL with no spaces, control or bidi
+characters, cut at 200 characters, so the app cannot add lines of its own.
+It asks every time. xdg-desktop-portal writes the desktop file and checks it: one group,
 an Exec line, and for a Flatpak an Exec that runs that same app (`flatpak
 run`), so a launcher starts nothing the app couldn't start itself. An install
 token, which skips the prompt, goes only to Reprise's own programs: an id
