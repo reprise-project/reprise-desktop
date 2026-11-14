@@ -41,7 +41,7 @@ pub enum Report {
     Wifi { on: bool },
     ScreenReader(crate::screenreader::Switched),
     Touchpad { on: bool },
-    Airplane { on: bool },
+    Airplane(reprisebus::airplane::Mode),
     RotationLock { locked: bool },
     Display(DisplayReport),
 }
@@ -672,7 +672,7 @@ async fn perform(buses: &mut Buses, job: Job) -> Option<Report> {
             r
         }
         Job::Airplane => match reprisebus::airplane::toggle(buses.system().await?).await {
-            Ok(on) => Some(Report::Airplane { on }),
+            Ok(mode) => Some(Report::Airplane(mode)),
             Err(e) => {
                 log::warn!("media: airplane mode: {e}");
                 None
@@ -698,17 +698,13 @@ async fn player(conn: &Connection, method: &'static str) -> Option<Report> {
 }
 
 async fn wifi(conn: &Connection) -> Option<Report> {
-    let nm = Proxy::new(
-        conn,
-        "org.freedesktop.NetworkManager",
-        "/org/freedesktop/NetworkManager",
-        "org.freedesktop.NetworkManager",
-    )
-    .await
-    .ok()?;
-    let on = nm.get_property::<bool>("WirelessEnabled").await.ok()?;
-    nm.set_property("WirelessEnabled", !on).await.ok()?;
-    Some(Report::Wifi { on: !on })
+    match reprisebus::airplane::toggle_wifi(conn).await {
+        Ok(on) => Some(Report::Wifi { on }),
+        Err(e) => {
+            log::warn!("media: {e}");
+            None
+        }
+    }
 }
 
 /// How long a job gets before the worker gives up: a wedged bus call or a `wpctl` that never exits would stall every later press.

@@ -2,6 +2,7 @@
 //! tooltip and device-shaped menu, the balloons a link change sends, and what a
 //! click means. It turns a snapshot into those; the D-Bus side is `reprisetray`'s.
 
+use reprisebus::airplane::Mode;
 use reprisetray::{Config, Icon, Msg, Node, Raise, Rows, Shown};
 
 use crate::nm;
@@ -23,6 +24,8 @@ pub enum TrayMsg {
     Repair,
     Wireless,
     Airplane,
+    /// The greyed row under Airplane Mode while a hardware switch holds every radio off.
+    AirplaneNote,
     Folder,
     Exit,
 }
@@ -48,7 +51,7 @@ pub struct MenuShape {
     pub hotspot_on: bool,
     pub vpns: Vec<(String, bool)>,
     /// None hides the row: the machine has no radio switch.
-    pub airplane: Option<bool>,
+    pub airplane: Option<Mode>,
 }
 
 impl Default for MenuShape {
@@ -92,11 +95,9 @@ pub fn menu(shape: &MenuShape) -> Rows<TrayMsg> {
         }
         rows.separator();
     }
-    if let Some(on) = shape.airplane {
-        rows.add(TrayMsg::Airplane, |id| {
-            Node::toggle(id, "Airplane Mode", on)
-        })
-        .separator();
+    if let Some(mode) = shape.airplane {
+        rows.airplane(TrayMsg::Airplane, TrayMsg::AirplaneNote, mode)
+            .separator();
     }
     rows.add(TrayMsg::Folder, row("Open Network Connections"))
         .separator()
@@ -187,8 +188,10 @@ pub fn speed_text(mbit: u32) -> String {
 /// connectivity while it is limited.
 pub fn tooltip(s: &nm::Snapshot) -> String {
     let link = link_tip(s);
-    if s.airplane == Some(true) {
-        return format!("{link}\nAirplane mode is on");
+    match s.airplane {
+        Some(Mode::On) => return format!("{link}\nAirplane mode is on"),
+        Some(Mode::Killed) => return format!("{link}\n{}", reprisebus::airplane::KILLED),
+        _ => {}
     }
     if !limited(s) {
         return link;
@@ -750,7 +753,7 @@ mod tests {
         let row = |row, label: &str| (Some(row), label.to_string(), false);
         let sep = || (None, String::new(), true);
         let shape = MenuShape {
-            airplane: Some(true),
+            airplane: Some(Mode::On),
             ..MenuShape::default()
         };
         assert_eq!(
@@ -765,7 +768,7 @@ mod tests {
         );
         assert_eq!(menu_nodes(&shape)[0].toggle, Some(true));
         let off = MenuShape {
-            airplane: Some(false),
+            airplane: Some(Mode::Off),
             ..MenuShape::default()
         };
         assert_eq!(menu_nodes(&off)[0].toggle, Some(false));
@@ -776,14 +779,34 @@ mod tests {
 
         let mut s = snap(vec![wifi(nm::State::Disconnected, None, 0)]);
         assert_eq!(menu_shape(&s).airplane, None, "no radio switch, no row");
-        s.airplane = Some(true);
-        assert_eq!(menu_shape(&s).airplane, Some(true));
+        s.airplane = Some(Mode::On);
+        assert_eq!(menu_shape(&s).airplane, Some(Mode::On));
         assert_eq!(
             tooltip(&s),
             "Wireless Network Connection\nNot connected\nAirplane mode is on"
         );
-        s.airplane = Some(false);
+        s.airplane = Some(Mode::Killed);
+        assert_eq!(
+            tooltip(&s),
+            "Wireless Network Connection\nNot connected\nTurned off by a hardware switch"
+        );
+        s.airplane = Some(Mode::Off);
         assert_eq!(tooltip(&s), "Wireless Network Connection\nNot connected");
+    }
+
+    #[test]
+    fn under_a_hardware_kill_the_airplane_row_greys_with_a_note_under_it() {
+        let shape = MenuShape {
+            airplane: Some(Mode::Killed),
+            ..MenuShape::default()
+        };
+        let nodes = menu_nodes(&shape);
+        assert_eq!(nodes[0].label, "Airplane Mode");
+        assert_eq!(nodes[0].toggle, Some(true));
+        assert!(!nodes[0].enabled, "the row greys");
+        assert_eq!(nodes[1].label, "Turned off by a hardware switch");
+        assert!(!nodes[1].enabled);
+        assert!(nodes[2].separator);
     }
 
     #[test]

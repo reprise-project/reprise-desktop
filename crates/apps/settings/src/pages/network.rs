@@ -2,6 +2,7 @@
 //! and the session proxy, which Apply writes ([`crate::proxyhost`]).
 
 use super::{Area, GX, X, edit, group, radio, updown};
+use reprisebus::airplane;
 use reprisefs::proxy::{Mode, Proxy, Server};
 use reprisekit::classic::widgets::LINE_H;
 use reprisekit::controls::form::{Control, Form, Item};
@@ -207,10 +208,18 @@ pub fn read_proxy(page: &mut Form) -> Proxy {
 }
 
 /// Show airplane mode as `state` has it (None: no radio switch), the check box greyed while
-/// `busy` carries out a change.
-pub fn show_airplane(page: &mut Form, state: Option<bool>, busy: bool) {
-    page.set_check(AIRPLANE, state == Some(true));
-    page.set_enabled(AIRPLANE, state.is_some() && !busy);
+/// `busy` carries out a change or a hardware switch holds every radio off.
+pub fn show_airplane(page: &mut Form, state: Option<airplane::Mode>, busy: bool) {
+    page.set_check(AIRPLANE, state.is_some_and(airplane::Mode::on));
+    page.set_enabled(
+        AIRPLANE,
+        state.and_then(airplane::Mode::flipped).is_some() && !busy,
+    );
     page.set_enabled(AIRPLANE_NOTE, state.is_some());
-    page.set_text(AIRPLANE_STATUS, if state.is_none() { NO_RADIO } else { "" });
+    let status = match state {
+        None => NO_RADIO,
+        Some(airplane::Mode::Killed) => airplane::KILLED,
+        Some(_) => "",
+    };
+    page.set_text(AIRPLANE_STATUS, status);
 }

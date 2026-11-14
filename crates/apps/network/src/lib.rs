@@ -34,6 +34,7 @@ use repriseapp::filedlg::{Host, Resolved, Step, type_keep};
 use repriseapp::keys::{form_clipboard, form_input, sheet_input};
 use repriseapp::oneshot::{self, MsgBox};
 use repriseapp::{App, Child, Ctx, DropForm, Event, FileDrop, PointerInput, Reply, WinId};
+use reprisebus::airplane::Mode;
 use reprisekit::access::Tree;
 use reprisekit::art::neticon;
 use reprisekit::controls::filedlg::{self, DlgMode, Event as FileEvent, Fields, FileDlg};
@@ -599,10 +600,11 @@ impl NetApp {
                 }
                 tray::TrayMsg::Vpn(i) => self.toggle_vpn(i),
                 tray::TrayMsg::Airplane => {
-                    if let Some(on) = self.snapshot.airplane {
-                        self.send(nm::Cmd::Airplane(!on));
+                    if let Some(on) = self.snapshot.airplane.and_then(Mode::flipped) {
+                        self.send(nm::Cmd::Airplane(on));
                     }
                 }
+                tray::TrayMsg::AirplaneNote => {}
                 tray::TrayMsg::Hotspot => {
                     let radio = tray::wifi_device(&self.snapshot)
                         .map(|d| (d.path.clone(), d.hotspot.is_some()));

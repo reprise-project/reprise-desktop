@@ -19,6 +19,8 @@ pub enum TrayMsg {
     /// Button `i` of the received-file balloon `tag`.
     Balloon(u32, usize),
     Airplane,
+    /// The greyed row under Airplane Mode while a hardware switch holds every radio off.
+    AirplaneNote,
     Exit,
 }
 
@@ -66,10 +68,8 @@ pub fn menu(s: &Snapshot) -> Rows<TrayMsg> {
         rows.separator()
             .add(TrayMsg::TogglePower, |id| Node::row(id, word));
     }
-    if let Some(on) = s.airplane {
-        rows.add(TrayMsg::Airplane, |id| {
-            Node::toggle(id, "Airplane Mode", on)
-        });
+    if let Some(mode) = s.airplane {
+        rows.airplane(TrayMsg::Airplane, TrayMsg::AirplaneNote, mode);
     }
     rows.separator()
         .add(TrayMsg::Exit, |id| Node::row(id, "Exit"));
@@ -131,6 +131,7 @@ pub fn start(waker: repriseapp::Waker) -> reprisetray::Started {
 mod tests {
     use super::*;
     use crate::bz::{Adapter, Device};
+    use reprisebus::airplane::Mode;
 
     fn snap(powered: bool, connected: usize) -> Snapshot {
         Snapshot {
@@ -233,7 +234,7 @@ mod tests {
     #[test]
     fn airplane_mode_is_a_check_row_under_the_power_row_on_a_machine_with_a_radio_switch() {
         let mut s = snap(false, 0);
-        s.airplane = Some(true);
+        s.airplane = Some(Mode::On);
         let nodes = menu_nodes(&s);
         let labels: Vec<&str> = nodes.iter().map(|n| n.label.as_str()).collect();
         assert_eq!(
@@ -248,10 +249,23 @@ mod tests {
             ]
         );
         assert_eq!(nodes[3].toggle, Some(true));
-        s.airplane = Some(false);
+        s.airplane = Some(Mode::Off);
         assert_eq!(menu_nodes(&s)[3].toggle, Some(false));
         let click = translate(Rows::clicked(&TrayMsg::Airplane), &s);
         assert_eq!(click, Some(TrayMsg::Airplane));
+    }
+
+    #[test]
+    fn under_a_hardware_kill_the_airplane_row_greys_with_a_note_under_it() {
+        let mut s = snap(false, 0);
+        s.airplane = Some(Mode::Killed);
+        let nodes = menu_nodes(&s);
+        assert_eq!(nodes[3].label, "Airplane Mode");
+        assert_eq!(nodes[3].toggle, Some(true));
+        assert!(!nodes[3].enabled, "the row greys");
+        assert_eq!(nodes[4].label, "Turned off by a hardware switch");
+        assert!(!nodes[4].enabled);
+        assert!(nodes[5].separator);
     }
 
     #[test]

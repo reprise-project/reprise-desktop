@@ -1,5 +1,6 @@
 use super::*;
 use crate::pages::system::{NOTIFICATION_SOUND, RECORD_SOUND};
+use reprisebus::airplane;
 
 #[test]
 fn the_sound_page_geometry() {
@@ -1809,11 +1810,16 @@ fn airplane_mode_greys_until_read_and_without_a_radio() {
         !enabled(&page, AIRPLANE),
         "greyed until the radios are read"
     );
-    show_airplane(&mut page, Some(true), false);
+    show_airplane(&mut page, Some(airplane::Mode::On), false);
     assert_eq!(page.checked(AIRPLANE), Some(true));
     assert!(enabled(&page, AIRPLANE));
     assert_eq!(status(&page), "");
-    show_airplane(&mut page, Some(false), true);
+    show_airplane(&mut page, Some(airplane::Mode::Killed), false);
+    assert_eq!(page.checked(AIRPLANE), Some(true));
+    assert!(!enabled(&page, AIRPLANE), "greyed under a hardware kill");
+    assert!(enabled(&page, "airplane_note"));
+    assert_eq!(status(&page), "Turned off by a hardware switch");
+    show_airplane(&mut page, Some(airplane::Mode::Off), true);
     assert_eq!(page.checked(AIRPLANE), Some(false));
     assert!(!enabled(&page, AIRPLANE), "greyed while a change runs");
     show_airplane(&mut page, None, false);
@@ -1826,17 +1832,20 @@ fn airplane_mode_greys_until_read_and_without_a_radio() {
 fn the_airplane_mode_rows_pin_their_pixels_in_every_look() {
     let row = Rect::new(20, 40, 358, 56);
     let mut page = network(Area::MIN);
-    show_airplane(&mut page, Some(true), false);
+    show_airplane(&mut page, Some(airplane::Mode::On), false);
     let on = row_pins(&page, row);
     show_airplane(&mut page, None, false);
     let none = row_pins(&page, row);
+    show_airplane(&mut page, Some(airplane::Mode::Killed), false);
+    let killed = row_pins(&page, row);
     assert_eq!(
-        [on, none],
+        [on, none, killed],
         [
             [0xd4ab66947128ebfe, 0x4f341a8af31bcccb, 0x0bacf51ccd78cc46],
             [0xd28c5f7b6e621d82, 0xe1aa3b114dbba873, 0xfa38d4ecfdf80291],
+            [0x90c13f02cc8fd8b6, 0xebb321a993ce7a0b, 0xfd2b81923554c4a7],
         ],
-        "on, no radio; Classic, Blue, Glass"
+        "on, no radio, hardware kill; Classic, Blue, Glass"
     );
 }
 

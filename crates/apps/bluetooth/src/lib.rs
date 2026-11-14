@@ -33,6 +33,7 @@ use std::sync::mpsc::Receiver;
 use repriseapp::keys::{dialog_key, form_clipboard, form_input, sheet_input};
 use repriseapp::oneshot::{self, MsgBox};
 use repriseapp::{App, BTN_LEFT, Child, Ctx, DropForm, Event, PointerInput, Reply, WinId};
+use reprisebus::airplane::Mode;
 use reprisekit::access::Tree;
 use reprisekit::controls::msgbox::Fields;
 use reprisekit::controls::{form, propsheet, wizard};
@@ -407,10 +408,11 @@ impl BtApp {
                     }
                 }
                 tray::TrayMsg::Airplane => {
-                    if let Some(on) = self.snapshot.airplane {
-                        self.send(bz::Cmd::Airplane(!on));
+                    if let Some(on) = self.snapshot.airplane.and_then(Mode::flipped) {
+                        self.send(bz::Cmd::Airplane(on));
                     }
                 }
+                tray::TrayMsg::AirplaneNote => {}
                 tray::TrayMsg::TogglePower => {
                     if let Some(a) = &self.snapshot.adapter {
                         self.send(bz::Cmd::SetPowered {

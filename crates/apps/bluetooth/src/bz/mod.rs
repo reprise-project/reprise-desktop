@@ -25,8 +25,8 @@ pub struct Snapshot {
     /// radio.
     pub adapter: Option<Adapter>,
     pub devices: Vec<Device>,
-    /// Whether airplane mode is on; None on a machine with no radio switch.
-    pub airplane: Option<bool>,
+    /// None on a machine with no radio switch.
+    pub airplane: Option<reprisebus::airplane::Mode>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
