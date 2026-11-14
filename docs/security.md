@@ -1864,8 +1864,9 @@ stop the share first.
   nothing as root: PackageKit, Flatpak or `pkexec pacman -U` (for an Arch
   package, which PackageKit's pacman backend refuses) does the work
   and polkit decides whether it takes an administrator's password. The sheet
-  first copies the file (and a `.sig` beside it) into a new folder in
-  `$XDG_RUNTIME_DIR` only you can open, reads its facts from the copy and
+  first copies the file (and a `.sig` beside it) into a new folder only you
+  can open, in `$XDG_RUNTIME_DIR`, or in `/var/tmp` when the file would
+  leave that RAM-backed folder under 64 MiB free, reads its facts from the copy and
   installs the copy, so a file someone swaps after it opened is not what
   installs. A downloaded package carries no repository signature, so
   PackageKit treats it as untrusted, the packager it names reads

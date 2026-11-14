@@ -111,6 +111,8 @@ struct Stopper {
     tid: Option<String>,
     pidfd: Option<flatpak::Pidfd>,
     cancelled: bool,
+    /// The private copy's folder, removed by `emergency` when the process ends unwound.
+    copy: Option<PathBuf>,
 }
 
 type Poster = repriseapp::Poster<Msg>;
@@ -618,12 +620,15 @@ fn settle_cancel(
     }
 }
 
-/// Where a package file's private copy goes: `$XDG_RUNTIME_DIR`, else the temp folder.
-fn runtime_dir() -> PathBuf {
-    std::env::var_os("XDG_RUNTIME_DIR")
+/// Where `file`'s private copy goes: `$XDG_RUNTIME_DIR` (else the temp folder) when it has the
+/// room, else `/var/tmp` on disk, which root's installers read as well.
+fn copy_parent(file: &Path) -> PathBuf {
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())
-        .unwrap_or_else(std::env::temp_dir)
+        .unwrap_or_else(std::env::temp_dir);
+    let size = std::fs::metadata(file).map_or(0, |m| m.len());
+    pkgfile::copy_parent(&runtime, Path::new("/var/tmp"), size, pkgfile::free_bytes)
 }
 
 /// Read `target`, post what it is, then run it each time `go` says so, until it ends other than
@@ -636,8 +641,9 @@ fn work(target: Target, go: Receiver<()>, poster: Poster, stop: Arc<Mutex<Stoppe
             let (f, p) = read_program(file, conn.as_ref());
             (f, p, Verb::Uninstall, None)
         }
-        Target::Install(file) => match pkgfile::private_copy(file, &runtime_dir()) {
+        Target::Install(file) => match pkgfile::private_copy(file, &copy_parent(file)) {
             Ok(c) => {
+                lock(&stop).copy = Some(c.dir().to_path_buf());
                 let (f, p) = read_file(&c.file, c.signed, conn.as_ref());
                 (f, p, Verb::Install, Some(c))
             }
@@ -982,6 +988,12 @@ impl App for Installer {
 }
 
 impl repriseapp::Extended for Installer {
+    fn emergency(&mut self) {
+        if let Some(dir) = lock(&self.stop).copy.take() {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
     fn text_sized(&self) -> bool {
         true
     }
