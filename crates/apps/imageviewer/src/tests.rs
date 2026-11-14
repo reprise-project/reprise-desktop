@@ -423,3 +423,20 @@ fn the_main_window_is_pinned_per_interface_and_scale() {
     let want: Vec<(String, u64)> = want.iter().map(|(k, h)| (k.to_string(), *h)).collect();
     assert_eq!(got, want);
 }
+
+#[test]
+fn the_desktop_defaults_open_every_type_the_viewer_declares() {
+    let entry = include_str!("../../../../data/apps/reprise-imageviewer.desktop");
+    let defaults = include_str!("../../../../data/reprise-mimeapps.list");
+    let declared = entry.lines().find_map(|l| l.strip_prefix("MimeType="));
+    let declared: Vec<&str> = declared
+        .unwrap()
+        .split(';')
+        .filter(|t| !t.is_empty())
+        .collect();
+    assert!(declared.contains(&"image/jxl"));
+    for t in declared {
+        let line = format!("{t}=reprise-imageviewer.desktop");
+        assert!(defaults.lines().any(|l| l == line), "{line} in the list");
+    }
+}

@@ -92,6 +92,7 @@ pub const KINDS: [Kind; 7] = [
             "image/webp",
             "image/bmp",
             "image/tiff",
+            "image/jxl",
         ],
         always: 1,
     },
@@ -873,6 +874,39 @@ pub(crate) mod tests {
             Some("firefox.desktop")
         );
         assert_eq!(id_of(&d, "text/html").as_deref(), Some("chromium.desktop"));
+    }
+
+    #[test]
+    fn a_photos_pick_sets_jpeg_xl_when_the_program_reads_it() {
+        let apps = vec![
+            app("still.desktop", "Still", "still %f", &["image/jpeg"], &[]),
+            app(
+                "viewer.desktop",
+                "Viewer",
+                "viewer %f",
+                &["image/jpeg", "image/jxl"],
+                &[],
+            ),
+        ];
+        let desktop = "[Default Applications]\nimage/jpeg=still.desktop\n";
+        let lists = vec![String::new(), String::new(), desktop.into()];
+        let mut d = Defaults::new(
+            apps,
+            MimeTree::default(),
+            lists,
+            1,
+            &HashMap::new(),
+            &|_| None,
+        );
+        let (rows, _) = d.kind_rows(kind("dp_photos"));
+        let viewer = rows.iter().position(|r| r == "Viewer").unwrap();
+        assert!(d.pick(kind("dp_photos"), viewer));
+        let set: Vec<&str> = d.edits.iter().map(|(m, _)| m.as_str()).collect();
+        assert_eq!(
+            set,
+            ["image/jpeg", "image/jxl"],
+            "the types Viewer declares"
+        );
     }
 
     #[test]

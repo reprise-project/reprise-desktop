@@ -8,10 +8,12 @@ use std::mem::MaybeUninit;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
+use jpegxl_sys::color::color_encoding::JxlColorEncoding;
 use jpegxl_sys::common::memory_manager::JxlMemoryManager;
 use jpegxl_sys::common::types::{JxlBool, JxlDataType, JxlEndianness, JxlPixelFormat};
 use jpegxl_sys::decode as sys;
 use jpegxl_sys::decode::JxlDecoderStatus as Status;
+use jpegxl_sys::encoder::encode::JxlColorEncodingSetToSRGB;
 use jpegxl_sys::metadata::codestream_header::JxlBasicInfo;
 use jpegxl_sys::threads::parallel_runner::{
     JXL_PARALLEL_RET_RUNNER_ERROR, JXL_PARALLEL_RET_SUCCESS, JxlParallelRetCode,
@@ -82,8 +84,10 @@ pub fn first_frame(
         endianness: JxlEndianness::Native,
         align: 0,
     };
-    let events = Status::BasicInfo as c_int | Status::FullImage as c_int;
+    let events =
+        Status::BasicInfo as c_int | Status::ColorEncoding as c_int | Status::FullImage as c_int;
     let mut size = None;
+    let mut ask_srgb = None;
     // SAFETY: `dec` is a live decoder; `bytes` and `clock` outlive it, `bytes` unchanged while
     // it reads.
     unsafe {
@@ -118,6 +122,23 @@ pub fn first_frame(
                 } else {
                     (info.xsize, info.ysize)
                 });
+                ask_srgb = (info.uses_original_profile == JxlBool::False)
+                    .then_some(info.num_color_channels == 1);
+            }
+            // With no CMS, libjxl hands over an XYB picture whose profile it cannot state as an
+            // enum in linear sRGB unless sRGB is asked for.
+            Status::ColorEncoding => {
+                if let Some(grey) = ask_srgb {
+                    let mut srgb = MaybeUninit::<JxlColorEncoding>::uninit();
+                    // SAFETY: the call fills `srgb`; `dec` is live and copies it.
+                    let ok = unsafe {
+                        JxlColorEncodingSetToSRGB(srgb.as_mut_ptr(), grey.into());
+                        sys::JxlDecoderSetPreferredColorProfile(dec.0, srgb.as_ptr())
+                    };
+                    if ok != Status::Success {
+                        return broken();
+                    }
+                }
             }
             Status::NeedImageOutBuffer => {
                 let Some((w, h)) = size else {
@@ -258,7 +279,6 @@ unsafe extern "C-unwind" fn free(opaque: *mut c_void, address: *mut c_void) {
 #[cfg(test)]
 pub(super) mod tests {
     use super::*;
-    use jpegxl_sys::color::color_encoding::JxlColorEncoding;
     use jpegxl_sys::encoder::encode as enc;
     use jpegxl_sys::encoder::encode::JxlEncoderStatus as EncStatus;
     use jpegxl_sys::metadata::codestream_header::JxlFrameHeader;
@@ -284,6 +304,18 @@ pub(super) mod tests {
         premultiplied: bool,
         options: &[(enc::JxlEncoderFrameSettingId, i64)],
     ) -> Vec<u8> {
+        encode_tagged(w, h, frames, premultiplied, options, None)
+    }
+
+    /// [`encode_with`], lossy (XYB) and tagged with `icc` when given.
+    fn encode_tagged(
+        w: u32,
+        h: u32,
+        frames: &[(&[u8], u32)],
+        premultiplied: bool,
+        options: &[(enc::JxlEncoderFrameSettingId, i64)],
+        icc: Option<&[u8]>,
+    ) -> Vec<u8> {
         let ok = |s: EncStatus| assert_eq!(s, EncStatus::Success);
         let format = JxlPixelFormat {
             num_channels: 4,
@@ -306,18 +338,22 @@ pub(super) mod tests {
             } else {
                 JxlBool::False
             };
-            info.uses_original_profile = JxlBool::True;
+            info.uses_original_profile = icc.is_none().into();
             if frames.len() > 1 {
                 info.have_animation = JxlBool::True;
                 info.animation.tps_numerator = 10;
                 info.animation.tps_denominator = 1;
             }
             ok(enc::JxlEncoderSetBasicInfo(e, &info));
-            let mut srgb = MaybeUninit::<JxlColorEncoding>::uninit();
-            enc::JxlColorEncodingSetToSRGB(srgb.as_mut_ptr(), JxlBool::False);
-            ok(enc::JxlEncoderSetColorEncoding(e, srgb.as_ptr()));
             let settings = enc::JxlEncoderFrameSettingsCreate(e, std::ptr::null());
-            ok(enc::JxlEncoderSetFrameLossless(settings, JxlBool::True));
+            if let Some(icc) = icc {
+                ok(enc::JxlEncoderSetICCProfile(e, icc.as_ptr(), icc.len()));
+            } else {
+                let mut srgb = MaybeUninit::<JxlColorEncoding>::uninit();
+                enc::JxlColorEncodingSetToSRGB(srgb.as_mut_ptr(), JxlBool::False);
+                ok(enc::JxlEncoderSetColorEncoding(e, srgb.as_ptr()));
+                ok(enc::JxlEncoderSetFrameLossless(settings, JxlBool::True));
+            }
             for &(id, value) in options {
                 ok(enc::JxlEncoderFrameSettingsSetOption(settings, id, value));
             }
@@ -380,6 +416,67 @@ pub(super) mod tests {
         }
         out.extend(&one[at..]);
         out
+    }
+
+    /// An ICC v2 RGB profile with sRGB's primaries and its curve as an 8-entry table, which a
+    /// JPEG XL can only carry as ICC bytes.
+    fn tabled_srgb_icc() -> Vec<u8> {
+        let s15 = |v: f64| ((v * 65536.0).round() as i32).to_be_bytes();
+        let xyz = |x, y, z| [&b"XYZ \0\0\0\0"[..], &s15(x), &s15(y), &s15(z)].concat();
+        let curve = (0..8).flat_map(|i| {
+            let v = f64::from(i) / 7.0;
+            let linear = if v <= 0.04045 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            };
+            ((linear * 65535.0).round() as u16).to_be_bytes()
+        });
+        let trc = [&b"curv\0\0\0\0\0\0\0\x08"[..], &curve.collect::<Vec<u8>>()].concat();
+        let tags = [
+            (b"wtpt", xyz(0.9642, 1.0, 0.8249)),
+            (b"rXYZ", xyz(0.4361, 0.2225, 0.0139)),
+            (b"gXYZ", xyz(0.3851, 0.7169, 0.0971)),
+            (b"bXYZ", xyz(0.1431, 0.0606, 0.7141)),
+            (b"rTRC", trc.clone()),
+            (b"gTRC", trc.clone()),
+            (b"bTRC", trc),
+        ];
+        let mut table = (tags.len() as u32).to_be_bytes().to_vec();
+        let mut data = Vec::new();
+        let start = 128 + 4 + 12 * tags.len();
+        for (sig, body) in &tags {
+            data.resize(data.len().next_multiple_of(4), 0);
+            table.extend(*sig);
+            table.extend(((start + data.len()) as u32).to_be_bytes());
+            table.extend((body.len() as u32).to_be_bytes());
+            data.extend(body);
+        }
+        let mut icc = ((128 + table.len() + data.len()) as u32)
+            .to_be_bytes()
+            .to_vec();
+        icc.extend(b"none\x02\x10\0\0mntrRGB XYZ ");
+        icc.resize(36, 0);
+        icc.extend(b"acsp");
+        icc.resize(68, 0);
+        icc.extend([s15(0.9642), s15(1.0), s15(0.8249)].concat());
+        icc.resize(128, 0);
+        icc.extend(table);
+        icc.extend(data);
+        icc
+    }
+
+    #[test]
+    fn a_lossy_picture_tagged_with_an_icc_profile_decodes_to_srgb() {
+        let grey = [128, 128, 128, 255].repeat(64 * 64);
+        let icc = tabled_srgb_icc();
+        let bytes = encode_tagged(64, 64, &[(&grey, 1)], false, &[], Some(&icc));
+        let px = first_frame(&bytes, 1 << 20, PLENTY, NO_HURRY).unwrap().px;
+        assert!(
+            px[..3].iter().all(|&v| v.abs_diff(128) <= 4),
+            "grey 128 stays near 128, not its linear value (about 56): {:?}",
+            &px[..3]
+        );
     }
 
     #[test]
