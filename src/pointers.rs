@@ -51,6 +51,7 @@ pub struct Pointers {
     /// The drag source's actions a target last heard of (`dnd_actions_changed`).
     pub drag_actions: Vec<smithay::input::dnd::DndAction>,
     pub absolute: crate::constraint::AbsoluteTrail,
+    pub v120: V120Carry,
     _globals: Globals,
 }
 
@@ -84,6 +85,7 @@ impl Pointers {
             motion_timer: None,
             drag_actions: Vec::new(),
             absolute: Default::default(),
+            v120: Default::default(),
             _globals: Globals {
                 _constraints: PointerConstraintsState::new::<State>(dh),
                 _relative: RelativePointerManagerState::new::<State>(dh),
@@ -280,6 +282,31 @@ pub fn scroll_speed(cfg: &Config, source: AxisSource) -> f64 {
     match source {
         AxisSource::Finger => cfg.touchpad.pointer.scroll_speed,
         _ => cfg.mouse.scroll_speed,
+    }
+}
+
+/// The 120ths of a notch scaled by `scroll_speed` and not yet sent, per axis (horizontal,
+/// vertical), so a speed that splits a notch sums to the right count over the events.
+#[derive(Debug, Default)]
+pub struct V120Carry {
+    source: Option<AxisSource>,
+    rest: [f64; 2],
+}
+
+impl V120Carry {
+    /// The whole 120ths to send for `v120` (already scaled) on `axis` (0 horizontal, 1
+    /// vertical); a change of source starts afresh.
+    pub fn take(&mut self, source: AxisSource, axis: usize, v120: f64) -> i32 {
+        if self.source != Some(source) {
+            *self = V120Carry {
+                source: Some(source),
+                rest: [0.0; 2],
+            };
+        }
+        let total = self.rest[axis] + v120;
+        let sent = total.round();
+        self.rest[axis] = total - sent;
+        sent as i32
     }
 }
 
@@ -576,6 +603,18 @@ pub struct KeptSwipe {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn scaled_v120_carries_what_rounding_leaves() {
+        let mut c = super::V120Carry::default();
+        let wheel = smithay::backend::input::AxisSource::Wheel;
+        let sent: i32 = (0..8).map(|_| c.take(wheel, 1, 15.0 * 0.1)).sum();
+        assert_eq!(sent, 12, "8 events of 1.5");
+        let small: i32 = (0..4).map(|_| c.take(wheel, 0, 0.4)).sum();
+        assert_eq!(small, 2, "four of 0.4");
+        let finger = smithay::backend::input::AxisSource::Finger;
+        assert_eq!(c.take(finger, 0, 0.4), 0, "a new source owes nothing");
+    }
+
     use super::*;
 
     fn touchpad() -> Caps {

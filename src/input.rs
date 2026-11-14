@@ -453,7 +453,7 @@ impl State {
                 let source = event.source();
                 let speed = crate::pointers::scroll_speed(&self.config, source);
                 let mut frame = AxisFrame::new(Event::time(&event)).source(source);
-                for axis in [Axis::Horizontal, Axis::Vertical] {
+                for (i, axis) in [Axis::Horizontal, Axis::Vertical].into_iter().enumerate() {
                     let v120 = event.amount_v120(axis).map(|v| v * speed);
                     let amount = event
                         .amount(axis)
@@ -462,7 +462,7 @@ impl State {
                     if amount != 0.0 {
                         frame = frame.value(axis, amount);
                         if let Some(v120) = v120 {
-                            frame = frame.v120(axis, v120.round() as i32);
+                            frame = frame.v120(axis, self.pointers.v120.take(source, i, v120));
                         }
                     } else if source == AxisSource::Finger {
                         frame = frame.stop(axis);
