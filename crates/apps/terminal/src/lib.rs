@@ -1108,6 +1108,13 @@ impl repriseapp::Extended for Terminal {
         }
     }
 
+    fn cancel_pointer(&mut self, win: WinId) {
+        match self.enter(win) {
+            true => self.let_go(),
+            false => repriseapp::reader_cancel_pointer(self, win),
+        }
+    }
+
     fn tab_with(&self, win: WinId) -> Option<WinId> {
         self.pane(win).and_then(|p| p.leader)
     }

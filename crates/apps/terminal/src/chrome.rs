@@ -291,12 +291,9 @@ impl Terminal {
                 }
             }
             PointerInput::Release { x, y, button, .. } if button == BTN_LEFT => {
-                let Some(press) = self.w.chrome.press.take() else {
+                let Some(press) = self.chrome_let_go() else {
                     return Reply::none();
                 };
-                self.w.tabs.strip.held = false;
-                self.w.tabs.strip.dragging = None;
-                self.w.chrome.bar.pressed = None;
                 let changed = self.chrome_changed();
                 match press {
                     Press::Close(i) if strip_hit(x, y) == DocHit::Close(i) => {
@@ -374,6 +371,16 @@ impl Terminal {
             SETTINGS => self.open_options(),
             _ => Reply::none(),
         }
+    }
+
+    /// Ends a press on the toolbar or the tab strip, a dragged tab left where the drag put it; the
+    /// press it ended.
+    pub(crate) fn chrome_let_go(&mut self) -> Option<Press> {
+        let press = self.w.chrome.press.take()?;
+        self.w.tabs.strip.held = false;
+        self.w.tabs.strip.dragging = None;
+        self.w.chrome.bar.pressed = None;
+        Some(press)
     }
 
     pub(crate) fn chrome_changed(&mut self) -> Reply {

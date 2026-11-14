@@ -1102,6 +1102,50 @@ fn every_reported_press_reports_its_release() {
 }
 
 #[test]
+fn a_covered_window_reports_the_held_button_released_and_ends_the_sweep() {
+    let mut ctx = test_ctx();
+    let mut t = terminal(&["sh", "-c", "printf '\\033[?1002h\\033[?1006h'; sleep 5"]);
+    t.follow_scale(MAIN, 1, &mut ctx);
+    until("the program takes the mouse", || {
+        t.w.tabs
+            .current()
+            .unwrap()
+            .mode()
+            .contains(TermMode::SGR_MOUSE)
+    });
+    let motion = |t: &mut Terminal, ctx: &mut Ctx, col| {
+        let (x, y) = cell_point(t, ctx, col, 0, false);
+        pointer(t, ctx, PointerInput::Motion { x, y });
+    };
+    let (x, y) = cell_point(&mut t, &ctx, 0, 0, false);
+    t.w.tabs.current().unwrap().written.borrow_mut().clear();
+    t.event(MAIN, press(x, y, BTN_LEFT), &mut ctx);
+    motion(&mut t, &mut ctx, 2);
+    repriseapp::cover(&mut t, MAIN, &ctx);
+    motion(&mut t, &mut ctx, 4);
+    let written = t.w.tabs.current().unwrap().written.borrow().concat();
+    assert_eq!(
+        String::from_utf8(written).unwrap(),
+        "\x1b[<0;1;1M\x1b[<32;3;1M\x1b[<0;3;1m"
+    );
+
+    let mut t = terminal(&["sh", "-c", "printf 'abc def'; sleep 5"]);
+    t.follow_scale(MAIN, 1, &mut ctx);
+    until("the text shows", || row_text(&t, 0) == "abc def");
+    let (x, y) = cell_point(&mut t, &ctx, 1, 0, false);
+    t.event(MAIN, press(x, y, BTN_LEFT), &mut ctx);
+    motion(&mut t, &mut ctx, 3);
+    let swept = t.w.tabs.current().unwrap().selection();
+    repriseapp::cover(&mut t, MAIN, &ctx);
+    motion(&mut t, &mut ctx, 6);
+    assert_eq!(t.w.tabs.current().unwrap().selection(), swept);
+    assert!(
+        swept.is_some_and(|s| !s.is_empty()),
+        "the sweep selected text"
+    );
+}
+
+#[test]
 fn a_broken_file_keeps_the_live_settings() {
     let dir = tempfile::tempdir().unwrap();
     let live = Settings {
