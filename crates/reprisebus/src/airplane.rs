@@ -33,14 +33,26 @@ impl Radios {
     };
 
     /// The radios NetworkManager's two switches and the rfkill `switches` leave on. A Bluetooth
-    /// radio is on while any of its switches is not soft-blocked.
+    /// radio is on while any of its switches is blocked neither way; Wi-Fi and mobile broadband
+    /// are off while every switch of theirs is hard-blocked, which NetworkManager's two miss.
     pub fn of(wifi: bool, wwan: bool, switches: &[Switch]) -> Radios {
+        let of_kind = |kind| switches.iter().filter(move |s: &&Switch| s.kind == kind);
+        let unkilled = |kind| {
+            let mut all = of_kind(kind).peekable();
+            all.peek().is_none() || all.any(|s| !s.hard)
+        };
         Radios {
-            wifi,
-            wwan,
-            bluetooth: switches
-                .iter()
-                .any(|s| s.kind == Kind::Bluetooth && !s.soft),
+            wifi: wifi && unkilled(Kind::Wlan),
+            wwan: wwan && unkilled(Kind::Wwan),
+            bluetooth: of_kind(Kind::Bluetooth).any(|s| !s.soft && !s.hard),
+        }
+    }
+
+    fn with(self, other: Radios) -> Radios {
+        Radios {
+            wifi: self.wifi || other.wifi,
+            wwan: self.wwan || other.wwan,
+            bluetooth: self.bluetooth || other.bluetooth,
         }
     }
 
@@ -111,9 +123,7 @@ pub async fn set(conn: &Connection, on: bool) -> Result<(), String> {
     let memory = memory_path();
     let now = radios(conn).await;
     let want = if on {
-        if now.any_on() {
-            remember(&memory, now);
-        }
+        keep(&memory, now);
         Radios::default()
     } else {
         recall(&memory)
@@ -217,6 +227,16 @@ fn remember(path: &Path, radios: Radios) {
     }
 }
 
+/// Airplane mode goes on with `now` on: keep them for turning off, beside those an earlier turn
+/// on kept that no turn off has brought back yet.
+fn keep(path: &Path, now: Radios) {
+    let kept = std::fs::read_to_string(path).map(|t| Radios::parse(&t));
+    let keep = now.with(kept.unwrap_or_default());
+    if keep.any_on() {
+        remember(path, keep);
+    }
+}
+
 /// The radios to turn back on, forgotten as they are read; every radio when none was kept.
 fn recall(path: &Path) -> Radios {
     let kept = std::fs::read_to_string(path).map(|t| Radios::parse(&t));
@@ -236,6 +256,14 @@ mod tests {
         }
     }
 
+    fn killed(kind: Kind) -> Switch {
+        Switch {
+            kind,
+            soft: false,
+            hard: true,
+        }
+    }
+
     const WLAN: Switch = Switch {
         kind: Kind::Wlan,
         soft: false,
@@ -247,6 +275,25 @@ mod tests {
         assert!(!Radios::of(false, false, &[WLAN]).bluetooth);
         assert!(!Radios::of(false, false, &[bt(true), bt(true)]).bluetooth);
         assert!(Radios::of(false, false, &[bt(true), bt(false)]).bluetooth);
+        assert!(!Radios::of(false, false, &[killed(Kind::Bluetooth)]).bluetooth);
+        assert!(Radios::of(false, false, &[killed(Kind::Bluetooth), bt(false)]).bluetooth);
+    }
+
+    #[test]
+    fn a_hardware_kill_switch_turns_every_radio_off() {
+        let all = [
+            killed(Kind::Wlan),
+            killed(Kind::Wwan),
+            killed(Kind::Bluetooth),
+        ];
+        assert_eq!(Radios::of(true, true, &all), Radios::default());
+        assert_eq!(state(Radios::of(true, true, &all), &all), Some(true));
+        let r = Radios::of(true, true, &[killed(Kind::Wlan), WLAN]);
+        assert!(r.wifi, "one Wi-Fi switch is free");
+        assert!(
+            Radios::of(true, true, &[]).wwan,
+            "no switch: as NetworkManager says"
+        );
     }
 
     #[test]
@@ -299,6 +346,26 @@ mod tests {
             [Change::Wifi(true)],
             "a radio turned on by hand stays on"
         );
+    }
+
+    #[test]
+    fn a_second_turn_on_keeps_what_the_first_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("reprise/airplane-mode");
+        let wifi_and_bt = Radios {
+            wifi: true,
+            wwan: false,
+            bluetooth: true,
+        };
+        keep(&path, wifi_and_bt);
+        let bt_by_hand = Radios {
+            bluetooth: true,
+            ..Radios::default()
+        };
+        keep(&path, bt_by_hand);
+        assert_eq!(recall(&path), wifi_and_bt);
+        keep(&path, Radios::default());
+        assert!(!path.exists(), "nothing on, nothing kept");
     }
 
     #[test]

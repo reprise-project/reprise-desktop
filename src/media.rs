@@ -7,7 +7,8 @@ use std::time::Duration;
 
 use reprisebus::bounded;
 use smithay::reexports::calloop::{
-    RegistrationToken, channel,
+    Interest, Mode, PostAction, RegistrationToken, channel,
+    generic::Generic,
     timer::{TimeoutAction, Timer},
 };
 use zbus::{Connection, Proxy};
@@ -839,8 +840,9 @@ fn run_lane(
 #[derive(Debug, Default)]
 pub struct MediaState {
     jobs: Option<Sender<Job>>,
-    /// Held open so the kernel leaves the airplane-mode key to [`Job::Airplane`].
-    rfkill_key: Option<std::fs::File>,
+    /// The source holding `/dev/rfkill` open so the kernel leaves the airplane-mode key to
+    /// [`Job::Airplane`].
+    rfkill_key: Option<RegistrationToken>,
     repeat: Option<RegistrationToken>,
     repeating: Option<(u32, Action)>,
 }
@@ -853,6 +855,29 @@ impl MediaState {
         self.jobs = Some(tx);
         rx
     }
+}
+
+/// Take the airplane-mode key from the kernel, reading off the events it queues on the file.
+fn take_rfkill_key(state: &State) -> Option<RegistrationToken> {
+    let device = reprisebus::rfkill::take_key()
+        .inspect_err(|e| log::info!("media: the kernel keeps the airplane-mode key ({e})"))
+        .ok()?;
+    let source = Generic::new(device, Interest::READ, Mode::Level);
+    let added =
+        state.handle.insert_source(source, |_, device, _| {
+            match reprisebus::rfkill::drain(&**device) {
+                Ok(()) => Ok(PostAction::Continue),
+                Err(e) => {
+                    log::warn!(
+                        "media: /dev/rfkill: {e}; the kernel takes the airplane-mode key back"
+                    );
+                    Ok(PostAction::Remove)
+                }
+            }
+        });
+    added
+        .inspect_err(|e| log::warn!("media: no /dev/rfkill source ({})", e.error))
+        .ok()
 }
 
 /// Whether holding the key keeps stepping: level actions do, the toggles fire once per press.
@@ -898,9 +923,7 @@ impl State {
             return;
         }
         self.key_input.media.jobs = Some(jtx);
-        self.key_input.media.rfkill_key = reprisebus::rfkill::take_key()
-            .inspect_err(|e| log::info!("media: the kernel keeps the airplane-mode key ({e})"))
-            .ok();
+        self.key_input.media.rfkill_key = take_rfkill_key(self);
         crate::displays::reread(self);
     }
 
