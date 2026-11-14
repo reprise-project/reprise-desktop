@@ -614,6 +614,16 @@ impl PropSheet {
         }
     }
 
+    /// Let go of the pointer outright, for a host whose window will not see the release: the
+    /// list's and the page's scrollbars and the open page's held part.
+    pub fn cancel_pointer(&mut self) {
+        if let Nav::List(list) = &mut self.nav {
+            list.bar_release();
+        }
+        self.release_bars();
+        self.open_mut().cancel_pointer();
+    }
+
     /// The pointer let go of the page's scrollbars: true when one was held or its look
     /// changed. [`PropSheet::release`] does it; a host that routes the page's release itself
     /// calls it first.

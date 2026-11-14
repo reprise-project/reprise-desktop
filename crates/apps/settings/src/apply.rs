@@ -9,7 +9,6 @@ use crate::{
 };
 use repriseapp::oneshot::{self, MsgBox};
 use repriseconf::Key;
-use reprisekit::controls::hosted::Hosted;
 use reprisekit::controls::msgbox;
 use reprisekit::controls::propsheet;
 use std::path::PathBuf;
@@ -297,11 +296,9 @@ impl SettingsApp {
         }
     }
 
-    /// Show `reason` in the error box; the first failure wins. The box is modal, so an open combo
-    /// list on the sheet closes under it.
+    /// Show `reason` in the error box; the first failure wins.
     pub(crate) fn fail(&mut self, reason: &str) {
         if self.error.is_none() {
-            self.sheet.dismiss();
             // `dialog-error` is the theme's, so it is `None` until the
             // first event primed it and the box draws without a column.
             self.error = Some(MsgBox::new(

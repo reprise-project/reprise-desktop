@@ -19,6 +19,33 @@ impl Host {
         modal_over(win, slots, |w| self.parent_of(w))
     }
 
+    /// Each window and the modal child gating its input, if any: none for a flyout or the modal
+    /// itself.
+    pub(crate) fn gates(&self) -> Vec<(WinId, Option<WinId>)> {
+        self.slots
+            .iter()
+            .map(|s| {
+                let flyout = s.window.toplevel().is_none();
+                (s.id, self.modal(s.id).filter(|&m| m != s.id && !flyout))
+            })
+            .collect()
+    }
+
+    /// A modal child mapped over `win`: the host's menu on it and the program's popup close, and
+    /// it lets go of the pointer, since the gate drops the release.
+    pub(crate) fn cover(&mut self, win: WinId) {
+        self.drop_menus(|w| w != win);
+        let Some(s) = self.slots.iter().find(|s| s.id == win) else {
+            return;
+        };
+        self.ctx.aim(s);
+        crate::cover(&mut *self.app, win, &self.ctx);
+        if let Some(s) = self.slot_mut(win) {
+            s.access.state.dirty = true;
+            s.dirty = true;
+        }
+    }
+
     pub(crate) fn gated(&self, win: WinId, ev: &Event) -> bool {
         let flyout = self
             .slots
@@ -397,6 +424,19 @@ pub(crate) fn modal_over(
 /// The newest, since each child maps over the ones before it.
 pub(crate) fn top_modal(slots: impl Iterator<Item = (WinId, bool)>) -> Option<WinId> {
     slots.filter(|&(_, modal)| modal).map(|(id, _)| id).last()
+}
+
+/// The windows ungated in `before` that a modal child gates in `after`.
+pub(crate) fn newly_covered(
+    before: &[(WinId, Option<WinId>)],
+    after: &[(WinId, Option<WinId>)],
+) -> Vec<WinId> {
+    let was_free = |id: WinId| before.iter().any(|&(b, m)| b == id && m.is_none());
+    after
+        .iter()
+        .filter(|&&(id, m)| m.is_some() && was_free(id))
+        .map(|&(id, _)| id)
+        .collect()
 }
 
 /// Whether `ev` on `win` is dropped because modal child `modal` is up:

@@ -104,8 +104,8 @@ use windows::Foreign;
 
 pub use access::{Reader, ReaderForm};
 pub use app::{
-    App, Caption, Child, Extended, Flyout, MAIN, Start, WinId, reader_forms, reader_popup,
-    window_id,
+    App, Caption, Child, Extended, Flyout, MAIN, Start, WinId, cover, reader_cancel_pointer,
+    reader_forms, reader_popup, window_id,
 };
 pub use clipboard::{
     clipboard_has_files, clipboard_has_image, clipboard_has_text, fake_clipboard_files,
