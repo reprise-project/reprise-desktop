@@ -354,6 +354,26 @@ impl Arrange {
         true
     }
 
+    /// The tiles grouped by top-left, in tile order: tiles at one top-left are copies showing
+    /// one desktop, drawn as one tile.
+    pub fn copies(&self) -> Vec<Vec<usize>> {
+        let mut groups: Vec<Vec<usize>> = Vec::new();
+        for (k, t) in self.tiles.iter().enumerate() {
+            match groups.iter_mut().find(|g| self.tiles[g[0]].pos == t.pos) {
+                Some(g) => g.push(k),
+                None => groups.push(vec![k]),
+            }
+        }
+        groups
+    }
+
+    /// The rect group `g` of [`Arrange::copies`] is drawn in: the union of its tiles.
+    fn group_rect(&self, lay: &Layout, g: &[usize]) -> Rect {
+        (g.iter().map(|&k| self.tile_rect(lay, k)))
+            .reduce(|a, b| a.union(&b))
+            .unwrap_or_default()
+    }
+
     pub fn step(&mut self, key: Step) -> bool {
         let n = self.tiles.len();
         if n == 0 {
@@ -393,21 +413,21 @@ pub fn draw(
     c.fill_rect(well, cs.button_shadow);
     draw_field_frame(c, p, well, cs.button_shadow);
     let clip = lay.inner.scaled(s);
-    let order = (0..a.tiles.len())
-        .filter(|&k| k != a.selected)
-        .chain(std::iter::once(a.selected).filter(|&k| k < a.tiles.len()));
-    let least = (0..a.tiles.len())
-        .map(|k| {
-            let r = a.tile_rect(lay, k).scaled(s);
+    let (picked, mut order): (Vec<_>, Vec<_>) =
+        (a.copies().into_iter()).partition(|g| g.contains(&a.selected));
+    order.extend(picked);
+    let least = (order.iter())
+        .map(|g| {
+            let r = a.group_rect(lay, g).scaled(s);
             r.width.min(r.height).max(0) as u32
         })
         .min()
         .unwrap_or(0);
     let size = (px * 2).min(least * 3 / 5).max(1);
     c.with_clip(clip, |c| {
-        for k in order {
-            let r = a.tile_rect(lay, k).scaled(s);
-            let picked = k == a.selected;
+        for g in order {
+            let r = a.group_rect(lay, &g).scaled(s);
+            let picked = g.contains(&a.selected);
             let (fill, ink) = if a.enabled {
                 (cs.background, cs.desktop_text)
             } else {
@@ -421,8 +441,8 @@ pub fn draw(
             let t = if picked { 2 * s } else { s };
             c.fill_rect(r, line);
             c.fill_rect(r.inset(t), fill);
-            let number = a.tiles[k].number.to_string();
-            text.draw(c, r, &number, true, ink, Align::Center, size);
+            let numbers: Vec<String> = g.iter().map(|&k| a.tiles[k].number.to_string()).collect();
+            text.draw(c, r, &numbers.join(" | "), true, ink, Align::Center, size);
             if picked && cue {
                 draw_focus_ring(c, r.inset(t + s), s, cs.hilight_text);
             }
@@ -718,6 +738,107 @@ mod tests {
             .filter(|&(x, y)| c.get(x, y) == cs.desktop_text.argb())
             .count();
         assert!(ink > 20, "the number 2 is drawn: {ink} px");
+    }
+
+    fn drawn(theme: &Theme, a: &Arrange, s: i32) -> Canvas {
+        let theme = theme.scaled(s);
+        let text = TextRenderer::load(&theme.fonts);
+        let lay = layout(Rect::new(0, 0, 358, 108), a);
+        let mut c = Canvas::new((358 * s) as u32, (108 * s) as u32);
+        draw(
+            &mut c,
+            &text,
+            &theme.paint(),
+            a,
+            &lay,
+            false,
+            theme.fonts.size_px,
+        );
+        c
+    }
+
+    /// A 1920x1080 copy of a 1280x1024 display at its top-left, and display 2 shown alone.
+    fn copied_and_alone() -> [(&'static str, Arrange); 2] {
+        let copied = Arrange::new(
+            vec![tile(1, (0, 0), (1920, 1080)), tile(2, (0, 0), (1280, 1024))],
+            1,
+        );
+        let alone = Arrange::new(vec![tile(2, (0, 0), (1920, 1080))], 0);
+        [("copied", copied), ("2 alone", alone)]
+    }
+
+    #[test]
+    fn copies_are_one_tile_with_both_numbers() {
+        let theme = Theme::default();
+        let cs = &theme.colors;
+        let [(_, copied), _] = copied_and_alone();
+        assert_eq!(copied.copies(), [vec![0, 1]]);
+        let lay = layout(Rect::new(0, 0, 358, 108), &copied);
+        let union = copied.group_rect(&lay, &[0, 1]);
+        assert_eq!(union, copied.tile_rect(&lay, 0), "the larger copy's rect");
+        let c = drawn(&theme, &copied, 1);
+        assert_eq!(
+            c.get(union.x, union.y),
+            cs.hilight.argb(),
+            "picked through 2"
+        );
+        let ink = |c: &Canvas| {
+            (union.y..union.bottom())
+                .flat_map(|y| (union.x..union.right()).map(move |x| (x, y)))
+                .filter(|&(x, y)| c.get(x, y) == cs.desktop_text.argb())
+                .count()
+        };
+        let one = drawn(
+            &theme,
+            &Arrange::new(vec![tile(1, (0, 0), (1920, 1080))], 0),
+            1,
+        );
+        assert!(
+            ink(&c) > 2 * ink(&one),
+            "\"1 | 2\" holds more ink than \"1\": {} against {}",
+            ink(&c),
+            ink(&one)
+        );
+        assert_eq!(well().0.copies(), [vec![0], vec![1]], "side by side: two");
+    }
+
+    #[test]
+    fn copied_and_lone_tiles_pin_in_every_look() {
+        crate::pins::fonts();
+        let looks = [
+            ("Classic", Theme::default()),
+            (
+                "Blue",
+                crate::interfaces::blue_theme(crate::blue::Variant::ALL[0]),
+            ),
+            (
+                "Glass",
+                crate::interfaces::theme_for(crate::interface::Interface::Glass),
+            ),
+        ];
+        let mut got = Vec::new();
+        for (name, theme) in &looks {
+            for (state, a) in copied_and_alone() {
+                for s in [1, 2] {
+                    let c = drawn(theme, &a, s);
+                    got.push((format!("{name} {state} {s}"), fnv(&c)));
+                }
+            }
+        }
+        crate::pins::check("arrange_copies", &got);
+    }
+
+    fn fnv(c: &Canvas) -> u64 {
+        let mut h = 0xcbf2_9ce4_8422_2325u64;
+        for v in [c.width, c.height]
+            .into_iter()
+            .chain(c.pixels.iter().copied())
+        {
+            for b in v.to_le_bytes() {
+                h = (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3);
+            }
+        }
+        h
     }
 
     #[test]

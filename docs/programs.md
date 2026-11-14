@@ -371,7 +371,9 @@ matched control focused.
     windows without the focus and the frame rate of hidden windows.
 - **Display & Sound**
   - **Display:** arrange monitors by dragging them, or pick one with the
-    arrows and move it with Ctrl+arrows to the next edge that way, Identify,
+    arrows and move it with Ctrl+arrows to the next edge that way (monitors
+    showing one copy share a tile labelled "1 | 2"; each keeps its number
+    while another is off), Identify,
     the primary screen, and each screen's resolution, refresh rate, orientation, scale,
     adaptive sync and color profile. With two monitors or more, Multiple displays extends,
     duplicates or shows only one of them. Forget saved layouts drops the layouts the desktop

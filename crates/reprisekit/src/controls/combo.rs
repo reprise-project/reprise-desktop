@@ -123,6 +123,9 @@ pub struct Combo {
     pub hosted: bool,
     /// The first row [`Combo::select_text`] added for a value the list lacked.
     pub added_at: Option<usize>,
+    /// A value wider than the field ends in an ellipsis instead of widening it in a form's fit:
+    /// for rows that are names from outside, of any length.
+    pub elide: bool,
 }
 
 impl Combo {
@@ -149,16 +152,18 @@ impl Combo {
             list_at: None,
             hosted: false,
             added_at: None,
+            elide: false,
         }
     }
 
     /// Replace the rows with `rows`, `selected` picked, the open list `drop` rows at most; a
-    /// greyed combo stays greyed.
+    /// greyed or eliding combo stays so.
     pub fn set_rows(&mut self, rows: &[String], selected: usize, drop: usize) {
         let refs: Vec<&str> = rows.iter().map(String::as_str).collect();
-        let enabled = self.enabled;
+        let (enabled, elide) = (self.enabled, self.elide);
         *self = Combo::new(&refs, selected, rows.len().clamp(1, drop));
         self.enabled = enabled;
+        self.elide = elide;
     }
 
     /// Selects the row showing `want`, adding it after the listed rows when they lack it. A row

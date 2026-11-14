@@ -134,7 +134,7 @@ impl SettingsApp {
     /// Identify: the compositor numbers the screens as the well does.
     /// Off the loop, since the call waits on the compositor.
     pub(crate) fn identify(&self) -> Reply {
-        let names = self.display.model.names();
+        let names = self.display.model.connected_names();
         std::thread::spawn(move || {
             if let Err(e) = reprisebus::tray::identify(&names) {
                 log::warn!("Identify: {e}");
