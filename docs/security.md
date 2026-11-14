@@ -1851,8 +1851,8 @@ stop the share first.
   does, so the sheet never acts on its own: it shows what the file is and goes
   ahead only on a click on Install (or Uninstall) or Alt with its access
   key, gated as the [consent prompts](#consent-prompts) are. Reprise runs
-  nothing as root: PackageKit, Flatpak or `pkexec pacman -U` (for a
-  `.pkg.tar.zst`, which PackageKit's pacman backend refuses) does the work
+  nothing as root: PackageKit, Flatpak or `pkexec pacman -U` (for an Arch
+  package, which PackageKit's pacman backend refuses) does the work
   and polkit decides whether it takes an administrator's password. The sheet
   first copies the file (and a `.sig` beside it) into a new folder in
   `$XDG_RUNTIME_DIR` only you can open, reads its facts from the copy and

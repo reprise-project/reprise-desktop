@@ -414,13 +414,12 @@ fn read_file(path: &Path, signed: bool, conn: Option<&Connection>) -> (Found, Pl
                             packager(facts.packager, signed && kind == pkgfile::Kind::Pacman),
                         ),
                     ];
-                    let takes = |c| zbus::block_on(packagekit_takes(c, path));
                     match conn {
-                        Some(c) if takes(c) => {
-                            zbus::block_on(simulate_file(c, &arg, &facts.name, &mut found))
-                        }
                         _ if kind == pkgfile::Kind::Pacman => {
                             pacman_plan(path, &facts.name, &mut found)
+                        }
+                        Some(c) if zbus::block_on(packagekit_takes_debs(c)) => {
+                            zbus::block_on(simulate_file(c, &arg, &facts.name, &mut found))
                         }
                         Some(_) if reprisefs::software::packagekit_present() => {
                             found.note = "This system's packages are of another kind.".into();
@@ -438,29 +437,16 @@ fn read_file(path: &Path, signed: bool, conn: Option<&Connection>) -> (Found, Pl
     (found, plan)
 }
 
-/// Whether PackageKit's backend installs `path`'s kind of file. Its pacman backend takes xz and gzip
-/// packages but not zstd ones, which go through pacman itself.
-async fn packagekit_takes(c: &Connection, path: &Path) -> bool {
-    let name = path.to_string_lossy().to_ascii_lowercase();
-    let wanted: &[&str] = if name.ends_with(".zst") {
-        &[
-            "application/x-zstd-compressed-tar",
-            "application/x-alpm-package",
-        ]
-    } else if name.ends_with(".xz") {
-        &[
-            "application/x-xz-compressed-tar",
-            "application/x-alpm-package",
-        ]
-    } else {
-        &["application/vnd.debian.binary-package", "application/x-deb"]
-    };
+/// Whether PackageKit's backend installs Debian packages. An Arch package goes through pacman
+/// itself: PackageKit's pacman backend takes no zstd packages and wants every file signed.
+async fn packagekit_takes_debs(c: &Connection) -> bool {
+    let wanted = ["application/vnd.debian.binary-package", "application/x-deb"];
     packagekit::file_types(c)
         .await
         .is_ok_and(|t| t.iter().any(|t| wanted.contains(&t.as_str())))
 }
 
-/// An Arch package PackageKit cannot take: pacman lists what it pulls in, and installs it.
+/// An Arch package: pacman lists what it pulls in, and installs it.
 fn pacman_plan(path: &Path, name: &str, found: &mut Found) -> Plan {
     match pkgfile::pacman_targets(path) {
         Ok(targets) => {
