@@ -3,7 +3,7 @@
 use repriseapp::{BTN_LEFT, BTN_RIGHT, Ctx, KeyInput};
 use reprisekit::access::{ROOT, Tree};
 use reprisekit::art::neticon::{self, NetIcon};
-use reprisekit::classic::widgets::{Axis, BarHit, ScrollHit};
+use reprisekit::classic::widgets::{Axis, ScrollHit};
 use reprisekit::controls::hosted::Chain;
 use reprisekit::controls::listview::{self, Column, ListView};
 use reprisekit::controls::menu::{MenuAction, MenuCtx, MenuItem, MenuKey, MenuTree, PopupMenu};
@@ -296,7 +296,6 @@ pub struct Folder {
     pub list: ListView,
     rows: Vec<Row>,
     pub popup: Option<Popup>,
-    thumb_drag: Option<i32>,
 }
 
 impl Default for Folder {
@@ -324,7 +323,6 @@ impl Folder {
             },
             rows: Vec::new(),
             popup: None,
-            thumb_drag: None,
         }
     }
 
@@ -471,27 +469,9 @@ impl Folder {
                     self.set_details(s);
                     Outcome::Redraw
                 }
-                listview::Hit::VBar(BarHit::Back) => redraw(self.list.scroll(-1, &lay)),
-                listview::Hit::VBar(BarHit::Forward) => redraw(self.list.scroll(1, &lay)),
-                listview::Hit::VBar(BarHit::PageBack) => {
-                    redraw(self.list.scroll(-(lay.rows as i64), &lay))
-                }
-                listview::Hit::VBar(BarHit::PageForward) => {
-                    redraw(self.list.scroll(lay.rows as i64, &lay))
-                }
-                listview::Hit::VBar(BarHit::Thumb(grab)) => {
-                    self.thumb_drag = Some(grab);
-                    Outcome::None
-                }
-                listview::Hit::VBar(BarHit::Track) => Outcome::None,
-                // The columns are fitted to the body, so the horizontal bar only shows on a window too narrow for them.
-                listview::Hit::HBar(BarHit::Back) => redraw(self.list.hscroll(-NAME_W, &lay)),
-                listview::Hit::HBar(BarHit::Forward) => redraw(self.list.hscroll(NAME_W, &lay)),
-                listview::Hit::HBar(BarHit::PageBack) => {
-                    redraw(self.list.hscroll(-lay.body.width, &lay))
-                }
-                listview::Hit::HBar(BarHit::PageForward) => {
-                    redraw(self.list.hscroll(lay.body.width, &lay))
+                _ if button == BTN_LEFT => {
+                    let press = listview::Input::Press(x, y);
+                    redraw(self.list.pointer(press, &lay, list_r, false).is_some())
                 }
                 _ => Outcome::None,
             };
@@ -535,13 +515,13 @@ impl Folder {
     }
 
     fn drag_or_menu(&mut self, x: i32, y: i32, ctx: &Ctx) -> Outcome {
-        if let Some(grab) = self.thumb_drag {
+        if self.list.thumb.holding() {
             let (_, list_r) = self.layout(ctx);
             let lay = listview::layout(&self.list, list_r, &ctx.theme.controls());
-            let top = self.list.top_at(&lay, y, grab);
-            let moved = top != self.list.top;
-            self.list.top = top;
-            return redraw(moved);
+            let drag = listview::Input::Motion(x, y);
+            return redraw(
+                self.list.pointer(drag, &lay, list_r, false) == Some(listview::Took::Moved),
+            );
         }
         let Some(p) = self.popup.as_mut() else {
             return Outcome::None;
@@ -550,7 +530,7 @@ impl Folder {
     }
 
     pub fn release(&mut self, ctx: &Ctx) -> Outcome {
-        self.thumb_drag = None;
+        self.list.thumb.release();
         let column = self.list.header.holding();
         self.list.header.release();
         redraw((self.list.bars.release_bar() || column) && ctx.styled())
@@ -761,6 +741,7 @@ fn menu_key(k: &KeyInput) -> Option<MenuKey> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use reprisekit::classic::widgets::scrollbar_parts;
     use reprisekit::controls::metrics::ControlMetrics;
 
     /// A press that never completes a double click.
@@ -886,6 +867,52 @@ mod tests {
         assert_eq!(f.list.bars.of(up), Interaction::Hot);
         assert_eq!(f.leave(&ctx), Outcome::Redraw);
         assert_eq!(f.list.bars.lit(), None);
+    }
+
+    #[test]
+    fn the_thumb_drags_the_rows_until_the_release_and_the_track_pages() {
+        let ctx = crate::tests::test_ctx((420, 200));
+        let vpns = (0..30).map(|i| nm::Vpn {
+            conn_path: format!("/settings/{i}"),
+            ..vpn()
+        });
+        let s = nm::Snapshot {
+            vpns: vpns.collect(),
+            ..snapshot()
+        };
+        let mut f = Folder::new();
+        f.refresh(&s, None);
+        let (_, list_r) = f.layout(&ctx);
+        let lay = listview::layout(&f.list, list_r, &ctx.theme.controls());
+        let sb = lay.scrollbar.expect("the VPNs overflow the list");
+        let p = scrollbar_parts(sb, 1, 0, lay.rows, f.list.slots(), false, lay.thumb_min);
+        let thumb = p.thumb.expect("a thumb");
+        let (x, y) = (thumb.x + 2, thumb.y + 3);
+
+        f.press(one(x, y), BTN_LEFT, &s, &ctx);
+        assert_eq!(
+            f.motion(x - 60, sb.bottom(), &ctx),
+            Outcome::Redraw,
+            "off the bar's side it still steers"
+        );
+        let end = f.list.top;
+        assert!(end > lay.rows, "the drag reaches the end");
+        assert_eq!(f.wheel(1, &ctx), Outcome::None, "nothing lies past the end");
+        f.release(&ctx);
+        assert_eq!(
+            f.motion(x, sb.y, &ctx),
+            Outcome::None,
+            "the release lets go"
+        );
+        assert_eq!(f.list.top, end);
+
+        // Scrolled past its group titles, the body fits one more row.
+        let page = listview::layout(&f.list, list_r, &ctx.theme.controls()).rows;
+        let back = sb.y + ctx.theme.controls().scroll + 2;
+        f.press(one(x, back), BTN_LEFT, &s, &ctx);
+        assert_eq!(f.list.top, end - page, "the track pages back");
+        f.press(one(x, back), BTN_RIGHT, &s, &ctx);
+        assert_eq!(f.list.top, end - page, "only the left button works the bar");
     }
 
     #[test]
