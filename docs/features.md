@@ -860,7 +860,7 @@ the screen takes the interface of the last session used at this computer.
 - **Find the pointer:** a tap of Ctrl on its own sends rings out from the
   pointer (`[accessibility] locate_pointer`); under Reduce motion they hold
   still.
-- **Visual alerts:** when a program rings the bell, the window that rang
+- **Visual alerts:** when a program rings the bell (an X11 program's too), the window that rang
   flashes, or the whole screen (`[accessibility] visual_bell`). A window you
   can't see flashes the screen. Flashes come at most three a second.
 - **MouseKeys:** the keypad moves the pointer, clicks and drags; hold Ctrl

@@ -398,6 +398,7 @@ fn start_helper(state: &mut State, display: u32) -> Option<helper::Helper> {
                     state.xwayland.grabbing.push(window);
                 }
             }
+            ChannelEvent::Msg(helper::Back::Bell(window)) => state.x11_bell(window),
             ChannelEvent::Closed => {}
         });
     if let Err(e) = source {
@@ -472,6 +473,23 @@ impl State {
             .iter()
             .find(|w| w.x11().is_some_and(|x| x.window_id() == id))
             .map(|w| w.id)
+    }
+
+    /// An X11 program rang the bell from X11 window `top` (a toplevel or its frame), else from
+    /// no window: rung for that window's surface, or the focused window's when it is an X11 one.
+    fn x11_bell(&mut self, top: Option<X11Window>) {
+        let window = match top {
+            Some(id) => self.windows.iter().find(|w| {
+                w.x11()
+                    .is_some_and(|x| x.window_id() == id || x.mapped_window_id() == Some(id))
+            }),
+            None => self
+                .focused
+                .and_then(|f| self.win(f))
+                .filter(|w| w.x11().is_some()),
+        };
+        let surface = window.map(|w| w.wl_surface().clone());
+        self.ring_bell(surface);
     }
 
     /// `x` sets or clears `_NET_WM_STATE_DEMANDS_ATTENTION`.

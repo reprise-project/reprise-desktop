@@ -1,6 +1,6 @@
-//! `xdg_system_bell_v1`: a ring plays the `[sounds] theme`'s bell unless `[sounds] bell` is off,
-//! flags its window when unfocused, and flashes as `[accessibility] visual_bell` says
-//! (`bellflash`).
+//! `xdg_system_bell_v1` and X11 programs' bells (`xwayland`): a ring plays the `[sounds] theme`'s
+//! bell unless `[sounds] bell` is off, flags its window when unfocused, and flashes as
+//! `[accessibility] visual_bell` says (`bellflash`).
 
 use std::time::{Duration, Instant};
 
@@ -77,14 +77,19 @@ impl State {
         self.flash_bell(ringing, now);
         self.config.sounds.bell && self.globals.system_bell.sounds(now)
     }
-}
 
-impl XdgSystemBellHandler for State {
-    fn ring(&mut self, surface: Option<WlSurface>) {
+    /// A ring for `surface`, from a Wayland client or an X11 program (`xwayland`).
+    pub fn ring_bell(&mut self, surface: Option<WlSurface>) {
         if self.ring_at(surface, Instant::now()) {
             let theme = self.config.sounds.theme.clone();
             repriseaudio::sounds::play(repriseaudio::sounds::Sound::Name(SOUND.into()), theme);
         }
+    }
+}
+
+impl XdgSystemBellHandler for State {
+    fn ring(&mut self, surface: Option<WlSurface>) {
+        self.ring_bell(surface);
     }
 }
 
