@@ -16,7 +16,7 @@ const LENGTH: Duration = Duration::from_millis(900);
 const STILL_AT: f64 = 0.5;
 
 /// Watches the keys for a lone Ctrl tap: Ctrl going down with no other key down, and up again
-/// with no key pressed nor pointer button or wheel used in between.
+/// with no key pressed nor button, wheel, touch, pen or gesture used in between.
 #[derive(Debug, Default)]
 pub struct CtrlTap {
     down: Vec<u32>,
@@ -38,7 +38,7 @@ impl CtrlTap {
         self.armed.take_if(|&mut c| c == code).is_some()
     }
 
-    /// A pointer button or the wheel was used: the Ctrl held is a Ctrl+click or Ctrl+wheel.
+    /// A button, the wheel, a finger, a pen or a gesture was used: the Ctrl held goes with it.
     pub fn spoil(&mut self) {
         self.armed = None;
     }
@@ -59,7 +59,11 @@ impl State {
         let ctrl = syms
             .iter()
             .any(|&s| s == KEY_Control_L || s == KEY_Control_R);
+        // A Ctrl tap under a held button or finger is a drag's copy or move switch.
+        let held =
+            self.buttons_down > 0 || !self.seat_buttons.is_empty() || self.devices.touch.any_down();
         if self.key_input.ctrl_tap.key(code, ctrl, pressed)
+            && !held
             && self.config.accessibility.locate_pointer
             && !self.console_holds_input()
         {
@@ -180,6 +184,32 @@ mod tests {
         frame_at(&mut h.state, since + LENGTH);
         assert_eq!(h.state.locate_rings.node, None, "gone at the end");
         assert!(h.state.scene.position(node).is_none(), "off the scene");
+    }
+
+    #[test]
+    fn a_ctrl_tap_during_a_drag_or_with_a_taken_click_does_not_ring() {
+        use crate::input::{BTN_LEFT, BTN_RIGHT};
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.state.config.accessibility.locate_pointer = true;
+        h.pointer_to(500.0, 400.0);
+        h.button(BTN_LEFT, true);
+        assert_eq!(rang(&mut h), None, "Ctrl under a held button");
+        h.button(BTN_LEFT, false);
+        h.state.open_region(false);
+        h.key(29, true);
+        h.button(BTN_RIGHT, true);
+        assert!(
+            h.state.panels.region.is_none(),
+            "the overlay took the click"
+        );
+        h.key(29, false);
+        h.button(BTN_RIGHT, false);
+        assert_eq!(
+            h.state.locate_rings.node, None,
+            "Ctrl+click the overlay took"
+        );
+        assert!(rang(&mut h).is_some(), "a lone tap after it rings");
     }
 
     #[test]
