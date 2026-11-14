@@ -354,3 +354,33 @@ fn a_thumb_held_across_a_page_switch_lets_go_at_the_release() {
     send(&mut a, &mut ctx, PointerInput::Motion { x, y: sb.bottom() });
     assert_eq!(top(&mut a), 0, "a motion with no button down drags nothing");
 }
+
+#[test]
+fn a_header_lit_during_a_thumb_drag_redraws_at_once() {
+    let mut a = app("side-list-thumb-header");
+    let mut ctx = test_ctx();
+    ctx.theme = reprisekit::interfaces::theme_for(Interface::Blue);
+    ctx.size = (1000, 640);
+    a.open_page(Page::Keyboard, None);
+    send(&mut a, &mut ctx, PointerInput::Motion { x: 0, y: 0 });
+    let cm = ctx.forms().controls();
+    let (list, rect, _) = a.side_list().expect("the shortcut list");
+    let lay = listview::layout(list, rect, &cm);
+    let sb = lay.scrollbar.expect("the shortcuts overflow the list");
+    let p = scrollbar_parts(sb, 1, 0, lay.rows, list.slots(), false, lay.thumb_min);
+    let thumb = p.thumb.expect("a thumb");
+    let (button, mods) = (BTN_LEFT, Mods::default());
+    let press = PointerInput::Press {
+        x: thumb.x + 2,
+        y: thumb.y + 3,
+        button,
+        time: 0,
+        mods,
+    };
+    send(&mut a, &mut ctx, press);
+    let (hx, hy) = (lay.header.x + 8, lay.header.y + lay.header.height / 2);
+    let over = PointerInput::Motion { x: hx, y: hy };
+    let r = a.event(MAIN, Event::Pointer(over), &mut ctx);
+    assert_eq!(top(&mut a), 0, "the thumb stays at the top");
+    assert!(r.redraw, "the header column the drag passes lights");
+}
