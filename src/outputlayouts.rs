@@ -300,7 +300,7 @@ impl State {
                     mode,
                     position,
                     scale: o.current_scale().fractional_scale() as f32,
-                    transform: crate::output::config_transform(o.current_transform()),
+                    transform: crate::output::config_transform(crate::output::chosen_transform(o)),
                     primary: h.enabled && primary.as_ref() == Some(o),
                 };
                 (id.clone(), m)
@@ -492,6 +492,53 @@ mod tests {
         let now = displays::outputs_fingerprint(&h.state.config.outputs);
         let text = std::fs::read_to_string(&h.state.saved_layouts.path).unwrap_or_default();
         Layouts::parse(&text).find(&ids, &now).is_some()
+    }
+
+    /// The transform displays.toml holds for `h`'s first monitor.
+    fn saved_transform(h: &crate::harness::Harness) -> Option<T> {
+        crate::state::flush();
+        let ids = ids_of(&crate::backend::heads(&h.state));
+        let now = displays::outputs_fingerprint(&h.state.config.outputs);
+        let text = std::fs::read_to_string(&h.state.saved_layouts.path).unwrap_or_default();
+        let layouts = Layouts::parse(&text);
+        Some(layouts.find(&ids, &now)?.monitors.first()?.1.transform)
+    }
+
+    #[test]
+    fn a_panel_auto_rotation_turned_saves_the_transform_it_had_until_the_lock() {
+        let mut h = crate::harness::Harness::new();
+        let panel = h.head("eDP-1", 1280, 800);
+        h.state.turn_panels(Transform::_90);
+        assert_eq!(panel.current_transform(), Transform::_90);
+        h.state.save_layout();
+        assert_eq!(
+            saved_transform(&h),
+            Some(T::Normal),
+            "the turn is not saved"
+        );
+
+        let req = HeadRequest {
+            enabled: true,
+            mode: None,
+            position: None,
+            transform: Transform::Normal,
+            scale: 1.0,
+            adaptive_sync: false,
+        };
+        assert!(h.state.apply_head(&panel, &req));
+        assert_eq!(
+            panel.current_transform(),
+            Transform::_90,
+            "asking the chosen transform keeps the turn"
+        );
+
+        h.state.config.auto_rotate = false;
+        crate::autorotate::config_changed(&mut h.state);
+        assert_eq!(
+            saved_transform(&h),
+            Some(T::Rotate90),
+            "the lock keeps the panel as turned"
+        );
     }
 
     #[test]

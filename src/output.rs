@@ -58,6 +58,43 @@ pub fn upload_scaled(scene: &mut DeskScene, sb: BufferId, canvas: &Canvas, scale
 /// Where output management placed an output, in its user data; None when automatic.
 struct Placement(Cell<Option<Point<i32, Logical>>>);
 
+/// A built-in panel's transform before auto-rotation turned it, and the turn, in its user data.
+struct Turned(Cell<Option<(Transform, Transform)>>);
+
+fn turned(output: &Output) -> &Turned {
+    output
+        .user_data()
+        .insert_if_missing(|| Turned(Cell::new(None)));
+    output.user_data().get::<Turned>().expect("inserted above")
+}
+
+/// `output`'s transform without auto-rotation's turn: what saved layouts keep.
+pub fn chosen_transform(output: &Output) -> Transform {
+    match turned(output).0.get() {
+        Some((base, turn)) if output.current_transform() == turn => base,
+        _ => output.current_transform(),
+    }
+}
+
+/// The transform `output` runs when `asked` is set on it: a panel's chosen transform or its turn
+/// keeps the turn, any other forgets it.
+fn asked_transform(output: &Output, asked: Transform) -> Transform {
+    let now = output.current_transform();
+    if let Some((base, turn)) = turned(output).0.get()
+        && now == turn
+        && (asked == base || asked == turn)
+    {
+        return now;
+    }
+    forget_turn(output);
+    asked
+}
+
+/// Make `output`'s current transform its chosen one; true when a turn was forgotten.
+pub fn forget_turn(output: &Output) -> bool {
+    turned(output).0.take().is_some()
+}
+
 fn placement(output: &Output) -> &Placement {
     output
         .user_data()
@@ -450,7 +487,7 @@ impl State {
             return true;
         }
         let scale = Scale::Fractional(f64::from(quarter_scale(req.scale as f32)));
-        self.set_transform_scale(output, req.transform, scale);
+        self.set_transform_scale(output, asked_transform(output, req.transform), scale);
         let at = req.position.or_else(|| self.back_place(output));
         set_placement(output, at.map(Point::from));
         if driven {
@@ -515,6 +552,8 @@ impl State {
         let was_whole = arrange::whole(&tiles(&shown));
         for &i in &turning {
             log::info!("output {}: turned to {t:?}", shown[i].name());
+            let base = chosen_transform(&shown[i]);
+            turned(&shown[i]).0.set((base != t).then_some((base, t)));
             let scale = shown[i].current_scale();
             self.set_transform_scale(&shown[i], t, scale);
         }
@@ -589,7 +628,8 @@ impl State {
                 }
             }
             if change.transform {
-                let t = transform(self.config.transform_for_output_name(&name));
+                let asked = transform(self.config.transform_for_output_name(&name));
+                let t = asked_transform(&output, asked);
                 if t != output.current_transform() {
                     output.change_current_state(None, Some(t), None, None);
                     crate::capture::constraints_changed(self, &output);
