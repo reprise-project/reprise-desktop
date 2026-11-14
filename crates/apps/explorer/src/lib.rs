@@ -1806,6 +1806,13 @@ impl repriseapp::Extended for Lazy {
         }
     }
 
+    fn cancel_pointer(&mut self, win: WinId) {
+        match (win, &mut self.inner) {
+            (MAIN, Some(ex)) => ex.cancel_pointer(),
+            _ => repriseapp::reader_cancel_pointer(self, win),
+        }
+    }
+
     fn drop_file_dialog(&mut self, win: WinId) -> Option<FileDrop<'_>> {
         let Some(Dialog::ChooseProgram(cp)) = self.inner.as_mut()?.dialog.as_mut() else {
             return None;

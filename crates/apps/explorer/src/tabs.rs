@@ -256,22 +256,28 @@ impl Explorer {
 
     /// The release of a press the strip took; `None` when it took none.
     pub(crate) fn tab_strip_release(&mut self, x: i32, y: i32, ctx: &mut Ctx) -> Option<Reply> {
-        let press = self.tab_press.take()?;
+        let press = self.tab_strip_let_go()?;
         let l = self.tab_layout(ctx);
         let hit = l
             .as_ref()
             .filter(|l| l.area.contains(x, y))
             .map_or(DocHit::Empty, |l| tabstrip::doc_hit(l, x, y));
-        let strip = &mut self.tabs.strip;
-        strip.held = false;
-        strip.dragging = None;
-        strip.hot_close = None;
-        strip.hot_adder = None;
         Some(match press {
             TabPress::Close(i) if hit == DocHit::Close(i) => self.close_tab(i, ctx),
             TabPress::Add if hit == DocHit::Add => self.new_tab(ctx),
             _ => Reply::redraw(),
         })
+    }
+
+    /// Ends a press on the strip, a dragged tab left where the drag put it; the press it ended.
+    pub(crate) fn tab_strip_let_go(&mut self) -> Option<TabPress> {
+        let press = self.tab_press.take()?;
+        let strip = &mut self.tabs.strip;
+        strip.held = false;
+        strip.dragging = None;
+        strip.hot_close = None;
+        strip.hot_adder = None;
+        Some(press)
     }
 
     /// A middle press: on a tab it closes it, on a folder in the view it opens it behind.

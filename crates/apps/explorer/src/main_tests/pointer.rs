@@ -299,3 +299,67 @@ fn thumb_buttons_step_back_and_forward() {
     ex.pointer(thumb(0x114), &mut ctx);
     assert_eq!(ex.place, Place::Folder(sub), "Forward returns to sub");
 }
+
+#[test]
+fn a_covered_window_lets_go_of_its_marquee_and_column_divider() {
+    use repriseapp::PointerInput;
+    let dir = tempfile::tempdir().expect("a temp dir");
+    for name in ["a.txt", "b.txt", "c.txt"] {
+        std::fs::write(dir.path().join(name), "x").expect("write");
+    }
+    let mut ctx = test_ctx();
+    let ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    let mut app = Lazy {
+        start: Start {
+            place: ex.place.clone(),
+            dir: None,
+            select: None,
+            connect: None,
+        },
+        inner: Some(ex),
+        units: TextUnits::ONE,
+    };
+    let press = |x, y| PointerInput::Press {
+        x,
+        y,
+        button: BTN_LEFT,
+        time: 5000,
+        mods: repriseapp::Mods::default(),
+    };
+    let ex = app.inner.as_mut().expect("the window");
+    ex.sv.set_mode(shellview::Mode::List);
+    let sl = ex.view_layout(ex.layout(&ctx).view, &ctx);
+    let centre = |i: usize| {
+        let c = sl.cells[i];
+        (c.x + c.width / 2, c.y + c.height / 2)
+    };
+    ex.pointer(press(sl.body.right() - 2, sl.body.bottom() - 2), &mut ctx);
+    let (x, y) = centre(1);
+    ex.pointer(PointerInput::Motion { x, y }, &mut ctx);
+    repriseapp::cover(&mut app, MAIN, &ctx);
+    let ex = app.inner.as_mut().expect("the window");
+    let (x, y) = centre(0);
+    ex.pointer(PointerInput::Motion { x, y }, &mut ctx);
+    assert_eq!(
+        ex.sv.selection.set.len(),
+        2,
+        "b.txt and c.txt stay selected"
+    );
+    assert!(ex.sv.marquee.is_none(), "no band is drawn");
+
+    ex.sv.set_mode(shellview::Mode::Details);
+    let view = ex.layout(&ctx).view;
+    let sl = ex.view_layout(view, &ctx);
+    let (x, y) = (view.y..view.bottom())
+        .flat_map(|y| (view.x..view.right()).map(move |x| (x, y)))
+        .find(|&(x, y)| shellview::hit(&ex.sv, &sl, x, y) == shellview::Hit::Divider(0))
+        .expect("the first column's divider");
+    let width = ex.sv.columns[0].width;
+    ex.pointer(press(x, y), &mut ctx);
+    ex.pointer(PointerInput::Motion { x: x + 30, y }, &mut ctx);
+    repriseapp::cover(&mut app, MAIN, &ctx);
+    let ex = app.inner.as_mut().expect("the window");
+    ex.pointer(PointerInput::Motion { x: x + 60, y }, &mut ctx);
+    assert_eq!(ex.sv.columns[0].width, width + 30, "Name stays 30 px wider");
+    assert_eq!(ex.settings.columns[0], width + 30, "the width is kept");
+}
