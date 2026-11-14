@@ -1276,7 +1276,9 @@ the program a clicked notification action names in its `desktop-entry` hint
 (for one that drops the token Reprise hands it). For 30 s the first
 activation one of that program's windows asks for raises it, once. The window
 is matched to the program by its app id, which a client picks itself, so a
-program posing as that one could take the raise. A program trusted with foreign toplevel management can,
+host program posing as that one could take the raise. A sandboxed window takes
+it only when its Flatpak app id is that program's desktop id, and a refused
+claim leaves the grant for the real program. A program trusted with foreign toplevel management can,
 since that protocol focuses any window it names.
 
 A notification's `ActivationToken`, `ActionInvoked`, `NotificationReplied`

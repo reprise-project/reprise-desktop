@@ -142,6 +142,7 @@ impl XdgActivationHandler for State {
         let app = (self.win(w)).and_then(|win| {
             reprisefs::apps::entry_for_app_id(&self.app_index, &win.app_id(), |_| true)
                 .map(|e| e.id.clone())
+                .filter(|id| crate::sandbox::may_take_raise(win, id))
         });
         let trusted = minted_trusted || live && self.raises.take(app.as_deref(), Instant::now());
         let Some(win) = self.win_mut(w) else {
