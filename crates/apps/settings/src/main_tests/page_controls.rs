@@ -215,6 +215,41 @@ fn other_on_the_colour_button_opens_the_color_dialog_whose_ok_sets_the_desktop()
 }
 
 #[test]
+fn an_error_box_mid_drag_lets_go_of_the_color_dialogs_field() {
+    use reprisekit::controls::colordlg;
+    let mut a = app("box-drops-color-drag");
+    let mut ctx = test_ctx();
+    let p = Page::Background.index();
+    a.sheet_event(propsheet::Event::Page(
+        p,
+        form::Event::Pressed("background"),
+    ));
+    let (d, ..) = a.color_dlg.as_mut().expect("the Color dialog");
+    d.dlg
+        .form_event(&mut d.form, form::Event::Pressed(colordlg::DEFINE));
+    d.form.drawn_with(&ctx.theme.paint());
+    let field = colordlg::layout(&d.form).field.expect("widened").inset(2);
+    let press = PointerInput::Press {
+        x: field.x + 60,
+        y: field.y + 30,
+        button: BTN_LEFT,
+        time: 0,
+        mods: Mods::default(),
+    };
+    a.event(COLOR_WIN, Event::Pointer(press), &mut ctx);
+    let hsl = |a: &SettingsApp| a.color_dlg.as_ref().expect("still open").0.dlg.hsl();
+    let held = hsl(&a);
+    fail_under_box(&mut a, &ctx, "refused");
+    close_box(&mut a, &mut ctx);
+    let corner = PointerInput::Motion {
+        x: field.x,
+        y: field.y,
+    };
+    a.event(COLOR_WIN, Event::Pointer(corner), &mut ctx);
+    assert_eq!(hsl(&a), held, "the colour stays where the press put it");
+}
+
+#[test]
 fn unchecking_run_as_asks_first_and_only_ok_unchecks_it() {
     let mut a = app("runas");
     let mut ctx = test_ctx();

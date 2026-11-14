@@ -184,13 +184,19 @@ pub trait Extended {
     }
 }
 
-/// [`Extended::reader_form`]'s form or sheet lets go of the pointer; what
-/// [`Extended::cancel_pointer`] does unless a program answers it.
+/// [`Extended::reader_form`]'s form or sheet lets go of the pointer, else
+/// [`Extended::drop_file_dialog`]'s dialog; what [`Extended::cancel_pointer`] does unless a
+/// program answers it.
 pub fn reader_cancel_pointer<A: Extended + ?Sized>(app: &mut A, win: WinId) {
-    match app.reader_form(win) {
-        Some(ReaderForm::Form(d)) => d.form.cancel_pointer(),
-        Some(ReaderForm::Sheet(s)) => s.cancel_pointer(),
-        None => {}
+    if let Some(f) = app.reader_form(win) {
+        match f {
+            ReaderForm::Form(d) => d.form.cancel_pointer(),
+            ReaderForm::Sheet(s) => s.cancel_pointer(),
+        }
+        return;
+    }
+    if let Some(FileDrop { dlg, .. }) = app.drop_file_dialog(win) {
+        dlg.cancel_pointer();
     }
 }
 

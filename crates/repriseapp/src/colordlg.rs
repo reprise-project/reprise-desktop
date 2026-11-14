@@ -70,6 +70,13 @@ impl ColorDialog {
         }
     }
 
+    /// Let go of the pointer outright, for a host whose window will not see the release: a drag
+    /// on the field or bar ends where it is, and the form's held control lets go.
+    pub fn cancel_pointer(&mut self) {
+        self.dlg.release();
+        self.form.cancel_pointer();
+    }
+
     pub fn draw(&self, c: &mut Canvas, text: &TextRenderer, p: &Paint, px: u32) {
         c.fill_rect(c.bounds(), p.cs.button_face);
         colordlg::draw_window(c, text, p, &self.form, &self.dlg, px);
