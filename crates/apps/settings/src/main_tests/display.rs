@@ -33,6 +33,33 @@ fn question_up(tag: &str, press: displayhost::Press) -> (SettingsApp, Ctx) {
 }
 
 #[test]
+fn apply_greys_once_a_profile_pick_is_written() {
+    let mut app = app("profile-apply");
+    let mut ctx = test_ctx();
+    app.event(
+        MAIN,
+        Event::Heads(vec![displaypage::test_head("DP-1")]),
+        &mut ctx,
+    );
+    let srgb = reprisefs::icc::Listed {
+        path: "/p/srgb.icc".into(),
+        name: "sRGB".into(),
+    };
+    app.display.model.set_profiles(vec![srgb], Vec::new());
+    app.display.model.pick_profile(1);
+    app.sync_apply();
+    let lit = |app: &SettingsApp| match &app.sheet.pages[0].item(propsheet::APPLY).unwrap().control
+    {
+        form::Control::Button { enabled, .. } => *enabled,
+        c => panic!("Apply is a button, not {c:?}"),
+    };
+    assert!(lit(&app));
+    assert!(app.apply());
+    app.start_display(displayhost::Press::Apply, &mut ctx.heads);
+    assert!(!lit(&app), "the pick is written");
+}
+
+#[test]
 fn the_questions_close_box_puts_the_old_mode_back_and_keeps_the_sheet() {
     let (mut app, mut ctx) = question_up("question-close", displayhost::Press::Apply);
     let r = app.event(displayhost::MONITOR_WIN, Event::CloseRequest, &mut ctx);
