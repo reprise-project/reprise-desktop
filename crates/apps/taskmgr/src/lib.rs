@@ -1063,7 +1063,9 @@ impl TaskMgr {
             }
             Event::Pointer(PointerInput::Motion { x, y }) => self.motion(x, y, ctx),
             Event::Pointer(PointerInput::Release { .. }) => {
-                let list = self.list().is_some_and(|l| l.release(ctx)) | self.perf_release(ctx);
+                // Both lists, as a page switched from mid-press leaves its list holding the thumb.
+                let list =
+                    self.apps.release(ctx) | self.procs.release(ctx) | self.perf_release(ctx);
                 self.note_widths();
                 let ev = self.form.release();
                 let r = self.form_event(ev, ctx);
