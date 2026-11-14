@@ -267,7 +267,7 @@ pub fn probe(
 
 /// `f` with FFmpeg's log silenced, as backends that are not there report errors. Calls may
 /// overlap across threads, a probe thread outliving the call that started it.
-fn quietly<T>(f: impl FnOnce() -> T) -> T {
+pub(crate) fn quietly<T>(f: impl FnOnce() -> T) -> T {
     use ffmpeg::util::log;
     struct Leave;
     impl Drop for Leave {
@@ -797,6 +797,7 @@ fn in_formats(blob: &[u8], formats: &[u32]) -> Vec<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testgpu::{Need, lacks};
 
     const Y_TILED: u64 = 0x0100_0000_0000_0002;
     const CCS: u64 = 0x0100_0000_0000_0006;
@@ -1127,6 +1128,9 @@ mod tests {
     /// `gpu` cuts a part at an odd origin out of a [`pattern`] frame: each luma is the
     /// pattern's at the same place in the frame.
     fn cuts_out_a_part(gpu: Gpu) {
+        if lacks(Need::Device(gpu)) {
+            return;
+        }
         let node = Path::new(RENDER_NODE);
         let devices = Devices::open(gpu, node).expect("the GPU's device");
         let gbm = gbm_device(node).unwrap();
@@ -1170,6 +1174,9 @@ mod tests {
     #[test]
     #[ignore = "needs an NVIDIA GPU with NVENC"]
     fn nvenc_passes_the_probe_with_the_drivers_tiled_modifiers() {
+        if lacks(Need::Nvenc) {
+            return;
+        }
         let node = Path::new(RENDER_NODE);
         let started = Instant::now();
         quietly(|| live_test(Codec::H264, Backend::Nvenc, node))

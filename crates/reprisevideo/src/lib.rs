@@ -6,4 +6,6 @@ pub mod monitor;
 pub mod stream;
 
 #[cfg(test)]
+pub(crate) mod testgpu;
+#[cfg(test)]
 pub(crate) mod testlog;
