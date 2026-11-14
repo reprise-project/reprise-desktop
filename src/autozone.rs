@@ -33,6 +33,7 @@ const DESKTOP_ID: &str = "reprise-datetime";
 
 const TIMEDATE: &str = "org.freedesktop.timedate1";
 const TIMEDATE_PATH: &str = "/org/freedesktop/timedate1";
+const SET_TIMEZONE: &str = "org.freedesktop.timedate1.set-timezone";
 
 const NM: &str = "org.freedesktop.NetworkManager";
 const NM_PATH: &str = "/org/freedesktop/NetworkManager";
@@ -282,6 +283,13 @@ async fn look(
     conn: &zbus::Connection,
     still_on: impl Fn() -> bool,
 ) -> Result<Option<String>, Miss> {
+    // Asked first, so a zone polkit won't let change shows no location pin.
+    if !reprisebus::polkit::allowed_without_password(conn, SET_TIMEZONE).await {
+        return Err(Miss::Refused(format!(
+            "polkit does not let the zone change without a password; an administrator has to \
+             allow {SET_TIMEZONE}"
+        )));
+    }
     let at = locate(conn)
         .await
         .map_err(|e| Miss::Retry(format!("geoclue gave no location: {e}")))?;
@@ -310,7 +318,7 @@ async fn look(
         Ok(_) => Ok(Some(zone)),
         Err(e) if needs_password(&e) => Err(Miss::Refused(format!(
             "polkit does not let {current} change to {zone} without a password; an \
-             administrator has to allow org.freedesktop.timedate1.set-timezone"
+             administrator has to allow {SET_TIMEZONE}"
         ))),
         Err(e) => Err(Miss::Retry(format!("timedated did not set {zone}: {e}"))),
     }
