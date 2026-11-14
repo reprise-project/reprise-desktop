@@ -1025,12 +1025,13 @@ page all open it. Reading GNOME's settings needs the `dconf` command.
   each encoder choice that codes a test frame in each codec (`video h265
   vaapi`), then `audio CODEC` for each audio codec the MP4 muxer takes
   (`audio opus`). Settings runs it the first time its Screen Capture page
-  opens, kills it after 30 s, and greys what it did not list. Its log
-  lines reach the journal through the compositor, which reads its stderr; on
-  failure its last line there is the reason. The compositor makes the file
-  under Videos/Screencasts and hands it over open, so the recorder never
-  opens a name in that folder; when the recorder fails the compositor
-  removes the file, unless the name now leads somewhere else.
+  opens, in a process group of its own: the probe dies with Settings, the
+  group is killed once the probe ends or after 30 s, and Settings greys what
+  it did not list. Its log lines reach the journal through the compositor,
+  which reads its stderr; on failure its last line there is the reason. The
+  compositor makes the file under Videos/Screencasts and hands it over open,
+  so the recorder never opens a name in that folder; when the recorder fails
+  the compositor removes the file, unless the name now leads somewhere else.
 - **Remote logins.** Under `reprise-login` with remote logins on,
   `reprise-login-rdp` listens on the port instead, as the system service
   `reprise-login-rdp.service` and its own system user, and has no window.

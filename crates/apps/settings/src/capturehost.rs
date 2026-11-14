@@ -6,58 +6,33 @@ use crate::registry::{self, Page};
 use crate::{SettingsApp, take};
 use repriseconf::recording::Probed;
 use std::ffi::OsStr;
-use std::io::Read;
 use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 const PROGRAM: &str = "reprise-record";
 
 /// `program --probe`'s answer; a probe that runs past `timeout` is killed. One that is missing,
 /// killed or exits non-zero is [`ProbeState::Failed`].
 pub(crate) fn run_probe(program: &OsStr, timeout: Duration) -> ProbeState {
-    let child = Command::new(program)
-        .arg("--probe")
+    let mut cmd = Command::new(program);
+    cmd.arg("--probe")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn();
-    let mut child = match child {
-        Ok(c) => c,
+        .stderr(Stdio::null());
+    match reprisefs::subprocess::run(&mut cmd, timeout) {
+        Ok(ran) if ran.status.success() => ProbeState::Done(Probed::parse(&ran.stdout)),
+        Ok(ran) => {
+            log::warn!("{PROGRAM} --probe ended with {}", ran.status);
+            ProbeState::Failed
+        }
+        Err(reprisefs::subprocess::Error::Timeout) => {
+            log::warn!("{PROGRAM} --probe did not answer; killed it");
+            ProbeState::Failed
+        }
         Err(e) => {
             log::warn!("{}: {e}", program.to_string_lossy());
-            return ProbeState::Failed;
+            ProbeState::Failed
         }
-    };
-    let mut stdout = child.stdout.take().expect("stdout is piped");
-    // Read apart from the wait, so a full pipe cannot hold the probe up. A process the probe
-    // left behind may keep the pipe open past a kill; the thread then ends with it.
-    let reader = std::thread::spawn(move || {
-        let mut text = String::new();
-        let _ = stdout.read_to_string(&mut text);
-        text
-    });
-    let started = Instant::now();
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if started.elapsed() < timeout => {
-                std::thread::sleep(Duration::from_millis(50))
-            }
-            _ => {
-                log::warn!("{PROGRAM} --probe did not answer; killed it");
-                let _ = child.kill();
-                let _ = child.wait();
-                return ProbeState::Failed;
-            }
-        }
-    };
-    if !status.success() {
-        log::warn!("{PROGRAM} --probe ended with {status}");
-        return ProbeState::Failed;
-    }
-    match reader.join() {
-        Ok(text) => ProbeState::Done(Probed::parse(&text)),
-        Err(_) => ProbeState::Failed,
     }
 }
 
@@ -113,6 +88,7 @@ mod tests {
     use repriseconf::recording::AudioCodec;
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
+    use std::time::Instant;
 
     fn script(dir: &Path, body: &str) -> PathBuf {
         let path = dir.join("reprise-record");

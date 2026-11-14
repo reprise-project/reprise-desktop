@@ -6,11 +6,10 @@ mod conversation;
 pub mod mount;
 
 use std::collections::HashMap;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use zbus::{OwnedObjectPath, OwnedVariant};
 use zeroize::Zeroizing;
@@ -217,39 +216,15 @@ fn run_gio(args: &[&str], wait: Duration) -> Result<String, String> {
     let Some(mut cmd) = gio_command() else {
         return Err("gio is not installed.".into());
     };
-    let mut child = cmd
-        .args(args)
+    cmd.args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    let mut out = child.stdout.take().expect("piped");
-    let mut err = child.stderr.take().expect("piped");
-    let reader = std::thread::spawn(move || {
-        let mut o = String::new();
-        let _ = out.read_to_string(&mut o);
-        let mut e = String::new();
-        let _ = err.read_to_string(&mut e);
-        (o, e)
-    });
-    let deadline = Instant::now() + wait;
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(s)) => break Some(s),
-            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(20)),
-            _ => {
-                let _ = child.kill();
-                let _ = child.wait();
-                break None;
-            }
-        }
-    };
-    let (out, err) = reader.join().unwrap_or_default();
-    match status {
-        Some(s) if s.success() => Ok(out),
-        Some(_) => Err(gio_error(&err)),
-        None => Err("The server did not answer.".into()),
+        .stderr(Stdio::piped());
+    match crate::subprocess::run(&mut cmd, wait) {
+        Ok(ran) if ran.status.success() => Ok(ran.stdout),
+        Ok(ran) => Err(gio_error(&ran.stderr)),
+        Err(crate::subprocess::Error::Timeout) => Err("The server did not answer.".into()),
+        Err(e) => Err(e.to_string()),
     }
 }
 
