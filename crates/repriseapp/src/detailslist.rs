@@ -115,8 +115,10 @@ impl<R: Rows + Default> List<R> {
                 moved(false)
             }
             _ => {
+                let at = (self.view.top, self.view.left_in(&lay));
                 let press = listview::Input::Press(x, y);
-                moved(self.view.pointer(press, &lay, r, false).is_some())
+                self.view.pointer(press, &lay, r, false);
+                moved((self.view.top, self.view.left_in(&lay)) != at)
             }
         }
     }
@@ -253,7 +255,16 @@ mod tests {
         let (x, y) = (thumb.x + 2, thumb.y + 3);
         let at = |x, y, time| ctx.theme.metrics.click(x, y, time);
 
-        assert_eq!(l.press(at(x, y, 0), BTN_LEFT, r, &ctx), Press::Redraw);
+        assert_eq!(
+            l.press(at(p.back.x + 2, p.back.y + 2, 0), BTN_LEFT, r, &ctx),
+            Press::None,
+            "the up arrow at the top scrolls nothing"
+        );
+        assert_eq!(
+            l.press(at(x, y, 500), BTN_LEFT, r, &ctx),
+            Press::None,
+            "grabbing the thumb scrolls nothing"
+        );
         assert!(
             l.motion(x + 40, sb.bottom(), r, &ctx),
             "off the bar's side it still steers"
