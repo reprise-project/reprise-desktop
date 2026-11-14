@@ -339,6 +339,28 @@ impl Terminal {
 
     fn grid_release(&mut self, x: i32, y: i32, button: u32, ctx: &Ctx) -> Reply {
         let cell = self.cell_at(x, y, ctx).map(|h| (h.col, h.row));
+        self.release_button(button, cell)
+    }
+
+    /// A modal child covers the window, which will not see the release: each button reported to
+    /// the program is reported released on the last cell, and a sweep or chrome press ends.
+    pub(crate) fn let_go(&mut self) {
+        if self.w.tabs.current().map(Tab::pid) == Some(self.w.mouse.tab) {
+            let cell = self.w.mouse.reported;
+            let held: Vec<u32> = self.w.mouse.reports.iter().map(|&(b, _)| b).collect();
+            for button in held {
+                self.release_button(button, cell);
+            }
+        }
+        self.w.mouse.end();
+        if self.chrome_let_go().is_some() {
+            self.w.chrome.dirty = true;
+        }
+    }
+
+    /// Button `button` let go over `cell`: a press reported to the program is reported released
+    /// there, and the left button's selection sweep ends.
+    fn release_button(&mut self, button: u32, cell: Option<CellAt>) -> Reply {
         let Some(tab) = self.w.tabs.current() else {
             self.w.mouse.end();
             return Reply::none();
