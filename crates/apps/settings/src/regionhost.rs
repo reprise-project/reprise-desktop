@@ -59,7 +59,7 @@ pub(crate) fn user_choice(conf: &Path, env: impl Fn(&str) -> Option<String>) -> 
 }
 
 /// `installed` with each locale's name, the account's and the system's locales added where
-/// missing and named as not installed, which is why their samples are blank.
+/// missing, named as not installed when they do not load, which is why their samples are blank.
 pub(crate) fn with_names(installed: Vec<String>, also: &[&str]) -> Vec<(String, String)> {
     let mut named: Vec<(String, String)> = (installed.into_iter())
         .map(|c| {
@@ -69,7 +69,10 @@ pub(crate) fn with_names(installed: Vec<String>, also: &[&str]) -> Vec<(String, 
         .collect();
     for c in also {
         if !named.iter().any(|(have, _)| have == c) {
-            let name = format!("{} - not installed", region::name(c));
+            let name = match region::loads(c) {
+                true => region::name(c),
+                false => format!("{} - not installed", region::name(c)),
+            };
             named.push((c.to_string(), name));
         }
     }
@@ -431,5 +434,12 @@ mod tests {
         let name = |code: &str| l.iter().find(|(c, _)| c == code).unwrap().1.clone();
         assert!(name("xx_NOPE.UTF-8").ends_with(" - not installed"));
         assert!(!name("en_US.UTF-8").contains("not installed"));
+        let c = with_names(vec![], &["C.UTF-8"]);
+        assert_eq!(c.len(), 1);
+        assert!(
+            !c[0].1.contains("not installed"),
+            "the C library's own locale: {}",
+            c[0].1
+        );
     }
 }

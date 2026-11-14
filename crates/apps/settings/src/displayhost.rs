@@ -16,6 +16,21 @@ use crate::{SettingsApp, outputwrite, take};
 
 pub const MONITOR_WIN: WinId = WinId::named("monitor");
 
+const NO_ANSWER: &str = "The desktop did not answer; the primary display was not changed.";
+
+/// SetPrimary `name`; Err is the error box's text. Blocking.
+#[cfg(not(test))]
+fn send_primary(name: &str) -> Result<(), &'static str> {
+    match reprisebus::tray::set_primary(name) {
+        Ok(true) => Ok(()),
+        Ok(false) => Err("That display is no longer shown, so it was not made the primary one."),
+        Err(e) => {
+            log::warn!("SetPrimary {name}: {e}");
+            Err(NO_ANSWER)
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Press {
     Ok,
@@ -39,9 +54,17 @@ pub struct DisplayHost {
     pub sensor_job: Option<std::sync::mpsc::Receiver<bool>>,
     /// The display profile listing, off the loop since colord may be asked.
     pub profile_scan: Option<std::sync::mpsc::Receiver<Vec<reprisefs::icc::Listed>>>,
-    /// The last primary `send_primary` was asked for.
+    /// The SetPrimary call, off the loop since the compositor answers once it wrote the layout.
+    /// Apply stays greyed while it runs.
+    pub primary_job: Option<std::sync::mpsc::Receiver<Result<(), &'static str>>>,
+    /// OK was pressed while `primary_job` ran: the sheet closes once it succeeds.
+    pub quit_after_primary: bool,
+    /// The last primary `start_primary` was asked for.
     #[cfg(test)]
     pub sent_primary: Option<String>,
+    /// Answers the job `start_primary` left pending.
+    #[cfg(test)]
+    pub primary_answer: Option<std::sync::mpsc::Sender<Result<(), &'static str>>>,
 }
 
 impl SettingsApp {
@@ -231,26 +254,44 @@ impl SettingsApp {
     }
 
     /// Have the compositor make `name` the primary output, saved in the connected monitors'
-    /// layout. Err is the error box's text.
+    /// layout; `primary_done` takes the answer.
     #[cfg(not(test))]
-    fn send_primary(&mut self, name: &str) -> Result<(), &'static str> {
-        match reprisebus::tray::set_primary(name) {
-            Ok(true) => Ok(()),
-            Ok(false) => {
-                Err("That display is no longer shown, so it was not made the primary one.")
-            }
-            Err(e) => {
-                log::warn!("SetPrimary {name}: {e}");
-                Err("The desktop did not answer; the primary display was not changed.")
-            }
-        }
+    fn start_primary(&mut self, name: String) {
+        self.display.primary_job = Some(self.spawn(move || send_primary(&name)));
     }
 
-    /// Tests never reach the session's compositor.
+    /// Tests never reach the session's compositor; they answer through `primary_answer`.
     #[cfg(test)]
-    fn send_primary(&mut self, name: &str) -> Result<(), &'static str> {
-        self.display.sent_primary = Some(name.to_string());
-        Ok(())
+    fn start_primary(&mut self, name: String) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.display.sent_primary = Some(name);
+        self.display.primary_answer = Some(tx);
+        self.display.primary_job = Some(rx);
+    }
+
+    /// The SetPrimary call ended: an error box for a failure, else the layouts read as saved.
+    /// Some(close) once done, close when OK waited for it.
+    pub(crate) fn primary_done(&mut self) -> Option<bool> {
+        let done = match take(self.display.primary_job.as_ref()?) {
+            Ok(None) => return None,
+            Ok(Some(r)) => r,
+            Err(()) => Err(NO_ANSWER),
+        };
+        self.display.primary_job = None;
+        let quit = std::mem::take(&mut self.display.quit_after_primary);
+        let close = match done {
+            Ok(()) => {
+                self.display.model.layouts_saved = true;
+                displaypage::refresh(&mut self.sheet, &self.display.model, &self.want);
+                quit
+            }
+            Err(why) => {
+                self.fail(why);
+                false
+            }
+        };
+        self.sync_apply();
+        Some(close)
     }
 
     /// Carry out what the flow decided. A `Quit` after an error box went
@@ -271,20 +312,17 @@ impl SettingsApp {
                         saved = true;
                     }
                 }
-                Effect::SavePrimary(name) => {
-                    if let Err(why) = self.send_primary(&name) {
-                        self.fail(why);
-                        failed = true;
-                    } else {
-                        saved = true;
-                    }
-                }
+                Effect::SavePrimary(name) => self.start_primary(name),
                 Effect::Fail(why) => {
                     self.fail(why);
                     failed = true;
                 }
                 Effect::Quit => r.quit = !failed,
             }
+        }
+        if r.quit && self.display.primary_job.is_some() {
+            r.quit = false;
+            self.display.quit_after_primary = true;
         }
         if saved && !self.display.model.layouts_saved {
             self.display.model.layouts_saved = true;

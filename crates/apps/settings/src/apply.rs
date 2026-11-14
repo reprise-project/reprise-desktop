@@ -121,7 +121,7 @@ impl SettingsApp {
             );
         }
         let dirty = self.dirty();
-        self.sheet.set_apply_enabled(dirty);
+        (self.sheet).set_apply_enabled(dirty && self.display.primary_job.is_none());
         self.sync_restore();
     }
 

@@ -145,6 +145,10 @@ impl SettingsApp {
             changed = true;
             quit = close;
         }
+        if let Some(close) = self.primary_done() {
+            changed = true;
+            quit |= close;
+        }
         if let Some(close) = self.proxy_done() {
             changed = true;
             quit |= close && self.login_job.is_none();

@@ -438,6 +438,7 @@ pub fn reload(state: &mut State, cfg: Config) {
     }
     let global = state.tabs_global.take();
     state.tabs_global = crate::tabsproto::advertise(&state.dh, state.config.window_tabs, global);
+    crate::nightlight::recheck_profiles(state);
     crate::nightlight::update(state);
     if old.interface != state.config.interface {
         crate::loginlink::interface_changed(state);

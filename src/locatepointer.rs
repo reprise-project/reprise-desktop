@@ -21,6 +21,8 @@ const STILL_AT: f64 = 0.5;
 pub struct CtrlTap {
     down: Vec<u32>,
     armed: Option<u32>,
+    /// The pointer buttons down, counted before any grab or overlay takes the press or release.
+    buttons: Vec<u32>,
 }
 
 impl CtrlTap {
@@ -41,6 +43,20 @@ impl CtrlTap {
     /// A button, the wheel, a finger, a pen or a gesture was used: the Ctrl held goes with it.
     pub fn spoil(&mut self) {
         self.armed = None;
+    }
+
+    /// Pointer `button` went down or up.
+    pub fn button(&mut self, button: u32, pressed: bool) {
+        self.spoil();
+        self.buttons.retain(|&b| b != button);
+        if pressed {
+            self.buttons.push(button);
+        }
+    }
+
+    /// The seat let go of every button (a session pause, the lock).
+    pub fn buttons_released(&mut self) {
+        self.buttons.clear();
     }
 }
 
@@ -68,8 +84,7 @@ impl State {
             .any(|&s| s == KEY_Control_L || s == KEY_Control_R);
         // A Ctrl tap under a held button or finger is a drag's copy or move switch; under
         // StickyKeys it is a latch.
-        let held =
-            self.buttons_down > 0 || !self.seat_buttons.is_empty() || self.devices.touch.any_down();
+        let held = !self.key_input.ctrl_tap.buttons.is_empty() || self.devices.touch.any_down();
         if self.key_input.ctrl_tap.key(code, ctrl, pressed)
             && !held
             && self.config.accessibility.locate_pointer
@@ -219,6 +234,20 @@ mod tests {
             "Ctrl+click the overlay took"
         );
         assert!(rang(&mut h).is_some(), "a lone tap after it rings");
+    }
+
+    #[test]
+    fn a_release_an_overlay_took_leaves_the_ctrl_tap_ringing() {
+        use crate::input::BTN_LEFT;
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.state.config.accessibility.locate_pointer = true;
+        h.pointer_to(500.0, 400.0);
+        h.button(BTN_LEFT, true);
+        h.state.open_region(false);
+        h.button(BTN_LEFT, false);
+        h.state.close_region();
+        assert!(rang(&mut h).is_some(), "the button is up");
     }
 
     #[test]
