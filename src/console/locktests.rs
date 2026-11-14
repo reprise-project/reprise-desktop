@@ -512,3 +512,56 @@ fn the_remote_sides_lock_neither_enters_nor_fades() {
     assert!(!h.state.desktop_locked(), "the remote side unlocks");
     assert!(h.state.lock.leaving.is_empty(), "its covers go at once");
 }
+
+/// Lock mode on the computer's keyboard with `a`'s aids, an output and the remote side up.
+fn lock_mode_with(a: impl FnOnce(&mut crate::config::AccessibilityConfig)) -> Harness {
+    let mut config = Config::default();
+    a(&mut config.accessibility);
+    let mut h = Harness::with_config(config);
+    h.output("eDP-1", 1920, 1080);
+    h.state.aids_configured();
+    h
+}
+
+fn begin_lock_mode(h: &mut Harness) -> crate::harness::TestClient {
+    let mut portal = h.connect_portal();
+    let lock = portal.lock_screen();
+    lock.set_layout(&[(0, 0, 1280, 720, 100)]);
+    h.roundtrip(&mut portal);
+    assert!(super::remote_side(&h.state));
+    portal
+}
+
+#[test]
+fn a_key_slow_keys_holds_back_when_lock_mode_begins_never_reaches_the_console() {
+    let mut h = lock_mode_with(|a| {
+        a.slow_keys = true;
+        a.slow_keys_delay = 100;
+    });
+    h.key(X, true);
+    let _portal = begin_lock_mode(&mut h);
+    h.key(X, false);
+    h.run_for(200);
+    assert_eq!(field(&h, Side::Console), "", "no x typed");
+}
+
+#[test]
+fn a_key_bounced_before_lock_mode_and_let_go_in_it_comes_up_after() {
+    let mut h = lock_mode_with(|a| {
+        a.bounce_keys = true;
+        a.bounce_keys_delay = 100;
+    });
+    tap(&mut h, &[X]);
+    h.key(X, true);
+    let _portal = begin_lock_mode(&mut h);
+    h.key(X, false);
+    hunter2(&mut h);
+    tap(&mut h, &HUNTER2);
+    tap(&mut h, &[ENTER]);
+    settle(&mut h);
+    assert!(!super::remote_side(&h.state), "lock mode ends");
+    h.run_for(150);
+    tap(&mut h, &[X]);
+    let keyboard = h.state.seat.get_keyboard().unwrap();
+    assert_eq!(keyboard.pressed_keys(), Default::default(), "x is up");
+}

@@ -48,6 +48,7 @@ pub(crate) fn pause(state: &mut State) {
             state.handle_key(code, false, InputTime::now());
         }
     }
+    state.aids_reset();
     crate::lockview::seat_away(state, true);
     // Under reprise-login, Switch User or another VT hands the screen to someone else.
     if state.login_link.is_some() && !state.console_locked() {

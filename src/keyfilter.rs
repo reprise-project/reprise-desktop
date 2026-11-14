@@ -291,7 +291,9 @@ impl KeyFilter {
             if let Some(i) = dropped {
                 self.bounced.remove(i);
             }
-            if self.cfg.bounce_keys {
+            // A release whose press went elsewhere (lock mode, another VT) was no keystroke here.
+            let seen = dropped.is_some() || self.down.contains(&k.code);
+            if self.cfg.bounce_keys && seen {
                 self.last_up = Some((k.code, now));
             }
             return dropped.is_some();
@@ -409,7 +411,19 @@ impl KeyFilter {
         }
     }
 
-    pub fn clear_sticky(&mut self) -> bool {
+    /// Forget every key it believes is down or waiting, and StickyKeys' modifiers, keeping the
+    /// settings. Returns whether the latched or locked modifiers changed.
+    pub fn reset(&mut self) -> bool {
+        let had = self.latched | self.locked != 0;
+        let cfg = std::mem::take(&mut self.cfg);
+        *self = KeyFilter {
+            cfg,
+            ..Default::default()
+        };
+        had
+    }
+
+    fn clear_sticky(&mut self) -> bool {
         let had = self.latched | self.locked != 0;
         self.latched = 0;
         self.locked = 0;
@@ -550,12 +564,17 @@ impl State {
         }
     }
 
-    /// StickyKeys lets go of what it latched and locked, on the seat's keyboard too.
-    pub fn aids_release_sticky(&mut self) {
-        if self.key_input.aids.filter.clear_sticky() {
+    /// Lock mode, the session leaving the seat or the lock screen begins: the aids forget every key
+    /// they hold and what StickyKeys latched and locked, on the seat's keyboard too. Clients hear
+    /// no release from this; the seat sends its own.
+    pub fn aids_reset(&mut self) {
+        let aids = &mut self.key_input.aids;
+        aids.held_from.clear();
+        if aids.filter.reset() {
             self.sync_aids();
             self.redraw_taskbars();
         }
+        self.arm_aids();
     }
 
     /// A pointer press was delivered: it used up the latch.
@@ -958,6 +977,43 @@ mod tests {
     }
 
     #[test]
+    fn bounce_keys_ignores_a_release_whose_press_it_never_saw() {
+        let mut f = bounce(500);
+        assert_eq!(f.key(key(A, false), 0).0, Verdict::Pass);
+        assert_eq!(f.key(key(A, true), 100).0, Verdict::Pass);
+    }
+
+    #[test]
+    fn a_reset_forgets_waiting_keys_and_the_latch_but_not_the_settings() {
+        let mut f = KeyFilter::default();
+        let cfg = AccessibilityConfig {
+            sticky_keys: true,
+            slow_keys: true,
+            slow_keys_delay: 300,
+            bounce_keys: true,
+            bounce_keys_delay: 500,
+            ..Default::default()
+        };
+        f.configure(&cfg);
+        f.key(key(CTRL, true), 0);
+        f.tick(300);
+        f.key(key(CTRL, true), 300);
+        f.key(key(CTRL, false), 400);
+        f.key(key(A, true), 1000);
+        assert_eq!(f.latched(), MOD_CTRL);
+        assert_eq!(f.deadline(), Some(1300), "a waits");
+        assert!(f.reset(), "the latch went");
+        assert_eq!((f.latched(), f.deadline()), (0, None));
+        assert_eq!(f.config(), &cfg);
+        assert_eq!(
+            f.key(key(A, true), 1100).0,
+            Verdict::Swallow,
+            "a waits anew"
+        );
+        assert_eq!(f.tick(1400).accept, [A]);
+    }
+
+    #[test]
     fn bounce_keys_lets_a_key_through_after_another_key() {
         let mut f = bounce(500);
         tap(&mut f, A, 0);
@@ -1282,6 +1338,80 @@ mod tests {
         type_s(&mut h);
         assert_eq!(crate::spawn::recorded(), ["reprise-settings"]);
         assert!(h.state.dialogs.views.is_empty(), "the question closes");
+    }
+
+    /// Evdev codes, as `Harness::key` takes them.
+    const EV_LEFTCTRL: u32 = 29;
+    const EV_A: u32 = 30;
+
+    fn focused_with(
+        a: impl FnOnce(&mut AccessibilityConfig),
+    ) -> (crate::harness::Harness, crate::harness::TestClient) {
+        let mut config = crate::config::Config::default();
+        a(&mut config.accessibility);
+        let mut h = crate::harness::Harness::with_config(config);
+        h.output("TEST-1", 1024, 768);
+        h.state.aids_configured();
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+        assert_eq!(h.state.focused, Some(t.id));
+        h.roundtrip(&mut c);
+        c.side.keys.clear();
+        (h, c)
+    }
+
+    fn heard(
+        h: &mut crate::harness::Harness,
+        c: &mut crate::harness::TestClient,
+    ) -> Vec<(u32, bool)> {
+        h.roundtrip(c);
+        std::mem::take(&mut c.side.keys)
+    }
+
+    #[test]
+    fn a_key_slow_keys_holds_back_at_a_session_pause_is_never_typed() {
+        let (mut h, mut c) = focused_with(|a| {
+            a.slow_keys = true;
+            a.slow_keys_delay = 100;
+        });
+        h.key(EV_A, true);
+        crate::backend::pause_session(&mut h.state);
+        h.run_for(200);
+        assert!(heard(&mut h, &mut c).is_empty(), "nothing typed while away");
+        h.key(EV_A, false);
+        assert!(
+            heard(&mut h, &mut c).is_empty(),
+            "the late release reaches no one"
+        );
+    }
+
+    #[test]
+    fn a_key_held_across_a_session_pause_types_again_at_once_on_return() {
+        let (mut h, mut c) = focused_with(|a| {
+            a.bounce_keys = true;
+            a.bounce_keys_delay = 5000;
+        });
+        h.key(EV_A, true);
+        crate::backend::pause_session(&mut h.state);
+        assert_eq!(heard(&mut h, &mut c), [(EV_A, true), (EV_A, false)]);
+        h.key(EV_A, false);
+        h.key(EV_A, true);
+        assert_eq!(heard(&mut h, &mut c), [(EV_A, true)], "no bounce");
+    }
+
+    #[test]
+    fn locking_the_session_drops_a_latched_ctrl() {
+        let (mut h, _c) = focused_with(|a| a.sticky_keys = true);
+        h.key(EV_LEFTCTRL, true);
+        h.key(EV_LEFTCTRL, false);
+        assert_eq!(h.state.key_input.aids.filter.latched(), MOD_CTRL);
+        crate::lockview::lock(&mut h.state);
+        assert_eq!(h.state.key_input.aids.filter.latched(), 0);
+        assert_eq!(h.state.xkb_mask().unwrap().0.latched, 0, "the seat's too");
+        h.key(EV_A, true);
+        h.key(EV_A, false);
+        let l = h.state.lock.on(crate::console::Side::Console);
+        assert_eq!(l.expect("locked").input(), "a", "the first letter types");
     }
 
     #[test]
