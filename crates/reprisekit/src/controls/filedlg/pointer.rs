@@ -541,6 +541,15 @@ impl FileDlg {
         true
     }
 
+    /// Let go of the pointer outright, for a host whose window will not see the release: a
+    /// marquee gives back the selection its press found, and no button, title or place stays held.
+    pub fn cancel_pointer(&mut self) {
+        self.cancel_marquee();
+        self.toolbar.pressed = None;
+        self.shell.header.clear();
+        self.places.pressed = None;
+    }
+
     /// Ends a press on a toolbar button, a Details column title, a place or a marquee, the
     /// presses the dialog tracks.
     pub fn release(&mut self) -> Event {

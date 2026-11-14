@@ -209,6 +209,32 @@ fn a_file_dialogs_views_menu_is_the_windows_popup_while_open() {
     assert_eq!(spots(&mut app), Some(1));
 }
 
+#[test]
+fn a_covered_file_dialog_lets_go_of_its_marquee() {
+    use reprisekit::controls::filedlg::{DlgMode, Event as E, Fields, FileDlg, Hit};
+    use reprisekit::controls::shellview;
+    let fields = Fields {
+        title: "Open".into(),
+        accept_label: "Open".into(),
+        filters: vec!["All Files (*.*)".into()],
+        mode: DlgMode::Open,
+        multiple: true,
+    };
+    let mut app = Picker {
+        dlg: FileDlg::new(fields, vec![]),
+        host: filedlg::Host::default(),
+    };
+    let (w, h) = app.dlg.client();
+    let r = Rect::new(0, 0, w, h);
+    let background = Some(Hit::Shell(shellview::Hit::Background));
+    let press = |d: &mut FileDlg| d.click_at(r, background, Default::default(), (w / 2, h / 2));
+    press(&mut app.dlg);
+    assert!(matches!(app.dlg.release(), E::Redraw), "the band was held");
+    press(&mut app.dlg);
+    crate::Extended::cancel_pointer(&mut app, MAIN);
+    assert!(matches!(app.dlg.release(), E::None), "nothing is held");
+}
+
 struct Kept {
     kept: (i32, i32),
     min: Option<(i32, i32)>,

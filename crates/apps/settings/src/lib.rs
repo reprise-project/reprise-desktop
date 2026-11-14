@@ -1175,7 +1175,7 @@ impl repriseapp::Extended for SettingsApp {
         })
     }
 
-    /// The side lists let go too, and the Add Layout dialog's form.
+    /// The side lists let go too, the Add Layout dialog's form and the Color dialog.
     fn cancel_pointer(&mut self, win: WinId) {
         match win {
             repriseapp::MAIN => {
@@ -1186,6 +1186,11 @@ impl repriseapp::Extended for SettingsApp {
             LAYOUT_WIN => {
                 if let Some(d) = self.add_layout.as_mut() {
                     d.form.cancel_pointer();
+                }
+            }
+            COLOR_WIN => {
+                if let Some((d, ..)) = self.color_dlg.as_mut() {
+                    d.cancel_pointer();
                 }
             }
             _ => {}
