@@ -239,7 +239,12 @@ impl AccountsApp {
         }
         if let Some((from, steps, ended)) = self.fingers.add_landed() {
             changed = true;
-            let dialog = self.add_finger.as_mut().filter(|d| d.generation == from);
+            // A queued start owns the dialog: the earlier add's last steps are not its own.
+            let queued = self.fingers.queued.is_some();
+            let dialog = self
+                .add_finger
+                .as_mut()
+                .filter(|d| d.generation == from && !queued);
             if let Some(d) = dialog {
                 for step in steps {
                     match step {
@@ -252,6 +257,15 @@ impl AccountsApp {
                 }
             }
             reread |= ended.is_some();
+            if ended.is_some()
+                && let Some((from, finger)) = self.fingers.queued.take()
+                && self
+                    .add_finger
+                    .as_ref()
+                    .is_some_and(|d| d.generation == from)
+            {
+                self.start_add(finger);
+            }
         }
         if reread {
             // A read under way may predate the change.
@@ -359,6 +373,7 @@ impl AccountsApp {
     /// lands and reads the fingers again.
     fn close_add_finger(&mut self) {
         self.add_finger = None;
+        self.fingers.queued = None;
         if let Some(a) = &self.fingers.add {
             a.stop.stop();
         }
@@ -369,10 +384,14 @@ impl AccountsApp {
         let Some(from) = self.add_finger.as_ref().map(|d| d.generation) else {
             return;
         };
-        if self.fingers.add.is_some() || self.fingers.deleting.is_some() {
+        if self.fingers.deleting.is_some() {
             if let Some(d) = &mut self.add_finger {
                 d.refused(addfinger::Refusal::InUse);
             }
+            return;
+        }
+        if self.fingers.add.is_some() {
+            self.fingers.queued = Some((from, finger));
             return;
         }
         let (tx, rx) = channel();
@@ -383,9 +402,10 @@ impl AccountsApp {
                 w.wake();
             }
         };
+        let add = self.finger_sources.add;
         std::thread::spawn(move || {
             let step = tx.clone();
-            let ended = reprisebus::fprint::add(finger.key(), stopped, |a| {
+            let ended = add(finger.key(), stopped, &mut |a| {
                 let _ = step.send(fingers::Msg::Step(a));
                 wake();
             });
@@ -1490,6 +1510,7 @@ mod tests {
         app.finger_sources = fingers::Sources {
             read: virtual_reader,
             delete: |_| Err(reprisebus::fprint::Refusal::NotAuthorized),
+            add: |_, _, _| Ok(()),
         };
         app.users.refresh(
             vec![user(1000, "jo", true, true), user(1001, "al", false, false)],
@@ -1563,6 +1584,51 @@ mod tests {
         assert!(
             matches!(d.step, addfinger::Step::Scanning { .. }),
             "{:?}",
+            d.step
+        );
+    }
+
+    #[test]
+    fn a_start_while_the_last_add_lets_the_reader_go_waits_for_it() {
+        use reprisebus::fprint::Adding;
+        let mut app = with_reader();
+        app.open_props(1000);
+        app.fingers_done();
+        let (tx, rx) = channel();
+        let (stop, _) = reprisebus::fprint::Stop::new();
+        // Try Again: the dialog that started the add, which is still letting the reader go.
+        let from = app.fingers.opened + 1;
+        app.fingers.add = Some(fingers::Add { from, rx, stop });
+        app.fingers_action(fingerprints::Action::Add, &mut test_ctx());
+        app.add_finger.as_mut().unwrap().event(form::Event::Default);
+        assert_eq!(app.add_finger.as_ref().unwrap().generation, from);
+        app.start_add(fingerprints::Finger::LeftThumb);
+        let d = app.add_finger.as_ref().unwrap();
+        assert!(
+            matches!(d.step, addfinger::Step::Waiting(_)),
+            "waits instead of refusing: {:?}",
+            d.step
+        );
+        assert_eq!(
+            app.fingers.queued,
+            Some((from, fingerprints::Finger::LeftThumb))
+        );
+        tx.send(fingers::Msg::Step(Adding::Started)).unwrap();
+        tx.send(fingers::Msg::Ended(Err(
+            reprisebus::fprint::Refusal::Failed,
+        )))
+        .unwrap();
+        app.fingers_done();
+        assert_eq!(app.fingers.queued, None);
+        assert_eq!(
+            app.fingers.add.as_ref().map(|a| a.from),
+            Some(from),
+            "the queued add starts"
+        );
+        let d = app.add_finger.as_ref().unwrap();
+        assert!(
+            matches!(d.step, addfinger::Step::Waiting(_)),
+            "the earlier add's end is not the dialog's: {:?}",
             d.step
         );
     }

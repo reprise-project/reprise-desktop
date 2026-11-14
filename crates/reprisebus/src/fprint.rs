@@ -301,17 +301,13 @@ pub async fn add_on(
         log::warn!("fprint: the reader stopped answering");
         Err(Refusal::Failed)
     };
-    let added = match Abortable::new(run, stop.0).await {
-        Ok(added) => added,
-        Err(_) => {
-            if started.get()
-                && let Err(e) = device.call::<_, _, ()>("EnrollStop", &()).await
-            {
-                log::debug!("fprint: stop: {e}");
-            }
-            Ok(())
-        }
-    };
+    let added = Abortable::new(run, stop.0).await.unwrap_or(Ok(()));
+    // fprintd wants EnrollStop after the final status as well as on a stop.
+    if started.get()
+        && let Err(e) = device.call::<_, _, ()>("EnrollStop", &()).await
+    {
+        log::debug!("fprint: stop: {e}");
+    }
     // A claim cut short by the stop ends with this connection.
     if claimed.get()
         && let Err(e) = device.call::<_, _, ()>("Release", &()).await
@@ -611,7 +607,12 @@ mod tests {
         );
         assert_eq!(
             calls(&r),
-            ["Claim \"\"", "EnrollStart right-index-finger", "Release"]
+            [
+                "Claim \"\"",
+                "EnrollStart right-index-finger",
+                "EnrollStop",
+                "Release"
+            ]
         );
     }
 
