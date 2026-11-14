@@ -49,7 +49,7 @@ fn apply_pointer(cfg: &mut PointerConfig, section: &str, k: PointerKeys) -> Resu
 
 /// Largest `[metrics]` value, pixels or milliseconds: everything past it
 /// is a typo, and the consumers do their arithmetic unclamped.
-const METRIC_MAX: i32 = 10_000;
+pub const METRIC_MAX: i32 = 10_000;
 
 pub(super) fn home_path(s: &str, home: Option<&std::ffi::OsStr>) -> Result<PathBuf, String> {
     let path = match (s.strip_prefix("~/"), home) {

@@ -542,8 +542,10 @@ pub fn adopt_orphans() {
 }
 
 /// The `revokefs-fuse` processes this process adopted ([`adopt_orphans`]) end, unmounting their
-/// download folders, which are then removed.
+/// download folders, which are then removed. Later orphans go to the usual reaper again.
 pub fn sweep_orphans() {
+    // SAFETY: prctl's PR_SET_CHILD_SUBREAPER takes plain integers.
+    unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 0, 0, 0, 0) };
     let me = std::process::id();
     let Ok(dir) = std::fs::read_dir("/proc") else {
         return;

@@ -539,8 +539,19 @@ mod tests {
         assert!(h.state.apply_head(&panel, &req));
         assert_eq!(
             panel.current_transform(),
+            Transform::Normal,
+            "asking the chosen transform forgets the turn"
+        );
+        h.state.turn_panels(Transform::_90);
+        let turn = HeadRequest {
+            transform: Transform::_90,
+            ..req
+        };
+        assert!(h.state.apply_head(&panel, &turn));
+        assert_eq!(
+            panel.current_transform(),
             Transform::_90,
-            "asking the chosen transform keeps the turn"
+            "asking the turn output management publishes keeps it"
         );
 
         h.state.config.auto_rotate = false;

@@ -175,7 +175,7 @@ fn double_click_ms_of(doc: &DocumentMut) -> Option<i32> {
     get(doc, &key("metrics", "double_click_ms"))?
         .as_integer()
         .and_then(|v| i32::try_from(v).ok())
-        .filter(|v| (0..=10_000).contains(v))
+        .filter(|v| (0..=config::METRIC_MAX).contains(v))
 }
 
 /// `[taskbar] position`, read now: "bottom" when unset, not a string or unparsable. Tray applets

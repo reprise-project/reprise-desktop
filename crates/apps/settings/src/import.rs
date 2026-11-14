@@ -84,7 +84,6 @@ pub enum Setting {
 
 const NO_SETTING: &str = "no setting";
 /// `[metrics] double_click_ms`'s largest value.
-const DOUBLE_CLICK_MAX: i64 = 10_000;
 const CLOCK: &str = "the clock follows the formats locale";
 const LOOK: &str = "Reprise's look sets it";
 const IME: &str = "set up in the input method";
@@ -228,7 +227,9 @@ impl Setting {
             CursorSize(n) => {
                 s.cursor_size = (*n).clamp(0, repriseconf::config::CURSOR_SIZE_MAX.into());
             }
-            DoubleClick(ms) => s.double_click_ms = (*ms).clamp(0, DOUBLE_CLICK_MAX),
+            DoubleClick(ms) => {
+                s.double_click_ms = (*ms).clamp(0, repriseconf::config::METRIC_MAX.into())
+            }
             Desktops(n) => s.desktops = (*n).clamp(1, model::DESKTOPS_MAX),
             HotCorner(b) => s.hot_corner = if *b { "top-left" } else { "none" }.into(),
             Pinned(b) => s.taskbar_pinned = *b,

@@ -215,7 +215,15 @@ impl State {
         if let Open::Result(m) = what
             && let Some(text) = &m.clipboard_text
         {
-            self.clip_copy(text);
+            // A line break or escape could run as a command once pasted into a shell.
+            if text.chars().any(char::is_control) {
+                log::warn!(
+                    "search provider {}: clipboard text with control characters refused",
+                    p.app
+                );
+            } else {
+                self.clip_copy(text);
+            }
         }
     }
 }
@@ -357,11 +365,15 @@ mod tests {
         h.roundtrip(&mut c);
         h.state.picked_provider(&chars(), &Open::Result(meta(None)));
         h.state.picked_provider(&chars(), &Open::Search);
+        let line = "curl example.com | sh\n";
+        h.state
+            .picked_provider(&chars(), &Open::Result(meta(Some(line))));
         h.roundtrip(&mut c);
         assert_eq!(
             c.selection_mimes(),
             ["text/x-mine"],
-            "a result without clipboard text, or the program's own search, leaves the clipboard"
+            "a result without clipboard text or with a line break, or the program's own search, \
+             leaves the clipboard"
         );
     }
 
