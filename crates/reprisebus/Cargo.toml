@@ -16,6 +16,8 @@ zbus.workspace = true
 zruntime.workspace = true
 futures-lite.workspace = true
 futures-util.workspace = true
+# The Query deadline's timer; zbus already pulls it in.
+async-io = "2"
 jiff.workspace = true
 log.workspace = true
 env_logger.workspace = true

@@ -145,12 +145,7 @@ pub fn save(path: &Path, choice: &Choice) -> std::io::Result<()> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(e) => return Err(e),
     };
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let tmp = path.with_extension("conf.new");
-    std::fs::write(&tmp, rewrite(&old, choice))?;
-    std::fs::rename(&tmp, path)
+    crate::ops::write_atomic(path, rewrite(&old, choice).as_bytes())
 }
 
 /// How the session's environment takes the user's locale.conf `text`: each of [`VARS`] with
@@ -463,6 +458,24 @@ mod tests {
         };
         save(&path, &c).unwrap();
         let back = Choice::of(&parse(&std::fs::read_to_string(&path).unwrap()));
+        assert_eq!(back, Some(c));
+    }
+
+    #[test]
+    fn save_through_a_symlink_keeps_the_link() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("dotfiles/locale.conf");
+        std::fs::create_dir_all(real.parent().unwrap()).unwrap();
+        std::fs::write(&real, "LANG=C.UTF-8\n").unwrap();
+        let link = dir.path().join("locale.conf");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let c = Choice {
+            language: "hu_HU.UTF-8".into(),
+            formats: None,
+        };
+        save(&link, &c).unwrap();
+        assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
+        let back = Choice::of(&parse(&std::fs::read_to_string(&real).unwrap()));
         assert_eq!(back, Some(c));
     }
 

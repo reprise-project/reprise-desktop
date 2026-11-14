@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 use std::os::fd::{AsFd, AsRawFd, OwnedFd};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use zbus::Connection;
@@ -33,14 +34,19 @@ pub fn fts_match(query: &str) -> Option<String> {
     (!words.is_empty()).then(|| format!("{}*", words.join(" ")))
 }
 
+/// How often a search in flight looks at its cancel flag.
+const CANCEL_CHECK: Duration = Duration::from_millis(100);
+
 /// The `file://` URLs of at most `max` files whose text or metadata matches `query`
 /// ([`fts_match`]), best first. Fails when the indexer is not installed, answers an error, or has
-/// not sent every row by `timeout` after the call; blocks the calling thread meanwhile.
+/// not answered and sent every row by `timeout` after the call, and soon after `cancel` is set;
+/// blocks the calling thread meanwhile.
 pub fn search(
     conn: &Connection,
     query: &str,
     max: usize,
     timeout: Duration,
+    cancel: &AtomicBool,
 ) -> Result<Vec<String>, String> {
     let Some(words) = fts_match(query) else {
         return Ok(Vec::new());
@@ -49,9 +55,24 @@ pub fn search(
     let (read, write) = pipe().map_err(|e| e.to_string())?;
     let sparql = format!("{QUERY}{max}");
     let args = HashMap::from([("match", Variant::from(words.as_str()))]);
-    crate::wait(call(conn, &sparql, Fd::from(write.as_fd()), &args)).map_err(|e| e.to_string())?;
+    let called = async {
+        let fd = Fd::from(write.as_fd());
+        call(conn, &sparql, fd, &args)
+            .await
+            .map_err(|e| e.to_string())
+    };
+    let given_up = async {
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            async_io::Timer::after(left.min(CANCEL_CHECK)).await;
+            if let Some(why) = stop(deadline, cancel) {
+                return Err(why.to_string());
+            }
+        }
+    };
+    crate::wait(futures_lite::future::or(called, given_up))?;
     drop(write);
-    let bytes = read_all(&read, deadline)?;
+    let bytes = read_all(&read, deadline, cancel)?;
     let mut urls: Vec<String> = Vec::new();
     for row in rows(&bytes).ok_or("the indexer's answer did not parse")? {
         if let Some(url) = row.into_iter().next()
@@ -101,15 +122,29 @@ fn pipe() -> std::io::Result<(OwnedFd, OwnedFd)> {
     })
 }
 
-/// Everything written to `fd` until the writer closes it; an error at `deadline`.
-fn read_all(fd: &OwnedFd, deadline: Instant) -> Result<Vec<u8>, String> {
+/// Why a search stops before its answer: the deadline passed or it was cancelled.
+fn stop(deadline: Instant, cancel: &AtomicBool) -> Option<&'static str> {
+    if cancel.load(Ordering::Relaxed) {
+        Some("cancelled")
+    } else if Instant::now() >= deadline {
+        Some("the indexer did not finish its answer in time")
+    } else {
+        None
+    }
+}
+
+/// Everything written to `fd` until the writer closes it; an error at `deadline` or once
+/// `cancel` is set.
+fn read_all(fd: &OwnedFd, deadline: Instant, cancel: &AtomicBool) -> Result<Vec<u8>, String> {
     let mut out = Vec::new();
     let mut buf = [0u8; 8192];
     loop {
-        let left = deadline.saturating_duration_since(Instant::now());
-        if left.is_zero() {
-            return Err("the indexer did not finish its answer in time".into());
+        if let Some(why) = stop(deadline, cancel) {
+            return Err(why.into());
         }
+        let left = deadline
+            .saturating_duration_since(Instant::now())
+            .min(CANCEL_CHECK);
         let mut pfd = libc::pollfd {
             fd: fd.as_raw_fd(),
             events: libc::POLLIN,
@@ -305,7 +340,13 @@ mod tests {
         answer.extend(row(&[("file:///home/u/a.txt", None)]));
         answer.extend(row(&[("file:///home/u/b%20c.pdf", None)]));
         let (_server, client, seen) = endpoint(answer, false);
-        let got = search(&client, "quarterly tax", 5, Duration::from_secs(5));
+        let got = search(
+            &client,
+            "quarterly tax",
+            5,
+            Duration::from_secs(5),
+            &AtomicBool::new(false),
+        );
         assert_eq!(
             got,
             Ok(vec![
@@ -328,10 +369,79 @@ mod tests {
     fn an_answer_not_finished_by_the_timeout_fails_without_waiting_for_it() {
         let (_server, client, _) = endpoint(row(&[("file:///a", None)]), true);
         let start = Instant::now();
-        let got = search(&client, "late", 5, Duration::from_millis(300));
+        let got = search(
+            &client,
+            "late",
+            5,
+            Duration::from_millis(300),
+            &AtomicBool::new(false),
+        );
         assert!(got.is_err(), "{got:?}");
         assert!(
             start.elapsed() < Duration::from_secs(1),
+            "{:?}",
+            start.elapsed()
+        );
+    }
+
+    /// An endpoint whose Query never returns.
+    struct Stuck;
+
+    #[zbus::interface(name = "org.freedesktop.Tracker3.Endpoint")]
+    impl Stuck {
+        async fn query(
+            &self,
+            _query: String,
+            _stream: zbus::OwnedFd,
+            _args: HashMap<String, zbus::OwnedVariant>,
+        ) -> Vec<String> {
+            std::future::pending().await
+        }
+    }
+
+    fn stuck() -> (Connection, Connection) {
+        let (a, b) = std::os::unix::net::UnixStream::pair().unwrap();
+        let server = std::thread::spawn(move || {
+            crate::connect(
+                zbus::connection::Builder::unix_stream(a)
+                    .server(zbus::Guid::generate())
+                    .p2p()
+                    .serve_at(PATH, Stuck),
+            )
+        });
+        let client = crate::connect(zbus::connection::Builder::unix_stream(b).p2p()).unwrap();
+        (server.join().unwrap().unwrap(), client)
+    }
+
+    #[test]
+    fn an_unanswered_query_fails_at_the_timeout_or_soon_after_a_cancel() {
+        let (_server, client) = stuck();
+        let start = Instant::now();
+        let got = search(
+            &client,
+            "stuck",
+            5,
+            Duration::from_millis(300),
+            &AtomicBool::new(false),
+        );
+        assert!(got.is_err(), "{got:?}");
+        assert!(
+            start.elapsed() < Duration::from_millis(800),
+            "{:?}",
+            start.elapsed()
+        );
+
+        let cancel = Arc::new(AtomicBool::new(false));
+        let setter = cancel.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(100));
+            setter.store(true, Ordering::Relaxed);
+        });
+        let start = Instant::now();
+        let got = search(&client, "stuck", 5, Duration::from_secs(10), &cancel);
+        assert_eq!(got, Err("cancelled".to_string()));
+        assert!(
+            start.elapsed() < Duration::from_millis(600),
             "{:?}",
             start.elapsed()
         );
@@ -341,7 +451,13 @@ mod tests {
     fn text_with_no_word_asks_nothing() {
         let (_server, client, seen) = endpoint(Vec::new(), false);
         assert_eq!(
-            search(&client, "--", 5, Duration::from_secs(1)),
+            search(
+                &client,
+                "--",
+                5,
+                Duration::from_secs(1),
+                &AtomicBool::new(false)
+            ),
             Ok(Vec::new())
         );
         assert!(seen.lock().unwrap().queries.is_empty());

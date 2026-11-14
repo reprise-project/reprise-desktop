@@ -72,7 +72,15 @@ pub enum Answer {
 /// A connection under way. Dropping it cancels it.
 pub struct Connecting {
     answers: Sender<Answer>,
-    child: Arc<Mutex<Option<Child>>>,
+    child: Arc<Mutex<Slot>>,
+}
+
+/// The running `gio mount`, and whether Cancel came. `attempt` checks and spawns under the same
+/// lock `cancel` takes, so a Cancel while the keyring is asked spawns nothing after it.
+#[derive(Default)]
+struct Slot {
+    child: Option<Child>,
+    cancelled: bool,
 }
 
 impl Connecting {
@@ -81,9 +89,12 @@ impl Connecting {
     }
 
     pub fn cancel(&self) {
-        if let Some(c) = reprisebus::mutex::lock(&self.child).as_mut() {
+        let mut slot = reprisebus::mutex::lock(&self.child);
+        slot.cancelled = true;
+        if let Some(c) = slot.child.as_mut() {
             let _ = c.kill();
         }
+        drop(slot);
         let _ = self.answers.send(Answer::Cancel);
     }
 }
@@ -97,7 +108,7 @@ impl Drop for Connecting {
 /// Mounts `addr` on a thread of its own; `post` gets each prompt and then the outcome.
 pub fn connect(addr: Address, post: impl FnMut(Step) + Send + 'static) -> Connecting {
     let (tx, rx) = std::sync::mpsc::channel();
-    let child = Arc::new(Mutex::new(None));
+    let child = Arc::new(Mutex::new(Slot::default()));
     let slot = child.clone();
     let spawned = std::thread::Builder::new()
         .name("gio-mount".into())
@@ -108,12 +119,7 @@ pub fn connect(addr: Address, post: impl FnMut(Step) + Send + 'static) -> Connec
     Connecting { answers: tx, child }
 }
 
-fn run(
-    addr: Address,
-    mut post: impl FnMut(Step),
-    rx: Receiver<Answer>,
-    child: Arc<Mutex<Option<Child>>>,
-) {
+fn run(addr: Address, mut post: impl FnMut(Step), rx: Receiver<Answer>, child: Arc<Mutex<Slot>>) {
     let secrets = Secrets::open();
     let stored = in_address(&addr).or_else(|| secrets.as_ref().and_then(|s| stored(s, &addr)));
     let mut talk = Talk {
@@ -172,8 +178,12 @@ impl Talk<'_> {
         anonymous: bool,
         post: &mut impl FnMut(Step),
         rx: &Receiver<Answer>,
-        slot: &Arc<Mutex<Option<Child>>>,
+        slot: &Arc<Mutex<Slot>>,
     ) -> Result<(), Failed> {
+        let mut held = reprisebus::mutex::lock(slot);
+        if held.cancelled {
+            return Err(Failed::Cancelled);
+        }
         let Some(mut cmd) = gio_command() else {
             return Err(Failed::Error("gio is not installed.".into()));
         };
@@ -192,7 +202,8 @@ impl Talk<'_> {
         let mut stdin = child.stdin.take().expect("piped");
         let mut stdout = child.stdout.take().expect("piped");
         let mut stderr = child.stderr.take().expect("piped");
-        *reprisebus::mutex::lock(slot) = Some(child);
+        held.child = Some(child);
+        drop(held);
         let mut conv = Conversation::default();
         let mut current: Option<Credentials> = None;
         let mut cancelled = false;
@@ -234,7 +245,7 @@ impl Talk<'_> {
                 Some(text) => write_line(&mut stdin, &text),
                 None => {
                     cancelled = true;
-                    if let Some(c) = reprisebus::mutex::lock(slot).as_mut() {
+                    if let Some(c) = reprisebus::mutex::lock(slot).child.as_mut() {
                         let _ = c.kill();
                     }
                     break;
@@ -244,7 +255,10 @@ impl Talk<'_> {
         drop(stdin);
         let mut err = String::new();
         let _ = stderr.read_to_string(&mut err);
-        let status = reprisebus::mutex::lock(slot).take().map(|mut c| c.wait());
+        let status = reprisebus::mutex::lock(slot)
+            .child
+            .take()
+            .map(|mut c| c.wait());
         match status {
             _ if cancelled => Err(Failed::Cancelled),
             Some(Ok(s)) if s.success() => Ok(()),
@@ -353,5 +367,32 @@ mod tests {
         assert_eq!((c.user.as_str(), c.password.as_str()), ("alice", "pw"));
         assert!(!c.remember);
         assert!(in_address(&Address::parse("smb://alice@nas/share").unwrap()).is_none());
+    }
+
+    #[test]
+    fn a_cancel_while_the_keyring_is_asked_starts_no_gio() {
+        let addr = Address::parse("smb://nas/share").unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let connecting = Connecting {
+            answers: tx,
+            child: Arc::new(Mutex::new(Slot::default())),
+        };
+        connecting.cancel();
+        let mut talk = Talk {
+            addr: &addr,
+            stored: None,
+            typed: None,
+            asked: 0,
+            can_remember: false,
+        };
+        let mut posted = Vec::new();
+        let slot = connecting.child.clone();
+        let tried = talk.attempt(true, &mut |s| posted.push(s), &rx, &slot);
+        assert_eq!(tried, Err(Failed::Cancelled));
+        assert!(posted.is_empty());
+        assert!(
+            reprisebus::mutex::lock(&slot).child.is_none(),
+            "no gio started"
+        );
     }
 }
