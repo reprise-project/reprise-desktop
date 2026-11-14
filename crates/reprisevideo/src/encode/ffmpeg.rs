@@ -7,7 +7,7 @@ use super::h264merge::Merge;
 use super::hwmap::{self, Converter, Devices};
 use super::probe::Backend;
 use super::split::Views;
-use super::{EncodeError, Encoded, Encoder};
+use super::{Codec, EncodeError, Encoded, Encoder, rate};
 use crate::stream::{Frame, FrameBuffer, Rect};
 use ::ffmpeg::{Dictionary, ffi, frame};
 use repriseconf::remote::Quality;
@@ -122,7 +122,7 @@ impl Ffmpeg {
             target: None,
             merge: matches!(
                 backend,
-                Backend::Vaapi { .. } | Backend::Nvenc | Backend::X264
+                Backend::Vaapi { .. } | Backend::Nvenc | Backend::Software
             )
             .then(Merge::default),
             split: (true, 1),
@@ -142,7 +142,7 @@ impl Ffmpeg {
 
     /// The journal line naming whether AVC444 codes its views on two encoders or on one, and why.
     fn views_line(&self) -> String {
-        let label = self.backend.label();
+        let label = self.backend.label(Codec::H264);
         let (on, screens) = self.split;
         let why = if self.merge.is_some() {
             return format!("AVC444 views: two {label} encoders, merged");
@@ -227,7 +227,7 @@ impl Ffmpeg {
         avc444: bool,
         merged: bool,
     ) -> Result<::ffmpeg::encoder::video::Encoder, EncodeError> {
-        let name = self.backend.codec();
+        let name = self.backend.encoder(Codec::H264);
         let codec = ::ffmpeg::encoder::find_by_name(name)
             .ok_or_else(|| EncodeError(format!("FFmpeg has no {name}")))?;
         let mut ctx = ::ffmpeg::codec::Context::new_with_codec(codec)
@@ -305,7 +305,7 @@ impl Ffmpeg {
                 self.views_logged = true;
             }
         }
-        let codec = self.backend.codec();
+        let codec = self.backend.encoder(Codec::H264);
         let open = self.open.as_mut().expect("opened above");
         let mut next = |input, idr| send(&mut open.encoder, input, idr, &mut open.pts, codec);
         let coded = match &mut open.input {
@@ -442,21 +442,17 @@ fn send(
 /// AVC444 view on its own encoder.
 fn options(backend: Backend, quality: Quality, avc444: bool, merged: bool) -> Dictionary {
     let mut o = Dictionary::new();
-    o.set("qp", quality.qp().to_string());
+    for (k, v) in rate::constant_qp(backend, quality.qp()) {
+        o.set(k, &v);
+    }
     let (nvenc_preset, x264_preset) = match quality {
         Quality::Speed => ("p1", "ultrafast"),
         Quality::Balanced => ("p3", "superfast"),
         Quality::Sharp => ("p5", "veryfast"),
     };
     let pairs: &[(&str, &str)] = match backend {
-        Backend::Vaapi { low_power } => &[
-            ("rc_mode", "CQP"),
-            ("low_power", if low_power { "1" } else { "0" }),
-            ("async_depth", "1"),
-            ("sei", "0"),
-        ],
+        Backend::Vaapi { .. } => &[("async_depth", "1"), ("sei", "0")],
         Backend::Nvenc => &[
-            ("rc", "constqp"),
             ("preset", nvenc_preset),
             ("tune", "ull"),
             ("delay", "0"),
@@ -464,13 +460,12 @@ fn options(backend: Backend, quality: Quality, avc444: bool, merged: bool) -> Di
             ("forced-idr", "1"),
         ],
         Backend::Vulkan => &[
-            ("rc_mode", "cqp"),
             ("async_depth", "1"),
             ("tune", "ull"),
             ("content", "desktop"),
             ("units", "0"),
         ],
-        Backend::X264 => &[
+        Backend::Software => &[
             ("preset", x264_preset),
             ("tune", "zerolatency"),
             ("forced-idr", "1"),
@@ -479,15 +474,21 @@ fn options(backend: Backend, quality: Quality, avc444: bool, merged: bool) -> Di
     for (k, v) in pairs {
         o.set(k, v);
     }
-    if avc444 && backend == Backend::X264 {
+    if avc444 && backend == Backend::Software {
         // Each view would look like a scene cut after the other and turn into an I picture.
         o.set("sc_threshold", "0");
     }
-    if merged && backend == Backend::X264 {
+    if merged && backend == Backend::Software {
         // Weighted prediction writes tables into slice headers that the merge doesn't rewrite.
         o.set("weightp", "none");
         // Finds scrolled text past the preset's range; only one encoder per view has the CPU for it.
         o.set("x264-params", "me=umh:merange=64");
+    }
+    #[cfg(test)]
+    if tests::holds_frames() {
+        // B-frames outside zerolatency: x264 keeps pictures back until it sees the next ones.
+        o.set("tune", "film");
+        o.set("bf", "3");
     }
     o
 }
@@ -523,7 +524,7 @@ impl Encoder for Ffmpeg {
             Err(Failed::Views(e)) => {
                 log::warn!(
                     "{} cannot code AVC444, sending AVC420: {e}",
-                    self.backend.label()
+                    self.backend.label(Codec::H264)
                 );
                 self.no_views = Some(frame.size);
                 self.open = None;
@@ -532,7 +533,7 @@ impl Encoder for Ffmpeg {
             Err(Failed::Merge(e)) => {
                 log::warn!(
                     "{} cannot merge the AVC444 views, coding both on one encoder: {e}",
-                    self.backend.label()
+                    self.backend.label(Codec::H264)
                 );
                 self.merge = None;
                 self.open = None;
@@ -617,7 +618,13 @@ pub(crate) mod tests {
 
     fn x264() -> Ffmpeg {
         silence();
-        Ffmpeg::new(Backend::X264, Path::new(RENDER_NODE), 60, Quality::Balanced).unwrap()
+        Ffmpeg::new(
+            Backend::Software,
+            Path::new(RENDER_NODE),
+            60,
+            Quality::Balanced,
+        )
+        .unwrap()
     }
 
     /// The pixel at (`x`, `y`) of picture `t`: smooth ramps and a square that moves.
@@ -767,7 +774,7 @@ pub(crate) mod tests {
         let size = (1920, 1080);
         for (rate, level) in [(60, 42), (144, 52)] {
             let mut encoder = Ffmpeg::new(
-                Backend::X264,
+                Backend::Software,
                 Path::new(RENDER_NODE),
                 rate,
                 Quality::Balanced,
@@ -780,7 +787,7 @@ pub(crate) mod tests {
     }
 
     fn x264_options(avc444: bool, merged: bool) -> Vec<(String, String)> {
-        let o = options(Backend::X264, Quality::Balanced, avc444, merged);
+        let o = options(Backend::Software, Quality::Balanced, avc444, merged);
         o.iter().map(|(k, v)| (k.into(), v.into())).collect()
     }
 
@@ -901,8 +908,13 @@ pub(crate) mod tests {
     #[test]
     fn a_dragged_windows_old_edges_leave_no_streaks_on_the_client() {
         silence();
-        let mut encoder =
-            Ffmpeg::new(Backend::X264, Path::new(RENDER_NODE), 60, Quality::Speed).unwrap();
+        let mut encoder = Ffmpeg::new(
+            Backend::Software,
+            Path::new(RENDER_NODE),
+            60,
+            Quality::Speed,
+        )
+        .unwrap();
         let mut decoder = Decoder::new();
         let at = |dx: u32| (8 + dx, 8 + dx / 3);
         let window = |dx: u32| Rect {
@@ -1371,8 +1383,11 @@ pub(crate) mod tests {
     #[ignore = "needs VA-API H.264 on /dev/dri/renderD128; run with --ignored where it has one"]
     fn a_shared_memory_frame_leaves_avc444_on_for_the_next_dmabuf() {
         silence();
-        let backend = (crate::encode::probe::probe(None).1.into_iter())
-            .map(|(b, _)| b)
+        let backend =
+            (crate::encode::probe::probe(None, &[Codec::H264], crate::encode::probe::live_test)
+                .1
+                .into_iter())
+            .map(|(_, b, _)| b)
             .find(|b| matches!(b, Backend::Vaapi { .. }))
             .expect("VA-API H.264 on this machine");
         let mut encoder =
@@ -1444,10 +1459,30 @@ pub(crate) mod tests {
         FAIL_AUX_SEND.take()
     }
 
+    thread_local! {
+        static HOLD_FRAMES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+
+    /// Whether encoders opened on this thread keep frames back until flushed.
+    pub(crate) fn holds_frames() -> bool {
+        HOLD_FRAMES.get()
+    }
+
+    /// Encoders opened on this thread while `f` runs keep frames back until flushed.
+    pub(crate) fn holding<T>(f: impl FnOnce() -> T) -> T {
+        HOLD_FRAMES.set(true);
+        let t = f();
+        HOLD_FRAMES.set(false);
+        t
+    }
+
     fn vaapi() -> Ffmpeg {
         silence();
-        let backend = (crate::encode::probe::probe(None).1.into_iter())
-            .map(|(b, _)| b)
+        let backend =
+            (crate::encode::probe::probe(None, &[Codec::H264], crate::encode::probe::live_test)
+                .1
+                .into_iter())
+            .map(|(_, b, _)| b)
             .find(|b| matches!(b, Backend::Vaapi { .. }))
             .expect("VA-API H.264 on this machine");
         let mut encoder =
@@ -1585,7 +1620,7 @@ pub(crate) mod tests {
     /// `encoder` over the desktop's 50 frames in dma-bufs (in shared memory for x264),
     /// keyframes asked for at [`KEYFRAMES`], Sharp from frame 35, and frame 45 unchanged.
     fn code_desktop(encoder: &mut Ffmpeg) -> Vec<Sent> {
-        let gbm = (encoder.backend != Backend::X264).then(render_node);
+        let gbm = (encoder.backend != Backend::Software).then(render_node);
         let desktop = Desktop::new();
         tapped();
         let mut sent = Vec::new();
@@ -2290,8 +2325,11 @@ pub(crate) mod tests {
     #[ignore = "needs VA-API H.264 on /dev/dri/renderD128; run with --ignored where it has one"]
     fn vaapi_codes_a_half_size_target() {
         silence();
-        let backend = (crate::encode::probe::probe(None).1.into_iter())
-            .map(|(b, _)| b)
+        let backend =
+            (crate::encode::probe::probe(None, &[Codec::H264], crate::encode::probe::live_test)
+                .1
+                .into_iter())
+            .map(|(_, b, _)| b)
             .find(|b| matches!(b, Backend::Vaapi { .. }))
             .expect("VA-API H.264 on this machine");
         codes_a_half_size_target(
@@ -2462,14 +2500,14 @@ pub(crate) mod tests {
             !split_encoders(Backend::Nvenc, true, 5),
             "10 sessions don't"
         );
-        for backend in [Backend::Vaapi { low_power: false }, Backend::X264] {
+        for backend in [Backend::Vaapi { low_power: false }, Backend::Software] {
             assert!(
                 split_encoders(backend, true, 16),
                 "{backend:?} has no session cap"
             );
         }
         assert!(
-            !split_encoders(Backend::X264, false, 1),
+            !split_encoders(Backend::Software, false, 1),
             "the key turns them off"
         );
     }

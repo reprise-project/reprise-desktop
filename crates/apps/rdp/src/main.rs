@@ -30,7 +30,7 @@ mod viewers;
 mod wayland;
 mod wlclip;
 
-use encode::choice;
+use encode::{Codec, choice};
 use listen::{End, Leave};
 use reprisebus::journal;
 use repriseconf::ConfigWatch;
@@ -516,11 +516,13 @@ fn spawn_probe(
 /// The H.264 backends that work and the stream modifiers each maps.
 fn picture() -> display::Picture {
     let conn = wayland::connect().ok();
-    let (device, working) = encode::probe::probe(conn.as_ref());
+    let (device, working) =
+        encode::probe::probe(conn.as_ref(), &[Codec::H264], encode::probe::live_test);
+    let working: Vec<_> = (working.into_iter()).map(|(_, b, m)| (b, m)).collect();
     for (backend, modifiers) in &working {
         log::info!(
             "encoder {} works on {}, modifiers {modifiers:#x?}",
-            backend.label(),
+            backend.label(Codec::H264),
             device.display(),
         );
     }

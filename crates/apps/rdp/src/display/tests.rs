@@ -738,7 +738,7 @@ pub(super) async fn code(live: &mut Live, frame: Frame) {
 
 #[tokio::test]
 async fn a_quality_change_recodes_a_static_screen() {
-    let mut c = coding(&[Backend::X264]);
+    let mut c = coding(&[Backend::Software]);
     code(&mut c.live, frame((4, 2), SMALL)).await;
     c.config.send_modify(|c| c.quality = Quality::Sharp);
     c.live.follow_config();
@@ -749,14 +749,14 @@ async fn a_quality_change_recodes_a_static_screen() {
     c.live.finish(done);
     assert_eq!(
         *c.coded.lock().unwrap(),
-        [(Backend::X264, true, 25), (Backend::X264, true, 21)],
+        [(Backend::Software, true, 25), (Backend::Software, true, 21)],
         "balanced, then a sharp keyframe"
     );
 }
 
 #[tokio::test]
 async fn a_frame_rate_change_reopens_the_encoder_on_a_keyframe() {
-    let mut c = coding(&[Backend::X264]);
+    let mut c = coding(&[Backend::Software]);
     code(&mut c.live, frame((4, 2), SMALL)).await;
     c.config.send_modify(|c| c.frame_rate = 120);
     c.live.follow_config();
@@ -768,7 +768,7 @@ async fn a_frame_rate_change_reopens_the_encoder_on_a_keyframe() {
     assert_eq!(*c.opened.lock().unwrap(), [60, 120]);
     assert_eq!(
         *c.coded.lock().unwrap(),
-        [(Backend::X264, true, 25), (Backend::X264, true, 25)],
+        [(Backend::Software, true, 25), (Backend::Software, true, 25)],
         "the new encoder starts on a keyframe"
     );
     assert_eq!(c.live.interval, frame_interval(120));
@@ -781,7 +781,7 @@ async fn quality_picks_avc444_only_when_offered() {
         flags: CapabilitiesV107Flags::empty(),
     };
     for (offered, gfx) in [(false, ready_gfx()), (true, opened_gfx(v10_7))] {
-        let mut c = coding_on(&[Backend::X264], gfx, None);
+        let mut c = coding_on(&[Backend::Software], gfx, None);
         for quality in [Quality::Balanced, Quality::Speed, Quality::Sharp] {
             c.config.send_modify(|c| c.quality = quality);
             c.live.follow_config();
@@ -797,7 +797,7 @@ async fn quality_picks_avc444_only_when_offered() {
 
 #[tokio::test]
 async fn a_live_encoder_change_reopens_on_the_next_frame() {
-    let mut c = coding(&[VAAPI, Backend::X264]);
+    let mut c = coding(&[VAAPI, Backend::Software]);
     assert_eq!(c.status.borrow().encoder, "VA-API H.264");
     code(&mut c.live, dmabuf(DRM_FORMAT_MOD_LINEAR)).await;
     code(&mut c.live, dmabuf(DRM_FORMAT_MOD_LINEAR)).await;
@@ -811,7 +811,7 @@ async fn a_live_encoder_change_reopens_on_the_next_frame() {
         [
             (VAAPI, true, 25),
             (VAAPI, false, 25),
-            (Backend::X264, true, 25)
+            (Backend::Software, true, 25)
         ],
         "the first frame after the change is a keyframe from x264"
     );
@@ -857,7 +857,7 @@ fn dmabuf(modifier: u64) -> Frame {
 
 #[tokio::test]
 async fn a_frame_another_encoder_cannot_read_waits_for_one_it_can() {
-    let mut c = coding(&[Backend::X264]);
+    let mut c = coding(&[Backend::Software]);
     c.live.take(dmabuf(Y_TILED));
     c.live.start(Instant::now());
     assert!(!c.live.busy, "x264 is not handed a tiled buffer");
@@ -865,7 +865,7 @@ async fn a_frame_another_encoder_cannot_read_waits_for_one_it_can() {
     code(&mut c.live, frame((4, 2), SMALL)).await;
     assert_eq!(
         *c.coded.lock().unwrap(),
-        [(Backend::X264, true, 25)],
+        [(Backend::Software, true, 25)],
         "the next readable frame goes out"
     );
     assert!(c.live.unreadable.is_none());
@@ -875,7 +875,7 @@ async fn a_frame_another_encoder_cannot_read_waits_for_one_it_can() {
 async fn a_hold_that_never_resolves_ends_in_the_next_encoder_within_two_seconds() {
     crate::listen::tests::capture_log();
     let modifier = 0x0100_0000_0000_0042;
-    let mut c = coding(&[VAAPI, Backend::X264]);
+    let mut c = coding(&[VAAPI, Backend::Software]);
     c.live.take(dmabuf(modifier));
     let t0 = Instant::now();
     let step = |live: &mut Live, ms: u64| {
@@ -887,9 +887,9 @@ async fn a_hold_that_never_resolves_ends_in_the_next_encoder_within_two_seconds(
     }
     assert_eq!(c.live.using, Some(VAAPI), "VA-API keeps it for two seconds");
     step(&mut c.live, 2000);
-    assert_eq!(c.live.using, Some(Backend::X264));
+    assert_eq!(c.live.using, Some(Backend::Software));
     assert_eq!(c.status.borrow().encoder, "Software H.264");
-    assert_eq!(c.live.order, Some(vec![Backend::X264]));
+    assert_eq!(c.live.order, Some(vec![Backend::Software]));
     assert!(c.live.keyframe, "x264 starts on a keyframe");
     let asked = "VA-API H.264 cannot read the stream's buffers (modifier 0x100000000000042); \
                  asking the stream again";
@@ -920,17 +920,17 @@ async fn a_hold_that_never_resolves_ends_in_the_next_encoder_within_two_seconds(
 #[tokio::test]
 async fn a_va_error_on_a_tiled_frame_goes_on_with_x264_once_the_stream_is_linear() {
     crate::listen::tests::capture_log();
-    let mut c = coding_on(&[VAAPI, Backend::X264], ready_gfx(), Some(VAAPI));
+    let mut c = coding_on(&[VAAPI, Backend::Software], ready_gfx(), Some(VAAPI));
     c.live.h264.as_mut().unwrap().picture = Arc::new(Picture {
         device: PathBuf::from("/dev/null"),
         working: vec![
             (VAAPI, vec![DRM_FORMAT_MOD_LINEAR, Y_TILED]),
-            (Backend::X264, vec![DRM_FORMAT_MOD_LINEAR]),
+            (Backend::Software, vec![DRM_FORMAT_MOD_LINEAR]),
         ],
     });
     c.live.choose(EncoderChoice::Auto);
     code(&mut c.live, dmabuf(Y_TILED)).await;
-    assert_eq!(c.live.using, Some(Backend::X264));
+    assert_eq!(c.live.using, Some(Backend::Software));
     assert_eq!(c.status.borrow().encoder, "Software H.264");
     assert_eq!(
         c.live.h264.as_ref().unwrap().modifiers,
@@ -947,7 +947,7 @@ async fn a_va_error_on_a_tiled_frame_goes_on_with_x264_once_the_stream_is_linear
     code(&mut c.live, dmabuf(DRM_FORMAT_MOD_LINEAR)).await;
     assert_eq!(
         *c.coded.lock().unwrap(),
-        [(Backend::X264, true, 25)],
+        [(Backend::Software, true, 25)],
         "x264 codes the first LINEAR frame, a keyframe"
     );
     assert_eq!(
@@ -1014,7 +1014,7 @@ async fn va_api_waits_past_a_linear_frame_off_256_byte_rows() {
 #[tokio::test]
 async fn bitmaps_ask_the_stream_for_linear_every_hold() {
     crate::listen::tests::capture_log();
-    let mut c = coding(&[Backend::X264]);
+    let mut c = coding(&[Backend::Software]);
     c.config.send_modify(|c| c.encoder = EncoderChoice::None);
     c.live.follow_config();
     c.live.take(dmabuf(0x0100_0000_0000_0043));
@@ -1069,7 +1069,7 @@ async fn a_client_without_avc420_shows_bitmaps_until_it_disconnects() {
     let path = H264 {
         gfx: Gfx::default(),
         offer: Offer::detached(),
-        picture: picture(&[Backend::X264]),
+        picture: picture(&[Backend::Software]),
         modifiers: vec![DRM_FORMAT_MOD_LINEAR],
         on: false,
     };
@@ -1118,7 +1118,7 @@ fn opening(gfx: &Gfx) -> (Live, Frames, Sizes) {
     let path = H264 {
         gfx: gfx.clone(),
         offer: Offer::detached(),
-        picture: picture(&[Backend::X264]),
+        picture: picture(&[Backend::Software]),
         modifiers: vec![DRM_FORMAT_MOD_LINEAR],
         on: false,
     };
@@ -1204,7 +1204,7 @@ async fn a_fallback_shows_in_the_encoder_status() {
     let path = H264 {
         gfx: Gfx::default(),
         offer: Offer::detached(),
-        picture: picture(&[Backend::X264]),
+        picture: picture(&[Backend::Software]),
         modifiers: vec![DRM_FORMAT_MOD_LINEAR],
         on: false,
     };
@@ -1238,7 +1238,7 @@ async fn the_encoder_label_is_reset_when_the_last_connection_ends() {
         let path = H264 {
             gfx: Gfx::default(),
             offer: Offer::detached(),
-            picture: picture(&[Backend::X264]),
+            picture: picture(&[Backend::Software]),
             modifiers: vec![DRM_FORMAT_MOD_LINEAR],
             on: false,
         };

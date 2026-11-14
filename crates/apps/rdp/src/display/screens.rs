@@ -291,7 +291,7 @@ mod tests {
             &[screen(0, 0, 400, 200), screen(400, 0, 400, 200)],
             &two_monitors(),
             (1200, 400),
-            Some((&gfx, &[Backend::X264])),
+            Some((&gfx, &[Backend::Software])),
             |_| fitted(&fits, None),
         );
         code(&mut c.lives[1], frame((400, 200), SMALL)).await;
@@ -311,7 +311,10 @@ mod tests {
         );
         assert_eq!(
             *fits.lock().unwrap(),
-            [(Backend::X264, None), (Backend::X264, Some((800, 400)))],
+            [
+                (Backend::Software, None),
+                (Backend::Software, Some((800, 400)))
+            ],
             "each screen is coded at its target, a target of its own size unscaled"
         );
         assert!(
@@ -335,13 +338,13 @@ mod tests {
             &[screen(0, 0, 1365, 767)],
             &[],
             (1365, 767),
-            Some((&gfx, &[Backend::X264])),
+            Some((&gfx, &[Backend::Software])),
             |_| fitted(&fits, None),
         );
         code(&mut c.lives[0], frame((1365, 767), SMALL)).await;
         assert_eq!(
             *fits.lock().unwrap(),
-            [(Backend::X264, None)],
+            [(Backend::Software, None)],
             "its even target is no scale"
         );
     }
@@ -354,17 +357,17 @@ mod tests {
             &[screen(0, 0, 400, 200), screen(400, 0, 400, 200)],
             &[],
             (800, 200),
-            Some((&gfx, &[VAAPI, Backend::X264])),
+            Some((&gfx, &[VAAPI, Backend::Software])),
             |screen| fitted(&fits, (screen == 1).then_some(VAAPI)),
         );
         for live in &mut c.lives {
             code(live, linear((400, 200))).await;
         }
         assert_eq!(c.lives[0].using, Some(VAAPI));
-        assert_eq!(c.lives[1].using, Some(Backend::X264));
+        assert_eq!(c.lives[1].using, Some(Backend::Software));
         assert!(c.lives.iter().all(|l| l.h264.as_ref().unwrap().on));
         let coded: Vec<Backend> = fits.lock().unwrap().iter().map(|f| f.0).collect();
-        assert_eq!(coded, [VAAPI, Backend::X264]);
+        assert_eq!(coded, [VAAPI, Backend::Software]);
         let pdus = crate::gfx::tests::sent(&mut events);
         assert_eq!(surfaces_drawn(&pdus), [0, 1], "both screens show H.264");
     }
@@ -484,8 +487,8 @@ mod tests {
             &[screen(0, 0, 400, 200), screen(400, 0, 400, 200)],
             &two_monitors(),
             (1200, 400),
-            Some((&gfx, &[Backend::X264])),
-            |screen| fitted(&fits, (screen == 1).then_some(Backend::X264)),
+            Some((&gfx, &[Backend::Software])),
+            |screen| fitted(&fits, (screen == 1).then_some(Backend::Software)),
         );
         code(&mut c.lives[0], frame((400, 200), SMALL)).await;
         code(&mut c.lives[1], frame((400, 200), SMALL)).await;
@@ -519,7 +522,7 @@ mod tests {
             &[screen(0, 0, 400, 200), screen(400, 0, 400, 200)],
             &two_monitors(),
             (1200, 400),
-            Some((&gfx, &[Backend::X264])),
+            Some((&gfx, &[Backend::Software])),
             |_| fitted(&fits, None),
         );
         let live = &mut c.lives[0];
@@ -569,7 +572,7 @@ mod tests {
             &[screen(0, 0, 400, 200), screen(400, 0, 400, 200)],
             &[],
             (400, 200),
-            Some((&gfx, &[Backend::X264])),
+            Some((&gfx, &[Backend::Software])),
             |_| fitted(&fits, None),
         );
         for live in &mut c.lives {

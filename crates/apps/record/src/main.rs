@@ -13,8 +13,8 @@ use fallback::{Ask, Backends, Step};
 use ffmpeg::Packet;
 use movie::Movie;
 use repriseconf::remote::EncoderChoice;
-use reprisevideo::encode::choice;
 use reprisevideo::encode::probe::{self, Backend};
+use reprisevideo::encode::{Codec, choice};
 use reprisevideo::stream::{self, DRM_FORMAT_MOD_LINEAR, Frame, FrameBuffer};
 use sound::Sound;
 use std::os::fd::RawFd;
@@ -74,7 +74,11 @@ fn record(args: &Args, stop: libc::sigset_t) -> Result<(), String> {
     #[cfg(feature = "fallback-test")]
     let (order, forced) = forced::order(order);
     let (first, modifiers) = order.first().ok_or("No H.264 encoder works here.")?;
-    log::info!("recording {}, {} first", args.output, first.label());
+    log::info!(
+        "recording {}, {} first",
+        args.output,
+        first.label(Codec::H264)
+    );
     let fd = cast.pipewire()?;
     let (stream, mut frames, _sizes) = stream::spawn(fd, screen.node, modifiers, APP, || {})?;
     let video_tx = tx.clone();
@@ -145,10 +149,11 @@ fn encoders(area: Option<Area>) -> (PathBuf, Vec<(Backend, Vec<u64>)>) {
             probe::TEST_SIDE
         );
         let node = PathBuf::from(probe::RENDER_NODE);
-        return (node, vec![(Backend::X264, vec![DRM_FORMAT_MOD_LINEAR])]);
+        return (node, vec![(Backend::Software, vec![DRM_FORMAT_MOD_LINEAR])]);
     }
     let conn = wayland_client::Connection::connect_to_env().ok();
-    let (device, working) = probe::probe(conn.as_ref());
+    let (device, working) = probe::probe(conn.as_ref(), &[Codec::H264], probe::file_test);
+    let working: Vec<_> = (working.into_iter()).map(|(_, b, m)| (b, m)).collect();
     let backends: Vec<_> = working.iter().map(|(b, _)| *b).collect();
     let order = choice::order(EncoderChoice::Auto, &backends);
     let with_modifiers = (order.into_iter())
@@ -309,7 +314,7 @@ impl<'a> File<'a> {
             match movie.code(frame, pts, &mut packets) {
                 Ok(()) => break,
                 Err(e) if self.output.is_none() => {
-                    log::warn!("{}: {e}", movie.backend().label());
+                    log::warn!("{}: {e}", movie.backend().label(Codec::H264));
                     self.movie = None;
                 }
                 Err(e) => return Err(e.to_string()),
@@ -346,7 +351,7 @@ impl<'a> File<'a> {
                             log::warn!(
                                 "{} cannot read the screen's buffers ({}); asking the stream \
                                  for buffers it maps",
-                                ask.backend.label(),
+                                ask.backend.label(Codec::H264),
                                 frame.buffer.describe()
                             );
                         }
@@ -369,11 +374,11 @@ impl<'a> File<'a> {
                     };
                     log::info!(
                         "coding {size:?} from {origin:?} with {}{cut}",
-                        backend.label()
+                        backend.label(Codec::H264)
                     );
                     return Ok(Some(m));
                 }
-                Err(e) => log::warn!("{}: {e}", backend.label()),
+                Err(e) => log::warn!("{}: {e}", backend.label(Codec::H264)),
             }
         }
     }
@@ -626,7 +631,7 @@ mod tests {
             width: 32,
             height: 24,
         });
-        let x264 = vec![(Backend::X264, vec![DRM_FORMAT_MOD_LINEAR])];
+        let x264 = vec![(Backend::Software, vec![DRM_FORMAT_MOD_LINEAR])];
         let mut file = File::new(&path, &node, x264, area, (64, 48), false);
         let t0 = Instant::now();
         for (i, grey) in [0x20u8, 0x80, 0xe0].into_iter().enumerate() {
@@ -664,7 +669,7 @@ mod tests {
                 Backend::Vaapi { low_power: false },
                 vec![DRM_FORMAT_MOD_LINEAR, Y_TILED],
             ),
-            (Backend::X264, vec![DRM_FORMAT_MOD_LINEAR]),
+            (Backend::Software, vec![DRM_FORMAT_MOD_LINEAR]),
         ];
         let area = Some(Area {
             x: 8,
@@ -708,7 +713,7 @@ mod tests {
         file.finish().unwrap();
         assert_eq!(
             *asks.borrow(),
-            [(Backend::X264, vec![DRM_FORMAT_MOD_LINEAR], false)],
+            [(Backend::Software, vec![DRM_FORMAT_MOD_LINEAR], false)],
             "the stream is asked once for x264's LINEAR buffers"
         );
         let mut input = ffmpeg::format::input(&path).unwrap();
