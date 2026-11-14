@@ -18,7 +18,7 @@ use reprisescene::{BufferId, TreeId};
 use smithay::{
     backend::input::InputTime,
     output::{Output, Scale},
-    utils::{Logical, Point, Rectangle, Transform},
+    utils::{Logical, Point, Rectangle, Size, Transform},
 };
 
 use crate::{
@@ -155,6 +155,31 @@ fn tiles(outputs: &[Output]) -> Vec<arrange::Tile> {
             }
         })
         .collect()
+}
+
+/// Where each of `outputs` sits with its panels at their chosen transforms, by name: a turned
+/// panel takes its upright size, and a whole layout that parts or overlaps settles around it.
+pub fn chosen_places(outputs: &[Output]) -> Vec<(String, (i32, i32))> {
+    let sideways = |t: Transform| t.transform_size(Size::<i32, Logical>::from((0, 1))).w == 1;
+    let mut t = tiles(outputs);
+    let was_whole = arrange::whole(&t);
+    let mut first = None;
+    for (i, (o, tile)) in outputs.iter().zip(&mut t).enumerate() {
+        let (now, base) = (o.current_transform(), chosen_transform(o));
+        if now != base {
+            first.get_or_insert(i);
+            if sideways(now) != sideways(base) {
+                tile.size = (tile.size.1, tile.size.0);
+            }
+        }
+    }
+    if let Some(first) = first
+        && was_whole
+        && !arrange::whole(&t)
+    {
+        arrange::settle(&mut t, first);
+    }
+    t.into_iter().map(|t| (t.name, t.pos)).collect()
 }
 
 /// Put `output` at layout `pos` for good, or back to automatic placement with None.

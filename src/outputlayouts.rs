@@ -267,10 +267,16 @@ impl State {
             return;
         }
         let ids = ids_of(&heads);
-        let shown: Vec<_> = (self.scene.outputs().iter())
+        let on_screen: Vec<Output> = (self.scene.outputs().iter())
             .filter(|o| !crate::virtualout::is_remote(o))
+            .filter(|o| reprisescene::output_rect(o).is_some())
+            .cloned()
+            .collect();
+        let shown: Vec<_> = on_screen
+            .iter()
             .filter_map(reprisescene::output_rect)
             .collect();
+        let places = crate::output::chosen_places(&on_screen);
         let right = (shown.iter())
             .max_by_key(|r| r.loc.x + r.size.w)
             .map_or((0, 0), |r| (r.loc.x + r.size.w, r.loc.y));
@@ -292,7 +298,9 @@ impl State {
                     });
                 let at = o.current_location();
                 let position = if h.enabled {
-                    (at.x, at.y)
+                    (places.iter())
+                        .find(|(n, _)| *n == name)
+                        .map_or((at.x, at.y), |(_, p)| *p)
                 } else if lid_held {
                     (self.output_places.back(&name, None, &shown)).unwrap_or(right)
                 } else {
@@ -542,6 +550,40 @@ mod tests {
             Some(T::Rotate90),
             "the lock keeps the panel as turned"
         );
+    }
+
+    #[test]
+    fn a_layout_saved_while_the_panel_is_turned_places_its_neighbour_beside_it_upright() {
+        let mut h = crate::harness::Harness::new();
+        let panel = h.head("eDP-1", 1280, 800);
+        let dp = h.head("DP-1", 1920, 1080);
+        h.state.turn_panels(Transform::_90);
+        crate::output::set_placement(&panel, Some((0, 0).into()));
+        crate::output::set_placement(&dp, Some((800, 0).into()));
+        h.state.update_layout();
+        assert_eq!(dp.current_location(), (800, 0).into());
+        h.state.save_layout();
+        crate::state::flush();
+
+        let heads = crate::backend::heads(&h.state);
+        let ids = ids_of(&heads);
+        let connectors: Vec<String> = heads.iter().map(|h| h.output.name()).collect();
+        let now = displays::outputs_fingerprint(&h.state.config.outputs);
+        let text = std::fs::read_to_string(&h.state.saved_layouts.path).unwrap_or_default();
+        let layouts = Layouts::parse(&text);
+        let saved = by_connector(&connectors, &ids, layouts.find(&ids, &now).unwrap());
+        let at = |name: &str| saved.iter().find(|(c, _)| c == name).unwrap().1.position;
+        assert_eq!(at("DP-1"), (1280, 0), "DP-1 sits beside the upright panel");
+        let tiles = [("eDP-1", (1280, 800)), ("DP-1", (1920, 1080))].map(|(name, size)| {
+            reprisekit::controls::arrange::Tile {
+                number: 0,
+                name: name.into(),
+                pos: at(name),
+                size,
+            }
+        });
+        assert!(reprisekit::controls::arrange::whole(&tiles));
+        assert_eq!(panel.current_transform(), Transform::_90);
     }
 
     #[test]
