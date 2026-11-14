@@ -392,6 +392,9 @@ desktop and stays out of the way when it's missing.
   and Settings > Thunderbolt; without it the page is greyed
 - iio-sensor-proxy, for the built-in screen turning with a convertible or
   tablet (`[display] auto_rotate`)
+- colord, for the profiles it keeps outside the ICC folders in the Display
+  page's Color profile list; Reprise only reads them, and only while colord
+  runs
 - ddcutil and the i2c-dev module, for external monitors' brightness over
   DDC/CI (the keys and the displays icon). Load i2c-dev at boot with
   `echo i2c-dev | sudo tee /etc/modules-load.d/i2c-dev.conf`; ddcutil's udev

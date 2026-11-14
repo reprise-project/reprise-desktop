@@ -79,6 +79,16 @@ impl Flow {
                 d.primary_saved();
                 out.push(Effect::SavePrimary(p));
             }
+            if !ch.profiles.is_empty() {
+                d.profiles_written();
+            }
+            for (head, p) in ch.profiles {
+                let keys = OutputKeys {
+                    icc_profile: Some(p),
+                    ..OutputKeys::default()
+                };
+                out.push(Effect::Save(head, keys));
+            }
             for (head, on) in ch.vrr {
                 let cfg = HeadConfig {
                     adaptive_sync: Some(on),

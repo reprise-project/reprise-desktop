@@ -60,6 +60,7 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
             ("forget_layouts", "Forget saved layouts"),
             ("multiple_displays", "Multiple displays:"),
             ("auto_rotate", "Rotate automatically"),
+            ("icc_profile", "Color profile:"),
         ],
         Page::NightLight => &[
             ("nl_enabled", "Warm the screen's colors at night"),

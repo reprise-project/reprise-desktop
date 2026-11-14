@@ -139,6 +139,7 @@ impl SettingsApp {
         changed |= self.providers_done();
         changed |= self.login_users_done();
         changed |= self.login_poll_done();
+        changed |= self.profiles_done();
         let mut quit = false;
         if let Some(close) = self.login_done() {
             changed = true;

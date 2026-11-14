@@ -372,8 +372,8 @@ matched control focused.
 - **Display & Sound**
   - **Display:** arrange monitors by dragging them, or pick one with the
     arrows and move it with Ctrl+arrows to the next edge that way, Identify,
-    the primary screen, and each screen's resolution, refresh rate, orientation, scale
-    and adaptive sync. With two monitors or more, Multiple displays extends,
+    the primary screen, and each screen's resolution, refresh rate, orientation, scale,
+    adaptive sync and color profile. With two monitors or more, Multiple displays extends,
     duplicates or shows only one of them. Forget saved layouts drops the layouts the desktop
     remembers per set of monitors. A built-in screen has Rotate automatically,
     greyed with a note when iio-sensor-proxy reports no accelerometer.
