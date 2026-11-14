@@ -310,17 +310,8 @@ fn connector_changed(state: &mut State, connector: connector::Info, head: Head) 
             );
             if set_mode(state, &output, i) {
                 state.update_layout();
-            } else if let Some(s) = state
-                .backend
-                .as_mut()
-                .and_then(|b| b.surfaces.get_mut(&head))
-            {
-                log::warn!(
-                    "{}: keeps a mode its connector no longer lists until the display is idle",
-                    output.name()
-                );
-                s.pending_mode = Some(PendingMode::new(s.connector.modes()[i]));
-                on_quiet(state);
+            } else {
+                retry_mode(state, &output, i);
             }
         }
         crate::outputmgmt::publish(state);
@@ -669,7 +660,11 @@ pub(crate) fn retire_global(state: &mut State, global: GlobalId) {
 pub fn set_mode(state: &mut State, output: &Output, index: usize) -> bool {
     let head = match screen_of(output) {
         Some(Screen::Monitor(head)) => head,
-        Some(Screen::Virtual) | None => return false,
+        #[cfg(test)]
+        None => return super::fake::set_mode(state, output, index),
+        #[cfg(not(test))]
+        None => return false,
+        Some(Screen::Virtual) => return false,
     };
     let Some(b) = state.backend.as_mut() else {
         return false;
@@ -712,6 +707,31 @@ pub fn set_mode(state: &mut State, output: &Output, index: usize) -> bool {
     crate::capture::constraints_changed(state, output);
     schedule(state, output);
     true
+}
+
+/// Try mode `index` of driven `output` again once the display is idle (`Step::Mode`), after
+/// `set_mode` refused it: backed off, given up after `MODE_TRIES`.
+pub fn retry_mode(state: &mut State, output: &Output, index: usize) {
+    let head = match screen_of(output) {
+        Some(Screen::Monitor(head)) => head,
+        #[cfg(test)]
+        None => return super::fake::retry_mode(state, output, index),
+        #[cfg(not(test))]
+        None => return,
+        Some(Screen::Virtual) => return,
+    };
+    let Some(s) = (state.backend.as_mut()).and_then(|b| b.surfaces.get_mut(&head)) else {
+        return;
+    };
+    let Some(&mode) = s.connector.modes().get(index) else {
+        return;
+    };
+    log::info!(
+        "{}: mode change tried again once the display is idle",
+        output.name()
+    );
+    s.pending_mode = Some(PendingMode::new(mode));
+    on_quiet(state);
 }
 
 pub fn set_vrr(state: &mut State, output: &Output, on: bool) -> bool {

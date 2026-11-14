@@ -1,5 +1,6 @@
 //! Connectors for tests: an output in `State::test_heads` is a head that `disable` parks and
-//! `enable` drives again, with the modes the harness gave it.
+//! `enable` drives again, with the modes the harness gave it. `State::test_modes` says what a
+//! mode change does.
 
 use smithay::output::Output;
 
@@ -50,4 +51,43 @@ pub(super) fn disable(state: &mut State, output: &Output) -> bool {
     }
     state.scene.remove_output(output);
     true
+}
+
+/// What a test head does with a mode change.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Modes {
+    /// Refused: no device to set it on.
+    #[default]
+    Refused,
+    /// Refused until `idle` runs the retries, as while a commit holds the display.
+    Busy,
+    Taken,
+}
+
+pub(super) fn set_mode(state: &mut State, output: &Output, index: usize) -> bool {
+    let Some(&mode) = output.modes().get(index) else {
+        return false;
+    };
+    if !state.test_heads.contains(output) || state.test_modes != Modes::Taken {
+        return false;
+    }
+    output.change_current_state(Some(mode), None, None, None);
+    true
+}
+
+pub(super) fn retry_mode(state: &mut State, output: &Output, index: usize) {
+    if state.test_modes == Modes::Busy {
+        state.test_mode_retries.push((output.clone(), index));
+    }
+}
+
+/// The display goes idle: mode changes take, and the ones `retry_mode` queued run as
+/// `Step::Mode` runs them.
+pub fn idle(state: &mut State) {
+    state.test_modes = Modes::Taken;
+    for (output, index) in std::mem::take(&mut state.test_mode_retries) {
+        if set_mode(state, &output, index) {
+            state.update_layout();
+        }
+    }
 }

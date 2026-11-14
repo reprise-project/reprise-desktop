@@ -299,6 +299,11 @@ pub struct State {
     /// A test's connectors, standing in for `backend` (`backend::fake`).
     #[cfg(test)]
     pub test_heads: Vec<smithay::output::Output>,
+    #[cfg(test)]
+    pub test_modes: crate::backend::fake::Modes,
+    /// Mode changes `backend::retry_mode` queued on `test_heads`.
+    #[cfg(test)]
+    pub test_mode_retries: Vec<(smithay::output::Output, usize)>,
     /// Stands in for a connector scan or output enable due (`backend::outputs_pending`).
     #[cfg(test)]
     pub test_outputs_pending: bool,
@@ -732,6 +737,10 @@ impl State {
             backend: None,
             #[cfg(test)]
             test_heads: Vec::new(),
+            #[cfg(test)]
+            test_modes: Default::default(),
+            #[cfg(test)]
+            test_mode_retries: Vec::new(),
             #[cfg(test)]
             test_outputs_pending: false,
             #[cfg(test)]

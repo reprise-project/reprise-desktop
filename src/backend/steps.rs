@@ -98,9 +98,9 @@ pub fn stalled(state: &State, output: &Output) -> bool {
 }
 
 /// Deferred work, in the order it runs: the device reset before the scan reads connectors
-/// again, each connector's probe, the scan of what they read, outputs enabled again, modes a
-/// changed connector list asked for while the display was busy, then the reloaded config's
-/// output changes and the held output management applies.
+/// again, each connector's probe, the scan of what they read, outputs enabled again, modes
+/// refused while the display was busy (`retry_mode`), then the reloaded config's output
+/// changes and the held output management applies.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Step {
     Reset,
@@ -134,7 +134,7 @@ pub(super) fn next_step(
     }
 }
 
-/// Tries of a `PendingMode` before the output keeps its unlisted mode.
+/// Tries of a `PendingMode` before the output keeps the mode it runs.
 pub(super) const MODE_TRIES: u32 = 6;
 
 /// A mode `set_mode` refused, tried again by `Step::Mode` once modes settle. A refusal there
@@ -390,7 +390,7 @@ fn quiet_step(state: &mut State) {
                     s.pending_mode = Some(next);
                 }
                 None => log::warn!(
-                    "{}: keeps a mode its connector no longer lists",
+                    "{}: the mode change is given up after {MODE_TRIES} tries",
                     output.name()
                 ),
             }
