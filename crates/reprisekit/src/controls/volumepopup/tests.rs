@@ -2116,6 +2116,30 @@ fn a_program_output_list_opens_above_its_combo_inside_the_panel() {
 }
 
 #[test]
+fn a_program_output_list_scrolled_out_of_view_closes() {
+    let apps: Vec<_> = (0..8).map(|i| app(&format!("p{i}"), 10)).collect();
+    let mut vp = VolumePopup::new(&mix(&apps));
+    let l = lay(&vp);
+    vp.focus = Focus::Device(2);
+    vp.key(&l, form::Key::Drop);
+    assert_eq!(vp.open_list(), Some(Pick::App(2)));
+    let l = lay(&vp);
+    let (x, y) = mid(l.bar.unwrap());
+    assert_eq!(vp.scroll(&l, x, y, WHEEL_ROWS), Event::Redraw);
+    assert_eq!(vp.open_list(), Some(Pick::App(2)), "its column still shows");
+    let l = lay(&vp);
+    assert_eq!(vp.scroll(&l, x, y, WHEEL_ROWS), Event::Redraw);
+    assert_eq!(vp.first, 2);
+    assert_eq!(vp.open_list(), None, "its column scrolled out");
+    let l = lay(&vp);
+    assert_eq!(
+        vp.key(&l, form::Key::Down),
+        Event::AppOutput("p1".into(), Some(0)),
+        "the key picks on the closed combo it scrolls back to"
+    );
+}
+
+#[test]
 fn keys_on_a_program_output_pick_at_once_and_default_follows_the_default() {
     let mut a = app("mpv", 8);
     a.output = Some(0);

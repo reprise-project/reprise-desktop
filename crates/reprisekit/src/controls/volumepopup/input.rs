@@ -277,6 +277,12 @@ impl VolumePopup {
             return Event::None;
         }
         self.first = first as usize;
+        // A program's list scrolled out of view would go on taking the keys unseen.
+        if let Some(Pick::App(i)) = self.open_list()
+            && !(self.first..self.first + MAX_SHOWN).contains(&(i - 1))
+        {
+            self.close_list();
+        }
         self.rehit(lay);
         Event::Redraw
     }
