@@ -26,6 +26,8 @@ const NO_PACKAGEKIT: &str = "Reprise installs and uninstalls the system's packag
                              PackageKit, which is not installed.";
 const NO_FLATPAK: &str = "Installing a Flatpak needs Flatpak, which is not installed.";
 const UNKNOWN: &str = "Unknown";
+/// A `.flatpakref`'s size until Flatpak says how much it downloads.
+const SIZE_LATER: &str = "Known once the download starts";
 const LAUNCHER_NOTE: &str = "Only the launcher is removed. The program that installed it keeps \
                              its own files.";
 
@@ -91,6 +93,8 @@ pub enum Msg {
         doing: String,
     },
     Cancellable(bool),
+    /// The most the job downloads, in bytes.
+    Download(u64),
     Ended(Result<(), Failure>),
 }
 
@@ -321,7 +325,7 @@ fn ref_found(r: reprisefs::software::FlatpakRef, found: &mut Found) {
     found.facts = vec![
         fact("App ID:", r.id),
         fact("Branch:", r.branch),
-        fact("Size:", "Known once the download starts"),
+        fact("Size:", SIZE_LATER),
         fact("Source:", format!("{source} (Flatpak)")),
     ];
     found.note = if runtime.is_empty() || runtime == source {
@@ -539,6 +543,7 @@ fn run(
                         poster.post(Msg::Cancellable(true));
                     }
                 },
+                &mut |bytes| poster.post(Msg::Download(bytes)),
             );
             ran.map_err(Failure::Text)
         }
@@ -765,6 +770,14 @@ impl Installer {
                     doing,
                     cancellable,
                 });
+            }
+            Msg::Download(bytes) => {
+                for (label, value) in &mut self.sheet.facts {
+                    if label == "Size:" && value == SIZE_LATER {
+                        *value = format!("Up to {} to download", size_text(Some(bytes)));
+                        self.stale = true;
+                    }
+                }
             }
             Msg::Cancellable(can) => {
                 if let Stage::Running { cancellable, .. } = &mut self.sheet.stage {
@@ -1150,6 +1163,34 @@ mod tests {
             Stage::Done,
             "a worker done and gone is no failure"
         );
+    }
+
+    #[test]
+    fn a_flatpakref_size_fills_in_once_flatpak_tells_it() {
+        let mut app = Installer::new(Target::Install("/d/x.flatpakref".into()));
+        let facts = vec![fact("App ID:", "org.example.X"), fact("Size:", SIZE_LATER)];
+        app.worker_msg(Msg::Found(Found {
+            facts,
+            ready: true,
+            ..Found::default()
+        }));
+        app.choose(Choice::Go);
+        app.worker_msg(Msg::Download(30_400_000));
+        assert_eq!(app.sheet.facts[1].1, "Up to 28.9 MB to download");
+        app.worker_msg(Msg::Download(1_000_000));
+        assert_eq!(
+            app.sheet.facts[1].1, "Up to 28.9 MB to download",
+            "the first size stays"
+        );
+
+        let mut bundle = Installer::new(Target::Install("/d/x.flatpak".into()));
+        bundle.worker_msg(Msg::Found(Found {
+            facts: vec![fact("Size:", "12.0 MB")],
+            ready: true,
+            ..Found::default()
+        }));
+        bundle.worker_msg(Msg::Download(30_400_000));
+        assert_eq!(bundle.sheet.facts[0].1, "12.0 MB", "a known size is kept");
     }
 
     #[test]

@@ -798,7 +798,13 @@ installed. The sheet reads and installs a private copy of the file. A
 packager reads "(unverified)" unless a `.sig` lies beside a pacman package.
 A `.flatpakref` or bundle installs for every user, and a `.flatpakref`'s
 repository (and the runtime's, named in the note when it differs) stays
-added. An uninstalled Flatpak keeps its settings and files in your home
+added. A `.flatpakref`'s size fills in with the most it downloads once
+Flatpak starts. An uninstalled Flatpak keeps its settings and files in your
+home folder. A launcher or web app an app installed through the portal shows
+the Flatpak that installed it, and Uninstall deletes just the launcher and
+its icon. Cancel stops a run where PackageKit or Flatpak can stop it, a
+dismissed password prompt returns to the question, and the task button shows
+the progress.
 folder. A launcher or web app an app installed through the portal shows the
 Flatpak that installed it, and Uninstall deletes just the launcher and its
 icon. Cancel stops a run where PackageKit or Flatpak can stop it, a
