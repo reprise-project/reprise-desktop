@@ -1004,7 +1004,12 @@ page all open it. Reading GNOME's settings needs the `dconf` command.
 - **Screen recorder.** `reprise-record --fd N --output NAME [--area
   X,Y,WIDTH,HEIGHT] [--sound]` records output NAME, or an area of it in its
   logical pixels, as an MP4 file into the regular file open on descriptor N,
-  with what plays through the default output device for `--sound`. It reads
+  with what plays through the default output device for `--sound`. The
+  sound keeps to the pictures' clock, each chunk timed by the PipeWire cycle
+  that captured it, so a recorder starved of CPU loses none: a gap in it, as
+  when the default
+  output device changes, is filled with silence, and sound running more
+  than 40 ms ahead is trimmed. It reads
   the codecs, rate control, frame rate and keyframe interval from
   `[recording]` as it starts ([configuration.md](configuration.md#recording)).
   The compositor starts it for a recording and stops it with SIGINT; it has

@@ -130,7 +130,8 @@ impl Sink {
             if ready.recv() != Ok(true) {
                 return;
             }
-            let samples = Box::new(samples);
+            let mut samples = samples;
+            let samples = Box::new(move |pcm: &[u8], _| samples(pcm));
             let target = Some(NAME);
             if let Err(e) = monitor::capture(target, APP, DESCRIPTION, rate, samples, stopped) {
                 log::warn!("sound: {e}");

@@ -343,8 +343,8 @@ fn capture_sound(tx: mpsc::Sender<Event>) -> Result<pipewire::channel::Sender<()
         .name("reprise-record-sound".into())
         .spawn(move || {
             pipewire::init();
-            let samples = Box::new(move |pcm: &[u8]| {
-                let _ = tx.send(Event::Sound(pcm.to_vec(), Instant::now()));
+            let samples = Box::new(move |pcm: &[u8], at| {
+                let _ = tx.send(Event::Sound(pcm.to_vec(), at));
             });
             let captured = reprisevideo::monitor::capture(
                 None,
