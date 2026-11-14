@@ -224,6 +224,38 @@ mod tests {
     }
 
     #[test]
+    fn primary_moved_with_a_refused_mode_pin_drops_the_saved_primary() {
+        let (mut h, a, _) = pair((1920, 1080));
+        a.add_mode(smithay::output::Mode {
+            size: (2560, 1440).into(),
+            refresh: 60_000,
+        });
+        assert!(h.state.set_primary("DP-2"));
+        h.dispatch();
+        crate::state::flush();
+        let old = h.state.config.clone();
+        h.state.config.outputs = vec![crate::config::OutputConfig {
+            name: "DP-1".into(),
+            scale: 1.0,
+            mode: Some(crate::config::OutputMode::parse("2560x1440").unwrap()),
+            adaptive_sync: None,
+            transform: Default::default(),
+            position: None,
+            primary: true,
+            icc_profile: None,
+        }];
+        h.state.apply_output_config(&old);
+        h.dispatch();
+        crate::state::flush();
+        assert!(
+            h.state.mode_refused("DP-1"),
+            "the harness refuses every mode"
+        );
+        assert_eq!(h.state.saved_primary(), None);
+        assert_eq!(h.state.console_primary(), Some(a));
+    }
+
+    #[test]
     fn one_display_has_nothing_to_extend_or_copy() {
         let mut h = Harness::new();
         let a = h.head("DP-1", 1920, 1080);
