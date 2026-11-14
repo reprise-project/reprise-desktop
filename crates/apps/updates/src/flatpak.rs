@@ -192,6 +192,12 @@ impl Follow {
         let id = self.ops.get(k - 1).map_or("", |o| o.0.as_str());
         Some((id, fraction))
     }
+
+    /// The most the transaction downloads, in bytes, once the table gave every operation a size.
+    fn download(&self) -> Option<u64> {
+        (!self.ops.is_empty() && self.ops.iter().all(|o| o.1 > 0))
+            .then(|| self.ops.iter().map(|o| o.1).sum())
+    }
 }
 
 /// A row of the operation table, ` 1.\t   \torg.example.App\tstable\tu\tflathub\t< 1.2 MB`,
@@ -262,26 +268,29 @@ pub fn install(
     }
     let mut args = vec!["update", flag(install), "-y"];
     args.extend(refs.iter().map(String::as_str));
-    follow(&args, step, &mut |_| {})
+    follow(&args, step, &mut |_| {}, &mut |_| {})
 }
 
 /// Run `flatpak ARGS`, a transaction answered yes to every question, calling `step` as in
-/// [`install`]. `running` gets its process id once started and None before it is reaped, so a
-/// signal sent while the id is held never reaches a reused pid.
+/// [`install`] and `sized` with the most it downloads, in bytes, once its first operation
+/// starts. `running` gets its process id once started and None before it is reaped, so a signal
+/// sent while the id is held never reaches a reused pid.
 pub fn follow(
     args: &[&str],
     step: &mut dyn FnMut(&str, f64),
     running: &mut dyn FnMut(Option<u32>),
+    sized: &mut dyn FnMut(u64),
 ) -> Result<(), String> {
     let mut cmd = Command::new(FLATPAK);
     cmd.args(args).env("LC_ALL", "C");
-    follow_command(cmd, step, running)
+    follow_command(cmd, step, running, sized)
 }
 
 fn follow_command(
     mut cmd: Command,
     step: &mut dyn FnMut(&str, f64),
     running: &mut dyn FnMut(Option<u32>),
+    sized: &mut dyn FnMut(u64),
 ) -> Result<(), String> {
     let mut child = cmd
         .stdin(Stdio::null())
@@ -301,9 +310,16 @@ fn follow_command(
     });
     if let Some(out) = child.stdout.take() {
         let mut follow = Follow::default();
+        let mut told = false;
         for line in BufReader::new(out).lines().map_while(Result::ok) {
             if let Some((id, fraction)) = follow.line(&line) {
                 step(id, fraction);
+            }
+            if !told && follow.last.is_some() {
+                told = true;
+                if let Some(bytes) = follow.download() {
+                    sized(bytes);
+                }
             }
         }
     }
@@ -521,17 +537,22 @@ mod tests {
         let mut cmd = Command::new("sh");
         cmd.args(["-c", "exit 0"]);
         let mut seen = Vec::new();
-        let ran = follow_command(cmd, &mut |_, _| {}, &mut |pid| {
-            let unreaped = seen
-                .last()
-                .copied()
-                .flatten()
-                .is_some_and(|p: u32| std::path::Path::new(&format!("/proc/{p}")).exists());
-            seen.push(pid);
-            if pid.is_none() {
-                assert!(unreaped, "the process is still ours to signal");
-            }
-        });
+        let ran = follow_command(
+            cmd,
+            &mut |_, _| {},
+            &mut |pid| {
+                let unreaped = seen
+                    .last()
+                    .copied()
+                    .flatten()
+                    .is_some_and(|p: u32| std::path::Path::new(&format!("/proc/{p}")).exists());
+                seen.push(pid);
+                if pid.is_none() {
+                    assert!(unreaped, "the process is still ours to signal");
+                }
+            },
+            &mut |_| {},
+        );
         assert_eq!(ran, Ok(()));
         assert!(matches!(seen[..], [Some(_), None]), "{seen:?}");
     }
@@ -604,6 +625,23 @@ mod tests {
             assert_eq!(id, wid);
             assert!((f - wf).abs() < 1e-9, "{id} at {f}, expected {wf}");
         }
+    }
+
+    #[test]
+    fn a_flatpakref_install_tells_its_download_size_once_it_starts() {
+        let out = include_str!("../tests/fixtures/flatpak-install-ref.txt");
+        let mut f = Follow::default();
+        let mut lines = out.lines();
+        for line in lines.by_ref() {
+            f.line(line);
+            if f.last.is_some() {
+                break;
+            }
+        }
+        assert_eq!(f.download(), Some(30_400_000), "the table's \"< 30.4 MB\"");
+        let last = lines.filter_map(|l| f.line(l).map(|(_, x)| x)).last();
+        assert_eq!(last, Some(1.0));
+        assert_eq!(Follow::default().download(), None, "no table, no size");
     }
 
     #[test]

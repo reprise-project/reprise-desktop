@@ -1,0 +1,16 @@
+
+com.github.k4zmu2a.spacecadetpinball permissions:
+    ipc	fallback-x11	pulseaudio	wayland	dri
+
+
+
+ 1.	   	com.github.k4zmu2a.spacecadetpinball	stable	i	flathub	< 30.4 MB
+
+
+Installing…
+Installing…                        0%  0 bytes/s
+Installing… ████████████████▌     83%
+Installing… ███████████████████▏  96%
+Installing… ███████████████████▏  96%  28.9 MB/s
+Installing… ████████████████████ 100%  15.1 MB/s
+Installation complete.
