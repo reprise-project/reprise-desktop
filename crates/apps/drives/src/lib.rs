@@ -98,8 +98,10 @@ struct DrivesApp {
     /// What boltd knows now, which a pressed button checks its device against.
     bolt_devices: Vec<reprisebus::bolt::Device>,
     bolt_asked: thunderbolt::Asked,
-    /// Thunderbolt balloons by tag, kept for the history's buttons.
+    /// Thunderbolt balloons by tag, kept for the history's buttons while their device waits.
     bolt_asks: HashMap<u32, reprisebus::bolt::Device>,
+    /// The uids with a change under way, so a second button for one starts no second prompt.
+    bolt_authorizing: HashSet<String>,
 }
 
 impl DrivesApp {
@@ -251,8 +253,17 @@ impl DrivesApp {
         }
     }
 
+    /// What boltd knows now. While it is off the bus (a restart) the devices asked about stay
+    /// asked, so its return brings no second balloon.
     fn bolt_found(&mut self, found: Option<reprisebus::bolt::Found>) {
-        self.bolt_devices = found.map(|f| f.devices).unwrap_or_default();
+        let Some(found) = found else {
+            self.bolt_devices.clear();
+            return;
+        };
+        self.bolt_devices = found.devices;
+        let devices = &self.bolt_devices;
+        self.bolt_asks
+            .retain(|_, a| devices.iter().any(|d| d.uid == a.uid && d.waiting()));
         for d in self.bolt_asked.feed(&self.bolt_devices) {
             log::info!(
                 "Thunderbolt device {} ({}) waits for authorization",
@@ -269,13 +280,13 @@ impl DrivesApp {
     }
 
     /// Button `i` of Thunderbolt balloon `tag`. A button pressed from the history acts only while
-    /// the device still waits.
-    fn bolt_answered(&mut self, tag: u32, i: usize) {
+    /// the device still waits and no change for it is under way. True when a change started.
+    fn bolt_answered(&mut self, tag: u32, i: usize) -> bool {
         let Some(asked) = self.bolt_asks.remove(&tag) else {
-            return;
+            return false;
         };
         let Some(change) = thunderbolt::change_for(i) else {
-            return;
+            return false;
         };
         let Some(d) = self
             .bolt_devices
@@ -283,10 +294,28 @@ impl DrivesApp {
             .find(|d| d.uid == asked.uid && d.waiting())
         else {
             log::info!("Thunderbolt device {} no longer waits", asked.uid);
-            return;
+            return false;
         };
+        if !self.bolt_authorizing.insert(d.uid.clone()) {
+            log::info!("Thunderbolt device {} is already being authorized", d.uid);
+            return false;
+        }
         if let Some((_, poster)) = &self.bolt {
             thunderbolt::carry_out(poster, d.clone(), change);
+        }
+        true
+    }
+
+    /// A change on device `uid` finished; a failure is told only while the device is still here.
+    fn bolt_done(&mut self, uid: &str, label: &str, result: Result<(), Option<String>>) {
+        self.bolt_authorizing.remove(uid);
+        match result {
+            Ok(()) => log::info!("Thunderbolt device {label} authorized"),
+            Err(None) => {}
+            Err(Some(why)) if self.bolt_devices.iter().any(|d| d.uid == uid) => {
+                self.notify(thunderbolt::failed_balloon(label, &why));
+            }
+            Err(Some(why)) => log::info!("Thunderbolt device {label} left: {why}"),
         }
     }
 
@@ -449,11 +478,9 @@ impl DrivesApp {
         while let Some(m) = self.bolt.as_ref().and_then(|(rx, _)| rx.try_recv().ok()) {
             match m {
                 thunderbolt::Msg::Found(f) => self.bolt_found(f),
-                thunderbolt::Msg::Done { label, result } => match result {
-                    Ok(()) => log::info!("Thunderbolt device {label} authorized"),
-                    Err(None) => {}
-                    Err(Some(why)) => self.notify(thunderbolt::failed_balloon(&label, &why)),
-                },
+                thunderbolt::Msg::Done { uid, label, result } => {
+                    self.bolt_done(&uid, &label, result)
+                }
             }
         }
         while let Some(raw) = self.msgs.as_ref().and_then(|rx| rx.try_recv().ok()) {
@@ -484,7 +511,7 @@ impl DrivesApp {
                     self.space_answered(tag, i)
                 }
                 Some(tray::TrayMsg::Button(tag, i)) if self.bolt_asks.contains_key(&tag) => {
-                    self.bolt_answered(tag, i)
+                    self.bolt_answered(tag, i);
                 }
                 Some(tray::TrayMsg::Button(tag, i)) => self.ask_answered(tag, i),
                 _ => {}
@@ -763,6 +790,55 @@ mod tests {
             at_pick: false,
             text_size,
         }
+    }
+
+    #[test]
+    fn a_device_being_authorized_takes_no_second_change_until_the_first_ends() {
+        use reprisebus::bolt::{Device, Found, Status};
+        let dock = Device {
+            path: "/org/freedesktop/bolt/devices/dock".into(),
+            uid: "dock".into(),
+            name: "Dock".into(),
+            vendor: "Acme".into(),
+            status: Status::Connected,
+            stored: false,
+            auto: false,
+        };
+        let mut app = DrivesApp::default();
+        let found = |devices: Vec<Device>| {
+            Some(Found {
+                domains: 1,
+                devices,
+            })
+        };
+        app.bolt_found(found(vec![dock.clone()]));
+        app.bolt_found(None);
+        app.bolt_found(found(vec![dock.clone()]));
+        assert_eq!(
+            app.bolt_asks.len(),
+            1,
+            "a boltd restart asks no second time"
+        );
+        app.bolt_asks.insert(7, dock.clone());
+        let first = *app.bolt_asks.keys().find(|&&t| t != 7).unwrap();
+        assert!(app.bolt_answered(first, thunderbolt::AUTHORIZE_ONCE));
+        assert!(
+            !app.bolt_answered(7, thunderbolt::AUTHORIZE_ONCE),
+            "the history entry while the first change runs"
+        );
+        app.bolt_done("dock", "Acme Dock", Err(None));
+        app.bolt_asks.insert(8, dock.clone());
+        assert!(app.bolt_answered(8, thunderbolt::ALWAYS));
+        let authorized = Device {
+            status: Status::Authorized,
+            ..dock
+        };
+        app.bolt_asks.insert(9, authorized.clone());
+        app.bolt_found(found(vec![authorized]));
+        assert!(
+            app.bolt_asks.is_empty(),
+            "a device that stopped waiting drops its balloons"
+        );
     }
 
     #[test]
