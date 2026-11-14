@@ -68,9 +68,9 @@ optdepends=('ttf-tahoma: Wine'\''s Tahoma, the UI font the layouts are tuned for
             'hwdata: graphics card names in About Reprise and Task Manager (pci.ids)'
             'geoclue: the location prompt and the location indicator (Reprise is the geoclue agent)'
             'dconf: GNOME settings in Import from Another Desktop (dconf dump)'
-            'intel-media-driver: hardware H.264 for Remote Desktop on Intel graphics'
-            'libva-mesa-driver: hardware H.264 for Remote Desktop on AMD graphics'
-            'nvidia-utils: hardware H.264 (NVENC) for Remote Desktop on NVIDIA graphics')
+            'intel-media-driver: hardware video encoding for Remote Desktop and screen recordings on Intel graphics'
+            'libva-mesa-driver: hardware video encoding for Remote Desktop and screen recordings on AMD graphics'
+            'nvidia-utils: hardware video encoding (NVENC) for Remote Desktop and screen recordings on NVIDIA graphics')
 provides=('reprise')
 conflicts=('reprise-git')
 backup=('etc/pam.d/reprise' 'etc/pam.d/reprise-fingerprint' 'etc/pam.d/reprise-rdp'

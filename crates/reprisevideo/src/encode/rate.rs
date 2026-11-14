@@ -14,8 +14,7 @@ pub enum RateControl {
     Constant(u32),
 }
 
-/// The quality that codes H.264 at x264's CRF 23 and the hardware encoders' QP 24.
-pub const DEFAULT_QUALITY: u8 = 55;
+pub use repriseconf::recording::DEFAULT_QUALITY;
 
 /// What [`rate`] sets on an encoder: rates in bit/s and the context's quality, 0 when unset,
 /// and its private options.
@@ -128,13 +127,20 @@ pub fn rate(backend: Backend, codec: Codec, rate: RateControl) -> Rate {
         Backend::Vaapi { low_power } => {
             vec![("rc_mode", mode("CBR", "VBR")), low_power_pair(low_power)]
         }
-        Backend::Nvenc => vec![("rc", mode("cbr", "vbr")), ("preset", "p4".into())],
+        // Filler holds the rate on a still screen; VA-API, Vulkan and SVT-AV1 have none.
+        Backend::Nvenc => {
+            let mut o = vec![("rc", mode("cbr", "vbr")), ("preset", "p4".into())];
+            if constant {
+                o.push(("cbr_padding", "1".into()));
+            }
+            o
+        }
         Backend::Vulkan => vec![("rc_mode", mode("cbr", "vbr"))],
         Backend::Software => {
             let mut o = vec![software_preset(codec)];
             match codec {
-                // Filler holds the rate on a still screen.
                 Codec::H264 if constant => o.push(("x264-params", "nal-hrd=cbr".into())),
+                Codec::H265 if constant => o.push(("x265-params", "strict-cbr=1".into())),
                 // SVT-AV1 runs CBR only with low-delay prediction; FFmpeg picks its CBR when
                 // the maximum rate is the bit rate.
                 Codec::Av1 if constant => o.push(("svtav1-params", "pred-struct=1".into())),
@@ -144,9 +150,11 @@ pub fn rate(backend: Backend, codec: Codec, rate: RateControl) -> Rate {
         }
     };
     let bits = kbit as usize * 1000;
-    let (max_rate, buffer) = match constant {
-        true => (bits, bits),
-        false => (2 * bits, 2 * bits),
+    let (max_rate, buffer) = match (constant, backend, codec) {
+        (true, ..) => (bits, bits),
+        // SVT-AV1's VBR refuses to open with a maximum rate.
+        (false, Backend::Software, Codec::Av1) => (0, 2 * bits),
+        (false, ..) => (2 * bits, 2 * bits),
     };
     Rate {
         bit_rate: bits,
@@ -241,7 +249,10 @@ mod tests {
     #[test]
     fn average_and_constant_set_each_backends_mode_and_the_rate() {
         let c = rate(Backend::Nvenc, Codec::H265, RateControl::Constant(8000));
-        assert_eq!(c.options, pairs(&[("rc", "cbr"), ("preset", "p4")]));
+        assert_eq!(
+            c.options,
+            pairs(&[("rc", "cbr"), ("preset", "p4"), ("cbr_padding", "1")])
+        );
         assert_eq!(
             (c.bit_rate, c.max_rate, c.buffer_size),
             (8_000_000, 8_000_000, 8_000_000)
@@ -251,6 +262,12 @@ mod tests {
         assert_eq!((a.max_rate, a.buffer_size), (16_000_000, 16_000_000));
         let x = rate(Backend::Software, Codec::H264, RateControl::Constant(2000));
         assert!(x.options.contains(&("x264-params", "nal-hrd=cbr".into())));
+        let x = rate(Backend::Software, Codec::H265, RateControl::Constant(2000));
+        assert!(x.options.contains(&("x265-params", "strict-cbr=1".into())));
+        let n = rate(Backend::Nvenc, Codec::H264, RateControl::Average(2000));
+        assert_eq!(n.options, pairs(&[("rc", "vbr"), ("preset", "p4")]));
+        let s = rate(Backend::Software, Codec::Av1, RateControl::Average(2000));
+        assert_eq!((s.max_rate, s.buffer_size), (0, 4_000_000));
         let s = rate(Backend::Software, Codec::Av1, RateControl::Constant(2000));
         assert!(
             s.options

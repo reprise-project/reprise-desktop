@@ -60,6 +60,7 @@ while an editor saves it doesn't.
 | `[thumbnail_cache]` | whether thumbnails are kept, the cap, and whether installed thumbnailers make them for PDFs, videos and fonts |
 | `[storage]` | the low disk space warning |
 | `[bluetooth]` | `battery_warning`: the percent a connected device's battery warns at, 15 by default, 0 off; `receive_files`: whether paired devices may offer files, off by default (Bluetooth Devices > Options) |
+| `[recording]` | the screen recordings' video codec, encoder, rate control, frame rate, keyframe interval and sound codec ([below](#recording)) |
 | `[remote_desktop]` | the Remote Desktop server's port, picture quality, frame rate, video encoder, sound, lock on leave, capture border and what this computer's screen shows while connected ([below](#remote-desktop)) |
 | `[debug]` | the debug overlay |
 | `[osd]` | `caps_lock`, `num_lock`: whether the key's on or off shows on screen when it changes, both on by default (Settings > Keyboard) |
@@ -159,6 +160,31 @@ timeouts unless a program inhibits idle.
 `speed` (1 to 10), `stars`, `shapes`, `cycle_colors`, `folder` (for Photos;
 Pictures when left out) and `photo_seconds` tune them. Photos runs as Blank
 while the session is locked.
+
+## Recording
+
+`[recording]` sets how screen recordings are coded. The recorder reads it
+as each recording starts. A missing key takes its default; an invalid key
+takes its default too, and the journal names the invalid ones. A file it
+can't read or that isn't TOML gives the defaults. Recordings are MP4 files
+whatever the codecs.
+
+| Key | Values | Default |
+| --- | --- | --- |
+| `codec` | `"h264"`, `"h265"` or `"av1"`. H.265 is tagged `hvc1`, which QuickTime and Safari play. With no encoder that codes it here, the recording fails with a notice naming the codec; another codec never stands in | `"h264"` |
+| `encoder` | `"auto"`: the first of VA-API, NVENC, Vulkan and the CPU that codes a test frame in the codec at start. `"vaapi"`, `"nvenc"`, `"vulkan"`, `"software"` (x264, x265 or SVT-AV1) are tried first, then the others in auto's order. An area under 256 pixels a side always codes on the CPU | `"auto"` |
+| `rate` | `"quality"`: a constant quality, the bitrate following the picture. `"average"`: `bitrate` on average, peaks up to twice that (SVT-AV1 caps no peaks). `"constant"`: `bitrate` held through each second; the last picture is repeated at the frame rate on a still screen, and x264, x265 and NVENC pad each second to the rate, so the file grows by the same amount every second. SVT-AV1, VA-API and Vulkan have no padding, so with them the file can stay under the rate on a still screen. Quality and Average add a picture only when the screen changes | `"quality"` |
+| `quality` | 1 to 100, for `"quality"`. 55 codes H.264 at x264's CRF 23 and the hardware encoders' QP 24; H.265 and AV1 run along their own scales | `55` |
+| `bitrate` | 500 to 100000 kbit/s, for `"average"` and `"constant"` | `8000` |
+| `frame_rate` | 1 to 240: frames a second at most, one in each slot of a grid at that rate; a change inside a slot already coded reaches the file at the next slot, so picture and sound can be up to one slot apart. `0`: the screen's refresh rate (60 when it can't be read), and for `"constant"` at most 60. The encoder plans its rate control for it, and `"constant"` codes every slot | `0` |
+| `keyframe_interval` | 1 to 60 seconds: the first picture this long after a keyframe is the next keyframe, however few pictures the screen adds | `4` |
+| `audio_codec` | `"aac"`, `"opus"` or `"flac"`, for recordings carrying sound (`[screenshot] record_sound`). With no encoder for it here, the recording fails with a notice naming the codec ("No Opus encoder works here.") before the screen is shared | `"aac"` |
+| `audio_bitrate` | 32 to 512 kbit/s, for AAC and Opus | `160` |
+| `audio_vbr` | `true`: Opus at a variable bitrate; `false` holds it. AAC always holds its bitrate | `true` |
+| `flac_compression` | 0 (fastest) to 12 (smallest), for FLAC; the sound is the same at every level | `5` |
+
+`reprise-record --probe` prints what codes here
+([programs.md](programs.md)).
 
 ## Remote Desktop
 

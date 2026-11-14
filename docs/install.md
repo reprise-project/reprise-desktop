@@ -299,10 +299,10 @@ user's server.
   Tokio, rustls and rcgen, built in. rustls's aws-lc-rs compiles its C library
   with the C compiler. IronRDP turns on flate2's zlib backend, which every
   program shares, so zlib is a runtime requirement
-- `reprise-rdp` and the screen recorder `reprise-record` encode H.264
+- `reprise-rdp` and the screen recorder `reprise-record` encode video
   through FFmpeg 8 or later (libavcodec, libavfilter, libavutil, libswscale,
-  and libavformat for the recorder's MP4 files, with FFmpeg's own AAC
-  encoder for their sound) with the `ffmpeg-the-third` crate, whose
+  and libavformat for the recorder's MP4 files, with FFmpeg's own AAC and
+  FLAC encoders for their sound) with the `ffmpeg-the-third` crate, whose
   bindings are generated from FFmpeg's headers at build time (clang). Its
   colour conversion sets the scaler's options on `SwsContext` directly, which
   FFmpeg 7 doesn't allow
@@ -347,8 +347,11 @@ user's server.
 - libxkbcommon and xkeyboard-config, whose registry names the keyboard
   layouts in the tray and in Reprise Settings
 - freetype2, fontconfig, PAM, libxcrypt, dbus, PipeWire 1.4 or later, zlib
-  and FFmpeg 8 or later (with libx264, which Remote Desktop encodes on when the GPU
-  cannot, and libopus, which it sends sound to the client in)
+  and FFmpeg 8 or later (with libx264, which Remote Desktop and screen recordings
+  encode H.264 on when the GPU cannot, and libopus, which Remote Desktop sends
+  sound to the client in and recordings code Opus sound with). FFmpeg's libx265
+  and libsvtav1 code H.265 and AV1 recordings on the CPU; without them those
+  codecs record only on a GPU encoder
 - libjxl, for JPEG XL screenshots and for opening `.jxl` pictures in the
   image viewer, Explorer's previews and thumbnails and the file dialogs
 - dbus-broker, or dbus-daemon 1.15 or later, whose peer credentials carry a
@@ -482,13 +485,14 @@ desktop and stays out of the way when it's missing.
 - dconf (`dconf-cli` on Ubuntu), for reading GNOME's settings in Import from
   Another Desktop; without it only Plasma's are found.
 
-- A VA-API driver with an H.264 encoder, for hardware H.264 in Remote
-  Desktop: `intel-media-driver` on Intel graphics, `libva-mesa-driver` on
-  AMD (Arch's `mesa` package provides it). On NVIDIA, `nvidia-utils` (CUDA
-  and NVENC), tried on a GeForce RTX 4080 SUPER with driver 615.78.
-  Without a hardware encoder, Remote Desktop encodes H.264 on the CPU with
-  x264 through FFmpeg's libx264, which Arch's `ffmpeg` links; a client
-  without H.264 gets RemoteFX bitmaps.
+- A VA-API driver with a video encoder, for hardware encoding in Remote
+  Desktop (H.264) and screen recordings (H.264, H.265 and AV1 where the GPU
+  codes them): `intel-media-driver` on Intel graphics, `libva-mesa-driver`
+  on AMD (Arch's `mesa` package provides it). On NVIDIA, `nvidia-utils`
+  (CUDA and NVENC), tried on a GeForce RTX 4080 SUPER with driver 615.78.
+  Without a hardware encoder, both encode on the CPU with FFmpeg's libx264,
+  libx265 and libsvtav1, which Arch's `ffmpeg` links; a Remote Desktop
+  client without H.264 gets RemoteFX bitmaps.
 
 **Portals and toolkits**
 

@@ -324,6 +324,19 @@ suspend_after = 0            # run [power] standby
 # jxl_effort = 7             # 1 (fastest) to 9 (smallest file); 8 and 9 take many seconds a shot, and shots save one at a time
 # record_sound = false       # screen recordings (Videos/Screencasts) also carry what plays
 
+# [recording]                # how screen recordings are coded, read as each one starts
+# codec = "h264"             # "h264", "h265" or "av1"; with no encoder for it here, recording fails
+# encoder = "auto"           # "auto", "vaapi", "nvenc", "vulkan" or "software"
+# rate = "quality"           # "quality", "average" (bitrate) or "constant" (bitrate, a frame each slot)
+# quality = 55               # 1 to 100, for "quality"; 55 is x264's CRF 23
+# bitrate = 8000             # kbit/s, 500 to 100000, for "average" and "constant"
+# frame_rate = 0             # most frames a second, 1 to 240; 0 is the screen's refresh rate (at most 60 for constant)
+# keyframe_interval = 4      # seconds after a keyframe that the next picture is one, 1 to 60
+# audio_codec = "aac"        # "aac", "opus" or "flac", for record_sound
+# audio_bitrate = 160        # kbit/s, 32 to 512, for AAC and Opus
+# audio_vbr = true           # Opus at a variable bitrate; false holds the bitrate
+# flac_compression = 5       # 0 (fastest) to 12 (smallest), for FLAC
+
 # [previews]                 # live pictures of windows, redrawn while they change
 # taskbar = true             # pointing at a task button shows its windows; false keeps the text tip
 # fps = 10                   # how often a changing picture is redrawn, 1 to 60; more costs more GPU

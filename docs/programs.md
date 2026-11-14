@@ -993,19 +993,31 @@ page all open it. Reading GNOME's settings needs the `dconf` command.
   [security.md](security.md#remote-desktop) for logins.
 - **Screen recorder.** `reprise-record --fd N --output NAME [--area
   X,Y,WIDTH,HEIGHT] [--sound]` records output NAME, or an area of it in its
-  logical pixels, as an MP4 file into the regular file open on descriptor N (H.264, and AAC for `--sound`, what
-  plays through the default output device). The compositor starts it for a
-  recording and stops it with SIGINT; it has no window. It reads the screen
-  through the portal's ScreenCast, which asks nothing for a recording the
-  compositor started ([security.md](security.md#sandboxed-programs)), and
-  codes the whole screen on the first encoder that works in Remote Desktop's
-  automatic order (VA-API, NVENC, Vulkan, x264). A hardware encoder gets an
-  area cut out on its GPU; an area under 256 pixels a side codes on x264,
-  cut out on the CPU, and the journal names the encoder and where the area
-  was cut. When a hardware encoder fails to open or to code the first
-  frame, the recorder asks the stream for buffers the next encoder reads
-  (LINEAR or shared memory for x264), drops the frames already on their
-  way and codes on that one; the movie starts at the first frame coded. Its log
+  logical pixels, as an MP4 file into the regular file open on descriptor N,
+  with what plays through the default output device for `--sound`. It reads
+  the codecs, rate control, frame rate and keyframe interval from
+  `[recording]` as it starts ([configuration.md](configuration.md#recording)).
+  The compositor starts it for a recording and stops it with SIGINT; it has
+  no window. It reads the screen through the portal's ScreenCast, which asks
+  nothing for a recording the compositor started
+  ([security.md](security.md#sandboxed-programs)), and codes the whole
+  screen on the first encoder of the codec that works, the one `encoder`
+  picks first and then Remote Desktop's automatic order (VA-API, NVENC,
+  Vulkan, the CPU). A hardware encoder gets an area cut out on its GPU; an
+  area under 256 pixels a side codes on the CPU, cut out there, and the
+  journal names the encoder and where the area was cut. When a hardware
+  encoder fails to open or to code the first frame, the recorder asks the
+  stream for buffers the next encoder reads (LINEAR or shared memory for the
+  CPU), drops the frames already on their way and codes on that one; the
+  movie starts at the first frame coded. When no encoder of the codec works
+  the recording fails with "No H.265 encoder works here." or "No H.265
+  encoder could code the screen." (for the codec set); with `--sound` and no
+  encoder of the audio codec, it fails with "No Opus encoder works here."
+  before the screen is shared. `reprise-record
+  --probe` prints what codes here and exits: a line `video CODEC ENCODER` for
+  each encoder choice that codes a test frame in each codec (`video h265
+  vaapi`), then `audio CODEC` for each audio codec the MP4 muxer takes
+  (`audio opus`). Its log
   lines reach the journal through the compositor, which reads its stderr; on
   failure its last line there is the reason. The compositor makes the file
   under Videos/Screencasts and hands it over open, so the recorder never

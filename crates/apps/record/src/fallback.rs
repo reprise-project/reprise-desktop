@@ -29,6 +29,7 @@ pub enum Step {
 }
 
 pub struct Backends {
+    codec: Codec,
     /// The backends not yet tried, in order, each with the stream modifiers it maps.
     left: Vec<(Backend, Vec<u64>)>,
     /// When the stream was asked for the first one's buffers, and whether it was asked again.
@@ -36,8 +37,12 @@ pub struct Backends {
 }
 
 impl Backends {
-    pub fn new(left: Vec<(Backend, Vec<u64>)>) -> Backends {
-        Backends { left, asked: None }
+    pub fn new(codec: Codec, left: Vec<(Backend, Vec<u64>)>) -> Backends {
+        Backends {
+            codec,
+            left,
+            asked: None,
+        }
     }
 
     /// What to do with a frame that came at `now`; `reads` says whether a backend mapping the
@@ -67,7 +72,7 @@ impl Backends {
             if held >= 2 * HOLD {
                 log::warn!(
                     "the screen's stream sent no buffers {} reads",
-                    backend.label(Codec::H264)
+                    backend.label(self.codec)
                 );
                 self.asked = None;
                 self.left.remove(0);
@@ -92,10 +97,13 @@ mod tests {
     const Y_TILED: u64 = 0x0100_0000_0000_0002;
 
     fn order() -> Backends {
-        Backends::new(vec![
-            (VAAPI, vec![DRM_FORMAT_MOD_LINEAR, Y_TILED]),
-            (Backend::Software, vec![DRM_FORMAT_MOD_LINEAR]),
-        ])
+        Backends::new(
+            Codec::H264,
+            vec![
+                (VAAPI, vec![DRM_FORMAT_MOD_LINEAR, Y_TILED]),
+                (Backend::Software, vec![DRM_FORMAT_MOD_LINEAR]),
+            ],
+        )
     }
 
     /// Who reads a Y-tiled dma-buf: a backend mapping the modifier, on a GPU.
@@ -162,10 +170,13 @@ mod tests {
     #[test]
     fn a_backend_skipped_for_its_buffers_asks_the_stream_for_the_next_ones() {
         const VULKAN_ONLY: u64 = 0x0300_0000_0000_0001;
-        let mut backends = Backends::new(vec![
-            (Backend::Vulkan, vec![VULKAN_ONLY]),
-            (Backend::Software, vec![DRM_FORMAT_MOD_LINEAR]),
-        ]);
+        let mut backends = Backends::new(
+            Codec::H264,
+            vec![
+                (Backend::Vulkan, vec![VULKAN_ONLY]),
+                (Backend::Software, vec![DRM_FORMAT_MOD_LINEAR]),
+            ],
+        );
         let t0 = Instant::now();
         let tiled_only = |_: Backend, _: &[u64]| false;
         assert!(matches!(backends.next(t0, tiled_only), Step::Wait(Some(_))));
