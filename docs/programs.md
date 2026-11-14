@@ -393,7 +393,10 @@ matched control focused.
     encoder, rate control (a quality, or a bitrate), frame rate and keyframe
     interval; and whether it carries what plays, in AAC, Opus or FLAC. A line
     says "Checking encoders..." while `reprise-record --probe` runs, and the
-    codecs and encoders it did not list are greyed.
+    codecs and encoders it did not list are greyed. After it the line names
+    what stops a recording ("No AV1 encoder works here.", or "Opus can't be
+    recorded here." with what plays recorded) or the encoder standing in for
+    the one picked ("VA-API AV1 (NVENC unavailable)").
   - **Notifications:** whether balloons play a sound, the balloon style
     (Glass), holding balloons during full screen, screen sharing and quiet
     hours, and the programs that sent notifications this session or are

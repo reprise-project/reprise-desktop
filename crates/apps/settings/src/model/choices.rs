@@ -193,9 +193,7 @@ pub const ENCODERS: &Choices = REMOTE_ENCODERS.split_at(5).0;
 
 /// The [`ENCODERS`] row for the CPU encoder of `[recording] codec` = `codec`.
 pub fn software_row(codec: &str) -> String {
-    let codec = (Codec::ALL.into_iter())
-        .find(|c| c.name() == codec)
-        .unwrap_or(Codec::H264);
+    let codec = Codec::from_name(codec).unwrap_or(Codec::H264);
     format!("Software ({})", codec.software_name())
 }
 

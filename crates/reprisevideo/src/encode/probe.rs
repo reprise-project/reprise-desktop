@@ -69,21 +69,7 @@ impl Backend {
     ];
 
     pub fn label(self, codec: Codec) -> &'static str {
-        use Codec::*;
-        match (self, codec) {
-            (Backend::Vaapi { .. }, H264) => "VA-API H.264",
-            (Backend::Vaapi { .. }, H265) => "VA-API H.265",
-            (Backend::Vaapi { .. }, Av1) => "VA-API AV1",
-            (Backend::Nvenc, H264) => "NVENC H.264",
-            (Backend::Nvenc, H265) => "NVENC H.265",
-            (Backend::Nvenc, Av1) => "NVENC AV1",
-            (Backend::Vulkan, H264) => "Vulkan H.264",
-            (Backend::Vulkan, H265) => "Vulkan H.265",
-            (Backend::Vulkan, Av1) => "Vulkan AV1",
-            (Backend::Software, H264) => "Software H.264",
-            (Backend::Software, H265) => "Software H.265",
-            (Backend::Software, Av1) => "Software AV1",
-        }
+        self.choice().label(codec).unwrap_or_default()
     }
 
     /// The FFmpeg encoder's name.
