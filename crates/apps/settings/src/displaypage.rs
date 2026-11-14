@@ -92,6 +92,8 @@ pub struct Display {
     profiles: Vec<reprisefs::icc::Listed>,
     /// `[[outputs]] icc_profile` as the file has it, by output.
     profiles_saved: Vec<(String, PathBuf)>,
+    /// The saved profiles whose file the listing found gone.
+    profiles_gone: Vec<PathBuf>,
     /// Profile picks not yet written, by output.
     profile_picks: Vec<(String, Option<PathBuf>)>,
 }
@@ -181,8 +183,15 @@ impl Display {
         self.primary_saved = self.primary.clone();
     }
 
-    pub fn set_profiles(&mut self, found: Vec<reprisefs::icc::Listed>) {
+    /// The listing: the profiles `found`, and the saved ones whose file is `gone`.
+    pub fn set_profiles(&mut self, found: Vec<reprisefs::icc::Listed>, gone: Vec<PathBuf>) {
         self.profiles = found;
+        self.profiles_gone = gone;
+    }
+
+    /// Every saved profile's file, for the listing to look for.
+    pub fn saved_profile_files(&self) -> Vec<PathBuf> {
+        self.profiles_saved.iter().map(|(_, p)| p.clone()).collect()
     }
 
     /// The `[[outputs]] icc_profile` entries the file has.
@@ -194,6 +203,12 @@ impl Display {
         (self.profiles_saved.iter())
             .find(|(n, _)| n == name)
             .map(|(_, p)| p)
+    }
+
+    /// Output `name`'s saved profile when the list lacks it: the combo's row past the list.
+    fn profile_unlisted(&self, name: &str) -> Option<&PathBuf> {
+        self.profile_saved(name)
+            .filter(|p| !self.profiles.iter().any(|l| l.path == **p))
     }
 
     /// Output `name`'s profile as picked, else as the file has it.
@@ -214,26 +229,34 @@ impl Display {
         }
     }
 
-    /// The Color profile combo's rows (None, then each profile found, then the shown output's own
-    /// when it is not among them) and the picked one's row.
+    /// The Color profile combo's rows (None, then each profile found, then the shown output's
+    /// saved one when it is not among them, by file name) and the picked one's row.
     pub fn profile_rows(&self) -> (Vec<String>, usize) {
         let mut rows = vec!["None".to_string()];
         rows.extend(self.profiles.iter().map(|l| l.name.clone()));
-        let Some(p) = self.head().and_then(|h| self.profile_of(&h.name)) else {
+        let Some(name) = self.head().map(|h| h.name.as_str()) else {
             return (rows, 0);
         };
-        match self.profiles.iter().position(|l| l.path == *p) {
-            Some(i) => (rows, i + 1),
-            None => {
-                let name = p.file_name().unwrap_or(p.as_os_str());
-                rows.push(name.to_string_lossy().into_owned());
-                let last = rows.len() - 1;
-                (rows, last)
-            }
+        let own = self.profile_unlisted(name);
+        if let Some(p) = own {
+            let file = p.file_name().unwrap_or(p.as_os_str()).to_string_lossy();
+            rows.push(match self.profiles_gone.contains(p) {
+                true => format!("{file} (missing)"),
+                false => file.into_owned(),
+            });
         }
+        let at = match self.profile_of(name) {
+            None => 0,
+            Some(p) => match self.profiles.iter().position(|l| l.path == *p) {
+                Some(i) => i + 1,
+                None if own == Some(p) => rows.len() - 1,
+                None => 0,
+            },
+        };
+        (rows, at)
     }
 
-    /// Combo row `row` for the shown output: 0 is no profile, the row past the list keeps its own.
+    /// Combo row `row` for the shown output: 0 is no profile, the row past the list its saved one.
     pub fn pick_profile(&mut self, row: usize) {
         let Some(name) = self.head().map(|h| h.name.clone()) else {
             return;
@@ -242,7 +265,10 @@ impl Display {
             0 => None,
             r => match self.profiles.get(r - 1) {
                 Some(l) => Some(l.path.clone()),
-                None => return,
+                None => match self.profile_unlisted(&name) {
+                    Some(p) if r == self.profiles.len() + 1 => Some(p.clone()),
+                    _ => return,
+                },
             },
         };
         self.profile_picks.retain(|(n, _)| *n != name);
@@ -1193,10 +1219,10 @@ mod tests {
     #[test]
     fn each_output_picks_its_own_profile_and_apply_asks_for_the_moved_ones() {
         let mut d = pair();
-        d.set_profiles(vec![
-            listed("/p/a.icc", "Alpha"),
-            listed("/p/b.icc", "Bravo"),
-        ]);
+        d.set_profiles(
+            vec![listed("/p/a.icc", "Alpha"), listed("/p/b.icc", "Bravo")],
+            Vec::new(),
+        );
         d.set_profiles_saved(vec![("HDMI-A-1".into(), PathBuf::from("/elsewhere/c.icc"))]);
         assert_eq!(
             d.profile_rows(),
@@ -1219,6 +1245,10 @@ mod tests {
         );
         d.pick_profile(3);
         assert!(!d.dirty(), "keeping its own profile changes nothing");
+        d.pick_profile(1);
+        assert_eq!(d.profile_rows().0.len(), 4, "the saved row stays");
+        d.pick_profile(3);
+        assert!(!d.dirty(), "back to the saved profile");
         d.pick_profile(0);
         d.pick_monitor(0);
         d.pick_profile(2);
@@ -1243,9 +1273,27 @@ mod tests {
     }
 
     #[test]
+    fn a_saved_profile_whose_file_is_gone_reads_missing_and_none_clears_it() {
+        let mut d = Display::with_heads(vec![test_head("DP-1")]);
+        let gone = PathBuf::from("/p/old.icc");
+        d.set_profiles_saved(vec![("DP-1".into(), gone.clone())]);
+        d.set_profiles(vec![listed("/p/a.icc", "Alpha")], vec![gone]);
+        assert_eq!(
+            d.profile_rows(),
+            (
+                vec!["None".into(), "Alpha".into(), "old.icc (missing)".into()],
+                2
+            )
+        );
+        d.pick_profile(0);
+        assert!(d.dirty());
+        assert_eq!(d.changes().unwrap().profiles, [("DP-1".to_string(), None)]);
+    }
+
+    #[test]
     fn the_profile_combo_reads_into_the_shown_output() {
         let mut d = Display::with_heads(vec![test_head("DP-1")]);
-        d.set_profiles(vec![listed("/p/a.icc", "Alpha")]);
+        d.set_profiles(vec![listed("/p/a.icc", "Alpha")], Vec::new());
         let mut f = page(&d, Area::MIN);
         f.set_combo(PROFILE, 1);
         assert!(read(&mut d, &f, PROFILE));
@@ -1614,7 +1662,7 @@ mod tests {
         use reprisekit::interface::Interface;
         let mut d = Display::with_heads(vec![test_head("DP-1")]);
         let long = "Dell U2720Q #1 2026-11-13 21:04:33 D65 2.2 F-S XYZLUT+MTX";
-        d.set_profiles(vec![listed("/p/dell.icc", long)]);
+        d.set_profiles(vec![listed("/p/dell.icc", long)], Vec::new());
         d.pick_profile(1);
         let groups: &[(&str, &[pagelist::Item])] =
             &[("Display & Sound", &[pagelist::Item::Page("Display")])];

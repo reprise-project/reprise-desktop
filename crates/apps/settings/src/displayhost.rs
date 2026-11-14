@@ -31,6 +31,9 @@ fn send_primary(name: &str) -> Result<(), &'static str> {
     }
 }
 
+/// The display profiles found, and the saved ones whose file is gone.
+type ProfileScan = (Vec<reprisefs::icc::Listed>, Vec<std::path::PathBuf>);
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Press {
     Ok,
@@ -53,7 +56,7 @@ pub struct DisplayHost {
     /// The accelerometer read off the loop, once the page first opens.
     pub sensor_job: Option<std::sync::mpsc::Receiver<bool>>,
     /// The display profile listing, off the loop since colord may be asked.
-    pub profile_scan: Option<std::sync::mpsc::Receiver<Vec<reprisefs::icc::Listed>>>,
+    pub profile_scan: Option<std::sync::mpsc::Receiver<ProfileScan>>,
     /// The SetPrimary call, off the loop since the compositor answers once it wrote the layout.
     /// Apply stays greyed while it runs.
     pub primary_job: Option<std::sync::mpsc::Receiver<Result<(), &'static str>>>,
@@ -84,13 +87,19 @@ impl SettingsApp {
         r
     }
 
-    /// List the display profiles on a thread; `profiles_done` takes them in.
+    /// List the display profiles on a thread, and look for the saved ones' files; `profiles_done`
+    /// takes them in.
     pub(crate) fn scan_profiles(&mut self) {
-        self.display.profile_scan = Some(self.spawn(|| {
-            reprisefs::icc::list(
+        let saved = self.display.model.saved_profile_files();
+        self.display.profile_scan = Some(self.spawn(move || {
+            let found = reprisefs::icc::list(
                 &reprisefs::icc::dirs(),
                 &reprisebus::colord::profile_files(),
-            )
+            );
+            let gone = (saved.into_iter())
+                .filter(|p| matches!(p.try_exists(), Ok(false)))
+                .collect();
+            (found, gone)
         }));
     }
 
@@ -98,13 +107,13 @@ impl SettingsApp {
         let Some(rx) = &self.display.profile_scan else {
             return false;
         };
-        let found = match crate::take(rx) {
+        let (found, gone) = match crate::take(rx) {
             Ok(None) => return false,
-            Ok(Some(found)) => found,
-            Err(()) => Vec::new(),
+            Ok(Some(scan)) => scan,
+            Err(()) => Default::default(),
         };
         self.display.profile_scan = None;
-        self.display.model.set_profiles(found);
+        self.display.model.set_profiles(found, gone);
         displaypage::refresh(&mut self.sheet, &self.display.model, &self.want);
         true
     }
@@ -189,7 +198,9 @@ impl SettingsApp {
                 flow.apply(&mut self.display.model, req, press == Press::Ok)
             }
         };
-        self.display_effects(effects)
+        let r = self.display_effects(effects);
+        self.sync_apply();
+        r
     }
 
     pub(crate) fn heads_applied(&mut self, serial: u32, ok: bool, req: &mut HeadRequests) -> Reply {
