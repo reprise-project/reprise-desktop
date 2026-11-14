@@ -247,6 +247,18 @@ pub fn read(path: &Path, kind: Kind) -> Result<Facts, String> {
     Ok(facts)
 }
 
+/// Whether `pacman -U` checks a package file's `.sig`: false under `LocalFileSigLevel = Never`
+/// (`pacman-conf` prints the resolved level), or when `pacman-conf` cannot say.
+pub fn local_sigs_checked() -> bool {
+    output("pacman-conf", &[OsStr::new("LocalFileSigLevel")]).is_ok_and(|o| sigs_checked(&o))
+}
+
+/// `pacman-conf LocalFileSigLevel`'s output names a level that checks package signatures.
+pub(crate) fn sigs_checked(level: &str) -> bool {
+    let mut words = level.split_whitespace().peekable();
+    words.peek().is_some() && !words.any(|w| matches!(w, "Never" | "PackageNever"))
+}
+
 /// The packages `pacman -U path` would install, by name: the file's and those it pulls in.
 pub fn pacman_targets(path: &Path) -> Result<Vec<String>, String> {
     let os = OsStr::new;

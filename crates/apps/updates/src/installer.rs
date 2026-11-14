@@ -354,11 +354,12 @@ fn ref_found(r: reprisefs::software::FlatpakRef, found: &mut Found) {
     found.ready = true;
 }
 
-/// Who built a package. Only pacman checks a signature, and only one in a `.sig` beside the file.
-fn packager(name: String, signed: bool) -> String {
-    match (name.is_empty(), signed) {
+/// Who built a package. `checked`: pacman will check a `.sig` beside the file as it installs it;
+/// that proves a key pacman trusts signed it, not that the named packager did.
+fn packager(name: String, checked: bool) -> String {
+    match (name.is_empty(), checked) {
         (true, _) => String::new(),
-        (false, true) => name,
+        (false, true) => format!("{name} (signature checked when it installs)"),
         (false, false) => format!("(unverified) {name}"),
     }
 }
@@ -431,7 +432,12 @@ fn read_file(path: &Path, signed: bool, conn: Option<&Connection>) -> (Found, Pl
                         fact("Size:", size_text(facts.size)),
                         fact(
                             "Packager:",
-                            packager(facts.packager, signed && kind == pkgfile::Kind::Pacman),
+                            packager(
+                                facts.packager,
+                                signed
+                                    && kind == pkgfile::Kind::Pacman
+                                    && pkgfile::local_sigs_checked(),
+                            ),
                         ),
                     ];
                     match conn {
@@ -1156,8 +1162,14 @@ mod tests {
         );
         assert_eq!(
             packager("Arch Linux <a@b>".into(), true),
-            "Arch Linux <a@b>"
+            "Arch Linux <a@b> (signature checked when it installs)"
         );
+        for level in ["PackageOptional\nPackageTrustedOnly\n", "PackageRequired\n"] {
+            assert!(pkgfile::sigs_checked(level), "{level:?} checks a .sig");
+        }
+        for level in ["PackageNever\n", "Never\n", ""] {
+            assert!(!pkgfile::sigs_checked(level), "{level:?} ignores a .sig");
+        }
         assert_eq!(fact("Packager:", packager(String::new(), false)).1, UNKNOWN);
     }
 
