@@ -444,6 +444,8 @@ struct SettingsApp {
     region_conf: PathBuf,
     region_read: Option<Receiver<regionhost::Reading>>,
     region_set: Option<Receiver<regionhost::Set>>,
+    /// The page showed at the last look, so an opening is told from a stay.
+    region_open: bool,
     contents: contentshost::Contents,
     providers: providerpage::Providers,
     events: eventshost::Events,
@@ -720,6 +722,7 @@ impl SettingsApp {
             region_conf: reprisefs::region::user_conf(),
             region_read: None,
             region_set: None,
+            region_open: false,
             contents: contentshost::Contents::default(),
             events: eventshost::Events::default(),
             thunderbolt: thunderbolthost::Thunderbolt::default(),
