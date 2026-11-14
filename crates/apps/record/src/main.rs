@@ -726,8 +726,19 @@ impl<'a> File<'a> {
         for mut p in packets {
             p.set_stream(stream);
             p.rescale_ts(from, to);
-            p.write_interleaved(output)
-                .map_err(|e| format!("Cannot write the recording: {e}"))?;
+            // FLAC's last packet is empty and carries the final STREAMINFO for the header, which
+            // `Packet::write_interleaved` refuses as invalid data.
+            // SAFETY: an open muxer and a packet of one of its streams, whose data it takes.
+            let written = unsafe {
+                ffmpeg::ffi::av_interleaved_write_frame(
+                    output.as_mut_ptr(),
+                    ffmpeg::packet::Mut::as_mut_ptr(&mut p),
+                )
+            };
+            if written < 0 {
+                let e = ffmpeg::Error::from(written);
+                return Err(format!("Cannot write the recording: {e}"));
+            }
         }
         Ok(())
     }
@@ -1257,6 +1268,43 @@ mod tests {
         assert!(ended.contains("cannot be read by the CPU"), "{ended}");
         file.finish().unwrap();
         assert_eq!(video_ms(&path)[..2], [0, 200], "the readable frames go on");
+    }
+
+    #[test]
+    fn a_flac_recording_ends_with_the_streaminfo_of_all_its_sound() {
+        ffmpeg::init().unwrap();
+        ffmpeg::util::log::set_level(ffmpeg::util::log::Level::Quiet);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.mp4");
+        let node = PathBuf::from(probe::RENDER_NODE);
+        let flac = Recording {
+            audio_codec: AudioCodec::Flac,
+            ..Recording::default()
+        };
+        let sound = Sound::open(AudioCodec::Flac, 160, true, 5).unwrap();
+        let making = making(&flac, Some(60), Some(sound));
+        let mut file = File::new(&path, &node, software(), None, (64, 64), making);
+        let t0 = Instant::now();
+        file.frame(grey(0x10), t0).unwrap();
+        for i in 1..=5 {
+            let tone = (0..960)
+                .flat_map(|n| [(n * i) as u8; 4])
+                .collect::<Vec<_>>();
+            file.sound(&tone, t0 + Duration::from_millis(20 * i as u64))
+                .unwrap();
+        }
+        file.finish().unwrap();
+        let input = ffmpeg::format::input(&path).unwrap();
+        let audio = input.stream(AUDIO).unwrap();
+        // SAFETY: plain fields of the stream's parameters, the extradata `extradata_size` long.
+        let info = unsafe {
+            let p = audio.parameters().as_ptr();
+            std::slice::from_raw_parts((*p).extradata, (*p).extradata_size as usize).to_vec()
+        };
+        assert_eq!(info.len(), 34, "a FLAC STREAMINFO");
+        let total = u64::from_be_bytes(info[10..18].try_into().unwrap()) & ((1 << 36) - 1);
+        assert_eq!(total, 5 * 960, "the header counts every sample");
+        assert_ne!(info[18..], [0; 16], "the header carries the sound's MD5");
     }
 
     #[test]
