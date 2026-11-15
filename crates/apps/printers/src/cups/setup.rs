@@ -28,6 +28,22 @@ impl std::fmt::Debug for Change {
     }
 }
 
+/// A device URI whose `Debug` drops the user name and password.
+#[derive(Clone, PartialEq)]
+pub struct DeviceUri(pub String);
+
+impl std::fmt::Debug for DeviceUri {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&without_userinfo(&self.0))
+    }
+}
+
+/// Whether cupsd may hold a user name and password in an address it reports without them: an
+/// SMB queue on a password-protected share has them in its address.
+pub fn may_hide_password(device_uri: &str) -> bool {
+    device_uri.starts_with("smb:")
+}
+
 impl Change {
     pub fn is_empty(&self) -> bool {
         self.info.is_none()
@@ -299,8 +315,15 @@ pub(super) fn add_calls(p: &NewPrinter) -> Vec<Call> {
 /// over, it becomes the default if the old one was, and the old one goes.
 /// cups-pk-helper's PrinterRename takes the same steps as root but leaves
 /// the defaults the PPD does not hold, so they follow as calls. The
-/// user's own default follows the name either way.
-pub fn rename(c: &Client, old: &str, new: &str, s: &Snapshot) -> Result<()> {
+/// user's own default follows the name either way. cupsd reports the address without its user
+/// name and password, so `device_uri`, when given, is the address the new queue takes instead.
+pub fn rename(
+    c: &Client,
+    old: &str,
+    new: &str,
+    device_uri: Option<&DeviceUri>,
+    s: &Snapshot,
+) -> Result<()> {
     if let Some(why) = name_clash(old, new, s) {
         return Err(Error::Refused(why));
     }
@@ -312,7 +335,7 @@ pub fn rename(c: &Client, old: &str, new: &str, s: &Snapshot) -> Result<()> {
             Vec::new()
         }
     };
-    let peer = rename_by_peer(c, old, new, s, ppd, &defaults);
+    let peer = rename_by_peer(c, old, new, device_uri, s, ppd, &defaults);
     if matches!(peer, Err(Error::Denied))
         && c.helper.installed()
         && let Some(e) = helper_rename_refusal(old, s)
@@ -320,16 +343,7 @@ pub fn rename(c: &Client, old: &str, new: &str, s: &Snapshot) -> Result<()> {
         return Err(e);
     }
     c.admin(peer, || {
-        let mut calls = vec![Call::PrinterRename(old.into(), new.into())];
-        calls.extend(defaults.iter().filter_map(|(k, v)| {
-            let option = option_of(k).to_string();
-            Some(Call::PrinterAddOptionDefault(
-                new.into(),
-                option,
-                vec![value_text(v)?],
-            ))
-        }));
-        calls
+        helper_rename_calls(old, new, device_uri, &defaults)
     })?;
     if let Some(text) = renamed_default(&lpoptions_text(), &system_lpoptions_text(), old, new) {
         write_lpoptions(&text)?;
@@ -349,6 +363,29 @@ pub fn name_clash(old: &str, new: &str, s: &Snapshot) -> Option<String> {
     } else {
         format!("There is already a printer called {}.", p.name)
     })
+}
+
+/// The cups-pk-helper calls renaming `old` to `new`: PrinterRename copies the address without its
+/// user name and password, so a given `device_uri` follows it.
+pub(super) fn helper_rename_calls(
+    old: &str,
+    new: &str,
+    device_uri: Option<&DeviceUri>,
+    defaults: &[(String, Value)],
+) -> Vec<Call> {
+    let mut calls = vec![Call::PrinterRename(old.into(), new.into())];
+    if let Some(u) = device_uri {
+        calls.push(Call::PrinterSetDevice(new.into(), u.0.clone()));
+    }
+    calls.extend(defaults.iter().filter_map(|(k, v)| {
+        let option = option_of(k).to_string();
+        Some(Call::PrinterAddOptionDefault(
+            new.into(),
+            option,
+            vec![value_text(v)?],
+        ))
+    }));
+    calls
 }
 
 /// cups-pk-helper's PrinterRename moves only held jobs: it refuses a queue
@@ -404,20 +441,18 @@ pub(super) fn carried_defaults(o: &Options, has_ppd: bool) -> Vec<(String, Value
     out
 }
 
-fn rename_by_peer(
-    c: &Client,
-    old: &str,
+/// The CUPS-Add-Modify-Printer request creating `new` as a copy of `p`, at `device_uri` when given.
+pub(super) fn rename_request(
     new: &str,
-    s: &Snapshot,
+    p: &Printer,
+    device_uri: Option<&DeviceUri>,
     ppd: Option<Vec<u8>>,
     defaults: &[(String, Value)],
-) -> Result<()> {
-    let Some(p) = s.printer(old) else {
-        return Err(Error::Refused(format!("{old} is no longer there.")));
-    };
+) -> Request {
+    let uri = device_uri.map_or(p.device_uri.as_str(), |u| u.0.as_str());
     let mut req = Request::new(CUPS_ADD_MODIFY_PRINTER)
         .op_attr("printer-uri", Value::uri(&printer_uri(new)))
-        .printer_attr("device-uri", Value::uri(&p.device_uri))
+        .printer_attr("device-uri", Value::uri(uri))
         .printer_attr("printer-info", Value::text(&p.info))
         .printer_attr("printer-location", Value::text(&p.location))
         .printer_attr("printer-is-shared", Value::Bool(p.shared))
@@ -429,7 +464,22 @@ fn rename_by_peer(
     if let Some(ppd) = ppd {
         req = req.with_data(ppd);
     }
-    c.call("/admin/", req)?;
+    req
+}
+
+fn rename_by_peer(
+    c: &Client,
+    old: &str,
+    new: &str,
+    device_uri: Option<&DeviceUri>,
+    s: &Snapshot,
+    ppd: Option<Vec<u8>>,
+    defaults: &[(String, Value)],
+) -> Result<()> {
+    let Some(p) = s.printer(old) else {
+        return Err(Error::Refused(format!("{old} is no longer there.")));
+    };
+    c.call("/admin/", rename_request(new, p, device_uri, ppd, defaults))?;
     for j in s.jobs_of(old) {
         let req = Request::new(CUPS_MOVE_JOB)
             .op_attr("job-uri", Value::uri(&job_uri(j.id)))

@@ -40,6 +40,7 @@ pub enum Cmd {
     Rename {
         old: String,
         new: String,
+        device_uri: Option<cups::DeviceUri>,
     },
     Modify {
         printer: String,
@@ -344,9 +345,13 @@ impl State {
             Cmd::CancelAll(p) => cups::cancel_all(c, p),
             Cmd::SetDefault(p) => cups::set_default(c, p),
             Cmd::Delete(p) => cups::delete(c, p),
-            Cmd::Rename { old, new } => {
+            Cmd::Rename {
+                old,
+                new,
+                device_uri,
+            } => {
                 let snap = self.last.clone().unwrap_or_default();
-                cups::rename(c, old, new, &snap)
+                cups::rename(c, old, new, device_uri.as_ref(), &snap)
             }
             Cmd::Modify { printer, change } => cups::modify(c, printer, change.clone()),
             Cmd::TestPage(p) => cups::test_page(c, p).map(|_| {
