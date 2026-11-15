@@ -396,6 +396,13 @@ fn the_status_bar_shows_the_pointer_and_the_selection_size() {
     let (bar, _) = p.status(&l, &ctx).unwrap();
     assert_eq!(bar.panels[1].text, "14,9");
     assert_eq!(bar.panels[2].text, "10x4");
+
+    p.doc.img = Bitmap::new(1920, 1080, WHITE);
+    p.command(menu::title::EDIT, menu::row::SELECT_ALL, &ctx);
+    p.hover = Some((1024, 768));
+    let (bar, _) = p.status(&l, &ctx).unwrap();
+    assert_eq!(bar.panels[1].text, "1024,768");
+    assert_eq!(bar.panels[2].text, "1920x1080");
 }
 
 /// [`reprisekit::pins::check_file`] on `tests/pins/<name>.txt`.
