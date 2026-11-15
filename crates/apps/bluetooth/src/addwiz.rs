@@ -325,7 +325,7 @@ impl AddWizard {
                 self.found = s
                     .devices
                     .iter()
-                    .filter(|d| !d.paired && d.rssi.is_some() && d.name.is_some())
+                    .filter(|d| !d.paired && d.heard && d.name.is_some())
                     .cloned()
                     .collect();
                 self.list.entries = (0..self.found.len()).map(Entry::Row).collect();
@@ -610,14 +610,14 @@ mod tests {
         }
     }
 
-    fn dev(path: &str, name: Option<&str>, paired: bool, rssi: Option<i16>) -> Device {
+    fn dev(path: &str, name: Option<&str>, paired: bool, heard: bool) -> Device {
         Device {
             path: path.into(),
             name: name.map(Into::into),
             alias: name.unwrap_or("AA-BB").into(),
             kind: Kind::Gamepad,
             paired,
-            rssi,
+            heard,
             ..Device::default()
         }
     }
@@ -631,10 +631,10 @@ mod tests {
                 ..Adapter::default()
             }),
             devices: vec![
-                dev("/a/pad", Some("Pad"), false, Some(-50)),
-                dev("/a/cans", Some("Cans"), true, Some(-40)),
-                dev("/a/anon", None, false, Some(-30)),
-                dev("/a/old", Some("Old"), false, None),
+                dev("/a/pad", Some("Pad"), false, true),
+                dev("/a/cans", Some("Cans"), true, true),
+                dev("/a/anon", None, false, true),
+                dev("/a/old", Some("Old"), false, false),
             ],
             airplane: None,
         }
@@ -706,7 +706,7 @@ mod tests {
             ];
             for how in finished {
                 let mut w = AddWizard::new(text, forms);
-                w.target = Some(dev("/a/pad", Some("Pad"), false, Some(-50)));
+                w.target = Some(dev("/a/pad", Some("Pad"), false, true));
                 w.step = Step::Pairing;
                 match &how {
                     None => w.paired("/a/pad", None, text, forms),

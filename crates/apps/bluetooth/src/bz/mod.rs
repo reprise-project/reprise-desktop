@@ -50,7 +50,8 @@ pub struct Device {
     pub paired: bool,
     pub trusted: bool,
     pub connected: bool,
-    pub rssi: Option<i16>,
+    /// BlueZ reports an RSSI: the adapter heard it in the discovery going on.
+    pub heard: bool,
     pub battery: Option<u8>,
 }
 
@@ -185,6 +186,61 @@ impl Kind {
     }
 }
 
+/// The properties [`fold`] reads of each interface; RSSI only for whether BlueZ reports one.
+const ADAPTER_KEYS: &[&str] = &["Powered", "PowerState", "Discoverable", "Discovering"];
+const DEVICE_KEYS: &[&str] = &[
+    "Address",
+    "Name",
+    "Alias",
+    "Icon",
+    "Class",
+    "Paired",
+    "Trusted",
+    "Connected",
+];
+const BATTERY_KEYS: &[&str] = &["Percentage"];
+const RSSI: &str = "RSSI";
+
+/// A `PropertiesChanged` BlueZ sent for an object's interface: the names of the properties
+/// changed and of those invalidated (gone).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Change {
+    pub path: String,
+    pub iface: String,
+    pub changed: Vec<String>,
+    pub invalidated: Vec<String>,
+}
+
+impl Change {
+    /// Whether folding the objects again may give a snapshot other than `last`. A device's RSSI
+    /// counts only when it appears or goes; a device `last` doesn't list counts only through a
+    /// property [`fold`] reads, since a new one arrives with `InterfacesAdded`.
+    pub fn alters(&self, last: &Snapshot) -> bool {
+        let keys = match self.iface.as_str() {
+            ADAPTER_IFACE => ADAPTER_KEYS,
+            DEVICE_IFACE => DEVICE_KEYS,
+            BATTERY_IFACE => BATTERY_KEYS,
+            _ => return false,
+        };
+        let names = |list: &[String], key: &str| list.iter().any(|k| k == key);
+        if keys
+            .iter()
+            .any(|k| names(&self.changed, k) || names(&self.invalidated, k))
+        {
+            return true;
+        }
+        let heard = (self.iface == DEVICE_IFACE)
+            .then(|| last.devices.iter().find(|d| d.path == self.path))
+            .flatten()
+            .map(|d| d.heard);
+        match heard {
+            Some(true) => names(&self.invalidated, RSSI),
+            Some(false) => names(&self.changed, RSSI),
+            None => false,
+        }
+    }
+}
+
 fn flag(p: &Props, key: &str) -> bool {
     p.get(key)
         .and_then(|v| bool::try_from(v.clone()).ok())
@@ -229,7 +285,7 @@ fn device_of(path: &str, p: &Props, battery: Option<&Props>) -> Device {
         paired: flag(p, "Paired"),
         trusted: flag(p, "Trusted"),
         connected: flag(p, "Connected"),
-        rssi: p.get("RSSI").and_then(|v| i16::try_from(v.clone()).ok()),
+        heard: p.contains_key(RSSI),
         battery: battery
             .and_then(|b| b.get("Percentage"))
             .and_then(|v| u8::try_from(v.clone()).ok()),
@@ -631,7 +687,7 @@ mod tests {
         assert_eq!(d.name, None);
         assert_eq!(d.alias, "AA-BB-CC-DD-EE-01");
         assert_eq!(d.kind, Kind::Other);
-        assert_eq!(d.rssi, Some(-60));
+        assert!(d.heard);
     }
 
     #[test]
@@ -769,5 +825,136 @@ mod tests {
             wait.try_recv().is_err(),
             "a dropped request closes its channel"
         );
+    }
+
+    /// An adapter, a device and its battery with every property BlueZ reports for them.
+    fn everything() -> Objects {
+        let u32v = OwnedVariant::from;
+        let strs = || OwnedVariant::try_from(zbus::Variant::from(vec!["x"])).unwrap();
+        let adapter = props(vec![
+            ("Address", s("00:AA:01:00:00:01")),
+            ("AddressType", s("public")),
+            ("Name", s("box")),
+            ("Alias", s("box")),
+            ("Class", u32v(0x7c010c_u32)),
+            ("Connectable", OwnedVariant::from(true)),
+            ("Powered", OwnedVariant::from(true)),
+            ("PowerState", s("on")),
+            ("Discoverable", OwnedVariant::from(true)),
+            ("DiscoverableTimeout", u32v(180_u32)),
+            ("Pairable", OwnedVariant::from(true)),
+            ("PairableTimeout", u32v(0_u32)),
+            ("Discovering", OwnedVariant::from(true)),
+            ("UUIDs", strs()),
+            ("Modalias", s("usb:v1D6Bp0246d0554")),
+            ("Roles", strs()),
+            ("ExperimentalFeatures", strs()),
+            ("Manufacturer", OwnedVariant::from(2_u16)),
+            ("Version", OwnedVariant::from(12_u8)),
+        ]);
+        let device = props(vec![
+            ("Address", s("AA:BB:CC:DD:EE:01")),
+            ("AddressType", s("public")),
+            ("Name", s("Pad")),
+            ("Alias", s("My pad")),
+            ("Icon", s("input-gaming")),
+            ("Class", u32v(0x002508_u32)),
+            ("Appearance", OwnedVariant::from(0x03c4_u16)),
+            ("UUIDs", strs()),
+            ("Paired", OwnedVariant::from(true)),
+            ("Bonded", OwnedVariant::from(true)),
+            ("Connected", OwnedVariant::from(true)),
+            ("Trusted", OwnedVariant::from(true)),
+            ("Blocked", OwnedVariant::from(false)),
+            ("WakeAllowed", OwnedVariant::from(true)),
+            ("LegacyPairing", OwnedVariant::from(false)),
+            ("CablePairing", OwnedVariant::from(false)),
+            ("Modalias", s("usb:v054Cp05C4d0100")),
+            ("RSSI", OwnedVariant::from(-60_i16)),
+            ("TxPower", OwnedVariant::from(4_i16)),
+            ("ManufacturerData", u32v(1_u32)),
+            ("ServiceData", u32v(1_u32)),
+            ("ServicesResolved", OwnedVariant::from(true)),
+            ("AdvertisingFlags", u32v(1_u32)),
+            ("AdvertisingData", u32v(1_u32)),
+            ("PreferredBearer", s("last-used")),
+        ]);
+        let battery = props(vec![
+            ("Percentage", OwnedVariant::from(80_u8)),
+            ("Source", s("HFP")),
+        ]);
+        Objects::from([
+            (
+                path("/org/bluez/hci0"),
+                HashMap::from([(ADAPTER_IFACE.to_string(), adapter)]),
+            ),
+            (
+                path("/org/bluez/hci0/dev_AA"),
+                HashMap::from([
+                    (DEVICE_IFACE.to_string(), device),
+                    (BATTERY_IFACE.to_string(), battery),
+                ]),
+            ),
+        ])
+    }
+
+    #[test]
+    fn fold_reads_no_property_outside_the_listed_ones() {
+        let all = everything();
+        let whole = fold(&all);
+        for (iface, keys) in [
+            (ADAPTER_IFACE, ADAPTER_KEYS),
+            (DEVICE_IFACE, DEVICE_KEYS),
+            (BATTERY_IFACE, BATTERY_KEYS),
+        ] {
+            let (p, ifaces) = all.iter().find(|(_, i)| i.contains_key(iface)).unwrap();
+            for key in ifaces[iface].keys() {
+                let mut less = all.clone();
+                less.get_mut(p).unwrap().get_mut(iface).unwrap().remove(key);
+                let listed = keys.contains(&key.as_str()) || key == RSSI;
+                assert!(
+                    listed || fold(&less) == whole,
+                    "{iface}.{key} changes the snapshot but is not listed"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn only_a_change_fold_reads_alters_the_snapshot() {
+        let last = fold(&everything());
+        let change = |iface: &str, changed: &[&str], invalidated: &[&str]| Change {
+            path: "/org/bluez/hci0/dev_AA".into(),
+            iface: iface.into(),
+            changed: changed.iter().map(|k| k.to_string()).collect(),
+            invalidated: invalidated.iter().map(|k| k.to_string()).collect(),
+        };
+        let gatt = "org.bluez.GattCharacteristic1";
+        for (c, alters) in [
+            (
+                change(DEVICE_IFACE, &["RSSI", "ManufacturerData"], &[]),
+                false,
+            ),
+            (
+                change(DEVICE_IFACE, &["ServiceData", "TxPower"], &[]),
+                false,
+            ),
+            (change(gatt, &["Value"], &[]), false),
+            (change(DEVICE_IFACE, &[], &["RSSI"]), true),
+            (change(DEVICE_IFACE, &["Connected"], &[]), true),
+            (change(BATTERY_IFACE, &["Percentage"], &[]), true),
+            (change(ADAPTER_IFACE, &["Discovering"], &[]), true),
+        ] {
+            assert_eq!(c.alters(&last), alters, "{c:?}");
+        }
+        let mut quiet = last.clone();
+        quiet.devices[0].heard = false;
+        assert!(
+            change(DEVICE_IFACE, &["RSSI"], &[]).alters(&quiet),
+            "a device heard again"
+        );
+        let mut elsewhere = change(DEVICE_IFACE, &["RSSI"], &[]);
+        elsewhere.path = "/org/bluez/hci1/dev_BB".into();
+        assert!(!elsewhere.alters(&quiet), "a device of another adapter");
     }
 }

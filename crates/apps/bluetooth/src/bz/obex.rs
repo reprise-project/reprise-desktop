@@ -477,13 +477,13 @@ fn not_received(a: Accepted, poster: &Poster) {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use std::io::{BufRead, BufReader};
     use std::process::{Child, Command, Stdio};
     use std::sync::mpsc;
 
-    struct Bus(Child, String);
+    pub(crate) struct Bus(Child, pub(crate) String);
 
     impl Drop for Bus {
         fn drop(&mut self) {
@@ -492,7 +492,7 @@ mod tests {
         }
     }
 
-    fn bus() -> Option<Bus> {
+    pub(crate) fn bus() -> Option<Bus> {
         let mut child = Command::new("dbus-daemon")
             .args(["--session", "--nofork", "--print-address"])
             .stdout(Stdio::piped())
@@ -506,7 +506,7 @@ mod tests {
         Some(Bus(child, line.trim().to_string()))
     }
 
-    async fn connect(address: &str) -> Connection {
+    pub(crate) async fn connect(address: &str) -> Connection {
         zbus::connection::Builder::address(address)
             .build()
             .await

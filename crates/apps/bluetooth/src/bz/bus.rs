@@ -4,10 +4,11 @@
 
 use super::*;
 use futures_util::stream::StreamExt;
+use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, Sender, channel};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use zbus::Connection;
-use zbus::{ObjectPath, Variant};
+use zbus::{ObjectPath, OwnedVariant, Variant};
 
 pub(super) const NAME: &str = "org.bluez";
 const OBJECT_MANAGER: &str = "org.freedesktop.DBus.ObjectManager";
@@ -15,8 +16,11 @@ const PROPERTIES: &str = "org.freedesktop.DBus.Properties";
 
 const QUIT_WAIT: Duration = Duration::from_secs(2);
 const CALL_TIMEOUT: Duration = Duration::from_secs(300);
+/// The least time between two reads of every object, so a burst of changes costs one.
+const READ_GAP: Duration = Duration::from_millis(200);
 
-const SIGNALS: &[&str] = &["InterfacesAdded", "InterfacesRemoved", "PropertiesChanged"];
+/// The interfaces whose `PropertiesChanged` may change the snapshot.
+const FOLDED: [&str; 3] = [ADAPTER_IFACE, DEVICE_IFACE, BATTERY_IFACE];
 
 #[derive(Debug)]
 pub struct BzHandle {
@@ -72,11 +76,24 @@ pub fn watch(waker: repriseapp::Waker) -> (Receiver<BzMsg>, BzHandle) {
     )
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum Wake {
-    Bus,
+    /// An object came or went.
+    Objects,
+    Changed(Change),
+    /// A radio switch changed, so airplane mode is read again.
+    Switch,
     Restarted,
     Quit,
+}
+
+impl Wake {
+    fn alters(&self, last: &Snapshot) -> bool {
+        match self {
+            Wake::Changed(c) => c.alters(last),
+            _ => true,
+        }
+    }
 }
 
 /// `REPRISE_BLUEZ_BUS=session` reads BlueZ off the session bus, for a test's stand-in service.
@@ -116,30 +133,61 @@ async fn run(poster: Poster, cmds: async_channel::Receiver<Cmd>, done: Sender<()
     let _pump = pump(&conn, wake_tx.clone()).await;
     follow_switches(wake_tx.clone());
     let _commands = commands(&conn, cmds, wake_tx, poster.clone(), obex);
+    follow(&conn, &wake_rx, &poster).await;
+    let _ = done.send(());
+}
+
+/// Posts the snapshot, then reads and posts it again after each wake that may change it, at most
+/// once per [`READ_GAP`]; one equal to the last posted is not posted. Airplane mode is read only
+/// at the start and after a radio switch. Returns on [`Wake::Quit`].
+async fn follow(conn: &Connection, wakes: &async_channel::Receiver<Wake>, poster: &Poster) {
+    let mut airplane = reprisebus::airplane::read(conn).await;
+    let mut last = snapshot(conn, airplane).await;
+    poster.post(BzMsg::Snapshot(last.clone()));
+    let mut read_at = Instant::now();
     loop {
-        let mut snapshot = if owns_bluez(&conn).await {
-            read(&conn).await
-        } else {
-            Snapshot::default()
-        };
-        snapshot.airplane = reprisebus::airplane::read(&conn).await;
-        poster.post(BzMsg::Snapshot(snapshot));
-        let Ok(first) = wake_rx.recv().await else {
-            let _ = done.send(());
-            return;
-        };
-        let mut wakes = vec![first];
-        while let Ok(w) = wake_rx.try_recv() {
-            wakes.push(w);
+        let mut woke = Vec::new();
+        while woke.is_empty() {
+            let Ok(w) = wakes.recv().await else {
+                return;
+            };
+            if w.alters(&last) {
+                woke.push(w);
+            }
         }
-        if wakes.contains(&Wake::Quit) {
-            let _ = done.send(());
+        if let Some(left) = READ_GAP.checked_sub(read_at.elapsed()) {
+            match zruntime::SharedRuntime::current() {
+                Ok(rt) => rt.sleep(left).await,
+                Err(e) => log::debug!("no runtime to wait on: {e}"),
+            }
+        }
+        woke.extend(std::iter::from_fn(|| wakes.try_recv().ok()));
+        if woke.contains(&Wake::Quit) {
             return;
         }
-        if wakes.contains(&Wake::Restarted) && owns_bluez(&conn).await {
-            register_agent(&conn).await;
+        if woke.contains(&Wake::Restarted) && owns_bluez(conn).await {
+            register_agent(conn).await;
+        }
+        if woke.contains(&Wake::Switch) {
+            airplane = reprisebus::airplane::read(conn).await;
+        }
+        let next = snapshot(conn, airplane).await;
+        read_at = Instant::now();
+        if next != last {
+            poster.post(BzMsg::Snapshot(next.clone()));
+            last = next;
         }
     }
+}
+
+async fn snapshot(conn: &Connection, airplane: Option<reprisebus::airplane::Mode>) -> Snapshot {
+    let mut s = if owns_bluez(conn).await {
+        read(conn).await
+    } else {
+        Snapshot::default()
+    };
+    s.airplane = airplane;
+    s
 }
 
 /// Read again on every rfkill change, which airplane mode and a radio switched elsewhere make.
@@ -147,7 +195,8 @@ fn follow_switches(wakes: async_channel::Sender<Wake>) {
     let spawned = std::thread::Builder::new()
         .name("reprise-bluetooth-rfkill".into())
         .spawn(move || {
-            if let Err(e) = reprisebus::rfkill::follow(|| wakes.send_blocking(Wake::Bus).is_ok()) {
+            if let Err(e) = reprisebus::rfkill::follow(|| wakes.send_blocking(Wake::Switch).is_ok())
+            {
                 log::info!("radio switches are not followed: {e}");
             }
         });
@@ -373,31 +422,192 @@ async fn pump(
     })
 }
 
+/// Objects coming and going, and `PropertiesChanged` on the [`FOLDED`] interfaces only: a GATT
+/// characteristic's notifications or a media player's track wake nothing.
 async fn subscribe(conn: &Connection) -> futures_util::stream::BoxStream<'static, Wake> {
-    let mut rules = Vec::new();
-    for member in SIGNALS {
-        match zbus::MatchRule::builder()
+    let signal = || {
+        zbus::MatchRule::builder()
             .msg_type(zbus::message::Type::Signal)
             .sender(NAME)
-            .member(*member)
+    };
+    let objects = ["InterfacesAdded", "InterfacesRemoved"]
+        .map(|member| signal().interface(OBJECT_MANAGER).member(member).build());
+    let changes = FOLDED.map(|iface| {
+        (signal().interface(PROPERTIES).member("PropertiesChanged"))
+            .add_arg(iface)
             .build()
-        {
+    });
+    let mut rules = Vec::new();
+    for rule in objects.into_iter().chain(changes) {
+        match rule {
             Ok(r) => rules.push(r.into()),
-            Err(e) => log::warn!("no match rule for {member}: {e}"),
+            Err(e) => log::warn!("no match rule for BlueZ: {e}"),
         }
     }
     reprisebus::signals(conn, NAME, rules)
         .await
-        .map(|s| match s {
-            reprisebus::Signal::OwnerChanged => Wake::Restarted,
-            reprisebus::Signal::Message(_) => Wake::Bus,
+        .filter_map(|s| async move {
+            match s {
+                reprisebus::Signal::OwnerChanged => Some(Wake::Restarted),
+                reprisebus::Signal::Message(m) => wake_of(&m),
+            }
         })
         .boxed()
+}
+
+/// The wake a BlueZ signal makes; None for a `PropertiesChanged` that doesn't parse.
+fn wake_of(m: &zbus::Message) -> Option<Wake> {
+    let hdr = m.header();
+    if hdr.member().map(|n| n.as_str()) != Some("PropertiesChanged") {
+        return Some(Wake::Objects);
+    }
+    let path = hdr.path()?.to_string();
+    let (iface, changed, invalidated): (String, HashMap<String, OwnedVariant>, Vec<String>) =
+        m.body().deserialize().ok()?;
+    Some(Wake::Changed(Change {
+        path,
+        iface,
+        changed: changed.into_keys().collect(),
+        invalidated,
+    }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bz::obex::tests::{bus, connect};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    const DEVICE: &str = "/org/bluez/hci0/dev_AA";
+
+    /// BlueZ's object manager, counting its `GetManagedObjects` calls.
+    struct FakeManager {
+        connected: Arc<Mutex<bool>>,
+        reads: Arc<AtomicUsize>,
+    }
+
+    #[zbus::interface(name = "org.freedesktop.DBus.ObjectManager")]
+    impl FakeManager {
+        fn get_managed_objects(&self) -> Objects {
+            self.reads.fetch_add(1, Ordering::Relaxed);
+            let connected = *self.connected.lock().unwrap();
+            let props = |pairs: Vec<(&str, Variant)>| -> Props {
+                (pairs.into_iter())
+                    .map(|(k, v)| (k.to_string(), OwnedVariant::try_from(v).unwrap()))
+                    .collect()
+            };
+            let adapter = props(vec![("Powered", Variant::from(true))]);
+            let device = props(vec![
+                ("Address", Variant::from("AA:BB:CC:DD:EE:01")),
+                ("Connected", Variant::from(connected)),
+                ("RSSI", Variant::from(-60_i16)),
+            ]);
+            let path = |p: &str| zbus::OwnedObjectPath::try_from(p).unwrap();
+            Objects::from([
+                (
+                    path("/org/bluez/hci0"),
+                    HashMap::from([(ADAPTER_IFACE.to_string(), adapter)]),
+                ),
+                (
+                    path(DEVICE),
+                    HashMap::from([(DEVICE_IFACE.to_string(), device)]),
+                ),
+            ])
+        }
+    }
+
+    async fn changed(bluez: &Connection, path: &str, iface: &str, key: &str, value: Variant<'_>) {
+        let body = (iface, HashMap::from([(key, value)]), Vec::<&str>::new());
+        (bluez.emit_signal(None::<&str>, path, PROPERTIES, "PropertiesChanged", &body))
+            .await
+            .unwrap();
+    }
+
+    async fn pause(ms: u64) {
+        let rt = zruntime::SharedRuntime::current().unwrap();
+        rt.sleep(Duration::from_millis(ms)).await;
+    }
+
+    #[test]
+    fn changes_the_snapshot_does_not_show_cost_no_read_and_a_burst_costs_one() {
+        let Some(bus) = bus() else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
+        let connected = Arc::new(Mutex::new(false));
+        let reads = Arc::new(AtomicUsize::new(0));
+        let (poster, posted) = Poster::channel(repriseapp::Waker::noop());
+        let (reads_quiet, reads_end) = zbus::block_on(async {
+            let bluez = connect(&bus.1).await;
+            let manager = FakeManager {
+                connected: connected.clone(),
+                reads: reads.clone(),
+            };
+            bluez.object_server().at("/", manager).await.unwrap();
+            bluez.request_name(NAME).await.unwrap();
+            let conn = connect(&bus.1).await;
+            let (tx, rx) = async_channel::unbounded();
+            let _pump = pump(&conn, tx.clone()).await;
+            let drive = async {
+                pause(300).await;
+                for i in 0..50_i16 {
+                    changed(&bluez, DEVICE, DEVICE_IFACE, "RSSI", Variant::from(-40 - i)).await;
+                    changed(
+                        &bluez,
+                        DEVICE,
+                        DEVICE_IFACE,
+                        "ManufacturerData",
+                        Variant::from(i),
+                    )
+                    .await;
+                    let gatt = format!("{DEVICE}/service0001/char0002");
+                    let value = Variant::from(vec![i as u8]);
+                    changed(
+                        &bluez,
+                        &gatt,
+                        "org.bluez.GattCharacteristic1",
+                        "Value",
+                        value,
+                    )
+                    .await;
+                }
+                pause(300).await;
+                let quiet = reads.load(Ordering::Relaxed);
+                *connected.lock().unwrap() = true;
+                for _ in 0..5 {
+                    changed(
+                        &bluez,
+                        DEVICE,
+                        DEVICE_IFACE,
+                        "Connected",
+                        Variant::from(true),
+                    )
+                    .await;
+                }
+                pause(500).await;
+                tx.send(Wake::Quit).await.unwrap();
+                quiet
+            };
+            let ((), quiet) = futures_util::future::join(follow(&conn, &rx, &poster), drive).await;
+            (quiet, reads.load(Ordering::Relaxed))
+        });
+        assert_eq!(
+            reads_quiet, 1,
+            "only the first read before the device connects"
+        );
+        assert!(
+            reads_end <= 3,
+            "the burst of five reads at most twice, {READ_GAP:?} apart: {reads_end}"
+        );
+        let shown: Vec<bool> = std::iter::from_fn(|| posted.try_recv().ok())
+            .map(|m| match m {
+                BzMsg::Snapshot(s) => s.devices[0].connected,
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(shown, [false, true], "one snapshot per change");
+    }
 
     #[test]
     fn a_method_error_reads_through_plain_error() {
