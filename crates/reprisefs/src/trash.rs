@@ -380,8 +380,12 @@ impl Bins {
                 "it is too big for the Recycle Bin",
             ));
         }
-        let (used, purged) = bincap::make_room(&root, bincap::used(&root), size, cap)?;
+        // Moved before any purge, so a refused move leaves every item in the trash. A move
+        // within the drive takes no space: the trash is over its cap only until the purge.
+        let before = bincap::used(&root);
         let t = trash_in(&root, &path)?;
+        let name = t.files.file_name().unwrap_or_default();
+        let (used, purged) = bincap::make_room(&root, before, size, cap, name);
         bincap::took(&root, &t, size, used);
         Ok((t, purged))
     }
@@ -1989,6 +1993,27 @@ mod tests {
         assert!(!b.files.exists() && !b.info.exists(), "the oldest went");
         assert!(a.files.exists() && c.files.exists());
         assert_eq!(bincap::used(&bins.home), 2 * (cap * 2 / 5));
+    }
+
+    #[test]
+    fn a_refused_trash_past_the_cap_erases_nothing() {
+        use std::os::unix::fs::PermissionsExt;
+        let (t, bins, _drive, cap) = capped();
+        let old = t.path().join("home/old");
+        sparse(&old, cap * 3 / 5);
+        let (old, _) = bins.trash(&old).unwrap();
+        let shut = t.path().join("home/shut");
+        sparse(&shut.join("new"), cap * 3 / 5);
+        fs::set_permissions(&shut, fs::Permissions::from_mode(0o555)).unwrap();
+
+        let r = bins.trash(&shut.join("new"));
+        fs::set_permissions(&shut, fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(r.unwrap_err().kind(), io::ErrorKind::PermissionDenied);
+        assert!(
+            old.files.exists() && old.info.exists(),
+            "the old item stays"
+        );
+        assert!(shut.join("new").exists());
     }
 
     #[test]

@@ -319,7 +319,8 @@ struct Held {
     size: u64,
 }
 
-fn held(root: &Path) -> Vec<Held> {
+/// Every item in the trash at `root` but `skip`, with its size.
+fn held(root: &Path, skip: Option<&OsStr>) -> Vec<Held> {
     let mut out = Vec::new();
     let Ok(bin) = BinDir::open(root) else {
         return out;
@@ -328,6 +329,9 @@ fn held(root: &Path) -> Vec<Held> {
     let mut kept = DirSizes::new();
     for name in bin.files() {
         crate::progress::step();
+        if Some(name.as_os_str()) == skip {
+            continue;
+        }
         let Some(st) = bin.stat(&name) else {
             continue;
         };
@@ -373,7 +377,7 @@ pub fn used(root: &Path) -> u64 {
         return total;
     }
     drop(totals);
-    let total = held(root).iter().map(|h| h.size).sum();
+    let total = held(root, None).iter().map(|h| h.size).sum();
     remember(root, total);
     total
 }
@@ -420,26 +424,28 @@ pub(crate) fn gone(files: &Path) {
     }
 }
 
-/// Erase the trash at `root`'s oldest items, never through a link, until `incoming` more bytes
-/// fit under `cap`; returns what it holds after and each erased item's `files/` path.
+/// Erase the trash at `root`'s oldest items but `keep`, never through a link, until `incoming`
+/// more bytes fit under `cap`; returns what it holds after, `keep` left out, and each erased
+/// item's `files/` path. An item it cannot erase ends the purge with the trash over its cap.
 pub(crate) fn make_room(
     root: &Path,
     used: u64,
     incoming: u64,
     cap: u64,
-) -> io::Result<(u64, Vec<PathBuf>)> {
+    keep: &OsStr,
+) -> (u64, Vec<PathBuf>) {
     if used.saturating_add(incoming) <= cap {
-        return Ok((used, Vec::new()));
+        return (used, Vec::new());
     }
     let Ok(bin) = BinDir::open(root) else {
-        return Ok((used, Vec::new()));
+        return (used, Vec::new());
     };
     let info = |name: &OsStr| {
         let mut info = name.to_os_string();
         info.push(".trashinfo");
         info
     };
-    let mut items: Vec<(i64, Held)> = held(root)
+    let mut items: Vec<(i64, Held)> = held(root, Some(keep))
         .into_iter()
         .map(|h| {
             let when = (bin.read_info(&info(&h.name)).ok())
@@ -456,7 +462,13 @@ pub(crate) fn make_room(
             break;
         }
         let files = root.join("files").join(&h.name);
-        bin.erase(&h.name, &files, None)?;
+        if let Err(e) = bin.erase(&h.name, &files, None) {
+            log::warn!(
+                "trash: could not erase {} to make room: {e}",
+                files.display()
+            );
+            break;
+        }
         if let Err(e) = bin.unlink_info(&info(&h.name))
             && e.kind() != io::ErrorKind::NotFound
         {
@@ -467,7 +479,7 @@ pub(crate) fn make_room(
         used -= h.size;
         purged.push(files);
     }
-    Ok((used, purged))
+    (used, purged)
 }
 
 pub fn too_big_text(name: &str) -> String {
@@ -888,7 +900,7 @@ mod tests {
 
         // 91 held, cap 100: 40 more needs 31 gone, the undated one and
         // the oldest.
-        let (left, purged) = make_room(&root, 91, 40, 100).unwrap();
+        let (left, purged) = make_room(&root, 91, 40, 100, OsStr::new(""));
         assert_eq!(left, 60);
         assert_eq!(
             purged,
@@ -900,7 +912,10 @@ mod tests {
         }
         assert!(root.join("files/middle").exists() && root.join("files/newest").exists());
 
-        assert_eq!(make_room(&root, 60, 40, 100).unwrap(), (60, Vec::new()));
+        assert_eq!(
+            make_room(&root, 60, 40, 100, OsStr::new("")),
+            (60, Vec::new())
+        );
     }
 
     #[test]
