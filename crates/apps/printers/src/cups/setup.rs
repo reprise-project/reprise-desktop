@@ -301,6 +301,9 @@ pub(super) fn add_calls(p: &NewPrinter) -> Vec<Call> {
 /// the defaults the PPD does not hold, so they follow as calls. The
 /// user's own default follows the name either way.
 pub fn rename(c: &Client, old: &str, new: &str, s: &Snapshot) -> Result<()> {
+    if let Some(why) = name_clash(old, new, s) {
+        return Err(Error::Refused(why));
+    }
     let ppd = ppd_of(c, old)?;
     let defaults = match options(c, old) {
         Ok(o) => carried_defaults(&o, ppd.is_some()),
@@ -332,6 +335,20 @@ pub fn rename(c: &Client, old: &str, new: &str, s: &Snapshot) -> Result<()> {
         write_lpoptions(&text)?;
     }
     Ok(())
+}
+
+/// Why `old` cannot become `new`: cupsd finds a printer by its name in any case, so a rename onto
+/// another case of a name, `old`'s own included, would modify that printer and then delete it.
+pub fn name_clash(old: &str, new: &str, s: &Snapshot) -> Option<String> {
+    let p = s
+        .printers
+        .iter()
+        .find(|p| p.name.eq_ignore_ascii_case(new))?;
+    Some(if p.name == old {
+        format!("{new} differs from {old} only in case, which printer names ignore.")
+    } else {
+        format!("There is already a printer called {}.", p.name)
+    })
 }
 
 /// cups-pk-helper's PrinterRename moves only held jobs: it refuses a queue
@@ -398,11 +415,6 @@ fn rename_by_peer(
     let Some(p) = s.printer(old) else {
         return Err(Error::Refused(format!("{old} is no longer there.")));
     };
-    if s.printer(new).is_some() {
-        return Err(Error::Refused(format!(
-            "There is already a printer called {new}."
-        )));
-    }
     let mut req = Request::new(CUPS_ADD_MODIFY_PRINTER)
         .op_attr("printer-uri", Value::uri(&printer_uri(new)))
         .printer_attr("device-uri", Value::uri(&p.device_uri))
