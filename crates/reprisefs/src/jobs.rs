@@ -614,10 +614,20 @@ mod tests {
             1 << 20,
             "held after the first chunk"
         );
-        assert!(dest.join("big").exists(), "the part is there while paused");
+        let names = || -> Vec<String> {
+            let entries = std::fs::read_dir(&dest).unwrap().flatten();
+            entries
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect()
+        };
+        let held = names();
+        assert!(
+            matches!(&held[..], [part] if part.starts_with(".reprise-") && part.ends_with(".part")),
+            "only a hidden part is there while paused, not big: {held:?}"
+        );
         meter.cancel();
         assert!(copy.join().unwrap().is_err(), "a cancelled copy fails");
-        assert!(!dest.join("big").exists(), "and leaves no part behind");
+        assert!(names().is_empty(), "and leaves no part behind");
     }
 
     #[test]

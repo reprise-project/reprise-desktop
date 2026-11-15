@@ -152,14 +152,15 @@ fn move_numbered(
 
 /// Copy `src` (a file, or a folder with everything in it) into `dir`
 /// under `name`, or the first free numbering of it, each candidate tried
-/// by the copy itself as [`move_numbered`] tries it. Returns the path.
+/// by the copy itself as [`move_numbered`] tries it, built under a part name
+/// ([`land_part`]). Returns the path.
 fn copy_numbered(src: &Path, dir: &Path, name: &OsStr, stop: &AtomicBool) -> io::Result<PathBuf> {
     let is_dir = src.is_dir();
     let name = at_free_name(dir, name, |dest| {
         go_on(stop)?;
         match is_dir {
             true => copy_dir_until(src, dest, stop),
-            false => copy_new(src, dest),
+            false => land_part(dest, |part| copy_new(src, part), |_| Ok(())),
         }
     })?;
     Ok(dir.join(name))
@@ -646,7 +647,7 @@ fn merge_into(
                 } else if kind.is_symlink() {
                     std::os::unix::fs::symlink(std::fs::read_link(&from)?, &to)?;
                 } else {
-                    copy_new(&from, &to)?;
+                    land_part(&to, |part| copy_new(&from, part), |_| Ok(()))?;
                 }
             }
             Err(e) => return Err(e.into()),
