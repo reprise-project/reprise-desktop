@@ -640,7 +640,12 @@ pub enum VpnEdit {
 pub enum NmMsg {
     Snapshot(Snapshot),
     Vpn(VpnEdit),
-    Failed { title: String, body: String },
+    Failed {
+        title: String,
+        body: String,
+    },
+    /// A join of this saved network failed on its key; a [`NmMsg::Failed`] that says so follows.
+    KeyRefused(Ssid),
 }
 
 pub fn known_and_vpns(

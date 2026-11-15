@@ -1,6 +1,7 @@
 //! Running the commands the windows send back.
 
 use super::call::{Failure, activate, call_auth, clean, opath, proxy};
+use super::follow::{Joining, follow};
 use super::snapshot::{get_all, object, saved};
 use super::wifi::{ap_key_mgmt, connection_for, new_profile_owner, rekey, wifi_settings};
 use super::*;
@@ -17,10 +18,71 @@ async fn disconnect(conn: &Connection, device: &str) -> Result<(), Failure> {
         .map_err(clean)
 }
 
-pub(super) async fn command(conn: &Connection, cmd: &Cmd) -> Result<Option<NmMsg>, Failure> {
+/// Run `cmd`; a join or VPN NetworkManager accepted is followed until it settles, and its
+/// failure comes back on `wakes`.
+pub(super) async fn command(
+    conn: &Connection,
+    cmd: &Cmd,
+    wakes: &async_channel::Sender<Wake>,
+) -> Result<Option<NmMsg>, Failure> {
     match cmd {
         Cmd::LoadVpn(conn_path) => load_vpn(conn, conn_path).await.map(|e| Some(NmMsg::Vpn(e))),
+        Cmd::Connect { device, ssid, .. } => {
+            let active = join_wifi(conn, cmd).await?;
+            let joining = Joining::Wifi(ssid.clone());
+            follow(conn, active, Some(device.clone()), joining, wakes.clone());
+            Ok(None)
+        }
+        Cmd::VpnUp(connection) => {
+            needs_no_agent(conn, connection, VPN_NEEDS_AGENT).await?;
+            let active = activate(conn, connection, "/", "/").await?;
+            follow(conn, active, None, Joining::Vpn, wakes.clone());
+            Ok(None)
+        }
         cmd => act(conn, cmd).await.map(|()| None),
+    }
+}
+
+/// A [`Cmd::Connect`]: the active connection's path once NetworkManager took it.
+pub(super) async fn join_wifi(conn: &Connection, cmd: &Cmd) -> Result<String, Failure> {
+    let Cmd::Connect {
+        device,
+        ap,
+        ssid,
+        key,
+        hidden,
+    } = cmd
+    else {
+        unreachable!("`command` joins only a Connect");
+    };
+    let known = connection_for(conn, ssid).await;
+    match connect_plan(known.as_deref(), key.as_ref()) {
+        ConnectPlan::Activate(connection) => {
+            needs_no_agent(conn, &connection, WIFI_NEEDS_AGENT).await?;
+            activate(conn, &connection, device, ap).await
+        }
+        ConnectPlan::Rekey { conn_path, key } => {
+            let offered = ap_key_mgmt(conn, ap).await;
+            rekey(conn, &conn_path, key, offered).await?;
+            activate(conn, &conn_path, device, ap).await
+        }
+        ConnectPlan::Add { key } => {
+            let owner = new_profile_owner(conn).await;
+            let key_mgmt = ap_key_mgmt(conn, ap).await;
+            let manager = proxy(conn, MANAGER_PATH, NAME).await?;
+            call_auth::<_, (zbus::OwnedObjectPath, zbus::OwnedObjectPath)>(
+                &manager,
+                "AddAndActivateConnection",
+                &(
+                    wifi_settings(ssid, key, key_mgmt, *hidden, owner.as_deref()),
+                    opath(device)?,
+                    opath(ap)?,
+                ),
+            )
+            .await?
+            .map(|(_, active)| active.as_str().to_string())
+            .ok_or_else(|| "NetworkManager answered with no active connection.".into())
+        }
     }
 }
 
@@ -197,42 +259,6 @@ async fn update(
 
 pub(super) async fn act(conn: &Connection, cmd: &Cmd) -> Result<(), Failure> {
     match cmd {
-        Cmd::Connect {
-            device,
-            ap,
-            ssid,
-            key,
-            hidden,
-        } => {
-            let known = connection_for(conn, ssid).await;
-            match connect_plan(known.as_deref(), key.as_ref()) {
-                ConnectPlan::Activate(connection) => {
-                    needs_no_agent(conn, &connection, WIFI_NEEDS_AGENT).await?;
-                    activate(conn, &connection, device, ap).await
-                }
-                ConnectPlan::Rekey { conn_path, key } => {
-                    let offered = ap_key_mgmt(conn, ap).await;
-                    rekey(conn, &conn_path, key, offered).await?;
-                    activate(conn, &conn_path, device, ap).await
-                }
-                ConnectPlan::Add { key } => {
-                    let owner = new_profile_owner(conn).await;
-                    let key_mgmt = ap_key_mgmt(conn, ap).await;
-                    let manager = proxy(conn, MANAGER_PATH, NAME).await?;
-                    call_auth::<_, (zbus::OwnedObjectPath, zbus::OwnedObjectPath)>(
-                        &manager,
-                        "AddAndActivateConnection",
-                        &(
-                            wifi_settings(ssid, key, key_mgmt, *hidden, owner.as_deref()),
-                            opath(device)?,
-                            opath(ap)?,
-                        ),
-                    )
-                    .await
-                    .map(|_| ())
-                }
-            }
-        }
         Cmd::Disconnect(device) => disconnect(conn, device).await,
         Cmd::Disable(device) => {
             if let Err(e) = disconnect(conn, device).await {
@@ -253,11 +279,7 @@ pub(super) async fn act(conn: &Connection, cmd: &Cmd) -> Result<(), Failure> {
             if let Err(e) = disconnect(conn, device).await {
                 log::debug!("disconnecting {device} before repairing it: {e}");
             }
-            activate(conn, "/", device, "/").await
-        }
-        Cmd::VpnUp(connection) => {
-            needs_no_agent(conn, connection, VPN_NEEDS_AGENT).await?;
-            activate(conn, connection, "/", "/").await
+            activate(conn, "/", device, "/").await.map(|_| ())
         }
         Cmd::VpnDown(connection) => {
             let manager = proxy(conn, MANAGER_PATH, NAME).await?;
@@ -336,7 +358,7 @@ pub(super) async fn act(conn: &Connection, cmd: &Cmd) -> Result<(), Failure> {
                 Some(path) => {
                     let current = settings_of(conn, &path).await?;
                     update(conn, &path, merge_groups(current, fresh)).await?;
-                    activate(conn, &path, device, "/").await
+                    activate(conn, &path, device, "/").await.map(|_| ())
                 }
                 None => {
                     let manager = proxy(conn, MANAGER_PATH, NAME).await?;
@@ -359,7 +381,9 @@ pub(super) async fn act(conn: &Connection, cmd: &Cmd) -> Result<(), Failure> {
                 .map(|_| ())
                 .map_err(clean)
         }
-        Cmd::LoadVpn(_) => unreachable!("`command` answers LoadVpn itself"),
+        Cmd::LoadVpn(_) | Cmd::Connect { .. } | Cmd::VpnUp(_) => {
+            unreachable!("`command` answers {cmd:?} itself")
+        }
         Cmd::Airplane(on) => reprisebus::airplane::set(conn, *on)
             .await
             .map_err(Failure::from),

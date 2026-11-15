@@ -156,19 +156,21 @@ where
     .map_err(|e| auth_failure(e, reprisebus::polkit::dismissed))
 }
 
-/// `ActivateConnection(connection, device, specific)`; "/" means "any".
+/// `ActivateConnection(connection, device, specific)`; "/" means "any". Answers the active
+/// connection's path.
 pub(super) async fn activate(
     conn: &Connection,
     connection: &str,
     device: &str,
     ap: &str,
-) -> Result<(), Failure> {
+) -> Result<String, Failure> {
     let manager = proxy(conn, MANAGER_PATH, NAME).await?;
     call_auth::<_, zbus::OwnedObjectPath>(
         &manager,
         "ActivateConnection",
         &(opath(connection)?, opath(device)?, opath(ap)?),
     )
-    .await
-    .map(|_| ())
+    .await?
+    .map(|p| p.as_str().to_string())
+    .ok_or_else(|| "NetworkManager answered with no active connection.".into())
 }
