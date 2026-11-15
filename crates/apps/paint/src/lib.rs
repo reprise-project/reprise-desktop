@@ -58,7 +58,7 @@ enum Prompt {
     Error,
     /// Save changes before `Then`; Yes saves first, No goes ahead, Cancel stays.
     SaveChanges(Then),
-    Overwrite(PathBuf),
+    Overwrite(PathBuf, file::Kind),
 }
 
 /// What runs once the picture is saved or its changes are let go.

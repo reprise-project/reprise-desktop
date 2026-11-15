@@ -106,6 +106,13 @@ impl Paint {
             QUALITY_ROW_H,
             &self.forms.look.controls(),
         );
+        if let Some(stem) = (self.path.as_deref())
+            .filter(|p| Kind::of(p).is_none())
+            .and_then(Path::file_stem)
+        {
+            dlg.set_file_name(&format!("{}.{}", stem.to_string_lossy(), Kind::Png.ext()));
+            dlg.set_filter(0);
+        }
         self.saveas = Some(dlg);
     }
 
@@ -159,12 +166,12 @@ impl Paint {
     pub(crate) fn answered(&mut self, what: Prompt, answer: Option<usize>) -> Reply {
         match (what, answer) {
             (Prompt::SaveChanges(then), Some(0)) => {
-                if self.path.is_none() {
+                let Some((path, kind)) = self.writable() else {
                     self.after_save = Some(then);
                     self.saveas_dialog();
                     return Reply::redraw_all();
-                }
-                if self.save_to_path() {
+                };
+                if self.write(&path, kind) {
                     return self.run(then);
                 }
                 Reply::redraw_all()
@@ -173,32 +180,33 @@ impl Paint {
                 self.doc.dirty = false;
                 self.run(then)
             }
-            (Prompt::Overwrite(path), Some(0)) => self.saveas_write(path),
+            (Prompt::Overwrite(path, kind), Some(0)) => self.saveas_write(path, kind),
             _ => Reply::redraw_all(),
         }
     }
 
-    /// Save: to the picture's file, or through Save As for an untitled one.
+    /// Save: to the picture's file, or through Save As for an untitled one or one whose type
+    /// Paint does not save.
     pub(crate) fn save(&mut self) -> Reply {
         self.commit_text();
         self.doc.finish();
-        if self.path.is_none() {
-            self.saveas_dialog();
-        } else {
-            self.save_to_path();
+        match self.writable() {
+            Some((path, kind)) => {
+                self.write(&path, kind);
+            }
+            None => self.saveas_dialog(),
         }
         Reply::redraw_all()
     }
 
-    fn save_to_path(&mut self) -> bool {
-        let Some(path) = self.path.clone() else {
-            return false;
-        };
-        self.write(&path)
+    /// The picture's file and its type, when it is one Paint saves; a GIF, WebP or TIFF it
+    /// opened goes through Save As.
+    fn writable(&self) -> Option<(PathBuf, Kind)> {
+        let path = self.path.clone()?;
+        Kind::of(&path).map(|kind| (path, kind))
     }
 
-    fn write(&mut self, path: &Path) -> bool {
-        let kind = Kind::of(path).unwrap_or(Kind::Png);
+    fn write(&mut self, path: &Path, kind: Kind) -> bool {
         match file::save(&self.doc.img, path, kind, self.quality) {
             Ok(()) => {
                 self.doc.dirty = false;
@@ -220,14 +228,20 @@ impl Paint {
     pub(crate) fn set_background(&mut self) -> Reply {
         self.commit_text();
         self.doc.finish();
-        let Some(path) = self.path.clone() else {
-            self.after_save = Some(Then::Background);
-            self.saveas_dialog();
-            return Reply::redraw_all();
+        let path = match (self.path.clone(), self.writable()) {
+            (Some(path), _) if !self.doc.dirty => path,
+            (_, Some((path, kind))) => {
+                if !self.write(&path, kind) {
+                    return Reply::redraw_all();
+                }
+                path
+            }
+            (_, None) => {
+                self.after_save = Some(Then::Background);
+                self.saveas_dialog();
+                return Reply::redraw_all();
+            }
         };
-        if self.doc.dirty && !self.write(&path) {
-            return Reply::redraw_all();
-        }
         if let Err(e) = set_wallpaper(&repriseconf::config_path(), &path) {
             log::warn!("background {}: {e}", path.display());
             self.error(tr!("background-failed", error = e));
@@ -295,6 +309,7 @@ impl Paint {
             .and_then(|d| SAVE_KINDS.get(d.filter()).copied())
             .unwrap_or(Kind::Png);
         let path = with_ext(path, kind);
+        let kind = Kind::of(&path).unwrap_or(kind);
         if taken(&path) && self.path.as_deref() != Some(&path) {
             self.ask(
                 tr!("overwrite", path = path.display().to_string()),
@@ -303,14 +318,14 @@ impl Paint {
                     reprisekit::kit_tr!("no-bare"),
                 ],
                 1,
-                Prompt::Overwrite(path),
+                Prompt::Overwrite(path, kind),
             );
             return Reply::redraw_all();
         }
-        self.saveas_write(path)
+        self.saveas_write(path, kind)
     }
 
-    fn saveas_write(&mut self, path: PathBuf) -> Reply {
+    fn saveas_write(&mut self, path: PathBuf, kind: Kind) -> Reply {
         if let Some(q) = (self.saveas.as_ref())
             .and_then(FileDlg::extra)
             .and_then(|f| f.combo_selected(QUALITY))
@@ -318,7 +333,7 @@ impl Paint {
         {
             self.quality = *q;
         }
-        if !self.write(&path) {
+        if !self.write(&path, kind) {
             return Reply::redraw_all();
         }
         self.path = Some(path);
