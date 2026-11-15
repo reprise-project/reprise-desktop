@@ -348,9 +348,13 @@ impl NetApp {
     }
 
     fn open_hotspot(&mut self, device: &str) {
+        let joined = (self.snapshot.devices.iter())
+            .find(|d| d.path == device)
+            .and_then(|d| d.wifi.as_ref()?.active_ssid.clone());
         self.hotspot = Some(hotspot::HotspotDialog::new(
             device,
             &hotspot::default_ssid(),
+            joined.as_deref(),
         ));
     }
 
@@ -613,7 +617,7 @@ impl NetApp {
                     let radio = tray::wifi_device(&self.snapshot)
                         .map(|d| (d.path.clone(), d.hotspot.is_some()));
                     match radio {
-                        Some((p, true)) => self.send(nm::Cmd::Disconnect(p)),
+                        Some((p, true)) => self.send(nm::Cmd::StopHotspot(p)),
                         Some((p, false)) => {
                             self.open_hotspot(&p);
                             shown = Some(HOTSPOT);
@@ -720,7 +724,7 @@ impl NetApp {
                 Reply::redraw_all()
             }
             folder::Outcome::StopHotspot(p) => {
-                self.send(nm::Cmd::Disconnect(p));
+                self.send(nm::Cmd::StopHotspot(p));
                 Reply::redraw()
             }
         }
@@ -1243,11 +1247,11 @@ impl App for NetApp {
                 modal: true,
             });
         }
-        if self.hotspot.is_some() {
+        if let Some(h) = &self.hotspot {
             out.push(Child {
                 id: HOTSPOT,
                 title: hotspot::HotspotDialog::window_title(),
-                size: u.size(hotspot::CLIENT),
+                size: u.size(h.client),
                 fixed: true,
                 modal: false,
             });
@@ -1634,6 +1638,38 @@ mod tests {
         let u = reprisekit::theme::TextUnits::new(17, 11);
         assert_eq!(child.size, u.size(hotspot::CLIENT));
         assert_eq!(child.size, (556, 331));
+    }
+
+    #[test]
+    fn create_hotspot_on_a_joined_radio_warns_in_a_taller_window() {
+        let size = |app: &NetApp| {
+            let child = app.children().into_iter().find(|c| c.id == HOTSPOT);
+            child.unwrap().size
+        };
+        let mut bare = NetApp::default();
+        bare.open_hotspot("/dev/1");
+        let mut app = NetApp::default();
+        app.snapshot.devices.push(nm::Device {
+            path: "/dev/1".into(),
+            kind: nm::Kind::Wifi,
+            wifi: Some(nm::Wifi {
+                active_ssid: Some("Home".into()),
+                ..nm::Wifi::default()
+            }),
+            ..nm::Device::default()
+        });
+        app.open_hotspot("/dev/1");
+        let warned = app.hotspot.as_ref().unwrap().form.item("warning");
+        assert!(warned.is_some(), "the dialog says it leaves Home");
+        assert!(
+            bare.hotspot
+                .as_ref()
+                .unwrap()
+                .form
+                .item("warning")
+                .is_none()
+        );
+        assert!(size(&app).1 > size(&bare).1);
     }
 
     #[test]

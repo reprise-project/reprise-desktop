@@ -595,7 +595,8 @@ The tray icon shows the link, a "limited" badge when the internet isn't
 there, and a balloon to sign in when a café wants you to. The folder lists
 your adapters and VPNs, each with Status (speed, bytes, address) and Repair.
 Pick a Wi-Fi network from the list, create a hotspot (its Status counts the
-devices that joined it), write a WireGuard
+devices that joined it; a radio joined to a network leaves it while the hotspot
+runs, and the dialog says so), write a WireGuard
 tunnel with its own key generator, or import a VPN file. When NetworkManager
 won't show a saved WireGuard key, its field is empty and keeps the key as long
 as no other key is changed. A network or VPN whose profile leaves its key or

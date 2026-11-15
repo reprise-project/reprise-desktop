@@ -609,6 +609,9 @@ pub enum Cmd {
         wpa3: bool,
         band: Band,
     },
+    /// Deactivate the hotspot running on this device, so the radio's saved networks may
+    /// autoconnect again (`Disconnect` would block that until the user picks one).
+    StopHotspot(String),
     Rescan(String),
     Airplane(bool),
     Quit,
