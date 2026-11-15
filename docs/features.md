@@ -826,8 +826,9 @@ the screen takes the interface of the last session used at this computer.
 - **Touchpad and mouse.** The touchpad can be turned off, or turn itself off
   while a mouse is plugged in. A clickpad clicks by the bottom areas or by
   the number of fingers on it. The mouse and the touchpad each have their
-  own scroll speed, and pressing left and right together can be a middle
-  click (`[mouse]`, `[touchpad]`, the Mouse and Touchpad pages in Settings).
+  own scroll speed, pressing left and right together can be a middle
+  click, and each can swap its primary and secondary buttons for the left
+  hand (`[mouse]`, `[touchpad]`, the Mouse and Touchpad pages in Settings).
 - **Touchscreens.** A program that takes touch gets touch; anywhere else a
   finger clicks and drags. Each touchscreen can be mapped to its screen.
 - **Drawing tablets** with pressure, tilt and the pen's buttons, each mappable

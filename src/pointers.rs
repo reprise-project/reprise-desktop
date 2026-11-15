@@ -124,6 +124,7 @@ pub struct Caps {
     pub natural: bool,
     pub dwt: bool,
     pub middle: bool,
+    pub left_handed: bool,
     pub send_events: SendEventsMode,
     pub click_methods: Vec<ClickMethod>,
     pub click_default: Option<ClickMethod>,
@@ -143,6 +144,7 @@ impl Caps {
             natural: d.config_scroll_has_natural_scroll(),
             dwt: d.config_dwt_is_available(),
             middle: d.config_middle_emulation_is_available(),
+            left_handed: d.config_left_handed_is_available(),
             send_events: d.config_send_events_modes(),
             click_methods: d.config_click_methods(),
             click_default: d.config_click_default_method(),
@@ -160,6 +162,7 @@ pub struct Plan {
     pub scroll: Option<ScrollMethod>,
     pub dwt: Option<bool>,
     pub middle: Option<bool>,
+    pub left_handed: Option<bool>,
     pub send_events: Option<SendEventsMode>,
     pub click: Option<ClickMethod>,
 }
@@ -187,6 +190,9 @@ pub fn plan(cfg: &Config, caps: &Caps) -> Plan {
     }
     if caps.middle {
         plan.middle = Some(pointer.middle_emulation);
+    }
+    if caps.left_handed {
+        plan.left_handed = Some(pointer.left_handed);
     }
     if caps.is_touchpad() {
         let tp = &cfg.touchpad;
@@ -258,6 +264,9 @@ fn apply(cfg: &Config, d: &mut Device) {
     }
     if let Some(v) = plan.middle {
         let _ = d.config_middle_emulation_set_enabled(v);
+    }
+    if let Some(v) = plan.left_handed {
+        let _ = d.config_left_handed_set(v);
     }
     if let Some(v) = plan.click {
         let _ = d.config_click_set_method(v);
@@ -606,6 +615,7 @@ mod tests {
             natural: true,
             dwt: true,
             middle: false,
+            left_handed: true,
             send_events: SendEventsMode::DISABLED | SendEventsMode::DISABLED_ON_EXTERNAL_MOUSE,
             click_methods: vec![ClickMethod::ButtonAreas, ClickMethod::Clickfinger],
             click_default: Some(ClickMethod::ButtonAreas),
@@ -621,6 +631,7 @@ mod tests {
             natural: true,
             dwt: false,
             middle: true,
+            left_handed: true,
             send_events: SendEventsMode::DISABLED,
             click_methods: Vec::new(),
             click_default: None,
@@ -641,6 +652,7 @@ mod tests {
                 scroll: Some(ScrollMethod::TwoFinger),
                 dwt: Some(true),
                 middle: None,
+                left_handed: Some(false),
                 send_events: Some(SendEventsMode::ENABLED),
                 click: Some(ClickMethod::ButtonAreas),
             }
@@ -652,6 +664,7 @@ mod tests {
                 profile: Some(AccelProfile::Adaptive),
                 natural: Some(false),
                 middle: Some(false),
+                left_handed: Some(false),
                 ..Plan::default()
             }
         );
@@ -703,6 +716,7 @@ mod tests {
             natural: false,
             dwt: false,
             middle: false,
+            left_handed: false,
             send_events: SendEventsMode::empty(),
             click_methods: Vec::new(),
             click_default: None,
@@ -720,6 +734,7 @@ mod tests {
             accel: false,
             natural: false,
             middle: false,
+            left_handed: false,
             ..mouse()
         };
         assert_eq!(plan(&cfg, &caps), Plan::default());
@@ -795,6 +810,25 @@ mod tests {
         assert_eq!(plan(&cfg, &pad).middle, Some(false));
         cfg.touchpad.pointer.middle_emulation = true;
         assert_eq!(plan(&cfg, &pad).middle, Some(true));
+    }
+
+    #[test]
+    fn left_handed_follows_each_section_on_a_device_that_can_swap() {
+        let mut cfg = Config::default();
+        cfg.mouse.left_handed = true;
+        assert_eq!(plan(&cfg, &mouse()).left_handed, Some(true));
+        assert_eq!(plan(&cfg, &touchpad()).left_handed, Some(false));
+        cfg.touchpad.pointer.left_handed = true;
+        assert_eq!(plan(&cfg, &touchpad()).left_handed, Some(true));
+        let fixed = Caps {
+            left_handed: false,
+            ..mouse()
+        };
+        assert_eq!(
+            plan(&cfg, &fixed).left_handed,
+            None,
+            "a device without the swap is left alone"
+        );
     }
 
     #[test]

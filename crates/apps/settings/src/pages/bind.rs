@@ -358,6 +358,7 @@ pub(super) fn binds() -> Vec<Bind> {
         Bind::Flag("mouse_accel", lens!(mouse_accel)),
         Bind::Flag("mouse_natural", lens!(mouse_natural)),
         Bind::Flag("mouse_middle", lens!(mouse_middle)),
+        Bind::Flag("mouse_left_handed", lens!(mouse_left_handed)),
         Bind::Steps(
             "mouse_scroll_speed",
             lens!(mouse_scroll_speed),
@@ -366,6 +367,7 @@ pub(super) fn binds() -> Vec<Bind> {
         Bind::Track("touchpad_speed", lens!(touchpad_speed)),
         Bind::Flag("touchpad_accel", lens!(touchpad_accel)),
         Bind::Flag("touchpad_natural", lens!(touchpad_natural)),
+        Bind::Flag("touchpad_left_handed", lens!(touchpad_left_handed)),
         Bind::Steps(
             "touchpad_scroll_speed",
             lens!(touchpad_scroll_speed),

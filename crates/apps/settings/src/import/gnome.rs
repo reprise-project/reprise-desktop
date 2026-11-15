@@ -283,8 +283,18 @@ pub(super) fn settings(dump: &str) -> Vec<Setting> {
             out.push(Setting::Natural(dev, b));
         }
     }
-    if get(MOUSE, "left-handed").and_then(Value::bool) == Some(true) {
-        out.push(other("Left-handed buttons", "On", super::NO_SETTING));
+    let mouse_left = get(MOUSE, "left-handed").and_then(Value::bool);
+    if let Some(b) = mouse_left {
+        out.push(Setting::LeftHanded(Device::Mouse, b));
+    }
+    // The touchpad's "mouse", its default, follows the mouse's setting.
+    let pad_left = match get(TOUCHPAD, "left-handed").and_then(Value::str) {
+        Some("left") => Some(true),
+        Some("right") => Some(false),
+        _ => mouse_left,
+    };
+    if let Some(b) = pad_left {
+        out.push(Setting::LeftHanded(Device::Touchpad, b));
     }
     if let Some(ms) = get(MOUSE, "double-click").and_then(Value::num) {
         out.push(Setting::DoubleClick(ms.round() as i64));

@@ -954,6 +954,7 @@ fn pointer_sections_parse_and_default() {
             natural_scroll: false,
             scroll_speed: 1.0,
             middle_emulation: false,
+            left_handed: false,
         }
     );
     assert_eq!(
@@ -965,6 +966,7 @@ fn pointer_sections_parse_and_default() {
                 natural_scroll: false,
                 scroll_speed: 1.0,
                 middle_emulation: false,
+                left_handed: false,
             },
             enabled: true,
             disable_with_mouse: false,
@@ -1023,6 +1025,9 @@ fn touchpad_switches_and_scrolling_parse_per_section() {
     let areas = Config::parse("[touchpad]\nclick_method = \"areas\"\n").unwrap();
     assert_eq!(areas.touchpad.click_method, ClickMethod::Areas);
     assert!(Config::parse("[touchpad]\nclick_method = \"corners\"\n").is_err());
+    let c = Config::parse("[touchpad]\nleft_handed = true\n").unwrap();
+    assert!(c.touchpad.pointer.left_handed);
+    assert!(!c.mouse.left_handed, "each class keeps its own buttons");
     assert!(Config::parse("[mouse]\nscroll_speed = 0\n").is_err());
     assert!(Config::parse("[touchpad]\nscroll_speed = 11\n").is_err());
 }

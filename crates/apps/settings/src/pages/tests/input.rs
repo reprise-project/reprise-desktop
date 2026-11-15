@@ -570,7 +570,7 @@ fn program_rows_follow_the_binds() {
 fn the_mouse_page_geometry() {
     let s = built();
     let p = Page::Mouse;
-    assert_eq!(rect(&s, p, "mouse_group"), Rect::new(20, 44, 358, 178));
+    assert_eq!(rect(&s, p, "mouse_group"), Rect::new(20, 44, 358, 200));
     assert_eq!(
         rect(&s, p, "double_click_ms"),
         Rect::new(78, 89, 238, trackbar::HEIGHT)
@@ -591,20 +591,21 @@ fn the_mouse_page_geometry() {
     assert_eq!(rect(&s, p, "mouse_fast"), Rect::new(224, 141, 26, 13));
     assert_eq!(rect(&s, p, "mouse_accel"), Rect::new(32, 169, 13, 13));
     assert_eq!(rect(&s, p, "mouse_middle"), Rect::new(32, 191, 13, 13));
-    assert_eq!(rect(&s, p, "wheel_group"), Rect::new(20, 232, 358, 106));
+    assert_eq!(rect(&s, p, "mouse_left_handed"), Rect::new(32, 213, 13, 13));
+    assert_eq!(rect(&s, p, "wheel_group"), Rect::new(20, 254, 358, 106));
     assert_eq!(
         rect(&s, p, "mouse_scroll_label"),
-        Rect::new(32, 256, 200, 13)
+        Rect::new(32, 278, 200, 13)
     );
     assert_eq!(
         rect(&s, p, "mouse_scroll_speed"),
-        Rect::new(78, 277, 238, trackbar::HEIGHT)
+        Rect::new(78, 299, 238, trackbar::HEIGHT)
     );
     assert_eq!(
         rect(&s, p, "mouse_scroll_value"),
-        Rect::new(286, 256, 80, 13)
+        Rect::new(286, 278, 80, 13)
     );
-    assert_eq!(rect(&s, p, "mouse_natural"), Rect::new(32, 308, 13, 13));
+    assert_eq!(rect(&s, p, "mouse_natural"), Rect::new(32, 330, 13, 13));
     inside_page(&s, p);
 }
 
@@ -613,7 +614,7 @@ fn the_mouse_page_geometry() {
 fn the_touchpad_page_geometry() {
     let s = built();
     let p = Page::Touchpad;
-    assert_eq!(rect(&s, p, "touchpad_group"), Rect::new(20, 44, 358, 166));
+    assert_eq!(rect(&s, p, "touchpad_group"), Rect::new(20, 44, 358, 144));
     assert_eq!(rect(&s, p, "touchpad_enabled"), Rect::new(32, 66, 13, 13));
     assert_eq!(rect(&s, p, "disable_with_mouse"), Rect::new(32, 88, 13, 13));
     assert_eq!(
@@ -623,12 +624,16 @@ fn the_touchpad_page_geometry() {
     assert_eq!(rect(&s, p, "touchpad_accel"), Rect::new(32, 163, 13, 13));
     assert_eq!(
         rect(&s, p, "disable_while_typing"),
-        Rect::new(32, 185, 13, 13)
+        Rect::new(199, 163, 13, 13)
     );
-    assert_eq!(rect(&s, p, "clicking_group"), Rect::new(20, 216, 358, 99));
-    assert_eq!(rect(&s, p, "tap_to_click"), Rect::new(32, 238, 13, 13));
+    assert_eq!(rect(&s, p, "clicking_group"), Rect::new(20, 194, 358, 121));
+    assert_eq!(rect(&s, p, "tap_to_click"), Rect::new(32, 216, 13, 13));
     assert_eq!(
         rect(&s, p, "two_finger_tap_right_click"),
+        Rect::new(32, 238, 13, 13)
+    );
+    assert_eq!(
+        rect(&s, p, "touchpad_left_handed"),
         Rect::new(32, 260, 13, 13)
     );
     assert_eq!(rect(&s, p, "click_method"), Rect::new(126, 282, 150, 21));
