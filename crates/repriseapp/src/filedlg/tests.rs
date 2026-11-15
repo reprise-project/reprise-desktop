@@ -186,6 +186,56 @@ fn a_start_folder_the_caller_names_wins_over_the_last_one() {
     assert_eq!(shown(&h), own, "a last folder since removed falls back");
 }
 
+/// The last folder sits on a mount that stopped answering: the dialog opens on the fallback and
+/// keeps the check, a dialog on a named folder leaves it alone, and the next open takes its
+/// answer.
+#[test]
+fn a_last_folder_that_does_not_answer_opens_on_the_fallback() {
+    let t = tempfile::tempdir().unwrap();
+    let file = t.path().join("filedialog.toml");
+    let (docs, own) = (t.path().join("docs"), t.path().join("own"));
+    std::fs::create_dir_all(&docs).unwrap();
+    std::fs::create_dir_all(&own).unwrap();
+    let u = Theme::default().text;
+    let mut h = host_of(&file, "test.app");
+    h.keep_folder(&docs);
+    let (answer, gate) = std::sync::mpsc::channel::<()>();
+    h.probing = Some((
+        docs.clone(),
+        Job::spawn(None, move || {
+            gate.recv().ok();
+            (true, true)
+        }),
+    ));
+    let start = std::time::Instant::now();
+    h.open_last(&own, open_fields(), u);
+    assert_eq!(shown(&h), own, "the fallback");
+    assert!(start.elapsed() < std::time::Duration::from_secs(30));
+    assert!(h.probing.is_some(), "the check is kept");
+
+    h.open(&own, open_fields(), u);
+    assert!(
+        h.probing.as_ref().is_some_and(|(p, _)| *p == docs),
+        "a named folder leaves the last one's check alone"
+    );
+
+    answer.send(()).unwrap();
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        h.open_last(&own, open_fields(), u);
+        if shown(&h) == docs {
+            break;
+        }
+        assert!(h.probing.is_some(), "the check is kept until it answers");
+        assert!(
+            std::time::Instant::now() < until,
+            "the check never answered"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    assert!(h.probing.is_none(), "an open takes the check's answer");
+}
+
 #[test]
 fn a_text_size_change_lays_the_dialog_out_for_the_new_size() {
     let mut h = Host::default();
