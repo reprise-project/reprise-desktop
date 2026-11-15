@@ -15,6 +15,7 @@ use reprisekit::raster::Canvas;
 use reprisekit::text::TextRenderer;
 use reprisekit::theme::Theme;
 use std::cell::RefCell;
+use std::time::Instant;
 
 pub enum Step {
     Closed,
@@ -127,7 +128,10 @@ fn box_event(
     };
     let mut f = build(fields);
     let out = f.key(key);
-    if let Some(i) = f.focus() {
+    // On a consent box the default stays the refusing button.
+    if !f.is_consent()
+        && let Some(i) = f.focus()
+    {
         let id = f.items[i].id;
         if let Some(b) = (0..fields.buttons.len()).find(|&b| button_is(b, id)) {
             fields.default = b;
@@ -178,6 +182,9 @@ pub struct MsgBox {
     /// delete prompts, which wear the template Explorer's do.
     template: Option<Template>,
     shown: Shown,
+    /// A consent box's wait ([`MsgBox::consent`]), on a form of its own: the box's form is built
+    /// again for every event.
+    gate: Option<Form>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -197,6 +204,7 @@ impl MsgBox {
             fields,
             template: None,
             shown: Shown::default(),
+            gate: None,
         }
     }
 
@@ -208,6 +216,7 @@ impl MsgBox {
             fields,
             template: Some(template),
             shown: Shown::default(),
+            gate: None,
         }
     }
 
@@ -223,10 +232,47 @@ impl MsgBox {
         }
     }
 
+    /// Make this a consent box ([`Form::set_consent`]), for a prompt that grants something: a
+    /// letter needs Alt, Enter, Space and Tab leave the default on the refusing button, and keys
+    /// and presses count only [`form::CONSENT_ARM`] after the box gets the keyboard.
+    pub fn consent(mut self) -> MsgBox {
+        let mut gate = Form::new(Vec::new());
+        gate.set_consent();
+        self.gate = Some(gate);
+        self
+    }
+
+    /// The box's window got the keyboard at `now`, or the box took the place of another in a
+    /// window that has it: a consent box starts its wait again.
+    pub fn consent_focused(&mut self, now: Instant) {
+        if let Some(g) = &mut self.gate {
+            g.consent_focused(now);
+        }
+    }
+
     pub fn event(&mut self, ev: &Event, text: &TextRenderer, theme: &Theme) -> Outcome {
-        let template = self.template;
+        let now = Instant::now();
+        if let Some(g) = &mut self.gate {
+            match ev {
+                Event::Focus(true) => {
+                    g.consent_focused(now);
+                    return Outcome::None;
+                }
+                Event::Key(k) if !g.consent_key(k.sym, now) => return Outcome::None,
+                Event::KeyUp(k) => g.consent_key_up(k.sym),
+                Event::Pointer(PointerInput::Press {
+                    button: BTN_LEFT, ..
+                }) if !g.consent_press(now) => return Outcome::None,
+                _ => {}
+            }
+        }
+        let (template, consent) = (self.template, self.gate.is_some());
         let step = box_event(ev, text, theme, &mut self.fields, &self.shown, |f| {
-            built(f, template, text, theme).1
+            let mut form = built(f, template, text, theme).1;
+            if consent {
+                form.set_consent();
+            }
+            form
         });
         match step {
             Step::Closed => Outcome::Closed(None),
@@ -436,6 +482,55 @@ mod tests {
             b.event(&key(keysym::RETURN, None), &text, &Theme::default()),
             Outcome::Closed(Some(0)),
             "Enter presses Yes"
+        );
+    }
+
+    #[test]
+    fn a_consent_box_waits_for_the_keyboard_and_grants_only_through_alt() {
+        let boxed = || {
+            let mut b = two_buttons();
+            b.fields.buttons = vec!["&Yes".into(), "&No".into()];
+            b.consent()
+        };
+        let mut b = boxed();
+        let text = TextRenderer::load(&FontConfig::default());
+        let theme = Theme::default();
+        let key = |sym, ch: &str, alt| {
+            Event::Key(crate::KeyInput {
+                sym,
+                utf8: None,
+                mods: crate::Mods {
+                    alt,
+                    ..Default::default()
+                },
+                edit: (!ch.is_empty()).then(|| EditKey::Insert(ch.into())),
+            })
+        };
+        let up = |ev: &Event| {
+            let Event::Key(k) = ev else { unreachable!() };
+            Event::KeyUp(k.clone())
+        };
+        let y = key(0x79, "y", false);
+        let enter = key(keysym::RETURN, "", false);
+        let tab = key(keysym::TAB, "", false);
+        assert_eq!(b.event(&Event::Focus(true), &text, &theme), Outcome::None);
+        assert_eq!(b.event(&enter, &text, &theme), Outcome::None, "too soon");
+        b.event(&up(&enter), &text, &theme);
+        b.consent_focused(Instant::now() - form::CONSENT_ARM);
+        assert_eq!(b.event(&y, &text, &theme), Outcome::None, "a bare y");
+        b.event(&tab, &text, &theme);
+        assert_eq!(b.fields.default, 1, "Tab leaves the default on No");
+        assert_eq!(
+            b.event(&enter, &text, &theme),
+            Outcome::Closed(Some(1)),
+            "Enter presses No"
+        );
+        let mut b = boxed();
+        b.consent_focused(Instant::now() - form::CONSENT_ARM);
+        assert_eq!(
+            b.event(&key(0x79, "y", true), &text, &theme),
+            Outcome::Closed(Some(0)),
+            "Alt+Y presses Yes"
         );
     }
 

@@ -83,6 +83,35 @@ fn arrows_never_move_between_a_consent_forms_buttons() {
     }
 }
 
+#[test]
+fn space_and_arrows_change_no_check_box_or_radio_on_a_consent_form() {
+    let build = |consent: bool| {
+        let mut f = Form::new(vec![
+            Item::radio("yes", 10, 10, "&Yes", "answer"),
+            Item::radio("no", 10, 30, "&No", "answer").checked(true),
+            Item::check("trust", 10, 50, "&Trust"),
+            Item::button("ok", Rect::new(10, 80, 75, 23), "OK", true, true),
+        ]);
+        f.focus_id("no");
+        if consent {
+            f.set_consent();
+        }
+        f
+    };
+    let mut plain = build(false);
+    assert_eq!(plain.key(Key::Up), Event::Changed("yes"));
+    let mut f = build(true);
+    for k in [Key::Up, Key::Left, Key::Down, Key::Right, Key::Space] {
+        assert_eq!(f.key(k.clone()), Event::None, "{k:?}");
+    }
+    assert_eq!(f.checked("no"), Some(true), "No stays picked");
+    f.focus_id("trust");
+    assert_eq!(f.key(Key::Space), Event::None);
+    assert_eq!(f.checked("trust"), Some(false), "the box stays clear");
+    assert_eq!(f.key(Key::Access('t')), Event::Changed("trust"));
+    assert_eq!(f.key(Key::Access('y')), Event::Changed("yes"));
+}
+
 /// Every sequence of up to four keys typed without Alt.
 #[test]
 fn no_sequence_of_keys_without_alt_grants_on_a_consent_form() {

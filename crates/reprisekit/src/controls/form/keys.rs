@@ -359,7 +359,7 @@ impl Form {
                 let (id, grows) = (self.items[i].id, self.items[i].grows);
                 let rect = self.at(&self.items[i]);
                 match (&mut self.items[i].control, other) {
-                    (Control::Check { checked, mixed, .. }, Key::Space) => {
+                    (Control::Check { checked, mixed, .. }, Key::Space) if plain => {
                         toggle_check(checked, mixed);
                         Event::Changed(id)
                     }
@@ -440,11 +440,11 @@ impl Form {
                             Event::None
                         }
                     }
-                    (Control::Radio { .. }, Key::Space) => {
+                    (Control::Radio { .. }, Key::Space) if plain => {
                         let ch = self.pick_radio(i);
                         self.changed(i, ch)
                     }
-                    (Control::Radio { .. }, Key::Up | Key::Left) => {
+                    (Control::Radio { .. }, Key::Up | Key::Left) if plain => {
                         match self.next_radio(i, true) {
                             Some(j) => {
                                 self.set_focus(Some(j));
@@ -454,7 +454,7 @@ impl Form {
                             None => Event::None,
                         }
                     }
-                    (Control::Radio { .. }, Key::Down | Key::Right) => {
+                    (Control::Radio { .. }, Key::Down | Key::Right) if plain => {
                         match self.next_radio(i, false) {
                             Some(j) => {
                                 self.set_focus(Some(j));

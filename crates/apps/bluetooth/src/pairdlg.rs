@@ -1,6 +1,6 @@
 //! Bluetooth Pairing Request: the modal box for a pairing the Add wizard is not running. Closing it
-//! unanswered refuses the request. A request the user did not start from Settings starts on its
-//! refusing answer and trusts the device only through its "trust" box.
+//! unanswered refuses the request. A request the user did not start from Settings is a consent
+//! form: it starts on its refusing answer and trusts the device only through its "trust" box.
 
 use reprisekit::classic::widgets::{BUTTON_H, BUTTON_W};
 use reprisekit::controls::form::{self, Form, Item};
@@ -71,11 +71,11 @@ impl PairDialog {
             waits,
             false,
         ));
-        let mut d = PairDialog {
-            req,
-            form: Form::new(items),
-            started,
-        };
+        let mut form = Form::new(items);
+        if !started {
+            form.set_consent();
+        }
+        let mut d = PairDialog { req, form, started };
         d.sync();
         d
     }
@@ -199,6 +199,33 @@ mod tests {
                 "{ask:?}"
             );
             assert_eq!(wait.try_recv(), Ok(Answer::Reject));
+        }
+    }
+
+    #[test]
+    fn keys_typed_without_alt_never_accept_or_trust_a_request_nobody_started() {
+        use reprisekit::controls::form::Key;
+        for ask in [Ask::Confirm(7), Ask::Authorize] {
+            let (mut d, wait) = asked(ask.clone(), false);
+            let mut out = Outcome::None;
+            for k in [
+                Key::Char('m'),
+                Key::Char('a'),
+                Key::Char('y'),
+                Key::Up,
+                Key::Tab { back: false },
+                Key::Space,
+                Key::Enter,
+            ] {
+                let e = d.form.key(k);
+                out = d.event(e);
+                if out != Outcome::Redraw && out != Outcome::None {
+                    break;
+                }
+            }
+            assert_eq!(out, Outcome::Answered(Answer::Reject), "{ask:?}");
+            assert_eq!(wait.try_recv(), Ok(Answer::Reject), "{ask:?}");
+            assert!(!d.trusts(), "{ask:?}: the trust box stays clear");
         }
     }
 
