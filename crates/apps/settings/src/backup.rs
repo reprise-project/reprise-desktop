@@ -1,7 +1,7 @@
 //! Export and Import: the files in [`ENTRIES`] in one TOML bundle, each file's text under its
 //! name, so a bundle carries Reprise's settings and remembered places to another account or machine.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use toml_edit::{DocumentMut, Item, Table, Value};
 
@@ -9,6 +9,8 @@ use toml_edit::{DocumentMut, Item, Table, Value};
 const HEADER: &str = "reprise_settings";
 const VERSION: i64 = 1;
 const FILES: &str = "files";
+/// The keys of entries that had no file when the bundle was made, which Import removes.
+const ABSENT: &str = "absent";
 
 /// Which XDG directory a file lives under, in its `reprise` folder.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -108,6 +110,19 @@ impl Roots {
         self.dir(e.root).join(e.name)
     }
 
+    /// `e` has no file: the file is not there, or the folder holds none.
+    fn missing(&self, e: &Entry) -> std::io::Result<bool> {
+        let path = self.path(e);
+        match e.kind {
+            Kind::File => match std::fs::symlink_metadata(&path) {
+                Ok(_) => Ok(false),
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(true),
+                Err(err) => Err(err),
+            },
+            Kind::Folder => Ok(folder_files(&path)?.is_empty()),
+        }
+    }
+
     /// Where Import keeps the files it replaced, as a bundle Import takes back.
     pub fn before_import(&self) -> PathBuf {
         self.config.join("reprise-settings-before-import.toml")
@@ -138,6 +153,14 @@ fn key(e: &Entry, child: Option<&str>) -> String {
     match child {
         Some(c) => format!("{root}/{}/{c}", e.name),
         None => format!("{root}/{}", e.name),
+    }
+}
+
+/// The key [`ABSENT`] names an entry by: the file's key, or a folder's with a trailing `/`.
+fn absent_key(e: &Entry) -> String {
+    match e.kind {
+        Kind::File => key(e, None),
+        Kind::Folder => key(e, Some("")),
     }
 }
 
@@ -181,10 +204,11 @@ impl std::fmt::Display for Refused {
     }
 }
 
-/// The files of one export, by key.
+/// The files of one export, by key, and the entries that had none.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Bundle {
     files: BTreeMap<String, String>,
+    absent: BTreeSet<String>,
 }
 
 impl Bundle {
@@ -216,11 +240,18 @@ impl Bundle {
                 }
             }
         }
-        Ok(Bundle { files })
+        Ok(Bundle {
+            files,
+            absent: BTreeSet::new(),
+        })
     }
 
     pub fn render(&self) -> String {
         let mut doc = DocumentMut::new();
+        if !self.absent.is_empty() {
+            let keys: toml_edit::Array = self.absent.iter().map(String::as_str).collect();
+            doc.insert(ABSENT, Item::Value(Value::Array(keys)));
+        }
         let mut header = Table::new();
         header.insert("version", Item::Value(Value::from(VERSION)));
         doc.insert(HEADER, Item::Table(header));
@@ -261,35 +292,67 @@ impl Bundle {
                 .parse::<DocumentMut>()
                 .map_err(|e| Refused::BadConfig(e.message().to_string()))?;
         }
-        Ok(Bundle { files })
+        let mut absent = BTreeSet::new();
+        for item in doc
+            .get(ABSENT)
+            .and_then(Item::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let k = item.as_str().unwrap_or_default();
+            if !ENTRIES.iter().any(|e| absent_key(e) == k) {
+                return Err(Refused::UnknownFile(k.to_string()));
+            }
+            absent.insert(k.to_string());
+        }
+        Ok(Bundle { files, absent })
     }
 
-    /// The entries this bundle replaces, in [`ENTRIES`]' order.
+    fn holds(&self, e: &Entry) -> bool {
+        (self.files.keys()).any(|k| entry_of(k).is_some_and(|(o, _)| o == e))
+    }
+
+    /// The entries this bundle writes files for, in [`ENTRIES`]' order.
     pub fn replaces(&self) -> Vec<&'static Entry> {
-        ENTRIES
-            .iter()
-            .filter(|e| {
-                self.files
-                    .keys()
-                    .any(|k| entry_of(k).is_some_and(|(o, _)| o == *e))
-            })
+        ENTRIES.iter().filter(|e| self.holds(e)).collect()
+    }
+
+    /// The entries whose files this bundle removes: they had none when it was made.
+    pub fn removes(&self) -> Vec<&'static Entry> {
+        (ENTRIES.iter())
+            .filter(|e| !self.holds(e) && self.absent.contains(&absent_key(e)))
             .collect()
     }
 
-    /// Keep the files this bundle replaces in [`Roots::before_import`], then write its files: a
-    /// folder entry loses the files the bundle does not hold. Returns where the old files went.
+    /// Keep what this bundle replaces or removes in [`Roots::before_import`], as a bundle that
+    /// undoes the import, then write its files; a folder entry loses the files the bundle does
+    /// not hold. Returns where the old files went.
     pub fn import(&self, roots: &Roots) -> std::io::Result<PathBuf> {
-        let replaced = self.replaces();
+        let touched: Vec<&Entry> = [self.replaces(), self.removes()].concat();
         let current = Bundle::gather(roots)?;
-        let kept = Bundle {
+        let mut kept = Bundle {
             files: (current.files.into_iter())
-                .filter(|(k, _)| entry_of(k).is_some_and(|(e, _)| replaced.contains(&e)))
+                .filter(|(k, _)| entry_of(k).is_some_and(|(e, _)| touched.contains(&e)))
                 .collect(),
+            absent: BTreeSet::new(),
         };
+        for e in &touched {
+            if !kept.holds(e) && roots.missing(e)? {
+                kept.absent.insert(absent_key(e));
+            }
+        }
         let backup = roots.before_import();
         std::fs::create_dir_all(&roots.config)?;
         repriseconf::write_atomic(&backup, &kept.render())?;
-        for e in replaced {
+        for e in self.removes() {
+            if e.kind == Kind::File {
+                match std::fs::remove_file(roots.path(e)) {
+                    Err(err) if err.kind() != std::io::ErrorKind::NotFound => return Err(err),
+                    _ => {}
+                }
+            }
+        }
+        for e in touched {
             let path = roots.path(e);
             if e.kind == Kind::Folder {
                 std::fs::create_dir_all(&path)?;
@@ -488,6 +551,65 @@ mod tests {
         );
         assert!(r.config.join("quicklaunch/old.desktop").exists());
         assert!(!r.config.join("quicklaunch/new.desktop").exists());
+    }
+
+    #[test]
+    fn importing_the_kept_bundle_removes_the_files_the_import_added() {
+        let a = tempfile::tempdir().unwrap();
+        let r = roots(a.path());
+        put(&r.state.join("explorer.toml"), "view = \"list\"\n");
+        std::fs::create_dir_all(r.config.join("quicklaunch")).unwrap();
+        let mut incoming = Bundle::default();
+        for (k, text) in [
+            ("config/config.toml", "[taskbar]\nauto_hide = true\n"),
+            ("config/quicklaunch/new.desktop", "new\n"),
+            ("state/displays.toml", "[a]\n"),
+            ("state/explorer.toml", "view = \"icons\"\n"),
+        ] {
+            incoming.files.insert(k.into(), text.into());
+        }
+        let backup = incoming.import(&r).unwrap();
+        let kept = Bundle::parse(&read_to(&backup)).unwrap();
+        let names = |l: Vec<&Entry>| l.iter().map(|e| e.name).collect::<Vec<_>>();
+        assert_eq!(names(kept.replaces()), ["explorer.toml"]);
+        assert_eq!(
+            names(kept.removes()),
+            ["config.toml", "quicklaunch", "displays.toml"]
+        );
+
+        kept.import(&r).unwrap();
+        assert!(!r.config.join("config.toml").exists());
+        assert!(!r.config.join("quicklaunch/new.desktop").exists());
+        assert!(!r.state.join("displays.toml").exists());
+        assert_eq!(read_to(&r.state.join("explorer.toml")), "view = \"list\"\n");
+        let again = Bundle::parse(&read_to(&backup)).unwrap();
+        assert_eq!(
+            names(again.replaces()),
+            [
+                "config.toml",
+                "quicklaunch",
+                "displays.toml",
+                "explorer.toml"
+            ],
+            "undoing the undo brings the import back"
+        );
+    }
+
+    #[test]
+    fn a_bundle_naming_an_absent_file_no_entry_gives_is_refused() {
+        let with =
+            |k: &str| format!("absent = [{k:?}]\n[reprise_settings]\nversion = 1\n[files]\n");
+        assert_eq!(
+            Bundle::parse(&with("state/displays.toml")).map(|b| b.removes().len()),
+            Ok(1)
+        );
+        for k in ["config/quicklaunch", "state/state.toml", "config/../x"] {
+            assert_eq!(
+                Bundle::parse(&with(k)),
+                Err(Refused::UnknownFile(k.into())),
+                "{k}"
+            );
+        }
     }
 
     #[test]

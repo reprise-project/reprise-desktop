@@ -32,15 +32,22 @@ pub(crate) fn import_question(file: &Path, bundle: &Bundle, roots: &Roots) -> St
         || file.display().to_string(),
         |n| n.to_string_lossy().into(),
     );
-    let mut text = format!("Import {name}? It replaces:\n");
-    for e in bundle.replaces() {
-        text.push_str(&format!("    {}\n", e.what));
+    let (replaces, removes) = (bundle.replaces(), bundle.removes());
+    let lines = |head: &str, list: &[&backup::Entry]| {
+        (list.iter()).fold(format!("{head}\n"), |t, e| t + &format!("    {}\n", e.what))
+    };
+    let mut parts = Vec::new();
+    if !replaces.is_empty() || removes.is_empty() {
+        parts.push(lines("It replaces:", &replaces));
     }
-    text.push_str(&format!(
-        "The current files are kept in {}.",
+    if !removes.is_empty() {
+        parts.push(lines("It removes:", &removes));
+    }
+    format!(
+        "Import {name}? {}The current files are kept in {}.",
+        parts.concat(),
         roots.before_import().display()
-    ));
-    text
+    )
 }
 
 impl SettingsApp {
@@ -155,6 +162,13 @@ mod tests {
             import_question(Path::new("/home/u/s.toml"), &bundle, &roots),
             "Import s.toml? It replaces:\n    Settings and keyboard shortcuts (config.toml)\n    \
              Display arrangements\nThe current files are kept in \
+             /home/u/.config/reprise/reprise-settings-before-import.toml."
+        );
+        let undo = "absent = [\"state/displays.toml\"]\n[reprise_settings]\nversion = 1\n[files]\n";
+        let bundle = Bundle::parse(undo).unwrap();
+        assert_eq!(
+            import_question(Path::new("/home/u/s.toml"), &bundle, &roots),
+            "Import s.toml? It removes:\n    Display arrangements\nThe current files are kept in \
              /home/u/.config/reprise/reprise-settings-before-import.toml."
         );
     }

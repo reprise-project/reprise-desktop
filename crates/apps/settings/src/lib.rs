@@ -319,11 +319,17 @@ fn run_backup(verb: BackupVerb) -> i32 {
             .map(|()| format!("Exported the settings to {}.", file.display())),
         BackupVerb::Import(file) => backup::read(file).and_then(|bundle| {
             let kept = backup::import(&bundle, &roots)?;
-            let what: Vec<&str> = bundle.replaces().iter().map(|e| e.what).collect();
+            let list = |l: Vec<&backup::Entry>| l.iter().map(|e| e.what).collect::<Vec<_>>();
+            let removed = list(bundle.removes());
+            let mut what = vec![list(bundle.replaces()).join(", ")];
+            if !removed.is_empty() {
+                what.push(format!("removed {}", removed.join(", ")));
+            }
+            what.retain(|w| !w.is_empty());
+            let what = what.join("; ");
             Ok(format!(
-                "Imported {}: {}.\nThe files it replaced are in {}.",
+                "Imported {}: {what}.\nThe files it replaced are in {}.",
                 file.display(),
-                what.join(", "),
                 kept.display()
             ))
         }),
