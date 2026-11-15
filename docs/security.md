@@ -1363,6 +1363,11 @@ What a consent prompt remembers, and where:
   permission store.
 - **Location:** Reprise's geoclue agent keeps its own answers.
 
+The FileChooser portal's Save dialog takes the name the app suggests as a
+file name only: a name with a slash keeps its last part, and `.` or `..`
+starts the field empty, so the app names the file and you pick the folder.
+Save answers with one file; a field naming several is refused.
+
 The Email portal asks nothing: the message opens unsent in your mail
 program, and you send it. Its attachments are only the files the app handed
 xdg-desktop-portal as open files, which the frontend turns into paths; an

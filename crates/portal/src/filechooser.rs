@@ -131,14 +131,15 @@ pub fn save_files_paths(dir: &Path, files: &[Vec<u8>]) -> Option<Vec<PathBuf>> {
     Some(out)
 }
 
+/// Whether `name` names a file inside a folder rather than a path.
+fn plain_name(name: &[u8]) -> bool {
+    !(name.is_empty() || name == b"." || name == b".." || name.contains(&b'/') || name.contains(&0))
+}
+
 fn save_files_names_ok(files: &[Vec<u8>]) -> bool {
     files.iter().all(|f| {
         let name = f.strip_suffix(b"\0").unwrap_or(f);
-        let ok = !(name.is_empty()
-            || name == b"."
-            || name == b".."
-            || name.contains(&b'/')
-            || name.contains(&0));
+        let ok = plain_name(name);
         if !ok {
             log::warn!(
                 "SaveFiles: refused the name {:?}",
@@ -181,9 +182,10 @@ pub struct FileChooser {
     pub frontend: crate::Frontend,
 }
 
-/// SaveFile's starting name: `current_file`'s file name, else
-/// `current_name`; and the real bytes when the name is not UTF-8, so a
-/// Save keeps them.
+/// SaveFile's starting name: `current_file`'s file name, else the last
+/// part of `current_name` when it is a plain name, so the app names the
+/// file and the user picks the folder; and the real bytes when the name is
+/// not UTF-8, so a Save keeps them.
 fn start_name(o: &HashMap<String, Variant<'_>>) -> (String, Option<Vec<u8>>) {
     if let Some(name) = opt_bytes(o, "current_file")
         .and_then(|b| bytes_path(&b).file_name().map(|n| n.to_os_string()))
@@ -191,7 +193,12 @@ fn start_name(o: &HashMap<String, Variant<'_>>) -> (String, Option<Vec<u8>>) {
         let raw = name.to_str().is_none().then(|| name.as_bytes().to_vec());
         return (name.to_string_lossy().into_owned(), raw);
     }
-    (opt_str(o, "current_name").unwrap_or_default(), None)
+    let name = opt_str(o, "current_name").unwrap_or_default();
+    let last = name.rsplit('/').next().unwrap_or_default();
+    match plain_name(last.as_bytes()) {
+        true => (last.to_string(), None),
+        false => (String::new(), None),
+    }
 }
 
 fn opt_str(o: &HashMap<String, Variant<'_>>, k: &str) -> Option<String> {
@@ -516,6 +523,23 @@ mod tests {
         let mut o: HashMap<String, Variant<'_>> = HashMap::new();
         o.insert("current_name".into(), Variant::from("plain.txt"));
         assert_eq!(start_name(&o), ("plain.txt".to_string(), None));
+    }
+
+    #[test]
+    fn a_suggested_name_keeps_only_its_file_name() {
+        for (asked, kept) in [
+            ("../x", "x"),
+            ("a/b", "b"),
+            ("/etc/passwd", "passwd"),
+            ("..", ""),
+            (".", ""),
+            ("a/..", ""),
+            ("dir/", ""),
+        ] {
+            let mut o: HashMap<String, Variant<'_>> = HashMap::new();
+            o.insert("current_name".into(), Variant::from(asked));
+            assert_eq!(start_name(&o).0, kept, "{asked:?} starts as {kept:?}");
+        }
     }
 
     #[test]
