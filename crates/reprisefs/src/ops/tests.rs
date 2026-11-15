@@ -1,3 +1,4 @@
+use super::fileio::write_in_place;
 use super::mounts::mount_under;
 use super::put::{FAIL_SWAP_BACK, Swap, preflight_merge, refuse_stuck_original, replace_file};
 use super::*;
@@ -1801,4 +1802,199 @@ fn copy_new_keeps_a_read_only_launcher_trusted() {
         fs::metadata(&to).unwrap().permissions().mode() & 0o7777,
         0o555
     );
+}
+
+#[test]
+fn write_document_keeps_mode_and_symlinks() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = tmp.path();
+    let real = dir.join("real.txt");
+    std::fs::write(&real, "old").expect("write");
+    std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o600)).expect("chmod");
+    write_document(&real, b"new").expect("save");
+    assert_eq!(std::fs::read_to_string(&real).expect("read"), "new");
+    assert_eq!(
+        std::fs::metadata(&real).expect("stat").permissions().mode() & 0o777,
+        0o600
+    );
+
+    let link = dir.join("link.txt");
+    std::os::unix::fs::symlink(&real, &link).expect("symlink");
+    write_document(&link, b"via link").expect("save");
+    assert!(
+        std::fs::symlink_metadata(&link)
+            .expect("lstat")
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(std::fs::read_to_string(&real).expect("read"), "via link");
+    assert!(
+        std::fs::read_dir(dir)
+            .expect("dir")
+            .flatten()
+            .all(|e| { !e.file_name().to_string_lossy().ends_with(".tmp") })
+    );
+}
+
+/// A save through a symlink renames a new file over the link's target, so the link stays and a
+/// failed write never truncates the target.
+#[test]
+fn write_document_replaces_a_symlink_target_and_writes_hard_links_in_place() {
+    use std::os::unix::fs::MetadataExt;
+    let dir = std::env::temp_dir().join(format!("reprisefs-document-links-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("store")).expect("mkdir");
+    let real = dir.join("store/doc.txt");
+    let link = dir.join("doc.txt");
+    std::fs::write(&real, "old").expect("write");
+    std::os::unix::fs::symlink("store/doc.txt", &link).expect("symlink");
+    let before = std::fs::metadata(&real).expect("stat").ino();
+
+    write_document(&link, b"new").expect("save");
+
+    let lstat = std::fs::symlink_metadata(&link).expect("lstat");
+    assert!(lstat.file_type().is_symlink(), "the link stays a symlink");
+    assert_eq!(std::fs::read_to_string(&real).expect("read"), "new");
+    assert_ne!(
+        std::fs::metadata(&real).expect("stat").ino(),
+        before,
+        "the target is a new inode renamed over the old one"
+    );
+
+    let other = dir.join("store/other.txt");
+    std::fs::hard_link(&real, &other).expect("hard link");
+    let before = std::fs::metadata(&real).expect("stat").ino();
+    write_document(&other, b"both").expect("save");
+    assert_eq!(std::fs::metadata(&real).expect("stat").ino(), before);
+    assert_eq!(std::fs::read_to_string(&real).expect("read"), "both");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn write_document_keeps_xattrs_but_drops_the_trust_marker() {
+    let dir = std::env::temp_dir().join(format!("reprisefs-document-xattr-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    let doc = dir.join("doc.txt");
+    std::fs::write(&doc, "old").expect("write");
+    let c = std::ffi::CString::new(doc.as_os_str().as_encoded_bytes()).expect("path");
+    // SAFETY: both strings are NUL-terminated and the value is readable for its length.
+    let set = unsafe {
+        libc::setxattr(
+            c.as_ptr(),
+            c"user.test".as_ptr(),
+            b"kept".as_ptr().cast(),
+            4,
+            0,
+        )
+    };
+    // A file system without `user.` xattrs has nothing to keep.
+    if set != 0 || crate::apps::set_trusted(&doc).is_err() {
+        std::fs::remove_dir_all(&dir).ok();
+        return;
+    }
+
+    write_document(&doc, b"new").expect("save");
+
+    assert_eq!(std::fs::read_to_string(&doc).expect("read"), "new");
+    let c = std::ffi::CString::new(doc.as_os_str().as_encoded_bytes()).expect("path");
+    let mut buf = [0u8; 8];
+    // SAFETY: both strings are NUL-terminated and `buf` is writable for its length.
+    let n = unsafe {
+        libc::getxattr(
+            c.as_ptr(),
+            c"user.test".as_ptr(),
+            buf.as_mut_ptr().cast(),
+            8,
+        )
+    };
+    assert_eq!(&buf[..usize::try_from(n).expect("user.test kept")], b"kept");
+    assert!(
+        !crate::apps::is_trusted(&doc),
+        "an edited file is no longer trusted"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A symlink planted at a temp-file name beside the document is never followed: the file it
+/// points at keeps its bytes.
+#[test]
+fn write_document_leaves_a_planted_temp_symlink_alone() {
+    let dir = std::env::temp_dir().join(format!("reprisefs-document-plant-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    let doc = dir.join("doc.txt");
+    let victim = dir.join("victim.txt");
+    std::fs::write(&doc, "old").expect("write");
+    std::fs::write(&victim, "keep").expect("write");
+    let planted = dir.join(format!(".doc.txt.{}.tmp", std::process::id()));
+    std::os::unix::fs::symlink(&victim, &planted).expect("symlink");
+
+    write_document(&doc, b"new").expect("save");
+
+    assert_eq!(std::fs::read_to_string(&doc).expect("read"), "new");
+    assert_eq!(std::fs::read_to_string(&victim).expect("read"), "keep");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn write_document_refuses_a_read_only_file() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = std::env::temp_dir().join(format!("reprisefs-document-ro-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    let doc = dir.join("doc.txt");
+    std::fs::write(&doc, "old").expect("write");
+    std::fs::set_permissions(&doc, std::fs::Permissions::from_mode(0o444)).expect("chmod");
+    // Root writes through any mode, so there is nothing to check.
+    if std::fs::OpenOptions::new().write(true).open(&doc).is_ok() {
+        std::fs::remove_dir_all(&dir).ok();
+        return;
+    }
+
+    let err = write_document(&doc, b"new").expect_err("save must fail");
+
+    assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
+    assert_eq!(std::fs::read_to_string(&doc).expect("read"), "old");
+    assert_eq!(std::fs::read_dir(&dir).expect("dir").count(), 1);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_hard_linked_file_keeps_its_bytes_and_inode_when_the_write_fails_midway() {
+    use std::os::unix::fs::MetadataExt;
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let (a, b) = (tmp.path().join("a.txt"), tmp.path().join("b.txt"));
+    std::fs::write(&a, "original text").expect("write");
+    std::fs::hard_link(&a, &b).expect("link");
+
+    let failed = write_in_place(&a, |mut f| {
+        use std::io::Write;
+        f.write_all(b"half")?;
+        Err(std::io::Error::other("disk full"))
+    });
+    assert_eq!(
+        failed.expect_err("the write failed").to_string(),
+        "disk full"
+    );
+    for p in [&a, &b] {
+        assert_eq!(std::fs::read_to_string(p).expect("read"), "original text");
+    }
+    let (ma, mb) = (
+        std::fs::metadata(&a).unwrap(),
+        std::fs::metadata(&b).unwrap(),
+    );
+    assert_eq!(ma.ino(), mb.ino());
+    assert_eq!(ma.nlink(), 2);
+    assert_eq!(
+        std::fs::read_dir(tmp.path()).unwrap().count(),
+        2,
+        "the backup is gone"
+    );
+
+    write_document(&a, b"new\ntext").expect("save");
+    assert_eq!(std::fs::read_to_string(&b).expect("read"), "new\ntext");
+    assert_eq!(std::fs::metadata(&b).unwrap().ino(), ma.ino());
+    assert_eq!(std::fs::read_dir(tmp.path()).unwrap().count(), 2);
 }

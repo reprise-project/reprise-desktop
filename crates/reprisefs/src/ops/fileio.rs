@@ -147,6 +147,119 @@ fn replace(path: &Path, bytes: &[u8], private: bool) -> io::Result<()> {
     std::fs::File::open(dir)?.sync_all()
 }
 
+/// Write `bytes` over a file a user edits so a crash or full disk never leaves it truncated:
+/// temp file, sync, rename, sync the directory. Keeps mode, xattrs and (where permitted) owner
+/// and group. A symlink's target is replaced; hard-linked files and dangling symlinks are written
+/// in place ([`write_in_place`]), since a rename would cut the link.
+pub fn write_document(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::MetadataExt;
+    let resolved;
+    let mut path = path;
+    let mut meta = std::fs::symlink_metadata(path).ok();
+    if meta.as_ref().is_some_and(|m| m.file_type().is_symlink())
+        && let Ok(real) = std::fs::canonicalize(path)
+    {
+        resolved = real;
+        path = &resolved;
+        meta = std::fs::symlink_metadata(path).ok();
+    }
+    if meta
+        .as_ref()
+        .is_some_and(|m| m.file_type().is_symlink() || m.nlink() > 1)
+    {
+        return write_in_place(path, |mut f| f.write_all(bytes));
+    }
+    if meta.as_ref().is_some_and(|m| m.is_file()) {
+        std::fs::OpenOptions::new().write(true).open(path)?;
+    }
+    let (f, tmp) = create_temp_beside(path, meta.as_ref().map(|m| m.permissions()))?;
+    let written = (|| {
+        if let Some(m) = &meta {
+            // Another user's file keeps its owner only under root; its group
+            // stays when the process is a member of it.
+            if std::os::unix::fs::fchown(&f, Some(m.uid()), Some(m.gid())).is_err() {
+                let _ = std::os::unix::fs::fchown(&f, None, Some(m.gid()));
+            }
+        }
+        if meta.is_some() {
+            copy_xattrs(path, &f);
+        }
+        (&f).write_all(bytes)?;
+        f.sync_all()?;
+        std::fs::rename(&tmp, path)
+    })();
+    if written.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+        return written;
+    }
+    // The directory sync makes the rename durable; a file system that refuses it does not fail the save.
+    if let Some(dir) = tmp.parent()
+        && let Ok(d) = std::fs::File::open(dir)
+    {
+        let _ = d.sync_all();
+    }
+    Ok(())
+}
+
+/// Rewrites `path` in its own inode. A synced copy of the old bytes waits beside it until the new
+/// ones are synced, and a failed write puts them back.
+pub(crate) fn write_in_place(
+    path: &Path,
+    fill: impl FnOnce(&std::fs::File) -> io::Result<()>,
+) -> io::Result<()> {
+    let Some(backup) = (match std::fs::symlink_metadata(path) {
+        Ok(m) if m.is_file() => Some(backup_beside(path, m.permissions())?),
+        _ => None,
+    }) else {
+        let f = std::fs::File::create(path)?;
+        fill(&f)?;
+        return f.sync_all();
+    };
+    let f = match std::fs::File::create(path) {
+        Ok(f) => f,
+        Err(e) => {
+            let _ = std::fs::remove_file(&backup);
+            return Err(e);
+        }
+    };
+    if let Err(e) = fill(&f).and_then(|()| f.sync_all()) {
+        match restore(&f, &backup) {
+            Ok(()) => {
+                let _ = std::fs::remove_file(&backup);
+            }
+            Err(r) => log::error!(
+                "restore {} from {}: {r}; the old text stays there",
+                path.display(),
+                backup.display()
+            ),
+        }
+        return Err(e);
+    }
+    let _ = std::fs::remove_file(&backup);
+    Ok(())
+}
+
+fn backup_beside(path: &Path, mode: std::fs::Permissions) -> io::Result<PathBuf> {
+    let (mut copy, at) = create_temp_beside(path, Some(mode))?;
+    let copied = std::fs::File::open(path)
+        .and_then(|mut old| std::io::copy(&mut old, &mut copy))
+        .and_then(|_| copy.sync_all());
+    if let Err(e) = copied {
+        let _ = std::fs::remove_file(&at);
+        return Err(e);
+    }
+    Ok(at)
+}
+
+fn restore(mut f: &std::fs::File, backup: &Path) -> io::Result<()> {
+    use std::io::Seek;
+    f.set_len(0)?;
+    f.rewind()?;
+    std::io::copy(&mut std::fs::File::open(backup)?, &mut f)?;
+    f.sync_all()
+}
+
 /// Give the fresh copy `to` the xattrs, mode and times of `from`. Xattrs go first: a `user.*`
 /// one needs the write bit the mode may drop. Only a file's mode is not best effort (vfat refuses some).
 pub(crate) fn copy_meta(

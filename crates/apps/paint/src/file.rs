@@ -3,7 +3,6 @@
 
 use crate::bitmap::Bitmap;
 use image::ImageEncoder;
-use std::io::Write;
 use std::path::Path;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -68,26 +67,11 @@ pub fn encode(img: &Bitmap, kind: Kind, quality: u8) -> Result<Vec<u8>, String> 
     Ok(out)
 }
 
-/// Writes `img` to `path` through a temporary file beside it, so a failed save leaves the old
-/// file whole.
+/// Writes `img` to `path` so a failed save leaves the old file whole
+/// ([`reprisefs::ops::write_document`]).
 pub fn save(img: &Bitmap, path: &Path, kind: Kind, quality: u8) -> Result<(), String> {
     let bytes = encode(img, kind, quality)?;
-    let dir = path
-        .parent()
-        .filter(|d| !d.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    let mut tmp = tempfile::Builder::new()
-        .permissions(std::os::unix::fs::PermissionsExt::from_mode(0o666))
-        .tempfile_in(dir)
-        .map_err(|e| e.to_string())?;
-    tmp.write_all(&bytes)
-        .and_then(|()| tmp.as_file().sync_all())
-        .map_err(|e| e.to_string())?;
-    if let Ok(meta) = std::fs::metadata(path) {
-        let _ = std::fs::set_permissions(tmp.path(), meta.permissions());
-    }
-    tmp.persist(path).map_err(|e| e.error.to_string())?;
-    Ok(())
+    reprisefs::ops::write_document(path, &bytes).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
@@ -142,6 +126,20 @@ mod tests {
             1,
             "no temporary file left"
         );
+    }
+
+    #[test]
+    fn a_save_through_a_symlink_writes_its_target() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("shared")).unwrap();
+        let real = dir.path().join("shared/logo.png");
+        let link = dir.path().join("logo.png");
+        std::fs::write(&real, b"old").unwrap();
+        std::os::unix::fs::symlink("shared/logo.png", &link).unwrap();
+        save(&sample(), &link, Kind::Png, DEFAULT_QUALITY).unwrap();
+        let lstat = std::fs::symlink_metadata(&link).unwrap();
+        assert!(lstat.file_type().is_symlink(), "the link stays a link");
+        assert_eq!(load(&real).unwrap(), sample());
     }
 
     #[test]
