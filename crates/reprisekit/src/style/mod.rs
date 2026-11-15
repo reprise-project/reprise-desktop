@@ -32,6 +32,9 @@ use crate::theme::{Color, ColorScheme, Metrics};
 #[derive(Clone)]
 pub struct Style {
     pub name: &'static str,
+    /// Tells apart styles that share a name but were built from different settings; 0 when the
+    /// name alone says which style it is. [`crate::paint::Look`] compares both.
+    pub key: u64,
     pub colors: ColorScheme,
     pub metrics: Metrics,
     pub caption_text: TextSpec,
@@ -166,6 +169,7 @@ impl Style {
     ) -> Style {
         Style {
             name,
+            key: 0,
             colors,
             metrics,
             caption_text,
@@ -215,6 +219,11 @@ impl Style {
             button_side: None,
             sided: Rescaled::default(),
         }
+    }
+
+    pub fn with_key(mut self, key: u64) -> Style {
+        self.key = key;
+        self
     }
 
     pub fn with_rescale(mut self, build: impl Fn(i32) -> Style + Send + Sync + 'static) -> Style {

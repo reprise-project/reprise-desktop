@@ -19,7 +19,7 @@ use crate::controls::scrollbar::ThumbDrag;
 use crate::controls::timefield::{self, TimeField};
 use crate::controls::treeview::{self, TreeView};
 use crate::controls::updown::{self, UpDown};
-use crate::look::{Look, Paint};
+use crate::look::Paint;
 use crate::pointer::Pointer;
 use crate::raster::{Canvas, Rect};
 use crate::text::{Align, DialogFont};
@@ -296,7 +296,7 @@ struct Rendering {
 impl Rendered {
     /// What `make` renders for item `item` from `from` at scale `s` and
     /// logical `size`, rendered again only when that control, scale or
-    /// size differs from the last draw's ([`same_render`]).
+    /// size differs from the last draw's.
     fn get(
         &self,
         item: usize,
@@ -308,9 +308,7 @@ impl Rendered {
         let mut entries = self.entries.borrow_mut();
         let k = match entries.iter().position(|e| e.item == item) {
             Some(k)
-                if entries[k].scale == s
-                    && entries[k].size == size
-                    && same_render(&entries[k].from, from) =>
+                if entries[k].scale == s && entries[k].size == size && entries[k].from == *from =>
             {
                 k
             }
@@ -339,22 +337,6 @@ impl Rendered {
         drop(entries);
         Ref::map(self.entries.borrow(), |e| e[k].canvases.as_slice())
     }
-}
-
-/// Whether `a` renders what `b` does: equal controls, and for a sample
-/// the same style art, which `Look`'s equality (by name) cannot tell
-/// apart: a Glass sample in another colour or intensity has the same name.
-fn same_render(a: &Control, b: &Control) -> bool {
-    a == b
-        && match (a, b) {
-            (Control::Sample { theme: x, .. }, Control::Sample { theme: y, .. }) => {
-                match (&x.look, &y.look) {
-                    (Look::Styled(p), Look::Styled(q)) => std::sync::Arc::ptr_eq(p, q),
-                    _ => true,
-                }
-            }
-            _ => true,
-        }
 }
 
 impl PartialEq for Rendered {

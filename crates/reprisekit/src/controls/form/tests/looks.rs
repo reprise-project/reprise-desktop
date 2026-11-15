@@ -291,8 +291,7 @@ fn a_blue_radio_label_sits_on_the_check_box_labels_row() {
 }
 
 /// Two Glass samples whose looks share a name but not their art (the
-/// glass in another colour) compare equal as controls, yet the second
-/// renders afresh: a sample is kept only while its style is the same.
+/// glass in another colour) are different controls, and the second renders afresh.
 #[test]
 fn a_sample_in_other_glass_art_renders_afresh() {
     use crate::glass;
@@ -311,7 +310,7 @@ fn a_sample_in_other_glass_art_renders_afresh() {
         theme,
         icon: None,
     };
-    assert_eq!(sample(sky.clone()), sample(ruby.clone()), "one look name");
+    assert_ne!(sample(sky.clone()), sample(ruby.clone()));
     let mut f = Form::new(vec![Item::new(
         "sample",
         Rect::new(0, 0, 350, 188),

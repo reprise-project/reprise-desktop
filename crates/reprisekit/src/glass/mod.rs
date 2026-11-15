@@ -297,7 +297,10 @@ fn cached(s: &Settings, small_bar: bool) -> Arc<Style> {
 }
 
 fn made(s: &Settings, small_bar: bool, scale: i32) -> Style {
-    let full = build_at(s, scale);
+    use std::hash::{Hash, Hasher};
+    let mut key = std::hash::DefaultHasher::new();
+    (s, small_bar).hash(&mut key);
+    let full = build_at(s, scale).with_key(key.finish());
     let full = if s.frame == Frame::Square {
         square::frame(full, scale)
     } else {

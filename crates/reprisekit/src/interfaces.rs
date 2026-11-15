@@ -601,4 +601,33 @@ mod tests {
         );
         assert_eq!(fb >> 24, 0xff, "opaque glass is opaque: {fb:08x}");
     }
+
+    #[test]
+    fn glass_themes_built_from_different_art_settings_differ() {
+        let theme = |g: &glass::Settings| theme_with(Interface::Glass, blue::Variant::Blue, g);
+        let sky = glass::Settings {
+            color: glass::swatch("sky").unwrap(),
+            ..glass::Settings::default()
+        };
+        let ruby = glass::Settings {
+            color: glass::swatch("ruby").unwrap(),
+            ..sky
+        };
+        let smoked = glass::Settings {
+            material: glass::Material::Smoked,
+            ..sky
+        };
+        assert_ne!(theme(&sky), theme(&ruby), "the colour tells them apart");
+        assert_ne!(theme(&sky), theme(&smoked), "the material tells them apart");
+        assert_eq!(
+            theme(&sky),
+            theme(&glass::Settings { blur: 1, ..sky }),
+            "the blur draws no art of the style's"
+        );
+        assert_eq!(theme(&sky).scaled(2), theme(&sky).scaled(2));
+        assert_eq!(
+            theme(&sky).with_text_size(150),
+            theme(&sky).with_text_size(150)
+        );
+    }
 }
