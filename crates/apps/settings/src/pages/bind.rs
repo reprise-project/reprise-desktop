@@ -601,9 +601,19 @@ fn unbound() -> [(&'static str, Nudge); 11] {
 }
 
 /// The config keys `form`'s controls write, in the field table's order: each control's field
-/// nudged off the defaults and the keys that moved read back from the field table.
+/// nudged off the defaults and the keys that moved read back from the field table. Worked out
+/// once per set of control ids.
 pub fn keys_of(form: &Form) -> Vec<Key> {
-    let base = Settings::default();
+    type Memo = std::collections::HashMap<Vec<&'static str>, Vec<Key>>;
+    thread_local! {
+        static MEMO: std::cell::RefCell<Memo> = Default::default();
+    }
+    let ids: Vec<&'static str> = form.items.iter().map(|i| i.id).collect();
+    MEMO.with_borrow_mut(|memo| memo.entry(ids).or_insert_with(|| nudged_keys(form)).clone())
+}
+
+fn nudged_keys(form: &Form) -> Vec<Key> {
+    let base = crate::model::defaults("");
     let mut moved = base.clone();
     for b in binds().iter().filter(|b| form.item(b.id()).is_some()) {
         b.nudge(&mut moved);
@@ -613,7 +623,7 @@ pub fn keys_of(form: &Form) -> Vec<Key> {
             nudge(&mut moved);
         }
     }
-    crate::model::keys_apart(&base, &moved)
+    crate::model::keys_apart(base, &moved)
 }
 
 /// Push `s` into every bound control and the Layouts list. Rebuilds the edits,
