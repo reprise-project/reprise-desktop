@@ -20,6 +20,7 @@ struct PointerKeys {
     natural_scroll: Option<bool>,
     scroll_speed: Option<f64>,
     middle_emulation: Option<bool>,
+    left_handed: Option<bool>,
 }
 
 fn apply_pointer(cfg: &mut PointerConfig, section: &str, k: PointerKeys) -> Result<(), String> {
@@ -43,6 +44,9 @@ fn apply_pointer(cfg: &mut PointerConfig, section: &str, k: PointerKeys) -> Resu
     }
     if let Some(v) = k.middle_emulation {
         cfg.middle_emulation = v;
+    }
+    if let Some(v) = k.left_handed {
+        cfg.left_handed = v;
     }
     Ok(())
 }
@@ -1282,6 +1286,7 @@ impl Config {
                     natural_scroll: m.natural_scroll,
                     scroll_speed: m.scroll_speed,
                     middle_emulation: m.middle_emulation,
+                    left_handed: m.left_handed,
                 },
             )?;
         }
@@ -1295,6 +1300,7 @@ impl Config {
                     natural_scroll: t.natural_scroll,
                     scroll_speed: t.scroll_speed,
                     middle_emulation: t.middle_emulation,
+                    left_handed: t.left_handed,
                 },
             )?;
             if let Some(v) = t.enabled {

@@ -28,6 +28,7 @@ repeat-interval=uint32 30
 
 [org/gnome/desktop/peripherals/mouse]
 accel-profile='flat'
+left-handed=true
 speed=-0.34
 
 [org/gnome/desktop/peripherals/touchpad]
@@ -158,6 +159,15 @@ fn a_gnome_dump_becomes_reprise_changes() {
     );
     assert_eq!(cells(row(&p, "Mouse speed")), ("0.0", "-0.3", false));
     assert_eq!(cells(row(&p, "Mouse acceleration")), ("On", "Off", false));
+    assert_eq!(
+        cells(row(&p, "Mouse left-handed buttons")),
+        ("Off", "On", false)
+    );
+    assert_eq!(
+        cells(row(&p, "Touchpad left-handed buttons")),
+        ("Off", "On", false),
+        "the pad's default follows the mouse"
+    );
     assert_eq!(
         cells(row(&p, "Touchpad natural scrolling")),
         ("Off", "On", false)
@@ -358,7 +368,7 @@ fn plasma_config(dir: &Path) {
         "kcminputrc",
         "[Keyboard]\nNumLock=0\nRepeatDelay=250\nRepeatRate=40\n\n\
          [Libinput][1133][16511][Logitech G502]\nPointerAcceleration=0.400\n\
-         PointerAccelerationProfile=1\n\n\
+         PointerAccelerationProfile=1\nLeftHanded=true\n\n\
          [Libinput][1739][52619][SYNA8004:00 06CB:CD8B Touchpad]\nClickMethod=2\n\
          DisableWhileTyping=false\nNaturalScroll=true\nTapToClick=true\n\n\
          [Mouse]\ncursorSize=36\ncursorTheme=Breeze_Light\n",
@@ -415,6 +425,16 @@ fn a_plasma_account_becomes_reprise_changes() {
     );
     assert_eq!(cells(row(&p, "Mouse speed")), ("0.0", "0.4", false));
     assert_eq!(cells(row(&p, "Mouse acceleration")), ("On", "Off", false));
+    assert_eq!(
+        cells(row(&p, "Mouse left-handed buttons")),
+        ("Off", "On", false)
+    );
+    assert!(
+        p.lines
+            .iter()
+            .all(|l| l.what != "Touchpad left-handed buttons"),
+        "the pad has no LeftHanded of its own"
+    );
     assert_eq!(
         cells(row(&p, "Touchpad natural scrolling")),
         ("Off", "On", false)

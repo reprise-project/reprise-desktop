@@ -35,6 +35,8 @@ pub struct PointerConfig {
     pub scroll_speed: f64,
     /// Left and right pressed together are a middle click.
     pub middle_emulation: bool,
+    /// The primary and secondary buttons swap, through libinput.
+    pub left_handed: bool,
 }
 
 impl PointerConfig {
@@ -49,6 +51,7 @@ impl Default for PointerConfig {
             natural_scroll: false,
             scroll_speed: 1.0,
             middle_emulation: false,
+            left_handed: false,
         }
     }
 }

@@ -255,6 +255,7 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
             ("mouse_speed", "Pointer speed"),
             ("mouse_accel", "Enhance pointer precision"),
             ("mouse_middle", "Press both buttons for a middle click"),
+            ("mouse_left_handed", "Switch primary and secondary buttons"),
             ("mouse_scroll_speed", "Scroll speed"),
             ("mouse_natural", "Reverse scrolling direction"),
         ],
@@ -271,6 +272,10 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
             (
                 "two_finger_tap_right_click",
                 "Two-finger tap is a right click (middle when off)",
+            ),
+            (
+                "touchpad_left_handed",
+                "Switch primary and secondary buttons",
             ),
             ("click_method", "Click method:"),
             (

@@ -181,7 +181,7 @@ fn scroll_speed(a: Area, y: i32, ids: [&'static str; 5]) -> Vec<Item> {
 }
 
 pub fn mouse(a: Area) -> Form {
-    let mut items = vec![group(a, "mouse_group", 44, 178, "Mouse")];
+    let mut items = vec![group(a, "mouse_group", 44, 200, "Mouse")];
     items.push(Item::label_at(
         "double_click_label",
         GX,
@@ -222,10 +222,16 @@ pub fn mouse(a: Area) -> Form {
         191,
         "Press both buttons for a &middle click",
     ));
-    items.push(group(a, "wheel_group", 232, 106, "Wheel"));
+    items.push(Item::check(
+        "mouse_left_handed",
+        GX,
+        213,
+        "S&witch primary and secondary buttons",
+    ));
+    items.push(group(a, "wheel_group", 254, 106, "Wheel"));
     items.extend(scroll_speed(
         a,
-        256,
+        278,
         [
             "mouse_scroll_label",
             "mouse_scroll_slow",
@@ -237,14 +243,14 @@ pub fn mouse(a: Area) -> Form {
     items.push(Item::check(
         "mouse_natural",
         GX,
-        308,
+        330,
         "Re&verse scrolling direction",
     ));
     Form::new(items)
 }
 
 /// The Touchpad page's controls that grey while "Use the touchpad" is unticked.
-pub(super) const TOUCHPAD_CONTROLS: [&str; 18] = [
+pub(super) const TOUCHPAD_CONTROLS: [&str; 19] = [
     "disable_with_mouse",
     "touchpad_speed_label",
     "touchpad_slow",
@@ -254,6 +260,7 @@ pub(super) const TOUCHPAD_CONTROLS: [&str; 18] = [
     "disable_while_typing",
     "tap_to_click",
     "two_finger_tap_right_click",
+    "touchpad_left_handed",
     "click_method_label",
     "click_method",
     "two_finger_scroll",
@@ -267,7 +274,7 @@ pub(super) const TOUCHPAD_CONTROLS: [&str; 18] = [
 
 pub fn touchpad(a: Area) -> Form {
     let mut items = vec![
-        group(a, "touchpad_group", 44, 166, "Touchpad"),
+        group(a, "touchpad_group", 44, 144, "Touchpad"),
         Item::check("touchpad_enabled", GX, 66, "&Use the touchpad"),
         Item::check(
             "disable_with_mouse",
@@ -290,18 +297,24 @@ pub fn touchpad(a: Area) -> Form {
     ));
     items.push(Item::check(
         "disable_while_typing",
-        GX,
-        185,
+        GX + a.gw() / 2,
+        163,
         "&Disable while typing",
     ));
 
-    items.push(group(a, "clicking_group", 216, 99, "Clicking"));
-    items.push(Item::check("tap_to_click", GX, 238, "&Tap to click"));
+    items.push(group(a, "clicking_group", 194, 121, "Clicking"));
+    items.push(Item::check("tap_to_click", GX, 216, "&Tap to click"));
     items.push(Item::check(
         "two_finger_tap_right_click",
         GX,
-        260,
+        238,
         "Two-finger tap is a &right click (middle when off)",
+    ));
+    items.push(Item::check(
+        "touchpad_left_handed",
+        GX,
+        260,
+        "S&witch primary and secondary buttons",
     ));
     items.push(Item::label_at(
         "click_method_label",

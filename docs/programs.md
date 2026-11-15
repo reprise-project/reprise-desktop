@@ -406,11 +406,12 @@ matched control focused.
     repeat, every shortcut, programs' global shortcuts included, whether
     Caps Lock and Num Lock show on screen, and the sheet holding Super shows.
   - **Mouse:** pointer speed, Enhance pointer precision, double-click
-    speed, middle click with both buttons, scroll speed and direction.
+    speed, middle click with both buttons, switching the primary and
+    secondary buttons, scroll speed and direction.
   - **Touchpad:** on or off, off while a mouse is plugged in, speed,
     Enhance pointer precision, disable-while-typing, tapping, two-finger tap
-    as a right click, the click method, two-finger scrolling, scroll speed
-    and direction.
+    as a right click, switching the primary and secondary buttons, the click
+    method, two-finger scrolling, scroll speed and direction.
   - **Cursor:** cursor theme and size.
   - **Tablet:** what each pad button, pad key, ring, strip and dial does,
     and how far a ring or strip turns per step.
@@ -916,7 +917,7 @@ picks which one to import from, the one used last first.
 | Dark style | Glass `mode = "dark"`, Classic's One Dark scheme; greyed under Blue |
 | Keyboard layouts, variants, model, options, layout per window | `[keyboard]` |
 | Key repeat rate and delay | `[keyboard] repeat_rate`, `repeat_delay` |
-| Mouse and touchpad speed, acceleration, natural scrolling | `[mouse]`, `[touchpad]` |
+| Mouse and touchpad speed, acceleration, natural scrolling, left-handed buttons | `[mouse]`, `[touchpad]` |
 | Tap to click, two-finger scrolling and tap, off while typing, click method, off with a mouse | `[touchpad]` |
 | Text scaling (GNOME), forced font DPI (Plasma) | `[accessibility] text_size`, the nearest step |
 | Night light on, warmth, schedule | `[night_light]` |
@@ -926,7 +927,7 @@ picks which one to import from, the one used last first.
 
 What has no Reprise setting is listed greyed at the end with why: the 12 or
 24 hour clock (Reprise's follows the formats locale), input methods, the GTK
-and icon themes and fonts (Reprise's look sets them), left-handed buttons,
+and icon themes and fonts (Reprise's look sets them),
 key repeat turned off and title bar buttons. A program that isn't installed
 here, and a picture that is missing or in another format, are greyed too.
 Start > Programs > Accessories, the Backup page in Settings and Welcome's last

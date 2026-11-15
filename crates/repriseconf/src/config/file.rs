@@ -79,6 +79,7 @@ pub struct FileMouse {
     pub natural_scroll: Option<bool>,
     pub scroll_speed: Option<f64>,
     pub middle_emulation: Option<bool>,
+    pub left_handed: Option<bool>,
 }
 
 #[derive(Deserialize, Default)]
@@ -89,6 +90,7 @@ pub struct FileTouchpad {
     pub natural_scroll: Option<bool>,
     pub scroll_speed: Option<f64>,
     pub middle_emulation: Option<bool>,
+    pub left_handed: Option<bool>,
     pub enabled: Option<bool>,
     pub disable_with_mouse: Option<bool>,
     pub click_method: Option<String>,

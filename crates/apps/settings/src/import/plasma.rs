@@ -339,8 +339,8 @@ pub(super) fn settings(config: &Path, home: &str) -> Vec<Setting> {
         if let Some(b) = flag(get("NaturalScroll")) {
             out.push(Setting::Natural(dev, b));
         }
-        if flag(get("LeftHanded")) == Some(true) {
-            out.push(other("Left-handed buttons", "On", super::NO_SETTING));
+        if let Some(b) = flag(get("LeftHanded")) {
+            out.push(Setting::LeftHanded(dev, b));
         }
         if dev == Device::Mouse {
             continue;
