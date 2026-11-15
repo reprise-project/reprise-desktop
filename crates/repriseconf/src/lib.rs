@@ -430,13 +430,7 @@ fn with_bt_key(text: &str, name: &'static str, value: Option<Value>) -> Result<S
         Some(v) => set(&mut doc, &k, v).map_err(|e| e.to_string())?,
         None => {
             remove(&mut doc, &k);
-            if doc
-                .get(k.table)
-                .and_then(Item::as_table_like)
-                .is_some_and(|t| t.is_empty())
-            {
-                doc.remove(k.table);
-            }
+            remove_table_if_empty(&mut doc, k.table);
         }
     }
     Ok(doc.to_string())
@@ -477,13 +471,7 @@ fn with_auto_time_zone(text: &str, on: bool) -> Result<String, String> {
         set(&mut doc, &k, Value::from(true)).map_err(|e| e.to_string())?;
     } else {
         remove(&mut doc, &k);
-        if doc
-            .get(k.table)
-            .and_then(Item::as_table_like)
-            .is_some_and(|t| t.is_empty())
-        {
-            doc.remove(k.table);
-        }
+        remove_table_if_empty(&mut doc, k.table);
     }
     Ok(doc.to_string())
 }
@@ -722,6 +710,22 @@ fn prepend_entry_prefix(t: &mut dyn TableLike, name: &str, prefix: &str) {
 }
 
 fn carry_past_table(doc: &mut DocumentMut, table: &str, prefix: &str) {
+    match after_table(doc, table) {
+        Some((parent, next)) => {
+            if let Some(pt) = table_of_mut(doc, &parent) {
+                prepend_entry_prefix(pt, &next, prefix);
+            }
+        }
+        None => {
+            let old = doc.trailing().as_str().unwrap_or_default().to_string();
+            doc.set_trailing(format!("{prefix}{old}"));
+        }
+    }
+}
+
+/// The entry whose prefix holds the text below `table`'s last entry, as `(parent, name)`; None
+/// for the document's trailing text.
+fn after_table(doc: &DocumentMut, table: &str) -> Option<(String, String)> {
     let (parent, name) = split_last(table).unwrap_or(("", ""));
     let names: Vec<String> = table_of(doc, parent)
         .map(|t| t.iter().map(|(n, _)| n.to_string()).collect())
@@ -742,17 +746,35 @@ fn carry_past_table(doc: &mut DocumentMut, table: &str, prefix: &str) {
             .and_then(|i| names.get(i + 1))
             .cloned()
     };
-    let Some(next) = next else {
-        if name.is_empty() || parent.is_empty() {
-            let old = doc.trailing().as_str().unwrap_or_default().to_string();
-            doc.set_trailing(format!("{prefix}{old}"));
-        } else {
-            carry_past_table(doc, parent, prefix);
-        }
+    match next {
+        Some(next) => Some((parent.to_string(), next)),
+        None if name.is_empty() || parent.is_empty() => None,
+        None => after_table(doc, parent),
+    }
+}
+
+/// Remove the table at `path` (dotted for a nested one) when it holds no entry and no comment
+/// sits on its header line or under it. A comment above it moves on, as [`remove`] moves it.
+pub fn remove_table_if_empty(doc: &mut DocumentMut, path: &'static str) {
+    let Some((parent, name)) = split_last(path) else {
         return;
     };
-    if let Some(pt) = table_of_mut(doc, parent) {
-        prepend_entry_prefix(pt, &next, prefix);
+    let Some(table) = table_of(doc, parent).and_then(|t| t.get(name)) else {
+        return;
+    };
+    if !table.as_table_like().is_some_and(|t| t.is_empty()) {
+        return;
+    }
+    let on_header = (table.as_table())
+        .and_then(|t| t.decor().suffix())
+        .and_then(|r| r.as_str())
+        .is_some_and(|s| s.contains('#'));
+    let below = match after_table(doc, path) {
+        Some((p, next)) => table_of(doc, &p).map(|t| entry_prefix(t, &next)),
+        None => doc.trailing().as_str().map(str::to_string),
+    };
+    if !on_header && !below.is_some_and(|text| text.contains('#')) {
+        remove(doc, &key(parent, name));
     }
 }
 
@@ -1075,9 +1097,12 @@ mod tests {
                 (pct != BT_BATTERY_WARNING).then(|| Value::from(i64::from(pct))),
             )
         };
-        let set = warn("# mine\n", 25).unwrap();
+        let set = warn("# mine\n[taskbar]\nheight = 30\n", 25).unwrap();
         assert_eq!(bt_battery_warning_in(&set), 25);
-        assert!(set.contains("# mine\n"), "the rest of the file stays");
+        assert!(
+            set.contains("# mine\n[taskbar]\nheight = 30\n"),
+            "the rest of the file stays"
+        );
         let back = warn(&set, 15).unwrap();
         assert!(!back.contains("bluetooth"), "{back}");
         assert!(warn("[bluetooth\n", 25).is_err());
@@ -1105,9 +1130,12 @@ mod tests {
             auto_time_zone_in("[time_zone]\nautomatic = true\n[privacy]\nlocation = false\n"),
             (true, false)
         );
-        let set = with_auto_time_zone("# mine\n", true).unwrap();
+        let set = with_auto_time_zone("# mine\n[taskbar]\nheight = 30\n", true).unwrap();
         assert_eq!(auto_time_zone_in(&set), (true, true));
-        assert!(set.contains("# mine\n"), "the rest of the file stays");
+        assert!(
+            set.contains("# mine\n[taskbar]\nheight = 30\n"),
+            "the rest of the file stays"
+        );
         let back = with_auto_time_zone(&set, false).unwrap();
         assert!(!back.contains("time_zone"), "{back}");
     }
@@ -1389,6 +1417,32 @@ name = \"Virtual-1\"
             Some(1)
         );
         assert!(d.to_string().contains("# a note"), "{}", d);
+    }
+
+    #[test]
+    fn an_empty_table_goes_only_when_no_comment_is_on_or_under_its_header() {
+        let emptied = |text: &str, path: &'static str| {
+            let mut d = doc(text);
+            remove_table_if_empty(&mut d, path);
+            d.to_string()
+        };
+        assert_eq!(emptied("[a]\n\n[b]\nx = 1\n", "a"), "\n[b]\nx = 1\n");
+        assert_eq!(emptied("[a]\nx = 1\n[b]\n", "b"), "[a]\nx = 1\n");
+        assert_eq!(emptied("[a]\ny = 1\n[a.b]\n", "a.b"), "[a]\ny = 1\n");
+        for kept in [
+            "[a] # about a\n\n[b]\nx = 1\n",
+            "[a]\n# x = 2\n\n[b]\nx = 1\n",
+            "[b]\nx = 1\n[a]\n# x = 2\n",
+        ] {
+            assert_eq!(emptied(kept, "a"), kept);
+        }
+        assert_eq!(
+            emptied("# about a\n[a]\n\n[b]\nx = 1\n", "a"),
+            "# about a\n\n[b]\nx = 1\n",
+            "a comment above the header moves on"
+        );
+        let full = "[a]\nx = 1\n";
+        assert_eq!(emptied(full, "a"), full, "a table with a key stays");
     }
 
     #[test]
