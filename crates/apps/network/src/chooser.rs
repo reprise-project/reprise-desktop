@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use repriseapp::{BTN_LEFT, Ctx, KeyInput};
 use reprisekit::access::{self, ROOT, Tree, accesskit};
@@ -166,6 +166,8 @@ pub struct Chooser {
     pub rows: Vec<NetRow>,
     pub list: TileList,
     pub connecting: Option<nm::Ssid>,
+    /// Saved networks whose last join failed on the key: Connect asks for a new one.
+    pub refused: HashSet<nm::Ssid>,
     pub button: Form,
     /// The text units the window is laid out at: its 100% layout grows by them.
     pub units: TextUnits,
@@ -182,6 +184,7 @@ impl Chooser {
             rows: Vec::new(),
             list: TileList::new(ROW_H),
             connecting: None,
+            refused: HashSet::new(),
             button: Form::new(vec![Item::new(
                 "connect",
                 Rect::new(BTN_X, BTN_Y, BTN_W, BUTTON_H),
@@ -379,7 +382,8 @@ impl Chooser {
             ap: row.ap.clone(),
             ssid: row.ssid.clone(),
             security: row.security,
-            needs_key: row.security != nm::Security::Open && !row.known,
+            needs_key: row.security != nm::Security::Open
+                && (!row.known || self.refused.contains(&row.ssid)),
         }
     }
 
@@ -803,6 +807,26 @@ mod tests {
             caption(nm::Security::Wep),
             "This network requires configuration"
         );
+    }
+
+    #[test]
+    fn a_saved_network_whose_key_was_refused_asks_for_a_new_one() {
+        let mut d = device();
+        let w = d.wifi.as_mut().unwrap();
+        w.active_ssid = None;
+        w.aps.iter_mut().for_each(|a| a.active = false);
+        d.state = nm::State::Disconnected;
+        let mut c = Chooser::new(&d, TextUnits::ONE);
+        let home = c.rows.iter().position(|r| r.ssid == "Home".into());
+        c.list.select_row(home);
+        let connect = |c: &mut Chooser| match c.activate() {
+            Outcome::Connect { needs_key, .. } => needs_key,
+            other => panic!("Connect gave {other:?}"),
+        };
+        assert!(!connect(&mut c), "a saved key is used as it is");
+        let ssid = c.selected().unwrap().ssid.clone();
+        c.refused.insert(ssid);
+        assert!(connect(&mut c), "a refused key is asked for");
     }
 
     #[test]

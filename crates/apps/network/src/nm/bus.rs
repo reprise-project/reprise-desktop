@@ -8,6 +8,7 @@ use zbus::Connection;
 
 mod act;
 mod call;
+mod follow;
 mod snapshot;
 mod wifi;
 use act::command;
@@ -295,7 +296,7 @@ fn commands(
             let wake = if cmd == Cmd::Quit {
                 Wake::Quit
             } else {
-                ran(&cmd, command(&bus, &cmd).await)
+                ran(&cmd, command(&bus, &cmd, &wakes).await)
             };
             if wakes.send(wake).await.is_err() || cmd == Cmd::Quit {
                 return;

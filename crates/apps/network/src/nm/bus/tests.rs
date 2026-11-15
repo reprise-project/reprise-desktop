@@ -1,5 +1,6 @@
-use super::act::{act, hotspot_settings, import_error};
+use super::act::{hotspot_settings, import_error, join_wifi};
 use super::call::{auth_failure, clean};
+use super::follow::{Joining, Seen, Settle, Why, not_joined};
 use super::wifi::{agent_held, key_mgmt_for, profile_owner, rekey_mgmt, rekeyed, wifi_settings};
 use super::*;
 use zbus::Variant;
@@ -83,6 +84,74 @@ fn common_network_manager_errors_read_as_sentences() {
         clean("org.freedesktop.DBus.Error.AccessDenied: Rejected send message"),
         Failure::Text(not_allowed.into())
     );
+}
+
+/// Folds `seen` in order and says how the activation settled, None if it is still running.
+fn settled(seen: &[Seen]) -> Option<Option<Why>> {
+    let mut s = Settle::default();
+    seen.iter().find_map(|&x| s.feed(x))
+}
+
+#[test]
+fn a_join_that_fails_on_its_key_says_the_key_was_refused() {
+    // A stale key: NetworkManager asks for new secrets twice, finds no agent, and fails the device
+    // before the active connection deactivates as "device disconnected".
+    let stale_key = [
+        Seen::Active(1, 0),
+        Seen::Device(50, 0),
+        Seen::Device(60, 8),
+        Seen::Device(50, 0),
+        Seen::Device(60, 8),
+        Seen::Device(120, 7),
+        Seen::Active(4, 3),
+    ];
+    let why = settled(&stale_key).flatten().unwrap();
+    assert_eq!(why, Why::Secrets);
+    assert_eq!(
+        not_joined(&Joining::Wifi("Home".into()), "Home", why),
+        "The key for Home was not accepted."
+    );
+    assert_eq!(
+        settled(&[Seen::Device(120, 53), Seen::Active(4, 3)]),
+        Some(Some(Why::NotFound))
+    );
+    assert_eq!(
+        settled(&[Seen::Device(120, 17), Seen::Active(4, 3)]),
+        Some(Some(Why::NoAddress))
+    );
+    assert_eq!(settled(&stale_key[..6]), None, "still running");
+}
+
+#[test]
+fn a_join_the_user_ends_or_replaces_is_no_failure() {
+    assert_eq!(
+        settled(&[Seen::Active(1, 0), Seen::Active(2, 1)]),
+        Some(None)
+    );
+    let replaced = [
+        Seen::Device(110, 60),
+        Seen::Device(30, 60),
+        Seen::Active(4, 3),
+    ];
+    assert_eq!(settled(&replaced), Some(None));
+    assert_eq!(
+        settled(&[Seen::Active(4, 2)]),
+        Some(None),
+        "disconnected by the user"
+    );
+}
+
+#[test]
+fn a_vpn_the_server_refuses_names_the_login() {
+    let why = settled(&[Seen::Active(1, 0), Seen::Active(4, 10)])
+        .flatten()
+        .unwrap();
+    assert_eq!(
+        not_joined(&Joining::Vpn, "Office", why),
+        "The server for Office did not accept the login."
+    );
+    assert_eq!(settled(&[Seen::Active(4, 9)]), Some(Some(Why::Secrets)));
+    assert_eq!(settled(&[Seen::Active(4, 6)]), Some(Some(Why::Other)));
 }
 
 #[test]
@@ -788,8 +857,8 @@ fn every_call_of_a_wifi_join_may_raise_the_password_prompt() {
             key: Some(Key::Psk(Psk::new("new key"))),
             hidden: false,
         };
-        act(&client, &connect("Home")).await.unwrap();
-        act(&client, &connect("Cafe")).await.unwrap();
+        join_wifi(&client, &connect("Home")).await.unwrap();
+        join_wifi(&client, &connect("Cafe")).await.unwrap();
     });
     assert_eq!(
         *calls.lock().unwrap(),

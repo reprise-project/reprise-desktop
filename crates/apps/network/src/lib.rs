@@ -26,6 +26,7 @@ mod tray;
 mod vpnsheet;
 mod wg;
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::mpsc::Receiver;
@@ -121,6 +122,8 @@ struct NetApp {
     tray_state: Option<(Vec<u8>, String, bool, tray::MenuShape)>,
     folder: folder::Folder,
     chooser: Option<chooser::Chooser>,
+    /// Saved networks whose last join failed on the key, which the chooser asks for again.
+    refused: HashSet<nm::Ssid>,
     key: Option<keydlg::KeyDialog>,
     eap: Option<keydlg::eap::EapDialog>,
     status: Option<status::Status>,
@@ -196,6 +199,14 @@ impl NetApp {
             .map(|d| chooser::Chooser::new(d, self.forms.text));
         if let Some(c) = found {
             self.chooser = Some(c);
+            self.sync_refused();
+        }
+    }
+
+    /// Hand the chooser the networks whose key it asks for again.
+    fn sync_refused(&mut self) {
+        if let Some(c) = &mut self.chooser {
+            c.refused = self.refused.clone();
         }
     }
 
@@ -433,6 +444,16 @@ impl NetApp {
             if s.nm_running { "up" } else { "down" }
         );
         self.snapshot = s;
+        let devices = &self.snapshot.devices;
+        let joined = |ssid: &nm::Ssid| {
+            (devices.iter().filter_map(|d| d.wifi.as_ref()))
+                .any(|w| w.aps.iter().any(|a| a.active && &a.ssid == ssid))
+        };
+        let refused = self.refused.len();
+        self.refused.retain(|s| !joined(s));
+        if self.refused.len() != refused {
+            self.sync_refused();
+        }
         self.folder.refresh(&self.snapshot, self.vpn_icon.clone());
         self.refit = true;
         match self.chooser.as_ref().and_then(|c| {
@@ -486,6 +507,17 @@ impl NetApp {
                     if let Some(t) = &self.tray {
                         t.notify(&title, &body);
                     }
+                }
+                nm::NmMsg::KeyRefused(ssid) => {
+                    if let Some(c) = self
+                        .chooser
+                        .as_mut()
+                        .filter(|c| c.connecting == Some(ssid.clone()))
+                    {
+                        c.connecting = None;
+                    }
+                    self.refused.insert(ssid);
+                    self.sync_refused();
                 }
                 nm::NmMsg::Vpn(edit) => {
                     self.vpn = Some(match edit {
@@ -1108,6 +1140,9 @@ impl NetApp {
     ) {
         if let Some(c) = &mut self.chooser {
             c.connecting = Some(ssid.clone());
+        }
+        if key.is_some() && self.refused.remove(&ssid) {
+            self.sync_refused();
         }
         self.send(nm::Cmd::Connect {
             device,

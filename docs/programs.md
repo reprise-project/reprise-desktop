@@ -602,7 +602,9 @@ as no other key is changed. A network or VPN whose profile leaves its key or
 password to a secret agent (another desktop's wallet, or "ask every time")
 can't be connected from here: Reprise runs no secret agent, so it says so
 instead of saving what you would type, and the VPN's Properties grey that
-field.
+field. A join or VPN that NetworkManager starts and then gives up on says why
+in a balloon ("The key for Home was not accepted."), and the next Connect to a
+saved network whose key was refused asks for the key again.
 
 The tray icon's Airplane Mode row turns Wi-Fi and mobile broadband off
 through NetworkManager and Bluetooth through rfkill, and its tooltip says so
