@@ -1358,7 +1358,13 @@ What a consent prompt remembers, and where:
   program that names itself after a remembered app gets it too.
 - **GlobalShortcuts:** an app with `[[global_shortcuts]]` entries in
   `config.toml` is allowed; a Deny adds it to `[portal] shortcuts_denied`
-  and it isn't asked again.
+  and it isn't asked again. A shortcut gets the key the app suggests only
+  when no desktop bind or other app holds it and it isn't a key that types
+  or edits text without Ctrl, Alt or Super (a letter, Shift+letter, space,
+  Return, Tab, BackSpace, Delete, Escape, an arrow, Home, End, Page Up or
+  Page Down); otherwise it is kept with no key until you set one in
+  Settings. So an allowed app's later binds, which add shortcuts without
+  asking, can't take keys from the window you type in.
 - **Access** (camera, background): answers go to xdg-desktop-portal's
   permission store.
 - **Location:** Reprise's geoclue agent keeps its own answers.

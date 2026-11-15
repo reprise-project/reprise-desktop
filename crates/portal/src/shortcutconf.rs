@@ -90,8 +90,9 @@ pub fn deny(doc: &mut DocumentMut, app: &str) {
     }
 }
 
-/// `trigger` (the shortcuts spec's `CTRL+ALT+space`) as keybind text,
-/// or None when it names Num Lock, an unknown key or only modifiers.
+/// `trigger` (the shortcuts spec's `CTRL+ALT+space`) as keybind text, or
+/// None when it names Num Lock, an unknown key, only modifiers, or a key
+/// that types or edits text without Ctrl, Alt or Super (`types_text`).
 pub fn trigger_keys(trigger: &str) -> Option<String> {
     let parts: Vec<&str> = trigger.split('+').map(str::trim).collect();
     let (key, mods) = parts.split_last()?;
@@ -107,8 +108,10 @@ pub fn trigger_keys(trigger: &str) -> Option<String> {
     }
     out.push(key);
     let keys = out.join("+");
-    (repriseconf::keybind::check(&keys).is_ok() && !repriseconf::keybind::modifier_only(&keys))
-        .then_some(keys)
+    (repriseconf::keybind::check(&keys).is_ok()
+        && !repriseconf::keybind::modifier_only(&keys)
+        && !repriseconf::keybind::types_text(&keys))
+    .then_some(keys)
 }
 
 /// Whether `keys` is free for a program: not the desktop's (reserved, or a
@@ -272,6 +275,24 @@ mod tests {
         assert_eq!(trigger_keys("CTRL+Nope"), None);
         assert_eq!(trigger_keys("CTRL+Shift_L"), None, "modifier-only");
         assert_eq!(trigger_keys(""), None);
+    }
+
+    #[test]
+    fn a_trigger_that_types_text_is_no_trigger() {
+        for t in ["a", "Return", "space", "SHIFT+a", "Tab", "Left"] {
+            assert_eq!(trigger_keys(t), None, "{t} is refused");
+        }
+        assert_eq!(trigger_keys("CTRL+a").as_deref(), Some("Ctrl+a"));
+        assert_eq!(trigger_keys("F13").as_deref(), Some("F13"));
+    }
+
+    #[test]
+    fn an_allowed_app_s_new_id_gets_no_typing_key() {
+        let mut d = doc("");
+        bind(&mut d, "t", &[w("talk", "Pause")]);
+        let got = bind(&mut d, "t", &[w("send", "Return")]);
+        assert_eq!(got[0].keys, "", "Return is not given");
+        assert_eq!(entries(&d, "t").len(), 2);
     }
 
     #[test]

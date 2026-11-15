@@ -15,6 +15,7 @@ unsafe extern "C" {
     fn xkb_keysym_from_name(name: *const c_char, flags: c_int) -> u32;
     fn xkb_keysym_get_name(keysym: u32, buffer: *mut c_char, size: usize) -> c_int;
     fn xkb_keysym_to_lower(keysym: u32) -> u32;
+    fn xkb_keysym_to_utf32(keysym: u32) -> u32;
 }
 
 pub fn key_known(name: &str) -> bool {
@@ -258,6 +259,43 @@ pub fn layered<T>(
     out
 }
 
+const CARET_KEYS: &[&str] = &[
+    "Left",
+    "Right",
+    "Up",
+    "Down",
+    "Home",
+    "End",
+    "Page_Up",
+    "Page_Down",
+    "KP_Left",
+    "KP_Right",
+    "KP_Up",
+    "KP_Down",
+    "KP_Home",
+    "KP_End",
+    "KP_Page_Up",
+    "KP_Page_Down",
+];
+
+/// Whether `keys` types or edits text in a focused field: no Ctrl, Alt or
+/// Super, and a key that types a character (Return, Tab, BackSpace, Delete
+/// and Escape included) or moves the caret.
+pub fn types_text(keys: &str) -> bool {
+    let Some((mods, key)) = split(keys) else {
+        return false;
+    };
+    if mods.iter().any(|m| *m != "shift") {
+        return false;
+    }
+    let Some(sym) = keysym(key) else {
+        return false;
+    };
+    // SAFETY: a pure function on a keysym value.
+    let typed = unsafe { xkb_keysym_to_utf32(sym) } != 0;
+    typed || CARET_KEYS.iter().any(|k| keysym(k) == Some(sym))
+}
+
 pub fn modifier_only(keys: &str) -> bool {
     split(keys).is_some_and(|(_, key)| MODIFIER_KEYS.iter().any(|m| key.eq_ignore_ascii_case(m)))
 }
@@ -445,6 +483,41 @@ mod tests {
             key_name(0x1008ff13).as_deref(),
             Some("XF86AudioRaiseVolume")
         );
+    }
+
+    #[test]
+    fn bare_typing_and_caret_keys_type_text() {
+        for keys in [
+            "a",
+            "Shift+a",
+            "1",
+            "space",
+            "Return",
+            "KP_Enter",
+            "Tab",
+            "BackSpace",
+            "Delete",
+            "Escape",
+            "Left",
+            "Page_Down",
+            "KP_Home",
+            "slash",
+            "eacute",
+        ] {
+            assert!(types_text(keys), "{keys} types text");
+        }
+        for keys in [
+            "Pause",
+            "F13",
+            "F24",
+            "XF86AudioPlay",
+            "Ctrl+a",
+            "Alt+Return",
+            "Super+space",
+            "Ctrl+Shift+Left",
+        ] {
+            assert!(!types_text(keys), "{keys} types no text");
+        }
     }
 
     #[test]
