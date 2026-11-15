@@ -46,8 +46,18 @@ impl DownSyms {
 }
 
 impl Host {
-    fn key_input(&self, event: &KeyEvent) -> KeyInput {
+    /// The keysym a program reads for `event`: under Ctrl, Alt or Super, a non-Latin letter reads
+    /// as the Latin keysym another configured layout gives the key.
+    fn key_sym(&self, event: &KeyEvent) -> u32 {
         let sym = event.keysym.raw();
+        let chord = self.mods.ctrl || self.mods.alt || self.mods.logo;
+        (chord.then(|| self.xkb.latin(event.raw_code, event.keysym)))
+            .flatten()
+            .unwrap_or(sym)
+    }
+
+    fn key_input(&self, event: &KeyEvent) -> KeyInput {
+        let sym = self.key_sym(event);
         let utf8 = event.utf8.clone();
         let edit = key_for(sym, self.mods.ctrl, self.mods.shift, utf8.as_deref());
         KeyInput {
@@ -386,7 +396,7 @@ impl KeyboardHandler for Host {
     ) {
         self.last_serial = serial;
         self.input_serial = serial;
-        self.down_syms.press(event.raw_code, event.keysym.raw());
+        self.down_syms.press(event.raw_code, self.key_sym(&event));
         self.key(event);
     }
     fn repeat_key(

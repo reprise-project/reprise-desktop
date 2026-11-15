@@ -1044,6 +1044,25 @@ pub mod keysym {
     pub const ISO_LEFT_TAB: u32 = 0xfe20;
 }
 
+/// The keysym a Ctrl, Alt or Super chord reads on a key whose active layout types `active`, a
+/// letter of a non-Latin script: the first ASCII one in `by_layout`, the key's base keysym in each
+/// configured layout in order. None when `active` is no such letter or no layout gives one.
+pub fn latin_fallback(
+    active: impl IntoIterator<Item = char>,
+    by_layout: impl IntoIterator<Item = u32>,
+) -> Option<u32> {
+    let latin = |c: char| {
+        c < '\u{250}'
+            || ('\u{1e00}'..='\u{1eff}').contains(&c)
+            || ('\u{2c60}'..='\u{2c7f}').contains(&c)
+            || ('\u{a720}'..='\u{a7ff}').contains(&c)
+    };
+    if !active.into_iter().any(|c| c.is_alphabetic() && !latin(c)) {
+        return None;
+    }
+    by_layout.into_iter().find(|s| (0x21..=0x7e).contains(s))
+}
+
 /// The editing key a press stands for, modifiers folded in. Ctrl+A / C / X / V / Y / Z (Shift+Z redoes) are commands, Shift extends, Ctrl steps words, other printable input is an insert. None for keys an edit has no use for.
 pub fn key_for(sym: u32, ctrl: bool, shift: bool, utf8: Option<&str>) -> Option<EditKey> {
     use keysym::*;
@@ -1726,6 +1745,29 @@ mod tests {
         let mut t = e("");
         t.select_word_at(0);
         assert!(!t.has_selection());
+    }
+
+    #[test]
+    fn a_non_latin_letter_falls_back_to_the_first_layout_with_an_ascii_keysym() {
+        assert_eq!(latin_fallback(['с'], [0x6d3, 0x63]), Some(0x63));
+        assert_eq!(latin_fallback(['ש'], [0xcf9, 0x61]), Some(0x61));
+        assert_eq!(
+            latin_fallback(['λ'], [0x7eb, 0x1000500, 0x6c, 0x76]),
+            Some(0x6c)
+        );
+    }
+
+    #[test]
+    fn a_latin_letter_or_a_non_letter_keeps_its_keysym() {
+        assert_eq!(latin_fallback(['é'], [0x32]), None);
+        assert_eq!(latin_fallback(['ě'], [0x32]), None);
+        assert_eq!(latin_fallback(['.'], [0x2f]), None);
+        assert_eq!(latin_fallback([], [0x61]), None);
+        assert_eq!(
+            latin_fallback(['с'], [0x6d3]),
+            None,
+            "no layout gives an ASCII keysym"
+        );
     }
 
     #[test]

@@ -263,6 +263,14 @@ mod tests {
     }
 
     #[test]
+    fn a_chord_on_a_cyrillic_letter_sends_its_latin_control_byte_and_alt_keeps_the_text() {
+        let ctrl = key(0x63, Some("с"), true, false, false);
+        assert_eq!(encode(&ctrl, none()), Some(vec![0x03]));
+        let alt = key(0x63, Some("с"), false, false, true);
+        assert_eq!(encode(&alt, none()), Some("\x1bс".as_bytes().to_vec()));
+    }
+
+    #[test]
     fn printable_passes_utf8() {
         assert_eq!(encode(&plain(0x61, Some("a")), none()), Some(b"a".to_vec()));
         let alt_a = key(0x61, Some("a"), false, false, true);

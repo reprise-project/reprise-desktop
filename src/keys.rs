@@ -58,6 +58,23 @@ pub fn place_key_for(xkb_code: u32) -> Option<u32> {
     (xkb_code == 41 + 8).then_some(KEY_grave)
 }
 
+/// The Latin keysym a chord on xkb key `code` reads when the active layout gives it `syms`
+/// (`reprisekit::textedit::latin_fallback`).
+pub fn latin_for(
+    state: &smithay::input::keyboard::xkb::State,
+    code: smithay::input::keyboard::Keycode,
+    syms: &[u32],
+) -> Option<u32> {
+    let keymap = state.get_keymap();
+    reprisekit::textedit::latin_fallback(
+        syms.iter().filter_map(|&s| key_char(s)),
+        (0..keymap.num_layouts_for_key(code)).filter_map(|layout| {
+            let base = keymap.key_get_syms_by_level(code, layout, 0);
+            base.first().map(|s| s.raw())
+        }),
+    )
+}
+
 /// The keysym a name like "Return" or "a" spells, matched without case; None for a name xkb does
 /// not know.
 pub fn from_name(name: &str) -> Option<u32> {

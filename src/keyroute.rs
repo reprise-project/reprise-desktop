@@ -30,12 +30,18 @@ pub struct KeyPress {
     pub lower: Vec<u32>,
     pub mods: u32,
     pub pressed: bool,
-    /// The keysym the key's place stands for whatever the layout gives it (`keys::place_key_for`),
-    /// when not among `lower`: binds match it only when no `lower` keysym is bound.
+    /// The keysym the key stands for whatever the active layout gives it, when not among `lower`:
+    /// a chord's Latin fallback (`keyboard::decode`) or `keys::place_key_for`. Binds match it
+    /// only when no `lower` keysym is bound.
     pub place: Option<u32>,
 }
 
 impl KeyPress {
+    /// `lower`, then `place`.
+    fn keys(&self) -> impl Iterator<Item = u32> + '_ {
+        self.lower.iter().chain(&self.place).copied()
+    }
+
     fn has(&self, sym: u32) -> bool {
         self.syms.contains(&sym)
     }
@@ -414,10 +420,10 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
     // bind, which toggles them shut the way it opened them, and the
     // switchers' binds, as a menu.
     let own = |action: Action| {
-        k.lower.iter().any(|&lower| {
+        k.keys().any(|key| {
             binds
                 .iter()
-                .any(|b| b.mods == k.mods && b.keysym == lower && b.action == action)
+                .any(|b| b.mods == k.mods && b.keysym == key && b.action == action)
         })
     };
     if modes.overview_open && k.pressed {
@@ -511,10 +517,10 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
     // A balloon's reply field, once clicked, takes every press but the
     // switcher's bind, as a dialog's field does.
     if modes.notify_reply_focused && k.pressed {
-        let cycle = k.lower.iter().any(|&lower| {
+        let cycle = k.keys().any(|key| {
             binds
                 .iter()
-                .any(|b| b.mods == k.mods && b.keysym == lower && b.action == Action::Cycle)
+                .any(|b| b.mods == k.mods && b.keysym == key && b.action == Action::Cycle)
         });
         return with(if cycle {
             KeyRoute::Binds(vec![Action::Cycle])
@@ -581,8 +587,8 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
         {
             return with(KeyRoute::IconMove(dir));
         }
-        for &lower in &k.lower {
-            match (lower, k.mods) {
+        for key in k.keys() {
+            match (key, k.mods) {
                 (KEY_Menu, 0) | (KEY_F10, MOD_SHIFT) => {
                     return with(KeyRoute::IconMenu(modes.selected_icon));
                 }
@@ -593,7 +599,7 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
             }
         }
         if let Some(i) = modes.selected_icon {
-            for &sym in &k.lower {
+            for sym in k.keys() {
                 match sym {
                     KEY_Return | KEY_KP_Enter if k.mods & MOD_ALT != 0 => {
                         return with(KeyRoute::IconProperties(i));
@@ -641,11 +647,11 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
 /// A press in the open switcher: Escape cancels it, Tab or a switcher's
 /// bind steps it; anything else (the arrows too) is swallowed.
 fn switcher_key(k: &KeyPress, binds: &[Keybind]) -> KeyRoute {
-    for &lower in k.lower.iter().chain(&k.place) {
-        if lower == KEY_Escape {
+    for key in k.keys() {
+        if key == KEY_Escape {
             return KeyRoute::SwitcherCancel;
         }
-        if let Some(backwards) = switcher_step_for(lower, k.mods, binds) {
+        if let Some(backwards) = switcher_step_for(key, k.mods, binds) {
             return KeyRoute::SwitcherStep { backwards };
         }
     }
@@ -865,8 +871,8 @@ fn bound(k: &KeyPress, binds: &[Keybind]) -> Vec<Action> {
         return Vec::new();
     }
     let unshifted = k.mods & !MOD_SHIFT;
-    (k.lower.iter().chain(&k.place))
-        .find_map(|&sym| on(unshifted, sym).filter(|b| reverses_with_shift(&b.action)))
+    k.keys()
+        .find_map(|sym| on(unshifted, sym).filter(|b| reverses_with_shift(&b.action)))
         .map(|b| b.action.clone())
         .into_iter()
         .collect()
@@ -878,14 +884,22 @@ pub fn reverses_with_shift(a: &Action) -> bool {
 }
 
 /// The global shortcuts whose chord is `k`.
+/// Like `bound`, `place` counts only when no `lower` keysym has one.
 fn bound_global(k: &KeyPress, globals: &[GlobalBind]) -> Vec<GlobalHit> {
-    (globals.iter())
-        .filter(|g| g.mods == k.mods && k.lower.contains(&g.keysym))
-        .map(|g| GlobalHit {
-            app: g.app.clone(),
-            id: g.id.clone(),
-        })
-        .collect()
+    let on = |syms: &[u32]| -> Vec<GlobalHit> {
+        (globals.iter())
+            .filter(|g| g.mods == k.mods && syms.contains(&g.keysym))
+            .map(|g| GlobalHit {
+                app: g.app.clone(),
+                id: g.id.clone(),
+            })
+            .collect()
+    };
+    let hits = on(&k.lower);
+    match k.place {
+        Some(p) if hits.is_empty() => on(&[p]),
+        _ => hits,
+    }
 }
 
 /// A modifier key's keysym as a chord counts it, with its modifier bit;

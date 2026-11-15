@@ -115,6 +115,20 @@ impl Xkb {
         })
     }
 
+    /// The Latin keysym a chord on wl_keyboard key `code` reads when the active layout gives it
+    /// `sym` (`reprisekit::textedit::latin_fallback`).
+    pub(crate) fn latin(&self, code: u32, sym: Keysym) -> Option<u32> {
+        let keymap = self.state.as_ref()?.get_keymap();
+        let code = xkb::Keycode::new(code + 8);
+        reprisekit::textedit::latin_fallback(
+            sym.key_char(),
+            (0..keymap.num_layouts_for_key(code)).filter_map(|layout| {
+                let base = keymap.key_get_syms_by_level(code, layout, 0);
+                base.first().map(|s| s.raw())
+            }),
+        )
+    }
+
     fn repeats(&self, code: u32) -> bool {
         self.state
             .as_ref()
@@ -300,10 +314,14 @@ mod tests {
     use std::io::Write;
 
     fn keymap_fd() -> (OwnedFd, usize) {
+        layouts_fd("us")
+    }
+
+    fn layouts_fd(layouts: &str) -> (OwnedFd, usize) {
         let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
         let keymap =
-            xkb::Keymap::new_from_names(&context, "", "", "us", "", None, xkb::COMPILE_NO_FLAGS)
-                .expect("the us keymap compiles");
+            xkb::Keymap::new_from_names(&context, "", "", layouts, "", None, xkb::COMPILE_NO_FLAGS)
+                .expect("the keymap compiles");
         let text = keymap.get_as_string(xkb::KEYMAP_FORMAT_TEXT_V1);
         let mut file = tempfile::tempfile().unwrap();
         file.write_all(text.as_bytes()).unwrap();
@@ -329,6 +347,20 @@ mod tests {
         let down = xkb.key(2, 30, true).expect("a keymap");
         assert_eq!(down.utf8.as_deref(), Some("a"));
         assert!(xkb.compose.is_some());
+    }
+
+    #[test]
+    fn a_russian_letter_reads_the_us_letter_of_its_key() {
+        let mut xkb = Xkb::default();
+        let (fd, size) = layouts_fd("us,ru");
+        xkb.take_keymap(fd, size);
+        xkb.modifiers(1 << 2, 0, 0, 1);
+        let c = xkb.key(1, 46, true).expect("a keymap");
+        assert_eq!(c.keysym, Keysym::Cyrillic_es);
+        assert_eq!(xkb.latin(46, c.keysym), Some(0x63));
+        xkb.modifiers(1 << 2, 0, 0, 0);
+        let c = xkb.key(2, 46, true).expect("a keymap");
+        assert_eq!(xkb.latin(46, c.keysym), None, "the us letter is its own");
     }
 
     #[test]
