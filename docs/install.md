@@ -524,7 +524,8 @@ desktop and stays out of the way when it's missing.
   archives in Explorer, opening a network's sign-in page, and attachments
   from a program's Send by Email in mail programs other than Thunderbird and
   Evolution
-- plocate with its database, or fd, for files in the launcher and Explorer's Search
+- plocate with its database, or fd, for files in the launcher and Explorer's Search;
+  with both, fd adds the files modified since plocate's last `updatedb`
 - localsearch, for files found by their contents in the launcher and the Start
   menu's search once Settings > Search turns it on (it says when localsearch is
   missing)
