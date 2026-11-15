@@ -143,6 +143,27 @@ fn free(doc: &DocumentMut, keys: &str) -> bool {
     !binds.iter().any(|(b, _)| same(b)) && !tables(doc).any(|t| same(str_of(t, "keys")))
 }
 
+/// The most shortcuts an app keeps; a bind past it adds no new ids.
+const MAX_PER_APP: usize = 64;
+/// The longest id or description, in bytes.
+const MAX_TEXT: usize = 256;
+
+fn id_fits(id: &str) -> bool {
+    !id.is_empty() && id.len() <= MAX_TEXT && !id.chars().any(char::is_control)
+}
+
+/// `description` without control characters, cut to `MAX_TEXT` bytes.
+fn clean(description: &str) -> String {
+    let mut out = String::new();
+    for c in description.chars().filter(|c| !c.is_control()) {
+        if out.len() + c.len_utf8() > MAX_TEXT {
+            break;
+        }
+        out.push(c);
+    }
+    out
+}
+
 fn assign(doc: &DocumentMut, trigger: &str) -> String {
     trigger_keys(trigger)
         .filter(|k| free(doc, k))
@@ -173,14 +194,17 @@ pub fn preview(doc: &DocumentMut, wanted: &[Wanted]) -> Vec<String> {
 
 /// Allow `app` and give it `wanted`: a new id gets its trigger when free,
 /// else no key; an existing one keeps its keys and takes a new
-/// description. Ids not in `wanted` stay. Returns `wanted`'s entries in
-/// its order.
+/// description. Ids not in `wanted` stay. An empty, long or control-character
+/// id, or one past `MAX_PER_APP`, is not added. Returns `wanted`'s entries
+/// in its order.
 pub fn bind(doc: &mut DocumentMut, app: &str, wanted: &[Wanted]) -> Vec<Entry> {
     if is_denied(doc, app) {
         let list: Vec<String> = denied_list(doc).into_iter().filter(|a| a != app).collect();
         set_denied(doc, &list);
     }
+    let mut kept = entries(doc, app).len();
     for w in wanted {
+        let description = clean(&w.description);
         let found = doc
             .get_mut(LIST)
             .and_then(Item::as_array_of_tables_mut)
@@ -190,16 +214,20 @@ pub fn bind(doc: &mut DocumentMut, app: &str, wanted: &[Wanted]) -> Vec<Entry> {
             });
         match found {
             Some(t) => {
-                if !w.description.is_empty() && str_of(t, "description") != w.description {
-                    t["description"] = value(&w.description);
+                if !description.is_empty() && str_of(t, "description") != description {
+                    t["description"] = value(&description);
                 }
             }
+            None if !id_fits(&w.id) || kept >= MAX_PER_APP => {
+                log::warn!("GlobalShortcuts: not adding {:?} for {app:?}", w.id);
+            }
             None => {
+                kept += 1;
                 let keys = assign(doc, &w.trigger);
                 let mut t = Table::new();
                 t["app"] = value(app);
                 t["id"] = value(&w.id);
-                t["description"] = value(&w.description);
+                t["description"] = value(&description);
                 t["keys"] = value(keys);
                 match doc.get_mut(LIST).and_then(Item::as_array_of_tables_mut) {
                     Some(a) => a.push(t),
@@ -284,6 +312,35 @@ mod tests {
         }
         assert_eq!(trigger_keys("CTRL+a").as_deref(), Some("Ctrl+a"));
         assert_eq!(trigger_keys("F13").as_deref(), Some("F13"));
+    }
+
+    #[test]
+    fn a_bind_adds_no_bad_ids_and_no_more_than_the_cap() {
+        let mut d = doc("");
+        let long = "x".repeat(MAX_TEXT + 1);
+        let got = bind(&mut d, "t", &[w("", ""), w(&long, ""), w("a\nb", "")]);
+        assert!(got.is_empty(), "{got:?}");
+        let many: Vec<Wanted> = (0..MAX_PER_APP + 5)
+            .map(|i| w(&i.to_string(), ""))
+            .collect();
+        assert_eq!(bind(&mut d, "t", &many).len(), MAX_PER_APP);
+        assert_eq!(bind(&mut d, "t", &[w("late", "")]).len(), 0);
+        assert_eq!(
+            bind(&mut d, "t", &[w("0", "")]).len(),
+            1,
+            "a kept id still binds"
+        );
+    }
+
+    #[test]
+    fn a_description_loses_control_characters_and_is_cut() {
+        let mut d = doc("");
+        let mut x = w("x", "");
+        x.description = format!("a\u{1b}[2Jb{}", "\u{e9}".repeat(MAX_TEXT));
+        let got = bind(&mut d, "t", &[x]);
+        assert!(got[0].description.starts_with("a[2Jb\u{e9}"));
+        assert!(got[0].description.len() <= MAX_TEXT);
+        assert!(!got[0].description.chars().any(char::is_control));
     }
 
     #[test]
