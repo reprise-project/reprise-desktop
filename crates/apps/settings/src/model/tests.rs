@@ -268,6 +268,20 @@ fn save_carries_the_comments_of_the_last_key_in_the_file() {
 }
 
 #[test]
+fn save_keeps_a_commented_header_it_leaves_empty() {
+    for text in [
+        "[icons]\ntheme = \"x\"\n\n[keyboard] # c\n# layout = \"\"\nlayout = \"hu\"\n",
+        "[icons]\ntheme = \"x\"\n\n[keyboard]\n# layout = \"\"\nlayout = \"hu\"\n",
+        "[keyboard]\n# layout = \"\"\nlayout = \"hu\"\n\n[icons]\ntheme = \"x\"\n",
+    ] {
+        let mut s = load(text);
+        s.kb_layout = Settings::default().kb_layout;
+        let out = saved(text, &s);
+        assert_eq!(out, text.replace("layout = \"hu\"\n", ""), "{text}");
+    }
+}
+
+#[test]
 fn rebase_takes_the_files_values_and_keeps_the_ones_the_sheet_moved() {
     let base = load("");
     let mut want = base.clone();

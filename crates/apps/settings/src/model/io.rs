@@ -10,7 +10,7 @@ use super::{
     glass_swatch,
 };
 use repriseconf::config::parse_hhmm;
-use repriseconf::{Key, get, key as k, remove, set};
+use repriseconf::{Key, get, key as k, remove, remove_table_if_empty, set};
 use toml_edit::{Array, DocumentMut, Item, Value};
 
 /// Read for the Remote Desktop page and never written: no page sets it.
@@ -128,7 +128,7 @@ pub fn load(text: &str) -> Settings {
     s
 }
 
-/// Write into `text` the fields the sheet moved, `want` against `base`, touching as little as possible: keys the sheet did not move are left alone even if the file changed under it, keys moved back to the interface's default are removed (and tables left empty), tables are created only when a key needs one.
+/// Write into `text` the fields the sheet moved, `want` against `base`, touching as little as possible: keys the sheet did not move are left alone even if the file changed under it, keys moved back to the interface's default are removed (and tables left empty, unless a comment sits on or under the header), tables are created only when a key needs one.
 ///
 /// `Err` when `text` does not parse; the caller must not write then.
 pub fn save(text: &str, want: &Settings, base: &Settings) -> Result<String, String> {
@@ -163,7 +163,7 @@ pub fn save(text: &str, want: &Settings, base: &Settings) -> Result<String, Stri
         }
     }
     for table in shrunk {
-        remove_if_empty(&mut doc, table);
+        remove_table_if_empty(&mut doc, table);
     }
     // The list is written whole or not at all: a table's comments do not
     // survive a rewrite anyway.
@@ -188,7 +188,7 @@ pub fn save(text: &str, want: &Settings, base: &Settings) -> Result<String, Stri
         let list = merge_denied(&want.denied, &base.denied, &have.denied);
         if list.is_empty() {
             remove(&mut doc, &DENIED);
-            remove_if_empty(&mut doc, DENIED.table);
+            remove_table_if_empty(&mut doc, DENIED.table);
         } else {
             let arr: Array = list.iter().map(String::as_str).collect();
             set(&mut doc, &DENIED, Value::Array(arr)).map_err(|e| e.to_string())?;
@@ -267,18 +267,6 @@ pub fn switch_interface(s: &mut Settings, from: &str, text: &str, loaded: &Setti
         s.glass_color = loaded.glass_color.clone();
     } else {
         s.color_scheme.clear();
-    }
-}
-
-/// Remove the table at `path` (dotted for a nested one) when nothing is left in it.
-fn remove_if_empty(doc: &mut DocumentMut, path: &'static str) {
-    let (parent, name) = path.rsplit_once('.').unwrap_or(("", path));
-    let key = k(parent, name);
-    let empty = get(doc, &key)
-        .and_then(Item::as_table_like)
-        .is_some_and(|t| t.is_empty());
-    if !name.is_empty() && empty {
-        remove(doc, &key);
     }
 }
 
