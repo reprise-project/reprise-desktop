@@ -174,8 +174,6 @@ pub struct Device {
     /// Duration counts from here.
     pub connected_since: Option<Instant>,
     pub ip4: Option<Ip4>,
-    pub rx_bytes: u64,
-    pub tx_bytes: u64,
     pub wifi: Option<Wifi>,
     pub hotspot: Option<String>,
     /// Devices joined to the hotspot; None when that is not known.
@@ -303,7 +301,6 @@ pub struct DeviceProps {
     pub wired: Option<Props>,
     pub wireless: Option<Props>,
     pub ip4: Option<Props>,
-    pub stats: Option<Props>,
     pub aps: Vec<(String, Props)>,
     /// The saved SSIDs, each with whether NetworkManager holds its key
     /// (see [`AccessPoint::keyless`]).
@@ -326,13 +323,6 @@ fn uint(props: &Props, key: &str) -> u32 {
     props
         .get(key)
         .and_then(|v| u32::try_from(v.clone()).ok())
-        .unwrap_or(0)
-}
-
-fn big(props: &Props, key: &str) -> u64 {
-    props
-        .get(key)
-        .and_then(|v| u64::try_from(v.clone()).ok())
         .unwrap_or(0)
 }
 
@@ -383,7 +373,6 @@ pub fn fold_device(props: &DeviceProps) -> Device {
         Kind::Wired => uint(&wired, "Speed"),
         Kind::Wifi => uint(&wireless, "Bitrate") / 1000,
     };
-    let stats = props.stats.clone().unwrap_or_default();
     Device {
         path: props.path.clone(),
         iface,
@@ -396,8 +385,6 @@ pub fn fold_device(props: &DeviceProps) -> Device {
         speed_mbit,
         connected_since: None,
         ip4: props.ip4.as_ref().and_then(|m| fold_ip4(m, props.dhcp)),
-        rx_bytes: big(&stats, "RxBytes"),
-        tx_bytes: big(&stats, "TxBytes"),
         wifi: (kind == Kind::Wifi).then(|| fold_wifi(props)),
         hotspot: props.hotspot.clone(),
         hotspot_clients: None,
@@ -623,10 +610,6 @@ pub enum Cmd {
         band: Band,
     },
     Rescan(String),
-    Stats {
-        device: String,
-        on: bool,
-    },
     Airplane(bool),
     Quit,
 }
@@ -1022,7 +1005,6 @@ mod tests {
                 ("AddressData", Variant::from(vec![address])),
                 ("Gateway", Variant::from("10.0.0.1")),
             ])),
-            stats: Some(props(vec![("RxBytes", Variant::from(1234u64))])),
             aps: vec![],
             known_ssids: HashMap::new(),
             active_ap: None,
@@ -1036,8 +1018,6 @@ mod tests {
         assert!(d.managed);
         assert!(d.carrier);
         assert_eq!(d.speed_mbit, 1000);
-        assert_eq!(d.rx_bytes, 1234);
-        assert_eq!(d.tx_bytes, 0);
         assert_eq!(
             d.ip4,
             Some(Ip4 {
@@ -1074,7 +1054,6 @@ mod tests {
             wired: None,
             wireless: Some(props(vec![("Bitrate", Variant::from(130000u32))])),
             ip4: None,
-            stats: None,
             aps: vec![
                 ("/ap/1".to_string(), ap("weak", 30, 0x100)),
                 ("/ap/2".to_string(), ap("strong", 80, 0x200)),

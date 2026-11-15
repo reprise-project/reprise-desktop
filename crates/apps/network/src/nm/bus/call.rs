@@ -11,8 +11,7 @@ pub(super) fn cmd_device(cmd: &Cmd) -> Option<&str> {
         | Cmd::Enable(device)
         | Cmd::Repair(device)
         | Cmd::Rescan(device)
-        | Cmd::Hotspot { device, .. }
-        | Cmd::Stats { device, .. } => Some(device),
+        | Cmd::Hotspot { device, .. } => Some(device),
         Cmd::VpnUp(_)
         | Cmd::VpnDown(_)
         | Cmd::LoadVpn(_)

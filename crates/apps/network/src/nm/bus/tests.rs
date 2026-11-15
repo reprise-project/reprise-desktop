@@ -86,21 +86,6 @@ fn common_network_manager_errors_read_as_sentences() {
 }
 
 #[test]
-fn a_refused_stats_refresh_rate_has_no_balloon() {
-    let stats = Cmd::Stats {
-        device: "/org/freedesktop/NetworkManager/Devices/3".into(),
-        on: true,
-    };
-    let refused = Err(clean(
-        "org.freedesktop.zbus.Error: Not authorized to perform this operation",
-    ));
-    assert!(matches!(
-        ran(&stats, refused),
-        Wake::Ran { error: None, .. }
-    ));
-}
-
-#[test]
 fn a_dismissed_prompt_has_no_message_box_and_a_refusal_has_one() {
     let denied = || {
         reprisebus::error::reply(
@@ -133,91 +118,6 @@ fn a_prompt_left_open_past_the_call_timeout_says_to_try_again() {
     ));
     let failure = auth_failure(io, || panic!("a timeout is no dismissal"));
     assert_eq!(failure, Failure::Text(reprisebus::polkit::TIMED_OUT.into()));
-}
-
-#[test]
-fn a_status_sheet_gets_its_counters_while_a_join_waits_on_a_password() {
-    use futures_util::FutureExt;
-    use futures_util::future::{Either, select};
-    let (cmd_tx, cmd_rx) = async_channel::unbounded();
-    let (wake_tx, wake_rx) = async_channel::unbounded();
-    cmd_tx.send_blocking(join()).unwrap();
-    cmd_tx
-        .send_blocking(Cmd::Stats {
-            device: DEV.into(),
-            on: true,
-        })
-        .unwrap();
-    let q = queue(cmd_rx, wake_tx, |cmd| async move {
-        if matches!(cmd, Cmd::Connect { .. }) {
-            std::future::pending::<()>().await;
-        }
-        Ok(None)
-    });
-    match select(Box::pin(q), Box::pin(wake_rx.recv())).now_or_never() {
-        Some(Either::Right((Ok(wake), _))) => assert_eq!(
-            wake,
-            Wake::Ran {
-                device: Some(DEV.into()),
-                error: None,
-                reply: None,
-            },
-            "the Stats command answers while the join is pending"
-        ),
-        _ => panic!("the Stats command waited behind the pending join"),
-    }
-}
-
-#[test]
-fn quit_answers_after_a_queued_stats_command_has_run() {
-    let (cmd_tx, cmd_rx) = async_channel::unbounded();
-    let (wake_tx, wake_rx) = async_channel::unbounded();
-    cmd_tx
-        .send_blocking(Cmd::Stats {
-            device: DEV.into(),
-            on: false,
-        })
-        .unwrap();
-    cmd_tx.send_blocking(Cmd::Quit).unwrap();
-    drop(cmd_tx);
-    zbus::block_on(queue(cmd_rx, wake_tx, |_| async { Ok(None) }));
-    let wakes: Vec<Wake> = std::iter::from_fn(|| wake_rx.try_recv().ok()).collect();
-    assert_eq!(
-        wakes,
-        vec![
-            Wake::Ran {
-                device: Some(DEV.into()),
-                error: None,
-                reply: None,
-            },
-            Wake::Quit
-        ],
-        "Stats off runs, then Quit answers"
-    );
-}
-
-#[test]
-fn only_a_bare_statistics_tick_skips_the_rebuild() {
-    let dev = "/org/freedesktop/NetworkManager/Devices/2";
-    let tick = props(vec![("RxBytes", Variant::from(10u64))]);
-    assert_eq!(
-        wake_for_change(dev, STATS_IFACE, &tick),
-        Some(Wake::Stats {
-            path: dev.into(),
-            rx: Some(10),
-            tx: None
-        })
-    );
-    let rate = props(vec![
-        ("RxBytes", Variant::from(10u64)),
-        ("RefreshRateMs", Variant::from(2000u32)),
-    ]);
-    assert_eq!(wake_for_change(dev, STATS_IFACE, &rate), Some(Wake::Bus));
-    assert_eq!(wake_for_change(dev, DEVICE_IFACE, &tick), Some(Wake::Bus));
-    assert_eq!(
-        wake_for_change(dev, STATS_IFACE, &props(vec![])),
-        Some(Wake::Bus)
-    );
 }
 
 #[test]
@@ -300,25 +200,6 @@ fn a_strength_update_patches_the_ap_and_keeps_the_list_in_order() {
     assert!(
         !patch_strength(&mut snap, "/ap/9", Some(1)),
         "an unknown access point wants a read"
-    );
-}
-
-#[test]
-fn a_statistics_tick_patches_its_device_and_keeps_the_other_counter() {
-    let mut snap = Snapshot {
-        devices: vec![Device {
-            path: "/d/1".into(),
-            rx_bytes: 5,
-            tx_bytes: 7,
-            ..Device::default()
-        }],
-        ..Snapshot::default()
-    };
-    assert!(patch_stats(&mut snap, "/d/1", None, Some(9)));
-    assert_eq!((snap.devices[0].rx_bytes, snap.devices[0].tx_bytes), (5, 9));
-    assert!(
-        !patch_stats(&mut snap, "/d/2", Some(1), None),
-        "an unknown device wants a read"
     );
 }
 

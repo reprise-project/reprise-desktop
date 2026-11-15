@@ -23,14 +23,11 @@ const ACTIVE_IFACE: &str = "org.freedesktop.NetworkManager.Connection.Active";
 const DEVICE_IFACE: &str = "org.freedesktop.NetworkManager.Device";
 const WIRED_IFACE: &str = "org.freedesktop.NetworkManager.Device.Wired";
 const WIRELESS_IFACE: &str = "org.freedesktop.NetworkManager.Device.Wireless";
-const STATS_IFACE: &str = "org.freedesktop.NetworkManager.Device.Statistics";
 const AP_IFACE: &str = "org.freedesktop.NetworkManager.AccessPoint";
 const IP4_IFACE: &str = "org.freedesktop.NetworkManager.IP4Config";
 const PROPERTIES: &str = "org.freedesktop.DBus.Properties";
 const MODIFY_SYSTEM: &str = "org.freedesktop.NetworkManager.settings.modify.system";
 const LOGIND: &str = "org.freedesktop.login1";
-
-const STATS_MS: u32 = 2000;
 
 /// How long [`NmHandle::quit`] waits for the thread to flush, so a wedged daemon cannot hold up
 /// exit.
@@ -87,11 +84,6 @@ pub fn watch(waker: repriseapp::Waker) -> (Receiver<NmMsg>, NmHandle) {
 enum Wake {
     Bus,
     Settings,
-    Stats {
-        path: String,
-        rx: Option<u64>,
-        tx: Option<u64>,
-    },
     Strength {
         path: String,
         strength: Option<u8>,
@@ -104,23 +96,11 @@ enum Wake {
     Quit,
 }
 
-/// The wake a `PropertiesChanged` on `path` is worth: counters-only statistics and strength-only
-/// access point updates are patched in place; a bare `LastScan` stamp is none; anything else
-/// rebuilds.
+/// The wake a `PropertiesChanged` on `path` is worth: strength-only access point updates are
+/// patched in place; a bare `LastScan` stamp is none; anything else rebuilds.
 fn wake_for_change(path: &str, iface: &str, changed: &Props) -> Option<Wake> {
     if iface == WIRELESS_IFACE && !changed.is_empty() && changed.keys().all(|k| k == "LastScan") {
         return None;
-    }
-    if iface == STATS_IFACE
-        && !changed.is_empty()
-        && changed.keys().all(|k| k == "RxBytes" || k == "TxBytes")
-    {
-        let counter = |k: &str| changed.get(k).and_then(|v| u64::try_from(v.clone()).ok());
-        return Some(Wake::Stats {
-            path: path.to_string(),
-            rx: counter("RxBytes"),
-            tx: counter("TxBytes"),
-        });
     }
     if iface == AP_IFACE
         && !changed.is_empty()
@@ -157,21 +137,6 @@ fn patch_strength(snapshot: &mut Snapshot, path: &str, strength: Option<u8>) -> 
         }
     }
     sort_aps(&mut wifi.aps);
-    true
-}
-
-/// Patch a statistics tick into the snapshot (counters the signal omits keep their value); false
-/// when no device has that path.
-fn patch_stats(snapshot: &mut Snapshot, path: &str, rx: Option<u64>, tx: Option<u64>) -> bool {
-    let Some(d) = snapshot.devices.iter_mut().find(|d| d.path == path) else {
-        return false;
-    };
-    if let Some(rx) = rx {
-        d.rx_bytes = rx;
-    }
-    if let Some(tx) = tx {
-        d.tx_bytes = tx;
-    }
     true
 }
 
@@ -241,11 +206,6 @@ async fn run(
                     saved_cache = None;
                     rebuild = true;
                 }
-                Wake::Stats { path, rx, tx } => {
-                    if !patch_stats(&mut snapshot, &path, rx, tx) {
-                        rebuild = true;
-                    }
-                }
                 Wake::Strength { path, strength } => {
                     if !patch_strength(&mut snapshot, &path, strength) {
                         rebuild = true;
@@ -291,9 +251,9 @@ fn follow_switches(wakes: async_channel::Sender<Wake>) {
     }
 }
 
-/// Run the windows' commands on a task beside the connection, each answered by a [`Wake::Ran`], so the loop
-/// keeps reading while a call waits on the authentication dialog. The returned task must be kept
-/// alive.
+/// Run the windows' commands in order on a task beside the connection, each answered by a
+/// [`Wake::Ran`], so the loop keeps reading while a call waits on the authentication dialog. The
+/// returned task must be kept alive.
 fn commands(
     conn: &Connection,
     cmds: async_channel::Receiver<Cmd>,
@@ -301,61 +261,17 @@ fn commands(
 ) -> zruntime::Task<(), zruntime::Shared> {
     let bus = conn.clone();
     zruntime::spawn(async move {
-        queue(cmds, wakes, |cmd| {
-            let bus = bus.clone();
-            async move { command(&bus, &cmd).await }
-        })
-        .await
-    })
-}
-
-/// [`commands`] without the bus. `Stats` commands take their own lane so a Status sheet opened
-/// during a pending join does not show frozen counters; each lane keeps its order.
-async fn queue<F, Fut>(
-    cmds: async_channel::Receiver<Cmd>,
-    wakes: async_channel::Sender<Wake>,
-    run: F,
-) where
-    F: Fn(Cmd) -> Fut,
-    Fut: std::future::Future<Output = Result<Option<NmMsg>, Failure>>,
-{
-    let (main_tx, main_rx) = async_channel::unbounded::<Cmd>();
-    let (stats_tx, stats_rx) = async_channel::unbounded::<Cmd>();
-    let (stats_done_tx, stats_done_rx) = async_channel::bounded::<()>(1);
-    let route = async move {
         while let Ok(cmd) = cmds.recv().await {
-            let quit = cmd == Cmd::Quit;
-            let lane = match cmd {
-                Cmd::Stats { .. } => &stats_tx,
-                _ => &main_tx,
-            };
-            if lane.send(cmd).await.is_err() || quit {
-                break;
-            }
-        }
-    };
-    let stats = async {
-        while let Ok(cmd) = stats_rx.recv().await {
-            if wakes.send(ran(&cmd, run(cmd.clone()).await)).await.is_err() {
-                break;
-            }
-        }
-        drop(stats_done_tx);
-    };
-    let main = async {
-        while let Ok(cmd) = main_rx.recv().await {
             let wake = if cmd == Cmd::Quit {
-                let _ = stats_done_rx.recv().await;
                 Wake::Quit
             } else {
-                ran(&cmd, run(cmd.clone()).await)
+                ran(&cmd, command(&bus, &cmd).await)
             };
-            if wakes.send(wake).await.is_err() {
+            if wakes.send(wake).await.is_err() || cmd == Cmd::Quit {
                 return;
             }
         }
-    };
-    futures_util::future::join3(route, stats, main).await;
+    })
 }
 
 fn ran(cmd: &Cmd, result: Result<Option<NmMsg>, Failure>) -> Wake {
@@ -363,10 +279,6 @@ fn ran(cmd: &Cmd, result: Result<Option<NmMsg>, Failure>) -> Wake {
         Ok(reply) => (reply.map(Box::new), None),
         Err(Failure::Dismissed) => {
             log::info!("{cmd:?}: the password prompt was dismissed");
-            (None, None)
-        }
-        Err(Failure::Text(e)) if matches!(cmd, Cmd::Stats { .. }) => {
-            log::info!("{cmd:?} failed: {e}");
             (None, None)
         }
         Err(Failure::Text(e)) => {
