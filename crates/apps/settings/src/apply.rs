@@ -95,14 +95,15 @@ impl SettingsApp {
             || self.region.as_ref().is_some_and(|r| r.dirty())
     }
 
-    /// Remove works on user entries only; a system entry has no file of the user's.
+    /// Remove works on the user's own entries only; a system entry, or a user file standing in
+    /// for one, is unchecked instead.
     fn sync_remove(&mut self) {
         let on = self
             .list
             .selection
             .focus
             .and_then(|i| self.entries.get(i))
-            .is_some_and(|e| e.user);
+            .is_some_and(|e| e.user && !e.stand_in);
         self.sheet.pages[Page::Startup.index()].set_enabled(pages::REMOVE, on);
     }
 

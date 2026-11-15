@@ -721,6 +721,7 @@ fn render_the_pages() {
         terminal: false,
         under_systemd: false,
         user: *user,
+        stand_in: false,
     })
     .collect();
     fill_list(&mut lv, &entries, &[true, false, true]);
