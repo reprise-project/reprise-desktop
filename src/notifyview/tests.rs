@@ -7,7 +7,8 @@ use super::paint::{balloon_icon, frame_outputs, paint, relative, sheet_icons, sl
 use super::pointer::{hold_at, icon_tip, point_at, press_target, rest_point};
 use super::reply::take_draft;
 use super::stack::{
-    Burst, chip_count, fill, fold_from, fold_in, join_burst, overflow, retint, shed, take_queued,
+    Arrivals, Burst, chip_count, fill, fold_from, fold_in, join_burst, overflow, retint, shed,
+    take_queued,
 };
 use super::warm::{land_warm, paint_warm_jobs};
 use super::*;
@@ -354,19 +355,43 @@ fn buttons_skip_the_default_action_and_menu_rows_name_every_action() {
 fn the_fourth_from_one_program_in_the_window_bursts() {
     let t0 = Instant::now();
     let at = |s| t0 + Duration::from_secs(s);
-    let mut r = VecDeque::new();
-    assert!(!arrived(&mut r, "Mail", at(0)));
-    assert!(!arrived(&mut r, "Chat", at(1)));
-    assert!(!arrived(&mut r, "Mail", at(2)));
-    assert!(!arrived(&mut r, "Mail", at(3)));
-    assert!(arrived(&mut r, "Mail", at(4)), "the fourth");
-    assert!(!arrived(&mut r, "Chat", at(5)));
-    let mut r = VecDeque::new();
+    let mut r = Arrivals::default();
+    assert!(!r.arrived("Mail", at(0)));
+    assert!(!r.arrived("Chat", at(1)));
+    assert!(!r.arrived("Mail", at(2)));
+    assert!(!r.arrived("Mail", at(3)));
+    assert!(r.arrived("Mail", at(4)), "the fourth");
+    assert!(!r.arrived("Chat", at(5)));
+    let mut r = Arrivals::default();
     for s in [0, 4, 8] {
-        arrived(&mut r, "Mail", at(s));
+        r.arrived("Mail", at(s));
     }
-    assert!(!arrived(&mut r, "Mail", at(11)), "the first fell out");
-    assert_eq!(r.len(), 3);
+    assert!(!r.arrived("Mail", at(11)), "the first fell out");
+    let mut r = Arrivals::default();
+    for s in 0..100 {
+        r.arrived("Mail", at(s / 20));
+    }
+    for s in [12, 13, 14] {
+        r.arrived("Mail", at(s));
+    }
+    assert!(
+        r.arrived("Mail", at(15)),
+        "a flood keeps the last four, still in the window"
+    );
+}
+
+#[test]
+fn programs_with_no_arrival_in_the_window_are_forgotten() {
+    let t0 = Instant::now();
+    let mut r = Arrivals::default();
+    for i in 0..1000 {
+        r.arrived(&format!("app{i}"), t0);
+    }
+    r.arrived("Mail", t0 + BURST_WINDOW + Duration::from_secs(1));
+    for i in 0..1000 {
+        r.arrived(&format!("late{i}"), t0 + BURST_WINDOW * 2);
+    }
+    assert_eq!(r.programs(), 1001, "Mail and the late thousand");
 }
 
 #[test]
@@ -1969,4 +1994,49 @@ fn an_own_notice_runs_the_action_its_button_names() {
         ["reprise-explorer"],
         "a later notice drops the earlier one's actions"
     );
+}
+
+#[test]
+fn a_flood_from_the_bus_paints_the_stack_and_the_bar_once_per_wake() {
+    use crate::tray::TrayEvent;
+    use std::os::fd::AsRawFd;
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    let (tx, wake, _heard) = crate::tray::headless(&mut h.state);
+    h.dispatch();
+    let draws = |h: &crate::harness::Harness| h.state.bars[0].draws;
+    let (bar_before, paints_before) = (draws(&h), h.state.notify.paints);
+    for id in 1..=1000 {
+        tx.send(TrayEvent::Notify(note(id, "Mail"))).expect("send");
+    }
+    // SAFETY: `wake` is an open eventfd and the buffer a live 8-byte local.
+    let wrote = unsafe { libc::write(wake.as_raw_fd(), (&1u64 as *const u64).cast(), 8) };
+    assert_eq!(wrote, 8);
+    let newest = |h: &crate::harness::Harness| match &h.state.notify.stack.first()?.item {
+        Item::Burst(b) => b.ids.last().copied(),
+        Item::Note(n) => Some(n.id),
+    };
+    let mut wakes = 0;
+    while newest(&h) != Some(1000) && wakes < 100 {
+        h.dispatch();
+        wakes += 1;
+    }
+    let v = &h.state.notify;
+    assert_eq!(v.stack.len(), 1);
+    assert!(v.queue.is_empty());
+    let Item::Burst(b) = &v.stack[0].item else {
+        panic!("the flood folds into one burst");
+    };
+    assert_eq!(b.title(), "20 new from Mail", "the ones the history keeps");
+    assert!(
+        v.paints - paints_before <= wakes,
+        "{} paints",
+        v.paints - paints_before
+    );
+    assert!(
+        draws(&h) - bar_before <= wakes,
+        "{} bar draws",
+        draws(&h) - bar_before
+    );
+    assert_eq!(wakes, 16, "64 notifications a wake");
 }

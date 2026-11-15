@@ -1541,7 +1541,11 @@ stop the share first.
   read only from a regular file of 32 MiB or less, opened without blocking,
   and read and decoded on the tray icons' two threads below, never on the
   bus thread, 4 at a time per sender; past 2 s for them all, counting the
-  wait for a thread, the notification shows without them.
+  wait for a thread, the notification shows without them. The compositor
+  takes at most 64 of the tray thread's events per pass of its loop and
+  draws the balloons, the taskbars and the history once per pass, so a
+  flood of notifications, or of one notification's updates, leaves input
+  and frames their turn.
 - **Content search.** Off by default (`[launcher] contents`): until it is
   turned on, the launcher and the Start menu's search never call
   localsearch, so the bus never starts the indexer for them. The Search

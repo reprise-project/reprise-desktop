@@ -497,18 +497,33 @@ fn tray_readable(state: &mut State, fd: BorrowedFd) {
     // Take the events out first: handling one may reach the tray again.
     let mut pending = Vec::new();
     if let Some(tray) = state.tray.as_ref() {
-        while let Ok(ev) = tray.events.try_recv() {
+        while pending.len() < EVENTS_PER_WAKE
+            && let Ok(ev) = tray.events.try_recv()
+        {
             pending.push(ev);
         }
     }
-    let mut redraw = false;
-    for ev in pending {
-        redraw |= handle_event(state, ev);
+    if pending.len() == EVENTS_PER_WAKE {
+        // SAFETY: `fd` is the open eventfd and the buffer a live 8-byte local. A full counter
+        // (EAGAIN) is readable already.
+        unsafe {
+            libc::write(fd.as_raw_fd(), (&1u64 as *const u64).cast(), 8);
+        }
     }
-    if redraw {
-        state.redraw_taskbars();
-    }
+    crate::notifyview::hold(state, |state| {
+        let mut redraw = false;
+        for ev in pending {
+            redraw |= handle_event(state, ev);
+        }
+        if redraw {
+            state.redraw_taskbars();
+        }
+    });
 }
+
+/// Events one wake handles; the rest wait for the next pass of the loop, so a flood from the bus
+/// shares the loop with input and frames.
+const EVENTS_PER_WAKE: usize = 64;
 
 fn new_eventfd() -> Option<OwnedFd> {
     // SAFETY: plain syscall, no pointers.
