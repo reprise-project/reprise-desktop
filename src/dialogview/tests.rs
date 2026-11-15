@@ -537,3 +537,34 @@ fn a_properties_header_whose_guessed_icon_is_refused_wears_the_next_one() {
     });
     std::fs::remove_dir_all(&root).unwrap();
 }
+
+#[test]
+fn a_delete_question_about_other_items_opens_over_an_unanswered_one() {
+    use reprisefs::bincap::BinLack;
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    let empty = Dialog::confirm_empty_bin(7, None);
+    let paths: Vec<std::path::PathBuf> = ["a", "b", "c"].map(|n| format!("/d/{n}").into()).into();
+    let trash = Dialog::confirm_delete_many(&paths, false, BinLack::None);
+    let erase = Dialog::confirm_delete_many(&paths, true, BinLack::None);
+    assert_eq!(empty.title, trash.title, "one title for both questions");
+    h.state.open_dialog(empty.clone());
+    h.state.open_dialog(trash.clone());
+    h.state.open_dialog(erase.clone());
+    let shown = |h: &crate::harness::Harness| -> Vec<Dialog> {
+        (h.state.dialogs.views.iter())
+            .map(|v| v.dialog.clone())
+            .collect()
+    };
+    let texts = |ds: Vec<Dialog>| -> Vec<String> { ds.into_iter().map(|d| d.text).collect() };
+    let want = [&empty, &trash, &erase].map(|d| d.text.clone());
+    assert_eq!(texts(shown(&h)), want, "three questions, newest on top");
+    h.state.open_dialog(trash.clone());
+    let top = shown(&h).pop().unwrap();
+    assert_eq!(
+        top.identity(),
+        trash.identity(),
+        "the same question is raised"
+    );
+    assert_eq!(shown(&h).len(), 3, "and not opened twice");
+}
