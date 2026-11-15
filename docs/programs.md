@@ -542,7 +542,8 @@ matched control focused.
     reopens, the Run and clipboard histories and location answers stay
     behind. Import shows what it replaces, keeps the current files in
     `~/.config/reprise/reprise-settings-before-import.toml` (a file Import
-    takes back), writes the new ones, and the desktop picks them up at once.
+    takes back, which also removes the files that weren't there before),
+    writes the new ones, and the desktop picks them up at once.
     Display arrangements only apply to the same monitors. From Another
     Desktop... opens [Import from Another Desktop](#import-from-another-desktop).
 
