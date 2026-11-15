@@ -6,7 +6,7 @@
 use crate::config::{Action, QuickLaunchEntry};
 use reprisefs::apps;
 use reprisefs::quicklaunch::{Button, slug, unique_name};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct QuickItem {
@@ -85,15 +85,21 @@ pub fn reread(dir: &Path, terminal: &str, shown: &[QuickItem], moved: bool) -> V
     items
 }
 
-/// Put a shortcut for `src` in `dir`: a `.desktop` file that [`parse`] accepts is copied as is,
-/// anything else gets a launcher built on `apps::open_command_for`. Returns the new file's name.
+/// Put a shortcut for `src` in `dir`: a [runnable](runs_as_is) `.desktop` file that [`parse`]
+/// accepts is copied as is, anything else gets a launcher built on `apps::open_command_for`, which
+/// asks before it runs a launcher. Returns the new file's name.
 pub fn add(dir: &Path, src: &Path) -> Option<String> {
+    add_from(dir, src, &apps::default_dirs())
+}
+
+/// [`add`], with `app_dirs` the application folders.
+fn add_from(dir: &Path, src: &Path, app_dirs: &[PathBuf]) -> Option<String> {
     let name = src.file_name()?.to_string_lossy().into_owned();
     if let Err(e) = std::fs::create_dir_all(dir) {
         log::warn!("quicklaunch: could not create {}: {e}", dir.display());
         return None;
     }
-    let (file, text) = if name.ends_with(".desktop") {
+    let (file, text) = if name.ends_with(".desktop") && runs_as_is(src, dir, app_dirs) {
         let text = apps::read_desktop_file(src).ok()?;
         if parse(&text, &name, "").is_none() {
             log::warn!("quicklaunch: {name} is not an application or action");
@@ -123,6 +129,17 @@ pub fn add(dir: &Path, src: &Path) -> Option<String> {
             None
         }
     }
+}
+
+/// Whether the `.desktop` file `src` may become a button that runs its `Exec`: it sits in one of
+/// `app_dirs` or in `dir` (Quick Launch's own), or the user allowed it to run.
+fn runs_as_is(src: &Path, dir: &Path, app_dirs: &[PathBuf]) -> bool {
+    let real = |d: &Path| std::fs::canonicalize(d).ok();
+    let Some(parent) = src.parent().and_then(real) else {
+        return false;
+    };
+    let listed = std::iter::once(dir).chain(app_dirs.iter().map(PathBuf::as_path));
+    listed.filter_map(real).any(|d| d == parent) || apps::is_trusted(src)
 }
 
 pub fn remove(dir: &Path, file: &str) {
@@ -297,7 +314,9 @@ mod tests {
         assert_eq!(scan(&dir, "foot").len(), 3);
     }
 
-    /// Pinning copies the app's `.desktop` file into the folder, keeping its name and class so the app's windows find it; unpinning deletes the copy and nothing else.
+    /// Pinning copies the app's `.desktop` file from an application folder into Quick Launch's,
+    /// keeping its name and class so the app's windows find it; unpinning deletes the copy and nothing
+    /// else.
     #[test]
     fn pin_copies_the_desktop_file_and_unpin_removes_it() {
         let src = fixture("pin-src");
@@ -311,7 +330,7 @@ mod tests {
         .unwrap();
         let dir = fixture("pin-dst");
         let _c2 = Cleanup(dir.clone());
-        let file = add(&dir, &app).unwrap();
+        let file = add_from(&dir, &app, std::slice::from_ref(&src)).unwrap();
         assert_eq!(file, "vscode.desktop");
         let items = scan(&dir, "foot");
         assert_eq!(items.len(), 1);
@@ -321,6 +340,37 @@ mod tests {
         remove(&dir, &file);
         assert!(scan(&dir, "foot").is_empty());
         assert!(app.exists(), "the source stays");
+    }
+
+    #[test]
+    fn a_launcher_from_elsewhere_opens_it_until_launching_it_is_allowed() {
+        let src = fixture("loose-src");
+        let _c = Cleanup(src.clone());
+        std::fs::create_dir_all(&src).unwrap();
+        let invoice = src.join("Invoice.desktop");
+        std::fs::write(
+            &invoice,
+            "[Desktop Entry]\nType=Application\nName=Invoice\nExec=sh -c true\n",
+        )
+        .unwrap();
+        let dir = fixture("loose-dst");
+        let _c2 = Cleanup(dir.clone());
+        let apps_dir = fixture("loose-apps");
+        let file = add_from(&dir, &invoice, std::slice::from_ref(&apps_dir)).unwrap();
+        assert_eq!(file, "invoice-desktop.desktop");
+        let items = scan(&dir, "foot");
+        assert_eq!(
+            items[0].entry.action,
+            exec(&["xdg-open", &invoice.to_string_lossy()], &file),
+            "opening it asks before it runs"
+        );
+        assert_eq!(items[0].entry.label, "Invoice.desktop");
+        apps::allow_launching(&invoice).unwrap();
+        let file = add_from(&dir, &invoice, &[apps_dir]).unwrap();
+        assert_eq!(file, "Invoice.desktop", "an allowed launcher is copied");
+        let copied = scan(&dir, "foot");
+        let copied = copied.iter().find(|i| i.file == file).unwrap();
+        assert_eq!(copied.entry.action, exec(&["sh", "-c", "true"], &file));
     }
 
     #[test]
@@ -336,7 +386,7 @@ mod tests {
         .unwrap();
         let dir = fixture("link-dst");
         let _c2 = Cleanup(dir.clone());
-        assert_eq!(add(&dir, &link), None);
+        assert_eq!(add_from(&dir, &link, std::slice::from_ref(&src)), None);
         assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
     }
 
@@ -352,7 +402,7 @@ mod tests {
         assert_eq!(scan(&dir, "foot"), []);
         let other = fixture("fifo-dst");
         let _c2 = Cleanup(other.clone());
-        assert_eq!(add(&other, &fifo), None);
+        assert_eq!(add_from(&other, &fifo, std::slice::from_ref(&dir)), None);
         assert_eq!(scan(&other, "foot"), []);
     }
 }
