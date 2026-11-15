@@ -151,9 +151,13 @@ captures light the red border, around the area while an area is recorded.
 The compositor makes the recording's file and hands it to the recorder
 open; the recorder never opens a name under Videos, so a program that can
 write there cannot point the recording at another file by swapping the
-name. The recorder waits for its portal answers from the portal's own bus
-name, and Stop signals it through a pidfd, which never reaches another
-process that got its pid.
+name. Stop signals the recorder through a pidfd, which never reaches
+another process that got its pid.
+
+Reprise's own portal clients (the recorder, the remote desktop server and
+Phone's Send files...) take a request's answer only from the unique name
+that owns `org.freedesktop.portal.Desktop`, so another program can't answer
+in the portal's place, with a file of its choosing or a session handle.
 
 ## X11 programs
 
