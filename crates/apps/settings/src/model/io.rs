@@ -303,6 +303,11 @@ pub fn validate(s: &Settings, base: &Settings) -> Result<(), String> {
     if s.nl_from == s.nl_to {
         return Err("The night light's From and To times must differ.".into());
     }
+    if let (Some(f), Some(t)) = (parse_hhmm(&s.glass_dark_from), parse_hhmm(&s.glass_dark_to))
+        && f == t
+    {
+        return Err("Glass's dark hours must start and end at different times.".into());
+    }
     // A file already holding equal times still applies other changes; the compositor drops the key alone.
     if s.quiet_hours != base.quiet_hours
         && let [from, to] = &s.quiet_hours[..]

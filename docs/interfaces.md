@@ -105,7 +105,7 @@ Glass has no colour schemes. It has a `[glass]` section instead:
 | `color` | `sky`, `twilight`, `sea`, `leaf`, `lime`, `sun`, `pumpkin`, `ruby`, `fuchsia`, `blush`, `violet`, `lavender`, `taupe`, `chocolate`, `slate`, `frost`, or `"#RRGGBB"` | `sky` |
 | `intensity` | how much of the colour shows, 0 to 100; part of it follows the brightness behind the glass, so translucent glass shows more colour over light backdrops than over dark ones (not under Smoked) | 42 |
 | `mode` | `light`, `dark`, `night` (dark from sunset to sunrise, or between `[night_light]`'s fixed times, whether or not night light is on) or `hours` (dark from `dark_from` to `dark_to`) | `light` |
-| `dark_from`, `dark_to` | local times for `mode = "hours"`; a `dark_to` at or before `dark_from` is the next morning | `"19:00"`, `"07:00"` |
+| `dark_from`, `dark_to` | local times for `mode = "hours"`, which must differ; a `dark_to` before `dark_from` is the next morning | `"19:00"`, `"07:00"` |
 | `material` | `frosted`, `smoked` or `molten` | `frosted` |
 | `frame` | `rounded` or `square` | `rounded` |
 | `notification_style` | the notification sheet's shape: `lozenge`; `halo`, with the app icon breaking out of its top-left edge and the glass washed in the icon's colour; or `droplet`, one row that opens on hover | `lozenge` |

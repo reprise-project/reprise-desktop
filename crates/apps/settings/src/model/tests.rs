@@ -1691,6 +1691,24 @@ fn quiet_hours_round_trip_and_refuse_equal_times() {
     );
 }
 
+#[test]
+fn apply_refuses_equal_glass_dark_hours() {
+    let s = Settings {
+        glass_dark_from: "08:00".into(),
+        glass_dark_to: "08:00".into(),
+        ..Settings::default()
+    };
+    assert_eq!(
+        validate(&s, &Settings::default()),
+        Err("Glass's dark hours must start and end at different times.".into())
+    );
+    let apart = Settings {
+        glass_dark_to: "20:00".into(),
+        ..s
+    };
+    assert_eq!(validate(&apart, &Settings::default()), Ok(()));
+}
+
 /// The compositor drops equal quiet hours; a file holding them still opens and takes other changes.
 #[test]
 fn a_file_with_equal_quiet_hours_still_loads_and_applies() {

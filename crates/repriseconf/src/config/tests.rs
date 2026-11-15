@@ -1329,12 +1329,47 @@ fn a_restored_key_that_fails_against_the_new_file_takes_its_default_alone() {
 }
 
 #[test]
-fn a_table_whose_keys_fail_only_together_is_dropped_whole() {
-    let text = "[night_light]\nenabled = true\nfrom = \"08:00\"\nto = \"08:00\"\ntemperature = 1\n";
-    let (c, dropped) = Config::parse_lenient(text).unwrap();
-    let keys: Vec<&str> = dropped.iter().map(|(k, _)| k.as_str()).collect();
-    assert_eq!(keys, ["night_light"]);
-    assert_eq!(c.night_light, NightLightConfig::default());
+fn partner_keys_are_tried_together_and_dropped_together() {
+    let dropped_keys = |text: &str| {
+        let (c, dropped) = Config::parse_lenient(text).unwrap();
+        let mut keys: Vec<String> = dropped.into_iter().map(|(k, _)| k).collect();
+        keys.sort();
+        (c, keys)
+    };
+    let (c, keys) = dropped_keys(
+        "[night_light]\nenabled = true\nfrom = \"08:00\"\nto = \"08:00\"\ntemperature = 1\n",
+    );
+    assert_eq!(
+        keys,
+        [
+            "night_light.from",
+            "night_light.temperature",
+            "night_light.to"
+        ]
+    );
+    assert!(c.night_light.enabled, "the rest of the table stays");
+    assert_eq!(
+        (c.night_light.from, c.night_light.to),
+        (21 * 60, 7 * 60),
+        "the pair takes its defaults together"
+    );
+
+    let (c, keys) =
+        dropped_keys("[glass]\nintensity = 50\ndark_from = \"08:00\"\ndark_to = \"08:00\"\n");
+    assert_eq!(keys, ["glass.dark_from", "glass.dark_to"]);
+    assert_eq!(
+        c.glass.intensity, 50,
+        "equal dark hours keep the rest of [glass]"
+    );
+
+    let (c, keys) =
+        dropped_keys("[glass]\nintensity = 150\ndark_from = \"07:00\"\ndark_to = \"19:00\"\n");
+    assert_eq!(keys, ["glass.intensity"]);
+    assert_eq!(
+        (c.glass_dark.from, c.glass_dark.to),
+        (7 * 60, 19 * 60),
+        "dark_from is checked against the file's dark_to, not the default"
+    );
 }
 
 #[test]
