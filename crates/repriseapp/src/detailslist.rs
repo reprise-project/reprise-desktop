@@ -166,6 +166,12 @@ impl<R: Rows + Default> List<R> {
         self.view.scroll(rows as i64, &lay)
     }
 
+    pub fn wheel_across(&mut self, cols: i32, r: Rect, ctx: &Ctx) -> bool {
+        let lay = self.layout(r, ctx);
+        let by = cols.saturating_mul(reprisekit::pointer::COLUMN_PX);
+        self.view.hscroll(by, &lay)
+    }
+
     /// The arrows, Home, End and the page keys move the selection; `None` for any other key.
     pub fn key(&mut self, sym: u32, r: Rect, ctx: &Ctx) -> Option<bool> {
         let lay = self.layout(r, ctx);

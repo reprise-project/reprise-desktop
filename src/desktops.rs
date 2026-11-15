@@ -231,9 +231,9 @@ impl State {
     }
 
     /// A wheel event over the pager or the desktop: wheel up switches to the previous desktop, down to the next, a
-    /// touchpad every [`crate::displays::TOUCH_STEP`] of travel.
+    /// touchpad every [`reprisekit::pointer::TOUCH_STEP`] of travel.
     pub fn desktop_wheel(&mut self, discrete: i32, continuous: f64) {
-        let steps = crate::displays::wheel_steps(discrete, continuous, &mut self.desktop_wheel);
+        let steps = -self.desktop_wheel.notches(discrete, continuous);
         if let Some(n) = wheel_target(self.desktops, steps) {
             self.switch_desktop(n);
         }
@@ -429,13 +429,9 @@ mod tests {
             count: 4,
             current: 1,
         };
-        let mut carried = (0, 0.0);
-        let mut step = |discrete, continuous| {
-            wheel_target(
-                d,
-                crate::displays::wheel_steps(discrete, continuous, &mut carried),
-            )
-        };
+        let mut carried = reprisekit::pointer::WheelCarry::default();
+        let mut step =
+            |discrete, continuous| wheel_target(d, -carried.notches(discrete, continuous));
         assert_eq!(step(-120, -15.0), Some(0), "a notch up");
         assert_eq!(step(120, 15.0), Some(2), "a notch down");
         assert_eq!(step(360, 45.0), Some(3), "three notches stop at the last");
@@ -451,19 +447,14 @@ mod tests {
     #[test]
     fn touchpad_travel_and_hi_res_wheels_add_up_to_one_step_a_notch() {
         let d = Desktops::new(4);
-        let mut carried = (0, 0.0);
-        let mut step = |discrete, continuous| {
-            wheel_target(
-                d,
-                crate::displays::wheel_steps(discrete, continuous, &mut carried),
-            )
-        };
+        let mut carried = reprisekit::pointer::WheelCarry::default();
+        let mut step =
+            |discrete, continuous| wheel_target(d, -carried.notches(discrete, continuous));
         assert_eq!(step(0, 6.0), None);
         assert_eq!(step(0, 6.0), None);
         assert_eq!(step(0, 6.0), Some(1), "18 of travel passes one step");
-        let mut carried = (0, 0.0);
-        let mut hi_res =
-            |discrete| wheel_target(d, crate::displays::wheel_steps(discrete, 5.0, &mut carried));
+        let mut carried = reprisekit::pointer::WheelCarry::default();
+        let mut hi_res = |discrete| wheel_target(d, -carried.notches(discrete, 5.0));
         assert_eq!(hi_res(60), None);
         assert_eq!(hi_res(60), Some(1), "two half notches make one");
     }

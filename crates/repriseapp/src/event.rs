@@ -62,6 +62,13 @@ pub enum PointerInput {
         y: i32,
         rows: i32,
     },
+    /// Horizontal scroll in columns (positive is right), counted as `Scroll` counts rows. A
+    /// diagonal frame sends this first, then `Scroll`.
+    ScrollAcross {
+        x: i32,
+        y: i32,
+        cols: i32,
+    },
     Leave,
 }
 

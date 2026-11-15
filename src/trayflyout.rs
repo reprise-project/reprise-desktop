@@ -27,7 +27,7 @@ pub struct FlyoutView {
     layout: FlyoutLayout,
     at: (i32, i32),
     ids: Vec<String>,
-    wheel: Option<(usize, bool, i32)>,
+    wheel: Option<(usize, bool, reprisekit::pointer::WheelCarry)>,
     link_hot: bool,
     #[cfg(test)]
     pub draws: usize,
@@ -307,12 +307,12 @@ fn click_point(cell: Rect, edge: Edge) -> (i32, i32) {
 /// remainder stays for the next event over the same cell and axis.
 pub fn scroll(state: &mut State, cell: usize, horizontal: bool, discrete: i32, continuous: f64) {
     let Some(v) = view(state) else { return };
-    let carried = match v.wheel {
-        Some((c, h, r)) if c == cell && h == horizontal => r,
-        _ => 0,
+    let mut carry = match v.wheel {
+        Some((c, h, carry)) if c == cell && h == horizontal => carry,
+        _ => Default::default(),
     };
-    let (steps, residual) = crate::tray::wheel_steps(discrete, continuous, carried);
-    v.wheel = Some((cell, horizontal, residual));
+    let steps = -carry.notches(discrete, continuous);
+    v.wheel = Some((cell, horizontal, carry));
     let Some(id) = v.ids.get(cell).cloned() else {
         return;
     };

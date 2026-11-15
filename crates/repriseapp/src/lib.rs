@@ -334,6 +334,8 @@ struct Host {
     shape: grip::PointerShape,
     mods: Modifiers,
     pointer_pos: (i32, i32),
+    /// The scroll carry for columns and rows, dropped when the pointer leaves a surface.
+    wheel: [reprisekit::pointer::WheelCarry; 2],
     pointer_in: Option<WinId>,
     loop_handle: LoopHandle<'static, Host>,
     qh: QueueHandle<Host>,

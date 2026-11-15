@@ -1093,6 +1093,10 @@ impl Host {
                 let hit = dlg.hit(text, px, r, *x, *y);
                 dlg.wheel(r, hit, *rows)
             }
+            Event::Pointer(PointerInput::ScrollAcross { x, y, cols }) => {
+                let hit = dlg.hit(text, px, r, *x, *y);
+                dlg.wheel_across(r, hit, *cols)
+            }
             _ => return Step::None,
         };
         self.outcome(dlg, out)

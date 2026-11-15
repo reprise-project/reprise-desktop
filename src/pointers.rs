@@ -310,26 +310,6 @@ impl V120Carry {
     }
 }
 
-/// Whole wheel notches an axis event carries for a StatusNotifierItem, plus the
-/// 120ths left over. Two conventions meet here: Wayland counts a wheel step positive towards the
-/// user, `discrete` in 120ths of a notch (0 for touchpads, where only the sign
-/// of `continuous` counts), while a StatusNotifierItem `Scroll` is positive
-/// away from the user. The sign flips and the sub-notch remainder is carried
-/// in `residual`. `discrete` can come raw off the EIS wire, so the sum saturates.
-pub fn wheel_steps(discrete: i32, continuous: f64, residual: i32) -> (i32, i32) {
-    if discrete != 0 {
-        let total = residual.saturating_add(discrete);
-        return (-(total / 120), total % 120);
-    }
-    if continuous > 0.0 {
-        (-1, 0)
-    } else if continuous < 0.0 {
-        (1, 0)
-    } else {
-        (0, residual)
-    }
-}
-
 impl State {
     /// Turn the touchpad on or off (`None` flips it): live at once, in config.toml when it
     /// changed, and in the on-screen panel.
@@ -832,33 +812,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn wheel_steps_flips_wayland_sign_for_the_item() {
-        assert_eq!(wheel_steps(120, 15.0, 0), (-1, 0));
-        assert_eq!(wheel_steps(-120, -15.0, 0), (1, 0));
-        assert_eq!(wheel_steps(360, 45.0, 0), (-3, 0));
-    }
-
-    #[test]
-    fn wheel_steps_reads_a_continuous_source_by_sign() {
-        assert_eq!(wheel_steps(0, 8.5, 0), (-1, 0));
-        assert_eq!(wheel_steps(0, -0.5, 0), (1, 0));
-    }
-
-    #[test]
-    fn wheel_steps_carries_a_sub_notch_remainder() {
-        let (steps, residual) = wheel_steps(40, 5.0, 0);
-        assert_eq!((steps, residual), (0, 40));
-        let (steps, residual) = wheel_steps(40, 5.0, residual);
-        assert_eq!((steps, residual), (0, 80));
-        assert_eq!(wheel_steps(40, 5.0, residual), (-1, 0));
-    }
-
-    #[test]
-    fn wheel_steps_keeps_the_remainder_on_an_empty_event() {
-        assert_eq!(wheel_steps(0, 0.0, 40), (0, 40));
-    }
-
     fn four_desktops(natural: bool) -> crate::config::Config {
         let mut cfg = crate::config::Config {
             base: repriseconf::config::Config {
@@ -965,13 +918,5 @@ mod tests {
         );
         h.state.set_touchpad(Some(true));
         assert!(h.state.config.touchpad.enabled);
-    }
-
-    #[test]
-    fn wheel_steps_saturates_an_extreme_discrete_value() {
-        assert_eq!(
-            wheel_steps(i32::MAX, 1.0, 40),
-            (-(i32::MAX / 120), i32::MAX % 120)
-        );
     }
 }

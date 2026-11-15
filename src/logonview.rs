@@ -54,8 +54,7 @@ pub struct LogonView {
     pub compose: Option<Compose>,
     /// The screen is drawn but not shown, and takes no pointer.
     pub hidden: bool,
-    /// The wheel's sub-notch remainder, in 120ths.
-    wheel: i32,
+    wheel: reprisekit::pointer::WheelCarry,
     /// The change playing on the screen. Its frames draw into `shown`, so it ends by settling
     /// there or with a whole draw.
     pub play: Option<Play>,
@@ -96,7 +95,7 @@ impl LogonView {
             layout: None,
             compose,
             hidden: false,
-            wheel: 0,
+            wheel: Default::default(),
             play: None,
             shown: None,
             ring: None,
@@ -292,18 +291,16 @@ pub fn wheel(state: &mut State, host: &Host, frame: &AxisFrame) {
     if !over {
         return;
     }
-    let (steps, residual) =
-        crate::pointers::wheel_steps(frame.v120.map_or(0, |v| v.1), frame.axis.1, v.wheel);
-    v.wheel = residual;
-    if steps == 0 {
+    let notches = v.wheel.notches(frame.v120.map_or(0, |v| v.1), frame.axis.1);
+    if notches == 0 {
         return;
     }
-    let key = if steps > 0 {
+    let key = if notches < 0 {
         LogonKey::Up
     } else {
         LogonKey::Down
     };
-    for _ in 0..steps.unsigned_abs() {
+    for _ in 0..notches.unsigned_abs() {
         v.model.key(key.clone());
     }
     redraw(state, host);

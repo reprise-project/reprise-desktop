@@ -849,3 +849,42 @@ fn menu_items_maps_nodes_and_skips_invisible() {
         "a radio row is bulleted"
     );
 }
+
+#[test]
+fn twenty_touchpad_frames_of_one_and_a_half_px_scroll_an_item_twice() {
+    use reprisekit::taskbar::TaskbarHit;
+    use smithay::backend::input::{Axis, AxisSource, InputTime};
+    use smithay::input::pointer::AxisFrame;
+    use std::os::fd::AsRawFd;
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    let (tx, wake, heard) = headless(&mut h.state);
+    tx.send(TrayEvent::Added(item("volume", false)))
+        .expect("send");
+    // SAFETY: `wake` is an open eventfd and the buffer a live 8-byte local.
+    let wrote = unsafe { libc::write(wake.as_raw_fd(), (&1u64 as *const u64).cast(), 8) };
+    assert_eq!(wrote, 8);
+    h.dispatch();
+    let tree = h.state.bars[0].tree;
+    let y = 754.0;
+    let bar = h.state.bar(tree).expect("bar");
+    let x = (0..1024)
+        .map(f64::from)
+        .find(|&x| matches!(h.state.bar_hit(bar, x, y), TaskbarHit::Tray(_)))
+        .expect("the item on the bar");
+    h.pointer_to(x + 2.0, y);
+    while heard.try_recv().is_ok() {}
+    for _ in 0..20 {
+        let frame = AxisFrame::new(InputTime::now())
+            .source(AxisSource::Finger)
+            .value(Axis::Vertical, -1.5);
+        h.state.handle_axis(frame);
+    }
+    let scrolls: Vec<i32> = std::iter::from_fn(|| heard.try_recv().ok())
+        .filter_map(|c| match c {
+            TrayCommand::Scroll { delta, .. } => Some(delta),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(scrolls, [1, 1], "30 px of upward travel is two steps up");
+}

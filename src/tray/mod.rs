@@ -25,7 +25,7 @@ pub use menu::{
 };
 pub use place::{behaviour_of, chevron_shown, mutes, overflow_enabled, placement, replace_all};
 pub(crate) use pointer::bar_cell;
-pub use pointer::{bell_cell, click, click_item, is_displays_cell, scroll_item, wheel_steps};
+pub use pointer::{bell_cell, click, click_item, is_displays_cell, scroll_item};
 
 use icons::drawn_sizes;
 use menu::{menu_open_for, open_layout};
@@ -369,10 +369,9 @@ pub struct Tray {
     /// Set once the D-Bus thread is known to be gone, so the warning is
     /// logged once instead of on every command.
     pub gone: bool,
-    /// Wheel motion over a tray icon short of a whole notch: the cell index,
-    /// whether the axis was horizontal, and the leftover 120ths (hi-res
-    /// wheels send fractions of a notch).
-    wheel: Option<(usize, bool, i32)>,
+    /// Wheel motion over a tray icon short of a whole notch: the cell index, whether the axis
+    /// was horizontal, and the carry.
+    wheel: Option<(usize, bool, reprisekit::pointer::WheelCarry)>,
     /// `item_icon`'s answers by (item id, px, needs attention), dropped when an item's icons
     /// change: a redraw must not rescale every pixmap.
     icon_cache: HashMap<(String, i32, bool), Option<Arc<Canvas>>>,

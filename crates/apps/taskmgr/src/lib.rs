@@ -1098,6 +1098,13 @@ impl TaskMgr {
                     _ => Reply::none(),
                 }
             }
+            Event::Pointer(PointerInput::ScrollAcross { x, y, cols }) => {
+                let lay = pages::layout(self, ctx);
+                match (lay.list, self.list()) {
+                    (Some(r), Some(l)) if r.contains(x, y) => redraw(l.wheel_across(cols, r, ctx)),
+                    _ => Reply::none(),
+                }
+            }
             _ => Reply::none(),
         }
     }

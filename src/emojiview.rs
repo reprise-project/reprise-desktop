@@ -151,7 +151,7 @@ impl State {
             glass: Backdrop::new(&self.glass),
             buffer,
         });
-        self.panels.wheel = 0;
+        self.panels.wheel = Default::default();
         self.restart_caret();
         self.redraw_emoji();
     }
@@ -215,15 +215,12 @@ impl State {
     /// The wheel over the panel: `discrete` in 120ths of a notch, down positive, or a `continuous`
     /// amount from a source without notches.
     pub fn emoji_wheel(&mut self, discrete: i32, continuous: f64) {
-        let (steps, residual) =
-            crate::pointers::wheel_steps(discrete, continuous, self.panels.wheel);
-        self.panels.wheel = residual;
-        if steps == 0 {
+        let notches = self.panels.wheel.notches(discrete, continuous);
+        if notches == 0 {
             return;
         }
         if let Some(v) = self.panels.emojiview.as_mut() {
-            // `wheel_steps` counts up as positive.
-            v.model.scroll(-i64::from(steps));
+            v.model.scroll(i64::from(notches));
             self.redraw_emoji();
         }
     }

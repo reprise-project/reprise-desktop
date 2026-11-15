@@ -127,8 +127,9 @@ pub(super) fn click_command(
 /// A wheel step on tray cell `index`: a built-in cell's goes to
 /// [`builtin::scroll`], an item's straight to the item as `Scroll`, leaving
 /// an open menu alone. `discrete` and `continuous` are the axis event's (see
-/// [`wheel_steps`]). An item's sub-notch remainder is kept for the next event
-/// over the same cell and axis; the displays cell keeps its own in
+/// [`reprisekit::pointer::WheelCarry::notches`]); an item's `Scroll` counts away from the user, so
+/// the sign flips. An item's carry is kept for the next event over the same
+/// cell and axis; the displays cell keeps its own in
 /// [`crate::displays::Displays::wheel`].
 pub fn scroll(
     state: &mut State,
@@ -151,12 +152,12 @@ pub fn scroll(
     };
     // A remainder belongs to the cell and the axis it came from; moving to
     // another icon starts the count again.
-    let carried = match tray.wheel {
-        Some((cell, h, r)) if cell == index && h == horizontal => r,
-        _ => 0,
+    let mut carry = match tray.wheel {
+        Some((cell, h, carry)) if cell == index && h == horizontal => carry,
+        _ => Default::default(),
     };
-    let (steps, residual) = wheel_steps(discrete, continuous, carried);
-    tray.wheel = Some((index, horizontal, residual));
+    let steps = -carry.notches(discrete, continuous);
+    tray.wheel = Some((index, horizontal, carry));
     let Some(id) = tray.item_at(revealed, leading, index).map(|i| i.id.clone()) else {
         return;
     };
@@ -167,7 +168,7 @@ pub fn wheel_left(state: &mut State) {
     if let Some(t) = state.tray.as_mut() {
         t.wheel = None;
     }
-    state.displays.wheel = (0, 0.0);
+    state.displays.wheel = Default::default();
 }
 
 /// Whether tray cell `index` on `bar` is the displays cell.
@@ -181,16 +182,12 @@ pub fn is_displays_cell(state: &State, bar: TreeId, index: usize) -> bool {
 impl State {
     pub fn tray_axis(&mut self, frame: &AxisFrame) -> bool {
         let hit = self.scene_hit(self.pointer_location());
-        // Over the history popup the wheel scrolls its list, in whole
-        // notches (`wheel_steps` counts up as positive).
+        // Over the history popup the wheel scrolls its list in whole notches.
         if hit == Hit::NotifyCenter {
             let discrete = frame.v120.map_or(0, |v| v.1);
-            let continuous = frame.axis.1;
-            if discrete != 0 || continuous != 0.0 {
-                let carried = self.notify.center_wheel;
-                let (steps, residual) = wheel_steps(discrete, continuous, carried);
-                self.notify.center_wheel = residual;
-                crate::notifycenter::scroll(self, -i64::from(steps));
+            let notches = self.notify.center_wheel.notches(discrete, frame.axis.1);
+            if notches != 0 {
+                crate::notifycenter::scroll(self, i64::from(notches));
             }
             return true;
         }
@@ -221,28 +218,6 @@ impl State {
             }
         }
         true
-    }
-}
-
-/// Whole wheel notches an axis event carries, positive away from the user,
-/// plus the 120ths left over for the next event.
-///
-/// Wayland counts a wheel step positive towards the user (down, or right),
-/// with `discrete` in 120ths of a notch; a touchpad leaves it 0 and only the
-/// sign of `continuous` counts. `Scroll` on the item side is Qt's angle
-/// delta, positive away from the user, so the sign flips here and the
-/// sub-notch remainder is carried in `residual`.
-pub fn wheel_steps(discrete: i32, continuous: f64, residual: i32) -> (i32, i32) {
-    if discrete != 0 {
-        let total = residual.saturating_add(discrete);
-        return (-(total / 120), total % 120);
-    }
-    if continuous > 0.0 {
-        (-1, 0)
-    } else if continuous < 0.0 {
-        (1, 0)
-    } else {
-        (0, residual)
     }
 }
 

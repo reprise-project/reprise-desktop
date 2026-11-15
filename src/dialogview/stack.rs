@@ -135,7 +135,7 @@ impl State {
             output: out,
             field_press: DoubleClick::default(),
             row_press: DoubleClick::default(),
-            wheel: 0,
+            wheel: Default::default(),
             icons: None,
             decodes: Default::default(),
             waiting: Vec::new(),

@@ -211,6 +211,7 @@ impl Viewer {
                 self.lit(moved || title, ctx)
             }
             PointerInput::Scroll { x, y, rows } => self.wheel(x, y, rows, ctx),
+            PointerInput::ScrollAcross { .. } => Reply::none(),
         }
     }
 

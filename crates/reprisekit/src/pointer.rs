@@ -3,6 +3,58 @@
 /// Rows one wheel notch scrolls; hosts report the wheel in rows, a control that steps by notches divides by this.
 pub const WHEEL_ROWS: i32 = 3;
 
+/// Px one column of sideways scroll moves a list or tree.
+pub const COLUMN_PX: i32 = 16;
+
+/// Scroll travel in surface px that makes one notch when the source sends no notches (a touchpad).
+pub const TOUCH_STEP: f64 = 15.0;
+
+/// What one scroll axis sent short of a whole step: 120ths of a notch from a wheel, travel from a
+/// touchpad. A change of source or direction drops it; one carry is read in one unit only.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct WheelCarry {
+    v120: i32,
+    travel: f64,
+}
+
+impl WheelCarry {
+    /// Whole notches one axis event makes, positive towards the user (down, right) as Wayland
+    /// counts: `v120` in 120ths of a notch, or 0 from a source without notches, whose `travel`
+    /// makes a notch every [`TOUCH_STEP`].
+    pub fn notches(&mut self, v120: i32, travel: f64) -> i32 {
+        self.steps(v120, travel, 1)
+    }
+
+    /// [`notches`](Self::notches) counted in lines (rows or columns), [`WHEEL_ROWS`] a notch.
+    pub fn lines(&mut self, v120: i32, travel: f64) -> i32 {
+        self.steps(v120, travel, WHEEL_ROWS)
+    }
+
+    fn steps(&mut self, v120: i32, travel: f64, per_notch: i32) -> i32 {
+        if v120 != 0 {
+            let v = v120.saturating_mul(per_notch);
+            if v.signum() != self.v120.signum() {
+                self.v120 = 0;
+            }
+            self.travel = 0.0;
+            let total = self.v120.saturating_add(v);
+            self.v120 = total % 120;
+            return total / 120;
+        }
+        if travel == 0.0 || !travel.is_finite() {
+            return 0;
+        }
+        let t = travel * f64::from(per_notch);
+        if t.signum() != self.travel.signum() || self.v120 != 0 {
+            *self = WheelCarry::default();
+        }
+        self.travel += t;
+        let steps = (self.travel / TOUCH_STEP).trunc();
+        self.travel -= steps * TOUCH_STEP;
+        steps as i32
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Nav {
     Back,
@@ -459,5 +511,72 @@ mod tests {
         let mut d = DoubleClick::default();
         d.press(A, at(0, 0, u32::MAX - 100));
         assert!(d.press(A, at(0, 0, 100)), "201 ms across the wrap");
+    }
+
+    #[test]
+    fn eight_eighth_notches_make_one_notch_of_three_rows() {
+        let mut notches = WheelCarry::default();
+        let mut rows = WheelCarry::default();
+        let sent: i32 = (0..8).map(|_| notches.notches(15, 1.875)).sum();
+        assert_eq!(sent, 1, "8 x 15/120 is one notch");
+        let sent: i32 = (0..8).map(|_| rows.lines(15, 1.875)).sum();
+        assert_eq!(sent, WHEEL_ROWS, "and three rows");
+    }
+
+    #[test]
+    fn ten_touchpad_frames_of_one_and_a_half_px_make_one_step() {
+        let mut c = WheelCarry::default();
+        let steps: Vec<i32> = (0..10).map(|_| c.notches(0, 1.5)).collect();
+        assert_eq!(steps.iter().sum::<i32>(), 1, "15 px of travel is one notch");
+        assert_eq!(steps[9], 1, "on the frame that reaches TOUCH_STEP");
+        for _ in 0..9 {
+            c.notches(0, 1.5);
+        }
+        assert_eq!(
+            c.notches(0, -15.0),
+            -1,
+            "a turn back drops the 13.5 px carried"
+        );
+    }
+
+    #[test]
+    fn a_slow_notch_carries_its_part_row_into_the_next() {
+        let mut c = WheelCarry::default();
+        assert_eq!(c.lines(36, 4.5), 0, "0.3 of a notch is 0.9 rows");
+        assert_eq!(c.lines(36, 4.5), 1, "1.8 rows");
+        assert_eq!(c.lines(36, 4.5), 1, "2.7 rows");
+        assert_eq!(c.lines(36, 4.5), 1, "3.6 rows");
+    }
+
+    #[test]
+    fn a_change_of_direction_or_source_starts_afresh() {
+        let mut c = WheelCarry::default();
+        assert_eq!(c.notches(80, 10.0), 0);
+        assert_eq!(
+            c.notches(-80, -10.0),
+            0,
+            "80 up after 80 down is not a notch"
+        );
+        assert_eq!(c.notches(-80, -10.0), -1);
+        assert_eq!(c.notches(0, 14.0), 0);
+        assert_eq!(
+            c.notches(100, 12.5),
+            0,
+            "a wheel after the touchpad keeps no travel"
+        );
+        assert_eq!(c.notches(0, 0.0), 0, "an empty event keeps the carry");
+        assert_eq!(c.notches(20, 2.5), 1);
+    }
+
+    #[test]
+    fn an_extreme_value_saturates() {
+        let mut c = WheelCarry::default();
+        assert_eq!(c.notches(i32::MAX, 1.0), i32::MAX / 120);
+        assert_eq!(c.notches(0, f64::INFINITY), 0);
+        assert_eq!(
+            c.notches(0, 15.0),
+            1,
+            "an infinite travel leaves the carry usable"
+        );
     }
 }

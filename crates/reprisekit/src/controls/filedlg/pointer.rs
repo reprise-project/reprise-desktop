@@ -416,6 +416,25 @@ impl FileDlg {
         self.filter_event(before, ev)
     }
 
+    /// A sideways scroll of `cols` columns (right is positive) over `hit`: the shell view
+    /// scrolls, unless a list or menu is open.
+    pub fn wheel_across(&mut self, r: Rect, hit: Option<Hit>, cols: i32) -> Event {
+        let open = self.lookin.open.is_some() || self.filetype.open.is_some();
+        if self.views_open || self.context.is_some() || open || self.extra_list_open() {
+            return Event::None;
+        }
+        if !matches!(hit, Some(Hit::Shell(_))) {
+            return Event::None;
+        }
+        let cm = self.drawn.0.get();
+        let lay = self.shell_layout(r, &cm);
+        if shellview::scroll_across(&mut self.shell, cols, &lay) {
+            Event::Redraw
+        } else {
+            Event::None
+        }
+    }
+
     fn wheel_inner(&mut self, r: Rect, hit: Option<Hit>, rows: i32) -> Event {
         let redraw = |moved: bool| if moved { Event::Redraw } else { Event::None };
         if self.views_open || self.context.is_some() {

@@ -1343,6 +1343,27 @@ impl View {
         moved
     }
 
+    /// Scroll `cols` character cells sideways (right positive), as the arrows step, held to the
+    /// text's ends; nothing moves while the box has no horizontal bar.
+    pub fn scroll_across(
+        &mut self,
+        cols: i32,
+        text: &TextRenderer,
+        m: &Metrics,
+        edit: &MultiEdit,
+        lay: &Layout,
+    ) -> bool {
+        if lay.hscroll.is_none() {
+            return false;
+        }
+        let cell = text.measure("M", m.bold, m.font_px).max(1);
+        let max = (widest_px(text, m, edit) + 2 - lay.inner.width).max(0);
+        let to = (self.left + cols.saturating_mul(cell)).clamp(0, max);
+        let moved = to != self.left;
+        self.left = to;
+        moved
+    }
+
     /// Scroll so the caret is inside the box.
     pub fn follow(
         &mut self,

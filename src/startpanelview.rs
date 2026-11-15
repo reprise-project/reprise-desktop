@@ -48,8 +48,7 @@ pub struct StartPanelView {
     result_settings: Vec<Setting>,
     result_kinds: Vec<ResultKind>,
     pub search: FileSearch,
-    /// Wheel travel short of a notch, in 120ths.
-    wheel: i32,
+    wheel: reprisekit::pointer::WheelCarry,
     /// `startmenu::places()` without its rules, parallel to `model.places`.
     places: Vec<MenuEntry>,
     pressed: Option<Spot>,
@@ -164,7 +163,7 @@ impl State {
             result_settings: Vec::new(),
             result_kinds: Vec::new(),
             search: self.new_search(),
-            wheel: 0,
+            wheel: Default::default(),
             places,
             pressed: None,
             hover: None,

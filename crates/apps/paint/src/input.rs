@@ -467,6 +467,11 @@ impl Paint {
                 self.hold_scroll(ctx);
                 Reply::redraw()
             }
+            PointerInput::ScrollAcross { cols, .. } => {
+                self.hscroll.top += cols * LINE_H;
+                self.hold_scroll(ctx);
+                Reply::redraw()
+            }
             PointerInput::Leave => {
                 let title = self.bar.leave();
                 let bars = self.hscroll.leave() | self.vscroll.leave();

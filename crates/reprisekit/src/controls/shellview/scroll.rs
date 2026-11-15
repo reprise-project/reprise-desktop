@@ -4,7 +4,7 @@ use crate::classic::widgets::{ScrollParts, scrollbar_parts, scrollbar_pos_at};
 use crate::controls::listview;
 use crate::controls::scrollbar;
 use crate::controls::shellgrid;
-use crate::pointer::WHEEL_ROWS;
+use crate::pointer::{COLUMN_PX, WHEEL_ROWS};
 use crate::raster::Rect;
 use crate::selection::scroll_into_view;
 
@@ -72,6 +72,15 @@ pub fn scroll(sv: &mut ShellView, by: i32, lay: &Layout) -> bool {
             sv.top = top;
             changed
         }
+    }
+}
+
+/// Scroll `cols` columns sideways (right positive): List's columns as [`scroll`] steps them,
+/// Details' [`COLUMN_PX`] a column; the icon modes never scroll sideways.
+pub fn scroll_across(sv: &mut ShellView, cols: i32, lay: &Layout) -> bool {
+    match sv.mode {
+        Mode::List => scroll(sv, cols, lay),
+        _ => hscroll(sv, cols.saturating_mul(COLUMN_PX), lay),
     }
 }
 
