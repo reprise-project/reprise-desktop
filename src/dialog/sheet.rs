@@ -210,7 +210,7 @@ pub struct AttrConfirm {
 pub enum AttrWrite {
     One {
         path: std::path::PathBuf,
-        name: Option<String>,
+        name: Option<std::ffi::OsString>,
         hidden: Option<bool>,
         folder_icon: Option<Option<String>>,
     },
@@ -293,9 +293,10 @@ pub(super) fn props_event(fd: &mut FormDialog, ev: reprisekit::controls::form::E
     let folder_icon = icon_move(base).filter(|_| base.launcher.is_none());
     let rest = summary.is_empty() && folder_icon.is_none() && launcher.is_empty();
     let write = |close: bool| match props_changes(form, base) {
-        (None, attrs, None) if attrs.is_empty() && rest && close => Outcome::Close,
-        (None, attrs, None) if attrs.is_empty() && rest => Outcome::Nothing,
-        (name, attrs, hidden) => Outcome::Properties {
+        (Err(text), ..) => Outcome::Notice(Box::new(Dialog::error("Rename", text))),
+        (Ok(None), attrs, None) if attrs.is_empty() && rest && close => Outcome::Close,
+        (Ok(None), attrs, None) if attrs.is_empty() && rest => Outcome::Nothing,
+        (Ok(name), attrs, hidden) => Outcome::Properties {
             path: base.path.clone(),
             name,
             attrs,
@@ -510,28 +511,28 @@ fn set_changes(
     (attrs, hidden)
 }
 
+pub(super) type PropsChanges = (
+    Result<Option<std::ffi::OsString>, String>,
+    reprisefs::props::AttrMoves,
+    Option<bool>,
+);
+
 /// What OK and Apply would write from sheet page `form`: the new name when the field or Hidden
-/// changed it, attributes whose boxes moved to a settled state, and Hidden when its box moved. The
-/// typed name is kept as is (spaces survive; all spaces renames nothing). Hidden dots the name
-/// unless the folder's `.hidden` lists it.
+/// changed it ([`reprisefs::props::rename_for`], its refusal text when the rename rules refuse
+/// it), attributes whose boxes moved to a settled state, and Hidden when its box moved.
 pub(super) fn props_changes(
     form: &reprisekit::controls::form::Form,
     base: &SheetBase,
-) -> (Option<String>, reprisefs::props::AttrMoves, Option<bool>) {
+) -> PropsChanges {
     use reprisekit::controls::filesheet;
-    let typed = filesheet::typed_name(form);
     let hidden = filesheet::hidden(form);
-    let dotted = base
-        .path
-        .file_name()
-        .is_some_and(|n| n.as_encoded_bytes().starts_with(b"."));
-    let dot = reprisefs::hidden::wants_dot(hidden, dotted, base.listed);
-    let name = filesheet::wanted_name(typed, dot, &base.ext);
-    let same = base
-        .path
-        .file_name()
-        .is_some_and(|n| n.to_string_lossy() == name);
-    let rename = (!typed.trim().is_empty() && !same && !name.contains('/')).then_some(name);
+    let rename = reprisefs::props::rename_for(
+        &base.path,
+        filesheet::typed_name(form),
+        hidden,
+        base.listed,
+        &base.ext,
+    );
     let read_only = match filesheet::read_only(form) {
         CheckState::Mixed => None,
         state if state == base.read_only => None,
@@ -557,7 +558,7 @@ fn sync_apply(fd: &mut FormDialog) {
     let dirty = match &fd.kind {
         FormKind::Properties(base) => {
             let (name, attrs, hidden) = props_changes(form, base);
-            name.is_some()
+            name != Ok(None)
                 || !attrs.is_empty()
                 || hidden.is_some()
                 || !summary_changes(fd.body.pages(), base).is_empty()

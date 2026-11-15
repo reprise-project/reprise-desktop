@@ -662,7 +662,7 @@ fn executable_writes_only_when_it_moves() {
 fn hidden_renames_and_an_indeterminate_box_writes_nothing() {
     let mut p = props(info(false));
     p.sheet.open_mut().set_check(HIDDEN, true);
-    assert_eq!(p.new_name().as_deref(), Some(".New Text Document.zip"));
+    assert_eq!(p.new_name(), Ok(Some(".New Text Document.zip".into())));
     assert_eq!(p.hidden(), Some(true));
     assert!(p.dirty());
 
@@ -673,7 +673,7 @@ fn hidden_renames_and_an_indeterminate_box_writes_nothing() {
     assert!(filesheet::hidden(p.sheet.open()));
     assert!(!p.dirty());
     p.sheet.open_mut().set_check(HIDDEN, false);
-    assert_eq!((p.new_name(), p.hidden()), (None, Some(false)));
+    assert_eq!((p.new_name(), p.hidden()), (Ok(None), Some(false)));
     assert!(p.dirty());
 
     let mut p = props(info(true));

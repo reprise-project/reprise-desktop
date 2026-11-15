@@ -642,7 +642,11 @@ impl Explorer {
                 },
             );
         }
-        let (new_name, attrs, hidden) = (p.new_name(), p.attrs(), p.hidden());
+        let new_name = match p.new_name() {
+            Ok(name) => name,
+            Err(text) => return self.message_box("Rename", text, ctx),
+        };
+        let (attrs, hidden) = (p.attrs(), p.hidden());
         let summary = p.summary_moves();
         let folder_icon = p.folder_icon_move();
         let launcher = p.launcher_edits();
@@ -831,7 +835,7 @@ impl Explorer {
 
     fn write_props(
         &mut self,
-        new_name: Option<String>,
+        new_name: Option<std::ffi::OsString>,
         attrs: AttrMoves,
         hidden: Option<bool>,
         tree: bool,
@@ -842,15 +846,7 @@ impl Explorer {
             return Reply::redraw_all();
         };
         let old = info.file_name();
-        let to = match new_name.map(|wanted| reprisefs::names::verdict(&old, &wanted, &[])) {
-            Some(reprisefs::names::Verdict::Refuse(text)) => {
-                return self.message_box("Rename", text, ctx);
-            }
-            Some(reprisefs::names::Verdict::Rename(name)) => {
-                info.path.parent().map(|d| d.join(name))
-            }
-            Some(reprisefs::names::Verdict::Cancel) | None => None,
-        };
+        let to = new_name.map(|name| info.path.with_file_name(name));
         let here = self.place.path().as_deref() == Some(info.path.as_path());
         let from = info.path.clone();
         let work = move |gate: &Gate| -> Option<Result<_, String>> {
