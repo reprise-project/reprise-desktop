@@ -84,21 +84,42 @@ fn open(state: &mut State, output: &Output, cell: Rect) {
 }
 
 pub fn reveal(state: &mut State, app: &str) {
-    if !is_open(state) {
-        let Some(output) = state.first_output() else {
-            return;
-        };
-        let cell = crate::tray::bell_cell(state, &output).unwrap_or_else(|| {
-            let shown = state.bar_placement(&output).shown;
-            let w = notifyhistory::width(&state.config.theme.look.controls());
-            Rect::new(shown.right() - w, shown.y, 1, shown.height)
-        });
-        open(state, &output, cell);
-    }
+    open_at_bell(state);
     if let Some(v) = state.notify.center.as_mut() {
         v.model.reveal(app);
     }
     redraw(state);
+}
+
+/// The notifications key: the history opens over the bell with the newest notification that can
+/// be answered selected, so Enter runs it and the Menu key lists its actions; open, it closes.
+pub fn toggle_answering(state: &mut State) {
+    if is_open(state) {
+        close(state);
+        return;
+    }
+    open_at_bell(state);
+    let newest = state.notify.log.newest_to_answer();
+    if let (Some(v), Some(id)) = (state.notify.center.as_mut(), newest) {
+        v.model.reveal_note(id);
+    }
+    redraw(state);
+}
+
+/// Opens the history over the first output's bell, or its bar's corner without one.
+fn open_at_bell(state: &mut State) {
+    if is_open(state) {
+        return;
+    }
+    let Some(output) = state.first_output() else {
+        return;
+    };
+    let cell = crate::tray::bell_cell(state, &output).unwrap_or_else(|| {
+        let shown = state.bar_placement(&output).shown;
+        let w = notifyhistory::width(&state.config.theme.look.controls());
+        Rect::new(shown.right() - w, shown.y, 1, shown.height)
+    });
+    open(state, &output, cell);
 }
 
 pub fn close(state: &mut State) {
@@ -559,6 +580,33 @@ mod tests {
             "Mail's balloons are off"
         );
         assert!(h.state.notify.log.get(2).is_some(), "it is in the history");
+    }
+
+    #[test]
+    fn the_notifications_key_opens_the_history_on_the_newest_to_answer_and_closes_it() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut invite = mail(1);
+        invite.actions = vec![("accept".into(), "Accept".into())];
+        crate::notifyview::show(&mut h.state, invite);
+        let mut chat = mail(2);
+        chat.key = "org.example.Chat".into();
+        crate::notifyview::show(&mut h.state, chat);
+        crate::notifyview::show(&mut h.state, mail(3));
+        toggle_answering(&mut h.state);
+        let v = h.state.notify.center.as_ref().expect("the history opens");
+        let picked = v.model.list.selected.and_then(|i| v.model.note_at(i));
+        assert_eq!(picked, Some(1), "the invite, under Mail's newer note");
+        key(&mut h.state, KEY_Menu, 0);
+        let menu = h
+            .state
+            .menus
+            .first()
+            .expect("the Menu key lists its actions");
+        assert_eq!(menu.items, [MenuItem::entry("Accept")]);
+        h.state.close_menu();
+        toggle_answering(&mut h.state);
+        assert!(!is_open(&h.state), "the key again closes it");
     }
 
     #[test]

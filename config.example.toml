@@ -913,6 +913,11 @@ action = "focus-taskbar"
 keys = "Super+b"
 action = "focus-tray"
 
+[[keybinds]]                 # the notification history on the newest notification with an
+keys = "Super+Shift+n"       # action left: Enter runs it, the Menu key lists its actions; a
+action = "notifications"     # balloon with actions ends what a screen reader says with this
+                             # key. Shift, as Super+n is the Do Not Disturb example above
+
 # A bind whose key is itself a modifier (Alt_L, Shift_R, Control_L,
 # Super_L, ...) is a modifier-only chord: it fires when one of its keys is
 # released and nothing else was pressed in between, in either order. This

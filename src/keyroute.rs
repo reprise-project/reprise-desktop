@@ -816,6 +816,7 @@ pub fn opens_surface(a: &Action) -> bool {
             | Action::ColorPicker
             | Action::FocusTaskbar
             | Action::FocusTray
+            | Action::Notifications
             | Action::Run
             | Action::LogOff
             | Action::TurnOff

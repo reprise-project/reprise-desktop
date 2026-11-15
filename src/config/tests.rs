@@ -19,12 +19,13 @@ fn defaults() {
     let c = Config::default();
     assert_eq!(c.terminal, "reprise-terminal");
     assert!(c.retired.is_empty());
-    assert_eq!(c.keybinds.len(), 46);
+    assert_eq!(c.keybinds.len(), 47);
     assert!(matches!(c.keybinds[0].action, Action::Terminal));
     assert_eq!(
         action_on(&c, "Ctrl+Shift+Escape"),
         Some(Action::TaskManager)
     );
+    assert_eq!(action_on(&c, "Super+Shift+n"), Some(Action::Notifications));
     assert_eq!(c.startmenu.len(), 9);
     assert_eq!(c.startmenu_banner, "Reprise Desktop");
     assert!(matches!(
@@ -260,7 +261,7 @@ action = "exit"
     assert_eq!(c.theme.metrics.frame_width, 4);
     assert_eq!(c.theme.fonts.family, vec!["DejaVu Sans".to_string()]);
     assert!(c.theme.fonts.antialias);
-    assert_eq!(c.keybinds.len(), 46);
+    assert_eq!(c.keybinds.len(), 47);
     assert_eq!(
         action_on(&c, "Super+t"),
         Some(Action::Spawn("kitty".into()))
@@ -369,7 +370,7 @@ fn a_startmenu_folder_without_items_is_an_empty_folder() {
 fn partial_file_keeps_defaults() {
     let c = Config::parse("terminal = \"foot\"\n").unwrap();
     assert_eq!(c.terminal, "foot");
-    assert_eq!(c.keybinds.len(), 46);
+    assert_eq!(c.keybinds.len(), 47);
     assert_eq!(c.theme, crate::theme::Theme::default());
 }
 

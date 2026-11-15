@@ -150,6 +150,14 @@ impl Log {
         *free.or(among.last()).expect("an entry to drop")
     }
 
+    /// The newest notification with an action that can still run, else the newest of all.
+    pub fn newest_to_answer(&self) -> Option<u32> {
+        let answerable = |e: &&Entry| e.n.actions.iter().any(|(k, _)| e.can_invoke(k));
+        (self.entries.iter().find(answerable))
+            .or(self.entries.first())
+            .map(|e| e.n.id)
+    }
+
     pub fn get(&self, id: u32) -> Option<&Entry> {
         self.entries.iter().find(|e| e.n.id == id)
     }
@@ -220,6 +228,28 @@ mod tests {
 
     fn note(id: u32) -> Notification {
         Notification::new(id, format!("n{id}"), String::new())
+    }
+
+    #[test]
+    fn the_newest_to_answer_has_an_action_left_else_it_is_the_newest() {
+        let acting = |id: u32| Notification {
+            actions: vec![("accept".into(), "Accept".into())],
+            ..note(id)
+        };
+        let mut log = Log::default();
+        assert_eq!(log.newest_to_answer(), None);
+        log.record(&acting(1), 1, false);
+        log.record(&acting(2), 2, false);
+        log.record(&note(3), 3, false);
+        assert_eq!(log.newest_to_answer(), Some(2));
+        log.close(2);
+        assert_eq!(
+            log.newest_to_answer(),
+            Some(1),
+            "a closed one has none left"
+        );
+        log.close(1);
+        assert_eq!(log.newest_to_answer(), Some(3));
     }
 
     #[test]
