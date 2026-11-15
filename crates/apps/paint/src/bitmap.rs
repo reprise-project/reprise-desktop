@@ -13,13 +13,21 @@ pub struct Bitmap {
 pub const WHITE: u32 = 0xFFFF_FFFF;
 pub const BLACK: u32 = 0xFF00_0000;
 
+/// The size [`Bitmap::skewed`] grows a `w` x `h` picture to, in `i64` so a steep angle cannot wrap.
+pub fn skewed_size(w: i32, h: i32, h_deg: i32, v_deg: i32) -> (i64, i64) {
+    let grow = |side: i32, deg: i32| {
+        (f64::from(side) * f64::from(deg).to_radians().tan().abs()).round() as i64
+    };
+    (i64::from(w) + grow(h, h_deg), i64::from(h) + grow(w, v_deg))
+}
+
 impl Bitmap {
     pub fn new(w: i32, h: i32, fill: u32) -> Bitmap {
         let (w, h) = (w.max(1), h.max(1));
         Bitmap {
             w,
             h,
-            px: vec![fill; (w * h) as usize],
+            px: vec![fill; w as usize * h as usize],
         }
     }
 
@@ -169,10 +177,8 @@ impl Bitmap {
             (h_deg as f64).to_radians().tan(),
             (v_deg as f64).to_radians().tan(),
         );
-        let dx = (self.h as f64 * th.abs()).round() as i32;
-        let dy = (self.w as f64 * tv.abs()).round() as i32;
-        let (w, h) = (self.w + dx, self.h + dy);
-        let mut out = Bitmap::new(w, h, bg);
+        let (w, h) = skewed_size(self.w, self.h, h_deg, v_deg);
+        let mut out = Bitmap::new(w as i32, h as i32, bg);
         for y in 0..self.h {
             let sx = if th >= 0.0 {
                 y as f64

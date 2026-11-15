@@ -148,4 +148,5 @@ background-failed = Paint cannot set the desktop background.
     { $error }
 paste-failed = The clipboard holds no picture Paint can read.
 bad-size = Please enter a whole number from 1 to { $max }.
+too-large = The picture would be more than { $max } pixels wide or high.
 draw-failed = Paint could not draw this window. { $error }

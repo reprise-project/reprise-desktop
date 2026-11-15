@@ -1,6 +1,7 @@
 //! Attributes, Resize and Skew, Flip and Rotate, the text toolbar, About and the prompts.
 
 use super::*;
+use crate::bitmap::skewed_size;
 use reprisekit::classic::widgets::{BUTTON_H, BUTTON_W};
 use reprisekit::controls::combo::Combo;
 use reprisekit::controls::form::{Control, Item};
@@ -271,20 +272,22 @@ impl Paint {
         }
     }
 
-    /// The dialog's OK: the picture changed as one step. False when a field is out of range.
+    /// The dialog's OK: the picture changed as one step. False when a field is out of range or the
+    /// result would pass [`MAX_SIDE`].
     fn apply(&mut self, kind: Kind) -> bool {
         let Some((_, f)) = &self.dialog else {
             return false;
         };
         let img = &self.doc.img;
+        let bad_size = |max: i32| tr!("bad-size", max = max);
         let out = match kind {
             Kind::Attributes => {
                 match (
                     number(f, WIDTH, 1, MAX_SIDE),
                     number(f, HEIGHT, 1, MAX_SIDE),
                 ) {
-                    (Some(w), Some(h)) => Some(img.with_size(w, h, self.doc.secondary)),
-                    _ => None,
+                    (Some(w), Some(h)) => Ok(img.with_size(w, h, self.doc.secondary)),
+                    _ => Err(bad_size(MAX_SIDE)),
                 }
             }
             Kind::Stretch => {
@@ -296,20 +299,25 @@ impl Paint {
                 );
                 match fields {
                     (Some(rh), Some(rv), Some(sh), Some(sv)) => {
-                        let w = (img.w * rh / 100).clamp(1, MAX_SIDE);
-                        let h = (img.h * rv / 100).clamp(1, MAX_SIDE);
-                        let mut out = img.resized(w, h);
-                        if (sh, sv) != (0, 0) {
-                            out = out.skewed(sh, sv, self.doc.secondary);
+                        let side = |n: i32, pct: i32| {
+                            (i64::from(n) * i64::from(pct) / 100).clamp(1, MAX_SIDE.into()) as i32
+                        };
+                        let (w, h) = (side(img.w, rh), side(img.h, rv));
+                        let (grown_w, grown_h) = skewed_size(w, h, sh, sv);
+                        if grown_w > MAX_SIDE.into() || grown_h > MAX_SIDE.into() {
+                            Err(tr!("too-large", max = MAX_SIDE))
+                        } else if (sh, sv) == (0, 0) {
+                            Ok(img.resized(w, h))
+                        } else {
+                            Ok(img.resized(w, h).skewed(sh, sv, self.doc.secondary))
                         }
-                        Some(out)
                     }
-                    _ => None,
+                    _ => Err(bad_size(500)),
                 }
             }
             Kind::Flip => {
                 let pick = FLIPS.iter().position(|id| f.checked(id) == Some(true));
-                Some(match pick {
+                Ok(match pick {
                     Some(1) => img.flipped_v(),
                     Some(2) => img.rotated(1),
                     Some(3) => img.rotated(2),
@@ -319,17 +327,12 @@ impl Paint {
             }
         };
         match out {
-            Some(img) => {
+            Ok(img) => {
                 self.doc.replace(img);
                 true
             }
-            None => {
-                let max = if kind == Kind::Attributes {
-                    MAX_SIDE
-                } else {
-                    500
-                };
-                self.error(tr!("bad-size", max = max));
+            Err(text) => {
+                self.error(text);
                 false
             }
         }

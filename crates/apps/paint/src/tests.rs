@@ -306,6 +306,25 @@ fn resize_and_flip_change_the_whole_picture() {
 }
 
 #[test]
+fn a_skew_past_the_largest_picture_is_refused_and_changes_nothing() {
+    let mut ctx = test_ctx();
+    let mut p = Paint::new(None);
+    p.doc.img = Bitmap::new(1920, 1080, WHITE);
+    p.open_dialog(dialogs::Kind::Stretch);
+    let f = &mut p.dialog.as_mut().unwrap().1;
+    set_edit(f, "skew-h", "89");
+    set_edit(f, "skew-v", "89");
+    p.event(DIALOG, key(0xff0d, false), &mut ctx);
+    assert!(p.dialog.is_some(), "the dialog stays up");
+    assert_eq!(
+        p.prompt.as_ref().map(|(b, _)| b.fields.text.as_str()),
+        Some("The picture would be more than 16,384 pixels wide or high.")
+    );
+    assert_eq!((p.doc.img.w, p.doc.img.h), (1920, 1080));
+    assert!(!p.doc.dirty);
+}
+
+#[test]
 fn a_covered_window_ends_a_stroke_where_it_is_and_commits_it() {
     let mut ctx = test_ctx();
     let mut p = Paint::new(None);
