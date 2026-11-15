@@ -20,7 +20,7 @@ use reprisekit::controls::taskpane;
 use reprisekit::controls::toolbar;
 use reprisekit::controls::treeview;
 use reprisekit::look::widgets::item;
-use reprisekit::pointer::Nav;
+use reprisekit::pointer::{COLUMN_PX, Nav};
 use reprisekit::raster::Rect;
 
 type BarPart = (Axis, ScrollHit);
@@ -135,6 +135,7 @@ impl Explorer {
             }
             PointerInput::Motion { x, y } => self.motion(x, y, ctx),
             PointerInput::Scroll { x, y, rows } => self.scroll(x, y, rows, ctx),
+            PointerInput::ScrollAcross { x, y, cols } => self.scroll_across(x, y, cols, ctx),
             PointerInput::Leave => {
                 // The pointer off the window disarms a drag that never started; a started one
                 // is the compositor's.
@@ -898,5 +899,30 @@ impl Explorer {
             return Reply::redraw();
         }
         Reply::none()
+    }
+
+    /// A sideways scroll: the folder tree or the view under the pointer moves `cols` columns.
+    fn scroll_across(&mut self, x: i32, y: i32, cols: i32, ctx: &mut Ctx) -> Reply {
+        if self.address.combo.open.is_some() {
+            return Reply::none();
+        }
+        let lay = self.layout(ctx);
+        let px = ctx.theme.fonts.size_px;
+        let moved = if let Some(frame) = lay.tree
+            && lay.bar.as_ref().is_some_and(|b| b.body.contains(x, y))
+        {
+            let tl = treeview::layout(&self.tree, &ctx.text, px, frame, &ctx.theme.controls());
+            self.tree.hscroll(cols.saturating_mul(COLUMN_PX), &tl)
+        } else if lay.view.contains(x, y) {
+            let sl = self.view_layout(lay.view, ctx);
+            shellview::scroll_across(&mut self.sv, cols, &sl)
+        } else {
+            false
+        };
+        if moved {
+            Reply::redraw()
+        } else {
+            Reply::none()
+        }
     }
 }

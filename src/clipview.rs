@@ -120,7 +120,7 @@ impl State {
             glass: Backdrop::new(&self.glass),
             buffer,
         });
-        self.panels.wheel = 0;
+        self.panels.wheel = Default::default();
         self.restart_caret();
         self.redraw_clipview();
     }
@@ -181,14 +181,11 @@ impl State {
     /// The wheel over the panel: `discrete` in 120ths of a notch, down
     /// positive, or a `continuous` amount from a source without notches.
     pub fn clipview_wheel(&mut self, discrete: i32, continuous: f64) {
-        let (steps, residual) =
-            crate::pointers::wheel_steps(discrete, continuous, self.panels.wheel);
-        self.panels.wheel = residual;
+        let rows = self.panels.wheel.lines(discrete, continuous);
         let Some(v) = self.panels.clipview.as_mut() else {
             return;
         };
-        // `wheel_steps` counts up as positive.
-        if steps != 0 && v.model.wheel(-steps * reprisekit::pointer::WHEEL_ROWS) {
+        if rows != 0 && v.model.wheel(rows) {
             self.redraw_clipview();
         }
     }

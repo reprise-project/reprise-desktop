@@ -57,6 +57,7 @@ pub(crate) use rename::draw_rename;
 pub use rename::{edit_index_at, rename_rect};
 pub use scroll::{
     drag_hthumb, drag_thumb, ensure_visible, follow, hpage, hscroll, hstep, page, reveal, scroll,
+    scroll_across,
 };
 
 pub const ROW_H: i32 = 17;

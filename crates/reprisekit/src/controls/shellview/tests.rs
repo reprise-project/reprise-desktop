@@ -4,7 +4,7 @@ use crate::access::accesskit::Role;
 use crate::classic::widgets::FIELD_PAD;
 use crate::controls::iconview::{self, IconMove};
 use crate::look::{Paint, classic_paint};
-use crate::pointer::WHEEL_ROWS;
+use crate::pointer::{COLUMN_PX, WHEEL_ROWS};
 use crate::selection::Mods;
 use crate::text::{Align, TextRenderer};
 use crate::textedit::TextEdit;
@@ -710,6 +710,30 @@ fn the_wheel_steps_list_mode_a_column_a_notch() {
     assert!(scroll(&mut sv, -1, &lay), "a part notch still steps");
     assert_eq!(sv.left, 2 * COL_W);
     assert_eq!(sv.top, 0, "nothing scrolls down");
+}
+
+#[test]
+fn a_sideways_scroll_steps_list_a_column_a_notch_and_details_by_column_px() {
+    let mut sv = view(60);
+    sv.mode = Mode::List;
+    let r = Rect::new(0, 0, 300, 100);
+    let lay = layout(&sv, r, &ControlMetrics::CLASSIC);
+    assert!(scroll_across(&mut sv, WHEEL_ROWS, &lay));
+    assert_eq!(sv.left, COL_W, "a notch right is a column");
+    sv.mode = Mode::Details;
+    sv.left = 0;
+    sv.columns[0].width = 400;
+    let lay = layout(&sv, r, &ControlMetrics::CLASSIC);
+    assert!(scroll_across(&mut sv, 2, &lay));
+    assert_eq!(sv.left, 2 * COLUMN_PX);
+    assert!(scroll_across(&mut sv, -9, &lay));
+    assert_eq!(sv.left, 0, "held at the left");
+    sv.mode = Mode::Icons;
+    let lay = layout(&sv, r, &ControlMetrics::CLASSIC);
+    assert!(
+        !scroll_across(&mut sv, 3, &lay),
+        "the icon modes never scroll sideways"
+    );
 }
 
 /// List's bar: the arrows step a column, the track pages, the thumb reports

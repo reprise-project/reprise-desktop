@@ -188,8 +188,8 @@ pub struct NotifyView {
     pub log: Log,
     /// The history popup, while open.
     pub center: Option<crate::notifycenter::CenterView>,
-    /// A wheel's sub-notch remainder over the history popup.
-    pub center_wheel: i32,
+    /// The wheel's carry over the history popup.
+    pub center_wheel: reprisekit::pointer::WheelCarry,
     shown: u64,
     /// The conditions that turn Do Not Disturb on by themselves, as last checked; the bell shows
     /// them.

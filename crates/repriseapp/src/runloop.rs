@@ -274,6 +274,7 @@ pub fn run(app: Box<dyn App>) -> Result<(), RunError> {
         shape: crate::grip::PointerShape::new(CursorShapeManager::bind(&globals, &qh).ok()),
         mods: Modifiers::default(),
         pointer_pos: (0, 0),
+        wheel: Default::default(),
         pointer_in: None,
         loop_handle: loop_handle.clone(),
         qh: qh.clone(),

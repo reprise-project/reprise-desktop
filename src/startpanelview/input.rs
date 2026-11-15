@@ -16,7 +16,6 @@ use crate::raster::Rect;
 use super::lists::jump_file;
 use super::search::ResultKind;
 
-const WHEEL_ROWS: i64 = 3;
 const ACCOUNTS: &str = "reprise-accounts";
 
 pub(super) fn key_of(k: &DialogKey) -> Option<Key> {
@@ -120,12 +119,9 @@ impl State {
         if v.model.mode() != Mode::Programs {
             return false;
         }
-        let (steps, rest) = crate::pointers::wheel_steps(discrete, continuous, v.wheel);
-        v.wheel = rest;
-        if steps != 0 {
-            // `wheel_steps` counts up as positive.
-            let rows = -i64::from(steps) * WHEEL_ROWS;
-            self.start_panel_event(|m| m.scroll_tree(rows));
+        let rows = v.wheel.lines(discrete, continuous);
+        if rows != 0 {
+            self.start_panel_event(|m| m.scroll_tree(i64::from(rows)));
         }
         true
     }

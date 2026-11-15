@@ -79,8 +79,7 @@ pub struct DialogView {
     field_press: DoubleClick<usize>,
     /// A list row's last press, for double-click as OK.
     row_press: DoubleClick<usize>,
-    /// The wheel's sub-notch remainder, in 120ths of a notch.
-    wheel: i32,
+    wheel: reprisekit::pointer::WheelCarry,
     /// Icons the last draw used, so a caret blink skips the lookups.
     icons: Option<(IconKey, DialogIcons)>,
     /// Jobs decoding icon files the icons wait for; they are looked up again when one lands.

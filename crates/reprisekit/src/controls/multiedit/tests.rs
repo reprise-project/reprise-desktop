@@ -1162,3 +1162,30 @@ fn a_drop_point_at_the_caret_hides_the_caret_so_its_bar_stays_inverted() {
         );
     }
 }
+
+#[test]
+fn a_sideways_scroll_steps_character_cells_to_the_text_end() {
+    let text = TextRenderer::load(&FontConfig::default());
+    let m = Metrics::default();
+    let t = e(&"M".repeat(60));
+    let l = layout(&text, &m, &t, Rect::new(0, 0, 200, 150), 1);
+    let cell = text.measure("M", m.bold, m.font_px);
+    let mut v = View::default();
+    assert!(v.scroll_across(2, &text, &m, &t, &l));
+    assert_eq!(v.left, 2 * cell, "two columns are two cells");
+    assert!(v.scroll_across(-5, &text, &m, &t, &l));
+    assert_eq!(v.left, 0, "held at the start");
+    v.scroll_across(1000, &text, &m, &t, &l);
+    assert_eq!(
+        v.left,
+        widest_px(&text, &m, &t) + 2 - l.inner.width,
+        "held at the end"
+    );
+    let wrapped = Metrics { wrap: true, ..m };
+    let wl = layout(&text, &wrapped, &t, Rect::new(0, 0, 200, 150), 1);
+    let mut w = View::default();
+    assert!(
+        !w.scroll_across(2, &text, &wrapped, &t, &wl),
+        "a wrapping box stays put"
+    );
+}

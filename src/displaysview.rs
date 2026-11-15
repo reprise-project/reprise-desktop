@@ -35,8 +35,7 @@ struct PanelView {
     output: Output,
     /// Each row's display.
     connectors: Vec<String>,
-    /// The wheel's carry for `displays::wheel_steps`.
-    wheel: (i32, f64),
+    wheel: reprisekit::pointer::WheelCarry,
 }
 
 pub fn is_open(state: &State) -> bool {
@@ -101,7 +100,7 @@ fn open(state: &mut State, output: &Output, cell: Rect) {
         cell,
         output: output.clone(),
         connectors,
-        wheel: (0, 0.0),
+        wheel: Default::default(),
     });
     place(state);
     redraw(state);
@@ -286,7 +285,7 @@ pub fn wheel(state: &mut State, lx: f64, ly: f64, discrete: i32, continuous: f64
     let Some(v) = state.displays_view.view.as_mut() else {
         return;
     };
-    let steps = crate::displays::wheel_steps(discrete, continuous, &mut v.wheel);
+    let steps = -v.wheel.notches(discrete, continuous);
     let event = v.model.wheel(&lay, x, y, steps);
     act(state, event);
 }

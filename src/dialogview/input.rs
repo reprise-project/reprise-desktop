@@ -97,9 +97,10 @@ impl State {
         }
     }
 
-    /// A wheel frame over `over` on dialog `index` (`discrete` in 120ths of a notch, `continuous` its sign
-    /// only). The tray list scrolls a row a notch and ignores it while a combo is open; Browse goes to
-    /// `browse_wheel`; others take `WHEEL_ROWS` a notch. True when a dialog is there.
+    /// A wheel frame over `over` on dialog `index` (`discrete` in 120ths of a notch, else
+    /// `continuous` travel). The tray list scrolls a row a notch and ignores it while a combo is
+    /// open; Browse goes to `browse_wheel`; others take `WHEEL_ROWS` a notch. True when a dialog
+    /// is there.
     pub fn dialog_wheel(
         &mut self,
         index: usize,
@@ -118,18 +119,16 @@ impl State {
         }
         let v = &mut self.dialogs.views[index];
         if let Some(t) = v.dialog.tray_mut() {
-            let (steps, _) = crate::tray::wheel_steps(discrete, continuous, 0);
-            if t.wheel(dialog::tray_part(over), -steps) {
+            let notches = v.wheel.notches(discrete, continuous);
+            if notches != 0 && t.wheel(dialog::tray_part(over), notches) {
                 self.redraw_dialog(index);
             }
             return true;
         }
-        let (steps, rest) = crate::pointers::wheel_steps(discrete, continuous, v.wheel);
-        v.wheel = rest;
-        if steps == 0 {
+        let rows = v.wheel.lines(discrete, continuous);
+        if rows == 0 {
             return true;
         }
-        let rows = -steps * reprisekit::pointer::WHEEL_ROWS;
         let shown = v.layout.completion(&v.dialog).map(|(_, l)| l.rows);
         if shown.is_some_and(|n| v.dialog.wheel_completion(n, rows)) {
             self.redraw_dialog(index);
@@ -150,9 +149,8 @@ impl State {
         if self.dialogs.views.len() - 1 != index {
             return Some(true);
         }
-        let (steps, rest) = crate::pointers::wheel_steps(discrete, continuous, self.panels.wheel);
-        self.panels.wheel = rest;
-        if steps == 0 {
+        let rows = self.panels.wheel.lines(discrete, continuous);
+        if rows == 0 {
             return Some(true);
         }
         let pos = self.pointer_location();
@@ -164,7 +162,7 @@ impl State {
         let (Some(p), Some(client)) = (v.dialog.picker_mut(), v.layout.page) else {
             return Some(true);
         };
-        let outcome = p.wheel(client, hit, -steps * reprisekit::pointer::WHEEL_ROWS);
+        let outcome = p.wheel(client, hit, rows);
         self.apply_dialog(outcome);
         Some(true)
     }

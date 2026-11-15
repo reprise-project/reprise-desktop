@@ -190,12 +190,12 @@ pub fn click(state: &mut State, output: &Output, b: Builtin, cell: Rect, button:
     }
 }
 
-/// A wheel step on cell `b`, with the axis event's `discrete` and `continuous` (see [`crate::displays::wheel_steps`]): the displays cell steps every display's brightness up or down.
+/// A wheel step on cell `b`, with the axis event's `discrete` and `continuous` (see [`reprisekit::pointer::WheelCarry::notches`]): the displays cell steps every display's brightness up or down.
 pub fn scroll(state: &mut State, b: Builtin, horizontal: bool, discrete: i32, continuous: f64) {
     if b != Builtin::Displays || horizontal {
         return;
     }
-    let steps = crate::displays::wheel_steps(discrete, continuous, &mut state.displays.wheel);
+    let steps = -state.displays.wheel.notches(discrete, continuous);
     if steps != 0 {
         crate::displays::step(state, None, Value::Brightness, steps);
         state.show_display_osd(Value::Brightness);

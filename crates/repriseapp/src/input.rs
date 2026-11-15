@@ -452,8 +452,11 @@ impl PointerHandler for Host {
             self.pointer_pos = (x, y);
             match event.kind {
                 PointerEventKind::Enter { .. } => self.pointer_in = Some(id),
-                PointerEventKind::Leave { .. } if self.pointer_in == Some(id) => {
-                    self.pointer_in = None
+                PointerEventKind::Leave { .. } => {
+                    self.wheel = Default::default();
+                    if self.pointer_in == Some(id) {
+                        self.pointer_in = None
+                    }
                 }
                 _ => {}
             }
@@ -486,12 +489,17 @@ impl PointerHandler for Host {
                     button,
                     mods: self.seat_mods(),
                 },
-                PointerEventKind::Axis { vertical, .. } => {
-                    let rows = if vertical.discrete != 0 {
-                        vertical.discrete * reprisekit::pointer::WHEEL_ROWS
-                    } else {
-                        (vertical.absolute / 5.0) as i32
-                    };
+                PointerEventKind::Axis {
+                    horizontal,
+                    vertical,
+                    ..
+                } => {
+                    let [h, v] = &mut self.wheel;
+                    let cols = h.lines(horizontal.value120, horizontal.absolute);
+                    let rows = v.lines(vertical.value120, vertical.absolute);
+                    if cols != 0 {
+                        self.pointer(id, PointerInput::ScrollAcross { x, y, cols });
+                    }
                     if rows == 0 {
                         continue;
                     }

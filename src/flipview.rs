@@ -82,7 +82,7 @@ pub struct Stack {
     draws: Rc<RefCell<Vec<Draw>>>,
     hidden: Vec<TreeId>,
     stepping: bool,
-    wheel: i32,
+    wheel: reprisekit::pointer::WheelCarry,
     /// When the desktop's live picture last drew, and the timer that asks
     /// for the frame that draws it again, `[previews] fps` on.
     desk_drawn: Option<Instant>,
@@ -286,7 +286,7 @@ impl State {
             draws,
             hidden: Vec::new(),
             stepping: false,
-            wheel: 0,
+            wheel: Default::default(),
             desk_drawn: None,
             desk_timer: None,
         });
@@ -493,10 +493,9 @@ impl State {
         let Some(st) = self.switcher.stack.as_mut() else {
             return;
         };
-        let (steps, residual) = crate::pointers::wheel_steps(discrete, continuous, st.wheel);
-        st.wheel = residual;
-        for _ in 0..steps.unsigned_abs() {
-            self.flip_step(steps > 0);
+        let notches = st.wheel.notches(discrete, continuous);
+        for _ in 0..notches.unsigned_abs() {
+            self.flip_step(notches < 0);
         }
     }
 

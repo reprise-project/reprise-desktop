@@ -10,9 +10,8 @@ pub struct Panels {
     pub clipview: Option<crate::clipview::ClipView>,
     pub region: Option<crate::regionview::RegionView>,
     pub colorpick: Option<crate::colorpickview::ColorPickView>,
-    /// The wheel's sub-notch remainder over the emoji picker or the
-    /// clipboard history.
-    pub wheel: i32,
+    /// The wheel's carry over the emoji picker or the clipboard history.
+    pub wheel: reprisekit::pointer::WheelCarry,
 }
 
 impl Panels {

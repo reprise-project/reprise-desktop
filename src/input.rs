@@ -518,8 +518,8 @@ impl State {
         if !self.desktop_locked() && self.shell_axis(&frame) {
             return;
         }
-        self.desktop_wheel = (0, 0.0);
-        self.panels.wheel = 0;
+        self.desktop_wheel = Default::default();
+        self.panels.wheel = Default::default();
         let Some(pointer) = self.seat.get_pointer() else {
             return;
         };

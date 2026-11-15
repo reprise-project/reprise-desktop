@@ -92,8 +92,8 @@ impl Display {
 pub struct Displays {
     pub list: Vec<Display>,
     seq: u64,
-    /// The displays cell's wheel carry for [`wheel_steps`]; the panel keeps its own.
-    pub wheel: (i32, f64),
+    /// The displays cell's wheel carry; the panel keeps its own.
+    pub wheel: reprisekit::pointer::WheelCarry,
     timer: Option<RegistrationToken>,
 }
 
@@ -303,22 +303,6 @@ impl Displays {
     }
 }
 
-/// Scroll travel in surface units that makes one step when the wheel sends no notches (a touchpad).
-pub const TOUCH_STEP: f64 = 15.0;
-
-/// Whole steps an axis event makes on the displays cell, positive to brighten; `carried` holds the 120ths of a notch and the touchpad travel left over.
-pub fn wheel_steps(discrete: i32, continuous: f64, carried: &mut (i32, f64)) -> i32 {
-    if discrete != 0 {
-        let (steps, residual) = crate::tray::wheel_steps(discrete, continuous, carried.0);
-        *carried = (residual, 0.0);
-        return steps;
-    }
-    carried.1 += continuous;
-    let steps = (carried.1 / TOUCH_STEP).trunc();
-    carried.1 -= steps * TOUCH_STEP;
-    -(steps as i32)
-}
-
 /// Whether the displays cell shows: a display can be dimmed, or night light is on in the config.
 pub fn cell_shown(state: &State) -> bool {
     state.displays.adjustable(Value::Brightness) || crate::nightlight::enabled(&state.night)
@@ -521,28 +505,6 @@ mod tests {
     fn seq_of(jobs: &[DisplayJob]) -> u64 {
         assert_eq!(jobs.len(), 1, "one job: {jobs:?}");
         jobs[0].seq()
-    }
-
-    #[test]
-    fn a_wheel_notch_steps_once_and_down_dims() {
-        let mut c = (0, 0.0);
-        assert_eq!(wheel_steps(-120, -15.0, &mut c), 1);
-        assert_eq!(wheel_steps(120, 15.0, &mut c), -1);
-        assert_eq!(wheel_steps(60, 7.5, &mut c), 0);
-        assert_eq!(
-            wheel_steps(60, 7.5, &mut c),
-            -1,
-            "two half notches make one"
-        );
-    }
-
-    #[test]
-    fn a_touchpad_swipe_steps_once_per_notch_of_travel() {
-        let mut c = (0, 0.0);
-        assert_eq!(wheel_steps(0, 7.0, &mut c), 0);
-        assert_eq!(wheel_steps(0, 9.0, &mut c), -1);
-        assert_eq!(wheel_steps(0, -40.0, &mut c), 2);
-        assert_eq!(wheel_steps(0, 0.0, &mut c), 0);
     }
 
     #[test]

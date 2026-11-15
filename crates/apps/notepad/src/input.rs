@@ -246,6 +246,15 @@ impl Notepad {
                     Reply::none()
                 }
             }
+            PointerInput::ScrollAcross { cols, .. } => {
+                let el = self.edit_layout(ctx);
+                let (mono, m, edit) = (&self.mono, &self.metrics, &self.edit);
+                if self.view.scroll_across(cols, mono, m, edit, &el) {
+                    Reply::redraw()
+                } else {
+                    Reply::none()
+                }
+            }
             _ => Reply::none(),
         }
     }
