@@ -128,6 +128,9 @@ pub(crate) struct Incoming {
     /// Its files come through the document portal (`dnd::through_portal`):
     /// a sandboxed program's drag. They are never moved.
     portal: bool,
+    /// The compositor marked it a sandboxed program's ([`dnd::SANDBOXED`]): its URI list is
+    /// held to [`dnd::held_drop`], and its files are never moved.
+    sandboxed: bool,
 }
 
 impl Host {
@@ -247,7 +250,9 @@ impl Host {
         let answer = accept.and_then(|a| {
             let mime = dnd::drop_mime(&inc.mimes, a.kind, files, inc.portal)?;
             let a = Accept {
-                actions: a.actions.read_as(mime == dnd::FILE_TRANSFER),
+                actions: a
+                    .actions
+                    .read_as(mime == dnd::FILE_TRANSFER || inc.sandboxed),
                 ..a
             };
             (a.actions != Actions::default()).then_some((a, mime))
@@ -382,10 +387,17 @@ impl Host {
                         }
                     });
                 } else {
-                    host.peeked(
-                        &offer,
-                        reprisefs::fileclip::decode(URI_LIST, buf.bytes()).paths,
-                    );
+                    let paths = reprisefs::fileclip::decode(URI_LIST, buf.bytes()).paths;
+                    let sandboxed = host
+                        .drag_in
+                        .as_ref()
+                        .is_some_and(|i| i.offer == offer && i.sandboxed);
+                    let paths = if sandboxed && !dnd::held_paths(&paths) {
+                        Vec::new()
+                    } else {
+                        paths
+                    };
+                    host.peeked(&offer, paths);
                 }
             },
         );
@@ -440,7 +452,9 @@ impl Host {
                     });
                 }
                 buf => {
-                    let data = buf.map(|b| dnd::decode_drop(b.bytes(), d.kind, mime));
+                    let data = buf.and_then(|b| {
+                        dnd::held_drop(dnd::decode_drop(b.bytes(), d.kind, mime), d.sandboxed)
+                    });
                     host.land(d, data);
                 }
             },
@@ -486,7 +500,8 @@ impl DataDeviceHandler for Host {
         // One dropped elsewhere and awaiting its finish is over.
         let own = self.drag_out.as_ref().is_some_and(|o| !o.dropped);
         let portal = dnd::through_portal(&mimes, own);
-        let source = source.read_as(portal);
+        let sandboxed = !own && reprisefs::dropdata::sandboxed(&mimes);
+        let source = source.read_as(portal || sandboxed);
         let peek = dnd::peek_mime(&mimes, portal);
         self.drag_in = Some(Incoming {
             win,
@@ -499,6 +514,7 @@ impl DataDeviceHandler for Host {
             accept: None,
             files: None,
             portal,
+            sandboxed,
         });
         self.send(
             win,
@@ -551,6 +567,7 @@ impl DataDeviceHandler for Host {
             source: inc.source,
             kind: accept.kind,
             action,
+            sandboxed: inc.sandboxed,
         };
         self.read_drop(landing, mime);
     }
@@ -564,6 +581,7 @@ struct Landing {
     kind: DropKind,
     action: DragAction,
     uris: bool,
+    sandboxed: bool,
 }
 
 impl DataOfferHandler for Host {
@@ -577,7 +595,7 @@ impl DataOfferHandler for Host {
         actions: DndAction,
     ) {
         if let Some(inc) = self.drag_in.as_mut().filter(|i| &i.offer == offer.inner()) {
-            inc.source = Actions::from_wl(actions).read_as(inc.portal);
+            inc.source = Actions::from_wl(actions).read_as(inc.portal || inc.sandboxed);
         }
     }
 

@@ -322,11 +322,11 @@ fn same_path(a: &std::path::Path, b: &std::path::Path) -> bool {
 }
 
 /// A document portal key is traded for its files, which blocks on the bus: runs off the loop.
-/// A sandboxed program's URI list is taken only when [`all_exported`].
+/// A sandboxed program's URI list is taken only when [`dropdata::all_exported`].
 fn items(mime: &str, bytes: &[u8], sandboxed: bool) -> std::io::Result<Vec<Dropped>> {
     if mime != dropdata::FILE_TRANSFER {
         let items = dropdata::decode(mime, bytes);
-        if sandboxed && mime == dropdata::URI_LIST && !all_exported(&items) {
+        if sandboxed && mime == dropdata::URI_LIST && !dropdata::all_exported(&items) {
             return Err(std::io::Error::other(
                 "a sandboxed program's URI list names files outside the document portal",
             ));
@@ -364,13 +364,6 @@ fn readable(source: &SeatSource, mut offered: Vec<String>) -> Vec<String> {
         offered.retain(|m| m != dropdata::URI_LIST);
     }
     offered
-}
-
-/// Whether `items` are all files the document portal exported.
-fn all_exported(items: &[Dropped]) -> bool {
-    !items.is_empty()
-        && (items.iter())
-            .all(|d| matches!(d, Dropped::File(p) if crate::sandbox::portal_exported(p)))
 }
 
 /// The error box's title for a drop given up before its op was settled.
@@ -1047,6 +1040,8 @@ mod tests {
                 .object_from_protocol_id(&h.state.dh, theirs.id().protocol_id())
                 .expect("the server's source");
             let source = SeatSource::new(crate::dnd::Origin::Client(ours));
+            let offered = source.metadata().unwrap().mime_types;
+            assert!(dropdata::sandboxed(&offered), "targets see {offered:?}");
             h.state.dnd.drops.over = None;
             c.side.source_targets.clear();
             c.side.source_ends.clear();
@@ -1079,7 +1074,7 @@ mod tests {
         };
         let exported = format!(
             "file://{}/abc/x.png",
-            crate::sandbox::document_root().display()
+            reprisefs::dropdata::document_root().display()
         );
         let uris = Some(dropdata::URI_LIST.to_string());
         assert_eq!(
@@ -1109,6 +1104,112 @@ mod tests {
             vec![Some(dropdata::MOZ_URL.to_string())],
             "a link"
         );
+    }
+
+    /// An X11 program's drag of a URI list, answering every read with `uris`.
+    struct X11List {
+        uris: String,
+        heard: std::sync::Mutex<Vec<&'static str>>,
+    }
+
+    impl smithay::utils::IsAlive for X11List {
+        fn alive(&self) -> bool {
+            true
+        }
+    }
+
+    impl smithay::input::dnd::Source for X11List {
+        fn metadata(&self) -> Option<smithay::input::dnd::SourceMetadata> {
+            Some(smithay::input::dnd::SourceMetadata {
+                mime_types: vec![dropdata::URI_LIST.into()],
+                dnd_actions: [COPY, MOVE].into_iter().collect(),
+            })
+        }
+        fn choose_action(&self, _: DndAction) {}
+        fn send(&self, _: &str, fd: OwnedFd) {
+            use std::io::Write;
+            let _ = std::fs::File::from(fd).write_all(self.uris.as_bytes());
+        }
+        fn drop_performed(&self) {}
+        fn cancel(&self) {
+            self.heard.lock().unwrap().push("cancel");
+        }
+        fn finished(&self) {
+            self.heard.lock().unwrap().push("finished");
+        }
+    }
+
+    #[test]
+    fn a_sandboxed_x11_programs_uri_list_of_host_files_is_refused_on_the_desktop() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        crate::fsjobs::setup(&mut h.state);
+        let root = crate::harness::scratch().join("sandboxed-x11-drop");
+        let desk = root.join("Desktop");
+        std::fs::create_dir_all(&desk).unwrap();
+        crate::desktopview::create(&mut h.state, desk.clone(), Default::default(), None);
+        for sandboxed in [true, false] {
+            let key = root.join("id_ed25519");
+            std::fs::write(&key, "key").unwrap();
+            let list = std::sync::Arc::new(X11List {
+                uris: format!("file://{}\r\n", key.display()),
+                heard: Default::default(),
+            });
+            let source = SeatSource::new(crate::dnd::Origin::X11 {
+                source: list.clone(),
+                sandboxed,
+            });
+            let marked = source.metadata().unwrap().mime_types;
+            assert_eq!(
+                marked.iter().any(|m| m == dropdata::SANDBOXED),
+                sandboxed,
+                "{marked:?}"
+            );
+            h.state.drop_over(&source, (600.0, 400.0).into());
+            let over = h.state.dnd.drops.over.take().expect("over the desktop");
+            assert!(over.answer.is_some(), "the desktop takes a URI list");
+            let plain = Some(Answer {
+                action: MOVE,
+                plan: Plan::Put(None),
+            });
+            h.state.drop_released(
+                source,
+                Over {
+                    answer: plain,
+                    ..over
+                },
+            );
+            let end = std::time::Instant::now() + Duration::from_secs(3);
+            while list.heard.lock().unwrap().is_empty() {
+                assert!(
+                    std::time::Instant::now() < end,
+                    "sandboxed {sandboxed}: the drop never ended"
+                );
+                h.run_for(5);
+            }
+            let moved = desk.join("id_ed25519");
+            if sandboxed {
+                assert_eq!(*list.heard.lock().unwrap(), ["cancel"]);
+                assert!(key.exists(), "the host file stays where it is");
+                assert!(!moved.exists(), "nothing lands on the desktop");
+            } else {
+                assert_eq!(*list.heard.lock().unwrap(), ["finished"]);
+                assert!(
+                    moved.exists(),
+                    "a host X11 program's file moves to the desktop"
+                );
+                std::fs::remove_file(moved).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn an_x11_drag_counts_as_a_host_drag_only_from_a_focused_host_window() {
+        use crate::dnd::x11_drag_sandboxed;
+        assert!(!x11_drag_sandboxed(Some(Ok(None))), "host X11 window");
+        assert!(x11_drag_sandboxed(Some(Ok(Some("org.example.App".into())))));
+        assert!(x11_drag_sandboxed(Some(Err(()))), "its X client unknown");
+        assert!(x11_drag_sandboxed(None), "no X11 window has focus");
     }
 
     #[test]

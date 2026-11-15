@@ -72,6 +72,12 @@ pub fn decode(mime: &str, bytes: &[u8]) -> FileClip {
     FileClip { paths, cut }
 }
 
+/// Whether a sandboxed program's clip is taken: a copy of files the document portal exported,
+/// which lends them read-only, so a cut of them is refused.
+pub fn sandboxed_list_taken(clip: &FileClip) -> bool {
+    !clip.cut && !clip.paths.is_empty() && (clip.paths.iter()).all(|p| dropdata::portal_exported(p))
+}
+
 pub fn is_cut_marker(bytes: &[u8]) -> bool {
     bytes.trim_ascii() == b"1"
 }
@@ -164,5 +170,22 @@ mod tests {
         assert!(is_cut_marker(b"1"));
         assert!(!is_cut_marker(b"0"));
         assert!(!is_cut_marker(b""));
+    }
+
+    #[test]
+    fn a_sandboxed_clip_is_taken_only_as_a_copy_of_document_portal_files() {
+        let doc = dropdata::document_root().join("abc/x.png");
+        let clip = |paths: &[&str], cut| FileClip {
+            paths: paths.iter().map(PathBuf::from).collect(),
+            cut,
+        };
+        let doc = doc.to_str().unwrap();
+        assert!(sandboxed_list_taken(&clip(&[doc], false)));
+        assert!(!sandboxed_list_taken(&clip(&[doc], true)), "a cut");
+        assert!(!sandboxed_list_taken(&clip(&[], false)), "no files");
+        assert!(
+            !sandboxed_list_taken(&clip(&[doc, "/home/u/.ssh/id_ed25519"], false)),
+            "one path outside the document portal"
+        );
     }
 }
