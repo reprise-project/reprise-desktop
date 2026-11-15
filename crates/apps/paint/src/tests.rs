@@ -389,6 +389,40 @@ fn save_as_adds_the_types_extension_only_when_missing() {
     assert_eq!(files::with_ext(png.clone(), Kind::Bmp), png);
 }
 
+/// A one-frame 4x2 GIF at `path`.
+fn write_gif(path: &Path) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    let frame = image::RgbaImage::from_pixel(4, 2, image::Rgba([200, 30, 30, 255]));
+    image::codecs::gif::GifEncoder::new(&mut bytes)
+        .encode_frame(image::Frame::new(frame))
+        .unwrap();
+    std::fs::write(path, &bytes).unwrap();
+    bytes
+}
+
+#[test]
+fn save_on_a_gif_opens_save_as_on_a_png_and_leaves_the_gif() {
+    let dir = tempfile::tempdir().unwrap();
+    let gif = dir.path().join("party.gif");
+    let bytes = write_gif(&gif);
+    let mut p = Paint::new(Some(gif.clone()));
+    assert_eq!(p.path.as_deref(), Some(gif.as_path()), "the GIF opens");
+    p.save();
+    assert_eq!(std::fs::read(&gif).unwrap(), bytes, "the GIF is untouched");
+    let dlg = p.saveas.as_ref().expect("Save As opens");
+    assert_eq!(dlg.file_name(), "party.png");
+    assert_eq!(dlg.filter(), 0, "Save as type is PNG");
+    assert!(p.after_save.is_none());
+
+    p.saveas = None;
+    p.doc.dirty = true;
+    let reply = p.answered(Prompt::SaveChanges(Then::Quit), Some(0));
+    assert!(!reply.quit, "nothing quits before Save As is done");
+    assert_eq!(std::fs::read(&gif).unwrap(), bytes);
+    assert!(p.saveas.is_some());
+    assert_eq!(p.after_save, Some(Then::Quit));
+}
+
 #[test]
 fn the_background_points_the_config_at_the_picture() {
     let dir = tempfile::tempdir().unwrap();

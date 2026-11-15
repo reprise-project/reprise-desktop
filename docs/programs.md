@@ -230,7 +230,8 @@ from 1x to 8x, with a pixel grid from 4x (Ctrl+G turns it off). Ctrl+Z steps bac
 last 50 changes, fewer when they are large.
 
 Paint opens PNG, JPEG, BMP, GIF, WebP and the other formats Reprise reads, and saves PNG, JPEG
-(the Quality box in Save As) and BMP; transparent pixels open on white. A save never leaves the
+(the Quality box in Save As) and BMP; transparent pixels open on white. Save on a picture of a
+type Paint does not save opens Save As on a PNG of the same name. A save never leaves the
 file half written, writes through a symbolic link to the file it points at, and keeps the file's
 owner, group and extended attributes. Set as Desktop Background
 saves the picture and makes it the wallpaper. Paint is offered for pictures in Open With without
