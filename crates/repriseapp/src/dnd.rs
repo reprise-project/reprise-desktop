@@ -11,7 +11,8 @@
 //! URI list (`reprisefs::dropdata`), and text as UTF-8 plain text.
 //! A sandboxed program's drag that offers a portal key has its files read
 //! through the portal in place of its URI list, which names paths inside
-//! the sandbox; those files are only ever copied.
+//! the sandbox. Its URI list is taken only for document portal files
+//! ([`held_drop`]), and its files are only ever copied.
 
 use crate::URI_LIST;
 use reprisekit::raster::Canvas;
@@ -21,7 +22,8 @@ use wayland_client::protocol::wl_data_device_manager::DndAction;
 /// `FILE_MIMES` is what a drag of files offers after the portal key;
 /// `TEXT_UTF8` is also the text mime a drop prefers.
 pub use reprisefs::dropdata::{
-    Dropped as Uri, FILE_MIMES, FILE_TRANSFER, HOST_FILES, MOZ_URL, TEXT_UTF8, encode_files,
+    Dropped as Uri, FILE_MIMES, FILE_TRANSFER, HOST_FILES, MOZ_URL, SANDBOXED, TEXT_UTF8,
+    encode_files,
 };
 
 /// What a drag of files offers, best first: the portal key and the mark
@@ -114,10 +116,11 @@ impl Actions {
         }
     }
 
-    /// These, less a move when the files come through the portal, which lent them read-only.
-    pub fn read_as(self, portal: bool) -> Actions {
+    /// These, less a move when `copy_only`: the files come through the portal, which lent them
+    /// read-only, or from a sandboxed program.
+    pub fn read_as(self, copy_only: bool) -> Actions {
         Actions {
-            move_: self.move_ && !portal,
+            move_: self.move_ && !copy_only,
             ..self
         }
     }
@@ -253,6 +256,26 @@ pub fn decode_drop(bytes: &[u8], kind: DropKind, mime: &str) -> Dropped {
         DropKind::Uris => Dropped::Uris(reprisefs::dropdata::decode(mime, bytes)),
         DropKind::Text => Dropped::Text(String::from_utf8_lossy(bytes).into_owned()),
     }
+}
+
+/// A drop read from a sandboxed program's URI list (`sandboxed`), None when it names anything
+/// but files the document portal exported: any other path is one inside its sandbox.
+pub fn held_drop(data: Dropped, sandboxed: bool) -> Option<Dropped> {
+    let taken = match &data {
+        _ if !sandboxed => true,
+        Dropped::Files(paths) => held_paths(paths),
+        Dropped::Uris(items) => reprisefs::dropdata::all_exported(items),
+        Dropped::Text(_) => true,
+    };
+    taken.then_some(data)
+}
+
+/// Whether a sandboxed program's `paths` are taken: each one the document portal exported.
+pub fn held_paths(paths: &[PathBuf]) -> bool {
+    !paths.is_empty()
+        && paths
+            .iter()
+            .all(|p| reprisefs::dropdata::portal_exported(p))
 }
 
 /// A drag of files a window starts: the paths, the image under the pointer,
@@ -494,5 +517,33 @@ mod tests {
             portal_drop(paths.clone(), DropKind::Uris),
             Dropped::Uris(vec![Uri::File(paths[0].clone())])
         );
+    }
+
+    #[test]
+    fn a_sandboxed_programs_uri_list_drops_only_document_portal_files() {
+        let doc = reprisefs::dropdata::document_root().join("abc/x.png");
+        let key = PathBuf::from("/home/u/.ssh/id_ed25519");
+        let list = |paths: &[&PathBuf]| {
+            let uris: String = paths
+                .iter()
+                .map(|p| format!("file://{}\r\n", p.display()))
+                .collect();
+            uris.into_bytes()
+        };
+        for kind in [DropKind::Files, DropKind::Uris] {
+            let held = |paths: &[&PathBuf], sandboxed| {
+                held_drop(decode_drop(&list(paths), kind, URI_LIST), sandboxed)
+            };
+            assert!(held(&[&doc], true).is_some(), "{kind:?}: a portal file");
+            assert_eq!(held(&[&key], true), None, "{kind:?}: a path in the sandbox");
+            assert_eq!(
+                held(&[&doc, &key], true),
+                None,
+                "{kind:?}: one path outside"
+            );
+            assert!(held(&[&key], false).is_some(), "{kind:?}: a host program's");
+        }
+        let text = Dropped::Text("file:///home/u/.ssh/id_ed25519".into());
+        assert_eq!(held_drop(text.clone(), true), Some(text), "text is text");
     }
 }

@@ -4,7 +4,7 @@
 
 use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// A browser's link: `url\ntitle` pairs, in UTF-16 from Firefox and
 /// Chromium.
@@ -17,6 +17,10 @@ pub const FILE_TRANSFER: &str = "application/vnd.portal.filetransfer";
 /// program outside a sandbox start (it takes the mime off a sandboxed
 /// program's drag).
 pub const HOST_FILES: &str = "application/x-reprise-host-files";
+/// Offered, never sent, by every drag and clipboard selection the compositor sees a sandboxed
+/// program make (it takes the mime off any other program's): its file list names host files
+/// only under the document portal ([`all_exported`]).
+pub const SANDBOXED: &str = "application/x-reprise-sandboxed";
 
 /// The form most file managers use: `copy` or `cut` on its own
 /// line, then the `file://` URIs joined with `\n`.
@@ -51,6 +55,44 @@ pub fn through_portal<S: AsRef<str>>(offered: &[S]) -> bool {
 }
 
 pub const HTML: &str = "text/html";
+
+/// Whether a drag or selection offering `offered` comes from a sandboxed program ([`SANDBOXED`]).
+pub fn sandboxed<S: AsRef<str>>(offered: &[S]) -> bool {
+    offered.iter().any(|m| m.as_ref() == SANDBOXED)
+}
+
+/// Mark `offered` with [`SANDBOXED`] when `sandboxed`, and take a forged mark off otherwise.
+pub fn mark_sandboxed(offered: &mut Vec<String>, sandboxed: bool) {
+    offered.retain(|m| m != SANDBOXED);
+    if sandboxed {
+        offered.push(SANDBOXED.to_string());
+    }
+}
+
+/// Where the document portal exports the files it grants sandboxed programs.
+pub fn document_root() -> PathBuf {
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            // SAFETY: getuid cannot fail.
+            format!("/run/user/{}", unsafe { libc::getuid() }).into()
+        });
+    runtime.join("doc")
+}
+
+/// Whether `path` lies under [`document_root`]: a sandboxed program can name a host file only
+/// there.
+pub fn portal_exported(path: &Path) -> bool {
+    path.starts_with(document_root())
+        && path
+            .components()
+            .all(|c| c != std::path::Component::ParentDir)
+}
+
+/// Whether a sandboxed program's `items` are taken: files only, each [`portal_exported`].
+pub fn all_exported(items: &[Dropped]) -> bool {
+    !items.is_empty() && (items.iter()).all(|d| matches!(d, Dropped::File(p) if portal_exported(p)))
+}
 
 /// The mime type to read a drag offering `offered` as, best first: a
 /// browser's link (it names the page), then files through the portal
@@ -205,6 +247,30 @@ pub fn link_name(url: &str, title: Option<&str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_document_portal_path_climbing_out_of_it_is_not_exported() {
+        let root = document_root();
+        assert!(portal_exported(&root.join("abc/x.png")));
+        assert!(!portal_exported(&root.join("abc/../../../etc/passwd")));
+        assert!(!portal_exported(Path::new("/home/u/x.png")));
+    }
+
+    #[test]
+    fn a_sandboxed_list_is_taken_only_when_every_item_is_an_exported_file() {
+        let doc = document_root().join("abc/x.png");
+        assert!(all_exported(&[Dropped::File(doc.clone())]));
+        assert!(!all_exported(&[]), "an empty list");
+        assert!(
+            !all_exported(&[Dropped::File(doc.clone()), file("/home/u/.ssh/id_ed25519")]),
+            "one path outside the document portal"
+        );
+        let link = Dropped::Url {
+            url: "https://example.com".into(),
+            title: None,
+        };
+        assert!(!all_exported(&[Dropped::File(doc), link]), "a link");
+    }
 
     fn file(p: &str) -> Dropped {
         Dropped::File(PathBuf::from(p))

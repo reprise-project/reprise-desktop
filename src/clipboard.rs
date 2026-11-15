@@ -129,7 +129,7 @@ fn owner_sandboxed(x11_app: Option<Option<String>>, wayland_focus: impl FnOnce()
 }
 
 /// A sandboxed program's files come through its document portal key when it offers one;
-/// its file list is held to [`sandboxed_list_taken`] once read.
+/// its file list is held to [`fileclip::sandboxed_list_taken`] once read.
 fn files_from(offered: &[String], sandboxed: bool) -> Option<Files> {
     if sandboxed
         && offered
@@ -139,14 +139,6 @@ fn files_from(offered: &[String], sandboxed: bool) -> Option<Files> {
         return Some(Files::Portal);
     }
     fileclip::source(offered).map(Files::List)
-}
-
-/// A sandboxed program's file list names host files only under the document portal, which
-/// lends them read-only, so a cut of them is refused.
-fn sandboxed_list_taken(clip: &FileClip) -> bool {
-    !clip.cut
-        && !clip.paths.is_empty()
-        && (clip.paths.iter()).all(|p| crate::sandbox::portal_exported(p))
 }
 
 /// The waiting paste's `done` when `serial` is still the newest paste; an older paste's answer
@@ -321,16 +313,20 @@ impl State {
     /// Whether the focused window's program runs sandboxed: the owner of an X11 selection, or
     /// of a Wayland source whose client is gone.
     pub(crate) fn clip_owner_sandboxed(&self) -> bool {
-        let x11_app = self
-            .focused
-            .and_then(|w| self.win(w))
-            .filter(|w| w.x11().is_some())
-            .map(|w| crate::sandbox::window_app(w).ok().flatten());
+        let x11_app = self.focused_x11_app().map(|app| app.ok().flatten());
         owner_sandboxed(x11_app, || {
             // Smithay takes a data device selection only from the client holding the keyboard.
             let focus = self.seat.get_keyboard().and_then(|k| k.current_focus());
             focus.is_some_and(|f| crate::sandbox::resource_sandboxed(&f))
         })
+    }
+
+    /// The focused window's [`crate::sandbox::window_app`], None when no X11 window has focus.
+    pub(crate) fn focused_x11_app(&self) -> Option<Result<Option<String>, ()>> {
+        self.focused
+            .and_then(|w| self.win(w))
+            .filter(|w| w.x11().is_some())
+            .map(crate::sandbox::window_app)
     }
 
     pub fn own_file_clip(&self) -> Option<FileClip> {
@@ -341,7 +337,7 @@ impl State {
         match self.own_offers() {
             // No stat: a file gone since is skipped by the paste.
             Some(offers) => own_files(&offers).is_some_and(|c| {
-                !c.paths.is_empty() && (!self.clip.sandboxed || sandboxed_list_taken(&c))
+                !c.paths.is_empty() && (!self.clip.sandboxed || fileclip::sandboxed_list_taken(&c))
             }),
             // A sandboxed list is refused unless every path is under the document portal, which
             // only reading the offer tells, so Paste greys for it.
@@ -358,7 +354,7 @@ impl State {
     pub fn clip_files(&mut self, done: impl FnOnce(&mut State, FileClip) + 'static) {
         if let Some(offers) = self.own_offers() {
             match own_files(&offers) {
-                Some(clip) if self.clip.sandboxed && !sandboxed_list_taken(&clip) => {
+                Some(clip) if self.clip.sandboxed && !fileclip::sandboxed_list_taken(&clip) => {
                     log::debug!("paste: a sandboxed program's recorded file list is refused");
                 }
                 Some(clip) => done(self, clip),
@@ -379,7 +375,7 @@ impl State {
             state.clip_read(source.files, move |state, buf| {
                 let mut clip = fileclip::decode(source.files, buf.bytes());
                 clip.cut |= kde_cut;
-                if sandboxed && !sandboxed_list_taken(&clip) {
+                if sandboxed && !fileclip::sandboxed_list_taken(&clip) {
                     log::debug!("paste: a sandboxed program's file list is refused");
                     return;
                 }
@@ -852,7 +848,7 @@ mod tests {
         h.output("TEST-1", 1024, 768);
         let mut c = h.connect_sandboxed();
         h.map_toplevel(&mut c, "test.app", 300, 200);
-        let exported = crate::sandbox::document_root().join("abc/x.png");
+        let exported = reprisefs::dropdata::document_root().join("abc/x.png");
         let exported_uri = format!("file://{}", exported.display());
         let cases = [
             (

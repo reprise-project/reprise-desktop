@@ -44,7 +44,7 @@ fn sandboxed_list_taken(bytes: &[u8]) -> bool {
     let items = dropdata::decode(dropdata::URI_LIST, bytes);
     !items.is_empty()
         && items.iter().all(|d| match d {
-            Dropped::File(p) => crate::sandbox::portal_exported(p),
+            Dropped::File(p) => reprisefs::dropdata::portal_exported(p),
             Dropped::Url { .. } => true,
         })
 }
@@ -407,7 +407,7 @@ mod tests {
 
     #[test]
     fn a_sandboxed_programs_list_drops_in_a_field_only_with_document_portal_files() {
-        let root = crate::sandbox::document_root();
+        let root = reprisefs::dropdata::document_root();
         let exported = format!("file://{}/abc/x.png\r\n", root.display());
         assert!(sandboxed_list_taken(exported.as_bytes()));
         assert!(sandboxed_list_taken(b"https://a.test/\r\n"));

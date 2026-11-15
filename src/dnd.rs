@@ -129,6 +129,8 @@ pub fn host_mark(offered: &[String], sandboxed: bool) -> Option<bool> {
     }
 }
 
+/// The types a drag offering `offered` reaches targets with: [`host_mark`]'s, and
+/// [`reprisefs::dropdata::SANDBOXED`] on exactly the drags of sandboxed programs.
 fn marked(mut offered: Vec<String>, sandboxed: bool) -> Vec<String> {
     use reprisefs::dropdata::HOST_FILES;
     match host_mark(&offered, sandboxed) {
@@ -136,7 +138,15 @@ fn marked(mut offered: Vec<String>, sandboxed: bool) -> Vec<String> {
         Some(false) => offered.retain(|m| m != HOST_FILES),
         None => {}
     }
+    reprisefs::dropdata::mark_sandboxed(&mut offered, sandboxed);
     offered
+}
+
+/// Whether an X11 drag counts as a sandboxed program's, by the focused X11 window's Flatpak app
+/// (`Some(Ok(None))` for a host window): its owner is unknown without one, so it counts as
+/// sandboxed then.
+pub(crate) fn x11_drag_sandboxed(focused_app: Option<Result<Option<String>, ()>>) -> bool {
+    !matches!(focused_app, Some(Ok(None)))
 }
 
 fn rested(since: u32, now: u32) -> bool {
@@ -198,8 +208,12 @@ pub enum Origin {
     /// A drag without a source, inside the client of this surface.
     Local(WlSurface),
     Own(Arc<dyn Source>),
-    /// An X11 program's drag, from the X11 window manager (`xdnd`).
-    X11(Arc<dyn Source>),
+    /// An X11 program's drag, from the X11 window manager (`xdnd`); `sandboxed` as
+    /// [`x11_drag_sandboxed`] judged its program.
+    X11 {
+        source: Arc<dyn Source>,
+        sandboxed: bool,
+    },
 }
 
 #[derive(Clone)]
@@ -214,7 +228,7 @@ impl std::fmt::Debug for DragSource {
             Origin::Client(s) => format!("Client({:?})", s.id()),
             Origin::Local(s) => format!("Local({:?})", s.id()),
             Origin::Own(_) => "Own".into(),
-            Origin::X11(_) => "X11".into(),
+            Origin::X11 { .. } => "X11".into(),
         };
         f.debug_struct("DragSource")
             .field("origin", &origin)
@@ -252,7 +266,7 @@ impl DragSource {
             Origin::Client(s) => s.id().same_client_as(&surface.id()),
             Origin::Local(s) => s.id().same_client_as(&surface.id()),
             Origin::Own(_) => true,
-            Origin::X11(_) => false,
+            Origin::X11 { .. } => false,
         }
     }
 
@@ -276,14 +290,15 @@ impl DragSource {
     }
 
     pub(crate) fn is_x11(&self) -> bool {
-        matches!(self.origin, Origin::X11(_))
+        matches!(self.origin, Origin::X11 { .. })
     }
 
-    /// Whether a sandboxed client started the drag, so its URI list names paths inside the sandbox.
+    /// Whether a sandboxed program started the drag, so its URI list names paths inside the sandbox.
     pub(crate) fn sandboxed(&self) -> bool {
         match &self.origin {
             Origin::Client(s) => crate::sandbox::resource_sandboxed(s),
-            Origin::Local(_) | Origin::Own(_) | Origin::X11(_) => false,
+            Origin::X11 { sandboxed, .. } => *sandboxed,
+            Origin::Local(_) | Origin::Own(_) => false,
         }
     }
 
@@ -300,7 +315,7 @@ impl IsAlive for DragSource {
         match &self.origin {
             Origin::Client(s) => s.alive(),
             Origin::Local(s) => s.alive(),
-            Origin::Own(s) | Origin::X11(s) => s.alive(),
+            Origin::Own(s) | Origin::X11 { source: s, .. } => s.alive(),
         }
     }
 }
@@ -310,7 +325,7 @@ impl Source for DragSource {
         match &self.origin {
             Origin::Client(s) => s.is_client_local(target),
             Origin::Local(s) => s.is_client_local(target),
-            Origin::Own(s) | Origin::X11(s) => s.is_client_local(target),
+            Origin::Own(s) | Origin::X11 { source: s, .. } => s.is_client_local(target),
         }
     }
 
@@ -322,12 +337,13 @@ impl Source for DragSource {
             }),
             Origin::Local(s) => s.metadata(),
             Origin::Own(s) => s.metadata(),
-            Origin::X11(s) => s.metadata().map(|mut m| {
+            Origin::X11 { source, sandboxed } => source.metadata().map(|mut m| {
                 for a in &self.learnt().listed {
                     if !m.dnd_actions.contains(a) {
                         m.dnd_actions.push(*a);
                     }
                 }
+                m.mime_types = marked(m.mime_types, *sandboxed);
                 m
             }),
         }
@@ -340,7 +356,7 @@ impl Source for DragSource {
         match &self.origin {
             Origin::Client(s) => s.target(mime_type),
             Origin::Local(s) => s.accepted(mime_type),
-            Origin::Own(s) | Origin::X11(s) => s.accepted(mime_type),
+            Origin::Own(s) | Origin::X11 { source: s, .. } => s.accepted(mime_type),
         }
     }
 
@@ -349,7 +365,7 @@ impl Source for DragSource {
         match &self.origin {
             Origin::Client(s) => s.choose_action(action),
             Origin::Local(s) => s.choose_action(action),
-            Origin::Own(s) | Origin::X11(s) => s.choose_action(action),
+            Origin::Own(s) | Origin::X11 { source: s, .. } => s.choose_action(action),
         }
     }
 
@@ -357,7 +373,7 @@ impl Source for DragSource {
         match &self.origin {
             Origin::Client(s) => Source::send(s, mime_type, fd),
             Origin::Local(_) => {}
-            Origin::Own(s) | Origin::X11(s) => s.send(mime_type, fd),
+            Origin::Own(s) | Origin::X11 { source: s, .. } => s.send(mime_type, fd),
         }
     }
 
@@ -365,7 +381,7 @@ impl Source for DragSource {
         match &self.origin {
             Origin::Client(s) => s.drop_performed(),
             Origin::Local(s) => s.drop_performed(),
-            Origin::Own(s) | Origin::X11(s) => s.drop_performed(),
+            Origin::Own(s) | Origin::X11 { source: s, .. } => s.drop_performed(),
         }
     }
 
@@ -378,7 +394,7 @@ impl Source for DragSource {
         match &self.origin {
             Origin::Client(s) => s.cancel(),
             Origin::Local(s) => s.cancel(),
-            Origin::Own(s) | Origin::X11(s) => s.cancel(),
+            Origin::Own(s) | Origin::X11 { source: s, .. } => s.cancel(),
         }
     }
 
@@ -386,7 +402,7 @@ impl Source for DragSource {
         match &self.origin {
             Origin::Client(s) => s.finished(),
             Origin::Local(s) => s.finished(),
-            Origin::Own(s) | Origin::X11(s) => s.finished(),
+            Origin::Own(s) | Origin::X11 { source: s, .. } => s.finished(),
         }
     }
 }
@@ -849,7 +865,7 @@ impl State {
         let source = self.drag_source()?;
         match source.origin {
             Origin::Own(_) => self.own_over(pos),
-            Origin::Client(_) | Origin::X11(_) => self.drop_over(&source, pos),
+            Origin::Client(_) | Origin::X11 { .. } => self.drop_over(&source, pos),
             Origin::Local(_) => None,
         }
     }
@@ -1327,7 +1343,7 @@ mod tests {
 
     #[test]
     fn a_target_sees_the_marked_types() {
-        use reprisefs::dropdata::{FILE_TRANSFER, HOST_FILES, URI_LIST};
+        use reprisefs::dropdata::{FILE_TRANSFER, HOST_FILES, SANDBOXED, URI_LIST};
         let m = |ms: &[&str]| ms.iter().map(|m| m.to_string()).collect::<Vec<_>>();
         assert_eq!(
             marked(m(&[FILE_TRANSFER, URI_LIST]), false),
@@ -1335,9 +1351,19 @@ mod tests {
         );
         assert_eq!(
             marked(m(&[HOST_FILES, FILE_TRANSFER, HOST_FILES]), true),
-            m(&[FILE_TRANSFER])
+            m(&[FILE_TRANSFER, SANDBOXED])
         );
         assert_eq!(marked(m(&[URI_LIST]), false), m(&[URI_LIST]));
+        assert_eq!(
+            marked(m(&[URI_LIST]), true),
+            m(&[URI_LIST, SANDBOXED]),
+            "a sandboxed URI list alone"
+        );
+        assert_eq!(
+            marked(m(&[SANDBOXED, URI_LIST, SANDBOXED]), false),
+            m(&[URI_LIST]),
+            "a host program's forged mark"
+        );
     }
 
     #[test]
@@ -1423,7 +1449,10 @@ mod tests {
 
     #[test]
     fn an_x11_drag_allows_the_actions_its_source_lists() {
-        let source = DragSource::new(Origin::X11(Arc::new(Heard::default())));
+        let source = DragSource::new(Origin::X11 {
+            source: Arc::new(Heard::default()),
+            sandboxed: false,
+        });
         let actions = || source.metadata().unwrap().dnd_actions.to_vec();
         assert_eq!(actions(), [COPY], "only what the source asks for");
         source.learnt().listed = vec![COPY, MOVE];
@@ -1435,7 +1464,10 @@ mod tests {
         use crate::xdnd::Offer;
         use smithay::input::dnd::OfferData;
         let heard = Arc::new(Heard::default());
-        let source = DragSource::new(Origin::X11(heard.clone()));
+        let source = DragSource::new(Origin::X11 {
+            source: heard.clone(),
+            sandboxed: false,
+        });
         assert!(source.is_x11());
         let offer = Offer::Reprise(source.clone());
         assert!(!offer.validated(), "nothing of Reprise's takes it yet");

@@ -340,6 +340,7 @@ impl State {
             return None;
         }
         let source: Arc<dyn Source> = source;
-        Some(self.x11_drag_started(DragSource::new(Origin::X11(source))))
+        let sandboxed = crate::dnd::x11_drag_sandboxed(self.focused_x11_app());
+        Some(self.x11_drag_started(DragSource::new(Origin::X11 { source, sandboxed })))
     }
 }
