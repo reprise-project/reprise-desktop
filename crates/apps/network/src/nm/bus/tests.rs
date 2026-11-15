@@ -1,4 +1,4 @@
-use super::act::{hotspot_settings, import_error, join_wifi};
+use super::act::{hotspot_on, hotspot_settings, import_error, join_wifi};
 use super::call::{auth_failure, clean};
 use super::follow::{Joining, Seen, Settle, Why, not_joined};
 use super::wifi::{agent_held, key_mgmt_for, profile_owner, rekey_mgmt, rekeyed, wifi_settings};
@@ -702,6 +702,41 @@ fn a_hotspot_profile_is_an_access_point_sharing_its_address() {
     assert!(
         !wpa3["802-11-wireless"].contains_key("band"),
         "Automatic leaves the band to the driver"
+    );
+}
+
+#[test]
+fn stop_hotspot_picks_the_hotspot_running_on_its_radio() {
+    let active = |conn: &str, device: &str| {
+        let path = |p: &str| zbus::OwnedObjectPath::try_from(p.to_string()).unwrap();
+        props(vec![
+            ("Connection", Variant::from(path(conn))),
+            ("Devices", Variant::from(vec![path(device)])),
+        ])
+    };
+    let (wlan0, wlan1) = (
+        "/org/freedesktop/NetworkManager/Devices/3",
+        "/org/freedesktop/NetworkManager/Devices/4",
+    );
+    let hotspots = HashMap::from([(
+        "/org/freedesktop/NetworkManager/Settings/9".to_string(),
+        "Desk".to_string(),
+    )]);
+    let actives = vec![
+        (
+            "/a/1".to_string(),
+            active("/org/freedesktop/NetworkManager/Settings/2", wlan0),
+        ),
+        (
+            "/a/2".to_string(),
+            active("/org/freedesktop/NetworkManager/Settings/9", wlan1),
+        ),
+    ];
+    assert_eq!(hotspot_on(&actives, wlan1, &hotspots), Some("/a/2"));
+    assert_eq!(
+        hotspot_on(&actives, wlan0, &hotspots),
+        None,
+        "the client connection on the other radio stays"
     );
 }
 

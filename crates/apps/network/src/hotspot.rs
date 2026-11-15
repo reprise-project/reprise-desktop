@@ -16,9 +16,14 @@ const FIELD_W: i32 = CLIENT.0 - MARGIN - FIELD_X;
 const FIELD_H: i32 = 20;
 const ROW_Y: [i32; 4] = [40, 70, 100, 130];
 const LABEL_DY: i32 = 4;
+const HINT_Y: i32 = ROW_Y[3] + 30;
 const BTN_Y: i32 = CLIENT.1 - MARGIN - BUTTON_H;
 const CANCEL_X: i32 = CLIENT.0 - MARGIN - BUTTON_W;
 const START_X: i32 = CANCEL_X - BUTTON_GAP - BUTTON_W;
+
+/// A wrapped warning line's length, which fits the dialog's width at every text size.
+const WARNING_COLS: usize = 60;
+const WARNING_GAP: i32 = 8;
 
 const SECURITY: [&str; 2] = ["WPA2 Personal", "WPA3 Personal"];
 const BANDS: [&str; 3] = ["Automatic", "2.4 GHz", "5 GHz"];
@@ -45,10 +50,30 @@ pub fn valid(ssid: &str, password: &str) -> bool {
 pub struct HotspotDialog {
     pub device: String,
     pub form: Form,
+    /// The client size: taller by the warning a joined radio gets.
+    pub client: (i32, i32),
+}
+
+/// The lines saying that starting the hotspot takes the radio off `joined`.
+fn warning(joined: &str) -> Vec<String> {
+    reprisekit::text::wrap_chars(
+        &format!(
+            "Starting the hotspot disconnects this computer from {joined}. It stays off that \
+             network until the hotspot stops."
+        ),
+        WARNING_COLS,
+    )
 }
 
 impl HotspotDialog {
-    pub fn new(device: &str, ssid: &str) -> HotspotDialog {
+    /// `joined` is the network the radio is on, which the hotspot would take it off.
+    pub fn new(device: &str, ssid: &str, joined: Option<&str>) -> HotspotDialog {
+        let warning = joined.map(warning).unwrap_or_default();
+        let grow = match warning.len() as i32 {
+            0 => 0,
+            n => n * LINE_H + WARNING_GAP,
+        };
+        let btn_y = BTN_Y + grow;
         let ssid_field = Item::edit(
             "ssid",
             Rect::new(FIELD_X, ROW_Y[0], FIELD_W, FIELD_H),
@@ -67,7 +92,7 @@ impl HotspotDialog {
         let label = |id, i: usize, text: &str| {
             Item::label_at(id, MARGIN, ROW_Y[i] + LABEL_DY, LABEL_W, text)
         };
-        let items = vec![
+        let mut items = vec![
             Item::lines(
                 "intro",
                 Rect::new(MARGIN, MARGIN, CLIENT.0 - 2 * MARGIN, 2 * LINE_H),
@@ -84,22 +109,34 @@ impl HotspotDialog {
             Item::lines_at(
                 "hint",
                 MARGIN,
-                ROW_Y[3] + 30,
+                HINT_Y,
                 CLIENT.0 - 2 * MARGIN,
                 &["The password takes 8 to 63 characters."],
             ),
             Item::button(
                 "start",
-                Rect::new(START_X, BTN_Y, BUTTON_W, BUTTON_H),
+                Rect::new(START_X, btn_y, BUTTON_W, BUTTON_H),
                 "&Start",
                 false,
                 true,
             ),
-            Item::button_at("cancel", CANCEL_X, BTN_Y, BUTTON_W, "Cancel", true),
+            Item::button_at("cancel", CANCEL_X, btn_y, BUTTON_W, "Cancel", true),
         ];
+        if !warning.is_empty() {
+            let lines: Vec<&str> = warning.iter().map(String::as_str).collect();
+            let y = HINT_Y + LINE_H + WARNING_GAP;
+            items.push(Item::lines_at(
+                "warning",
+                MARGIN,
+                y,
+                CLIENT.0 - 2 * MARGIN,
+                &lines,
+            ));
+        }
         let mut d = HotspotDialog {
             device: device.to_string(),
             form: Form::new(items),
+            client: (CLIENT.0, CLIENT.1 + grow),
         };
         d.form.focus_id("password");
         d.sync_button();
@@ -176,9 +213,46 @@ mod tests {
     #[test]
     fn the_dialog_fits_its_text() {
         let over = reprisekit::interfaces::form_overflows(|_, _, _| {
-            vec![("hotspot".into(), HotspotDialog::new("/dev/3", "desk").form)]
+            let joined = "Library Guest Wireless Long Name";
+            vec![
+                (
+                    "hotspot".into(),
+                    HotspotDialog::new("/dev/3", "desk", None).form,
+                ),
+                (
+                    "joined".into(),
+                    HotspotDialog::new("/dev/3", "desk", Some(joined)).form,
+                ),
+            ]
         });
         assert!(over.is_empty(), "{}", over.join("\n"));
+    }
+
+    #[test]
+    fn a_joined_radio_warns_above_start_that_it_leaves_its_network() {
+        let d = HotspotDialog::new("/dev/3", "desk", None);
+        assert!(d.form.item("warning").is_none());
+        assert_eq!(d.client, CLIENT);
+        let d = HotspotDialog::new("/dev/3", "desk", Some("Home"));
+        let Control::Lines(lines) = &d.form.item("warning").unwrap().control else {
+            panic!("the warning is lines");
+        };
+        assert_eq!(
+            lines.join(" "),
+            "Starting the hotspot disconnects this computer from Home. It stays off that network \
+             until the hotspot stops."
+        );
+        let (warning, start) = (
+            d.form.item("warning").unwrap().rect,
+            d.form.item("start").unwrap().rect,
+        );
+        assert!(warning.bottom() < start.y, "above Start");
+        assert!(warning.y > d.form.item("hint").unwrap().rect.bottom());
+        assert_eq!(
+            start.bottom(),
+            d.client.1 - MARGIN,
+            "the dialog grows by the warning"
+        );
     }
 
     fn type_into(d: &mut HotspotDialog, id: &str, s: &str) {
@@ -198,7 +272,7 @@ mod tests {
 
     #[test]
     fn start_waits_for_a_long_enough_password() {
-        let mut d = HotspotDialog::new("/dev/3", "desk");
+        let mut d = HotspotDialog::new("/dev/3", "desk", None);
         assert!(!start_enabled(&d));
         assert_eq!(d.event(form::Event::Default), Outcome::None);
         type_into(&mut d, "password", "1234567");
@@ -218,7 +292,7 @@ mod tests {
 
     #[test]
     fn the_combos_pick_wpa3_and_the_band() {
-        let mut d = HotspotDialog::new("/dev/3", "desk");
+        let mut d = HotspotDialog::new("/dev/3", "desk", None);
         type_into(&mut d, "password", "correct horse");
         d.form.set_combo("security", 1);
         d.form.set_combo("band", 2);
@@ -235,7 +309,7 @@ mod tests {
 
     #[test]
     fn the_password_is_a_secret_field() {
-        let mut d = HotspotDialog::new("/dev/3", "desk");
+        let mut d = HotspotDialog::new("/dev/3", "desk", None);
         type_into(&mut d, "password", "correct horse");
         match &d.form.item("password").unwrap().control {
             Control::Edit { edit, .. } => assert!(edit.is_secret()),
@@ -256,7 +330,7 @@ mod tests {
     fn the_dialog_draws_its_rows() {
         let theme = reprisekit::theme::Theme::default();
         let text = reprisekit::text::TextRenderer::load(&reprisekit::theme::FontConfig::default());
-        let d = HotspotDialog::new("/dev/3", "desk");
+        let d = HotspotDialog::new("/dev/3", "desk", None);
         let mut c = Canvas::new(CLIENT.0 as u32, CLIENT.1 as u32);
         c.fill_rect(c.bounds(), theme.colors.button_face);
         form::draw(
@@ -298,7 +372,7 @@ mod tests {
             ..reprisekit::theme::Theme::default()
         };
         let text = reprisekit::text::TextRenderer::load(&reprisekit::theme::FontConfig::default());
-        let mut d = HotspotDialog::new("/dev/3", "desk");
+        let mut d = HotspotDialog::new("/dev/3", "desk", None);
         type_into(&mut d, "password", "correct horse");
         let mut c = Canvas::new(CLIENT.0 as u32, CLIENT.1 as u32);
         c.fill_rect(c.bounds(), theme.colors.button_face);

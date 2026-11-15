@@ -18,6 +18,54 @@ async fn disconnect(conn: &Connection, device: &str) -> Result<(), Failure> {
         .map_err(clean)
 }
 
+/// Every active connection with its `Connection.Active` properties.
+async fn actives(conn: &Connection) -> Result<Vec<(String, Props)>, Failure> {
+    let paths = proxy(conn, MANAGER_PATH, NAME)
+        .await?
+        .get_property::<Vec<zbus::OwnedObjectPath>>("ActiveConnections")
+        .await
+        .map_err(clean)?;
+    let reads = paths.iter().map(|p| async move {
+        let props = get_all(conn, p.as_str(), ACTIVE_IFACE).await?;
+        Some((p.as_str().to_string(), props))
+    });
+    Ok(futures_util::future::join_all(reads)
+        .await
+        .into_iter()
+        .flatten()
+        .collect())
+}
+
+async fn deactivate(conn: &Connection, active: &str) -> Result<(), Failure> {
+    proxy(conn, MANAGER_PATH, NAME)
+        .await?
+        .call_method("DeactivateConnection", &(opath(active)?,))
+        .await
+        .map(|_| ())
+        .map_err(clean)
+}
+
+/// The active connection in `actives` running one of the `hotspots` profiles on `device`.
+pub(super) fn hotspot_on<'a>(
+    actives: &'a [(String, Props)],
+    device: &str,
+    hotspots: &HashMap<String, String>,
+) -> Option<&'a str> {
+    let on_device = |props: &Props| {
+        props
+            .get("Devices")
+            .and_then(|v| Vec::<zbus::OwnedObjectPath>::try_from(v.clone()).ok())
+            .is_some_and(|d| d.iter().any(|p| p.as_str() == device))
+    };
+    actives
+        .iter()
+        .find(|(_, props)| {
+            on_device(props)
+                && object(props, "Connection").is_some_and(|c| hotspots.contains_key(&c))
+        })
+        .map(|(path, _)| path.as_str())
+}
+
 /// Run `cmd`; a join or VPN NetworkManager accepted is followed until it settles, and its
 /// failure comes back on `wakes`.
 pub(super) async fn command(
@@ -282,26 +330,21 @@ pub(super) async fn act(conn: &Connection, cmd: &Cmd) -> Result<(), Failure> {
             activate(conn, "/", device, "/").await.map(|_| ())
         }
         Cmd::VpnDown(connection) => {
-            let manager = proxy(conn, MANAGER_PATH, NAME).await?;
-            let actives = manager
-                .get_property::<Vec<zbus::OwnedObjectPath>>("ActiveConnections")
-                .await
-                .map_err(clean)?;
-            for active in actives {
-                let active = active.as_str().to_string();
-                let Some(props) = get_all(conn, &active, ACTIVE_IFACE).await else {
-                    continue;
-                };
-                if object(&props, "Connection").as_deref() != Some(connection.as_str()) {
-                    continue;
-                }
-                return manager
-                    .call_method("DeactivateConnection", &(opath(&active)?,))
-                    .await
-                    .map(|_| ())
-                    .map_err(clean);
+            let actives = actives(conn).await?;
+            let up = actives.iter().find(|(_, props)| {
+                object(props, "Connection").as_deref() == Some(connection.as_str())
+            });
+            match up {
+                Some((active, _)) => deactivate(conn, active).await,
+                None => Err("That connection is not active.".into()),
             }
-            Err("That connection is not active.".into())
+        }
+        Cmd::StopHotspot(device) => {
+            let (actives, saved) = futures_util::join!(actives(conn), saved(conn));
+            match hotspot_on(&actives?, device, &hotspot_profiles(&saved)) {
+                Some(active) => deactivate(conn, active).await,
+                None => Err("The hotspot is not running.".into()),
+            }
         }
         Cmd::SaveWireGuard { conn_path, cfg } => {
             let owner = new_profile_owner(conn).await;
