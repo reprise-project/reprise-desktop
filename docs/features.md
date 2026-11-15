@@ -588,8 +588,10 @@ are.
   to have a little gravity. Hold Shift and Stand By turns into Hibernate;
   an empty `[power] standby` greys Stand By.
 - **Save prompts.** Log Off, Turn Off and Restart ask every window to close
-  and wait, so programs can ask to save. After 5 seconds a list shows who's
-  still holding things up, with End Now and Cancel. Turn Off and Restart ask
+  and wait, so programs can ask to save. A desktop copy, move, delete or
+  zip under way holds the end too, its progress dialog still up. After 5
+  seconds a list shows who's still holding things up, with End Now and
+  Cancel. Turn Off and Restart ask
   logind first: when it says no, nothing closes. A refusal before or after
   the programs close (polkit, an inhibitor, a failing `[power]` command)
   shows a message saying why. One that needs a password asks for it over

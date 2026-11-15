@@ -30,6 +30,7 @@ struct Shown {
     to: String,
     /// What tells the dialog apart from another job's.
     ident: PathBuf,
+    cancelled: bool,
 }
 
 /// A delete or Empty Recycle Bin.
@@ -61,7 +62,8 @@ pub struct Running {
     op: DropOp,
     puts: Vec<Put>,
     started: Instant,
-    /// The progress dialog's view once it is up; it stays `Some` after the view is closed.
+    /// The progress dialog's view once it is up; it stays `Some` while the view is closed until
+    /// `present` opens it again.
     dialog: Option<u64>,
     landed: usize,
     failed: Option<Failure>,
@@ -215,6 +217,7 @@ impl State {
             from,
             to: folder_name(dir),
             ident: dir.to_path_buf(),
+            cancelled: run.job.cancelled(),
         };
         let dialog = self.present(job, st);
         if let Some(run) = self.drags.running.get_mut(dir) {
@@ -222,28 +225,20 @@ impl State {
         }
     }
 
-    /// Open `job`'s dialog once it has run [`copyprogress::SHOW_AFTER`], else take `st` into it.
-    /// Returns the dialog's view, which stays `Some` after the view is closed.
+    /// Open `job`'s dialog once it has run [`copyprogress::SHOW_AFTER`], and again when anything but
+    /// its Cancel closed it (a Welcome panel, a session end, an unplug), else take `st` into it.
+    /// Under a Welcome panel it waits for the panel to close. Returns the dialog's view.
     fn present(&mut self, job: Shown, st: Status) -> Option<u64> {
         let ms = job.started.elapsed().as_millis() as u64;
-        let Some(id) = job.dialog else {
-            if job.started.elapsed() < copyprogress::SHOW_AFTER {
-                return None;
+        let Some(i) = job.dialog.and_then(|id| self.dialog_index(id)) else {
+            let early = job.started.elapsed() < copyprogress::SHOW_AFTER;
+            if job.cancelled || early || self.dialog_is_modal() {
+                return job.dialog;
             }
             let mut cp = CopyProgress::new(job.kind, &job.from, &job.to, self.config.glass.color);
             cp.update(st, ms);
-            let before = self.dialogs.views.last().map(|v| v.id);
-            self.open_dialog(Dialog::copy_progress(cp, job.ident));
-            let id = self
-                .dialogs
-                .views
-                .last()
-                .map(|v| v.id)
-                .filter(|&id| Some(id) != before);
-            return Some(id.unwrap_or(u64::MAX));
-        };
-        let Some(i) = self.dialogs.views.iter().position(|v| v.id == id) else {
-            return Some(id);
+            let opened = self.open_view(Dialog::copy_progress(cp, job.ident), None);
+            return opened.or(job.dialog);
         };
         let d = &mut self.dialogs.views[i].dialog;
         let button = |d: &Dialog| {
@@ -257,7 +252,7 @@ impl State {
         if button(&self.dialogs.views[i].dialog) != was {
             self.redraw_taskbars();
         }
-        Some(id)
+        job.dialog
     }
 
     /// Close dialog `id` of a job that dealt with `done` items: a balloon tells of the end when the
@@ -345,6 +340,24 @@ impl State {
             run.job.set_paused(false);
             run.job.cancel();
         }
+    }
+
+    /// What a put, delete or zip under way does, for the session-end prompt; None when none runs.
+    pub(crate) fn files_under_way(&self) -> Option<&'static str> {
+        let d = &self.drags;
+        if let Some(r) = d.running.values().next() {
+            return Some(match r.op {
+                DropOp::Move => "Moving files",
+                _ => "Copying files",
+            });
+        }
+        if let Some(r) = d.removals.values().next() {
+            return Some(match r.kind {
+                Kind::Empty => "Emptying the Recycle Bin",
+                _ => "Deleting files",
+            });
+        }
+        d.zips.values().next().map(|_| "Compressing files")
     }
 
     /// The meter of the removal or zip whose progress dialog is `id`.
@@ -455,6 +468,7 @@ impl State {
             from,
             to: String::new(),
             ident: r.paths.first().cloned().unwrap_or_default(),
+            cancelled: r.job.meter().cancelled(),
         };
         let dialog = self.present(job, st);
         if let Some(r) = self.drags.removals.get_mut(&key) {
@@ -524,6 +538,7 @@ impl State {
             from: z.from.clone(),
             to: z.to.clone(),
             ident: z.ident.clone(),
+            cancelled: z.job.meter().cancelled(),
         };
         let st = status(z.job.meter().snapshot(), 0);
         let dialog = self.present(job, st);
@@ -554,6 +569,127 @@ mod tests {
             assert!(std::time::Instant::now() < end, "the zip ends");
             h.run_for(20);
         }
+    }
+
+    /// A copy of one file into a fresh folder, started but not polled: the loop takes its news
+    /// only when a test turns it.
+    fn copy_into(h: &mut crate::harness::Harness, name: &str) -> (PathBuf, PathBuf) {
+        use crate::dragview::{DragSource, QueuedPut};
+        let dir = sandbox(name);
+        let path = dir.join("a.txt");
+        std::fs::write(&path, "a").unwrap();
+        let to = dir.join("to");
+        std::fs::create_dir(&to).unwrap();
+        let source = DragSource::File {
+            path,
+            name: "a.txt".into(),
+        };
+        h.state.spawn_put(QueuedPut {
+            dir: to.clone(),
+            op: reprisefs::ops::DropOp::Copy,
+            puts: vec![((source, None, None), None)],
+            existing: Vec::new(),
+        });
+        (dir, to)
+    }
+
+    /// The put into `to` as its poll sees it once it has run past `SHOW_AFTER`.
+    fn shown_late(h: &mut crate::harness::Harness, to: &std::path::Path) {
+        let run = h.state.drags.running.get_mut(to).unwrap();
+        run.started -= super::copyprogress::SHOW_AFTER;
+        h.state.show_put(to);
+    }
+
+    fn copy_view(h: &crate::harness::Harness) -> Option<usize> {
+        (h.state.dialogs.views.iter()).position(|v| v.dialog.copy().is_some())
+    }
+
+    fn turn_off(h: &mut crate::harness::Harness) {
+        let d = crate::dialog::Dialog::turn_off(&h.state.config.power, false);
+        h.state.open_dialog(d);
+        assert!(h.state.dialog_is_modal(), "the panel is on top");
+    }
+
+    fn close_top(h: &mut crate::harness::Harness) {
+        h.state.close_dialog_at(h.state.dialogs.views.len() - 1);
+    }
+
+    #[test]
+    fn a_copy_dialog_a_turn_off_panel_closed_comes_back_once_the_panel_is_cancelled() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let (dir, to) = copy_into(&mut h, "panel");
+        shown_late(&mut h, &to);
+        assert_eq!(copy_view(&h), Some(0), "the copy dialog is up");
+        turn_off(&mut h);
+        assert_eq!(copy_view(&h), None, "the panel takes the screen alone");
+        h.state.show_put(&to);
+        assert_eq!(copy_view(&h), None, "nothing opens under the panel");
+        assert!(h.state.dialog_is_modal(), "the panel keeps the keys");
+        close_top(&mut h);
+        h.state.show_put(&to);
+        let i = copy_view(&h).expect("the copy dialog is back");
+        let v = &h.state.dialogs.views[i];
+        assert!(v.dialog.on_taskbar(), "with its task button");
+        assert_eq!(h.state.drags.running[&to].dialog, Some(v.id));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_copy_crossing_its_delay_under_a_welcome_panel_opens_once_the_panel_closes() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let (dir, to) = copy_into(&mut h, "under-panel");
+        turn_off(&mut h);
+        shown_late(&mut h, &to);
+        assert_eq!(h.state.dialogs.views.len(), 1, "only the panel");
+        assert!(h.state.dialog_is_modal(), "the panel keeps the keys");
+        close_top(&mut h);
+        h.state.show_put(&to);
+        assert!(copy_view(&h).is_some(), "the copy dialog opens");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_cancelled_copy_whose_dialog_was_closed_opens_no_other() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let (dir, to) = copy_into(&mut h, "cancelled");
+        shown_late(&mut h, &to);
+        let id = h.state.dialogs.views[copy_view(&h).unwrap()].id;
+        h.state.cancel_put(id);
+        h.state.close_all_dialogs();
+        h.state.show_put(&to);
+        assert_eq!(copy_view(&h), None, "the cancelled copy shows nothing");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_copy_dialog_on_an_unplugged_output_moves_to_the_one_left() {
+        let mut h = crate::harness::Harness::new();
+        let first = h.output("TEST-1", 1024, 768);
+        let second = h.output("TEST-2", 1024, 768);
+        let b = h.state.layout_box(Some(&second));
+        h.pointer_to(f64::from(b.x + b.width / 2), f64::from(b.y + b.height / 2));
+        let (dir, to) = copy_into(&mut h, "unplug");
+        shown_late(&mut h, &to);
+        let i = copy_view(&h).unwrap();
+        assert_eq!(
+            h.state.dialogs.views[i].output, second,
+            "it opened on TEST-2"
+        );
+        h.state.scene.remove_output(&second);
+        h.state.output_removed(&second);
+        let i = copy_view(&h).expect("the copy dialog stays up");
+        let v = &h.state.dialogs.views[i];
+        assert_eq!(v.output, first);
+        let area = h.state.usable_area(Some(&first));
+        let inside = v.x >= area.x
+            && v.y >= area.y
+            && v.x + v.layout.size.0 <= area.x + area.width
+            && v.y + v.layout.size.1 <= area.y + area.height;
+        assert!(inside, "inside TEST-1's usable area");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
